@@ -27,7 +27,6 @@
 # internals mcpp is free to change.
 set -e
 
-command -v qemu-system-riscv64 >/dev/null || { echo "SKIP: no qemu"; exit 0; }
 
 # The sysroot has to be installed in the home MCPP uses, which is not
 # necessarily the ambient xlings home. Skip rather than fail: this test is
@@ -35,6 +34,21 @@ command -v qemu-system-riscv64 >/dev/null || { echo "SKIP: no qemu"; exit 0; }
 MH="${MCPP_HOME:-$HOME/.mcpp}"
 SYSROOT_ROOT="$MH/registry/data/xpkgs/xim-x-picolibc-riscv"
 [[ -d "$SYSROOT_ROOT" ]] || { echo "SKIP: xim:picolibc-riscv not installed in $MH"; exit 0; }
+
+# Resolve the emulator to a PATH-independent absolute path.
+#
+# The runner template may name it bare — that is what a user writes — but this
+# test is about mcpp's runner MECHANISM, not about shim/home topology. Measured
+# in CI: `qemu-system-riscv64 --version` succeeded in one step while `mcpp run`
+# execing the same bare name answered "xlings: 'qemu-system-riscv64' is not
+# installed", because the shim on PATH dispatches against its owner home. A
+# real BSP has the same information and would emit an absolute path too.
+QEMU="$(command -v qemu-system-riscv64 || true)"
+for d in "$HOME"/.mcpp/registry/data/xpkgs/*-x-qemu-riscv/*/bin \
+         "$HOME"/.xlings/data/xpkgs/*-x-qemu-riscv/*/bin; do
+    [[ -x "$d/qemu-system-riscv64" ]] && QEMU="$d/qemu-system-riscv64"
+done
+[[ -n "$QEMU" ]] || { echo "SKIP: no qemu-system-riscv64"; exit 0; }
 
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
@@ -136,9 +150,10 @@ kind = "bin"
 main = "src/main.cpp"
 
 [target.riscv64-none-elf]
-runner = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
+runner = ["QEMU_PATH", "-machine", "virt", "-nographic",
           "-no-reboot", "-semihosting", "-bios", "none", "-kernel"]
 EOF
+sed -i "s|QEMU_PATH|$QEMU|" mcpp.toml
 
 "$MCPP" run --target-triple riscv64-none-elf > run.log 2>&1 || true
 grep -q 'BSP-CHAIN-OK 42' run.log || {

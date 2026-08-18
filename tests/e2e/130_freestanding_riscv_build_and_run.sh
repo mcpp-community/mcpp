@@ -41,6 +41,21 @@
 #   the printed line    the MODULE actually executed on the emulated hart.
 set -e
 
+# Resolve the emulator to a PATH-independent absolute path.
+#
+# The runner template may name it bare — that is what a user writes — but this
+# test is about mcpp's runner MECHANISM, not about shim/home topology. Measured
+# in CI: `qemu-system-riscv64 --version` succeeded in one step while `mcpp run`
+# execing the same bare name answered "xlings: 'qemu-system-riscv64' is not
+# installed", because the shim on PATH dispatches against its owner home. A
+# real BSP has the same information and would emit an absolute path too.
+QEMU="$(command -v qemu-system-riscv64 || true)"
+for d in "$HOME"/.mcpp/registry/data/xpkgs/*-x-qemu-riscv/*/bin \
+         "$HOME"/.xlings/data/xpkgs/*-x-qemu-riscv/*/bin; do
+    [[ -x "$d/qemu-system-riscv64" ]] && QEMU="$d/qemu-system-riscv64"
+done
+[[ -n "$QEMU" ]] || { echo "SKIP: no qemu-system-riscv64"; exit 0; }
+
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
@@ -103,9 +118,10 @@ kind = "bin"
 main = "src/start.S"
 
 [target.riscv64-none-elf]
-runner = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
+runner = ["QEMU_PATH", "-machine", "virt", "-nographic",
           "-no-reboot", "-bios", "default", "-kernel"]
 EOF
+sed -i "s|QEMU_PATH|$QEMU|" mcpp.toml
 
 # ── build ───────────────────────────────────────────────────────────────────
 "$MCPP" build --target riscv64-none-elf > build.log 2>&1 || {
