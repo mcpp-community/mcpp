@@ -207,6 +207,31 @@ std::string join_flags(const std::vector<std::string>& flags) {
 //    default install name is the path it was LINKED at, so a package built in
 //    /tmp/build-xyz records /tmp/build-xyz and cannot be relocated — which is
 //    every distributed dylib. `@rpath/<file>` is the only default that travels.
+// A PE link flag, spelled for the TARGET ABI and wrapped for the driver.
+//
+// ⚠️ NOT a dialect-table entry, and Windows CI is why. Clang targeting the MSVC
+// ABI speaks the GNU DIALECT while driving lld-link, so a dialect-keyed spelling
+// handed it `-Wl,--out-implib,` and lld-link answered `warning: ignoring unknown
+// argument '--out-implib'` followed by `could not open '…lib': no such file`.
+// Three flags in this PR made the same mistake — `-fPIC`, the import library,
+// and `/DEF:` — and the mistake is always the same one: asking which COMPILER
+// when the question is which TARGET.
+//
+// `sep` is `LinkStyle::SeparateLinker`, i.e. link.exe invoked directly, where
+// the flag needs no `-Wl,` wrapper. Everything else goes through a compiler
+// driver.
+std::string pe_link_flag(const BuildPlan& plan, bool sep,
+                         std::string_view msvcForm, std::string_view gnuForm,
+                         std::string_view path)
+{
+    const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+    const bool msvcAbi = t ? t->is_msvc_env()
+                           : mcpp::toolchain::is_msvc_target(plan.toolchain);
+    if (!msvcAbi) return std::string(gnuForm) + std::string(path);
+    auto flag = std::string(msvcForm) + std::string(path);
+    return sep ? flag : "-Wl," + flag;
+}
+
 std::string shared_soname_flag(const LinkUnit& lu, const BuildPlan& plan) {
     if (lu.kind != LinkUnit::SharedLibrary) return "";
     const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
@@ -1058,7 +1083,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             link_rule("cxx_archive", std::string(dial.archiveCmd), "AR");
             link_rule("cxx_shared",
                       "$cxx -shared $in -o $out $ldflags $soname_flag "
-                      "$implib_flag $unit_ldflags",
+                      "$implib_flag $def_flag $unit_ldflags",
                       "SHARED");
             // mcpp#426: a link unit with no C++ translation unit in it is
             // linked by the C driver. `g++` appends `-lstdc++` unconditionally,
@@ -1071,7 +1096,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                       "$cc $in -o $out $c_ldflags $unit_ldflags", "LINK");
             link_rule("c_shared",
                       "$cc -shared $in -o $out $c_ldflags $soname_flag "
-                      "$implib_flag $unit_ldflags",
+                      "$implib_flag $def_flag $unit_ldflags",
                       "SHARED");
         }
     }
@@ -1853,20 +1878,21 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // agrees with — the name belongs to plan.cppm's import_library_for, and
         // this is how it gets to the command. The SPELLING belongs to the
         // dialect table, same as `archiveRemoveArg`.
+        const bool sepLinker =
+            dial.linkStyle == mcpp::toolchain::CommandDialect::LinkStyle::SeparateLinker;
         if (!lu.importLibrary.empty()) {
-            std::string arg{ dial.sharedImportLibArg };
-            // `{}` or nothing: a row without the placeholder cannot say WHERE to
-            // write, so emitting its bare text would hand the linker a flag with
-            // no argument. Skipping is the honest reading of an empty row, and
-            // the implicit output above then fails loudly as a missing file
-            // rather than quietly linking against a stale one.
-            if (auto at = arg.find("{}"); at != std::string::npos) {
-                arg.replace(at, 2, escape_ninja_path(lu.importLibrary));
-                out_line += "  implib_flag = " + arg + "\n";
-            }
+            out_line += "  implib_flag = " + pe_link_flag(
+                plan, sepLinker, "/IMPLIB:", "-Wl,--out-implib,",
+                escape_ninja_path(lu.importLibrary)) + "\n";
         }
-        if (!lu.defFile.empty())
-            out_line += "  def_flag = /DEF:" + escape_ninja_path(lu.defFile) + "\n";
+        if (!lu.defFile.empty()) {
+            // `/DEF:` on both sides: it is a link.exe/lld-link flag, and the
+            // only targets that reach here are MSVC-ABI ones (MinGW auto-exports
+            // and gets no def edge at all).
+            out_line += "  def_flag = " + pe_link_flag(
+                plan, sepLinker, "/DEF:", "/DEF:",
+                escape_ninja_path(lu.defFile)) + "\n";
+        }
         {
             // Per-unit C++ runtime link, by ROLE. The kind→role map is the
             // only place that knows a TestBinary runs on the build machine
