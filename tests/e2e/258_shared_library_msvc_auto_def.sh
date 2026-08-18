@@ -157,4 +157,98 @@ anndef="$(find annotated/target -name 'annkit.def' | head -1)"
     echo "      chosen surface with all of it."
     exit 1; }
 
-echo "PASS: MSVC exports without dllexport, and defers to dllexport when present"
+# ── the LIMIT, made reproducible ────────────────────────────────────────
+#
+# Auto-export covers code. Exported DATA additionally needs
+# `__declspec(dllimport)` on the CONSUMER's declaration — CMake documents the
+# same limit for the same mechanism. Until now that lived in prose, and a claim
+# about what does NOT work is exactly the kind that drifts: the generated `.def`
+# already marks variables `DATA`, so it is reasonable to wonder whether the limit
+# still bites. It does, and here is the difference.
+#
+# ⚠️ The assertion is on the DIFFERENCE between the two spellings, not on any
+# particular error text — which form the failure takes (a link error, or a
+# pointer read where a value was meant) depends on the toolset version, and
+# pinning one of them would make this test a hostage to that.
+cd "$TMP"
+mkdir -p datalib/src
+cat > datalib/src/datalib.cppm <<'EOF'
+export module datalib;
+export extern "C" int dl_value;
+EOF
+cat > datalib/src/datalib.cpp <<'EOF'
+module datalib;
+extern "C" int dl_value = 99;
+EOF
+cat > datalib/mcpp.toml <<'EOF'
+[package]
+name    = "datalib"
+version = "0.1.0"
+[build]
+sources = ["src/*.cppm", "src/*.cpp"]
+[targets.datalib]
+kind   = "shared"
+[toolchain]
+windows = "msvc@system"
+EOF
+( cd datalib && "$MCPP" build > build.log 2>&1 ) || {
+    cat datalib/build.log; echo "FAIL: the data library did not build"; exit 1; }
+
+# It IS exported, and marked DATA — so the limit is about the consumer's
+# declaration, not about the export.
+datadef="$(find datalib/target -name 'datalib.def' | head -1)"
+grep -q 'dl_value DATA' "$datadef" || {
+    cat "$datadef"
+    echo "FAIL: the exported variable is not marked DATA. Without that the"
+    echo "      linker generates a call thunk and the consumer reads the thunk."
+    exit 1; }
+
+consume() {   # $1 = declaration, $2 = log
+    rm -rf "$TMP/dataapp"
+    mkdir -p "$TMP/dataapp/src"
+    cat > "$TMP/dataapp/src/main.cpp" <<EOF
+#include <cstdio>
+$1
+int main(){ std::printf("data=%d\n", dl_value); return 0; }
+EOF
+    local dep_host; dep_host="$(host_path "$TMP/datalib")"
+    cat > "$TMP/dataapp/mcpp.toml" <<EOF
+[package]
+name    = "dataapp"
+version = "0.1.0"
+[dependencies]
+datalib = { path = "$dep_host" }
+[targets.dataapp]
+kind = "bin"
+main = "src/main.cpp"
+[toolchain]
+windows = "msvc@system"
+EOF
+    ( cd "$TMP/dataapp" && "$MCPP" run > "$2" 2>&1 )
+}
+
+consume 'extern "C" int dl_value;' "$TMP/plain.log" && plain_ok=1 || plain_ok=0
+consume 'extern "C" __declspec(dllimport) int dl_value;' "$TMP/imported.log" && imported_ok=1 || imported_ok=0
+
+if [[ "$imported_ok" != 1 ]]; then
+    cat "$TMP/imported.log"
+    echo "FAIL: even WITH __declspec(dllimport) the data symbol was unusable."
+    echo "      Then the limit documented in docs/12 is not the whole story and"
+    echo "      the documentation needs to say what actually holds."
+    exit 1
+fi
+grep -q 'data=99' "$TMP/imported.log" || {
+    cat "$TMP/imported.log"; echo "FAIL: dllimport built but read the wrong value"; exit 1; }
+
+if [[ "$plain_ok" == 1 ]] && grep -q 'data=99' "$TMP/plain.log"; then
+    cat "$TMP/plain.log"
+    echo "NOTE: reading exported DATA without __declspec(dllimport) WORKED here."
+    echo "      docs/12 (and CMake's documentation for the same mechanism) say it"
+    echo "      should not. Either this toolset is more forgiving than the"
+    echo "      documented contract, or the limit has stopped applying — and the"
+    echo "      documentation is now the thing that is wrong."
+    exit 1
+fi
+echo "  (the limit reproduces: dllimport is required for exported data)"
+
+echo "PASS: MSVC exports without dllexport, defers to dllexport, and data still needs dllimport"

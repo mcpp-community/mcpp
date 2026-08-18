@@ -153,6 +153,16 @@ the package/feature boundary, not on an individual target.
 
 ### 2.3 `[build]` — Build Configuration
 
+> **Every entry `sources` matches must produce an object that gets linked.** A
+> file mcpp cannot place — an extension outside the built-ins and outside
+> `module_extensions` — is refused, naming the file, the extension and the key.
+> It is not ignored, because the failure that produced this rule was not "one
+> file too many" but *compiled and then linked by nobody*: the scanner reads
+> `export module` and gives the edge a BMI while the classifier says the file has
+> no role, and what the author sees is `undefined reference` to a module-mangled
+> symbol. Headers belong in `include_dirs`; Windows resource scripts in
+> `[resources]`.
+
 > **`sources = []` is not the same as omitting `sources`.** An absent key
 > selects the default glob; an explicitly empty list means *compile nothing*,
 > which is what a header-only distribution package needs to say. Until

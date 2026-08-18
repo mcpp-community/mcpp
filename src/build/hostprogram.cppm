@@ -438,12 +438,53 @@ build_host_module(const fs::path& bdir, const fs::path& compiler,
         return out;
     }
 
+    // The interface's LANGUAGE, stated rather than inferred from its extension.
+    //
+    // ⚠️ Measured on macOS CI: a rule package whose lib root is `rulepkg.ixx`
+    // made `clang++ --precompile rulepkg.ixx -o rulepkg.pcm` EXIT 0 AND WRITE
+    // NOTHING — clang's driver does not recognise `.ixx`, so it treated the file
+    // as a linker input, warned that it was unused, and succeeded. The failure
+    // surfaced one step later as `no such file or directory: …/rulepkg.pcm`,
+    // naming an output rather than the input that was never read.
+    //
+    // Every other module compile in mcpp already says this (BmiTraits::
+    // moduleInterfaceLangFlag — `/interface /TP`, `-x c++-module`, `-x c++`);
+    // the host-module path was the one place that still let the driver guess.
+    // It is positional on GNU-style drivers, so it goes immediately before the
+    // input.
+    std::vector<std::string> langArgv;
+    {
+        std::string_view lang = traits.moduleInterfaceLangFlag;
+        for (std::size_t i = 0; i < lang.size(); ) {
+            while (i < lang.size() && lang[i] == ' ') ++i;
+            auto j = lang.find(' ', i);
+            if (j == std::string_view::npos) j = lang.size();
+            if (j > i) langArgv.emplace_back(lang.substr(i, j - i));
+            i = j;
+        }
+    }
+
     if (mcpp::toolchain::is_clang(tc)) {
         fs::path pcm = bdir / (stem + std::string(traits.bmiExt));
-        if (auto r = run(with_base({compiler.string(), stdFlag, "--precompile",
-                                    interfacePath.string(), "-o", pcm.string()}),
-                         "precompile"); !r)
+        std::vector<std::string> pre{compiler.string(), stdFlag, "--precompile"};
+        for (auto const& l : langArgv) pre.push_back(l);
+        pre.push_back(interfacePath.string());
+        pre.push_back("-o"); pre.push_back(pcm.string());
+        if (auto r = run(with_base(std::move(pre)), "precompile"); !r)
             return std::unexpected(r.error());
+        // The precompile can succeed and write nothing when the driver ignored
+        // the input, which is exactly what happened above. Checked here so the
+        // diagnostic names the interface rather than a missing output.
+        if (!fs::exists(pcm, ec)) {
+            return std::unexpected(std::format(
+                "host module '{}': the compiler accepted '{}' and produced no "
+                "BMI.\n"
+                "       The interface's language is passed explicitly, so this "
+                "is not an extension\n"
+                "       the driver failed to recognise — check that the file "
+                "really is a module interface.",
+                logicalName, interfacePath.string()));
+        }
         if (auto r = run(with_base({compiler.string(), stdFlag, "-c",
                                     pcm.string(), "-o", out.object.string()}),
                          "object"); !r)
@@ -455,9 +496,11 @@ build_host_module(const fs::path& bdir, const fs::path& compiler,
 
     // GCC: BMIs are implicit under <cwd>/gcm.cache, so nothing to name — which
     // is also why the compile has to happen in bdir (it already does).
-    if (auto r = run(with_base({compiler.string(), stdFlag, "-fmodules", "-c",
-                                interfacePath.string(), "-o", out.object.string()}),
-                     "compile"); !r)
+    std::vector<std::string> gccArgv{compiler.string(), stdFlag, "-fmodules", "-c"};
+    for (auto const& l : langArgv) gccArgv.push_back(l);
+    gccArgv.push_back(interfacePath.string());
+    gccArgv.push_back("-o"); gccArgv.push_back(out.object.string());
+    if (auto r = run(with_base(std::move(gccArgv)), "compile"); !r)
         return std::unexpected(r.error());
     out.useFlags = {"-fmodules"};
     return out;

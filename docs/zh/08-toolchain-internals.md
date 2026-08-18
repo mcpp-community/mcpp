@@ -455,6 +455,32 @@ C 世界(`CLibMode::Sysroot`)并有自己的 libc++ 链接处理;Windows 没有 
 mcpp 把运行时 DLL 部署到产物 exe 旁,这正是该平台对 §3–§4 所做一切的原生
 等价物。
 
+### 7.5 一个 flag 由哪根轴决定
+
+2026.8.18 那一轮改了四个 flag,每一个此前都挂在错误的轴上。而这类错误的表现
+永远相同:**在恰好一个平台上莫名其妙地失败**,报错既不点名那个 flag,
+也不点名它背后的决定。
+
+一共三根轴,而在它们之间做选择的问题是:**这个 flag 最终被谁读到。**
+
+| 轴 | 问题 | 例子 | 怎么问 |
+|---|---|---|---|
+| **目标格式** | 产出的是哪种映像 | `-fPIC`(PE 代码本就位置无关;clang 直接拒绝这个 flag) | `triple::parse(...)->is_pe()`,宿主兜底 |
+| **目标 ABI** | 哪个链接器会消费它 | `--out-implib` vs `/IMPLIB:`、`/DEF:`、SONAME / install-name 的形式 | `is_msvc_target(tc)`、`triple->is_msvc_env()` |
+| **方言** | mcpp 直接调用的是哪个程序 | `-L` vs `/LIBPATH:`、`-I` vs `/I`、归档命令 | `dialect_for(tc)`、`LinkStyle::SeparateLinker` |
+
+**面向 MSVC ABI 的 clang 是同时区分这三根轴的那个反例。** 它说 GNU 方言、
+产出 MSVC ABI 的对象、生成 PE 映像。问错了轴就会:
+
+- 按**方言**判 ⇒ 拿到 `-Wl,--out-implib`,lld-link 回
+  `ignoring unknown argument`,随后是「文件不存在」;
+- 按**ABI** 判 ⇒ 拿到 `/LIBPATH:`,而编译器驱动不认;
+- 按**编译器二进制**判 ⇒ 拿到 `-fPIC`,直接拒绝运行。
+
+失败形状总是同一个:flag 按邻近平台的拼法发出去,而报错来自离那个决定三步远的
+另一个程序。面向链接器的答案集中在 `ninja_backend` 的 `pe_link_flag`;
+方言表在原来那个条目的位置写明了为什么它答不了这些问题。
+
 ## 8. 源码地图
 
 | 关注点 | 文件 |

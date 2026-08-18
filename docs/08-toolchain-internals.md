@@ -587,6 +587,38 @@ question "can this machine produce it", and `prepare.cppm` now asks it — with 
 explicit `[target.X] toolchain = "…"` as the escape hatch for a cross toolchain
 supplied by the author.
 
+### 7.5 Which axis decides a flag
+
+Four flags changed in the 2026.8.18 round, and each had been keyed on the wrong
+axis. Every one of those mistakes showed up the same way: an inexplicable
+failure on exactly one platform, with a message that named neither the flag nor
+the decision behind it.
+
+There are three axes, and the question that picks between them is **who finally
+reads this flag**.
+
+| axis | the question | examples | how it is asked |
+|---|---|---|---|
+| **target format** | what kind of image is produced | `-fPIC` (PE code is position independent by design; clang refuses the flag outright) | `triple::parse(...)->is_pe()`, host fallback |
+| **target ABI** | which linker will consume this | `--out-implib` vs `/IMPLIB:`, `/DEF:`, the SONAME / install-name form | `is_msvc_target(tc)`, `triple->is_msvc_env()` |
+| **dialect** | which program mcpp is invoking | `-L` vs `/LIBPATH:`, `-I` vs `/I`, the archive command | `dialect_for(tc)`, `LinkStyle::SeparateLinker` |
+
+**Clang targeting the MSVC ABI is the case that separates all three.** It speaks
+the GNU dialect, produces MSVC-ABI objects, and emits a PE image. Ask it the
+wrong question and:
+
+- keyed on the dialect, it is handed `-Wl,--out-implib` and lld-link answers
+  `ignoring unknown argument` followed by a missing file;
+- keyed on the ABI, it is handed `/LIBPATH:`, which a compiler driver does not
+  take;
+- keyed on the compiler binary, it is handed `-fPIC` and refuses to run at all.
+
+The failure mode is always the same shape: the flag is spelled for a
+neighbouring platform, and the diagnostic comes from a program three steps away
+from the decision. `ninja_backend`'s `pe_link_flag` is where the linker-facing
+answers live; the dialect table says, where its entry used to be, why it cannot
+answer them.
+
 ## 8. Source map
 
 | Concern | File |

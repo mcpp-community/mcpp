@@ -243,7 +243,7 @@ ldflags = ["-Llib/x86_64-linux-musl", "-lmathkit"]
 | `kind = "shared"` on `*-musl` | ❌ musl target 是静态链接的 |
 | 发布预编译 BMI | ❌ 未尝试;BMI 与编译器构建逐位绑定 |
 | 把依赖打包进去 | ❌ 改为声明依赖(见上) |
-| 用**原生 `cl.exe`** 消费这种包 | ❌ 见下 |
+| 用**原生 `cl.exe`** 消费这种包 | ✅ —— 经方言中立的链接意图;见下 |
 
 ### MSVC ABI 上的符号导出
 

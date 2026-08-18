@@ -131,7 +131,13 @@ ValidateReport validate(const Graph&                    g,
     // Pure-binary projects (mcpp itself, scaffolded `mcpp new`) skip this
     // check — they have no lib-root concept.
     if (mcpp::manifest::has_lib_target(manifest)) {
-        auto lib_root_rel = mcpp::manifest::resolve_lib_root_path(manifest);
+        // PROBING when there is a tree to probe: the convention offers one
+        // candidate per declared module extension, and checking only the
+        // `.cppm` one warns that an `.ixx` project's lib root is missing when
+        // it is right there.
+        auto lib_root_rel = projectRoot.empty()
+            ? mcpp::manifest::resolve_lib_root_path(manifest)
+            : mcpp::manifest::resolve_lib_root_path(manifest, projectRoot);
         const bool was_explicit = !manifest.lib.path.empty();
 
         // On-disk existence check (skipped when projectRoot is empty —

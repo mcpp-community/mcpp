@@ -268,7 +268,7 @@ package published to a mixed-version audience.
 | `kind = "shared"` on `*-musl` | ❌ a musl target links statically |
 | shipping prebuilt BMIs | ❌ not attempted; BMIs are compiler-build-exact |
 | bundling dependencies into the package | ❌ declare them instead (above) |
-| consuming a package with **native `cl.exe`** | ❌ see below |
+| consuming a package with **native `cl.exe`** | ✅ — via the neutral link intent; see below |
 
 ### Exports on the MSVC ABI
 
