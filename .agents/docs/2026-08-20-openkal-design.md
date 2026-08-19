@@ -310,6 +310,39 @@ ninja: error: dependency cycle: gcm.cache/openkal.stream.gcm -> gcm.cache/openka
 模块图把点号读成了层级关系。⇒ **ABI 模块名不能是接口名的点号延伸**,
 `openkal.decl.stream` 可以,`openkal.stream.decl` 不行。
 
+#### ⭐ 模块命名是**规范条款**,不是风格
+
+| 名字 | 谁提供 | 谁写 |
+|---|---|---|
+| `openkal.<interface>` | **后端** | 应用 `import` 它 |
+| `openkal.decl.<interface>` | **接口包** | **只有后端作者** `export import` 它 |
+
+**必须入规范**,三条理由都是硬的:
+
+1. ⭐ 每个后端都要 `export import` **这个确切的名字** —— 名字本身就是契约的一部分;
+   名字自由 = 后端没法照着规范写。
+2. ⓘ 「后端不能重定义接口类型」那条保证(实测 `conflicts with import`)
+   **只在所有后端 import 同一个模块时成立**。
+3. conformance 要 diff 导出名集合,得知道哪些来自共享模块、哪些是后端自己加的。
+
+**为什么是 `decl`**(排除掉的):
+
+| | |
+|---|---|
+| `openkal.impl.*` | ⛔ **语义反了** —— 那是接口包,不是实现;实现提供的是 `openkal.*` |
+| `openkal.abi.*` | ⛔ openkal 本身就是 ABI,冗余 |
+| `openkal.core.*` | ⛔ 与 §2.1 的「core 接口集」撞词 |
+| `openkal.spec.*` | ⚠️ 可用,但读者会以为里面是规范**正文** |
+| ⭐ `openkal.decl.*` | 无歧义:里面就是声明 |
+
+⚠️ **规范必须连同理由一起写**:读者会很自然地选 `openkal.stream.decl`(点号延伸),
+而那个 ⓘ 实测直接自环(§4.3)。只写「必须这么叫」不写为什么,第一个实现者就会卡住。
+
+⚠️ **一个被否掉的简化**:把所有声明合并成单个 `openkal` 模块,后端各自
+`export import openkal;`。少一层命名,但**破坏「每个 interface 独立版本」** ——
+只提供 stream 的后端会把 task/fs 的声明一起拖进来,大模块对裸机的编译代价也不友好。
+⇒ **每个 interface 一个 `openkal.decl.<interface>`。**
+
 ### 4.4 后端怎么被选中:只用 `mcpp.toml`
 
 ```toml
