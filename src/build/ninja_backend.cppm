@@ -1873,6 +1873,18 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         std::string implicitOut;
         if (!lu.importLibrary.empty())
             implicitOut = " | " + escape_ninja_path(lu.importLibrary);
+        // The link map, DECLARED rather than merely written. It is produced by
+        // a flag on the link command, so it cannot be its own edge — a second
+        // edge claiming to produce it would run the link twice. Declaring it
+        // as an implicit output is what makes ninja regenerate a deleted map
+        // and clean it with everything else; without the declaration it exists
+        // only as a side effect that nothing tracks.
+        if (!fsObjcopy.empty()
+            && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary)) {
+            auto map = lu.output; map += ".map";
+            implicitOut += (implicitOut.empty() ? " | " : " ")
+                         + escape_ninja_path(map);
+        }
 
         // The `.def` edge, emitted BEFORE the link that consumes it.
         //
@@ -1961,9 +1973,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // ── Freestanding artifact set ──────────────────────────────────────
         //
         // `.bin` is a real edge on the `.elf`, so ninja rebuilds it when the
-        // image changes and never when it does not. `.map` is an implicit
-        // OUTPUT of the link: one command writes both, and a second edge
-        // claiming to produce the map would run the link twice.
+        // image changes and never when it does not. `.map` is declared as an
+        // implicit output of the link edge above — see the note there.
         if (!fsObjcopy.empty()
             && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary)) {
             const auto elf = escape_ninja_path(lu.output);

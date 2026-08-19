@@ -171,4 +171,15 @@ after="$(sha256sum "$elf.bin" | cut -d' ' -f1)"
     echo ".bin did not change after a source edit — it is not a real ninja edge"
     exit 1; }
 
+# ⚠️ The `.map` is written by a FLAG on the link command, not by its own edge,
+# so it is easy to leave undeclared — and then nothing tracks it. Delete it and
+# ninja must put it back; without the implicit-output declaration the ELF is
+# up to date, ninja has nothing to do, and the map stays gone.
+rm -f "$elf.map"
+"$MCPP" build --target riscv64-none-elf > build3.log 2>&1
+[[ -f "$elf.map" ]] || {
+    cat build3.log
+    echo ".map did not come back after being deleted — it is not a declared output"
+    exit 1; }
+
 echo "PASS: bare-metal mcpp test names its failure, and the artifact set is real"
