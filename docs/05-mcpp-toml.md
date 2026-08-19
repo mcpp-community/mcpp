@@ -906,7 +906,7 @@ can produce them.
 
 ```bash
 mcpp build --target riscv64-none-elf
-mcpp run   --target-triple riscv64-none-elf     # via [target.<triple>].runner
+mcpp run   --target riscv64-none-elf     # via [target.<triple>].runner
 ```
 
 **What changes on a freestanding target**

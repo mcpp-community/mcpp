@@ -804,7 +804,7 @@ cxxflags = ["-march=x86-64-v2"]
 
 ```bash
 mcpp build --target riscv64-none-elf
-mcpp run   --target-triple riscv64-none-elf     # 经 [target.<triple>].runner
+mcpp run   --target riscv64-none-elf     # 经 [target.<triple>].runner
 ```
 
 **freestanding target 上有什么不同**

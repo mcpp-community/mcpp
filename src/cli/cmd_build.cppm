@@ -166,10 +166,10 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     bool no_cache = parsed.is_flag_set("no-cache");
     if (auto c = parsed.value("cache")) cache_mode = *c;
     else if (no_cache)                  cache_mode = "off";
-    // ⚠️ `--target-triple`, never `--target`: this subcommand's POSITIONAL is
-    // called target and means the binary NAME, and the parser keys both by
-    // that word. See the option's declaration in cli.cppm.
+    // Both spellings; see cli.cppm for why the positional had to be renamed
+    // before `--target` could exist here at all.
     std::string target_triple;
+    if (auto tt = parsed.value("target"))        target_triple = *tt;
     if (auto tt = parsed.value("target-triple")) target_triple = *tt;
     return mcpp::build::build_run_target(targetName, passthrough, package_filter,
                                          cache_mode, no_cache, target_triple);
