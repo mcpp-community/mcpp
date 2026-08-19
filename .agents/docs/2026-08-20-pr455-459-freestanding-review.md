@@ -6,6 +6,8 @@
 
 **时间**:2026-08-19 一日之内(#455 合入 → #459 合入),发布 `2026.8.19.1` … `2026.8.19.4`。
 
+**配套**:用户面场景与伪代码见 [裸机使用场景](2026-08-20-baremetal-user-facing-scenarios.md)。
+
 ⚠️ **本文的定位是 review 而不是总结**:凡是「做了什么」都给出可复核的出处(PR 号、
 文件、命令),凡是「做错了什么」都写明**发现方式**与**当时为什么没看见**。
 一日四个补丁版本本身就是一个信号,第 6 节专门分析它。
@@ -115,7 +117,38 @@ e2e/131 从**两侧**钉它:目标 C 头**必须**到达消费者,板级包**自
 
 ⚠️ **这个错误能存在两个版本,是因为它在装好的机器上完全不可见** —— 见 §5.2。
 
-### 2.4 单一读取点
+### 2.4 包命名与归属:两条都符合既有先例(review 时被问到)
+
+**`picolibc-riscv` / `qemu-riscv` 把 target 写进包名,对吗?** —— 对,而且是 xim 的既有规则:
+
+```
+aarch64-linux-musl-gcc   riscv64-linux-musl-gcc   x86_64-linux-musl-gcc
+mingw-cross-gcc          mingw-w64                musl-gcc
+picolibc-riscv           qemu-riscv
+```
+
+⭐ **名字承载 TARGET,`archs` 轴承载 HOST**(`llvm` 的 `archs = {x86_64, arm64}` 是宿主)。
+`llvm` 名字里没有 target,因为它一份载荷服务所有 target —— 规则是一致的,不是巧合。
+
+粒度落在 **ISA 家族**而不是 triple:`riscv64-none-elf` 与 `riscv32-none-elf` 共用一个
+`picolibc-riscv`(内含两个 multilib 档位),这正是 picolibc 上游一次构建的产物单位。
+
+**picolibc 该在 mcpp-index 侧还是 xim 侧?** —— **xim 侧,构建期由目标行解析**,也就是 #459 的做法。
+
+| 判据 | picolibc |
+|---|---|
+| 可 `import` 吗 | ❌ 没有 C++ 模块,是头 + `libc.a` + crt0 + 链接脚本 |
+| 进依赖图吗 | ❌ 由 **target** 选定,不由用户的依赖图选定 |
+| 生态里同类的东西在哪 | `glibc` `musl` `musl-cross-make` **全在 xim**;`mcpp-index` 里 libc 包 **0 个** |
+
+⇒ 放进 mcpp-index 会把 libc 重新塞回包依赖图,**正好撤销 #459**。
+
+⚠️ **但确实缺一个旋钮**:`TargetEntry` 今天有 `toolchain`/`linkage`/`runner`/`cxxRuntime`,
+**没有 `sysroot`** ⇒ 工程无法把 picolibc 换成 newlib。
+自然形态是 `[target.X] sysroot = "xim:newlib-riscv@…"`,与 `[toolchain]` 覆盖编译器同构。
+**未实现,列入 §8。**
+
+### 2.5 单一读取点
 
 `choose_runner(ctx)` 是「产物怎么执行」的**唯一**读取点,`mcpp run` 与 `mcpp test` 共用。
 这是本仓库反复付过学费的形状(#233/#240/#242/#344:同一决策两处推导)。
@@ -290,6 +323,7 @@ error: exception handling was enabled in precompiled file
 |---|---|---|
 | **T3 档**(`std::format`、标量 `std::sort`、完整 `std::string`) | 真实边界 | libc++ 把这些实体放在编译版库里(标量 `__sort` 是 `extern template`,**无宏可关**)⇒ 需为目标编 `libc++.a`,是新载荷 |
 | `mcpp-index` #220 | 待发布生效 | 依赖 2026.8.19.4 |
+| **`[target.X] sysroot` 覆盖** | 缺口 | 见 §2.4:今天换不了 libc 实现 |
 | 目标表**索引化** | 已定为阶段二 | 把 `pin` + `sysroot` 搬到索引,含老客户端降级路径;阶段一不会让它更难做 |
 | 第二块板 / ARM Cortex-M | 未开始 | rv32 已作为「ISA 表是数据」的证据 |
 | `prepare.cppm` / `execute.cppm` 体量 | 技术债 | 见 §4 |
