@@ -228,6 +228,30 @@ TEST(XpkgEnvVar, BothSpellingsAreDerivedFromOneSanitizer) {
               "MCPP_XPKG_PICOLIBC_RISCV_DIR");
 }
 
+// ── whole-graph properties ──────────────────────────────────────────────────
+
+TEST(FreestandingFlags, ExceptionsAndRttiAreOffForTheWholeGraph) {
+    auto spec = resolve("riscv64-none-elf");
+    ASSERT_TRUE(spec.has_value());
+    auto f = compile_flags(*spec);
+    // ⚠️ These live with the TARGET, not in a project's cxxflags, because a
+    // BMI records them: a dependency compiled with exceptions cannot be
+    // imported by a TU without them, and clang reports that as a .pcm
+    // "configuration mismatch" rather than as a flag disagreement.
+    EXPECT_TRUE(std::ranges::find(f, "-fno-exceptions") != f.end());
+    EXPECT_TRUE(std::ranges::find(f, "-fno-rtti") != f.end());
+    // The company they keep — same argument, already shipped.
+    EXPECT_TRUE(std::ranges::find(f, "-ffreestanding") != f.end());
+    EXPECT_TRUE(std::ranges::find(f, "-nostdinc++") != f.end());
+}
+
+TEST(FreestandingFlags, HostedTargetsGetNoneOfThis) {
+    // The flags are a property of a freestanding triple, and the cache key
+    // reads them through the same resolve(). A hosted target must produce no
+    // Spec, or every hosted key would move for no reason.
+    EXPECT_FALSE(resolve("x86_64-linux-gnu").has_value());
+}
+
 // ── engine floor: a package that needs a newer mcpp ─────────────────────────
 
 TEST(BuildProgramCompatHint, RecognisesAllThreeFrontendSpellings) {

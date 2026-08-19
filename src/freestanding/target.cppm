@@ -101,6 +101,33 @@ inline std::vector<std::string> compile_flags(const Spec& s) {
     // mcpp.build.directives), so a libc wrapper includes the target headers
     // privately and exports what it wants seen.
     out.emplace_back("-nostdinc++");
+    // ⚠️ Exceptions and RTTI off, and this belongs HERE — with the target — for
+    // the same reason `-ffreestanding` does: it is a property every TU in the
+    // graph must agree on.
+    //
+    // manifest/types.cppm's `is_dialect_flag` deliberately does NOT propagate
+    // `-fno-exceptions` graph-wide, on the grounds that "dependencies may
+    // assume exceptions are available". That is right for a hosted target and
+    // exactly backwards here: a freestanding target has no unwinder and no
+    // libc++abi, so nothing CAN throw — `optional::value()` alone drags in
+    // `__cxa_throw`, `vtable for std::exception` and two more, and the link
+    // fails with no hint that exceptions were the cause.
+    //
+    // Leaving it to the project's own `cxxflags` does not work, and the way it
+    // fails is worse than not linking. Measured: those flags reach the root's
+    // TUs but not a dependency's module compile, so the BMI and the importer
+    // disagree and clang says
+    //
+    //     error: exception handling was enabled in precompiled file
+    //     'mcpplibs.riscv_virt_rt.pcm' but is currently disabled
+    //
+    // which names a module file rather than the setting that split the graph.
+    //
+    // Not a preference, then, but not permanent either: a board that ships a
+    // target-built libc++abi and unwinder has a real case for turning these
+    // back on, and that is the point at which this becomes a manifest key.
+    out.emplace_back("-fno-exceptions");
+    out.emplace_back("-fno-rtti");
     return out;
 }
 

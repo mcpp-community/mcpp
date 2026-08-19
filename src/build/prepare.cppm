@@ -5273,18 +5273,15 @@ prepare_build(bool print_fingerprint,
         // no subset of it to build without an OS. Saying "provides no std
         // module source" sends the reader to look for a broken payload.
         //
-        // ⚠️ It used to end with a copy-pasteable
-        //
-        //     [dependencies]
-        //     mcpplibs.std.freestanding = "0.1"
-        //
-        // and that package is NOT published. A diagnostic whose suggested fix
-        // fails at the next command is worse than one that explains and stops:
-        // the reader spends the next minutes deciding whether their index is
-        // broken. Point at what a bare-metal project actually has today — the
-        // board package it already depends on exports a module — and describe
-        // the subset package as a shape rather than as a line to paste.
-        // Restore the concrete line when such a package ships.
+        // ⚠️ The line below is copy-pasteable, and that is a PROMISE: it has
+        // to resolve today. It briefly did not — an earlier version of this
+        // message named `mcpplibs.std.freestanding` before any such package
+        // existed, so following the advice failed at the very next command
+        // with "package not found" and sent the reader off to debug their
+        // index. The package is published now (103 of libc++'s 110 headers,
+        // measured; the 7 that fail fail on a hosted x86_64 too), so the line
+        // is back. If it is ever removed from the index, this must change with
+        // it.
         if (auto ft = mcpp::toolchain::triple::parse(tc->targetTriple);
             ft && ft->is_freestanding())
         {
@@ -5295,19 +5292,20 @@ prepare_build(bool print_fingerprint,
                 "filesystem, iostreams\n"
                 "       included), so there is no subset of it to build without "
                 "an OS underneath.\n"
+                "       Use the freestanding subset instead — an ordinary "
+                "dependency carrying\n"
+                "       the parts of the library that need no OS "
+                "(array, span, optional, atomic,\n"
+                "       string_view, ranges, expected, charconv, coroutines):\n"
                 "\n"
-                "       What a bare-metal project uses instead:\n"
-                "         * the module its BOARD package exports — that is where "
-                "the target's\n"
-                "           C library is already wrapped (riscv-virt-rt exports "
-                "`mcpplibs.riscv_virt_rt`);\n"
-                "         * or a freestanding subset package, which is an "
-                "ordinary dependency\n"
-                "           providing the header-only parts of the library that "
-                "need no OS.\n"
+                "           [dependencies]\n"
+                "           std-freestanding = \"0.1.0\"\n"
                 "\n"
-                "       No such subset package is published yet, so there is no "
-                "line to paste here.",
+                "       then `import mcpplibs.std.freestanding;` in place of "
+                "`import std;`.\n"
+                "       The target's C library itself comes from the BOARD "
+                "package (riscv-virt-rt\n"
+                "       exports `mcpplibs.riscv_virt_rt`).",
                 tc->targetTriple));
         }
         return std::unexpected(std::format(

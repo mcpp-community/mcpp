@@ -931,7 +931,8 @@ that has none.
 |---|---|
 | Link line | `-nostdlib -nostartfiles -static`, and nothing hosted — no crt files, no dynamic linker, no C++ runtime. The linker is addressed by **absolute path** (`-fuse-ld=<payload>/bin/ld.lld`), because `-fuse-ld=lld` resolves through `PATH` and finds GNU ld on any machine with binutils earlier on it. |
 | ISA flags | `-march` / `-mabi` / `-mcmodel` come from the target table, so `--target <triple>` alone is enough to produce a correct object file. |
-| `import std` | **Unavailable.** `std` is one module over the entire library — threads, filesystem and iostreams included — so there is no subset of it to build without an OS. What a firmware imports instead is the module its **board package** exports, which is where the target's C library is already wrapped. |
+| Exceptions and RTTI | **Off**, on every translation unit including a dependency's. There is no unwinder and no `libc++abi`, so nothing can throw; `std::optional::value()` alone would otherwise pull in `__cxa_throw` and three more undefined symbols. It belongs to the target rather than to a project's `cxxflags` because a BMI records it — a dependency compiled with exceptions cannot be imported by a unit without them. |
+| `import std` | **Unavailable.** `std` is one module over the entire library — threads, filesystem and iostreams included — so there is no subset of it to build without an OS. Two ordinary dependencies replace it: the **board package** wraps the target's C library, and **`std-freestanding`** carries the parts of the standard library that need no OS (103 of libc++'s 110 headers, measured). |
 | Entry point | `int main()` works **as long as something supplies a `crt0`** — a board package normally does, and then a firmware's entry point is an ordinary `main` whose return value reaches the host through semihosting. Only a zero-libc board needs an explicit target whose `main` points at the file carrying `_start`. |
 
 **A minimal firmware**

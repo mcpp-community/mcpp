@@ -827,7 +827,8 @@ cd blinky && mcpp run
 |---|---|
 | 链接线 | `-nostdlib -nostartfiles -static`,且不带任何 hosted 的东西 —— 没有 crt 文件、没有动态链接器、没有 C++ 运行时。链接器用**绝对路径**寻址(`-fuse-ld=<载荷>/bin/ld.lld`),因为 `-fuse-ld=lld` 走 `PATH` 解析,在任何 binutils 排前面的机器上都会找到 GNU ld。 |
 | ISA flag | `-march` / `-mabi` / `-mcmodel` 来自 target 表,所以只写 `--target <triple>` 就足以产出正确的目标文件。 |
-| `import std` | **不可用。** `std` 是覆盖整个库的一个模块 —— 线程、文件系统、iostreams 全在内 —— 没有 OS 就没有它的子集可编。固件真正 import 的是**板级包导出的模块**,目标的 C 库已经在那里包好了。 |
+| 异常与 RTTI | **关闭**,作用于每一个翻译单元,依赖的也不例外。没有 unwinder、没有 `libc++abi`,谁都抛不了;否则光是 `std::optional::value()` 就会拉进 `__cxa_throw` 等四个未定义符号。它属于 **target** 而不是工程的 `cxxflags`,因为 **BMI 会记录这个配置** —— 带异常编出来的依赖,不带异常的单元 import 不进来。 |
+| `import std` | **不可用。** `std` 是覆盖整个库的一个模块 —— 线程、文件系统、iostreams 全在内 —— 没有 OS 就没有它的子集可编。取代它的是两个普通依赖:**板级包**包住目标的 C 库,**`std-freestanding`** 提供标准库里不需要 OS 的那部分(实测 libc++ 110 个头里的 103 个)。 |
 | 入口点 | **只要有人提供 `crt0`,`int main()` 就能用** —— 板级支持包通常就提供它,于是固件的入口就是普通的 `main`,它的返回值经 semihosting 传回宿主。**只有零 libc 的板子**才需要显式声明 target 并把 `main` 指向携带 `_start` 的那个文件。 |
 
 **一个最小固件**

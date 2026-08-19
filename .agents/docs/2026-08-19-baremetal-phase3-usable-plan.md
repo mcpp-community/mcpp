@@ -470,3 +470,39 @@ manifest」的目录里,manifest 永远是最新的那个文件,快路径**永�
 
 **教训**:`mcpp run` 单独跑是对的,`mcpp build && mcpp run` 才错 —— **顺序本身就是被测
 对象**。而 130/131/132 三个测试都恰好先 `run`,所以谁也看不见。
+
+### 11.5 ⚠️ 我说 E-STD「要从头实现、不该在收尾时半做」—— 这条是错的,而且调研文档早就写着
+
+用户指出后回查 `2026-08-18-freestanding-baremetal-analysis.md`,X1–X10 把这条路测到了底:
+
+| 我说的 | 文档实测(本轮已用**已发布载荷**复现) |
+|---|---|
+| `-nostdinc++` 之下 libc++ 的头一个都用不了 | 合成 freestanding `__config_site` 后 **103 / 110 可编**;失败的 7 个在 x86_64 宿主上**同样失败** ⇒ 裸机这层**编译期损失为 0** |
+| 子集要从头实现 | libc++ 自己带 110 个 `std/<header>.inc`(每个就是该头的 `export namespace std {...}`)⇒ **子集是机械挑选**,生成物 217 行全是 `#include` |
+| 是独立规模的工作 | T1+T2 当时就跑通了,只有 **T3**(`std::format`/标量 `sort`/完整 `string`)需要为目标编 `libc++.a` |
+
+⚠️ **`-nostdinc++` 恰恰是这条路的机制而不是障碍**:它让 libc++ 的头**私有**给子集包,
+包再 export 一个模块 —— 和 BSP 私有 include 目标 libc 头是同一个形状。我把它读反了。
+
+⭐ 复现时只差**一个符号**:`std::__libcpp_verbose_abort`。⚠️ 而且它必须**通过 libc++
+自己的头**声明 —— 真符号在 ABI 内联命名空间 `std::__1::` 里,手写 `namespace std {...}`
+**编得过、链不上、报错一字不变**。
+
+#### ⚠️ 真正的阻塞点是异常,而且它是「整图属性」
+
+`optional::value()` 一个就拉进 `__cxa_throw` + `vtable for std::exception` 等 4 个符号。
+而 `-fno-exceptions`:
+
+- 写在工程 `[build] cxxflags` 里**没用** —— 到不了依赖的模块编译,于是 BMI 与导入者不一致,
+  clang 报的是 **`.pcm` configuration mismatch**,点名一个模块文件而不是那个 flag。
+- `is_dialect_flag`(整图传播的那张表)**刻意排除了它**,理由写着「依赖可能假设异常可用」——
+  **这条在 hosted 成立,在裸机上正好反过来**:没有 unwinder,谁都用不了。
+
+⇒ 放进**引擎的 freestanding target flags**(和 `-ffreestanding`/`-nostdinc++` 同处),
+那是唯一能保证整图一致的地方。
+
+#### ⚠️ 它顺带暴露了一个「升级即坏」的缓存缺陷
+
+依赖缓存键有 triple,**没有 triple 隐含的那组 flag**。而**哪些 flag 由 triple 隐含是 mcpp 的决定**,
+会随版本变、triple 字符串不变 ⇒ 升级后复用了升级前的 BMI,硬失败,错误只点名一个 `.pcm`。
+已加 `targetImpliedFlags` 轴(hosted 为空,不动任何现有键)。
