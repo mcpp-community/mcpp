@@ -21,6 +21,7 @@ import mcpp.pack;
 import mcpp.pack.strip;
 import mcpp.toolchain.model;
 import mcpp.toolchain.registry;
+import mcpp.toolchain.triple;
 import mcpp.ui;
 
 namespace mcpp::pack {
@@ -195,7 +196,16 @@ export int build_and_pack(Options opts, bool modeFromUser,
     plan->stripTools = mcpp::pack::StripTools{
         .strip   = mcpp::toolchain::binutils_tool(ctx->tc, "strip"),
         .objcopy = mcpp::toolchain::binutils_tool(ctx->tc, "objcopy"),
-        .inBandDebugInfo = ctx->tc.compiler != mcpp::toolchain::CompilerId::MSVC,
+        // The CANONICAL triple, resolved the same way the library packer
+        // resolves it: an empty `targetTriple` means "this host", and asking
+        // the empty string would answer "in-band" for macOS and MSVC alike.
+        .inBandDebugInfo = mcpp::pack::debug_info_is_in_band(
+            ctx->tc.targetTriple.empty()
+                ? mcpp::toolchain::triple::host_triple().str()
+                : [&] {
+                      auto t = mcpp::toolchain::triple::parse(ctx->tc.targetTriple);
+                      return t ? t->str() : ctx->tc.targetTriple;
+                  }()),
     };
 
     mcpp::ui::info("Packing", std::format("{} v{} ({}{})",

@@ -354,13 +354,12 @@ export int build_and_pack_library(const std::string& targetName,
             .importLibrary = importLib,
             // From THIS leg's toolchain, for the same reason `archiveTool` is:
             // a fat package's foreign leg must not be stripped by the host's
-            // tool. `inBandDebugInfo` is the one bit of "does this even apply"
-            // — PE/MSVC keeps debug information in a separate `.pdb`.
+            // tool. Whether stripping APPLIES is a question about the leg's
+            // TARGET, not about its compiler — see mcpp.pack.strip.
             .stripTools  = mcpp::pack::StripTools{
                 .strip   = mcpp::toolchain::binutils_tool(ctx->tc, "strip"),
                 .objcopy = mcpp::toolchain::binutils_tool(ctx->tc, "objcopy"),
-                .inBandDebugInfo =
-                    ctx->tc.compiler != mcpp::toolchain::CompilerId::MSVC,
+                .inBandDebugInfo = mcpp::pack::debug_info_is_in_band(triple),
             },
         });
         mcpp::ui::status("Packed leg", std::format("{}  [{}]", triple, tag.str()));

@@ -307,6 +307,29 @@ TEST(PackStrip, EveryShapeDropsCommentAndNote) {
     }
 }
 
+TEST(PackStrip, WhetherStrippingAppliesIsAskedOfTheTargetNotTheCompiler) {
+    // Keying this on the compiler is wrong in BOTH directions, and each
+    // direction is a real configuration mcpp ships:
+    //
+    //   clang -> x86_64-windows-msvc   produces .pdb debug info; a
+    //                                  compiler-keyed rule would try to strip
+    //                                  in-band DWARF that is not there.
+    //   Apple clang on macOS           ships no `llvm-strip`, so a
+    //                                  compiler-keyed rule would REFUSE every
+    //                                  `mcpp pack` on a Mac — for a format
+    //                                  whose image carries a debug MAP and
+    //                                  leaves the DWARF in the .o files.
+    EXPECT_TRUE (mcpp::pack::debug_info_is_in_band("x86_64-linux-gnu"));
+    EXPECT_TRUE (mcpp::pack::debug_info_is_in_band("aarch64-linux-musl"));
+    EXPECT_TRUE (mcpp::pack::debug_info_is_in_band("x86_64-windows-gnu"));
+    EXPECT_FALSE(mcpp::pack::debug_info_is_in_band("x86_64-windows-msvc"));
+    EXPECT_FALSE(mcpp::pack::debug_info_is_in_band("aarch64-macos"));
+    EXPECT_FALSE(mcpp::pack::debug_info_is_in_band("x86_64-macos"));
+    // Segment-wise, not substring: mcpp has been bitten by a triple predicate
+    // that answered on a substring before.
+    EXPECT_TRUE(mcpp::pack::debug_info_is_in_band("macos64-linux-gnu"));
+}
+
 TEST(PackStrip, MsvcHasNothingInBandToRemove) {
     // PE/MSVC keeps debug information in a separate `.pdb`. An empty `strip`
     // tool there is the right answer, not a missing dependency — and the two

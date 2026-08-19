@@ -39,14 +39,30 @@
 // exact name, so the build-id survives and `--add-gnu-debuglink` still has
 // something to pair with.
 //
-// EMPTY TOOL IS NOT ALWAYS AN ERROR
+// EMPTY TOOL IS NOT ALWAYS AN ERROR, AND WHICH CASE IT IS BELONGS TO THE
+// TARGET FORMAT — NOT TO THE COMPILER
 //
-// PE/MSVC keeps debug information in a separate `.pdb` by design, so there is
-// nothing in-band to remove and no binutils to remove it with. That is
-// `NotApplicable`. Every other format carries DWARF inside the image, so a
-// missing `strip` there is a REFUSAL — the same stance `run_library_pack`
-// already takes for a missing archiver, and for the same reason: shipping the
-// artifact anyway is the silent-wrong-answer this feature exists to remove.
+// Two of the three formats keep debug information OUTSIDE the image, and for
+// them an absent `strip` is the right answer rather than a missing dependency:
+//
+//   PE/MSVC    a separate `.pdb`, by design.
+//   Mach-O     the linked image carries a DEBUG MAP (N_OSO stanzas naming the
+//              `.o` files); the DWARF itself never enters the `.dylib` unless
+//              `dsymutil` is run, and what it then produces is a `.dSYM`
+//              bundle beside the image. `strip` there would remove the symbol
+//              table — a different thing — and `objcopy --only-keep-debug` has
+//              nothing to copy.
+//
+// ELF and PE/MinGW carry DWARF inside the image, so a missing `strip` there is
+// a REFUSAL — the same stance `run_library_pack` already takes for a missing
+// archiver, and for the same reason: shipping the artifact anyway is the
+// silent-wrong-answer this feature exists to remove.
+//
+// ⚠️ KEYING THIS ON THE COMPILER WOULD BE WRONG IN BOTH DIRECTIONS. clang
+// targeting `x86_64-windows-msvc` produces `.pdb` debug info and would be
+// asked to strip in-band; Apple's clang ships no `llvm-strip`, so a
+// compiler-keyed rule would REFUSE every `mcpp pack` on macOS for a format that
+// has nothing to strip in the first place.
 
 export module mcpp.pack.strip;
 
@@ -68,10 +84,18 @@ struct StripTools {
     std::filesystem::path strip;
     std::filesystem::path objcopy;
     // Does this leg's format carry debug information inside the image?
-    // False only for PE/MSVC (`.pdb`). Resolved once by the caller so this
-    // module never has to know what a toolchain is.
+    // Ask `debug_info_is_in_band` rather than filling this by hand — see the
+    // header for the two formats where the answer is no, and for why the
+    // question is about the TARGET and not about the compiler.
     bool                  inBandDebugInfo = true;
 };
+
+// Is debug information carried INSIDE an image built for `canonicalTriple`?
+//
+// A string question about the canonical triple (`arch-os[-env]`), deliberately:
+// this module knows nothing about toolchains, and both packers have already
+// resolved that triple by the time they ask.
+bool debug_info_is_in_band(std::string_view canonicalTriple);
 
 enum class StripOutcome { Stripped, NotApplicable };
 
@@ -130,6 +154,22 @@ std::uintmax_t size_of(const std::filesystem::path& p) {
 }
 
 } // namespace
+
+bool debug_info_is_in_band(std::string_view canonicalTriple) {
+    // `arch-os[-env]`. Splitting rather than substring-matching: an arch or a
+    // vendor segment could contain either of these words, and mcpp has been
+    // bitten before by a triple predicate that answered on a substring.
+    std::vector<std::string_view> seg;
+    for (std::size_t i = 0; i <= canonicalTriple.size(); ) {
+        auto j = canonicalTriple.find('-', i);
+        if (j == std::string_view::npos) { seg.push_back(canonicalTriple.substr(i)); break; }
+        seg.push_back(canonicalTriple.substr(i, j - i));
+        i = j + 1;
+    }
+    if (seg.size() >= 2 && seg[1] == "macos") return false;   // debug map + .dSYM
+    if (seg.size() >= 3 && seg[2] == "msvc")  return false;   // separate .pdb
+    return true;
+}
 
 std::vector<std::string> strip_args(ArtifactShape shape) {
     // dh_strip's own division. See the header for the measurement behind the
