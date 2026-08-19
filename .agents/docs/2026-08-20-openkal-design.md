@@ -175,52 +175,90 @@ _Noreturn void kal_exit (int32_t code);
 
 ---
 
-## 4. 能力组件化:三种机制,不能混用
+## 4. 能力组件化:ADL 探测 + 兜底重载
 
-⚠️ **先说一条会砍掉最直觉做法的实测**(mcpp 2026.8.19.4 上验的):
+⚠️ **草案在这里错了一整节。** 它说:
+
+> `requires` 作用在不存在的限定名上是硬错误 ⇒ 「能力 = 符号在不在」这条路 C++ 内测不出来
+> ⇒ 声明必须永远齐全,能力要放进一个 `caps` 结构体。
+
+**第一句对,后面全错。** 硬错误只发生在**限定名**上;**非限定名 + ADL** 在模板里是
+dependent 的,`requires` 会老实求值为 `false`。
+
+ⓘ **实测(llvm 22.1.8,真 C++20 模块,不是头文件)**:
 
 ```cpp
-if constexpr (requires { kal::seek(s, 0); })   // ⚠️ 名字不存在 ⇒ 硬错误,不是 false
+// ⛔ 限定名:名字不存在 ⇒ 硬错误
+if constexpr (requires(S s) { kal::seek(s, 0); })
+
+// ✅ 非限定 + ADL:名字不存在 ⇒ false
+template <class S> concept Seekable = requires(S s, long o) { seek(s, o); };
 ```
 
-`requires` 作用在**不存在的限定名**上是 ill-formed。
-⇒ **「能力 = 符号在不在」这条路,C++ 语言内测不出来。**
-**声明必须永远齐全,能力必须是另一个可命名的东西。**
+⇒ **能力不需要另一个可命名的东西。后端的模块接口本身就是能力声明。**
 
-| | 例子 | 机制 | 失败时机 |
-|---|---|---|---|
-| **① 接口在不在** | 有没有 `openkal.task` | **模块导入** | 编译期,点名模块 |
-| **② 接口内的操作在不在** | 有 `write` 没 `seek` | **constexpr caps** | 编译期,`static_assert` 文案 |
-| **③ 语义能力** | 抢占式 vs 协作式调度 | **`cfg()` 轴** | 依赖解析期 |
-
-⚠️ **③ 绝不能做成 concept**:ⓘ K1/K2 实测 `RiscvSv39` 与 `NoMmu` **同时满足**同一个
-`AddressSpace` concept,通用代码在 NoMmu 上**静默失败**。**concept 检查语法,不检查语义。**
-
-⭐ **但 openkal core 里一条 ③ 都没有** —— 见 §4.3。K1/K2 那个例子是 **openarch** 的
-`AddressSpace`,不是 openkal 的。
-
-### 4.1 ①:让模块解析本身成为能力检查
-
-```
-openkal.stream          ← 接口:extern "C" 声明 + concepts + 类型化封装
-openkal.stream.caps     ← 由「后端」提供
-```
+### 4.1 三件事同时成立(ⓘ 全部实测)
 
 ```cpp
 export module openkal.stream;
-import openkal.stream.caps;   // 没有后端 ⇒ 编译期找不到模块,点名它
+export namespace kal {
+
+struct stream    { unsigned long h; };
+struct io_result { unsigned long n; int e; };
+
+// ⭐ 兜底重载的返回类型与真实现不同 —— 这是让「探测」与「兜底」共存的关键
+struct unsupported_t {};
+template <class> inline constexpr bool always_false = false;
+
+template <class S>
+unsupported_t seek(S, long) {
+    static_assert(always_false<S>,
+        "this openkal backend provides no seekable streams. "
+        "openkal.fs hands out descriptors that do.");
+    return {};
+}
+
+// 探测:要求返回真类型,兜底自动落选
+template <class S> concept HasSeek =
+    requires(S s, long o) { requires __is_same(decltype(seek(s, o)), io_result); };
+
+}
 ```
 
-⇒ **「没有实现者」不是链接器吐未定义符号,而是编译器说模块不存在。**
+后端只需要**声明并定义真实现**,不需要任何配置:
 
-⚠️ **接法要注意方向。** 草案曾写「接口包 `reexport` 后端的 provisions」——
-**错的**:ⓘ `reexport` 是**向下游**传播(`grpc` 把 protoc 透给它的用户),
-而这里需要的是接口拿到**消费者所选后端**提供的东西,方向相反,`reexport` 表达不了。
+```cpp
+export module openkal.uart;
+export import openkal.stream;
+export namespace kal { io_result seek(stream, long) { /* … */ } }
+```
 
-正确接法是**反过来**,而且正好是 `reexport` 的本意:
+| 场景 | 结果 | ⓘ |
+|---|---|---|
+| 有后端,调用 `seek(s, 0)` | ✅ 编过,真实现赢重载 | 实测 |
+| 有后端,`HasSeek<stream>` | ✅ **真** | 实测 |
+| 无后端,`HasSeek<stream>` | ✅ **假**(不是硬错误)⇒ `if constexpr` 可优雅降级 | 实测 |
+| 无后端,**强行调用** | ⭐ **编译期报错,文案是规范自己写的那句** | 实测 |
+
+⚠️ **这里有一个必须踩过才知道的坑**:如果兜底重载的返回类型**和真实现一样**,
+`HasSeek` 在没有后端时也是**真** —— 因为 ADL 找到了兜底,而 `requires` 不实例化函数体,
+`static_assert` 不会触发。**两个机制互相干扰,靠返回类型区分才能共存。**
+ⓘ 我第一版就是这么写的,测出来是真才发现。
+
+### 4.2 ⇒ 草案里三样东西被删掉了
+
+| 删掉的 | 为什么不再需要 |
+|---|---|
+| `caps` 结构体 | 后端的模块接口就是声明 |
+| `openkal.stream.caps` 模块 | 同上 |
+| `capabilities.toml` | ⭐ **生态整洁性**:mcpp 的一切都在 `mcpp.toml` 里,不该为这个引入第二份配置 |
+
+**后端选择仍然只是条件依赖**(§4.3),整条链路**零新增配置、零新增引擎轴**。
+
+### 4.3 后端怎么被选中:只用 `mcpp.toml`
 
 ```toml
-# 后端包 openkal-uart 的 manifest
+# 后端包 openkal-uart
 [dependencies]
 openkal-stream = { version = "0.1", reexport = true }   # 把接口透给我的消费者
 ```
@@ -234,120 +272,61 @@ openkal-uart  = "0.1"
 ```
 
 源码 `import openkal.stream;` 两个 target 一字不改。
-⇒ **零新增引擎轴,且用的是已有机制的本意。**
 
-⚠️ 两个后端同时进图会造成 `openkal.stream.caps` 模块重复定义 —— 基数为 1(§12)
-使这成为用户错误,mcpp 会报模块冲突。
+⚠️ ⓘ 方向要注意:`reexport` 是**向下游**传播(`grpc` 把 protoc 透给用户),
+所以是**后端 reexport 接口**,不是接口 reexport 后端 —— 草案写反过。
 
-### 4.2 ②:能力是**值**
+### 4.4 接口层面的缺失(①)
 
-```cpp
-export module openkal.stream.caps;
-export namespace kal::stream_caps {
-struct caps {
-    static constexpr bool sequential = true;
-    static constexpr bool seek       = false;   // 这个后端没有
-    static constexpr bool vectored   = true;
-    static constexpr bool nonblock   = false;
-};
-}
-```
+一整个 interface 不存在时,`import openkal.task;` **编译期就找不到模块**。
+这一条不变,而且和 §4.1 是同一套失败语义:**编译期,点名,不是运行期返回值。**
 
-```cpp
-if constexpr (kal::stream_caps::caps::seek) { kal::seek(s, off); }
+---
 
-static_assert(kal::stream_caps::caps::seek,
-    "this backend has no seekable streams; openkal.fs hands out "
-    "descriptors that do");
-```
+## 5. ⭐「声称 ≠ 事实」问题:新机制消掉了大半
 
-组合 = **concept over caps**,不是 concept over 符号:
+草案担心的是:后端写 `caps::seek = true` 而 `seek()` 永远失败。
+**§4 换成 ADL 之后,结构性的谎话已经说不出来了:**
 
-```cpp
-template <class C> concept Sequential = C::sequential;
-template <class C> concept Seekable   = Sequential<C> && C::seek;
-```
+> **你不能「声称有 seek」而不真的声明一个返回 `io_result` 的 `seek`。**
+> 而声明了不定义,是链接错误。
 
-### 4.3 ③:⚠️ openkal core 用不到它 —— 一条被撤回的引擎改动
+⇒ **声称与实现是同一个制品**,不再需要「同源生成」那套纪律,也不需要 `capabilities.toml`。
 
-草案曾要求扩 `cfg()` 文法以支持 `cfg(mmu)` 这类能力谓词。**重估后撤回。**
+### 5.1 ① 让「不支持」在类型系统里**不可表达**(仍然最强)
 
-那条结论的出处是 K1/K2,而 K1/K2 测的是 **openarch 的 `AddressSpace`** —— 草案把它
-搬进了 openkal。逐个接口检查 openkal 有没有「存在但语义不同」的能力:
+剩下的问题是**分类错误**,不是撒谎。判据不变:
 
-| interface | 有 ③ 类语义轴吗 |
-|---|---|
-| `abort` | 无 |
-| `stream` | seek / nonblock / vectored 都是**操作**(②类) |
-| `memory` | 静态 arena vs 按需分页 = **容量**不是能力;分配失败到处都有定义 |
-| `time` | monotonic vs wall 是**两种资源**,不是一个资源的两种语义 |
-| `task` | ⚠️ 抢占 vs 协作**确实是** —— 但那是 D1 以后的事 |
-
-⇒ **core(abort + stream + memory)一条语义轴都不需要,①② 足够。**
-
-而且 **triple 本身已经承载了大部分**:`riscv64-none-elf` 与 `riscv64-linux-gnu` 的
-区别里就包含了 MMU 用不用。今天已有的文法足以选后端。
-
-⭐ **撤回后,本方案变成零引擎改动。**
-
-## 5. ⭐ caps 撒谎问题:四层防御,按强度排
-
-**问题**:后端可以写 `caps::seek = true` 然后 `seek()` 永远失败。
-这是 K1/K2 的问题换了一层出现 —— caps 检查的是**有没有这个字段**,不是**它说的是不是真的**。
-
-### 5.1 ① 让「不支持」在类型系统里**不可表达**(最强)
-
-如果一个操作可以「存在但永远失败」,**通常说明它被错误地合并了**。
+> **一个操作若能「存在但永远失败」,通常说明它被错误地合并了。**
 
 ⓘ MMU 就是这个的实例:`NoMmu::map()` 对非恒等映射返回 `false` —— 那**不是撒谎,
 是这个抽象本来就不该把两族东西装进一个 concept**。当时的结论是把它挪到 `cfg` 轴。
 
-推广到 `seek`:socket 不能 seek,但那**不是后端撒谎,是名词错了**。
+推广:socket 不能 seek,但那**不是后端撒谎,是名词错了** ——
+所以 `fs` 的 descriptor 与 `net` 的 socket 各持自己的句柄类型(§2.3),
+`kal::seek(socket, 0)` 因为**没有那个重载**而编译失败,不是因为返回错误。
 
-```cpp
-// 不是:caps::seek = false
-// 而是:句柄类型里根本没有那个能力位
-using console = kal::stream_of<kal::cap::write>;                   // seek 不在
-using file    = kal::stream_of<kal::cap::read, kal::cap::write,
-                               kal::cap::seek>;
-kal::seek(c, 0);   // ⚠️ 编译错误:重载要求 seek 位
-```
+### 5.2 ② 双向 conformance:`false` 也要验
 
-⇒ **能撒的谎少了一整类**,因为「`caps::x = true` 而 `x()` 无意义」在类型层面构造不出来。
-
-### 5.2 ② caps 与实现**同源生成**
-
-不要让后端手写 caps。**一张表同时产出 caps 模块和源码选择**:
-
-```
-backend/capabilities.toml        ← 唯一来源
-   ├─→ mcpp:generated=  →  openkal.stream.caps
-   └─→ 源码选择         →  seek.cpp 编不编进去
-```
-
-⇒ **撒谎要改表,而改表就把实现一起删了。**
-`mcpp:generated=` 与源码选择**都是今天已有的指令**,不需要新机制。
-
-### 5.3 ③ 双向 conformance:`false` 也要验
-
-> `caps::seek == false` 的后端,**必须不导出 seek 符号** —— `nm` 可查。
+> 后端若不提供 `seek`,**必须真的不导出这个符号** —— `nm` 可查。
 
 ⭐ 价值在于**它不是行为测试,是对制品的静态检查**:又快又不可能漏测。
-两侧都钉,caps 才从「声称」变成「事实」。
+在新机制下这条更强了:导出了符号 ⇒ ADL 就会找到 ⇒ 探测为真 ⇒ 与声称自动一致。
+**这条变成了「验证机制本身没被绕过」,而不是「验证后端没撒谎」。**
 
-### 5.4 ④ 过程兜底
+### 5.3 ③ 过程兜底
 
 conformance 结果进索引元数据:没过 seek 那组的后端,描述符里不允许声称。
 这是唯一能约束「实现者根本不跑 conformance」的东西。
 
-### 5.5 ⚠️ 诚实的残余风险
+### 5.4 ⚠️ 诚实的残余风险
 
-**这四条都不证明行为。** 后端可以导出符号、通过 happy path、在某个输入上错。
+**以上都不证明行为。** 后端可以导出 `seek`、通过 happy path、在某个输入上错。
 这是**每一份规范都有的残余风险**(POSIX 也一样),答案只能是 conformance 的覆盖度,
 不存在语言层的解法。
 
-⇒ **顺序很重要**:先靠 ① 让错误分类不可表达,再靠 ② 让撒谎自毁,③④ 只是兜底。
-一上来就写更严的 conformance,是在给一个**本可以消除的问题**加检查。
+⇒ 但和草案相比,**残余从「结构 + 行为」缩小到只剩「行为」** —— 这正是把机制从
+「声明一个 bool」换成「声明一个函数」买到的东西。
 
 ---
 
@@ -358,8 +337,8 @@ conformance 结果进索引元数据:没过 seek 那组的后端,描述符里不
 | | |
 |---|---|
 | 一组 `extern "C"` 定义 | §3 的清单,按你实现的 interface |
-| 一个 `<interface>.caps` 模块 | ⚠️ **生成的**,不是手写的(§5.2) |
-| conformance 通过记录 | 双向:声称有的能用,声称没有的**符号不存在** |
+| 一个导出真实现的模块 | ⭐ **它就是能力声明**,不需要额外的 caps(§4) |
+| conformance 通过记录 | 双向:声称有的能用,没提供的**符号不存在** |
 
 ### 6.2 最小实现:一个裸机 UART 后端
 
@@ -380,13 +359,9 @@ kal_io_result kal_stream_write(kal_stream s, const void* buf, uintptr_t n) {
 }
 ```
 
-```toml
-# capabilities.toml —— caps 与源码选择的唯一来源
-[stream]
-sequential = true
-seek       = false      # ⇒ seek.cpp 不编进去,符号也不存在
-vectored   = false
-```
+⚠️ **没有第二份配置。** 这个后端不提供 `seek`,做法就是**不声明它** ——
+`mcpp.toml` 里只有普通的包信息,`seek.cpp` 不存在,符号也不存在,
+而消费者侧 `kal::HasSeek<kal::stream>` 因此为假(§4.1)。
 
 ### 6.3 后端怎么被选中
 
@@ -415,13 +390,24 @@ openkal-linux = "0.1"
 ### 7.1 应用直接用
 
 ```cpp
-import openkal.stream;
+import openkal.uart;          // 后端;接口随 reexport 而来
 
 int main() {
     kal::write(kal::stdout(), "hello\n");
-    if constexpr (kal::stream_caps::caps::vectored) { /* 用 writev 形状 */ }
+
+    // 有就用,没有就走别的路 —— 探测是 ADL,不是查表
+    if constexpr (kal::HasVectored<kal::stream>) { /* writev 形状 */ }
+    else                                         { /* 逐段写 */ }
+
+    // 要求必须有:文案是规范自己写的
+    static_assert(kal::HasSeek<kal::stream>,
+                  "this program needs seekable streams");
 }
 ```
+
+⭐ **而且不写 `if constexpr` 也不会错**:直接调 `kal::seek(s, 0)` 在没有后端支持时
+就是**编译期报错并给出规范的原话**(§4.1 实测)—— 这是 §7 里问「能不能内置」的答案:
+**能,而且是默认行为,不需要消费者做任何事。**
 
 ⓘ **KA2 实测:换后端不重编应用** —— 同一个 `app.o` 换掉后端目标文件重链即成。
 
@@ -609,7 +595,8 @@ thread_local int counter;  →  编译 ✅ 链接 ✅ 零未定义符号 ✅ 零
 | 特性 | 解决什么 | ⚠️ 限制 |
 |---|---|---|
 | **modules** | 接口/caps 分离;**模块找不到 = 能力检查**,把链接期错误提前到编译期 | 需要 mcpp 的 `reexport`/provisions 承载 |
-| **`constexpr` caps 描述符** | 能力是**值**不是符号 —— 绕开「`requires` 测不了缺失名字」 | — |
+| ⭐ **ADL + `requires`** | ⓘ **非限定名**在模板里是 dependent 的 ⇒ 缺失时求值为 `false` 而不是硬错误。**能力探测不需要额外的数据结构,后端的模块接口就是声明** | ⚠️ **限定名**(`kal::seek`)仍是硬错误 —— 两者的差别是这套设计成立的全部基础 |
+| ⭐ **兜底重载 + `static_assert`** | 没有后端时直接调用 ⇒ **编译期报错,文案是规范写的** | ⚠️ 兜底的**返回类型必须与真实现不同**,否则探测恒为真(ⓘ 实测踩过) |
 | **`if constexpr`** | 消费者按能力降级,未选中的分支**不实例化** | — |
 | **concepts** | 组合 caps;openhal 的多提供者共存 | ⚠️ ⓘ **只检查语法不检查语义**(K1/K2),③ 类能力不能用它 |
 | **非类型模板参数(能力位)** | 让「不支持」**在类型系统里不可表达**(§5.1) | — |
@@ -620,7 +607,8 @@ thread_local int counter;  →  编译 ✅ 链接 ✅ 零未定义符号 ✅ 零
 | **`_Noreturn` / `[[noreturn]]`** | `kal_abort` 的控制流事实进类型 | — |
 | ~~virtual / vtable~~ | — | ⛔ 把结构体布局写进 ABI,「只增不改」保护不了 |
 | ~~exceptions / RTTI~~ | — | ⛔ 裸机整图关闭(mcpp 2026.8.19.4 起) |
-| ~~`requires` 探测符号~~ | — | ⛔ ⓘ **实测:硬错误,不是 `false`** |
+| ~~`requires` 探测**限定名**~~ | — | ⛔ ⓘ 实测:硬错误。**改用非限定 + ADL** |
+| ~~`caps` 结构体 / `capabilities.toml`~~ | — | ⛔ 被 ADL 机制整个取代;且第二份配置文件违背生态整洁性 |
 
 ---
 
@@ -688,6 +676,7 @@ thread_local int counter;  →  编译 ✅ 链接 ✅ 零未定义符号 ✅ 零
 |---|---|---|
 | **`openkal.namespace`**(取代 fs/net) | 「文件 / socket / UART 给你的都是 stream,只是命名方式不同」 | ① 触犯本文自己的 §5.1 规矩(caps 成为不相干能力并集);② URI 解析器**就是**模拟层,违反对下判据;③ 引用的 WASIp2 先例是**误读**(它分开资源种类,只共享 stream 类型) |
 | **扩 `cfg()` 文法支持 `cfg(mmu)`** | K1/K2 说「MMU 是能力轴不是契约」 | 那条结论是关于 **openarch** 的;openkal core 逐个接口查下来**一条 ③ 类语义轴都没有**,而且 triple 本身已承载大部分 |
+| **`caps` 结构体 + `capabilities.toml`** | 以为「`requires` 测不了缺失的名字」⇒ 能力必须放进另一个可命名的东西 | ⓘ **只对限定名成立**。非限定 + ADL 在模板里是 dependent 的,缺失时求值为 `false`。⇒ 后端的模块接口本身就是能力声明,**两样东西整个删掉**,也不需要第二份配置 |
 | **「接口包 `reexport` 后端」** | 以为 mcpp 的承载件现成 | ⓘ `reexport` 是**向下游**传播,方向相反。正确接法是**后端 reexport 接口**(§4.1),恰好是该机制的本意 |
 
 ⭐ 三条的共同形状:**都是「我有一个漂亮的统一」,而漂亮的统一把两件本来不同的事合并了。**
@@ -769,14 +758,25 @@ POSIX 至少规定了 `PIPE_BUF` 以内的原子性。**草案一个字没提。
 
 三条撤回(§15)+ 六条开放问题(§16)里,有一个共同形状值得单独记:
 
-⭐ **草案的错误全部是「一个漂亮的统一,把两件本来不同的事合并了」**:
+草案的错误分两族。
+
+**族一:一个漂亮的统一,把两件本来不同的事合并了。**
 
 - `openkal.namespace` 合并了「命名」与「资源种类」
 - `cfg(mmu)` 把 openarch 的结论搬进 openkal
-- 「两个堆」是没有合并该合并的(分配器)
+- 「两个堆」是**没有**合并该合并的(分配器)
 
 而 §5.1 给出的判据 —— **「一个操作若能『存在但永远失败』,说明它被错误地合并了」** ——
-本来就能抓住前两条。
+本来就能抓住前两条。⚠️ **我只用它去检查别人的后端,没有用它检查自己的分解。**
 
-⚠️ **我只用它去检查别人的后端,没有用它检查自己的分解。**
-⇒ 判据要对**自己的设计**先跑一遍,再拿去当准入门槛。
+**族二:测了一种写法,把结论推广到了全部。**
+
+⚠️ `caps` 结构体 + `capabilities.toml` 那整套,建立在**一次实测**上:
+「`requires { mcpp::runner("x") }` 是硬错误」。那次实测本身没错,
+错在**结论的量词** —— 我写的是「C++ 语言内测不出来」,而真实情况是
+**「限定名测不出来」**。非限定 + ADL 一直是可以的。
+
+⇒ 代价是**一整节设计 + 一份多余的配置文件格式**,而验证它只需要三行代码。
+
+⭐ **两族合起来的规律**:一条实测能否定一个做法,**但否定不了一整类做法** ——
+写下「X 做不到」之前,要先问「我测的是 X,还是 X 的某一种写法」。
