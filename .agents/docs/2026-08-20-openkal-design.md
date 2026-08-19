@@ -255,28 +255,117 @@ export namespace kal { io_result seek(stream, long) { /* … */ } }
 
 **后端选择仍然只是条件依赖**(§4.3),整条链路**零新增配置、零新增引擎轴**。
 
-### 4.3 后端怎么被选中:只用 `mcpp.toml`
+### 4.3 ⭐ 模块名的归属:后端提供「接口名」
+
+这是全套设计里最容易写错的一处,而且草案写错过 —— 它让应用 `import openkal.uart;`,
+**那等于把源码钉死在后端上**,正好推翻 openkal 的立身之本。
+
+⚠️ 但它掩盖了一个真实约束。ⓘ **三条实测(mcpp 2026.8.19.4 / gcc 16.1.0)**:
+
+| | 结果 |
+|---|---|
+| 传递依赖的模块能不能 import | ✅ **能** —— app 只依赖 backend,可以 `import` iface 的模块 |
+| **ADL 能不能到达未 import 的模块** | ⛔ **不能** —— `error: 'seek' was not declared in this scope` |
+| ⇒ 所以后端的声明**必须在应用 import 的那个模块里** | — |
+
+⭐ **解法:`openkal.stream` 这个模块名由「后端」提供,接口包用另一个名字。**
+
+```
+openkal.abi.stream   ← 接口包:类型、兜底重载、concepts
+openkal.stream       ← 由「后端」提供:export import openkal.abi.stream; + 真实现
+```
+
+```cpp
+// 接口包
+export module openkal.abi.stream;
+export namespace kal { struct stream{…}; struct io_result{…};
+                       template <class S> unsupported_t seek(S, long) {…}
+                       template <class S> concept HasSeek = …; }
+
+// 后端包 —— 它提供「接口名」
+export module openkal.stream;
+export import openkal.abi.stream;
+export namespace kal { io_result seek(stream, long) { … } }
+```
+
+```cpp
+// 应用:后端在源码里无名
+import openkal.stream;
+int main() {
+    kal::stream s{1};
+    static_assert(kal::HasSeek<kal::stream>);
+    return seek(s, 0).n;                        // ADL 找到后端的实现
+}
+```
+
+ⓘ **端到端跑通**(app 只写 `import openkal.stream;`,concept 为真,返回后端的值)。
+
+⚠️ ⚠️ **一个必须踩过才知道的坑**:接口模块**不能**叫 `openkal.stream.abi`。
+ⓘ 实测直接 ninja 自环:
+
+```
+ninja: error: dependency cycle: gcm.cache/openkal.stream.gcm -> gcm.cache/openkal.stream.gcm
+```
+
+模块图把点号读成了层级关系。⇒ **ABI 模块名不能是接口名的点号延伸**,
+`openkal.abi.stream` 可以,`openkal.stream.abi` 不行。
+
+### 4.4 后端怎么被选中:只用 `mcpp.toml`
 
 ```toml
 # 后端包 openkal-uart
 [dependencies]
-openkal-stream = { version = "0.1", reexport = true }   # 把接口透给我的消费者
+openkal-abi = { version = "0.1" }      # 它 export import 的那个
 ```
 
 ```toml
-# 消费者:只写后端,按 target 选;接口随之而来
+# 消费者:只写后端,按 target 选
 [target.'cfg(os = "linux")'.dependencies]
 openkal-linux = "0.1"
 [target.'cfg(os = "none")'.dependencies]
 openkal-uart  = "0.1"
 ```
 
-源码 `import openkal.stream;` 两个 target 一字不改。
+源码 `import openkal.stream;` 两个 target 一字不改 —— ⓘ 这正是 KA1 测到的
+「同一份 `app.cppm`,零 `#if`,两个后端」。
 
-⚠️ ⓘ 方向要注意:`reexport` 是**向下游**传播(`grpc` 把 protoc 透给用户),
-所以是**后端 reexport 接口**,不是接口 reexport 后端 —— 草案写反过。
+⚠️ 两个后端同时进图 ⇒ 两个包都导出 `openkal.stream` ⇒ 模块名冲突。
+基数为 1(§12)使这成为用户错误,而且是**编译期**被发现的。
 
-### 4.4 接口层面的缺失(①)
+#### ⭐ 消费者要声明几个依赖:两个
+
+```toml
+[dependencies]
+openkal-abi = "0.1"            # ① 契约:我编程针对的那份规范
+
+[target.'cfg(os = "linux")'.dependencies]
+openkal-linux = "0.1"          # ② 实现:可替换的那一半
+[target.'cfg(os = "none")'.dependencies]
+openkal-uart  = "0.1"
+```
+
+技术上 ① **可以省略**(后端已经把它拉进来了,模块也 `export import` 了)。
+**但不该省**,理由只有一条,而且是硬的:
+
+> ⭐ **① 是应用真正耦合的东西,而且它让「契约版本不匹配」变成解析期错误。**
+
+应用写 `openkal-abi = "0.2"`、后端只支持 `"0.1"` ⇒ **依赖解析当场失败**;
+省掉 ① 的话,同一个问题要等到**编译期**才以一堆签名不匹配的形式冒出来。
+
+而且这与生态里已被验证的形状一致:Rust 的 `embedded-hal`(trait 包)+ 板级包,
+应用同时依赖两者;`log` + `env_logger` 也是同一个形状。
+
+| | 只写后端 | ⭐ 契约 + 后端 |
+|---|---|---|
+| 行数 | 1 | 2 |
+| 契约版本由谁定 | ⚠️ 后端 | **应用** |
+| 版本不匹配何时暴露 | ⚠️ 编译期,一堆签名错误 | **解析期,一条消息** |
+| 换后端要改几行 | 1 | 1(① 不动) |
+
+⚠️ ① 看起来「声明了却没 import」—— 那是表象:应用 `import openkal.stream;` 时,
+后端 `export import openkal.abi.stream;` 把它带了进来。**①的作用是钉版本,不是给 import 用。**
+
+### 4.5 接口层面的缺失(①)
 
 一整个 interface 不存在时,`import openkal.task;` **编译期就找不到模块**。
 这一条不变,而且和 §4.1 是同一套失败语义:**编译期,点名,不是运行期返回值。**
@@ -390,7 +479,7 @@ openkal-linux = "0.1"
 ### 7.1 应用直接用
 
 ```cpp
-import openkal.uart;          // 后端;接口随 reexport 而来
+import openkal.stream;        // ⭐ 只写接口名;提供它的是后端(§4.3)
 
 int main() {
     kal::write(kal::stdout(), "hello\n");
@@ -677,7 +766,7 @@ thread_local int counter;  →  编译 ✅ 链接 ✅ 零未定义符号 ✅ 零
 | **`openkal.namespace`**(取代 fs/net) | 「文件 / socket / UART 给你的都是 stream,只是命名方式不同」 | ① 触犯本文自己的 §5.1 规矩(caps 成为不相干能力并集);② URI 解析器**就是**模拟层,违反对下判据;③ 引用的 WASIp2 先例是**误读**(它分开资源种类,只共享 stream 类型) |
 | **扩 `cfg()` 文法支持 `cfg(mmu)`** | K1/K2 说「MMU 是能力轴不是契约」 | 那条结论是关于 **openarch** 的;openkal core 逐个接口查下来**一条 ③ 类语义轴都没有**,而且 triple 本身已承载大部分 |
 | **`caps` 结构体 + `capabilities.toml`** | 以为「`requires` 测不了缺失的名字」⇒ 能力必须放进另一个可命名的东西 | ⓘ **只对限定名成立**。非限定 + ADL 在模板里是 dependent 的,缺失时求值为 `false`。⇒ 后端的模块接口本身就是能力声明,**两样东西整个删掉**,也不需要第二份配置 |
-| **「接口包 `reexport` 后端」** | 以为 mcpp 的承载件现成 | ⓘ `reexport` 是**向下游**传播,方向相反。正确接法是**后端 reexport 接口**(§4.1),恰好是该机制的本意 |
+| **应用 `import openkal.uart;`** | 想让「接口随后端而来」 | ⛔ **把源码钉死在后端上**,推翻 openkal 的立身之本。ⓘ 而且掩盖了真约束:**ADL 到不了未 import 的模块**(实测)。正解是**后端提供接口名**(§4.3) |
 
 ⭐ 三条的共同形状:**都是「我有一个漂亮的统一」,而漂亮的统一把两件本来不同的事合并了。**
 这与 §5.1 给出的判据是同一条 —— 只是那一节我用它去检查别人的后端,没有用它检查自己的分解。
