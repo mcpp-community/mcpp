@@ -174,7 +174,8 @@ jobs:
           # PASS line or it does not.
           for t in tests/e2e/130_freestanding_riscv_build_and_run.sh \
                    tests/e2e/131_freestanding_bsp_supplies_everything.sh \
-                   tests/e2e/132_freestanding_test_and_artifacts.sh; do
+                   tests/e2e/132_freestanding_test_and_artifacts.sh \
+                   tests/e2e/133_freestanding_std_subset.sh; do
             echo "=== $t ==="
             bash "$t" 2>&1 | tee "$(basename "$t").log"
             rc=${PIPESTATUS[0]}
@@ -192,6 +193,9 @@ jobs:
           grep -q 'PASS: bare-metal mcpp test names its failure' \
             132_freestanding_test_and_artifacts.sh.log || {
             echo "132 (test + artifacts) skipped on the runner that must run it"; exit 1; }
+          grep -q 'PASS: the freestanding std subset' \
+            133_freestanding_std_subset.sh.log || {
+            echo "133 (std subset) skipped on the runner that must run it"; exit 1; }
 
   # ──────────────────────────────────────────────────────────────────
   # Hermetic (no host toolchain): the ONLY environment class that

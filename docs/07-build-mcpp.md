@@ -133,6 +133,28 @@ both claiming to know how to run the artifact is a configuration error, and
 mcpp reports it naming both rather than merging them into an argv that is
 neither one's.
 
+### Asking instead of declaring: `toolchain_dir` / `sysroot_dir` (2026.8.19.4+)
+
+```cpp
+const char* tc = mcpp::toolchain_dir();   // the resolved toolchain's payload root
+const char* sr = mcpp::sysroot_dir();     // the TARGET's C library root, or ""
+```
+
+A package that needs headers shipped by the toolchain — libc++'s, for a
+freestanding standard-library subset — or a file inside the target's C library
+— a linker script, for a board-support package — asks for the directory rather
+than declaring a dependency on the thing that provides it.
+
+⚠️ The difference is not cosmetic. Declaring `xim:llvm` pins a package to one
+standard-library implementation; declaring `xim:picolibc-riscv@1.8.12` pins it
+to one C library, one architecture and one version. Neither is a property of a
+package whose content is implementation-neutral. Asking follows whatever
+`[toolchain]` and `--target` actually resolved.
+
+`sysroot_dir()` is empty on a hosted target: there the C library arrives with
+the compiler payload or through the runtime binding, and nothing has to look
+for it.
+
 ### Finding an `[xlings] deps` payload: `xpkg_dir` (2026.8.19+)
 
 `dep_dir` answers for **mcpp** dependencies. An xlings package is a different

@@ -98,30 +98,46 @@ struct TargetInfo {
     // Convention toolchain pin for `--target <canonical>` with no explicit
     // [target.X] toolchain override. Empty = no convention (host default).
     std::string_view pin;
+    // The TARGET's C library, resolved at compile time exactly the way `pin`
+    // resolves the compiler. Empty = none applies.
+    //
+    // ⚠️ This axis exists because bare metal was the one target class without
+    // it, and the gap leaked into every package. A hosted target gets its libc
+    // automatically — `x86_64-linux-musl` carries musl inside its gcc payload,
+    // and glibc arrives through PayloadPaths — so nobody writes `xim:glibc` in
+    // a manifest. Freestanding pins a generic clang, which brings no target
+    // libc at all, so before this every bare-metal package had to declare
+    // `[xlings] deps = ["xim:picolibc-riscv@1.8.12"]` itself. That is not a
+    // dependency of the package; it is a property of the target, and stating
+    // it per-package bound a board-support package and a standard-library
+    // subset alike to one libc, one ISA and one version.
+    std::string_view sysroot;
     bool defaultStatic;           // target's default linkage is static
 };
 
 // (note deliberately excludes "static" — the display layer derives that tag
 // from defaultStatic, so listing it here would duplicate it.)
 inline constexpr TargetInfo kKnownTargets[] = {
-    // canonical               tier         note   pin           defaultStatic
-    { "x86_64-linux-gnu",      "verified",  "",    "",           false },
-    { "x86_64-linux-musl",     "verified",  "",    "gcc@16.1.0", true  },
-    { "aarch64-linux-musl",    "verified",  "",    "gcc@16.1.0", true  },
-    { "x86_64-windows-gnu",    "verified",  "PE",  "gcc@16.1.0", true  },
-    { "x86_64-windows-msvc",   "verified",  "PE",  "",           false },
-    { "aarch64-macos",         "verified",  "",    "",           false },
-    { "riscv64-linux-musl",    "planned",   "",    "",           true  },
-    { "aarch64-linux-gnu",     "planned",   "",    "",           false },
-    { "x86_64-macos",          "planned",   "",    "",           false },
+    // canonical               tier         note   pin           sysroot                        defaultStatic
+    { "x86_64-linux-gnu",      "verified",  "",    "",           "",                            false },
+    { "x86_64-linux-musl",     "verified",  "",    "gcc@16.1.0", "",                            true  },
+    { "aarch64-linux-musl",    "verified",  "",    "gcc@16.1.0", "",                            true  },
+    { "x86_64-windows-gnu",    "verified",  "PE",  "gcc@16.1.0", "",                            true  },
+    { "x86_64-windows-msvc",   "verified",  "PE",  "",           "",                            false },
+    { "aarch64-macos",         "verified",  "",    "",           "",                            false },
+    { "riscv64-linux-musl",    "planned",   "",    "",           "",                            true  },
+    { "aarch64-linux-gnu",     "planned",   "",    "",           "",                            false },
+    { "x86_64-macos",          "planned",   "",    "",           "",                            false },
     // Bare metal. `defaultStatic` is not a preference here — there is no
     // loader, so there is no other option. The pin is llvm on every host
     // because clang/lld are cross-compilers by construction: unlike the hosted
     // rows above, these need no per-host cross payload at all.
     // ISA profile (-march/-mabi/-mcmodel) lives in mcpp.freestanding.target,
     // which is the single place that decision is made.
-    { "riscv64-none-elf",      "verified",  "bare","llvm@22.1.8", true  },
-    { "riscv32-none-elf",      "verified",  "bare","llvm@22.1.8", true  },
+    // The sysroot column is what keeps a bare-metal PACKAGE from having to
+    // name a libc: the C library is the target's, like the compiler.
+    { "riscv64-none-elf",      "verified",  "bare","llvm@22.1.8","xim:picolibc-riscv@1.8.12",  true  },
+    { "riscv32-none-elf",      "verified",  "bare","llvm@22.1.8","xim:picolibc-riscv@1.8.12",  true  },
 };
 
 inline std::span<const TargetInfo> known_targets() { return kKnownTargets; }

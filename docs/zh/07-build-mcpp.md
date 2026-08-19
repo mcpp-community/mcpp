@@ -121,6 +121,24 @@ for (auto a : {"-machine","virt","-nographic","-no-reboot","-kernel"})
 ⚠️ **只能有一个依赖提供 runner。** 两个板级支持包都声称知道怎么跑这个产物是配置
 错误;mcpp 会**同时点名两个**并报错,而不是把它们并成一个谁也不是的 argv。
 
+### 问,而不是声明:`toolchain_dir` / `sysroot_dir`(2026.8.19.4+)
+
+```cpp
+const char* tc = mcpp::toolchain_dir();   // 已解析工具链的载荷根目录
+const char* sr = mcpp::sysroot_dir();     // 目标的 C 库根目录,没有则为 ""
+```
+
+一个包需要工具链自带的头(比如 freestanding 标准库子集要的 libc++ 头),或者需要
+目标 C 库里的某个**文件**(比如板级支持包要的链接脚本)时,应当**问这个目录在哪**,
+而不是去声明一个依赖来把它拽进来。
+
+⚠️ 这不是写法差异。声明 `xim:llvm` 会把包**钉死在一个标准库实现**上;声明
+`xim:picolibc-riscv@1.8.12` 会把它钉死在**一个 C 库、一种架构、一个版本**上。而这些
+都不是一个内容全是标准规定的名字的包的属性。**问**则会跟随 `[toolchain]` 与
+`--target` 真正解析到的结果。
+
+宿主目标上 `sysroot_dir()` 为空:那里 C 库随编译器载荷或运行时绑定而来,没人需要找它。
+
 ### 找到 `[xlings] deps` 的载荷:`xpkg_dir`(2026.8.19+)
 
 `dep_dir` 回答的是 **mcpp** 依赖。xlings 包是另一个命名空间、另一套 store 布局,

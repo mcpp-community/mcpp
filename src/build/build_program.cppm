@@ -38,6 +38,11 @@ export namespace mcpp::build {
 // target/profile/feature change re-runs the program.
 struct BuildProgramEnv {
     std::string targetTriple;               // resolved canonical triple; "" = host
+    // The resolved toolchain's payload root and the target's own C library
+    // root. Both exist so a package can ASK instead of DECLARE — see
+    // hostprogram::toolchain_dir / sysroot_dir for why declaring was wrong.
+    std::string toolchainDir;
+    std::string targetSysroot;
     std::string profile;                    // effective profile name (dev/release/…)
     std::vector<std::string> features;      // active feature closure of the package
     // Artifact home (bin/cache/out). Empty → <root>/target/.build-mcpp (the
@@ -295,6 +300,12 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
         e.emplace_back("MCPP_TARGET_ENV", t.env);
     }
     e.emplace_back("MCPP_HOST", hostT);
+    // Always emitted, empty when they do not apply: a build program reads
+    // these through `env_or`, which cannot tell "absent" from "empty", and an
+    // absent variable would make the answer depend on whatever the parent
+    // process happened to export.
+    e.emplace_back("MCPP_TOOLCHAIN_DIR", env.toolchainDir);
+    e.emplace_back("MCPP_TARGET_SYSROOT", env.targetSysroot);
     e.emplace_back("MCPP_PROFILE", env.profile);
     e.emplace_back("MCPP_OUT_DIR", outDir.string());
     e.emplace_back("MCPP_MANIFEST_DIR", root.string());

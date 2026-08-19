@@ -95,6 +95,30 @@ TEST(CacheKey, ToolchainIdentityChangesTheKey) {
                                                      EXPECT_NE(ck::key_hex(b, pkg()), base); }
 }
 
+// ⚠️ The axis that exists because an UPGRADE broke a build.
+//
+// A freestanding triple silently implies -march/-mabi/-ffreestanding/
+// -nostdinc++/-fno-exceptions/-fno-rtti, and WHICH ones is mcpp's decision —
+// so the set changes between mcpp versions while the triple string does not.
+// Keyed on the triple alone, an mcpp that adds a flag reuses BMIs built
+// before it, and clang refuses them with a message that names a .pcm file:
+//
+//     error: exception handling was enabled in precompiled file
+//     'mcpplibs.riscv_virt_rt.pcm' but is currently disabled
+//
+// Measured on exactly that upgrade, on a project that had built once before.
+TEST(CacheKey, TargetImpliedFlagsChangeTheKey) {
+    auto base = ck::key_hex(axes(), pkg());
+    { auto b = axes(); b.targetImpliedFlags = {"-ffreestanding"};
+                       EXPECT_NE(ck::key_hex(b, pkg()), base); }
+    // Adding one flag to an existing set must move it too — the upgrade case
+    // is never "empty becomes non-empty", it is "one more flag than before".
+    auto before = axes(); before.targetImpliedFlags = {"-ffreestanding", "-nostdinc++"};
+    auto after  = axes(); after.targetImpliedFlags  = {"-ffreestanding", "-nostdinc++",
+                                                       "-fno-exceptions"};
+    EXPECT_NE(ck::key_hex(after, pkg()), ck::key_hex(before, pkg()));
+}
+
 // ── B axis: language and dialect ─────────────────────────────────────────────
 TEST(CacheKey, LanguageAndDialectChangeTheKey) {
     auto base = ck::key_hex(axes(), pkg());

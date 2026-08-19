@@ -35,6 +35,7 @@ import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
+import mcpp.freestanding.target;   // the target sysroot layout (libdir)
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
@@ -1768,6 +1769,42 @@ prepare_build(bool print_fingerprint,
             tc->hasImportStd = false;
             tc->stdModuleSource.clear();
             tc->stdCompatSource.clear();
+
+            // ── The target's C library, resolved like its compiler ─────────
+            //
+            // The row in kKnownTargets names it, exactly as it names the
+            // toolchain pin, and it is installed through the same channel a
+            // project's `[xlings] deps` use (see the materialization above).
+            // Resolved HERE because the config is already open; the flag
+            // builder only reads the result.
+            //
+            // Absent is not an error at this point: the install happens
+            // earlier in this function and may legitimately not have run yet
+            // on a first pass. What follows would then simply not add the
+            // paths, and the link fails naming the missing libc — which is the
+            // truthful message either way.
+            if (auto* known = mcpp::toolchain::triple::find_known_target(*want);
+                known && !known->sysroot.empty()) {
+                if (auto cfg3 = get_cfg(); cfg3) {
+                    auto ref = mcpp::xlings::paths::parse_xpkg_ref(
+                        std::string(known->sysroot));
+                    auto xl  = mcpp::config::make_xlings_env(**cfg3);
+                    if (auto dir = mcpp::xlings::paths::xpkg_payload(xl, ref)) {
+                        if (auto spec = mcpp::freestanding::resolve(*want)) {
+                            const auto inc =
+                                *dir / "include" / std::string(spec->libdir);
+                            const auto lib =
+                                *dir / "lib"     / std::string(spec->libdir);
+                            std::error_code ec2;
+                            tc->targetSysrootRoot = *dir;
+                            if (std::filesystem::is_directory(inc, ec2))
+                                tc->targetSysrootInclude = inc;
+                            if (std::filesystem::is_directory(lib, ec2))
+                                tc->targetSysrootLib = lib;
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -2054,14 +2091,40 @@ prepare_build(bool print_fingerprint,
     // custom non-builtin index entries (so xlings can clone them) plus the
     // [xlings] deps/workspace/subos/envs materialized verbatim.
     const auto& runtimeOwnerManifest = wsManifest ? *wsManifest : *m;
+    // The TARGET's C library, if this target has one. Resolved here and not by
+    // any package, for the same reason the compiler pin is: it is a property
+    // of the target.
+    //
+    // ⚠️ It rides the SAME channel as `[xlings] deps` rather than getting an
+    // install path of its own — one materialization, one place that can be
+    // wrong. What it must NOT do is depend on the project having an `[xlings]`
+    // section: a bare-metal project written to the template has none, and the
+    // whole point is that it never mentions a libc.
+    std::string targetSysroot;
+    if (tc) {
+        if (auto tt = mcpp::toolchain::triple::parse(tc->targetTriple))
+            if (auto* known = mcpp::toolchain::triple::find_known_target(*tt);
+                known && !known->sysroot.empty())
+                targetSysroot = std::string(known->sysroot);
+    }
     const bool materializeRootRuntime =
-        !overrides.inherited_runtime_binding && !runtimeOwnerManifest.xlings.empty();
+        !overrides.inherited_runtime_binding
+        && (!runtimeOwnerManifest.xlings.empty() || !targetSysroot.empty());
     if (!m->indices.empty() || materializeRootRuntime) {
         auto cfg2 = get_cfg();
         if (cfg2) {
             mcpp::xlings::ProjectEnv penv;
             if (materializeRootRuntime) {
                 penv.deps  = runtimeOwnerManifest.xlings.deps;
+                // Appended, never substituted: a project may legitimately
+                // declare other xim packages, and a target sysroot is one more
+                // entry rather than a replacement for the list. Deduplicated
+                // because a manifest written before this axis existed still
+                // names it, and declaring it twice is not an error the author
+                // should have to hear about.
+                if (!targetSysroot.empty()
+                    && std::ranges::find(penv.deps, targetSysroot) == penv.deps.end())
+                    penv.deps.push_back(targetSysroot);
                 penv.subos = runtimeOwnerManifest.xlings.subos;
                 for (auto const& [k, v] : runtimeOwnerManifest.xlings.workspace)
                     penv.workspace.emplace_back(k, v);
@@ -4937,6 +5000,13 @@ prepare_build(bool print_fingerprint,
             };
             mcpp::build::BuildProgramEnv bpEnv;
             bpEnv.targetTriple = resolvedTargetCanonical;
+        // The payload ROOT, not the driver: `<root>/bin/clang++` → `<root>`.
+        // A build program wants `<root>/include/c++/v1`, and deriving that
+        // from the driver path in every program would be the same expression
+        // copied into every package.
+        bpEnv.toolchainDir  = (tc && !tc->binaryPath.empty())
+            ? tc->binaryPath.parent_path().parent_path().string() : std::string{};
+        bpEnv.targetSysroot = tc ? tc->targetSysrootRoot.string() : std::string{};
             bpEnv.profile      = effectiveProfile;
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
             bpEnv.artifactsDir = workRoot / "target" / ".build-mcpp" / "deps"
@@ -5097,6 +5167,13 @@ prepare_build(bool print_fingerprint,
         if (!host) return std::unexpected(host.error());
         mcpp::build::BuildProgramEnv bpEnv;
         bpEnv.targetTriple = resolvedTargetCanonical;
+        // The payload ROOT, not the driver: `<root>/bin/clang++` → `<root>`.
+        // A build program wants `<root>/include/c++/v1`, and deriving that
+        // from the driver path in every program would be the same expression
+        // copied into every package.
+        bpEnv.toolchainDir  = (tc && !tc->binaryPath.empty())
+            ? tc->binaryPath.parent_path().parent_path().string() : std::string{};
+        bpEnv.targetSysroot = tc ? tc->targetSysrootRoot.string() : std::string{};
         bpEnv.profile      = effectiveProfile;
         // Set explicitly rather than relying on build_dir()'s root-relative
         // default: under BuildOverrides::work_dir the package root is shared
@@ -5273,18 +5350,15 @@ prepare_build(bool print_fingerprint,
         // no subset of it to build without an OS. Saying "provides no std
         // module source" sends the reader to look for a broken payload.
         //
-        // ⚠️ It used to end with a copy-pasteable
-        //
-        //     [dependencies]
-        //     mcpplibs.std.freestanding = "0.1"
-        //
-        // and that package is NOT published. A diagnostic whose suggested fix
-        // fails at the next command is worse than one that explains and stops:
-        // the reader spends the next minutes deciding whether their index is
-        // broken. Point at what a bare-metal project actually has today — the
-        // board package it already depends on exports a module — and describe
-        // the subset package as a shape rather than as a line to paste.
-        // Restore the concrete line when such a package ships.
+        // ⚠️ The line below is copy-pasteable, and that is a PROMISE: it has
+        // to resolve today. It briefly did not — an earlier version of this
+        // message named `mcpplibs.std.freestanding` before any such package
+        // existed, so following the advice failed at the very next command
+        // with "package not found" and sent the reader off to debug their
+        // index. The package is published now (103 of libc++'s 110 headers,
+        // measured; the 7 that fail fail on a hosted x86_64 too), so the line
+        // is back. If it is ever removed from the index, this must change with
+        // it.
         if (auto ft = mcpp::toolchain::triple::parse(tc->targetTriple);
             ft && ft->is_freestanding())
         {
@@ -5295,19 +5369,20 @@ prepare_build(bool print_fingerprint,
                 "filesystem, iostreams\n"
                 "       included), so there is no subset of it to build without "
                 "an OS underneath.\n"
+                "       Use the freestanding subset instead — an ordinary "
+                "dependency carrying\n"
+                "       the parts of the library that need no OS "
+                "(array, span, optional, atomic,\n"
+                "       string_view, ranges, expected, charconv, coroutines):\n"
                 "\n"
-                "       What a bare-metal project uses instead:\n"
-                "         * the module its BOARD package exports — that is where "
-                "the target's\n"
-                "           C library is already wrapped (riscv-virt-rt exports "
-                "`mcpplibs.riscv_virt_rt`);\n"
-                "         * or a freestanding subset package, which is an "
-                "ordinary dependency\n"
-                "           providing the header-only parts of the library that "
-                "need no OS.\n"
+                "           [dependencies]\n"
+                "           std-freestanding = \"0.1.0\"\n"
                 "\n"
-                "       No such subset package is published yet, so there is no "
-                "line to paste here.",
+                "       then `import mcpplibs.std.freestanding;` in place of "
+                "`import std;`.\n"
+                "       The target's C library itself comes from the BOARD "
+                "package (riscv-virt-rt\n"
+                "       exports `mcpplibs.riscv_virt_rt`).",
                 tc->targetTriple));
         }
         return std::unexpected(std::format(

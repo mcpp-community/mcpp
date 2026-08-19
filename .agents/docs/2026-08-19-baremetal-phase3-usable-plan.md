@@ -470,3 +470,72 @@ manifest」的目录里,manifest 永远是最新的那个文件,快路径**永�
 
 **教训**:`mcpp run` 单独跑是对的,`mcpp build && mcpp run` 才错 —— **顺序本身就是被测
 对象**。而 130/131/132 三个测试都恰好先 `run`,所以谁也看不见。
+
+### 11.5 ⚠️ 我说 E-STD「要从头实现、不该在收尾时半做」—— 这条是错的,而且调研文档早就写着
+
+用户指出后回查 `2026-08-18-freestanding-baremetal-analysis.md`,X1–X10 把这条路测到了底:
+
+| 我说的 | 文档实测(本轮已用**已发布载荷**复现) |
+|---|---|
+| `-nostdinc++` 之下 libc++ 的头一个都用不了 | 合成 freestanding `__config_site` 后 **103 / 110 可编**;失败的 7 个在 x86_64 宿主上**同样失败** ⇒ 裸机这层**编译期损失为 0** |
+| 子集要从头实现 | libc++ 自己带 110 个 `std/<header>.inc`(每个就是该头的 `export namespace std {...}`)⇒ **子集是机械挑选**,生成物 217 行全是 `#include` |
+| 是独立规模的工作 | T1+T2 当时就跑通了,只有 **T3**(`std::format`/标量 `sort`/完整 `string`)需要为目标编 `libc++.a` |
+
+⚠️ **`-nostdinc++` 恰恰是这条路的机制而不是障碍**:它让 libc++ 的头**私有**给子集包,
+包再 export 一个模块 —— 和 BSP 私有 include 目标 libc 头是同一个形状。我把它读反了。
+
+⭐ 复现时只差**一个符号**:`std::__libcpp_verbose_abort`。⚠️ 而且它必须**通过 libc++
+自己的头**声明 —— 真符号在 ABI 内联命名空间 `std::__1::` 里,手写 `namespace std {...}`
+**编得过、链不上、报错一字不变**。
+
+#### ⚠️ 真正的阻塞点是异常,而且它是「整图属性」
+
+`optional::value()` 一个就拉进 `__cxa_throw` + `vtable for std::exception` 等 4 个符号。
+而 `-fno-exceptions`:
+
+- 写在工程 `[build] cxxflags` 里**没用** —— 到不了依赖的模块编译,于是 BMI 与导入者不一致,
+  clang 报的是 **`.pcm` configuration mismatch**,点名一个模块文件而不是那个 flag。
+- `is_dialect_flag`(整图传播的那张表)**刻意排除了它**,理由写着「依赖可能假设异常可用」——
+  **这条在 hosted 成立,在裸机上正好反过来**:没有 unwinder,谁都用不了。
+
+⇒ 放进**引擎的 freestanding target flags**(和 `-ffreestanding`/`-nostdinc++` 同处),
+那是唯一能保证整图一致的地方。
+
+#### ⚠️ 它顺带暴露了一个「升级即坏」的缓存缺陷
+
+依赖缓存键有 triple,**没有 triple 隐含的那组 flag**。而**哪些 flag 由 triple 隐含是 mcpp 的决定**,
+会随版本变、triple 字符串不变 ⇒ 升级后复用了升级前的 BMI,硬失败,错误只点名一个 `.pcm`。
+已加 `targetImpliedFlags` 轴(hosted 为空,不动任何现有键)。
+
+### 11.6 ⭐ 用户指出的架构错误:目标的 libc 不该由包声明
+
+我把 `xim:picolibc-riscv@1.8.12` 写进了 BSP 和 std 子集两个包的 `[xlings] deps`。
+用户指出三条,**三条都对**:不该绑 libc、不该绑 riscv、不该绑编译器;而且 freestanding
+在普通宿主上一样能用(实测:`-ffreestanding` + 宿主 libc,同一份代码编得过)。
+
+⚠️ **真因是引擎的一个结构性缺口**,不是包写得随意:
+
+| | 编译器 | 目标 libc |
+|---|---|---|
+| hosted(`x86_64-linux-musl`) | 目标表 `pin` **自动** | musl 在 gcc 载荷里 / glibc 走 `PayloadPaths` —— **自动**,没人写过 `xim:glibc` |
+| freestanding | 目标表 `pin = llvm@22.1.8` **自动** | **没有任何一条轴** ⇒ 外溢到每个包 |
+
+⇒ **给 `TargetInfo` 加 `sysroot` 轴**(和 `pin` 并列),复用现有 `[xlings] deps` 物化通道
+安装,引擎把 `-isystem <sysroot>/include/<档位>` 和 `-L <sysroot>/lib/<档位>` 放上去。
+
+**位置是目标的事实,选择是板级的事实**:引擎给位置,BSP 用**裸名**选 `-lcrt0-semihost`
+`-lc` `-lsemihost` 并指定链接脚本。
+
+同时补两个「问引擎」的接口:`mcpp::toolchain_dir()` 与 `mcpp::sysroot_dir()`
+⇒ **两个包的 `[xlings] deps` 里 libc 与编译器全部消失**,std 子集变成与架构/libc/实现无关。
+
+#### 实施中撞到的三条
+
+1. ⚠️ **`-L` 加到 `f.ld` 上会被丢掉** —— freestanding **整条替换**链接线(否则载荷 cfg
+   注入宿主 dynamic linker),所以必须放进 `LinkInputs`。实测:flag 拼出来了,然后不在。
+2. ⚠️ **`link-script` 的裸名会被按包根绝对化** ⇒ `picolibcpp.ld` 指到包目录里。板级包要
+   用 `sysroot_dir()` 自己拼 —— 它知道**要哪个脚本**,不知道**在哪**。
+3. ⚠️ **e2e/131 的私有性断言判据失效了**:它用 `#include <stdio.h>` 编不过来证明依赖的
+   `include-dir` 不到达消费者。libc 归目标之后 `<stdio.h>` **本来就该编得过**(和宿主一样)。
+   ⇒ 拆成两条:目标 C 头**必须**到达(正面断言),板级包**自己的**头**必须不**到达。
+   **原来那条测的其实是「libc 从哪来」,不是「作用域对不对」。**

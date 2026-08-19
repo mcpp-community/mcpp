@@ -56,6 +56,8 @@ import mcpp.manifest;
 import mcpp.modgraph.scanner;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
+import mcpp.toolchain.triple;
+import mcpp.freestanding.target;   // the flags a bare-metal triple implies
 
 export namespace mcpp::build::cache_key {
 
@@ -79,6 +81,22 @@ struct BuildAxes {
     std::string compilerVersion;
     std::string driverIdentity;
     std::string targetTriple;
+    // ⚠️ The flags the TRIPLE implies, not the ones anyone wrote down.
+    //
+    // A freestanding triple silently carries `-march`/`-mabi`/`-mcmodel`/
+    // `-ffreestanding`/`-nostdinc++`/`-fno-exceptions`/`-fno-rtti`, and which
+    // ones is a decision MCPP MAKES — so it changes between mcpp versions
+    // while the triple string does not. Without this axis the key cannot tell
+    // the two apart, and an upgrade that adds a flag serves BMIs built before
+    // it. That is not a stale-cache annoyance; it is a hard failure whose
+    // message names a .pcm file:
+    //
+    //     error: exception handling was enabled in precompiled file
+    //     'mcpplibs.riscv_virt_rt.pcm' but is currently disabled
+    //
+    // Measured on exactly that upgrade. Empty for hosted targets, so nothing
+    // else's key moves.
+    std::vector<std::string> targetImpliedFlags;
     std::string stdlibId;
     std::string stdlibVersion;
     // B
@@ -198,6 +216,7 @@ nlohmann::json to_json(const BuildAxes& b, const PackageAxes& p) {
         {"compiler_version", b.compilerVersion},
         {"driver_identity", b.driverIdentity},
         {"target_triple", b.targetTriple},
+        {"target_implied_flags", b.targetImpliedFlags},
         {"stdlib", b.stdlibId},
         {"stdlib_version", b.stdlibVersion},
     };
@@ -244,6 +263,7 @@ std::string key_hex(const BuildAxes& b, const PackageAxes& p) {
     put(s, "ccver",    b.compilerVersion);
     put(s, "driver",   b.driverIdentity);
     put(s, "triple",   b.targetTriple);
+    put_list(s, "targetflags", b.targetImpliedFlags);
     put(s, "stdlib",   b.stdlibId);
     put(s, "stdlibv",  b.stdlibVersion);
     // B
@@ -295,6 +315,9 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
         : (tc.binaryPath.empty() ? std::string{}
                                  : mcpp::toolchain::hash_file(tc.binaryPath));
     b.targetTriple    = tc.targetTriple;
+    if (auto ft = mcpp::toolchain::triple::parse(tc.targetTriple))
+        if (auto spec = mcpp::freestanding::resolve(*ft))
+            b.targetImpliedFlags = mcpp::freestanding::compile_flags(*spec);
     b.stdlibId        = tc.stdlibId;
     b.stdlibVersion   = tc.stdlibVersion;
 
