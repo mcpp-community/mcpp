@@ -1285,12 +1285,38 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             f.cc  += prefix;
             f.as  += mcpp::freestanding::assemble_prefix(*spec);
 
+            // ── The target's C library, from the TARGET, not from a package ──
+            //
+            // A hosted target never made anyone write this down: musl rides
+            // inside its gcc payload and glibc arrives through PayloadPaths.
+            // Bare metal pins a generic clang, which carries no target libc,
+            // and until this the gap leaked outward — every board-support
+            // package and every library had to declare
+            // `[xlings] deps = ["xim:picolibc-riscv@1.8.12"]`, which bound
+            // each of them to one libc, one ISA and one version of both.
+            //
+            // What the engine supplies is exactly the libc's LOCATION. Which
+            // objects to start with, which linker script, which libraries —
+            // `-lcrt0-semihost` versus a UART crt0 — remain board decisions
+            // and stay in the board package. Location is a target fact;
+            // selection is a board fact.
+            // Compile side: the target's C headers. Link side is NOT here —
+            // it goes into LinkInputs below, because the freestanding link
+            // line is replaced wholesale and anything added to f.ld here is
+            // discarded.
+            if (!plan.toolchain.targetSysrootInclude.empty()) {
+                const auto flag =
+                    " -isystem " + ninjaEsc(plan.toolchain.targetSysrootInclude);
+                f.cxx += flag; f.cc += flag; f.as += flag;
+            }
+
             mcpp::freestanding::LinkInputs in;
             // Absolute path, not `-fuse-ld=lld`: the name resolves through
             // PATH and finds GNU ld on any machine with binutils earlier on
             // it, which then dies with 'unrecognised emulation mode'.
             // Reproduced on this toolchain 2026-08-19.
             in.lld = mcpp::freestanding::resolve_lld(plan.toolchain.binaryPath);
+            in.sysrootLib = plan.toolchain.targetSysrootLib;
             // ⚠️ `--no-default-config` FIRST, and it is not hygiene.
             //
             // The llvm payload ships bin/clang++.cfg with an unconditional

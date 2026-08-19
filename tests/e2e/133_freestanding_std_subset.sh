@@ -50,27 +50,28 @@ cd "$TMP"
 "$MCPP" new board > /dev/null
 cd board
 rm -f src/main.cpp tests/*.cpp 2>/dev/null || true
+# ⚠️ NO libc anywhere in this package. The target's C library is the TARGET's,
+# resolved by mcpp from the target's own row exactly as the compiler is; the
+# board selects OUT of it (which crt0, which libraries) and names the linker
+# script it wants, and asks where the sysroot is rather than declaring one.
 cat > mcpp.toml <<'EOF'
 [package]
 name    = "board"
 version = "0.1.0"
 
 [xlings]
-deps = ["xim:picolibc-riscv@1.8.12", "xim:qemu-riscv@9.2.4-1"]
+deps = ["xim:qemu-riscv@9.2.4-1"]
 EOF
 cat > build.mcpp <<'EOF'
 import std;
 int main() {
-    const char* sysroot = std::getenv("MCPP_XPKG_XIM_PICOLIBC_RISCV_DIR");
-    if (!sysroot || !*sysroot) { std::cerr << "no picolibc\n"; return 1; }
-    std::string lib = std::format("{}/lib/rv64gc/lp64d", sysroot);
-    std::println("mcpp:include-dir={}/include/rv64gc/lp64d", sysroot);
-    std::println("mcpp:link-search={}", lib);
+    // Bare names: mcpp already put -L for the target sysroot on the link line.
     std::println("mcpp:link-lib=crt0-semihost");
     std::println("mcpp:link-lib=c");
     std::println("mcpp:link-lib=semihost");
     std::println("mcpp:link-lib=clang_rt.builtins-riscv64");
-    std::println("mcpp:link-script={}/picolibcpp.ld", lib);
+    if (const char* s = std::getenv("MCPP_TARGET_SYSROOT"); s && *s)
+        std::println("mcpp:link-script={}/lib/rv64gc/lp64d/picolibcpp.ld", s);
     if (const char* q = std::getenv("MCPP_XPKG_XIM_QEMU_RISCV_DIR"); q && *q) {
         std::println("mcpp:runner={}/bin/qemu-system-riscv64", q);
         for (auto a : {"-machine","virt","-nographic","-no-reboot",
@@ -95,13 +96,14 @@ cd "$TMP"
 "$MCPP" new stdfs > /dev/null
 cd stdfs
 rm -f src/main.cpp tests/*.cpp src/stdfs.cppm 2>/dev/null || true
+# ⚠️ NO [xlings] section. The C++ headers come from whatever toolchain mcpp
+# resolved, and the target's C headers mcpp already put on the compile line.
+# Declaring either would pin this package to one implementation, one libc and
+# one ISA — which is what an earlier version of it did.
 cat > mcpp.toml <<'EOF'
 [package]
 name    = "stdfs"
 version = "0.1.0"
-
-[xlings]
-deps = ["xim:picolibc-riscv@1.8.12", "xim:llvm"]
 EOF
 
 # ⚠️ The config has to be a FILE. `_LIBCPP_HAS_THREADS` and friends are read
@@ -110,10 +112,8 @@ EOF
 cat > build.mcpp <<'EOF'
 import std;
 int main() {
-    const char* sysroot = std::getenv("MCPP_XPKG_XIM_PICOLIBC_RISCV_DIR");
-    const char* llvm    = std::getenv("MCPP_XPKG_XIM_LLVM_DIR");
-    if (!sysroot || !*sysroot) { std::cerr << "no picolibc\n"; return 1; }
-    if (!llvm || !*llvm)       { std::cerr << "no llvm payload\n"; return 1; }
+    const char* llvm = std::getenv("MCPP_TOOLCHAIN_DIR");
+    if (!llvm || !*llvm) { std::cerr << "no toolchain dir\n"; return 1; }
 
     const std::string out = std::getenv("MCPP_OUT_DIR") ?: ".";
     const std::string cfg = out + "/libcxx-config/c++/v1";
@@ -142,7 +142,6 @@ int main() {
     std::println("mcpp:include-dir={}", cfg);
     std::println("mcpp:include-dir={}/include/c++/v1", llvm);
     std::println("mcpp:include-dir={}/share/libc++/v1", llvm);
-    std::println("mcpp:include-dir={}/include/rv64gc/lp64d", sysroot);
     return 0;
 }
 EOF

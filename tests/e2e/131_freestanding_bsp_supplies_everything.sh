@@ -169,14 +169,50 @@ grep -q 'float 3.1416'   run.log || {
 grep -q 'MALLOC-OK'      run.log || {
     cat run.log; echo "the heap is not wired"; exit 1; }
 
-# ── the private half of the seam, pinned from the other side ────────────────
-# If include-dir DID reach the consumer, this would compile — and the whole
-# reason the BSP exports a module would be gone.
+# ── the two include seams, which are NOT the same seam ──────────────────────
+#
+# ⚠️ This used to test both with `#include <stdio.h>` and expect it to FAIL.
+# That criterion was wrong once the target's C library became the target's:
+# `<stdio.h>` now arrives the way it does on a hosted build, from mcpp, for
+# every unit — nobody declares glibc on x86_64 either. Testing the private
+# scope with a libc header was really testing where the libc came from.
+#
+# So both halves, separately:
+#
+# 1. The TARGET's C headers DO reach the consumer. This is the new behaviour
+#    and it deserves a positive assertion, not just the absence of a failure.
 cat > src/main.cpp <<'EOF'
 #include <stdio.h>
-extern "C" int main() { printf("leaked\n"); return 0; }
+extern "C" int main() { printf("TARGET-LIBC-OK\n"); return 0; }
+EOF
+"$MCPP" build --target riscv64-none-elf > libc.log 2>&1 || {
+    cat libc.log
+    echo "the target's C headers did not reach the consumer"
+    exit 1; }
+
+# 2. A DEPENDENCY's own include-dir still does not. Tested with a header the
+#    BOARD ships, which is the only thing `Scope::PackagePrivate` was ever
+#    about — a package must not widen its consumer's include path.
+mkdir -p "$TMP/board/private"
+cat > "$TMP/board/private/board_secret.h" <<'EOF'
+#define BOARD_SECRET 1
+EOF
+python3 - "$TMP/board/build.mcpp" <<'PY'
+import sys, pathlib
+p = pathlib.Path(sys.argv[1]); t = p.read_text()
+marker = "    return 0;\n}"
+assert marker in t, t[-200:]
+t = t.replace(marker,
+    '    std::println("mcpp:include-dir={}/private", std::getenv("MCPP_MANIFEST_DIR"));\n'
+    + marker, 1)
+p.write_text(t)
+PY
+cat > src/main.cpp <<'EOF'
+#include <board_secret.h>
+extern "C" int main() { return BOARD_SECRET; }
 EOF
 if "$MCPP" build --target riscv64-none-elf > leak.log 2>&1; then
+    cat leak.log
     echo "a dependency's include-dir reached the consumer — it is supposed to be"
     echo "package-private (mcpp.build.directives, Scope::PackagePrivate)"
     exit 1

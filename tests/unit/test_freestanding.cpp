@@ -228,6 +228,36 @@ TEST(XpkgEnvVar, BothSpellingsAreDerivedFromOneSanitizer) {
               "MCPP_XPKG_PICOLIBC_RISCV_DIR");
 }
 
+// ── the target owns its C library ───────────────────────────────────────────
+
+TEST(FreestandingTarget, BareMetalRowsNameTheirSysroot) {
+    // ⚠️ The axis that stops every bare-metal PACKAGE from naming a libc.
+    // Before it, a board-support package and a standard-library subset each
+    // had to carry `[xlings] deps = ["xim:picolibc-riscv@..."]`, which bound
+    // both to one libc, one ISA and one version of each — none of which is a
+    // property of either package.
+    for (const char* s : { "riscv64-none-elf", "riscv32-none-elf" }) {
+        auto* k = mcpp::toolchain::triple::find_known_target(
+            *mcpp::toolchain::triple::parse(s));
+        ASSERT_NE(k, nullptr) << s;
+        EXPECT_FALSE(k->sysroot.empty()) << s;
+        // Same spelling the install channel takes, so the two cannot drift.
+        EXPECT_TRUE(k->sysroot.starts_with("xim:")) << s;
+    }
+}
+
+TEST(FreestandingTarget, HostedRowsNameNone) {
+    // A hosted target's libc comes with the compiler payload or through the
+    // runtime binding. Naming one here would resolve a second copy.
+    for (const char* s : { "x86_64-linux-gnu", "x86_64-linux-musl",
+                           "aarch64-macos", "x86_64-windows-gnu" }) {
+        auto* k = mcpp::toolchain::triple::find_known_target(
+            *mcpp::toolchain::triple::parse(s));
+        ASSERT_NE(k, nullptr) << s;
+        EXPECT_TRUE(k->sysroot.empty()) << s;
+    }
+}
+
 // ── whole-graph properties ──────────────────────────────────────────────────
 
 TEST(FreestandingFlags, ExceptionsAndRttiAreOffForTheWholeGraph) {

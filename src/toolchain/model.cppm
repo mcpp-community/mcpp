@@ -83,6 +83,18 @@ struct Toolchain {
     std::filesystem::path               stdCompatSource;    // bits/std_compat.cc / std.compat.cppm
     std::filesystem::path               sysroot;            // -print-sysroot output (or empty)
     std::optional<PayloadPaths>         payloadPaths;        // fine-grained sysroot from xpkgs
+    // The TARGET's C library, for targets whose row in kKnownTargets names one
+    // (today: bare metal). Resolved during prepare, where the config is
+    // already open, rather than in the flag builder — computing it there would
+    // put a config load on a path that runs per build and answers a question
+    // prepare has already answered.
+    //
+    // Empty for every hosted target: they get their libc from the compiler
+    // payload or from PayloadPaths, which is why nobody ever had to write one
+    // down for them.
+    std::filesystem::path               targetSysrootRoot;
+    std::filesystem::path               targetSysrootInclude;
+    std::filesystem::path               targetSysrootLib;
     std::vector<std::filesystem::path>   compilerRuntimeDirs; // LD_LIBRARY_PATH for private tools
     std::vector<std::filesystem::path>   linkRuntimeDirs;     // -L/-rpath dirs for produced binaries
     // Environment the toolchain's tools need when invoked (set on the ninja

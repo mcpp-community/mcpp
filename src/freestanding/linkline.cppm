@@ -66,6 +66,11 @@ inline std::string assemble_prefix(const Spec& s) { return compile_prefix(s); }
 struct LinkInputs {
     std::filesystem::path lld;          // absolute path to ld.lld
     std::filesystem::path linkerScript; // "" = none (BSP-supplied when present)
+    // Where the TARGET's C library lives. Supplied by the engine from the
+    // target's own row, so a board package selects libraries by bare name
+    // (`-lc`, `-lcrt0-semihost`) without knowing which libc it is or where it
+    // landed. "" = this target has no sysroot of its own.
+    std::filesystem::path sysrootLib;
     std::vector<std::filesystem::path> prologue;  // before the user's objects
     std::vector<std::filesystem::path> epilogue;  // after them
 };
@@ -80,6 +85,13 @@ inline std::string link_flags(const Spec& s, const LinkInputs& in,
     out += " -nostdlib -nostartfiles -static";
     if (!in.lld.empty())
         out += " -fuse-ld=" + esc(in.lld);
+    // ⚠️ BEFORE the libraries the board selects, and it has to be on THIS line
+    // rather than in the generic ld flags: a freestanding link line is
+    // REPLACED wholesale (the payload cfg would otherwise inject a host
+    // dynamic linker), so anything appended to the ordinary ldflags earlier is
+    // discarded. Measured — the -L was built, and then silently was not there.
+    if (!in.sysrootLib.empty())
+        out += " -L" + esc(in.sysrootLib);
     if (!in.linkerScript.empty())
         out += " -T " + esc(in.linkerScript);
     return out;

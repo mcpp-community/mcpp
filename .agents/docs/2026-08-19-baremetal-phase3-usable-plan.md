@@ -506,3 +506,36 @@ manifest」的目录里,manifest 永远是最新的那个文件,快路径**永�
 依赖缓存键有 triple,**没有 triple 隐含的那组 flag**。而**哪些 flag 由 triple 隐含是 mcpp 的决定**,
 会随版本变、triple 字符串不变 ⇒ 升级后复用了升级前的 BMI,硬失败,错误只点名一个 `.pcm`。
 已加 `targetImpliedFlags` 轴(hosted 为空,不动任何现有键)。
+
+### 11.6 ⭐ 用户指出的架构错误:目标的 libc 不该由包声明
+
+我把 `xim:picolibc-riscv@1.8.12` 写进了 BSP 和 std 子集两个包的 `[xlings] deps`。
+用户指出三条,**三条都对**:不该绑 libc、不该绑 riscv、不该绑编译器;而且 freestanding
+在普通宿主上一样能用(实测:`-ffreestanding` + 宿主 libc,同一份代码编得过)。
+
+⚠️ **真因是引擎的一个结构性缺口**,不是包写得随意:
+
+| | 编译器 | 目标 libc |
+|---|---|---|
+| hosted(`x86_64-linux-musl`) | 目标表 `pin` **自动** | musl 在 gcc 载荷里 / glibc 走 `PayloadPaths` —— **自动**,没人写过 `xim:glibc` |
+| freestanding | 目标表 `pin = llvm@22.1.8` **自动** | **没有任何一条轴** ⇒ 外溢到每个包 |
+
+⇒ **给 `TargetInfo` 加 `sysroot` 轴**(和 `pin` 并列),复用现有 `[xlings] deps` 物化通道
+安装,引擎把 `-isystem <sysroot>/include/<档位>` 和 `-L <sysroot>/lib/<档位>` 放上去。
+
+**位置是目标的事实,选择是板级的事实**:引擎给位置,BSP 用**裸名**选 `-lcrt0-semihost`
+`-lc` `-lsemihost` 并指定链接脚本。
+
+同时补两个「问引擎」的接口:`mcpp::toolchain_dir()` 与 `mcpp::sysroot_dir()`
+⇒ **两个包的 `[xlings] deps` 里 libc 与编译器全部消失**,std 子集变成与架构/libc/实现无关。
+
+#### 实施中撞到的三条
+
+1. ⚠️ **`-L` 加到 `f.ld` 上会被丢掉** —— freestanding **整条替换**链接线(否则载荷 cfg
+   注入宿主 dynamic linker),所以必须放进 `LinkInputs`。实测:flag 拼出来了,然后不在。
+2. ⚠️ **`link-script` 的裸名会被按包根绝对化** ⇒ `picolibcpp.ld` 指到包目录里。板级包要
+   用 `sysroot_dir()` 自己拼 —— 它知道**要哪个脚本**,不知道**在哪**。
+3. ⚠️ **e2e/131 的私有性断言判据失效了**:它用 `#include <stdio.h>` 编不过来证明依赖的
+   `include-dir` 不到达消费者。libc 归目标之后 `<stdio.h>` **本来就该编得过**(和宿主一样)。
+   ⇒ 拆成两条:目标 C 头**必须**到达(正面断言),板级包**自己的**头**必须不**到达。
+   **原来那条测的其实是「libc 从哪来」,不是「作用域对不对」。**

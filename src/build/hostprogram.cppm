@@ -182,6 +182,27 @@ inline const char* target_env()                   { return env_or("MCPP_TARGET_E
 inline const char* host()                         { return env_or("MCPP_HOST"); }
 inline const char* profile()                      { return env_or("MCPP_PROFILE"); }
 inline const char* out_dir()                      { return env_or("MCPP_OUT_DIR"); }
+
+// Where the TOOLCHAIN mcpp resolved for this build lives — the payload root,
+// the directory whose `bin/` holds the driver.
+//
+// ⚠️ This exists so a package never has to DECLARE a toolchain. A package that
+// needs headers the toolchain ships (libc++'s, for a freestanding standard
+// library subset) previously had to put `xim:llvm` in `[xlings] deps`, which
+// pinned it to one implementation — and the measured fact is that the same
+// subset works over libstdc++'s freestanding mode too, so pinning was not
+// merely inelegant, it closed a road. Asking here follows whatever
+// `[toolchain]` actually resolved.
+inline const char* toolchain_dir()                { return env_or("MCPP_TOOLCHAIN_DIR"); }
+
+// Where the TARGET's C library lives, for targets that have one of their own
+// (today: bare metal). Same argument one line up: the libc is a property of
+// the target, mcpp resolves it from the target's own row, and a package that
+// needs to name a FILE inside it (a linker script) asks rather than declares.
+//
+// Empty on a hosted target — there the libc comes with the compiler payload or
+// through the runtime binding, and nothing has to look for it.
+inline const char* sysroot_dir()                  { return env_or("MCPP_TARGET_SYSROOT"); }
 inline const char* manifest_dir()                 { return env_or("MCPP_MANIFEST_DIR"); }
 inline bool has_feature(const char* name) {
     char buf[256] = "MCPP_FEATURE_";
