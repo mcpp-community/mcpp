@@ -61,8 +61,13 @@ hosted 后端把 `kal_stream_write` 转发到 `::write(2)`(在 libc 之上);
 | **`openkal.memory`** | 一块内存区域 | ✅ | 静态 arena 上的 bump allocator 是一个**实现** |
 | `openkal.time` | 一个时间源 | ❌ | ⚠️ 不走的计数器**不是**时钟 —— 会让超时静默失效 = **模拟** |
 | `openkal.task` | 一个执行上下文 | ❌ | 需要调度 + 上下文切换(那是 openarch) |
-| `openkal.namespace` | 名字 → 资源 | ❌ | 需要一个命名权威 |
+| `openkal.fs` | 一个 **descriptor**(自有句柄类型) | ❌ | 需要一个命名权威 |
+| `openkal.net` | 一个 **socket**(自有句柄类型) | ❌ | 同上 |
 | `openkal.channel` | 一条消息通道 | ❌ | — |
+
+⭐ **`stream` 是共享货币,不是统一入口**:`fs` 的 descriptor 与 `net` 的 socket 各有
+自己的句柄类型和自己的操作,但**都能产出 `openkal.stream`**。往哪写这件事对文件 /
+socket / UART 是同一套代码;打开它们不是。
 
 ### 2.2 ⭐ core 的判别式:实现 vs 模拟
 
@@ -74,21 +79,48 @@ hosted 后端把 `kal_stream_write` 转发到 `::write(2)`(在 libc 之上);
 ⇒ **「这块 MCU 没有堆」是错的命题**:只要有 RAM,堆就是实现出来的;
 上层不关心 openkal 底层怎么做到。
 
-### 2.3 ⚠️ `fs` 与 `net` 不是接口
+### 2.3 ⚠️ 一个被起草后撤回的分解:`openkal.namespace`
 
-它们在资源分解下**溶解**了:
+草案曾把 `fs` 和 `net` 消掉,换成一个通用的 `openkal.namespace`(名字 → 资源),
+理由是「文件 / TCP 连接 / 管道 / 串口给你的都是 stream,只是命名方式不同」。
+
+**重估后撤回。三条攻击全部成立:**
+
+**① 它触犯本文自己的 §5.1 规矩。** 「一个操作若能『存在但永远失败』,说明它被错误地
+合并了」—— 而把文件和 socket 都塞进一个 `stream`,`stream` 的 caps 就成了
+**互不相干能力的并集**(seek/size/truncate/sync 对上 shutdown/peer/nodelay),
+每个后端对其中大多数说 `false`。**正是那个反模式,换了个地方出现。**
+
+**② `namespace` 需要一个 URI 解析器,那是模拟层。** `kal_namespace_open("tcp://…")`
+要求**每个后端都能解析 scheme**:只有 UART 的后端也得解析并拒绝 `tcp://`;
+合法 scheme 集合无界、不可发现;错误是字符串形状的。
+⚠️ **直接违反对下判据**(四后端自然实现、不需模拟层),而且比 POSIX 还差 ——
+POSIX 至少 `open()` 与 `socket()+connect()` 是分开的类型化调用。
+
+**③ 引用的先例是错的。** 草案称「这是 WASIp2 收敛到的形状」。**不是。** WASIp2 是:
 
 ```
-"tcp://10.0.0.1:80"  ──namespace──▶  一个 stream
-"/etc/hosts"         ──namespace──▶  一个 stream
-UART                 ──BSP 接线──▶   stdout(也是 stream)
+wasi:io/streams        input-stream / output-stream   ← 共享的传输资源
+wasi:filesystem/types  descriptor                     ← 自有资源类型,能产出 stream
+wasi:sockets/tcp       tcp-socket                     ← 自有资源类型,能产出 stream
 ```
 
-⭐ **TCP 连接、文件、管道、串口给你的是同一种资源,只是命名方式不同。**
-这比 POSIX 的 "everything is a file"(把命名和资源混成一个整数)干净:
-**命名失败和读写失败是两件事,现在它们在两个接口里。**
+它把**资源种类分开**,共享的是 **stream 这个传输类型**。草案把「共享 stream」
+误读成了「统一命名」。
 
-**net 不是设备,但网卡是** —— 按基数分(§10):网卡 N 个 → openhal;协议栈 1 个 → openkal。
+⇒ **保留对的那半(流统一了传输),丢掉错的那半(统一命名)。**
+
+| | namespace 草案 | 撤回后 | 单体 fs+net |
+|---|---|---|---|
+| 实现者 | ⛔ 人人要 URI 解析器 | ✅ 没有就**不提供**该 interface | ✅ 同 |
+| 消费者 | ⛔ 错误是字符串;**编译期不知道支不支持** | ⭐ `import openkal.net;` 缺了就**编译期报错** | ✅ 同 |
+| 规范负担 | ⛔ 要标准化 **scheme 注册表** = 巨大隐藏面 | ✅ 每 interface 独立版本,面有界 | ⚠️ 接口大但有界 |
+| 类型安全 | ⛔ caps 成为不相干能力并集 | ✅ 文件操作在文件句柄上 | ✅ 同 |
+
+⚠️ **划分原则(按资源种类)没错,错的是塌缩过头** —— `descriptor` / `socket` /
+`stream` 本来就是三种资源。
+
+**net 不是设备,但网卡是** —— 按基数分(§12):网卡 N 个 → openhal;协议栈 1 个 → openkal。
 
 ---
 
@@ -159,10 +191,13 @@ if constexpr (requires { kal::seek(s, 0); })   // ⚠️ 名字不存在 ⇒ 硬
 |---|---|---|---|
 | **① 接口在不在** | 有没有 `openkal.task` | **模块导入** | 编译期,点名模块 |
 | **② 接口内的操作在不在** | 有 `write` 没 `seek` | **constexpr caps** | 编译期,`static_assert` 文案 |
-| **③ 语义能力** | 有没有 MMU、能否阻塞 | **`cfg()` 轴** | 依赖解析期 |
+| **③ 语义能力** | 抢占式 vs 协作式调度 | **`cfg()` 轴** | 依赖解析期 |
 
 ⚠️ **③ 绝不能做成 concept**:ⓘ K1/K2 实测 `RiscvSv39` 与 `NoMmu` **同时满足**同一个
 `AddressSpace` concept,通用代码在 NoMmu 上**静默失败**。**concept 检查语法,不检查语义。**
+
+⭐ **但 openkal core 里一条 ③ 都没有** —— 见 §4.3。K1/K2 那个例子是 **openarch** 的
+`AddressSpace`,不是 openkal 的。
 
 ### 4.1 ①:让模块解析本身成为能力检查
 
@@ -178,8 +213,31 @@ import openkal.stream.caps;   // 没有后端 ⇒ 编译期找不到模块,点�
 
 ⇒ **「没有实现者」不是链接器吐未定义符号,而是编译器说模块不存在。**
 
-mcpp 侧承载件已有:后端由 **`cfg()` 条件依赖**选,接口包用 **`reexport = true`**
-把后端 provisions 透给消费者 —— 对应「后端选择 = 条件依赖,零新增轴」。
+⚠️ **接法要注意方向。** 草案曾写「接口包 `reexport` 后端的 provisions」——
+**错的**:ⓘ `reexport` 是**向下游**传播(`grpc` 把 protoc 透给它的用户),
+而这里需要的是接口拿到**消费者所选后端**提供的东西,方向相反,`reexport` 表达不了。
+
+正确接法是**反过来**,而且正好是 `reexport` 的本意:
+
+```toml
+# 后端包 openkal-uart 的 manifest
+[dependencies]
+openkal-stream = { version = "0.1", reexport = true }   # 把接口透给我的消费者
+```
+
+```toml
+# 消费者:只写后端,按 target 选;接口随之而来
+[target.'cfg(os = "linux")'.dependencies]
+openkal-linux = "0.1"
+[target.'cfg(os = "none")'.dependencies]
+openkal-uart  = "0.1"
+```
+
+源码 `import openkal.stream;` 两个 target 一字不改。
+⇒ **零新增引擎轴,且用的是已有机制的本意。**
+
+⚠️ 两个后端同时进图会造成 `openkal.stream.caps` 模块重复定义 —— 基数为 1(§12)
+使这成为用户错误,mcpp 会报模块冲突。
 
 ### 4.2 ②:能力是**值**
 
@@ -199,8 +257,8 @@ struct caps {
 if constexpr (kal::stream_caps::caps::seek) { kal::seek(s, off); }
 
 static_assert(kal::stream_caps::caps::seek,
-    "this backend has no seekable streams; openkal.namespace is the "
-    "interface that hands out seekable ones");
+    "this backend has no seekable streams; openkal.fs hands out "
+    "descriptors that do");
 ```
 
 组合 = **concept over caps**,不是 concept over 符号:
@@ -210,15 +268,27 @@ template <class C> concept Sequential = C::sequential;
 template <class C> concept Seekable   = Sequential<C> && C::seek;
 ```
 
-### 4.3 ③:`cfg()` 轴 —— ⚠️ 今天文法不够
+### 4.3 ③:⚠️ openkal core 用不到它 —— 一条被撤回的引擎改动
 
-mcpp 今天 `cfg()` 的文法是 **os / arch / family / env + all/any/not**,**没有能力谓词**。
-⇒ `cfg(mmu)` 这类需要**扩文法**。
+草案曾要求扩 `cfg()` 文法以支持 `cfg(mmu)` 这类能力谓词。**重估后撤回。**
 
-⚠️ 这是本方案**唯一需要引擎改动**的一处,而且与「零新增轴」不冲突 ——
-是给已有的 `cfg` 加一个词类,不是加一条新轴。
+那条结论的出处是 K1/K2,而 K1/K2 测的是 **openarch 的 `AddressSpace`** —— 草案把它
+搬进了 openkal。逐个接口检查 openkal 有没有「存在但语义不同」的能力:
 
----
+| interface | 有 ③ 类语义轴吗 |
+|---|---|
+| `abort` | 无 |
+| `stream` | seek / nonblock / vectored 都是**操作**(②类) |
+| `memory` | 静态 arena vs 按需分页 = **容量**不是能力;分配失败到处都有定义 |
+| `time` | monotonic vs wall 是**两种资源**,不是一个资源的两种语义 |
+| `task` | ⚠️ 抢占 vs 协作**确实是** —— 但那是 D1 以后的事 |
+
+⇒ **core(abort + stream + memory)一条语义轴都不需要,①② 足够。**
+
+而且 **triple 本身已经承载了大部分**:`riscv64-none-elf` 与 `riscv64-linux-gnu` 的
+区别里就包含了 MMU 用不用。今天已有的文法足以选后端。
+
+⭐ **撤回后,本方案变成零引擎改动。**
 
 ## 5. ⭐ caps 撒谎问题:四层防御,按强度排
 
@@ -600,10 +670,113 @@ thread_local int counter;  →  编译 ✅ 链接 ✅ 零未定义符号 ✅ 零
 
 | | 为什么 |
 |---|---|
-| **`open(path)` 进 core** | WASIp1 的教训;命名进 `openkal.namespace`,且不是 core |
+| **`open(path)` 进 core** | WASIp1 的教训;开文件在 `openkal.fs`(自有句柄类型),不在 core,也不经一个通用命名接口(§2.3) |
 | **运行期 `ENOSYS`** | 部分性用「链接哪些 interface」表达;⭐ gcc 的 `gthr-single.h` 已是三十年的先例 |
 | **errno 透传** | 封闭 `enum class`;映射不是模拟 |
 | **虚接口 / vtable** | ABI 脆弱,与「只增不改」冲突 |
 | **`thread_local` 的保证** | 属于 openarch + BSP(§10.4) |
 | **引擎认识 openkal** | ⚠️ 计划 §7.2 第一行:**引擎永不认识这三层**;后端选择 = 条件依赖,零新增轴 |
 | **现在就实现** | D0 的门是「第三方来了没有」,不是「能不能写出来」 |
+
+---
+
+## 15. 撤回记录
+
+⚠️ 草案里被 review 推翻的两条,连同它们**为什么当时看起来对**:
+
+| 撤回的 | 当时的理由 | 为什么错 |
+|---|---|---|
+| **`openkal.namespace`**(取代 fs/net) | 「文件 / socket / UART 给你的都是 stream,只是命名方式不同」 | ① 触犯本文自己的 §5.1 规矩(caps 成为不相干能力并集);② URI 解析器**就是**模拟层,违反对下判据;③ 引用的 WASIp2 先例是**误读**(它分开资源种类,只共享 stream 类型) |
+| **扩 `cfg()` 文法支持 `cfg(mmu)`** | K1/K2 说「MMU 是能力轴不是契约」 | 那条结论是关于 **openarch** 的;openkal core 逐个接口查下来**一条 ③ 类语义轴都没有**,而且 triple 本身已承载大部分 |
+| **「接口包 `reexport` 后端」** | 以为 mcpp 的承载件现成 | ⓘ `reexport` 是**向下游**传播,方向相反。正确接法是**后端 reexport 接口**(§4.1),恰好是该机制的本意 |
+
+⭐ 三条的共同形状:**都是「我有一个漂亮的统一」,而漂亮的统一把两件本来不同的事合并了。**
+这与 §5.1 给出的判据是同一条 —— 只是那一节我用它去检查别人的后端,没有用它检查自己的分解。
+
+---
+
+## 16. 综合 review 发现的开放问题
+
+撤回两条之后重新通读,又找出六条 —— 都是**规范必须表态、但草案没表态**的。
+
+### 16.1 ⚠️ 两个堆(ⓘ 实测,不是理论)
+
+ⓘ picolibc `libc.a` 的 `vfprintf.c.o` **引用 `free`** —— **printf 与分配器是耦合的**。
+而固件里已有一整套 `malloc`/`free`/`__malloc_sbrk_aligned`/`__fallback_sbrk`。
+
+⇒ 若 `operator new` 走 `kal_alloc`(openkal 的 arena)而 `printf` 走 picolibc 的
+`malloc`,**同一块 RAM 上会有两个分配器**,而且都想长 sbrk。
+
+**规范必须写死一条**:
+
+> **后端上若已存在 libc 分配器,`kal_alloc` 必须实现在它之上,而不是与它并列。**
+
+三种配置:
+
+| 后端 | 做法 | |
+|---|---|---|
+| picolibc | `kal_alloc` → `malloc`(openkal 在 libc **之上**) | ✅ 一个堆 |
+| 零 libc | `kal_alloc` → 自带 arena;没有 libc malloc | ✅ 一个堆 |
+| ⛔ 自带 arena **且** libc malloc 也在 | — | **禁止** |
+
+⚠️ 这条部分可 conformance 化:检查固件里 `sbrk` 的消费者是不是只有一个。
+
+### 16.2 ⚠️ 错误集合的封闭性
+
+草案说「封闭 `enum class`,不透传 errno」。但 POSIX 有约 130 个 errno,
+一个 ~15 项的封闭集合**必然丢信息**。规范要表态:
+
+- 丢掉细节(简单,但诊断质量下降),还是
+- 留一个 `other` + **后端私有的细节通道**(`kal_last_error_detail()`),
+  ⚠️ 但那是全局状态,和 errno 一样的毛病
+
+**倾向**:封闭集合 + 细节通道**只用于日志**,不进控制流。需要写进 SPEC。
+
+### 16.3 ⚠️ C ABI 没有版本,而结构体布局会被永久冻结
+
+「每个 interface 独立版本 + 只增不改」保护得了**函数**(加新函数是可加的),
+保护不了**结构体**:`kal_io_result` 的布局一旦发布就永远不能动。
+
+选项:符号带版本后缀(`kal_stream_write_v1`,难看但诚实),或**明确声明这些布局永久冻结**。
+草案默认了后者却没写出来。
+
+### 16.4 ⚠️ 拥有 vs 借用,C ABI 强制不了
+
+标准流是**借用**(不配 `close`),`openkal.fs` 的 descriptor 是**拥有**(必须 close)。
+C ABI 里没有 RAII,谁来保证?
+
+⇒ 类型化 C++ 层可以包 RAII,但**那不是规范的一部分**,Rust/C 消费者拿不到。
+规范至少要把「哪些句柄是拥有的」写清楚,并规定重复 close 的行为。
+
+### 16.5 ⚠️ 线程安全未规定
+
+同一个 `kal_stream` 被两个 task 同时 `write`,是什么行为?
+POSIX 至少规定了 `PIPE_BUF` 以内的原子性。**草案一个字没提。**
+这条在有 `openkal.task` 之后立刻变成必须回答的。
+
+### 16.6 ⚠️ sized-free 的方向性成本
+
+`kal_free(p, size, align)` 对 arena 友好(Rust 的做法),但:
+
+- hosted 后端 `kal_free` → `free(p)`,**丢掉 size**:无成本 ✅
+- 反向:一个建在 `kal_alloc` 之上的 libc `malloc` **必须自己存 size** ⇒ 每次分配多一个字
+
+⚠️ 与 §16.1 的规则合看,反向配置本来就该避免,所以成本可控 —— 但要写明。
+
+---
+
+## 17. 这一轮 review 的元结论
+
+三条撤回(§15)+ 六条开放问题(§16)里,有一个共同形状值得单独记:
+
+⭐ **草案的错误全部是「一个漂亮的统一,把两件本来不同的事合并了」**:
+
+- `openkal.namespace` 合并了「命名」与「资源种类」
+- `cfg(mmu)` 把 openarch 的结论搬进 openkal
+- 「两个堆」是没有合并该合并的(分配器)
+
+而 §5.1 给出的判据 —— **「一个操作若能『存在但永远失败』,说明它被错误地合并了」** ——
+本来就能抓住前两条。
+
+⚠️ **我只用它去检查别人的后端,没有用它检查自己的分解。**
+⇒ 判据要对**自己的设计**先跑一遍,再拿去当准入门槛。
