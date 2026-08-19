@@ -10,9 +10,9 @@ specification itself, which is maintained in the `mcpplibs/openkal` repository.
 
 | Repository | Contents | Version |
 | --- | --- | --- |
-| `mcpplibs/openkal` | the specification, the modules that declare it, the surface checker, and a substitution example | 0.1.0 |
-| `mcpplibs/openkal-linux` | the reference implementation for Linux, its conformance suite, and an example | 0.1.0 |
-| `mcpplibs/mcpp-index` | descriptors for both packages | pull request 220 |
+| `mcpplibs/openkal` | the specification, the modules that declare it, the surface checker, and a substitution example | 0.2.0 |
+| `mcpplibs/openkal-linux` | the reference implementation for Linux, its conformance suite, and an example | 0.2.0 |
+| `mcpplibs/mcpp-index` | descriptors for both packages | pull requests 220 and 221 |
 
 Both packages are mirrored to GitCode, and the mirrored archives were verified
 to be byte-identical to those served by GitHub.
@@ -51,16 +51,30 @@ the resolution is recorded.
 
 ### 3.1 Architecture
 
+⚠️ **A correction applied after 0.1 was published.** Version 0.1 placed the
+module a consumer imports under the control of the implementation: the
+specification package provided `openkal.decl.<name>` and the implementation
+re-exported it as `openkal.<name>`. Review identified this as a contradiction of
+what a specification is for, and the identification was correct. The arrangement
+existed to support detection of optional operations through argument-dependent
+lookup, which requires an implementation's declarations to be visible to the
+consumer — and version 0.1 defined no optional operation, so the mechanism
+served nothing that existed.
+
+Version 0.2 restores the intended layering: the specification package provides
+the interface, and an implementation contributes definitions and exports no
+module. The cost is that a missing implementation is reported by the linker
+rather than by the compiler, and the diagnostic names the undefined functions.
+
 An interface is the unit of provision and of versioning. An implementation
 provides an interface in whole or not at all, and an interface that is not
 provided is absent as a module rather than present and refusing.
 
 The consequence for the module layout is stated in clause 4 of the
-specification: the implementation owns the name a consumer imports, because
-argument-dependent lookup does not reach a module the translation unit has not
-imported. The alternative arrangement, in which the specification package owns
-that name, was rejected because it would have made optional capabilities
-undetectable.
+specification: the specification package owns every module, and an
+implementation exports none. An implementation therefore cannot extend the
+interface, and this is not a rule that must be enforced — it follows from the
+arrangement.
 
 ### 3.2 Stability
 
@@ -76,22 +90,24 @@ reproduced by a test suite.
 
 ### 3.3 Simplicity
 
-The capability mechanism uses argument-dependent lookup and a fallback overload.
-An earlier design used a record of capability flags together with a separate
-configuration file, and both were removed. A record can disagree with the code
-it describes; a declaration cannot. The removal also eliminated a second
-configuration format from the ecosystem, in which every other fact about a
-package resides in `mcpp.toml`.
+Version 0.2 defines no optional operation, and therefore no mechanism for
+expressing one. Two designs were built and removed before this was recognised: a
+record of capability flags with a separate configuration file, and a set of
+fallback overloads detected through argument-dependent lookup. Each solved a
+problem the specification did not yet have.
+
+Clause 6.3 records the alternatives and the measurements that constrain them, so
+that the choice is informed when an optional operation is first defined.
 
 ### 3.4 User experience
 
-A consumer that calls an operation the implementation does not provide is
-rejected during compilation, and the diagnostic carries the wording the
-specification supplies. This is the default behaviour and requires nothing of
-the consumer: no capability test, no configuration, and no annotation.
+A consumer imports the interface and names no implementation. Which
+implementation supplies the definitions is decided in the manifest, and changing
+it is a change to one line.
 
-A consumer that wishes to adapt rather than fail uses the concept the interface
-provides, which evaluates to false when the operation is absent.
+A consumer that depends upon no implementation compiles and fails to link, with
+the undefined functions named. That is later than a compilation failure and is
+legible; clause 4.2 records it rather than concealing it.
 
 ### 3.5 Compatibility
 
