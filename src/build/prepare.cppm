@@ -575,14 +575,23 @@ export CacheMode resolve_cache_mode(const mcpp::manifest::Manifest& m,
 // place. The rule is pure (manifest + one override string), so both sides can
 // evaluate it without resolving a toolchain or scanning the module graph.
 //
-// Precedence: --profile/--release/--dev > [build].default-profile > "dev".
+// Precedence: --profile/--release/--dev > [build].default-profile > `fallback`.
 // The global default is "dev" (-O0 -g) per the dominant convention
 // (Cargo/Meson/CMake/Zig/Bazel/MSBuild all default to debug).
+//
+// `fallback` exists for ONE caller: `mcpp pack`, where the artifact leaves this
+// machine and an unoptimized build with the publisher's absolute source paths
+// in it is never what was meant. It changes the LAST step only, so a manifest
+// that states `[build] default-profile` still decides — packaging an artifact
+// with different flags than `mcpp build` produces would be its own surprise.
+// Adding a parameter here rather than a second resolver keeps the precedence
+// rule in one function, which is why this function exists at all.
 export std::string resolve_profile_name(const mcpp::manifest::Manifest& m,
-                                        std::string_view override_name) {
+                                        std::string_view override_name,
+                                        std::string_view fallback = "dev") {
     if (!override_name.empty())                 return std::string(override_name);
     if (!m.buildConfig.defaultProfile.empty())  return m.buildConfig.defaultProfile;
-    return "dev";
+    return fallback.empty() ? std::string("dev") : std::string(fallback);
 }
 
 // Command-level overrides (--target / --static).
@@ -642,6 +651,10 @@ export struct BuildOverrides {
     bool        force_static = false; // --static (or implied by musl target)
     std::string package_filter;      // -p <name>: only build this workspace member
     std::string profile;             // --profile <name> (default "release")
+    // What `resolve_profile_name` falls back to when neither the command line
+    // nor `[build] default-profile` says. Empty = "dev", which is every
+    // interactive command. `mcpp pack` sets "release": see resolve_profile_name.
+    std::string profile_fallback;
     std::string features;            // --features a,b,c (root package activation)
     bool        strict = false;      // --strict: schema warnings become errors
     std::string capabilities;        // --cap blas=openblas,lapack=mkl (provider pins)
@@ -1121,7 +1134,7 @@ prepare_build(bool print_fingerprint,
         // wants its plain `mcpp build` optimized sets
         // [build].default-profile = "release" (mcpp's own mcpp.toml does this,
         // so the released binary stays -O2).
-        pname = resolve_profile_name(*m, overrides.profile);
+        pname = resolve_profile_name(*m, overrides.profile, overrides.profile_fallback);
         mcpp::manifest::Profile pr;
         if (pname == "dev" || pname == "debug") { pr.optLevel = "0"; pr.debug = true; }
         else if (pname == "dist")               { pr.optLevel = "3"; pr.strip = true; }

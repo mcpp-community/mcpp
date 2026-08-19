@@ -256,16 +256,77 @@ That is a degradation, not a break, and it is the right direction. But it means
 **the gate protects new clients only**, which belongs in the release notes of any
 package published to a mixed-version audience.
 
+## What travels inside a package, and what deliberately does not
+
+A published package must work on a machine that is not the publisher's. Two
+steps enforce that, and both run on every artifact the packer stages.
+
+### The build machine's loader paths are removed
+
+A dev build bakes the toolchain's own directories into every shared object:
+
+```text
+DT_RUNPATH = <home>/registry/data/xpkgs/xim-x-glibc/2.44/lib64
+           : <home>/registry/data/xpkgs/xim-x-gcc/16.1.0/lib64
+           : <home>/registry/subos/default/lib
+```
+
+That is correct for a dev build and fatal for a package (issue #460), because
+of one rule in the ELF loader: **an object that carries any `DT_RUNPATH` makes
+the loader skip the entire inherited `DT_RPATH` chain when resolving that
+object's own dependencies.** The consumer's `DT_RPATH` — payload, package
+directory, SubOS farm, all computed on the machine that will actually run it —
+is therefore not consulted, and the program dies with
+
+```text
+error while loading shared libraries: libstdc++.so.6: cannot open shared object file
+```
+
+⚠️ **`$ORIGIN` is not the fix.** Measured on a real package with the build
+machine's store made unreachable:
+
+| state on the shipped `.so` | consumer's `DT_RPATH` inherited? | result |
+|---|---|---|
+| stale absolute `DT_RUNPATH` | no | fails |
+| **no tag at all** | **yes** | **runs** |
+| `DT_RUNPATH = $ORIGIN` | no | fails |
+| `DT_RUNPATH = ""` | no | fails |
+
+It is the tag's *presence* that disables inheritance, not its contents. So
+`mcpp pack` removes the entry rather than rewriting it — and removing it is not
+a compromise, it is the right answer: the consumer's own `DT_RPATH` is the same
+closure, resolved where it means something.
+
+The path *string* stays in `.dynstr`, unreferenced. `.dynstr` is tail-merged by
+the linker, so a shorter live string can begin inside the dead one and deleting
+those bytes cannot be shown safe; `patchelf --remove-rpath` leaves the identical
+residue at the identical file size. **A guard for this must therefore read the
+dynamic entries, never `grep` the file's bytes** — see
+`tests/e2e/_elf_tag.sh`.
+
+On Mach-O the packer reads `LC_RPATH` and warns when a package would carry one;
+rewriting it (`install_name_tool -delete_rpath`) is not automated yet, because
+no test in this suite produces a `.dylib` to measure the edit on.
+
+### Debug information is removed
+
+See [docs/02](02-pack-and-release.md) for the flags, the per-shape table, and
+`--debug-symbols`. The rule that matters for a *library* package: a static
+archive is only ever `--strip-debug`ed, because `--strip-all` removes the
+archive symbol index and the consumer's link then fails with `archive has no
+index; run ranlib to add one`.
+
 ## Current limitations
 
 | | status |
 |---|---|
 | `kind = "lib"` (static) | ✅ every target, tested on all three |
-| `kind = "shared"` on Linux/ELF | ✅ — the package carries both the link name and the SONAME |
+| `kind = "shared"` on Linux/ELF | ✅ — the package carries both the link name and the SONAME, and no build-machine loader path |
 | `kind = "shared"` on PE / MinGW (`*-windows-gnu`) | ✅ — the package carries the `.dll` **and** its import library |
-| `kind = "shared"` on Mach-O (`*-macos`) | ✅ — install name is `@rpath/<file>`, so the `.dylib` relocates |
+| `kind = "shared"` on Mach-O (`*-macos`) | ✅ — install name is `@rpath/<file>`, so the `.dylib` relocates. `LC_RPATH` is reported, not yet rewritten |
 | `kind = "shared"` on PE / MSVC (`*-windows-msvc`) | ✅ — mcpp generates the `.def`; see below |
 | `kind = "shared"` on `*-musl` | ❌ a musl target links statically |
+| one package carrying two ABIs for the same triple (gcc **and** clang) | ❌ leg selection is `cfg(arch/os/env)`; publish one package per ABI |
 | shipping prebuilt BMIs | ❌ not attempted; BMIs are compiler-build-exact |
 | bundling dependencies into the package | ❌ declare them instead (above) |
 | consuming a package with **native `cl.exe`** | ✅ — via the neutral link intent; see below |
@@ -415,6 +476,9 @@ The e2e suite gates each test on host capabilities, so "the suite is green" and
 | Mach-O shared library relocating out of its build tree | — | ✅ | — |
 | MSVC refusing `kind = "shared"` for the export reason | — | — | ✅ |
 | a released mcpp consuming a package this one produced | local only | local only | local only |
+| a packed `.so` carries no build-machine loader path, **and the guard can see the defect when it is put back** | ✅ | — | — |
+| a stripped static archive still links; a stripped shared library still loads; `--no-strip` / `[pack] strip` / `--debug-symbols` from both sides | ✅ | — | — |
+| the ELF editor on ELF32 and big-endian | unit test | unit test | unit test |
 
 *impossible* is not a gap: a macOS host can serve exactly one target
 (`host_can_serve`, `registry.cppm`), so a package with two legs cannot be produced

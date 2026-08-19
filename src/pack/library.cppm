@@ -38,9 +38,12 @@ export module mcpp.pack.library;
 import std;
 import mcpp.pack.digest;
 import mcpp.pack.manifest_emit;
+import mcpp.pack.relocate;
+import mcpp.pack.strip;
 import mcpp.source_kind;   // builtin_extension_table — what needs no declaring
 import mcpp.pack.zip;
 import mcpp.platform;
+import mcpp.ui;
 
 export namespace mcpp::pack {
 
@@ -71,6 +74,11 @@ struct LibraryLeg {
     // package that no linker can use, so the package carries both and the
     // emitted manifest points consumers at this one.
     std::filesystem::path importLibrary;
+    // Debug-information removal for THIS leg's toolchain, resolved by the
+    // caller from `mcpp::toolchain::binutils_tool`. Per leg for the same
+    // reason `archiveTool` is: a fat package's aarch64 leg must not be
+    // stripped by the x86_64 host's tool.
+    mcpp::pack::StripTools stripTools;
 };
 
 struct LibraryPackPlan {
@@ -94,6 +102,11 @@ struct LibraryPackPlan {
     std::filesystem::path includeDir;     // absolute, or empty
     std::vector<std::pair<std::string, std::string>> dependencies;
     std::vector<std::filesystem::path> extras;   // README / LICENSE / [pack].include hits
+
+    // Remove debug information from the shipped artifacts (mcpp.pack.resolve_strip).
+    bool                  strip = true;
+    // Where the separated `*.debug` files go, absolute. Empty = do not separate.
+    std::filesystem::path debugDir;
 
     std::vector<LibraryLeg> legs;
 };
@@ -273,26 +286,6 @@ run_library_pack(const LibraryPackPlan& plan)
                 return std::unexpected(r.error());
         }
 
-        // A shared library needs BOTH of its names present.
-        //
-        // `-lmathkit-shared` resolves `libmathkit-shared.so` at link time, but
-        // the object records `SONAME libmathkit.so.1`, and that is the name the
-        // loader asks for. Ship only the built file and the consumer links,
-        // then fails to start — mcpp's own runtime-closure check reports
-        // "libmathkit.so.1 not found on the search path this artifact will
-        // actually use", which is how this was caught.
-        //
-        // A symlink is what a distribution ships; a copy is the fallback for
-        // filesystems (and archives) that cannot carry one.
-        if (leg.shared && !leg.soname.empty() && leg.soname != name) {
-            auto alias = dst.parent_path() / leg.soname;
-            std::error_code linkEc;
-            std::filesystem::remove(alias, linkEc);
-            std::filesystem::create_symlink(name, alias, linkEc);
-            if (linkEc)
-                if (auto r = copy_into(leg.artifact, alias); !r) return std::unexpected(r.error());
-        }
-
         // Delete the objects of the units published as source. The consumer
         // compiles those itself; leaving them in the archive means two
         // definitions of the module initialiser, resolved by link order.
@@ -324,6 +317,99 @@ run_library_pack(const LibraryPackPlan& plan)
             }
         }
 
+        // ── THE ORDER, AND IT IS NOT FREE ─────────────────────────────
+        //
+        // Four steps change the artifact's bytes and one records them. They
+        // are written here, once, because every one of them is a way to ship
+        // a package whose manifest describes a file that is not the one in the
+        // archive:
+        //
+        //   1. copy            (above)
+        //   2. drop objects    (above) — changes the archive's members
+        //   3. relocate        — remove the build machine's loader paths
+        //   4. strip           — remove debug info (and separate it)
+        //   5. soname alias    — a symlink to, or a COPY OF, the FINAL file
+        //   6. digest          — the package's evidence, over the final bytes
+        //
+        // 5 after 3–4 is the one that used to be wrong in a way nothing could
+        // see: the alias' copy fallback read `leg.artifact` (the BUILD tree's
+        // file), which was byte-identical only because nothing here modified
+        // anything. With 3 and 4 in place it would ship an unrelocated,
+        // unstripped library under the exact name the loader asks for — and
+        // only on the machines where `create_symlink` fails, which is where
+        // nobody looks.
+
+        // 3. The build machine does not travel. See mcpp.pack.relocate for why
+        //    this removes the tag rather than rewriting it to `$ORIGIN`.
+        {
+            auto r = mcpp::pack::relocate::strip_search_paths(dst);
+            if (!r) return std::unexpected(LibraryPackError{ std::format(
+                "cannot make '{}' relocatable: {}", dst.string(), r.error()) });
+            using O = mcpp::pack::relocate::Outcome;
+            if (r->outcome == O::Removed) {
+                std::string what;
+                for (auto const& p : r->paths) { if (!what.empty()) what += " "; what += p; }
+                mcpp::ui::status("Relocated",
+                    std::format("{} ({} dropped from the loader search path)",
+                                name, what.empty() ? std::string("build-machine paths") : what));
+            } else if (r->outcome == O::Reported && !r->paths.empty()) {
+                // Mach-O: read, not rewritten. Saying nothing here would let a
+                // `.dylib` carry the publisher's LC_RPATH into a package while
+                // the ELF leg beside it is clean.
+                std::string what;
+                for (auto const& p : r->paths) { if (!what.empty()) what += ", "; what += p; }
+                mcpp::ui::warning(std::format(
+                    "{} carries LC_RPATH entries that mcpp does not yet rewrite: {}\n"
+                    "  If any of them names a directory on THIS machine, the package is "
+                    "not relocatable. Remove it with `install_name_tool -delete_rpath "
+                    "<path> <file>` before publishing.", name, what));
+            } else if (r->outcome == O::Unanalysed) {
+                mcpp::ui::warning(std::format(
+                    "{} could not be checked for build-machine loader paths: {}",
+                    name, r->note));
+            }
+        }
+
+        // 4. Debug information does not travel either — unless asked.
+        if (plan.strip) {
+            const auto shape = leg.shared ? mcpp::pack::ArtifactShape::SharedLibrary
+                                          : mcpp::pack::ArtifactShape::StaticArchive;
+            auto r = mcpp::pack::strip_artifact(dst, shape, leg.stripTools, plan.debugDir);
+            if (!r) return std::unexpected(LibraryPackError{ r.error() });
+            if (r->outcome == mcpp::pack::StripOutcome::Stripped) {
+                mcpp::ui::status("Stripped", std::format("{}  {} → {} bytes{}",
+                    name, r->before, r->after,
+                    r->debugFile.empty() ? std::string{}
+                                         : std::format("  (debug: {})",
+                                                       r->debugFile.filename().string())));
+            }
+            // The IMPORT LIBRARY is deliberately not stripped: it is an archive
+            // of linker stubs with no debug information to remove, and dh_strip
+            // makes the same exclusion.
+        }
+
+        // 5. A shared library needs BOTH of its names present.
+        //
+        // `-lmathkit-shared` resolves `libmathkit-shared.so` at link time, but
+        // the object records `SONAME libmathkit.so.1`, and that is the name the
+        // loader asks for. Ship only the built file and the consumer links,
+        // then fails to start — mcpp's own runtime-closure check reports
+        // "libmathkit.so.1 not found on the search path this artifact will
+        // actually use", which is how this was caught.
+        //
+        // A symlink is what a distribution ships; a copy is the fallback for
+        // filesystems (and archives) that cannot carry one — and it copies
+        // `dst`, never `leg.artifact`. See the order note above.
+        if (leg.shared && !leg.soname.empty() && leg.soname != name) {
+            auto alias = dst.parent_path() / leg.soname;
+            std::error_code linkEc;
+            std::filesystem::remove(alias, linkEc);
+            std::filesystem::create_symlink(name, alias, linkEc);
+            if (linkEc)
+                if (auto r = copy_into(dst, alias); !r) return std::unexpected(r.error());
+        }
+
+        // 6. Evidence, over the bytes that actually ship.
         docLegs.push_back(PackageLeg{
             .triple   = leg.triple,
             .libFile  = name,

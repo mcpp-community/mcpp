@@ -215,6 +215,23 @@ struct AvailableIndex {
 std::vector<AvailableIndex> available_toolchain_indexes();
 
 std::filesystem::path derive_c_compiler(const Toolchain& tc);
+
+// A binutils-family tool for THIS toolchain's TARGET, named in the GNU
+// spelling ("ar", "strip", "objcopy").
+//
+// WHY ONE FUNCTION. Four families spell the same tool four ways — llvm-<n>
+// beside clang, `<triple>-<n>` for a cross, a separate binutils payload for a
+// glibc gcc — and until this existed only `ar` knew that. A second tool added
+// by copying `archive_tool` would be the same decision derived twice, and the
+// copy is the one that silently stops agreeing.
+//
+// EMPTY IS AN ANSWER, NOT ALWAYS A FAILURE. On MSVC there is no binutils and
+// no need for one: PE/MSVC keeps debug information in a separate `.pdb`, so
+// there is nothing in-band for `strip` to remove. Callers must distinguish
+// "this format has nothing to strip" from "the tool this format needs is
+// missing" — see mcpp.pack.strip, which refuses only the second.
+std::filesystem::path binutils_tool(const Toolchain& tc, std::string_view name);
+
 std::filesystem::path archive_tool(const Toolchain& tc);
 std::filesystem::path link_tool(const Toolchain& tc);
 std::filesystem::path staged_std_bmi_path(const Toolchain& tc,
@@ -609,53 +626,67 @@ std::filesystem::path derive_c_compiler(const Toolchain& tc) {
     return derive_c_compiler_path(tc.binaryPath);
 }
 
-std::filesystem::path archive_tool(const Toolchain& tc) {
-    if (tc.compiler == CompilerId::MSVC) {
-        auto lib = tc.binaryPath.parent_path() / "lib.exe";
-        std::error_code ec;
-        if (std::filesystem::exists(lib, ec)) return lib;
+std::filesystem::path binutils_tool(const Toolchain& tc, std::string_view name) {
+    // MSVC: no binutils, and none wanted — see the declaration.
+    if (tc.compiler == CompilerId::MSVC) return {};
+
+    std::error_code ec;
+    auto dir = tc.binaryPath.parent_path();
+
+    // Clang ships the whole family as `llvm-<name>` beside the frontend.
+    if (is_clang(tc)) {
+        auto llvmTool = dir / (std::string("llvm-") + std::string(name)
+                               + std::string(mcpp::platform::exe_suffix));
+        if (std::filesystem::exists(llvmTool, ec)) return llvmTool;
         return {};
     }
-    if (is_clang(tc)) return mcpp::toolchain::clang::archive_tool(tc);
 
     // MinGW bundles its own binutils next to the frontend (self-contained,
     // like musl) — never an external binutils xpkg. Native (Windows-host) ships
     // `ar.exe`; the Linux-hosted cross ships the triple-prefixed ELF tool
     // `x86_64-w64-mingw32-ar`. Try the cross form first, then native.
     if (is_mingw_target(tc)) {
-        std::error_code ec;
-        auto dir = tc.binaryPath.parent_path();
         if (!tc.targetTriple.empty()) {
-            auto crossAr = dir / (tc.targetTriple + "-ar");
-            if (std::filesystem::exists(crossAr, ec)) return crossAr;
+            auto cross = dir / (tc.targetTriple + "-" + std::string(name));
+            if (std::filesystem::exists(cross, ec)) return cross;
         }
-        auto ar = dir / "ar.exe";
-        if (std::filesystem::exists(ar, ec)) return ar;
+        auto native = dir / (std::string(name) + ".exe");
+        if (std::filesystem::exists(native, ec)) return native;
         return {};
     }
 
     if (!is_musl_target(tc)) {
         if (auto binutilsBin = mcpp::toolchain::gcc::find_binutils_bin(tc.binaryPath))
-            return *binutilsBin / "ar";
+            return *binutilsBin / std::string(name);
     }
 
-    // musl `ar` is the triple-prefixed cross tool (e.g. aarch64-linux-musl-ar),
+    // A musl tool is the triple-prefixed cross form (e.g. aarch64-linux-musl-ar),
     // sitting next to the frontend. Derive from the resolved target triple so
-    // cross targets pick the matching archiver instead of the x86_64 one.
-    std::string arName = !tc.targetTriple.empty()
-        ? tc.targetTriple + "-ar"
-        : "x86_64-linux-musl-ar";
-    auto dir = tc.binaryPath.parent_path();
+    // cross targets pick the matching tool instead of the x86_64 one.
+    std::string crossName = (!tc.targetTriple.empty()
+        ? tc.targetTriple : std::string("x86_64-linux-musl")) + "-" + std::string(name);
     // Same `.exe` reasoning as the frontend candidates above: a windows-hosted
     // musl cross payload ships `<triple>-ar.exe`. Try it first, then the bare
     // name (which is what every ELF host has).
     if constexpr (mcpp::platform::is_windows) {
-        auto muslArExe = dir / (arName + ".exe");
-        if (std::filesystem::exists(muslArExe)) return muslArExe;
+        auto muslExe = dir / (crossName + ".exe");
+        if (std::filesystem::exists(muslExe, ec)) return muslExe;
     }
-    auto muslAr = dir / arName;
-    if (std::filesystem::exists(muslAr)) return muslAr;
+    auto musl = dir / crossName;
+    if (std::filesystem::exists(musl, ec)) return musl;
     return {};
+}
+
+std::filesystem::path archive_tool(const Toolchain& tc) {
+    // The one spelling that is NOT a binutils name: MSVC archives with
+    // LIB.EXE, which takes a different verb for every operation.
+    if (tc.compiler == CompilerId::MSVC) {
+        auto lib = tc.binaryPath.parent_path() / "lib.exe";
+        std::error_code ec;
+        if (std::filesystem::exists(lib, ec)) return lib;
+        return {};
+    }
+    return binutils_tool(tc, "ar");
 }
 
 std::filesystem::path staged_std_bmi_path(const Toolchain& tc,

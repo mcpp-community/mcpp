@@ -133,12 +133,56 @@ mcpp pack --target aarch64-linux-musl  # ARM64 equivalent
 mcpp pack --format dir                 # output as a directory, no tarball
 mcpp pack -o myapp.tar.gz              # filename only: lands at target/dist/myapp.tar.gz
 mcpp pack -o /abs/path/myapp.tar.gz    # includes a directory: output to the literal path
+mcpp pack --profile dev                # build with a different profile (default: release)
+mcpp pack --no-strip                   # ship the artifacts as built
+mcpp pack --debug-symbols dbg/         # write the separated *.debug files under dbg/
 ```
 
 When `-o` is given a bare filename, the output is placed under `target/dist/`;
 when it includes a directory (relative or absolute), the literal path is used.
 
 For the full set of options, see `mcpp pack --help`.
+
+### What a packed artifact is built with, and what travels inside it
+
+Two things differ from `mcpp build`, and both exist because a package leaves
+this machine:
+
+**The profile falls back to `release`, not `dev`.** Precedence is unchanged
+otherwise — `--profile` beats `[build] default-profile`, which beats the
+fallback. Only the last step differs, so a project that states a profile still
+gets the one it stated, and `mcpp pack` never produces an artifact built with
+flags `mcpp build` would not.
+
+**Debug information is stripped, and the publisher's paths go with it.** An
+unstripped artifact carries DWARF, and DWARF carries the absolute paths of the
+producer's source tree and build directory. What is removed depends on what the
+artifact *is* — this is dh_strip's division, and the archive row is the one that
+matters:
+
+| artifact | strip flags | why not more |
+|---|---|---|
+| executable | `--strip-all` | nothing links against it |
+| shared library | `--strip-unneeded` | keeps `.dynsym` — that IS the export list |
+| static archive | `--strip-debug --enable-deterministic-archives` | `--strip-all` removes the archive **symbol index**, and the consumer's link then fails with `archive has no index; run ranlib to add one` |
+
+All three also drop `.comment` and `.note`. Section removal is by exact name, so
+`.note.gnu.build-id` survives and still pairs with `--add-gnu-debuglink`.
+
+`--no-strip` (or `[pack] strip = false`) ships the artifacts exactly as built.
+`--debug-symbols <dir>` separates the information instead of discarding it:
+`<dir>/<artifact>.debug` is written and the shipped artifact gets a
+`.gnu_debuglink` pointing at it, which is what a debugger and `debuginfod`
+follow.
+
+> `[pack] strip` is not `[profile.<name>].strip`. The profile key appends `-s`
+> to the **link**, which never touches a static archive and cannot separate
+> anything; this one governs what the **package** carries. Two different
+> decisions, two different names.
+
+**Bundled libraries are never stripped.** They came out of the store or off the
+host, mcpp did not build them, and rewriting somebody else's shared payload for
+this bundle's benefit is not the packer's business.
 
 ## Output Layout
 
@@ -310,6 +354,21 @@ The reverse direction — packing a Linux or macOS artifact *from* Windows —
 still does not work, and for the original reason: that closure is resolved by
 the target's own dynamic linker, which a Windows host has no way to run.
 
+#### Packing a Mach-O program is refused — on every host, including macOS
+
+The same closure step asks the dynamic linker for the dependency list by running
+the artifact with `LD_TRACE_LOADED_OBJECTS=1`. That variable is glibc's; dyld
+has never heard of it. So on a Mac the command does not trace anything — **it
+runs the program**, and whatever the program prints is then parsed as a
+dependency table. mcpp refuses instead, and says which mechanism is missing.
+
+The refusal is keyed on the artifact's **format**, not on the host, for the same
+reason the Windows one is: `LD_TRACE_LOADED_OBJECTS` cannot trace a Mach-O from
+Linux either.
+
+A `kind = "lib"` / `"shared"` target packs normally on macOS — a library package
+never runs the artifact. This restriction is only for programs.
+
 ## Configuration
 
 Packaging behavior is configured via the `[pack]` section in `mcpp.toml`. The
@@ -317,9 +376,11 @@ common fields are:
 
 ```toml
 [pack]
-default_mode = "static"             # override the normal vendored default for bare `mcpp pack`
-include      = ["share/**", "config/*.toml"]   # extra files to bundle
-exclude      = ["debug/**"]
+default_mode  = "static"            # override the normal vendored default for bare `mcpp pack`
+strip         = true                # default. false ships the artifacts as built
+debug_symbols = "dist/debug"        # separate the debug info here instead of discarding it
+include       = ["share/**", "config/*.toml"]   # extra files to bundle
+exclude       = ["debug/**"]
 
 # Fine-tune the vendored filtering policy. The configuration key keeps its
 # established `bundle-project` spelling.
@@ -339,7 +400,11 @@ The `static` mode additionally requires a musl toolchain configured under
 
 ## Planned Support
 
-macOS dylib, Windows DLL, and distribution formats such as `.deb` / `.rpm` /
-AppImage are still on the roadmap. This document evolves alongside the
+macOS **program** bundling (the Mach-O dependency closure, via `otool -L` /
+`LC_LOAD_DYLIB`, and `install_name_tool` for relocation) is still on the
+roadmap; until it lands `mcpp pack <program>` refuses on that format rather than
+producing something that only looks like a bundle. Windows DLL bundling beyond
+the current `.zip`, and distribution formats such as `.deb` / `.rpm` / AppImage,
+are also on the roadmap. This document evolves alongside the
 `mcpp pack` implementation; for the latest options, refer to
 `mcpp pack --help`.

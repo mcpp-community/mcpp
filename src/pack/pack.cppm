@@ -39,6 +39,8 @@ import mcpp.build.loader_contract;
 import mcpp.config;
 import mcpp.pack.binfmt;
 import mcpp.pack.host_requirements;
+import mcpp.pack.relocate;
+import mcpp.pack.strip;
 import mcpp.pack.zip;
 import mcpp.platform;
 import mcpp.platform.xlings;
@@ -83,7 +85,37 @@ struct Options {
     // caller resolves the contract; this is the one bit of it that packaging
     // acts on.
     bool                            carryToolchainRuntime = false;
+
+    // ── how the shipped artifact is BUILT and what travels inside it ──
+    //
+    // `profile` is the `--profile` override only. The default is not spelled
+    // here: `mcpp pack` passes `BuildOverrides::profile_fallback = "release"`,
+    // so `[build] default-profile` still decides when it is set, and the
+    // precedence rule stays in `resolve_profile_name` where the rest of mcpp
+    // reads it.
+    std::string                     profile;
+    // Tri-state on purpose. `nullopt` = "nobody said", which is what lets
+    // `[pack] strip` be consulted at all — a plain `bool` defaulted to true
+    // would make the manifest key unreachable from the CLI's point of view.
+    std::optional<bool>             strip;
+    // `--debug-symbols <dir>`: where the separated `*.debug` files go. Empty =
+    // do not separate.
+    std::filesystem::path           debugSymbols;
 };
+
+// The strip decision for this run: `--strip`/`--no-strip` > `[pack] strip` >
+// stripped.
+//
+// Spelled once because both packers ask it and a distribution that strips its
+// libraries but not its programs is a distribution whose rule nobody can state.
+bool resolve_strip(const Options& opts, const mcpp::manifest::PackConfig& cfg);
+
+// Where the separated debug files go, absolute. Empty = do not separate.
+// A manifest-relative path is resolved against the project root, like every
+// other path a manifest names.
+std::filesystem::path resolve_debug_dir(const Options& opts,
+                                        const mcpp::manifest::PackConfig& cfg,
+                                        const std::filesystem::path& projectRoot);
 
 // Resolved plan — all paths absolute, all decisions baked in.
 struct Plan {
@@ -110,6 +142,14 @@ struct Plan {
     // The search set the PE closure resolves names against, after the
     // contract has had its say (see make_plan).
     std::vector<std::filesystem::path>   searchDirs;
+    // ── debug information: the RESOLVED decision, not the request ─────
+    //
+    // On the Plan rather than in Options because `Options` is what the user
+    // asked for and this is what that came out as once the manifest and the
+    // toolchain had their say. The library packer keeps the same split.
+    bool                                 strip = true;
+    std::filesystem::path                debugDir;   // absolute; empty = discard
+    mcpp::pack::StripTools               stripTools;
 };
 
 struct Error { std::string message; };
@@ -221,6 +261,23 @@ std::string wrapper_dirname_from_archive(const std::filesystem::path& archive) {
 }
 
 } // namespace detail
+
+bool resolve_strip(const Options& opts, const mcpp::manifest::PackConfig& cfg) {
+    if (opts.strip) return *opts.strip;
+    if (cfg.strip)  return *cfg.strip;
+    return true;
+}
+
+std::filesystem::path resolve_debug_dir(const Options& opts,
+                                        const mcpp::manifest::PackConfig& cfg,
+                                        const std::filesystem::path& projectRoot)
+{
+    auto raw = !opts.debugSymbols.empty()
+        ? opts.debugSymbols
+        : std::filesystem::path(cfg.debugSymbols);
+    if (raw.empty()) return {};
+    return raw.is_absolute() ? raw : projectRoot / raw;
+}
 
 std::expected<Plan, Error>
 make_plan(const mcpp::manifest::Manifest& manifest,
@@ -548,6 +605,26 @@ set_interpreter(const std::filesystem::path& binary,
     int rc = run_silent(cmd);
     if (rc != 0) return std::unexpected(std::format(
         "patchelf --set-interpreter failed (exit {}): {}", rc, binary.string()));
+    return {};
+}
+
+// Remove the program's debug information — and ONLY the program's.
+//
+// A bundled `.so` is somebody else's file: it came out of the store or off the
+// host, mcpp did not build it, and stripping it would change a shared payload's
+// bytes for no gain to this bundle. dh_strip draws the same line (a package
+// strips what it built).
+//
+// Shared with `run_pe` deliberately: a MinGW `.exe` carries DWARF in-band just
+// like an ELF one, so "does the bundle ship debug info" must not depend on
+// which output family it lands in.
+std::expected<void, Error>
+strip_program(const Plan& plan, const std::filesystem::path& staged)
+{
+    if (!plan.strip) return {};
+    auto r = mcpp::pack::strip_artifact(staged, mcpp::pack::ArtifactShape::Executable,
+                                        plan.stripTools, plan.debugDir);
+    if (!r) return std::unexpected(Error{r.error()});
     return {};
 }
 
@@ -890,6 +967,8 @@ run_pe(const Plan& plan)
         }
     }
 
+    if (auto r = strip_program(plan, stagedExe); !r) return r;
+
     if (plan.opts.format != Format::Tar) return {};
 
     std::vector<mcpp::pack::zip::Entry> entries;
@@ -932,6 +1011,42 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     // defined(_WIN32)` refusal used to occupy — and it was never really about
     // the host: `LD_TRACE_LOADED_OBJECTS` cannot trace a PE from Linux either.
     if (plan.targetIsPe) return detail::run_pe(plan);
+
+    // A Mach-O artifact is REFUSED, on every host including macOS.
+    //
+    // The closure below asks the dynamic linker for the dependency list by
+    // running the artifact with `LD_TRACE_LOADED_OBJECTS=1`. That variable
+    // belongs to glibc's ld.so; dyld has never heard of it (its counterpart is
+    // `DYLD_PRINT_LIBRARIES`), so on macOS the command does not trace anything
+    // — IT RUNS THE USER'S PROGRAM. Whatever that program prints is then parsed
+    // as a dependency table, which yields nothing, and the bundle is written
+    // and reported as `Packed`. A program with side effects performs them; an
+    // interactive one hangs the packer.
+    //
+    // ASKED OF THE FORMAT, NOT OF THE HOST — the same correction the `_WIN32`
+    // branch below already carries. `LD_TRACE_LOADED_OBJECTS` cannot trace a
+    // Mach-O from Linux either, and a macOS host is not the thing that makes
+    // this impossible.
+    //
+    // docs/02 lists macOS bundling under "Planned Support"; until it lands,
+    // saying so is strictly better than producing an empty bundle that claims
+    // to be one.
+    if (mcpp::pack::binfmt::identify(plan.builtBinary).format
+        == mcpp::pack::binfmt::Format::MachO) {
+        return std::unexpected(Error{
+            "cannot package a Mach-O program yet.\n"
+            "       The dependency closure for that format is resolved by running the "
+            "artifact under\n"
+            "       the target's own dynamic linker, and the mechanism mcpp uses "
+            "(LD_TRACE_LOADED_OBJECTS)\n"
+            "       is glibc's — dyld ignores it and simply RUNS the program, which is "
+            "why this is\n"
+            "       refused rather than attempted.\n"
+            "       A `kind = \"lib\"` / `\"shared\"` target packs normally on macOS "
+            "(`mcpp pack <lib-target>`);\n"
+            "       for a program, ship the build tree or use a platform bundler until "
+            "macOS support lands."});
+    }
 
 #if defined(_WIN32)
     // A NON-PE artifact on a Windows host: a cross build to Linux or macOS.
@@ -1032,11 +1147,23 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
             //   empty bundle      → clear the original dev-sandbox RUNPATH
             //                       (~/.mcpp/registry/... doesn't exist on
             //                       a user's target machine)
-            const char* rpath = toBundle.empty() ? "" : "$ORIGIN/../lib";
-            if (auto r = set_search_path(bundledBinary, rpath,
-                                         mcpp::build::loader::Form::Executable,
-                                         patchelf); !r)
+            // An EMPTY bundle gets the tag REMOVED, not set to "".
+            //
+            // `patchelf --set-rpath ''` leaves the tag present with an empty
+            // string, and a present-but-empty DT_RUNPATH is not inert: it
+            // suppresses the inherited DT_RPATH chain exactly like a stale one
+            // does (measured — see mcpp.pack.relocate). Harmless on an
+            // executable, which is the top of that chain, but there is no
+            // reason to write a tag that says nothing, and the library packer
+            // needs the removal path anyway.
+            if (toBundle.empty()) {
+                if (auto r = mcpp::pack::relocate::strip_search_paths(bundledBinary); !r)
+                    return std::unexpected(Error{r.error()});
+            } else if (auto r = set_search_path(bundledBinary, "$ORIGIN/../lib",
+                                                mcpp::build::loader::Form::Executable,
+                                                patchelf); !r) {
                 return std::unexpected(Error{r.error()});
+            }
 
             // EVERY BUNDLED LIBRARY, not just the executable.
             //
@@ -1122,6 +1249,14 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
         if (auto r = write_topentry_wrapper(plan.stagingRoot, plan.binaryName); !r)
             return std::unexpected(Error{r.error()});
     }
+
+    // 4b. Debug information does not travel either.
+    //
+    // AFTER every byte-changing step above (patchelf's search path, PT_INTERP)
+    // and before the archive: strip must see the final image, and the archive
+    // must see the stripped one. Same ordering rule the library packer states
+    // at its leg loop.
+    if (auto r = strip_program(plan, bundledBinary); !r) return r;
 
     // 5. Output.
     if (plan.opts.format == Format::Tar) {

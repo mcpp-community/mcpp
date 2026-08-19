@@ -18,6 +18,9 @@ import mcpp.build.plan;
 import mcpp.config;
 import mcpp.fetcher.progress;
 import mcpp.pack;
+import mcpp.pack.strip;
+import mcpp.toolchain.model;
+import mcpp.toolchain.registry;
 import mcpp.ui;
 
 namespace mcpp::pack {
@@ -47,6 +50,10 @@ export int build_and_pack(Options opts, bool modeFromUser,
         ov.target_triple = "x86_64-linux-musl";
     else
         ov.target_triple = opts.targetTriple;
+    // A bundled program leaves this machine: release is the fallback, not dev.
+    // `[build] default-profile` still decides when the project states one.
+    ov.profile          = opts.profile;
+    ov.profile_fallback = "release";
 
     auto ctx = mcpp::build::prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
                              /*extraTargets=*/{}, ov);
@@ -76,7 +83,9 @@ export int build_and_pack(Options opts, bool modeFromUser,
         && ctx->tc.targetTriple.find("-musl") == std::string::npos) {
         // Need to re-prepare the build with the musl target.
         mcpp::build::BuildOverrides ov2;
-        ov2.target_triple = "x86_64-linux-musl";
+        ov2.target_triple    = "x86_64-linux-musl";
+        ov2.profile          = opts.profile;
+        ov2.profile_fallback = "release";
         auto ctx2 = mcpp::build::prepare_build(false, false, {}, ov2);
         if (!ctx2) { mcpp::ui::error(ctx2.error()); return 2; }
         ctx = std::move(ctx2);
@@ -176,9 +185,23 @@ export int build_and_pack(Options opts, bool modeFromUser,
         ctx->plan.runtimeRequirements);
     if (!plan) { mcpp::ui::error(plan.error().message); return 1; }
 
-    mcpp::ui::info("Packing", std::format("{} v{} ({})",
+    // The RESOLVED debug-information decision. On the plan, not in Options:
+    // Options is the request, this is what it came out as once the manifest
+    // and the toolchain had their say. Tools come from the build's own
+    // toolchain so a cross bundle is stripped by the cross tool.
+    plan->strip     = mcpp::pack::resolve_strip(opts, ctx->manifest.packConfig);
+    plan->debugDir  = mcpp::pack::resolve_debug_dir(opts, ctx->manifest.packConfig,
+                                                    ctx->projectRoot);
+    plan->stripTools = mcpp::pack::StripTools{
+        .strip   = mcpp::toolchain::binutils_tool(ctx->tc, "strip"),
+        .objcopy = mcpp::toolchain::binutils_tool(ctx->tc, "objcopy"),
+        .inBandDebugInfo = ctx->tc.compiler != mcpp::toolchain::CompilerId::MSVC,
+    };
+
+    mcpp::ui::info("Packing", std::format("{} v{} ({}{})",
         plan->packageName, plan->packageVersion,
-        mcpp::pack::mode_cli_name(plan->opts.mode)));
+        mcpp::pack::mode_cli_name(plan->opts.mode),
+        plan->strip ? ", stripped" : ""));
 
     auto r = mcpp::pack::run(*plan, *cfg);
     if (!r) {
