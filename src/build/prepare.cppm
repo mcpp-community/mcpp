@@ -5273,9 +5273,18 @@ prepare_build(bool print_fingerprint,
         // no subset of it to build without an OS. Saying "provides no std
         // module source" sends the reader to look for a broken payload.
         //
-        // Naming the replacement is the whole value of the diagnostic: the
-        // freestanding subset is an ordinary package, so the fix is one line in
-        // the manifest rather than a toolchain investigation.
+        // ⚠️ It used to end with a copy-pasteable
+        //
+        //     [dependencies]
+        //     mcpplibs.std.freestanding = "0.1"
+        //
+        // and that package is NOT published. A diagnostic whose suggested fix
+        // fails at the next command is worse than one that explains and stops:
+        // the reader spends the next minutes deciding whether their index is
+        // broken. Point at what a bare-metal project actually has today — the
+        // board package it already depends on exports a module — and describe
+        // the subset package as a shape rather than as a line to paste.
+        // Restore the concrete line when such a package ships.
         if (auto ft = mcpp::toolchain::triple::parse(tc->targetTriple);
             ft && ft->is_freestanding())
         {
@@ -5286,13 +5295,19 @@ prepare_build(bool print_fingerprint,
                 "filesystem, iostreams\n"
                 "       included), so there is no subset of it to build without "
                 "an OS underneath.\n"
-                "       Use the freestanding subset instead:\n"
                 "\n"
-                "           [dependencies]\n"
-                "           mcpplibs.std.freestanding = \"0.1\"\n"
+                "       What a bare-metal project uses instead:\n"
+                "         * the module its BOARD package exports — that is where "
+                "the target's\n"
+                "           C library is already wrapped (riscv-virt-rt exports "
+                "`mcpplibs.riscv_virt_rt`);\n"
+                "         * or a freestanding subset package, which is an "
+                "ordinary dependency\n"
+                "           providing the header-only parts of the library that "
+                "need no OS.\n"
                 "\n"
-                "       then `import mcpplibs.std.freestanding;` in place of "
-                "`import std;`.",
+                "       No such subset package is published yet, so there is no "
+                "line to paste here.",
                 tc->targetTriple));
         }
         return std::unexpected(std::format(
