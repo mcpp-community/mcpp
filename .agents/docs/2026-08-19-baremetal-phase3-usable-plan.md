@@ -437,3 +437,36 @@ mcpplibs.std.freestanding = "0.1"
 ⚠️ 一般化:**诊断里的每一条建议都是一个承诺**,而承诺是要被兑现的。写「加这一行」
 之前必须先确认那一行今天能跑通 —— 这条和 [[issue427-absence-treated-as-contradiction]]
 里那条错误建议是同一形状。
+
+### 11.4 ⚠️ 2026.8.19.2 发出去就带着一个 bug:`mcpp build` 之后 `mcpp run` 直接执行裸机 ELF
+
+**发布后**用发布的二进制做真实验证时才发现 —— 这正是「本地真实验证」这一步存在的理由。
+
+```
+$ mcpp new blinky --template riscv-virt-rt && cd blinky
+$ mcpp run                     # ✅ 走 qemu,打印正常
+$ mcpp build && mcpp run       # ❌ Running `target/riscv64-none-elf/…/bin/blinky`
+                               #    没有模拟器、没有输出、exit=1
+```
+
+**根因**:`try_fast_run` 直接 exec 缓存里的产物,它的注释写着
+「`mcpp run` never takes a --target flag」所以只匹配 `targetTriple == ""` 的条目。
+调用点确实挡住了 `--target` 旗标 —— 但**工程可以把目标写在 manifest 里**
+(`[build] target`),而这个拼写**从来没进过缓存键**:交叉构建写下的条目 key 是 `""`,
+读回来就被当成宿主构建。
+
+⇒ 修法是把这个函数的**前置条件**写成代码:它 exec 产物本身,所以只在产物属于**本机**时
+才成立。声明了默认目标就一律退回完整 prepare(runner 正是在那里解析的)。
+
+#### ⚠️ 第一版回归测试是假绿 —— 而且我差点就信了
+
+把 build-then-run 加进 e2e 131 的既有工程后,**关掉修复它照样通过**。
+探针(给 `try_fast_run` 的 16 个 `return nullopt` 各打一个编号)指出是 **BAIL 11**:
+`mcpp.toml` 比 `build.ninja` 新,快路径**本来就没被走到**。
+
+原因很反直觉:**重建并不会重写内容未变的 `build.ninja`**,所以在一个「原地编辑过
+manifest」的目录里,manifest 永远是最新的那个文件,快路径**永久关闭**。
+⇒ 测试必须**新建一个干净工程**。改完后先确认它在关掉修复时**变红**,再确认修复后变绿。
+
+**教训**:`mcpp run` 单独跑是对的,`mcpp build && mcpp run` 才错 —— **顺序本身就是被测
+对象**。而 130/131/132 三个测试都恰好先 `run`,所以谁也看不见。

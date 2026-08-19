@@ -800,6 +800,9 @@ struct FastPathIdentity {
     // extensions are module interfaces in THIS project, and this is already
     // the only manifest read on the fast path.
     mcpp::ExtensionTable extTable;
+    // `[build] target` — the project's DEFAULT cross target, and the reason
+    // try_fast_run cannot assume the artifact runs here. See its use.
+    std::string defaultTarget;
 };
 
 std::optional<FastPathIdentity>
@@ -813,6 +816,7 @@ fast_path_identity(const std::filesystem::path& projectRoot,
             mcpp::build::resolve_cache_mode(*m, ""))),
         m->resources.files,
         mcpp::extension_table_for(m->buildConfig.moduleExtensions),
+        m->buildConfig.target,
     };
 }
 
@@ -916,7 +920,7 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
 
 // mcpp#225 (E2): `mcpp run`'s fast path. Mirrors try_fast_build's
 // fingerprint/freshness gate against the SAME cache entry `mcpp build`
-// wrote (targetTriple == "" — `mcpp run` never takes a --target flag), then
+// wrote (targetTriple == "" — a HOST build; see the precondition below), then
 // on a hit runs ninja and execs the cached run-target directly — skipping
 // prepare_build (toolchain resolution + full modgraph scan) entirely.
 // Returns nullopt when there's no usable cache entry (build_run_target
@@ -927,6 +931,28 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
                                 std::span<const std::string> passthrough) {
     auto want = fast_path_identity(projectRoot);
     if (!want) return std::nullopt;
+
+    // ⚠️ THE precondition of this whole function: it exec's the cached
+    // artifact itself, so it is only ever valid when that artifact is for THIS
+    // machine.
+    //
+    // The header above used to justify matching `targetTriple == ""` with
+    // "`mcpp run` never takes a --target flag". The caller does guard the
+    // flag — but a project can name its target in the MANIFEST instead, and
+    // that spelling never reaches the cache key, so a cross build's entry is
+    // written as "" and read back as if it were a host build.
+    //
+    // Measured on the shipped 2026.8.19.2, on the first two commands a
+    // bare-metal user runs after `mcpp new`:
+    //
+    //     $ mcpp build && mcpp run
+    //          Running `target/riscv64-none-elf/…/bin/blinky`   ← no emulator
+    //     exit=1
+    //
+    // `mcpp run` alone was correct; only build-then-run reached the cache. So
+    // the fast path is off whenever a default target is declared, and the full
+    // prepare — which is what resolves the runner — takes over.
+    if (!want->defaultTarget.empty()) return std::nullopt;
 
     auto entries = read_build_cache(projectRoot);
     const BuildCacheEntry* match = nullptr;
