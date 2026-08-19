@@ -535,3 +535,67 @@ TEST(BuildDirectives, LinkScriptDoesNotClaimADeclaredOutput) {
         EXPECT_FALSE(def.mustExistAfterRun);
     }
 }
+
+// ── runner ─────────────────────────────────────────────────────────────────
+//
+// How the artifact is EXECUTED, when the host cannot execute it. Produced by
+// a board-support package's build.mcpp, because the value is machine-specific:
+// the emulator lives in a package payload whose path carries a home and a
+// version, and only a build program can compute that.
+
+TEST(BuildDirectives, RunnerBuildsAnArgvFromRepeatedLines) {
+    // argv is an ordered list and a directive is one line = one value, so the
+    // list is built by repetition. Order is the emission order.
+    auto d = parse("mcpp:runner=/payload/bin/qemu-system-riscv64\n"
+                   "mcpp:runner=-machine\n"
+                   "mcpp:runner=virt\n"
+                   "mcpp:runner=-kernel\n");
+    auto& r = d.at(dirs::Slot::Runner);
+    ASSERT_EQ(r.size(), 4u);
+    EXPECT_EQ(r[0], "/payload/bin/qemu-system-riscv64");
+    EXPECT_EQ(r[1], "-machine");
+    EXPECT_EQ(r[3], "-kernel");
+}
+
+TEST(BuildDirectives, RunnerTokensAreVerbatim) {
+    // Not a path to normalize: `-bios` is a token, and the producer already
+    // resolved the executable absolutely (a bare name resolves through PATH to
+    // a shim that dispatches against its OWNER home — measured in CI).
+    auto d = parse("mcpp:runner=-bios\nmcpp:runner=none\n");
+    auto& r = d.at(dirs::Slot::Runner);
+    ASSERT_EQ(r.size(), 2u);
+    EXPECT_EQ(r[0], "-bios");
+    EXPECT_EQ(r[1], "none");
+}
+
+TEST(BuildDirectives, RunnerHasItsOwnSlotAndScope) {
+    const dirs::Def* runner = nullptr;
+    const dirs::Def* script = nullptr;
+    for (auto const& def : dirs::kTable) {
+        if (def.wire == "runner")      runner = &def;
+        if (def.wire == "link-script") script = &def;
+    }
+    ASSERT_NE(runner, nullptr);
+    ASSERT_NE(script, nullptr);
+    // Its own slot: putting it in LdFlags would put an emulator's argv on the
+    // linker command line.
+    EXPECT_EQ(runner->slot, dirs::Slot::Runner);
+    EXPECT_NE(runner->slot, script->slot);
+    // Its own scope: RunGlobal propagates like LinkGlobal but carries an
+    // exactly-one-provider rule that LinkGlobal must not inherit — two
+    // dependencies' link flags concatenate correctly, two runners cannot.
+    EXPECT_EQ(runner->scope, dirs::Scope::RunGlobal);
+    EXPECT_EQ(script->scope, dirs::Scope::LinkGlobal);
+}
+
+TEST(BuildDirectives, RunnerLandsInBuildConfigNotInLdflags) {
+    auto d = parse("mcpp:runner=/qemu\nmcpp:runner=-kernel\n"
+                   "mcpp:link-lib=c\n");
+    mcpp::manifest::Manifest m;
+    dirs::apply(m, d);
+    ASSERT_EQ(m.buildConfig.runner.size(), 2u);
+    EXPECT_EQ(m.buildConfig.runner[0], "/qemu");
+    // The link line must carry the library and nothing of the runner.
+    for (auto const& f : m.buildConfig.ldflags)
+        EXPECT_EQ(f.find("qemu"), std::string::npos) << f;
+}

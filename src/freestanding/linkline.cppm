@@ -85,6 +85,20 @@ inline std::string link_flags(const Spec& s, const LinkInputs& in,
     return out;
 }
 
+// The link map, for the question only a map can answer on a bare-metal target:
+// why a section is where it is, and why something did or did not get pulled in.
+//
+// A flag on the link rather than a separate edge, because the linker is the
+// only thing that can produce it and it does so as a side effect of the link
+// it is already doing.
+inline std::string map_flag(const std::filesystem::path& artifact,
+                            const std::function<std::string(
+                                const std::filesystem::path&)>& esc)
+{
+    auto m = artifact; m += ".map";
+    return " -Wl,-Map=" + esc(m);
+}
+
 // LLD inside the same payload as the driver.
 //
 // Derived from the driver's own path rather than searched for, because a
@@ -96,6 +110,24 @@ inline std::filesystem::path resolve_lld(const std::filesystem::path& driver) {
     const auto bin = driver.parent_path();
     std::error_code ec;
     for (const char* name : { "ld.lld", "ld.lld.exe", "lld", "lld.exe" }) {
+        auto p = bin / name;
+        if (std::filesystem::exists(p, ec)) return p;
+    }
+    return {};
+}
+
+// llvm-objcopy inside the same payload as the driver, for the flat image a
+// flasher takes. Derived from the driver's path for the same reason
+// `resolve_lld` is: a search is how the wrong tool gets picked. Returns "" for
+// a hosted target — a loader wants the ELF, so there is nothing to convert.
+inline std::filesystem::path
+resolve_objcopy(const std::filesystem::path& driver, std::string_view triple) {
+    if (driver.empty()) return {};
+    if (!resolve(triple)) return {};      // not a bare-metal target we know
+    const auto bin = driver.parent_path();
+    std::error_code ec;
+    for (const char* name : { "llvm-objcopy", "llvm-objcopy.exe",
+                              "objcopy", "objcopy.exe" }) {
         auto p = bin / name;
         if (std::filesystem::exists(p, ec)) return p;
     }
@@ -122,6 +154,54 @@ inline std::string wrong_linker_message(const std::filesystem::path& linker,
         "       this target's object format and fails with "
         "'unrecognised emulation mode'.",
         linker.string(), firstLine.empty() ? "(no output)" : firstLine);
+}
+
+// ── Size summary ───────────────────────────────────────────────────────────
+//
+// The core constraint on a bare-metal target is CAPACITY, and mcpp already
+// knows the number the moment the link finishes. Not printing it means every
+// user runs `size` themselves — and the ones who do not find out the image no
+// longer fits when the flasher refuses it.
+//
+// Parsed rather than passed through so the shape is mcpp's, not the tool's:
+// `llvm-size` and GNU `size` differ in their headers, and a build that printed
+// one tool's table would change appearance with the toolchain.
+struct SizeSummary { long long text = 0, data = 0, bss = 0; };
+
+inline long long size_total(const SizeSummary& s) { return s.text + s.data + s.bss; }
+
+// Parse the Berkeley-format second line: "   text	   data	    bss	    dec …".
+inline std::optional<SizeSummary> parse_size_output(std::string_view out) {
+    std::size_t nl = out.find('\n');
+    if (nl == std::string_view::npos) return std::nullopt;
+    auto row = out.substr(nl + 1);
+    SizeSummary s;
+    int got = 0;
+    long long cur = 0; bool in = false;
+    for (char c : row) {
+        if (c >= '0' && c <= '9') { cur = cur * 10 + (c - '0'); in = true; continue; }
+        if (in) {
+            if (got == 0) s.text = cur;
+            else if (got == 1) s.data = cur;
+            else if (got == 2) { s.bss = cur; return s; }
+            ++got; cur = 0; in = false;
+        }
+        if (c == '\n') break;
+    }
+    if (in && got == 2) { s.bss = cur; return s; }
+    return std::nullopt;
+}
+
+// `llvm-size` beside the driver, same derivation as the linker and objcopy.
+inline std::filesystem::path resolve_size_tool(const std::filesystem::path& driver) {
+    if (driver.empty()) return {};
+    const auto bin = driver.parent_path();
+    std::error_code ec;
+    for (const char* name : { "llvm-size", "llvm-size.exe", "size", "size.exe" }) {
+        auto p = bin / name;
+        if (std::filesystem::exists(p, ec)) return p;
+    }
+    return {};
 }
 
 } // namespace mcpp::freestanding

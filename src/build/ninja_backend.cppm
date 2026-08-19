@@ -18,6 +18,7 @@ module;
 export module mcpp.build.ninja;
 
 import std;
+import mcpp.freestanding.linkline;
 import mcpp.build.backend;
 import mcpp.manifest;
 import mcpp.source_kind;
@@ -503,6 +504,29 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     deployFiles.insert(deployFiles.end(),
                        flags.toolchainRuntimeDeploy.begin(),
                        flags.toolchainRuntimeDeploy.end());
+
+    // ── The raw image a flasher takes ──────────────────────────────────────
+    //
+    // Only freestanding targets get this; a hosted binary is loaded by a
+    // loader that wants the ELF.
+    const auto fsObjcopy = mcpp::freestanding::resolve_objcopy(
+        plan.toolchain.binaryPath, plan.toolchain.targetTriple);
+
+    if (!fsObjcopy.empty()) {
+        append("objcopy = " + escape_ninja_path(fsObjcopy) + "\n\n");
+        // ── The raw image a flasher takes ──────────────────────────────────
+        //
+        // A SEPARATE EDGE with the ELF as its input, not a second output of
+        // the link. A flat binary is produced by a different tool from a
+        // finished ELF, and folding it into the link command would make the
+        // two share one up-to-date check: touch a source, ninja relinks, and
+        // whether the .bin is regenerated depends on the command happening to
+        // run again rather than on a declared dependency. That is the shape
+        // where an incremental build hands back a stale image.
+        append("rule objcopy_bin\n");
+        append("  command = $objcopy -O binary $in $out\n");
+        append("  description = OBJCOPY $out\n\n");
+    }
 
     bool need_c_rule = false, need_asm_rule = false, need_nasm_rule = false;
     for (auto& cu : plan.compileUnits) {
@@ -1922,10 +1946,30 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             if (lu.kind != LinkUnit::StaticLibrary)
                 tail.runtimeFallback = flags.ldRuntimeFallback;
             tail.loaderTag = lu.loaderTagFlag;
+            // The link map — per unit, because it is named after the artifact.
+            if (!fsObjcopy.empty()
+                && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary))
+                tail.dependencies += mcpp::freestanding::map_flag(
+                    lu.output, [](const std::filesystem::path& q) {
+                        return escape_ninja_path(q);
+                    });
             if (auto unit = tail.render(); !unit.empty())
                 out_line += "  unit_ldflags =" + unit + "\n";
         }
         append(std::move(out_line));
+
+        // ── Freestanding artifact set ──────────────────────────────────────
+        //
+        // `.bin` is a real edge on the `.elf`, so ninja rebuilds it when the
+        // image changes and never when it does not. `.map` is an implicit
+        // OUTPUT of the link: one command writes both, and a second edge
+        // claiming to produce the map would run the link twice.
+        if (!fsObjcopy.empty()
+            && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary)) {
+            const auto elf = escape_ninja_path(lu.output);
+            append("build " + elf + ".bin: objcopy_bin " + elf + "\n");
+            append("default " + elf + ".bin\n\n");
+        }
 
         for (auto const& alias : lu.runtimeAliases) {
             append(std::format("build {} : runtime_alias {}\n",

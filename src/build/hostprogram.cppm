@@ -50,6 +50,25 @@ inline void generated(const char* path)           { std::printf("mcpp:generated=
 inline void source(const char* path)              { std::printf("mcpp:source=%s\n", path); }
 inline void include_dir(const char* dir)          { std::printf("mcpp:include-dir=%s\n", dir); }
 inline void include_dir_after(const char* dir)    { std::printf("mcpp:include-dir-after=%s\n", dir); }
+// One argv token of the command that EXECUTES this build's artifact, when the
+// host cannot run it itself (a freestanding image: wrong ISA, no loader).
+//
+// Called once per token, in order — argv is an ordered list and a directive
+// carries one value per line. The artifact path is appended by mcpp, or
+// substituted for a `{}` token if one is present.
+//
+// ⚠️ Emit the executable as an ABSOLUTE path. A bare name resolves through
+// PATH to a shim that dispatches against its OWNER home, which is not
+// necessarily the home this build uses; measured in CI as
+// `xlings: 'qemu-system-riscv64' is not installed` from a job where the same
+// bare name had answered `--version` two steps earlier. `xpkg_dir()` is how a
+// package finds the payload it declared.
+//
+// ⚠️ Exactly one dependency may supply this. Two board-support packages both
+// claiming to know how to run the artifact is a configuration error, and mcpp
+// reports it naming both rather than merging them.
+inline void runner(const char* token)             { std::printf("mcpp:runner=%s\n", token); }
+
 // The memory layout for a freestanding link. Reaches the CONSUMER's link line
 // (like link_lib/link_search, unlike include_dir), because the package that
 // knows a board's layout is not the package being built.

@@ -49,6 +49,7 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:source=<path>` *(0.0.100+)*  | 把一份**既有**源文件选入构建(绝对路径,或相对包根)。下游效果与 `generated=` 相同;语义区别在于文件是程序*选中*的(tarball payload / vendored 源树)而非程序写出的——例如对大型源码包做 per-target 源选择 |
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | 为本包自身 TU 增加一个**私有** include 目录(`-I`;绝对路径或相对包根,自动规范化)。取代过去 `cxxflag=-I` + `cflag=-I` 的双重裸发 |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | 同 `include-dir`,但排在系统目录**之后**搜索(`-idirafter`)——用于会遮蔽系统头的 payload 源树 |
+| `mcpp:runner=<token>` *(2026.8.19.2+)* | 执行本次构建产物的命令的**一个 argv token**(宿主跑不了它时)。一个 token 一次调用、按顺序;产物路径会被追加(或替换 `{}`)。**到达消费者**。⚠️ 可执行文件要发**绝对路径**,且**只能有一个**依赖提供它 |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | 用这个**链接脚本**链接(`-T`;相对路径按包根解析,发出的是绝对路径,因为链接是在构建目录里跑的)。与 `include-dir` 不同,它**到达消费者** —— 板子的内存布局恰恰是消费者写不出来的那一项 |
 | `mcpp:rerun-if-changed=<path>`     | 该文件变化时重跑 `build.mcpp` |
 | `mcpp:rerun-if-env-changed=<VAR>`  | 该环境变量变化时重跑 `build.mcpp` |
@@ -94,8 +95,31 @@ int main() {
 | `mcpp::rerun_if_changed_glob(pat)` *(2026.8.6.2+)* | `mcpp:rerun-if-changed-glob=` —— 匹配 `pat` 的文件**集合**发生变化时重跑(见下) |
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | 读 `MCPP_DEP_<PKG>_BIN_<TOOL>` —— 依赖构建出的 **host 工具**的绝对路径(见下) |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
+| `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` —— 见下 |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | 本 manifest 在 `[xlings] deps` 里声明的包的载荷目录;没声明或没安装时返回 `""`(见下) |
 | `mcpp::action{…}.submit()` *(2026.8.5.1+)* | `mcpp:action=` —— **声明一个构建图节点**,而不是在这里把活干了(见下) |
+
+### `runner` —— 产物的执行方式(2026.8.19.2+)
+
+板级支持包知道模拟器、机器型号和固件模式,也知道模拟器**在哪** —— 而静态 manifest
+写不出来:载荷路径里带着 home 和版本号。
+
+```cpp
+const char* qemu = mcpp::xpkg_dir("xim", "qemu-riscv");
+mcpp::runner(std::format("{}/bin/qemu-system-riscv64", qemu).c_str());
+for (auto a : {"-machine","virt","-nographic","-no-reboot","-kernel"})
+    mcpp::runner(a);
+```
+
+这样消费者**完全不需要 `[target.<triple>]` 段**。它若还是写了,**以它为准** ——
+调试时把 `-bios default` 换成 `-bios none -semihosting` 是正当需求 —— 且 mcpp 会说明
+它覆盖了哪个依赖。
+
+⚠️ **可执行文件要发绝对路径。** 裸名会经 `PATH` 解析到一个 shim,而 shim 按**拥有它
+的 home** 派发,那未必是本次构建用的 home。
+
+⚠️ **只能有一个依赖提供 runner。** 两个板级支持包都声称知道怎么跑这个产物是配置
+错误;mcpp 会**同时点名两个**并报错,而不是把它们并成一个谁也不是的 argv。
 
 ### 找到 `[xlings] deps` 的载荷:`xpkg_dir`(2026.8.19+)
 

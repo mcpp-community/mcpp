@@ -227,3 +227,41 @@ TEST(XpkgEnvVar, BothSpellingsAreDerivedFromOneSanitizer) {
     EXPECT_EQ(xpkg_env_var("", "picolibc-riscv"),
               "MCPP_XPKG_PICOLIBC_RISCV_DIR");
 }
+
+// ── artifact set ───────────────────────────────────────────────────────────
+
+TEST(FreestandingArtifacts, SizeOutputIsParsedNotPassedThrough) {
+    // Parsed so the printed shape is mcpp's, not the tool's: llvm-size and GNU
+    // size differ in their headers, and a build whose output changed
+    // appearance with the toolchain would be reporting the tool, not the size.
+    auto s = parse_size_output(
+        "   text\t   data\t    bss\t    dec\t    hex\tfilename\n"
+        "   8836\t     80\t   5668\t  14584\t   38f8\tfirmware\n");
+    ASSERT_TRUE(s.has_value());
+    EXPECT_EQ(s->text, 8836);
+    EXPECT_EQ(s->data, 80);
+    EXPECT_EQ(s->bss,  5668);
+    // The number that decides whether the image fits.
+    EXPECT_EQ(size_total(*s), 14584);
+}
+
+TEST(FreestandingArtifacts, MalformedSizeOutputIsNotGuessedAt) {
+    // An informational line has no standing to invent numbers.
+    EXPECT_FALSE(parse_size_output("").has_value());
+    EXPECT_FALSE(parse_size_output("size: cannot open 'x'\n").has_value());
+}
+
+TEST(FreestandingArtifacts, MapFlagNamesTheArtifact) {
+    auto f = map_flag("/build/bin/firmware",
+                      [](const std::filesystem::path& p) { return p.string(); });
+    EXPECT_EQ(f, " -Wl,-Map=/build/bin/firmware.map");
+}
+
+TEST(FreestandingArtifacts, ObjcopyOnlyResolvesForABareMetalTarget) {
+    // A hosted binary is loaded by a loader that wants the ELF, so there is
+    // nothing to convert — and resolving a tool for it would put an edge in
+    // every hosted graph.
+    EXPECT_TRUE(resolve_objcopy("/payload/bin/clang++", "x86_64-linux-gnu").empty());
+    // (The bare-metal case needs a real payload on disk, so it is asserted by
+    // tests/e2e/130 instead: the artifact set has to actually appear.)
+}

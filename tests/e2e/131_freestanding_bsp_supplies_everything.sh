@@ -65,7 +65,7 @@ name    = "board"
 version = "0.1.0"
 
 [xlings]
-deps = ["xim:picolibc-riscv@1.8.12"]
+deps = ["xim:picolibc-riscv@1.8.12", "xim:qemu-riscv@9.2.4-1"]
 EOF
 
 cat > build.mcpp <<'EOF'
@@ -93,6 +93,16 @@ int main() {
     std::println("mcpp:link-lib=semihost");
     std::println("mcpp:link-lib=clang_rt.builtins-{}", rt);
     std::println("mcpp:link-script={}/picolibcpp.ld", lib);
+    // ⭐ The runner too: the package that knows the board resolves the
+    // emulator absolutely and says how to drive it. The consumer's manifest
+    // below has no [target.*] section at all — that is N1 of the plan.
+    const char* qemu = std::getenv("MCPP_XPKG_XIM_QEMU_RISCV_DIR");
+    if (qemu && *qemu) {
+        std::println("mcpp:runner={}/bin/qemu-system-riscv64", qemu);
+        for (auto a : {"-machine","virt","-nographic","-no-reboot",
+                       "-semihosting","-bios","none","-kernel"})
+            std::println("mcpp:runner={}", a);
+    }
     std::println("mcpp:rerun-if-env-changed=MCPP_TARGET_ARCH");
     return 0;
 }
@@ -136,7 +146,8 @@ extern "C" int main() {
 EOF
 
 # ⚠️ This manifest IS the assertion. Nothing here names picolibc, compiler-rt,
-# crt0, a linker script, a load address, -nostdlib or -mcmodel.
+# crt0, a linker script, a load address, -nostdlib, -mcmodel — or an emulator.
+# There is no [target.*] section at all: the runner comes from the BSP.
 cat > mcpp.toml <<'EOF'
 [package]
 name    = "fw"
@@ -148,12 +159,7 @@ board = { path = "../board" }
 [targets.firmware]
 kind = "bin"
 main = "src/main.cpp"
-
-[target.riscv64-none-elf]
-runner = ["QEMU_PATH", "-machine", "virt", "-nographic",
-          "-no-reboot", "-semihosting", "-bios", "none", "-kernel"]
 EOF
-sed -i "s|QEMU_PATH|$QEMU|" mcpp.toml
 
 "$MCPP" run --target-triple riscv64-none-elf > run.log 2>&1 || true
 grep -q 'BSP-CHAIN-OK 42' run.log || {

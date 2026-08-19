@@ -324,8 +324,17 @@ int run(int argc, char** argv) {
             // target triple, exactly as in `mcpp build --target`. Spelling the
             // option differently here would make the one command that needs
             // both the one command where the flag is not called --target.
-            .option(cl::Option("target-triple").takes_value().value_name("TRIPLE")
+            // ⚠️ `--target` is the spelling every other subcommand uses, so it
+            // is the one here too. The POSITIONAL above happens to share the
+            // word and means something else entirely (a binary name) — that
+            // collision predates this flag and is why `--target-triple` also
+            // exists: an unambiguous spelling for anyone who wants one.
+            // Making `run` the one command whose cross-target flag is not
+            // called `--target` would have been the worse trade.
+            .option(cl::Option("target").takes_value().value_name("TRIPLE")
                 .help("Cross target triple (same axis as `mcpp build --target`)"))
+            .option(cl::Option("target-triple").takes_value().value_name("TRIPLE")
+                .help("Unambiguous alias for --target (the positional is a binary NAME)"))
             .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
                 .help("Run only the named workspace member (single-member; no --workspace fan-out)"))
             .option(cl::Option("cache").takes_value().value_name("MODE")
@@ -339,6 +348,8 @@ int run(int argc, char** argv) {
             .description("Build + run all tests/**/*.cpp (after `--`, args go to each test binary)")
             .arg(cl::Arg("pattern")
                 .help("Run only tests whose name contains PATTERN (optional)"))
+            .option(cl::Option("target").takes_value().value_name("TRIPLE")
+                .help("Cross target triple (same axis as `mcpp build --target`)"))
             .option(cl::Option("message-format").takes_value().value_name("FMT")
                 .help("Output format: human (default) | json (NDJSON, one record per test)"))
             .option(cl::Option("list")
