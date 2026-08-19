@@ -837,6 +837,17 @@ thread_local int counter;  →  编译 ✅ 链接 ✅ 零未定义符号 ✅ 零
 
 ⚠️ 这条部分可 conformance 化:检查固件里 `sbrk` 的消费者是不是只有一个。
 
+### 16.1b ⚠️ 短写:`kal_stream_write` 写不全时怎么办(§20.3 逼出来的)
+
+写参考实现时立刻撞上:`::write(2)` 可以短写。SPEC 必须选一边:
+
+| | 后果 |
+|---|---|
+| **写全或报错**(推荐) | 循环在**后端**里写一次 |
+| 允许短写 | ⚠️ **每个调用方**都要自己写循环 —— 这正是 POSIX 让无数程序出错的地方 |
+
+⇒ 建议规定「写全或报错」,短写只在 `kal_stream_write_some`(若真需要)里出现。
+
 ### 16.2 ⚠️ 错误集合的封闭性
 
 草案说「封闭 `enum class`,不透传 errno」。但 POSIX 有约 130 个 errno,
@@ -964,4 +975,182 @@ unsupported_t seek(S, long) { … }
 | **引擎改动** | ✅ **零** |
 | **对下/对上判据** | ✅ 双向且可数(数桥接行数) |
 | ⚠️ **开放问题** | §16 六条 + §18 两条,**全部需要 SPEC 表态** |
-| ⚠️ **最大风险** | 不是技术 —— 是 **D0 的门:有没有第三方来实现第三个后端** |
+| ⚠️ **最大风险** | 不是技术 —— 是 **D0 的门:有没有第三方来实现第三个后端**。⭐ 缓解手段是 §20 的官方 `openkal-linux` 完整参考实现:**降低门槛,但不移动门** |
+
+---
+
+## 20. 官方参考实现:`openkal-linux`(完整)
+
+⭐ **它有两个身份**:一个**当天可用**的后端,和**其它实现者要抄的那份样板**。
+
+⚠️ 它**不能移动 D0 的门**(门是「有第三方实现了第三个后端」),但它把门**变得够得着** ——
+没有可抄的样板时,第三方要同时猜形状和写实现。
+
+### 20.1 ⭐ 写这份实现时才发现的一条:core 操作根本不需要 ADL
+
+| | 声明在哪 | 后端提供什么 | 探测机制 |
+|---|---|---|---|
+| **core 操作**(write/read/alloc/abort) | 接口包 `extern "C"` + C++ 封装 | **只有 C 函数的定义** | **不需要** —— core 的定义就是「一定在」 |
+| **可选能力**(seek/vectored/…) | 后端声明 C++ 重载 | 声明 + 定义 | **ADL**(§4.1) |
+
+⇒ ADL 那套只服务**可选能力**。core 走最简单的路:接口声明,后端定义,缺了就是链接错误。
+
+### 20.2 包结构
+
+```
+openkal-linux/
+├── mcpp.toml
+└── src/
+    ├── stream.cppm      export module openkal.stream;   ← 提供接口名
+    ├── stream.cpp       extern "C" 定义
+    ├── memory.cppm      export module openkal.memory;
+    ├── memory.cpp
+    ├── abort.cppm       export module openkal.abort;
+    └── abort.cpp
+```
+
+```toml
+[package]
+name    = "openkal-linux"
+version = "0.1.0"
+
+[dependencies]
+openkal = "0.1"                     # 契约
+
+[target.'cfg(not(linux))'.build]
+# 这个后端只在 linux 上有意义;别的 target 上它不该被选中
+```
+
+### 20.3 `openkal.stream`
+
+```cpp
+// src/stream.cppm —— 提供应用可见的名字,自己不加任何非标准的东西
+export module openkal.stream;
+export import openkal.decl.stream;
+// core 操作无需在此声明:它们是 openkal.decl.stream 里的 extern "C" + 封装。
+// 这个后端也不提供 seek —— 见 20.6,那不是疏漏。
+```
+
+```cpp
+// src/stream.cpp
+#include <unistd.h>
+#include <errno.h>
+import openkal.decl.stream;
+
+extern "C" {
+
+kal_stream kal_stdin (void) { return kal_stream{0}; }
+kal_stream kal_stdout(void) { return kal_stream{1}; }
+kal_stream kal_stderr(void) { return kal_stream{2}; }
+
+kal_io_result kal_stream_write(kal_stream s, const void* buf, uintptr_t n) {
+    auto* p = static_cast<const unsigned char*>(buf);
+    uintptr_t done = 0;
+    while (done < n) {
+        ssize_t r = ::write(static_cast<int>(s.h), p + done, n - done);
+        if (r < 0) {
+            // ⚠️ EINTR 必须重试。漏掉它的后端在有信号的系统上会随机短写,
+            // 而这类 bug 在测试里几乎不出现。
+            if (errno == EINTR) continue;
+            return { done, kal_from_errno(errno) };
+        }
+        if (r == 0) break;
+        done += static_cast<uintptr_t>(r);
+    }
+    return { done, 0 };
+}
+
+kal_io_result kal_stream_read(kal_stream s, void* buf, uintptr_t n) {
+    for (;;) {
+        ssize_t r = ::read(static_cast<int>(s.h), buf, n);
+        if (r < 0) { if (errno == EINTR) continue; return { 0, kal_from_errno(errno) }; }
+        return { static_cast<uintptr_t>(r), 0 };   // 短读是正常的,不重试
+    }
+}
+
+int32_t kal_stream_flush(kal_stream) { return 0; }   // 裸 fd 无用户态缓冲
+
+}
+```
+
+⚠️ **写这段逼出了一个 SPEC 必须回答的问题**(§16 没覆盖):
+
+> `kal_stream_write` 返回**短写**,还是**写全或报错**?
+
+上面选了「循环到写全」。若 SPEC 选另一边,**每个调用方都要自己写这个循环** ——
+这正是 POSIX 让无数程序出错的地方。⇒ **建议 SPEC 规定「写全或报错」,短写只在
+`kal_stream_write_some`(如果需要)里出现。**
+
+### 20.4 `openkal.memory` —— 演示 §16.1 的规则
+
+```cpp
+// src/memory.cpp
+#include <stdlib.h>
+
+extern "C" {
+// ⭐ 建在 libc 分配器之上,不是与它并列 —— §16.1 的规则,这里是它的正面示例。
+void* kal_alloc(uintptr_t size, uintptr_t align) {
+    if (align <= alignof(max_align_t)) return ::malloc(size);
+    return ::aligned_alloc(align, (size + align - 1) / align * align);
+}
+// sized-free:这个方向丢掉 size 是零成本的(§16.6)
+void kal_free(void* p, uintptr_t, uintptr_t) { ::free(p); }
+}
+```
+
+### 20.5 `openkal.abort`
+
+```cpp
+// src/abort.cpp
+#include <unistd.h>
+#include <stdlib.h>
+
+extern "C" {
+[[noreturn]] void kal_abort(const char* msg, uintptr_t len) {
+    if (msg && len) { ssize_t r = ::write(2, msg, len); (void)r; }
+    ::abort();
+}
+[[noreturn]] void kal_exit(int32_t code) { ::_exit(code); }
+}
+```
+
+⚠️ `_exit` 而不是 `exit`:`exit` 会跑 atexit 与静态析构,而 `kal_exit` 的契约是
+「立刻结束」。这类差别**必须写进 SPEC**,否则两个后端的语义会悄悄分叉。
+
+### 20.6 ⭐ 参考实现验证了 fs/net 的分解(§2.3)
+
+写 Linux 后端时会立刻撞上一件事:
+
+> **Linux 上「能不能 seek」是每个句柄的属性,不是后端的属性。**
+> `lseek(fd)` 对普通文件成功,对管道 `ESPIPE`。
+
+⇒ 如果 `openkal.stream` 有 `seek`,Linux 后端**无法诚实回答** ——
+声称有,则对管道永远失败(**正是 §5.1 的「存在但永远失败」反模式**);
+声称没有,则文件用不了。
+
+⭐ **而 §2.3 的分解让这个问题不存在**:seek 属于 `openkal.fs` 的 descriptor 类型,
+`openkal.stream` 压根没有它。**参考实现独立地证实了那次撤回是对的。**
+
+⇒ **这是「写一份完整实现」最大的价值:它是唯一能发现分解错误的方法,
+而且比 conformance 更早。**
+
+### 20.7 它作为样板教什么
+
+| 样板里的模式 | 其它实现者照抄什么 |
+|---|---|
+| `stream.cppm` 只有 `export import`,不加任何东西 | **不要往标准模块名里塞私货**(§4.4) |
+| EINTR 循环 | 每个后端都要处理自己平台的「被打断」 |
+| `kal_alloc` 走 `malloc` | §16.1:有 libc 分配器就建在它之上 |
+| `kal_from_errno` 是一张**表** | **映射 ≠ 模拟**(§3.1) |
+| 没有 `seek` | 能力缺失就是**不声明**,不是声明后返回错误 |
+| `_exit` 而非 `exit` | 语义细节要向 SPEC 对齐,不要凭直觉 |
+
+### 20.8 对 D0 的影响:降低门槛,不移动门
+
+| | |
+|---|---|
+| D0 的门 | **有第三方实现了第三个后端** —— 不变 |
+| 官方 linux 后端做的事 | 把「猜形状 + 写实现」减成**只写实现** |
+| ⚠️ 不做的事 | 它**不算**第三方后端,也不算第三个后端(linux/bare 是官方的两个) |
+
+⇒ 判据仍然是**别人来不来**,而这份实现让「来」这件事从一个季度变成一个周末。
