@@ -14,6 +14,14 @@ specification itself, which is maintained in the `mcpplibs/openkal` repository.
 | `mcpplibs/openkal-linux` | the reference implementation for Linux, its conformance suite, and an example | 0.2.0 |
 | `mcpplibs/mcpp-index` | descriptors for both packages | pull requests 220 and 221 |
 
+⚠️ **This table records 0.2 and is not the current state.** The specification is
+at 0.4.0 and covers eight interfaces; the implementations are `openkal-linux`
+0.4.0, `openkal-macos` 0.2.0 and `openkal-libc` 0.2.0. See
+[the portable-program findings](2026-08-20-openkal-portable-program-findings.md)
+for what 0.4 changed and why, and
+[the completeness plan](2026-08-20-openkal-completeness-plan.md) for the
+interfaces 0.3 added.
+
 Both packages are mirrored to GitCode, and the mirrored archives were verified
 to be byte-identical to those served by GitHub.
 
