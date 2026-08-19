@@ -353,6 +353,24 @@ struct Resources {
 // is read in ~150 places, and a BuildConfig genuinely IS a set of build
 // inputs plus the selection axis and resolved policy scalars.
 struct BuildConfig : BuildInputs {
+    // How `mcpp run` / `mcpp test` execute an artifact this host cannot run,
+    // as an argv template (the artifact path is appended, or substituted for
+    // `{}`).
+    //
+    // On BuildConfig rather than only in `[target.<triple>].runner` because
+    // the value is MACHINE-SPECIFIC: the emulator lives in a package payload
+    // whose path carries a home and a version, so only a `build.mcpp` can
+    // compute it — and a build program writes into BuildConfig. A
+    // board-support package emitting `mcpp:runner=` is the intended producer;
+    // the manifest key remains the consumer's override.
+    //
+    // ⚠️ EXACTLY ONE provider among the dependencies. Two board-support
+    // packages both claiming to know how to run the artifact is a
+    // configuration error, not something to merge: appending would produce an
+    // argv that is neither one's, and it would fail at exec time with no
+    // indication of which package contributed which token.
+    std::vector<std::string>            runner;
+
     // Was `sources` WRITTEN, as opposed to merely being empty?
     //
     // Presence is semantic here for the same reason it is on

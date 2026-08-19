@@ -316,16 +316,29 @@ int run(int argc, char** argv) {
             .action(wrap_rc(cmd_build)))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
-            // NB: this positional is a BINARY NAME from [[bin]]/src layout —
-            // unrelated to `--target <triple>` (the cross-target axis).
-            .arg(cl::Arg("target").help("Binary name (optional)"))
-            // ⚠️ Same word, two axes — and they were ALREADY named this way:
-            // the positional above is a binary name, this option is the cross
-            // target triple, exactly as in `mcpp build --target`. Spelling the
-            // option differently here would make the one command that needs
-            // both the one command where the flag is not called --target.
-            .option(cl::Option("target-triple").takes_value().value_name("TRIPLE")
+            // ⚠️ Named `bin`, NOT `target`, and the rename is load-bearing.
+            //
+            // This positional is a BINARY NAME from [[bin]]/src layout. It was
+            // called `target` — the same word as the cross-target axis — and
+            // ParsedArgs::value() falls back from an unset option to a
+            // positional OF THE SAME NAME, so adding `--target` here made
+            // every ordinary invocation read the binary name as a triple:
+            //
+            //     $ mcpp run q
+            //     error: unknown target 'q'
+            //
+            // The name is never read back (cmd_run takes positional(0) by
+            // index); it only labels this slot and shows up in --help, where
+            // `bin` is the more accurate word anyway. So renaming it is what
+            // lets `run` spell the flag `--target` like every other
+            // subcommand, instead of being the one command that cannot.
+            .arg(cl::Arg("bin").help("Binary name (optional)"))
+            .option(cl::Option("target").takes_value().value_name("TRIPLE")
                 .help("Cross target triple (same axis as `mcpp build --target`)"))
+            // Kept as an alias: it shipped in 2026.8.19.1 as the only spelling
+            // `run` accepted, and scripts written against it must keep working.
+            .option(cl::Option("target-triple").takes_value().value_name("TRIPLE")
+                .help("Alias for --target"))
             .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
                 .help("Run only the named workspace member (single-member; no --workspace fan-out)"))
             .option(cl::Option("cache").takes_value().value_name("MODE")
@@ -339,6 +352,8 @@ int run(int argc, char** argv) {
             .description("Build + run all tests/**/*.cpp (after `--`, args go to each test binary)")
             .arg(cl::Arg("pattern")
                 .help("Run only tests whose name contains PATTERN (optional)"))
+            .option(cl::Option("target").takes_value().value_name("TRIPLE")
+                .help("Cross target triple (same axis as `mcpp build --target`)"))
             .option(cl::Option("message-format").takes_value().value_name("FMT")
                 .help("Output format: human (default) | json (NDJSON, one record per test)"))
             .option(cl::Option("list")

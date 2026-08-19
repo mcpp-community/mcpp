@@ -52,6 +52,7 @@ is ignored, so diagnostics may be logged freely.
 | `mcpp:source=<path>` *(0.0.100+)*  | select a **pre-existing** source file into the build (absolute, or relative to the package root). Same downstream effect as `generated=`; use it for files the program *chose* (payload/vendored tree) rather than wrote — e.g. a per-target source selection over a large tarball |
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | add a **private** include directory (`-I`) for this package's own TUs (absolute, or relative to the package root; normalized). Replaces the `cxxflag=-I` + `cflag=-I` double emission |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | like `include-dir`, but searched **after** the system directories (`-idirafter`) — for payload trees that shadow system headers |
+| `mcpp:runner=<token>` *(2026.8.19.2+)* | one argv token of the command that EXECUTES this build's artifact, when the host cannot. Emitted once per token, in order; the artifact path is appended (or substituted for `{}`). Reaches the **consumer**. ⚠️ Emit the executable as an ABSOLUTE path, and only **one** dependency may supply it |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | link with this **linker script** (`-T`; relative resolves against the package root, and the emitted path is absolute because the link runs in the build directory). Reaches the **consumer**, unlike `include-dir` — a board's memory layout is the one thing a consumer cannot write for itself |
 | `mcpp:rerun-if-changed=<path>`     | re-run `build.mcpp` when this file changes |
 | `mcpp:rerun-if-env-changed=<VAR>`  | re-run `build.mcpp` when this env var changes |
@@ -101,8 +102,36 @@ int main() {
 | `mcpp::rerun_if_changed_glob(pat)` *(2026.8.6.2+)* | `mcpp:rerun-if-changed-glob=` — re-run when the **set** of files matching `pat` changes (see below) |
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | reads `MCPP_DEP_<PKG>_BIN_<TOOL>` — the absolute path of a **host tool** built by a dependency (see below) |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
+| `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` — see below |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package this manifest declared in `[xlings] deps`; `""` when it was not declared or is not installed (see below) |
 | `mcpp::action{…}.submit()` *(2026.8.5.1+)* | `mcpp:action=` — declares a **build-graph node** instead of doing the work here (see below) |
+
+### `runner` — how the artifact is executed (2026.8.19.2+)
+
+A board-support package knows the emulator, its machine model and its firmware
+mode. It also knows where the emulator IS, which a static manifest cannot: the
+payload path carries a home and a version.
+
+```cpp
+const char* qemu = mcpp::xpkg_dir("xim", "qemu-riscv");
+mcpp::runner(std::format("{}/bin/qemu-system-riscv64", qemu).c_str());
+for (auto a : {"-machine","virt","-nographic","-no-reboot","-kernel"})
+    mcpp::runner(a);
+```
+
+The consumer then needs no `[target.<triple>]` section at all. If it writes one
+anyway, **it wins** — swapping `-bios default` for `-bios none -semihosting`
+while debugging is a legitimate thing to want — and mcpp says which dependency
+it overrode.
+
+⚠️ **Emit the executable as an absolute path.** A bare name resolves through
+`PATH` to a shim that dispatches against its own owner home, which is not
+necessarily the home this build uses.
+
+⚠️ **Exactly one dependency may supply a runner.** Two board-support packages
+both claiming to know how to run the artifact is a configuration error, and
+mcpp reports it naming both rather than merging them into an argv that is
+neither one's.
 
 ### Finding an `[xlings] deps` payload: `xpkg_dir` (2026.8.19+)
 
@@ -297,15 +326,43 @@ write it yourself). mcpp uses that two ways:
   with an upgrade hint. Continuing would silently drop directives the build
   depends on — and "the build succeeded but the flag never arrived" is the
   worst class of build bug.
-- Because the two sides then provably agree, an **unrecognized directive is an
-  error** rather than a warning: within one protocol version it can only be a
-  typo.
+- An **unrecognized directive is an error** rather than a warning, and the error
+  names *both* possible causes. It cannot name one: the protocol number is
+  stamped by whichever mcpp **compiled** the program, not carried by the
+  package, so a package written for a newer mcpp arrives at an older one
+  wearing the older engine's number. Two matching numbers therefore say nothing
+  about whether the key came from the future.
 
 A `printf`-style program announces nothing, so it keeps the historical
 warn-and-ignore behaviour. That surface is **frozen at the eleven directives in
 the table above** — it still works and will keep working, but new capabilities
 land only in the typed API. Prefer `import mcpp;` for anything intended to
 maintain.
+
+#### A package that needs a newer mcpp
+
+When a published package calls a typed function this mcpp does not have, the
+compile error naming it is followed by:
+
+```
+       The `mcpp` build module this engine bundles does not have that name.
+       Either the package was written for a newer mcpp (try `mcpp self update`;
+       this is mcpp 2026.8.19.2), or the name is misspelled …
+```
+
+The package cannot handle this itself, and it is worth knowing why — the
+obvious guard does not compile:
+
+```cpp
+if constexpr (requires { mcpp::runner("qemu"); })   // ✗ hard error when absent
+    mcpp::runner("qemu");
+```
+
+A `requires`-expression over a **qualified name that does not exist** is
+ill-formed, not `false`. So there is no in-language feature probe, and a
+package that adopts a new directive states its floor in prose (its README) and
+relies on the diagnostic above. Such a package should name the mcpp version it
+requires.
 
 ### `import std;` (mcpp 2026.8.2.1+)
 

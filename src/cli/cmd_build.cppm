@@ -166,7 +166,10 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     bool no_cache = parsed.is_flag_set("no-cache");
     if (auto c = parsed.value("cache")) cache_mode = *c;
     else if (no_cache)                  cache_mode = "off";
+    // Both spellings; see cli.cppm for why the positional had to be renamed
+    // before `--target` could exist here at all.
     std::string target_triple;
+    if (auto tt = parsed.value("target"))        target_triple = *tt;
     if (auto tt = parsed.value("target-triple")) target_triple = *tt;
     return mcpp::build::build_run_target(targetName, passthrough, package_filter,
                                          cache_mode, no_cache, target_triple);
@@ -187,6 +190,8 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (auto p = parsed.value("package")) ov.package_filter = *p;
     if (auto c = parsed.value("cache")) ov.cache_mode = *c;
     else if (parsed.is_flag_set("no-cache")) ov.cache_mode = "off";
+
+    if (auto tt = parsed.value("target")) ov.target_triple = *tt;
 
     mcpp::build::TestOptions to;
     if (parsed.positional_count() > 0) to.filter = parsed.positional(0);

@@ -3132,6 +3132,10 @@ prepare_build(bool print_fingerprint,
     // the build.mcpp side for the same reason that one is: a program that
     // reconstructs the store path is coupled to internals mcpp is free to
     // change. See mcpp::build::hostprogram::xpkg_dir.
+    // Which dependency supplied the runner, for the exactly-one-provider
+    // error below. A name rather than a bool: the message has to name both.
+    std::string runnerProvider;
+
     auto fillXpkgDirs = [&](mcpp::build::BuildProgramEnv& e,
                             const mcpp::manifest::Manifest& owner) {
         if (owner.xlings.deps.empty()) return;
@@ -4958,6 +4962,7 @@ prepare_build(bool print_fingerprint,
             const auto mark = markDirectiveTail(pkg.manifest);
             const auto ldN = bcDep.ldflags.size();
             const auto actN = bcDep.actions.size();
+            const auto runnerN = bcDep.runner.size();
             if (auto r = mcpp::build::run_build_program(
                     pkg.manifest, pkg.root, host->first, host->second,
                     pkg.manifest.cppStandard, bpEnv);
@@ -4976,6 +4981,33 @@ prepare_build(bool print_fingerprint,
             // (link-search paths are already absolute from parse_line).
             foldDirectiveTailIntoPrivateBuild(pkg, pkg.manifest, mark);
             adoptActionOutputs(pkg.manifest, pkg.root, actN);
+
+            // Scope::RunGlobal — how the artifact is EXECUTED, forwarded to
+            // the root like link flags but with the opposite merge rule.
+            //
+            // ⚠️ EXACTLY ONE provider. Link flags from two dependencies
+            // concatenate and that is correct; two runners cannot — appending
+            // produces an argv that is neither one's and fails at exec time
+            // with nothing to say which package contributed which token. So
+            // the second provider is a hard error that names BOTH, because
+            // naming only the loser tells the reader half of what they need.
+            if (bcDep.runner.size() > runnerN) {
+                std::vector<std::string> supplied(
+                    bcDep.runner.begin() + static_cast<std::ptrdiff_t>(runnerN),
+                    bcDep.runner.end());
+                if (!m->buildConfig.runner.empty() && !runnerProvider.empty()) {
+                    return std::unexpected(std::format(
+                        "two dependencies both supply a runner for this target: "
+                        "'{}' and '{}'.\n"
+                        "       A runner is how the artifact is EXECUTED — there "
+                        "can only be one.\n"
+                        "       Drop one of them, or override both with an "
+                        "explicit [target.<triple>].runner.",
+                        runnerProvider, pkg.manifest.package.name));
+                }
+                m->buildConfig.runner = std::move(supplied);
+                runnerProvider = pkg.manifest.package.name;
+            }
             m->buildConfig.ldflags.insert(m->buildConfig.ldflags.end(),
                 bcDep.ldflags.begin() + ldN, bcDep.ldflags.end());
         }
@@ -5241,9 +5273,18 @@ prepare_build(bool print_fingerprint,
         // no subset of it to build without an OS. Saying "provides no std
         // module source" sends the reader to look for a broken payload.
         //
-        // Naming the replacement is the whole value of the diagnostic: the
-        // freestanding subset is an ordinary package, so the fix is one line in
-        // the manifest rather than a toolchain investigation.
+        // ⚠️ It used to end with a copy-pasteable
+        //
+        //     [dependencies]
+        //     mcpplibs.std.freestanding = "0.1"
+        //
+        // and that package is NOT published. A diagnostic whose suggested fix
+        // fails at the next command is worse than one that explains and stops:
+        // the reader spends the next minutes deciding whether their index is
+        // broken. Point at what a bare-metal project actually has today — the
+        // board package it already depends on exports a module — and describe
+        // the subset package as a shape rather than as a line to paste.
+        // Restore the concrete line when such a package ships.
         if (auto ft = mcpp::toolchain::triple::parse(tc->targetTriple);
             ft && ft->is_freestanding())
         {
@@ -5254,13 +5295,19 @@ prepare_build(bool print_fingerprint,
                 "filesystem, iostreams\n"
                 "       included), so there is no subset of it to build without "
                 "an OS underneath.\n"
-                "       Use the freestanding subset instead:\n"
                 "\n"
-                "           [dependencies]\n"
-                "           mcpplibs.std.freestanding = \"0.1\"\n"
+                "       What a bare-metal project uses instead:\n"
+                "         * the module its BOARD package exports — that is where "
+                "the target's\n"
+                "           C library is already wrapped (riscv-virt-rt exports "
+                "`mcpplibs.riscv_virt_rt`);\n"
+                "         * or a freestanding subset package, which is an "
+                "ordinary dependency\n"
+                "           providing the header-only parts of the library that "
+                "need no OS.\n"
                 "\n"
-                "       then `import mcpplibs.std.freestanding;` in place of "
-                "`import std;`.",
+                "       No such subset package is published yet, so there is no "
+                "line to paste here.",
                 tc->targetTriple));
         }
         return std::unexpected(std::format(

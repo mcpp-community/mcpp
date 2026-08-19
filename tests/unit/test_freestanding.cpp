@@ -227,3 +227,70 @@ TEST(XpkgEnvVar, BothSpellingsAreDerivedFromOneSanitizer) {
     EXPECT_EQ(xpkg_env_var("", "picolibc-riscv"),
               "MCPP_XPKG_PICOLIBC_RISCV_DIR");
 }
+
+// ── engine floor: a package that needs a newer mcpp ─────────────────────────
+
+TEST(BuildProgramCompatHint, RecognisesAllThreeFrontendSpellings) {
+    using mcpp::build::mentions_missing_mcpp_api;
+    // ⚠️ Measured, not assumed: `if constexpr (requires { mcpp::runner("x"); })`
+    // is a HARD ERROR when the name is absent, so a package cannot probe for a
+    // newer API in-language. The compiler's error IS the compat channel, and
+    // these are the three ways it arrives.
+    EXPECT_TRUE(mentions_missing_mcpp_api(
+        "build.mcpp:57:11: error: 'runner' is not a member of 'mcpp'"));          // gcc
+    EXPECT_TRUE(mentions_missing_mcpp_api(
+        "build.mcpp:57:11: error: no member named 'runner' in namespace 'mcpp'"));// clang
+    EXPECT_TRUE(mentions_missing_mcpp_api(
+        "build.mcpp(57): error C2039: 'runner': is not a member of 'mcpp'"));     // cl.exe
+}
+
+TEST(BuildProgramCompatHint, StaysOffFailuresThatAreNotAboutOurApi) {
+    using mcpp::build::mentions_missing_mcpp_api;
+    // The hint says "your mcpp may be too old". Attaching that to an ordinary
+    // compile error would send the reader to the wrong place, so the match is
+    // anchored on OUR namespace — a package's own missing symbol names its own.
+    EXPECT_FALSE(mentions_missing_mcpp_api(
+        "build.mcpp:12:5: error: 'runner' is not a member of 'board'"));
+    EXPECT_FALSE(mentions_missing_mcpp_api(
+        "build.mcpp:3:1: error: expected ';' after top level declarator"));
+    EXPECT_FALSE(mentions_missing_mcpp_api(
+        "build.mcpp:9:9: error: use of undeclared identifier 'mcpp_runner'"));
+}
+
+// ── artifact set ───────────────────────────────────────────────────────────
+
+TEST(FreestandingArtifacts, SizeOutputIsParsedNotPassedThrough) {
+    // Parsed so the printed shape is mcpp's, not the tool's: llvm-size and GNU
+    // size differ in their headers, and a build whose output changed
+    // appearance with the toolchain would be reporting the tool, not the size.
+    auto s = parse_size_output(
+        "   text\t   data\t    bss\t    dec\t    hex\tfilename\n"
+        "   8836\t     80\t   5668\t  14584\t   38f8\tfirmware\n");
+    ASSERT_TRUE(s.has_value());
+    EXPECT_EQ(s->text, 8836);
+    EXPECT_EQ(s->data, 80);
+    EXPECT_EQ(s->bss,  5668);
+    // The number that decides whether the image fits.
+    EXPECT_EQ(size_total(*s), 14584);
+}
+
+TEST(FreestandingArtifacts, MalformedSizeOutputIsNotGuessedAt) {
+    // An informational line has no standing to invent numbers.
+    EXPECT_FALSE(parse_size_output("").has_value());
+    EXPECT_FALSE(parse_size_output("size: cannot open 'x'\n").has_value());
+}
+
+TEST(FreestandingArtifacts, MapFlagNamesTheArtifact) {
+    auto f = map_flag("/build/bin/firmware",
+                      [](const std::filesystem::path& p) { return p.string(); });
+    EXPECT_EQ(f, " -Wl,-Map=/build/bin/firmware.map");
+}
+
+TEST(FreestandingArtifacts, ObjcopyOnlyResolvesForABareMetalTarget) {
+    // A hosted binary is loaded by a loader that wants the ELF, so there is
+    // nothing to convert — and resolving a tool for it would put an edge in
+    // every hosted graph.
+    EXPECT_TRUE(resolve_objcopy("/payload/bin/clang++", "x86_64-linux-gnu").empty());
+    // (The bare-metal case needs a real payload on disk, so it is asserted by
+    // tests/e2e/130 instead: the artifact set has to actually appear.)
+}

@@ -159,9 +159,25 @@ readelf -h "$img" | grep -q '0x80200000' || {
     readelf -h "$img" | grep -i entry; exit 1; }
 
 # ── run ─────────────────────────────────────────────────────────────────────
-"$MCPP" run --target-triple riscv64-none-elf > run.log 2>&1 || true
+# ⚠️ BOTH spellings, and the pairing is the test.
+#
+# `run` also takes a POSITIONAL binary name, and the arg parser falls back
+# from an unset option to a positional of the same name. While that positional
+# was itself called `target`, adding `--target` here silently turned
+# `mcpp run <binary>` into `mcpp run --target=<binary>`:
+#
+#     $ mcpp run q
+#     error: unknown target 'q'
+#
+# `--target-triple` shipped first and stays an alias, so both are pinned; the
+# positional case is pinned by 73_issue131_per_target_cxxflag.sh.
+"$MCPP" run --target riscv64-none-elf > run.log 2>&1 || true
 grep -q 'MCPP-FREESTANDING-OK' run.log || {
     cat run.log; echo "the firmware did not run (or produced no output)"; exit 1; }
+
+"$MCPP" run --target-triple riscv64-none-elf > alias.log 2>&1 || true
+grep -q 'MCPP-FREESTANDING-OK' alias.log || {
+    cat alias.log; echo "--target-triple (the 2026.8.19.1 spelling) stopped working"; exit 1; }
 
 # ── the runner is REQUIRED, and its absence must say so ─────────────────────
 # Two-sided: without this, "run worked" could equally mean mcpp exec'd the

@@ -72,7 +72,11 @@ using mcpp::build::program_protocol::run_timeout_for;
 // Where a directive's value accumulates. One slot may be fed by several wire
 // names (link-lib and link-search both produce link flags).
 enum class Slot : std::size_t {
-    CxxFlags = 0,
+    // How to EXECUTE the artifact. Its own slot, not a corner of LdFlags: it
+    // is neither a compile input nor a link input, and putting it in LdFlags
+    // would put an emulator's argv on the linker command line.
+    Runner,
+    CxxFlags,
     CFlags,
     LdFlags,
     Defines,
@@ -101,6 +105,12 @@ inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
 enum class Scope {
     PackagePrivate,  // only this package's own TUs — never propagated to consumers
     LinkGlobal,      // reaches the final link of whatever consumes this package
+    // Reaches how the consumer RUNS the artifact. Parallel to LinkGlobal in
+    // propagation and deliberately NOT the same value: the two have different
+    // conflict rules. Link flags from two dependencies concatenate and that is
+    // correct; two runners cannot, so this scope carries an exactly-one-
+    // provider check that LinkGlobal must not inherit.
+    RunGlobal,
     SourceSet,       // joins the compile set
     RerunKey,        // not a build input at all; only feeds the re-run key
     GraphNode,       // declares an edge in the build graph; see manifest::BuildAction
@@ -139,7 +149,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 14> kTable{{
+inline constexpr std::array<Def, 15> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -172,6 +182,19 @@ inline constexpr std::array<Def, 14> kTable{{
     // the contract for one row would cost more than it buys: lld's own error
     // is already exact ("cannot find linker script <path>"), which is the
     // condition the contract exists to make legible.
+    // ⚠️ One argv TOKEN per line, in emission order.
+    //
+    // argv is an ordered list and a directive is one line = one value, so the
+    // list is built by repetition. The alternative — a JSON array, as `action`
+    // uses — would introduce an escaping contract for a payload that never
+    // nests, and `action` pays that cost only because it has six fields.
+    //
+    // Verbatim: a runner token is not a path to normalize (it may be `-bios`),
+    // and the producer already resolved the emulator absolutely, because a
+    // bare name resolves through PATH to a shim that dispatches against its
+    // OWNER home — measured in CI as `xlings: '…' is not installed` from a job
+    // where the same name had answered `--version` two steps earlier.
+    {"runner",              "runner",            Slot::Runner,           Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              4},
     {"link-script",         "ldflag",            Slot::LdFlags,          Scope::LinkGlobal,     Transform::LinkerScript,  false, "",                           "",                                              3},
     {"include-dir",         "include-dir",       Slot::IncludeDirs,      Scope::PackagePrivate, Transform::AbsPath,       false, "",                           "",                                              1},
     {"include-dir-after",   "include-dir-after", Slot::IncludeDirsAfter, Scope::PackagePrivate, Transform::AbsPath,       false, "",                           "",                                              1},
@@ -559,11 +582,14 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     auto const& cxx      = d.at(Slot::CxxFlags);
     auto const& c        = d.at(Slot::CFlags);
     auto const& ld       = d.at(Slot::LdFlags);
+    auto const& runner   = d.at(Slot::Runner);
     auto const& defines  = d.at(Slot::Defines);
 
     bc.cxxflags.insert(bc.cxxflags.end(), cxx.begin(), cxx.end());
     bc.cflags.insert(bc.cflags.end(), c.begin(), c.end());
     bc.ldflags.insert(bc.ldflags.end(), ld.begin(), ld.end());
+    // Appended in emission order — the tokens ARE the argv.
+    bc.runner.insert(bc.runner.end(), runner.begin(), runner.end());
     // cfg defines colour BOTH language channels — the one slot that fans out.
     bc.cflags.insert(bc.cflags.end(), defines.begin(), defines.end());
     bc.cxxflags.insert(bc.cxxflags.end(), defines.begin(), defines.end());

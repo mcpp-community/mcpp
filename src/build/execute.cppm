@@ -16,6 +16,7 @@ import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.toolchain.triple;
 import mcpp.freestanding.runner;
+import mcpp.freestanding.linkline;
 import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
 import mcpp.build.backend;
 import mcpp.build.ninja;
@@ -385,6 +386,69 @@ compute_subos_env(const mcpp::build::BuildPlan& plan) {
 // instead of re-deriving it. `scheduleNinjaJobs` is NOT the compiler cap under
 // detach-codegen: a detached compiler stops holding a ninja slot, so ninja is
 // handed a larger number on purpose.
+// THE read point for "how is this artifact executed".
+//
+// One function, two callers (`mcpp run` and `mcpp test`). Deriving it twice is
+// the shape this codebase has paid for repeatedly (#233/#240/#242/#344): it
+// does not fail when you add the second derivation, it fails later, when one
+// of them gains a rule the other does not.
+//
+// Returns an empty argv for a hosted target — the caller runs the artifact
+// directly, as it always did.
+struct RunnerChoice {
+    std::vector<std::string> tmpl;      // empty = execute the artifact directly
+    bool freestanding = false;          // a runner is REQUIRED when true
+    bool fromManifest = false;          // the consumer overrode a dependency's
+};
+
+RunnerChoice choose_runner(const BuildContext& ctx) {
+    RunnerChoice c;
+    auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
+    if (!ft || !ft->is_freestanding()) return c;
+    c.freestanding = true;
+    // Two producers, ordinary precedence: what the author of THIS project
+    // wrote beats what a dependency supplied. The dependency is the normal
+    // case (a board-support package computes the emulator's absolute path);
+    // the manifest key exists for swapping `-bios default` for
+    // `-bios none -semihosting` while debugging.
+    c.tmpl = ctx.manifest.buildConfig.runner;
+    if (auto it = ctx.manifest.targetOverrides.find(ctx.tc.targetTriple);
+        it != ctx.manifest.targetOverrides.end() && !it->second.runner.empty()) {
+        c.tmpl = it->second.runner;
+        c.fromManifest = !ctx.manifest.buildConfig.runner.empty();
+    }
+    return c;
+}
+
+// The capacity number, printed because capacity is the constraint.
+//
+// After `Finished`, not instead of it: the build succeeded either way, and a
+// size line that replaced the outcome would be a different kind of message.
+// Silent on every hosted target and whenever the tool is absent — an
+// informational line has no standing to fail a build.
+void report_freestanding_size(const BuildContext& ctx) {
+    auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
+    if (!ft || !ft->is_freestanding()) return;
+    auto tool = mcpp::freestanding::resolve_size_tool(ctx.tc.binaryPath);
+    if (tool.empty()) return;
+    for (auto const& lu : ctx.plan.linkUnits) {
+        if (lu.kind != mcpp::build::LinkUnit::Binary) continue;
+        auto art = ctx.outputDir / lu.output;
+        std::error_code ec;
+        if (!std::filesystem::exists(art, ec)) continue;
+        auto out = mcpp::xlings::run_capture(std::format(
+            "{} {} 2>/dev/null", mcpp::xlings::shq(tool.string()),
+            mcpp::xlings::shq(art.string())));
+        if (!out) continue;
+        auto s = mcpp::freestanding::parse_size_output(*out);
+        if (!s) continue;
+        mcpp::ui::info("Size", std::format(
+            "{}  text {}  data {}  bss {}  total {}",
+            lu.targetName, s->text, s->data, s->bss,
+            mcpp::freestanding::size_total(*s)));
+    }
+}
+
 export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                    std::string_view targetOverride = "") {
     // `--cache=off` means a cold build: no global cache, and target/ cleared —
@@ -563,6 +627,7 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         if (bc.lto)   descriptor += " + lto";
         mcpp::ui::finished(ctx.profile, r->elapsed, descriptor);
     }
+    report_freestanding_size(ctx);
     return 0;
 }
 
@@ -1049,10 +1114,22 @@ export int build_run_target(const std::optional<std::string>& targetName,
     if (auto ft = mcpp::toolchain::triple::parse(ctx->tc.targetTriple))
         freestandingRun = ft->is_freestanding();
     if (freestandingRun) {
-        std::vector<std::string> tmpl;
-        if (auto it = ctx->manifest.targetOverrides.find(ctx->tc.targetTriple);
-            it != ctx->manifest.targetOverrides.end())
-            tmpl = it->second.runner;
+        // Two producers, and the precedence is the ordinary one: what the
+        // author of THIS project wrote beats what a dependency supplied.
+        //
+        // The dependency is the normal case — a board-support package knows
+        // the emulator, its machine model and its firmware mode, and computes
+        // the absolute path that a static manifest cannot. The explicit key
+        // exists for the other case: swapping `-bios default` for
+        // `-bios none -semihosting` while debugging is a legitimate thing to
+        // want, and removing that ability to make the BSP authoritative would
+        // trade one problem for a worse one.
+        const auto choice = choose_runner(*ctx);
+        auto tmpl = choice.tmpl;
+        if (choice.fromManifest)
+            mcpp::ui::info("note", std::format(
+                "[target.{}].runner overrides the runner a dependency supplied",
+                ctx->tc.targetTriple));
         if (tmpl.empty()) {
             std::println(stderr, "error: {}",
                 mcpp::freestanding::no_runner_message(ctx->tc.targetTriple));
@@ -1612,8 +1689,30 @@ export int run_tests(std::span<const std::string> passthrough,
 
         auto exe = ctx->outputDir / lu.output;
 
+        // A freestanding test image cannot run here either, and the answer is
+        // the SAME runner `mcpp run` uses — one read point, two callers.
+        //
+        // Nothing else about the test model changes, and that is a measured
+        // result rather than a simplification: semihosting propagates the
+        // firmware's `main` return value to the emulator's exit code
+        // (`return 7` → qemu exits 7, verified), so "exit code is the verdict"
+        // holds on bare metal exactly as it does on the host. An earlier plan
+        // called for a structured stdout protocol because it assumed there was
+        // no exit code to read; there is.
         std::vector<std::string> argv;
-        argv.push_back(exe.string());
+        {
+            const auto choice = choose_runner(*ctx);
+            if (choice.freestanding) {
+                if (choice.tmpl.empty()) {
+                    std::println(stderr, "error: {}",
+                        mcpp::freestanding::no_runner_message(ctx->tc.targetTriple));
+                    return 2;
+                }
+                argv = mcpp::freestanding::expand(choice.tmpl, exe);
+            } else {
+                argv.push_back(exe.string());
+            }
+        }
         for (auto& a : passthrough) argv.push_back(a);
 
         std::vector<std::pair<std::string, std::string>> childEnv;

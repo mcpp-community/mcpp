@@ -906,8 +906,24 @@ can produce them.
 
 ```bash
 mcpp build --target riscv64-none-elf
-mcpp run   --target-triple riscv64-none-elf     # via [target.<triple>].runner
+mcpp run   --target riscv64-none-elf     # via [target.<triple>].runner
 ```
+
+**Starting from a board package**
+
+Almost nothing below has to be written by hand. A board-support package carries
+the C library, the startup code, the memory layout and the emulator, so the
+shortest path to a booting image is:
+
+```bash
+mcpp new blinky --template riscv-virt-rt
+cd blinky && mcpp run
+```
+
+The generated manifest names no linker script, load address, libc or emulator —
+it has no `[target.*]` section at all. The rest of this section describes what
+such a package supplies, which is what to reach for when writing one for a board
+that has none.
 
 **What changes on a freestanding target**
 
@@ -915,8 +931,8 @@ mcpp run   --target-triple riscv64-none-elf     # via [target.<triple>].runner
 |---|---|
 | Link line | `-nostdlib -nostartfiles -static`, and nothing hosted — no crt files, no dynamic linker, no C++ runtime. The linker is addressed by **absolute path** (`-fuse-ld=<payload>/bin/ld.lld`), because `-fuse-ld=lld` resolves through `PATH` and finds GNU ld on any machine with binutils earlier on it. |
 | ISA flags | `-march` / `-mabi` / `-mcmodel` come from the target table, so `--target <triple>` alone is enough to produce a correct object file. |
-| `import std` | **Unavailable.** `std` is one module over the entire library — threads, filesystem and iostreams included — so there is no subset of it to build without an OS. The freestanding subset package replaces it, and mcpp's diagnostic names it. |
-| Entry point | There is no `main`. Declare the target explicitly and point `main` at the file carrying `_start`. |
+| `import std` | **Unavailable.** `std` is one module over the entire library — threads, filesystem and iostreams included — so there is no subset of it to build without an OS. What a firmware imports instead is the module its **board package** exports, which is where the target's C library is already wrapped. |
+| Entry point | `int main()` works **as long as something supplies a `crt0`** — a board package normally does, and then a firmware's entry point is an ordinary `main` whose return value reaches the host through semihosting. Only a zero-libc board needs an explicit target whose `main` points at the file carrying `_start`. |
 
 **A minimal firmware**
 
