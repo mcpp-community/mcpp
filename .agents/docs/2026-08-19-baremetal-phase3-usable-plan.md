@@ -361,3 +361,55 @@ error: test result: FAILED. 2 passed; 1 failed
   ⇒ **把位置参数改名 `bin`**(在 `--help` 里本来就更准),`--target` 就自由了。
   `--target-triple` 作为 2026.8.19.1 已发布的拼写保留为别名。
   **一致性是判据之一,它排在「不能坏」后面 —— 但排在后面不等于要放弃。**
+
+### 11.2 R2/R5 的实施结论:两条计划主张又被推翻
+
+#### ⭐ R5:`mcpp new --template baremetal-riscv` 不该由 mcpp 提供
+
+§6 写的是给 mcpp 加一个内建模板。**读代码发现这条路是被刻意关掉的**:
+
+```cpp
+// src/cli/cmd_new.cppm
+//   builtin registry (frozen: bin; gui = transitional alias), else a
+//   package template: [ns.]pkg | [ns.]pkg:tmpl | [ns.]pkg@ver:tmpl.
+```
+
+⇒ **模板随提供它的包走**(封闭语法 / 开放词汇),而且 `mcpp new` 会把自依赖按
+**它解析到的版本**写进生成的 manifest —— 模板因此**不可能与库脱节**。
+
+落地形态因此变成:`riscv-virt-rt` 里加 `templates/blinky/`,用户敲
+
+```bash
+mcpp new blinky --template riscv-virt-rt
+```
+
+**mcpp 侧零改动**。这比原计划好在:模板与板级包同一版本、同一仓库、同一次发布。
+
+#### ⚠️ R2:包的 `[xlings] deps` **不会**到达消费者 —— 少了这条边包是废的
+
+`mcpp` 只为**根工程**(或 workspace)物化 `[xlings]`(`prepare.cppm` 的
+`runtimeOwnerManifest`)。BSP 自己声明的 `xim:picolibc-riscv` / `xim:qemu-riscv`
+在被当依赖用时**一个都不装** —— 用户 `mcpp add` 之后拿到的是一个没有 libc 也没有
+模拟器的板级包,直到 `build.mcpp` 才报出来。
+
+解法**不在 mcpp 里**:xim 的描述符本来就有安装期依赖边,写在 `xpm.<平台>.deps`
+(`libpng.lua` 早就这么用)。⇒ 描述符里加
+
+```lua
+deps = { "xim:picolibc-riscv@1.8.12", "xim:qemu-riscv@9.2.4-1" },
+```
+
+**实测判据(必须是「拿走再装回来」,不能只看装好的机器)**:把 store 里的
+`xim-x-picolibc-riscv` 改名藏起来 → `mcpp add` + `mcpp build` **把它装了回来并链接成功**;
+不加这条边则停在 `build.mcpp` 说「declared in [xlings].deps but is not installed」。
+
+#### ⚠️ Form A vs Form B:选错的话包会「解析成功、编译成功、链接到空气」
+
+`riscv-virt-rt` 带 `build.mcpp`,而 mcpp 在**包根**找它。Form B(内联 `mcpp = {...}`)
+把包根留在解包目录,tarball 的 `riscv-virt-rt-<v>/` 包裹层由每条 glob 的 `*/` 吸收
+⇒ **`build.mcpp` 落在下一层,找不到**。Form A(`mcpp = "*/mcpp.toml"`)把包根移进包裹层。
+⇒ **凡是带 `build.mcpp` 的包必须用 Form A。**
+
+#### 兼容性:类型化 API 没有语言内的特性探测(见 §3.2 的补记)
+
+包侧无解 ⇒ 补在引擎侧的编译失败诊断上,对**以后每一次**类型化 API 新增都生效。
