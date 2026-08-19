@@ -324,17 +324,21 @@ int run(int argc, char** argv) {
             // target triple, exactly as in `mcpp build --target`. Spelling the
             // option differently here would make the one command that needs
             // both the one command where the flag is not called --target.
-            // ⚠️ `--target` is the spelling every other subcommand uses, so it
-            // is the one here too. The POSITIONAL above happens to share the
-            // word and means something else entirely (a binary name) — that
-            // collision predates this flag and is why `--target-triple` also
-            // exists: an unambiguous spelling for anyone who wants one.
-            // Making `run` the one command whose cross-target flag is not
-            // called `--target` would have been the worse trade.
-            .option(cl::Option("target").takes_value().value_name("TRIPLE")
-                .help("Cross target triple (same axis as `mcpp build --target`)"))
+            // ⚠️ NOT `--target`, and this is not a style choice.
+            //
+            // The POSITIONAL above is already called target — it is the binary
+            // NAME — and the parser keys both by that word, so declaring the
+            // option makes `mcpp run <binary>` set the cross-target instead:
+            //
+            //     $ mcpp run q
+            //     error: unknown target 'q'
+            //
+            // Measured, after trying exactly that for the sake of matching
+            // `mcpp build --target`. `run` is the one subcommand that cannot
+            // spell it that way, and the existing comment on the positional
+            // said so before this was attempted.
             .option(cl::Option("target-triple").takes_value().value_name("TRIPLE")
-                .help("Unambiguous alias for --target (the positional is a binary NAME)"))
+                .help("Cross target triple (same axis as `mcpp build --target`)"))
             .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
                 .help("Run only the named workspace member (single-member; no --workspace fan-out)"))
             .option(cl::Option("cache").takes_value().value_name("MODE")

@@ -316,6 +316,15 @@ error: test result: FAILED. 2 passed; 1 failed
   消费者写了 ⇒ 以它为准并说明覆盖了谁。
 - **R4 按设计落地**,包括计划里点名的 R-5:`.bin` 是以 `.elf` 为输入的**独立 ninja 边**,
   改一行源码后**内容**变(不是只有 mtime 变)。
-- ⚠️ 顺带修了一处**我自己造成的不一致**:`mcpp run` 先前用 `--target-triple` 而其余
-  子命令用 `--target`。现在 `--target` 到处可用,`--target-triple` 作为 `run` 的
-  无歧义别名保留(它的**位置参数**恰好也叫 target,含义是二进制名)。
+- ⚠️ **一次为了「一致性」而制造的回归,被 CI 抓回来。** `mcpp run` 用
+  `--target-triple` 而其余子命令用 `--target`,看起来像我造成的不一致,于是我给
+  `run` 也加了 `--target`。**parser 把选项和位置参数按同一个词索引**,于是:
+
+  ```
+  $ mcpp run q
+  error: unknown target 'q'          ← q 是二进制名,被当成了目标三元组
+  ```
+
+  `e2e/73` 立刻红。而位置参数上**原本就有一条注释写着这个碰撞** —— 我为了对称把它
+  覆盖了。⇒ `run` 保持 `--target-triple`(`test` 没有这个位置参数,`--target` 正常)。
+  **一致性是判据之一,但它排在「不能坏」后面。**
