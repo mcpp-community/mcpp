@@ -271,20 +271,20 @@ export namespace kal { io_result seek(stream, long) { /* … */ } }
 ⭐ **解法:`openkal.stream` 这个模块名由「后端」提供,接口包用另一个名字。**
 
 ```
-openkal.abi.stream   ← 接口包:类型、兜底重载、concepts
-openkal.stream       ← 由「后端」提供:export import openkal.abi.stream; + 真实现
+openkal.decl.stream   ← 接口包:类型、兜底重载、concepts
+openkal.stream       ← 由「后端」提供:export import openkal.decl.stream; + 真实现
 ```
 
 ```cpp
 // 接口包
-export module openkal.abi.stream;
+export module openkal.decl.stream;
 export namespace kal { struct stream{…}; struct io_result{…};
                        template <class S> unsupported_t seek(S, long) {…}
                        template <class S> concept HasSeek = …; }
 
 // 后端包 —— 它提供「接口名」
 export module openkal.stream;
-export import openkal.abi.stream;
+export import openkal.decl.stream;
 export namespace kal { io_result seek(stream, long) { … } }
 ```
 
@@ -300,7 +300,7 @@ int main() {
 
 ⓘ **端到端跑通**(app 只写 `import openkal.stream;`,concept 为真,返回后端的值)。
 
-⚠️ ⚠️ **一个必须踩过才知道的坑**:接口模块**不能**叫 `openkal.stream.abi`。
+⚠️ ⚠️ **一个必须踩过才知道的坑**:接口模块**不能**叫 `openkal.stream.decl`。
 ⓘ 实测直接 ninja 自环:
 
 ```
@@ -308,14 +308,14 @@ ninja: error: dependency cycle: gcm.cache/openkal.stream.gcm -> gcm.cache/openka
 ```
 
 模块图把点号读成了层级关系。⇒ **ABI 模块名不能是接口名的点号延伸**,
-`openkal.abi.stream` 可以,`openkal.stream.abi` 不行。
+`openkal.decl.stream` 可以,`openkal.stream.decl` 不行。
 
 ### 4.4 后端怎么被选中:只用 `mcpp.toml`
 
 ```toml
 # 后端包 openkal-uart
 [dependencies]
-openkal-abi = { version = "0.1" }      # 它 export import 的那个
+openkal = { version = "0.1" }          # 它 export import 的那个
 ```
 
 ```toml
@@ -336,7 +336,7 @@ openkal-uart  = "0.1"
 
 ```toml
 [dependencies]
-openkal-abi = "0.1"            # ① 契约:我编程针对的那份规范
+openkal = "0.1"                # ① 契约:openkal 本身就是那份规范
 
 [target.'cfg(os = "linux")'.dependencies]
 openkal-linux = "0.1"          # ② 实现:可替换的那一半
@@ -349,7 +349,7 @@ openkal-uart  = "0.1"
 
 > ⭐ **① 是应用真正耦合的东西,而且它让「契约版本不匹配」变成解析期错误。**
 
-应用写 `openkal-abi = "0.2"`、后端只支持 `"0.1"` ⇒ **依赖解析当场失败**;
+应用写 `openkal = "0.2"`、后端只支持 `"0.1"` ⇒ **依赖解析当场失败**;
 省掉 ① 的话,同一个问题要等到**编译期**才以一堆签名不匹配的形式冒出来。
 
 而且这与生态里已被验证的形状一致:Rust 的 `embedded-hal`(trait 包)+ 板级包,
@@ -363,7 +363,45 @@ openkal-uart  = "0.1"
 | 换后端要改几行 | 1 | 1(① 不动) |
 
 ⚠️ ① 看起来「声明了却没 import」—— 那是表象:应用 `import openkal.stream;` 时,
-后端 `export import openkal.abi.stream;` 把它带了进来。**①的作用是钉版本,不是给 import 用。**
+后端 `export import openkal.decl.stream;` 把它带了进来。**①的作用是钉版本,不是给 import 用。**
+
+#### ⚠️ 命名:丑的那一半要落在实现者身上
+
+**openkal 本身就是接口/ABI,包名不该再带 `-abi`。**
+
+| 谁写 | 名字 | 谁看得到 |
+|---|---|---|
+| 应用 | `import openkal.stream;` · `openkal = "0.1"` | **所有人** —— 干净 |
+| 后端作者 | `export import openkal.decl.stream;` | **只有实现者** |
+
+⇒ 两个模块名是语言逼出来的(§4.3),但**限定词只出现在实现者那一侧**。
+
+#### ⚠️ 后端拥有应用可见的名字 ⇒ 碎片化风险,靠规范 + conformance 机械地封住
+
+这是这套形状唯一的真代价:`openkal.stream` 由后端提供,理论上后端可以往里塞
+非标准的东西,而应用**察觉不到自己用了厂商扩展**。
+
+⭐ 但**后端能塞的东西是有界的**,而且边界是语言给的:
+
+| 后端**不能** | 因为 |
+|---|---|
+| 重定义 `stream` / `io_result` / `unsupported_t` | ⓘ **实测被编译器拒**:`redeclaring 'struct kal::io_result@openkal.decl.stream' in module 'openkal.stream' conflicts with import` |
+| 改 concepts 的语义 | 同上 |
+| 改兜底重载 | 同上 |
+| **只能**:加 spec 列出的那些函数的实现,**或额外的重载** | ← 唯一的自由度 |
+
+⇒ **规范只需要封住最后一行**,而它是**静态可查**的:
+
+> **SPEC**:`openkal.stream` 导出的名字集合**必须等于** spec 列表 ∩ 该后端实现的能力。
+> 厂商扩展必须放在**另一个模块名**里(`vendor.foo.stream`),应用要用就得显式 import 它 ——
+> **于是「我用了扩展」在源码里是可见的。**
+>
+> **conformance**:dump 后端模块的导出名集合,与 spec 列表**逐条 diff**。多一个名字 = 不通过。
+
+⚠️ 还要 diff **签名**,不只是名字:后端把 `seek(stream, long)` 写成
+`seek(stream, unsigned long)` 时 ADL 仍会经隐式转换选中它,而语义可能不同。
+
+⭐ 这条比 §5 的其它防御更强,因为它**不是行为测试** —— 名字集合是制品的静态属性。
 
 ### 4.5 接口层面的缺失(①)
 
@@ -869,3 +907,61 @@ POSIX 至少规定了 `PIPE_BUF` 以内的原子性。**草案一个字没提。
 
 ⭐ **两族合起来的规律**:一条实测能否定一个做法,**但否定不了一整类做法** ——
 写下「X 做不到」之前,要先问「我测的是 X,还是 X 的某一种写法」。
+
+---
+
+## 18. 第二轮综合 review 新增的两条
+
+### 18.1 ⭐ 基数是「每个 interface 一个实现」,不是「每个程序一个后端」
+
+草案 §12 说 openkal 的基数是 1,含糊在于**1 个什么**。澄清:
+
+```toml
+[target.'cfg(os = "none")'.dependencies]
+openkal-uart  = "0.1"      # 提供 openkal.stream
+openkal-arena = "0.1"      # 提供 openkal.memory
+```
+
+**一个程序可以从不同提供者拿不同的 interface** —— 这是好事,而且是 §2 资源分解的
+自然结果。冲突只发生在**同一个 interface 有两个提供者**时(两个包都导出
+`openkal.stream`),那是模块名冲突,**编译期报错**。
+
+⇒ 「基数 1」应当读作:**每个 interface 的实现是 1 个**。契约形态(C ABI)的论据不变。
+
+### 18.2 ⚠️ 兜底重载太贪心,文案会张冠李戴
+
+```cpp
+template <class S> unsupported_t seek(S, long) {
+    static_assert(always_false<S>, "…no seekable streams…");
+}
+```
+
+`S` 无约束 ⇒ `kal` 里**任何**类型调 `seek` 都落到这里。
+`seek(some_socket, 0)` 会得到「no seekable **streams**」—— 名词错了。
+
+**修法**:兜底要约束到它该管的类型,或者文案改成不带具体名词的。
+
+```cpp
+template <class S> requires std::same_as<S, stream>
+unsupported_t seek(S, long) { … }
+```
+
+⚠️ 这条小,但它是 §5.1 那条判据的又一次应用:**兜底重载的适用范围也是一种「分类」**,
+分类过宽,诊断就会指向错误的地方。
+
+---
+
+## 19. 设计现状小结(第二轮 review 后)
+
+| 维度 | 状态 |
+|---|---|
+| **位置无关**(上/下 libc) | ✅ 由不透明句柄承载,ⓘ 三种后端实测 |
+| **划分依据** | ✅ 资源种类;⚠️ 曾塌缩过头(namespace),已撤回 |
+| **core 边界** | ✅ abort + stream + memory,判别式是「实现 vs 模拟」 |
+| **能力探测** | ✅ ADL + 兜底重载,ⓘ 真模块上三行为同时成立;**零额外配置** |
+| **模块名归属** | ✅ 后端提供接口名(语言逼出来的),⚠️ 碎片化靠 spec + 名字集合 diff 封住(静态可查) |
+| **依赖形状** | ✅ 契约 + 后端两条,契约那条用来**钉版本** |
+| **引擎改动** | ✅ **零** |
+| **对下/对上判据** | ✅ 双向且可数(数桥接行数) |
+| ⚠️ **开放问题** | §16 六条 + §18 两条,**全部需要 SPEC 表态** |
+| ⚠️ **最大风险** | 不是技术 —— 是 **D0 的门:有没有第三方来实现第三个后端** |
