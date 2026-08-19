@@ -182,4 +182,51 @@ if "$MCPP" build --target riscv64-none-elf > leak.log 2>&1; then
     exit 1
 fi
 
+# ── ⚠️ build, THEN run: the sequence that shipped broken in 2026.8.19.2 ─────
+#
+# `mcpp run` on its own was correct; the SECOND invocation was not. With the
+# target named in the MANIFEST rather than on the command line, `mcpp build`
+# wrote a fast-path cache entry keyed "" (the CLI override, which was empty),
+# and `mcpp run` matched that as a HOST build and exec'd the RISC-V ELF:
+#
+#     Running `target/riscv64-none-elf/.../bin/firmware`     ← no emulator
+#     exit=1
+#
+# ⚠️ A FRESH project, not the one above, and that is load-bearing. The run
+# fast path also requires mcpp.toml to be older than build.ninja, and a
+# rebuild does not rewrite build.ninja when its content is unchanged — so in a
+# directory whose manifest has been edited in place the fast path is already
+# off and this check silently tests nothing. Verified by disabling the fix and
+# watching this go red.
+cd "$TMP"
+mkdir -p order/src
+cd order
+cat > mcpp.toml <<'EOF'
+[package]
+name    = "order"
+version = "0.1.0"
+
+[build]
+target = "riscv64-none-elf"
+
+[dependencies]
+board = { path = "../board" }
+EOF
+cat > src/main.cpp <<'EOF'
+import board;
+extern "C" int main() { board::print("ORDER-OK\n"); return 0; }
+EOF
+
+"$MCPP" build > buildfirst.log 2>&1 || {
+    cat buildfirst.log; echo "build with a manifest target failed"; exit 1; }
+"$MCPP" run > runafter.log 2>&1 || true
+grep -q 'ORDER-OK' runafter.log || {
+    cat runafter.log
+    echo "build-then-run lost the runner (the artifact was exec'd directly)"
+    exit 1; }
+# Two-sided: assert the emulator is really in the command line, so a future
+# change that happens to make the ELF runnable here cannot pass this silently.
+grep -q 'qemu-system-riscv64' runafter.log || {
+    cat runafter.log; echo "the run did not go through the emulator"; exit 1; }
+
 echo "PASS: BSP supplies the sysroot, linker script and runtime; consumer only depends on it"
