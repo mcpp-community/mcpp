@@ -1,152 +1,185 @@
 # openkal 设计方案:通用内核 ABI 规范
 
-**状态**:**0.2 已实施并发布**(0.1 的分层已被 review 推翻,见 §21)。规范与接口模块在
-[`mcpplibs/openkal`](https://github.com/mcpplibs/openkal),Linux 参考实现在
-[`mcpplibs/openkal-linux`](https://github.com/mcpplibs/openkal-linux),两者均为 `0.2.0`。
-实施计划与结果见
-[`2026-08-20-openkal-implementation-plan.md`](2026-08-20-openkal-implementation-plan.md)。
+**状态**:0.4 已实施并发布。规范与接口模块位于
+[`mcpplibs/openkal`](https://github.com/mcpplibs/openkal)(0.4.0),Linux 实现位于
+[`mcpplibs/openkal-linux`](https://github.com/mcpplibs/openkal-linux)(0.4.0),
+macOS 实现位于 [`mcpplibs/openkal-macos`](https://github.com/mcpplibs/openkal-macos)(0.2.0),
+其上的 C 库位于 [`mcpplibs/openkal-libc`](https://github.com/mcpplibs/openkal-libc)(0.2.0)。
 
-对应第一阶段计划 §7 的 **D0**;D0 的门不是技术判据 ——
-是**「有第三方实现了第三个后端」**,参考实现降低门槛而不移动门。
+配套文档:
 
-⚠️ **本文与规范正文的关系**:本文记录**推导过程**,包含被撤回的方案与其理由;
-规范正文(`openkal/SPEC.md`)只记录**结论**。两者冲突时以规范正文为准。
+- [`2026-08-20-openkal-implementation-plan.md`](2026-08-20-openkal-implementation-plan.md)
+  —— 0.1/0.2 的实施计划与结果。
+- [`2026-08-20-openkal-completeness-plan.md`](2026-08-20-openkal-completeness-plan.md)
+  —— 0.3 扩展至八个接口的计划与判据。
+- [`2026-08-20-openkal-portable-program-findings.md`](2026-08-20-openkal-portable-program-findings.md)
+  —— 0.4 的两条规范条款,及发现它们的可移植程序。
 
-**证据来源**:标注 ⓘ 的是本机实测(载荷版本写在旁边),其余是设计主张。
-调研出处见 [`2026-08-18-freestanding-baremetal-analysis.md`](2026-08-18-freestanding-baremetal-analysis.md)。
+本文记录推导过程,包含被撤回的方案及其理由;规范正文(`openkal/SPEC.md`)只记录结论。
+两者冲突时以规范正文为准。
+
+证据来源分两类:标注为「实测」的结论在本机或持续集成上验证过,载荷版本随文注明;
+其余为设计主张。调研出处见
+[`2026-08-18-freestanding-baremetal-analysis.md`](2026-08-18-freestanding-baremetal-analysis.md)。
+
+---
+
+## 0. 多维度评估摘要
+
+下表按八个维度给出当前状态。各维度的详细论证分散在正文对应章节。
+
+| 维度 | 状态 | 依据 |
+|---|---|---|
+| **架构** | 接口按资源种类划分,而非按标准库的哪一部分得以启用划分;规范包拥有全部模块,实现不导出模块,因而实现无法扩展接口 | §2、§21 |
+| **稳定性** | 结构体布局在 0.1 冻结;演进规则允许新增声明、禁止修改既有声明;0.4 新增两条行为规则而未改动任何声明,导出符号集合不变 | §16.3、§22 |
+| **优雅简洁** | 0.2 起不存在可选操作,因而不存在表达可选性的机制;两套曾被构建的机制(能力位结构体、ADL 兜底重载)均已删除,理由见 §15 | §4、§15 |
+| **用户体验** | 消费者 import 接口、不命名实现;更换实现是 manifest 中的一行;缺少实现时链接期报错并点名未定义的函数 | §7、§21.3 |
+| **兼容性** | 消费者声明两条依赖,其中契约那条把版本不匹配从编译期的一批签名错误转为解析期的一条消息 | §4.4 |
+| **跨平台** | 句柄为不透明的一个机器字,因而实现可位于 C 库之上、之下或不依赖 C 库;两个操作系统上的实现记录了四处分歧 | §1.1、§23 |
+| **一致性** | 采用生态既有词汇:能力缺失在编译期表达,后端选择是条件依赖;引擎未新增任何轴,openkal 的实现未要求修改 mcpp | §14、§24 |
+| **无感升级** | 0.1 引入两个包、不修改任何既有包;0.4 未改动声明,符合 0.3 的实现同样满足 0.4 的导出要求 | §22 |
 
 ---
 
 ## 1. 定位:一份规范,两个方向
 
-openkal **不是一个库,是一份内核 ABI 规范**。它有两类使用者,方向相反:
+openkal 是一份内核 ABI 规范,而非一个库。它有两类使用者,方向相反:
 
 ```
         应用 / libc / libc++ / Rust / ...
-                    │  对上:消费者「可以依赖什么」
+                    │  对上:消费者可以依赖什么
         ════════════╪════════════  openkal SPEC
-                    │  对下:实现者「必须提供什么」
-        Linux / Windows / 你写的内核 / 裸机 BSP
+                    │  对下:实现者必须提供什么
+        Linux / Windows / 自行编写的内核 / 裸机 BSP
 ```
 
-⭐ **关键性质:openkal 不知道自己在 libc 之上还是之下。**
-hosted 后端把 `kal_stream_write` 转发到 `::write(2)`(在 libc 之上);
-裸机后端直接打 MMIO(取代 libc);picolibc 后端把 `FILE::put` 接到它上面(在 libc 之下)。
-**三种都成立,而且是同一份契约。**
+其关键性质是:openkal 不确定自身位于 C 库之上还是之下。宿主后端把
+`kal_stream_write` 转发到 `::write(2)`,此时它位于 C 库之上;裸机后端直接写 MMIO,
+此时它取代 C 库;picolibc 后端把 `FILE::put` 接到它上面,此时它位于 C 库之下。
+三种配置都成立,且是同一份契约。
 
-ⓘ **实测(调研 KA1/KA3)**:同一份 `app.cppm`,零 `#if`,hosted 转 `::write(2)`、
-裸机转 MMIO UART;**两侧 `app.o` 的外部符号集完全相同**(都只有 `kal_write`);
-裸机侧零未定义符号,157 字节。
+实测(调研 KA1/KA3):同一份 `app.cppm`,不含任何 `#if`,宿主侧转 `::write(2)`、
+裸机侧转 MMIO UART;两侧 `app.o` 的外部符号集合完全相同,均只有 `kal_write`;
+裸机侧无未定义符号,体积 157 字节。
 
-### 1.1 这个性质由什么承载
+### 1.1 该性质由什么承载
 
-**句柄的不透明性。** 一旦句柄有类型,openkal 就被钉在 libc 的某一侧:
+由句柄的不透明性承载。句柄一旦具有类型,openkal 就被固定在 C 库的某一侧:
 
-| 句柄形状 | 强迫的位置 | 后果 |
+| 句柄形状 | 强制的位置 | 后果 |
 |---|---|---|
-| `int fd` | libc 之下(要有 fd 表) | ⛔ Windows 后端要维护 fd→HANDLE 表 = **模拟层** |
-| `FILE*` / stream 对象 | libc 之上 | ⛔ 裸机零 libc 档、Windows 都得造 FILE |
-| **不透明一个机器字** | **不强迫** | ✅ 每个后端塞自己原生的东西 |
+| `int fd` | C 库之下,须存在 fd 表 | Windows 实现须维护 fd→HANDLE 表,构成模拟层 |
+| `FILE*` 或流对象 | C 库之上 | 裸机零 C 库配置与 Windows 均须构造 FILE |
+| 不透明的一个机器字 | 不强制 | 每个实现存放其原生表示 |
 
 ---
 
-## 2. 划分依据:资源种类,不是「点亮标准库」
+## 2. 划分依据:资源种类
 
-⚠️ **一条被否掉的划分依据**:按「点亮标准库的哪一块」切接口。
-它耦合到 C++、耦合到今天的标准库,而且**依赖方向反了** —— 内核 ABI 应由内核提供什么定义。
+一条被否决的划分依据是:按标准库的哪一部分得以启用来切分接口。该依据耦合到 C++、
+耦合到当前的标准库,且依赖方向相反 —— 内核 ABI 应当由内核提供什么来定义。
 
-而且那正是**同一个错误的第三代**:POSIX 由 C 的 stdio/unistd 塑形,WASIp1 由 POSIX 塑形。
+该错误此前出现过两代:POSIX 由 C 的 stdio 与 unistd 塑形,WASIp1 由 POSIX 塑形。
 
-⭐ **划分依据 = 交给你的是哪一种资源。** 语言无关,也是 WASIp2 / seL4 / Fuchsia 收敛到的形状。
+采用的划分依据是「交付的是哪一种资源」。该依据与语言无关,也是 WASIp2、seL4 与
+Fuchsia 收敛到的形状。
 
-「点亮标准库」退回它该在的位置:**D1 的准入判据**(见 §11.2),不是划分依据。
+「标准库的哪一部分得以启用」退回其应有的位置:D1 阶段的准入判据(见 §13.1),
+而非划分依据。
 
 ### 2.1 接口清单
 
-| interface | 资源 | core? | 判据:无该设施的后端能实现吗 |
+0.3 将接口从三个扩展至八个。下表中的判据一列回答:不具备该设施的实现能否提供该接口。
+
+| interface | 资源 | core | 判据 |
 |---|---|---|---|
-| **`openkal.abort`** | (终止) | ✅ | `for(;;) wfi` 是一个**实现** |
-| **`openkal.stream`** | 一条字节流 | ✅ | null sink 是一个**实现** |
-| **`openkal.memory`** | 一块内存区域 | ✅ | 静态 arena 上的 bump allocator 是一个**实现** |
-| `openkal.time` | 一个时间源 | ❌ | ⚠️ 不走的计数器**不是**时钟 —— 会让超时静默失效 = **模拟** |
-| `openkal.task` | 一个执行上下文 | ❌ | 需要调度 + 上下文切换(那是 openarch) |
-| `openkal.fs` | 一个 **descriptor**(自有句柄类型) | ❌ | 需要一个命名权威 |
-| `openkal.net` | 一个 **socket**(自有句柄类型) | ❌ | 同上 |
-| `openkal.channel` | 一条消息通道 | ❌ | — |
+| `openkal.abort` | 终止 | 是 | `for(;;) wfi` 是一个实现 |
+| `openkal.stream` | 一条字节流 | 是 | 空接收端是一个实现 |
+| `openkal.memory` | 一块内存区域 | 是 | 静态区域上的递增分配器是一个实现 |
+| `openkal.env` | 环境提供的参数与变量 | 否 | 空向量是一个实现 |
+| `openkal.time` | 一个时间源 | 否 | 不前进的计数器不是时钟,会使超时静默失效,构成模拟 |
+| `openkal.fs` | 一个 descriptor,自有句柄类型 | 否 | 需要一组预置目录 |
+| `openkal.process` | 一个被启动的程序 | 否 | 需要启动程序的能力 |
+| `openkal.task` | 一个执行上下文 | 否 | 需要调度与上下文切换,属 openarch |
+| `openkal.net` | 一个 socket,自有句柄类型 | 保留 | 需要协议栈 |
+| `openkal.channel` | 一条消息通道 | 保留 | — |
 
-⭐ **`stream` 是共享货币,不是统一入口**:`fs` 的 descriptor 与 `net` 的 socket 各有
-自己的句柄类型和自己的操作,但**都能产出 `openkal.stream`**。往哪写这件事对文件 /
-socket / UART 是同一套代码;打开它们不是。
+`stream` 是共享的传输类型,而非统一入口:`fs` 的 descriptor 与 `net` 的 socket 各有
+自己的句柄类型与操作,但都能产出 `openkal.stream`。向何处写入这件事,对文件、socket
+与 UART 是同一套代码;打开它们不是。
 
-### 2.2 ⭐ core 的判别式:实现 vs 模拟
+### 2.2 core 的判别式:实现与模拟
 
-> **假实现会让上层「静默地错」的 ⇒ 模拟;只是「容量小 / 会失败」的 ⇒ 实现。**
+判别式如下:
 
-`operator new` 失败在任何平台上都是**有定义的结果**,所以静态 arena 是实现。
-而一个不前进的时钟会让 `wait_for` 永远返回、熵不随机会让密钥可预测 —— 那是模拟。
+> 若一个虚假的实现会使上层静默地产生错误结果,则它是模拟;若它只是容量有限或会失败,
+> 则它是实现。
 
-⇒ **「这块 MCU 没有堆」是错的命题**:只要有 RAM,堆就是实现出来的;
-上层不关心 openkal 底层怎么做到。
+`operator new` 失败在任何平台上都是有定义的结果,因此静态区域上的分配器是实现。
+不前进的时钟会使 `wait_for` 立即返回,不随机的熵源会使密钥可预测,二者均是模拟。
 
-### 2.3 ⚠️ 一个被起草后撤回的分解:`openkal.namespace`
+由此,「这块 MCU 没有堆」是一个错误的命题:只要有 RAM,堆就可以被实现出来;
+上层不关心 openkal 底层如何做到。
 
-草案曾把 `fs` 和 `net` 消掉,换成一个通用的 `openkal.namespace`(名字 → 资源),
-理由是「文件 / TCP 连接 / 管道 / 串口给你的都是 stream,只是命名方式不同」。
+### 2.3 一个被起草后撤回的分解:`openkal.namespace`
 
-**重估后撤回。三条攻击全部成立:**
+草案曾以一个通用的 `openkal.namespace`(名字映射到资源)取代 `fs` 与 `net`,
+理由是文件、TCP 连接、管道与串口交付的都是流,区别仅在命名方式。
 
-**① 它触犯本文自己的 §5.1 规矩。** 「一个操作若能『存在但永远失败』,说明它被错误地
-合并了」—— 而把文件和 socket 都塞进一个 `stream`,`stream` 的 caps 就成了
-**互不相干能力的并集**(seek/size/truncate/sync 对上 shutdown/peer/nodelay),
-每个后端对其中大多数说 `false`。**正是那个反模式,换了个地方出现。**
+重估后撤回,三条反对意见全部成立。
 
-**② `namespace` 需要一个 URI 解析器,那是模拟层。** `kal_namespace_open("tcp://…")`
-要求**每个后端都能解析 scheme**:只有 UART 的后端也得解析并拒绝 `tcp://`;
-合法 scheme 集合无界、不可发现;错误是字符串形状的。
-⚠️ **直接违反对下判据**(四后端自然实现、不需模拟层),而且比 POSIX 还差 ——
-POSIX 至少 `open()` 与 `socket()+connect()` 是分开的类型化调用。
+第一,它违反本文 §5.1 自己给出的判据。该判据为「一个操作若能存在但永远失败,
+说明它被错误地合并了」。把文件与 socket 都归入一个 `stream`,则 `stream` 的能力集合
+成为互不相干能力的并集(seek、size、truncate、sync 对 shutdown、peer、nodelay),
+每个实现对其中大多数返回否定。这正是该判据所禁止的形状,只是换了位置出现。
 
-**③ 引用的先例是错的。** 草案称「这是 WASIp2 收敛到的形状」。**不是。** WASIp2 是:
+第二,`namespace` 需要一个 URI 解析器,而解析器是模拟层。
+`kal_namespace_open("tcp://…")` 要求每个实现都能解析 scheme:只提供 UART 的实现
+也必须解析并拒绝 `tcp://`;合法 scheme 的集合无界且不可发现;错误以字符串形式表达。
+这直接违反对下判据(四个实现均能自然实现、不需模拟层),且劣于 POSIX ——
+POSIX 至少把 `open()` 与 `socket()+connect()` 分为两个类型化调用。
+
+第三,所引先例有误。草案称该形状是 WASIp2 收敛到的形状,事实并非如此。WASIp2 的形状是:
 
 ```
-wasi:io/streams        input-stream / output-stream   ← 共享的传输资源
-wasi:filesystem/types  descriptor                     ← 自有资源类型,能产出 stream
-wasi:sockets/tcp       tcp-socket                     ← 自有资源类型,能产出 stream
+wasi:io/streams        input-stream / output-stream   共享的传输资源
+wasi:filesystem/types  descriptor                     自有资源类型,能产出 stream
+wasi:sockets/tcp       tcp-socket                     自有资源类型,能产出 stream
 ```
 
-它把**资源种类分开**,共享的是 **stream 这个传输类型**。草案把「共享 stream」
-误读成了「统一命名」。
+它把资源种类分开,共享的是 stream 这一传输类型。草案把「共享 stream」误读为「统一命名」。
 
-⇒ **保留对的那半(流统一了传输),丢掉错的那半(统一命名)。**
+结论是保留正确的一半(流统一了传输),舍弃错误的一半(统一命名)。
 
 | | namespace 草案 | 撤回后 | 单体 fs+net |
 |---|---|---|---|
-| 实现者 | ⛔ 人人要 URI 解析器 | ✅ 没有就**不提供**该 interface | ✅ 同 |
-| 消费者 | ⛔ 错误是字符串;**编译期不知道支不支持** | ⭐ `import openkal.net;` 缺了就**编译期报错** | ✅ 同 |
-| 规范负担 | ⛔ 要标准化 **scheme 注册表** = 巨大隐藏面 | ✅ 每 interface 独立版本,面有界 | ⚠️ 接口大但有界 |
-| 类型安全 | ⛔ caps 成为不相干能力并集 | ✅ 文件操作在文件句柄上 | ✅ 同 |
+| 实现者 | 每个实现都需要 URI 解析器 | 不具备则不提供该 interface | 同左 |
+| 消费者 | 错误是字符串;编译期无法得知是否支持 | `import openkal.net;` 缺失则编译期报错 | 同左 |
+| 规范负担 | 需标准化 scheme 注册表,隐含接口面规模不受控 | 每个 interface 独立版本,接口面有界 | 接口大但有界 |
+| 类型安全 | 能力集合成为不相干能力的并集 | 文件操作作用于文件句柄 | 同左 |
 
-⚠️ **划分原则(按资源种类)没错,错的是塌缩过头** —— `descriptor` / `socket` /
-`stream` 本来就是三种资源。
+划分原则(按资源种类)本身没有错误,错误在于塌缩过度 —— descriptor、socket 与
+stream 本就是三种资源。
 
-**net 不是设备,但网卡是** —— 按基数分(§12):网卡 N 个 → openhal;协议栈 1 个 → openkal。
+网络本身不是设备,而网卡是。按基数划分(§12):网卡有 N 个,归 openhal;
+协议栈有 1 个,归 openkal。
 
 ---
 
 ## 3. 核心 ABI 形状
 
 ```c
-/* openkal.core —— C ABI(H1:跨包提供实现只有这一条路)*/
+/* openkal —— C ABI(H1:跨包提供实现只有这一条路径)*/
 
-typedef struct { uintptr_t h; } kal_stream;     /* 不透明,1 个机器字 */
+typedef struct { uintptr_t h; } kal_stream;     /* 不透明,一个机器字 */
 
-/* 标准流:借用,不拥有 —— 裸机上「关闭控制台」没有意义 */
+/* 标准流:借用而非拥有 —— 在裸机上关闭控制台没有意义 */
 kal_stream kal_stdout(void);
 kal_stream kal_stderr(void);
 kal_stream kal_stdin (void);
 
-/* 2 字返回;T ≤ 1 个机器字 */
-typedef struct { uintptr_t n; int32_t err; } kal_io_result;
+/* 两字返回;标量部分须不超过一个机器字 */
+typedef struct { uintptr_t n; int32_t e; } kal_io_result;
 
 kal_io_result kal_stream_write(kal_stream, const void* buf, uintptr_t len);
 kal_io_result kal_stream_read (kal_stream, void*       buf, uintptr_t len);
@@ -161,52 +194,57 @@ _Noreturn void kal_abort(const char* msg, uintptr_t len);
 _Noreturn void kal_exit (int32_t code);
 ```
 
-四个后端往 `h` 里塞什么 —— **桥接代码全部为 0 行**:
+四类实现在 `h` 中存放的内容如下,桥接代码均为零行:
 
-| 后端 | `h` |
+| 实现 | `h` |
 |---|---|
 | linux | `fd` |
 | windows | `HANDLE` |
-| bare + picolibc | ⓘ **`FILE*`(就是 `__stdio`)** |
-| bare 零 libc | 驱动结构指针 / 小索引 |
-| 真内核 | **能力索引** |
+| 裸机 + picolibc | 实测为 `FILE*`,即 `__stdio` |
+| 裸机零 C 库 | 驱动结构指针或小索引 |
+| 真内核 | 能力索引 |
 
-### 3.1 为什么是这些形状
+### 3.1 形状的选择理由
 
 | 决定 | 理由 |
 |---|---|
-| **C ABI** | ⓘ H1 实测:跨包提供实现只有这一条路;且 KAL 一次 call 的成本**可忽略**(本来就要陷入) |
-| **2 字结构返回** | ⓘ CABI 实测:两个 arch 上结构返回都更便宜;RISC-V 上就是 `a0/a1`,陷入桩天然能回。⚠️ **`T` 必须 ≤ 一个机器字**,否则退化成隐藏指针 |
-| **不透明句柄** | §1.1;且真内核不能假设进程模型 / 全局命名空间,句柄必须是**调用方上下文相关**的 |
-| **`enum class` 错误码,不透传 errno** | errno 是 POSIX 的。⚠️ 但**映射 ≠ 模拟**:查表翻译不是模拟层,造 fd 命名空间才是 |
-| **自由函数,不要 vtable** | 虚表 = 把结构体布局写进 ABI,而「只增不改」保护不了它(加一个方法就改布局) |
-| **没有 `open(path)`** | WASIp1 的教训:照抄 fd + 路径命名空间 ⇒ 每个非 POSIX 宿主都要模拟 preopen / `openat` |
+| C ABI | 实测(H1):跨包提供实现只有这一条路径;且 KAL 一次调用的成本可忽略,因为调用本身就要穿越陷入边界 |
+| 两字结构返回 | 实测(CABI):两个体系结构上结构返回都更便宜;RISC-V 上即 `a0/a1`,陷入桩天然可返回。标量部分必须不超过一个机器字,否则退化为隐藏指针 |
+| 不透明句柄 | 见 §1.1;且真内核不能假设进程模型与全局命名空间,句柄必须与调用方上下文相关 |
+| 封闭错误枚举,不透传 errno | errno 属于 POSIX。映射不等于模拟:查表翻译不是模拟层,构造 fd 命名空间才是 |
+| 自由函数而非虚表 | 虚表把结构体布局写入 ABI,而「只增不改」的演进规则保护不了它 —— 增加一个方法即改变布局 |
+| core 中没有 `open(path)` | WASIp1 的教训:照搬 fd 加路径命名空间,导致每个非 POSIX 宿主都要模拟 preopen 与 `openat` |
 
 ---
 
-## 4. 能力组件化:ADL 探测 + 兜底重载
+## 4. 可选能力的机制:两次构建,两次删除
 
-⚠️ **草案在这里错了一整节。** 它说:
+本节记录一段完整的推导,其结论是删除该机制。保留记录的理由是:两个候选方案各自的
+约束是实测得到的,而下一次真正出现可选操作时需要这些约束。
 
-> `requires` 作用在不存在的限定名上是硬错误 ⇒ 「能力 = 符号在不在」这条路 C++ 内测不出来
-> ⇒ 声明必须永远齐全,能力要放进一个 `caps` 结构体。
+### 4.1 草案的第一处错误及其纠正
 
-**第一句对,后面全错。** 硬错误只发生在**限定名**上;**非限定名 + ADL** 在模板里是
-dependent 的,`requires` 会老实求值为 `false`。
+草案曾写道:
 
-ⓘ **实测(llvm 22.1.8,真 C++20 模块,不是头文件)**:
+> `requires` 作用于不存在的限定名是硬错误,因此「能力等于符号是否存在」这条路径
+> 在 C++ 内无法测出,声明必须永远齐全,能力须放入一个 `caps` 结构体。
+
+第一句成立,其后的推论不成立。硬错误只发生在限定名上;非限定名经 ADL 在模板中是
+待决的,`requires` 会求值为 `false`。
+
+实测(llvm 22.1.8,真 C++20 模块,非头文件):
 
 ```cpp
-// ⛔ 限定名:名字不存在 ⇒ 硬错误
+// 限定名:名字不存在时是硬错误
 if constexpr (requires(S s) { kal::seek(s, 0); })
 
-// ✅ 非限定 + ADL:名字不存在 ⇒ false
+// 非限定名经 ADL:名字不存在时求值为 false
 template <class S> concept Seekable = requires(S s, long o) { seek(s, o); };
 ```
 
-⇒ **能力不需要另一个可命名的东西。后端的模块接口本身就是能力声明。**
+由此,能力不需要另一个可命名的实体,实现的模块接口本身即是能力声明。
 
-### 4.1 三件事同时成立(ⓘ 全部实测)
+### 4.2 兜底重载机制,及其只有实测才能发现的约束
 
 ```cpp
 export module openkal.stream;
@@ -215,7 +253,7 @@ export namespace kal {
 struct stream    { unsigned long h; };
 struct io_result { unsigned long n; int e; };
 
-// ⭐ 兜底重载的返回类型与真实现不同 —— 这是让「探测」与「兜底」共存的关键
+// 兜底重载的返回类型必须与真实现不同
 struct unsupported_t {};
 template <class> inline constexpr bool always_false = false;
 
@@ -227,381 +265,214 @@ unsupported_t seek(S, long) {
     return {};
 }
 
-// 探测:要求返回真类型,兜底自动落选
 template <class S> concept HasSeek =
     requires(S s, long o) { requires __is_same(decltype(seek(s, o)), io_result); };
 
 }
 ```
 
-后端只需要**声明并定义真实现**,不需要任何配置:
+四种情形均经实测:
 
-```cpp
-export module openkal.uart;
-export import openkal.stream;
-export namespace kal { io_result seek(stream, long) { /* … */ } }
-```
-
-| 场景 | 结果 | ⓘ |
-|---|---|---|
-| 有后端,调用 `seek(s, 0)` | ✅ 编过,真实现赢重载 | 实测 |
-| 有后端,`HasSeek<stream>` | ✅ **真** | 实测 |
-| 无后端,`HasSeek<stream>` | ✅ **假**(不是硬错误)⇒ `if constexpr` 可优雅降级 | 实测 |
-| 无后端,**强行调用** | ⭐ **编译期报错,文案是规范自己写的那句** | 实测 |
-
-⚠️ **这里有一个必须踩过才知道的坑**:如果兜底重载的返回类型**和真实现一样**,
-`HasSeek` 在没有后端时也是**真** —— 因为 ADL 找到了兜底,而 `requires` 不实例化函数体,
-`static_assert` 不会触发。**两个机制互相干扰,靠返回类型区分才能共存。**
-ⓘ 我第一版就是这么写的,测出来是真才发现。
-
-### 4.2 ⇒ 草案里三样东西被删掉了
-
-| 删掉的 | 为什么不再需要 |
+| 情形 | 结果 |
 |---|---|
-| `caps` 结构体 | 后端的模块接口就是声明 |
-| `openkal.stream.caps` 模块 | 同上 |
-| `capabilities.toml` | ⭐ **生态整洁性**:mcpp 的一切都在 `mcpp.toml` 里,不该为这个引入第二份配置 |
+| 有实现,调用 `seek(s, 0)` | 编译通过,真实现在重载决议中被选中 |
+| 有实现,求值 `HasSeek<stream>` | 为真 |
+| 无实现,求值 `HasSeek<stream>` | 为假,非硬错误,因而 `if constexpr` 可降级 |
+| 无实现,强制调用 | 编译期报错,文案由规范给出 |
 
-**后端选择仍然只是条件依赖**(§4.3),整条链路**零新增配置、零新增引擎轴**。
+其中一条约束只有实测才能发现:若兜底重载的返回类型与真实现相同,则 `HasSeek` 在
+无实现时同样为真 —— ADL 找到了兜底重载,而 `requires` 不实例化函数体,
+`static_assert` 因而不触发。两个机制相互干扰,只有依靠返回类型区分才能共存。
+本文第一版即如此编写,测得为真后才发现。
 
-### 4.3 ⭐ 模块名的归属:后端提供「接口名」
+### 4.3 模块名归属:一条已被撤回的安排
 
-这是全套设计里最容易写错的一处,而且草案写错过 —— 它让应用 `import openkal.uart;`,
-**那等于把源码钉死在后端上**,正好推翻 openkal 的立身之本。
+0.1 采用的安排是:接口包提供 `openkal.decl.<interface>`,实现提供
+`openkal.<interface>` 并 `export import` 前者。该安排的唯一用途是使可选能力可经 ADL
+探测,而 ADL 要求实现的声明对消费者可见。
 
-⚠️ 但它掩盖了一个真实约束。ⓘ **三条实测(mcpp 2026.8.19.4 / gcc 16.1.0)**:
+该安排在 0.2 被撤回,理由见 §21。此处保留其中三条实测,因为它们是语言事实,
+与该安排是否被采纳无关(mcpp 2026.8.19.4 / gcc 16.1.0):
 
-| | 结果 |
+| 事实 | 结果 |
 |---|---|
-| 传递依赖的模块能不能 import | ✅ **能** —— app 只依赖 backend,可以 `import` iface 的模块 |
-| **ADL 能不能到达未 import 的模块** | ⛔ **不能** —— `error: 'seek' was not declared in this scope` |
-| ⇒ 所以后端的声明**必须在应用 import 的那个模块里** | — |
+| 传递依赖的模块能否 import | 能。应用只依赖实现,可以 import 接口包的模块 |
+| ADL 能否到达未 import 的模块 | 不能。报 `error: 'seek' was not declared in this scope` |
+| 接口模块能否命名为 `openkal.stream.decl` | 不能。ninja 报依赖自环 |
 
-⭐ **解法:`openkal.stream` 这个模块名由「后端」提供,接口包用另一个名字。**
-
-```
-openkal.decl.stream   ← 接口包:类型、兜底重载、concepts
-openkal.stream       ← 由「后端」提供:export import openkal.decl.stream; + 真实现
-```
-
-```cpp
-// 接口包
-export module openkal.decl.stream;
-export namespace kal { struct stream{…}; struct io_result{…};
-                       template <class S> unsupported_t seek(S, long) {…}
-                       template <class S> concept HasSeek = …; }
-
-// 后端包 —— 它提供「接口名」
-export module openkal.stream;
-export import openkal.decl.stream;
-export namespace kal { io_result seek(stream, long) { … } }
-```
-
-```cpp
-// 应用:后端在源码里无名
-import openkal.stream;
-int main() {
-    kal::stream s{1};
-    static_assert(kal::HasSeek<kal::stream>);
-    return seek(s, 0).n;                        // ADL 找到后端的实现
-}
-```
-
-ⓘ **端到端跑通**(app 只写 `import openkal.stream;`,concept 为真,返回后端的值)。
-
-⚠️ ⚠️ **一个必须踩过才知道的坑**:接口模块**不能**叫 `openkal.stream.decl`。
-ⓘ 实测直接 ninja 自环:
+第三条的完整报错为:
 
 ```
 ninja: error: dependency cycle: gcm.cache/openkal.stream.gcm -> gcm.cache/openkal.stream.gcm
 ```
 
-模块图把点号读成了层级关系。⇒ **ABI 模块名不能是接口名的点号延伸**,
-`openkal.decl.stream` 可以,`openkal.stream.decl` 不行。
+模块图把点号读作层级关系。因此,若将来需要一个与接口名并列的模块名,它不能是接口名的
+点号延伸:`openkal.decl.stream` 可行,`openkal.stream.decl` 不可行。
 
-#### ⭐ 模块命名是**规范条款**,不是风格
+### 4.4 实现如何被选中:只使用 `mcpp.toml`
 
-| 名字 | 谁提供 | 谁写 |
-|---|---|---|
-| `openkal.<interface>` | **后端** | 应用 `import` 它 |
-| `openkal.decl.<interface>` | **接口包** | **只有后端作者** `export import` 它 |
-
-**必须入规范**,三条理由都是硬的:
-
-1. ⭐ 每个后端都要 `export import` **这个确切的名字** —— 名字本身就是契约的一部分;
-   名字自由 = 后端没法照着规范写。
-2. ⓘ 「后端不能重定义接口类型」那条保证(实测 `conflicts with import`)
-   **只在所有后端 import 同一个模块时成立**。
-3. conformance 要 diff 导出名集合,得知道哪些来自共享模块、哪些是后端自己加的。
-
-**为什么是 `decl`**(排除掉的):
-
-| | |
-|---|---|
-| `openkal.impl.*` | ⛔ **语义反了** —— 那是接口包,不是实现;实现提供的是 `openkal.*` |
-| `openkal.abi.*` | ⛔ openkal 本身就是 ABI,冗余 |
-| `openkal.core.*` | ⛔ 与 §2.1 的「core 接口集」撞词 |
-| `openkal.spec.*` | ⚠️ 可用,但读者会以为里面是规范**正文** |
-| ⭐ `openkal.decl.*` | 无歧义:里面就是声明 |
-
-⚠️ **规范必须连同理由一起写**:读者会很自然地选 `openkal.stream.decl`(点号延伸),
-而那个 ⓘ 实测直接自环(§4.3)。只写「必须这么叫」不写为什么,第一个实现者就会卡住。
-
-⚠️ **一个被否掉的简化**:把所有声明合并成单个 `openkal` 模块,后端各自
-`export import openkal;`。少一层命名,但**破坏「每个 interface 独立版本」** ——
-只提供 stream 的后端会把 task/fs 的声明一起拖进来,大模块对裸机的编译代价也不友好。
-⇒ **每个 interface 一个 `openkal.decl.<interface>`。**
-
-### 4.4 后端怎么被选中:只用 `mcpp.toml`
-
-```toml
-# 后端包 openkal-uart
-[dependencies]
-openkal = { version = "0.1" }          # 它 export import 的那个
-```
-
-```toml
-# 消费者:只写后端,按 target 选
-[target.'cfg(os = "linux")'.dependencies]
-openkal-linux = "0.1"
-[target.'cfg(os = "none")'.dependencies]
-openkal-uart  = "0.1"
-```
-
-源码 `import openkal.stream;` 两个 target 一字不改 —— ⓘ 这正是 KA1 测到的
-「同一份 `app.cppm`,零 `#if`,两个后端」。
-
-⚠️ 两个后端同时进图 ⇒ 两个包都导出 `openkal.stream` ⇒ 模块名冲突。
-基数为 1(§12)使这成为用户错误,而且是**编译期**被发现的。
-
-#### ⭐ 消费者要声明几个依赖:两个
+消费者声明两条依赖:
 
 ```toml
 [dependencies]
-openkal = "0.1"                # ① 契约:openkal 本身就是那份规范
+openkal = "0.4.0"                # 契约
 
 [target.'cfg(os = "linux")'.dependencies]
-openkal-linux = "0.1"          # ② 实现:可替换的那一半
-[target.'cfg(os = "none")'.dependencies]
-openkal-uart  = "0.1"
+openkal-linux = "0.4.0"          # 实现,可替换的一半
+
+[target.'cfg(os = "macos")'.dependencies]
+openkal-macos = "0.2.0"
 ```
 
-技术上 ① **可以省略**(后端已经把它拉进来了,模块也 `export import` 了)。
-**但不该省**,理由只有一条,而且是硬的:
+源码写 `import openkal.stream;`,两个目标之间一字不改。这与 KA1 实测的
+「同一份 `app.cppm`、无 `#if`、两个实现」是同一形状。
 
-> ⭐ **① 是应用真正耦合的东西,而且它让「契约版本不匹配」变成解析期错误。**
+契约那条依赖在技术上可以省略,但不应省略,理由只有一条:
 
-应用写 `openkal = "0.2"`、后端只支持 `"0.1"` ⇒ **依赖解析当场失败**;
-省掉 ① 的话,同一个问题要等到**编译期**才以一堆签名不匹配的形式冒出来。
+> 它是应用真正耦合的对象,并且它把契约版本不匹配变成解析期错误。
 
-而且这与生态里已被验证的形状一致:Rust 的 `embedded-hal`(trait 包)+ 板级包,
-应用同时依赖两者;`log` + `env_logger` 也是同一个形状。
+应用声明 `openkal = "0.4"` 而实现只支持 `"0.3"` 时,依赖解析当场失败;省略该条时,
+同一问题要等到编译期才以一批签名不匹配的形式出现。
 
-| | 只写后端 | ⭐ 契约 + 后端 |
+该形状与生态中已被验证的形状一致:Rust 的 `embedded-hal`(trait 包)加板级包,
+应用同时依赖两者;`log` 加 `env_logger` 也是同一形状。
+
+| | 只写实现 | 契约加实现 |
 |---|---|---|
 | 行数 | 1 | 2 |
-| 契约版本由谁定 | ⚠️ 后端 | **应用** |
-| 版本不匹配何时暴露 | ⚠️ 编译期,一堆签名错误 | **解析期,一条消息** |
-| 换后端要改几行 | 1 | 1(① 不动) |
+| 契约版本由谁决定 | 实现 | 应用 |
+| 版本不匹配何时暴露 | 编译期,一批签名错误 | 解析期,一条消息 |
+| 更换实现须改几行 | 1 | 1,契约那条不动 |
 
-⚠️ ① 看起来「声明了却没 import」—— 那是表象:应用 `import openkal.stream;` 时,
-后端 `export import openkal.decl.stream;` 把它带了进来。**①的作用是钉版本,不是给 import 用。**
+包名不应带 `-abi` 后缀:openkal 本身就是接口与 ABI。
 
-#### ⚠️ 命名:丑的那一半要落在实现者身上
+### 4.5 接口层面的缺失
 
-**openkal 本身就是接口/ABI,包名不该再带 `-abi`。**
-
-| 谁写 | 名字 | 谁看得到 |
-|---|---|---|
-| 应用 | `import openkal.stream;` · `openkal = "0.1"` | **所有人** —— 干净 |
-| 后端作者 | `export import openkal.decl.stream;` | **只有实现者** |
-
-⇒ 两个模块名是语言逼出来的(§4.3),但**限定词只出现在实现者那一侧**。
-
-#### ⚠️ 后端拥有应用可见的名字 ⇒ 碎片化风险,靠规范 + conformance 机械地封住
-
-这是这套形状唯一的真代价:`openkal.stream` 由后端提供,理论上后端可以往里塞
-非标准的东西,而应用**察觉不到自己用了厂商扩展**。
-
-⭐ 但**后端能塞的东西是有界的**,而且边界是语言给的:
-
-| 后端**不能** | 因为 |
-|---|---|
-| 重定义 `stream` / `io_result` / `unsupported_t` | ⓘ **实测被编译器拒**:`redeclaring 'struct kal::io_result@openkal.decl.stream' in module 'openkal.stream' conflicts with import` |
-| 改 concepts 的语义 | 同上 |
-| 改兜底重载 | 同上 |
-| **只能**:加 spec 列出的那些函数的实现,**或额外的重载** | ← 唯一的自由度 |
-
-⇒ **规范只需要封住最后一行**,而它是**静态可查**的:
-
-> **SPEC**:`openkal.stream` 导出的名字集合**必须等于** spec 列表 ∩ 该后端实现的能力。
-> 厂商扩展必须放在**另一个模块名**里(`vendor.foo.stream`),应用要用就得显式 import 它 ——
-> **于是「我用了扩展」在源码里是可见的。**
->
-> **conformance**:dump 后端模块的导出名集合,与 spec 列表**逐条 diff**。多一个名字 = 不通过。
-
-⚠️ 还要 diff **签名**,不只是名字:后端把 `seek(stream, long)` 写成
-`seek(stream, unsigned long)` 时 ADL 仍会经隐式转换选中它,而语义可能不同。
-
-⭐ 这条比 §5 的其它防御更强,因为它**不是行为测试** —— 名字集合是制品的静态属性。
-
-### 4.5 接口层面的缺失(①)
-
-一整个 interface 不存在时,`import openkal.task;` **编译期就找不到模块**。
-这一条不变,而且和 §4.1 是同一套失败语义:**编译期,点名,不是运行期返回值。**
+一整个 interface 不存在时,`import openkal.task;` 在编译期即找不到模块。
+该性质在 0.2 的分层下依然成立,因为模块由规范包提供。
 
 ---
 
-## 5. ⭐「声称 ≠ 事实」问题:新机制消掉了大半
+## 5. 声称与事实的分离
 
-草案担心的是:后端写 `caps::seek = true` 而 `seek()` 永远失败。
-**§4 换成 ADL 之后,结构性的谎话已经说不出来了:**
+草案担心的情形是:实现声明 `caps::seek = true` 而 `seek()` 永远失败。
+在 ADL 机制下,结构性的不实声明已不可能作出:
 
-> **你不能「声称有 seek」而不真的声明一个返回 `io_result` 的 `seek`。**
-> 而声明了不定义,是链接错误。
+> 无法在不声明一个返回 `io_result` 的 `seek` 的前提下声称具备 seek 能力,
+> 而声明后不定义是链接错误。
 
-⇒ **声称与实现是同一个制品**,不再需要「同源生成」那套纪律,也不需要 `capabilities.toml`。
+在 0.2 删除该机制后,该问题以更彻底的方式消失:不存在可选操作,因而不存在可声称的能力。
 
-### 5.1 ① 让「不支持」在类型系统里**不可表达**(仍然最强)
+### 5.1 使「不支持」在类型系统中不可表达
 
-剩下的问题是**分类错误**,不是撒谎。判据不变:
+剩余的问题是分类错误而非不实声明。判据不变:
 
-> **一个操作若能「存在但永远失败」,通常说明它被错误地合并了。**
+> 一个操作若能存在但永远失败,通常说明它被错误地合并了。
 
-ⓘ MMU 就是这个的实例:`NoMmu::map()` 对非恒等映射返回 `false` —— 那**不是撒谎,
-是这个抽象本来就不该把两族东西装进一个 concept**。当时的结论是把它挪到 `cfg` 轴。
+MMU 是该判据的一个实例:`NoMmu::map()` 对非恒等映射返回否定,这不是不实声明,
+而是该抽象本不应把两族对象装入一个 concept。当时的结论是把它移到 `cfg` 轴。
 
-推广:socket 不能 seek,但那**不是后端撒谎,是名词错了** ——
-所以 `fs` 的 descriptor 与 `net` 的 socket 各持自己的句柄类型(§2.3),
-`kal::seek(socket, 0)` 因为**没有那个重载**而编译失败,不是因为返回错误。
+推广之:socket 不能 seek,但这不是实现的不实声明,而是名词错误。因此 `fs` 的
+descriptor 与 `net` 的 socket 各持自己的句柄类型(§2.3),`kal::seek(socket, 0)`
+因不存在该重载而编译失败,而非因返回错误而失败。
 
-### 5.2 ② 双向 conformance:`false` 也要验
+### 5.2 双向 conformance
 
-> 后端若不提供 `seek`,**必须真的不导出这个符号** —— `nm` 可查。
+> 实现若不提供某操作,必须确实不导出该符号 —— 该性质可用 `nm` 检查。
 
-⭐ 价值在于**它不是行为测试,是对制品的静态检查**:又快又不可能漏测。
-在新机制下这条更强了:导出了符号 ⇒ ADL 就会找到 ⇒ 探测为真 ⇒ 与声称自动一致。
-**这条变成了「验证机制本身没被绕过」,而不是「验证后端没撒谎」。**
+其价值在于它不是行为测试,而是对制品的静态检查:既快且不可能漏测。
+0.4 的实现中,该检查以 `--complete` 模式运行,即实现声称提供全部接口时,
+未导出的名字同样构成失败。两个实现均导出全部 47 个名字。
 
-### 5.3 ③ 过程兜底
+### 5.3 残余风险
 
-conformance 结果进索引元数据:没过 seek 那组的后端,描述符里不允许声称。
-这是唯一能约束「实现者根本不跑 conformance」的东西。
-
-### 5.4 ⚠️ 诚实的残余风险
-
-**以上都不证明行为。** 后端可以导出 `seek`、通过 happy path、在某个输入上错。
-这是**每一份规范都有的残余风险**(POSIX 也一样),答案只能是 conformance 的覆盖度,
+以上均不证明行为。实现可以导出某操作、通过顺利路径、在某个输入上出错。
+这是每一份规范都具有的残余风险,POSIX 亦然,答案只能是 conformance 的覆盖度,
 不存在语言层的解法。
 
-⇒ 但和草案相比,**残余从「结构 + 行为」缩小到只剩「行为」** —— 这正是把机制从
-「声明一个 bool」换成「声明一个函数」买到的东西。
+0.4 的经验给出了该风险的一个具体形态:一个测试若不观察目标,就无法检测目标。
+实现的套件启动 `/bin/true` 并读取其状态,而 `/bin/true` 忽略参数,因此无论参数向量
+完整到达还是被移位一位,状态都相同。详见 §23.1。
 
 ---
 
-## 6. 实现者视角(对下)
+## 6. 实现者视角
 
-### 6.1 要交付什么
+### 6.1 交付内容
 
 | | |
 |---|---|
-| 一组 `extern "C"` 定义 | §3 的清单,按你实现的 interface |
-| 一个导出真实现的模块 | ⭐ **它就是能力声明**,不需要额外的 caps(§4) |
-| conformance 通过记录 | 双向:声称有的能用,没提供的**符号不存在** |
+| 一组 `extern "C"` 定义 | 按所实现的 interface,覆盖 §3 与 §22 的清单 |
+| conformance 通过记录 | 双向:提供的操作可用,未提供的符号不存在 |
+| 导出模块 | 无。规范包拥有全部模块,实现不导出任何模块(§21) |
 
 ### 6.2 最小实现:一个裸机 UART 后端
 
 ```cpp
 // openkal-uart/src/stream.cpp
 extern "C" {
-kal_stream kal_stdout(void) { return kal_stream{1}; }   // h = 一个小索引
+kal_stream kal_stdout(void) { return kal_stream{1}; }   // h 是一个小索引
 kal_stream kal_stderr(void) { return kal_stream{1}; }
 kal_stream kal_stdin (void) { return kal_stream{0}; }
 
 kal_io_result kal_stream_write(kal_stream s, const void* buf, uintptr_t n) {
-    if (s.h != 1) return kal_io_result{0, KAL_EBADF};
+    if (s.h != 1) return kal_io_result{0, kal_err_invalid};
     auto* p = static_cast<const unsigned char*>(buf);
     for (uintptr_t i = 0; i < n; ++i)
         *reinterpret_cast<volatile unsigned char*>(0x10000000) = p[i];
-    return kal_io_result{n, 0};
+    return kal_io_result{n, kal_ok};
 }
 }
 ```
 
-⚠️ **没有第二份配置。** 这个后端不提供 `seek`,做法就是**不声明它** ——
-`mcpp.toml` 里只有普通的包信息,`seek.cpp` 不存在,符号也不存在,
-而消费者侧 `kal::HasSeek<kal::stream>` 因此为假(§4.1)。
+不存在第二份配置文件。该实现不提供 `openkal.fs`,做法是不提供其定义;
+`mcpp.toml` 中只有普通的包信息。
 
-### 6.3 后端怎么被选中
+### 6.3 实现如何被选中
 
-**条件依赖,零新增引擎轴**:
+条件依赖,引擎无新增轴:
 
 ```toml
 [target.'cfg(all(arch = "riscv64", os = "none"))'.dependencies]
 openkal-uart = "0.1"
 
 [target.'cfg(os = "linux")'.dependencies]
-openkal-linux = "0.1"
+openkal-linux = "0.4.0"
 ```
 
-### 6.4 ⚠️ 真内核实现者的额外约束
+### 6.4 真内核实现者的额外约束
 
-1. **不能假设进程模型 / 用户内核分界 / 全局命名空间** —— 单地址空间内核里没有「进程」
-2. **句柄必须是调用方上下文相关的**,不能是全局整数表下标
-3. **返回形状要能过陷入边界** —— 2 字结构在 RISC-V 上就是 `a0/a1`
+1. 不能假设进程模型、用户内核分界或全局命名空间 —— 单地址空间内核中没有进程。
+2. 句柄必须与调用方上下文相关,不能是全局整数表的下标。
+3. 返回形状必须能穿越陷入边界 —— 两字结构在 RISC-V 上即 `a0/a1`。
 
-⇒ 三条**全部指向同一个结论**:不透明一个机器字的句柄。
+三条约束都指向同一结论:不透明的一个机器字的句柄。
 
 ---
 
-## 7. 上层视角(对上)
+## 7. 上层视角
 
-### 7.1 应用直接用
+### 7.1 应用直接使用
 
 ```cpp
-import openkal.stream;        // ⭐ 只写接口名;提供它的是后端(§4.3)
+import openkal.stream;        // 只写接口名;提供定义的是实现
 
 int main() {
-    kal::write(kal::stdout(), "hello\n");
-
-    // 有就用,没有就走别的路 —— 探测是 ADL,不是查表
-    if constexpr (kal::HasVectored<kal::stream>) { /* writev 形状 */ }
-    else                                         { /* 逐段写 */ }
-
-    // 要求必须有:文案是规范自己写的
-    static_assert(kal::HasSeek<kal::stream>,
-                  "this program needs seekable streams");
+    kal::write(kal::out(), "hello\n");
 }
 ```
 
-⭐ **而且不写 `if constexpr` 也不会错**:直接调 `kal::seek(s, 0)` 在没有后端支持时
-就是**编译期报错并给出规范的原话**(§4.1 实测)—— 这是 §7 里问「能不能内置」的答案:
-**能,而且是默认行为,不需要消费者做任何事。**
+实测(KA2):更换实现不需重新编译应用 —— 同一个 `app.o` 更换实现的目标文件重新链接即可。
 
-ⓘ **KA2 实测:换后端不重编应用** —— 同一个 `app.o` 换掉后端目标文件重链即成。
-
-### 7.2 类型化封装(C ABI 之上的零成本层)
+### 7.2 类型化封装:C ABI 之上的零成本层
 
 ```cpp
-export module openkal.stream;
-import openkal.stream.caps;
-
 export namespace kal {
 
-enum class error : std::int32_t { ok = 0, badf, again, io, nospace, /*…*/ };
-
-struct [[nodiscard]] io_result {
-    std::uintptr_t n;
-    error          e;
-    constexpr explicit operator bool() const { return e == error::ok; }
-};
-
 inline io_result write(stream s, std::span<const std::byte> b) {
-    auto r = kal_stream_write(s, b.data(), b.size());
-    return { r.n, static_cast<error>(r.err) };
+    return kal_stream_write(s, b.data(), b.size());
 }
 
-// 便利重载:字符串
 inline io_result write(stream s, std::string_view sv) {
     return write(s, std::as_bytes(std::span{sv.data(), sv.size()}));
 }
@@ -609,49 +480,49 @@ inline io_result write(stream s, std::string_view sv) {
 }
 ```
 
-⚠️ `std::span` / `std::byte` / `std::string_view` **全都在 freestanding 可用的 103 个头里**
-(ⓘ 实测,见 review §4)—— 这一层在裸机上是可以存在的。
+`std::span`、`std::byte` 与 `std::string_view` 均在 freestanding 可用的 103 个头文件内
+(实测,见 freestanding review §4),因此该层在裸机上可以存在。
 
 ---
 
 ## 8. 对接下层硬件:BSP 接线
 
-⭐ **openhal 的设备实例可以成为 openkal 的后端** —— 这是接线,不是层级:
+openhal 的设备实例可以成为 openkal 的实现,这是接线而非层级:
 
 ```cpp
-// BSP:把这块板的 openhal Serial 接成 openkal 的 stdout
+// BSP:把这块板的 openhal Serial 接成 openkal 的标准输出
 import openhal.serial;
 
 namespace {
-    auto& uart = board::uart0();          // openhal 实例(concept,零成本)
+    auto& uart = board::uart0();          // openhal 实例,concept,零成本
 }
 
 extern "C" kal_io_result kal_stream_write(kal_stream s, const void* buf, uintptr_t n) {
-    if (s.h != 1) return { 0, KAL_EBADF };
-    uart.write({static_cast<const std::byte*>(buf), n});   // 内联进来
-    return { n, 0 };
+    if (s.h != 1) return { 0, kal_err_invalid };
+    uart.write({static_cast<const std::byte*>(buf), n});   // 内联
+    return { n, kal_ok };
 }
 ```
 
-⚠️ **注意成本**:openhal 是 concept,`uart.write` **可内联**;openkal 是 C ABI,
-`kal_stream_write` 是一次真调用。这正是两者契约形态不同的原因(§10)。
+成本上需注意:openhal 是 concept,`uart.write` 可内联;openkal 是 C ABI,
+`kal_stream_write` 是一次真实调用。这正是两者契约形态不同的原因(§12)。
 
 ---
 
-## 9. 对接 libc:picolibc(⚠️ 缝是实测出来的)
+## 9. 对接 C 库:picolibc
 
-ⓘ **实测(picolibc 1.8.12,rv64gc/lp64d)** —— `libsemihost.a` 的 `common_iob.c.o`:
+实测(picolibc 1.8.12,rv64gc/lp64d),`libsemihost.a` 的 `common_iob.c.o` 含:
 
 ```
-d __stdio                    ← FILE 实体
-R stdout / stdin / stderr    ← 三个都指向它(同址)
-U sys_semihost_putc          ← 未定义
-U sys_semihost_getc          ← 未定义
+d __stdio                    FILE 实体
+R stdout / stdin / stderr    三者均指向它,同址
+U sys_semihost_putc          未定义
+U sys_semihost_getc          未定义
 ```
 
-而 **`libc.a` 根本不定义 `stdout`** —— picolibc 早就把「C 库」和「控制台在哪」分开了。
+而 `libc.a` 并不定义 `stdout` —— picolibc 早已把「C 库」与「控制台位于何处」分开。
 
-⇒ 移植到 openkal = **一个小 .o**:
+因此移植到 openkal 只需一个小目标文件:
 
 ```cpp
 // openkal-picolibc/src/console.cpp
@@ -659,8 +530,7 @@ U sys_semihost_getc          ← 未定义
 import openkal.stream;
 
 static int kal_putc(char c, FILE*) {
-    auto b = static_cast<std::byte>(c);
-    return kal::write(kal::stdout(), {&b, 1}) ? c : EOF;
+    return kal_stream_write(kal_stdout(), &c, 1).e == kal_ok ? c : EOF;
 }
 static FILE __kal_stdio = FDEV_SETUP_STREAM(kal_putc, nullptr, nullptr,
                                             _FDEV_SETUP_WRITE);
@@ -668,62 +538,56 @@ extern "C" FILE* const stdout = &__kal_stdio;
 extern "C" FILE* const stderr = &__kal_stdio;
 ```
 
-⭐ **成本论据**:`struct __file` 里 `put` **本来就是函数指针**
-(`int (*put)(char, struct __file*)`)。接到 `kal` 上**不新增任何一层间接**。
+成本论据:`struct __file` 中的 `put` 本来就是函数指针
+(`int (*put)(char, struct __file*)`),接到 openkal 上不新增任何一层间接。
+由此 `printf` 与 `kal_stream_write` 汇入同一底层,不产生第二条 I/O 路径。
 
-⇒ **`printf` 和 `kal::write` 汇到同一个底,不产生第二条 I/O 路径。**
-
-⚠️ 反向也成立(openkal 在 libc **之上**):hosted 后端的 `kal_stream_write` 可以就是
-`fwrite(buf, 1, n, stdout)`。**同一份契约,两个方向。**
+反向同样成立:宿主实现的 `kal_stream_write` 可以就是 `fwrite(buf, 1, n, stdout)`。
+同一份契约,两个方向。
 
 ---
 
-## 10. 对接 libc++ / gcc 工具链
+## 10. 对接 libc++ 与 gcc 工具链
 
-### 10.1 libc++:36 个名字,ⓘ **实测清单**
+### 10.1 libc++:36 个名字
 
-ⓘ llvm 22.1.8 的 `__thread/support/` 有 **四个后端**:`pthread.h` `windows.h` `c11.h`
-**`external.h`** —— 可插拔线程后端这个形状**在标准库里已经存在**。
+实测:llvm 22.1.8 的 `__thread/support/` 有四个后端 —— `pthread.h`、`windows.h`、
+`c11.h`、`external.h`。可插拔线程后端这一形状在标准库中已经存在。
 
-`_LIBCPP_HAS_THREAD_API_EXTERNAL = 1` 后,要提供 `<__external_threading>`,
-面是 ⓘ **36 个名字**(从 `pthread.h` 数出来的,与调研一致):
+置 `_LIBCPP_HAS_THREAD_API_EXTERNAL = 1` 后须提供 `<__external_threading>`,
+其接口面为 36 个名字(自 `pthread.h` 计数,与调研一致):
 
 ```
 mutex×4            __libcpp_mutex_t / _lock / _trylock / _unlock / _destroy
 recursive_mutex×5  __libcpp_recursive_mutex_t / _init / _lock / _trylock / _unlock / _destroy
 condvar×5          __libcpp_condvar_t / _signal / _broadcast / _wait / _timedwait / _destroy
 thread×9           __libcpp_thread_t / _id / _create / _join / _detach / _yield / _sleep_for …
-once×1             __libcpp_execute_once (+ __libcpp_exec_once_flag)
+once×1             __libcpp_execute_once 与 __libcpp_exec_once_flag
 tls×3              __libcpp_tls_key / _create / _get / _set
 ```
 
-映射到 `openkal.task` 应当是**一一对应**,不需要适配层:
+0.3 定义 `openkal.task` 时采取的形状与此不同,且这一差异是刻意的。openkal 只声明
+「使一个上下文在某个字上挂起」的原语,互斥量与条件变量是其上的构造。
+`openkal-libc` 用 `kal_task_wait` 与 `kal_task_wake` 构造了一个三态互斥量,
+证明该分解可行(§23.2)。因此对接 libc++ 时,36 个名字中的互斥量与条件变量部分
+由适配层构造,而非由 openkal 逐一声明。
 
-```cpp
-// openkal 侧 <__external_threading> 的实现骨架
-using __libcpp_mutex_t = kal_mutex;                       // 不透明,1 字
-inline int __libcpp_mutex_lock(__libcpp_mutex_t* m) {
-    return static_cast<int>(kal_mutex_lock(*m));          // 直调,零桥接
-}
-```
+这一取舍的理由是:互斥量的数量在一个程序中不确定,而挂起原语只有一个。
+按 §12 的基数论据,数量不确定的对象不属于 C ABI 契约。
 
-⚠️ **这听起来像「又在照抄」,区别是实质的**:`__external_threading` 本来就是给
-**非 POSIX 系统**用的插点,它已经过了「非 POSIX 宿主能不能实现」这道筛;POSIX 没有。
-**照抄一个可移植性插点 ≠ 照抄一个 OS。**
+### 10.2 gcc 与 libstdc++:gthreads
 
-### 10.2 gcc / libstdc++:gthreads
+实测(gcc 16.1.0):`bits/gthr-default.h` 中 `__gthread_*` 共 71 个名字,
+其中 20 个是 `__gthread_objc_*` 遗留,真实接口面为 51,与 libc++ 的 36 高度重合。
 
-ⓘ **实测(gcc 16.1.0)**:`bits/gthr-default.h` 里 `__gthread_*` 共 **71** 个名字,
-其中 **20** 个是 `__gthread_objc_*` 遗留 ⇒ **真实面 51**,与 libc++ 的 36 高度重合。
+更重要的先例是 gcc 自带的 `gthr-single.h`:「没有线程」是一个编译期后端选择,
+而非运行期 `ENOSYS`。这正是本方案主张的形状,而 gcc 已如此实践三十年。
 
-⭐ ⓘ 更重要的先例:gcc 自带 **`gthr-single.h`** —— **「没有线程」是一个编译期后端选择**,
-不是运行期 `ENOSYS`。**这正是本方案 §4 主张的形状,而且 gcc 已经这么做了三十年。**
-
-⇒ openkal 的 gcc 侧对接 = 提供一份 `gthr-openkal.h`,和 `gthr-posix.h` 平级。
+因此 openkal 的 gcc 侧对接是提供一份 `gthr-openkal.h`,与 `gthr-posix.h` 平级。
 
 ### 10.3 `operator new` 与 `__libcpp_verbose_abort`
 
-这两个是**标准扩展点**,不需要发明契约:
+二者是标准扩展点,不需要发明契约:
 
 ```cpp
 void* operator new(std::size_t n) {
@@ -737,251 +601,240 @@ _LIBCPP_BEGIN_NAMESPACE_STD
 _LIBCPP_END_NAMESPACE_STD
 ```
 
-ⓘ ⚠️ **`__libcpp_verbose_abort` 必须通过 libc++ 自己的头声明** —— 真符号在 ABI 内联
-命名空间 `std::__1::` 里,手写 `namespace std { }` **编得过、链不上、报错一字不变**
-(本轮实测踩过)。
+实测得到的一条约束:`__libcpp_verbose_abort` 必须通过 libc++ 自身的头文件声明 ——
+真实符号位于 ABI 内联命名空间 `std::__1::` 中,手写 `namespace std { }` 能编译通过、
+无法链接,且报错文字与未定义时完全相同。
 
-### 10.4 ⚠️ openkal 明确**不认领** `thread_local`
+### 10.4 openkal 不认领 `thread_local`
 
-ⓘ 实测的静默失败:
+实测得到的静默失败:
 
 ```
-thread_local int counter;  →  编译 ✅ 链接 ✅ 零未定义符号 ✅ 零诊断 ✅
-                           →  运行期通过未设置的 tp 读写垃圾地址
+thread_local int counter;  →  编译通过、链接通过、无未定义符号、无诊断
+                           →  运行期通过未设置的 tp 读写无效地址
 ```
 
-`thread_local` **不属于线程契约**,属于 **openarch(TLS 寄存器约定)+ BSP
-(`start.S` 设 `tp` + 链接脚本 `.tdata/.tbss`)**。
-而 `__external_threading` 里的 `tls×3` 是 **pthread_key 那种动态 TLS**,不是它。
+`thread_local` 不属于线程契约,属于 openarch(TLS 寄存器约定)与 BSP
+(`start.S` 设置 `tp`、链接脚本提供 `.tdata`/`.tbss`)。
+而 `__external_threading` 中的 tls 三项是 `pthread_key` 那种动态 TLS,并非同一事物。
 
-⇒ **规范里必须写死这条边**,否则「我实现了 openkal 的线程」会被读成「`thread_local` 能用了」。
-⚠️ 且 libc++/libstdc++ **自己内部就用 `thread_local`**,不是「用户不写就没事」。
+规范必须明确该边界,否则「我实现了 openkal 的线程」会被读作「`thread_local` 可用了」。
+且 libc++ 与 libstdc++ 自身内部就使用 `thread_local`,并非用户不书写即可回避。
 
 ---
 
-## 11. C++ 特性 → 解决什么问题
+## 11. C++ 特性与其所解决的问题
 
-| 特性 | 解决什么 | ⚠️ 限制 |
+| 特性 | 解决的问题 | 限制 |
 |---|---|---|
-| **modules** | 接口/caps 分离;**模块找不到 = 能力检查**,把链接期错误提前到编译期 | 需要 mcpp 的 `reexport`/provisions 承载 |
-| ⭐ **ADL + `requires`** | ⓘ **非限定名**在模板里是 dependent 的 ⇒ 缺失时求值为 `false` 而不是硬错误。**能力探测不需要额外的数据结构,后端的模块接口就是声明** | ⚠️ **限定名**(`kal::seek`)仍是硬错误 —— 两者的差别是这套设计成立的全部基础 |
-| ⭐ **兜底重载 + `static_assert`** | 没有后端时直接调用 ⇒ **编译期报错,文案是规范写的** | ⚠️ 兜底的**返回类型必须与真实现不同**,否则探测恒为真(ⓘ 实测踩过) |
-| **`if constexpr`** | 消费者按能力降级,未选中的分支**不实例化** | — |
-| **concepts** | 组合 caps;openhal 的多提供者共存 | ⚠️ ⓘ **只检查语法不检查语义**(K1/K2),③ 类能力不能用它 |
-| **非类型模板参数(能力位)** | 让「不支持」**在类型系统里不可表达**(§5.1) | — |
-| **`static_assert` + 文案** | 把缺能力变成**人能读**的编译错,而不是链接器的符号名 | — |
-| **`enum class`** | 封闭错误集合,不透传 errno | — |
-| **`[[nodiscard]]`** | `io_result` 不能被静默丢弃 | — |
-| **`std::span` / `std::byte` / `string_view`** | C ABI 之上的类型化层 | ⓘ 三者都在 freestanding 可用的 103 头里 |
-| **`_Noreturn` / `[[noreturn]]`** | `kal_abort` 的控制流事实进类型 | — |
-| ~~virtual / vtable~~ | — | ⛔ 把结构体布局写进 ABI,「只增不改」保护不了 |
-| ~~exceptions / RTTI~~ | — | ⛔ 裸机整图关闭(mcpp 2026.8.19.4 起) |
-| ~~`requires` 探测**限定名**~~ | — | ⛔ ⓘ 实测:硬错误。**改用非限定 + ADL** |
-| ~~`caps` 结构体 / `capabilities.toml`~~ | — | ⛔ 被 ADL 机制整个取代;且第二份配置文件违背生态整洁性 |
+| modules | 模块找不到即构成能力检查,把链接期错误提前到编译期 | 需要 mcpp 的 `reexport` 与 provisions 承载 |
+| ADL 与 `requires` | 非限定名在模板中是待决的,缺失时求值为 `false` 而非硬错误 | 限定名仍是硬错误;二者的差别是该机制成立的全部基础。0.2 起未被使用 |
+| 兜底重载与 `static_assert` | 无实现时直接调用即编译期报错,文案由规范给出 | 兜底的返回类型必须与真实现不同,否则探测恒为真。0.2 起未被使用 |
+| `if constexpr` | 消费者按能力降级,未选中的分支不实例化 | — |
+| concepts | 组合能力;openhal 的多提供者共存 | 只检查语法不检查语义(K1/K2) |
+| 非类型模板参数 | 使「不支持」在类型系统中不可表达(§5.1) | — |
+| `enum` | 封闭错误集合,不透传 errno | — |
+| `[[nodiscard]]` | `io_result` 不能被静默丢弃 | — |
+| `std::span` / `std::byte` / `string_view` | C ABI 之上的类型化层 | 三者均在 freestanding 可用的 103 个头文件内 |
+| `[[noreturn]]` | 把 `kal_abort` 的控制流事实纳入类型 | — |
+| virtual 与虚表 | 不采用 | 把结构体布局写入 ABI,「只增不改」保护不了 |
+| exceptions 与 RTTI | 不采用 | 裸机整图关闭(mcpp 2026.8.19.4 起) |
+| 以 `requires` 探测限定名 | 不采用 | 实测为硬错误 |
+| `caps` 结构体与 `capabilities.toml` | 不采用 | 被 ADL 机制取代,而后者又在 0.2 被删除;第二份配置文件违背生态整洁性 |
 
 ---
 
-## 12. 与 openhal / openarch 的关系:**契约形态由基数决定**
+## 12. 与 openhal 及 openarch 的关系:契约形态由基数决定
 
-| | 一个程序里几个实现 | 契约 | 为什么 |
+| | 一个程序中的实现数 | 契约 | 理由 |
 |---|---|---|---|
-| **openarch** | **1**(一颗 CPU) | concept **+ LTO 必需** | ⓘ K3:`local_irq_disable()` 本该一条 `csrci`;跨模块 `-O2` 退化成真 `jal`,`-flto` 才恢复 |
-| **openkal** | **1**(一个内核) | **C ABI** | ⓘ 一次 call 可忽略(本来就陷入);H1 |
-| **openhal** | **N**(每条总线/设备) | **concept** | ⓘ H3:多提供者共存 + 零成本可内联 |
+| openarch | 1,一颗 CPU | concept 且必须 LTO | 实测 K3:`local_irq_disable()` 本应是一条 `csrci`;跨模块 `-O2` 退化为真实 `jal`,`-flto` 后恢复 |
+| openkal | 1,一个内核 | C ABI | 一次调用成本可忽略,因为本就要陷入;H1 |
+| openhal | N,每条总线与设备各一 | concept | 实测 H3:多提供者共存且零成本可内联 |
 
-⭐ **openarch 与 openhal 都是 concept,但理由相反**:一个因为调用成本灾难性,
-一个因为要多实现共存。openkal 两种压力都没有 ⇒ 用最简单也最稳定的 C ABI。
+openarch 与 openhal 都采用 concept,但理由相反:前者因调用成本不可接受,
+后者因需要多实现共存。openkal 两种压力都不存在,因而采用最简单也最稳定的 C ABI。
 
-**openkal.stream 与 openhal.Console 的边界**:
+`openkal.stream` 与 `openhal.Console` 的边界:
 
-- openkal 的流 = **程序的标准流**:一个、环境给的、借用的 ——「我的诊断往哪去」
-- openhal 的 `Console`/`Serial` = **你打开的一个设备**:多个、拥有的、有类型
+- openkal 的流是程序的标准流:数量为一、由环境给出、借用而非拥有。
+- openhal 的 `Console` 与 `Serial` 是被打开的设备:数量为多、被拥有、有类型。
 
-**是两个名词,不是一个东西的两层。** 自然组合见 §8。
+二者是两个名词,而非同一事物的两层。自然的组合方式见 §8。
 
 ---
 
 ## 13. 判据与门
 
-### 13.1 双向准入判据(⚠️ 文档今天只有对下那一半)
+### 13.1 双向准入判据
 
-| 方向 | 判据 | 怎么数 |
+| 方向 | 判据 | 计量方式 |
 |---|---|---|
-| **对下** | 四个后端自然实现,**没有模拟层** | 写出四个后端的 `kal_stream_write`,数「只为迁就形状而存在」的行数 —— 任何后端需要**表/注册中心/路径解析器**,形状就错了 |
-| **对上** | libc / libc++ / gcc 的**既有插点**直接落上,**没有适配层** | `stdout->put` · `operator new` · `__libcpp_verbose_abort` · 36 个 `__libcpp_*` · `gthr-*.h` —— 同样数桥接行数 |
+| 对下 | 四个实现均能自然实现,不存在模拟层 | 写出四个实现的 `kal_stream_write`,计量「仅为迁就形状而存在」的行数。任何实现若需要表、注册中心或路径解析器,则形状有误 |
+| 对上 | C 库、libc++ 与 gcc 的既有插点可直接落上,不存在适配层 | `stdout->put`、`operator new`、`__libcpp_verbose_abort`、36 个 `__libcpp_*`、`gthr-*.h`,同样计量桥接行数 |
 
-⇒ **对上判据不满足 ⇒ 说明资源分解切错了,回去改分解** —— 而不是改边界迁就标准库。
+对上判据不满足意味着资源分解切分有误,应当返回修改分解,而非修改边界以迁就标准库。
 
-### 13.2 D0–D3 的门(来自第一阶段计划 §7,不改)
+### 13.2 D0 至 D3 的门
 
-| 阶段 | ⭐ 继续的判据 | ⚠️ 停止的信号 |
+| 阶段 | 继续的判据 | 停止的信号 |
 |---|---|---|
-| **D0** | **有第三方实现了第三个后端** —— 这才是 D 能否成立的真变量 | 半年内无人实现 ⇒ 停在 D0,当 mcpp 内部设施 |
-| **D1** | 三个官方后端全过 conformance;⚠️ windows 后端**不经 MSVC CRT 的 POSIX 兼容层** | windows 做不出来而不模拟 ⇒ **SPEC 形状错了**,回炉 |
-| **D2**(openhal) | 同一个驱动包既跑裸机 MCU 又跑 Linux | 驱动作者不来 ⇒ 停;不影响 openkal |
-| **D3**(openarch) | ⚠️ 两个最硬原语不碎(上下文切换 / 页表项) | 碎掉 ⇒ **停**;⚠️ 碎在这里后面全是幻觉 |
+| D0 | 有第三方实现了第三个后端 —— 这是该方向能否成立的真实变量 | 半年内无人实现,则停在 D0,作为 mcpp 内部设施 |
+| D1 | 三个官方实现全部通过 conformance;Windows 实现不经 MSVC CRT 的 POSIX 兼容层 | Windows 实现无法在不模拟的前提下完成,说明 SPEC 形状有误,需返工 |
+| D2(openhal) | 同一个驱动包既运行于裸机 MCU 又运行于 Linux | 驱动作者不参与则停止;不影响 openkal |
+| D3(openarch) | 两个最难抽象的原语(上下文切换、页表项)不碎裂 | 碎裂则停止;此处碎裂后,其后的结论均不可信 |
+
+0.4 的进展不移动 D0 的门。两个官方实现均由同一作者编写,因而它们之间的一致
+不构成第三方证据(§23.1)。
 
 ---
 
-## 14. 明确不做的
+## 14. 明确不做的事项
 
-| | 为什么 |
+| 事项 | 理由 |
 |---|---|
-| **`open(path)` 进 core** | WASIp1 的教训;开文件在 `openkal.fs`(自有句柄类型),不在 core,也不经一个通用命名接口(§2.3) |
-| **运行期 `ENOSYS`** | 部分性用「链接哪些 interface」表达;⭐ gcc 的 `gthr-single.h` 已是三十年的先例 |
-| **errno 透传** | 封闭 `enum class`;映射不是模拟 |
-| **虚接口 / vtable** | ABI 脆弱,与「只增不改」冲突 |
-| **`thread_local` 的保证** | 属于 openarch + BSP(§10.4) |
-| **引擎认识 openkal** | ⚠️ 计划 §7.2 第一行:**引擎永不认识这三层**;后端选择 = 条件依赖,零新增轴 |
-| **现在就实现** | D0 的门是「第三方来了没有」,不是「能不能写出来」 |
+| core 中提供 `open(path)` | WASIp1 的教训;打开文件属于 `openkal.fs`(自有句柄类型),不在 core,也不经一个通用命名接口(§2.3) |
+| 运行期 `ENOSYS` | 部分性以「链接哪些 interface」表达;gcc 的 `gthr-single.h` 已是三十年的先例 |
+| 透传 errno | 采用封闭枚举;映射不是模拟 |
+| 虚接口与虚表 | ABI 脆弱,与「只增不改」冲突 |
+| 保证 `thread_local` | 属于 openarch 与 BSP(§10.4) |
+| 引擎认识 openkal | 计划 §7.2 第一行:引擎永不认识这三层;实现的选择是条件依赖,引擎无新增轴 |
 
 ---
 
 ## 15. 撤回记录
 
-⚠️ 草案里被 review 推翻的两条,连同它们**为什么当时看起来对**:
+草案与 0.1 中被撤回的四条,连同它们当时看似成立的理由:
 
-| 撤回的 | 当时的理由 | 为什么错 |
+| 撤回的事项 | 当时的理由 | 错误所在 |
 |---|---|---|
-| **`openkal.namespace`**(取代 fs/net) | 「文件 / socket / UART 给你的都是 stream,只是命名方式不同」 | ① 触犯本文自己的 §5.1 规矩(caps 成为不相干能力并集);② URI 解析器**就是**模拟层,违反对下判据;③ 引用的 WASIp2 先例是**误读**(它分开资源种类,只共享 stream 类型) |
-| **扩 `cfg()` 文法支持 `cfg(mmu)`** | K1/K2 说「MMU 是能力轴不是契约」 | 那条结论是关于 **openarch** 的;openkal core 逐个接口查下来**一条 ③ 类语义轴都没有**,而且 triple 本身已承载大部分 |
-| **`caps` 结构体 + `capabilities.toml`** | 以为「`requires` 测不了缺失的名字」⇒ 能力必须放进另一个可命名的东西 | ⓘ **只对限定名成立**。非限定 + ADL 在模板里是 dependent 的,缺失时求值为 `false`。⇒ 后端的模块接口本身就是能力声明,**两样东西整个删掉**,也不需要第二份配置 |
-| **应用 `import openkal.uart;`** | 想让「接口随后端而来」 | ⛔ **把源码钉死在后端上**,推翻 openkal 的立身之本。ⓘ 而且掩盖了真约束:**ADL 到不了未 import 的模块**(实测)。正解是**后端提供接口名**(§4.3) |
+| `openkal.namespace` 取代 fs 与 net | 文件、socket 与 UART 交付的都是流,区别仅在命名方式 | 一、违反本文 §5.1 的判据,能力集合成为不相干能力的并集;二、URI 解析器即是模拟层,违反对下判据;三、所引 WASIp2 先例是误读,它分开资源种类,只共享 stream 类型 |
+| 扩展 `cfg()` 文法以支持 `cfg(mmu)` | K1/K2 的结论是「MMU 是能力轴而非契约」 | 该结论关于 openarch;openkal core 逐个接口检视,没有一条语义轴需要它,且 triple 本身已承载大部分 |
+| `caps` 结构体与 `capabilities.toml` | 认为 `requires` 无法测出缺失的名字,因而能力必须放入另一个可命名的实体 | 该性质只对限定名成立。非限定名经 ADL 在模板中是待决的,缺失时求值为 `false`。实现的模块接口本身即是能力声明,两样事物整体删除,亦不需要第二份配置 |
+| 应用 `import openkal.uart;` | 希望接口随实现而来 | 把源码固定在特定实现上,推翻 openkal 的基本性质。且它掩盖了真实约束:ADL 到不了未 import 的模块 |
 
-⭐ 三条的共同形状:**都是「我有一个漂亮的统一」,而漂亮的统一把两件本来不同的事合并了。**
-这与 §5.1 给出的判据是同一条 —— 只是那一节我用它去检查别人的后端,没有用它检查自己的分解。
+四条的共同形状:都是一个看似整齐的统一,而该统一把两件本来不同的事合并了。
+这与 §5.1 给出的判据是同一条 —— 只是该节的判据此前被用于检查他人的实现,
+而未被用于检查自身的分解。
 
 ---
 
 ## 16. 综合 review 发现的开放问题
 
-撤回两条之后重新通读,又找出六条 —— 都是**规范必须表态、但草案没表态**的。
+以下问题在 0.1 至 0.4 的过程中逐条得到规范表态,状态列注明其去向。
 
-### 16.1 ⚠️ 两个堆(ⓘ 实测,不是理论)
+### 16.1 两个分配器
 
-ⓘ picolibc `libc.a` 的 `vfprintf.c.o` **引用 `free`** —— **printf 与分配器是耦合的**。
-而固件里已有一整套 `malloc`/`free`/`__malloc_sbrk_aligned`/`__fallback_sbrk`。
+实测:picolibc `libc.a` 的 `vfprintf.c.o` 引用 `free`,即 printf 与分配器是耦合的。
+而固件中已存在一整套 `malloc`、`free`、`__malloc_sbrk_aligned` 与 `__fallback_sbrk`。
 
-⇒ 若 `operator new` 走 `kal_alloc`(openkal 的 arena)而 `printf` 走 picolibc 的
-`malloc`,**同一块 RAM 上会有两个分配器**,而且都想长 sbrk。
+若 `operator new` 走 `kal_alloc`(openkal 的区域分配器)而 `printf` 走 picolibc 的
+`malloc`,则同一块 RAM 上存在两个分配器,且都试图扩展 sbrk。
 
-**规范必须写死一条**:
+规范条款:
 
-> **后端上若已存在 libc 分配器,`kal_alloc` 必须实现在它之上,而不是与它并列。**
+> 实现所处的环境若已存在 C 库分配器,`kal_alloc` 必须实现在它之上,而非与它并列。
 
-三种配置:
-
-| 后端 | 做法 | |
+| 配置 | 做法 | 结论 |
 |---|---|---|
-| picolibc | `kal_alloc` → `malloc`(openkal 在 libc **之上**) | ✅ 一个堆 |
-| 零 libc | `kal_alloc` → 自带 arena;没有 libc malloc | ✅ 一个堆 |
-| ⛔ 自带 arena **且** libc malloc 也在 | — | **禁止** |
+| picolibc | `kal_alloc` 转 `malloc`,openkal 位于 C 库之上 | 一个分配器 |
+| 零 C 库 | `kal_alloc` 使用自带区域;不存在 C 库 malloc | 一个分配器 |
+| 自带区域且 C 库 malloc 同时存在 | — | 禁止 |
 
-⚠️ 这条部分可 conformance 化:检查固件里 `sbrk` 的消费者是不是只有一个。
+该条部分可 conformance 化:检查固件中 sbrk 的消费者是否唯一。
 
-### 16.1b ⚠️ 短写:`kal_stream_write` 写不全时怎么办(§20.3 逼出来的)
+### 16.2 短写
 
-写参考实现时立刻撞上:`::write(2)` 可以短写。SPEC 必须选一边:
+写参考实现时立即撞上:`::write(2)` 可以短写。规范须选择一侧。
 
-| | 后果 |
+| 选择 | 后果 |
 |---|---|
-| **写全或报错**(推荐) | 循环在**后端**里写一次 |
-| 允许短写 | ⚠️ **每个调用方**都要自己写循环 —— 这正是 POSIX 让无数程序出错的地方 |
+| 写全或报错(已采纳) | 循环位于实现内部,只写一次 |
+| 允许短写 | 每个调用方都要自行编写循环,这正是 POSIX 使大量程序出错之处 |
 
-⇒ 建议规定「写全或报错」,短写只在 `kal_stream_write_some`(若真需要)里出现。
+已写入 SPEC 条款 7.4:`kal_stream_write` 写全或报告阻止它的条件,部分传输不是成功的结果;
+`kal_stream_read` 报告实际传输的字节数,可少于请求数,零字节加 `kal_ok` 表示输入结束。
+与部分写入不同,部分读取携带调用方需要的信息。
 
-### 16.2 ⚠️ 错误集合的封闭性
+### 16.3 错误集合的封闭性与结构体布局
 
-草案说「封闭 `enum class`,不透传 errno」。但 POSIX 有约 130 个 errno,
-一个 ~15 项的封闭集合**必然丢信息**。规范要表态:
+POSIX 有约 130 个 errno,一个约 15 项的封闭集合必然丢失信息。
+已采纳的方案是封闭集合,细节通道只用于日志、不进入控制流。
 
-- 丢掉细节(简单,但诊断质量下降),还是
-- 留一个 `other` + **后端私有的细节通道**(`kal_last_error_detail()`),
-  ⚠️ 但那是全局状态,和 errno 一样的毛病
+C ABI 没有版本,而结构体布局会被永久冻结。「每个 interface 独立版本、只增不改」
+保护得了函数(新增函数是可加的),保护不了结构体:`kal_io_result` 的布局一旦发布
+即不能变动。已采纳的方案是明确声明这些布局永久冻结,写入 SPEC 条款 5.3。
+符号版本后缀作为备选记录于 SPEC 的未决事项。
 
-**倾向**:封闭集合 + 细节通道**只用于日志**,不进控制流。需要写进 SPEC。
+### 16.4 拥有与借用
 
-### 16.3 ⚠️ C ABI 没有版本,而结构体布局会被永久冻结
+标准流是借用的,不配 `close`;`openkal.fs` 的 descriptor 是拥有的,必须关闭。
+C ABI 中没有 RAII,类型化 C++ 层可以封装 RAII,但那不是规范的一部分,
+Rust 与 C 的消费者拿不到。规范因此明确列出哪些句柄是拥有的,并规定重复关闭的行为。
 
-「每个 interface 独立版本 + 只增不改」保护得了**函数**(加新函数是可加的),
-保护不了**结构体**:`kal_io_result` 的布局一旦发布就永远不能动。
+### 16.5 线程安全
 
-选项:符号带版本后缀(`kal_stream_write_v1`,难看但诚实),或**明确声明这些布局永久冻结**。
-草案默认了后者却没写出来。
+同一个 `kal_stream` 被两个上下文同时写入的行为,在 0.3 定义 `openkal.task` 后
+立即成为必须回答的问题。SPEC 条款 6.5 给出回答。
 
-### 16.4 ⚠️ 拥有 vs 借用,C ABI 强制不了
+### 16.6 sized-free 的方向性成本
 
-标准流是**借用**(不配 `close`),`openkal.fs` 的 descriptor 是**拥有**(必须 close)。
-C ABI 里没有 RAII,谁来保证?
+`kal_free(p, size, align)` 对区域分配器友好,但方向不对称:
 
-⇒ 类型化 C++ 层可以包 RAII,但**那不是规范的一部分**,Rust/C 消费者拿不到。
-规范至少要把「哪些句柄是拥有的」写清楚,并规定重复 close 的行为。
+- 宿主实现 `kal_free` 转 `free(p)`,丢弃 size,无成本。
+- 反向:一个建立在 `kal_alloc` 之上的 C 库 `malloc` 必须自行保存 size,每次分配多一个字。
 
-### 16.5 ⚠️ 线程安全未规定
-
-同一个 `kal_stream` 被两个 task 同时 `write`,是什么行为?
-POSIX 至少规定了 `PIPE_BUF` 以内的原子性。**草案一个字没提。**
-这条在有 `openkal.task` 之后立刻变成必须回答的。
-
-### 16.6 ⚠️ sized-free 的方向性成本
-
-`kal_free(p, size, align)` 对 arena 友好(Rust 的做法),但:
-
-- hosted 后端 `kal_free` → `free(p)`,**丢掉 size**:无成本 ✅
-- 反向:一个建在 `kal_alloc` 之上的 libc `malloc` **必须自己存 size** ⇒ 每次分配多一个字
-
-⚠️ 与 §16.1 的规则合看,反向配置本来就该避免,所以成本可控 —— 但要写明。
+与 §16.1 的规则合并考虑,反向配置本就应当避免,因而成本可控。该取舍已写明。
 
 ---
 
-## 17. 这一轮 review 的元结论
+## 17. 第一轮 review 的元结论
 
-三条撤回(§15)+ 六条开放问题(§16)里,有一个共同形状值得单独记:
+三条撤回(§15)与六条开放问题(§16)中,存在一个共同形状。
 
-草案的错误分两族。
+草案的错误分为两族。
 
-**族一:一个漂亮的统一,把两件本来不同的事合并了。**
+第一族:一个看似整齐的统一,把两件本来不同的事合并了。
 
-- `openkal.namespace` 合并了「命名」与「资源种类」
-- `cfg(mmu)` 把 openarch 的结论搬进 openkal
-- 「两个堆」是**没有**合并该合并的(分配器)
+- `openkal.namespace` 合并了「命名」与「资源种类」。
+- `cfg(mmu)` 把 openarch 的结论搬入 openkal。
+- 「两个分配器」是未合并本应合并的对象。
 
-而 §5.1 给出的判据 —— **「一个操作若能『存在但永远失败』,说明它被错误地合并了」** ——
-本来就能抓住前两条。⚠️ **我只用它去检查别人的后端,没有用它检查自己的分解。**
+而 §5.1 给出的判据 ——「一个操作若能存在但永远失败,说明它被错误地合并了」——
+本可抓住前两条。该判据此前只被用于检查他人的实现,未被用于检查自身的分解。
 
-**族二:测了一种写法,把结论推广到了全部。**
+第二族:测量了一种写法,并把结论推广到全部写法。
 
-⚠️ `caps` 结构体 + `capabilities.toml` 那整套,建立在**一次实测**上:
-「`requires { mcpp::runner("x") }` 是硬错误」。那次实测本身没错,
-错在**结论的量词** —— 我写的是「C++ 语言内测不出来」,而真实情况是
-**「限定名测不出来」**。非限定 + ADL 一直是可以的。
+`caps` 结构体与 `capabilities.toml` 那一整套建立在一次实测之上:
+「`requires { mcpp::runner("x") }` 是硬错误」。该实测本身没有错误,
+错误在于结论的量词 —— 所写的是「C++ 语言内无法测出」,而真实情况是
+「限定名无法测出」。非限定名经 ADL 一直可行。
 
-⇒ 代价是**一整节设计 + 一份多余的配置文件格式**,而验证它只需要三行代码。
+代价是一整节设计与一份多余的配置文件格式,而验证它只需三行代码。
 
-⭐ **两族合起来的规律**:一条实测能否定一个做法,**但否定不了一整类做法** ——
-写下「X 做不到」之前,要先问「我测的是 X,还是 X 的某一种写法」。
+两族合并后的规律是:一条实测能否定一个做法,但否定不了一整类做法。
+在写下「X 做不到」之前,应当先问「所测的是 X,还是 X 的某一种写法」。
 
 ---
 
-## 18. 第二轮综合 review 新增的两条
+## 18. 第二轮 review 新增的两条
 
-### 18.1 ⭐ 基数是「每个 interface 一个实现」,不是「每个程序一个后端」
+### 18.1 基数是「每个 interface 一个实现」
 
-草案 §12 说 openkal 的基数是 1,含糊在于**1 个什么**。澄清:
+草案 §12 称 openkal 的基数为 1,其含糊之处在于「1 个什么」。澄清如下:
 
 ```toml
 [target.'cfg(os = "none")'.dependencies]
-openkal-uart  = "0.1"      # 提供 openkal.stream
-openkal-arena = "0.1"      # 提供 openkal.memory
+openkal-uart  = "0.1"      # 提供 openkal.stream 的定义
+openkal-arena = "0.1"      # 提供 openkal.memory 的定义
 ```
 
-**一个程序可以从不同提供者拿不同的 interface** —— 这是好事,而且是 §2 资源分解的
-自然结果。冲突只发生在**同一个 interface 有两个提供者**时(两个包都导出
-`openkal.stream`),那是模块名冲突,**编译期报错**。
+一个程序可以从不同提供者取得不同的 interface,这是 §2 资源分解的自然结果。
+冲突只发生在同一个 interface 有两个提供者时,那是重复符号定义,在链接期报错。
 
-⇒ 「基数 1」应当读作:**每个 interface 的实现是 1 个**。契约形态(C ABI)的论据不变。
+因此「基数 1」应当读作:每个 interface 的实现是一个。契约形态(C ABI)的论据不变。
 
-### 18.2 ⚠️ 兜底重载太贪心,文案会张冠李戴
+### 18.2 兜底重载的适用范围
 
 ```cpp
 template <class S> unsupported_t seek(S, long) {
@@ -989,229 +842,92 @@ template <class S> unsupported_t seek(S, long) {
 }
 ```
 
-`S` 无约束 ⇒ `kal` 里**任何**类型调 `seek` 都落到这里。
-`seek(some_socket, 0)` 会得到「no seekable **streams**」—— 名词错了。
+`S` 无约束,因此 `kal` 中任何类型调用 `seek` 都落到此处。
+`seek(some_socket, 0)` 会得到「no seekable streams」,名词错误。
 
-**修法**:兜底要约束到它该管的类型,或者文案改成不带具体名词的。
+修法是把兜底约束到它应当负责的类型:
 
 ```cpp
 template <class S> requires std::same_as<S, stream>
 unsupported_t seek(S, long) { … }
 ```
 
-⚠️ 这条小,但它是 §5.1 那条判据的又一次应用:**兜底重载的适用范围也是一种「分类」**,
-分类过宽,诊断就会指向错误的地方。
+该条虽小,但它是 §5.1 判据的又一次应用:兜底重载的适用范围也是一种分类,
+分类过宽则诊断指向错误的位置。
 
 ---
 
-## 19. 设计现状小结(第二轮 review 后)
+## 19. 官方参考实现:`openkal-linux`
 
-| 维度 | 状态 |
+它有两个身份:一个当天可用的实现,以及其他实现者可以照抄的样板。
+它不移动 D0 的门(门是「有第三方实现了第三个后端」),但它使门变得够得着 ——
+在没有可照抄的样板时,第三方须同时推测形状并编写实现。
+
+### 19.1 参考实现验证了 fs 与 stream 的分解
+
+编写 Linux 实现时会立即撞上一件事:
+
+> Linux 上「能否 seek」是每个句柄的属性,而非实现的属性。
+> `lseek(fd)` 对普通文件成功,对管道返回 `ESPIPE`。
+
+因此若 `openkal.stream` 具有 `seek`,Linux 实现无法诚实回答:声称具备则对管道永远失败
+(正是 §5.1 的「存在但永远失败」反模式);声称不具备则文件无法使用。
+
+而 §2.3 的分解使该问题不存在:seek 属于 `openkal.fs` 的 descriptor 类型,
+`openkal.stream` 根本没有它。参考实现独立地证实了那次撤回是正确的。
+
+这是编写一份完整实现的最大价值:它是发现分解错误的唯一方法,且比 conformance 更早。
+
+### 19.2 样板所教授的模式
+
+| 模式 | 其他实现者应当照抄的内容 |
 |---|---|
-| **位置无关**(上/下 libc) | ✅ 由不透明句柄承载,ⓘ 三种后端实测 |
-| **划分依据** | ✅ 资源种类;⚠️ 曾塌缩过头(namespace),已撤回 |
-| **core 边界** | ✅ abort + stream + memory,判别式是「实现 vs 模拟」 |
-| **能力探测** | ✅ ADL + 兜底重载,ⓘ 真模块上三行为同时成立;**零额外配置** |
-| **模块名归属** | ✅ 后端提供接口名(语言逼出来的),⚠️ 碎片化靠 spec + 名字集合 diff 封住(静态可查) |
-| **依赖形状** | ✅ 契约 + 后端两条,契约那条用来**钉版本** |
-| **引擎改动** | ✅ **零** |
-| **对下/对上判据** | ✅ 双向且可数(数桥接行数) |
-| ⚠️ **开放问题** | §16 六条 + §18 两条,**全部需要 SPEC 表态** |
-| ⚠️ **最大风险** | 不是技术 —— 是 **D0 的门:有没有第三方来实现第三个后端**。⭐ 缓解手段是 §20 的官方 `openkal-linux` 完整参考实现:**降低门槛,但不移动门** |
+| EINTR 循环 | 每个实现都要处理自身平台的中断语义 |
+| `kal_alloc` 转 `malloc` | §16.1:存在 C 库分配器时建立在它之上 |
+| `kal_from_errno` 是一张表 | 映射不等于模拟(§3.1) |
+| 不提供某能力时不声明 | 能力缺失即不提供定义,而非提供定义后返回错误 |
+| `_exit` 而非 `exit` | `exit` 会执行 atexit 与静态析构,而 `kal_exit` 的契约是立刻结束。此类语义细节须向 SPEC 对齐 |
 
 ---
 
-## 20. 官方参考实现:`openkal-linux`(完整)
+## 20. 0.3:从三个接口扩展到八个
 
-⭐ **它有两个身份**:一个**当天可用**的后端,和**其它实现者要抄的那份样板**。
+0.3 的接口集合由资源种类推导而来,而非由某个程序的调用清单推导而来。
+该方向由明确要求确定:设计通用内核 ABI,并以 gcc 工具链作为验证,而非以 gcc
+的调用清单定义 openkal。
 
-⚠️ 它**不能移动 D0 的门**(门是「有第三方实现了第三个后端」),但它把门**变得够得着** ——
-没有可抄的样板时,第三方要同时猜形状和写实现。
+三条推导及其证据:
 
-### 20.1 ⭐ 写这份实现时才发现的一条:core 操作根本不需要 ADL
+**`openkal.fs` 全程相对于一个目录,不存在全局路径命名空间。** 全局命名空间在
+基于能力的内核上不存在,该类实现将不得不构造一个。环境提供一组预置目录,
+程序在其上操作。证据是一个大型可移植程序的形状:名字解析是 C 库的工作,
+而 `openkal-libc` 的 `okc::resolve` 以最长前缀匹配实现了它(§23.2)。
 
-| | 声明在哪 | 后端提供什么 | 探测机制 |
-|---|---|---|---|
-| **core 操作**(write/read/alloc/abort) | 接口包 `extern "C"` + C++ 封装 | **只有 C 函数的定义** | **不需要** —— core 的定义就是「一定在」 |
-| **可选能力**(seek/vectored/…) | 后端声明 C++ 重载 | 声明 + 定义 | **ADL**(§4.1) |
+**`openkal.process` 启动一个程序而非复制调用方。** 复制调用方无法在每个环境上
+忠实完成。旁证是:一个大型可移植程序启动子进程,而不调用任何复制类操作。
 
-⇒ ADL 那套只服务**可选能力**。core 走最简单的路:接口声明,后端定义,缺了就是链接错误。
+**`openkal.task` 暴露「使一个上下文在某个字上挂起」的原语。** 互斥量与条件变量是
+其上的构造,这一点在任何实现它们的 C 库中都可观察到。
 
-### 20.2 包结构
-
-```
-openkal-linux/
-├── mcpp.toml
-└── src/
-    ├── stream.cppm      export module openkal.stream;   ← 提供接口名
-    ├── stream.cpp       extern "C" 定义
-    ├── memory.cppm      export module openkal.memory;
-    ├── memory.cpp
-    ├── abort.cppm       export module openkal.abort;
-    └── abort.cpp
-```
-
-```toml
-[package]
-name    = "openkal-linux"
-version = "0.1.0"
-
-[dependencies]
-openkal = "0.1"                     # 契约
-
-[target.'cfg(not(linux))'.build]
-# 这个后端只在 linux 上有意义;别的 target 上它不该被选中
-```
-
-### 20.3 `openkal.stream`
-
-```cpp
-// src/stream.cppm —— 提供应用可见的名字,自己不加任何非标准的东西
-export module openkal.stream;
-export import openkal.decl.stream;
-// core 操作无需在此声明:它们是 openkal.decl.stream 里的 extern "C" + 封装。
-// 这个后端也不提供 seek —— 见 20.6,那不是疏漏。
-```
-
-```cpp
-// src/stream.cpp
-#include <unistd.h>
-#include <errno.h>
-import openkal.decl.stream;
-
-extern "C" {
-
-kal_stream kal_stdin (void) { return kal_stream{0}; }
-kal_stream kal_stdout(void) { return kal_stream{1}; }
-kal_stream kal_stderr(void) { return kal_stream{2}; }
-
-kal_io_result kal_stream_write(kal_stream s, const void* buf, uintptr_t n) {
-    auto* p = static_cast<const unsigned char*>(buf);
-    uintptr_t done = 0;
-    while (done < n) {
-        ssize_t r = ::write(static_cast<int>(s.h), p + done, n - done);
-        if (r < 0) {
-            // ⚠️ EINTR 必须重试。漏掉它的后端在有信号的系统上会随机短写,
-            // 而这类 bug 在测试里几乎不出现。
-            if (errno == EINTR) continue;
-            return { done, kal_from_errno(errno) };
-        }
-        if (r == 0) break;
-        done += static_cast<uintptr_t>(r);
-    }
-    return { done, 0 };
-}
-
-kal_io_result kal_stream_read(kal_stream s, void* buf, uintptr_t n) {
-    for (;;) {
-        ssize_t r = ::read(static_cast<int>(s.h), buf, n);
-        if (r < 0) { if (errno == EINTR) continue; return { 0, kal_from_errno(errno) }; }
-        return { static_cast<uintptr_t>(r), 0 };   // 短读是正常的,不重试
-    }
-}
-
-int32_t kal_stream_flush(kal_stream) { return 0; }   // 裸 fd 无用户态缓冲
-
-}
-```
-
-⚠️ **写这段逼出了一个 SPEC 必须回答的问题**(§16 没覆盖):
-
-> `kal_stream_write` 返回**短写**,还是**写全或报错**?
-
-上面选了「循环到写全」。若 SPEC 选另一边,**每个调用方都要自己写这个循环** ——
-这正是 POSIX 让无数程序出错的地方。⇒ **建议 SPEC 规定「写全或报错」,短写只在
-`kal_stream_write_some`(如果需要)里出现。**
-
-### 20.4 `openkal.memory` —— 演示 §16.1 的规则
-
-```cpp
-// src/memory.cpp
-#include <stdlib.h>
-
-extern "C" {
-// ⭐ 建在 libc 分配器之上,不是与它并列 —— §16.1 的规则,这里是它的正面示例。
-void* kal_alloc(uintptr_t size, uintptr_t align) {
-    if (align <= alignof(max_align_t)) return ::malloc(size);
-    return ::aligned_alloc(align, (size + align - 1) / align * align);
-}
-// sized-free:这个方向丢掉 size 是零成本的(§16.6)
-void kal_free(void* p, uintptr_t, uintptr_t) { ::free(p); }
-}
-```
-
-### 20.5 `openkal.abort`
-
-```cpp
-// src/abort.cpp
-#include <unistd.h>
-#include <stdlib.h>
-
-extern "C" {
-[[noreturn]] void kal_abort(const char* msg, uintptr_t len) {
-    if (msg && len) { ssize_t r = ::write(2, msg, len); (void)r; }
-    ::abort();
-}
-[[noreturn]] void kal_exit(int32_t code) { ::_exit(code); }
-}
-```
-
-⚠️ `_exit` 而不是 `exit`:`exit` 会跑 atexit 与静态析构,而 `kal_exit` 的契约是
-「立刻结束」。这类差别**必须写进 SPEC**,否则两个后端的语义会悄悄分叉。
-
-### 20.6 ⭐ 参考实现验证了 fs/net 的分解(§2.3)
-
-写 Linux 后端时会立刻撞上一件事:
-
-> **Linux 上「能不能 seek」是每个句柄的属性,不是后端的属性。**
-> `lseek(fd)` 对普通文件成功,对管道 `ESPIPE`。
-
-⇒ 如果 `openkal.stream` 有 `seek`,Linux 后端**无法诚实回答** ——
-声称有,则对管道永远失败(**正是 §5.1 的「存在但永远失败」反模式**);
-声称没有,则文件用不了。
-
-⭐ **而 §2.3 的分解让这个问题不存在**:seek 属于 `openkal.fs` 的 descriptor 类型,
-`openkal.stream` 压根没有它。**参考实现独立地证实了那次撤回是对的。**
-
-⇒ **这是「写一份完整实现」最大的价值:它是唯一能发现分解错误的方法,
-而且比 conformance 更早。**
-
-### 20.7 它作为样板教什么
-
-| 样板里的模式 | 其它实现者照抄什么 |
-|---|---|
-| `stream.cppm` 只有 `export import`,不加任何东西 | **不要往标准模块名里塞私货**(§4.4) |
-| EINTR 循环 | 每个后端都要处理自己平台的「被打断」 |
-| `kal_alloc` 走 `malloc` | §16.1:有 libc 分配器就建在它之上 |
-| `kal_from_errno` 是一张**表** | **映射 ≠ 模拟**(§3.1) |
-| 没有 `seek` | 能力缺失就是**不声明**,不是声明后返回错误 |
-| `_exit` 而非 `exit` | 语义细节要向 SPEC 对齐,不要凭直觉 |
-
-### 20.8 对 D0 的影响:降低门槛,不移动门
-
-| | |
-|---|---|
-| D0 的门 | **有第三方实现了第三个后端** —— 不变 |
-| 官方 linux 后端做的事 | 把「猜形状 + 写实现」减成**只写实现** |
-| ⚠️ 不做的事 | 它**不算**第三方后端,也不算第三个后端(linux/bare 是官方的两个) |
-
-⇒ 判据仍然是**别人来不来**,而这份实现让「来」这件事从一个季度变成一个周末。
+`openkal.time` 的能力字是 0.3 引入的机制,其必要性由第二个实现证实:
+macOS 的单调时钟在系统挂起期间继续前进,Linux 的停止(§23.1)。
+若不存在能力字,该差异只能由消费者自行推测。
 
 ---
 
-## 21. ⚠️ 0.1 的分层被推翻:实现不该拥有应用 import 的名字
+## 21. 0.1 的分层被推翻:实现不应拥有应用 import 的名字
 
-0.1 让**实现**提供 `openkal.stream`,规范包提供 `openkal.decl.stream` 由实现再导出。
-review 指出这与「openkal 是接口」矛盾 —— **应用 import 的那个名字落在了规范管不到的一方手里**。
+0.1 让实现提供 `openkal.stream`,规范包提供 `openkal.decl.stream` 并由实现再导出。
+review 指出这与「openkal 是接口」矛盾 —— 应用 import 的那个名字落在了规范管不到的一方。
 
-### 21.1 我的理由为什么站不住
+### 21.1 原有理由不成立的原因
 
-那套安排的**唯一**用途是让可选能力可经 ADL 探测,而 ADL 要求实现的声明对消费者可见。
-⚠️ **而 0.1 一个可选能力都没有** —— `write_vectored` 是我为了演示机制放进去的。
+该安排的唯一用途是使可选能力可经 ADL 探测,而 ADL 要求实现的声明对消费者可见。
+而 0.1 没有定义任何可选能力 —— `write_vectored` 是为演示机制而放入的。
 
-⇒ **机制服务的是一个当时不存在的需求**,却付出了「实现拥有接口名」这个真实代价。
+因此该机制服务的是一个当时不存在的需求,却付出了「实现拥有接口名」这一真实代价。
 
-### 21.2 0.2 的分层(实测成立)
+### 21.2 0.2 的分层
 
 ```
 应用 ──import──► openkal ◄──import── 实现
@@ -1219,29 +935,134 @@ review 指出这与「openkal 是接口」矛盾 —— **应用 import 的那�
   └──────────── 链接 ─────────────────┘
 ```
 
-- 规范包提供 `openkal.types` / `.abort` / `.stream` / `.memory`
-- **实现零模块**,只贡献定义;它 import 与消费者**同一个**接口,因为它要定义自己声明的东西
-- ⇒ **实现无法扩展接口** —— 这不是需要执行的规则,是这个安排的推论
+- 规范包提供全部模块。
+- 实现不导出任何模块,只贡献定义;它 import 与消费者相同的接口,因为它要定义自己
+  所声明的内容。
+- 因此实现无法扩展接口。这不是一条需要执行的规则,而是该安排的推论。
 
-ⓘ 实测:后端零模块的工程编译运行通过;缺实现时报
-`undefined reference to kal_stream_write`(链接期,可读)。
+实测:实现零模块的工程编译运行通过;缺少实现时报
+`undefined reference to kal_stream_write`,位于链接期,可读。
 
 ### 21.3 代价与去向
 
-| | 0.1 | 0.2 |
+| | 0.1 | 0.2 及其后 |
 |---|---|---|
-| 缺实现 | 编译期,点名模块 | **链接期**,点名函数 |
-| 可选能力探测 | ADL,编译期 `if constexpr` | **无**(0.2 无可选能力) |
-| 实现能否扩展接口 | 能加重载,靠 conformance 封 | **不能**,由安排本身排除 |
-| 碎片化风险 | 有,需 surface diff 兜底 | **无** |
+| 缺少实现 | 编译期,点名模块 | 链接期,点名函数 |
+| 可选能力探测 | ADL,编译期 `if constexpr` | 无,因为不存在可选能力 |
+| 实现能否扩展接口 | 能新增重载,靠 conformance 封住 | 不能,由安排本身排除 |
+| 碎片化风险 | 存在,需导出名集合比对兜底 | 不存在 |
 
-⇒ 可选能力的机制**推迟到真的出现时再定**,SPEC 6.3 记录了两个候选与各自的约束
-(以及那三条实测:限定名 vs 非限定名、ADL 到不了未 import 的模块、点号延伸导致模块自环)。
+可选能力的机制推迟到真正出现时再定,SPEC 6.3 记录了两个候选与各自的约束
+(以及三条实测:限定名与非限定名的差别、ADL 到不了未 import 的模块、
+点号延伸导致模块自环)。
 
 ### 21.4 元结论
 
-这是本轮第三次同一形状:**我为一个尚不存在的需求设计了机制,并为它付出了真实代价。**
+这是同一形状的第三次出现:为一个尚不存在的需求设计机制,并为它付出真实代价。
 
-前两次是 `openkal.namespace`(为统一命名合并了两种资源)与 `cfg(mmu)`(把 openarch 的
-结论搬进 openkal)。⇒ **判据应当是「今天有没有这个需求」,而不是「将来会不会有」** ——
-将来的需求可以用「推迟决定并记录约束」来接,代价远低于提前实现一个错的机制。
+前两次是 `openkal.namespace`(为统一命名而合并两种资源)与 `cfg(mmu)`
+(把 openarch 的结论搬入 openkal)。判据应当是「今天是否存在该需求」,
+而非「将来是否会有」—— 将来的需求可以用「推迟决定并记录约束」来承接,
+其代价远低于提前实现一个错误的机制。
+
+---
+
+## 22. 0.4:规范此前未表态的两点
+
+0.4 的两条条款由一个跨八个接口的可移植程序发现。二者均未改动任何声明,
+因而导出符号集合不变,符合 0.3 的实现同样满足 0.4 的导出要求。
+详细记录见
+[`2026-08-20-openkal-portable-program-findings.md`](2026-08-20-openkal-portable-program-findings.md)。
+
+### 22.1 条款 7.6:参数向量
+
+`kal_process_spawn` 接受一个路径与一个参数向量。0.3 未说明该向量是否包含被启动程序
+自身的名字。两个实现都在向量前面插入了路径,因而调用方的第 0 项落到了第 1 位。
+
+采纳的规则是:向量是完整的,且被原样传递,其第 0 项是被启动程序观察到的自身名字。
+三条理由,按分量排序:
+
+1. 两侧必须一致。被启动的程序通过 `kal_env_arg(0)` 读取自身名字,而该函数确实包含它。
+   调用方若未提供,则无法预测程序将读到什么。
+2. 程序观察到的自身名字,在每个具有参数向量的环境上都是可观察行为,该选择属于调用方。
+3. 相邻接口均如此:`posix_spawn`、`fdio_spawn`,以及 `CreateProcess` 的惯用形式。
+   偏离者需要理由,而此处没有。
+
+### 22.2 条款 7.7:缺席是一种答复
+
+`kal_fs_info` 作用于不存在的名字时,0.3 声明了 `kal_node_absent` 但未说明何时使用它。
+
+采纳的规则是:查询成功并报告缺席,而打开同一名字报告 `kal_err_not_found`。
+查询与访问是两种操作:一个询问名字指向什么的调用方,在被告知它不指向任何东西时
+已经得到了答复。这与 `openkal.env` 在「变量缺席」与「变量值为空」之间所作的区分
+是同一条,理由也相同。
+
+---
+
+## 23. 第二个实现与其上的 C 库所提供的证据
+
+### 23.1 两个实现之间的一致不构成证据
+
+`openkal-macos` 记录了四处与 Linux 实现的分歧,每一处都是某个接口本可假设某种机制
+的位置:单调时钟在系统挂起期间继续前进而非停止;名字比较不区分大小写;
+spawn 没有设置工作目录的属性;不存在程序可用的挂起原语。
+这四处证明能力字与相应的接口形状是必要的。
+
+但两个实现在参数向量一事上作出了相同的选择,而该选择是错误的。它们一致的原因是
+同一作者、同一次阅读。同一作者的第二个实现,其证据力低于他人的第二个实现;
+这是这两个实现之间所能建立的上限。
+
+由此推出一条对 conformance 的要求:一个测试若不观察目标,就无法检测目标。
+实现的套件启动 `/bin/true` 并读取状态,而 `/bin/true` 忽略参数,因此参数向量
+完整到达与被移位一位产生相同的状态。0.4 新增的断言启动一个 shell:
+`sh -c <script>` 在未给出后续参数时从自身的第 0 项取 `$0`,因而脚本观察到调用方
+选择的名字。该断言在改变行为之前,已被确认对旧行为失败。
+
+### 23.2 `openkal-libc` 检验了规范所作的声明
+
+规范声明:把一个 C 库移植到 openkal 一次,其上的软件即可运行于每个 openkal 实现。
+`openkal-libc` 检验该声明,方式是执行规范刻意置于自身之外的两项适配:
+
+1. 把一个全局名字解析到环境提供的目录上(`okc::resolve`,最长前缀匹配)。
+2. 从挂起原语构造同步对象(`okc::mutex`,三态)。
+
+其上的一个普通程序按全局路径读取文件、查询环境变量、测量时间间隔并启动另一个程序,
+而其自身不包含上述任何一项。该程序的输出与系统 `wc` 逐字段一致。
+
+`openkal-libc` 的三个测试套件最初全部链接失败,报出十六个未定义操作。
+该失败正是 SPEC 条款 4.2 所描述的诊断,这是该条款首次被一个非为检验它而构造的场景检验。
+
+---
+
+## 24. 一致性:与 mcpp 生态的关系
+
+openkal 的实现未要求修改 mcpp。所使用的机制全部是生态既有的:
+
+| 需求 | 所用机制 | 是否新增引擎轴 |
+|---|---|---|
+| 按平台选择实现 | `[target.'cfg(os = "…")'.dependencies]` | 否 |
+| 库自身不链接实现,而其测试需要 | `[target.'cfg(…)'.dev-dependencies]` | 否 |
+| 契约版本不匹配在解析期暴露 | 普通的版本依赖 | 否 |
+| 能力缺失在编译期表达 | 模块不存在 | 否 |
+| 导出面的静态检查 | `nm` 加一份名字清单 | 否 |
+
+不引入第二份配置文件是一条明确约束:mcpp 生态的全部声明位于 `mcpp.toml` 中,
+`capabilities.toml` 因违背该约束而被删除(§15)。
+
+---
+
+## 25. 现状小结
+
+| 维度 | 状态 |
+|---|---|
+| 位置无关(C 库之上或之下) | 由不透明句柄承载,三种实现实测 |
+| 划分依据 | 资源种类;曾塌缩过度(namespace),已撤回 |
+| core 边界 | abort、stream、memory;判别式是「实现与模拟」 |
+| 接口集合 | 八个接口,0.3 由资源种类推导;net 与 channel 保留 |
+| 能力表达 | 不存在可选操作,因而不存在表达可选性的机制;属性差异由能力字承载 |
+| 模块名归属 | 规范包拥有全部模块,实现不导出模块 |
+| 依赖形状 | 契约与实现两条,契约那条用于固定版本 |
+| 引擎改动 | 零 |
+| 对下与对上判据 | 双向且可计量,以桥接行数计 |
+| 实现数量 | 两个操作系统实现,一个其上的 C 库;两者由同一作者编写 |
+| 最大风险 | 不是技术性的,而是 D0 的门:是否有第三方实现第三个后端。参考实现降低门槛,不移动门 |

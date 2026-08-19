@@ -49,7 +49,7 @@ reasons, in order of weight:
    the conventional form of `CreateProcess`. The outlier needed a reason and did
    not have one.
 
-⭐ **Both implementations agreed, and their agreement was worth nothing.** They
+**Both implementations agreed, and their agreement was worth nothing.** They
 were written by one author from one reading. A second implementation by the same
 author tests less than a second implementation by another; this is the limit of
 what the two can establish between them, and it is now recorded in the macOS
@@ -69,10 +69,11 @@ operations: a caller that asks what a name refers to has been answered when told
 that it refers to nothing. It is the same distinction `openkal.env` already draws
 between a variable that is absent and one whose value is empty.
 
-⚠️ **The test I wrote first was wrong, and the implementation was right.** I
-asserted that enquiry after removal fails. It succeeded, and my first reading was
-that removal had not worked. The file was gone from the disk. Had I trusted the
-assertion over the artefact, I would have "fixed" a correct implementation.
+**The test written first was wrong, and the implementation was right.** It
+asserted that enquiry after removal fails. It succeeded, and the first reading of
+that result was that removal had not worked. The file was gone from the disk. Had
+the assertion been trusted over the artefact, a correct implementation would have
+been changed to accommodate an incorrect test.
 
 ## 3. The three defects in continuous integration
 
@@ -97,8 +98,8 @@ had run. Five suites were present. The assertion exists precisely because *a
 suite that discovered nothing reports success* — and a hand-written list defeats
 that purpose the moment a suite is added.
 
-The list is now derived from `tests/*.cpp`. ⭐ The general form: **an assertion
-about coverage must be derived from what exists, not from what existed.**
+The list is now derived from `tests/*.cpp`. The general form is that an assertion
+about coverage must be derived from what exists rather than from what existed.
 
 ### 3.3 A step that had never run
 
@@ -107,9 +108,9 @@ Every implementation's final step ran an example and grepped for
 operation that no example prints. In `openkal-macos` and `openkal-libc` it also
 named a directory the repository does not contain.
 
-It had never passed, and nobody could have noticed: the step before it failed
-first, so it was never reached. ⚠️ **A pipeline whose steps fail in order hides
-every later defect, and reports the first as though it were the only one.**
+It had never passed, and its failure was unobservable: the step before it failed
+first, so it was never reached. A pipeline whose steps fail in order hides every
+later defect, and reports the first as though it were the only one.
 `openkal-macos`'s failure was reported as an inability to start `/bin/bash` in a
 working directory, which reads as an infrastructure fault rather than as a
 missing example.
@@ -137,10 +138,10 @@ whole value of the program is that it does not.
 Two properties were designed in after the first version had neither.
 
 **It does not start itself.** The first version spawned its own executable with a
-`--child` marker. The marker did not arrive — because of the argv defect the
-program existed to find — and the program started itself without end. ⚠️ **A
+`--child` marker. The marker did not arrive, because of the argv defect the
+program existed to find, and the program started itself without end. A
 conformance program must not have an unbounded failure mode, and least of all one
-armed by the defect it is looking for.** It now starts a shell, and reports the
+armed by the defect it is looking for. It now starts a shell, and reports the
 observation as unobservable if the environment supplies no directory to start it
 from.
 
@@ -150,33 +151,33 @@ only that the program reported would pass for a program that reported failures.
 
 ## 5. Method
 
-⭐ **The specification's silences are not visible in the specification.** Two
-rules were missing. Reading the text, twice, over two rounds, found neither.
+**The silences of a specification are not visible in the specification.** Two
+rules were missing. Reading the text, twice, across two rounds, found neither.
 Writing one program and running it found both in under an hour. Clause 9 requires
 a conformance procedure for this reason, and the requirement was under-served by
 a suite that started programs without observing what they received.
 
-⭐ **A test that does not observe the thing cannot detect the thing.** The suite
+**A test that does not observe the thing cannot detect the thing.** The suite
 started `/bin/true` and read its status. `/bin/true` ignores its arguments, so
 the same status was produced whether the vector arrived intact or shifted. The
 replacement starts a shell, whose behaviour depends on the vector.
 
-⚠️ **Green is a property of the assertions, not of the software.** Four
+**A green pipeline is a property of the assertions, not of the software.** Four
 pipelines were green across two published packages containing an ABI defect, a
 CI comparison against the wrong version, an assertion covering two of five
 suites, and a step that had never executed.
 
-⚠️ **The revert probe is what separates an assertion from a decoration.** The new
+**The revert probe is what separates an assertion from a decoration.** The new
 argv assertion was confirmed to fail against the previous behaviour before the
-behaviour was changed. On restoring the fix it still failed — because `mv`
-restored an older mtime and nothing rebuilt. Had I read that as "the fix does not
-work", I would have chased a defect that was not there.
+behaviour was changed. On restoring the fix it still failed, because `mv`
+restored an older mtime and nothing rebuilt. Read as "the fix does not work",
+that result would have sent the investigation after a defect that was not there.
 
-⚠️ **One edit, several places.** Writing the index descriptors, a regex that
-matched the first version block updated one of three platform tables per file,
-leaving `openkal-macos` advertising the new version for Linux and the old one for
-macOS. It parsed, and it would have installed. The check that caught it enumerated
-what the file *says* rather than what the edit *intended*.
+**One edit, several places.** While writing the index descriptors, an expression
+that matched the first version block updated one of three platform tables per
+file, leaving `openkal-macos` advertising the new version for Linux and the old
+one for macOS. It parsed, and it would have installed. The check that caught it
+enumerated what the file states rather than what the edit intended.
 
 ## 6. What remains
 

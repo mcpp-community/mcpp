@@ -295,7 +295,20 @@ namespace, a hosted system without one, a capability-based kernel, and a
 freestanding target. An interface that any of the four could satisfy only by
 constructing a compatibility layer is decomposed again rather than admitted.
 
-### 4.7 Upgrade
+### 4.7 Consistency
+
+The extension introduces no vocabulary the ecosystem does not already have. An
+implementation is selected by a conditional dependency, an interface it does not
+provide is absent as a module, and the exported surface is compared against a
+list of names. None of these is new, and none required a change to the build
+system: openkal was implemented, twice, without modifying mcpp.
+
+The constraint that admits no exception is that every declaration a project makes
+resides in its `mcpp.toml`. A configuration file accompanying the capability
+record was drafted and removed for violating it, and the rule that replaced the
+record was chosen partly because it requires no file at all.
+
+### 4.8 Upgrade
 
 An implementation adds interfaces without altering those it already provides. A
 program observes the addition through dependency resolution. No existing
@@ -321,6 +334,37 @@ than a judgement.
 Criterion 3 is the one that distinguishes this work from a portable C library.
 A specification satisfied only by environments resembling the one it was written
 against has not been validated, however many programs it hosts.
+
+### 5.1 State against these criteria, recorded 2026-08-20
+
+| Criterion | State |
+| --- | --- |
+| 1. A C library retargeted onto openkal | Partially met. `openkal-libc` 0.2.0 performs the two adaptations the specification places outside itself — resolving a global name against the supplied directories, and constructing synchronisation objects from the suspension primitive — and a program above it reads a file by global path, consults a variable, measures an interval and starts another program without containing any of that. Its output agrees with the system's own counter field by field. musl itself has not been retargeted. |
+| 2. A compiler toolchain above that library | Not met, and not attempted. It follows criterion 1 and is the subject of the next round. |
+| 3. A second implementation for an environment without a global path namespace | Not met. `openkal-macos` 0.2.0 is a second implementation and records four divergences from the first, but both environments have a global path namespace and both were written by one author. Section 5.2 records what that limits. |
+| 4. A conformance suite covering behaviour, absence, and the capability words | Met for the operations and the exported surface: five suites per implementation, and a surface comparison in `--complete` mode confirming all 47 names. The agreement between a capability word and the behaviour it describes is asserted for `openkal.time` and not yet for the others. |
+| 5. No implementation requires a table, a registry or a name resolver | Met. Neither implementation maintains a translation table; the handle carries an index and a generation directly. Name resolution resides in `openkal-libc`, which is where the specification places it. |
+
+### 5.2 What two implementations by one author establish, and what they do not
+
+`openkal-macos` records four divergences from the Linux implementation, and each
+is a place where an interface could have assumed a mechanism: the monotonic clock
+continues during suspension where the other stops, names are compared without
+regard to case, the spawn has no attribute setting the working directory, and
+there is no suspension primitive a program may use. These establish that the
+capability words and the interface shapes that accommodate them are necessary.
+
+The two implementations also agreed on a question the specification had not
+settled, and their agreement was worth nothing: both prepended the path to the
+argument vector, because both were written by one author from one reading. A
+second implementation by the same author establishes less than a second
+implementation by another, and criterion 3 is written as it is for that reason.
+
+The consequence for the conformance suite is recorded in
+[the portable-program findings](2026-08-20-openkal-portable-program-findings.md):
+a test that does not observe the thing cannot detect the thing. The suite started
+a program that ignores its arguments and read its status, which produced the same
+result whether the vector arrived intact or shifted by one.
 
 ## 6. Matters this plan does not settle
 
