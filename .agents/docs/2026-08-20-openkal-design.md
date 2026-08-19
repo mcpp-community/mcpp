@@ -1,7 +1,16 @@
 # openkal 设计方案:通用内核 ABI 规范
 
-**状态**:设计草案,**未实施**。对应第一阶段计划 §7 的 **D0/D1**,而 D0 的门不是技术判据 ——
-是**「有第三方实现了第三个后端」**。本文的价值在于**不要在 D0 就把路堵死**。
+**状态**:**0.1 已实施并发布**。规范与声明模块在
+[`mcpplibs/openkal`](https://github.com/mcpplibs/openkal),Linux 参考实现在
+[`mcpplibs/openkal-linux`](https://github.com/mcpplibs/openkal-linux),两者均为 `0.1.0`。
+实施计划与结果见
+[`2026-08-20-openkal-implementation-plan.md`](2026-08-20-openkal-implementation-plan.md)。
+
+对应第一阶段计划 §7 的 **D0**;D0 的门不是技术判据 ——
+是**「有第三方实现了第三个后端」**,参考实现降低门槛而不移动门。
+
+⚠️ **本文与规范正文的关系**:本文记录**推导过程**,包含被撤回的方案与其理由;
+规范正文(`openkal/SPEC.md`)只记录**结论**。两者冲突时以规范正文为准。
 
 **证据来源**:标注 ⓘ 的是本机实测(载荷版本写在旁边),其余是设计主张。
 调研出处见 [`2026-08-18-freestanding-baremetal-analysis.md`](2026-08-18-freestanding-baremetal-analysis.md)。
