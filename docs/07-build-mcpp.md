@@ -326,15 +326,43 @@ write it yourself). mcpp uses that two ways:
   with an upgrade hint. Continuing would silently drop directives the build
   depends on — and "the build succeeded but the flag never arrived" is the
   worst class of build bug.
-- Because the two sides then provably agree, an **unrecognized directive is an
-  error** rather than a warning: within one protocol version it can only be a
-  typo.
+- An **unrecognized directive is an error** rather than a warning, and the error
+  names *both* possible causes. It cannot name one: the protocol number is
+  stamped by whichever mcpp **compiled** the program, not carried by the
+  package, so a package written for a newer mcpp arrives at an older one
+  wearing the older engine's number. Two matching numbers therefore say nothing
+  about whether the key came from the future.
 
 A `printf`-style program announces nothing, so it keeps the historical
 warn-and-ignore behaviour. That surface is **frozen at the eleven directives in
 the table above** — it still works and will keep working, but new capabilities
 land only in the typed API. Prefer `import mcpp;` for anything intended to
 maintain.
+
+#### A package that needs a newer mcpp
+
+When a published package calls a typed function this mcpp does not have, the
+compile error naming it is followed by:
+
+```
+       The `mcpp` build module this engine bundles does not have that name.
+       Either the package was written for a newer mcpp (try `mcpp self update`;
+       this is mcpp 2026.8.19.2), or the name is misspelled …
+```
+
+The package cannot handle this itself, and it is worth knowing why — the
+obvious guard does not compile:
+
+```cpp
+if constexpr (requires { mcpp::runner("qemu"); })   // ✗ hard error when absent
+    mcpp::runner("qemu");
+```
+
+A `requires`-expression over a **qualified name that does not exist** is
+ill-formed, not `false`. So there is no in-language feature probe, and a
+package that adopts a new directive states its floor in prose (its README) and
+relies on the diagnostic above. Such a package should name the mcpp version it
+requires.
 
 ### `import std;` (mcpp 2026.8.2.1+)
 

@@ -132,6 +132,32 @@ mcpp::runner("-kernel");
 ⭐ **决定:先按「什么都不加」发布,并把包级 `requires-mcpp` 作为一个独立探针(P-COMPAT)排在后面。**
 理由:诊断已经可行动,而一个会让老客户端硬失败的新键代价高得多 —— 且这个代价**尚未测过**。
 
+#### ⚠️ 实施时探到的:上表第 2 行「诊断可行动」对**类型化 API 是假的**
+
+那条可行动的诊断(`protocol_error()`,点名 `mcpp self update`)只对**wire 键**生效,
+而它要求程序**先编译得过**。BSP 用的是 `mcpp::runner(...)`,老 mcpp 上根本编不过,
+拿到的是:
+
+```
+error: 'runner' is not a member of 'mcpp'
+```
+
+—— 读起来像**包作者拼错了**,而不是**读者的引擎旧了**。
+
+我先试了在包里做优雅降级,**实测证伪**:
+
+```cpp
+if constexpr (requires { mcpp::runner("qemu"); })   // ✗ 名字不存在 ⇒ 硬错误
+```
+
+`requires` 表达式作用在**不存在的限定名**上是 ill-formed,**不是求值为 `false`**。
+⇒ **语言内没有特性探测**,包侧无路可走。
+
+⭐ **所以补在引擎侧**:`build.mcpp` 编译失败且错误里出现「不是 `mcpp` 的成员」时,
+追加一段点名 `mcpp self update` 并报出当前版本的提示(三个前端三种写法都认)。
+**这对以后每一次类型化 API 新增都生效**,不只是 `runner`。
+判据:`mentions_missing_mcpp_api` 单测钉三种拼写 + 三条不该误报的普通错误。
+
 ### 3.3 收录进 `mcpplibs/mcpp-index`
 
 `pkgs/r/riscv-virt-rt.lua` 与 `pkgs/m/mcpplibs.std.freestanding.lua`。

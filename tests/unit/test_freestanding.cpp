@@ -228,6 +228,35 @@ TEST(XpkgEnvVar, BothSpellingsAreDerivedFromOneSanitizer) {
               "MCPP_XPKG_PICOLIBC_RISCV_DIR");
 }
 
+// ── engine floor: a package that needs a newer mcpp ─────────────────────────
+
+TEST(BuildProgramCompatHint, RecognisesAllThreeFrontendSpellings) {
+    using mcpp::build::mentions_missing_mcpp_api;
+    // ⚠️ Measured, not assumed: `if constexpr (requires { mcpp::runner("x"); })`
+    // is a HARD ERROR when the name is absent, so a package cannot probe for a
+    // newer API in-language. The compiler's error IS the compat channel, and
+    // these are the three ways it arrives.
+    EXPECT_TRUE(mentions_missing_mcpp_api(
+        "build.mcpp:57:11: error: 'runner' is not a member of 'mcpp'"));          // gcc
+    EXPECT_TRUE(mentions_missing_mcpp_api(
+        "build.mcpp:57:11: error: no member named 'runner' in namespace 'mcpp'"));// clang
+    EXPECT_TRUE(mentions_missing_mcpp_api(
+        "build.mcpp(57): error C2039: 'runner': is not a member of 'mcpp'"));     // cl.exe
+}
+
+TEST(BuildProgramCompatHint, StaysOffFailuresThatAreNotAboutOurApi) {
+    using mcpp::build::mentions_missing_mcpp_api;
+    // The hint says "your mcpp may be too old". Attaching that to an ordinary
+    // compile error would send the reader to the wrong place, so the match is
+    // anchored on OUR namespace — a package's own missing symbol names its own.
+    EXPECT_FALSE(mentions_missing_mcpp_api(
+        "build.mcpp:12:5: error: 'runner' is not a member of 'board'"));
+    EXPECT_FALSE(mentions_missing_mcpp_api(
+        "build.mcpp:3:1: error: expected ';' after top level declarator"));
+    EXPECT_FALSE(mentions_missing_mcpp_api(
+        "build.mcpp:9:9: error: use of undeclared identifier 'mcpp_runner'"));
+}
+
 // ── artifact set ───────────────────────────────────────────────────────────
 
 TEST(FreestandingArtifacts, SizeOutputIsParsedNotPassedThrough) {
