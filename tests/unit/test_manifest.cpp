@@ -3743,10 +3743,13 @@ sysroot = ""
 // `E_NOT_FOUND: package '…@0.1.x' not found` — naming the PACKAGE, which
 // exists. This repository's own documentation recommended that form.
 
-TEST(Manifest, DependencyVersionAcceptsEveryFormThatResolves) {
-    // ⭐ This test exists to prevent the check from NARROWING anything. Each of
-    // these was measured to resolve against the real index before the check was
-    // added, so a future tightening that breaks one of them fails here first.
+// ⚠️ PARSE-acceptance, which is a weaker property than installability and was
+// measured to be weaker: `"0.0"` parses here and then fails at fetch with
+// `install path missing`. The check added below is a manifest check and has no
+// business ruling on the installer's path derivation, so this test pins what
+// the PARSER must keep accepting and says nothing about what fetches.
+TEST(Manifest, DependencyVersionParserAcceptsEveryEstablishedForm) {
+    // ⭐ This test exists to prevent the check from NARROWING anything.
     for (const char* v : { "0.0.1", "0.0", "^0.0.1", ">=0.0.1, <0.1.0", "*" }) {
         auto src = std::format(R"(
 [package]

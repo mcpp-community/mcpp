@@ -1151,21 +1151,25 @@ backend-openblas = { implies = ["use_blas"] }
 compat.openblas = "0.3"
 ```
 
-⚠️ **`"0.3"` and not `"0.3.x"`.** A trailing `.x` is not a selector this resolver
-has; the literal reaches the installer, which reports the package as not found.
-Measured against a control, with a package the index certainly carries:
+⚠️ **`"^0.3.0"` and not `"0.3.x"` or `"0.3"`.** Measured against a package the
+index certainly carries, with a **build** as the criterion:
 
 | Written | Result |
 |---|---|
-| `cmdline = "0.0.1"` | resolves |
-| `cmdline = "0.0"` | resolves |
-| `cmdline = "0.0.x"` | **`E_NOT_FOUND`** |
+| `cmdline = "0.0.1"` | builds |
+| `cmdline = "^0.0.1"` | builds |
+| `cmdline = "0.0"` | resolves, then `install path missing after fetch` |
+| `cmdline = "0.0.x"` | `E_NOT_FOUND`, naming the package — which exists |
 
-A two-segment prefix expresses "any patch of this minor" and works. This matters
-more here than in `[dependencies]`, because a feature whose implementation
-cannot be fetched is a feature that does not exist — and a project using a path
-dependency during development never consults the index, so the failure appears
-only after publication.
+⭐ The three outcomes are worth distinguishing, because two weaker criteria each
+admit a form that does not work: "no `E_NOT_FOUND`" admits the two-segment
+prefix, and "resolves" admits it as well. Only building against the real index
+settles it.
+
+⚠️ This matters more here than in `[dependencies]`. A feature whose
+implementation cannot be fetched is a feature that does not exist, and a project
+using a **path** dependency during development never consults the index — so the
+failure appears only after publication, to somebody else.
 
 This composes with capabilities (§2.8.1): a single `backend-openblas` feature
 both **pulls** the provider (`compat.openblas`, which `provides = ["blas"]`) and
