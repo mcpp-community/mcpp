@@ -600,6 +600,42 @@ QEMU 可以从源码构建,而且**只构建需要的目标**能把代价压下�
 一次就等于把门槛降成注释。
 
 **阶段 2:在一个临时 PR 的 CI 上,用 Actions 构建其余四个宿主。**
+**⇒ 已开始:`mcpplibs/qemu-x86`。**
+
+> 仓库只含跨宿主构建工作流,不含描述符、不含二进制、不做镜像上传。截至本次修订
+> **linux x64 / linux arm64 / darwin arm64 三条腿绿**(x64 那条还引导了 multiboot
+> 探针并断言了打印),darwin x64 绿,win32 x64 仍在迭代。
+
+⭐ **这一步的价值已经兑现:六条只有真跑才会出现的发现,而每一条都是「已发布却装不上」
+的成因。** 它们在这里只是红叉。
+
+| # | 宿主 | 发现 |
+|---|---|---|
+| 1 | darwin | `found no usable distlib` —— QEMU 的 `mkvenv` 建非隔离虚拟环境要 distlib,而现代 Python 都不自带。⚠️ 第一轮我只在 macOS 修了它并归因于「Homebrew 比较特别」;Windows 走到同一行,说明它是 **QEMU 9.2.4 的属性** |
+| 2 | win32 | 解压创建符号链接失败。⚠️ 我先断言「MSYS2 的 tar 会改成复制」——**错的**:`setup-msys2` 默认 `winsymlinks:nativestrict`。⭐ 报的是 `No such file or directory` 而不是 `Permission denied`,所以是**顺序**不是权限,冲权限去的修法不会奏效 |
+| 3 | darwin x64 | ⚠️ **两轮都没跑过 —— 不是失败,是一直排队。** `macos-13` 镜像已退役,而退役标签不报错、只等。汇总页上「没跑」与「慢」长得一样。换 `macos-15-intel` 后立刻开始 |
+| 4 | win32 | vendored wheel 够不着:`file://D:/…/python/wheels` —— `file://` URL 在盘符前需要**三个**斜杠,只有两个时 `D:` 被解析成主机名。而 `mkvenv` 离线,没有回落。⭐ 修法不是补斜杠,是预装 `pycotap`:非隔离虚拟环境看得见系统的包,mkvenv 的判据就是「能不能 import」 |
+| 5 | win32 | MSYS2 的 Python **不自带 pip**(单独的包)。我默认了它在场 |
+| 6 | win32 | `ninja` 会连**单元测试**一起构建,而 `test-vmstate.exe` 在 MinGW 下链接不了(`undefined reference to qemu_ftruncate64`)—— 2032 个目标里已经编好 1897 个。⭐ 只构建模拟器目标而不是给测试打补丁,是更小的主张 |
+
+### 4.3.1 ⚠️ 体积:strip 回答的比预期少得多
+
+实测于 linux-x64:
+
+| | |
+|---|---|
+| `qemu-system-x86_64` | 78,681,192 → **26,994,336 字节**(strip 后) |
+| 整个安装前缀 | 392 MB → **343 MB** |
+
+⭐ **也就是说约 316 MB 根本不是模拟器。** 一个把这个前缀直接打包的载荷会把它一起
+发出去,而索引的资产预算是实测 **0.012 MB/s** 的单连接上传、无分片、无断点续传 ——
+所以**载荷选什么**比它 strip 掉什么更重要。这一条要在写描述符之前回答,而不是靠
+「删到出问题为止」。
+
+⚠️ macOS 那两条腿不 strip,并且说明了原因:strip Mach-O 会让 ad-hoc 签名失效,这
+正是本生态发布流水线自己的规则。
+
+
 
 ⭐ 这一步的价值在于**先把五条流水线跑通,再谈收录**。GitHub 托管的 runner
 覆盖 linux x64/arm64、macOS arm64/x64 与 windows x64,恰好就是本索引服务的
