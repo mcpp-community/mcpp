@@ -374,7 +374,15 @@ run_library_pack(const LibraryPackPlan& plan)
         if (plan.strip) {
             const auto shape = leg.shared ? mcpp::pack::ArtifactShape::SharedLibrary
                                           : mcpp::pack::ArtifactShape::StaticArchive;
-            auto r = mcpp::pack::strip_artifact(dst, shape, leg.stripTools, plan.debugDir);
+            // PER LEG, mirroring `lib/<triple>/`. A fat package's legs share an
+            // artifact NAME — `libmathkit-shared.so` for both the gnu and the
+            // musl leg is the normal case, not a corner one — so a flat debug
+            // directory would have the second leg overwrite the first, and the
+            // first artifact's `.gnu_debuglink` would then resolve to the other
+            // target's symbols. Silently.
+            const auto legDebugDir = plan.debugDir.empty()
+                ? std::filesystem::path{} : plan.debugDir / leg.triple;
+            auto r = mcpp::pack::strip_artifact(dst, shape, leg.stripTools, legDebugDir);
             if (!r) return std::unexpected(LibraryPackError{ r.error() });
             if (r->outcome == mcpp::pack::StripOutcome::Stripped) {
                 mcpp::ui::status("Stripped", std::format("{}  {} → {} bytes{}",

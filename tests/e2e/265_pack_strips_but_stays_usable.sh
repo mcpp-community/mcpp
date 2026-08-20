@@ -146,9 +146,18 @@ echo "  [pack] strip = false: honoured"
 rm -rf target/dist
 "$MCPP" pack mathkit-shared --debug-symbols dbg > pack-e.log 2>&1 || {
     cat pack-e.log; echo "FAIL: --debug-symbols pack"; exit 1; }
-[[ -f dbg/libmathkit-shared.so.debug ]] || {
-    ls -R dbg 2>&1; echo "FAIL: no separated debug file"; exit 1; }
-[[ "$(has_symtab dbg/libmathkit-shared.so.debug)" == "yes" ]] || {
+# PER TRIPLE, mirroring `lib/<triple>/`. A fat package's legs share an artifact
+# NAME (`libmathkit-shared.so` for both a gnu and a musl leg is the normal case),
+# so a flat debug directory would have the second leg overwrite the first — and
+# the first artifact's `.gnu_debuglink` would then resolve to the other target's
+# symbols, silently. Asserting the layout is what keeps that from regressing.
+dbgfile="$(find dbg -name 'libmathkit-shared.so.debug' | head -1)"
+[[ -n "$dbgfile" ]] || { ls -R dbg 2>&1; echo "FAIL: no separated debug file"; exit 1; }
+[[ "$dbgfile" == dbg/*/libmathkit-shared.so.debug ]] || {
+    echo "FAIL: the debug file is not under a per-triple directory: $dbgfile"
+    echo "      A fat package's legs share an artifact name; a flat layout loses one."
+    exit 1; }
+[[ "$(has_symtab "$dbgfile")" == "yes" ]] || {
     echo "FAIL: the separated debug file carries no debug information"; exit 1; }
 pkg_e="$TMP/mathkit/$(find target/dist -maxdepth 1 -type d -name 'mathkit-0.1.0-*' | head -1)"
 so_e="$(find "$pkg_e/lib" -name 'libmathkit-shared.so' -type f | head -1)"

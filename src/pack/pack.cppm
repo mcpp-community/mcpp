@@ -1140,29 +1140,32 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
         if (auto r = bundle_libs(toBundle, plan.stagingRoot); !r)
             return std::unexpected(Error{r.error()});
 
+        // Search path: point at bundled libs, or REMOVE THE TAG if there are none.
+        //
+        // The empty case used to be `patchelf --set-rpath ''`, which leaves the
+        // tag present with an empty string — and a present-but-empty DT_RUNPATH
+        // is not inert: it suppresses the inherited DT_RPATH chain exactly like
+        // a stale one does (measured — see mcpp.pack.relocate). Harmless on an
+        // executable, which is the top of that chain, but there is no reason to
+        // write a tag that says nothing.
+        //
+        // OUTSIDE the patchelf guard, because it no longer needs patchelf. That
+        // is the whole point of the in-process editor: `--mode system` on a host
+        // where the sandbox has no patchelf used to leave the build machine's
+        // store in the artifact and say nothing at all.
+        if (toBundle.empty()) {
+            if (auto r = mcpp::pack::relocate::strip_search_paths(bundledBinary); !r)
+                return std::unexpected(Error{r.error()});
+        }
+
         auto patchelf = sandbox_patchelf(cfg);
         if (!patchelf.empty()) {
-            // Search path: point at bundled libs (or clear if none).
             //   non-empty bundle → "$ORIGIN/../lib" so the binary finds them
-            //   empty bundle      → clear the original dev-sandbox RUNPATH
-            //                       (~/.mcpp/registry/... doesn't exist on
-            //                       a user's target machine)
-            // An EMPTY bundle gets the tag REMOVED, not set to "".
-            //
-            // `patchelf --set-rpath ''` leaves the tag present with an empty
-            // string, and a present-but-empty DT_RUNPATH is not inert: it
-            // suppresses the inherited DT_RPATH chain exactly like a stale one
-            // does (measured — see mcpp.pack.relocate). Harmless on an
-            // executable, which is the top of that chain, but there is no
-            // reason to write a tag that says nothing, and the library packer
-            // needs the removal path anyway.
-            if (toBundle.empty()) {
-                if (auto r = mcpp::pack::relocate::strip_search_paths(bundledBinary); !r)
+            if (!toBundle.empty()) {
+                if (auto r = set_search_path(bundledBinary, "$ORIGIN/../lib",
+                                             mcpp::build::loader::Form::Executable,
+                                             patchelf); !r)
                     return std::unexpected(Error{r.error()});
-            } else if (auto r = set_search_path(bundledBinary, "$ORIGIN/../lib",
-                                                mcpp::build::loader::Form::Executable,
-                                                patchelf); !r) {
-                return std::unexpected(Error{r.error()});
             }
 
             // EVERY BUNDLED LIBRARY, not just the executable.
