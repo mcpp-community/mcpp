@@ -1059,6 +1059,11 @@ package = {
 
 // Feature System v2 Stage 2a: optional deps activated by a feature.
 // TOML surface uses a dedicated [feature-deps.<name>] section.
+// ⚠️ The fixture used to say `zlib = "1.3.x"`, which cannot resolve: a trailing
+// `.x` is not a selector this resolver has. It went unnoticed because the same
+// form was in the documented `[feature-deps]` example, and because a fixture
+// only has to PARSE — nothing here ever asked the index for that package. It
+// reached a published package (`std-freestanding` 0.3.0) before it was measured.
 TEST(Manifest, FeatureDepsTomlSection) {
     constexpr auto src = R"(
 [package]
@@ -1070,7 +1075,7 @@ kind = "lib"
 default = []
 backend = []
 [feature-deps.backend]
-zlib = "1.3.x"
+zlib = "1.3"
 )";
     auto m = mcpp::manifest::parse_string(src);
     ASSERT_TRUE(m.has_value()) << m.error().format();
@@ -3727,4 +3732,87 @@ sysroot = ""
     ASSERT_TRUE(m.has_value()) << m.error().format();
     for (auto const& w : m->schemaWarnings)
         EXPECT_EQ(w.find("sysroot"), std::string::npos) << w;
+}
+
+// ── Dependency version requirements are checked where they are written ───────
+//
+// ⚠️ The parser that decides which published version satisfies a requirement
+// existed all along; the dependency reader did not use it, and handed its
+// string to the installer instead. A requirement the matcher could never
+// satisfy therefore reached the network and came back as
+// `E_NOT_FOUND: package '…@0.1.x' not found` — naming the PACKAGE, which
+// exists. This repository's own documentation recommended that form.
+
+TEST(Manifest, DependencyVersionAcceptsEveryFormThatResolves) {
+    // ⭐ This test exists to prevent the check from NARROWING anything. Each of
+    // these was measured to resolve against the real index before the check was
+    // added, so a future tightening that breaks one of them fails here first.
+    for (const char* v : { "0.0.1", "0.0", "^0.0.1", ">=0.0.1, <0.1.0", "*" }) {
+        auto src = std::format(R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies]
+cmdline = "{}"
+)", v);
+        auto m = mcpp::manifest::parse_string(src);
+        EXPECT_TRUE(m.has_value()) << v << ": " << (m ? "" : m.error().format());
+    }
+}
+
+TEST(Manifest, DependencyVersionRejectsATrailingX) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies]
+cmdline = "0.0.x"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    auto msg = m.error().format();
+    EXPECT_NE(msg.find("not a requirement"), std::string::npos) << msg;
+    // The message has to say what IS accepted, because the reader arrived here
+    // by writing something that looked reasonable.
+    EXPECT_NE(msg.find("1.2"), std::string::npos) << msg;
+}
+
+TEST(Manifest, DependencyVersionRejectsTrailingGarbage) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies]
+cmdline = "1.2.3abc"
+)";
+    EXPECT_FALSE(mcpp::manifest::parse_string(src).has_value());
+}
+
+// A path or git dependency has no version, and requiring one would break every
+// workspace member.
+TEST(Manifest, DependencyWithoutAVersionIsUnaffected) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies]
+local = { path = "../local" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    EXPECT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+}
+
+// The long form reaches a different code path than the bare string, and only
+// one of the two used to set `spec.version`. Both are checked.
+TEST(Manifest, LongFormDependencyVersionIsCheckedToo) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies]
+cmdline = { version = "0.0.x", features = ["a"] }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().format().find("not a requirement"), std::string::npos);
 }

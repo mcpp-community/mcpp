@@ -7,9 +7,37 @@ import std;
 import mcpp.source_kind;
 import mcpp.libs.toml;
 import mcpp.pm.dep_spec;
+import mcpp.version_req;
 import mcpp.pm.dependency_selector;
 import mcpp.pm.index_spec;
 import mcpp.platform;
+
+// A dependency's version requirement, checked with the parser that will later
+// be asked to match it.
+//
+// ⚠️ THE PARSER EXISTED AND THIS PATH DID NOT USE IT.
+//
+// `version_req::parse_req` is what decides which published version satisfies a
+// requirement. The dependency reader handed its string straight to the
+// installer instead, so a requirement the matcher could never satisfy reached
+// the network — and came back as
+//
+//     E_NOT_FOUND: package 'compat.std-freestanding-alloc-libc@0.1.x' not
+//     found in the synced index
+//
+// which names the PACKAGE. The package exists; the requirement is what does
+// not parse. Measured 2026-08-20, from a form that this repository's own
+// documentation recommended (`docs/05` §2.8.2 said `compat.openblas = "0.3.x"`).
+//
+// Checking here converts a network round-trip and a misleading answer into a
+// message that names the actual problem, at the point where the text was
+// written.
+std::optional<std::string> version_req_problem(std::string_view spec) {
+    if (spec.empty()) return std::nullopt;          // path/git/workspace deps
+    if (auto r = mcpp::version_req::parse_req(spec); !r) return r.error();
+    return std::nullopt;
+}
+
 
 export namespace mcpp::manifest {
 
@@ -632,7 +660,18 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 "typo, or a field a newer mcpp understands.", section, fqName, sk));
         }
         if (auto it = sub.find("path");    it != sub.end() && it->second.is_string()) spec.path    = it->second.as_string();
-        if (auto it = sub.find("version"); it != sub.end() && it->second.is_string()) spec.version = it->second.as_string();
+        if (auto it = sub.find("version"); it != sub.end() && it->second.is_string()) {
+            spec.version = it->second.as_string();
+            if (auto why = version_req_problem(spec.version))
+                return std::unexpected(error(origin, std::format(
+                    "[{}.\"{}\"] version = '{}' is not a requirement this "
+                    "resolver can match: {}.\n"
+                    "       Accepted: an exact version (\"1.2.3\"), a prefix "
+                    "(\"1.2\" = any patch of that minor),\n"
+                    "       a comparator (\"^1.2\", \">=1.0, <2.0\"), or "
+                    "\"*\". A trailing `.x` is not one of them.",
+                    section, fqName, spec.version, *why)));
+        }
         if (auto it = sub.find("git");     it != sub.end() && it->second.is_string()) spec.git     = it->second.as_string();
         if (auto it = sub.find("visibility"); it != sub.end() && it->second.is_string()) {
             spec.visibility = it->second.as_string();
@@ -746,6 +785,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         auto key = selector.stableMapKey;
         if (value.is_string()) {
             spec.version = value.as_string();
+            if (auto why = version_req_problem(spec.version))
+                return std::unexpected(error(origin, std::format(
+                    "[{}] {} = '{}' is not a requirement this resolver can "
+                    "match: {}.\n"
+                    "       Accepted: an exact version (\"1.2.3\"), a prefix "
+                    "(\"1.2\" = any patch of that minor),\n"
+                    "       a comparator (\"^1.2\", \">=1.0, <2.0\"), or "
+                    "\"*\". A trailing `.x` is not one of them.",
+                    section, key, spec.version, *why)));
         } else if (value.is_table()) {
             auto& sub = value.as_table();
             if (!looks_like_inline_dep_spec(sub)) {
