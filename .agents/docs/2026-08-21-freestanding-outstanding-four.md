@@ -602,9 +602,11 @@ QEMU 可以从源码构建,而且**只构建需要的目标**能把代价压下�
 **阶段 2:在一个临时 PR 的 CI 上,用 Actions 构建其余四个宿主。**
 **⇒ 已开始:`mcpplibs/qemu-x86`。**
 
-> 仓库只含跨宿主构建工作流,不含描述符、不含二进制、不做镜像上传。截至本次修订
-> **linux x64 / linux arm64 / darwin arm64 三条腿绿**(x64 那条还引导了 multiboot
-> 探针并断言了打印),darwin x64 绿,win32 x64 仍在迭代。
+> 仓库只含跨宿主构建工作流,不含描述符、不含二进制、不做镜像上传。
+> **⭐ 五条腿全绿。** `linux-x64` 真正引导了 multiboot 探针(SeaBIOS 起来、镜像打印
+> `qemu-x86 probe ok`);另外四条按设计回落成只核 `--version`,并各自发出一条
+> `##[notice]` 说明**这台宿主的链接器发不出 x86 ELF**。这是收录门槛所要求的那件事,
+> 而它是在任何东西被发布之前拿到的。
 
 ⭐ **这一步的价值已经兑现:六条只有真跑才会出现的发现,而每一条都是「已发布却装不上」
 的成因。** 它们在这里只是红叉。
@@ -617,6 +619,19 @@ QEMU 可以从源码构建,而且**只构建需要的目标**能把代价压下�
 | 4 | win32 | vendored wheel 够不着:`file://D:/…/python/wheels` —— `file://` URL 在盘符前需要**三个**斜杠,只有两个时 `D:` 被解析成主机名。而 `mkvenv` 离线,没有回落。⭐ 修法不是补斜杠,是预装 `pycotap`:非隔离虚拟环境看得见系统的包,mkvenv 的判据就是「能不能 import」 |
 | 5 | win32 | MSYS2 的 Python **不自带 pip**(单独的包)。我默认了它在场 |
 | 6 | win32 | `ninja` 会连**单元测试**一起构建,而 `test-vmstate.exe` 在 MinGW 下链接不了(`undefined reference to qemu_ftruncate64`)—— 2032 个目标里已经编好 1897 个。⭐ 只构建模拟器目标而不是给测试打补丁,是更小的主张 |
+
+### 4.3.0 ⚠️ 第七条与第八条:失败的是探针,不是模拟器
+
+| # | 宿主 | 发现 |
+|---|---|---|
+| 7 | win32 | 只构建模拟器目标之后,`meson install --no-rebuild` 停在 `ERROR: File 'trace/trace-events-all' could not be found` —— 那是 install 要拷的**生成**文件。点名它只会停在下一个;去掉 `--no-rebuild` 会重建全部、把链接不了的单元测试带回来。⭐ 改为**显式组装载荷**(模拟器 + `pc-bios` + 用 `ldd` 实测出的 **13 个 MinGW 运行时 DLL**),这也正是 316MB 那条发现说载荷该做的事 |
+| 8 | 全部 | ⚠️ **引导探针的门槛问错了问题。** 它检查有没有 32 位*编译器*,然后放链接过去 —— Windows 上前者通过(`cc -m32` 照样产出对象),链接倒下:`ld.exe: unrecognised emulation mode: elf_i386 / Supported emulations: i386pep i386pe`。改成问**链接器**认不认这个 emulation,一条检查覆盖全部宿主 |
+
+⚠️ **而我差点把这条修复读成一次「假绿」。** 检查各腿是否真的引导时,我 grep 了
+`::notice::this host's linker emits no x86 ELF` —— 那串字**同时出现在被回显的脚本里**,
+于是五条腿全被读成「跳过」,包括确实引导了的 `linux-x64`。判据换成 GitHub 真正发出的
+`##[notice]` 注解(脚本回显里不会有)之后,真相是:一条引导、四条按设计回落。
+**同一个形状:grep 匹配到的是脚本而不是结果。**
 
 ### 4.3.1 ⚠️ 体积:strip 回答的比预期少得多
 
