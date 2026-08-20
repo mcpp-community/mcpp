@@ -323,14 +323,28 @@ obligation rather than a convenience: `memcpy`, `memmove`, `memset` and `memcmp`
 must exist because the compiler lowers structure assignment and array
 initialisation onto them. `std-freestanding-nolibc` supplies those and `strlen`.
 
-⚠️ `std-freestanding` and `std-freestanding-nolibc` serve **mutually exclusive**
-arrangements. The subset needs the C library's headers — measured: on the
-zero-libc tier it fails at compile with `'inttypes.h' file not found` — so a
-project that can use the subset has a C library and does not need the five
-functions, while a project on the zero-libc tier cannot use the subset at all.
+The subset composes with this tier rather than excluding it. `std-freestanding`
+with `features = ["nolibc"]` compiles against no C library at all, and measured,
+**94 of its 103 headers** do. The obstacle was never that the subset wants a C
+library: libc++ ships wrappers for the C headers — `string.h` and its siblings —
+which reach the real header through `#include_next` to obtain `size_t`,
+`mbstate_t`, `time_t` and `EOF`. With no C library the chain has nothing to
+continue to, and the wrapper fails on a missing *type* rather than a missing
+header, which is why the cause is not evident from the error. Four small headers
+restore the chain, and the feature is what pulls them in.
 
-⚠️ That package is for the zero-libc tier only, and using it alongside a C
-library fails silently rather than loudly. A C library ships as an archive, and
+A board-support package can serve this tier too, and for the same reason it is
+worth having one at all. Where a machine's UART is, where its RAM begins and
+which emulator boots it are not C library facts:
+
+```toml
+[dependencies]
+riscv-virt-rt = { version = "0.5.0", features = ["nolibc"] }
+```
+
+⚠️ `std-freestanding-nolibc` is what that feature resolves to, and adding it
+**directly** alongside a C library fails silently rather than loudly. A C library
+ships as an archive, and
 an archive member is pulled only while the symbol is still undefined; a
 dependency package's object files enter the link unconditionally. The package
 therefore defines `memcpy` first, the C library's member is never pulled, and

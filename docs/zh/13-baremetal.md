@@ -293,11 +293,23 @@ freestanding 翻译单元仍会用到的 C 函数中,有四个是义务而非便
 `memmove`、`memset` 与 `memcmp` 必须存在,因为编译器把结构体赋值与数组初始化下降到
 它们之上。`std-freestanding-nolibc` 提供这四个与 `strlen`。
 
-⚠️ `std-freestanding` 与 `std-freestanding-nolibc` 服务于**互斥**的安排。子集需要
-C 库的头文件 —— 实测:零 libc 档上它在编译期即死于 `'inttypes.h' file not found`
-—— 因此能用子集的工程有 C 库、不需要这五个函数,而处在零 libc 档的工程根本用不了子集。
+子集与这一档是**组合**关系而非互斥。`std-freestanding` 带 `features = ["nolibc"]`
+时在完全没有 C 库的情况下编译,实测其 **103 个头中的 94 个**可用。障碍从来不是子集
+需要一个 C 库:libc++ 为 C 头文件提供了包装头 —— `string.h` 及其同类 —— 它们通过
+`#include_next` 续到真正的头去取 `size_t`、`mbstate_t`、`time_t` 与 `EOF`。没有
+C 库时这条链无处可续,包装头死在缺**类型**而不是缺头文件上,这正是从报错看不出成因的
+原因。四个很小的头把链续上,而该 feature 负责把它们引进来。
 
-⚠️ 该包仅用于零 libc 档,而与 C 库并用时是**静默**失败而非响亮失败。C 库以归档形式
+板级支持包同样可以服务这一档,理由与"为什么要有板级包"是同一条:一台机器的 UART 在哪、
+RAM 从哪开始、哪个模拟器启动它,没有一条是 C 库事实:
+
+```toml
+[dependencies]
+riscv-virt-rt = { version = "0.5.0", features = ["nolibc"] }
+```
+
+⚠️ `std-freestanding-nolibc` 正是该 feature 解析到的包,而**直接**把它与 C 库并用时
+是**静默**失败而非响亮失败。C 库以归档形式
 发布,归档成员只在符号仍未定义时才被拉入;而依赖包的目标文件无条件进入链接。于是该包
 先定义了 `memcpy`,C 库的成员从不被拉入,构建**成功** —— 程序拿到的是逐字节实现而不是
 C 库经过优化的那份,且没有任何提示。实测(picolibc 在场):冷构建链接通过,`nm` 只找到
