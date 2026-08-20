@@ -1076,6 +1076,25 @@ The bound provider's link/include flags reach the consumer through normal
 dependency mechanics; the capability layer is the *selection-and-validation* step
 that turns a silently-wrong or missing backend into a loud configure-time error.
 
+**Binding selects a provider; it does not prune the link line.** A dependency
+package contributes its object files to the consumer's link regardless of whether
+its capability was the one bound. Measured with two packages that both provide
+one capability and both define `cap_probe`: unpinned, resolution fails as the
+table says; after pinning one with `[capabilities]`, the build reaches the linker
+and fails there instead —
+
+```
+ld: obj/mcpplibs_pa/src/impl.o: in function `cap_probe':
+    multiple definition of `cap_probe'; obj/mcpplibs_pb/src/impl.o: first defined here
+```
+
+This matters for a capability whose providers define the **same symbols** — a
+whole-program singleton such as `operator new`, or a C API with one fixed name
+set. For those, two providers in the graph is a defect to fix rather than an
+ambiguity to pin: pinning replaces an error that names both candidates with one
+that names a mangled symbol. Interchangeable *libraries* (BLAS implementations,
+which export distinct symbol sets and are selected per link) are unaffected.
+
 ### 2.8.2 `[feature-deps.<name>]` — dependencies a feature pulls in
 
 A dependency declared under `[feature-deps.<name>]` is **optional**: it is
@@ -1111,6 +1130,44 @@ features = {
     },
 }
 ```
+
+#### A default implementation that stays replaceable
+
+The same three pieces cover the case where a library wants to *offer* an
+implementation without *imposing* one — a whole-program singleton such as
+`operator new`, a logging sink, or a panic handler:
+
+```toml
+[features]
+default   = []
+# The consumer-side switch: "I use the part of this library that needs an allocator".
+alloc     = { requires = ["freestanding-allocator"] }
+# The built-in default: activating this one is enough.
+alloc-kal = { implies = ["alloc"] }
+
+# Resolved only when `alloc-kal` is active, so the library itself carries no
+# dependency on the implementation.
+[feature-deps.alloc-kal]
+std-freestanding-alloc-kal = "0.1.x"
+```
+
+Three usages, one line each:
+
+| Consumer needs | What the manifest says |
+|---|---|
+| none of the allocating parts | `std-freestanding = "0.2.0"` — no allocator enters the graph |
+| the default | `features = ["alloc-kal"]` — the implementation arrives with it, and its package name never has to be known |
+| its own or a third party's | `features = ["alloc"]` plus a package that `provides = ["freestanding-allocator"]` |
+
+Two properties make this preferable to shipping the implementation
+unconditionally. A library that ships one takes a decision belonging to the
+program, and it cannot be undone: features are **additive**, so there is no way
+for a consumer to switch a default *off*. And because a dependency package's
+objects link unconditionally (§2.8.1), a shipped default plus a program-supplied
+one is a duplicate definition rather than a replacement — the archive semantics
+that let a C++ standard library offer a replaceable `operator new` do not apply
+to a package dependency. Keeping the implementation behind a switch means the
+two never coexist.
 
 ### 2.8.3 `[scan_overrides."<glob>"]` — Author-Asserted Scan Results
 

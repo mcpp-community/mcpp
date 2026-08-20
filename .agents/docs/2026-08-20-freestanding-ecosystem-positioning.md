@@ -355,27 +355,92 @@ sysroot,因为目标 libc 由目标表行的 `sysroot` 解析、不走依赖图�
 按头文件拆成 `freestanding.core` / `freestanding.<其它>`,等于把一份**生成的**清单
 改回**手工策展的**清单——正好撤销该纪律,而且清单会随 libc++ 版本漂移。
 
-⇒ 该拆的是**「程序必须自己提供什么」**,而那不是模块切分,是一个独立的小包:
+⇒ 该拆的是**「程序必须自己提供什么」**。而 `alloc` 不是一个头文件开关:
+
+⚠️ **它不改变哪些东西能编,只改变哪些东西能链上。** 103 个头今天已经无条件包含,
+`std::vector` 现在就编得过,失败发生在链接(§3.2 实测)。
+
+| 不需要 `alloc` | 需要 `alloc` |
+|---|---|
+| `array` `span` `optional` `expected` `atomic` `string_view` `ranges` `bit` `charconv` `tuple` | `vector` `string` `deque` `list` `map` `set` `unordered_*` `function` `any` `make_unique`;⚠️ **协程**(帧默认经 `operator new`) |
+
+上表只有 `vector` 一行直接测过,其余由「缺 `operator new`」这一机制推得。
+
+### 6.6.1 最终形状:feature 开关 + `feature-deps` 拉默认 + capability 仲裁
+
+⭐ **这不是新发明,是本仓库已文档化的形状**(`docs/05` §2.8.2 的 `backend-openblas`:
+一个 feature 同时**拉 provider** 并**打开消费者开关**),照搬到分配器:
+
+```toml
+# mcpplibs/std-freestanding
+[features]
+default   = []
+alloc     = { requires = ["freestanding-allocator"] }   # 消费者开关
+alloc-kal = { implies = ["alloc"] }                     # 内置默认:开它就够
+
+[feature-deps.alloc-kal]
+std-freestanding-alloc-kal = "0.1.x"                    # 仅在 alloc-kal 激活时解析
+```
+
+| 场景 | 工程里写什么 |
+|---|---|
+| tier-0 固件 | `std-freestanding = "0.2.0"` — 不碰分配器 |
+| ⭐ **默认路径** | `features = ["alloc-kal"]` — 一个 feature,实现自动进图,**不必知道 provider 包名** |
+| 自定义 / 第三方 | `features = ["alloc"]` + 自己那个 `provides = ["freestanding-allocator"]` 的包 |
+
+它同时拿到四件事:**实现分离**(本体零依赖,openkal 只出现在 `feature-deps` 下)·
+**默认一键可得** · **可换** · **并集风险被转化**(依赖擅自开 `alloc-kal` 而应用又自带
+provider 时,得到的是解析期两个 provider 报错,不是链接期一句
+`duplicate symbol: operator new`)。
+
+### 6.6.2 ⚠️ 三条被否决的形态,以及否决它们的实测
+
+| 形态 | 否决理由 |
+|---|---|
+| 按头文件拆 `freestanding.core` / `freestanding.<其它>` | 把**生成的**清单改回**手工策展的**清单,撤销包自己写明的纪律,且清单随 libc++ 版本漂移 |
+| `nolibc` 做成 feature | ⚠️ **非加性**:feature 在图上并集,任一包打开则全图打开,而板级包链了 `-lc` 时 `memmove`/`strlen` 重复。且加性 feature **无法被消费者关掉**。它是**目标**的属性(sysroot 有没有 libc),做成包级开关就是同一决策的第二处推导 |
+| provider 用弱符号提供「可被顶掉的默认」 | ⚠️ 两份实现同时在图里**不报错**,按链接顺序静默选一个——把解析期能报的错换成运行期的静默错。libc++ 自己不这么做,它靠归档 |
+
+### 6.6.3 ⭐ 实测:依赖以裸 `.o` 参与链接,因此「库给默认、程序顶掉」不成立
+
+`build.ninja` 的链接边(零 libc 工程,实测):
 
 ```
-mcpplibs/std-freestanding-alloc      约 30 行
+build bin/solo | bin/solo.map : cxx_link obj/mcpplibs_std-freestanding/src/std_freestanding.m.o \
+      obj/main.o obj/mcpplibs_std-freestanding/src/verbose_abort.o
 ```
 
-它提供 §3.2 实测缺失的那 **12 个** `operator new` / `operator delete` 重载
-(含 `align_val_t` 的四个——不写就链不上),转发到一个由工程选定的策略:
+**整份文件零个 `.a`。** `StaticLibrary` 只在**根清单**声明 `kind = "lib"` 的目标上产生
+(`plan.cppm:1637`),不是依赖包被消费的形态。
 
-| 策略 | 转发到 | 何时用 |
-|---|---|---|
-| ⭐ **默认** | `kal_alloc` / `kal_free` | 生态内优先:openkal 是 mcpp 自己的抽象,且它在裸机与宿主上都成立 |
-| `libc` | `malloc` / `free` | 板级包已经链了 `-lc`,不想引入 openkal |
-| `none` | 不定义,留给工程 | 内核/bootloader 自带分配器 |
+⇒ libc++ 那套「库里常驻一份默认、程序定义了就顶掉」依赖**归档语义**(成员仅在符号
+仍未定义时才拉入);目标文件的定义**无条件进入链接**,所以那条路今天走不通。
+这正是 §6.6.1 用「开关控制是否存在」而非「默认存在可覆盖」的原因——两份定义**从不共存**。
 
-⇒ 默认转 `kal_alloc` 的代价是该包依赖 `openkal`;当目标上没有 openkal 后端时,
-链接期报缺 `kal_alloc` 并点名——**与直接报缺 `operator new` 相比,它点的是一个
-有文档、有实现路径的名字**。
+### 6.6.4 ⭐ 实测:capability 消歧**不裁剪链接行**
 
-配套:把 `undefined symbol: operator new` 变成**具名诊断**,点名该包。
-档位是文档与诊断的事,不是模块切分的事。
+两个包都 `provides = ["alloc-cap"]` 且都定义同名符号:
+
+```
+error: capability 'alloc-cap' has multiple providers in the graph: [pa, pb];
+       select one with [capabilities] alloc-cap = "<provider>" or --cap alloc-cap=<provider>
+```
+
+按提示指定 `[capabilities] alloc-cap = "pa"` 之后:
+
+```
+ld: obj/mcpplibs_pa/src/impl.o: in function `cap_probe':
+    multiple definition of `cap_probe'; obj/mcpplibs_pb/src/impl.o: first defined here
+```
+
+链接边上**两份 `.o` 都在**。
+
+⇒ **capability 绑定的是「谁满足这条要求」,不是「哪些目标文件参与链接」。**
+对**单例符号**类的 provider(`operator new` 即是),`[capabilities]` 消歧会把一个
+点名两个 provider 的好错误,换成一句 `multiple definition` 的坏错误。
+
+⚠️ 因此分配器能力的规则要比 `blas` 严一档:**两个 provider 同时在图里是要修的错误,
+不是可消歧的状态。** 这一条已补进 `docs/05` §2.8.1。
 
 ---
 
@@ -388,6 +453,23 @@ freestanding 目标 · 自带链接脚本(`link-script`)· 自定义 runner ·
 
 ⇒ 写内核最繁琐的构建部分基本齐备。实测:一个零依赖的 freestanding 工程可以构建,
 产物 `text 12 data 0 bss 0 total 12`——这证明仅凭 ISA 表行就足以产出正确目标文件。
+
+⭐ **更强的一条实测:零 libc 链接已经成立。** 一个只依赖 `std-freestanding`、
+**没有板级包、没有 `-lc`、没有 crt0** 的工程,自带 `memmove` + `strlen` + `_start`
+之后**链接通过**,`text 15866`。
+
+⚠️ **但未验证它能否启动**,而且已知不能:实测 ELF 的加载地址是 `0x10000`,
+qemu `virt` 需要 `0x80000000`。
+
+⇒ ⭐ **零 libc 档缺的不是 libc,是链接脚本**——而链接脚本是**板级事实**,不是 libc
+事实(§1.2)。这一条反而加强了分层结论:去掉 libc 之后剩下的那件事,恰好落在
+分层里已经有归属的那一格。
+
+⚠️ 那两个函数**不应无条件放进 `std-freestanding`**:它们是 libc 符号,板级包一旦链了
+`-lc` 就会重复(§6.6.3 已证依赖以裸 `.o` 参与链接,重复即硬错误)。而且它们本不同层——
+`memcpy`/`memmove`/`memset`/`memcmp` 是**编译器要求的**(freestanding 实现也必须提供,
+因为编译器会自行发出对它们的调用),属 ABI 层;只有 `strlen` 真的是 libc。
+⇒ 应为独立小包,由零 libc 档拉入。
 
 ### 7.2 缺口
 
