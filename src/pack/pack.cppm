@@ -1031,10 +1031,17 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     // docs/02 lists macOS bundling under "Planned Support"; until it lands,
     // saying so is strictly better than producing an empty bundle that claims
     // to be one.
+    //
+    // NAMES THE ARTIFACT. Not decoration: `mcpp pack <name>` routes on the
+    // target's kind, and a refusal that does not say WHICH program it got to is
+    // indistinguishable from one that resolved the wrong target — which is the
+    // exact defect `route_pack_target` exists to prevent. It is also the only
+    // way an e2e can check that routing on macOS, where no program bundle can
+    // be produced to inspect.
     if (mcpp::pack::binfmt::identify(plan.builtBinary).format
         == mcpp::pack::binfmt::Format::MachO) {
-        return std::unexpected(Error{
-            "cannot package a Mach-O program yet.\n"
+        return std::unexpected(Error{std::format(
+            "cannot package the Mach-O program '{}' yet.\n", plan.binaryName) +
             "       The dependency closure for that format is resolved by running the "
             "artifact under\n"
             "       the target's own dynamic linker, and the mechanism mcpp uses "

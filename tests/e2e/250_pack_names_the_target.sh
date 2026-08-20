@@ -42,6 +42,38 @@ EOF
 
 cd two
 
+# ── Mach-O: which target was CHOSEN is still checkable ─────────────────
+#
+# A program bundle cannot be produced on Mach-O (266), so "look inside the
+# staging dir" is unavailable here. The refusal names the artifact it got to,
+# which answers the same question: `pack beta` must reach beta and `pack alpha`
+# must reach alpha. Without this branch the file would simply not run on macOS,
+# and the defect it exists for — `mcpp pack app2` bundling app1 — is not a
+# platform-specific one.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    for want in beta alpha; do
+        other=$([[ "$want" == beta ]] && echo alpha || echo beta)
+        if "$MCPP" pack "$want" --mode system > "$want.log" 2>&1; then
+            cat "$want.log"; echo "FAIL: a Mach-O program bundle was produced"; exit 1
+        fi
+        grep -q "Mach-O program '$want'" "$want.log" || {
+            cat "$want.log"
+            echo "FAIL: 'mcpp pack $want' did not reach $want"; exit 1; }
+        grep -q "Mach-O program '$other'" "$want.log" && {
+            cat "$want.log"
+            echo "FAIL: 'mcpp pack $want' reached $other instead"; exit 1; }
+    done
+    # An unknown name must still fail EARLIER and differently — otherwise the
+    # two assertions above would pass for a build that refuses everything.
+    if "$MCPP" pack nosuch --mode system > bad.log 2>&1; then
+        cat bad.log; echo "FAIL: an unknown target name was accepted"; exit 1
+    fi
+    grep -q "no target named 'nosuch'" bad.log || {
+        cat bad.log; echo "wrong refusal for an unknown name"; exit 1; }
+    echo "PASS: mcpp pack reaches the target it is given"
+    exit 0
+fi
+
 # ── the named program is the one that gets bundled ─────────────────────
 "$MCPP" pack beta --mode system > beta.log 2>&1 || { cat beta.log; echo "pack beta failed"; exit 1; }
 staged="$(find target/dist -maxdepth 1 -type d -name 'two-0.1.0*' | head -1)"
