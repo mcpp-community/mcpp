@@ -947,6 +947,20 @@ compat.openblas = "0.3.0"    # provider 必须是图中真实存在的依赖
 被绑定 provider 的链接/头文件旗标经由常规依赖机制流到消费方;capability 层是那道
 *选择与校验* 步骤,把"静默选错后端 / 缺后端"变成构建期的显式报错。
 
+**绑定选中的是 provider,它不裁剪链接行。** 依赖包的目标文件一律进入消费方的链接,
+与它的能力是否被绑定无关。实测:两个包都提供同一能力且都定义 `cap_probe`,未 pin 时
+解析按上表报错;按提示用 `[capabilities]` pin 其中一个之后,构建走到链接器才失败——
+
+```
+ld: obj/mcpplibs_pa/src/impl.o: in function `cap_probe':
+    multiple definition of `cap_probe'; obj/mcpplibs_pb/src/impl.o: first defined here
+```
+
+这一点对**多个 provider 定义同一批符号**的能力有影响 —— 全程序单例(例如
+`operator new`),或名字集合固定的 C 接口。对这类能力,图中出现两个 provider 是**待修的
+缺陷**而非可 pin 的歧义:pin 会把一个点名两个候选的报错,换成一个点名 mangled 符号的报错。
+可互换的**库**(各 BLAS 实现导出不同的符号集合,按链接选其一)不受此影响。
+
 ### 2.8.2 `[feature-deps.<name>]` —— 由 feature 拉取的依赖
 
 在 `[feature-deps.<name>]` 下声明的依赖是**可选的**:仅当该 feature 激活时(根 `--features`,
@@ -980,6 +994,38 @@ features = {
     },
 }
 ```
+
+#### 保持可替换的默认实现
+
+同样这三件东西,也覆盖"库希望**提供**一份实现但不**强加**一份"的情形 —— 全程序单例,
+例如 `operator new`、日志 sink、panic handler:
+
+```toml
+[features]
+default   = []
+# 消费方开关:"我用到了本库中需要分配器的那部分"。
+alloc     = { requires = ["freestanding-allocator"] }
+# 内置默认:激活它就够了。
+alloc-kal = { implies = ["alloc"] }
+
+# 仅在 `alloc-kal` 激活时解析,因此库本体不携带对该实现的依赖。
+[feature-deps.alloc-kal]
+std-freestanding-alloc-kal = "0.1.x"
+```
+
+三种用法各一行:
+
+| 消费方需要 | 清单里怎么写 |
+|---|---|
+| 不用会分配的那部分 | `std-freestanding = "0.2.0"` —— 分配器不进图 |
+| 默认实现 | `features = ["alloc-kal"]` —— 实现随之进图,**无需知道其包名** |
+| 自己的或第三方的 | `features = ["alloc"]` 加一个 `provides = ["freestanding-allocator"]` 的包 |
+
+有两条性质使该形状优于无条件随包提供实现。随包提供实现的库替程序做了本属程序的决定,
+而且**撤销不掉**:feature 是**加性**的,消费方没有把某个默认**关掉**的手段。以及,由于
+依赖包的目标文件无条件参与链接(§2.8.1),随包的默认加上程序自备的那份是**重复定义**
+而非替换 —— 让 C++ 标准库能提供可替换 `operator new` 的那套归档语义,对包依赖并不适用。
+把实现放在开关之后,意味着两者**从不共存**。
 
 ### 2.8.3 `[scan_overrides."<glob>"]` —— 作者断言的扫描结果
 
