@@ -1566,3 +1566,49 @@ TEST(NinjaBackendPeRuntime, AnElfToolchainNeverStagesItsRuntimeDirs) {
     plan.toolchain.targetTriple = "x86_64-linux-gnu";
     EXPECT_TRUE(compute_flags(plan).toolchainRuntimeDeploy.empty());
 }
+
+// ── link_failure_advice ──────────────────────────────────────────────────────
+//
+// A freestanding link that reaches for `operator new` fails naming a mangled
+// symbol from a header inside the standard library. Nothing in that message
+// says which package supplies it, or that the answer is one manifest line.
+
+TEST(LinkFailureAdvice, NamesTheAllocatorFeatureForLldsSpelling) {
+    const std::string out =
+        "ld.lld: error: undefined symbol: operator new(unsigned long)\n"
+        ">>> referenced by allocate.h:58\n";
+    auto advice = mcpp::build::link_failure_advice(out);
+    EXPECT_NE(advice.find("alloc-kal"), std::string::npos);
+    EXPECT_NE(advice.find("std-freestanding"), std::string::npos);
+    // The four that are most often forgotten are named, because omitting them
+    // produces a SECOND link failure after the first is fixed.
+    EXPECT_NE(advice.find("align_val_t"), std::string::npos);
+}
+
+TEST(LinkFailureAdvice, MatchesGnuLdsSpellingToo) {
+    // Two linkers, two spellings of the same fact. Matching only lld's would
+    // make the advice appear on some toolchains and not others.
+    const std::string out =
+        "/usr/bin/ld: main.o: undefined reference to `operator new(unsigned long)'\n";
+    EXPECT_FALSE(mcpp::build::link_failure_advice(out).empty());
+}
+
+TEST(LinkFailureAdvice, StaysSilentOnUnrelatedFailures) {
+    // The advice is appended to EVERY failed build, so a needle that matched
+    // loosely would attach allocator advice to a missing board symbol.
+    const std::string out =
+        "ld.lld: error: undefined symbol: board_uart_init\n"
+        "error: cannot open crt0.o: No such file or directory\n";
+    EXPECT_TRUE(mcpp::build::link_failure_advice(out).empty());
+}
+
+TEST(LinkFailureAdvice, CarriesNoVersionLiteral) {
+    // ⚠️ The `import std` advice needed tests/e2e/135 to keep its version
+    // honest. This one is built so it cannot go stale the same way: it names a
+    // package and a FEATURE, and the feature pulls the implementation. A digit
+    // sequence that looks like a version here would be a regression in kind.
+    auto advice = mcpp::build::link_failure_advice(
+        "ld.lld: error: undefined symbol: operator new(unsigned long)\n");
+    ASSERT_FALSE(advice.empty());
+    EXPECT_EQ(advice.find("0."), std::string::npos) << advice;
+}
