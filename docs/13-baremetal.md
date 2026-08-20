@@ -13,30 +13,79 @@ covers the hosted link model this chapter departs from.
 ## Overview
 
 A freestanding target is a target whose `os` field is `none`. The target table
-at `src/toolchain/triple.cppm` carries three of them:
+at `src/toolchain/triple.cppm` carries four of them:
 
 | Triple | Tier | C library |
 |---|---|---|
 | `riscv64-none-elf` | verified | `xim:picolibc-riscv` |
 | `riscv32-none-elf` | verified | `xim:picolibc-riscv` |
 | `aarch64-none-elf` | preview | none — the zero-libc tier |
+| `x86_64-none-elf` | preview | none — the zero-libc tier |
 
 `verified` means an image has been built **and run** for the row. `preview`
 means it builds and has been observed to run, but is not yet covered by the
 engine's own emulator jobs.
 
-⚠️ The third row's C library column is empty, and that is a statement rather
-than an omission: no aarch64 build of picolibc exists in the package index, and
-the first consumer of that row — the `openarch` layer of machine mechanism —
-references no C library symbol. An empty column means exactly what
-`[target.<triple>].sysroot = ""` means in a manifest, so a project targeting it
+⚠️ The last two rows' C library column is empty, and that is a statement rather
+than an omission: no aarch64 or x86_64 build of picolibc exists in the package
+index, and the first consumer of both rows — the `openarch` layer of machine
+mechanism — references no C library symbol. An empty column means exactly what
+`[target.<triple>].sysroot = ""` means in a manifest, so a project targeting one
 begins on the zero-libc tier without asking. A project that wants a C library on
-that target declares one, which is also how it would choose a different one.
+those targets declares one, which is also how it would choose a different one.
 
 Such a target needs no per-host cross toolchain. clang and lld are
 cross-compilers by construction — one binary emits every target it was built
 with — so the target table pins `llvm@22.1.8` on every host, and any machine
-that can install the LLVM payload can produce an image for any of the three.
+that can install the LLVM payload can produce an image for any of the four.
+
+### The x86_64 row is not four strings
+
+⚠️ **A target row is normally an entry in two tables and nothing else. This one
+needed engine code, and the reason is a property of clang rather than of the
+instruction set.**
+
+clang selects a toolchain from the triple. It has a *BareMetal* toolchain for
+arm, aarch64 and riscv, which links with `ld.lld` directly; it has none for
+x86_64, so every spelling of a bare x86_64 triple falls through to the generic
+GCC toolchain — whose linker is the **host's `g++`**:
+
+```
+g++: error: unrecognized command-line option '-fuse-ld=/…/llvm/22.1.8/bin/ld.lld'
+```
+
+Measured for `x86_64-none-elf`, `x86_64-unknown-none-elf`, `x86_64-unknown-none`,
+`x86_64-elf`, `x86_64-none-none` and `x86_64-unknown-unknown`, and unchanged by
+`-fuse-ld=lld`, `--ld-path=`, `--gcc-toolchain=` or `-B`. The one thing that
+does change it is putting `linux` in the OS position, which makes clang link
+directly and adds eight host `-L` paths to a bare-metal link.
+
+Neither outcome is acceptable: routing through a host `g++` makes the row work
+on a Linux host and nowhere else, and host search paths on a freestanding link
+are the hermeticity this engine exists to keep. So the row carries a fifth
+column, `lldEmulation`, and when it is set the engine drives the link with
+`ld.lld` itself. The flag vocabulary changes with the tool — `-Map=` rather than
+`-Wl,-Map=`, `-m elf_x86_64` rather than `--target=` — and the driver-only flags
+(`-nostdlib++`, the loader tag) are dropped rather than translated.
+
+The column is empty for the riscv and aarch64 rows. Their driver already reaches
+lld, and changing a working link to make three rows look alike is how a
+regression is introduced.
+
+### `-mno-red-zone` is part of the target, not a preference
+
+The System V x86-64 ABI reserves 128 bytes below `rsp` that a leaf function may
+use without adjusting the stack pointer, because on a hosted system nothing else
+writes there. On bare metal the processor pushes an interrupt frame at `rsp` —
+into the red zone — and the interrupted leaf resumes to find its locals
+overwritten. There is no fault and no diagnostic, and it happens only when an
+interrupt arrives inside a leaf.
+
+There is no bare-metal x86_64 program for which the red zone is safe, so the
+flag is a property of the row rather than something a project remembers. It
+reaches the command line through a new `extra` column in the ISA-profile table,
+which exists because `-march`/`-mabi`/`-mcmodel` could not express it. RISC-V
+and aarch64 have no equivalent, which is why the column did not exist before.
 
 Three things a bare-metal build requires are not properties of the ISA, and
 mcpp does not attempt to derive them: which startup object and libraries to

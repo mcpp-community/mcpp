@@ -160,6 +160,27 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // has actually booted under it, claiming `verified` would be claiming the
     // measurement rather than reporting it.
     { "aarch64-none-elf",      "preview",   "bare","llvm@22.1.8","",                            true  },
+    // ⚠️ THIS ROW EXISTS SO THAT A THIRD MACHINE CAN DISAGREE WITH THE FIRST
+    // TWO, WHICH IS THE ONLY THING THAT TELLS AN ABSTRACTION FROM A HABIT.
+    //
+    // riscv64 and aarch64 are both load/store RISC machines with a weak memory
+    // model and a fixed instruction width, so an interface that fits both may
+    // fit because it is right or because they are alike. x86_64 is neither: it
+    // has variable-length instructions, a total-store-order memory model under
+    // which three of openarch's four barriers need no instruction at all, and
+    // an interrupt mechanism that is a table of gates rather than a base
+    // register. What survives all three is an abstraction.
+    //
+    // ⚠️ The tier is `preview` for the same reason aarch64's is, and the reason
+    // is stricter than it sounds: `verified` here means an image was built AND
+    // RUN. `xim:qemu-x86` does not exist yet — the index carries no
+    // `qemu-system-x86_64` — so nothing on this row has booted. Claiming
+    // `verified` would be claiming a measurement that has not been made.
+    //
+    // The sysroot column is empty, the zero-libc tier, for the reason given
+    // above `aarch64-none-elf`: the first consumer is `openarch`, which
+    // references no C library symbol.
+    { "x86_64-none-elf",       "preview",   "bare","llvm@22.1.8","",                            true  },
 };
 
 inline std::span<const TargetInfo> known_targets() { return kKnownTargets; }

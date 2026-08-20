@@ -4535,6 +4535,45 @@ prepare_build(bool print_fingerprint,
             // doubly-listed gtest_main.cc cannot land twice.
             auto& bc = pkg.manifest.buildConfig;
             if (!bc.featureSources.empty()) {
+                // ⭐ WHETHER A FEATURE *GATES* A SOURCE OR *PROVIDES* IT, AND
+                // THE ANSWER IS WRITTEN IN THE MANIFEST ALREADY.
+                //
+                // Two families of package reach this code and they want
+                // opposite things under `mcpp test`:
+                //
+                //   gtest         lists `*/googletest/src/gtest_main.cc` in
+                //                 base `sources` AND under `features.main`.
+                //                 The package provides the file unconditionally;
+                //                 the feature is a gate over it. The
+                //                 dev-dependency track's per-test main detection
+                //                 must still SEE it in order to prune it per
+                //                 test, so an inactive gate must not make it
+                //                 vanish.
+                //
+                //   riscv-virt-rt names `src/kal/**` under `features.openkal`
+                //                 and nowhere else. The package does not provide
+                //                 those files at all without the feature — the
+                //                 headers they include arrive through that
+                //                 feature's `[feature-deps]` — so compiling them
+                //                 fails on `'openkal/abort.h' file not found`.
+                //
+                // The discriminator is membership in base `sources`, evaluated
+                // BEFORE the drop below removes it. A glob in both places is a
+                // gate; a glob in one place is a provider.
+                //
+                // ⚠️ THIS IS THE FOURTH ATTEMPT, AND THE THIRD WAS ABANDONED ON
+                // A MISTAKEN READING. It was recorded as failing because
+                // "gtest's base entry is a glob that MATCHES the file rather
+                // than the same string". Measured against the descriptor the
+                // index actually carries, the two entries are byte-identical
+                // (`compat.gtest.lua` lines 71 and 90). The criterion was
+                // sound; what it was applied to was not — the earlier attempt
+                // compared against `bc.sources` AFTER `drop()` had already
+                // removed the entry, so the membership test could only ever be
+                // false.
+                std::set<std::string> baseGlobs(bc.sources.begin(), bc.sources.end());
+                baseGlobs.insert(pkg.manifest.modules.sources.begin(),
+                                 pkg.manifest.modules.sources.end());
                 if (!includeDevDeps) {
                     // glob → owned by at least one ACTIVE feature?
                     std::set<std::string> activeNow(active.begin(), active.end());
@@ -4554,6 +4593,30 @@ prepare_build(bool print_fingerprint,
                     // are re-added below.
                     for (auto& [g, isActive] : gated) {
                         if (isActive || g.starts_with("!")) continue;
+                        bc.sources.push_back("!" + g);
+                        pkg.manifest.modules.sources.push_back("!" + g);
+                    }
+                }
+                else {
+                    // `mcpp test`. The gate that build mode applies wholesale is
+                    // applied here only to the globs the package provides
+                    // NOWHERE ELSE, which leaves gtest's doubly-listed source
+                    // visible and stops riscv-virt-rt's feature-only sources
+                    // from being compiled without their feature.
+                    //
+                    // ⚠️ THE `!` EXCLUSION IS THE WHOLE MECHANISM, NOT THE GLOB
+                    // REMOVAL. `src/kal/**` is never IN `bc.sources` — the
+                    // package declares no `sources` at all and its files are
+                    // matched by the inferred `src/**`. Erasing the string
+                    // erases nothing; only an exclusion gates.
+                    std::set<std::string> activeNow(active.begin(), active.end());
+                    std::map<std::string, bool> gated;
+                    for (auto& [f, globs] : bc.featureSources)
+                        for (auto& g : globs)
+                            gated[g] = gated[g] || activeNow.contains(f);
+                    for (auto& [g, isActive] : gated) {
+                        if (isActive || g.starts_with("!")) continue;
+                        if (baseGlobs.contains(g)) continue;   // a gate, not a provider
                         bc.sources.push_back("!" + g);
                         pkg.manifest.modules.sources.push_back("!" + g);
                     }

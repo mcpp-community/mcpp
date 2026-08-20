@@ -39,6 +39,9 @@ payload: /c/Users/runneradmin/.mcpp/registry/data/xpkgs/xim-x-llvm/*/
 
 ## 1. `mcpp test` 与 `mcpp build` 对 feature 源的判断不一致
 
+> **已修复(mcpp 2026.8.21.1)。** ⚠️ 而修法既不是路线 A 也不是路线 B —— 是第三次
+> 尝试的判据,它当初被以一个**错误的理由**放弃了。见 1.3.1。
+
 ### 1.1 现象与位置
 
 同一个包、同一份清单,两条命令编译的源文件集合不同:
@@ -82,10 +85,37 @@ base `sources` 里,而 dev 依赖那条轨道的「逐测试 main 探测」需�
 |---|---|
 | DROP 与 `!` 排除在两种模式下都跑 | **弄坏 gtest**:mcpp 自己的单测链接失败,`ld returned 1 exit status` |
 | test 模式只删 glob 字符串、不加 `!` 排除 | 无效:`src/kal/**` 从来不在 `bc.sources` 里,删字符串什么都没删,文件仍由 base glob `src/**` 匹配 |
-| 按「该 glob 是否也出现在 base `sources`」判别 | 无效:gtest 的 base 是一条**能匹配到**那个文件的 glob,不是同一个字符串;字符串相等判别不到 |
+| 按「该 glob 是否也出现在 base `sources`」判别 | 记录为无效,理由是「gtest 的 base 是一条能匹配到那个文件的 glob,不是同一个字符串」。**这条记录是错的** —— 见 1.3.1 |
 
 三次都已撤销。**不留半个修复**:把一个只在部分情形下正确的门放进已发布的
 引擎,比一个有文档的缺陷更糟。
+
+### 1.3.1 ⚠️ 第三次尝试的判据是对的,被放弃的理由是错的
+
+去读索引真正携带的描述符 `pkgs/c/compat.gtest.lua`:
+
+```lua
+sources  = { "*/googletest/src/gtest-all.cc",
+             "*/googletest/src/gtest_main.cc" },   -- 第 71–73 行
+features = { ["main"] = { sources = { "*/googletest/src/gtest_main.cc" } } },  -- 第 90 行
+```
+
+两处**逐字节相同**。所以「字符串相等判别不到」这句话与事实不符,而当初把它写进
+文档时没有去读那个文件 —— 判据被一个凭印象写下的理由否掉了。
+
+真正让第三次尝试失效的是**判据被施加的时机**:membership 是拿 `bc.sources` 去比
+的,而 `drop()` 已经先一步把那条 glob 从里面删掉了,于是这个测试只可能为假。
+
+⭐ **修法**:在 `drop()` 之前把 base 的 glob 集合快照下来,并且只在 test 模式使用
+它 ——
+
+* glob 同时出现在 base `sources` 与 feature 里 ⇒ 这是一个**门**(gtest 那一族),
+  test 模式下保持可见,逐测试 main 探测仍然剪得掉它;
+* glob 只出现在 feature 里 ⇒ 这是一个**提供者**(riscv-virt-rt 那一族),
+  test 模式下也要 `!` 排除。
+
+⚠️ 而 `!` 排除才是整个机制,删 glob 字符串不是:`src/kal/**` 从来就不在
+`bc.sources` 里(该包根本没声明 `sources`),它的文件由推导出的 `src/**` 匹配。
 
 ### 1.4 正确的修法
 
@@ -129,13 +159,18 @@ openkal = { sources = ["src/kal/**"] }                             # 只经 feat
 
 必须同时满足,**任缺其一即视为未修复**:
 
-1. `mcpplibs/riscv-virt-rt` 不带 feature 时 `mcpp test` 与 `mcpp build`
-   编出的目标文件集合相同;
-2. mcpp 自己的 `mcpp test unit/test_manifest` 仍然链接并通过(gtest 那一族);
-3. 两条断言进 e2e,用两个最小包分别表达上面两族,而不是依赖生态包。
+1. ✅ `mcpplibs/riscv-virt-rt` 不带 feature 时 `mcpp test` 不再编译
+   `src/kal/**`,两条命令都以 0 退出(此前 test 死于
+   `'openkal/abort.h' file not found`);
+2. ✅ mcpp 自己的 92 个单测仍然链接并通过(gtest 那一族);
+3. ✅ `tests/e2e/138_feature_sources_gate_vs_provider.sh`,两个最小包分别表达
+   上面两族,不依赖任何生态包。
 
 ⚠️ 第 3 条是重点。这个缺陷之所以活到今天,是因为**没有任何测试同时覆盖两族**;
 只修不测,下一次同样的改动会再次在两者之间摇摆。
+
+⭐ 那条 e2e 已按「回归测试必须先失败」验证过:拿修复前的引擎跑它,它以正是本节
+开头那句症状失败;拿修复后的引擎跑它,它通过。
 
 ### 1.6 副作用
 
@@ -237,9 +272,21 @@ libcxx-headers = "22.1.8"     # 与产出导出表的那个 libc++ 同版本
 
 **步骤 2:新建 `xim:libcxx-headers`。**
 
-内容是 `include/c++/v1` 与 `share/libc++`,实测 xz 压缩后 **0.9 MB**。它与
-宿主无关,因此**一个包服务全部五个宿主**,而「加进载荷」要给每个缺失的宿主
+内容是 `include/c++/v1` 与 `share/libc++`。复测于 llvm 22.1.8 的载荷:
+
+| | |
+|---|---|
+| `include/c++/v1` | 16 MB |
+| `share/libc++` | 624 KB |
+| 打包后(`tar` + `xz -9`) | **943,180 字节** |
+
+它与宿主无关,因此**一个包服务全部五个宿主**,而「加进载荷」要给每个缺失的宿主
 各加一次。
+
+⚠️ **这个包尚未上传,而不上传是有意的。** 它今天可以打出来,但没有任何东西验证过
+它在 Windows 上确实让 `std-freestanding` 工作 —— 步骤 1 还没做。把一个未经验证的
+产物先镜像出去,只是让「未经验证的东西」传播得更快。这与 `mcpplibs/qemu-x86` 那边
+定下的顺序是同一条:**先跑通,再发布**。
 
 **步骤 3:实现层的选择成为可声明的。**
 
@@ -285,78 +332,144 @@ libcxx-headers = "22.1.8"     # 与产出导出表的那个 libc++ 同版本
 
 ---
 
-## 3. openarch:trap 与 cpu 已实现,目录树重整为三层
+## 3. openarch:三台机器,一个包两个门面,后端由 feature 选择
 
-### 3.1 已完成(0.3.1)
+> **本节已由 0.4.0 落地。** 下面记录做成了什么、以及两处本方案原先判断错了的地方。
 
-`openarch.trap` 与 `openarch.cpu` 两个接口连同两个后端已实现,探针仍是一份
-源码、在两台机器上输出逐字相同。
+### 3.1 已完成(0.4.0)
 
-⭐ **门槛产出的第三条发现:`trap_frame` 必须带 `instr_len`。** 第一版没有它,
-理由是「两台机器的陷入指令都是四字节」。实测 rv64gc:
+四个接口 —— contexts、页表项、trap、per-CPU 与屏障 —— 覆盖**三个**指令集:
+riscv64、aarch64、x86_64。一份探针源码在三台机器上构建并运行,输出逐字节相同。
+
+⭐ **第三台机器是把门槛变成证据的那一步,而本方案原先低估了它。** §4 把 x86_64
+当作「模拟器载荷问题」,并把它排在最后;实际上 riscv64 与 aarch64 都是弱内存序、
+定长指令的 load/store RISC 机器,**一个同时适配两者的接口可能是因为它对,也可能
+是因为它们像**,而在这两台机器上再怎么测也分不开这两种情况。x86_64 两样都不是:
+变长指令;total store order(四条屏障里三条不需要任何指令);中断机制是 256 个门
+的表;控制台由 `out` 到达,没有任何指针能命名它。
+
+它挖出了三条,而每一条都是两台 RISC 机器合起来也看不见的:
+
+1. **`MAIR_EL1` 那个决定不再是 aarch64 的例外。** 两台机器时是一比一,「本层拥有
+   属性寄存器」还可以被称作 aarch64 的权宜。x86_64 的 `PWT`/`PCD`/`PAT` 三个分散
+   的位同样构成 `IA32_PAT` 的索引 —— 现在是二比一,方向反了过来。
+   ⚠️ **而且它的规则更严。** 未编程的 `MAIR_EL1` 字段读作最严格的类型,过早的
+   aarch64 映射只是慢而正确;`IA32_PAT` 的复位值在索引 1 上是 **write-through**,
+   过早的设备映射是被缓存的 —— 写在程序没有选择的时刻到达设备,不触发任何异常。
+2. **`pc` 在每台机器上并不指同一件事。** 两台 RISC 机器都报告出错指令的地址;
+   x86_64 把异常分为 *fault*(如此)与 *trap*(报告**下一条**的地址),而 `int3`
+   ——`instr_len` 正是为跨过它而存在的断点 —— 是 trap。后端做归一化,于是
+   `f->pc += f->instr_len` 在三台机器上都恢复到同一处。
+3. **接口的一条承诺在这台机器的页表项里无法表达。** riscv 用 `U` 限定 `X`,
+   aarch64 有独立的 `PXN`/`UXN`;x86_64 只有一个覆盖全部特权级的 `NX`,该规则改由
+   `CR4.SMEP` 提供。
+
+⭐ **0.3.x 的第三条发现仍然成立:`trap_frame` 必须带 `instr_len`。** 实测 rv64gc:
 
 ```
 cause:3 desc=breakpoint          epc:0x800001f2
 cause:2 desc=illegal_instruction epc:0x800001f6   ← 无限重复
 ```
 
-`0x800001f2` 不是四字节对齐——C 扩展是 `rv64gc` 的一部分,汇编器发的是两字节
-的 `c.ebreak`,handler 按 4 推进就落进下一条指令中间。aarch64 只有一种指令
-宽度,永远暴露不了这一条。后端知道答案而调用方推导不出来,这正是「该放进
-frame」的定义。
+`0x800001f2` 不是四字节对齐 —— C 扩展是 `rv64gc` 的一部分,汇编器发的是两字节的
+`c.ebreak`。aarch64 只有一种指令宽度,永远暴露不了这一条。
 
-其余两处结构性差异:
-
-* **陷入的形状**。riscv 一个入口加一个原因寄存器;aarch64 十六个槽,而「哪个
-  槽跑了」这半信息在槽跳走之后任何寄存器里都读不到。本层因此接管 aarch64 的
-  向量表,理由与接管 `MAIR_EL1` 一致。⚠️ 每个槽必须在**不破坏被陷入上下文**
-  的前提下记下自己的编号——`mov x9, #N` 会毁掉 x9,而那是被中断代码的寄存器。
-* **屏障**。riscv 一条 `fence`、操作数是两个集合的叉积;aarch64 三条含义不同
-  的指令。接口暴露的是两者都能回答的四个问题,而 `complete` 单列是因为 `dmb`
-  与 `dsb` 的区别在写设备寄存器时是正确性问题。
-
-### 3.2 目录树:接口层、ABI 与后端在树上分开
+### 3.2 目录树:混合式的根,以及它顺带修好的一条
 
 ```
 openarch/
-├── mcpp.toml              [workspace]
+├── mcpp.toml              [package] openarch  兼  [workspace]
+├── src/                   C++ 门面 —— 模块 mcpplibs.openarch 再导出四个
+├── tests/                 两个门面必须一致的地方
 ├── abi/                   契约 —— 只有头文件,不依赖任何东西
 │   ├── mcpp.toml          openarch-abi
-│   └── include/openarch/
-│       ├── abi.h          后端要实现的东西
-│       └── pte_encode.h   纯编码器,宿主可调用
-├── spec/                  契约之上的 C++ 模块
-│   ├── mcpp.toml          openarch          → 依赖 openarch-abi
-│   ├── src/               context/trap/cpu/pte.cppm
-│   └── tests/             编码器的宿主断言
-├── backends/              每个指令集一个包
-│   ├── riscv64/mcpp.toml  openarch-riscv64  → 依赖 openarch-abi
-│   └── aarch64/mcpp.toml  openarch-aarch64  → 依赖 openarch-abi
-└── examples/switch/       一份探针源码,在每台机器上运行
+│   └── include/
+│       ├── mcpplibs/openarch.h   C 门面,全部
+│       └── openarch/
+│           ├── types.h    宽度,写一次、断言一次
+│           ├── abi.h      后端要实现的东西
+│           └── pte_encode.h   纯编码器,宿主可调用
+├── backends/              每个指令集一个包,都 provides "openarch-backend"
+│   ├── riscv64/  aarch64/  x86_64/
+└── examples/switch/       一份探针源码
 ```
 
-⭐ **`spec/` 拥有全部模块、没有一条指令;`backends/` 拥有指令、不导出模块。**
-两条都由 CI 断言,而不是交给目录名——0.3.1 之前后端在 `src/arch/<arch>/`、
-与规范同包,分层是一个由路径撑着的约定。
-
-**拆分逼出了一个接口变化,而那个变化本身是对的。** 模块实现单元必须与它实现
-的模块同包,所以在 `pte`/`trap`/`cpu` 的边界变成 C ABI 之前,拆包不可能。收益
-不是整洁:边界是 C ABI 的规范可以由**不是 C++ 模块**的东西实现——一份汇编、
-一个厂商的二进制,或者同一指令集在另一个特权级上的第二个后端。riscv 正需要
-最后这一种。
-
-⚠️ **`abi/` 单独成包是依赖图逼出来的。** 第一版把头放在 `spec/`、后端依赖
-`spec/`,而 `spec/` 用 cfg 拉后端以免消费者写自己的架构。mcpp 拒绝:
+⚠️ **本方案原先写的是「根是 `[workspace]`,接口在 `spec/` 成员里」,那个形状是错
+的,而错在一条它自己没有预见的地方。** portability 作业在仓库根跑
+`mcpp build --target riscv64-none-elf`,虚拟 workspace 会**对所有成员扇出** ——
+于是 aarch64 汇编被喂给 riscv 汇编器:
 
 ```
-error: dependency cycle through package 'openarch'
-       while computing its build-cache key
+unrecognized instruction mnemonic, did you mean: sra, srl?
 ```
 
-放弃自动选后端会让每个消费者写下架构;把头复制进每个后端会造出两份必须一致
-而没有机制保证一致的文件。契约不属于任何一侧。
+混合式的根(同时是 `[package]` 与 `[workspace]`)修好了它:根现在是接口包,构建
+它只拉入该 target 的后端。这个形状同时也是消费者只写一行依赖的原因 —— 虚拟
+workspace 会让 `openarch = "0.4.0"` 不得不指名成员目录。
 
-**消费者写的东西一字未变**:`openarch = "0.3.1"`,后端由目标解析。
+### 3.2.1 两个门面
+
+消费者写一行依赖,然后二选一:
+
+```c
+#include <mcpplibs/openarch.h>   /* C,以及想要 C 名字的 C++ */
+```
+```cpp
+import mcpplibs.openarch;        // 四个模块,再导出
+```
+
+⭐ 两者是**一个库的两种拼写**,不是两份互相对齐的声明:模块的 `trap_frame`
+**就是** `::arch_trap_frame`(`using`,不是同形体),枚举由契约的枚举量*定义而来*
+—— `illegal = ARCH_TRAP_ILLEGAL`。`tests/faces.cpp` 检查的是**推导**而不是一致性,
+后者是更弱的东西:「两边都是 2」今天成立、明天可能不成立,唯一维持它的是有人同时
+改两处。
+
+### 3.2.2 后端由 feature 选择
+
+三个曾由一个机制回答的问题被分开了:
+
+| 消费者要什么 | 清单里写什么 |
+|---|---|
+| 本 target 的后端 | `openarch = "0.4.0"` |
+| 指定某一个 | `default-features = false, features = ["backend-riscv64"]` |
+| **自己实现** | `default-features = false, features = ["backend-external"]` + 一个 `provides = ["openarch-backend"]` 的包 |
+
+`backend-external` 不指名任何包,而是 *require 能力*;图里没有提供者时构建在
+configure 阶段停下并说明,而不是在链接期报出一个改过名的符号。这与
+`std-freestanding` 的分配器同形,于是生态里「一个可被替换的默认实现」只有一种
+写法而不是两种。
+
+⚠️ **`backend-auto` 刻意不 require 该能力,而第一版让它 require 了。** feature 是
+可加的,而 `requires` 是无条件的 —— 哪怕满足它的 `feature-deps` 是 target 条件化
+的。于是本包自己的宿主测试无法构建:
+
+```
+error: no package provides capability 'openarch-backend' required by 'openarch'
+```
+
+宿主目标没有后端是**关于目标的事实**,不是消费者能处理的错误。
+
+### 3.2.3 类型集中到一处
+
+`openarch/types.h` 定义 `arch_u32`/`arch_u64`/`arch_uptr` 并**断言它们的宽度**。
+此前每处用点各自拼出 `unsigned long long`,顶上一段注释解释为什么不是
+`unsigned long` —— 一条被描述而从未被检查的规则。它唯一一次被违反(`1UL << 53`)
+是靠运气发现的:那个移位恰好在 `constexpr` 里,编译器被迫求值。
+
+⚠️ `arch_uptr` **不**断言为八字节。页表项在每台机器上都是 64 位(包括 32 位机器),
+指针不是,而 `riscv32-none-elf` 是本仓库打算到达的目标。断言指针是八字节会在今天
+测过的每台机器上通过,而那正是 openkal 在 `fs.h` 里犯过的错。
+
+### 3.2.4 ⚠️ CI 从 0.3.0 起一直是红的,而我此前报告过它是绿的
+
+两处,都是我写的断言把「意图」和「它实际匹配的模式」搞混了:
+
+1. **「探针不按架构分支」这条太宽。** 它 grep `__riscv|__aarch64__`,而探针**必须**
+   在恰好一处指名架构 —— 陷入指令,`ebreak` / `brk #0` / `int3` 是同一个想法的三种
+   拼写,没有可移植的第四种。trap 接口在 0.3.0 落地时这条断言就开始失败,按它自己
+   的字面是对的、按它的意图是错的,而它一直红到 0.3.1 因为没有人去读那些 run。
+   收窄为:**一个**条件块,块内除指令外别无他物。
+2. portability 作业的扇出问题,见 §3.2。
 
 ### 3.3 仍未做:时钟,以及它是否属于这一层
 
@@ -380,7 +493,67 @@ S 模式那份是否只能经 SBI。两个答案决定接口归属,而调研比�
 
 ## 4. x86_64 裸机目标
 
-### 4.1 卡在哪里
+> **本节的阶段 4 已由 mcpp 2026.8.21.1 提前落地,而落地过程推翻了本节的一个前提。**
+> 阶段 1–3(`xim:qemu-x86` 的构建与收录)仍然未做,分析依旧成立。
+
+### 4.0 ⚠️ 「不是代码,是模拟器载荷」这句话是错的
+
+本节原先断言目标行本身没有工作量,只差一个模拟器。实测下来目标行需要**引擎
+代码**,而原因是 clang 的属性、不是指令集的属性。
+
+clang 由 triple 选工具链。它为 arm / aarch64 / riscv 备有 *BareMetal* 工具链,
+直接以 `ld.lld` 链接;**它没有 x86_64 的**,于是裸 x86_64 triple 的每一种写法都
+落到通用 GCC 工具链上 —— 而后者的链接器是**宿主的 `g++`**:
+
+```
+g++: error: unrecognized command-line option '-fuse-ld=/…/llvm/22.1.8/bin/ld.lld'
+```
+
+对 `x86_64-none-elf`、`x86_64-unknown-none-elf`、`x86_64-unknown-none`、
+`x86_64-elf`、`x86_64-none-none`、`x86_64-unknown-unknown` 逐一实测,结果一致;
+`-fuse-ld=lld` / `--ld-path=` / `--gcc-toolchain=` / `-B` 逐一实测,均不改变结果。
+唯一能改变它的是把 `linux` 放进 OS 位 —— 那会给一次裸机链接带来**八条宿主 `-L`**。
+
+两种结果都不可接受:经宿主 `g++` 会让这一行只在 Linux 宿主上成立(而 macOS 与
+Windows 宿主根本没有能产 ELF 的 `g++`);宿主搜索路径出现在 freestanding 链接
+上,正是引擎要守住的封闭性。
+
+**解法**:ISA 档表新增 `lldEmulation` 列;置位时引擎直接用 `ld.lld` 驱动链接。
+标志的词汇随工具一起改变 —— `-Map=` 而非 `-Wl,-Map=`。⚠️ 仅属于驱动的标志是
+**丢弃**而非翻译,而第一次尝试漏了两个:
+
+```
+ld.lld: error: unknown argument '-nostdlib++'
+ld.lld: error: unknown argument '-Wl,--disable-new-dtags'
+```
+
+⚠️ riscv 与 aarch64 两行该列**留空**。它们的驱动本就到得了 lld,为了让三行看起来
+一致而改动一条可用的链接,正是引入回归的方式。
+
+第二列 `extra` 承载 `-mno-red-zone`,也不是偏好:System V 的 128 字节红区在有 OS
+的机器上安全,是因为内核为中断切了栈;裸机上处理器把中断帧压进红区,被中断的叶
+函数恢复后局部变量已被覆盖 —— 不触发异常、没有诊断,而且只在中断恰好落在叶函数
+内部时发生。
+
+### 4.0.1 ⭐ 探针能跑起来,靠的是 multiboot 的 a.out kludge
+
+QEMU 的 multiboot 装载器**只接受 32 位 ELF**:
+
+```
+qemu-system-x86_64: Cannot load x86-64 image, give a 32bit one.
+```
+
+而 ELF 的 class 是整个文件的属性,x86-64 代码产不出 ELF32。走的是 multiboot 的
+另一条路 —— flag 位 16 的 a.out kludge,头里自带装载地址,装载器根本不解析 ELF。
+
+⭐ 让这条路的算术成立的是 `SIZEOF_HEADERS`:装载器算的起始文件偏移是
+`header_addr - load_addr`,所以这个差必须等于 multiboot 头在文件里的真实偏移。
+把镜像起点写成 `0x100000 + SIZEOF_HEADERS`,ELF 头恰好占满 `load_addr` 与
+`header_addr` 之间的字节,偏移与地址保持同余、链接器不插填充,差值**按构造**就是
+偏移。按平常写法(`. = 0x100000`)`.multiboot` 落在文件偏移 0x1000 而地址
+0x100000,`load_addr` 就得是 0xFF000 —— 落在写入会被丢弃的 legacy BIOS 窗口里。
+
+### 4.1 阶段 1–3 卡在哪里
 
 不是代码,是模拟器载荷。`qemu-riscv` 描述符里写明了本索引的收录门槛:为它
 服务的五个宿主目标(linux x64/arm64、darwin x64/arm64、win32 x64)从**同一个
@@ -447,10 +620,14 @@ QEMU 可以从源码构建,而且**只构建需要的目标**能把代价压下�
 `openxlings/xim-pkgindex`。DT_NEEDED 闭包按 `qemu-arm` 的做法**实测**后决定
 `deps` 是否为空,而不是从兄弟描述符抄结论。
 
-**阶段 4:目标表加 `x86_64-none-elf` 行。**
+**阶段 4:目标表加 `x86_64-none-elf` 行。✅ 已完成(mcpp 2026.8.21.1)。**
 
 与 `aarch64-none-elf` 同样是零 libc 档:索引里没有 x86 的裸机 C 库,而第一批
-消费者——UEFI 应用与 openarch 的第三个后端——都不需要。
+消费者 —— UEFI 应用与 openarch 的第三个后端 —— 都不需要。
+
+⚠️ 这一阶段本来排在最后,理由是「等模拟器」。实际顺序反了过来:目标行先落地,
+openarch 的第三个后端因此写得出来,而**第三台机器正是把门槛从「适配」变成
+「抽象」的那一步**(见 §3.1)。模拟器仍然缺,CI 的那一行用 apt 装并注明了原因。
 
 ### 4.4 判据
 
@@ -468,10 +645,15 @@ QEMU 可以从源码构建,而且**只构建需要的目标**能把代价压下�
 | | 项 | 状态 | 建议 |
 |---|---|---|---|
 | 1 | Windows libc++(第 2 节) | 未做。⭐ 结论已从「加进载荷」**改为独立成包**,理由见 2.5 | 先做 2.1 的测量,再按三步落地。**我们自己能做完** |
-| 2 | feature 源不一致(第 1 节) | 未做,三次修法被证伪 | 需要 glob 展开 + 两族的 e2e |
-| 3 | openarch 的 trap / cpu(第 3 节) | ✅ **0.3.1 已完成**,目录树重整为 abi/spec/backends 三层 | — |
+| 2 | feature 源不一致(第 1 节) | ✅ **已修复**(2026.8.21.1)。⚠️ 修法就是第三次尝试的判据 —— 它当初被一个**没有去读文件就写下的理由**否掉了 | — |
+| 3 | openarch(第 3 节) | ✅ **0.4.0 已完成**:混合式的根、两个门面、feature 选后端、三个指令集 | — |
 | 4 | openarch 的时钟归属(3.3) | 未做 | ⭐ 先作为**调研**:两种启动方式各一个最小探针,答案决定接口归属 |
-| 5 | x86_64 裸机(第 4 节) | 未做 | 阶段 1 先做 linux x64 供 openkal-uefi 用;阶段 2 用**临时 PR 的 CI 矩阵**跑通五条腿再谈收录 |
+| 5 | x86_64 裸机(第 4 节) | ✅ **阶段 4 已完成**(目标行 + 引擎的直连链接);阶段 1–3 未做 | `xim:qemu-x86` 仍缺。阶段 1 先做 linux x64 供 openkal-uefi 用;阶段 2 用**临时 PR 的 CI 矩阵**跑通五条腿再谈收录 |
+
+⚠️ **本方案排序里有一处判断错了,值得记下来。** 第 5 项原先排在最后,理由是它
+「卡在模拟器载荷」。实际做下来,它是**唯一一项改变了对已完成工作之信心**的:
+第三台机器挖出了三条两台 RISC 机器合起来也看不见的东西(§3.1)。一个「被外部
+依赖卡住」的条目和一个「价值低」的条目在列表上看起来一样,而它们不是一回事。
 
 ⚠️ 排期时要当外部依赖的只剩两处,比本文第一版少了一处:`xim:qemu-x86` 需要
 进 `openxlings/xim-pkgindex`;QEMU 的五宿主构建若沿用 xPack 的脚本,需要与那个
