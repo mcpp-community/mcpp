@@ -125,8 +125,14 @@ capability 作仲裁,实现在别的包。
 | 模板用 `[build] ldflags = ["-T", "link.ld"]` | 链接器工作目录是构建目录 ⇒ `cannot find linker script link.ld` | 改用 `mcpp:link-script=`,它按包根解析 |
 | `alignof(__max_align_t)` 可用 | 该标识符来自 `<stddef.h>`,零 libc 包没有 | 改用编译器预定义的 `__BIGGEST_ALIGNMENT__` |
 | Cortex-M「只缺一行目标表」 | xim 索引里裸机 C 库只有 `picolibc-riscv`,qemu 只有 `qemu-riscv` | 真实成本是**两个新载荷** + 一行 + 一个包 |
+| ⭐ `nolibc` 与 `-lc` 并存会**重复定义而失败** | **冷构建成功**,`nm` 只找到一处 `memcpy` —— C 库是**归档**,成员只在符号仍未定义时才拉入,而包的 `.o` 先定义了它 | 危害不是链接失败,而是**静默替换**了 C 库的优化实现。已更正包注释、README、`docs/13` 中英两版 |
 
-⇒ 八条里有七条**若不实测就会写进文档**。
+⇒ 九条里有八条**若不实测就会写进文档**。
+
+⚠️ 最后一条是本轮唯一一次**已经写进了已发布文本才被推翻**的:它进了包的 mcpp.toml、
+README、索引描述符与 `docs/13`,之后才被实测否掉。推理链本身没错(依赖确实以 `.o`
+参与链接),错在**没有把它与「C 库是归档」这一半合起来看**。
+「结构上可能 ≠ 运行时确实」这一条,这次是在我自己身上生效的。
 
 ---
 
@@ -172,6 +178,6 @@ capability 作仲裁,实现在别的包。
 |---|---|
 | 生态侧验证 | **仅 Linux**。macOS / Windows 宿主上的裸机链无持续验证 |
 | 两个 alloc provider 的互斥 | 由解析器保证,**已实测**;但未验证第三方 provider 的情形 |
-| `std-freestanding-nolibc` 与 `-lc` 共存 | 设计上不可共存,**未实测**其失败信息是否可读 |
+| `std-freestanding-nolibc` 与 `-lc` 共存 | ⚠️ **已实测,而且推翻了设计主张** —— 见 §3 末行 |
 | openkal 裸机后端 | 实现 core 三件;`kal_stream_read` 走 semihosting,**未实测**输入路径 |
 | 零 libc 模板的 rv32 档 | **未实测**(模板只写了 rv64 的 `[target.*]` 段) |

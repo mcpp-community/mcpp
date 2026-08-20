@@ -323,9 +323,14 @@ obligation rather than a convenience: `memcpy`, `memmove`, `memset` and `memcmp`
 must exist because the compiler lowers structure assignment and array
 initialisation onto them. `std-freestanding-nolibc` supplies those and `strlen`.
 
-⚠️ That package is for the zero-libc tier only. A dependency package's object
-files enter the consumer's link unconditionally, so a project whose board
-package links `-lc` would get two definitions of `memcpy`.
+⚠️ That package is for the zero-libc tier only, and using it alongside a C
+library fails silently rather than loudly. A C library ships as an archive, and
+an archive member is pulled only while the symbol is still undefined; a
+dependency package's object files enter the link unconditionally. The package
+therefore defines `memcpy` first, the C library's member is never pulled, and
+the build succeeds — with the byte-at-a-time implementations in place of the C
+library's optimised ones, and no report of the substitution. Measured with
+picolibc present: a cold build links, and `nm` finds one definition.
 
 ### Running tests on the target
 
