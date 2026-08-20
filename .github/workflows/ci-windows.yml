@@ -254,7 +254,8 @@ jobs:
           XLINGS_NON_INTERACTIVE: '1'
         run: |
           export MCPP_VENDORED_XLINGS=$(cygpath -w "$USERPROFILE/.xlings/subos/default/bin/xlings.exe")
-          git clone --depth 1 --recurse-submodules \
+          "$GITHUB_WORKSPACE/.github/tools/git_clone_retry.sh" \
+            --depth 1 --recurse-submodules \
             https://github.com/openxlings/xlings /tmp/xlings-src
           cd /tmp/xlings-src
           "$MCPP_SELF" self config --mirror GLOBAL

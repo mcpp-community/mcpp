@@ -231,16 +231,69 @@ ldflags = ["-Llib/x86_64-linux-musl", "-lmathkit"]
 这是**降级**而不是变砖,方向是对的。但它意味着**闸门只保护新客户端**,
 面向混合版本用户群发布时,这一条应写进发布说明。
 
+## 包里带什么走,以及刻意不带什么
+
+发布出去的包必须能在**不是发布者的**机器上工作。两个步骤保证这件事,
+它们作用在打包器暂存的每一个产物上。
+
+### 构建机的 loader 搜索路径会被删掉
+
+dev 构建会把工具链自己的目录烙进每一个共享对象:
+
+```text
+DT_RUNPATH = <home>/registry/data/xpkgs/xim-x-glibc/2.44/lib64
+           : <home>/registry/data/xpkgs/xim-x-gcc/16.1.0/lib64
+           : <home>/registry/subos/default/lib
+```
+
+这对 dev 构建是对的,对一个包则是致命的(issue #460),原因是 ELF 装载器的
+一条规则:**一个携带任何 `DT_RUNPATH` 的对象,会让装载器在解析它自己的依赖时
+跳过整条继承来的 `DT_RPATH` 链。** 于是消费方那条 `DT_RPATH` —— 载荷、包目录、
+SubOS farm,全都是在真正要运行它的那台机器上算出来的 —— 根本不被查,程序死在
+
+```text
+error while loading shared libraries: libstdc++.so.6: cannot open shared object file
+```
+
+⚠️ **`$ORIGIN` 不是解药。** 在真实的包上、把构建机的 store 变成不可达之后实测:
+
+| 发货 `.so` 上的状态 | 消费方 `DT_RPATH` 被继承? | 结果 |
+|---|---|---|
+| 失效的绝对路径 `DT_RUNPATH` | 否 | 失败 |
+| **完全没有这条 tag** | **是** | **能跑** |
+| `DT_RUNPATH = $ORIGIN` | 否 | 失败 |
+| `DT_RUNPATH = ""` | 否 | 失败 |
+
+关掉继承的是这条 tag 的**存在**,不是它的内容。所以 `mcpp pack` 删掉这个条目而
+不是改写它 —— 而且删掉不是妥协,它就是正确答案:消费方自己的 `DT_RPATH` 是同一个
+闭包,只不过是在它有意义的那台机器上解析的。
+
+路径**字符串**会留在 `.dynstr` 里,没有人再指向它。`.dynstr` 被链接器做了尾部合并,
+一个更短的活字符串可能从这条死字符串的中间开始,删掉这些字节无法被证明是安全的;
+`patchelf --remove-rpath` 留下的残留在尺寸上逐字节相同。**所以这件事的守卫必须读
+动态段的条目,绝不能 `grep` 文件字节** —— 见 `tests/e2e/_elf_tag.sh`。
+
+Mach-O 上打包器会读出 `LC_RPATH` 并在包会携带它时告警;自动改写
+(`install_name_tool -delete_rpath`)尚未做,因为这个套件里还没有任何测试能产出
+一个 `.dylib` 来给这次字节编辑做判据。
+
+### 调试信息会被剥掉
+
+参数、分档表与 `--debug-symbols` 见 [docs/02](02-pack-and-release.md)。
+对**库**包最要紧的一条:静态归档只做 `--strip-debug`,因为 `--strip-all` 会删掉
+归档的符号索引,消费方链接时会报 `archive has no index; run ranlib to add one`。
+
 ## 当前边界
 
 | | 状态 |
 |---|---|
 | `kind = "lib"`(静态) | ✅ 所有 target,三平台都测了 |
-| `kind = "shared"` on Linux/ELF | ✅ —— 包里同时带链接名与 SONAME |
+| `kind = "shared"` on Linux/ELF | ✅ —— 包里同时带链接名与 SONAME,且不含构建机的 loader 路径 |
 | `kind = "shared"` on PE / MinGW(`*-windows-gnu`) | ✅ —— 包里同时带 `.dll` **和它的导入库** |
-| `kind = "shared"` on Mach-O(`*-macos`) | ✅ —— install name 是 `@rpath/<file>`,`.dylib` 可重定位 |
+| `kind = "shared"` on Mach-O(`*-macos`) | ✅ —— install name 是 `@rpath/<file>`,`.dylib` 可重定位。`LC_RPATH` 只报告,尚未改写 |
 | `kind = "shared"` on PE / MSVC(`*-windows-msvc`) | ✅ —— mcpp 生成 `.def`;见下 |
 | `kind = "shared"` on `*-musl` | ❌ musl target 是静态链接的 |
+| 一个包同时携带同一 triple 的两套 ABI(gcc **与** clang) | ❌ leg 选择是 `cfg(arch/os/env)`;一个 ABI 发一个包 |
 | 发布预编译 BMI | ❌ 未尝试;BMI 与编译器构建逐位绑定 |
 | 把依赖打包进去 | ❌ 改为声明依赖(见上) |
 | 用**原生 `cl.exe`** 消费这种包 | ✅ —— 经方言中立的链接意图;见下 |
@@ -364,6 +417,9 @@ e2e 套件按宿主能力给每条测试开门,所以「套件是绿的」和「
 | Mach-O 共享库离开构建树仍可加载 | — | ✅ | — |
 | MSVC 以「导出」为理由拒绝 `kind = "shared"` | — | — | ✅ |
 | 已发布的 mcpp 消费本版产出的包 | 仅本机 | 仅本机 | 仅本机 |
+| 打包出的 `.so` 不含构建机 loader 路径,**且把缺陷放回去时守卫看得见** | ✅ | — | — |
+| strip 过的静态归档仍可链接、strip 过的共享库仍可加载,`--no-strip` / `[pack] strip` / `--debug-symbols` 两侧都钉 | ✅ | — | — |
+| ELF 编辑器在 ELF32 与大端上的行为 | 单测 | 单测 | 单测 |
 
 *不可能* 不是缺口:macOS 宿主只能服务一个 target(`host_can_serve`,
 `registry.cppm`),那里根本产不出两个 target 的产物的包。

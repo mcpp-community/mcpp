@@ -790,6 +790,20 @@ struct LibConfig {
 //   "bundle-all"      — bundle every dynamic dep including libc / libstdc++
 struct PackConfig {
     std::string                         defaultMode;   // empty → "bundle-project"
+    // ⚠️ THERE IS DELIBERATELY NO `[pack] profile`. Which profile `mcpp pack`
+    // builds with is `--profile` > `[build] default-profile` > "release" —
+    // packaging only changes the LAST step (from "dev"), because a fourth
+    // precedence level would have to be resolved before `prepare_build` runs
+    // and this manifest is what `prepare_build` produces.
+    // Strip the SHIPPED artifacts (not a link-time `-s`; see mcpp.pack.strip).
+    // Tri-state: unset = the default (strip), which is what a published binary
+    // wants. `false` ships the artifact exactly as built.
+    std::optional<bool>                 strip;
+    // Where the separated `*.debug` files go, package-root-relative or
+    // absolute. Empty = do not separate, which is the default: most publishers
+    // do not ship a debug package, and writing one by default would double the
+    // output of every `mcpp pack`.
+    std::string                         debugSymbols;
     std::vector<std::string>            include;       // extra files/globs to ship
     std::vector<std::string>            exclude;       // patterns to drop from include
     // Mode C overrides — let the user expand or contract the PEP 600

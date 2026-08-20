@@ -310,7 +310,12 @@ jobs:
         run: |
           MCPP=/tmp/mcpp-fresh   # the freshly self-hosted binary built from this PR
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          git clone --depth 1 --recurse-submodules \
+          # ⚠️ THIS IS THE STEP THE RETRY WAS MEASURED ON: a macOS runner
+          # answered `Could not resolve host: github.com` after 30s of
+          # resolver timeout, failing a PR check before a single line of
+          # mcpp had run. See .github/tools/git_clone_retry.sh.
+          "$GITHUB_WORKSPACE/.github/tools/git_clone_retry.sh" \
+            --depth 1 --recurse-submodules \
             https://github.com/openxlings/xlings /tmp/xlings-src
           cd /tmp/xlings-src
           "$MCPP" self config --mirror GLOBAL

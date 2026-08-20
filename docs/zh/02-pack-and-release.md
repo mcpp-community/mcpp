@@ -99,12 +99,55 @@ mcpp pack --target aarch64-linux-musl  # ARM64 等价写法
 mcpp pack --format dir                 # 输出为目录,不打包 tarball
 mcpp pack -o myapp.tar.gz              # 仅文件名:落到 target/dist/myapp.tar.gz
 mcpp pack -o /abs/path/myapp.tar.gz    # 含目录:按字面路径输出
+mcpp pack --profile dev                # 换一个 profile 构建(默认 release)
+mcpp pack --no-strip                   # 按构建原样发货,不剥符号
+mcpp pack --debug-symbols dbg/         # 把分离出的 *.debug 写到 dbg/
 ```
 
 `-o` 接受裸文件名时自动归到 `target/dist/`;含目录(相对或绝对)
 时按字面路径输出。
 
 完整选项参见 `mcpp pack --help`。
+
+### 打包产物用什么构建,里面带什么走
+
+与 `mcpp build` 有两点不同,都因为「这个产物要离开本机」:
+
+**profile 的兜底是 `release` 而不是 `dev`。** 其余优先级不变 ——
+`--profile` > `[build] default-profile` > 兜底。只有最后一步不同,所以声明过
+profile 的工程仍然拿到它声明的那个,`mcpp pack` 也不会产出一个 `mcpp build`
+产不出来的 flag 组合。
+
+> 有一条后果要知道:裸 `mcpp build` 与裸 `mcpp pack` 现在会写进**不同的**
+> `target/<triple>/<fingerprint>/` 目录 —— 指纹把 profile 算进去了。手工放到
+> 构建产物旁边的文件(一个 DLL、一份数据)因此只在两条命令解析到同一个
+> profile 时才被 `pack` 看见:把它写进 `[build] default-profile`,或者两条命令
+> 都带 `--profile`。声明式通道(`[runtime] deploy_files`、
+> `runtime_search_dirs`)不受影响。
+
+**调试信息会被剥掉,发布者的路径随之消失。** 未 strip 的产物带着 DWARF,而
+DWARF 带着发布者源码树与构建目录的绝对路径。剥什么取决于产物**是什么** ——
+这是 dh_strip 的分档,而其中归档那一行是要命的:
+
+| 产物 | strip 参数 | 为什么不能更狠 |
+|---|---|---|
+| 可执行文件 | `--strip-all` | 没有人链接它 |
+| 共享库 | `--strip-unneeded` | 保留 `.dynsym` —— 那**就是**导出表 |
+| 静态归档 | `--strip-debug --enable-deterministic-archives` | `--strip-all` 会删掉归档的**符号索引**,消费方链接时报 `archive has no index; run ranlib to add one` |
+
+三档都会去掉 `.comment` 与 `.note`。段删除按**精确名字**匹配,所以
+`.note.gnu.build-id` 会保留,`--add-gnu-debuglink` 仍然有东西可配对。
+
+`--no-strip`(或 `[pack] strip = false`)按构建原样发货。
+`--debug-symbols <目录>` 则是分离而不是丢弃:写出 `<目录>/<产物>.debug`,
+并给发货的产物加上指向它的 `.gnu_debuglink` —— 调试器与 `debuginfod` 认这个。
+
+> `[pack] strip` 不是 `[profile.<name>].strip`。后者是给**链接**加 `-s`,
+> 既碰不到静态归档、也无法分离出任何东西;前者管的是**包里带什么**。
+> 两个不同的决定,两个不同的名字。
+
+**被捆绑进来的库永远不 strip。** 它们来自 store 或宿主,不是 mcpp 构建的,
+为了这一个 bundle 去改写别人的共享载荷不是打包器该做的事。
 
 ## 产物布局
 
@@ -259,15 +302,31 @@ mcpp pack --target x86_64-windows-gnu     # 在 Linux 宿主上
 反方向 —— 在 Windows 上给 Linux / macOS 产物打包 —— 仍然不支持,原因还是最初
 那个:那条闭包要由目标自己的动态链接器解析,而 Windows 宿主没有办法运行它。
 
+#### Mach-O 程序会被拒绝 —— 在所有宿主上,包括 macOS
+
+同一步闭包解析是靠 `LD_TRACE_LOADED_OBJECTS=1` **运行产物**来问动态链接器要
+依赖表的。这个变量属于 glibc 的 ld.so,dyld 从来不认(它的对应物是
+`DYLD_PRINT_LIBRARIES`)。所以在 Mac 上这条命令不会 trace 任何东西 ——
+**它会把用户的程序跑起来**,然后把程序的输出当成依赖表解析。mcpp 现在直接拒绝,
+并在信息里点名缺的是哪个机制。
+
+判定按产物的**格式**而不是宿主,理由与 Windows 那条完全相同:
+`LD_TRACE_LOADED_OBJECTS` 在 Linux 上也 trace 不了一个 Mach-O。
+
+`kind = "lib"` / `"shared"` 目标在 macOS 上照常打包 —— 库打包从不运行产物。
+这条限制只针对程序。
+
 ## 配置项
 
 打包行为通过 `mcpp.toml` 中的 `[pack]` 节配置,常用字段如下:
 
 ```toml
 [pack]
-default_mode = "static"             # 覆盖裸 `mcpp pack` 的正常 vendored 默认值
-include      = ["share/**", "config/*.toml"]   # 额外打包的文件
-exclude      = ["debug/**"]
+default_mode  = "static"            # 覆盖裸 `mcpp pack` 的正常 vendored 默认值
+strip         = true                # 默认值。false = 按构建原样发货
+debug_symbols = "dist/debug"        # 把调试信息分离到这里,而不是丢弃
+include       = ["share/**", "config/*.toml"]   # 额外打包的文件
+exclude       = ["debug/**"]
 
 # 微调 vendored 的过滤策略。配置键保留既有的 `bundle-project` 拼写。
 [pack.bundle-project]
@@ -284,6 +343,8 @@ force_bundle = ["libfoo.so"]        # 即使命中 PEP 600 名单也强制打包
 
 ## 待支持
 
-macOS dylib、Windows DLL,以及 `.deb` / `.rpm` / AppImage 等分发格式
-尚在规划中。本文档随 `mcpp pack` 实现演进,最新选项以
+macOS **程序** bundling(Mach-O 依赖闭包,走 `otool -L` / `LC_LOAD_DYLIB`,
+重定位走 `install_name_tool`)仍在规划中;在它落地之前,`mcpp pack <程序>`
+会在该格式上拒绝,而不是产出一个只是看起来像 bundle 的东西。当前 `.zip`
+之外的 Windows DLL 分发,以及 `.deb` / `.rpm` / AppImage 等格式,同样在规划中。本文档随 `mcpp pack` 实现演进,最新选项以
 `mcpp pack --help` 为准。

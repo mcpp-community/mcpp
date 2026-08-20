@@ -39,6 +39,21 @@ cat > mcpp.toml <<'EOF'
 name = "winpack"
 version = "0.1.0"
 
+# ⚠️ THIS TEST DROPS A FILE INTO THE BUILD TREE AND EXPECTS `pack` TO SEE IT,
+# so the two commands have to agree on WHICH build tree that is.
+#
+# `mcpp pack` builds with the `release` fallback (a packaged artifact leaves
+# this machine), while a bare `mcpp build` uses `dev` — two profiles, two
+# fingerprint directories, and the stand-in DLL below would land in the one
+# `pack` does not use. Nothing about the closure would be wrong; the file would
+# simply not be there, and the assertion would read as "the closure reader
+# failed".
+#
+# Stating the profile in the manifest settles it for both, and doubles as a
+# check that `[build] default-profile` still outranks pack's fallback.
+[build]
+default-profile = "dev"
+
 # `force_bundle` reaching a SYSTEM name is what makes the next assertion
 # positive rather than vacuous — see the comment at the msvcrt.dll check.
 [pack.bundle-project]

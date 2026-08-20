@@ -173,7 +173,10 @@ jobs:
       - name: "Cross-build xlings -> ${{ matrix.target }}"
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          git clone --depth 1 https://github.com/openxlings/xlings /tmp/xlings-src
+          # A hosted runner's DNS hiccup is not a red build — see
+          # .github/tools/git_clone_retry.sh for the measurement.
+          "$GITHUB_WORKSPACE/.github/tools/git_clone_retry.sh" \
+            --depth 1 https://github.com/openxlings/xlings /tmp/xlings-src
           cd /tmp/xlings-src
           "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
           "$MCPP" build --target ${{ matrix.target }}

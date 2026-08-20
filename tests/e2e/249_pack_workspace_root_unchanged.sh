@@ -52,6 +52,32 @@ int main() { std::printf("ok=%d\n", core_answer()); return 0; }
 EOF
 
 cd ws
+
+# ── Mach-O: the routing is the claim, and a bundle cannot be produced ──
+#
+# `mcpp pack` of a PROGRAM is refused on Mach-O (its dependency closure would
+# be resolved by RUNNING the artifact under a linker that ignores the tracing
+# variable — see 266). So on macOS the question this file asks becomes: did the
+# workspace root still hand through to the MEMBER'S PROGRAM? The refusal names
+# the artifact, which is exactly the evidence for that — and it is a different
+# message from "this package declares no program and no library to pack", which
+# is what a routing regression would produce.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+    if "$MCPP" pack --mode system > pack.log 2>&1; then
+        cat pack.log
+        echo "FAIL: a Mach-O program bundle was produced; 266 says it must be refused"
+        exit 1
+    fi
+    grep -q "Mach-O program 'hello'" pack.log || {
+        cat pack.log
+        echo "FAIL: the workspace root did not route to the member's program 'hello'."
+        echo "      (A refusal naming some other artifact, or a 'declares no program'"
+        echo "       error, is the routing regression this file exists to catch.)"
+        exit 1; }
+    echo "PASS: a workspace root still routes to its member's program"
+    exit 0
+fi
+
 "$MCPP" pack --mode system > pack.log 2>&1 || {
     cat pack.log
     echo "FAIL: packing from a virtual workspace root stopped working"

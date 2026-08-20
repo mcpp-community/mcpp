@@ -3,6 +3,103 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.20.1] — 2026-08-20
+
+### 修复
+
+- **`mcpp pack` 打出的 `kind = "shared"` 库带走了构建机,产物在别人机器上起不来
+  (#460)。**
+
+  打包只是把链接产物 `copy_file` 进包里,于是 `.so` 保留了链接期的
+  `DT_RUNPATH`——一串指向**构建机** `~/.mcpp/` 的绝对路径。消费者在另一台机器上
+  拿到的是 `libstdc++.so.6: cannot open shared object file`。
+
+  ⚠️ **issue 里建议的 `$ORIGIN` 修不好它,空串也修不好。** 在真实包 + 真实消费者上
+  实测(把构建机 store 变成不可达):
+
+  | 发货 `.so` 上的状态 | 消费方 `DT_RPATH` 被继承 | 结果 |
+  |---|---|---|
+  | 失效绝对路径的 `DT_RUNPATH`(此前的行为) | 否 | rc=127 |
+  | **没有这条 tag** | **是** | ok |
+  | `DT_RUNPATH = $ORIGIN` | 否 | rc=127 |
+  | `DT_RUNPATH = ""` | 否 | rc=127 |
+
+  关掉继承的是这条 tag 的**存在**而不是内容,所以判据是「tag 不存在」。删掉它也
+  不是妥协:消费方自己的 `DT_RPATH` 是同一个闭包,只不过是在真正要运行它的机器上
+  解析的。
+
+  实现是**进程内改写 `PT_DYNAMIC`**(删槽、后移、补 `DT_NULL`,文件尺寸不变),
+  不是调 patchelf——库打包支持 `--target` 且没有宿主门,非 Linux 宿主上
+  `sandbox_patchelf` 会解析为空,照抄应用侧的 `if (!patchelf.empty())` 等于把这个
+  缺陷留给一半的宿主。新增 `mcpp.pack.relocate`,覆盖 ELF32/64 × 大小端(单测),
+  Mach-O 只读报告 `LC_RPATH`。
+
+- **`mcpp pack` 一个 Mach-O 程序会**执行用户的程序**,然后报告 `Packed`。**
+
+  非 PE 路径靠 `LD_TRACE_LOADED_OBJECTS=1 '<binary>'` 向动态链接器要依赖表,而这个
+  变量是 glibc 的;dyld 不认它,于是那条命令在 macOS 上就是把程序跑起来,程序的
+  输出被当成依赖表解析(解析出零条),然后写出一个只含二进制的包。有副作用的程序
+  会把副作用做一遍,交互式的会把打包器挂住。现在按**产物格式**(而非宿主)拒绝,
+  理由与旁边那条 `_WIN32` 拒绝完全同源。macOS 上 `kind = "lib"` / `"shared"` 照常
+  打包——库打包从不运行产物。
+
+  为什么此前没人发现:e2e 的 `pack` 能力 = `elf` + `patchelf`,只有 `Linux)` 分支
+  给,所以应用打包在 macOS 上**一条 e2e 都没跑过**。
+
+- **共享库包的 SONAME 别名在符号链接失败时会拷到未处理的原始产物。**
+
+  别名的 copy 回退读的是 `leg.artifact`(构建树里的文件)而不是暂存后的 `dst`。
+  在没有重定位/strip 之前两者逐字节相同,所以看不出来;之后它会在
+  `create_symlink` 失败的机器上,用装载器真正要打开的那个名字,发出一份未重定位、
+  未 strip 的库。
+
+### 变更
+
+- **`mcpp pack` 默认走 release 并 strip 发货产物。**
+
+  此前两个打包器发的都是 dev 构建:未 strip、带着发布者的绝对源码路径。现在
+  profile 的**兜底**从 `dev` 改为 `release`——其余优先级不变(`--profile` >
+  `[build] default-profile` > 兜底),所以声明过 profile 的工程仍然拿到它声明的
+  那个。
+
+  剥什么取决于产物**是什么**,用的是 dh_strip 的分档:
+
+  | 产物 | 参数 | 为什么不能更狠 |
+  |---|---|---|
+  | 可执行文件 | `--strip-all` | 没有人链接它 |
+  | 共享库 | `--strip-unneeded` | 保留 `.dynsym`——那**就是**导出表 |
+  | 静态归档 | `--strip-debug --enable-deterministic-archives` | ⚠️ `--strip-all` 会删掉归档的**符号索引**,消费方链接时报 `archive has no index; run ranlib to add one`(实测) |
+
+  被捆绑进 bundle 的第三方 `.so` **不**剥——它们不是 mcpp 构建的。
+
+  新增 `--profile` / `--no-strip` / `--debug-symbols <DIR>` 与 `[pack] strip`、
+  `[pack] debug_symbols`。`--debug-symbols` 是分离而不是丢弃:写出
+  `<dir>/<triple>/<产物>.debug` 并给发货产物加 `.gnu_debuglink`——**按 triple 分目录**,
+  因为 fat 包的各条 leg 产物同名(`gnu` 与 `musl` 两条腿都叫
+  `libmathkit-shared.so` 是常态),扁平布局会让后一条覆盖前一条,而前一个产物的
+  `.gnu_debuglink` 会静默指向另一个目标的符号。
+
+  ⚠️ **一条要知道的后果**:裸 `mcpp build` 与裸 `mcpp pack` 现在写进**不同的**
+  `target/<triple>/<fingerprint>/` 目录(指纹把 profile 算进去了)。手工放到构建
+  产物旁边的文件只在两条命令解析到同一个 profile 时才被 `pack` 看见;声明式通道
+  (`[runtime] deploy_files`、`runtime_search_dirs`)不受影响。e2e 240 因此在
+  fixture 里显式写了 `[build] default-profile`。
+
+  > `[pack] strip` 与 `[profile.<name>].strip` 是两个决定:后者给**链接**加 `-s`
+  > (碰不到静态归档,也分离不出任何东西),前者管**包里带什么**。
+
+### 内部
+
+- `mcpp::toolchain::binutils_tool(tc, name)`:四个工具链家族对同一个 binutils 工具
+  的四种拼法,此前只有 `ar` 知道。`archive_tool` 现在由它表达(MSVC 的 `lib.exe`
+  仍是特例,因为它不是 binutils 的名字)。
+- `tests/e2e/_elf_tag.sh`:215 与新增的 264 共用同一个 ELF 读取器,两份拷贝会变成
+  「构建机路径」的两个定义。
+- **判据只查动态段,不查文件字节**:重定位删的是条目,字符串留在 `.dynstr`
+  (`patchelf --remove-rpath` 实测残留完全相同,`.dynstr` 有尾部合并,删不安全)。
+  一个 `grep` 式的判据会把正确重定位的产物报成脏的,而且会在 strip 落地那天因为
+  另一个原因变绿——两次都不是因为重定位。
+
 ## [2026.8.18.3] — 2026-08-18
 
 ### 新增

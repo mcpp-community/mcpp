@@ -35,6 +35,8 @@ import mcpp.pack;
 import mcpp.pack.abi_tag;
 import mcpp.pack.interface;
 import mcpp.pack.library;
+import mcpp.pack.strip;
+import mcpp.toolchain.model;
 import mcpp.platform;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.registry;
@@ -130,6 +132,11 @@ export int build_and_pack_library(const std::string& targetName,
     for (auto const& want : legs) {
         mcpp::build::BuildOverrides ov;
         ov.target_triple = want;
+        // A packaged artifact leaves this machine, so the fallback is release
+        // rather than the interactive "dev". `[build] default-profile` still
+        // decides when the project states one — see resolve_profile_name.
+        ov.profile          = opts.profile;
+        ov.profile_fallback = "release";
         auto ctx = mcpp::build::prepare_build(false, /*includeDevDeps=*/false, {}, ov);
         if (!ctx) { mcpp::ui::error(ctx.error()); return 2; }
 
@@ -287,6 +294,12 @@ export int build_and_pack_library(const std::string& targetName,
             declaredPlatforms = ctx->manifest.package.platforms;
             plan.dependencies = publishable_dependencies(ctx->manifest);
             plan.extras       = extras_of(ctx->manifest, ctx->projectRoot);
+            // Read from the FIRST leg's manifest, like every other package-wide
+            // fact here: one package, one answer. A `[pack] strip` that differed
+            // per target would describe two packages.
+            plan.strip        = mcpp::pack::resolve_strip(opts, ctx->manifest.packConfig);
+            plan.debugDir     = mcpp::pack::resolve_debug_dir(
+                                    opts, ctx->manifest.packConfig, ctx->projectRoot);
             plan.interfaceSources = closure.published;
             plan.dropObjects  = published_object_names(closure);
             for (auto const& d : ctx->manifest.buildConfig.includeDirs) {
@@ -339,6 +352,15 @@ export int build_and_pack_library(const std::string& targetName,
             .soname      = target->soname,
             .shared      = shared,
             .importLibrary = importLib,
+            // From THIS leg's toolchain, for the same reason `archiveTool` is:
+            // a fat package's foreign leg must not be stripped by the host's
+            // tool. Whether stripping APPLIES is a question about the leg's
+            // TARGET, not about its compiler — see mcpp.pack.strip.
+            .stripTools  = mcpp::pack::StripTools{
+                .strip   = mcpp::toolchain::binutils_tool(ctx->tc, "strip"),
+                .objcopy = mcpp::toolchain::binutils_tool(ctx->tc, "objcopy"),
+                .inBandDebugInfo = mcpp::pack::debug_info_is_in_band(triple),
+            },
         });
         mcpp::ui::status("Packed leg", std::format("{}  [{}]", triple, tag.str()));
     }

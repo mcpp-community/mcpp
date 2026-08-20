@@ -79,7 +79,26 @@ jobs:
           mcpp index update || true
           idx="$HOME/.mcpp/registry/data/xim-pkgindex"
           rm -rf "$idx"
-          git clone --depth 1 https://github.com/openxlings/xim-pkgindex "$idx"
+          # A bare `git clone` here fails the whole job on a runner DNS
+          # hiccup. The policy lives in .github/tools/git_clone_retry.sh —
+          # but this job checks the repository out LAST ON PURPOSE (a
+          # `.xlings.json` in the workspace re-points where `xlings install`
+          # writes, so an early checkout silently changes what the
+          # fresh-install steps above are testing). The helper therefore does
+          # not exist on disk yet, and the retry is spelled inline. Same
+          # policy: retry every failure, bounded, git's own message survives.
+          clone_retry() {
+            local rc dest="${@: -1}"
+            for i in 1 2 3 4; do
+              rc=0; git clone "$@" || rc=$?
+              [ "$rc" = 0 ] && return 0
+              [ "$i" = 4 ] && return "$rc"
+              [ -e "$dest" ] && rm -rf -- "$dest"
+              echo "clone_retry: attempt $i failed (exit $rc); retrying" >&2
+              sleep $((i * 5))
+            done
+          }
+          clone_retry --depth 1 https://github.com/openxlings/xim-pkgindex "$idx"
           grep -n "skipping relocation\|os.isfile(path.join(bindir" "$idx/pkgs/m/musl-gcc.lua" | head -2 || true
 
       - name: Native build + run an `import std` program
@@ -156,7 +175,21 @@ jobs:
           export MCPP_HOME=$(mcpp self env | awk -F'= *' '/^MCPP_HOME/{print $2; exit}')
           echo "reusing MCPP_HOME=$MCPP_HOME"
           test -d "$MCPP_HOME" || { echo "could not determine MCPP_HOME"; exit 1; }
-          git clone --depth 1 https://github.com/openxlings/xlings /tmp/xlings-src
+          # Same inline retry as the index clone above, and for the same
+          # reason — the checkout that would provide the shared helper is
+          # deliberately the last step in this job.
+          clone_retry() {
+            local rc dest="${@: -1}"
+            for i in 1 2 3 4; do
+              rc=0; git clone "$@" || rc=$?
+              [ "$rc" = 0 ] && return 0
+              [ "$i" = 4 ] && return "$rc"
+              [ -e "$dest" ] && rm -rf -- "$dest"
+              echo "clone_retry: attempt $i failed (exit $rc); retrying" >&2
+              sleep $((i * 5))
+            done
+          }
+          clone_retry --depth 1 https://github.com/openxlings/xlings /tmp/xlings-src
           cd /tmp/xlings-src
           # "$m", not `mcpp`: the just-built binary is the code under review,
           # and building xlings with the INSTALLED one meant this half of the

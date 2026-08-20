@@ -1359,6 +1359,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         }
         m.packConfig.defaultMode = s;
     }
+    if (auto v = doc->get_bool("pack.strip"))
+        m.packConfig.strip = *v;
+    if (auto v = doc->get_string("pack.debug_symbols"))
+        m.packConfig.debugSymbols = *v;
     if (auto v = doc->get_string_array("pack.include"))
         m.packConfig.include = *v;
     if (auto v = doc->get_string_array("pack.exclude"))

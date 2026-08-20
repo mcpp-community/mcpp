@@ -447,6 +447,15 @@ int run(int argc, char** argv) {
                 .help("tar (default; .zip for a Windows target) | dir"))
             .option(cl::Option("output").short_name('o').takes_value()
                 .help("Override output path"))
+            // Packaging builds RELEASE by default — the artifact leaves this
+            // machine. `[build] default-profile` still wins when it is set;
+            // this only replaces the "dev" fallback every other command uses.
+            .option(cl::Option("profile").takes_value()
+                .help("Build profile (default: [build] default-profile, else release)"))
+            .option(cl::Option("no-strip")
+                .help("Ship the artifacts as built (default: strip debug info)"))
+            .option(cl::Option("debug-symbols").takes_value().value_name("DIR")
+                .help("Write the separated *.debug files here (default: discard)"))
             .action(wrap_rc(cmd_pack)))
 
         // ─── emit (one nested subcommand: xpkg) ────────────────────────

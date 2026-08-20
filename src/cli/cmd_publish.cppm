@@ -58,6 +58,16 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
     if (auto v = parsed.value("output")) opts.output = *v;
 
+    // ⚠️ `value()`, not `option_or_empty()`, for `profile` — and NOT for
+    // anything whose name a positional shares. `ParsedArgs::value()` falls back
+    // to a same-named positional when the option is unset, which is how
+    // `mcpp run q` once became `--target=q`. `pack`'s positional is `target`,
+    // so `--target` is read through `option()` above and stays unaffected;
+    // `profile` and `debug-symbols` have no positional twin.
+    if (auto v = parsed.value("profile")) opts.profile = *v;
+    if (parsed.is_flag_set("no-strip")) opts.strip = false;
+    if (auto v = parsed.value("debug-symbols")) opts.debugSymbols = *v;
+
     // `--target` is repeatable: one leg per triple, which is how a library
     // package ships for several targets at once. The application path has
     // always taken exactly one, and still does — packing one executable for
