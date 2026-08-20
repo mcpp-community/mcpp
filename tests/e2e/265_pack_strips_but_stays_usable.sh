@@ -74,6 +74,12 @@ PY
 
 consume() {   # <package dir> <expected token> — build a program against it and run
     local pkg="$1" want="$2" tag="$3"
+    # Through a named *_HOST variable, not interpolated inline: the manifest
+    # below is FILE CONTENT, and on Git Bash a shell-spelled /tmp/... path is
+    # read by a native mcpp.exe as "root of the current drive". 00_fixture_path
+    # _hygiene enforces the naming so the conversion is visible at the use site.
+    local PKG_HOST
+    PKG_HOST="$(host_path "$pkg")"
     rm -rf "$TMP/consumer"
     mkdir -p "$TMP/consumer/src"
     cat > "$TMP/consumer/src/main.cpp" <<'EOF'
@@ -86,7 +92,7 @@ EOF
 name    = "consumer"
 version = "0.1.0"
 [dependencies]
-mathkit = { path = "$(host_path "$pkg")" }
+mathkit = { path = "$PKG_HOST" }
 [targets.consumer]
 kind = "bin"
 main = "src/main.cpp"
