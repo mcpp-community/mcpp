@@ -403,7 +403,7 @@ P1-1(闭包模型学会 RUNPATH 抑制规则)落地后,这段诊断才**说得�
 
 | # | 主张 | 证据等级 |
 |---|---|---|
-| 1 | macOS 宿主上应用打包走 glibc 路径并执行产物 | **读码**(`pack.cppm:934` 分支 + `ldd_parse:442`),**需 macOS 核验** |
+| 1 | macOS 宿主上应用打包走 glibc 路径并执行产物 | **已按格式拒绝(2026.8.20.1)**。旁证:此前 macOS 上 249/250 是绿的,而它们检查的正是那次「运行用户程序」产出的 bundle —— 加上拒绝后这两条立刻变红 | **读码 + macOS CI 实测** |
 | 2 | e2e 的 `pack` 能力 = ELF + patchelf ⇒ 应用打包在 macOS 上一条 e2e 都不跑 | **读码**(`tests/e2e/run_all.sh:43-76` 的 `Linux)` / `Darwin)` 分支) |
 | 3 | `binfmt::Format` 已是三态但只服务 PE 路径 | 读码 |
 | 4 | `is_machine_local` 无 packer 调用方 | **grep** |
@@ -411,6 +411,6 @@ P1-1(闭包模型学会 RUNPATH 抑制规则)落地后,这段诊断才**说得�
 | 6 | 库 leg 的 digest 记录但从不校验 | 读码(`prebuilt.cppm:137-139` 只匹配 `role == "interface"`) |
 | 7 | tar 路径不确定、zip 路径确定,而文档只声明了确定性 | 读码(`pack.cppm:797` vs `:917`)+ docs/02:306 |
 | 8 | `PackConfig` 无 profile / strip 键 | 读码(`types.cppm:791-800`) |
-| 9 | 静态库不能 `--strip-all`(会删符号表) | 通用知识,**落地前必须实测** |
+| 9 | 静态库不能 `--strip-all`(会删符号表) | **已实测**:`ld: 归档没有索引;run ranlib`,而 `--strip-debug` 后 2988→1244 字节且消费方链接并跑通(e2e 265 两侧都钉) |
 | 10 | 老客户端兼容用静态+真实两半钉,且 CI 上只跑了静态那半 | 读码 + docs/12 自述 |
 | 11 | `--mode` 对库目标 warning 且措辞含 "yet" | 读码(`cmd_publish.cppm:78-82`) |
