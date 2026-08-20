@@ -12,14 +12,31 @@ covers the hosted link model this chapter departs from.
 
 ## Overview
 
-A freestanding target is a target whose `os` field is `none`. mcpp treats two
-of them as verified: `riscv64-none-elf` and `riscv32-none-elf`, both listed in
-the target table at `src/toolchain/triple.cppm`.
+A freestanding target is a target whose `os` field is `none`. The target table
+at `src/toolchain/triple.cppm` carries three of them:
+
+| Triple | Tier | C library |
+|---|---|---|
+| `riscv64-none-elf` | verified | `xim:picolibc-riscv` |
+| `riscv32-none-elf` | verified | `xim:picolibc-riscv` |
+| `aarch64-none-elf` | preview | none — the zero-libc tier |
+
+`verified` means an image has been built **and run** for the row. `preview`
+means it builds and has been observed to run, but is not yet covered by the
+engine's own emulator jobs.
+
+⚠️ The third row's C library column is empty, and that is a statement rather
+than an omission: no aarch64 build of picolibc exists in the package index, and
+the first consumer of that row — the `openarch` layer of machine mechanism —
+references no C library symbol. An empty column means exactly what
+`[target.<triple>].sysroot = ""` means in a manifest, so a project targeting it
+begins on the zero-libc tier without asking. A project that wants a C library on
+that target declares one, which is also how it would choose a different one.
 
 Such a target needs no per-host cross toolchain. clang and lld are
 cross-compilers by construction — one binary emits every target it was built
 with — so the target table pins `llvm@22.1.8` on every host, and any machine
-that can install the LLVM payload can produce a RISC-V image.
+that can install the LLVM payload can produce an image for any of the three.
 
 Three things a bare-metal build requires are not properties of the ISA, and
 mcpp does not attempt to derive them: which startup object and libraries to
