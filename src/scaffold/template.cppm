@@ -118,6 +118,21 @@ struct TemplateMeta {
     std::string postMessage;
     // [template.inject] self = { features = [...] }
     std::vector<std::string> injectSelfFeatures;
+    // [template.inject] self = false
+    //
+    // ⚠️ A TEMPLATE THAT MUST NOT DEPEND ON ITS OWN PACKAGE IS NOT HYPOTHETICAL.
+    //
+    // The self-dependency exists so a template cannot drift from the library
+    // that ships it, and for almost every template that is right. It is wrong
+    // for one whose whole subject is depending on NOTHING: a bare-metal package
+    // may ship a kernel starting point for a target with no C library, and its
+    // own module includes <stdio.h> — so injecting it makes the generated
+    // project fail to compile the dependency it never asked for.
+    //
+    // Measured: `mcpp new k --template riscv-virt-rt:nolibc` then `mcpp run`
+    // failed on the board package's own module, in a project whose manifest
+    // declares no dependencies at all.
+    bool injectSelf = true;
 };
 
 std::expected<TemplateMeta, std::string>
@@ -142,6 +157,12 @@ load_meta(const std::filesystem::path& templateDir) {
             meta.isDefault = it->second.as_bool();
         if (auto it = t->find("inject"); it != t->end() && it->second.is_table()) {
             auto& inj = it->second.as_table();
+            // The bool form declines the injection outright; the table form
+            // keeps it and carries features.
+            if (auto self = inj.find("self");
+                self != inj.end() && self->second.is_bool()) {
+                meta.injectSelf = self->second.as_bool();
+            }
             if (auto self = inj.find("self");
                 self != inj.end() && self->second.is_table()) {
                 auto& st = self->second.as_table();
