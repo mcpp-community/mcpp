@@ -97,6 +97,49 @@ inline std::string link_flags(const Spec& s, const LinkInputs& in,
     return out;
 }
 
+// The same link, expressed for `ld.lld` itself rather than for a driver.
+//
+// Used when the target's row carries an `lldEmulation` — see the column's
+// comment in mcpp.freestanding.target for the measurement that made this
+// necessary. The two lines are deliberately NOT one function with a flag: a
+// driver line and a linker line share no vocabulary, and writing them together
+// would mean a conditional at every token.
+//
+// ⚠️ WHAT CLANG WOULD HAVE ADDED, AND WHAT IS DELIBERATELY NOT REPRODUCED.
+// Measured on llvm 22.1.8 for the two rows whose driver does reach lld: it
+// passes `-Bstatic`, `-m <emulation>`, `-X`, and three `-L` paths under
+// `lib/clang-runtimes/<triple>/lib` and `lib/clang/22/lib/<triple>`. The `-L`s
+// name directories THAT DO NOT EXIST in this payload — it ships no bare-metal
+// runtime at all — so reproducing them would add three paths to nothing.
+// `-X` discards local symbols, which changes what `nm` reports about an image;
+// a link that silently drops symbols is not the same link.
+inline std::string link_flags_direct(const Spec& s, const LinkInputs& in,
+                                     const std::function<std::string(
+                                         const std::filesystem::path&)>& esc)
+{
+    std::string out;
+    out += " -m " + std::string(s.lldEmulation);
+    out += " -Bstatic";
+    // No loader exists, so an image must not name one. The driver line reaches
+    // this through `-static`; here it is said to the linker.
+    out += " --no-dynamic-linker";
+    if (!in.sysrootLib.empty())
+        out += " -L" + esc(in.sysrootLib);
+    if (!in.linkerScript.empty())
+        out += " -T " + esc(in.linkerScript);
+    return out;
+}
+
+// The map flag, for a linker rather than a driver: no `-Wl,` to route it
+// through.
+inline std::string map_flag_direct(const std::filesystem::path& artifact,
+                                   const std::function<std::string(
+                                       const std::filesystem::path&)>& esc)
+{
+    auto m = artifact; m += ".map";
+    return " -Map=" + esc(m);
+}
+
 // The link map, for the question only a map can answer on a bare-metal target:
 // why a section is where it is, and why something did or did not get pulled in.
 //

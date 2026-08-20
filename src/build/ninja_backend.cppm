@@ -633,6 +633,11 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             flags.ldBinary.empty() ? std::string("link.exe")
                                    : escape_ninja_path(flags.ldBinary)));
     }
+    // The linker itself, for a freestanding target whose compiler driver would
+    // hand the link to a foreign one. Bound only when set, so a graph that does
+    // not use it has no variable naming a tool it never runs.
+    if (!flags.ldDriver.empty())
+        append(std::format("ld_driver = {}\n", escape_ninja_path(flags.ldDriver)));
     // `$mcpp` is needed by stage_file in EVERY configuration (dyndep or not),
     // so the binding cannot live inside the `if (dyndep)` below.
     append(std::format("mcpp      = {}\n", escape_ninja_path(mcpp_exe_path())));
@@ -1152,6 +1157,19 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                       "$ld /nologo /DLL /OUT:$out $implib_flag $def_flag "
                       "$in $ldflags $unit_ldflags",
                       "SHARED");
+        } else if (!flags.ldDriver.empty()) {
+            // ⚠️ THE LINKER, NOT THE DRIVER, AND THE OBJECTS COME LAST.
+            //
+            // A compiler driver accepts objects anywhere on the line and sorts
+            // them out; `ld` resolves left to right, so a library named before
+            // the object that needs it contributes nothing and the link fails
+            // on a symbol that is present. This shape is only reached by a
+            // freestanding target whose row carries an `lldEmulation`.
+            link_rule("cxx_link",
+                      "$ld_driver $ldflags $unit_ldflags -o $out $in", "LINK");
+            link_rule("cxx_archive", std::string(dial.archiveCmd), "AR");
+            link_rule("c_link",
+                      "$ld_driver $c_ldflags $unit_ldflags -o $out $in", "LINK");
         } else {
             link_rule("cxx_link",
                       "$cxx $in -o $out $ldflags $unit_ldflags", "LINK");
@@ -2008,14 +2026,26 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // in every graph that builds a static library.
             if (lu.kind != LinkUnit::StaticLibrary)
                 tail.runtimeFallback = flags.ldRuntimeFallback;
-            tail.loaderTag = lu.loaderTagFlag;
+            // ⚠️ NOT ON A DIRECT LINK. The tag selects between `DT_RPATH`
+            // and `DT_RUNPATH`, entries of a dynamic section; an image with no
+            // loader has neither, and `ld.lld` rejects the flag's `-Wl,` form
+            // outright.
+            if (flags.ldDriver.empty()) tail.loaderTag = lu.loaderTagFlag;
             // The link map — per unit, because it is named after the artifact.
             if (!fsObjcopy.empty()
-                && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary))
-                tail.dependencies += mcpp::freestanding::map_flag(
-                    lu.output, [](const std::filesystem::path& q) {
-                        return escape_ninja_path(q);
-                    });
+                && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary)) {
+                // ⚠️ `-Map=` OR `-Wl,-Map=`, DECIDED BY WHO IS BEING SPOKEN TO.
+                // With `ldDriver` set the link is `ld.lld` itself, and `-Wl,`
+                // is a driver's way of saying "pass this on" — handed to the
+                // linker it is an unknown option, on the one target where the
+                // map matters most.
+                auto esc = [](const std::filesystem::path& q) {
+                    return escape_ninja_path(q);
+                };
+                tail.dependencies += flags.ldDriver.empty()
+                    ? mcpp::freestanding::map_flag(lu.output, esc)
+                    : mcpp::freestanding::map_flag_direct(lu.output, esc);
+            }
             if (auto unit = tail.render(); !unit.empty())
                 out_line += "  unit_ldflags =" + unit + "\n";
         }

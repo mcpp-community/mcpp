@@ -59,6 +59,16 @@ struct CompileFlags {
     std::filesystem::path ccBinary;   // gcc / clang (derived; cl.exe = same)
     std::filesystem::path arBinary;   // ar / llvm-ar / lib.exe (empty → PATH)
     std::filesystem::path ldBinary;   // link.exe (SeparateLinker dialects only)
+    // ⚠️ THE LINK IS DRIVEN BY THIS BINARY INSTEAD OF BY THE COMPILER, AND
+    // WHEN IT IS SET THE WHOLE FLAG VOCABULARY CHANGES WITH IT.
+    //
+    // Empty everywhere except a freestanding target whose row carries an
+    // `lldEmulation` — today `x86_64-none-elf`, where clang delegates the link
+    // to the host's `g++`. `ld`/`ldC` then hold LINKER flags rather than driver
+    // flags: `-Map=` and not `-Wl,-Map=`, `-m elf_x86_64` and not `--target=`.
+    // A caller that mixes the two gets a diagnostic from the linker naming a
+    // flag the reader never wrote.
+    std::filesystem::path ldDriver;
     std::string sysroot;              // --sysroot=... (for ninja ldflags)
     std::string bFlag;                // -B<binutils> (for ninja ldflags)
     bool staticStdlib = true;
@@ -1327,8 +1337,22 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // RISC-V firmware image with an x86-64 PT_INTERP baked in, which
             // links clean and reports success. Measured, on this very change,
             // before this line existed.
-            std::string fsLd = isClangWithCfg ? " --no-default-config" : "";
-            fsLd += mcpp::freestanding::link_flags(*spec, in, ninjaEsc);
+            // ⚠️ TWO SHAPES, AND WHICH ONE IS A PROPERTY OF THE TARGET'S ROW.
+            //
+            // With an `lldEmulation` the compiler driver is bypassed entirely,
+            // because for that target it would hand the link to a host `g++`
+            // that cannot take our linker's path — see the column's comment in
+            // mcpp.freestanding.target. `--no-default-config` is then not
+            // needed either: the payload's clang config file is a DRIVER
+            // config, and nothing here runs the driver.
+            std::string fsLd;
+            if (!spec->lldEmulation.empty()) {
+                f.ldDriver = in.lld;
+                fsLd = mcpp::freestanding::link_flags_direct(*spec, in, ninjaEsc);
+            } else {
+                fsLd = isClangWithCfg ? " --no-default-config" : "";
+                fsLd += mcpp::freestanding::link_flags(*spec, in, ninjaEsc);
+            }
             f.ld  = fsLd + user_ldflags;
             f.ldC = f.ld;
             // Nothing hosted survives: these carry payload/sysroot/-B flags
@@ -1337,6 +1361,22 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             f.bFlag.clear();
             f.ldRuntimeFallback.clear();
             f.linkage = "static";
+            // ⚠️ WHEN THE LINKER IS DRIVEN DIRECTLY, EVERY REMAINING DRIVER
+            // FLAG IS AN ERROR RATHER THAN A NO-OP. Measured on the first
+            // attempt, where two survived the freestanding replacement and
+            // reached `ld.lld`:
+            //
+            //     ld.lld: error: unknown argument '-nostdlib++'
+            //     ld.lld: error: unknown argument '-Wl,--disable-new-dtags'
+            //
+            // The first is the per-role C++ runtime contract; the second is the
+            // loader tag, which names a dynamic-section entry an image with no
+            // loader does not have. Both are meaningful to a compiler driver
+            // and meaningless here, so they are cleared rather than translated.
+            if (!f.ldDriver.empty()) {
+                for (auto& r : f.ldStdlibByRole)  r.clear();
+                for (auto& r : f.ldStdlibCByRole) r.clear();
+            }
         }
     }
 

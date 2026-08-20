@@ -44,6 +44,68 @@ struct Spec {
     // own multilib convention (`<march>/<mabi>`), carried here so a wrapper
     // package can name its layout without re-deriving the profile.
     std::string_view libdir;
+    // ⚠️ FLAGS THIS ISA REQUIRES THAT THE FOUR COLUMNS ABOVE CANNOT EXPRESS.
+    //
+    // The table had three flag columns because three were enough for RISC-V and
+    // aarch64, where everything a freestanding build needs is an ISA profile, a
+    // calling convention and a code model. x86_64 is the first row that needs a
+    // fourth thing, and it is not a preference: see `-mno-red-zone` below.
+    //
+    // Empty for every row that does not, which is every row but one.
+    std::span<const std::string_view> extra;
+
+    // ⚠️ NON-EMPTY MEANS "THIS TARGET'S LINK CANNOT GO THROUGH THE COMPILER
+    // DRIVER", AND THAT IS A PROPERTY OF CLANG RATHER THAN OF THE ISA.
+    //
+    // Every freestanding link is driven by clang, which selects a toolchain
+    // from the triple and, for the rows that have one, ends up invoking
+    // `ld.lld` directly. Measured on llvm 22.1.8, for every spelling of a bare
+    // x86_64 triple — `x86_64-none-elf`, `x86_64-unknown-none`, `x86_64-elf`,
+    // `x86_64-none-none` — clang instead invokes the HOST'S `g++` as the
+    // linker driver:
+    //
+    //     g++: error: unrecognized command-line option
+    //          '-fuse-ld=/…/llvm/22.1.8/bin/ld.lld'
+    //
+    // clang has a BareMetal toolchain for arm, aarch64 and riscv and none for
+    // x86_64, so that triple falls through to the generic GCC toolchain, whose
+    // linker IS gcc. No flag changes it: `-fuse-ld=lld`, `--ld-path=`,
+    // `--gcc-toolchain=`, `-B` were each measured and each left `g++` in
+    // place. Only putting `linux` in the OS position does — and that brings
+    // eight host `-L` paths onto a bare-metal link, which is the hermeticity
+    // this engine exists to keep.
+    //
+    // So for such a row the engine links with `ld.lld` itself and this column
+    // carries the emulation name that clang would have passed. Empty for the
+    // riscv and aarch64 rows: their driver already reaches lld, and changing a
+    // working link to prove a point is how a regression gets introduced.
+    std::string_view lldEmulation;
+};
+
+// The flags each row's `extra` column points at. Named arrays rather than
+// inline braces because a `span` must refer to storage that outlives it, and a
+// temporary array in an aggregate initialiser does not.
+inline constexpr std::string_view kX86_64NoneExtra[] = {
+    // ⚠️ WITHOUT THIS, EVERY TRAP HANDLER ON THIS TARGET CORRUPTS THE FUNCTION
+    // IT INTERRUPTED, AND NOTHING REPORTS IT.
+    //
+    // The System V x86-64 ABI reserves 128 bytes below `rsp` — the red zone —
+    // which a leaf function may use without adjusting the stack pointer,
+    // because on a hosted system nothing else writes there: the kernel switches
+    // to its own stack for interrupts, and signal frames are placed clear of
+    // it.
+    //
+    // On bare metal nothing does that for you. The processor pushes an
+    // interrupt frame at `rsp` — into the red zone — and the leaf function
+    // resumes to find its locals overwritten. There is no fault and no
+    // diagnostic; the value is simply wrong, and only sometimes, because it
+    // depends on whether an interrupt happened to arrive inside a leaf.
+    //
+    // This is a property of the target rather than of a project, which is why
+    // it is here: there is no bare-metal x86_64 program for which the red zone
+    // is safe. RISC-V and aarch64 have no equivalent, which is why the column
+    // did not exist until this row.
+    "-mno-red-zone",
 };
 
 // ⚠️ Defaults, not the only possibility. `rv64gc/lp64d` is what qemu `virt`
@@ -78,6 +140,31 @@ inline constexpr Spec kTable[] = {
     // The engine reads this column only when a sysroot exists, so an invented
     // value would be a value nothing could ever check.
     { "aarch64-none-elf",   "armv8-a",  "aapcs", "small",  ""               },
+    // ⚠️ `x86-64` WITH A HYPHEN, WHICH IS THE ONE PLACE THIS TRIPLE'S TWO
+    // SPELLINGS DIVERGE. The triple segment is `x86_64` with an underscore and
+    // the `-march` value is `x86-64` with a hyphen; deriving one from the other
+    // is a substitution that looks harmless and produces `unknown target CPU`.
+    //
+    // `x86-64` is the baseline, not a modern microarchitecture level. A row
+    // that named `x86-64-v3` would produce images that fault on hardware and
+    // emulators older than roughly 2015, for a target whose whole audience is
+    // people who do not control what they run on. A project that knows its
+    // machine raises it in its own manifest.
+    //
+    // `sysv` is the only ABI this target has, and unlike aarch64's `aapcs` it
+    // is also the driver's default. It is written out because this table is the
+    // place the decision is made, not the place it is inherited.
+    //
+    // `small` places code and data in the low 2 GiB, which is where a
+    // `-kernel` image loaded by an emulator runs. A higher-half kernel — one
+    // linked at 0xFFFFFFFF80000000 — selects `-mcmodel=kernel` in its own
+    // manifest; that is a linker-script decision and cannot be a default,
+    // because the two are wrong for each other rather than merely suboptimal.
+    //
+    // ⚠️ THE LIBDIR IS EMPTY FOR THE SAME REASON aarch64's IS: this row
+    // resolves no C library, so a value here could never be checked.
+    { "x86_64-none-elf",    "x86-64",   "sysv",  "small",  "", kX86_64NoneExtra,
+      "elf_x86_64" },
 };
 
 // The single read point. Returns nullopt for anything that is not a known
@@ -110,6 +197,10 @@ inline std::vector<std::string> compile_flags(const Spec& s) {
     out.emplace_back(std::string("-mabi=")  + std::string(s.mabi));
     if (!s.mcmodel.empty())
         out.emplace_back(std::string("-mcmodel=") + std::string(s.mcmodel));
+    // Whatever the three columns above could not say. Emitted before
+    // `-ffreestanding` so the ordering of this function's output stays a
+    // function of the table rather than of the row.
+    for (auto flag : s.extra) out.emplace_back(flag);
     out.emplace_back("-ffreestanding");
     // ⚠️ No C++ standard library headers. Not a preference — the toolchain's
     // libc++ headers are built for the HOST: `#include <stdio.h>` resolves to
