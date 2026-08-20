@@ -694,6 +694,19 @@ struct TargetEntry {
     // channel deliberately carries build INPUTS and nothing else
     // (ConditionalConfig). One axis, one scoping rule.
     std::string                         cxxRuntime;
+    // The target's C library, overriding the `sysroot` column of the target
+    // table for this triple. Same axis as `toolchain` overriding `pin`: one
+    // names the compiler the target resolves, the other names the C library,
+    // and both were engine-only until a project had a reason to disagree.
+    //
+    // ⚠️ `std::optional`, not `std::string`, because ABSENT and EMPTY are
+    // different answers. Absent inherits the target row. `sysroot = ""` is the
+    // ZERO-LIBC tier: no C library is resolved, no include or library path is
+    // added, and the link carries only what the project and its dependencies
+    // supply. A kernel or a bootloader wants exactly that, and with a plain
+    // string the two cases would be indistinguishable — the empty string is
+    // what a target row without a sysroot already looks like.
+    std::optional<std::string>          sysroot;
     // ⚠️ NO per-role field here. There used to be a `cxxRuntimeTests`, and it was
     // parsed nowhere and applied nowhere — a configuration key that looked
     // available and did nothing (#418). The per-target channel carries the

@@ -3639,3 +3639,92 @@ runner = "qemu-system-riscv64 -kernel"
 )";
     EXPECT_FALSE(mcpp::manifest::parse_string(scalar).has_value());
 }
+
+// ── [target.<triple>].sysroot — the target's C library, per project ──────────
+//
+// The axis exists because the target table binds one C library per triple, and
+// three independent needs want to disagree with it: a kernel wants none, a
+// project on a vendor SDK wants that SDK's newlib, and a `std-freestanding`
+// stack over openkal wants openkal's C library.
+
+TEST(Manifest, TargetSysrootOverrideIsParsed) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.riscv64-none-elf]
+sysroot = "xim:newlib-riscv@4.4"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto it = m->targetOverrides.find("riscv64-none-elf");
+    ASSERT_NE(it, m->targetOverrides.end());
+    ASSERT_TRUE(it->second.sysroot.has_value());
+    EXPECT_EQ(*it->second.sysroot, "xim:newlib-riscv@4.4");
+    EXPECT_TRUE(m->schemaWarnings.empty())
+        << (m->schemaWarnings.empty() ? "" : m->schemaWarnings[0]);
+}
+
+// ⚠️ The distinction this test pins is the reason the field is an optional.
+// An empty string is a REQUEST (no C library), not an absence.
+TEST(Manifest, TargetSysrootEmptyStringIsRecordedAsPresent) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.riscv64-none-elf]
+sysroot = ""
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto it = m->targetOverrides.find("riscv64-none-elf");
+    ASSERT_NE(it, m->targetOverrides.end());
+    ASSERT_TRUE(it->second.sysroot.has_value());
+    EXPECT_TRUE(it->second.sysroot->empty());
+}
+
+TEST(Manifest, TargetSysrootAbsentStaysNullopt) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.riscv64-none-elf]
+linkage = "static"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto it = m->targetOverrides.find("riscv64-none-elf");
+    ASSERT_NE(it, m->targetOverrides.end());
+    EXPECT_FALSE(it->second.sysroot.has_value());
+}
+
+// A bare name is the plausible typo, and accepting it would install nothing
+// and then fail much later naming a missing libc.
+TEST(Manifest, TargetSysrootRejectsANonXpkgReference) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.riscv64-none-elf]
+sysroot = "newlib"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().format().find("xpkg reference"), std::string::npos);
+}
+
+// The unknown-scalar sweep must not report a key it now honours — the exact
+// shape of #418, where a key was reported as ignored while being applied.
+TEST(Manifest, TargetSysrootIsNotReportedAsUnsupported) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.riscv64-none-elf]
+sysroot = ""
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    for (auto const& w : m->schemaWarnings)
+        EXPECT_EQ(w.find("sysroot"), std::string::npos) << w;
+}

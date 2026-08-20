@@ -718,6 +718,36 @@ namespace {
 // index is first opened, which can be hundreds of lines earlier; the message
 // that STOPS the build has to carry the cause, because that is the one a user
 // reads. See mcpp::pm::unusable_index_hint.
+// Spelling-independent `[target.<triple>]` lookup.
+//
+// A section keyed `x86_64-w64-mingw32` matches a resolved `x86_64-windows-gnu`,
+// and unparseable keys compare exactly (the escape hatch for custom triples).
+// Factored out of the toolchain-override path because the sysroot override must
+// use the SAME matching: two lookups that disagreed about spelling would give a
+// section that applies to `toolchain` and not to `sysroot`, which is a defect
+// nobody would think to look for.
+const mcpp::manifest::TargetEntry*
+find_target_entry(const mcpp::manifest::Manifest& m,
+                  const mcpp::toolchain::triple::Triple& t)
+{
+    if (auto it = m.targetOverrides.find(t.str()); it != m.targetOverrides.end())
+        return &it->second;
+    for (auto const& [key, entry] : m.targetOverrides) {
+        if (auto k = mcpp::toolchain::triple::parse(key); k && k->str() == t.str())
+            return &entry;
+    }
+    return nullptr;
+}
+
+// The project's `[target.<triple>].sysroot`, or nullopt when it declared none.
+std::optional<std::string>
+sysroot_override(const mcpp::manifest::Manifest& m,
+                 const mcpp::toolchain::triple::Triple& t)
+{
+    auto* e = find_target_entry(m, t);
+    return e ? e->sysroot : std::nullopt;
+}
+
 std::string with_index_cause(std::string msg) {
     if (auto hint = mcpp::pm::unusable_index_hint(); !hint.empty())
         msg += "\n" + hint;
@@ -1796,11 +1826,12 @@ prepare_build(bool print_fingerprint,
             // on a first pass. What follows would then simply not add the
             // paths, and the link fails naming the missing libc — which is the
             // truthful message either way.
-            if (auto* known = mcpp::toolchain::triple::find_known_target(*want);
-                known && !known->sysroot.empty()) {
+            if (const std::string want_sysroot =
+                    mcpp::toolchain::triple::effective_sysroot(
+                        *want, sysroot_override(*m, *want));
+                !want_sysroot.empty()) {
                 if (auto cfg3 = get_cfg(); cfg3) {
-                    auto ref = mcpp::xlings::paths::parse_xpkg_ref(
-                        std::string(known->sysroot));
+                    auto ref = mcpp::xlings::paths::parse_xpkg_ref(want_sysroot);
                     auto xl  = mcpp::config::make_xlings_env(**cfg3);
                     if (auto dir = mcpp::xlings::paths::xpkg_payload(xl, ref)) {
                         if (auto spec = mcpp::freestanding::resolve(*want)) {
@@ -2116,9 +2147,8 @@ prepare_build(bool print_fingerprint,
     std::string targetSysroot;
     if (tc) {
         if (auto tt = mcpp::toolchain::triple::parse(tc->targetTriple))
-            if (auto* known = mcpp::toolchain::triple::find_known_target(*tt);
-                known && !known->sysroot.empty())
-                targetSysroot = std::string(known->sysroot);
+            targetSysroot = mcpp::toolchain::triple::effective_sysroot(
+                *tt, sysroot_override(*m, *tt));
     }
     const bool materializeRootRuntime =
         !overrides.inherited_runtime_binding

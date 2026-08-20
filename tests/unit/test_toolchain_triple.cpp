@@ -214,3 +214,38 @@ TEST(Triple, BareMetalEabiSpellings) {
     // vocabulary table yet, and the target gate is what says so.
     EXPECT_FALSE(is_known_target(*hf));
 }
+
+// ── effective_sysroot: the project's override, the target row otherwise ──────
+//
+// ⚠️ The absent/empty distinction is the whole point of these three tests. A
+// plain `std::string` would make "the project said nothing" and "the project
+// asked for no C library" the same value, and a kernel project would silently
+// get picolibc back.
+
+TEST(Triple, EffectiveSysrootFallsBackToTheTargetRow) {
+    auto t = parse("riscv64-none-elf");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(effective_sysroot(*t, std::nullopt), "xim:picolibc-riscv@1.8.12");
+}
+
+TEST(Triple, EffectiveSysrootHonoursAnOverride) {
+    auto t = parse("riscv64-none-elf");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(effective_sysroot(*t, std::optional<std::string>{"xim:newlib-riscv@4.4"}),
+              "xim:newlib-riscv@4.4");
+}
+
+TEST(Triple, EffectiveSysrootEmptyStringIsTheZeroLibcTier) {
+    // Present-and-empty must NOT fall through to the target row. Measured
+    // end-to-end alongside this: with `sysroot = ""`, `#include <stdio.h>`
+    // stops resolving and a self-contained image links at 108 bytes.
+    auto t = parse("riscv64-none-elf");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(effective_sysroot(*t, std::optional<std::string>{""}), "");
+}
+
+TEST(Triple, EffectiveSysrootIsEmptyForHostedTargets) {
+    auto t = parse("x86_64-linux-musl");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(effective_sysroot(*t, std::nullopt), "");
+}

@@ -1414,6 +1414,28 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         triple, e.cxxRuntime)));
                 }
             }
+            // The target's C library, overriding the target table's `sysroot`
+            // column. Accepted forms are an xpkg reference (`xim:newlib-arm@4.4`)
+            // and the empty string.
+            //
+            // ⚠️ The empty string is MEANINGFUL and must not be normalised
+            // away: it selects the zero-libc tier. Written into an
+            // `std::optional`, so "the key is absent" (inherit the target row)
+            // stays distinguishable from "the key is present and empty" (no C
+            // library at all). Collapsing the two is how a kernel project would
+            // silently get picolibc back.
+            if (auto it = body.find("sysroot"); it != body.end() && it->second.is_string()) {
+                std::string s = it->second.as_string();
+                if (!s.empty() && s.find(':') == std::string::npos) {
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].sysroot = '{}' is not an xpkg reference; "
+                        "expected `<namespace>:<name>[@<version>]` (e.g. "
+                        "\"xim:picolibc-riscv@1.8.12\"), or \"\" for a target "
+                        "with no C library.", triple, s)));
+                }
+                e.sysroot = std::move(s);
+            }
+
             // `runner` — the argv template `mcpp run` uses for a target whose
             // artifact cannot execute here. An ARRAY, so it is neither a
             // scalar (the unknown-key sweep below skips it by type) nor part
@@ -1460,7 +1482,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // new conditional sections need no change here, and the reported
             // case — a scalar that does nothing — is still caught.
             static constexpr std::string_view kKnownTargetScalars[] = {
-                "cxx_runtime", "linkage", "toolchain",
+                "cxx_runtime", "linkage", "sysroot", "toolchain",
             };
             for (auto& [key, value] : body) {
                 if (value.is_table()) continue;   // the conditional channel
