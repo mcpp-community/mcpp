@@ -227,8 +227,42 @@ openkal = { sources = ["src/kal/**"] }                             # 只经 feat
 | 层 | 内容 | 与实现有关吗 |
 |---|---|---|
 | **接口** | 包含哪些标准头、导出哪些标准名 | **无关**,标准定义 |
-| **配置** | 如何让一个实现进入 freestanding 状态 | **有关,但很小**:libc++ 合成 `__config_site`;libstdc++ 一个 `-D_GLIBCXX_HOSTED=0`(实测 29/34);MSVC STL 的头建立在 Windows CRT 上,对非 Windows 目标不成立 |
+| **配置** | 如何让一个实现进入 freestanding 状态 | **有关,而且比原先写的大**:见 2.3.1 |
 | **头从哪来** | 那些文件本身 | **与宿主无关**,但今天从宿主的编译器载荷里借 |
+
+### 2.3.1 ⚠️ 「libstdc++ 一个 `-D_GLIBCXX_HOSTED=0` 就行(29/34)」是错的
+
+本文原先把配置层写成「有关,但很小」,并给了 libstdc++ 29/34 这个数字。重测之后
+那个数字站不住,而站不住的方式说明了真正的问题在哪。
+
+同一批 40 个 C++23/26 freestanding 头,同一份 libstdc++ 16.1.0,同样加
+`-D_GLIBCXX_HOSTED=0`,只换目标:
+
+| 目标 | 结果 |
+|---|---|
+| `x86_64-linux-gnu`(宿主) | **40 / 40 编过** |
+| `riscv64-none-elf`(裸机) | **0 / 40**,全部倒在同一处 |
+
+```
+bits/c++config.h:733:
+bits/os_defines.h:39:10: fatal error: 'features.h' file not found
+```
+
+⇒ 原来那个 29/34 是在**宿主目标**上量的。它证明的是「libstdc++ 支持 freestanding
+模式」,而不是「libstdc++ 能服务一个裸机目标」—— 而后者才是这个包的用途。
+
+⭐ **于是问题的提法要改:重点不是「用哪个标准库」,而是「那份标准库有没有为这个目标
+configure 过」。**
+
+| 实现 | 逐目标配置是什么 | 能不能合成 |
+|---|---|---|
+| libc++ | `__config_site` —— 一个**扁平的宏列表** | **能**。本仓库的 `regenerate.sh` 就是用 `sed` 改十行得到交叉目标的配置 |
+| libstdc++ | `bits/c++config.h` —— **configure 的产物**,且 `#include <bits/os_defines.h>` → `<features.h>`,把宿主 C 库拖进来 | 不能。要给裸机目标用,需要**一份为该目标 configure 出来的 libstdc++**,即一个 riscv64 的 gcc |
+| MSVC STL | UCRT / vcruntime 头 | ⚠️ **未测量。** 本机没有 MSVC 载荷,不能声称验证过。它属于同一类问题,而这只是分类不是结论 |
+
+⇒ 选 libc++ **不是因为它「更 freestanding」**,而是因为它的逐目标配置是唯一一个可以
+被合成出来的。这条理由比原先写的「配置层很小」更准确,也更有用:它说明换实现解决不了
+Windows 的问题。
 
 ⭐ **第三层才是 Windows 问题的所在,而它与「用哪个标准库」无关。**
 
