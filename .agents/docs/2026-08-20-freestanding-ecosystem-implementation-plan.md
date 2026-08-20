@@ -133,7 +133,7 @@ capability 作仲裁,实现在别的包。
 | ⭐ `[feature-deps]` 可以写 `"0.1.x"`(照抄自 `docs/05` §2.8.2 的示例) | **解析失败**。对照组:`cmdline` 的 `0.0.1` 通过、`0.0` 通过、`0.0.x` 失败 | `std-freestanding` 0.3.1 改用两段前缀;`docs/05` 中英两版的示例本身也已更正 |
 | feature 是消费者控制的,不开就不包含 | **中间库能替根工程打开。** 实测:根不请求 `loud`,中间库请求了,根自己的翻译单元里就得到 `LOUD` | 这是 `nolibc` 必须独立成包的决定性证据 —— 做成 feature 的话,一个库能让每个消费者静默换掉 C 库的 `memcpy` |
 
-| `nolibc` 也应做成 `std-freestanding` 的 feature(默认关),与 `alloc-*` 一致 | ⭐ **该状态不可达。** `std-freestanding` 需要 C 库的**头文件**,零 libc 档上死在 `'inttypes.h' file not found`(编译期);而 `sysroot = ""` 同时拿走头与库,没有「有头无库」这一档 | 不加该 feature —— 它会是**构造上恒不生效**的。独立包保持独立 |
+| `nolibc` 也应做成 `std-freestanding` 的 feature(默认关),与 `alloc-*` 一致 | ⚠️ **我判断它「状态不可达」,而那个判断建立在一次测错的探针上**;正确测量后它**可达,但代价是一个独立项目**。见 §3.1 | 本轮不加;记为后续项 |
 
 ⇒ 十四条里有十三条**若不实测就会写进文档**。
 
@@ -168,6 +168,38 @@ capability 作仲裁,实现在别的包。
 README、索引描述符与 `docs/13`,之后才被实测否掉。推理链本身没错(依赖确实以 `.o`
 参与链接),错在**没有把它与「C 库是归档」这一半合起来看**。
 「结构上可能 ≠ 运行时确实」这一条,这次是在我自己身上生效的。
+
+### 3.1 ⭐ 零 libc 档上的标准库子集:一次测了四遍才对
+
+问题是「`std-freestanding` 能不能在零 libc 档上用」。前三次测量全部无效,而**每一次
+我都以为已经有答案了**:
+
+| 次 | 做法 | 为什么无效 |
+|---|---|---|
+| 1 | 手搓 `clang++ -nostdinc++` 编各个头 | 回落到**宿主 glibc** 的头 |
+| 2 | 加 `-nostdlibinc` | 载荷的 `clang.cfg` **无条件注入** `-isystem <宿主 glibc>`,仍然穿透 |
+| 3 | 由此得出「32/103」 | 该数字量的是载荷配置,不是零 libc |
+| 4 | ⭐ **用 mcpp 本身构建**(它发 `--no-default-config`) | 有效 |
+
+⇒ **判据必须走被测系统本身。** 手搓的命令行不是 mcpp 的编译行,而两者的差别恰好
+就是这个问题的答案所在。
+
+正确测量的结果:
+
+- 零 libc 档上,**编译器自带的** freestanding C 头都在(`stdint.h` `stddef.h`
+  `stdarg.h` `limits.h` `float.h`);缺的只是真正的 libc 头(`string.h` `stdio.h`)。
+- 21 个 tier-0 头里 **15 个直接可编**(`array` `span` `expected` `bit` `charconv`
+  `concepts` `type_traits` `tuple` `utility` `compare` `limits` `numbers` 等)。
+- 余下 6 个的真因是 **libc++ 自带 C 头的包装头**(如 `include/c++/v1/string.h`),
+  它靠 `#include_next` 到 C 库那份去取 `size_t`;没有 C 库时断链。
+- 加一份最小 `string.h` shim(⚠️ 必须放在 libc++ 之后,否则 `#include_next` 跳过它)
+  解锁 `optional` 与 `coroutine`;`string_view` 还差 `mbstate_t`(`<wchar.h>`),
+  `atomic` 还差 `time_t`(经 `<chrono>` 到 `<time.h>`)。
+
+⇒ **结论:可达,但它是一个独立项目而不是一个 feature。** 让 `std-freestanding` 在零
+libc 档可用,需要 `std-freestanding-nolibc` 从「五个函数」长成「五个函数 + libc++
+真正需要的那一小组 C 头」。⚠️ 一份写错的 `mbstate_t` 不会报错,只会让类型静默不匹配 ——
+这类东西不能顺手做。
 
 ---
 
