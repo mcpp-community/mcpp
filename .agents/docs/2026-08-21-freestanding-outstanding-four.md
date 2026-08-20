@@ -39,6 +39,9 @@ payload: /c/Users/runneradmin/.mcpp/registry/data/xpkgs/xim-x-llvm/*/
 
 ## 1. `mcpp test` 与 `mcpp build` 对 feature 源的判断不一致
 
+> **已修复(mcpp 2026.8.21.1)。** ⚠️ 而修法既不是路线 A 也不是路线 B —— 是第三次
+> 尝试的判据,它当初被以一个**错误的理由**放弃了。见 1.3.1。
+
 ### 1.1 现象与位置
 
 同一个包、同一份清单,两条命令编译的源文件集合不同:
@@ -82,10 +85,37 @@ base `sources` 里,而 dev 依赖那条轨道的「逐测试 main 探测」需�
 |---|---|
 | DROP 与 `!` 排除在两种模式下都跑 | **弄坏 gtest**:mcpp 自己的单测链接失败,`ld returned 1 exit status` |
 | test 模式只删 glob 字符串、不加 `!` 排除 | 无效:`src/kal/**` 从来不在 `bc.sources` 里,删字符串什么都没删,文件仍由 base glob `src/**` 匹配 |
-| 按「该 glob 是否也出现在 base `sources`」判别 | 无效:gtest 的 base 是一条**能匹配到**那个文件的 glob,不是同一个字符串;字符串相等判别不到 |
+| 按「该 glob 是否也出现在 base `sources`」判别 | 记录为无效,理由是「gtest 的 base 是一条能匹配到那个文件的 glob,不是同一个字符串」。**这条记录是错的** —— 见 1.3.1 |
 
 三次都已撤销。**不留半个修复**:把一个只在部分情形下正确的门放进已发布的
 引擎,比一个有文档的缺陷更糟。
+
+### 1.3.1 ⚠️ 第三次尝试的判据是对的,被放弃的理由是错的
+
+去读索引真正携带的描述符 `pkgs/c/compat.gtest.lua`:
+
+```lua
+sources  = { "*/googletest/src/gtest-all.cc",
+             "*/googletest/src/gtest_main.cc" },   -- 第 71–73 行
+features = { ["main"] = { sources = { "*/googletest/src/gtest_main.cc" } } },  -- 第 90 行
+```
+
+两处**逐字节相同**。所以「字符串相等判别不到」这句话与事实不符,而当初把它写进
+文档时没有去读那个文件 —— 判据被一个凭印象写下的理由否掉了。
+
+真正让第三次尝试失效的是**判据被施加的时机**:membership 是拿 `bc.sources` 去比
+的,而 `drop()` 已经先一步把那条 glob 从里面删掉了,于是这个测试只可能为假。
+
+⭐ **修法**:在 `drop()` 之前把 base 的 glob 集合快照下来,并且只在 test 模式使用
+它 ——
+
+* glob 同时出现在 base `sources` 与 feature 里 ⇒ 这是一个**门**(gtest 那一族),
+  test 模式下保持可见,逐测试 main 探测仍然剪得掉它;
+* glob 只出现在 feature 里 ⇒ 这是一个**提供者**(riscv-virt-rt 那一族),
+  test 模式下也要 `!` 排除。
+
+⚠️ 而 `!` 排除才是整个机制,删 glob 字符串不是:`src/kal/**` 从来就不在
+`bc.sources` 里(该包根本没声明 `sources`),它的文件由推导出的 `src/**` 匹配。
 
 ### 1.4 正确的修法
 
@@ -129,13 +159,18 @@ openkal = { sources = ["src/kal/**"] }                             # 只经 feat
 
 必须同时满足,**任缺其一即视为未修复**:
 
-1. `mcpplibs/riscv-virt-rt` 不带 feature 时 `mcpp test` 与 `mcpp build`
-   编出的目标文件集合相同;
-2. mcpp 自己的 `mcpp test unit/test_manifest` 仍然链接并通过(gtest 那一族);
-3. 两条断言进 e2e,用两个最小包分别表达上面两族,而不是依赖生态包。
+1. ✅ `mcpplibs/riscv-virt-rt` 不带 feature 时 `mcpp test` 不再编译
+   `src/kal/**`,两条命令都以 0 退出(此前 test 死于
+   `'openkal/abort.h' file not found`);
+2. ✅ mcpp 自己的 92 个单测仍然链接并通过(gtest 那一族);
+3. ✅ `tests/e2e/138_feature_sources_gate_vs_provider.sh`,两个最小包分别表达
+   上面两族,不依赖任何生态包。
 
 ⚠️ 第 3 条是重点。这个缺陷之所以活到今天,是因为**没有任何测试同时覆盖两族**;
 只修不测,下一次同样的改动会再次在两者之间摇摆。
+
+⭐ 那条 e2e 已按「回归测试必须先失败」验证过:拿修复前的引擎跑它,它以正是本节
+开头那句症状失败;拿修复后的引擎跑它,它通过。
 
 ### 1.6 副作用
 
@@ -598,7 +633,7 @@ openarch 的第三个后端因此写得出来,而**第三台机器正是把门�
 | | 项 | 状态 | 建议 |
 |---|---|---|---|
 | 1 | Windows libc++(第 2 节) | 未做。⭐ 结论已从「加进载荷」**改为独立成包**,理由见 2.5 | 先做 2.1 的测量,再按三步落地。**我们自己能做完** |
-| 2 | feature 源不一致(第 1 节) | 未做,三次修法被证伪 | 需要 glob 展开 + 两族的 e2e |
+| 2 | feature 源不一致(第 1 节) | ✅ **已修复**(2026.8.21.1)。⚠️ 修法就是第三次尝试的判据 —— 它当初被一个**没有去读文件就写下的理由**否掉了 | — |
 | 3 | openarch(第 3 节) | ✅ **0.4.0 已完成**:混合式的根、两个门面、feature 选后端、三个指令集 | — |
 | 4 | openarch 的时钟归属(3.3) | 未做 | ⭐ 先作为**调研**:两种启动方式各一个最小探针,答案决定接口归属 |
 | 5 | x86_64 裸机(第 4 节) | ✅ **阶段 4 已完成**(目标行 + 引擎的直连链接);阶段 1–3 未做 | `xim:qemu-x86` 仍缺。阶段 1 先做 linux x64 供 openkal-uefi 用;阶段 2 用**临时 PR 的 CI 矩阵**跑通五条腿再谈收录 |
