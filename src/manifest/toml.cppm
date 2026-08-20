@@ -12,6 +12,26 @@ import mcpp.pm.dependency_selector;
 import mcpp.pm.index_spec;
 import mcpp.platform;
 
+// ⚠️ ANONYMOUS NAMESPACE, AND THIS COST TWO WINDOWS JOBS TO LEARN.
+//
+// The first version of this helper sat at namespace scope in the module
+// purview, which makes its declaration part of what this module's interface
+// records. Its return type is `std::optional<std::string>`, and under clang
+// with the MSVC standard library that was enough to break every downstream
+// translation unit that constructs one:
+//
+//     MSVC\include\optional:307: error: no matching constructor for
+//     initialization of '_SMF_control<_Optional_construct_base<basic_string…
+//
+// The errors named test files that this change never touched, which is the
+// signature of the hazard: a std type in a newly-exported interface poisons the
+// importers' module files rather than failing where it was written. The Linux
+// jobs stayed green throughout.
+//
+// Nothing outside this file calls it, so nothing outside this file should be
+// able to see it.
+namespace {
+
 // A dependency's version requirement, checked with the parser that will later
 // be asked to match it.
 //
@@ -50,6 +70,8 @@ std::optional<std::string> version_req_problem(std::string_view spec) {
     if (auto r = mcpp::version_req::parse_req(spec); !r) return r.error();
     return std::nullopt;
 }
+
+}  // namespace
 
 
 export namespace mcpp::manifest {
