@@ -1059,6 +1059,11 @@ package = {
 
 // Feature System v2 Stage 2a: optional deps activated by a feature.
 // TOML surface uses a dedicated [feature-deps.<name>] section.
+// ⚠️ The fixture used to say `zlib = "1.3.x"`, which cannot resolve: a trailing
+// `.x` is not a selector this resolver has. It went unnoticed because the same
+// form was in the documented `[feature-deps]` example, and because a fixture
+// only has to PARSE — nothing here ever asked the index for that package. It
+// reached a published package (`std-freestanding` 0.3.0) before it was measured.
 TEST(Manifest, FeatureDepsTomlSection) {
     constexpr auto src = R"(
 [package]
@@ -1070,7 +1075,7 @@ kind = "lib"
 default = []
 backend = []
 [feature-deps.backend]
-zlib = "1.3.x"
+zlib = "1.3"
 )";
     auto m = mcpp::manifest::parse_string(src);
     ASSERT_TRUE(m.has_value()) << m.error().format();
@@ -3638,4 +3643,193 @@ version = "0.1.0"
 runner = "qemu-system-riscv64 -kernel"
 )";
     EXPECT_FALSE(mcpp::manifest::parse_string(scalar).has_value());
+}
+
+// ── [target.<triple>].sysroot — the target's C library, per project ──────────
+//
+// The axis exists because the target table binds one C library per triple, and
+// three independent needs want to disagree with it: a kernel wants none, a
+// project on a vendor SDK wants that SDK's newlib, and a `std-freestanding`
+// stack over openkal wants openkal's C library.
+
+TEST(Manifest, TargetSysrootOverrideIsParsed) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.riscv64-none-elf]
+sysroot = "xim:newlib-riscv@4.4"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto it = m->targetOverrides.find("riscv64-none-elf");
+    ASSERT_NE(it, m->targetOverrides.end());
+    ASSERT_TRUE(it->second.sysrootDeclared);
+    EXPECT_EQ(it->second.sysroot, "xim:newlib-riscv@4.4");
+    EXPECT_TRUE(m->schemaWarnings.empty())
+        << (m->schemaWarnings.empty() ? "" : m->schemaWarnings[0]);
+}
+
+// ⚠️ The distinction this test pins is the reason the field is an optional.
+// An empty string is a REQUEST (no C library), not an absence.
+TEST(Manifest, TargetSysrootEmptyStringIsRecordedAsPresent) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.riscv64-none-elf]
+sysroot = ""
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto it = m->targetOverrides.find("riscv64-none-elf");
+    ASSERT_NE(it, m->targetOverrides.end());
+    ASSERT_TRUE(it->second.sysrootDeclared);
+    EXPECT_TRUE(it->second.sysroot.empty());
+}
+
+TEST(Manifest, TargetSysrootAbsentIsNotDeclared) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.riscv64-none-elf]
+linkage = "static"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto it = m->targetOverrides.find("riscv64-none-elf");
+    ASSERT_NE(it, m->targetOverrides.end());
+    EXPECT_FALSE(it->second.sysrootDeclared);
+}
+
+// A bare name is the plausible typo, and accepting it would install nothing
+// and then fail much later naming a missing libc.
+TEST(Manifest, TargetSysrootRejectsANonXpkgReference) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.riscv64-none-elf]
+sysroot = "newlib"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().format().find("xpkg reference"), std::string::npos);
+}
+
+// The unknown-scalar sweep must not report a key it now honours — the exact
+// shape of #418, where a key was reported as ignored while being applied.
+TEST(Manifest, TargetSysrootIsNotReportedAsUnsupported) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.riscv64-none-elf]
+sysroot = ""
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    for (auto const& w : m->schemaWarnings)
+        EXPECT_EQ(w.find("sysroot"), std::string::npos) << w;
+}
+
+// ── Dependency version requirements are checked where they are written ───────
+//
+// ⚠️ The parser that decides which published version satisfies a requirement
+// existed all along; the dependency reader did not use it, and handed its
+// string to the installer instead. A requirement the matcher could never
+// satisfy therefore reached the network and came back as
+// `E_NOT_FOUND: package '…@0.1.x' not found` — naming the PACKAGE, which
+// exists. This repository's own documentation recommended that form.
+
+// ⚠️ PARSE-acceptance, which is a weaker property than installability and was
+// measured to be weaker: `"0.0"` parses here and then fails at fetch with
+// `install path missing`. The check added below is a manifest check and has no
+// business ruling on the installer's path derivation, so this test pins what
+// the PARSER must keep accepting and says nothing about what fetches.
+TEST(Manifest, DependencyVersionParserAcceptsEveryEstablishedForm) {
+    // ⭐ This test exists to prevent the check from NARROWING anything.
+    for (const char* v : { "0.0.1", "0.0", "^0.0.1", ">=0.0.1, <0.1.0", "*" }) {
+        auto src = std::format(R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies]
+cmdline = "{}"
+)", v);
+        auto m = mcpp::manifest::parse_string(src);
+        EXPECT_TRUE(m.has_value()) << v << ": " << (m ? "" : m.error().format());
+    }
+}
+
+// ⚠️ REPORTED, NOT REJECTED, and the distinction is load-bearing. The first
+// version of this check returned an error, and a project pinned to a PUBLISHED
+// package carrying such a string stopped loading entirely — including when the
+// offending entry belonged to a feature nobody activates. Published data must
+// not be invalidated by a new program any more than the reverse.
+TEST(Manifest, DependencyVersionReportsATrailingXWithoutFailingTheLoad) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies]
+cmdline = "0.0.x"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    bool found = false;
+    for (auto const& w : m->schemaWarnings)
+        if (w.find("not a requirement") != std::string::npos) found = true;
+    EXPECT_TRUE(found) << "no warning naming the requirement";
+    // ⭐ And it must say that the PACKAGE is not the problem, because the
+    // failure the reader will otherwise see names exactly that.
+    for (auto const& w : m->schemaWarnings)
+        if (w.find("not a requirement") != std::string::npos)
+            EXPECT_NE(w.find("PACKAGE"), std::string::npos) << w;
+}
+
+TEST(Manifest, DependencyVersionReportsTrailingGarbage) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies]
+cmdline = "1.2.3abc"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value());
+    EXPECT_FALSE(m->schemaWarnings.empty());
+}
+
+// A path or git dependency has no version, and requiring one would break every
+// workspace member.
+TEST(Manifest, DependencyWithoutAVersionIsUnaffected) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies]
+local = { path = "../local" }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    EXPECT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+}
+
+// The long form reaches a different code path than the bare string, and only
+// one of the two used to set `spec.version`. Both are checked.
+TEST(Manifest, LongFormDependencyVersionIsCheckedToo) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies]
+cmdline = { version = "0.0.x", features = ["a"] }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    bool found = false;
+    for (auto const& w : m->schemaWarnings)
+        if (w.find("not a requirement") != std::string::npos) found = true;
+    EXPECT_TRUE(found);
 }

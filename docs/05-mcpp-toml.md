@@ -893,9 +893,42 @@ for arch/env conditions and combinators.
   them generating noise on the other two — the same way an inactive feature's
   entries simply are not there. A zero-hit glob in the *unconditional* table
   still warns, because there it is a real defect.
-- **`toolchain` / `linkage` are exact-triple only** — they describe one specific
-  cross target, so put them under `[target.<triple>]` (above), not under a bare
-  alias or `cfg(...)`.
+- **`toolchain` / `linkage` / `sysroot` are exact-triple only** — they describe
+  one specific cross target, so put them under `[target.<triple>]` (above), not
+  under a bare alias or `cfg(...)`.
+
+#### `sysroot` — the target's C library
+
+`sysroot` (mcpp 2026.8.20.2+) overrides the C library the target table binds to
+a triple, on the same axis as `toolchain` overriding the compiler pin: one names
+the compiler a target resolves, the other names its C library, and both were
+engine-only until a project had a reason to disagree.
+
+```toml
+[target.riscv64-none-elf]
+sysroot = "xim:newlib-riscv@4.4"     # a different C library
+```
+
+```toml
+[target.riscv64-none-elf]
+sysroot = ""                          # no C library at all
+```
+
+⚠️ **An absent key and an empty one are different answers.** Absent inherits the
+target table's C library. Present-and-empty is the **zero-libc tier**: no C
+library is resolved, no include or library path is added, and the link carries
+only what the project and its dependencies supply. `#include <stdio.h>` stops
+resolving. A kernel or a bootloader wants exactly that, and collapsing the two
+cases would silently hand such a project the target's C library back.
+
+The value is an xpkg reference or the empty string; a bare name is rejected when
+the manifest is parsed, because accepting it would install nothing and then fail
+much later naming a missing libc.
+
+A build program can ask which C library was resolved: `mcpp::target_libc()`
+returns its package name and `mcpp::target_libc_profile()` the sub-directory for
+the target's ISA profile. Both are empty on the zero-libc tier. See
+[13 — Bare-Metal and Freestanding Targets](13-baremetal.md).
 
 ### 2.7.2 Bare metal (`os = none`) — freestanding targets
 
@@ -903,6 +936,11 @@ for arch/env conditions and combinators.
 underneath. They need no per-host cross toolchain: clang and lld are
 cross-compilers by construction, so any host that can install the llvm payload
 can produce them.
+
+This section is the manifest reference. The worked examples — scaffolding,
+running, testing on the target, the freestanding standard-library subset and
+writing a board-support package — are in
+[13 — Bare-Metal and Freestanding Targets](13-baremetal.md).
 
 ```bash
 mcpp build --target riscv64-none-elf
@@ -1076,6 +1114,25 @@ The bound provider's link/include flags reach the consumer through normal
 dependency mechanics; the capability layer is the *selection-and-validation* step
 that turns a silently-wrong or missing backend into a loud configure-time error.
 
+**Binding selects a provider; it does not prune the link line.** A dependency
+package contributes its object files to the consumer's link regardless of whether
+its capability was the one bound. Measured with two packages that both provide
+one capability and both define `cap_probe`: unpinned, resolution fails as the
+table says; after pinning one with `[capabilities]`, the build reaches the linker
+and fails there instead —
+
+```
+ld: obj/mcpplibs_pa/src/impl.o: in function `cap_probe':
+    multiple definition of `cap_probe'; obj/mcpplibs_pb/src/impl.o: first defined here
+```
+
+This matters for a capability whose providers define the **same symbols** — a
+whole-program singleton such as `operator new`, or a C API with one fixed name
+set. For those, two providers in the graph is a defect to fix rather than an
+ambiguity to pin: pinning replaces an error that names both candidates with one
+that names a mangled symbol. Interchangeable *libraries* (BLAS implementations,
+which export distinct symbol sets and are selected per link) are unaffected.
+
 ### 2.8.2 `[feature-deps.<name>]` — dependencies a feature pulls in
 
 A dependency declared under `[feature-deps.<name>]` is **optional**: it is
@@ -1091,8 +1148,28 @@ backend-openblas = { implies = ["use_blas"] }
 # Pulled ONLY when `backend-openblas` is active. Each entry is a full dependency
 # spec (version/path/git + its own features).
 [feature-deps.backend-openblas]
-compat.openblas = "0.3.x"
+compat.openblas = "0.3"
 ```
+
+⚠️ **`"^0.3.0"` and not `"0.3.x"` or `"0.3"`.** Measured against a package the
+index certainly carries, with a **build** as the criterion:
+
+| Written | Result |
+|---|---|
+| `cmdline = "0.0.1"` | builds |
+| `cmdline = "^0.0.1"` | builds |
+| `cmdline = "0.0"` | resolves, then `install path missing after fetch` |
+| `cmdline = "0.0.x"` | `E_NOT_FOUND`, naming the package — which exists |
+
+⭐ The three outcomes are worth distinguishing, because two weaker criteria each
+admit a form that does not work: "no `E_NOT_FOUND`" admits the two-segment
+prefix, and "resolves" admits it as well. Only building against the real index
+settles it.
+
+⚠️ This matters more here than in `[dependencies]`. A feature whose
+implementation cannot be fetched is a feature that does not exist, and a project
+using a **path** dependency during development never consults the index — so the
+failure appears only after publication, to somebody else.
 
 This composes with capabilities (§2.8.1): a single `backend-openblas` feature
 both **pulls** the provider (`compat.openblas`, which `provides = ["blas"]`) and
@@ -1111,6 +1188,44 @@ features = {
     },
 }
 ```
+
+#### A default implementation that stays replaceable
+
+The same three pieces cover the case where a library wants to *offer* an
+implementation without *imposing* one — a whole-program singleton such as
+`operator new`, a logging sink, or a panic handler:
+
+```toml
+[features]
+default   = []
+# The consumer-side switch: "I use the part of this library that needs an allocator".
+alloc     = { requires = ["freestanding-allocator"] }
+# The built-in default: activating this one is enough.
+alloc-kal = { implies = ["alloc"] }
+
+# Resolved only when `alloc-kal` is active, so the library itself carries no
+# dependency on the implementation.
+[feature-deps.alloc-kal]
+std-freestanding-alloc-kal = "0.1.x"
+```
+
+Three usages, one line each:
+
+| Consumer needs | What the manifest says |
+|---|---|
+| none of the allocating parts | `std-freestanding = "0.2.0"` — no allocator enters the graph |
+| the default | `features = ["alloc-kal"]` — the implementation arrives with it, and its package name never has to be known |
+| its own or a third party's | `features = ["alloc"]` plus a package that `provides = ["freestanding-allocator"]` |
+
+Two properties make this preferable to shipping the implementation
+unconditionally. A library that ships one takes a decision belonging to the
+program, and it cannot be undone: features are **additive**, so there is no way
+for a consumer to switch a default *off*. And because a dependency package's
+objects link unconditionally (§2.8.1), a shipped default plus a program-supplied
+one is a duplicate definition rather than a replacement — the archive semantics
+that let a C++ standard library offer a replaceable `operator new` do not apply
+to a package dependency. Keeping the implementation behind a switch means the
+two never coexist.
 
 ### 2.8.3 `[scan_overrides."<glob>"]` — Author-Asserted Scan Results
 

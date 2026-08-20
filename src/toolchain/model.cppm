@@ -94,6 +94,11 @@ struct Toolchain {
     // down for them.
     std::filesystem::path               targetSysrootRoot;
     std::filesystem::path               targetSysrootInclude;
+    // The C library's package NAME (`picolibc-riscv`), recorded beside its
+    // paths so a build program can be told which C library it is without
+    // reverse-engineering the store layout from the path above. Empty on the
+    // zero-libc tier and on hosted targets.
+    std::string                         targetSysrootPkg;
     std::filesystem::path               targetSysrootLib;
     std::vector<std::filesystem::path>   compilerRuntimeDirs; // LD_LIBRARY_PATH for private tools
     std::vector<std::filesystem::path>   linkRuntimeDirs;     // -L/-rpath dirs for produced binaries

@@ -151,6 +151,39 @@ inline const TargetInfo* find_known_target(const Triple& t) {
 
 inline bool is_known_target(const Triple& t) { return find_known_target(t) != nullptr; }
 
+// The effective target C library for one build.
+//
+// SINGLE READ POINT, and it is one because it was two. `prepare_build` derived
+// "which sysroot does this target use" in two places — once to compute the
+// include/library paths and once to materialize the xim package — and adding a
+// project-level override to only one of them would have produced a build that
+// installs one C library and compiles against another. This codebase has paid
+// for that shape repeatedly (#233/#240/#242/#344).
+//
+// `override_` is the project's `[target.<triple>].sysroot`, and its optionality
+// is load-bearing:
+//
+//   nullptr  -> the project said nothing; the target table's column applies
+//   "xim:..." -> the project named a different C library
+//   ""        -> the project asked for NO C library (the zero-libc tier)
+//
+// Returning "" for the last case is deliberate: it is what a hosted target row
+// already carries, and every consumer of this function already treats empty as
+// "add no target sysroot paths". The tier therefore needs no new branch
+// anywhere downstream — it reuses the answer the engine already knew how to
+// handle.
+// ⚠️ A POINTER AND NOT AN `std::optional<std::string>`. The tri-state is the
+// same — null means "the project said nothing" — and a pointer parameter
+// instantiates nothing in this module's interface. See the note on
+// `TargetEntry::sysroot` for what the optional cost when it reached one.
+inline std::string effective_sysroot(const Triple& t,
+                                     const std::string* override_)
+{
+    if (override_) return *override_;
+    if (auto* k = find_known_target(t)) return std::string(k->sysroot);
+    return {};
+}
+
 // Closest known-target canonical name for a mistyped `--target` (checked
 // against canonical names AND common alias spellings). nullopt when nothing
 // is plausibly close.

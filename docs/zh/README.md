@@ -15,6 +15,7 @@
 - [10 - 发布一个库到 mcpp-index](10-publishing-a-library.md)
 - [11 - 机器可读输出](11-machine-output.md)
 - [12 - 分发预编译库](12-binary-distribution.md)
+- [13 - 裸机与 freestanding 目标](13-baremetal.md)
 
 ## 规范文档
 

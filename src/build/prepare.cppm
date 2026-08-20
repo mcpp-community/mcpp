@@ -718,6 +718,75 @@ namespace {
 // index is first opened, which can be hundreds of lines earlier; the message
 // that STOPS the build has to carry the cause, because that is the one a user
 // reads. See mcpp::pm::unusable_index_hint.
+// Spelling-independent `[target.<triple>]` lookup.
+//
+// A section keyed `x86_64-w64-mingw32` matches a resolved `x86_64-windows-gnu`,
+// and unparseable keys compare exactly (the escape hatch for custom triples).
+// Factored out of the toolchain-override path because the sysroot override must
+// use the SAME matching: two lookups that disagreed about spelling would give a
+// section that applies to `toolchain` and not to `sysroot`, which is a defect
+// nobody would think to look for.
+const mcpp::manifest::TargetEntry*
+find_target_entry(const mcpp::manifest::Manifest& m,
+                  const mcpp::toolchain::triple::Triple& t)
+{
+    if (auto it = m.targetOverrides.find(t.str()); it != m.targetOverrides.end())
+        return &it->second;
+    for (auto const& [key, entry] : m.targetOverrides) {
+        if (auto k = mcpp::toolchain::triple::parse(key); k && k->str() == t.str())
+            return &entry;
+    }
+    return nullptr;
+}
+
+// The project's `[target.<triple>].sysroot`, or nullptr when it declared none.
+const std::string*
+sysroot_override(const mcpp::manifest::Manifest& m,
+                 const mcpp::toolchain::triple::Triple& t)
+{
+    auto* e = find_target_entry(m, t);
+    return (e && e->sysrootDeclared) ? &e->sysroot : nullptr;
+}
+
+// The target-facing answers a `build.mcpp` may ask the engine for.
+//
+// ONE function because there are TWO call sites — the root project and each
+// dependency — and four values derived independently in two places is the
+// shape this codebase keeps paying for. A board package that got the right
+// answer as a root project and a stale one as a dependency would fail only in
+// the consuming build, which is the harder direction to debug.
+void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
+                           const mcpp::toolchain::Toolchain* tc)
+{
+    e.toolchainDir  = (tc && !tc->binaryPath.empty())
+        ? tc->binaryPath.parent_path().parent_path().string() : std::string{};
+    e.targetSysroot = tc ? tc->targetSysrootRoot.string() : std::string{};
+    e.targetLibc    = tc ? tc->targetSysrootPkg : std::string{};
+    if (!tc) return;
+
+    // The C LIBRARY's sub-directory for this ISA profile, from the freestanding
+    // table — the same single read point the compile flags use.
+    //
+    // ⚠️ Gated on there being a C library at all, and the gate is the point: the
+    // value is a multilib convention, so on the zero-libc tier there is nothing
+    // for it to be a convention OF. Emitting `rv64gc/lp64d` there would hand a
+    // kernel a path into a directory that does not exist, and the name of the
+    // accessor would be a lie. All three libc-facing answers are empty together.
+    if (!e.targetSysroot.empty())
+        if (auto spec = mcpp::freestanding::resolve(tc->targetTriple))
+            e.targetLibcProfile = std::string(spec->libdir);
+
+    // Which builtins library the RESOLVED toolchain ships. Freestanding only:
+    // on a hosted target the driver links them without being asked, and
+    // handing a package a name it must not use would invite it to.
+    if (auto t = mcpp::toolchain::triple::parse(tc->targetTriple);
+        t && t->is_freestanding()) {
+        e.targetBuiltinsLib = mcpp::toolchain::is_clang(*tc)
+            ? "clang_rt.builtins-" + t->arch
+            : std::string("gcc");
+    }
+}
+
 std::string with_index_cause(std::string msg) {
     if (auto hint = mcpp::pm::unusable_index_hint(); !hint.empty())
         msg += "\n" + hint;
@@ -1796,11 +1865,12 @@ prepare_build(bool print_fingerprint,
             // on a first pass. What follows would then simply not add the
             // paths, and the link fails naming the missing libc — which is the
             // truthful message either way.
-            if (auto* known = mcpp::toolchain::triple::find_known_target(*want);
-                known && !known->sysroot.empty()) {
+            if (const std::string want_sysroot =
+                    mcpp::toolchain::triple::effective_sysroot(
+                        *want, sysroot_override(*m, *want));
+                !want_sysroot.empty()) {
                 if (auto cfg3 = get_cfg(); cfg3) {
-                    auto ref = mcpp::xlings::paths::parse_xpkg_ref(
-                        std::string(known->sysroot));
+                    auto ref = mcpp::xlings::paths::parse_xpkg_ref(want_sysroot);
                     auto xl  = mcpp::config::make_xlings_env(**cfg3);
                     if (auto dir = mcpp::xlings::paths::xpkg_payload(xl, ref)) {
                         if (auto spec = mcpp::freestanding::resolve(*want)) {
@@ -1810,6 +1880,7 @@ prepare_build(bool print_fingerprint,
                                 *dir / "lib"     / std::string(spec->libdir);
                             std::error_code ec2;
                             tc->targetSysrootRoot = *dir;
+                            tc->targetSysrootPkg  = ref.name;
                             if (std::filesystem::is_directory(inc, ec2))
                                 tc->targetSysrootInclude = inc;
                             if (std::filesystem::is_directory(lib, ec2))
@@ -2116,9 +2187,8 @@ prepare_build(bool print_fingerprint,
     std::string targetSysroot;
     if (tc) {
         if (auto tt = mcpp::toolchain::triple::parse(tc->targetTriple))
-            if (auto* known = mcpp::toolchain::triple::find_known_target(*tt);
-                known && !known->sysroot.empty())
-                targetSysroot = std::string(known->sysroot);
+            targetSysroot = mcpp::toolchain::triple::effective_sysroot(
+                *tt, sysroot_override(*m, *tt));
     }
     const bool materializeRootRuntime =
         !overrides.inherited_runtime_binding
@@ -5013,13 +5083,10 @@ prepare_build(bool print_fingerprint,
             };
             mcpp::build::BuildProgramEnv bpEnv;
             bpEnv.targetTriple = resolvedTargetCanonical;
-        // The payload ROOT, not the driver: `<root>/bin/clang++` → `<root>`.
-        // A build program wants `<root>/include/c++/v1`, and deriving that
-        // from the driver path in every program would be the same expression
-        // copied into every package.
-        bpEnv.toolchainDir  = (tc && !tc->binaryPath.empty())
-            ? tc->binaryPath.parent_path().parent_path().string() : std::string{};
-        bpEnv.targetSysroot = tc ? tc->targetSysrootRoot.string() : std::string{};
+        // The payload ROOT (not the driver), the target's C library, and the
+        // three answers that keep a board package from hardcoding a toolchain
+        // or a libc. All four in one call — see fill_target_build_env.
+        fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
             bpEnv.profile      = effectiveProfile;
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
             bpEnv.artifactsDir = workRoot / "target" / ".build-mcpp" / "deps"
@@ -5180,13 +5247,10 @@ prepare_build(bool print_fingerprint,
         if (!host) return std::unexpected(host.error());
         mcpp::build::BuildProgramEnv bpEnv;
         bpEnv.targetTriple = resolvedTargetCanonical;
-        // The payload ROOT, not the driver: `<root>/bin/clang++` → `<root>`.
-        // A build program wants `<root>/include/c++/v1`, and deriving that
-        // from the driver path in every program would be the same expression
-        // copied into every package.
-        bpEnv.toolchainDir  = (tc && !tc->binaryPath.empty())
-            ? tc->binaryPath.parent_path().parent_path().string() : std::string{};
-        bpEnv.targetSysroot = tc ? tc->targetSysrootRoot.string() : std::string{};
+        // The payload ROOT (not the driver), the target's C library, and the
+        // three answers that keep a board package from hardcoding a toolchain
+        // or a libc. All four in one call — see fill_target_build_env.
+        fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
         bpEnv.profile      = effectiveProfile;
         // Set explicitly rather than relying on build_dir()'s root-relative
         // default: under BuildOverrides::work_dir the package root is shared
@@ -5372,6 +5436,19 @@ prepare_build(bool print_fingerprint,
         // measured; the 7 that fail fail on a hosted x86_64 too), so the line
         // is back. If it is ever removed from the index, this must change with
         // it.
+        //
+        // ⚠️ And the VERSION is part of the promise, not decoration — which is
+        // how the same defect recurred in a second form. The line said "0.1.0"
+        // after 0.2.0 superseded it in the index, and 0.1.0 is not published,
+        // so pasting it produced
+        //
+        //     E_NOT_FOUND: package 'compat.std-freestanding@0.1.0' not found
+        //     in the synced index
+        //
+        // measured 2026-08-20 while documenting this message. A floor would
+        // not fix it either: the request has to name a version the index
+        // actually carries. Publishing a new std-freestanding means updating
+        // this literal in the same change.
         if (auto ft = mcpp::toolchain::triple::parse(tc->targetTriple);
             ft && ft->is_freestanding())
         {
@@ -5389,7 +5466,7 @@ prepare_build(bool print_fingerprint,
                 "       string_view, ranges, expected, charconv, coroutines):\n"
                 "\n"
                 "           [dependencies]\n"
-                "           std-freestanding = \"0.1.0\"\n"
+                "           std-freestanding = \"0.2.0\"\n"
                 "\n"
                 "       then `import mcpplibs.std.freestanding;` in place of "
                 "`import std;`.\n"

@@ -43,6 +43,23 @@ struct BuildProgramEnv {
     // hostprogram::toolchain_dir / sysroot_dir for why declaring was wrong.
     std::string toolchainDir;
     std::string targetSysroot;
+    // Three more answers a board-support package would otherwise hardcode.
+    //
+    // ⚠️ THE COUPLING THESE REMOVE IS INVISIBLE IN A MANIFEST. `riscv-virt-rt`
+    // declares no dependency on LLVM or on picolibc — #459 removed those — and
+    // yet it named `clang_rt.builtins-riscv64` (a compiler-rt fact, `libgcc`
+    // under GCC) and `rv64gc/lp64d` (picolibc's multilib convention). A
+    // declared dependency is visible; a hardcoded name is not, and it fails
+    // only when something is swapped.
+    //
+    // The division of labour is the same one the layering already uses:
+    // location is a target fact, selection is a board fact. Which builtins
+    // library exists is decided by the compiler, and no board chooses to go
+    // without one; where a profile's libraries live is the C library's
+    // convention. Both belong to the engine, which knows them already.
+    std::string targetBuiltinsLib;          // "clang_rt.builtins-riscv64" | "gcc" | ""
+    std::string targetLibcProfile;          // "rv64gc/lp64d" | ""
+    std::string targetLibc;                 // "picolibc-riscv" | "" (zero-libc tier)
     std::string profile;                    // effective profile name (dev/release/…)
     std::vector<std::string> features;      // active feature closure of the package
     // Artifact home (bin/cache/out). Empty → <root>/target/.build-mcpp (the
@@ -306,6 +323,9 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     // process happened to export.
     e.emplace_back("MCPP_TOOLCHAIN_DIR", env.toolchainDir);
     e.emplace_back("MCPP_TARGET_SYSROOT", env.targetSysroot);
+    e.emplace_back("MCPP_TARGET_BUILTINS_LIB", env.targetBuiltinsLib);
+    e.emplace_back("MCPP_TARGET_LIBC_PROFILE", env.targetLibcProfile);
+    e.emplace_back("MCPP_TARGET_LIBC", env.targetLibc);
     e.emplace_back("MCPP_PROFILE", env.profile);
     e.emplace_back("MCPP_OUT_DIR", outDir.string());
     e.emplace_back("MCPP_MANIFEST_DIR", root.string());

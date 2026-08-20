@@ -767,6 +767,11 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
             if (diagnostics.back() != '\n')
                 std::fputc('\n', stderr);
         }
+        // Read from the RAW output, not from `diagnostics`: the filter drops
+        // command lines, and a future filter change must not be able to
+        // silently remove the advice along with them.
+        if (auto advice = mcpp::build::link_failure_advice(out); !advice.empty())
+            std::fputs(advice.c_str(), stderr);
         return 1;
     }
     if (verbose && !out.empty())

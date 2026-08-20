@@ -3,6 +3,59 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.20.2] — 2026-08-20
+
+### 新增
+
+- **`[target.<triple>].sysroot` —— 目标的 C 库可按工程覆盖,并由此有了零 libc 档。**
+
+  目标表把一份 C 库绑在每个 triple 上,而三条互不相干的需求都想和它分歧:内核要
+  一份都不要、厂商 SDK 上的工程要换成 newlib、`std-freestanding` 坐到 openkal 的
+  C 库上也要换。**一个旋钮解锁三条线。**
+
+  ⚠️ 字段是可选值而不是字符串,因为**缺席与空是两个不同的答案**:缺席继承目标表行,
+  `sysroot = ""` 是零 libc 档。用普通字符串两者不可区分,而空串正是没有 sysroot 的
+  目标行本来的样子 —— 内核工程会静默地把 picolibc 拿回去。
+
+  实测两侧:不覆盖时 picolibc 头可用;`sysroot = ""` 后 `'stdio.h' file not found`;
+  零 libc 自包含镜像 **`text 108`**,在 qemu 中打印 `zero-libc ok`。
+
+- **三个目标查询,解除板级包对编译器与 C 库的隐式耦合。**
+
+  `mcpp::target_builtins_lib()` / `mcpp::target_libc_profile()` /
+  `mcpp::target_libc()`。
+
+  ⚠️ 这层耦合**在任何 manifest 里都看不见**:`riscv-virt-rt` 既不声明 LLVM 也不
+  声明 picolibc,却依然服务不了第二种工具链或第二份 C 库,因为
+  `clang_rt.builtins-riscv64` 与 `rv64gc/lp64d` 写进了它的 build.mcpp。**声明出来的
+  依赖可评审;写死的名字只在换东西时才失败。**
+
+  判据不是「能编过」(只有一种取值时永远成立),而是板级包代码里两个字面量**归零**
+  且 rv32/rv64 双档仍通过。
+
+- **裸机上缺 `operator new` 时的具名诊断。**
+
+  裸机工程一用 `std::vector`,链接就死在标准库深处某个头文件里的 mangled 符号上,
+  而消息里没有一处说明哪个包提供它。现在追加说明,并给出激活 feature 的写法。
+  ⭐ 该建议**不带版本字面量** —— 它点名的是包与 feature,因此跨该包的每个版本都成立。
+
+### 测试
+
+- **e2e 机器校验 `import std` 诊断里那条可粘贴的依赖行。**
+
+  ⚠️ 同一个缺陷发过两次(先是包不存在,后是版本过期),而两次的修法都是「改字面量
+  + 加注释」;第二次发生时,第一次留下的注释就在断掉的那一行正上方。**注释强制不了
+  跨仓库不变量。**
+
+  新守卫不写版本号,而是触发诊断、从输出里抠出那一行、原样粘进 manifest、再构建。
+  revert-A 探针确认它对**历史缺陷本身**变红。
+
+### 生态
+
+- `mcpplibs/std-freestanding` 0.3.0 —— `alloc` / `alloc-kal` / `alloc-libc` feature。
+- `mcpplibs/std-freestanding-alloc-kal` 0.1.0、`-alloc-libc` 0.1.0、`-nolibc` 0.1.0(新)。
+- `mcpplibs/riscv-virt-rt` 0.4.0 —— 解耦、openkal 裸机后端、零 libc 内核模板。
+
 ## [2026.8.20.1] — 2026-08-20
 
 ### 修复

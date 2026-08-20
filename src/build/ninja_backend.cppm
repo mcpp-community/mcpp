@@ -65,6 +65,18 @@ std::string emit_ninja_string(const BuildPlan& plan);
 std::string filter_ninja_output(std::string_view output,
                                 std::span<const std::string> commandPrefixes);
 
+// Advice appended to a failed build whose linker output names a replaceable
+// function nothing in the graph defines. Empty when there is nothing to add.
+//
+// ⚠️ The case this exists for reads as a toolchain fault and is not one. A
+// freestanding target has no compiled `libc++`, so `operator new` is simply
+// absent; the moment a project uses `std::vector` the link fails naming a
+// mangled symbol from a header deep inside the standard library, and nothing
+// in that message says which package supplies it or that the answer is one
+// manifest line. Measured: `undefined symbol: operator new(unsigned long)`
+// referenced from `__libcpp_allocate` in `__new/allocate.h`.
+std::string link_failure_advice(std::string_view output);
+
 }  // namespace mcpp::build
 
 namespace mcpp::build {
@@ -409,6 +421,45 @@ runtime_env_for_dirs(const std::vector<std::filesystem::path>& dirs) {
 }
 
 }  // namespace
+
+std::string link_failure_advice(std::string_view output) {
+    // Both linkers, both spellings. lld says "undefined symbol: X"; GNU ld says
+    // "undefined reference to `X'". Matched on the operator's own name rather
+    // than on a mangled form, because the mangling differs by ABI and the
+    // demangled text is what both emit.
+    static constexpr std::string_view kNew[] = {
+        "undefined symbol: operator new",
+        "undefined reference to `operator new",
+    };
+    bool missingNew = false;
+    for (auto n : kNew)
+        if (output.find(n) != std::string_view::npos) { missingNew = true; break; }
+    if (!missingNew) return {};
+
+    // ⚠️ NOT a version literal. The advice names a package and a feature, and
+    // the feature is what pulls the implementation — so this line stays correct
+    // across every release of that package. The version-bearing advice in the
+    // `import std` message needed an e2e to keep it honest (tests/e2e/135);
+    // this one is built so that it cannot go stale in the same way.
+    return
+        "\n"
+        "note: nothing in this build defines `operator new`.\n"
+        "      A freestanding target has no compiled libc++, so the allocating\n"
+        "      parts of the standard library (vector, string, map, and the\n"
+        "      default coroutine frame) link only once the program supplies an\n"
+        "      allocator. The non-allocating parts — array, span, optional,\n"
+        "      atomic, string_view, ranges — need nothing.\n"
+        "\n"
+        "      Activate the subset's allocator feature, which brings an\n"
+        "      implementation with it:\n"
+        "\n"
+        "          [dependencies]\n"
+        "          std-freestanding = { version = \"…\", features = [\"alloc-kal\"] }\n"
+        "\n"
+        "      To supply an allocator instead, define the twelve `operator new`\n"
+        "      and `operator delete` overloads — including the four taking\n"
+        "      `std::align_val_t`, which are the ones most often forgotten.\n";
+}
 
 std::string filter_ninja_output(std::string_view output,
                                 std::span<const std::string> commandPrefixes) {
@@ -2426,6 +2477,12 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     } else {
         auto prefixes = command_prefixes(flags, plan);
         auto diagnostics = opts.verbose ? out : filter_ninja_output(out, prefixes);
+        // Appended here as well as on the fast path (execute.cppm): the two
+        // paths report failure through different channels, and advice attached
+        // to only one of them would appear or not depending on whether
+        // build.ninja happened to be up to date — which is exactly the kind of
+        // "same decision in two places" this codebase keeps paying for.
+        diagnostics += link_failure_advice(out);
         return std::unexpected(BuildError{"build failed", plan.outputDir / "build.ninja",
                                           std::move(diagnostics)});
     }

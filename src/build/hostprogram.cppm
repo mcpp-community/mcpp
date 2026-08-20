@@ -203,6 +203,48 @@ inline const char* toolchain_dir()                { return env_or("MCPP_TOOLCHAI
 // Empty on a hosted target — there the libc comes with the compiler payload or
 // through the runtime binding, and nothing has to look for it.
 inline const char* sysroot_dir()                  { return env_or("MCPP_TARGET_SYSROOT"); }
+
+// ── Three answers a board-support package would otherwise hardcode ───────────
+//
+// ⚠️ The coupling these remove does not appear in any manifest. A board package
+// can declare no dependency on LLVM and none on picolibc — and still be unable
+// to serve a second toolchain or a second C library, because it wrote their
+// names into its `build.mcpp`. A declared dependency is visible and reviewable;
+// a hardcoded name fails only when something is swapped, which is exactly when
+// nobody is looking for it.
+//
+// The rule that decides what belongs here is the one the layering already
+// uses: LOCATION IS A TARGET FACT, SELECTION IS A BOARD FACT.
+
+// The compiler's builtins library, by bare name: `clang_rt.builtins-riscv64`
+// for an LLVM payload, `gcc` for a GCC one.
+//
+// A board does not choose whether to have builtins — every freestanding link
+// needs them, and on rv64 the trigger is picolibc's printf doing 128-bit
+// shifts, which the ISA has no instruction for. What varies is only which
+// implementation the resolved toolchain ships, and that is not a board fact.
+// Empty on a hosted target, where the driver links them without being asked.
+inline const char* target_builtins_lib()          { return env_or("MCPP_TARGET_BUILTINS_LIB"); }
+
+// The C library's sub-directory for this target's ISA profile, e.g.
+// `rv64gc/lp64d`. It is the multilib convention of whichever C library the
+// target resolved, with no board input at all — a board that wanted a
+// different layout would be using a different C library.
+//
+// Empty when the target has no C library of its own (the zero-libc tier, or a
+// hosted target).
+inline const char* target_libc_profile()          { return env_or("MCPP_TARGET_LIBC_PROFILE"); }
+
+// The C library's package name, e.g. `picolibc-riscv`; empty on the zero-libc
+// tier and on hosted targets.
+//
+// This one does NOT remove a coupling — it makes one visible. A board package
+// that genuinely must differ between picolibc and newlib (the crt0 object is
+// named differently, and that IS a board choice) can branch on this instead of
+// assuming. An explicit branch can be read and can be extended; an assumption
+// baked into a string literal can be neither.
+inline const char* target_libc()                  { return env_or("MCPP_TARGET_LIBC"); }
+
 inline const char* manifest_dir()                 { return env_or("MCPP_MANIFEST_DIR"); }
 inline bool has_feature(const char* name) {
     char buf[256] = "MCPP_FEATURE_";

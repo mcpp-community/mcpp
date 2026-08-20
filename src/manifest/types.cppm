@@ -694,6 +694,35 @@ struct TargetEntry {
     // channel deliberately carries build INPUTS and nothing else
     // (ConditionalConfig). One axis, one scoping rule.
     std::string                         cxxRuntime;
+    // The target's C library, overriding the `sysroot` column of the target
+    // table for this triple. Same axis as `toolchain` overriding `pin`: one
+    // names the compiler the target resolves, the other names the C library,
+    // and both were engine-only until a project had a reason to disagree.
+    //
+    // ⚠️ TWO MEMBERS AND NOT AN `std::optional<std::string>`, AND THE REASON IS
+    // NOT STYLE.
+    //
+    // ABSENT and EMPTY are different answers — absent inherits the target row,
+    // `sysroot = ""` is the ZERO-LIBC tier — so a plain string alone cannot
+    // carry the distinction. An optional can, and was the first version.
+    //
+    // But an `std::optional<std::string>` DATA MEMBER of an exported struct
+    // forces this module's interface to materialise that specialisation's
+    // special-member machinery, and under clang with the MSVC standard library
+    // that broke every downstream translation unit constructing one:
+    //
+    //     MSVC\include\optional:307: error: no matching constructor for
+    //     initialization of '_SMF_control<_Optional_construct_base<basic_string…
+    //
+    // The errors named test files the change never touched — the signature of a
+    // std type in a newly-exported interface poisoning the importers' module
+    // files rather than failing where it was written. `std::optional<std::string>`
+    // already appeared in this module as a RETURN type without incident; a
+    // member is what forces the instantiation.
+    //
+    // Two plain members carry the same information and instantiate nothing.
+    std::string                         sysroot;
+    bool                                sysrootDeclared = false;
     // ⚠️ NO per-role field here. There used to be a `cxxRuntimeTests`, and it was
     // parsed nowhere and applied nowhere — a configuration key that looked
     // available and did nothing (#418). The per-target channel carries the

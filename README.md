@@ -380,6 +380,8 @@ the right toolchain payload is resolved and installed automatically.
 | `x86_64-windows-gnu`  | gcc 16 MinGW-w64 — native on Windows, cross from Linux (wine-verified) *(Windows default without Visual Studio)* | ✅ |
 | `x86_64-windows-msvc` | `msvc@system` (detected VS/BuildTools) or llvm ¹ *(Windows default with Visual Studio)* | ✅ |
 | `aarch64-macos`       | llvm *(macOS default)* | ✅ |
+| `riscv64-none-elf`    | llvm 22 — bare metal, no OS; needs no per-host cross payload ² | ✅ |
+| `riscv32-none-elf`    | llvm 22 — bare metal, no OS; needs no per-host cross payload ² | ✅ |
 | `riscv64-linux-musl`  | — | 🔄 |
 | `aarch64-linux-gnu`   | — | 🔄 |
 | `x86_64-macos`        | — | 🔄 |
@@ -400,6 +402,12 @@ the right toolchain payload is resolved and installed automatically.
 > or configure; `mcpp new && mcpp build` just works on a stock Windows box.
 > An explicit `[toolchain]` in `mcpp.toml` is always respected as written —
 > mcpp revises its own default, never yours.
+>
+> ² The bare-metal rows carry no operating system: clang and lld are
+> cross-compilers by construction, so any host that can install the LLVM
+> payload produces these targets. The C library, startup code, memory layout
+> and emulator travel with a board-support package rather than with mcpp — see
+> [docs/13 — Bare-Metal and Freestanding Targets](docs/13-baremetal.md).
 
 ## Documentation
 

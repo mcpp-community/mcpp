@@ -793,14 +793,46 @@ cxxflags = ["-march=x86-64-v2"]
   「glob 未匹配到任何源文件」的警告。于是一份 manifest 可以同时携带三个 OS 的
   flag 表,而不会在另外两个上制造噪声 —— 与未启用 feature 的条目根本不存在是
   同一个道理。**无条件**表里的零命中 glob 仍然告警,因为那里它是真实缺陷。
-- **`toolchain` / `linkage` 仅限精确三元组** —— 它们描述某一个具体的交叉目标,
+- **`toolchain` / `linkage` / `sysroot` 仅限精确三元组** —— 它们描述某一个具体的交叉目标,
   因此写在 `[target.<triple>]` 下(见上),而不是裸别名或 `cfg(...)` 下。
+
+#### `sysroot` —— 目标的 C 库
+
+`sysroot`(mcpp 2026.8.20.2+)覆盖目标表为某个三元组绑定的 C 库,与 `toolchain`
+覆盖编译器 pin 同轴:一个指名目标所解析的编译器,另一个指名它的 C 库,两者在工程
+有理由与之分歧之前都只由引擎决定。
+
+```toml
+[target.riscv64-none-elf]
+sysroot = "xim:newlib-riscv@4.4"     # a different C library
+```
+
+```toml
+[target.riscv64-none-elf]
+sysroot = ""                          # no C library at all
+```
+
+⚠️ **键缺席与键为空是两个不同的答案。** 缺席继承目标表的 C 库。存在且为空是
+**零 libc 档**:不解析任何 C 库,不加入头文件与库目录,链接行上只有工程与其依赖
+提供的内容,`#include <stdio.h>` 不再解析。内核与 bootloader 要的正是这一档,而把
+两种情形合并会让这类工程静默地把目标的 C 库拿回去。
+
+取值是 xpkg 引用或空字符串;裸名在解析清单时即被拒绝,因为接受它会导致什么都不安装,
+然后在很晚的时候以「缺少 libc」失败。
+
+构建程序可以询问解析到的是哪份 C 库:`mcpp::target_libc()` 返回其包名,
+`mcpp::target_libc_profile()` 返回目标 ISA 档位对应的子目录。零 libc 档上两者均为空。
+参见[13 —— 裸机与 freestanding 目标](13-baremetal.md)。
 
 ### 2.7.2 裸机(`os = none`)—— freestanding target
 
 `riscv64-none-elf` 与 `riscv32-none-elf` 是底下没有操作系统的 target。它们不需要
 逐宿主的交叉工具链:clang 与 lld 天生是交叉编译器,任何能装 llvm 载荷的宿主都能
 产出它们。
+
+本节是清单参考。示例部分 —— 生成工程、运行、在目标上测试、freestanding 标准库
+子集,以及编写板级支持包 —— 在
+[13 — 裸机与 freestanding 目标](13-baremetal.md)。
 
 ```bash
 mcpp build --target riscv64-none-elf
@@ -943,6 +975,20 @@ compat.openblas = "0.3.0"    # provider 必须是图中真实存在的依赖
 被绑定 provider 的链接/头文件旗标经由常规依赖机制流到消费方;capability 层是那道
 *选择与校验* 步骤,把"静默选错后端 / 缺后端"变成构建期的显式报错。
 
+**绑定选中的是 provider,它不裁剪链接行。** 依赖包的目标文件一律进入消费方的链接,
+与它的能力是否被绑定无关。实测:两个包都提供同一能力且都定义 `cap_probe`,未 pin 时
+解析按上表报错;按提示用 `[capabilities]` pin 其中一个之后,构建走到链接器才失败——
+
+```
+ld: obj/mcpplibs_pa/src/impl.o: in function `cap_probe':
+    multiple definition of `cap_probe'; obj/mcpplibs_pb/src/impl.o: first defined here
+```
+
+这一点对**多个 provider 定义同一批符号**的能力有影响 —— 全程序单例(例如
+`operator new`),或名字集合固定的 C 接口。对这类能力,图中出现两个 provider 是**待修的
+缺陷**而非可 pin 的歧义:pin 会把一个点名两个候选的报错,换成一个点名 mangled 符号的报错。
+可互换的**库**(各 BLAS 实现导出不同的符号集合,按链接选其一)不受此影响。
+
 ### 2.8.2 `[feature-deps.<name>]` —— 由 feature 拉取的依赖
 
 在 `[feature-deps.<name>]` 下声明的依赖是**可选的**:仅当该 feature 激活时(根 `--features`,
@@ -957,8 +1003,26 @@ backend-openblas = { implies = ["use_blas"] }
 # 仅当 `backend-openblas` 激活时才拉取。每个条目都是完整的依赖 spec
 #(version/path/git + 其自身的 features)。
 [feature-deps.backend-openblas]
-compat.openblas = "0.3.x"
+compat.openblas = "0.3"
 ```
+
+⚠️ **写 `"^0.3.0"`,而不是 `"0.3.x"` 或 `"0.3"`。** 以索引中确定存在的包作对照,
+判据取**构建成功**:
+
+| 写法 | 结果 |
+|---|---|
+| `cmdline = "0.0.1"` | 构建通过 |
+| `cmdline = "^0.0.1"` | 构建通过 |
+| `cmdline = "0.0"` | 解析通过,随后 `install path missing after fetch` |
+| `cmdline = "0.0.x"` | `E_NOT_FOUND`,点名的是包 —— 而该包存在 |
+
+⭐ 这三种结果值得分开,因为两个更弱的判据各自会放行一种不可用的写法:
+「没有 `E_NOT_FOUND`」放行两段前缀,「解析通过」同样放行它。**只有对着真实索引构建
+一次**才能定论。
+
+⚠️ 这一点在此处比在 `[dependencies]` 中更要紧:**实现取不回来的 feature 等于不存在的
+feature**,而开发期使用 **path** 依赖的工程根本不查索引 —— 该失败只在发布之后才出现,
+而且是出现在别人身上。
 
 该机制与能力(§2.8.1)组合:单个 `backend-openblas` feature 既**拉取** provider
 (`compat.openblas`,其 `provides = ["blas"]`),又**开启**消费方开关
@@ -976,6 +1040,38 @@ features = {
     },
 }
 ```
+
+#### 保持可替换的默认实现
+
+同样这三件东西,也覆盖"库希望**提供**一份实现但不**强加**一份"的情形 —— 全程序单例,
+例如 `operator new`、日志 sink、panic handler:
+
+```toml
+[features]
+default   = []
+# 消费方开关:"我用到了本库中需要分配器的那部分"。
+alloc     = { requires = ["freestanding-allocator"] }
+# 内置默认:激活它就够了。
+alloc-kal = { implies = ["alloc"] }
+
+# 仅在 `alloc-kal` 激活时解析,因此库本体不携带对该实现的依赖。
+[feature-deps.alloc-kal]
+std-freestanding-alloc-kal = "0.1.x"
+```
+
+三种用法各一行:
+
+| 消费方需要 | 清单里怎么写 |
+|---|---|
+| 不用会分配的那部分 | `std-freestanding = "0.2.0"` —— 分配器不进图 |
+| 默认实现 | `features = ["alloc-kal"]` —— 实现随之进图,**无需知道其包名** |
+| 自己的或第三方的 | `features = ["alloc"]` 加一个 `provides = ["freestanding-allocator"]` 的包 |
+
+有两条性质使该形状优于无条件随包提供实现。随包提供实现的库替程序做了本属程序的决定,
+而且**撤销不掉**:feature 是**加性**的,消费方没有把某个默认**关掉**的手段。以及,由于
+依赖包的目标文件无条件参与链接(§2.8.1),随包的默认加上程序自备的那份是**重复定义**
+而非替换 —— 让 C++ 标准库能提供可替换 `operator new` 的那套归档语义,对包依赖并不适用。
+把实现放在开关之后,意味着两者**从不共存**。
 
 ### 2.8.3 `[scan_overrides."<glob>"]` —— 作者断言的扫描结果
 

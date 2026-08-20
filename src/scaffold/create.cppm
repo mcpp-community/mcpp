@@ -256,11 +256,15 @@ export int new_from_package_template(
         mcpp::ui::error(instantiated.error());
         return 1;
     }
-    auto injected = mcpp::scaffold::inject_self_dependency(
-        root / "mcpp.toml", vars, chosen->meta.injectSelfFeatures);
-    if (!injected) {
-        mcpp::ui::error(injected.error());
-        return 1;
+    // A template may decline the self-dependency — see TemplateMeta::injectSelf
+    // for the case that requires it.
+    if (chosen->meta.injectSelf) {
+        auto injected = mcpp::scaffold::inject_self_dependency(
+            root / "mcpp.toml", vars, chosen->meta.injectSelfFeatures);
+        if (!injected) {
+            mcpp::ui::error(injected.error());
+            return 1;
+        }
     }
 
     // Parsing the completed manifest is the final semantic gate. Nothing is

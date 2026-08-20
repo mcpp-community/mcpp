@@ -7,9 +7,78 @@ import std;
 import mcpp.source_kind;
 import mcpp.libs.toml;
 import mcpp.pm.dep_spec;
+import mcpp.version_req;
 import mcpp.pm.dependency_selector;
 import mcpp.pm.index_spec;
 import mcpp.platform;
+
+// ⚠️ ANONYMOUS NAMESPACE, AND THIS COST TWO WINDOWS JOBS TO LEARN.
+//
+// The first version of this helper sat at namespace scope in the module
+// purview, which makes its declaration part of what this module's interface
+// records. Under clang
+// with the MSVC standard library that was enough to break every downstream
+// translation unit that constructs one:
+//
+//     MSVC\include\optional:307: error: no matching constructor for
+//     initialization of '_SMF_control<_Optional_construct_base<basic_string…
+//
+// The errors named test files that this change never touched, which is the
+// signature of the hazard: a std type in a newly-exported interface poisons the
+// importers' module files rather than failing where it was written. The Linux
+// jobs stayed green throughout.
+//
+// Nothing outside this file calls it, so nothing outside this file should be
+// able to see it.
+namespace {
+
+// A dependency's version requirement, checked with the parser that will later
+// be asked to match it.
+//
+// ⚠️ THE PARSER EXISTED AND THIS PATH DID NOT USE IT.
+//
+// `version_req::parse_req` is what decides which published version satisfies a
+// requirement. The dependency reader handed its string straight to the
+// installer instead, so a requirement the matcher could never satisfy reached
+// the network — and came back as
+//
+//     E_NOT_FOUND: package 'compat.std-freestanding-alloc-libc@0.1.x' not
+//     found in the synced index
+//
+// which names the PACKAGE. The package exists; the requirement is what does
+// not parse. Measured 2026-08-20, from a form that this repository's own
+// documentation recommended (`docs/05` §2.8.2 said `compat.openblas = "0.3.x"`).
+//
+// Checking here converts a network round-trip and a misleading answer into a
+// message that names the actual problem, at the point where the text was
+// written.
+//
+// ⚠️ A WARNING AND NOT AN ERROR, AND THE FIRST VERSION GOT THIS WRONG.
+//
+// Rejecting the manifest breaks every consumer of a PUBLISHED package that
+// carries such a string — including one where the offending entry belongs to a
+// feature nobody activates. Measured: with the check as an error, a project
+// pinned to `std-freestanding` 0.3.0 stopped loading entirely, although the
+// half of that package it used was unaffected.
+//
+// This is the mirror of the rule the index already follows. Published data must
+// not invalidate a running program; equally, a new program must not invalidate
+// published data. A manifest check has no standing to do so over an entry that
+// may never be reached.
+// ⚠️ RETURNS A PLAIN STRING, EMPTY MEANING "NO PROBLEM", AND NOT AN
+// `std::optional<std::string>`. The optional was the obvious spelling and cost
+// two rounds of Windows CI: see the note on `TargetEntry::sysroot` for what
+// that specialisation does to importers under clang with the MSVC standard
+// library. Nothing here needs to distinguish an absent problem from an empty
+// one, so nothing is lost.
+std::string version_req_problem(std::string_view spec) {
+    if (spec.empty()) return {};                    // path/git/workspace deps
+    if (auto r = mcpp::version_req::parse_req(spec); !r) return r.error();
+    return {};
+}
+
+}  // namespace
+
 
 export namespace mcpp::manifest {
 
@@ -632,7 +701,17 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 "typo, or a field a newer mcpp understands.", section, fqName, sk));
         }
         if (auto it = sub.find("path");    it != sub.end() && it->second.is_string()) spec.path    = it->second.as_string();
-        if (auto it = sub.find("version"); it != sub.end() && it->second.is_string()) spec.version = it->second.as_string();
+        if (auto it = sub.find("version"); it != sub.end() && it->second.is_string()) {
+            spec.version = it->second.as_string();
+            if (auto why = version_req_problem(spec.version); !why.empty())
+                m.schemaWarnings.push_back(std::format(
+                    "[{}.\"{}\"] version = '{}' is not a requirement this "
+                    "resolver can match ({}). The fetch will fail naming the "
+                    "PACKAGE, which may well exist; it is this requirement that "
+                    "does not parse. Accepted: an exact version (\"1.2.3\") or "
+                    "a comparator (\"^1.2.3\", \">=1.0.0, <2.0.0\").",
+                    section, fqName, spec.version, why));
+        }
         if (auto it = sub.find("git");     it != sub.end() && it->second.is_string()) spec.git     = it->second.as_string();
         if (auto it = sub.find("visibility"); it != sub.end() && it->second.is_string()) {
             spec.visibility = it->second.as_string();
@@ -746,6 +825,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         auto key = selector.stableMapKey;
         if (value.is_string()) {
             spec.version = value.as_string();
+            if (auto why = version_req_problem(spec.version); !why.empty())
+                m.schemaWarnings.push_back(std::format(
+                    "[{}] {} = '{}' is not a requirement this resolver can "
+                    "match ({}). The fetch will fail naming the PACKAGE, which "
+                    "may well exist; it is this requirement that does not "
+                    "parse. Accepted: an exact version (\"1.2.3\") or a "
+                    "comparator (\"^1.2.3\", \">=1.0.0, <2.0.0\").",
+                    section, key, spec.version, why));
         } else if (value.is_table()) {
             auto& sub = value.as_table();
             if (!looks_like_inline_dep_spec(sub)) {
@@ -1414,6 +1501,29 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         triple, e.cxxRuntime)));
                 }
             }
+            // The target's C library, overriding the target table's `sysroot`
+            // column. Accepted forms are an xpkg reference (`xim:newlib-arm@4.4`)
+            // and the empty string.
+            //
+            // ⚠️ The empty string is MEANINGFUL and must not be normalised
+            // away: it selects the zero-libc tier. Written into an
+            // `std::optional`, so "the key is absent" (inherit the target row)
+            // stays distinguishable from "the key is present and empty" (no C
+            // library at all). Collapsing the two is how a kernel project would
+            // silently get picolibc back.
+            if (auto it = body.find("sysroot"); it != body.end() && it->second.is_string()) {
+                std::string s = it->second.as_string();
+                if (!s.empty() && s.find(':') == std::string::npos) {
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].sysroot = '{}' is not an xpkg reference; "
+                        "expected `<namespace>:<name>[@<version>]` (e.g. "
+                        "\"xim:picolibc-riscv@1.8.12\"), or \"\" for a target "
+                        "with no C library.", triple, s)));
+                }
+                e.sysroot = std::move(s);
+                e.sysrootDeclared = true;
+            }
+
             // `runner` — the argv template `mcpp run` uses for a target whose
             // artifact cannot execute here. An ARRAY, so it is neither a
             // scalar (the unknown-key sweep below skips it by type) nor part
@@ -1460,7 +1570,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // new conditional sections need no change here, and the reported
             // case — a scalar that does nothing — is still caught.
             static constexpr std::string_view kKnownTargetScalars[] = {
-                "cxx_runtime", "linkage", "toolchain",
+                "cxx_runtime", "linkage", "sysroot", "toolchain",
             };
             for (auto& [key, value] : body) {
                 if (value.is_table()) continue;   // the conditional channel

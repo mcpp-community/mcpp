@@ -388,3 +388,63 @@ widget = "1.0.0"
 }
 
 } // namespace
+
+// ── [template.inject] self = false ───────────────────────────────────────────
+//
+// ⚠️ A TEMPLATE THAT MUST NOT DEPEND ON ITS OWN PACKAGE IS NOT HYPOTHETICAL.
+//
+// The self-dependency keeps a template from drifting from the library that
+// ships it, and for almost every template that is right. It is wrong for one
+// whose subject is depending on NOTHING: a bare-metal package may ship a kernel
+// starting point for a target with no C library, while the package's own module
+// includes <stdio.h>. Measured: the injected dependency failed to compile
+// before the generated project was reached, in a project whose manifest
+// declares no dependencies at all.
+TEST(ScaffoldTemplate, InjectSelfCanBeDeclined) {
+    auto dir = std::filesystem::temp_directory_path() / "mcpp_tmpl_noself";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream f(dir / "template.toml");
+        f << "[template]\ndescription = \"d\"\n[template.inject]\nself = false\n";
+    }
+    auto meta = mcpp::scaffold::load_meta(dir);
+    ASSERT_TRUE(meta.has_value()) << (meta ? "" : meta.error());
+    EXPECT_FALSE(meta->injectSelf);
+    std::filesystem::remove_all(dir);
+}
+
+// The default must stay ON: every template that does not say otherwise relies
+// on the injection, and a silent flip would leave them all without their own
+// package.
+TEST(ScaffoldTemplate, InjectSelfDefaultsToOn) {
+    auto dir = std::filesystem::temp_directory_path() / "mcpp_tmpl_self_default";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream f(dir / "template.toml");
+        f << "[template]\ndescription = \"d\"\n";
+    }
+    auto meta = mcpp::scaffold::load_meta(dir);
+    ASSERT_TRUE(meta.has_value()) << (meta ? "" : meta.error());
+    EXPECT_TRUE(meta->injectSelf);
+    std::filesystem::remove_all(dir);
+}
+
+// The table form still carries features, and must not be read as "declined".
+TEST(ScaffoldTemplate, InjectSelfTableFormStillInjects) {
+    auto dir = std::filesystem::temp_directory_path() / "mcpp_tmpl_self_table";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    {
+        std::ofstream f(dir / "template.toml");
+        f << "[template]\ndescription = \"d\"\n"
+             "[template.inject]\nself = { features = [\"x\"] }\n";
+    }
+    auto meta = mcpp::scaffold::load_meta(dir);
+    ASSERT_TRUE(meta.has_value()) << (meta ? "" : meta.error());
+    EXPECT_TRUE(meta->injectSelf);
+    ASSERT_EQ(meta->injectSelfFeatures.size(), 1u);
+    EXPECT_EQ(meta->injectSelfFeatures[0], "x");
+    std::filesystem::remove_all(dir);
+}
