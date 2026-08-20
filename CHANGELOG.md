@@ -74,7 +74,16 @@
 
   新增 `--profile` / `--no-strip` / `--debug-symbols <DIR>` 与 `[pack] strip`、
   `[pack] debug_symbols`。`--debug-symbols` 是分离而不是丢弃:写出
-  `<dir>/<产物>.debug` 并给发货产物加 `.gnu_debuglink`。
+  `<dir>/<triple>/<产物>.debug` 并给发货产物加 `.gnu_debuglink`——**按 triple 分目录**,
+  因为 fat 包的各条 leg 产物同名(`gnu` 与 `musl` 两条腿都叫
+  `libmathkit-shared.so` 是常态),扁平布局会让后一条覆盖前一条,而前一个产物的
+  `.gnu_debuglink` 会静默指向另一个目标的符号。
+
+  ⚠️ **一条要知道的后果**:裸 `mcpp build` 与裸 `mcpp pack` 现在写进**不同的**
+  `target/<triple>/<fingerprint>/` 目录(指纹把 profile 算进去了)。手工放到构建
+  产物旁边的文件只在两条命令解析到同一个 profile 时才被 `pack` 看见;声明式通道
+  (`[runtime] deploy_files`、`runtime_search_dirs`)不受影响。e2e 240 因此在
+  fixture 里显式写了 `[build] default-profile`。
 
   > `[pack] strip` 与 `[profile.<name>].strip` 是两个决定:后者给**链接**加 `-s`
   > (碰不到静态归档,也分离不出任何东西),前者管**包里带什么**。

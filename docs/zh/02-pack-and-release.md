@@ -118,6 +118,13 @@ mcpp pack --debug-symbols dbg/         # 把分离出的 *.debug 写到 dbg/
 profile 的工程仍然拿到它声明的那个,`mcpp pack` 也不会产出一个 `mcpp build`
 产不出来的 flag 组合。
 
+> 有一条后果要知道:裸 `mcpp build` 与裸 `mcpp pack` 现在会写进**不同的**
+> `target/<triple>/<fingerprint>/` 目录 —— 指纹把 profile 算进去了。手工放到
+> 构建产物旁边的文件(一个 DLL、一份数据)因此只在两条命令解析到同一个
+> profile 时才被 `pack` 看见:把它写进 `[build] default-profile`,或者两条命令
+> 都带 `--profile`。声明式通道(`[runtime] deploy_files`、
+> `runtime_search_dirs`)不受影响。
+
 **调试信息会被剥掉,发布者的路径随之消失。** 未 strip 的产物带着 DWARF,而
 DWARF 带着发布者源码树与构建目录的绝对路径。剥什么取决于产物**是什么** ——
 这是 dh_strip 的分档,而其中归档那一行是要命的:

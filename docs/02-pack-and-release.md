@@ -154,6 +154,14 @@ fallback. Only the last step differs, so a project that states a profile still
 gets the one it stated, and `mcpp pack` never produces an artifact built with
 flags `mcpp build` would not.
 
+> One consequence to know: a bare `mcpp build` and a bare `mcpp pack` now write
+> into **different** `target/<triple>/<fingerprint>/` directories, because the
+> fingerprint covers the profile. A file placed beside a built artifact by hand
+> — a DLL, a data blob — is therefore only visible to `pack` when both commands
+> resolve to the same profile: state it in `[build] default-profile`, or pass
+> `--profile` to both. The declarative channels (`[runtime] deploy_files`,
+> `runtime_search_dirs`) are unaffected.
+
 **Debug information is stripped, and the publisher's paths go with it.** An
 unstripped artifact carries DWARF, and DWARF carries the absolute paths of the
 producer's source tree and build directory. What is removed depends on what the
