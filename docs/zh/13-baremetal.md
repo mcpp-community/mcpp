@@ -217,6 +217,85 @@ std::mutex m;
 error: no type named 'mutex' in namespace 'std'
 ```
 
+### 子集中会分配的那半边
+
+子集不改变什么能编。它的全部头文件都是无条件包含的,`std::vector` 今天就编得过;
+失败发生在**链接**,因为 freestanding 目标没有编译版 `libc++`,也就没有
+`operator new`:
+
+```
+ld.lld: error: undefined symbol: operator new(unsigned long)
+>>> referenced by allocate.h:58
+```
+
+| 不需要分配器 | 需要分配器 |
+|---|---|
+| `array` `span` `optional` `expected` `atomic` `string_view` `ranges` `algorithm` `bit` `charconv` `tuple` | `vector` `string` `deque` `list` `map` `set` `unordered_*` `function` `any` `make_unique`,以及默认的协程帧 |
+
+分配器随一个 feature 到来:
+
+```toml
+[dependencies]
+riscv-virt-rt    = "0.4.0"
+std-freestanding = { version = "0.3.0", features = ["alloc-libc"] }
+```
+
+```
+        Size blinky  text 13764  data 80  bss 5668  total 19512
+
+vector 5 last=16
+```
+
+`alloc-libc` 转发到目标的 C 库,目标有 C 库时它是更短的路径。`alloc-kal` 转发到
+openkal,适用于同一份源码还要为「环境不是 C 库」的目标构建的工程;裸机上 openkal
+后端由板级支持包提供,因为控制台与堆区都是板级事实:
+
+```toml
+riscv-virt-rt    = { version = "0.4.0", features = ["openkal"] }
+std-freestanding = { version = "0.3.0", features = ["alloc-kal"] }
+```
+
+`operator new` 是全程序单例,因此实现是独立的包,而选择属于程序。feature 以能力的
+形式声明这条要求,实现方提供该能力,解析器绑定恰好一个。两种失败因此都在图解析时
+报告,点名的是包而不是 mangled 符号:
+
+```
+error: no package provides capability 'freestanding-allocator' required by 'std-freestanding'
+
+error: capability 'freestanding-allocator' has multiple providers in the graph:
+       [std-freestanding-alloc-kal, std-freestanding-alloc-libc]
+```
+
+### 没有 C 库的目标
+
+`[target.<triple>].sysroot` 覆盖目标表所绑定的 C 库,与 `toolchain` 覆盖编译器 pin
+同轴。空字符串表示完全不要 C 库:
+
+```toml
+[target.riscv64-none-elf]
+sysroot = ""
+```
+
+有了这一行,C 头文件离开编译行,C 库离开链接行。`#include <stdio.h>` 不再解析,
+镜像里只剩工程与其依赖放进去的内容。实测:一个自带入口点与链接脚本的自包含镜像
+链接后为 **108 字节**,并能启动。
+
+键缺席与键为空是两个不同的答案。缺席继承目标表的 C 库,存在且为空则拒绝它。内核与
+bootloader 要的是后者,而
+
+```bash
+mcpp new mykernel --template riscv-virt-rt:nolibc
+```
+
+生成的工程已处于该安排 —— 一个入口点、一份内存映射、一个设备,实测 369 字节。
+
+freestanding 翻译单元仍会用到的 C 函数中,有四个是义务而非便利:`memcpy`、
+`memmove`、`memset` 与 `memcmp` 必须存在,因为编译器把结构体赋值与数组初始化下降到
+它们之上。`std-freestanding-nolibc` 提供这四个与 `strlen`。
+
+⚠️ 该包仅用于零 libc 档。依赖包的目标文件无条件进入消费方的链接,因此板级支持包链了
+`-lc` 的工程会得到两份 `memcpy`。
+
 ### 在目标上运行测试
 
 `mcpp test` 为每个 `tests/*.cpp` 构建一个独立镜像,在板级支持包提供的模拟器里运行,
@@ -451,6 +530,6 @@ deps = ["xim:qemu-riscv@9.2.4-1"]
 | `std::format`、内建标量类型上的 `std::sort`、以及完整的 `std::string` | 在**链接**期失败并点名未定义符号。libc++ 把这些实体放在编译版库中 —— 标量 `__sort` 的实例化是 `extern template`,没有可用于关闭它们的宏 —— 因此需要为目标编出的 `libc++.a`。该载荷尚未发布。 |
 | 异常与 RTTI | 在整张图上关闭。`try`/`catch` 在编译期即不可用。一块随包提供目标版 `libc++abi` 与 unwinder 的板子有重新开启它们的正当理由;那也正是这一项应当成为一个清单键的时刻。 |
 | 板子覆盖面 | 只有一个板级家族。`riscv32-none-elf` 证明的是 ISA 表为数据,而不是已移植第二台机器。ARM Cortex-M 尚未尝试。 |
-| 替换 C 库 | `[target.<triple>]` 接受 `toolchain`、`linkage`、`runner` 与 `cxx_runtime`,但**没有 `sysroot` 键**。因此把 picolibc 换成 newlib 在今天的工程清单里无法表达。 |
+| 替换 C 库 | 自 2026.8.20.2 起可经 `[target.<triple>].sysroot` 表达,而**仅空值一侧经过验证**(零 libc 档)。指向另一份 C 库同样被接受并经同一通道安装,但生态中没有第二份裸机 C 库,该路径未经测试。 |
 | `win32-arm64` 上的 `qemu-riscv` | 上游包未为该宿主发布资产,因此在其上安装会失败。该失败是正确的而非静默的,但该宿主无法运行裸机镜像。 |
 | 生态侧 CI 广度 | 两个生态包各自的 CI 只跑 `ubuntu-24.04`。mcpp-index 的 `tests/examples/` workspace 成员在三个平台上无条件运行且没有能力门,因此需要模拟器与目标 sysroot 的包无法加入其中。这是一个已知的覆盖缺口。 |

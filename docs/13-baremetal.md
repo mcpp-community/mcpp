@@ -237,6 +237,96 @@ std::mutex m;
 error: no type named 'mutex' in namespace 'std'
 ```
 
+### The allocating half of the subset
+
+The subset does not change what compiles. All of its headers are included
+unconditionally and `std::vector` compiles today; what fails is the **link**,
+because a freestanding target has no compiled `libc++` and therefore no
+`operator new`:
+
+```
+ld.lld: error: undefined symbol: operator new(unsigned long)
+>>> referenced by allocate.h:58
+```
+
+| Needs nothing | Needs an allocator |
+|---|---|
+| `array` `span` `optional` `expected` `atomic` `string_view` `ranges` `algorithm` `bit` `charconv` `tuple` | `vector` `string` `deque` `list` `map` `set` `unordered_*` `function` `any` `make_unique`, and the default coroutine frame |
+
+An allocator arrives with a feature:
+
+```toml
+[dependencies]
+riscv-virt-rt    = "0.4.0"
+std-freestanding = { version = "0.3.0", features = ["alloc-libc"] }
+```
+
+```
+        Size blinky  text 13764  data 80  bss 5668  total 19512
+
+vector 5 last=16
+```
+
+`alloc-libc` forwards to the target's C library and is the shorter path when the
+target has one. `alloc-kal` forwards to openkal instead, which is what a project
+wants when the same sources must also build for a target whose environment is
+not a C library; on bare metal the board package supplies the openkal backend,
+because the console and the heap region are board facts:
+
+```toml
+riscv-virt-rt    = { version = "0.4.0", features = ["openkal"] }
+std-freestanding = { version = "0.3.0", features = ["alloc-kal"] }
+```
+
+`operator new` is a whole-program singleton, so the implementation is a separate
+package and the choice belongs to the program. The feature states the
+requirement as a capability; the implementations provide it; the resolver binds
+exactly one. Both failure modes are therefore reported when the graph resolves,
+naming packages rather than mangled symbols:
+
+```
+error: no package provides capability 'freestanding-allocator' required by 'std-freestanding'
+
+error: capability 'freestanding-allocator' has multiple providers in the graph:
+       [std-freestanding-alloc-kal, std-freestanding-alloc-libc]
+```
+
+### A target with no C library
+
+`[target.<triple>].sysroot` overrides the C library the target table binds, on
+the same axis as `toolchain` overriding the compiler pin. The empty string
+declines a C library altogether:
+
+```toml
+[target.riscv64-none-elf]
+sysroot = ""
+```
+
+With that line the C headers leave the compile line and the C library leaves the
+link. `#include <stdio.h>` stops resolving, and the image contains only what the
+project and its dependencies put in it. Measured: a self-contained image with
+its own entry point and linker script links at **108 bytes** and boots.
+
+An absent key and an empty one are different answers. Absent inherits the target
+table's C library; present-and-empty declines it. A kernel or a bootloader wants
+the second, and
+
+```bash
+mcpp new mykernel --template riscv-virt-rt:nolibc
+```
+
+produces a project already in that arrangement — an entry point, a memory map
+and a device, measured at 369 bytes.
+
+Four of the C functions a freestanding translation unit still reaches for are an
+obligation rather than a convenience: `memcpy`, `memmove`, `memset` and `memcmp`
+must exist because the compiler lowers structure assignment and array
+initialisation onto them. `std-freestanding-nolibc` supplies those and `strlen`.
+
+⚠️ That package is for the zero-libc tier only. A dependency package's object
+files enter the consumer's link unconditionally, so a project whose board
+package links `-lc` would get two definitions of `memcpy`.
+
 ### Running tests on the target
 
 `mcpp test` builds one image per `tests/*.cpp`, runs each under the emulator
@@ -488,6 +578,6 @@ targets, but that expectation is **not** covered by a test.
 | `std::format`, `std::sort` over builtin scalar types, and a complete `std::string` | Fail at **link** time naming the undefined symbol. libc++ places these entities in the compiled library — the scalar `__sort` instantiations are `extern template`, with no macro that disables them — so a target-built `libc++.a` is required. No such payload is published. |
 | Exceptions and RTTI | Disabled across the whole graph. `try`/`catch` is unavailable at compile time. A board shipping a target-built `libc++abi` and unwinder has a genuine case for re-enabling them; that is the point at which this becomes a manifest key. |
 | Board coverage | One board family. `riscv32-none-elf` demonstrates that the ISA table is data, not that a second machine has been ported. ARM Cortex-M has not been attempted. |
-| C library substitution | `[target.<triple>]` accepts `toolchain`, `linkage`, `runner` and `cxx_runtime`, but has **no `sysroot` key**. Replacing picolibc with newlib is therefore not expressible in a project's manifest today. |
+| C library substitution | Expressible since 2026.8.20.2 through `[target.<triple>].sysroot`, and **verified only for the empty value** (the zero-libc tier). Pointing it at a different C library is accepted and installed through the same channel, but no second bare-metal C library is published, so that path is untested. |
 | `qemu-riscv` on `win32-arm64` | The upstream package publishes no asset for that host, so installation fails on it. The failure is correct rather than silent, but the host cannot run a bare-metal image. |
 | Ecosystem CI breadth | The two ecosystem packages run their own CI on `ubuntu-24.04` only. mcpp-index's `tests/examples/` workspace members run unconditionally on three platforms with no capability gate, so a package requiring an emulator and a target sysroot cannot be added there. This is a known coverage gap. |

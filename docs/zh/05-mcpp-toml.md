@@ -793,8 +793,36 @@ cxxflags = ["-march=x86-64-v2"]
   「glob 未匹配到任何源文件」的警告。于是一份 manifest 可以同时携带三个 OS 的
   flag 表,而不会在另外两个上制造噪声 —— 与未启用 feature 的条目根本不存在是
   同一个道理。**无条件**表里的零命中 glob 仍然告警,因为那里它是真实缺陷。
-- **`toolchain` / `linkage` 仅限精确三元组** —— 它们描述某一个具体的交叉目标,
+- **`toolchain` / `linkage` / `sysroot` 仅限精确三元组** —— 它们描述某一个具体的交叉目标,
   因此写在 `[target.<triple>]` 下(见上),而不是裸别名或 `cfg(...)` 下。
+
+#### `sysroot` —— 目标的 C 库
+
+`sysroot`(mcpp 2026.8.20.2+)覆盖目标表为某个三元组绑定的 C 库,与 `toolchain`
+覆盖编译器 pin 同轴:一个指名目标所解析的编译器,另一个指名它的 C 库,两者在工程
+有理由与之分歧之前都只由引擎决定。
+
+```toml
+[target.riscv64-none-elf]
+sysroot = "xim:newlib-riscv@4.4"     # a different C library
+```
+
+```toml
+[target.riscv64-none-elf]
+sysroot = ""                          # no C library at all
+```
+
+⚠️ **键缺席与键为空是两个不同的答案。** 缺席继承目标表的 C 库。存在且为空是
+**零 libc 档**:不解析任何 C 库,不加入头文件与库目录,链接行上只有工程与其依赖
+提供的内容,`#include <stdio.h>` 不再解析。内核与 bootloader 要的正是这一档,而把
+两种情形合并会让这类工程静默地把目标的 C 库拿回去。
+
+取值是 xpkg 引用或空字符串;裸名在解析清单时即被拒绝,因为接受它会导致什么都不安装,
+然后在很晚的时候以「缺少 libc」失败。
+
+构建程序可以询问解析到的是哪份 C 库:`mcpp::target_libc()` 返回其包名,
+`mcpp::target_libc_profile()` 返回目标 ISA 档位对应的子目录。零 libc 档上两者均为空。
+参见[13 —— 裸机与 freestanding 目标](13-baremetal.md)。
 
 ### 2.7.2 裸机(`os = none`)—— freestanding target
 

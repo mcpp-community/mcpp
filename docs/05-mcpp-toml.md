@@ -893,9 +893,42 @@ for arch/env conditions and combinators.
   them generating noise on the other two — the same way an inactive feature's
   entries simply are not there. A zero-hit glob in the *unconditional* table
   still warns, because there it is a real defect.
-- **`toolchain` / `linkage` are exact-triple only** — they describe one specific
-  cross target, so put them under `[target.<triple>]` (above), not under a bare
-  alias or `cfg(...)`.
+- **`toolchain` / `linkage` / `sysroot` are exact-triple only** — they describe
+  one specific cross target, so put them under `[target.<triple>]` (above), not
+  under a bare alias or `cfg(...)`.
+
+#### `sysroot` — the target's C library
+
+`sysroot` (mcpp 2026.8.20.2+) overrides the C library the target table binds to
+a triple, on the same axis as `toolchain` overriding the compiler pin: one names
+the compiler a target resolves, the other names its C library, and both were
+engine-only until a project had a reason to disagree.
+
+```toml
+[target.riscv64-none-elf]
+sysroot = "xim:newlib-riscv@4.4"     # a different C library
+```
+
+```toml
+[target.riscv64-none-elf]
+sysroot = ""                          # no C library at all
+```
+
+⚠️ **An absent key and an empty one are different answers.** Absent inherits the
+target table's C library. Present-and-empty is the **zero-libc tier**: no C
+library is resolved, no include or library path is added, and the link carries
+only what the project and its dependencies supply. `#include <stdio.h>` stops
+resolving. A kernel or a bootloader wants exactly that, and collapsing the two
+cases would silently hand such a project the target's C library back.
+
+The value is an xpkg reference or the empty string; a bare name is rejected when
+the manifest is parsed, because accepting it would install nothing and then fail
+much later naming a missing libc.
+
+A build program can ask which C library was resolved: `mcpp::target_libc()`
+returns its package name and `mcpp::target_libc_profile()` the sub-directory for
+the target's ISA profile. Both are empty on the zero-libc tier. See
+[13 — Bare-Metal and Freestanding Targets](13-baremetal.md).
 
 ### 2.7.2 Bare metal (`os = none`) — freestanding targets
 
