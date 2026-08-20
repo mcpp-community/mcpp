@@ -141,4 +141,39 @@ grep -q -- "-march=x86-64" verbose.log || {
 grep -q -- "-mno-red-zone" verbose.log || {
     echo "the red zone was left enabled on a target that takes interrupts"; exit 1; }
 
+# ── 7. A shared library on this target is refused in words ─────────────────
+#
+# ⚠️ THE DIRECT-LINKER PATH DEFINES NO SHARED-LIBRARY RULE, AND WITHOUT A CHECK
+# THE FAILURE NAMES AN INTERNAL ONE:
+#
+#     ninja: error: build.ninja:88: unknown build rule 'cxx_shared'
+#
+# to somebody who wrote `kind = "shared"` in a manifest. Defining the rule would
+# be worse than omitting it: `ld.lld -shared` succeeds and produces an object
+# nothing on a machine with no loader can load.
+cd "$TMP"
+mkdir -p shared/src && cd shared
+cat > mcpp.toml <<'EOF'
+[package]
+name    = "shr"
+version = "0.1.0"
+
+[build]
+target = "x86_64-none-elf"
+
+[targets.shr]
+kind = "shared"
+EOF
+echo 'int f() { return 1; }' > src/lib.cpp
+if "$MCPP" build > shared.log 2>&1; then
+    cat shared.log; echo "a shared library was built for a target with no loader"; exit 1
+fi
+grep -q "no dynamic loader" shared.log || {
+    cat shared.log
+    echo "the refusal does not name the situation"; exit 1; }
+if grep -q "unknown build rule" shared.log; then
+    cat shared.log
+    echo "the failure names an internal ninja rule instead of the cause"; exit 1
+fi
+
 echo "PASS: x86_64-none-elf builds on the zero-libc tier, linked by ld.lld directly"

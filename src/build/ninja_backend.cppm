@@ -2306,6 +2306,33 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             "compile_commands.json was not updated: {}", cdb.error().message));
     }
 
+    // ⚠️ A SHARED LIBRARY ON A TARGET WHOSE LINK IS DRIVEN BY THE LINKER, SAID
+    // IN WORDS RATHER THAN AS A MISSING NINJA RULE.
+    //
+    // The direct-linker path defines `cxx_link`, `c_link` and `cxx_archive` and
+    // no shared-library rule, because a target with no loader has nothing to
+    // load one. Without this check the failure is
+    //
+    //     ninja: error: build.ninja:88: unknown build rule 'cxx_shared'
+    //
+    // which names an internal rule to somebody who wrote `kind = "shared"` in a
+    // manifest. Defining the rule would be worse: `ld.lld -shared` succeeds and
+    // produces an object nothing on that machine can load.
+    if (!flags.ldDriver.empty()) {
+        for (auto const& lu : plan.linkUnits) {
+            if (lu.kind != LinkUnit::SharedLibrary) continue;
+            return std::unexpected(BuildError{std::format(
+                "target '{}' is a shared library, and '{}' has no dynamic "
+                "loader to load one.\n"
+                "  A freestanding image is linked statically because there is "
+                "no other option: nothing on that machine resolves a symbol at "
+                "run time.\n"
+                "  Use `kind = \"lib\"` for a static library, or `kind = "
+                "\"bin\"` for the image itself.",
+                lu.targetName, plan.toolchain.targetTriple)});
+        }
+    }
+
     // A distribution contract that could not be honored is reported, never
     // silently downgraded — the whole point of the model (INV-1/INV-4 in
     // .agents/docs/2026-08-02-issue336-pr142-analysis.md). Emitted here rather
