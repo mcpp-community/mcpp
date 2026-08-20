@@ -508,15 +508,30 @@ openkal 的接口划分与 UEFI 的服务几乎一一对应,因此 `openkal-uefi
 ⇒ 一个 bootloader 可以用 `openkal` 写业务(读文件、打印、分配),用
 `std-freestanding` 的 tier-0 写数据结构,而**完全不碰 UEFI 的具体 API**。
 
-⚠️ 两条约束:
+⚠️ 两条约束,而**第一条已被实测推翻**:
 
-1. **UEFI 应用是 PE/COFF(subsystem `EFI_APPLICATION`),不是 ELF。** 目标不是
-   `x86_64-none-elf`,需要一个 PE 形态的裸机目标行 + `lld-link`。载荷里有
-   `lld-link`,但**该目标行今天不存在**,且它与现有裸机行的形状不同(§5 的
-   决策 B 应当先落地)。
+1. ~~UEFI 需要一个今天不存在的 PE 形态裸机目标行。~~ ⭐ **实测:不需要。**
+   `x86_64-windows-gnu` 加三个链接 flag(`-nostdlib`、`-Wl,--subsystem,10`、
+   `-Wl,-e,efi_main`)产出的正是 `IMAGE_SUBSYSTEM_EFI_APPLICATION (0xA)`,
+   且**不依赖任何 DLL**;该目标默认就是 Microsoft x64 调用约定,固件函数指针可
+   直接调用。已实现为 `mcpplibs/openkal-uefi` 0.1.0,在 OVMF 下作为
+   `EFI/BOOT/BOOTX64.EFI` 启动验证。
+
+   ⇒ 原判断是从「裸机链接行是 ELF 形状」推出来的,错在**没有考虑已有的 PE 目标
+   能否被降到 freestanding**。这是本轮第二次「结构上可能 ≠ 运行时确实」在我自己
+   身上生效。
+
 2. ⚠️ **legacy BIOS 基本不在射程内**:512 字节 MBR 是 16 位实模式,clang 无法
    有意义地生成。现实的「BIOS 路径」是 **multiboot2 ELF**(由 GRUB 加载),
    而那正好就是 `x86_64-none-elf`,不需要新形态。
+
+### 7.5 RISC-V 上还有一个比板级更可移植的后端
+
+`mcpplibs/openkal-opensbi` 0.1.0:控制台是对**已经知道机器是什么**的固件的一次
+`ecall`,因此同一个镜像在 QEMU `virt` 的 OpenSBI 下与真实板子上都能跑,不必重新
+构建 —— 而板级后端往固定地址写,换板即静默失效(§6.4)。
+
+⇒ 两种后端并列而非替代:**SBI 要求底下有固件,板级后端不要求。**
 
 ### 7.3 ⭐ 最小示例不是一个内核
 

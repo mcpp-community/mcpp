@@ -127,7 +127,10 @@ capability 作仲裁,实现在别的包。
 | Cortex-M「只缺一行目标表」 | xim 索引里裸机 C 库只有 `picolibc-riscv`,qemu 只有 `qemu-riscv` | 真实成本是**两个新载荷** + 一行 + 一个包 |
 | ⭐ `nolibc` 与 `-lc` 并存会**重复定义而失败** | **冷构建成功**,`nm` 只找到一处 `memcpy` —— C 库是**归档**,成员只在符号仍未定义时才拉入,而包的 `.o` 先定义了它 | 危害不是链接失败,而是**静默替换**了 C 库的优化实现。已更正包注释、README、`docs/13` 中英两版 |
 
-⇒ 九条里有八条**若不实测就会写进文档**。
+| ⭐ UEFI 需要一个不存在的 PE 形态裸机目标 ⇒ 受阻 | `x86_64-windows-gnu` + 三个链接 flag 即产出 `IMAGE_SUBSYSTEM_EFI_APPLICATION`,**零 DLL 依赖**,OVMF 下启动通过 | `openkal-uefi` 0.1.0 已发布;定位文档 §7.4 已更正 |
+| `kind = "lib"` 能让依赖以归档参与链接,从而只拉被引用的成员 | 两个变体**逐字节相同**(`text 1027`),`build.ninja` 里零个 `.a` | 拆分 `nolibc` 的编译器档与库档**不做** —— 能让该边界产生收益的机制不存在 |
+
+⇒ 十一条里有十条**若不实测就会写进文档**。
 
 ⚠️ 最后一条是本轮唯一一次**已经写进了已发布文本才被推翻**的:它进了包的 mcpp.toml、
 README、索引描述符与 `docs/13`,之后才被实测否掉。推理链本身没错(依赖确实以 `.o`
@@ -164,6 +167,7 @@ README、索引描述符与 `docs/13`,之后才被实测否掉。推理链本身
 
 | 项 | 状态 | 阻塞 |
 |---|---|---|
+| **openkal 后端覆盖面** | ⭐ **已扩到四个**:linux / macos / windows / musl 之外,新增 `openkal-opensbi`(RISC-V 可移植)与 `openkal-uefi`(固件),加上板级包内的裸机后端 | —— |
 | **openarch A0 的第二个 arch** | 受阻 | A0 的门要求**两个真实不同的 arch**。aarch64 缺目标表行与模拟器(xim 只有 `qemu-riscv`)。⭐ 只做一个 arch **不能**证明抽象不碎 —— 这正是该门存在的理由,伪造它比不做更糟 |
 | **openarch 的 addrspace 判据** | 受阻 | 内存属性的语义判据需要在两个 arch 上真跑 |
 | **Cortex-M(决策 E 步 1)** | 未开始 | 需新建 `xim:picolibc-arm` 与 `xim:qemu-arm` 两个载荷 |
@@ -180,4 +184,4 @@ README、索引描述符与 `docs/13`,之后才被实测否掉。推理链本身
 | 两个 alloc provider 的互斥 | 由解析器保证,**已实测**;但未验证第三方 provider 的情形 |
 | `std-freestanding-nolibc` 与 `-lc` 共存 | ⚠️ **已实测,而且推翻了设计主张** —— 见 §3 末行 |
 | openkal 裸机后端 | 实现 core 三件;`kal_stream_read` 走 semihosting,**未实测**输入路径 |
-| 零 libc 模板的 rv32 档 | **未实测**(模板只写了 rv64 的 `[target.*]` 段) |
+| 零 libc 模板的 rv32 档 | **已实测**:355 字节,在 `qemu-system-riscv32` 中打印并停机。⚠️ 需手改 `[target.<triple>]` 段的键 —— 该段按精确三元组匹配,而模板只能写出一个 |
