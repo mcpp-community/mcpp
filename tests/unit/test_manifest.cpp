@@ -3688,7 +3688,7 @@ sysroot = ""
     EXPECT_TRUE(it->second.sysroot.empty());
 }
 
-TEST(Manifest, TargetSysrootAbsentStaysNullopt) {
+TEST(Manifest, TargetSysrootAbsentIsNotDeclared) {
     constexpr auto src = R"(
 [package]
 name = "x"

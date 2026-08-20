@@ -16,7 +16,7 @@ import mcpp.platform;
 //
 // The first version of this helper sat at namespace scope in the module
 // purview, which makes its declaration part of what this module's interface
-// records. Its return type is `std::optional<std::string>`, and under clang
+// records. Under clang
 // with the MSVC standard library that was enough to break every downstream
 // translation unit that constructs one:
 //
@@ -65,10 +65,16 @@ namespace {
 // not invalidate a running program; equally, a new program must not invalidate
 // published data. A manifest check has no standing to do so over an entry that
 // may never be reached.
-std::optional<std::string> version_req_problem(std::string_view spec) {
-    if (spec.empty()) return std::nullopt;          // path/git/workspace deps
+// ⚠️ RETURNS A PLAIN STRING, EMPTY MEANING "NO PROBLEM", AND NOT AN
+// `std::optional<std::string>`. The optional was the obvious spelling and cost
+// two rounds of Windows CI: see the note on `TargetEntry::sysroot` for what
+// that specialisation does to importers under clang with the MSVC standard
+// library. Nothing here needs to distinguish an absent problem from an empty
+// one, so nothing is lost.
+std::string version_req_problem(std::string_view spec) {
+    if (spec.empty()) return {};                    // path/git/workspace deps
     if (auto r = mcpp::version_req::parse_req(spec); !r) return r.error();
-    return std::nullopt;
+    return {};
 }
 
 }  // namespace
@@ -697,14 +703,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         if (auto it = sub.find("path");    it != sub.end() && it->second.is_string()) spec.path    = it->second.as_string();
         if (auto it = sub.find("version"); it != sub.end() && it->second.is_string()) {
             spec.version = it->second.as_string();
-            if (auto why = version_req_problem(spec.version))
+            if (auto why = version_req_problem(spec.version); !why.empty())
                 m.schemaWarnings.push_back(std::format(
                     "[{}.\"{}\"] version = '{}' is not a requirement this "
                     "resolver can match ({}). The fetch will fail naming the "
                     "PACKAGE, which may well exist; it is this requirement that "
                     "does not parse. Accepted: an exact version (\"1.2.3\") or "
                     "a comparator (\"^1.2.3\", \">=1.0.0, <2.0.0\").",
-                    section, fqName, spec.version, *why));
+                    section, fqName, spec.version, why));
         }
         if (auto it = sub.find("git");     it != sub.end() && it->second.is_string()) spec.git     = it->second.as_string();
         if (auto it = sub.find("visibility"); it != sub.end() && it->second.is_string()) {
@@ -819,14 +825,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         auto key = selector.stableMapKey;
         if (value.is_string()) {
             spec.version = value.as_string();
-            if (auto why = version_req_problem(spec.version))
+            if (auto why = version_req_problem(spec.version); !why.empty())
                 m.schemaWarnings.push_back(std::format(
                     "[{}] {} = '{}' is not a requirement this resolver can "
                     "match ({}). The fetch will fail naming the PACKAGE, which "
                     "may well exist; it is this requirement that does not "
                     "parse. Accepted: an exact version (\"1.2.3\") or a "
                     "comparator (\"^1.2.3\", \">=1.0.0, <2.0.0\").",
-                    section, key, spec.version, *why));
+                    section, key, spec.version, why));
         } else if (value.is_table()) {
             auto& sub = value.as_table();
             if (!looks_like_inline_dep_spec(sub)) {
