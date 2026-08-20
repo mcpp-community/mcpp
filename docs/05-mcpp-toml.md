@@ -904,6 +904,11 @@ underneath. They need no per-host cross toolchain: clang and lld are
 cross-compilers by construction, so any host that can install the llvm payload
 can produce them.
 
+This section is the manifest reference. The worked examples — scaffolding,
+running, testing on the target, the freestanding standard-library subset and
+writing a board-support package — are in
+[13 — Bare-Metal and Freestanding Targets](13-baremetal.md).
+
 ```bash
 mcpp build --target riscv64-none-elf
 mcpp run   --target riscv64-none-elf     # via [target.<triple>].runner

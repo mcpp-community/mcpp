@@ -5372,6 +5372,19 @@ prepare_build(bool print_fingerprint,
         // measured; the 7 that fail fail on a hosted x86_64 too), so the line
         // is back. If it is ever removed from the index, this must change with
         // it.
+        //
+        // ⚠️ And the VERSION is part of the promise, not decoration — which is
+        // how the same defect recurred in a second form. The line said "0.1.0"
+        // after 0.2.0 superseded it in the index, and 0.1.0 is not published,
+        // so pasting it produced
+        //
+        //     E_NOT_FOUND: package 'compat.std-freestanding@0.1.0' not found
+        //     in the synced index
+        //
+        // measured 2026-08-20 while documenting this message. A floor would
+        // not fix it either: the request has to name a version the index
+        // actually carries. Publishing a new std-freestanding means updating
+        // this literal in the same change.
         if (auto ft = mcpp::toolchain::triple::parse(tc->targetTriple);
             ft && ft->is_freestanding())
         {
@@ -5389,7 +5402,7 @@ prepare_build(bool print_fingerprint,
                 "       string_view, ranges, expected, charconv, coroutines):\n"
                 "\n"
                 "           [dependencies]\n"
-                "           std-freestanding = \"0.1.0\"\n"
+                "           std-freestanding = \"0.2.0\"\n"
                 "\n"
                 "       then `import mcpplibs.std.freestanding;` in place of "
                 "`import std;`.\n"

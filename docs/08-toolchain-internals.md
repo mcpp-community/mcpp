@@ -528,27 +528,38 @@ The machinery is already arch-parameterized; the work is data:
 3. nothing else: `-B`/`-L`/loader emission, the fixup pipeline, and the
    hermetic check are all name-agnostic.
 
-### 7.3 Embedded / bare-metal toolchains (outlook)
+### 7.3 Embedded and bare-metal toolchains
 
-The model extends naturally to `arm-none-eabi`-class toolchains because the
-hard parts of the hosted world *disappear* rather than multiply:
+`riscv64-none-elf` and `riscv32-none-elf` are implemented, and the user-facing
+account is [13 — Bare-Metal and Freestanding Targets](13-baremetal.md). This
+section records how the resulting shape relates to the hosted model above.
 
-- **No dynamic linker**: `loader` stays empty — already legal everywhere
-  (renderers omit `--dynamic-linker`; the pack/deploy story is flashing, not
-  ELF interp).
-- **No glibc payload**: newlib/picolibc live inside the toolchain's own
-  sysroot ⇒ `CLibMode::Sysroot`, the exact mode self-contained musl uses
-  today. `is_musl_target`-style self-containment detection generalizes to a
-  capability flag ("ships own C library").
-- **Fixup kind = none or gcc-like** depending on how the payload is built
-  (a cross gcc payload still wants PT_INTERP/RUNPATH alignment for the
-  *host-run* compiler binaries — that part is identical to today's gcc kind;
-  the *target* side needs nothing).
-- **Hermetic check** generalizes: assert crt0/semihosting stubs resolve
-  inside the toolchain payload instead of Scrt1.o/loader.
-- What genuinely needs new design: per-target `[target.'cfg(...)']` specs
-  for MCU flags (`-mcpu`, `--specs=nosys.specs`), linker-script handling,
-  and a run/flash story — build-graph concerns above this document's layer.
+Three of this section's earlier predictions held:
+
+- **No dynamic linker.** `loader` stays empty, which every renderer already
+  permitted; the deployment story is flashing rather than ELF interp.
+- **The target side needs no fixup.** Host-run compiler binaries still want
+  PT_INTERP/RUNPATH alignment, identical to today's gcc kind.
+- **MCU flags, linker-script handling and a run story genuinely needed new
+  design.** All three landed, and above this document's layer as predicted:
+  ISA flags come from a one-row-per-target table in
+  `src/freestanding/target.cppm`, the linker script arrives through the
+  `link-script` build directive, and execution through `runner`.
+
+One prediction was wrong, and the correction is the load-bearing part of the
+design. The C library does **not** live inside the toolchain payload, so this
+is not `CLibMode::Sysroot` with a different sysroot. picolibc is a separate
+payload named by the target's own table row
+(`sysroot = xim:picolibc-riscv@1.8.12` in `src/toolchain/triple.cppm`), on the
+same footing as that row's compiler `pin`. Resolving it from the target rather
+than from the toolchain is what keeps a bare-metal *package* from having to
+name a libc, exactly as a hosted package never names glibc.
+
+The freestanding link line is also **replaced** rather than extended — see
+`src/freestanding/linkline.cppm` — because every hosted link flag is wrong
+there rather than merely unnecessary. Anything appended to the ordinary ldflags
+earlier in the pipeline is discarded, which is why the target sysroot's `-L`
+is emitted on that line and not with the generic flags.
 
 ### 7.4 Non-ELF platforms
 

@@ -429,24 +429,33 @@ loader;`/bin/sh` 有事:它的 `PT_INTERP` 指向**宿主** loader,而且任何�
 3. 其余什么都不用做:`-B`/`-L`/loader 的发射、fixup 管线、hermetic 校验全部
    与名字无关。
 
-### 7.3 嵌入式 / 裸机工具链(展望)
+### 7.3 嵌入式与裸机工具链
 
-模型可以自然延伸到 `arm-none-eabi` 一类工具链,因为 hosted 世界的难点在这里
-是**消失**而不是加倍:
+`riscv64-none-elf` 与 `riscv32-none-elf` 已实现,面向用户的说明见
+[13 — 裸机与 freestanding 目标](13-baremetal.md)。本节记录由此得到的形态与
+上文 hosted 模型之间的关系。
 
-- **无动态链接器**:`loader` 保持为空——全链路本来就允许(渲染器自动省略
-  `--dynamic-linker`;部署故事是烧录,不是 ELF interp);
-- **无 glibc payload**:newlib/picolibc 在工具链自己的 sysroot 里 ⇒
-  `CLibMode::Sysroot`,与今天自包含 musl 完全同一模式。`is_musl_target` 式的
-  自包含判定应泛化为能力标志("自带 C 库");
-- **fixup kind = 无或 gcc 式**,取决于 payload 怎么打包(交叉 gcc 的
-  **宿主运行**的编译器二进制仍需要 PT_INTERP/RUNPATH 对齐——与今天的 gcc kind
-  完全相同;**目标侧**什么都不需要);
-- **hermetic 校验**可泛化:断言 crt0/semihosting stub 解析在工具链 payload 内,
-  替代 Scrt1.o/loader;
-- 真正需要新设计的:MCU flags 的 per-target 规格(`-mcpu`、
-  `--specs=nosys.specs`)、链接脚本处理、运行/烧录故事——那些是本档之上的
-  构建图层面。
+本节早先的三条预测成立:
+
+- **无动态链接器。** `loader` 保持为空,这一点每个渲染器本来就允许;部署路径是
+  烧录而不是 ELF interp。
+- **目标侧不需要 fixup。** 宿主运行的编译器二进制仍需要 PT_INTERP/RUNPATH 对齐,
+  与今天的 gcc kind 完全相同。
+- **MCU flags、链接脚本处理与运行路径确实需要新设计。** 三者都已落地,且如预测
+  那样位于本文档之上的层次:ISA 参数来自 `src/freestanding/target.cppm` 中每个
+  目标一行的表,链接脚本经 `link-script` 构建指令到达,执行方式经 `runner` 到达。
+
+有一条预测是错的,而这条更正正是整个设计的承重部分。C 库**不在**工具链载荷内,
+因此这并不是换了一个 sysroot 的 `CLibMode::Sysroot`。picolibc 是一份独立载荷,
+由目标自己的表行指名(`src/toolchain/triple.cppm` 中的
+`sysroot = xim:picolibc-riscv@1.8.12`),与该行的编译器 `pin` 处于同一地位。
+从目标而非从工具链解析它,正是裸机**包**不必指名一份 libc 的原因,如同 hosted
+包从不指名 glibc。
+
+freestanding 链接行同样是被**替换**而不是被追加 —— 见
+`src/freestanding/linkline.cppm` —— 因为在那里每一条 hosted 链接 flag 都是错的,
+而不只是多余的。管线更早处追加到普通 ldflags 上的内容会被丢弃,这也是目标 sysroot
+的 `-L` 发在该行上而不是与通用 flag 一起发出的原因。
 
 ### 7.4 非 ELF 平台
 

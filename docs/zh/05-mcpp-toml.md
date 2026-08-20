@@ -802,6 +802,10 @@ cxxflags = ["-march=x86-64-v2"]
 逐宿主的交叉工具链:clang 与 lld 天生是交叉编译器,任何能装 llvm 载荷的宿主都能
 产出它们。
 
+本节是清单参考。示例部分 —— 生成工程、运行、在目标上测试、freestanding 标准库
+子集,以及编写板级支持包 —— 在
+[13 — 裸机与 freestanding 目标](13-baremetal.md)。
+
 ```bash
 mcpp build --target riscv64-none-elf
 mcpp run   --target riscv64-none-elf     # 经 [target.<triple>].runner
