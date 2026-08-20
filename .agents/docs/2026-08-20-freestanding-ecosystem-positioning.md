@@ -690,3 +690,124 @@ C3 的三个新问题:ROM bootloader 的镜像头(esptool 格式)· 没有 semih
 
 ⚠️ 五项决策全部不要求引擎认识 KAL / HAL / ARCH,也全部不新增引擎轴——
 A 复用 `provides`,B 只改目标表的输入来源,C/D 是包与载荷,E 是案例选择。
+
+---
+
+# 第二部分:实施记录(2026-08-20)
+
+本部分记录上述方案的落地结果。它与方案分开,因为**十七项假设中有十四项被
+实测推翻或修正**,而被推翻的过程本身是这份文档最有价值的部分:一个只记录
+结论的方案,读者无法判断哪些结论是被检验过的。
+
+## 7. 八个维度上的落点
+
+| 维度 | 落点 | 判据 |
+|---|---|---|
+| **架构** | C 库成为**目标**的属性(`[target.X].sysroot`),而不是包的;板级包不再指名 picolibc、compiler-rt 或 multilib 目录 | `riscv-virt-rt` 的 `build.mcpp` 里三个硬编码名字全部换成查询;e2e/134 两侧钉住 |
+| **稳定性** | 每一条新诊断都有机器校验,不靠注释维持 | e2e/135 把诊断里给出的依赖行**粘回 manifest 再构建**;riscv-virt-rt 的 CI 断言拒绝消息的**内容**而非退出码 |
+| **优雅** | 新增能力零新引擎轴:`sysroot` 是既有目标表的一列,三个查询走既有的 build.mcpp 契约,分配器走既有的 capability 机制 | 引擎侧改动集中在 `triple.cppm`、`freestanding/target.cppm` 与 `prepare.cppm` 的填值处 |
+| **用户体验** | `mcpp new k --template riscv-virt-rt:nolibc-bsp` 产出**两个文件**的可运行内核工程 | 实测 294 字节镜像;对照 `:nolibc` 模板的五个文件 |
+| **兼容性** | 目标表新增行不改变既有两行;`nolibc` 是新 feature 而非默认;版本校验从硬错误降级为 `schemaWarnings` | 钉住 `std-freestanding 0.3.0` 的工程在校验加入后仍能加载 |
+| **跨平台** | 八个仓库补宿主平台轴(macos-14 + windows-2022) | 五个仓库三宿主全绿;`std-freestanding` 的 Windows 缺口**测量并记录**而非删除 |
+| **一致性** | 同一份探针源码在两台指令集不同的机器上运行,输出逐字相同 | openarch 的门槛判定,riscv64 与 aarch64 退出码均为 0 |
+| **无感升级** | 索引 `deps` 边补回后,消费者装板级包即得到目标 C 库;引擎发布走既有闭环 | 「拿走再装回来」实测:包与 qemu 一起藏起来后重新构建,两者都被装回 |
+
+## 8. 任务依赖图(实际执行的形态)
+
+```
+E1 引擎:[target.X].sysroot 覆盖与零 libc 档 ──┬─→ P1 std-freestanding nolibc feature
+                                              ├─→ P2 riscv-virt-rt 0.5.0 nolibc feature
+                                              └─→ E4 aarch64-none-elf 目标行(零 libc)
+E2 引擎:三个目标查询接口 ────────────────────→ P2
+E3 引擎:operator new 缺失的具名诊断 ─────────→ P3 两个 alloc 实现包
+X1 索引:xim:qemu-arm(含 xlings-res 双端镜像)─┐
+E4 ───────────────────────────────────────────┴─→ A1 openarch aarch64 上下文后端
+                                                  └─→ A2 门槛判定(一份探针,两台机器)
+                                                      └─→ A3 openarch.pte 两个后端
+                                                          └─→ A4 CI 三腿
+X2 索引:riscv-virt-rt 的 picolibc 安装边补回 ─→ 全部生态仓库 CI
+```
+
+⚠️ **图里有一条边是实施中才发现的**:`X2`。方案里没有它,因为方案假定
+「mcpp 从目标行解析 C 库」等同于「mcpp 安装它」。实测:引擎只在磁盘上**查找**,
+从不安装,而 0.3.0 删掉索引里的安装边时把这两件事混为了一谈。
+
+## 9. 九个仓库的协作形态
+
+| 仓库 | 本次交付 | 版本 |
+|---|---|---|
+| `mcpp-community/mcpp` | 引擎五项能力 + 目标表第三行 + 章节 13 | 2026.8.20.2 → **2026.8.20.3** |
+| `mcpplibs/std-freestanding` | `alloc` / `alloc-kal` / `alloc-libc` / `nolibc` 四个 feature;C++26 特性宏守卫;标准强制清单与合规断言 | 0.2.0 → **0.4.0** |
+| `mcpplibs/std-freestanding-nolibc` | 五个 C 函数 + 四份 C 头,供零 libc 档 | **0.2.0** |
+| `mcpplibs/std-freestanding-alloc-kal` | 十二个 operator new/delete,经 openkal | **0.1.0** |
+| `mcpplibs/std-freestanding-alloc-libc` | 同上,经目标 C 库 | **0.1.0** |
+| `mcpplibs/riscv-virt-rt` | 解耦三个硬编码名字;`openkal` 与 `nolibc` 两个 feature;两个零 libc 模板 | 0.3.0 → **0.5.0** |
+| `mcpplibs/openkal-opensbi` | SBI 控制台 + SRST + bump 分配器 | **0.1.0** |
+| `mcpplibs/openkal-uefi` | Boot Services 后端,偏移由 static_assert 钉住 | **0.1.0** |
+| `mcpplibs/openarch` | 第二个架构 + 页表项接口,门槛通过 | 0.1.0 → **0.2.0** |
+
+外加两个索引仓库:`mcpplibs/mcpp-index`(包描述符)与
+`openxlings/xim-pkgindex`(`xim:qemu-arm`),以及新建的 `xlings-res/qemu-arm`
+双端镜像。
+
+## 10. 项目模板
+
+| 模板 | 生成 | 用途 |
+|---|---|---|
+| `riscv-virt-rt` | 普通 `int main()` 工程 | picolibc 之上的固件 |
+| `riscv-virt-rt:nolibc` | 五个文件,不依赖任何包 | 内核起点,展示**到底需要什么** |
+| `riscv-virt-rt:nolibc-bsp` | 两个文件,依赖板级包的 `nolibc` feature | 内核起点,展示**BSP 省掉了什么** |
+
+⚠️ 后两者刻意成对存在。差别不在程序做什么,而在这块板的数据手册被抄进工程
+多少。
+
+## 11. 被实测推翻的方案假设
+
+按对方案的杀伤力排序。
+
+1. **「mcpp 从目标行解析 C 库」被读成「mcpp 会安装它」。** 引擎只查找不安装;
+   冷 runner 的整份日志里 `picolibc` 一次都没出现。索引的 `deps` 边是补法,
+   而 0.3.0 把它连同构建期耦合一起删了。
+2. **`std-freestanding` 与 `std-freestanding-nolibc` 「互斥」。** 0.4.0 的
+   `nolibc` feature 让子集在零 libc 档可用,实测 94/103。写着互斥的那段文档
+   与推翻它的 feature 是同一个 PR 合入的。
+3. **板级包在零 libc 档「无事可做」。** 不用 C 库的开发者需要的是**更多**板级
+   包而不是更少:UART 在哪、RAM 从哪开始、哪个模拟器启动它,没有一条是 C 库
+   事实。0.5.0 把 C 库变成消费方式上的一个 feature。
+4. **`libc.empty()` 意味着「工程拒绝了 C 库」。** 它同样意味着「还没装」。本机
+   picolibc 早就在,所以每次本地测试都过,CI 在冷机上失败。
+5. **UEFI 需要新的 PE freestanding 目标。** 不需要:`x86_64-windows-gnu` 加
+   `-nostdlib -Wl,--subsystem,10` 就产出 `IMAGE_SUBSYSTEM_EFI_APPLICATION`。
+6. **`-mabi=lp64` 是 aarch64 的 ABI 名。** clang 直接拒绝;正确的是 `aapcs`。
+   按 RISC-V 类推填表,恰好会在类推最像的地方错。
+7. **feature 可以控制 ISA 后端的宿主可测面。** 一个文件只要被任何 feature
+   命名就归它独占——feature 未激活时不编译它,**即便 cfg 块显式列出**,而库
+   构建仍报成功。头文件 `inline` 才是解法。
+8. **`std-freestanding` 的 Windows 失败是「包绑死在 libc++」。** 更深一层:
+   libc++ 的 `__config_site` 只为**宿主 triple** 出厂,所以合成它是用 libc++
+   做**任何**交叉的唯一办法(不合成时标准强制的 34 个头 **0/34**)。Windows
+   缺的是载荷没打包 `include/c++/v1`,而 libc++ 的头是与宿主无关的纯文本。
+9. **C++26 的 freestanding 特性宏可以当门。** libc++ 22.1.8 一个都不定义,
+   libstdc++ 16.1.0 定义七个,两者都不定义那个元宏。拿在场当门会把这个包在
+   libc++ 上清空。规则必须不对称:**在场且不足才排除,缺席不排除**。
+10. **这个包提供的是「libc++ 恰好能编的东西」。** 它同时提供了**标准强制的
+    全部 34 个**,而它宣传的 `<array>`/`<span>`/`<optional>`/`<vector>`
+    **都不在**强制列表里。说法比实际低。
+11. **`mcpp build` 与 `mcpp test` 对 feature 源的判断一致。** 不一致:ADD 两边
+    都跑而 DROP 被 `!includeDevDeps` 挡住,于是 `mcpp test` 编译未激活的
+    feature 源。这是为 gtest 的 `main` feature 做的选择被推广到了每个包。
+12. **上下文接口预留的 128 字节是个余量。** 它已经假定了一条契约:保存的上下文
+    只含整数状态。aarch64 连 `d8`–`d15` 一起保存需要 168 字节。
+13. **页表项自带其含义。** aarch64 写的是指向 `MAIR_EL1` 的索引,所以同样的位
+    在两台 CPU 上描述不同的内存。本层因此接管那个寄存器。
+14. **QEMU 一个包支持很多指令集。** xPack 按目标族分包:`qemu-riscv` 的
+    `bin/` 里只有两个程序。
+
+## 12. 尚未完成
+
+| | 状态 |
+|---|---|
+| `mcpp test` 与 `mcpp build` 的 feature 源不一致 | 已定位到 `prepare.cppm` 的 DROP 条件,未修——正确的修法要把「对测试规划器可见」与「编进库里」分开,并连 gtest 路径一起验证 |
+| Windows LLVM 载荷缺 `include/c++/v1` | 已定位。修法是往载荷里**加一份资源**,不动 Windows 宿主默认的 MSVC STL |
+| openarch 的 trap / per-CPU / 屏障 / 时钟 | 刻意未开始:形状取决于已完成的两条原语 |
+| x86_64 裸机目标 | 卡在模拟器载荷:没有上游为本索引服务的五个宿主目标发布 `qemu-system-x86_64` |
