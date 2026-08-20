@@ -10,13 +10,27 @@
 
 ## 概述
 
-freestanding 目标是 `os` 字段为 `none` 的目标。mcpp 将其中两个列为 verified:
-`riscv64-none-elf` 与 `riscv32-none-elf`,两行都在 `src/toolchain/triple.cppm`
-的目标表中。
+freestanding 目标是 `os` 字段为 `none` 的目标。`src/toolchain/triple.cppm`
+的目标表中有三个:
+
+| Triple | 档位 | C 库 |
+|---|---|---|
+| `riscv64-none-elf` | verified | `xim:picolibc-riscv` |
+| `riscv32-none-elf` | verified | `xim:picolibc-riscv` |
+| `aarch64-none-elf` | preview | 无 —— 零 libc 档 |
+
+`verified` 意味着该行的镜像被构建**并被运行**过。`preview` 意味着它构建得出、
+也被观察到能运行,但尚未纳入引擎自己的模拟器作业。
+
+⚠️ 第三行的 C 库列为空,这是声明而非遗漏:包索引里不存在 aarch64 的 picolibc
+构建,而这一行的第一个消费者 —— 机器机制层 `openarch` —— 一个 C 库符号都不引用。
+空列在这里的含义与清单里 `[target.<triple>].sysroot = ""` 完全一致,因此面向它的
+工程无需声明即处在零 libc 档。想要 C 库的工程自行声明一个,而那也正是它换用另一份
+C 库的做法。
 
 这类目标不需要逐宿主的交叉工具链。clang 与 lld 在构造上就是交叉编译器 ——
 一个二进制发射它构建时支持的全部目标 —— 因此目标表在每个宿主上都钉
-`llvm@22.1.8`,任何能安装 LLVM 载荷的机器都能产出 RISC-V 镜像。
+`llvm@22.1.8`,任何能安装 LLVM 载荷的机器都能为这三个中的任何一个产出镜像。
 
 裸机构建需要的三样东西并不是 ISA 的属性,mcpp 也不试图推导它们:选哪个启动对象
 与哪些库、哪份链接脚本描述这台机器的内存、以及如何执行产出的镜像。这三样随
