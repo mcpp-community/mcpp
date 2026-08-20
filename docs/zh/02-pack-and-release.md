@@ -295,6 +295,20 @@ mcpp pack --target x86_64-windows-gnu     # 在 Linux 宿主上
 反方向 —— 在 Windows 上给 Linux / macOS 产物打包 —— 仍然不支持,原因还是最初
 那个:那条闭包要由目标自己的动态链接器解析,而 Windows 宿主没有办法运行它。
 
+#### Mach-O 程序会被拒绝 —— 在所有宿主上,包括 macOS
+
+同一步闭包解析是靠 `LD_TRACE_LOADED_OBJECTS=1` **运行产物**来问动态链接器要
+依赖表的。这个变量属于 glibc 的 ld.so,dyld 从来不认(它的对应物是
+`DYLD_PRINT_LIBRARIES`)。所以在 Mac 上这条命令不会 trace 任何东西 ——
+**它会把用户的程序跑起来**,然后把程序的输出当成依赖表解析。mcpp 现在直接拒绝,
+并在信息里点名缺的是哪个机制。
+
+判定按产物的**格式**而不是宿主,理由与 Windows 那条完全相同:
+`LD_TRACE_LOADED_OBJECTS` 在 Linux 上也 trace 不了一个 Mach-O。
+
+`kind = "lib"` / `"shared"` 目标在 macOS 上照常打包 —— 库打包从不运行产物。
+这条限制只针对程序。
+
 ## 配置项
 
 打包行为通过 `mcpp.toml` 中的 `[pack]` 节配置,常用字段如下:
@@ -319,20 +333,6 @@ force_bundle = ["libfoo.so"]        # 即使命中 PEP 600 名单也强制打包
 
 `static` 模式还需在 `[target.<triple>]` 中配置 musl 工具链,完整写法
 参见 [`examples/03-pack-static`](../../examples/03-pack-static/) 的 `mcpp.toml`。
-
-### Mach-O 程序会被拒绝 —— 在所有宿主上,包括 macOS
-
-同一步闭包解析是靠 `LD_TRACE_LOADED_OBJECTS=1` **运行产物**来问动态链接器要
-依赖表的。这个变量属于 glibc 的 ld.so,dyld 从来不认(它的对应物是
-`DYLD_PRINT_LIBRARIES`)。所以在 Mac 上这条命令不会 trace 任何东西 ——
-**它会把用户的程序跑起来**,然后把程序的输出当成依赖表解析。mcpp 现在直接拒绝,
-并在信息里点名缺的是哪个机制。
-
-判定按产物的**格式**而不是宿主,理由与 Windows 那条完全相同:
-`LD_TRACE_LOADED_OBJECTS` 在 Linux 上也 trace 不了一个 Mach-O。
-
-`kind = "lib"` / `"shared"` 目标在 macOS 上照常打包 —— 库打包从不运行产物。
-这条限制只针对程序。
 
 ## 待支持
 
