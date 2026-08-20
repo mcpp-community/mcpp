@@ -739,13 +739,13 @@ find_target_entry(const mcpp::manifest::Manifest& m,
     return nullptr;
 }
 
-// The project's `[target.<triple>].sysroot`, or nullopt when it declared none.
-std::optional<std::string>
+// The project's `[target.<triple>].sysroot`, or nullptr when it declared none.
+const std::string*
 sysroot_override(const mcpp::manifest::Manifest& m,
                  const mcpp::toolchain::triple::Triple& t)
 {
     auto* e = find_target_entry(m, t);
-    return e ? e->sysroot : std::nullopt;
+    return (e && e->sysrootDeclared) ? &e->sysroot : nullptr;
 }
 
 // The target-facing answers a `build.mcpp` may ask the engine for.

@@ -3664,8 +3664,8 @@ sysroot = "xim:newlib-riscv@4.4"
     ASSERT_TRUE(m.has_value()) << m.error().format();
     auto it = m->targetOverrides.find("riscv64-none-elf");
     ASSERT_NE(it, m->targetOverrides.end());
-    ASSERT_TRUE(it->second.sysroot.has_value());
-    EXPECT_EQ(*it->second.sysroot, "xim:newlib-riscv@4.4");
+    ASSERT_TRUE(it->second.sysrootDeclared);
+    EXPECT_EQ(it->second.sysroot, "xim:newlib-riscv@4.4");
     EXPECT_TRUE(m->schemaWarnings.empty())
         << (m->schemaWarnings.empty() ? "" : m->schemaWarnings[0]);
 }
@@ -3684,8 +3684,8 @@ sysroot = ""
     ASSERT_TRUE(m.has_value()) << m.error().format();
     auto it = m->targetOverrides.find("riscv64-none-elf");
     ASSERT_NE(it, m->targetOverrides.end());
-    ASSERT_TRUE(it->second.sysroot.has_value());
-    EXPECT_TRUE(it->second.sysroot->empty());
+    ASSERT_TRUE(it->second.sysrootDeclared);
+    EXPECT_TRUE(it->second.sysroot.empty());
 }
 
 TEST(Manifest, TargetSysrootAbsentStaysNullopt) {
@@ -3700,7 +3700,7 @@ linkage = "static"
     ASSERT_TRUE(m.has_value()) << m.error().format();
     auto it = m->targetOverrides.find("riscv64-none-elf");
     ASSERT_NE(it, m->targetOverrides.end());
-    EXPECT_FALSE(it->second.sysroot.has_value());
+    EXPECT_FALSE(it->second.sysrootDeclared);
 }
 
 // A bare name is the plausible typo, and accepting it would install nothing

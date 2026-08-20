@@ -1515,6 +1515,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         "with no C library.", triple, s)));
                 }
                 e.sysroot = std::move(s);
+                e.sysrootDeclared = true;
             }
 
             // `runner` — the argv template `mcpp run` uses for a target whose
