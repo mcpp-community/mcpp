@@ -1148,8 +1148,24 @@ backend-openblas = { implies = ["use_blas"] }
 # Pulled ONLY when `backend-openblas` is active. Each entry is a full dependency
 # spec (version/path/git + its own features).
 [feature-deps.backend-openblas]
-compat.openblas = "0.3.x"
+compat.openblas = "0.3"
 ```
+
+⚠️ **`"0.3"` and not `"0.3.x"`.** A trailing `.x` is not a selector this resolver
+has; the literal reaches the installer, which reports the package as not found.
+Measured against a control, with a package the index certainly carries:
+
+| Written | Result |
+|---|---|
+| `cmdline = "0.0.1"` | resolves |
+| `cmdline = "0.0"` | resolves |
+| `cmdline = "0.0.x"` | **`E_NOT_FOUND`** |
+
+A two-segment prefix expresses "any patch of this minor" and works. This matters
+more here than in `[dependencies]`, because a feature whose implementation
+cannot be fetched is a feature that does not exist — and a project using a path
+dependency during development never consults the index, so the failure appears
+only after publication.
 
 This composes with capabilities (§2.8.1): a single `backend-openblas` feature
 both **pulls** the provider (`compat.openblas`, which `provides = ["blas"]`) and

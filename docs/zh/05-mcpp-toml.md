@@ -1003,8 +1003,21 @@ backend-openblas = { implies = ["use_blas"] }
 # 仅当 `backend-openblas` 激活时才拉取。每个条目都是完整的依赖 spec
 #(version/path/git + 其自身的 features)。
 [feature-deps.backend-openblas]
-compat.openblas = "0.3.x"
+compat.openblas = "0.3"
 ```
+
+⚠️ **写 `"0.3"` 而不是 `"0.3.x"`。** 结尾的 `.x` 不是本解析器拥有的选择器;该字面量
+原样送到安装器,安装器报告找不到该包。以索引中确定存在的包作对照实测:
+
+| 写法 | 结果 |
+|---|---|
+| `cmdline = "0.0.1"` | 解析通过 |
+| `cmdline = "0.0"` | 解析通过 |
+| `cmdline = "0.0.x"` | **`E_NOT_FOUND`** |
+
+两段前缀表达「该 minor 下的任意 patch」且可用。这一点在此处比在 `[dependencies]` 中
+更要紧,因为**实现取不回来的 feature 等于不存在的 feature** —— 而开发期使用 path
+依赖的工程根本不查索引,该失败只在发布之后才出现。
 
 该机制与能力(§2.8.1)组合:单个 `backend-openblas` feature 既**拉取** provider
 (`compat.openblas`,其 `provides = ["blas"]`),又**开启**消费方开关
