@@ -748,6 +748,45 @@ sysroot_override(const mcpp::manifest::Manifest& m,
     return e ? e->sysroot : std::nullopt;
 }
 
+// The target-facing answers a `build.mcpp` may ask the engine for.
+//
+// ONE function because there are TWO call sites — the root project and each
+// dependency — and four values derived independently in two places is the
+// shape this codebase keeps paying for. A board package that got the right
+// answer as a root project and a stale one as a dependency would fail only in
+// the consuming build, which is the harder direction to debug.
+void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
+                           const mcpp::toolchain::Toolchain* tc)
+{
+    e.toolchainDir  = (tc && !tc->binaryPath.empty())
+        ? tc->binaryPath.parent_path().parent_path().string() : std::string{};
+    e.targetSysroot = tc ? tc->targetSysrootRoot.string() : std::string{};
+    e.targetLibc    = tc ? tc->targetSysrootPkg : std::string{};
+    if (!tc) return;
+
+    // The C LIBRARY's sub-directory for this ISA profile, from the freestanding
+    // table — the same single read point the compile flags use.
+    //
+    // ⚠️ Gated on there being a C library at all, and the gate is the point: the
+    // value is a multilib convention, so on the zero-libc tier there is nothing
+    // for it to be a convention OF. Emitting `rv64gc/lp64d` there would hand a
+    // kernel a path into a directory that does not exist, and the name of the
+    // accessor would be a lie. All three libc-facing answers are empty together.
+    if (!e.targetSysroot.empty())
+        if (auto spec = mcpp::freestanding::resolve(tc->targetTriple))
+            e.targetLibcProfile = std::string(spec->libdir);
+
+    // Which builtins library the RESOLVED toolchain ships. Freestanding only:
+    // on a hosted target the driver links them without being asked, and
+    // handing a package a name it must not use would invite it to.
+    if (auto t = mcpp::toolchain::triple::parse(tc->targetTriple);
+        t && t->is_freestanding()) {
+        e.targetBuiltinsLib = mcpp::toolchain::is_clang(*tc)
+            ? "clang_rt.builtins-" + t->arch
+            : std::string("gcc");
+    }
+}
+
 std::string with_index_cause(std::string msg) {
     if (auto hint = mcpp::pm::unusable_index_hint(); !hint.empty())
         msg += "\n" + hint;
@@ -1841,6 +1880,7 @@ prepare_build(bool print_fingerprint,
                                 *dir / "lib"     / std::string(spec->libdir);
                             std::error_code ec2;
                             tc->targetSysrootRoot = *dir;
+                            tc->targetSysrootPkg  = ref.name;
                             if (std::filesystem::is_directory(inc, ec2))
                                 tc->targetSysrootInclude = inc;
                             if (std::filesystem::is_directory(lib, ec2))
@@ -5043,13 +5083,10 @@ prepare_build(bool print_fingerprint,
             };
             mcpp::build::BuildProgramEnv bpEnv;
             bpEnv.targetTriple = resolvedTargetCanonical;
-        // The payload ROOT, not the driver: `<root>/bin/clang++` → `<root>`.
-        // A build program wants `<root>/include/c++/v1`, and deriving that
-        // from the driver path in every program would be the same expression
-        // copied into every package.
-        bpEnv.toolchainDir  = (tc && !tc->binaryPath.empty())
-            ? tc->binaryPath.parent_path().parent_path().string() : std::string{};
-        bpEnv.targetSysroot = tc ? tc->targetSysrootRoot.string() : std::string{};
+        // The payload ROOT (not the driver), the target's C library, and the
+        // three answers that keep a board package from hardcoding a toolchain
+        // or a libc. All four in one call — see fill_target_build_env.
+        fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
             bpEnv.profile      = effectiveProfile;
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
             bpEnv.artifactsDir = workRoot / "target" / ".build-mcpp" / "deps"
@@ -5210,13 +5247,10 @@ prepare_build(bool print_fingerprint,
         if (!host) return std::unexpected(host.error());
         mcpp::build::BuildProgramEnv bpEnv;
         bpEnv.targetTriple = resolvedTargetCanonical;
-        // The payload ROOT, not the driver: `<root>/bin/clang++` → `<root>`.
-        // A build program wants `<root>/include/c++/v1`, and deriving that
-        // from the driver path in every program would be the same expression
-        // copied into every package.
-        bpEnv.toolchainDir  = (tc && !tc->binaryPath.empty())
-            ? tc->binaryPath.parent_path().parent_path().string() : std::string{};
-        bpEnv.targetSysroot = tc ? tc->targetSysrootRoot.string() : std::string{};
+        // The payload ROOT (not the driver), the target's C library, and the
+        // three answers that keep a board package from hardcoding a toolchain
+        // or a libc. All four in one call — see fill_target_build_env.
+        fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
         bpEnv.profile      = effectiveProfile;
         // Set explicitly rather than relying on build_dir()'s root-relative
         // default: under BuildOverrides::work_dir the package root is shared
