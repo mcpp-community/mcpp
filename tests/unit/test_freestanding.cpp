@@ -348,3 +348,59 @@ TEST(FreestandingArtifacts, ObjcopyOnlyResolvesForABareMetalTarget) {
     // (The bare-metal case needs a real payload on disk, so it is asserted by
     // tests/e2e/130 instead: the artifact set has to actually appear.)
 }
+
+// ── aarch64-none-elf: the second bare-metal architecture ────────────────────
+//
+// ⚠️ THESE ASSERT THE TWO VALUES THAT WOULD HAVE BEEN WRONG IF THE ROW HAD BEEN
+// FILLED IN BY ANALOGY WITH THE RISC-V ROWS ABOVE IT.
+//
+// `-mabi` is the first. RISC-V spells its ABI as a data model (`lp64d`,
+// `ilp32`), and aarch64's LP64 data model makes `lp64` the obvious entry — which
+// clang rejects outright: `error: unknown target ABI 'lp64'`. aarch64's `-mabi`
+// names a procedure call standard, and `aapcs` is the only value it takes here.
+// Measured before the row was written rather than after it failed.
+//
+// The code model is the second. `medany` exists on the RISC-V rows because the
+// default assumes the low 2GiB and bare-metal RISC-V runs at 0x80000000;
+// aarch64's `small` already addresses +/-4GiB PC-relative, which covers any
+// single image wherever a linker script places it.
+TEST(FreestandingTarget, Aarch64UsesTheProcedureCallStandardNotADataModel) {
+    auto t = mcpp::toolchain::triple::parse("aarch64-none-elf");
+    ASSERT_TRUE(t.has_value());
+    auto s = mcpp::freestanding::resolve(t->str());
+    ASSERT_TRUE(s.has_value());
+    EXPECT_EQ(s->mabi, "aapcs");
+    EXPECT_NE(s->mabi, "lp64");
+    EXPECT_EQ(s->march, "armv8-a");
+    EXPECT_EQ(s->mcmodel, "small");
+}
+
+// The row resolves no C library, which is what makes it the zero-libc tier: the
+// first consumer of this target is a layer of machine mechanism that references
+// no C library symbol, and there is no aarch64 picolibc in the index to resolve
+// even if it wanted one.
+TEST(FreestandingTarget, Aarch64ResolvesNoCLibrary) {
+    auto t = mcpp::toolchain::triple::parse("aarch64-none-elf");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_TRUE(mcpp::toolchain::triple::effective_sysroot(*t, nullptr).empty());
+
+    // ⚠️ The other side: a project may still ASK for one, and the override is
+    // what carries the request. An empty column means "nothing by default", not
+    // "nothing is possible".
+    const std::string want = "xim:some-aarch64-libc@1.0";
+    EXPECT_EQ(mcpp::toolchain::triple::effective_sysroot(*t, &want), want);
+}
+
+// The libdir column is empty for the same reason, and a consumer that read it
+// would be reading a value nothing could ever check.
+TEST(FreestandingTarget, Aarch64HasNoMultilibDirectoryToName) {
+    auto s = mcpp::freestanding::resolve("aarch64-none-elf");
+    ASSERT_TRUE(s.has_value());
+    EXPECT_TRUE(s->libdir.empty());
+
+    // The RISC-V rows do name one, so the emptiness above is this row's
+    // property rather than the field being unused everywhere.
+    auto r = mcpp::freestanding::resolve("riscv64-none-elf");
+    ASSERT_TRUE(r.has_value());
+    EXPECT_FALSE(r->libdir.empty());
+}
