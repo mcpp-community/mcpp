@@ -138,6 +138,28 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // name a libc: the C library is the target's, like the compiler.
     { "riscv64-none-elf",      "verified",  "bare","llvm@22.1.8","xim:picolibc-riscv@1.8.12",  true  },
     { "riscv32-none-elf",      "verified",  "bare","llvm@22.1.8","xim:picolibc-riscv@1.8.12",  true  },
+    // ⚠️ AN EMPTY SYSROOT COLUMN, AND IT IS A STATEMENT RATHER THAN AN OMISSION.
+    //
+    // The two rows above name a C library because a project targeting them
+    // ordinarily wants one. This row does not, because there is no aarch64
+    // build of picolibc in the index — and, more to the point, because the
+    // first consumer of this row does not want one. `openarch` is a layer of
+    // machine mechanism: contexts, traps, page-table entries. It references no
+    // C library symbol, and a row that resolved one would make every project
+    // on this target carry a payload it never calls.
+    //
+    // An empty column here means exactly what `[target.<triple>].sysroot = ""`
+    // means in a manifest — the zero-libc tier: no headers on the compile line,
+    // no library directory on the link, and `#include <stdio.h>` does not
+    // resolve. A project that wants a C library on this target says so in its
+    // own manifest, which is also how it would choose a different one.
+    //
+    // ⚠️ The tier is `preview` and not `verified`: `verified` in this table
+    // means an image has been built AND RUN for the row, and running one needs
+    // an emulator. `xim:qemu-arm` provides `qemu-system-aarch64`; until a probe
+    // has actually booted under it, claiming `verified` would be claiming the
+    // measurement rather than reporting it.
+    { "aarch64-none-elf",      "preview",   "bare","llvm@22.1.8","",                            true  },
 };
 
 inline std::span<const TargetInfo> known_targets() { return kKnownTargets; }

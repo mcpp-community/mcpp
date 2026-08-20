@@ -55,6 +55,29 @@ inline constexpr Spec kTable[] = {
     //  triple                march       mabi     mcmodel    libdir
     { "riscv64-none-elf",   "rv64gc",   "lp64d", "medany", "rv64gc/lp64d"   },
     { "riscv32-none-elf",   "rv32imac", "ilp32", "medany", "rv32imac/ilp32" },
+    // ⚠️ `aapcs` AND NOT `lp64`. The two RISC-V rows above spell their ABI the
+    // way RISC-V does, and the obvious extrapolation to aarch64 is `lp64` —
+    // which is what LP64 aarch64 actually is, and which clang rejects:
+    //
+    //     error: unknown target ABI 'lp64'
+    //
+    // aarch64's `-mabi` names a procedure call standard rather than a data
+    // model, and the only value it takes for this target is `aapcs`. Measured
+    // rather than reasoned: `-mabi=lp64` compiles on riscv64 and fails here,
+    // so a table filled in by analogy would have been wrong in exactly the
+    // place the analogy is strongest.
+    //
+    // `small` is the code model: it addresses ±4GiB PC-relative, which covers
+    // any single bare-metal image regardless of where the linker script places
+    // it. RISC-V needs `medany` for the corresponding reason — its default
+    // assumes the low 2GiB, and bare-metal RISC-V runs at 0x80000000.
+    //
+    // ⚠️ THE LIBDIR COLUMN IS EMPTY, AND THAT IS THE ROW'S CHARACTER. It names
+    // a C library's multilib directory, and this target's row in the target
+    // table resolves no C library: `aarch64-none-elf` is the zero-libc tier.
+    // The engine reads this column only when a sysroot exists, so an invented
+    // value would be a value nothing could ever check.
+    { "aarch64-none-elf",   "armv8-a",  "aapcs", "small",  ""               },
 };
 
 // The single read point. Returns nullopt for anything that is not a known
