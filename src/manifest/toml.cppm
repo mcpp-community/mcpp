@@ -32,6 +32,19 @@ import mcpp.platform;
 // Checking here converts a network round-trip and a misleading answer into a
 // message that names the actual problem, at the point where the text was
 // written.
+//
+// ⚠️ A WARNING AND NOT AN ERROR, AND THE FIRST VERSION GOT THIS WRONG.
+//
+// Rejecting the manifest breaks every consumer of a PUBLISHED package that
+// carries such a string — including one where the offending entry belongs to a
+// feature nobody activates. Measured: with the check as an error, a project
+// pinned to `std-freestanding` 0.3.0 stopped loading entirely, although the
+// half of that package it used was unaffected.
+//
+// This is the mirror of the rule the index already follows. Published data must
+// not invalidate a running program; equally, a new program must not invalidate
+// published data. A manifest check has no standing to do so over an entry that
+// may never be reached.
 std::optional<std::string> version_req_problem(std::string_view spec) {
     if (spec.empty()) return std::nullopt;          // path/git/workspace deps
     if (auto r = mcpp::version_req::parse_req(spec); !r) return r.error();
@@ -663,14 +676,13 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         if (auto it = sub.find("version"); it != sub.end() && it->second.is_string()) {
             spec.version = it->second.as_string();
             if (auto why = version_req_problem(spec.version))
-                return std::unexpected(error(origin, std::format(
+                m.schemaWarnings.push_back(std::format(
                     "[{}.\"{}\"] version = '{}' is not a requirement this "
-                    "resolver can match: {}.\n"
-                    "       Accepted: an exact version (\"1.2.3\"), a prefix "
-                    "(\"1.2\" = any patch of that minor),\n"
-                    "       a comparator (\"^1.2\", \">=1.0, <2.0\"), or "
-                    "\"*\". A trailing `.x` is not one of them.",
-                    section, fqName, spec.version, *why)));
+                    "resolver can match ({}). The fetch will fail naming the "
+                    "PACKAGE, which may well exist; it is this requirement that "
+                    "does not parse. Accepted: an exact version (\"1.2.3\") or "
+                    "a comparator (\"^1.2.3\", \">=1.0.0, <2.0.0\").",
+                    section, fqName, spec.version, *why));
         }
         if (auto it = sub.find("git");     it != sub.end() && it->second.is_string()) spec.git     = it->second.as_string();
         if (auto it = sub.find("visibility"); it != sub.end() && it->second.is_string()) {
@@ -786,14 +798,13 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         if (value.is_string()) {
             spec.version = value.as_string();
             if (auto why = version_req_problem(spec.version))
-                return std::unexpected(error(origin, std::format(
+                m.schemaWarnings.push_back(std::format(
                     "[{}] {} = '{}' is not a requirement this resolver can "
-                    "match: {}.\n"
-                    "       Accepted: an exact version (\"1.2.3\"), a prefix "
-                    "(\"1.2\" = any patch of that minor),\n"
-                    "       a comparator (\"^1.2\", \">=1.0, <2.0\"), or "
-                    "\"*\". A trailing `.x` is not one of them.",
-                    section, key, spec.version, *why)));
+                    "match ({}). The fetch will fail naming the PACKAGE, which "
+                    "may well exist; it is this requirement that does not "
+                    "parse. Accepted: an exact version (\"1.2.3\") or a "
+                    "comparator (\"^1.2.3\", \">=1.0.0, <2.0.0\").",
+                    section, key, spec.version, *why));
         } else if (value.is_table()) {
             auto& sub = value.as_table();
             if (!looks_like_inline_dep_spec(sub)) {

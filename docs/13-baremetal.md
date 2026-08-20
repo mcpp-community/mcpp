@@ -323,6 +323,12 @@ obligation rather than a convenience: `memcpy`, `memmove`, `memset` and `memcmp`
 must exist because the compiler lowers structure assignment and array
 initialisation onto them. `std-freestanding-nolibc` supplies those and `strlen`.
 
+⚠️ `std-freestanding` and `std-freestanding-nolibc` serve **mutually exclusive**
+arrangements. The subset needs the C library's headers — measured: on the
+zero-libc tier it fails at compile with `'inttypes.h' file not found` — so a
+project that can use the subset has a C library and does not need the five
+functions, while a project on the zero-libc tier cannot use the subset at all.
+
 ⚠️ That package is for the zero-libc tier only, and using it alongside a C
 library fails silently rather than loudly. A C library ships as an archive, and
 an archive member is pulled only while the symbol is still undefined; a

@@ -3763,7 +3763,12 @@ cmdline = "{}"
     }
 }
 
-TEST(Manifest, DependencyVersionRejectsATrailingX) {
+// ⚠️ REPORTED, NOT REJECTED, and the distinction is load-bearing. The first
+// version of this check returned an error, and a project pinned to a PUBLISHED
+// package carrying such a string stopped loading entirely — including when the
+// offending entry belonged to a feature nobody activates. Published data must
+// not be invalidated by a new program any more than the reverse.
+TEST(Manifest, DependencyVersionReportsATrailingXWithoutFailingTheLoad) {
     constexpr auto src = R"(
 [package]
 name = "x"
@@ -3772,15 +3777,19 @@ version = "0.1.0"
 cmdline = "0.0.x"
 )";
     auto m = mcpp::manifest::parse_string(src);
-    ASSERT_FALSE(m.has_value());
-    auto msg = m.error().format();
-    EXPECT_NE(msg.find("not a requirement"), std::string::npos) << msg;
-    // The message has to say what IS accepted, because the reader arrived here
-    // by writing something that looked reasonable.
-    EXPECT_NE(msg.find("1.2"), std::string::npos) << msg;
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    bool found = false;
+    for (auto const& w : m->schemaWarnings)
+        if (w.find("not a requirement") != std::string::npos) found = true;
+    EXPECT_TRUE(found) << "no warning naming the requirement";
+    // ⭐ And it must say that the PACKAGE is not the problem, because the
+    // failure the reader will otherwise see names exactly that.
+    for (auto const& w : m->schemaWarnings)
+        if (w.find("not a requirement") != std::string::npos)
+            EXPECT_NE(w.find("PACKAGE"), std::string::npos) << w;
 }
 
-TEST(Manifest, DependencyVersionRejectsTrailingGarbage) {
+TEST(Manifest, DependencyVersionReportsTrailingGarbage) {
     constexpr auto src = R"(
 [package]
 name = "x"
@@ -3788,7 +3797,9 @@ version = "0.1.0"
 [dependencies]
 cmdline = "1.2.3abc"
 )";
-    EXPECT_FALSE(mcpp::manifest::parse_string(src).has_value());
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value());
+    EXPECT_FALSE(m->schemaWarnings.empty());
 }
 
 // A path or git dependency has no version, and requiring one would break every
@@ -3816,6 +3827,9 @@ version = "0.1.0"
 cmdline = { version = "0.0.x", features = ["a"] }
 )";
     auto m = mcpp::manifest::parse_string(src);
-    ASSERT_FALSE(m.has_value());
-    EXPECT_NE(m.error().format().find("not a requirement"), std::string::npos);
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    bool found = false;
+    for (auto const& w : m->schemaWarnings)
+        if (w.find("not a requirement") != std::string::npos) found = true;
+    EXPECT_TRUE(found);
 }

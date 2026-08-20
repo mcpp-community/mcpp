@@ -293,6 +293,10 @@ freestanding 翻译单元仍会用到的 C 函数中,有四个是义务而非便
 `memmove`、`memset` 与 `memcmp` 必须存在,因为编译器把结构体赋值与数组初始化下降到
 它们之上。`std-freestanding-nolibc` 提供这四个与 `strlen`。
 
+⚠️ `std-freestanding` 与 `std-freestanding-nolibc` 服务于**互斥**的安排。子集需要
+C 库的头文件 —— 实测:零 libc 档上它在编译期即死于 `'inttypes.h' file not found`
+—— 因此能用子集的工程有 C 库、不需要这五个函数,而处在零 libc 档的工程根本用不了子集。
+
 ⚠️ 该包仅用于零 libc 档,而与 C 库并用时是**静默**失败而非响亮失败。C 库以归档形式
 发布,归档成员只在符号仍未定义时才被拉入;而依赖包的目标文件无条件进入链接。于是该包
 先定义了 `memcpy`,C 库的成员从不被拉入,构建**成功** —— 程序拿到的是逐字节实现而不是
