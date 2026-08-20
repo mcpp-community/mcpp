@@ -524,8 +524,8 @@ tarball(§4 最后一行)——它们不会因为 mcpp 升级而自动变好,只
 | 10 | 已发布的二进制库包同样受影响(但 `mcpp publish` 本身发的是源码,不是这条路径) | 读码(`publish/pipeline.cppm:109`) |
 | 11 | soname 别名的 copy 回退拷的是未重定位的源 | 读码(`library.cppm:293`) |
 | 12 | 库包产物是 debug、未 strip、含发布者源码路径 | **实测** |
-| 13 | 打包 shared 目标不校验其 DT_NEEDED 闭包 | 读码,**未实测** |
-| 14 | Mach-O 的 `LC_RPATH` 是否泄漏 | **未核验**,需在 macOS 上跑 |
+| 13 | 打包 shared 目标不校验其 DT_NEEDED 闭包 | 读码,**未实测**(P1-3,仍未实施) |
+| 14 | Mach-O 的 `LC_RPATH` 是否泄漏 | **已核验:不泄漏**(2026-08-20,PR#464 的 macOS CI)。打包器现在读出 `LC_RPATH` 并在非空时告警,整个 macOS e2e 套件一条都没发出 ⇒ `.dylib` 的可重定位性来自链接期的 `-install_name @rpath/`,不需要打包期改写 |
 
 ---
 
