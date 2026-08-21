@@ -127,7 +127,32 @@ jobs:
             --summary "$GITHUB_STEP_SUMMARY"
           )
           [[ -z "$REQUESTED_TAG" ]] || args+=(--tag "$REQUESTED_TAG")
+
+          # ⚠️ EXIT 75 IS "THE PUSH LANDED, THE AUR'S INDEX HAS NOT CAUGHT UP",
+          # AND FAILING ON IT MAKES THIS REPOSITORY'S CI RED FOR SOMEBODY ELSE'S
+          # REFRESH SCHEDULE.
+          #
+          # The reconciler already classifies that case as TRANSIENT and exits
+          # 75 (the conventional EX_TEMPFAIL) rather than 2. It is reached only
+          # AFTER the git push has succeeded, so the AUR holds the new version
+          # at that point; what has not happened is the AUR's own RPC metadata
+          # refresh, which runs on a schedule measured in minutes.
+          #
+          # Measured twice (2026.8.21.2 and 2026.8.21.3): this step reported
+          # `AUR RPC did not converge to <ver>` and the AUR RPC answered with
+          # that exact version when asked afterwards.
+          #
+          # ⚠️ EVERY OTHER NON-ZERO CODE STILL FAILS. A refused downgrade (3) and
+          # a permanent error (2) are this repository's problem and stay red.
+          set +e
           python3 scripts/aur/reconcile_mcpp_bin.py "${args[@]}"
+          rc=$?
+          set -e
+          if [[ "$rc" == "75" ]]; then
+              echo "::warning::The push to the AUR succeeded; its RPC metadata had not refreshed within the poll window. Verify with: curl -s 'https://aur.archlinux.org/rpc/v5/info?arg[]=mcpp-bin'"
+          elif [[ "$rc" != "0" ]]; then
+              exit "$rc"
+          fi
 
       - name: Preserve reconciliation reports
         if: always()
