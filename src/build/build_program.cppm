@@ -592,6 +592,16 @@ std::expected<void, std::string> run_build_program(
     CacheRecord cache = read_cache(bdir);
     if (cache_fresh(root, bdir, cache, programHash, compilerHash, ctxHash)) {
         dirs::apply(m, cache.directives);
+        // ⚠️ ONE OF TWO SITES, AND THE ONE THAT IS EASY TO FORGET.
+        //
+        // A cache hit does not re-run the program, so an advisory emitted only
+        // on the run path below would appear on the first build of a project
+        // and never again — which reads as "the condition went away". The
+        // wording comes from dirs::advisories so the two sites cannot drift;
+        // what they must not drift on is WHETHER they emit, and e2e 139
+        // asserts the second build, not the first.
+        for (auto const& a : dirs::advisories(m.package.name, cache.directives))
+            mcpp::ui::warning(a);
         mcpp::ui::info("build.mcpp", "up to date (cached)");
         return {};
     }
@@ -966,6 +976,9 @@ std::expected<void, std::string> run_build_program(
     }
 
     dirs::apply(m, d);
+    // The second of the two sites. See the note on the cache-hit path above.
+    for (auto const& a : dirs::advisories(m.package.name, d))
+        mcpp::ui::warning(a);
     write_cache(bdir, root, programHash, compilerHash, ctxHash, d);
     return {};
 }

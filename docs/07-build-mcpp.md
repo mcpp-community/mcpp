@@ -54,6 +54,7 @@ is ignored, so diagnostics may be logged freely.
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | like `include-dir`, but searched **after** the system directories (`-idirafter`) — for payload trees that shadow system headers |
 | `mcpp:runner=<token>` *(2026.8.19.2+)* | one argv token of the command that EXECUTES this build's artifact, when the host cannot. Emitted once per token, in order; the artifact path is appended (or substituted for `{}`). Reaches the **consumer**. ⚠️ Emit the executable as an ABSOLUTE path, and only **one** dependency may supply it |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | link with this **linker script** (`-T`; relative resolves against the package root, and the emitted path is absolute because the link runs in the build directory). Reaches the **consumer**, unlike `include-dir` — a board's memory layout is the one thing a consumer cannot write for itself |
+| `mcpp:warning=<text>` *(2026.8.21.2+)* | say something to the user and **keep going**. The one directive that changes no compile line, no link line and no source set. Survives the build cache — see below |
 | `mcpp:rerun-if-changed=<path>`     | re-run `build.mcpp` when this file changes |
 | `mcpp:rerun-if-env-changed=<VAR>`  | re-run `build.mcpp` when this env var changes |
 
@@ -104,7 +105,50 @@ int main() {
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` — see below |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package this manifest declared in `[xlings] deps`; `""` when it was not declared or is not installed (see below) |
+| `mcpp::warning(text)` *(2026.8.21.2+)* | `mcpp:warning=` — see below |
 | `mcpp::action{…}.submit()` *(2026.8.5.1+)* | `mcpp:action=` — declares a **build-graph node** instead of doing the work here (see below) |
+
+### `warning` — succeeding and still being heard (2026.8.21.2+)
+
+A build program's output reaches the user **only when the program exits
+non-zero**: mcpp captures it and prints what it captured on failure. So a
+`std::printf` or `std::fprintf(stderr, ...)` note is invisible on exactly the
+successful builds that needed it.
+
+```cpp
+if (const char* dir = mcpp::xpkg_dir("xim", "qemu-riscv"); dir && *dir) {
+    mcpp::runner(std::format("{}/bin/qemu-system-riscv64", dir).c_str());
+    // … the rest of the argv …
+} else {
+    mcpp::warning("qemu-riscv is not installed, so `mcpp run` has no runner. "
+                  "Install it once:  xlings install qemu-riscv -y");
+}
+```
+
+⚠️ **This exists because the alternatives are worse, and both were tried.** A
+note on stderr printed nothing on a successful build. Exiting non-zero would be
+wrong too: `mcpp build` has no need of an emulator, and failing a build that is
+correct trades a missing sentence for a broken command.
+
+Use it for a condition the program **handled correctly** but the user would want
+to know about — most often *"I could not find X, so I configured nothing that
+depends on it."* For an error, exit non-zero; that output is printed already.
+
+**It does not fail the build.** `mcpp build` still exits 0.
+
+**It is attributed.** The line appears as `<package>: <text>`, because in a
+workspace several programs may speak and the reader needs to know which manifest
+to open.
+
+⭐ **It survives the build cache.** A build program's result is cached, and a
+cache hit does not re-run it — so an advisory that lived only on the run path
+would appear on a project's first build and never again, which reads as *"the
+condition was resolved"*. mcpp replays it on every hit.
+
+⚠️ **A whole-project no-op build prints nothing at all, including this.** When
+there is nothing to do the build never reaches the `build.mcpp` stage — it also
+does not report which target it built or which sources it inferred. Touch a
+source and the advisory returns.
 
 ### `runner` — how the artifact is executed (2026.8.19.2+)
 

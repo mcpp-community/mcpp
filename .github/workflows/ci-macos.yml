@@ -262,7 +262,16 @@ jobs:
           echo "--- otool -L ---";  otool -L "$BIN" || true
           echo "--- rpaths ---";    otool -l "$BIN" | grep -A2 LC_RPATH || true
           echo "--- statically embedded libc++? ---"
-          nm "$BIN" 2>/dev/null | grep -cE "T __ZNSt3__1" || echo "0 (good: no libc++ code in binary)"
+          # ⚠️ `nm ... 2>/dev/null | grep -c` USED TO PRINT "0 (good)" WHEN `nm`
+          # ITSELF FAILED. A count of zero and a tool that never ran produce the
+          # same number, and the word "good" is then a claim nothing supports.
+          # This is diagnostic output rather than a gate, which makes it worse
+          # rather than better: a human reads it and believes it.
+          if nm "$BIN" > /tmp/nm.out 2> /tmp/nm.err; then
+            echo "$(grep -cE 'T __ZNSt3__1' /tmp/nm.out) libc++ symbols (0 = none embedded)"
+          else
+            echo "nm failed, so this measurement says nothing: $(head -1 /tmp/nm.err)"
+          fi
           echo "--- direct run ---"
           set +e
           "$BIN" > run.out 2>&1

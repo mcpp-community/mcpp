@@ -489,6 +489,25 @@ error: no runner is configured for 'riscv64-none-elf' — a freestanding artifac
 板级支持包是一个普通的 mcpp 包。它在 `[xlings] deps` 下声明所需的模拟器,为消费者
 导出一个 C++ 模块,并从 `build.mcpp` 发出它的板级事实。
 
+⚠️ **`[xlings] deps` 里的声明不是安装触发器。** 它让 `mcpp::xpkg_dir` 能回答「那个包
+落在哪」,自己不装任何东西。写在索引描述符平台 `deps` 里的板级包,其模拟器**随包安装**,
+遇不到这件事;而一个自己声明模拟器的工程 —— 因为没有哪个板级包服务它的那些机器 ——
+会在干净机器上拿到空的 `xpkg_dir`,此时必须说出来:
+
+```cpp
+if (const char* dir = mcpp::xpkg_dir("xim", "qemu-riscv"); dir && *dir) {
+    mcpp::runner(std::format("{}/bin/qemu-system-riscv64", dir).c_str());
+    // …… 其余 argv ……
+} else {
+    mcpp::warning("qemu-riscv 未安装,于是 `mcpp run` 没有 runner。"
+                  "装一次即可:  xlings install qemu-riscv -y");
+}
+```
+
+没有那一行,构建会成功、不配置 runner,而 `mcpp run` 报告缺少 runner 并建议写一个
+`runner` 键 —— 这句话一般情况下对,在这里不对。见 [07 —— build.mcpp](07-build-mcpp.md)
+的 `mcpp:warning=`。
+
 ### 板级支持包发出的指令
 
 | 指令 | 作用 |

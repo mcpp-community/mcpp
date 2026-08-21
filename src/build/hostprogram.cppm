@@ -69,6 +69,23 @@ inline void include_dir_after(const char* dir)    { std::printf("mcpp:include-di
 // reports it naming both rather than merging them.
 inline void runner(const char* token)             { std::printf("mcpp:runner=%s\n", token); }
 
+// Say something to the user and keep going.
+//
+// ⚠️ THIS IS THE ONLY WAY A BUILD PROGRAM CAN SUCCEED AND STILL BE HEARD.
+// mcpp prints what it captured from a build program only when that program
+// EXITS NON-ZERO, so a `std::printf` or `std::fprintf(stderr, ...)` note is
+// invisible on precisely the successful builds that needed it.
+//
+// Use it for a condition the program handled correctly but the user would
+// want to know about — most often "I could not find X, so I configured
+// nothing that depends on it". Do not use it for an error: exit non-zero
+// instead, and the output is printed already.
+//
+// ⚠️ It survives the build cache. A cached run does not re-execute the
+// program, and an advisory that appeared once and then vanished would read as
+// "resolved". mcpp replays it on every hit.
+inline void warning(const char* message)          { std::printf("mcpp:warning=%s\n", message); }
+
 // The memory layout for a freestanding link. Reaches the CONSUMER's link line
 // (like link_lib/link_search, unlike include_dir), because the package that
 // knows a board's layout is not the package being built.

@@ -97,6 +97,9 @@ enum class Slot : std::size_t {
     // cannot carry them. The bundled `mcpp` module owns the encoding, which
     // is exactly why the typed API is the only surface that grows (S4).
     Actions,
+    // A sentence for the USER. Not a build input at all — see Scope::Advisory
+    // for why this could not be folded into any existing slot.
+    Warnings,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -114,6 +117,20 @@ enum class Scope {
     SourceSet,       // joins the compile set
     RerunKey,        // not a build input at all; only feeds the re-run key
     GraphNode,       // declares an edge in the build graph; see manifest::BuildAction
+    // ⚠️ REACHES THE USER RATHER THAN THE BUILD, AND THAT IS WHY IT IS A
+    // SEVENTH VALUE RATHER THAN A REUSED ONE.
+    //
+    // Every other scope answers "which part of the build sees this". An
+    // advisory is seen by nobody in the build: it changes no compile line, no
+    // link line and no source set, and `apply` therefore does not read its
+    // slot. Spelling it `PackagePrivate` would have been the cheap move and
+    // would have said something false — that it reaches this package's own
+    // translation units.
+    //
+    // `RerunKey` is the closest existing value (also "not a build input"), and
+    // it is still wrong: a re-run key feeds a MACHINE decision, an advisory
+    // feeds a person.
+    Advisory,
 };
 
 // How the raw wire value is normalized before it is stored. Applied ONCE, at
@@ -149,7 +166,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 15> kTable{{
+inline constexpr std::array<Def, 16> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -201,6 +218,36 @@ inline constexpr std::array<Def, 15> kTable{{
     {"rerun-if-changed",    "",                  Slot::RerunFiles,       Scope::RerunKey,       Transform::Verbatim,      false, "",                           "",                                              1},
     {"rerun-if-env-changed","",                  Slot::RerunEnv,         Scope::RerunKey,       Transform::Verbatim,      false, "",                           "",                                              1},
     {"rerun-if-changed-glob","",                 Slot::RerunGlobs,       Scope::RerunKey,       Transform::Verbatim,      false, "",                           "",                                              2},
+    // ⚠️ THE ONE THING A BUILD PROGRAM COULD NOT DO BEFORE: SUCCEED AND STILL
+    // SAY SOMETHING.
+    //
+    // mcpp captures a build program and prints what it captured only on a
+    // NON-ZERO exit. So a program that finished its job but found something
+    // the user needs to know had no channel: a `std::cerr` note printed
+    // nothing on exactly the builds that needed it, which is worse than no
+    // note at all because it looks like a fix. Failing instead is not an
+    // option either — the build succeeded.
+    //
+    // The motivating case: a manifest's `[xlings] deps` is a DECLARATION, not
+    // an install trigger, so on a machine that has not installed the emulator
+    // `xpkg_dir` returns empty and the program configures no runner. Correct,
+    // silent, and indistinguishable to the user from a package that forgot.
+    //
+    // ⚠️ `tag` IS NON-EMPTY, AND THAT IS LOAD-BEARING. A build program's
+    // result is cached and a hit does not re-run it, so an advisory that lived
+    // only on the run path would appear once and never again — the same
+    // failure shape as the note that was deleted, arrived at from the other
+    // side. A non-empty tag puts it in the cache record, and `serialize` /
+    // `accept_cache_record` are table-driven, so the replay costs nothing.
+    //
+    // ⚠️ kCacheEpoch is deliberately NOT bumped for this row. Entries written
+    // before it carry no `d warning` line, and the programs that wrote them
+    // could not emit one — so replaying them yields exactly what the program
+    // said, and the entry is still correct. Bumping would re-run every build
+    // program in every project on upgrade and buy nothing. The reverse
+    // direction is already safe: an older engine reading a newer entry hits
+    // the unknown-tag path and discards the whole record.
+    {"warning",             "warning",           Slot::Warnings,         Scope::Advisory,       Transform::Verbatim,      false, "", "", 5},
     {"action",              "action",            Slot::Actions,          Scope::GraphNode,      Transform::Verbatim,      false, "",                           "",                                              1},
 }};
 
@@ -254,6 +301,22 @@ void accept_output(Directives& d, const mcpp::toolchain::CommandDialect& dial,
 // warn-and-ignore behaviour: it is a hand-written printf program, frozen at
 // protocol 1, and its unknown keys are typos rather than future syntax.
 std::optional<std::string> protocol_error(const Directives& d);
+
+// ── Advisories ─────────────────────────────────────────────────────────────
+//
+// The `mcpp:warning=` lines a program emitted, each already prefixed with the
+// package it came from.
+//
+// ⚠️ THE FORMATTING LIVES HERE AND THE PRINTING DOES NOT, for two reasons that
+// pull the same way. This module deliberately imports no UI — a directive
+// table that knew how to draw would be a different kind of thing. And there
+// are TWO call sites, a run and a cache hit, which is exactly the shape that
+// drifts: one source for the wording means they cannot disagree about what
+// they say, and a test covers whether they both say it.
+//
+// The package name comes from the caller because a build program cannot spell
+// it reliably — in a workspace it would have to know which member it is.
+std::vector<std::string> advisories(std::string_view packageName, const Directives& d);
 
 // ── Cache serialization ────────────────────────────────────────────────────
 
@@ -575,6 +638,19 @@ std::string glob_fingerprint(const std::filesystem::path& root,
     std::string joined;
     for (auto const& h : hits) { joined += h; joined.push_back('\n'); }
     return mcpp::toolchain::hash_string(joined);
+}
+
+std::vector<std::string> advisories(std::string_view packageName, const Directives& d) {
+    std::vector<std::string> out;
+    for (auto const& w : d.at(Slot::Warnings)) {
+        // Unnamed rather than "<unnamed package>": a workspace member always
+        // has a name, and an unnamed root is a single-package build where the
+        // prefix would be noise.
+        out.push_back(packageName.empty()
+                          ? std::string(w)
+                          : std::format("{}: {}", packageName, w));
+    }
+    return out;
 }
 
 void apply(mcpp::manifest::Manifest& m, const Directives& d) {
