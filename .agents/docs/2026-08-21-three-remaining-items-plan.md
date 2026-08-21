@@ -117,12 +117,51 @@ xPack,因为它们有上游;这个包没有上游,本仓库就是上游。
 ⚠️ 第 3 条是重点。`--version` 能跑只证明二进制不是坏的;**引导一个真实镜像才证明这个
 载荷可用**,而这两件事在本生态里分开过一次(见 `xcb-gen-and-ok-marker-content-gap`)。
 
+### 1.4.1 已完成(2026-08-21),以及计划没有预料到的两条
+
+四条判据全部满足。⚠️ **实施过程中出现两件本节没有预料到的事,两件都是「什么都没发生」
+被读成「一切正常」的形状。**
+
+**一、`deps` 为空是实测出来的,但第一次测量什么也没测到。**
+
+写下的检查是 `ldd "$B" 2>/dev/null | grep -v "$PAYLOAD/lib/"`,**一行不输出**,读起来
+和「没有越界」一模一样。真相:subos PATH 上的 `ldd` 是个在该 shell 下**语法就崩**的
+脚本,而它崩在 **stderr** —— 正好被 `2>/dev/null` 吃掉。改为直接对 loader 调
+`LD_TRACE_LOADED_OBJECTS=1` 后得到:
+
+    15 个对象;12 个出自载荷自己的 lib/(RUNPATH=$ORIGIN/../lib)
+    2 个跨出边界:libc.so.6  libm.so.6   —— 都是核心 glibc
+    1 个是 loader 本身
+
+⇒ `deps` 为空,与 `qemu-arm` 同形,理由同样是 elfpatch 整条替换运行期搜索标签。
+
+**二、⚠️ 扁平归档不能整目录搬,而这一条 §1.3 没有提。**
+
+`xim` **就地解压到存放归档的那个目录**,而那个目录是共享的。xPack 的归档带
+`xpack-qemu-arm-<ver>/` 根,所以 `qemu-arm` 搬那一个目录即可;本包的归档是**扁平的**
+(`bin/`、`share/` 在顶层),整目录搬会搬走 xim 的共享目录。症状是
+`linux-install-test` 报 `no directory contains bin/qemu-system-x86_64`。
+
+改法沿用 `cc-connect` 对其扁平载荷的做法:`os.mkdir(install_dir())` 再按名搬。
+⭐ **断言放在搬之前** —— 源目录是共享的,里面的 `bin/` 未必是我们的,放在之后的检查
+已经把别人的搬走了。
+
+**三、镜像的判据救了一次。** `gtc` 对 `linux-arm64` 报告 `uploaded`,而回探得到
+
+    {"error_code":404,"error_code_name":"NOT_PATH",...}   # 127 字节
+
+日志里那次上传其实抛了 urllib traceback,循环继续走了下一个。CN 端首轮 **4 OK /
+1 mismatch**,重传后 5/5。这与本次会话早先的一次**截断**是同一判据抓住的两种不同故障。
+
 ### 1.5 收录之后要回改的三处
 
 * `openarch` 的 `build.mcpp`:x86_64 分支目前直接 `return 0` 且注明「索引里没有
   `xim:qemu-x86`」。收录后改为与另两台机器同形,并把那段注释改写成历史记录。
 * `openarch` 的 CI:x86_64 那一行的模拟器从 apt 改回 `xim:qemu-x86`,与另两行一致。
 * `openarch` 的模板 README:`mcpp build --target x86_64-none-elf` 改为 `mcpp run`。
+
+⇒ 三处均已改(`mcpplibs/openarch` 0.5.0)。实测:`mcpp run --target x86_64-none-elf`
+经索引装的 `xim:qemu-x86` 引导并打印 `switch ok`,即判据 3。
 
 ---
 
@@ -249,6 +288,28 @@ after fetch`。判据是**构建**,不是「没报 E_NOT_FOUND」。
 ⇒ 若要把这一栏从未知变成已知,需要一次最小测量:在 Windows 宿主上,用 MSVC STL 的头对
 `riscv64-none-elf` 编 `#include <array>`,并记录第一条错误。那次测量应当在
 `std-freestanding` 的 CI 里作为一个**允许失败**的信息性步骤跑一次,而不是在本地猜。
+
+#### 2.6.1 已测量(2026-08-21,`std-freestanding` PR#1 的 Windows 行)
+
+那一步跑了,结果**比本节的推测早一步**:
+
+```
+── MSVC STL, for a bare-metal target ──
+t.cpp:1:10: fatal error: 'array' file not found
+── MSVC STL, for its own target, as a control ──
+(无诊断)
+```
+
+⭐ **那些头从来没被读到。** 本节推测的失败点是「UCRT / vcruntime 是 Windows 目标的
+组件,因此编不过」;真实情况是 clang **只在目标是 MSVC 目标时**才搜索 MSVC 标准库,
+`riscv64-none-elf` 下它根本不去那儿看,于是 `<array>` 直接不存在。对照组用同一个
+clang 同一行编 `x86_64-pc-windows-msvc`,一声不吭。
+
+⇒ 「用 MSVC STL 服务裸机目标」不是一件会失败的事,是一件**驱动从不尝试**的事。
+**宿主的 clang 是拿什么标准库编出来的,不参与一次交叉编译。**
+
+⚠️ 这是这个问题的第**三**个解释,前两个都错。这一栏之所以最终答对,不是因为第三次
+推理更严谨,而是因为它是唯一一次去问机器。
 
 ---
 
