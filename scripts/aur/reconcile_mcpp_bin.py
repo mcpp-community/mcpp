@@ -1050,8 +1050,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--arch-image", default=ARCH_IMAGE)
     parser.add_argument("--push-attempts", type=int, default=4)
     parser.add_argument("--push-base-delay", type=float, default=5.0)
-    parser.add_argument("--rpc-poll-attempts", type=int, default=12)
-    parser.add_argument("--rpc-poll-delay", type=float, default=5.0)
+    # ⚠️ 12 x 5s = 60s WAS TOO SHORT, AND THE FAILURE IT PRODUCED WAS A LIE
+    # ABOUT WHOSE FAULT IT WAS.
+    #
+    # This poll runs AFTER the git push has succeeded, so by the time it starts
+    # the AUR already holds the new version — what it waits for is the AUR's own
+    # RPC metadata to catch up, which refreshes on a schedule measured in
+    # minutes, not seconds. Measured on 2026.8.21.2 and again on 2026.8.21.3:
+    # the workflow reported `AUR RPC did not converge` and the AUR RPC showed
+    # the new version when asked afterwards. Both were red for a third party's
+    # refresh interval.
+    #
+    # 40 x 15s = 10 minutes covers the observed lag with room. See also the
+    # workflow, which no longer treats a non-converged poll as a build failure —
+    # the push is the thing this repository is responsible for.
+    parser.add_argument("--rpc-poll-attempts", type=int, default=40)
+    parser.add_argument("--rpc-poll-delay", type=float, default=15.0)
     parser.add_argument("--report-json", type=Path)
     parser.add_argument("--summary", type=Path)
     args = parser.parse_args(argv)
