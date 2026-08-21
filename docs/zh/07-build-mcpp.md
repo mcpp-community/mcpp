@@ -51,6 +51,7 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | 同 `include-dir`,但排在系统目录**之后**搜索(`-idirafter`)——用于会遮蔽系统头的 payload 源树 |
 | `mcpp:runner=<token>` *(2026.8.19.2+)* | 执行本次构建产物的命令的**一个 argv token**(宿主跑不了它时)。一个 token 一次调用、按顺序;产物路径会被追加(或替换 `{}`)。**到达消费者**。⚠️ 可执行文件要发**绝对路径**,且**只能有一个**依赖提供它 |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | 用这个**链接脚本**链接(`-T`;相对路径按包根解析,发出的是绝对路径,因为链接是在构建目录里跑的)。与 `include-dir` 不同,它**到达消费者** —— 板子的内存布局恰恰是消费者写不出来的那一项 |
+| `mcpp:warning=<text>` *(2026.8.21.2+)* | 对用户说一句话并**继续**。唯一一条不改变编译行、链接行与源码集的指令。它**穿过构建缓存** —— 见下 |
 | `mcpp:rerun-if-changed=<path>`     | 该文件变化时重跑 `build.mcpp` |
 | `mcpp:rerun-if-env-changed=<VAR>`  | 该环境变量变化时重跑 `build.mcpp` |
 
@@ -97,7 +98,44 @@ int main() {
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` —— 见下 |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | 本 manifest 在 `[xlings] deps` 里声明的包的载荷目录;没声明或没安装时返回 `""`(见下) |
+| `mcpp::warning(text)` *(2026.8.21.2+)* | `mcpp:warning=` —— 见下 |
 | `mcpp::action{…}.submit()` *(2026.8.5.1+)* | `mcpp:action=` —— **声明一个构建图节点**,而不是在这里把活干了(见下) |
+
+### `warning` —— 成功了,而且仍然被听见(2026.8.21.2+)
+
+构建程序的输出**只在程序非零退出时**到达用户:mcpp 抓取它,并在失败时打印抓到的东西。
+于是 `std::printf` 或 `std::fprintf(stderr, ...)` 写的提示,在**恰恰需要它的那些成功
+构建**上一个字都不显示。
+
+```cpp
+if (const char* dir = mcpp::xpkg_dir("xim", "qemu-riscv"); dir && *dir) {
+    mcpp::runner(std::format("{}/bin/qemu-system-riscv64", dir).c_str());
+    // …… 其余 argv ……
+} else {
+    mcpp::warning("qemu-riscv 未安装,于是 `mcpp run` 没有 runner。"
+                  "装一次即可:  xlings install qemu-riscv -y");
+}
+```
+
+⚠️ **它之所以存在,是因为两个替代方案都更差,而且都试过。** 写到 stderr 的提示在成功
+构建上什么都不打印。非零退出也不对:`mcpp build` 并不需要模拟器,让一个正确的构建失败,
+是用一句缺失的话换一条坏掉的命令。
+
+用它来说一个程序**已经正确处理**、但用户会想知道的情况 —— 最常见的是「我没找到 X,所以
+我没有配置任何依赖它的东西」。要报错就非零退出,那条路径的输出已经会被打印。
+
+**它不会让构建失败。** `mcpp build` 仍然退出 0。
+
+**它带归属。** 该行显示为 `<包名>: <文字>`,因为一个 workspace 里可能有好几个程序在说话,
+而读者需要知道该打开哪一份清单。
+
+⭐ **它穿过构建缓存。** 构建程序的结果是被缓存的,命中时不再运行 —— 所以一条只活在运行
+路径上的提示,会在工程的第一次构建出现、之后再也不出现,而那读起来像「问题已解决」。
+mcpp 在每次命中时重放它。
+
+⚠️ **全工程 no-op 构建什么都不打印,包括这一条。** 无事可做时,构建根本到不了
+`build.mcpp` 阶段 —— 它同样不会报告构建了哪个目标、推断了哪些源码。touch 一下源码,提示
+就回来了。
 
 ### `runner` —— 产物的执行方式(2026.8.19.2+)
 

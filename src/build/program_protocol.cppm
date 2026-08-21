@@ -45,7 +45,13 @@ export namespace mcpp::build::program_protocol {
 // number than this must refuse: it cannot know what it is being asked to do,
 // and "warn and ignore" would turn that into a silently different build.
 // v2 (#359): adds `rerun-if-changed-glob`.
-inline constexpr int kProtocolVersion = 4;
+// v5: adds `warning` — the channel a program uses to succeed and still say
+// something. ⚠️ A package that calls `mcpp::warning()` does not fail on an
+// older engine with a PROTOCOL error; it fails earlier, at the build.mcpp
+// COMPILE, because the bundled module that engine ships has no such function.
+// That is the same cost `link-script` carried into v3 and is stated here so
+// the next reader does not look for a protocol path that never runs.
+inline constexpr int kProtocolVersion = 5;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

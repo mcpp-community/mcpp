@@ -547,6 +547,28 @@ A board-support package is an ordinary mcpp package. It declares the emulator
 it needs under `[xlings] deps`, exports one C++ module for consumers, and emits
 its board facts from `build.mcpp`.
 
+⚠️ **A declaration under `[xlings] deps` is not an install trigger.** It is what
+lets `mcpp::xpkg_dir` answer *"where did that package land"*; it installs
+nothing. A board package listed in the index descriptor's platform `deps` gets
+its emulator installed with it, and never meets this. A project that declares
+its own — because no board package serves its machines — will find `xpkg_dir`
+empty on a clean machine and must say so:
+
+```cpp
+if (const char* dir = mcpp::xpkg_dir("xim", "qemu-riscv"); dir && *dir) {
+    mcpp::runner(std::format("{}/bin/qemu-system-riscv64", dir).c_str());
+    // … the rest of the argv …
+} else {
+    mcpp::warning("qemu-riscv is not installed, so `mcpp run` has no runner. "
+                  "Install it once:  xlings install qemu-riscv -y");
+}
+```
+
+Without that line the build succeeds, configures no runner, and `mcpp run`
+reports a missing runner with advice about writing a `runner` key — true in
+general, and not the cause here. See `mcpp:warning=` in
+[07 — build.mcpp](07-build-mcpp.md).
+
 ### The directives a board-support package emits
 
 | Directive | Effect |
