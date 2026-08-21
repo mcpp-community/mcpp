@@ -19,17 +19,25 @@ at `src/toolchain/triple.cppm` carries four of them:
 |---|---|---|
 | `riscv64-none-elf` | verified | `xim:picolibc-riscv` |
 | `riscv32-none-elf` | verified | `xim:picolibc-riscv` |
-| `aarch64-none-elf` | preview | none — the zero-libc tier |
-| `x86_64-none-elf` | preview | none — the zero-libc tier |
+| `aarch64-none-elf` | preview | none by default — the zero-libc tier; `xim:picolibc-aarch64` is declarable |
+| `x86_64-none-elf` | preview | none by default — the zero-libc tier; `xim:picolibc-x86` is declarable |
 
 `verified` means an image has been built **and run** for the row. `preview`
 means it builds and has been observed to run, but is not yet covered by the
 engine's own emulator jobs.
 
-⚠️ The last two rows' C library column is empty, and that is a statement rather
-than an omission: no aarch64 or x86_64 build of picolibc exists in the package
-index, and the first consumer of both rows — the `openarch` layer of machine
-mechanism — references no C library symbol. An empty column means exactly what
+⚠️ The last two rows default to no C library, and that is a statement rather
+than an omission: the first consumer of both rows — the `openarch` layer of
+machine mechanism — references no C library symbol, and if no row defaulted to
+this tier there would be nothing demonstrating the tier works.
+⭐ **A build for those rows is declarable, not absent** (mcpp 2026.8.21.3+).
+`xim:picolibc-aarch64` and `xim:picolibc-x86` are in the index; a project that
+wants one names it the same way it would choose a different one:
+
+```toml
+[target.aarch64-none-elf]
+sysroot = "xim:picolibc-aarch64@1.8.12"
+``` An empty column means exactly what
 `[target.<triple>].sysroot = ""` means in a manifest, so a project targeting one
 begins on the zero-libc tier without asking. A project that wants a C library on
 those targets declares one, which is also how it would choose a different one.
