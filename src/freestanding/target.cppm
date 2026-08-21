@@ -108,6 +108,25 @@ inline constexpr std::string_view kX86_64NoneExtra[] = {
     "-mno-red-zone",
 };
 
+// ⚠️ THE `libdir` COLUMN WAS EMPTY ON THE LAST TWO ROWS UNTIL 2026-08-21, AND
+// THAT WAS CORRECT UNTIL THE DAY IT WAS NOT.
+//
+// It names the sub-directory of a multilib C library — picolibc's own
+// convention, `<march>/<mabi>` — and those two rows had no C library in the
+// index to point into, so an empty column said something true.
+//
+// `xim:picolibc-aarch64` and `xim:picolibc-x86` now exist. Measured with the
+// column still empty: a project that declares
+// `[target.aarch64-none-elf] sysroot = "xim:picolibc-aarch64@1.8.12"` gets
+// `'stdio.h' file not found` — the package is installed and correct, and the
+// engine cannot find the profile inside it.
+//
+// ⚠️ Filling this does NOT give those targets a C library by default. The
+// column is consulted only when a sysroot has been resolved, and the target
+// TABLE still binds none for these two rows — the zero-libc tier stays the
+// default and the package stays opt-in. This makes the opt-in work; it does not
+// take the opt-out away.
+//
 // ⚠️ Defaults, not the only possibility. `rv64gc/lp64d` is what qemu `virt`
 // runs and what the first BSP targets; a board that needs `rv32imac/ilp32`
 // selects it through its own manifest, not by editing this table. The table
@@ -139,7 +158,7 @@ inline constexpr Spec kTable[] = {
     // table resolves no C library: `aarch64-none-elf` is the zero-libc tier.
     // The engine reads this column only when a sysroot exists, so an invented
     // value would be a value nothing could ever check.
-    { "aarch64-none-elf",   "armv8-a",  "aapcs", "small",  ""               },
+    { "aarch64-none-elf",   "armv8-a",  "aapcs", "small",  "armv8-a/aapcs"  },
     // ⚠️ `x86-64` WITH A HYPHEN, WHICH IS THE ONE PLACE THIS TRIPLE'S TWO
     // SPELLINGS DIVERGE. The triple segment is `x86_64` with an underscore and
     // the `-march` value is `x86-64` with a hyphen; deriving one from the other
@@ -163,7 +182,7 @@ inline constexpr Spec kTable[] = {
     //
     // ⚠️ THE LIBDIR IS EMPTY FOR THE SAME REASON aarch64's IS: this row
     // resolves no C library, so a value here could never be checked.
-    { "x86_64-none-elf",    "x86-64",   "sysv",  "small",  "", kX86_64NoneExtra,
+    { "x86_64-none-elf",    "x86-64",   "sysv",  "small",  "x86-64/sysv", kX86_64NoneExtra,
       "elf_x86_64" },
 };
 

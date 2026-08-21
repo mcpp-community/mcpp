@@ -391,16 +391,42 @@ TEST(FreestandingTarget, Aarch64ResolvesNoCLibrary) {
     EXPECT_EQ(mcpp::toolchain::triple::effective_sysroot(*t, &want), want);
 }
 
-// The libdir column is empty for the same reason, and a consumer that read it
-// would be reading a value nothing could ever check.
-TEST(FreestandingTarget, Aarch64HasNoMultilibDirectoryToName) {
-    auto s = mcpp::freestanding::resolve("aarch64-none-elf");
-    ASSERT_TRUE(s.has_value());
-    EXPECT_TRUE(s->libdir.empty());
+// ⚠️ THIS TEST USED TO ASSERT THE OPPOSITE, AND IT WAS RIGHT UNTIL 2026-08-21.
+//
+// The libdir column names the sub-directory of a MULTILIB C library, and the
+// aarch64 and x86_64 rows had none in the index to point into — so an empty
+// column asserted something true, and a consumer reading it would have been
+// reading a value nothing could check.
+//
+// `xim:picolibc-aarch64` and `xim:picolibc-x86` now exist, and their payloads
+// use picolibc's own `<march>/<mabi>` convention. Measured with the column
+// still empty: a project declaring
+// `[target.aarch64-none-elf] sysroot = "xim:picolibc-aarch64@1.8.12"` got
+// `'stdio.h' file not found` while the package sat installed and correct.
+//
+// ⭐ The values below are a CROSS-REPOSITORY fact: they must match the
+// directory layout those two packages ship. `xim-pkgindex`'s
+// `.agents/tools/build-baremetal-sysroot.sh` produces them from the same
+// march/mabi pair this table carries, so the two cannot drift silently — but
+// they are named here so a reader knows where the other half lives.
+TEST(FreestandingTarget, MultilibDirectoriesMatchTheIndexPayloads) {
+    auto a = mcpp::freestanding::resolve("aarch64-none-elf");
+    ASSERT_TRUE(a.has_value());
+    EXPECT_EQ(a->libdir, "armv8-a/aapcs");
+    // The directory is the march/mabi pair, so it cannot disagree with the
+    // flags the same row produces.
+    EXPECT_EQ(a->libdir, std::string(a->march) + "/" + std::string(a->mabi));
 
-    // The RISC-V rows do name one, so the emptiness above is this row's
-    // property rather than the field being unused everywhere.
-    auto r = mcpp::freestanding::resolve("riscv64-none-elf");
-    ASSERT_TRUE(r.has_value());
-    EXPECT_FALSE(r->libdir.empty());
+    auto x = mcpp::freestanding::resolve("x86_64-none-elf");
+    ASSERT_TRUE(x.has_value());
+    EXPECT_EQ(x->libdir, "x86-64/sysv");
+    EXPECT_EQ(x->libdir, std::string(x->march) + "/" + std::string(x->mabi));
+
+    // ⚠️ Filling this column does NOT give those targets a C library by
+    // default. It is consulted only once a sysroot has been RESOLVED, and the
+    // target table still binds none for these two rows — the zero-libc tier
+    // stays the default and the package stays opt-in.
+    auto t = mcpp::toolchain::triple::parse("aarch64-none-elf");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_TRUE(mcpp::toolchain::triple::effective_sysroot(*t, nullptr).empty());
 }

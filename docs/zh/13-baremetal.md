@@ -17,17 +17,25 @@ freestanding 目标是 `os` 字段为 `none` 的目标。`src/toolchain/triple.c
 |---|---|---|
 | `riscv64-none-elf` | verified | `xim:picolibc-riscv` |
 | `riscv32-none-elf` | verified | `xim:picolibc-riscv` |
-| `aarch64-none-elf` | preview | 无 —— 零 libc 档 |
-| `x86_64-none-elf` | preview | 无 —— 零 libc 档 |
+| `aarch64-none-elf` | preview | 默认无 —— 零 libc 层;`xim:picolibc-aarch64` 可声明 |
+| `x86_64-none-elf` | preview | 默认无 —— 零 libc 层;`xim:picolibc-x86` 可声明 |
 
 `verified` 意味着该行的镜像被构建**并被运行**过。`preview` 意味着它构建得出、
 也被观察到能运行,但尚未纳入引擎自己的模拟器作业。
 
-⚠️ 后两行的 C 库列为空,这是声明而非遗漏:包索引里不存在 aarch64 与 x86_64 的
-picolibc 构建,而这两行的第一个消费者 —— 机器机制层 `openarch` —— 一个 C 库符号
-都不引用。空列在这里的含义与清单里 `[target.<triple>].sysroot = ""` 完全一致,
-因此面向它们的工程无需声明即处在零 libc 档。想要 C 库的工程自行声明一个,而那也
-正是它换用另一份 C 库的做法。
+⚠️ 后两行**默认**没有 C 库,这是声明而非遗漏:这两行的第一个消费者 —— 机器机制层
+`openarch` —— 一个 C 库符号都不引用,而**如果四行里没有一行默认在这一层,就没有
+任何东西在证明这一层可用**。空列在这里的含义与清单里
+`[target.<triple>].sysroot = ""` 完全一致。
+
+⭐ **这两行的 C 库是可声明的,不是不存在的**(mcpp 2026.8.21.3+)。
+`xim:picolibc-aarch64` 与 `xim:picolibc-x86` 已在索引里;想要它的工程自行声明,
+而那与它换用另一份 C 库是同一个动作:
+
+```toml
+[target.aarch64-none-elf]
+sysroot = "xim:picolibc-aarch64@1.8.12"
+```
 
 这类目标不需要逐宿主的交叉工具链。clang 与 lld 在构造上就是交叉编译器 ——
 一个二进制发射它构建时支持的全部目标 —— 因此目标表在每个宿主上都钉
