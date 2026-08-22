@@ -513,6 +513,25 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     std::string compile_toolchain_flags;
     std::string link_toolchain_flags;
     std::string link_toolchain_flags_c;   // same, minus C++ runtime selection
+    // ⭐⭐ THE TRIPLE ON THE LINK LINE TOO, AND FOR A DIFFERENT REASON THAN ON
+    // THE COMPILE LINE.
+    //
+    // Compiling without it produces objects for the wrong machine. LINKING
+    // without it produces the wrong LINKER: `-fuse-ld=lld` names a family, and
+    // the clang driver picks the flavour from the target — `ld.lld` for ELF,
+    // `ld64.lld` for Mach-O, `lld-link` for PE. With no target it picks the
+    // host's.
+    //
+    // ⚠️ Measured 2026-08-23, cross-linking for macOS from Linux, after the
+    // objects were already correct Mach-O:
+    //
+    //     ld.lld: error: obj/main.o: unknown file type
+    //
+    // — the ELF linker, handed Mach-O objects, describing them accurately and
+    // saying nothing about why it was the one running.
+    const std::string crossTarget = plan.toolchain.crossTargetFlag.empty()
+        ? std::string{}
+        : " " + plan.toolchain.crossTargetFlag;
     const bool isClangWithCfg = dm.hasCfg;
     // LLVM root of a clang-with-cfg toolchain — used by the macOS link
     // path below to locate libc++.a/libc++abi.a for staticStdlib.
@@ -567,18 +586,47 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         llvmRootForStdlib = dm.llvmRoot;
         // Linker flags that cfg normally provides. The payload C-runtime
         // flags (-B/-L/loader) are appended via payload_ld below.
-        link_toolchain_flags = " --no-default-config";
+        link_toolchain_flags = crossTarget + " --no-default-config";
+        if (!crossTarget.empty()) {
+            // ⭐⭐ THE TARGET SIDE COMES FROM THE GRAPH, SO THE HOST'S MODEL
+            // CONTRIBUTES NOTHING — THE SAME REPLACEMENT `stdModuleFlags`
+            // ALREADY MAKES ON THE COMPILE SIDE.
+            //
+            // `lm.link_flags()` describes the C library THIS MACHINE has and
+            // `kLinkDriverFlags` selects the C++ runtime THE PAYLOAD ships.
+            // Both are right for a native link and both are wrong here: the C
+            // library, the C++ runtime and the platform are packages, and the
+            // package that knows a format states its own link line (openkal-musl
+            // carries `-nostdlib` plus that format's entry symbol).
+            //
+            // ⚠️ Measured 2026-08-23, after the correct linker was finally
+            // being chosen:
+            //
+            //     ld64.lld: error: unknown argument '--as-needed'
+            //     ld64.lld: error: unknown argument
+            //       '--dynamic-linker=…/xim-x-glibc/2.44/lib64/ld-linux-x86-64.so.2'
+            //
+            // — this host's glibc loader, handed to a Mach-O linker. Each
+            // message is accurate and none of them names the cause.
+            //
+            // `-fuse-ld=lld` stays because it names a FAMILY and the driver
+            // picks the flavour from the target; that is the one part of the
+            // selection that is still ours to make.
+            link_toolchain_flags += " -fuse-ld=lld";
+            link_toolchain_flags_c = link_toolchain_flags;
+        } else {
         if (lm.mode == mcpp::toolchain::CLibMode::Sysroot)
             link_toolchain_flags += lm.link_flags(ninjaEsc);
         link_toolchain_flags_c = link_toolchain_flags
             + std::string(mcpp::toolchain::ClangDriverModel::kLinkDriverFlagsC);
         link_toolchain_flags +=
             mcpp::toolchain::ClangDriverModel::kLinkDriverFlags;
+        }
         f.sysroot = link_toolchain_flags;
     } else if (lm.mode != mcpp::toolchain::CLibMode::None) {
         // GCC (or Clang without cfg): --sysroot from probe, or the payload
         // headers + C runtime (-B for crt discovery, -L for -lc/-lm).
-        link_toolchain_flags = lm.link_flags(ninjaEsc);
+        link_toolchain_flags = crossTarget + lm.link_flags(ninjaEsc);
         link_toolchain_flags_c = link_toolchain_flags;   // nothing C++-only here
         f.sysroot = link_toolchain_flags;
     }
@@ -1107,7 +1155,21 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // but the link line has a hard 128KiB ceiling (MAX_ARG_STRLEN) that real
     // workspaces already spend 43% of.
     std::string payload_ld;
+    // ⚠️ AND NOT WHEN THE TARGET SIDE COMES FROM THE GRAPH — the second half of
+    // the replacement made where `link_toolchain_flags` is built. `lm` describes
+    // THIS MACHINE's C runtime: `-B`/`-L` into the payload and this host's
+    // dynamic loader. Measured 2026-08-23, with the correct linker already
+    // running for a macOS cross:
+    //
+    //     ld64.lld: error: unknown argument
+    //       '--dynamic-linker=…/xim-x-glibc/2.44/lib64/ld-linux-x86-64.so.2'
+    //
+    // ⚠️ The first replacement alone was not enough, and that is the finding:
+    // the C-runtime group reaches the link line through TWO channels, and a
+    // reader who fixed one saw the identical error and could reasonably
+    // conclude the fix had not worked.
     if (isClangWithCfg
+     && plan.toolchain.crossTargetFlag.empty()
      && lm.mode == mcpp::toolchain::CLibMode::PayloadFirst)
         payload_ld = lm.link_flags(ninjaEsc);
     // GCC: replace the payload's patched `*link:` with the pristine one, so
@@ -1256,8 +1318,16 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // its own. Inject `-latomic` (under --as-needed) after runtime_dirs
         // so its -L entries are on the search path; self-guards on the lib
         // actually being present (see atomic_link_flag).
-        std::string atomic_ld = atomic_link_flag(plan.toolchain.linkRuntimeDirs,
-                                                 !full_static.empty());
+        // ⚠️ THE THIRD CHANNEL. `libatomic` is this HOST's, found by looking in
+        // the payload's directories, and `--push-state` / `--as-needed` are GNU
+        // ld spellings that a Mach-O or PE linker does not have. A target whose
+        // runtime comes from the graph gets its own answer to oversized
+        // `std::atomic` from that graph.
+        std::string atomic_ld =
+            plan.toolchain.crossTargetFlag.empty()
+                ? atomic_link_flag(plan.toolchain.linkRuntimeDirs,
+                                   !full_static.empty())
+                : std::string{};
         f.ld = std::format("{}{}{}{}{}{}{}{}{}", full_static,
                            link_toolchain_flags, b_flag, runtime_dirs,
                            link_intent_ld, atomic_ld, payload_ld,
