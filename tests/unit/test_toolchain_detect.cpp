@@ -94,7 +94,7 @@ TEST(ToolchainDetect, IgnoresTargetRuntimeLibraryPathDuringProbe) {
     EXPECT_EQ(tc->targetTriple, "x86_64-unknown-linux-gnu");
 }
 
-TEST(ToolchainDetect, CompilerRuntimeDirsUseTheBoundGlibcPayload) {
+TEST(ToolchainDetect, NativeGccUsesTheBoundGlibcLoaderForProbes) {
     auto root = std::filesystem::temp_directory_path()
               / std::format("mcpp_compiler_runtime_{}", std::random_device{}());
     TempDirGuard cleanup{root};
@@ -107,10 +107,29 @@ TEST(ToolchainDetect, CompilerRuntimeDirsUseTheBoundGlibcPayload) {
     std::filesystem::create_directories(wanted);
     std::filesystem::create_directories(other);
 
+    auto loader = wanted / "ld-linux-x86-64.so.2";
+    auto trace = root / "loader.trace";
+    std::ofstream loaderOs(loader);
+    loaderOs << R"(#!/usr/bin/env bash
+if [[ "$1" != "--library-path" || "$2" != ")" << wanted.string() << R"(" ]]; then
+    echo "bad loader invocation: $*" >&2
+    exit 127
+fi
+printf '%s\n' "$*" >> ")" << trace.string() << R"("
+shift 3
+exec env -u LD_LIBRARY_PATH "$@"
+)";
+    loaderOs.close();
+    std::filesystem::permissions(
+        loader,
+        std::filesystem::perms::owner_exec
+        | std::filesystem::perms::owner_read
+        | std::filesystem::perms::owner_write);
+
     std::ofstream os(compiler);
     os << R"(#!/usr/bin/env bash
-if [[ "${LD_LIBRARY_PATH:-}" != *")" << wanted.string() << R"("* ]]; then
-    echo "missing bound glibc directory" >&2
+if [[ -n "${LD_LIBRARY_PATH:-}" ]]; then
+    echo "probe inherited LD_LIBRARY_PATH" >&2
     exit 127
 fi
 case "$1" in
@@ -127,6 +146,7 @@ esac
 
     auto tc = detect(compiler, "glibc@2.44");
     ASSERT_TRUE(tc.has_value()) << tc.error().message;
+    EXPECT_EQ(tc->compilerInvocationLoader, loader);
     EXPECT_NE(std::find(tc->compilerInvocationRuntimeDirs.begin(),
                         tc->compilerInvocationRuntimeDirs.end(), wanted),
               tc->compilerInvocationRuntimeDirs.end());
@@ -135,6 +155,13 @@ esac
               tc->compilerInvocationRuntimeDirs.end());
     EXPECT_EQ(std::find(tc->compilerRuntimeDirs.begin(), tc->compilerRuntimeDirs.end(), wanted),
               tc->compilerRuntimeDirs.end());
+    EXPECT_EQ(compiler_env_prefix(*tc).find("LD_LIBRARY_PATH"), std::string::npos);
+
+    std::ifstream traceIn(trace);
+    std::string traceText((std::istreambuf_iterator<char>(traceIn)), {});
+    EXPECT_NE(traceText.find("--version"), std::string::npos) << traceText;
+    EXPECT_NE(traceText.find("-dumpmachine"), std::string::npos) << traceText;
+    EXPECT_NE(traceText.find("-print-sysroot"), std::string::npos) << traceText;
 
     auto mingw = xpkgs / "xim-x-mingw-cross-gcc" / "16.1.0" / "bin"
                / "x86_64-w64-mingw32-g++";
@@ -143,6 +170,9 @@ esac
 
     auto mingwDirs = discover_compiler_invocation_runtime_dirs(mingw, "glibc@2.44");
     EXPECT_EQ(std::find(mingwDirs.begin(), mingwDirs.end(), wanted), mingwDirs.end());
+    auto mingwLoader = discover_compiler_invocation_loader(mingw, "glibc@2.44");
+    ASSERT_TRUE(mingwLoader.has_value()) << mingwLoader.error().message;
+    EXPECT_FALSE(mingwLoader->has_value());
 }
 #endif // defined(__linux__)
 

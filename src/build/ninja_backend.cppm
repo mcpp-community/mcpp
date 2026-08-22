@@ -64,6 +64,9 @@ std::unique_ptr<Backend> make_ninja_backend();
 std::string emit_ninja_string(const BuildPlan& plan);
 std::string filter_ninja_output(std::string_view output,
                                 std::span<const std::string> commandPrefixes);
+std::string compiler_launcher_contents(const std::filesystem::path& loader,
+                                       const std::filesystem::path& compiler,
+                                       const std::vector<std::filesystem::path>& dirs);
 
 // Advice appended to a failed build whose linker output names a replaceable
 // function nothing in the graph defines. Empty when there is nothing to add.
@@ -80,6 +83,21 @@ std::string link_failure_advice(std::string_view output);
 }  // namespace mcpp::build
 
 namespace mcpp::build {
+
+std::string compiler_launcher_contents(const std::filesystem::path& loader,
+                                       const std::filesystem::path& compiler,
+                                       const std::vector<std::filesystem::path>& dirs) {
+    std::string libraryPath;
+    for (auto const& dir : dirs) {
+        if (!libraryPath.empty()) libraryPath += ':';
+        libraryPath += dir.string();
+    }
+    return std::format(
+        "#!/bin/sh\nexec {} --library-path {} {} \"$@\"\n",
+        mcpp::platform::shell::quote(loader.string()),
+        mcpp::platform::shell::quote(libraryPath),
+        mcpp::platform::shell::quote(compiler.string()));
+}
 
 namespace {
 
@@ -288,7 +306,9 @@ const std::vector<std::filesystem::path>& compiler_invocation_dirs(const BuildPl
 }
 
 bool needs_compiler_launcher(const BuildPlan& plan) {
-    return mcpp::platform::is_linux && !compiler_invocation_dirs(plan).empty();
+    return mcpp::platform::is_linux
+        && plan.toolchain.compiler == mcpp::toolchain::CompilerId::GCC
+        && !plan.toolchain.compilerInvocationLoader.empty();
 }
 
 std::filesystem::path compiler_launcher_path(const BuildPlan& plan, bool cxx) {
@@ -296,17 +316,10 @@ std::filesystem::path compiler_launcher_path(const BuildPlan& plan, bool cxx) {
 }
 
 void write_compiler_launcher(const std::filesystem::path& path,
+                             const std::filesystem::path& loader,
                              const std::filesystem::path& compiler,
                              const std::vector<std::filesystem::path>& dirs) {
-    std::string libraryPath;
-    for (auto const& dir : dirs) {
-        if (!libraryPath.empty()) libraryPath += ':';
-        libraryPath += dir.string();
-    }
-    write_file(path, std::format(
-        "#!/bin/sh\nLD_LIBRARY_PATH={}\nexport LD_LIBRARY_PATH\nexec {} \"$@\"\n",
-        mcpp::platform::shell::quote(libraryPath),
-        mcpp::platform::shell::quote(compiler.string())));
+    write_file(path, compiler_launcher_contents(loader, compiler, dirs));
 
     std::error_code ec;
     std::filesystem::permissions(path, std::filesystem::perms::owner_exec,
@@ -627,8 +640,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     const bool need_ios_init_shim = flags.needsStreamInitShim;
     auto compiler_command = [&](const std::filesystem::path& binary, bool cxx) {
         if (needs_compiler_launcher(plan))
-            return escape_ninja_path(compiler_launcher_path(plan, cxx));
-        return escape_ninja_path(binary);
+            return shell_quote_arg(escape_ninja_chars(
+                compiler_launcher_path(plan, cxx).string()));
+        return shell_quote_arg(escape_ninja_chars(binary.string()));
     };
     append(std::format("cxx       = {}\n", compiler_command(flags.cxxBinary, /*cxx=*/true)));
     // clang-scan-deps receives the driver after `--` as argv, not as a shell
@@ -2325,8 +2339,10 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     if (needs_compiler_launcher(plan)) {
         const auto& dirs = compiler_invocation_dirs(plan);
         write_compiler_launcher(compiler_launcher_path(plan, /*cxx=*/true),
+                                plan.toolchain.compilerInvocationLoader,
                                 flags.cxxBinary, dirs);
         write_compiler_launcher(compiler_launcher_path(plan, /*cxx=*/false),
+                                plan.toolchain.compilerInvocationLoader,
                                 flags.ccBinary, dirs);
     }
     stage("write-compiler-launcher");

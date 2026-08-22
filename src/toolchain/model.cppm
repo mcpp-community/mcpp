@@ -103,15 +103,21 @@ struct Toolchain {
     // Runtime directories inherited by Ninja and its whole process tree. Keep
     // private libc out of this list: Ninja launches each edge through /bin/sh.
     std::vector<std::filesystem::path>   compilerRuntimeDirs;
-    // Directories required when starting a compiler driver. On Linux this may
-    // include the bound glibc payload, but it is applied inside each compiler
-    // command after Ninja's shell has already started.
+    // Directories required when starting a compiler driver. For native managed
+    // GCC on Linux, the private loader below consumes these after Ninja's
+    // shell has already started.
     std::vector<std::filesystem::path>   compilerInvocationRuntimeDirs;
+    // The private ELF loader for a native managed GCC and its bound glibc.
+    // Empty for every other toolchain: they retain their ordinary driver
+    // invocation. Keeping this separate from the runtime directories matters
+    // because an LD_LIBRARY_PATH export reaches GCC's host as/ld children.
+    std::filesystem::path               compilerInvocationLoader;
     std::vector<std::filesystem::path>   linkRuntimeDirs;     // -L/-rpath dirs for produced binaries
     // Environment the toolchain's tools need when invoked (set on the ninja
-    // process, inherited by compiler/linker children). Empty for GCC/Clang
-    // (their LD_LIBRARY_PATH need goes through compilerRuntimeDirs); the
-    // MSVC backend fills INCLUDE/LIB/PATH here (design §5.1).
+    // process, inherited by compiler/linker children). Empty for GCC/Clang;
+    // native managed GCC uses compilerInvocationLoader instead of exporting
+    // its bound glibc. The MSVC backend fills INCLUDE/LIB/PATH here (design
+    // §5.1).
     // (Own struct, not std::pair — GCC 16 modules choke on a std::pair
     // member added to this exported class: "failed to load pendings".)
     std::vector<EnvVar> envOverrides;

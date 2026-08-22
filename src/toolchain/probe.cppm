@@ -37,6 +37,10 @@ std::vector<std::filesystem::path>
 discover_compiler_invocation_runtime_dirs(const std::filesystem::path& compilerBin,
                                           std::string_view runtimeBinding);
 
+std::expected<std::optional<std::filesystem::path>, DetectError>
+discover_compiler_invocation_loader(const std::filesystem::path& compilerBin,
+                                    std::string_view runtimeBinding);
+
 std::vector<std::filesystem::path>
 discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
                            std::string_view targetTriple);
@@ -105,6 +109,10 @@ bool is_native_managed_gcc(const std::filesystem::path& compilerBin) {
     // but their host-side driver must not load that private libc.
     const auto packageVersion = compilerBin.parent_path().parent_path();
     return packageVersion.parent_path().filename() == "xim-x-gcc";
+}
+
+bool is_elf_loader_name(std::string_view name) {
+    return name.starts_with("ld-linux-") && name.find(".so") != std::string_view::npos;
 }
 
 } // namespace
@@ -247,6 +255,58 @@ discover_compiler_invocation_runtime_dirs(const std::filesystem::path& compilerB
     return dirs;
 }
 
+std::expected<std::optional<std::filesystem::path>, DetectError>
+discover_compiler_invocation_loader(const std::filesystem::path& compilerBin,
+                                    std::string_view runtimeBinding) {
+    if constexpr (!mcpp::platform::is_linux) {
+        return std::optional<std::filesystem::path>{};
+    }
+
+    if (!runtimeBinding.starts_with("glibc@") || !is_native_managed_gcc(compilerBin))
+        return std::optional<std::filesystem::path>{};
+
+    auto glibc = payload_root_for_binding(compilerBin, runtimeBinding);
+    if (!glibc) {
+        return std::unexpected(DetectError{std::format(
+            "native managed GCC '{}' requires bound {} but its payload is unavailable",
+            compilerBin.string(), std::string(runtimeBinding))});
+    }
+
+    std::vector<std::filesystem::path> candidates;
+    std::error_code ec;
+    for (auto const& dir : {*glibc / "lib64", *glibc / "lib"}) {
+        if (!std::filesystem::is_directory(dir, ec)) {
+            ec.clear();
+            continue;
+        }
+        for (std::filesystem::directory_iterator it(dir, ec), end; !ec && it != end;
+             it.increment(ec)) {
+            const auto& candidate = it->path();
+            if (!is_elf_loader_name(candidate.filename().string())
+                || !std::filesystem::is_regular_file(candidate, ec)) {
+                ec.clear();
+                continue;
+            }
+            auto resolved = std::filesystem::weakly_canonical(candidate, ec);
+            if (ec) {
+                ec.clear();
+                resolved = std::filesystem::absolute(candidate, ec);
+                if (ec) resolved = candidate;
+            }
+            if (std::find(candidates.begin(), candidates.end(), resolved) == candidates.end())
+                candidates.push_back(std::move(resolved));
+        }
+        ec.clear();
+    }
+
+    if (candidates.size() != 1) {
+        return std::unexpected(DetectError{std::format(
+            "native managed GCC '{}' requires exactly one ld-linux-*.so* in bound {} payload; found {}",
+            compilerBin.string(), std::string(runtimeBinding), candidates.size())});
+    }
+    return std::optional<std::filesystem::path>{candidates.front()};
+}
+
 std::vector<std::filesystem::path>
 discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
                            std::string_view targetTriple) {
@@ -270,6 +330,11 @@ discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
 }
 
 std::string compiler_env_prefix(const Toolchain& tc) {
+    if (!tc.compilerInvocationLoader.empty()) {
+        return std::format("{} --library-path {} ",
+            mcpp::xlings::shq(tc.compilerInvocationLoader.string()),
+            mcpp::xlings::shq(join_colon_paths(tc.compilerInvocationRuntimeDirs)));
+    }
     return env_prefix_for_dirs(tc.compilerInvocationRuntimeDirs.empty()
         ? tc.compilerRuntimeDirs : tc.compilerInvocationRuntimeDirs);
 }

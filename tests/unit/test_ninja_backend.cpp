@@ -797,7 +797,7 @@ TEST(NinjaBackend, ClangScanRuleWritesViaDashOWithoutShellRedirection) {
         << "scan rule must not use shell redirection: " << rule;
 }
 
-TEST(NinjaBackend, ClangScanUsesRawDriverWhenCompilerNeedsRuntimeLauncher) {
+TEST(NinjaBackend, ClangKeepsItsRawDriverWhenItHasRuntimeDirectories) {
     auto plan = minimal_plan();
     plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
     plan.toolchain.binaryPath = "/opt/xim-x-llvm/bin/clang++";
@@ -813,14 +813,9 @@ TEST(NinjaBackend, ClangScanUsesRawDriverWhenCompilerNeedsRuntimeLauncher) {
 
     auto ninja = emit_ninja_string(plan);
 
-    if constexpr (mcpp::platform::is_linux) {
-        EXPECT_NE(ninja.find("cxx       = /tmp/mcpp-ninja-test/target/test/mcpp-cxx"),
-                  std::string::npos) << ninja;
-        EXPECT_EQ(ninja.find("LD_LIBRARY_PATH"), std::string::npos) << ninja;
-    } else {
-        EXPECT_NE(ninja.find("cxx       = /opt/xim-x-llvm/bin/clang++"), std::string::npos)
-            << ninja;
-    }
+    EXPECT_NE(ninja.find("cxx       = /opt/xim-x-llvm/bin/clang++"), std::string::npos)
+        << ninja;
+    EXPECT_EQ(ninja.find("mcpp-cxx"), std::string::npos) << ninja;
     EXPECT_NE(ninja.find("cxx_driver = /opt/xim-x-llvm/bin/clang++"), std::string::npos)
         << ninja;
     auto scanRule = ninja.find("rule cxx_scan");
@@ -830,6 +825,51 @@ TEST(NinjaBackend, ClangScanUsesRawDriverWhenCompilerNeedsRuntimeLauncher) {
     auto rule = ninja.substr(scanRule, scanEnd - scanRule);
     EXPECT_NE(rule.find("-- $cxx_driver"), std::string::npos) << rule;
     EXPECT_EQ(rule.find("LD_LIBRARY_PATH"), std::string::npos) << rule;
+}
+
+TEST(NinjaBackend, PrivateGccLauncherUsesItsLoaderWithoutExportingLibraryPath) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "private ELF loaders are Linux-only";
+
+    auto script = compiler_launcher_contents(
+        "/opt/xim-x-glibc/2.44/lib/ld-linux-x86-64.so.2",
+        "/opt/xim-x-gcc/16.1.0/bin/g++",
+        {"/opt/xim-x-glibc/2.44/lib", "/opt/xim-x-gcc/16.1.0/lib64"});
+
+    EXPECT_NE(script.find("exec '/opt/xim-x-glibc/2.44/lib/ld-linux-x86-64.so.2' --library-path "),
+              std::string::npos) << script;
+    EXPECT_NE(script.find("'/opt/xim-x-glibc/2.44/lib:/opt/xim-x-gcc/16.1.0/lib64' "),
+              std::string::npos) << script;
+    EXPECT_NE(script.find("'/opt/xim-x-gcc/16.1.0/bin/g++' \"$@\""), std::string::npos)
+        << script;
+    EXPECT_EQ(script.find("LD_LIBRARY_PATH"), std::string::npos) << script;
+}
+
+TEST(NinjaBackend, PrivateGccLauncherPathIsNinjaEscapedThenShellQuoted) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "private ELF loaders are Linux-only";
+
+    auto plan = minimal_plan();
+    plan.outputDir = "/tmp/mcpp output$dir:with'quote";
+    plan.toolchain.compilerInvocationLoader =
+        "/opt/xim-x-glibc/2.44/lib/ld-linux-x86-64.so.2";
+    plan.toolchain.compilerInvocationRuntimeDirs = {"/opt/xim-x-glibc/2.44/lib"};
+    plan.compileUnits.push_back({
+        .source = "src/main.c",
+        .kind = mcpp::SourceKind::C,
+        .object = "obj/main.o",
+        .packageName = "objc_rule_test",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+    auto expectedCxx = shell_quote_arg(escape_ninja_chars(
+        (plan.outputDir / "mcpp-cxx").string()));
+    auto expectedCc = shell_quote_arg(escape_ninja_chars(
+        (plan.outputDir / "mcpp-cc").string()));
+
+    EXPECT_NE(ninja.find("cxx       = " + expectedCxx), std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("cc        = " + expectedCc), std::string::npos) << ninja;
+    EXPECT_EQ(ninja.find("LD_LIBRARY_PATH"), std::string::npos) << ninja;
 }
 
 // The `cmd /c` wrapper was the only place mcpp put a shell between ninja and

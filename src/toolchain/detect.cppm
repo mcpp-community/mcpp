@@ -61,6 +61,10 @@ detect(const std::filesystem::path& explicit_compiler,
     tc.compilerRuntimeDirs = discover_compiler_runtime_dirs(tc.binaryPath);
     tc.compilerInvocationRuntimeDirs =
         discover_compiler_invocation_runtime_dirs(tc.binaryPath, runtimeBinding);
+    auto loader = discover_compiler_invocation_loader(tc.binaryPath, runtimeBinding);
+    if (!loader) return std::unexpected(loader.error());
+    if (*loader)
+        tc.compilerInvocationLoader = std::move(**loader);
     auto envPrefix = compiler_env_prefix(tc);
 
     auto ver_r = run_capture(std::format("{}{} --version 2>&1",
