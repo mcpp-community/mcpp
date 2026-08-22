@@ -35,7 +35,7 @@ export namespace mcpp::toolchain::compat {
 
 // A user/config spec token pair, normalized to the two-axis identity model.
 struct NormalizedSpec {
-    std::string    family;    // "gcc" | "llvm" | "msvc"
+    std::string    family;    // "gcc" | "llvm" | "msvc" | "openkal-llvm"
     std::string    version;   // numeric (possibly partial), or "system"; never "-musl"-suffixed
     triple::Triple target;    // empty = host
     // Set when a legacy spelling was rewritten; `hint` is the one-line note.
@@ -108,7 +108,12 @@ std::optional<NormalizedSpec> normalize_spec(std::string_view compilerIn,
     out.version = version;
 
     // ── canonical families pass through ─────────────────────────────────────
-    if (compiler == "gcc" || compiler == "llvm" || compiler == "msvc") {
+    // ⭐ `openkal-llvm` is a canonical family and NOT an alias for `llvm`. The
+    // two resolve to the same payload, and they answer differently about which
+    // targets are reachable — see Family::OpenkalLlvm. An alias would collapse
+    // that difference, which is the whole content of the name.
+    if (compiler == "gcc" || compiler == "llvm" || compiler == "msvc"
+        || compiler == "openkal-llvm") {
         out.family = std::string(compiler);
         if (muslVersionSuffix && compiler == "gcc") {
             out.target = host_musl_triple();

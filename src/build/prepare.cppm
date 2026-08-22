@@ -1338,6 +1338,37 @@ prepare_build(bool print_fingerprint,
         bool hasExplicitSection   = it != m->targetOverrides.end();
         bool hasToolchainOverride = hasExplicitSection
                                  && !it->second.toolchain.empty();
+
+        // ⭐⭐ DOES THIS PROJECT TAKE ITS TARGET SIDE FROM openkal?
+        //
+        // Asked HERE, before dependency resolution, because the refusal below
+        // happens here — and the answer is available here, because it is a
+        // statement the project makes about itself rather than a fact about the
+        // graph. `[toolchain] default = "openkal-llvm@…"` (or the same name in
+        // a `[target.X] toolchain`) says: the headers, the C library, the C++
+        // runtime and the platform's implementation come from packages, and the
+        // compiler's job is code generation.
+        //
+        // ⚠️ THE GRAPH IS NOT CONSULTED, AND THAT IS DELIBERATE. Whether an
+        // openkal implementation actually exists for the requested target is
+        // not this layer's question — openkal clause 6.1 answers it at LINK
+        // time, by naming the `kal_*` that could not be resolved. That is a
+        // better report than the refusal below: it names what is absent, while
+        // "this host cannot build that target" names something that stopped
+        // being true.
+        const bool openkalTargetSide = [&] {
+            auto family_of = [](std::string_view spec) {
+                if (spec.empty()) return false;
+                auto at = spec.find('@');
+                auto fam = at == std::string_view::npos ? spec : spec.substr(0, at);
+                return fam == "openkal-llvm";
+            };
+            if (hasToolchainOverride && family_of(it->second.toolchain)) return true;
+            // `for_platform` answers with an optional: a project may name no
+            // toolchain at all, and then it certainly did not name this one.
+            auto def = m->toolchain.for_platform(kCurrentPlatform);
+            return def && family_of(*def);
+        }();
         const triple::TargetInfo* known =
             parsed ? triple::find_known_target(*parsed) : nullptr;
 
@@ -1382,7 +1413,8 @@ prepare_build(bool print_fingerprint,
         // The escape hatch stays open on purpose: an explicit `[target.X]`
         // toolchain override means the author is supplying the cross toolchain
         // themselves, and mcpp's payload matrix has no standing to refuse it.
-        if (known && known->tier != "planned" && !hasToolchainOverride && parsed
+        if (known && known->tier != "planned" && !hasToolchainOverride
+            && !openkalTargetSide && parsed
             && !mcpp::toolchain::host_can_serve(*parsed)) {
             std::string servable;
             for (auto const& info : triple::known_targets()) {
@@ -1438,8 +1470,22 @@ prepare_build(bool print_fingerprint,
         // for (--target, or [build] target) still wins, as it always has.
         const bool pinWouldOverruleUser =
             targetFromGlobalDefault && tc_origin_is_user_explicit(tcOrigin);
+        // ⭐ AND IT MUST NOT FIRE WHEN THE PROJECT'S TARGET SIDE IS openkal.
+        //
+        // The pin encodes which payload serves a triple — `gcc@16.1.0` for
+        // Windows-GNU, because the mingw payload is what supplies that
+        // target's headers and C library. A project taking its target side
+        // from openkal supplies those itself and needs the compiler its
+        // runtime packages were configured for.
+        //
+        // ⚠️ Measured 2026-08-23, before this line: `--target x86_64-windows-gnu`
+        // on the openkal stack resolved `x86_64-w64-mingw32-g++` EVEN WITH an
+        // explicit `--toolchain llvm@22.1.8`, and gcc cannot compile libc++'s
+        // std module. The row won, silently, because `pinWouldOverruleUser`
+        // only guards a target that came from a REMEMBERED default — and this
+        // one came from the command line.
         if (known && !hasToolchainOverride && !known->pin.empty()
-            && !pinWouldOverruleUser) {
+            && !pinWouldOverruleUser && !openkalTargetSide) {
             tcSpec = std::string(known->pin);
             if (!tc_origin_is_user_explicit(tcOrigin))
                 tcOrigin = TcOrigin::TargetPin;

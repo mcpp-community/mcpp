@@ -28,13 +28,42 @@ import mcpp.toolchain.triple;
 
 export namespace mcpp::toolchain {
 
-enum class Family { Gcc, Llvm, Msvc };
+// ⭐⭐ `OpenkalLlvm` IS NOT A FOURTH COMPILER. It is the SAME llvm payload,
+// asked a different question about where the target side comes from.
+//
+// Gcc, Llvm and Msvc each answer "which target can I produce?" with "the one my
+// payload was built for" — a gcc payload IS its target, an msvc payload targets
+// the machine it runs on, and even the llvm payload is used that way because
+// mcpp has always supplied the target's headers and C library from a per-(host,
+// target) payload beside it.
+//
+// openkal removes that second half. The target side — headers, C library, C++
+// runtime, and the platform's own implementation of a 48-function interface —
+// is a set of PACKAGES in the dependency graph, built from source by whichever
+// compiler is running. What is left for the compiler is code generation, and
+// clang emits every format it was built with from one binary.
+//
+// ⇒ So this family's target coverage is not a payload matrix. It is "every
+// triple clang can emit", and whether the target side actually EXISTS for a
+// given triple is not this layer's question: openkal clause 6.1 makes a missing
+// implementation a link error naming the `kal_*` it could not resolve, which is
+// a better report than "this host cannot build that" — the first names what is
+// absent, the second names the wrong thing entirely.
+enum class Family { Gcc, Llvm, Msvc, OpenkalLlvm };
+
+// True when a family's target coverage is decided by what the compiler can
+// emit rather than by which payloads exist. One predicate so the gate, the
+// listing and the payload resolution cannot disagree.
+constexpr bool family_serves_every_target(Family f) {
+    return f == Family::OpenkalLlvm;
+}
 
 inline std::string_view family_name(Family f) {
     switch (f) {
         case Family::Gcc:  return "gcc";
         case Family::Llvm: return "llvm";
         case Family::Msvc: return "msvc";
+        case Family::OpenkalLlvm: return "openkal-llvm";
     }
     return "?";
 }
@@ -294,6 +323,7 @@ parse_toolchain_spec(std::string compilerArg,
     ToolchainSpec spec;
     if      (norm->family == "llvm") spec.family = Family::Llvm;
     else if (norm->family == "msvc") spec.family = Family::Msvc;
+    else if (norm->family == "openkal-llvm") spec.family = Family::OpenkalLlvm;
     else                             spec.family = Family::Gcc;
     spec.version = std::move(norm->version);
     spec.target  = std::move(norm->target);
@@ -390,7 +420,11 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
         pkg.frontendCandidates = {"cl.exe"};
         return pkg;
     }
-    if (spec.family == Family::Llvm) {
+    if (spec.family == Family::Llvm || spec.family == Family::OpenkalLlvm) {
+        // ⭐ THE SAME PAYLOAD. `openkal-llvm` downloads nothing of its own and
+        // installs nothing of its own — it is a statement about where the
+        // TARGET SIDE comes from, and the compiler is the llvm payload either
+        // way. A user who has one has both.
         pkg.ximName = mcpp::toolchain::llvm::package_name();
         pkg.frontendCandidates = mcpp::toolchain::llvm::frontend_candidates();
         return pkg;
@@ -494,6 +528,8 @@ std::filesystem::path payload_frontend(const std::filesystem::path& payloadRoot,
     if (family == Family::Msvc) {
         // Same resolution the install and build paths use, so the three
         // cannot disagree about where an msvc payload keeps its compiler.
+        // (OpenkalLlvm falls through to the generic bin/-shaped resolution
+        // below, which is the llvm payload's shape.)
         if (auto inst = mcpp::toolchain::msvc::installation_at(payloadRoot,
                                                               pkg.ximVersion))
             return inst->clPath;
@@ -601,6 +637,10 @@ std::vector<AvailableIndex> available_toolchain_indexes() {
         { "gcc",      Family::Gcc },
         { "musl-gcc", Family::Gcc },
         { mcpp::toolchain::llvm::package_name(), Family::Llvm },
+        // The same package, listed a second time under the name that says what
+        // its targets are. Installing either installs both, which is accurate:
+        // there is one payload and two ways of asking it a question.
+        { mcpp::toolchain::llvm::package_name(), Family::OpenkalLlvm },
     };
     // The Windows-PE gcc payload is host-split at the distribution layer
     // (§4.3); each host lists the package it would actually install.
