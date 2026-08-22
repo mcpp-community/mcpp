@@ -31,8 +31,11 @@ std::string trim_line(std::string s);
 std::string normalize_driver_output(std::string_view s);
 
 std::vector<std::filesystem::path>
-discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin,
-                               std::string_view runtimeBinding = {});
+discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin);
+
+std::vector<std::filesystem::path>
+discover_compiler_invocation_runtime_dirs(const std::filesystem::path& compilerBin,
+                                          std::string_view runtimeBinding);
 
 std::vector<std::filesystem::path>
 discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
@@ -190,8 +193,7 @@ std::string normalize_driver_output(std::string_view s) {
 }
 
 std::vector<std::filesystem::path>
-discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin,
-                               std::string_view runtimeBinding) {
+discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin) {
     std::vector<std::filesystem::path> dirs;
     auto root = compilerBin.parent_path().parent_path();
 
@@ -211,6 +213,14 @@ discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin,
         append_existing_unique(dirs, *rt / "lib64");
         append_existing_unique(dirs, *rt / "lib");
     }
+
+    return dirs;
+}
+
+std::vector<std::filesystem::path>
+discover_compiler_invocation_runtime_dirs(const std::filesystem::path& compilerBin,
+                                          std::string_view runtimeBinding) {
+    auto dirs = discover_compiler_runtime_dirs(compilerBin);
 
     // A managed compiler's DT_RUNPATH reaches its bound private libc for its
     // own direct dependencies only. A host /etc/ld.so.preload library can
@@ -251,7 +261,8 @@ discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
 }
 
 std::string compiler_env_prefix(const Toolchain& tc) {
-    return env_prefix_for_dirs(tc.compilerRuntimeDirs);
+    return env_prefix_for_dirs(tc.compilerInvocationRuntimeDirs.empty()
+        ? tc.compilerRuntimeDirs : tc.compilerInvocationRuntimeDirs);
 }
 
 std::expected<std::filesystem::path, DetectError>

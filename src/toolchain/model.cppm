@@ -100,7 +100,13 @@ struct Toolchain {
     // zero-libc tier and on hosted targets.
     std::string                         targetSysrootPkg;
     std::filesystem::path               targetSysrootLib;
-    std::vector<std::filesystem::path>   compilerRuntimeDirs; // LD_LIBRARY_PATH for private tools
+    // Runtime directories inherited by Ninja and its whole process tree. Keep
+    // private libc out of this list: Ninja launches each edge through /bin/sh.
+    std::vector<std::filesystem::path>   compilerRuntimeDirs;
+    // Directories required when starting a compiler driver. On Linux this may
+    // include the bound glibc payload, but it is applied inside each compiler
+    // command after Ninja's shell has already started.
+    std::vector<std::filesystem::path>   compilerInvocationRuntimeDirs;
     std::vector<std::filesystem::path>   linkRuntimeDirs;     // -L/-rpath dirs for produced binaries
     // Environment the toolchain's tools need when invoked (set on the ninja
     // process, inherited by compiler/linker children). Empty for GCC/Clang

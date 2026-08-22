@@ -127,9 +127,13 @@ esac
 
     auto tc = detect(compiler, "glibc@2.44");
     ASSERT_TRUE(tc.has_value()) << tc.error().message;
-    EXPECT_NE(std::find(tc->compilerRuntimeDirs.begin(), tc->compilerRuntimeDirs.end(), wanted),
-              tc->compilerRuntimeDirs.end());
-    EXPECT_EQ(std::find(tc->compilerRuntimeDirs.begin(), tc->compilerRuntimeDirs.end(), other),
+    EXPECT_NE(std::find(tc->compilerInvocationRuntimeDirs.begin(),
+                        tc->compilerInvocationRuntimeDirs.end(), wanted),
+              tc->compilerInvocationRuntimeDirs.end());
+    EXPECT_EQ(std::find(tc->compilerInvocationRuntimeDirs.begin(),
+                        tc->compilerInvocationRuntimeDirs.end(), other),
+              tc->compilerInvocationRuntimeDirs.end());
+    EXPECT_EQ(std::find(tc->compilerRuntimeDirs.begin(), tc->compilerRuntimeDirs.end(), wanted),
               tc->compilerRuntimeDirs.end());
 }
 #endif // defined(__linux__)

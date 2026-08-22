@@ -58,7 +58,9 @@ detect(const std::filesystem::path& explicit_compiler,
         return tc;
     }
 
-    tc.compilerRuntimeDirs = discover_compiler_runtime_dirs(tc.binaryPath, runtimeBinding);
+    tc.compilerRuntimeDirs = discover_compiler_runtime_dirs(tc.binaryPath);
+    tc.compilerInvocationRuntimeDirs =
+        discover_compiler_invocation_runtime_dirs(tc.binaryPath, runtimeBinding);
     auto envPrefix = compiler_env_prefix(tc);
 
     auto ver_r = run_capture(std::format("{}{} --version 2>&1",

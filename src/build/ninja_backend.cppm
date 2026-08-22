@@ -589,10 +589,17 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // The macOS initializer-ordering shim (#336) is a C translation unit, so
     // it needs the C driver bindings even in a project with no .c sources.
     const bool need_ios_init_shim = flags.needsStreamInitShim;
-    append(std::format("cxx       = {}\n", escape_ninja_path(flags.cxxBinary)));
+    auto compiler_command = [&](const std::filesystem::path& binary) {
+        const auto& dirs = plan.toolchain.compilerInvocationRuntimeDirs.empty()
+            ? plan.toolchain.compilerRuntimeDirs
+            : plan.toolchain.compilerInvocationRuntimeDirs;
+        return mcpp::platform::linux_::build_clean_ld_library_path_prefix(dirs)
+             + escape_ninja_path(binary);
+    };
+    append(std::format("cxx       = {}\n", compiler_command(flags.cxxBinary)));
     append(std::format("cxxflags  = {}\n", flags.cxx));
     if (need_c_rule || need_asm_rule || need_ios_init_shim) {  // asm_object drives the C compiler too
-        append(std::format("cc        = {}\n", escape_ninja_path(flags.ccBinary)));
+        append(std::format("cc        = {}\n", compiler_command(flags.ccBinary)));
     }
     if (need_c_rule || need_ios_init_shim) {
         append(std::format("cflags    = {}\n", flags.cc));
