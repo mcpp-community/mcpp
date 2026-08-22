@@ -150,6 +150,22 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // reads it.
     if (!tc.crossTargetFlag.empty()) out.push_back(tc.crossTargetFlag);
 
+    // ⭐⭐ AND WHAT A `throw` AND A `thread_local` COMPILE INTO, WHICH IS A
+    // PROPERTY OF THE GRAPH AND NOT OF ANY ONE PACKAGE — see
+    // `graph_runtime_compile_flags` for what and why.
+    //
+    // ⚠️ IT WAS DECLARED PER-PACKAGE, WHICH IS EXACTLY AS FAR AS IT REACHED.
+    // `openkal-llvm-runtime` set `-fdwarf-exceptions` in its own `[build]`, so
+    // its objects agreed with each other and nothing else did. Measured
+    // 2026-08-23 — every object compiled, and the link said:
+    //
+    //     ld.lld: error: undefined symbol: __gxx_personality_seh0
+    //
+    // referenced from the CONSUMER's `main.o`, which had a `try` block and no
+    // reason to know any of this. A user cannot be asked to write a flag whose
+    // necessity is a fact about their dependencies.
+    for (auto& f : graph_runtime_compile_flags(tc)) out.push_back(f);
+
     const bool bypassCfg =
         dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always
                       || mcpp::platform::is_linux);
@@ -161,7 +177,28 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // returning early.
     const bool trustCfg = !bypassCfg && dm.hasCfg;
 
-    if (bypassCfg) {
+    // ⚠️ AND NOT WHEN THE TARGET SIDE COMES FROM THE GRAPH — the compile-side
+    // counterpart of the replacement `flags.cppm` makes on the link line.
+    //
+    // These tokens are the payload's: `-isystem <payload>/include/c++/v1` and
+    // the C library beside it. For an openkal target the C++ runtime and the C
+    // library are packages, and the payload's copies are built for the machine
+    // doing the building.
+    //
+    // ⚠️ `-nostdinc++` DOES NOT REMOVE THEM, which is what makes this its own
+    // fix rather than a flag. That option suppresses the DRIVER's own C++
+    // search; a path put there explicitly with `-isystem` stays. Measured
+    // 2026-08-23, cross-compiling openkal-windows — a package that uses no C++
+    // standard library at all — with `-nostdinc++` on the command line:
+    //
+    //     winnt.h:16 → …/xim-x-llvm/…/include/c++/v1/ctype.h
+    //                → __config:13 '__config_site' file not found
+    //
+    // mingw's own header asked for `<ctype.h>`, and the payload's libc++ was
+    // still ahead of the sysroot that had just been pointed at the right place.
+    const bool graphSuppliesTarget = !tc.crossTargetFlag.empty();
+
+    if (bypassCfg && !graphSuppliesTarget) {
         for (auto& t : dm.compile_tokens(esc, opt.clangStdlibSelect))
             out.push_back(t);
     }
@@ -175,7 +212,8 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     if (mcpp::platform::is_macos && !opt.macosDeploymentTarget.empty())
         out.push_back("-mmacosx-version-min=" + opt.macosDeploymentTarget);
 
-    if (!trustCfg && (bypassCfg || lm.mode != CLibMode::None))
+    if (!trustCfg && !graphSuppliesTarget
+        && (bypassCfg || lm.mode != CLibMode::None))
         for (auto& t : lm.compile_tokens(esc)) out.push_back(t);
 
     return out;

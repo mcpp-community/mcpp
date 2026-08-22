@@ -5647,6 +5647,12 @@ prepare_build(bool print_fingerprint,
             // aarch64 — the module and its importers would agree with each
             // other and with nothing else.
             flags += " " + tc->crossTargetFlag;
+            // ⚠️ AND THE SECOND CHANNEL. `hostflags.cppm` reaches every ordinary
+            // translation unit; this command is assembled here instead, so a
+            // `std.pcm` built with SEH would be imported by units built with
+            // DWARF. Same function, not a second copy of the decision.
+            for (auto& f : mcpp::toolchain::graph_runtime_compile_flags(*tc))
+                flags += " " + f;
         }
         for (auto& f : pkg.manifest.stdModuleFlags) {
             // A flag naming a path is relative to the package that named it,

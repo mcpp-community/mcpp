@@ -198,6 +198,43 @@ bool is_musl_target(const Toolchain& tc);
 bool is_msvc_target(const Toolchain& tc);
 bool is_mingw_target(const Toolchain& tc);
 
+// ⭐⭐ THE FLAGS A WHOLE GRAPH HAS TO AGREE ON WHEN THE RUNTIME COMES FROM IT.
+//
+// An ordinary flag is a package's business. These two are not: they change what
+// a translation unit EMITS for constructs the language guarantees work across a
+// program — a `throw` and a `thread_local`. Two objects that disagree link, and
+// then the disagreement is the bug.
+//
+// Both become necessary from one fact, `Toolchain::targetCxxRuntime`: the C++
+// runtime, the unwinder and the C library are packages rather than the
+// compiler's payload. The compiler's defaults for these are chosen for the
+// platform's OWN runtime, which is exactly the thing that is not being used.
+//
+//   -fdwarf-exceptions   PE only. clang defaults to SEH there, whose personality
+//                        (`__gxx_personality_seh0`) and `.pdata`/`.xdata` come
+//                        from the operating system's unwinder. The graph brings
+//                        libunwind, which reads `.eh_frame`.
+//   -femulated-tls       PE and Mach-O. Both reach a `thread_local` through
+//                        something the DYNAMIC LOADER bootstraps — `_tls_index`
+//                        on PE, `_tlv_bootstrap` on Mach-O. A self-contained
+//                        image has no loader to do it, so the access becomes an
+//                        ordinary call into compiler-rt against a key the C
+//                        library owns.
+//
+// ⚠️ ELF IS DELIBERATELY ABSENT FROM THE SECOND, and it is not an oversight:
+// there a `thread_local` is a fixed offset from the thread pointer, which the C
+// library establishes itself. Adding the flag would work and cost an indirection
+// on every access — but it would also make ELF the only target whose thread
+// locals are laid out differently from every OTHER build of the same target.
+//
+// ⚠️ AND THE REASON THIS IS A FUNCTION RATHER THAN TWO `if`s: the compile
+// command is assembled in two places (`hostflags.cppm` for every ordinary unit,
+// `prepare.cppm` for the `std` module), and a `std.pcm` built with SEH imported
+// by units built with DWARF is a defect that neither file can see. "One fact,
+// two channels" has produced an identical bug three times in this ecosystem;
+// here the second channel is removed instead of being told to remember.
+std::vector<std::string> graph_runtime_compile_flags(const Toolchain& tc);
+
 // Can the artifact we are building be fully statically linked (`-static`)?
 //
 // This is a property of the TARGET, not of the machine doing the build —
@@ -313,6 +350,16 @@ bool is_mingw_target(const Toolchain& tc) {
     if (auto t = triple::parse(tc.targetTriple)) return t->is_windows_gnu();
     // "x86_64-w64-mingw32" (mingw-w64) / legacy "*-pc-mingw32".
     return tc.targetTriple.find("mingw32") != std::string::npos;
+}
+
+std::vector<std::string> graph_runtime_compile_flags(const Toolchain& tc) {
+    std::vector<std::string> out;
+    if (!tc.targetCxxRuntime) return out;
+    auto t = triple::parse(tc.targetTriple);
+    if (!t) return out;
+    if (t->is_pe()) out.emplace_back("-fdwarf-exceptions");
+    if (t->is_pe() || t->os == "macos") out.emplace_back("-femulated-tls");
+    return out;
 }
 
 bool target_supports_full_static(std::string_view targetTriple, bool hostCapability) {

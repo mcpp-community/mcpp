@@ -1202,6 +1202,28 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // + libstdc++exp (std::print's __open_terminal/__write_to_terminal live in
     // libstdc++exp.a, not plain libstdc++). Self-contained binutils → no -B.
     if (isMingwTc) {
+        // ⭐⭐ AND THE SAME SENTENCE THAT QUALIFIES THE PARAGRAPH ABOVE: that
+        // holds while every PE cross is served by a MinGW PAYLOAD, whose driver
+        // IS the target and therefore needs nothing said to it. When the target
+        // side comes from the dependency graph the compiler is an ordinary
+        // retargetable clang, and this early return was dropping the one flag
+        // that tells it which target to link for.
+        //
+        // ⚠️ Measured 2026-08-23, `--target x86_64-windows-gnu` over openkal —
+        // every object compiled, and then:
+        //
+        //     ld.lld: error: obj/…/types.m.o: unknown file type      (× 30)
+        //
+        // COFF objects handed to lld's ELF driver, because the compile line
+        // carried `--target=` and the link line did not. Thirty accurate
+        // messages, none of which names the missing flag.
+        //
+        // ⇒ Third time this shape has appeared (payload compile tokens, then
+        // the host link model, now the PE early return). The predicate is the
+        // same one every time, so it is spelled the same way.
+        const std::string graphTargetLd =
+            plan.toolchain.crossTargetFlag.empty() ? std::string{}
+                                                   : link_toolchain_flags;
         // `-static` / `-static-libstdc++` now come from the contract table via
         // unit_ldflags (dist::Format::Pe) — the whole-link `-static` is what
         // "self-contained" means here, since the piecemeal recipe still leaves
@@ -1209,11 +1231,12 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         std::string mingw_stdexp;
         if (caps.stdlib_id == "libstdc++")
             mingw_stdexp = " -lstdc++exp";
-        f.ld = std::format("{}{}{}{}", link_intent_ld, user_ldflags,
-                           mingw_stdexp, link_extra);
+        f.ld = std::format("{}{}{}{}{}", graphTargetLd, link_intent_ld,
+                           user_ldflags, mingw_stdexp, link_extra);
         // `-lstdc++exp` is named explicitly, so swapping g++ for gcc would not
         // drop it — the C line has to leave it out.
-        f.ldC = std::format("{}{}{}", link_intent_ld, user_ldflags, link_extra);
+        f.ldC = std::format("{}{}{}{}", graphTargetLd, link_intent_ld,
+                            user_ldflags, link_extra);
         return f;
     }
 
