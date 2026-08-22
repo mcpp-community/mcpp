@@ -21,8 +21,28 @@ import mcpp.platform.xlings;
 
 namespace mcpp::pm {
 
-// `mcpp search <keyword>`.
-export int search_packages(const std::string& keyword) {
+namespace {
+// #487 — "1.0.0, 0.9.0" from an already-sorted-desc list. `keep` bounds the
+// default view; --all-versions passes std::numeric_limits<std::size_t>::max().
+std::string join_versions(const std::vector<std::string>& versions,
+                          std::size_t keep) {
+    std::string joined;
+    auto n = std::min(versions.size(), keep);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (i) joined += ", ";
+        joined += versions[i];
+    }
+    return joined;
+}
+} // namespace
+
+// `mcpp search <keyword> [--all-versions]`.
+//
+// Each hit line appends the versions the package publishes, merged across
+// its descriptor's per-OS tables (#487): the latest three by default, all of
+// them under --all-versions. A hit with no readable descriptor prints exactly
+// as before — enrichment is best-effort display, never a failure.
+export int search_packages(const std::string& keyword, bool allVersions = false) {
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
 
@@ -51,9 +71,19 @@ export int search_packages(const std::string& keyword) {
         std::println("No packages match `{}`.", keyword);
         return 0;
     }
+    constexpr std::size_t kAllVersions =
+        std::numeric_limits<std::size_t>::max();
     std::println("");
     for (auto& h : *hits) {
-        std::println("  {:<20}  {}", h.name, h.description);
+        auto versions = f.versions_for_hit(h);
+        if (versions.empty()) {
+            std::println("  {:<20}  {}", h.name, h.description);
+        } else {
+            std::println("  {:<20}  {}  ({})", h.name, h.description,
+                         join_versions(versions, allVersions
+                                                    ? kAllVersions
+                                                    : 3));
+        }
     }
     return 0;
 }
