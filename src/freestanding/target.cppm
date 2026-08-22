@@ -246,6 +246,36 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // main()`, which is a workaround for a claim the build was making on the
     // program's behalf and that was no longer true.
     if (!targetCxxRuntime) out.emplace_back("-ffreestanding");
+    // ⭐⭐ UNWIND TABLES, WHICH THE COMPILER TURNS OFF FOR THIS KIND OF TARGET
+    // AND WHICH NOTHING IN THE BUILD OTHERWISE SAYS.
+    //
+    // On a hosted ELF target clang emits `.eh_frame` for every function by
+    // default. On a bare-metal ELF target it does not — the assumption being
+    // that nothing will ever unwind. When a C++ runtime IS present for the
+    // target that assumption is wrong, and the way it is wrong is specific:
+    // the tables appear for anything compiled with `-fexceptions` (libc++abi,
+    // libunwind's C++ half, the program) and are ABSENT for everything else,
+    // which on this stack means the C library and libunwind's own C sources.
+    //
+    // ⚠️ AND A PARTIAL SET OF TABLES DOES NOT DEGRADE — IT STOPS THE WALK.
+    // Measured 2026-08-23 on riscv64-none-elf, and the measurement is worth
+    // keeping because every intermediate reading pointed elsewhere:
+    //
+    //     __unw_get_proc_info  -> 0  start=80200148 end=8020068c lsda=80447190
+    //     __unw_step           -> 0   (UNW_STEP_END)
+    //     after step           -> 8021d55e
+    //
+    // The frame WAS found, its personality data WAS found, the step DID compute
+    // a return address — and `step` still reported the end of the stack,
+    // because libunwind re-derives the info for the caller and the caller was
+    // `__libc_start_main`, a C function with no table. `_Unwind_RaiseException`
+    // lives in libunwind's own `UnwindLevel1.c` and has none either, so a throw
+    // ends at the first step with `terminating due to uncaught exception`.
+    //
+    // The asynchronous form rather than `-funwind-tables`: it is what a hosted
+    // ELF target already gets by default, and the rest of this stack was
+    // developed against that behaviour.
+    if (targetCxxRuntime) out.emplace_back("-fasynchronous-unwind-tables");
     // ⚠️ No C++ standard library headers. Not a preference — the toolchain's
     // libc++ headers are built for the HOST: `#include <stdio.h>` resolves to
     // libc++'s wrapper, which opens `<__config_site>`, which is generated per
