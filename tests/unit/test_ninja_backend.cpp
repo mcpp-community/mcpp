@@ -814,8 +814,9 @@ TEST(NinjaBackend, ClangScanUsesRawDriverWhenCompilerNeedsRuntimeLauncher) {
     auto ninja = emit_ninja_string(plan);
 
     if constexpr (mcpp::platform::is_linux) {
-        EXPECT_NE(ninja.find("cxx       = env LD_LIBRARY_PATH=/opt/xim-x-llvm/lib "
-                             "/opt/xim-x-llvm/bin/clang++"), std::string::npos) << ninja;
+        EXPECT_NE(ninja.find("cxx       = /tmp/mcpp-ninja-test/target/test/mcpp-cxx"),
+                  std::string::npos) << ninja;
+        EXPECT_EQ(ninja.find("LD_LIBRARY_PATH"), std::string::npos) << ninja;
     } else {
         EXPECT_NE(ninja.find("cxx       = /opt/xim-x-llvm/bin/clang++"), std::string::npos)
             << ninja;

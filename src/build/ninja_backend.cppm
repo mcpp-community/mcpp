@@ -281,6 +281,38 @@ void write_file(const std::filesystem::path& p, std::string_view content) {
     os << content;
 }
 
+const std::vector<std::filesystem::path>& compiler_invocation_dirs(const BuildPlan& plan) {
+    return plan.toolchain.compilerInvocationRuntimeDirs.empty()
+        ? plan.toolchain.compilerRuntimeDirs
+        : plan.toolchain.compilerInvocationRuntimeDirs;
+}
+
+bool needs_compiler_launcher(const BuildPlan& plan) {
+    return mcpp::platform::is_linux && !compiler_invocation_dirs(plan).empty();
+}
+
+std::filesystem::path compiler_launcher_path(const BuildPlan& plan, bool cxx) {
+    return plan.outputDir / (cxx ? "mcpp-cxx" : "mcpp-cc");
+}
+
+void write_compiler_launcher(const std::filesystem::path& path,
+                             const std::filesystem::path& compiler,
+                             const std::vector<std::filesystem::path>& dirs) {
+    std::string libraryPath;
+    for (auto const& dir : dirs) {
+        if (!libraryPath.empty()) libraryPath += ':';
+        libraryPath += dir.string();
+    }
+    write_file(path, std::format(
+        "#!/bin/sh\nLD_LIBRARY_PATH={}\nexport LD_LIBRARY_PATH\nexec {} \"$@\"\n",
+        mcpp::platform::shell::quote(libraryPath),
+        mcpp::platform::shell::quote(compiler.string())));
+
+    std::error_code ec;
+    std::filesystem::permissions(path, std::filesystem::perms::owner_exec,
+                                 std::filesystem::perm_options::add, ec);
+}
+
 bool run(const std::string& cmd, std::string& output_capture, bool capture_output = true) {
     output_capture.clear();
     if (capture_output) {
@@ -384,6 +416,10 @@ std::vector<std::string> command_prefixes(const CompileFlags& flags,
     };
     add(flags.cxxBinary);
     add(flags.ccBinary);
+    if (needs_compiler_launcher(plan)) {
+        add(compiler_launcher_path(plan, /*cxx=*/true));
+        add(compiler_launcher_path(plan, /*cxx=*/false));
+    }
     add(flags.arBinary);
     add(plan.scanDepsPath);
     // mcpp itself drives the dyndep and stage_file rules; its echoed command
@@ -589,20 +625,18 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // The macOS initializer-ordering shim (#336) is a C translation unit, so
     // it needs the C driver bindings even in a project with no .c sources.
     const bool need_ios_init_shim = flags.needsStreamInitShim;
-    auto compiler_command = [&](const std::filesystem::path& binary) {
-        const auto& dirs = plan.toolchain.compilerInvocationRuntimeDirs.empty()
-            ? plan.toolchain.compilerRuntimeDirs
-            : plan.toolchain.compilerInvocationRuntimeDirs;
-        return mcpp::platform::linux_::build_clean_ld_library_path_prefix(dirs)
-             + escape_ninja_path(binary);
+    auto compiler_command = [&](const std::filesystem::path& binary, bool cxx) {
+        if (needs_compiler_launcher(plan))
+            return escape_ninja_path(compiler_launcher_path(plan, cxx));
+        return escape_ninja_path(binary);
     };
-    append(std::format("cxx       = {}\n", compiler_command(flags.cxxBinary)));
+    append(std::format("cxx       = {}\n", compiler_command(flags.cxxBinary, /*cxx=*/true)));
     // clang-scan-deps receives the driver after `--` as argv, not as a shell
-    // command. Keep a raw path for that interface; `$cxx` may start with env.
+    // command. Keep a raw path for that interface; `$cxx` may be a launcher.
     append(std::format("cxx_driver = {}\n", escape_ninja_path(flags.cxxBinary)));
     append(std::format("cxxflags  = {}\n", flags.cxx));
     if (need_c_rule || need_asm_rule || need_ios_init_shim) {  // asm_object drives the C compiler too
-        append(std::format("cc        = {}\n", compiler_command(flags.ccBinary)));
+        append(std::format("cc        = {}\n", compiler_command(flags.ccBinary, /*cxx=*/false)));
     }
     if (need_c_rule || need_ios_init_shim) {
         append(std::format("cflags    = {}\n", flags.cc));
@@ -2281,9 +2315,21 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                                                       plan.outputDir.string(), ec.message()),
                                           plan.outputDir});
 
+    auto flags = compute_flags(plan);
+    stage("compute-flags");
+
     auto ninja_path = plan.outputDir / "build.ninja";
     auto manifest = emit_ninja_string(plan);
     stage("emit-ninja");
+
+    if (needs_compiler_launcher(plan)) {
+        const auto& dirs = compiler_invocation_dirs(plan);
+        write_compiler_launcher(compiler_launcher_path(plan, /*cxx=*/true),
+                                flags.cxxBinary, dirs);
+        write_compiler_launcher(compiler_launcher_path(plan, /*cxx=*/false),
+                                flags.ccBinary, dirs);
+    }
+    stage("write-compiler-launcher");
 
     // Command-length backstop (see
     // .agents/docs/2026-08-06-command-length-architecture.md). The structural
@@ -2299,8 +2345,6 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     stage("write-ninja");
 
     // compile_commands.json — via the dedicated module.
-    auto flags = compute_flags(plan);
-    stage("compute-flags");
     auto cdb = write_compile_commands(plan, flags);
     stage("compile-commands");
     if (!cdb) {
