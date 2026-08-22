@@ -597,6 +597,9 @@ std::string emit_ninja_string(const BuildPlan& plan) {
              + escape_ninja_path(binary);
     };
     append(std::format("cxx       = {}\n", compiler_command(flags.cxxBinary)));
+    // clang-scan-deps receives the driver after `--` as argv, not as a shell
+    // command. Keep a raw path for that interface; `$cxx` may start with env.
+    append(std::format("cxx_driver = {}\n", escape_ninja_path(flags.cxxBinary)));
     append(std::format("cxxflags  = {}\n", flags.cxx));
     if (need_c_rule || need_asm_rule || need_ios_init_shim) {  // asm_object drives the C compiler too
         append(std::format("cc        = {}\n", compiler_command(flags.ccBinary)));
@@ -1274,7 +1277,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // overruns (#261: 48 -I entries at a deep consumer path).
             append(std::format(
                    "  command = $scan_deps -format=p1689 -o $out -- "
-                   "$cxx{} $cxxflags $unit_cxxflags $unit_lang -c $in "
+                   "$cxx_driver{} $cxxflags $unit_cxxflags $unit_lang -c $in "
                    "-o $compile_target\n",
                    rsp_ref(scanPayload)));
         }

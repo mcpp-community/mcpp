@@ -99,6 +99,14 @@ std::string env_prefix_for_dirs(const std::vector<std::filesystem::path>& dirs) 
     return mcpp::platform::linux_::build_clean_ld_library_path_prefix(dirs);
 }
 
+bool is_native_managed_gcc(const std::filesystem::path& compilerBin) {
+    // Managed compiler paths are <xpkgs>/xim-x-gcc/<version>/bin/g++.
+    // Cross compilers also accept a glibc runtime binding for their target,
+    // but their host-side driver must not load that private libc.
+    const auto packageVersion = compilerBin.parent_path().parent_path();
+    return packageVersion.parent_path().filename() == "xim-x-gcc";
+}
+
 } // namespace
 
 std::optional<std::filesystem::path>
@@ -228,7 +236,8 @@ discover_compiler_invocation_runtime_dirs(const std::filesystem::path& compilerB
     // Use the resolved binding rather than scanning installed glibc versions:
     // the selected payload is an ABI decision, not a directory-order choice.
     if constexpr (mcpp::platform::is_linux) {
-        if (runtimeBinding.starts_with("glibc@")) {
+        if (runtimeBinding.starts_with("glibc@")
+            && is_native_managed_gcc(compilerBin)) {
             if (auto glibc = payload_root_for_binding(compilerBin, runtimeBinding)) {
                 append_existing_unique(dirs, *glibc / "lib64");
                 append_existing_unique(dirs, *glibc / "lib");

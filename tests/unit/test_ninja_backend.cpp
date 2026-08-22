@@ -791,8 +791,44 @@ TEST(NinjaBackend, ClangScanRuleWritesViaDashOWithoutShellRedirection) {
     auto rule = ninja.substr(scanRule, scanEnd - scanRule);
 
     EXPECT_NE(rule.find("-format=p1689 -o $out --"), std::string::npos) << rule;
+    EXPECT_NE(rule.find("-- $cxx_driver"), std::string::npos) << rule;
+    EXPECT_EQ(rule.find("-- $cxx "), std::string::npos) << rule;
     EXPECT_EQ(rule.find("> $out"), std::string::npos)
         << "scan rule must not use shell redirection: " << rule;
+}
+
+TEST(NinjaBackend, ClangScanUsesRawDriverWhenCompilerNeedsRuntimeLauncher) {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
+    plan.toolchain.binaryPath = "/opt/xim-x-llvm/bin/clang++";
+    plan.toolchain.compilerInvocationRuntimeDirs = {"/opt/xim-x-llvm/lib"};
+    plan.scanDepsPath = "/opt/xim-x-llvm/bin/clang-scan-deps";
+    plan.compileUnits.push_back({
+        .source = "src/m.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
+        .object = "obj/m.o",
+        .packageName = "objc_rule_test",
+        .providesModule = "m",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    if constexpr (mcpp::platform::is_linux) {
+        EXPECT_NE(ninja.find("cxx       = env LD_LIBRARY_PATH=/opt/xim-x-llvm/lib "
+                             "/opt/xim-x-llvm/bin/clang++"), std::string::npos) << ninja;
+    } else {
+        EXPECT_NE(ninja.find("cxx       = /opt/xim-x-llvm/bin/clang++"), std::string::npos)
+            << ninja;
+    }
+    EXPECT_NE(ninja.find("cxx_driver = /opt/xim-x-llvm/bin/clang++"), std::string::npos)
+        << ninja;
+    auto scanRule = ninja.find("rule cxx_scan");
+    ASSERT_NE(scanRule, std::string::npos) << ninja;
+    auto scanEnd = ninja.find("description = SCAN", scanRule);
+    ASSERT_NE(scanEnd, std::string::npos) << ninja;
+    auto rule = ninja.substr(scanRule, scanEnd - scanRule);
+    EXPECT_NE(rule.find("-- $cxx_driver"), std::string::npos) << rule;
+    EXPECT_EQ(rule.find("LD_LIBRARY_PATH"), std::string::npos) << rule;
 }
 
 // The `cmd /c` wrapper was the only place mcpp put a shell between ninja and

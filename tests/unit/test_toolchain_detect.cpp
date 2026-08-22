@@ -135,6 +135,14 @@ esac
               tc->compilerInvocationRuntimeDirs.end());
     EXPECT_EQ(std::find(tc->compilerRuntimeDirs.begin(), tc->compilerRuntimeDirs.end(), wanted),
               tc->compilerRuntimeDirs.end());
+
+    auto mingw = xpkgs / "xim-x-mingw-cross-gcc" / "16.1.0" / "bin"
+               / "x86_64-w64-mingw32-g++";
+    std::filesystem::create_directories(mingw.parent_path());
+    std::ofstream(mingw).close();
+
+    auto mingwDirs = discover_compiler_invocation_runtime_dirs(mingw, "glibc@2.44");
+    EXPECT_EQ(std::find(mingwDirs.begin(), mingwDirs.end(), wanted), mingwDirs.end());
 }
 #endif // defined(__linux__)
 
