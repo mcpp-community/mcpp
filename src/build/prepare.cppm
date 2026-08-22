@@ -5512,8 +5512,29 @@ prepare_build(bool print_fingerprint,
         // not fix it either: the request has to name a version the index
         // actually carries. Publishing a new std-freestanding means updating
         // this literal in the same change.
+        // ⚠️ THE QUESTION IS WHETHER A HOSTED STANDARD LIBRARY IS PRESENT, NOT
+        // WHETHER THE TARGET IS FREESTANDING.
+        //
+        // Those were the same question for as long as no one had built one for
+        // such a target, and they stopped being the same when someone did:
+        // `mcpplibs/openkal-llvm-runtime' configures libc++, libc++abi and
+        // libunwind for a machine with no operating system, and a program above
+        // it has the library this refusal says it cannot have.
+        //
+        // The refusal is kept, because it is right in every case where nothing
+        // supplies one --- which is still the ordinary case, and the advice
+        // below is still the advice. What changes is that a package can now say
+        // otherwise, and it says so the way every other capability is declared:
+        //
+        //     provides = ["hosted-standard-library"]
+        //
+        // A capability rather than a triple, because the fact is a property of
+        // the graph and not of the target, and because dependency resolution is
+        // the earliest time at which it is known.
+        const bool hostedStdProvided =
+            capProviders.find("hosted-standard-library") != capProviders.end();
         if (auto ft = mcpp::toolchain::triple::parse(tc->targetTriple);
-            ft && ft->is_freestanding())
+            ft && ft->is_freestanding() && !hostedStdProvided)
         {
             return std::unexpected(std::format(
                 "`import std;` is not available on '{}' — a freestanding target "
