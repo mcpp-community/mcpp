@@ -98,6 +98,25 @@ struct Toolchain {
     // and run-time type information off for every unit — right when nothing can
     // throw, and wrong when something can.
     bool                                targetCxxRuntime = false;
+
+    // ⭐⭐ THE `--target=` A RETARGETABLE DRIVER HAS TO BE GIVEN, OR EMPTY.
+    //
+    // Non-empty only when the user asked for a cross AND the resolved compiler
+    // is one binary that emits many targets (clang). For a native build, and
+    // for a cross served by a driver that has exactly one target of its own
+    // (`x86_64-w64-mingw32-g++`), this stays empty and nothing is added.
+    //
+    // ⚠️ IT CANNOT BE DERIVED FROM `targetTriple` BEING NON-EMPTY. A native
+    // build has a `targetTriple` too — the probed one — so a consumer that
+    // tested for non-empty would add `--target=<host>` to every compile in
+    // every project. Measured: it does, and what it produces is not a
+    // diagnostic about targets but `/bin/sh: 1: Syntax error: word unexpected`
+    // out of the generated build file.
+    //
+    // So the fact is recorded where it is KNOWN — at target resolution, which
+    // is the only place that has both the request and the compiler — and read
+    // verbatim everywhere else.
+    std::string                         crossTargetFlag;
     std::filesystem::path               sysroot;            // -print-sysroot output (or empty)
     std::optional<PayloadPaths>         payloadPaths;        // fine-grained sysroot from xpkgs
     // The TARGET's C library, for targets whose row in kKnownTargets names one

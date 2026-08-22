@@ -1823,15 +1823,55 @@ prepare_build(bool print_fingerprint,
     // `tc.targetTriple`, so correcting it here corrects all of them at once —
     // which is the point of there being one field rather than five answers.
     //
-    // ⚠️ Scoped to freestanding on purpose. The hosted cross targets already
-    // resolve a per-target binary, and overwriting their probed triple would
-    // replace a measured fact with an assumed one for no gain.
+    // ⚠️ THIS USED TO BE SCOPED TO FREESTANDING, WITH THIS REASON:
+    //
+    //     The hosted cross targets already resolve a per-target binary, and
+    //     overwriting their probed triple would replace a measured fact with
+    //     an assumed one for no gain.
+    //
+    // ⭐⭐ That was true while every hosted cross was served by a payload. It
+    // stops being true when the TARGET SIDE comes from the dependency graph:
+    // the C library, the C++ runtime and the platform's own implementation are
+    // then packages built from source, and the compiler is an ordinary clang —
+    // whose `-dumpmachine` answers the host, exactly as the paragraph above
+    // describes for freestanding.
+    //
+    // ⚠️ Measured 2026-08-23, with an explicit `[target.aarch64-macos]
+    // toolchain = "llvm@…"`. The manifest's cfg evaluation used the REQUESTED
+    // target, so the C library's aarch64 headers were on the command line; the
+    // toolchain's own triple was still the host's, so code generation was
+    // x86_64. Two answers to one question, in one command:
+    //
+    //     okm_float_assert.c: the C library and the compiler disagree about
+    //     LDBL_DIG  ('33 == 18')          33 = aarch64 binary128, 18 = x87
+    //
+    // ⇒ The condition is now the property the first paragraph of this comment
+    // already names: a RETARGETABLE driver has to be told. gcc is not one — a
+    // gcc payload IS its target — so the mingw and musl-gcc crosses keep
+    // answering from `-dumpmachine`, which for them remains a measured fact.
     if (!overrides.target_triple.empty()) {
         if (auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
-            want && want->is_freestanding())
+            want && (want->is_freestanding()
+                     || tc->compiler == mcpp::toolchain::CompilerId::Clang))
         {
             tc->targetTriple = want->str();
 
+            // And the flag that says it to the driver — for a HOSTED target
+            // only. Freestanding already emits its own `--target`, together
+            // with the ISA flags that must accompany it
+            // (freestanding/target.cppm); a second one here would be the same
+            // decision in two places.
+            if (!want->is_freestanding()
+                && tc->compiler == mcpp::toolchain::CompilerId::Clang) {
+                tc->crossTargetFlag =
+                    "--target=" + want->llvm_triple(
+                        mcpp::platform::macos::deployment_target(
+                            m->buildConfig.macosDeploymentTarget));
+            }
+        }
+        if (auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
+            want && want->is_freestanding())
+        {
             // `import std` is structurally hosted, and turning it off is the
             // SAME fact as the line above, not a second policy: libc++'s
             // std.cppm is one module over the whole library, including the
@@ -5512,6 +5552,33 @@ prepare_build(bool print_fingerprint,
                 pkg.root.string()));
         }
         tc->stdModuleSource   = src;
+        // ⚠️ AND THE COMPAT MODULE, FROM THE SAME PACKAGE OR NOT AT ALL.
+        //
+        // `std.compat` is a second module over the SAME library. Leaving it
+        // pointing at the toolchain's copy does not fail where it is set — it
+        // fails later, in that copy's own headers, against a configuration that
+        // was never generated for this target. Measured on a macOS cross:
+        //
+        //   error: std module precompile failed (rc=1):
+        //     …/xim-x-llvm/22.1.8/share/libc++/v1/std.compat.cppm
+        //     …/include/c++/v1/__config:13: '__config_site' file not found
+        //
+        // — which reads as a broken toolchain payload and says nothing about
+        // the two libraries having been mixed. A package that supplies one
+        // module supplies both, or the pair is not offered.
+        if (!pkg.manifest.stdCompatModule.empty()) {
+            auto csrc = pkg.root / pkg.manifest.stdCompatModule;
+            if (!std::filesystem::exists(csrc)) {
+                return std::unexpected(std::format(
+                    "package '{}' declares [package].std-compat-module = '{}', "
+                    "and there is no such file under '{}'",
+                    pkg.manifest.package.name, pkg.manifest.stdCompatModule,
+                    pkg.root.string()));
+            }
+            tc->stdCompatSource = csrc;
+        } else {
+            tc->stdCompatSource.clear();
+        }
         tc->targetCxxRuntime  = true;
         tc->hasImportStd      = true;
         tc->importStdMinLevel = 20;   // libc++'s own floor; see clang.cppm
@@ -5525,8 +5592,15 @@ prepare_build(bool print_fingerprint,
             fs && fs->is_freestanding()) {
             if (auto spec = mcpp::freestanding::resolve(*fs))
                 flags += mcpp::freestanding::compile_prefix(*spec, true);
-        } else if (!tc->targetTriple.empty()) {
-            flags += " --target=" + tc->targetTriple;
+        } else if (!tc->crossTargetFlag.empty()) {
+            // ⚠️ `crossTargetFlag` and not `targetTriple`. The triple is mcpp's
+            // vocabulary (`aarch64-macos`); the flag carries the spelling a
+            // compiler takes (`arm64-apple-macos14.0`). Measured: emitting the
+            // first produced `--target=aarch64-macos`, which clang accepts as a
+            // triple it has never heard of and then treats as a bare-metal
+            // aarch64 — the module and its importers would agree with each
+            // other and with nothing else.
+            flags += " " + tc->crossTargetFlag;
         }
         for (auto& f : pkg.manifest.stdModuleFlags) {
             // A flag naming a path is relative to the package that named it,

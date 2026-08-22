@@ -460,6 +460,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // the package root, because that is what a package can state about itself;
     // the absolute path is made where the package's root is known.
     if (auto v = doc->get_string("package.std-module")) m.stdModule = *v;
+    if (auto v = doc->get_string("package.std-compat-module"))
+        m.stdCompatModule = *v;
     if (auto v = doc->get_string_array("package.std-module-flags"))
         m.stdModuleFlags = *v;
 

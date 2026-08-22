@@ -298,11 +298,31 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
 {
     auto relBmi = std::filesystem::relative(bmiPath, cacheDir).string();
     auto relStdBmi = std::filesystem::relative(stdBmiPath, cacheDir).string();
+    // ⚠️ THE SAME REPLACEMENT THE `std` BUILDER MAKES, FOR THE SAME REASON.
+    //
+    // `std.compat` is a second module over the SAME library, and it therefore
+    // needs the same headers, the same target and the same configuration. This
+    // used to take `sysrootFlag` unconditionally while its sibling above
+    // replaced it — so a package-provided pair had one module built against its
+    // own libc++ and the other against the toolchain's.
+    //
+    // ⚠️ It does not fail where the two are chosen. Measured on a macOS cross:
+    //
+    //   error: std module precompile failed (rc=1):
+    //     …/openkal-llvm-runtime/llvm-generated/std.compat.cppm:16
+    //     …/xim-x-llvm/22.1.8/include/c++/v1/__config:13
+    //         fatal error: '__config_site' file not found
+    //
+    // The SOURCE named is the package's; the header it opened is the
+    // toolchain's, whose per-installation configuration was never generated for
+    // this target. Reading that message, the mixture is invisible.
+    if (!tc.stdModuleFlags.empty()) sysrootFlag = {};
+    const std::string& extraFlags = tc.stdModuleFlags;
     // std.compat depends on std, so we need -fmodule-file=std=<std.pcm>
     // Note: the path after = must NOT be shell-quoted separately; the
     // entire -fmodule-file flag is a single token to the compiler.
     return {
-        std::format("cd {} && {}{} {} -Wno-reserved-module-identifier{} "
+        std::format("cd {} && {}{} {} -Wno-reserved-module-identifier{}{} "
                     "-fmodule-file=std={} "
                     "--precompile {} -o {} 2>&1",
                     mcpp::xlings::shq(cacheDir.string()),
@@ -310,10 +330,11 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
                     mcpp::xlings::shq(tc.binaryPath.string()),
                     cppStandardFlag,
                     sysrootFlag,
+                    extraFlags,
                     relStdBmi,
                     mcpp::xlings::shq(tc.stdCompatSource.string()),
                     mcpp::xlings::shq(relBmi)),
-        std::format("cd {} && {}{} {} -Wno-reserved-module-identifier{} "
+        std::format("cd {} && {}{} {} -Wno-reserved-module-identifier{}{} "
                     "-fmodule-file=std={} "
                     "{} -c -o std.compat.o 2>&1",
                     mcpp::xlings::shq(cacheDir.string()),
@@ -321,6 +342,7 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
                     mcpp::xlings::shq(tc.binaryPath.string()),
                     cppStandardFlag,
                     sysrootFlag,
+                    extraFlags,
                     relStdBmi,
                     mcpp::xlings::shq(relBmi))
     };

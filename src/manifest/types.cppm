@@ -916,6 +916,11 @@ struct Manifest {
     // std-module gate reads; a package that says one without the other is
     // saying something about a library it does not supply.
     std::string                                     stdModule;       // relative path
+    // The second module over the SAME library. A package that names
+    // `std-module` and not this one offers `import std;` and not
+    // `import std.compat;` — a complete answer, and better than silently
+    // pairing its own `std` with the toolchain's `std.compat`.
+    std::string                                     stdCompatModule;
     std::vector<std::string>                        stdModuleFlags;
     std::map<std::string, std::vector<std::string>> featureProvides; // feature → caps
     std::map<std::string, std::vector<std::string>> featureRequires; // feature → caps

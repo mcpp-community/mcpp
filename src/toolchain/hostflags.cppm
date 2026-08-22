@@ -29,6 +29,7 @@ import mcpp.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.registry;
+import mcpp.toolchain.triple;
 
 export namespace mcpp::toolchain {
 
@@ -121,6 +122,33 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
 
     const auto dm = resolve_clang_driver(tc);
     const auto lm = resolve_link_model(tc);
+
+    // ⭐⭐ THE TRIPLE, SAID OUT LOUD, WHEN NOTHING ELSE SAYS IT.
+    //
+    // Every hosted cross this build tool could do was served by a payload whose
+    // driver had exactly one target — `x86_64-w64-mingw32-g++` needs no
+    // `--target` because it has no choice. So nothing emitted one outside the
+    // freestanding path, and the assumption "the driver knows" was true.
+    //
+    // It stops being true the moment the TARGET SIDE comes from the dependency
+    // graph instead of from a payload. Then the compiler is an ordinary clang,
+    // which emits every format it was built with, and which will emit for THIS
+    // machine unless told otherwise.
+    //
+    // ⚠️ Measured 2026-08-23. A build for `aarch64-macos` with an explicit
+    // `[target.aarch64-macos] toolchain = "llvm@…"` resolved the whole graph,
+    // took the C library's aarch64 headers, and compiled with no `--target` —
+    // host code generation, target declarations. It was caught by an assertion
+    // the C library port wrote for precisely this situation:
+    //
+    //     the C library and the compiler disagree about LDBL_DIG ('33 == 18')
+    //
+    // 33 is aarch64's binary128 and 18 is x87: two machines in one command.
+    //
+    // The decision itself is not made here — see Toolchain::crossTargetFlag,
+    // which is set where both the request and the compiler are known. This
+    // reads it.
+    if (!tc.crossTargetFlag.empty()) out.push_back(tc.crossTargetFlag);
 
     const bool bypassCfg =
         dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always
