@@ -81,6 +81,23 @@ struct Toolchain {
     std::string                         stdlibVersion;
     std::filesystem::path               stdModuleSource;    // bits/std.cc / std.cppm
     std::filesystem::path               stdCompatSource;    // bits/std_compat.cc / std.compat.cppm
+    // Flags the std module source needs that the compiler cannot supply itself.
+    //
+    // Empty for every toolchain that ships its own standard library: there the
+    // module source is the compiler's, and the compiler finds its own headers.
+    // Non-empty when the source comes from a PACKAGE instead --- a standard
+    // library configured for a target the compiler knows nothing about --- and
+    // then the include path and the configuration are the package's, so they
+    // have to be carried here.
+    //
+    // They reach the cache key without anything further being done: the key is
+    // derived from the build COMMANDS, and these are part of them.
+    std::string                         stdModuleFlags;
+    // A package in the graph supplies a C++ runtime built FOR THIS TARGET.
+    // Read by the freestanding flag table, which otherwise forces exceptions
+    // and run-time type information off for every unit — right when nothing can
+    // throw, and wrong when something can.
+    bool                                targetCxxRuntime = false;
     std::filesystem::path               sysroot;            // -print-sysroot output (or empty)
     std::optional<PayloadPaths>         payloadPaths;        // fine-grained sysroot from xpkgs
     // The TARGET's C library, for targets whose row in kKnownTargets names one

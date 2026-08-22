@@ -186,6 +186,24 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
                                                    std::string_view sysrootFlag,
                                                    std::string_view cppStandardFlag) {
     auto relBmi = std::filesystem::relative(bmiPath, cacheDir).string();
+    // ⚠️ A PACKAGE-PROVIDED std MODULE REPLACES THE TOOLCHAIN'S SYSROOT FLAGS
+    // RATHER THAN BEING APPENDED TO THEM.
+    //
+    // Those flags describe the standard library the COMPILER ships and the C
+    // library the HOST has, and they lead with `-isystem' — so appending to them
+    // puts the host's headers ahead of the package's, and no later flag can
+    // undo it. Measured: the module then compiles the host C library's
+    // <wchar.h> and stops on names that library expects the host compiler to
+    // have supplied.
+    //
+    // The triple has to be restated for the same reason: it was in the flags
+    // being replaced, and without it the module is built for whatever machine
+    // is doing the building.
+    // The replacement is complete: whoever set stdModuleFlags stated the target
+    // as well, because the triple was in the string being replaced and a module
+    // built without it is built for whatever machine is doing the building.
+    if (!tc.stdModuleFlags.empty()) sysrootFlag = {};
+    const std::string& extraFlags = tc.stdModuleFlags;
 #if defined(_WIN32)
     // Windows: use absolute paths, raw binary path as first token
     // (cmd.exe strips leading quotes), shq for args with spaces.
@@ -221,23 +239,25 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
 #else
     return {
         std::format(
-            "cd {} && {}{} {} -Wno-reserved-module-identifier{} "
+            "cd {} && {}{} {} -Wno-reserved-module-identifier{}{} "
             "--precompile {} -o {} 2>&1",
             mcpp::xlings::shq(cacheDir.string()),
             mcpp::toolchain::compiler_env_prefix(tc),
             mcpp::xlings::shq(tc.binaryPath.string()),
             cppStandardFlag,
             sysrootFlag,
+            extraFlags,
             mcpp::xlings::shq(tc.stdModuleSource.string()),
             mcpp::xlings::shq(relBmi)),
         std::format(
-            "cd {} && {}{} {} -Wno-reserved-module-identifier{} "
+            "cd {} && {}{} {} -Wno-reserved-module-identifier{}{} "
             "{} -c -o std.o 2>&1",
             mcpp::xlings::shq(cacheDir.string()),
             mcpp::toolchain::compiler_env_prefix(tc),
             mcpp::xlings::shq(tc.binaryPath.string()),
             cppStandardFlag,
             sysrootFlag,
+            extraFlags,
             mcpp::xlings::shq(relBmi))
     };
 #endif

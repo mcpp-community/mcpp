@@ -36,6 +36,7 @@ import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
 import mcpp.freestanding.target;   // the target sysroot layout (libdir)
+import mcpp.freestanding.linkline; // the ISA profile, for the std module command
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
@@ -5482,6 +5483,91 @@ prepare_build(bool print_fingerprint,
     }
 
     bool needsStdModule = graph_or_targets_import_std(scan.graph, *m, *root);
+    // A standard library that came from a PACKAGE brings its own module
+    // source, because the compiler cannot be asked for one it does not have.
+    //
+    // `-print-library-module-manifest-path' is the right question when the
+    // standard library is the compiler's own. It is the wrong question when
+    // the library was configured by a package for a target the compiler
+    // knows nothing about: the source exists, and the compiler has never
+    // heard of it. So the package says where it is, and what it needs ---
+    // its include path and its own __config_site, neither of which the
+    // compiler would find.
+    //
+    // Both are read only from a package that ALSO provides the capability
+    // below. A package that named a std module without supplying the
+    // library would be describing something it does not have.
+    for (auto& pkg : packages) {
+        if (pkg.manifest.stdModule.empty()) continue;
+        const auto& provs = pkg.manifest.provides;
+        if (std::find(provs.begin(), provs.end(),
+                      std::string{"hosted-standard-library"}) == provs.end())
+            continue;
+        auto src = pkg.root / pkg.manifest.stdModule;
+        if (!std::filesystem::exists(src)) {
+            return std::unexpected(std::format(
+                "package '{}' declares [package].std-module = '{}', and there "
+                "is no such file under '{}'",
+                pkg.manifest.package.name, pkg.manifest.stdModule,
+                pkg.root.string()));
+        }
+        tc->stdModuleSource   = src;
+        tc->targetCxxRuntime  = true;
+        tc->hasImportStd      = true;
+        tc->importStdMinLevel = 20;   // libc++'s own floor; see clang.cppm
+        // The target, first. On a freestanding target that means the whole ISA
+        // profile --- `--target', `-march', `-mabi', `-mcmodel' --- because a
+        // module built without them disagrees with every unit that imports it,
+        // and clang reports that as an ABI mismatch naming a .pcm file rather
+        // than the flag that split them. On a hosted one it is the triple alone.
+        std::string flags;
+        if (auto fs = mcpp::toolchain::triple::parse(tc->targetTriple);
+            fs && fs->is_freestanding()) {
+            if (auto spec = mcpp::freestanding::resolve(*fs))
+                flags += mcpp::freestanding::compile_prefix(*spec, true);
+        } else if (!tc->targetTriple.empty()) {
+            flags += " --target=" + tc->targetTriple;
+        }
+        for (auto& f : pkg.manifest.stdModuleFlags) {
+            // A flag naming a path is relative to the package that named it,
+            // for the same reason the module source is.
+            auto candidate = pkg.root / f;
+            flags += " " + mcpp::xlings::shq(
+                std::filesystem::exists(candidate) ? candidate.string() : f);
+        }
+        // ⚠️ AND THE HEADERS THIS PACKAGE ITSELF IS BUILT AGAINST.
+        //
+        // The std module source is one of this package's translation units in
+        // every way that matters, and it reaches the C library's headers the
+        // same way the rest of them do --- through the requirements the packages
+        // BENEATH this one publish. A package cannot name those in its own
+        // manifest: they belong to its dependencies, and their paths are known
+        // only after resolution.
+        //
+        // Measured: without them the module compiles until libc++ includes
+        // <bits/alltypes.h>, which is the C library's, and stops there.
+        // publicUsage rather than privateBuild: the module is compiled once and
+        // imported by consumers, so the headers it must see are the ones the
+        // package PUBLISHES, not the ones it happens to build itself against.
+        // The two differ, and the difference is not cosmetic --- a package's own
+        // build path carries directories that exist for its .cpp files and that
+        // shadow the library's headers when a module is compiled against them.
+        for (auto& d : pkg.publicUsage.includeDirs)
+            flags += " -isystem " + mcpp::xlings::shq(d.string());
+        for (auto& d : pkg.publicUsage.includeDirsAfter)
+            flags += " -idirafter " + mcpp::xlings::shq(d.string());
+        // And the definitions, for the same reason as the directories: a C
+        // library's headers show a different library depending on which feature
+        // macros are set, and the ones this package is built with are the ones
+        // its own translation units see. Measured: without them the module
+        // reaches musl's <time.h> and stops on `clockid_t', a name that header
+        // declares only under the macro the package carries.
+        for (auto& f : pkg.publicUsage.cxxflags)
+            flags += " " + mcpp::xlings::shq(f);
+        tc->stdModuleFlags = flags;
+        break;
+    }
+
     if (needsStdModule && !tc->hasImportStd) {
         // A freestanding target reaches here for a reason the generic message
         // gets wrong. Nothing is missing from the toolchain — libc++'s std
@@ -5512,8 +5598,29 @@ prepare_build(bool print_fingerprint,
         // not fix it either: the request has to name a version the index
         // actually carries. Publishing a new std-freestanding means updating
         // this literal in the same change.
+        // ⚠️ THE QUESTION IS WHETHER A HOSTED STANDARD LIBRARY IS PRESENT, NOT
+        // WHETHER THE TARGET IS FREESTANDING.
+        //
+        // Those were the same question for as long as no one had built one for
+        // such a target, and they stopped being the same when someone did:
+        // `mcpplibs/openkal-llvm-runtime' configures libc++, libc++abi and
+        // libunwind for a machine with no operating system, and a program above
+        // it has the library this refusal says it cannot have.
+        //
+        // The refusal is kept, because it is right in every case where nothing
+        // supplies one --- which is still the ordinary case, and the advice
+        // below is still the advice. What changes is that a package can now say
+        // otherwise, and it says so the way every other capability is declared:
+        //
+        //     provides = ["hosted-standard-library"]
+        //
+        // A capability rather than a triple, because the fact is a property of
+        // the graph and not of the target, and because dependency resolution is
+        // the earliest time at which it is known.
+        const bool hostedStdProvided =
+            capProviders.find("hosted-standard-library") != capProviders.end();
         if (auto ft = mcpp::toolchain::triple::parse(tc->targetTriple);
-            ft && ft->is_freestanding())
+            ft && ft->is_freestanding() && !hostedStdProvided)
         {
             return std::unexpected(std::format(
                 "`import std;` is not available on '{}' — a freestanding target "
