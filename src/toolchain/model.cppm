@@ -93,6 +93,11 @@ struct Toolchain {
     // They reach the cache key without anything further being done: the key is
     // derived from the build COMMANDS, and these are part of them.
     std::string                         stdModuleFlags;
+    // A package in the graph supplies a C++ runtime built FOR THIS TARGET.
+    // Read by the freestanding flag table, which otherwise forces exceptions
+    // and run-time type information off for every unit — right when nothing can
+    // throw, and wrong when something can.
+    bool                                targetCxxRuntime = false;
     std::filesystem::path               sysroot;            // -print-sysroot output (or empty)
     std::optional<PayloadPaths>         payloadPaths;        // fine-grained sysroot from xpkgs
     // The TARGET's C library, for targets whose row in kKnownTargets names one

@@ -210,7 +210,13 @@ inline std::optional<Spec> resolve(std::string_view triple) {
 // what the compiler may assume about the library (no `main` special-casing, no
 // builtin-to-libcall rewrites it cannot back up), and that assumption has to
 // hold for every TU in the build, including a dependency's.
-inline std::vector<std::string> compile_flags(const Spec& s) {
+// `targetCxxRuntime` — a package in the graph supplies a C++ runtime BUILT FOR
+// THIS TARGET (libc++abi and an unwinder). The comment below predicted this
+// case and named it as the point at which the exception/RTTI pair stops being
+// unconditional; the caller answers it from the capability the graph declares,
+// so the answer is the graph's rather than a guess about the target.
+inline std::vector<std::string> compile_flags(const Spec& s,
+                                              bool targetCxxRuntime = false) {
     std::vector<std::string> out;
     out.emplace_back(std::string("-march=") + std::string(s.march));
     out.emplace_back(std::string("-mabi=")  + std::string(s.mabi));
@@ -233,6 +239,8 @@ inline std::vector<std::string> compile_flags(const Spec& s) {
     // package-private by design (the supply-chain rule in
     // mcpp.build.directives), so a libc wrapper includes the target headers
     // privately and exports what it wants seen.
+    // Kept in both cases: a target-side C++ library reaches a consumer through
+    // its own include dirs and modules, never through the compiler's.
     out.emplace_back("-nostdinc++");
     // ⚠️ Exceptions and RTTI off, and this belongs HERE — with the target — for
     // the same reason `-ffreestanding` does: it is a property every TU in the
@@ -259,8 +267,18 @@ inline std::vector<std::string> compile_flags(const Spec& s) {
     // Not a preference, then, but not permanent either: a board that ships a
     // target-built libc++abi and unwinder has a real case for turning these
     // back on, and that is the point at which this becomes a manifest key.
-    out.emplace_back("-fno-exceptions");
-    out.emplace_back("-fno-rtti");
+    //
+    // ⭐ AND THAT POINT HAS ARRIVED. A package that provides the capability
+    // `hosted-standard-library' for this target IS the board described above:
+    // it carries libc++abi and libunwind compiled for it. With one present,
+    // forcing these off is what breaks the build --- the runtime is compiled
+    // with exceptions because it IMPLEMENTS them, and a graph that disagrees
+    // with it reports the same `exception handling was enabled in precompiled
+    // file' the paragraph above quotes.
+    if (!targetCxxRuntime) {
+        out.emplace_back("-fno-exceptions");
+        out.emplace_back("-fno-rtti");
+    }
     return out;
 }
 

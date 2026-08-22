@@ -1290,7 +1290,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     if (isFreestandingTarget) {
         if (auto spec = mcpp::freestanding::resolve(
                 *mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))) {
-            const auto prefix = mcpp::freestanding::compile_prefix(*spec);
+            const auto prefix = mcpp::freestanding::compile_prefix(
+                *spec, plan.toolchain.targetCxxRuntime);
             f.cxx += prefix;
             f.cc  += prefix;
             f.as  += mcpp::freestanding::assemble_prefix(*spec);

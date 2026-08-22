@@ -43,10 +43,10 @@ export namespace mcpp::freestanding {
 // `-dumpmachine`) nothing about the driver's identity says which target is
 // wanted. Omit it and the build silently produces host objects — measured, and
 // the exact shape of the E1 defect this work exists to close.
-inline std::string compile_prefix(const Spec& s) {
+inline std::string compile_prefix(const Spec& s, bool targetCxxRuntime = false) {
     std::string out;
     out += " --target=" + std::string(s.triple);
-    for (auto const& f : compile_flags(s)) { out += ' '; out += f; }
+    for (auto const& f : compile_flags(s, targetCxxRuntime)) { out += ' '; out += f; }
     return out;
 }
 

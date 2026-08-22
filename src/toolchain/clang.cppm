@@ -199,13 +199,11 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     // The triple has to be restated for the same reason: it was in the flags
     // being replaced, and without it the module is built for whatever machine
     // is doing the building.
-    std::string targetFlag;
-    if (!tc.stdModuleFlags.empty()) {
-        sysrootFlag = {};
-        if (!tc.targetTriple.empty())
-            targetFlag = " --target=" + tc.targetTriple;
-    }
-    const std::string extraFlags = targetFlag + tc.stdModuleFlags;
+    // The replacement is complete: whoever set stdModuleFlags stated the target
+    // as well, because the triple was in the string being replaced and a module
+    // built without it is built for whatever machine is doing the building.
+    if (!tc.stdModuleFlags.empty()) sysrootFlag = {};
+    const std::string& extraFlags = tc.stdModuleFlags;
 #if defined(_WIN32)
     // Windows: use absolute paths, raw binary path as first token
     // (cmd.exe strips leading quotes), shq for args with spaces.

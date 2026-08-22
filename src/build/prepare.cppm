@@ -36,6 +36,7 @@ import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
 import mcpp.freestanding.target;   // the target sysroot layout (libdir)
+import mcpp.freestanding.linkline; // the ISA profile, for the std module command
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
@@ -5511,9 +5512,22 @@ prepare_build(bool print_fingerprint,
                 pkg.root.string()));
         }
         tc->stdModuleSource   = src;
+        tc->targetCxxRuntime  = true;
         tc->hasImportStd      = true;
         tc->importStdMinLevel = 20;   // libc++'s own floor; see clang.cppm
+        // The target, first. On a freestanding target that means the whole ISA
+        // profile --- `--target', `-march', `-mabi', `-mcmodel' --- because a
+        // module built without them disagrees with every unit that imports it,
+        // and clang reports that as an ABI mismatch naming a .pcm file rather
+        // than the flag that split them. On a hosted one it is the triple alone.
         std::string flags;
+        if (auto fs = mcpp::toolchain::triple::parse(tc->targetTriple);
+            fs && fs->is_freestanding()) {
+            if (auto spec = mcpp::freestanding::resolve(*fs))
+                flags += mcpp::freestanding::compile_prefix(*spec, true);
+        } else if (!tc->targetTriple.empty()) {
+            flags += " --target=" + tc->targetTriple;
+        }
         for (auto& f : pkg.manifest.stdModuleFlags) {
             // A flag naming a path is relative to the package that named it,
             // for the same reason the module source is.
