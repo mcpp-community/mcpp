@@ -31,7 +31,8 @@ std::string trim_line(std::string s);
 std::string normalize_driver_output(std::string_view s);
 
 std::vector<std::filesystem::path>
-discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin);
+discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin,
+                               std::string_view runtimeBinding = {});
 
 std::vector<std::filesystem::path>
 discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
@@ -96,6 +97,10 @@ std::string env_prefix_for_dirs(const std::vector<std::filesystem::path>& dirs) 
 }
 
 } // namespace
+
+std::optional<std::filesystem::path>
+payload_root_for_binding(const std::filesystem::path& compilerBin,
+                         std::string_view binding);
 
 std::expected<std::string, DetectError> run_capture(const std::string& cmd) {
     auto r = mcpp::platform::process::capture_host_tool(cmd);
@@ -185,7 +190,8 @@ std::string normalize_driver_output(std::string_view s) {
 }
 
 std::vector<std::filesystem::path>
-discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin) {
+discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin,
+                               std::string_view runtimeBinding) {
     std::vector<std::filesystem::path> dirs;
     auto root = compilerBin.parent_path().parent_path();
 
@@ -204,6 +210,20 @@ discover_compiler_runtime_dirs(const std::filesystem::path& compilerBin) {
     if (auto rt = mcpp::xlings::paths::find_sibling_tool(compilerBin, "gcc-runtime")) {
         append_existing_unique(dirs, *rt / "lib64");
         append_existing_unique(dirs, *rt / "lib");
+    }
+
+    // A managed compiler's DT_RUNPATH reaches its bound private libc for its
+    // own direct dependencies only. A host /etc/ld.so.preload library can
+    // require libdl.so.2 itself, where that non-transitive RUNPATH cannot help.
+    // Use the resolved binding rather than scanning installed glibc versions:
+    // the selected payload is an ABI decision, not a directory-order choice.
+    if constexpr (mcpp::platform::is_linux) {
+        if (runtimeBinding.starts_with("glibc@")) {
+            if (auto glibc = payload_root_for_binding(compilerBin, runtimeBinding)) {
+                append_existing_unique(dirs, *glibc / "lib64");
+                append_existing_unique(dirs, *glibc / "lib");
+            }
+        }
     }
     return dirs;
 }

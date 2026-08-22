@@ -93,6 +93,45 @@ TEST(ToolchainDetect, IgnoresTargetRuntimeLibraryPathDuringProbe) {
     EXPECT_EQ(tc->compiler, CompilerId::Clang);
     EXPECT_EQ(tc->targetTriple, "x86_64-unknown-linux-gnu");
 }
+
+TEST(ToolchainDetect, CompilerRuntimeDirsUseTheBoundGlibcPayload) {
+    auto root = std::filesystem::temp_directory_path()
+              / std::format("mcpp_compiler_runtime_{}", std::random_device{}());
+    TempDirGuard cleanup{root};
+
+    auto xpkgs = root / "registry" / "data" / "xpkgs";
+    auto compiler = xpkgs / "xim-x-gcc" / "16.1.0" / "bin" / "g++";
+    auto wanted = xpkgs / "xim-x-glibc" / "2.44" / "lib";
+    auto other  = xpkgs / "xim-x-glibc" / "2.39" / "lib64";
+    std::filesystem::create_directories(compiler.parent_path());
+    std::filesystem::create_directories(wanted);
+    std::filesystem::create_directories(other);
+
+    std::ofstream os(compiler);
+    os << R"(#!/usr/bin/env bash
+if [[ "${LD_LIBRARY_PATH:-}" != *")" << wanted.string() << R"("* ]]; then
+    echo "missing bound glibc directory" >&2
+    exit 127
+fi
+case "$1" in
+  --version) echo "g++ (mcpp test) 16.1.0" ;;
+  -dumpmachine) echo "x86_64-linux-gnu" ;;
+esac
+)";
+    os.close();
+    std::filesystem::permissions(
+        compiler,
+        std::filesystem::perms::owner_exec
+        | std::filesystem::perms::owner_read
+        | std::filesystem::perms::owner_write);
+
+    auto tc = detect(compiler, "glibc@2.44");
+    ASSERT_TRUE(tc.has_value()) << tc.error().message;
+    EXPECT_NE(std::find(tc->compilerRuntimeDirs.begin(), tc->compilerRuntimeDirs.end(), wanted),
+              tc->compilerRuntimeDirs.end());
+    EXPECT_EQ(std::find(tc->compilerRuntimeDirs.begin(), tc->compilerRuntimeDirs.end(), other),
+              tc->compilerRuntimeDirs.end());
+}
 #endif // defined(__linux__)
 
 // ─── normalize_driver_output: path-free semantic identity ─────────────
