@@ -456,6 +456,12 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
 
     // [package] provides — package-level capabilities (Feature System v2 S3).
     if (auto v = doc->get_string_array("package.provides")) m.provides = *v;
+    // [package] std-module / std-module-flags — see manifest::types. Relative to
+    // the package root, because that is what a package can state about itself;
+    // the absolute path is made where the package's root is known.
+    if (auto v = doc->get_string("package.std-module")) m.stdModule = *v;
+    if (auto v = doc->get_string_array("package.std-module-flags"))
+        m.stdModuleFlags = *v;
 
     // [capabilities] cap = "provider" — root-only provider pins.
     if (auto* caps = doc->get_table("capabilities"); caps && !caps->empty()) {
