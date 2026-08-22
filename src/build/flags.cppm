@@ -533,6 +533,27 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         ? std::string{}
         : " " + plan.toolchain.crossTargetFlag;
     const bool isClangWithCfg = dm.hasCfg;
+
+    // ⭐⭐ THE TARGET SIDE COMES FROM THE DEPENDENCY GRAPH, STATED ONCE.
+    //
+    // ⚠️ TWO CONDITIONS AND NOT ONE, and each excludes a case the other admits.
+    //
+    // `crossTargetFlag` alone is too wide: it is set for EVERY hosted target a
+    // retargetable clang is pointed at, including the musl and glibc crosses
+    // served by a payload — and those still need this host's `-B`, its runtime
+    // directories and its C-runtime flags, because for them the payload IS the
+    // target side.
+    //
+    // `targetCxxRuntime` alone is too wide the other way: it says a package
+    // supplies a C++ runtime, which is also true of a NATIVE build of such a
+    // package, where the payload's link model is right and dropping it would
+    // remove a working link.
+    //
+    // Together they say the thing this replacement depends on: the C library,
+    // the C++ runtime and the platform are packages, AND we are pointing the
+    // compiler at a target that is not this machine.
+    const bool graphTargetSide = plan.toolchain.targetCxxRuntime
+                              && !plan.toolchain.crossTargetFlag.empty();
     // LLVM root of a clang-with-cfg toolchain — used by the macOS link
     // path below to locate libc++.a/libc++abi.a for staticStdlib.
     std::filesystem::path llvmRootForStdlib;
@@ -1201,29 +1222,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // Windows MinGW build (host≠target). No rpath/loader/payload model. Static
     // + libstdc++exp (std::print's __open_terminal/__write_to_terminal live in
     // libstdc++exp.a, not plain libstdc++). Self-contained binutils → no -B.
-    if (isMingwTc) {
-        // ⭐⭐ AND THE SAME SENTENCE THAT QUALIFIES THE PARAGRAPH ABOVE: that
-        // holds while every PE cross is served by a MinGW PAYLOAD, whose driver
-        // IS the target and therefore needs nothing said to it. When the target
-        // side comes from the dependency graph the compiler is an ordinary
-        // retargetable clang, and this early return was dropping the one flag
-        // that tells it which target to link for.
-        //
-        // ⚠️ Measured 2026-08-23, `--target x86_64-windows-gnu` over openkal —
-        // every object compiled, and then:
-        //
-        //     ld.lld: error: obj/…/types.m.o: unknown file type      (× 30)
-        //
-        // COFF objects handed to lld's ELF driver, because the compile line
-        // carried `--target=` and the link line did not. Thirty accurate
-        // messages, none of which names the missing flag.
-        //
-        // ⇒ Third time this shape has appeared (payload compile tokens, then
-        // the host link model, now the PE early return). The predicate is the
-        // same one every time, so it is spelled the same way.
-        const std::string graphTargetLd =
-            plan.toolchain.crossTargetFlag.empty() ? std::string{}
-                                                   : link_toolchain_flags;
+    // ⚠️ AND ONLY WHILE THE PAYLOAD IS THE TARGET, which is what the paragraph
+    // above assumes without saying so: `x86_64-w64-mingw32-g++` needs no
+    // `--target` because it HAS no other. When the target side comes from the
+    // dependency graph the compiler is an ordinary retargetable clang, and this
+    // branch is one of three shaped by the HOST rather than by the target — see
+    // the replacement below, which covers all three at once.
+    if (isMingwTc && !graphTargetSide) {
         // `-static` / `-static-libstdc++` now come from the contract table via
         // unit_ldflags (dist::Format::Pe) — the whole-link `-static` is what
         // "self-contained" means here, since the piecemeal recipe still leaves
@@ -1231,12 +1236,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         std::string mingw_stdexp;
         if (caps.stdlib_id == "libstdc++")
             mingw_stdexp = " -lstdc++exp";
-        f.ld = std::format("{}{}{}{}{}", graphTargetLd, link_intent_ld,
-                           user_ldflags, mingw_stdexp, link_extra);
+        f.ld = std::format("{}{}{}{}", link_intent_ld, user_ldflags,
+                           mingw_stdexp, link_extra);
         // `-lstdc++exp` is named explicitly, so swapping g++ for gcc would not
         // drop it — the C line has to leave it out.
-        f.ldC = std::format("{}{}{}{}", graphTargetLd, link_intent_ld,
-                            user_ldflags, link_extra);
+        f.ldC = std::format("{}{}{}", link_intent_ld, user_ldflags, link_extra);
         return f;
     }
 
@@ -1362,6 +1366,52 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                             link_toolchain_flags_c, b_flag, runtime_dirs,
                             link_intent_ld, atomic_ld, payload_ld,
                             user_ldflags, link_extra);
+    }
+
+    // ── The target side comes from the graph, so the HOST's link is wrong ──
+    //
+    // ⭐⭐ THE THREE BRANCHES ABOVE ARE SHAPED BY THIS MACHINE, NOT BY THE
+    // TARGET. `if constexpr (is_windows)` / `needs_explicit_libcxx` / else is a
+    // question about where mcpp itself was built, and each answer describes a
+    // link on that machine: an SDK path, a deployment target, a loader search
+    // path, this host's `libatomic`. Every one of them is right when the target
+    // is the host or is served by a payload, and wrong when the C library, the
+    // C++ runtime and the platform are packages in the dependency graph.
+    //
+    // ⚠️ ONLY THE THIRD BRANCH EVER CONSUMED `link_toolchain_flags`, WHICH IS
+    // WHERE `--target=` LIVES. So a cross build over openkal linked correctly
+    // from a Linux host and would have handed a Mach-O or an ELF to a linker
+    // told nothing about the target from a macOS or a Windows one. The measured
+    // shape of that failure is on record from the PE case, which reached it a
+    // different way:
+    //
+    //     ld.lld: error: obj/…/types.m.o: unknown file type      (× 30)
+    //
+    // ⇒ Applied LAST and by REPLACEMENT, exactly as the freestanding block
+    // below is and for the same reason it is: what came before is not merely
+    // unnecessary but wrong, and appending to it would leave the outcome
+    // depending on the driver's flag ordering rather than on a decision.
+    //
+    // ⚠️ AND IT REPLACES A SPECIAL CASE RATHER THAN ADDING ONE. The PE branch
+    // above carried its own copy of this for one format; this covers PE, Mach-O
+    // and ELF, on every host, with the predicate stated once.
+    //
+    // What survives, and why each one is not the host's:
+    //   full_static          the contract table's, keyed on the target's FORMAT
+    //   link_toolchain_flags `--target=`, `--no-default-config`, `-fuse-ld=lld`
+    //   link_intent_ld       what the user asked to build (exe/shared/static)
+    //   user_ldflags         the manifest's own words
+    //   link_extra           `-flto` / `-s`, profile decisions
+    //
+    // What does not: `b_flag` (this host's binutils), `runtime_dirs` and the
+    // `-rpath` beside them (this host's payload directories — measured on a
+    // Mach-O link as `-Wl,-rpath,…/lib/x86_64-unknown-linux-gnu`, which ld64
+    // accepts and writes into the image), `payload_ld`, `atomic_ld`.
+    if (!isFreestandingTarget && graphTargetSide) {
+        f.ld = std::format("{}{}{}{}{}", full_static, link_toolchain_flags,
+                           link_intent_ld, user_ldflags, link_extra);
+        f.ldC = std::format("{}{}{}{}{}", full_static, link_toolchain_flags_c,
+                            link_intent_ld, user_ldflags, link_extra);
     }
 
     // ── Freestanding: the target has no OS, so most of the above is wrong ──
