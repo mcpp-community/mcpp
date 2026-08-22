@@ -3,6 +3,31 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.22.1] — 在飞
+
+### 新增
+
+- **`mcpp search` 显示包的可用版本,`mcpp add` 的建议同样携带。**
+
+  search 的命中行追加该包描述符 per-OS 版本表的并集:semver 降序、按键去重,
+  默认显示最新 3 个并以 `, ...` 标记截断,`--all-versions` 显示全部。描述符不可读
+  或未发布任何版本的包保持原两列输出——富化是尽力而为的展示,不是新的失败路径。
+
+  ```
+  $ mcpp search imgui
+    compat:imgui      Dear ImGui immediate-mode GUI library core sources       (1.92.8, 1.92.8-docking)
+    mcpplibs:imgui    C++23 module package for Dear ImGui core and GLFW/OpenGL3 backends  (0.0.6, 0.0.5, 0.0.4)
+  ```
+
+  `mcpp add` 未命中时的跨命名空间建议从裸 FQN 升级为带版本:
+  `compat.eui-neo (0.5.6, 0.5.5, 0.5.3)`。数据是白捡的——did-you-mean 扫描本就要
+  打开每个候选 `.lua` 读身份(#278),版本只是同一段文本的再一次遍历;排序复用
+  SemVer 解析(`version_req`),不可解析的键保留原文排在最后(#363 的教训:任意的
+  索引键无法从解析形态复原)。build 失败路径的同款提示同步升级,两条路径不说两套话。
+
+  排序与扫描各有单测钉住;e2e 162 断言 build 与 add 两侧的建议都带版本。
+  (#487,#324 的遗留半边)
+
 ## [2026.8.20.2] — 2026-08-20
 
 ### 新增

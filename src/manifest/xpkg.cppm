@@ -9,6 +9,7 @@ import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;
 import mcpp.platform;
 import mcpp.platform.axis;
+import mcpp.version_req;
 
 export namespace mcpp::manifest {
 
@@ -53,6 +54,12 @@ list_xpkg_version_entries(std::string_view luaContent,
 std::vector<std::string>
 list_xpkg_versions(std::string_view luaContent,
                    const mcpp::platform::PlatformKey& platform);
+
+// Union of per-OS version-key lists, semver-descending, deduplicated — the
+// display shape behind `mcpp add` suggestions and `mcpp search` (#487). See
+// the definition for the ordering rules applied to unparsable keys.
+std::vector<std::string> merge_xpkg_versions_desc(
+    const std::vector<std::vector<std::string>>& perPlatform);
 // Extract the `namespace` field from an xpkg .lua's `package = { ... }` block.
 // Returns empty string if the field is absent (legacy descriptors).
 std::string extract_xpkg_namespace(std::string_view luaContent);
@@ -1059,6 +1066,42 @@ list_xpkg_versions(std::string_view luaContent,
     std::vector<std::string> out;
     for (auto& e : list_xpkg_version_entries(luaContent, platformAxis))
         out.push_back(std::move(e.version));
+    return out;
+}
+
+// #487 — the union view over a descriptor's per-OS version tables, for
+// display in `mcpp add` suggestions and `mcpp search`. Sorted
+// semver-descending and deduplicated by exact key.
+//
+// Ordering parses each key with the SemVer grammar; a key that does not parse
+// keeps its original text (#363's lesson: an arbitrary index key cannot be
+// reproduced from its parsed form), sorts AFTER every parsable key, and orders
+// among itself lexicographically. Equal-Version keys written differently
+// (e.g. "1.0" vs "1.0.0") keep their first-seen input order.
+std::vector<std::string> merge_xpkg_versions_desc(
+    const std::vector<std::vector<std::string>>& perPlatform) {
+    std::vector<std::string> out;
+    for (auto& list : perPlatform)
+        for (auto& key : list)
+            if (std::find(out.begin(), out.end(), key) == out.end())
+                out.push_back(key);
+
+    auto parsed = [](const std::string& s)
+        -> std::optional<mcpp::version_req::Version> {
+        auto v = mcpp::version_req::parse_version(s);
+        if (!v) return std::nullopt;
+        return std::move(*v);
+    };
+
+    std::stable_sort(out.begin(), out.end(),
+                     [&](const std::string& a, const std::string& b) {
+                         auto pa = parsed(a);
+                         auto pb = parsed(b);
+                         if (pa && pb) return *pb < *pa;   // desc
+                         if (pa) return true;              // parsable first
+                         if (pb) return false;
+                         return a < b;                     // both opaque
+                     });
     return out;
 }
 

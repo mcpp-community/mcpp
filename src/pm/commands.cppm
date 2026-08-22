@@ -277,9 +277,9 @@ inline int cmd_add(const mcpplibs::cmdline::ParsedArgs& parsed) {
         if (!found.hit && found.conclusive) {
             std::string hint;
             if (!selector.candidates.empty()) {
-                for (auto& fqn : mcpp::pm::cross_namespace_matches(
+                for (auto& suggestion : mcpp::pm::cross_namespace_suggestions(
                          route, selector.candidates.front().shortName)) {
-                    hint += "\n    " + fqn;
+                    hint += "\n    " + suggestion.fqn + suggestion.versions_label();
                 }
             }
             if (!hint.empty()) {
