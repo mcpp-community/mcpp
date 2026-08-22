@@ -279,8 +279,11 @@ EOF
 printf 'int main() { return 0; }\n' > src/main.cpp
 "$MCPP" build > o0.log 2>&1 || { cat o0.log; echo "FAIL: probe build failed"; exit 1; }
 OBJ_NINJA=$(find target -name build.ninja | head -1)
-OBJ_CXX=$(sed -n 's/^cxx *= *//p' "$OBJ_NINJA" | head -1)
-[ -n "$OBJ_CXX" ] || { cat "$OBJ_NINJA"; echo "FAIL: could not read the compiler out of build.ninja"; exit 1; }
+# `cxx` may be a fingerprint-scoped launcher. This action is deliberately
+# retained after that build directory is removed below, so use the stable raw
+# driver exported for clang-scan-deps instead.
+OBJ_CXX=$(sed -n 's/^cxx_driver *= *//p' "$OBJ_NINJA" | head -1)
+[ -n "$OBJ_CXX" ] || { cat "$OBJ_NINJA"; echo "FAIL: could not read the compiler driver out of build.ninja"; exit 1; }
 
 cat > src/main.cpp <<'EOF'
 #include <cstdio>

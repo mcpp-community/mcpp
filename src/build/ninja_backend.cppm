@@ -64,6 +64,9 @@ std::unique_ptr<Backend> make_ninja_backend();
 std::string emit_ninja_string(const BuildPlan& plan);
 std::string filter_ninja_output(std::string_view output,
                                 std::span<const std::string> commandPrefixes);
+std::string compiler_launcher_contents(const std::filesystem::path& loader,
+                                       const std::filesystem::path& compiler,
+                                       const std::vector<std::filesystem::path>& dirs);
 
 // Advice appended to a failed build whose linker output names a replaceable
 // function nothing in the graph defines. Empty when there is nothing to add.
@@ -80,6 +83,21 @@ std::string link_failure_advice(std::string_view output);
 }  // namespace mcpp::build
 
 namespace mcpp::build {
+
+std::string compiler_launcher_contents(const std::filesystem::path& loader,
+                                       const std::filesystem::path& compiler,
+                                       const std::vector<std::filesystem::path>& dirs) {
+    std::string libraryPath;
+    for (auto const& dir : dirs) {
+        if (!libraryPath.empty()) libraryPath += ':';
+        libraryPath += dir.string();
+    }
+    return std::format(
+        "#!/bin/sh\nexec {} --library-path {} {} \"$@\"\n",
+        mcpp::platform::shell::quote(loader.string()),
+        mcpp::platform::shell::quote(libraryPath),
+        mcpp::platform::shell::quote(compiler.string()));
+}
 
 namespace {
 
@@ -281,6 +299,33 @@ void write_file(const std::filesystem::path& p, std::string_view content) {
     os << content;
 }
 
+const std::vector<std::filesystem::path>& compiler_invocation_dirs(const BuildPlan& plan) {
+    return plan.toolchain.compilerInvocationRuntimeDirs.empty()
+        ? plan.toolchain.compilerRuntimeDirs
+        : plan.toolchain.compilerInvocationRuntimeDirs;
+}
+
+bool needs_compiler_launcher(const BuildPlan& plan) {
+    return mcpp::platform::is_linux
+        && plan.toolchain.compiler == mcpp::toolchain::CompilerId::GCC
+        && !plan.toolchain.compilerInvocationLoader.empty();
+}
+
+std::filesystem::path compiler_launcher_path(const BuildPlan& plan, bool cxx) {
+    return plan.outputDir / (cxx ? "mcpp-cxx" : "mcpp-cc");
+}
+
+void write_compiler_launcher(const std::filesystem::path& path,
+                             const std::filesystem::path& loader,
+                             const std::filesystem::path& compiler,
+                             const std::vector<std::filesystem::path>& dirs) {
+    write_file(path, compiler_launcher_contents(loader, compiler, dirs));
+
+    std::error_code ec;
+    std::filesystem::permissions(path, std::filesystem::perms::owner_exec,
+                                 std::filesystem::perm_options::add, ec);
+}
+
 bool run(const std::string& cmd, std::string& output_capture, bool capture_output = true) {
     output_capture.clear();
     if (capture_output) {
@@ -384,6 +429,10 @@ std::vector<std::string> command_prefixes(const CompileFlags& flags,
     };
     add(flags.cxxBinary);
     add(flags.ccBinary);
+    if (needs_compiler_launcher(plan)) {
+        add(compiler_launcher_path(plan, /*cxx=*/true));
+        add(compiler_launcher_path(plan, /*cxx=*/false));
+    }
     add(flags.arBinary);
     add(plan.scanDepsPath);
     // mcpp itself drives the dyndep and stage_file rules; its echoed command
@@ -589,10 +638,19 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // The macOS initializer-ordering shim (#336) is a C translation unit, so
     // it needs the C driver bindings even in a project with no .c sources.
     const bool need_ios_init_shim = flags.needsStreamInitShim;
-    append(std::format("cxx       = {}\n", escape_ninja_path(flags.cxxBinary)));
+    auto compiler_command = [&](const std::filesystem::path& binary, bool cxx) {
+        if (needs_compiler_launcher(plan))
+            return shell_quote_arg(escape_ninja_chars(
+                compiler_launcher_path(plan, cxx).string()));
+        return escape_ninja_path(binary);
+    };
+    append(std::format("cxx       = {}\n", compiler_command(flags.cxxBinary, /*cxx=*/true)));
+    // clang-scan-deps receives the driver after `--` as argv, not as a shell
+    // command. Keep a raw path for that interface; `$cxx` may be a launcher.
+    append(std::format("cxx_driver = {}\n", escape_ninja_path(flags.cxxBinary)));
     append(std::format("cxxflags  = {}\n", flags.cxx));
     if (need_c_rule || need_asm_rule || need_ios_init_shim) {  // asm_object drives the C compiler too
-        append(std::format("cc        = {}\n", escape_ninja_path(flags.ccBinary)));
+        append(std::format("cc        = {}\n", compiler_command(flags.ccBinary, /*cxx=*/false)));
     }
     if (need_c_rule || need_ios_init_shim) {
         append(std::format("cflags    = {}\n", flags.cc));
@@ -1267,7 +1325,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // overruns (#261: 48 -I entries at a deep consumer path).
             append(std::format(
                    "  command = $scan_deps -format=p1689 -o $out -- "
-                   "$cxx{} $cxxflags $unit_cxxflags $unit_lang -c $in "
+                   "$cxx_driver{} $cxxflags $unit_cxxflags $unit_lang -c $in "
                    "-o $compile_target\n",
                    rsp_ref(scanPayload)));
         }
@@ -2271,9 +2329,23 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                                                       plan.outputDir.string(), ec.message()),
                                           plan.outputDir});
 
+    auto flags = compute_flags(plan);
+    stage("compute-flags");
+
     auto ninja_path = plan.outputDir / "build.ninja";
     auto manifest = emit_ninja_string(plan);
     stage("emit-ninja");
+
+    if (needs_compiler_launcher(plan)) {
+        const auto& dirs = compiler_invocation_dirs(plan);
+        write_compiler_launcher(compiler_launcher_path(plan, /*cxx=*/true),
+                                plan.toolchain.compilerInvocationLoader,
+                                flags.cxxBinary, dirs);
+        write_compiler_launcher(compiler_launcher_path(plan, /*cxx=*/false),
+                                plan.toolchain.compilerInvocationLoader,
+                                flags.ccBinary, dirs);
+    }
+    stage("write-compiler-launcher");
 
     // Command-length backstop (see
     // .agents/docs/2026-08-06-command-length-architecture.md). The structural
@@ -2289,8 +2361,6 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     stage("write-ninja");
 
     // compile_commands.json — via the dedicated module.
-    auto flags = compute_flags(plan);
-    stage("compute-flags");
     auto cdb = write_compile_commands(plan, flags);
     stage("compile-commands");
     if (!cdb) {
