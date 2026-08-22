@@ -116,7 +116,7 @@ if [[ "$1" != "--library-path" || "$2" != ")" << wanted.string() << R"(" ]]; the
     exit 127
 fi
 printf '%s\n' "$*" >> ")" << trace.string() << R"("
-shift 3
+shift 2
 exec env -u LD_LIBRARY_PATH "$@"
 )";
     loaderOs.close();

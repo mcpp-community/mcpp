@@ -642,7 +642,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         if (needs_compiler_launcher(plan))
             return shell_quote_arg(escape_ninja_chars(
                 compiler_launcher_path(plan, cxx).string()));
-        return shell_quote_arg(escape_ninja_chars(binary.string()));
+        return escape_ninja_path(binary);
     };
     append(std::format("cxx       = {}\n", compiler_command(flags.cxxBinary, /*cxx=*/true)));
     // clang-scan-deps receives the driver after `--` as argv, not as a shell
