@@ -43,6 +43,21 @@ struct BuildProgramEnv {
     // hostprogram::toolchain_dir / sysroot_dir for why declaring was wrong.
     std::string toolchainDir;
     std::string targetSysroot;
+    // ⭐⭐ WHICH COMPILER RESOLVED — "gcc" | "clang" | "msvc" | "".
+    //
+    // A package should never have to guess this, and until this field existed
+    // the only way to was to look at `toolchainDir` and recognise a directory
+    // name. The question is real and recurring: the routines a compiler emits
+    // calls to and no C library defines live in `libgcc.a` under one and in
+    // compiler-rt under another, and the tool that turns a `.def` into an
+    // import library is `dlltool` under one and `llvm-dlltool` under another.
+    //
+    // ⚠️ Measured 2026-08-22, both on the same day and both from the same
+    // missing answer: `openkal-musl` naming `-lgcc` on a link whose compiler was
+    // clang (`unable to find library -lgcc`), and `openkal-windows` running
+    // `llvm-dlltool` under a GCC toolchain (`sh: 1: llvm-dlltool: not found`).
+    // Each package had made the assumption its author's toolchain made true.
+    std::string compilerId;
     // Three more answers a board-support package would otherwise hardcode.
     //
     // ⚠️ THE COUPLING THESE REMOVE IS INVISIBLE IN A MANIFEST. `riscv-virt-rt`
@@ -322,6 +337,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     // absent variable would make the answer depend on whatever the parent
     // process happened to export.
     e.emplace_back("MCPP_TOOLCHAIN_DIR", env.toolchainDir);
+    e.emplace_back("MCPP_COMPILER", env.compilerId);
     e.emplace_back("MCPP_TARGET_SYSROOT", env.targetSysroot);
     e.emplace_back("MCPP_TARGET_BUILTINS_LIB", env.targetBuiltinsLib);
     e.emplace_back("MCPP_TARGET_LIBC_PROFILE", env.targetLibcProfile);

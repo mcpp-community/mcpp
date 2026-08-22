@@ -762,6 +762,11 @@ void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
     e.toolchainDir  = (tc && !tc->binaryPath.empty())
         ? tc->binaryPath.parent_path().parent_path().string() : std::string{};
     e.targetSysroot = tc ? tc->targetSysrootRoot.string() : std::string{};
+    e.compilerId    = !tc ? std::string{}
+        : tc->compiler == mcpp::toolchain::CompilerId::GCC   ? "gcc"
+        : tc->compiler == mcpp::toolchain::CompilerId::Clang ? "clang"
+        : tc->compiler == mcpp::toolchain::CompilerId::MSVC  ? "msvc"
+        : std::string{};
     e.targetLibc    = tc ? tc->targetSysrootPkg : std::string{};
     if (!tc) return;
 
