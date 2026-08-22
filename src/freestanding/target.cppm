@@ -226,7 +226,26 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // `-ffreestanding` so the ordering of this function's output stays a
     // function of the table rather than of the row.
     for (auto flag : s.extra) out.emplace_back(flag);
-    out.emplace_back("-ffreestanding");
+    // ⭐ AND `-ffreestanding` ITSELF IS ONE OF THE THINGS THE GRAPH DECIDES.
+    //
+    // The paragraph above this function names what the flag changes: "no `main`
+    // special-casing, no builtin-to-libcall rewrites it cannot back up". Both
+    // are statements about whether a library is there — and when a package in
+    // the graph provides `hosted-standard-library` FOR THIS TARGET, one is.
+    // `hosted` is the language's own word for not-freestanding, so a provider
+    // of that capability is asserting exactly the condition this flag denies.
+    //
+    // ⚠️ Measured 2026-08-23, and the way it showed was not a diagnostic about
+    // the flag. A bare-metal program whose `main` was an ordinary C++ `int
+    // main()` failed to link with `undefined symbol: main`, while `nm` on its
+    // own object showed `_Z4mainv` — under `-ffreestanding` a C++ `main` is not
+    // the reserved entry point and is therefore mangled like any other
+    // function. The startup object referred to `main` and nothing defined it.
+    //
+    // The alternative was to make every such program write `extern "C" int
+    // main()`, which is a workaround for a claim the build was making on the
+    // program's behalf and that was no longer true.
+    if (!targetCxxRuntime) out.emplace_back("-ffreestanding");
     // ⚠️ No C++ standard library headers. Not a preference — the toolchain's
     // libc++ headers are built for the HOST: `#include <stdio.h>` resolves to
     // libc++'s wrapper, which opens `<__config_site>`, which is generated per

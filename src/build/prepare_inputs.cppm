@@ -288,6 +288,45 @@ std::string canonical_package_build_metadata(
         s += pkg.manifest.package.version;
         s += " source=";
         s += pkg.manifest.package.sourceProvenance;
+        // ⭐⭐ WHAT THIS PACKAGE IS BUILT WITH, AND NOT ONLY WHAT IT ASKS THE
+        // RUNTIME FOR.
+        //
+        // Only the root's compile inputs used to reach the fingerprint, through
+        // `canonical_compile_flags` on the root manifest. A DEPENDENCY's
+        // `[build] cflags` / `defines` / `sources` / per-glob flags reached
+        // nothing — so editing one left the fingerprint unchanged, the consumer
+        // kept the same output directory, and the fast path replayed a
+        // build.ninja generated before the edit.
+        //
+        // ⚠️ AND THE WAY THAT SHOWS IS THAT THE EDIT APPEARS TO HAVE HAD NO
+        // EFFECT. Measured 2026-08-23 on a path dependency: a flag added to
+        // `[build] cflags` was absent from the generated `unit_cflags` after a
+        // rebuild, absent after touching the sources, and present the moment
+        // `target/` was removed. The first two observations are what a reader
+        // uses to conclude the flag is being filtered, and one was concluded
+        // and written down before the third measurement was taken.
+        //
+        // The comment beside the root-flag tail merge in prepare.cppm has said
+        // "canonical_package_build_metadata folds packages[].manifest.
+        // buildConfig" since before this fix. It now does.
+        //
+        // packages[0] is the root, whose flags `canonical_compile_flags`
+        // already folds; serialising it twice is harmless and keeps this loop
+        // one rule rather than one rule and an exception.
+        s += ' ';
+        s += canonical_compile_flags(pkg.manifest);
+        for (auto const& src : pkg.manifest.buildConfig.sources) {
+            s += " src:";
+            s += src;
+        }
+        for (auto const& dir : pkg.manifest.buildConfig.includeDirs) {
+            s += " inc:";
+            s += dir.generic_string();
+        }
+        for (auto const& dir : pkg.manifest.buildConfig.includeDirsAfter) {
+            s += " inca:";
+            s += dir.generic_string();
+        }
         auto const& runtime = pkg.manifest.runtimeConfig;
         for (auto const& requirement : runtime.requirements) {
             s += " runtime-need:";
