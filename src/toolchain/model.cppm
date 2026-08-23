@@ -220,6 +220,37 @@ bool is_mingw_target(const Toolchain& tc);
 //                        image has no loader to do it, so the access becomes an
 //                        ordinary call into compiler-rt against a key the C
 //                        library owns.
+//   -fvisibility=hidden  Mach-O only. There, a symbol with DEFAULT visibility
+//   -fvisibility-inlines-  and weak (linkonce_odr) linkage — which is what every
+//     hidden              template instantiation and inline function is — is
+//                        coalesced BY THE DYNAMIC LOADER, so the linker routes
+//                        calls to it through a stub and a GOT slot the loader
+//                        fills. That is how one definition wins across dylibs,
+//                        and it is machinery a self-contained image has no use
+//                        for.
+//
+// ⚠️⚠️ AND THE THIRD ONE WAS FOUND BY A PROGRAM THAT LINKED, WAS SIGNED, AND
+// CRASHED ON THE REAL MACHINE — which is the whole argument for running the
+// artefact rather than inspecting it. On an arm64 Mac:
+//
+//     stop reason = EXC_BAD_ACCESS (code=1, address=0x0)
+//     frame #0: 0x0000000000000000
+//
+// No output, no frames: the program jumped to address zero at its first
+// indirect call. The image had 1238 `__stubs` entries and 1335 `__got` slots
+// for THREE undefined symbols, and the stubs' names were its own —
+// `std::vector<int>::__init_with_size`, `operator new`, and a thousand more
+// libc++ internals. `main`'s first statement constructs a `std::vector<int>`.
+//
+// The package builds libc++ with `_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS`,
+// which is correct for a static build and leaves every instantiation at default
+// visibility. On ELF that is inert — a static link resolves weak definitions at
+// LINK time and nothing survives to run time. On Mach-O it produces the
+// coalescing machinery above.
+//
+// ⇒ Measured after adding the two flags: `__stubs` 0x3a08 → 0x6c, `__got`
+// 0x29b8 → 0x58. Nine stubs and eleven slots, which is the size a program with
+// three imports should have.
 //
 // ⚠️ ELF IS DELIBERATELY ABSENT FROM THE SECOND, and it is not an oversight:
 // there a `thread_local` is a fixed offset from the thread pointer, which the C
@@ -359,6 +390,12 @@ std::vector<std::string> graph_runtime_compile_flags(const Toolchain& tc) {
     if (!t) return out;
     if (t->is_pe()) out.emplace_back("-fdwarf-exceptions");
     if (t->is_pe() || t->os == "macos") out.emplace_back("-femulated-tls");
+    // ⭐⭐ MACH-O ONLY, AND THE REASON IS THAT WEAK-DEF IS A RUN-TIME MECHANISM
+    // THERE. See the note on this function for the measurement.
+    if (t->os == "macos") {
+        out.emplace_back("-fvisibility=hidden");
+        out.emplace_back("-fvisibility-inlines-hidden");
+    }
     return out;
 }
 
