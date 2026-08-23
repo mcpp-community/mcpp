@@ -63,11 +63,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # ⚠️ The version that BOOTSTRAPS the build of this repository's mcpp. What is
-  # under test is the mcpp that comes out, which is why every step below uses
-  # the built binary rather than this one.
-  MCPP_VERSION: 2026.8.19.4
-  XLINGS_VERSION: v2026.8.17.2
+  # ⚠️ No mcpp or xlings version here. `bootstrap-mcpp` owns both, and a second
+  # statement of them is a second thing to keep in step — the pin check
+  # (.github/tools/check_version_pins.sh) enforces the ones that exist and would
+  # not know about a copy in this file.
   XLINGS_NON_INTERACTIVE: '1'
   # The branch of the openkal packages this change is verified against. They
   # move together with it; when they are on `main` this becomes `main`.
@@ -91,57 +90,52 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install xlings (Unix)
-        if: runner.os != 'Windows'
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh \
-            | bash -s "$XLINGS_VERSION"
-          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
-
-      - name: Install xlings (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          irm https://d2learn.org/xlings-install.ps1.txt | iex
-          "$env:USERPROFILE\.xlings\subos\current\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
-      - name: Install the bootstrap mcpp
-        run: |
-          # ⚠️ A LOOP, because one `xlings update` can return a stale index
-          # without saying so: the index is published behind a pointer that
-          # propagates asynchronously, and "synced 0 seconds ago" describes when
-          # it was fetched rather than what it contains.
-          for attempt in 1 2 3 4 5 6; do
-            xlings update > /dev/null 2>&1 || true
-            if xlings install "mcpp@$MCPP_VERSION" -y -g; then break; fi
-            if [ "$attempt" = 6 ]; then
-              echo "::error::mcpp@$MCPP_VERSION never appeared in the index"; exit 1
-            fi
-            sleep 60
-          done
-          mcpp self config --mirror GLOBAL
+      # ⚠️ THE REPOSITORY'S OWN BOOTSTRAP, NOT A SECOND ONE.
+      #
+      # This job first wrote its own: fetch xlings, then
+      # `xlings install mcpp@<version>`. It failed on the very first run:
+      #
+      #     xlings: version '2026.8.17.1' not found for 'mcpp'
+      #       available: 2026.8.19.4
+      #
+      # `.xlings.json` at this repository's root pins the mcpp that BUILDS mcpp,
+      # and that pin does not move when mcpp is released — so it names a version
+      # the index no longer carries, and a bare install inside the checkout
+      # obeys the pin rather than the argument. `bootstrap-mcpp` already knows
+      # this (it runs `install_pinned_mcpp.sh`), works on all three systems, and
+      # shares the cache lineage every other job lands on.
+      #
+      # ⇒ Two bootstraps would be two things to keep correct, and the second one
+      # was wrong within a day of being written.
+      - uses: ./.github/actions/bootstrap-mcpp
 
       # ⭐ THE mcpp UNDER TEST. Everything after this uses the binary this step
-      # produces; the bootstrap one above is only what compiles it.
+      # produces; the bootstrapped one above is only what compiles it.
       - name: Build the mcpp in this pull request
         run: |
           set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
           # ⚠️ `--dev` and not `--release`. What is under test is a set of
           # decisions about compile and link flags; an optimisation level
           # changes none of them and a release self-build is most of the budget
           # of a job on a two-core runner.
-          mcpp build --dev
+          "$MCPP" build --dev
           BUILT=$(find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) | head -1)
           [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
-          echo "$(cd "$(dirname "$BUILT")" && pwd)" >> "$GITHUB_PATH"
+          BUILT=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")
+          echo "MCPP_UNDER_TEST=$BUILT" >> "$GITHUB_ENV"
           "$BUILT" --version
 
       - name: Select the toolchain the openkal packages ask for
         run: |
+          set -euo pipefail
           # ⚠️ Install, then select. `toolchain default` names one and does not
           # fetch it.
-          mcpp toolchain install llvm 22.1.8
-          mcpp toolchain default 'llvm@22.1.8'
+          "$MCPP_UNDER_TEST" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP_UNDER_TEST" toolchain install llvm 22.1.8
+          "$MCPP_UNDER_TEST" toolchain default 'llvm@22.1.8'
 
       - name: The program — one source, three targets
         run: |
@@ -156,7 +150,7 @@ jobs:
           # running would be the weaker claim.
           for t in x86_64-linux-gnu aarch64-macos x86_64-windows-gnu; do
             rm -rf target
-            mcpp build --target "$t"
+            "$MCPP_UNDER_TEST" build --target "$t"
             a=$(find target -type f \( -name 'openkal-same-source' -o -name 'openkal-same-source.exe' \) | head -1)
             [ -n "$a" ] || { echo "::error::$t produced no artefact on ${{ matrix.host }}"; exit 1; }
             case "$t" in
