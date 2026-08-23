@@ -32,6 +32,7 @@ import mcpp.toolchain.cppfly;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
+import mcpp.toolchain.model;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
@@ -1887,6 +1888,60 @@ prepare_build(bool print_fingerprint,
                                 tc->targetSysrootLib = lib;
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // ── The LLVM family's target C++ runtime on a hosted musl target ─────
+    //
+    // The gcc payload for *-linux-musl is self-contained: musl and libstdc++
+    // ride inside it, and `effective_sysroot` above stays empty. A clang
+    // frontend brings no target libc at all — the same gap the bare-metal
+    // `sysroot` column closes for picolibc, one layer up. The target's row
+    // names an xim package carrying the target's musl libc++ (headers,
+    // archives, std.cppm); resolved here for the same reason the bare-metal
+    // sysroot is: the config is already open, and the flag builder only reads
+    // the result.
+    //
+    // Scoped to clang-on-musl so the gcc path is untouched. Absent package is
+    // not an error here either — the install may not have run on a first pass
+    // and the link will name what is missing.
+    if (mcpp::toolchain::is_clang(*tc)
+        && mcpp::toolchain::is_musl_target(*tc))
+    {
+        if (const std::string want_libcxx = mcpp::toolchain::triple::
+                effective_llvm_sysroot(
+                    *mcpp::toolchain::triple::parse(tc->targetTriple),
+                    sysroot_override(*m, *mcpp::toolchain::triple::parse(
+                                              tc->targetTriple)));
+            !want_libcxx.empty())
+        {
+            if (auto cfg4 = get_cfg(); cfg4) {
+                auto ref = mcpp::xlings::paths::parse_xpkg_ref(want_libcxx);
+                auto xl  = mcpp::config::make_xlings_env(**cfg4);
+                if (auto dir = mcpp::xlings::paths::xpkg_payload(xl, ref)) {
+                    const auto inc = *dir / "include" / "c++" / "v1";
+                    const auto lib = *dir / "lib";
+                    std::error_code ec3;
+                    tc->targetSysrootRoot = *dir;
+                    tc->targetSysrootPkg  = ref.name;
+                    if (std::filesystem::is_directory(inc, ec3))
+                        tc->targetSysrootInclude = inc;
+                    if (std::filesystem::is_directory(lib, ec3))
+                        tc->targetSysrootLib = lib;
+                    // std.cppm from the payload replaces the host libc++ copy
+                    // detection found — same reason the freestanding path
+                    // clears it: a std BMI built over the wrong libc.
+                    const auto stdcppm = *dir / "share" / "libc++" / "v1"
+                                       / "std.cppm";
+                    if (std::filesystem::exists(stdcppm, ec3))
+                        tc->stdModuleSource = stdcppm;
+                    const auto compat = *dir / "share" / "libc++" / "v1"
+                                      / "std.compat.cppm";
+                    tc->stdCompatSource = std::filesystem::exists(compat, ec3)
+                                              ? compat
+                                              : std::filesystem::path{};
                 }
             }
         }

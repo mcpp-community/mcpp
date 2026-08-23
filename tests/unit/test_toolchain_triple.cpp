@@ -256,3 +256,40 @@ TEST(Triple, EffectiveSysrootIsEmptyForHostedTargets) {
     ASSERT_TRUE(t.has_value());
     EXPECT_EQ(effective_sysroot(*t, nullptr), "");
 }
+
+// ── effective_llvm_sysroot: the LLVM family's target libc++ ─────────────────
+
+TEST(Triple, EffectiveLlvmSysrootNamesTheMuslLibcxxPayload) {
+    // The gcc payload for *-linux-musl is self-contained; a clang frontend
+    // is not, so the target row carries the libc++ payload for it.
+    auto t = parse("x86_64-linux-musl");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(effective_llvm_sysroot(*t, nullptr),
+              "xim:llvm-musl-libcxx@22.1.8");
+    auto a = parse("aarch64-linux-musl");
+    ASSERT_TRUE(a.has_value());
+    EXPECT_EQ(effective_llvm_sysroot(*a, nullptr),
+              "xim:llvm-musl-libcxx@22.1.8");
+}
+
+TEST(Triple, EffectiveLlvmSysrootOverrideWins) {
+    auto t = parse("x86_64-linux-musl");
+    ASSERT_TRUE(t.has_value());
+    const std::string kPinned = "xim:llvm-musl-libcxx@23.0.0";
+    EXPECT_EQ(effective_llvm_sysroot(*t, &kPinned), kPinned);
+}
+
+TEST(Triple, EffectiveLlvmSysrootIsEmptyWhereLlvmNeedsNothing) {
+    // Hosted gnu, macOS: the llvm frontend plus PayloadPaths cover it.
+    auto g = parse("x86_64-linux-gnu");
+    ASSERT_TRUE(g.has_value());
+    EXPECT_EQ(effective_llvm_sysroot(*g, nullptr), "");
+    auto m = parse("aarch64-macos");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(effective_llvm_sysroot(*m, nullptr), "");
+    // Bare metal names its own C library in `sysroot`; the libc++ column
+    // stays empty there — the freestanding std subset is a package.
+    auto b = parse("riscv64-none-elf");
+    ASSERT_TRUE(b.has_value());
+    EXPECT_EQ(effective_llvm_sysroot(*b, nullptr), "");
+}

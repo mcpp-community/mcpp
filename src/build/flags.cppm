@@ -29,6 +29,7 @@ import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.model;
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
+import mcpp.platform.xlings;
 
 export namespace mcpp::build {
 
@@ -542,7 +543,64 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         return ft && ft->is_freestanding();
     }();
 
-    if (!isFreestandingTarget) {
+    // The musl-gcc payload root for --gcc-toolchain: crt, libgcc and the
+    // musl libc itself live there. Located relative to the SAME xpkgs base
+    // the clang frontend came from (xpkgs_from_compiler), so the build
+    // cannot mix payloads from two homes. Two shapes, matching the registry's
+    // payload naming: the host-native `musl-gcc` package and the
+    // triple-named `<triple>-gcc` cross package.
+    const auto musl_gcc_toolchain = [&](const mcpp::toolchain::Toolchain& tc)
+        -> std::filesystem::path
+    {
+        auto base = mcpp::xlings::paths::xpkgs_from_compiler(tc.binaryPath);
+        if (!base) return {};
+        auto pkg = std::string("x-") + tc.targetTriple + "-gcc";
+        std::error_code ec;
+        for (auto& e : std::filesystem::directory_iterator(*base, ec)) {
+            auto name = e.path().filename().string();
+            if (name.find(pkg) != std::string::npos
+                || (tc.targetTriple.find(mcpp::platform::host_arch)
+                        != std::string::npos
+                    && name.find("x-musl-gcc") != std::string::npos))
+            {
+                // <xim-x-...>/<version> — first version dir wins; payloads
+                // are single-version in practice.
+                std::error_code ec2;
+                for (auto& v : std::filesystem::directory_iterator(
+                         e.path(), ec2))
+                    if (v.is_directory()) return v.path();
+            }
+        }
+        return {};
+    };
+
+    // llvm-musl: a clang frontend on a hosted musl target. The hosted
+    // clang-with-cfg path below reconstructs the HOST's world (glibc payload,
+    // host libc++), which for this target is exactly what must not reach the
+    // line — same class of bug as freestanding E1, one layer up. The target's
+    // musl libc++ rides in an xim payload resolved by prepare into
+    // targetSysroot*, and the C runtime (crt/libgcc/musl libc) comes from the
+    // musl-gcc payload via the driver's --gcc-toolchain.
+    const bool isLlvmMusl = mcpp::toolchain::is_clang(plan.toolchain)
+        && mcpp::toolchain::is_musl_target(plan.toolchain)
+        && !plan.toolchain.targetSysrootInclude.empty();
+
+    if (isLlvmMusl) {
+        // Compile side: neutral driver (--no-default-config kills the cfg's
+        // host glibc/loader pins), target triple, musl libc++ headers, the
+        // musl-gcc payload for crt/libgcc, and the target's own libc via
+        // --sysroot. HostFlagOptions knows none of this — it serves hosted
+        // gnu and macOS — so the tokens are assembled here, where every
+        // input (payload paths, gcc-toolchain dir) is already in hand.
+        compile_toolchain_flags =
+            " --no-default-config --target=" + plan.toolchain.targetTriple
+            + " --gcc-toolchain=" + ninjaEsc(musl_gcc_toolchain(plan.toolchain))
+            + " -rtlib=libgcc -unwindlib=libgcc -nostdinc++"
+            + " -isystem " + ninjaEsc(plan.toolchain.targetSysrootInclude)
+            + " --sysroot="
+            + ninjaEsc(musl_gcc_toolchain(plan.toolchain)
+                       / plan.toolchain.targetTriple);
+    } else if (!isFreestandingTarget) {
         mcpp::toolchain::HostFlagOptions hopt;
         hopt.cfgBypass = mcpp::toolchain::HostFlagOptions::CfgBypass::Always;
         hopt.macosDeploymentTarget = macosDeploymentTarget;
@@ -563,7 +621,25 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // x86-64 dynamic linker); it is added to the freestanding prefix.
         compile_toolchain_flags = " --no-default-config";
     }
-    if (isClangWithCfg) {
+    if (isLlvmMusl) {
+        // Link side mirrors the compile side: neutral driver, target triple,
+        // gcc-toolchain for crt/libgcc, then the target's musl libc++
+        // archives replace the driver's default stdlib selection entirely
+        // (-nostdlib++ + explicit -lc++/-lc++abi). The kLinkDriverFlags
+        // (compiler-rt/libunwind) are host selections and must not appear.
+        const auto gccTc = musl_gcc_toolchain(plan.toolchain);
+        link_toolchain_flags =
+            " --no-default-config --target=" + plan.toolchain.targetTriple
+            + " --gcc-toolchain=" + ninjaEsc(gccTc)
+            + " -rtlib=libgcc -unwindlib=libgcc -fuse-ld=lld --sysroot="
+            + ninjaEsc(gccTc / plan.toolchain.targetTriple)
+            + " -nostdlib++ -L"
+            + ninjaEsc(plan.toolchain.targetSysrootRoot / "lib")
+            + " -lc++ -lc++abi";
+        link_toolchain_flags_c = link_toolchain_flags;
+        f.sysroot = link_toolchain_flags;
+        llvmRootForStdlib = plan.toolchain.targetSysrootRoot;
+    } else if (isClangWithCfg) {
         llvmRootForStdlib = dm.llvmRoot;
         // Linker flags that cfg normally provides. The payload C-runtime
         // flags (-B/-L/loader) are appended via payload_ld below.

@@ -112,6 +112,14 @@ struct TargetInfo {
     // it per-package bound a board-support package and a standard-library
     // subset alike to one libc, one ISA and one version.
     std::string_view sysroot;
+    // The TARGET's C++ runtime for the LLVM family on this target. The gcc
+    // payload for *-linux-musl is self-contained (musl + libstdc++ ride
+    // inside it), but a clang frontend brings no target libc at all — same
+    // gap the `sysroot` column closes for bare metal, one layer up. Names an
+    // xim package carrying the target's musl libc++ (headers, static
+    // archives, std.cppm). Empty = the LLVM family needs nothing beyond the
+    // frontend (hosted gnu, macOS, bare metal's own sysroot).
+    std::string_view llvmSysroot;
     bool defaultStatic;           // target's default linkage is static
 };
 
@@ -119,15 +127,15 @@ struct TargetInfo {
 // from defaultStatic, so listing it here would duplicate it.)
 inline constexpr TargetInfo kKnownTargets[] = {
     // canonical               tier         note   pin           sysroot                        defaultStatic
-    { "x86_64-linux-gnu",      "verified",  "",    "",           "",                            false },
-    { "x86_64-linux-musl",     "verified",  "",    "gcc@16.1.0", "",                            true  },
-    { "aarch64-linux-musl",    "verified",  "",    "gcc@16.1.0", "",                            true  },
-    { "x86_64-windows-gnu",    "verified",  "PE",  "gcc@16.1.0", "",                            true  },
-    { "x86_64-windows-msvc",   "verified",  "PE",  "",           "",                            false },
-    { "aarch64-macos",         "verified",  "",    "",           "",                            false },
-    { "riscv64-linux-musl",    "planned",   "",    "",           "",                            true  },
-    { "aarch64-linux-gnu",     "planned",   "",    "",           "",                            false },
-    { "x86_64-macos",          "planned",   "",    "",           "",                            false },
+    { "x86_64-linux-gnu",      "verified",  "",    "",           "",                            "",false },
+    { "x86_64-linux-musl",     "verified",  "",    "gcc@16.1.0", "",                            "xim:llvm-musl-libcxx@22.1.8",true  },
+    { "aarch64-linux-musl",    "verified",  "",    "gcc@16.1.0", "",                            "xim:llvm-musl-libcxx@22.1.8",true  },
+    { "x86_64-windows-gnu",    "verified",  "PE",  "gcc@16.1.0", "",                            "",true  },
+    { "x86_64-windows-msvc",   "verified",  "PE",  "",           "",                            "",false },
+    { "aarch64-macos",         "verified",  "",    "",           "",                            "",false },
+    { "riscv64-linux-musl",    "planned",   "",    "",           "",                            "xim:llvm-musl-libcxx@22.1.8",true  },
+    { "aarch64-linux-gnu",     "planned",   "",    "",           "",                            "",false },
+    { "x86_64-macos",          "planned",   "",    "",           "",                            "",false },
     // Bare metal. `defaultStatic` is not a preference here — there is no
     // loader, so there is no other option. The pin is llvm on every host
     // because clang/lld are cross-compilers by construction: unlike the hosted
@@ -136,8 +144,8 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // which is the single place that decision is made.
     // The sysroot column is what keeps a bare-metal PACKAGE from having to
     // name a libc: the C library is the target's, like the compiler.
-    { "riscv64-none-elf",      "verified",  "bare","llvm@22.1.8","xim:picolibc-riscv@1.8.12",  true  },
-    { "riscv32-none-elf",      "verified",  "bare","llvm@22.1.8","xim:picolibc-riscv@1.8.12",  true  },
+    { "riscv64-none-elf",      "verified",  "bare","llvm@22.1.8","xim:picolibc-riscv@1.8.12",  "",true  },
+    { "riscv32-none-elf",      "verified",  "bare","llvm@22.1.8","xim:picolibc-riscv@1.8.12",  "",true  },
     // ⚠️ AN EMPTY SYSROOT COLUMN, AND IT IS A STATEMENT RATHER THAN AN OMISSION.
     //
     // The two rows above name a C library because a project targeting them
@@ -159,7 +167,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // an emulator. `xim:qemu-arm` provides `qemu-system-aarch64`; until a probe
     // has actually booted under it, claiming `verified` would be claiming the
     // measurement rather than reporting it.
-    { "aarch64-none-elf",      "preview",   "bare","llvm@22.1.8","",                            true  },
+    { "aarch64-none-elf",      "preview",   "bare","llvm@22.1.8","",                            "",true  },
     // ⚠️ THIS ROW EXISTS SO THAT A THIRD MACHINE CAN DISAGREE WITH THE FIRST
     // TWO, WHICH IS THE ONLY THING THAT TELLS AN ABSTRACTION FROM A HABIT.
     //
@@ -180,7 +188,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // The sysroot column is empty, the zero-libc tier, for the reason given
     // above `aarch64-none-elf`: the first consumer is `openarch`, which
     // references no C library symbol.
-    { "x86_64-none-elf",       "preview",   "bare","llvm@22.1.8","",                            true  },
+    { "x86_64-none-elf",       "preview",   "bare","llvm@22.1.8","",                            "",true  },
 };
 
 inline std::span<const TargetInfo> known_targets() { return kKnownTargets; }
@@ -224,6 +232,18 @@ inline std::string effective_sysroot(const Triple& t,
 {
     if (override_) return *override_;
     if (auto* k = find_known_target(t)) return std::string(k->sysroot);
+    return {};
+}
+
+// The LLVM family's target C++ runtime for this target (see TargetInfo::
+// llvmSysroot). Same override-first shape as effective_sysroot so a project
+// can pin a specific libc++ build for a target the table has not caught up
+// with. Empty = the LLVM family needs nothing beyond its frontend.
+inline std::string effective_llvm_sysroot(const Triple& t,
+                                          const std::string* override_)
+{
+    if (override_) return *override_;
+    if (auto* k = find_known_target(t)) return std::string(k->llvmSysroot);
     return {};
 }
 
