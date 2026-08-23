@@ -914,6 +914,37 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // Only ADDS answers: a triple that says neither falls through to
             // exactly the previous derivation, so no existing build changes.
             const auto& t = plan.toolchain.targetTriple;
+            // ⭐⭐ THE PARSED TRIPLE FIRST, BECAUSE THE SUBSTRINGS BELOW DO NOT
+            // MATCH THE SPELLING mcpp ITSELF USES.
+            //
+            // `apple` and `darwin` are LLVM's words. mcpp's canonical form for
+            // that target is `aarch64-macos`, which contains neither — so the
+            // test fell through to the host on every host, and the two failures
+            // that produces are opposite:
+            //
+            //   Linux host, macOS target    → Elf contract for a Mach-O
+            //   macOS host, Linux target    → MachO contract for an ELF
+            //
+            // ⚠️ Measured 2026-08-23, the second one, on a macOS runner
+            // cross-building for `x86_64-linux-gnu` over openkal:
+            //
+            //     ld.lld: error: unable to find library -load_hidden
+            //     …/xim-x-llvm/22.1.8/lib/libc++.a: archive member
+            //       'system_error.cpp.o' is neither ET_REL nor LLVM bitcode
+            //
+            // `-load_hidden` is a Mach-O linker's word and that archive is the
+            // HOST's — both chosen because the format question was answered by
+            // asking which machine was doing the building.
+            //
+            // The substring tests are kept below as a fallback for a triple the
+            // vocabulary cannot parse (the `[target.X]` escape hatch), where a
+            // spelling is all there is.
+            if (auto parsed = mcpp::toolchain::triple::parse(t)) {
+                if (parsed->is_pe())            return dist::Format::Pe;
+                if (parsed->os == "macos")      return dist::Format::MachO;
+                if (parsed->os == "linux"
+                    || parsed->os == "none")    return dist::Format::Elf;
+            }
             if (t.find("windows") != std::string::npos
                 || t.find("mingw") != std::string::npos)
                 return dist::Format::Pe;
