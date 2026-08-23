@@ -3,6 +3,7 @@
 export module mcpp.manifest.toml;
 
 import mcpp.manifest.types;
+import mcpp.targetside;
 import std;
 import mcpp.source_kind;
 import mcpp.libs.toml;
@@ -455,7 +456,32 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     }
 
     // [package] provides — package-level capabilities (Feature System v2 S3).
-    if (auto v = doc->get_string_array("package.provides")) m.provides = *v;
+    //
+    // Two populations share this array, and only one of them is mcpp's. Names
+    // under the reserved `mcpp:` prefix are target-side layers the engine
+    // resolves and acts on, so they are a closed set and a misspelling is an
+    // error here. Every other name belongs to the packages themselves — the
+    // feature system matches `requires` against `provides` without the engine
+    // having an opinion — so those pass through untouched.
+    //
+    // Validating the whole array instead would reject `freestanding-allocator`,
+    // which already ships. Validating none of it is what shipped until now, and
+    // its cost is that a single wrong letter in a layer name disables the
+    // behaviour it was meant to select while the build still reports success.
+    if (auto v = doc->get_string_array("package.provides")) {
+        for (auto const& entry : *v)
+            if (auto cap = mcpp::targetside::parse_capability(entry); !cap)
+                return std::unexpected(error(origin, cap.error()));
+        m.provides = *v;
+    }
+    // [package] std-module / std-module-flags — see manifest::types. Relative to
+    // the package root, because that is what a package can state about itself;
+    // the absolute path is made where the package's root is known.
+    if (auto v = doc->get_string("package.std-module")) m.stdModule = *v;
+    if (auto v = doc->get_string("package.std-compat-module"))
+        m.stdCompatModule = *v;
+    if (auto v = doc->get_string_array("package.std-module-flags"))
+        m.stdModuleFlags = *v;
 
     // [capabilities] cap = "provider" — root-only provider pins.
     if (auto* caps = doc->get_table("capabilities"); caps && !caps->empty()) {
@@ -1501,16 +1527,21 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         triple, e.cxxRuntime)));
                 }
             }
-            // The target's C library, overriding the target table's `sysroot`
-            // column. Accepted forms are an xpkg reference (`xim:newlib-arm@4.4`)
-            // and the empty string.
+            // WHICH PREBUILT C LIBRARY DIRECTORY THIS TARGET TAKES, overriding
+            // the target table's `sysroot` column. Accepted forms are an xpkg
+            // reference (`xim:newlib-arm@4.4`) and the empty string.
             //
-            // ⚠️ The empty string is MEANINGFUL and must not be normalised
-            // away: it selects the zero-libc tier. Written into an
-            // `std::optional`, so "the key is absent" (inherit the target row)
-            // stays distinguishable from "the key is present and empty" (no C
-            // library at all). Collapsing the two is how a kernel project would
-            // silently get picolibc back.
+            // The empty string is MEANINGFUL and must not be normalised away.
+            // What it selects is "no prebuilt directory", which is NOT the same
+            // statement as "this program has no C library" — a project whose C
+            // library is built from source by a package in its dependency graph
+            // writes it too, and has one. Reading it as the stronger claim is a
+            // mistake the wording here used to invite.
+            //
+            // Written into an `std::optional`, so "the key is absent" (inherit
+            // the target row) stays distinguishable from "the key is present and
+            // empty". Collapsing the two is how a kernel project would silently
+            // get picolibc back.
             if (auto it = body.find("sysroot"); it != body.end() && it->second.is_string()) {
                 std::string s = it->second.as_string();
                 if (!s.empty() && s.find(':') == std::string::npos) {
@@ -1518,7 +1549,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         "[target.{}].sysroot = '{}' is not an xpkg reference; "
                         "expected `<namespace>:<name>[@<version>]` (e.g. "
                         "\"xim:picolibc-riscv@1.8.12\"), or \"\" for a target "
-                        "with no C library.", triple, s)));
+                        "that takes no prebuilt C library directory.",
+                        triple, s)));
                 }
                 e.sysroot = std::move(s);
                 e.sysrootDeclared = true;

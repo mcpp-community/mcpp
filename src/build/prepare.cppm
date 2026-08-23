@@ -16,6 +16,7 @@ export module mcpp.build.prepare;
 export import mcpp.build.prepare_inputs;
 
 import std;
+import mcpp.targetside;
 import mcpp.diag;
 import mcpp.home;
 import mcpp.platform.axis;
@@ -36,6 +37,7 @@ import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.stdmod;
 import mcpp.freestanding.target;   // the target sysroot layout (libdir)
+import mcpp.freestanding.linkline; // the ISA profile, for the std module command
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
@@ -755,12 +757,57 @@ sysroot_override(const mcpp::manifest::Manifest& m,
 // shape this codebase keeps paying for. A board package that got the right
 // answer as a root project and a stale one as a dependency would fail only in
 // the consuming build, which is the harder direction to debug.
+// ⚠️⚠️ A NETWORK STEP OF A BUILD, RETRIED — AND IT HAD NO RETRY AT ALL.
+//
+// A dependency resolved by `git` is fetched on every machine that has not
+// cached it, and a transport that hiccups once failed the whole build:
+//
+//     error: git clone of 'https://github.com/…' failed:
+//     Cloning into '/home/runner/.mcpp/git/63269d80b47f71e6'...
+//
+// — no message from git, which is what a connection that dies mid-transfer
+// looks like. Measured twice on 2026-08-23: once in continuous integration and
+// once locally as `TLS connect error: … unexpected eof while reading`.
+//
+// ⚠️ THREE ATTEMPTS, AND THE LAST FAILURE IS REPORTED UNCHANGED. A wrong URL
+// and a missing branch fail exactly as a transient fault does, so this cannot
+// tell them apart and does not try: a permanent failure costs three seconds and
+// produces the message it always did. Hiding a real error behind a retry is the
+// worse trade, which is why the count is small and the report is untouched.
+//
+// ⚠️ BOTH NETWORK STEPS, not one. The first version retried only the clone —
+// and a probe with a nonexistent repository failed in ONE second, because the
+// step that runs first is `git ls-remote` and it was still bare. A retry on
+// half of a path is a retry that reports success at having been added.
+//
+// `between` runs after a failed attempt: the clone needs the partial directory
+// removed, or git's next attempt fails with "already exists and is not an empty
+// directory" — a second, different error that says nothing about the first.
+mcpp::platform::process::RunResult run_with_network_retry(
+        std::string_view command,
+        const std::function<void()>& between = {}) {
+    mcpp::platform::process::RunResult r{};
+    for (int attempt = 1; attempt <= 3; ++attempt) {
+        r = mcpp::platform::process::capture(command);
+        if (r.exit_code == 0) return r;
+        if (between) between();
+        if (attempt < 3)
+            std::this_thread::sleep_for(std::chrono::seconds(attempt));
+    }
+    return r;
+}
+
 void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
                            const mcpp::toolchain::Toolchain* tc)
 {
     e.toolchainDir  = (tc && !tc->binaryPath.empty())
         ? tc->binaryPath.parent_path().parent_path().string() : std::string{};
     e.targetSysroot = tc ? tc->targetSysrootRoot.string() : std::string{};
+    e.compilerId    = !tc ? std::string{}
+        : tc->compiler == mcpp::toolchain::CompilerId::GCC   ? "gcc"
+        : tc->compiler == mcpp::toolchain::CompilerId::Clang ? "clang"
+        : tc->compiler == mcpp::toolchain::CompilerId::MSVC  ? "msvc"
+        : std::string{};
     e.targetLibc    = tc ? tc->targetSysrootPkg : std::string{};
     if (!tc) return;
 
@@ -800,6 +847,13 @@ prepare_build(bool print_fingerprint,
               bool includeDevDeps = false,
               std::vector<mcpp::manifest::Target> extraTargets = {},
               BuildOverrides overrides = {}) {
+    // A refusal decided early and released late. `host_can_serve` answers
+    // "does a payload on this machine produce this target", which is knowable
+    // before dependency resolution and is only half the question: a package in
+    // the graph can supply the target's system, and the graph is not known
+    // here. Held until it is, and released only if nothing supplies it.
+    std::string unservedTargetDiagnosis;
+
     auto root = overrides.project_root.empty()
         ? mcpp::project::find_manifest_root(std::filesystem::current_path())
         : std::optional<std::filesystem::path>(overrides.project_root);
@@ -1337,6 +1391,7 @@ prepare_build(bool print_fingerprint,
         bool hasExplicitSection   = it != m->targetOverrides.end();
         bool hasToolchainOverride = hasExplicitSection
                                  && !it->second.toolchain.empty();
+
         const triple::TargetInfo* known =
             parsed ? triple::find_known_target(*parsed) : nullptr;
 
@@ -1381,7 +1436,28 @@ prepare_build(bool print_fingerprint,
         // The escape hatch stays open on purpose: an explicit `[target.X]`
         // toolchain override means the author is supplying the cross toolchain
         // themselves, and mcpp's payload matrix has no standing to refuse it.
-        if (known && known->tier != "planned" && !hasToolchainOverride && parsed
+        // DIAGNOSED HERE, REPORTED LATER, AND THE DIFFERENCE IS THE POINT.
+        //
+        // Whether a payload on this machine produces this target is knowable
+        // now. Whether anything ELSE produces it is not: a dependency can
+        // supply the target's platform interface and C library, and the
+        // dependency graph does not exist yet at this line. Refusing here
+        // therefore answered a narrower question than the one it claimed —
+        // measured, a project that only had to add a dependency was told its
+        // machine could not build the target at all.
+        //
+        // The refusal is kept in full, because it is right whenever nothing
+        // supplies the target side, which remains the ordinary case. It is
+        // carried to where the graph is known and released there. Nothing
+        // between here and there consumes the answer: what follows is toolchain
+        // and dependency resolution, and a target no payload serves resolves to
+        // a driver that simply will not be asked to emit anything.
+        //
+        // The escape hatch stays open on purpose: an explicit `[target.X]`
+        // toolchain override means the author is supplying the cross toolchain
+        // themselves, and mcpp's payload matrix has no standing to refuse it.
+        if (known && known->tier != "planned" && !hasToolchainOverride
+            && parsed
             && !mcpp::toolchain::host_can_serve(*parsed)) {
             std::string servable;
             for (auto const& info : triple::known_targets()) {
@@ -1391,16 +1467,20 @@ prepare_build(bool print_fingerprint,
                 if (!servable.empty()) servable += ", ";
                 servable += t->str();
             }
-            return std::unexpected(std::format(
-                "target '{}' cannot be built on this host — no toolchain payload "
-                "exists that runs here and produces it.\n"
-                "       this host can build: {}\n"
-                "       Build it on a host that can, or supply your own cross "
-                "toolchain with an\n"
-                "       explicit [target.{}] toolchain = \"…\" section.",
+            unservedTargetDiagnosis = std::format(
+                "target '{}' cannot be built on this host.\n"
+                "       No toolchain payload here produces it, and nothing in "
+                "the dependency graph\n"
+                "       supplies its system side.\n"
+                "       this host can build with the payload alone: {}\n"
+                "       To build it anyway, depend on a package that implements "
+                "the target's system\n"
+                "       (its kernel interface and C library), or supply your own "
+                "cross toolchain with\n"
+                "       an explicit [target.{}] toolchain = \"…\" section.",
                 parsed->str(),
                 servable.empty() ? "(nothing — `mcpp toolchain list`)" : servable,
-                parsed->str()));
+                parsed->str());
         }
         // Canonical from here on: cfg evaluation, spec attachment and the
         // target/ output directory all see one spelling.
@@ -1427,16 +1507,28 @@ prepare_build(bool print_fingerprint,
         // A convention, not an instruction: on the Windows-GNU first-run path
         // this is what turns the seeded target into `gcc@16.1.0`.
         //
-        // It must not fire when a REMEMBERED target would overrule a
-        // toolchain the user wrote down. Once the no-Visual-Studio fallback
-        // persists `default_target = x86_64-windows-gnu`, every later project
-        // inherits that target — and the pin attached to it would then
-        // silently replace an explicit `[toolchain] windows = "llvm@…"`,
-        // which is exactly the promise the fallback is built on ("mcpp
-        // revises its own defaults, never yours"). A target the user asked
-        // for (--target, or [build] target) still wins, as it always has.
-        const bool pinWouldOverruleUser =
-            targetFromGlobalDefault && tc_origin_is_user_explicit(tcOrigin);
+        // It must not fire when it would overrule a toolchain the user wrote
+        // down. The pin is mcpp's own default for a target row — `gcc@16.1.0`
+        // for Windows-GNU, because the mingw payload is what supplies that
+        // target's headers and C library — and an explicit `[toolchain]` line
+        // is not a default. This is the promise the no-Visual-Studio fallback
+        // is built on: mcpp revises its own defaults, never yours.
+        //
+        // HOW THE TARGET WAS NAMED IS NOT PART OF THE QUESTION, and it used to
+        // be. The guard read `targetFromGlobalDefault && user_explicit`, so a
+        // target given on the command line disabled it — and then the row's pin
+        // replaced a toolchain the project had stated. Measured 2026-08-23:
+        // `--target x86_64-windows-gnu` with an explicit `llvm@22.1.8` resolved
+        // `x86_64-w64-mingw32-g++`, and gcc cannot compile libc++'s std module.
+        //
+        // A project that means to use a different compiler for a pinned target
+        // is stating something about its own build, and a project whose target
+        // side comes from its dependency graph is the ordinary reason to do so:
+        // the payload the row names supplies headers and a C library that such
+        // a project does not use. The narrower reading of this guard was
+        // patched with an openkal-specific exception; stating the rule
+        // correctly removes the need for one.
+        const bool pinWouldOverruleUser = tc_origin_is_user_explicit(tcOrigin);
         if (known && !hasToolchainOverride && !known->pin.empty()
             && !pinWouldOverruleUser) {
             tcSpec = std::string(known->pin);
@@ -1822,15 +1914,55 @@ prepare_build(bool print_fingerprint,
     // `tc.targetTriple`, so correcting it here corrects all of them at once —
     // which is the point of there being one field rather than five answers.
     //
-    // ⚠️ Scoped to freestanding on purpose. The hosted cross targets already
-    // resolve a per-target binary, and overwriting their probed triple would
-    // replace a measured fact with an assumed one for no gain.
+    // ⚠️ THIS USED TO BE SCOPED TO FREESTANDING, WITH THIS REASON:
+    //
+    //     The hosted cross targets already resolve a per-target binary, and
+    //     overwriting their probed triple would replace a measured fact with
+    //     an assumed one for no gain.
+    //
+    // ⭐⭐ That was true while every hosted cross was served by a payload. It
+    // stops being true when the TARGET SIDE comes from the dependency graph:
+    // the C library, the C++ runtime and the platform's own implementation are
+    // then packages built from source, and the compiler is an ordinary clang —
+    // whose `-dumpmachine` answers the host, exactly as the paragraph above
+    // describes for freestanding.
+    //
+    // ⚠️ Measured 2026-08-23, with an explicit `[target.aarch64-macos]
+    // toolchain = "llvm@…"`. The manifest's cfg evaluation used the REQUESTED
+    // target, so the C library's aarch64 headers were on the command line; the
+    // toolchain's own triple was still the host's, so code generation was
+    // x86_64. Two answers to one question, in one command:
+    //
+    //     okm_float_assert.c: the C library and the compiler disagree about
+    //     LDBL_DIG  ('33 == 18')          33 = aarch64 binary128, 18 = x87
+    //
+    // ⇒ The condition is now the property the first paragraph of this comment
+    // already names: a RETARGETABLE driver has to be told. gcc is not one — a
+    // gcc payload IS its target — so the mingw and musl-gcc crosses keep
+    // answering from `-dumpmachine`, which for them remains a measured fact.
     if (!overrides.target_triple.empty()) {
         if (auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
-            want && want->is_freestanding())
+            want && (want->is_freestanding()
+                     || tc->compiler == mcpp::toolchain::CompilerId::Clang))
         {
             tc->targetTriple = want->str();
 
+            // And the flag that says it to the driver — for a HOSTED target
+            // only. Freestanding already emits its own `--target`, together
+            // with the ISA flags that must accompany it
+            // (freestanding/target.cppm); a second one here would be the same
+            // decision in two places.
+            if (!want->is_freestanding()
+                && tc->compiler == mcpp::toolchain::CompilerId::Clang) {
+                tc->crossTargetFlag =
+                    "--target=" + want->llvm_triple(
+                        mcpp::platform::macos::deployment_target(
+                            m->buildConfig.macosDeploymentTarget));
+            }
+        }
+        if (auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
+            want && want->is_freestanding())
+        {
             // `import std` is structurally hosted, and turning it off is the
             // SAME fact as the line above, not a second policy: libc++'s
             // std.cppm is one module over the whole library, including the
@@ -4183,7 +4315,9 @@ prepare_build(bool print_fingerprint,
                             std::format("mcpp.lock records no commit for branch "
                                         "'{}'", spec.gitRev),
                             "resolve");
-                    auto r = mcpp::platform::process::capture(std::format(
+                    // The FIRST network step of a git dependency, and therefore
+                    // the one a transient fault is most likely to meet.
+                    auto r = run_with_network_retry(std::format(
                         "git ls-remote {} {} 2>&1",
                         mcpp::platform::shell::quote(spec.git),
                         mcpp::platform::shell::quote(
@@ -4265,7 +4399,11 @@ prepare_build(bool print_fingerprint,
                         mcpp::platform::shell::quote(gitRoot.string()),
                         mcpp::platform::shell::quote(gitRoot.string()),
                         mcpp::platform::shell::quote(resolvedGitRev));
-                auto r = mcpp::platform::process::capture(cloneCmd);
+                // See `run_with_network_retry` for why, and for what the
+                // callback is removing between attempts.
+                auto r = run_with_network_retry(cloneCmd, [&] {
+                    std::filesystem::remove_all(gitRoot, ec);
+                });
                 if (r.exit_code != 0) {
                     std::filesystem::remove_all(gitRoot, ec);
                     return std::unexpected(std::format(
@@ -5289,6 +5427,142 @@ prepare_build(bool print_fingerprint,
         }
     }
 
+    mcpp::targetside::TargetSide resolvedTargetSide;
+
+    // ── THE TARGET SIDE, RESOLVED ONCE ───────────────────────────────────────
+    //
+    // HERE AND NOT EARLIER, AND THAT IS THE WHOLE POINT.
+    //
+    // mcpp serves two ways of supplying a target's platform interface, C
+    // library and C++ runtime, and the moment each becomes knowable is
+    // opposite: a prebuilt directory is known before dependency resolution, a
+    // set of packages only after it. Until now three separate derivations ran
+    // at the earlier moment and guessed the later answer — the family name in
+    // this file, `graphTargetSide` in flags, `graphCxxRuntime` in the contract
+    // — and they disagreed on the case none of them was written for. Measured:
+    //
+    //   ld64.lld: error: …/lib/x86_64-unknown-linux-gnu/libc++.so:
+    //                    unhandled file type
+    //
+    // for a pure C program crossed to macOS, whose graph supplies a C library
+    // and no C++ runtime at all.
+    //
+    // Placing the resolution after capability binding and before the root
+    // build.mcpp means every later consumer reads one value, and a build
+    // program can be told what was resolved rather than re-deriving it.
+    {
+        namespace tsd = mcpp::targetside;
+
+        // Scan the graph once for each layer. A package declares the layer it
+        // supplies and, optionally, the interface name it answers to:
+        //
+        //     provides = ["mcpp:kernel-abi=openkal"]
+        //
+        // The engine knows the three layer names and nothing about the
+        // implementations that fill them. `hosted-standard-library` is accepted
+        // for the C++ layer as the spelling that shipped before this one, so an
+        // existing package keeps working unchanged.
+        auto provider_of = [&](tsd::CapLayer want)
+            -> std::optional<tsd::Provider> {
+            std::optional<tsd::Provider> found;
+            for (auto const& pkg : packages) {
+                for (auto const& entry : pkg.manifest.provides) {
+                    std::optional<tsd::CapDecl> decl;
+                    if (auto parsed = tsd::parse_capability(entry); parsed && *parsed)
+                        decl = **parsed;
+                    else if (entry == "hosted-standard-library")
+                        decl = tsd::CapDecl{ tsd::CapLayer::CxxAbi, {} };
+                    if (!decl || decl->layer != want) continue;
+
+                    tsd::Provider p;
+                    p.name          = pkg.manifest.package.name;
+                    p.version       = pkg.manifest.package.version;
+                    p.interfaceName = decl->interfaceName;
+                    p.hasStdModule  = !pkg.manifest.stdModule.empty();
+                    // A package may carry both spellings during the transition,
+                    // and the array order is the author's, not a preference.
+                    // The current spelling names the interface; the older one
+                    // cannot, so taking whichever came first would report a
+                    // package name where an interface name belongs.
+                    if (!found || (found->interfaceName.empty()
+                                   && !p.interfaceName.empty()))
+                        found = p;
+                }
+            }
+            return found;
+        };
+
+        tsd::Inputs in;
+        if (tc) {
+            if (auto tt = mcpp::toolchain::triple::parse(tc->targetTriple)) {
+                in.llvmTriple         = tt->llvm_triple(
+                    mcpp::platform::macos::deployment_target(
+                        m->buildConfig.macosDeploymentTarget));
+                in.targetOs           = tt->os;
+                in.targetEnv          = tt->env;
+                in.freestandingTarget = tt->is_freestanding();
+
+                // `sysroot = ""` and "no sysroot key" are different answers and
+                // must not be collapsed: the first says this project wants no
+                // prebuilt C library, the second says it did not say.
+                if (auto const* ovr = sysroot_override(*m, *tt); ovr && ovr->empty())
+                    in.sysrootDeclaredEmpty = true;
+                else
+                    in.sysrootXpkg = mcpp::toolchain::triple::effective_sysroot(
+                        *tt, sysroot_override(*m, *tt));
+            }
+            in.payloadLibcRef      = tc->targetSysrootPkg;
+            in.payloadCxxInterface = tc->stdlibId;
+        }
+        in.kernelAbi = provider_of(tsd::CapLayer::KernelAbi);
+        in.cAbi      = provider_of(tsd::CapLayer::CAbi);
+        in.cxxAbi    = provider_of(tsd::CapLayer::CxxAbi);
+
+        resolvedTargetSide = tsd::resolve(in);
+        if (auto why = tsd::check_layering(resolvedTargetSide))
+            return std::unexpected(*why);
+
+        // The refusal held since toolchain resolution, released now that the
+        // other half of its question has an answer. A payload on this machine
+        // does not produce this target; if the graph does not supply the
+        // target's system either, then nothing does and the diagnosis stands.
+        if (!unservedTargetDiagnosis.empty()
+            && !resolvedTargetSide.system_from_graph())
+            return std::unexpected(unservedTargetDiagnosis);
+
+        // A request that cannot be honoured is said so rather than dropped.
+        //
+        // Measured 2026-08-23: `[build] linkage = "dynamic"` on a project whose
+        // system comes from the graph produced a statically linked artifact and
+        // printed nothing. The outcome is correct — the graph supplies its
+        // libraries as objects compiled into this build, and there is no shared
+        // object for a loader to resolve at run time — but a directive that has
+        // no effect and no diagnostic is indistinguishable from one that was
+        // never read.
+        if (resolvedTargetSide.system_from_graph()
+            && m->buildConfig.linkage == "dynamic")
+            mcpp::ui::warning(
+                "`linkage = \"dynamic\"` has no effect when the "
+                "target's system comes from the dependency graph: those "
+                "packages are compiled into this build as objects, and there "
+                "is no shared object to link against. The artifact is static.");
+
+        // Reported, and reported HERE rather than recorded in a manifest field.
+        //
+        // A line a project writes states an intention, and it goes stale the
+        // moment the packages beneath it change — a program that names its C
+        // library by name is naming a transitive dependency it did not choose.
+        // This states the outcome, so it cannot be stale, and it answers a
+        // question that until now had no answer at all: reading every manifest
+        // in the graph did not tell anyone what would end up on the link line,
+        // because three places derived it separately and could disagree.
+        mcpp::ui::info("Target", tsd::format_report(
+            resolvedTargetSide,
+            resolvedTargetCanonical.empty()
+                ? (tc ? tc->targetTriple : std::string{})
+                : resolvedTargetCanonical));
+    }
+
     // ── L3: ROOT build.mcpp (moved after dependency resolution, design §3.1
     // item 4) ────────────────────────────────────────────────────────────────
     // Runs HERE — after dep resolution + feature activation (so the contract
@@ -5482,6 +5756,135 @@ prepare_build(bool print_fingerprint,
     }
 
     bool needsStdModule = graph_or_targets_import_std(scan.graph, *m, *root);
+    // A standard library that came from a PACKAGE brings its own module
+    // source, because the compiler cannot be asked for one it does not have.
+    //
+    // `-print-library-module-manifest-path' is the right question when the
+    // standard library is the compiler's own. It is the wrong question when
+    // the library was configured by a package for a target the compiler
+    // knows nothing about: the source exists, and the compiler has never
+    // heard of it. So the package says where it is, and what it needs ---
+    // its include path and its own __config_site, neither of which the
+    // compiler would find.
+    //
+    // Both are read only from a package that ALSO provides the capability
+    // below. A package that named a std module without supplying the
+    // library would be describing something it does not have.
+    for (auto& pkg : packages) {
+        if (pkg.manifest.stdModule.empty()) continue;
+        const auto& provs = pkg.manifest.provides;
+        if (std::find(provs.begin(), provs.end(),
+                      std::string{"hosted-standard-library"}) == provs.end())
+            continue;
+        auto src = pkg.root / pkg.manifest.stdModule;
+        if (!std::filesystem::exists(src)) {
+            return std::unexpected(std::format(
+                "package '{}' declares [package].std-module = '{}', and there "
+                "is no such file under '{}'",
+                pkg.manifest.package.name, pkg.manifest.stdModule,
+                pkg.root.string()));
+        }
+        tc->stdModuleSource   = src;
+        // ⚠️ AND THE COMPAT MODULE, FROM THE SAME PACKAGE OR NOT AT ALL.
+        //
+        // `std.compat` is a second module over the SAME library. Leaving it
+        // pointing at the toolchain's copy does not fail where it is set — it
+        // fails later, in that copy's own headers, against a configuration that
+        // was never generated for this target. Measured on a macOS cross:
+        //
+        //   error: std module precompile failed (rc=1):
+        //     …/xim-x-llvm/22.1.8/share/libc++/v1/std.compat.cppm
+        //     …/include/c++/v1/__config:13: '__config_site' file not found
+        //
+        // — which reads as a broken toolchain payload and says nothing about
+        // the two libraries having been mixed. A package that supplies one
+        // module supplies both, or the pair is not offered.
+        if (!pkg.manifest.stdCompatModule.empty()) {
+            auto csrc = pkg.root / pkg.manifest.stdCompatModule;
+            if (!std::filesystem::exists(csrc)) {
+                return std::unexpected(std::format(
+                    "package '{}' declares [package].std-compat-module = '{}', "
+                    "and there is no such file under '{}'",
+                    pkg.manifest.package.name, pkg.manifest.stdCompatModule,
+                    pkg.root.string()));
+            }
+            tc->stdCompatSource = csrc;
+        } else {
+            tc->stdCompatSource.clear();
+        }
+        tc->targetCxxRuntime  = true;
+        tc->hasImportStd      = true;
+        tc->importStdMinLevel = 20;   // libc++'s own floor; see clang.cppm
+        // The target, first. On a freestanding target that means the whole ISA
+        // profile --- `--target', `-march', `-mabi', `-mcmodel' --- because a
+        // module built without them disagrees with every unit that imports it,
+        // and clang reports that as an ABI mismatch naming a .pcm file rather
+        // than the flag that split them. On a hosted one it is the triple alone.
+        std::string flags;
+        if (auto fs = mcpp::toolchain::triple::parse(tc->targetTriple);
+            fs && fs->is_freestanding()) {
+            if (auto spec = mcpp::freestanding::resolve(*fs))
+                flags += mcpp::freestanding::compile_prefix(*spec, true);
+        } else if (!tc->crossTargetFlag.empty()) {
+            // ⚠️ `crossTargetFlag` and not `targetTriple`. The triple is mcpp's
+            // vocabulary (`aarch64-macos`); the flag carries the spelling a
+            // compiler takes (`arm64-apple-macos14.0`). Measured: emitting the
+            // first produced `--target=aarch64-macos`, which clang accepts as a
+            // triple it has never heard of and then treats as a bare-metal
+            // aarch64 — the module and its importers would agree with each
+            // other and with nothing else.
+            flags += " " + tc->crossTargetFlag;
+            // ⚠️ AND THE SECOND CHANNEL. `hostflags.cppm` reaches every ordinary
+            // translation unit; this command is assembled here instead, so a
+            // `std.pcm` built with SEH would be imported by units built with
+            // DWARF. Same function, not a second copy of the decision.
+            for (auto& f : mcpp::toolchain::graph_runtime_compile_flags(*tc))
+                flags += " " + f;
+        }
+        // Everything up to here says which machine the module is for; what
+        // follows says where its headers are. The codegen step needs only the
+        // first — see Toolchain::stdModuleTargetFlags.
+        tc->stdModuleTargetFlags = flags;
+        for (auto& f : pkg.manifest.stdModuleFlags) {
+            // A flag naming a path is relative to the package that named it,
+            // for the same reason the module source is.
+            auto candidate = pkg.root / f;
+            flags += " " + mcpp::xlings::shq(
+                std::filesystem::exists(candidate) ? candidate.string() : f);
+        }
+        // ⚠️ AND THE HEADERS THIS PACKAGE ITSELF IS BUILT AGAINST.
+        //
+        // The std module source is one of this package's translation units in
+        // every way that matters, and it reaches the C library's headers the
+        // same way the rest of them do --- through the requirements the packages
+        // BENEATH this one publish. A package cannot name those in its own
+        // manifest: they belong to its dependencies, and their paths are known
+        // only after resolution.
+        //
+        // Measured: without them the module compiles until libc++ includes
+        // <bits/alltypes.h>, which is the C library's, and stops there.
+        // publicUsage rather than privateBuild: the module is compiled once and
+        // imported by consumers, so the headers it must see are the ones the
+        // package PUBLISHES, not the ones it happens to build itself against.
+        // The two differ, and the difference is not cosmetic --- a package's own
+        // build path carries directories that exist for its .cpp files and that
+        // shadow the library's headers when a module is compiled against them.
+        for (auto& d : pkg.publicUsage.includeDirs)
+            flags += " -isystem " + mcpp::xlings::shq(d.string());
+        for (auto& d : pkg.publicUsage.includeDirsAfter)
+            flags += " -idirafter " + mcpp::xlings::shq(d.string());
+        // And the definitions, for the same reason as the directories: a C
+        // library's headers show a different library depending on which feature
+        // macros are set, and the ones this package is built with are the ones
+        // its own translation units see. Measured: without them the module
+        // reaches musl's <time.h> and stops on `clockid_t', a name that header
+        // declares only under the macro the package carries.
+        for (auto& f : pkg.publicUsage.cxxflags)
+            flags += " " + mcpp::xlings::shq(f);
+        tc->stdModuleFlags = flags;
+        break;
+    }
+
     if (needsStdModule && !tc->hasImportStd) {
         // A freestanding target reaches here for a reason the generic message
         // gets wrong. Nothing is missing from the toolchain — libc++'s std
@@ -5512,8 +5915,29 @@ prepare_build(bool print_fingerprint,
         // not fix it either: the request has to name a version the index
         // actually carries. Publishing a new std-freestanding means updating
         // this literal in the same change.
+        // ⚠️ THE QUESTION IS WHETHER A HOSTED STANDARD LIBRARY IS PRESENT, NOT
+        // WHETHER THE TARGET IS FREESTANDING.
+        //
+        // Those were the same question for as long as no one had built one for
+        // such a target, and they stopped being the same when someone did:
+        // `mcpplibs/openkal-llvm-runtime' configures libc++, libc++abi and
+        // libunwind for a machine with no operating system, and a program above
+        // it has the library this refusal says it cannot have.
+        //
+        // The refusal is kept, because it is right in every case where nothing
+        // supplies one --- which is still the ordinary case, and the advice
+        // below is still the advice. What changes is that a package can now say
+        // otherwise, and it says so the way every other capability is declared:
+        //
+        //     provides = ["hosted-standard-library"]
+        //
+        // A capability rather than a triple, because the fact is a property of
+        // the graph and not of the target, and because dependency resolution is
+        // the earliest time at which it is known.
+        const bool hostedStdProvided =
+            capProviders.find("hosted-standard-library") != capProviders.end();
         if (auto ft = mcpp::toolchain::triple::parse(tc->targetTriple);
-            ft && ft->is_freestanding())
+            ft && ft->is_freestanding() && !hostedStdProvided)
         {
             return std::unexpected(std::format(
                 "`import std;` is not available on '{}' — a freestanding target "
@@ -5695,6 +6119,11 @@ prepare_build(bool print_fingerprint,
                                              stdBmiPath, stdObjectPath, storeRoots);
     if (!planResult) return std::unexpected(planResult.error());
     ctx.plan        = std::move(*planResult);
+    // Resolved far above, where the dependency graph first exists. It is
+    // attached here rather than threaded through `make_plan` because nothing
+    // that function does depends on it: the flag assembly that does reads the
+    // plan, and every reader of `compute_flags` runs after this line.
+    ctx.plan.targetSide = resolvedTargetSide;
     // The module graph outlives the plan for one consumer: `mcpp pack`, which
     // has to know which units are INTERFACE (published as source) and which
     // are implementation (published only as an object). The plan flattens that

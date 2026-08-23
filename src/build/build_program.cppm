@@ -43,6 +43,21 @@ struct BuildProgramEnv {
     // hostprogram::toolchain_dir / sysroot_dir for why declaring was wrong.
     std::string toolchainDir;
     std::string targetSysroot;
+    // ⭐⭐ WHICH COMPILER RESOLVED — "gcc" | "clang" | "msvc" | "".
+    //
+    // A package should never have to guess this, and until this field existed
+    // the only way to was to look at `toolchainDir` and recognise a directory
+    // name. The question is real and recurring: the routines a compiler emits
+    // calls to and no C library defines live in `libgcc.a` under one and in
+    // compiler-rt under another, and the tool that turns a `.def` into an
+    // import library is `dlltool` under one and `llvm-dlltool` under another.
+    //
+    // ⚠️ Measured 2026-08-22, both on the same day and both from the same
+    // missing answer: `openkal-musl` naming `-lgcc` on a link whose compiler was
+    // clang (`unable to find library -lgcc`), and `openkal-windows` running
+    // `llvm-dlltool` under a GCC toolchain (`sh: 1: llvm-dlltool: not found`).
+    // Each package had made the assumption its author's toolchain made true.
+    std::string compilerId;
     // Three more answers a board-support package would otherwise hardcode.
     //
     // ⚠️ THE COUPLING THESE REMOVE IS INVISIBLE IN A MANIFEST. `riscv-virt-rt`
@@ -302,6 +317,31 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     std::vector<std::pair<std::string, std::string>> e;
     auto hostT = mcpp::toolchain::triple::host_triple().str();
     e.emplace_back("MCPP_TARGET", env.targetTriple.empty() ? hostT : env.targetTriple);
+    // ⭐⭐ THE SAME VALUE UNFILLED — EMPTY WHEN NOBODY NAMED A TARGET.
+    //
+    // `MCPP_TARGET` above answers "which machine is this for", and filling it
+    // in with the host is right for that question. It cannot answer a different
+    // one that a platform package has to ask: **was this build POINTED at a
+    // target**, or is it an ordinary native build?
+    //
+    // The two are not the same even when the triples are equal. `mcpp build
+    // --target aarch64-macos` on an arm64 Mac names the same machine the host
+    // is, and yet it is the graph that supplies the target side — so this tool
+    // puts no system SDK on the link, and the package that knows the system is
+    // the only thing that can name one. A native build on the same machine gets
+    // the SDK and needs nothing from the package.
+    //
+    // ⚠️ Measured 2026-08-23, `openkal-macos` trying to decide this from what
+    // was available. From the host: right for the cross, wrong for
+    // `--target aarch64-macos` ON a Mac (`library not found for -lSystem`).
+    // From `MCPP_TARGET`: right for the cross, wrong for the native build,
+    // because it is never empty (`undefined symbol: wcslen`, `strtoul`, … —
+    // the package's three-name stub had shadowed the vendor's complete one).
+    //
+    // ⭐ An older mcpp sets neither, and that is the correct answer for it:
+    // it has no graph-supplied target side, so the system is always on the
+    // link and a package should supply nothing.
+    e.emplace_back("MCPP_TARGET_REQUESTED", env.targetTriple);
     // Convenience splits of the resolved target (Cargo CARGO_CFG_TARGET_*
     // parity): parsed ONCE here through the canonical triple parser so every
     // build.mcpp stops hand-splitting MCPP_TARGET. MCPP_TARGET_ENV is "" when
@@ -322,6 +362,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     // absent variable would make the answer depend on whatever the parent
     // process happened to export.
     e.emplace_back("MCPP_TOOLCHAIN_DIR", env.toolchainDir);
+    e.emplace_back("MCPP_COMPILER", env.compilerId);
     e.emplace_back("MCPP_TARGET_SYSROOT", env.targetSysroot);
     e.emplace_back("MCPP_TARGET_BUILTINS_LIB", env.targetBuiltinsLib);
     e.emplace_back("MCPP_TARGET_LIBC_PROFILE", env.targetLibcProfile);

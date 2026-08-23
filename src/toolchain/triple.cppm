@@ -44,6 +44,57 @@ struct Triple {
         return s;
     }
 
+    // ⭐⭐ THE SPELLING A COMPILER TAKES, WHICH IS NOT THE SPELLING mcpp USES.
+    //
+    // `str()` is mcpp's vocabulary: short, unambiguous, and the thing a user
+    // types. LLVM's is a four-field form with a vendor, and on Apple platforms
+    // the architecture has a different name and the OS carries a version.
+    //
+    // ⚠️ THIS EXISTS BECAUSE CROSS-COMPILING USED TO MEAN SOMETHING NARROWER.
+    // Every hosted cross mcpp could do was served by a payload whose DRIVER was
+    // already specialised — `x86_64-w64-mingw32-g++` needs no `--target`,
+    // because it has only one. So nothing ever needed this function, and
+    // nothing emitted `--target=` outside the freestanding path.
+    //
+    // openkal changes the shape of the question. The target side — headers,
+    // C library, C++ runtime, the OS's own openkal implementation — is a set of
+    // PACKAGES in the dependency graph, built from source by whichever compiler
+    // is running. What remains for the compiler is code generation, and clang
+    // emits every format it was built with from one binary. There is no payload
+    // to specialise, so the triple has to be said out loud.
+    //
+    // ⚠️ Measured 2026-08-23, before this existed: a build for `aarch64-macos`
+    // resolved the whole graph, took musl's aarch64 headers, and compiled with
+    // NO `--target` at all — so the host's x86_64 code generation met aarch64
+    // declarations. What caught it was the port's own assertion, which exists
+    // for exactly this:
+    //
+    //     okm_float_assert.c: the C library and the compiler disagree about
+    //     LDBL_DIG  ('33 == 18')
+    //
+    // 33 is aarch64's binary128; 18 is x87. Two machines in one command line.
+    std::string llvm_triple(std::string_view macosVersion = {}) const {
+        if (empty()) return {};
+        if (os == "macos") {
+            // Apple spells the 64-bit ARM architecture `arm64`, and the OS
+            // component carries the deployment target: `arm64-apple-macos14`.
+            // Without a version clang picks its own default, which is a
+            // decision belonging to the project rather than to the compiler.
+            const std::string a = (arch == "aarch64") ? "arm64" : arch;
+            std::string t = a + "-apple-macos";
+            t += macosVersion.empty() ? std::string("14.0")
+                                      : std::string(macosVersion);
+            return t;
+        }
+        if (os == "windows") {
+            if (is_msvc_env()) return arch + "-pc-windows-msvc";
+            return arch + "-w64-windows-gnu";
+        }
+        if (os == "linux") return arch + "-unknown-linux-" + (env.empty() ? "gnu" : env);
+        if (os == "none")  return str();   // freestanding: already LLVM's form
+        return str();
+    }
+
     bool is_musl() const        { return env == "musl"; }
     bool is_msvc_env() const    { return env == "msvc"; }
     bool is_windows_gnu() const { return os == "windows" && env == "gnu"; }

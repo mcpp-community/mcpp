@@ -30,6 +30,7 @@
 export module mcpp.build.distribution;
 
 import std;
+import mcpp.toolchain.triple;
 
 export namespace mcpp::build::dist {
 
@@ -101,6 +102,45 @@ enum class Contract {
 // The binary format decides which mechanisms even exist — Mach-O has no
 // priority-ordered initializer section, PE has no rpath, ELF has both.
 enum class Format { Elf, MachO, Pe };
+
+// ⭐⭐ WHICH FORMAT A TARGET PRODUCES, ASKED OF THE TARGET.
+//
+// `hostFallback` is what a triple outside the vocabulary falls back to, and it
+// is a parameter rather than a compile-time constant so that this function can
+// be examined without being the machine it is about.
+//
+// ⚠️ THIS USED TO BE A LAMBDA INSIDE A FIFTEEN-HUNDRED-LINE FUNCTION, AND THAT
+// IS WHY IT HAD NO TEST. It tested the triple for the substrings `apple` and
+// `darwin`, which are LLVM's words; mcpp's canonical form is `aarch64-macos`
+// and contains neither, so the test fell through to a question about the HOST
+// and produced opposite errors on opposite hosts:
+//
+//   Linux host, macOS target  → an ELF contract for a Mach-O
+//   macOS host, Linux target  → a Mach-O contract for an ELF, which is
+//                               `ld.lld: error: unable to find library
+//                               -load_hidden` plus the host's own libc++.a on
+//                               an ELF link line
+//
+// Both were found by running three hosts against three targets. Either would
+// have been found by four lines of assertion, once this was a function.
+//
+// The substring tests remain as a fallback for a triple the vocabulary cannot
+// parse — the `[target.X]` escape hatch — where a spelling is all there is.
+Format format_for(std::string_view targetTriple, Format hostFallback) {
+    if (auto parsed = mcpp::toolchain::triple::parse(targetTriple)) {
+        if (parsed->is_pe())         return Format::Pe;
+        if (parsed->os == "macos")   return Format::MachO;
+        if (parsed->os == "linux"
+            || parsed->os == "none") return Format::Elf;
+    }
+    if (targetTriple.find("windows") != std::string_view::npos
+        || targetTriple.find("mingw") != std::string_view::npos)
+        return Format::Pe;
+    if (targetTriple.find("apple") != std::string_view::npos
+        || targetTriple.find("darwin") != std::string_view::npos)
+        return Format::MachO;
+    return hostFallback;
+}
 
 std::string_view to_string(Contract c) {
     switch (c) {
@@ -256,6 +296,27 @@ struct MechanismInput {
     // (measured 2026-08-19). A target-side C++ runtime, if one is wanted, is
     // an ordinary package — the same way the libc is.
     bool             freestanding = false;
+    // ⭐⭐ THE HOSTED FORM OF THE LINE ABOVE: a package in the graph supplies
+    // the C++ runtime, built for this target, and its objects are already on
+    // the link line.
+    //
+    // The table below has three answers and all of them name a runtime to LINK
+    // — the system's, the toolchain's, or a static form of one. Each is right
+    // when the runtime is something the artifact has to be JOINED to, and each
+    // is wrong here, where it is already inside. The archives it would find are
+    // the host's, which is the same defect the `freestanding` flag above
+    // exists for; the difference is only that this target has an OS.
+    //
+    // ⚠️ Measured 2026-08-23, cross-building for `aarch64-macos` over openkal
+    // right after the format decision was corrected to key on the target — the
+    // wrong format had been masking this:
+    //
+    //     ld64.lld: error: library not found for -lc++
+    //
+    // ⇒ Not "pick openkal's here". openkal's IS the objects; there is no
+    // library to name, and the honest flag is the one that stops the driver
+    // from adding its own.
+    bool             graphCxxRuntime = false;
 };
 
 struct Mechanism {
@@ -351,7 +412,7 @@ Mechanism resolve(const MechanismInput& in) {
     // ELF here, and every ELF cell below reaches for the toolchain's HOST
     // archives. One of them silently produced a link line with
     // x86-64 libc++.a on a riscv64 link.
-    if (in.freestanding) {
+    if (in.freestanding || in.graphCxxRuntime) {
         m.effective = Contract::SelfContained;
         m.unitFlags = " -nostdlib++";
         return m;

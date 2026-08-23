@@ -904,6 +904,24 @@ struct Manifest {
     // one provider from the graph. See
     // .agents/docs/2026-06-29-feature-capability-model-design.md.
     std::vector<std::string>                        provides;        // package-level
+    // [package] std-module / std-module-flags — a package that IS a standard
+    // library says where its `std' module source is and what that source needs
+    // to compile. The build tool otherwise asks the COMPILER where std.cppm is
+    // (`-print-library-module-manifest-path'), which is right whenever the
+    // standard library is the compiler's own and wrong when it is a package's:
+    // that source was configured for a target the compiler knows nothing about,
+    // and its include path and its __config_site are the package's.
+    //
+    // Both are read only from a package that also provides the capability the
+    // std-module gate reads; a package that says one without the other is
+    // saying something about a library it does not supply.
+    std::string                                     stdModule;       // relative path
+    // The second module over the SAME library. A package that names
+    // `std-module` and not this one offers `import std;` and not
+    // `import std.compat;` — a complete answer, and better than silently
+    // pairing its own `std` with the toolchain's `std.compat`.
+    std::string                                     stdCompatModule;
+    std::vector<std::string>                        stdModuleFlags;
     std::map<std::string, std::vector<std::string>> featureProvides; // feature → caps
     std::map<std::string, std::vector<std::string>> featureRequires; // feature → caps
     // Feature System v2 Stage 2a — dependencies activated by a feature. A dep

@@ -210,7 +210,13 @@ inline std::optional<Spec> resolve(std::string_view triple) {
 // what the compiler may assume about the library (no `main` special-casing, no
 // builtin-to-libcall rewrites it cannot back up), and that assumption has to
 // hold for every TU in the build, including a dependency's.
-inline std::vector<std::string> compile_flags(const Spec& s) {
+// `targetCxxRuntime` — a package in the graph supplies a C++ runtime BUILT FOR
+// THIS TARGET (libc++abi and an unwinder). The comment below predicted this
+// case and named it as the point at which the exception/RTTI pair stops being
+// unconditional; the caller answers it from the capability the graph declares,
+// so the answer is the graph's rather than a guess about the target.
+inline std::vector<std::string> compile_flags(const Spec& s,
+                                              bool targetCxxRuntime = false) {
     std::vector<std::string> out;
     out.emplace_back(std::string("-march=") + std::string(s.march));
     out.emplace_back(std::string("-mabi=")  + std::string(s.mabi));
@@ -220,7 +226,56 @@ inline std::vector<std::string> compile_flags(const Spec& s) {
     // `-ffreestanding` so the ordering of this function's output stays a
     // function of the table rather than of the row.
     for (auto flag : s.extra) out.emplace_back(flag);
-    out.emplace_back("-ffreestanding");
+    // ⭐ AND `-ffreestanding` ITSELF IS ONE OF THE THINGS THE GRAPH DECIDES.
+    //
+    // The paragraph above this function names what the flag changes: "no `main`
+    // special-casing, no builtin-to-libcall rewrites it cannot back up". Both
+    // are statements about whether a library is there — and when a package in
+    // the graph provides `hosted-standard-library` FOR THIS TARGET, one is.
+    // `hosted` is the language's own word for not-freestanding, so a provider
+    // of that capability is asserting exactly the condition this flag denies.
+    //
+    // ⚠️ Measured 2026-08-23, and the way it showed was not a diagnostic about
+    // the flag. A bare-metal program whose `main` was an ordinary C++ `int
+    // main()` failed to link with `undefined symbol: main`, while `nm` on its
+    // own object showed `_Z4mainv` — under `-ffreestanding` a C++ `main` is not
+    // the reserved entry point and is therefore mangled like any other
+    // function. The startup object referred to `main` and nothing defined it.
+    //
+    // The alternative was to make every such program write `extern "C" int
+    // main()`, which is a workaround for a claim the build was making on the
+    // program's behalf and that was no longer true.
+    if (!targetCxxRuntime) out.emplace_back("-ffreestanding");
+    // ⭐⭐ UNWIND TABLES, WHICH THE COMPILER TURNS OFF FOR THIS KIND OF TARGET
+    // AND WHICH NOTHING IN THE BUILD OTHERWISE SAYS.
+    //
+    // On a hosted ELF target clang emits `.eh_frame` for every function by
+    // default. On a bare-metal ELF target it does not — the assumption being
+    // that nothing will ever unwind. When a C++ runtime IS present for the
+    // target that assumption is wrong, and the way it is wrong is specific:
+    // the tables appear for anything compiled with `-fexceptions` (libc++abi,
+    // libunwind's C++ half, the program) and are ABSENT for everything else,
+    // which on this stack means the C library and libunwind's own C sources.
+    //
+    // ⚠️ AND A PARTIAL SET OF TABLES DOES NOT DEGRADE — IT STOPS THE WALK.
+    // Measured 2026-08-23 on riscv64-none-elf, and the measurement is worth
+    // keeping because every intermediate reading pointed elsewhere:
+    //
+    //     __unw_get_proc_info  -> 0  start=80200148 end=8020068c lsda=80447190
+    //     __unw_step           -> 0   (UNW_STEP_END)
+    //     after step           -> 8021d55e
+    //
+    // The frame WAS found, its personality data WAS found, the step DID compute
+    // a return address — and `step` still reported the end of the stack,
+    // because libunwind re-derives the info for the caller and the caller was
+    // `__libc_start_main`, a C function with no table. `_Unwind_RaiseException`
+    // lives in libunwind's own `UnwindLevel1.c` and has none either, so a throw
+    // ends at the first step with `terminating due to uncaught exception`.
+    //
+    // The asynchronous form rather than `-funwind-tables`: it is what a hosted
+    // ELF target already gets by default, and the rest of this stack was
+    // developed against that behaviour.
+    if (targetCxxRuntime) out.emplace_back("-fasynchronous-unwind-tables");
     // ⚠️ No C++ standard library headers. Not a preference — the toolchain's
     // libc++ headers are built for the HOST: `#include <stdio.h>` resolves to
     // libc++'s wrapper, which opens `<__config_site>`, which is generated per
@@ -233,6 +288,8 @@ inline std::vector<std::string> compile_flags(const Spec& s) {
     // package-private by design (the supply-chain rule in
     // mcpp.build.directives), so a libc wrapper includes the target headers
     // privately and exports what it wants seen.
+    // Kept in both cases: a target-side C++ library reaches a consumer through
+    // its own include dirs and modules, never through the compiler's.
     out.emplace_back("-nostdinc++");
     // ⚠️ Exceptions and RTTI off, and this belongs HERE — with the target — for
     // the same reason `-ffreestanding` does: it is a property every TU in the
@@ -259,8 +316,18 @@ inline std::vector<std::string> compile_flags(const Spec& s) {
     // Not a preference, then, but not permanent either: a board that ships a
     // target-built libc++abi and unwinder has a real case for turning these
     // back on, and that is the point at which this becomes a manifest key.
-    out.emplace_back("-fno-exceptions");
-    out.emplace_back("-fno-rtti");
+    //
+    // ⭐ AND THAT POINT HAS ARRIVED. A package that provides the capability
+    // `hosted-standard-library' for this target IS the board described above:
+    // it carries libc++abi and libunwind compiled for it. With one present,
+    // forcing these off is what breaks the build --- the runtime is compiled
+    // with exceptions because it IMPLEMENTS them, and a graph that disagrees
+    // with it reports the same `exception handling was enabled in precompiled
+    // file' the paragraph above quotes.
+    if (!targetCxxRuntime) {
+        out.emplace_back("-fno-exceptions");
+        out.emplace_back("-fno-rtti");
+    }
     return out;
 }
 

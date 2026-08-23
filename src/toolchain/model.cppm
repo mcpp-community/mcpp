@@ -81,6 +81,64 @@ struct Toolchain {
     std::string                         stdlibVersion;
     std::filesystem::path               stdModuleSource;    // bits/std.cc / std.cppm
     std::filesystem::path               stdCompatSource;    // bits/std_compat.cc / std.compat.cppm
+    // Flags the std module source needs that the compiler cannot supply itself.
+    //
+    // Empty for every toolchain that ships its own standard library: there the
+    // module source is the compiler's, and the compiler finds its own headers.
+    // Non-empty when the source comes from a PACKAGE instead --- a standard
+    // library configured for a target the compiler knows nothing about --- and
+    // then the include path and the configuration are the package's, so they
+    // have to be carried here.
+    //
+    // They reach the cache key without anything further being done: the key is
+    // derived from the build COMMANDS, and these are part of them.
+    std::string                         stdModuleFlags;
+    // ⭐⭐ THE PART OF THE ABOVE THAT SAYS WHICH MACHINE, SEPARATED FROM THE
+    // PART THAT SAYS WHERE THE HEADERS ARE.
+    //
+    // `stdModuleFlags` is one string carrying two different facts: the target
+    // and its ABI-affecting options, and the include paths the module's SOURCE
+    // needs. Building the module has two steps, and only the first needs both —
+    // the second compiles a BMI, which already contains everything the headers
+    // contributed.
+    //
+    // ⚠️ Passing the whole string to the second step is not wrong, it is noisy,
+    // and the noise is the kind that hides things:
+    //
+    //     clang++: warning: argument unused during compilation: '-nostdinc++'
+    //     clang++: warning: argument unused during compilation: '-isystem …'
+    //       (× 17, once per include directory)
+    //
+    // Seventeen warnings that are correct and mean nothing, in front of any
+    // warning that would mean something. ⚠️ They were present on every platform
+    // and visible on none: the non-Windows command ends in `2>&1` and mcpp
+    // discards a successful command's output, so the Windows leg — which has no
+    // redirection — is where they first appeared.
+    std::string                         stdModuleTargetFlags;
+    // A package in the graph supplies a C++ runtime built FOR THIS TARGET.
+    // Read by the freestanding flag table, which otherwise forces exceptions
+    // and run-time type information off for every unit — right when nothing can
+    // throw, and wrong when something can.
+    bool                                targetCxxRuntime = false;
+
+    // ⭐⭐ THE `--target=` A RETARGETABLE DRIVER HAS TO BE GIVEN, OR EMPTY.
+    //
+    // Non-empty only when the user asked for a cross AND the resolved compiler
+    // is one binary that emits many targets (clang). For a native build, and
+    // for a cross served by a driver that has exactly one target of its own
+    // (`x86_64-w64-mingw32-g++`), this stays empty and nothing is added.
+    //
+    // ⚠️ IT CANNOT BE DERIVED FROM `targetTriple` BEING NON-EMPTY. A native
+    // build has a `targetTriple` too — the probed one — so a consumer that
+    // tested for non-empty would add `--target=<host>` to every compile in
+    // every project. Measured: it does, and what it produces is not a
+    // diagnostic about targets but `/bin/sh: 1: Syntax error: word unexpected`
+    // out of the generated build file.
+    //
+    // So the fact is recorded where it is KNOWN — at target resolution, which
+    // is the only place that has both the request and the compiler — and read
+    // verbatim everywhere else.
+    std::string                         crossTargetFlag;
     std::filesystem::path               sysroot;            // -print-sysroot output (or empty)
     std::optional<PayloadPaths>         payloadPaths;        // fine-grained sysroot from xpkgs
     // The TARGET's C library, for targets whose row in kKnownTargets names one
@@ -161,6 +219,74 @@ bool is_clang(const Toolchain& tc);
 bool is_musl_target(const Toolchain& tc);
 bool is_msvc_target(const Toolchain& tc);
 bool is_mingw_target(const Toolchain& tc);
+
+// ⭐⭐ THE FLAGS A WHOLE GRAPH HAS TO AGREE ON WHEN THE RUNTIME COMES FROM IT.
+//
+// An ordinary flag is a package's business. These two are not: they change what
+// a translation unit EMITS for constructs the language guarantees work across a
+// program — a `throw` and a `thread_local`. Two objects that disagree link, and
+// then the disagreement is the bug.
+//
+// Both become necessary from one fact, `Toolchain::targetCxxRuntime`: the C++
+// runtime, the unwinder and the C library are packages rather than the
+// compiler's payload. The compiler's defaults for these are chosen for the
+// platform's OWN runtime, which is exactly the thing that is not being used.
+//
+//   -fdwarf-exceptions   PE only. clang defaults to SEH there, whose personality
+//                        (`__gxx_personality_seh0`) and `.pdata`/`.xdata` come
+//                        from the operating system's unwinder. The graph brings
+//                        libunwind, which reads `.eh_frame`.
+//   -femulated-tls       PE and Mach-O. Both reach a `thread_local` through
+//                        something the DYNAMIC LOADER bootstraps — `_tls_index`
+//                        on PE, `_tlv_bootstrap` on Mach-O. A self-contained
+//                        image has no loader to do it, so the access becomes an
+//                        ordinary call into compiler-rt against a key the C
+//                        library owns.
+//   -fvisibility=hidden  Mach-O only. There, a symbol with DEFAULT visibility
+//   -fvisibility-inlines-  and weak (linkonce_odr) linkage — which is what every
+//     hidden              template instantiation and inline function is — is
+//                        coalesced BY THE DYNAMIC LOADER, so the linker routes
+//                        calls to it through a stub and a GOT slot the loader
+//                        fills. That is how one definition wins across dylibs,
+//                        and it is machinery a self-contained image has no use
+//                        for.
+//
+// ⚠️⚠️ AND THE THIRD ONE WAS FOUND BY A PROGRAM THAT LINKED, WAS SIGNED, AND
+// CRASHED ON THE REAL MACHINE — which is the whole argument for running the
+// artefact rather than inspecting it. On an arm64 Mac:
+//
+//     stop reason = EXC_BAD_ACCESS (code=1, address=0x0)
+//     frame #0: 0x0000000000000000
+//
+// No output, no frames: the program jumped to address zero at its first
+// indirect call. The image had 1238 `__stubs` entries and 1335 `__got` slots
+// for THREE undefined symbols, and the stubs' names were its own —
+// `std::vector<int>::__init_with_size`, `operator new`, and a thousand more
+// libc++ internals. `main`'s first statement constructs a `std::vector<int>`.
+//
+// The package builds libc++ with `_LIBCPP_DISABLE_VISIBILITY_ANNOTATIONS`,
+// which is correct for a static build and leaves every instantiation at default
+// visibility. On ELF that is inert — a static link resolves weak definitions at
+// LINK time and nothing survives to run time. On Mach-O it produces the
+// coalescing machinery above.
+//
+// ⇒ Measured after adding the two flags: `__stubs` 0x3a08 → 0x6c, `__got`
+// 0x29b8 → 0x58. Nine stubs and eleven slots, which is the size a program with
+// three imports should have.
+//
+// ⚠️ ELF IS DELIBERATELY ABSENT FROM THE SECOND, and it is not an oversight:
+// there a `thread_local` is a fixed offset from the thread pointer, which the C
+// library establishes itself. Adding the flag would work and cost an indirection
+// on every access — but it would also make ELF the only target whose thread
+// locals are laid out differently from every OTHER build of the same target.
+//
+// ⚠️ AND THE REASON THIS IS A FUNCTION RATHER THAN TWO `if`s: the compile
+// command is assembled in two places (`hostflags.cppm` for every ordinary unit,
+// `prepare.cppm` for the `std` module), and a `std.pcm` built with SEH imported
+// by units built with DWARF is a defect that neither file can see. "One fact,
+// two channels" has produced an identical bug three times in this ecosystem;
+// here the second channel is removed instead of being told to remember.
+std::vector<std::string> graph_runtime_compile_flags(const Toolchain& tc);
 
 // Can the artifact we are building be fully statically linked (`-static`)?
 //
@@ -277,6 +403,22 @@ bool is_mingw_target(const Toolchain& tc) {
     if (auto t = triple::parse(tc.targetTriple)) return t->is_windows_gnu();
     // "x86_64-w64-mingw32" (mingw-w64) / legacy "*-pc-mingw32".
     return tc.targetTriple.find("mingw32") != std::string::npos;
+}
+
+std::vector<std::string> graph_runtime_compile_flags(const Toolchain& tc) {
+    std::vector<std::string> out;
+    if (!tc.targetCxxRuntime) return out;
+    auto t = triple::parse(tc.targetTriple);
+    if (!t) return out;
+    if (t->is_pe()) out.emplace_back("-fdwarf-exceptions");
+    if (t->is_pe() || t->os == "macos") out.emplace_back("-femulated-tls");
+    // ⭐⭐ MACH-O ONLY, AND THE REASON IS THAT WEAK-DEF IS A RUN-TIME MECHANISM
+    // THERE. See the note on this function for the measurement.
+    if (t->os == "macos") {
+        out.emplace_back("-fvisibility=hidden");
+        out.emplace_back("-fvisibility-inlines-hidden");
+    }
+    return out;
 }
 
 bool target_supports_full_static(std::string_view targetTriple, bool hostCapability) {

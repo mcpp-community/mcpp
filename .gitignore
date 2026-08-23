@@ -43,3 +43,9 @@ bench/bench-report.json
 # --project mode writes the measured build's stdout/stderr next to the project
 bench-child.log
 .mcpp.toml.bench-backup
+
+# ⚠️ An empty file a shell redirection left behind. It was committed in #436
+# and lived on `main` for a week; the name reads like a variable that was meant
+# to be expanded (`> $binDir`) and was not. Listed so the same slip is caught
+# next time rather than reviewed again.
+binDir

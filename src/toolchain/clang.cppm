@@ -186,6 +186,28 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
                                                    std::string_view sysrootFlag,
                                                    std::string_view cppStandardFlag) {
     auto relBmi = std::filesystem::relative(bmiPath, cacheDir).string();
+    // ⚠️ A PACKAGE-PROVIDED std MODULE REPLACES THE TOOLCHAIN'S SYSROOT FLAGS
+    // RATHER THAN BEING APPENDED TO THEM.
+    //
+    // Those flags describe the standard library the COMPILER ships and the C
+    // library the HOST has, and they lead with `-isystem' — so appending to them
+    // puts the host's headers ahead of the package's, and no later flag can
+    // undo it. Measured: the module then compiles the host C library's
+    // <wchar.h> and stops on names that library expects the host compiler to
+    // have supplied.
+    //
+    // The triple has to be restated for the same reason: it was in the flags
+    // being replaced, and without it the module is built for whatever machine
+    // is doing the building.
+    // The replacement is complete: whoever set stdModuleFlags stated the target
+    // as well, because the triple was in the string being replaced and a module
+    // built without it is built for whatever machine is doing the building.
+    if (!tc.stdModuleFlags.empty()) sysrootFlag = {};
+    const std::string& extraFlags = tc.stdModuleFlags;
+    // ⚠️ The codegen step compiles a BMI, which already carries what the
+    // headers contributed; only the machine has to be restated. See
+    // Toolchain::stdModuleTargetFlags.
+    const std::string& codegenFlags = tc.stdModuleTargetFlags;
 #if defined(_WIN32)
     // Windows: use absolute paths, raw binary path as first token
     // (cmd.exe strips leading quotes), shq for args with spaces.
@@ -197,47 +219,86 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     // and generates harmless warnings about #include in module purview and
     // the reserved 'std' module name — suppress both.
     std::string ixxFlags = (ext == ".ixx")
-        ? " -x c++-module -Wno-include-angled-in-module-purview -Wno-reserved-module-identifier"
+        ? " -x c++-module -Wno-include-angled-in-module-purview"
         : "";
+    // ⚠️ AND THE RESERVED-NAME WARNING UNCONDITIONALLY, WHICH IS WHAT THE OTHER
+    // BRANCH DOES.
+    //
+    // `export module std;` is a reserved identifier and every standard library
+    // that ships one triggers the warning; the non-Windows command has carried
+    // the suppression since it was written. This branch tied it to `.ixx`,
+    // which was correct while the only `std` module a Windows host ever saw was
+    // the MSVC STL's — and stopped being correct when a package could supply
+    // its own. Measured 2026-08-23, a Windows host building the openkal
+    // runtime's `llvm-generated/std.cppm`:
+    //
+    //     std.cppm:167:15: warning: 'std' is a reserved name for a module
+    //       [-Wreserved-module-identifier]
+    //
+    // A warning that is correct, unavoidable, and printed on every build is
+    // noise of the kind that hides the next one.
+    ixxFlags += " -Wno-reserved-module-identifier";
+    // ⚠️ `extraFlags` IS ON BOTH COMMANDS HERE, AND IT WAS ON NEITHER.
+    //
+    // This branch was written when a Windows host built for itself against the
+    // MSVC STL, and `stdModuleFlags` did not exist — so the omission was not
+    // visible: there was nothing to omit. It became a defect when a package
+    // could supply its own `std` module, because that string is where the
+    // package's own headers, `-nostdinc` and the target triple live.
+    //
+    // ⚠️ Measured 2026-08-23, a Windows host cross-building for
+    // `x86_64-linux-gnu` over openkal — the command it produced carried FIVE
+    // tokens:
+    //
+    //     clang++.exe -std=c++23 --precompile "…/std.cppm" -o "…/std.pcm"
+    //     …/llvm-generated/std.cppm:16:10: fatal error: '__config' file not found
+    //
+    // The same build from a Linux host had `--target=`, `--no-default-config`,
+    // `-nostdinc`, `-nostdinc++` and eight `-I`s. The error names a header, and
+    // the cause is a branch keyed on which machine is doing the building.
     return {
         std::format(
-            "{} {}{}{} "
+            "{} {}{}{}{} "
             "--precompile {} -o {}",
             tc.binaryPath.string(),
             cppStandardFlag,
             ixxFlags,
             sysrootFlag,
+            extraFlags,
             mcpp::xlings::shq(tc.stdModuleSource.string()),
             mcpp::xlings::shq(absBmi)),
         std::format(
-            "{} {}{} "
+            "{} {}{}{} "
             "{} -c -o {}",
             tc.binaryPath.string(),
             cppStandardFlag,
             sysrootFlag,
+            codegenFlags,
             mcpp::xlings::shq(absBmi),
             mcpp::xlings::shq((cacheDir / "std.o").string()))
     };
 #else
     return {
         std::format(
-            "cd {} && {}{} {} -Wno-reserved-module-identifier{} "
+            "cd {} && {}{} {} -Wno-reserved-module-identifier{}{} "
             "--precompile {} -o {} 2>&1",
             mcpp::xlings::shq(cacheDir.string()),
             mcpp::toolchain::compiler_env_prefix(tc),
             mcpp::xlings::shq(tc.binaryPath.string()),
             cppStandardFlag,
             sysrootFlag,
+            extraFlags,
             mcpp::xlings::shq(tc.stdModuleSource.string()),
             mcpp::xlings::shq(relBmi)),
         std::format(
-            "cd {} && {}{} {} -Wno-reserved-module-identifier{} "
+            "cd {} && {}{} {} -Wno-reserved-module-identifier{}{} "
             "{} -c -o std.o 2>&1",
             mcpp::xlings::shq(cacheDir.string()),
             mcpp::toolchain::compiler_env_prefix(tc),
             mcpp::xlings::shq(tc.binaryPath.string()),
             cppStandardFlag,
             sysrootFlag,
+            codegenFlags,
             mcpp::xlings::shq(relBmi))
     };
 #endif
@@ -278,31 +339,79 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
 {
     auto relBmi = std::filesystem::relative(bmiPath, cacheDir).string();
     auto relStdBmi = std::filesystem::relative(stdBmiPath, cacheDir).string();
+    // ⚠️ THE SAME REPLACEMENT THE `std` BUILDER MAKES, FOR THE SAME REASON.
+    //
+    // `std.compat` is a second module over the SAME library, and it therefore
+    // needs the same headers, the same target and the same configuration. This
+    // used to take `sysrootFlag` unconditionally while its sibling above
+    // replaced it — so a package-provided pair had one module built against its
+    // own libc++ and the other against the toolchain's.
+    //
+    // ⚠️ It does not fail where the two are chosen. Measured on a macOS cross:
+    //
+    //   error: std module precompile failed (rc=1):
+    //     …/openkal-llvm-runtime/llvm-generated/std.compat.cppm:16
+    //     …/xim-x-llvm/22.1.8/include/c++/v1/__config:13
+    //         fatal error: '__config_site' file not found
+    //
+    // The SOURCE named is the package's; the header it opened is the
+    // toolchain's, whose per-installation configuration was never generated for
+    // this target. Reading that message, the mixture is invisible.
+    if (!tc.stdModuleFlags.empty()) sysrootFlag = {};
+    const std::string& extraFlags = tc.stdModuleFlags;
+    // Same split as the `std` builder above: the second command compiles a BMI
+    // and needs the machine restated, not the include paths.
+    const std::string& codegenFlags = tc.stdModuleTargetFlags;
     // std.compat depends on std, so we need -fmodule-file=std=<std.pcm>
     // Note: the path after = must NOT be shell-quoted separately; the
     // entire -fmodule-file flag is a single token to the compiler.
+    //
+    // ⚠️⚠️ ABSOLUTE PATHS AND NO `cd`, AND ONE FORM RATHER THAN TWO.
+    //
+    // This used to be `cd <cacheDir> && … pcm.cache/std.pcm …`. `cd X && …`
+    // DOES NOT CHANGE THE DRIVE in cmd.exe — the build cache lives under the
+    // user's profile and a checkout lives wherever the runner put it, so on CI
+    // those are `C:` and `D:`. The `cd` succeeds, the drive stays where it was,
+    // and every relative path resolves against the wrong root. Measured
+    // 2026-08-23, a Windows host cross-building for `x86_64-linux-gnu`:
+    //
+    //     std.compat.cppm:84:8: fatal error: module file 'pcm.cache\std.pcm'
+    //       not found: module file not found
+    //
+    // — and `std.pcm` had been built successfully one command earlier.
+    //
+    // ⚠️ The obvious repair was a `#if defined(_WIN32)` branch, which is what
+    // the `std` builder above has. It was written and then withdrawn: a branch
+    // that only compiles on one platform is a branch this machine cannot check,
+    // and every defect this session found in the host dimension had exactly
+    // that shape — code shaped by which machine was doing the building. Naming
+    // absolute paths is correct everywhere, so there is one form.
+    auto absBmi    = (cacheDir / relBmi).string();
+    auto absStdBmi = (cacheDir / relStdBmi).string();
+    auto absObj    = (cacheDir / "std.compat.o").string();
     return {
-        std::format("cd {} && {}{} {} -Wno-reserved-module-identifier{} "
+        std::format("{}{} {} -Wno-reserved-module-identifier{}{} "
                     "-fmodule-file=std={} "
                     "--precompile {} -o {} 2>&1",
-                    mcpp::xlings::shq(cacheDir.string()),
                     mcpp::toolchain::compiler_env_prefix(tc),
                     mcpp::xlings::shq(tc.binaryPath.string()),
                     cppStandardFlag,
                     sysrootFlag,
-                    relStdBmi,
+                    extraFlags,
+                    absStdBmi,
                     mcpp::xlings::shq(tc.stdCompatSource.string()),
-                    mcpp::xlings::shq(relBmi)),
-        std::format("cd {} && {}{} {} -Wno-reserved-module-identifier{} "
+                    mcpp::xlings::shq(absBmi)),
+        std::format("{}{} {} -Wno-reserved-module-identifier{}{} "
                     "-fmodule-file=std={} "
-                    "{} -c -o std.compat.o 2>&1",
-                    mcpp::xlings::shq(cacheDir.string()),
+                    "{} -c -o {} 2>&1",
                     mcpp::toolchain::compiler_env_prefix(tc),
                     mcpp::xlings::shq(tc.binaryPath.string()),
                     cppStandardFlag,
                     sysrootFlag,
-                    relStdBmi,
-                    mcpp::xlings::shq(relBmi))
+                    codegenFlags,
+                    absStdBmi,
+                    mcpp::xlings::shq(absBmi),
+                    mcpp::xlings::shq(absObj))
     };
 }
 

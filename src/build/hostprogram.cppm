@@ -212,6 +212,15 @@ inline const char* out_dir()                      { return env_or("MCPP_OUT_DIR"
 // `[toolchain]` actually resolved.
 inline const char* toolchain_dir()                { return env_or("MCPP_TOOLCHAIN_DIR"); }
 
+// Which compiler resolved: "gcc", "clang", "msvc", or "" if none did.
+//
+// ⭐ Ask this rather than inferring it from `toolchain_dir()`. The two questions
+// a package has actually needed it for are which runtime library holds the
+// routines the compiler emits calls to, and which spelling of a binutils tool
+// exists beside the driver — and both have a different right answer per family
+// rather than per version or per payload.
+inline const char* compiler()                     { return env_or("MCPP_COMPILER"); }
+
 // Where the TARGET's C library lives, for targets that have one of their own
 // (today: bare metal). Same argument one line up: the libc is a property of
 // the target, mcpp resolves it from the target's own row, and a package that
