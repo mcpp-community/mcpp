@@ -82,15 +82,32 @@ echo "$native" | grep -qE 'target=\[[a-z0-9_]+-[a-z0-9-]+\]' || {
 }
 
 # ── A build pointed at a target ────────────────────────────────────────────
-# x86_64-linux-musl is chosen because every host in this suite can resolve it
-# without a payload download beyond what the other cross tests already use.
-cross=$("$MCPP" build --target x86_64-linux-musl 2>&1 || true)
+#
+# ⚠️ THE HOST'S OWN TRIPLE, NAMED EXPLICITLY — which is the case that
+# distinguishes the two variables rather than merely one that differs from the
+# native run. `--target <host>` produces equal values for `MCPP_TARGET` and the
+# host triple, and `MCPP_TARGET_REQUESTED` is non-empty because a target was
+# named. A test that used a foreign triple would pass with a variable that
+# merely echoed `MCPP_TARGET`.
+#
+# ⚠️ And it needs no payload. The first version of this test named
+# `x86_64-linux-musl` on the grounds that every host could resolve it, which was
+# an assumption rather than a measurement:
+#
+#     error: target 'x86_64-linux-musl' cannot be built on this host —
+#            no toolchain payload exists that runs here and produces it
+#
+# on the macOS leg. The host's own triple is the one target every host has by
+# construction.
+host_triple=$(echo "$native" | sed -n 's/.*PROBE target=\[\([^]]*\)\].*/\1/p' | head -1)
+[ -n "$host_triple" ] || { echo "could not read the host triple from the probe" >&2; exit 1; }
+cross=$("$MCPP" build --target "$host_triple" 2>&1 || true)
 echo "$cross" | grep -q 'PROBE ' || {
     echo "the build program did not report on the cross build" >&2
     echo "$cross" >&2
     exit 1
 }
-echo "$cross" | grep -qE 'requested=\[x86_64-linux-musl\]' || {
+echo "$cross" | grep -qE "requested=\[$host_triple\]" || {
     echo "MCPP_TARGET_REQUESTED should carry the triple that was named" >&2
     echo "$cross" | grep 'PROBE ' >&2
     exit 1
