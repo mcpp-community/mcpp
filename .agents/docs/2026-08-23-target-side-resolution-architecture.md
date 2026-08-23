@@ -1005,7 +1005,40 @@ Target x86_64-windows-gnu → x86_64-w64-windows-gnu
 
 ```toml
 [dependencies]
-openkal-linux = { git = "https://github.com/mcpplibs/openkal-linux", features = ["standalone"] }
+openkal-linux           = { git = "…/openkal-linux", features = ["standalone"] }
+std-freestanding-nolibc = "^0.2.0"     # ⭐ 见下
+
+[target.x86_64-linux-gnu]
+sysroot = ""
+```
+
+⭐ **实测(2026-08-24)必须补两处,而两处都是本形态的性质:**
+
+其一,`std-freestanding-nolibc`。openkal-linux 自身要用 `memset`,而这一层之下没有 C 库:
+
+```
+ld.lld: error: undefined symbol: memset
+```
+
+这正是该包存在的理由 ——「a freestanding C++ library still needs 五个函数四个头」。
+
+其二,mcpp 侧的链接行。驱动被指向一个 hosted 三元组时会自带 crt 启动件与动态加载器,而本形态
+两者都不该有:
+
+```
+/usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o (outside the sandbox)
+/lib64/ld-linux-x86-64.so.2                  (outside the sandbox)
+```
+
+⇒ 本轮实现:`c-abi` 缺席时链接行加 `-nostdlib -static`。理由不是策略而是性质 —— **没有 C 库
+就没有它的启动件,也没有属于这个程序的解释器。**
+
+实测结果:
+
+```
+   Compiling openkal-linux / std-freestanding-nolibc v0.2.0
+    Finished dev
+产物: ELF 64-bit LSB executable, x86-64        运行: raw openkal   exit=0
 ```
 
 | | |

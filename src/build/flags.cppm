@@ -1459,7 +1459,18 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // does not have. The platform package supplies the entry point (its
         // `standalone` feature says so); what the driver must be told is to
         // stop supplying one of its own.
-        if (plan.targetSide.cAbi.absent()) graphLd += " -nostdlib";
+        //
+        // `-static` for the same reason, and it is not a policy choice. A
+        // dynamic executable names an interpreter in its program headers and
+        // the loader resolves its imports at run time; with no C library there
+        // is nothing to resolve and no interpreter that belongs to this
+        // program. Left off, the driver writes the HOST's:
+        //
+        //     /lib64/ld-linux-x86-64.so.2 (outside the sandbox)
+        //
+        // — the one line that survived after `-nostdlib` removed the startup
+        // objects, measured.
+        if (plan.targetSide.cAbi.absent()) graphLd += " -nostdlib -static";
         // Names a FAMILY; the driver picks the flavour from the target, which
         // is the one part of the selection that is still ours to make.
         //
