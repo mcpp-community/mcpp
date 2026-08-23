@@ -217,22 +217,42 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     std::string ixxFlags = (ext == ".ixx")
         ? " -x c++-module -Wno-include-angled-in-module-purview -Wno-reserved-module-identifier"
         : "";
+    // ⚠️ `extraFlags` IS ON BOTH COMMANDS HERE, AND IT WAS ON NEITHER.
+    //
+    // This branch was written when a Windows host built for itself against the
+    // MSVC STL, and `stdModuleFlags` did not exist — so the omission was not
+    // visible: there was nothing to omit. It became a defect when a package
+    // could supply its own `std` module, because that string is where the
+    // package's own headers, `-nostdinc` and the target triple live.
+    //
+    // ⚠️ Measured 2026-08-23, a Windows host cross-building for
+    // `x86_64-linux-gnu` over openkal — the command it produced carried FIVE
+    // tokens:
+    //
+    //     clang++.exe -std=c++23 --precompile "…/std.cppm" -o "…/std.pcm"
+    //     …/llvm-generated/std.cppm:16:10: fatal error: '__config' file not found
+    //
+    // The same build from a Linux host had `--target=`, `--no-default-config`,
+    // `-nostdinc`, `-nostdinc++` and eight `-I`s. The error names a header, and
+    // the cause is a branch keyed on which machine is doing the building.
     return {
         std::format(
-            "{} {}{}{} "
+            "{} {}{}{}{} "
             "--precompile {} -o {}",
             tc.binaryPath.string(),
             cppStandardFlag,
             ixxFlags,
             sysrootFlag,
+            extraFlags,
             mcpp::xlings::shq(tc.stdModuleSource.string()),
             mcpp::xlings::shq(absBmi)),
         std::format(
-            "{} {}{} "
+            "{} {}{}{} "
             "{} -c -o {}",
             tc.binaryPath.string(),
             cppStandardFlag,
             sysrootFlag,
+            extraFlags,
             mcpp::xlings::shq(absBmi),
             mcpp::xlings::shq((cacheDir / "std.o").string()))
     };
