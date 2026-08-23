@@ -1,0 +1,230 @@
+name: openkal cross-build (3 hosts × 3 targets)
+
+# ⭐⭐ WHAT THIS WORKFLOW ASSERTS, AND WHY IT IS A MATRIX RATHER THAN A ROW.
+#
+# `cross-build-test.yml` verifies the crosses served by a PAYLOAD: a toolchain
+# whose driver has exactly one target. There the host and the target are joined
+# — `x86_64-w64-mingw32-g++` is the Windows cross and nothing else — so one row
+# per supported combination is the honest shape.
+#
+# openkal changes the shape of the question. The target side — the C library,
+# the C++ runtime, the platform's own implementation — is a set of PACKAGES in
+# the dependency graph, and the compiler is an ordinary retargetable clang. The
+# claim that follows is that N hosts × N targets collapses to N implementations
+# plus one tool: **the machine doing the building stops being a variable.**
+#
+# ⚠️ THAT IS A CLAIM, AND CLAIMS OF THIS SHAPE HAVE BEEN WRONG IN THIS
+# REPOSITORY. Reaching PE from a Linux host needed four separate repairs, and
+# adding the other two hosts found seven more — every one of them a decision
+# that had been keyed on which machine was building rather than on which machine
+# the output was for:
+#
+#   the link line's three host-shaped branches, only one of which carried
+#   `--target=`; the `std` module command's Windows branch, which dropped the
+#   package's own include paths; `cd X && …` not changing the drive in cmd.exe;
+#   the artefact-format test matching LLVM's `apple` rather than mcpp's `macos`;
+#   the C++ runtime contract naming a library to link when one was already in
+#   the objects; `-nostdinc` missing so a host SDK header could be found; and
+#   `-lgcc` naming GCC's runtime on a link whose compiler is clang.
+#
+# None of those was visible from one host. So the matrix is the test.
+#
+# ── The shape ──────────────────────────────────────────────────────────────
+#
+# THREE build jobs, one per host, each producing THREE artefacts — nine builds.
+# THREE run jobs, one per system, each executing the artefact FOR that system
+# produced by ALL THREE hosts.
+#
+#              build on Linux   build on macOS   build on Windows
+#   run Linux        ✓                ✓                 ✓
+#   run macOS        ✓                ✓                 ✓
+#   run Windows      ✓                ✓                 ✓
+#
+# ⭐ The diagonal is an ordinary native build. The six off-diagonal cells are
+# the claim, and they are what a single-host workflow cannot reach.
+#
+# ⚠️ THE RUN JOBS INSTALL NOTHING — not mcpp, not a compiler, not a C runtime.
+# A program above openkal carries its C library, its C++ runtime and its
+# unwinder; what remains is the operating system it was built for. If a
+# toolchain step is ever added to one of them because "the program needs it",
+# that is the finding rather than the fix.
+#
+# ⚠️ AND THE ASSERTION IS ON THE OUTPUT, NOT THE EXIT STATUS. The program prints
+# four lines, and `unwound: true` is the one a link cannot fake: it says a
+# destructor ran while an exception was being carried out of a frame, which
+# means the unwinder found this image's own frame descriptions.
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # ⚠️ The version that BOOTSTRAPS the build of this repository's mcpp. What is
+  # under test is the mcpp that comes out, which is why every step below uses
+  # the built binary rather than this one.
+  MCPP_VERSION: 2026.8.19.4
+  XLINGS_VERSION: v2026.8.17.2
+  XLINGS_NON_INTERACTIVE: '1'
+  # The branch of the openkal packages this change is verified against. They
+  # move together with it; when they are on `main` this becomes `main`.
+  OPENKAL_BRANCH: feat/openkal-closure
+
+jobs:
+  build:
+    name: build 3 targets on ${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { host: linux,   runner: ubuntu-24.04  }
+          - { host: macos,   runner: macos-14      }
+          - { host: windows, runner: windows-2022  }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xlings (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/openxlings/xlings/main/tools/other/quick_install.sh \
+            | bash -s "$XLINGS_VERSION"
+          echo "$HOME/.xlings/subos/current/bin" >> "$GITHUB_PATH"
+
+      - name: Install xlings (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          irm https://d2learn.org/xlings-install.ps1.txt | iex
+          "$env:USERPROFILE\.xlings\subos\current\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Install the bootstrap mcpp
+        run: |
+          # ⚠️ A LOOP, because one `xlings update` can return a stale index
+          # without saying so: the index is published behind a pointer that
+          # propagates asynchronously, and "synced 0 seconds ago" describes when
+          # it was fetched rather than what it contains.
+          for attempt in 1 2 3 4 5 6; do
+            xlings update > /dev/null 2>&1 || true
+            if xlings install "mcpp@$MCPP_VERSION" -y -g; then break; fi
+            if [ "$attempt" = 6 ]; then
+              echo "::error::mcpp@$MCPP_VERSION never appeared in the index"; exit 1
+            fi
+            sleep 60
+          done
+          mcpp self config --mirror GLOBAL
+
+      # ⭐ THE mcpp UNDER TEST. Everything after this uses the binary this step
+      # produces; the bootstrap one above is only what compiles it.
+      - name: Build the mcpp in this pull request
+        run: |
+          set -euo pipefail
+          # ⚠️ `--dev` and not `--release`. What is under test is a set of
+          # decisions about compile and link flags; an optimisation level
+          # changes none of them and a release self-build is most of the budget
+          # of a job on a two-core runner.
+          mcpp build --dev
+          BUILT=$(find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) | head -1)
+          [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
+          echo "$(cd "$(dirname "$BUILT")" && pwd)" >> "$GITHUB_PATH"
+          "$BUILT" --version
+
+      - name: Select the toolchain the openkal packages ask for
+        run: |
+          # ⚠️ Install, then select. `toolchain default` names one and does not
+          # fetch it.
+          mcpp toolchain install llvm 22.1.8
+          mcpp toolchain default 'llvm@22.1.8'
+
+      - name: The program — one source, three targets
+        run: |
+          set -euo pipefail
+          git clone --quiet --depth 1 -b "$OPENKAL_BRANCH" \
+            https://github.com/mcpplibs/openkal-llvm-runtime "$RUNNER_TEMP/okl"
+          cd "$RUNNER_TEMP/okl/examples/same-source"
+          mkdir -p "$RUNNER_TEMP/out"
+          # ⚠️ The three HOSTED targets. Bare metal is verified by
+          # `openkal-llvm-runtime`'s own CI under qemu; it has no runner here to
+          # execute on, and a build-only cell in a workflow whose point is
+          # running would be the weaker claim.
+          for t in x86_64-linux-gnu aarch64-macos x86_64-windows-gnu; do
+            rm -rf target
+            mcpp build --target "$t"
+            a=$(find target -type f \( -name 'openkal-same-source' -o -name 'openkal-same-source.exe' \) | head -1)
+            [ -n "$a" ] || { echo "::error::$t produced no artefact on ${{ matrix.host }}"; exit 1; }
+            case "$t" in
+              x86_64-windows-gnu) cp "$a" "$RUNNER_TEMP/out/windows.exe" ;;
+              aarch64-macos)      cp "$a" "$RUNNER_TEMP/out/macos"       ;;
+              *)                  cp "$a" "$RUNNER_TEMP/out/linux"       ;;
+            esac
+            echo "${{ matrix.host }} → $t : $(ls -l "$a" | awk '{print $5}') bytes"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openkal-built-on-${{ matrix.host }}
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: error
+
+  run:
+    name: run 3 builds on ${{ matrix.system }}
+    needs: build
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { system: linux,   runner: ubuntu-24.04, file: linux       }
+          - { system: macos,   runner: macos-14,     file: macos       }
+          - { system: windows, runner: windows-2022, file: windows.exe }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # ⚠️ NO checkout AND NO toolchain. This job is the claim: a program built
+      # above openkal needs the operating system it was built for and nothing
+      # else. Anything installed here would weaken what a pass means.
+      - uses: actions/download-artifact@v4
+        with: { pattern: openkal-built-on-*, path: art }
+
+      - name: The same program, from all three build hosts
+        run: |
+          set -euo pipefail
+          fail=0
+          for host in linux macos windows; do
+            bin="art/openkal-built-on-$host/${{ matrix.file }}"
+            echo "──────── built on $host, running on ${{ matrix.system }} ────────"
+            if [ ! -f "$bin" ]; then
+              echo "::error::$bin is missing"; fail=1; continue
+            fi
+            # ⚠️ The executable bit does not survive an artefact upload.
+            chmod +x "$bin" || true
+            # ⚠️ arm64 macOS refuses an unsigned image, so the signature is
+            # asserted before the run: a failure here is "the linker did not
+            # ad-hoc sign it", which is a different repair from "it crashed".
+            if [ "${{ matrix.system }}" = "macos" ]; then
+              codesign -dv "$bin" 2>&1 | grep -q 'adhoc\|Signature' \
+                || { echo "::error::built on $host: no code signature"; fail=1; continue; }
+            fi
+            if ! "./$bin" > out.log 2>&1; then
+              echo "::error::built on $host: it did not run"; cat out.log; fail=1; continue
+            fi
+            cat out.log
+            ok=1
+            grep -q 'sorted: 2 4 7' out.log || ok=0
+            grep -q 'caught: 42'    out.log || ok=0
+            # ⭐ The line a link cannot fake.
+            grep -q 'unwound: true' out.log || ok=0
+            grep -q 'import std over openkal: ok' out.log || ok=0
+            [ "$ok" = 1 ] || { echo "::error::built on $host: wrong output"; fail=1; }
+          done
+          [ "$fail" = 0 ] || exit 1
+          echo "three builds, one system, same four lines"
