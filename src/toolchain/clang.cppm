@@ -219,8 +219,25 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     // and generates harmless warnings about #include in module purview and
     // the reserved 'std' module name — suppress both.
     std::string ixxFlags = (ext == ".ixx")
-        ? " -x c++-module -Wno-include-angled-in-module-purview -Wno-reserved-module-identifier"
+        ? " -x c++-module -Wno-include-angled-in-module-purview"
         : "";
+    // ⚠️ AND THE RESERVED-NAME WARNING UNCONDITIONALLY, WHICH IS WHAT THE OTHER
+    // BRANCH DOES.
+    //
+    // `export module std;` is a reserved identifier and every standard library
+    // that ships one triggers the warning; the non-Windows command has carried
+    // the suppression since it was written. This branch tied it to `.ixx`,
+    // which was correct while the only `std` module a Windows host ever saw was
+    // the MSVC STL's — and stopped being correct when a package could supply
+    // its own. Measured 2026-08-23, a Windows host building the openkal
+    // runtime's `llvm-generated/std.cppm`:
+    //
+    //     std.cppm:167:15: warning: 'std' is a reserved name for a module
+    //       [-Wreserved-module-identifier]
+    //
+    // A warning that is correct, unavoidable, and printed on every build is
+    // noise of the kind that hides the next one.
+    ixxFlags += " -Wno-reserved-module-identifier";
     // ⚠️ `extraFlags` IS ON BOTH COMMANDS HERE, AND IT WAS ON NEITHER.
     //
     // This branch was written when a Windows host built for itself against the
