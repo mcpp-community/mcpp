@@ -1253,9 +1253,11 @@ prepare_build(bool print_fingerprint,
     // costs nobody anything and needs no coordination.
     //
     // It counts as user-explicit, so mcpp will not quietly revise it.
+    bool toolchainFromFlag = false;
     if (const char* tcEnv = std::getenv("MCPP_TOOLCHAIN"); tcEnv && *tcEnv) {
         tcSpec   = std::string(tcEnv);
         tcOrigin = TcOrigin::ManifestToolchain;
+        toolchainFromFlag = true;
     }
     if (!tcSpec.has_value()) {
         auto cfg = get_cfg();
@@ -1436,8 +1438,17 @@ prepare_build(bool print_fingerprint,
         // which is exactly the promise the fallback is built on ("mcpp
         // revises its own defaults, never yours"). A target the user asked
         // for (--target, or [build] target) still wins, as it always has.
+        // `hasToolchainOverride` above covers the manifest's [target.X]
+        // section. `--toolchain` must stop the pin on its own, regardless of
+        // where the target came from: the flag form of the promise
+        // `pinWouldOverruleUser` keeps for remembered targets ("mcpp revises
+        // its own defaults, never yours") — measured, `--toolchain llvm
+        // --target x86_64-linux-musl` used to resolve gcc@16.1.0 because the
+        // musl row's pin silently replaced the flag.
         const bool pinWouldOverruleUser =
-            targetFromGlobalDefault && tc_origin_is_user_explicit(tcOrigin);
+            toolchainFromFlag
+            || (targetFromGlobalDefault
+                && tc_origin_is_user_explicit(tcOrigin));
         if (known && !hasToolchainOverride && !known->pin.empty()
             && !pinWouldOverruleUser) {
             tcSpec = std::string(known->pin);
@@ -1823,15 +1834,22 @@ prepare_build(bool print_fingerprint,
     // `tc.targetTriple`, so correcting it here corrects all of them at once —
     // which is the point of there being one field rather than five answers.
     //
-    // ⚠️ Scoped to freestanding on purpose. The hosted cross targets already
-    // resolve a per-target binary, and overwriting their probed triple would
-    // replace a measured fact with an assumed one for no gain.
+    // ⚠️ Scoped to freestanding AND the llvm-musl family on purpose. The
+    // other hosted cross targets already resolve a per-target binary, and
+    // overwriting their probed triple would replace a measured fact with an
+    // assumed one for no gain. llvm-musl is the same one-binary case as
+    // freestanding: the clang frontend's -dumpmachine answers with the host
+    // while the build targets musl, so without this the output dir, cache key
+    // and flag layer all stay on the host triple (E1 for a hosted target).
     if (!overrides.target_triple.empty()) {
-        if (auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
-            want && want->is_freestanding())
+        auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
+        const bool llvmMuslTarget = want && want->is_musl()
+            && mcpp::toolchain::is_clang(*tc);
+        if (want && (want->is_freestanding() || llvmMuslTarget))
         {
             tc->targetTriple = want->str();
 
+            if (want->is_freestanding()) {
             // `import std` is structurally hosted, and turning it off is the
             // SAME fact as the line above, not a second policy: libc++'s
             // std.cppm is one module over the whole library, including the
@@ -1852,9 +1870,14 @@ prepare_build(bool print_fingerprint,
             tc->hasImportStd = false;
             tc->stdModuleSource.clear();
             tc->stdCompatSource.clear();
+            }
 
             // ── The target's C library, resolved like its compiler ─────────
             //
+            // (freestanding only: the C library column names picolibc, whose
+            // payload layout a freestanding spec describes. llvm-musl resolves
+            // its libc++ one block below instead.)
+            if (want->is_freestanding())
             // The row in kKnownTargets names it, exactly as it names the
             // toolchain pin, and it is installed through the same channel a
             // project's `[xlings] deps` use (see the materialization above).

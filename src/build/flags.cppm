@@ -1183,7 +1183,12 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // but the link line has a hard 128KiB ceiling (MAX_ARG_STRLEN) that real
     // workspaces already spend 43% of.
     std::string payload_ld;
-    if (isClangWithCfg
+    // llvm-musl excluded: the clangWithCfg PayloadFirst flags here name the
+    // HOST's glibc (its loader ends up as a static binary's PT_INTERP), while
+    // the isLlvmMusl branch above already assembled the target's complete C
+    // runtime (musl sysroot + crt via --gcc-toolchain).
+    if (!isLlvmMusl
+     && isClangWithCfg
      && lm.mode == mcpp::toolchain::CLibMode::PayloadFirst)
         payload_ld = lm.link_flags(ninjaEsc);
     // GCC: replace the payload's patched `*link:` with the pristine one, so

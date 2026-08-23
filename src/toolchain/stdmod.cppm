@@ -34,12 +34,14 @@ import std;
 import mcpp.home;
 import mcpp.libs.json;
 import mcpp.platform;
+import mcpp.platform.xlings;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.gcc;
 import mcpp.toolchain.hostflags;
 import mcpp.toolchain.linkmodel;
+import mcpp.toolchain.model;
 import mcpp.toolchain.msvc;
 
 export namespace mcpp::toolchain {
@@ -249,8 +251,46 @@ std::expected<StdModule, StdModError> ensure_built(
     HostFlagOptions hopt;
     hopt.cfgBypass = HostFlagOptions::CfgBypass::Always;
     hopt.clangStdlibSelect = true;
-    std::string sysroot_flag =
+    std::string sysroot_flag;
+    // llvm-musl: the shared producer reconstructs the HOST's header world,
+    // which is wrong for the target whose std.cppm this is — the failure is
+    // the freestanding doc's `__config_site not found` one layer up. The
+    // target's musl libc++ headers and C library come from the payload
+    // prepare resolved (targetSysroot*) plus the musl-gcc sysroot.
+    if (is_clang(tc) && is_musl_target(tc)
+        && !tc.targetSysrootInclude.empty())
+    {
+        // The musl C headers come from the musl-gcc payload's sysroot; the
+        // frontend locates it the same way the link side does (a
+        // triple-named sibling of the llvm payload under xpkgs).
+        auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(tc.binaryPath);
+        std::string sysroot;
+        if (xpkgs) {
+            // Two payload shapes, matching the registry's naming: the
+            // triple-named cross package and the host-native musl-gcc one
+            // (whose sysroot still lives under <triple>/).
+            const std::string shapes[] = {
+                std::format("xim-x-{}-gcc", tc.targetTriple), "xim-x-musl-gcc"};
+            for (auto const& shape : shapes) {
+                auto gccRoot = *xpkgs / shape;
+                std::error_code ec;
+                if (!std::filesystem::is_directory(gccRoot, ec)) continue;
+                for (auto& e : std::filesystem::directory_iterator(gccRoot, ec))
+                    if (e.is_directory()) {
+                        sysroot = (e.path() / tc.targetTriple).string();
+                        break;
+                    }
+                if (!sysroot.empty()) break;
+            }
+        }
+        sysroot_flag = std::format(
+            " --no-default-config --target={} -nostdinc++ -stdlib=libc++"
+            " --sysroot={} -isystem'{}'",
+            tc.targetTriple, sysroot, tc.targetSysrootInclude.string());
+    } else {
+    sysroot_flag =
         render_tokens(host_compile_tokens(tc, hopt, shellEsc));
+    }
 
     // Deployment target appended here rather than passed to the producer
     // ONLY to keep this command string byte-identical to what earlier
