@@ -5659,6 +5659,10 @@ prepare_build(bool print_fingerprint,
             for (auto& f : mcpp::toolchain::graph_runtime_compile_flags(*tc))
                 flags += " " + f;
         }
+        // Everything up to here says which machine the module is for; what
+        // follows says where its headers are. The codegen step needs only the
+        // first — see Toolchain::stdModuleTargetFlags.
+        tc->stdModuleTargetFlags = flags;
         for (auto& f : pkg.manifest.stdModuleFlags) {
             // A flag naming a path is relative to the package that named it,
             // for the same reason the module source is.

@@ -204,6 +204,10 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     // built without it is built for whatever machine is doing the building.
     if (!tc.stdModuleFlags.empty()) sysrootFlag = {};
     const std::string& extraFlags = tc.stdModuleFlags;
+    // ⚠️ The codegen step compiles a BMI, which already carries what the
+    // headers contributed; only the machine has to be restated. See
+    // Toolchain::stdModuleTargetFlags.
+    const std::string& codegenFlags = tc.stdModuleTargetFlags;
 #if defined(_WIN32)
     // Windows: use absolute paths, raw binary path as first token
     // (cmd.exe strips leading quotes), shq for args with spaces.
@@ -252,7 +256,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
             tc.binaryPath.string(),
             cppStandardFlag,
             sysrootFlag,
-            extraFlags,
+            codegenFlags,
             mcpp::xlings::shq(absBmi),
             mcpp::xlings::shq((cacheDir / "std.o").string()))
     };
@@ -277,7 +281,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
             mcpp::xlings::shq(tc.binaryPath.string()),
             cppStandardFlag,
             sysrootFlag,
-            extraFlags,
+            codegenFlags,
             mcpp::xlings::shq(relBmi))
     };
 #endif
@@ -338,6 +342,9 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
     // this target. Reading that message, the mixture is invisible.
     if (!tc.stdModuleFlags.empty()) sysrootFlag = {};
     const std::string& extraFlags = tc.stdModuleFlags;
+    // Same split as the `std` builder above: the second command compiles a BMI
+    // and needs the machine restated, not the include paths.
+    const std::string& codegenFlags = tc.stdModuleTargetFlags;
     // std.compat depends on std, so we need -fmodule-file=std=<std.pcm>
     // Note: the path after = must NOT be shell-quoted separately; the
     // entire -fmodule-file flag is a single token to the compiler.
@@ -384,7 +391,7 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
                     mcpp::xlings::shq(tc.binaryPath.string()),
                     cppStandardFlag,
                     sysrootFlag,
-                    extraFlags,
+                    codegenFlags,
                     absStdBmi,
                     mcpp::xlings::shq(absBmi),
                     mcpp::xlings::shq(absObj))

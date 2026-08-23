@@ -93,6 +93,28 @@ struct Toolchain {
     // They reach the cache key without anything further being done: the key is
     // derived from the build COMMANDS, and these are part of them.
     std::string                         stdModuleFlags;
+    // ⭐⭐ THE PART OF THE ABOVE THAT SAYS WHICH MACHINE, SEPARATED FROM THE
+    // PART THAT SAYS WHERE THE HEADERS ARE.
+    //
+    // `stdModuleFlags` is one string carrying two different facts: the target
+    // and its ABI-affecting options, and the include paths the module's SOURCE
+    // needs. Building the module has two steps, and only the first needs both —
+    // the second compiles a BMI, which already contains everything the headers
+    // contributed.
+    //
+    // ⚠️ Passing the whole string to the second step is not wrong, it is noisy,
+    // and the noise is the kind that hides things:
+    //
+    //     clang++: warning: argument unused during compilation: '-nostdinc++'
+    //     clang++: warning: argument unused during compilation: '-isystem …'
+    //       (× 17, once per include directory)
+    //
+    // Seventeen warnings that are correct and mean nothing, in front of any
+    // warning that would mean something. ⚠️ They were present on every platform
+    // and visible on none: the non-Windows command ends in `2>&1` and mcpp
+    // discards a successful command's output, so the Windows leg — which has no
+    // redirection — is where they first appeared.
+    std::string                         stdModuleTargetFlags;
     // A package in the graph supplies a C++ runtime built FOR THIS TARGET.
     // Read by the freestanding flag table, which otherwise forces exceptions
     // and run-time type information off for every unit — right when nothing can
