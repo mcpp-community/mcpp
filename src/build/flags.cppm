@@ -1328,7 +1328,22 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         //
         // Native cl.exe (isMsvcDialect, returned above) keeps link.exe: there
         // the response file is ours, and 2026.8.5.3 already fixed it.
-        f.ld = std::format(" -fuse-ld=lld{}{}{}", link_intent_ld,
+        // ⚠️ `full_static` IS ON THIS LINE, AND IT WAS NOT.
+        //
+        // The two branches below both carry it; this one did not, and nothing
+        // showed because a Windows host's `-static` for an ELF target was
+        // arriving from the C++ runtime contract instead — which had chosen the
+        // PE cell, because the FORMAT question above was being answered by
+        // asking which machine was building. Correcting that answer removed the
+        // flag, and the artefact this job asserts about changed shape:
+        //
+        //     mcpp-linux-musl: ELF 64-bit LSB executable, x86-64, …
+        //       dynamically linked, interpreter /lib/ld-musl-x86_64.so.1
+        //
+        // where every other host produces a static one. ⇒ Whole-program static
+        // linkage is a property of the TARGET (`target_supports_full_static`
+        // plus the manifest's `linkage`), so it belongs on every host's line.
+        f.ld = std::format("{} -fuse-ld=lld{}{}{}", full_static, link_intent_ld,
                            user_ldflags, link_extra);
         f.ldC = f.ld;   // no C++ runtime token on this line
     } else if constexpr (mcpp::platform::needs_explicit_libcxx) {
