@@ -216,3 +216,82 @@ TEST(HostFlags, DeploymentTargetOnlyOnMacos) {
     });
     EXPECT_EQ(found, mcpp::platform::is_macos);
 }
+
+// ── graph_runtime_compile_flags: what a `throw` and a `thread_local` compile
+//    into, when the runtime comes from the dependency graph.
+//
+// These are not ordinary flags. They change what a translation unit EMITS for
+// constructs the language guarantees work across a whole program, so two
+// objects that disagree link and the disagreement is the defect. The function
+// exists so that the decision is made once; these tests exist so that each of
+// its four states is stated rather than inferred from a build.
+
+namespace {
+
+mcpp::toolchain::Toolchain graph_tc(std::string triple) {
+    mcpp::toolchain::Toolchain tc;
+    tc.compiler         = CompilerId::Clang;
+    tc.targetTriple     = std::move(triple);
+    tc.targetCxxRuntime = true;
+    return tc;
+}
+
+bool has(const std::vector<std::string>& v, std::string_view f) {
+    return std::ranges::find(v, f) != v.end();
+}
+
+}  // namespace
+
+// PE: clang defaults to SEH there, whose personality routine and unwind data
+// come from the operating system's unwinder. A graph that supplies its own C++
+// runtime supplies its own unwinder with it, and the two cannot be mixed inside
+// one image. A `thread_local` on PE is reached through `_tls_index`, which the
+// dynamic loader bootstraps and a self-contained image has no loader for.
+TEST(GraphRuntimeFlags, PeTakesDwarfExceptionsAndEmulatedTls) {
+    auto f = mcpp::toolchain::graph_runtime_compile_flags(graph_tc("x86_64-windows-gnu"));
+    EXPECT_TRUE(has(f, "-fdwarf-exceptions"));
+    EXPECT_TRUE(has(f, "-femulated-tls"));
+}
+
+// Mach-O: the exception mechanism is already DWARF, so only the thread-local
+// one applies — `_tlv_bootstrap` is the loader-bootstrapped name there. The
+// visibility pair is present because on this format a default-visibility weak
+// definition is coalesced BY THE LOADER, which is machinery a self-contained
+// image has no use for and which produced a jump to address zero when it was
+// left in place.
+TEST(GraphRuntimeFlags, MachOTakesEmulatedTlsAndHiddenVisibilityButNotDwarf) {
+    auto f = mcpp::toolchain::graph_runtime_compile_flags(graph_tc("aarch64-macos"));
+    EXPECT_FALSE(has(f, "-fdwarf-exceptions"));
+    EXPECT_TRUE(has(f, "-femulated-tls"));
+    EXPECT_TRUE(has(f, "-fvisibility=hidden"));
+    EXPECT_TRUE(has(f, "-fvisibility-inlines-hidden"));
+}
+
+// ⚠️ ELF takes NONE of them, and that is a decision rather than an omission.
+// There a `thread_local` is a fixed offset from the thread pointer, which the
+// C library establishes itself; adding the flag would work, cost an
+// indirection on every access, and make ELF the only target whose thread
+// locals are laid out differently from every other build of the same target.
+TEST(GraphRuntimeFlags, ElfTakesNone) {
+    auto f = mcpp::toolchain::graph_runtime_compile_flags(graph_tc("x86_64-linux-gnu"));
+    EXPECT_TRUE(f.empty());
+}
+
+// ⚠️ And nothing at all when the runtime is NOT the graph's, whatever the
+// target. The predicate is `targetCxxRuntime`; a native or payload-served build
+// of the same triple must be untouched.
+TEST(GraphRuntimeFlags, PayloadServedTargetTakesNoneEvenOnPe) {
+    mcpp::toolchain::Toolchain tc;
+    tc.compiler     = CompilerId::Clang;
+    tc.targetTriple = "x86_64-windows-gnu";
+    tc.targetCxxRuntime = false;
+    EXPECT_TRUE(mcpp::toolchain::graph_runtime_compile_flags(tc).empty());
+}
+
+// A triple outside the vocabulary yields nothing rather than a guess: the
+// answer depends on the object format, and a spelling that cannot be parsed
+// does not name one.
+TEST(GraphRuntimeFlags, UnparseableTripleTakesNone) {
+    EXPECT_TRUE(mcpp::toolchain::graph_runtime_compile_flags(
+        graph_tc("not-a-triple-at-all")).empty());
+}

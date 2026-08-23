@@ -256,3 +256,88 @@ TEST(Triple, EffectiveSysrootIsEmptyForHostedTargets) {
     ASSERT_TRUE(t.has_value());
     EXPECT_EQ(effective_sysroot(*t, nullptr), "");
 }
+
+// ── llvm_triple: the spelling a compiler takes, which is not the one mcpp uses
+
+// mcpp's canonical form and LLVM's four-field form differ in more than
+// punctuation: on Apple platforms the architecture has a different name and the
+// operating system carries a version. Every one of these was a defect the
+// three-host matrix found rather than a test.
+
+TEST(Triple, LlvmTripleLinuxGnu) {
+    auto t = parse("x86_64-linux-gnu");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->llvm_triple(""), "x86_64-unknown-linux-gnu");
+}
+
+TEST(Triple, LlvmTripleLinuxMusl) {
+    auto t = parse("aarch64-linux-musl");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->llvm_triple(""), "aarch64-unknown-linux-musl");
+}
+
+TEST(Triple, LlvmTripleWindowsGnu) {
+    auto t = parse("x86_64-windows-gnu");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->llvm_triple(""), "x86_64-w64-windows-gnu");
+}
+
+// ⚠️ `aarch64` becomes `arm64` and the version is appended. A build that
+// emitted mcpp's own spelling produced `--target=aarch64-macos`, which clang
+// accepts as a triple it has never heard of and then treats as bare-metal
+// aarch64 — the module and its importers then agree with each other and with
+// nothing else.
+TEST(Triple, LlvmTripleMacosRenamesArchAndCarriesVersion) {
+    auto t = parse("aarch64-macos");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->llvm_triple("14.0"), "arm64-apple-macos14.0");
+    EXPECT_EQ(t->llvm_triple("15.2"), "arm64-apple-macos15.2");
+}
+
+TEST(Triple, LlvmTripleMacosX86KeepsArchName) {
+    auto t = parse("x86_64-macos");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->llvm_triple("14.0"), "x86_64-apple-macos14.0");
+}
+
+// A freestanding triple is already LLVM's own form, so it is returned as
+// written rather than expanded into four fields.
+TEST(Triple, LlvmTripleFreestandingIsUnchanged) {
+    auto t = parse("riscv64-none-elf");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->llvm_triple(""), "riscv64-none-elf");
+}
+
+// ── The object format each target has, asked of the triple rather than of the
+//    machine running the build.
+
+// ⚠️ The artefact-format decision used to test the triple for the substrings
+// `apple` and `darwin`. Those are LLVM's words; mcpp's canonical form is
+// `aarch64-macos`, which contains neither — so the test fell through to a
+// question about the HOST, and produced opposite errors on opposite hosts: an
+// ELF contract for a Mach-O when built on Linux, and a Mach-O contract for an
+// ELF when built on macOS.
+TEST(Triple, OsFieldIdentifiesMacosWithoutTheWordApple) {
+    auto t = parse("aarch64-macos");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->os, "macos");
+    EXPECT_FALSE(t->is_pe());
+    EXPECT_FALSE(t->is_freestanding());
+    EXPECT_EQ(t->str().find("apple"), std::string::npos);
+    EXPECT_EQ(t->str().find("darwin"), std::string::npos);
+}
+
+TEST(Triple, OsFieldIdentifiesPe) {
+    auto t = parse("x86_64-windows-gnu");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_TRUE(t->is_pe());
+    EXPECT_EQ(t->os, "windows");
+}
+
+TEST(Triple, OsFieldIdentifiesFreestanding) {
+    auto t = parse("riscv64-none-elf");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_TRUE(t->is_freestanding());
+    EXPECT_EQ(t->os, "none");
+    EXPECT_FALSE(t->is_pe());
+}

@@ -557,3 +557,76 @@ TEST(Distribution, RoleCountCoversEveryRole) {
         EXPECT_FALSE(dist::to_string(r).empty());
     }
 }
+
+// ── The two short-circuits: when there is no C++ runtime to distribute WITH ──
+//
+// Every cell of the table above answers "how does this artefact carry its C++
+// runtime", and all of the answers name a runtime to LINK — the system's, the
+// toolchain's, or a static form of one. Two situations make all of them wrong
+// rather than merely unnecessary, and in both the archives the table would
+// reach for belong to the HOST.
+
+TEST(Distribution, FreestandingCarriesNoRuntimeToDistribute) {
+    dist::MechanismInput in;
+    in.format       = dist::Format::Elf;
+    in.stdlibId     = "libc++";
+    in.freestanding = true;
+    in.requested    = dist::Contract::SelfContained;
+    in.role         = dist::Role::Distributable;
+    // Deliberately present: the point is that they are NOT reached.
+    in.libcxxArchive    = "/tc/lib/libc++.a";
+    in.libcxxAbiArchive = "/tc/lib/libc++abi.a";
+    auto m = dist::resolve(in);
+    EXPECT_EQ(m.effective, dist::Contract::SelfContained);
+    EXPECT_EQ(m.unitFlags, " -nostdlib++");
+    EXPECT_EQ(m.unitFlags.find("libc++.a"), std::string::npos);
+    EXPECT_FALSE(m.degraded);
+}
+
+// ⚠️ The hosted form of the same fact. A package in the graph has compiled a
+// C++ runtime FOR THIS TARGET and its objects are already on the link line, so
+// there is no library to name and nothing to look for. Measured before this
+// existed: `ld64.lld: error: library not found for -lc++`.
+TEST(Distribution, GraphSuppliedRuntimeCarriesNoLibraryToName) {
+    auto in = macos_input();
+    in.graphCxxRuntime = true;
+    in.requested       = dist::Contract::SelfContained;
+    in.role            = dist::Role::Distributable;
+    auto m = dist::resolve(in);
+    EXPECT_EQ(m.effective, dist::Contract::SelfContained);
+    EXPECT_EQ(m.unitFlags, " -nostdlib++");
+    EXPECT_EQ(m.unitFlags.find("-lc++"), std::string::npos);
+    EXPECT_EQ(m.unitFlags.find("load_hidden"), std::string::npos);
+}
+
+// The same on every format, because the fact is about the graph and not about
+// the object format.
+TEST(Distribution, GraphSuppliedRuntimeIsFormatIndependent) {
+    for (auto fmt : {dist::Format::Elf, dist::Format::MachO, dist::Format::Pe}) {
+        dist::MechanismInput in;
+        in.format          = fmt;
+        in.stdlibId        = "libc++";
+        in.graphCxxRuntime = true;
+        in.requested       = dist::Contract::SelfContained;
+        in.role            = dist::Role::Distributable;
+        auto m = dist::resolve(in);
+        EXPECT_EQ(m.unitFlags, " -nostdlib++")  ;
+        EXPECT_EQ(m.effective, dist::Contract::SelfContained);
+    }
+}
+
+// ⚠️ And it does not depend on the contract the project asked for: a
+// host-coupled request cannot be honoured by naming the system's runtime when
+// the graph's is already inside the artefact.
+TEST(Distribution, GraphSuppliedRuntimeIgnoresTheRequestedContract) {
+    for (auto c : {dist::Contract::SelfContained,
+                   dist::Contract::ToolchainCoupled,
+                   dist::Contract::HostCoupled}) {
+        auto in = macos_input();
+        in.graphCxxRuntime = true;
+        in.requested       = c;
+        in.role            = dist::Role::Distributable;
+        auto m = dist::resolve(in);
+        EXPECT_EQ(m.unitFlags, " -nostdlib++");
+    }
+}
