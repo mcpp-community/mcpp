@@ -1438,6 +1438,28 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // "which machine is this for".
         std::string graphLd = crossTarget;
         if (isClangWithCfg) graphLd += " --no-default-config";
+        // NO C LIBRARY MEANS NO C LIBRARY'S STARTUP FILES EITHER.
+        //
+        // A hosted target whose C-ABI layer is absent is a real shape, not an
+        // incomplete one: a program that calls the platform interface directly
+        // — a kernel, a loader, anything that wants the smallest surface it can
+        // have — depends on the platform implementation and nothing above it.
+        //
+        // The driver does not know that. Told to emit for a hosted triple it
+        // supplies `crt1.o`, `crti.o`, the gcc startup objects and a dynamic
+        // linker, all of them the HOST's, and the hermetic link check reports
+        // them one by one:
+        //
+        //     /lib/x86_64-linux-gnu/crti.o (outside the sandbox)
+        //     /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o (outside the sandbox)
+        //     /lib64/ld-linux-x86-64.so.2 (outside the sandbox)
+        //
+        // Measured, and the report names the symptom rather than the cause: the
+        // payload is not missing, it is being asked for something this program
+        // does not have. The platform package supplies the entry point (its
+        // `standalone` feature says so); what the driver must be told is to
+        // stop supplying one of its own.
+        if (plan.targetSide.cAbi.absent()) graphLd += " -nostdlib";
         // Names a FAMILY; the driver picks the flavour from the target, which
         // is the one part of the selection that is still ours to make.
         //

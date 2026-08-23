@@ -16,6 +16,14 @@
 # stack, and a test that fetched an ecosystem over the network to assert a
 # string in a report would be slower and no more conclusive.
 #
+# ⚠️ NO `sed -i` ANYWHERE, AND THAT IS NOT STYLE. BSD sed reads the argument
+# after `-i` as a backup suffix, so an in-place edit written for GNU sed fails
+# on macOS. Measured on the macOS leg of this suite, in this very file:
+#
+#     sed: 1: "sys/mcpp.toml": unterminated substitute pattern
+#
+# The provider's manifest is therefore written from scratch for each case.
+#
 # `"$MCPP"`, never a bare `mcpp`: the harness passes the binary under test, and
 # a bare name resolves through PATH to whichever engine is installed.
 set -e
@@ -24,24 +32,29 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
 
-# ── A package that supplies two layers ──────────────────────────────────────
-#
-# One package standing in for the platform implementation and the C library
-# both. The resolver reads a layer per capability, not a layer per package, so
-# a single provider of two layers is a legitimate shape and a useful one to
-# assert: it proves the two lookups are independent.
 mkdir -p sys/src
-cat > sys/mcpp.toml <<'EOF'
-[package]
-name     = "fake-system"
-version  = "2.0.0"
-provides = ["mcpp:kernel-abi=fakeos", "mcpp:c-abi=fakelibc"]
-
-[targets.fake-system]
-kind    = "lib"
-sources = ["src/*.c"]
-EOF
 printf 'int fake_system_marker(void) { return 0; }\n' > sys/src/sys.c
+
+# Rewrite the provider's manifest with the capabilities given as arguments, and
+# drop the output tree so the next build re-plans from it.
+provider_declares() {
+    {
+        echo '[package]'
+        echo 'name     = "fake-system"'
+        echo 'version  = "2.0.0"'
+        if [ $# -gt 0 ]; then
+            printf 'provides = ['
+            sep=""
+            for cap in "$@"; do printf '%s"%s"' "$sep" "$cap"; sep=", "; done
+            printf ']\n'
+        fi
+        echo ''
+        echo '[targets.fake-system]'
+        echo 'kind    = "lib"'
+        echo 'sources = ["src/*.c"]'
+    } > sys/mcpp.toml
+    rm -rf target
+}
 
 mkdir -p src
 cat > mcpp.toml <<'EOF'
@@ -54,15 +67,22 @@ fake-system = { path = "sys" }
 EOF
 printf 'int main() { return 0; }\n' > src/main.cpp
 
-# ⚠️ `|| true`, AND THAT IS THE TEST'S SUBJECT RATHER THAN A CONCESSION.
-# The resolution is reported during planning, before a single object is
-# compiled, so what this file asserts is complete whether or not the link
-# afterwards succeeds. Requiring a successful link would additionally require a
-# working C runtime payload for the host, which is a different thing to test
-# and one the rest of the suite already covers.
+# ── A package that supplies two layers ──────────────────────────────────────
+#
+# One package standing in for the platform implementation and the C library
+# both. The resolver reads a layer per capability, not a layer per package, so
+# a single provider of two layers is a legitimate shape and a useful one to
+# assert: it proves the two lookups are independent.
+#
+# ⚠️ `|| true`, AND THAT IS THE TEST'S SUBJECT RATHER THAN A CONCESSION. The
+# resolution is reported during planning, before a single object is compiled, so
+# what this file asserts is complete whether or not the link afterwards
+# succeeds. Requiring a successful link would additionally require a working C
+# runtime payload for the host, which is a different thing to test and one the
+# rest of the suite already covers.
+provider_declares "mcpp:kernel-abi=fakeos" "mcpp:c-abi=fakelibc"
 out=$("$MCPP" build 2>&1 || true)
 
-# The report exists, and it names the layer, the interface and the provider.
 echo "$out" | grep -q 'kernel-abi  *fakeos' || {
     echo "the kernel-abi layer must report the interface the package declared" >&2
     echo "$out" >&2; exit 1
@@ -92,8 +112,7 @@ echo "$out" | grep -q 'c++ *—' || {
 #
 # The control that makes the block above mean something: remove the capability
 # line and every layer must fall back to the payload.
-sed -i.bak '/^provides/d' sys/mcpp.toml
-rm -rf target
+provider_declares
 plain=$("$MCPP" build 2>&1 || true)
 echo "$plain" | grep -q 'fakeos' && {
     echo "a package that declares no capability must not fill a layer" >&2
@@ -103,15 +122,13 @@ echo "$plain" | grep -qE 'kernel-abi .*payload' || {
     echo "with nothing in the graph, the layers come from the payload" >&2
     echo "$plain" >&2; exit 1
 }
-mv sys/mcpp.toml.bak sys/mcpp.toml
 
 # ── A misspelling inside mcpp's reserved namespace is an error ──────────────
 #
 # This is the whole reason the prefix exists. An unvalidated capability array
 # turns one wrong letter into a behaviour that silently does not happen, and
 # the build still reports success.
-sed -i 's/mcpp:kernel-abi=fakeos/mcpp:kernel_abi=fakeos/' sys/mcpp.toml
-rm -rf target
+provider_declares "mcpp:kernel_abi=fakeos" "mcpp:c-abi=fakelibc"
 bad=$("$MCPP" build 2>&1 || true)
 echo "$bad" | grep -q "names no capability mcpp knows" || {
     echo "a misspelled capability in the mcpp: namespace must fail the build" >&2
@@ -133,13 +150,15 @@ echo "$bad" | grep -q 'Compiling' && {
 # `provides` also carries capabilities packages match among themselves. Closing
 # the whole array would reject those, and the freestanding allocator selection
 # that already ships is one.
-sed -i 's/"mcpp:kernel_abi=fakeos", //' sys/mcpp.toml
-sed -i 's/provides = \[/provides = ["a-capability-mcpp-never-heard-of", /' sys/mcpp.toml
-rm -rf target
+provider_declares "a-capability-mcpp-never-heard-of" "mcpp:c-abi=fakelibc"
 free=$("$MCPP" build 2>&1 || true)
 echo "$free" | grep -q "names no capability mcpp knows" && {
     echo "a capability outside the mcpp: namespace must pass through untouched" >&2
     echo "$free" >&2; cat sys/mcpp.toml >&2; exit 1
+}
+echo "$free" | grep -q 'c-abi  *fakelibc' || {
+    echo "the layer beside the unknown name must still resolve" >&2
+    echo "$free" >&2; exit 1
 }
 
 echo "target-side resolution reads the graph, reports it, and validates its own namespace"
