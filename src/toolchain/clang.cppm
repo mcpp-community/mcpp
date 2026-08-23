@@ -341,30 +341,53 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
     // std.compat depends on std, so we need -fmodule-file=std=<std.pcm>
     // Note: the path after = must NOT be shell-quoted separately; the
     // entire -fmodule-file flag is a single token to the compiler.
+    //
+    // ⚠️⚠️ ABSOLUTE PATHS AND NO `cd`, AND ONE FORM RATHER THAN TWO.
+    //
+    // This used to be `cd <cacheDir> && … pcm.cache/std.pcm …`. `cd X && …`
+    // DOES NOT CHANGE THE DRIVE in cmd.exe — the build cache lives under the
+    // user's profile and a checkout lives wherever the runner put it, so on CI
+    // those are `C:` and `D:`. The `cd` succeeds, the drive stays where it was,
+    // and every relative path resolves against the wrong root. Measured
+    // 2026-08-23, a Windows host cross-building for `x86_64-linux-gnu`:
+    //
+    //     std.compat.cppm:84:8: fatal error: module file 'pcm.cache\std.pcm'
+    //       not found: module file not found
+    //
+    // — and `std.pcm` had been built successfully one command earlier.
+    //
+    // ⚠️ The obvious repair was a `#if defined(_WIN32)` branch, which is what
+    // the `std` builder above has. It was written and then withdrawn: a branch
+    // that only compiles on one platform is a branch this machine cannot check,
+    // and every defect this session found in the host dimension had exactly
+    // that shape — code shaped by which machine was doing the building. Naming
+    // absolute paths is correct everywhere, so there is one form.
+    auto absBmi    = (cacheDir / relBmi).string();
+    auto absStdBmi = (cacheDir / relStdBmi).string();
+    auto absObj    = (cacheDir / "std.compat.o").string();
     return {
-        std::format("cd {} && {}{} {} -Wno-reserved-module-identifier{}{} "
+        std::format("{}{} {} -Wno-reserved-module-identifier{}{} "
                     "-fmodule-file=std={} "
                     "--precompile {} -o {} 2>&1",
-                    mcpp::xlings::shq(cacheDir.string()),
                     mcpp::toolchain::compiler_env_prefix(tc),
                     mcpp::xlings::shq(tc.binaryPath.string()),
                     cppStandardFlag,
                     sysrootFlag,
                     extraFlags,
-                    relStdBmi,
+                    absStdBmi,
                     mcpp::xlings::shq(tc.stdCompatSource.string()),
-                    mcpp::xlings::shq(relBmi)),
-        std::format("cd {} && {}{} {} -Wno-reserved-module-identifier{}{} "
+                    mcpp::xlings::shq(absBmi)),
+        std::format("{}{} {} -Wno-reserved-module-identifier{}{} "
                     "-fmodule-file=std={} "
-                    "{} -c -o std.compat.o 2>&1",
-                    mcpp::xlings::shq(cacheDir.string()),
+                    "{} -c -o {} 2>&1",
                     mcpp::toolchain::compiler_env_prefix(tc),
                     mcpp::xlings::shq(tc.binaryPath.string()),
                     cppStandardFlag,
                     sysrootFlag,
                     extraFlags,
-                    relStdBmi,
-                    mcpp::xlings::shq(relBmi))
+                    absStdBmi,
+                    mcpp::xlings::shq(absBmi),
+                    mcpp::xlings::shq(absObj))
     };
 }
 
