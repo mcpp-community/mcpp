@@ -193,6 +193,12 @@ mcpp xpkg parse <file.lua> --format json
 
 `data` 就是 `--json` 裸打印的那份文档。
 
+`mcpp` 字段为内联表的描述符产出完整文档:`namespace`、`name`、`versions`、
+`standard`、`import_std`、`sources`、`include_dirs`、`generated_files`、
+`generated_contents`、`targets`、`unknown_keys`。没有内联表的描述符以
+`"form": "A"` 代替构建信息。两种形态都携带 `versions` —— 描述符各平台
+`xpm` 表的版本键。
+
 ### `mcpp.cache` —— 全局构建缓存
 
 ```
