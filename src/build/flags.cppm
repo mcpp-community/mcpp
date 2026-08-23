@@ -534,26 +534,28 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         : " " + plan.toolchain.crossTargetFlag;
     const bool isClangWithCfg = dm.hasCfg;
 
-    // ⭐⭐ THE TARGET SIDE COMES FROM THE DEPENDENCY GRAPH, STATED ONCE.
+    // THE TARGET SIDE COMES FROM THE DEPENDENCY GRAPH, READ RATHER THAN
+    // DERIVED.
     //
-    // ⚠️ TWO CONDITIONS AND NOT ONE, and each excludes a case the other admits.
+    // This used to be `targetCxxRuntime && !crossTargetFlag.empty()`, and the
+    // twenty lines that stood here argued why neither condition could be
+    // dropped. The argument was sound about the two conditions and wrong about
+    // the question: both are proxies measured before the dependency graph
+    // exists, and a proxy cannot see a case it was not written for.
     //
-    // `crossTargetFlag` alone is too wide: it is set for EVERY hosted target a
-    // retargetable clang is pointed at, including the musl and glibc crosses
-    // served by a payload — and those still need this host's `-B`, its runtime
-    // directories and its C-runtime flags, because for them the payload IS the
-    // target side.
+    // The case it could not see was a C program. `targetCxxRuntime` says a
+    // package supplies a C++ RUNTIME, and a C program has none while its
+    // system still comes from the graph. So the gate in prepare admitted the
+    // build, this predicate rejected it, the payload's own libc++ stayed on the
+    // link line, and a macOS cross ended in:
     //
-    // `targetCxxRuntime` alone is too wide the other way: it says a package
-    // supplies a C++ runtime, which is also true of a NATIVE build of such a
-    // package, where the payload's link model is right and dropping it would
-    // remove a working link.
+    //     ld64.lld: error: …/lib/x86_64-unknown-linux-gnu/libc++.so:
+    //                      unhandled file type
     //
-    // Together they say the thing this replacement depends on: the C library,
-    // the C++ runtime and the platform are packages, AND we are pointing the
-    // compiler at a target that is not this machine.
-    const bool graphTargetSide = plan.toolchain.targetCxxRuntime
-                              && !plan.toolchain.crossTargetFlag.empty();
+    // `mcpp.targetside` answers the question directly, after resolution, for
+    // every layer separately. Reading it here means this site and the gate
+    // cannot disagree, because there is nothing left to disagree about.
+    const bool graphTargetSide = plan.targetSide.system_from_graph();
     // LLVM root of a clang-with-cfg toolchain — used by the macOS link
     // path below to locate libc++.a/libc++abi.a for staticStdlib.
     std::filesystem::path llvmRootForStdlib;
@@ -1003,11 +1005,18 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // "incompatible with elf64lriscv". See MechanismInput::freestanding.
         if (auto ft = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))
             mi.freestanding = ft->is_freestanding();
-        // ⭐⭐ AND THE HOSTED FORM OF THE SAME FACT. A package in the graph has
-        // compiled a C++ runtime FOR THIS TARGET and its objects are on the
-        // link line — so, exactly as on bare metal, every archive the table
+        // AND THE HOSTED FORM OF THE SAME FACT. The target's system comes from
+        // the graph — so, exactly as on bare metal, every archive the table
         // below would reach for is the HOST's.
-        mi.graphCxxRuntime = plan.toolchain.targetCxxRuntime;
+        //
+        // The condition is the SYSTEM's origin and not the C++ runtime's. It
+        // was the latter until this line, and that is precisely why a C
+        // program over the same packages kept the payload's libc++ on its link
+        // line: the table asked whether a C++ runtime came from the graph, a C
+        // program has none, and the answer "no" was read as "so the payload's
+        // is right". A program with no C++ runtime needs the driver stopped
+        // from adding one just as much as a program that brought its own.
+        mi.graphCxxRuntime = plan.targetSide.system_from_graph();
 
         const bool wantsArchives =
             (base == dist::Contract::SelfContained
@@ -1431,11 +1440,39 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         if (isClangWithCfg) graphLd += " --no-default-config";
         // Names a FAMILY; the driver picks the flavour from the target, which
         // is the one part of the selection that is still ours to make.
-        graphLd += " -fuse-ld=lld";
+        //
+        // Only for a driver that has lld. A graph-supplied target side does not
+        // imply clang — the same packages compiled by gcc are the intended
+        // second consumer — and `-fuse-ld=lld` handed to a gcc that was not
+        // built with it fails at the link with a message about a missing
+        // linker rather than about the choice made here.
+        if (plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang)
+            graphLd += " -fuse-ld=lld";
 
         f.ld = std::format("{}{}{}{}{}", full_static, graphLd,
                            link_intent_ld, user_ldflags, link_extra);
         f.ldC = f.ld;   // no C++ runtime token on this line
+
+        // AND THE SECOND CHANNEL, WHICH THE REPLACEMENT ABOVE DOES NOT REACH.
+        //
+        // `ldRuntimeFallback` carries `-Wl,-rpath` into this host's subos
+        // library view, and it is appended per unit rather than through `f.ld`.
+        // Measured on a native openkal build, whose target side is entirely
+        // from the graph:
+        //
+        //     unit_ldflags = -nostdlib++ -Wl,-rpath,…/registry/subos/default/lib
+        //
+        // It did no harm there, because a program built over these packages
+        // links statically and the tag never reaches the image — `readelf -d`
+        // reports no dynamic section at all. That is luck rather than design:
+        // the path names directories on the machine that built the artifact,
+        // and the moment one of these targets produces a dynamic image it is a
+        // load-time reference to a directory the target machine does not have.
+        //
+        // Cleared for the same reason the freestanding block below clears it:
+        // a search path belongs to whoever supplies the libraries, and here
+        // that is the dependency graph.
+        f.ldRuntimeFallback.clear();
     }
 
     // ── Freestanding: the target has no OS, so most of the above is wrong ──

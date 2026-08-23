@@ -7,6 +7,7 @@ export module mcpp.build.plan;
 
 import std;
 import mcpp.build.graph_shape;
+import mcpp.targetside;
 import mcpp.build.loader_contract;
 import mcpp.manifest;
 import mcpp.source_kind;
@@ -154,6 +155,16 @@ struct BuildPlan {
     mcpp::manifest::Manifest        manifest;
     mcpp::toolchain::Toolchain      toolchain;
     mcpp::toolchain::Fingerprint    fingerprint;
+    // Where the target's platform interface, C library and C++ runtime come
+    // from, resolved once in prepare after the dependency graph is known.
+    //
+    // It is a field of the plan rather than of the toolchain because it is not
+    // a property of the compiler: the same clang serves a build whose system
+    // comes from its own payload and one whose system is built from source by
+    // that same clang. Attaching it to the toolchain is what produced the
+    // `openkal-llvm` family name, which had to be invented to carry a fact
+    // about the dependency graph on an object that describes a compiler.
+    mcpp::targetside::TargetSide    targetSide;
     // Which graph this plan will write into build.ninja. The fingerprint does
     // NOT cover dev-deps or test targets, so `mcpp build` and `mcpp test`
     // share an output directory and overwrite each other's graph; this is what

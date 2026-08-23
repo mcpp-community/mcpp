@@ -28,35 +28,23 @@ import mcpp.toolchain.triple;
 
 export namespace mcpp::toolchain {
 
-// ⭐⭐ `OpenkalLlvm` IS NOT A FOURTH COMPILER. It is the SAME llvm payload,
-// asked a different question about where the target side comes from.
+// `OpenkalLlvm` IS A SPELLING, NOT A COMPILER, AND NO LONGER A DECISION.
 //
-// Gcc, Llvm and Msvc each answer "which target can I produce?" with "the one my
-// payload was built for" — a gcc payload IS its target, an msvc payload targets
-// the machine it runs on, and even the llvm payload is used that way because
-// mcpp has always supplied the target's headers and C library from a per-(host,
-// target) payload beside it.
+// It named the same llvm payload as `Llvm` and existed to carry one fact: that
+// a project's headers, C library, C++ runtime and platform implementation come
+// from packages rather than from a payload beside the compiler. A toolchain
+// family was the wrong object to carry it. That fact belongs to the dependency
+// graph, is only knowable after the graph is resolved, and says nothing about
+// which compiler is running — the same packages compiled by gcc are the
+// intended second consumer, and expressing them through a family name would
+// have required a second name for the same fact.
 //
-// openkal removes that second half. The target side — headers, C library, C++
-// runtime, and the platform's own implementation of a 48-function interface —
-// is a set of PACKAGES in the dependency graph, built from source by whichever
-// compiler is running. What is left for the compiler is code generation, and
-// clang emits every format it was built with from one binary.
-//
-// ⇒ So this family's target coverage is not a payload matrix. It is "every
-// triple clang can emit", and whether the target side actually EXISTS for a
-// given triple is not this layer's question: openkal clause 6.1 makes a missing
-// implementation a link error naming the `kal_*` it could not resolve, which is
-// a better report than "this host cannot build that" — the first names what is
-// absent, the second names the wrong thing entirely.
+// `mcpp.targetside` resolves it per layer, from what packages declare, at the
+// point where the graph exists. This member survives so that a manifest
+// written against the older spelling still resolves; it behaves in every
+// respect as `Llvm`, and nothing branches on it.
 enum class Family { Gcc, Llvm, Msvc, OpenkalLlvm };
 
-// True when a family's target coverage is decided by what the compiler can
-// emit rather than by which payloads exist. One predicate so the gate, the
-// listing and the payload resolution cannot disagree.
-constexpr bool family_serves_every_target(Family f) {
-    return f == Family::OpenkalLlvm;
-}
 
 inline std::string_view family_name(Family f) {
     switch (f) {

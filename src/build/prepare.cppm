@@ -16,6 +16,7 @@ export module mcpp.build.prepare;
 export import mcpp.build.prepare_inputs;
 
 import std;
+import mcpp.targetside;
 import mcpp.diag;
 import mcpp.home;
 import mcpp.platform.axis;
@@ -846,6 +847,13 @@ prepare_build(bool print_fingerprint,
               bool includeDevDeps = false,
               std::vector<mcpp::manifest::Target> extraTargets = {},
               BuildOverrides overrides = {}) {
+    // A refusal decided early and released late. `host_can_serve` answers
+    // "does a payload on this machine produce this target", which is knowable
+    // before dependency resolution and is only half the question: a package in
+    // the graph can supply the target's system, and the graph is not known
+    // here. Held until it is, and released only if nothing supplies it.
+    std::string unservedTargetDiagnosis;
+
     auto root = overrides.project_root.empty()
         ? mcpp::project::find_manifest_root(std::filesystem::current_path())
         : std::optional<std::filesystem::path>(overrides.project_root);
@@ -1384,36 +1392,6 @@ prepare_build(bool print_fingerprint,
         bool hasToolchainOverride = hasExplicitSection
                                  && !it->second.toolchain.empty();
 
-        // ⭐⭐ DOES THIS PROJECT TAKE ITS TARGET SIDE FROM openkal?
-        //
-        // Asked HERE, before dependency resolution, because the refusal below
-        // happens here — and the answer is available here, because it is a
-        // statement the project makes about itself rather than a fact about the
-        // graph. `[toolchain] default = "openkal-llvm@…"` (or the same name in
-        // a `[target.X] toolchain`) says: the headers, the C library, the C++
-        // runtime and the platform's implementation come from packages, and the
-        // compiler's job is code generation.
-        //
-        // ⚠️ THE GRAPH IS NOT CONSULTED, AND THAT IS DELIBERATE. Whether an
-        // openkal implementation actually exists for the requested target is
-        // not this layer's question — openkal clause 6.1 answers it at LINK
-        // time, by naming the `kal_*` that could not be resolved. That is a
-        // better report than the refusal below: it names what is absent, while
-        // "this host cannot build that target" names something that stopped
-        // being true.
-        const bool openkalTargetSide = [&] {
-            auto family_of = [](std::string_view spec) {
-                if (spec.empty()) return false;
-                auto at = spec.find('@');
-                auto fam = at == std::string_view::npos ? spec : spec.substr(0, at);
-                return fam == "openkal-llvm";
-            };
-            if (hasToolchainOverride && family_of(it->second.toolchain)) return true;
-            // `for_platform` answers with an optional: a project may name no
-            // toolchain at all, and then it certainly did not name this one.
-            auto def = m->toolchain.for_platform(kCurrentPlatform);
-            return def && family_of(*def);
-        }();
         const triple::TargetInfo* known =
             parsed ? triple::find_known_target(*parsed) : nullptr;
 
@@ -1458,8 +1436,28 @@ prepare_build(bool print_fingerprint,
         // The escape hatch stays open on purpose: an explicit `[target.X]`
         // toolchain override means the author is supplying the cross toolchain
         // themselves, and mcpp's payload matrix has no standing to refuse it.
+        // DIAGNOSED HERE, REPORTED LATER, AND THE DIFFERENCE IS THE POINT.
+        //
+        // Whether a payload on this machine produces this target is knowable
+        // now. Whether anything ELSE produces it is not: a dependency can
+        // supply the target's platform interface and C library, and the
+        // dependency graph does not exist yet at this line. Refusing here
+        // therefore answered a narrower question than the one it claimed —
+        // measured, a project that only had to add a dependency was told its
+        // machine could not build the target at all.
+        //
+        // The refusal is kept in full, because it is right whenever nothing
+        // supplies the target side, which remains the ordinary case. It is
+        // carried to where the graph is known and released there. Nothing
+        // between here and there consumes the answer: what follows is toolchain
+        // and dependency resolution, and a target no payload serves resolves to
+        // a driver that simply will not be asked to emit anything.
+        //
+        // The escape hatch stays open on purpose: an explicit `[target.X]`
+        // toolchain override means the author is supplying the cross toolchain
+        // themselves, and mcpp's payload matrix has no standing to refuse it.
         if (known && known->tier != "planned" && !hasToolchainOverride
-            && !openkalTargetSide && parsed
+            && parsed
             && !mcpp::toolchain::host_can_serve(*parsed)) {
             std::string servable;
             for (auto const& info : triple::known_targets()) {
@@ -1469,16 +1467,20 @@ prepare_build(bool print_fingerprint,
                 if (!servable.empty()) servable += ", ";
                 servable += t->str();
             }
-            return std::unexpected(std::format(
-                "target '{}' cannot be built on this host — no toolchain payload "
-                "exists that runs here and produces it.\n"
-                "       this host can build: {}\n"
-                "       Build it on a host that can, or supply your own cross "
-                "toolchain with an\n"
-                "       explicit [target.{}] toolchain = \"…\" section.",
+            unservedTargetDiagnosis = std::format(
+                "target '{}' cannot be built on this host.\n"
+                "       No toolchain payload here produces it, and nothing in "
+                "the dependency graph\n"
+                "       supplies its system side.\n"
+                "       this host can build with the payload alone: {}\n"
+                "       To build it anyway, depend on a package that implements "
+                "the target's system\n"
+                "       (its kernel interface and C library), or supply your own "
+                "cross toolchain with\n"
+                "       an explicit [target.{}] toolchain = \"…\" section.",
                 parsed->str(),
                 servable.empty() ? "(nothing — `mcpp toolchain list`)" : servable,
-                parsed->str()));
+                parsed->str());
         }
         // Canonical from here on: cfg evaluation, spec attachment and the
         // target/ output directory all see one spelling.
@@ -1505,32 +1507,30 @@ prepare_build(bool print_fingerprint,
         // A convention, not an instruction: on the Windows-GNU first-run path
         // this is what turns the seeded target into `gcc@16.1.0`.
         //
-        // It must not fire when a REMEMBERED target would overrule a
-        // toolchain the user wrote down. Once the no-Visual-Studio fallback
-        // persists `default_target = x86_64-windows-gnu`, every later project
-        // inherits that target — and the pin attached to it would then
-        // silently replace an explicit `[toolchain] windows = "llvm@…"`,
-        // which is exactly the promise the fallback is built on ("mcpp
-        // revises its own defaults, never yours"). A target the user asked
-        // for (--target, or [build] target) still wins, as it always has.
-        const bool pinWouldOverruleUser =
-            targetFromGlobalDefault && tc_origin_is_user_explicit(tcOrigin);
-        // ⭐ AND IT MUST NOT FIRE WHEN THE PROJECT'S TARGET SIDE IS openkal.
+        // It must not fire when it would overrule a toolchain the user wrote
+        // down. The pin is mcpp's own default for a target row — `gcc@16.1.0`
+        // for Windows-GNU, because the mingw payload is what supplies that
+        // target's headers and C library — and an explicit `[toolchain]` line
+        // is not a default. This is the promise the no-Visual-Studio fallback
+        // is built on: mcpp revises its own defaults, never yours.
         //
-        // The pin encodes which payload serves a triple — `gcc@16.1.0` for
-        // Windows-GNU, because the mingw payload is what supplies that
-        // target's headers and C library. A project taking its target side
-        // from openkal supplies those itself and needs the compiler its
-        // runtime packages were configured for.
+        // HOW THE TARGET WAS NAMED IS NOT PART OF THE QUESTION, and it used to
+        // be. The guard read `targetFromGlobalDefault && user_explicit`, so a
+        // target given on the command line disabled it — and then the row's pin
+        // replaced a toolchain the project had stated. Measured 2026-08-23:
+        // `--target x86_64-windows-gnu` with an explicit `llvm@22.1.8` resolved
+        // `x86_64-w64-mingw32-g++`, and gcc cannot compile libc++'s std module.
         //
-        // ⚠️ Measured 2026-08-23, before this line: `--target x86_64-windows-gnu`
-        // on the openkal stack resolved `x86_64-w64-mingw32-g++` EVEN WITH an
-        // explicit `--toolchain llvm@22.1.8`, and gcc cannot compile libc++'s
-        // std module. The row won, silently, because `pinWouldOverruleUser`
-        // only guards a target that came from a REMEMBERED default — and this
-        // one came from the command line.
+        // A project that means to use a different compiler for a pinned target
+        // is stating something about its own build, and a project whose target
+        // side comes from its dependency graph is the ordinary reason to do so:
+        // the payload the row names supplies headers and a C library that such
+        // a project does not use. The narrower reading of this guard was
+        // patched with an openkal-specific exception; stating the rule
+        // correctly removes the need for one.
+        const bool pinWouldOverruleUser = tc_origin_is_user_explicit(tcOrigin);
         if (known && !hasToolchainOverride && !known->pin.empty()
-            && !pinWouldOverruleUser && !openkalTargetSide) {
+            && !pinWouldOverruleUser) {
             tcSpec = std::string(known->pin);
             if (!tc_origin_is_user_explicit(tcOrigin))
                 tcOrigin = TcOrigin::TargetPin;
@@ -5427,6 +5427,142 @@ prepare_build(bool print_fingerprint,
         }
     }
 
+    mcpp::targetside::TargetSide resolvedTargetSide;
+
+    // ── THE TARGET SIDE, RESOLVED ONCE ───────────────────────────────────────
+    //
+    // HERE AND NOT EARLIER, AND THAT IS THE WHOLE POINT.
+    //
+    // mcpp serves two ways of supplying a target's platform interface, C
+    // library and C++ runtime, and the moment each becomes knowable is
+    // opposite: a prebuilt directory is known before dependency resolution, a
+    // set of packages only after it. Until now three separate derivations ran
+    // at the earlier moment and guessed the later answer — the family name in
+    // this file, `graphTargetSide` in flags, `graphCxxRuntime` in the contract
+    // — and they disagreed on the case none of them was written for. Measured:
+    //
+    //   ld64.lld: error: …/lib/x86_64-unknown-linux-gnu/libc++.so:
+    //                    unhandled file type
+    //
+    // for a pure C program crossed to macOS, whose graph supplies a C library
+    // and no C++ runtime at all.
+    //
+    // Placing the resolution after capability binding and before the root
+    // build.mcpp means every later consumer reads one value, and a build
+    // program can be told what was resolved rather than re-deriving it.
+    {
+        namespace tsd = mcpp::targetside;
+
+        // Scan the graph once for each layer. A package declares the layer it
+        // supplies and, optionally, the interface name it answers to:
+        //
+        //     provides = ["mcpp:kernel-abi=openkal"]
+        //
+        // The engine knows the three layer names and nothing about the
+        // implementations that fill them. `hosted-standard-library` is accepted
+        // for the C++ layer as the spelling that shipped before this one, so an
+        // existing package keeps working unchanged.
+        auto provider_of = [&](tsd::CapLayer want)
+            -> std::optional<tsd::Provider> {
+            std::optional<tsd::Provider> found;
+            for (auto const& pkg : packages) {
+                for (auto const& entry : pkg.manifest.provides) {
+                    std::optional<tsd::CapDecl> decl;
+                    if (auto parsed = tsd::parse_capability(entry); parsed && *parsed)
+                        decl = **parsed;
+                    else if (entry == "hosted-standard-library")
+                        decl = tsd::CapDecl{ tsd::CapLayer::CxxAbi, {} };
+                    if (!decl || decl->layer != want) continue;
+
+                    tsd::Provider p;
+                    p.name          = pkg.manifest.package.name;
+                    p.version       = pkg.manifest.package.version;
+                    p.interfaceName = decl->interfaceName;
+                    p.hasStdModule  = !pkg.manifest.stdModule.empty();
+                    // A package may carry both spellings during the transition,
+                    // and the array order is the author's, not a preference.
+                    // The current spelling names the interface; the older one
+                    // cannot, so taking whichever came first would report a
+                    // package name where an interface name belongs.
+                    if (!found || (found->interfaceName.empty()
+                                   && !p.interfaceName.empty()))
+                        found = p;
+                }
+            }
+            return found;
+        };
+
+        tsd::Inputs in;
+        if (tc) {
+            if (auto tt = mcpp::toolchain::triple::parse(tc->targetTriple)) {
+                in.llvmTriple         = tt->llvm_triple(
+                    mcpp::platform::macos::deployment_target(
+                        m->buildConfig.macosDeploymentTarget));
+                in.targetOs           = tt->os;
+                in.targetEnv          = tt->env;
+                in.freestandingTarget = tt->is_freestanding();
+
+                // `sysroot = ""` and "no sysroot key" are different answers and
+                // must not be collapsed: the first says this project wants no
+                // prebuilt C library, the second says it did not say.
+                if (auto const* ovr = sysroot_override(*m, *tt); ovr && ovr->empty())
+                    in.sysrootDeclaredEmpty = true;
+                else
+                    in.sysrootXpkg = mcpp::toolchain::triple::effective_sysroot(
+                        *tt, sysroot_override(*m, *tt));
+            }
+            in.payloadLibcRef      = tc->targetSysrootPkg;
+            in.payloadCxxInterface = tc->stdlibId;
+        }
+        in.kernelAbi = provider_of(tsd::CapLayer::KernelAbi);
+        in.cAbi      = provider_of(tsd::CapLayer::CAbi);
+        in.cxxAbi    = provider_of(tsd::CapLayer::CxxAbi);
+
+        resolvedTargetSide = tsd::resolve(in);
+        if (auto why = tsd::check_layering(resolvedTargetSide))
+            return std::unexpected(*why);
+
+        // The refusal held since toolchain resolution, released now that the
+        // other half of its question has an answer. A payload on this machine
+        // does not produce this target; if the graph does not supply the
+        // target's system either, then nothing does and the diagnosis stands.
+        if (!unservedTargetDiagnosis.empty()
+            && !resolvedTargetSide.system_from_graph())
+            return std::unexpected(unservedTargetDiagnosis);
+
+        // A request that cannot be honoured is said so rather than dropped.
+        //
+        // Measured 2026-08-23: `[build] linkage = "dynamic"` on a project whose
+        // system comes from the graph produced a statically linked artifact and
+        // printed nothing. The outcome is correct — the graph supplies its
+        // libraries as objects compiled into this build, and there is no shared
+        // object for a loader to resolve at run time — but a directive that has
+        // no effect and no diagnostic is indistinguishable from one that was
+        // never read.
+        if (resolvedTargetSide.system_from_graph()
+            && m->buildConfig.linkage == "dynamic")
+            mcpp::ui::warning(
+                "`linkage = \"dynamic\"` has no effect when the "
+                "target's system comes from the dependency graph: those "
+                "packages are compiled into this build as objects, and there "
+                "is no shared object to link against. The artifact is static.");
+
+        // Reported, and reported HERE rather than recorded in a manifest field.
+        //
+        // A line a project writes states an intention, and it goes stale the
+        // moment the packages beneath it change — a program that names its C
+        // library by name is naming a transitive dependency it did not choose.
+        // This states the outcome, so it cannot be stale, and it answers a
+        // question that until now had no answer at all: reading every manifest
+        // in the graph did not tell anyone what would end up on the link line,
+        // because three places derived it separately and could disagree.
+        mcpp::ui::info("Target", tsd::format_report(
+            resolvedTargetSide,
+            resolvedTargetCanonical.empty()
+                ? (tc ? tc->targetTriple : std::string{})
+                : resolvedTargetCanonical));
+    }
+
     // ── L3: ROOT build.mcpp (moved after dependency resolution, design §3.1
     // item 4) ────────────────────────────────────────────────────────────────
     // Runs HERE — after dep resolution + feature activation (so the contract
@@ -5983,6 +6119,11 @@ prepare_build(bool print_fingerprint,
                                              stdBmiPath, stdObjectPath, storeRoots);
     if (!planResult) return std::unexpected(planResult.error());
     ctx.plan        = std::move(*planResult);
+    // Resolved far above, where the dependency graph first exists. It is
+    // attached here rather than threaded through `make_plan` because nothing
+    // that function does depends on it: the flag assembly that does reads the
+    // plan, and every reader of `compute_flags` runs after this line.
+    ctx.plan.targetSide = resolvedTargetSide;
     // The module graph outlives the plan for one consumer: `mcpp pack`, which
     // has to know which units are INTERFACE (published as source) and which
     // are implementation (published only as an object). The plan flattens that
