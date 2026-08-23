@@ -1360,6 +1360,25 @@ TargetSide resolve(const Manifest& root, const DepGraph& g,
    引用;补发第二轮七个版本,按层把每处 `branch = …` 换成索引里存在的版本。⇒ **「合入并发布」
    不等于「可用」,而「可用」的判据是发布物里没有指向分支的引用。**
 
+### 18.3a 形态 7 的实测:解析正确,而链接另有既有缺口
+
+**实测**,`std-freestanding@0.5.1` 的 `alloc-libc` 之上、picolibc 之下:
+
+```
+kernel-abi  —
+c-abi       picolibc-riscv (xim:picolibc-riscv@1.8.12, prebuilt)
+c++         freestanding   (std-freestanding@0.5.1, graph, subset)
+
+ld.lld: error: undefined symbol: malloc / aligned_alloc / free
+```
+
+⭐ 上三行即判据 2:**两个体系在同一次构建里按层并存,而输出把它讲清楚了。** 这是本设计要证明
+的事,它成立。
+
+⚠️ 而链接失败**先于本次改动即存在** —— 同一工程在 mcpp 2026.8.21.3 上报同样三个符号。
+`alloc-libc` 把分配器转发给目标的 C 库,而 picolibc 的这三个符号没有到达链接线。⇒ 属
+`std-freestanding-alloc-libc` 与 picolibc 的组合缺口,与目标侧解析无关,另行立项。
+
 ### 18.4 生态发布
 
 | 包 | 第一轮 | 第二轮(索引解析) |
