@@ -362,7 +362,7 @@ picolibc 一类走的是 freestanding 分支(`isFreestandingTarget` 提前短路
 ⚠️ 但测量发现一处**惰性**残留。链接线上有载荷侧的贡献:
 
 ```
-unit_ldflags = -nostdlib++ -Wl,-rpath,/home/speak/.mcpp/registry/subos/default/lib …
+unit_ldflags = -nostdlib++ -Wl,-rpath,<mcpp-home>/registry/subos/default/lib …
 ```
 
 而**实测**该 rpath **没有落进产物**(`readelf -d` 报「There is no dynamic section」)。原因是
