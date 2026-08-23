@@ -1459,10 +1459,27 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // Mach-O link as `-Wl,-rpath,…/lib/x86_64-unknown-linux-gnu`, which ld64
     // accepts and writes into the image), `payload_ld`, `atomic_ld`.
     if (!isFreestandingTarget && graphTargetSide) {
-        f.ld = std::format("{}{}{}{}{}", full_static, link_toolchain_flags,
+        // ⚠️ ASSEMBLED HERE RATHER THAN TAKEN FROM `link_toolchain_flags`,
+        // BECAUSE THAT STRING IS ONLY POPULATED WHEN THE PAYLOAD HAS A CONFIG
+        // FILE (`isClangWithCfg`). The Linux payload ships one and the Windows
+        // payload does not, so on a Windows host the replacement emitted no
+        // `--target=` at all and clang chose its own default:
+        //
+        //     lld-link: error: obj/mcpplibs_openkal-linux/src/env.o:
+        //       unknown file type                                    (× many)
+        //
+        // ELF objects handed to lld's MSVC driver. `--target=` is not a
+        // property of whether a config file exists; it is the whole content of
+        // "which machine is this for".
+        std::string graphLd = crossTarget;
+        if (isClangWithCfg) graphLd += " --no-default-config";
+        // Names a FAMILY; the driver picks the flavour from the target, which
+        // is the one part of the selection that is still ours to make.
+        graphLd += " -fuse-ld=lld";
+
+        f.ld = std::format("{}{}{}{}{}", full_static, graphLd,
                            link_intent_ld, user_ldflags, link_extra);
-        f.ldC = std::format("{}{}{}{}{}", full_static, link_toolchain_flags_c,
-                            link_intent_ld, user_ldflags, link_extra);
+        f.ldC = f.ld;   // no C++ runtime token on this line
     }
 
     // ── Freestanding: the target has no OS, so most of the above is wrong ──
