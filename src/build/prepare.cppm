@@ -756,6 +756,46 @@ sysroot_override(const mcpp::manifest::Manifest& m,
 // shape this codebase keeps paying for. A board package that got the right
 // answer as a root project and a stale one as a dependency would fail only in
 // the consuming build, which is the harder direction to debug.
+// ⚠️⚠️ A NETWORK STEP OF A BUILD, RETRIED — AND IT HAD NO RETRY AT ALL.
+//
+// A dependency resolved by `git` is fetched on every machine that has not
+// cached it, and a transport that hiccups once failed the whole build:
+//
+//     error: git clone of 'https://github.com/…' failed:
+//     Cloning into '/home/runner/.mcpp/git/63269d80b47f71e6'...
+//
+// — no message from git, which is what a connection that dies mid-transfer
+// looks like. Measured twice on 2026-08-23: once in continuous integration and
+// once locally as `TLS connect error: … unexpected eof while reading`.
+//
+// ⚠️ THREE ATTEMPTS, AND THE LAST FAILURE IS REPORTED UNCHANGED. A wrong URL
+// and a missing branch fail exactly as a transient fault does, so this cannot
+// tell them apart and does not try: a permanent failure costs three seconds and
+// produces the message it always did. Hiding a real error behind a retry is the
+// worse trade, which is why the count is small and the report is untouched.
+//
+// ⚠️ BOTH NETWORK STEPS, not one. The first version retried only the clone —
+// and a probe with a nonexistent repository failed in ONE second, because the
+// step that runs first is `git ls-remote` and it was still bare. A retry on
+// half of a path is a retry that reports success at having been added.
+//
+// `between` runs after a failed attempt: the clone needs the partial directory
+// removed, or git's next attempt fails with "already exists and is not an empty
+// directory" — a second, different error that says nothing about the first.
+mcpp::platform::process::RunResult run_with_network_retry(
+        std::string_view command,
+        const std::function<void()>& between = {}) {
+    mcpp::platform::process::RunResult r{};
+    for (int attempt = 1; attempt <= 3; ++attempt) {
+        r = mcpp::platform::process::capture(command);
+        if (r.exit_code == 0) return r;
+        if (between) between();
+        if (attempt < 3)
+            std::this_thread::sleep_for(std::chrono::seconds(attempt));
+    }
+    return r;
+}
+
 void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
                            const mcpp::toolchain::Toolchain* tc)
 {
@@ -4275,7 +4315,9 @@ prepare_build(bool print_fingerprint,
                             std::format("mcpp.lock records no commit for branch "
                                         "'{}'", spec.gitRev),
                             "resolve");
-                    auto r = mcpp::platform::process::capture(std::format(
+                    // The FIRST network step of a git dependency, and therefore
+                    // the one a transient fault is most likely to meet.
+                    auto r = run_with_network_retry(std::format(
                         "git ls-remote {} {} 2>&1",
                         mcpp::platform::shell::quote(spec.git),
                         mcpp::platform::shell::quote(
@@ -4357,7 +4399,11 @@ prepare_build(bool print_fingerprint,
                         mcpp::platform::shell::quote(gitRoot.string()),
                         mcpp::platform::shell::quote(gitRoot.string()),
                         mcpp::platform::shell::quote(resolvedGitRev));
-                auto r = mcpp::platform::process::capture(cloneCmd);
+                // See `run_with_network_retry` for why, and for what the
+                // callback is removing between attempts.
+                auto r = run_with_network_retry(cloneCmd, [&] {
+                    std::filesystem::remove_all(gitRoot, ec);
+                });
                 if (r.exit_code != 0) {
                     std::filesystem::remove_all(gitRoot, ec);
                     return std::unexpected(std::format(
