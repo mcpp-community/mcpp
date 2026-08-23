@@ -902,62 +902,18 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         //
         // Target-keyed, not host-keyed: a Linux-hosted MinGW cross build
         // produces a PE and must take the PE answer.
-        const dist::Format format = [&] {
-            if (isMingwTc) return dist::Format::Pe;
-            // The TARGET's own word, when it has one. `isMingwTc` was the only
-            // cross case this knew about, so every other question about the
-            // output format was answered by asking the HOST — which is right
-            // whenever they agree and unaskable in a test that does not run on
-            // the platform it is about. A triple that names its OS is a fact;
-            // the host is a stand-in for one.
-            //
-            // Only ADDS answers: a triple that says neither falls through to
-            // exactly the previous derivation, so no existing build changes.
-            const auto& t = plan.toolchain.targetTriple;
-            // ⭐⭐ THE PARSED TRIPLE FIRST, BECAUSE THE SUBSTRINGS BELOW DO NOT
-            // MATCH THE SPELLING mcpp ITSELF USES.
-            //
-            // `apple` and `darwin` are LLVM's words. mcpp's canonical form for
-            // that target is `aarch64-macos`, which contains neither — so the
-            // test fell through to the host on every host, and the two failures
-            // that produces are opposite:
-            //
-            //   Linux host, macOS target    → Elf contract for a Mach-O
-            //   macOS host, Linux target    → MachO contract for an ELF
-            //
-            // ⚠️ Measured 2026-08-23, the second one, on a macOS runner
-            // cross-building for `x86_64-linux-gnu` over openkal:
-            //
-            //     ld.lld: error: unable to find library -load_hidden
-            //     …/xim-x-llvm/22.1.8/lib/libc++.a: archive member
-            //       'system_error.cpp.o' is neither ET_REL nor LLVM bitcode
-            //
-            // `-load_hidden` is a Mach-O linker's word and that archive is the
-            // HOST's — both chosen because the format question was answered by
-            // asking which machine was doing the building.
-            //
-            // The substring tests are kept below as a fallback for a triple the
-            // vocabulary cannot parse (the `[target.X]` escape hatch), where a
-            // spelling is all there is.
-            if (auto parsed = mcpp::toolchain::triple::parse(t)) {
-                if (parsed->is_pe())            return dist::Format::Pe;
-                if (parsed->os == "macos")      return dist::Format::MachO;
-                if (parsed->os == "linux"
-                    || parsed->os == "none")    return dist::Format::Elf;
-            }
-            if (t.find("windows") != std::string::npos
-                || t.find("mingw") != std::string::npos)
-                return dist::Format::Pe;
-            if (t.find("apple") != std::string::npos
-                || t.find("darwin") != std::string::npos)
-                return dist::Format::MachO;
-            if constexpr (mcpp::platform::needs_explicit_libcxx)
-                return dist::Format::MachO;
-            else if constexpr (mcpp::platform::is_windows)
-                return dist::Format::Pe;
-            else
-                return dist::Format::Elf;
-        }();
+        // The format the TARGET produces. `isMingwTc` is kept ahead of the
+        // table because it recognises a mingw toolchain by more than its
+        // triple; everything after it is `dist::format_for`, which is where
+        // the question is answered and where it is tested.
+        const dist::Format format =
+            isMingwTc ? dist::Format::Pe
+                      : dist::format_for(plan.toolchain.targetTriple,
+                            mcpp::platform::needs_explicit_libcxx
+                                ? dist::Format::MachO
+                            : mcpp::platform::is_windows
+                                ? dist::Format::Pe
+                                : dist::Format::Elf);
 
         // `static_stdlib` is a faithful alias of the two ends of the contract:
         // its documented meaning has always been exactly self-contained vs the

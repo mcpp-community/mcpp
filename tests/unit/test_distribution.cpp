@@ -630,3 +630,43 @@ TEST(Distribution, GraphSuppliedRuntimeIgnoresTheRequestedContract) {
         EXPECT_EQ(m.unitFlags, " -nostdlib++");
     }
 }
+
+// ── format_for: which format a target produces ──────────────────────────────
+//
+// ⚠️ This was a lambda inside a fifteen-hundred-line function and therefore had
+// no test, and what it got wrong was found by running three hosts against three
+// targets. The assertions below are the ones that would have found it in a
+// second: the canonical spellings mcpp itself uses contain neither `apple` nor
+// `darwin`, and the answer must not depend on the fallback.
+
+TEST(Distribution, FormatIsTakenFromTheTargetAndNotTheFallback) {
+    // Every fallback, so that a target the vocabulary knows can never be
+    // decided by the machine doing the building.
+    for (auto fb : {dist::Format::Elf, dist::Format::MachO, dist::Format::Pe}) {
+        EXPECT_EQ(dist::format_for("aarch64-macos", fb),      dist::Format::MachO);
+        EXPECT_EQ(dist::format_for("x86_64-macos", fb),       dist::Format::MachO);
+        EXPECT_EQ(dist::format_for("x86_64-windows-gnu", fb), dist::Format::Pe);
+        EXPECT_EQ(dist::format_for("x86_64-linux-gnu", fb),   dist::Format::Elf);
+        EXPECT_EQ(dist::format_for("aarch64-linux-musl", fb), dist::Format::Elf);
+        EXPECT_EQ(dist::format_for("riscv64-none-elf", fb),   dist::Format::Elf);
+    }
+}
+
+// The `[target.X]` escape hatch: a spelling the vocabulary cannot parse is all
+// there is to go on, so LLVM's words are recognised there.
+TEST(Distribution, FormatFallsBackToSpellingForAnUnparseableTriple) {
+    EXPECT_EQ(dist::format_for("arm64-apple-macos14.0", dist::Format::Elf),
+              dist::Format::MachO);
+    EXPECT_EQ(dist::format_for("x86_64-w64-mingw32", dist::Format::Elf),
+              dist::Format::Pe);
+    EXPECT_EQ(dist::format_for("x86_64-unknown-darwin", dist::Format::Elf),
+              dist::Format::MachO);
+}
+
+// ⚠️ And only then the host. A triple that says nothing at all is the one case
+// where the machine doing the building is the best available answer.
+TEST(Distribution, FormatUsesTheFallbackOnlyWhenTheTripleSaysNothing) {
+    EXPECT_EQ(dist::format_for("", dist::Format::MachO),   dist::Format::MachO);
+    EXPECT_EQ(dist::format_for("", dist::Format::Pe),      dist::Format::Pe);
+    EXPECT_EQ(dist::format_for("nonsense", dist::Format::Elf), dist::Format::Elf);
+}
