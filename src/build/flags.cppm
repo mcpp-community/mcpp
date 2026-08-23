@@ -891,24 +891,6 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // nothing below re-decides it. The flags land in the PER-UNIT channel
     // (`unit_ldflags`) rather than the global one because two roles in the
     // same build may hold different contracts.
-    // ⭐⭐ AND NOT AT ALL WHEN THE C++ RUNTIME IS ALREADY IN THE OBJECTS.
-    //
-    // Every answer this block can give names a runtime to LINK — the system's
-    // (`-lc++`), the toolchain's (`-load_hidden …/libc++.a`), or a static form
-    // of one of them. All three are right when the runtime is something the
-    // artifact has to be joined to, and all three are wrong when a package in
-    // the graph already compiled one for this target and its objects are on
-    // the link line.
-    //
-    // ⚠️ Measured 2026-08-23, immediately after the format decision above was
-    // corrected to key on the target. `aarch64-macos` had been falling through
-    // to `Elf`, where this block contributes nothing — so a wrong answer to one
-    // question was masking a second wrong answer to another:
-    //
-    //     ld64.lld: error: library not found for -lc++
-    //
-    // ⇒ There is nothing to find, and nothing to look for.
-    if (!plan.toolchain.targetCxxRuntime)
     {
         namespace dist = mcpp::build::dist;
         auto const& bc = plan.manifest.buildConfig;
@@ -1065,6 +1047,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // "incompatible with elf64lriscv". See MechanismInput::freestanding.
         if (auto ft = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))
             mi.freestanding = ft->is_freestanding();
+        // ⭐⭐ AND THE HOSTED FORM OF THE SAME FACT. A package in the graph has
+        // compiled a C++ runtime FOR THIS TARGET and its objects are on the
+        // link line — so, exactly as on bare metal, every archive the table
+        // below would reach for is the HOST's.
+        mi.graphCxxRuntime = plan.toolchain.targetCxxRuntime;
 
         const bool wantsArchives =
             (base == dist::Contract::SelfContained

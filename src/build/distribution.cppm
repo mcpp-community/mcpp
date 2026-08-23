@@ -256,6 +256,27 @@ struct MechanismInput {
     // (measured 2026-08-19). A target-side C++ runtime, if one is wanted, is
     // an ordinary package — the same way the libc is.
     bool             freestanding = false;
+    // ⭐⭐ THE HOSTED FORM OF THE LINE ABOVE: a package in the graph supplies
+    // the C++ runtime, built for this target, and its objects are already on
+    // the link line.
+    //
+    // The table below has three answers and all of them name a runtime to LINK
+    // — the system's, the toolchain's, or a static form of one. Each is right
+    // when the runtime is something the artifact has to be JOINED to, and each
+    // is wrong here, where it is already inside. The archives it would find are
+    // the host's, which is the same defect the `freestanding` flag above
+    // exists for; the difference is only that this target has an OS.
+    //
+    // ⚠️ Measured 2026-08-23, cross-building for `aarch64-macos` over openkal
+    // right after the format decision was corrected to key on the target — the
+    // wrong format had been masking this:
+    //
+    //     ld64.lld: error: library not found for -lc++
+    //
+    // ⇒ Not "pick openkal's here". openkal's IS the objects; there is no
+    // library to name, and the honest flag is the one that stops the driver
+    // from adding its own.
+    bool             graphCxxRuntime = false;
 };
 
 struct Mechanism {
@@ -351,7 +372,7 @@ Mechanism resolve(const MechanismInput& in) {
     // ELF here, and every ELF cell below reaches for the toolchain's HOST
     // archives. One of them silently produced a link line with
     // x86-64 libc++.a on a riscv64 link.
-    if (in.freestanding) {
+    if (in.freestanding || in.graphCxxRuntime) {
         m.effective = Contract::SelfContained;
         m.unitFlags = " -nostdlib++";
         return m;
