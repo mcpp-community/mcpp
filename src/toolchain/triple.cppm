@@ -557,6 +557,31 @@ std::optional<Triple> parse(std::string_view s) {
     // the request `x86_64-linux-gnu`, which names a C library. See
     // `Triple::envExplicit`.
     if (t.os == "linux" && t.env.empty()) t.env = "gnu";
+    // ⚠️ AND THE SAME ON WINDOWS AND ON BARE METAL, WHICH WERE MISSING AND MADE
+    // THE RULE A LIE ON TWO PLATFORMS OUT OF FOUR.
+    //
+    // `x86_64-linux` parsed and `x86_64-windows` did not — `unknown target` —
+    // so "a request must be able to say nothing" held on Linux and macOS and
+    // not elsewhere. The asymmetry forced every Windows cross build to spell
+    // `gnu`, and under this ecosystem that word describes nothing present in
+    // the build: the compiler is clang, the linker lld, the compiler runtime
+    // compiler-rt, the C library musl, the C++ runtime libc++, the platform
+    // openkal. It is LLVM's label for the non-MSVC ABI, inherited from MinGW,
+    // and mcpp cannot rename it — but it can stop requiring it to be typed.
+    //
+    // ⚠️ `gnu` AND NOT THE HOST'S OWN ENV. `host_triple()` answers `msvc` on a
+    // Windows machine, and filling from it would give one command a different
+    // identity — a different output directory and cache key — on each host. A
+    // target's identity may not depend on where it was built. `gnu` is the row
+    // reachable from every host and the one this ecosystem targets; a project
+    // wanting Microsoft's ABI writes `msvc`, and writing it there is meaningful
+    // because it selects a different object ABI rather than a different C
+    // library.
+    if (t.os == "windows" && t.env.empty()) t.env = "gnu";
+    // On a target with no operating system the segment names the object format,
+    // and every row in the table carries `elf`. Filling it lets `riscv64-none`
+    // mean what it plainly says.
+    if (t.is_freestanding() && t.env.empty()) t.env = "elf";
     return t;
 }
 
