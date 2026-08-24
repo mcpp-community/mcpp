@@ -407,7 +407,7 @@ TEST(TargetSideRequest, AFilledEnvSegmentStatesNothing) {
     auto in = payload_linux();
     in.compilerFamily = "llvm";
     in.cAbi = provider("openkal-musl", "0.3.3", "musl");
-    in.envNamesCAbi = true;
+    in.envAxis = ts::EnvAxis::CLibrary;
     // `--target x86_64-linux` — the project declined to name a C library, so
     // the parser's fill must not become a claim it can be held to.
     in.requestedCAbi.clear();
@@ -424,7 +424,7 @@ TEST(TargetSideRequest, AWrittenEnvSegmentThatDisagreesIsReported) {
     in.cAbi               = provider("openkal-musl", "0.3.3", "musl");
     in.requestedCAbi      = "gnu";
     in.requestFreeTarget  = "x86_64-linux";
-    in.envNamesCAbi       = true;
+    in.envAxis            = ts::EnvAxis::CLibrary;
     auto why = ts::check_request(ts::resolve(in));
     ASSERT_TRUE(why.has_value());
     EXPECT_NE(why->find("`gnu`"), std::string::npos);
@@ -438,7 +438,7 @@ TEST(TargetSideRequest, APrebuiltCLibraryIsWhatTheRequestSelected) {
     auto in = payload_linux();
     in.compilerFamily = "llvm";
     in.requestedCAbi  = "musl";
-    in.envNamesCAbi   = true;
+    in.envAxis        = ts::EnvAxis::CLibrary;
     // No graph supplier: the payload's C library IS the request's answer, so
     // there is nothing to contradict even when the names differ.
     EXPECT_EQ(ts::check_request(ts::resolve(in)), std::nullopt);
@@ -456,8 +456,120 @@ TEST(TargetSideRequest, TheSegmentIsOnlyACLibraryWhereItNamesOne) {
     in.cAbi              = provider("openkal-musl", "0.3.3", "musl");
     in.requestedCAbi     = "gnu";
     in.requestFreeTarget = "x86_64-windows";
-    in.envNamesCAbi      = false;
+    in.envAxis           = ts::EnvAxis::ObjectAbi;
     EXPECT_EQ(ts::check_request(ts::resolve(in)), std::nullopt);
+}
+
+// ⭐ AND WHEN IT DOES NOT NAME ONE, THE REPORT SAYS WHAT IT DOES NAME.
+//
+// Staying silent is correct as a DIAGNOSTIC and insufficient as a REPORT. The
+// reader sees `x86_64-windows-gnu` above a line reading `c-abi musl`, finds no
+// row called `gnu`, and maps it to the nearest thing that looks like a C
+// library name. Measured twice, by the same reader, on two different days.
+TEST(TargetSideReport, AnEnvSegmentThatIsNotACLibraryIsGlossed) {
+    auto in = payload_linux();
+    in.targetOs          = "windows";
+    in.compilerFamily    = "llvm";
+    in.cAbi              = provider("openkal-musl", "0.3.3", "musl");
+    in.requestedCAbi     = "gnu";
+    in.requestFreeTarget = "x86_64-windows";
+    in.envAxis           = ts::EnvAxis::ObjectAbi;
+
+    auto r = ts::format_report(ts::resolve(in), "x86_64-windows-gnu");
+    EXPECT_NE(r.find("gnu selects the Itanium C++ ABI, not a C library"),
+              std::string::npos) << r;
+}
+
+// A bare-metal target's segment names the object FORMAT, and the same gloss
+// applies with a different noun. One enum, three platforms, no `#if`.
+TEST(TargetSideReport, OnBareMetalTheSegmentNamesTheObjectFormat) {
+    auto in = payload_linux();
+    in.targetOs          = "none";
+    in.compilerFamily    = "llvm";
+    in.cAbi              = provider("openkal-musl", "0.3.3", "musl");
+    in.requestedCAbi     = "elf";
+    in.requestFreeTarget = "riscv64-none";
+    in.envAxis           = ts::EnvAxis::ObjectFormat;
+
+    auto r = ts::format_report(ts::resolve(in), "riscv64-none-elf");
+    EXPECT_NE(r.find("elf selects the object format, not a C library"),
+              std::string::npos) << r;
+}
+
+// ⚠️ THE NOUN COMES FROM THE VALUE, NOT ONLY FROM THE AXIS.
+//
+// `gnu` and `msvc` sit on the same axis and select OPPOSITE ABIs. A noun fixed
+// per axis would print "the Itanium C++ ABI" for an MSVC build — a statement
+// that is not merely vague but false.
+TEST(TargetSideReport, TheOppositeValueOnTheSameAxisGetsTheOppositeName) {
+    auto in = payload_linux();
+    in.targetOs          = "windows";
+    in.compilerFamily    = "llvm";
+    in.cAbi              = provider("openkal-musl", "0.3.3", "musl");
+    in.requestedCAbi     = "msvc";
+    in.requestFreeTarget = "x86_64-windows";
+    in.envAxis           = ts::EnvAxis::ObjectAbi;
+
+    auto r = ts::format_report(ts::resolve(in), "x86_64-windows-msvc");
+    EXPECT_NE(r.find("msvc selects the MSVC C++ ABI"), std::string::npos) << r;
+    EXPECT_EQ(r.find("Itanium"), std::string::npos) << r;
+}
+
+// ⭐ AND THE NAME IT PRINTS MUST NOT BE ANY ROW'S VALUE.
+//
+// Naming the ABI rather than the axis is what stops a reader mapping `gnu` to
+// `c++-abi libc++` — a second wrong answer, since libstdc++ sits on the same
+// ABI. If the gloss ever printed a string that also appears as a layer's
+// implementation name, the confusion would return in a new place.
+TEST(TargetSideReport, TheGlossNamesNothingThatAppearsAsALayerValue) {
+    auto in = payload_linux();
+    in.targetOs          = "windows";
+    in.compilerFamily    = "llvm";
+    in.cAbi              = provider("openkal-musl", "0.3.3", "musl");
+    in.cxxAbi            = provider("openkal-llvm-runtime", "0.1.2", "libc++");
+    in.requestedCAbi     = "gnu";
+    in.requestFreeTarget = "x86_64-windows";
+    in.envAxis           = ts::EnvAxis::ObjectAbi;
+
+    auto r = ts::format_report(ts::resolve(in), "x86_64-windows-gnu");
+    auto head = r.substr(0, r.find('\n'));
+    EXPECT_NE(head.find("Itanium"), std::string::npos) << head;
+    EXPECT_EQ(head.find("libc++"), std::string::npos) << head;
+    EXPECT_EQ(head.find("musl"),   std::string::npos) << head;
+}
+
+// ⚠️ AND IT DOES NOT FIRE WHEN THE C LIBRARY CAME FROM A PAYLOAD.
+//
+// A payload C library IS what the triple selected — the triple is how it was
+// selected — so `gnu → ucrt` follows visibly and a gloss would be noise on
+// every ordinary Windows build.
+TEST(TargetSideReport, NoGlossWhenTheTripleItselfChoseTheCLibrary) {
+    auto in = payload_linux();
+    in.targetOs          = "windows";
+    in.compilerFamily    = "llvm";
+    in.requestedCAbi     = "gnu";
+    in.requestFreeTarget = "x86_64-windows";
+    in.envAxis           = ts::EnvAxis::ObjectAbi;
+    // cAbi left as the payload's — not from the graph.
+
+    auto r = ts::format_report(ts::resolve(in), "x86_64-windows-gnu");
+    EXPECT_EQ(r.find("not a C library"), std::string::npos) << r;
+}
+
+// On Linux the segment DOES name a C library, so there is nothing to gloss —
+// the disagreement is reported as a warning instead, which is a different
+// mechanism and must not double up.
+TEST(TargetSideReport, NoGlossWhereTheSegmentNamesACLibrary) {
+    auto in = payload_linux();
+    in.compilerFamily    = "llvm";
+    in.cAbi              = provider("openkal-musl", "0.3.3", "musl");
+    in.requestedCAbi     = "gnu";
+    in.requestFreeTarget = "x86_64-linux";
+    in.envAxis           = ts::EnvAxis::CLibrary;
+
+    auto r = ts::format_report(ts::resolve(in), "x86_64-linux-gnu");
+    EXPECT_EQ(r.find("not a C library"), std::string::npos) << r;
+    EXPECT_NE(ts::check_request(ts::resolve(in)), std::nullopt);
 }
 
 // ── Rule two: declared requirements ──────────────────────────────────────────

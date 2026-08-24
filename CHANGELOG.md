@@ -3,6 +3,52 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.24.5] — 2026-08-25
+
+### 改进
+
+- **三元组的 env 段在每个平台上命名不同的轴,而报告此前只是对此保持沉默。**
+
+  ```
+  Target x86_64-windows-gnu → x86_64-w64-windows-gnu
+         c-abi   musl   (openkal-musl@0.3.3, graph)
+  ```
+
+  ⭐ 沉默作为**诊断**是对的 —— 在 Windows 上报「名字请求了 `gnu` C ABI」
+  会在每一次合法的 MinGW 构建上出现,而且说的是错的。作为**报告**则不够:
+  读者在其中找不到一行叫 `gnu`,于是把它映到最像 C 库名字的那一行。
+  它真正对应的是 `c++-abi`。
+
+  于是在该段不命名 C 库的平台上,报告直接说出它选中的是什么:
+
+  ```
+  Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu selects the Itanium C++ ABI, not a C library)
+  ```
+
+  ⭐ **它不对应报告里的任何一行,而这正是要点。** 对这次构建的产物实测:
+
+  | 观测 | 值 |
+  |---|---|
+  | 导入的库 | `ntdll`、`KERNEL32`、`SHELL32` —— 无 `msvcrt`,无 `ucrtbase` |
+  | Itanium 修饰符号(`_Z…`) | 4507 |
+  | MSVC 修饰符号(`?…`) | 0 |
+
+  第一行说明 `c-abi musl` 是老实的:MinGW 的 C 运行时一点没链进来。
+  五层记录的是每一层**由谁供给**;`gnu` 命名的是这些**对象遵循哪套约定**。
+  把它读成 `c++-abi libc++` 是第二个错误答案 —— libstdc++ 同样坐在
+  Itanium ABI 上。因此报告命名那套 **ABI 本身**,它的名字不出现在任何一行里,
+  于是不会被误当成某一层。
+
+  ⚠️ 名词取自**值**而非仅取自轴:`gnu` 与 `msvc` 同轴而选中相反的 ABI,
+  按轴取名会给 MSVC 构建打印「Itanium」—— 那不只是含糊,是假的。
+
+  内部把 `envNamesCAbi` 这个布尔换成 `EnvAxis`,因为布尔是对事实的有损编码:
+  该段在 Linux 上是 C 库、Windows 上是对象 ABI、无操作系统时是对象格式。
+  一个只回答「是否为第一种」的布尔,能压住错误的警告,却给不出正确的名字。
+
+  ⚠️ 该提示**不出现**在 C 库来自载荷时:那种情况下 C 库正是三元组选中的,
+  `gnu → ucrt` 是可见的因果,加注就成了每次普通 Windows 构建上的噪声。
+
 ## [2026.8.24.4] — 2026-08-24
 
 ### 修复

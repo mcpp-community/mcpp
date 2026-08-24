@@ -5818,10 +5818,16 @@ prepare_build(bool print_fingerprint,
                     auto bare = *tt; bare.env.clear();
                     in.requestFreeTarget = bare.str();
                 }
-                // Only on Linux does the segment name a C library. On Windows
-                // it names the object ABI and on bare metal the object format,
-                // and neither is the axis the graph's C library sits on.
-                in.envNamesCAbi = tt->os == "linux";
+                // The segment names a different axis on each platform, and
+                // saying WHICH lets the report gloss it instead of merely
+                // withholding a warning. Only the C-library case can contradict
+                // what the graph resolved; the other two are simply a different
+                // question, and the report says so.
+                in.envAxis =
+                    tt->os == "linux"   ? tsd::EnvAxis::CLibrary
+                  : tt->os == "windows" ? tsd::EnvAxis::ObjectAbi
+                  : tt->is_freestanding() ? tsd::EnvAxis::ObjectFormat
+                                          : tsd::EnvAxis::Unknown;
 
                 // `sysroot = ""` and "no sysroot key" are different answers and
                 // must not be collapsed: the first says this project wants no

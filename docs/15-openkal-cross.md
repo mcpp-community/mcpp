@@ -129,6 +129,46 @@ GNU ABI, `msvc` for PE with Microsoft's — and both are compatible with more th
 one C library. The mismatch report is therefore scoped to platforms where the
 segment names a C library.
 
+Silence is right as a diagnostic and insufficient as a report. A reader sees
+
+```
+Target x86_64-windows-gnu → x86_64-w64-windows-gnu
+       c-abi   musl   (openkal-musl@0.3.3, graph)
+```
+
+finds no row called `gnu`, and maps it to the nearest thing that resembles a C
+library name.
+
+Measured on the artefact of exactly that build:
+
+| Observation | Value |
+|---|---|
+| imported libraries | `ntdll`, `KERNEL32`, `SHELL32` — no `msvcrt`, no `ucrtbase` |
+| Itanium-mangled symbols (`_Z…`) | 4507 |
+| MSVC-mangled symbols (`?…`) | 0 |
+
+The first row is why `c-abi musl` is honest: none of MinGW's C runtime is
+linked. The other two are what `gnu` selected — the Itanium C++ ABI rather than
+Microsoft's.
+
+That correspondence is to no row of the report, and the absence is the point.
+The five layers record who **supplies** each layer; `gnu` names a convention the
+**objects follow**, which several layers must agree on. Reading it as `c++-abi
+libc++` is a second wrong answer: libc++ is one implementation of the standard
+library and libstdc++ is another, and both sit on the Itanium ABI.
+
+The report therefore names the ABI itself, whose name appears in no row and so
+cannot be mistaken for one:
+
+```
+Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu selects the Itanium C++ ABI, not a C library)
+```
+
+The segment carries a different axis on each platform — the C library on Linux,
+the object ABI on Windows, the object format where there is no operating system
+— and one value records which, rather than a boolean recording only whether the
+first case holds.
+
 ## Bare Metal
 
 A target with no operating system is the same model with the platform layer
