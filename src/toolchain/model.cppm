@@ -210,6 +210,23 @@ struct Toolchain {
             default:                return "unknown";
         }
     }
+
+    // ⚠️ THE FAMILY NAME, WHICH IS NOT THE DRIVER'S NAME, AND THEY DIFFER FOR
+    // EXACTLY ONE FAMILY — THE COMMON ONE.
+    //
+    // The driver is `clang`; the family is `llvm`. Everything a user or a
+    // package WRITES uses the family: `mcpp toolchain default llvm@22.1.8`,
+    // `[toolchain] default = "llvm@22.1.8"`, `requires = ["mcpp:compiler=llvm"]`.
+    // Reporting or matching against `clang` would mean a requirement stated in
+    // the spelling the ecosystem uses could never be satisfied.
+    std::string_view compiler_family() const {
+        switch (compiler) {
+            case CompilerId::GCC:   return "gcc";
+            case CompilerId::Clang: return "llvm";
+            case CompilerId::MSVC:  return "msvc";
+            default:                return "unknown";
+        }
+    }
 };
 
 struct DetectError { std::string message; };

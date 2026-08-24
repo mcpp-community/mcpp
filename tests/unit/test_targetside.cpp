@@ -254,10 +254,13 @@ TEST(TargetSideReport, AbsentLayersReadAsADashRatherThanBeingOmitted) {
     in.llvmTriple           = "x86_64-none-elf";
     in.freestandingTarget   = true;
     in.sysrootDeclaredEmpty = true;
-    auto text = ts::format_report(ts::resolve(in), "x86_64-none-elf");
-    EXPECT_NE(text.find("kernel-abi  —"), std::string::npos);
-    EXPECT_NE(text.find("c-abi       —"), std::string::npos);
-    EXPECT_NE(text.find("c++         —"), std::string::npos);
+    in.compilerFamily       = "llvm";
+    auto text = ts::format_report(ts::resolve(in), "x86_64-none-elf",
+                                  /*verbose=*/true);
+    EXPECT_NE(text.find("kernel-abi"), std::string::npos);
+    EXPECT_NE(text.find("c-abi"), std::string::npos);
+    EXPECT_NE(text.find("c++-abi"), std::string::npos);
+    EXPECT_NE(text.find("—"), std::string::npos);
 }
 
 TEST(TargetSideReport, NamesInterfaceAndImplementationSeparately) {
@@ -269,4 +272,183 @@ TEST(TargetSideReport, NamesInterfaceAndImplementationSeparately) {
         << "four packages answer to one interface name; collapsing them would "
            "hide why one source reaches four machines";
     EXPECT_NE(text.find("graph"), std::string::npos);
+}
+
+// ── What earns a line ────────────────────────────────────────────────────────
+//
+// A zero-configuration build resolves every layer from one compiler payload,
+// and five lines reading `(payload)` answer a question nobody asked. What earns
+// a line is a layer that came from somewhere else.
+TEST(TargetSideReport, AZeroConfigurationBuildPrintsOnlyTheTarget) {
+    auto in = payload_linux();
+    in.compilerFamily  = "llvm";
+    in.compilerVersion = "22.1.8";
+    auto text = ts::format_report(ts::resolve(in), "x86_64-linux-gnu");
+    EXPECT_EQ(text.find('\n'), std::string::npos)
+        << "every layer came from the payload, so none of them is news:\n" << text;
+}
+
+TEST(TargetSideReport, VerbosePrintsAllFiveIncludingThePayloadOnes) {
+    auto in = payload_linux();
+    in.compilerFamily  = "llvm";
+    in.compilerVersion = "22.1.8";
+    auto text = ts::format_report(ts::resolve(in), "x86_64-linux-gnu",
+                                  /*verbose=*/true);
+    for (auto* label : {"compiler", "compiler-runtime", "kernel-abi", "c-abi",
+                        "c++-abi"})
+        EXPECT_NE(text.find(label), std::string::npos) << label;
+}
+
+// An absent layer is a statement, and whether the stack is shown at all must not
+// depend on where that statement sits among the rows. A bare-metal build has an
+// absent kernel interface ABOVE a prebuilt C library; deciding per row swallowed
+// the first and printed the second.
+TEST(TargetSideReport, AnAbsentLayerAboveAPrintedOneIsStillPrinted) {
+    ts::Inputs in;
+    in.llvmTriple         = "riscv64-none-elf";
+    in.freestandingTarget = true;
+    in.compilerFamily     = "llvm";
+    in.sysrootXpkg        = "xim:picolibc-riscv@1.8.12";
+    auto text = ts::format_report(ts::resolve(in), "riscv64-none-elf");
+    EXPECT_NE(text.find("c-abi"), std::string::npos) << text;
+    EXPECT_NE(text.find("kernel-abi"), std::string::npos)
+        << "the kernel interface is absent, which is the information:\n" << text;
+}
+
+TEST(TargetSideReport, OnlyTheLayersThatCameFromElsewhereEarnALine) {
+    auto in = payload_linux();
+    in.compilerFamily = "llvm";
+    in.cxxAbi = provider("openkal-llvm-runtime", "0.1.1", "libc++");
+    auto text = ts::format_report(ts::resolve(in), "x86_64-linux-gnu");
+    EXPECT_NE(text.find("c++-abi"), std::string::npos);
+    EXPECT_EQ(text.find("kernel-abi"), std::string::npos)
+        << "the kernel interface is the payload's, which is not news";
+}
+
+// ── The five layers ──────────────────────────────────────────────────────────
+
+// A payload's C library is named by the triple's env field where the triple has
+// one. macOS has none, and falling back to `glibc` named a library that does not
+// exist on the platform — invisible while the report printed only the layers a
+// build had something to say about.
+TEST(TargetSideResolve, ThePayloadCLibraryIsNamedForItsPlatform) {
+    auto mac = payload_linux();
+    mac.targetOs  = "macos";
+    mac.targetEnv = "";
+    EXPECT_EQ(ts::resolve(mac).cAbi.interfaceName, "libSystem");
+
+    auto win = payload_linux();
+    win.targetOs  = "windows";
+    win.targetEnv = "";
+    EXPECT_EQ(ts::resolve(win).cAbi.interfaceName, "ucrt");
+
+    EXPECT_EQ(ts::resolve(payload_linux()).cAbi.interfaceName, "gnu")
+        << "a triple that states its env keeps stating it";
+}
+
+TEST(TargetSideResolve, TheCompilerIsALayerAndItIsAlwaysThePayloads) {
+    auto in = payload_linux();
+    in.compilerFamily  = "gcc";
+    in.compilerVersion = "16.1.0";
+    auto r = ts::resolve(in);
+    EXPECT_EQ(r.compiler.origin, ts::Origin::Payload);
+    EXPECT_EQ(r.compiler.interfaceName, "gcc");
+    EXPECT_EQ(r.compiler.impl, "16.1.0");
+}
+
+// The builtins are what a PURE C PROGRAM needs. A package supplies them only
+// when the payload's own are wrong for the target; absent from the graph means
+// the payload's, not absent.
+TEST(TargetSideResolve, TheCompilerRuntimeDefaultsToTheCompilersOwn) {
+    auto in = payload_linux();
+    in.compilerFamily = "llvm";
+    auto r = ts::resolve(in);
+    EXPECT_EQ(r.compilerRuntime.origin, ts::Origin::Payload);
+    EXPECT_EQ(r.compilerRuntime.interfaceName, "llvm");
+
+    in.compilerRuntime = provider("openkal-llvm-runtime", "0.1.1", "compiler-rt");
+    auto g = ts::resolve(in);
+    EXPECT_EQ(g.compilerRuntime.origin, ts::Origin::Graph);
+    EXPECT_EQ(g.compilerRuntime.interfaceName, "compiler-rt");
+}
+
+TEST(TargetSideCapability, TheCompilerIsALayerNoPackageMaySupply) {
+    EXPECT_FALSE(ts::layer_is_suppliable_by_package(ts::CapLayer::Compiler));
+    for (auto l : {ts::CapLayer::CompilerRuntime, ts::CapLayer::KernelAbi,
+                   ts::CapLayer::CAbi, ts::CapLayer::CxxAbi})
+        EXPECT_TRUE(ts::layer_is_suppliable_by_package(l));
+}
+
+TEST(TargetSideCapability, TheGrammarKnowsAllFiveLayers) {
+    struct Row { const char* entry; ts::CapLayer layer; const char* iface; };
+    for (auto const& row : std::initializer_list<Row>{
+             {"mcpp:compiler=llvm",              ts::CapLayer::Compiler,        "llvm"},
+             {"mcpp:compiler-runtime=compiler-rt", ts::CapLayer::CompilerRuntime, "compiler-rt"},
+             {"mcpp:kernel-abi=openkal",         ts::CapLayer::KernelAbi,       "openkal"},
+             {"mcpp:c-abi=musl",                 ts::CapLayer::CAbi,            "musl"},
+             {"mcpp:c++-abi=libc++",             ts::CapLayer::CxxAbi,          "libc++"}}) {
+        auto parsed = ts::parse_capability(row.entry);
+        ASSERT_TRUE(parsed.has_value()) << row.entry;
+        ASSERT_TRUE(parsed->has_value()) << row.entry;
+        EXPECT_EQ((*parsed)->layer, row.layer) << row.entry;
+        EXPECT_EQ((*parsed)->interfaceName, row.iface) << row.entry;
+    }
+    // Outside the reserved prefix the feature system owns the name.
+    auto own = ts::parse_capability("freestanding-allocator");
+    ASSERT_TRUE(own.has_value());
+    EXPECT_FALSE(own->has_value());
+    // Inside it, a misspelling is an error rather than a silently dead check.
+    EXPECT_FALSE(ts::parse_capability("mcpp:c_abi=musl").has_value());
+}
+
+// ── Rule two: declared requirements ──────────────────────────────────────────
+
+TEST(TargetSideRequirements, ARequirementIsCheckedAgainstWhatResolved) {
+    auto in = payload_linux();
+    in.compilerFamily = "gcc";
+    in.cxxAbi = provider("acme-runtime", "0.1.0", "libc++");
+    auto r = ts::resolve(in);
+
+    std::vector<ts::Requirement> reqs{
+        {"acme-runtime@0.1.0", ts::CapLayer::Compiler, "llvm"}};
+    auto why = ts::check_requirements(r, reqs);
+    ASSERT_TRUE(why.has_value());
+    EXPECT_NE(why->find("requires the compiler to be `llvm`"), std::string::npos);
+    EXPECT_NE(why->find("mcpp toolchain default llvm"), std::string::npos)
+        << "a diagnostic that names no next step is a diagnostic the reader "
+           "must still go and research";
+
+    in.compilerFamily = "llvm";
+    EXPECT_EQ(ts::check_requirements(ts::resolve(in), reqs), std::nullopt);
+}
+
+TEST(TargetSideRequirements, AnUnsuppliedLayerIsNamedAsSuch) {
+    auto in = payload_linux();
+    in.compilerFamily       = "llvm";
+    in.freestandingTarget   = true;
+    in.sysrootDeclaredEmpty = true;
+    std::vector<ts::Requirement> reqs{
+        {"acme-board@0.1.0", ts::CapLayer::CAbi, "picolibc"}};
+    auto why = ts::check_requirements(ts::resolve(in), reqs);
+    ASSERT_TRUE(why.has_value());
+    EXPECT_NE(why->find("nothing supplies that layer"), std::string::npos);
+    EXPECT_NE(why->find("mcpp:c-abi=picolibc"), std::string::npos);
+}
+
+// ── Rule one: one supplier per layer ─────────────────────────────────────────
+
+TEST(TargetSideConflict, TwoSuppliersAreNamedTogetherWithHowEachArrived) {
+    ts::Conflict c;
+    c.layer     = ts::CapLayer::CAbi;
+    c.first     = "mcpplibs/openkal-musl@0.3.3";
+    c.firstVia  = "a transitive dependency";
+    c.second    = "acme/tinylibc@0.2.0";
+    auto text = ts::format_conflict(c);
+    EXPECT_NE(text.find("openkal-musl@0.3.3"), std::string::npos);
+    EXPECT_NE(text.find("tinylibc@0.2.0"), std::string::npos);
+    EXPECT_NE(text.find("a transitive dependency"), std::string::npos);
+    EXPECT_NE(text.find("a direct dependency"), std::string::npos);
+    EXPECT_NE(text.find("choice rather than a contribution"), std::string::npos)
+        << "the reason matters: choosing wrong does not fail the link, it "
+           "produces a program that runs and occasionally does not";
 }

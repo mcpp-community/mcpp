@@ -103,7 +103,9 @@ echo "$out" | grep -q 'graph' || {
 # ⚠️ AND THE POSITIVE CONTROL ON THE SAME OUTPUT. Without this, the assertions
 # above would also pass on an engine that printed the same three lines for
 # every build regardless of what the graph contained.
-echo "$out" | grep -q 'c++ *—' || {
+# The label is the capability name — `c++-abi`, matching `mcpp:c++-abi` — so
+# that the report and the manifest use one vocabulary for one layer.
+echo "$out" | grep -q 'c++-abi *—' || {
     echo "a project with no C++ runtime package must report that layer absent" >&2
     echo "$out" >&2; exit 1
 }
@@ -113,7 +115,12 @@ echo "$out" | grep -q 'c++ *—' || {
 # The control that makes the block above mean something: remove the capability
 # line and every layer must fall back to the payload.
 provider_declares
-plain=$("$MCPP" build 2>&1 || true)
+# MCPP_VERBOSE, because an ordinary report prints only the layers the compiler
+# payload did NOT supply. That suppression is itself the control's subject here:
+# with nothing in the graph there is nothing to print, and the assertion below
+# needs the full stack to check that the fallback happened rather than that the
+# lines merely vanished.
+plain=$(MCPP_VERBOSE=1 "$MCPP" build 2>&1 || true)
 echo "$plain" | grep -q 'fakeos' && {
     echo "a package that declares no capability must not fill a layer" >&2
     echo "$plain" >&2; exit 1
@@ -123,25 +130,43 @@ echo "$plain" | grep -qE 'kernel-abi .*payload' || {
     echo "$plain" >&2; exit 1
 }
 
-# ── A misspelling inside mcpp's reserved namespace is an error ──────────────
+# ── A name inside mcpp's reserved namespace is never silent ─────────────────
 #
-# This is the whole reason the prefix exists. An unvalidated capability array
-# turns one wrong letter into a behaviour that silently does not happen, and
-# the build still reports success.
+# This is the whole reason the prefix exists: an unvalidated capability array
+# turns one wrong letter into a behaviour that silently does not happen while
+# the build reports success.
+#
+# ⚠️ IN A DEPENDENCY IT IS A WARNING RATHER THAN AN ERROR, AND THE CHANGE WAS
+# FORCED BY A MEASUREMENT. mcpp cannot distinguish a misspelling from a layer
+# named after this build tool was released, and the two mistakes cost different
+# amounts. Refusing meant a package declaring a NEW layer failed to load under
+# every engine released before it — the vocabulary could never be extended by a
+# published package, permanently. Warning means a dependency's typo costs a
+# missing layer the consumer is told about, and cannot fix anyway.
+#
+# What this file asserts is therefore the property the prefix was introduced
+# for — the name is reported — not the severity. The root project's own
+# manifest still errors; e2e 281 covers that half.
 provider_declares "mcpp:kernel_abi=fakeos" "mcpp:c-abi=fakelibc"
 bad=$("$MCPP" build 2>&1 || true)
-echo "$bad" | grep -q "names no capability mcpp knows" || {
-    echo "a misspelled capability in the mcpp: namespace must fail the build" >&2
+echo "$bad" | grep -q "kernel_abi" || {
+    echo "a misspelled capability in the mcpp: namespace must be reported" >&2
     echo "$bad" >&2; exit 1
 }
 echo "$bad" | grep -q 'mcpp:kernel-abi' || {
-    echo "the diagnostic must list the layer names that do exist" >&2
+    echo "the report must list the layer names that do exist" >&2
     echo "$bad" >&2; exit 1
 }
-# And it must fail BEFORE anything is compiled: a manifest this engine cannot
-# read is not a build that got far enough to have a link.
-echo "$bad" | grep -q 'Compiling' && {
-    echo "the manifest must be rejected before compilation begins" >&2
+# And the misspelled layer must be UNFILLED — reporting the name and then
+# resolving the layer anyway would be the worst of both.
+echo "$bad" | grep -qE 'kernel-abi +fakeos' && {
+    echo "a name this engine does not know must not fill a layer" >&2
+    echo "$bad" >&2; exit 1
+}
+# The layer beside it, spelled correctly, still resolves: one bad entry costs
+# one layer and not the package.
+echo "$bad" | grep -qE 'c-abi +fakelibc' || {
+    echo "a correctly spelled capability beside a misspelled one must still resolve" >&2
     echo "$bad" >&2; exit 1
 }
 

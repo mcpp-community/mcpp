@@ -31,6 +31,7 @@
 | 编号 | 标题 | 状态 | 最后修改 | 对应实现 |
 |---|---|---|---|---|
 | [SPEC-001](package-identity.md) | 包身份(`package.namespace` / `package.name`)、`[dependencies]` 选择器与匹配机制 | 评审中 v1.1 | 2026-08-03 | mcpp >= 0.0.106 |
+| [SPEC-002](target-side.md) | 目标侧模型与能力声明(`mcpp:` 保留命名空间、五层、三条规则) | 评审中 v1.0 | 2026-08-24 | mcpp >= 2026.8.24.2 |
 
 ## 文档约定
 

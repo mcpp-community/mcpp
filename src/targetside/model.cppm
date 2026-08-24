@@ -47,7 +47,7 @@ import std;
 
 export namespace mcpp::targetside {
 
-// ── The four ways a layer can be supplied ────────────────────────────────────
+// ── The four ways a layer can be supplied ───────────────────────────────────
 //
 // `Xpkg` and `Payload` are both "prebuilt", and they are still distinct: a
 // payload directory is chosen by the toolchain and an xpkg by the target table
@@ -89,16 +89,40 @@ struct Layer {
 
 // ── The resolved target side ─────────────────────────────────────────────────
 //
-// Three layers, and their correspondence to the triple is not decoration:
+// FIVE LAYERS. A layer is a seam at which one implementation can be exchanged
+// for another; a thing is a layer when three conditions hold at once — at least
+// two interchangeable implementations exist, it can be replaced independently of
+// its neighbours, and it stands in a definite "was configured for" relation to
+// the layer beneath it.
 //
-//   kernelAbi  ← the triple's OS field       linux / macos / windows / none
-//   cAbi       ← the triple's ENV field      gnu / musl / (msvc)
-//   cxx        ← no field of the triple      because it sits above the ABI
+//   compiler         who compiles              llvm / gcc / msvc
+//   compilerRuntime  the compiler's own        compiler-rt+libunwind / libgcc
+//                    runtime: builtins, the
+//                    unwinder
+//   kernelAbi        the platform interface    linux / windows / darwin / openkal
+//   cAbi             the C library             glibc / musl / picolibc
+//   cxx              the C++ library and its   libc++ / libstdc++ / MSVC STL
+//                    ABI runtime
 //
-// The middle layer is implicit on a traditional stack — a C library issues
-// syscalls or calls Win32 directly, and nothing names the seam. openkal's whole
-// contribution is to name it, which is why `kernelAbi` reads `—` for a picolibc
-// bare-metal build and `openkal` for an openkal one ON THE SAME TARGET.
+// ⚠️ `compilerRuntime` IS NOT PART OF `cxx`, AND THE DISTINCTION WAS MEASURED
+// BEFORE IT WAS NAMED. The builtins (`__udivti3` and its relatives) are what a
+// PURE C PROGRAM needs. Counting them as part of the C++ runtime is the same
+// error as the one recorded at the head of this file: a C program crossed to
+// macOS was asked "is there a C++ runtime" and answered "no", after which the
+// link line kept the payload's own libc++ and handed a Linux shared object to a
+// Mach-O linker. A layer that only some programs need is still a layer.
+//
+// ⚠️ `kernelAbi` HAS NO NAME ON A TRADITIONAL STACK. A C library issues system
+// calls or calls the platform's own entry points directly, and nothing names the
+// seam. Naming it is what lets one C library sit above four platforms, which is
+// why this field reads `—` for a picolibc bare-metal build and `openkal` for an
+// openkal one ON THE SAME TARGET.
+//
+// The correspondence to the triple is partial and that is the point:
+//
+//   kernelAbi  ← the triple's OS field
+//   cAbi       ← the triple's ENV field, AS A REQUEST rather than as the answer
+//   the rest   ← no field of the triple
 struct TargetSide {
     // The triple the driver is actually given, which is NOT the one the user
     // wrote. Measured: `--target=aarch64-macos` produces a Mach-O whose
@@ -108,6 +132,8 @@ struct TargetSide {
     // bearing and belongs in the report.
     std::string llvmTriple;
 
+    Layer compiler;
+    Layer compilerRuntime;
     Layer kernelAbi;
     Layer cAbi;
     Layer cxx;
@@ -126,7 +152,7 @@ struct TargetSide {
 //
 // mcpp HARDCODES LAYER NAMES AND NEVER HARDCODES IMPLEMENTATIONS.
 //
-// The three layer names below are a closed set compiled into the engine. The
+// The five layer names below are a closed set compiled into the engine. The
 // implementations that fill them — openkal, musl, picolibc, and whatever comes
 // next — appear nowhere in this file or any other. That line is what separates
 // this design from the string comparison it replaces (`fam == "openkal-llvm"`
@@ -136,15 +162,26 @@ struct TargetSide {
 // build model and do not grow. Implementations may not, because growing is
 // precisely what they do: the ecosystem's combinations are 2×N×M while its
 // packages are 2+N+M.
-enum class CapLayer { KernelAbi, CAbi, CxxAbi };
+enum class CapLayer { Compiler, CompilerRuntime, KernelAbi, CAbi, CxxAbi };
 
 constexpr std::string_view cap_layer_name(CapLayer l) {
     switch (l) {
-        case CapLayer::KernelAbi: return "kernel-abi";
-        case CapLayer::CAbi:      return "c-abi";
-        case CapLayer::CxxAbi:    return "c++-abi";
+        case CapLayer::Compiler:        return "compiler";
+        case CapLayer::CompilerRuntime: return "compiler-runtime";
+        case CapLayer::KernelAbi:       return "kernel-abi";
+        case CapLayer::CAbi:            return "c-abi";
+        case CapLayer::CxxAbi:          return "c++-abi";
     }
     return {};
+}
+
+// The layers a PACKAGE may supply. `compiler` is not among them: a compiler is
+// a payload this engine installs and drives, and the differences between
+// families — flag spellings, the module model, the BMI format, the driver
+// config file — are things the engine must know rather than data a package can
+// describe. It remains a layer, and it remains one a package may REQUIRE.
+constexpr bool layer_is_suppliable_by_package(CapLayer l) {
+    return l != CapLayer::Compiler;
 }
 
 struct CapDecl {
@@ -180,23 +217,55 @@ parse_capability(std::string_view entry) {
     }
 
     CapDecl d{};
-    if      (layer == "kernel-abi") d.layer = CapLayer::KernelAbi;
-    else if (layer == "c-abi")      d.layer = CapLayer::CAbi;
-    else if (layer == "c++-abi")    d.layer = CapLayer::CxxAbi;
+    if      (layer == "compiler")         d.layer = CapLayer::Compiler;
+    else if (layer == "compiler-runtime") d.layer = CapLayer::CompilerRuntime;
+    else if (layer == "kernel-abi")       d.layer = CapLayer::KernelAbi;
+    else if (layer == "c-abi")            d.layer = CapLayer::CAbi;
+    else if (layer == "c++-abi")          d.layer = CapLayer::CxxAbi;
     else
         return std::unexpected(std::format(
-            "`provides = [\"{}\"]` names no capability mcpp knows.\n"
+            "`{}` names no capability mcpp knows.\n"
             "       The `mcpp:` prefix is reserved for the target-side layers "
-            "this engine resolves, and there are three:\n"
-            "         mcpp:kernel-abi[=<name>]   the platform interface a C library sits on\n"
-            "         mcpp:c-abi[=<name>]        the C library\n"
-            "         mcpp:c++-abi[=<name>]      the C++ runtime\n"
+            "this engine resolves, and there are five:\n"
+            "         mcpp:compiler[=<name>]          who compiles\n"
+            "         mcpp:compiler-runtime[=<name>]  the compiler's own runtime "
+            "(builtins, unwinder)\n"
+            "         mcpp:kernel-abi[=<name>]        the platform interface a C "
+            "library sits on\n"
+            "         mcpp:c-abi[=<name>]             the C library\n"
+            "         mcpp:c++-abi[=<name>]           the C++ runtime\n"
             "       A capability of your own needs no prefix; those are passed "
             "through untouched.", entry));
 
     if (!iface.empty()) d.interfaceName = std::string(iface);
     return std::optional<CapDecl>{d};
 }
+
+// ── Requirements: `requires = ["mcpp:<layer>=<implementation>"]` ─────────────
+//
+// THE SYMMETRIC HALF OF `provides`, AND THE ONLY WAY THE LAYERING RULE CAN BE
+// ENFORCED WITHOUT PUTTING A PRODUCT NAME IN THE ENGINE.
+//
+// A C++ runtime built from libc++'s sources is compiled, and its module, by
+// clang; gcc cannot consume it. That fact belongs to the package, not to mcpp —
+// writing `if (stdlib == "libc++" && compiler == gcc)` here would hardcode two
+// implementation names, which rule four forbids. The package states it:
+//
+//     requires = ["mcpp:compiler=llvm"]
+//
+// and this engine checks a relation it can state generically: the layer named
+// must resolve to the interface named.
+//
+// ⚠️ It is also how `compiler-runtime` stays honest. libgcc is configured for
+// gcc and compiler-rt for clang; a build whose compiler is one and whose
+// runtime is the other resolves `__udivti3` differently from every other link in
+// the same program. mcpp does not know which runtime belongs to which family —
+// the runtime package says so.
+struct Requirement {
+    std::string requiredBy;      // package id that stated it, for the diagnostic
+    CapLayer    layer;
+    std::string interfaceName;   // what that layer must resolve to
+};
 
 // ── Resolver input ───────────────────────────────────────────────────────────
 //
@@ -227,6 +296,14 @@ struct Inputs {
     std::string targetEnv;             // mcpp's own ENV field ("musl", "gnu", …)
     bool        freestandingTarget = false;
 
+    // The compiler, which is always a payload and never a package (see
+    // `layer_is_suppliable_by_package`). Present here so that the layering rule
+    // has something to check requirements against, and so that the report can
+    // show the whole stack rather than the part of it packages happen to fill.
+    std::string compilerFamily;        // "llvm" / "gcc" / "msvc"
+    std::string compilerVersion;
+
+    std::optional<Provider> compilerRuntime;
     std::optional<Provider> kernelAbi;
     std::optional<Provider> cAbi;
     std::optional<Provider> cxxAbi;
@@ -243,6 +320,29 @@ struct Inputs {
     std::string payloadCxxInterface;            // "libc++" / "libstdc++" / "MSVC STL"
 };
 
+// The name of the C library a compiler payload carries for a target.
+//
+// ⚠️ THE TRIPLE'S ENV FIELD ANSWERS THIS ONLY WHERE THE TRIPLE HAS ONE, AND
+// FALLING BACK TO `glibc` NAMED A LIBRARY THAT DOES NOT EXIST ON THE PLATFORM.
+// Measured on macOS, where the canonical triple carries no env segment:
+//
+//   c-abi             glibc          (payload)
+//
+// The value was invisible while the report printed only three layers on a
+// build that had something to say; showing the whole stack made a wrong label
+// into a wrong statement.
+//
+// ⚠️ These names are PAYLOAD facts, which is why they may be written here at
+// all: mcpp ships those payloads and knows what is inside them. What must never
+// be written here is what a PACKAGE supplies — that is the difference the
+// reserved-capability grammar exists to keep.
+inline std::string payload_libc_name(std::string_view os, std::string_view env) {
+    if (!env.empty()) return std::string(env);
+    if (os == "macos")   return "libSystem";
+    if (os == "windows") return "ucrt";
+    return "glibc";
+}
+
 // An xpkg reference is `<namespace>:<name>[@<version>]`; the interface a reader
 // wants to see is the name, not the whole address.
 inline std::string xpkg_interface(std::string_view ref) {
@@ -256,6 +356,25 @@ inline std::string xpkg_interface(std::string_view ref) {
 inline TargetSide resolve(const Inputs& in) {
     TargetSide ts;
     ts.llvmTriple = in.llvmTriple;
+
+    // compiler — always a payload, never a package.
+    if (!in.compilerFamily.empty())
+        ts.compiler = { Origin::Payload, in.compilerFamily,
+                        in.compilerVersion, false };
+
+    // compiler-runtime — the builtins and the unwinder.
+    //
+    // ⚠️ ABSENT FROM THE GRAPH DOES NOT MEAN ABSENT. Every compiler payload
+    // ships one; a package supplies it only when the payload's own is the wrong
+    // one for this target, which is the same shape as every other layer here.
+    // The payload's is reported under the compiler's own name because that is
+    // what it is — a family's runtime, not a separately chosen implementation.
+    if (in.compilerRuntime)
+        ts.compilerRuntime = { Origin::Graph,
+                               in.compilerRuntime->display_interface(),
+                               in.compilerRuntime->id(), false };
+    else if (!in.compilerFamily.empty())
+        ts.compilerRuntime = { Origin::Payload, in.compilerFamily, {}, false };
 
     // kernel-abi ← the triple's OS field.
     if (in.kernelAbi)
@@ -280,7 +399,7 @@ inline TargetSide resolve(const Inputs& in) {
     else if (in.freestandingTarget)
         ts.cAbi = { Origin::None, {}, {}, false };
     else
-        ts.cAbi = { Origin::Payload, in.targetEnv.empty() ? "glibc" : in.targetEnv,
+        ts.cAbi = { Origin::Payload, payload_libc_name(in.targetOs, in.targetEnv),
                     in.payloadLibcRef, false };
 
     // c++ — no field of the triple, because it sits above the ABI.
@@ -304,8 +423,25 @@ inline TargetSide resolve(const Inputs& in) {
     return ts;
 }
 
-// The same rule stated for the explicit-override path, where the resolver's
-// structure no longer guarantees it.
+// The layer a capability name refers to, so a check can be written once for all
+// five rather than once per layer.
+inline const Layer& layer_of(const TargetSide& ts, CapLayer l) {
+    switch (l) {
+        case CapLayer::Compiler:        return ts.compiler;
+        case CapLayer::CompilerRuntime: return ts.compilerRuntime;
+        case CapLayer::KernelAbi:       return ts.kernelAbi;
+        case CapLayer::CAbi:            return ts.cAbi;
+        case CapLayer::CxxAbi:          return ts.cxx;
+    }
+    return ts.cxx;
+}
+
+// ── Rule two, part one: what the resolver's structure cannot guarantee ───────
+//
+// The default path cannot construct the payload-C++-over-foreign-C-library
+// combination, because `resolve` only reaches the payload's C++ runtime when the
+// C library is also the payload's. An explicit `[target.X]` override can, so the
+// rule is stated again here for that path.
 inline std::optional<std::string> check_layering(const TargetSide& ts) {
     if (ts.cxx.origin == Origin::Payload && ts.cAbi.origin != Origin::Payload
         && ts.cAbi.origin != Origin::None)
@@ -324,28 +460,174 @@ inline std::optional<std::string> check_layering(const TargetSide& ts) {
     return std::nullopt;
 }
 
+// ── Rule two, part two: declared requirements ────────────────────────────────
+//
+// ⚠️ A REQUIREMENT IS CHECKED AGAINST THE RESOLVED LAYER, NOT AGAINST THE
+// REQUEST. `requires = ["mcpp:compiler=llvm"]` is satisfied by whatever the
+// compiler layer actually resolved to, which is the only value that will be on
+// the command line.
+//
+// Nothing here knows what `llvm` or `compiler-rt` mean. The comparison is
+// between two strings a package chose and a supplier declared, and a mismatch is
+// reported by naming both — which is what a reader needs and what an engine
+// hardcoding a table of families could not produce for a family it had not
+// heard of.
+inline std::optional<std::string>
+check_requirements(const TargetSide& ts, std::span<const Requirement> reqs) {
+    constexpr std::string_view kPad = "         ";
+    for (auto const& r : reqs) {
+        // An entry with no `=<implementation>` asks only that the layer be
+        // supplied by someone, which the absence check below still answers.
+        auto const& have = layer_of(ts, r.layer);
+        if (!r.interfaceName.empty() && have.interfaceName == r.interfaceName)
+            continue;
+        if (r.interfaceName.empty() && !have.absent()) continue;
+
+        auto name = cap_layer_name(r.layer);
+        // What to do about it depends on which layer disagreed, and there are
+        // only two answers: the compiler is chosen by the toolchain axis, and
+        // every other layer by the dependency graph.
+        std::string advice =
+            r.layer == CapLayer::Compiler
+                ? std::format(
+                      "       Select that compiler — yours outranks mcpp's own "
+                      "default:\n"
+                      "           mcpp toolchain default {}\n"
+                      "       or, for one target only:\n"
+                      "           [target.<triple>]\n"
+                      "           toolchain = \"{}\"",
+                      r.interfaceName, r.interfaceName)
+                : std::format(
+                      "       Depend on a package that declares `provides = "
+                      "[\"mcpp:{}={}\"]`,\n"
+                      "       or remove the package that requires it.",
+                      name, r.interfaceName);
+
+        if (have.absent())
+            return std::format(
+                "`{}` requires the {} to be `{}`, and nothing supplies that "
+                "layer.\n"
+                "{}{:<17} {}\n{}",
+                r.requiredBy, name,
+                r.interfaceName.empty() ? "supplied" : r.interfaceName,
+                kPad, name, "—", advice);
+
+        std::string resolved = have.impl.empty()
+            ? std::format("{:<14} ({})", have.interfaceName,
+                          origin_name(have.origin))
+            : std::format("{:<14} ({}, {})", have.interfaceName, have.impl,
+                          origin_name(have.origin));
+        return std::format(
+            "`{}` requires the {} to be `{}`.\n"
+            "{}{:<17} {}\n"
+            "{}{:<17} {:<14} (required by {})\n"
+            "       An implementation is configured for the layer beneath it, "
+            "and this one\n"
+            "       was never configured for the one that resolved.\n{}",
+            r.requiredBy, name, r.interfaceName,
+            kPad, name, resolved,
+            kPad, "required", r.interfaceName, r.requiredBy,
+            advice);
+    }
+    return std::nullopt;
+}
+
+// ── Rule one: one supplier per layer ─────────────────────────────────────────
+//
+// A C library, a kernel interface and a C++ runtime are MUTUALLY EXCLUSIVE
+// CHOICES, not additive contributions. Two suppliers is an error, and it must be
+// an error rather than a silent pick: the failure mode of choosing wrong is not
+// a link error but a program that runs and occasionally does not.
+struct Conflict {
+    CapLayer    layer;
+    std::string first;        // package id
+    std::string firstVia;     // empty when a direct dependency
+    std::string second;
+    std::string secondVia;
+};
+
+inline std::string format_conflict(const Conflict& c) {
+    auto via = [](std::string_view v) {
+        return v.empty() ? std::string("a direct dependency")
+                         : std::format("via {}", v);
+    };
+    return std::format(
+        "two packages supply the {}, and it is a choice rather than a "
+        "contribution.\n"
+        "         {}  ({})\n"
+        "         {}  ({})\n"
+        "       A build has exactly one {}. Remove one of them, or depend on a "
+        "package that reexports the one you want.",
+        cap_layer_name(c.layer),
+        c.first, via(c.firstVia), c.second, via(c.secondVia),
+        cap_layer_name(c.layer));
+}
+
 // ── Report ───────────────────────────────────────────────────────────────────
 //
 // The build prints what it RESOLVED, and that is why this design adds no
 // manifest field for the same information. A line in a manifest states an
 // intention that goes stale when the packages beneath it change; this states
 // the outcome and cannot.
-inline std::string format_report(const TargetSide& ts, std::string_view targetName) {
+//
+// ⚠️ BY DEFAULT IT PRINTS ONLY THE LAYERS THE COMPILER PAYLOAD DID NOT SUPPLY.
+// A zero-configuration build resolves all five from one payload, and five lines
+// reading `(payload)` carry no information — they are the answer to a question
+// nobody asked. What earns a line is a layer that came from somewhere else.
+//
+// `verbose` prints all five, and DIAGNOSTICS ALWAYS DO: an error must show the
+// evidence it rests on, including the parts that are ordinary.
+inline std::string format_layers(const TargetSide& ts, bool verbose) {
     // Thirteen spaces so the layer names sit under the triple rather than under
     // the status verb: the caller's status line right-aligns a verb in twelve
     // columns and follows it with one space.
     constexpr std::string_view kIndent = "             ";
-    auto line = [&](std::string_view label, const Layer& l) {
-        if (l.absent())
-            return std::format("{}{:<11} —\n", kIndent, label);
-        std::string suffix = l.subset ? ", subset" : "";
-        if (l.impl.empty())
-            return std::format("{}{:<11} {} ({}{})\n", kIndent, label,
-                               l.interfaceName, origin_name(l.origin), suffix);
-        return std::format("{}{:<11} {:<14} ({}, {}{})\n", kIndent, label,
-                           l.interfaceName, l.impl, origin_name(l.origin), suffix);
+    const std::pair<std::string_view, const Layer&> rows[] = {
+        { "compiler",         ts.compiler         },
+        { "compiler-runtime", ts.compilerRuntime  },
+        { "kernel-abi",       ts.kernelAbi        },
+        { "c-abi",            ts.cAbi             },
+        { "c++-abi",          ts.cxx              },
     };
 
+    // ⚠️ WHETHER THE STACK IS SHOWN AT ALL IS DECIDED BEFORE ANY ROW IS
+    // WRITTEN, AND THE FIRST VERSION DECIDED IT PER ROW.
+    //
+    // An absent layer is a statement rather than a gap, so it belongs in a
+    // report that is showing the stack and nowhere else. Asking "has anything
+    // been printed yet" made that depend on ORDER: a bare-metal build has an
+    // absent `kernel-abi` above a prebuilt `c-abi`, so the statement was
+    // swallowed while the line below it printed. Two passes, and the question
+    // is asked once.
+    const bool showing = verbose || std::any_of(
+        std::begin(rows), std::end(rows), [](auto const& r) {
+            return !r.second.absent() && r.second.origin != Origin::Payload;
+        });
+    if (!showing) return {};
+
+    std::string out;
+    for (auto const& [label, l] : rows) {
+        if (!verbose && l.origin == Origin::Payload) continue;
+        if (l.absent()) {
+            out += std::format("{}{:<17} —\n", kIndent, label);
+            continue;
+        }
+        std::string suffix = l.subset ? ", subset" : "";
+        // One column layout whether or not an implementation is named, so the
+        // rows read as a table rather than as a list of sentences.
+        if (l.impl.empty())
+            out += std::format("{}{:<17} {:<14} ({}{})\n", kIndent, label,
+                               l.interfaceName, origin_name(l.origin), suffix);
+        else
+            out += std::format("{}{:<17} {:<14} ({}, {}{})\n", kIndent, label,
+                               l.interfaceName, l.impl, origin_name(l.origin),
+                               suffix);
+    }
+    return out;
+}
+
+inline std::string format_report(const TargetSide& ts, std::string_view targetName,
+                                 bool verbose = false) {
     // The head carries no verb of its own: the caller supplies one through the
     // status line's own padding, and the layer lines below are indented to sit
     // under it.
@@ -353,10 +635,9 @@ inline std::string format_report(const TargetSide& ts, std::string_view targetNa
         ? std::format("{}\n", targetName)
         : std::format("{} → {}\n", targetName, ts.llvmTriple);
 
-    auto body = line("kernel-abi", ts.kernelAbi)
-              + line("c-abi",      ts.cAbi)
-              + line("c++",        ts.cxx);
+    auto body = format_layers(ts, verbose);
     if (!body.empty() && body.back() == '\n') body.pop_back();
+    if (body.empty()) { head.pop_back(); return head; }
     return head + body;
 }
 
