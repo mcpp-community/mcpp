@@ -471,7 +471,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string_array("package.provides")) {
         for (auto const& entry : *v)
             if (auto cap = mcpp::targetside::parse_capability(entry); !cap)
-                return std::unexpected(error(origin, cap.error()));
+                m.unknownCapabilities.push_back(entry);
         m.provides = *v;
     }
     // [package] requires — validated exactly like `provides`: names under the
@@ -479,7 +479,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string_array("package.requires")) {
         for (auto const& entry : *v)
             if (auto cap = mcpp::targetside::parse_capability(entry); !cap)
-                return std::unexpected(error(origin, cap.error()));
+                m.unknownCapabilities.push_back(entry);
         m.requires_ = *v;
     }
     // std-module / std-compat-module / std-module-flags.

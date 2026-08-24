@@ -288,6 +288,12 @@ The toolchain family spelling `openkal-llvm` normalises to `llvm`. It named the
 same payload and carried a fact about the target side, which the model above
 resolves from what packages declare.
 
-An unknown name inside the reserved prefix is an error; an unknown key elsewhere
-in a manifest is ignored. A published package therefore continues to load under
-an engine predating a key it carries.
+An unknown name inside the reserved prefix is an error in the root project's own
+manifest and a warning in a dependency's. The first is a misspelling the author
+is looking at; the second is a manifest written against a newer engine, and
+refusing it would mean the layer vocabulary could never be extended by a
+published package. An unknown key elsewhere in a manifest is ignored.
+
+That provision governs future engines only. A package declaring a layer name
+still requires its consumers to run an engine no older than the release that
+introduced the name.

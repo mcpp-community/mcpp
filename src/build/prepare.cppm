@@ -99,6 +99,22 @@ namespace mcpp::build {
 // should not fail outright, only tell the user what it ignored.
 inline void warn_unknown_xpkg_keys(const mcpp::manifest::Manifest& dm,
                                    std::string_view depLabel) {
+    // ⚠️ A LAYER NAME THIS ENGINE DOES NOT KNOW IS A VERSION GAP, NOT A TYPO,
+    // WHEN IT ARRIVES FROM A DEPENDENCY.
+    //
+    // The reserved `mcpp:` prefix is a closed set so a misspelling cannot
+    // silently disable a behaviour. Refusing a DEPENDENCY's manifest for it made
+    // the set closed in a second sense nobody intended: a published package
+    // could never declare a layer named after the reader was released.
+    // Ignoring the layer and saying so is what this engine already does for
+    // every other unknown key, and it is the only response that lets the
+    // vocabulary grow.
+    for (auto const& cap : dm.unknownCapabilities) {
+        mcpp::ui::warning(std::format(
+            "dependency '{}': `{}` names a target-side layer this mcpp does not "
+            "know — ignored. A newer mcpp may resolve it; this build proceeds "
+            "without that layer.", depLabel, cap));
+    }
     for (auto const& key : dm.xpkgUnknownKeys) {
         auto suggestion = mcpp::manifest::closest_known_xpkg_key(key);
         if (suggestion.empty())
@@ -922,6 +938,21 @@ prepare_build(bool print_fingerprint,
               *overrides.preloaded_manifest)
         : mcpp::manifest::load(*root / "mcpp.toml");
     if (!m) return std::unexpected(m.error().format());
+
+    // ⚠️ AND ONLY FOR THE ROOT. A layer name this engine does not know is a
+    // typo in the manifest the author is looking at, and a version gap in a
+    // dependency's. The reserved `mcpp:` prefix exists so the first is an error
+    // rather than a silently disabled behaviour; refusing the second as well
+    // meant the layer vocabulary could never be extended by a published package
+    // (`warn_unknown_xpkg_keys` carries that half).
+    if (!m->unknownCapabilities.empty()) {
+        auto const& cap = m->unknownCapabilities.front();
+        auto why = mcpp::targetside::parse_capability(cap);
+        return std::unexpected(std::format(
+            "{}: {}", (*root / "mcpp.toml").string(),
+            why ? std::format("`{}` names no capability mcpp knows.", cap)
+                : why.error()));
+    }
 
     // A DISTRIBUTION package is not a source tree, and building "in" one is a
     // failure that looks like a success: `interface/` holds declarations whose
@@ -5563,6 +5594,20 @@ prepare_build(bool print_fingerprint,
                 : std::format("{}@{}", pkg.manifest.package.name,
                               pkg.manifest.package.version);
 
+            // ⚠️ EVERY PACKAGE KIND, NOT ONLY THE ONES WITH AN XPKG
+            // DESCRIPTOR. `warn_unknown_xpkg_keys` reaches a dependency
+            // resolved through the index; a path or git dependency carries a
+            // manifest of its own and reached no warning at all, so a layer
+            // this engine does not know went by in silence. This loop sees
+            // every package in the graph.
+            for (auto const& cap : pkg.manifest.unknownCapabilities) {
+                if (&pkg == &packages.front()) continue;   // root: already refused
+                mcpp::ui::warning(std::format(
+                    "package '{}': `{}` names a target-side layer this mcpp does "
+                    "not know — ignored. A newer mcpp may resolve it; this build "
+                    "proceeds without that layer.", pkgId, cap));
+            }
+
             for (auto const& entry : pkg.manifest.provides) {
                 std::optional<tsd::CapDecl> decl;
                 if (auto parsed = tsd::parse_capability(entry); parsed && *parsed)
@@ -5610,10 +5655,10 @@ prepare_build(bool print_fingerprint,
             // one is: a typo would otherwise disable a check silently.
             for (auto const& entry : pkg.manifest.requires_) {
                 auto parsed = tsd::parse_capability(entry);
-                if (!parsed)
-                    return std::unexpected(std::format(
-                        "package '{}': {}", pkgId, parsed.error()));
-                if (!*parsed) continue;      // not in mcpp's namespace
+                // An unknown layer name is reported where the manifest was
+                // read — as an error for the root and a warning for a
+                // dependency — so it is skipped rather than refused twice.
+                if (!parsed || !*parsed) continue;
                 requirements.push_back({ pkgId, (*parsed)->layer,
                                          (*parsed)->interfaceName });
             }

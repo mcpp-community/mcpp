@@ -131,4 +131,62 @@ out="$("$MCPP" build 2>&1)" || rc=$?
 grep -q "not a layer a package can supply" <<< "$out" || {
     echo "the refusal does not say why:"; echo "$out"; exit 1; }
 
+# ── The layer vocabulary must be extensible by a published package ──────────
+#
+# ⚠️ This one comes from a measurement, and the behaviour it replaces made the
+# vocabulary permanently un-extendable:
+#
+#     error: dependency 'openkal-llvm-runtime': mcpp.toml: error:
+#            `provides = ["mcpp:compiler-runtime=compiler-rt"]` names no
+#            capability mcpp knows.
+#
+# A package declaring a newly named layer failed to load under every engine
+# released before that layer was named. Whose manifest it is decides the
+# answer: the root's is a misspelling the author is looking at, a dependency's
+# is a manifest written against a newer engine.
+cd ..
+mkdir -p future app4/src
+cat > future/mcpp.toml <<'TOML'
+[package]
+namespace = "probe"
+name      = "from-the-future"
+version   = "0.1.0"
+provides  = ["mcpp:quantum-abi=spooky"]
+
+[build]
+sources = []
+TOML
+cat > app4/mcpp.toml <<'TOML'
+[package]
+name    = "app4"
+version = "0.1.0"
+
+[dependencies]
+from-the-future = { path = "../future" }
+TOML
+printf 'int main(){ return 0; }\n' > app4/src/main.cpp
+cd app4
+rc=0
+out="$("$MCPP" build 2>&1)" || rc=$?
+[[ "$rc" -eq 0 ]] || {
+    echo "a dependency naming a layer this engine does not know must not fail the build:"
+    echo "$out"; exit 1; }
+grep -q "quantum-abi" <<< "$out" || {
+    echo "the ignored layer must be named:"; echo "$out"; exit 1; }
+
+# And the same name in the ROOT's own manifest is the author's to fix.
+cat > mcpp.toml <<'TOML'
+[package]
+name     = "app4"
+version  = "0.1.0"
+provides = ["mcpp:quantum-abi=spooky"]
+TOML
+rc=0
+out="$("$MCPP" build 2>&1)" || rc=$?
+[[ "$rc" -ne 0 ]] || {
+    echo "a misspelled layer name in the root manifest must be an error:"
+    echo "$out"; exit 1; }
+grep -q "names no capability mcpp knows" <<< "$out" || {
+    echo "the refusal does not say what is wrong:"; echo "$out"; exit 1; }
+
 echo "OK"

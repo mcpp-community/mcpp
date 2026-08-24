@@ -890,6 +890,29 @@ struct Manifest {
     // schema evolution is loud in lint instead of invisible.
     std::vector<std::string>    xpkgUnknownKeys;
 
+    // ⚠️ CAPABILITY NAMES INSIDE THE RESERVED `mcpp:` PREFIX THAT THIS ENGINE
+    // DOES NOT KNOW, AND WHY THEY ARE RECORDED RATHER THAN REFUSED HERE.
+    //
+    // The reserved prefix is a closed set so that a misspelled layer name is an
+    // error instead of a silently disabled behaviour. Refusing at PARSE time
+    // made the set closed in a second, unintended sense: a package declaring a
+    // layer added after the reader was released failed to load AT ALL, so the
+    // vocabulary could never be extended by a published package.
+    //
+    // Measured 2026-08-24, `openkal-llvm-runtime` declaring the newly named
+    // compiler-runtime layer, read by the release before it:
+    //
+    //   error: dependency 'openkal-llvm-runtime': mcpp.toml: error:
+    //          `provides = ["mcpp:compiler-runtime=compiler-rt"]` names no
+    //          capability mcpp knows.
+    //
+    // Whose manifest it is decides the answer. A name in the ROOT project's own
+    // manifest is the author's to fix and they are looking at the build — an
+    // error. A name in a DEPENDENCY's manifest was written against a newer
+    // engine, and the correct response is to ignore the layer and say so, which
+    // is what this engine already does for every other unknown key.
+    std::vector<std::string>    unknownCapabilities;
+
     Package                     package;
     Language                    language;
     Modules                     modules;
