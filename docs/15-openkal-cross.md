@@ -119,7 +119,10 @@ mcpp build --target x86_64-linux
 
 The build reports the mismatch when the segment is present and disagrees. It is
 a report rather than a refusal, because the segment is ignored rather than
-violated: the artifact is identical either way.
+violated. Measured on one host, `x86_64-linux` against `x86_64-linux-musl`: the
+two executables differ, and after stripping they are byte-identical. What
+differs is the debug information, which records the output directory, and the
+directory is named after the triple. The code is the same code.
 
 On Windows the same segment names the object ABI instead — `gnu` for PE with the
 GNU ABI, `msvc` for PE with Microsoft's — and both are compatible with more than
