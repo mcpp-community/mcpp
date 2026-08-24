@@ -508,6 +508,52 @@ openkal 规范里**没有随机源接口**（SURFACE.txt 全文无 random / entr
 preopen。⭐ **那正是能力模型要挡的东西** —— 一个程序不能凭一个绝对路径
 够到平台上的任意对象。所以这不是缺口,是拒绝。
 
+### 7.5.1 判定:该不该进规范
+
+原则是「openkal 不加就能实现,就不加;但绝不能不走 openkal 接口层」。
+逐条核对:
+
+**① 能不能不加就实现 —— 不能。**
+
+| 现有接口 | 能否供给熵 |
+|---|---|
+| `fs` | ❌ `kal_fs_open` 只能相对 preopen 目录 —— 能力模型的**拒绝**,不是缺口 |
+| `time` | ❌ 时钟不是熵 |
+| `env` | ❌ 只有 arg / var 的读取,没有平台数据通路 |
+| 其余六个 | ❌ 与熵无关 |
+
+⭐ **而这个包已经诚实地回答过同一个问题。** `okm_start.c` 为 musl 的
+`AT_RANDOM` 凑了 16 字节,注释写着:
+
+> openkal has no source of entropy and this layer does not invent one: the
+> bytes below are derived from the clock and from the address of an object,
+> which makes them unpredictable to a reader of the source **and not to an
+> adversary**. … the README records that **neither is a security property on
+> this port**.
+
+那 16 字节给 allocator cookie 与 stack canary 够用 —— 它们本来就不承诺安全。
+`std::random_device` 不够:那个类的存在意义就是不可预测。
+
+**② 能不能绕过接口层 —— 不能。** 直接发 `SYS_getrandom` 违反原则,
+而这正是本条最初的症状。
+
+**③ 它是不是通用内核能力 —— 宿主上是,裸机上不是。**
+
+| 后端 | 平台接口 | 有无 |
+|---|---|---|
+| linux | `getrandom(2)` | ✅ |
+| macos | `getentropy(2)` / `arc4random_buf` | ✅ |
+| windows | `ProcessPrng` / `BCryptGenRandom` | ✅ |
+| uefi | `EFI_RNG_PROTOCOL` | ⚠️ **可选协议**,固件不一定实现 |
+| opensbi | SBI 基础规范无 RNG 扩展 | ❌ 取决于板载外设 |
+
+⭐ **「宿主普遍有、裸机不一定有」正是 openkal 能力模型为之设计的形状。**
+按 6.1 条,不提供该接口的后端让它作为链接期定义缺席 —— 与 `openkal.fs`
+在 opensbi 上缺席完全同理。
+
+**⇒ 判定:该加。** 三条都指向同一个答案,而第三条还说明它加进去之后
+不需要任何新机制。
+
 **落地形状,两段:**
 
 **长期(根本解)** —— openkal 规范新增随机源接口。按 6.1 条,
@@ -541,3 +587,76 @@ musl libc++ 头混合。⭐ 与 7.2 是**同一个 cfg** 引起的两个症状,�
 - **GMF 里 `#include <标准头>` 的 TU 编不过** —— `clang++.cfg` 把宿主
   libc++ 与 glibc 的 `-isystem` 塞进来,与 openkal 的 musl libc++ 头混合。
   ⭐ 与 7.2 是**同一个 cfg** 引起的两个症状,应一并考虑。
+
+### 7.5.2 `openkal.random` 接口设计草案
+
+按 §7.5.1 的三条判定,该加。形状照 `openkal.time` —— 它是现有接口里最小的
+一个,而随机源的问题结构与它同型:**一件事,可能不被提供,提供时行为有差异**。
+
+```c
+/* openkal.random --- a source of unpredictable bytes.
+ *
+ * ⚠️ NOT A GENERATOR. This interface answers "give me bytes the platform
+ * considers unpredictable"; it does not define a PRNG, hold state, or promise
+ * a distribution. A program that wants a reproducible sequence seeds its own
+ * generator from these bytes and never comes back.
+ */
+#define KAL_RANDOM_PROP_BLOCKING   ((kal_uintptr)1u << 0)
+#define KAL_RANDOM_PROP_HARDWARE   ((kal_uintptr)1u << 1)
+
+extern const kal_uintptr kal_random_props;
+
+/* Fills `len` bytes at `out`. Returns kal_ok, or an error.
+ *
+ * ⚠️ NO PARTIAL SUCCESS. Either every byte is filled or none is, and the
+ * distinction between "the source is momentarily empty" and "this environment
+ * has no source" is the difference between `kal_err_again` and the interface
+ * being absent at link time (clause 6.1).
+ */
+kal_status kal_random_fill(void* out, kal_uintptr len);
+```
+
+**两个能力字位,各自的理由:**
+
+| 位 | 含义 | 为什么程序需要知道 |
+|---|---|---|
+| `BLOCKING` | 熵不足时可能阻塞 | 一个在早期启动路径上取随机数的程序会因此挂住;它需要能选择不那么做 |
+| `HARDWARE` | 直接来自硬件 RNG 而非内核池 | 影响的是信任模型,不是接口行为 |
+
+⚠️ **不设 `KAL_RANDOM_PROP_AVAILABLE`。** 「有没有」由接口的**在场与否**回答
+(6.1 条),不由能力字回答 —— 这正是 `openkal-opensbi@0.1.3` 那次撤回的教训:
+给一个不提供的接口定义能力字,是回答第三个问题而跳过第二个。
+
+**六个后端的实现路径:**
+
+| 后端 | 实现 | 提供? |
+|---|---|---|
+| linux | `getrandom(2)` | ✅ |
+| macos | `getentropy(2)` | ✅ |
+| windows | `ProcessPrng` / `BCryptGenRandom` | ✅ |
+| uefi | `EFI_RNG_PROTOCOL` | ⚠️ 协议在则提供,不在则整个接口缺席 |
+| opensbi | 无 SBI 扩展 | ❌ 不提供 |
+| 裸机通用 | 取决于板载 RNG | 由 BSP 决定 |
+
+⭐ **uefi 那一行是这个设计最有意思的地方**:同一个后端在不同固件上
+可能提供或不提供。按 6.1 条「实现提供一个接口是全有或全无」,
+`openkal-uefi` 必须在**构建期**决定 —— 要么声明提供并在运行期
+`EFI_RNG_PROTOCOL` 缺席时返回错误,要么整个不提供。⚠️ 前者违反 6.1 条的
+「不得以运行期拒绝表达部分性」;所以正确做法是**后者**,而想要它的
+固件用一个 feature 打开。
+
+**连带改动:**
+
+1. `openkal-musl` 的 `port/` 加 `getrandom` 转发到 `kal_random_fill`,
+   并把 `okm_start.c` 的 `AT_RANDOM` 从「时钟凑数」改为真随机 ——
+   ⚠️ 但要保留 fallback:该接口缺席时那 16 字节仍要有值,否则裸机上
+   连 stack canary 都起不来。
+2. `openkal-llvm-runtime` 的两份 `__config_site` 把
+   `_LIBCPP_HAS_RANDOM_DEVICE` 改为跟随目标是否有该接口。
+3. openkal 的一致性套件加一条:同一实现连续两次 `kal_random_fill`
+   不得返回相同字节。⚠️ 这条会以极小概率误报,而那个概率是 2^-len*8 ——
+   在 `len=32` 时可以忽略,写清楚比省掉好。
+
+**⚠️ 本草案未实测。** 它是判定之后的下一步,而判定本身(§7.5.1)是实测的。
+接口一旦定下,六个后端与两个消费者都要改 —— 这是跨三仓库的一件事,
+不属于目标词表这一 PR。
