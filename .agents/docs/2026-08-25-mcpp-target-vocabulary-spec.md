@@ -81,7 +81,7 @@ mcpp 在映射时补出编译器需要的 vendor,自己不保存它。
 | `x86_64-windows-musl` | C 库 | **musl**(openkal 之上) |
 | `x86_64-windows-msvc` | C 库 | UCRT |
 | `aarch64-macos` | (省略) | 由图决定:有 openkal 则 musl,否则 libSystem |
-| `aarch64-macos-musl` | C 库 | **musl**(openkal 之上) |
+| `aarch64-macos-musl` | — | **词表里没有这一行**,见 §6.1 |
 | `riscv64-none` | (无) | **没有 C 库** |
 
 ⚠️ **macOS 也需要这一段,而我第一稿写的是「该平台只有一个 C 库」。**
@@ -300,12 +300,26 @@ riscv64-none            → （clang 专属:见 §2.3)
 
 ```
 aarch64-macos          图里有 openkal → musl        图里没有 → libSystem
-aarch64-macos-musl     显式请求 musl
-aarch64-macos-???      ← 没有这个写法
+aarch64-macos-musl     ← 没有这个写法
+aarch64-macos-???      ← 也没有这个写法
 ```
 
+⚠️ **上一稿在此写着「`aarch64-macos-musl` 显式请求 musl」,而词表里没有这一行。**
+实测(本 PR 构建出的二进制):
+
+```
+$ mcpp build --target aarch64-macos-musl
+error: unknown target 'aarch64-macos-musl'
+```
+
+也就是说,macOS 这一轴上**两个方向都说不出来**:既钉不住 musl,也钉不住
+libSystem,唯一的写法 `aarch64-macos` 把这件事整个交给图。Windows 那一轴
+之所以能说出来,是因为本 PR 为它加了 `x86_64-windows-musl` 这一行 ——
+macOS 缺的是同一件东西,而不是缺一条策略。
+
 于是一个**装了 openkal 依赖、却想在 macOS 上用 libSystem** 的工程,
-无法表达这个意图。
+无法表达这个意图;反过来,一个想在 macOS 上明确钉住 musl 的工程,同样
+无法表达。
 
 ⚠️ **Linux 上没有这个缺口**:`x86_64-linux-gnu` 恰恰就是「显式钉住 glibc」,
 即使图里有 openkal-musl 也能说出来(今天的行为是报出分歧并以图为准 ——
