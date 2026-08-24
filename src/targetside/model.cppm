@@ -78,12 +78,21 @@ constexpr std::string_view origin_name(Origin o) {
 // reading `c-abi musl` is not left to work out which row `gnu` belongs to.
 enum class EnvAxis { Unknown, CLibrary, ObjectAbi, ObjectFormat };
 
-// The noun for an axis, as it appears in the report. Empty for `Unknown`,
+// The noun for a segment, as it appears in the report. Empty for `Unknown`,
 // because a report that cannot name the axis says nothing rather than guessing.
-inline std::string_view env_axis_noun(EnvAxis a) {
+//
+// ⚠️ THE VALUE, NOT ONLY THE AXIS. `gnu` and `msvc` sit on the same axis and
+// select opposite ABIs, so a noun fixed per axis would print "the Itanium C++
+// ABI" for an MSVC build. Naming the ABI rather than the axis is deliberate:
+// `Itanium` and `MSVC` appear in no row of the report, so neither can be
+// mistaken for a layer the way "the C++ ABI" would be.
+inline std::string_view env_axis_noun(EnvAxis a, std::string_view segment = {}) {
     switch (a) {
         case EnvAxis::CLibrary:     return "a C library";
-        case EnvAxis::ObjectAbi:    return "the object ABI";
+        case EnvAxis::ObjectAbi:
+            if (segment == "gnu")  return "the Itanium C++ ABI";
+            if (segment == "msvc") return "the MSVC C++ ABI";
+            return "the object ABI";
         case EnvAxis::ObjectFormat: return "the object format";
         case EnvAxis::Unknown:      break;
     }
@@ -751,11 +760,23 @@ inline std::string format_report(const TargetSide& ts, std::string_view targetNa
     // READER IS LOOKING AT IT.
     //
     // `x86_64-windows-gnu` above a line reading `c-abi musl` is not a
-    // contradiction: on Windows `gnu` names the object ABI, and the row it
-    // actually corresponds to is `c++-abi`. But the report contains no row
-    // called `gnu`, so a reader maps it to the nearest thing that looks like a
-    // C library name and concludes the build disagrees with itself. Measured
-    // twice, by the same reader, on two different days.
+    // contradiction. Measured on the artefact of exactly that build:
+    //
+    //     imports        ntdll, KERNEL32, SHELL32 — no msvcrt, no ucrtbase
+    //     `_Z…` symbols  4507
+    //     `?…`  symbols  0
+    //
+    // The first line is why `c-abi musl` is honest: none of MinGW's C runtime
+    // is linked. The other two are what `gnu` actually selected — the Itanium
+    // C++ ABI rather than Microsoft's.
+    //
+    // ⭐ AND IT CORRESPONDS TO NO ROW OF THIS REPORT, WHICH IS THE POINT. The
+    // five layers record who SUPPLIES each layer; `gnu` names a convention the
+    // OBJECTS FOLLOW, and several layers must agree on it. Pointing the reader
+    // at `c++-abi libc++` would be a second wrong answer: libc++ is one
+    // implementation of the standard library, libstdc++ is another, and both
+    // sit on the Itanium ABI. The gloss therefore names the ABI itself, whose
+    // name appears in no row and so cannot be mistaken for one.
     //
     // A warning would be wrong — it would fire on every legitimate MinGW build
     // and would say something false. A noun on the head line is not a
@@ -770,8 +791,9 @@ inline std::string format_report(const TargetSide& ts, std::string_view targetNa
         && !ts.requestedCAbi.empty()
         && !ts.cAbi.absent() && ts.cAbi.fromGraph()
         && ts.cAbi.interfaceName != ts.requestedCAbi) {
-        head += std::format("   ({} names {}, not a C library)",
-                            ts.requestedCAbi, env_axis_noun(ts.envAxis));
+        head += std::format("   ({} selects {}, not a C library)",
+                            ts.requestedCAbi,
+                            env_axis_noun(ts.envAxis, ts.requestedCAbi));
     }
     head += '\n';
 

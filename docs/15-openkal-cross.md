@@ -137,11 +137,31 @@ Target x86_64-windows-gnu → x86_64-w64-windows-gnu
 ```
 
 finds no row called `gnu`, and maps it to the nearest thing that resembles a C
-library name. The row it belongs to is `c++-abi`. Where the segment does not
-name a C library, the report therefore names what it does:
+library name.
+
+Measured on the artefact of exactly that build:
+
+| Observation | Value |
+|---|---|
+| imported libraries | `ntdll`, `KERNEL32`, `SHELL32` — no `msvcrt`, no `ucrtbase` |
+| Itanium-mangled symbols (`_Z…`) | 4507 |
+| MSVC-mangled symbols (`?…`) | 0 |
+
+The first row is why `c-abi musl` is honest: none of MinGW's C runtime is
+linked. The other two are what `gnu` selected — the Itanium C++ ABI rather than
+Microsoft's.
+
+That correspondence is to no row of the report, and the absence is the point.
+The five layers record who **supplies** each layer; `gnu` names a convention the
+**objects follow**, which several layers must agree on. Reading it as `c++-abi
+libc++` is a second wrong answer: libc++ is one implementation of the standard
+library and libstdc++ is another, and both sit on the Itanium ABI.
+
+The report therefore names the ABI itself, whose name appears in no row and so
+cannot be mistaken for one:
 
 ```
-Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu names the object ABI, not a C library)
+Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu selects the Itanium C++ ABI, not a C library)
 ```
 
 The segment carries a different axis on each platform — the C library on Linux,

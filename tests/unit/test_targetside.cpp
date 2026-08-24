@@ -476,7 +476,7 @@ TEST(TargetSideReport, AnEnvSegmentThatIsNotACLibraryIsGlossed) {
     in.envAxis           = ts::EnvAxis::ObjectAbi;
 
     auto r = ts::format_report(ts::resolve(in), "x86_64-windows-gnu");
-    EXPECT_NE(r.find("gnu names the object ABI, not a C library"),
+    EXPECT_NE(r.find("gnu selects the Itanium C++ ABI, not a C library"),
               std::string::npos) << r;
 }
 
@@ -492,8 +492,50 @@ TEST(TargetSideReport, OnBareMetalTheSegmentNamesTheObjectFormat) {
     in.envAxis           = ts::EnvAxis::ObjectFormat;
 
     auto r = ts::format_report(ts::resolve(in), "riscv64-none-elf");
-    EXPECT_NE(r.find("elf names the object format, not a C library"),
+    EXPECT_NE(r.find("elf selects the object format, not a C library"),
               std::string::npos) << r;
+}
+
+// ⚠️ THE NOUN COMES FROM THE VALUE, NOT ONLY FROM THE AXIS.
+//
+// `gnu` and `msvc` sit on the same axis and select OPPOSITE ABIs. A noun fixed
+// per axis would print "the Itanium C++ ABI" for an MSVC build — a statement
+// that is not merely vague but false.
+TEST(TargetSideReport, TheOppositeValueOnTheSameAxisGetsTheOppositeName) {
+    auto in = payload_linux();
+    in.targetOs          = "windows";
+    in.compilerFamily    = "llvm";
+    in.cAbi              = provider("openkal-musl", "0.3.3", "musl");
+    in.requestedCAbi     = "msvc";
+    in.requestFreeTarget = "x86_64-windows";
+    in.envAxis           = ts::EnvAxis::ObjectAbi;
+
+    auto r = ts::format_report(ts::resolve(in), "x86_64-windows-msvc");
+    EXPECT_NE(r.find("msvc selects the MSVC C++ ABI"), std::string::npos) << r;
+    EXPECT_EQ(r.find("Itanium"), std::string::npos) << r;
+}
+
+// ⭐ AND THE NAME IT PRINTS MUST NOT BE ANY ROW'S VALUE.
+//
+// Naming the ABI rather than the axis is what stops a reader mapping `gnu` to
+// `c++-abi libc++` — a second wrong answer, since libstdc++ sits on the same
+// ABI. If the gloss ever printed a string that also appears as a layer's
+// implementation name, the confusion would return in a new place.
+TEST(TargetSideReport, TheGlossNamesNothingThatAppearsAsALayerValue) {
+    auto in = payload_linux();
+    in.targetOs          = "windows";
+    in.compilerFamily    = "llvm";
+    in.cAbi              = provider("openkal-musl", "0.3.3", "musl");
+    in.cxxAbi            = provider("openkal-llvm-runtime", "0.1.2", "libc++");
+    in.requestedCAbi     = "gnu";
+    in.requestFreeTarget = "x86_64-windows";
+    in.envAxis           = ts::EnvAxis::ObjectAbi;
+
+    auto r = ts::format_report(ts::resolve(in), "x86_64-windows-gnu");
+    auto head = r.substr(0, r.find('\n'));
+    EXPECT_NE(head.find("Itanium"), std::string::npos) << head;
+    EXPECT_EQ(head.find("libc++"), std::string::npos) << head;
+    EXPECT_EQ(head.find("musl"),   std::string::npos) << head;
 }
 
 // ⚠️ AND IT DOES NOT FIRE WHEN THE C LIBRARY CAME FROM A PAYLOAD.

@@ -19,11 +19,28 @@
   读者在其中找不到一行叫 `gnu`,于是把它映到最像 C 库名字的那一行。
   它真正对应的是 `c++-abi`。
 
-  于是在该段不命名 C 库的平台上,报告直接说出它命名的是什么:
+  于是在该段不命名 C 库的平台上,报告直接说出它选中的是什么:
 
   ```
-  Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu names the object ABI, not a C library)
+  Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu selects the Itanium C++ ABI, not a C library)
   ```
+
+  ⭐ **它不对应报告里的任何一行,而这正是要点。** 对这次构建的产物实测:
+
+  | 观测 | 值 |
+  |---|---|
+  | 导入的库 | `ntdll`、`KERNEL32`、`SHELL32` —— 无 `msvcrt`,无 `ucrtbase` |
+  | Itanium 修饰符号(`_Z…`) | 4507 |
+  | MSVC 修饰符号(`?…`) | 0 |
+
+  第一行说明 `c-abi musl` 是老实的:MinGW 的 C 运行时一点没链进来。
+  五层记录的是每一层**由谁供给**;`gnu` 命名的是这些**对象遵循哪套约定**。
+  把它读成 `c++-abi libc++` 是第二个错误答案 —— libstdc++ 同样坐在
+  Itanium ABI 上。因此报告命名那套 **ABI 本身**,它的名字不出现在任何一行里,
+  于是不会被误当成某一层。
+
+  ⚠️ 名词取自**值**而非仅取自轴:`gnu` 与 `msvc` 同轴而选中相反的 ABI,
+  按轴取名会给 MSVC 构建打印「Itanium」—— 那不只是含糊,是假的。
 
   内部把 `envNamesCAbi` 这个布尔换成 `EnvAxis`,因为布尔是对事实的有损编码:
   该段在 Linux 上是 C 库、Windows 上是对象 ABI、无操作系统时是对象格式。
