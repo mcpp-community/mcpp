@@ -498,9 +498,40 @@ openkal 规范里**没有随机源接口**（SURFACE.txt 全文无 random / entr
 在这套体系里它同样跑在 openkal 之上,同样没有随机源 —— 名字容易误读,
 而设置是对的。
 
-**重新打开它的触发条件**:openkal 规范新增随机源接口之后,
-`openkal-llvm-runtime` 把两份 `__config_site` 的该宏改为 1,
-并在 `[target]` 里为不提供该接口的目标保持 0。
+**⚠️ 我先前写「openkal-llvm-runtime 只能开关那个宏」,那句话是错的。**
+移植机制现成:`openkal-musl/port/src/okm_syscall.c` **已经把 69 个系统调用
+转给了 openkal**(`SYS_read`、`SYS_openat`、`SYS_mmap`、`SYS_futex` …)。
+真正的约束不是「没有转的办法」,是**规范里没有可转的目标**。
+
+**为什么不能经 fs 打开 `/dev/urandom`。** 这条路在设计上就被挡住:
+`kal_fs_open` 只能相对 **preopen 目录**打开,而 openkal-linux 只给 2 个
+preopen。⭐ **那正是能力模型要挡的东西** —— 一个程序不能凭一个绝对路径
+够到平台上的任意对象。所以这不是缺口,是拒绝。
+
+**落地形状,两段:**
+
+**长期(根本解)** —— openkal 规范新增随机源接口。按 6.1 条,
+不提供它的后端让相应符号链接期缺席,这正是规范已有的机制。
+
+**当下(可立即做)** —— `openkal-musl` 加一个 feature。该包已有
+`[features]`(`default = ["posix"]`),机制现成:
+
+```toml
+[features]
+host-entropy = { }   # port 提供 getrandom,经宿主特定通路取熵
+```
+
+⚠️ **它在裸机上无法实现**,所以名字必须说清它假设了什么 ——
+`host-entropy` 而不是 `random`。
+
+⚠️ 并且 `openkal-llvm-runtime` 的 `_LIBCPP_HAS_RANDOM_DEVICE` 必须
+**跟随**这个 feature,不能独立开关 —— 否则回到「宏开了、符号没有」,
+把编译错换成链接错而已。
+
+**这条跨三个仓库(openkal 规范 / openkal-musl / openkal-llvm-runtime),
+且必须先在规范里定接口。** 它不属于目标词表这一 PR:词表讲的是「目标怎么
+命名与映射」,这条讲的是「平台接口该不该多一个能力」,混在一起会让两件事
+都说不清。
 
 ### 7.6 GMF 里 include 标准头,未查
 
