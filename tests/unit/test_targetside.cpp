@@ -413,15 +413,23 @@ TEST(TargetSideRequest, AFilledEnvSegmentStatesNothing) {
     EXPECT_EQ(ts::check_request(ts::resolve(in)), std::nullopt);
 }
 
-TEST(TargetSideRequest, AWrittenEnvSegmentThatDisagreesIsRefused) {
+// ⚠️ REPORTED, NOT REFUSED. The graph supplies the C library either way, so the
+// segment is ignored rather than violated and the artifact is identical with or
+// without it. Refusing was tried and broke every project spelling the host
+// target `x86_64-linux-gnu` — which is what `mcpp toolchain list` prints.
+TEST(TargetSideRequest, AWrittenEnvSegmentThatDisagreesIsReported) {
     auto in = payload_linux();
-    in.compilerFamily  = "llvm";
-    in.cAbi            = provider("openkal-musl", "0.3.3", "musl");
-    in.requestedCAbi   = "gnu";
+    in.compilerFamily     = "llvm";
+    in.cAbi               = provider("openkal-musl", "0.3.3", "musl");
+    in.requestedCAbi      = "gnu";
+    in.requestFreeTarget  = "x86_64-linux";
     auto why = ts::check_request(ts::resolve(in));
     ASSERT_TRUE(why.has_value());
-    EXPECT_NE(why->find("requests the `gnu` C ABI"), std::string::npos);
+    EXPECT_NE(why->find("`gnu`"), std::string::npos);
     EXPECT_NE(why->find("musl"), std::string::npos);
+    EXPECT_NE(why->find("--target x86_64-linux"), std::string::npos)
+        << "telling someone their target name is wrong is only useful once "
+           "there is a right one to give them";
 }
 
 TEST(TargetSideRequest, APrebuiltCLibraryIsWhatTheRequestSelected) {

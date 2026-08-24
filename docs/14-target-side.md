@@ -121,9 +121,10 @@ request rather than the answer, and the resolved value is reported by the
 build.
 
 Omitting the field declines to state one: `x86_64-linux` asks for whatever
-supplies that layer, and `x86_64-linux-musl` asks for musl. A request the
-dependency graph contradicts is refused, since only one of the two can describe
-the artifact.
+supplies that layer, and `x86_64-linux-musl` asks for musl. When the dependency
+graph supplies a different one the graph decides, and the build reports that the
+name is inaccurate together with the spelling to use instead. The request is
+ignored rather than violated, so the artifact is the same either way.
 
 ### The Toolchain
 

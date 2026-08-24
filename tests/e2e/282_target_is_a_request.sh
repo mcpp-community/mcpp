@@ -61,14 +61,22 @@ grep -q "Target x86_64-linux-gnu" <<< "$out" && {
     echo "a segment the project did not write must not appear in the report:"
     echo "$out"; exit 1; }
 
-# ── 2. Naming one that the graph contradicts is refused ─────────────────────
-rc=0
-out="$("$MCPP" build --target x86_64-linux-gnu 2>&1)" || rc=$?
-[[ "$rc" -ne 0 ]] || {
-    echo "a request the graph contradicts was accepted:"; echo "$out"; exit 1; }
-grep -q "requests the .gnu. C ABI" <<< "$out" || {
-    echo "the refusal does not name the request:"; echo "$out"; exit 1; }
+# ── 2. Naming one the graph disagrees with is reported, not refused ─────────
+#
+# ⚠️ The severity was decided by a measurement. Refusing is the clean answer —
+# only one of the two names can describe the artifact — and it broke every
+# project and CI configuration spelling the host target `x86_64-linux-gnu`,
+# which is what `mcpp toolchain list` prints and therefore what people write.
+# mcpp's own openkal matrix was the first casualty.
+#
+# What settles it is that the request changes nothing: the graph supplies the C
+# library either way, so the segment is ignored rather than violated.
+out="$("$MCPP" build --target x86_64-linux-gnu 2>&1 || true)"
+grep -q "asks for the .gnu. C ABI" <<< "$out" || {
+    echo "the mismatch was not reported:"; echo "$out"; exit 1; }
 grep -q "musl" <<< "$out" || {
-    echo "the refusal does not name what resolved:"; echo "$out"; exit 1; }
+    echo "the report does not name what resolved:"; echo "$out"; exit 1; }
+grep -q -- "--target x86_64-linux" <<< "$out" || {
+    echo "the report names no correct spelling to use instead:"; echo "$out"; exit 1; }
 
 echo "OK"

@@ -5814,6 +5814,10 @@ prepare_build(bool print_fingerprint,
                 // project never wrote. The request was captured upstream, where
                 // the distinction still existed.
                 in.requestedCAbi = requestedCAbi;
+                if (!requestedCAbi.empty()) {
+                    auto bare = *tt; bare.env.clear();
+                    in.requestFreeTarget = bare.str();
+                }
 
                 // `sysroot = ""` and "no sysroot key" are different answers and
                 // must not be collapsed: the first says this project wants no
@@ -5847,11 +5851,13 @@ prepare_build(bool print_fingerprint,
         // names a file the reader has never opened and no decision mcpp made.
         if (auto why = tsd::check_requirements(resolvedTargetSide, requirements))
             return std::unexpected(*why);
-        // The triple asked for a C library and the graph supplied a different
-        // one. Printing both and building anyway makes the target's own name a
-        // false statement about the artifact it produced.
+        // ⚠️ A WARNING, NOT A REFUSAL. The graph decides the C library either
+        // way, so the segment is ignored rather than violated and the artifact
+        // is the same with or without it. Refusing was tried and broke every
+        // project spelling the host target `x86_64-linux-gnu` — which is what
+        // `mcpp toolchain list` prints, and therefore what people write.
         if (auto why = tsd::check_request(resolvedTargetSide))
-            return std::unexpected(*why);
+            mcpp::diag::warning("target", *why);
 
         // The refusal held since toolchain resolution, released now that the
         // other half of its question has an answer. A payload on this machine

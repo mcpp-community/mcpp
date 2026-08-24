@@ -140,8 +140,12 @@ struct TargetSide {
 
     // What the triple asked the C library to be, empty when it did not ask.
     // Kept beside the resolved value rather than replacing it: the report
-    // states the outcome, and this exists so a contradiction can be named.
+    // states the outcome, and this exists so a mismatch can be named.
     std::string requestedCAbi;
+    // The same target with that segment removed — the spelling to suggest when
+    // the request turns out to describe nothing. Built by the caller, which is
+    // the only place that still holds mcpp's own triple.
+    std::string requestFreeTarget;
 
     // The single question the five former derivation sites actually asked.
     //
@@ -317,6 +321,8 @@ struct Inputs {
     // `Triple::envExplicit`. Empty here means the project said nothing, and a
     // build that says nothing cannot be contradicted.
     std::string requestedCAbi;
+    // The same target spelled without that segment, for the suggestion.
+    std::string requestFreeTarget;
 
     std::optional<Provider> compilerRuntime;
     std::optional<Provider> kernelAbi;
@@ -371,7 +377,8 @@ inline std::string xpkg_interface(std::string_view ref) {
 inline TargetSide resolve(const Inputs& in) {
     TargetSide ts;
     ts.llvmTriple    = in.llvmTriple;
-    ts.requestedCAbi = in.requestedCAbi;
+    ts.requestedCAbi     = in.requestedCAbi;
+    ts.requestFreeTarget = in.requestFreeTarget;
 
     // compiler — always a payload, never a package.
     if (!in.compilerFamily.empty())
@@ -550,41 +557,45 @@ check_requirements(const TargetSide& ts, std::span<const Requirement> reqs) {
 
 // ── The triple is a request; the target side is the fact ────────────────────
 //
-// ⚠️ A CONTRADICTION IS REFUSED RATHER THAN PRINTED.
+// ⚠️ REPORTED RATHER THAN REFUSED, AND THE SEVERITY WAS DECIDED BY A
+// MEASUREMENT RATHER THAN BY THE PRINCIPLE.
 //
-// Measured, before this check existed:
+// The first version refused. It is the semantically clean answer — the name
+// says one C library, the artifact contains another, and only one of the two
+// can be true. It also broke every project and every CI configuration that
+// spells the host target `x86_64-linux-gnu`, which is what `mcpp toolchain
+// list` prints and therefore what people write. mcpp's own openkal matrix was
+// the first casualty.
 //
-//     Target x86_64-windows-gnu → x86_64-w64-windows-gnu
-//            c-abi   musl   (openkal-musl@0.3.3, graph)
+// What decides the severity is that the request changes NOTHING. The graph
+// supplies the C library either way; the segment is ignored, not violated. A
+// build that would be identical without the segment is not a build to refuse —
+// it is a build whose name misdescribes it, and saying so is the whole
+// remedy.
 //
-// The name says one C library and the line under it says another. Both were
-// produced by the same build, and the build succeeded. A reader has no way to
-// know which one the link line used, and the answer — the second — makes the
-// first a lie the tool told about its own output.
-//
-// The request is honoured where nothing else supplies the layer, which is the
-// ordinary case and is why the segment exists. Where something does, and it
-// disagrees, only one of the two can be true.
+// ⚠️ The remedy has to be actionable, which is why `x86_64-linux` had to work
+// first. Telling someone their target name is wrong is only useful once there
+// is a right one to give them.
 inline std::optional<std::string> check_request(const TargetSide& ts) {
     if (ts.requestedCAbi.empty()) return std::nullopt;
     if (ts.cAbi.absent()) return std::nullopt;
     if (ts.cAbi.interfaceName == ts.requestedCAbi) return std::nullopt;
     // A prebuilt or payload C library IS what the request selected — the
     // request is how it was selected. Only a supplier chosen by something else
-    // can contradict it.
+    // can disagree with it.
     if (!ts.cAbi.fromGraph()) return std::nullopt;
 
     return std::format(
-        "this build requests the `{}` C ABI, and its dependency graph supplies "
-        "`{}`.\n"
-        "         requested         {}\n"
-        "         resolved          {:<14} ({}, graph)\n"
-        "       A build has one C library, and the target's name is where the "
-        "request is written.\n"
-        "       Drop the segment to let the graph decide, or remove the package "
-        "that supplies it.",
-        ts.requestedCAbi, ts.cAbi.interfaceName,
-        ts.requestedCAbi, ts.cAbi.interfaceName, ts.cAbi.impl);
+        "the target name asks for the `{}` C ABI and the dependency graph "
+        "supplies `{}`.\n"
+        "       The graph decides, so the build below uses `{}` — the name is "
+        "what is inaccurate,\n"
+        "       not the artifact. Drop the segment to say what is actually "
+        "meant:\n"
+        "           --target {}",
+        ts.requestedCAbi, ts.cAbi.interfaceName, ts.cAbi.interfaceName,
+        ts.requestFreeTarget.empty() ? std::string("<arch>-<os>")
+                                     : ts.requestFreeTarget);
 }
 
 // ── Rule one: one supplier per layer ─────────────────────────────────────────
