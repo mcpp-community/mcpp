@@ -3912,9 +3912,30 @@ prepare_build(bool print_fingerprint,
     // version mangling fallback (Level 1) so two cross-major copies of
     // the same package can coexist with distinct module names.
     //
-    // Headers (referenced via `[build].include_dirs`) are NOT staged —
-    // those keep pointing at the original install dir via absolutized
-    // include paths.
+    // Headers reached through `[build].include_dirs` are NOT staged — those
+    // keep pointing at the original install dir via absolutized include paths.
+    //
+    // ⭐ HEADERS BESIDE A SOURCE ARE A DIFFERENT CASE, AND THEY ARE STAGED.
+    //
+    // `#include "detail.h"` is resolved relative to the directory of the file
+    // holding the directive, so moving the source moves the search. No
+    // `include_dirs` entry is involved and absolutizing one cannot help: the
+    // package never declared a path because it never needed one. Measured
+    // before this, on a package whose `src/time.cpp` includes `src/sbi.h`:
+    //
+    //     target/.mangled/openkal-opensbi/__self__/src/time.cpp:44:10:
+    //         fatal error: 'sbi.h' file not found
+    //
+    // ⚠️ THE DIAGNOSIS THIS PRODUCES POINTS AT THE WRONG THING. The path in it
+    // is a staging directory the author never wrote, for a header sitting
+    // exactly where the source expects it, and the build that triggered it
+    // asked for nothing unusual — two majors of one dependency is a supported
+    // arrangement, and this is its most ordinary consequence.
+    //
+    // What is copied is every file in a directory that contains a staged
+    // source and is not itself staged, verbatim: rewriting applies to module
+    // declarations, and a header has none. Directories with no staged source
+    // are not visited, so this stays proportional to what is being staged.
     auto stage_with_rewrite = [&](const std::filesystem::path& srcRoot,
                                   const std::filesystem::path& dstRoot,
                                   const mcpp::manifest::Manifest& depManifest,
@@ -3947,6 +3968,29 @@ prepare_build(bool print_fingerprint,
             if (!os) return std::unexpected(std::format(
                 "stage: cannot write '{}'", dst.string()));
             os << out;
+        }
+
+        // The files beside those sources, carried across unchanged so a quoted
+        // include still finds what it named.
+        std::set<std::filesystem::path> sourceDirs;
+        for (auto const& f : *sources) sourceDirs.insert(f.parent_path());
+        for (auto const& dir : sourceDirs) {
+            for (auto const& entry : std::filesystem::directory_iterator(dir, ec)) {
+                if (ec) break;
+                if (!entry.is_regular_file()) continue;
+                if (sources->contains(entry.path())) continue;
+                auto rel = std::filesystem::relative(entry.path(), srcRoot, ec);
+                if (ec) continue;
+                auto dst = dstRoot / rel;
+                std::filesystem::create_directories(dst.parent_path(), ec);
+                std::filesystem::copy_file(
+                    entry.path(), dst,
+                    std::filesystem::copy_options::overwrite_existing, ec);
+                if (ec) return std::unexpected(std::format(
+                    "stage: cannot copy '{}': {}",
+                    entry.path().string(), ec.message()));
+            }
+            ec.clear();
         }
         return {};
     };
