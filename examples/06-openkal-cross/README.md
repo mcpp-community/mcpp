@@ -97,14 +97,23 @@ The reference comes from the question rather than from any filesystem call. See
 
 ## Bare Metal On x86
 
-An x86_64 machine with no operating system is reached through UEFI, and a UEFI
-application is PE/COFF entered through the Microsoft x64 calling convention.
-Its target is therefore `x86_64-windows-gnu` — the same triple as a Windows
-program — distinguished by which implementation of the platform interface the
-graph resolved, and by three link flags that select the EFI subsystem.
+Two routes, and neither belongs in this manifest.
 
-That combination needs its own manifest, since one manifest cannot resolve two
-different platform implementations for one triple. See `mcpplibs/openkal-uefi`.
+A **UEFI application** is PE/COFF entered through the Microsoft x64 calling
+convention, so its target is `x86_64-windows-gnu` — the same triple as a Windows
+program — distinguished by which implementation of the platform interface the
+graph resolved. One manifest cannot resolve two different implementations for one
+triple, so it needs its own. See `mcpplibs/openkal-uefi`.
+
+A **kernel** has no firmware services to call. Its target is `x86_64-none-elf`,
+the zero-libc tier, entered at its own `_start`, reaching hardware directly.
+There is no platform interface beneath it to depend on; what such a program
+builds on is `mcpplibs/openarch`, the architecture-mechanism layer. The program
+in this directory would not run there, because it asks a platform interface
+questions and there is none.
+
+Both routes are described in
+[docs/15 — Cross-Compilation Over openkal](../../docs/15-openkal-cross.md).
 
 ## Reference
 

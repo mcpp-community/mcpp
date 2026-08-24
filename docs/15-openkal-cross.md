@@ -147,10 +147,49 @@ runner  = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
 firmware mode to use are board facts, and an engine that guesses one is an
 engine a different board has to fight.
 
-An x86_64 machine with no operating system is reached through UEFI. A UEFI
-application is PE/COFF entered through the Microsoft x64 calling convention, so
-its target is `x86_64-windows-gnu` — the same triple as a Windows program,
-distinguished by which platform implementation the graph resolved.
+### Two Routes To A Bare x86_64 Machine
+
+An x86_64 machine with no operating system is reached in two different ways, and
+the difference is what loads the program.
+
+| Route | Target | Platform layer | Entry |
+|---|---|---|---|
+| UEFI application | `x86_64-windows-gnu` | `openkal-uefi` | firmware, with Boot Services available |
+| Kernel, or raw bare metal | `x86_64-none-elf` | none, or `openarch` | the reset vector, with nothing beneath |
+
+A UEFI application is PE/COFF entered through the Microsoft x64 calling
+convention. Both are properties the LLVM toolchain already has, so its target is
+the same triple as a Windows program and firmware function pointers are called
+directly. What distinguishes it from a Windows build is which implementation of
+the platform interface the graph resolved, together with three link flags that
+select `IMAGE_SUBSYSTEM_EFI_APPLICATION`.
+
+A kernel has no firmware services to call. Its target is `x86_64-none-elf`, the
+zero-libc tier: no C library on the compile line, no library directory on the
+link, and `#include <stdio.h>` does not resolve. The program is entered at its
+own `_start` and reaches hardware directly.
+
+`openarch` is the layer such a program builds on. It is not a platform interface
+and does not answer to `mcpp:kernel-abi`; it is the architecture mechanism —
+execution contexts, traps, per-CPU state and address spaces — presented as one
+interface over several instruction sets, with a backend package per instruction
+set. A kernel depends on it and supplies its own platform layer, or none.
+
+### Why x86_64 Bare Metal Required Engine Work
+
+`riscv64-none-elf` and `aarch64-none-elf` are rows in a table and nothing more:
+Clang has a BareMetal toolchain for both, drives their links itself and reaches
+`ld.lld`. It has none for x86_64, so that triple falls through to the generic
+GCC toolchain, whose linker is the host's `g++`:
+
+```
+g++: error: unrecognized command-line option '-fuse-ld=…/ld.lld'
+```
+
+Measured for every spelling of a bare x86_64 triple, and not correctable by any
+flag. The row therefore carries a linker emulation and mcpp invokes `ld.lld`
+itself, which is also why the host toolchain must be shown not to participate in
+such a link.
 
 ## Measured Limits
 
