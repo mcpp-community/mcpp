@@ -17,6 +17,7 @@
 - [12 - Distributing a Prebuilt Library](12-binary-distribution.md)
 - [13 - Bare-Metal and Freestanding Targets](13-baremetal.md)
 - [14 - The Target Side](14-target-side.md)
+- [15 - Cross-Compilation Over openkal](15-openkal-cross.md)
 
 ## Specifications
 

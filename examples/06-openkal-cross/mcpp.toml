@@ -1,0 +1,30 @@
+[package]
+name        = "portable-report"
+version     = "0.1.0"
+description = "One source, three hosted targets, over openkal"
+
+# There is no `[build] target` here, and its absence is what the directory is
+# for. The target is given on the command line so that the same file can be
+# built three ways without being edited.
+
+[dependencies]
+# One line selects three of the five target-side layers. `openkal-llvm-runtime`
+# supplies the compiler runtime and the C++ runtime, and depends in turn on
+# `openkal-musl` for the C library, which depends on whichever implementation of
+# openkal matches the target being built.
+openkal-llvm-runtime = "0.1.1"
+
+[toolchain]
+# A compiler, and nothing else. Where the headers, the C library, the C++
+# runtime and the platform implementation come from is not stated in this file;
+# it follows from the dependency above and is resolved after the graph exists.
+# The build reports what it resolved.
+default = "llvm@22.1.8"
+
+# ⚠️ NO BARE-METAL TARGET SECTION, AND ITS ABSENCE IS DELIBERATE.
+#
+# This program asks about a filesystem and about tasks. An implementation that
+# provides neither is absent as a link-time definition — clause 6.1 of the
+# openkal specification — so the question itself does not link, which is the
+# mechanism rather than a defect. A bare-metal project is a different project,
+# and the README says what it writes instead.

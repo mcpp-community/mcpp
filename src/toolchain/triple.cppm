@@ -34,6 +34,32 @@ struct Triple {
     std::string os;     // "linux" | "macos" | "windows"
     std::string env;    // "gnu" | "musl" | "msvc" | "" (always empty on macos)
 
+    // ⚠️ WHETHER THE ENV SEGMENT WAS WRITTEN, AS OPPOSED TO SUPPLIED BY THIS
+    // PARSER — AND THE TRIPLE HAS TO CARRY BOTH BECAUSE IT SERVES TWO ROLES.
+    //
+    // A triple is an IDENTITY — the output directory's name, part of a cache
+    // key, the subject of a `cfg()` predicate — and identities must be total
+    // and canonical. It is also a REQUEST, and a request has to be able to say
+    // nothing. `parse` makes the identity total by filling `x86_64-linux` in as
+    // `x86_64-linux-gnu`, and until this flag existed that filling ALSO
+    // destroyed the request: the two states were indistinguishable downstream.
+    //
+    // Measured: a project whose graph supplies musl, built with
+    // `--target x86_64-linux`, reported
+    //
+    //     Target x86_64-linux-gnu → x86_64-unknown-linux-gnu
+    //            c-abi   musl   (openkal-musl@0.3.3, graph)
+    //
+    // — a name that contradicts the fact printed two lines under it. The user
+    // had declined to name a C library; the parser named one for them.
+    //
+    // The narrow shape is deliberate. Removing the fill would make `env` empty
+    // for a hosted target at 22 read sites, ten of which are in this file, and
+    // every one would need a new answer for a state that never existed before.
+    // A flag beside the value leaves the identity exactly as it was and gives
+    // the request somewhere to live.
+    bool envExplicit = false;
+
     bool empty() const { return arch.empty() && os.empty(); }
 
     // Canonical rendering: "arch-os[-env]"; "" for an empty (= host) triple.
@@ -126,7 +152,17 @@ struct Triple {
         return std::nullopt;
     }
 
-    bool operator==(const Triple&) const = default;
+    // ⚠️ IDENTITY IS THE THREE SEGMENTS, AND `envExplicit` IS DELIBERATELY NOT
+    // AMONG THEM — WHICH IS WHY THIS IS NOT `= default`.
+    //
+    // The flag records where the env segment came from, not what the target is.
+    // A defaulted comparison would make `x86_64-linux-gnu` written by a user
+    // unequal to the same triple derived by `host_triple`, and the first thing
+    // that breaks is the `host` tag in `mcpp toolchain list`, which compares
+    // exactly those two.
+    bool operator==(const Triple& o) const {
+        return arch == o.arch && os == o.os && env == o.env;
+    }
 };
 
 // Lenient parse of any recognizable triple spelling into canonical fields.
@@ -289,6 +325,9 @@ inline Triple host_triple() {
     Triple t;
     t.arch = std::string(mcpp::platform::host_arch);
     t.os   = std::string(mcpp::platform::name);
+    // Derived from the machine rather than written by anyone, so it states no
+    // request: a host build must not be refused for "contradicting" a C library
+    // its own triple never asked for.
     if (t.os == "linux")        t.env = "gnu";
     else if (t.os == "windows") t.env = "msvc";
     return t;
@@ -486,23 +525,23 @@ std::optional<Triple> parse(std::string_view s) {
             || starts_with(k, "macos"))         { t.os = "macos";   sawOs = true; t.env.clear(); continue; }
         // "mingw32" is the GNU os segment for ALL MinGW targets (64-bit
         // included — historical residue); it means windows + gnu env.
-        if (starts_with(k, "mingw"))            { t.os = "windows"; sawOs = true; t.env = "gnu"; continue; }
+        if (starts_with(k, "mingw"))            { t.os = "windows"; sawOs = true; t.env = "gnu"; t.envExplicit = true; continue; }
 
         // Bare-metal object-format / ABI segments. Only meaningful with
         // os=none: `riscv64-none-elf`, `arm-none-eabi`, `arm-none-eabihf`.
         // Gated on the OS so a hosted triple cannot pick them up by accident.
         if (t.os == "none") {
-            if (k == "elf")                { t.env = "elf";    continue; }
-            if (k == "eabihf")             { t.env = "eabihf"; continue; }
-            if (k == "eabi")               { t.env = "eabi";   continue; }
+            if (k == "elf")                { t.env = "elf";    t.envExplicit = true; continue; }
+            if (k == "eabihf")             { t.env = "eabihf"; t.envExplicit = true; continue; }
+            if (k == "eabi")               { t.env = "eabi";   t.envExplicit = true; continue; }
         }
 
         if (t.os != "macos") {
-            if (k == "musl" || starts_with(k, "musleabi")) { t.env = "musl"; continue; }
-            if (k == "gnu"  || starts_with(k, "gnueabi"))  { t.env = "gnu";  continue; }
+            if (k == "musl" || starts_with(k, "musleabi")) { t.env = "musl"; t.envExplicit = true; continue; }
+            if (k == "gnu"  || starts_with(k, "gnueabi"))  { t.env = "gnu";  t.envExplicit = true; continue; }
             // starts_with: clang effective triples can carry a version suffix
             // on the env segment ("…-windows-msvc19.44.35211").
-            if (starts_with(k, "msvc"))                    { t.env = "msvc"; continue; }
+            if (starts_with(k, "msvc"))                    { t.env = "msvc"; t.envExplicit = true; continue; }
         }
         // Unrecognized segment (androideabi, wasi, …): not in mcpp's target
         // language — treat as unparseable rather than guessing.
@@ -510,8 +549,14 @@ std::optional<Triple> parse(std::string_view s) {
     }
 
     if (!sawOs) return std::nullopt;
-    if (t.os == "macos") t.env.clear();                 // macos carries no env segment
-    if (t.os == "linux" && t.env.empty()) t.env = "gnu"; // "x86_64-linux" alias
+    // macOS carries no env segment at all, so nothing was declined there.
+    if (t.os == "macos") { t.env.clear(); t.envExplicit = false; }
+    // ⚠️ THE FILL STAYS, AND THE FACT THAT IT WAS A FILL IS NOW RECORDED.
+    // `x86_64-linux` is the canonical identity `x86_64-linux-gnu` — every
+    // directory name and cache key downstream depends on that — but it is NOT
+    // the request `x86_64-linux-gnu`, which names a C library. See
+    // `Triple::envExplicit`.
+    if (t.os == "linux" && t.env.empty()) t.env = "gnu";
     return t;
 }
 

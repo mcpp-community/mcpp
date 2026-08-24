@@ -49,3 +49,4 @@ bench-child.log
 # to be expanded (`> $binDir`) and was not. Listed so the same slip is caught
 # next time rather than reviewed again.
 binDir
+examples/*/target/
