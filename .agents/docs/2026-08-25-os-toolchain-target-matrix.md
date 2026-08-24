@@ -68,8 +68,17 @@
 | `*-linux-gnu` | ✅ 仅同 arch | ❌ | ❌ | glibc 目标还需要 `xim:glibc` / `xim:linux-headers`,它们只有本 arch 的 |
 | `*-windows-gnu` | ✅ | ❌ | ✅ | mingw 交叉载荷有 linux-hosted 与 windows-hosted 两份 |
 | `*-windows-msvc` | ❌ | ❌ | ✅ | MSVC 只在 Windows 上存在 |
-| `aarch64-macos` | ❌ | ✅ | ❌ | 苹果 SDK 不可再分发 |
+| `aarch64-macos` | ❌ | ✅ | ❌ | 见下:是 SDK 的分发条款,不是 libc 闭源 |
 | `*-none-*`(裸机) | ✅ | ✅ | ✅ | ⭐ clang/lld 天生交叉,**不需要任何按宿主的载荷** |
+
+⚠️ **macOS 那一行的理由要说准,我第一稿写错了。** Apple 的 **Libc 是开源的**
+(`apple-oss-distributions/Libc`),所以「libc 闭源」不是原因。真正的原因是
+**SDK 的分发条款**:交叉链接一个 Mach-O 需要 SDK 里的头文件与 `.tbd` 存根库,
+而那些不可再分发,mcpp 因此没有 macOS 的交叉载荷。
+
+⭐ 并且 `libSystem` 不等于 Libc —— 它是一把伞,底下含 libc、libm、
+libpthread、libdyld 等。说「macOS 的 C 库是 libSystem」是就**链接对象**而言,
+不是就**实现来源**而言。
 
 ⭐ 裸机那一行是整张表里唯一「三个宿主全绿」的,而理由不是覆盖得好,
 是**它根本不需要载荷**。注释把这一点写得很准:

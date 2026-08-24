@@ -80,8 +80,61 @@ mcpp 在映射时补出编译器需要的 vendor,自己不保存它。
 | `x86_64-windows-gnu` | C 库 | **MinGW CRT**(封装 `msvcrt.dll`) |
 | `x86_64-windows-musl` | C 库 | **musl**(openkal 之上) |
 | `x86_64-windows-msvc` | C 库 | UCRT |
-| `aarch64-macos` | (无) | libSystem —— 该平台只有一个,不需要名字 |
+| `aarch64-macos` | (省略) | 由图决定:有 openkal 则 musl,否则 libSystem |
+| `aarch64-macos-musl` | C 库 | **musl**(openkal 之上) |
 | `riscv64-none` | (无) | **没有 C 库** |
+
+⚠️ **macOS 也需要这一段,而我第一稿写的是「该平台只有一个 C 库」。**
+实测(mcpp 2026.8.24.6,构建期体系):
+
+```
+Target aarch64-macos → arm64-apple-macos14.0
+       c-abi   musl   (openkal-musl@0.3.3, graph)
+```
+
+⭐ **openkal 让 macOS 上也有了 musl**,与 libSystem 并存 —— 与 Windows
+完全同形。所以「该平台只有一个」这句话在 openkal 出现之前成立,现在不成立,
+而我在同一份文档的 §5 里已经记下了这个实测却没有回头改这张表。
+
+⚠️ **`aarch64-macos` 不带第三段时该解析成哪一个?** 与 Linux/Windows 一致:
+**不作请求**,由图决定 —— 有 openkal 依赖就是 musl,没有就是 libSystem。
+这正是「省略即不作请求」这条规则在第三个平台上的同一次应用。
+
+⭐ **libSystem 不该有名字,而理由是实测出来的。**
+
+macOS 的三元组形状与另外两个平台不同 —— OS 段里带部署目标,且**没有
+env 段**:
+
+```
+arm64-apple-macos14.0
+     ^vendor ^os + 部署目标
+```
+
+clang 接受任意 env 后缀却不赋予任何含义,实测:
+
+```
+arm64-apple-macos14.0-gnu   → 原样返回,未规范化
+arm64-apple-macos14.0-musl  → 原样返回,未规范化
+```
+
+原样保留而不像 Windows 那样重拼,说明 **Darwin 那一支根本不看 env 段**。
+
+于是给 libSystem 起名会得到一个**在编译器侧没有对应物**的字符串。而它
+本来也不需要名字:按「省略 = 不作请求,由图决定」,两种情况都被覆盖 ——
+
+| 图里有 openkal | 结果 |
+|---|---|
+| 有 | `c-abi musl (graph)` |
+| 没有 | libSystem(payload) |
+
+⚠️ **这与 Linux/Windows 不对称,而不对称是有理由的。** 那两个平台上
+`gnu` 是 LLVM 词表里真实存在、且映射到真实编译器行为的值(Windows 上
+它决定对象 ABI);macOS 上没有任何对应物可映射。规范因此定:
+**macOS 的第三段只有一个合法值 `musl`,libSystem 由省略表达。**
+
+⚠️ 连带:openkal 路径上 mcpp 完全不碰 libSystem,所以这个命名问题
+在构建期体系里从一开始就不存在 —— 它只在预构建路径上被问起,
+而那条路径今天用的正是省略式。
 
 ⚠️ **`x86_64-linux-gnu` 里的 `gnu` 严格说是项目名而非库名(glibc)。**
 保留它是为了兼容既有工程与 LLVM,而不是因为它准确。规范应当**接受
@@ -193,7 +246,7 @@ riscv64-none            → （clang 专属:见 §2.3)
 | **语法** | `<arch>-<os>[-<libc>]`,段内字符集,大小写 |
 | **arch 取值** | `x86_64` `aarch64` `riscv64` `riscv32` … |
 | **os 取值** | `linux` `windows` `macos` `none` |
-| **libc 取值** | `gnu`(别名 `glibc`)`musl` `msvc` `ucrt`(预留) |
+| **libc 取值** | `gnu`(别名 `glibc`)`musl` `msvc` `ucrt`(预留);macOS 上仅 `musl` |
 | **省略规则** | 省略 libc = **不作请求**,由图或默认决定;身份仍完整 |
 | **派生属性** | `abi`(itanium / msvc)、`format`(elf / pe / macho)、`freestanding` |
 | **别名表** | `riscv64-none-elf` → `riscv64-none`,`x86_64-w64-mingw32` → `x86_64-windows-gnu` |
@@ -231,8 +284,49 @@ riscv64-none            → （clang 专属:见 §2.3)
 - **没有断言反向映射的完整规则。** §2.1 的映射不是双射,而诊断路径上
   确实需要「从 clang 三元组说出 mcpp 目标」。规则应当是「多对一时报出全部
   候选」还是「拒绝反推」,需要看诊断的实际用法再定。
-- **没有断言 macOS 是否需要 libc 段。** 实测该平台 C 库唯一(libSystem),
-  但构建期体系下 `c-abi` 报的是 `musl (graph)` —— 那是 openkal 在 macOS 上
-  的 musl,与 libSystem 并存。⚠️ 这意味着 macOS 也可能需要
-  `aarch64-macos-musl` 与 `aarch64-macos-system` 的区分,与 Windows 同形。
-  本轮未展开,应作为下一步实测项。
+(macOS 显式钉住 libSystem 的问题已移到 §6,作为一条明确记录在案的代价。)
+
+---
+
+## 6. 已知代价:记录在案,遇到真实用例再解
+
+本节记录**明知而未解**的东西。它们不是遗漏,而是判断「现在解的收益不明」
+之后留下的账;每一条都给出**重新打开它的触发条件**,以免后来者需要重新
+把上下文推导一遍。
+
+### 6.1 macOS 上无法显式请求 libSystem
+
+规范定为「libSystem 由省略表达」(§1.1)。代价是**说不出它**:
+
+```
+aarch64-macos          图里有 openkal → musl        图里没有 → libSystem
+aarch64-macos-musl     显式请求 musl
+aarch64-macos-???      ← 没有这个写法
+```
+
+于是一个**装了 openkal 依赖、却想在 macOS 上用 libSystem** 的工程,
+无法表达这个意图。
+
+⚠️ **Linux 上没有这个缺口**:`x86_64-linux-gnu` 恰恰就是「显式钉住 glibc」,
+即使图里有 openkal-musl 也能说出来(今天的行为是报出分歧并以图为准 ——
+见 `check_request`,那本身也是一条待议的策略)。
+
+**不解的理由**:没有真实用例。给 libSystem 起的任何名字在 clang 侧都没有
+对应物(实测 Darwin 不看 env 段),所以它只能是 mcpp 单方面的标记 ——
+为一个没人提出过的需求引入一个只有一半意义的名字,代价比收益清楚。
+
+**重新打开它的触发条件**,满足任一即可:
+
+1. 出现一个工程,依赖图里有 openkal 而在 macOS 上确实需要 libSystem
+2. openkal 支持了「同一构建里按目标选择 C 库」,使这个组合从边缘变成常规
+3. LLVM 在 Darwin 一支开始解释 env 段,使这个名字有了可映射的对象
+
+**届时的候选做法**(不预先择一):`aarch64-macos-system`、
+`aarch64-macos-apple`,或者引入一个与三元组正交的表达(如
+`[target.X] c-abi = "system"`)—— 最后一条可能更合适,因为它承认
+「这不是三元组该回答的问题」。
+
+### 6.2 其余待定项
+
+`ucrt` 如何进表、反向映射的规则、裸机去 `-elf` 的时机 —— 见 §5。
+它们与 6.1 的差别是:那些是**尚未测**,这一条是**测过了并决定不做**。
