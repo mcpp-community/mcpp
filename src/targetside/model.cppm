@@ -138,6 +138,11 @@ struct TargetSide {
     Layer cAbi;
     Layer cxx;
 
+    // What the triple asked the C library to be, empty when it did not ask.
+    // Kept beside the resolved value rather than replacing it: the report
+    // states the outcome, and this exists so a contradiction can be named.
+    std::string requestedCAbi;
+
     // The single question the five former derivation sites actually asked.
     //
     // It is about the SYSTEM, not about the C++ runtime. A C program over
@@ -303,6 +308,16 @@ struct Inputs {
     std::string compilerFamily;        // "llvm" / "gcc" / "msvc"
     std::string compilerVersion;
 
+    // ⚠️ THE C LIBRARY THE TRIPLE ASKED FOR, WHICH IS NOT THE SAME QUESTION AS
+    // WHICH ONE RESOLVED.
+    //
+    // `x86_64-linux-musl` states a request; `x86_64-linux` declines to. The
+    // parser fills the second one in as `gnu` so that the identity stays
+    // canonical, so `targetEnv` alone cannot tell the two apart — see
+    // `Triple::envExplicit`. Empty here means the project said nothing, and a
+    // build that says nothing cannot be contradicted.
+    std::string requestedCAbi;
+
     std::optional<Provider> compilerRuntime;
     std::optional<Provider> kernelAbi;
     std::optional<Provider> cAbi;
@@ -355,7 +370,8 @@ inline std::string xpkg_interface(std::string_view ref) {
 // ── The resolution ───────────────────────────────────────────────────────────
 inline TargetSide resolve(const Inputs& in) {
     TargetSide ts;
-    ts.llvmTriple = in.llvmTriple;
+    ts.llvmTriple    = in.llvmTriple;
+    ts.requestedCAbi = in.requestedCAbi;
 
     // compiler — always a payload, never a package.
     if (!in.compilerFamily.empty())
@@ -530,6 +546,45 @@ check_requirements(const TargetSide& ts, std::span<const Requirement> reqs) {
             advice);
     }
     return std::nullopt;
+}
+
+// ── The triple is a request; the target side is the fact ────────────────────
+//
+// ⚠️ A CONTRADICTION IS REFUSED RATHER THAN PRINTED.
+//
+// Measured, before this check existed:
+//
+//     Target x86_64-windows-gnu → x86_64-w64-windows-gnu
+//            c-abi   musl   (openkal-musl@0.3.3, graph)
+//
+// The name says one C library and the line under it says another. Both were
+// produced by the same build, and the build succeeded. A reader has no way to
+// know which one the link line used, and the answer — the second — makes the
+// first a lie the tool told about its own output.
+//
+// The request is honoured where nothing else supplies the layer, which is the
+// ordinary case and is why the segment exists. Where something does, and it
+// disagrees, only one of the two can be true.
+inline std::optional<std::string> check_request(const TargetSide& ts) {
+    if (ts.requestedCAbi.empty()) return std::nullopt;
+    if (ts.cAbi.absent()) return std::nullopt;
+    if (ts.cAbi.interfaceName == ts.requestedCAbi) return std::nullopt;
+    // A prebuilt or payload C library IS what the request selected — the
+    // request is how it was selected. Only a supplier chosen by something else
+    // can contradict it.
+    if (!ts.cAbi.fromGraph()) return std::nullopt;
+
+    return std::format(
+        "this build requests the `{}` C ABI, and its dependency graph supplies "
+        "`{}`.\n"
+        "         requested         {}\n"
+        "         resolved          {:<14} ({}, graph)\n"
+        "       A build has one C library, and the target's name is where the "
+        "request is written.\n"
+        "       Drop the segment to let the graph decide, or remove the package "
+        "that supplies it.",
+        ts.requestedCAbi, ts.cAbi.interfaceName,
+        ts.requestedCAbi, ts.cAbi.interfaceName, ts.cAbi.impl);
 }
 
 // ── Rule one: one supplier per layer ─────────────────────────────────────────

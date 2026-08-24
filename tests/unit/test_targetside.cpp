@@ -401,6 +401,38 @@ TEST(TargetSideCapability, TheGrammarKnowsAllFiveLayers) {
     EXPECT_FALSE(ts::parse_capability("mcpp:c_abi=musl").has_value());
 }
 
+// ── The triple is a request; the target side is the fact ────────────────────
+
+TEST(TargetSideRequest, AFilledEnvSegmentStatesNothing) {
+    auto in = payload_linux();
+    in.compilerFamily = "llvm";
+    in.cAbi = provider("openkal-musl", "0.3.3", "musl");
+    // `--target x86_64-linux` — the project declined to name a C library, so
+    // the parser's fill must not become a claim it can be held to.
+    in.requestedCAbi.clear();
+    EXPECT_EQ(ts::check_request(ts::resolve(in)), std::nullopt);
+}
+
+TEST(TargetSideRequest, AWrittenEnvSegmentThatDisagreesIsRefused) {
+    auto in = payload_linux();
+    in.compilerFamily  = "llvm";
+    in.cAbi            = provider("openkal-musl", "0.3.3", "musl");
+    in.requestedCAbi   = "gnu";
+    auto why = ts::check_request(ts::resolve(in));
+    ASSERT_TRUE(why.has_value());
+    EXPECT_NE(why->find("requests the `gnu` C ABI"), std::string::npos);
+    EXPECT_NE(why->find("musl"), std::string::npos);
+}
+
+TEST(TargetSideRequest, APrebuiltCLibraryIsWhatTheRequestSelected) {
+    auto in = payload_linux();
+    in.compilerFamily = "llvm";
+    in.requestedCAbi  = "musl";
+    // No graph supplier: the payload's C library IS the request's answer, so
+    // there is nothing to contradict even when the names differ.
+    EXPECT_EQ(ts::check_request(ts::resolve(in)), std::nullopt);
+}
+
 // ── Rule two: declared requirements ──────────────────────────────────────────
 
 TEST(TargetSideRequirements, ARequirementIsCheckedAgainstWhatResolved) {

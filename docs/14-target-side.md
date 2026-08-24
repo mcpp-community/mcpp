@@ -120,6 +120,11 @@ interface. The environment field states a request for a C library; it is a
 request rather than the answer, and the resolved value is reported by the
 build.
 
+Omitting the field declines to state one: `x86_64-linux` asks for whatever
+supplies that layer, and `x86_64-linux-musl` asks for musl. A request the
+dependency graph contradicts is refused, since only one of the two can describe
+the artifact.
+
 ### The Toolchain
 
 `mcpp toolchain default <family>@<version>`, `[toolchain]` in the manifest, or
@@ -128,8 +133,9 @@ layer, which is the one layer no package may supply.
 
 A target row may carry a convention — a toolchain whose payload supplies that
 target's C library. The convention applies when the manifest states nothing for
-that target. When it replaces a default set with `mcpp toolchain default`, the
-status line reports the substitution and names the one-line override.
+that target AND nothing in the dependency graph supplies the target's system.
+The second condition is knowable only after resolution, so the toolchain is
+resolved there rather than before it.
 
 ### Dependencies
 

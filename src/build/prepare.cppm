@@ -915,6 +915,19 @@ prepare_build(bool print_fingerprint,
     // learned by experiment — writing the same value a second time in
     // `[target.<triple>]` and observing that it works.
     std::string pinReplacedDefault;
+    // The C library the target triple asked for, taken before the triple is
+    // canonicalised. Empty when the project declined to name one.
+    std::string requestedCAbi;
+    // The target as the project spelled it, when that differs from the
+    // canonical identity. Report only; empty means they coincide.
+    std::string targetDisplayName;
+    // The target row's toolchain convention, held until the graph is known.
+    // Empty when the row names none or the project named its own.
+    std::string targetPinCandidate;
+    // Whether the resolved toolchain spec names the machine's own Visual
+    // Studio. Decided inside `resolve_target_toolchain`, read by
+    // `host_tc_for_build_program`, which is why it is declared out here.
+    bool tcSpecIsMsvc = false;
 
     auto root = overrides.project_root.empty()
         ? mcpp::project::find_manifest_root(std::filesystem::current_path())
@@ -1559,6 +1572,28 @@ prepare_build(bool print_fingerprint,
                 servable.empty() ? "(nothing — `mcpp toolchain list`)" : servable,
                 parsed->str());
         }
+        // ⚠️ CAPTURED BEFORE CANONICALISATION, BECAUSE CANONICALISATION IS
+        // EXACTLY WHAT DESTROYS IT.
+        //
+        // `str()` renders the filled-in identity, so `x86_64-linux` becomes
+        // `x86_64-linux-gnu` here and every later `parse` of that string reports
+        // an env segment the project never wrote. The request has to be taken
+        // from the ONLY triple that still knows the difference: this one.
+        if (parsed && parsed->envExplicit) requestedCAbi = parsed->env;
+        // ⚠️ AND THE SPELLING THE PROJECT USED, FOR THE REPORT ONLY.
+        //
+        // The canonical form is the identity — the output directory, the cache
+        // key, the subject of a `cfg()` — and it must stay filled. The REPORT is
+        // a different thing: it says what was asked for and what resolved, and
+        // heading it `x86_64-linux-gnu` above a line reading `c-abi musl` states
+        // a contradiction the build does not actually contain. A project that
+        // declined to name a C library is shown as having declined.
+        if (parsed && !parsed->envExplicit && !parsed->env.empty()) {
+            auto asWritten = *parsed;
+            asWritten.env.clear();
+            targetDisplayName = asWritten.str();
+        }
+
         // Canonical from here on: cfg evaluation, spec attachment and the
         // target/ output directory all see one spelling.
         if (parsed) overrides.target_triple = parsed->str();
@@ -1605,23 +1640,14 @@ prepare_build(bool print_fingerprint,
         // a project does not use. The narrower reading of this guard was
         // patched with an openkal-specific exception; stating the rule
         // correctly removes the need for one.
-        const bool pinWouldOverruleUser = tc_origin_is_user_explicit(tcOrigin);
+        // ⚠️ RECORDED, NOT APPLIED. The convention answers "which payload
+        // supplies this target's C library", and whether it is needed depends on
+        // whether the dependency graph supplies one instead. That is knowable
+        // only after resolution, so the decision waits for
+        // `resolve_target_toolchain` and only the candidate is kept here.
         if (known && !hasToolchainOverride && !known->pin.empty()
-            && !pinWouldOverruleUser) {
-            // ⚠️ AND WHEN IT REPLACES SOMETHING THE USER WROTE DOWN, SAY SO.
-            //
-            // `mcpp toolchain default llvm` prints the change back and then a
-            // cross build silently used a different compiler. The substitution
-            // is correct — the row names the payload that supplies this target's
-            // C library — but a status line reporting only the outcome left the
-            // reader to discover the rule by writing the same value a second
-            // time in `[target.<triple>]` and observing that it worked.
-            if (tcOrigin == TcOrigin::GlobalDefault && tcSpec.has_value()
-                && *tcSpec != known->pin)
-                pinReplacedDefault = *tcSpec;
-            tcSpec = std::string(known->pin);
-            if (!tc_origin_is_user_explicit(tcOrigin))
-                tcOrigin = TcOrigin::TargetPin;
+            && !tc_origin_is_user_explicit(tcOrigin)) {
+            targetPinCandidate = std::string(known->pin);
         }
         if (known && known->defaultStatic && m->buildConfig.linkage.empty())
             m->buildConfig.linkage = "static";
@@ -1679,9 +1705,30 @@ prepare_build(bool print_fingerprint,
     // Studio. `Origin::Managed` is everything else, including a VERSIONED
     // msvc spec, and that is the point: what the manifest says is what gets
     // used, on every machine, instead of whatever this one happens to have.
-    std::optional<mcpp::toolchain::ToolchainSpec> parsedSpec;
-    auto tcOriginAxis = mcpp::toolchain::Origin::Managed;
-    if (tcSpec.has_value() && *tcSpec != "system") {
+    // ⚠️ RESOLVED HERE, RUN AFTER THE DEPENDENCY GRAPH — AND THE SPLIT IS THE
+    // WHOLE POINT.
+    //
+    // A target row's convention does not name a preferred compiler. It names
+    // the payload that supplies THAT TARGET'S C library. Whether the user's own
+    // toolchain can serve the target instead depends on whether something ELSE
+    // supplies the target side — and that is knowable only once the graph is
+    // resolved, which is after this point in the function.
+    //
+    // Deciding early was measured to be wrong in both directions. Applying the
+    // convention unconditionally replaced a toolchain the user had set with
+    // `mcpp toolchain default`, for a payload their project never used. NOT
+    // applying it turned a working zero-dependency cross build into a failing
+    // one, because clang alone carries no C runtime for `x86_64-windows-gnu`
+    // while the payload the row names does.
+    //
+    // ⚠️ The body does not MOVE; only its execution does. Everything between
+    // here and the call site was measured to read `tc` exactly once, and that
+    // one read wanted the target triple rather than the compiler.
+    std::optional<mcpp::toolchain::Toolchain> tc;
+    auto resolve_target_toolchain = [&]() -> std::expected<void, std::string> {
+      std::optional<mcpp::toolchain::ToolchainSpec> parsedSpec;
+      auto tcOriginAxis = mcpp::toolchain::Origin::Managed;
+      if (tcSpec.has_value() && *tcSpec != "system") {
         // A parse FAILURE is not the same as an unparseable spec being
         // absent: `gcc@system` now fails here by name (see
         // parse_toolchain_spec), and swallowing that would put the error back
@@ -1691,11 +1738,14 @@ prepare_build(bool print_fingerprint,
             "[toolchain].{} = '{}': {}", kCurrentPlatform, *tcSpec, s.error()));
         parsedSpec   = std::move(*s);
         tcOriginAxis = mcpp::toolchain::origin_of(*parsedSpec);
-    }
-    const bool tcSpecIsMsvc =
+      }
+      // ⚠️ ASSIGNED, NOT DECLARED. `host_tc_for_build_program` reads it and is
+      // defined outside this lambda, so the declaration lives in the enclosing
+      // scope; the value is still decided here, where the spec is parsed.
+      tcSpecIsMsvc =
         parsedSpec && tcOriginAxis == mcpp::toolchain::Origin::SystemMsvc;
 
-    if (tcSpecIsMsvc) {
+      if (tcSpecIsMsvc) {
         if (!mcpp::platform::is_windows) {
             return std::unexpected(std::format(
                 "toolchain '{}' is only available on Windows hosts", *tcSpec));
@@ -1708,7 +1758,7 @@ prepare_build(bool print_fingerprint,
         mcpp::ui::info("Resolved", std::format(
             "msvc@system → msvc {} ({})",
             inst->display_version(), inst->clPath.string()));
-    } else if (parsedSpec) {
+      } else if (parsedSpec) {
         auto spec = parsedSpec;
         if (spec->version.empty()) {
             return std::unexpected(std::format(
@@ -1807,9 +1857,9 @@ prepare_build(bool print_fingerprint,
                         mcpp::fetcher::make_path_ctx(&**get_cfg(), *root)),
                     chosenBy));
         }
-    } else if (tcSpec.has_value() && *tcSpec == "system") {
+      } else if (tcSpec.has_value() && *tcSpec == "system") {
         // Explicit user opt-in to system PATH compiler — kept as escape hatch.
-    } else if (mcpp::platform::env::offline_mode()
+      } else if (mcpp::platform::env::offline_mode()
                || mcpp::platform::env::no_auto_install()) {
         // CI / offline / test opt-out: hard-error instead of silently
         // pulling ~800 MB of toolchain. Preserves the original M5.5
@@ -1858,7 +1908,7 @@ prepare_build(bool print_fingerprint,
                 "       {}",
                 pins::kSuggestGccMusl, pins::kFirstRunLinuxOther, release));
         }
-    } else {
+      } else {
         // First-run UX: no project-level [toolchain], no global default,
         // and the user just ran `mcpp build` (or similar). Auto-install
         // the platform's canonical default so the user gets a working
@@ -1961,14 +2011,14 @@ prepare_build(bool print_fingerprint,
           // not the running build.
         tcSpec   = defaultSpec;
         tcOrigin = TcOrigin::FirstRun;
-    }
+      }
 
-    // Windows first run that got diverted to winlibs GCC: announce it and
-    // persist BOTH axes, so the next invocation is silent and
-    // `mcpp toolchain list` shows the same pair the build actually used.
-    // Persisting only the target would leave the toolchain axis implicit
-    // (derived from the vocabulary pin) and the two views would disagree.
-    if (windowsGnuFirstRun && tcSpec.has_value()) {
+      // Windows first run that got diverted to winlibs GCC: announce it and
+      // persist BOTH axes, so the next invocation is silent and
+      // `mcpp toolchain list` shows the same pair the build actually used.
+      // Persisting only the target would leave the toolchain axis implicit
+      // (derived from the vocabulary pin) and the two views would disagree.
+      if (windowsGnuFirstRun && tcSpec.has_value()) {
         mcpp::ui::info("First run",
             std::format("no toolchain configured and no Visual Studio found — "
                         "using {} for {} (MinGW-w64, self-contained)",
@@ -1982,288 +2032,292 @@ prepare_build(bool print_fingerprint,
                 std::format("set to {} → {}", *tcSpec, overrides.target_triple));
         }
         tcOrigin = TcOrigin::FirstRun;
-    }
+      }
 
-    auto tc = mcpp::toolchain::detect(
-        explicit_compiler, runtimePayload, runtimeBindingSnapshot.contractHash);
-    if (!tc) return std::unexpected(tc.error().message);
+      auto detected = mcpp::toolchain::detect(
+          explicit_compiler, runtimePayload, runtimeBindingSnapshot.contractHash);
+      if (!detected) return std::unexpected(detected.error().message);
+      tc = std::move(*detected);
 
-    // Something about the resolution the user has to be told, but which is
-    // not a failure. Today's only producer is the Windows SDK axis: a managed
-    // toolset binds the SDK it was installed with, so a `WindowsSdkDir` in
-    // the environment does not apply — and an override that is ignored
-    // SILENTLY is indistinguishable from one that was never set.
-    if (!tc->resolutionNote.empty())
-        mcpp::ui::info("note", tc->resolutionNote);
+      // Something about the resolution the user has to be told, but which is
+      // not a failure. Today's only producer is the Windows SDK axis: a managed
+      // toolset binds the SDK it was installed with, so a `WindowsSdkDir` in
+      // the environment does not apply — and an override that is ignored
+      // SILENTLY is indistinguishable from one that was never set.
+      if (!tc->resolutionNote.empty())
+          mcpp::ui::info("note", tc->resolutionNote);
 
-    // ── A retargetable driver has to be TOLD what it is targeting ────────
-    //
-    // `tc.targetTriple` comes from `-dumpmachine`, and for every cross target
-    // that worked before this it was right for a reason that does not
-    // generalise: those targets use a DISTINCT compiler binary
-    // (`x86_64-w64-mingw32-g++`, `aarch64-linux-musl-g++`), whose own
-    // -dumpmachine reports the cross triple. Clang is ONE binary that emits
-    // every target it was built with, so -dumpmachine always answers with the
-    // host — and nothing downstream ever learns otherwise.
-    //
-    // Measured before this line existed:
-    //
-    //   $ mcpp build --target riscv64-none-elf
-    //       Resolved llvm@22.1.8 → riscv64-none-elf → …/bin/clang++
-    //       Finished dev [unoptimized + debuginfo] in 0.47s
-    //   $ ls target/
-    //       x86_64-linux-gnu/          ← an ELF for the host, reported as riscv64
-    //
-    // That is E1: success reported, host artifact produced. The output
-    // directory, the fingerprint, the cache key and the flag layer all read
-    // `tc.targetTriple`, so correcting it here corrects all of them at once —
-    // which is the point of there being one field rather than five answers.
-    //
-    // ⚠️ THIS USED TO BE SCOPED TO FREESTANDING, WITH THIS REASON:
-    //
-    //     The hosted cross targets already resolve a per-target binary, and
-    //     overwriting their probed triple would replace a measured fact with
-    //     an assumed one for no gain.
-    //
-    // ⭐⭐ That was true while every hosted cross was served by a payload. It
-    // stops being true when the TARGET SIDE comes from the dependency graph:
-    // the C library, the C++ runtime and the platform's own implementation are
-    // then packages built from source, and the compiler is an ordinary clang —
-    // whose `-dumpmachine` answers the host, exactly as the paragraph above
-    // describes for freestanding.
-    //
-    // ⚠️ Measured 2026-08-23, with an explicit `[target.aarch64-macos]
-    // toolchain = "llvm@…"`. The manifest's cfg evaluation used the REQUESTED
-    // target, so the C library's aarch64 headers were on the command line; the
-    // toolchain's own triple was still the host's, so code generation was
-    // x86_64. Two answers to one question, in one command:
-    //
-    //     okm_float_assert.c: the C library and the compiler disagree about
-    //     LDBL_DIG  ('33 == 18')          33 = aarch64 binary128, 18 = x87
-    //
-    // ⇒ The condition is now the property the first paragraph of this comment
-    // already names: a RETARGETABLE driver has to be told. gcc is not one — a
-    // gcc payload IS its target — so the mingw and musl-gcc crosses keep
-    // answering from `-dumpmachine`, which for them remains a measured fact.
-    if (!overrides.target_triple.empty()) {
-        if (auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
-            want && (want->is_freestanding()
-                     || tc->compiler == mcpp::toolchain::CompilerId::Clang))
-        {
-            tc->targetTriple = want->str();
+      // ── A retargetable driver has to be TOLD what it is targeting ────────
+      //
+      // `tc.targetTriple` comes from `-dumpmachine`, and for every cross target
+      // that worked before this it was right for a reason that does not
+      // generalise: those targets use a DISTINCT compiler binary
+      // (`x86_64-w64-mingw32-g++`, `aarch64-linux-musl-g++`), whose own
+      // -dumpmachine reports the cross triple. Clang is ONE binary that emits
+      // every target it was built with, so -dumpmachine always answers with the
+      // host — and nothing downstream ever learns otherwise.
+      //
+      // Measured before this line existed:
+      //
+      //   $ mcpp build --target riscv64-none-elf
+      //       Resolved llvm@22.1.8 → riscv64-none-elf → …/bin/clang++
+      //       Finished dev [unoptimized + debuginfo] in 0.47s
+      //   $ ls target/
+      //       x86_64-linux-gnu/          ← an ELF for the host, reported as riscv64
+      //
+      // That is E1: success reported, host artifact produced. The output
+      // directory, the fingerprint, the cache key and the flag layer all read
+      // `tc.targetTriple`, so correcting it here corrects all of them at once —
+      // which is the point of there being one field rather than five answers.
+      //
+      // ⚠️ THIS USED TO BE SCOPED TO FREESTANDING, WITH THIS REASON:
+      //
+      //     The hosted cross targets already resolve a per-target binary, and
+      //     overwriting their probed triple would replace a measured fact with
+      //     an assumed one for no gain.
+      //
+      // ⭐⭐ That was true while every hosted cross was served by a payload. It
+      // stops being true when the TARGET SIDE comes from the dependency graph:
+      // the C library, the C++ runtime and the platform's own implementation are
+      // then packages built from source, and the compiler is an ordinary clang —
+      // whose `-dumpmachine` answers the host, exactly as the paragraph above
+      // describes for freestanding.
+      //
+      // ⚠️ Measured 2026-08-23, with an explicit `[target.aarch64-macos]
+      // toolchain = "llvm@…"`. The manifest's cfg evaluation used the REQUESTED
+      // target, so the C library's aarch64 headers were on the command line; the
+      // toolchain's own triple was still the host's, so code generation was
+      // x86_64. Two answers to one question, in one command:
+      //
+      //     okm_float_assert.c: the C library and the compiler disagree about
+      //     LDBL_DIG  ('33 == 18')          33 = aarch64 binary128, 18 = x87
+      //
+      // ⇒ The condition is now the property the first paragraph of this comment
+      // already names: a RETARGETABLE driver has to be told. gcc is not one — a
+      // gcc payload IS its target — so the mingw and musl-gcc crosses keep
+      // answering from `-dumpmachine`, which for them remains a measured fact.
+      if (!overrides.target_triple.empty()) {
+          if (auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
+              want && (want->is_freestanding()
+                       || tc->compiler == mcpp::toolchain::CompilerId::Clang))
+          {
+              tc->targetTriple = want->str();
 
-            // And the flag that says it to the driver — for a HOSTED target
-            // only. Freestanding already emits its own `--target`, together
-            // with the ISA flags that must accompany it
-            // (freestanding/target.cppm); a second one here would be the same
-            // decision in two places.
-            if (!want->is_freestanding()
-                && tc->compiler == mcpp::toolchain::CompilerId::Clang) {
-                tc->crossTargetFlag =
-                    "--target=" + want->llvm_triple(
-                        mcpp::platform::macos::deployment_target(
-                            m->buildConfig.macosDeploymentTarget));
-            }
-        }
-        if (auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
-            want && want->is_freestanding())
-        {
-            // `import std` is structurally hosted, and turning it off is the
-            // SAME fact as the line above, not a second policy: libc++'s
-            // std.cppm is one module over the whole library, including the
-            // parts that are threads, filesystem and iostreams. There is no
-            // subset of it to precompile.
-            //
-            // Left on, the failure is neither early nor legible — measured:
-            //
-            //   error: std module precompile failed (rc=1):
-            //   .../include/c++/v1/__config:13:10: fatal error:
-            //       '__config_site' file not found
-            //
-            // which reads as a broken toolchain payload and says nothing about
-            // the target. The freestanding std subset a user actually wants is
-            // an ordinary package (`mcpplibs.std.freestanding`), so mcpp's job
-            // here is to stop pretending the hosted one exists and to say
-            // where the other one is.
-            tc->hasImportStd = false;
-            tc->stdModuleSource.clear();
-            tc->stdCompatSource.clear();
+              // And the flag that says it to the driver — for a HOSTED target
+              // only. Freestanding already emits its own `--target`, together
+              // with the ISA flags that must accompany it
+              // (freestanding/target.cppm); a second one here would be the same
+              // decision in two places.
+              if (!want->is_freestanding()
+                  && tc->compiler == mcpp::toolchain::CompilerId::Clang) {
+                  tc->crossTargetFlag =
+                      "--target=" + want->llvm_triple(
+                          mcpp::platform::macos::deployment_target(
+                              m->buildConfig.macosDeploymentTarget));
+              }
+          }
+          if (auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
+              want && want->is_freestanding())
+          {
+              // `import std` is structurally hosted, and turning it off is the
+              // SAME fact as the line above, not a second policy: libc++'s
+              // std.cppm is one module over the whole library, including the
+              // parts that are threads, filesystem and iostreams. There is no
+              // subset of it to precompile.
+              //
+              // Left on, the failure is neither early nor legible — measured:
+              //
+              //   error: std module precompile failed (rc=1):
+              //   .../include/c++/v1/__config:13:10: fatal error:
+              //       '__config_site' file not found
+              //
+              // which reads as a broken toolchain payload and says nothing about
+              // the target. The freestanding std subset a user actually wants is
+              // an ordinary package (`mcpplibs.std.freestanding`), so mcpp's job
+              // here is to stop pretending the hosted one exists and to say
+              // where the other one is.
+              tc->hasImportStd = false;
+              tc->stdModuleSource.clear();
+              tc->stdCompatSource.clear();
 
-            // ── The target's C library, resolved like its compiler ─────────
-            //
-            // The row in kKnownTargets names it, exactly as it names the
-            // toolchain pin, and it is installed through the same channel a
-            // project's `[xlings] deps` use (see the materialization above).
-            // Resolved HERE because the config is already open; the flag
-            // builder only reads the result.
-            //
-            // Absent is not an error at this point: the install happens
-            // earlier in this function and may legitimately not have run yet
-            // on a first pass. What follows would then simply not add the
-            // paths, and the link fails naming the missing libc — which is the
-            // truthful message either way.
-            if (const std::string want_sysroot =
-                    mcpp::toolchain::triple::effective_sysroot(
-                        *want, sysroot_override(*m, *want));
-                !want_sysroot.empty()) {
-                if (auto cfg3 = get_cfg(); cfg3) {
-                    auto ref = mcpp::xlings::paths::parse_xpkg_ref(want_sysroot);
-                    auto xl  = mcpp::config::make_xlings_env(**cfg3);
-                    if (auto dir = mcpp::xlings::paths::xpkg_payload(xl, ref)) {
-                        if (auto spec = mcpp::freestanding::resolve(*want)) {
-                            const auto inc =
-                                *dir / "include" / std::string(spec->libdir);
-                            const auto lib =
-                                *dir / "lib"     / std::string(spec->libdir);
-                            std::error_code ec2;
-                            tc->targetSysrootRoot = *dir;
-                            tc->targetSysrootPkg  = ref.name;
-                            if (std::filesystem::is_directory(inc, ec2))
-                                tc->targetSysrootInclude = inc;
-                            if (std::filesystem::is_directory(lib, ec2))
-                                tc->targetSysrootLib = lib;
-                        }
-                    }
-                }
-            }
-        }
-    }
+              // ── The target's C library, resolved like its compiler ─────────
+              //
+              // The row in kKnownTargets names it, exactly as it names the
+              // toolchain pin, and it is installed through the same channel a
+              // project's `[xlings] deps` use (see the materialization above).
+              // Resolved HERE because the config is already open; the flag
+              // builder only reads the result.
+              //
+              // Absent is not an error at this point: the install happens
+              // earlier in this function and may legitimately not have run yet
+              // on a first pass. What follows would then simply not add the
+              // paths, and the link fails naming the missing libc — which is the
+              // truthful message either way.
+              if (const std::string want_sysroot =
+                      mcpp::toolchain::triple::effective_sysroot(
+                          *want, sysroot_override(*m, *want));
+                  !want_sysroot.empty()) {
+                  if (auto cfg3 = get_cfg(); cfg3) {
+                      auto ref = mcpp::xlings::paths::parse_xpkg_ref(want_sysroot);
+                      auto xl  = mcpp::config::make_xlings_env(**cfg3);
+                      if (auto dir = mcpp::xlings::paths::xpkg_payload(xl, ref)) {
+                          if (auto spec = mcpp::freestanding::resolve(*want)) {
+                              const auto inc =
+                                  *dir / "include" / std::string(spec->libdir);
+                              const auto lib =
+                                  *dir / "lib"     / std::string(spec->libdir);
+                              std::error_code ec2;
+                              tc->targetSysrootRoot = *dir;
+                              tc->targetSysrootPkg  = ref.name;
+                              if (std::filesystem::is_directory(inc, ec2))
+                                  tc->targetSysrootInclude = inc;
+                              if (std::filesystem::is_directory(lib, ec2))
+                                  tc->targetSysrootLib = lib;
+                          }
+                      }
+                  }
+              }
+          }
+      }
 
-    // The Windows runtime identity, flowing BACK into the contract.
-    //
-    // Everything else about the runtime is known before a toolchain is
-    // resolved, and deliberately so (see the RuntimeBinding block above). The
-    // Windows SDK is the exception: it is a property of the toolchain, and
-    // until it reached the contract hash the version axis simply did not
-    // exist one layer below the compiler — two SDKs produced one cache key.
-    //
-    // `ucrt@<v>` is a COMPATIBILITY FLOOR, not a payload binding like
-    // `glibc@<v>`: ucrtbase.dll is an OS component and mcpp ships no
-    // redistributable for it. See mcpp.platform.runtime_binding.
-    if (!tc->windowsSdkVersion.empty()) {
-        mcpp::platform::runtime::bind_windows_ucrt(
-            runtimeBindingSnapshot, tc->windowsSdkVersion);
-        tc->runtimeContractHash = runtimeBindingSnapshot.contractHash;
-    }
+      // The Windows runtime identity, flowing BACK into the contract.
+      //
+      // Everything else about the runtime is known before a toolchain is
+      // resolved, and deliberately so (see the RuntimeBinding block above). The
+      // Windows SDK is the exception: it is a property of the toolchain, and
+      // until it reached the contract hash the version axis simply did not
+      // exist one layer below the compiler — two SDKs produced one cache key.
+      //
+      // `ucrt@<v>` is a COMPATIBILITY FLOOR, not a payload binding like
+      // `glibc@<v>`: ucrtbase.dll is an OS component and mcpp ships no
+      // redistributable for it. See mcpp.platform.runtime_binding.
+      if (!tc->windowsSdkVersion.empty()) {
+          mcpp::platform::runtime::bind_windows_ucrt(
+              runtimeBindingSnapshot, tc->windowsSdkVersion);
+          tc->runtimeContractHash = runtimeBindingSnapshot.contractHash;
+      }
 
-    // ── Targeting the MSVC ABI without a usable MSVC ─────────────────────
-    //
-    // One judgement, one place. This used to be two separate concerns and
-    // only one of them was implemented: `msvc@system` with no Windows SDK
-    // was caught here, while clang-targeting-MSVC on a machine with no
-    // Visual Studio at all — the default on every bare Windows box — fell
-    // straight through to clang's own "'vector' file not found", from which
-    // no user could infer that a working alternative was one flag away.
-    // Deriving the same judgement in two places is how the second case went
-    // unnoticed, so they are now one condition with two outcomes.
-    const bool targetsMsvcAbi =
-        tc->compiler == mcpp::toolchain::CompilerId::MSVC
-        || mcpp::toolchain::is_msvc_target(*tc);
-    if (targetsMsvcAbi && !msvc_usable_either_origin()) {
-        // Native cl.exe is ALWAYS a deliberate choice: mcpp never selects
-        // msvc@system on its own — it cannot install one — so the only way it
-        // reaches config.toml is a user typing `mcpp toolchain default msvc`.
-        // Without this, that user (who evidently wants MSVC and is probably
-        // just missing the SDK component) would be silently moved to MinGW
-        // instead of being told which component to install.
-        //
-        // The residual imprecision is deliberate and bounded: a *global*
-        // default of llvm@20.1.7 is indistinguishable from the one mcpp used
-        // to write itself, so an explicitly-typed one gets repaired too. The
-        // value is identical either way and the machine cannot build with it;
-        // a user who wants that failure can pin it in mcpp.toml, which is
-        // honoured exactly.
-        const bool userChoseMsvcItself =
-            tc->compiler == mcpp::toolchain::CompilerId::MSVC;
-        const bool mayRepair =
-            !tc_origin_is_user_explicit(tcOrigin)
-            && !userChoseMsvcItself
-            && !mcpp::platform::env::offline_mode()
-            && !mcpp::platform::env::no_auto_install()
-            && mcpp::platform::is_windows;
-        if (!mayRepair) {
-            return std::unexpected(msvc_unavailable_guidance(*tc));
-        }
-        // mcpp chose this default itself and it cannot work on this machine.
-        // Revise it — including for users who already have `llvm@20.1.7`
-        // persisted by an older mcpp: the first-run branch never fires again
-        // for them, so this gate (which runs on EVERY build) is what repairs
-        // them without a single manual command.
-        namespace pins = mcpp::toolchain::triple::pins;
-        mcpp::ui::info("Toolchain",
-            std::format("{} targets the MSVC ABI but no Visual Studio "
-                        "(MSVC STL + Windows SDK) was found — switching to {} → {}",
-                        tcSpec.value_or("the configured default"),
-                        pins::kFirstRunWinGnu, pins::kFirstRunWinGnuTarget));
+      // ── Targeting the MSVC ABI without a usable MSVC ─────────────────────
+      //
+      // One judgement, one place. This used to be two separate concerns and
+      // only one of them was implemented: `msvc@system` with no Windows SDK
+      // was caught here, while clang-targeting-MSVC on a machine with no
+      // Visual Studio at all — the default on every bare Windows box — fell
+      // straight through to clang's own "'vector' file not found", from which
+      // no user could infer that a working alternative was one flag away.
+      // Deriving the same judgement in two places is how the second case went
+      // unnoticed, so they are now one condition with two outcomes.
+      const bool targetsMsvcAbi =
+          tc->compiler == mcpp::toolchain::CompilerId::MSVC
+          || mcpp::toolchain::is_msvc_target(*tc);
+      if (targetsMsvcAbi && !msvc_usable_either_origin()) {
+          // Native cl.exe is ALWAYS a deliberate choice: mcpp never selects
+          // msvc@system on its own — it cannot install one — so the only way it
+          // reaches config.toml is a user typing `mcpp toolchain default msvc`.
+          // Without this, that user (who evidently wants MSVC and is probably
+          // just missing the SDK component) would be silently moved to MinGW
+          // instead of being told which component to install.
+          //
+          // The residual imprecision is deliberate and bounded: a *global*
+          // default of llvm@20.1.7 is indistinguishable from the one mcpp used
+          // to write itself, so an explicitly-typed one gets repaired too. The
+          // value is identical either way and the machine cannot build with it;
+          // a user who wants that failure can pin it in mcpp.toml, which is
+          // honoured exactly.
+          const bool userChoseMsvcItself =
+              tc->compiler == mcpp::toolchain::CompilerId::MSVC;
+          const bool mayRepair =
+              !tc_origin_is_user_explicit(tcOrigin)
+              && !userChoseMsvcItself
+              && !mcpp::platform::env::offline_mode()
+              && !mcpp::platform::env::no_auto_install()
+              && mcpp::platform::is_windows;
+          if (!mayRepair) {
+              return std::unexpected(msvc_unavailable_guidance(*tc));
+          }
+          // mcpp chose this default itself and it cannot work on this machine.
+          // Revise it — including for users who already have `llvm@20.1.7`
+          // persisted by an older mcpp: the first-run branch never fires again
+          // for them, so this gate (which runs on EVERY build) is what repairs
+          // them without a single manual command.
+          namespace pins = mcpp::toolchain::triple::pins;
+          mcpp::ui::info("Toolchain",
+              std::format("{} targets the MSVC ABI but no Visual Studio "
+                          "(MSVC STL + Windows SDK) was found — switching to {} → {}",
+                          tcSpec.value_or("the configured default"),
+                          pins::kFirstRunWinGnu, pins::kFirstRunWinGnuTarget));
 
-        overrides.target_triple = std::string(pins::kFirstRunWinGnuTarget);
-        // The x86_64-windows-gnu row is defaultStatic; the target block that
-        // normally applies that already ran, so mirror just this one field.
-        if (m->buildConfig.linkage.empty()) m->buildConfig.linkage = "static";
+          overrides.target_triple = std::string(pins::kFirstRunWinGnuTarget);
+          // The x86_64-windows-gnu row is defaultStatic; the target block that
+          // normally applies that already ran, so mirror just this one field.
+          if (m->buildConfig.linkage.empty()) m->buildConfig.linkage = "static";
 
-        auto gnuSpec = mcpp::toolchain::parse_toolchain_spec(
-            std::string(pins::kFirstRunWinGnu));
-        if (!gnuSpec) return std::unexpected(gnuSpec.error());
-        if (auto t = mcpp::toolchain::triple::parse(overrides.target_triple))
-            gnuSpec->target = *t;
-        auto gnuPkg = mcpp::toolchain::to_xim_package(*gnuSpec);
+          auto gnuSpec = mcpp::toolchain::parse_toolchain_spec(
+              std::string(pins::kFirstRunWinGnu));
+          if (!gnuSpec) return std::unexpected(gnuSpec.error());
+          if (auto t = mcpp::toolchain::triple::parse(overrides.target_triple))
+              gnuSpec->target = *t;
+          auto gnuPkg = mcpp::toolchain::to_xim_package(*gnuSpec);
 
-        auto cfgR = get_cfg();
-        if (!cfgR) return std::unexpected(cfgR.error());
-        mcpp::fetcher::Fetcher fetcherR(**cfgR);
-        mcpp::fetcher::InstallProgressHandler progressR;
-        auto payloadR = fetcherR.resolve_xpkg_path(gnuPkg.target(),
-                            /*autoInstall=*/true, &progressR);
-        if (!payloadR) {
-            return std::unexpected(std::format(
-                "switching to the MinGW-w64 toolchain ({}) failed: {}\n"
-                "       install it manually with:\n"
-                "         mcpp toolchain install {} --target {}",
-                pins::kFirstRunWinGnu, payloadR.error().message,
-                pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget));
-        }
-        explicit_compiler =
-            mcpp::toolchain::toolchain_frontend(payloadR->binDir, gnuPkg);
-        if (!std::filesystem::exists(explicit_compiler)) {
-            return std::unexpected(std::format(
-                "MinGW-w64 payload {} has no known C++ frontend in {}",
-                gnuPkg.target(), payloadR->binDir.string()));
-        }
-        if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
-                **cfgR, payloadR->root, gnuPkg,
-                runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
-            return std::unexpected(std::format(
-                "MinGW toolchain post-install fixup: {}", fixed.error()));
-        else report_fixup(*fixed, payloadR->root);
+          auto cfgR = get_cfg();
+          if (!cfgR) return std::unexpected(cfgR.error());
+          mcpp::fetcher::Fetcher fetcherR(**cfgR);
+          mcpp::fetcher::InstallProgressHandler progressR;
+          auto payloadR = fetcherR.resolve_xpkg_path(gnuPkg.target(),
+                              /*autoInstall=*/true, &progressR);
+          if (!payloadR) {
+              return std::unexpected(std::format(
+                  "switching to the MinGW-w64 toolchain ({}) failed: {}\n"
+                  "       install it manually with:\n"
+                  "         mcpp toolchain install {} --target {}",
+                  pins::kFirstRunWinGnu, payloadR.error().message,
+                  pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget));
+          }
+          explicit_compiler =
+              mcpp::toolchain::toolchain_frontend(payloadR->binDir, gnuPkg);
+          if (!std::filesystem::exists(explicit_compiler)) {
+              return std::unexpected(std::format(
+                  "MinGW-w64 payload {} has no known C++ frontend in {}",
+                  gnuPkg.target(), payloadR->binDir.string()));
+          }
+          if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
+                  **cfgR, payloadR->root, gnuPkg,
+                  runtimeBindingSnapshot.runtimeId, runtimeLibDir); !fixed)
+              return std::unexpected(std::format(
+                  "MinGW toolchain post-install fixup: {}", fixed.error()));
+          else report_fixup(*fixed, payloadR->root);
 
-        // Persist both axes so the repair happens once, not on every build.
-        if (mcpp::config::write_default_toolchain(**cfgR, pins::kFirstRunWinGnu))
-            (*cfgR)->defaultToolchain = std::string(pins::kFirstRunWinGnu);
-        if (mcpp::config::write_default_target(**cfgR, overrides.target_triple))
-            (*cfgR)->defaultTarget = overrides.target_triple;
+          // Persist both axes so the repair happens once, not on every build.
+          if (mcpp::config::write_default_toolchain(**cfgR, pins::kFirstRunWinGnu))
+              (*cfgR)->defaultToolchain = std::string(pins::kFirstRunWinGnu);
+          if (mcpp::config::write_default_target(**cfgR, overrides.target_triple))
+              (*cfgR)->defaultTarget = overrides.target_triple;
 
-        tcSpec   = std::string(pins::kFirstRunWinGnu);
-        tcOrigin = TcOrigin::FirstRun;
-        tc = mcpp::toolchain::detect(
-            explicit_compiler, runtimePayload,
-            runtimeBindingSnapshot.contractHash);
-        if (!tc) return std::unexpected(tc.error().message);
-    }
+          tcSpec   = std::string(pins::kFirstRunWinGnu);
+          tcOrigin = TcOrigin::FirstRun;
+          auto redetected = mcpp::toolchain::detect(
+              explicit_compiler, runtimePayload,
+              runtimeBindingSnapshot.contractHash);
+          if (!redetected) return std::unexpected(redetected.error().message);
+          tc = std::move(*redetected);
+      }
 
-    // For musl-gcc the toolchain is fully self-contained
-    // (`<root>/x86_64-linux-musl/{include,lib}` is its own sysroot).
-    // musl-gcc's `-dumpmachine` reports `x86_64-linux-musl`.
-    bool isMuslTc = mcpp::toolchain::is_musl_target(*tc);
+      // For musl-gcc the toolchain is fully self-contained
+      // (`<root>/x86_64-linux-musl/{include,lib}` is its own sysroot).
+      // musl-gcc's `-dumpmachine` reports `x86_64-linux-musl`.
+      bool isMuslTc = mcpp::toolchain::is_musl_target(*tc);
 
-    // A musl toolchain only really makes sense with static linkage —
-    // dynamic-musl binaries depend on a system /lib/ld-musl-x86_64.so.1
-    // that most distros don't ship. Default linkage to "static" when
-    // the resolved toolchain is musl, unless the user has already opted
-    // out via `--static` or [target.<triple>].linkage. (There is no
-    // [build].linkage — the parser only reads it under a target section.)
-    if (isMuslTc && m->buildConfig.linkage.empty()) {
-        m->buildConfig.linkage = "static";
-    }
+      // A musl toolchain only really makes sense with static linkage —
+      // dynamic-musl binaries depend on a system /lib/ld-musl-x86_64.so.1
+      // that most distros don't ship. Default linkage to "static" when
+      // the resolved toolchain is musl, unless the user has already opted
+      // out via `--static` or [target.<triple>].linkage. (There is no
+      // [build].linkage — the parser only reads it under a target section.)
+      if (isMuslTc && m->buildConfig.linkage.empty()) {
+          m->buildConfig.linkage = "static";
+      }
+    return {};
+    };
 
     // Sysroot comes from the toolchain payload itself (GCC -print-sysroot,
     // Clang clang++.cfg). mcpp does not override it — the payload is
@@ -2421,9 +2475,21 @@ prepare_build(bool print_fingerprint,
     // wrong. What it must NOT do is depend on the project having an `[xlings]`
     // section: a bare-metal project written to the template has none, and the
     // whole point is that it never mentions a libc.
+    // ⚠️ FROM THE REQUESTED TRIPLE, NOT FROM THE TOOLCHAIN — AND THE TWO WERE
+    // THE SAME VALUE ALL ALONG.
+    //
+    // This read of `tc->targetTriple` was the ONLY thing tying the compiler's
+    // resolution to a point before dependency resolution, and it never wanted
+    // the compiler: `tc->targetTriple` is corrected to the requested triple a
+    // few lines after the toolchain is detected, so the value here is the one
+    // `--target` named. Taking it from the request instead lets the toolchain
+    // be resolved where the information it needs actually exists.
     std::string targetSysroot;
-    if (tc) {
-        if (auto tt = mcpp::toolchain::triple::parse(tc->targetTriple))
+    {
+        auto tt = overrides.target_triple.empty()
+            ? std::optional{mcpp::toolchain::triple::host_triple()}
+            : mcpp::toolchain::triple::parse(overrides.target_triple);
+        if (tt)
             targetSysroot = mcpp::toolchain::triple::effective_sysroot(
                 *tt, sysroot_override(*m, *tt));
     }
@@ -4682,6 +4748,45 @@ prepare_build(bool print_fingerprint,
 
     computeUsageRequirements();
 
+    // ─── The toolchain, resolved now that the graph exists ──────────────────
+    //
+    // ⚠️ THE TARGET AND THE COMPILER ARE NOT BOUND TOGETHER, AND THE ROW'S
+    // CONVENTION IS A FALLBACK RATHER THAN A RULE.
+    //
+    // `x86_64-linux-musl → gcc@16.1.0` does not say "prefer gcc". It says "the
+    // musl-gcc payload is what supplies this target's C library". A project
+    // whose C library comes from its dependency graph does not use that payload,
+    // and for it the convention is not a default but a substitution — measured,
+    // it replaced a toolchain the user had set with `mcpp toolchain default` and
+    // said nothing.
+    //
+    // The discriminator is whether anything in the graph supplies the system,
+    // which is what these few lines ask. It is the same question
+    // `mcpp.targetside` answers in full further down; asked here it needs only
+    // the answer's shape, so it reads the manifests rather than resolving them.
+    {
+        bool graphSuppliesSystem = false;
+        for (auto const& pkg : packages) {
+            for (auto const& entry : pkg.manifest.provides) {
+                auto cap = mcpp::targetside::parse_capability(entry);
+                if (!cap || !*cap) continue;
+                if ((*cap)->layer == mcpp::targetside::CapLayer::KernelAbi
+                 || (*cap)->layer == mcpp::targetside::CapLayer::CAbi) {
+                    graphSuppliesSystem = true;
+                }
+            }
+        }
+        if (!targetPinCandidate.empty() && !graphSuppliesSystem) {
+            if (tcOrigin == TcOrigin::GlobalDefault && tcSpec.has_value()
+                && *tcSpec != targetPinCandidate)
+                pinReplacedDefault = *tcSpec;
+            tcSpec   = targetPinCandidate;
+            tcOrigin = TcOrigin::TargetPin;
+        }
+        if (auto r = resolve_target_toolchain(); !r)
+            return std::unexpected(r.error());
+    }
+
     // ─── Feature activation (Cargo-style, additive) ────────────────────
     // activated(pkg) = pkg.[features].default ∪ features requested for it
     // (root: --features; deps: the root dep spec's `features = [...]`).
@@ -5703,6 +5808,12 @@ prepare_build(bool print_fingerprint,
                 in.targetOs           = tt->os;
                 in.targetEnv          = tt->env;
                 in.freestandingTarget = tt->is_freestanding();
+                // ⚠️ NOT `tt->envExplicit`. By this line the triple has been
+                // canonicalised, and the canonical form of `x86_64-linux` is
+                // `x86_64-linux-gnu` — re-parsing it reports a segment the
+                // project never wrote. The request was captured upstream, where
+                // the distinction still existed.
+                in.requestedCAbi = requestedCAbi;
 
                 // `sysroot = ""` and "no sysroot key" are different answers and
                 // must not be collapsed: the first says this project wants no
@@ -5735,6 +5846,11 @@ prepare_build(bool print_fingerprint,
         // otherwise fails inside that runtime's own headers, in a message that
         // names a file the reader has never opened and no decision mcpp made.
         if (auto why = tsd::check_requirements(resolvedTargetSide, requirements))
+            return std::unexpected(*why);
+        // The triple asked for a C library and the graph supplied a different
+        // one. Printing both and building anyway makes the target's own name a
+        // false statement about the artifact it produced.
+        if (auto why = tsd::check_request(resolvedTargetSide))
             return std::unexpected(*why);
 
         // The refusal held since toolchain resolution, released now that the
@@ -5810,9 +5926,11 @@ prepare_build(bool print_fingerprint,
         // prints them all; a diagnostic always does.
         mcpp::ui::info("Target", tsd::format_report(
             resolvedTargetSide,
-            resolvedTargetCanonical.empty()
-                ? (tc ? tc->targetTriple : std::string{})
-                : resolvedTargetCanonical,
+            !targetDisplayName.empty()
+                ? targetDisplayName
+                : (resolvedTargetCanonical.empty()
+                       ? (tc ? tc->targetTriple : std::string{})
+                       : resolvedTargetCanonical),
             mcpp::log::is_verbose()));
     }
 
