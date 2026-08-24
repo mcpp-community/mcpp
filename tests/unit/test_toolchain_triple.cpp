@@ -400,3 +400,35 @@ TEST(Triple, MacosCarriesNoSegmentToDecline) {
     EXPECT_TRUE(t->env.empty());
     EXPECT_FALSE(t->envExplicit);
 }
+
+// ⚠️ NO TWO ROWS MAY SHARE A CANONICAL NAME, AND THIS WAS NOT A HYPOTHETICAL.
+//
+// Adding `x86_64-windows-musl` and later correcting its `pin` column produced
+// TWO rows with that name — the edit inserted a corrected row without removing
+// the original. `find_known_target` returns the first match, so every behaviour
+// was correct and nothing failed; what the table carried was a second row of
+// dead data whose columns disagreed with the live one.
+//
+// ⭐ Caught by reading the diff, which is the wrong mechanism: a duplicate is a
+// property of the table and a machine can see it. The cost of the check is four
+// lines.
+TEST(Triple, TheTargetTableHasNoDuplicateNames) {
+    std::vector<std::string_view> seen;
+    for (const auto& info : known_targets()) {
+        for (auto s : seen)
+            EXPECT_NE(s, info.canonical)
+                << "duplicate row in kKnownTargets: " << info.canonical;
+        seen.push_back(info.canonical);
+    }
+}
+
+// And every row must parse to itself: a canonical name that does not survive a
+// round trip through `parse`/`str` is a row no `--target` can reach.
+TEST(Triple, EveryTableRowIsItsOwnCanonicalForm) {
+    for (const auto& info : known_targets()) {
+        auto t = parse(info.canonical);
+        ASSERT_TRUE(t.has_value()) << info.canonical;
+        EXPECT_EQ(t->str(), info.canonical)
+            << info.canonical << " does not round-trip";
+    }
+}

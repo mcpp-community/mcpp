@@ -271,35 +271,6 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // openkal's CI has that step — so this is measurable, and the tier moves
     // when it has been measured rather than when it seems likely.
     { "x86_64-windows-musl",   "preview",   "PE",  "llvm@22.1.8","",                            true  },
-    // ⚠️ musl ON WINDOWS, WHICH THE LLVM TRIPLE VOCABULARY CANNOT SPELL AND
-    // WHICH EXISTS ANYWAY.
-    //
-    // LLVM offers `gnu` and `msvc` for Windows and both name an ABI, so a
-    // reader concludes there is no third possibility and calls a musl-based
-    // Windows build `-gnu`. The artefact says otherwise. Measured on one built
-    // over `openkal-musl`:
-    //
-    //     imports        ntdll, KERNEL32, SHELL32 — no msvcrt, no ucrtbase
-    //     `_Z…` symbols  4507        `?…` symbols  0
-    //
-    // No MinGW C runtime is linked and the C++ ABI is Itanium. That is musl on
-    // Windows, and mcpp had no name for it — so its identity, its output
-    // directory and its packed ABI tag all read `gnu`, which is the one thing
-    // the C library is not.
-    //
-    // ⭐ THE FIX IS A NAME, NOT A MECHANISM. mcpp's canonical form and the
-    // triple handed to clang are already two different strings — the report
-    // prints both, either side of an arrow — and `llvm_triple()` already sends
-    // every non-MSVC Windows target to `…-w64-windows-gnu`. That spelling is
-    // correct there and stays: it selects the Itanium ABI, which is the ABI
-    // this C library was built for. What was missing was mcpp's own word for
-    // the row.
-    //
-    // The pin is empty because nothing supplies this target from a payload; a
-    // project reaches it through the graph, and a project that names no such
-    // dependency is told so by the layer report rather than handed a payload
-    // that does not exist.
-    { "x86_64-windows-musl",   "preview",   "PE",  "",           "",                            true  },
     { "x86_64-windows-msvc",   "verified",  "PE",  "",           "",                            false },
     { "aarch64-macos",         "verified",  "",    "",           "",                            false },
     { "riscv64-linux-musl",    "planned",   "",    "",           "",                            true  },
