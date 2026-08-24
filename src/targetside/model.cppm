@@ -146,6 +146,9 @@ struct TargetSide {
     // the request turns out to describe nothing. Built by the caller, which is
     // the only place that still holds mcpp's own triple.
     std::string requestFreeTarget;
+    // Whether the env segment names a C library on this platform. See the
+    // member of the same name on `Inputs`.
+    bool envNamesCAbi = false;
 
     // The single question the five former derivation sites actually asked.
     //
@@ -323,6 +326,17 @@ struct Inputs {
     std::string requestedCAbi;
     // The same target spelled without that segment, for the suggestion.
     std::string requestFreeTarget;
+    // ⚠️ WHETHER THE ENV SEGMENT NAMES A C LIBRARY ON THIS PLATFORM, WHICH IS
+    // NOT TRUE EVERYWHERE AND WAS ASSUMED TO BE.
+    //
+    // The segment carries a different axis depending on the OS. On Linux it
+    // names the C library — `gnu` is glibc, `musl` is musl — which is the case
+    // the request check was written for. On Windows it names the OBJECT ABI:
+    // `gnu` is PE with the GNU ABI and `msvc` is PE with Microsoft's, and both
+    // are compatible with more than one C library. Reporting a Windows build as
+    // "asking for the `gnu` C ABI" describes an axis the name never addressed,
+    // and the correction it suggested named a target that does not exist.
+    bool envNamesCAbi = false;
 
     std::optional<Provider> compilerRuntime;
     std::optional<Provider> kernelAbi;
@@ -379,6 +393,7 @@ inline TargetSide resolve(const Inputs& in) {
     ts.llvmTriple    = in.llvmTriple;
     ts.requestedCAbi     = in.requestedCAbi;
     ts.requestFreeTarget = in.requestFreeTarget;
+    ts.envNamesCAbi      = in.envNamesCAbi;
 
     // compiler — always a payload, never a package.
     if (!in.compilerFamily.empty())
@@ -577,6 +592,7 @@ check_requirements(const TargetSide& ts, std::span<const Requirement> reqs) {
 // first. Telling someone their target name is wrong is only useful once there
 // is a right one to give them.
 inline std::optional<std::string> check_request(const TargetSide& ts) {
+    if (!ts.envNamesCAbi) return std::nullopt;
     if (ts.requestedCAbi.empty()) return std::nullopt;
     if (ts.cAbi.absent()) return std::nullopt;
     if (ts.cAbi.interfaceName == ts.requestedCAbi) return std::nullopt;

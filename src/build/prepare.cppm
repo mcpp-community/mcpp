@@ -5818,6 +5818,10 @@ prepare_build(bool print_fingerprint,
                     auto bare = *tt; bare.env.clear();
                     in.requestFreeTarget = bare.str();
                 }
+                // Only on Linux does the segment name a C library. On Windows
+                // it names the object ABI and on bare metal the object format,
+                // and neither is the axis the graph's C library sits on.
+                in.envNamesCAbi = tt->os == "linux";
 
                 // `sysroot = ""` and "no sysroot key" are different answers and
                 // must not be collapsed: the first says this project wants no

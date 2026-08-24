@@ -1,0 +1,179 @@
+# Cross-Compilation Over openkal
+
+Conventional cross-compilation is served by a payload. A toolchain is built for
+one target, its driver has exactly one answer, and reaching a second target
+means obtaining a second toolchain. The number of payloads a distribution must
+publish is therefore the number of host-target pairs it supports.
+
+openkal changes what is being crossed. The target side — the platform interface,
+the C library, the compiler runtime and the C++ runtime — becomes a set of
+packages resolved from the dependency graph and compiled from source by whichever
+compiler is running. What remains for the compiler is code generation, and one
+Clang binary emits every object format it was built with.
+
+This document states the model, what a project writes, what the ecosystem
+supplies, and the limits that have been measured.
+
+## The Claim
+
+An ecosystem of N platforms and M architectures requires N implementations of
+one interface rather than N×M toolchains. The count follows from where the
+target side lives: a package built from source is built for whatever target the
+compiler is asked to emit, so a platform implementation is written once and
+reaches every architecture the compiler supports.
+
+The claim is verified by a matrix of three hosts and three targets, each cell
+building one source and running the result.
+
+## What A Project Writes
+
+```toml
+[dependencies]
+openkal-llvm-runtime = "0.1.1"
+
+[toolchain]
+default = "llvm@22.1.8"
+```
+
+Two lines. The first selects three layers of the target side; the second names
+a compiler and says nothing about where anything else comes from.
+
+Targets are given on the command line:
+
+```bash
+mcpp build --target x86_64-linux
+mcpp build --target aarch64-macos
+mcpp build --target x86_64-windows-gnu
+```
+
+No `[target.<triple>]` section is required for a hosted target, and no
+preprocessor directive is required in the source. A worked example is
+[examples/06-openkal-cross](../examples/06-openkal-cross).
+
+## What The Ecosystem Supplies
+
+| Package | Layer | Content |
+|---|---|---|
+| `openkal` | — | the specification, and the C++ modules that declare it |
+| `openkal-linux` | `kernel-abi` | the reference implementation, on Linux system calls |
+| `openkal-macos` | `kernel-abi` | on the macOS system-call surface |
+| `openkal-windows` | `kernel-abi` | on Win32 and the object manager, using no C runtime symbol |
+| `openkal-opensbi` | `kernel-abi` | on the RISC-V Supervisor Binary Interface, no operating system |
+| `openkal-uefi` | `kernel-abi` | on UEFI Boot Services, before an operating system exists |
+| `openkal-musl` | `c-abi` | musl redirected onto openkal, ported once |
+| `openkal-llvm-runtime` | `compiler-runtime`, `c++-abi` | compiler-rt builtins, libunwind, libc++abi and libc++, configured for openkal-musl |
+
+A project names the last of these. The others follow from its dependencies.
+
+## Why The Compiler Must Be LLVM
+
+`openkal-llvm-runtime` declares the requirement rather than leaving it to be
+discovered:
+
+```toml
+requires = ["mcpp:compiler=llvm"]
+```
+
+Its sources are libc++'s, and its `std` module source in particular is compiled
+by Clang. Handing that source to GCC fails inside libc++'s own headers, in a
+message naming a file the reader has never opened:
+
+```
+fatal error: __config: No such file or directory
+```
+
+With the requirement declared, the build refuses the combination before it
+compiles anything, and names the command that selects a compiler which satisfies
+it.
+
+## How The Target Is Chosen
+
+The target row of mcpp's own vocabulary may carry a toolchain convention. That
+convention names the payload which supplies **that target's C library**, and it
+applies only when two conditions hold: the manifest states nothing for the
+target, and nothing in the dependency graph supplies the target's system.
+
+The second condition is knowable only after the graph is resolved. A project
+whose C library comes from `openkal-musl` therefore keeps the compiler it asked
+for, while a project with no dependencies still receives the payload the row
+names. Both behaviours were measured; deciding either way in advance was wrong
+for the other.
+
+## The Environment Segment
+
+On Linux the third segment of a target triple names the C library. Under openkal
+the C library comes from the graph, so a triple that names one states a request
+the graph may not honour:
+
+```
+mcpp build --target x86_64-linux-gnu     # asks for glibc
+      c-abi   musl   (openkal-musl@0.3.3, graph)
+```
+
+The graph decides. Omitting the segment states no request and produces the same
+artifact:
+
+```
+mcpp build --target x86_64-linux
+```
+
+The build reports the mismatch when the segment is present and disagrees. It is
+a report rather than a refusal, because the segment is ignored rather than
+violated: the artifact is identical either way.
+
+On Windows the same segment names the object ABI instead — `gnu` for PE with the
+GNU ABI, `msvc` for PE with Microsoft's — and both are compatible with more than
+one C library. The mismatch report is therefore scoped to platforms where the
+segment names a C library.
+
+## Bare Metal
+
+A target with no operating system is the same model with the platform layer
+supplied by firmware rather than by a kernel. `riscv64-none-elf` over OpenSBI
+runs the same source as a hosted target, including `import std`, because the
+standard library it uses is the one the graph supplied rather than the
+compiler's own.
+
+Two things must be declared, both properties of the board rather than defaults:
+
+```toml
+[target.riscv64-none-elf]
+sysroot = ""
+runner  = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
+           "-no-reboot", "-bios", "default", "-kernel"]
+```
+
+`sysroot = ""` selects the zero-libc tier. Which machine model and which
+firmware mode to use are board facts, and an engine that guesses one is an
+engine a different board has to fight.
+
+An x86_64 machine with no operating system is reached through UEFI. A UEFI
+application is PE/COFF entered through the Microsoft x64 calling convention, so
+its target is `x86_64-windows-gnu` — the same triple as a Windows program,
+distinguished by which platform implementation the graph resolved.
+
+## Measured Limits
+
+Three, recorded because each was found by building rather than by reading.
+
+**A backend must define every capability word.** The specification's queries are
+inline functions over property objects, so a program that merely asks whether a
+filesystem exists takes the address of `kal_fs_props`. A backend that omits the
+words for layers it lacks makes the question fail to link on exactly the class of
+machine the question exists for.
+
+**Two suppliers of one layer is an error rather than a choice.** A C library, a
+platform interface and a C++ runtime are mutually exclusive. Selecting the wrong
+one does not fail the link; it produces a program that runs and intermittently
+does not.
+
+**A payload's C++ runtime cannot sit above a foreign C library.** Its
+`__config_site` records the configuration it was built with. The resolver's
+structure prevents the combination on the default path, and a diagnostic covers
+the paths where a project overrides the contract explicitly.
+
+## Reference
+
+[docs/14 — The Target Side](14-target-side.md) for the five layers, the four
+origins and the rules. [SPEC-002](spec/target-side.md) for the normative
+statement of the capability grammar.
