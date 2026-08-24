@@ -434,13 +434,49 @@ export enum class TcOrigin {
     None,               // nothing resolved yet
     ManifestToolchain,  // mcpp.toml [toolchain]           — user explicit
     TargetSection,      // mcpp.toml [target.X].toolchain  — user explicit
-    GlobalDefault,      // config.toml [toolchain] default — mcpp's own default
+    GlobalDefault,      // `mcpp toolchain default`        — user explicit
     TargetPin,          // triple.cppm vocabulary convention
     FirstRun,           // chosen and persisted by this very invocation
 };
 
+// ⚠️ `GlobalDefault` IS DELIBERATELY NOT LISTED, AND THE REASON IS A MEASURED
+// REGRESSION RATHER THAN A JUDGEMENT ABOUT WHOSE OPINION COUNTS.
+//
+// A target row's pin does not name a preferred compiler. It names the payload
+// that supplies THAT TARGET'S C library — the mingw payload for
+// `x86_64-windows-gnu`, the musl-gcc payload for `*-linux-musl`. Whether the
+// user's own default can serve the target instead depends on whether something
+// ELSE supplies the target side, and that is knowable only after the dependency
+// graph is resolved, which is after this line.
+//
+// Making the global default outrank the pin was tried and measured: a project
+// with no dependencies, a global default of `llvm@22.1.8` and
+// `--target x86_64-windows-gnu` stopped building, because clang alone carries no
+// C runtime for that target while the payload the row names does. That is a
+// working build turned into a failing one by an upgrade.
+//
+// What the user actually loses is ergonomics, and that is addressed where it is
+// visible: when the pin replaces a default the user wrote down, the status line
+// SAYS SO and names the one-line override. The structural fix is to defer the
+// pin the way the target side itself was deferred — resolve it after the graph,
+// where the question it answers has an answer.
 export inline bool tc_origin_is_user_explicit(TcOrigin o) {
     return o == TcOrigin::ManifestToolchain || o == TcOrigin::TargetSection;
+}
+
+// How a resolution came about, for the status line. A convention that replaced
+// nothing needs no explanation; one that replaced a user's stated preference is
+// a decision the user did not make and must be told about.
+export constexpr std::string_view tc_origin_name(TcOrigin o) {
+    switch (o) {
+        case TcOrigin::ManifestToolchain: return "[toolchain] in mcpp.toml";
+        case TcOrigin::TargetSection:     return "[target.<triple>] in mcpp.toml";
+        case TcOrigin::GlobalDefault:     return "your default";
+        case TcOrigin::TargetPin:         return "target default";
+        case TcOrigin::FirstRun:          return "first-run default";
+        case TcOrigin::None:              break;
+    }
+    return {};
 }
 
 // What to tell a user whose build targets the MSVC ABI on a machine that
@@ -853,6 +889,12 @@ prepare_build(bool print_fingerprint,
     // the graph can supply the target's system, and the graph is not known
     // here. Held until it is, and released only if nothing supplies it.
     std::string unservedTargetDiagnosis;
+    // Non-empty when a target row's convention replaced a toolchain the user
+    // had set with `mcpp toolchain default`. Reported on the status line,
+    // because a substitution nobody is told about is a rule that can only be
+    // learned by experiment — writing the same value a second time in
+    // `[target.<triple>]` and observing that it works.
+    std::string pinReplacedDefault;
 
     auto root = overrides.project_root.empty()
         ? mcpp::project::find_manifest_root(std::filesystem::current_path())
@@ -1531,6 +1573,17 @@ prepare_build(bool print_fingerprint,
         const bool pinWouldOverruleUser = tc_origin_is_user_explicit(tcOrigin);
         if (known && !hasToolchainOverride && !known->pin.empty()
             && !pinWouldOverruleUser) {
+            // ⚠️ AND WHEN IT REPLACES SOMETHING THE USER WROTE DOWN, SAY SO.
+            //
+            // `mcpp toolchain default llvm` prints the change back and then a
+            // cross build silently used a different compiler. The substitution
+            // is correct — the row names the payload that supplies this target's
+            // C library — but a status line reporting only the outcome left the
+            // reader to discover the rule by writing the same value a second
+            // time in `[target.<triple>]` and observing that it worked.
+            if (tcOrigin == TcOrigin::GlobalDefault && tcSpec.has_value()
+                && *tcSpec != known->pin)
+                pinReplacedDefault = *tcSpec;
             tcSpec = std::string(known->pin);
             if (!tc_origin_is_user_explicit(tcOrigin))
                 tcOrigin = TcOrigin::TargetPin;
@@ -1697,10 +1750,27 @@ prepare_build(bool print_fingerprint,
             else report_fixup(*fixed, payload->root);
             // Canonical rendering, whatever spelling the manifest/config used:
             // "Resolved gcc@16.1.0 → x86_64-linux-musl → <frontend>".
+            //
+            // ⚠️ AND IT SAYS SO WHEN MCPP CHOSE. A toolchain the user wrote down
+            // needs no explanation — they can read their own manifest. One this
+            // engine selected from a target row is a decision the user did not
+            // make, and a status line that reports the outcome without the
+            // reason leaves them to discover the rule by experiment.
+            std::string chosenBy;
+            if (!pinReplacedDefault.empty())
+                chosenBy = std::format(
+                    "\n             target default for {}, replacing your "
+                    "{} — override with `[target.{}] toolchain`",
+                    overrides.target_triple, pinReplacedDefault,
+                    overrides.target_triple);
+            else if (tcOrigin == TcOrigin::TargetPin
+                  || tcOrigin == TcOrigin::FirstRun)
+                chosenBy = std::format("  ({})", tc_origin_name(tcOrigin));
             mcpp::ui::info("Resolved",
-                std::format("{} → {}", spec->display(),
+                std::format("{} → {}{}", spec->display(),
                     mcpp::ui::shorten_path(explicit_compiler,
-                        mcpp::fetcher::make_path_ctx(&**get_cfg(), *root))));
+                        mcpp::fetcher::make_path_ctx(&**get_cfg(), *root)),
+                    chosenBy));
         }
     } else if (tcSpec.has_value() && *tcSpec == "system") {
         // Explicit user opt-in to system PATH compiler — kept as escape hatch.
@@ -5453,43 +5523,118 @@ prepare_build(bool print_fingerprint,
     {
         namespace tsd = mcpp::targetside;
 
-        // Scan the graph once for each layer. A package declares the layer it
+        // Scan the graph once for every layer. A package declares the layer it
         // supplies and, optionally, the interface name it answers to:
         //
         //     provides = ["mcpp:kernel-abi=openkal"]
         //
-        // The engine knows the three layer names and nothing about the
+        // The engine knows the five layer names and nothing about the
         // implementations that fill them. `hosted-standard-library` is accepted
         // for the C++ layer as the spelling that shipped before this one, so an
         // existing package keeps working unchanged.
-        auto provider_of = [&](tsd::CapLayer want)
-            -> std::optional<tsd::Provider> {
-            std::optional<tsd::Provider> found;
-            for (auto const& pkg : packages) {
-                for (auto const& entry : pkg.manifest.provides) {
-                    std::optional<tsd::CapDecl> decl;
-                    if (auto parsed = tsd::parse_capability(entry); parsed && *parsed)
-                        decl = **parsed;
-                    else if (entry == "hosted-standard-library")
-                        decl = tsd::CapDecl{ tsd::CapLayer::CxxAbi, {} };
-                    if (!decl || decl->layer != want) continue;
+        //
+        // ⚠️ ONE SUPPLIER PER LAYER, AND TWO IS AN ERROR RATHER THAN A PICK.
+        // A C library, a kernel interface and a C++ runtime are mutually
+        // exclusive choices; the same rule already governs `[build] runner` for
+        // the same reason. Until this scan collected candidates instead of
+        // keeping the first acceptable one, two suppliers resolved by graph
+        // traversal order — an order the author neither writes nor can predict —
+        // and the loser's `[build]` section still reached the command line.
+        struct Candidate { tsd::Provider p; bool direct; };
+        std::map<int, std::vector<Candidate>> byLayer;
+        std::vector<tsd::Requirement>         requirements;
 
-                    tsd::Provider p;
-                    p.name          = pkg.manifest.package.name;
-                    p.version       = pkg.manifest.package.version;
-                    p.interfaceName = decl->interfaceName;
-                    p.hasStdModule  = !pkg.manifest.stdModule.empty();
-                    // A package may carry both spellings during the transition,
-                    // and the array order is the author's, not a preference.
-                    // The current spelling names the interface; the older one
-                    // cannot, so taking whichever came first would report a
-                    // package name where an interface name belongs.
-                    if (!found || (found->interfaceName.empty()
-                                   && !p.interfaceName.empty()))
-                        found = p;
+        const auto& rootDeps = m->dependencies;
+        auto is_direct = [&](std::string_view name) {
+            for (auto const& [k, _] : rootDeps) {
+                if (k == name) return true;
+                // Selectors are `<namespace>.<name>` or a bare tail; a tail
+                // match is what the author sees in their own manifest.
+                if (k.size() > name.size() && k.ends_with(name)
+                    && k[k.size() - name.size() - 1] == '.')
+                    return true;
+            }
+            return false;
+        };
+
+        for (auto const& pkg : packages) {
+            const auto pkgId = pkg.manifest.package.version.empty()
+                ? pkg.manifest.package.name
+                : std::format("{}@{}", pkg.manifest.package.name,
+                              pkg.manifest.package.version);
+
+            for (auto const& entry : pkg.manifest.provides) {
+                std::optional<tsd::CapDecl> decl;
+                if (auto parsed = tsd::parse_capability(entry); parsed && *parsed)
+                    decl = **parsed;
+                else if (entry == "hosted-standard-library")
+                    decl = tsd::CapDecl{ tsd::CapLayer::CxxAbi, {} };
+                if (!decl) continue;
+                if (!tsd::layer_is_suppliable_by_package(decl->layer)) {
+                    return std::unexpected(std::format(
+                        "package '{}' declares `provides = [\"{}\"]`, and the "
+                        "compiler is not a layer a package can supply.\n"
+                        "       A compiler is a payload this engine installs and "
+                        "drives; the differences between families are things the "
+                        "engine must know rather than data a package can "
+                        "describe.\n"
+                        "       A package may REQUIRE one: `requires = "
+                        "[\"mcpp:compiler=<family>\"]`.",
+                        pkgId, entry));
+                }
+
+                tsd::Provider p;
+                p.name          = pkg.manifest.package.name;
+                p.version       = pkg.manifest.package.version;
+                p.interfaceName = decl->interfaceName;
+                p.hasStdModule  = !pkg.manifest.stdModule.empty();
+
+                auto& slot = byLayer[static_cast<int>(decl->layer)];
+                // A package may carry both spellings during the transition, and
+                // the array order is the author's, not a preference. Two entries
+                // from the SAME package are one supplier; the current spelling
+                // names the interface and the older one cannot, so the entry
+                // that carries an interface name wins.
+                auto same = std::find_if(slot.begin(), slot.end(),
+                    [&](const Candidate& c){ return c.p.name == p.name; });
+                if (same != slot.end()) {
+                    if (same->p.interfaceName.empty() && !p.interfaceName.empty())
+                        same->p = p;
+                } else {
+                    slot.push_back({ p, is_direct(p.name) });
                 }
             }
-            return found;
+
+            // `requires` — the symmetric half. An entry naming a layer this
+            // engine does not know is an error for the same reason a `provides`
+            // one is: a typo would otherwise disable a check silently.
+            for (auto const& entry : pkg.manifest.requires_) {
+                auto parsed = tsd::parse_capability(entry);
+                if (!parsed)
+                    return std::unexpected(std::format(
+                        "package '{}': {}", pkgId, parsed.error()));
+                if (!*parsed) continue;      // not in mcpp's namespace
+                requirements.push_back({ pkgId, (*parsed)->layer,
+                                         (*parsed)->interfaceName });
+            }
+        }
+
+        for (auto const& [layerInt, slot] : byLayer) {
+            if (slot.size() < 2) continue;
+            tsd::Conflict c;
+            c.layer     = static_cast<tsd::CapLayer>(layerInt);
+            c.first     = slot[0].p.id();
+            c.firstVia  = slot[0].direct ? "" : "a transitive dependency";
+            c.second    = slot[1].p.id();
+            c.secondVia = slot[1].direct ? "" : "a transitive dependency";
+            return std::unexpected(tsd::format_conflict(c));
+        }
+
+        auto provider_of = [&](tsd::CapLayer want)
+            -> std::optional<tsd::Provider> {
+            auto it = byLayer.find(static_cast<int>(want));
+            if (it == byLayer.end() || it->second.empty()) return std::nullopt;
+            return it->second.front().p;
         };
 
         tsd::Inputs in;
@@ -5513,13 +5658,26 @@ prepare_build(bool print_fingerprint,
             }
             in.payloadLibcRef      = tc->targetSysrootPkg;
             in.payloadCxxInterface = tc->stdlibId;
+            // The compiler is a layer, and it is the one layer no package can
+            // supply. It enters here so that a requirement has something to be
+            // checked against and so the report can show the whole stack.
+            in.compilerFamily  = std::string(tc->compiler_family());
+            in.compilerVersion = tc->version;
         }
-        in.kernelAbi = provider_of(tsd::CapLayer::KernelAbi);
-        in.cAbi      = provider_of(tsd::CapLayer::CAbi);
-        in.cxxAbi    = provider_of(tsd::CapLayer::CxxAbi);
+        in.compilerRuntime = provider_of(tsd::CapLayer::CompilerRuntime);
+        in.kernelAbi       = provider_of(tsd::CapLayer::KernelAbi);
+        in.cAbi            = provider_of(tsd::CapLayer::CAbi);
+        in.cxxAbi          = provider_of(tsd::CapLayer::CxxAbi);
 
         resolvedTargetSide = tsd::resolve(in);
         if (auto why = tsd::check_layering(resolvedTargetSide))
+            return std::unexpected(*why);
+        // ⚠️ REQUIREMENTS ARE CHECKED BEFORE ANYTHING IS COMPILED, WHICH IS THE
+        // WHOLE POINT OF DECLARING THEM. The combination this rejects — a C++
+        // runtime configured for one compiler family being handed to another —
+        // otherwise fails inside that runtime's own headers, in a message that
+        // names a file the reader has never opened and no decision mcpp made.
+        if (auto why = tsd::check_requirements(resolvedTargetSide, requirements))
             return std::unexpected(*why);
 
         // The refusal held since toolchain resolution, released now that the
@@ -5529,6 +5687,38 @@ prepare_build(bool print_fingerprint,
         if (!unservedTargetDiagnosis.empty()
             && !resolvedTargetSide.system_from_graph())
             return std::unexpected(unservedTargetDiagnosis);
+
+        // ⚠️ THE TARGET AND THE COMPILER ARE NOT BOUND TOGETHER, AND THE
+        // TARGET ROW'S CONVENTION IS A FALLBACK RATHER THAN A RULE.
+        //
+        // A row pins a toolchain because the payload that toolchain belongs to
+        // is what supplies THAT TARGET'S C library. A project whose target side
+        // comes from its dependency graph does not use that payload, so the
+        // substitution was unnecessary — and this is the first line at which
+        // that is knowable, because it is the first line at which the graph
+        // exists.
+        //
+        // ⚠️ The decision itself is NOT revised here. `tc` has been read and
+        // mutated at 39 sites between its resolution and this point — the
+        // effective triple, the cross flag, the target sysroot, the MSVC
+        // runtime contract — and re-resolving it here would redo all of them
+        // out of order. Deferring the CHOICE the way the target side itself was
+        // deferred is the structural fix and is its own change; until then the
+        // user is told what happened and how to state the preference once.
+        if (!pinReplacedDefault.empty()
+            && resolvedTargetSide.system_from_graph()) {
+            mcpp::diag::warning("toolchain", std::format(
+                "this project's target side comes from its dependency graph, so "
+                "{} would have served {}.\n"
+                "       mcpp used the target row's convention because the graph "
+                "is not known when the\n"
+                "       toolchain is chosen. State the preference for this "
+                "target to skip the substitution:\n"
+                "           [target.{}]\n"
+                "           toolchain = \"{}\"",
+                pinReplacedDefault, resolvedTargetCanonical,
+                resolvedTargetCanonical, pinReplacedDefault));
+        }
 
         // A request that cannot be honoured is said so rather than dropped.
         //
@@ -5556,11 +5746,17 @@ prepare_build(bool print_fingerprint,
         // question that until now had no answer at all: reading every manifest
         // in the graph did not tell anyone what would end up on the link line,
         // because three places derived it separately and could disagree.
+        //
+        // ⚠️ AND IT PRINTS ONLY WHAT IS NOT ORDINARY. A zero-configuration build
+        // resolves all five layers from one compiler payload, and five lines
+        // reading `(payload)` answer a question nobody asked. `MCPP_VERBOSE`
+        // prints them all; a diagnostic always does.
         mcpp::ui::info("Target", tsd::format_report(
             resolvedTargetSide,
             resolvedTargetCanonical.empty()
                 ? (tc ? tc->targetTriple : std::string{})
-                : resolvedTargetCanonical));
+                : resolvedTargetCanonical,
+            mcpp::log::is_verbose()));
     }
 
     // ── L3: ROOT build.mcpp (moved after dependency resolution, design §3.1
@@ -5845,7 +6041,7 @@ prepare_build(bool print_fingerprint,
         // follows says where its headers are. The codegen step needs only the
         // first — see Toolchain::stdModuleTargetFlags.
         tc->stdModuleTargetFlags = flags;
-        for (auto& f : pkg.manifest.stdModuleFlags) {
+        for (auto& f : pkg.manifest.buildConfig.stdModuleFlags) {
             // A flag naming a path is relative to the package that named it,
             // for the same reason the module source is.
             auto candidate = pkg.root / f;

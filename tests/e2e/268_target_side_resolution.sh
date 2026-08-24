@@ -103,7 +103,9 @@ echo "$out" | grep -q 'graph' || {
 # ⚠️ AND THE POSITIVE CONTROL ON THE SAME OUTPUT. Without this, the assertions
 # above would also pass on an engine that printed the same three lines for
 # every build regardless of what the graph contained.
-echo "$out" | grep -q 'c++ *—' || {
+# The label is the capability name — `c++-abi`, matching `mcpp:c++-abi` — so
+# that the report and the manifest use one vocabulary for one layer.
+echo "$out" | grep -q 'c++-abi *—' || {
     echo "a project with no C++ runtime package must report that layer absent" >&2
     echo "$out" >&2; exit 1
 }
@@ -113,7 +115,12 @@ echo "$out" | grep -q 'c++ *—' || {
 # The control that makes the block above mean something: remove the capability
 # line and every layer must fall back to the payload.
 provider_declares
-plain=$("$MCPP" build 2>&1 || true)
+# MCPP_VERBOSE, because an ordinary report prints only the layers the compiler
+# payload did NOT supply. That suppression is itself the control's subject here:
+# with nothing in the graph there is nothing to print, and the assertion below
+# needs the full stack to check that the fallback happened rather than that the
+# lines merely vanished.
+plain=$(MCPP_VERBOSE=1 "$MCPP" build 2>&1 || true)
 echo "$plain" | grep -q 'fakeos' && {
     echo "a package that declares no capability must not fill a layer" >&2
     echo "$plain" >&2; exit 1

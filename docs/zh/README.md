@@ -16,6 +16,7 @@
 - [11 - 机器可读输出](11-machine-output.md)
 - [12 - 分发预编译库](12-binary-distribution.md)
 - [13 - 裸机与 freestanding 目标](13-baremetal.md)
+- [14 - 目标侧](14-target-side.md)
 
 ## 规范文档
 

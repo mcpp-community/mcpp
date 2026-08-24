@@ -192,6 +192,16 @@ struct BuildInputs {
     std::vector<std::filesystem::path> includeDirs;    // relative to package root
     // #249: emitted as -idirafter (searched after the toolchain's system dirs)
     std::vector<std::filesystem::path> includeDirsAfter;
+    // What the `std` module source of a package that IS a standard library
+    // needs on its command line.
+    //
+    // A MEMBER OF THIS TYPE AND NOT OF THE MANIFEST, for the same reason
+    // `defines` is: membership here is what makes the cfg axis carry it. A
+    // package supplying one C++ runtime over SEVERAL C libraries needs
+    // different flags per C library — `-D_GNU_SOURCE` is right for musl and
+    // glibc and wrong for picolibc — and while this lived beside the package's
+    // identity there was no spelling for that difference.
+    std::vector<std::string>           stdModuleFlags;
 };
 
 // The single additive merge. Every conditional axis folds through this, so
@@ -210,6 +220,9 @@ inline void append(BuildInputs& dst, const BuildInputs& src) {
     dst.includeDirsAfter.insert(dst.includeDirsAfter.end(),
                                 src.includeDirsAfter.begin(),
                                 src.includeDirsAfter.end());
+    dst.stdModuleFlags.insert(dst.stdModuleFlags.end(),
+                              src.stdModuleFlags.begin(),
+                              src.stdModuleFlags.end());
 }
 
 // A build-graph node declared by a build program (`mcpp:action=`).
@@ -904,6 +917,23 @@ struct Manifest {
     // one provider from the graph. See
     // .agents/docs/2026-06-29-feature-capability-model-design.md.
     std::vector<std::string>                        provides;        // package-level
+    // [package] requires — the symmetric half of `provides`, and the only way
+    // the layering rule can be enforced without a product name in the engine.
+    //
+    // A C++ runtime built from libc++'s sources is compiled, and its module,
+    // by clang; gcc cannot consume it. That fact belongs to the package:
+    //
+    //     requires = ["mcpp:compiler=llvm"]
+    //
+    // The engine then checks a relation it can state generically — the named
+    // layer must resolve to the named implementation — and reports a mismatch
+    // by naming both, which a hardcoded table could not do for a family it had
+    // never heard of.
+    //
+    // ⚠️ Names outside the `mcpp:` prefix are the feature system's and pass
+    // through untouched, exactly as they do in `provides`.
+    // ⚠️ The spelling is `requires_` because `requires` is a keyword.
+    std::vector<std::string>                        requires_;
     // [package] std-module / std-module-flags — a package that IS a standard
     // library says where its `std' module source is and what that source needs
     // to compile. The build tool otherwise asks the COMPILER where std.cppm is
@@ -921,7 +951,8 @@ struct Manifest {
     // `import std.compat;` — a complete answer, and better than silently
     // pairing its own `std` with the toolchain's `std.compat`.
     std::string                                     stdCompatModule;
-    std::vector<std::string>                        stdModuleFlags;
+    // (`std-module-flags` lives on BuildInputs so the cfg axis can carry it —
+    //  see the member there.)
     std::map<std::string, std::vector<std::string>> featureProvides; // feature → caps
     std::map<std::string, std::vector<std::string>> featureRequires; // feature → caps
     // Feature System v2 Stage 2a — dependencies activated by a feature. A dep

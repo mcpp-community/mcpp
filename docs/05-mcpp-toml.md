@@ -1101,6 +1101,36 @@ blas = "compat.openblas"     # equivalently: mcpp build --cap blas=compat.openbl
 compat.openblas = "0.3.0"    # the provider must be a real dependency in the graph
 ```
 
+The reserved prefix `mcpp:` names the target-side layers this engine resolves,
+and those names are validated against a closed set. A package-level `requires`
+array carries the symmetric statement — what a target-side layer must resolve to
+for this package to be usable.
+
+```toml
+[package]
+name     = "acme.llvm-runtime"
+version  = "0.1.0"
+provides = ["mcpp:compiler-runtime=compiler-rt", "mcpp:c++-abi=libc++"]
+requires = ["mcpp:compiler=llvm"]
+```
+
+A package that is a standard library states its `std` module source under
+`[build]`, where the flags it needs become conditional like any other build
+input.
+
+```toml
+[build]
+std-module        = "llvm-generated/std.cppm"
+std-compat-module = "llvm-generated/std.compat.cppm"
+std-module-flags  = ["--no-default-config", "-nostdinc++"]
+
+[target.'cfg(c-abi = "musl")'.build]
+std-module-flags = ["-D_GNU_SOURCE"]
+```
+
+See [14 - The Target Side](14-target-side.md) for the five layers, the rules
+that govern them, and the diagnostics.
+
 Binding is **deterministic**:
 
 | Providers of a required capability in the graph | Result |

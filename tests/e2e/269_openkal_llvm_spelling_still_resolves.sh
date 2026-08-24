@@ -68,7 +68,10 @@ old_spelling=$(driver_for "openkal-llvm@22.1.8")
 # the second would report `graph` somewhere and the first would not.
 manifest "openkal-llvm@22.1.8"
 rm -rf target
-old_report=$("$MCPP" build 2>&1 | grep -E 'kernel-abi|c-abi' || true)
+# MCPP_VERBOSE, because an ordinary report prints only the layers the compiler
+# payload did NOT supply — and every layer here is the payload's, which is
+# precisely what this assertion is about.
+old_report=$(MCPP_VERBOSE=1 "$MCPP" build 2>&1 | grep -E 'kernel-abi|c-abi' || true)
 echo "$old_report" | grep -q 'graph' && {
     echo "the toolchain family name must no longer decide where the target side comes from" >&2
     echo "$old_report" >&2

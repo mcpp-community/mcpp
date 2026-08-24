@@ -474,14 +474,38 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 return std::unexpected(error(origin, cap.error()));
         m.provides = *v;
     }
-    // [package] std-module / std-module-flags — see manifest::types. Relative to
-    // the package root, because that is what a package can state about itself;
-    // the absolute path is made where the package's root is known.
+    // [package] requires — validated exactly like `provides`: names under the
+    // reserved prefix are a closed set, everything else passes through.
+    if (auto v = doc->get_string_array("package.requires")) {
+        for (auto const& entry : *v)
+            if (auto cap = mcpp::targetside::parse_capability(entry); !cap)
+                return std::unexpected(error(origin, cap.error()));
+        m.requires_ = *v;
+    }
+    // std-module / std-compat-module / std-module-flags.
+    //
+    // ⚠️ THEY BELONG UNDER `[build]`, AND `[package]` IS THE OLDER SPELLING.
+    // The module source is one of this package's translation units in every way
+    // that matters: it is compiled with the package's include directories and
+    // its definitions, and it is a `.cppm` file like any other. Keeping it in
+    // `[package]` cost the one thing that placement decides — `[build]` is
+    // conditional and `[package]` is not, so a package supporting several C
+    // libraries could not vary the flags its std module needs. `-D_GNU_SOURCE`
+    // is right for musl and glibc and wrong for picolibc, and there was no
+    // spelling for that.
+    //
+    // Read `[package]` first so `[build]` wins, and so a manifest carrying both
+    // during the transition behaves the way its author would expect.
     if (auto v = doc->get_string("package.std-module")) m.stdModule = *v;
     if (auto v = doc->get_string("package.std-compat-module"))
         m.stdCompatModule = *v;
     if (auto v = doc->get_string_array("package.std-module-flags"))
-        m.stdModuleFlags = *v;
+        m.buildConfig.stdModuleFlags = *v;
+    if (auto v = doc->get_string("build.std-module")) m.stdModule = *v;
+    if (auto v = doc->get_string("build.std-compat-module"))
+        m.stdCompatModule = *v;
+    if (auto v = doc->get_string_array("build.std-module-flags"))
+        m.buildConfig.stdModuleFlags = *v;
 
     // [capabilities] cap = "provider" — root-only provider pins.
     if (auto* caps = doc->get_table("capabilities"); caps && !caps->empty()) {

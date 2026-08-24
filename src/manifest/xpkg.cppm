@@ -229,7 +229,8 @@ inline constexpr std::string_view kKnownXpkgKeys[] = {
     "cflags", "c_standard", "cxxflags", "defines", "deps", "features", "flags",
     "generated_files", "import_std", "include_dirs", "include_dirs_after",
     "language", "ldflags",
-    "linux", "macosx", "modules", "provides", "runtime", "scan_overrides",
+    "linux", "macosx", "modules", "provides", "requires", "runtime",
+    "scan_overrides",
     "schema", "sources", "target_cfg", "targets", "windows",
 };
 
@@ -238,7 +239,10 @@ inline constexpr std::string_view kKnownXpkgKeys[] = {
 inline constexpr std::pair<std::string_view, std::string_view> kXpkgKeyAliases[] = {
     { "dependencies", "deps" },
     { "dependency",   "deps" },
-    { "requires",     "deps" },   // cargo muscle memory
+    // ⚠️ `requires` USED TO REDIRECT HERE and no longer does: it is a key in its
+    // own right now, the symmetric half of `provides`. A redirect for a key that
+    // exists is unreachable — `closest_known_xpkg_key` is consulted only for
+    // UNKNOWN keys — and leaving it would be a claim this file no longer makes.
     // #296: `defines` is a real key now (package-level bare macros). Only the
     // singular misspelling needs redirecting, and it points at `defines` — the
     // old redirect to `flags` predates the key existing.
@@ -1271,18 +1275,25 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             }
             cur.consume('}');
         }
-        else if (key == "provides") {
+        else if (key == "provides" || key == "requires") {
             // Package-level capabilities (Feature System v2 S3): this package
             // satisfies the listed abstract capability names for any dependent
             // that `requires` them. `{ "blas", "lapack", ... }`.
+            //
+            // `requires` is the symmetric half: what this package needs a
+            // target-side layer to resolve to. Both arrays serve the same two
+            // populations — names under the reserved `mcpp:` prefix are layers
+            // the engine acts on, everything else belongs to the feature system.
+            auto* dst = (key == "provides") ? &m.provides : &m.requires_;
             if (!cur.consume('{')) {
                 return std::unexpected(ManifestError{
-                    "expected '{' after `provides =`", m.sourcePath, 0, 0});
+                    std::format("expected '{{' after `{} =`", key),
+                    m.sourcePath, 0, 0});
             }
             cur.skip_ws_and_comments();
             while (!cur.eof() && cur.peek() != '}') {
                 auto s = cur.read_string();
-                if (!s.empty()) m.provides.push_back(std::move(s));
+                if (!s.empty()) dst->push_back(std::move(s));
                 cur.skip_ws_and_comments();
             }
             cur.consume('}');

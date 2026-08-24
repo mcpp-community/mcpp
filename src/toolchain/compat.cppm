@@ -108,13 +108,15 @@ std::optional<NormalizedSpec> normalize_spec(std::string_view compilerIn,
     out.version = version;
 
     // ── canonical families pass through ─────────────────────────────────────
-    // ⭐ `openkal-llvm` is a canonical family and NOT an alias for `llvm`. The
-    // two resolve to the same payload, and they answer differently about which
-    // targets are reachable — see Family::OpenkalLlvm. An alias would collapse
-    // that difference, which is the whole content of the name.
+    // ⚠️ `openkal-llvm` NORMALISES TO `llvm`, AND USED TO BE A FAMILY OF ITS
+    // OWN. It named the same payload and carried a fact about where the TARGET
+    // SIDE comes from — which `mcpp.targetside` now resolves from what packages
+    // declare, after the graph exists, where the fact actually lives. The
+    // spelling is kept so a manifest or config written against it still
+    // resolves; it is an alias and nothing behaves differently under it.
     if (compiler == "gcc" || compiler == "llvm" || compiler == "msvc"
         || compiler == "openkal-llvm") {
-        out.family = std::string(compiler);
+        out.family = compiler == "openkal-llvm" ? "llvm" : std::string(compiler);
         if (muslVersionSuffix && compiler == "gcc") {
             out.target = host_musl_triple();
             return with_hint(std::move(out),

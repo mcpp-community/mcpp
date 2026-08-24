@@ -963,6 +963,33 @@ blas = "compat.openblas"     # 等价于:mcpp build --cap blas=compat.openblas
 compat.openblas = "0.3.0"    # provider 必须是图中真实存在的依赖
 ```
 
+保留前缀 `mcpp:` 命名本引擎解析的目标侧层,这些名字对照一个闭集校验。
+包级 `requires` 数组承载对称的陈述 —— 某个目标侧层必须解析为什么,
+本包才可用。
+
+```toml
+[package]
+name     = "acme.llvm-runtime"
+version  = "0.1.0"
+provides = ["mcpp:compiler-runtime=compiler-rt", "mcpp:c++-abi=libc++"]
+requires = ["mcpp:compiler=llvm"]
+```
+
+作为标准库的包在 `[build]` 下陈述它的 `std` 模块源,
+其所需的 flag 在那里与任何其它构建输入一样可条件化。
+
+```toml
+[build]
+std-module        = "llvm-generated/std.cppm"
+std-compat-module = "llvm-generated/std.compat.cppm"
+std-module-flags  = ["--no-default-config", "-nostdinc++"]
+
+[target.'cfg(c-abi = "musl")'.build]
+std-module-flags = ["-D_GNU_SOURCE"]
+```
+
+五个层、约束它们的规则与相应诊断,见 [14 - 目标侧](14-target-side.md)。
+
 绑定是**确定性**的:
 
 | 图中某被需要能力的 provider 数量 | 结果 |
