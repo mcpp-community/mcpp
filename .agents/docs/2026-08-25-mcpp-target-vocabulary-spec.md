@@ -360,7 +360,7 @@ truncxfhf2.c:13:36: error: unknown type name 'xf_float'; did you mean 'tf_float'
 修法:`cfg(all(os = "linux", not(arch = "x86_64")))`。
 已提 mcpplibs/openkal-llvm-runtime#5。
 
-### 7.2 ⚠️ 未修:`--no-default-config` 本身改变目标特性
+### 7.2 ✅ 已修:`--no-default-config` 本身改变目标特性
 
 x87 修好之后撞到下一处:
 
@@ -396,19 +396,54 @@ clang --target=aarch64-unknown-linux-musl --no-default-config   →  -fmv
 ⚠️ **x86_64 上 `--no-default-config` 不改变特性,所以这对矛盾从未暴露。**
 aarch64 是第一个让它现形的目标 —— 这正是「第二个架构才检验抽象」的又一例。
 
-**候选修法**(均未实测,按代价排):
+**修法:把 `--rtlib=compiler-rt` 补进 `std-module-flags`。**
 
-1. 让普通 TU 也带 `--no-default-config` —— 一致了,但会去掉 cfg 里
-   其它可能承重的东西,影响面未知
-2. 把 std 模块的目标特性显式钉住(`-fno-mv` 或对称地补 `+outline-atomics`)
-   —— 治标,且要为每个架构维护一张表
-3. ⭐ 让 `stdModuleTargetFlags` 把「驱动配置对特性的影响」也算进去 ——
-   即由引擎查询一次 `clang -### --no-default-config` 与不带的差集,
-   把差异补给消费侧。治本,但要新增一次编译器探测
+实测,补上之后两侧逐字相同:
 
-**验收判据**:`mcpp build --target aarch64-linux-musl` 在一个依赖
-`openkal-llvm-runtime` 的工程上产出 aarch64 静态 ELF,且 `file` 报
-`ELF 64-bit LSB executable, ARM aarch64, statically linked`。
+```
+TU (读 cfg)          +fp-armv8 +neon +outline-atomics +v8a
+std(旧:无 rtlib)    -fmv +fp-armv8 +neon +v8a
+std(新:+rtlib)      +fp-armv8 +neon +outline-atomics +v8a
+```
+
+⭐ **声明在这个包里也是最诚实的位置**:它 IS 那份 compiler-rt。
+x86_64 上两侧本来都是空,所以该 flag 对它无影响 —— 这也再次说明为何
+缺陷只在第二个架构上现形。
+
+### 7.2b ✅ 已修:特性开了,而辅助函数没人产出
+
+7.2 修好后撞到下一层:
+
+```
+ld.lld: error: undefined symbol: __aarch64_swp4_acq
+```
+
+`+outline-atomics` 需要 `__aarch64_*` 辅助函数,它们住在 compiler-rt 里 ——
+而本包没产出。upstream 把 `aarch64/lse.S` 编 **125 遍**,每遍给不同的
+`-DL_<pat> -DSIZE=<n> -DMODEL=<m>`,`sources` 的 glob 传不了 per-file 定义。
+
+⭐ **解法是把宏从命令行移进文件,而不是复制 125 份实现**:每个组合成为
+一个只声明宏、再 include 共享正文的小文件,正文仍是 upstream 的、未改、
+在原处。生成物放在 `llvm-generated/outline-atomics/`,与 `llvm/` 分开 ——
+与本包既有约定一致(`std.cppm`、`__config_site` 都在那里)。
+
+⚠️ 途中两处「以为做完了其实没有」:
+`#include "assembly.h"` 在新目录下解析不到(汇编器把 `HIDDEN(...)`
+读成指令),解法是让生成文件按相对自身的路径 include 那个头,不需要 flag;
+以及 `__aarch64_have_lse_atomics` 未定义 —— 它在 `cpu_model/aarch64.c`,
+而 glob `builtins/*.c` **不含子目录**,那个文件从未被编过。
+
+⚠️ **我先把 `-mno-outline-atomics` 加在 mcpp 引擎里,那是错的方向** ——
+关掉一个本该支持的特性。有了辅助函数之后该 flag 已撤,**引擎零改动**。
+
+**验收判据(已达成)**:
+
+```
+mcpp build --target aarch64-linux-musl
+→ ELF 64-bit LSB executable, ARM aarch64, statically linked
+  已定义的 __aarch64_* 符号 10,未定义 0
+  产物中 LSE 指令 8 处   ← 特性真的在工作
+```
 
 ### 7.3 ⚠️ 未查:`aarch64-linux-gnu` 仍是 `planned`
 
@@ -423,12 +458,55 @@ error: target 'aarch64-linux-gnu' is registered but not yet supported (planned)
 工具链」,没说「你要的那个目标另有拼法」。`did_you_mean` 今天只对拼错的
 名字生效,不对「档位不够但同类目标可用」的情况生效。
 
-### 7.4 使用者报告里另外两条,未查
+### 7.4 使用者报告里的另外两条
 
-- **`std::random_device` 不可用** —— payload 的 `__config_site` 两份都写
-  `_LIBCPP_HAS_RANDOM_DEVICE 0`,他本地改成 1 即修好 5 个编译错。
-  ⚠️ 静态 musl 二进制读 `/dev/urandom` 应当可行,所以 `generic` 那份为何
-  也关着需要单独查。
+### 7.5 `std::random_device`:根在规范,不在运行时包
+
+使用者报告 `_LIBCPP_HAS_RANDOM_DEVICE 0` 让 5 个 TU 编不过,本地改成 1 即修好,
+并问「静态 musl 二进制读 `/dev/urandom` 应当可行,`generic` 那份为何也关着」。
+
+⚠️ **改成 1 只让编译期通过。** 编译期只看宏,真正链接会缺符号 ——
+那个 0 不是保守设置,是**当前事实的准确记录**。
+
+**因果链逐层查证:**
+
+```
+std::random_device
+    ↓ libc++ 有五条后端:GETENTROPY / DEV_RANDOM / ARC4_RANDOM /
+      WIN32_RANDOM / FUCHSIA_CPRNG
+    ↓ getentropy 是最合适的一条 —— 它不需要文件系统
+musl 的 src/misc/getentropy.c  →  调 getrandom()
+    ↓
+musl 的 src/linux/getrandom.c  →  syscall_cp(SYS_getrandom, …)
+    ↓ 而 openkal-musl 的 port/ 里没有它的替代实现
+openkal 规范里**没有随机源接口**（SURFACE.txt 全文无 random / entropy）
+```
+
+⭐ **根在最底下那一层。** 另一条后端 `DEV_RANDOM` 走
+`open("/dev/urandom")` + `read`,同样落在 openkal 的文件系统接口上,
+而一个没有文件系统的后端(裸机)连这条也没有。
+
+**三层各自能做什么:**
+
+| 层 | 可行性 | 代价 |
+|---|---|---|
+| **openkal 规范** | ⭐ 根本解 —— 新增 `openkal.random` 或等价接口 | 六个后端各实现一遍;按 6.1 条,不提供该接口的后端让它链接期缺席 |
+| **openkal-musl** | 可以,但绕过规范 —— port 里实现 `getrandom` | 它仍要从**某处**取熵,绕不开平台层 |
+| **openkal-llvm-runtime** | ❌ 只能开关那个宏 | 开了在链接期缺 `getrandom`,把编译错换成链接错 |
+
+⚠️ **「`generic` 那份也关着」的答案**:`generic` 不等于「宿主 Linux」。
+在这套体系里它同样跑在 openkal 之上,同样没有随机源 —— 名字容易误读,
+而设置是对的。
+
+**重新打开它的触发条件**:openkal 规范新增随机源接口之后,
+`openkal-llvm-runtime` 把两份 `__config_site` 的该宏改为 1,
+并在 `[target]` 里为不提供该接口的目标保持 0。
+
+### 7.6 GMF 里 include 标准头,未查
+
+`clang++.cfg` 把宿主 libc++ 与 glibc 的 `-isystem` 塞进来,与 openkal 的
+musl libc++ 头混合。⭐ 与 7.2 是**同一个 cfg** 引起的两个症状,应一并考虑 ——
+7.2 已由「把 `--rtlib` 补回 std 模块」解决,这一条尚未查。
 - **GMF 里 `#include <标准头>` 的 TU 编不过** —— `clang++.cfg` 把宿主
   libc++ 与 glibc 的 `-isystem` 塞进来,与 openkal 的 musl libc++ 头混合。
   ⭐ 与 7.2 是**同一个 cfg** 引起的两个症状,应一并考虑。
