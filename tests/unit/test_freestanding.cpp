@@ -430,3 +430,42 @@ TEST(FreestandingTarget, MultilibDirectoriesMatchTheIndexPayloads) {
     ASSERT_TRUE(t.has_value());
     EXPECT_TRUE(mcpp::toolchain::triple::effective_sysroot(*t, nullptr).empty());
 }
+
+// ── The two tables keyed on the same triple must agree ───────────────────────
+//
+// ⚠️ A BARE-METAL TARGET IS DESCRIBED TWICE, IN TWO FILES, AND NOTHING WAS
+// CHECKING THAT THE TWO DESCRIPTIONS COVER THE SAME ROWS.
+//
+// `kKnownTargets` (toolchain/triple.cppm) says a row exists, which tier it is
+// in and what supplies its C library. `kTable` (freestanding/target.cppm) says
+// what its ISA profile is and how its link is driven. A row present in the
+// first and absent from the second parses, resolves a toolchain, and fails
+// somewhere inside code generation with a message about flags rather than
+// about a missing row. The reverse — present in the second, absent from the
+// first — is dead data that reads as support.
+//
+// ⭐ The check is possible only because both are compile-time tables with a
+// single read point each. It costs fifteen lines and removes an entire class
+// of "added a target, forgot half of it".
+TEST(FreestandingTarget, EveryBareRowInTheTargetTableHasAnIsaProfile) {
+    for (const auto& info : mcpp::toolchain::triple::known_targets()) {
+        if (info.note != "bare") continue;
+        auto t = mcpp::toolchain::triple::parse(info.canonical);
+        ASSERT_TRUE(t.has_value()) << info.canonical;
+        EXPECT_TRUE(mcpp::freestanding::resolve(*t).has_value())
+            << info.canonical
+            << " is a bare row in kKnownTargets with no row in freestanding::kTable";
+    }
+}
+
+TEST(FreestandingTarget, EveryIsaProfileHasABareRowInTheTargetTable) {
+    for (const auto& spec : mcpp::freestanding::known()) {
+        auto t = mcpp::toolchain::triple::parse(spec.triple);
+        ASSERT_TRUE(t.has_value()) << spec.triple;
+        const auto* info = mcpp::toolchain::triple::find_known_target(*t);
+        ASSERT_NE(info, nullptr)
+            << spec.triple << " has an ISA profile but no row in kKnownTargets";
+        EXPECT_EQ(info->note, "bare")
+            << spec.triple << " has an ISA profile but is not marked bare";
+    }
+}

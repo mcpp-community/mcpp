@@ -1,0 +1,141 @@
+# 目标三元组
+
+目标三元组写作 `<arch>-<os>` 或 `<arch>-<os>-<env>`。本章说明每一段的含义、
+第三段何时可以省略,以及为何这个答案在 mcpp 同时支持的两种体系下并不相同。
+
+## 两种体系,同一套拼写
+
+mcpp 解析目标侧 —— 平台接口、C 库、编译期运行时与 C++ 运行时 —— 有两条路径,
+而一个工程通常在没有显式选择的情况下就落在其中之一。
+
+**传统预构建体系。** 一份工具链载荷为一个目标而构建,并随身携带那个目标的
+C 库。选中 `x86_64-linux-musl` 就是选中 musl-gcc 载荷,选中
+`x86_64-linux-gnu` 就是选中一份 glibc 的。三元组的第三段在解析期是承重的,
+因为它正是挑选载荷的方式。
+
+**构建期体系。** 目标侧以包的形式出现在依赖图中,由正在运行的那个编译器
+从源码构建。第三段不选中任何东西,因为图已经决定了。这是
+[第 15 章](15-openkal-cross.md)所描述的体系。
+
+两者的差别在于第三段**做什么**,而不在于它怎么拼。工程不声明自己属于哪一种;
+由依赖图决定,构建则报告它解析出了什么。
+
+## 各段
+
+| 段 | 内容 | 例 |
+|---|---|---|
+| `arch` | 指令集 | `x86_64`、`aarch64`、`riscv64` |
+| `os` | 操作系统,或 `none` | `linux`、`windows`、`macos`、`none` |
+| `env` | 见下 —— 它在每个平台上是不同的轴 | `gnu`、`musl`、`msvc`、`elf` |
+
+第三段值得留意,因为它在各处命名的并不是同一类东西:
+
+| 平台 | `env` 命名 | 取值 |
+|---|---|---|
+| `linux` | **C 库** | `gnu`(glibc)、`musl` |
+| `windows` | **对象 ABI** | `gnu`(Itanium C++ ABI)、`msvc`(微软的) |
+| `none` | **对象格式** | `elf` |
+| `macos` | 无;该平台不带这一段 | — |
+
+⭐ 在 Windows 上这一段经常被读错,因为 `gnu` 这个词暗示了一个并不在场的 C 库。
+对一份按构建期体系为 `x86_64-windows-gnu` 构建的产物实测:
+
+| 观测 | 值 |
+|---|---|
+| 导入的库 | `ntdll`、`KERNEL32`、`SHELL32` —— 无 `msvcrt`,无 `ucrtbase` |
+| Itanium 修饰符号(`_Z…`) | 4507 |
+| MSVC 修饰符号(`?…`) | 0 |
+
+没有任何 GNU 的东西在场:编译器是 clang,链接器是 lld,编译期运行时是
+compiler-rt,C 库是 musl,C++ 运行时是 libc++,平台是 openkal。`gnu` 是
+LLVM 词表里「非 MSVC 的那套 ABI」的标签,继承自 MinGW,而 clang 需要这个
+拼写来选中正确的内部工具链。mcpp 改不了它。
+
+## 省略第三段
+
+`<arch>-<os>` 在每个平台上都是一个完整的目标:
+
+```bash
+mcpp build --target x86_64-linux      # = x86_64-linux-gnu
+mcpp build --target x86_64-windows    # = x86_64-windows-gnu
+mcpp build --target riscv64-none      # = riscv64-none-elf
+mcpp build --target aarch64-macos     # macOS 本来就没有这一段可省
+```
+
+省略它不改变任何身份。输出目录、缓存键与 `cfg()` 谓词的主语都取规范形式,
+因此两种拼法共用一个指纹,第二次构建是缓存命中而不是又一次完整构建。
+
+不同的是**请求被记录成了什么**。三元组既是身份 —— 身份必须完整 ——
+也是请求 —— 请求必须能什么都不说;mcpp 两者都保留:为身份填上那一段,
+同时记住这次填充是一次填充。
+
+### 该用哪种拼法
+
+**在构建期体系下,省略它。** 图供给 C 库与各运行时,那一段陈述的是一个
+不会被查询的请求。在这种体系下,`x86_64-windows` 不只是比
+`x86_64-windows-gnu` 短 —— 它更准确,因为并没有任何 GNU 的东西参与。
+
+**在传统预构建体系下,当这个选择有意义时写出它。**
+`x86_64-linux-musl` 与 `x86_64-linux-gnu` 选中不同的载荷、产出不同的产物。
+写出那一段正是作出这个选择的方式。
+
+**在 Windows 上,想要微软那套 ABI 时写 `msvc`。** `gnu` 是默认填充,
+而 `msvc` 是不同的对象 ABI 而非不同的 C 库,因此那一段在两种体系下都有意义。
+
+## 构建报告了什么
+
+报告以写下的目标为标题,并把它解析为编译器自己的拼写:
+
+```
+      Target x86_64-windows → x86_64-w64-windows-gnu
+             kernel-abi        openkal        (openkal-windows@0.1.3, graph)
+             c-abi             musl           (openkal-musl@0.3.3, graph)
+             c++-abi           libc++         (openkal-llvm-runtime@0.1.2, graph)
+```
+
+有两条诊断挂在第三段上,适用哪一条由上面那张表决定。
+
+**当该段命名 C 库、而图供给了另一个时,构建报出这个分歧。** 以图为准,
+所以这是报出而非拒绝 —— 两种写法下产物相同,不准确的只是名字:
+
+```
+warning: the target name asks for the `gnu` C ABI and the dependency graph supplies `musl`.
+       The graph decides, so the build below uses `musl` — the name is what is inaccurate,
+       not the artifact. Drop the segment to say what is actually meant:
+           --target x86_64-linux
+```
+
+**当该段命名的是别的东西时,报告说出那是什么。** 在那里发警告是错的:
+它会在每一次合法的 MinGW 构建上出现,并且描述了一条名字从未涉及的轴。
+该提示只在使用者主动写出那一段时出现,且命名那套 **ABI 本身**而非任何一层:
+
+```
+Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu selects the Itanium C++ ABI, not a C library)
+```
+
+⭐ 而它**不对应报告里的任何一行**,这正是要点。五层记录的是每一层
+**由谁供给**;那一段命名的是这些**对象遵循哪套约定**,是若干层必须一致的
+横切事项。把它读成 `c++-abi libc++` 是第二个错误答案,因为 libstdc++
+坐在同一套 ABI 上。
+
+## 自定义目标
+
+不在 mcpp 表内的三元组需要一个显式段落,而这也是一块板子声明
+「任何默认值都给不出的事实」的方式:
+
+```toml
+[target.riscv64-none-elf]
+sysroot = ""
+runner  = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
+           "-no-reboot", "-bios", "default", "-kernel"]
+```
+
+`sysroot = ""` 选定零 libc 档:编译行上没有 C 库,链接上也没有。
+⚠️ **缺席 `sysroot` 键是另一个答案** —— 它继承该目标行自己的默认值。
+见[第 13 章](13-baremetal.md)。
+
+## 参考
+
+[第 14 章](14-target-side.md)讲五层以及每一层由谁供给。
+[第 15 章](15-openkal-cross.md)完整讲构建期体系。
+[第 03 章](03-toolchains.md)讲工具链轴,它是分开的:目标不决定编译器。

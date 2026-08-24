@@ -18,6 +18,7 @@
 - [13 - 裸机与 freestanding 目标](13-baremetal.md)
 - [14 - 目标侧](14-target-side.md)
 - [15 - 基于 openkal 的交叉构建](15-openkal-cross.md)
+- [16 - 目标三元组](16-the-target-triple.md)
 
 ## 规范文档
 

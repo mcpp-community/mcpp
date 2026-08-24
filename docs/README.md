@@ -18,6 +18,7 @@
 - [13 - Bare-Metal and Freestanding Targets](13-baremetal.md)
 - [14 - The Target Side](14-target-side.md)
 - [15 - Cross-Compilation Over openkal](15-openkal-cross.md)
+- [16 - The Target Triple](16-the-target-triple.md)
 
 ## Specifications
 

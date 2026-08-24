@@ -341,3 +341,62 @@ TEST(Triple, OsFieldIdentifiesFreestanding) {
     EXPECT_EQ(t->os, "none");
     EXPECT_FALSE(t->is_pe());
 }
+
+// ── The env segment may be declined on every platform ────────────────────────
+//
+// ⚠️ `x86_64-linux` parsed and `x86_64-windows` did not. The rule "a target
+// triple states a REQUEST, and a request must be able to say nothing" therefore
+// held on two platforms out of four, and the two where it did not were exactly
+// the ones whose segment names something other than a C library — so a user was
+// required to type a word that described nothing they had chosen.
+//
+// The identity stays total: `x86_64-windows` IS `x86_64-windows-gnu`, one output
+// directory and one cache key. What differs is `envExplicit`, which records that
+// nothing was asked for.
+TEST(Triple, TheEnvSegmentMayBeDeclinedOnWindows) {
+    auto t = parse("x86_64-windows");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->str(), "x86_64-windows-gnu");
+    EXPECT_EQ(t->env, "gnu");
+    EXPECT_FALSE(t->envExplicit);
+}
+
+TEST(Triple, TheEnvSegmentMayBeDeclinedOnBareMetal) {
+    auto t = parse("riscv64-none");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->str(), "riscv64-none-elf");
+    EXPECT_TRUE(t->is_freestanding());
+    EXPECT_FALSE(t->envExplicit);
+}
+
+// Writing it out is still a request, and still recorded as one.
+TEST(Triple, WritingTheSegmentOutIsStillARequest) {
+    auto g = parse("x86_64-windows-gnu");
+    ASSERT_TRUE(g.has_value());
+    EXPECT_TRUE(g->envExplicit);
+
+    auto m = parse("x86_64-windows-msvc");
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->env, "msvc");
+    EXPECT_TRUE(m->envExplicit);
+}
+
+// ⚠️ THE FILL IS `gnu` AND NOT THE HOST'S OWN ENV.
+//
+// `host_triple()` answers `msvc` on a Windows machine. Filling from it would
+// give one command a different identity — a different output directory and
+// cache key — on each host, and a target's identity may not depend on where it
+// was built. The two spellings must therefore agree on every machine.
+TEST(Triple, TheFillDoesNotDependOnTheHost) {
+    EXPECT_EQ(parse("x86_64-windows")->str(), parse("x86_64-windows-gnu")->str());
+    EXPECT_EQ(parse("riscv64-none")->str(),   parse("riscv64-none-elf")->str());
+}
+
+// macOS declines the segment by having none at all, which was already true and
+// is asserted here so the four platforms are covered in one place.
+TEST(Triple, MacosCarriesNoSegmentToDecline) {
+    auto t = parse("aarch64-macos");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_TRUE(t->env.empty());
+    EXPECT_FALSE(t->envExplicit);
+}
