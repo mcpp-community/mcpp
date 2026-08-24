@@ -3,9 +3,70 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
-## [未发布]
+## [2026.8.24.6] — 2026-08-25
+
+### 新增
+
+- **⭐ `x86_64-windows-musl`:Windows 上的 musl 有名字了。**
+
+  同一个 `--target x86_64-windows-gnu`,两种体系下的 C 库完全不同 ——
+  而 mcpp 用同一个名字称呼它们。实测同一份源码:
+
+  | | MinGW CRT | musl / openkal |
+  |---|---|---|
+  | 体积 | 587,894 | **9,815,552**(16.7×) |
+  | 依赖 DLL | `KERNEL32`、**`msvcrt.dll`** | `ntdll`、`KERNEL32`、`SHELL32` |
+
+  ⭐ MinGW 的 C 库不是自足的:`printf`/`malloc` 的实现在目标机自带的
+  `msvcrt.dll` 里。musl 是自足的,整个 C 库静态链入,只经 openkal 调
+  Win32 原语。**两者是不同的东西,不该共用一个名字。**
+
+  ⚠️ **这个名字 LLVM 拼不出来。** 实测 llvm 22.1.8:
+
+  ```
+  clang++ --target=x86_64-pc-windows-musl -c t.cpp
+      #5  llvm::MCWinCOFFStreamer::emitCGProfileEntry(...)
+  ```
+
+  崩在 COFF 写出器,不是诊断而是 ICE。Windows 上四个非 MSVC 环境
+  `gnu`/`cygnus`/`itanium`/`musl`,前三个能编,只有 `musl` 死;
+  预定义宏显示它从未被建模(无 `__MINGW32__`)。
+
+  ⭐ **于是 mcpp 的名字与交给 clang 的三元组必须是两个字符串**,而它们
+  本来就是 —— 构建报告里那个箭头两侧就是:
+
+  ```
+  Target x86_64-windows-musl → x86_64-w64-windows-gnu
+         ^ 回答「C 库是谁」      ^ 回答「遵循哪套对象 ABI」
+  ```
+
+  ⚠️ 该行 pin 为 `llvm@22.1.8`,不是偏好:全局默认为 gcc 时,空 pin 会让
+  它落到 musl-gcc 载荷并报「没有 C++ 前端」—— 一条关于缺前端的消息,
+  而真正的问题是只有 clang 能发这个目标。裸机各行同理。
+
+  ⚠️ 档为 `preview`:`verified` 的定义是「构建**并运行**过」,而端到端
+  可用还差一环 —— `openkal-musl@0.3.3` 精确钉死 `openkal-windows = "0.1.3"`,
+  索引里已有的 0.1.4 到不了消费者。生态链条另行推进。
 
 ### 修复
+
+- **构建期体系下 `x86_64-windows-gnu` 的名实不符,此前静默。**
+
+  ```
+  x86_64-linux-gnu     名字说 gnu，事实是 musl  →  ⚠️ 警告
+  x86_64-windows-gnu   名字说 gnu，事实是 musl  →  ❌ 静默
+  ```
+
+  `check_request()` 豁免了非「C 库轴」的平台,理由是「Windows 上 `gnu`
+  命名对象 ABI 而非 C 库」—— **只对了一半**:那一段捆着对象 ABI(被兑现)
+  与 MinGW 的 C 运行时(被图替换),第二件正是该函数存在的意义。
+
+  判据改为「轴 ∈ {CLibrary, ObjectAbi}」。⚠️ 裸机的 `elf` 继续豁免 ——
+  它在任何平台上都不命名 C 库,对它说「请求了 `elf` C ABI」是胡话。
+  消息在对象 ABI 轴上额外说明 ABI 那一半**未受影响**。
+
+  误伤由既有的 `fromGraph()` 挡住:实测传统预构建路径下
+  `c-abi gnu (payload)` 不进警告。
 
 - **暂存跨主版本副本时,与源码相邻的私有头没有跟着走。**
 
@@ -26,6 +87,12 @@
 
   现在,凡是包含了被暂存源码的目录,其中未被暂存的文件一并原样带过去。没有被
   暂存源码的目录不会被访问,所以代价与暂存量成正比。
+
+### 文档
+
+- docs/16 新增「三套词表,以及它们为何不同」(中英双份):GCC / LLVM /
+  mcpp 三套的形状、`x86_64-w64-mingw32` 为何把实现放在 OS 位、
+  clang 如何把它重拼为 `windows-gnu`,以及 mcpp 为何要保留自己那一套。
 
 ## [2026.8.24.5] — 2026-08-25
 
@@ -2654,7 +2721,6 @@ xlings 作为运行时底座:subos 环境到达程序,以及 self-contained 的
   由 cfg 驱动的 `clang`/`clang++` 直接调用编译与运行均通过;移除上述搜索路径的
   对照组按预期失败。mcpp 自身构建路径不受影响(构建 flags 由 linkmodel
   独立提供,不读取 cfg)。
-
 
 
 ### 修复

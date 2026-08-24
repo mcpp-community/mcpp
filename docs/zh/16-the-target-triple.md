@@ -118,6 +118,123 @@ Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu selects the Itanium 
 横切事项。把它读成 `c++-abi libc++` 是第二个错误答案,因为 libstdc++
 坐在同一套 ABI 上。
 
+## 三套词表,以及它们为何不同
+
+一个三元组由三方书写,而三方并不共用一套约定;mcpp 在它们之间翻译。
+知道手上这个字符串属于哪一套,第三段带来的困惑就消掉大半。
+
+### 形状
+
+```
+<arch> - <vendor> - <os> - <env>
+```
+
+每一段都可省,省掉的由编译器补。`vendor` 是历史遗留,今天几乎不承重 ——
+除非目标有理由说别的,否则一律填 `unknown`:
+
+```
+x86_64-linux-gnu   →  x86_64-unknown-linux-gnu
+aarch64-macos      →  aarch64-unknown-macos
+```
+
+三段写法是四段省掉一段,省的是哪一段由「能否解析」决定。
+
+### GCC 与 clang 选目标的方式根本不同
+
+| | GCC | clang |
+|---|---|---|
+| 目标 | **构建编译器时**就定死 | **运行时**选 |
+| 怎么问 | `-dumpmachine` | `-dumpmachine`,或 `--target=` |
+| 交叉编译 | 换**另一个可执行文件** | 传一个 flag |
+
+实测:
+
+```
+g++                     →  x86_64-linux-gnu       (只能发这个)
+x86_64-w64-mingw32-g++  →  x86_64-w64-mingw32     (只能发这个)
+clang++                 →  x86_64-unknown-linux-gnu,而 --target= 可改
+```
+
+⭐ 这就是传统预构建体系**不传 `--target`** 的原因:那份载荷的编译器以它唯一
+能发的目标命名,选目标等于选载荷。也是构建期体系只需要一个编译器的原因。
+
+### MinGW 按 GCC 的约定给自己命名
+
+MinGW 自己的三元组是 `x86_64-w64-mingw32`:
+
+| 段 | 值 | 为什么 |
+|---|---|---|
+| arch | `x86_64` | |
+| vendor | `w64` | 项目名 `mingw-w64`,用以区别于已停滞的原 `mingw32` 项目 |
+| os | **`mingw32`** | ⭐ MinGW 把**自己**放在 OS 位 |
+| env | (无) | 三段就是全名 |
+
+这套约定源自 autoconf 的 `config.guess`,那里 OS 段命名的是目标的运行环境 ——
+而在 GNU 工具链的世界观里 MinGW **就是**一个独立环境:有自己的头文件、
+自己的 C 运行时、自己的 `configure` 分支。名字里的 `32` 是历史遗留,
+`w64` 才表示这是那个支持 64 位的项目。
+
+LLVM 不接受这个世界观。它认为 OS 是 `windows`,MinGW 只是其上的一种 ABI
+环境,于是把这个名字重拼 —— 实测:
+
+```
+x86_64-w64-mingw32  →  x86_64-w64-windows-gnu
+x86_64-pc-mingw32   →  x86_64-pc-windows-gnu
+```
+
+```
+GCC   x86_64 - w64     - mingw32 - (无)
+                ^vendor   ^os
+LLVM  x86_64 - unknown - windows - gnu
+                ^vendor   ^os       ^env
+```
+
+⭐ **`mingw32` 从 OS 位被拆成 `windows` 加 `gnu`。** `gnu` 这个取值之所以
+存在,正是因为 LLVM 需要给拆剩下的那一半起个名字。它的含义是
+「MinGW/Itanium 这一支 ABI」,在 Windows 上从来不是「C 库是 glibc」——
+同一个词在不同操作系统下承担不同职责,这是 LLVM 词表的既有事实,
+不是 mcpp 的发明。
+
+### mcpp 保留的那一套
+
+| 词表 | 例 | 谁读 |
+|---|---|---|
+| GCC / autoconf | `x86_64-w64-mingw32` | 预构建载荷的编译器,以文件名的形式 |
+| LLVM | `x86_64-w64-windows-gnu` | `clang --target=` |
+| **mcpp** | `x86_64-windows-gnu` | 目标表、输出目录、`cfg()`、打包的 ABI tag |
+
+mcpp 自己那套必须能映到前两套。构建报告里那个箭头就是这个映射,
+从第三套到第二套:
+
+```
+Target x86_64-windows-gnu → x86_64-w64-windows-gnu
+       ^ mcpp                ^ LLVM
+```
+
+⚠️ 把第三套词表独立出来,正是 mcpp 能命名 LLVM 命名不了的东西的原因。
+实测 llvm 22.1.8:`windows` 配 `musl` 环境能被三元组解析器接受,
+而编译器会崩:
+
+```
+clang++ --target=x86_64-pc-windows-musl -c t.cpp
+    #5  llvm::MCWinCOFFStreamer::emitCGProfileEntry(...)
+```
+
+崩点在 **COFF 写出器**:clang 已认定输出是 COFF,却没有一条 Windows-musl
+的路径去把 streamer 需要的状态配齐。它认识的四个非 MSVC Windows 环境 ——
+`gnu`、`cygnus`、`itanium`、`musl` —— 前三个都能编,只有 `musl` 死;
+预定义宏说明了这个环境从未被建模:
+
+| 三元组 | 宏 |
+|---|---|
+| `…-windows-gnu` | `__GNUC__` `__MINGW32__` `_WIN32` |
+| `…-windows-msvc` | `_MSC_VER` `_WIN32` |
+| `…-windows-musl` | `__GNUC__` `_WIN32` —— **无 `__MINGW32__`** |
+
+所以 Windows 上的 musl C 库**无法**向 clang 命名,而 mcpp 仍然必须为它命名,
+因为 mcpp 的名字回答的是另一个问题:**C 库是谁**,而 LLVM 的名字回答
+**遵循哪套对象 ABI**。两者都需要,且不是同一个字符串。
+
 ## 自定义目标
 
 不在 mcpp 表内的三元组需要一个显式段落,而这也是一块板子声明

@@ -137,6 +137,131 @@ convention the **objects follow**, which several layers must agree on. Reading
 it as `c++-abi libc++` is a second wrong answer, since libstdc++ sits on the
 same ABI.
 
+## Three Vocabularies, And Why They Differ
+
+A triple is written by three parties that do not share a convention, and mcpp
+translates between them. Knowing which one a string belongs to removes most of
+the confusion the third segment causes.
+
+### The shape
+
+```
+<arch> - <vendor> - <os> - <env>
+```
+
+Every field may be omitted and the compiler fills what is missing. `vendor` is
+historical and carries almost nothing today — it is filled as `unknown` unless
+the target has a reason to say otherwise:
+
+```
+x86_64-linux-gnu   →  x86_64-unknown-linux-gnu
+aarch64-macos      →  aarch64-unknown-macos
+```
+
+A three-field spelling is a four-field one with a field elided, and which field
+was elided follows from what parses.
+
+### GCC and clang do not select targets the same way
+
+| | GCC | clang |
+|---|---|---|
+| target | fixed when the compiler was **built** | chosen at **run time** |
+| how to ask | `-dumpmachine` | `-dumpmachine`, or `--target=` |
+| to cross-compile | use a **different executable** | pass a flag |
+
+Measured:
+
+```
+g++                     →  x86_64-linux-gnu       (emits nothing else)
+x86_64-w64-mingw32-g++  →  x86_64-w64-mingw32     (emits nothing else)
+clang++                 →  x86_64-unknown-linux-gnu, and --target= changes it
+```
+
+⭐ This is why the prebuilt system passes no `--target`: the payload's compiler
+is named after the one target it can emit, and choosing a target means choosing
+a payload. It is also why the build-time system needs only one compiler.
+
+### MinGW names itself in the GCC convention
+
+MinGW's own triple is `x86_64-w64-mingw32`:
+
+| Field | Value | Why |
+|---|---|---|
+| arch | `x86_64` | |
+| vendor | `w64` | the project is `mingw-w64`, distinguishing it from the stalled original `mingw32` |
+| os | **`mingw32`** | ⭐ MinGW puts *itself* in the OS field |
+| env | (absent) | three fields is the whole name |
+
+The convention descends from autoconf's `config.guess`, where the OS field names
+the target's runtime environment — and in the GNU toolchain's view MinGW *is* a
+distinct environment, with its own headers, its own C runtime and its own
+`configure` branches. The `32` is historical; `w64` is what says the name refers
+to the 64-bit-capable project.
+
+LLVM does not accept that view. It holds that the OS is `windows` and that MinGW
+is one ABI environment on top of it, so it re-spells the name — measured:
+
+```
+x86_64-w64-mingw32  →  x86_64-w64-windows-gnu
+x86_64-pc-mingw32   →  x86_64-pc-windows-gnu
+```
+
+```
+GCC   x86_64 - w64     - mingw32 - (none)
+                ^vendor   ^os
+LLVM  x86_64 - unknown - windows - gnu
+                ^vendor   ^os       ^env
+```
+
+⭐ **`mingw32` is split out of the OS field into `windows` plus `gnu`.** The
+value `gnu` exists because LLVM needed a name for the half that was left over.
+Its meaning is "the MinGW/Itanium ABI lineage" and it has never meant "the C
+library is glibc" on Windows — the same word carries different duties under
+different operating systems, and that is LLVM's vocabulary rather than mcpp's
+invention.
+
+### What mcpp keeps
+
+| Vocabulary | Example | Read by |
+|---|---|---|
+| GCC / autoconf | `x86_64-w64-mingw32` | the prebuilt payload's compiler, by its file name |
+| LLVM | `x86_64-w64-windows-gnu` | `clang --target=` |
+| **mcpp** | `x86_64-windows-gnu` | the target table, the output directory, `cfg()`, a packed ABI tag |
+
+mcpp's own form must map onto both. The arrow in the build report is that
+mapping, from the third vocabulary to the second:
+
+```
+Target x86_64-windows-gnu → x86_64-w64-windows-gnu
+       ^ mcpp                ^ LLVM
+```
+
+⚠️ Keeping the third vocabulary separate is what lets mcpp name something LLVM
+cannot. Measured on llvm 22.1.8, `windows` with a `musl` environment is accepted
+by the triple parser and crashes the compiler:
+
+```
+clang++ --target=x86_64-pc-windows-musl -c t.cpp
+    #5  llvm::MCWinCOFFStreamer::emitCGProfileEntry(...)
+```
+
+The crash is in the COFF writer: clang has decided the output is COFF and has no
+Windows-musl path to configure the streamer with. Of the four non-MSVC Windows
+environments it knows — `gnu`, `cygnus`, `itanium`, `musl` — the first three
+compile and only `musl` dies, and the predefined macros show why the environment
+was never modelled:
+
+| Triple | Macros |
+|---|---|
+| `…-windows-gnu` | `__GNUC__` `__MINGW32__` `_WIN32` |
+| `…-windows-msvc` | `_MSC_VER` `_WIN32` |
+| `…-windows-musl` | `__GNUC__` `_WIN32` — **no `__MINGW32__`** |
+
+So a musl C library on Windows cannot be named to clang, and must still be named
+by mcpp, because mcpp's name answers a different question: **which C library**,
+where LLVM's answers **which object ABI**. Both are needed and they are not the
+same string.
+
 ## Custom Targets
 
 A triple outside mcpp's table needs an explicit section, which is also how a

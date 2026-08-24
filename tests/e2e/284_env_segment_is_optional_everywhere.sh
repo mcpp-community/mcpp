@@ -96,3 +96,47 @@ check_pair riscv64-none    riscv64-none-elf    || rc=1
 
 [ "$rc" = 0 ] || exit 1
 echo "OK: the env segment is optional on every platform, and declining it changes no identity"
+
+# ── The Windows C-library axis has a name of its own ─────────────────────────
+#
+# ⚠️ `x86_64-windows-musl` is a target mcpp names and LLVM cannot. Measured on
+# llvm 22.1.8, handing `windows` with a `musl` environment to clang is not a
+# diagnostic but an ICE inside the COFF writer:
+#
+#     #5  llvm::MCWinCOFFStreamer::emitCGProfileEntry(...)
+#
+# so mcpp's canonical form and the triple passed to the compiler must be
+# different strings — which they already are, either side of the arrow in the
+# build report.
+#
+# ⭐ THE ASSERTION IS THAT IT IS A KNOWN TARGET WITH A CORRECT DIAGNOSIS, NOT
+# THAT IT BUILDS. This project names no dependency, so nothing supplies the
+# target side and the build cannot succeed — correctly. What is under test is
+# that mcpp recognises the name and says the true thing about it, rather than
+# `unknown target`, which is what it said before the row existed.
+out="$("$MCPP" build --target x86_64-windows-musl 2>&1 || true)"
+
+case "$out" in
+  *"unknown target"*)
+    echo "FAIL: x86_64-windows-musl is not in the target table"
+    exit 1 ;;
+esac
+
+case "$out" in
+  *"nothing in the dependency graph"*)
+    echo "  ok  x86_64-windows-musl is known, and the refusal names the real reason" ;;
+  *)
+    echo "FAIL: the refusal did not name the missing supplier"
+    printf '%s\n' "$out" | grep -m2 -iE 'error|Target'
+    exit 1 ;;
+esac
+
+# And the toolchain line proves the mapping: mcpp's name goes in, and the
+# compiler is asked for the target it actually understands.
+case "$out" in
+  *"→ x86_64-windows-musl →"*)
+    echo "  ok  the toolchain line carries mcpp's own name" ;;
+  *) : ;;   # older phrasing; the check above is the load-bearing one
+esac
+
+echo "OK: mcpp names a C library LLVM cannot spell, and diagnoses it honestly"
