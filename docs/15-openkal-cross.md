@@ -150,6 +150,35 @@ runner  = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
 firmware mode to use are board facts, and an engine that guesses one is an
 engine a different board has to fight.
 
+### The Source Is The Same, The Program Is Not
+
+"The same source" is a claim about the toolchain and the standard library, and
+it holds: `import std` works, the C++ runtime is the one the graph supplied, and
+no `#if` distinguishes the targets. It is not a claim that any given program
+builds for any given target, and the specification is explicit about why.
+
+A bare-metal backend provides some interfaces and not others. `openkal-opensbi`
+provides `abort`, `stream`, `memory`, `env` and `time`; it provides no
+filesystem and no tasks, because the machine has none. Clause 6.1 makes that
+absence a link-time fact:
+
+> An interface that an implementation does not provide is absent as a link-time
+> definition, and a consumer that uses it fails to link.
+
+A capability word therefore answers a narrower question than it first appears
+to. It says how an implementation behaves *within an interface it provides* —
+whether names are compared case-sensitively, what the granularity of a clock is.
+Whether the interface exists at all is answered before that, by the dependency
+graph, and failing that by the linker.
+
+The distinction is easy to lose, because the query is an inline function over a
+data object, so a program that merely asks whether a filesystem exists takes the
+address of `kal_fs_props` and fails to link with no filesystem call anywhere in
+it. Defining that word as zero in the backend removes the error and is the one
+remedy the clause forbids: the program then proceeds past the point the linker
+existed to stop it at. It was tried, published as `openkal-opensbi@0.1.3`, and
+retracted.
+
 ### Two Routes To A Bare x86_64 Machine
 
 An x86_64 machine with no operating system is reached in two different ways, and

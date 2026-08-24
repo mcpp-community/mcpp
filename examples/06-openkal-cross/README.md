@@ -1,6 +1,6 @@
 # 06 — One Source, Several Machines
 
-A program that asks each machine what it is, built for four targets from any
+A program that asks each machine what it is, built for three targets from any
 host without being edited.
 
 ```bash
@@ -8,7 +8,6 @@ mcpp run                                  # this machine
 mcpp build --target x86_64-linux          # Linux,   from any host
 mcpp build --target aarch64-macos         # macOS,   from any host
 mcpp build --target x86_64-windows-gnu    # Windows, from any host
-mcpp run   --target riscv64-none-elf      # no operating system at all
 ```
 
 `src/main.cpp` contains no preprocessor directive and no branch on a target
@@ -66,11 +65,41 @@ runtime that links successfully whether or not it works: a program whose
 unwinder is absent still builds, and fails only when something is thrown.
 Running a destructor during the unwind separates the two.
 
-## Bare Metal
+## What This Program Does Not Ask
 
-`riscv64-none-elf` has no operating system beneath it. The `[target]` section
-declares the zero-libc tier and names the emulator, because which machine model
-and which firmware mode to use are board facts rather than defaults:
+A capability word says how an implementation behaves **within an interface it
+provides**. Whether it provides the interface at all is a different question,
+and the specification answers it earlier and by other means:
+
+| Time | Mechanism | Question |
+|---|---|---|
+| dependency resolution | the package declares what it provides | may this program be built against this implementation |
+| link | an undefined symbol | was an interface used that the implementation does not provide |
+| run | a capability word | how does this implementation behave within an interface it provides |
+
+So this program may ask a filesystem how it compares names, and may not ask a
+machine whether it has a filesystem. Building it for `riscv64-none-elf`, whose
+backend implements `abort`, `stream`, `memory`, `env` and `time` and nothing
+else, produces:
+
+```
+ld.lld: error: undefined symbol: kal_fs_props
+>>> referenced by fs.cppm:136
+>>>               obj/main.o:(kal::fs::properties@openkal.fs())
+```
+
+The reference comes from the question rather than from any filesystem call, and
+the error is clause 6.1 working: "an interface that an implementation does not
+provide is absent as a link-time definition, and a consumer that uses it fails
+to link." Defining the word as zero in the backend was tried, and it is the one
+thing the clause forbids — the program then proceeds past the point the linker
+existed to stop it at.
+
+## What A Bare-Metal Project Writes Instead
+
+A different program, in a different directory, asking only what that machine
+provides. Two things must be declared, both properties of the board rather than
+defaults:
 
 ```toml
 [target.riscv64-none-elf]
@@ -79,21 +108,9 @@ runner  = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
            "-no-reboot", "-bios", "default", "-kernel"]
 ```
 
-The emulator is named without a path, and must stay that way: committing an
-absolute path puts one machine's layout into a file every other machine reads.
-
-⚠️ This target requires `openkal-opensbi` at a version that defines every
-capability word. Earlier versions omit the ones that read zero, and a program
-that merely asks whether a filesystem exists then fails to link:
-
-```
-ld.lld: error: undefined symbol: kal_fs_props
->>> referenced by fs.cppm:136
->>>               obj/main.o:(kal::fs::properties@openkal.fs())
-```
-
-The reference comes from the question rather than from any filesystem call. See
-`mcpplibs/openkal-opensbi#2`.
+`sysroot = ""` selects the zero-libc tier. The emulator is named without a path,
+and must stay that way: committing an absolute path puts one machine's layout
+into a file every other machine reads.
 
 ## Bare Metal On x86
 
@@ -108,9 +125,7 @@ triple, so it needs its own. See `mcpplibs/openkal-uefi`.
 A **kernel** has no firmware services to call. Its target is `x86_64-none-elf`,
 the zero-libc tier, entered at its own `_start`, reaching hardware directly.
 There is no platform interface beneath it to depend on; what such a program
-builds on is `mcpplibs/openarch`, the architecture-mechanism layer. The program
-in this directory would not run there, because it asks a platform interface
-questions and there is none.
+builds on is `mcpplibs/openarch`, the architecture-mechanism layer.
 
 Both routes are described in
 [docs/15 — Cross-Compilation Over openkal](../../docs/15-openkal-cross.md).

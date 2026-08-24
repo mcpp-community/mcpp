@@ -1,14 +1,13 @@
-// One source, four machines, and a program that asks each of them what it is.
+// One source, three machines, and a program that asks each of them what it is.
 //
 //     mcpp run                                  this machine
 //     mcpp build --target x86_64-linux          Linux,   any host
 //     mcpp build --target aarch64-macos         macOS,   any host
 //     mcpp build --target x86_64-windows        Windows, any host
-//     mcpp build --target riscv64-none-elf      no operating system at all
 //
 // Nothing below is conditional on a platform. There is no preprocessor
 // directive in this file, and no branch on a target name. What differs between
-// the four builds is which packages the dependency graph resolved, and the
+// the three builds is which packages the dependency graph resolved, and the
 // only trace of that difference in the source is that the program ASKS about
 // capabilities instead of assuming them.
 //
@@ -19,6 +18,17 @@
 // exercises a different layer of the target side, and so that a build which
 // silently reached the host's own libraries instead of the resolved ones would
 // answer differently.
+//
+// ⚠️ WHAT IS ASKED HERE AND WHAT IS NOT.
+//
+// A capability word says how an implementation behaves WITHIN an interface it
+// provides. Whether it provides the interface at all is a different question,
+// answered earlier and by something else: the dependency graph, and failing
+// that the linker. So this file may ask a filesystem how it compares names, and
+// may not ask a machine whether it has a filesystem — on one that does not,
+// `kal::fs::properties()` is an undefined symbol, and that is clause 6.1 of the
+// specification working rather than failing. A program for such a machine is a
+// different program, and the README says what it writes instead.
 
 import std;
 
@@ -81,9 +91,9 @@ int main() {
     // ── The platform interface ──────────────────────────────────────────────
     //
     // A preopened directory is the only filesystem root a program is given on a
-    // capability-oriented platform, and a count of zero is a complete answer
-    // rather than an error: a bare-metal target has no filesystem, and this
-    // program is expected to run there too.
+    // capability-oriented platform. The count is a property of an implementation
+    // that HAS a filesystem — how many roots it handed over — and not a way of
+    // discovering whether there is one.
     facts.push_back({"preopened directories",
                      std::format("{}", kal::fs::preopen_count())});
     facts.push_back({"case-sensitive paths",
@@ -111,9 +121,11 @@ int main() {
 
     // ── Concurrency ─────────────────────────────────────────────────────────
     //
-    // Reported rather than used. A program that spawns a thread on a machine
-    // with one core and no scheduler does not fail to compile; it fails to
-    // return. Asking first is the difference.
+    // Reported rather than used. Every implementation reached here provides
+    // `openkal.task`; what varies is whether its scheduler preempts and whether
+    // anything runs in parallel. A program that spawns a thread without asking
+    // does not fail to compile on a machine with one core and a cooperative
+    // scheduler; it fails to return.
     facts.push_back({"preemptive scheduling",
                      yes_no(kal::task::has(kal::task::preemptive))});
     facts.push_back({"parallel execution",
@@ -138,7 +150,7 @@ int main() {
     // ── Output ──────────────────────────────────────────────────────────────
     //
     // One column width for every row, computed rather than hard-coded, so that
-    // the output of the four builds can be compared line by line.
+    // the output of the three builds can be compared line by line.
     std::size_t width = 0;
     for (const auto& f : facts) width = std::max(width, f.subject.size());
 
