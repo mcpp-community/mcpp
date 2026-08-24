@@ -559,19 +559,39 @@ inline std::string format_layers(const TargetSide& ts, bool verbose) {
     // the status verb: the caller's status line right-aligns a verb in twelve
     // columns and follows it with one space.
     constexpr std::string_view kIndent = "             ";
+    const std::pair<std::string_view, const Layer&> rows[] = {
+        { "compiler",         ts.compiler         },
+        { "compiler-runtime", ts.compilerRuntime  },
+        { "kernel-abi",       ts.kernelAbi        },
+        { "c-abi",            ts.cAbi             },
+        { "c++-abi",          ts.cxx              },
+    };
+
+    // ⚠️ WHETHER THE STACK IS SHOWN AT ALL IS DECIDED BEFORE ANY ROW IS
+    // WRITTEN, AND THE FIRST VERSION DECIDED IT PER ROW.
+    //
+    // An absent layer is a statement rather than a gap, so it belongs in a
+    // report that is showing the stack and nowhere else. Asking "has anything
+    // been printed yet" made that depend on ORDER: a bare-metal build has an
+    // absent `kernel-abi` above a prebuilt `c-abi`, so the statement was
+    // swallowed while the line below it printed. Two passes, and the question
+    // is asked once.
+    const bool showing = verbose || std::any_of(
+        std::begin(rows), std::end(rows), [](auto const& r) {
+            return !r.second.absent() && r.second.origin != Origin::Payload;
+        });
+    if (!showing) return {};
+
     std::string out;
-    auto line = [&](std::string_view label, const Layer& l) {
-        if (!verbose && l.origin == Origin::Payload) return;
+    for (auto const& [label, l] : rows) {
+        if (!verbose && l.origin == Origin::Payload) continue;
         if (l.absent()) {
-            // An absent layer is a statement, so it prints — but only where the
-            // reader is already being shown the stack.
-            if (verbose || !out.empty())
-                out += std::format("{}{:<17} —\n", kIndent, label);
-            return;
+            out += std::format("{}{:<17} —\n", kIndent, label);
+            continue;
         }
         std::string suffix = l.subset ? ", subset" : "";
         // One column layout whether or not an implementation is named, so the
-        // five rows read as a table rather than as five sentences.
+        // rows read as a table rather than as a list of sentences.
         if (l.impl.empty())
             out += std::format("{}{:<17} {:<14} ({}{})\n", kIndent, label,
                                l.interfaceName, origin_name(l.origin), suffix);
@@ -579,12 +599,7 @@ inline std::string format_layers(const TargetSide& ts, bool verbose) {
             out += std::format("{}{:<17} {:<14} ({}, {}{})\n", kIndent, label,
                                l.interfaceName, l.impl, origin_name(l.origin),
                                suffix);
-    };
-    line("compiler",         ts.compiler);
-    line("compiler-runtime", ts.compilerRuntime);
-    line("kernel-abi",       ts.kernelAbi);
-    line("c-abi",            ts.cAbi);
-    line("c++-abi",          ts.cxx);
+    }
     return out;
 }
 

@@ -299,6 +299,22 @@ TEST(TargetSideReport, VerbosePrintsAllFiveIncludingThePayloadOnes) {
         EXPECT_NE(text.find(label), std::string::npos) << label;
 }
 
+// An absent layer is a statement, and whether the stack is shown at all must not
+// depend on where that statement sits among the rows. A bare-metal build has an
+// absent kernel interface ABOVE a prebuilt C library; deciding per row swallowed
+// the first and printed the second.
+TEST(TargetSideReport, AnAbsentLayerAboveAPrintedOneIsStillPrinted) {
+    ts::Inputs in;
+    in.llvmTriple         = "riscv64-none-elf";
+    in.freestandingTarget = true;
+    in.compilerFamily     = "llvm";
+    in.sysrootXpkg        = "xim:picolibc-riscv@1.8.12";
+    auto text = ts::format_report(ts::resolve(in), "riscv64-none-elf");
+    EXPECT_NE(text.find("c-abi"), std::string::npos) << text;
+    EXPECT_NE(text.find("kernel-abi"), std::string::npos)
+        << "the kernel interface is absent, which is the information:\n" << text;
+}
+
 TEST(TargetSideReport, OnlyTheLayersThatCameFromElsewhereEarnALine) {
     auto in = payload_linux();
     in.compilerFamily = "llvm";
