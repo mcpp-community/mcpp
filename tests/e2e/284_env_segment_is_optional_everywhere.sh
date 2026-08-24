@@ -131,12 +131,37 @@ case "$out" in
     exit 1 ;;
 esac
 
-# And the toolchain line proves the mapping: mcpp's name goes in, and the
-# compiler is asked for the target it actually understands.
+# ⭐ AND THE PIN IS ASSERTED, BECAUSE THE PIN IS WHAT THE ROW IS FOR.
+#
+# The row names `llvm` not as a preference but because a global default of gcc
+# would otherwise be carried onto a target no gcc can emit, and the error would
+# then be about a missing C++ frontend in a musl-gcc payload — a true sentence
+# about the wrong subject. So the toolchain line has to show the pin winning,
+# and it has to show mcpp's own name being what was asked for:
+#
+#     Resolved llvm@22.1.8 → x86_64-windows-musl → …/xim-x-llvm/22.1.8/bin/clang++
+#              target default for x86_64-windows-musl, replacing your gcc@16.1.0
+#
+# ⚠️ THIS WAS WRITTEN WITH AN `*) : ;;` FALLBACK, WHICH MADE IT UNFAILABLE.
+# A branch that accepts anything is not a check, and this file's whole subject
+# is a name that used to be accepted by nothing. The fallback is gone; if the
+# report's phrasing changes, this is meant to go red and be updated.
 case "$out" in
   *"→ x86_64-windows-musl →"*)
     echo "  ok  the toolchain line carries mcpp's own name" ;;
-  *) : ;;   # older phrasing; the check above is the load-bearing one
+  *)
+    echo "FAIL: the toolchain line did not carry mcpp's own name for the target"
+    printf '%s\n' "$out" | grep -m2 -i 'resolv'
+    exit 1 ;;
+esac
+
+case "$out" in
+  *"llvm@22.1.8"*)
+    echo "  ok  the row's pin decided the toolchain" ;;
+  *)
+    echo "FAIL: the target table's pin did not decide the toolchain"
+    printf '%s\n' "$out" | grep -m2 -i 'resolv'
+    exit 1 ;;
 esac
 
 echo "OK: mcpp names a C library LLVM cannot spell, and diagnoses it honestly"
