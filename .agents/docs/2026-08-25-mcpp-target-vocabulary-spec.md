@@ -330,3 +330,105 @@ aarch64-macos-???      ← 没有这个写法
 
 `ucrt` 如何进表、反向映射的规则、裸机去 `-elf` 的时机 —— 见 §5。
 它们与 6.1 的差别是:那些是**尚未测**,这一条是**测过了并决定不做**。
+
+---
+
+## 7. 验收:`aarch64-linux-musl` 端到端可用
+
+⭐ **一套目标词表的价值只有在第二个架构上才被检验。** x86_64 上「按 OS 分」
+与「按架构分」给出相同答案,所以判据用错了轴也看不出来。本节把
+`aarch64-linux-musl` 定为规范的**验收目标**,并记录逐层剥出的三处缺陷。
+
+来源:mcpp-community/mcpp#492 的使用者报告 —— 他需要同时出 x86_64 与
+aarch64 两份静态二进制。
+
+### 7.1 ✅ 已修:x87 例程按 OS 排,而它是架构的性质
+
+```
+truncxfhf2.c:13:36: error: unknown type name 'xf_float'; did you mean 'tf_float'?
+```
+
+`*xf*.c` / `*xc3.c` 是 x87 80 位 `long double` 例程。排除它们的两处条件是
+`cfg(os = "macos")` 与 `cfg(os = "none")`,而 aarch64-linux 落进
+`cfg(os = "linux")` 那一支,没有排除。
+
+⚠️ **两处此前都是对的**:那两个 OS 今天恰好都蕴含「非 x87 架构」。
+并且 linux 段**不排除**也是对的 —— x86 上 `long double` 真是 x87 80 位,
+`-lgcc` 拿掉后 `ld.lld: error: undefined symbol: __mulxc3` 会真的出现。
+**两个方向都会坏,错的只是轴。**
+
+修法:`cfg(all(os = "linux", not(arch = "x86_64")))`。
+已提 mcpplibs/openkal-llvm-runtime#5。
+
+### 7.2 ⚠️ 未修:`--no-default-config` 本身改变目标特性
+
+x87 修好之后撞到下一处:
+
+```
+error: precompiled file 'std.pcm' was compiled with the target feature '-fmv'
+       but the current translation unit is not
+error: current translation unit is compiled with the target feature
+       '+outline-atomics' but the precompiled file 'std.pcm' was not
+```
+
+⭐ **根因不是三元组不一致**(两边都是 `aarch64-unknown-linux-musl`,
+已从缓存里那条命令逐字核对),也不是缓存串目标(键含 `target_triple`,
+两个 aarch64 条目正确地按工具链分开)。实测:
+
+```
+clang --target=aarch64-unknown-linux-musl                       →  +outline-atomics
+clang --target=aarch64-unknown-linux-musl --no-default-config   →  -fmv
+```
+
+**`--no-default-config` 自己就改变目标特性。** std 模块带它编
+(包的 `std-module-flags` 要求),普通 TU 不带。
+
+⚠️ 而那个 flag 是**必需的**,包里的注释写明理由:载荷的 `clang++.cfg`
+无条件塞进宿主 C 库的头,不排除它,模块会在 `<wchar.h>` 上失败。
+
+于是这是**两个都成立的要求相撞**:
+
+| 要求 | 来自 | 为什么必需 |
+|---|---|---|
+| std 模块要 `--no-default-config` | 包 | 否则宿主 C 库的头混进来 |
+| std 模块与 TU 的目标特性必须一致 | clang | 否则 BMI 加载失败 |
+
+⚠️ **x86_64 上 `--no-default-config` 不改变特性,所以这对矛盾从未暴露。**
+aarch64 是第一个让它现形的目标 —— 这正是「第二个架构才检验抽象」的又一例。
+
+**候选修法**(均未实测,按代价排):
+
+1. 让普通 TU 也带 `--no-default-config` —— 一致了,但会去掉 cfg 里
+   其它可能承重的东西,影响面未知
+2. 把 std 模块的目标特性显式钉住(`-fno-mv` 或对称地补 `+outline-atomics`)
+   —— 治标,且要为每个架构维护一张表
+3. ⭐ 让 `stdModuleTargetFlags` 把「驱动配置对特性的影响」也算进去 ——
+   即由引擎查询一次 `clang -### --no-default-config` 与不带的差集,
+   把差异补给消费侧。治本,但要新增一次编译器探测
+
+**验收判据**:`mcpp build --target aarch64-linux-musl` 在一个依赖
+`openkal-llvm-runtime` 的工程上产出 aarch64 静态 ELF,且 `file` 报
+`ELF 64-bit LSB executable, ARM aarch64, statically linked`。
+
+### 7.3 ⚠️ 未查:`aarch64-linux-gnu` 仍是 `planned`
+
+使用者撞到的原话是:
+
+```
+error: target 'aarch64-linux-gnu' is registered but not yet supported (planned)
+```
+
+⭐ 而他真正需要的是 **`aarch64-linux-musl`**(静态二进制),那一行是
+`verified`。⚠️ 这是一处**文档/诊断问题而非能力问题**:诊断说了「没发布
+工具链」,没说「你要的那个目标另有拼法」。`did_you_mean` 今天只对拼错的
+名字生效,不对「档位不够但同类目标可用」的情况生效。
+
+### 7.4 使用者报告里另外两条,未查
+
+- **`std::random_device` 不可用** —— payload 的 `__config_site` 两份都写
+  `_LIBCPP_HAS_RANDOM_DEVICE 0`,他本地改成 1 即修好 5 个编译错。
+  ⚠️ 静态 musl 二进制读 `/dev/urandom` 应当可行,所以 `generic` 那份为何
+  也关着需要单独查。
+- **GMF 里 `#include <标准头>` 的 TU 编不过** —— `clang++.cfg` 把宿主
+  libc++ 与 glibc 的 `-isystem` 塞进来,与 openkal 的 musl libc++ 头混合。
+  ⭐ 与 7.2 是**同一个 cfg** 引起的两个症状,应一并考虑。
