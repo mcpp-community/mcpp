@@ -110,10 +110,14 @@ inline void warn_unknown_xpkg_keys(const mcpp::manifest::Manifest& dm,
     // every other unknown key, and it is the only response that lets the
     // vocabulary grow.
     for (auto const& cap : dm.unknownCapabilities) {
+        auto why = mcpp::targetside::parse_capability(cap);
         mcpp::ui::warning(std::format(
-            "dependency '{}': `{}` names a target-side layer this mcpp does not "
-            "know — ignored. A newer mcpp may resolve it; this build proceeds "
-            "without that layer.", depLabel, cap));
+            "dependency '{}': {}\n"
+            "       Ignored, and this build proceeds without that layer. "
+            "A newer mcpp may resolve it.",
+            depLabel,
+            why ? std::format("`{}` names no capability mcpp knows.", cap)
+                : why.error()));
     }
     for (auto const& key : dm.xpkgUnknownKeys) {
         auto suggestion = mcpp::manifest::closest_known_xpkg_key(key);
@@ -5602,10 +5606,18 @@ prepare_build(bool print_fingerprint,
             // every package in the graph.
             for (auto const& cap : pkg.manifest.unknownCapabilities) {
                 if (&pkg == &packages.front()) continue;   // root: already refused
+                // The same text the root's refusal carries, including the list
+                // of layers that do exist. A warning that says less than the
+                // error it replaced would be a worse diagnostic wearing a
+                // milder severity.
+                auto why = tsd::parse_capability(cap);
                 mcpp::ui::warning(std::format(
-                    "package '{}': `{}` names a target-side layer this mcpp does "
-                    "not know — ignored. A newer mcpp may resolve it; this build "
-                    "proceeds without that layer.", pkgId, cap));
+                    "package '{}': {}\n"
+                    "       Ignored, and this build proceeds without that layer. "
+                    "A newer mcpp may resolve it.",
+                    pkgId,
+                    why ? std::format("`{}` names no capability mcpp knows.", cap)
+                        : why.error()));
             }
 
             for (auto const& entry : pkg.manifest.provides) {
