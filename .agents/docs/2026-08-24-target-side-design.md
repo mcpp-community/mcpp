@@ -1,3 +1,10 @@
+> ✅ **本文已实现并发布**,见 mcpp 2026.8.24.2 与 2026.8.24.3。
+> 规范化陈述在 `docs/spec/target-side.md`(SPEC-002),使用者文档在
+> `docs/14-target-side.md` 与 `docs/15-openkal-cross.md`。
+> **落地过程中被推翻的判断记在**
+> `2026-08-24-graph-target-side-optimization-plan.md` §17,读设计之后值得一读:
+> 其中三条是本文没有问对的问题,一条是把规范的机制当成了缺陷。
+
 # mcpp 目标侧设计
 
 2026-08-24 · 设计定稿
