@@ -327,6 +327,25 @@ TEST(TargetSideReport, OnlyTheLayersThatCameFromElsewhereEarnALine) {
 
 // ── The five layers ──────────────────────────────────────────────────────────
 
+// A payload's C library is named by the triple's env field where the triple has
+// one. macOS has none, and falling back to `glibc` named a library that does not
+// exist on the platform — invisible while the report printed only the layers a
+// build had something to say about.
+TEST(TargetSideResolve, ThePayloadCLibraryIsNamedForItsPlatform) {
+    auto mac = payload_linux();
+    mac.targetOs  = "macos";
+    mac.targetEnv = "";
+    EXPECT_EQ(ts::resolve(mac).cAbi.interfaceName, "libSystem");
+
+    auto win = payload_linux();
+    win.targetOs  = "windows";
+    win.targetEnv = "";
+    EXPECT_EQ(ts::resolve(win).cAbi.interfaceName, "ucrt");
+
+    EXPECT_EQ(ts::resolve(payload_linux()).cAbi.interfaceName, "gnu")
+        << "a triple that states its env keeps stating it";
+}
+
 TEST(TargetSideResolve, TheCompilerIsALayerAndItIsAlwaysThePayloads) {
     auto in = payload_linux();
     in.compilerFamily  = "gcc";

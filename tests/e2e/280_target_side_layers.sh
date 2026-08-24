@@ -25,8 +25,12 @@ out="$("$MCPP" build 2>&1)"
 target_line="$(printf '%s\n' "$out" | grep -E '^\s+Target ' || true)"
 [[ -n "$target_line" ]] || { echo "no Target line at all:"; echo "$out"; exit 1; }
 
+# ⚠️ The labels go through `grep -F`, not a pattern. `c++-abi` in an extended
+# regular expression is a repetition operator applied to a repetition operator,
+# which GNU grep tolerates and BSD grep rejects outright — measured on macOS:
+#     grep: repetition-operator operand invalid
 for label in compiler compiler-runtime kernel-abi c-abi c++-abi; do
-    if printf '%s\n' "$out" | grep -qE "^\s+${label}\s"; then
+    if printf '%s\n' "$out" | grep -qF "             ${label} "; then
         echo "a zero-configuration build printed the '$label' layer, which came"
         echo "from the compiler payload and is therefore not news:"
         echo "$out"
@@ -38,7 +42,7 @@ done
 "$MCPP" clean > /dev/null 2>&1
 verbose="$(MCPP_VERBOSE=1 "$MCPP" build 2>&1)"
 for label in compiler compiler-runtime kernel-abi c-abi c++-abi; do
-    printf '%s\n' "$verbose" | grep -qE "^\s+${label}\s" || {
+    printf '%s\n' "$verbose" | grep -qF "             ${label} " || {
         echo "MCPP_VERBOSE did not print the '$label' layer:"
         printf '%s\n' "$verbose" | grep -A 8 'Target '
         exit 1
@@ -48,9 +52,9 @@ done
 # The compiler layer reports the FAMILY, which is the spelling every toolchain
 # spec and every capability uses. `clang` is the driver's name and would make a
 # requirement written as `mcpp:compiler=llvm` unsatisfiable.
-printf '%s\n' "$verbose" | grep -qE "^\s+compiler\s+(llvm|gcc|msvc)\s" || {
+printf '%s\n' "$verbose" | grep -qE "compiler +(llvm|gcc|msvc) " || {
     echo "the compiler layer must report a family, not a driver name:"
-    printf '%s\n' "$verbose" | grep -E '^\s+compiler\s'
+    printf '%s\n' "$verbose" | grep -F "             compiler "
     exit 1
 }
 

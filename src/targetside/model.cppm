@@ -320,6 +320,29 @@ struct Inputs {
     std::string payloadCxxInterface;            // "libc++" / "libstdc++" / "MSVC STL"
 };
 
+// The name of the C library a compiler payload carries for a target.
+//
+// ⚠️ THE TRIPLE'S ENV FIELD ANSWERS THIS ONLY WHERE THE TRIPLE HAS ONE, AND
+// FALLING BACK TO `glibc` NAMED A LIBRARY THAT DOES NOT EXIST ON THE PLATFORM.
+// Measured on macOS, where the canonical triple carries no env segment:
+//
+//   c-abi             glibc          (payload)
+//
+// The value was invisible while the report printed only three layers on a
+// build that had something to say; showing the whole stack made a wrong label
+// into a wrong statement.
+//
+// ⚠️ These names are PAYLOAD facts, which is why they may be written here at
+// all: mcpp ships those payloads and knows what is inside them. What must never
+// be written here is what a PACKAGE supplies — that is the difference the
+// reserved-capability grammar exists to keep.
+inline std::string payload_libc_name(std::string_view os, std::string_view env) {
+    if (!env.empty()) return std::string(env);
+    if (os == "macos")   return "libSystem";
+    if (os == "windows") return "ucrt";
+    return "glibc";
+}
+
 // An xpkg reference is `<namespace>:<name>[@<version>]`; the interface a reader
 // wants to see is the name, not the whole address.
 inline std::string xpkg_interface(std::string_view ref) {
@@ -376,7 +399,7 @@ inline TargetSide resolve(const Inputs& in) {
     else if (in.freestandingTarget)
         ts.cAbi = { Origin::None, {}, {}, false };
     else
-        ts.cAbi = { Origin::Payload, in.targetEnv.empty() ? "glibc" : in.targetEnv,
+        ts.cAbi = { Origin::Payload, payload_libc_name(in.targetOs, in.targetEnv),
                     in.payloadLibcRef, false };
 
     // c++ — no field of the triple, because it sits above the ABI.
