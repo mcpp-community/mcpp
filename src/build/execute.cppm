@@ -1115,7 +1115,26 @@ export int build_run_target(const std::optional<std::string>& targetName,
     auto ctx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
                              /*extraTargets=*/{}, ov);
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
-    if (auto rc = run_build_plan(*ctx, /*verbose=*/false, no_cache); rc != 0)
+    // ⚠️ `target_triple` IS PASSED, AND OMITTING IT WROTE A CROSS BUILD INTO
+    // THE HOST'S CACHE SLOT.
+    //
+    // The last argument becomes the cache entry's `[target=]` key. `cmd_build`
+    // supplies it at both of its call sites; this one did not, so
+    // `mcpp run --target X` built X correctly and then recorded the result as a
+    // HOST build. `try_fast_run` matches on `targetTriple.empty()`, so the very
+    // next bare `mcpp run` took that entry and exec'd the cross artifact
+    // directly — no build of the host target, and no runner:
+    //
+    //     $ mcpp run --target riscv64-none-elf   # correct, under qemu
+    //     $ mcpp run
+    //          Running `target/riscv64-none-elf/…/bin/openkal-same-source`
+    //     exit=1
+    //
+    // The comment on `try_fast_run` records the same defect reached through the
+    // MANIFEST's default target, and guards that door alone. This is the other
+    // door: the flag. Measured on 2026.8.24.3, from a clean `target/`.
+    if (auto rc = run_build_plan(*ctx, /*verbose=*/false, no_cache, target_triple);
+        rc != 0)
         return rc;
 
     // Find binary target

@@ -3,6 +3,37 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.24.4] — 2026-08-24
+
+### 修复
+
+- **⚠️ `mcpp run --target X` 把 X 的构建记进了宿主的槽。**
+
+  损害不在这条命令 —— 它构建得完全正确 —— 而在下一条:
+
+  ```
+  $ mcpp run --target riscv64-none-elf        # 正确,经 qemu 跑起来
+  $ mcpp run
+       Running `target/riscv64-none-elf/…/bin/openkal-same-source`
+  exit=1
+  ```
+
+  缓存文件里逐字可见:一次 riscv 交叉构建写下的键是 `[target=]`。空键的
+  含义是「为这台机器构建」,而这正是快路径允许自己**直接 exec 缓存产物**
+  的唯一依据。裸的 `mcpp run` 命中它,跳过整个 prepare_build —— 因此既没有
+  构建宿主目标,也没有解析 runner —— 把另一个目标的二进制在本机执行了。
+
+  真因是一个丢掉的实参:`build_run_target` 收到 `target_triple`、用它建好
+  overrides 并正确交叉构建,唯独没把它传给写缓存的那一步。`mcpp build` 的
+  两个调用点都传了。
+
+  ⭐ 同一个缺陷有**两条到达路径**:目标写在清单的 `[build] target` 里(已守),
+  以及目标来自 `--target` flag(本次)。修好一条不会暴露另一条。
+
+  ⚠️ 回归测试的判据是**路径而不是退出码**。异架构产物 exec 会失败,所以
+  只看退出码的测试在那里因错误的理由通过,**而在同架构上完全测不到** ——
+  后者更危险:用户不会看到崩溃,只会拿到一个 musl 产物冒充宿主产物。
+
 ## [2026.8.24.3] — 2026-08-24
 
 ### 修复
