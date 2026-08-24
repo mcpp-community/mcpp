@@ -129,6 +129,26 @@ GNU ABI, `msvc` for PE with Microsoft's — and both are compatible with more th
 one C library. The mismatch report is therefore scoped to platforms where the
 segment names a C library.
 
+Silence is right as a diagnostic and insufficient as a report. A reader sees
+
+```
+Target x86_64-windows-gnu → x86_64-w64-windows-gnu
+       c-abi   musl   (openkal-musl@0.3.3, graph)
+```
+
+finds no row called `gnu`, and maps it to the nearest thing that resembles a C
+library name. The row it belongs to is `c++-abi`. Where the segment does not
+name a C library, the report therefore names what it does:
+
+```
+Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu names the object ABI, not a C library)
+```
+
+The segment carries a different axis on each platform — the C library on Linux,
+the object ABI on Windows, the object format where there is no operating system
+— and one value records which, rather than a boolean recording only whether the
+first case holds.
+
 ## Bare Metal
 
 A target with no operating system is the same model with the platform layer

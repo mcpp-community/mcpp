@@ -64,6 +64,32 @@ constexpr std::string_view origin_name(Origin o) {
     }
     return "none";
 }
+// What the env segment of a target triple names — an axis that changes with the
+// OS, which is why the triple alone cannot answer "is `gnu` a C library".
+//
+//   linux    `gnu` / `musl`     the C LIBRARY
+//   windows  `gnu` / `msvc`     the OBJECT ABI (both allow several C libraries)
+//   none     `elf`              the OBJECT FORMAT
+//
+// The distinction is load-bearing twice over. It decides whether a mismatch
+// between the segment and the resolved C library is a contradiction worth
+// reporting, and — when it is NOT — it lets the report say what the segment
+// does mean, so that a reader looking at `x86_64-windows-gnu` above a line
+// reading `c-abi musl` is not left to work out which row `gnu` belongs to.
+enum class EnvAxis { Unknown, CLibrary, ObjectAbi, ObjectFormat };
+
+// The noun for an axis, as it appears in the report. Empty for `Unknown`,
+// because a report that cannot name the axis says nothing rather than guessing.
+inline std::string_view env_axis_noun(EnvAxis a) {
+    switch (a) {
+        case EnvAxis::CLibrary:     return "a C library";
+        case EnvAxis::ObjectAbi:    return "the object ABI";
+        case EnvAxis::ObjectFormat: return "the object format";
+        case EnvAxis::Unknown:      break;
+    }
+    return {};
+}
+
 
 // ── One layer of the target side ─────────────────────────────────────────────
 //
@@ -132,6 +158,7 @@ struct TargetSide {
     // bearing and belongs in the report.
     std::string llvmTriple;
 
+
     Layer compiler;
     Layer compilerRuntime;
     Layer kernelAbi;
@@ -146,9 +173,9 @@ struct TargetSide {
     // the request turns out to describe nothing. Built by the caller, which is
     // the only place that still holds mcpp's own triple.
     std::string requestFreeTarget;
-    // Whether the env segment names a C library on this platform. See the
-    // member of the same name on `Inputs`.
-    bool envNamesCAbi = false;
+    // What the env segment names on this platform. See the member of the same
+    // name on `Inputs`.
+    EnvAxis envAxis = EnvAxis::Unknown;
 
     // The single question the five former derivation sites actually asked.
     //
@@ -326,17 +353,20 @@ struct Inputs {
     std::string requestedCAbi;
     // The same target spelled without that segment, for the suggestion.
     std::string requestFreeTarget;
-    // ⚠️ WHETHER THE ENV SEGMENT NAMES A C LIBRARY ON THIS PLATFORM, WHICH IS
-    // NOT TRUE EVERYWHERE AND WAS ASSUMED TO BE.
+    // ⚠️ WHAT THE ENV SEGMENT NAMES ON THIS PLATFORM. It is a different axis
+    // per OS, and a boolean here was a lossy encoding of that.
     //
-    // The segment carries a different axis depending on the OS. On Linux it
-    // names the C library — `gnu` is glibc, `musl` is musl — which is the case
-    // the request check was written for. On Windows it names the OBJECT ABI:
-    // `gnu` is PE with the GNU ABI and `msvc` is PE with Microsoft's, and both
-    // are compatible with more than one C library. Reporting a Windows build as
-    // "asking for the `gnu` C ABI" describes an axis the name never addressed,
-    // and the correction it suggested named a target that does not exist.
-    bool envNamesCAbi = false;
+    // On Linux the segment names the C library — `gnu` is glibc, `musl` is musl
+    // — which is the case the request check was written for. On Windows it
+    // names the OBJECT ABI: `gnu` is PE with the GNU ABI and `msvc` is PE with
+    // Microsoft's, and both are compatible with more than one C library. On a
+    // target with no operating system it names the object FORMAT.
+    //
+    // Reporting a Windows build as "asking for the `gnu` C ABI" describes an
+    // axis the name never addressed, and the correction it suggested named a
+    // target that does not exist. Knowing which axis it IS lets the report say
+    // so instead of merely staying silent.
+    EnvAxis envAxis = EnvAxis::Unknown;
 
     std::optional<Provider> compilerRuntime;
     std::optional<Provider> kernelAbi;
@@ -393,7 +423,7 @@ inline TargetSide resolve(const Inputs& in) {
     ts.llvmTriple    = in.llvmTriple;
     ts.requestedCAbi     = in.requestedCAbi;
     ts.requestFreeTarget = in.requestFreeTarget;
-    ts.envNamesCAbi      = in.envNamesCAbi;
+    ts.envAxis           = in.envAxis;
 
     // compiler — always a payload, never a package.
     if (!in.compilerFamily.empty())
@@ -592,7 +622,7 @@ check_requirements(const TargetSide& ts, std::span<const Requirement> reqs) {
 // first. Telling someone their target name is wrong is only useful once there
 // is a right one to give them.
 inline std::optional<std::string> check_request(const TargetSide& ts) {
-    if (!ts.envNamesCAbi) return std::nullopt;
+    if (ts.envAxis != EnvAxis::CLibrary) return std::nullopt;
     if (ts.requestedCAbi.empty()) return std::nullopt;
     if (ts.cAbi.absent()) return std::nullopt;
     if (ts.cAbi.interfaceName == ts.requestedCAbi) return std::nullopt;
@@ -714,8 +744,36 @@ inline std::string format_report(const TargetSide& ts, std::string_view targetNa
     // status line's own padding, and the layer lines below are indented to sit
     // under it.
     std::string head = (ts.llvmTriple.empty() || ts.llvmTriple == targetName)
-        ? std::format("{}\n", targetName)
-        : std::format("{} → {}\n", targetName, ts.llvmTriple);
+        ? std::format("{}", targetName)
+        : std::format("{} → {}", targetName, ts.llvmTriple);
+
+    // ⚠️ WHEN THE SEGMENT IS NOT A C LIBRARY, SAY WHAT IT IS — HERE, WHERE THE
+    // READER IS LOOKING AT IT.
+    //
+    // `x86_64-windows-gnu` above a line reading `c-abi musl` is not a
+    // contradiction: on Windows `gnu` names the object ABI, and the row it
+    // actually corresponds to is `c++-abi`. But the report contains no row
+    // called `gnu`, so a reader maps it to the nearest thing that looks like a
+    // C library name and concludes the build disagrees with itself. Measured
+    // twice, by the same reader, on two different days.
+    //
+    // A warning would be wrong — it would fire on every legitimate MinGW build
+    // and would say something false. A noun on the head line is not a
+    // diagnostic; it is the missing half of a name the report was already
+    // showing.
+    //
+    // Scoped to the case that actually reads as a contradiction: the segment is
+    // present, it does not name a C library here, and the C library came from
+    // somewhere the segment did not choose. A payload C library IS selected by
+    // the triple, so `gnu → ucrt` follows visibly and needs no gloss.
+    if (ts.envAxis != EnvAxis::Unknown && ts.envAxis != EnvAxis::CLibrary
+        && !ts.requestedCAbi.empty()
+        && !ts.cAbi.absent() && ts.cAbi.fromGraph()
+        && ts.cAbi.interfaceName != ts.requestedCAbi) {
+        head += std::format("   ({} names {}, not a C library)",
+                            ts.requestedCAbi, env_axis_noun(ts.envAxis));
+    }
+    head += '\n';
 
     auto body = format_layers(ts, verbose);
     if (!body.empty() && body.back() == '\n') body.pop_back();

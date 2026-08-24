@@ -110,6 +110,25 @@ mcpp build --target x86_64-linux
 `msvc` 是 PE 加微软的 —— 而两者都与不止一种 C 库相容。
 因此该项报出被限定在该段命名 C 库的那些平台上。
 
+⭐ 沉默作为**诊断**是对的,作为**报告**是不够的。读者看到
+
+```
+Target x86_64-windows-gnu → x86_64-w64-windows-gnu
+       c-abi   musl   (openkal-musl@0.3.3, graph)
+```
+
+在其中找不到一行叫 `gnu`,于是把它映到最像 C 库名字的那一行。
+它真正对应的是 `c++-abi`。因此在该段不命名 C 库的平台上,
+报告直接说出它命名的是什么:
+
+```
+Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu names the object ABI, not a C library)
+```
+
+该段在每个平台上承载不同的轴 —— Linux 上是 C 库,Windows 上是对象 ABI,
+没有操作系统时是对象格式 —— 因此记录的是**它是哪一个**,
+而不是一个只记录「是否为第一种」的布尔。
+
 ## 裸机
 
 一个没有操作系统的目标,是同一个模型,只是平台层由固件而非内核供给。
