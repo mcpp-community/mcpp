@@ -221,3 +221,82 @@ jobs:
           bash tests/matrix/compare.sh measured-graph.tsv \
                tests/matrix/expected.tsv ${{ matrix.host }} graph || fail=1
           [ "$fail" = 0 ] || exit 1
+
+  coverage:
+    # ⭐⭐ THE DENOMINATOR. Every check above is per host, and no per-host check
+    # can notice a host that never ran.
+    #
+    # ⚠️ Each `scan` job compares the rows for ITS OWN host, so deleting a host
+    # from the matrix above silently retires every expectation the table holds
+    # for it: nothing measures those rows, nothing compares them, and the
+    # workflow is green. This job is the one place that reads the expected table
+    # as a whole and requires the run to have covered it.
+    #
+    # It runs even when a scan failed (`always()`), because "which hosts were
+    # covered" is a different question from "did they pass" — and a run where a
+    # host is missing entirely should say so in those words rather than leaving
+    # a reader to infer it from a job list.
+    name: coverage (every host the table names was scanned)
+    needs: scan
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: matrix-*
+          path: measured
+      - name: Every host in expected.tsv produced rows
+        run: |
+          set -euo pipefail
+          want=$(awk -F'\t' 'NF>=11 {print $2}' tests/matrix/expected.tsv | sort -u)
+          [ -n "$want" ] || { echo "::error::expected.tsv names no host at all"; exit 1; }
+          got=$(cat measured/*/measured.tsv 2>/dev/null \
+                | awk -F'\t' 'NF>=11 {print $2}' | sort -u)
+          echo "expected hosts: $(echo $want)"
+          echo "scanned hosts:  $(echo ${got:-<none>})"
+          fail=0
+          for h in $want; do
+            printf '%s\n' "$got" | grep -qx "$h" || {
+              echo "::error::expected.tsv holds rows for '$h', and no scan produced any"
+              fail=1
+            }
+          done
+          # ⭐ AND THE OTHER DIRECTION. A host that scanned but has no rows in the
+          # table is a new build host nobody declared expectations for — the
+          # per-host compare already reds on it, but saying it here names the
+          # cause rather than listing 40 unexplained cells.
+          for h in $got; do
+            printf '%s\n' "$want" | grep -qx "$h" || {
+              echo "::error::'$h' was scanned and the expected table does not mention it"
+              echo "        add its rows to tests/matrix/expected.tsv from this run's artifact"
+              fail=1
+            }
+          done
+          [ "$fail" = 0 ] || exit 1
+          echo "OK: every build host the table names was scanned, and no other"
+
+      - name: The build hosts mcpp ships for are the ones scanned
+        run: |
+          set -euo pipefail
+          # ⚠️⚠️ THE TABLE AND THE RELEASE MUST NAME THE SAME SET. A host that
+          # gets a published binary and no scan is a host whose target table is
+          # a claim nobody checked; a host that is scanned and never shipped is
+          # coverage spent on a machine no user has.
+          #
+          # Derived from release.yml's asset names rather than restated here, so
+          # adding a fifth host to the release fails this step until the matrix
+          # covers it.
+          ship=$(grep -oE 'mcpp-\$\{?[A-Za-z_{}. ]*\}?-(linux|macosx|windows)-(x86_64|aarch64|arm64)' \
+                   .github/workflows/release.yml \
+                 | sed -E 's/.*-(linux|macosx|windows)-/\1-/' \
+                 | sed 's/^macosx-/macos-/' | sort -u)
+          scanned=$(awk -F'\t' 'NF>=11 {print $2}' tests/matrix/expected.tsv | sort -u)
+          echo "release publishes: $(echo $ship)"
+          echo "matrix declares:   $(echo $scanned)"
+          if [ "$ship" != "$scanned" ]; then
+            echo "::error::the set of build hosts mcpp publishes and the set the target matrix declares differ"
+            diff <(printf '%s\n' "$ship") <(printf '%s\n' "$scanned") | sed 's/^/        /' || true
+            exit 1
+          fi
+          echo "OK: $(printf '%s\n' "$ship" | wc -l) build hosts, published and scanned"
