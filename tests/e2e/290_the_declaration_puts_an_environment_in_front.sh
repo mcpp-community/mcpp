@@ -4,7 +4,7 @@
 #
 # ⚠️ IT USED TO FIND WHATEVER THE MACHINE HAD, AND `command -v` CANNOT TELL THE
 # DIFFERENCE. Measured 2026-08-25 with a build program that printed its own
-# PATH: mcpp's own environment appeared nowhere in it, and
+# PATH: the project's declared environment appeared nowhere in it, and
 # `command -v qemu-system-riscv64` returned a shim that answers, when run,
 #
 #     [error] qemu-system-riscv64 is not installed in this subos (_)
@@ -13,11 +13,21 @@
 # environment the build could not reach.
 #
 # ⭐⭐ THIS FILE ASSERTS BOTH DIRECTIONS, BECAUSE ONLY ONE OF THEM IS THE
-# FEATURE. Prepending unconditionally would have passed the first half and is
-# the design that was withdrawn: a shared directory in front of every project
-# makes what a build sees depend on what else was installed on that machine.
-# The declaration is what puts it there, so a project that declares nothing
-# must come out byte-for-byte unchanged.
+# FEATURE. Prepending unconditionally would pass the "declared" half, and that
+# is the design that was withdrawn: a shared directory in front of every
+# project makes what a build sees depend on what else was installed on that
+# machine. The declaration is what puts it there, so a project that declares
+# nothing must come out unchanged.
+#
+# ⚠️⚠️ AND "UNCHANGED" IS COMPARED AGAINST THE INHERITED VALUE, NOT AGAINST A
+# PATTERN. The first version of this half rejected a first entry matching
+# `*/subos/*/bin` — and CI's own PATH already begins with one, because the
+# runner activates an xlings environment to get mcpp at all:
+#
+#     MCPP: /home/runner/.xlings/subos/default/bin/mcpp
+#
+# so it reported mcpp prepending something that was already there. A test for
+# "did not change it" has to hold the before and the after side by side.
 set -e
 
 MCPP="${MCPP:-mcpp}"
@@ -31,26 +41,15 @@ probe='import std;
 
 int main() {
     const char* p = std::getenv("PATH");
-    std::string_view path(p ? p : "");
-    std::string_view first;
-    for (auto part : std::views::split(path, '"'"':'"'"')) {
-        first = std::string_view(part);
-        break;
-    }
-    std::println("PROBE_FIRST={}", first);
-    std::println("PROBE_ENTRIES={}", std::ranges::count(path, '"'"':'"'"') + 1);
+    std::println("PROBE_PATH={}", p ? p : "");
     return 1;
 }'
 
-# Returns "<first>|<entries>", or nothing if the program did not run.
+# Echoes the child's PATH, or nothing if the build program did not run.
 run_probe() {
-    local dir="$1"
-    local out
+    local dir="$1" out
     out="$(cd "$dir" && "$MCPP" build 2>&1 || true)"
-    local f e
-    f="$(printf '%s\n' "$out" | grep -oP 'PROBE_FIRST=\K.*' | head -1)"
-    e="$(printf '%s\n' "$out" | grep -oP 'PROBE_ENTRIES=\K[0-9]+' | head -1)"
-    [ -n "$f" ] && printf '%s|%s\n' "$f" "$e"
+    printf '%s\n' "$out" | grep -oP 'PROBE_PATH=\K.*' | head -1
 }
 
 make_project() {
@@ -62,6 +61,10 @@ make_project() {
     printf '%s\n' "$probe" > "$dir/build.mcpp"
 }
 
+# The value every assertion below is relative to. mcpp inherits this shell's
+# PATH, so this is exactly what an unchanged child would report.
+inherited="$PATH"
+
 # ── Half one: a project that declared nothing ─────────────────────────────
 make_project "$work/plain" ""
 plain="$(run_probe "$work/plain")"
@@ -69,16 +72,15 @@ if [ -z "$plain" ]; then
     echo "SKIP: the build program did not report — it may not have run here"
     exit 0
 fi
-plain_first="${plain%%|*}"
 
-case "$plain_first" in
-  */subos/*/bin)
-    echo "FAIL: a project that declared no environment got one in front anyway"
-    echo "        got: $plain_first"
-    exit 1 ;;
-  *)
-    echo "  ok  a project that declares nothing keeps the PATH it was given" ;;
-esac
+if [ "$plain" = "$inherited" ]; then
+    echo "  ok  a project that declares nothing gets the PATH mcpp was started with"
+else
+    echo "FAIL: a project that declared no environment had its PATH changed"
+    diff <(printf '%s\n' "$inherited" | tr ':' '\n') \
+         <(printf '%s\n' "$plain"     | tr ':' '\n') | head -6 | sed 's/^/        /'
+    exit 1
+fi
 
 # ── Half two: the same project, declaring one ─────────────────────────────
 #
@@ -93,25 +95,31 @@ if [ -z "$declared" ]; then
     echo "SKIP: the declaring project's build program did not report"
     exit 0
 fi
-declared_first="${declared%%|*}"
-declared_entries="${declared##*|}"
 
-case "$declared_first" in
-  */subos/*/bin)
-    echo "  ok  a project that declares one gets it first: $declared_first" ;;
-  *)
-    echo "FAIL: the declared environment is not at the front of PATH"
-    echo "        got: $declared_first"
-    exit 1 ;;
+if [ "$declared" = "$inherited" ]; then
+    echo "FAIL: the declaration changed nothing — the environment is not in front"
+    echo "        PATH: $(printf '%s' "$declared" | cut -c1-100)…"
+    exit 1
+fi
+
+first="${declared%%:*}"
+case "$first" in
+  */subos/*/bin) echo "  ok  the declared environment is first: $first" ;;
+  *) echo "FAIL: something other than a subos was prepended"
+     echo "        got: $first"
+     exit 1 ;;
 esac
 
-# ⭐ AND THE HOST IS STILL BEHIND IT. One entry means the inherited PATH was
-# replaced rather than extended, which would break every build program that
-# calls `git`, `python3` or a shell.
-if [ "${declared_entries:-1}" -gt 1 ]; then
-    echo "  ok  the inherited PATH survives behind it ($declared_entries entries)"
+# ⭐ AND THE INHERITED VALUE IS STILL THERE, WHOLE, BEHIND IT. Prefixing means
+# the rest is untouched; a test that only checked the first entry would pass on
+# a PATH that had thrown everything else away, which would break every build
+# program that calls `git`, `python3` or a shell.
+if [ "${declared#*:}" = "$inherited" ]; then
+    echo "  ok  and the inherited PATH follows it, unchanged"
 else
-    echo "FAIL: PATH was replaced, not prefixed — only $declared_entries entry"
+    echo "FAIL: the inherited PATH was not preserved behind the prefix"
+    diff <(printf '%s\n' "$inherited"      | tr ':' '\n') \
+         <(printf '%s\n' "${declared#*:}"  | tr ':' '\n') | head -6 | sed 's/^/        /'
     exit 1
 fi
 
