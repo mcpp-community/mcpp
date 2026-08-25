@@ -38,7 +38,35 @@ build_and_read() {   # extra args… → sets $report and $ldflags
     report="$("$MCPP" build "$@" 2>&1 || true)"
     local f; f="$(find target -name build.ninja 2>/dev/null | head -1)"
     ldflags=""
-    [ -n "$f" ] && ldflags="$(grep -m1 '^ldflags' "$f" || true)"
+    if [ -n "$f" ]; then
+        ldflags="$(grep -m1 '^ldflags' "$f" || true)"
+    fi
+    # ⚠️⚠️ AN EXPLICIT `return 0`, BECAUSE THIS FUNCTION IS ALLOWED TO FIND
+    # NOTHING — AND THE SAME LINE HAS NOW BEEN WRONG TWICE.
+    #
+    # Written as `[ -n "$f" ] && ldflags=…`, the whole chain returns 1 when
+    # there is no build.ninja, that becomes the function's exit status, and
+    # under `set -e` the CALLER dies — silently, mid-script, for exactly the
+    # case the function exists to handle.
+    #
+    # ⚠️ Measured on windows-2022: relation one printed both its `ok` lines and
+    # the script then stopped. No relation two, no conclusion, no error. The
+    # graph build produced no link line there, which is a legitimate outcome
+    # and should have reached the `SKIP` branch twenty lines below.
+    #
+    # ⭐ 295's `ldflags_of` had the identical line and was fixed with the
+    # identical comment earlier in the same session. Fixing one instance of a
+    # shape is not fixing the shape: the sibling was three files away and
+    # nobody looked.
+    #
+    # ⚠️ AND THE SHAPE IS NARROWER THAN IT LOOKS — measured, not reasoned. A
+    # FUNCTION ending in `[ … ] && …` kills its caller; the same list ending a
+    # `{ …; } > file` group does NOT, because errexit exempts a `&&` list whose
+    # failure came from a non-final component. So 290/292/293, which all end
+    # such a group with `[ -n "$2" ] && printf …` and are all called with an
+    # empty second argument, are correct as written. Searching for the text and
+    # "fixing" those three would have changed three working tests.
+    return 0
 }
 
 # The `c-abi` row's origin and the package it names, from the report.
