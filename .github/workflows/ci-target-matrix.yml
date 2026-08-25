@@ -91,13 +91,40 @@ jobs:
             }
             echo "  ok  $1"
           }
+          # ⚠️⚠️ ONE DECLARED EXEMPTION, AND IT IS DECLARED RATHER THAN INFERRED.
+          #
+          # 297 is about a bare-metal row refusing a compiler that cannot emit
+          # the target, so it has to DECLARE a non-llvm compiler. Every toolchain
+          # mcpp installs on macOS is llvm — there is no gcc payload and no MSVC
+          # — so on that host the convention/capability distinction has nothing
+          # to distinguish, and the test says so and exits 0.
+          #
+          # ⭐ THE EXEMPTION IS PER HOST AND SPELLED OUT. Accepting "a skip is a
+          # conclusion" everywhere would let a genuinely broken test pass on all
+          # three; the whole reason this step exists is that an exit code cannot
+          # tell a pass from a skip.
+          check_or_declared_skip() {
+            grep -qF "$2" "$1".log && { echo "  ok  $1"; return 0; }
+            grep -q '^SKIP:' "$1".log && {
+              echo "  ok  $1 (declared skip on ${{ matrix.host }}: $(grep -m1 '^SKIP:' "$1".log))"
+              return 0
+            }
+            echo "::error::$1 neither concluded nor declared a skip on ${{ matrix.host }}"
+            tail -6 "$1".log 2>/dev/null | sed 's/^/        /'
+            return 1
+          }
           fail=0
           check 295_naming_the_host_target_changes_nothing.sh \
             "OK: naming the host's own target changes nothing" || fail=1
           check 296_what_the_report_names_is_what_the_link_line_uses.sh \
             "OK: what the report names is what the link line uses" || fail=1
-          check 297_a_capability_pin_is_not_a_preference.sh \
-            "OK: a capability pin is not a preference" || fail=1
+          if [ "${{ matrix.host }}" = macos ]; then
+            check_or_declared_skip 297_a_capability_pin_is_not_a_preference.sh \
+              "OK: a capability pin is not a preference" || fail=1
+          else
+            check 297_a_capability_pin_is_not_a_preference.sh \
+              "OK: a capability pin is not a preference" || fail=1
+          fi
           check 298_overriding_a_convention_requires_replacing_it.sh \
             "OK: a convention may be overridden, but not merely removed" || fail=1
           [ "$fail" = 0 ] || exit 1

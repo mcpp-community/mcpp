@@ -64,23 +64,37 @@ for tc in gcc llvm; do
     [ -n "$ldflags" ] || { echo "  SKIP  $tc@$ver produced no link line"; continue; }
     checked=$((checked+1))
 
-    # ⭐ THE PAYLOAD IS NAMED BY THE REPORT, so the assertion does not hardcode
-    # one. Whatever `xim-x-…` directory the C library came from must appear.
-    pkg="$(printf '%s\n' "$report" | awk 'match($0, /xim-x-[a-z0-9-]+/) {
-               print substr($0, RSTART, RLENGTH) }' | sort -u | head -20)"
-    hit=0
-    for p in $pkg; do
-        printf '%s\n' "$ldflags" | grep -q -- "$p" && hit=1 && break
-    done
-    # A C library whose headers and libs live inside the compiler payload needs
-    # no separate entry — that is the gcc cross-driver arrangement — so the
-    # criterion is that SOMETHING from mcpp's own store is on the line.
-    if [ "$hit" = 1 ] || printf '%s\n' "$ldflags" | grep -q 'registry/data/xpkgs'; then
-        echo "  ok  $tc@$ver: the payload the report names is on the link line"
+    # ⭐⭐ THE QUERY NAMES THE DIRECTORY, AND THE LINK LINE MUST CONTAIN IT.
+    #
+    # `cLibrary.path` is what `resolve_link_model` decided — the same function
+    # the flag emitter calls — so this asserts that what mcpp SAYS it will pass
+    # is what mcpp passes. Nothing is hardcoded and nothing is per-platform.
+    #
+    # ⚠️ THE FIRST VERSION HARDCODED `registry/data/xpkgs` AND WAS WRONG ON
+    # macOS. Measured on macos-14:
+    #
+    #     c-abi     libSystem   (payload)
+    #     ldflags = -isysroot /Applications/Xcode_15.4.app/…/MacOSX.sdk
+    #
+    # — and that is CORRECT. Darwin's C library is the SDK's libSystem, and the
+    # SDK belongs to the machine, not to a payload. The test was asserting a
+    # Linux arrangement and calling its absence a defect.
+    want="$("$MCPP" why toolchain --toolchain "$tc@$ver" --format json 2>/dev/null \
+            | jq -r '.data.cLibrary.path // ""')"
+    if [ -z "$want" ]; then
+        # ⚠️ EARNED: the query says mcpp passes no C-library path at all, which
+        # is the self-contained cross-driver arrangement (mingw g++ carries its
+        # own). There is nothing to look for, so there is nothing to assert.
+        echo "  SKIP  $tc@$ver: mcpp passes no C-library path for this target"
+        checked=$((checked-1))
+        continue
+    fi
+    if printf '%s\n' "$ldflags" | grep -qF -- "$want"; then
+        echo "  ok  $tc@$ver: the C library the query names is on the link line"
     else
-        echo "FAIL: $tc@$ver: report says c-abi is the payload's, link line has no payload path"
-        echo "        $line"
-        printf '        %s\n' "$(printf '%s' "$ldflags" | cut -c1-110)"
+        echo "FAIL: $tc@$ver: the query names a C library the link line does not use"
+        echo "        query:   $want"
+        printf '        ldflags: %s\n' "$(printf '%s' "$ldflags" | cut -c1-110)"
         fail=1
     fi
 done
