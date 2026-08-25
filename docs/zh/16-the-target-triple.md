@@ -311,6 +311,73 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 全部差别就在于用的是哪个 C 库。任何宿主都没有为它准备的载荷;它的系统只能来自依赖
 图,这正是 `toolchain list` 报的 `via dependency graph`。
 
+## 构建机是第三条轴
+
+上面两条轴 —— 用哪个编译器、C 库从哪来 —— 是工程做的选择。第三条不是:它是构建
+运行在哪台机器上,而它决定了**哪些行根本够得着**。
+
+`mcpp toolchain list` 只报告这台宿主够得着的行。Linux 上是目标表 14 行里的 12 行;
+`x86_64-windows-msvc` 与 `aarch64-macos` 缺席,而这是对的 —— MSVC 与 macOS SDK
+属于它们自己的机器,没有依赖能替代。
+
+### 规则,五行说完
+
+| 目标类别 | 哪些宿主服务它 | 为什么 |
+|---|---|---|
+| `*-linux-musl` | Linux(任意架构)、Windows(仅同架构) | musl 载荷是自足的 |
+| `*-linux-gnu` | Linux,且仅同架构 | 还需要本机架构的 `xim:glibc` / `xim:linux-headers` |
+| `x86_64-windows-gnu` | Linux、Windows | 一个身份,只在分发层按宿主分岔 |
+| `x86_64-windows-{msvc,musl}` | Windows | MSVC 是在机器上被找到的;没有 gcc 发得出 PE+musl |
+| `aarch64-macos` | macOS | SDK 是那台机器的 |
+| `*-none-elf` | 每一台 | clang 与 lld 按构造就是交叉编译器 |
+
+⚠️ **一行在这台宿主缺席,不等于这台宿主建不出它。** `host_can_serve` 给出的拒绝
+讲的是**载荷**,而依赖图可以改为供给系统 —— 这就是 `x86_64-windows-musl` 在 Linux
+上显示 `via dependency graph`、并且在那里真的产出 PE32+ 的原因。
+
+### 完整表格
+
+tier 与 pin 是行的属性,不随宿主变。三个宿主列是 `mcpp toolchain list` 在那里的报告。
+
+| target | tier | pin | linux | macOS | Windows |
+|---|---|---|---|---|---|
+| `x86_64-linux-gnu` | verified | — | installed | — | — |
+| `x86_64-linux-musl` | verified | `gcc@16.1.0` | installed | — | installed |
+| `aarch64-linux-musl` | verified | `gcc@16.1.0` | installed | — | — |
+| `riscv64-linux-musl` | planned | — | planned | planned | planned |
+| `aarch64-linux-gnu` | planned | — | planned | planned | planned |
+| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | installed | — | installed |
+| `x86_64-windows-musl` | preview | `llvm@22.1.8` | **via dependency graph** | — | installed |
+| `x86_64-windows-msvc` | verified | — | — | — | installed |
+| `aarch64-macos` | verified | — | — | installed | — |
+| `x86_64-macos` | planned | — | planned | planned | planned |
+| `riscv64-none-elf` | verified | `llvm@22.1.8` | available | available | available |
+| `riscv32-none-elf` | verified | `llvm@22.1.8` | available | available | available |
+| `aarch64-none-elf` | preview | `llvm@22.1.8` | available | available | available |
+| `x86_64-none-elf` | preview | `llvm@22.1.8` | available | available | available |
+
+linux 一列是实测的。另外两列由上面的规则给出,并由下面这套 CI 扫描确认。
+
+### 而 CI 在三台上测它
+
+`.github/workflows/ci-target-matrix.yml` 跑在三台 runner 上,而每台把什么解析成
+自己的目标,与它的名字给人的印象并不一致:
+
+| runner | 宿主列 | 它解析出的宿主目标 |
+|---|---|---|
+| `ubuntu-24.04` | linux | `x86_64-unknown-linux-gnu` |
+| `macos-14` | macOS | `arm64-apple-darwin23.6.0` —— **ARM**,不是 x86_64 |
+| `windows-2022` | Windows | `x86_64-pc-windows-msvc` |
+
+每台扫描它列出的每一行,两种体系各一遍 —— 只有载荷,以及图里加上
+`openkal-musl` + `openkal-llvm-runtime` —— 结果与
+[`tests/matrix/expected.tsv`](../../tests/matrix/expected.tsv) 比对。
+
+⚠️ **格数不是常数。** 它取决于那台机器装了什么,而同一台 runner 在相邻两轮里被
+观察到工具链不同。所以比对断言的是**扫描真的产出了行**、以及**期望表点名的每一行
+都被跑到**,而不是一个总数:一格因为载荷没被恢复而消失,与一格通过了,在退出码上
+没有区别。
+
 ## 自定义目标
 
 不在 mcpp 表内的三元组需要一个显式段落,而这也是一块板子声明

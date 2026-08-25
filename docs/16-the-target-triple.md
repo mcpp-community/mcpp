@@ -348,6 +348,80 @@ is in use. A payload for it does not exist on any host; its system can only come
 from a dependency graph, which is what `toolchain list` reports as
 `via dependency graph`.
 
+## The Build Host Is A Third Axis
+
+The two axes above — which compiler, and where the C library comes from — are
+choices a project makes. The third is not: it is the machine the build runs on,
+and it decides which rows are reachable at all.
+
+`mcpp toolchain list` reports only the rows this host can reach. On Linux that
+is 12 of the 14 rows in the target table; `x86_64-windows-msvc` and
+`aarch64-macos` are absent, and correctly so — MSVC and the macOS SDK belong to
+their own machines and no dependency substitutes for them.
+
+### The rule, in five lines
+
+| target class | which hosts serve it | why |
+|---|---|---|
+| `*-linux-musl` | Linux (any arch), Windows (same arch only) | the musl payloads are self-contained |
+| `*-linux-gnu` | Linux, same arch only | additionally needs the host-native `xim:glibc` / `xim:linux-headers` |
+| `x86_64-windows-gnu` | Linux, Windows | one identity, host-split at the distribution layer |
+| `x86_64-windows-{msvc,musl}` | Windows | MSVC is located on the machine; no gcc emits PE+musl |
+| `aarch64-macos` | macOS | the SDK is the machine's |
+| `*-none-elf` | every host | clang and lld are cross-compilers by construction |
+
+⚠️ **A row absent from this host is not a row that cannot be built here.** The
+refusal `host_can_serve` produces is about payloads, and a dependency graph can
+supply the system instead — which is why `x86_64-windows-musl` reads
+`via dependency graph` on Linux and builds a real PE32+ there.
+
+### The full table
+
+Tier and pin are properties of the row and do not vary by host. The three host
+columns are what `mcpp toolchain list` reports there.
+
+| target | tier | pin | linux | macOS | Windows |
+|---|---|---|---|---|---|
+| `x86_64-linux-gnu` | verified | — | installed | — | — |
+| `x86_64-linux-musl` | verified | `gcc@16.1.0` | installed | — | installed |
+| `aarch64-linux-musl` | verified | `gcc@16.1.0` | installed | — | — |
+| `riscv64-linux-musl` | planned | — | planned | planned | planned |
+| `aarch64-linux-gnu` | planned | — | planned | planned | planned |
+| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | installed | — | installed |
+| `x86_64-windows-musl` | preview | `llvm@22.1.8` | **via dependency graph** | — | installed |
+| `x86_64-windows-msvc` | verified | — | — | — | installed |
+| `aarch64-macos` | verified | — | — | installed | — |
+| `x86_64-macos` | planned | — | planned | planned | planned |
+| `riscv64-none-elf` | verified | `llvm@22.1.8` | available | available | available |
+| `riscv32-none-elf` | verified | `llvm@22.1.8` | available | available | available |
+| `aarch64-none-elf` | preview | `llvm@22.1.8` | available | available | available |
+| `x86_64-none-elf` | preview | `llvm@22.1.8` | available | available | available |
+
+The linux column is measured. The other two follow from the rule above and are
+confirmed by the CI scan described next.
+
+### And CI measures it, on all three
+
+`.github/workflows/ci-target-matrix.yml` runs on three runners, and what each
+one resolves as its own target is not what its name suggests:
+
+| runner | host column | host target it resolves |
+|---|---|---|
+| `ubuntu-24.04` | linux | `x86_64-unknown-linux-gnu` |
+| `macos-14` | macOS | `arm64-apple-darwin23.6.0` — **ARM**, not x86_64 |
+| `windows-2022` | Windows | `x86_64-pc-windows-msvc` |
+
+Each runner scans every row it lists, under both systems — the payload alone,
+and again with `openkal-musl` + `openkal-llvm-runtime` in the graph — and the
+result is compared against [`tests/matrix/expected.tsv`](../tests/matrix/expected.tsv).
+
+⚠️ **The cell count is not a constant.** It follows from what that machine has
+installed, and the same runner has been observed with different toolchains on
+consecutive runs. That is why the comparison asserts *the scan produced rows*
+and *every row the expected table names was reached*, rather than a total: a
+cell that vanishes because a payload was not restored is indistinguishable from
+a cell that passed, by exit code alone.
+
 ## Custom Targets
 
 A triple outside mcpp's table needs an explicit section, which is also how a
