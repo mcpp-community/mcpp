@@ -801,8 +801,24 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
     // user-explicit declaration. Adding a second way in would give the two
     // spellings different provenance, and provenance is exactly what the
     // convention/capability distinction turns on.
+    //
+    // ⚠️ RESTORED AFTERWARDS. This is a library function; leaving a declared
+    // toolchain in the environment would make the NEXT thing this process does
+    // inherit a compiler nobody asked it for.
+    // ⭐ `ScopedEnv` already exists for exactly this and restores the prior
+    // value, including "there was none".
+    std::optional<mcpp::platform::env::ScopedEnv> tcGuard;
     if (!tcSpec.empty())
-        mcpp::platform::env::set("MCPP_TOOLCHAIN", std::string(tcSpec));
+        tcGuard.emplace("MCPP_TOOLCHAIN", std::string(tcSpec));
+
+    // ⚠️⚠️ CLEARED BEFORE THE CALL, NOT ONLY READ AFTER IT.
+    //
+    // The sink is per-thread and `prepare_build` recurses for tool
+    // provisioning. Reading it afterwards without clearing first means a code
+    // recorded by an EARLIER query — or by a nested sub-build of a previous
+    // one — can be reported as this query's reason. A stale reason is worse
+    // than none: it is a specific, plausible, wrong answer.
+    (void)mcpp::build::refusal::take();
 
     // ⚠️⚠️ STDOUT BELONGS TO THE ENVELOPE, AND `prepare_build` NARRATES.
     //
