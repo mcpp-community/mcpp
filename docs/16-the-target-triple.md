@@ -262,6 +262,51 @@ by mcpp, because mcpp's name answers a different question: **which C library**,
 where LLVM's answers **which object ABI**. Both are needed and they are not the
 same string.
 
+## The Compiler And The C Library Are Two Axes
+
+A target names a machine. It does not name who compiles for it, and it does not
+name where its C library comes from — those are two further choices, and the
+same target string means a different build under each.
+
+⚠️ **"From the payload" is not one payload.** It is whichever payload the
+chosen compiler brings, and gcc and clang bring them differently: gcc has one
+payload per target, with a triple-prefixed driver, while one `clang++` emits
+every target it was built with. Measured on one host, one source:
+
+| toolchain | target | driver that ran | c-abi | c++-abi |
+|---|---|---|---|---|
+| `gcc@16.1.0` | `x86_64-linux-musl` | `xim-x-musl-gcc/…/x86_64-linux-musl-g++` | musl | libstdc++ |
+| `gcc@16.1.0` | `x86_64-windows-gnu` | `xim-x-mingw-cross-gcc/…/x86_64-w64-mingw32-g++` | gnu | libstdc++ |
+| `llvm@22.1.8` | `x86_64-linux-musl` | `xim-x-llvm/…/clang++` | musl | libc++ |
+| `llvm@22.1.8` | `x86_64-windows-gnu` | `xim-x-llvm/…/clang++` | gnu | libc++ |
+
+clang does not reach into gcc's payload for a C library, and gcc does not reach
+into clang's. Each brings its own.
+
+### And a dependency graph replaces that axis entirely
+
+The same three targets, with `openkal-musl` and `openkal-llvm-runtime` in the
+graph — measured the same way:
+
+| target | kernel-abi | c-abi | c++-abi |
+|---|---|---|---|
+| `x86_64-linux-musl` | openkal (openkal-linux, graph) | musl (graph) | libc++ (graph) |
+| `x86_64-windows-gnu` | openkal (openkal-windows, graph) | musl (graph) | libc++ (graph) |
+| `x86_64-windows-musl` | openkal (openkal-windows, graph) | musl (graph) | libc++ (graph) |
+
+⚠️ **Look at `x86_64-windows-gnu` in both tables.** Its C library is `gnu` — the
+MinGW CRT — when a payload supplies it, and `musl` when the graph does. One
+target string, two different C libraries, and until 2026.8.24.6 mcpp had no way
+to say which: the same `--target x86_64-windows-gnu` produced artefacts that
+differed by 16.7× in size and named entirely different DLLs.
+
+That is why `x86_64-windows-musl` exists as a separate name. It maps to the same
+LLVM triple as `x86_64-windows-gnu` — LLVM cannot spell it — so the two are
+indistinguishable to the compiler, and the whole difference is which C library
+is in use. A payload for it does not exist on any host; its system can only come
+from a dependency graph, which is what `toolchain list` reports as
+`via dependency graph`.
+
 ## Custom Targets
 
 A triple outside mcpp's table needs an explicit section, which is also how a
