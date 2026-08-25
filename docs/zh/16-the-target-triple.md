@@ -235,6 +235,44 @@ clang++ --target=x86_64-pc-windows-musl -c t.cpp
 因为 mcpp 的名字回答的是另一个问题:**C 库是谁**,而 LLVM 的名字回答
 **遵循哪套对象 ABI**。两者都需要,且不是同一个字符串。
 
+## 编译器与 C 库是两个轴
+
+目标命名的是一台机器。它不指定谁来编译,也不指定它的 C 库从哪来 —— 那是另外两个
+选择,而同一个目标字符串在每种选择下都是不同的构建。
+
+⚠️ **「来自载荷」不是某一份固定载荷**,而是所选编译器带来的那一份;gcc 与 clang
+带法不同:gcc 一个目标一份载荷、驱动带三元组前缀,而一个 `clang++` 打它构建时支持
+的每个目标。同一台宿主、同一份源码实测:
+
+| 工具链 | 目标 | 实际运行的驱动 | c-abi | c++-abi |
+|---|---|---|---|---|
+| `gcc@16.1.0` | `x86_64-linux-musl` | `xim-x-musl-gcc/…/x86_64-linux-musl-g++` | musl | libstdc++ |
+| `gcc@16.1.0` | `x86_64-windows-gnu` | `xim-x-mingw-cross-gcc/…/x86_64-w64-mingw32-g++` | gnu | libstdc++ |
+| `llvm@22.1.8` | `x86_64-linux-musl` | `xim-x-llvm/…/clang++` | musl | libc++ |
+| `llvm@22.1.8` | `x86_64-windows-gnu` | `xim-x-llvm/…/clang++` | gnu | libc++ |
+
+clang 不会去 gcc 的载荷里取 C 库,gcc 也不会去 clang 的载荷里取。各带各的。
+
+### 而依赖图会整个替换这一轴
+
+同样三个目标,图里有 `openkal-musl` 与 `openkal-llvm-runtime` —— 同法实测:
+
+| 目标 | kernel-abi | c-abi | c++-abi |
+|---|---|---|---|
+| `x86_64-linux-musl` | openkal(openkal-linux,图) | musl(图) | libc++(图) |
+| `x86_64-windows-gnu` | openkal(openkal-windows,图) | musl(图) | libc++(图) |
+| `x86_64-windows-musl` | openkal(openkal-windows,图) | musl(图) | libc++(图) |
+
+⚠️ **看两张表里的 `x86_64-windows-gnu`。** 载荷供给时它的 C 库是 `gnu`,即 MinGW
+CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 而 mcpp 在 2026.8.24.6
+之前无法说清是哪一个:同一条 `--target x86_64-windows-gnu` 产出的东西体积差 16.7
+倍、依赖的 DLL 完全不同。
+
+这就是 `x86_64-windows-musl` 作为独立名字存在的理由。它与 `x86_64-windows-gnu`
+映射到**同一个 LLVM 三元组** —— LLVM 拼不出它 —— 所以两者在编译器那一侧无法区分,
+全部差别就在于用的是哪个 C 库。任何宿主都没有为它准备的载荷;它的系统只能来自依赖
+图,这正是 `toolchain list` 报的 `via dependency graph`。
+
 ## 自定义目标
 
 不在 mcpp 表内的三元组需要一个显式段落,而这也是一块板子声明
