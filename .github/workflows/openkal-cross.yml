@@ -68,9 +68,16 @@ env:
   # (.github/tools/check_version_pins.sh) enforces the ones that exist and would
   # not know about a copy in this file.
   XLINGS_NON_INTERACTIVE: '1'
-  # The branch of the openkal packages this change is verified against. They
-  # move together with it; when they are on `main` this becomes `main`.
-  OPENKAL_BRANCH: feat/openkal-closure
+  # The branch of the openkal packages this change is verified against.
+  #
+  # ⚠️ IT WAS `feat/openkal-closure` UNTIL 2026-08-25, LONG AFTER THAT BRANCH
+  # MERGED. A fixed name here is a pin nobody is reminded to move: the comment
+  # said "when they are on `main` this becomes `main`" and the moment for that
+  # passed without anyone reading it again. Every run since was verifying this
+  # engine against a tree the ecosystem had left behind — and the two
+  # regressions found today both hid behind exactly this shape, a pin that
+  # keeps a check green by keeping it out of date.
+  OPENKAL_BRANCH: main
 
 jobs:
   build:
@@ -140,7 +147,19 @@ jobs:
       - name: The program — one source, three targets
         run: |
           set -euo pipefail
-          git clone --quiet --depth 1 -b "$OPENKAL_BRANCH" \
+          # ⚠️ THE SEVENTH CALL SITE. `git_clone_retry.sh` was written because a
+          # runner's DNS hiccup is not a red build, and its own note counts
+          # "six call sites, one failure mode" — this workflow was not among
+          # them, and the mode duly arrived here. Measured on this job,
+          # 2026-08-25:
+          #
+          #     fatal: unable to access '…/openkal-llvm-runtime/':
+          #            Could not resolve host: github.com
+          #
+          # One name that did not resolve ended a 120-minute job in its first
+          # minute, beside a real failure it had nothing to do with.
+          "$GITHUB_WORKSPACE/.github/tools/git_clone_retry.sh" \
+            --quiet --depth 1 -b "$OPENKAL_BRANCH" \
             https://github.com/mcpplibs/openkal-llvm-runtime "$RUNNER_TEMP/okl"
           cd "$RUNNER_TEMP/okl/examples/same-source"
           mkdir -p "$RUNNER_TEMP/out"
