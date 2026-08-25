@@ -555,7 +555,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // `mcpp.targetside` answers the question directly, after resolution, for
     // every layer separately. Reading it here means this site and the gate
     // cannot disagree, because there is nothing left to disagree about.
-    const bool graphTargetSide = plan.targetSide.system_from_graph();
+    // (The `system_from_graph` reading that stood here is gone: both of its
+    // former users ask about the C library, and one of them was getting a
+    // different answer than it needed. Leaving the name in scope would have
+    // left the wrong question one keystroke away.)
     // LLVM root of a clang-with-cfg toolchain — used by the macOS link
     // path below to locate libc++.a/libc++abi.a for staticStdlib.
     std::filesystem::path llvmRootForStdlib;
@@ -1229,7 +1232,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // dependency graph the compiler is an ordinary retargetable clang, and this
     // branch is one of three shaped by the HOST rather than by the target — see
     // the replacement below, which covers all three at once.
-    if (isMingwTc && !graphTargetSide) {
+    //
+    // ⚠️ THE SAME PREDICATE AS THE REPLACEMENT, BECAUSE THEY ARE COMPLEMENTARY.
+    // "covers all three at once" is only true while the two conditions are each
+    // other's negation; if this one said `system` and that one said `C library`,
+    // a mingw build whose kernel interface came from the graph and whose C
+    // library did not would enter neither, and emit no link line at all.
+    if (isMingwTc && !plan.targetSide.c_library_off_payload()) {
         // `-static` / `-static-libstdc++` now come from the contract table via
         // unit_ldflags (dist::Format::Pe) — the whole-link `-static` is what
         // "self-contained" means here, since the piecemeal recipe still leaves
@@ -1423,7 +1432,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // `-rpath` beside them (this host's payload directories — measured on a
     // Mach-O link as `-Wl,-rpath,…/lib/x86_64-unknown-linux-gnu`, which ld64
     // accepts and writes into the image), `payload_ld`, `atomic_ld`.
-    if (!isFreestandingTarget && graphTargetSide) {
+    //
+    // ⚠️ AND THE CONDITION IS THE C LIBRARY, NOT THE SYSTEM. Everything the
+    // replacement drops is a way of reaching the PAYLOAD's C library, so a
+    // build whose C library still comes from the payload must not enter here
+    // — however much of the rest of its target side the graph supplies. See
+    // `TargetSide::c_library_off_payload`, which records the shape this got
+    // wrong and what it cost.
+    if (!isFreestandingTarget && plan.targetSide.c_library_off_payload()) {
         // ⚠️ ASSEMBLED HERE RATHER THAN TAKEN FROM `link_toolchain_flags`,
         // BECAUSE THAT STRING IS ONLY POPULATED WHEN THE PAYLOAD HAS A CONFIG
         // FILE (`isClangWithCfg`). The Linux payload ships one and the Windows

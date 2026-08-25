@@ -194,6 +194,43 @@ struct TargetSide {
     bool system_from_graph() const {
         return kernelAbi.fromGraph() || cAbi.fromGraph();
     }
+
+    // ⚠️ AND THE C LIBRARY IS A SEPARATE QUESTION, WHICH THE ONE ABOVE WAS
+    // ANSWERING FOR IT AND GETTING WRONG.
+    //
+    // `system_from_graph` is an OR over two layers, and the link line's
+    // decision about the payload's C-library search paths depends on ONE of
+    // them. The two coincide in the arrangement they were written for — an
+    // openkal target takes both its kernel interface and its C library from
+    // the graph — and come apart in one that is just as ordinary:
+    //
+    //     [dependencies]
+    //     openkal-linux = { version = "0.5.4", features = ["standalone"] }
+    //
+    // A backend that implements openkal ON TOP OF Linux, linked by a program
+    // that still uses the payload's glibc. `kernelAbi.fromGraph()` is true,
+    // `cAbi` is the payload's, and the link side replaced `f.ld` — dropping
+    // the search paths for a C library it was still going to link. The
+    // driver asked for the startup files anyway and the linker had nowhere
+    // to look:
+    //
+    //     error: hermetic link check failed
+    //              crt1.o (bare name — the linker cannot resolve it)
+    //              crti.o (bare name — the linker cannot resolve it)
+    //              crtn.o (bare name — the linker cannot resolve it)
+    //
+    // ⚠️ THIS SHIPPED. It reached every conformance suite in the openkal
+    // ecosystem, because that shape is exactly how a backend is tested:
+    // openkal-linux, openkal-macos and openkal-windows all build their suite
+    // against the platform's own C library. Their CI was pinned to an older
+    // mcpp and so kept passing, which is why nothing said so until the pin
+    // moved.
+    //
+    // Absent counts as not-from-the-payload: a target with no C-ABI layer has
+    // no startup files to find, and the branch below adds `-nostdlib` for it.
+    bool c_library_off_payload() const {
+        return cAbi.fromGraph() || cAbi.absent();
+    }
 };
 
 // ── Capability grammar: mcpp:<layer>[=<interface>] ───────────────────────────

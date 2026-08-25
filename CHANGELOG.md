@@ -3,6 +3,59 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.24.7] — 2026-08-25
+
+### 修复
+
+- **⭐⭐ 图供给内核接口时,载荷那份 C 库被一起断开了。**
+
+  ```
+  error: hermetic link check failed
+           crt1.o (bare name — the linker cannot resolve it)
+           crti.o (bare name — the linker cannot resolve it)
+           crtn.o (bare name — the linker cannot resolve it)
+  ```
+
+  三行清单即可复现:
+
+  ```toml
+  [dependencies]
+  openkal-linux = "0.5.4"
+  ```
+
+  判据是一个**跨两层的 `OR`**,被用来决定只取决于其中一层的事:
+
+  ```cpp
+  bool system_from_graph() const {
+      return kernelAbi.fromGraph() || cAbi.fromGraph();
+  }
+  ```
+
+  链接侧在它为真时**整体替换** `f.ld`,丢掉载荷的 binutils 前缀、库目录与
+  rpath —— 而这些全是通往**载荷那份 C 库**的路。两层在它被写出来时针对的场景里
+  同进同退(openkal 目标的内核接口与 C 库都来自图),在另一个同样普通的场景里
+  分开:**一个在平台之上实现 openkal 的后端,而程序仍用载荷的 C 库**。
+  驱动照样索取启动文件,链接器却没有了可查的路径。
+
+  ⚠️ **这个形状正是每个 openkal 后端被测试的方式** —— openkal-linux、
+  openkal-macos、openkal-windows 三家的一致性套件都对着平台自己的 C 库构建。
+  它们的 CI 钉在旧 mcpp 上,所以一直绿;pin 一动就全红,而这是缺陷被发现的
+  唯一原因。
+
+  ⚠️ **mcpp 278 条 e2e 里,「kernel-abi 来自图 + C 库来自载荷」这个组合一条
+  都没有。** 新增 `285_kernel_abi_from_graph_keeps_the_payload_c_library.sh`,
+  断言到**产物能跑**,而不只是链接成功。
+
+  判据两向(2026.8.24.6 与本修复):
+
+  ```
+  已发布 24.6   error: hermetic link check failed — crt1.o (bare name)
+  本修复        ok  it links against the payload's C library, and runs
+  ```
+
+  区间由 CI 侧三分支并行二分给出:`8.21.3 绿 → 8.24.1 红`,唯一实质提交是
+  #486。
+
 ## [2026.8.24.6] — 2026-08-25
 
 ### 新增
