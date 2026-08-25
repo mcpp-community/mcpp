@@ -865,13 +865,27 @@ jobs:
 
       - name: Mirror binaries to xlings-res/mcpp (gh + gtc)
         if: ${{ env.XLINGS_RES_TOKEN != '' }}
-        # Hard ceiling for the whole mirror segment. The script caps each asset
-        # at MIRROR_UPLOAD_TIMEOUT (180s) and abandons anything slower, so a
-        # healthy run lands well inside this; 10min is the backstop that keeps a
-        # pathological host from burning the job's budget the way v0.0.94 did
-        # (30min, killed, zero per-asset visibility). Whatever gets skipped is
-        # reported by name + size and pushed by hand.
-        timeout-minutes: 10
+        # ⚠️⚠️ THIS MUST BE LONGER THAN THE SCRIPT'S OWN LEG DEADLINE, AND FOR
+        # A LONG TIME IT WAS SHORTER.
+        #
+        # `mirror_res.sh` gives GitCode `MIRROR_LEG_DEADLINE_GTC=2400s` because
+        # that host shapes inbound traffic; this step killed it at 600s, so the
+        # script's budget could never be spent and the shorter of two
+        # disagreeing limits always won. Every release since has ended the same
+        # way — `The action … has timed out after 10 minutes`, GitHub's eight
+        # assets uploaded in seconds and GitCode's three large ones cut off,
+        # with only the small `.sha256` files through. v2026.8.25.1 and
+        # v2026.8.25.2 both, measured.
+        #
+        # ⚠️ The paragraph this replaces described a design that no longer
+        # exists: a per-asset `MIRROR_UPLOAD_TIMEOUT` of 180s. The script's own
+        # comment records why it went ("the old per-asset cap failed four
+        # releases in a row") — but this value, calibrated to it, stayed.
+        #
+        # 45 > 40 leaves the script room to reach its own deadline and report
+        # what it abandoned by name, which is the visibility the value exists
+        # for; the job's `timeout-minutes: 30` above is the outer backstop.
+        timeout-minutes: 45
         env:
           GH_TOKEN: ${{ secrets.XLINGS_RES_TOKEN }}
         run: |
