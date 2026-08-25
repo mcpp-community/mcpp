@@ -96,3 +96,72 @@ check_pair riscv64-none    riscv64-none-elf    || rc=1
 
 [ "$rc" = 0 ] || exit 1
 echo "OK: the env segment is optional on every platform, and declining it changes no identity"
+
+# ── The Windows C-library axis has a name of its own ─────────────────────────
+#
+# ⚠️ `x86_64-windows-musl` is a target mcpp names and LLVM cannot. Measured on
+# llvm 22.1.8, handing `windows` with a `musl` environment to clang is not a
+# diagnostic but an ICE inside the COFF writer:
+#
+#     #5  llvm::MCWinCOFFStreamer::emitCGProfileEntry(...)
+#
+# so mcpp's canonical form and the triple passed to the compiler must be
+# different strings — which they already are, either side of the arrow in the
+# build report.
+#
+# ⭐ THE ASSERTION IS THAT IT IS A KNOWN TARGET WITH A CORRECT DIAGNOSIS, NOT
+# THAT IT BUILDS. This project names no dependency, so nothing supplies the
+# target side and the build cannot succeed — correctly. What is under test is
+# that mcpp recognises the name and says the true thing about it, rather than
+# `unknown target`, which is what it said before the row existed.
+out="$("$MCPP" build --target x86_64-windows-musl 2>&1 || true)"
+
+case "$out" in
+  *"unknown target"*)
+    echo "FAIL: x86_64-windows-musl is not in the target table"
+    exit 1 ;;
+esac
+
+case "$out" in
+  *"nothing in the dependency graph"*)
+    echo "  ok  x86_64-windows-musl is known, and the refusal names the real reason" ;;
+  *)
+    echo "FAIL: the refusal did not name the missing supplier"
+    printf '%s\n' "$out" | grep -m2 -iE 'error|Target'
+    exit 1 ;;
+esac
+
+# ⭐ AND THE PIN IS ASSERTED, BECAUSE THE PIN IS WHAT THE ROW IS FOR.
+#
+# The row names `llvm` not as a preference but because a global default of gcc
+# would otherwise be carried onto a target no gcc can emit, and the error would
+# then be about a missing C++ frontend in a musl-gcc payload — a true sentence
+# about the wrong subject. So the toolchain line has to show the pin winning,
+# and it has to show mcpp's own name being what was asked for:
+#
+#     Resolved llvm@22.1.8 → x86_64-windows-musl → …/xim-x-llvm/22.1.8/bin/clang++
+#              target default for x86_64-windows-musl, replacing your gcc@16.1.0
+#
+# ⚠️ THIS WAS WRITTEN WITH AN `*) : ;;` FALLBACK, WHICH MADE IT UNFAILABLE.
+# A branch that accepts anything is not a check, and this file's whole subject
+# is a name that used to be accepted by nothing. The fallback is gone; if the
+# report's phrasing changes, this is meant to go red and be updated.
+case "$out" in
+  *"→ x86_64-windows-musl →"*)
+    echo "  ok  the toolchain line carries mcpp's own name" ;;
+  *)
+    echo "FAIL: the toolchain line did not carry mcpp's own name for the target"
+    printf '%s\n' "$out" | grep -m2 -i 'resolv'
+    exit 1 ;;
+esac
+
+case "$out" in
+  *"llvm@22.1.8"*)
+    echo "  ok  the row's pin decided the toolchain" ;;
+  *)
+    echo "FAIL: the target table's pin did not decide the toolchain"
+    printf '%s\n' "$out" | grep -m2 -i 'resolv'
+    exit 1 ;;
+esac
+
+echo "OK: mcpp names a C library LLVM cannot spell, and diagnoses it honestly"

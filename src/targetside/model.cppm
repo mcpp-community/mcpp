@@ -631,7 +631,27 @@ check_requirements(const TargetSide& ts, std::span<const Requirement> reqs) {
 // first. Telling someone their target name is wrong is only useful once there
 // is a right one to give them.
 inline std::optional<std::string> check_request(const TargetSide& ts) {
-    if (ts.envAxis != EnvAxis::CLibrary) return std::nullopt;
+    // ⚠️ TWO AXES REACH HERE, AND EXEMPTING THE SECOND WAS THE DEFECT.
+    //
+    // `CLibrary` is the obvious one: on Linux the segment names the C library
+    // outright. `ObjectAbi` was exempted on the grounds that `gnu` on Windows
+    // names the Itanium C++ ABI rather than a C library — true, and incomplete.
+    // The segment there bundles TWO things: the object ABI, which is honoured,
+    // and MinGW's C runtime, which a graph-supplied C library replaces. The
+    // second half is a name/fact disagreement of exactly the shape this
+    // function exists to report, and it went unreported.
+    //
+    // Measured, one project, two spellings, same graph:
+    //
+    //     --target x86_64-linux-gnu     c-abi musl (graph)   warned
+    //     --target x86_64-windows-gnu   c-abi musl (graph)   silent   ← the defect
+    //
+    // ⚠️ `ObjectFormat` STAYS EXEMPT, and not for symmetry. `elf` never names a
+    // C library on any platform, so "the target name asks for the `elf` C ABI"
+    // would be nonsense rather than merely noisy. That axis is glossed in the
+    // report instead.
+    if (ts.envAxis != EnvAxis::CLibrary && ts.envAxis != EnvAxis::ObjectAbi)
+        return std::nullopt;
     if (ts.requestedCAbi.empty()) return std::nullopt;
     if (ts.cAbi.absent()) return std::nullopt;
     if (ts.cAbi.interfaceName == ts.requestedCAbi) return std::nullopt;
@@ -640,15 +660,24 @@ inline std::optional<std::string> check_request(const TargetSide& ts) {
     // can disagree with it.
     if (!ts.cAbi.fromGraph()) return std::nullopt;
 
+    // On the object-ABI axis the name is half honoured, and saying only that it
+    // is "inaccurate" would suggest the ABI changed too. It did not.
+    std::string aside;
+    if (ts.envAxis == EnvAxis::ObjectAbi)
+        aside = std::format(
+            "\n       The object ABI `{}` selects is unaffected; what it does "
+            "not select here is the\n       C library.",
+            ts.requestedCAbi);
+
     return std::format(
         "the target name asks for the `{}` C ABI and the dependency graph "
         "supplies `{}`.\n"
         "       The graph decides, so the build below uses `{}` — the name is "
         "what is inaccurate,\n"
-        "       not the artifact. Drop the segment to say what is actually "
-        "meant:\n"
+        "       not the artifact.{}\n"
+        "       Drop the segment to say what is actually meant:\n"
         "           --target {}",
-        ts.requestedCAbi, ts.cAbi.interfaceName, ts.cAbi.interfaceName,
+        ts.requestedCAbi, ts.cAbi.interfaceName, ts.cAbi.interfaceName, aside,
         ts.requestFreeTarget.empty() ? std::string("<arch>-<os>")
                                      : ts.requestFreeTarget);
 }
@@ -787,7 +816,11 @@ inline std::string format_report(const TargetSide& ts, std::string_view targetNa
     // present, it does not name a C library here, and the C library came from
     // somewhere the segment did not choose. A payload C library IS selected by
     // the triple, so `gnu → ucrt` follows visibly and needs no gloss.
-    if (ts.envAxis != EnvAxis::Unknown && ts.envAxis != EnvAxis::CLibrary
+    // ⚠️ `ObjectFormat` ONLY. The object-ABI axis used to be glossed here and is
+    // now WARNED about instead — see `check_request`. Leaving both in place
+    // would say the same thing twice, once as an aside and once as a warning,
+    // which reads as two different findings.
+    if (ts.envAxis == EnvAxis::ObjectFormat
         && !ts.requestedCAbi.empty()
         && !ts.cAbi.absent() && ts.cAbi.fromGraph()
         && ts.cAbi.interfaceName != ts.requestedCAbi) {

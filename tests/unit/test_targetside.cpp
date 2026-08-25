@@ -449,7 +449,15 @@ TEST(TargetSideRequest, APrebuiltCLibraryIsWhatTheRequestSelected) {
 // than one C library. Reporting such a build as "asking for the `gnu` C ABI"
 // describes an axis the name never addressed, and the correction it suggested
 // named a target that does not exist.
-TEST(TargetSideRequest, TheSegmentIsOnlyACLibraryWhereItNamesOne) {
+// ⚠️ AND THE OBJECT-ABI AXIS REPORTS TOO, WHICH IS THE REVERSAL.
+//
+// It was exempted on the grounds that `gnu` on Windows names the Itanium C++
+// ABI rather than a C library. True, and incomplete: the segment bundles the
+// object ABI, which IS honoured, with MinGW's C runtime, which a graph-supplied
+// C library replaces. The second half is a name/fact disagreement of exactly
+// the shape this function reports, and it went unreported — while the identical
+// shape on Linux warned.
+TEST(TargetSideRequest, TheObjectAbiAxisReportsTheCLibraryHalfToo) {
     auto in = payload_linux();
     in.targetOs          = "windows";
     in.compilerFamily    = "llvm";
@@ -457,6 +465,27 @@ TEST(TargetSideRequest, TheSegmentIsOnlyACLibraryWhereItNamesOne) {
     in.requestedCAbi     = "gnu";
     in.requestFreeTarget = "x86_64-windows";
     in.envAxis           = ts::EnvAxis::ObjectAbi;
+
+    auto why = ts::check_request(ts::resolve(in));
+    ASSERT_NE(why, std::nullopt);
+    EXPECT_NE(why->find("musl"), std::string::npos) << *why;
+    // ⭐ And it says the ABI half was honoured, so the reader does not conclude
+    // the object ABI changed as well.
+    EXPECT_NE(why->find("object ABI"), std::string::npos) << *why;
+    EXPECT_NE(why->find("--target x86_64-windows"), std::string::npos) << *why;
+}
+
+// The object-FORMAT axis stays exempt, and not for symmetry: `elf` names no C
+// library on any platform, so "asks for the `elf` C ABI" would be nonsense
+// rather than merely noisy.
+TEST(TargetSideRequest, TheObjectFormatAxisStaysExempt) {
+    auto in = payload_linux();
+    in.targetOs          = "none";
+    in.compilerFamily    = "llvm";
+    in.cAbi              = provider("openkal-musl", "0.3.3", "musl");
+    in.requestedCAbi     = "elf";
+    in.requestFreeTarget = "riscv64-none";
+    in.envAxis           = ts::EnvAxis::ObjectFormat;
     EXPECT_EQ(ts::check_request(ts::resolve(in)), std::nullopt);
 }
 
@@ -466,7 +495,10 @@ TEST(TargetSideRequest, TheSegmentIsOnlyACLibraryWhereItNamesOne) {
 // reader sees `x86_64-windows-gnu` above a line reading `c-abi musl`, finds no
 // row called `gnu`, and maps it to the nearest thing that looks like a C
 // library name. Measured twice, by the same reader, on two different days.
-TEST(TargetSideReport, AnEnvSegmentThatIsNotACLibraryIsGlossed) {
+// ⚠️ THE GLOSS IS NOW THE OBJECT-FORMAT AXIS ALONE. The object-ABI axis warns
+// instead (see `TheObjectAbiAxisReportsTheCLibraryHalfToo`), and leaving both
+// in place would state one finding twice — once as an aside, once as a warning.
+TEST(TargetSideReport, TheObjectAbiAxisIsNoLongerGlossed) {
     auto in = payload_linux();
     in.targetOs          = "windows";
     in.compilerFamily    = "llvm";
@@ -476,8 +508,7 @@ TEST(TargetSideReport, AnEnvSegmentThatIsNotACLibraryIsGlossed) {
     in.envAxis           = ts::EnvAxis::ObjectAbi;
 
     auto r = ts::format_report(ts::resolve(in), "x86_64-windows-gnu");
-    EXPECT_NE(r.find("gnu selects the Itanium C++ ABI, not a C library"),
-              std::string::npos) << r;
+    EXPECT_EQ(r.find("not a C library"), std::string::npos) << r;
 }
 
 // A bare-metal target's segment names the object FORMAT, and the same gloss
@@ -494,48 +525,6 @@ TEST(TargetSideReport, OnBareMetalTheSegmentNamesTheObjectFormat) {
     auto r = ts::format_report(ts::resolve(in), "riscv64-none-elf");
     EXPECT_NE(r.find("elf selects the object format, not a C library"),
               std::string::npos) << r;
-}
-
-// ⚠️ THE NOUN COMES FROM THE VALUE, NOT ONLY FROM THE AXIS.
-//
-// `gnu` and `msvc` sit on the same axis and select OPPOSITE ABIs. A noun fixed
-// per axis would print "the Itanium C++ ABI" for an MSVC build — a statement
-// that is not merely vague but false.
-TEST(TargetSideReport, TheOppositeValueOnTheSameAxisGetsTheOppositeName) {
-    auto in = payload_linux();
-    in.targetOs          = "windows";
-    in.compilerFamily    = "llvm";
-    in.cAbi              = provider("openkal-musl", "0.3.3", "musl");
-    in.requestedCAbi     = "msvc";
-    in.requestFreeTarget = "x86_64-windows";
-    in.envAxis           = ts::EnvAxis::ObjectAbi;
-
-    auto r = ts::format_report(ts::resolve(in), "x86_64-windows-msvc");
-    EXPECT_NE(r.find("msvc selects the MSVC C++ ABI"), std::string::npos) << r;
-    EXPECT_EQ(r.find("Itanium"), std::string::npos) << r;
-}
-
-// ⭐ AND THE NAME IT PRINTS MUST NOT BE ANY ROW'S VALUE.
-//
-// Naming the ABI rather than the axis is what stops a reader mapping `gnu` to
-// `c++-abi libc++` — a second wrong answer, since libstdc++ sits on the same
-// ABI. If the gloss ever printed a string that also appears as a layer's
-// implementation name, the confusion would return in a new place.
-TEST(TargetSideReport, TheGlossNamesNothingThatAppearsAsALayerValue) {
-    auto in = payload_linux();
-    in.targetOs          = "windows";
-    in.compilerFamily    = "llvm";
-    in.cAbi              = provider("openkal-musl", "0.3.3", "musl");
-    in.cxxAbi            = provider("openkal-llvm-runtime", "0.1.2", "libc++");
-    in.requestedCAbi     = "gnu";
-    in.requestFreeTarget = "x86_64-windows";
-    in.envAxis           = ts::EnvAxis::ObjectAbi;
-
-    auto r = ts::format_report(ts::resolve(in), "x86_64-windows-gnu");
-    auto head = r.substr(0, r.find('\n'));
-    EXPECT_NE(head.find("Itanium"), std::string::npos) << head;
-    EXPECT_EQ(head.find("libc++"), std::string::npos) << head;
-    EXPECT_EQ(head.find("musl"),   std::string::npos) << head;
 }
 
 // ⚠️ AND IT DOES NOT FIRE WHEN THE C LIBRARY CAME FROM A PAYLOAD.

@@ -210,6 +210,67 @@ inline constexpr TargetInfo kKnownTargets[] = {
     { "x86_64-linux-musl",     "verified",  "",    "gcc@16.1.0", "",                            true  },
     { "aarch64-linux-musl",    "verified",  "",    "gcc@16.1.0", "",                            true  },
     { "x86_64-windows-gnu",    "verified",  "PE",  "gcc@16.1.0", "",                            true  },
+    // ⚠️ musl ON WINDOWS. IT EXISTS, AND UNTIL THIS ROW mcpp HAD NO NAME FOR IT.
+    //
+    // LLVM's triple vocabulary offers `gnu` and `msvc` for Windows and both
+    // name an ABI, so a reader concludes there is no third possibility and
+    // calls a musl-based Windows build `-gnu`. The artefact disagrees. Measured
+    // on one built over `openkal-musl`:
+    //
+    //     imports        ntdll, KERNEL32, SHELL32 — no msvcrt, no ucrtbase
+    //     `_Z…` symbols  4507        `?…` symbols  0
+    //
+    // No MinGW C runtime is linked. That is musl on Windows, and calling it
+    // `gnu` put the one thing the C library is not into its identity, its
+    // output directory, its `cfg(env = …)` and its packed ABI tag.
+    //
+    // ⭐ THE FIX IS A NAME, NOT A MECHANISM, AND THE REASON THE MISTAKE HELD SO
+    // LONG IS WORTH RECORDING. "LLVM cannot spell x86_64-windows-musl" is true
+    // and is about the string handed to CLANG. mcpp's canonical form is a
+    // different string — the build report prints both, either side of an arrow:
+    //
+    //     Target x86_64-windows-gnu → x86_64-w64-windows-gnu
+    //            ^ mcpp's identity    ^ what clang is given
+    //
+    // Letting the compiler's vocabulary bound mcpp's own merged two axes into
+    // one. `llvm_triple()` already sends every non-MSVC Windows target to
+    // `…-w64-windows-gnu`, and that spelling is correct there and stays: it
+    // selects the Itanium C++ ABI, which is the ABI this C library was compiled
+    // for. mcpp's name answers a different question — which C library — and now
+    // it can.
+    //
+    //     mcpp target             → clang                    c-abi
+    //     x86_64-linux-musl       → x86_64-unknown-linux-musl  musl
+    //     x86_64-windows-gnu      → x86_64-w64-windows-gnu     MinGW CRT
+    //     x86_64-windows-musl     → x86_64-w64-windows-gnu     musl
+    //
+    // The last two rows differ in the first column and agree in the second,
+    // which is the whole point.
+    //
+    // ⚠️ THE PIN IS `llvm`, AND IT IS NOT A PREFERENCE. The column names the
+    // payload that supplies this target's C library everywhere else in this
+    // table; here nothing supplies it, and what the column has to prevent is
+    // the OPPOSITE — a global default of gcc being carried onto a target no gcc
+    // can emit. Measured with `mcpp toolchain default gcc@16.1.0`:
+    //
+    //     error: toolchain payload 'xim:musl-gcc@16.1.0' has no known C++
+    //            frontend in …/xim-x-musl-gcc/16.1.0/bin
+    //
+    // — a message about a missing frontend, for a target whose real problem is
+    // that only clang emits it at all. The bare-metal rows carry `llvm` for the
+    // same reason and say so in their own note.
+    //
+    // The C library still comes from the dependency graph. `host_can_serve`
+    // says no for this row on a non-Windows host — correctly, for the prebuilt
+    // system — and that refusal is diagnosed early and RELEASED once the graph
+    // is known (see the long note at prepare.cppm's `unservedTargetDiagnosis`),
+    // so a project whose C library comes from a dependency is not turned away.
+    //
+    // ⚠️ TIER IS `preview`, NOT `verified`. `verified` in this table means an
+    // artefact was built AND RUN. Running a PE on a Linux host needs wine, and
+    // openkal's CI has that step — so this is measurable, and the tier moves
+    // when it has been measured rather than when it seems likely.
+    { "x86_64-windows-musl",   "preview",   "PE",  "llvm@22.1.8","",                            true  },
     { "x86_64-windows-msvc",   "verified",  "PE",  "",           "",                            false },
     { "aarch64-macos",         "verified",  "",    "",           "",                            false },
     { "riscv64-linux-musl",    "planned",   "",    "",           "",                            true  },
