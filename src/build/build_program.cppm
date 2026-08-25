@@ -105,6 +105,30 @@ struct BuildProgramEnv {
     // the same re-run key: a rebuilt tool re-runs the program that uses it,
     // with no `rerun-if-changed` needed from the author.
     std::vector<std::pair<std::string, std::string>> toolPaths;
+    // ⭐⭐ THE DIRECTORY THIS BUILD SYSTEM'S OWN TOOLS ARE IN, PUT AT THE FRONT
+    // OF THE CHILD'S `PATH`.
+    //
+    // A build program that wants a tool has, until this field, had to find it
+    // the way any shell script would — and `command -v` answers about the
+    // machine, not about this build. Measured 2026-08-25: mcpp installs
+    // `qemu-system-riscv64` into its own subos, and a probe that asked PATH
+    // got an xlings shim that answers, when run,
+    //
+    //     [error] qemu-system-riscv64 is not installed in this subos (_)
+    //
+    // — found, reported as present, and unable to execute. The 221 programs
+    // mcpp had installed on purpose were not on that PATH at all.
+    //
+    // ⚠️ PREPENDED, NOT SUBSTITUTED. A build program legitimately reaches for
+    // things this build system does not ship — `git`, `python3`, a shell — and
+    // a PATH containing only mcpp's directory would break every one of them for
+    // the sake of a guarantee nobody asked for. Front position is what makes
+    // the isolated copy the default answer; the host stays reachable behind it.
+    //
+    // This is the same division of labour as `toolchainDir` and `compilerId`
+    // above: a package should be able to ASK rather than guess, and the thing
+    // that knows the answer is the one that installed the tools.
+    std::string toolsBin;
     // #355 step 5: dependency-provided modules to compile FOR THE HOST and make
     // importable from this build.mcpp — reusable build rules distributed as
     // ordinary mcpp packages (`import mcpp.rules.protobuf;`) instead of a
@@ -412,6 +436,24 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     // append the platform's exe suffix itself, and a tool's adjacent DATA
     // (protoc's well-known .proto files, say) lives in the package tree, which
     // dep_dir() already exposes.
+    // ── The child's PATH, with this build system's own tools in front ───────
+    //
+    // See `BuildProgramEnv::toolsBin` for why this exists and why it is a
+    // prefix rather than a replacement.
+    //
+    // ⚠️ THE INHERITED VALUE IS READ HERE AND NOT ASSUMED. `extraEnv` replaces
+    // a variable outright in the child, so writing only mcpp's directory would
+    // silently be the substitution this deliberately is not.
+    if (!env.toolsBin.empty()) {
+        const char* inherited = std::getenv("PATH");
+        std::string path = env.toolsBin;
+        if (inherited && *inherited) {
+            path += mcpp::platform::env::path_list_separator();
+            path += inherited;
+        }
+        e.emplace_back("PATH", path);
+    }
+
     for (auto const& [var, path] : env.toolPaths) {
         auto [it, inserted] = depVarValue.try_emplace(var, path);
         if (inserted) {

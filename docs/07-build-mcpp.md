@@ -482,6 +482,30 @@ These values are folded into the re-run key **unconditionally** — changing the
 target, profile, or feature set re-runs the program without any
 `rerun-if-env-changed` declaration.
 
+### `PATH` — this build system's tools first (mcpp 2026.8.25.1+)
+
+The child's `PATH` is the one mcpp was started with, **prefixed** with the
+directory mcpp installs its own tools into. A build program that looks up a
+tool therefore finds the copy this build system placed there, and still reaches
+anything else the machine has.
+
+```
+PATH=<mcpp's own tool directory>:<the PATH mcpp itself was started with>
+```
+
+Why it is a prefix and not a replacement: a build program legitimately calls
+`git`, `python3` or a shell, none of which mcpp ships. Front position makes the
+isolated copy the default answer; the host stays reachable behind it.
+
+⚠️ **`command -v` answers about the machine, not about this build.** Before
+this, a program asking `PATH` for a tool mcpp had installed could get an
+unrelated one — measured on `qemu-system-riscv64`, where the answer was a shim
+that reports "is not installed in this subos" when executed, while the working
+copy sat in mcpp's own directory and was not on `PATH` at all.
+
+The directory is empty on an installation that has no sub-OS yet, and `PATH` is
+then left exactly as inherited.
+
 ## Dependencies' build.mcpp (mcpp 0.0.95+)
 
 A dependency that ships a `build.mcpp` gets it compiled and run too (the

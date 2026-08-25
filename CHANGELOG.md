@@ -77,6 +77,45 @@
   ⚠️ **没有任何生产路径会带着全 `None` 的 `TargetSide` 走到 flags**:`resolve`
   给普通本机构建的是 `cAbi = { Payload, … }`。夹具现在照实写。
 
+- **⭐ 载荷的 C++ 运行时,服务的是载荷的 C 库。**
+
+  ```
+  undefined reference to `__cxa_allocate_exception'
+  undefined reference to `std::runtime_error::runtime_error(char const*)'
+  ```
+
+  契约表用 `system_from_graph()` 决定要不要取载荷的 C++ 归档 —— 又是那个跨两层的
+  OR。一个「内核接口来自包、而 C 库与 C++ 运行时都来自载荷」的程序本该由那些归档
+  服务,OR 却说不是,`-nostdlib++` 于是砍掉了它要用的那一份。
+
+  ⚠️ **这一处在两个方向上都错过。** 最初是 `targetCxxRuntime`,对 C 程序失败
+  (它没有 C++ 运行时,答「否」被读成「载荷的是对的」);#486 换成 OR,又矫枉过正。
+  **C 库才是决定它的那一层** —— 理由 `check_layering` 早已反向陈述:载荷的 C++
+  运行时是对着载荷的 C 库配置的,所以当且仅当那份 C 库在用时它才可用。
+
+- **⭐ `build.mcpp` 的 `PATH` 前置 mcpp 自己的工具目录。**
+
+  ```
+  PATH=<mcpp 自己的工具目录>:<mcpp 启动时的 PATH>
+  ```
+
+  mcpp 把工具装进自己的 sub-OS(写下这条时那台机器上有 221 个),而此前
+  build.mcpp 继承的 PATH 里**一个都没有**。它想用某个工具,只能像 shell 脚本
+  一样去问 PATH —— 而 `command -v` 回答的是「这台机器有什么」,不是「这次构建
+  用什么」。
+
+  实测代价:`command -v qemu-system-riscv64` 命中一个 shim,执行时答
+  `[error] qemu-system-riscv64 is not installed in this subos` —— 找到了、
+  报告为存在、却跑不了,而真正的那份就在 mcpp 自己的目录里,不在 PATH 上。
+
+  ⚠️ **前置而非替换。** build.mcpp 合理地会调 `git`、`python3`、shell,这些
+  mcpp 都不提供;只有 mcpp 的目录的 PATH 会把它们全部弄坏。前置让隔离的那份
+  成为默认答案,宿主留在后面仍可达。
+
+  ⭐ 解析**只发生一次**:`toolsBinDir` 在 `get_cfg` 之后算好,交给
+  `fill_target_build_env` —— 而不是在它的两个调用点各算一遍。本次发布修的三条
+  缺陷全部来自「一个事实在多处各自推导」,这个字段不再添一处。
+
 ### 测试
 
 - 五条单元测试,**按 `Origin` 的四个值各一条**,外加一条把缺陷本身写成断言
