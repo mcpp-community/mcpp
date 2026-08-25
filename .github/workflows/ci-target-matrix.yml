@@ -91,25 +91,30 @@ jobs:
             }
             echo "  ok  $1"
           }
-          # ⚠️⚠️ ONE DECLARED EXEMPTION, AND IT IS DECLARED RATHER THAN INFERRED.
+          # ⚠️⚠️ A SKIP IS ACCEPTED FOR ONE NAMED REASON, NOT ON ONE NAMED HOST.
           #
-          # 297 is about a bare-metal row refusing a compiler that cannot emit
-          # the target, so it has to DECLARE a non-llvm compiler. Every toolchain
-          # mcpp installs on macOS is llvm — there is no gcc payload and no MSVC
-          # — so on that host the convention/capability distinction has nothing
-          # to distinguish, and the test says so and exits 0.
+          # 297 declares a non-llvm compiler, so it needs one to exist. Every
+          # toolchain mcpp installs on macOS is llvm; on windows-2022 it depends
+          # on what the restored cache holds — measured, one run had
+          # `gcc@16.1.0` and the next had only `llvm@20.1.7`.
           #
-          # ⭐ THE EXEMPTION IS PER HOST AND SPELLED OUT. Accepting "a skip is a
-          # conclusion" everywhere would let a genuinely broken test pass on all
-          # three; the whole reason this step exists is that an exit code cannot
-          # tell a pass from a skip.
-          check_or_declared_skip() {
+          # ⚠️ THE FIRST VERSION EXEMPTED macOS BY NAME, and the very next
+          # Windows run skipped for the same reason and went red. Naming the
+          # host encodes where the fact happened to hold; naming the FACT holds
+          # wherever it does. A skip for any other reason is still a failure.
+          #
+          # ⭐ AND THE DENOMINATOR IS ASSERTED SEPARATELY: linux always has a gcc
+          # payload (it backs the host row), so that job uses `check` and the
+          # test is guaranteed to be exercised somewhere on every run. Without
+          # that, a reason accepted everywhere is a test that runs nowhere.
+          check_or_declared_skip() {   # log  ok-line  acceptable-skip-substring
             grep -qF "$2" "$1".log && { echo "  ok  $1"; return 0; }
-            grep -q '^SKIP:' "$1".log && {
-              echo "  ok  $1 (declared skip on ${{ matrix.host }}: $(grep -m1 '^SKIP:' "$1".log))"
+            if grep -q '^SKIP:' "$1".log && grep -qF "$3" "$1".log; then
+              echo "  ok  $1 (declared skip: $(grep -m1 '^SKIP:' "$1".log))"
               return 0
-            }
-            echo "::error::$1 neither concluded nor declared a skip on ${{ matrix.host }}"
+            fi
+            echo "::error::$1 neither concluded nor declared the expected skip on ${{ matrix.host }}"
+            echo "        expected skip to mention: $3"
             tail -6 "$1".log 2>/dev/null | sed 's/^/        /'
             return 1
           }
@@ -118,12 +123,15 @@ jobs:
             "OK: naming the host's own target changes nothing" || fail=1
           check 296_what_the_report_names_is_what_the_link_line_uses.sh \
             "OK: what the report names is what the link line uses" || fail=1
-          if [ "${{ matrix.host }}" = macos ]; then
-            check_or_declared_skip 297_a_capability_pin_is_not_a_preference.sh \
-              "OK: a capability pin is not a preference" || fail=1
-          else
+          if [ "${{ matrix.host }}" = linux ]; then
+            # The denominator: gcc is always installed here, so this host must
+            # actually run the test.
             check 297_a_capability_pin_is_not_a_preference.sh \
               "OK: a capability pin is not a preference" || fail=1
+          else
+            check_or_declared_skip 297_a_capability_pin_is_not_a_preference.sh \
+              "OK: a capability pin is not a preference" \
+              "gcc is not installed here" || fail=1
           fi
           check 298_overriding_a_convention_requires_replacing_it.sh \
             "OK: a convention may be overridden, but not merely removed" || fail=1
