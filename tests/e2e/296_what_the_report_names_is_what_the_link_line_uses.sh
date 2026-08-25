@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# requires: gcc unix-shell jq
+# The layer the report names is the layer the link line reaches for.
+#
+# ⭐⭐ TWO RELATIONS, NO EXPECTED VALUES. Like e2e 295, this compares two things
+# mcpp itself produced rather than checking them against a table, so it holds on
+# every host and needs nothing installed beyond a working toolchain:
+#
+#   c-abi (payload)  ⇒  the link line must reach into that payload
+#   c-abi (graph)    ⇒  the link line must NOT reach into this host's C library
+#
+# ⚠️ THE FIRST ONE IS THE SHAPE THIS RELEASE KEEPS PAYING FOR. `xim:glibc` is
+# installed, carries Scrt1.o/crti.o/crtn.o, and the report says
+# `c-abi glibc (payload)` — while llvm's link line contained no reference to it
+# at all and the build failed on startup objects resolved from /lib. The report
+# and the link line disagreed, and only the report was read.
+#
+# ⚠️ AND THE SECOND ONE IS ITS MIRROR. A graph-supplied C library that still
+# carried this host's loader produced, measured 2026-08-23:
+#
+#     ld64.lld: error: unknown argument
+#       '--dynamic-linker=…/xim-x-glibc/2.44/lib64/ld-linux-x86-64.so.2'
+#
+# — accurate, and naming nothing about the decision. Both directions are here
+# because a fix for either one alone can break the other.
+set -e
+
+MCPP="${MCPP:-mcpp}"
+work="$(mktemp -d)"
+trap 'rm -rf "$work"' EXIT
+mkdir -p "$work/src"
+cd "$work"
+printf '#include <cstdio>\nint main() { std::printf("ok\\n"); }\n' > src/main.cpp
+
+report=""; ldflags=""
+build_and_read() {   # extra args… → sets $report and $ldflags
+    rm -rf target
+    report="$("$MCPP" build "$@" 2>&1 || true)"
+    local f; f="$(find target -name build.ninja 2>/dev/null | head -1)"
+    ldflags=""
+    [ -n "$f" ] && ldflags="$(grep -m1 '^ldflags' "$f" || true)"
+}
+
+# The `c-abi` row's origin and the package it names, from the report.
+c_abi_line() { printf '%s\n' "$report" | grep -E '^\s+c-abi\s' | head -1; }
+
+fail=0; checked=0
+
+# ── Relation one: a payload C library must be on the link line ─────────────
+for tc in gcc llvm; do
+    # ⭐ From the machine interface: `grep -oP` does not exist on macOS, and its
+    # failure mode here was a skip rather than a red.
+    ver="$("$MCPP" toolchain list --format json 2>/dev/null \
+           | jq -r --arg t "$tc" '[.data.toolchains[] | select(.family==$t) | .version][0] // empty')"
+    [ -n "$ver" ] || { echo "  SKIP  $tc is not installed here"; continue; }
+    printf '[package]\nname    = "linkprobe"\nversion = "0.1.0"\n\n[toolchain]\ndefault = "%s@%s"\n' \
+        "$tc" "$ver" > mcpp.toml
+    build_and_read --verbose
+    line="$(c_abi_line)"
+    case "$line" in
+      *"(payload)"*) ;;
+      *) echo "  SKIP  $tc@$ver: c-abi is not the payload's here (${line:-no row})"; continue ;;
+    esac
+    [ -n "$ldflags" ] || { echo "  SKIP  $tc@$ver produced no link line"; continue; }
+    checked=$((checked+1))
+
+    # ⭐ THE PAYLOAD IS NAMED BY THE REPORT, so the assertion does not hardcode
+    # one. Whatever `xim-x-…` directory the C library came from must appear.
+    pkg="$(printf '%s\n' "$report" | awk 'match($0, /xim-x-[a-z0-9-]+/) {
+               print substr($0, RSTART, RLENGTH) }' | sort -u | head -20)"
+    hit=0
+    for p in $pkg; do
+        printf '%s\n' "$ldflags" | grep -q -- "$p" && hit=1 && break
+    done
+    # A C library whose headers and libs live inside the compiler payload needs
+    # no separate entry — that is the gcc cross-driver arrangement — so the
+    # criterion is that SOMETHING from mcpp's own store is on the line.
+    if [ "$hit" = 1 ] || printf '%s\n' "$ldflags" | grep -q 'registry/data/xpkgs'; then
+        echo "  ok  $tc@$ver: the payload the report names is on the link line"
+    else
+        echo "FAIL: $tc@$ver: report says c-abi is the payload's, link line has no payload path"
+        echo "        $line"
+        printf '        %s\n' "$(printf '%s' "$ldflags" | cut -c1-110)"
+        fail=1
+    fi
+done
+
+# ── Relation two: a graph C library must not drag the host's in ───────────
+cat > mcpp.toml <<'TOML'
+[package]
+name    = "linkprobe"
+version = "0.1.0"
+
+[toolchain]
+default = "llvm@22.1.8"
+
+[dependencies]
+openkal-musl = "0.3.5"
+openkal-llvm-runtime = "0.1.3"
+TOML
+printf 'import std;\nint main(){ std::println("ok"); }\n' > src/main.cpp
+build_and_read
+line="$(c_abi_line)"
+case "$line" in
+  *graph*)
+    [ -n "$ldflags" ] || { echo "  SKIP  the graph build produced no link line"; :; }
+    if [ -n "$ldflags" ]; then
+        checked=$((checked+1))
+        # This host's C library, by the two spellings mcpp itself would emit.
+        if printf '%s\n' "$ldflags" | grep -qE 'xim-x-glibc|/lib/x86_64-linux-gnu|/usr/lib/gcc'; then
+            echo "FAIL: c-abi comes from the graph, yet the link line reaches for this host's C library"
+            printf '%s\n' "$ldflags" | tr ' ' '\n' \
+                | grep -E 'xim-x-glibc|/lib/x86_64-linux-gnu|/usr/lib/gcc' | head -4 | sed 's/^/        /'
+            fail=1
+        else
+            echo "  ok  a graph C library does not drag this host's in"
+        fi
+    fi ;;
+  *) echo "  SKIP  the graph did not supply the C library here (${line:-no row})" ;;
+esac
+
+if [ "$checked" = 0 ]; then
+    echo "SKIP: nothing here produced a link line to relate to a report"
+    exit 0
+fi
+[ "$fail" = 0 ] || exit 1
+echo "OK: what the report names is what the link line uses ($checked relations)"

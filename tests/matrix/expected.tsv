@@ -1,0 +1,70 @@
+# tests/matrix/expected.tsv — 这个仓库声明的支持矩阵。
+#
+# ⭐⭐ 这是一份声明,不是一份记录。改了行为就必须同时改它,而 CI 比对的是
+#     `tests/matrix/scan.sh` 的一次真实测量与这里的每一行。
+#
+# 列:mode host target compiler compiler-triple c-lib c-abi c++-abi openkal status reason
+#
+# status × reason —— 两者都参与比对:
+#   ok           / none                     解析通过,且真的建出来了
+#   unsupported  / tier-planned             词表里有这一行,还没有任何东西接线
+#   unsupported  / capability-pin           这一行的工具链是能力陈述,不可被推翻
+#   unsupported  / convention-unreplaced    约定被推翻了,而没有任何东西接替它
+#   unsupported  / host-cannot-serve        本机没有载荷,图也没有供给这个系统
+#   unsupported  / layer-requirement        某个包要求的层,解析没有给出
+#
+# ⚠️⚠️ 这里**没有** `mismatch`,而这是刻意的。写下 `mismatch` 就是把一个缺陷
+#      声明成期望,矩阵会在它上面变绿。一格测出 `mismatch`,要么修 mcpp,要么
+#      让 mcpp 在决定处给出一句带 reason 的拒绝 —— 没有第三条路。
+#
+# ⚠️ 只有 `mode host target compiler status reason` 六列参与比对。中间五列是
+#    测量的记录,留在这里是为了让一行的变化可读:`c-abi` 从 payload 变成 graph
+#    会在 diff 里自己说话,而只有 status 的表说不出来。
+#
+# ⭐ reason 也是判据。一格从 `capability-pin` 变成 `convention-unreplaced`,
+#    status 仍是 unsupported —— 那是两条不同的规则,换了一条却不红,这张表就
+#    只在说「它没建出来」,不在说「为什么」。
+#
+# linux 行:2026-08-26 实测于 x86_64 Linux(mcpp 2026.8.26.1)。
+# windows / macos 行:留待各自宿主的第一次 CI 运行回填 —— ⚠️ 从别的宿主推断出来
+# 的一行,断言的是推断而不是那台机器。
+payload	linux	aarch64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux	aarch64-linux-musl	gcc@16.1.0	aarch64-unknown-linux-musl	payload	musl(payload)	libstdc++(payload)	-	ok	none
+payload	linux	aarch64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux	riscv32-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux	riscv64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux	riscv64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux	x86_64-linux-gnu	gcc@16.1.0	x86_64-unknown-linux-gnu	subos	gnu(payload)	libstdc++(payload)	-	ok	none
+payload	linux	x86_64-linux-musl	gcc@16.1.0	x86_64-unknown-linux-musl	payload	musl(payload)	libstdc++(payload)	-	ok	none
+payload	linux	x86_64-macos	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux	x86_64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux	x86_64-windows-gnu	gcc@16.1.0	x86_64-w64-windows-gnu	none	gnu(payload)	libstdc++(payload)	-	ok	none
+payload	linux	x86_64-windows-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux	aarch64-linux-gnu	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	linux	aarch64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	convention-unreplaced
+payload	linux	aarch64-none-elf	llvm@22.1.8	aarch64-none-elf	payload	-	-	-	ok	none
+payload	linux	riscv32-none-elf	llvm@22.1.8	riscv32-none-elf	payload	-	-	-	ok	none
+payload	linux	riscv64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	linux	riscv64-none-elf	llvm@22.1.8	riscv64-none-elf	payload	-	-	-	ok	none
+payload	linux	x86_64-linux-gnu	llvm@22.1.8	x86_64-unknown-linux-gnu	payload	gnu(payload)	libc++(payload)	-	ok	none
+payload	linux	x86_64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	convention-unreplaced
+payload	linux	x86_64-macos	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	linux	x86_64-none-elf	llvm@22.1.8	x86_64-none-elf	payload	-	-	-	ok	none
+payload	linux	x86_64-windows-gnu	llvm@22.1.8	-	-	-	-	-	unsupported	convention-unreplaced
+payload	linux	x86_64-windows-musl	llvm@22.1.8	-	-	-	-	-	unsupported	host-cannot-serve
+graph	linux	aarch64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux	aarch64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
+graph	linux	riscv64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux	x86_64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
+graph	linux	x86_64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
+graph	linux	x86_64-macos	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux	x86_64-windows-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
+graph	linux	x86_64-windows-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+graph	linux	aarch64-linux-gnu	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	linux	aarch64-linux-musl	llvm@22.1.8	aarch64-unknown-linux-musl	payload	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
+graph	linux	riscv64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	linux	x86_64-linux-gnu	llvm@22.1.8	x86_64-unknown-linux-gnu	payload	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
+graph	linux	x86_64-linux-musl	llvm@22.1.8	x86_64-unknown-linux-musl	payload	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
+graph	linux	x86_64-macos	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	linux	x86_64-windows-gnu	llvm@22.1.8	x86_64-w64-windows-gnu	none	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
+graph	linux	x86_64-windows-musl	llvm@22.1.8	x86_64-w64-windows-gnu	payload	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none

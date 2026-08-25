@@ -390,6 +390,16 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("why")
             .description("Explain how the toolchain / runtime / deps were resolved")
             .arg(cl::Arg("topic").help("toolchain | runtime | deps (default: all)"))
+            // ⭐ `--target` / `--toolchain` make this a QUERY rather than a
+            // report on the current directory's default: "what would a build
+            // for THIS pair resolve to" is the question the target matrix asks
+            // once per cell, and it builds nothing.
+            .option(cl::Option("target").takes_value()
+                .help("Ask about this target instead of the project's default"))
+            .option(cl::Option("toolchain").takes_value()
+                .help("Ask about this toolchain, e.g. llvm@22.1.8"))
+            .option(cl::Option("format").takes_value().value_name("json")
+                .help("Machine-readable output (enveloped; see docs/11-machine-output.md)"))
             .action(wrap_rc(cmd_why)))
         .subcommand(cl::App("resolve")
             .description("Re-resolve the build plan and explain it")
@@ -501,7 +511,9 @@ int run(int argc, char** argv) {
         // ─── resource management ───────────────────────────────────────
         .subcommand(cl::App("toolchain")
             .description("Install / list / select / remove C++ toolchains")
-            .subcommand(cl::App("list").description("List installed toolchains"))
+            .subcommand(cl::App("list").description("List installed toolchains")
+                .option(cl::Option("format").takes_value().value_name("json")
+                    .help("Machine-readable output (enveloped; see docs/11-machine-output.md)")))
             .subcommand(cl::App("install")
                 .description("Install a toolchain via mcpp's xlings")
                 // Both `mcpp toolchain install gcc 16.1.0` and `mcpp toolchain
@@ -756,9 +768,25 @@ int run(int argc, char** argv) {
     auto protocol_commands = [] {
         using mcpp::wire::Effect;
         return std::vector<mcpp::wire::CommandEffects>{
-            {"self env",   {Effect::InitMcppHome}},
-            {"xpkg parse", {}},
-            {"cache list", {}},
+            {"self env",       {Effect::InitMcppHome}},
+            {"xpkg parse",     {}},
+            {"cache list",     {}},
+            {"toolchain list", {Effect::InitMcppHome}},
+            // ⚠️⚠️ `why toolchain` DECLARES MORE THAN IT USUALLY DOES, AND THAT
+            // IS THE CORRECT DIRECTION.
+            //
+            // It answers a question without building, which reads like a pure
+            // query — but the answer comes from `prepare_build`, which resolves
+            // the dependency graph. That can fetch packages, install a toolchain
+            // payload, write the global cache, and run a dependency's build
+            // program during tool provisioning.
+            //
+            // A client gates on this table BEFORE running anything, so an
+            // omission here is a safety claim that is not true. Over-declaring
+            // costs one prompt; under-declaring costs the gate.
+            {"why toolchain",  {Effect::InitMcppHome, Effect::ReadProject,
+                                Effect::Network, Effect::WriteGlobalCache,
+                                Effect::ExecBuildScript}},
         };
     };
 

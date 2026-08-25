@@ -253,6 +253,44 @@ clang++ --target=x86_64-pc-windows-musl -c t.cpp
 
 clang 不会去 gcc 的载荷里取 C 库,gcc 也不会去 clang 的载荷里取。各带各的。
 
+### 换另一个编译器,就要把另一份 C 库一起换上
+
+每一行有宿主的目标都写着一个工具链,而那个名字是**约定**不是**能力**:它回答的是
+*哪个载荷供给这个目标的 C 库*,所以一个自己供给 C 库的工程可以写另一个编译器。
+不能做的是写另一个编译器而什么都不供给。
+
+```toml
+[toolchain]
+default = "llvm@22.1.8"        # x86_64-linux-musl 这一行写的是 gcc
+```
+
+```
+$ mcpp build --target x86_64-linux-musl
+error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
+       payload, and 'llvm@22.1.8' has none here.
+```
+
+⚠️ **2026.8.26.1 之前这会把整个构建跑完,然后在链接上失败**,报
+`crtbeginT.o (bare name — the linker cannot resolve it)`——对症状准确,对决定沉默。
+clang 是可重定向的,自己不带 C 库,于是去够一份 gcc 安装;在恰好装了系统 mingw 的
+机器上,同样写法用于 `x86_64-windows-gnu` 够到的是
+`/usr/lib/gcc/x86_64-w64-mingw32/…`,那比失败更糟。
+
+补上替代者,就是全部的差别:
+
+```toml
+[dependencies]
+openkal-llvm-runtime = "0.1.3"   # → openkal-musl → openkal-<os>
+[toolchain]
+default = "llvm@22.1.8"
+```
+
+这就是 [`examples/06-openkal-cross`](../../examples/06-openkal-cross),也是那句
+拒绝里为什么点名 openkal。
+
+⚠️ **裸机行与 `x86_64-windows-musl` 行的工具链不是约定**,根本不可被推翻——
+见[第 03 章](03-toolchains.md)。
+
 ### 而依赖图会整个替换这一轴
 
 同样三个目标,图里有 `openkal-musl` 与 `openkal-llvm-runtime` —— 同法实测:

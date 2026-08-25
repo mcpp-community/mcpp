@@ -128,6 +128,17 @@ esac
 # of either failing at runtime or declaring an unknown capability.
 command -v python3 &>/dev/null && CAPS+=(python3)
 
+# jq: the JSON reader for the tests that consume mcpp's MACHINE interface
+# (`--format json`) rather than the tables it prints for people.
+#
+# ⚠️ DECLARING IT IS PART OF ADDING IT. A `# requires:` token that no branch
+# here ever adds makes every test naming it skip for ever, silently — the
+# `65_*` block spent months in that state. Every GitHub-hosted runner ships jq,
+# so in CI this is always true and a skip there is a red (the matrix workflow
+# asserts each invariant's conclusion line); on a minimal local machine the
+# skip is honest.
+command -v jq &>/dev/null && CAPS+=(jq)
+
 # nasm: the x86 assembler for .asm sources (PATH — including the xlings
 # subos shim — or the mcpp sandbox tool dir).
 if command -v nasm &>/dev/null \
@@ -178,9 +189,9 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 # absent on Linux and must stay legal to declare. It is checked against the
 # CAPS+=() calls above by tests/e2e/README or by reading them -- keep it in
 # sync when adding a capability.
-KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx llvm macos mingw mingw-cross
-            msvc musl nasm no-msvc pack patchelf python3 qemu-riscv scan-deps
-            symlink unix-shell windows wine xlings-msvc)
+KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx jq llvm macos mingw
+            mingw-cross msvc musl nasm no-msvc pack patchelf python3 qemu-riscv
+            scan-deps symlink unix-shell windows wine xlings-msvc)
 
 bad_tokens=0
 for tf in "$HERE"/[0-9]*.sh; do

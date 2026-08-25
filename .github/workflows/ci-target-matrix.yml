@@ -1,0 +1,166 @@
+name: target matrix
+
+# ⭐⭐ 让支持矩阵成为一次测量的输出,而不是一份会悄悄过期的文档。
+#
+# ⚠️ 这套东西存在的理由,是本仓库反复付出的一类代价:一格因为「今天这台机器恰好
+# 装了某个载荷」而通过,或因为没装而跳过,而两者在退出码上与「全部正确」没有区别。
+# 三个宿主各扫一遍,把结果与仓库里的期望表比对,差异即失败。
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  XLINGS_NON_INTERACTIVE: '1'
+
+jobs:
+  invariants:
+    # ⭐ 第一层:四条恒等式,不需要期望表,也不依赖机器上装了什么。
+    #    它们是结构约束 —— 任何一格只要跑起来了就该满足。
+    name: invariants (${{ matrix.host }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { host: linux,   runner: ubuntu-24.04 }
+          - { host: macos,   runner: macos-14     }
+          - { host: windows, runner: windows-2022 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build the mcpp in this pull request
+        run: |
+          set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build --dev
+          # ⚠️ 两种拼写,且按 mtime 取最新 —— target/ 是缓存恢复的,`head -1`
+          # 会挑到上一次推送留下的二进制,版本号一样而代码是旧的。
+          BUILT=$(find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) \
+                  -newer mcpp.toml | head -1)
+          [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
+          BUILT=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")
+          echo "MCPP_UNDER_TEST=$BUILT" >> "$GITHUB_ENV"
+          "$BUILT" --version
+
+      - name: The invariants
+        run: |
+          set -euo pipefail
+          export MCPP="$MCPP_UNDER_TEST"
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          # ⚠️ These four read mcpp's MACHINE interface, so jq is not optional
+          # here. Without it each one takes its own "nothing to compare" exit —
+          # four honest-looking skips, and the next step would then report that
+          # the invariants did not run. Failing on the cause beats failing on
+          # the symptom four steps later.
+          command -v jq >/dev/null || { echo "::error::jq is missing on ${{ matrix.host }}"; exit 1; }
+          fail=0
+          for t in tests/e2e/295_*.sh tests/e2e/296_*.sh \
+                   tests/e2e/297_*.sh tests/e2e/298_*.sh; do
+            echo "=== $t ==="
+            bash "$t" 2>&1 | tee "$(basename "$t").log" || true
+            rc=${PIPESTATUS[0]}
+            [ "$rc" = "0" ] || { echo "::error::$t failed (exit $rc)"; fail=1; }
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      - name: Each invariant RAN
+        run: |
+          set -euo pipefail
+          # ⭐ 这一步存在的全部理由:退出码分不清「通过」与「跳过」。两条 e2e 都
+          #    有为「这台机器没有可比的东西」准备的早退,而 CI 要的是它们真的比
+          #    过了。
+          check() {
+            grep -qF "$2" "$1".log || {
+              echo "::error::$1 did not reach its conclusion on ${{ matrix.host }}"
+              tail -6 "$1".log 2>/dev/null | sed 's/^/        /'
+              return 1
+            }
+            echo "  ok  $1"
+          }
+          fail=0
+          check 295_naming_the_host_target_changes_nothing.sh \
+            "OK: naming the host's own target changes nothing" || fail=1
+          check 296_what_the_report_names_is_what_the_link_line_uses.sh \
+            "OK: what the report names is what the link line uses" || fail=1
+          check 297_a_capability_pin_is_not_a_preference.sh \
+            "OK: a capability pin is not a preference" || fail=1
+          check 298_overriding_a_convention_requires_replacing_it.sh \
+            "OK: a convention may be overridden, but not merely removed" || fail=1
+          [ "$fail" = 0 ] || exit 1
+
+  scan:
+    # ⭐ 第二层:全表扫描,与仓库里的期望表比对。
+    name: scan (${{ matrix.host }})
+    needs: invariants
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { host: linux,   runner: ubuntu-24.04 }
+          - { host: macos,   runner: macos-14     }
+          - { host: windows, runner: windows-2022 }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build the mcpp in this pull request
+        run: |
+          set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build --dev
+          BUILT=$(find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) \
+                  -newer mcpp.toml | head -1)
+          [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
+          echo "MCPP_UNDER_TEST=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")" >> "$GITHUB_ENV"
+
+      - name: Scan both systems
+        run: |
+          set -euo pipefail
+          export MCPP="$MCPP_UNDER_TEST"
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          # ⚠️ 两种体系各自成表。scan 把 mode 写进第一列,而比对必须按 mode 分开
+          # 做 —— 拿一种体系的测量去比整张表,另一种的每一行都会被报成「没跑到」。
+          bash tests/matrix/scan.sh payload > measured-payload.tsv
+          bash tests/matrix/scan.sh graph   > measured-graph.tsv
+          cat measured-payload.tsv measured-graph.tsv > measured.tsv
+          echo "--- measured ---"; cat measured.tsv
+
+      # ⚠️ 上传排在比对之前,而这是刻意的次序。宿主的第一次运行本就没有期望行,
+      # 比对会红 —— 而回填要用的正是这份产物。`if: always()` 也保留:一步失败不
+      # 该把证据一起带走。
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: matrix-${{ matrix.host }}
+          path: measured.tsv
+
+      - name: Compare with the expected table
+        run: |
+          set -euo pipefail
+          fail=0
+          bash tests/matrix/compare.sh measured-payload.tsv \
+               tests/matrix/expected.tsv ${{ matrix.host }} payload || fail=1
+          bash tests/matrix/compare.sh measured-graph.tsv \
+               tests/matrix/expected.tsv ${{ matrix.host }} graph || fail=1
+          [ "$fail" = 0 ] || exit 1

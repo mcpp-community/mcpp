@@ -200,3 +200,56 @@ mcpp cache list --format json
 ```
 
 `data` 是 `{root, entries[]}`,与 `--json` 裸打印的一致。
+
+### `mcpp.toolchain.list` —— 装了什么,以及这台宿主服务哪些目标
+
+```
+mcpp toolchain list --format json
+```
+
+`data` 是 `{host, toolchains[], targets[]}`。一个工具链是
+`{family, version, default}`;Visual Studio 另有 `source: "system"` —— 它是在
+机器上被找到的,不是 mcpp 装的。一行目标是
+`{target, note, toolchain, status, default}`,`status` 取
+`installed` / `available` / `via dependency graph` / `planned`。
+
+### `mcpp.why.toolchain` —— 一对 (目标, 工具链) 会解析成什么
+
+```
+mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
+```
+
+它只解析并报告,不构建。`data`:
+
+| 字段 | |
+|---|---|
+| `requested` | `{target, toolchain}` —— 问的是什么 |
+| `status` | `ok` 或 `refused` |
+| `reason` | 拒绝的记号,或 `none` |
+| `compiler` | `{family, version, driver}` —— 真正会跑的驱动器 |
+| `triple` | `{requested, toolchain, llvm}` |
+| `cLibrary` | `{mode, path, origin}`;`mode` 取 `sysroot` / `payload-first` / `none`,`origin` 取 `payload` / `subos` / `host` / `none` |
+| `layers[]` | 目标侧五层:`{layer, interface, impl, origin, subset}` |
+
+⭐ **`reason` 是一个记号,不是一句话。** 拒绝的消息仍然写给人看,仍然点名目标、
+规则与出路;而一个要给结果分类的程序读 `reason`:
+
+| `reason` | |
+|---|---|
+| `tier-planned` | 词表里有这一行,还没有任何东西接线 |
+| `host-cannot-serve` | 本机没有载荷,依赖也没有供给这个系统 |
+| `capability-pin` | 这一行的工具链是能力陈述,不是偏好 |
+| `convention-unreplaced` | 约定被推翻了,而没有任何东西接替它 |
+| `os-mismatch` | 请求的与解析出的三元组指向不同的操作系统 |
+| `layer-requirement` | 某个包要求的层,解析没有给出 |
+| `layer-ordering` | 五层叠不起来 |
+| `other` | 一处还没有被命名的拒绝分支 |
+
+⚠️ **只要问题被回答了就退 0,包括答案是「拒绝」。** 「它能不能构建,不能的话
+为什么」被「不能,因为这一行的 pin 是能力陈述」完整地回答了。非零退出的含义是
+这次查询本身没跑起来。
+
+⚠️ **它声明的 effects 故意偏宽。** `--protocol-version` 为这条命令列出
+`network`、`write-global-cache` 与 `exec-build-script`:答案来自与构建同一次的
+解析,而那可能拉取包、安装载荷、并运行某个依赖的构建程序。客户端是在**运行之前**
+读这张表来决定放不放行的,漏报一项就是一句不成立的安全承诺。

@@ -425,7 +425,23 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     // Family::Gcc — the target decides the payload.
     const auto& t = spec.target;
 
-    if (t.is_musl()) {
+    // ⚠️⚠️ `&& t.os == "linux"` — AND THE PARAGRAPH BELOW ALREADY SAID SO.
+    //
+    // "Canonical linux-musl triples coincide with the GNU tool spelling" is a
+    // statement about linux-musl, and the condition asked only whether the C
+    // library is musl. `x86_64-windows-musl` was added later and walked in.
+    // Measured 2026-08-26 on a Linux x86_64 host:
+    //
+    //     $ mcpp build --target x86_64-windows-musl   ([toolchain] gcc@16.1.0)
+    //       fetcher: resolve: target='xim:musl-gcc@16.1.0'
+    //       error: toolchain payload 'xim:musl-gcc@16.1.0' has no known C++
+    //              frontend in …/xim-x-musl-gcc/16.1.0/bin
+    //
+    // `native` read `t.arch == host_arch` and got true, so a PE target resolved
+    // the host's ELF Linux payload. The message names a missing frontend, which
+    // is true of that payload and says nothing about the decision that reached
+    // for it — the same shape as the rest of this release.
+    if (t.is_musl() && t.os == "linux") {
         // Same target, two payload shapes: the host-native `musl-gcc` package
         // (XLINGS_RES picks the host-matching asset) when target arch == host
         // arch, else the triple-named cross package. Canonical linux-musl

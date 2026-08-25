@@ -85,6 +85,28 @@ export int cmd_doctor(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
 }
 
 export int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    // ⚠️ `--format` IS ONLY DEFINED FOR THE `toolchain` TOPIC, and saying so
+    // beats emitting an envelope whose `data` silently omits what was asked
+    // for. `runtime` and `deps` have their own shapes and no consumer yet;
+    // inventing one here would publish a contract nobody has read.
+    if (auto f = parsed.value("format")) {
+        auto fmt = mcpp::wire::parse_format(*f);
+        if (!fmt) {
+            std::println(stderr, "error: {}",
+                         mcpp::wire::unsupported_format(*f));
+            return 2;
+        }
+        const std::string topic = parsed.positional(0);
+        if (!topic.empty() && topic != "toolchain") {
+            std::println(stderr,
+                "error: --format json is defined for `mcpp why toolchain`; "
+                "'{}' has no machine-readable shape yet", topic);
+            return 2;
+        }
+        return mcpp::doctor::why_toolchain_json(
+            parsed.option_or_empty("target").value(),
+            parsed.option_or_empty("toolchain").value());
+    }
     return mcpp::doctor::why_report(parsed.positional(0));
 }
 

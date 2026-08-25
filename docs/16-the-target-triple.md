@@ -283,6 +283,47 @@ every target it was built with. Measured on one host, one source:
 clang does not reach into gcc's payload for a C library, and gcc does not reach
 into clang's. Each brings its own.
 
+### Choosing the other compiler means supplying the other C library
+
+Each hosted row names a toolchain, and that name is a convention rather than a
+capability: it answers *which payload supplies this target's C library*, so a
+project that supplies one itself may name a different compiler. What it may not
+do is name a different compiler and supply nothing.
+
+```toml
+[toolchain]
+default = "llvm@22.1.8"        # x86_64-linux-musl's row names gcc
+```
+
+```
+$ mcpp build --target x86_64-linux-musl
+error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
+       payload, and 'llvm@22.1.8' has none here.
+```
+
+⚠️ **Before 2026.8.26.1 this ran the whole build and failed at the link**, with
+`crtbeginT.o (bare name — the linker cannot resolve it)` — accurate about the
+symptom and silent about the decision. clang is retargetable and brings no C
+library, so it reached for a gcc installation; on a machine that happens to have
+a system one, the same spelling for `x86_64-windows-gnu` reached
+`/usr/lib/gcc/x86_64-w64-mingw32/…` instead, which is worse than failing.
+
+Adding the replacement is the whole difference:
+
+```toml
+[dependencies]
+openkal-llvm-runtime = "0.1.3"   # → openkal-musl → openkal-<os>
+[toolchain]
+default = "llvm@22.1.8"
+```
+
+That is [`examples/06-openkal-cross`](../examples/06-openkal-cross), and it is
+why the refusal names openkal in its own text.
+
+⚠️ **A bare-metal row's toolchain is not a convention, and neither is
+`x86_64-windows-musl`'s** — no gcc payload emits a PE with a musl C library, so
+those rows cannot be overridden at all. See [chapter 03](03-toolchains.md).
+
 ### And a dependency graph replaces that axis entirely
 
 The same three targets, with `openkal-musl` and `openkal-llvm-runtime` in the

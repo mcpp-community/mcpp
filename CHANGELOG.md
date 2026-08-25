@@ -3,7 +3,136 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.26.1] — 2026-08-26
+
+写出 `--target` 这个动作,曾被当成「这个构建的系统来自依赖图」。完整分析见
+[`.agents/docs/2026-08-26-cross-target-implies-graph.md`](.agents/docs/2026-08-26-cross-target-implies-graph.md)
+与[六张矩阵表](.agents/docs/2026-08-26-target-matrix-six-tables.md)。
+
+### 修复
+
+- **⭐⭐ 命名宿主自己的目标,曾让构建失败。**
+
+  同一台机器、同一个编译器、**同一个目标**,只差写不写 `--target`:
+
+  ```
+  $ mcpp build                            → ELF 64-bit LSB pie executable
+  $ mcpp build --target x86_64-linux-gnu  → hermetic link check failed
+  ```
+
+  不带 `--target` 时宿主目标**就是** `x86_64-linux-gnu`。显式那条丢掉了
+  `-stdlib=libc++`、`--rtlib=compiler-rt`、`--unwindlib=libunwind`,以及指向已装
+  `xim:glibc` 的 `-B`/`-L`/`--dynamic-linker`,于是 clang 回退到默认,启动对象落到
+  载荷之外。
+
+  根因是 `crossTarget` 非空被当成「系统来自图」。那处代码**自己的注释**写的正是
+  后者;而 `crossTarget` 只是 `--target=<三元组>` 这个字符串,任何命名目标都非空
+  ——包括命名宿主目标、且完全不依赖任何包的工程。
+
+  ⚠️ **同一个错误的问题被问了三遍**,分散在三处:`link_toolchain_flags`、
+  `payload_ld`、`atomic_ld`。而其中一处的注释只预告了**两**条通道:
+
+  > the C-runtime group reaches the link line through TWO channels, and a reader
+  > who fixed one saw the identical error and could reasonably conclude the fix
+  > had not worked.
+
+  ⭐ 三条全部改问 `targetSide.cAbi.prebuilt()` —— 与 `2026.8.25.1`
+  把另外三处决定迁过去的**同一个谓词**。这是该族的第六至第八条。
+
+- **⭐ 目标行声明的 sysroot 从不被安装(#510)。**
+
+  一行目标表声明两样东西,只有一样被兑现:`pin` 走
+  `resolve_xpkg_path(…, autoInstall=true, …)`,`sysroot` 是纯查询,查不到就静默
+  跳过整块。干净环境实测:
+
+  ```
+  Target riscv64-none-elf
+         c-abi  picolibc-riscv (…, prebuilt)
+  error: 'stdio.h' file not found
+  ```
+
+  报告点名了这个目标的 C 库,而构建找不到它的头。⚠️ mcpp 自己的裸机 CI **手工装
+  它**并在注释里说明了原因,于是每一条裸机 e2e 都跑在缺陷已被抹平的机器上。
+
+  改为走同一个 `autoInstall` 通道;离线与 `MCPP_NO_AUTO_INSTALL` 由 `Fetcher`
+  判定,不在此处再问一遍。
+
+- **⭐ 裸机行的 pin 是能力陈述,不是偏好。**
+
+  ```
+  [toolchain] default = "gcc@16.1.0"
+  $ mcpp build --target riscv64-none-elf
+    g++: error: unrecognized argument in option '-mabi=lp64d'
+  ```
+
+  一条关于选项的消息,而决定在一百行之前。宿主行的 pin 说的是「哪个载荷供给这个
+  目标的 C 库」,作者自带编译器时理应让位;裸机行说的是「哪个编译器能发出这个
+  目标」——宿主 g++ 发不出 riscv64,谁声明都不行。现在在决定处拒绝,并指出出路。
+
+  ⚠️ **约定仍然可以被推翻**:hosted 目标上显式声明 gcc 照常生效。
+
+### 机器接口
+
+- **⭐⭐ 两条命令进入 `--format json`,矩阵与四条 e2e 不再匹配任何一句话。**
+
+  ```
+  mcpp toolchain list --format json          → mcpp.toolchain.list
+  mcpp why toolchain --target T --toolchain C --format json
+                                             → mcpp.why.toolchain
+  ```
+
+  后者只解析不构建,给出五层、驱动器、三元组、C 库模型,以及 `status` 与
+  `reason`。`reason` 是一个记号——`capability-pin` / `convention-unreplaced` /
+  `tier-planned` / `host-cannot-serve` / `os-mismatch` / `layer-requirement` /
+  `layer-ordering`,由 `mcpp.build.refusal` 在每一处拒绝的 `return` 之前记下。
+
+  ⚠️ **代价是当场量到的**:本次会话里我把 `cannot emit it` 改成
+  `cannot be emitted by`,e2e 297 的断言随即变成空转——它仍然「通过」,只是不再
+  匹配任何东西。消息**仍然是承诺**(点名目标、规则与出路,e2e 照旧断言这一点);
+  换掉的是**分类**:一个答案集有限的问题,不该用子串搜索来问。
+
+  ⚠️ 而**查询不能取代构建**。`llvm × x86_64-windows-gnu` 解析得完全正常,失败
+  在链接期的封闭性检查上——只查不建会把它报成绿。矩阵两样都做:分类取自
+  `reason`,结论取自构建的退出码。
+
+  ⚠️ `why toolchain` 声明的 effects 故意偏宽(`network` / `write-global-cache` /
+  `exec-build-script`):它的答案来自与构建同一次的解析。客户端是在运行**之前**
+  读这张表的,漏报一项就是一句不成立的安全承诺。
+
+- **⭐ `refused` 曾与 `none` 同读数。** 一处没有记号的拒绝分支让矩阵写下
+  `unsupported / none`——「拒绝了」和「没有理由」共用一个词,正是本次发布在修的
+  那个形状,重现在为发现它而造的机器里。现在无记号的拒绝报 `other`:一句可见的
+  承认,而不是并进邻近的理由。
+
+- **⭐⭐ 新增 `ci-target-matrix.yml`,三个宿主 × 两层。** 第一层跑上述恒等式,
+  不需要期望表;第二层用 `tests/matrix/scan.sh` 全表扫描 × 两种体系,与仓库里的
+  `tests/matrix/expected.tsv` 比对。
+
+  ⚠️ **「跳过」必须是期望表说的,不是运行时发现的**:一格因为「今天这台机器没装
+  某载荷」而跳过,与「这个组合本就不支持」是两回事,前者会让矩阵在缺件机器上悄悄
+  变绿。比对脚本还先断言**扫描真的跑了**——一格没跑与全部通过,在退出码上没有
+  区别。
+
+
+### 测试
+
+- **⭐⭐ e2e 295 是一条恒等式,不是一个阈值。** `mcpp build` 与
+  `mcpp build --target <宿主自己的目标>` 描述同一次构建,链接线必须逐 flag 相同。
+  它不需要期望表、不取决于机器上装了什么,任何宿主都成立。
+
+  ⭐ **它把「修了一半」直接指出来**:差异 7 项 → 5 项 → 3 项 → 0,每一步指向下一
+  条通道。没有它,修完两条会看到「还是红」,而那句注释会让人以为已经找全。
+
+- e2e 296:报告说 `c-abi (payload)` ⇒ 链接线必须含该载荷;说 `(graph)` ⇒ 不得含
+  宿主的 C 库。两向。
+- e2e 297:能力 pin 不可被推翻,且约定 pin 仍可被推翻——只断言前一半时,一个把
+  所有声明都拒掉的守卫同样能通过。
+
 ## [2026.8.25.2] — 2026-08-25
+
+一个谓词族的收尾。`2026.8.25.1` 修了其中四条,本次修余下三条,并补上让它们
+存活至今的两个 CI 空洞。完整分析见
+[`.agents/docs/2026-08-25-the-two-layer-predicate-family.md`](.agents/docs/2026-08-25-the-two-layer-predicate-family.md)。
 
 ### 修复
 
@@ -35,21 +164,6 @@
   ⚠️ 发现方式:2026.8.25.1 发布后重钉七个下游 pin PR,openkal-opensbi 红在
   `g++: unrecognized`。它在 2026.8.24.6 那轮红在**同一条**,所以既非 25.1 引入,
   也非 25.1 修掉——是同一跨度里的遗留。
-
-### 测试
-
-- e2e 292,两向断言:声明一层之后裸机目标仍解析到同一个编译器(先建立基线,
-  否则分不清「修好了」和「这台机器没有 llvm」);以及宿主行**不得**顶掉项目自己
-  选的工具链——不加区分地永不取消 pin 也能让前一半通过,而那正是这个谓词当初要
-  防的替换。
-
-## [2026.8.25.2] — 2026-08-25
-
-一个谓词族的收尾。`2026.8.25.1` 修了其中四条,本次修余下三条,并补上让它们
-存活至今的两个 CI 空洞。完整分析见
-[`.agents/docs/2026-08-25-the-two-layer-predicate-family.md`](.agents/docs/2026-08-25-the-two-layer-predicate-family.md)。
-
-### 修复
 
 - **⭐⭐ 图供给了 C 库,不等于目标平台的 SDK 不再需要。**
 
@@ -128,6 +242,11 @@
   传输层错误);并修掉 `502ERR` 拼接(`|| echo ERR` 是追加不是替换)。
 
 ### 测试
+
+- e2e 292,两向断言:声明一层之后裸机目标仍解析到同一个编译器(先建立基线,
+  否则分不清「修好了」和「这台机器没有 llvm」);以及宿主行**不得**顶掉项目自己
+  选的工具链——不加区分地永不取消 pin 也能让前一半通过,而那正是这个谓词当初要
+  防的替换。
 
 - **e2e 292/293/294**,每条两向断言,且**都在修复前的二进制上验证过会失败**:
   292 声明一层后裸机目标仍解析到同一编译器 + 宿主行不得顶掉项目自己的工具链;

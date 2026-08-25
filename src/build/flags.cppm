@@ -613,7 +613,28 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // Linker flags that cfg normally provides. The payload C-runtime
         // flags (-B/-L/loader) are appended via payload_ld below.
         link_toolchain_flags = crossTarget + " --no-default-config";
-        if (!crossTarget.empty()) {
+        // ⚠️⚠️ THE CONDITION IS WHETHER THE GRAPH SUPPLIES THE C LIBRARY, AND
+        // FOR A LONG TIME IT ASKED WHETHER `--target` HAD BEEN TYPED.
+        //
+        // `crossTarget` is the string `--target=<llvm triple>`. It is non-empty
+        // for ANY named target, including a project that names the host's own
+        // and depends on nothing — and such a project's system comes from the
+        // payload, not from a graph. Measured 2026-08-26, same machine, same
+        // compiler, same target, differing only in whether it was spelled out:
+        //
+        //     $ mcpp build                            → ELF 64-bit LSB pie exec
+        //     $ mcpp build --target x86_64-linux-gnu  → hermetic link check failed
+        //
+        // The explicit spelling lost `-stdlib=libc++`, `--rtlib=compiler-rt`,
+        // `--unwindlib=libunwind` and every reference to the installed
+        // `xim:glibc` — `-B`, `-L` and the loader — so clang fell back to its
+        // defaults and the startup objects resolved out of /lib.
+        //
+        // ⭐ `cAbi.prebuilt()` IS THE QUESTION THE COMMENT BELOW ALREADY ASKED,
+        // and it is the same predicate 2026.8.25.1 moved three other decisions
+        // onto. e2e 295 states the invariant as an identity: naming the host's
+        // own target changes nothing.
+        if (!plan.targetSide.cAbi.prebuilt()) {
             // ⭐⭐ THE TARGET SIDE COMES FROM THE GRAPH, SO THE HOST'S MODEL
             // CONTRIBUTES NOTHING — THE SAME REPLACEMENT `stdModuleFlags`
             // ALREADY MAKES ON THE COMPILE SIDE.
@@ -1209,8 +1230,17 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // the C-runtime group reaches the link line through TWO channels, and a
     // reader who fixed one saw the identical error and could reasonably
     // conclude the fix had not worked.
+    //
+    // ⭐⭐ AND THE CONDITION IS THE SAME ONE, MADE CORRECT THE SAME WAY. This
+    // asked `crossTargetFlag.empty()` — "was `--target` typed" — where it meant
+    // "does the graph supply the C library". `cAbi.prebuilt()` is that
+    // question. The comment above says the group reaches the link line through
+    // two channels; it is the same substitution on both, and fixing only the
+    // first left `-B`, `-L` and the loader missing while
+    // `-stdlib=libc++`/`--rtlib`/`--unwindlib` had already come back — the
+    // partial state e2e 295 reported and this line completes.
     if (isClangWithCfg
-     && plan.toolchain.crossTargetFlag.empty()
+     && plan.targetSide.cAbi.prebuilt()
      && lm.mode == mcpp::toolchain::CLibMode::PayloadFirst)
         payload_ld = lm.link_flags(ninjaEsc);
     // GCC: replace the payload's patched `*link:` with the pristine one, so
@@ -1262,11 +1292,32 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         std::string mingw_stdexp;
         if (caps.stdlib_id == "libstdc++")
             mingw_stdexp = " -lstdc++exp";
-        f.ld = std::format("{}{}{}{}", link_intent_ld, user_ldflags,
-                           mingw_stdexp, link_extra);
+        // ⭐⭐ `crossTarget`, BECAUSE THE PARAGRAPH ABOVE STATES A PRECONDITION
+        // THE CONDITION DOES NOT CHECK: "`x86_64-w64-mingw32-g++` needs no
+        // `--target` because it HAS no other".
+        //
+        // `is_mingw_target` answers "is the TARGET mingw", and that is true for
+        // a retargetable clang aimed at `x86_64-w64-windows-gnu` — which does
+        // have another target, and whose link line must say which. Measured
+        // 2026-08-26 on Linux, llvm@22.1.8, `--target x86_64-windows-gnu`:
+        //
+        //     ldflags =                                  ← empty
+        //     ld.lld: error: obj/main.o: unknown file type
+        //
+        // The object was a correct `Intel amd64 COFF`. Without `--target=` the
+        // driver linked as the host, so `-fuse-ld=lld` selected the ELF flavour
+        // — the identical sentence the comment beside `crossTarget` records for
+        // a Mach-O cross, reached through this branch instead.
+        //
+        // ⭐ Not a new condition but the string that names the machine: a mingw
+        // g++ has an empty `crossTargetFlag`, so this is the identity for the
+        // case the paragraph was written about, and the fix for the other one.
+        f.ld = std::format("{}{}{}{}{}", crossTarget, link_intent_ld,
+                           user_ldflags, mingw_stdexp, link_extra);
         // `-lstdc++exp` is named explicitly, so swapping g++ for gcc would not
         // drop it — the C line has to leave it out.
-        f.ldC = std::format("{}{}{}", link_intent_ld, user_ldflags, link_extra);
+        f.ldC = std::format("{}{}{}{}", crossTarget, link_intent_ld,
+                            user_ldflags, link_extra);
         return f;
     }
 
@@ -1421,8 +1472,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // ld spellings that a Mach-O or PE linker does not have. A target whose
         // runtime comes from the graph gets its own answer to oversized
         // `std::atomic` from that graph.
+        // ⭐ THE THIRD CHANNEL, AND THE LAST ONE. `libatomic` is this HOST's,
+        // found in the payload's directories, so it belongs to exactly the
+        // group `link_toolchain_flags` and `payload_ld` belong to — and it
+        // asked the same wrong question they did. Fixing the first two left
+        // e2e 295 reporting a three-flag difference (`-latomic` and its
+        // `--push-state`/`--pop-state` pair), which is what sent a reader here.
         std::string atomic_ld =
-            plan.toolchain.crossTargetFlag.empty()
+            plan.targetSide.cAbi.prebuilt()
                 ? atomic_link_flag(plan.toolchain.linkRuntimeDirs,
                                    !full_static.empty())
                 : std::string{};

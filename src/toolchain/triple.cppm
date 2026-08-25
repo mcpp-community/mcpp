@@ -131,6 +131,28 @@ struct Triple {
     // re-derives it from `os == "none"` and drifts.
     bool is_freestanding() const { return os == "none"; }
 
+    // ⭐⭐ WHETHER THIS ROW'S TOOLCHAIN PIN IS A CAPABILITY RATHER THAN A
+    // CONVENTION — the distinction that decides whether an author may override
+    // it.
+    //
+    // A hosted row's pin answers "which payload supplies this target's C
+    // library", and an author who supplies one may name any compiler. These
+    // rows answer a different question, and the answer does not depend on who
+    // supplies what:
+    //
+    //   freestanding   no per-host cross payload exists at all; clang and lld
+    //                  are cross-compilers by construction and gcc is not.
+    //   PE + musl      no gcc payload emits a PE with a musl C library. The
+    //                  mingw payload emits PE with the MinGW CRT, which is the
+    //                  separate `-gnu` row; there is no third gcc.
+    //
+    // ⚠️ SPELLED HERE RATHER THAN AT EACH DECISION, because the first version
+    // said `is_freestanding()` at two of them and `x86_64-windows-musl` — a row
+    // added later — was a convention at both. Measured: declaring gcc for it
+    // resolved the host's Linux musl payload and reported a missing C++
+    // frontend.
+    bool pin_is_capability() const { return is_freestanding() || (is_pe() && is_musl()); }
+
     // cfg() `family` dimension: unix | windows.
     std::string family() const {
         if (os == "windows") return "windows";
