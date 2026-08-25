@@ -72,9 +72,26 @@ runs:
         REPO_DIR="$(pwd)"
         # Always install the pinned version — the cache may hold an older
         # xlings whose sysroot/packages are incompatible.
+        # ⚠️⚠️ THE ARCHITECTURE IS READ, NOT ASSUMED. This branched on the OS
+        # alone and named `linux-x86_64` for every non-Darwin host, which is
+        # invisible until a Linux runner is not x86_64. Measured on
+        # `ubuntu-24.04-arm`, the first time this repo scheduled one:
+        #
+        #     .../xlings-2026.8.17.2-linux-x86_64/subos/default/bin/xlings:
+        #       cannot execute binary file: Exec format error
+        #     Process completed with exit code 126
+        #
+        # xlings has published `linux-aarch64` all along; nothing here asked
+        # for it. `ci-aarch64-fresh-install.yml` never hit this because it
+        # bootstraps through `quick_install.sh`, which does read the arch.
         case "$(uname -s)" in
           Darwin) tarball="xlings-${XLINGS_VERSION}-macosx-arm64.tar.gz" ;;
-          *)      tarball="xlings-${XLINGS_VERSION}-linux-x86_64.tar.gz" ;;
+          *)
+            case "$(uname -m)" in
+              aarch64|arm64) xa=aarch64 ;;
+              *)             xa=x86_64  ;;
+            esac
+            tarball="xlings-${XLINGS_VERSION}-linux-${xa}.tar.gz" ;;
         esac
         WORK=$(mktemp -d)
         # Retried and verified — see .github/tools/fetch_release.sh. A bare curl
