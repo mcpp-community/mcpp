@@ -23,7 +23,16 @@ mcpp 的行为 —— 前一版文档就这么错过一次。
 | 无标记 | Linux x86_64 宿主上**真跑过** |
 | **推** | 由源码逻辑推出,**无本地测量** |
 | `-` | 该轴对这一格无意义 |
-| **不支持** | 明确不支持,并给出原因 |
+| **不支持** | 这个组合不成立,并给出原因 |
+| **未支持** | 组合成立,但 mcpp 还没做 —— **不是缺陷** |
+
+⚠️ **「未支持」与「缺陷」必须分开。** 一格没跑通有三种可能,只有第三种是缺陷:
+
+| 状态 | 判据 | 记号 |
+|---|---|---|
+| 载荷根本不存在 | 索引里没有这个 sysroot 包 | **未支持** |
+| 载荷存在但 mcpp 从不为它接线 | 索引里有,而 mcpp 没有装它、也没有下发对应 flag | **未支持** |
+| 载荷已装、别的分支接了,这个分支没接 | 同一份载荷,一个编译器接上了另一个没有 | ❌ **缺陷** |
 
 ### 两道门是分开的
 
@@ -64,11 +73,11 @@ mcpp 的行为 —— 前一版文档就这么错过一次。
 | `x86_64-linux-gnu` | linux | gcc | `x86_64-unknown-linux-gnu` | 载荷自带 | glibc | libstdc++ | - | — |
 | `x86_64-linux-gnu` | linux | llvm | `x86_64-unknown-linux-gnu` | `xim:glibc` + `xim:linux-headers` | glibc | libc++ | - | 载荷已装;gcc 分支接了,llvm 分支未接 |
 | `x86_64-linux-musl` | linux | gcc | `x86_64-unknown-linux-musl` | 载荷自带 | musl | libstdc++ | - | 驱动 `x86_64-linux-musl-g++` |
-| `x86_64-linux-musl` | linux | llvm | `x86_64-unknown-linux-musl` | 需 musl sysroot | musl | libc++ | - | — |
+| `x86_64-linux-musl` | linux | llvm | `x86_64-unknown-linux-musl` | `xim:musl`(索引里有) | musl | libc++ | - | **未支持**:mcpp 从不为 llvm 装它 |
 | `aarch64-linux-musl` | linux | gcc | `aarch64-unknown-linux-musl` | 载荷自带 | musl | libstdc++ | - | 交叉 |
-| `aarch64-linux-musl` | linux | llvm | `aarch64-unknown-linux-musl` | 需 musl sysroot | musl | libc++ | - | 交叉 |
+| `aarch64-linux-musl` | linux | llvm | `aarch64-unknown-linux-musl` | 无对应载荷 | musl | libc++ | - | **未支持**:llvm 载荷无此 sysroot 目录 |
 | `x86_64-windows-gnu` | windows | gcc | `x86_64-w64-windows-gnu` | 载荷自带 | gnu(MinGW CRT) | libstdc++ | - | 包名 `mingw-cross-gcc` |
-| `x86_64-windows-gnu` | windows | llvm | `x86_64-w64-windows-gnu` | 需 MinGW sysroot | gnu | libc++ | - | — |
+| `x86_64-windows-gnu` | windows | llvm | `x86_64-w64-windows-gnu` | 无 MinGW sysroot 载荷 | gnu | libc++ | - | **未支持**:索引里没有这个包 |
 | `riscv64-none-elf` | 无 | llvm | `riscv64-none-elf` | `xim:picolibc-riscv@1.8.12` | picolibc | 无 | - | `-march/-mabi/-mcmodel` 由 freestanding 表定 |
 | `riscv32-none-elf` | 无 | llvm | `riscv32-none-elf` | `xim:picolibc-riscv@1.8.12` | picolibc | 无 | - | 同上 |
 | `aarch64-none-elf` | 无 | llvm | `aarch64-none-elf` | 无(表里为空) | 无 | 无 | - | preview;须 `sysroot = ""` |
@@ -86,13 +95,13 @@ mcpp 的行为 —— 前一版文档就这么错过一次。
 | mcpp target | 目标机 OS | 编译器 | 编译器 target | sysroot | c-abi | c++-abi | openkal | 构建配置特殊说明 |
 |---|---|---|---|---|---|---|---|---|
 | `x86_64-linux-gnu` | linux | gcc | `x86_64-unknown-linux-gnu` | 载荷自带 | gnu | libstdc++ | - | ✅ |
-| `x86_64-linux-gnu` | linux | llvm | `x86_64-unknown-linux-gnu` | **无** | gnu | — | - | ❌ **A**:`Scrt1.o (outside the sandbox)` |
+| `x86_64-linux-gnu` | linux | llvm | `x86_64-unknown-linux-gnu` | **无** | gnu | — | - | ❌ **A**:载荷已装而未接线 |
 | `x86_64-linux-musl` | linux | gcc | `x86_64-unknown-linux-musl` | 载荷自带 | musl | libstdc++ | - | ✅ |
-| `x86_64-linux-musl` | linux | llvm | `x86_64-unknown-linux-musl` | **无** | musl | — | - | ❌ **A** |
+| `x86_64-linux-musl` | linux | llvm | `x86_64-unknown-linux-musl` | **无** | musl | — | - | **未支持**:`xim:musl` 未接线;诊断是 hermetic |
 | `aarch64-linux-musl` | linux | gcc | `aarch64-unknown-linux-musl` | 载荷自带 | musl | libstdc++ | - | ✅ |
-| `aarch64-linux-musl` | linux | llvm | `aarch64-unknown-linux-musl` | **无** | musl | — | - | ❌ **A** |
+| `aarch64-linux-musl` | linux | llvm | `aarch64-unknown-linux-musl` | **无** | musl | — | - | **未支持**:无此 sysroot;诊断是 hermetic |
 | `x86_64-windows-gnu` | windows | gcc | `x86_64-w64-windows-gnu` | 载荷自带 | gnu | libstdc++ | - | ✅ `ldflags = -lstdc++exp` |
-| `x86_64-windows-gnu` | windows | llvm | `x86_64-w64-windows-gnu` | **无** | gnu | — | - | ❌ **B**:`ldflags` 为空 |
+| `x86_64-windows-gnu` | windows | llvm | `x86_64-w64-windows-gnu` | **无** | gnu | — | - | **未支持** + ❌ **B**:无载荷,**而诊断说的是别的事** |
 | `riscv64-none-elf` | 无 | llvm | — | `sysroot=""` | 无 | 无 | - | ✅ 产出 RISC-V ELF |
 | `riscv64-none-elf` | 无 | llvm | — | **表里的 picolibc** | picolibc | 无 | - | ❌ **C**:干净环境不安装(#510) |
 | `riscv32-none-elf` | 无 | llvm | — | `sysroot=""` | 无 | 无 | - | ✅ |
@@ -190,48 +199,53 @@ libunwind,用 gcc 构建它不是一件存在的事;包用 `requires` 声明了�
 
 **载荷体系(表 1 vs 表 2)四行不符;openkal 体系(表 4 vs 表 5)全部一致。**
 
-| 差异 | 表 1 说应该 | 表 2 实测 | 影响 |
-|---|---|---|---|
-| **A** | llvm × 三个 linux 目标:`xim:glibc`/musl sysroot 就位 | sysroot **无**,clang 找宿主的,hermetic 拒绝 | **llvm 在 hosted linux 目标上不可用** |
-| **B** | llvm × windows-gnu:MinGW sysroot 就位 | `ldflags` 为空,无 `-B/-L/--sysroot` | **不可用,且诊断无关**(`unknown file type`) |
-| **C** | 目标行的 picolibc 就位 | 声明而不安装(#510) | **干净环境下裸机不可用** |
-| **D** | 裸机行的 pin 是能力陈述,gcc 不该接手 | 用户显式声明 gcc 时无条件让位 | 诊断指向 `-mabi` 而非决定 |
+| 差异 | 类别 | 表 1 说应该 | 表 2 实测 | 影响 |
+|---|---|---|---|---|
+| **A** | ❌ **缺陷** | llvm × `x86_64-linux-gnu` 接上 `xim:glibc` | 载荷已装、gcc 接了、llvm 没接 | llvm 在这个目标上不可用 |
+| **B** | ❌ **诊断缺陷** | llvm × windows-gnu 若不支持,应当这么说 | 报 `ld.lld: unknown file type`,与真因无关 | 使用者被指向错误方向 |
+| **C** | ❌ **缺陷** | 目标行 picolibc 就位 | 声明而不安装(#510) | 干净环境裸机不可用 |
+| **D** | ❌ **缺陷** | 裸机 pin 是能力陈述,gcc 不该接手 | 用户写 gcc 时无条件让位 | 诊断指向 `-mabi` 而非决定 |
+| — | **未支持** | llvm × `x86_64-linux-musl` | `xim:musl` 在索引里,mcpp 从不为 llvm 装 | 功能缺口,**不是缺陷** |
+| — | **未支持** | llvm × `aarch64-linux-musl` | llvm 载荷无该 sysroot 目录 | 同上 |
+| — | **未支持** | llvm × `x86_64-windows-gnu` | 索引里没有 MinGW sysroot 包 | 同上 |
 
-### A 与 B 同源,而 A 有一处关键事实
+### A 是缺陷,而三个 musl/mingw 格不是
 
-两者都是:**clang 靠 `--target=` 切目标,目标 sysroot 必须由外部给,mcpp 没给。**
-gcc 不需要 —— 它一个目标一份载荷,驱动自带 sysroot(实测存在
-`xim-x-mingw-cross-gcc/16.1.0/x86_64-w64-mingw32/`)。
-
-⭐⭐ **A 不是「缺少 sysroot」,是「同一份东西 gcc 接上了而 llvm 没接」。** 实测两条
-链接线:
+⭐ **区别在于那份载荷在不在。** 实测:
 
 ```
-gcc  × x86_64-linux-gnu   ldflags:
-  -Wl,--dynamic-linker=…/xim-x-glibc/2.44/lib64/ld-linux-x86-64.so.2
-  -L…/xim-x-glibc/2.44/lib64
-  -Wl,-rpath,…/xim-x-glibc/2.44/lib64
-  -B…/xim-x-binutils/2.42/bin
+$ ls …/xim-x-llvm/22.1.8/lib/ | grep -E '^(x86_64|aarch64|riscv)'
+x86_64-unknown-linux-gnu          ← 只有这一个
 
-llvm × x86_64-linux-gnu   ldflags:
-  --target=x86_64-unknown-linux-gnu --no-default-config -fuse-ld=lld
-  -L…/xim-x-llvm/22.1.8/lib/x86_64-unknown-linux-gnu
-  -L…/xim-x-gcc-runtime/15.1.0/lib64
-  (没有任何 xim-x-glibc)
+$ ls -d …/xpkgs/xim-x-glibc            ✅ 已装
+$ ls -d …/xpkgs/xim-x-musl             ❌ 无此载荷(索引里有 xim:musl,mcpp 不装)
+$ mcpp search musl | grep mingw        ❌ 索引里没有 MinGW sysroot 包
 ```
 
-而缺的正是 glibc 的启动对象,**它们就在那份载荷里**:
+- **A**(`x86_64-linux-gnu`)—— `xim:glibc` 已装且带着 `Scrt1.o crti.o crtn.o`,
+  **gcc 的链接线接了它**:
 
-```
-$ ls …/xim-x-glibc/2.44/lib/ | grep -E '^(Scrt1|crti|crtn)\.o$'
-crti.o  crtn.o  Scrt1.o
-```
+  ```
+  gcc :  -Wl,--dynamic-linker=…/xim-x-glibc/2.44/lib64/ld-linux-x86-64.so.2
+         -L…/xim-x-glibc/2.44/lib64  -Wl,-rpath,…  -B…/xim-x-binutils/2.42/bin
+  llvm:  --target=… --no-default-config -fuse-ld=lld
+         -L…/xim-x-llvm/…  -L…/xim-x-gcc-runtime/…      ← 没有任何 xim-x-glibc
+  ```
 
-⭐ 所以 A 的一句话是:**`xim:glibc` 装了、gcc 的链接线接了、llvm 的没接。** 缺的不
-是载荷,是 llvm 分支上对应的 `-L`/`-B`/`--dynamic-linker`。这比缺一份载荷容易修得
-多,也把 A 的优先级提到 B 之前。
+  **同一份载荷,一个分支接上另一个没接** —— 这是缺陷。
 
-⚠️ **hermetic 检查对 A 报而对 B 不报,未查清。未实测。**
+- **三个 musl / mingw 格** —— 载荷根本不在。这是**未支持**,该做的是补载荷与接线,
+  不是修 bug。
+
+### B 剩下的那一半确实是缺陷
+
+即便 llvm × windows-gnu 归为「未支持」,**诊断仍然是错的**:它报
+`ld.lld: error: obj/main.o: unknown file type`,而真因是没有 MinGW sysroot。
+
+⚠️ 与 A 对照:A 那格 hermetic 检查**报得很准**(逐个列出落在沙箱外的 `.o`)。
+**同一类问题,一处有准确诊断、一处没有** —— 为什么,未查清。**未实测。**
+
+---
 
 ---
 
