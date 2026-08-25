@@ -1270,6 +1270,19 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         return f;
     }
 
+    // ⭐ THE PART OF THE LINK LINE THAT BELONGS TO THE TARGET, NOT THE PAYLOAD.
+    //
+    // Empty on every platform whose kernel interface is an instruction rather
+    // than a library — Linux's is `syscall`, so a self-contained libc from the
+    // dependency graph really does replace everything the payload contributed.
+    // Darwin's interface IS a library (`libSystem`), so a Mach-O link needs the
+    // SDK whoever supplies libc.
+    //
+    // Written by the macOS branch below and read by the graph replacement after
+    // it: one value, written once, so the two cannot disagree about what
+    // survives a replacement. Declared here rather than inside either, because
+    // the ordering between them is the whole point.
+    std::string platformAnchor;
     if constexpr (mcpp::platform::is_windows) {
         if (isMsvcDialect) {
             // Native cl.exe: link.exe does the link (SeparateLinker). Search
@@ -1374,6 +1387,23 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         std::string macos_sdk;
         if (auto sdk = mcpp::platform::macos::sdk_path())
             macos_sdk = " -isysroot " + escape_path(*sdk);
+        // ⭐⭐ AND KEPT, BECAUSE THE GRAPH BRANCH BELOW REPLACES THIS LINE.
+        //
+        // `-isysroot` and the deployment floor describe the TARGET OS. Every
+        // other token here describes the payload — which is exactly what a
+        // graph-supplied C library replaces — so when that replacement runs it
+        // must carry these two across. It did not, and the failure was the one
+        // the comment above predicts, on a stack whose C library came from the
+        // graph (measured 2026-08-25, openkal-musl on macos-14):
+        //
+        //     ld64.lld: error: library not found for -lSystem
+        //     ld64.lld: error: undefined symbol: clock_gettime_nsec_np
+        //
+        // A Mach-O link needs the SDK whoever supplies libc, because on Darwin
+        // the platform interface IS a library. Linux needs no equivalent: its
+        // kernel interface is an instruction, so a self-contained libc from the
+        // graph really does replace everything.
+        platformAnchor = macos_sdk + version_min;
         f.ld = std::format("{}{}{} -fuse-ld=lld{}{}{}{}", full_static,
                            b_flag, macos_sdk, version_min, link_intent_ld,
                            user_ldflags, link_extra);
@@ -1514,7 +1544,23 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         if (plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang)
             graphLd += " -fuse-ld=lld";
 
-        f.ld = std::format("{}{}{}{}{}", full_static, graphLd,
+        // ⭐⭐ AND THE TARGET'S OWN ANCHOR SURVIVES THE REPLACEMENT.
+        //
+        // Everything this branch rebuilds describes the PAYLOAD — its `-B`, its
+        // startup objects, its loader — and a graph-supplied C library is
+        // exactly what replaces those. `platformAnchor` is the part that does
+        // not: on Darwin it is `-isysroot <SDK>` plus the deployment floor,
+        // which describe the target OS and are needed however libc arrives.
+        //
+        // Measured 2026-08-25 without it, on openkal-musl over openkal-macos:
+        //
+        //     ld64.lld: error: library not found for -lSystem
+        //     ld64.lld: error: undefined symbol: clock_gettime_nsec_np
+        //
+        // — the failure the macOS branch's own comment predicts, caused by this
+        // branch discarding the line that prevents it. Empty everywhere else,
+        // so no other target's link line moves.
+        f.ld = std::format("{}{}{}{}{}{}", full_static, graphLd, platformAnchor,
                            link_intent_ld, user_ldflags, link_extra);
         f.ldC = f.ld;   // no C++ runtime token on this line
 

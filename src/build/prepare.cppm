@@ -924,6 +924,19 @@ prepare_build(bool print_fingerprint,
     // The target row's toolchain convention, held until the graph is known.
     // Empty when the row names none or the project named its own.
     std::string targetPinCandidate;
+    // ⭐⭐ AND WHETHER THAT PIN IS A CONVENTION OR A CAPABILITY, RECORDED AT
+    // THE SAME READ.
+    //
+    // A hosted row's pin answers "which payload supplies this target's C
+    // library", so a graph that supplies one instead makes it inapplicable.
+    // A freestanding row's pin answers a different question — the table says
+    // so in its own words: "the pin is llvm on every host because clang/lld
+    // are cross-compilers by construction". A host g++ cannot emit
+    // riscv64-none-elf at all, and no dependency changes that.
+    //
+    // Taken here rather than re-derived at the decision point, because the row
+    // is read exactly once and both facts come out of that read.
+    bool targetPinIsCapability = false;
     // Whether the resolved toolchain spec names the machine's own Visual
     // Studio. Decided inside `resolve_target_toolchain`, read by
     // `host_tc_for_build_program`, which is why it is declared out here.
@@ -1673,6 +1686,7 @@ prepare_build(bool print_fingerprint,
         if (known && !hasToolchainOverride && !known->pin.empty()
             && !tc_origin_is_user_explicit(tcOrigin)) {
             targetPinCandidate = std::string(known->pin);
+            targetPinIsCapability = parsed && parsed->is_freestanding();
         }
         if (known && known->defaultStatic && m->buildConfig.linkage.empty())
             m->buildConfig.linkage = "static";
@@ -1750,7 +1764,19 @@ prepare_build(bool print_fingerprint,
     // here and the call site was measured to read `tc` exactly once, and that
     // one read wanted the target triple rather than the compiler.
     std::optional<mcpp::toolchain::Toolchain> tc;
-    auto resolve_target_toolchain = [&]() -> std::expected<void, std::string> {
+    // ⚠️ `std::function` AND NOT `auto`, BECAUSE THE FIRST-RUN BRANCH INSIDE
+    // CALLS BACK INTO IT. That branch installs a host default and then has to
+    // resolve THAT default for the requested target — which is what the top of
+    // this same function does. Recursing reuses it; writing it a second time
+    // there would be a second answer to one question. Depth is one: the second
+    // pass takes the `tcSpec.has_value()` branch that the first-run path just
+    // made true.
+    bool firstRunNeedsTargetPass = false;
+    // Guards the one recursive call below. Set before the call so the second
+    // pass cannot reach it, whatever else changed in between.
+    bool targetPassDone = false;
+    std::function<std::expected<void, std::string>()> resolve_target_toolchain;
+    resolve_target_toolchain = [&]() -> std::expected<void, std::string> {
       std::optional<mcpp::toolchain::ToolchainSpec> parsedSpec;
       auto tcOriginAxis = mcpp::toolchain::Origin::Managed;
       if (tcSpec.has_value() && *tcSpec != "system") {
@@ -2036,6 +2062,35 @@ prepare_build(bool print_fingerprint,
           // not the running build.
         tcSpec   = defaultSpec;
         tcOrigin = TcOrigin::FirstRun;
+
+        // ⭐⭐ AND IF A TARGET WAS ASKED FOR, RESOLVE FOR IT — THIS BRANCH JUST
+        // INSTALLED A HOST COMPILER AND WAS ABOUT TO BUILD WITH IT.
+        //
+        // Everything above answers "this machine has no toolchain, give it
+        // one", and the answer is a HOST payload. `--target` was never read
+        // here, so on a machine that had never built anything,
+        // `mcpp build --target x86_64-windows-gnu` installed a native gcc and
+        // compiled Windows sources with it. Measured in CI 2026-08-25:
+        //
+        //     First run  no toolchain configured — installing gcc@16.1.0 …
+        //      Resolved  gcc@16.1.0 → …/xim-x-gcc/16.1.0/bin/g++
+        //                                        ↑ no target in the path
+        //
+        // against the same command on a machine that already had one:
+        //
+        //      Resolved  gcc@16.1.0 → x86_64-windows-gnu → …/mingw-cross-gcc/…
+        //
+        // ⭐ REUSES THE PATH THAT ALREADY KNOWS HOW, rather than repeating what
+        // it does. `resolve_target_toolchain` maps a spec plus a target onto a
+        // payload and installs it; the default just chosen is the spec. A
+        // second implementation here would be a second answer to one question,
+        // which is the shape this release exists to remove.
+        // ⚠️ RECORDED HERE, ACTED ON BELOW — the Windows first-run block that
+        // follows SETS `overrides.target_triple` itself, and returning from
+        // here would skip it. Its own comment says why that matters: it
+        // persists BOTH axes, and persisting only the target leaves
+        // `mcpp toolchain list` disagreeing with what the build used.
+        firstRunNeedsTargetPass = !overrides.target_triple.empty();
       }
 
       // Windows first run that got diverted to winlibs GCC: announce it and
@@ -2057,6 +2112,48 @@ prepare_build(bool print_fingerprint,
                 std::format("set to {} → {}", *tcSpec, overrides.target_triple));
         }
         tcOrigin = TcOrigin::FirstRun;
+      }
+
+      // ⭐⭐ AND NOW RESOLVE FOR THE TARGET, IF ONE WAS ASKED FOR.
+      //
+      // The first-run branch above answers "this machine has no toolchain, give
+      // it one", and the answer is a HOST payload; `--target` was never read
+      // there. On a machine that had never built anything,
+      // `mcpp build --target x86_64-windows-gnu` therefore installed a native
+      // gcc and compiled Windows sources with it — measured in CI 2026-08-25:
+      //
+      //     First run  no toolchain configured — installing gcc@16.1.0 …
+      //      Resolved  gcc@16.1.0 → …/xim-x-gcc/16.1.0/bin/g++
+      //                                        ↑ no target in the path
+      //
+      // against the same command where one already existed:
+      //
+      //      Resolved  gcc@16.1.0 → x86_64-windows-gnu → …/mingw-cross-gcc/…
+      //
+      // ⭐ REUSES THE PATH THAT ALREADY KNOWS HOW rather than repeating it. The
+      // default just chosen is the spec; mapping a spec plus a target onto a
+      // payload (installing it if absent — `autoInstall` was always true there)
+      // is what the top of this function does. Depth is one: the second pass
+      // takes the `tcSpec.has_value()` branch the first run just made true.
+      // ⚠️⚠️ ONE-SHOT, AND THE FLAG IS SET BEFORE THE CALL, NOT AFTER.
+      //
+      // This line sits OUTSIDE the first-run branch — it has to, because the
+      // Windows block just above sets the target itself — so it is evaluated on
+      // every pass. The first version relied on `firstRunNeedsTargetPass` being
+      // false on the second pass; it is a captured variable that nothing
+      // resets, so every pass recursed again. Measured in a consumer's CI as
+      // the same `Resolved` line four times and then
+      //
+      //     ##[error]Process completed with exit code 139
+      //
+      // — SIGSEGV, a stack that ran out. A recursion whose termination depends
+      // on state the recursive call does not change is not a depth-one
+      // recursion, however its comment reads.
+      if (!targetPassDone
+          && (firstRunNeedsTargetPass
+              || (windowsGnuFirstRun && tcSpec.has_value()))) {
+        targetPassDone = true;
+        return resolve_target_toolchain();
       }
 
       auto detected = mcpp::toolchain::detect(
@@ -4845,7 +4942,26 @@ prepare_build(bool print_fingerprint,
                 }
             }
         }
-        if (!targetPinCandidate.empty() && !graphSuppliesSystem) {
+        // ⚠️ AND A FREESTANDING PIN SURVIVES IT. `graphSuppliesSystem` spans
+        // kernel-abi and c-abi, and it correctly cancels a HOSTED row's
+        // convention — that row names the payload the graph is replacing.
+        // A bare-metal row names the only compiler that emits the target.
+        //
+        // Measured 2026-08-25, on a three-line manifest:
+        //
+        //     provides = ["mcpp:kernel-abi=openkal"]
+        //     $ mcpp build --target riscv64-none-elf
+        //       Resolved gcc@16.1.0 → riscv64-none-elf → …/bin/g++
+        //       g++: error: unrecognized argument in option '-mabi=lp64d'
+        //       g++: error: unrecognized command-line option
+        //                   '--target=riscv64-none-elf'
+        //
+        // A package saying which layer it supplies made the host compiler be
+        // chosen for a target it cannot produce. Same shape as the four
+        // defects 2026.8.25.1 fixed: a predicate spanning two layers deciding
+        // something that does not depend on either of them.
+        if (!targetPinCandidate.empty()
+            && (!graphSuppliesSystem || targetPinIsCapability)) {
             if (tcOrigin == TcOrigin::GlobalDefault && tcSpec.has_value()
                 && *tcSpec != targetPinCandidate)
                 pinReplacedDefault = *tcSpec;
@@ -6022,14 +6138,77 @@ prepare_build(bool print_fingerprint,
         // resolves all five layers from one compiler payload, and five lines
         // reading `(payload)` answer a question nobody asked. `MCPP_VERBOSE`
         // prints them all; a diagnostic always does.
-        mcpp::ui::info("Target", tsd::format_report(
-            resolvedTargetSide,
+        // ⚠️⚠️ THE REQUESTED TARGET AND THE RESOLVED ONE MUST NAME THE SAME
+        // OPERATING SYSTEM, AND UNTIL THIS LINE NOTHING CHECKED.
+        //
+        // Measured 2026-08-25 in CI, on a machine that had installed only a
+        // native gcc — the report itself said it, and the build carried on:
+        //
+        //     Target x86_64-windows-gnu → x86_64-unknown-linux-gnu
+        //     …
+        //     src/stream.cpp:68:9: error: 'GetFileType' was not declared
+        //
+        // Two operating systems on one line. The cross payload was absent, so
+        // resolution fell back to the host compiler, and Windows sources were
+        // compiled for Linux; the failure surfaced a hundred lines later as an
+        // undeclared identifier, naming a symbol rather than the decision.
+        // openkal-uefi hit the same fallback at the linker
+        // (`ld: unrecognized option '--subsystem'`).
+        //
+        // ⭐ THE REPORT ALREADY HELD THE EVIDENCE — this asserts on it rather
+        // than deriving the question again. A refusal here costs one line; the
+        // alternative is a message about a Win32 function, in a file the reader
+        // did not write, for a decision made in this one.
+        //
+        // Scope is deliberately the OS and not the whole triple: an ABI or
+        // vendor difference between `x86_64-windows-gnu` and
+        // `x86_64-w64-windows-gnu` is the normalisation this very line reports,
+        // and refusing on it would reject every correct cross build.
+        // ⭐ THE NAME THE REPORT PRINTS, DERIVED ONCE AND USED BY BOTH.
+        //
+        // ⚠️ The first version of this guard read `resolvedTargetCanonical`
+        // directly while the report below chose among three sources. They
+        // agreed on the machine it was written on and disagreed in CI, where
+        // the canonical string was empty and the report still named the target
+        // from `targetDisplayName` — so the report showed the mismatch and the
+        // guard, asking a different variable, saw nothing to refuse. One fact,
+        // derived twice: the shape this whole release exists to remove.
+        const std::string reportedTargetName =
             !targetDisplayName.empty()
                 ? targetDisplayName
                 : (resolvedTargetCanonical.empty()
                        ? (tc ? tc->targetTriple : std::string{})
-                       : resolvedTargetCanonical),
-            mcpp::log::is_verbose()));
+                       : resolvedTargetCanonical);
+        if (!resolvedTargetSide.llvmTriple.empty()
+            && !reportedTargetName.empty()) {
+            auto want = mcpp::toolchain::triple::parse(reportedTargetName);
+            auto got  = mcpp::toolchain::triple::parse(
+                            resolvedTargetSide.llvmTriple);
+            // The inputs, when asked for. A guard that declines to fire and a
+            // guard that was never reached read the same from outside.
+            if (mcpp::log::is_verbose())
+                mcpp::ui::info("Target", std::format(
+                    "same-OS check: '{}'(os={}) vs '{}'(os={})",
+                    reportedTargetName, want ? want->os : "<unparsed>",
+                    resolvedTargetSide.llvmTriple, got ? got->os : "<unparsed>"));
+            if (want && got && !want->os.empty() && !got->os.empty()
+                && want->os != got->os) {
+                return std::unexpected(std::format(
+                    "target '{}' resolved to a toolchain for '{}'.\n"
+                    "       Those are different operating systems, so nothing "
+                    "built here would be for\n"
+                    "       the target that was asked for. No payload on this "
+                    "host produces '{}',\n"
+                    "       and mcpp will not substitute the host's.\n"
+                    "       install one with `mcpp toolchain install <family> "
+                    "<version>`, or name it\n"
+                    "       explicitly with `[target.{}] toolchain = \"…\"`.",
+                    reportedTargetName, resolvedTargetSide.llvmTriple,
+                    reportedTargetName, reportedTargetName));
+            }
+        }
+        mcpp::ui::info("Target", tsd::format_report(
+            resolvedTargetSide, reportedTargetName, mcpp::log::is_verbose()));
     }
 
     // ── L3: ROOT build.mcpp (moved after dependency resolution, design §3.1
