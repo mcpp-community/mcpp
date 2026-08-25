@@ -314,71 +314,88 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 ## 构建机是第三条轴
 
 上面两条轴 —— 用哪个编译器、C 库从哪来 —— 是工程做的选择。第三条不是:它是构建
-运行在哪台机器上,而它决定了**哪些行根本够得着**。
+运行在哪台机器上。
 
-`mcpp toolchain list` 只报告这台宿主够得着的行。Linux 上是目标表 14 行里的 12 行;
-`x86_64-windows-msvc` 与 `aarch64-macos` 缺席,而这是对的 —— MSVC 与 macOS SDK
-属于它们自己的机器,没有依赖能替代。
+⭐ **这条轴是 mcpp 自己发布的那一组,而且是 (os, arch) 不是 os。**
+`release.yml` 发布四份宿主二进制:
 
-### 规则,五行说完
+| 构建机 | 发布资产 | CI runner |
+|---|---|---|
+| `linux-x86_64` | `mcpp-<v>-linux-x86_64.tar.gz` | `ubuntu-24.04` |
+| `linux-aarch64` | `mcpp-<v>-linux-aarch64.tar.gz` | `ubuntu-24.04-arm` |
+| `macos-arm64` | `mcpp-<v>-macosx-arm64.tar.gz` | `macos-14` |
+| `windows-x86_64` | `mcpp-<v>-windows-x86_64.zip` | `windows-2022` |
 
-| 目标类别 | 哪些宿主服务它 | 为什么 |
+⚠️ **两台 Linux 不是同一台。** `x86_64-linux-gnu` 需要本机架构的 `xim:glibc` 与
+`xim:linux-headers` 载荷,而它们只为宿主自己的架构存在 —— 所以那一行从
+`linux-x86_64` 够得着,从 `linux-aarch64` 够不着;`aarch64-linux-gnu` 是镜像的
+情形,两台上都是 `planned`。把它们并成 `linux`,一台会把另一台的行覆盖掉。
+
+### 哪台构建机服务哪个目标
+
+| target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
+|---|---|---|---|---|---|---|
+| `x86_64-linux-gnu` | verified | — | ✅ 载荷 | — | — | — |
+| `aarch64-linux-gnu` | planned | — | planned | planned | planned | planned |
+| `x86_64-linux-musl` | verified | `gcc@16.1.0` | ✅ 载荷 | ✅ 载荷 | — | ✅ 载荷 |
+| `aarch64-linux-musl` | verified | `gcc@16.1.0` | ✅ 载荷 | ✅ 载荷 | — | — |
+| `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
+| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | ✅ 载荷 | ✅ 载荷 | — | ✅ 载荷 |
+| `x86_64-windows-musl` | preview | `llvm@22.1.8` | ⚙ 图 | ⚙ 图 | ⚙ 图 | ✅ 载荷 |
+| `x86_64-windows-msvc` | verified | — | — | — | — | ✅ 系统 |
+| `aarch64-macos` | verified | — | — | — | ✅ SDK | — |
+| `x86_64-macos` | planned | — | planned | planned | planned | planned |
+| `riscv64-none-elf` | verified | `llvm@22.1.8` | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 |
+| `riscv32-none-elf` | verified | `llvm@22.1.8` | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 |
+| `aarch64-none-elf` | preview | `llvm@22.1.8` | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 |
+| `x86_64-none-elf` | preview | `llvm@22.1.8` | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 |
+
+`✅ 载荷` 这里有工具链载荷产出它 · `⚙ 图` 没有载荷,但依赖可以供给系统 ·
+`✅ 系统` 在机器上被找到,不是 mcpp 装的 · `✅ SDK` 平台自己的 ·
+`—` 从这台宿主够不着 · `planned` 词表里有,还没有任何东西接线。
+
+### 列背后的规则
+
+| 目标类别 | 哪些构建机服务它 | 为什么 |
 |---|---|---|
 | `*-linux-musl` | Linux(任意架构)、Windows(仅同架构) | musl 载荷是自足的 |
-| `*-linux-gnu` | Linux,且仅同架构 | 还需要本机架构的 `xim:glibc` / `xim:linux-headers` |
+| `*-linux-gnu` | Linux,且仅同架构 | 还要本机架构的 `xim:glibc` / `xim:linux-headers` |
 | `x86_64-windows-gnu` | Linux、Windows | 一个身份,只在分发层按宿主分岔 |
-| `x86_64-windows-{msvc,musl}` | Windows | MSVC 是在机器上被找到的;没有 gcc 发得出 PE+musl |
+| `x86_64-windows-msvc` | Windows | MSVC 是在机器上被找到的 |
+| `x86_64-windows-musl` | 载荷只在 Windows;走图则任意宿主 | 没有 gcc 发得出 PE+musl,而 LLVM 拼不出这个三元组 |
 | `aarch64-macos` | macOS | SDK 是那台机器的 |
 | `*-none-elf` | 每一台 | clang 与 lld 按构造就是交叉编译器 |
 
-⚠️ **一行在这台宿主缺席,不等于这台宿主建不出它。** `host_can_serve` 给出的拒绝
-讲的是**载荷**,而依赖图可以改为供给系统 —— 这就是 `x86_64-windows-musl` 在 Linux
-上显示 `via dependency graph`、并且在那里真的产出 PE32+ 的原因。
+⚠️ **一个 `—` 讲的是载荷,不是可能性。** `host_can_serve` 回答的是「这里有没有
+载荷产出它」,而依赖图可以改为供给系统 —— 这就是 `x86_64-windows-musl` 在 Linux
+上显示 `via dependency graph`、并在那里产出真正的 PE32+ 的原因。
 
-### 完整表格
+### 而 CI 把每一台都测了
 
-tier 与 pin 是行的属性,不随宿主变。三个宿主列是 `mcpp toolchain list` 在那里的报告。
+[`ci-target-matrix.yml`](../../.github/workflows/ci-target-matrix.yml) 在全部四台
+宿主上跑。每台扫描它列出的每一行两遍 —— 只有载荷,以及图里加上
+`openkal-musl` + `openkal-llvm-runtime` —— 与
+[`tests/matrix/expected.tsv`](../../tests/matrix/expected.tsv) 比对,键是
+`(mode, host, target, compiler)`。
 
-| target | tier | pin | linux | macOS | Windows |
-|---|---|---|---|---|---|
-| `x86_64-linux-gnu` | verified | — | installed | — | — |
-| `x86_64-linux-musl` | verified | `gcc@16.1.0` | installed | — | installed |
-| `aarch64-linux-musl` | verified | `gcc@16.1.0` | installed | — | — |
-| `riscv64-linux-musl` | planned | — | planned | planned | planned |
-| `aarch64-linux-gnu` | planned | — | planned | planned | planned |
-| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | installed | — | installed |
-| `x86_64-windows-musl` | preview | `llvm@22.1.8` | **via dependency graph** | — | installed |
-| `x86_64-windows-msvc` | verified | — | — | — | installed |
-| `aarch64-macos` | verified | — | — | installed | — |
-| `x86_64-macos` | planned | — | planned | planned | planned |
-| `riscv64-none-elf` | verified | `llvm@22.1.8` | available | available | available |
-| `riscv32-none-elf` | verified | `llvm@22.1.8` | available | available | available |
-| `aarch64-none-elf` | preview | `llvm@22.1.8` | available | available | available |
-| `x86_64-none-elf` | preview | `llvm@22.1.8` | available | available | available |
+⚠️ 每台把什么解析成自己的目标,与它的名字给人的印象并不一致:
 
-linux 一列是实测的。另外两列由上面的规则给出,并由下面这套 CI 扫描确认。
+| runner | 它解析出的宿主目标 |
+|---|---|
+| `ubuntu-24.04` | `x86_64-unknown-linux-gnu` |
+| `ubuntu-24.04-arm` | `aarch64-unknown-linux-gnu` |
+| `macos-14` | `arm64-apple-darwin23.6.0` —— **ARM**,不是 x86_64 |
+| `windows-2022` | `x86_64-pc-windows-msvc` —— **msvc**,而那里的 mingw gcc 目标是 `-gnu` |
 
-### 而 CI 在三台上测它
+本章三条判据都曾假设了 Linux 上的那个巧合,并在其它宿主上被纠正。
 
-`.github/workflows/ci-target-matrix.yml` 跑在三台 runner 上,而每台把什么解析成
-自己的目标,与它的名字给人的印象并不一致:
-
-| runner | 宿主列 | 它解析出的宿主目标 |
-|---|---|---|
-| `ubuntu-24.04` | linux | `x86_64-unknown-linux-gnu` |
-| `macos-14` | macOS | `arm64-apple-darwin23.6.0` —— **ARM**,不是 x86_64 |
-| `windows-2022` | Windows | `x86_64-pc-windows-msvc` |
-
-每台扫描它列出的每一行,两种体系各一遍 —— 只有载荷,以及图里加上
-`openkal-musl` + `openkal-llvm-runtime` —— 结果与
-[`tests/matrix/expected.tsv`](../../tests/matrix/expected.tsv) 比对。
-
-⚠️ **格数不是常数。** 它取决于那台机器装了什么,而同一台 runner 在相邻两轮里被
-观察到工具链不同。所以比对断言的是**扫描真的产出了行**、以及**期望表点名的每一行
-都被跑到**,而不是一个总数:一格因为载荷没被恢复而消失,与一格通过了,在退出码上
-没有区别。
+⚠️ **每台的格数不是常数。** 它取决于那台机器装了什么,而同一台 runner 在相邻两轮
+里被测到工具链不同。所以比对断言的是**扫描真的产出了行**、以及**期望表点名的每一
+行都被跑到**,而不是一个总数:一格因为载荷没被恢复而消失,与一格通过了,在退出码
+上没有区别。
 
 ## 自定义目标
+
 
 不在 mcpp 表内的三元组需要一个显式段落,而这也是一块板子声明
 「任何默认值都给不出的事实」的方式:

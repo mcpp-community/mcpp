@@ -29,9 +29,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { host: linux,   runner: ubuntu-24.04 }
-          - { host: macos,   runner: macos-14     }
-          - { host: windows, runner: windows-2022 }
+          # ⭐⭐ THE BUILD-HOST AXIS IS THE SET mcpp SHIPS FOR, NOT THE SET THAT
+          # WAS CONVENIENT. `release.yml` publishes four: linux-x86_64,
+          # linux-aarch64, macosx-arm64, windows-x86_64. A host mcpp is
+          # distributed for and never scanned is a host whose target table is
+          # a claim nobody checked.
+          #
+          # ⚠️ `host` IS (os, arch) AND NOT os. Two Linux hosts differ in which
+          # rows they serve — `x86_64-linux-gnu` needs the host-native glibc
+          # payload, so it is reachable on one and not the other — and a single
+          # `linux` key would have them overwrite each other in expected.tsv.
+          - { host: linux-x86_64,   runner: ubuntu-24.04     }
+          - { host: linux-aarch64,  runner: ubuntu-24.04-arm }
+          - { host: macos-arm64,    runner: macos-14         }
+          - { host: windows-x86_64, runner: windows-2022     }
     defaults:
       run:
         shell: bash
@@ -123,7 +134,7 @@ jobs:
             "OK: naming the host's own target changes nothing" || fail=1
           check 296_what_the_report_names_is_what_the_link_line_uses.sh \
             "OK: what the report names is what the link line uses" || fail=1
-          if [ "${{ matrix.host }}" = linux ]; then
+          if [ "${{ matrix.host }}" = linux-x86_64 ]; then
             # The denominator: gcc is always installed here, so this host must
             # actually run the test.
             check 297_a_capability_pin_is_not_a_preference.sh \
@@ -147,9 +158,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { host: linux,   runner: ubuntu-24.04 }
-          - { host: macos,   runner: macos-14     }
-          - { host: windows, runner: windows-2022 }
+          # ⭐⭐ THE BUILD-HOST AXIS IS THE SET mcpp SHIPS FOR, NOT THE SET THAT
+          # WAS CONVENIENT. `release.yml` publishes four: linux-x86_64,
+          # linux-aarch64, macosx-arm64, windows-x86_64. A host mcpp is
+          # distributed for and never scanned is a host whose target table is
+          # a claim nobody checked.
+          #
+          # ⚠️ `host` IS (os, arch) AND NOT os. Two Linux hosts differ in which
+          # rows they serve — `x86_64-linux-gnu` needs the host-native glibc
+          # payload, so it is reachable on one and not the other — and a single
+          # `linux` key would have them overwrite each other in expected.tsv.
+          - { host: linux-x86_64,   runner: ubuntu-24.04     }
+          - { host: linux-aarch64,  runner: ubuntu-24.04-arm }
+          - { host: macos-arm64,    runner: macos-14         }
+          - { host: windows-x86_64, runner: windows-2022     }
     defaults:
       run:
         shell: bash

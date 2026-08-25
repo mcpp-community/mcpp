@@ -25,46 +25,52 @@
 #    status 仍是 unsupported —— 那是两条不同的规则,换了一条却不红,这张表就
 #    只在说「它没建出来」,不在说「为什么」。
 #
-# linux 行:2026-08-26 实测于 x86_64 Linux(mcpp 2026.8.26.1)。
-# windows / macos 行:留待各自宿主的第一次 CI 运行回填 —— ⚠️ 从别的宿主推断出来
-# 的一行,断言的是推断而不是那台机器。
-payload	linux	aarch64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-payload	linux	aarch64-linux-musl	gcc@16.1.0	aarch64-unknown-linux-musl	payload	musl(payload)	libstdc++(payload)	-	ok	none
-payload	linux	aarch64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-payload	linux	riscv32-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-payload	linux	riscv64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-payload	linux	riscv64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-payload	linux	x86_64-linux-gnu	gcc@16.1.0	x86_64-unknown-linux-gnu	subos	gnu(payload)	libstdc++(payload)	-	ok	none
-payload	linux	x86_64-linux-musl	gcc@16.1.0	x86_64-unknown-linux-musl	payload	musl(payload)	libstdc++(payload)	-	ok	none
-payload	linux	x86_64-macos	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-payload	linux	x86_64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-payload	linux	x86_64-windows-gnu	gcc@16.1.0	x86_64-w64-windows-gnu	none	gnu(payload)	libstdc++(payload)	-	ok	none
-payload	linux	x86_64-windows-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-payload	linux	aarch64-linux-gnu	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-payload	linux	aarch64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	convention-unreplaced
-payload	linux	aarch64-none-elf	llvm@22.1.8	aarch64-none-elf	payload	-	-	-	ok	none
-payload	linux	riscv32-none-elf	llvm@22.1.8	riscv32-none-elf	payload	-	-	-	ok	none
-payload	linux	riscv64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-payload	linux	riscv64-none-elf	llvm@22.1.8	riscv64-none-elf	payload	-	-	-	ok	none
-payload	linux	x86_64-linux-gnu	llvm@22.1.8	x86_64-unknown-linux-gnu	payload	gnu(payload)	libc++(payload)	-	ok	none
-payload	linux	x86_64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	convention-unreplaced
-payload	linux	x86_64-macos	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-payload	linux	x86_64-none-elf	llvm@22.1.8	x86_64-none-elf	payload	-	-	-	ok	none
-payload	linux	x86_64-windows-gnu	llvm@22.1.8	-	-	-	-	-	unsupported	convention-unreplaced
-payload	linux	x86_64-windows-musl	llvm@22.1.8	-	-	-	-	-	unsupported	host-cannot-serve
-graph	linux	aarch64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-graph	linux	aarch64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
-graph	linux	riscv64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-graph	linux	x86_64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
-graph	linux	x86_64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
-graph	linux	x86_64-macos	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-graph	linux	x86_64-windows-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
-graph	linux	x86_64-windows-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
-graph	linux	aarch64-linux-gnu	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-graph	linux	aarch64-linux-musl	llvm@22.1.8	aarch64-unknown-linux-musl	payload	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
-graph	linux	riscv64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-graph	linux	x86_64-linux-gnu	llvm@22.1.8	x86_64-unknown-linux-gnu	payload	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
-graph	linux	x86_64-linux-musl	llvm@22.1.8	x86_64-unknown-linux-musl	payload	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
-graph	linux	x86_64-macos	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-graph	linux	x86_64-windows-gnu	llvm@22.1.8	x86_64-w64-windows-gnu	none	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
-graph	linux	x86_64-windows-musl	llvm@22.1.8	x86_64-w64-windows-gnu	payload	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
+# ⚠️⚠️ host 是 (os, arch),不是 os。mcpp 自己发布四份宿主二进制:
+#   linux-x86_64 / linux-aarch64 / macos-arm64 / windows-x86_64
+# 两台 Linux 服务的行不一样 —— `x86_64-linux-gnu` 需要本机架构的 glibc 载荷,
+# 所以在 x86_64 上够得着、在 aarch64 上够不着。只写 `linux` 会让后跑的一台把先跑
+# 的那台在这张表里的行「解释掉」,而覆盖的方向取决于谁后跑,不取决于谁对。
+#
+# linux-x86_64 行:2026-08-26 实测(mcpp 2026.8.26.1)。
+# linux-aarch64 / macos-arm64 / windows-x86_64 行:留待各自宿主的第一次 CI 运行
+# 回填 —— ⚠️ 从别的宿主推断出来的一行,断言的是推断而不是那台机器。
+payload	linux-x86_64	aarch64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	aarch64-linux-musl	gcc@16.1.0	aarch64-unknown-linux-musl	payload	musl(payload)	libstdc++(payload)	-	ok	none
+payload	linux-x86_64	aarch64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux-x86_64	riscv32-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux-x86_64	riscv64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	riscv64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux-x86_64	x86_64-linux-gnu	gcc@16.1.0	x86_64-unknown-linux-gnu	subos	gnu(payload)	libstdc++(payload)	-	ok	none
+payload	linux-x86_64	x86_64-linux-musl	gcc@16.1.0	x86_64-unknown-linux-musl	payload	musl(payload)	libstdc++(payload)	-	ok	none
+payload	linux-x86_64	x86_64-macos	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	x86_64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux-x86_64	x86_64-windows-gnu	gcc@16.1.0	x86_64-w64-windows-gnu	none	gnu(payload)	libstdc++(payload)	-	ok	none
+payload	linux-x86_64	x86_64-windows-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux-x86_64	aarch64-linux-gnu	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	aarch64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	convention-unreplaced
+payload	linux-x86_64	aarch64-none-elf	llvm@22.1.8	aarch64-none-elf	payload	-	-	-	ok	none
+payload	linux-x86_64	riscv32-none-elf	llvm@22.1.8	riscv32-none-elf	payload	-	-	-	ok	none
+payload	linux-x86_64	riscv64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	riscv64-none-elf	llvm@22.1.8	riscv64-none-elf	payload	-	-	-	ok	none
+payload	linux-x86_64	x86_64-linux-gnu	llvm@22.1.8	x86_64-unknown-linux-gnu	payload	gnu(payload)	libc++(payload)	-	ok	none
+payload	linux-x86_64	x86_64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	convention-unreplaced
+payload	linux-x86_64	x86_64-macos	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	x86_64-none-elf	llvm@22.1.8	x86_64-none-elf	payload	-	-	-	ok	none
+payload	linux-x86_64	x86_64-windows-gnu	llvm@22.1.8	-	-	-	-	-	unsupported	convention-unreplaced
+payload	linux-x86_64	x86_64-windows-musl	llvm@22.1.8	-	-	-	-	-	unsupported	host-cannot-serve
+graph	linux-x86_64	aarch64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	aarch64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
+graph	linux-x86_64	riscv64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	x86_64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
+graph	linux-x86_64	x86_64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
+graph	linux-x86_64	x86_64-macos	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	x86_64-windows-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
+graph	linux-x86_64	x86_64-windows-musl	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+graph	linux-x86_64	aarch64-linux-gnu	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	aarch64-linux-musl	llvm@22.1.8	aarch64-unknown-linux-musl	payload	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
+graph	linux-x86_64	riscv64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	x86_64-linux-gnu	llvm@22.1.8	x86_64-unknown-linux-gnu	payload	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
+graph	linux-x86_64	x86_64-linux-musl	llvm@22.1.8	x86_64-unknown-linux-musl	payload	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
+graph	linux-x86_64	x86_64-macos	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	x86_64-windows-gnu	llvm@22.1.8	x86_64-w64-windows-gnu	none	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
+graph	linux-x86_64	x86_64-windows-musl	llvm@22.1.8	x86_64-w64-windows-gnu	payload	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none

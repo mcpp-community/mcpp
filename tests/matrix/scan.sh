@@ -45,10 +45,24 @@ command -v jq >/dev/null 2>&1 || {
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/src"; cd "$work"
 
+# ⚠️⚠️ 构建机是 (os, arch),不是 os。
+#
+# mcpp 自己发布四份宿主二进制:linux-x86_64 / linux-aarch64 / macosx-arm64 /
+# windows-x86_64。两台 Linux 服务的行**不一样** —— `x86_64-linux-gnu` 需要本机
+# 架构的 glibc 载荷,所以在 x86_64 上够得着,在 aarch64 上够不着。
+#
+# 只写 `linux` 会让两台在期望表里用同一个键,后跑的一台把先跑的那台的行「解释掉」,
+# 而覆盖的方向取决于谁后跑,不取决于谁对。
 case "$(uname -s)" in
-  Linux)  HOST=linux ;; Darwin) HOST=macos ;;
-  MINGW*|MSYS*|CYGWIN*) HOST=windows ;; *) HOST=unknown ;;
+  Linux)  HOST_OS=linux ;; Darwin) HOST_OS=macos ;;
+  MINGW*|MSYS*|CYGWIN*) HOST_OS=windows ;; *) HOST_OS=unknown ;;
 esac
+case "$(uname -m)" in
+  x86_64|amd64) HOST_ARCH=x86_64 ;;
+  aarch64|arm64) HOST_ARCH=$([ "$HOST_OS" = macos ] && echo arm64 || echo aarch64) ;;
+  *) HOST_ARCH="$(uname -m)" ;;
+esac
+HOST="$HOST_OS-$HOST_ARCH"
 
 # 目标与编译器清单都取自 mcpp 自己的机器接口,而不是脚本里再抄一份 —— 抄一份
 # 就会漂移,而按列宽解析一张给人看的表,会让列宽变成测试套件的一部分。实测过
