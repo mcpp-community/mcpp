@@ -93,28 +93,33 @@
   **C 库才是决定它的那一层** —— 理由 `check_layering` 早已反向陈述:载荷的 C++
   运行时是对着载荷的 C 库配置的,所以当且仅当那份 C 库在用时它才可用。
 
-- **⭐ `build.mcpp` 的 `PATH` 前置 mcpp 自己的工具目录。**
+- **⭐ `build.mcpp` 的 `PATH` 前置项目声明的那个环境。**
 
   ```
-  PATH=<mcpp 自己的工具目录>:<mcpp 启动时的 PATH>
+  PATH=<被声明环境的 bin>:<mcpp 启动时的 PATH>
   ```
 
-  mcpp 把工具装进自己的 sub-OS(写下这条时那台机器上有 221 个),而此前
-  build.mcpp 继承的 PATH 里**一个都没有**。它想用某个工具,只能像 shell 脚本
-  一样去问 PATH —— 而 `command -v` 回答的是「这台机器有什么」,不是「这次构建
-  用什么」。
+  构建程序想用某个工具,此前只能像 shell 脚本一样去问 `PATH` —— 而 `command -v`
+  回答的是「这台机器有什么」,不是「这次构建用什么」。实测代价:
+  `command -v qemu-system-riscv64` 命中一个 shim,执行时答
+  `[error] qemu-system-riscv64 is not installed in this subos` —— 找到了、报告
+  为存在、却跑不了,而可用的那份就在项目自己的环境里,不在 `PATH` 上。
 
-  实测代价:`command -v qemu-system-riscv64` 命中一个 shim,执行时答
-  `[error] qemu-system-riscv64 is not installed in this subos` —— 找到了、
-  报告为存在、却跑不了,而真正的那份就在 mcpp 自己的目录里,不在 PATH 上。
+  ⚠️ **只对声明了 `[xlings].subos` 的项目生效,没声明的逐字节不变。** 一个更早
+  的草案无条件前置 mcpp 共享的 `subos/default/bin`,那会让「构建看见什么」取决
+  于这台机器上还装过什么 —— 同一台机器上的两个项目彼此一致,而同一个项目在两台
+  机器上不一致。是声明本身把它放到前面的。
 
-  ⚠️ **前置而非替换。** build.mcpp 合理地会调 `git`、`python3`、shell,这些
-  mcpp 都不提供;只有 mcpp 的目录的 PATH 会把它们全部弄坏。前置让隔离的那份
-  成为默认答案,宿主留在后面仍可达。
+  ⚠️ **前置而非替换。** 构建程序合理地会调 `git`、`python3`、shell,这些都不在
+  SubOS 里;只有被声明目录的 `PATH` 会把它们全部弄坏。
 
-  ⭐ 解析**只发生一次**:`toolsBinDir` 在 `get_cfg` 之后算好,交给
-  `fill_target_build_env` —— 而不是在它的两个调用点各算一遍。本次发布修的三条
-  缺陷全部来自「一个事实在多处各自推导」,这个字段不再添一处。
+  ⭐ **没有新的决定点。** `mcpp::xlings::runtime` 早就是「项目用哪个 SubOS」的
+  唯一策略,`RuntimeBinding::subosDir` 是它已解析的答案;本次只是把这个答案多交
+  付给一个消费者。`projectSubosBin` 在绑定解析后算**一次**,两个交付点各自取用。
+  本次发布修的三条缺陷全部来自「一个事实在多处各自推导」。各包的载荷路径由
+  `MCPP_XPKG_*_DIR` 另行回答,与 `PATH` 是两个问题。
+
+  新增 `examples/07-project-subos/` 与 [第 17 章](docs/17-the-project-environment.md)。
 
 ### 测试
 
@@ -138,6 +143,9 @@
   | 287 | 交叉到 aarch64,断言 outline-atomics 辅助函数与 LSE 指令数,qemu 真跑 |
   | 288 | 无 OS 无 C 库,断言报告里**没有 c-abi 那一行**,并在 qemu 里真启动 |
   | 289 | **一台宿主横扫四个目标** —— 这个体系本就是通用交叉构建,传统栈要六个 runner 的覆盖,这里一个循环 |
+  | 290 | 声明把环境放到 `PATH` 前面,**而且只有声明会** —— 两个方向各一条断言 |
+
+  290 的两半只有一半是特性:无条件前置能通过前一半,而那正是被撤回的设计。
 
 ## [2026.8.24.6] — 2026-08-25
 

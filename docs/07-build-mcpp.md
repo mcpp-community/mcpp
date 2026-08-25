@@ -482,29 +482,40 @@ These values are folded into the re-run key **unconditionally** — changing the
 target, profile, or feature set re-runs the program without any
 `rerun-if-env-changed` declaration.
 
-### `PATH` — this build system's tools first (mcpp 2026.8.25.1+)
+### `PATH` — the environment the project declared (mcpp 2026.8.25.1+)
 
-The child's `PATH` is the one mcpp was started with, **prefixed** with the
-directory mcpp installs its own tools into. A build program that looks up a
-tool therefore finds the copy this build system placed there, and still reaches
-anything else the machine has.
+A project that declares `[xlings].subos` runs its build programs with that
+environment's `bin` at the front of `PATH`:
 
 ```
-PATH=<mcpp's own tool directory>:<the PATH mcpp itself was started with>
+PATH=<the declared environment's bin>:<the PATH mcpp itself was started with>
 ```
+
+so a bare command name in a build program resolves inside the environment the
+project named, on every machine that builds it.
+
+⚠️ **Only for projects that declare one.** A project with no `[xlings].subos`
+gets the `PATH` mcpp was started with, byte for byte. A shared directory in
+front of every project would make what a build sees depend on what else had
+been installed on that machine — two projects on one machine would agree with
+each other, and the same project on two machines would not.
 
 Why it is a prefix and not a replacement: a build program legitimately calls
-`git`, `python3` or a shell, none of which mcpp ships. Front position makes the
-isolated copy the default answer; the host stays reachable behind it.
+`git`, `python3` or a shell, none of which live in a sub-OS. Front position
+makes the declared environment the default answer; the host stays reachable
+behind it.
 
 ⚠️ **`command -v` answers about the machine, not about this build.** Before
-this, a program asking `PATH` for a tool mcpp had installed could get an
-unrelated one — measured on `qemu-system-riscv64`, where the answer was a shim
-that reports "is not installed in this subos" when executed, while the working
-copy sat in mcpp's own directory and was not on `PATH` at all.
+this, a program asking `PATH` for a declared tool could get an unrelated one —
+measured on `qemu-system-riscv64`, where the answer was a shim that reports
+"is not installed in this subos" when executed, while a working copy sat in the
+project's own environment and was not on `PATH` at all.
 
-The directory is empty on an installation that has no sub-OS yet, and `PATH` is
-then left exactly as inherited.
+The selection is the one [chapter 8](08-toolchain-internals.md) already
+describes — the same declaration that decides which C library the project links
+against, delivered to one more consumer. See
+[chapter 17](17-the-project-environment.md) for what a declared environment is
+and when to want one; `examples/07-project-subos/` is a working project.
 
 ## Dependencies' build.mcpp (mcpp 0.0.95+)
 

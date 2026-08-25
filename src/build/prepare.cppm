@@ -854,19 +854,8 @@ mcpp::platform::process::RunResult run_with_network_retry(
 }
 
 void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
-                           const mcpp::toolchain::Toolchain* tc,
-                           const std::string& toolsBin)
+                           const mcpp::toolchain::Toolchain* tc)
 {
-    // ⭐ ONE CALL, AND THAT IS THE POINT OF THIS FUNCTION.
-    //
-    // Every answer a build program would otherwise hardcode is filled here, so
-    // that the two call sites below cannot drift apart. `toolsBin` arrives as
-    // an argument rather than being resolved here because this is a free
-    // function with no configuration in scope — and resolving it twice at the
-    // call sites is exactly the shape that produced three regressions in
-    // #486: one fact, derived in more than one place, agreeing until it did
-    // not.
-    e.toolsBin = toolsBin;
     e.toolchainDir  = (tc && !tc->binaryPath.empty())
         ? tc->binaryPath.parent_path().parent_path().string() : std::string{};
     e.targetSysroot = tc ? tc->targetSysrootRoot.string() : std::string{};
@@ -1291,28 +1280,6 @@ prepare_build(bool print_fingerprint,
         return &*cfg_opt;
     };
 
-    // ⭐ WHERE THIS BUILD SYSTEM'S OWN TOOLS ARE, RESOLVED ONCE.
-    //
-    // Read once here rather than at each `fill_target_build_env` call, because
-    // there are two of them (root package and dependency) and a value derived
-    // separately at each is a value that can disagree. That is not a
-    // hypothetical shape in this file: three defects fixed in this release
-    // came from one fact being computed in more than one place — see
-    // `TargetSide::c_library_is_the_payloads` and the note in
-    // `cache_key.cppm`.
-    //
-    // Through the config resolver, not `~/.mcpp`: `MCPP_HOME` moves this
-    // directory, and every other consumer of it (doctor, resources) reads it
-    // the same way. Empty when the directory does not exist — a fresh
-    // installation has no sub-OS yet, and `contract_env` then leaves `PATH`
-    // untouched rather than prefixing a path to nothing.
-    std::string toolsBinDir;
-    if (auto c = get_cfg(/*requireBootstrap=*/false)) {
-        auto bin = (*c)->xlingsHome() / "subos" / "default" / "bin";
-        std::error_code tec;
-        if (std::filesystem::is_directory(bin, tec)) toolsBinDir = bin.string();
-    }
-
     // Resolve one exact runtime contract before resolving/fixing a toolchain.
     // The fixup is itself a consumer of RuntimeBinding: doing it first would
     // recreate #392 by letting directory order choose a libc and only later
@@ -1334,6 +1301,31 @@ prepare_build(bool print_fingerprint,
         if (!runtimeBindingSnapshot.note.empty())
             mcpp::ui::info("Runtime", runtimeBindingSnapshot.note);
     }
+    // ⭐⭐ THE `bin` THIS PROJECT'S BUILD PROGRAMS SEE FIRST — derived ONCE,
+    // here, from the selection that has just been resolved.
+    //
+    // Empty unless the manifest declared `[xlings].subos`. That is deliberate:
+    // prepending the SHARED `subos/default/bin` would make what a build sees
+    // depend on what else has been installed on this machine, so a project
+    // that has not asked for an environment of its own gets the `PATH` mcpp
+    // was started with, byte for byte.
+    //
+    // ⚠️ NOT RE-DERIVED AT THE TWO DELIVERY SITES BELOW, AND NOT FROM
+    // `[xlings] deps`. `mcpp::xlings::runtime` is the sole runtime-selection
+    // policy and `RuntimeBinding::subosDir` is its resolved answer; a second
+    // derivation is how a build ends up with two subos and no way to say which
+    // one it used. The per-package payload paths a program may also need are
+    // already answered, separately, by `MCPP_XPKG_*_DIR`.
+    const std::string projectSubosBin = [&]() -> std::string {
+        using Mode = mcpp::xlings::runtime::RuntimeSelection::Mode;
+        if (runtimeBindingSnapshot.selection.mode != Mode::NamedSubos)
+            return {};
+        auto bin = runtimeBindingSnapshot.subosDir / "bin";
+        std::error_code ec;
+        if (!std::filesystem::is_directory(bin, ec)) return {};
+        return bin.string();
+    }();
+
     const auto runtimePayload = runtimeBindingSnapshot.libc.value_or("");
     const auto runtimeLibDir = runtimeBindingSnapshot.libraryDirs.empty()
         ? std::filesystem::path{} : runtimeBindingSnapshot.libraryDirs.front();
@@ -5574,7 +5566,8 @@ prepare_build(bool print_fingerprint,
         // The payload ROOT (not the driver), the target's C library, and the
         // three answers that keep a board package from hardcoding a toolchain
         // or a libc. All four in one call — see fill_target_build_env.
-        fill_target_build_env(bpEnv, tc ? &*tc : nullptr, toolsBinDir);
+        fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
+        bpEnv.toolsBin = projectSubosBin;
             bpEnv.profile      = effectiveProfile;
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
             bpEnv.artifactsDir = workRoot / "target" / ".build-mcpp" / "deps"
@@ -6051,7 +6044,8 @@ prepare_build(bool print_fingerprint,
         // The payload ROOT (not the driver), the target's C library, and the
         // three answers that keep a board package from hardcoding a toolchain
         // or a libc. All four in one call — see fill_target_build_env.
-        fill_target_build_env(bpEnv, tc ? &*tc : nullptr, toolsBinDir);
+        fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
+        bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;
         // Set explicitly rather than relying on build_dir()'s root-relative
         // default: under BuildOverrides::work_dir the package root is shared
