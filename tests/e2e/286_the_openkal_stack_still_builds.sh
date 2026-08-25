@@ -109,12 +109,24 @@ esac
 # header is the fact. A dynamic image names the host's loader here, and that is
 # a path the target machine has no reason to have.
 if command -v readelf > /dev/null 2>&1; then
-    if readelf -l "$bin" 2>/dev/null | grep -q 'INTERP'; then
-        echo "FAIL: the image names an interpreter"
-        readelf -l "$bin" | grep -A1 INTERP | sed 's/^/        /'
+    phdrs="$(readelf -l "$bin" 2>/dev/null || true)"
+    # ⚠️ THIS ASSERTS AN ABSENCE, SO IT MUST FIRST ESTABLISH THAT SOMETHING WAS
+    # READ. `readelf -l` on a file it cannot parse prints zero lines and exits
+    # quietly; `grep -q INTERP` then finds nothing, which reads exactly like a
+    # static image. e2e 287 shipped that mistake with a disassembler and CI
+    # caught it — the same shape, one file over.
+    segs="$(printf '%s\n' "$phdrs" \
+            | grep -cE '^\s+(LOAD|PHDR|NOTE|GNU_|INTERP|DYNAMIC|TLS)' || true)"
+    if [ "${segs:-0}" = 0 ]; then
+        echo "FAIL: readelf reported no program headers at all — it did not read $bin"
         exit 1
     fi
-    echo "  ok  no INTERP segment — nothing for a loader to resolve"
+    if printf '%s\n' "$phdrs" | grep -q 'INTERP'; then
+        echo "FAIL: the image names an interpreter"
+        printf '%s\n' "$phdrs" | grep -A1 INTERP | sed 's/^/        /'
+        exit 1
+    fi
+    echo "  ok  no INTERP among $segs program headers — nothing for a loader to resolve"
 fi
 
 # ── And it runs, which is the only check the others cannot fake ─────────────

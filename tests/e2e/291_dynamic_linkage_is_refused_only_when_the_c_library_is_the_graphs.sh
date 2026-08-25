@@ -85,7 +85,17 @@ echo "  ok  no warning when the C library is the payload's"
 # ⭐ AND THE ARTIFACT AGREES. The warning's claim is "The artifact is static";
 # a test that only checked for the absence of the text would pass on a build
 # that silently produced a static binary anyway.
-needed="$(readelf -d "$bin" 2>/dev/null | grep -c NEEDED || true)"
+dyn="$(readelf -d "$bin" 2>&1 || true)"
+# ⚠️ "no dynamic section" AND "readelf said nothing" BOTH COUNT ZERO `NEEDED`.
+# The first is the answer a static binary gives and the second is the answer a
+# tool that could not read the file gives, and only one of them is about this
+# build. `readelf -d` on a static ELF says so in words; on a file it cannot
+# parse it says nothing at all.
+if [ -z "$dyn" ]; then
+    echo "FAIL: readelf produced no output for $bin — the measurement did not happen"
+    exit 1
+fi
+needed="$(printf '%s\n' "$dyn" | grep -c NEEDED || true)"
 if [ "${needed:-0}" -gt 0 ]; then
     echo "  ok  'dynamic' was honoured — $needed DT_NEEDED entries"
 else
