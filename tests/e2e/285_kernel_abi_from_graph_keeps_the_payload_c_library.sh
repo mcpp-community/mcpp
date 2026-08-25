@@ -64,8 +64,30 @@ default = "gcc@16.1.0"
 [dependencies]
 openkal-linux = "0.5.4"
 TOML
+# ⭐ THE PROGRAM USES THE C++ RUNTIME, NOT ONLY THE C LIBRARY.
+#
+# `int main() { return 0; }` links against almost nothing and would pass while
+# a second defect of the same family was live: the contract table decided
+# whether the payload's C++ archives serve this target with the same two-layer
+# OR, so `-nostdlib++` was emitted for this shape and a program that throws
+# could not link —
+#
+#     undefined reference to `__cxa_allocate_exception'
+#     undefined reference to `std::runtime_error::runtime_error(char const*)'
+#
+# A `throw` and a `std::string` reach the C++ runtime and the C library
+# respectively, so one program covers both layers this shape gets wrong.
 cat > src/main.cpp <<'CPP'
-int main() { return 0; }
+#include <string>
+#include <stdexcept>
+#include <cstdio>
+
+int main() {
+    try { throw std::runtime_error("boom"); }
+    catch (const std::exception& e) { std::printf("%s\n", e.what()); }
+    std::string s = "x"; s += "y";
+    return s == "xy" ? 0 : 1;
+}
 CPP
 
 out="$("$MCPP" build 2>&1)" && rc=0 || rc=$?
@@ -99,8 +121,9 @@ fi
 bin="$(find target -type f -name kabi | head -1)"
 [ -n "$bin" ] || { echo "FAIL: no artefact was produced"; exit 1; }
 
-if "$bin"; then
-    echo "  ok  it links against the payload's C library, and runs"
+if out="$("$bin" 2>&1)"; then
+    [ "$out" = "boom" ] || { echo "FAIL: wrong output: $out"; exit 1; }
+    echo "  ok  it links against the payload's C library and C++ runtime, and runs"
 else
     echo "FAIL: the artefact does not run"
     exit 1

@@ -1008,18 +1008,34 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // "incompatible with elf64lriscv". See MechanismInput::freestanding.
         if (auto ft = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))
             mi.freestanding = ft->is_freestanding();
-        // AND THE HOSTED FORM OF THE SAME FACT. The target's system comes from
-        // the graph — so, exactly as on bare metal, every archive the table
-        // below would reach for is the HOST's.
+        // AND THE HOSTED FORM OF THE SAME FACT. The archives the table below
+        // reaches for are the PAYLOAD's, and the question is whether this
+        // target is served by them.
         //
-        // The condition is the SYSTEM's origin and not the C++ runtime's. It
-        // was the latter until this line, and that is precisely why a C
-        // program over the same packages kept the payload's libc++ on its link
-        // line: the table asked whether a C++ runtime came from the graph, a C
-        // program has none, and the answer "no" was read as "so the payload's
-        // is right". A program with no C++ runtime needs the driver stopped
-        // from adding one just as much as a program that brought its own.
-        mi.graphCxxRuntime = plan.targetSide.system_from_graph();
+        // It was `targetCxxRuntime` once, and that was wrong for a C program:
+        // the table asked whether a C++ runtime came from the graph, a C
+        // program has none, and "no" was read as "so the payload's is right".
+        // A program with no C++ runtime needs the driver stopped from adding
+        // one just as much as a program that brought its own.
+        //
+        // ⚠️ IT WAS THEN `system_from_graph()`, WHICH OVERSHOT IN THE OTHER
+        // DIRECTION. That is an OR over two layers, and a program whose kernel
+        // interface comes from a package while its C library and C++ runtime
+        // are the payload's is served by the payload's archives — yet the OR
+        // said otherwise and `-nostdlib++` removed the one it needed:
+        //
+        //     undefined reference to `std::runtime_error::runtime_error(char const*)'
+        //     undefined reference to `typeinfo for std::runtime_error'
+        //
+        // measured on `openkal-linux = "0.5.4"` with a `throw` in main.
+        //
+        // ⭐ THE C LIBRARY IS WHAT DECIDES IT, for the same reason it decides
+        // the link line's search paths: the payload's C++ runtime was
+        // configured against the payload's C library, so it is eligible when
+        // and only when that C library is the one in use. `check_layering`
+        // states the same rule in the other direction, refusing the
+        // combination this predicate must not create.
+        mi.graphCxxRuntime = !plan.targetSide.cAbi.prebuilt();
 
         const bool wantsArchives =
             (base == dist::Contract::SelfContained

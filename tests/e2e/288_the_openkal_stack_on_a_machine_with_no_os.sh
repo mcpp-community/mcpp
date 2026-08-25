@@ -37,6 +37,22 @@ version = "0.1.0"
 [toolchain]
 default = "llvm@22.1.8"
 
+# ⚠️ `sysroot = ""` IS WHAT MAKES THIS THE NO-C-LIBRARY SHAPE, AND THE TARGET
+# NAME DOES NOT IMPLY IT.
+#
+# `riscv64-none-elf` names a machine with no operating system; whether the
+# program has a C library is a separate statement, and the target table answers
+# it with a default — `xim:picolibc-riscv@1.8.12`. Measured while writing this
+# file, whose whole point is the layer being ABSENT:
+#
+#     c-abi  picolibc-riscv (xim:picolibc-riscv@1.8.12, prebuilt)
+#
+# So the absence has to be asked for. This is the one e2e that covers
+# `cAbi.absent()`, the fourth `Origin` value, and it would have been covering
+# `Xpkg` instead.
+[target.riscv64-none-elf]
+sysroot = ""
+
 # The platform, and nothing above it. `standalone` says this implementation is
 # the whole of the program's environment: it supplies the entry point, because
 # no C runtime is going to.
@@ -83,13 +99,27 @@ case "$out" in
   *) echo "FAIL: the platform did not come from the graph"
      printf '%s\n' "$out" | grep -E 'abi' | sed 's/^/        /'; exit 1 ;;
 esac
-# ⭐ AND NO `c-abi` LINE AT ALL. A target with no C library must not report one;
-# if this ever prints, something resolved a C library nobody asked for.
-case "$out" in
-  *"c-abi"*)
+# ⭐ AND THE `c-abi` LINE NAMES NOTHING.
+#
+# ⚠️ THE FIRST VERSION OF THIS ASSERTED THE LINE WAS ABSENT, WHICH IS THE WRONG
+# CRITERION AND WOULD HAVE FAILED ON A CORRECT BUILD. The report prints one row
+# per layer and says what each resolved to; a layer that resolved to nothing is
+# reported as nothing:
+#
+#     c-abi             —
+#
+# That is the report doing its job — a row that vanished would be
+# indistinguishable from a row nobody looked at. What must not appear is a
+# NAME, which is what the earlier draft of this file actually saw:
+#
+#     c-abi  picolibc-riscv (xim:picolibc-riscv@1.8.12, prebuilt)
+c_abi_line="$(printf '%s\n' "$out" | grep -E '^\s*c-abi' | head -1)"
+case "$c_abi_line" in
+  *"—"*|"")
+    echo "  ok  the c-abi layer names nothing — the target has no C library" ;;
+  *)
     echo "FAIL: a C library was resolved for a target that has none"
-    printf '%s\n' "$out" | grep 'c-abi' | sed 's/^/        /'; exit 1 ;;
-  *) echo "  ok  no c-abi layer — the target has no C library" ;;
+    echo "        $c_abi_line"; exit 1 ;;
 esac
 
 bin="$(find target -type f -name okbare | head -1)"
@@ -102,9 +132,21 @@ case "$desc" in
 esac
 
 # ── It boots on a machine whose firmware provides the SBI ──────────────────
-q="$(command -v qemu-system-riscv64 || true)"
-if [ -z "$q" ]; then
-    q="$(ls -d "$HOME"/.mcpp/registry/data/xpkgs/xim-x-qemu-riscv/*/bin/qemu-system-riscv64 2>/dev/null | head -1)"
+# ⚠️ THE PAYLOAD'S COPY FIRST, AND `command -v` ONLY AS A FALLBACK.
+#
+# On a machine with xlings there is a `qemu-system-riscv64` on PATH that is a
+# shim, and asking it to run anything answers:
+#
+#     [error] qemu-system-riscv64 is not installed in this subos (_)
+#
+# `command -v` finds it and reports success, so a probe written PATH-first
+# selects a program that cannot run and reports the failure as the test's.
+# The payload's copy is the one this build system installed on purpose.
+q="$(ls -d "$HOME"/.mcpp/registry/data/xpkgs/xim-x-qemu-riscv/*/bin/qemu-system-riscv64 2>/dev/null | head -1)"
+if [ -z "$q" ] || ! "$q" --version > /dev/null 2>&1; then
+    q="$(command -v qemu-system-riscv64 || true)"
+    # And the fallback is checked the same way, for the same reason.
+    [ -n "$q" ] && ! "$q" --version > /dev/null 2>&1 && q=""
 fi
 if [ -z "$q" ]; then
     echo "  SKIP  no riscv64 machine emulator here — linking is not booting"
