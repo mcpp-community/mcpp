@@ -55,12 +55,23 @@ fail=0
 # The target is read from the machine rather than hardcoded: any row whose pin
 # names a family other than llvm will do, and which rows exist is the target
 # table's business, not this test's.
-# ⭐ A ROW WHOSE PIN IS A gcc AND WHOSE STATUS SAYS THIS HOST SERVES IT.
-# Both halves matter: a `planned` row would refuse for a different rule and
-# half one would then pass while testing nothing.
+# ⭐⭐ `pin`, NOT `toolchain` — AND THE DIFFERENCE COST A RED CI RUN.
+#
+# `toolchain` is what the row is associated with: the installed payload on an
+# installed row, the convention on a vocabulary row. A row can have the first
+# and no second. This test needs a row that HAS a convention, so it reads the
+# field that carries only that.
+#
+# Measured 2026-08-26 on ubuntu-24.04: selecting on `toolchain` picked
+# `x86_64-linux-gnu`, whose convention pin is empty, and the test then demanded
+# a refusal that correctly did not happen.
+#
+# The status filter matters for the same reason in the other direction: a
+# `planned` row refuses under a different rule, and half one would pass while
+# testing nothing.
 pinned="$("$MCPP" toolchain list --format json 2>/dev/null \
           | jq -r '[.data.targets[]
-                    | select(.toolchain | startswith("gcc"))
+                    | select(.pin | startswith("gcc"))
                     | select(.status != "planned")
                     | .target][0] // empty')"
 if [ -z "$pinned" ]; then

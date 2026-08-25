@@ -386,6 +386,39 @@ toolchain = "gcc@16.1.0"
 linkage   = "static"
 ```
 
+### 约定可以被推翻,能力不行
+
+**有宿主**那一行的 pin 回答的是*哪个载荷供给这个目标的 C 库*,所以一个自己供给
+C 库的工程可以写任何编译器 —— 整个 openkal 生态就建立在这道口子上。不能做的是
+写另一个编译器而什么都不供给:
+
+```
+$ mcpp build --target x86_64-linux-musl        # [toolchain] default = "llvm@…"
+error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
+       payload, and 'llvm@22.1.8' has none here.
+```
+
+有两类行回答的是另一个问题,它们的 pin 根本不可被推翻:
+
+| 行 | 为什么 |
+|---|---|
+| 所有 `*-none-elf` | 不存在按宿主分的交叉载荷;clang 与 lld 按构造就是交叉编译器,gcc 不是 |
+| `x86_64-windows-musl` | 没有任何 gcc 载荷发得出 PE + musl —— mingw 载荷发的是 PE + MinGW CRT,那是隔壁 `-gnu` 那一行 |
+
+```
+$ mcpp build --target riscv64-none-elf         # [toolchain] default = "gcc@…"
+error: target 'riscv64-none-elf' cannot be emitted by 'gcc@16.1.0'.
+```
+
+⭐ **两处拒绝都发生在做出决定的地方**,而不是留给编译器。2026.8.26.1 之前,前者
+会跑完整个构建然后死在链接上,报 `crtbeginT.o (bare name)`;后者给出
+`g++: error: unrecognized argument in option '-mabi=lp64d'` —— 一条关于选项的
+消息,而决定在一百行之前。
+
+要给这些结果分类的程序读 `mcpp why toolchain --format json` 的 `data.reason`
+(`convention-unreplaced` / `capability-pin`),而不是那句话 ——
+见[第 11 章](11-machine-output.md)。
+
 项目还可以声明自己的*默认*构建 target——"本项目发布全静态"这类语义
 就该放在这里(全静态是产物属性,不是编译器家族属性):
 

@@ -417,6 +417,41 @@ toolchain = "gcc@16.1.0"
 linkage   = "static"
 ```
 
+### A convention may be overridden. A capability may not.
+
+The pin on a **hosted** row answers *which payload supplies this target's C
+library*, so a project that supplies one itself may name any compiler — that is
+the escape hatch the whole openkal ecosystem is built on. What it may not do is
+name a different compiler and supply nothing:
+
+```
+$ mcpp build --target x86_64-linux-musl        # [toolchain] default = "llvm@…"
+error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
+       payload, and 'llvm@22.1.8' has none here.
+```
+
+Two rows answer a different question, and their pin cannot be overridden at all:
+
+| row | why |
+|---|---|
+| every `*-none-elf` | no per-host cross payload exists; clang and lld are cross-compilers by construction and gcc is not |
+| `x86_64-windows-musl` | no gcc payload emits a PE with a musl C library — the mingw payload emits PE with the MinGW CRT, which is the separate `-gnu` row |
+
+```
+$ mcpp build --target riscv64-none-elf         # [toolchain] default = "gcc@…"
+error: target 'riscv64-none-elf' cannot be emitted by 'gcc@16.1.0'.
+```
+
+⭐ **Both refusals are decided where the decision is made**, not left to the
+compiler. Before 2026.8.26.1 the first ran the whole build and died at the link
+on `crtbeginT.o (bare name)`, and the second produced
+`g++: error: unrecognized argument in option '-mabi=lp64d'` — a message about an
+option, for a decision made a hundred lines earlier.
+
+A program classifying these reads `data.reason` from
+`mcpp why toolchain --format json` (`convention-unreplaced` / `capability-pin`)
+rather than the sentence — see [chapter 11](11-machine-output.md).
+
 A project can set its *default* build target — this is where "this project
 ships fully-static" belongs (static output is a product property, not a
 compiler-family property):

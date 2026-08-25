@@ -573,6 +573,20 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         std::string target;      // canonical triple
         std::string note;        // "host" / "static" / "PE" / "cross" tags
         std::string toolchain;   // "gcc 16.1.0" or "—"
+        // ⚠️⚠️ `toolchain` MEANS TWO DIFFERENT THINGS DEPENDING ON THE ROW, and
+        // that is fine for a column a person reads and wrong for a field a
+        // program reads. On an INSTALLED row it is the payload that is here; on
+        // a vocabulary row it is the target table's convention pin. A row can
+        // have the first and no second — `x86_64-linux-gnu` has an installed
+        // gcc and no convention at all.
+        //
+        // Measured 2026-08-26: e2e 298 selected "a row whose pin is a gcc" from
+        // this field and got `x86_64-linux-gnu` on the CI runner, where the pin
+        // is empty. It then asserted a refusal that correctly did not happen.
+        //
+        // ⭐ So the convention travels in its own field, empty when there is
+        // none. Same defect family as the release this was written for.
+        std::string pin;         // the target table's convention pin, or empty
         std::string status;      // installed | available | planned
         bool        isDefault = false;
         int         rank = 0;    // display order: installed < available < planned
@@ -604,6 +618,8 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         r.target    = t.str();
         r.note      = note_for(t);
         r.toolchain = tcLabel;
+        for (auto const& info : mcpp::toolchain::triple::known_targets())
+            if (info.canonical == r.target) { r.pin = std::string(info.pin); break; }
         r.status    = "installed";
         r.rank      = 0;
         r.isDefault = defSpec
@@ -666,6 +682,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         std::string pin(info.pin);
         if (auto at = pin.find('@'); at != std::string::npos) pin[at] = ' ';
         r.toolchain = pin.empty() ? "—" : pin;
+        r.pin       = std::string(info.pin);
         // Three answers, not two. "available" means a payload here produces it;
         // "via dependency graph" means the compiler is here and the system has
         // to come from packages — a different thing to do next, so a different
@@ -688,6 +705,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
             {"target",    r.target},
             {"note",      r.note},
             {"toolchain", r.toolchain},
+            {"pin",       r.pin},
             {"status",    r.status},
             {"default",   r.isDefault},
         });
