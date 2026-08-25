@@ -3,6 +3,46 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.25.2] — 2026-08-25
+
+### 修复
+
+- **⭐⭐ 一个包声明「我供给哪一层」,让裸机目标丢掉了唯一能产出它的编译器。**
+
+  实测,三行清单就够:
+
+  ```toml
+  provides = ["mcpp:kernel-abi=openkal"]
+  ```
+  ```
+  $ mcpp build --target riscv64-none-elf
+    Resolved gcc@16.1.0 → riscv64-none-elf → …/bin/g++
+    g++: error: unrecognized argument in option '-mabi=lp64d'
+    g++: error: unrecognized command-line option '--target=riscv64-none-elf'
+  ```
+
+  `graphSuppliesSystem` 是一个跨 kernel-abi ∪ c-abi 的 OR,它取消目标行的编译器
+  pin。**对宿主行这是对的**——那一行指的是「哪个载荷供给这个目标的 C 库」,图供给
+  了就用不上它。**对裸机行不是**:表里自己写着「pin 是 llvm,因为 clang/lld 按构造
+  就是交叉编译器」——宿主 g++ 根本发不出 `riscv64-none-elf`,图里有什么都不改变
+  这件事。
+
+  于是 pin 分成两类,而这个区分**在读取那一行的同一处**记下,不在决定点重新推导。
+
+  与 2026.8.25.1 修的四条同型:**一个跨两层的谓词,决定了一件不取决于这两层的事**。
+  这是第五条。
+
+  ⚠️ 发现方式:2026.8.25.1 发布后重钉七个下游 pin PR,openkal-opensbi 红在
+  `g++: unrecognized`。它在 2026.8.24.6 那轮红在**同一条**,所以既非 25.1 引入,
+  也非 25.1 修掉——是同一跨度里的遗留。
+
+### 测试
+
+- e2e 292,两向断言:声明一层之后裸机目标仍解析到同一个编译器(先建立基线,
+  否则分不清「修好了」和「这台机器没有 llvm」);以及宿主行**不得**顶掉项目自己
+  选的工具链——不加区分地永不取消 pin 也能让前一半通过,而那正是这个谓词当初要
+  防的替换。
+
 ## [2026.8.25.1] — 2026-08-25
 
 ### 修复

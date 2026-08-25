@@ -924,6 +924,19 @@ prepare_build(bool print_fingerprint,
     // The target row's toolchain convention, held until the graph is known.
     // Empty when the row names none or the project named its own.
     std::string targetPinCandidate;
+    // ⭐⭐ AND WHETHER THAT PIN IS A CONVENTION OR A CAPABILITY, RECORDED AT
+    // THE SAME READ.
+    //
+    // A hosted row's pin answers "which payload supplies this target's C
+    // library", so a graph that supplies one instead makes it inapplicable.
+    // A freestanding row's pin answers a different question — the table says
+    // so in its own words: "the pin is llvm on every host because clang/lld
+    // are cross-compilers by construction". A host g++ cannot emit
+    // riscv64-none-elf at all, and no dependency changes that.
+    //
+    // Taken here rather than re-derived at the decision point, because the row
+    // is read exactly once and both facts come out of that read.
+    bool targetPinIsCapability = false;
     // Whether the resolved toolchain spec names the machine's own Visual
     // Studio. Decided inside `resolve_target_toolchain`, read by
     // `host_tc_for_build_program`, which is why it is declared out here.
@@ -1673,6 +1686,7 @@ prepare_build(bool print_fingerprint,
         if (known && !hasToolchainOverride && !known->pin.empty()
             && !tc_origin_is_user_explicit(tcOrigin)) {
             targetPinCandidate = std::string(known->pin);
+            targetPinIsCapability = parsed && parsed->is_freestanding();
         }
         if (known && known->defaultStatic && m->buildConfig.linkage.empty())
             m->buildConfig.linkage = "static";
@@ -4845,7 +4859,26 @@ prepare_build(bool print_fingerprint,
                 }
             }
         }
-        if (!targetPinCandidate.empty() && !graphSuppliesSystem) {
+        // ⚠️ AND A FREESTANDING PIN SURVIVES IT. `graphSuppliesSystem` spans
+        // kernel-abi and c-abi, and it correctly cancels a HOSTED row's
+        // convention — that row names the payload the graph is replacing.
+        // A bare-metal row names the only compiler that emits the target.
+        //
+        // Measured 2026-08-25, on a three-line manifest:
+        //
+        //     provides = ["mcpp:kernel-abi=openkal"]
+        //     $ mcpp build --target riscv64-none-elf
+        //       Resolved gcc@16.1.0 → riscv64-none-elf → …/bin/g++
+        //       g++: error: unrecognized argument in option '-mabi=lp64d'
+        //       g++: error: unrecognized command-line option
+        //                   '--target=riscv64-none-elf'
+        //
+        // A package saying which layer it supplies made the host compiler be
+        // chosen for a target it cannot produce. Same shape as the four
+        // defects 2026.8.25.1 fixed: a predicate spanning two layers deciding
+        // something that does not depend on either of them.
+        if (!targetPinCandidate.empty()
+            && (!graphSuppliesSystem || targetPinIsCapability)) {
             if (tcOrigin == TcOrigin::GlobalDefault && tcSpec.has_value()
                 && *tcSpec != targetPinCandidate)
                 pinReplacedDefault = *tcSpec;
