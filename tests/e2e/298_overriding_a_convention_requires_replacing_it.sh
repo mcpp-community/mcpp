@@ -69,11 +69,28 @@ fail=0
 # The status filter matters for the same reason in the other direction: a
 # `planned` row refuses under a different rule, and half one would pass while
 # testing nothing.
-pinned="$("$MCPP" toolchain list --format json 2>/dev/null \
-          | jq -r '[.data.targets[]
-                    | select(.pin | startswith("gcc"))
-                    | select(.status != "planned")
-                    | .target][0] // empty')"
+# ⚠️ AND THE HOST'S OWN ARCHITECTURE FIRST. Selecting alphabetically picked
+# `aarch64-linux-musl` on an x86_64 runner — the same rule, exercised on a
+# machine that cannot run the result.
+#
+# ⚠️ THE FIRST VERSION OF THIS COMMENT SAID "because the cross target is
+# expensive to build". Measured on ubuntu-24.04 before writing it down: the
+# whole invariants step is 85 seconds either way, because openkal's packages
+# arrive prebuilt. The reason is representativeness, not cost, and a reason
+# written from a guess is the kind that later talks someone out of a correct
+# change.
+hostArch="$("$MCPP" toolchain list --format json 2>/dev/null \
+            | jq -r '.data.host // "" | split("-")[0]')"
+pick() {
+    "$MCPP" toolchain list --format json 2>/dev/null \
+      | jq -r --arg a "$1" '[.data.targets[]
+                             | select(.pin | startswith("gcc"))
+                             | select(.status != "planned")
+                             | select($a == "" or (.target | startswith($a + "-")))
+                             | .target][0] // empty'
+}
+pinned="$(pick "$hostArch")"
+[ -n "$pinned" ] || pinned="$(pick "")"
 if [ -z "$pinned" ]; then
     echo "SKIP: no target row here pins a non-llvm toolchain"
     exit 0

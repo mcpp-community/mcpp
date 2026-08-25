@@ -38,19 +38,25 @@ printf '#include <cstdio>\nint main() { std::printf("ok\\n"); }\n' > src/main.cp
 # The target this host builds for when nothing is said. Taken from mcpp itself
 # rather than assembled from `uname`: the point is to name the target mcpp would
 # have chosen, and deriving it a second way would test the derivation instead.
-host_target() {
-    # ⭐ THE MACHINE INTERFACE NAMES IT DIRECTLY. `data.host` is the host
-    # triple, which is what "this machine's own target" means — no column to
-    # locate and no note to recognise.
-    #
-    # ⚠️ THE FIRST TWO DRAFTS BOTH READ THE HUMAN TABLE AND BOTH READ IT WRONG.
-    # One took the `*`, which marks the default toolchain PAIR and on this
-    # machine sat on `aarch64-linux-musl` — a CROSS target, so the identity
-    # compared two different builds and skipped. The next took the `host` note,
-    # which is right today and is still a column position in a table formatted
-    # for people.
-    "$MCPP" toolchain list --format json 2>/dev/null \
-        | jq -r '.data.host // empty'
+# ⚠️⚠️ THE TARGET IS PER TOOLCHAIN, NOT PER MACHINE — AND THREE DRAFTS ASSUMED
+# OTHERWISE.
+#
+# The identity is "naming the target this build would use anyway changes
+# nothing". On Linux that is the machine's own target for every family, so
+# `data.host` worked and hid the assumption. On Windows it does not: the host
+# target is `x86_64-windows-msvc`, and a mingw gcc targets
+# `x86_64-windows-gnu`. Measured on windows-2022:
+#
+#     FAIL: gcc@16.1.0 — one spelling built and the other did not
+#             explicit: produced nothing
+#
+# — correct behaviour. gcc cannot emit `-msvc`, and the test had asked it to.
+#
+# ⭐ So ask the query what THIS toolchain resolves to with no target named, and
+# then name that. Exact on every host, and it needs no table.
+implicit_target() {   # toolchain spec → the triple it would use anyway
+    "$MCPP" why toolchain --toolchain "$1" --format json 2>/dev/null \
+        | jq -r '.data.triple.toolchain // empty'
 }
 
 ldflags_of() {   # extra args… → the ldflags line, or nothing
@@ -87,9 +93,9 @@ for tc in gcc llvm; do
     printf '[package]\nname    = "idprobe"\nversion = "0.1.0"\n\n[toolchain]\ndefault = "%s@%s"\n' \
         "$tc" "$ver" > mcpp.toml
 
-    ht="$(host_target)"
+    ht="$(implicit_target "$tc@$ver")"
     if [ -z "$ht" ]; then
-        echo "  SKIP  could not read this host's own target from mcpp"
+        echo "  SKIP  the query did not name a target for $tc@$ver"
         continue
     fi
 

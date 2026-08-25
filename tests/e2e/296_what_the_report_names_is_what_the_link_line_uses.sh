@@ -82,11 +82,39 @@ for tc in gcc llvm; do
     want="$("$MCPP" why toolchain --toolchain "$tc@$ver" --format json 2>/dev/null \
             | jq -r '.data.cLibrary.path // ""')"
     if [ -z "$want" ]; then
-        # ⚠️ EARNED: the query says mcpp passes no C-library path at all, which
-        # is the self-contained cross-driver arrangement (mingw g++ carries its
-        # own). There is nothing to look for, so there is nothing to assert.
-        echo "  SKIP  $tc@$ver: mcpp passes no C-library path for this target"
-        checked=$((checked-1))
+        # ⭐⭐ NO PATH IS ALSO A CLAIM, AND IT IS CHECKABLE. The query says mcpp
+        # passes no C-library path — the self-contained arrangement, where the
+        # driver carries its own (mingw g++, MSVC). The assertion is then the
+        # other direction: nothing from OUTSIDE mcpp's store may appear either.
+        #
+        # ⚠️ THE FIRST VERSION SKIPPED HERE, and on windows-2022 both toolchains
+        # took that branch — so relation one had no coverage on that host at all
+        # and the test did not reach its conclusion.
+        # ⚠️⚠️ THE FLAG AND ITS PATH ARE JOINED FIRST, AND BOTH SPELLINGS EXIST.
+        #
+        # `-B/usr/lib` is one word and `-B /usr/lib` is two. Splitting on spaces
+        # and matching `^-B` flags the bare `-B` of the second form as a leak
+        # with no path in it; requiring a path in the token instead makes the
+        # second form invisible. Measured both, writing this line:
+        #
+        #     -B /usr/lib/gcc   → [-B]                      (false positive)
+        #     -B /usr/lib/gcc   → []                        (false negative)
+        #
+        # ⭐ A false negative is the worse one here — this branch exists to
+        # catch a link line reaching outside mcpp's store — so the two forms are
+        # made one before anything is decided.
+        leak="$(printf '%s\n' "$ldflags" \
+                | sed -E 's/(--sysroot|-isysroot|-B|-L)[[:space:]]+/\1/g' \
+                | tr ' ' '\n' \
+                | grep -E '^(--sysroot=?|-isysroot=?|-B|-L)[^ ]*[/\\][^ ]*$' \
+                | grep -vF 'registry' | head -3)"
+        if [ -z "$leak" ]; then
+            echo "  ok  $tc@$ver: a self-contained driver brings in nothing external"
+        else
+            echo "FAIL: $tc@$ver: the query names no C library, and the link line reaches outside"
+            printf '        %s\n' $leak
+            fail=1
+        fi
         continue
     fi
     if printf '%s\n' "$ldflags" | grep -qF -- "$want"; then

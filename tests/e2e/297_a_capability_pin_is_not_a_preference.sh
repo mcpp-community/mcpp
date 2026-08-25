@@ -105,21 +105,34 @@ fi
 
 # ── Half two: a hosted target still honours the declaration ───────────────
 #
-# `x86_64-linux-musl` carries `gcc@16.1.0` in the table, so declaring gcc here
-# agrees with the row — which would make the assertion vacuous. Declare it for
-# a row whose pin is llvm instead, and require the declaration to win.
+# ⚠️⚠️ THE TARGET COMES FROM THE QUERY, NOT FROM A LITERAL. This half used to
+# name `x86_64-linux-gnu`, which is a hosted row on Linux and a CROSS row on
+# Windows — where the host target is `x86_64-windows-msvc` and gcc does not
+# serve it. Measured on windows-2022, the query for that combination produced
+# something jq could not parse, and the test died on `jq: parse error` with no
+# statement about what it had found.
+#
+# The claim is "a hosted row still honours a declared toolchain", so the row to
+# use is the one this toolchain would use anyway.
 printf '[package]\nname    = "capprobe"\nversion = "0.1.0"\n\n[toolchain]\ndefault = "gcc@%s"\n' \
     "$gccver" > mcpp.toml
 printf '#include <cstdio>\nint main() { std::printf("ok\\n"); }\n' > src/main.cpp
+hostedTarget="$(cd "$work" && "$MCPP" why toolchain --toolchain "gcc@$gccver" \
+                  --format json 2>/dev/null | jq -r '.data.triple.toolchain // empty')"
+if [ -z "$hostedTarget" ]; then
+    echo "SKIP: the query did not name a target for gcc@$gccver on this host"
+    exit 0
+fi
 rm -rf target
-hosted="$(cd "$work" && "$MCPP" build --target x86_64-linux-gnu 2>&1 || true)"
-hostedReason="$(cd "$work" && "$MCPP" why toolchain --target x86_64-linux-gnu \
+hosted="$(cd "$work" && "$MCPP" build --target "$hostedTarget" 2>&1 || true)"
+hostedReason="$(cd "$work" && "$MCPP" why toolchain --target "$hostedTarget" \
                   --toolchain "gcc@$gccver" --format json 2>/dev/null \
-                | jq -r '.data.reason // "-"')"
+                | jq -r '.data.reason // "-"' 2>/dev/null)"
+[ -n "$hostedReason" ] || hostedReason="-"
 
 case "$hostedReason" in
   capability-pin)
-    echo "FAIL: a hosted target refused a declared toolchain — the escape hatch is gone"
+    echo "FAIL: $hostedTarget refused a declared toolchain — the escape hatch is gone"
     printf '%s\n' "$hosted" | head -4 | sed 's/^/        /'
     exit 1 ;;
   none)
