@@ -93,6 +93,24 @@
   **C 库才是决定它的那一层** —— 理由 `check_layering` 早已反向陈述:载荷的 C++
   运行时是对着载荷的 C 库配置的,所以当且仅当那份 C 库在用时它才可用。
 
+- **⭐ 第四条同型:`linkage = "dynamic"` 的「无效」诊断在说谎。**
+
+  实测 2026-08-25,在 285 的形状上(kernel-abi 来自图 + C 库来自载荷):
+
+  ```
+  warning: `linkage = "dynamic"` has no effect … The artifact is static.
+  $ file    → dynamically linked
+  $ readelf → NEEDED libm.so.6, libgcc_s.so.1, libc.so.6
+  ```
+
+  谓词用的是 `system_from_graph()`(跨 kernel-abi 与 c-abi 两层的 OR),而这条
+  警告自己给的理由——「那些包被当作对象编进本次构建,没有共享对象可链接」——
+  是**C 库单独一层**的性质。载荷的 libc 有共享对象,`dynamic` 就被兑现了,这里
+  本来无话可说。改为 `cAbi.fromGraph()`。
+
+  prepare.cppm 里另外两处 `system_from_graph()` 保留:它们问的是「图有没有供给
+  系统的任一部分」,那确实是两层的问题。
+
 - **⭐ `build.mcpp` 的 `PATH` 前置项目声明的那个环境。**
 
   ```
@@ -144,6 +162,7 @@
   | 288 | 无 OS 无 C 库,断言报告里**没有 c-abi 那一行**,并在 qemu 里真启动 |
   | 289 | **一台宿主横扫四个目标** —— 这个体系本就是通用交叉构建,传统栈要六个 runner 的覆盖,这里一个循环 |
   | 290 | 声明把环境放到 `PATH` 前面,**而且只有声明会** —— 两个方向各一条断言 |
+  | 291 | `dynamic` 只在 C 库来自图时被拒 —— 且断言产物的 `DT_NEEDED` 而非只断言文案 |
 
   290 的两半只有一半是特性:无条件前置能通过前一半,而那正是被撤回的设计。
 

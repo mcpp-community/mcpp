@@ -5981,14 +5981,26 @@ prepare_build(bool print_fingerprint,
 
         // A request that cannot be honoured is said so rather than dropped.
         //
-        // Measured 2026-08-23: `[build] linkage = "dynamic"` on a project whose
-        // system comes from the graph produced a statically linked artifact and
+        // Measured 2026-08-23: `linkage = "dynamic"` on a project whose system
+        // comes from the graph produced a statically linked artifact and
         // printed nothing. The outcome is correct — the graph supplies its
         // libraries as objects compiled into this build, and there is no shared
         // object for a loader to resolve at run time — but a directive that has
         // no effect and no diagnostic is indistinguishable from one that was
         // never read.
-        if (resolvedTargetSide.system_from_graph()
+        //
+        // ⚠️ THE C LIBRARY IS THE LAYER THIS DEPENDS ON, NOT "THE SYSTEM".
+        // `system_from_graph()` spans two layers, and the arrangement that
+        // separates them is real: a backend running ON a platform takes its
+        // kernel interface from the graph while the C library stays the
+        // payload's. Measured 2026-08-25 on exactly that project — the
+        // predicate was true, this warning printed "The artifact is static",
+        // and the artifact had three DT_NEEDED entries including `libc.so.6`.
+        // The reason the message gives is a property of the C library alone:
+        // a payload libc has a shared object, so `dynamic` is honoured and
+        // there is nothing to warn about. Same shape as the three defects this
+        // release fixes — see `TargetSide::system_from_graph`'s own note.
+        if (resolvedTargetSide.cAbi.fromGraph()
             && m->buildConfig.linkage == "dynamic")
             mcpp::ui::warning(
                 "`linkage = \"dynamic\"` has no effect when the "
