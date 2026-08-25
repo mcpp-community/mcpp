@@ -774,3 +774,62 @@ tree 0.8.0 → exit 1    1.0 以下,minor 前进即为破坏性
 `SURFACE.txt` 和 README 的表是同一份清单的四种陈述,而 CI 只比对前三种 ——
 表面检查器读的是 `SURFACE.txt` 和头文件,README 对它来说是散文。这就是一行
 能在若干次发布里一直缺着的原因。
+
+### 8.7 一处排除,两个决定
+
+`openkal-llvm-runtime` 里 `!llvm/libcxx/src/random.cpp` 这条排除被删掉,对
+hosted 是对的 —— 它同时把 `_LIBCPP_HAS_RANDOM_DEVICE` 打开了。但 **freestanding
+那份配置仍是 0**,而同一次删除也波及了它:
+
+```
+llvm/libcxx/src/random.cpp:68:1: error: use of undeclared identifier 'random_device'
+```
+
+开关关掉时 `<random>` 不声明这个类,而 `src/random.cpp` 无条件定义它的成员 ——
+这个文件**自己不带守卫**,不像旁边的 filesystem 源码。
+
+⚠️ **hosted 块的注释里早就写着 freestanding 的立场**("The freestanding
+configuration keeps the switch at 0"),只是没有人照着做。一条排除服务于两个
+互相不同意的配置,删它就要分别回答。
+
+判据取的是**构建图**而不是「编过了」:`libcxx/src/random.cpp` 在 freestanding 的
+`build.ninja` 里出现 0 次(与已知被排除的 filesystem 一致),而应当在的
+`random_shuffle.cpp` 出现 2 次。再把排除注释掉重建 —— 复现同一条错误。
+
+### 8.8 可选接口的转发者让「可选」变成了「必需」
+
+`openkal.random` 是可选接口,裸机后端不提供它。而 `openkal-musl` 的系统调用
+分发器**无条件**引用 `kal_random_fill`,且这个分发器被链接进**每一个**程序:
+
+```
+ld.lld: error: undefined symbol: kal_random_fill
+>>> referenced by okm_syscall.c:409
+```
+
+于是一条可选接口的缺席,变成了**所有裸机程序**的链接失败 —— 哪怕它一个随机
+字节都不要。这是 6.1 条在另一个方向上的后果:该条把「不提供」表达为「没有定义」,
+而任何**无条件引用**都会把这句话翻译成「必须提供」。
+
+⭐ **可选接口的转发者必须弱引用**,缺席时返回该层自己的「没有这个东西」的答案。
+这里是 `ENOSYS` —— Linux 系统调用 ABI 对未实现调用的定义答案,而 musl 自己的
+`getrandom` 正是照着它写的。
+
+⚠️ **这不是 6.1 条禁止的运行期拒绝。** 那一条约束的是 **openkal 的实现**:
+不得提供一个运行时报告不支持的接口。弱引用发生在**层的另一侧** —— 转发者实现的
+是 Linux 的契约,不是 openkal 的。
+
+⚠️ **惯用法和约定这个仓库本来都有,一个都没被用上**:`okm_phdr.c` 就在用
+`__attribute__((weak))`,而 `okm_syscall.c` 开头第 11 行写着「能被告知没有的
+调用返回 -ENOSYS」。
+
+**这条缺陷发布出去了,而 openkal-musl 自己的 CI 一格都没看见它** —— 是下游
+`openkal-llvm-runtime` 的裸机程序把它顶出来的。补的检查落在**符号类别**上,
+不需要裸机工具链,也比一次链接更直接地陈述这个不变量;并且自带控制项:
+
+```
+有 weak      w kal_random_fill   U kal_time_sleep   → 绿
+去掉 weak    U kal_random_fill   U kal_time_sleep   → 红
+```
+
+只断言「random_fill 是弱的」会在符号消失或对象没被构建时同样通过,所以旁边那个
+**必需**接口必须仍是未定义强引用。
