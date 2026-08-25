@@ -117,7 +117,38 @@ runs:
           "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}" \
           "${WORK}/${tarball}"
         tar -xzf "${WORK}/${tarball}" -C "${WORK}"
-        "${WORK}/${tarball%.tar.gz}/subos/default/bin/xlings" self install
+        # ⚠️⚠️ THE TWO LINUX TARBALLS DO NOT HAVE THE SAME SHAPE, and this line
+        # named one of them. Measured on the 2026.8.17.2 assets:
+        #
+        #   linux-x86_64   → subos/default/bin/xlings   (513 entries)
+        #   linux-aarch64  → bin/xlings                 (494 entries)
+        #
+        # so fetching the right architecture — the fix immediately above — got
+        # as far as `No such file or directory`, exit 127.
+        #
+        # ⭐ FOUND RATHER THAN ASSUMED, AND THE SEARCH IS BOUNDED. `-maxdepth 5`
+        # keeps it from wandering into the payload tree, and an empty result is
+        # a hard error: a bootstrap that silently continues without xlings fails
+        # forty lines later on something that reads like a different problem.
+        #
+        # ⚠️ CHECKED BEFORE CHANGING THE THREE HOSTS THAT ALREADY WORKED. On
+        # x86_64 this now resolves `bin/xlings` where the line before named
+        # `subos/default/bin/xlings` — and those are the same file:
+        #
+        #   subos/default/bin/xlings -> ../../../bin/xlings   (symlink)
+        #   md5 94b8e2f2… for both
+        #
+        # A find that quietly moved macOS and Windows onto a different binary
+        # would have been a worse defect than the one being fixed.
+        XL_BOOT="$(find "${WORK}/${tarball%.tar.gz}" -maxdepth 5 -type f \
+                        -name xlings -perm -u+x | head -1)"
+        [ -n "$XL_BOOT" ] || {
+          echo "::error::no xlings executable inside ${tarball}"
+          find "${WORK}/${tarball%.tar.gz}" -maxdepth 3 | head -20
+          exit 1
+        }
+        echo "bootstrap xlings: ${XL_BOOT#${WORK}/}"
+        "$XL_BOOT" self install
         export PATH="$HOME/.xlings/subos/default/bin:$PATH"
         echo "$HOME/.xlings/subos/default/bin" >> "$GITHUB_PATH"
         xlings --version
