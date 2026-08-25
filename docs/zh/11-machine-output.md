@@ -210,8 +210,13 @@ mcpp toolchain list --format json
 `data` 是 `{host, toolchains[], targets[]}`。一个工具链是
 `{family, version, default}`;Visual Studio 另有 `source: "system"` —— 它是在
 机器上被找到的,不是 mcpp 装的。一行目标是
-`{target, note, toolchain, status, default}`,`status` 取
+`{target, note, toolchain, pin, status, default}`,`status` 取
 `installed` / `available` / `via dependency graph` / `planned`。
+
+⚠️ **`toolchain` 与 `pin` 不是同一个字段写两遍。** `toolchain` 是这一行关联到
+什么 —— 已装的行是装了的载荷,词表行是那一行的约定。`pin` 只承载目标表的约定,
+没有约定的行为空。`x86_64-linux-gnu` 装了 gcc 而根本没有约定,所以要挑「约定是
+gcc 的行」必须读 `pin`。
 
 ### `mcpp.why.toolchain` —— 一对 (目标, 工具链) 会解析成什么
 

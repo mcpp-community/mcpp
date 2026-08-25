@@ -239,8 +239,15 @@ mcpp toolchain list --format json
 `data` is `{host, toolchains[], targets[]}`. A toolchain is
 `{family, version, default}` — plus `source: "system"` for a Visual Studio
 installation, which is located on the machine rather than installed by mcpp. A
-target row is `{target, note, toolchain, status, default}`, and `status` is one
-of `installed` / `available` / `via dependency graph` / `planned`.
+target row is `{target, note, toolchain, pin, status, default}`, and `status` is
+one of `installed` / `available` / `via dependency graph` / `planned`.
+
+⚠️ **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
+the row is associated with — the installed payload on an installed row, the
+convention on a vocabulary row. `pin` is only ever the target table's
+convention, and is empty for a row that has none. `x86_64-linux-gnu` has an
+installed gcc and no convention at all, so selecting "rows whose convention is a
+gcc" must read `pin`.
 
 ### `mcpp.why.toolchain` — what a build for one pair would resolve to
 
