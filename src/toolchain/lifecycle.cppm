@@ -591,7 +591,37 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
         auto t = mcpp::toolchain::triple::parse(info.canonical);
         if (!t) continue;
         bool planned = info.tier == "planned";
-        if (!planned && !installable_here(*t)) continue;
+        // ⭐⭐ A ROW NO PAYLOAD SERVES IS NOT THEREFORE UNBUILDABLE.
+        //
+        // `host_can_serve` answers "can this host serve the target FROM A
+        // PAYLOAD". Dropping the row presents that as "can this host build for
+        // the target", and one row separates the two. Measured 2026-08-25 on
+        // Linux: `x86_64-windows-musl` was absent from this list while the same
+        // machine produced a real artefact for it —
+        //
+        //     $ mcpp build --target x86_64-windows-musl
+        //       c-abi  musl  (openkal-musl@0.3.5, graph)
+        //     $ file …/winmusl.exe
+        //       PE32+ executable (console) x86-64, for MS Windows
+        //
+        // — because its system came from the dependency graph, which is what
+        // the row's own note in the target table says happens.
+        //
+        // ⚠️ AND NOT EVERY ABSENT ROW IS THAT. `x86_64-windows-msvc` and
+        // `aarch64-macos` are absent on a Linux host CORRECTLY: MSVC and the
+        // macOS SDK are host-only and no dependency substitutes for them.
+        // The discriminator is already in the table and needs no new field —
+        // a row that names a compiler THIS host can install is one whose only
+        // missing piece is the system, and a graph can supply a system.
+        bool graphCouldServe = false;
+        if (!planned && !installable_here(*t) && !info.pin.empty()) {
+            auto at = info.pin.find('@');
+            auto fam = info.pin.substr(0, at == std::string_view::npos
+                                              ? info.pin.size() : at);
+            for (auto const& idx : mcpp::toolchain::available_toolchain_indexes())
+                if (idx.ximName == fam) { graphCouldServe = true; break; }
+        }
+        if (!planned && !installable_here(*t) && !graphCouldServe) continue;
         TargetRow r;
         r.target    = std::string(info.canonical);
         r.note      = note_for(*t);
@@ -599,7 +629,13 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
         std::string pin(info.pin);
         if (auto at = pin.find('@'); at != std::string::npos) pin[at] = ' ';
         r.toolchain = pin.empty() ? "—" : pin;
-        r.status    = planned ? "planned" : "available";
+        // Three answers, not two. "available" means a payload here produces it;
+        // "via dependency graph" means the compiler is here and the system has
+        // to come from packages — a different thing to do next, so a different
+        // word.
+        r.status    = planned          ? "planned"
+                    : graphCouldServe  ? "via dependency graph"
+                                       : "available";
         r.rank      = planned ? 2 : 1;
         targetRows.push_back(std::move(r));
     }

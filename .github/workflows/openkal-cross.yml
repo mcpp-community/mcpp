@@ -281,7 +281,15 @@ jobs:
           "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
           "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
           "$MCPP" build --dev
-          BUILT=$(find target -type f -name 'mcpp' | head -1)
+          # ⚠️ NEWEST BY MTIME, NOT FIRST BY DIRECTORY ORDER. `target/` holds one
+          # directory per fingerprint and the runner restores a cache of it, so
+          # `find … | head -1` can return a binary an earlier run left behind.
+          # Measured: it reported the right VERSION STRING — the stale copy was
+          # built from an earlier push of this same release — while missing the
+          # last two commits, so one new test passed and two failed for reasons
+          # that were nowhere in the source.
+          BUILT=$(find target -type f -name 'mcpp' -printf '%T@ %p\n' \
+                  | sort -rn | head -1 | cut -d' ' -f2)
           [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
           BUILT=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")
           echo "MCPP_UNDER_TEST=$BUILT" >> "$GITHUB_ENV"
@@ -337,7 +345,8 @@ jobs:
           # detect.
           fail=0
           for t in tests/e2e/285_*.sh tests/e2e/286_*.sh tests/e2e/287_*.sh \
-                   tests/e2e/288_*.sh tests/e2e/289_*.sh tests/e2e/291_*.sh; do
+                   tests/e2e/288_*.sh tests/e2e/289_*.sh tests/e2e/291_*.sh \
+                   tests/e2e/292_*.sh tests/e2e/293_*.sh tests/e2e/294_*.sh; do
             echo "=== $t ==="
             bash "$t" 2>&1 | tee "$(basename "$t").log" || true
             rc=${PIPESTATUS[0]}
@@ -383,4 +392,10 @@ jobs:
             "OK: one host reached" || fail=1
           check 291_dynamic_linkage_is_refused_only_when_the_c_library_is_the_graphs.sh \
             "OK: the C library decides whether 'dynamic' can be honoured" || fail=1
+          check 292_a_package_that_names_a_layer_does_not_lose_the_targets_compiler.sh \
+            "OK: naming a layer changes the system, not the compiler that emits the target" || fail=1
+          check 293_the_requested_target_and_the_resolved_one_name_one_os.sh \
+            "OK: the requested target and the resolved one name one operating system" || fail=1
+          check 294_the_list_answers_what_can_be_built_not_what_has_a_payload.sh \
+            "OK: the list answers what can be built, not what has a payload" || fail=1
           [ "$fail" = 0 ] || exit 1

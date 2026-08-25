@@ -106,9 +106,20 @@ Available toolchains (run `mcpp toolchain install <family> <version>`):
      llvm 20.1.7
 ```
 
-`*` 标记当前的默认对。Targets 块是 target 词汇表的实时视图:`installed`
-为已装的链,`available` 为本宿主可安装的 target,`planned` 为已登记但尚未
-发布的 target。
+`*` 标记当前的默认对。Targets 块是 target 词汇表的实时视图,共四种状态:
+
+| 状态 | 含义 | 下一步做什么 |
+|---|---|---|
+| `installed` | 本机已有的载荷就能产出它 | 无 |
+| `available` | 本宿主存在可装的载荷 | `mcpp toolchain install` |
+| `via dependency graph` | 编译器在本机,而目标的系统不在,由包供给 | 依赖一个实现该目标内核接口与 C 库的包 |
+| `planned` | 已登记在词表中,尚未发布 | — |
+
+⚠️ **不在这个块里的 target,在本机根本构建不了**——而这句话现在比以前更窄。
+mcpp 2026.8.25.2 之前,这个块只列载荷能服务的那些,于是「系统来自依赖图」的
+target 缺席,而同一台机器能为它产出真实的产物。`x86_64-windows-msvc` 与
+`aarch64-macos` 在 Linux 宿主上仍然缺席,这是**对的**:MSVC 与 macOS SDK 是宿主
+专有的,依赖替代不了。
 
 ## Windows PE 之 MinGW-w64(`x86_64-windows-gnu`,无需 Visual Studio)
 

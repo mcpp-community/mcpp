@@ -133,7 +133,9 @@ done
 # The final completeness gate below still does FULL GETs.
 probe() { # host_path asset → 0 iff the object serves bytes
   local code
-  code=$(curl -fsSL -o /dev/null -w '%{http_code}' -r 0-0 -L "$1" 2>/dev/null)
+  code=$(curl -fsS -o /dev/null -w '%{http_code}' -r 0-0 -L \
+              --retry 3 --retry-all-errors --retry-delay 2 --max-time 60 \
+              "$1" 2>/dev/null)
   [[ "$code" == 200 || "$code" == 206 ]]
 }
 
@@ -285,7 +287,24 @@ hosts=()
 [[ "${GTC_ENABLED:-0}" == 1 ]] && hosts+=("gitcode.com/$GTC_DST")
 for host in "${hosts[@]}"; do
   for a in "${ASSETS[@]}"; do
-    code=$(curl -fsSL -o /dev/null -w '%{http_code}' -L "https://${host}/releases/download/${VER}/${a}" 2>/dev/null || echo ERR)
+    # ⚠️ RETRIED, BECAUSE A MIRROR CAN ANSWER 502 FOR AN ASSET IT HOLDS.
+    # v2026.8.25.1 failed here twice: every one of the 16 assets reported
+    # "already mirrored, skipping", and the gate then failed one of them on a
+    # single 502 from GitCode's edge. Fetched by hand a minute later it was
+    # 5,772,395 bytes with the published sha256 — the file was never missing.
+    #
+    # `--retry-all-errors` and not `--retry`: plain `--retry` covers transient
+    # HTTP codes but not the transport-layer failures this path also sees, and
+    # this repository has paid for that distinction before (ci-curl-52).
+    #
+    # ⚠️ `|| echo ERR` APPENDS, it does not replace — `-f` makes curl exit
+    # non-zero on 502 while `-w` has already written the code, so the variable
+    # read `502ERR` and the log could not be grepped for a status. Substituted
+    # only when curl printed nothing at all.
+    code=$(curl -fsS -o /dev/null -w '%{http_code}' -L \
+                --retry 3 --retry-all-errors --retry-delay 3 --max-time 120 \
+                "https://${host}/releases/download/${VER}/${a}" 2>/dev/null)
+    [[ -n "$code" ]] || code=ERR
     echo "  $code  https://${host}/releases/download/${VER}/${a}"
     [[ "$code" == 200 ]] || { rc=1; echo "[mirror] FAIL: missing/unverified: https://${host}/releases/download/${VER}/${a}" >&2; }
   done

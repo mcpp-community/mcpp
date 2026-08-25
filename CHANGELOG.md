@@ -43,6 +43,108 @@
   选的工具链——不加区分地永不取消 pin 也能让前一半通过,而那正是这个谓词当初要
   防的替换。
 
+## [2026.8.25.2] — 2026-08-25
+
+一个谓词族的收尾。`2026.8.25.1` 修了其中四条,本次修余下三条,并补上让它们
+存活至今的两个 CI 空洞。完整分析见
+[`.agents/docs/2026-08-25-the-two-layer-predicate-family.md`](.agents/docs/2026-08-25-the-two-layer-predicate-family.md)。
+
+### 修复
+
+- **⭐⭐ 图供给了 C 库,不等于目标平台的 SDK 不再需要。**
+
+  ```
+  kernel-abi   openkal   (openkal-macos@0.3.4, graph)
+  c-abi        musl      (openkal-musl@0.3.5, graph)
+  ld64.lld: error: library not found for -lSystem
+  ld64.lld: error: undefined symbol: clock_gettime_nsec_np
+  ```
+
+  macOS 分支给链接线加 `-isysroot`,它自己的注释写明了为什么(「否则 ld64.lld
+  会死在 library not found for -lSystem」);而 80 行之后的图分支把整条 `f.ld`
+  换掉,`-isysroot` 随之消失——**注释预言的那个失败,由它下面的代码造成**。
+
+  ⭐ **Linux 上二者恰好重合而 Darwin 上不重合**:Linux 的内核接口是一条指令
+  (`syscall`),所以自足的 musl 真的替换了一切;Darwin 的内核接口**本身就是一个
+  库**(libSystem),所以 Mach-O 链接无论 libc 从哪来都要 SDK。新增
+  `platformAnchor`:写一次、读一次,两个分支不可能对「什么该活下来」有分歧。
+
+- **⭐⭐ 请求的目标与解析出的目标必须是同一个操作系统。**
+
+  ```
+  Target x86_64-windows-gnu → x86_64-unknown-linux-gnu
+  …
+  src/stream.cpp:68:9: error: 'GetFileType' was not declared in this scope
+  ```
+
+  一行里两个操作系统,而没有任何提示。交叉载荷缺席时解析回落到宿主编译器,
+  Windows 源码被按 Linux 编译,失败在一百行之后——报出的是一个 Win32 函数名,
+  不是做出这个决定的那一处。openkal-uefi 撞在链接器上:
+  `ld: unrecognized option '--subsystem'`。
+
+  ⭐ **报告里早就有证据,现在对它下断言**,而不是把问题重新推导一遍。范围刻意
+  只取 OS:`x86_64-windows-gnu → x86_64-w64-windows-gnu` 的差异正是这一行要报告
+  的归一化,拿整个三元组比会拒掉每一次正确的交叉构建。
+
+- **⭐⭐ 「首次运行」那条路把 `--target` 丢了。**
+
+  ```
+  First run  no toolchain configured — installing gcc@16.1.0 (glibc, native ABI)
+   Resolved  gcc@16.1.0 → …/xim-x-gcc/16.1.0/bin/g++          ← 路径里没有目标
+  ```
+
+  同一条命令在已有工具链的机器上是
+  `Resolved gcc@16.1.0 → x86_64-windows-gnu → …/mingw-cross-gcc/…`。这条分支回答
+  的是「这台机器没有工具链,给它一个」,答案是一份**宿主**载荷;
+  `overrides.target_triple` 在这条路上**从未被读取**。而载荷解析那条路上
+  `autoInstall=true` **本来就在**,只是没被走到。
+
+  ⭐ 修法不是加条件,而是让首次运行**汇入**那条已经会处理目标的路径。上面那条
+  「同一个操作系统」的不变量因此有了配套:守卫让错配变成一句拒绝,汇入让本来就能
+  服务的目标不再走到那句拒绝。
+
+  ⚠️ **这一处的第一版是无限递归,而我的注释写着「深度为一」。** 闸放在了分支之外
+  (必须放外面:它上面那段 Windows 代码自己会设置 target),而标志没有任何人复位。
+  本机看不见——这一格只在「首次运行 + 交叉目标」出现,而开发机永远不是首次运行。
+  抓到它的是两条 CI,症状还不同:生态仓库上 `Resolved` 打四遍后 **exit 139
+  (SIGSEGV,爆栈)**,mcpp 自己的 `bare Windows` 上 `First run` 反复打印后 exit 1。
+  现在的闸结构上不可能循环,标志在**调用之前**置位。
+
+- **`toolchain list` 漏掉了本机能构建的目标。**
+
+  它用 `host_can_serve`(问的是「有没有预制载荷」)去回答「能不能构建」。实测
+  Linux 上 `x86_64-windows-musl` 不在列表里,而同一台机器能产出真正的 PE32+。
+
+  ⚠️ **而不是每一行缺席都是这样**:`x86_64-windows-msvc` 与 `aarch64-macos` 在
+  Linux 上缺席是**对的**,MSVC 与 macOS SDK 是宿主专有的,依赖替代不了。判据不
+  需要新字段——**一行若指向本宿主装得上的编译器,那它缺的只是系统,而系统可以
+  由图供给**。第三种状态:`via dependency graph`。
+
+- **镜像完整性门:一个没有重试的 GET 判掉整条发布。**
+
+  `2026.8.25.1` 的发布红了两次,两次都报 16 个资产「already mirrored」,然后因
+  其中一个的 502 判失败。手工抓下来:5,772,395 字节,sha256 与发布的校验和逐位
+  相同。补 `--retry-all-errors`(不是 `--retry`,后者盖不住这条路径也会遇到的
+  传输层错误);并修掉 `502ERR` 拼接(`|| echo ERR` 是追加不是替换)。
+
+### 测试
+
+- **e2e 292/293/294**,每条两向断言,且**都在修复前的二进制上验证过会失败**:
+  292 声明一层后裸机目标仍解析到同一编译器 + 宿主行不得顶掉项目自己的工具链;
+  293 拒绝跨 OS 的解析 + 四个正确交叉目标零误伤;294 列出图供给的目标 + 宿主
+  专有的仍然缺席。
+
+- **⚠️ `285`–`289` 此前一条都没在 CI 跑过。** 它们声明 `# requires: llvm`,而两个
+  linux e2e shard 的能力行里没有 `llvm`,`run_all.sh` 在 skip 时退 0。新增
+  `openkal-cross.yml` 的 `ecosystem-e2e`:装 gcc + llvm + 两个模拟器,直跑六条,
+  **逐条断言 PASS 行**,并对 287/288 **额外断言运行阶段那一行**(实测它们会降级
+  成 SKIP 而 OK 行照印)。
+
+- **判据的「否」与「没测成」同读数**:一次会话里我自己新写的六条 e2e 有四条犯了
+  它(宿主 objdump 反汇编外架构得零指令零报错、`readelf` 读不了的文件输出零行、
+  CI 自己的 PATH 本就以 subos/bin 开头)。判据一律带分母
+  (`7 LSE instructions out of 148906`),工具取自产生该产物的工具链。
+
 ## [2026.8.25.1] — 2026-08-25
 
 ### 修复

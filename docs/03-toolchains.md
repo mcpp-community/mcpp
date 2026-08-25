@@ -109,8 +109,22 @@ Available toolchains (run `mcpp toolchain install <family> <version>`):
 ```
 
 `*` marks the default pair. The Targets block is the live view of the target
-vocabulary: `installed` payloads, `available` targets this host can install,
-and `planned` targets that are registered but not yet shipped.
+vocabulary, in four statuses:
+
+| Status | Meaning | What to do next |
+|---|---|---|
+| `installed` | a payload here already produces it | nothing |
+| `available` | a payload exists for this host | `mcpp toolchain install` |
+| `via dependency graph` | the compiler is here; the target's system is not, and packages can supply it | depend on an implementation of the target's kernel interface and C library |
+| `planned` | registered in the vocabulary, not yet shipped | — |
+
+⚠️ **A target absent from this block cannot be built here at all** — and that
+is a narrower statement than it used to be. Until mcpp 2026.8.25.2 the block
+listed only what a payload served, so a target whose system comes from a
+dependency graph was missing while the same host produced real artefacts for
+it. `x86_64-windows-msvc` and `aarch64-macos` remain absent on a Linux host,
+correctly: MSVC and the macOS SDK are host-only and no dependency substitutes
+for them.
 
 ## Windows PE via MinGW-w64 (`x86_64-windows-gnu`, no Visual Studio required)
 
