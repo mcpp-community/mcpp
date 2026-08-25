@@ -19,6 +19,7 @@
 - [14 - The Target Side](14-target-side.md)
 - [15 - Cross-Compilation Over openkal](15-openkal-cross.md)
 - [16 - The Target Triple](16-the-target-triple.md)
+- [17 - The Project Environment](17-the-project-environment.md)
 
 ## Specifications
 

@@ -291,3 +291,79 @@ TEST(CacheKey, GeneratedFilesAreOrderIndependent) {
     EXPECT_EQ(build({{"a.h", "1"}, {"b.h", "2"}}),
               build({{"b.h", "2"}, {"a.h", "1"}}));
 }
+
+// ── The key must describe the compilation that will happen ──────────────────
+//
+// ⚠️⚠️ THIS KEY ONCE DERIVED ITS OWN INPUTS INSTEAD OF READING THE BUILD'S.
+//
+// `freestanding::compile_flags` takes `targetCxxRuntime` because the answer
+// changes with it: a freestanding target whose graph supplies a C++ runtime is
+// compiled WITHOUT `-fno-exceptions`, one whose graph does not is compiled
+// with it. `flags.cppm` passes it; `build_axes` did not, and so hashed the
+// flags of the other configuration.
+//
+// ⭐ THE FAILURE IS A HIT ACROSS AN INCOMPATIBILITY, NOT A MISS. Two
+// configurations that must not share a slot produced the same key, so the
+// second build loaded the first's BMIs:
+//
+//     error: exception handling was enabled in precompiled file
+//            'openkal.stream.pcm' but is currently disabled
+//
+// In the cache itself, `openkal@0.7.0` held six fingerprint slots with five
+// differently-sized copies of that one BMI: slotting per configuration was
+// working, choosing the slot was not.
+//
+// ⚠️ IT WAS DORMANT UNTIL THE PARAMETER EXISTED. Before the flag became
+// conditional the two computations agreed for every input, so ignoring one of
+// them was still correct. That is what makes the test worth writing against
+// `build_axes` rather than against a hand-built `BuildAxes`: the fixture above
+// cannot express the defect, because the defect is in the derivation.
+namespace {
+mcpp::toolchain::Toolchain freestanding_tc(bool cxxRuntimeFromGraph) {
+    mcpp::toolchain::Toolchain tc;
+    tc.compiler          = mcpp::toolchain::CompilerId::Clang;
+    tc.version           = "22.1.8";
+    tc.driverIdent       = "clang-22.1.8";
+    tc.targetTriple      = "riscv64-none-elf";
+    tc.targetCxxRuntime  = cxxRuntimeFromGraph;
+    return tc;
+}
+}
+
+TEST(CacheKey, AGraphSuppliedCxxRuntimeChangesTheFreestandingFlags) {
+    mcpp::manifest::Manifest m;
+    m.package.standard = "c++23";
+    const auto without = ck::build_axes(freestanding_tc(false), m, "-std=c++23", {}, "");
+    const auto with    = ck::build_axes(freestanding_tc(true),  m, "-std=c++23", {}, "");
+
+    // The flags themselves differ — this is the fact the key has to carry.
+    EXPECT_NE(without.targetImpliedFlags, with.targetImpliedFlags);
+
+    // And the one that has no C++ runtime is the one that gets the pair.
+    const auto has = [](const std::vector<std::string>& v, std::string_view f) {
+        return std::ranges::find(v, f) != v.end();
+    };
+    EXPECT_TRUE(has(without.targetImpliedFlags, "-fno-exceptions"));
+    EXPECT_FALSE(has(with.targetImpliedFlags,   "-fno-exceptions"));
+}
+
+TEST(CacheKey, TheTwoFreestandingConfigurationsDoNotShareASlot) {
+    mcpp::manifest::Manifest m;
+    m.package.standard = "c++23";
+    EXPECT_NE(ck::key_hex(ck::build_axes(freestanding_tc(false), m, "-std=c++23", {}, ""), pkg()),
+              ck::key_hex(ck::build_axes(freestanding_tc(true),  m, "-std=c++23", {}, ""), pkg()));
+}
+
+// ⭐ AND A HOSTED TARGET IS UNAFFECTED, so the fix cannot be read as "the key
+// now changes with something it should not". `freestanding::resolve` returns
+// nothing for a hosted triple, and the flags stay empty either way.
+TEST(CacheKey, AHostedTargetHasNoTargetImpliedFlagsEitherWay) {
+    mcpp::manifest::Manifest m;
+    m.package.standard = "c++23";
+    auto tc = freestanding_tc(false); tc.targetTriple = "x86_64-linux-gnu";
+    auto a  = ck::build_axes(tc, m, "-std=c++23", {}, "");
+    tc.targetCxxRuntime = true;
+    auto b  = ck::build_axes(tc, m, "-std=c++23", {}, "");
+    EXPECT_TRUE(a.targetImpliedFlags.empty()) << a.targetImpliedFlags.size();
+    EXPECT_EQ(a.targetImpliedFlags, b.targetImpliedFlags);
+}

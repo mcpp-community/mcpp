@@ -68,9 +68,16 @@ env:
   # (.github/tools/check_version_pins.sh) enforces the ones that exist and would
   # not know about a copy in this file.
   XLINGS_NON_INTERACTIVE: '1'
-  # The branch of the openkal packages this change is verified against. They
-  # move together with it; when they are on `main` this becomes `main`.
-  OPENKAL_BRANCH: feat/openkal-closure
+  # The branch of the openkal packages this change is verified against.
+  #
+  # ⚠️ IT WAS `feat/openkal-closure` UNTIL 2026-08-25, LONG AFTER THAT BRANCH
+  # MERGED. A fixed name here is a pin nobody is reminded to move: the comment
+  # said "when they are on `main` this becomes `main`" and the moment for that
+  # passed without anyone reading it again. Every run since was verifying this
+  # engine against a tree the ecosystem had left behind — and the two
+  # regressions found today both hid behind exactly this shape, a pin that
+  # keeps a check green by keeping it out of date.
+  OPENKAL_BRANCH: main
 
 jobs:
   build:
@@ -140,7 +147,19 @@ jobs:
       - name: The program — one source, three targets
         run: |
           set -euo pipefail
-          git clone --quiet --depth 1 -b "$OPENKAL_BRANCH" \
+          # ⚠️ THE SEVENTH CALL SITE. `git_clone_retry.sh` was written because a
+          # runner's DNS hiccup is not a red build, and its own note counts
+          # "six call sites, one failure mode" — this workflow was not among
+          # them, and the mode duly arrived here. Measured on this job,
+          # 2026-08-25:
+          #
+          #     fatal: unable to access '…/openkal-llvm-runtime/':
+          #            Could not resolve host: github.com
+          #
+          # One name that did not resolve ended a 120-minute job in its first
+          # minute, beside a real failure it had nothing to do with.
+          "$GITHUB_WORKSPACE/.github/tools/git_clone_retry.sh" \
+            --quiet --depth 1 -b "$OPENKAL_BRANCH" \
             https://github.com/mcpplibs/openkal-llvm-runtime "$RUNNER_TEMP/okl"
           cd "$RUNNER_TEMP/okl/examples/same-source"
           mkdir -p "$RUNNER_TEMP/out"
@@ -222,3 +241,146 @@ jobs:
           done
           [ "$fail" = 0 ] || exit 1
           echo "three builds, one system, same four lines"
+
+  # ──────────────────────────────────────────────────────────────────
+  # The e2e scripts that BUILD the openkal ecosystem, on a runner that
+  # has what they ask for.
+  #
+  # ⚠️ THEY WERE WRITTEN AND THEY WERE NEVER RUN. `285`–`289` declare
+  # `# requires: llvm`, and the linux e2e shards report
+  #
+  #     Detected capabilities: elf unix-shell fresh-sandbox gcc
+  #                            patchelf pack symlink python3 …
+  #
+  # — no `llvm`, on either shard, because the shard workflow never
+  # installs one. `run_all.sh` exits 0 on a skip, so the suite stayed
+  # green while the five tests measuring this ecosystem did not run.
+  #
+  # run_all.sh's own note says why no token can fix this: a hard-requires
+  # cannot tell "this runner is misconfigured" from "this platform
+  # legitimately lacks the capability". The guard has to know which
+  # runner it is, so it lives in the job — install the capability, then
+  # assert each script's PASS line actually appeared. Same shape as
+  # ci-linux-e2e.yml's `baremetal` job, for the same reason.
+  # ──────────────────────────────────────────────────────────────────
+  ecosystem-e2e:
+    name: openkal e2e (the scripts, on a runner that has llvm)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build the mcpp in this pull request
+        run: |
+          set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build --dev
+          BUILT=$(find target -type f -name 'mcpp' | head -1)
+          [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
+          BUILT=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")
+          echo "MCPP_UNDER_TEST=$BUILT" >> "$GITHUB_ENV"
+          "$BUILT" --version
+
+      - name: Install what the scripts declare
+        run: |
+          set -euo pipefail
+          "$MCPP_UNDER_TEST" self config --mirror GLOBAL 2>/dev/null || true
+          # Both, and both are load-bearing: 285 and 291's first half build
+          # with gcc (a backend running ON a platform, keeping the payload's
+          # C library), 286-289 and 291's second half with llvm (the whole
+          # stack from the graph, where openkal-llvm-runtime IS libc++).
+          "$MCPP_UNDER_TEST" toolchain install gcc 16.1.0
+          "$MCPP_UNDER_TEST" toolchain install llvm 22.1.8
+
+      # ⚠️ THE EMULATORS, OR TWO OF THE SIX MEASURE HALF OF WHAT THEY SAY.
+      #
+      # 287 and 288 both end by RUNNING what they built — an aarch64 binary and
+      # a riscv64 machine image — and both degrade to a SKIP when no emulator
+      # is here. Measured on this job's first run: 288 printed
+      #
+      #     SKIP  no riscv64 machine emulator here — linking is not booting
+      #
+      # and still reached its OK line, so the PASS-line assertion below would
+      # have called that covered. Linking is not booting, as the script itself
+      # says.
+      #
+      # ⚠️ BOTH homes, for the reason ci-linux-e2e.yml's baremetal job records:
+      # the shim on PATH dispatches against whichever home owns it, so an
+      # emulator installed only in the ambient one answers "not installed" when
+      # mcpp asks.
+      - name: Install the emulators the last two scripts need
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user
+          "$XLINGS_BIN" install xim:qemu-riscv -y
+          XLINGS_HOME="${MCPP_HOME:-$HOME/.mcpp}/registry" \
+            "$XLINGS_BIN" install xim:qemu-riscv -y
+          # Reachable AND runnable, asserted before the tests: without this the
+          # scripts would simply skip and say so in a line nobody reads.
+          qemu-aarch64 --version | head -1
+          "$XLINGS_BIN" run qemu-system-riscv64 --version 2>/dev/null | head -1 \
+            || command -v qemu-system-riscv64
+
+      - name: The scripts
+        run: |
+          set -euo pipefail
+          export MCPP="$MCPP_UNDER_TEST"
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          # Directly rather than through run_all.sh: it accepts no filter, and
+          # it exits 0 on a skip — which is the condition this job exists to
+          # detect.
+          fail=0
+          for t in tests/e2e/285_*.sh tests/e2e/286_*.sh tests/e2e/287_*.sh \
+                   tests/e2e/288_*.sh tests/e2e/289_*.sh tests/e2e/291_*.sh; do
+            echo "=== $t ==="
+            bash "$t" 2>&1 | tee "$(basename "$t").log" || true
+            rc=${PIPESTATUS[0]}
+            [ "$rc" = "0" ] || { echo "::error::$t failed (exit $rc)"; fail=1; }
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      - name: Each one RAN
+        run: |
+          set -euo pipefail
+          # ⭐ THE ASSERTION THIS JOB EXISTS FOR. A zero exit code cannot
+          # distinguish "passed" from "skipped" — every one of these scripts
+          # has an early `exit 0` for a capability or an arrangement it did
+          # not find. The PASS line can.
+          check() {
+            grep -qF "$2" "$1".log || {
+              echo "::error::$1 did not run to its conclusion on the runner that must run it"
+              tail -5 "$1".log 2>/dev/null | sed 's/^/        /'
+              return 1
+            }
+            echo "  ok  $1"
+          }
+          fail=0
+          check 285_kernel_abi_from_graph_keeps_the_payload_c_library.sh \
+            "OK: a graph-supplied kernel interface leaves the payload's C library reachable" || fail=1
+          check 286_the_openkal_stack_still_builds.sh \
+            "OK: the openkal stack builds, links statically and runs" || fail=1
+          check 287_the_openkal_stack_crosses_to_aarch64.sh \
+            "OK: the openkal stack crosses to aarch64, supplies its atomics helpers and runs" || fail=1
+          # ⭐ AND IT REACHED THE PARTS THAT NEED A TOOL. Both of 287's last two
+          # assertions degrade to a SKIP, and the OK line prints either way.
+          check 287_the_openkal_stack_crosses_to_aarch64.sh \
+            "LSE instructions out of" || fail=1
+          check 287_the_openkal_stack_crosses_to_aarch64.sh \
+            "it runs under qemu-aarch64" || fail=1
+          check 288_the_openkal_stack_on_a_machine_with_no_os.sh \
+            "OK: openkal runs on a machine with no operating system and no C library" || fail=1
+          # ⭐ 288's name says "runs"; without this it can print that line
+          # having only linked.
+          check 288_the_openkal_stack_on_a_machine_with_no_os.sh \
+            "it boots" || fail=1
+          check 289_one_host_reaches_every_openkal_target.sh \
+            "OK: one host reached" || fail=1
+          check 291_dynamic_linkage_is_refused_only_when_the_c_library_is_the_graphs.sh \
+            "OK: the C library decides whether 'dynamic' can be honoured" || fail=1
+          [ "$fail" = 0 ] || exit 1

@@ -1,0 +1,23 @@
+import std;
+
+// A build program that answers one question: whose tools does this build see?
+//
+// ⚠️ IT DOES NOT CONSTRUCT A PATH TO ONE. `MCPP_XPKG_QEMU_RISCV` gives the
+// payload directory, and a program can join `/bin/qemu-system-riscv64` onto it
+// — that works, and it means every build program in the ecosystem repeats the
+// same joining, each with its own idea of the layout. Asking `PATH` is what a
+// program would do anyway; what `[xlings].subos` changed is the answer.
+int main() {
+    std::string_view path(std::getenv("PATH") ? std::getenv("PATH") : "");
+    std::string_view first;
+    for (auto part : std::views::split(path, ':')) { first = std::string_view(part); break; }
+
+    // Reported through the advisory channel, so a successful build still says
+    // it. mcpp prints a build program's stdout only when the program fails,
+    // and a probe whose evidence only appears on failure has none.
+    std::println("mcpp:warning=PATH begins at {}", first);
+    std::println("mcpp:warning=this project's subos is {}",
+                 std::getenv("MCPP_XPKG_QEMU_RISCV_DIR")
+                     ? "populated" : "not installed yet");
+    return 0;
+}

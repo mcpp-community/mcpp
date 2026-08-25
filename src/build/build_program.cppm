@@ -105,6 +105,38 @@ struct BuildProgramEnv {
     // the same re-run key: a rebuilt tool re-runs the program that uses it,
     // with no `rerun-if-changed` needed from the author.
     std::vector<std::pair<std::string, std::string>> toolPaths;
+    // ⭐⭐ THE `bin` OF THIS PROJECT'S OWN SubOS, AT THE FRONT OF THE CHILD'S
+    // `PATH`. Empty for a project that has not declared one, and an empty
+    // value means the child's `PATH` is left exactly as mcpp received it.
+    //
+    // A build program that needs a tool has, until this field, had to ask
+    // `PATH` the way a shell script would — and `PATH` answers about the
+    // MACHINE, not about this build. Measured 2026-08-25: a probe for
+    // `qemu-system-riscv64` found one that answers, when executed,
+    //
+    //     [error] qemu-system-riscv64 is not installed in this subos (_)
+    //
+    // — present, and unable to run — while the copy the project had declared
+    // sat in its own payload directory, reachable only by a path the program
+    // would have had to construct itself.
+    //
+    // ⚠️ THE PROJECT'S SubOS, NEVER A GLOBAL ONE. An earlier draft put this
+    // build system's shared `subos/default/bin` in front, which makes what a
+    // build sees depend on what else has been installed on the machine — two
+    // projects on one machine would agree with each other, and the same
+    // project on two machines would not. A declared `[xlings].subos` is a
+    // directory that belongs to the project and travels with it.
+    //
+    // ⚠️ WHO DECIDES IS NOT DECIDED HERE. `mcpp::xlings::runtime` is the sole
+    // project runtime-selection policy and `RuntimeBinding::subosDir` is its
+    // resolved answer; this field carries that answer to the child. Deriving
+    // it a second time — from the manifest, from `[xlings] deps`, from the
+    // config — is how a build ends up with two subos and no way to say which
+    // one it used.
+    //
+    // ⚠️ PREPENDED, NOT SUBSTITUTED. A build program legitimately calls `git`,
+    // `python3` or a shell, none of which arrive this way.
+    std::string toolsBin;
     // #355 step 5: dependency-provided modules to compile FOR THE HOST and make
     // importable from this build.mcpp — reusable build rules distributed as
     // ordinary mcpp packages (`import mcpp.rules.protobuf;`) instead of a
@@ -412,6 +444,23 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     // append the platform's exe suffix itself, and a tool's adjacent DATA
     // (protoc's well-known .proto files, say) lives in the package tree, which
     // dep_dir() already exposes.
+    // ── The child's PATH, with the project's own SubOS in front ────────────
+    //
+    // See `BuildProgramEnv::toolsBin` for why this exists, why it is a prefix
+    // rather than a replacement, and why the decision is not made here.
+    if (!env.toolsBin.empty()) {
+        std::string path = env.toolsBin;
+        // ⚠️ THE INHERITED VALUE IS READ HERE AND NOT ASSUMED. `extraEnv`
+        // replaces a variable outright in the child, so writing only the
+        // project's own directory would silently be the substitution this
+        // deliberately is not.
+        if (const char* inherited = std::getenv("PATH"); inherited && *inherited) {
+            path += mcpp::platform::env::path_list_separator();
+            path += inherited;
+        }
+        e.emplace_back("PATH", path);
+    }
+
     for (auto const& [var, path] : env.toolPaths) {
         auto [it, inserted] = depVarValue.try_emplace(var, path);
         if (inserted) {

@@ -50,3 +50,6 @@ bench-child.log
 # next time rather than reviewed again.
 binDir
 examples/*/target/
+
+# `mcpp test` writes a per-invocation scratch dir here.
+.mcpp/

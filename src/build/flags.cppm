@@ -555,7 +555,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // `mcpp.targetside` answers the question directly, after resolution, for
     // every layer separately. Reading it here means this site and the gate
     // cannot disagree, because there is nothing left to disagree about.
-    const bool graphTargetSide = plan.targetSide.system_from_graph();
+    // (The `system_from_graph` reading that stood here is gone: both of its
+    // former users ask about the C library, and one of them was getting a
+    // different answer than it needed. Leaving the name in scope would have
+    // left the wrong question one keystroke away.)
     // LLVM root of a clang-with-cfg toolchain — used by the macOS link
     // path below to locate libc++.a/libc++abi.a for staticStdlib.
     std::filesystem::path llvmRootForStdlib;
@@ -1005,18 +1008,34 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // "incompatible with elf64lriscv". See MechanismInput::freestanding.
         if (auto ft = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple))
             mi.freestanding = ft->is_freestanding();
-        // AND THE HOSTED FORM OF THE SAME FACT. The target's system comes from
-        // the graph — so, exactly as on bare metal, every archive the table
-        // below would reach for is the HOST's.
+        // AND THE HOSTED FORM OF THE SAME FACT. The archives the table below
+        // reaches for are the PAYLOAD's, and the question is whether this
+        // target is served by them.
         //
-        // The condition is the SYSTEM's origin and not the C++ runtime's. It
-        // was the latter until this line, and that is precisely why a C
-        // program over the same packages kept the payload's libc++ on its link
-        // line: the table asked whether a C++ runtime came from the graph, a C
-        // program has none, and the answer "no" was read as "so the payload's
-        // is right". A program with no C++ runtime needs the driver stopped
-        // from adding one just as much as a program that brought its own.
-        mi.graphCxxRuntime = plan.targetSide.system_from_graph();
+        // It was `targetCxxRuntime` once, and that was wrong for a C program:
+        // the table asked whether a C++ runtime came from the graph, a C
+        // program has none, and "no" was read as "so the payload's is right".
+        // A program with no C++ runtime needs the driver stopped from adding
+        // one just as much as a program that brought its own.
+        //
+        // ⚠️ IT WAS THEN `system_from_graph()`, WHICH OVERSHOT IN THE OTHER
+        // DIRECTION. That is an OR over two layers, and a program whose kernel
+        // interface comes from a package while its C library and C++ runtime
+        // are the payload's is served by the payload's archives — yet the OR
+        // said otherwise and `-nostdlib++` removed the one it needed:
+        //
+        //     undefined reference to `std::runtime_error::runtime_error(char const*)'
+        //     undefined reference to `typeinfo for std::runtime_error'
+        //
+        // measured on `openkal-linux = "0.5.4"` with a `throw` in main.
+        //
+        // ⭐ THE C LIBRARY IS WHAT DECIDES IT, for the same reason it decides
+        // the link line's search paths: the payload's C++ runtime was
+        // configured against the payload's C library, so it is eligible when
+        // and only when that C library is the one in use. `check_layering`
+        // states the same rule in the other direction, refusing the
+        // combination this predicate must not create.
+        mi.graphCxxRuntime = !plan.targetSide.cAbi.prebuilt();
 
         const bool wantsArchives =
             (base == dist::Contract::SelfContained
@@ -1229,7 +1248,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // dependency graph the compiler is an ordinary retargetable clang, and this
     // branch is one of three shaped by the HOST rather than by the target — see
     // the replacement below, which covers all three at once.
-    if (isMingwTc && !graphTargetSide) {
+    //
+    // ⚠️ THE SAME PREDICATE AS THE REPLACEMENT, BECAUSE THEY ARE COMPLEMENTARY.
+    // "covers all three at once" is only true while the two conditions are each
+    // other's negation; if this one said `system` and that one said `C library`,
+    // a mingw build whose kernel interface came from the graph and whose C
+    // library did not would enter neither, and emit no link line at all.
+    if (isMingwTc && plan.targetSide.cAbi.prebuilt()) {
         // `-static` / `-static-libstdc++` now come from the contract table via
         // unit_ldflags (dist::Format::Pe) — the whole-link `-static` is what
         // "self-contained" means here, since the piecemeal recipe still leaves
@@ -1423,7 +1448,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // `-rpath` beside them (this host's payload directories — measured on a
     // Mach-O link as `-Wl,-rpath,…/lib/x86_64-unknown-linux-gnu`, which ld64
     // accepts and writes into the image), `payload_ld`, `atomic_ld`.
-    if (!isFreestandingTarget && graphTargetSide) {
+    //
+    // ⚠️ AND THE CONDITION IS THE C LIBRARY, NOT THE SYSTEM. Everything the
+    // replacement drops is a way of reaching the PAYLOAD's C library, so a
+    // build whose C library still comes from the payload must not enter here
+    // — however much of the rest of its target side the graph supplies. See
+    // the note beside `Layer::prebuilt` in mcpp.targetside, which records what
+    // this got wrong and what it cost.
+    if (!isFreestandingTarget && !plan.targetSide.cAbi.prebuilt()) {
         // ⚠️ ASSEMBLED HERE RATHER THAN TAKEN FROM `link_toolchain_flags`,
         // BECAUSE THAT STRING IS ONLY POPULATED WHEN THE PAYLOAD HAS A CONFIG
         // FILE (`isClangWithCfg`). The Linux payload ships one and the Windows

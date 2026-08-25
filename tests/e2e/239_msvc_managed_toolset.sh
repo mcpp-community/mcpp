@@ -60,7 +60,21 @@ if ! "$MCPP" toolchain list 2>&1 | grep -q "$TOOLSET"; then
 fi
 
 # 1) install it. Any failure from here on is a FAILURE.
-rc=0; out=$("$MCPP" toolchain install msvc "$TOOLSET" 2>&1) || rc=$?
+#
+# ⚠️ STREAMED AS WELL AS CAPTURED, BECAUSE THIS STEP IS THE ONE THAT RUNS OUT
+# OF TIME. It fetches ~376 MB (xim:msvc ~85 MB + xim:windows-sdk ~291 MB), and
+# `out=$(...)` alone prints nothing while it does — so a run killed by the
+# per-test deadline leaves 600 seconds of silence and a harness line that can
+# only guess ("likely network / xlings stall"). Measured 2026-08-25 in CI:
+# exactly that, with no way to tell a stalled download from a hung install.
+#
+# `tee` keeps `$out` for the assertions below and puts the progress in the log
+# where a timeout can be read afterwards.
+echo "--- installing msvc $TOOLSET (~376 MB: toolset + Windows SDK) ---"
+log="$TMP/install.log"
+"$MCPP" toolchain install msvc "$TOOLSET" 2>&1 | tee "$log"
+rc=${PIPESTATUS[0]}
+out=$(cat "$log")
 if [[ $rc -ne 0 ]]; then
     echo "FAIL: install msvc $TOOLSET (rc=$rc):"
     echo "$out"

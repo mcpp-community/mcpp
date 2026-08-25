@@ -3,6 +3,225 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.25.1] — 2026-08-25
+
+### 修复
+
+- **⭐⭐ 图供给内核接口时,载荷那份 C 库被一起断开了。**
+
+  ```
+  error: hermetic link check failed
+           crt1.o (bare name — the linker cannot resolve it)
+           crti.o (bare name — the linker cannot resolve it)
+           crtn.o (bare name — the linker cannot resolve it)
+  ```
+
+  三行清单即可复现:
+
+  ```toml
+  [dependencies]
+  openkal-linux = "0.5.4"
+  ```
+
+  判据是一个**跨两层的 `OR`**,被用来决定只取决于其中一层的事:
+
+  ```cpp
+  bool system_from_graph() const {
+      return kernelAbi.fromGraph() || cAbi.fromGraph();
+  }
+  ```
+
+  链接侧在它为真时**整体替换** `f.ld`,丢掉载荷的 binutils 前缀、库目录与
+  rpath —— 而这些全是通往**载荷那份 C 库**的路。两层在它被写出来时针对的场景里
+  同进同退(openkal 目标的内核接口与 C 库都来自图),在另一个同样普通的场景里
+  分开:**一个在平台之上实现 openkal 的后端,而程序仍用载荷的 C 库**。
+  驱动照样索取启动文件,链接器却没有了可查的路径。
+
+  ⚠️ **这个形状正是每个 openkal 后端被测试的方式** —— openkal-linux、
+  openkal-macos、openkal-windows 三家的一致性套件都对着平台自己的 C 库构建。
+  它们的 CI 钉在旧 mcpp 上,所以一直绿;pin 一动就全红,而这是缺陷被发现的
+  唯一原因。
+
+  ⚠️ **mcpp 278 条 e2e 里,「kernel-abi 来自图 + C 库来自载荷」这个组合一条
+  都没有。** 新增 `285_kernel_abi_from_graph_keeps_the_payload_c_library.sh`,
+  断言到**产物能跑**,而不只是链接成功。
+
+  判据两向(2026.8.24.6 与本修复):
+
+  ```
+  已发布 24.6   error: hermetic link check failed — crt1.o (bare name)
+  本修复        ok  it links against the payload's C library, and runs
+  ```
+
+  区间由 CI 侧三分支并行二分给出:`8.21.3 绿 → 8.24.1 红`,唯一实质提交是
+  #486。
+
+  ⭐ **判据是层的来源,不是情形的列举。** `Origin` 有四个值
+  (`Payload` / `Xpkg` / `Graph` / `None`),而链接线要问的是「C 库是不是来自
+  解析之前就存在的目录」—— 这正是 `Layer::prebuilt()` 的定义,也是本模块开头
+  那段注释划分世界的方式(prebuilt 在解析前可知,composed 在解析后才知)。
+  因此**没有新增谓词**:两处改用 `cAbi.prebuilt()`,与既有的两处读法(C++ 层
+  能否用载荷运行时、`check_layering`)成为同一个事实的第三次读取。
+
+  ⚠️ 一版写成 `fromGraph() || absent()` 的中间修法被否掉了:它答对三个来源、
+  对 `Xpkg`(来自预构建 sysroot 的 C 库)沉默,而那同样不是载荷的。
+
+- **ninja 后端的测试夹具补上了目标侧。**
+
+  `minimal_plan()` 此前让 `TargetSide` 保持默认构造 —— 四层全 `Origin::None`,
+  那不是「本机构建」,是「什么都还没解析」。它能一直蒙混过去,是因为旧判据
+  对「全 None」与「载荷构建」给出同一个答案;换成链接线真正要问的问题,两者
+  才分开,而夹具描述的于是变成「没有 C 库的目标」——它拿到 `-nostdlib -static`
+  且不带任何运行期搜索路径,而这个文件里 44 条断言全是关于「有载荷 C 库」的。
+
+  ⚠️ **没有任何生产路径会带着全 `None` 的 `TargetSide` 走到 flags**:`resolve`
+  给普通本机构建的是 `cAbi = { Payload, … }`。夹具现在照实写。
+
+- **⭐⭐ 缓存键漏掉了新参数,于是跨着一处不兼容命中了。**
+
+  `compile_flags(spec)` 在 #486 长出第二个参数 `targetCxxRuntime`,而缓存键
+  仍按一个参数算:
+
+  ```cpp
+  b.targetImpliedFlags = mcpp::freestanding::compile_flags(*spec);
+  ```
+
+  同一个键因此覆盖两套实际不同的编译 flag。**命中不是「跳过一次重编」,是
+  「拿到一份为另一套 flag 建的产物」**——实测 `openkal@0.7.0` 出现 6 个槽位
+  对应 5 个尺寸各异的 BMI。
+
+  ⚠️ 这类缺陷不会在加参数的那天失败,它在下一次缓存命中时失败,而那时改动
+  已经不在视野里了。三条单元测试因此**直接打在 `build_axes()` 上**,而不是手
+  搭一个 `BuildAxes`——后者表达不出「推导过程本身错了」这件事。
+
+- **⭐ 载荷的 C++ 运行时,服务的是载荷的 C 库。**
+
+  ```
+  undefined reference to `__cxa_allocate_exception'
+  undefined reference to `std::runtime_error::runtime_error(char const*)'
+  ```
+
+  契约表用 `system_from_graph()` 决定要不要取载荷的 C++ 归档 —— 又是那个跨两层的
+  OR。一个「内核接口来自包、而 C 库与 C++ 运行时都来自载荷」的程序本该由那些归档
+  服务,OR 却说不是,`-nostdlib++` 于是砍掉了它要用的那一份。
+
+  ⚠️ **这一处在两个方向上都错过。** 最初是 `targetCxxRuntime`,对 C 程序失败
+  (它没有 C++ 运行时,答「否」被读成「载荷的是对的」);#486 换成 OR,又矫枉过正。
+  **C 库才是决定它的那一层** —— 理由 `check_layering` 早已反向陈述:载荷的 C++
+  运行时是对着载荷的 C 库配置的,所以当且仅当那份 C 库在用时它才可用。
+
+- **⭐ 第四条同型:`linkage = "dynamic"` 的「无效」诊断在说谎。**
+
+  实测 2026-08-25,在 285 的形状上(kernel-abi 来自图 + C 库来自载荷):
+
+  ```
+  warning: `linkage = "dynamic"` has no effect … The artifact is static.
+  $ file    → dynamically linked
+  $ readelf → NEEDED libm.so.6, libgcc_s.so.1, libc.so.6
+  ```
+
+  谓词用的是 `system_from_graph()`(跨 kernel-abi 与 c-abi 两层的 OR),而这条
+  警告自己给的理由——「那些包被当作对象编进本次构建,没有共享对象可链接」——
+  是**C 库单独一层**的性质。载荷的 libc 有共享对象,`dynamic` 就被兑现了,这里
+  本来无话可说。改为 `cAbi.fromGraph()`。
+
+  prepare.cppm 里另外两处 `system_from_graph()` 保留:它们问的是「图有没有供给
+  系统的任一部分」,那确实是两层的问题。
+
+- **⭐ `build.mcpp` 的 `PATH` 前置项目声明的那个环境。**
+
+  ```
+  PATH=<被声明环境的 bin>:<mcpp 启动时的 PATH>
+  ```
+
+  构建程序想用某个工具,此前只能像 shell 脚本一样去问 `PATH` —— 而 `command -v`
+  回答的是「这台机器有什么」,不是「这次构建用什么」。实测代价:
+  `command -v qemu-system-riscv64` 命中一个 shim,执行时答
+  `[error] qemu-system-riscv64 is not installed in this subos` —— 找到了、报告
+  为存在、却跑不了,而可用的那份就在项目自己的环境里,不在 `PATH` 上。
+
+  ⚠️ **只对声明了 `[xlings].subos` 的项目生效,没声明的逐字节不变。** 一个更早
+  的草案无条件前置 mcpp 共享的 `subos/default/bin`,那会让「构建看见什么」取决
+  于这台机器上还装过什么 —— 同一台机器上的两个项目彼此一致,而同一个项目在两台
+  机器上不一致。是声明本身把它放到前面的。
+
+  ⚠️ **前置而非替换。** 构建程序合理地会调 `git`、`python3`、shell,这些都不在
+  SubOS 里;只有被声明目录的 `PATH` 会把它们全部弄坏。
+
+  ⭐ **没有新的决定点。** `mcpp::xlings::runtime` 早就是「项目用哪个 SubOS」的
+  唯一策略,`RuntimeBinding::subosDir` 是它已解析的答案;本次只是把这个答案多交
+  付给一个消费者。`projectSubosBin` 在绑定解析后算**一次**,两个交付点各自取用。
+  本次发布修的三条缺陷全部来自「一个事实在多处各自推导」。各包的载荷路径由
+  `MCPP_XPKG_*_DIR` 另行回答,与 `PATH` 是两个问题。
+
+  新增 `examples/07-project-subos/` 与 [第 17 章](docs/17-the-project-environment.md)。
+
+### 测试
+
+- 五条单元测试,**按 `Origin` 的四个值各一条**,外加一条把缺陷本身写成断言
+  (内核接口的来源不参与这个决定)。按枚举写而不按想到的情形写:后者只覆盖
+  作者想到的,前者在枚举新增取值时会留下可见的缺口。
+
+- 三条缓存键测试,**直接打在 `build_axes()` 上**而不是手搭 `BuildAxes`:
+  那个夹具表达不了这个缺陷,因为缺陷在推导里。两种配置的 flag 必须不同、
+  缓存键必须不同,而**宿主目标必须不受影响** —— 最后一条是防止修过头的控制项。
+
+- 五条真实依赖 openkal 包的 e2e。此前八条提到 openkal 的脚本里有七条用的是
+  **合成清单**(当场编造一个自称 `provides = ["mcpp:kernel-abi=…"]` 的包),
+  测的是引擎对一句声明的处理,测不到生态实际的形状 —— 今天的两条回归都从这条缝
+  里出去。
+
+  | | 覆盖 |
+  |---|---|
+  | 285 | kernel-abi 来自图 + C 库来自**载荷**(后端跑在平台之上) |
+  | 286 | 三层全来自图,断言静态、无 INTERP、能跑 |
+  | 287 | 交叉到 aarch64,断言 outline-atomics 辅助函数与 LSE 指令数,qemu 真跑 |
+  | 288 | 无 OS 无 C 库,断言 c-abi 那一行的**值**是 `—`(不是断言它缺席),并在 qemu 里真启动 |
+  | 289 | **一台宿主横扫四个目标** —— 这个体系本就是通用交叉构建,传统栈要六个 runner 的覆盖,这里一个循环 |
+  | 290 | 声明把环境放到 `PATH` 前面,**而且只有声明会** —— 两半都对着**继承的那个值**比对,不是比对一个模式 |
+  | 291 | `dynamic` 只在 C 库来自图时被拒 —— 且断言产物的 `DT_NEEDED` 而非只断言文案 |
+
+- **⚠️ 上面这张表里的 285–289,此前一条都没在 CI 跑过。**
+
+  它们声明 `# requires: llvm`,而两个 linux e2e shard 报的能力行是
+
+  ```
+  Detected capabilities: elf unix-shell fresh-sandbox gcc patchelf pack …
+  ```
+
+  没有 `llvm`——shard 的 workflow 从不装。`run_all.sh` 在 skip 时退 0,于是
+  套件一直绿,而专门用来衡量这个生态的五条测试一次都没执行。**「我加了测试」
+  和「测试跑过」是两件事**,这一条我自己又犯了一次。
+
+  修法用仓库已有的范式,而不是新造一个 token:`run_all.sh` 自己的注释写明了
+  为什么没有 hard-requires——一个 token 分不清「这台 runner 配错了」和「这个
+  平台本来就没有」。有效的守卫必须知道自己在跟哪台 runner 说话,所以它住在
+  job 里。新增 `openkal-cross.yml` 的 `ecosystem-e2e`:装 gcc + llvm,直接跑
+  这六条,再逐条断言它们的 PASS 行真的出现了。与 `ci-linux-e2e.yml` 的
+  `baremetal` job 同形,同因。
+
+  ⭐ **这个 job 第一次跑就抓到 287 在说谎。** 它用
+  `command -v llvm-objdump || command -v objdump` 找反汇编器,而 CI 上前者不在
+  PATH、后者是宿主 GNU binutils —— BFD 只编了 x86_64。让它反汇编 aarch64 会打印
+  一个文件头、**零条指令、零报错**:
+
+  ```
+  $ objdump -d a-aarch64.o | grep -cE '^\s*[0-9a-f]+:'
+  0
+  $ llvm-objdump -d a-aarch64.o | grep -cE '^\s*[0-9a-f]+:'
+  5
+  ```
+
+  `grep -c` 得 0,脚本报「`+outline-atomics` 看起来是被关掉了」。它在写它的那台
+  机器上通过,因为那里恰好有 `/usr/bin/llvm-objdump`。现在工具取自**编译这个
+  产物的那条工具链**,并且先数指令总行数:零条 = 工具读不了这个文件,那不是
+  关于 LSE 的证据。判据也随之带上分母(`7 LSE instructions out of 148906`)。
+
+  同一轮还发现 287/288 的「运行」两步在 CI 上都降级成了 SKIP 而 OK 行照印。job
+  因此装上两个模拟器,并对这两条**额外断言运行阶段的那一行**。
+
+  290 的两半只有一半是特性:无条件前置能通过前一半,而那正是被撤回的设计。
+
 ## [2026.8.24.6] — 2026-08-25
 
 ### 新增

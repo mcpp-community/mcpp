@@ -78,6 +78,16 @@ jobs:
           # Name what this job runs, so the job title and its contents cannot
           # drift apart. Widen the glob when a second test joins.
           E2E_ONLY: '239_*.sh'
+          # ⚠️ THE DEFAULT PER-TEST CAP IS TOO CLOSE TO WHAT THIS TEST COSTS.
+          # 239 fetches ~376 MB, and its measured durations on this runner are
+          # 244 / 292 / 313 / 335 / 515s against run_all.sh's 600s default — a
+          # download-bound test whose spread nearly reaches its own deadline,
+          # so a slow mirror reports a red build for a correct one.
+          #
+          # Raised only here, where the job runs that one test and the step's
+          # own `timeout-minutes: 30` is the real backstop — which is what
+          # run_all.sh's comment says the per-test value is meant to sit under.
+          E2E_TEST_TIMEOUT: '1500'
         run: |
           export MCPP="$MCPP_SELF"
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"

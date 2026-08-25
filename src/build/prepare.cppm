@@ -1301,6 +1301,31 @@ prepare_build(bool print_fingerprint,
         if (!runtimeBindingSnapshot.note.empty())
             mcpp::ui::info("Runtime", runtimeBindingSnapshot.note);
     }
+    // ⭐⭐ THE `bin` THIS PROJECT'S BUILD PROGRAMS SEE FIRST — derived ONCE,
+    // here, from the selection that has just been resolved.
+    //
+    // Empty unless the manifest declared `[xlings].subos`. That is deliberate:
+    // prepending the SHARED `subos/default/bin` would make what a build sees
+    // depend on what else has been installed on this machine, so a project
+    // that has not asked for an environment of its own gets the `PATH` mcpp
+    // was started with, byte for byte.
+    //
+    // ⚠️ NOT RE-DERIVED AT THE TWO DELIVERY SITES BELOW, AND NOT FROM
+    // `[xlings] deps`. `mcpp::xlings::runtime` is the sole runtime-selection
+    // policy and `RuntimeBinding::subosDir` is its resolved answer; a second
+    // derivation is how a build ends up with two subos and no way to say which
+    // one it used. The per-package payload paths a program may also need are
+    // already answered, separately, by `MCPP_XPKG_*_DIR`.
+    const std::string projectSubosBin = [&]() -> std::string {
+        using Mode = mcpp::xlings::runtime::RuntimeSelection::Mode;
+        if (runtimeBindingSnapshot.selection.mode != Mode::NamedSubos)
+            return {};
+        auto bin = runtimeBindingSnapshot.subosDir / "bin";
+        std::error_code ec;
+        if (!std::filesystem::is_directory(bin, ec)) return {};
+        return bin.string();
+    }();
+
     const auto runtimePayload = runtimeBindingSnapshot.libc.value_or("");
     const auto runtimeLibDir = runtimeBindingSnapshot.libraryDirs.empty()
         ? std::filesystem::path{} : runtimeBindingSnapshot.libraryDirs.front();
@@ -5542,6 +5567,7 @@ prepare_build(bool print_fingerprint,
         // three answers that keep a board package from hardcoding a toolchain
         // or a libc. All four in one call — see fill_target_build_env.
         fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
+        bpEnv.toolsBin = projectSubosBin;
             bpEnv.profile      = effectiveProfile;
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
             bpEnv.artifactsDir = workRoot / "target" / ".build-mcpp" / "deps"
@@ -5955,14 +5981,26 @@ prepare_build(bool print_fingerprint,
 
         // A request that cannot be honoured is said so rather than dropped.
         //
-        // Measured 2026-08-23: `[build] linkage = "dynamic"` on a project whose
-        // system comes from the graph produced a statically linked artifact and
+        // Measured 2026-08-23: `linkage = "dynamic"` on a project whose system
+        // comes from the graph produced a statically linked artifact and
         // printed nothing. The outcome is correct — the graph supplies its
         // libraries as objects compiled into this build, and there is no shared
         // object for a loader to resolve at run time — but a directive that has
         // no effect and no diagnostic is indistinguishable from one that was
         // never read.
-        if (resolvedTargetSide.system_from_graph()
+        //
+        // ⚠️ THE C LIBRARY IS THE LAYER THIS DEPENDS ON, NOT "THE SYSTEM".
+        // `system_from_graph()` spans two layers, and the arrangement that
+        // separates them is real: a backend running ON a platform takes its
+        // kernel interface from the graph while the C library stays the
+        // payload's. Measured 2026-08-25 on exactly that project — the
+        // predicate was true, this warning printed "The artifact is static",
+        // and the artifact had three DT_NEEDED entries including `libc.so.6`.
+        // The reason the message gives is a property of the C library alone:
+        // a payload libc has a shared object, so `dynamic` is honoured and
+        // there is nothing to warn about. Same shape as the three defects this
+        // release fixes — see `TargetSide::system_from_graph`'s own note.
+        if (resolvedTargetSide.cAbi.fromGraph()
             && m->buildConfig.linkage == "dynamic")
             mcpp::ui::warning(
                 "`linkage = \"dynamic\"` has no effect when the "
@@ -6019,6 +6057,7 @@ prepare_build(bool print_fingerprint,
         // three answers that keep a board package from hardcoding a toolchain
         // or a libc. All four in one call — see fill_target_build_env.
         fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
+        bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;
         // Set explicitly rather than relying on build_dir()'s root-relative
         // default: under BuildOverrides::work_dir the package root is shared

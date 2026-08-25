@@ -81,6 +81,12 @@ inline std::string link_flags(const Spec& s, const LinkInputs& in,
 {
     std::string out;
     out += " --target=" + std::string(s.triple);
+    // The default `targetCxxRuntime` is deliberate here and not an omission of
+    // the kind fixed in cache_key.cppm: what this list contributes to a LINK
+    // line is the machine description (`-march`, `-mabi`, `-mcmodel`), and the
+    // two flags the argument governs — `-fno-exceptions`, `-fno-rtti` — say
+    // nothing to a linker. Passing it would change no byte of the output while
+    // suggesting it does.
     for (auto const& f : compile_flags(s)) { out += ' '; out += f; }
     out += " -nostdlib -nostartfiles -static";
     if (!in.lld.empty())

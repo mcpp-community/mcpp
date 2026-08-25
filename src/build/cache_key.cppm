@@ -315,9 +315,37 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
         : (tc.binaryPath.empty() ? std::string{}
                                  : mcpp::toolchain::hash_file(tc.binaryPath));
     b.targetTriple    = tc.targetTriple;
+    // ⚠️⚠️ `tc.targetCxxRuntime` IS PASSED, AND OMITTING IT MADE THIS KEY
+    // DESCRIBE A COMPILATION THAT DOES NOT HAPPEN.
+    //
+    // `compile_flags` takes that argument because the answer changes with it:
+    // a freestanding target whose graph supplies a C++ runtime is compiled
+    // WITHOUT `-fno-exceptions`, and one whose graph does not is compiled with
+    // it. The flag builder reads it (flags.cppm passes
+    // `plan.toolchain.targetCxxRuntime`); this key did not, so it defaulted to
+    // `false` and hashed the flags of the other configuration.
+    //
+    // ⭐ THE CONSEQUENCE IS A CACHE HIT ACROSS AN INCOMPATIBILITY, NOT A MISS.
+    // Two configurations that must not share a slot hashed to the same key, so
+    // the second build loaded the first's BMIs. Measured 2026-08-25 on a
+    // bare-metal program over openkal-opensbi:
+    //
+    //     error: exception handling was enabled in precompiled file
+    //            'openkal.stream.pcm' but is currently disabled
+    //
+    // and in the cache itself — `openkal@0.7.0` had six fingerprint slots
+    // holding five differently-sized copies of that one BMI. Slotting per
+    // configuration was working; choosing the slot was not.
+    //
+    // ⚠️ IT WAS DORMANT UNTIL THE ARGUMENT EXISTED. Before #486 the two layers
+    // computed identical flag lists for every input, so a key that ignored one
+    // of them was still correct. The defect is that a cache key derived its
+    // inputs a second time instead of reading what the build uses — and that
+    // stops being harmless the moment the derivation gains a parameter.
     if (auto ft = mcpp::toolchain::triple::parse(tc.targetTriple))
         if (auto spec = mcpp::freestanding::resolve(*ft))
-            b.targetImpliedFlags = mcpp::freestanding::compile_flags(*spec);
+            b.targetImpliedFlags =
+                mcpp::freestanding::compile_flags(*spec, tc.targetCxxRuntime);
     b.stdlibId        = tc.stdlibId;
     b.stdlibVersion   = tc.stdlibVersion;
 

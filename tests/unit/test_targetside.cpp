@@ -612,3 +612,70 @@ TEST(TargetSideConflict, TwoSuppliersAreNamedTogetherWithHowEachArrived) {
         << "the reason matters: choosing wrong does not fail the link, it "
            "produces a program that runs and occasionally does not";
 }
+
+// ── Which layer decides the payload's C-library flags ───────────────────────
+//
+// ⚠️ THE PREDICATE THIS REPLACES WAS AN `OR` OVER TWO LAYERS, AND SHIPPED.
+//
+//     bool system_from_graph() const {
+//         return kernelAbi.fromGraph() || cAbi.fromGraph();
+//     }
+//
+// The link side replaced `f.ld` when that was true, dropping the `-B` that
+// lets a driver find startup files. The two layers move together for an
+// openkal target and come apart for a backend that implements openkal on top
+// of a platform whose C library the program still uses. Measured, on three
+// lines of manifest:
+//
+//     error: hermetic link check failed
+//              crt1.o (bare name — the linker cannot resolve it)
+//
+// ⭐ ONE TEST PER `Origin`, BECAUSE THE QUESTION HAS ONE ANSWER PER VALUE.
+// A predicate written as a list of cases answers the ones its author thought
+// of; four tests against a four-valued enum make the fifth value's absence
+// visible when someone adds it.
+namespace {
+mcpp::targetside::TargetSide side_with(mcpp::targetside::Origin cAbiOrigin,
+                                       mcpp::targetside::Origin kernelOrigin
+                                           = mcpp::targetside::Origin::Graph) {
+    using namespace mcpp::targetside;
+    TargetSide ts;
+    ts.kernelAbi = { kernelOrigin, "openkal", "openkal-linux@0.5.4", false };
+    ts.cAbi      = { cAbiOrigin,
+                     cAbiOrigin == Origin::None ? "" : "glibc", "", false };
+    return ts;
+}
+}
+
+TEST(TargetSideCLibrary, ThePayloadsCLibraryIsPrebuilt) {
+    // The shape that failed: the graph supplies the kernel interface and the C
+    // library is still the payload's, so the payload's flags must survive.
+    EXPECT_TRUE(side_with(mcpp::targetside::Origin::Payload).cAbi.prebuilt());
+}
+
+TEST(TargetSideCLibrary, AnXpkgSysrootIsPrebuiltToo) {
+    // The value a hand-written `fromGraph() || absent()` was silent about. A
+    // sysroot from an xpkg is a directory that existed before resolution, like
+    // a payload and unlike a package.
+    EXPECT_TRUE(side_with(mcpp::targetside::Origin::Xpkg).cAbi.prebuilt());
+}
+
+TEST(TargetSideCLibrary, AGraphBuiltCLibraryIsNotPrebuilt) {
+    EXPECT_FALSE(side_with(mcpp::targetside::Origin::Graph).cAbi.prebuilt());
+}
+
+TEST(TargetSideCLibrary, NoCLibraryIsNotPrebuilt) {
+    // Nothing to reach, and the link line adds `-nostdlib -static` for it.
+    EXPECT_FALSE(side_with(mcpp::targetside::Origin::None).cAbi.prebuilt());
+    EXPECT_TRUE(side_with(mcpp::targetside::Origin::None).cAbi.absent());
+}
+
+TEST(TargetSideCLibrary, TheKernelInterfaceDoesNotDecideIt) {
+    // The defect itself, as an assertion: every kernel-interface origin leaves
+    // the answer to the C-ABI layer alone.
+    using namespace mcpp::targetside;
+    for (auto k : { Origin::Payload, Origin::Xpkg, Origin::Graph, Origin::None }) {
+        EXPECT_TRUE(side_with(Origin::Payload, k).cAbi.prebuilt());
+        EXPECT_FALSE(side_with(Origin::Graph,  k).cAbi.prebuilt());
+    }
+}
