@@ -241,3 +241,107 @@ jobs:
           done
           [ "$fail" = 0 ] || exit 1
           echo "three builds, one system, same four lines"
+
+  # ──────────────────────────────────────────────────────────────────
+  # The e2e scripts that BUILD the openkal ecosystem, on a runner that
+  # has what they ask for.
+  #
+  # ⚠️ THEY WERE WRITTEN AND THEY WERE NEVER RUN. `285`–`289` declare
+  # `# requires: llvm`, and the linux e2e shards report
+  #
+  #     Detected capabilities: elf unix-shell fresh-sandbox gcc
+  #                            patchelf pack symlink python3 …
+  #
+  # — no `llvm`, on either shard, because the shard workflow never
+  # installs one. `run_all.sh` exits 0 on a skip, so the suite stayed
+  # green while the five tests measuring this ecosystem did not run.
+  #
+  # run_all.sh's own note says why no token can fix this: a hard-requires
+  # cannot tell "this runner is misconfigured" from "this platform
+  # legitimately lacks the capability". The guard has to know which
+  # runner it is, so it lives in the job — install the capability, then
+  # assert each script's PASS line actually appeared. Same shape as
+  # ci-linux-e2e.yml's `baremetal` job, for the same reason.
+  # ──────────────────────────────────────────────────────────────────
+  ecosystem-e2e:
+    name: openkal e2e (the scripts, on a runner that has llvm)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build the mcpp in this pull request
+        run: |
+          set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build --dev
+          BUILT=$(find target -type f -name 'mcpp' | head -1)
+          [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
+          BUILT=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")
+          echo "MCPP_UNDER_TEST=$BUILT" >> "$GITHUB_ENV"
+          "$BUILT" --version
+
+      - name: Install what the scripts declare
+        run: |
+          set -euo pipefail
+          "$MCPP_UNDER_TEST" self config --mirror GLOBAL 2>/dev/null || true
+          # Both, and both are load-bearing: 285 and 291's first half build
+          # with gcc (a backend running ON a platform, keeping the payload's
+          # C library), 286-289 and 291's second half with llvm (the whole
+          # stack from the graph, where openkal-llvm-runtime IS libc++).
+          "$MCPP_UNDER_TEST" toolchain install gcc 16.1.0
+          "$MCPP_UNDER_TEST" toolchain install llvm 22.1.8
+
+      - name: The scripts
+        run: |
+          set -euo pipefail
+          export MCPP="$MCPP_UNDER_TEST"
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          # Directly rather than through run_all.sh: it accepts no filter, and
+          # it exits 0 on a skip — which is the condition this job exists to
+          # detect.
+          fail=0
+          for t in tests/e2e/285_*.sh tests/e2e/286_*.sh tests/e2e/287_*.sh \
+                   tests/e2e/288_*.sh tests/e2e/289_*.sh tests/e2e/291_*.sh; do
+            echo "=== $t ==="
+            bash "$t" 2>&1 | tee "$(basename "$t").log" || true
+            rc=${PIPESTATUS[0]}
+            [ "$rc" = "0" ] || { echo "::error::$t failed (exit $rc)"; fail=1; }
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      - name: Each one RAN
+        run: |
+          set -euo pipefail
+          # ⭐ THE ASSERTION THIS JOB EXISTS FOR. A zero exit code cannot
+          # distinguish "passed" from "skipped" — every one of these scripts
+          # has an early `exit 0` for a capability or an arrangement it did
+          # not find. The PASS line can.
+          check() {
+            grep -qF "$2" "$1".log || {
+              echo "::error::$1 did not run to its conclusion on the runner that must run it"
+              tail -5 "$1".log 2>/dev/null | sed 's/^/        /'
+              return 1
+            }
+            echo "  ok  $1"
+          }
+          fail=0
+          check 285_kernel_abi_from_graph_keeps_the_payload_c_library.sh \
+            "OK: a graph-supplied kernel interface leaves the payload's C library reachable" || fail=1
+          check 286_the_openkal_stack_still_builds.sh \
+            "OK: the openkal stack builds, links statically and runs" || fail=1
+          check 287_the_openkal_stack_crosses_to_aarch64.sh \
+            "OK: the openkal stack crosses to aarch64, supplies its atomics helpers and runs" || fail=1
+          check 288_the_openkal_stack_on_a_machine_with_no_os.sh \
+            "OK: openkal runs on a machine with no operating system and no C library" || fail=1
+          check 289_one_host_reaches_every_openkal_target.sh \
+            "OK: one host reached" || fail=1
+          check 291_dynamic_linkage_is_refused_only_when_the_c_library_is_the_graphs.sh \
+            "OK: the C library decides whether 'dynamic' can be honoured" || fail=1
+          [ "$fail" = 0 ] || exit 1

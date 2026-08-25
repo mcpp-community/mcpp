@@ -164,6 +164,25 @@
   | 290 | 声明把环境放到 `PATH` 前面,**而且只有声明会** —— 两个方向各一条断言 |
   | 291 | `dynamic` 只在 C 库来自图时被拒 —— 且断言产物的 `DT_NEEDED` 而非只断言文案 |
 
+- **⚠️ 上面这张表里的 285–289,此前一条都没在 CI 跑过。**
+
+  它们声明 `# requires: llvm`,而两个 linux e2e shard 报的能力行是
+
+  ```
+  Detected capabilities: elf unix-shell fresh-sandbox gcc patchelf pack …
+  ```
+
+  没有 `llvm`——shard 的 workflow 从不装。`run_all.sh` 在 skip 时退 0,于是
+  套件一直绿,而专门用来衡量这个生态的五条测试一次都没执行。**「我加了测试」
+  和「测试跑过」是两件事**,这一条我自己又犯了一次。
+
+  修法用仓库已有的范式,而不是新造一个 token:`run_all.sh` 自己的注释写明了
+  为什么没有 hard-requires——一个 token 分不清「这台 runner 配错了」和「这个
+  平台本来就没有」。有效的守卫必须知道自己在跟哪台 runner 说话,所以它住在
+  job 里。新增 `openkal-cross.yml` 的 `ecosystem-e2e`:装 gcc + llvm,直接跑
+  这六条,再逐条断言它们的 PASS 行真的出现了。与 `ci-linux-e2e.yml` 的
+  `baremetal` job 同形,同因。
+
   290 的两半只有一半是特性:无条件前置能通过前一半,而那正是被撤回的设计。
 
 ## [2026.8.24.6] — 2026-08-25

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: gcc elf network
+# requires: gcc llvm elf unix-shell
 # `linkage = "dynamic"` is reported as ineffective only when it actually is.
 #
 # ⚠️ THE PREDICATE USED TO SPAN TWO LAYERS AND THE REASON SPANS ONE. The
