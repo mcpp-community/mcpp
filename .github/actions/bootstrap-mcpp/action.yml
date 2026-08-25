@@ -42,6 +42,22 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.mcpp
+        # ⚠️⚠️ `runner.arch` IS PART OF EVERY KEY, AND WAS NOT.
+        #
+        # These caches hold INSTALLED BINARIES — `~/.xlings`, `~/.mcpp`, and
+        # `target/`. Keyed on `runner.os` alone, `Linux` names two machines, and
+        # `ubuntu-24.04-arm` restored what `ubuntu-24.04` had stored. Measured
+        # the first time this repo scheduled an arm Linux runner:
+        #
+        #     Cache hit for: xlings-Linux-v2-xl2026.8.17.2-…
+        #     …/bin/xlings: cannot execute binary file: Exec format error
+        #
+        # ⭐ AND IT SURVIVED THE FIX ONE LAYER DOWN. Reading `uname -m` to pick
+        # the right tarball is correct and was not enough: the download never
+        # happened, because a cache from the other architecture was already
+        # there. A key that does not name the machine is a key that lets one
+        # machine answer for another.
+        #
         # The xlings version is part of the LINEAGE, not just the key: mcpp
         # vendors xlings into ~/.mcpp/registry/bin once at `self init` and
         # never revisits it (acquire_xlings_binary returns early when the file
@@ -50,17 +66,17 @@ runs:
         # sandbox — which is what actually resolves dependencies — would
         # silently stay behind (observed: a 0.4.30 sandbox surviving under a
         # 0.4.69 bootstrap for weeks).
-        key: mcpp-sandbox-${{ runner.os }}-ci-xl${{ inputs.xlings-version }}-${{ hashFiles('mcpp.toml', '.xlings.json') }}
+        key: mcpp-sandbox-${{ runner.os }}-${{ runner.arch }}-ci-xl${{ inputs.xlings-version }}-${{ hashFiles('mcpp.toml', '.xlings.json') }}
         restore-keys: |
-          mcpp-sandbox-${{ runner.os }}-ci-xl${{ inputs.xlings-version }}-
+          mcpp-sandbox-${{ runner.os }}-${{ runner.arch }}-ci-xl${{ inputs.xlings-version }}-
 
     - name: Cache xlings
       uses: actions/cache@v4
       with:
         path: ~/.xlings
-        key: xlings-${{ runner.os }}-v2-xl${{ inputs.xlings-version }}-${{ hashFiles('.xlings.json') }}
+        key: xlings-${{ runner.os }}-${{ runner.arch }}-v2-xl${{ inputs.xlings-version }}-${{ hashFiles('.xlings.json') }}
         restore-keys: |
-          xlings-${{ runner.os }}-v2-xl${{ inputs.xlings-version }}-
+          xlings-${{ runner.os }}-${{ runner.arch }}-v2-xl${{ inputs.xlings-version }}-
 
     - name: Bootstrap mcpp via xlings (unix)
       if: runner.os != 'Windows'
@@ -165,7 +181,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: target
-        key: mcpp-target-${{ runner.os }}-${{ github.job }}-${{ hashFiles('src/**', 'tests/**', 'mcpp.toml', 'mcpp.lock') }}
+        key: mcpp-target-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src/**', 'tests/**', 'mcpp.toml', 'mcpp.lock') }}
         restore-keys: |
-          mcpp-target-${{ runner.os }}-${{ github.job }}-
-          mcpp-target-${{ runner.os }}-
+          mcpp-target-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
+          mcpp-target-${{ runner.os }}-${{ runner.arch }}-
