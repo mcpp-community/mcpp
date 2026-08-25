@@ -97,14 +97,50 @@ if [ -n "$nm" ]; then
     fi
 fi
 
-objdump="$(command -v llvm-objdump || command -v objdump || true)"
+# ⚠️⚠️ A DISASSEMBLER THAT CANNOT READ THIS FILE ANSWERS "NO LSE", AND THE
+# FIRST VERSION OF THIS BELIEVED IT.
+#
+# `command -v objdump` on a Linux runner finds GNU binutils, whose BFD is built
+# for ONE architecture. Asked to disassemble an aarch64 binary on an x86_64
+# host it prints a header, no instructions, and — this is the part that costs —
+# NO ERROR:
+#
+#     $ objdump --info | head -2
+#     elf64-x86-64
+#     $ objdump -d a-aarch64.o | wc -l
+#     5                          # …of which 0 are instructions, 0 are errors
+#
+# `grep -c` on that is 0, which this then reported as "`+outline-atomics` looks
+# disabled". Measured 2026-08-25: it passed on the machine it was written on,
+# where /usr/bin/llvm-objdump happens to exist and is picked first, and failed
+# in CI where it does not — the first time this test had ever run there.
+#
+# ⭐ SO THE TOOL IS TAKEN FROM THE TOOLCHAIN THAT BUILT THE BINARY. mcpp
+# installed llvm to compile this; its llvm-objdump reads every target clang
+# emits, by construction.
+objdump=""
+for c in "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-llvm/*/bin/llvm-objdump; do
+    [ -x "$c" ] && objdump="$c"
+done
+[ -n "$objdump" ] || objdump="$(command -v llvm-objdump || true)"
+[ -n "$objdump" ] || objdump="$(command -v objdump || true)"
+
 if [ -n "$objdump" ]; then
-    lse="$("$objdump" -d "$bin" 2>/dev/null | grep -cE '\b(casal|cas|ldaddal|ldadd|swpal|swp)\b' || true)"
-    if [ "${lse:-0}" -gt 0 ]; then
-        echo "  ok  $lse LSE instructions — the feature is on, not switched off"
+    disasm="$("$objdump" -d "$bin" 2>/dev/null || true)"
+    # ⭐ THE GUARD THAT SEPARATES THE TWO ANSWERS. Zero instruction lines means
+    # the tool could not read the file; it is not evidence about LSE, and
+    # reporting it as such is how a green suite hides a broken measurement.
+    insns="$(printf '%s\n' "$disasm" | grep -cE '^\s*[0-9a-f]+:' || true)"
+    if [ "${insns:-0}" = 0 ]; then
+        echo "  SKIP  $(basename "$objdump") disassembled nothing — it cannot read aarch64 here"
     else
-        echo "FAIL: no LSE instruction; \`+outline-atomics\` looks disabled rather than supported"
-        exit 1
+        lse="$(printf '%s\n' "$disasm" | grep -cE '\b(casal|cas|ldaddal|ldadd|swpal|swp)\b' || true)"
+        if [ "${lse:-0}" -gt 0 ]; then
+            echo "  ok  $lse LSE instructions out of $insns — the feature is on, not switched off"
+        else
+            echo "FAIL: $insns instructions disassembled and not one LSE; \`+outline-atomics\` is disabled"
+            exit 1
+        fi
     fi
 fi
 

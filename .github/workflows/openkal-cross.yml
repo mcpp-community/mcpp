@@ -298,6 +298,35 @@ jobs:
           "$MCPP_UNDER_TEST" toolchain install gcc 16.1.0
           "$MCPP_UNDER_TEST" toolchain install llvm 22.1.8
 
+      # ⚠️ THE EMULATORS, OR TWO OF THE SIX MEASURE HALF OF WHAT THEY SAY.
+      #
+      # 287 and 288 both end by RUNNING what they built — an aarch64 binary and
+      # a riscv64 machine image — and both degrade to a SKIP when no emulator
+      # is here. Measured on this job's first run: 288 printed
+      #
+      #     SKIP  no riscv64 machine emulator here — linking is not booting
+      #
+      # and still reached its OK line, so the PASS-line assertion below would
+      # have called that covered. Linking is not booting, as the script itself
+      # says.
+      #
+      # ⚠️ BOTH homes, for the reason ci-linux-e2e.yml's baremetal job records:
+      # the shim on PATH dispatches against whichever home owns it, so an
+      # emulator installed only in the ambient one answers "not installed" when
+      # mcpp asks.
+      - name: Install the emulators the last two scripts need
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq qemu-user
+          "$XLINGS_BIN" install xim:qemu-riscv -y
+          XLINGS_HOME="${MCPP_HOME:-$HOME/.mcpp}/registry" \
+            "$XLINGS_BIN" install xim:qemu-riscv -y
+          # Reachable AND runnable, asserted before the tests: without this the
+          # scripts would simply skip and say so in a line nobody reads.
+          qemu-aarch64 --version | head -1
+          "$XLINGS_BIN" run qemu-system-riscv64 --version 2>/dev/null | head -1 \
+            || command -v qemu-system-riscv64
+
       - name: The scripts
         run: |
           set -euo pipefail
@@ -338,8 +367,18 @@ jobs:
             "OK: the openkal stack builds, links statically and runs" || fail=1
           check 287_the_openkal_stack_crosses_to_aarch64.sh \
             "OK: the openkal stack crosses to aarch64, supplies its atomics helpers and runs" || fail=1
+          # ⭐ AND IT REACHED THE PARTS THAT NEED A TOOL. Both of 287's last two
+          # assertions degrade to a SKIP, and the OK line prints either way.
+          check 287_the_openkal_stack_crosses_to_aarch64.sh \
+            "LSE instructions out of" || fail=1
+          check 287_the_openkal_stack_crosses_to_aarch64.sh \
+            "it runs under qemu-aarch64" || fail=1
           check 288_the_openkal_stack_on_a_machine_with_no_os.sh \
             "OK: openkal runs on a machine with no operating system and no C library" || fail=1
+          # ⭐ 288's name says "runs"; without this it can print that line
+          # having only linked.
+          check 288_the_openkal_stack_on_a_machine_with_no_os.sh \
+            "it boots" || fail=1
           check 289_one_host_reaches_every_openkal_target.sh \
             "OK: one host reached" || fail=1
           check 291_dynamic_linkage_is_refused_only_when_the_c_library_is_the_graphs.sh \

@@ -77,6 +77,23 @@
   ⚠️ **没有任何生产路径会带着全 `None` 的 `TargetSide` 走到 flags**:`resolve`
   给普通本机构建的是 `cAbi = { Payload, … }`。夹具现在照实写。
 
+- **⭐⭐ 缓存键漏掉了新参数,于是跨着一处不兼容命中了。**
+
+  `compile_flags(spec)` 在 #486 长出第二个参数 `targetCxxRuntime`,而缓存键
+  仍按一个参数算:
+
+  ```cpp
+  b.targetImpliedFlags = mcpp::freestanding::compile_flags(*spec);
+  ```
+
+  同一个键因此覆盖两套实际不同的编译 flag。**命中不是「跳过一次重编」,是
+  「拿到一份为另一套 flag 建的产物」**——实测 `openkal@0.7.0` 出现 6 个槽位
+  对应 5 个尺寸各异的 BMI。
+
+  ⚠️ 这类缺陷不会在加参数的那天失败,它在下一次缓存命中时失败,而那时改动
+  已经不在视野里了。三条单元测试因此**直接打在 `build_axes()` 上**,而不是手
+  搭一个 `BuildAxes`——后者表达不出「推导过程本身错了」这件事。
+
 - **⭐ 载荷的 C++ 运行时,服务的是载荷的 C 库。**
 
   ```
@@ -159,7 +176,7 @@
   | 285 | kernel-abi 来自图 + C 库来自**载荷**(后端跑在平台之上) |
   | 286 | 三层全来自图,断言静态、无 INTERP、能跑 |
   | 287 | 交叉到 aarch64,断言 outline-atomics 辅助函数与 LSE 指令数,qemu 真跑 |
-  | 288 | 无 OS 无 C 库,断言报告里**没有 c-abi 那一行**,并在 qemu 里真启动 |
+  | 288 | 无 OS 无 C 库,断言 c-abi 那一行的**值**是 `—`(不是断言它缺席),并在 qemu 里真启动 |
   | 289 | **一台宿主横扫四个目标** —— 这个体系本就是通用交叉构建,传统栈要六个 runner 的覆盖,这里一个循环 |
   | 290 | 声明把环境放到 `PATH` 前面,**而且只有声明会** —— 两个方向各一条断言 |
   | 291 | `dynamic` 只在 C 库来自图时被拒 —— 且断言产物的 `DT_NEEDED` 而非只断言文案 |
@@ -182,6 +199,26 @@
   job 里。新增 `openkal-cross.yml` 的 `ecosystem-e2e`:装 gcc + llvm,直接跑
   这六条,再逐条断言它们的 PASS 行真的出现了。与 `ci-linux-e2e.yml` 的
   `baremetal` job 同形,同因。
+
+  ⭐ **这个 job 第一次跑就抓到 287 在说谎。** 它用
+  `command -v llvm-objdump || command -v objdump` 找反汇编器,而 CI 上前者不在
+  PATH、后者是宿主 GNU binutils —— BFD 只编了 x86_64。让它反汇编 aarch64 会打印
+  一个文件头、**零条指令、零报错**:
+
+  ```
+  $ objdump -d a-aarch64.o | grep -cE '^\s*[0-9a-f]+:'
+  0
+  $ llvm-objdump -d a-aarch64.o | grep -cE '^\s*[0-9a-f]+:'
+  5
+  ```
+
+  `grep -c` 得 0,脚本报「`+outline-atomics` 看起来是被关掉了」。它在写它的那台
+  机器上通过,因为那里恰好有 `/usr/bin/llvm-objdump`。现在工具取自**编译这个
+  产物的那条工具链**,并且先数指令总行数:零条 = 工具读不了这个文件,那不是
+  关于 LSE 的证据。判据也随之带上分母(`7 LSE instructions out of 148906`)。
+
+  同一轮还发现 287/288 的「运行」两步在 CI 上都降级成了 SKIP 而 OK 行照印。job
+  因此装上两个模拟器,并对这两条**额外断言运行阶段的那一行**。
 
   290 的两半只有一半是特性:无条件前置能通过前一半,而那正是被撤回的设计。
 
