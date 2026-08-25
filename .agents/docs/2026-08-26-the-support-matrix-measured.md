@@ -38,6 +38,21 @@
 
 14 × 2 × 2 = **56 格**。
 
+### 轴的完整定义
+
+| 轴 | 本轮取值 |
+|---|---|
+| **构建机(宿主 OS × arch)** | Linux x86_64 —— 只有一台,见 §5 |
+| **mcpp 目标** | `kKnownTargets` 全部 14 行 |
+| **编译器族** | gcc、llvm(msvc 需 Windows 宿主) |
+| **编译器三元组** | 由 mcpp 解析,是**结果**不是输入 |
+| **系统来源** | payload / graph |
+| c-abi / c++-abi | 由上面五轴决定,是**结果** |
+
+⚠️ **判据一律取自 `mcpp build` 这个入口**:构建报告的原文,以及生成的
+`build.ninja` 里 mcpp 真正下发的 flag。**不直接问编译器** —— 绕开被测对象去问它的
+组件,得到的是组件的默认行为而非 mcpp 的行为(本文 §4.② 初稿就是这么错的)。
+
 ---
 
 ## 2. payload 模式(系统来自编译器载荷)
@@ -106,26 +121,30 @@ error: hermetic link check failed — the sandbox toolchain resolves its C runti
 **建议**:该拒绝在同一目标存在可用编译器时,附一句指出它。判据两向:**没有可用
 替代时不得出现这句话**。
 
-### ② llvm × windows-gnu:MinGW CRT 来自 `/usr`,且守卫没拦
+### ② llvm × windows-gnu:mcpp 没有为这个组合提供目标 sysroot
 
-```
-$ clang++ --target=x86_64-w64-windows-gnu -print-search-dirs
-libraries: …/xim-x-llvm/22.1.8/lib/clang/22
-           /usr/lib/gcc/x86_64-w64-mingw32/13-win32     ← 宿主
-           /usr/x86_64-w64-mingw32/lib                  ← 宿主
-```
+⚠️ **本条初稿的测量方式是错的。** 它直接跑
+`clang++ --target=… -print-search-dirs` 看到 `/usr/x86_64-w64-mingw32/lib`,并据此
+说「CRT 来自宿主」。**那不是 mcpp 的构建线** —— 绕开被测对象去问它的一个组件,得到
+的是那个组件的默认行为,不是 mcpp 让它做了什么。
 
-链接线上**没有 `-L`、`-B`、`--sysroot`**,mcpp 什么都没指定。构建最终失败于
-`ld.lld: error: obj/main.o: unknown file type`,而这条消息与真正的问题无关。
+⭐ **正确的判据是 mcpp 真正下发的命令行**,即生成的 `build.ninja`:
 
-⚠️⚠️ **两处存疑,均未实测:**
-- 密闭性检查为何对 ① 报了而对 ② 没报 —— 可能是它只认 ELF 形状的路径。
-- `-print-search-dirs` 里还出现了
-  `--dynamic-linker=…/xim-x-glibc/2.44/lib/ld-linux-x86-64.so.2` —— 给一个 PE 目标
-  指定了 Linux 加载器,来自 `clang++.cfg` 而 `--target=` 没有撤掉它。
+| | gcc × windows-gnu | llvm × windows-gnu |
+|---|---|---|
+| `cxxflags` | `-std=c++23 -fmodules -O0 -g`(**无 `--target`**) | `--target=x86_64-w64-windows-gnu` |
+| `ldflags` | `-lstdc++exp` | **空** |
+| 目标 sysroot | **驱动自带**:`xim-x-mingw-cross-gcc/16.1.0/x86_64-w64-mingw32/` | **无人提供** |
 
-**这一格是本文最需要先查清的。** 在 mcpp 的支持矩阵里它当前既不能用,也没有一条
-说清楚为什么的诊断。
+gcc 那格不需要 mcpp 说任何话:`x86_64-w64-mingw32-g++` 是**为这个目标构建的交叉
+编译器**,sysroot 在它自己的载荷里。llvm 那格是同一个 `clang++` 靠 `--target=` 切
+目标,**头与库必须由外部给**,而 mcpp 给的是空 `ldflags`、没有 `-B`/`-L`/`--sysroot`。
+
+构建最终失败于 `ld.lld: error: obj/main.o: unknown file type`,与真正的问题无关。
+
+⚠️ **仍未查清:** 密闭性检查对 ① 报了而对 ② 没报。**未实测。**
+
+**这一格是本文最需要先查清的。** 它当前既不能用,也没有一条说清楚为什么的诊断。
 
 ### ③ gcc × 裸机:宿主 g++ 收到 clang 专用 flag
 
