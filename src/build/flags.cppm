@@ -1238,7 +1238,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // other's negation; if this one said `system` and that one said `C library`,
     // a mingw build whose kernel interface came from the graph and whose C
     // library did not would enter neither, and emit no link line at all.
-    if (isMingwTc && !plan.targetSide.c_library_off_payload()) {
+    if (isMingwTc && plan.targetSide.cAbi.prebuilt()) {
         // `-static` / `-static-libstdc++` now come from the contract table via
         // unit_ldflags (dist::Format::Pe) — the whole-link `-static` is what
         // "self-contained" means here, since the piecemeal recipe still leaves
@@ -1437,9 +1437,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // replacement drops is a way of reaching the PAYLOAD's C library, so a
     // build whose C library still comes from the payload must not enter here
     // — however much of the rest of its target side the graph supplies. See
-    // `TargetSide::c_library_off_payload`, which records the shape this got
-    // wrong and what it cost.
-    if (!isFreestandingTarget && plan.targetSide.c_library_off_payload()) {
+    // the note beside `Layer::prebuilt` in mcpp.targetside, which records what
+    // this got wrong and what it cost.
+    if (!isFreestandingTarget && !plan.targetSide.cAbi.prebuilt()) {
         // ⚠️ ASSEMBLED HERE RATHER THAN TAKEN FROM `link_toolchain_flags`,
         // BECAUSE THAT STRING IS ONLY POPULATED WHEN THE PAYLOAD HAS A CONFIG
         // FILE (`isClangWithCfg`). The Linux payload ships one and the Windows

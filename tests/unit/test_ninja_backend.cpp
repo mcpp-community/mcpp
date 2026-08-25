@@ -12,6 +12,7 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.model;
 import mcpp.platform;
 import mcpp.platform.runtime_search;
+import mcpp.targetside;
 
 using namespace mcpp::build;
 
@@ -49,6 +50,25 @@ BuildPlan minimal_plan() {
     plan.toolchain.version = "test";
     plan.toolchain.binaryPath = "/usr/bin/g++";
     plan.toolchain.targetTriple = "x86_64-linux-gnu";
+
+    // ⚠️ AND THE TARGET SIDE, WHICH THIS FIXTURE USED TO LEAVE DEFAULT.
+    //
+    // A default-constructed `TargetSide` has every layer at `Origin::None`,
+    // which is not a native build — it is "nothing has been resolved". No
+    // production path reaches the flag builder with one: `resolve` gives a
+    // plain native build `cAbi = { Payload, … }`, from its final branch.
+    //
+    // The fixture got away with it while the link line was gated on
+    // `kernelAbi.fromGraph() || cAbi.fromGraph()`, which is false for all-None
+    // and false for a payload build alike. Asking the question the link line
+    // actually has — did the C library come from a directory that existed
+    // before resolution — separates them, and the fixture then described a
+    // target with no C library while every assertion in this file is about one
+    // that has the payload's.
+    plan.targetSide.compiler = { mcpp::targetside::Origin::Payload, "gcc", "", false };
+    plan.targetSide.kernelAbi = { mcpp::targetside::Origin::Payload, "linux", "", false };
+    plan.targetSide.cAbi = { mcpp::targetside::Origin::Payload, "glibc", "", false };
+    plan.targetSide.cxx = { mcpp::targetside::Origin::Payload, "libstdc++", "", false };
     return plan;
 }
 

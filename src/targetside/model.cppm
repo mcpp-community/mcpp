@@ -226,11 +226,38 @@ struct TargetSide {
     // mcpp and so kept passing, which is why nothing said so until the pin
     // moved.
     //
-    // Absent counts as not-from-the-payload: a target with no C-ABI layer has
-    // no startup files to find, and the branch below adds `-nostdlib` for it.
-    bool c_library_off_payload() const {
-        return cAbi.fromGraph() || cAbi.absent();
-    }
+    // ⚠️ AND THE C LIBRARY IS A SEPARATE QUESTION, WHICH THE ONE ABOVE WAS
+    // ANSWERING FOR IT AND GETTING WRONG.
+    //
+    // `system_from_graph` is an OR over two layers, and the link line's
+    // decision about the payload's C-library flags depends on ONE of them.
+    // The two coincide in the arrangement it was written for — an openkal
+    // target takes both its kernel interface and its C library from the graph
+    // — and come apart in one that is just as ordinary:
+    //
+    //     [dependencies]
+    //     openkal-linux = "0.5.4"
+    //
+    // A backend that implements openkal ON TOP OF Linux, linked by a program
+    // that still uses the payload's glibc. `kernelAbi.fromGraph()` is true,
+    // `cAbi.origin` is `Payload`, and the link side replaced `f.ld` — dropping
+    // the `-B` that lets the driver find startup files for a C library it was
+    // still going to link:
+    //
+    //     error: hermetic link check failed
+    //              crt1.o (bare name — the linker cannot resolve it)
+    //
+    // ⚠️ THIS SHIPPED, in 2026.8.24.1, and reached every backend in the
+    // ecosystem — that shape is how a backend is tested. Their CI was pinned
+    // to an older mcpp and kept passing.
+    //
+    // ⭐ THERE IS NO PREDICATE HERE, BECAUSE `Layer::prebuilt()` ALREADY IS
+    // ONE. The question the link line asks is whether the C library came from
+    // a DIRECTORY that existed before resolution (a payload, an xpkg sysroot)
+    // or from packages that had to be resolved first — which is the very
+    // distinction the head of this file draws, and the one `prebuilt()` was
+    // named for. `cAbi.prebuilt()` says it; anything spelled out case by case
+    // answers three of the four origins and goes quiet about the fourth.
 };
 
 // ── Capability grammar: mcpp:<layer>[=<interface>] ───────────────────────────
