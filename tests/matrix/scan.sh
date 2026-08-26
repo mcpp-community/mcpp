@@ -186,9 +186,15 @@ for tc in $(compilers); do
     #    读任何一行输出。
     printf '\n[toolchain]\ndefault = "%s"\n' "$tc" >> mcpp.toml
     rm -rf target
-    if run_limited "${MATRIX_TIMEOUT:-600}" "$MCPP" build --target "$t" >/dev/null 2>&1; then
+    if run_limited "${MATRIX_TIMEOUT:-600}" "$MCPP" build --target "$t" \
+         >"$work/b.out" 2>&1; then
         emit "$MODE" "$HOST" "$t" "$tc" "$tri" "$clib" "$cabi" "$cxxabi" "$okpkg" ok none
     else
+        # ⚠️ 与查询失败同型:`build-failed` 是对的分类,而没有证据说明为什么。
+        # macOS 上 20 格一模一样的红、日志里找不到原因,就是把输出丢掉的代价。
+        # 这里只留错误行,不倒整份构建日志 —— 40 格 × 一份完整日志读不动。
+        echo "scan: $t × $tc 构建失败: $(grep -m2 -iE '^error|error:' "$work/b.out" \
+                                          | tr '\n' ' ' | cut -c1-160)" >&2
         emit "$MODE" "$HOST" "$t" "$tc" "$tri" "$clib" "$cabi" "$cxxabi" "$okpkg" \
              mismatch build-failed
     fi

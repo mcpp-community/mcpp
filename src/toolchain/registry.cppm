@@ -604,10 +604,26 @@ bool host_can_serve(const triple::Triple& target) {
 
     if (target.os == "linux") {
         if constexpr (mcpp::platform::is_linux) {
-            // musl payloads are self-contained, so any arch is reachable; a
-            // glibc target additionally needs the host-native sysroot payloads
-            // (xim:glibc / xim:linux-headers), which only exist for this arch.
-            return target.is_musl() || target.arch == mcpp::platform::host_arch;
+            // ⚠️⚠️ "SELF-CONTAINED" IS ABOUT THE PAYLOAD'S CONTENTS, NOT ABOUT
+            // WHICH HOSTS IT IS PUBLISHED FOR — and this line read it as both.
+            //
+            // A musl payload really does carry its own sysroot, so no host-side
+            // libc is needed. It still has to EXIST for the host running it,
+            // and the cross packages are published per host arch:
+            //
+            //   x86_64-linux-musl-gcc    archs = { "x86_64" }
+            //   aarch64-linux-musl-gcc   archs = { "x86_64", "aarch64" }
+            //
+            // Measured on ubuntu-24.04-arm: `--target x86_64-linux-musl` was
+            // admitted, resolved a package with no aarch64 asset, and failed at
+            // install — `mismatch / build-failed` in the target matrix, twice.
+            //
+            // ⭐ The native row stays reachable on every arch: `musl-gcc`
+            // publishes both, which is why `aarch64-linux-musl` is `ok` there.
+            const bool crossArch = target.arch != mcpp::platform::host_arch;
+            if (target.is_musl())
+                return !crossArch || mcpp::platform::host_arch == "x86_64";
+            return !crossArch;
         }
         // Non-Linux host: only the self-contained musl payloads can work at
         // all (nothing else would find a C library). Today exactly one such
@@ -618,8 +634,15 @@ bool host_can_serve(const triple::Triple& target) {
             && target.is_musl()
             && target.arch == mcpp::platform::host_arch;
     }
-    if (target.is_windows_gnu())
-        return mcpp::platform::is_linux || mcpp::platform::is_windows;
+    // ⚠️ THE mingw CROSS IS PUBLISHED FOR ONE HOST ARCH. `mingw-cross-gcc`
+    // declares `archs = { "x86_64" }`, so a Linux host that is not x86_64
+    // cannot obtain it — measured on ubuntu-24.04-arm, where the row was
+    // listed and its refusal carried no reason at all (`unsupported / other`).
+    if (target.is_windows_gnu()) {
+        if constexpr (mcpp::platform::is_windows) return true;
+        return mcpp::platform::is_linux
+            && mcpp::platform::host_arch == "x86_64";
+    }
     if (target.os == "windows") return bool(mcpp::platform::is_windows);
     if (target.os == "macos")   return bool(mcpp::platform::is_macos);
 
