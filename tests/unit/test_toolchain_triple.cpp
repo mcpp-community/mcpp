@@ -4,6 +4,7 @@ import std;
 import mcpp.toolchain.triple;
 
 using namespace mcpp::toolchain::triple;
+namespace triple = mcpp::toolchain::triple;
 
 // ── parse: canonical spellings round-trip ────────────────────────────────────
 
@@ -65,6 +66,88 @@ TEST(Triple, NormalizesAppleSpellings) {
 
 TEST(Triple, NormalizesBareLinuxToGnuEnv) {
     EXPECT_EQ(parse("x86_64-linux")->str(), "x86_64-linux-gnu");
+}
+
+// ── resolve_request: the REQUEST is completed from the vocabulary ────────────
+//
+// `parse` fills lexically so the IDENTITY stays total and host-independent (the
+// test just above pins that). `resolve_request` answers the other half — which
+// row a request that named no C library should resolve to — and it is the one
+// that consults `kKnownTargets`.
+
+TEST(TripleRequest, ASupportedLexicalDefaultIsKept) {
+    // x86_64-linux-gnu is `verified`, so nothing moves. This is the control for
+    // the case below: a fix that sent every bare `-linux` to musl would pass the
+    // aarch64 test and break every project on the planet.
+    auto r = triple::resolve_request(*parse("x86_64-linux"));
+    EXPECT_EQ(r.triple.str(), "x86_64-linux-gnu");
+    EXPECT_FALSE(r.completedFromVocabulary);
+    EXPECT_FALSE(r.ambiguous);
+}
+
+TEST(TripleRequest, TheOnlySupportedSiblingIsTaken) {
+    // aarch64-linux-gnu is `planned`; aarch64-linux-musl is `verified`. Measured
+    // on 2026.8.26.1: `--target aarch64-linux` refused as planned while
+    // `--target aarch64-linux-musl` built.
+    auto r = triple::resolve_request(*parse("aarch64-linux"));
+    EXPECT_EQ(r.triple.str(), "aarch64-linux-musl");
+    EXPECT_TRUE(r.completedFromVocabulary);
+    // ⚠️ mcpp CHOOSING A ROW IS NOT THE PROJECT NAMING A C LIBRARY. `envExplicit`
+    // feeds the request/fact comparison and the report's display name; setting
+    // it here would make mcpp compare its own answer against itself.
+    EXPECT_FALSE(r.triple.envExplicit);
+}
+
+TEST(TripleRequest, AWrittenSegmentIsARequestAndIsNotRevised) {
+    // The escape hatch: writing the segment opts into the `planned` row, and the
+    // tier gate then refuses something the user actually typed.
+    auto r = triple::resolve_request(*parse("aarch64-linux-gnu"));
+    EXPECT_EQ(r.triple.str(), "aarch64-linux-gnu");
+    EXPECT_FALSE(r.completedFromVocabulary);
+}
+
+TEST(TripleRequest, AFamilyWithNoSupportedRowKeepsTheLexicalFillAndReportsItsRows) {
+    // riscv64-linux-musl is `planned` and riscv64-linux-gnu does not exist at
+    // all, so the fill named a row outside the vocabulary and the refusal came
+    // out as `unknown target 'riscv64-linux'` — false, the family is registered.
+    auto r = triple::resolve_request(*parse("riscv64-linux"));
+    EXPECT_EQ(r.triple.str(), "riscv64-linux-gnu");
+    EXPECT_FALSE(r.completedFromVocabulary);
+    ASSERT_EQ(r.siblings.size(), 1u);
+    EXPECT_EQ(r.siblings[0], "riscv64-linux-musl");
+    EXPECT_TRUE(r.supported.empty());
+}
+
+TEST(TripleRequest, MacosCarriesNoEnvAndIsLeftAlone) {
+    EXPECT_EQ(triple::resolve_request(*parse("aarch64-macos")).triple.str(),
+              "aarch64-macos");
+    // x86_64-macos is `planned` with no sibling: the tier gate still speaks.
+    auto r = triple::resolve_request(*parse("x86_64-macos"));
+    EXPECT_EQ(r.triple.str(), "x86_64-macos");
+    EXPECT_TRUE(r.supported.empty());
+}
+
+TEST(TripleRequest, WindowsAndBareMetalDefaultsAreSupportedRows) {
+    // Both lexical fills (`gnu` on Windows, `elf` freestanding) name supported
+    // rows, so completion is a no-op — recorded so that a future row change
+    // which breaks that shows up here rather than in a user's build.
+    EXPECT_EQ(triple::resolve_request(*parse("x86_64-windows")).triple.str(),
+              "x86_64-windows-gnu");
+    EXPECT_EQ(triple::resolve_request(*parse("riscv64-none")).triple.str(),
+              "riscv64-none-elf");
+}
+
+TEST(TripleRequest, EverySupportedRowIsReachableFromItsOwnSpelling) {
+    // The completion must never turn a written, supported triple into a
+    // different one. Checked across the whole vocabulary rather than by example,
+    // because the failure mode is one row nobody thought to test.
+    for (auto const& row : triple::known_targets()) {
+        if (row.tier == "planned") continue;
+        auto t = parse(row.canonical);
+        ASSERT_TRUE(t.has_value()) << row.canonical;
+        EXPECT_EQ(triple::resolve_request(*t).triple.str(),
+                  std::string(row.canonical));
+    }
 }
 
 TEST(Triple, NormalizesDumpmachineSpellings) {

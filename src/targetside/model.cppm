@@ -582,8 +582,22 @@ inline std::optional<std::string> check_layering(const TargetSide& ts) {
 // reported by naming both — which is what a reader needs and what an engine
 // hardcoding a table of families could not produce for a family it had not
 // heard of.
+// ⚠️ `compilerStatedBy` NAMES WHERE THE COMPILER CAME FROM, AND THE ADVICE IS
+// WRONG WITHOUT IT.
+//
+// Until 2026.8.26.2 a compiler requirement mcpp could satisfy by itself still
+// refused, and the first remedy it offered was `mcpp toolchain default <fam>` —
+// a GLOBAL change, made because ONE project's dependency asked. Now the graph's
+// requirement is applied wherever mcpp's own answer was revisable, so the only
+// way to reach this branch is a compiler the project stated itself. In that
+// situation the global default is not what is being used and changing it fixes
+// nothing: the advice has to point at the statement that actually decided.
+//
+// Empty = the caller does not know (unit tests, and any future caller); the
+// generic wording then applies.
 inline std::optional<std::string>
-check_requirements(const TargetSide& ts, std::span<const Requirement> reqs) {
+check_requirements(const TargetSide& ts, std::span<const Requirement> reqs,
+                   std::string_view compilerStatedBy = {}) {
     constexpr std::string_view kPad = "         ";
     for (auto const& r : reqs) {
         // An entry with no `=<implementation>` asks only that the layer be
@@ -599,14 +613,24 @@ check_requirements(const TargetSide& ts, std::span<const Requirement> reqs) {
         // every other layer by the dependency graph.
         std::string advice =
             r.layer == CapLayer::Compiler
-                ? std::format(
-                      "       Select that compiler — yours outranks mcpp's own "
-                      "default:\n"
-                      "           mcpp toolchain default {}\n"
-                      "       or, for one target only:\n"
-                      "           [target.<triple>]\n"
-                      "           toolchain = \"{}\"",
-                      r.interfaceName, r.interfaceName)
+                ? (compilerStatedBy.empty()
+                    ? std::format(
+                          "       Select that compiler for this project:\n"
+                          "           [toolchain]\n"
+                          "           default = \"{}\"\n"
+                          "       or, for one target only:\n"
+                          "           [target.<triple>]\n"
+                          "           toolchain = \"{}\"",
+                          r.interfaceName, r.interfaceName)
+                    : std::format(
+                          "       This build's compiler is stated in {}, and a "
+                          "compiler the project states\n"
+                          "       outranks one its dependencies ask for.\n"
+                          "       Change it to `{}`, or remove it — with nothing "
+                          "stated, mcpp takes the\n"
+                          "       compiler the graph requires and changes no "
+                          "configuration to do it.",
+                          compilerStatedBy, r.interfaceName))
                 : std::format(
                       "       Depend on a package that declares `provides = "
                       "[\"mcpp:{}={}\"]`,\n"

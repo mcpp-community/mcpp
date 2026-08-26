@@ -67,6 +67,7 @@ cannot rename it.
 mcpp build --target x86_64-linux      # = x86_64-linux-gnu
 mcpp build --target x86_64-windows    # = x86_64-windows-gnu
 mcpp build --target riscv64-none      # = riscv64-none-elf
+mcpp build --target aarch64-linux     # = aarch64-linux-musl
 mcpp build --target aarch64-macos     # macOS has no segment to decline
 ```
 
@@ -79,6 +80,45 @@ What differs is the record of what was asked for. A triple serves as an
 identity, which must be total, and as a request, which must be able to say
 nothing; mcpp keeps both, filling the segment for the identity while recording
 that the fill was a fill.
+
+### The completion is chosen from the vocabulary, not from a fixed word
+
+The fourth line above is why the two roles have to stay separate. Filling
+`aarch64-linux` lexically gives `aarch64-linux-gnu`, and that row is `planned`
+— while `aarch64-linux-musl` is `verified`. Before 2026.8.26.2 the tier gate
+asked about the filled value, so:
+
+```
+$ mcpp build --target aarch64-linux
+  error: target 'aarch64-linux-gnu' is registered but not yet supported (planned)
+$ mcpp build --target aarch64-linux-musl
+  Finished dev [unoptimized + debuginfo] in 0.99s
+```
+
+The question asked was *aarch64, Linux*. The question answered was
+*aarch64-linux-**gnu***, and the message quotes a triple that appears nowhere in
+the command. `riscv64-linux` was worse: the fill named a row outside the
+vocabulary entirely, so a registered family was reported as `unknown target`.
+
+A request that declined the segment is completed against the known-target table,
+in this order:
+
+1. the lexical default names a supported row — take it (`x86_64-linux` → `gnu`);
+2. exactly one row for this `(arch, os)` is supported — take it
+   (`aarch64-linux` → `musl`);
+3. nothing is supported — keep the lexical form, and diagnose against the rows
+   that *do* exist (`riscv64-linux` → "planned; registered rows for this system:
+   `riscv64-linux-musl`");
+4. several are supported and the lexical default is none of them — refuse and
+   list them. No `(arch, os)` has this shape today.
+
+Rule 1 comes first so this retires itself: the day `aarch64-linux-gnu` graduates
+from `planned`, the lexical answer wins again with nothing to edit.
+
+**Writing the segment opts out.** A written segment is a request, not a gap, so
+`--target aarch64-linux-gnu` still reaches the `planned` row's refusal — which
+is the escape hatch for opting into a row early with an explicit
+`[target.<triple>] toolchain`.
 
 ### Which Spelling To Use
 

@@ -81,6 +81,58 @@ The pair persists as `[toolchain] default = "gcc@16.1.0"` +
 configs with combined spellings like `default = "gcc@15.1.0-musl"` keep
 working unchanged.)
 
+### What decides a build's compiler
+
+Five things can name it. They are ranked, and the rank is what makes the two
+statements a project can write outrank everything mcpp keeps on its own:
+
+| | source | may mcpp revise it |
+|---|---|---|
+| 1 | `[target.<triple>] toolchain` in `mcpp.toml` | no |
+| 2 | `[toolchain] default` in `mcpp.toml` (or `MCPP_TOOLCHAIN`) | no |
+| 3 | `requires = ["mcpp:compiler=<family>"]` from a dependency | — |
+| 4 | the target row's pin, when the row's payload supplies the target side | yes |
+| 5 | `mcpp toolchain default`, then mcpp's first-run default | yes |
+
+**A dependency may require a compiler family.** A C++ runtime is configured for
+one family and records that configuration in the headers it ships, so a package
+supplying one states which compiler it was built for. When that requirement
+differs from a value at rank 4 or 5 — answers mcpp derived itself — mcpp takes
+the required family for that build:
+
+```
+$ mcpp build
+   Resolving toolchain
+    Resolved llvm@22.1.8 → …/xim-x-llvm/22.1.8/bin/clang++
+             required by openkal-llvm-runtime@0.1.3 (`requires = ["mcpp:compiler=llvm"]`),
+             not your gcc@16.1.0 — this project only
+```
+
+⭐ **Nothing is written.** Not `~/.mcpp/config.toml`, not the project's
+`mcpp.toml`. The requirement is a property of this build, so it applies to this
+build; the machine's default stays whatever it was, for every other project.
+The version comes from what is already installed — the same resolution
+`mcpp toolchain default <family>` performs — and only from the ecosystem's own
+pin when nothing of that family is present.
+
+**A compiler the project states is not revised.** At ranks 1–2 the project has
+said what it builds with, and a dependency disagreeing is a real contradiction:
+
+```
+error: `openkal-llvm-runtime@0.1.3` requires the compiler to be `llvm`.
+         compiler          gcc            (16.1.0, payload)
+         required          llvm           (required by openkal-llvm-runtime@0.1.3)
+       This build's compiler is stated in [toolchain] in mcpp.toml, and a compiler
+       the project states outranks one its dependencies ask for.
+       Change it to `llvm`, or remove it — with nothing stated, mcpp takes the
+       compiler the graph requires and changes no configuration to do it.
+```
+
+**Two dependencies requiring different families is an error, not a pick.** One
+build has one compiler; resolving by graph-traversal order would decide it by an
+order the author neither writes nor can predict, and would satisfy one package
+while failing the other inside a header.
+
 ## Inspecting Toolchain Status
 
 ```bash

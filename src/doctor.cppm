@@ -886,10 +886,20 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
 
     data["status"] = "ok";
     data["reason"] = "none";
+    // ⭐ AND WHY THIS ONE. The build's status line says it; a consumer of the
+    // machine interface asking "what would this resolve to, and why" would
+    // otherwise have to parse that prose — the substring matching this document
+    // exists to remove. `requiredBy` and `replaced` are empty unless something
+    // was required and something was displaced.
     data["compiler"] = {
         {"family",  std::string(tc.compiler_name())},
         {"version", tc.version},
         {"driver",  tc.binaryPath.string()},
+        {"chosenBy", {
+            {"origin",     ctx->compilerChoice.origin},
+            {"requiredBy", ctx->compilerChoice.requiredBy},
+            {"replaced",   ctx->compilerChoice.replaced},
+        }},
     };
     data["triple"] = {
         {"requested", std::string(target)},
@@ -920,12 +930,42 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
     const auto& srPath =
         lm.mode == mcpp::toolchain::CLibMode::Sysroot ? lm.sysroot
                                                       : lm.crtDir;
+    // ⚠️⚠️ AND WHETHER THIS MODEL IS THE ONE IN THE ARTIFACT, BECAUSE THE
+    // DOCUMENT USED TO ANSWER THE SAME QUESTION TWICE AND DIFFERENTLY.
+    //
+    // Measured on 2026.8.26.1, one `mcpp why toolchain --format json` over an
+    // openkal project:
+    //
+    //     "cLibrary": { "origin": "payload", "path": "…/xim-x-glibc/2.44/lib64" }
+    //     "layers":   [ { "layer": "c-abi", "interface": "musl",
+    //                     "impl": "openkal-musl@0.3.5", "origin": "graph" } ]
+    //
+    // The artifact settles it — statically linked, no interpreter, no
+    // `DT_NEEDED`, eleven openkal symbols — so glibc is not in it. Both fields
+    // were accurate about different questions: `cLibrary` describes the
+    // PAYLOAD's link model (the search paths a payload-supplied C library would
+    // use), `layers[].c-abi` describes the BUILD. A consumer had no way to tell
+    // which one governed, which is the same defect as a name that contradicts a
+    // fact printed under it.
+    //
+    // ⭐ ONE FIELD ADDED, NONE CHANGED. `mcpp.why.toolchain` promises that
+    // fields are added and never removed and that a field's meaning never
+    // changes (docs/11 §6). Renaming `cLibrary`, or widening `mode` with a
+    // `graph` value, would break that promise for a document whose whole point
+    // is to be depended on. `suppliesTarget` says which of the two governs and
+    // sends the reader to the entry that does.
+    const bool payloadSuppliesCLib =
+        lm.mode != mcpp::toolchain::CLibMode::None
+        && ts.cAbi.origin != mcpp::targetside::Origin::Graph;
     data["cLibrary"] = {
         {"mode",   lm.mode == mcpp::toolchain::CLibMode::Sysroot      ? "sysroot"
                  : lm.mode == mcpp::toolchain::CLibMode::PayloadFirst ? "payload-first"
                                                                       : "none"},
         {"path",   srPath.string()},
         {"origin", std::string(path_origin(srPath))},
+        // false = the graph supplies this build's C library; read the `c-abi`
+        // entry of `layers` for the one that is actually in the artifact.
+        {"suppliesTarget", payloadSuppliesCLib},
     };
 
     auto layer = [](std::string_view label,

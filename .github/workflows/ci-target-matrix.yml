@@ -80,7 +80,10 @@ jobs:
           command -v jq >/dev/null || { echo "::error::jq is missing on ${{ matrix.host }}"; exit 1; }
           fail=0
           for t in tests/e2e/295_*.sh tests/e2e/296_*.sh \
-                   tests/e2e/297_*.sh tests/e2e/298_*.sh; do
+                   tests/e2e/297_*.sh tests/e2e/298_*.sh \
+                   tests/e2e/299_*.sh tests/e2e/300_*.sh \
+                   tests/e2e/301_*.sh tests/e2e/302_*.sh \
+                   tests/e2e/303_*.sh; do
             echo "=== $t ==="
             bash "$t" 2>&1 | tee "$(basename "$t").log" || true
             rc=${PIPESTATUS[0]}
@@ -172,6 +175,55 @@ jobs:
             check_or_declared_skip 298_overriding_a_convention_requires_replacing_it.sh \
               "OK: a convention may be overridden, but not merely removed" \
               "llvm is not installed here" || fail=1
+          fi
+
+          # ── 2026.8.26.2: an answer mcpp already had, now used ─────────────
+          #
+          # ⭐ 299/300/303 CARRY NO SKIP AT ALL, so they use `check` on every
+          # host. They read the vocabulary and the query's own document —
+          # neither depends on which payloads this machine happens to hold, and
+          # a version of them that skipped anywhere would be a version that
+          # could skip everywhere.
+          check 299_a_request_that_named_no_c_library_resolves_to_a_row_that_exists.sh \
+            "OK: a request that named no C library resolves to a row that exists" || fail=1
+          check 300_a_registered_family_is_not_reported_unknown.sh \
+            "OK: a registered family is not reported unknown" || fail=1
+          # ⚠️ 303's third half stacks a musl c-abi over this host's own target,
+          # and not every host stacks that — an MSVC-ABI host answers the
+          # layering question first, correctly, and there is then no
+          # two-answer document to check. Granted by reason; linux-x86_64 below
+          # is the denominator that must run the whole file.
+          if [ "${{ matrix.host }}" = linux-x86_64 ]; then
+            check 303_the_query_gives_one_answer_for_the_c_library.sh \
+              "OK: the query gives one answer for the C library" || fail=1
+          else
+            check_or_declared_skip 303_the_query_gives_one_answer_for_the_c_library.sh \
+              "OK: the query gives one answer for the C library" \
+              "refuses a musl c-abi over its own target" || fail=1
+          fi
+
+          # ⚠️ 301/302 NEED TWO COMPILER FAMILIES, AND THAT IS A PROPERTY OF THE
+          # MACHINE RATHER THAN OF THE CLAIM. "A requirement that DIFFERS from
+          # mcpp's own answer is applied" cannot be stated where only one family
+          # exists — macOS installs llvm only, and aarch64 Linux has no llvm
+          # payload at all (see 298's note).
+          #
+          # ⭐ AND THE DENOMINATOR IS linux-x86_64, WHICH HAS BOTH. Without a
+          # host required to actually run these, a reason accepted everywhere is
+          # a test that runs nowhere.
+          if [ "${{ matrix.host }}" = linux-x86_64 ]; then
+            check 301_the_graphs_compiler_is_taken_and_nothing_is_written.sh \
+              "OK: the graph's compiler is taken and nothing is written" || fail=1
+            check 302_a_stated_compiler_outranks_the_graph_and_two_requirements_do_not_stack.sh \
+              "OK: a stated compiler outranks the graph and two requirements do not stack" || fail=1
+          else
+            check_or_declared_skip 301_the_graphs_compiler_is_taken_and_nothing_is_written.sh \
+              "OK: the graph's compiler is taken and nothing is written" \
+              "no other family is" || fail=1
+            # 302's half two needs no second family and always runs; only half
+            # one is skipped, so the file still reaches its conclusion.
+            check 302_a_stated_compiler_outranks_the_graph_and_two_requirements_do_not_stack.sh \
+              "OK: a stated compiler outranks the graph and two requirements do not stack" || fail=1
           fi
           [ "$fail" = 0 ] || exit 1
 

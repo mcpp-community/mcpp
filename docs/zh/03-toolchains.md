@@ -79,6 +79,54 @@ mcpp toolchain default gcc@16 --target x86_64-linux-musl   # "默认就要全静
 `[toolchain] default = "gcc@16.1.0"` + `default_target = "x86_64-linux-musl"`。
 (存量 config 里 `default = "gcc@15.1.0-musl"` 这类合并拼写原样可用。)
 
+### 谁决定一次构建的编译器
+
+有五种来源会给它命名。它们是分级的,而这套分级正是让工程能写下的那两条压过
+mcpp 自己保管的一切的原因:
+
+| | 来源 | mcpp 可否改写 |
+|---|---|---|
+| 1 | `mcpp.toml` 的 `[target.<triple>] toolchain` | 否 |
+| 2 | `mcpp.toml` 的 `[toolchain] default`(或 `MCPP_TOOLCHAIN`) | 否 |
+| 3 | 依赖的 `requires = ["mcpp:compiler=<族>"]` | — |
+| 4 | 目标行的 pin(当该行的载荷供给目标侧时) | 是 |
+| 5 | `mcpp toolchain default`,以及 mcpp 的首次运行默认值 | 是 |
+
+**依赖可以要求一个编译器族。** 一份 C++ 运行时是为某一个族 configure 过的,
+并把这份配置记在它所发布的头文件里,因此供给它的包会说明自己是为哪个编译器构建
+的。当这条要求与第 4、5 级 —— mcpp 自己推导出来的答案 —— 不同时,mcpp 就为这次
+构建取用被要求的那个族:
+
+```
+$ mcpp build
+   Resolving toolchain
+    Resolved llvm@22.1.8 → …/xim-x-llvm/22.1.8/bin/clang++
+             required by openkal-llvm-runtime@0.1.3 (`requires = ["mcpp:compiler=llvm"]`),
+             not your gcc@16.1.0 — this project only
+```
+
+⭐ **不写任何东西。** 不写 `~/.mcpp/config.toml`,也不写工程的 `mcpp.toml`。
+这条要求是**这次构建**的性质,就只作用于这次构建;这台机器的默认值保持原样,对
+其他每一个工程都是。版本取自已经装好的那些 —— 与 `mcpp toolchain default <族>`
+走的是同一条解析 —— 只有该族一个都没装时,才取生态自己的 pin。
+
+**工程写下的编译器不会被改写。** 第 1、2 级上工程已经说明了它用什么构建,依赖
+与之不一致就是一次真实的矛盾:
+
+```
+error: `openkal-llvm-runtime@0.1.3` requires the compiler to be `llvm`.
+         compiler          gcc            (16.1.0, payload)
+         required          llvm           (required by openkal-llvm-runtime@0.1.3)
+       This build's compiler is stated in [toolchain] in mcpp.toml, and a compiler
+       the project states outranks one its dependencies ask for.
+       Change it to `llvm`, or remove it — with nothing stated, mcpp takes the
+       compiler the graph requires and changes no configuration to do it.
+```
+
+**两个依赖要求不同的族是错误,不是一次挑选。** 一次构建只有一个编译器;按图的
+遍历顺序来定,等于让作者既不书写也无法预测的顺序做决定,并且会满足其中一个包而
+让另一个在它自己的头文件里失败。
+
 ## 查看工具链状态
 
 ```bash

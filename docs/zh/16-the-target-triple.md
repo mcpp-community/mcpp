@@ -59,6 +59,7 @@ LLVM 词表里「非 MSVC 的那套 ABI」的标签,继承自 MinGW,而 clang �
 mcpp build --target x86_64-linux      # = x86_64-linux-gnu
 mcpp build --target x86_64-windows    # = x86_64-windows-gnu
 mcpp build --target riscv64-none      # = riscv64-none-elf
+mcpp build --target aarch64-linux     # = aarch64-linux-musl
 mcpp build --target aarch64-macos     # macOS 本来就没有这一段可省
 ```
 
@@ -68,6 +69,39 @@ mcpp build --target aarch64-macos     # macOS 本来就没有这一段可省
 不同的是**请求被记录成了什么**。三元组既是身份 —— 身份必须完整 ——
 也是请求 —— 请求必须能什么都不说;mcpp 两者都保留:为身份填上那一段,
 同时记住这次填充是一次填充。
+
+### 补全取自词表,不取自一个固定的词
+
+上面第四行正是这两种角色必须分开的理由。把 `aarch64-linux` 按词法填成
+`aarch64-linux-gnu`,而那一行是 `planned` —— `aarch64-linux-musl` 才是
+`verified`。2026.8.26.2 之前,tier 闸问的是填充后的值:
+
+```
+$ mcpp build --target aarch64-linux
+  error: target 'aarch64-linux-gnu' is registered but not yet supported (planned)
+$ mcpp build --target aarch64-linux-musl
+  Finished dev [unoptimized + debuginfo] in 0.99s
+```
+
+被问的问题是「aarch64 的 Linux」。被回答的问题是「aarch64-linux-**gnu**」,
+而报错引用的三元组在那条命令里根本不存在。`riscv64-linux` 更严重:填充产生的
+那一行完全不在词表里,于是一个**已登记**的目标族被报成 `unknown target`。
+
+省略了这一段的请求,按下列顺序对着已知目标表补全:
+
+1. 词法默认命中一个受支持的行 —— 用它(`x86_64-linux` → `gnu`);
+2. 该 `(arch, os)` 下恰好一个受支持的行 —— 用它(`aarch64-linux` → `musl`);
+3. 一个受支持的都没有 —— 保留词法形式,并对着**确实存在**的那些行给出诊断
+   (`riscv64-linux` → 「planned;该系统已登记的行:`riscv64-linux-musl`」);
+4. 多个受支持而词法默认不在其中 —— 拒绝并列出候选。今天没有任何
+   `(arch, os)` 是这个形状。
+
+规则 1 排在最前,使这件事能自己退休:`aarch64-linux-gnu` 从 `planned` 升级的
+那一天,词法答案重新胜出,不需要有人回来改任何东西。
+
+**写出这一段就是退出补全。** 写出来的段是请求而不是空缺,因此
+`--target aarch64-linux-gnu` 仍会撞上 `planned` 行的拒绝 —— 那正是用显式
+`[target.<triple>] toolchain` 提前加入某一行的逃生口。
 
 ### 该用哪种拼法
 
