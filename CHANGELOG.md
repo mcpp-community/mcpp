@@ -73,6 +73,35 @@
 
 ### 目标矩阵在四台构建机上找到的
 
+⭐⭐ **116 格,0 个 `mismatch`。** 四台各自的实测写在
+[`tests/matrix/expected.tsv`](tests/matrix/expected.tsv),每一行都来自它自己那台
+机器 —— 从别的宿主推断出来的一行,断言的是推断而不是那台机器。
+
+| 宿主 | 格数 | ok |
+|---|---|---|
+| `linux-x86_64` | 40 | 14 |
+| `linux-aarch64` | 16 | 1 |
+| `macos-arm64` | 20 | 10 |
+| `windows-x86_64` | 40 | 9 |
+
+| status | reason | 格数 |
+|---|---|---|
+| ok | none | 34 |
+| unsupported | tier-planned | 36 |
+| unsupported | capability-pin | 16 |
+| unsupported | convention-unreplaced | 12 |
+| unsupported | host-cannot-serve | 7 |
+| unsupported | layer-requirement | 5 |
+| unsupported | host-tool-toolchain | 4 |
+| unsupported | lld-required-absent | 1 |
+| unsupported | other | 1 |
+
+⚠️ 最后那一格是**诚实的** `other`:`std module precompile failed` 由
+`stdmod.cppm` 发出,那里够不到拒绝记号的沉淀点。它是**构建失败经拒绝通道浮出**,
+不是一条规则 —— 把它硬塞进邻近的理由才是错的。
+
+
+
 ⭐⭐ **把 `linux-aarch64` 加进构建机轴之后,四台各自交出了一台机器上看不见的缺陷。**
 轴取自 `release.yml` 发布的那一组(linux-x86_64 / linux-aarch64 / macos-arm64 /
 windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二进制却从没被扫过的
