@@ -144,8 +144,28 @@ jobs:
               "OK: a capability pin is not a preference" \
               "gcc is not installed here" || fail=1
           fi
-          check 298_overriding_a_convention_requires_replacing_it.sh \
-            "OK: a convention may be overridden, but not merely removed" || fail=1
+          if [ "${{ matrix.host }}" = linux-x86_64 ]; then
+            check 298_overriding_a_convention_requires_replacing_it.sh \
+              "OK: a convention may be overridden, but not merely removed" || fail=1
+          else
+            # ⚠️ THE MIRROR OF 297's EXEMPTION, AND FOR THE OTHER FAMILY.
+            #
+            # 298 declares llvm, and there is no llvm payload for aarch64 Linux —
+            # upstream stopped publishing linux-aarch64 after 19.x and the index
+            # has none. Measured on `ubuntu-24.04-arm`:
+            #
+            #     SKIP: llvm is not installed here, and this test is about
+            #           declaring it
+            #
+            # ⭐ Granting it by REASON rather than by host is what makes it
+            # retire itself: the day
+            # `.agents/docs/2026-08-26-aarch64-linux-ecosystem-closure.md`
+            # lands an aarch64 llvm, this stops being a skip and starts being
+            # the assertion, with nothing here to change.
+            check_or_declared_skip 298_overriding_a_convention_requires_replacing_it.sh \
+              "OK: a convention may be overridden, but not merely removed" \
+              "llvm is not installed here" || fail=1
+          fi
           [ "$fail" = 0 ] || exit 1
 
   scan:
