@@ -198,7 +198,26 @@ P0 ──┬── P1(llvm 构建)──┬── P3(索引接线)── P4(mcpp
 - **判据**:`xlings install llvm@22.1.8` 在 aarch64 上成功;
   失败时的消息点名架构。
 
-### P4 — mcpp 对 aarch64 诚实
+### P4 — mcpp 对 aarch64 诚实(✅ 已落地)
+
+⭐ **决定:aarch64 上先只支持 `musl-gcc`,其余显式标记延缓。**
+
+- **P4.1 ✅** `available_toolchain_indexes()` 在非 x86_64 Linux 上不再列出
+  `llvm` 与 `mingw-cross-gcc`。⚠️ 这是一句**政策陈述**(mcpp 在这台宿主上支持
+  哪些族),不是索引数据的抄本 —— 与目标行的 `tier` 同类。
+- **P4.2 ✅ 延缓的前提每轮重测**:`.github/tools/check_aarch64_llvm_deferral.sh`
+  查 `xlings-res/llvm` 的 20.1.7 / 22.1.8 是否出现了 `linux-aarch64` 资产。
+  ⚠️ **它在理由不再成立时变红**,与一般的检查方向相反。
+  ⚠️ 网络故障不得被读成「出现了」:读不到资产表就说读不到,保持前提不动。
+- **P4.3 ✅ 生态 e2e 的豁免按理由给**:298 在 aarch64 上跳过,理由是
+  `llvm is not installed here`。按理由给而不是按宿主给,llvm 落地那天它自动
+  从「跳过」变回「断言」,workflow 一行都不用改。
+
+⚠️ **`host_can_serve()` 对裸机仍无条件 `true`** —— 那条理由(clang/lld 按构造
+就是交叉编译器)预设了 clang 在这台机器上存在。P4.1 的门让四个裸机行不再被
+列出,所以症状已经消失;这一处的**根因**留到 P1 之后再处理,因为届时它自然成立。
+
+### P4-原文 — mcpp 对 aarch64 诚实
 
 - **P4.1** `available_toolchain_indexes()` 目前按 OS 分支不问架构。
   ⚠️ **不要把索引数据抄进 mcpp** —— 那正是会漂移的形状。

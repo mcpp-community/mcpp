@@ -640,11 +640,39 @@ bool host_can_serve(const triple::Triple& target) {
 }
 
 std::vector<AvailableIndex> available_toolchain_indexes() {
+    // ⚠️⚠️ NOT EVERY FAMILY EXISTS FOR EVERY (OS, ARCH), AND THIS LIST USED TO
+    // SAY OTHERWISE.
+    //
+    // The branches below are per-OS and there were none per-ARCH, so an aarch64
+    // Linux host was told llvm could be installed. Measured 2026-08-26 against
+    // the index and upstream:
+    //
+    //   xlings-res/llvm 20.1.7 / 22.1.8   no linux-aarch64 asset
+    //   llvm/llvm-project 20.1.7, 21.1.0  no linux-aarch64 asset
+    //   llvm/llvm-project 19.1.7          has one — too old for `import std`
+    //
+    // so `mcpp toolchain install llvm 22.1.8` there is a 404 that this list
+    // promised would work. Same family as the rest of this release: a table
+    // that answers a narrower question than the one it is asked.
+    //
+    // ⭐ THIS IS A POLICY STATEMENT, NOT A COPY OF THE INDEX. It says which
+    // families mcpp SUPPORTS on this host — the same kind of statement `tier`
+    // makes for a target row — and the plan that retires it is
+    // `.agents/docs/2026-08-26-aarch64-linux-ecosystem-closure.md` §P1.
+    //
+    // ⚠️ AND ITS PREMISE IS ASSERTED IN CI, so it cannot outlive its reason.
+    // `ci-target-matrix.yml`'s aarch64 job checks that no linux-aarch64 llvm
+    // asset has appeared; the day one does, that step reds and names this
+    // gate. A deferral nobody rechecks is indistinguishable from a defect.
+    const bool linuxNonX86 =
+        mcpp::platform::is_linux && mcpp::platform::host_arch != "x86_64";
+
     std::vector<AvailableIndex> out{
         { "gcc",      Family::Gcc },
         { "musl-gcc", Family::Gcc },
-        { mcpp::toolchain::llvm::package_name(), Family::Llvm },
     };
+    if (!linuxNonX86)
+        out.push_back({ mcpp::toolchain::llvm::package_name(), Family::Llvm });
     // The Windows-PE gcc payload is host-split at the distribution layer
     // (§4.3); each host lists the package it would actually install.
     if constexpr (mcpp::platform::is_windows) {
@@ -660,7 +688,8 @@ std::vector<AvailableIndex> available_toolchain_indexes() {
         out.push_back({ std::string(mcpp::platform::host_arch) + "-linux-musl-gcc",
                         Family::Gcc });
     } else if constexpr (mcpp::platform::is_linux) {
-        out.push_back({ "mingw-cross-gcc", Family::Gcc });
+        // Same gate: `mingw-cross-gcc` publishes x86_64 only.
+        if (!linuxNonX86) out.push_back({ "mingw-cross-gcc", Family::Gcc });
     }
     return out;
 }

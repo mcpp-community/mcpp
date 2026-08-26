@@ -88,6 +88,13 @@ jobs:
           done
           [ "$fail" = 0 ] || exit 1
 
+      # ⚠️ A DEFERRAL NOBODY RECHECKS IS INDISTINGUISHABLE FROM A DEFECT. This
+      # step fails when its reason STOPS holding — the day an aarch64 llvm is
+      # published — which is the opposite of what a check usually does.
+      - name: The aarch64 llvm deferral still has its reason
+        if: matrix.host == 'linux-aarch64'
+        run: bash .github/tools/check_aarch64_llvm_deferral.sh
+
       - name: Each invariant RAN
         run: |
           set -euo pipefail
