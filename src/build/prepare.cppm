@@ -5425,9 +5425,21 @@ prepare_build(bool print_fingerprint,
         // asked. `GlobalDefault` is deliberately not user-explicit — see the
         // note on that function — so a remembered default is exactly the kind of
         // value this may replace.
-        if (!reqCompiler.empty()) {
+        // ⚠️ `system` IS LEFT ALONE, AND IT IS THE ONE VALUE HERE THAT IS AN
+        // ESCAPE HATCH RATHER THAN AN ANSWER.
+        //
+        // It means "the PATH compiler, whatever it is" — a deliberate opt-out
+        // of the payload model. Substituting a payload for it would defeat
+        // exactly what the user asked for, and mcpp cannot even tell whether
+        // the requirement is already satisfied: the family of a PATH compiler
+        // is not knowable from the spec. `check_requirements` reports the
+        // mismatch further down against what the driver actually turned out to
+        // be, which is the only place that answer exists.
+        const bool tcIsSystemEscapeHatch =
+            tcSpec.has_value() && *tcSpec == "system";
+        if (!reqCompiler.empty() && !tcIsSystemEscapeHatch) {
             std::string haveFamily;
-            if (tcSpec.has_value() && *tcSpec != "system")
+            if (tcSpec.has_value())
                 if (auto s = mcpp::toolchain::parse_toolchain_spec(*tcSpec); s)
                     haveFamily =
                         std::string(mcpp::toolchain::family_name(s->family));

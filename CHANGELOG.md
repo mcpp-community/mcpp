@@ -99,6 +99,14 @@
   测陈述它。⚠️ 这条缺陷是**读出来的**:它需要一台没有工具链的 Windows 机器,而
   `config.toml` 的 sha256 判据跑在已配好的环境里,两条分支一条都到不了。
 
+### 兼容性
+
+⭐ **没有任何一次原本成功的构建换了行为。** 图声明编译器的情形里,原来的结局是
+`check_requirements` 拒绝 —— 也就是说那些构建本来就不成功;`--target aarch64-linux`
+与 `riscv64-linux` 原来是拒绝;`x86_64-linux` / `x86_64-windows` / `riscv64-none` /
+`aarch64-macos` 的补全结果一字未变(单测逐行遍历整张词表守住这一条)。机器接口只
+增字段。`[toolchain] default = "system"`(PATH 编译器这条逃生口)不被替换。
+
 ### 判据
 
 - e2e `299`–`303`,全部走 `--format json` 分类而非字符串搜索,并接入
