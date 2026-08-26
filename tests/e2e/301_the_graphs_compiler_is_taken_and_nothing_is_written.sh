@@ -81,9 +81,26 @@ printf '[package]\nname     = "needs-%s"\nversion  = "0.1.0"\nrequires = ["mcpp:
 printf '[package]\nname    = "app"\nversion = "0.1.0"\n\n[dependencies]\nneeds-%s = { path = "../needs" }\n' \
     "$want" > "$work/app/mcpp.toml"
 
+# ⚠️⚠️ A HASHER THAT DOES NOT EXIST MAKES THIS CRITERION PASS BY MEASURING
+# NOTHING. macOS has no `sha256sum` (it is `shasum -a 256`), and the first draft
+# would then have compared two empty strings — which are equal. The whole point
+# of this half is that a build can succeed AND rewrite the configuration; a
+# check that cannot tell them apart is worse than no check.
+if command -v sha256sum >/dev/null 2>&1; then
+    hash_of() { sha256sum "$1" | cut -d' ' -f1; }
+elif command -v shasum >/dev/null 2>&1; then
+    hash_of() { shasum -a 256 "$1" | cut -d' ' -f1; }
+else
+    echo "FAIL: no sha256 tool on this host, and this half's whole claim is a hash"
+    exit 1
+fi
+
 cfg="${MCPP_HOME:-$HOME/.mcpp}/config.toml"
 before=""
-[ -f "$cfg" ] && before="$(sha256sum "$cfg" | cut -d' ' -f1)"
+if [ -f "$cfg" ]; then
+    before="$(hash_of "$cfg")"
+    [ -n "$before" ] || { echo "FAIL: could not hash $cfg"; exit 1; }
+fi
 
 j="$("$MCPP" why toolchain --format json 2>/dev/null)"
 reason="$(printf '%s' "$j" | jq -r '.data.reason // "-"' | tr -d '\r')"
@@ -103,7 +120,14 @@ echo "  ok  the graph required '$want' and mcpp took it (was '$current')"
 
 # ── And it changed no configuration ──────────────────────────────────────
 after=""
-[ -f "$cfg" ] && after="$(sha256sum "$cfg" | cut -d' ' -f1)"
+[ -f "$cfg" ] && after="$(hash_of "$cfg")"
+# ⚠️ AND BOTH SIDES MUST BE NON-EMPTY. `"" = ""` is the shape this half exists
+# to refuse, whatever produced the emptiness.
+if [ -z "$before" ] || [ -z "$after" ]; then
+    echo "FAIL: one side of the comparison is empty (before='$before' after='$after'),"
+    echo "      so nothing was actually compared"
+    exit 1
+fi
 if [ "$before" = "$after" ]; then
     echo "  ok  and $cfg is byte-identical"
 else
