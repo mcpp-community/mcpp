@@ -42,6 +42,29 @@ command -v jq >/dev/null 2>&1 || {
     exit 2
 }
 
+# ⚠️⚠️ `timeout` IS GNU coreutils AND macOS HAS NEITHER IT NOR `gtimeout`.
+#
+# Measured on macos-14, the first run that reached this script: every cell came
+# back `mismatch / query-failed` — all 20 of them — because the wrapper was not
+# a command. `mcpp toolchain list`, which this script does NOT wrap, worked
+# fine, which is how the two were told apart.
+#
+# ⭐ `tests/e2e/run_all.sh` has had this exact detection since it shipped. The
+# defect was not that the problem is hard; it is that a second copy of a
+# decision was written without looking at the first.
+#
+# No timeout command is a legitimate state: the step-level `timeout-minutes` in
+# the workflow is the backstop, and running unwrapped beats not running.
+TIMEOUT=""
+if   command -v timeout  >/dev/null 2>&1; then TIMEOUT=timeout
+elif command -v gtimeout >/dev/null 2>&1; then TIMEOUT=gtimeout
+fi
+[ -n "$TIMEOUT" ] || echo "scan: no timeout/gtimeout here — running unwrapped" >&2
+run_limited() {   # seconds cmd… → run with a limit if one is available
+    local secs="$1"; shift
+    if [ -n "$TIMEOUT" ]; then "$TIMEOUT" "$secs" "$@"; else "$@"; fi
+}
+
 work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/src"; cd "$work"
 
@@ -123,11 +146,16 @@ for tc in $(compilers); do
     fi
 
     # ── 第一问:这一格会解析成什么 ────────────────────────────────────
-    q="$(timeout "${MATRIX_QUERY_TIMEOUT:-300}" \
-         "$MCPP" why toolchain --target "$t" --toolchain "$tc" --format json 2>/dev/null)"
+    # ⚠️ stderr 留到一个文件里,不丢。前一版写的是 `2>/dev/null`,于是
+    # `query-failed` 是对的分类而**没有任何证据**说明为什么 —— macOS 上 20 格
+    # 全红,原因(`timeout` 不存在)被这个重定向吞掉了。
+    q="$(run_limited "${MATRIX_QUERY_TIMEOUT:-300}" \
+         "$MCPP" why toolchain --target "$t" --toolchain "$tc" --format json \
+         2>"$work/q.err")"
     if [ -z "$q" ]; then
         # ⚠️ 查询本身没跑起来。这不是「这一格不支持」,而是「不知道」—— 两者必须
         # 分开,否则一次环境故障会被整片读成「不支持」。
+        echo "scan: $t × $tc 查询无输出: $(head -2 "$work/q.err" | tr '\n' ' ')" >&2
         emit "$MODE" "$HOST" "$t" "$tc" - - - - - mismatch query-failed
         continue
     fi
@@ -158,7 +186,7 @@ for tc in $(compilers); do
     #    读任何一行输出。
     printf '\n[toolchain]\ndefault = "%s"\n' "$tc" >> mcpp.toml
     rm -rf target
-    if timeout "${MATRIX_TIMEOUT:-600}" "$MCPP" build --target "$t" >/dev/null 2>&1; then
+    if run_limited "${MATRIX_TIMEOUT:-600}" "$MCPP" build --target "$t" >/dev/null 2>&1; then
         emit "$MODE" "$HOST" "$t" "$tc" "$tri" "$clib" "$cabi" "$cxxabi" "$okpkg" ok none
     else
         emit "$MODE" "$HOST" "$t" "$tc" "$tri" "$clib" "$cabi" "$cxxabi" "$okpkg" \
