@@ -91,10 +91,20 @@ HOST="$HOST_OS-$HOST_ARCH"
 # 就会漂移,而按列宽解析一张给人看的表,会让列宽变成测试套件的一部分。实测过
 # 的代价:两版测试对「版本在第几列」的看法不同,读 `$NF` 的那版取到了
 # `(default)` —— 一个恰好只出现在最可能被选中的那一行上的值。
-LIST="$("$MCPP" toolchain list --format json 2>/dev/null)"
+# ⚠️⚠️ CR 必须剥掉,而不是指望它不出现。
+#
+# git-bash 里 jq 以文本模式写 stdout,`\n` 变成 `\r\n`,而 `\r` 不在 IFS 里 ——
+# 于是每个词尾都挂着一个 CR。实测 windows-2022:48 格里 38 格是
+# `unsupported / other`,因为 `--target "aarch64-linux-gnu\r"` 解析不了。
+# 整台机器的扫描测的是一张被污染的目标表。
+#
+# ⭐ 剥在**读进来的那一处**,不在每个使用点 —— 后者是同一个决定写 N 遍。
+jq_r() { jq -r "$@" | tr -d '\r'; }
+
+LIST="$("$MCPP" toolchain list --format json 2>/dev/null | tr -d '\r')"
 [ -n "$LIST" ] || { echo "scan: \`toolchain list --format json\` produced nothing" >&2; exit 2; }
 
-targets() { printf '%s' "$LIST" | jq -r '.data.targets[].target' | sort -u; }
+targets() { printf '%s' "$LIST" | jq_r '.data.targets[].target' | sort -u; }
 
 # ⭐ 每族只取最新的一个。矩阵回答的是「这个目标支不支持」,同一族的三个版本对
 # 这个问题给同一个答案,而 5×12 与 2×12 在 CI 上是小时级的差别。
@@ -102,7 +112,7 @@ targets() { printf '%s' "$LIST" | jq -r '.data.targets[].target' | sort -u; }
 # ⚠️ 但收窄必须说出来。被丢掉的版本写到 stderr —— 一次没跑的测量和一次通过的
 # 测量,在退出码上没有区别。
 compilers() {
-    printf '%s' "$LIST" | jq -r '.data.toolchains[] | .family + "@" + .version' \
+    printf '%s' "$LIST" | jq_r '.data.toolchains[] | .family + "@" + .version' \
     | awk -F@ '{ if (seen[$1]++) print "scan: 略过 " $0 " —— 每族只取最新" > "/dev/stderr"
                  else print $0 }'
 }
@@ -151,7 +161,7 @@ for tc in $(compilers); do
     # 全红,原因(`timeout` 不存在)被这个重定向吞掉了。
     q="$(run_limited "${MATRIX_QUERY_TIMEOUT:-300}" \
          "$MCPP" why toolchain --target "$t" --toolchain "$tc" --format json \
-         2>"$work/q.err")"
+         2>"$work/q.err" | tr -d '\r')"
     if [ -z "$q" ]; then
         # ⚠️ 查询本身没跑起来。这不是「这一格不支持」,而是「不知道」—— 两者必须
         # 分开,否则一次环境故障会被整片读成「不支持」。
@@ -159,7 +169,7 @@ for tc in $(compilers); do
         emit "$MODE" "$HOST" "$t" "$tc" - - - - - mismatch query-failed
         continue
     fi
-    jq_get() { printf '%s' "$q" | jq -r "$1" 2>/dev/null; }
+    jq_get() { printf '%s' "$q" | jq_r "$1" 2>/dev/null; }
     st="$(jq_get '.data.status // "-"')"
     rs="$(jq_get '.data.reason // "-"')"
     tri="$(jq_get '(.data.triple.llvm // "") | if . == "" then "-" else . end')"

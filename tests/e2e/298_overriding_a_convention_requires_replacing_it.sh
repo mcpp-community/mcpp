@@ -42,7 +42,7 @@ cd "$work"
 printf '#include <cstdio>\nint main() { std::printf("ok\\n"); }\n' > src/main.cpp
 
 llvmver="$("$MCPP" toolchain list --format json 2>/dev/null \
-           | jq -r '[.data.toolchains[] | select(.family=="llvm") | .version][0] // empty')"
+           | jq -r '[.data.toolchains[] | select(.family=="llvm") | .version][0] // empty' | tr -d '\r')"
 if [ -z "$llvmver" ]; then
     echo "SKIP: llvm is not installed here, and this test is about declaring it"
     exit 0
@@ -80,14 +80,14 @@ fail=0
 # written from a guess is the kind that later talks someone out of a correct
 # change.
 hostArch="$("$MCPP" toolchain list --format json 2>/dev/null \
-            | jq -r '.data.host // "" | split("-")[0]')"
+            | jq -r '.data.host // "" | split("-")[0]' | tr -d '\r')"
 pick() {
     "$MCPP" toolchain list --format json 2>/dev/null \
       | jq -r --arg a "$1" '[.data.targets[]
                              | select(.pin | startswith("gcc"))
                              | select(.status != "planned")
                              | select($a == "" or (.target | startswith($a + "-")))
-                             | .target][0] // empty'
+                             | .target][0] // empty' | tr -d '\r'
 }
 pinned="$(pick "$hostArch")"
 [ -n "$pinned" ] || pinned="$(pick "")"
@@ -106,7 +106,7 @@ out="$("$MCPP" build --target "$pinned" 2>&1 || true)"
 # the sentence is still checked below, because naming the target, the convention
 # and the replacement is a promise no code can keep on its own.
 reason="$("$MCPP" why toolchain --target "$pinned" --toolchain "llvm@$llvmver" \
-            --format json 2>/dev/null | jq -r '.data.reason // "-"')"
+            --format json 2>/dev/null | jq -r '.data.reason // "-"' | tr -d '\r')"
 
 case "$reason" in
   convention-unreplaced)
@@ -174,10 +174,10 @@ graph="$("$MCPP" build --target "$pinned" --verbose 2>&1 || true)"
 # really did supply the C library (otherwise "not refused" is vacuous — an
 # unresolved dependency would satisfy it too).
 graphReason="$("$MCPP" why toolchain --target "$pinned" --toolchain "llvm@$llvmver" \
-                 --format json 2>/dev/null | jq -r '.data.reason // "-"')"
+                 --format json 2>/dev/null | jq -r '.data.reason // "-"' | tr -d '\r')"
 graphCabi="$("$MCPP" why toolchain --target "$pinned" --toolchain "llvm@$llvmver" \
                --format json 2>/dev/null \
-             | jq -r '[.data.layers[] | select(.layer=="c-abi") | .origin][0] // "-"')"
+             | jq -r '[.data.layers[] | select(.layer=="c-abi") | .origin][0] // "-"' | tr -d '\r')"
 
 if [ "$graphReason" = convention-unreplaced ]; then
     echo "FAIL: a graph-supplied C library was refused — the escape hatch is gone"

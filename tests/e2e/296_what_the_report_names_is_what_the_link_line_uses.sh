@@ -87,7 +87,7 @@ fail=0; checked=0
 #
 # This is cheap and catches the whole class, on every host, for every family.
 for spec in $("$MCPP" toolchain list --format json 2>/dev/null \
-              | jq -r '.data.toolchains[] | .family + "@" + .version'); do
+              | jq -r '.data.toolchains[] | .family + "@" + .version' | tr -d '\r'); do
     if "$MCPP" why toolchain --toolchain "$spec" --format json >/dev/null 2>&1; then
         echo "  ok  $spec round-trips through --toolchain"
         checked=$((checked+1))
@@ -102,7 +102,7 @@ for tc in gcc llvm; do
     # ⭐ From the machine interface: `grep -oP` does not exist on macOS, and its
     # failure mode here was a skip rather than a red.
     ver="$("$MCPP" toolchain list --format json 2>/dev/null \
-           | jq -r --arg t "$tc" '[.data.toolchains[] | select(.family==$t) | .version][0] // empty')"
+           | jq -r --arg t "$tc" '[.data.toolchains[] | select(.family==$t) | .version][0] // empty' | tr -d '\r')"
     [ -n "$ver" ] || { echo "  SKIP  $tc is not installed here"; continue; }
     printf '[package]\nname    = "linkprobe"\nversion = "0.1.0"\n\n[toolchain]\ndefault = "%s@%s"\n' \
         "$tc" "$ver" > mcpp.toml
@@ -131,7 +131,7 @@ for tc in gcc llvm; do
     # SDK belongs to the machine, not to a payload. The test was asserting a
     # Linux arrangement and calling its absence a defect.
     want="$("$MCPP" why toolchain --toolchain "$tc@$ver" --format json 2>/dev/null \
-            | jq -r '.data.cLibrary.path // ""')"
+            | jq -r '.data.cLibrary.path // ""' | tr -d '\r')"
     if [ -z "$want" ]; then
         # ⭐⭐ NO PATH IS ALSO A CLAIM, AND IT IS CHECKABLE. The query says mcpp
         # passes no C-library path — the self-contained arrangement, where the

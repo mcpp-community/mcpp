@@ -56,7 +56,7 @@ printf '#include <cstdio>\nint main() { std::printf("ok\\n"); }\n' > src/main.cp
 # then name that. Exact on every host, and it needs no table.
 implicit_target() {   # toolchain spec → the triple it would use anyway
     "$MCPP" why toolchain --toolchain "$1" --format json 2>/dev/null \
-        | jq -r '.data.triple.toolchain // empty'
+        | jq -r '.data.triple.toolchain // empty' | tr -d '\r'
 }
 
 ldflags_of() {   # extra args… → the ldflags line, or nothing
@@ -85,7 +85,7 @@ for tc in gcc llvm; do
     # `grep -oP`, which does not exist on macOS and would have turned this half
     # into a silent skip there.
     ver="$("$MCPP" toolchain list --format json 2>/dev/null \
-           | jq -r --arg t "$tc" '[.data.toolchains[] | select(.family==$t) | .version][0] // empty')"
+           | jq -r --arg t "$tc" '[.data.toolchains[] | select(.family==$t) | .version][0] // empty' | tr -d '\r')"
     if [ -z "$ver" ]; then
         echo "  SKIP  $tc is not installed here"
         continue

@@ -41,7 +41,7 @@ printf 'extern "C" int main(int, char**, char**) { return 0; }\n' > src/main.cpp
 # people: a column position is not a contract, and two earlier drafts of the
 # neighbouring test disagreed about which column held the version.
 gccver="$("$MCPP" toolchain list --format json 2>/dev/null \
-          | jq -r '[.data.toolchains[] | select(.family=="gcc") | .version][0] // empty')"
+          | jq -r '[.data.toolchains[] | select(.family=="gcc") | .version][0] // empty' | tr -d '\r')"
 if [ -z "$gccver" ]; then
     echo "SKIP: gcc is not installed here, and this test is about declaring it"
     exit 0
@@ -64,7 +64,7 @@ out="$(cd "$work" && "$MCPP" build --target riscv64-none-elf 2>&1 || true)"
 # the assertion then passed by matching nothing at all.
 reason="$(cd "$work" && "$MCPP" why toolchain --target riscv64-none-elf \
             --toolchain "gcc@$gccver" --format json 2>/dev/null \
-          | jq -r '.data.reason // "-"')"
+          | jq -r '.data.reason // "-"' | tr -d '\r')"
 
 case "$reason" in
   capability-pin)
@@ -118,7 +118,7 @@ printf '[package]\nname    = "capprobe"\nversion = "0.1.0"\n\n[toolchain]\ndefau
     "$gccver" > mcpp.toml
 printf '#include <cstdio>\nint main() { std::printf("ok\\n"); }\n' > src/main.cpp
 hostedTarget="$(cd "$work" && "$MCPP" why toolchain --toolchain "gcc@$gccver" \
-                  --format json 2>/dev/null | jq -r '.data.triple.toolchain // empty')"
+                  --format json 2>/dev/null | jq -r '.data.triple.toolchain // empty' | tr -d '\r')"
 if [ -z "$hostedTarget" ]; then
     echo "SKIP: the query did not name a target for gcc@$gccver on this host"
     exit 0
@@ -127,7 +127,7 @@ rm -rf target
 hosted="$(cd "$work" && "$MCPP" build --target "$hostedTarget" 2>&1 || true)"
 hostedReason="$(cd "$work" && "$MCPP" why toolchain --target "$hostedTarget" \
                   --toolchain "gcc@$gccver" --format json 2>/dev/null \
-                | jq -r '.data.reason // "-"' 2>/dev/null)"
+                | jq -r '.data.reason // "-"' 2>/dev/null | tr -d '\r')"
 [ -n "$hostedReason" ] || hostedReason="-"
 
 case "$hostedReason" in
