@@ -111,7 +111,32 @@ targets() { printf '%s' "$LIST" | jq_r '.data.targets[].target' | sort -u; }
 #
 # ⚠️ 但收窄必须说出来。被丢掉的版本写到 stderr —— 一次没跑的测量和一次通过的
 # 测量,在退出码上没有区别。
+#
+# ⚠️⚠️ 而「装了哪些」不是「这台宿主声明了哪些」,把前者当成后者会让缓存决定判据。
+#
+# 实测 2026-08-26,同一个提交:PR 的 `scan (windows-x86_64)` 绿,合入 main 后同一
+# 个 job 红 —— 因为那次 runner 恢复出来的缓存里多了一个 `gcc@16.1.0`,扫描于是产出
+# 24 格,而期望表为这台宿主声明的是 16 格,八格全部报成「表里没有这一格」。
+#
+# 这台宿主装了什么随缓存变(297 的具名跳过就是围着这个事实写的),而**期望表是一
+# 份声明**。让编译器轴跟着声明走,这一整类假红就消失了:`MATRIX_COMPILERS` 由
+# workflow 从 expected.tsv 自己那一列算出来传进来。
+#
+# ⭐ 不传时退回「装了什么扫什么」,因为本机跑没有期望表可依。
 compilers() {
+    if [ -n "${MATRIX_COMPILERS:-}" ]; then
+        # ⚠️ 收窄仍然要说出来。装着却不在声明里的那些,写到 stderr —— 一次没跑的
+        # 测量和一次通过的测量,在退出码上没有区别。
+        printf '%s' "$LIST" | jq_r '.data.toolchains[] | .family + "@" + .version' \
+        | while IFS= read -r have; do
+            case " $MATRIX_COMPILERS " in
+              *" $have "*) ;;
+              *) echo "scan: 略过 $have —— 本宿主的期望表没有声明它" >&2 ;;
+            esac
+          done
+        printf '%s\n' $MATRIX_COMPILERS
+        return
+    fi
     printf '%s' "$LIST" | jq_r '.data.toolchains[] | .family + "@" + .version' \
     | awk -F@ '{ if (seen[$1]++) print "scan: 略过 " $0 " —— 每族只取最新" > "/dev/stderr"
                  else print $0 }'
