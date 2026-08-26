@@ -99,6 +99,33 @@
   测陈述它。⚠️ 这条缺陷是**读出来的**:它需要一台没有工具链的 Windows 机器,而
   `config.toml` 的 sha256 判据跑在已配好的环境里,两条分支一条都到不了。
 
+### 示例
+
+- **⭐ `examples/06-openkal-cross` 现在是四个目标,而且不再写 `[toolchain]`。**
+
+  第四行 `--target aarch64-linux` 正是这次修好的那一条 —— 在此之前它补全成
+  `aarch64-linux-gnu`(registered but not supported)并拒绝。同时删掉了那个
+  `[toolchain] default = "llvm@22.1.8"` 段:`openkal-llvm-runtime` 自己声明
+  `requires = ["mcpp:compiler=llvm"]`,mcpp 现在读它。实测在一台全局默认为 gcc 的
+  机器上,四个目标全部解析出 `llvm@22.1.8`,而 `~/.mcpp/config.toml` 一字未改。
+
+  ⚠️ 顺带修掉一处失效的钉:该示例的依赖下界还写着 `0.1.1`,而那个版本的
+  compiler-rt builtins 在 aarch64 上编不过。这个示例**不被任何 CI 构建**,所以它
+  钉住的版本过期了也没有任何东西会说话。
+
+### CI
+
+- **⚠️⚠️ 目标矩阵的编译器轴跟着「装了什么」走,于是缓存能决定判据。**
+
+  实测:同一个提交,PR 的 `scan (windows-x86_64)` 绿,合入 main 后同一个 job 红 ——
+  那次 runner 恢复出来的缓存里多了一个 `gcc@16.1.0`,扫描产出 24 格而期望表为这台
+  宿主声明的是 16 格,八格全部报成「表里没有这一格」。
+
+  ⭐ **期望表是一份声明**,编译器轴现在跟着它走(`MATRIX_COMPILERS`,由 workflow
+  从 expected.tsv 的同一列算出,与「装哪些」那一步同源,所以两者不可能各说各话)。
+  装着却不在声明里的版本写到 stderr —— 一次没跑的测量和一次通过的测量,在退出码上
+  没有区别。
+
 ### 兼容性
 
 ⭐ **没有任何一次原本成功的构建换了行为。** 图声明编译器的情形里,原来的结局是

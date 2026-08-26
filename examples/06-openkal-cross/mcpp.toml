@@ -1,25 +1,41 @@
 [package]
 name        = "portable-report"
 version     = "0.1.0"
-description = "One source, three hosted targets, over openkal"
+description = "One source, four hosted targets, over openkal"
 
 # There is no `[build] target` here, and its absence is what the directory is
 # for. The target is given on the command line so that the same file can be
-# built three ways without being edited.
+# built four ways without being edited.
 
 [dependencies]
 # One line selects three of the five target-side layers. `openkal-llvm-runtime`
 # supplies the compiler runtime and the C++ runtime, and depends in turn on
 # `openkal-musl` for the C library, which depends on whichever implementation of
 # openkal matches the target being built.
-openkal-llvm-runtime = "0.1.1"
+openkal-llvm-runtime = "0.1.3"
 
-[toolchain]
-# A compiler, and nothing else. Where the headers, the C library, the C++
-# runtime and the platform implementation come from is not stated in this file;
-# it follows from the dependency above and is resolved after the graph exists.
-# The build reports what it resolved.
-default = "llvm@22.1.8"
+# ⭐⭐ AND IT SELECTS THE FOURTH — THE COMPILER — WITHOUT THIS FILE SAYING SO.
+#
+# There used to be a `[toolchain] default = "llvm@22.1.8"` here, with a comment
+# explaining that it named "a compiler, and nothing else". It is gone, and the
+# example is more accurate for it: `openkal-llvm-runtime` declares
+# `requires = ["mcpp:compiler=llvm"]`, because a C++ runtime is configured for
+# one compiler family and records that configuration in the headers it ships.
+#
+# Since 2026.8.26.2 mcpp reads that and takes it. Measured on a machine whose
+# global default is gcc, all four targets:
+#
+#     Resolved llvm@22.1.8 → aarch64-linux-musl → …/xim-x-llvm/22.1.8/bin/clang++
+#              required by openkal-llvm-runtime@0.1.3
+#              (`requires = ["mcpp:compiler=llvm"]`), not your gcc@16.1.0
+#              — this project only
+#
+# ⚠️ "this project only" is load-bearing. Nothing is written: not
+# `~/.mcpp/config.toml`, not this file. A requirement is a property of the
+# package that states it, so it decides this build and no other.
+#
+# A project that wants a different compiler still writes one here, and that
+# statement outranks the graph — see docs/03.
 
 # ⚠️ NO BARE-METAL TARGET SECTION, AND ITS ABSENCE IS DELIBERATE.
 #

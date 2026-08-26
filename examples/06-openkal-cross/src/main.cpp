@@ -1,13 +1,20 @@
-// One source, three machines, and a program that asks each of them what it is.
+// One source, four machines, and a program that asks each of them what it is.
 //
 //     mcpp run                                  this machine
-//     mcpp build --target x86_64-linux          Linux,   any host
-//     mcpp build --target aarch64-macos         macOS,   any host
-//     mcpp build --target x86_64-windows        Windows, any host
+//     mcpp build --target x86_64-linux          Linux   x86_64,  any host
+//     mcpp build --target aarch64-linux         Linux   aarch64, any host
+//     mcpp build --target aarch64-macos         macOS   aarch64, any host
+//     mcpp build --target x86_64-windows        Windows x86_64,  any host
+//
+// ⭐ EVERY ONE OF THEM DECLINES THE THIRD SEGMENT, AND THE FOURTH LINE COULD
+// NOT BE WRITTEN UNTIL 2026.8.26.2. `aarch64-linux` used to complete to
+// `aarch64-linux-gnu` — a row registered but not supported — and refuse, while
+// `aarch64-linux-musl` built. A request that names no C library now resolves to
+// a row that exists; see docs/16.
 //
 // Nothing below is conditional on a platform. There is no preprocessor
 // directive in this file, and no branch on a target name. What differs between
-// the three builds is which packages the dependency graph resolved, and the
+// the four builds is which packages the dependency graph resolved, and the
 // only trace of that difference in the source is that the program ASKS about
 // capabilities instead of assuming them.
 //

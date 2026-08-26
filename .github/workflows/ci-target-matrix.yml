@@ -309,6 +309,19 @@ jobs:
           export MCPP="$MCPP_UNDER_TEST"
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          # ⚠️⚠️ 编译器轴跟着**声明**走,不跟着「这台机器上装了什么」走。
+          #
+          # 实测 2026-08-26,同一个提交:PR 上这个 job 绿,合入 main 后红 —— 那
+          # 次 windows-2022 恢复出来的缓存里多了一个 `gcc@16.1.0`,扫描产出 24
+          # 格而期望表声明 16 格,八格全部报成「表里没有这一格」。缓存里有什么
+          # 不是这个仓库声明了什么,而判据必须是后者。
+          #
+          # 与上一步取自同一列,所以「装它」和「扫它」不可能各说各话。
+          MATRIX_COMPILERS="$(awk -F'\t' -v h='${{ matrix.host }}' \
+                                'NF>=11 && $2==h {print $4}' tests/matrix/expected.tsv \
+                              | sort -u | tr '\n' ' ')"
+          export MATRIX_COMPILERS
+          echo "declared compiler axis: ${MATRIX_COMPILERS:-<none — scanning what is installed>}"
           # ⚠️ 两种体系各自成表。scan 把 mode 写进第一列,而比对必须按 mode 分开
           # 做 —— 拿一种体系的测量去比整张表,另一种的每一行都会被报成「没跑到」。
           bash tests/matrix/scan.sh payload > measured-payload.tsv
