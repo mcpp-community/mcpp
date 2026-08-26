@@ -217,19 +217,6 @@ P0 ──┬── P1(llvm 构建)──┬── P3(索引接线)── P4(mcpp
 就是交叉编译器)预设了 clang 在这台机器上存在。P4.1 的门让四个裸机行不再被
 列出,所以症状已经消失;这一处的**根因**留到 P1 之后再处理,因为届时它自然成立。
 
-### P4-原文 — mcpp 对 aarch64 诚实
-
-- **P4.1** `available_toolchain_indexes()` 目前按 OS 分支不问架构。
-  ⚠️ **不要把索引数据抄进 mcpp** —— 那正是会漂移的形状。
-  正确做法:让这张表回答「这个 (os, arch) 上这个族有没有载荷」,
-  而答案来自已有的 `list_available_xpkg_versions()` 查询,
-  与 `gcc_native_payload_is_musl()` 已经在做的事同型。
-- **P4.2** `host_can_serve()` 对裸机无条件 `true`,理由是
-  「clang/lld 按构造就是交叉编译器」。⚠️ **那个理由预设了 clang 在这台机器上
-  存在。** 在 llvm 落地前,aarch64 上四个裸机行应报一句可读的拒绝,
-  带 `reason`,而不是 404。
-- **判据**:aarch64 上 `scan.sh` 的 `mismatch` 与 `other` 均为 0。
-
 ### P5 — 生态 CI 加 aarch64
 
 - **P5.1** 七个 openkal 仓库的 `ci.yml` 各加一条 `ubuntu-24.04-arm` leg。
