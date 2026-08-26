@@ -581,6 +581,19 @@ export struct BuildContext {
     // whether a cached build.ninja was generated for the profile being asked
     // for — and so `Finished <profile>` stops being a hardcoded "release".
     std::string                     profile;
+    // ⭐ WHY THIS COMPILER — carried so the QUERY can answer it too.
+    //
+    // A build says so on its status line. `mcpp why toolchain --format json`
+    // exists precisely to answer "what would this resolve to, and why", and a
+    // consumer that had to parse the prose to learn that a dependency chose the
+    // compiler would be doing the substring matching the machine interface was
+    // introduced to remove.
+    struct CompilerChoice {
+        std::string origin;      // tc_origin_name(): who decided
+        std::string requiredBy;  // the package, when the graph decided
+        std::string replaced;    // the spec displaced, when one was
+    };
+    CompilerChoice                  compilerChoice;
     // Resolved global-cache mode. Read side is honored in prepare_build; write
     // side in run_build_plan.
     CacheMode                       cacheMode = CacheMode::Global;
@@ -5408,31 +5421,54 @@ prepare_build(bool print_fingerprint,
                 // here — where both halves are known — beats a compiler
                 // complaining about a file the reader never named.
                 else if (tcOrigin == TcOrigin::TargetPin) {
+                    // ⚠️⚠️ THE TWO ROWS REFUSE UNDER ONE RULE AND FOR TWO
+                    // REASONS, AND ONE REMEDY DOES NOT SERVE BOTH.
+                    //
+                    // A CONVENTION pin is cancelled by a graph that supplies the
+                    // target's system — that is `graphSuppliesSystem`, one
+                    // screen up — so "depend on a package that supplies it" is
+                    // exactly the way out.
+                    //
+                    // A CAPABILITY pin is not: `targetPinIsCapability` keeps it
+                    // applied no matter what the graph supplies, because no
+                    // other family emits the target at all. Offering the same
+                    // remedy there prints an instruction that the sentence
+                    // directly above it has already ruled out — the failure
+                    // this release removes from `check_requirements`, reproduced
+                    // three screens away.
+                    std::string_view why = targetPinIsCapability
+                        ? "The row names its compiler as a capability: no other "
+                          "family emits this target."
+                        : "The row's payload is what supplies this target's "
+                          "headers and C library,\n       and nothing in the "
+                          "dependency graph supplies them instead.";
+                    std::string remedy = targetPinIsCapability
+                        ? std::format(
+                              "       Drop the package that requires `{}`, or "
+                              "take a version of it built\n"
+                              "       for `{}`.",
+                              reqCompiler, targetPinCandidate)
+                        : std::format(
+                              "       Depend on a package that supplies this "
+                              "target's system (its kernel\n"
+                              "       interface and C library) so the row's "
+                              "payload is not needed, or drop\n"
+                              "       the package that requires `{}`.",
+                              reqCompiler);
                     refusal::record(refusal::Code::CompilerRequirementConflict);
                     return std::unexpected(std::format(
                         "`{}` requires the compiler to be `{}`, and target '{}' "
                         "cannot be built with it here.\n"
                         "         target row       {:<14} ({})\n"
                         "         required         {:<14} (required by {})\n"
-                        "       {}\n"
-                        "       Depend on a package that supplies this target's "
-                        "system (its kernel\n"
-                        "       interface and C library) so the row's payload is "
-                        "not needed, or drop\n"
-                        "       the package that requires `{}`.",
+                        "       {}\n{}",
                         reqCompilerBy, reqCompiler,
                         targetRowName.empty() ? overrides.target_triple
                                               : targetRowName,
                         targetPinCandidate,
                         targetPinIsCapability ? "capability" : "convention",
                         reqCompiler, reqCompilerBy,
-                        targetPinIsCapability
-                            ? "The row names its compiler as a capability: no "
-                              "other family emits this target."
-                            : "The row's payload is what supplies this target's "
-                              "headers and C library,\n       and nothing in the "
-                              "dependency graph supplies them instead.",
-                        reqCompiler));
+                        why, remedy));
                 }
                 // Free to take it. `tcSpec` is either absent (nothing configured
                 // anywhere) or one of mcpp's own remembered answers.
@@ -7301,6 +7337,10 @@ prepare_build(bool print_fingerprint,
     ctx.runtimeSelection = runtimeSelection;
     ctx.runtimeBinding = runtimeBindingSnapshot;
     ctx.profile     = effectiveProfile;
+    ctx.compilerChoice = { std::string(tc_origin_name(tcOrigin)),
+                           graphCompilerRequiredBy,
+                           graphCompilerReplaced.empty() ? pinReplacedDefault
+                                                         : graphCompilerReplaced };
     ctx.cacheMode   = cacheMode;
     ctx.projectRoot= *root;
     ctx.outputDir  = target_dir(*tc, fp, workRoot);

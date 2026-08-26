@@ -113,18 +113,41 @@ else
     exit 1
 fi
 
-# ── And the status line says who asked ───────────────────────────────────
+# ── And the query says who asked ─────────────────────────────────────────
 #
 # ⚠️ A COMPILER THE USER DID NOT NAME, REPORTED WITHOUT ITS REASON, IS A RULE
 # THAT CAN ONLY BE LEARNED BY EXPERIMENT. The same argument that put a reason on
 # the target row's substitution applies here, and more so: this one overrides a
 # value the user set with `mcpp toolchain default`.
+#
+# ⭐ FROM `compiler.chosenBy`, NOT FROM THE PROSE. A consumer asking "why this
+# compiler" reading the status line would be doing the substring matching the
+# machine interface exists to remove — and so would this test.
+by="$(printf '%s' "$j" | jq -r '.data.compiler.chosenBy.requiredBy // ""' | tr -d '\r')"
+was="$(printf '%s' "$j" | jq -r '.data.compiler.chosenBy.replaced // ""' | tr -d '\r')"
+case "$by" in
+  needs-"$want"@*) echo "  ok  and the query names the package that asked ($by)" ;;
+  "")  echo "FAIL: compiler.chosenBy.requiredBy is empty — the document does not"
+       echo "      say a dependency decided this"; exit 1 ;;
+  *)   echo "FAIL: compiler.chosenBy.requiredBy is '$by', expected needs-$want@…"
+       exit 1 ;;
+esac
+if [ -n "$was" ]; then
+    echo "  ok  and names what it displaced ($was)"
+else
+    echo "FAIL: compiler.chosenBy.replaced is empty, yet '$current' was displaced"
+    exit 1
+fi
+
+# ⭐ AND THE HUMAN-FACING LINE STILL CARRIES IT. The token is for programs; the
+# person running the build reads the status line, and a decision reported there
+# without its reason is the rule learned by experiment.
 out="$("$MCPP" build 2>&1 || true)"
 ok=1
 printf '%s\n' "$out" | grep -q "needs-$want"          || ok=0
 printf '%s\n' "$out" | grep -q "mcpp:compiler=$want"  || ok=0
 if [ "$ok" = 1 ]; then
-    echo "  ok  and the status line names the package that asked"
+    echo "  ok  and the status line names it too"
 else
     echo "FAIL: the resolution does not say who required this compiler"
     printf '%s\n' "$out" | head -6 | sed 's/^/        /'

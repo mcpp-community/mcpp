@@ -109,4 +109,48 @@ else
     exit 1
 fi
 
+# ── Half three: a capability row's remedy is not a convention row's ──────
+#
+# ⚠️⚠️ THE TWO ROWS REFUSE UNDER ONE RULE AND FOR TWO REASONS, AND ONE REMEDY
+# DOES NOT SERVE BOTH.
+#
+# A convention pin is cancelled by a graph that supplies the target's system, so
+# "depend on a package that supplies it" is the way out. A capability pin is
+# not — it stays applied whatever the graph supplies, because no other family
+# emits the target. Printed there, that remedy is an instruction the sentence
+# directly above it has already ruled out.
+#
+# ⭐ FOUND BY READING THE MESSAGE, NOT BY A FAILING BUILD. This half exists so
+# the next rewording cannot put it back.
+#
+# ⚠️ The refusal is decided from the VOCABULARY (the row's pin) before any
+# payload is resolved, so this half is host-independent and needs nothing
+# installed.
+printf '[package]\nname    = "app"\nversion = "0.1.0"\n\n[dependencies]\nneeds-gcc = { path = "../needs-gcc" }\n' \
+    > mcpp.toml
+j3="$("$MCPP" why toolchain --target riscv64-none-elf --format json 2>/dev/null)"
+reason3="$(printf '%s' "$j3" | jq -r '.data.reason // "-"' | tr -d '\r')"
+msg3="$(printf '%s' "$j3" | jq -r '.diagnostics[].message' | tr -d '\r')"
+
+if [ "$reason3" != compiler-requirement-conflict ]; then
+    echo "FAIL: a capability row against a gcc requirement gave reason '$reason3'"
+    printf '%s\n' "$msg3" | sed 's/^/        /'
+    exit 1
+fi
+echo "  ok  a capability row refuses a requirement it cannot satisfy"
+
+if printf '%s\n' "$msg3" | grep -qi 'capability'; then
+    echo "  ok  and it says the pin is a capability"
+else
+    echo "FAIL: the refusal does not say the row's pin is a capability"
+    printf '%s\n' "$msg3" | sed 's/^/        /'
+    exit 1
+fi
+if printf '%s\n' "$msg3" | grep -q "supplies this target's system"; then
+    echo "FAIL: the remedy offers to supply the system, which a capability pin ignores"
+    printf '%s\n' "$msg3" | sed 's/^/        /'
+    exit 1
+fi
+echo "  ok  and it does not offer a remedy a capability pin ignores"
+
 echo "OK: a stated compiler outranks the graph and two requirements do not stack"

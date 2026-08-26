@@ -45,6 +45,10 @@
   | 已有 gcc 默认的机器 | 拒绝,要求改全局默认 | 装/用 llvm,`config.toml` 不动 |
   | 什么都没装的机器 | 装 gcc → 持久化 gcc → 再拒绝 | 首次运行分支根本不进,直接装 llvm |
 
+  ⭐ 状态行点名是哪个包要求的、顶掉了什么;`why toolchain --format json` 新增
+  `compiler.chosenBy = {origin, requiredBy, replaced}`,让「为什么是 llvm」不必去
+  解析那行提示 —— 那正是机器接口存在的理由所要消除的字符串匹配。
+
   拒绝只剩一种局面:工程自己在 `[toolchain]` 或 `[target.X]` 写下了相反的编译器。
   ⚠️ 那种局面里全局默认与本次构建无关,因此原来那条 `mcpp toolchain default llvm`
   的建议**连问题都解决不了**,已改为指向那条陈述本身。两个包要求不同的族则是错误

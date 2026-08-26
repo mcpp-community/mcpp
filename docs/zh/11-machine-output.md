@@ -231,10 +231,26 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `requested` | `{target, toolchain}` —— 问的是什么 |
 | `status` | `ok` 或 `refused` |
 | `reason` | 拒绝的记号,或 `none` |
-| `compiler` | `{family, version, driver}` —— 真正会跑的驱动器 |
+| `compiler` | `{family, version, driver, chosenBy}` —— 真正会跑的驱动器,以及为什么是它 |
 | `triple` | `{requested, toolchain, llvm}` |
 | `cLibrary` | `{mode, path, origin, suppliesTarget}`;`mode` 取 `sysroot` / `payload-first` / `none`,`origin` 取 `payload` / `subos` / `host` / `none` |
 | `layers[]` | 目标侧五层:`{layer, interface, impl, origin, subset}` |
+
+⭐ **`compiler.chosenBy` 回答「为什么是它」。** `{origin, requiredBy, replaced}`
+—— `origin` 与构建状态行用的是同一句话(`[toolchain] in mcpp.toml`、
+`your default`、`target default`、`required by the dependency graph`、
+`first-run default`)。当某条 `requires = ["mcpp:compiler=…"]` 做了决定时,
+`requiredBy` 点名那个包,`replaced` 点名被顶掉的那个 spec;没有发生时两者都为空。
+
+```jsonc
+"compiler": { "family": "clang", "version": "22.1.8", "driver": "…/clang++",
+              "chosenBy": { "origin":     "required by the dependency graph",
+                            "requiredBy": "openkal-llvm-runtime@0.1.3",
+                            "replaced":   "gcc@16.1.0" } }
+```
+
+没有它,要问「为什么」的消费方只能去解析状态行 —— 而那正是这份文档存在的理由所要
+消除的字符串匹配。
 
 ⚠️ **`cLibrary` 与 `layers[].c-abi` 回答的是两个问题,`suppliesTarget` 说明哪一个
 管用。** `cLibrary` 描述的是**载荷**的链接模型 —— 一份由载荷供给的 C 库会用到的

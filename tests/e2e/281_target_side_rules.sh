@@ -54,8 +54,25 @@ out="$(MCPP_TOOLCHAIN=gcc@16.1.0 "$MCPP" build 2>&1)" || rc=$?
 [[ "$rc" -ne 0 ]] || { echo "a requirement gcc does not meet was accepted:"; echo "$out"; exit 1; }
 grep -q "requires the compiler to be" <<< "$out" || {
     echo "the refusal does not name the requirement:"; echo "$out"; exit 1; }
-grep -q "mcpp toolchain default" <<< "$out" || {
+# ⚠️ THE NEXT STEP MUST BE ONE THAT WOULD ACTUALLY WORK, AND UNTIL 2026.8.26.2
+# THE FIRST ONE OFFERED WAS `mcpp toolchain default llvm`.
+#
+# That is a GLOBAL change — the default for every project on the machine —
+# printed because ONE project's dependency asked. And since the graph's
+# requirement is now applied wherever mcpp's own answer was revisable, the only
+# way to reach this refusal is a compiler the project STATED (here,
+# `MCPP_TOOLCHAIN`). In that situation the global default is not what is being
+# used, so changing it fixes nothing: the advice has to name the statement that
+# decided.
+grep -q "remove it" <<< "$out" || {
     echo "the refusal names no next step:"; echo "$out"; exit 1; }
+# ⚠️ `if`, NOT `grep … && { … }`. Under `set -e` a trailing `&&` list whose
+# left side fails takes the script down — and here grep FAILING is the passing
+# case. This repo has paid for that shape more than once.
+if grep -q "mcpp toolchain default" <<< "$out"; then
+    echo "the refusal offers a global change that would not fix this failure:"
+    echo "$out"; exit 1
+fi
 # The evidence the decision rests on must be printed even though the compiler
 # layer comes from the payload and is suppressed in an ordinary report.
 grep -qE "^\s+compiler\s+gcc" <<< "$out" || {

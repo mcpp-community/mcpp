@@ -40,25 +40,46 @@ probe() {   # → "<cabi-origin> <suppliesTarget>"
 # ⚠️ A `null` HERE IS NOT A FAILING ASSERTION, IT IS AN ABSENT ONE. Without
 # this check the comparisons below would read "null" on both sides and agree.
 printf '[package]\nname    = "clibprobe"\nversion = "0.1.0"\n' > mcpp.toml
-raw="$("$MCPP" why toolchain --format json 2>/dev/null | tr -d '\r' \
-       | jq -r '.data.cLibrary.suppliesTarget // "MISSING"')"
-if [ "$raw" = MISSING ]; then
-    echo "FAIL: cLibrary.suppliesTarget is absent — the document still cannot say"
-    echo "      which of its two C-library answers governs"
+base="$("$MCPP" why toolchain --format json 2>/dev/null | tr -d '\r')"
+basereason="$(printf '%s' "$base" | jq -r '.data.reason // "QUERY-FAILED"')"
+if [ "$basereason" != none ]; then
+    echo "FAIL: the query refused ('$basereason') on a dependency-free project"
+    printf '%s' "$base" | jq -r '.diagnostics[].message' | sed 's/^/        /'
     exit 1
 fi
-echo "  ok  the query says which of its two C-library answers governs"
+# ⚠️⚠️ `has`, NOT `// "MISSING"`. jq's `//` returns its right side when the left
+# is null OR FALSE — so `"suppliesTarget": false`, which is a perfectly good
+# answer, read as absent. Measured on windows-x86_64: the field was there and
+# this check reported it missing.
+if printf '%s' "$base" | jq -e '.data.cLibrary | has("suppliesTarget")' >/dev/null; then
+    echo "  ok  the query says which of its two C-library answers governs"
+else
+    echo "FAIL: cLibrary.suppliesTarget is absent — the document still cannot say"
+    echo "      which of its two C-library answers governs"
+    printf '%s' "$base" | jq -c '.data.cLibrary' | sed 's/^/        /'
+    exit 1
+fi
 
-# ── Half two: with no graph, the payload governs ─────────────────────────
+# ── Half two: the control — with no graph, the payload is not denied ─────
+#
+# ⚠️ THE CLAIM IS SELF-CONSISTENCY, NOT A PARTICULAR VALUE. `suppliesTarget` is
+# also false when there is no payload C-library model at all (`mode: none`),
+# which is a legitimate state on some hosts. What must never happen is
+# `suppliesTarget: false` while the c-abi layer says the payload supplied it.
 read -r origin supplies <<EOF
 $(probe)
 EOF
-if [ "$origin" = payload ] && [ "$supplies" = true ]; then
-    echo "  ok  with no dependency graph the payload supplies the C library"
-else
-    echo "FAIL: no graph, yet c-abi origin '$origin' and suppliesTarget '$supplies'"
+mode="$(printf '%s' "$base" | jq -r '.data.cLibrary.mode')"
+if [ "$origin" = graph ]; then
+    echo "FAIL: a project with no dependencies took its c-abi from the graph"
     exit 1
 fi
+if [ "$supplies" = false ] && [ "$mode" != none ]; then
+    echo "FAIL: the payload has a link model ('$mode') and the c-abi is '$origin',"
+    echo "      yet cLibrary says it does not supply the target"
+    exit 1
+fi
+echo "  ok  with no dependency graph the two answers agree (mode '$mode', c-abi '$origin')"
 
 # ── Half three: with a graph, it says so ─────────────────────────────────
 #
@@ -80,13 +101,24 @@ printf '[package]\nname    = "clibprobe"\nversion = "0.1.0"\n\n[dependencies]\nf
 # straight to the skip when `origin2` was empty — and empty is what a FAILED
 # query produces, not only an inapplicable one. A criterion whose "no" and whose
 # "could not measure" print the same line asserts nothing.
-reason2="$("$MCPP" why toolchain --format json 2>/dev/null | tr -d '\r' \
-           | jq -r '.data.reason // "QUERY-FAILED"')"
+doc2="$("$MCPP" why toolchain --format json 2>/dev/null | tr -d '\r')"
+reason2="$(printf '%s' "$doc2" | jq -r '.data.reason // "QUERY-FAILED"')"
 if [ "$reason2" != none ]; then
-    echo "FAIL: the query refused ('$reason2') where it had to answer"
-    "$MCPP" why toolchain --format json 2>/dev/null | tr -d '\r' \
-      | jq -r '.diagnostics[].message' | sed 's/^/        /'
-    exit 1
+    # ⚠️ NAMED, NOT SILENT. A musl C library over this host's own target is not
+    # a combination every host can stack — on an MSVC-ABI host the layering
+    # check answers first, and that is a different question correctly answered.
+    # Printing the reason is what keeps this distinguishable from a defect;
+    # a bare `exit 0` here would make the file's conclusion unreachable and
+    # unremarked.
+    # ⚠️⚠️ AND IT DOES NOT PRINT THE CONCLUSION LINE. The skip means the central
+    # claim was NOT checked here; emitting `OK:` anyway would make CI's
+    # "did it reach its conclusion" step accept a file that asserted two thirds
+    # of itself. The skip is granted by REASON in the workflow, and
+    # linux-x86_64 is the denominator that must run the whole thing.
+    echo "SKIP: this host refuses a musl c-abi over its own target ('$reason2'),"
+    echo "      so there is no two-answer document to check here"
+    printf '%s' "$doc2" | jq -r '.diagnostics[].message' | head -3 | sed 's/^/        /'
+    exit 0
 fi
 read -r origin2 supplies2 <<EOF
 $(probe)

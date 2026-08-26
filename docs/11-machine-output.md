@@ -262,10 +262,27 @@ It resolves and reports; it does not build. `data` is:
 | `requested` | `{target, toolchain}` — what was asked for |
 | `status` | `ok` or `refused` |
 | `reason` | a refusal token, or `none` |
-| `compiler` | `{family, version, driver}` — the driver that would run |
+| `compiler` | `{family, version, driver, chosenBy}` — the driver that would run, and why |
 | `triple` | `{requested, toolchain, llvm}` |
 | `cLibrary` | `{mode, path, origin, suppliesTarget}` — `mode` is `sysroot` / `payload-first` / `none`; `origin` is `payload` / `subos` / `host` / `none` |
 | `layers[]` | the five target-side layers: `{layer, interface, impl, origin, subset}` |
+
+⭐ **`compiler.chosenBy` answers "why this one".** `{origin, requiredBy,
+replaced}` — `origin` is the same phrase the build's status line uses
+(`[toolchain] in mcpp.toml`, `your default`, `target default`,
+`required by the dependency graph`, `first-run default`). `requiredBy` names the
+package when a `requires = ["mcpp:compiler=…"]` decided it, and `replaced` names
+the spec that was displaced; both are empty when nothing was.
+
+```jsonc
+"compiler": { "family": "clang", "version": "22.1.8", "driver": "…/clang++",
+              "chosenBy": { "origin":     "required by the dependency graph",
+                            "requiredBy": "openkal-llvm-runtime@0.1.3",
+                            "replaced":   "gcc@16.1.0" } }
+```
+
+Without it a consumer asking *why* would have to parse the status line — the
+substring matching this document exists to remove.
 
 ⚠️ **`cLibrary` and `layers[].c-abi` answer two questions, and `suppliesTarget`
 says which one governs.** `cLibrary` describes the *payload's* link model — the

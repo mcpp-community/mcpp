@@ -886,10 +886,20 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
 
     data["status"] = "ok";
     data["reason"] = "none";
+    // ⭐ AND WHY THIS ONE. The build's status line says it; a consumer of the
+    // machine interface asking "what would this resolve to, and why" would
+    // otherwise have to parse that prose — the substring matching this document
+    // exists to remove. `requiredBy` and `replaced` are empty unless something
+    // was required and something was displaced.
     data["compiler"] = {
         {"family",  std::string(tc.compiler_name())},
         {"version", tc.version},
         {"driver",  tc.binaryPath.string()},
+        {"chosenBy", {
+            {"origin",     ctx->compilerChoice.origin},
+            {"requiredBy", ctx->compilerChoice.requiredBy},
+            {"replaced",   ctx->compilerChoice.replaced},
+        }},
     };
     data["triple"] = {
         {"requested", std::string(target)},
