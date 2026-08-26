@@ -21,6 +21,8 @@ import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
 import mcpp.toolchain.post_install;
 import mcpp.ui;
+import mcpp.wire;
+import mcpp.libs.json;
 import mcpp.log;
 import mcpp.platform.xlings;
 import mcpp.platform.xlings.runtime_selection;
@@ -423,7 +425,21 @@ bool version_greater(const std::string& a, const std::string& b) {
     return b < a;   // stable tie-break for non-numeric tails
 }
 
-export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
+// ⭐⭐ `json` SUPPRESSES EVERY HUMAN LINE AND EMITS THE SAME TWO TABLES AS DATA.
+//
+// The two tables here — installed toolchains, and target rows with their status
+// — are what `tests/matrix/scan.sh` and four e2e tests need to know before they
+// can ask anything. All of them read them by parsing this function's aligned
+// columns with awk, which makes a column width a load-bearing part of the test
+// suite. Two versions of one test disagreed on which column held the version,
+// and the one that read `$NF` picked up `(default)` — a value that appears on
+// exactly the row most likely to be chosen.
+//
+// ⚠️ ONE SOURCE, TWO RENDERINGS. The rows are built once above and rendered
+// either way at the bottom; a second enumeration for the machine path is how
+// the two come to disagree about what is installed.
+export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
+                          bool json = false) {
     auto pkgsDir = cfg.xlingsHome() / "data" / "xpkgs";
     auto effective = effective_default_toolchain(cfg);
 
@@ -440,6 +456,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
             defTarget = *t;
     }
     auto hostT = mcpp::toolchain::triple::host_triple();
+    nlohmann::json jsonToolchains = nlohmann::json::array();
 
     // ── enumerate installed payloads → (identity, version, frontend) ────
     struct Payload {
@@ -492,16 +509,22 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
         std::println("(no toolchains installed — run `mcpp toolchain install gcc 16.1.0` "
                      "or just `mcpp build` to auto-install the default)");
     } else {
-        std::println("Toolchains:");
+        if (!json) std::println("Toolchains:");
         for (auto& f : famvers) {
             bool isDefault = defSpec
                 && mcpp::toolchain::spec_matches_payload(*defSpec, { f.family, {} }, f.version);
+            jsonToolchains.push_back({
+                {"family",  std::string(mcpp::toolchain::family_name(f.family))},
+                {"version", f.version},
+                {"default", isDefault},
+            });
+            if (json) continue;
             std::println("  {:<3}{:<22}{}",
                 isDefault ? "*" : "",
                 std::format("{} {}", mcpp::toolchain::family_name(f.family), f.version),
                 isDefault ? "  (default)" : "");
         }
-        if (effective.fromProject) {
+        if (!json && effective.fromProject) {
             std::println("  (* = effective toolchain from project mcpp.toml "
                          "[toolchain]; global default is '{}')",
                          cfg.defaultToolchain.empty() ? "<none>"
@@ -512,7 +535,37 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
     // ─── System section (Windows: detected MSVC) ────────────────────────
     // MSVC is never in xpkgs — it's located on the machine. Show it so
     // `toolchain list` reflects everything `toolchain default` accepts.
-    if (mcpp::platform::is_windows) {
+    //
+    // ⚠️ It joins `toolchains` on the machine path rather than getting a
+    // section of its own: to a client, "a compiler I can select" is one list,
+    // and where mcpp found it is a property of the entry, not a reason for a
+    // second array.
+    if (mcpp::platform::is_windows && json) {
+        if (auto inst = mcpp::toolchain::msvc::detect_installation())
+            // ⚠️⚠️ `version` MUST BE WHAT `--toolchain` ACCEPTS, AND THIS EMITTED
+            // WHAT cl.exe REPORTS.
+            //
+            // A system Visual Studio is selected as `msvc@system`; its COMPILER
+            // version is `19.44.35228`, which `parse_toolchain_spec` rejects by
+            // design — it "names a COMPILER version, not a toolset".
+            //
+            // ⭐ THE MACHINE INTERFACE HAS TO ROUND-TRIP. A consumer reads
+            // `family` and `version`, joins them, and hands the result back;
+            // `tests/matrix/scan.sh` did exactly that and every msvc cell came
+            // back `build-failed` with mcpp refusing its own output. Measured on
+            // windows-2022, both modes.
+            //
+            // The human-facing number keeps a field of its own, so nothing is
+            // lost — it simply stops pretending to be a spec.
+            jsonToolchains.push_back({
+                {"family",         "msvc"},
+                {"version",        "system"},
+                {"displayVersion", inst->display_version()},
+                {"default", defSpec
+                            && defSpec->family == mcpp::toolchain::Family::Msvc},
+                {"source",  "system"},
+            });
+    } else if (mcpp::platform::is_windows) {
         if (auto inst = mcpp::toolchain::msvc::detect_installation()) {
             bool isDefault = defSpec
                 && defSpec->family == mcpp::toolchain::Family::Msvc;
@@ -536,6 +589,20 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
         std::string target;      // canonical triple
         std::string note;        // "host" / "static" / "PE" / "cross" tags
         std::string toolchain;   // "gcc 16.1.0" or "—"
+        // ⚠️⚠️ `toolchain` MEANS TWO DIFFERENT THINGS DEPENDING ON THE ROW, and
+        // that is fine for a column a person reads and wrong for a field a
+        // program reads. On an INSTALLED row it is the payload that is here; on
+        // a vocabulary row it is the target table's convention pin. A row can
+        // have the first and no second — `x86_64-linux-gnu` has an installed
+        // gcc and no convention at all.
+        //
+        // Measured 2026-08-26: e2e 298 selected "a row whose pin is a gcc" from
+        // this field and got `x86_64-linux-gnu` on the CI runner, where the pin
+        // is empty. It then asserted a refusal that correctly did not happen.
+        //
+        // ⭐ So the convention travels in its own field, empty when there is
+        // none. Same defect family as the release this was written for.
+        std::string pin;         // the target table's convention pin, or empty
         std::string status;      // installed | available | planned
         bool        isDefault = false;
         int         rank = 0;    // display order: installed < available < planned
@@ -567,6 +634,8 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
         r.target    = t.str();
         r.note      = note_for(t);
         r.toolchain = tcLabel;
+        for (auto const& info : mcpp::toolchain::triple::known_targets())
+            if (info.canonical == r.target) { r.pin = std::string(info.pin); break; }
         r.status    = "installed";
         r.rank      = 0;
         r.isDefault = defSpec
@@ -629,6 +698,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
         std::string pin(info.pin);
         if (auto at = pin.find('@'); at != std::string::npos) pin[at] = ' ';
         r.toolchain = pin.empty() ? "—" : pin;
+        r.pin       = std::string(info.pin);
         // Three answers, not two. "available" means a payload here produces it;
         // "via dependency graph" means the compiler is here and the system has
         // to come from packages — a different thing to do next, so a different
@@ -645,6 +715,28 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg) {
             return a.target < b.target;
         });
 
+    nlohmann::json jsonTargets = nlohmann::json::array();
+    for (auto& r : targetRows)
+        jsonTargets.push_back({
+            {"target",    r.target},
+            {"note",      r.note},
+            {"toolchain", r.toolchain},
+            {"pin",       r.pin},
+            {"status",    r.status},
+            {"default",   r.isDefault},
+        });
+    if (json) {
+        mcpp::wire::emit({
+            .kind    = "mcpp.toolchain.list",
+            .effects = {},
+            .data    = nlohmann::json{
+                {"host",       mcpp::toolchain::triple::host_triple().str()},
+                {"toolchains", jsonToolchains},
+                {"targets",    jsonTargets},
+            },
+        });
+        return 0;
+    }
     if (!targetRows.empty()) {
         std::println("");
         std::println("Targets:");

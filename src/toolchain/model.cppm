@@ -427,6 +427,33 @@ std::vector<std::string> graph_runtime_compile_flags(const Toolchain& tc) {
     if (!tc.targetCxxRuntime) return out;
     auto t = triple::parse(tc.targetTriple);
     if (!t) return out;
+    // ⚠️⚠️ AND aarch64's RUNTIME LIBRARY CHOICE, WHICH IS A CODEGEN FACT THERE.
+    //
+    // On aarch64 `--rtlib=compiler-rt` is not a link-time preference: it moves
+    // the target-feature set. Measured by `openkal-llvm-runtime`, whose own
+    // manifest records it:
+    //
+    //   --target=aarch64-…-musl                      -fmv +fp-armv8 +neon +v8a
+    //   --target=aarch64-…-musl --rtlib=compiler-rt  +fp-armv8 +neon +outline-atomics
+    //
+    // The package declared it in `std-module-flags`, which reaches the std
+    // module's command and nothing else, so `std.pcm` and every consumer TU
+    // disagreed. Measured on macos-14 building `aarch64-linux-musl` over the
+    // graph:
+    //
+    //   error: precompiled file 'std.pcm' was compiled with the target feature
+    //          '+outline-atomics' but the current translation unit is not
+    //   error: current translation unit is compiled with the target feature
+    //          '-fmv' but the precompiled file 'std.pcm' was not
+    //
+    // ⭐ SAME DEFECT AS `-fdwarf-exceptions`, ONE FLAG LATER — see the note in
+    // hostflags.cppm, which describes that one in these words: "its objects
+    // agreed with each other and nothing else did". A property of the graph
+    // cannot be declared by one package for one command.
+    //
+    // ⚠️ x86_64 HAS NO SUCH FEATURE, so both sides listed nothing there and the
+    // defect was invisible until a second architecture was built.
+    if (t->arch == "aarch64") out.emplace_back("--rtlib=compiler-rt");
     if (t->is_pe()) out.emplace_back("-fdwarf-exceptions");
     if (t->is_pe() || t->os == "macos") out.emplace_back("-femulated-tls");
     // ⭐⭐ MACH-O ONLY, AND THE REASON IS THAT WEAK-DEF IS A RUN-TIME MECHANISM

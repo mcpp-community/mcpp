@@ -229,3 +229,66 @@ mcpp cache list --format json
 ```
 
 `data` is `{root, entries[]}`, the same document `--json` prints bare.
+
+### `mcpp.toolchain.list` — what is installed, and which targets this host serves
+
+```
+mcpp toolchain list --format json
+```
+
+`data` is `{host, toolchains[], targets[]}`. A toolchain is
+`{family, version, default}` — plus `source: "system"` for a Visual Studio
+installation, which is located on the machine rather than installed by mcpp. A
+target row is `{target, note, toolchain, pin, status, default}`, and `status` is
+one of `installed` / `available` / `via dependency graph` / `planned`.
+
+⚠️ **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
+the row is associated with — the installed payload on an installed row, the
+convention on a vocabulary row. `pin` is only ever the target table's
+convention, and is empty for a row that has none. `x86_64-linux-gnu` has an
+installed gcc and no convention at all, so selecting "rows whose convention is a
+gcc" must read `pin`.
+
+### `mcpp.why.toolchain` — what a build for one pair would resolve to
+
+```
+mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
+```
+
+It resolves and reports; it does not build. `data` is:
+
+| field | |
+|---|---|
+| `requested` | `{target, toolchain}` — what was asked for |
+| `status` | `ok` or `refused` |
+| `reason` | a refusal token, or `none` |
+| `compiler` | `{family, version, driver}` — the driver that would run |
+| `triple` | `{requested, toolchain, llvm}` |
+| `cLibrary` | `{mode, path, origin}` — `mode` is `sysroot` / `payload-first` / `none`; `origin` is `payload` / `subos` / `host` / `none` |
+| `layers[]` | the five target-side layers: `{layer, interface, impl, origin, subset}` |
+
+⭐ **`reason` is a token, not a sentence.** The refusal's message is still
+written for a person and still names the target, the rule and the way out — but
+a program classifying the outcome reads `reason`:
+
+| `reason` | |
+|---|---|
+| `tier-planned` | the row exists in the vocabulary; nothing is wired yet |
+| `host-cannot-serve` | no payload here, and no dependency supplied the system |
+| `capability-pin` | the row's toolchain is a capability, not a preference |
+| `convention-unreplaced` | the convention was overridden and nothing replaced it |
+| `os-mismatch` | the requested and resolved triples name different systems |
+| `layer-requirement` | a package requires a layer the resolution did not give it |
+| `layer-ordering` | the five layers do not stack |
+| `other` | a refusal whose branch has not been given a token yet |
+
+⚠️ **Exit 0 whenever the question was answered, including "refused".** "Would
+this build, and if not why" is answered successfully by "no, because the row's
+pin is a capability". A non-zero exit means the query itself could not run.
+
+⚠️ **Its effects are broad on purpose.** `--protocol-version` lists `network`,
+`write-global-cache` and `exec-build-script` for this command: the answer comes
+from the same resolution a build performs, which may fetch packages, install a
+payload and run a dependency's build program. A client gates on that table
+*before* running anything, so an omission would be a safety claim that is not
+true.

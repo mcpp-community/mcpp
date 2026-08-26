@@ -15,6 +15,9 @@ import mcpp.source_kind;
 import mcpp.manifest;
 import mcpp.bmi_cache.maintenance;
 import mcpp.build.prepare;
+import mcpp.build.refusal;
+import mcpp.targetside;
+import mcpp.wire;
 import mcpp.build.plan;
 import mcpp.build.runtime_validation;
 import mcpp.config;
@@ -26,12 +29,14 @@ import mcpp.home;
 import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.platform.process;
+import mcpp.platform.env;
 import mcpp.platform.elf_runtime;
 import mcpp.pm.index_refresh;   // staleness_note for `mcpp why deps`
 import mcpp.project;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
+import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.stdmod;
 import mcpp.toolchain.abi;
 import mcpp.ui;
@@ -769,6 +774,189 @@ int print_stored_runtime_resolution() {
 }
 
 // `mcpp why [topic]` / `mcpp resolve --explain`.
+
+// ⭐⭐ THE SAME RESOLUTION `why toolchain` PRINTS, AS DATA.
+//
+// A build for one (target, toolchain) pair resolves five layers, a driver, a
+// triple and a sysroot, and then either proceeds or refuses. Every one of those
+// is a finite value, and until this function the only way to read them from
+// outside was to match the sentences mcpp prints for a person. The cost of that
+// was measured on 2026-08-26: rewording one refusal turned an e2e assertion
+// into a no-op, silently, in the same session that wrote it.
+//
+// ⚠️ EXIT 0 WHENEVER THE QUESTION WAS ANSWERED, INCLUDING WHEN THE ANSWER IS
+// "REFUSED". This is a query: "would this build, and if not why" is answered
+// successfully by "no, because the row's pin is a capability". Overloading the
+// exit code would give a client exactly the ambiguity the envelope exists to
+// remove — and `data.status` is unambiguous. A non-zero exit here means the
+// query itself could not run.
+//
+// It builds nothing. `prepare_build` stops before any compile, which is also
+// why the target matrix can afford to ask it for every cell.
+export int why_toolchain_json(std::string_view target, std::string_view tcSpec) {
+    mcpp::build::BuildOverrides ov;
+    ov.target_triple = std::string(target);
+    // ⚠️ `MCPP_TOOLCHAIN`, not a field on the overrides — that is the channel
+    // `--toolchain` already uses, and `prepare_build` reads it as a
+    // user-explicit declaration. Adding a second way in would give the two
+    // spellings different provenance, and provenance is exactly what the
+    // convention/capability distinction turns on.
+    //
+    // ⚠️ RESTORED AFTERWARDS. This is a library function; leaving a declared
+    // toolchain in the environment would make the NEXT thing this process does
+    // inherit a compiler nobody asked it for.
+    // ⭐ `ScopedEnv` already exists for exactly this and restores the prior
+    // value, including "there was none".
+    std::optional<mcpp::platform::env::ScopedEnv> tcGuard;
+    if (!tcSpec.empty())
+        tcGuard.emplace("MCPP_TOOLCHAIN", std::string(tcSpec));
+
+    // ⚠️⚠️ CLEARED BEFORE THE CALL, NOT ONLY READ AFTER IT.
+    //
+    // The sink is per-thread and `prepare_build` recurses for tool
+    // provisioning. Reading it afterwards without clearing first means a code
+    // recorded by an EARLIER query — or by a nested sub-build of a previous
+    // one — can be reported as this query's reason. A stale reason is worse
+    // than none: it is a specific, plausible, wrong answer.
+    (void)mcpp::build::refusal::take();
+
+    // ⚠️⚠️ STDOUT BELONGS TO THE ENVELOPE, AND `prepare_build` NARRATES.
+    //
+    // `Resolving toolchain` / `Resolved …` / `Target … → …` are status lines
+    // for a person, and they go to stdout. A client is told to detect the
+    // protocol BY PARSING stdout — see the module comment in mcpp.wire — so
+    // three lines of prose ahead of the JSON is not a cosmetic problem, it is
+    // the envelope failing to arrive. Measured on the first run of this
+    // function: `json.tool` refused at `line 1 column 4`.
+    //
+    // Restored afterwards rather than left set: this is a library function and
+    // the process may go on to do something that should narrate.
+    const bool wasQuiet = mcpp::ui::is_quiet();
+    mcpp::ui::set_quiet(true);
+    struct QuietGuard {
+        bool prev;
+        ~QuietGuard() { mcpp::ui::set_quiet(prev); }
+    } quietGuard{wasQuiet};
+
+    nlohmann::json data;
+    data["requested"] = {
+        {"target",    std::string(target)},
+        {"toolchain", std::string(tcSpec)},
+    };
+
+    auto ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false,
+                                          /*includeDevDeps=*/false, {}, ov);
+    std::vector<mcpp::wire::Diagnostic> diags;
+    if (!ctx) {
+        // ⚠️ `take()` AFTER the call and only here: a site that recorded a code
+        // and then did not refuse would otherwise leak it into the next query.
+        // ⚠️⚠️ `None` MEANS "NOTHING RECORDED", AND HERE THAT IS NOT "no reason"
+        // — the build demonstrably refused. Reporting `none` beside
+        // `refused` gives one word two meanings, which is the defect this
+        // whole release is about, reintroduced in the machinery built to
+        // detect it. Measured: `gcc` + `openkal-llvm-runtime` refused through
+        // a site that had no code, and the matrix recorded
+        // `unsupported / none`.
+        //
+        // ⭐ `other` is a visible admission: a refusal exists and its branch
+        // has not been named yet.
+        auto code = mcpp::build::refusal::take();
+        if (code == mcpp::build::refusal::Code::None)
+            code = mcpp::build::refusal::Code::Other;
+        data["status"] = "refused";
+        data["reason"] = std::string(mcpp::build::refusal::name(code));
+        diags.push_back({
+            .code     = std::format("target.{}",
+                                    mcpp::build::refusal::name(code)),
+            .severity = mcpp::wire::Severity::Error,
+            .message  = ctx.error(),
+        });
+        mcpp::wire::emit({
+            .kind        = "mcpp.why.toolchain",
+            .effects     = { mcpp::wire::Effect::ReadProject },
+            .data        = data,
+            .diagnostics = diags,
+        });
+        return 0;
+    }
+    (void)mcpp::build::refusal::take();
+
+    const auto& tc = ctx->tc;
+    const auto& ts = ctx->plan.targetSide;
+
+    data["status"] = "ok";
+    data["reason"] = "none";
+    data["compiler"] = {
+        {"family",  std::string(tc.compiler_name())},
+        {"version", tc.version},
+        {"driver",  tc.binaryPath.string()},
+    };
+    data["triple"] = {
+        {"requested", std::string(target)},
+        {"toolchain", tc.targetTriple},
+        {"llvm",      ts.llvmTriple},
+    };
+
+    // ⭐⭐ THE C LIBRARY MODEL, NOT `tc.sysroot`.
+    //
+    // `tc.sysroot` is what the driver reports for `-print-sysroot`, and it is
+    // frequently empty for a toolchain that nonetheless receives an explicit
+    // `--sysroot` on every command line. The first version of this reported it
+    // and disagreed with the build: the query said `none` while build.ninja
+    // carried `--sysroot=…/registry/subos/default`.
+    //
+    // `resolve_link_model` is the function the flag emitter itself calls, and
+    // it is a pure function of the toolchain — so asking it here is asking the
+    // same question of the same authority rather than re-deriving an answer
+    // that can drift from the one the build uses.
+    const auto lm = mcpp::toolchain::resolve_link_model(tc);
+    auto path_origin = [](const std::filesystem::path& p) -> std::string_view {
+        if (p.empty()) return "none";
+        const auto sp = p.generic_string();
+        if (sp.find("registry/data/xpkgs") != std::string::npos) return "payload";
+        if (sp.find("registry/subos")      != std::string::npos) return "subos";
+        return "host";
+    };
+    const auto& srPath =
+        lm.mode == mcpp::toolchain::CLibMode::Sysroot ? lm.sysroot
+                                                      : lm.crtDir;
+    data["cLibrary"] = {
+        {"mode",   lm.mode == mcpp::toolchain::CLibMode::Sysroot      ? "sysroot"
+                 : lm.mode == mcpp::toolchain::CLibMode::PayloadFirst ? "payload-first"
+                                                                      : "none"},
+        {"path",   srPath.string()},
+        {"origin", std::string(path_origin(srPath))},
+    };
+
+    auto layer = [](std::string_view label,
+                    const mcpp::targetside::Layer& l) {
+        return nlohmann::json{
+            {"layer",     std::string(label)},
+            {"interface", l.interfaceName},
+            {"impl",      l.impl},
+            {"origin",    l.absent()
+                            ? std::string("none")
+                            : std::string(mcpp::targetside::origin_name(l.origin))},
+            {"subset",    l.subset},
+        };
+    };
+    data["layers"] = nlohmann::json::array({
+        layer("compiler",         ts.compiler),
+        layer("compiler-runtime", ts.compilerRuntime),
+        layer("kernel-abi",       ts.kernelAbi),
+        layer("c-abi",            ts.cAbi),
+        layer("c++-abi",          ts.cxx),
+    });
+
+    mcpp::wire::emit({
+        .kind        = "mcpp.why.toolchain",
+        .effects     = { mcpp::wire::Effect::ReadProject },
+        .data        = data,
+        .diagnostics = diags,
+    });
+    return 0;
+}
+
 export int why_report(const std::string& topic) {
     const bool all = topic.empty() || topic == "all";
 

@@ -13,6 +13,7 @@ import mcpp.config;
 import mcpp.fetcher.progress;
 import mcpp.toolchain.lifecycle;
 import mcpp.ui;
+import mcpp.wire;
 
 namespace mcpp::cli {
 
@@ -36,8 +37,18 @@ export int cmd_toolchain(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::string targetArg;
     if (auto t = sub_parsed.value("target")) targetArg = *t;
 
-    if (subname == "list")
-        return mcpp::toolchain::toolchain_list(*cfg);
+    if (subname == "list") {
+        bool json = false;
+        if (auto f = sub_parsed.value("format")) {
+            if (!mcpp::wire::parse_format(*f)) {
+                std::println(stderr, "error: {}",
+                             mcpp::wire::unsupported_format(*f));
+                return 2;
+            }
+            json = true;
+        }
+        return mcpp::toolchain::toolchain_list(*cfg, json);
+    }
     if (subname == "install")
         return mcpp::toolchain::toolchain_install(
             *cfg, sub_parsed.positional(0), sub_parsed.positional(1), targetArg);

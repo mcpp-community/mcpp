@@ -425,7 +425,23 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     // Family::Gcc — the target decides the payload.
     const auto& t = spec.target;
 
-    if (t.is_musl()) {
+    // ⚠️⚠️ `&& t.os == "linux"` — AND THE PARAGRAPH BELOW ALREADY SAID SO.
+    //
+    // "Canonical linux-musl triples coincide with the GNU tool spelling" is a
+    // statement about linux-musl, and the condition asked only whether the C
+    // library is musl. `x86_64-windows-musl` was added later and walked in.
+    // Measured 2026-08-26 on a Linux x86_64 host:
+    //
+    //     $ mcpp build --target x86_64-windows-musl   ([toolchain] gcc@16.1.0)
+    //       fetcher: resolve: target='xim:musl-gcc@16.1.0'
+    //       error: toolchain payload 'xim:musl-gcc@16.1.0' has no known C++
+    //              frontend in …/xim-x-musl-gcc/16.1.0/bin
+    //
+    // `native` read `t.arch == host_arch` and got true, so a PE target resolved
+    // the host's ELF Linux payload. The message names a missing frontend, which
+    // is true of that payload and says nothing about the decision that reached
+    // for it — the same shape as the rest of this release.
+    if (t.is_musl() && t.os == "linux") {
         // Same target, two payload shapes: the host-native `musl-gcc` package
         // (XLINGS_RES picks the host-matching asset) when target arch == host
         // arch, else the triple-named cross package. Canonical linux-musl
@@ -588,10 +604,26 @@ bool host_can_serve(const triple::Triple& target) {
 
     if (target.os == "linux") {
         if constexpr (mcpp::platform::is_linux) {
-            // musl payloads are self-contained, so any arch is reachable; a
-            // glibc target additionally needs the host-native sysroot payloads
-            // (xim:glibc / xim:linux-headers), which only exist for this arch.
-            return target.is_musl() || target.arch == mcpp::platform::host_arch;
+            // ⚠️⚠️ "SELF-CONTAINED" IS ABOUT THE PAYLOAD'S CONTENTS, NOT ABOUT
+            // WHICH HOSTS IT IS PUBLISHED FOR — and this line read it as both.
+            //
+            // A musl payload really does carry its own sysroot, so no host-side
+            // libc is needed. It still has to EXIST for the host running it,
+            // and the cross packages are published per host arch:
+            //
+            //   x86_64-linux-musl-gcc    archs = { "x86_64" }
+            //   aarch64-linux-musl-gcc   archs = { "x86_64", "aarch64" }
+            //
+            // Measured on ubuntu-24.04-arm: `--target x86_64-linux-musl` was
+            // admitted, resolved a package with no aarch64 asset, and failed at
+            // install — `mismatch / build-failed` in the target matrix, twice.
+            //
+            // ⭐ The native row stays reachable on every arch: `musl-gcc`
+            // publishes both, which is why `aarch64-linux-musl` is `ok` there.
+            const bool crossArch = target.arch != mcpp::platform::host_arch;
+            if (target.is_musl())
+                return !crossArch || mcpp::platform::host_arch == "x86_64";
+            return !crossArch;
         }
         // Non-Linux host: only the self-contained musl payloads can work at
         // all (nothing else would find a C library). Today exactly one such
@@ -602,8 +634,38 @@ bool host_can_serve(const triple::Triple& target) {
             && target.is_musl()
             && target.arch == mcpp::platform::host_arch;
     }
-    if (target.is_windows_gnu())
-        return mcpp::platform::is_linux || mcpp::platform::is_windows;
+    // ⚠️ THE mingw CROSS IS PUBLISHED FOR ONE HOST ARCH. `mingw-cross-gcc`
+    // declares `archs = { "x86_64" }`, so a Linux host that is not x86_64
+    // cannot obtain it — measured on ubuntu-24.04-arm, where the row was
+    // listed and its refusal carried no reason at all (`unsupported / other`).
+    if (target.is_windows_gnu()) {
+        if constexpr (mcpp::platform::is_windows) return true;
+        return mcpp::platform::is_linux
+            && mcpp::platform::host_arch == "x86_64";
+    }
+    // ⚠️⚠️ PE + musl HAS NO PAYLOAD ON ANY HOST, INCLUDING WINDOWS.
+    //
+    // `triple::pin_is_capability()` already says so — no gcc emits a PE with a
+    // musl C library, and LLVM cannot spell the triple — and chapter 16 states
+    // it in those words: "A payload for it does not exist on any host; its
+    // system can only come from a dependency graph."
+    //
+    // This line disagreed, on exactly one host. Measured on windows-2022,
+    // payload system:
+    //
+    //     c-abi      musl      (payload)
+    //     c++-abi    msvc-stl  (payload)
+    //     lld-link: error: undefined symbol: __main
+    //     lld-link: error: undefined symbol: __mingw_vfprintf
+    //
+    // — musl's C library, MSVC's STL and MinGW's CRT symbols in one link. On
+    // Linux the same cell already answered `host-cannot-serve`, which is the
+    // right answer everywhere.
+    //
+    // ⭐ The graph path is untouched: this refusal is held and released only
+    // when nothing supplies the target's system, and `graph × windows-musl` is
+    // `ok` on both hosts.
+    if (target.is_pe() && target.is_musl()) return false;
     if (target.os == "windows") return bool(mcpp::platform::is_windows);
     if (target.os == "macos")   return bool(mcpp::platform::is_macos);
 
@@ -624,11 +686,39 @@ bool host_can_serve(const triple::Triple& target) {
 }
 
 std::vector<AvailableIndex> available_toolchain_indexes() {
+    // ⚠️⚠️ NOT EVERY FAMILY EXISTS FOR EVERY (OS, ARCH), AND THIS LIST USED TO
+    // SAY OTHERWISE.
+    //
+    // The branches below are per-OS and there were none per-ARCH, so an aarch64
+    // Linux host was told llvm could be installed. Measured 2026-08-26 against
+    // the index and upstream:
+    //
+    //   xlings-res/llvm 20.1.7 / 22.1.8   no linux-aarch64 asset
+    //   llvm/llvm-project 20.1.7, 21.1.0  no linux-aarch64 asset
+    //   llvm/llvm-project 19.1.7          has one — too old for `import std`
+    //
+    // so `mcpp toolchain install llvm 22.1.8` there is a 404 that this list
+    // promised would work. Same family as the rest of this release: a table
+    // that answers a narrower question than the one it is asked.
+    //
+    // ⭐ THIS IS A POLICY STATEMENT, NOT A COPY OF THE INDEX. It says which
+    // families mcpp SUPPORTS on this host — the same kind of statement `tier`
+    // makes for a target row — and the plan that retires it is
+    // `.agents/docs/2026-08-26-aarch64-linux-ecosystem-closure.md` §P1.
+    //
+    // ⚠️ AND ITS PREMISE IS ASSERTED IN CI, so it cannot outlive its reason.
+    // `ci-target-matrix.yml`'s aarch64 job checks that no linux-aarch64 llvm
+    // asset has appeared; the day one does, that step reds and names this
+    // gate. A deferral nobody rechecks is indistinguishable from a defect.
+    const bool linuxNonX86 =
+        mcpp::platform::is_linux && mcpp::platform::host_arch != "x86_64";
+
     std::vector<AvailableIndex> out{
         { "gcc",      Family::Gcc },
         { "musl-gcc", Family::Gcc },
-        { mcpp::toolchain::llvm::package_name(), Family::Llvm },
     };
+    if (!linuxNonX86)
+        out.push_back({ mcpp::toolchain::llvm::package_name(), Family::Llvm });
     // The Windows-PE gcc payload is host-split at the distribution layer
     // (§4.3); each host lists the package it would actually install.
     if constexpr (mcpp::platform::is_windows) {
@@ -644,7 +734,8 @@ std::vector<AvailableIndex> available_toolchain_indexes() {
         out.push_back({ std::string(mcpp::platform::host_arch) + "-linux-musl-gcc",
                         Family::Gcc });
     } else if constexpr (mcpp::platform::is_linux) {
-        out.push_back({ "mingw-cross-gcc", Family::Gcc });
+        // Same gate: `mingw-cross-gcc` publishes x86_64 only.
+        if (!linuxNonX86) out.push_back({ "mingw-cross-gcc", Family::Gcc });
     }
     return out;
 }

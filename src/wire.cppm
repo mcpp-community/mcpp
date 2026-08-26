@@ -67,10 +67,18 @@ inline constexpr int kEnvelopeVersion = 1;
 // from what comes back.
 struct KindVersion { std::string_view kind; int version; };
 
-inline constexpr std::array<KindVersion, 3> kKinds{{
-    {"mcpp.env",   1},
-    {"mcpp.xpkg",  1},
-    {"mcpp.cache", 1},
+inline constexpr std::array<KindVersion, 5> kKinds{{
+    {"mcpp.env",             1},
+    {"mcpp.xpkg",            1},
+    {"mcpp.cache",           1},
+    // `mcpp why toolchain --format json`: what a build for one (target,
+    // toolchain) pair WOULD resolve to, without building it — the five layers,
+    // the driver, the triple, the C-library model, and either `ok` or a refusal
+    // whose `reason` is a token from mcpp.build.refusal.
+    {"mcpp.why.toolchain",   1},
+    // `mcpp toolchain list --format json`: which toolchains are installed and
+    // which target rows this host serves, with their status.
+    {"mcpp.toolchain.list",  1},
 }};
 
 // What running a command does, beyond writing to stdout.

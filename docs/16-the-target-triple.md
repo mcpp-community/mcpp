@@ -262,7 +262,184 @@ by mcpp, because mcpp's name answers a different question: **which C library**,
 where LLVM's answers **which object ABI**. Both are needed and they are not the
 same string.
 
+## The Compiler And The C Library Are Two Axes
+
+A target names a machine. It does not name who compiles for it, and it does not
+name where its C library comes from — those are two further choices, and the
+same target string means a different build under each.
+
+⚠️ **"From the payload" is not one payload.** It is whichever payload the
+chosen compiler brings, and gcc and clang bring them differently: gcc has one
+payload per target, with a triple-prefixed driver, while one `clang++` emits
+every target it was built with. Measured on one host, one source:
+
+| toolchain | target | driver that ran | c-abi | c++-abi |
+|---|---|---|---|---|
+| `gcc@16.1.0` | `x86_64-linux-musl` | `xim-x-musl-gcc/…/x86_64-linux-musl-g++` | musl | libstdc++ |
+| `gcc@16.1.0` | `x86_64-windows-gnu` | `xim-x-mingw-cross-gcc/…/x86_64-w64-mingw32-g++` | gnu | libstdc++ |
+| `llvm@22.1.8` | `x86_64-linux-musl` | `xim-x-llvm/…/clang++` | musl | libc++ |
+| `llvm@22.1.8` | `x86_64-windows-gnu` | `xim-x-llvm/…/clang++` | gnu | libc++ |
+
+clang does not reach into gcc's payload for a C library, and gcc does not reach
+into clang's. Each brings its own.
+
+### Choosing the other compiler means supplying the other C library
+
+Each hosted row names a toolchain, and that name is a convention rather than a
+capability: it answers *which payload supplies this target's C library*, so a
+project that supplies one itself may name a different compiler. What it may not
+do is name a different compiler and supply nothing.
+
+```toml
+[toolchain]
+default = "llvm@22.1.8"        # x86_64-linux-musl's row names gcc
+```
+
+```
+$ mcpp build --target x86_64-linux-musl
+error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
+       payload, and 'llvm@22.1.8' has none here.
+```
+
+⚠️ **Before 2026.8.26.1 this ran the whole build and failed at the link**, with
+`crtbeginT.o (bare name — the linker cannot resolve it)` — accurate about the
+symptom and silent about the decision. clang is retargetable and brings no C
+library, so it reached for a gcc installation; on a machine that happens to have
+a system one, the same spelling for `x86_64-windows-gnu` reached
+`/usr/lib/gcc/x86_64-w64-mingw32/…` instead, which is worse than failing.
+
+Adding the replacement is the whole difference:
+
+```toml
+[dependencies]
+openkal-llvm-runtime = "0.1.3"   # → openkal-musl → openkal-<os>
+[toolchain]
+default = "llvm@22.1.8"
+```
+
+That is [`examples/06-openkal-cross`](../examples/06-openkal-cross), and it is
+why the refusal names openkal in its own text.
+
+⚠️ **A bare-metal row's toolchain is not a convention, and neither is
+`x86_64-windows-musl`'s** — no gcc payload emits a PE with a musl C library, so
+those rows cannot be overridden at all. See [chapter 03](03-toolchains.md).
+
+### And a dependency graph replaces that axis entirely
+
+The same three targets, with `openkal-musl` and `openkal-llvm-runtime` in the
+graph — measured the same way:
+
+| target | kernel-abi | c-abi | c++-abi |
+|---|---|---|---|
+| `x86_64-linux-musl` | openkal (openkal-linux, graph) | musl (graph) | libc++ (graph) |
+| `x86_64-windows-gnu` | openkal (openkal-windows, graph) | musl (graph) | libc++ (graph) |
+| `x86_64-windows-musl` | openkal (openkal-windows, graph) | musl (graph) | libc++ (graph) |
+
+⚠️ **Look at `x86_64-windows-gnu` in both tables.** Its C library is `gnu` — the
+MinGW CRT — when a payload supplies it, and `musl` when the graph does. One
+target string, two different C libraries, and until 2026.8.24.6 mcpp had no way
+to say which: the same `--target x86_64-windows-gnu` produced artefacts that
+differed by 16.7× in size and named entirely different DLLs.
+
+That is why `x86_64-windows-musl` exists as a separate name. It maps to the same
+LLVM triple as `x86_64-windows-gnu` — LLVM cannot spell it — so the two are
+indistinguishable to the compiler, and the whole difference is which C library
+is in use. A payload for it does not exist on any host; its system can only come
+from a dependency graph, which is what `toolchain list` reports as
+`via dependency graph`.
+
+## The Build Host Is A Third Axis
+
+The two axes above — which compiler, and where the C library comes from — are
+choices a project makes. The third is not: it is the machine the build runs on.
+
+⭐ **The axis is the set mcpp ships for, and it is (os, arch) rather than os.**
+`release.yml` publishes four host binaries:
+
+| build host | release asset | CI runner |
+|---|---|---|
+| `linux-x86_64` | `mcpp-<v>-linux-x86_64.tar.gz` | `ubuntu-24.04` |
+| `linux-aarch64` | `mcpp-<v>-linux-aarch64.tar.gz` | `ubuntu-24.04-arm` |
+| `macos-arm64` | `mcpp-<v>-macosx-arm64.tar.gz` | `macos-14` |
+| `windows-x86_64` | `mcpp-<v>-windows-x86_64.zip` | `windows-2022` |
+
+⚠️ **The two Linux hosts are not one host.** `x86_64-linux-gnu` needs the
+host-native `xim:glibc` and `xim:linux-headers` payloads, which exist for the
+host's own architecture only — so that row is reachable from `linux-x86_64` and
+not from `linux-aarch64`, while `aarch64-linux-gnu` is the mirror case and is
+`planned` on both. Collapsing them to `linux` would let one overwrite the
+other's rows.
+
+### Which build host serves which target
+
+| target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
+|---|---|---|---|---|---|---|
+| `x86_64-linux-gnu` | verified | — | ✅ payload | — | — | — |
+| `aarch64-linux-gnu` | planned | — | planned | planned | planned | planned |
+| `x86_64-linux-musl` | verified | `gcc@16.1.0` | ✅ payload | ✅ payload | — | ✅ payload |
+| `aarch64-linux-musl` | verified | `gcc@16.1.0` | ✅ payload | ✅ payload | — | — |
+| `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
+| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | ✅ payload | ✅ payload | — | ✅ payload |
+| `x86_64-windows-musl` | preview | `llvm@22.1.8` | ⚙ graph | ⚙ graph | ⚙ graph | ✅ payload |
+| `x86_64-windows-msvc` | verified | — | — | — | — | ✅ system |
+| `aarch64-macos` | verified | — | — | — | ✅ SDK | — |
+| `x86_64-macos` | planned | — | planned | planned | planned | planned |
+| `riscv64-none-elf` | verified | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
+| `riscv32-none-elf` | verified | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
+| `aarch64-none-elf` | preview | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
+| `x86_64-none-elf` | preview | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
+
+`✅ payload` a toolchain payload here produces it · `⚙ graph` no payload, but a
+dependency can supply the system · `✅ system` located on the machine, not
+installed by mcpp · `✅ SDK` the platform's own · `—` unreachable from this host
+· `planned` registered in the vocabulary, nothing wired yet.
+
+### The rule behind the columns
+
+| target class | which build hosts serve it | why |
+|---|---|---|
+| `*-linux-musl` | Linux (any arch), Windows (same arch only) | the musl payloads are self-contained |
+| `*-linux-gnu` | Linux, same arch only | additionally needs the host-native `xim:glibc` / `xim:linux-headers` |
+| `x86_64-windows-gnu` | Linux, Windows | one identity, host-split at the distribution layer |
+| `x86_64-windows-msvc` | Windows | MSVC is located on the machine |
+| `x86_64-windows-musl` | Windows by payload; anywhere by graph | no gcc emits PE+musl, and LLVM cannot spell the triple |
+| `aarch64-macos` | macOS | the SDK is the machine's |
+| `*-none-elf` | every host | clang and lld are cross-compilers by construction |
+
+⚠️ **A `—` is about payloads, not about possibility.** `host_can_serve` answers
+"does a payload here produce it", and a dependency graph can supply the system
+instead — which is why `x86_64-windows-musl` reads `via dependency graph` on
+Linux and produces a real PE32+ there.
+
+### And CI measures every one of them
+
+[`ci-target-matrix.yml`](../.github/workflows/ci-target-matrix.yml) runs on all
+four hosts. Each scans every row it lists, twice — the payload alone, then with
+`openkal-musl` + `openkal-llvm-runtime` in the graph — and compares against
+[`tests/matrix/expected.tsv`](../tests/matrix/expected.tsv), which is keyed on
+`(mode, host, target, compiler)`.
+
+⚠️ What a runner resolves as its own target is not what its name suggests:
+
+| runner | host target it resolves |
+|---|---|
+| `ubuntu-24.04` | `x86_64-unknown-linux-gnu` |
+| `ubuntu-24.04-arm` | `aarch64-unknown-linux-gnu` |
+| `macos-14` | `arm64-apple-darwin23.6.0` — **ARM**, not x86_64 |
+| `windows-2022` | `x86_64-pc-windows-msvc` — **msvc**, while a mingw gcc there targets `-gnu` |
+
+Three of this chapter's criteria assumed the Linux coincidence and had to be
+corrected on the other hosts.
+
+⚠️ **The cell count per host is not a constant.** It follows from what that
+machine has installed, and the same runner has been measured with different
+toolchains on consecutive runs. The comparison therefore asserts *the scan
+produced rows* and *every row the expected table names was reached*, rather than
+a total: a cell that vanishes because a payload was not restored is otherwise
+indistinguishable from a cell that passed.
+
 ## Custom Targets
+
 
 A triple outside mcpp's table needs an explicit section, which is also how a
 board declares facts no default can supply:

@@ -235,7 +235,167 @@ clang++ --target=x86_64-pc-windows-musl -c t.cpp
 因为 mcpp 的名字回答的是另一个问题:**C 库是谁**,而 LLVM 的名字回答
 **遵循哪套对象 ABI**。两者都需要,且不是同一个字符串。
 
+## 编译器与 C 库是两个轴
+
+目标命名的是一台机器。它不指定谁来编译,也不指定它的 C 库从哪来 —— 那是另外两个
+选择,而同一个目标字符串在每种选择下都是不同的构建。
+
+⚠️ **「来自载荷」不是某一份固定载荷**,而是所选编译器带来的那一份;gcc 与 clang
+带法不同:gcc 一个目标一份载荷、驱动带三元组前缀,而一个 `clang++` 打它构建时支持
+的每个目标。同一台宿主、同一份源码实测:
+
+| 工具链 | 目标 | 实际运行的驱动 | c-abi | c++-abi |
+|---|---|---|---|---|
+| `gcc@16.1.0` | `x86_64-linux-musl` | `xim-x-musl-gcc/…/x86_64-linux-musl-g++` | musl | libstdc++ |
+| `gcc@16.1.0` | `x86_64-windows-gnu` | `xim-x-mingw-cross-gcc/…/x86_64-w64-mingw32-g++` | gnu | libstdc++ |
+| `llvm@22.1.8` | `x86_64-linux-musl` | `xim-x-llvm/…/clang++` | musl | libc++ |
+| `llvm@22.1.8` | `x86_64-windows-gnu` | `xim-x-llvm/…/clang++` | gnu | libc++ |
+
+clang 不会去 gcc 的载荷里取 C 库,gcc 也不会去 clang 的载荷里取。各带各的。
+
+### 换另一个编译器,就要把另一份 C 库一起换上
+
+每一行有宿主的目标都写着一个工具链,而那个名字是**约定**不是**能力**:它回答的是
+*哪个载荷供给这个目标的 C 库*,所以一个自己供给 C 库的工程可以写另一个编译器。
+不能做的是写另一个编译器而什么都不供给。
+
+```toml
+[toolchain]
+default = "llvm@22.1.8"        # x86_64-linux-musl 这一行写的是 gcc
+```
+
+```
+$ mcpp build --target x86_64-linux-musl
+error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
+       payload, and 'llvm@22.1.8' has none here.
+```
+
+⚠️ **2026.8.26.1 之前这会把整个构建跑完,然后在链接上失败**,报
+`crtbeginT.o (bare name — the linker cannot resolve it)`——对症状准确,对决定沉默。
+clang 是可重定向的,自己不带 C 库,于是去够一份 gcc 安装;在恰好装了系统 mingw 的
+机器上,同样写法用于 `x86_64-windows-gnu` 够到的是
+`/usr/lib/gcc/x86_64-w64-mingw32/…`,那比失败更糟。
+
+补上替代者,就是全部的差别:
+
+```toml
+[dependencies]
+openkal-llvm-runtime = "0.1.3"   # → openkal-musl → openkal-<os>
+[toolchain]
+default = "llvm@22.1.8"
+```
+
+这就是 [`examples/06-openkal-cross`](../../examples/06-openkal-cross),也是那句
+拒绝里为什么点名 openkal。
+
+⚠️ **裸机行与 `x86_64-windows-musl` 行的工具链不是约定**,根本不可被推翻——
+见[第 03 章](03-toolchains.md)。
+
+### 而依赖图会整个替换这一轴
+
+同样三个目标,图里有 `openkal-musl` 与 `openkal-llvm-runtime` —— 同法实测:
+
+| 目标 | kernel-abi | c-abi | c++-abi |
+|---|---|---|---|
+| `x86_64-linux-musl` | openkal(openkal-linux,图) | musl(图) | libc++(图) |
+| `x86_64-windows-gnu` | openkal(openkal-windows,图) | musl(图) | libc++(图) |
+| `x86_64-windows-musl` | openkal(openkal-windows,图) | musl(图) | libc++(图) |
+
+⚠️ **看两张表里的 `x86_64-windows-gnu`。** 载荷供给时它的 C 库是 `gnu`,即 MinGW
+CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 而 mcpp 在 2026.8.24.6
+之前无法说清是哪一个:同一条 `--target x86_64-windows-gnu` 产出的东西体积差 16.7
+倍、依赖的 DLL 完全不同。
+
+这就是 `x86_64-windows-musl` 作为独立名字存在的理由。它与 `x86_64-windows-gnu`
+映射到**同一个 LLVM 三元组** —— LLVM 拼不出它 —— 所以两者在编译器那一侧无法区分,
+全部差别就在于用的是哪个 C 库。任何宿主都没有为它准备的载荷;它的系统只能来自依赖
+图,这正是 `toolchain list` 报的 `via dependency graph`。
+
+## 构建机是第三条轴
+
+上面两条轴 —— 用哪个编译器、C 库从哪来 —— 是工程做的选择。第三条不是:它是构建
+运行在哪台机器上。
+
+⭐ **这条轴是 mcpp 自己发布的那一组,而且是 (os, arch) 不是 os。**
+`release.yml` 发布四份宿主二进制:
+
+| 构建机 | 发布资产 | CI runner |
+|---|---|---|
+| `linux-x86_64` | `mcpp-<v>-linux-x86_64.tar.gz` | `ubuntu-24.04` |
+| `linux-aarch64` | `mcpp-<v>-linux-aarch64.tar.gz` | `ubuntu-24.04-arm` |
+| `macos-arm64` | `mcpp-<v>-macosx-arm64.tar.gz` | `macos-14` |
+| `windows-x86_64` | `mcpp-<v>-windows-x86_64.zip` | `windows-2022` |
+
+⚠️ **两台 Linux 不是同一台。** `x86_64-linux-gnu` 需要本机架构的 `xim:glibc` 与
+`xim:linux-headers` 载荷,而它们只为宿主自己的架构存在 —— 所以那一行从
+`linux-x86_64` 够得着,从 `linux-aarch64` 够不着;`aarch64-linux-gnu` 是镜像的
+情形,两台上都是 `planned`。把它们并成 `linux`,一台会把另一台的行覆盖掉。
+
+### 哪台构建机服务哪个目标
+
+| target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
+|---|---|---|---|---|---|---|
+| `x86_64-linux-gnu` | verified | — | ✅ 载荷 | — | — | — |
+| `aarch64-linux-gnu` | planned | — | planned | planned | planned | planned |
+| `x86_64-linux-musl` | verified | `gcc@16.1.0` | ✅ 载荷 | ✅ 载荷 | — | ✅ 载荷 |
+| `aarch64-linux-musl` | verified | `gcc@16.1.0` | ✅ 载荷 | ✅ 载荷 | — | — |
+| `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
+| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | ✅ 载荷 | ✅ 载荷 | — | ✅ 载荷 |
+| `x86_64-windows-musl` | preview | `llvm@22.1.8` | ⚙ 图 | ⚙ 图 | ⚙ 图 | ✅ 载荷 |
+| `x86_64-windows-msvc` | verified | — | — | — | — | ✅ 系统 |
+| `aarch64-macos` | verified | — | — | — | ✅ SDK | — |
+| `x86_64-macos` | planned | — | planned | planned | planned | planned |
+| `riscv64-none-elf` | verified | `llvm@22.1.8` | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 |
+| `riscv32-none-elf` | verified | `llvm@22.1.8` | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 |
+| `aarch64-none-elf` | preview | `llvm@22.1.8` | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 |
+| `x86_64-none-elf` | preview | `llvm@22.1.8` | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 |
+
+`✅ 载荷` 这里有工具链载荷产出它 · `⚙ 图` 没有载荷,但依赖可以供给系统 ·
+`✅ 系统` 在机器上被找到,不是 mcpp 装的 · `✅ SDK` 平台自己的 ·
+`—` 从这台宿主够不着 · `planned` 词表里有,还没有任何东西接线。
+
+### 列背后的规则
+
+| 目标类别 | 哪些构建机服务它 | 为什么 |
+|---|---|---|
+| `*-linux-musl` | Linux(任意架构)、Windows(仅同架构) | musl 载荷是自足的 |
+| `*-linux-gnu` | Linux,且仅同架构 | 还要本机架构的 `xim:glibc` / `xim:linux-headers` |
+| `x86_64-windows-gnu` | Linux、Windows | 一个身份,只在分发层按宿主分岔 |
+| `x86_64-windows-msvc` | Windows | MSVC 是在机器上被找到的 |
+| `x86_64-windows-musl` | 载荷只在 Windows;走图则任意宿主 | 没有 gcc 发得出 PE+musl,而 LLVM 拼不出这个三元组 |
+| `aarch64-macos` | macOS | SDK 是那台机器的 |
+| `*-none-elf` | 每一台 | clang 与 lld 按构造就是交叉编译器 |
+
+⚠️ **一个 `—` 讲的是载荷,不是可能性。** `host_can_serve` 回答的是「这里有没有
+载荷产出它」,而依赖图可以改为供给系统 —— 这就是 `x86_64-windows-musl` 在 Linux
+上显示 `via dependency graph`、并在那里产出真正的 PE32+ 的原因。
+
+### 而 CI 把每一台都测了
+
+[`ci-target-matrix.yml`](../../.github/workflows/ci-target-matrix.yml) 在全部四台
+宿主上跑。每台扫描它列出的每一行两遍 —— 只有载荷,以及图里加上
+`openkal-musl` + `openkal-llvm-runtime` —— 与
+[`tests/matrix/expected.tsv`](../../tests/matrix/expected.tsv) 比对,键是
+`(mode, host, target, compiler)`。
+
+⚠️ 每台把什么解析成自己的目标,与它的名字给人的印象并不一致:
+
+| runner | 它解析出的宿主目标 |
+|---|---|
+| `ubuntu-24.04` | `x86_64-unknown-linux-gnu` |
+| `ubuntu-24.04-arm` | `aarch64-unknown-linux-gnu` |
+| `macos-14` | `arm64-apple-darwin23.6.0` —— **ARM**,不是 x86_64 |
+| `windows-2022` | `x86_64-pc-windows-msvc` —— **msvc**,而那里的 mingw gcc 目标是 `-gnu` |
+
+本章三条判据都曾假设了 Linux 上的那个巧合,并在其它宿主上被纠正。
+
+⚠️ **每台的格数不是常数。** 它取决于那台机器装了什么,而同一台 runner 在相邻两轮
+里被测到工具链不同。所以比对断言的是**扫描真的产出了行**、以及**期望表点名的每一
+行都被跑到**,而不是一个总数:一格因为载荷没被恢复而消失,与一格通过了,在退出码
+上没有区别。
+
 ## 自定义目标
+
 
 不在 mcpp 表内的三元组需要一个显式段落,而这也是一块板子声明
 「任何默认值都给不出的事实」的方式:

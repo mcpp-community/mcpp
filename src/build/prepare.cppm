@@ -18,6 +18,7 @@ export import mcpp.build.prepare_inputs;
 import std;
 import mcpp.targetside;
 import mcpp.diag;
+import mcpp.build.refusal;
 import mcpp.home;
 import mcpp.platform.axis;
 import mcpp.libs.json;
@@ -937,6 +938,15 @@ prepare_build(bool print_fingerprint,
     // Taken here rather than re-derived at the decision point, because the row
     // is read exactly once and both facts come out of that read.
     bool targetPinIsCapability = false;
+    // ⚠️ THE ROW'S PIN, KEPT EVEN WHEN THE PROJECT NAMED ITS OWN COMPILER —
+    // which is exactly when `targetPinCandidate` above is left empty.
+    //
+    // The candidate answers "should mcpp apply its convention"; this answers
+    // "what does the convention SAY", and the two differ precisely in the case
+    // that needs a diagnosis: a project that overrode the convention and has
+    // nothing supplying what the convention was there to supply.
+    std::string targetRowPin;
+    std::string targetRowName;
     // Whether the resolved toolchain spec names the machine's own Visual
     // Studio. Decided inside `resolve_target_toolchain`, read by
     // `host_tc_for_build_program`, which is why it is declared out here.
@@ -1538,6 +1548,7 @@ prepare_build(bool print_fingerprint,
                 overrides.target_triple));
         }
         if (known && known->tier == "planned" && !hasToolchainOverride) {
+            refusal::record(refusal::Code::TierPlanned);
             return std::unexpected(std::format(
                 "target '{}' is registered but not yet supported (planned) — "
                 "no toolchain is published for it yet.\n"
@@ -1683,10 +1694,67 @@ prepare_build(bool print_fingerprint,
         // whether the dependency graph supplies one instead. That is knowable
         // only after resolution, so the decision waits for
         // `resolve_target_toolchain` and only the candidate is kept here.
+        if (known && !known->pin.empty() && parsed
+            && !parsed->pin_is_capability()) {
+            targetRowPin  = std::string(known->pin);
+            targetRowName = parsed->str();
+        }
         if (known && !hasToolchainOverride && !known->pin.empty()
             && !tc_origin_is_user_explicit(tcOrigin)) {
             targetPinCandidate = std::string(known->pin);
-            targetPinIsCapability = parsed && parsed->is_freestanding();
+            targetPinIsCapability = parsed && parsed->pin_is_capability();
+        }
+        // ⚠️⚠️ A USER'S EXPLICIT TOOLCHAIN OVERRIDES A CONVENTION, NOT A
+        // CAPABILITY — AND UNTIL THIS LINE IT OVERRODE BOTH.
+        //
+        // The block above deliberately steps aside for an explicit
+        // `[toolchain] default`: a hosted row's pin says "this payload supplies
+        // the target's C library", and an author who names their own compiler
+        // has said they will supply it instead. A bare-metal row's pin says
+        // something the author cannot override — the table's own words: "the
+        // pin is llvm on every host because clang/lld are cross-compilers by
+        // construction". A host g++ does not emit riscv64 whatever anyone
+        // declares.
+        //
+        // ⚠️ Measured 2026-08-26:
+        //
+        //     [toolchain] default = "gcc@16.1.0"
+        //     $ mcpp build --target riscv64-none-elf
+        //       g++: error: unrecognized argument in option '-mabi=lp64d'
+        //       g++: note: valid arguments to '-mabi=' are: ms sysv
+        //
+        // — a message about an option, for a decision made here. Refusing at
+        // the decision costs one line; the alternative is a compiler complaining
+        // about flags the reader never wrote.
+        if (known && parsed && parsed->pin_is_capability()
+            && tc_origin_is_user_explicit(tcOrigin) && tcSpec.has_value()) {
+            auto declared = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
+            if (declared && declared->family != mcpp::toolchain::Family::Llvm) {
+                // ⚠️ THE REASON TRAVELS WITH THE ROW. Both rows refuse for the
+                // same rule and NOT for the same reason, and one sentence
+                // covering both would be wrong about one of them: a PE+musl
+                // target is not bare metal, and a reader told it is stops
+                // reading.
+                std::string_view why = parsed->is_freestanding()
+                    ? "A freestanding target has no per-host cross payload: "
+                      "clang and lld are\n"
+                      "       cross-compilers by construction and gcc is not."
+                    : "No gcc payload emits a PE with a musl C library — the "
+                      "mingw payload emits\n"
+                      "       PE with the MinGW CRT, which is the separate "
+                      "`-gnu` row.";
+                refusal::record(refusal::Code::CapabilityPin);
+                return std::unexpected(std::format(
+                    "target '{}' cannot be emitted by '{}'.\n"
+                    "       {}\n"
+                    "       The row names llvm as a capability rather than as a "
+                    "preference, so this\n"
+                    "       one line is not a convention you can override.\n"
+                    "       remove the `[toolchain]` line for this target, or set "
+                    "it to `{}`.",
+                    parsed->str(), *tcSpec, why,
+                    known->pin.empty() ? std::string_view("llvm") : known->pin));
+            }
         }
         if (known && known->defaultStatic && m->buildConfig.linkage.empty())
             m->buildConfig.linkage = "static";
@@ -1827,13 +1895,44 @@ prepare_build(bool print_fingerprint,
         }
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
+        // ⚠️⚠️ AND NOT INSTALLED WHEN NO PAYLOAD HERE COULD SERVE THE TARGET.
+        //
+        // `unservedTargetDiagnosis` is decided a thousand lines above and
+        // released a thousand lines below — deliberately, because whether the
+        // dependency GRAPH supplies the target's system is not knowable until
+        // it is resolved. This install sits between the two, and it does not
+        // need to wait: if no payload here serves the target, then either the
+        // graph supplies the system (and this payload is not wanted) or the
+        // build refuses later (and it is not wanted then either).
+        //
+        // ⚠️ Measured on ubuntu-24.04-arm, `--target x86_64-linux-musl`:
+        //
+        //     error: toolchain 'gcc@16.1.0': xlings install of
+        //       'xim:x86_64-linux-musl-gcc@16.1.0' failed …
+        //
+        // — the cross-musl packages are published per host arch and that one is
+        // x86_64-only. The refusal that names this correctly never ran, because
+        // the install failed first and failed hard.
+        //
+        // ⭐ Skipping leaves BOTH later paths intact; attempting cannot help
+        // either of them.
+        const bool targetPayloadUnservable =
+            !unservedTargetDiagnosis.empty() && !spec->target.empty();
+
         auto cfg = get_cfg();
         if (!cfg) return std::unexpected(cfg.error());
         mcpp::fetcher::Fetcher fetcher(**cfg);
 
         mcpp::ui::info("Resolving", "toolchain");
         mcpp::fetcher::InstallProgressHandler progress;
-        auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
+        auto payload = fetcher.resolve_xpkg_path(
+            pkg.target(), /*autoInstall=*/!targetPayloadUnservable, &progress);
+        if (!payload && targetPayloadUnservable) {
+            // The held diagnosis is already the right words for this; releasing
+            // it here rather than at its usual site keeps one sentence per cause.
+            refusal::record(refusal::Code::HostCannotServe);
+            return std::unexpected(unservedTargetDiagnosis);
+        }
         if (!payload) {
             // `windows = "msvc@19.44"` in a manifest is the retired
             // cl-version spelling; saying "no such xim package" would send
@@ -2282,7 +2381,41 @@ prepare_build(bool print_fingerprint,
                   if (auto cfg3 = get_cfg(); cfg3) {
                       auto ref = mcpp::xlings::paths::parse_xpkg_ref(want_sysroot);
                       auto xl  = mcpp::config::make_xlings_env(**cfg3);
-                      if (auto dir = mcpp::xlings::paths::xpkg_payload(xl, ref)) {
+                      // ⭐⭐ INSTALLED, NOT MERELY LOOKED UP — THE SAME CHANNEL
+                      // THE ROW'S TOOLCHAIN PIN GOES THROUGH.
+                      //
+                      // The row names two things and only one of them used to
+                      // be made to exist: `pin` went through
+                      // `resolve_xpkg_path(…, autoInstall=true, …)` while
+                      // `sysroot` was a pure lookup that returned nullopt and
+                      // let the whole block below be skipped without a word.
+                      //
+                      // ⚠️ Measured 2026-08-26 in a clean environment (an empty
+                      // home, so mcpp's registry starts fresh):
+                      //
+                      //     Target riscv64-none-elf
+                      //            c-abi  picolibc-riscv (…, prebuilt)
+                      //     error: 'stdio.h' file not found
+                      //
+                      // The report named the C library and the build could not
+                      // find its headers. mcpp's own bare-metal CI installs it
+                      // by hand, which is why no test ever saw this — every
+                      // bare-metal e2e runs on a machine where the gap has
+                      // already been papered over.
+                      //
+                      // ⚠️ OFFLINE AND `MCPP_NO_AUTO_INSTALL` ARE THE FETCHER'S
+                      // DECISION, not re-derived here. One question, one place
+                      // that answers it — asking it twice is the shape this
+                      // whole release exists to remove.
+                      mcpp::fetcher::Fetcher srFetcher(**cfg3);
+                      mcpp::fetcher::InstallProgressHandler srProgress;
+                      std::optional<std::filesystem::path> dir;
+                      if (auto p = srFetcher.resolve_xpkg_path(
+                              want_sysroot, /*autoInstall=*/true, &srProgress))
+                          dir = p->root;
+                      else
+                          dir = mcpp::xlings::paths::xpkg_payload(xl, ref);
+                      if (dir) {
                           if (auto spec = mcpp::freestanding::resolve(*want)) {
                               const auto inc =
                                   *dir / "include" / std::string(spec->libdir);
@@ -2489,6 +2622,11 @@ prepare_build(bool print_fingerprint,
             return std::pair{explicit_compiler, *tc};
         if (hostTcCache) return *hostTcCache;
         if (!tcSpec || *tcSpec == "system" || tcSpecIsMsvc) {
+            // ⭐ A READABLE REFUSAL THAT HAD NO CODE, so the target matrix
+            // recorded four identical `other` cells for it. The sentence was
+            // right; the classification was missing. Measured on windows-2022
+            // with `msvc@system` declared and any cross target.
+            refusal::record(refusal::Code::HostToolToolchain);
             return std::unexpected(std::string(
                 "build.mcpp under a cross --target needs a resolvable host "
                 "toolchain — set one via [toolchain] or `mcpp toolchain default`"));
@@ -4968,6 +5106,62 @@ prepare_build(bool print_fingerprint,
             tcSpec   = targetPinCandidate;
             tcOrigin = TcOrigin::TargetPin;
         }
+        // ⚠️⚠️ OVERRIDING THE CONVENTION IS ALLOWED; OVERRIDING IT AND SUPPLYING
+        // NOTHING IN ITS PLACE IS NOT, AND UNTIL THIS BLOCK IT LOOKED THE SAME.
+        //
+        // A hosted row's pin names the payload that supplies the target's C
+        // library. A project may name a different compiler — that is the escape
+        // hatch the whole convention/capability distinction exists to protect —
+        // and the ordinary reason to do so is that its dependency graph supplies
+        // the C library instead. `examples/06-openkal-cross` is exactly that:
+        // `llvm@22.1.8` plus `openkal-llvm-runtime`, and `graphSuppliesSystem`
+        // is true there.
+        //
+        // ⚠️ WITH NEITHER, THE BUILD USED TO RUN ANYWAY AND FAIL SOMEWHERE ELSE.
+        // Measured 2026-08-26 on Linux, `[toolchain] default = "llvm@22.1.8"`
+        // and no dependencies:
+        //
+        //   --target x86_64-linux-musl
+        //     hermetic link check failed … crtbeginT.o (bare name)
+        //   --target x86_64-windows-gnu
+        //     hermetic link check failed …
+        //     /usr/lib/gcc/x86_64-w64-mingw32/13-win32/crtbegin.o (outside)
+        //
+        // Both are accurate about the symptom and silent about the decision:
+        // clang is retargetable and brings no C library, so it reached for a
+        // gcc installation — one that does not exist under the payload prefix
+        // in the first case, and that belongs to the HOST in the second. There
+        // is no llvm payload supplying either target's C library today.
+        //
+        // ⭐ THE REFUSAL IS DECIDED HERE BECAUSE ONLY HERE ARE BOTH HALVES
+        // KNOWN. The row is read a thousand lines earlier and the graph does
+        // not exist then; `host_can_serve` is family-agnostic and would answer
+        // "yes, some payload here produces it" — the same shape as the family
+        // this release is about, a predicate answering a question narrower than
+        // the one it is asked.
+        if (!targetRowPin.empty() && !graphSuppliesSystem
+            && tc_origin_is_user_explicit(tcOrigin) && tcSpec.has_value()) {
+            auto declared = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
+            auto rowTc    = mcpp::toolchain::parse_toolchain_spec(targetRowPin);
+            if (declared && rowTc && declared->family != rowTc->family) {
+                refusal::record(refusal::Code::ConventionUnreplaced);
+                return std::unexpected(std::format(
+                    "target '{}' takes its C library from the '{}' payload, and "
+                    "'{}' has none here.\n"
+                    "       The row's toolchain is a convention, so naming your "
+                    "own compiler overrides it —\n"
+                    "       but the convention is what supplies this target's "
+                    "headers and C library, and\n"
+                    "       nothing in the dependency graph supplies them "
+                    "instead.\n"
+                    "       depend on a package that implements the target's C "
+                    "library (openkal-musl and\n"
+                    "       openkal-llvm-runtime are the ones in the index), or "
+                    "remove the `[toolchain]`\n"
+                    "       line so `{}` is used for this target.",
+                    targetRowName, targetRowPin, *tcSpec, targetRowPin));
+            }
+        }
         if (auto r = resolve_target_toolchain(); !r)
             return std::unexpected(r.error());
     }
@@ -6037,16 +6231,65 @@ prepare_build(bool print_fingerprint,
         in.cAbi            = provider_of(tsd::CapLayer::CAbi);
         in.cxxAbi          = provider_of(tsd::CapLayer::CxxAbi);
 
+        // ⚠️⚠️ A ROW THAT LINKS THROUGH lld DIRECTLY, ON A PAYLOAD WITH NO lld.
+        //
+        // `x86_64-none-elf` is the only row carrying an `lldEmulation`, and its
+        // column comment in mcpp.freestanding.target says why the driver is
+        // bypassed for it: the driver "would hand the link to a host `g++` that
+        // cannot take our linker's path".
+        //
+        // ⚠️ MEASURED TWICE ON windows-2022, AND THE SECOND TIME WAS MY OWN
+        // FALLBACK. First, an empty `resolve_lld` left linker vocabulary on a
+        // driver line:
+        //
+        //     clang++: error: unknown argument: '-m'
+        //
+        // Then, falling back to the driver line reproduced exactly what the
+        // bypass exists to prevent:
+        //
+        //     clang++: error: linker (via gcc) command failed
+        //     collect2.exe: error: ld returned 1 exit status
+        //
+        // ⭐ There is no third shape. The row needs lld by name; when the
+        // payload has none, the answer is a refusal at the decision, not a
+        // different link.
+        if (auto fsT = tc.has_value()
+                     ? mcpp::toolchain::triple::parse(tc->targetTriple)
+                     : std::nullopt;
+            fsT && fsT->is_freestanding()) {
+            auto fsSpec = mcpp::freestanding::resolve(*fsT);
+            if (fsSpec && !fsSpec->lldEmulation.empty()
+                && mcpp::freestanding::resolve_lld(tc->binaryPath).empty()) {
+                refusal::record(refusal::Code::LldRequiredAbsent);
+                return std::unexpected(std::format(
+                    "target '{}' links through lld directly, and this toolchain "
+                    "payload ships none.\n"
+                    "       The row carries an lld emulation ('{}'), which means "
+                    "the compiler driver is\n"
+                    "       bypassed — for this target it would hand the link to "
+                    "a host linker that\n"
+                    "       cannot take a freestanding ELF.\n"
+                    "       install a toolchain whose payload contains ld.lld, "
+                    "or build this target\n"
+                    "       from a host that has one.",
+                    fsT->str(), fsSpec->lldEmulation));
+            }
+        }
+
         resolvedTargetSide = tsd::resolve(in);
-        if (auto why = tsd::check_layering(resolvedTargetSide))
+        if (auto why = tsd::check_layering(resolvedTargetSide)) {
+            refusal::record(refusal::Code::LayerOrdering);
             return std::unexpected(*why);
+        }
         // ⚠️ REQUIREMENTS ARE CHECKED BEFORE ANYTHING IS COMPILED, WHICH IS THE
         // WHOLE POINT OF DECLARING THEM. The combination this rejects — a C++
         // runtime configured for one compiler family being handed to another —
         // otherwise fails inside that runtime's own headers, in a message that
         // names a file the reader has never opened and no decision mcpp made.
-        if (auto why = tsd::check_requirements(resolvedTargetSide, requirements))
+        if (auto why = tsd::check_requirements(resolvedTargetSide, requirements)) {
+            refusal::record(refusal::Code::LayerRequirement);
             return std::unexpected(*why);
+        }
         // ⚠️ A WARNING, NOT A REFUSAL. The graph decides the C library either
         // way, so the segment is ignored rather than violated and the artifact
         // is the same with or without it. Refusing was tried and broke every
@@ -6060,8 +6303,10 @@ prepare_build(bool print_fingerprint,
         // does not produce this target; if the graph does not supply the
         // target's system either, then nothing does and the diagnosis stands.
         if (!unservedTargetDiagnosis.empty()
-            && !resolvedTargetSide.system_from_graph())
+            && !resolvedTargetSide.system_from_graph()) {
+            refusal::record(refusal::Code::HostCannotServe);
             return std::unexpected(unservedTargetDiagnosis);
+        }
 
         // ⚠️ THE TARGET AND THE COMPILER ARE NOT BOUND TOGETHER, AND THE
         // TARGET ROW'S CONVENTION IS A FALLBACK RATHER THAN A RULE.
@@ -6193,6 +6438,7 @@ prepare_build(bool print_fingerprint,
                     resolvedTargetSide.llvmTriple, got ? got->os : "<unparsed>"));
             if (want && got && !want->os.empty() && !got->os.empty()
                 && want->os != got->os) {
+                refusal::record(refusal::Code::OsMismatch);
                 return std::unexpected(std::format(
                     "target '{}' resolved to a toolchain for '{}'.\n"
                     "       Those are different operating systems, so nothing "

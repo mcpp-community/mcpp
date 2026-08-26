@@ -1,0 +1,363 @@
+name: target matrix
+
+# ⭐⭐ 让支持矩阵成为一次测量的输出,而不是一份会悄悄过期的文档。
+#
+# ⚠️ 这套东西存在的理由,是本仓库反复付出的一类代价:一格因为「今天这台机器恰好
+# 装了某个载荷」而通过,或因为没装而跳过,而两者在退出码上与「全部正确」没有区别。
+# 三个宿主各扫一遍,把结果与仓库里的期望表比对,差异即失败。
+on:
+  pull_request:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  XLINGS_NON_INTERACTIVE: '1'
+
+jobs:
+  invariants:
+    # ⭐ 第一层:四条恒等式,不需要期望表,也不依赖机器上装了什么。
+    #    它们是结构约束 —— 任何一格只要跑起来了就该满足。
+    name: invariants (${{ matrix.host }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ⭐⭐ THE BUILD-HOST AXIS IS THE SET mcpp SHIPS FOR, NOT THE SET THAT
+          # WAS CONVENIENT. `release.yml` publishes four: linux-x86_64,
+          # linux-aarch64, macosx-arm64, windows-x86_64. A host mcpp is
+          # distributed for and never scanned is a host whose target table is
+          # a claim nobody checked.
+          #
+          # ⚠️ `host` IS (os, arch) AND NOT os. Two Linux hosts differ in which
+          # rows they serve — `x86_64-linux-gnu` needs the host-native glibc
+          # payload, so it is reachable on one and not the other — and a single
+          # `linux` key would have them overwrite each other in expected.tsv.
+          - { host: linux-x86_64,   runner: ubuntu-24.04     }
+          - { host: linux-aarch64,  runner: ubuntu-24.04-arm }
+          - { host: macos-arm64,    runner: macos-14         }
+          - { host: windows-x86_64, runner: windows-2022     }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build the mcpp in this pull request
+        run: |
+          set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build --dev
+          # ⚠️ 两种拼写,且按 mtime 取最新 —— target/ 是缓存恢复的,`head -1`
+          # 会挑到上一次推送留下的二进制,版本号一样而代码是旧的。
+          BUILT=$(find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) \
+                  -newer mcpp.toml | head -1)
+          [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
+          BUILT=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")
+          echo "MCPP_UNDER_TEST=$BUILT" >> "$GITHUB_ENV"
+          "$BUILT" --version
+
+      - name: The invariants
+        run: |
+          set -euo pipefail
+          export MCPP="$MCPP_UNDER_TEST"
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          # ⚠️ These four read mcpp's MACHINE interface, so jq is not optional
+          # here. Without it each one takes its own "nothing to compare" exit —
+          # four honest-looking skips, and the next step would then report that
+          # the invariants did not run. Failing on the cause beats failing on
+          # the symptom four steps later.
+          command -v jq >/dev/null || { echo "::error::jq is missing on ${{ matrix.host }}"; exit 1; }
+          fail=0
+          for t in tests/e2e/295_*.sh tests/e2e/296_*.sh \
+                   tests/e2e/297_*.sh tests/e2e/298_*.sh; do
+            echo "=== $t ==="
+            bash "$t" 2>&1 | tee "$(basename "$t").log" || true
+            rc=${PIPESTATUS[0]}
+            [ "$rc" = "0" ] || { echo "::error::$t failed (exit $rc)"; fail=1; }
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      # ⚠️ A DEFERRAL NOBODY RECHECKS IS INDISTINGUISHABLE FROM A DEFECT. This
+      # step fails when its reason STOPS holding — the day an aarch64 llvm is
+      # published — which is the opposite of what a check usually does.
+      - name: The aarch64 llvm deferral still has its reason
+        if: matrix.host == 'linux-aarch64'
+        run: bash .github/tools/check_aarch64_llvm_deferral.sh
+
+      - name: Each invariant RAN
+        run: |
+          set -euo pipefail
+          # ⭐ 这一步存在的全部理由:退出码分不清「通过」与「跳过」。两条 e2e 都
+          #    有为「这台机器没有可比的东西」准备的早退,而 CI 要的是它们真的比
+          #    过了。
+          check() {
+            grep -qF "$2" "$1".log || {
+              echo "::error::$1 did not reach its conclusion on ${{ matrix.host }}"
+              tail -6 "$1".log 2>/dev/null | sed 's/^/        /'
+              return 1
+            }
+            echo "  ok  $1"
+          }
+          # ⚠️⚠️ A SKIP IS ACCEPTED FOR ONE NAMED REASON, NOT ON ONE NAMED HOST.
+          #
+          # 297 declares a non-llvm compiler, so it needs one to exist. Every
+          # toolchain mcpp installs on macOS is llvm; on windows-2022 it depends
+          # on what the restored cache holds — measured, one run had
+          # `gcc@16.1.0` and the next had only `llvm@20.1.7`.
+          #
+          # ⚠️ THE FIRST VERSION EXEMPTED macOS BY NAME, and the very next
+          # Windows run skipped for the same reason and went red. Naming the
+          # host encodes where the fact happened to hold; naming the FACT holds
+          # wherever it does. A skip for any other reason is still a failure.
+          #
+          # ⭐ AND THE DENOMINATOR IS ASSERTED SEPARATELY: linux always has a gcc
+          # payload (it backs the host row), so that job uses `check` and the
+          # test is guaranteed to be exercised somewhere on every run. Without
+          # that, a reason accepted everywhere is a test that runs nowhere.
+          check_or_declared_skip() {   # log  ok-line  acceptable-skip-substring
+            grep -qF "$2" "$1".log && { echo "  ok  $1"; return 0; }
+            if grep -q '^SKIP:' "$1".log && grep -qF "$3" "$1".log; then
+              echo "  ok  $1 (declared skip: $(grep -m1 '^SKIP:' "$1".log))"
+              return 0
+            fi
+            echo "::error::$1 neither concluded nor declared the expected skip on ${{ matrix.host }}"
+            echo "        expected skip to mention: $3"
+            tail -6 "$1".log 2>/dev/null | sed 's/^/        /'
+            return 1
+          }
+          fail=0
+          check 295_naming_the_host_target_changes_nothing.sh \
+            "OK: naming the host's own target changes nothing" || fail=1
+          check 296_what_the_report_names_is_what_the_link_line_uses.sh \
+            "OK: what the report names is what the link line uses" || fail=1
+          if [ "${{ matrix.host }}" = linux-x86_64 ]; then
+            # The denominator: gcc is always installed here, so this host must
+            # actually run the test.
+            check 297_a_capability_pin_is_not_a_preference.sh \
+              "OK: a capability pin is not a preference" || fail=1
+          else
+            check_or_declared_skip 297_a_capability_pin_is_not_a_preference.sh \
+              "OK: a capability pin is not a preference" \
+              "gcc is not installed here" || fail=1
+          fi
+          if [ "${{ matrix.host }}" = linux-x86_64 ]; then
+            check 298_overriding_a_convention_requires_replacing_it.sh \
+              "OK: a convention may be overridden, but not merely removed" || fail=1
+          else
+            # ⚠️ THE MIRROR OF 297's EXEMPTION, AND FOR THE OTHER FAMILY.
+            #
+            # 298 declares llvm, and there is no llvm payload for aarch64 Linux —
+            # upstream stopped publishing linux-aarch64 after 19.x and the index
+            # has none. Measured on `ubuntu-24.04-arm`:
+            #
+            #     SKIP: llvm is not installed here, and this test is about
+            #           declaring it
+            #
+            # ⭐ Granting it by REASON rather than by host is what makes it
+            # retire itself: the day
+            # `.agents/docs/2026-08-26-aarch64-linux-ecosystem-closure.md`
+            # lands an aarch64 llvm, this stops being a skip and starts being
+            # the assertion, with nothing here to change.
+            check_or_declared_skip 298_overriding_a_convention_requires_replacing_it.sh \
+              "OK: a convention may be overridden, but not merely removed" \
+              "llvm is not installed here" || fail=1
+          fi
+          [ "$fail" = 0 ] || exit 1
+
+  scan:
+    # ⭐ 第二层:全表扫描,与仓库里的期望表比对。
+    name: scan (${{ matrix.host }})
+    needs: invariants
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ⭐⭐ THE BUILD-HOST AXIS IS THE SET mcpp SHIPS FOR, NOT THE SET THAT
+          # WAS CONVENIENT. `release.yml` publishes four: linux-x86_64,
+          # linux-aarch64, macosx-arm64, windows-x86_64. A host mcpp is
+          # distributed for and never scanned is a host whose target table is
+          # a claim nobody checked.
+          #
+          # ⚠️ `host` IS (os, arch) AND NOT os. Two Linux hosts differ in which
+          # rows they serve — `x86_64-linux-gnu` needs the host-native glibc
+          # payload, so it is reachable on one and not the other — and a single
+          # `linux` key would have them overwrite each other in expected.tsv.
+          - { host: linux-x86_64,   runner: ubuntu-24.04     }
+          - { host: linux-aarch64,  runner: ubuntu-24.04-arm }
+          - { host: macos-arm64,    runner: macos-14         }
+          - { host: windows-x86_64, runner: windows-2022     }
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build the mcpp in this pull request
+        run: |
+          set -euo pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build --dev
+          BUILT=$(find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) \
+                  -newer mcpp.toml | head -1)
+          [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
+          echo "MCPP_UNDER_TEST=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")" >> "$GITHUB_ENV"
+
+      # ⚠️⚠️ 格数不能是缓存状态的函数。
+      #
+      # 实测:同一台 ubuntu-24.04,一轮装了 gcc+llvm(扫 40 格),下一轮只有 gcc
+      # (扫 20 格)。`expected.tsv` 声明的是前者,于是后者会把所有 llvm 行报成
+      # 「期望表说有而扫描没跑到」—— 而那句报错是对的,问题在于覆盖面**漂移**了。
+      #
+      # ⭐ 矩阵要声明它扫哪些工具链,并把它们装上。装不上就红在这里,而不是
+      # 变成一屏「没跑到」。
+      - name: Install the toolchains this matrix declares
+        run: |
+          set -uo pipefail
+          export MCPP="$MCPP_UNDER_TEST"
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          want="$(awk -F'\t' -v h='${{ matrix.host }}' \
+                    'NF>=11 && $2==h {print $4}' tests/matrix/expected.tsv \
+                  | sort -u)"
+          if [ -z "$want" ]; then
+            echo "  ?   ${{ matrix.host }} 尚无期望行 —— 扫描它现有的工具链"
+            exit 0
+          fi
+          fail=0
+          for spec in $want; do
+            fam="${spec%@*}"; ver="${spec#*@}"
+            # `msvc@system` 是在机器上被找到的,不是装出来的。
+            [ "$ver" = system ] && { echo "  ok  $spec (system)"; continue; }
+            if "$MCPP" toolchain install "$fam" "$ver" >/dev/null 2>&1; then
+              echo "  ok  $spec"
+            else
+              echo "::error::$spec 装不上,而期望表声明了它"
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ] || exit 1
+
+      - name: Scan both systems
+        run: |
+          set -euo pipefail
+          export MCPP="$MCPP_UNDER_TEST"
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          # ⚠️ 两种体系各自成表。scan 把 mode 写进第一列,而比对必须按 mode 分开
+          # 做 —— 拿一种体系的测量去比整张表,另一种的每一行都会被报成「没跑到」。
+          bash tests/matrix/scan.sh payload > measured-payload.tsv
+          bash tests/matrix/scan.sh graph   > measured-graph.tsv
+          cat measured-payload.tsv measured-graph.tsv > measured.tsv
+          echo "--- measured ---"; cat measured.tsv
+
+      # ⚠️ 上传排在比对之前,而这是刻意的次序。宿主的第一次运行本就没有期望行,
+      # 比对会红 —— 而回填要用的正是这份产物。`if: always()` 也保留:一步失败不
+      # 该把证据一起带走。
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: matrix-${{ matrix.host }}
+          path: measured.tsv
+
+      - name: Compare with the expected table
+        run: |
+          set -euo pipefail
+          fail=0
+          bash tests/matrix/compare.sh measured-payload.tsv \
+               tests/matrix/expected.tsv ${{ matrix.host }} payload || fail=1
+          bash tests/matrix/compare.sh measured-graph.tsv \
+               tests/matrix/expected.tsv ${{ matrix.host }} graph || fail=1
+          [ "$fail" = 0 ] || exit 1
+
+  coverage:
+    # ⭐⭐ THE DENOMINATOR. Every check above is per host, and no per-host check
+    # can notice a host that never ran.
+    #
+    # ⚠️ Each `scan` job compares the rows for ITS OWN host, so deleting a host
+    # from the matrix above silently retires every expectation the table holds
+    # for it: nothing measures those rows, nothing compares them, and the
+    # workflow is green. This job is the one place that reads the expected table
+    # as a whole and requires the run to have covered it.
+    #
+    # It runs even when a scan failed (`always()`), because "which hosts were
+    # covered" is a different question from "did they pass" — and a run where a
+    # host is missing entirely should say so in those words rather than leaving
+    # a reader to infer it from a job list.
+    name: coverage (every host the table names was scanned)
+    needs: scan
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: matrix-*
+          path: measured
+      - name: Every host in expected.tsv produced rows
+        run: |
+          set -euo pipefail
+          want=$(awk -F'\t' 'NF>=11 {print $2}' tests/matrix/expected.tsv | sort -u)
+          [ -n "$want" ] || { echo "::error::expected.tsv names no host at all"; exit 1; }
+          got=$(cat measured/*/measured.tsv 2>/dev/null \
+                | awk -F'\t' 'NF>=11 {print $2}' | sort -u)
+          echo "expected hosts: $(echo $want)"
+          echo "scanned hosts:  $(echo ${got:-<none>})"
+          fail=0
+          for h in $want; do
+            printf '%s\n' "$got" | grep -qx "$h" || {
+              echo "::error::expected.tsv holds rows for '$h', and no scan produced any"
+              fail=1
+            }
+          done
+          # ⭐ AND THE OTHER DIRECTION. A host that scanned but has no rows in the
+          # table is a new build host nobody declared expectations for — the
+          # per-host compare already reds on it, but saying it here names the
+          # cause rather than listing 40 unexplained cells.
+          for h in $got; do
+            printf '%s\n' "$want" | grep -qx "$h" || {
+              echo "::error::'$h' was scanned and the expected table does not mention it"
+              echo "        add its rows to tests/matrix/expected.tsv from this run's artifact"
+              fail=1
+            }
+          done
+          [ "$fail" = 0 ] || exit 1
+          echo "OK: every build host the table names was scanned, and no other"
+
+      - name: The build hosts mcpp ships for are the ones scanned
+        run: |
+          set -euo pipefail
+          # ⚠️⚠️ THE TABLE AND THE RELEASE MUST NAME THE SAME SET. A host that
+          # gets a published binary and no scan is a host whose target table is
+          # a claim nobody checked; a host that is scanned and never shipped is
+          # coverage spent on a machine no user has.
+          #
+          # Derived from release.yml's asset names rather than restated here, so
+          # adding a fifth host to the release fails this step until the matrix
+          # covers it.
+          ship=$(grep -oE 'mcpp-\$\{?[A-Za-z_{}. ]*\}?-(linux|macosx|windows)-(x86_64|aarch64|arm64)' \
+                   .github/workflows/release.yml \
+                 | sed -E 's/.*-(linux|macosx|windows)-/\1-/' \
+                 | sed 's/^macosx-/macos-/' | sort -u)
+          scanned=$(awk -F'\t' 'NF>=11 {print $2}' tests/matrix/expected.tsv | sort -u)
+          echo "release publishes: $(echo $ship)"
+          echo "matrix declares:   $(echo $scanned)"
+          if [ "$ship" != "$scanned" ]; then
+            echo "::error::the set of build hosts mcpp publishes and the set the target matrix declares differ"
+            diff <(printf '%s\n' "$ship") <(printf '%s\n' "$scanned") | sed 's/^/        /' || true
+            exit 1
+          fi
+          echo "OK: $(printf '%s\n' "$ship" | wc -l) build hosts, published and scanned"
