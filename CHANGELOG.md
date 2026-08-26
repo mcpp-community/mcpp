@@ -71,6 +71,55 @@
 
   ⚠️ **约定仍然可以被推翻**:hosted 目标上显式声明 gcc 照常生效。
 
+### 目标矩阵在四台构建机上找到的
+
+⭐⭐ **把 `linux-aarch64` 加进构建机轴之后,四台各自交出了一台机器上看不见的缺陷。**
+轴取自 `release.yml` 发布的那一组(linux-x86_64 / linux-aarch64 / macos-arm64 /
+windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二进制却从没被扫过的
+宿主,它的目标表是一句没人核过的话。
+
+- **⚠️ `--rtlib=compiler-rt` 在 aarch64 上是 codegen 事实,而它被声明在只覆盖
+  一侧的键上。**
+
+  ```
+  error: precompiled file 'std.pcm' was compiled with the target feature
+         '+outline-atomics' but the current translation unit is not
+  ```
+
+  `openkal-llvm-runtime` 把它写在 `std-module-flags` 里 —— 那个键到达 `std.pcm`
+  的命令,不到达任何消费者的 TU。⭐ **与 `-fdwarf-exceptions` 是同一个缺陷,换了
+  一个 flag**;那次的解法是提升成图级的 `graph_runtime_compile_flags`,这次同样。
+
+  ⚠️ x86_64 上两侧都列空,所以直到第二个架构被构建才可见。
+
+- **⚠️ PE + musl 在任何宿主上都没有载荷,而 `host_can_serve` 在 Windows 上说有。**
+
+  ```
+  c-abi    musl(payload)
+  c++-abi  msvc-stl(payload)
+  lld-link: error: undefined symbol: __mingw_vfprintf
+  ```
+
+  musl 的 C 库、MSVC 的 STL、MinGW 的符号,一格里三个 C 运行时。
+  `triple::pin_is_capability()` 与 docs/16 都已写明这一行只能由依赖图供给;
+  Linux 上同一格早就答 `host-cannot-serve`。
+
+- **⚠️ 宿主服务不了的目标,仍然去装它的载荷。** 拒绝被决定在早、释放在晚(因为
+  图供不供给系统只有解析后才知道),而安装夹在中间,于是先失败且失败得更硬:
+  `xlings install of 'xim:x86_64-linux-musl-gcc@16.1.0' failed`。跳过安装让两条
+  后续路径都完好;尝试安装帮不了其中任何一条。
+
+- **⚠️ aarch64 Linux 只支持 `musl-gcc`,其余显式延缓。** 上游 LLVM 从 20.x 起停发
+  `linux-aarch64`,索引里也没有,所以 `available_toolchain_indexes()` 在非 x86_64
+  Linux 上不再列 `llvm` 与 `mingw-cross-gcc`。⭐ 这是**政策陈述**不是索引数据的
+  抄本,并且 `check_aarch64_llvm_deferral.sh` **在理由不再成立时变红** ——
+  没人复查的延缓与缺陷无法区分。计划见
+  [`.agents/docs/2026-08-26-aarch64-linux-ecosystem-closure.md`](.agents/docs/2026-08-26-aarch64-linux-ecosystem-closure.md)。
+
+- 交叉 musl 与 mingw 的载荷都按宿主架构发布,`host_can_serve` 对两者也改为按架构
+  回答。⚠️ 「自足」讲的是载荷装了什么,不是它为哪些宿主发布 —— 那行注释是对的,
+  代码把它读错了一层。
+
 ### 机器接口
 
 - **⭐⭐ 两条命令进入 `--format json`,矩阵与四条 e2e 不再匹配任何一句话。**

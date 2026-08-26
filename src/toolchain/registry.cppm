@@ -643,6 +643,29 @@ bool host_can_serve(const triple::Triple& target) {
         return mcpp::platform::is_linux
             && mcpp::platform::host_arch == "x86_64";
     }
+    // ⚠️⚠️ PE + musl HAS NO PAYLOAD ON ANY HOST, INCLUDING WINDOWS.
+    //
+    // `triple::pin_is_capability()` already says so — no gcc emits a PE with a
+    // musl C library, and LLVM cannot spell the triple — and chapter 16 states
+    // it in those words: "A payload for it does not exist on any host; its
+    // system can only come from a dependency graph."
+    //
+    // This line disagreed, on exactly one host. Measured on windows-2022,
+    // payload system:
+    //
+    //     c-abi      musl      (payload)
+    //     c++-abi    msvc-stl  (payload)
+    //     lld-link: error: undefined symbol: __main
+    //     lld-link: error: undefined symbol: __mingw_vfprintf
+    //
+    // — musl's C library, MSVC's STL and MinGW's CRT symbols in one link. On
+    // Linux the same cell already answered `host-cannot-serve`, which is the
+    // right answer everywhere.
+    //
+    // ⭐ The graph path is untouched: this refusal is held and released only
+    // when nothing supplies the target's system, and `graph × windows-musl` is
+    // `ok` on both hosts.
+    if (target.is_pe() && target.is_musl()) return false;
     if (target.os == "windows") return bool(mcpp::platform::is_windows);
     if (target.os == "macos")   return bool(mcpp::platform::is_macos);
 
