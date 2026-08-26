@@ -41,6 +41,9 @@ export namespace mcpp::build::refusal {
 // rather than a silent merge into a neighbouring reason.
 enum class Code {
     None,                  // no refusal
+    UnknownTarget,         // the spelling names no row, and no (arch, os) group
+    AmbiguousRequest,      // several rows serve (arch, os) and none is the default
+    CompilerRequirementConflict, // the graph and the project name different compilers
     TierPlanned,           // the row exists in the vocabulary, nothing is wired
     HostCannotServe,       // no payload here, and no graph supplied the system
     CapabilityPin,         // the row's toolchain is a capability, not a preference
@@ -57,6 +60,10 @@ enum class Code {
 constexpr std::string_view name(Code c) {
     switch (c) {
         case Code::None:                 return "none";
+        case Code::UnknownTarget:        return "unknown-target";
+        case Code::AmbiguousRequest:     return "ambiguous-request";
+        case Code::CompilerRequirementConflict:
+                                         return "compiler-requirement-conflict";
         case Code::TierPlanned:          return "tier-planned";
         case Code::HostCannotServe:      return "host-cannot-serve";
         case Code::CapabilityPin:        return "capability-pin";

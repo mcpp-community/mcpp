@@ -574,9 +574,25 @@ TEST(TargetSideRequirements, ARequirementIsCheckedAgainstWhatResolved) {
     auto why = ts::check_requirements(r, reqs);
     ASSERT_TRUE(why.has_value());
     EXPECT_NE(why->find("requires the compiler to be `llvm`"), std::string::npos);
-    EXPECT_NE(why->find("mcpp toolchain default llvm"), std::string::npos)
+    EXPECT_NE(why->find("default = \"llvm\""), std::string::npos)
         << "a diagnostic that names no next step is a diagnostic the reader "
            "must still go and research";
+    // ⚠️ AND THE STEP IT NAMES MUST NOT BE A GLOBAL ONE. Until 2026.8.26.2 the
+    // first remedy offered was `mcpp toolchain default llvm` — the default for
+    // every project on the machine, changed because ONE project's dependency
+    // asked. mcpp now applies the graph's requirement itself wherever its own
+    // answer was revisable, so a global change is both unnecessary and, in the
+    // only case that still reaches here, ineffective.
+    EXPECT_EQ(why->find("mcpp toolchain default"), std::string::npos)
+        << "the remedy must stay inside the project that has the problem";
+
+    // With the caller naming where the compiler was stated, the advice points
+    // at that statement instead of at the generic pair of spellings.
+    auto stated = ts::check_requirements(r, reqs, "[toolchain] in mcpp.toml");
+    ASSERT_TRUE(stated.has_value());
+    EXPECT_NE(stated->find("[toolchain] in mcpp.toml"), std::string::npos);
+    EXPECT_NE(stated->find("remove it"), std::string::npos)
+        << "removing the statement is what lets mcpp take the graph's compiler";
 
     in.compilerFamily = "llvm";
     EXPECT_EQ(ts::check_requirements(ts::resolve(in), reqs), std::nullopt);

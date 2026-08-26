@@ -364,6 +364,97 @@ inline const TargetInfo* find_known_target(const Triple& t) {
 
 inline bool is_known_target(const Triple& t) { return find_known_target(t) != nullptr; }
 
+// ── Completing a request that declined to name a C library ──────────────────
+//
+// ⚠️⚠️ `parse` FILLS THE ENV SEGMENT LEXICALLY, AND THE TIER GATE USED TO ASK
+// ABOUT THE FILLED VALUE RATHER THAN ABOUT THE REQUEST.
+//
+// The fill is an IDENTITY operation and has to stay exactly as it is: total,
+// lexical, and independent of the host (see the note on `Triple::envExplicit`
+// and the one beside the fill itself). `x86_64-linux` is the identity
+// `x86_64-linux-gnu` on every machine, and a unit test says so.
+//
+// What it is NOT is an answer to "does mcpp support this". Measured on
+// 2026.8.26.1:
+//
+//     $ mcpp build --target aarch64-linux
+//       error: target 'aarch64-linux-gnu' is registered but not yet supported
+//     $ mcpp build --target aarch64-linux-musl
+//       Finished dev [unoptimized + debuginfo] in 0.99s
+//
+// The question asked was "aarch64, Linux". The question answered was
+// "aarch64-linux-GNU", and the error even quotes a triple the user never typed.
+// The same fill sends `riscv64-linux` to `riscv64-linux-gnu`, a row that does
+// not exist at all, so a registered target family is reported as UNKNOWN.
+//
+// This function is the request's own completion, applied only where a request
+// is read and only when the segment was not written. It consults the vocabulary
+// — compile-time data, therefore the same on every host, so target identity
+// still does not depend on where the build ran.
+//
+// ⭐ RULE ONE MAKES THIS RETIRE ITSELF. When `aarch64-linux-gnu` graduates from
+// `planned`, rule one matches first and the completion goes back to the lexical
+// answer with nobody editing this function.
+struct RequestResolution {
+    Triple triple;                            // the identity to use from here on
+    // The lexical fill was replaced by a row from the vocabulary. For the
+    // report: the user wrote one thing and mcpp resolved it to another.
+    bool   completedFromVocabulary = false;
+    std::vector<std::string_view> siblings;   // every row sharing (arch, os)
+    std::vector<std::string_view> supported;  // of those, the ones not `planned`
+    // Several rows are supported and the lexical fill names none of them, so
+    // there is no basis to pick. No (arch, os) group has this shape today; the
+    // rule is written down so the first one does not get an invented answer.
+    bool   ambiguous = false;
+};
+
+inline RequestResolution resolve_request(const Triple& parsed) {
+    RequestResolution r;
+    r.triple = parsed;
+    // A written segment is a request, not a gap: honour it, including when it
+    // names a `planned` row (the tier gate is what refuses that, and its
+    // subject is then genuinely what the user typed).
+    if (parsed.envExplicit || parsed.arch.empty() || parsed.os.empty())
+        return r;
+
+    const std::string prefix = parsed.arch + "-" + parsed.os;
+    for (auto& k : kKnownTargets) {
+        // Exact (macOS rows carry no env) or `arch-os-<env>`. The separator
+        // check is what keeps a prefix from spanning two different OS names.
+        const bool exact = k.canonical == prefix;
+        const bool sub   = k.canonical.size() > prefix.size()
+                        && k.canonical.starts_with(prefix)
+                        && k.canonical[prefix.size()] == '-';
+        if (!exact && !sub) continue;
+        r.siblings.push_back(k.canonical);
+        if (k.tier != "planned") r.supported.push_back(k.canonical);
+    }
+
+    const std::string lexical = parsed.str();
+    for (auto s : r.supported)
+        if (s == lexical) return r;              // rule 1: the fill is supported
+
+    if (r.supported.size() == 1) {               // rule 2: the only supported row
+        auto only = r.supported.front();
+        r.triple.env = only.size() > prefix.size()
+                     ? std::string(only.substr(prefix.size() + 1))
+                     : std::string{};
+        // ⚠️ STILL NOT EXPLICIT. `envExplicit` records what the PROJECT asked
+        // for and feeds the C-library-request check; mcpp choosing a row is not
+        // the project naming a C library. Setting it here would make
+        // `check_request` compare mcpp's own answer against itself, and would
+        // print `aarch64-linux-musl` where the user wrote `aarch64-linux`.
+        r.completedFromVocabulary = true;
+        return r;
+    }
+    // rule 4 before rule 3: several supported rows and the fill names none.
+    if (r.supported.size() > 1) r.ambiguous = true;
+    // rule 3: nothing supported (empty group, or every row `planned`). Keep the
+    // lexical identity and let the caller diagnose from `siblings`, which is
+    // what lets the message name a row that actually exists.
+    return r;
+}
+
 // The effective target C library for one build.
 //
 // SINGLE READ POINT, and it is one because it was two. `prepare_build` derived

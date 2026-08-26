@@ -233,14 +233,32 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `reason` | 拒绝的记号,或 `none` |
 | `compiler` | `{family, version, driver}` —— 真正会跑的驱动器 |
 | `triple` | `{requested, toolchain, llvm}` |
-| `cLibrary` | `{mode, path, origin}`;`mode` 取 `sysroot` / `payload-first` / `none`,`origin` 取 `payload` / `subos` / `host` / `none` |
+| `cLibrary` | `{mode, path, origin, suppliesTarget}`;`mode` 取 `sysroot` / `payload-first` / `none`,`origin` 取 `payload` / `subos` / `host` / `none` |
 | `layers[]` | 目标侧五层:`{layer, interface, impl, origin, subset}` |
+
+⚠️ **`cLibrary` 与 `layers[].c-abi` 回答的是两个问题,`suppliesTarget` 说明哪一个
+管用。** `cLibrary` 描述的是**载荷**的链接模型 —— 一份由载荷供给的 C 库会用到的
+搜索路径。`layers[].c-abi` 描述的是**这次构建**。当依赖供给 C 库时两者分叉,而在
+`suppliesTarget` 之前,同一份文档同时报出两者却没有任何字段说明该信哪个:
+
+```jsonc
+"cLibrary": { "origin": "payload", "path": "…/xim-x-glibc/2.44/lib64",
+              "suppliesTarget": false },   // ← 新增;载荷并不在产物里
+"layers":   [ { "layer": "c-abi", "interface": "musl",
+                "impl": "openkal-musl@0.3.5", "origin": "graph" } ]
+```
+
+是**新增一个字段**而不是给 `cLibrary` 改名或给 `mode` 加取值,因为 §6 承诺字段
+只增不删、且一个字段的含义永不改变。
 
 ⭐ **`reason` 是一个记号,不是一句话。** 拒绝的消息仍然写给人看,仍然点名目标、
 规则与出路;而一个要给结果分类的程序读 `reason`:
 
 | `reason` | |
 |---|---|
+| `unknown-target` | 这个拼写不指向任何一行,`(arch, os)` 也没有对应的组 |
+| `ambiguous-request` | 该 `(arch, os)` 有多行受支持,而词法默认不在其中 |
+| `compiler-requirement-conflict` | 图要求的编译器在这里用不了 |
 | `tier-planned` | 词表里有这一行,还没有任何东西接线 |
 | `host-cannot-serve` | 本机没有载荷,依赖也没有供给这个系统 |
 | `capability-pin` | 这一行的工具链是能力陈述,不是偏好 |

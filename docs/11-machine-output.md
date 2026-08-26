@@ -264,8 +264,26 @@ It resolves and reports; it does not build. `data` is:
 | `reason` | a refusal token, or `none` |
 | `compiler` | `{family, version, driver}` — the driver that would run |
 | `triple` | `{requested, toolchain, llvm}` |
-| `cLibrary` | `{mode, path, origin}` — `mode` is `sysroot` / `payload-first` / `none`; `origin` is `payload` / `subos` / `host` / `none` |
+| `cLibrary` | `{mode, path, origin, suppliesTarget}` — `mode` is `sysroot` / `payload-first` / `none`; `origin` is `payload` / `subos` / `host` / `none` |
 | `layers[]` | the five target-side layers: `{layer, interface, impl, origin, subset}` |
+
+⚠️ **`cLibrary` and `layers[].c-abi` answer two questions, and `suppliesTarget`
+says which one governs.** `cLibrary` describes the *payload's* link model — the
+search paths a payload-supplied C library would use. `layers[].c-abi` describes
+the *build*. When a dependency supplies the C library the two diverge, and
+before `suppliesTarget` existed the document reported both with no way to tell
+them apart:
+
+```jsonc
+"cLibrary": { "origin": "payload", "path": "…/xim-x-glibc/2.44/lib64",
+              "suppliesTarget": false },   // ← added; the payload is not in the artifact
+"layers":   [ { "layer": "c-abi", "interface": "musl",
+                "impl": "openkal-musl@0.3.5", "origin": "graph" } ]
+```
+
+A field was added rather than `cLibrary` renamed or `mode` widened, because §6
+promises that fields are added and never removed and that a field's meaning
+never changes.
 
 ⭐ **`reason` is a token, not a sentence.** The refusal's message is still
 written for a person and still names the target, the rule and the way out — but
@@ -273,6 +291,9 @@ a program classifying the outcome reads `reason`:
 
 | `reason` | |
 |---|---|
+| `unknown-target` | the spelling names no row, and no `(arch, os)` group either |
+| `ambiguous-request` | several rows serve this `(arch, os)` and none is the default |
+| `compiler-requirement-conflict` | the graph's required compiler cannot be used here |
 | `tier-planned` | the row exists in the vocabulary; nothing is wired yet |
 | `host-cannot-serve` | no payload here, and no dependency supplied the system |
 | `capability-pin` | the row's toolchain is a capability, not a preference |

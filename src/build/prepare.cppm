@@ -36,6 +36,10 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
+// For `resolve_version_match` / `list_installed_versions`: a bare compiler
+// family named by the dependency graph resolves to a concrete version through
+// exactly the path `mcpp toolchain default <family>` uses.
+import mcpp.toolchain.lifecycle;
 import mcpp.toolchain.stdmod;
 import mcpp.freestanding.target;   // the target sysroot layout (libdir)
 import mcpp.freestanding.linkline; // the ISA profile, for the std module command
@@ -457,6 +461,7 @@ export enum class TcOrigin {
     TargetSection,      // mcpp.toml [target.X].toolchain  — user explicit
     GlobalDefault,      // `mcpp toolchain default`        — user explicit
     TargetPin,          // triple.cppm vocabulary convention
+    GraphRequirement,   // `requires = ["mcpp:compiler=…"]` in the graph
     FirstRun,           // chosen and persisted by this very invocation
 };
 
@@ -494,6 +499,7 @@ export constexpr std::string_view tc_origin_name(TcOrigin o) {
         case TcOrigin::TargetSection:     return "[target.<triple>] in mcpp.toml";
         case TcOrigin::GlobalDefault:     return "your default";
         case TcOrigin::TargetPin:         return "target default";
+        case TcOrigin::GraphRequirement:  return "required by the dependency graph";
         case TcOrigin::FirstRun:          return "first-run default";
         case TcOrigin::None:              break;
     }
@@ -916,6 +922,15 @@ prepare_build(bool print_fingerprint,
     // learned by experiment — writing the same value a second time in
     // `[target.<triple>]` and observing that it works.
     std::string pinReplacedDefault;
+    // ⭐ THE PACKAGE WHOSE `requires` CHOSE THE COMPILER, AND WHAT IT ASKED FOR.
+    //
+    // Non-empty only when the graph's requirement actually changed the answer.
+    // Reported on the status line for the same reason `pinReplacedDefault` is:
+    // a compiler the user did not name is a decision they did not make, and one
+    // reported without its reason is a rule learned by experiment.
+    std::string graphCompilerRequiredBy;   // "openkal-llvm-runtime@0.1.3"
+    std::string graphCompilerFamily;       // "llvm"
+    std::string graphCompilerReplaced;     // the spec it displaced, for the line
     // The C library the target triple asked for, taken before the triple is
     // canonicalised. Empty when the project declined to name one.
     std::string requestedCAbi;
@@ -1513,7 +1528,34 @@ prepare_build(bool print_fingerprint,
     // override and the vocabulary-table convention (pin + default linkage).
     if (!overrides.target_triple.empty()) {
         namespace triple = mcpp::toolchain::triple;
+        // ⚠️ THE SPELLING THE PROJECT WROTE, KEPT FOR EVERY DIAGNOSTIC BELOW.
+        // `overrides.target_triple` is canonicalised further down, and until
+        // this variable existed the refusals quoted the canonical form:
+        // `--target aarch64-linux` produced "target 'aarch64-linux-gnu' is
+        // registered but not yet supported", a string the reader never typed
+        // and cannot find in their own command.
+        const std::string requestedSpelling = overrides.target_triple;
         auto parsed = triple::parse(overrides.target_triple);
+
+        // ⚠️⚠️ THE REQUEST IS COMPLETED FROM THE VOCABULARY BEFORE ANYTHING
+        // READS IT, AND THE ORDER RELATIVE TO THE `[target.X]` LOOKUP IS PART
+        // OF THE CONTRACT.
+        //
+        // `parse` fills a missing env segment lexically so the identity stays
+        // total — `x86_64-linux` IS `x86_64-linux-gnu`, and a unit test says so.
+        // Every gate below then asked about the filled value instead of about
+        // the request. See `triple::resolve_request` for the two measurements.
+        //
+        // The lookup that follows keys on `parsed->str()`, so completing after
+        // it would match sections against a triple this build is not going to
+        // use. A project wanting the `planned` row keeps its escape hatch by
+        // WRITING the segment: `--target aarch64-linux-gnu` skips completion
+        // entirely, because a written segment is a request rather than a gap.
+        triple::RequestResolution req;
+        if (parsed) {
+            req    = triple::resolve_request(*parsed);
+            parsed = req.triple;
+        }
 
         // [target.X] lookup is spelling-independent: a section keyed
         // `x86_64-w64-mingw32` matches `--target x86_64-windows-gnu` and
@@ -1537,23 +1579,79 @@ prepare_build(bool print_fingerprint,
         // toolchain (the worst failure mode — you think you cross-compiled).
         // An explicit [target.X] section is the escape hatch for custom
         // triples outside the vocabulary.
+        // Several rows serve this (arch, os) and the lexical default names none
+        // of them, so there is nothing to complete the request WITH. Refusing
+        // and listing them is the only honest answer; picking one would be an
+        // invented convention. No group has this shape today — the rule is here
+        // so the first one that does gets a diagnosis rather than a guess.
+        if (parsed && req.ambiguous && !hasExplicitSection) {
+            std::string opts;
+            for (auto s : req.supported) {
+                if (!opts.empty()) opts += ", ";
+                opts += std::string(s);
+            }
+            refusal::record(refusal::Code::AmbiguousRequest);
+            return std::unexpected(std::format(
+                "target '{}' does not say which C library, and several are "
+                "supported here.\n"
+                "       candidates: {}\n"
+                "       Name one of them.",
+                requestedSpelling, opts));
+        }
         if (!known && !hasExplicitSection) {
-            auto sug = triple::did_you_mean(overrides.target_triple);
+            // ⚠️ "UNKNOWN" IS A CLAIM ABOUT THE VOCABULARY, AND IT WAS FALSE FOR
+            // A WHOLE arch+os FAMILY.
+            //
+            // Measured on 2026.8.26.1: `--target riscv64-linux` reported
+            // `unknown target 'riscv64-linux'` while `riscv64-linux-musl` was
+            // sitting in `kKnownTargets` as `planned`. The lexical fill had
+            // produced `riscv64-linux-gnu` — a row that genuinely does not
+            // exist — and the gate reported on the fill.
+            //
+            // A non-empty sibling group means the family IS registered, so this
+            // is the planned refusal wearing the wrong word. It names the row
+            // that exists, which is also the one the reader would have to write
+            // to opt in.
+            if (!req.siblings.empty()) {
+                std::string rows;
+                for (auto s : req.siblings) {
+                    if (!rows.empty()) rows += ", ";
+                    rows += std::string(s);
+                }
+                refusal::record(refusal::Code::TierPlanned);
+                return std::unexpected(std::format(
+                    "target '{}' is registered but not yet supported (planned) — "
+                    "no toolchain is published for it yet.\n"
+                    "       registered rows for this system: {}\n"
+                    "       An explicit [target.<triple>] toolchain override can "
+                    "opt in early.",
+                    requestedSpelling, rows));
+            }
+            auto sug = triple::did_you_mean(requestedSpelling);
+            refusal::record(refusal::Code::UnknownTarget);
             return std::unexpected(std::format(
                 "unknown target '{}'{}\n"
                 "       known targets: `mcpp toolchain list`; a custom triple needs an\n"
                 "       explicit [target.{}] section in mcpp.toml",
-                overrides.target_triple,
+                requestedSpelling,
                 sug ? std::format(" — did you mean '{}'?", *sug) : "",
-                overrides.target_triple));
+                requestedSpelling));
         }
         if (known && known->tier == "planned" && !hasToolchainOverride) {
             refusal::record(refusal::Code::TierPlanned);
+            // The subject is what the user wrote. When completion filled a
+            // segment, both are shown — otherwise the sentence is about a
+            // string that appears nowhere in their command.
+            const std::string subject =
+                requestedSpelling == parsed->str()
+                    ? std::format("'{}'", requestedSpelling)
+                    : std::format("'{}' (which resolves to '{}')",
+                                  requestedSpelling, parsed->str());
             return std::unexpected(std::format(
-                "target '{}' is registered but not yet supported (planned) — "
+                "target {} is registered but not yet supported (planned) — "
                 "no toolchain is published for it yet.\n"
                 "       An explicit [target.{}] toolchain override can opt in early.",
-                parsed->str(), parsed->str()));
+                subject, parsed->str()));
         }
         // Known, supported — and IMPOSSIBLE ON THIS HOST.
         //
@@ -1992,7 +2090,21 @@ prepare_build(bool print_fingerprint,
             // make, and a status line that reports the outcome without the
             // reason leaves them to discover the rule by experiment.
             std::string chosenBy;
-            if (!pinReplacedDefault.empty())
+            // ⭐ A COMPILER THE GRAPH ASKED FOR IS ANNOUNCED WITH THE PACKAGE
+            // THAT ASKED. Without the name this reads as mcpp ignoring the
+            // user's default; with it, it reads as the dependency it is.
+            // The second line appears only when something was displaced —
+            // "replacing nothing" is not worth a line.
+            if (!graphCompilerRequiredBy.empty())
+                chosenBy = std::format(
+                    "\n             required by {} (`requires = "
+                    "[\"mcpp:compiler={}\"]`){}",
+                    graphCompilerRequiredBy, graphCompilerFamily,
+                    graphCompilerReplaced.empty()
+                        ? std::string{}
+                        : std::format(", not your {} — this project only",
+                                      graphCompilerReplaced));
+            else if (!pinReplacedDefault.empty())
                 chosenBy = std::format(
                     "\n             target default for {}, replacing your "
                     "{} — override with `[target.{}] toolchain`",
@@ -5070,6 +5182,110 @@ prepare_build(bool print_fingerprint,
     // the answer's shape, so it reads the manifests rather than resolving them.
     {
         bool graphSuppliesSystem = false;
+        // ⭐⭐ `requires` IS READ HERE TOO, AND UNTIL THIS LOOP IT WAS ONLY EVER
+        // CHECKED — A THOUSAND LINES LATER, AGAINST A DECISION THIS BLOCK HAD
+        // ALREADY MADE WITHOUT IT.
+        //
+        // `provides` and `requires` are the two halves of one vocabulary and
+        // they were read at opposite ends of the function: this block consulted
+        // the first to decide the compiler, and `check_requirements` used the
+        // second only to reject the outcome. Measured on 2026.8.26.1, one
+        // three-line manifest, `llvm@22.1.8` already installed:
+        //
+        //     [dependencies]
+        //     openkal-llvm-runtime = "0.1.3"     # requires mcpp:compiler=llvm
+        //
+        //     $ mcpp build                       # global default gcc@16.1.0
+        //       error: `openkal-llvm-runtime@0.1.3` requires the compiler to be `llvm`.
+        //              Select that compiler …  mcpp toolchain default llvm
+        //     $ MCPP_TOOLCHAIN=llvm@22.1.8 mcpp build
+        //       Finished dev [unoptimized + debuginfo] in 1.02s
+        //
+        // Nothing was missing. The engine knew which compiler was wanted, the
+        // payload was on the machine, and the remedy it printed was to change
+        // the default for EVERY project on the box because ONE project's
+        // dependency asked.
+        //
+        // ⚠️ AND THIS IS THE PLACE, NOT MERELY *A* PLACE. `resolve_target_toolchain`
+        // has exactly two call sites — its own one-shot recursion, and the one
+        // at the bottom of this block — so every branch inside it, INCLUDING the
+        // first-run install-and-persist path and all three
+        // `write_default_toolchain` calls, is downstream of this line. Setting
+        // `tcSpec` here therefore selects the compiler without writing anything:
+        // on a machine with no toolchain at all the first-run branch is not even
+        // reached, because its condition is `!tcSpec.has_value()`.
+        //
+        // That is the whole design. "Do not touch the user's configuration" is
+        // not a rule anyone has to remember here — the writes live on a branch
+        // this no longer enters.
+        std::string reqCompiler, reqCompilerBy;
+
+        // ⭐ A FAMILY NAME BECOMES A CONCRETE SPEC THE SAME WAY IT DOES FOR
+        // `mcpp toolchain default <family>`, AND FOR THE SAME REASON.
+        //
+        // `requires = ["mcpp:compiler=llvm"]` names a family; the build path
+        // needs `<family>@<version>` and refuses anything else
+        // (`expected '<pkg>@<version>'`). There are two honest sources for the
+        // missing half and they are tried in this order:
+        //
+        //   1. what is already installed — highest version wins, nothing is
+        //      downloaded, and it is literally the same two functions
+        //      `toolchain_set_default` calls;
+        //   2. the vocabulary's own pins — the version this ecosystem ships for
+        //      that family, already written down once per row. Deriving it from
+        //      there rather than from a fresh constant means the answer moves
+        //      when the ecosystem moves, with nobody having to remember a
+        //      second place.
+        //
+        // ⚠️ NOT `pins::kFirstRun*`. Those are per-HOST first-run defaults —
+        // `llvm@20.1.7` on macOS, `gcc@16.1.0` on Linux x86_64 — so reading them
+        // would make the version a package requires depend on which machine
+        // built it. A requirement is a property of the package.
+        auto resolve_required_family =
+            [&](const std::string& family)
+            -> std::expected<std::string, std::string> {
+            auto spec = mcpp::toolchain::parse_toolchain_spec(family);
+            if (!spec)
+                return std::unexpected(std::format(
+                    "`{}` requires the compiler to be `{}`, and mcpp has no "
+                    "compiler family by that name.\n"
+                    "       known families: gcc, llvm, msvc.",
+                    reqCompilerBy, family));
+
+            if (auto cfg = get_cfg(); cfg) {
+                auto pkg = mcpp::toolchain::to_xim_package(*spec);
+                if (auto picked = mcpp::toolchain::resolve_version_match(
+                        "", mcpp::toolchain::list_installed_versions(
+                                (*cfg)->xlingsHome() / "data" / "xpkgs",
+                                pkg.ximName)))
+                    return std::format("{}@{}", family, *picked);
+            }
+
+            std::vector<std::string> fromVocabulary;
+            for (auto const& row : mcpp::toolchain::triple::known_targets()) {
+                if (row.pin.empty()) continue;
+                auto p = mcpp::toolchain::parse_toolchain_spec(
+                    std::string(row.pin));
+                if (!p || p->version.empty()) continue;
+                if (mcpp::toolchain::family_name(p->family) != family) continue;
+                fromVocabulary.push_back(p->version);
+            }
+            if (auto picked = mcpp::toolchain::resolve_version_match(
+                    "", std::move(fromVocabulary)))
+                return std::format("{}@{}", family, *picked);
+
+            // Neither source has one. Saying which family and which two places
+            // were consulted is the difference between an actionable message
+            // and "something went wrong".
+            return std::unexpected(std::format(
+                "`{}` requires the compiler to be `{}`, and mcpp has no version "
+                "of it to use.\n"
+                "       none is installed, and no target row pins one.\n"
+                "       install one — `mcpp toolchain install {} <version>` "
+                "(`mcpp toolchain list --available {}`).",
+                reqCompilerBy, family, family, family));
+        };
+
         for (auto const& pkg : packages) {
             for (auto const& entry : pkg.manifest.provides) {
                 auto cap = mcpp::targetside::parse_capability(entry);
@@ -5077,6 +5293,41 @@ prepare_build(bool print_fingerprint,
                 if ((*cap)->layer == mcpp::targetside::CapLayer::KernelAbi
                  || (*cap)->layer == mcpp::targetside::CapLayer::CAbi) {
                     graphSuppliesSystem = true;
+                }
+            }
+            for (auto const& entry : pkg.manifest.requires_) {
+                auto cap = mcpp::targetside::parse_capability(entry);
+                if (!cap || !*cap) continue;
+                if ((*cap)->layer != mcpp::targetside::CapLayer::Compiler) continue;
+                // A bare `mcpp:compiler` asks only that one exist, which it
+                // always does. Only a named family selects anything.
+                if ((*cap)->interfaceName.empty()) continue;
+                const auto pkgId = pkg.manifest.package.version.empty()
+                    ? pkg.manifest.package.name
+                    : std::format("{}@{}", pkg.manifest.package.name,
+                                  pkg.manifest.package.version);
+                // ⚠️ TWO DIFFERENT FAMILIES IS AN ERROR RATHER THAN A PICK, the
+                // same rule `provides` already follows one screen down. Choosing
+                // by graph-traversal order would make the answer depend on an
+                // order the author neither writes nor can predict — and unlike a
+                // conflicting `provides`, this one would silently satisfy one
+                // package's requirement and fail the other's inside a header.
+                if (!reqCompiler.empty() && reqCompiler != (*cap)->interfaceName) {
+                    refusal::record(refusal::Code::CompilerRequirementConflict);
+                    return std::unexpected(std::format(
+                        "two packages require different compilers, and a build "
+                        "has only one.\n"
+                        "         {:<28} requires `{}`\n"
+                        "         {:<28} requires `{}`\n"
+                        "       Both cannot hold. Drop one of them, or take a "
+                        "version of one that is\n"
+                        "       configured for the other's compiler.",
+                        reqCompilerBy, reqCompiler, pkgId,
+                        (*cap)->interfaceName));
+                }
+                if (reqCompiler.empty()) {
+                    reqCompiler   = (*cap)->interfaceName;
+                    reqCompilerBy = pkgId;
                 }
             }
         }
@@ -5105,6 +5356,97 @@ prepare_build(bool print_fingerprint,
                 pinReplacedDefault = *tcSpec;
             tcSpec   = targetPinCandidate;
             tcOrigin = TcOrigin::TargetPin;
+        }
+
+        // ⭐⭐ THE GRAPH'S REQUIREMENT, TAKEN AS AN INSTRUCTION RATHER THAN AS A
+        // TEST TO FAIL LATER.
+        //
+        // Everything above this line decides the compiler from what mcpp knows
+        // about the TARGET. A package saying `requires = ["mcpp:compiler=llvm"]`
+        // is saying something about ITSELF — its C++ runtime was configured for
+        // one family and its headers record that configuration — and it is the
+        // most specific statement in the build. Below the user's own word, above
+        // every default mcpp keeps.
+        //
+        // ⚠️ THE RANK IS NOT NEW. `TcOrigin` already sorts these, and
+        // `tc_origin_is_user_explicit` already answers "may mcpp revise this".
+        // The defect was never that the answer was wrong; it was that nobody
+        // asked. `GlobalDefault` is deliberately not user-explicit — see the
+        // note on that function — so a remembered default is exactly the kind of
+        // value this may replace.
+        if (!reqCompiler.empty()) {
+            std::string haveFamily;
+            if (tcSpec.has_value() && *tcSpec != "system")
+                if (auto s = mcpp::toolchain::parse_toolchain_spec(*tcSpec); s)
+                    haveFamily =
+                        std::string(mcpp::toolchain::family_name(s->family));
+
+            if (haveFamily != reqCompiler) {
+                // ⚠️ THE PROJECT'S OWN WORD IS NOT REVISED, AND THIS IS THE ONLY
+                // CASE THAT STILL REFUSES. `[toolchain]`, `[target.X].toolchain`
+                // and `MCPP_TOOLCHAIN` are statements about THIS build; the
+                // graph disagreeing with one of them is a real contradiction and
+                // `check_requirements` reports it further down with both names.
+                // Nothing to do here but leave the value alone.
+                if (tc_origin_is_user_explicit(tcOrigin)) {
+                    // fall through to check_requirements
+                }
+                // ⚠️⚠️ A ROW'S PIN THAT SURVIVED TO HERE CANNOT BE OVERRIDDEN BY
+                // A REQUIREMENT, AND THE REASON IS THE SAME ONE THE PIN EXISTS
+                // FOR.
+                //
+                // The block above applied it only when the graph does NOT supply
+                // the system, or when the row names a capability. In the first
+                // case the row's payload is what carries this target's headers
+                // and C library, and a different compiler brings none — measured
+                // as `crtbeginT.o (bare name)` and as a host `crtbegin.o`, both
+                // accurate about the symptom and silent about the decision. In
+                // the second the row names the only compiler that emits the
+                // target at all.
+                //
+                // Either way the requirement cannot be honoured, and saying so
+                // here — where both halves are known — beats a compiler
+                // complaining about a file the reader never named.
+                else if (tcOrigin == TcOrigin::TargetPin) {
+                    refusal::record(refusal::Code::CompilerRequirementConflict);
+                    return std::unexpected(std::format(
+                        "`{}` requires the compiler to be `{}`, and target '{}' "
+                        "cannot be built with it here.\n"
+                        "         target row       {:<14} ({})\n"
+                        "         required         {:<14} (required by {})\n"
+                        "       {}\n"
+                        "       Depend on a package that supplies this target's "
+                        "system (its kernel\n"
+                        "       interface and C library) so the row's payload is "
+                        "not needed, or drop\n"
+                        "       the package that requires `{}`.",
+                        reqCompilerBy, reqCompiler,
+                        targetRowName.empty() ? overrides.target_triple
+                                              : targetRowName,
+                        targetPinCandidate,
+                        targetPinIsCapability ? "capability" : "convention",
+                        reqCompiler, reqCompilerBy,
+                        targetPinIsCapability
+                            ? "The row names its compiler as a capability: no "
+                              "other family emits this target."
+                            : "The row's payload is what supplies this target's "
+                              "headers and C library,\n       and nothing in the "
+                              "dependency graph supplies them instead.",
+                        reqCompiler));
+                }
+                // Free to take it. `tcSpec` is either absent (nothing configured
+                // anywhere) or one of mcpp's own remembered answers.
+                else {
+                    auto pickedSpec = resolve_required_family(reqCompiler);
+                    if (!pickedSpec)
+                        return std::unexpected(pickedSpec.error());
+                    graphCompilerReplaced   = tcSpec.value_or("");
+                    graphCompilerRequiredBy = reqCompilerBy;
+                    graphCompilerFamily     = reqCompiler;
+                    tcSpec   = *pickedSpec;
+                    tcOrigin = TcOrigin::GraphRequirement;
+                }
+            }
         }
         // ⚠️⚠️ OVERRIDING THE CONVENTION IS ALLOWED; OVERRIDING IT AND SUPPLYING
         // NOTHING IN ITS PLACE IS NOT, AND UNTIL THIS BLOCK IT LOOKED THE SAME.
@@ -6286,7 +6628,13 @@ prepare_build(bool print_fingerprint,
         // runtime configured for one compiler family being handed to another —
         // otherwise fails inside that runtime's own headers, in a message that
         // names a file the reader has never opened and no decision mcpp made.
-        if (auto why = tsd::check_requirements(resolvedTargetSide, requirements)) {
+        // The origin travels with the check: reaching a compiler-layer refusal
+        // now means the project stated its own compiler, and the remedy has to
+        // name that statement rather than a global default it is not using.
+        if (auto why = tsd::check_requirements(
+                resolvedTargetSide, requirements,
+                tc_origin_is_user_explicit(tcOrigin) ? tc_origin_name(tcOrigin)
+                                                     : std::string_view{})) {
             refusal::record(refusal::Code::LayerRequirement);
             return std::unexpected(*why);
         }

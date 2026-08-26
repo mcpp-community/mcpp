@@ -3,6 +3,98 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.26.2] — 2026-08-26
+
+已经解析出的答案,没有被用来做决定。完整分析见
+[`.agents/docs/2026-08-26-resolved-but-not-consulted.md`](.agents/docs/2026-08-26-resolved-but-not-consulted.md)。
+
+⭐ **这不是 2026.8.25.x 那个「谓词回答了比自己更窄的问题」的家族。** 那一族是判据
+问错了;这一族里谓词问对了、答案也算对了,只是那个答案**没有接到决定上**。两条都
+是「多存了一个字段而没有多接一根线」,因此读判据时看不出来 —— 只在用户问「你既然
+已经知道了,为什么还要我说一遍」时暴露。
+
+### 修复
+
+- **⭐⭐ 依赖声明的编译器被检查,但从未被采纳。**
+
+  ```
+  $ cat mcpp.toml
+    [dependencies]
+    openkal-llvm-runtime = "0.1.3"      # requires = ["mcpp:compiler=llvm"]
+
+  $ mcpp build                          # 全局默认 gcc@16.1.0,而 llvm@22.1.8 已装
+    error: `openkal-llvm-runtime@0.1.3` requires the compiler to be `llvm`.
+           Select that compiler …  mcpp toolchain default llvm
+  ```
+
+  这次拒绝没有换来任何信息:它要求的东西已经在本机,版本也已确定
+  (`MCPP_TOOLCHAIN=llvm@22.1.8 mcpp build` 用时 1.02s)。付出的代价是让用户改一
+  处**全局**状态去满足**一个**工程的一条依赖。
+
+  真因是位置:`prepare.cppm` 有一个标题写着「the toolchain, resolved now that
+  the graph exists」的接缝,它扫 `pkg.manifest.provides` 来决定编译器,**却不扫
+  `requires_`** —— 后者在一千行之后才被收集,只用来否决这个决定。
+
+  ⭐⭐ **修好之后不写任何东西,而这是位置带来的,不是额外加的开关。**
+  `resolve_target_toolchain` 只有两个调用点,整个函数体(含首次运行的
+  安装并持久化分支与全部三处 `write_default_toolchain`)都在图之后。把图的要求
+  写进 `tcSpec` 的时机早于首次运行分支被求值,于是:
+
+  | | 之前 | 现在 |
+  |---|---|---|
+  | 已有 gcc 默认的机器 | 拒绝,要求改全局默认 | 装/用 llvm,`config.toml` 不动 |
+  | 什么都没装的机器 | 装 gcc → 持久化 gcc → 再拒绝 | 首次运行分支根本不进,直接装 llvm |
+
+  拒绝只剩一种局面:工程自己在 `[toolchain]` 或 `[target.X]` 写下了相反的编译器。
+  ⚠️ 那种局面里全局默认与本次构建无关,因此原来那条 `mcpp toolchain default llvm`
+  的建议**连问题都解决不了**,已改为指向那条陈述本身。两个包要求不同的族则是错误
+  而不是一次挑选,并同时点名两个包。
+
+- **⭐⭐ tier 闸问的是补全后的身份,而不是请求。**
+
+  ```
+  $ mcpp build --target aarch64-linux
+    error: target 'aarch64-linux-gnu' is registered but not yet supported (planned)
+  $ mcpp build --target aarch64-linux-musl
+    Finished dev [unoptimized + debuginfo] in 0.99s
+  ```
+
+  `parse` 把缺失的 env 段按词法填成 `gnu`,那是为了让**身份**完整(输出目录、缓存
+  键),`envExplicit` 就是为记住这个区别而存在的 —— 而 tier 闸不看它。被问的是
+  「aarch64 的 Linux」,被回答的是「aarch64-linux-**gnu**」,报错还引用了一个用户
+  从没打过的字符串。
+
+  省略了 env 段的请求现在对着词表补全,规则 1(词法默认受支持就用它)排在最前,
+  因此 `x86_64-linux` 一动不动,而这件事能自己退休。⚠️ **`parse()` 未改**:身份
+  必须保持词法、全量、与宿主无关。
+
+- **⚠️ `unknown target 'riscv64-linux'` 说的是假话。**
+
+  `riscv64-linux-musl` 就在词表里(`planned`)。词法填充产生了一个**完全不存在**
+  的行,于是一个已登记的目标族被报成未知。而且这条路径没有 `refusal::record`,
+  `--format json` 把它报成 `reason: "other"`。现在它给出 planned 的诊断并点名
+  `riscv64-linux-musl`;真正的拼写错误仍报 unknown,但带上了新的
+  `unknown-target` 记号。
+
+- **⚠️ `why toolchain --format json` 的两个字段互相矛盾。**
+
+  `cLibrary` 说 glibc/payload,`layers[].c-abi` 说 musl/graph。产物给出裁决 ——
+  静态、无解释器、无 `DT_NEEDED`、11 个 openkal 符号 —— glibc 不在里面。两者各自
+  准确,回答的却是不同的问题,而消费方无从判断该信哪个。新增
+  `cLibrary.suppliesTarget`;⭐ 是**增字段**而非改名或给 `mode` 加取值,因为
+  docs/11 §6 承诺字段只增不删、含义永不改变。
+
+### 判据
+
+- e2e `299`–`303`,全部走 `--format json` 分类而非字符串搜索,并接入
+  `target matrix` 的第一层 —— **四台构建机各跑一遍**。
+- ⭐ `301` 的判据是 `~/.mcpp/config.toml` 的 **sha256**,不是「构建成功」:构建成功
+  与配置被改写可以同时为真,而那正是这次要消除的行为。
+- ⭐ `299` 的第二半是对照 —— `x86_64-linux` 必须仍是 gnu。只测 aarch64 会让「把
+  linux 的默认整个换成 musl」这种过头实现看起来是对的。
+- 单测 `TripleRequest.*` 七条,含一条遍历整张词表的「每个受支持的行都能从它自己的
+  拼写到达」。
+
 ## [2026.8.26.1] — 2026-08-26
 
 写出 `--target` 这个动作,曾被当成「这个构建的系统来自依赖图」。完整分析见

@@ -63,6 +63,12 @@ std::vector<int> parse_version_components(std::string_view s) {
 //   "15.1"   → highest 15.1.Y
 //   "15.1.0" → exact match (or empty if not present)
 // Empty result = no match.
+// ⭐ EXPORTED SO THAT "WHICH VERSION OF THIS FAMILY" HAS ONE ANSWER.
+// `mcpp toolchain default llvm` resolves a bare family through these two, and
+// `prepare_build` now has to answer the same question when the dependency graph
+// asks for a compiler family by name. A second implementation there would be
+// the same decision derived twice — the shape this codebase keeps paying for.
+export
 std::optional<std::string>
 resolve_version_match(std::string_view partial,
                       std::vector<std::string> available)
@@ -92,6 +98,7 @@ resolve_version_match(std::string_view partial,
 }
 
 // Enumerate installed `<pkgsDir>/xim-x-<name>/<version>/` subdirs.
+export
 std::vector<std::string>
 list_installed_versions(const std::filesystem::path& pkgsDir,
                         std::string_view ximName)
