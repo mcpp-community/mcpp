@@ -76,6 +76,31 @@ TEST(WindowsDefaults, OriginClassification) {
     EXPECT_FALSE(tc_origin_is_user_explicit(TcOrigin::TargetPin));
     EXPECT_FALSE(tc_origin_is_user_explicit(TcOrigin::FirstRun));
     EXPECT_FALSE(tc_origin_is_user_explicit(TcOrigin::None));
+    // A compiler the dependency graph required is not the user's word either —
+    // mcpp derived it, so the two paths that revise mcpp's own answers may.
+    EXPECT_FALSE(tc_origin_is_user_explicit(TcOrigin::GraphRequirement));
+}
+
+// ⚠️⚠️ AND IT IS THE ONE ORIGIN THAT MAY NEVER BECOME THE MACHINE'S DEFAULT.
+//
+// Two branches persist one: the Windows first-run diversion, whose condition is
+// `tcSpec.has_value()`, and the MSVC repair, whose gate is "mcpp chose this
+// itself". A compiler chosen by `requires = ["mcpp:compiler=…"]` satisfies both
+// — so a bare Windows box building ONE llvm-requiring project would have handed
+// llvm to every later project that asked for nothing.
+//
+// ⭐ THIS IS THE ONLY PLACE THE INVARIANT CAN BE MEASURED WITHOUT A BARE
+// WINDOWS MACHINE. The e2e that checks `config.toml`'s sha256 runs where a
+// toolchain is already configured, so it never reaches either branch; here the
+// rule itself is the subject.
+TEST(WindowsDefaults, OnlyMcppsOwnAnswersMayBePersisted) {
+    using mcpp::build::TcOrigin;
+    using mcpp::build::tc_origin_may_persist;
+    EXPECT_FALSE(tc_origin_may_persist(TcOrigin::GraphRequirement));
+    EXPECT_TRUE (tc_origin_may_persist(TcOrigin::GlobalDefault));
+    EXPECT_TRUE (tc_origin_may_persist(TcOrigin::TargetPin));
+    EXPECT_TRUE (tc_origin_may_persist(TcOrigin::FirstRun));
+    EXPECT_TRUE (tc_origin_may_persist(TcOrigin::None));
 }
 
 // The fallback target must be PE/GNU, not the host's MSVC-ABI triple — the

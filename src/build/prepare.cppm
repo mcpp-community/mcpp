@@ -490,6 +490,24 @@ export inline bool tc_origin_is_user_explicit(TcOrigin o) {
     return o == TcOrigin::ManifestToolchain || o == TcOrigin::TargetSection;
 }
 
+// ⚠️⚠️ MAY A BUILD THAT RESOLVED THIS WAY WRITE THE MACHINE'S DEFAULT?
+//
+// `GraphRequirement` is the one origin that must not: it is a property of a
+// package this project depends on, not of this machine. Two branches persist a
+// default — the Windows first-run diversion, whose condition is
+// `tcSpec.has_value()`, and the MSVC repair, whose gate is "mcpp chose this
+// itself" — and a compiler chosen by `requires = ["mcpp:compiler=…"]` satisfies
+// both. Measured against the design rather than a run, because it needs a
+// Windows box with no toolchain: a bare machine building ONE llvm-requiring
+// project would have handed llvm to every later project that asked for nothing.
+//
+// ⭐ NAMED RATHER THAN SPELLED INLINE AT EACH SITE. There are two today; the
+// third would be written by someone who never read this note, and a predicate
+// with a name is something they can find.
+export inline bool tc_origin_may_persist(TcOrigin o) {
+    return o != TcOrigin::GraphRequirement;
+}
+
 // How a resolution came about, for the status line. A convention that replaced
 // nothing needs no explanation; one that replaced a user's stated preference is
 // a decision the user did not make and must be told about.
@@ -2322,7 +2340,19 @@ prepare_build(bool print_fingerprint,
       // `mcpp toolchain list` shows the same pair the build actually used.
       // Persisting only the target would leave the toolchain axis implicit
       // (derived from the vocabulary pin) and the two views would disagree.
-      if (windowsGnuFirstRun && tcSpec.has_value()) {
+      //
+      // ⚠️⚠️ NOT WHEN THE DEPENDENCY GRAPH SUPPLIED THE ANSWER. This branch's
+      // condition is `tcSpec.has_value()`, and since 2026.8.26.2 a package's
+      // `requires = ["mcpp:compiler=…"]` can be what made it true — so a bare
+      // Windows box building ONE project with an llvm-requiring dependency
+      // would have persisted llvm as the MACHINE's default, and the next
+      // project, which asked for nothing, would inherit it.
+      //
+      // A requirement is a property of the package that states it. It decides
+      // this build and nothing else; the first-run answer for the machine is
+      // still the one this branch was written for.
+      if (windowsGnuFirstRun && tcSpec.has_value()
+          && tc_origin_may_persist(tcOrigin)) {
         mcpp::ui::info("First run",
             std::format("no toolchain configured and no Visual Studio found — "
                         "using {} for {} (MinGW-w64, self-contained)",
@@ -2606,8 +2636,16 @@ prepare_build(bool print_fingerprint,
           // honoured exactly.
           const bool userChoseMsvcItself =
               tc->compiler == mcpp::toolchain::CompilerId::MSVC;
+          // ⚠️ AND NOT A COMPILER THE GRAPH REQUIRED. The repair below rewrites
+          // the machine's default to winlibs GCC, which is right when mcpp's
+          // own default cannot work here. A family a package REQUIRED is not
+          // mcpp's default to revise: switching to gcc would satisfy nothing —
+          // `check_requirements` refuses the build three thousand lines later —
+          // while having changed the user's configuration on the way there.
+          // Refusing at the decision is what the rest of this release is about.
           const bool mayRepair =
               !tc_origin_is_user_explicit(tcOrigin)
+              && tc_origin_may_persist(tcOrigin)
               && !userChoseMsvcItself
               && !mcpp::platform::env::offline_mode()
               && !mcpp::platform::env::no_auto_install()
