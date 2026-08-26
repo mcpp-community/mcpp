@@ -48,6 +48,9 @@ enum class Code {
     OsMismatch,            // requested and resolved triples name different systems
     LayerRequirement,      // a package requires a layer the resolution did not give it
     LayerOrdering,         // the five layers do not stack (check_layering)
+    LldRequiredAbsent,     // the row links through lld directly and none is here
+    HostToolToolchain,     // build.mcpp under a cross target has no host toolchain
+    StdModulePrecompile,   // the std module could not be precompiled
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -61,6 +64,9 @@ constexpr std::string_view name(Code c) {
         case Code::OsMismatch:           return "os-mismatch";
         case Code::LayerRequirement:     return "layer-requirement";
         case Code::LayerOrdering:        return "layer-ordering";
+        case Code::LldRequiredAbsent:    return "lld-required-absent";
+        case Code::HostToolToolchain:    return "host-tool-toolchain";
+        case Code::StdModulePrecompile:  return "std-module-precompile";
         case Code::Other:                return "other";
     }
     return "other";

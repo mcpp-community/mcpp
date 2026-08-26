@@ -2622,6 +2622,11 @@ prepare_build(bool print_fingerprint,
             return std::pair{explicit_compiler, *tc};
         if (hostTcCache) return *hostTcCache;
         if (!tcSpec || *tcSpec == "system" || tcSpecIsMsvc) {
+            // ⭐ A READABLE REFUSAL THAT HAD NO CODE, so the target matrix
+            // recorded four identical `other` cells for it. The sentence was
+            // right; the classification was missing. Measured on windows-2022
+            // with `msvc@system` declared and any cross target.
+            refusal::record(refusal::Code::HostToolToolchain);
             return std::unexpected(std::string(
                 "build.mcpp under a cross --target needs a resolvable host "
                 "toolchain — set one via [toolchain] or `mcpp toolchain default`"));
@@ -6225,6 +6230,51 @@ prepare_build(bool print_fingerprint,
         in.kernelAbi       = provider_of(tsd::CapLayer::KernelAbi);
         in.cAbi            = provider_of(tsd::CapLayer::CAbi);
         in.cxxAbi          = provider_of(tsd::CapLayer::CxxAbi);
+
+        // ⚠️⚠️ A ROW THAT LINKS THROUGH lld DIRECTLY, ON A PAYLOAD WITH NO lld.
+        //
+        // `x86_64-none-elf` is the only row carrying an `lldEmulation`, and its
+        // column comment in mcpp.freestanding.target says why the driver is
+        // bypassed for it: the driver "would hand the link to a host `g++` that
+        // cannot take our linker's path".
+        //
+        // ⚠️ MEASURED TWICE ON windows-2022, AND THE SECOND TIME WAS MY OWN
+        // FALLBACK. First, an empty `resolve_lld` left linker vocabulary on a
+        // driver line:
+        //
+        //     clang++: error: unknown argument: '-m'
+        //
+        // Then, falling back to the driver line reproduced exactly what the
+        // bypass exists to prevent:
+        //
+        //     clang++: error: linker (via gcc) command failed
+        //     collect2.exe: error: ld returned 1 exit status
+        //
+        // ⭐ There is no third shape. The row needs lld by name; when the
+        // payload has none, the answer is a refusal at the decision, not a
+        // different link.
+        if (auto fsT = tc.has_value()
+                     ? mcpp::toolchain::triple::parse(tc->targetTriple)
+                     : std::nullopt;
+            fsT && fsT->is_freestanding()) {
+            auto fsSpec = mcpp::freestanding::resolve(*fsT);
+            if (fsSpec && !fsSpec->lldEmulation.empty()
+                && mcpp::freestanding::resolve_lld(tc->binaryPath).empty()) {
+                refusal::record(refusal::Code::LldRequiredAbsent);
+                return std::unexpected(std::format(
+                    "target '{}' links through lld directly, and this toolchain "
+                    "payload ships none.\n"
+                    "       The row carries an lld emulation ('{}'), which means "
+                    "the compiler driver is\n"
+                    "       bypassed — for this target it would hand the link to "
+                    "a host linker that\n"
+                    "       cannot take a freestanding ELF.\n"
+                    "       install a toolchain whose payload contains ld.lld, "
+                    "or build this target\n"
+                    "       from a host that has one.",
+                    fsT->str(), fsSpec->lldEmulation));
+            }
+        }
 
         resolvedTargetSide = tsd::resolve(in);
         if (auto why = tsd::check_layering(resolvedTargetSide)) {

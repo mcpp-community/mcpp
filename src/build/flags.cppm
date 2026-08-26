@@ -1720,41 +1720,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // mcpp.freestanding.target. `--no-default-config` is then not
             // needed either: the payload's clang config file is a DRIVER
             // config, and nothing here runs the driver.
-            // ⚠️⚠️ THE CALLEE'S COMMENT STATES A CONTRACT AND THE CALLER DID
-            // NOT KEEP IT. `resolve_lld` says: "Returns \"\" when the payload
-            // has no LLD, and the caller must treat that as a hard error rather
-            // than falling back — falling back is the failure."
-            //
-            // One condition set two things and only one of them could fail:
-            // with an `lldEmulation` the branch assigned `f.ldDriver = in.lld`
-            // AND emitted linker-vocabulary flags. An empty `in.lld` left the
-            // flags and took the linker away, so `ld.lld`'s words went to
-            // `clang++`. Measured on windows-2022, `--target x86_64-none-elf`:
-            //
-            //     clang++: error: unknown argument: '-m'
-            //     clang++: error: unknown argument: '--no-dynamic-linker'
-            //
-            // ⭐ `x86_64-none-elf` is the ONLY row carrying an `lldEmulation` —
-            // the riscv and aarch64 rows reach lld through the driver — so one
-            // row on one host was the whole exposure.
-            //
-            // ⚠️ `compute_flags` returns flags, not an expected, so the refusal
-            // cannot be raised here. Falling back to the DRIVER line is the
-            // honest second choice: it is the shape the other three bare-metal
-            // rows already use, and its failure, if any, is stated in the
-            // driver's own vocabulary rather than in a linker's.
-            const bool lldDirect =
-                !spec->lldEmulation.empty() && !in.lld.empty();
-            if (!spec->lldEmulation.empty() && in.lld.empty())
-                mcpp::diag::degraded(
-                    "freestanding/link",
-                    std::format("target '{}' asks for a direct lld link and this "
-                                "payload ships none", spec->triple),
-                    "the compiler driver links instead, as it does for every "
-                    "other bare-metal row",
-                    "install a toolchain whose payload contains ld.lld");
             std::string fsLd;
-            if (lldDirect) {
+            if (!spec->lldEmulation.empty()) {
                 f.ldDriver = in.lld;
                 fsLd = mcpp::freestanding::link_flags_direct(*spec, in, ninjaEsc);
             } else {
