@@ -74,6 +74,29 @@ c_abi_line() { printf '%s\n' "$report" | grep -E '^\s+c-abi\s' | head -1; }
 
 fail=0; checked=0
 
+# ── Relation zero: the machine interface must round-trip ──────────────────
+#
+# ⭐⭐ A CONSUMER READS `family` AND `version`, JOINS THEM, AND HANDS THE RESULT
+# BACK. That has to work, and for one entry it did not.
+#
+# ⚠️ Measured on windows-2022: `toolchain list --format json` reported
+# `msvc@19.44.35228` — cl.exe's version — and `--toolchain msvc@19.44.35228` is
+# refused by design ("names a COMPILER version, not a toolset"). Every msvc cell
+# in the target matrix came back `build-failed`, with mcpp rejecting its own
+# output. A system toolset is selected as `msvc@system`.
+#
+# This is cheap and catches the whole class, on every host, for every family.
+for spec in $("$MCPP" toolchain list --format json 2>/dev/null \
+              | jq -r '.data.toolchains[] | .family + "@" + .version'); do
+    if "$MCPP" why toolchain --toolchain "$spec" --format json >/dev/null 2>&1; then
+        echo "  ok  $spec round-trips through --toolchain"
+        checked=$((checked+1))
+    else
+        echo "FAIL: toolchain list emitted '$spec' and --toolchain refuses it"
+        fail=1
+    fi
+done
+
 # ── Relation one: a payload C library must be on the link line ─────────────
 for tc in gcc llvm; do
     # ⭐ From the machine interface: `grep -oP` does not exist on macOS, and its

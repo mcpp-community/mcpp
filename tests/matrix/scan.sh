@@ -193,8 +193,11 @@ for tc in $(compilers); do
         # ⚠️ 与查询失败同型:`build-failed` 是对的分类,而没有证据说明为什么。
         # macOS 上 20 格一模一样的红、日志里找不到原因,就是把输出丢掉的代价。
         # 这里只留错误行,不倒整份构建日志 —— 40 格 × 一份完整日志读不动。
-        echo "scan: $t × $tc 构建失败: $(grep -m2 -iE '^error|error:' "$work/b.out" \
-                                          | tr '\n' ' ' | cut -c1-160)" >&2
+        # ⚠️ 三行,**整行**。前一版 `cut -c1-160` 把真正的错误砍在半路 ——
+        # macOS 那格只留下 `precompiled file '/private/var/…/target/` 就没了,
+        # 而要看的正是后半截。判据的单位是一整行输出。
+        echo "scan: $t × $tc 构建失败:" >&2
+        grep -m3 -iE '^error|error:' "$work/b.out" | sed 's/^/    /' >&2
         emit "$MODE" "$HOST" "$t" "$tc" "$tri" "$clib" "$cabi" "$cxxabi" "$okpkg" \
              mismatch build-failed
     fi

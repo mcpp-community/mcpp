@@ -542,9 +542,25 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
     // second array.
     if (mcpp::platform::is_windows && json) {
         if (auto inst = mcpp::toolchain::msvc::detect_installation())
+            // ⚠️⚠️ `version` MUST BE WHAT `--toolchain` ACCEPTS, AND THIS EMITTED
+            // WHAT cl.exe REPORTS.
+            //
+            // A system Visual Studio is selected as `msvc@system`; its COMPILER
+            // version is `19.44.35228`, which `parse_toolchain_spec` rejects by
+            // design — it "names a COMPILER version, not a toolset".
+            //
+            // ⭐ THE MACHINE INTERFACE HAS TO ROUND-TRIP. A consumer reads
+            // `family` and `version`, joins them, and hands the result back;
+            // `tests/matrix/scan.sh` did exactly that and every msvc cell came
+            // back `build-failed` with mcpp refusing its own output. Measured on
+            // windows-2022, both modes.
+            //
+            // The human-facing number keeps a field of its own, so nothing is
+            // lost — it simply stops pretending to be a spec.
             jsonToolchains.push_back({
-                {"family",  "msvc"},
-                {"version", inst->display_version()},
+                {"family",         "msvc"},
+                {"version",        "system"},
+                {"displayVersion", inst->display_version()},
                 {"default", defSpec
                             && defSpec->family == mcpp::toolchain::Family::Msvc},
                 {"source",  "system"},

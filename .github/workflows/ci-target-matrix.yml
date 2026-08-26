@@ -217,6 +217,40 @@ jobs:
           [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
           echo "MCPP_UNDER_TEST=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")" >> "$GITHUB_ENV"
 
+      # ⚠️⚠️ 格数不能是缓存状态的函数。
+      #
+      # 实测:同一台 ubuntu-24.04,一轮装了 gcc+llvm(扫 40 格),下一轮只有 gcc
+      # (扫 20 格)。`expected.tsv` 声明的是前者,于是后者会把所有 llvm 行报成
+      # 「期望表说有而扫描没跑到」—— 而那句报错是对的,问题在于覆盖面**漂移**了。
+      #
+      # ⭐ 矩阵要声明它扫哪些工具链,并把它们装上。装不上就红在这里,而不是
+      # 变成一屏「没跑到」。
+      - name: Install the toolchains this matrix declares
+        run: |
+          set -uo pipefail
+          export MCPP="$MCPP_UNDER_TEST"
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          want="$(awk -F'\t' -v h='${{ matrix.host }}' \
+                    'NF>=11 && $2==h {print $4}' tests/matrix/expected.tsv \
+                  | sort -u)"
+          if [ -z "$want" ]; then
+            echo "  ?   ${{ matrix.host }} 尚无期望行 —— 扫描它现有的工具链"
+            exit 0
+          fi
+          fail=0
+          for spec in $want; do
+            fam="${spec%@*}"; ver="${spec#*@}"
+            # `msvc@system` 是在机器上被找到的,不是装出来的。
+            [ "$ver" = system ] && { echo "  ok  $spec (system)"; continue; }
+            if "$MCPP" toolchain install "$fam" "$ver" >/dev/null 2>&1; then
+              echo "  ok  $spec"
+            else
+              echo "::error::$spec 装不上,而期望表声明了它"
+              fail=1
+            fi
+          done
+          [ "$fail" = 0 ] || exit 1
+
       - name: Scan both systems
         run: |
           set -euo pipefail

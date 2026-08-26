@@ -1895,13 +1895,44 @@ prepare_build(bool print_fingerprint,
         }
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
+        // ⚠️⚠️ AND NOT INSTALLED WHEN NO PAYLOAD HERE COULD SERVE THE TARGET.
+        //
+        // `unservedTargetDiagnosis` is decided a thousand lines above and
+        // released a thousand lines below — deliberately, because whether the
+        // dependency GRAPH supplies the target's system is not knowable until
+        // it is resolved. This install sits between the two, and it does not
+        // need to wait: if no payload here serves the target, then either the
+        // graph supplies the system (and this payload is not wanted) or the
+        // build refuses later (and it is not wanted then either).
+        //
+        // ⚠️ Measured on ubuntu-24.04-arm, `--target x86_64-linux-musl`:
+        //
+        //     error: toolchain 'gcc@16.1.0': xlings install of
+        //       'xim:x86_64-linux-musl-gcc@16.1.0' failed …
+        //
+        // — the cross-musl packages are published per host arch and that one is
+        // x86_64-only. The refusal that names this correctly never ran, because
+        // the install failed first and failed hard.
+        //
+        // ⭐ Skipping leaves BOTH later paths intact; attempting cannot help
+        // either of them.
+        const bool targetPayloadUnservable =
+            !unservedTargetDiagnosis.empty() && !spec->target.empty();
+
         auto cfg = get_cfg();
         if (!cfg) return std::unexpected(cfg.error());
         mcpp::fetcher::Fetcher fetcher(**cfg);
 
         mcpp::ui::info("Resolving", "toolchain");
         mcpp::fetcher::InstallProgressHandler progress;
-        auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
+        auto payload = fetcher.resolve_xpkg_path(
+            pkg.target(), /*autoInstall=*/!targetPayloadUnservable, &progress);
+        if (!payload && targetPayloadUnservable) {
+            // The held diagnosis is already the right words for this; releasing
+            // it here rather than at its usual site keeps one sentence per cause.
+            refusal::record(refusal::Code::HostCannotServe);
+            return std::unexpected(unservedTargetDiagnosis);
+        }
         if (!payload) {
             // `windows = "msvc@19.44"` in a manifest is the retired
             // cl-version spelling; saying "no such xim package" would send
