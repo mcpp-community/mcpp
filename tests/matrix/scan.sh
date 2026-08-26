@@ -185,6 +185,13 @@ for tc in $(compilers); do
     : "${tri:=-}" "${clib:=-}" "${cabi:=-}" "${cxxabi:=-}" "${okpkg:=-}"
 
     if [ "$st" = refused ]; then
+        # ⚠️ `other` 是「拒绝了而这一处分支还没有名字」。它是一句可见的承认,
+        # 而承认之后要能查 —— 否则下一个人看到的仍是一个没有原因的 unsupported。
+        # 拒绝的**消息**在信封的 diagnostics 里,这里把它打出来。
+        if [ "$rs" = other ]; then
+            echo "scan: $t × $tc 无名拒绝:" >&2
+            jq_get '.diagnostics[0].message // "(无消息)"' | head -3 | sed 's/^/    /' >&2
+        fi
         emit "$MODE" "$HOST" "$t" "$tc" "$tri" "$clib" "$cabi" "$cxxabi" "$okpkg" \
              unsupported "$rs"
         continue
