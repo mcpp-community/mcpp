@@ -43,7 +43,12 @@ enum class Code {
     None,                  // no refusal
     UnknownTarget,         // the spelling names no row, and no (arch, os) group
     AmbiguousRequest,      // several rows serve (arch, os) and none is the default
-    CompilerRequirementConflict, // the graph and the project name different compilers
+    // The compiler a package requires cannot be used for this build: the
+    // project stated a different one, two packages disagree, the target row
+    // names a family that is the only one able to emit it, or no version of the
+    // required family exists to use. One code, because what a consumer does
+    // about all four is the same — read the message.
+    CompilerRequirementConflict,
     TierPlanned,           // the row exists in the vocabulary, nothing is wired
     HostCannotServe,       // no payload here, and no graph supplied the system
     CapabilityPin,         // the row's toolchain is a capability, not a preference

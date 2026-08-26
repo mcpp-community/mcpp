@@ -5296,12 +5296,14 @@ prepare_build(bool print_fingerprint,
             [&](const std::string& family)
             -> std::expected<std::string, std::string> {
             auto spec = mcpp::toolchain::parse_toolchain_spec(family);
-            if (!spec)
+            if (!spec) {
+                refusal::record(refusal::Code::CompilerRequirementConflict);
                 return std::unexpected(std::format(
                     "`{}` requires the compiler to be `{}`, and mcpp has no "
                     "compiler family by that name.\n"
                     "       known families: gcc, llvm, msvc.",
                     reqCompilerBy, family));
+            }
 
             if (auto cfg = get_cfg(); cfg) {
                 auto pkg = mcpp::toolchain::to_xim_package(*spec);
@@ -5328,6 +5330,10 @@ prepare_build(bool print_fingerprint,
             // Neither source has one. Saying which family and which two places
             // were consulted is the difference between an actionable message
             // and "something went wrong".
+            // ⚠️ RECORDED, like every other refusal in this function. An
+            // unnamed branch reports `other`, and this release exists partly
+            // because one of those had a perfectly good name.
+            refusal::record(refusal::Code::CompilerRequirementConflict);
             return std::unexpected(std::format(
                 "`{}` requires the compiler to be `{}`, and mcpp has no version "
                 "of it to use.\n"
