@@ -77,6 +77,32 @@ std::string json_array(const std::vector<std::string>& v) {
     return out + "]";
 }
 
+// The per-OS xpm version lists, in the payload shape both forms share:
+// {"linux":[...],"macosx":[...],"windows":[...]}. Form A emits it too —
+// the tables are computed before the form branch either way, and dropping
+// them there is what made envelope consumers read Form A descriptors as
+// version-less (mcpp-vscode#8).
+std::string versions_json(
+        const std::map<std::string, std::vector<std::string>>& versions) {
+    std::string out = "{";
+    bool first = true;
+    for (auto& [plat, v] : versions) {
+        if (!first) out += ",";
+        first = false;
+        out += "\"" + plat + "\":" + json_array(v);
+    }
+    return out + "}";
+}
+
+std::string joined_versions(const std::vector<std::string>& v) {
+    std::string joined;
+    for (std::size_t i = 0; i < v.size(); ++i) {
+        if (i) joined += ", ";
+        joined += v[i];
+    }
+    return joined;
+}
+
 } // namespace
 
 export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
@@ -164,14 +190,22 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
     // Form A descriptors carry no `mcpp = {}` table — build info comes
     // from the fetched source's own mcpp.toml. Nothing further to parse.
+    // The xpm version tables are independent of that segment and are the
+    // resolver's source of truth, so both spellings publish them here.
     auto field = mcpp::manifest::extract_mcpp_field(lua);
     if (field.kind != mcpp::manifest::McppField::TableBody) {
         if (asJson) {
             emit_xpkg(std::format(
-                "{{\"namespace\":\"{}\",\"name\":\"{}\",\"form\":\"A\"}}",
-                json_escape(id.ns), json_escape(id.name)), enveloped);
+                "{{\"namespace\":\"{}\",\"name\":\"{}\",\"versions\":{},"
+                "\"form\":\"A\"}}",
+                json_escape(id.ns), json_escape(id.name),
+                versions_json(versions)), enveloped);
         } else {
             std::println("package    {} (namespace '{}')", fqn, id.ns);
+            for (auto& [plat, v] : versions) {
+                if (v.empty()) continue;
+                std::println("versions   {:<8} {}", plat, joined_versions(v));
+            }
             std::println("form       A — no mcpp segment (build info from the "
                          "source's mcpp.toml)");
             std::println("parse OK");
@@ -254,16 +288,6 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
             targets += "\"" + json_escape(m->targets[i].name) + "\"";
         }
         targets += "]";
-        std::string vers = "{";
-        {
-            bool f2 = true;
-            for (auto& [plat, v] : versions) {
-                if (!f2) vers += ",";
-                f2 = false;
-                vers += "\"" + plat + "\":" + json_array(v);
-            }
-        }
-        vers += "}";
         std::string genContents = "{";
         {
             bool f3 = true;
@@ -281,7 +305,8 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
                      "\"include_dirs\":{},\"generated_files\":{},"
                      "\"generated_contents\":{},\"targets\":{},"
                      "\"unknown_keys\":{}}}",
-                     json_escape(id.ns), json_escape(id.name), vers,
+                     json_escape(id.ns), json_escape(id.name),
+                     versions_json(versions),
                      json_escape(m->package.standard),
                      m->language.importStd ? "true" : "false",
                      json_array(m->modules.sources),
@@ -299,12 +324,7 @@ export int cmd_xpkg_parse(const mcpplibs::cmdline::ParsedArgs& parsed) {
     std::println("package    {} (namespace '{}')", fqn, id.ns);
     for (auto& [plat, v] : versions) {
         if (v.empty()) continue;
-        std::string joined;
-        for (std::size_t i = 0; i < v.size(); ++i) {
-            if (i) joined += ", ";
-            joined += v[i];
-        }
-        std::println("versions   {:<8} {}", plat, joined);
+        std::println("versions   {:<8} {}", plat, joined_versions(v));
     }
     std::println("standard   {}  import_std={}", m->package.standard,
                  m->language.importStd);

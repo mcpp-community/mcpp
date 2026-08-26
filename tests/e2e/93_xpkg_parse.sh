@@ -77,4 +77,46 @@ if "$MCPP" xpkg parse broken.lua > /dev/null 2>&1; then
     echo "FAIL: broken descriptor should fail"; exit 1
 fi
 
+# ── 5. Form A descriptor (no inline `mcpp` segment): versions still ship ──
+# Form A = the descriptor carries no `mcpp = {}` table (build info comes from
+# the fetched source's own mcpp.toml). The xpm version tables are still the
+# resolver's source of truth, so both spellings must publish them — dropping
+# already-computed versions here is what made the vscode completion layer
+# treat 18/81 index descriptors as version-less (mcpp-vscode#8).
+cat > forma.lua <<'EOF'
+package = {
+    spec      = "1",
+    namespace = "demo",
+    name      = "demo.forma",
+    xpm = {
+        linux   = { ["0.9.0"] = { url = "u", sha256 = "h" } },
+        macosx  = { ["0.9.0"] = { url = "u", sha256 = "h" },
+                    ["1.0.0"] = { url = "u2", sha256 = "h2" } },
+        windows = { ["1.0.0"] = { url = "u", sha256 = "h" } },
+    },
+}
+EOF
+
+"$MCPP" xpkg parse forma.lua | tee forma.out
+grep -q "form       A" forma.out
+grep -q "versions   linux" forma.out
+grep -q "1.0.0" forma.out
+grep -q "parse OK" forma.out
+
+"$MCPP" xpkg parse --json forma.lua > forma.json
+"$MCPP" xpkg parse --format json forma.lua > forma.env.json
+python3 - <<'PY'
+import json
+j = json.load(open("forma.json"))
+assert j["namespace"] == "demo" and j["name"] == "forma", j
+assert j["form"] == "A", j
+assert sorted(j["versions"]["linux"]) == ["0.9.0"], j
+assert sorted(j["versions"]["macosx"]) == ["0.9.0", "1.0.0"], j
+assert sorted(j["versions"]["windows"]) == ["1.0.0"], j
+e = json.load(open("forma.env.json"))
+assert e["kind"] == "mcpp.xpkg", e
+assert sorted(e["data"]["versions"]["macosx"]) == ["0.9.0", "1.0.0"], e
+print("form a ok")
+PY
+
 echo "PASS 93_xpkg_parse"

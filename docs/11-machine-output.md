@@ -222,6 +222,13 @@ mcpp xpkg parse <file.lua> --format json
 
 `data` is the same document `--json` prints bare.
 
+A descriptor whose `mcpp` field is an inline table yields the full document:
+`namespace`, `name`, `versions`, `standard`, `import_std`, `sources`,
+`include_dirs`, `generated_files`, `generated_contents`, `targets`,
+`unknown_keys`. A descriptor without an inline table reports `"form": "A"`
+in place of the build information. Both forms carry `versions` — the per-OS
+version keys of the descriptor's `xpm` tables.
+
 ### `mcpp.cache` — the global build cache
 
 ```
