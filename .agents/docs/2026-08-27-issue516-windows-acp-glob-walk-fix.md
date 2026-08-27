@@ -24,7 +24,8 @@
    `path_matches_glob` / `rewrite_rel_copy` / `local_include_dirs_for` 三处,
    **漏掉了同一个 walk 循环里比它们早一行执行的 `is_excluded_walk_dir`**。
    #516 看到的这条整洁报错,正是 #231 顺手加的顶层 catch 在正常工作。
-3. **爆炸半径不是一个包。** mcpp-index 128 个 recipe 里 **101 个(79%)**含以 `*` 开头的 glob,
+3. **爆炸半径不是一个包。** 在 mcpplibs/mcpp-index `891b2f7` 上量:130 个 recipe 里
+   **103 个**含以 `*` 开头的 glob,
    即"从解压根无界递归遍历"。任何上游 tarball 哪天多一个非 ASCII 文件名,当天 Windows 就红。
 
 ---

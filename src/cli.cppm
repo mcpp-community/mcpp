@@ -103,8 +103,9 @@ void print_usage() {
 // `src/modgraph/` and `src/manifest/` are leaf layers — not one module in
 // either imports `mcpp.ui` or `mcpp.diag` — so the glob walk RECORDS
 // (mcpp::modgraph::note_unnarrowable_path) and the CLI reports. A scope guard
-// rather than a call before `return` because run() has five exits, and the one
-// added next year would silently drop the report — which is precisely the
+// rather than a call before `return` because run() has several exits — an
+// unknown command, a parse error, `--help`, the dispatched action — and the
+// one added next year would silently drop the report, which is precisely the
 // failure shape this whole change is about.
 //
 // Reported as `degraded`, not `warning`: mcpp.diag's batch invariant is that a

@@ -27,8 +27,12 @@
   该函数是 walk 循环体的**第一行**,每个目录条目过一次 —— 所以它比 `#231`
   加固过的 `path_matches_glob` **更早**执行,加固那里对目录名从来无效。
 
-  触发条件比看上去宽:`include_dirs = { "*" }`(mcpp-index 里 128 个 recipe
-  有 101 个含以 `*` 开头的 glob)会从解压根**无界递归遍历整棵上游源码树**。
+  触发条件比看上去宽:`include_dirs = { "*" }` 这类以 `*` 开头的 glob,
+  字面前缀为空,会从解压根**无界递归遍历整棵上游源码树**。
+  在 mcpplibs/mcpp-index `891b2f7` 上量:130 个 recipe 里有 **103 个**至少含一条
+  这样的 glob(口径:`.lua` 里出现以 `*` 开头的字符串字面量;抽查其分布为
+  `*/include` / `*` / `*/src` / `*/mcpp.toml` 等,全部是 glob,无假阳性)。
+  这个比例会随索引增长而变,写下的是当天那个 commit 的数。
   cpp-httplib 带了 `test/www/日本語Dir/`,于是 `httplib` / `httplib-tls` /
   `httplib-zstd` 三个测试在 Windows 上一起挂 —— 而 Linux/macOS 全绿,因为那两个
   平台上 `path::string()` 不做任何编码转换。

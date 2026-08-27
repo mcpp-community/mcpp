@@ -35,8 +35,11 @@ std::filesystem::path native_path_from_generic(std::string_view s) {
 // ─── narrowing a walk-derived path ────────────────────────────────────────
 //
 // THE ONE PLACE a path that came out of a directory walk becomes a narrow
-// string. Everything else in the tree calls this; nothing calls
-// `.string()` / `.generic_string()` on such a path directly.
+// string. A direct `.string()` / `.generic_string()` on such a path needs a
+// written reason (`// NARROW-OK: …`) and there is exactly one of those today,
+// in p1689.cppm. This is a convention with a gate behind it, not a guarantee
+// the compiler enforces — see the gate's header for what it does and does not
+// cover.
 //
 // Why it needs to exist at all: on Windows `path::string()` converts the
 // native (wide) name through the process's ANSI code page and THROWS
@@ -79,6 +82,11 @@ std::optional<std::string> try_narrow(const std::filesystem::path& p) {
 // definition cannot be put into a message without throwing the very exception
 // this module exists to avoid. (Diagnostic code walking into its own trap is
 // the most likely way this regresses.)
+//
+// The stored spelling is GENERIC (`/`), because that is what try_narrow
+// produces and there is no second narrowing here to disagree with it. On
+// Windows the reported path therefore reads `C:/pkg/test/www`, not
+// `C:\pkg\test\www`; docs/05-mcpp-toml.md shows it that way too.
 void note_unnarrowable_path(const std::filesystem::path& p);
 
 // Take and clear this run's records.

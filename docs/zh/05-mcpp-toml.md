@@ -554,10 +554,13 @@ glob 是窄字符串,编译命令和 `build.ninja` 也是。在 Windows 上这�
 这类条目会被跳过,并按目录报告一次:
 
 ```text
-warning: 'C:\...\pkg\test\www' contains names this system's active code page cannot represent
+warning: 'C:/.../pkg/test/www' contains names this system's active code page cannot represent
   impact: those files take no part in the build
   hint: Windows only: this is the process ANSI code page, which `chcp` does not change. ...
 ```
+
+报告里给的是**最近一个代码页拼得出的祖先目录**,用通用(`/`)写法。拼不出的那个名字本身
+永远不会被打印:渲染它会抛出这条消息正在报告的同一个异常。
 
 `chcp` 改的是**控制台**代码页,对此无效。若这些名字只是测试数据或文档,跳过是无害
 的——上游 tarball 里带一个日文夹具目录,在 en-US 宿主上照样构建。源文件则不然:需要

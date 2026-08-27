@@ -631,10 +631,14 @@ named on a compile command, or written into a build file.
 Such entries are skipped, and the skip is reported once per directory:
 
 ```text
-warning: 'C:\...\pkg\test\www' contains names this system's active code page cannot represent
+warning: 'C:/.../pkg/test/www' contains names this system's active code page cannot represent
   impact: those files take no part in the build
   hint: Windows only: this is the process ANSI code page, which `chcp` does not change. ...
 ```
+
+The reported path is the nearest ancestor whose name the code page *can* spell,
+in generic (`/`) spelling. The offending name itself is never printed: rendering
+it would throw the same exception the message is reporting.
 
 `chcp` sets the *console* code page and has no effect here. Names that are only
 test data or documentation are harmless — an upstream tarball carrying a
