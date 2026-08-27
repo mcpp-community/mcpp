@@ -68,34 +68,6 @@ jobs:
       - name: Fresh-install mcpp via xlings
         run: |
           xlings install mcpp -y
-          # ⚠️⚠️ TRANSITION: GIVE THE BOOTSTRAP THE glibc ITS BINDING NAMES.
-          #
-          # `xim:glibc`'s `latest` moved from `2.44` to `2.44.2`. A payload
-          # directory is named after the version a request RESOLVED to, while a
-          # RuntimeBinding carries the version that was DECLARED — and the xlings
-          # a released mcpp vendors into its own sandbox still declares `2.44`.
-          # So a clean machine installs `2.44.2`, the toolchain fixup asks for
-          # `2.44`, and the build stops before anything is compiled:
-          #
-          #     error: selected RuntimeBinding glibc@2.44 requires payload
-          #            '…/xpkgs/xim-x-glibc/2.44', but it is not installed
-          #
-          # ⚠️ On every NEW machine and on none that already existed, which is why
-          # it is invisible from a developer's own. Measured on `main` as readily
-          # as on any branch — the index records the same failure verbatim in
-          # `pkgs/g/glibc.lua` and states the rule it broke: "The index is DATA
-          # and the client is a PROGRAM: the consumer ships first."
-          #
-          # ⭐ REMOVE THIS once a released mcpp resolves it. `mcpp 2026.8.27.1`
-          # accepts an installed payload whose version REFINES the requested one
-          # (`payload_dir_for_version`), so a bootstrap from it needs nothing
-          # here. Until then the missing payload is simply installed.
-          if [ -x "$HOME/.mcpp/registry/bin/xlings" ]; then
-            XLINGS_HOME="$HOME/.mcpp/registry" XLINGS_NON_INTERACTIVE=1 \
-              "$HOME/.mcpp/registry/bin/xlings" install glibc@2.44 -y -g \
-              >/dev/null 2>&1 || true
-            echo "glibc payloads present: $(ls "$HOME/.mcpp/registry/data/xpkgs/xim-x-glibc" 2>/dev/null | tr '\n' ' ')"
-          fi
           mcpp --version
           mcpp self config --mirror GLOBAL 2>/dev/null || true
 
