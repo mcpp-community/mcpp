@@ -1019,6 +1019,9 @@ kal_uintptr kal_terminal_props(struct kal_stream);   /* enquiry: varies per reso
 
 #### `openkal/net.h` —— 连接
 
+> ⚠️ **本草案已被 §7.5 ⓶ 取代**:交出的是被拥有的 `kal_net_conn`,流经 `kal_net_stream` 从它借。下面保留的是当时提出的形状。
+
+
 ```c
 /* openkal.net --- a connection, which is a stream with a peer and a way to be
  * half-closed. Clause 3.4 records why this is not merged with `openkal.fs':
@@ -1124,6 +1127,9 @@ extern const kal_uintptr kal_datagram_props;
 ```
 
 #### `openkal/space.h`
+
+> ⚠️ **本草案已被 §7.5 ⓵ 取代**:收敛成 `kal_space_start` 一个操作,`kal_space` 类型不存在。下面保留的是当时提出的形状。
+
 
 ```c
 /* openkal.space --- an address space, and a context executing in one.
@@ -1811,6 +1817,60 @@ clause 6.1 的缺席是靠**不导出符号**表达的,不是靠不写。
 |---|---|---|
 | **C** | `[build] private_include_dirs` | §3.8 |
 | **D** | 目标侧报告在「由图供给的层收窄了上层的面」时说出来 | §3.6 的运行期一侧 —— ⚠️ 引擎不得硬编码 POSIX 名 ⇒ 由包说 |
+
+---
+
+## 7.5 ⭐⭐ 实施回填:写实现改掉了两处接口设计
+
+本节是**落地之后**回填的。§2.12 的头文件草案里有两处,**读的时候没看出问题,写第一份
+实现时第一次运行就暴露了**。两处都是**改规范而不是改实现**。
+
+### ⓵ `openkal.space` 从两个操作收敛成一个
+
+草案是 `kal_space_clone` + `kal_space_start`,调用者手里拿着一个 space 句柄。
+
+⚠️ **本规范面向的环境里没有一个把这对当原语。** Linux 的 `clone` 是**一个动作**:
+复制地址空间**并且**在副本里开始执行,没有「只做前一半」的形式。要求实现把两者分开,
+它只能照样启动一个上下文、把它停在某个等待原语上、再自建一条信令通道告诉它跑什么 ——
+clause 7.1 对此的判词是:**是规范的形状有错,不是实现有错。**
+
+⭐ 分开的形式还有一个它答不上来的问题:调用者 clone 之后、start 之前改了自己的内存,
+子上下文看见的是哪一份?一个操作没有这个问题。
+
+⇒ `kal_space_start(entry, arg, stack_top, out)`,`kal_space` 类型与
+`kal_space_clone` / `kal_space_destroy` 一并删除。被否掉的形式记进 clause 6.3。
+
+### ⓶ `openkal.net` 交出的是**被拥有的连接**,流是从它借的
+
+草案里 `kal_net_connect` 直接交出一个 `kal_stream` 并声明它是被拥有的。
+
+⚠️ **那在 clause 7.2 下无法实现。** 规范要求「实现不得把已释放的句柄当作有效」,而
+流句柄就是环境的传输操作所接受的东西 —— 在描述符系统上是一个**关掉就会被复用的数字**,
+没有地方放代际。被拥有的句柄放得下,借来的流放不下。
+
+⭐ `openkal.fs` 早就回答过同一个问题:文件被拥有,流经 `kal_fs_stream` 从它借,并随
+文件一起释放。`openkal.net` 现在就是这个形状,措辞也照抄 —— 因为是同一个安排。
+
+更直白的症状是第一次跑就出现的:
+
+    FAIL: the bytes read are the bytes written
+    FAIL: the peer observes end of input after a half-closure
+
+Linux 实现把连接打进了句柄方案,而 `kal_stream_read` 把那个打包过的字当描述符用。
+
+⇒ 新增 `struct kal_net_conn` 与 `kal_uintptr kal_net_stream(struct kal_net_conn)`;
+connect / accept / peer / local / shutdown / close 全部改收连接;
+`kal_timeout_accept` 交出的也是连接。
+
+### ⓷ `_LIBCPP_HAS_TERMINAL` 的结论与 §4.1 相反
+
+§4.1 说把它设成 `0`。⭐ **那只是「对一个坏掉的 port 的正确描述」** —— 它门控的是
+`isatty`,而 `isatty` 之所以不工作,是端口层用 TCGETS 回答了 musl 用 TIOCGWINSZ 问的
+问题。修端口层才是修法,声明本来就该是真的。
+
+⇒ 端口层已修;`__config_site` 的声明保持 `1`,并在 openkal-llvm-runtime 的 CI 里加了
+一条**对账**判据:判据是**关系**(pty 与 pipe 必须不同,且与系统 C 库同向),
+两个方向都会红 —— 声明 1 而端口答不出、声明 0 而端口其实答得出,都判失败。
 
 ---
 
