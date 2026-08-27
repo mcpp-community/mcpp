@@ -219,6 +219,16 @@ after expansion — so a glob may name exactly the directories it expands to. An
 entry that is not among this package's `include_dirs` withholds nothing and is
 reported as such rather than passing in silence.
 
+**On an older engine the key is ignored, never fatal.** Measured on 2026.8.26.2:
+in a dependency's manifest it is accepted silently, and in a root manifest it
+warns — `[build] has unsupported key 'private_include_dirs' (ignored)` — and the
+build continues. So a package may adopt the key without waiting for its
+consumers to upgrade; those on an older engine simply keep receiving the
+directory as they did before. The one place this does **not** hold is a
+published `xim` descriptor's `target_cfg` block, where an unrecognised sub-key
+is a hard error that fails the whole manifest — do not put this key there until
+the index floor names an engine that knows it.
+
 `include_dirs_after` (#249) lists header directories that are searched **after**
 the toolchain's system directories (emitted as `-idirafter` on GCC/Clang, as
 trailing `/I` under the MSVC dialect, and as plain `-I` for NASM

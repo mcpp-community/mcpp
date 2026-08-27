@@ -1411,7 +1411,8 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                         return std::unexpected(ManifestError{
                             std::format("unknown target_cfg key '{}' (expected "
                                         "cflags/cxxflags/ldflags/sources/defines/"
-                                        "flags/include_dirs/include_dirs_after)", sub),
+                                        "flags/include_dirs/private_include_dirs/"
+                                        "include_dirs_after)", sub),
                             m.sourcePath, 0, 0});
                     }
                     if (!cur.consume('=') || !cur.consume('{')) {
