@@ -45,7 +45,24 @@ namespace pinned {
     // in lock-step by hand; that list was already missing both composite
     // actions, which is how CI's sandbox sat on 0.4.30 unnoticed while
     // everything else had moved on. Don't reintroduce a hand-maintained list.
-    inline constexpr std::string_view kXlingsVersion   = "2026.8.27.4";
+    //
+    // ⚠️ 2026.8.27.5 is a FLOOR, not just the current pick. Below 2026.8.27.2
+    // the bundled xlings takes a subos's runtime binding from a compiled-in
+    // constant, so a home can declare one glibc and install another the
+    // moment the index publishes a packaging revision -- and mcpp is the
+    // party that notices, because select_glibc_payload_lib looks up the
+    // payload directory by the binding's exact version and refuses to fall
+    // back:
+    //
+    //   error: selected RuntimeBinding glibc@2.44 requires payload
+    //          '<store>/xim-x-glibc/2.44', but it is not installed
+    //
+    // Measured across four xlings versions against an index carrying both
+    // 2.44 and 2.44.2: every client whose binding is a constant mismatched;
+    // 2026.8.27.4 and .5, which read the index, stayed consistent. .5 also
+    // makes the declaration outrank the index during resolution, so it holds
+    // even when `latest` is not the highest entry in the table.
+    inline constexpr std::string_view kXlingsVersion   = "2026.8.27.5";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
