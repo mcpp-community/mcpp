@@ -883,3 +883,137 @@ TEST(Scanner, RelativeIncludeFlagsAbsolutized) {
 
     std::filesystem::remove_all(dir);
 }
+
+// ─── mcpp#516 / #230: names the active code page cannot spell ──────────────
+//
+// On Windows `path::string()` converts the native (wide) name through the
+// process ANSI code page and throws std::system_error when a character has no
+// spelling there. OFF Windows the same call is a copy that cannot fail — so
+// the defect is NOT FALSIFIABLE on Linux or macOS, and the Windows leg of CI
+// is the only place the last test below means anything. It says so out loud
+// (GTEST_SKIP with a reason) rather than passing vacuously.
+
+namespace {
+
+// Can the active code page spell this name? Asked through path's own
+// conversion, i.e. the exact call the code under test makes. Doubles as the
+// guard against a future runner image whose default ACP is UTF-8 (65001),
+// which would otherwise quietly turn the regression test into decoration.
+[[maybe_unused]] bool acp_can_spell(const std::wstring& w) {
+    try { (void)std::filesystem::path(w).string(); return true; }
+    catch (const std::exception&) { return false; }
+}
+
+}  // namespace
+
+// The recorder: one unreadable subtree produces ONE record, keyed by the
+// nearest ancestor that CAN be named — never by the offending name, which
+// cannot be put into a message without throwing the very exception being
+// reported. Platform-independent logic, so this runs everywhere.
+TEST(Glob, UnnarrowablePathsDedupToTheirSpellableAncestor) {
+    (void)take_unnarrowable_paths();   // other tests in this binary walk too
+
+    const std::filesystem::path base = "/pkg/test/www";
+    note_unnarrowable_path(base / "bad" / "a.txt");
+    note_unnarrowable_path(base / "bad" / "b.txt");
+    note_unnarrowable_path(base / "other.txt");
+
+    auto notes = take_unnarrowable_paths();
+    ASSERT_EQ(notes.size(), 2u);   // ".../www/bad" and ".../www" — not three files
+    EXPECT_NE(std::find(notes.begin(), notes.end(), (base / "bad").generic_string()),
+              notes.end());
+    EXPECT_NE(std::find(notes.begin(), notes.end(), base.generic_string()),
+              notes.end());
+
+    // take() clears: the next command reports afresh rather than replaying.
+    EXPECT_TRUE(take_unnarrowable_paths().empty());
+}
+
+// A non-ASCII directory name must not disturb the walk on ANY platform. This
+// one is reproducible everywhere (on Windows the UTF-8 bytes land as whatever
+// the ACP makes of them, which still exercises the walk).
+TEST(Scanner, GlobWalkHandlesNonAsciiNames) {
+    auto dir = make_tempdir("mcpp-scanner-nonascii");
+    // U+65E5 U+672C U+8A9E in UTF-8, spelled as bytes so the test does not
+    // depend on the source file's encoding. Split before "Dir" because a C++
+    // hex escape is greedy — "\x9ED" would be one (out-of-range) escape.
+    std::filesystem::create_directories(
+        dir / "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E" "Dir");
+    write(dir / "zzz_ascii" / "x.h", "#pragma once\n");
+
+    std::vector<std::filesystem::path> dirs;
+    ASSERT_NO_THROW({ dirs = expand_dir_glob(dir, "*"); });
+    EXPECT_NE(std::find(dirs.begin(), dirs.end(), dir / "zzz_ascii"), dirs.end());
+
+    std::vector<std::filesystem::path> files;
+    ASSERT_NO_THROW({ files = expand_glob(dir, "**/*.h"); });
+    EXPECT_NE(std::find(files.begin(), files.end(), dir / "zzz_ascii" / "x.h"),
+              files.end());
+
+    std::filesystem::remove_all(dir);
+}
+
+// mcpp#516 proper: a directory name the ACTIVE CODE PAGE cannot spell used to
+// throw out of `is_excluded_walk_dir`'s `.filename().string()` — the first
+// line of the walk loop, which is why #231 hardening `path_matches_glob` (one
+// line later) could never cover it. The throw escaped to main() as
+//   error: internal: unhandled exception: No mapping for the Unicode
+//   character exists in the target multi-byte code page.
+// and exit 70.
+//
+// Asserts (a) the walk does not throw, (b) it is not TRUNCATED at the bad
+// entry, and (c) the skip was RECORDED — silently dropping the file is the
+// half-fix this whole change exists to avoid.
+TEST(Scanner, GlobWalkSurvivesNamesTheCodePageCannotSpell) {
+#ifndef _WIN32
+    GTEST_SKIP() << "path::string() performs no encoding conversion off Windows; "
+                    "mcpp#516 is not reproducible here";
+#else
+    // Devanagari is in NO Windows ANSI code page, so this case stays live on
+    // every non-UTF-8 ACP. The Japanese name mirrors mcpp#516's real input
+    // (cpp-httplib's test/www/<CJK>Dir), but CP932/936/950 CAN spell it, so on
+    // Japanese and Chinese hosts it alone would silently prove nothing.
+    //
+    // Built from explicit code units rather than a literal: the test must not
+    // depend on the source file's encoding, nor on /utf-8 reaching the
+    // compiler, nor on a checkout preserving the bytes.
+    // U+0915 U+0916 U+0917 = DEVANAGARI KA KHA GA
+    const std::wstring unspellable{wchar_t(0x0915), wchar_t(0x0916), wchar_t(0x0917),
+                                   L'D', L'i', L'r'};
+    // U+65E5 U+672C U+8A9E = the three han characters in mcpp#516's directory
+    const std::wstring japanese{wchar_t(0x65E5), wchar_t(0x672C), wchar_t(0x8A9E),
+                                L'D', L'i', L'r'};
+
+    if (acp_can_spell(unspellable)) {
+        GTEST_SKIP() << "the active code page can spell any name (UTF-8 ACP); "
+                        "mcpp#516 is unreachable on this host";
+    }
+
+    auto dir = make_tempdir("mcpp-scanner-acp");
+    std::filesystem::create_directories(dir / std::filesystem::path(unspellable));
+    std::filesystem::create_directories(dir / std::filesystem::path(japanese));
+    // A good neighbour, to prove the walk continued past the bad entry.
+    write(dir / "zzz_ascii" / "x.h", "#pragma once\n");
+
+    (void)take_unnarrowable_paths();
+
+    // The include-dir channel — mcpp#516's actual path (`include_dirs = {"*"}`,
+    // whose literal prefix is empty, so the walk starts at the package root).
+    std::vector<std::filesystem::path> dirs;
+    ASSERT_NO_THROW({ dirs = expand_dir_glob(dir, "*"); });
+    EXPECT_NE(std::find(dirs.begin(), dirs.end(), dir / "zzz_ascii"), dirs.end())
+        << "the walk was truncated at the unspellable entry";
+
+    // The file channel — installedLayoutMatchesIndex's
+    // `expand_glob(verRoot, "mcpp.toml")` walks the whole tree the same way.
+    std::vector<std::filesystem::path> files;
+    ASSERT_NO_THROW({ files = expand_glob(dir, "**/*.h"); });
+    EXPECT_NE(std::find(files.begin(), files.end(), dir / "zzz_ascii" / "x.h"),
+              files.end());
+
+    EXPECT_FALSE(take_unnarrowable_paths().empty())
+        << "the skipped entries were not recorded, so nothing would be reported";
+
+    std::filesystem::remove_all(dir);
+#endif
+}

@@ -33,6 +33,8 @@ import mcpp.platform.env;            // --offline → MCPP_OFFLINE
 import mcpp.platform.runtime_search; // linker-wrapper path-injection opt-out
 import mcpp.ui;
 import mcpp.log;
+import mcpp.diag;               // the single sink for the report below
+import mcpp.modgraph.glob;      // take_unnarrowable_paths()
 
 export namespace mcpp::cli {
 
@@ -95,8 +97,51 @@ void print_usage() {
     std::println("Docs: https://github.com/mcpp-community/mcpp/tree/main/docs");
 }
 
+// The ONE place this run's "could not be named in the active code page"
+// records are reported.
+//
+// `src/modgraph/` and `src/manifest/` are leaf layers — not one module in
+// either imports `mcpp.ui` or `mcpp.diag` — so the glob walk RECORDS
+// (mcpp::modgraph::note_unnarrowable_path) and the CLI reports. A scope guard
+// rather than a call before `return` because run() has several exits — an
+// unknown command, a parse error, `--help`, the dispatched action — and the
+// one added next year would silently drop the report, which is precisely the
+// failure shape this whole change is about.
+//
+// Reported as `degraded`, not `warning`: mcpp.diag's batch invariant is that a
+// branch doing LESS because a precondition was not met owes the user an
+// `impact` sentence. Skipping files is doing less.
+//
+// Known boundary: both `diag::flush(strict)` call sites live inside the build
+// path and run before this guard fires, so `--strict` does not promote these
+// to errors. Deliberate — the alternative is a second drain point, i.e. a
+// second answerer for the same question.
+struct ReportUnnarrowablePaths {
+    // A destructor is implicitly noexcept, so anything escaping this body is
+    // std::terminate — and run() can be left by an exception (main() catches
+    // one), which is exactly when this runs during unwinding. A change whose
+    // entire subject is "an uncaught exception must not end the build" does
+    // not get to introduce a second one in its own reporting path.
+    ~ReportUnnarrowablePaths() try {
+        for (auto const& anchor : mcpp::modgraph::take_unnarrowable_paths()) {
+            mcpp::diag::degraded(
+                "path/codepage",
+                std::format("'{}' contains names this system's active code "
+                            "page cannot represent", anchor),
+                "those files take no part in the build",
+                "Windows only: this is the process ANSI code page, which "
+                "`chcp` does not change. Harmless when the names are test "
+                "data or docs; if they are sources, rename them or build on a "
+                "system whose code page covers them.");
+        }
+    } catch (...) {
+        // Losing the report is bad; terminating instead of it is worse.
+    }
+};
+
 int run(int argc, char** argv) {
     namespace cl = mcpplibs::cmdline;
+    ReportUnnarrowablePaths reportUnnarrowable_;
 
     // ─── --quiet / --no-color: pre-scan ─────────────────────────────────
     // The cmdline lib propagates global options into nested subcommand

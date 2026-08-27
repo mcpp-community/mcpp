@@ -621,6 +621,34 @@ skipped). Limits: `.asm` targets x86 only (hard error elsewhere — gate the
 files off other targets), `.S` is unavailable on the MSVC toolchain, and
 `.asm` means NASM syntax (MASM sources should be `!`-excluded).
 
+### File names outside the host code page
+
+Globs are narrow strings, and so are compile commands and `build.ninja`. On
+Windows those strings are produced in the process's **ANSI code page**, so a
+file whose name has no spelling in that code page cannot be matched by a glob,
+named on a compile command, or written into a build file.
+
+Such entries are skipped, and the skip is reported once per directory:
+
+```text
+warning: 'C:/.../pkg/test/www' contains names this system's active code page cannot represent
+  impact: those files take no part in the build
+  hint: Windows only: this is the process ANSI code page, which `chcp` does not change. ...
+```
+
+The reported path is the nearest ancestor whose name the code page *can* spell,
+in generic (`/`) spelling. The offending name itself is never printed: rendering
+it would throw the same exception the message is reporting.
+
+`chcp` sets the *console* code page and has no effect here. Names that are only
+test data or documentation are harmless — an upstream tarball carrying a
+Japanese-named fixture directory builds fine on an en-US host. Sources are not:
+they need renaming, or a host whose code page covers them.
+
+Linux and macOS perform no such conversion, so nothing is skipped there. A
+package that builds on one and not the other, with an
+`internal: unhandled exception` from a code-page message, was mcpp#516.
+
 ### 2.4 `[lib]` — Library Root Module Convention
 
 ```toml

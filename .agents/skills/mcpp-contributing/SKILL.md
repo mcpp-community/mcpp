@@ -278,6 +278,40 @@ docs/                     ← 用户文档
 .agents/skills/           ← Agent 技能文档
 ```
 
+## 路径窄化不变式（走查得到的 path 不得直接 `.string()`）
+
+Windows 上 `std::filesystem::path::string()` 会把 native（宽）名经**进程 ANSI 代码页**
+转换，遇到该代码页拼不出的字符就抛 `std::system_error`。**非 Windows 上同一个调用只是
+一次拷贝，永不失败**——所以这个隐患在 Linux/macOS 上（包括它们的测试里）完全不可见。
+
+它已经付过两次代价，每次戴着不同的面具：#230 抛出后逃到 `std::terminate`，git-bash
+显示为**裸 exit 127**（看起来像"命令找不到"）；#516 逃到 `main()` 的 catch，显示为
+`internal: unhandled exception`（看起来像下载器的**解压/编码缺陷**）。#231 加固了三处
+调用点，漏掉了同一个 walk 循环里**早一行**执行的第四处。
+
+规则（按用途选，不是三选一的风格问题）：
+
+| 用途 | 写法 |
+|---|---|
+| 与 ASCII 字面量比较 | **按 `path` 比**，根本不窄化 |
+| 需要稳定身份（hash / key / digest） | `p.u8string()` —— 各平台都是 UTF-8，不碰代码页 |
+| 需要交给编译器 / ninja / CDB | `mcpp::modgraph::try_narrow(p)`，并处理 `nullopt` |
+
+`try_narrow` 返回 `nullopt` 表示"这个文件没法出现在任何交给工具链的字符串里"。
+**跳过它，并且必须报出来**——`mcpp.diag` 的批次不变式对此已有规定：因为前提不满足而
+少做事，必须走 `diag::degraded()` 并给出 `impact`。静默丢弃是这类缺陷藏身的地方。
+
+`src/modgraph/` 与 `src/manifest/` 是 leaf 层（全仓没有一条到 `mcpp.ui` / `mcpp.diag`
+的 import 边），所以它们**记录**（`note_unnarrowable_path`），由 CLI 层排空上报。
+
+`.github/tools/check_narrow_conversions.sh` 是硬门，但它只扫 `src/modgraph`、
+`src/scaffold`——**通过不等于已审计**。确有把握的站点用 `// NARROW-OK: <理由>` 标注，
+理由必须写出"为什么这个输入不可能带这种名字"。
+
+**测试只有跑在 Windows CI 上才有意义**，且必须自己检查 `GetACP()`：runner 镜像哪天默认
+UTF-8 ACP（65001），这类用例会静默变成永远绿的装饰品。参见
+`tests/unit/test_modgraph.cpp` 的 `Scanner.GlobWalkSurvivesNamesTheCodePageCannotSpell`。
+
 ## 注意事项
 
 - C++23 模块项目，修改模块时注意 import 依赖顺序

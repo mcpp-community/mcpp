@@ -235,8 +235,25 @@ submodule_paths(const std::filesystem::path& root) {
 // package's source glob.
 bool is_excluded_walk_dir(const std::filesystem::path& dir,
                           const std::filesystem::path& root) {
-    auto name = dir.filename().string();
-    if (name == ".mcpp" || name == ".git" || name == "target") return true;
+    // Compare as paths. Do NOT narrow.
+    //
+    // #516: `dir.filename().string()` went through MSVC's wide→ANSI
+    // conversion and threw std::system_error for any directory name the
+    // active code page cannot spell (`test/www/<CJK>Dir/` in cpp-httplib).
+    // This function is the FIRST line of the walk loop and runs once per
+    // directory entry, so it fires before `path_matches_glob`'s guard —
+    // hardening that one (#231) could never cover a directory name.
+    //
+    // The three literals are ASCII, so their conversion to the native
+    // representation is lossless, and `path::operator==` compares native
+    // strings case-sensitively — byte-for-byte the same decision the narrow
+    // comparison made. Static constants rather than temporaries per entry:
+    // #225 bounded this walk for a reason, and this is on its hot path.
+    static const std::filesystem::path kMcppDir{".mcpp"};
+    static const std::filesystem::path kGitDir{".git"};
+    static const std::filesystem::path kTargetDir{"target"};
+    const auto name = dir.filename();
+    if (name == kMcppDir || name == kGitDir || name == kTargetDir) return true;
     auto const& submodules = submodule_paths(root);
     if (submodules.empty()) return false;
     std::error_code ec;
@@ -597,6 +614,14 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
     // have meant" a module interface would be a second answer to the same
     // question — the very thing that produced this defect.
     if (u.kind == mcpp::SourceKind::Other) {
+        // Narrow through try_narrow even here. Everything that reaches
+        // scan_file today came through a glob filter, so the conversion cannot
+        // actually fail — but a DIAGNOSTIC that throws the exception it is
+        // describing is the single most likely way this class of bug comes
+        // back, and it costs one `value_or` to make that impossible.
+        auto nameNarrow = try_narrow(file.filename()).value_or(
+            "(a name this code page cannot spell)");
+        auto extNarrow  = try_narrow(file.extension()).value_or("");
         return std::unexpected(ScanError{ file, 0, std::format(
             "'{}' is listed in [build] sources, and mcpp has no role for the "
             "extension '{}'.\n"
@@ -608,9 +633,9 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
             "  Otherwise remove it from `sources` — headers belong in "
             "`include_dirs`, and\n"
             "  Windows resource scripts in `[resources]`.",
-            file.filename().string(),
-            file.extension().string().empty() ? "(none)" : file.extension().string(),
-            file.extension().string().empty() ? ".ixx" : file.extension().string()) });
+            nameNarrow,
+            extNarrow.empty() ? "(none)" : extNarrow,
+            extNarrow.empty() ? ".ixx"   : extNarrow) });
     }
 
     // C-like files are not C++ modules: they cannot legally contain `module` / `import`
@@ -1012,7 +1037,10 @@ void scan_one_into(ScanResult& result,
         if (ext.empty()) continue;
         bool seen = false;
         for (auto const& f : all_files)
-            if (f.extension().string() == ext) { seen = true; break; }
+            // Compare as paths — `ext` is ASCII, so it converts to the native
+            // representation losslessly, and no walk-derived name is narrowed
+            // (see mcpp::modgraph::try_narrow).
+            if (f.extension() == ext) { seen = true; break; }
         if (!seen) {
             result.warnings.push_back(ScanError{root, 0, std::format(
                 "[build] module_extensions declares '{}' but no source file "

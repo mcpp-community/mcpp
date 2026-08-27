@@ -55,6 +55,21 @@ jobs:
       - name: Check version / xlings pin consistency
         run: bash .github/tools/check_version_pins.sh
 
+      # Same placement, same reason: pure text, no toolchain, under a second.
+      #
+      # This one is a HARD gate (unlike lint-ci-assertions.sh below) because it
+      # has no false positives left — its scope was cut to the two directories
+      # that walk trees mcpp does not control, and the one legitimate site
+      # carries a NARROW-OK rationale. See the script's header for why the
+      # scope is that narrow, and mcpp#516 for what it costs when it is missed.
+      #
+      # It runs on LINUX on purpose even though the bug it guards is
+      # Windows-only: it is text analysis, and putting it where the fast leg is
+      # means a violation is reported in seconds rather than after a Windows
+      # bootstrap.
+      - name: Check no walk-derived path is narrowed directly
+        run: bash .github/tools/check_narrow_conversions.sh
+
       # Same placement, same reason: pure text, no toolchain.
       #
       # ⚠️ IT PRINTS AND DOES NOT FAIL, DELIBERATELY. The three rules it carries

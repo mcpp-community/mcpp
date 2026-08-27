@@ -545,6 +545,30 @@ nasm 则**硬失败**(汇编绝不静默跳过)。限制:`.asm` 仅限 x86 目�
 报错——用条件 sources 门控)、MSVC 工具链不支持 `.S`、`.asm` 即 NASM 语法
 (MASM 源请用 `!` 排除)。
 
+### 宿主代码页之外的文件名
+
+glob 是窄字符串,编译命令和 `build.ninja` 也是。在 Windows 上这些字符串由进程的
+**ANSI 代码页**产生,因此一个名字在该代码页里无法拼写的文件,既匹配不了 glob,也
+写不进编译命令或构建文件。
+
+这类条目会被跳过,并按目录报告一次:
+
+```text
+warning: 'C:/.../pkg/test/www' contains names this system's active code page cannot represent
+  impact: those files take no part in the build
+  hint: Windows only: this is the process ANSI code page, which `chcp` does not change. ...
+```
+
+报告里给的是**最近一个代码页拼得出的祖先目录**,用通用(`/`)写法。拼不出的那个名字本身
+永远不会被打印:渲染它会抛出这条消息正在报告的同一个异常。
+
+`chcp` 改的是**控制台**代码页,对此无效。若这些名字只是测试数据或文档,跳过是无害
+的——上游 tarball 里带一个日文夹具目录,在 en-US 宿主上照样构建。源文件则不然:需要
+改名,或换一台代码页覆盖得了的机器。
+
+Linux 与 macOS 不做这种转换,因此那里不会跳过任何名字。一个包在一边能构建、在另一
+边报 `internal: unhandled exception` 并指向代码页,就是 mcpp#516。
+
 ### 2.4 `[lib]` — 库根模块约定
 
 ```toml
