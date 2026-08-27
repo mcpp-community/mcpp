@@ -410,20 +410,30 @@ select_glibc_payload_lib(const std::filesystem::path& glibcRoot,
             runtimeId));
     }
 
-    auto payload = glibcRoot / std::string(version);
-    std::error_code ec;
-    if (!std::filesystem::is_directory(payload, ec)) {
+    // ⭐ ONE RESOLVER, TWO CALLERS. `payload_dir_for_version` also answers
+    // `probe`'s compile-side discovery; see its own header for why a request
+    // and a resolution are two vocabularies, and why a unique component-wise
+    // refinement is an answer while a directory-order pick is not.
+    //
+    // ⚠️ THE FIRST VERSION OF THIS FIX SPELLED IT HERE, and that left the other
+    // caller: the toolchain then installed and the compile line came out
+    // without the glibc include directory, which reads as
+    // `features.h: No such file` from inside libstdc++'s own headers.
+    auto payload = mcpp::xlings::paths::payload_dir_for_version(
+        glibcRoot, version);
+    if (!payload) {
         return std::unexpected(std::format(
-            "selected RuntimeBinding {} requires payload '{}', but it is not "
-            "installed; mcpp will not fall back to another directory entry",
-            runtimeId, payload.string()));
+            "selected RuntimeBinding {} requires payload '{}', but no installed "
+            "payload is its resolution; mcpp will not fall back to another "
+            "directory entry",
+            runtimeId, (glibcRoot / std::string(version)).string()));
     }
-    auto lib = payload_lib_dir_with_loader(payload);
+    auto lib = payload_lib_dir_with_loader(*payload);
     if (lib.empty()) {
         return std::unexpected(std::format(
             "selected RuntimeBinding {} payload '{}' is stale/incomplete: no "
             "dynamic loader was found under lib64/ or lib/",
-            runtimeId, payload.string()));
+            runtimeId, payload->string()));
     }
     return lib;
 }

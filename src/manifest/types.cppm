@@ -192,6 +192,38 @@ struct BuildInputs {
     std::vector<std::filesystem::path> includeDirs;    // relative to package root
     // #249: emitted as -idirafter (searched after the toolchain's system dirs)
     std::vector<std::filesystem::path> includeDirsAfter;
+    // ⭐⭐ WHICH OF `includeDirs` A CONSUMER MUST NOT RECEIVE.
+    //
+    // `publicUsage` has always taken `privateBuild`'s include directories
+    // ENTIRE, so a package is built from exactly the set it publishes. For
+    // almost every package those are the same set. For one that vendors a
+    // library with an internal header overlay they are not, and the difference
+    // reaches every consumer.
+    //
+    // `mcpplibs/openkal-musl` states the case in its own source
+    // (`port/include/features.h`), having found it three times:
+    //
+    //   ⓘ THIS IS THE SECOND-BEST REMEDY. The first would be for a package to
+    //   distinguish the directories it is BUILT FROM from the directories it
+    //   PUBLISHES. Measured 2026-08-22: mcpp cannot express it.
+    //
+    // musl's build reaches its own declarations through `src/include`, whose
+    // headers define `hidden`, `weak` and `weak_alias` — names that mean
+    // something only to musl's own sources. Publishing that directory hands
+    // those macros to every consumer, and which consumer breaks on which name
+    // was discovered one at a time: a C++ one on `restrict`, then on linkage;
+    // a C one (compiler-rt) on `weak`, which it writes itself.
+    //
+    // ⚠️ A SUBSET OF `includeDirs`, NOT A SECOND LIST, AND THE REASON IS ORDER.
+    // The relative order of the two kinds is load-bearing: moving musl's
+    // internal directories after the public ones makes musl's OWN build find
+    // the public `<features.h>` first and fail with `unknown type name hidden`
+    // (measured, same file). Two arrays in TOML cannot express one order, so
+    // `includeDirs` stays the single ordered list and this one says which of
+    // its entries stop at the package boundary. An entry here that is not in
+    // `includeDirs` withholds nothing, and is reported as such rather than
+    // passing in silence.
+    std::vector<std::filesystem::path> privateIncludeDirs;
     // What the `std` module source of a package that IS a standard library
     // needs on its command line.
     //
@@ -220,6 +252,9 @@ inline void append(BuildInputs& dst, const BuildInputs& src) {
     dst.includeDirsAfter.insert(dst.includeDirsAfter.end(),
                                 src.includeDirsAfter.begin(),
                                 src.includeDirsAfter.end());
+    dst.privateIncludeDirs.insert(dst.privateIncludeDirs.end(),
+                                  src.privateIncludeDirs.begin(),
+                                  src.privateIncludeDirs.end());
     dst.stdModuleFlags.insert(dst.stdModuleFlags.end(),
                               src.stdModuleFlags.begin(),
                               src.stdModuleFlags.end());

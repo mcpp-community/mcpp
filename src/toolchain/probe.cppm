@@ -374,16 +374,28 @@ payload_root_for_binding(const std::filesystem::path& compilerBin,
     const auto name    = binding.substr(0, at);
     const auto version = std::string(binding.substr(at + 1));
 
-    std::error_code ec;
+    // ⭐ THE DIRECTORY IS NAMED AFTER WHAT THE REQUEST RESOLVED TO, NOT AFTER
+    // THE REQUEST. `payload_dir_for_version` is the one answer to that, shared
+    // with the toolchain post-install fixup — see its header.
+    //
+    // ⚠️ THIS SITE'S FAILURE DOES NOT NAME A VERSION. The fixup at least says
+    // which payload it wanted; here the include directory is simply never
+    // added, and what the user reads comes from inside libstdc++:
+    //
+    //     bits/os_defines.h:39: fatal error: features.h: No such file
+    //
+    // Measured 2026-08-27 on openkal-musl's CI after the fixup alone was fixed.
     // Compiler siblings: <...>/xpkgs/xim-x-<name>/<version>
     if (auto xpkgs = mcpp::xlings::paths::xpkgs_from_compiler(compilerBin)) {
-        auto root = *xpkgs / std::format("xim-x-{}", name) / version;
-        if (std::filesystem::exists(root, ec)) return root;
+        if (auto root = mcpp::xlings::paths::payload_dir_for_version(
+                *xpkgs / std::format("xim-x-{}", name), version))
+            return *root;
     }
     // Active home.
     if (auto xpkgs = mcpp::xlings::paths::active_home_xpkgs()) {
-        auto root = *xpkgs / std::format("xim-x-{}", name) / version;
-        if (std::filesystem::exists(root, ec)) return root;
+        if (auto root = mcpp::xlings::paths::payload_dir_for_version(
+                *xpkgs / std::format("xim-x-{}", name), version))
+            return *root;
     }
     return std::nullopt;
 }

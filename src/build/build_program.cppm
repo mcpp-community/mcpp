@@ -291,6 +291,15 @@ std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc,
     // undefined __cxa_* / __gxx_personality_v0.
     opt.cfgBypass = mcpp::toolchain::HostFlagOptions::CfgBypass::LinuxOnly;
     opt.clangStdlibSelect = true;
+    // ⭐ `cAbiPrebuilt` is left at its default (true), and that is a statement
+    // rather than an omission: `tc` here is always HOST-targeting (see this
+    // function's header), so the helper's C library is the payload's whatever
+    // the project's target side turns out to be.
+    //
+    // ⚠️ It also corrects a latent defect. The predicate this replaced was
+    // `!tc.crossTargetFlag.empty()`, and a host toolchain resolved for a cross
+    // build could carry one — in which case the helper lost the payload's own
+    // headers for a reason that had nothing to do with it.
     // binutils -B so the driver finds ld/as (GCC; musl and MinGW ship their own).
     opt.binutilsPrefix = !mcpp::toolchain::is_musl_target(tc)
                       && !mcpp::toolchain::is_mingw_target(tc);

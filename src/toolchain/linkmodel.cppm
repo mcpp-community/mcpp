@@ -20,6 +20,7 @@ export module mcpp.toolchain.linkmodel;
 import std;
 import mcpp.platform;
 import mcpp.toolchain.model;
+import mcpp.toolchain.triple;
 
 export namespace mcpp::toolchain {
 
@@ -304,13 +305,57 @@ ClangDriverModel resolve_clang_driver(const Toolchain& tc) {
     dm.llvmRoot = tc.binaryPath.parent_path().parent_path();
     auto libcxxInclude = dm.llvmRoot / "include" / "c++" / "v1";
     dm.cxxIncludes.push_back(libcxxInclude);
+
+    // ⭐⭐ THE PAYLOAD'S DIRECTORIES ARE NAMED IN LLVM'S VOCABULARY, AND THIS
+    // LOOKUP USED mcpp'S.
+    //
+    // `include/<triple>/c++/v1` and `lib/<triple>` are written by the LLVM
+    // build, so they carry LLVM's spelling — `x86_64-unknown-linux-gnu`.
+    // `tc.targetTriple` is mcpp's — `x86_64-linux-gnu`. The two coincide only
+    // when the triple was PROBED (`-dumpmachine` answers in LLVM's form), and
+    // they come apart the moment a target is named: prepare rewrites
+    // `targetTriple` to mcpp's canonical spelling for a retargetable driver.
+    //
+    // ⚠️ AND THE MISS IS SILENT. Both lookups are `if (exists) push_back`, so
+    // a directory that is not found simply does not appear. What is in the one
+    // that goes missing is a single file — `__config_site` — which is why the
+    // failure this produces reads `'__config_site' file not found` from inside
+    // libc++'s own `__config`, names no decision mcpp made, and has been
+    // mistaken for a broken payload more than once in this codebase.
+    //
+    // Measured 2026-08-27, same machine, same compiler, same target:
+    //
+    //     mcpp build                             include/x86_64-unknown-linux-gnu/c++/v1  ✔
+    //     mcpp build --target x86_64-linux-gnu   (absent)
+    //
+    // ⭐ BOTH SPELLINGS ARE TRIED, and that is not a heuristic: they are two
+    // vocabularies for one fact, and which one a given payload used is a
+    // property of how it was built rather than of anything mcpp decides. The
+    // LLVM spelling is tried first because it is the one an LLVM payload
+    // writes.
     if (!tc.targetTriple.empty()) {
-        auto targetInclude = dm.llvmRoot / "include" / tc.targetTriple / "c++" / "v1";
-        if (std::filesystem::exists(targetInclude))
-            dm.cxxIncludes.push_back(targetInclude);
-        auto targetLib = dm.llvmRoot / "lib" / tc.targetTriple;
-        if (std::filesystem::exists(targetLib))
-            dm.libDirs.push_back(targetLib);
+        std::vector<std::string> spellings;
+        if (auto t = mcpp::toolchain::triple::parse(tc.targetTriple)) {
+            auto llvmForm = t->llvm_triple();
+            if (!llvmForm.empty()) spellings.push_back(std::move(llvmForm));
+        }
+        if (std::ranges::find(spellings, tc.targetTriple) == spellings.end())
+            spellings.push_back(tc.targetTriple);
+
+        for (auto const& spelling : spellings) {
+            auto targetInclude = dm.llvmRoot / "include" / spelling / "c++" / "v1";
+            if (std::filesystem::exists(targetInclude)) {
+                dm.cxxIncludes.push_back(targetInclude);
+                break;
+            }
+        }
+        for (auto const& spelling : spellings) {
+            auto targetLib = dm.llvmRoot / "lib" / spelling;
+            if (std::filesystem::exists(targetLib)) {
+                dm.libDirs.push_back(targetLib);
+                break;
+            }
+        }
     }
     return dm;
 }

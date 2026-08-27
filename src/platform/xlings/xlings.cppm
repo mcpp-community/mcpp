@@ -19,6 +19,7 @@ import mcpp.pm.index_contract;
 import mcpp.pm.index_snapshot;
 import mcpp.platform;
 import mcpp.log;
+import mcpp.home;
 
 export namespace mcpp::xlings {
 
@@ -168,6 +169,35 @@ namespace paths {
     std::optional<std::filesystem::path>
     find_home_tool(std::string_view tool,
                    std::string_view requiredRelPath = {});
+
+    // ⭐⭐ WHICH INSTALLED PAYLOAD DIRECTORY ANSWERS A REQUESTED VERSION.
+    //
+    // A request and a resolution are two vocabularies for one fact. A
+    // RuntimeBinding carries the DECLARED version (`glibc@2.44`); xlings names
+    // the payload directory after what that request RESOLVED to (`2.44.2`).
+    // They coincide until the index moves a package within a series, and then
+    // every lookup that spells the directory by the declared version stops
+    // finding it.
+    //
+    // ⚠️ STATED ONCE HERE BECAUSE IT HAS TWO CALLERS AND THEY FAILED
+    // SEPARATELY. `post_install`'s toolchain fixup and `probe`'s compile-side
+    // payload discovery each spelled it themselves; fixing one left the other,
+    // and the second failure did not name a version at all — it read
+    //
+    //     bits/os_defines.h:39: fatal error: features.h: No such file
+    //
+    // because the glibc include directory had simply not been added.
+    //
+    // ⭐ A REFINEMENT, NOT A DIRECTORY-ORDER PICK. `2.44.2` is what the request
+    // `2.44` resolved to: its version COMPONENTS begin with the requested ones.
+    // `2.4` does not answer `2.44`, because the comparison is per component and
+    // not per character. And when two payloads both refine the request, this
+    // returns nothing — "the resolution of this request" has to be one payload
+    // to be an answer at all, and picking by directory order is the guess every
+    // caller here refuses to make.
+    std::optional<std::filesystem::path>
+    payload_dir_for_version(const std::filesystem::path& packageRoot,
+                            std::string_view version);
 
     // index data root: env.home / "data"
     std::filesystem::path index_data(const Env& env);
@@ -834,15 +864,22 @@ find_sibling_tool(const std::filesystem::path& compilerBin,
 }
 
 std::optional<std::filesystem::path> active_home_xpkgs() {
-    std::filesystem::path home;
-    if (const char* h = std::getenv("MCPP_HOME"); h && *h) {
-        home = h;
-    } else if (const char* u = std::getenv("HOME"); u && *u) {
-        home = std::filesystem::path(u) / ".mcpp";
-    } else {
-        return std::nullopt;
-    }
-    auto xpkgs = home / "registry" / "data" / "xpkgs";
+    // ⭐⭐ `mcpp::home::root()`, NOT A FOURTH DERIVATION OF IT.
+    //
+    // This function used to resolve the home itself — `$MCPP_HOME`, else
+    // `$HOME/.mcpp` — which is two of the three answers `mcpp.home` gives. The
+    // one it left out is SELF-CONTAINED MODE: a release tarball or
+    // `xlings install mcpp` puts the binary at `<root>/bin/mcpp` and the
+    // unpacked tree IS the home. On such an install this function answered
+    // `$HOME/.mcpp`, so payload discovery reached a DIFFERENT home than
+    // everything else in the process — and what payload discovery produces is
+    // `-isystem` rows on every compile command.
+    //
+    // ⚠️ `mcpp.home`'s own header opens with this: "Every path under the mcpp
+    // home must be derived from here. Before #311 this logic existed in three
+    // places … the copies drifted." This was the fourth copy, and it drifted
+    // the same way.
+    auto xpkgs = mcpp::home::root() / "registry" / "data" / "xpkgs";
     std::error_code ec;
     if (!std::filesystem::exists(xpkgs, ec)) return std::nullopt;
     return xpkgs;
@@ -932,16 +969,75 @@ find_sibling_package(const std::filesystem::path& compilerBin,
     if (auto found = find_package_in_xpkgs(*xpkgs, packageName, requiredRelPath))
         return found;
 
-    // Also check ~/.xlings/data/xpkgs/ (xlings global home) as fallback.
-    std::error_code ec;
-    const char* home = std::getenv("HOME");
-    if (home) {
-        auto xlingsXpkgs = std::filesystem::path(home) / ".xlings" / "data" / "xpkgs";
-        if (xlingsXpkgs != *xpkgs && std::filesystem::exists(xlingsXpkgs, ec))
-            return find_package_in_xpkgs(xlingsXpkgs, packageName, requiredRelPath);
-    }
-
+    // ⚠️⚠️ THE `~/.xlings` FALLBACK IS GONE, AND ITS REMOVAL IS THE POINT.
+    //
+    // It used to read: "Also check ~/.xlings/data/xpkgs/ (xlings global home)
+    // as fallback." That was written when one machine had one home. It means
+    // that a build whose `MCPP_HOME` names one tree can take a payload out of
+    // ANOTHER, and what this function's callers do with the result is put it on
+    // every compile command:
+    //
+    //     probe.cppm:448   linux-headers  →  -isystem <other home>/…/include
+    //
+    // ⇒ a hermetic build reaching outside its own sandbox for headers, with no
+    // diagnostic, and with the resulting objects looking exactly like objects
+    // built from the payload that was actually pinned. Reported as the second
+    // half of mcpp#514, where a project's dependency units carried `-isystem`
+    // rows naming a home the build was not using.
+    //
+    // ⭐ THE DIRECTION IS THE SAFE ONE. Not finding a payload is reported —
+    // `probe.cppm` already has the verbose branch for it, and a glibc build
+    // that then fails at `<linux/limits.h>` says so at the first compile.
+    // Finding the WRONG one says nothing at all, and this codebase has paid
+    // for that shape before (`e2e-inherit-toolchain-corrupts-real-payloads`,
+    // `dev-overlay-poisons-a-released-version`).
     return std::nullopt;
+}
+
+std::optional<std::filesystem::path>
+payload_dir_for_version(const std::filesystem::path& packageRoot,
+                        std::string_view version) {
+    // ⚠️ AN EMPTY REQUEST IS NOT A REQUEST FOR EVERYTHING. `packageRoot / ""`
+    // is `packageRoot` itself, which IS a directory — so without this the
+    // exact-match branch below would hand back the package root and every
+    // caller would treat that container as a payload. Both callers today
+    // reject an empty version before arriving here; this is the invariant
+    // stated where it holds rather than at each of them.
+    if (version.empty()) return std::nullopt;
+
+    std::error_code ec;
+    auto exact = packageRoot / std::string(version);
+    if (std::filesystem::is_directory(exact, ec)) return exact;
+
+    auto components = [](std::string_view v) {
+        std::vector<std::string> parts;
+        std::size_t start = 0;
+        while (start <= v.size()) {
+            auto dot = v.find('.', start);
+            if (dot == std::string_view::npos) {
+                parts.emplace_back(v.substr(start));
+                break;
+            }
+            parts.emplace_back(v.substr(start, dot - start));
+            start = dot + 1;
+        }
+        return parts;
+    };
+    const auto wanted = components(version);
+
+    std::optional<std::filesystem::path> only;
+    std::error_code dec;
+    for (auto it = std::filesystem::directory_iterator(packageRoot, dec);
+         !dec && it != std::filesystem::directory_iterator{};
+         it.increment(dec)) {
+        if (!it->is_directory(dec)) continue;
+        const auto have = components(it->path().filename().string());
+        if (have.size() <= wanted.size()) continue;
+        if (!std::equal(wanted.begin(), wanted.end(), have.begin())) continue;
+        if (only) return std::nullopt;   // two refinements are not an answer
+        only = it->path();
+    }
+    return only;
 }
 
 std::filesystem::path index_data(const Env& env) {

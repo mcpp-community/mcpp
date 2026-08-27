@@ -367,3 +367,92 @@ TEST(CacheKey, AHostedTargetHasNoTargetImpliedFlagsEitherWay) {
     EXPECT_TRUE(a.targetImpliedFlags.empty()) << a.targetImpliedFlags.size();
     EXPECT_EQ(a.targetImpliedFlags, b.targetImpliedFlags);
 }
+
+// ⭐⭐ THE HEADER SET THE DRIVER IS POINTED AT IS PART OF THE IDENTITY.
+//
+// Everything else on axis A describes the COMPILER. Nothing described the
+// LIBRARY it compiles against — and the two are separately installed: one clang
+// payload sits above whichever `xim:glibc` and `xim:linux-headers` the home
+// carries. `driverIdentity` cannot cover it by design, because
+// `normalize_driver_output` strips paths so that one entry CAN be shared
+// between two homes.
+//
+// Measured (mcpp#514 §B): two host builds resolving glibc 2.39 and 2.44 hit one
+// entry, and the mixed BMIs crashed the clang frontend during deserialization
+// rather than producing a diagnostic.
+TEST(CacheKey, TheHeaderSetIsPartOfTheKey) {
+    mcpp::manifest::Manifest m;
+    m.package.standard = "c++23";
+
+    auto a = ck::build_axes(freestanding_tc(false), m, "-std=c++23", {}, "");
+    auto b = a;
+    // The axis is filled from the resolvers in a real build; here it is set
+    // directly, because what this asserts is that the KEY reads it — not how
+    // linkmodel discovers a payload, which is that module's own test.
+    b.targetHeaderSet = { "-isystem<store>/xim-x-glibc/2.44/include" };
+    a.targetHeaderSet = { "-isystem<store>/xim-x-glibc/2.39/include" };
+
+    EXPECT_NE(ck::key_hex(a, pkg()), ck::key_hex(b, pkg()));
+}
+
+// ...and it travels in entry.json, so a suspected wrong hit can be read field
+// by field rather than guessed at. `is_cached` compares `inputs.toolchain` as
+// one object, which is also why an entry written before this axis existed is a
+// miss without needing `kCacheEpoch` to move.
+TEST(CacheKey, TheHeaderSetIsRecordedInTheEntry) {
+    mcpp::manifest::Manifest m;
+    m.package.standard = "c++23";
+    auto a = ck::build_axes(freestanding_tc(false), m, "-std=c++23", {}, "");
+    a.targetHeaderSet = { "-isystem<store>/xim-x-glibc/2.44/include" };
+    auto j = ck::to_json(a, pkg());
+    ASSERT_TRUE(j["toolchain"].contains("target_header_set"));
+    EXPECT_EQ(j["toolchain"]["target_header_set"][0],
+              "-isystem<store>/xim-x-glibc/2.44/include");
+}
+
+// ⭐⭐ AND THE PATHS IN IT ARE RELATIVE — INCLUDING THE ONES OUTSIDE `<store>`.
+//
+// ⚠️ THE TWO TESTS ABOVE SET THE AXIS DIRECTLY, so neither of them runs the
+// relativization, and a store-only rule passed both while leaving this
+// developer's own home in every key. The toolchain that showed it is the
+// ordinary one: `CLibMode::Sysroot`, whose single compile token is
+//
+//     --sysroot=<home>/registry/subos/default
+//
+// — under the HOME and not under `<store>`. An absolute key there is not
+// WRONG, it is unshareable: two homes holding the same payloads stop hitting
+// each other's entries, which is the property `normalize_driver_output` gives
+// up path information to preserve.
+//
+// ⭐ THE CRITERION IS THE ABSENCE OF THE HOME, not the presence of a tag.
+// Asserting `starts_with("<home>")` would still pass if the rest of the string
+// carried the absolute path behind it.
+TEST(CacheKey, TheHeaderSetCarriesNoAbsoluteHome) {
+    const std::filesystem::path home  = "/home/somebody/.mcpp/registry";
+    const std::filesystem::path store = home / "data" / "xpkgs";
+
+    mcpp::toolchain::Toolchain tc;
+    tc.compiler     = mcpp::toolchain::CompilerId::GCC;   // no cfg ⇒ Sysroot mode
+    tc.version      = "16.1.0";
+    tc.driverIdent  = "gcc-16.1.0";
+    tc.targetTriple = "x86_64-linux-gnu";
+    tc.sysroot      = home / "subos" / "default";
+
+    mcpp::manifest::Manifest m;
+    m.package.standard = "c++23";
+    const auto a = ck::build_axes(tc, m, "-std=c++23", {}, "", store);
+
+    // A denominator: with an empty axis every assertion below is vacuous, and
+    // an empty axis is itself the bug in the other direction.
+    ASSERT_FALSE(a.targetHeaderSet.empty());
+    for (auto const& t : a.targetHeaderSet)
+        EXPECT_EQ(t.find(home.generic_string()), std::string::npos) << t;
+
+    // Two subos on ONE home are still two keys — the relativization must not
+    // flatten the distinction it exists to preserve.
+    auto tc2 = tc;
+    tc2.sysroot = home / "subos" / "musl";
+    const auto b = ck::build_axes(tc2, m, "-std=c++23", {}, "", store);
+    EXPECT_NE(a.targetHeaderSet, b.targetHeaderSet);
+    EXPECT_NE(ck::key_hex(a, pkg()), ck::key_hex(b, pkg()));
+}

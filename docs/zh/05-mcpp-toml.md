@@ -166,6 +166,7 @@ module_extensions = [".ixx"]      # 模块**接口**额外使用的扩展名(见
 build_program_timeout = 1800      # build.mcpp 的运行上限(秒);0 = 不限(见下节)
 include_dirs = ["include", "third_party/include"]  # 头文件搜索路径
 include_dirs_after = ["*"]         # 排在系统目录之后搜索的头文件目录(-idirafter)
+private_include_dirs = ["vendor/src/include"]  # `include_dirs` 中不发布给消费者的那些
 c_standard   = "c11"              # C 源文件的标准(默认 c11)
 cflags       = ["-DFOO=1"]        # 额外 C 编译参数
 cxxflags     = ["-DBAR=2"]        # 额外 C++ 编译参数(不要放 -std=...)
@@ -177,6 +178,35 @@ cache        = "global"           # 依赖的全局构建缓存:global(默认)| 
 jobs         = "auto"             # 并发编译数:正整数,或 "auto"(见下节)
 bmi_schedule = "auto"             # 模块边调度:auto(= 关)| on | off(见下节)
 ```
+
+`private_include_dirs` 指出 **`include_dirs` 中**在本包边界处停住的那些条目:
+本包用它们编译,消费者永远收不到。
+
+绝大多数包发布的就是它编译时用的那一套,所以长期以来只有 `include_dirs` 就够了。
+两者不同的形状只有一种 —— 一个包**内嵌了带内部头覆盖层的库**。musl 通过
+`src/include` 到达它自己的声明,而那些头定义了 `hidden`、`weak`、`weak_alias`,
+这些名字只对 musl 自己的源码有意义。把那个目录发布出去,等于把这些宏交给每一个
+消费者;而一个把 `hidden` 当普通标识符用的消费者会编不过,且看不出原因。
+
+```toml
+[build]
+# ⚠️ 两类目录的**相对顺序**是承重的:本包自己构建时,内部覆盖层必须排在公共头之前。
+# 这正是它被设计成 `include_dirs` 的**子集**而不是第二个列表的原因 ——
+# 两个数组表达不了一个顺序。
+include_dirs         = ["port/include", "musl/src/include", "musl/include"]
+private_include_dirs = ["musl/src/include"]
+```
+
+条目支持与 `include_dirs` 相同的 `*` glob 约定,并在**展开之后**比对 ——
+所以一个 glob 可以恰好指名它展开出的那些目录。若某条目不在本包的 `include_dirs`
+里,它什么也没扣下,mcpp 会把这件事说出来而不是让它悄悄通过。
+
+**旧引擎会忽略这个键,而不会因此失败。** 在 2026.8.26.2 上实测:出现在依赖的清单里
+时被静默接受;出现在根清单里时给一条警告 —— `[build] has unsupported key
+'private_include_dirs' (ignored)` —— 构建照常继续。所以一个包可以先用上这个键,
+不必等消费者升级;还在旧引擎上的消费者只是像以前一样继续收到那个目录。**唯一不成立
+的地方**是已发布的 `xim` 描述符的 `target_cfg` 块:那里不认识的子键是硬错误,会让
+整份清单加载失败 —— 在索引下限指向认识它的引擎之前,不要把这个键写进那里。
 
 `include_dirs_after`(#249)列出**排在工具链系统目录之后**搜索的头文件目录
 (GCC/Clang 发射为 `-idirafter`;MSVC 方言退化为排在末尾的 `/I`,NASM 汇编

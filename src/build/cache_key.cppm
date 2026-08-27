@@ -56,6 +56,7 @@ import mcpp.manifest;
 import mcpp.modgraph.scanner;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.fingerprint;
+import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.triple;
 import mcpp.freestanding.target;   // the flags a bare-metal triple implies
 
@@ -97,6 +98,36 @@ struct BuildAxes {
     // Measured on exactly that upgrade. Empty for hosted targets, so nothing
     // else's key moves.
     std::vector<std::string> targetImpliedFlags;
+    // ⭐⭐ THE HEADER SET THE DRIVER IS POINTED AT — not the driver.
+    //
+    // Everything else on this axis describes the COMPILER. Nothing described
+    // the LIBRARY it compiles against, and the two are separately installed:
+    // one clang payload sits above whichever `xim:glibc` and
+    // `xim:linux-headers` the home happens to carry.
+    //
+    // ⚠️ AND `driverIdentity` CANNOT COVER IT, BY DESIGN.
+    // `normalize_driver_output` deliberately strips `/home/`, `/tmp/` and
+    // `/var/` paths out of `clang --version`, which is what lets one entry be
+    // shared between two homes. Correct — and it means two homes carrying the
+    // same clang above DIFFERENT glibc payloads produce the same
+    // `driver_identity`, the same key, and one entry serving two header sets.
+    //
+    // Measured (mcpp#514 §B, third direction): two host builds resolving glibc
+    // 2.39 and 2.44 hit one entry, and the mixed BMIs then crash the clang
+    // frontend outright — SIGSEGV in
+    // `ASTReader::FindExternalVisibleDeclsByName` during deserialization —
+    // rather than producing a readable diagnostic. BMIs carry no cross-check
+    // against each other.
+    //
+    // ⭐ THE `std` CACHE ON THE SAME MACHINE HAS ALWAYS HAD THIS. Its identity
+    // folds in `std_build_commands`, the whole command line, `-isystem` rows
+    // included. Two caches, one machine, two notions of "the same inputs"; the
+    // dependency one was the short one.
+    //
+    // Store-relative, for the same reason the include dirs below are: the key
+    // must survive a different MCPP_HOME, and what matters is WHICH payloads,
+    // not where the home is.
+    std::vector<std::string> targetHeaderSet;
     std::string stdlibId;
     std::string stdlibVersion;
     // B
@@ -163,7 +194,8 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
                      const mcpp::manifest::Manifest&   rootManifest,
                      std::string_view                  cppStandardFlag,
                      const std::vector<std::string>&   dialectFlags,
-                     std::string_view                  macosDeploymentTarget);
+                     std::string_view                  macosDeploymentTarget,
+                     const std::filesystem::path&      storeRoot = {});
 
 // Axes E from one PackageRoot. `storeRoot` is stripped off absolute include
 // dirs so the key survives a different MCPP_HOME (the payload paths are
@@ -217,6 +249,7 @@ nlohmann::json to_json(const BuildAxes& b, const PackageAxes& p) {
         {"driver_identity", b.driverIdentity},
         {"target_triple", b.targetTriple},
         {"target_implied_flags", b.targetImpliedFlags},
+        {"target_header_set", b.targetHeaderSet},
         {"stdlib", b.stdlibId},
         {"stdlib_version", b.stdlibVersion},
     };
@@ -264,6 +297,7 @@ std::string key_hex(const BuildAxes& b, const PackageAxes& p) {
     put(s, "driver",   b.driverIdentity);
     put(s, "triple",   b.targetTriple);
     put_list(s, "targetflags", b.targetImpliedFlags);
+    put_list(s, "hdrset",      b.targetHeaderSet);
     put(s, "stdlib",   b.stdlibId);
     put(s, "stdlibv",  b.stdlibVersion);
     // B
@@ -302,7 +336,8 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
                      const mcpp::manifest::Manifest&   rootManifest,
                      std::string_view                  cppStandardFlag,
                      const std::vector<std::string>&   dialectFlags,
-                     std::string_view                  macosDeploymentTarget)
+                     std::string_view                  macosDeploymentTarget,
+                     const std::filesystem::path&      storeRoot)
 {
     BuildAxes b;
     b.compilerId      = std::string(tc.compiler_name());
@@ -348,6 +383,67 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
                 mcpp::freestanding::compile_flags(*spec, tc.targetCxxRuntime);
     b.stdlibId        = tc.stdlibId;
     b.stdlibVersion   = tc.stdlibVersion;
+
+    // ⭐ THE HEADER SET, TAKEN FROM THE RESOLVERS THAT PRODUCE THE COMMAND
+    // LINE — not derived a second time.
+    //
+    // `mcpp.toolchain.linkmodel` is already the single answer to "where does
+    // this toolchain's C library and libc++ come from"; every consumer of a
+    // compile line reads it. Asking it here means the key describes the header
+    // set that will actually be used, and cannot drift from it.
+    //
+    // ⚠️ RELATIVE, IN TWO TIERS — and `<store>` ALONE IS NOT ENOUGH.
+    //
+    // The absolute form names this machine's home, and the whole point of
+    // `normalize_driver_output` stripping paths is that one entry can serve
+    // two homes carrying the same payloads. Leaving these absolute undoes it.
+    //
+    // ⚠️ MEASURED, AND `<store>` MISSED THE COMMON CASE. This developer's own
+    // toolchain resolves `CLibMode::Sysroot`, whose only compile token is
+    //
+    //     --sysroot=/home/<user>/.mcpp/registry/subos/default
+    //
+    // — under the HOME and not under `<store>`, so a store-only rule left the
+    // home in the key and every entry stopped being shareable. `<home>` is the
+    // second tier for exactly this, mirroring the `<store>`/`<pkg>` pair
+    // `fill_package_config` already uses for the same reason.
+    //
+    // ⭐ WHAT THIS AXIS DOES AND DOES NOT SEPARATE, stated so the next reader
+    // does not have to re-derive it:
+    //   * payload-supplied headers — `<store>/xim-x-glibc/2.44/include` — carry
+    //     the VERSION in the path, so two payloads are two keys. This is the
+    //     measured mcpp#514 §B case and the one this axis exists for.
+    //   * two subos on one home — `<home>/subos/default` vs `<home>/subos/foo`
+    //     — are two keys, which they were not before this axis existed.
+    //   * the SAME subos name in two homes stays one key even if the two hold
+    //     different C libraries. Unchanged from before, and the same trade
+    //     `normalize_driver_output` already makes; the whole-project
+    //     fingerprint's field 11 is what separates those.
+    {
+        const auto storeStr = storeRoot.generic_string();
+        // `<home>/registry/data/xpkgs` → `<home>/registry`. Derived rather than
+        // passed because the two must be the same home by construction: a
+        // second parameter could be given a different one, and then the tiers
+        // would describe two machines.
+        const auto homeStr = storeRoot.empty()
+            ? std::string{}
+            : storeRoot.parent_path().parent_path().generic_string();
+        const mcpp::toolchain::PathEscape relativize =
+            [&](const std::filesystem::path& p) -> std::string {
+                auto str = p.generic_string();
+                if (!storeStr.empty() && str.starts_with(storeStr))
+                    return "<store>" + str.substr(storeStr.size());
+                if (!homeStr.empty() && str.starts_with(homeStr))
+                    return "<home>" + str.substr(homeStr.size());
+                return str;
+            };
+        for (auto& t : mcpp::toolchain::resolve_clang_driver(tc)
+                           .compile_tokens(relativize))
+            b.targetHeaderSet.push_back(t);
+        for (auto& t : mcpp::toolchain::resolve_link_model(tc)
+                           .compile_tokens(relativize))
+            b.targetHeaderSet.push_back(t);
+    }
 
     b.cppStandard     = rootManifest.package.standard;
     b.cppStandardFlag = std::string(cppStandardFlag);
