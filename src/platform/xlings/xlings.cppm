@@ -997,6 +997,14 @@ find_sibling_package(const std::filesystem::path& compilerBin,
 std::optional<std::filesystem::path>
 payload_dir_for_version(const std::filesystem::path& packageRoot,
                         std::string_view version) {
+    // ⚠️ AN EMPTY REQUEST IS NOT A REQUEST FOR EVERYTHING. `packageRoot / ""`
+    // is `packageRoot` itself, which IS a directory — so without this the
+    // exact-match branch below would hand back the package root and every
+    // caller would treat that container as a payload. Both callers today
+    // reject an empty version before arriving here; this is the invariant
+    // stated where it holds rather than at each of them.
+    if (version.empty()) return std::nullopt;
+
     std::error_code ec;
     auto exact = packageRoot / std::string(version);
     if (std::filesystem::is_directory(exact, ec)) return exact;

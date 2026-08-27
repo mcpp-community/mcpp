@@ -319,3 +319,23 @@ TEST(GlibcPayload, NothingInstalledIsStillRefused) {
     auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44");
     EXPECT_FALSE(got.has_value());
 }
+
+// ⚠️ AN EMPTY REQUEST IS NOT A REQUEST FOR EVERYTHING.
+//
+// `packageRoot / ""` is `packageRoot`, and that IS a directory — so the
+// exact-match branch would hand the CONTAINER back and every caller would
+// treat it as a payload. Both callers reject an empty version before arriving,
+// which is exactly why nothing would have caught it here.
+TEST(PayloadDirForVersion, AnEmptyRequestIsNotTheContainer) {
+    auto root = std::filesystem::temp_directory_path()
+              / "mcpp_payload_empty_request";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "2.44.2");
+
+    EXPECT_FALSE(mcpp::xlings::paths::payload_dir_for_version(root, ""));
+    // The denominator: a real request against the same tree still resolves,
+    // so an empty result above is the guard and not an unreadable directory.
+    EXPECT_TRUE(mcpp::xlings::paths::payload_dir_for_version(root, "2.44"));
+
+    std::filesystem::remove_all(root);
+}
