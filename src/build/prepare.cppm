@@ -2781,9 +2781,44 @@ prepare_build(bool print_fingerprint,
     std::optional<std::pair<std::filesystem::path, mcpp::toolchain::Toolchain>> hostTcCache;
     auto host_tc_for_build_program = [&]() -> std::expected<
             std::pair<std::filesystem::path, mcpp::toolchain::Toolchain>, std::string> {
+        // ⭐⭐ A HOST TOOLCHAIN'S C LIBRARY IS THE PAYLOAD'S, WHATEVER THE
+        // PROJECT'S TARGET SIDE IS.
+        //
+        // `build.mcpp` is compiled AND RUN on the machine doing the build. Its
+        // C library therefore comes from the compiler payload — even for a
+        // project whose TARGET takes its C library from the dependency graph.
+        // The two are different machines and this function's whole job is to
+        // keep them apart.
+        //
+        // ⚠️ AND THE NATIVE BRANCH BELOW RETURNS THE MAIN `tc`, WHICH CARRIES
+        // THE OTHER ANSWER. `build_program.cppm`'s own header states the
+        // invariant — "`tc` is always a HOST-targeting toolchain" — and for
+        // every field but this one the native branch satisfied it, because on a
+        // native build the compiler IS the host compiler. `cAbiPrebuilt` is the
+        // first field where "same compiler" and "same target side" come apart.
+        //
+        // ⚠️ AN INVARIANT, NOT A BUG FIX FOR ANY MEASURED FAILURE. It was
+        // written while chasing a `features.h: No such file` on openkal-musl's
+        // CI and it is NOT that failure's cause: measured on `origin/main` and
+        // on this branch, the gcc std module carries zero `-isystem`/
+        // `-idirafter` rows either way — that toolchain reaches its C library
+        // through the specs the post-install fixup rewrites, and the real
+        // defect was in resolving WHICH glibc payload those specs name.
+        //
+        // Kept because the invariant is worth being true: a helper compiled and
+        // run on the build machine must not inherit the target's C-library
+        // origin, and the next field that comes apart would find no rule here.
+        //
+        // ⇒ Stated once, so every consumer (the std module build,
+        // `host_base_flags`) gets it without asking.
+        auto as_host = [](mcpp::toolchain::Toolchain t) {
+            t.cAbiPrebuilt = true;
+            return t;
+        };
         if (overrides.target_triple.empty())
-            return std::pair{explicit_compiler, *tc};
-        if (hostTcCache) return *hostTcCache;
+            return std::pair{explicit_compiler, as_host(*tc)};
+        if (hostTcCache)
+            return std::pair{hostTcCache->first, as_host(hostTcCache->second)};
         if (!tcSpec || *tcSpec == "system" || tcSpecIsMsvc) {
             // ⭐ A READABLE REFUSAL THAT HAD NO CODE, so the target matrix
             // recorded four identical `other` cells for it. The sentence was
@@ -2828,7 +2863,7 @@ prepare_build(bool print_fingerprint,
         mcpp::ui::info("Resolved", std::format(
             "host toolchain for build.mcpp: {}", htc->label()));
         hostTcCache = std::pair{frontend, *htc};
-        return *hostTcCache;
+        return std::pair{hostTcCache->first, as_host(hostTcCache->second)};
     };
 
     // Resolve dependencies: walk the **transitive** graph from the main
