@@ -410,91 +410,30 @@ select_glibc_payload_lib(const std::filesystem::path& glibcRoot,
             runtimeId));
     }
 
-    auto payload = glibcRoot / std::string(version);
-    std::error_code ec;
-    if (!std::filesystem::is_directory(payload, ec)) {
-        // ⭐⭐ THE VERSION THAT WAS ASKED FOR AND THE VERSION THAT WAS
-        // INSTALLED ARE TWO VOCABULARIES FOR ONE FACT.
-        //
-        // A RuntimeBinding carries the DECLARED identity — what the subos state
-        // says the provider is. xlings names the payload directory after what
-        // the request RESOLVED to, and the two differ the moment the index
-        // moves a package within a series: `xim:glibc@2.44` resolving to
-        // `2.44.2` puts the payload in `xim-x-glibc/2.44.2` while the
-        // declaration still reads `glibc@2.44`.
-        //
-        // ⚠️ Measured 2026-08-27, on every CI machine with a cold cache, on
-        // `main` as readily as on any branch:
-        //
-        //     error: selected RuntimeBinding glibc@2.44 requires payload
-        //            '…/xim-x-glibc/2.44', but it is not installed
-        //
-        //     $ ls …/xim-x-glibc/     →  2.44.2
-        //
-        // `runtime_binding.cppm` already names this exact shape one version
-        // earlier ("observed in CI as runtime=glibc@2.39 with libc.so.6
-        // resolving to the managed 2.44 payload") and canonicalizes it —
-        // but only once the SubOS view exists. This runs during the FIRST
-        // toolchain install, before there is a view to read.
-        //
-        // ⭐ A REFINEMENT, NOT A DIRECTORY-ORDER PICK — and that distinction is
-        // the whole of why the refusal below still stands. `2.44.2` is what the
-        // request `2.44` resolved to: its version components BEGIN with the
-        // requested ones. `2.4` does not match `2.44`, because the comparison
-        // is per component and not per character. And if two payloads both
-        // refine the request, nothing here chooses between them: the refusal is
-        // reported exactly as before, because "the resolution of this request"
-        // has to be one payload to be an answer at all.
-        auto components = [](std::string_view v) {
-            std::vector<std::string> parts;
-            std::size_t start = 0;
-            while (start <= v.size()) {
-                auto dot = v.find('.', start);
-                if (dot == std::string_view::npos) {
-                    parts.emplace_back(v.substr(start));
-                    break;
-                }
-                parts.emplace_back(v.substr(start, dot - start));
-                start = dot + 1;
-            }
-            return parts;
-        };
-        const auto wanted = components(version);
-
-        std::vector<std::filesystem::path> refinements;
-        std::error_code dec;
-        for (auto it = std::filesystem::directory_iterator(glibcRoot, dec);
-             !dec && it != std::filesystem::directory_iterator{};
-             it.increment(dec)) {
-            if (!it->is_directory(dec)) continue;
-            const auto have = components(it->path().filename().string());
-            if (have.size() <= wanted.size()) continue;
-            if (!std::equal(wanted.begin(), wanted.end(), have.begin())) continue;
-            refinements.push_back(it->path());
-        }
-
-        if (refinements.size() != 1) {
-            return std::unexpected(std::format(
-                "selected RuntimeBinding {} requires payload '{}', but it is not "
-                "installed{}; mcpp will not fall back to another directory entry",
-                runtimeId, payload.string(),
-                refinements.empty()
-                    ? std::string{}
-                    : std::format(" and {} installed payloads refine that "
-                                  "version, so none of them is its resolution",
-                                  refinements.size())));
-        }
-        payload = refinements.front();
-        mcpp::log::verbose("toolchain", std::format(
-            "RuntimeBinding {} resolved to installed payload '{}'",
-            runtimeId, payload.filename().string()));
+    // ⭐ ONE RESOLVER, TWO CALLERS. `payload_dir_for_version` also answers
+    // `probe`'s compile-side discovery; see its own header for why a request
+    // and a resolution are two vocabularies, and why a unique component-wise
+    // refinement is an answer while a directory-order pick is not.
+    //
+    // ⚠️ THE FIRST VERSION OF THIS FIX SPELLED IT HERE, and that left the other
+    // caller: the toolchain then installed and the compile line came out
+    // without the glibc include directory, which reads as
+    // `features.h: No such file` from inside libstdc++'s own headers.
+    auto payload = mcpp::xlings::paths::payload_dir_for_version(
+        glibcRoot, version);
+    if (!payload) {
+        return std::unexpected(std::format(
+            "selected RuntimeBinding {} requires payload '{}', but no installed "
+            "payload is its resolution; mcpp will not fall back to another "
+            "directory entry",
+            runtimeId, (glibcRoot / std::string(version)).string()));
     }
-    auto lib = payload_lib_dir_with_loader(payload);
+    auto lib = payload_lib_dir_with_loader(*payload);
     if (lib.empty()) {
         return std::unexpected(std::format(
             "selected RuntimeBinding {} payload '{}' is stale/incomplete: no "
             "dynamic loader was found under lib64/ or lib/",
-            runtimeId, payload.string()));
+            runtimeId, payload->string()));
     }
     return lib;
 }

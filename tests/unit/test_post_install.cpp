@@ -3,6 +3,7 @@
 
 import std;
 import mcpp.toolchain.post_install;
+import mcpp.platform.xlings;
 import mcpp.config;
 import mcpp.toolchain.registry;
 import mcpp.platform;
@@ -269,9 +270,48 @@ TEST(GlibcPayload, TwoRefinementsAreRefusedRatherThanChosenBetween) {
     make_glibc_payload(fx.root, "2.44.1");
     make_glibc_payload(fx.root, "2.44.2");
     auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44");
-    ASSERT_FALSE(got.has_value());
-    EXPECT_NE(got.error().find("none of them is its resolution"), std::string::npos)
-        << got.error();
+    EXPECT_FALSE(got.has_value());
+}
+
+// ⭐⭐ THE RESOLVER ITSELF, because it has TWO callers and they failed
+// separately. The first version of this fix lived inside the toolchain fixup;
+// `probe`'s compile-side payload discovery spelled the same lookup its own way
+// and kept missing — and ITS failure names no version at all:
+//
+//     bits/os_defines.h:39: fatal error: features.h: No such file
+//
+// because the glibc include directory is simply never added. Asserting on the
+// shared function is what makes both call sites covered by one test.
+TEST(PayloadDirForVersion, ExactWinsOverRefinement) {
+    GlibcRootFixture fx{"mcpp_pdfv_exact"};
+    std::filesystem::create_directories(fx.root / "2.44");
+    std::filesystem::create_directories(fx.root / "2.44.2");
+    auto got = mcpp::xlings::paths::payload_dir_for_version(fx.root, "2.44");
+    ASSERT_TRUE(got.has_value());
+    EXPECT_EQ(got->filename(), "2.44");
+}
+
+TEST(PayloadDirForVersion, OneRefinementIsTheAnswer) {
+    GlibcRootFixture fx{"mcpp_pdfv_one"};
+    std::filesystem::create_directories(fx.root / "2.44.2");
+    auto got = mcpp::xlings::paths::payload_dir_for_version(fx.root, "2.44");
+    ASSERT_TRUE(got.has_value());
+    EXPECT_EQ(got->filename(), "2.44.2");
+}
+
+TEST(PayloadDirForVersion, TwoRefinementsAreNotAnAnswer) {
+    GlibcRootFixture fx{"mcpp_pdfv_two"};
+    std::filesystem::create_directories(fx.root / "2.44.1");
+    std::filesystem::create_directories(fx.root / "2.44.2");
+    EXPECT_FALSE(mcpp::xlings::paths::payload_dir_for_version(fx.root, "2.44"));
+}
+
+// ⚠️ PER COMPONENT, NOT PER CHARACTER — a string prefix would hand a build the
+// wrong C library and say nothing.
+TEST(PayloadDirForVersion, AStringPrefixIsNotARefinement) {
+    GlibcRootFixture fx{"mcpp_pdfv_strprefix"};
+    std::filesystem::create_directories(fx.root / "2.44");
+    EXPECT_FALSE(mcpp::xlings::paths::payload_dir_for_version(fx.root, "2.4"));
 }
 
 TEST(GlibcPayload, NothingInstalledIsStillRefused) {

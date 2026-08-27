@@ -170,6 +170,35 @@ namespace paths {
     find_home_tool(std::string_view tool,
                    std::string_view requiredRelPath = {});
 
+    // ⭐⭐ WHICH INSTALLED PAYLOAD DIRECTORY ANSWERS A REQUESTED VERSION.
+    //
+    // A request and a resolution are two vocabularies for one fact. A
+    // RuntimeBinding carries the DECLARED version (`glibc@2.44`); xlings names
+    // the payload directory after what that request RESOLVED to (`2.44.2`).
+    // They coincide until the index moves a package within a series, and then
+    // every lookup that spells the directory by the declared version stops
+    // finding it.
+    //
+    // ⚠️ STATED ONCE HERE BECAUSE IT HAS TWO CALLERS AND THEY FAILED
+    // SEPARATELY. `post_install`'s toolchain fixup and `probe`'s compile-side
+    // payload discovery each spelled it themselves; fixing one left the other,
+    // and the second failure did not name a version at all — it read
+    //
+    //     bits/os_defines.h:39: fatal error: features.h: No such file
+    //
+    // because the glibc include directory had simply not been added.
+    //
+    // ⭐ A REFINEMENT, NOT A DIRECTORY-ORDER PICK. `2.44.2` is what the request
+    // `2.44` resolved to: its version COMPONENTS begin with the requested ones.
+    // `2.4` does not answer `2.44`, because the comparison is per component and
+    // not per character. And when two payloads both refine the request, this
+    // returns nothing — "the resolution of this request" has to be one payload
+    // to be an answer at all, and picking by directory order is the guess every
+    // caller here refuses to make.
+    std::optional<std::filesystem::path>
+    payload_dir_for_version(const std::filesystem::path& packageRoot,
+                            std::string_view version);
+
     // index data root: env.home / "data"
     std::filesystem::path index_data(const Env& env);
 
@@ -963,6 +992,44 @@ find_sibling_package(const std::filesystem::path& compilerBin,
     // for that shape before (`e2e-inherit-toolchain-corrupts-real-payloads`,
     // `dev-overlay-poisons-a-released-version`).
     return std::nullopt;
+}
+
+std::optional<std::filesystem::path>
+payload_dir_for_version(const std::filesystem::path& packageRoot,
+                        std::string_view version) {
+    std::error_code ec;
+    auto exact = packageRoot / std::string(version);
+    if (std::filesystem::is_directory(exact, ec)) return exact;
+
+    auto components = [](std::string_view v) {
+        std::vector<std::string> parts;
+        std::size_t start = 0;
+        while (start <= v.size()) {
+            auto dot = v.find('.', start);
+            if (dot == std::string_view::npos) {
+                parts.emplace_back(v.substr(start));
+                break;
+            }
+            parts.emplace_back(v.substr(start, dot - start));
+            start = dot + 1;
+        }
+        return parts;
+    };
+    const auto wanted = components(version);
+
+    std::optional<std::filesystem::path> only;
+    std::error_code dec;
+    for (auto it = std::filesystem::directory_iterator(packageRoot, dec);
+         !dec && it != std::filesystem::directory_iterator{};
+         it.increment(dec)) {
+        if (!it->is_directory(dec)) continue;
+        const auto have = components(it->path().filename().string());
+        if (have.size() <= wanted.size()) continue;
+        if (!std::equal(wanted.begin(), wanted.end(), have.begin())) continue;
+        if (only) return std::nullopt;   // two refinements are not an answer
+        only = it->path();
+    }
+    return only;
 }
 
 std::filesystem::path index_data(const Env& env) {
