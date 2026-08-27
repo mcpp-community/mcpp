@@ -116,7 +116,12 @@ void print_usage() {
 // to errors. Deliberate — the alternative is a second drain point, i.e. a
 // second answerer for the same question.
 struct ReportUnnarrowablePaths {
-    ~ReportUnnarrowablePaths() {
+    // A destructor is implicitly noexcept, so anything escaping this body is
+    // std::terminate — and run() can be left by an exception (main() catches
+    // one), which is exactly when this runs during unwinding. A change whose
+    // entire subject is "an uncaught exception must not end the build" does
+    // not get to introduce a second one in its own reporting path.
+    ~ReportUnnarrowablePaths() try {
         for (auto const& anchor : mcpp::modgraph::take_unnarrowable_paths()) {
             mcpp::diag::degraded(
                 "path/codepage",
@@ -128,6 +133,8 @@ struct ReportUnnarrowablePaths {
                 "data or docs; if they are sources, rename them or build on a "
                 "system whose code page covers them.");
         }
+    } catch (...) {
+        // Losing the report is bad; terminating instead of it is worse.
     }
 };
 

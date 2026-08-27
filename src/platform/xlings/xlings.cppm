@@ -45,7 +45,7 @@ namespace pinned {
     // in lock-step by hand; that list was already missing both composite
     // actions, which is how CI's sandbox sat on 0.4.30 unnoticed while
     // everything else had moved on. Don't reintroduce a hand-maintained list.
-    inline constexpr std::string_view kXlingsVersion   = "2026.8.17.2";
+    inline constexpr std::string_view kXlingsVersion   = "2026.8.27.4";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 

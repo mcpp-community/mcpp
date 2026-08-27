@@ -235,8 +235,25 @@ submodule_paths(const std::filesystem::path& root) {
 // package's source glob.
 bool is_excluded_walk_dir(const std::filesystem::path& dir,
                           const std::filesystem::path& root) {
-    auto name = dir.filename().string();
-    if (name == ".mcpp" || name == ".git" || name == "target") return true;
+    // Compare as paths. Do NOT narrow.
+    //
+    // #516: `dir.filename().string()` went through MSVC's wide→ANSI
+    // conversion and threw std::system_error for any directory name the
+    // active code page cannot spell (`test/www/<CJK>Dir/` in cpp-httplib).
+    // This function is the FIRST line of the walk loop and runs once per
+    // directory entry, so it fires before `path_matches_glob`'s guard —
+    // hardening that one (#231) could never cover a directory name.
+    //
+    // The three literals are ASCII, so their conversion to the native
+    // representation is lossless, and `path::operator==` compares native
+    // strings case-sensitively — byte-for-byte the same decision the narrow
+    // comparison made. Static constants rather than temporaries per entry:
+    // #225 bounded this walk for a reason, and this is on its hot path.
+    static const std::filesystem::path kMcppDir{".mcpp"};
+    static const std::filesystem::path kGitDir{".git"};
+    static const std::filesystem::path kTargetDir{"target"};
+    const auto name = dir.filename();
+    if (name == kMcppDir || name == kGitDir || name == kTargetDir) return true;
     auto const& submodules = submodule_paths(root);
     if (submodules.empty()) return false;
     std::error_code ec;

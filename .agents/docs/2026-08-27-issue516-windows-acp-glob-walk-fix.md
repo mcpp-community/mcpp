@@ -227,7 +227,8 @@ warning: skipped a path whose name cannot be represented in the active code page
 
 ### 4.4 不变式与 CI 门
 
-写进 `AGENTS.md`:
+写进 `.agents/skills/mcpp-contributing/SKILL.md`(**初稿写的是 `AGENTS.md` —— mcpp 没有
+这个文件,那是 xlings 的习惯**;贡献规范在 skill 里):
 
 > **任何来自 `directory_iterator` 的 `path` 都不得直接 `.string()` / `.generic_string()`。**
 > 只与 ASCII 字面量比较时按 `path` 比;必须产出窄串时走 `mcpp::modgraph::try_narrow()`。
@@ -235,7 +236,7 @@ warning: skipped a path whose name cannot be represented in the active code page
 CI 门(只覆盖真正会走查任意树的目录,并**明说它的边界**):
 
 ```bash
-# tools/check-narrow-conversions.sh —— 只管 src/modgraph/,因为只有这里走查任意树。
+# .github/tools/check_narrow_conversions.sh —— 作用域收窄的理由见脚本头。
 # 它挡的是"新写的代码直接窄化",挡不住"经由别处传进来的 path"——
 # 后者靠 §4.2 的唯一入口约定,不靠这个 grep。
 if grep -rnE '\.(filename|stem|extension)\(\)\.(generic_)?string\(\)' src/modgraph/ \
@@ -370,7 +371,7 @@ build.ninja、CDB、命令行一个字节不变。
 |---|---|---|
 | 1 | P0 补丁(§3.1) | `ci-windows` 绿 |
 | 2 | §5.3 单测 | **打补丁前必须红**,补丁后绿。CI 日志里能看到它**没有** skip |
-| 3 | P1 收敛(§4.2/4.3)+ `AGENTS.md` 不变式 + CI 门 | 门在故意加一行裸 `.filename().string()` 时会红 |
+| 3 | P1 收敛(§4.2/4.3)+ 贡献规范不变式 + CI 门 | 门在故意加一行裸 `.filename().string()` 时会红 |
 | 4 | 真实复现验证 | mcpp-index PR #260 的 windows 矩阵三个 httplib 用例转绿 |
 
 **第 2 步的"打补丁前必须红"不能省。** 一个从来没红过的测试不证明任何事

@@ -58,7 +58,7 @@ std::filesystem::path native_path_from_generic(std::string_view s) {
 // #231 hardened three sites against it and missed a fourth
 // (`is_excluded_walk_dir`, which runs one line EARLIER in the same walk) —
 // which is why this is now a single function with a CI gate behind it
-// (tools/check-narrow-conversions.sh) rather than a fourth try/catch.
+// (.github/tools/check_narrow_conversions.sh) rather than a fourth try/catch.
 //
 // nullopt means: this path cannot be named in any string we hand to a
 // compiler, a build file, or a glob. Skip it — and record it, because
@@ -87,7 +87,8 @@ void note_unnarrowable_path(const std::filesystem::path& p);
 // `src/manifest/` imports `mcpp.ui` or `mcpp.diag` — so it RECORDS and the
 // CLI reports. Drained in exactly one place (`cli::run`'s scope guard), which
 // is what keeps "recorded but never shown" from becoming the next silent
-// failure. See docs & AGENTS.md.
+// failure. The rule is written up in .agents/skills/mcpp-contributing/SKILL.md
+// ("路径窄化不变式") and the user-facing behaviour in docs/05-mcpp-toml.md.
 std::vector<std::string> take_unnarrowable_paths();
 
 // Does `candidate` match `glob`, interpreted relative to `root`?
