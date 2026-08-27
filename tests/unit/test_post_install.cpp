@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <fstream>
 
 import std;
 import mcpp.toolchain.post_install;
@@ -189,4 +190,92 @@ TEST(PostInstallFixup, APackageWithNoFixupReportsNothingToReport) {
     EXPECT_TRUE(result->skippedReason.empty())
         << "a toolchain with no fixup reported a degradation: "
         << result->skippedReason;
+}
+
+// ⭐⭐ THE VERSION THAT WAS ASKED FOR AND THE VERSION THAT WAS INSTALLED ARE
+// TWO VOCABULARIES FOR ONE FACT.
+//
+// A RuntimeBinding carries the DECLARED identity; xlings names the payload
+// directory after what the request RESOLVED to. The two come apart the moment
+// the index moves a package within a series — `xim:glibc@2.44` resolving to
+// `2.44.2`.
+//
+// Measured 2026-08-27 on every CI machine with a cold cache, on `main` as
+// readily as on any branch:
+//
+//     error: selected RuntimeBinding glibc@2.44 requires payload
+//            '…/xim-x-glibc/2.44', but it is not installed
+//     $ ls …/xim-x-glibc/   →   2.44.2
+namespace {
+
+// A payload is "installed" for this purpose when it has a lib dir with a
+// loader in it — that is what select_glibc_payload_lib returns.
+std::filesystem::path make_glibc_payload(const std::filesystem::path& root,
+                                         std::string_view version) {
+    auto lib = root / std::string(version) / "lib64";
+    std::filesystem::create_directories(lib);
+    std::ofstream(lib / "ld-linux-x86-64.so.2");
+    return lib;
+}
+
+struct GlibcRootFixture {
+    std::filesystem::path root;
+    explicit GlibcRootFixture(std::string_view name)
+        : root(std::filesystem::temp_directory_path() / name) {
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+        std::filesystem::create_directories(root);
+    }
+    ~GlibcRootFixture() {
+        std::error_code ec;
+        std::filesystem::remove_all(root, ec);
+    }
+};
+
+} // namespace
+
+TEST(GlibcPayload, TheExactVersionIsPreferred) {
+    GlibcRootFixture fx{"mcpp_glibc_exact"};
+    auto want = make_glibc_payload(fx.root, "2.44");
+    make_glibc_payload(fx.root, "2.44.2");
+    auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44");
+    ASSERT_TRUE(got.has_value()) << got.error();
+    EXPECT_EQ(*got, want);
+}
+
+TEST(GlibcPayload, ARequestResolvesToItsOneRefinement) {
+    GlibcRootFixture fx{"mcpp_glibc_refine"};
+    auto only = make_glibc_payload(fx.root, "2.44.2");
+    auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44");
+    ASSERT_TRUE(got.has_value()) << got.error();
+    EXPECT_EQ(*got, only);
+}
+
+// ⚠️ PER COMPONENT, NOT PER CHARACTER. `2.4` is not a request that `2.44`
+// answers — a prefix match on the string would say it is, and would then hand
+// a build the wrong C library without saying anything.
+TEST(GlibcPayload, AStringPrefixIsNotARefinement) {
+    GlibcRootFixture fx{"mcpp_glibc_strprefix"};
+    make_glibc_payload(fx.root, "2.44");
+    auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.4");
+    EXPECT_FALSE(got.has_value());
+}
+
+// ⭐ AND THE REFUSAL STILL STANDS WHEN THERE IS NO ONE ANSWER. "The resolution
+// of this request" has to be a single payload to be an answer at all; two
+// refinements are not a menu to pick from.
+TEST(GlibcPayload, TwoRefinementsAreRefusedRatherThanChosenBetween) {
+    GlibcRootFixture fx{"mcpp_glibc_ambiguous"};
+    make_glibc_payload(fx.root, "2.44.1");
+    make_glibc_payload(fx.root, "2.44.2");
+    auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44");
+    ASSERT_FALSE(got.has_value());
+    EXPECT_NE(got.error().find("none of them is its resolution"), std::string::npos)
+        << got.error();
+}
+
+TEST(GlibcPayload, NothingInstalledIsStillRefused) {
+    GlibcRootFixture fx{"mcpp_glibc_empty"};
+    auto got = mcpp::toolchain::select_glibc_payload_lib(fx.root, "glibc@2.44");
+    EXPECT_FALSE(got.has_value());
 }
