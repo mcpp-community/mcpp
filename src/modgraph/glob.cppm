@@ -32,6 +32,64 @@ std::filesystem::path native_path_from_generic(std::string_view s) {
     return p;
 }
 
+// ─── narrowing a walk-derived path ────────────────────────────────────────
+//
+// THE ONE PLACE a path that came out of a directory walk becomes a narrow
+// string. Everything else in the tree calls this; nothing calls
+// `.string()` / `.generic_string()` on such a path directly.
+//
+// Why it needs to exist at all: on Windows `path::string()` converts the
+// native (wide) name through the process's ANSI code page and THROWS
+// `std::system_error` when a character has no spelling there —
+// "No mapping for the Unicode character exists in the target multi-byte code
+// page". Off Windows the same call is a copy that cannot fail, so this whole
+// hazard is invisible on Linux and macOS — including to their tests.
+//
+// It has cost two incidents, wearing a different mask each time:
+//
+//   #230  a walked index tree held `bug-report---问题反馈.md`; the throw
+//         escaped to std::terminate → `__fastfail(0xC0000409)` → git-bash
+//         reported a bare **exit 127**, which reads as "command not found".
+//   #516  cpp-httplib ships `test/www/日本語Dir/`, and the `include_dirs =
+//         { "*" }` convention walks the whole extracted tarball; the throw
+//         escaped to main()'s catch as `internal: unhandled exception`,
+//         which reads as an **extraction/encoding bug in the downloader**.
+//
+// #231 hardened three sites against it and missed a fourth
+// (`is_excluded_walk_dir`, which runs one line EARLIER in the same walk) —
+// which is why this is now a single function with a CI gate behind it
+// (tools/check-narrow-conversions.sh) rather than a fourth try/catch.
+//
+// nullopt means: this path cannot be named in any string we hand to a
+// compiler, a build file, or a glob. Skip it — and record it, because
+// "silently not built" is exactly where this class of bug hides.
+std::optional<std::string> try_narrow(const std::filesystem::path& p) {
+    try {
+        return p.generic_string();
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+// Record that something had to be skipped because `try_narrow` could not name
+// it. Deduplicated to the nearest ANCESTOR that CAN be named: one unreadable
+// subtree produces one record, not one per file.
+//
+// What is stored is that ancestor — never the offending name, which by
+// definition cannot be put into a message without throwing the very exception
+// this module exists to avoid. (Diagnostic code walking into its own trap is
+// the most likely way this regresses.)
+void note_unnarrowable_path(const std::filesystem::path& p);
+
+// Take and clear this run's records.
+//
+// modgraph is a leaf layer — no module under `src/modgraph/` or
+// `src/manifest/` imports `mcpp.ui` or `mcpp.diag` — so it RECORDS and the
+// CLI reports. Drained in exactly one place (`cli::run`'s scope guard), which
+// is what keeps "recorded but never shown" from becoming the next silent
+// failure. See docs & AGENTS.md.
+std::vector<std::string> take_unnarrowable_paths();
+
 // Does `candidate` match `glob`, interpreted relative to `root`?
 //
 // Supports "**" (any number of directory levels) and "*" (within one segment).
@@ -43,16 +101,15 @@ bool path_matches_glob(const std::filesystem::path& candidate,
                        const std::filesystem::path& root,
                        std::string_view             glob)
 {
-    std::string rel;
-    try {
-        rel = candidate.lexically_relative(root).generic_string();
-    } catch (const std::exception&) {
-        // MSVC's narrow conversion throws std::system_error when the native
-        // (wide) name has no spelling in the ANSI codepage (e.g. a CJK
-        // filename on an en-US host — mcpp#230 hit this on an issue template
-        // inside a walked index tree). Such a name can never be spelled in a
-        // glob or a compile command either: not a match, and never a reason to
-        // tear down the whole build.
+    // lexically_relative is pure path arithmetic and cannot throw; the
+    // narrowing is the part that can, so it is the part that goes through
+    // try_narrow.
+    auto rel = try_narrow(candidate.lexically_relative(root));
+    if (!rel) {
+        // A name the code page cannot spell can never match a glob (a glob is
+        // a narrow string) and could never reach a compile command either.
+        // Not a match — and not a reason to tear down the whole build.
+        note_unnarrowable_path(candidate);
         return false;
     }
 
@@ -91,7 +148,46 @@ bool path_matches_glob(const std::filesystem::path& candidate,
         };
         return rec(0, 0);
     };
-    return match(rel, glob);
+    return match(*rel, glob);
 }
 
 } // namespace mcpp::modgraph
+
+// ── implementation ──────────────────────────────────────────────────────────
+
+namespace mcpp::modgraph {
+namespace {
+
+// A run's worth of unnarrowable subtrees, keyed by their nearest spellable
+// ancestor. `std::set` so the report comes out in a stable order regardless of
+// directory-enumeration order, which the standard leaves unspecified.
+std::mutex             g_unnarrowableMu;
+std::set<std::string>  g_unnarrowable;
+
+}  // namespace
+
+void note_unnarrowable_path(const std::filesystem::path& p) {
+    // Climb to the first ancestor this code page CAN spell. `p` itself fails
+    // by construction; usually exactly one component is at fault, so the
+    // parent already succeeds.
+    std::string anchor;
+    for (auto dir = p.parent_path();; dir = dir.parent_path()) {
+        if (auto s = try_narrow(dir)) { anchor = std::move(*s); break; }
+        if (dir.parent_path() == dir) break;   // reached the root, still unspellable
+    }
+    // Every component was unspellable (or `p` was a bare relative name). Say so
+    // rather than reporting an empty path, which reads as a bug in the report.
+    if (anchor.empty()) anchor = "(a path this code page cannot spell)";
+
+    std::lock_guard lk(g_unnarrowableMu);
+    g_unnarrowable.insert(std::move(anchor));
+}
+
+std::vector<std::string> take_unnarrowable_paths() {
+    std::lock_guard lk(g_unnarrowableMu);
+    std::vector<std::string> out(g_unnarrowable.begin(), g_unnarrowable.end());
+    g_unnarrowable.clear();
+    return out;
+}
+
+}  // namespace mcpp::modgraph

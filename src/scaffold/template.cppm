@@ -137,16 +137,25 @@ struct TemplateMeta {
 
 std::expected<TemplateMeta, std::string>
 load_meta(const std::filesystem::path& templateDir) {
+    // u8string(), not string(): `templateDir` comes from a directory walk of a
+    // third-party template provider, and on Windows `.string()` throws for a
+    // name the active code page cannot spell (mcpp#516). A diagnostic that
+    // throws the exception it is trying to report is the worst version of this
+    // bug, and these two are diagnostics.
+    auto dirNameU8 = templateDir.filename().u8string();
+    auto dirName   = std::string(reinterpret_cast<const char*>(dirNameU8.data()),
+                                 dirNameU8.size());
+
     auto metaPath = templateDir / "template.toml";
     if (!std::filesystem::exists(metaPath)) {
         return std::unexpected(std::format(
-            "template '{}' has no template.toml", templateDir.filename().string()));
+            "template '{}' has no template.toml", dirName));
     }
     auto doc = mcpp::libs::toml::parse_file(metaPath);
     if (!doc) {
         return std::unexpected(std::format(
             "template '{}': bad template.toml: {}",
-            templateDir.filename().string(), doc.error().message));
+            dirName, doc.error().message));
     }
 
     TemplateMeta meta;
@@ -262,7 +271,15 @@ list_templates(const std::filesystem::path& packageRoot) {
             }
             continue;
         }
-        auto templateName = e.path().filename().string();
+        // u8string(), not string(): this is an unfiltered directory walk of a
+        // third-party template provider, and on Windows `.string()` throws for
+        // any directory name the active code page cannot spell (mcpp#516).
+        // The name is validated as "one ASCII atom" three lines down, so a
+        // non-ASCII name still gets refused — it now gets refused with the
+        // message that explains it, instead of aborting the whole command.
+        auto nameU8 = e.path().filename().u8string();
+        auto templateName = std::string(reinterpret_cast<const char*>(nameU8.data()),
+                                        nameU8.size());
         auto parsedName = mcpp::pm::parse_package_selector(templateName);
         if (!parsedName || parsedName->namespace_) {
             return std::unexpected(std::format(

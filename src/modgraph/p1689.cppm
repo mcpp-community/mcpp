@@ -336,7 +336,14 @@ scan_file(const std::filesystem::path&        source,
 
     // One unique name per source — flat layout in tmpDir is fine since
     // the caller gives us a fresh dir per build.
-    auto stem = source.filename().string();
+    // `source` is always a glob-filtered path. path_matches_glob drops any
+    // candidate try_narrow() cannot spell, so a name this code page has no
+    // spelling for never reaches a scan — and a PROJECT ROOT that cannot be
+    // spelled makes every candidate fail that same filter, so the build stops
+    // at "no sources" well before here. What this feeds is a compiler command
+    // line anyway: a path that cannot be narrowed cannot be handed to a
+    // compiler at all. (mcpp#516 audit)
+    auto stem = source.filename().string();  // NARROW-OK: glob-filtered, see above
     auto base = tmpDir / std::format("{}_{}",
         std::hash<std::string>{}(source.string()) % 1000000, stem);
     auto ddi = base; ddi += ".ddi";

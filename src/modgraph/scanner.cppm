@@ -597,6 +597,14 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
     // have meant" a module interface would be a second answer to the same
     // question — the very thing that produced this defect.
     if (u.kind == mcpp::SourceKind::Other) {
+        // Narrow through try_narrow even here. Everything that reaches
+        // scan_file today came through a glob filter, so the conversion cannot
+        // actually fail — but a DIAGNOSTIC that throws the exception it is
+        // describing is the single most likely way this class of bug comes
+        // back, and it costs one `value_or` to make that impossible.
+        auto nameNarrow = try_narrow(file.filename()).value_or(
+            "(a name this code page cannot spell)");
+        auto extNarrow  = try_narrow(file.extension()).value_or("");
         return std::unexpected(ScanError{ file, 0, std::format(
             "'{}' is listed in [build] sources, and mcpp has no role for the "
             "extension '{}'.\n"
@@ -608,9 +616,9 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
             "  Otherwise remove it from `sources` — headers belong in "
             "`include_dirs`, and\n"
             "  Windows resource scripts in `[resources]`.",
-            file.filename().string(),
-            file.extension().string().empty() ? "(none)" : file.extension().string(),
-            file.extension().string().empty() ? ".ixx" : file.extension().string()) });
+            nameNarrow,
+            extNarrow.empty() ? "(none)" : extNarrow,
+            extNarrow.empty() ? ".ixx"   : extNarrow) });
     }
 
     // C-like files are not C++ modules: they cannot legally contain `module` / `import`
@@ -1012,7 +1020,10 @@ void scan_one_into(ScanResult& result,
         if (ext.empty()) continue;
         bool seen = false;
         for (auto const& f : all_files)
-            if (f.extension().string() == ext) { seen = true; break; }
+            // Compare as paths — `ext` is ASCII, so it converts to the native
+            // representation losslessly, and no walk-derived name is narrowed
+            // (see mcpp::modgraph::try_narrow).
+            if (f.extension() == ext) { seen = true; break; }
         if (!seen) {
             result.warnings.push_back(ScanError{root, 0, std::format(
                 "[build] module_extensions declares '{}' but no source file "

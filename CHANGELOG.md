@@ -3,6 +3,70 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.27.2] — 2026-08-27
+
+一个文件名把整个 Windows 构建打断了,而报错说的是别的事。完整分析见
+[`.agents/docs/2026-08-27-issue516-windows-acp-glob-walk-fix.md`](.agents/docs/2026-08-27-issue516-windows-acp-glob-walk-fix.md)。
+
+⭐ **这是 `#230` 的同一处漏网,不是新缺陷。** `#231` 加固了三个窄化站点,
+漏掉了同一个 walk 循环里**早一行**执行的第四处。
+
+### 修复
+
+- **⭐⭐ 一个当前代码页拼不出的目录名,会让 `mcpp` 在 Windows 上以内部错误退出。**(#516)
+
+  `src/modgraph/scanner.cppm` 的 `is_excluded_walk_dir()` 用
+  `dir.filename().string()` 取目录名。MSVC 的 `path::string()` 走
+  `WideCharToMultiByte(ACP)`,遇到该代码页拼不出的字符就抛 `std::system_error`:
+
+  ```
+  error: internal: unhandled exception: No mapping for the Unicode character
+  exists in the target multi-byte code page.
+  ```
+
+  该函数是 walk 循环体的**第一行**,每个目录条目过一次 —— 所以它比 `#231`
+  加固过的 `path_matches_glob` **更早**执行,加固那里对目录名从来无效。
+
+  触发条件比看上去宽:`include_dirs = { "*" }`(mcpp-index 里 128 个 recipe
+  有 101 个含以 `*` 开头的 glob)会从解压根**无界递归遍历整棵上游源码树**。
+  cpp-httplib 带了 `test/www/日本語Dir/`,于是 `httplib` / `httplib-tls` /
+  `httplib-zstd` 三个测试在 Windows 上一起挂 —— 而 Linux/macOS 全绿,因为那两个
+  平台上 `path::string()` 不做任何编码转换。
+
+  **报错指向的方向是错的**:它看起来像下载器的解压/编码缺陷。实际上解压是**对的**
+  —— `ERROR_NO_UNICODE_TRANSLATION` 的前提正是宽名里有 ACP 拼不出的字符;
+  若真落成了 mojibake,反而不会抛。
+
+- **窄化收敛成一条规则,而不是第四个 try/catch。**(#516)
+
+  `mcpp::modgraph::try_narrow()` 是走查路径变成窄串的唯一入口。按用途分三档:
+  与 ASCII 字面量比较 → **按 `path` 比,不窄化**;需要稳定身份(hash/digest)→
+  `u8string()`;需要交给编译器/ninja/CDB → `try_narrow()` 并处理 `nullopt`。
+  `.github/tools/check_narrow_conversions.sh` 是硬门(作用域被刻意收窄到
+  `src/modgraph`、`src/scaffold` 两处 —— 第一版覆盖四个目录、22 个命中里 20 个是
+  假阳性,那样的门一个月内就会被绕过)。
+
+- **跳过的文件不再是静默的。** 一个无法命名的条目会按目录报告一次,走
+  `mcpp.diag` 的 `degraded` 通道(它的批次不变式本就要求"因前提不满足而少做事
+  必须给出 `impact`"):
+
+  ```
+  warning: '<dir>' contains names this system's active code page cannot represent
+    impact: those files take no part in the build
+  ```
+
+- **`interface_set_digest` 不再依赖宿主代码页。**
+
+  它用 `.string()` 折入文件名,而输入是对已发布包 interface 目录的**未经过滤**的
+  `recursive_directory_iterator` 走查。除了会抛,它还让**在 Linux 上打包、在
+  Windows 上校验**的同一棵树对非 ASCII 名字给出不同摘要 —— 表现为
+  "does not match what was packaged",本文件能产生的最吓人的诊断。
+  改用 `u8string()`(各平台同一串字节);纯 ASCII 名字字节不变,已发布包的摘要不变。
+
+### 其他
+
+- 内部依赖的 xlings pin 升至 `2026.8.27.4`。
+
 ## [2026.8.27.1] — 2026-08-27
 
 目标侧被解析出来了,只发给了一个编译单元。完整分析见
