@@ -1605,6 +1605,12 @@ to ask an operation about that directory"*)。⇒ `stat`/`statx`/`newfstatat` �
 
 ### 3.6 ⑤ ⭐⭐ 「永远没有」变链接错误 —— 零设计成本,回报最大
 
+> ⚠️⚠️ **本节的「零设计成本」是错的,实施后已由 §7.6 更正。** 机制有一个前提,
+> 而这份文档把它当成了已经满足:`-ffunction-sections` + `-Wl,--gc-sections`
+> **只有 `cfg(os = "linux")` 一个 target 设了**。另外三个 target 不收集未引用的
+> section,于是同一份排除表在宿主上绿、在 mingw 上把构建打死。
+> 下面保留的是当时的推理。
+
 **问题**:今天 `okm_syscall.c` 用同一个 `-ENOSYS` 回答了两件性质不同的事。
 
 | | 例子 | 正确的回答时机 |
@@ -1871,6 +1877,56 @@ connect / accept / peer / local / shutdown / close 全部改收连接;
 ⇒ 端口层已修;`__config_site` 的声明保持 `1`,并在 openkal-llvm-runtime 的 CI 里加了
 一条**对账**判据:判据是**关系**(pty 与 pipe 必须不同,且与系统 C 库同向),
 两个方向都会红 —— 声明 1 而端口答不出、声明 0 而端口其实答得出,都判失败。
+
+---
+
+## 7.6 ⭐⭐ 实施回填:⑤ 的排除表从十八条缩到五条
+
+§3.6 说这条「零设计成本,回报最大」。实施之后两条都要更正。
+
+### 前提只在四个 target 里的一个成立
+
+机制靠的是「没被引用的定义会被丢掉」,而那要 `-ffunction-sections` +
+`-Wl,--gc-sections`。⚠️ **只有 `cfg(os = "linux")` 的 ldflags 里有**,macOS 与
+Windows 那两节**根本没设 ldflags**。于是宿主上排除是隐形的,mingw 上对象被保留:
+
+    musl/src/legacy/daemon.c:18: undefined reference to `fork'
+
+⚠️ 我当时的实测只跑了宿主一行,并据此在清单注释里写下「这两个 flag 已经在位」——
+对我测的那个 target 为真,对其余三个为假。
+
+### 闭包:一次问清,而不是跟着失败一条条加
+
+排除一族只有在 musl 自己不从别处引用它时才成立。逐族查了目录之外的引用者:
+
+| 族 | 目录外引用者 | 闭包终点 |
+|---|---|---|
+| `timerfd` `eventfd` `signalfd` `inotify` `epoll` | **0** | — ⇒ 排除 |
+| `select` | `network/res_msend.c` | 随 network |
+| `network` | `syslog.c` `nscd_query.c` `mq_notify.c` | → `getpwnam` |
+| `fork` | `forkpty.c` `wordexp.c` `daemon.c` `linux/clone.c` | → **`pthread_create`** |
+
+⭐ **fork 的闭包终点是线程实现,network 的终点是口令函数。** 排任一个都会带走一个
+必需的或普通的设施 ⇒ 两个都不排。
+
+⚠️ 先前是跟着失败一条条加(lchmod→fchmodat、sem_open→link、daemon/wordexp/
+forkpty→fork),那是错的方法:这个问题在源码上一遍就能问清。
+
+### 结论:不是拒绝,是还不可能
+
+排除 network 族要等**每个 target 都收集未引用的 section**(ELF/PE 用
+`--gc-sections`,macOS 用 `-dead_strip`)—— 那是三条链接线的改动,可以单独测,
+不该挂在这一批里。
+
+⭐ **代价照直说**:今天一个用 socket 的程序仍然能构建、仍然在运行期失败,也就是
+`tinyhttps` 在第 27 个测试上遇到的那件事。留下的五条自带理由 —— 一个创建出来却
+永远不会就绪的 fd,比一个创建不出来的更坏 —— 且它们的闭包在每个 target 上都是空的。
+
+### 另一条:可选接口的转发者必须弱引用
+
+`pipe` 落到 `kal_process_channel` 上之后,裸机后端(不提供 `openkal.process`)上
+**每一个**程序都链接失败,不管它要不要 pipe。同一条规则四行之外就写在
+`kal_random_fill` 上。⇒ 判据改成符号类别:`w` 而不是 `U`。
 
 ---
 
