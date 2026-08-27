@@ -31,7 +31,7 @@ work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 cd "$work"
 
-mkdir -p src lib/src lib/pub lib/internal
+mkdir -p src lib/src lib/pub lib/internal lib/gen/one lib/gen/two
 
 cat > lib/mcpp.toml <<'EOF'
 [package]
@@ -43,14 +43,21 @@ version = "0.1.0"
 # this list rather than a second list: the internal overlay must precede the
 # public headers for the package's OWN build, and two TOML arrays cannot
 # express one order.
-include_dirs         = ["internal", "pub"]
-private_include_dirs = ["internal"]
+#
+# ⭐ `gen/*` IS A GLOB ON BOTH LINES. The filter is applied AFTER expansion, so
+# the glob withholds exactly the directories it expands to. Comparing the
+# unexpanded spellings would be the obvious implementation and would publish
+# every one of them, because `gen/*` is not literally equal to `gen/one`.
+include_dirs         = ["internal", "gen/*", "pub"]
+private_include_dirs = ["internal", "gen/*"]
 EOF
 printf 'export module vendored;\nexport int vendored_v() { return 7; }\n' > lib/src/vendored.cppm
 printf '#pragma once\n#define VENDORED_PUBLIC 1\n' > lib/pub/pub.h
 # The internal overlay: a macro that is meaningful to the package and a
 # perfectly ordinary identifier to everyone else.
 printf '#pragma once\n#define hidden __attribute__((visibility("hidden")))\n' > lib/internal/overlay.h
+printf '#pragma once\n' > lib/gen/one/one.h
+printf '#pragma once\n' > lib/gen/two/two.h
 
 cat > mcpp.toml <<'EOF'
 [package]
@@ -107,5 +114,16 @@ fail=0
 [ "$(has_dir '/src/main' '/lib/internal')" = false ] || {
     echo "FAIL: the private directory leaked to the consumer"; fail=1; }
 
+# ⭐ AND THE GLOB WITHHOLDS WHAT IT EXPANDS TO — both directories, by name.
+# Checking `gen` alone would pass for an implementation that matched the
+# unexpanded spelling and published `gen/one` and `gen/two` anyway.
+for g in one two; do
+    [ "$(has_dir '/lib/src/' "/lib/gen/$g")" = true ] || {
+        echo "FAIL: the provider lost 'gen/$g', which its own glob names"; fail=1; }
+    [ "$(has_dir '/src/main' "/lib/gen/$g")" = false ] || {
+        echo "FAIL: 'gen/$g' leaked to the consumer — the glob was compared unexpanded"
+        fail=1; }
+done
+
 [ "$fail" = 0 ] || exit 1
-echo "OK: built-from and published are separable (provider=$prov consumer=$cons rows)"
+echo "OK: built-from and published are separable, globs included (provider=$prov consumer=$cons rows)"
