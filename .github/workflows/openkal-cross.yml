@@ -128,9 +128,52 @@ jobs:
           # decisions about compile and link flags; an optimisation level
           # changes none of them and a release self-build is most of the budget
           # of a job on a two-core runner.
+          # ⚠️⚠️ REMOVE ANY mcpp ALREADY UNDER `target/` FIRST, so that after the
+          # build there is exactly ONE and it is the one this step produced.
+          #
+          # `target/` is a RESTORED CACHE whose key hashes `src/**`. A source
+          # change misses the key, `restore-keys` hands back the nearest older
+          # tree anyway — that is the point of the layered restore — and the
+          # build then writes its output into a NEW `<triple>/<fingerprint>/`
+          # directory beside the ones already there. `find … | head -1` returns
+          # whichever directory the walk reaches first, which is not the newest
+          # and is not this build's.
+          #
+          # ⚠️ MEASURED, LOCALLY AND ON CI. On this developer's own tree the
+          # command picks `007bc0f2b78f7fa5` while the build just wrote
+          # `148448dec6c4a7a7`. On CI it picked a stale binary whose ELF
+          # interpreter names a glibc payload the runner no longer has:
+          #
+          #     …/bin/mcpp: cannot execute: required file not found     (exit 127)
+          #
+          # — which reads as a broken build of THIS commit and is nothing of the
+          # kind. Two runs, same stale fingerprint, after seven green ones: the
+          # trigger is simply a source change large enough to leave two
+          # directories in the restored tree.
+          #
+          # ⭐ mtime CANNOT BE THE CRITERION HERE. A cache restore writes every
+          # file at extraction time, so "newest" is meaningless on exactly the
+          # tree where this goes wrong — `ls -t | head -1` has picked a stale
+          # fingerprint in this repository before. Absence can't be faked:
+          # delete them, and whatever exists afterwards was linked just now.
+          #
+          # The objects and BMIs stay cached — this costs one link.
+          find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) -delete 2>/dev/null || true
           "$MCPP" build --dev
-          BUILT=$(find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) | head -1)
-          [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
+          # ⚠️ EXACTLY ONE, not "at least one". Two would mean the delete above
+          # missed a tree and the ambiguity this step exists to remove is back.
+          #
+          # ⚠️ NO `mapfile`. This job also runs on macos, whose `/bin/bash` is
+          # 3.2 and has no such builtin — a bashism here would fail on one row
+          # of the matrix for a reason unrelated to what the row tests.
+          find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) > /tmp/mcpp-built.txt
+          COUNT=$(wc -l < /tmp/mcpp-built.txt | tr -d ' ')
+          if [ "$COUNT" -ne 1 ]; then
+            echo "::error::expected exactly one built mcpp, found $COUNT"
+            sed 's/^/        /' /tmp/mcpp-built.txt
+            exit 1
+          fi
+          BUILT=$(cat /tmp/mcpp-built.txt)
           BUILT=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")
           echo "MCPP_UNDER_TEST=$BUILT" >> "$GITHUB_ENV"
           "$BUILT" --version
