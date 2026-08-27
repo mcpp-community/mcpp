@@ -97,9 +97,16 @@ line_of() {   # channel, extra args… → that line of build.ninja, or nothing
 # token that names which machine. `-fprebuilt-module-path=` names the build
 # directory, which differs because the fingerprint does; that is the mechanism
 # working, not a difference in what is compiled.
+#
+# ⚠️ NOT ANCHORED WITH `^`, AND WINDOWS IS WHY. The ninja channel QUOTES a token
+# whose path needs it, so the same flag arrives as
+# `"-fprebuilt-module-path=C$:\Users\..."` — an anchored pattern misses it and
+# the comparison then fails on the one token this filter exists to remove.
+# Measured on windows-x86_64, where it turned a green invariant into a red one
+# for a reason that had nothing to do with what was being compiled.
 normalise() {
     printf '%s\n' "$1" | tr ' ' '\n' \
-        | grep -v '^--target=' | grep -v '^-fprebuilt-module-path=' \
+        | grep -v -- '--target=' | grep -v -- '-fprebuilt-module-path=' \
         | grep -v '^$' | sort
 }
 
