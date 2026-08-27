@@ -4146,6 +4146,28 @@ prepare_build(bool print_fingerprint,
         return dirs;
     };
 
+    // The same expansion for `private_include_dirs`, so a private entry may be
+    // a glob and still name exactly the directories it expands to.
+    auto expandPrivateIncludeDirs =
+        [&](const std::filesystem::path& packageRoot,
+            const mcpp::manifest::Manifest& manifest)
+    {
+        std::vector<std::filesystem::path> dirs;
+        for (auto const& inc : manifest.buildConfig.privateIncludeDirs) {
+            if (inc.is_absolute()) {
+                auto n = inc;
+                n.make_preferred();
+                appendUniquePath(dirs, std::move(n));
+                continue;
+            }
+            for (auto& dir : mcpp::modgraph::expand_dir_glob(
+                     packageRoot, inc.generic_string())) {
+                appendUniquePath(dirs, dir);
+            }
+        }
+        return dirs;
+    };
+
     auto makePackageRoot =
         [&](const std::filesystem::path& packageRoot,
             const mcpp::manifest::Manifest& manifest)
@@ -4159,7 +4181,53 @@ prepare_build(bool print_fingerprint,
         pkg.privateBuild.includeDirsAfter = expandIncludeDirsAfter(packageRoot, manifest);
         pkg.privateBuild.cflags = manifest.buildConfig.cflags;
         pkg.privateBuild.cxxflags = manifest.buildConfig.cxxflags;
-        pkg.publicUsage.includeDirs = pkg.privateBuild.includeDirs;
+        // ⭐⭐ NOT `= privateBuild` ANY MORE — a package may now say which of
+        // its include directories stop at its own boundary.
+        //
+        // This line took the whole set for as long as the two were the same
+        // set, which they are for almost every package. The one shape where
+        // they are not is a package that vendors a library with an internal
+        // header overlay: musl's `src/include` adds `hidden`, `weak` and
+        // `weak_alias` for musl's own sources, and publishing it hands those
+        // names to every consumer. See BuildInputs::privateIncludeDirs.
+        //
+        // ⚠️ THE FILTER IS APPLIED AFTER GLOB EXPANSION, so a private entry may
+        // itself be a glob and still name exactly the directories it expands
+        // to. Comparing the unexpanded spellings would let `musl/src/*` be
+        // published because it is not literally equal to `musl/src/include`.
+        {
+            const auto privateExpanded =
+                expandPrivateIncludeDirs(packageRoot, manifest);
+            for (auto const& d : pkg.privateBuild.includeDirs)
+                if (std::ranges::find(privateExpanded, d) == privateExpanded.end())
+                    pkg.publicUsage.includeDirs.push_back(d);
+
+            // ⚠️ AN ENTRY THAT WITHHOLDS NOTHING IS REPORTED, because the way
+            // it fails is the very defect this key exists to prevent: a
+            // directory the author believes is private stays published, and
+            // nothing about the build looks different until a consumer trips
+            // over a name months later.
+            //
+            // A WARNING AND NOT AN ERROR, for consistency with `include_dirs`
+            // itself: that key silently ignores a glob matching nothing, and a
+            // conditional manifest can legitimately name a directory that
+            // exists on one platform only. Refusing here would be stricter
+            // than the list this one filters.
+            for (auto const& want : privateExpanded) {
+                if (std::ranges::find(pkg.privateBuild.includeDirs, want)
+                    != pkg.privateBuild.includeDirs.end())
+                    continue;
+                mcpp::diag::warning("manifest", std::format(
+                    "package '{}': `private_include_dirs` names '{}', which is "
+                    "not among this package's `include_dirs`.\n"
+                    "       It withholds nothing — `private_include_dirs` says "
+                    "which entries OF `include_dirs`\n"
+                    "       stop at this package's boundary, and an entry that "
+                    "is not one of them is published\n"
+                    "       exactly as before.",
+                    manifest.package.name, want.generic_string()));
+            }
+        }
         pkg.publicUsage.includeDirsAfter = pkg.privateBuild.includeDirsAfter;
         pkg.linkUsage.ldflags = manifest.buildConfig.ldflags;
         return pkg;
@@ -6453,6 +6521,17 @@ prepare_build(bool print_fingerprint,
 
     mcpp::targetside::TargetSide resolvedTargetSide;
 
+    // What the packages supplying the target side's layers publish: the header
+    // directories and interface flags the whole build is compiled against.
+    //
+    // ⭐ ONE SET, TWO READERS, and that is deliberate: it is merged into every
+    // package's `privateBuild` (so every compile edge sees it) and handed to
+    // the `std` module's own command line (which is one more translation unit
+    // of the same build). Before this existed, only the second reader was
+    // written, and it derived the set itself — which is how the two could
+    // describe different worlds.
+    mcpp::modgraph::UsageRequirements targetSideUsage;
+
     // ── THE TARGET SIDE, RESOLVED ONCE ───────────────────────────────────────
     //
     // HERE AND NOT EARLIER, AND THAT IS THE WHOLE POINT.
@@ -6494,7 +6573,13 @@ prepare_build(bool print_fingerprint,
         // keeping the first acceptable one, two suppliers resolved by graph
         // traversal order — an order the author neither writes nor can predict —
         // and the loser's `[build]` section still reached the command line.
-        struct Candidate { tsd::Provider p; bool direct; };
+        // ⭐ `index` — WHICH PACKAGE this candidate is, not just its name.
+        //
+        // Needed once resolution is done: a layer supplied from the graph
+        // publishes an include set the WHOLE build must see (see
+        // `targetSideUsage` below), and reaching that package by name would be
+        // a second lookup of something already in hand.
+        struct Candidate { tsd::Provider p; bool direct; std::size_t index = 0; };
         std::map<int, std::vector<Candidate>> byLayer;
         std::vector<tsd::Requirement>         requirements;
 
@@ -6511,7 +6596,8 @@ prepare_build(bool print_fingerprint,
             return false;
         };
 
-        for (auto const& pkg : packages) {
+        for (std::size_t pkgIndex = 0; pkgIndex < packages.size(); ++pkgIndex) {
+            auto const& pkg = packages[pkgIndex];
             const auto pkgId = pkg.manifest.package.version.empty()
                 ? pkg.manifest.package.name
                 : std::format("{}@{}", pkg.manifest.package.name,
@@ -6576,8 +6662,9 @@ prepare_build(bool print_fingerprint,
                 if (same != slot.end()) {
                     if (same->p.interfaceName.empty() && !p.interfaceName.empty())
                         same->p = p;
+                    same->index = pkgIndex;
                 } else {
-                    slot.push_back({ p, is_direct(p.name) });
+                    slot.push_back({ p, is_direct(p.name), pkgIndex });
                 }
             }
 
@@ -6711,6 +6798,114 @@ prepare_build(bool print_fingerprint,
         }
 
         resolvedTargetSide = tsd::resolve(in);
+
+        // ⭐⭐ RECORDED ON THE TOOLCHAIN THE MOMENT IT IS KNOWN, because three
+        // producers of a compile line need it and only one of them can see
+        // `resolvedTargetSide`.
+        //
+        // `flags.cppm` reads `plan.targetSide` directly; the std module build
+        // (`mcpp.toolchain.stdmod`) and the build.mcpp host helper cannot —
+        // they are in the toolchain layer and take a `Toolchain`. Giving them a
+        // second way to derive the answer is exactly the shape this release
+        // exists to remove, so the answer travels on the value they already
+        // share.
+        //
+        // ⚠️ HERE AND NOT LATER: `ensure_built` runs at :7368 and every compile
+        // line is assembled after it. A std BMI built against a different C
+        // library than its importers is what e2e 181 catches.
+        if (tc) tc->cAbiPrebuilt = resolvedTargetSide.cAbi.prebuilt();
+
+        // ── The target side's include set is a property of the BUILD ─────────
+        //
+        // ⭐⭐ IT WAS ALREADY COMPUTED, AND IT REACHED EXACTLY ONE TRANSLATION
+        // UNIT.
+        //
+        // A package that supplies a target-side layer publishes the headers the
+        // whole target is built against — libc++'s, the C library's, the
+        // architecture's. Those travel today as an ordinary `publicUsage`,
+        // which propagates ALONG DEPENDENCY EDGES. So a workspace member that
+        // depends on the provider receives them and a SIBLING DEPENDENCY
+        // PACKAGE does not: `nlohmann.json` is not downstream of
+        // `openkal-llvm-runtime`, it is beside it.
+        //
+        // The result is two flavours of BMI in one build — `std` compiled over
+        // the target's libc++ (correct: the block at :7232 hands it exactly
+        // this set) and the dependency packages compiled over the payload's.
+        // Any unit importing both fails at the first template instantiation
+        // that touches a declaration present in both header sets:
+        //
+        //     istream:1245: error: reference to 'space' is ambiguous
+        //     note: candidate … xim-x-llvm/…/__locale:321
+        //     note: candidate … openkal-llvm-runtime/…/__locale:302
+        //
+        // mcpp#514. Reproduced in twenty lines with no openkal at all: a path
+        // package declaring `provides = ["mcpp:c++-abi=libc++"]` and one
+        // `include_dirs` entry reaches the root and its own units, and reaches
+        // no sibling dependency package.
+        //
+        // ⭐ THE FIX IS THE ONE `mcpp.targetside` OPENS WITH: resolve once,
+        // after the graph is known, and have every consumer read that one
+        // value. A `publicUsage` describes what a library asks of ITS USERS; a
+        // target side is beneath everything. Modelling the second as the first
+        // is what made it edge-scoped.
+        //
+        // ⚠️ ONLY LAYERS THE GRAPH SUPPLIES. `Layer::fromGraph()` is the whole
+        // condition. A payload-supplied layer already reaches every unit
+        // through `mcpp.toolchain.hostflags`, and emitting it twice would put
+        // the ordering of one decision in two places.
+        {
+            std::set<std::size_t> layerProviderIndices;
+            auto note_layer = [&](tsd::CapLayer which, const tsd::Layer& resolved) {
+                if (!resolved.fromGraph()) return;
+                auto it = byLayer.find(static_cast<int>(which));
+                if (it != byLayer.end() && !it->second.empty())
+                    layerProviderIndices.insert(it->second.front().index);
+            };
+            note_layer(tsd::CapLayer::CompilerRuntime, resolvedTargetSide.compilerRuntime);
+            note_layer(tsd::CapLayer::KernelAbi,       resolvedTargetSide.kernelAbi);
+            note_layer(tsd::CapLayer::CAbi,            resolvedTargetSide.cAbi);
+            note_layer(tsd::CapLayer::CxxAbi,          resolvedTargetSide.cxx);
+
+            for (auto idx : layerProviderIndices) {
+                if (idx >= packages.size()) continue;
+                auto const& provider = packages[idx];
+                appendUniquePaths(targetSideUsage.includeDirs,
+                                  provider.publicUsage.includeDirs);
+                appendUniquePaths(targetSideUsage.includeDirsAfter,
+                                  provider.publicUsage.includeDirsAfter);
+                appendUniqueFlags(targetSideUsage.cflags,
+                                  provider.publicUsage.cflags);
+                appendUniqueFlags(targetSideUsage.cxxflags,
+                                  provider.publicUsage.cxxflags);
+            }
+
+            // Into `privateBuild` and NOT into `publicUsage`.
+            //
+            // It is visible to the whole graph already, so it needs no further
+            // propagation; and writing it into `publicUsage` would fold the
+            // target side into the usage requirements of any library this
+            // build packages — a promise about a different machine.
+            //
+            // ⚠️ APPENDED, so a package's own directories keep coming first.
+            // The target side only has to precede the DRIVER's own defaults,
+            // and those are always searched last.
+            if (!targetSideUsage.includeDirs.empty()
+                || !targetSideUsage.includeDirsAfter.empty()
+                || !targetSideUsage.cflags.empty()
+                || !targetSideUsage.cxxflags.empty()) {
+                for (auto& p : packages) {
+                    appendUniquePaths(p.privateBuild.includeDirs,
+                                      targetSideUsage.includeDirs);
+                    appendUniquePaths(p.privateBuild.includeDirsAfter,
+                                      targetSideUsage.includeDirsAfter);
+                    appendUniqueFlags(p.privateBuild.cflags,
+                                      targetSideUsage.cflags);
+                    appendUniqueFlags(p.privateBuild.cxxflags,
+                                      targetSideUsage.cxxflags);
+                }
+            }
+        }
+
         if (auto why = tsd::check_layering(resolvedTargetSide)) {
             refusal::record(refusal::Code::LayerOrdering);
             return std::unexpected(*why);
@@ -7204,9 +7399,25 @@ prepare_build(bool print_fingerprint,
         // The two differ, and the difference is not cosmetic --- a package's own
         // build path carries directories that exist for its .cpp files and that
         // shadow the library's headers when a module is compiled against them.
-        for (auto& d : pkg.publicUsage.includeDirs)
+        //
+        // ⭐⭐ AND IT IS `targetSideUsage`, NOT THIS PACKAGE'S `publicUsage`.
+        //
+        // The two are the same set whenever one package supplies every layer,
+        // which is the arrangement this block was written for — so reading the
+        // package directly was correct and stayed correct until a second
+        // provider appeared. `openkal-llvm-runtime` supplies the C++ runtime
+        // while `openkal-musl` supplies the C library, and the std module needs
+        // both: libc++'s own headers reach `<bits/alltypes.h>`, which is the C
+        // library's.
+        //
+        // ⭐ Reading the assembled set also makes this site and every compile
+        // edge read ONE value. Deriving it here a second time is the shape
+        // #233/#240/#242/#344 each cost a release, and the same set has to
+        // reach both or the `std` BMI describes a different world than the
+        // units importing it — which is mcpp#514 exactly.
+        for (auto& d : targetSideUsage.includeDirs)
             flags += " -isystem " + mcpp::xlings::shq(d.string());
-        for (auto& d : pkg.publicUsage.includeDirsAfter)
+        for (auto& d : targetSideUsage.includeDirsAfter)
             flags += " -idirafter " + mcpp::xlings::shq(d.string());
         // And the definitions, for the same reason as the directories: a C
         // library's headers show a different library depending on which feature
@@ -7214,7 +7425,7 @@ prepare_build(bool print_fingerprint,
         // its own translation units see. Measured: without them the module
         // reaches musl's <time.h> and stops on `clockid_t', a name that header
         // declares only under the macro the package carries.
-        for (auto& f : pkg.publicUsage.cxxflags)
+        for (auto& f : targetSideUsage.cxxflags)
             flags += " " + mcpp::xlings::shq(f);
         tc->stdModuleFlags = flags;
         break;
@@ -8067,7 +8278,11 @@ prepare_build(bool print_fingerprint,
                 *tc, m->cppStandard.experimental,
                 mcpp::manifest::dialect_flags(m->buildConfig)),
             mcpp::platform::macos::deployment_target(
-                m->buildConfig.macosDeploymentTarget));
+                m->buildConfig.macosDeploymentTarget),
+            // The GLOBAL registry root — the same one `fill_package_config`
+            // relativizes against below, so both halves of the key describe
+            // payload paths the same way.
+            storeRoots.empty() ? std::filesystem::path{} : storeRoots.front());
 
         // Sources belonging to each package, package-root-relative and sorted.
         std::vector<std::vector<std::string>> pkgSources(packages.size());

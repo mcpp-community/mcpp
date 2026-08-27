@@ -76,6 +76,44 @@ struct HostFlagOptions {
     // Must agree across the std BMI and everything that imports it — clang
     // rejects a module built for a different deployment target outright.
     std::string macosDeploymentTarget;
+
+    // ⭐⭐ DOES THE TARGET'S C LIBRARY COME FROM A DIRECTORY THAT EXISTED
+    // BEFORE DEPENDENCY RESOLUTION? — `plan.targetSide.cAbi.prebuilt()`, READ
+    // rather than derived.
+    //
+    // This function used to ask `!tc.crossTargetFlag.empty()`: is there a
+    // `--target=` on the command line. Its own comment said what it meant to
+    // ask — "AND NOT WHEN THE TARGET SIDE COMES FROM THE GRAPH" — and those
+    // are different questions. A project that names its host's own target
+    // while depending on nothing answers yes to the first and no to the
+    // second.
+    //
+    // ⚠️ THE LINK SIDE OF THIS DEFECT WAS FIXED IN 2026.8.26.1 (#511) AND THIS
+    // SIDE WAS NOT. Measured on 2026.8.26.2, same machine, same compiler, same
+    // target, differing only in whether it was spelled out:
+    //
+    //     $ mcpp build                                   ldflags: identical ✔
+    //     $ mcpp build --target x86_64-unknown-linux-gnu  cxxflags: SIX tokens gone
+    //
+    //         --no-default-config  -nostdinc++
+    //         -isystem <payload>/include/c++/v1
+    //         -isystem <payload>/include/<triple>/c++/v1
+    //         -isystem <glibc>/include
+    //         -isystem <linux-headers>/include
+    //
+    // ⇒ headers from one library, objects linked from another. On a machine
+    // with system headers it compiles against /usr/include and links the
+    // payload — the silent ABI mix; on one without, it fails naming the
+    // payload.
+    //
+    // ⭐ e2e 295 states the invariant ("naming the host's own target changes
+    // nothing") and compared only `^ldflags`, so the identity held one line
+    // above the line where it did not. It now compares both.
+    //
+    // Default true = "prebuilt", which is the zero-dependency case and what
+    // every caller that has no graph (the std module build, the build.mcpp
+    // host helper) means.
+    bool cAbiPrebuilt = true;
 };
 
 // Host-compile flags as argv tokens, in the order the string channels have
@@ -196,11 +234,39 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     //
     // mingw's own header asked for `<ctype.h>`, and the payload's libc++ was
     // still ahead of the sysroot that had just been pointed at the right place.
-    const bool graphSuppliesTarget = !tc.crossTargetFlag.empty();
+    //
+    // ⭐ READ, NOT DERIVED — see HostFlagOptions::cAbiPrebuilt for the
+    // measurement that replaced `!tc.crossTargetFlag.empty()` here. This site
+    // and `flags.cppm`'s link side now ask one question of one value, so they
+    // cannot disagree.
+    const bool graphSuppliesTarget = !opt.cAbiPrebuilt;
 
     if (bypassCfg && !graphSuppliesTarget) {
         for (auto& t : dm.compile_tokens(esc, opt.clangStdlibSelect))
             out.push_back(t);
+    } else if (bypassCfg) {
+        // ⭐⭐ THE BYPASS IS NOT PART OF THE PAYLOAD'S HEADER SET, AND IT WAS
+        // BEING SUPPRESSED WITH IT.
+        //
+        // The payload's `-isystem` rows describe a C library this target does
+        // not use, so the branch above is right to withhold them. The cfg
+        // bypass is a different statement: `post_install.cppm` calls that file
+        // "a per-machine, per-install-path artifact", and reading it makes the
+        // command line depend on what happened to be installed when the
+        // payload landed.
+        //
+        // ⚠️ Measured on 2026.8.26.2: `mcpp build --target <the host's own>`
+        // dropped `--no-default-config`, so clang read `bin/clang++.cfg` and
+        // the build silently inherited that machine's install. It is also what
+        // made a hand-written `<triple>-clang++.cfg` a working workaround for
+        // mcpp#514 — a workaround that only exists because this token went
+        // missing.
+        //
+        // Emitted here rather than moved into `compile_tokens`: that vector's
+        // rendering is part of the std module's cache identity, and reordering
+        // it would invalidate every user's std BMI for no behavioural gain.
+        // Nothing that used to be emitted moves; this path emitted nothing.
+        out.push_back("--no-default-config");
     }
 
     // Unconditional on macOS, cfg or no cfg. clang refuses to load a module

@@ -367,3 +367,45 @@ TEST(CacheKey, AHostedTargetHasNoTargetImpliedFlagsEitherWay) {
     EXPECT_TRUE(a.targetImpliedFlags.empty()) << a.targetImpliedFlags.size();
     EXPECT_EQ(a.targetImpliedFlags, b.targetImpliedFlags);
 }
+
+// ⭐⭐ THE HEADER SET THE DRIVER IS POINTED AT IS PART OF THE IDENTITY.
+//
+// Everything else on axis A describes the COMPILER. Nothing described the
+// LIBRARY it compiles against — and the two are separately installed: one clang
+// payload sits above whichever `xim:glibc` and `xim:linux-headers` the home
+// carries. `driverIdentity` cannot cover it by design, because
+// `normalize_driver_output` strips paths so that one entry CAN be shared
+// between two homes.
+//
+// Measured (mcpp#514 §B): two host builds resolving glibc 2.39 and 2.44 hit one
+// entry, and the mixed BMIs crashed the clang frontend during deserialization
+// rather than producing a diagnostic.
+TEST(CacheKey, TheHeaderSetIsPartOfTheKey) {
+    mcpp::manifest::Manifest m;
+    m.package.standard = "c++23";
+
+    auto a = ck::build_axes(freestanding_tc(false), m, "-std=c++23", {}, "");
+    auto b = a;
+    // The axis is filled from the resolvers in a real build; here it is set
+    // directly, because what this asserts is that the KEY reads it — not how
+    // linkmodel discovers a payload, which is that module's own test.
+    b.targetHeaderSet = { "-isystem<store>/xim-x-glibc/2.44/include" };
+    a.targetHeaderSet = { "-isystem<store>/xim-x-glibc/2.39/include" };
+
+    EXPECT_NE(ck::key_hex(a, pkg()), ck::key_hex(b, pkg()));
+}
+
+// ...and it travels in entry.json, so a suspected wrong hit can be read field
+// by field rather than guessed at. `is_cached` compares `inputs.toolchain` as
+// one object, which is also why an entry written before this axis existed is a
+// miss without needing `kCacheEpoch` to move.
+TEST(CacheKey, TheHeaderSetIsRecordedInTheEntry) {
+    mcpp::manifest::Manifest m;
+    m.package.standard = "c++23";
+    auto a = ck::build_axes(freestanding_tc(false), m, "-std=c++23", {}, "");
+    a.targetHeaderSet = { "-isystem<store>/xim-x-glibc/2.44/include" };
+    auto j = ck::to_json(a, pkg());
+    ASSERT_TRUE(j["toolchain"].contains("target_header_set"));
+    EXPECT_EQ(j["toolchain"]["target_header_set"][0],
+              "-isystem<store>/xim-x-glibc/2.44/include");
+}

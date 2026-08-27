@@ -593,6 +593,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         mcpp::toolchain::HostFlagOptions hopt;
         hopt.cfgBypass = mcpp::toolchain::HostFlagOptions::CfgBypass::Always;
         hopt.macosDeploymentTarget = macosDeploymentTarget;
+        // ⭐ THE SAME EXPRESSION THE LINK SIDE ASKS, twenty lines further down
+        // (`plan.targetSide.cAbi.prebuilt()`). Reading one value at both sites
+        // is what makes it impossible for them to disagree — which they did,
+        // from #511 until now, because only the link side was corrected.
+        hopt.cAbiPrebuilt = plan.targetSide.cAbi.prebuilt();
         compile_toolchain_flags = mcpp::toolchain::render_tokens(
             mcpp::toolchain::host_compile_tokens(plan.toolchain, hopt, ninjaEsc));
     } else {

@@ -350,6 +350,12 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string_array("build.include_dirs_after")) {
         for (auto& s : *v) m.buildConfig.includeDirsAfter.emplace_back(s);
     }
+    // [build].private_include_dirs — of `include_dirs`, the ones a consumer
+    // must NOT receive. See BuildInputs::privateIncludeDirs for why it is a
+    // subset of that list rather than a second ordered list.
+    if (auto v = doc->get_string_array("build.private_include_dirs")) {
+        for (auto& s : *v) m.buildConfig.privateIncludeDirs.emplace_back(s);
+    }
 
     // [targets.*] — M5.0: now optional. If absent, defer to auto-inference (in load()).
     // [profile.<name>] — bundled build settings.
@@ -1241,6 +1247,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         "allow_host_libs", "bmi_schedule", "build_program_timeout", "c_standard",
         "cache", "cflags", "cxxflags", "cxx_runtime", "default-profile", "defines",
         "dialect_cxxflags", "flags", "include_dirs", "include_dirs_after",
+        "private_include_dirs",
         "jobs", "ldflags", "macos_deployment_target", "module_extensions", "profile",
         "sources", "static_stdlib", "target",
     };

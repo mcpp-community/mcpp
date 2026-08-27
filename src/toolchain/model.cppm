@@ -121,6 +121,29 @@ struct Toolchain {
     // throw, and wrong when something can.
     bool                                targetCxxRuntime = false;
 
+    // ⭐⭐ DOES THE TARGET'S C LIBRARY COME FROM A DIRECTORY THAT EXISTED
+    // BEFORE DEPENDENCY RESOLUTION? — `TargetSide::cAbi.prebuilt()`, recorded
+    // here so the three producers of a compile line read one value.
+    //
+    // ⚠️ THIS IS NOT `targetCxxRuntime` AND THE DIFFERENCE IS THE ONE
+    // 2026.8.25.1 WAS ABOUT. That field says a package supplies a C++ RUNTIME;
+    // this one says where the C LIBRARY comes from. A pure C program over
+    // openkal has no C++ runtime and its C library still comes from the graph,
+    // and a backend that implements openkal ON TOP OF Linux takes its kernel
+    // interface from the graph while its C library stays the payload's. The
+    // two come apart in both directions.
+    //
+    // ⚠️ RECORDED, NOT DERIVED. `mcpp.targetside` answers it once, after the
+    // dependency graph exists; every consumer reads this. The predicate it
+    // replaced on the compile side was `!crossTargetFlag.empty()` — "is there a
+    // `--target=` on the command line" — which is true for a project that names
+    // its host's own target and depends on nothing. See
+    // `HostFlagOptions::cAbiPrebuilt` for the measurement.
+    //
+    // Defaults to true (prebuilt): a build whose graph supplies nothing, and
+    // every host-targeting toolchain, means exactly that.
+    bool                                cAbiPrebuilt = true;
+
     // ⭐⭐ THE `--target=` A RETARGETABLE DRIVER HAS TO BE GIVEN, OR EMPTY.
     //
     // Non-empty only when the user asked for a cross AND the resolved compiler

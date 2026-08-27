@@ -176,6 +176,7 @@ module_extensions = [".ixx"]      # Extra extensions used by module INTERFACES (
 build_program_timeout = 1800      # Seconds a build.mcpp may run; 0 = no limit (§ below)
 include_dirs = ["include", "third_party/include"]  # Header search paths
 include_dirs_after = ["*"]         # Header dirs searched AFTER system dirs (-idirafter)
+private_include_dirs = ["vendor/src/include"]  # Of `include_dirs`, the ones a consumer must NOT get
 c_standard   = "c11"              # Standard for C source files (default c11)
 cflags       = ["-DFOO=1"]        # Extra C compile flags
 cxxflags     = ["-DBAR=2"]        # Extra C++ compile flags (do not put -std=... here)
@@ -189,6 +190,34 @@ cache        = "global"           # Global dependency cache: global (default) | 
 jobs         = "auto"             # Concurrent compiles: a positive number, or "auto" (§ below)
 bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | off (§ below)
 ```
+
+`private_include_dirs` names the entries **of `include_dirs`** that stop at this
+package's own boundary: this package compiles with them, and a consumer never
+receives them.
+
+Almost every package publishes exactly the set it is built from, which is why
+`include_dirs` alone was enough for a long time. The shape where the two differ
+is a package that vendors a library with an *internal header overlay*. musl
+reaches its own declarations through `src/include`, whose headers define
+`hidden`, `weak` and `weak_alias` — names that mean something only to musl's own
+sources. Publishing that directory hands those macros to every consumer, and a
+consumer that uses `hidden` as an ordinary identifier stops compiling for a
+reason it has no way to see.
+
+```toml
+[build]
+# ⚠️ The relative ORDER of the two kinds is load-bearing: the internal overlay
+# must precede the public headers for this package's own build. That is why
+# this is a SUBSET of `include_dirs` rather than a second list — two arrays
+# cannot express one order.
+include_dirs         = ["port/include", "musl/src/include", "musl/include"]
+private_include_dirs = ["musl/src/include"]
+```
+
+Entries take the same `*` glob convention as `include_dirs`, and are matched
+after expansion — so a glob may name exactly the directories it expands to. An
+entry that is not among this package's `include_dirs` withholds nothing and is
+reported as such rather than passing in silence.
 
 `include_dirs_after` (#249) lists header directories that are searched **after**
 the toolchain's system directories (emitted as `-idirafter` on GCC/Clang, as

@@ -59,7 +59,26 @@ implicit_target() {   # toolchain spec → the triple it would use anyway
         | jq -r '.data.triple.toolchain // empty' | tr -d '\r'
 }
 
-ldflags_of() {   # extra args… → the ldflags line, or nothing
+# ⚠️⚠️ TWO LINES, AND FOR A LONG TIME THIS TEST READ ONLY ONE.
+#
+# The identity is about THE BUILD, and a build has a compile line as well as a
+# link line. `2026.8.26.1` corrected the link side; the compile side kept
+# asking `!crossTarget.empty()` and kept getting it wrong, and this test could
+# not see that because it compared `^ldflags` alone.
+#
+# Measured on 2026.8.26.2 — same machine, same compiler, same target, differing
+# only in whether it was spelled out — the compile line lost SIX tokens:
+#
+#     --no-default-config  -nostdinc++
+#     -isystem <payload>/include/c++/v1
+#     -isystem <payload>/include/<triple>/c++/v1
+#     -isystem <glibc>/include
+#     -isystem <linux-headers>/include
+#
+# ⇒ headers from one library and objects linked from another, silently, on any
+# machine that happens to have system headers.
+line_of() {   # channel, extra args… → that line of build.ninja, or nothing
+    local channel="$1"; shift
     rm -rf target
     "$MCPP" build "$@" >/dev/null 2>&1 || true
     local f; f="$(find target -name build.ninja 2>/dev/null | head -1)"
@@ -69,9 +88,19 @@ ldflags_of() {   # extra args… → the ldflags line, or nothing
     # examine, a build that produced no link line, killed the script before it
     # could say so. It exited 1 with no output at all.
     if [ -n "$f" ]; then
-        grep -m1 '^ldflags' "$f" || true
+        grep -m1 "^$channel" "$f" || true
     fi
     return 0
+}
+
+# `--target=` is expected on the explicit side and only there — it is the one
+# token that names which machine. `-fprebuilt-module-path=` names the build
+# directory, which differs because the fingerprint does; that is the mechanism
+# working, not a difference in what is compiled.
+normalise() {
+    printf '%s\n' "$1" | tr ' ' '\n' \
+        | grep -v '^--target=' | grep -v '^-fprebuilt-module-path=' \
+        | grep -v '^$' | sort
 }
 
 fail=0
@@ -99,8 +128,10 @@ for tc in gcc llvm; do
         continue
     fi
 
-    implicit="$(ldflags_of)"
-    explicit="$(ldflags_of --target "$ht")"
+    implicit="$(line_of ldflags)"
+    explicit="$(line_of ldflags --target "$ht")"
+    implicit_cxx="$(line_of cxxflags)"
+    explicit_cxx="$(line_of cxxflags --target "$ht")"
 
     if [ -z "$implicit" ] || [ -z "$explicit" ]; then
         # ⚠️ EARNED, NOT ASSUMED. One of the two produced no build.ninja at all,
@@ -119,20 +150,32 @@ for tc in gcc llvm; do
     fi
 
     checked=$((checked+1))
-    # `--target=<triple>` itself is expected on the explicit side and only
-    # there: it is the one token that names which machine, and the identity is
-    # about everything else.
-    a="$(printf '%s\n' "$implicit" | tr ' ' '\n' | grep -v '^--target=' | sort)"
-    b="$(printf '%s\n' "$explicit" | tr ' ' '\n' | grep -v '^--target=' | sort)"
 
-    if [ "$a" = "$b" ]; then
-        echo "  ok  $tc@$ver: naming $ht changes nothing"
-    else
-        echo "FAIL: $tc@$ver: naming $ht changed the link line"
-        diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") \
-            | grep -E '^[<>]' | head -8 | sed 's/^/        /'
-        fail=1
-    fi
+    for channel in ldflags cxxflags; do
+        if [ "$channel" = ldflags ]; then
+            lhs="$implicit"; rhs="$explicit"
+        else
+            lhs="$implicit_cxx"; rhs="$explicit_cxx"
+        fi
+        # ⚠️ BOTH SIDES MUST HAVE CONTENT. Two empty strings compare equal, and
+        # a comparison that passes on nothing is the false green this file's
+        # other guard already exists for.
+        if [ -z "$lhs" ] || [ -z "$rhs" ]; then
+            echo "FAIL: $tc@$ver: no $channel line to compare"
+            fail=1
+            continue
+        fi
+        a="$(normalise "$lhs")"
+        b="$(normalise "$rhs")"
+        if [ "$a" = "$b" ]; then
+            echo "  ok  $tc@$ver: naming $ht changes nothing ($channel)"
+        else
+            echo "FAIL: $tc@$ver: naming $ht changed the $channel line"
+            diff <(printf '%s\n' "$a") <(printf '%s\n' "$b") \
+                | grep -E '^[<>]' | head -8 | sed 's/^/        /'
+            fail=1
+        fi
+    done
 done
 
 if [ "$checked" = 0 ]; then

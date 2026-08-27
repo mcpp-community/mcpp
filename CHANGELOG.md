@@ -3,6 +3,80 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.27.1] — 2026-08-27
+
+目标侧被解析出来了,只发给了一个编译单元。完整分析见
+[`.agents/docs/2026-08-27-openkal-native-path-three-issues.md`](.agents/docs/2026-08-27-openkal-native-path-three-issues.md)。
+
+⭐ **与 `2026.8.25.x`/`2026.8.26.1` 是同一族的下一层。** 那两批修的是「谓词问错了」
+与「答案没接到决定上」;这一批里,答案**接上了一个消费者,而它有五个**。
+
+### 修复
+
+- **⭐⭐ 编译侧的谓词,是 `2026.8.26.1` 在链接侧修掉的那条的孪生兄弟。**
+
+  `hostflags.cppm` 问的是 `!crossTargetFlag.empty()` ——「命令行上有没有
+  `--target=`」——而它的注释写的是「目标侧来自图」。同一台机器、同一个编译器、
+  同一个目标,只差写不写 `--target`,编译线少了**六个 token**:
+
+  ```
+  --no-default-config  -nostdinc++
+  -isystem <payload>/include/c++/v1
+  -isystem <payload>/include/<triple>/c++/v1
+  -isystem <glibc>/include
+  -isystem <linux-headers>/include
+  ```
+
+  ⇒ 头文件来自一个库,目标文件链自另一个库。两侧现在读同一个
+  `plan.targetSide.cAbi.prebuilt()`。⚠️ `--no-default-config` 从这个条件里
+  **拆了出来无条件发** —— 它不是载荷头文件集合的一部分,而 cfg 文件按
+  `post_install.cppm` 自己的说法是「per-machine, per-install-path artifact」。
+
+  ⚠️ `e2e 295` 写的就是这条恒等式,而它只比对 `^ldflags`,所以恒等式在**下一行**
+  不成立而测试看不见。现在两条都比。
+
+- **⭐⭐ 载荷目录名是 LLVM 词汇,而查找用的是 mcpp 词汇 —— 而且失配是静默的。**
+
+  `include/<triple>/c++/v1` 与 `lib/<triple>` 由 LLVM 的构建写下,带的是
+  `x86_64-unknown-linux-gnu`;`tc.targetTriple` 是 mcpp 的
+  `x86_64-linux-gnu`。两者只在三元组是**探测来的**时候恰好相同。查找是
+  `if (exists) push_back`,所以找不到就什么也不发生 —— 而那个目录里只有一个文件,
+  `__config_site`,它的缺席产生的报错读起来像载荷坏了。两种拼法现在都试。
+
+- **⭐⭐ 由图供给的目标侧,只到达了一个编译单元(mcpp#514 §A)。**
+
+  提供 `mcpp:` 层的包发布的是**整个目标**编译时所依据的头文件集合,而它今天以
+  `publicUsage` 的形态**沿依赖边**传播。于是根与 provider 自己的单元拿得到,而
+  **兄弟依赖包**拿不到 —— `nlohmann.json` 不在 `openkal-llvm-runtime` 的下游,
+  它在它旁边。结果是一次构建里两种口味的 BMI,任何同时导入两者的 TU 在第一个
+  模板实例化处炸掉(`reference to 'space' is ambiguous`)。
+
+  ⭐ 目标侧解析之后,`fromGraph()` 的层的 `publicUsage` 并入**每一个**包的
+  `privateBuild`;`std` 模块的命令行也改读同一个集合,不再自己推一遍。
+
+- **⭐⭐ 缓存键描述了编译器,没有描述它被指向的头文件集合(mcpp#514 §B)。**
+
+  A 轴上的每一项都在描述**编译器**,没有一项描述它编译时所依据的**库** ——
+  而两者是分开安装的。`driverIdentity` 按设计也覆盖不了它:
+  `normalize_driver_output` **故意**抹掉路径,好让一个条目能被两个 home 共享。
+  新增 `targetHeaderSet` 轴,取自已经解析好的 `linkmodel`,并 store-相对化。
+  ⚠️ 不 bump `kCacheEpoch` —— 旧条目是 miss 而不是不可用。
+
+- **⭐ home 发现有第四份拷贝,而且会伸到别的 home 里去。**
+
+  `active_home_xpkgs()` 自己重推了一遍 home(漏掉自包含安装那一档);
+  `find_sibling_package` 找不到时**无条件回落** `~/.xlings/data/xpkgs`。
+  后者意味着一次密闭构建可以从**另一棵树**取载荷,而结果直接进每条编译命令的
+  `-isystem`。前者改为 `mcpp::home::root()`,后者删除 —— 找不到会说话,找错了不会。
+
+### 新增
+
+- **`[build] private_include_dirs`** —— 指出 `include_dirs` 中在本包边界处停住的
+  条目。`publicUsage` 此前整份接过 `privateBuild` 的目录,于是一个内嵌了带内部头
+  覆盖层的库(musl 的 `src/include` 定义 `hidden`/`weak`/`weak_alias`)会把那些宏
+  发给每一个消费者。⚠️ 它是 `include_dirs` 的**子集**而不是第二个列表:两类目录的
+  相对顺序是承重的,而两个 TOML 数组表达不了一个顺序。
+
 ## [2026.8.26.2] — 2026-08-26
 
 已经解析出的答案,没有被用来做决定。完整分析见

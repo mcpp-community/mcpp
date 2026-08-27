@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+#include <fstream>
+#include <unistd.h>
 
 import std;
 import mcpp.platform;
@@ -294,4 +296,69 @@ TEST(GraphRuntimeFlags, PayloadServedTargetTakesNoneEvenOnPe) {
 TEST(GraphRuntimeFlags, UnparseableTripleTakesNone) {
     EXPECT_TRUE(mcpp::toolchain::graph_runtime_compile_flags(
         graph_tc("not-a-triple-at-all")).empty());
+}
+
+// ⭐⭐ `--no-default-config` IS NOT PART OF THE PAYLOAD'S HEADER SET, AND WAS
+// BEING SUPPRESSED WITH IT.
+//
+// The payload's `-isystem` rows describe a C library a graph-supplied target
+// does not use, so withholding them is right. The cfg bypass is a different
+// statement: `post_install.cppm` calls that file "a per-machine,
+// per-install-path artifact", and reading it makes the command line depend on
+// what happened to be installed when the payload landed.
+//
+// Measured on 2026.8.26.2: `mcpp build --target <the host's own>` dropped the
+// token, so clang read `bin/clang++.cfg`. That is also what made a hand-written
+// `<triple>-clang++.cfg` a working workaround for mcpp#514 — a workaround that
+// only existed because this token went missing.
+TEST(HostFlags, TheCfgBypassSurvivesAGraphSuppliedTargetSide) {
+    // ⚠️ A FIXTURE, NOT THE MACHINE'S OWN TOOLCHAIN. The first draft used a
+    // synthetic `Toolchain` with no `binaryPath`, so `resolve_clang_driver`
+    // reported no cfg and the whole test SKIPPED — a check that asserts
+    // nothing while reporting success, which is the one failure mode a test
+    // must not have. `resolve_clang_driver` only asks whether a sibling
+    // `<driver>.cfg` EXISTS, so two empty files are a complete fixture.
+    namespace fs = std::filesystem;
+    const auto root = fs::temp_directory_path()
+                    / ("mcpp_hostflags_" + std::to_string(::getpid()));
+    fs::remove_all(root);
+    fs::create_directories(root / "bin");
+    fs::create_directories(root / "include" / "c++" / "v1");
+    { std::ofstream(root / "bin" / "clang++"); }
+    { std::ofstream(root / "bin" / "clang++.cfg"); }
+    struct Cleanup {
+        fs::path p;
+        ~Cleanup() { std::error_code ec; fs::remove_all(p, ec); }
+    } cleanup{root};
+
+    auto tc = tc_for(CompilerId::Clang);
+    tc.binaryPath = root / "bin" / "clang++";
+    ASSERT_TRUE(mcpp::toolchain::resolve_clang_driver(tc).hasCfg)
+        << "the fixture did not produce a cfg — the assertions below would be vacuous";
+
+    const auto has = [](const std::vector<std::string>& v, std::string_view f) {
+        return std::ranges::find(v, f) != v.end();
+    };
+
+    HostFlagOptions prebuilt;
+    prebuilt.cfgBypass    = HostFlagOptions::CfgBypass::Always;
+    prebuilt.cAbiPrebuilt = true;
+
+    HostFlagOptions fromGraph = prebuilt;
+    fromGraph.cAbiPrebuilt = false;
+
+    const auto a = mcpp::toolchain::host_compile_tokens(
+        tc, prebuilt, mcpp::toolchain::no_escape);
+    const auto b = mcpp::toolchain::host_compile_tokens(
+        tc, fromGraph, mcpp::toolchain::no_escape);
+
+    // The bypass is emitted on BOTH sides: the cfg is a per-machine,
+    // per-install-path artifact, and reading it makes the command line depend
+    // on what happened to be installed when the payload landed.
+    EXPECT_TRUE(has(a, "--no-default-config"));
+    EXPECT_TRUE(has(b, "--no-default-config"));
+    // ...while the payload's own C++ headers stay withheld from the graph side,
+    // which is the distinction this splits apart.
+    EXPECT_TRUE(has(a, "-nostdinc++"));
+    EXPECT_FALSE(has(b, "-nostdinc++"));
 }

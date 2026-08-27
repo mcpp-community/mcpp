@@ -228,6 +228,7 @@ namespace mcpp::manifest {
 inline constexpr std::string_view kKnownXpkgKeys[] = {
     "cflags", "c_standard", "cxxflags", "defines", "deps", "features", "flags",
     "generated_files", "import_std", "include_dirs", "include_dirs_after",
+    "private_include_dirs",
     "language", "ldflags",
     "linux", "macosx", "modules", "provides", "requires", "runtime",
     "scan_overrides",
@@ -1258,6 +1259,22 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             }
             cur.consume('}');
         }
+        else if (key == "private_include_dirs") {
+            // Of `include_dirs`, the entries that stop at the package
+            // boundary. See BuildInputs::privateIncludeDirs.
+            if (!cur.consume('{')) {
+                return std::unexpected(ManifestError{
+                    "expected '{' after `private_include_dirs =`",
+                    m.sourcePath, 0, 0});
+            }
+            cur.skip_ws_and_comments();
+            while (!cur.eof() && cur.peek() != '}') {
+                auto s = cur.read_string();
+                if (!s.empty()) m.buildConfig.privateIncludeDirs.emplace_back(s);
+                cur.skip_ws_and_comments();
+            }
+            cur.consume('}');
+        }
         else if (key == "include_dirs_after") {
             // #249: header dirs searched AFTER the toolchain's system dirs
             // (-idirafter). Use for extracted-tarball roots that contain
@@ -1387,6 +1404,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     // unknown-key policy is a separate question — #263).
                     std::vector<std::filesystem::path>* pathDst =
                           sub == "include_dirs"       ? &cc.inputs.includeDirs
+                        : sub == "private_include_dirs" ? &cc.inputs.privateIncludeDirs
                         : sub == "include_dirs_after" ? &cc.inputs.includeDirsAfter
                         : nullptr;
                     if (!dst && !pathDst) {

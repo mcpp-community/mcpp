@@ -19,6 +19,7 @@ import mcpp.pm.index_contract;
 import mcpp.pm.index_snapshot;
 import mcpp.platform;
 import mcpp.log;
+import mcpp.home;
 
 export namespace mcpp::xlings {
 
@@ -834,15 +835,22 @@ find_sibling_tool(const std::filesystem::path& compilerBin,
 }
 
 std::optional<std::filesystem::path> active_home_xpkgs() {
-    std::filesystem::path home;
-    if (const char* h = std::getenv("MCPP_HOME"); h && *h) {
-        home = h;
-    } else if (const char* u = std::getenv("HOME"); u && *u) {
-        home = std::filesystem::path(u) / ".mcpp";
-    } else {
-        return std::nullopt;
-    }
-    auto xpkgs = home / "registry" / "data" / "xpkgs";
+    // ⭐⭐ `mcpp::home::root()`, NOT A FOURTH DERIVATION OF IT.
+    //
+    // This function used to resolve the home itself — `$MCPP_HOME`, else
+    // `$HOME/.mcpp` — which is two of the three answers `mcpp.home` gives. The
+    // one it left out is SELF-CONTAINED MODE: a release tarball or
+    // `xlings install mcpp` puts the binary at `<root>/bin/mcpp` and the
+    // unpacked tree IS the home. On such an install this function answered
+    // `$HOME/.mcpp`, so payload discovery reached a DIFFERENT home than
+    // everything else in the process — and what payload discovery produces is
+    // `-isystem` rows on every compile command.
+    //
+    // ⚠️ `mcpp.home`'s own header opens with this: "Every path under the mcpp
+    // home must be derived from here. Before #311 this logic existed in three
+    // places … the copies drifted." This was the fourth copy, and it drifted
+    // the same way.
+    auto xpkgs = mcpp::home::root() / "registry" / "data" / "xpkgs";
     std::error_code ec;
     if (!std::filesystem::exists(xpkgs, ec)) return std::nullopt;
     return xpkgs;
@@ -932,15 +940,28 @@ find_sibling_package(const std::filesystem::path& compilerBin,
     if (auto found = find_package_in_xpkgs(*xpkgs, packageName, requiredRelPath))
         return found;
 
-    // Also check ~/.xlings/data/xpkgs/ (xlings global home) as fallback.
-    std::error_code ec;
-    const char* home = std::getenv("HOME");
-    if (home) {
-        auto xlingsXpkgs = std::filesystem::path(home) / ".xlings" / "data" / "xpkgs";
-        if (xlingsXpkgs != *xpkgs && std::filesystem::exists(xlingsXpkgs, ec))
-            return find_package_in_xpkgs(xlingsXpkgs, packageName, requiredRelPath);
-    }
-
+    // ⚠️⚠️ THE `~/.xlings` FALLBACK IS GONE, AND ITS REMOVAL IS THE POINT.
+    //
+    // It used to read: "Also check ~/.xlings/data/xpkgs/ (xlings global home)
+    // as fallback." That was written when one machine had one home. It means
+    // that a build whose `MCPP_HOME` names one tree can take a payload out of
+    // ANOTHER, and what this function's callers do with the result is put it on
+    // every compile command:
+    //
+    //     probe.cppm:448   linux-headers  →  -isystem <other home>/…/include
+    //
+    // ⇒ a hermetic build reaching outside its own sandbox for headers, with no
+    // diagnostic, and with the resulting objects looking exactly like objects
+    // built from the payload that was actually pinned. Reported as the second
+    // half of mcpp#514, where a project's dependency units carried `-isystem`
+    // rows naming a home the build was not using.
+    //
+    // ⭐ THE DIRECTION IS THE SAFE ONE. Not finding a payload is reported —
+    // `probe.cppm` already has the verbose branch for it, and a glibc build
+    // that then fails at `<linux/limits.h>` says so at the first compile.
+    // Finding the WRONG one says nothing at all, and this codebase has paid
+    // for that shape before (`e2e-inherit-toolchain-corrupts-real-payloads`,
+    // `dev-overlay-poisons-a-released-version`).
     return std::nullopt;
 }
 
