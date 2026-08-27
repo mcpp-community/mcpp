@@ -392,18 +392,49 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
     // compile line reads it. Asking it here means the key describes the header
     // set that will actually be used, and cannot drift from it.
     //
-    // ⚠️ Store-relative. The absolute form names this machine's home, and the
-    // whole point of `normalize_driver_output` stripping paths is that one
-    // entry can serve two homes carrying the same payloads. Leaving these
-    // absolute would undo that; folding them in relative distinguishes
-    // DIFFERENT payloads while still sharing between homes.
+    // ⚠️ RELATIVE, IN TWO TIERS — and `<store>` ALONE IS NOT ENOUGH.
+    //
+    // The absolute form names this machine's home, and the whole point of
+    // `normalize_driver_output` stripping paths is that one entry can serve
+    // two homes carrying the same payloads. Leaving these absolute undoes it.
+    //
+    // ⚠️ MEASURED, AND `<store>` MISSED THE COMMON CASE. This developer's own
+    // toolchain resolves `CLibMode::Sysroot`, whose only compile token is
+    //
+    //     --sysroot=/home/<user>/.mcpp/registry/subos/default
+    //
+    // — under the HOME and not under `<store>`, so a store-only rule left the
+    // home in the key and every entry stopped being shareable. `<home>` is the
+    // second tier for exactly this, mirroring the `<store>`/`<pkg>` pair
+    // `fill_package_config` already uses for the same reason.
+    //
+    // ⭐ WHAT THIS AXIS DOES AND DOES NOT SEPARATE, stated so the next reader
+    // does not have to re-derive it:
+    //   * payload-supplied headers — `<store>/xim-x-glibc/2.44/include` — carry
+    //     the VERSION in the path, so two payloads are two keys. This is the
+    //     measured mcpp#514 §B case and the one this axis exists for.
+    //   * two subos on one home — `<home>/subos/default` vs `<home>/subos/foo`
+    //     — are two keys, which they were not before this axis existed.
+    //   * the SAME subos name in two homes stays one key even if the two hold
+    //     different C libraries. Unchanged from before, and the same trade
+    //     `normalize_driver_output` already makes; the whole-project
+    //     fingerprint's field 11 is what separates those.
     {
         const auto storeStr = storeRoot.generic_string();
+        // `<home>/registry/data/xpkgs` → `<home>/registry`. Derived rather than
+        // passed because the two must be the same home by construction: a
+        // second parameter could be given a different one, and then the tiers
+        // would describe two machines.
+        const auto homeStr = storeRoot.empty()
+            ? std::string{}
+            : storeRoot.parent_path().parent_path().generic_string();
         const mcpp::toolchain::PathEscape relativize =
             [&](const std::filesystem::path& p) -> std::string {
                 auto str = p.generic_string();
                 if (!storeStr.empty() && str.starts_with(storeStr))
                     return "<store>" + str.substr(storeStr.size());
+                if (!homeStr.empty() && str.starts_with(homeStr))
+                    return "<home>" + str.substr(homeStr.size());
                 return str;
             };
         for (auto& t : mcpp::toolchain::resolve_clang_driver(tc)

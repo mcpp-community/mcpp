@@ -6695,9 +6695,15 @@ prepare_build(bool print_fingerprint,
                 auto same = std::find_if(slot.begin(), slot.end(),
                     [&](const Candidate& c){ return c.p.name == p.name; });
                 if (same != slot.end()) {
-                    if (same->p.interfaceName.empty() && !p.interfaceName.empty())
-                        same->p = p;
-                    same->index = pkgIndex;
+                    // ⚠️ `index` MOVES WITH `p` AND NOT ON ITS OWN. The two
+                    // describe one package, and this branch is reached only
+                    // from the same `pkgIndex` today — a package carrying both
+                    // spellings — so they cannot differ yet. Tying them keeps
+                    // it that way if a second package ever reaches here.
+                    if (same->p.interfaceName.empty() && !p.interfaceName.empty()) {
+                        same->p     = p;
+                        same->index = pkgIndex;
+                    }
                 } else {
                     slot.push_back({ p, is_direct(p.name), pkgIndex });
                 }
