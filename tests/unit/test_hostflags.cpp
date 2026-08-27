@@ -1,6 +1,5 @@
 #include <gtest/gtest.h>
 #include <fstream>
-#include <unistd.h>
 
 import std;
 import mcpp.platform;
@@ -319,8 +318,12 @@ TEST(HostFlags, TheCfgBypassSurvivesAGraphSuppliedTargetSide) {
     // must not have. `resolve_clang_driver` only asks whether a sibling
     // `<driver>.cfg` EXISTS, so two empty files are a complete fixture.
     namespace fs = std::filesystem;
-    const auto root = fs::temp_directory_path()
-                    / ("mcpp_hostflags_" + std::to_string(::getpid()));
+    // ⚠️ A FIXED NAME AND `remove_all` FIRST, NOT A PROCESS ID. The first
+    // draft reached for `::getpid()` and `<unistd.h>`, which do not exist under
+    // MSVC — it built on the machine it was written on and failed on Windows
+    // CI, which is the only place that half of this project is visible.
+    // gtest runs a binary's tests serially, so one name is enough.
+    const auto root = fs::temp_directory_path() / "mcpp_hostflags_cfg_fixture";
     fs::remove_all(root);
     fs::create_directories(root / "bin");
     fs::create_directories(root / "include" / "c++" / "v1");
