@@ -893,3 +893,92 @@ error while loading shared libraries: libcore.so
 
 ⭐ 前两条都是**推理写在文档里、判据写在测试里、然后测试推翻了推理**。
 第三条是推理被证实 —— 但只有把它写成判据才发现第一轮的谓词错了。
+
+---
+
+## 14. 落地记录
+
+发布为 **mcpp 2026.8.28.2**(PR `mcpp-community/mcpp#521`),
+生态侧 `mcpplibs/mcpp-index#269`(eui-neo Linux SNI 托盘)。
+
+### 14.1 新增的两个模块
+
+| 模块 | 是什么 |
+|---|---|
+| `mcpp.build.linkage_form` | 纯函数、表驱动:`admissible(pkg, format, libcLinkage)` ∩ 请求 → `DepLinkage`。无文件系统、无 manifest 知识 |
+| `mcpp.build.symbol_provision` | 纯策略:两段式谓词 + 归因 + 文案。ELF 解析在 `elf_runtime`,I/O 在 `runtime_validation` |
+
+⭐ **形态被物化成 target kind**,于是 ELF 的 soname/`$ORIGIN`、PE 的导入库与
+自动 `.def`、Mach-O 的 install name **一行新代码都不用写** —— 三种格式的
+既有发射器原样适用。这是「不设第四层」那个决定买到的东西。
+
+### 14.2 一个新键名,两张已有的表
+
+`[build] dependency_linkage` + `[profile.*]` 覆盖 + 依赖边上的 `linkage`
+(**仅根工程**)。`[target.<triple>]` 那张表在第二轮 review 里撤回了(§12.4)。
+
+**索引描述符零新键。**
+
+### 14.3 修掉的四条,其中三条不是这根轴引入的
+
+| | 谁引入的 | 为什么在这个 PR 里修 |
+|---|---|---|
+| 依赖包的 `required_features` 从不生效 | 既有 | 轴让「一个目标仅仅存在就改变链接方式」变成常态 |
+| `-fPIC` 不在缓存键里 | 既有(良性) | 轴让它**可达**:非 PIC 对象喂给共享链接 |
+| `mcpp pack` 不收合成的共享库 | 既有(2026.8.26.1 复现) | 同上:从 12 个包变成任何一个包 |
+| `soname` 在非 shared 目标上硬失败 | 既有 | 它是「两个提供者合成一个」的唯一途径 |
+
+⭐ 三条都是**同一个形状**:一个缺陷在旧模型下不可达或良性,而新的自由度把它
+变成日常路径。判据不是「是不是我写坏的」,而是「这根轴有没有让它变得可达」。
+
+### 14.4 这次会话里被实测推翻的推理
+
+| # | 写下的推理 | 实测 | 代价 |
+|---|---|---|---|
+| 1 | `$ORIGIN` 闭包大概率捞得到合成的 `.so` | ⚠️ 捞不到,包解开就起不来 | 判据 12 |
+| 2 | 三条出路里 `dependency_linkage` 排第一 | ⚠️ 它把 1 份变 2 份 | 文案重排 + 单测断言次序 |
+| 3 | 主机工具那条路到不了这段代码 | ⚠️ 到得了,查找在下面几百行 | `187_dep_host_tool` 红 |
+| 4 | 「零 diff」用旧两版的二进制对照 | ⚠️ 对照物错了(路径不同 + 版本差两代) | 重做后指纹逐字节相同 |
+
+⭐⭐ 第 3 条和第 4 条是同一条教训的两面:**理由凭印象写、判据施加在错误的对象上**。
+仓库的记忆里两条都有名字,而它们在一次会话里各自又发生了一遍。
+
+### 14.5 生态侧
+
+`compat.eui-neo` 的 Linux 腿接上 SNI 托盘,glib 取自 `xim:glib`,
+它的闭包(zlib/pcre2/libffi/libselinux/util-linux)**不暂存**,经 subos 库视图解析。
+⚠️ 不暂存 `libz` 是为了不制造第二个提供者 —— 也就是不制造这条 issue 本身。
+
+实测 `eui_tray_init -> 1`(真的在会话总线上注册)。
+
+⚠️ 遗留:同时用到 `compat.zlib` 的消费者仍会收到冲突警告。根治要
+`compat.zlib` 声明 `soname = "libz.so.1"`,而那要等索引 `latest` 的 mcpp 下限
+跨过 2026.8.28.2 —— 正是 §11.3 预判的那条发布顺序。
+
+### 14.6 已开出的两条被下限挡住的后续
+
+| issue | 内容 | 前置判据 |
+|---|---|---|
+| `mcpplibs/mcpp-index#270` | `compat.zlib` 声明 `soname = "libz.so.1"` | ⚠️ 索引 `latest` 的 mcpp 下限跨过 2026.8.28.2 —— 旧客户端读到的是**加载失败**,不是忽略 |
+| `mcpp-community/mcpp#522` | xpkg 的 feature 能带 `ldflags` / `include_dirs` | 实现后同样要等下限;⚠️ 还要先答「feature 的 ldflags 是私有还是沿 Public 边传播」 |
+
+⭐ 两条是同一个形状,而这个形状本身是这条 issue 的第三个产物:
+**一个键能不能发,判据不是「引擎支持了吗」,而是「索引 `latest` 的下限跨过去了吗」。**
+`soname` 在这里第一次以「硬失败」的形式把它演示了一遍。
+
+⭐ `#522` 还回答了生态侧一个具体问题:eui-neo 的托盘**能不能做成 feature**。
+不能 —— feature 带得了 `defines`,带不了 `ldflags`,于是关掉 feature 的消费者
+照样链 glib:代价一样,托盘没有。所以它默认开启,理由写进了描述符。
+
+### 14.7 生态侧的一个副产物:CN 镜像
+
+`compat.eui-neo` 的 0.5.5 与 0.5.7 此前在 gitcode 上 404(0.5.5 的注释还写着
+「从未发布到 mcpp-res」)。本地 `gtc` 各发一次并**重新下载核对**:
+sha256 与描述符声明一致,wrap 层一致。三个平台腿都改成 `{ GLOBAL, CN }`。
+
+⚠️ 顺带推翻了一条照抄的理由:`#245` 说「CN 镜像的 tarball 不保留 wrap 层」。
+去查了 —— gitcode 的 `eui-neo-0.5.6.tar.gz` 解出来就是 `EUI-NEO-0.5.6/`,
+与 GitHub 的是同一份字节(一个 `sha256` 服务两个 URL,本来就要求如此)。
+
+⚠️ 诚实的边界:CN 资产**已发布并逐字节核过**,但没有再做一次「把 GLOBAL 弄坏
+再构建」的强制走 CN 路径实验 —— 那次尝试把磁盘写满了,而它能加的证据有限。
