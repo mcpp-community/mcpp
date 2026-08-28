@@ -122,4 +122,31 @@ done
     exit 1
 }
 
-echo "ok: default static ($static_fp), shared ($shared_fp), symbol imported"
+# ── 4. the bundle a shared build produces must actually start ──────────────
+#
+# ⚠️ A `.so` that is built and then not shipped is the worst outcome of this
+# axis: everything is green locally, the archive uploads, and it fails on the
+# user's machine with `error while loading shared libraries`. The closure is
+# resolved by RUNNING the artifact, and the library is found through `$ORIGIN`
+# — which points at an empty directory if the copy in the staging tree is the
+# one being traced.
+"$MCPP" pack > pack.log 2>&1 || { cat pack.log; echo "FAIL: pack"; exit 1; }
+archive="$(find target/dist -name '*.tar.gz' | head -1)"
+[[ -n "$archive" ]] || { cat pack.log; echo "FAIL: no archive"; exit 1; }
+
+extract="$(mktemp -d)"
+tar xzf "$archive" -C "$extract"
+bundled="$(find "$extract" -name 'libcore.so' | head -1)"
+[[ -n "$bundled" ]] || {
+    echo "FAIL: the shared dependency was not bundled"
+    find "$extract" -type f | head -20
+    rm -rf "$extract"; exit 1
+}
+packed="$(find "$extract" -name app -type f -perm -u+x | head -1)"
+[[ -n "$packed" ]] || { echo "FAIL: no executable in the bundle"; rm -rf "$extract"; exit 1; }
+out="$("$(cd "$(dirname "$packed")" && pwd)/$(basename "$packed")" 2>&1)" || {
+    echo "FAIL: the extracted bundle does not start: $out"; rm -rf "$extract"; exit 1; }
+[[ "$out" == "42" ]] || { echo "FAIL: bundle printed '$out'"; rm -rf "$extract"; exit 1; }
+rm -rf "$extract"
+
+echo "ok: default static ($static_fp), shared ($shared_fp), symbol imported, bundle runs"

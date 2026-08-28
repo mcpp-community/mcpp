@@ -717,6 +717,38 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
 
     auto searchDirs = runtime_search_dirs(plan);
 
+    // ⚠️ WHAT AN UNCHANGED ARTIFACT KEEPS.
+    //
+    // Re-parsing every image on every drive is what made the loader-tag check
+    // cost 158.7s of a 190s hot run, so an artifact whose stat did not move is
+    // skipped here too. But skipping it must not DROP its verdict: `mcpp test`
+    // drives the backend once per test on an already-built tree, and a
+    // workspace relinks one member at a time. Without this read-back the
+    // record would shrink to "whatever moved last", a conflict found on
+    // Monday would stop being reported on Tuesday, and — worse — the absence
+    // of an entry would read exactly like "checked and clean".
+    const auto resolutionPath = plan.outputDir / "resolution.json";
+    nlohmann::json resolution;
+    {
+        std::ifstream input(resolutionPath);
+        resolution = nlohmann::json::parse(input, nullptr, false);
+    }
+    const auto recorded = [&]() -> nlohmann::json {
+        auto rt = resolution.is_object() ? resolution.find("runtime")
+                                         : resolution.end();
+        if (rt == resolution.end() || !rt->is_object())
+            return nlohmann::json::array();
+        auto entries = rt->find("symbol_provision");
+        if (entries == rt->end() || !entries->is_array())
+            return nlohmann::json::array();
+        return *entries;
+    }();
+    auto stored_for = [&](const std::string& rel) -> const nlohmann::json* {
+        for (auto const& entry : recorded)
+            if (entry.is_object() && entry.value("path", "") == rel) return &entry;
+        return nullptr;
+    };
+
     // Symbol tables of closure objects, parsed at most once per file. Several
     // images in one build share almost their whole closure.
     std::map<std::filesystem::path, std::vector<std::string>> closureCache;
@@ -733,23 +765,58 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
         return closureCache.emplace(object, std::move(names)).first->second;
     };
 
+    bool anyFresh = false;
     for (auto const& [artifact, oldStamp] : before) {
         auto now = stamp(artifact);
         if (!now.exists) continue;
-        // Only images this run actually produced. An unchanged artifact was
-        // judged by an earlier run and re-parsing it every build would make a
-        // no-op build pay for a symbol-table walk it cannot learn from.
-        if (now == oldStamp) continue;
+
+        std::error_code relEc;
+        auto rel = std::filesystem::relative(artifact, plan.outputDir, relEc);
+        auto relStr = (relEc ? artifact : rel).lexically_normal().generic_string();
+
+        // Only images this run actually produced get re-read. An unchanged one
+        // keeps the verdict already on file (see the note above); with none on
+        // file it falls through and is read, so the first build after this
+        // record appeared does not report "never checked" forever.
+        if (now == oldStamp) {
+            if (auto const* prev = stored_for(relStr)) {
+                sp::Report kept;
+                auto status = prev->value("status", "");
+                kept.status = status == "clean"          ? sp::Status::Clean
+                            : status == "conflict"       ? sp::Status::Conflict
+                            : status == "not-applicable" ? sp::Status::NotApplicable
+                                                         : sp::Status::NotEvaluated;
+                kept.exported = prev->value("exported", std::size_t{0});
+                kept.total    = prev->value("dynamic_symbols", std::size_t{0});
+                kept.reason   = prev->value("reason", "");
+                if (auto c = prev->find("conflicts");
+                    c != prev->end() && c->is_array()) {
+                    for (auto const& entry : *c) {
+                        sp::Conflict conflict;
+                        conflict.name   = entry.value("symbol", "");
+                        conflict.isFunc = entry.value("kind", "") == "func";
+                        if (auto by = entry.find("also_provided_by");
+                            by != entry.end() && by->is_array())
+                            for (auto const& label : *by)
+                                if (label.is_string())
+                                    conflict.alsoProvidedBy.push_back(label);
+                        kept.conflicts.push_back(std::move(conflict));
+                    }
+                }
+                findings.push_back({artifact, std::move(kept)});
+                continue;
+            }
+        }
+        anyFresh = true;
 
         // Which link unit is this? Its own flags matter as much as the
         // global ones, and the static side of any report is attributed from
-        // the objects it links.
+        // the objects it links. Spelled EXACTLY as `snapshot_link_artifacts`
+        // spells it, so the two cannot disagree about which key names which
+        // artifact — a mismatch here loses the unit's own flags silently.
         const mcpp::build::LinkUnit* unit = nullptr;
         for (auto const& lu : plan.linkUnits) {
-            if ((plan.outputDir / lu.output).lexically_normal() == artifact) {
-                unit = &lu;
-                break;
-            }
+            if (plan.outputDir / lu.output == artifact) { unit = &lu; break; }
         }
 
         auto facts = mcpp::platform::elf::inspect_elf_runtime(artifact);
@@ -821,13 +888,8 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
     // scrolls past, and `resolution.json` is what CI, `mcpp why runtime` and a
     // test can read. It also gives a test a FIELD to assert on instead of a
     // substring of a message — a message whose wording is free to improve.
-    if (!findings.empty()) {
-        const auto path = plan.outputDir / "resolution.json";
-        nlohmann::json resolution;
-        {
-            std::ifstream input(path);
-            resolution = nlohmann::json::parse(input, nullptr, false);
-        }
+    if (!findings.empty() && anyFresh) {
+        const auto& path = resolutionPath;
         if (!resolution.is_discarded() && resolution.is_object()) {
             if (auto runtime = resolution.find("runtime");
                 runtime != resolution.end() && runtime->is_object()) {
