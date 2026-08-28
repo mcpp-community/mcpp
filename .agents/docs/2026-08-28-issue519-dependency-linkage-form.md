@@ -1082,3 +1082,21 @@ providers: ['libz.so.1.3.1']
 那要等索引 `latest` 的 mcpp 下限跨过 2026.8.28.2 —— 也就是刚发布的这一版。
 `mcpplibs/mcpp-index#270` 记着这条,前置判据写在里面。**发布顺序不是流程,
 是这条设计的一部分。**
+
+### 15.5 ⚠️ 诚实的 CI 边界:`ci-fresh-install` 有一条腿是红的
+
+12 条腿里 11 条绿(Linux / macOS / 三个 Windows / debian-11 / debian-testing /
+fedora / arch / ubuntu-2004),红的是 `Linux distro (tumbleweed)`。
+
+**它与本次改动无关,而且这一点是结构性可证的**:失败发生在
+`Install prerequisites`,而 `Install xlings + mcpp` 那一步是 **skipped** ——
+mcpp 一次都没被下载。前四次 run 该腿都是绿的,⇒ 上游当天坏的。
+
+真因是 openSUSE 仓库刷新失败之后 `zypper -n install` **仍然继续**,拿过期
+元数据解析,于是报出来的是 `No provider of 'binutils' found`。
+⭐ 缺陷不在「红」,在**红的理由指向了错误的对象** —— 与本文反复出现的那一族
+同形:一个失败必须报告它自己的原因,而不是它在下一层造成的症状。
+已开 `mcpp-community/mcpp#523`。
+
+⚠️ 写在这里而不是略过,是因为「CI 全绿」这句话如果要有用,它就必须在不全绿的
+时候也照实说。
