@@ -141,6 +141,20 @@ struct BuildAxes {
     bool        debug = false;
     bool        lto   = false;
     bool        strip = false;
+    // ⚠️ Position-independent code, and it is here because it was MISSING.
+    //
+    // `-fPIC` is whole-build: one shared link unit anywhere and every object
+    // in the graph gets it. That was invisible to this key, which hashes a
+    // package's own declared flags rather than the ones the flag builder
+    // computes. Harmless while a package's form was fixed by its author —
+    // both configurations produced objects that only ever went into an
+    // executable. Not harmless once `[build] dependency_linkage = "shared"`
+    // exists: a project that asked for it can hit an entry another project
+    // wrote without it and hand non-PIC objects to a shared link.
+    //
+    // Decided by `make_plan` (BuildPlan::needsPic) and passed in, so the
+    // compiler flag and this key read the same bit.
+    bool        pic   = false;
 };
 
 // Axes D/E/F for one package.
@@ -195,7 +209,8 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
                      std::string_view                  cppStandardFlag,
                      const std::vector<std::string>&   dialectFlags,
                      std::string_view                  macosDeploymentTarget,
-                     const std::filesystem::path&      storeRoot = {});
+                     const std::filesystem::path&      storeRoot = {},
+                     bool                              needsPic = false);
 
 // Axes E from one PackageRoot. `storeRoot` is stripped off absolute include
 // dirs so the key survives a different MCPP_HOME (the payload paths are
@@ -265,6 +280,7 @@ nlohmann::json to_json(const BuildAxes& b, const PackageAxes& p) {
         {"debug", b.debug},
         {"lto", b.lto},
         {"strip", b.strip},
+        {"pic", b.pic},
     };
     j["package"] = {
         {"index", p.indexName},
@@ -311,6 +327,7 @@ std::string key_hex(const BuildAxes& b, const PackageAxes& p) {
     put(s, "debug",    b.debug ? "1" : "0");
     put(s, "lto",      b.lto   ? "1" : "0");
     put(s, "strip",    b.strip ? "1" : "0");
+    put(s, "pic",      b.pic   ? "1" : "0");
     // D
     put(s, "index",    p.indexName);
     put(s, "pkg",      p.packageName);
@@ -337,9 +354,11 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
                      std::string_view                  cppStandardFlag,
                      const std::vector<std::string>&   dialectFlags,
                      std::string_view                  macosDeploymentTarget,
-                     const std::filesystem::path&      storeRoot)
+                     const std::filesystem::path&      storeRoot,
+                     bool                              needsPic)
 {
     BuildAxes b;
+    b.pic             = needsPic;
     b.compilerId      = std::string(tc.compiler_name());
     b.compilerVersion = tc.version;
     // Same rule the whole-project fingerprint uses: prefer the declared driver

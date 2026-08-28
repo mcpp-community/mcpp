@@ -176,6 +176,18 @@ struct BuildPlan {
     // readers, one derivation. Deriving it separately in the backend and in the
     // executor is how the BMI-equivalence check and the job count drifted into
     // disagreeing about what a module edge is.
+    // Does this build need position-independent code?
+    //
+    // ONE DERIVATION, THREE READERS — the flag assembly, the whole-project
+    // fingerprint, and the per-package cache key. It used to be derived by
+    // `flags.cppm` alone, by scanning the link units, and the other two did
+    // not know about it at all. That was survivable only while a package's
+    // form was fixed by its author: once a consumer can ask for the shared
+    // form (`[build] dependency_linkage`), the same cache entry can serve
+    // non-PIC objects to a link that puts them inside a shared object, and
+    // the failure is `relocation R_X86_64_32S ... can not be used when making
+    // a shared object` on a file nobody edited.
+    bool                            needsPic = false;
     std::string                     scheduleTag = "none";
     // What to hand ninja. Under detach-codegen a compiler stops holding a slot
     // when it publishes, so this must exceed the real compiler cap or the ready
@@ -1810,6 +1822,14 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
 
         plan.linkUnits.push_back(std::move(lu));
+    }
+
+    // The single derivation. Deliberately at the END of make_plan, after every
+    // producer of a link unit has run: a dependency resolved to the shared
+    // form arrives as an ordinary SharedLibrary unit, so this one predicate
+    // covers the package's own shared targets and its dependencies' alike.
+    for (auto const& lu : plan.linkUnits) {
+        if (lu.kind == LinkUnit::SharedLibrary) { plan.needsPic = true; break; }
     }
 
     return plan;

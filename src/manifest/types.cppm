@@ -589,6 +589,20 @@ struct BuildConfig : BuildInputs {
     // footgun): a project that defaults to dev should pass `--profile release`
     // when producing a distributable (a pack-time release guard is a follow-up).
     std::string                         defaultProfile;
+    // `[build] dependency_linkage` — "static" (default) | "shared" (#519).
+    //
+    // How this build wants its DEPENDENCIES to arrive: merged into the images
+    // that use them, or as separate shared libraries beside them. A separate
+    // axis from `[target.<triple>].linkage`, which answers the same-sounding
+    // question about the C LIBRARY — and they are not independent, because a
+    // statically linked image cannot load a shared object at all
+    // (mcpp.build.linkage_form).
+    //
+    // A SCALAR, so it is deliberately absent from the `cfg(...)` channel:
+    // that channel appends, and this needs last-wins. Overridable per profile
+    // and per dependency edge. Empty = "static", which is byte-for-byte what
+    // mcpp did before the key existed.
+    std::string                         dependencyLinkage;
     // `[build] cache` — "global" (default) | "local" | "off". Project-level
     // default for the global dependency cache; --cache and MCPP_BUILD_CACHE
     // both override it. Validated in prepare_build (unknown value: warning, or
@@ -911,6 +925,14 @@ struct Profile {
     bool        debug    = false;
     bool        lto      = false;
     bool        strip    = false;
+    // `dependency_linkage`, per profile (#519).
+    //
+    // OPTIONAL, and that is load-bearing rather than stylistic: resolving a
+    // profile REPLACES the whole struct with the declared one, so a plain
+    // value would make `[profile.dev] opt = 0` silently reset a
+    // `[build] dependency_linkage = "shared"` back to the field default.
+    // Absent means "whatever [build] said".
+    std::optional<std::string> dependencyLinkage;
     // Passthrough escape hatch (fixed keys, open values — I6 completeness):
     std::vector<std::string> cflags;
     std::vector<std::string> cxxflags;
@@ -1137,8 +1159,24 @@ bool is_basename(std::string_view value) {
 std::optional<std::string> validate_target_soname(const Target& t,
                                                   std::string_view targetPath) {
     if (t.soname.empty()) return std::nullopt;
-    if (t.kind != Target::SharedLibrary) {
-        return std::format("{}soname is only valid for shared targets", targetPath);
+    // A LIBRARY may declare one, whatever form it is built in.
+    //
+    // This used to require `kind = "shared"`, which read as tidiness and was
+    // in fact a constraint on the ecosystem: a `soname` is the name a library
+    // is FOUND BY, and it is the only thing that lets mcpp's build of a
+    // package and a third party's copy of the same library resolve to one
+    // file rather than two. A package cannot state that unless it can write
+    // the name down while still being consumed as a static library — which is
+    // the normal case (mcpp-index: 84 `kind = "lib"` against 12 `"shared"`).
+    //
+    // ⚠️ RELAXED RATHER THAN MOVED: the old spelling made the whole manifest
+    // FAIL TO LOAD, in both parsers. Any descriptor that starts writing this
+    // key is therefore unreadable by every mcpp released before this change,
+    // so the ecosystem-side rollout is gated on the index's floor moving —
+    // see .agents/docs/2026-08-28-issue519-dependency-linkage-form.md §11.3.
+    // The engine accepting it is what makes that gate start counting down.
+    if (t.kind != Target::Library && t.kind != Target::SharedLibrary) {
+        return std::format("{}soname is only valid for library targets", targetPath);
     }
     if (!is_basename(t.soname)) {
         return std::format("{}soname must be a library basename, got '{}'",

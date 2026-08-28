@@ -1126,9 +1126,32 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     //    point becomes `run.sh` which invokes the bundled ld with
     //    --library-path → fully portable across glibc versions.
     if (plan.opts.mode != Mode::Static) {
-        auto deps = ldd_parse(bundledBinary);
+        // ⚠️ THE BUILT BINARY, NOT THE STAGED COPY, and the difference is
+        // `$ORIGIN`.
+        //
+        // The closure is resolved by running the artifact under its own
+        // loader. A dependency that mcpp itself built as a shared library
+        // lives beside the artifact in `bin/` and is found through the
+        // `$ORIGIN` in its RUNPATH — but the copy in the staging directory has
+        // an empty `bin/` next to it, so that entry resolves to nothing, the
+        // library never appears in the closure, and it is therefore never
+        // bundled. The bundle builds, packs and uploads without complaint, and
+        // fails on the user's machine with
+        // `error while loading shared libraries: libfoo.so`.
+        //
+        // Measured on mcpp 2026.8.26.1 with an author-declared
+        // `kind = "shared"` dependency, so this predates the consumer-side
+        // form axis (#519) — but that axis is what makes it reachable for
+        // EVERY package rather than the handful that declare themselves
+        // shared, which is why it is fixed here.
+        //
+        // Tracing the built binary is safe: the staged file is a byte copy of
+        // it and nothing has modified either one at this point (patchelf runs
+        // further down). What changes is only which directory `$ORIGIN`
+        // expands to while the loader is looking.
+        auto deps = ldd_parse(plan.builtBinary);
         if (!deps) return std::unexpected(Error{std::format(
-            "ldd failed on {}: {}", bundledBinary.string(), deps.error())});
+            "ldd failed on {}: {}", plan.builtBinary.string(), deps.error())});
 
         std::vector<ResolvedDep> toBundle;
         for (auto& d : *deps) {

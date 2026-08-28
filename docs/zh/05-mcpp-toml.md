@@ -94,10 +94,14 @@ soname = "libmylib.so.1"  # 可选: Linux/ELF ABI 名称,运行时会生成同�
 让下游程序可通过标准 ABI 名称 `DT_NEEDED` 或 `dlopen()` 加载该库。
 该字段只对 `kind = "shared"` 有效,值必须是文件名 basename。
 
-当前共享库目标只支持 Linux/ELF。面向 macOS 或 Windows 的
-`kind = "shared"` 目标(包括交叉构建)会在规划阶段直接拒绝,因为 mcpp
-尚未建模 Mach-O install name 或 PE import library。若目标是这些平台,请使用
-`kind = "lib"` 构建静态库,或将共享库目标设为 Linux。
+共享库目标在三种二进制格式上都可用。ELF 产出带 `soname` 的 `.so` 与 `$ORIGIN`
+搜索路径;Mach-O 产出 install name 为 `@rpath/<file>` 的 `.dylib`,因此移动后
+仍能被找到;PE 同时产出加载器打开的 `.dll` 和链接器消费的 import library,并在
+MSVC ABI 上从对象生成导出表(该 ABI 没有 `__declspec(dllexport)` 或 `.def` 时
+不导出任何符号)。参见 `tests/e2e/08`、`257`、`259`。
+
+`soname` 对 `kind = "lib"` 同样有意义 —— 见下文的 `dependency_linkage`,
+库以何种形态出现是**消费者**的决定。
 
 #### 按目标的键(per-target keys)
 
@@ -174,10 +178,89 @@ ldflags      = ["-lfoo"]          # 额外链接参数
 defines      = ["BIZ=1", "QUX"]   # 作用于每个 TU 的预处理宏(脱糖为 -D;会进入模块扫描)
 cxx_runtime  = "self-contained"   # C++ 运行时契约(见下节);static_stdlib 是旧拼写
 macos_deployment_target = "14.0"   # macOS 产物的最低支持系统版本(仅 macOS 生效)
+dependency_linkage = "static"     # 依赖以何种形态进入:static(默认)| shared(见下文)
 cache        = "global"           # 依赖的全局构建缓存:global(默认)| local | off(见 §2.10)
 jobs         = "auto"             # 并发编译数:正整数,或 "auto"(见下节)
 bmi_schedule = "auto"             # 模块边调度:auto(= 关)| on | off(见下节)
 ```
+
+#### `dependency_linkage` —— 静态还是动态由消费者决定
+
+```toml
+[build]
+dependency_linkage = "shared"        # 全图默认;缺省即 "static"
+
+[profile.dev]
+dependency_linkage = "shared"        # 按 profile 覆盖
+
+[dependencies]
+"compat.zlib" = { version = "1.3.2", linkage = "shared" }   # 单个包
+```
+
+在 mcpp 2026.8.28.2 之前,一个依赖只有一种形态,而且由**包作者**定死:
+`kind = "lib"` 把它的对象并进每个消费者的链接,`kind = "shared"` 产出真正的
+共享库。这个决定放错了位置。一个库在运行期该不该是独立文件,是**被构建的那个
+程序**的性质 —— 它怎么分发、多久重链一次、进程里是不是已经有人提供了这个库。
+
+- **`static`**(默认)—— 依赖的对象并进使用它的映像。与 mcpp 一直以来的行为
+  逐字节相同;不写这个键的工程构建结果不变。
+- **`shared`** —— mcpp 把依赖构建成产物旁边的共享库并链接它,由 `$ORIGIN`
+  (ELF)/ `@loader_path`(Mach-O)/ 可执行文件自身目录(PE)保证构建目录
+  移动后仍能找到它。
+
+⚠️ **这不是 `[target.<triple>].linkage`**(§2.7.1)。那个键回答的是听起来相同、
+实则关于 **C 库**的问题(musl 的 `-static`、MSVC 的 `/MT`)。两者并不独立,而且
+方向很重要:整链静态的映像没有解释器,根本装不下任何共享对象。因此在 C 库静态
+链接的目标上 —— 这是 **musl 的默认** —— `dependency_linkage = "shared"` 会被
+拒绝,并说明原因。
+
+**包可以声明它必须是某一种形态**,而且只在确有理由时:
+
+| 包写了 | mcpp 读作 |
+|---|---|
+| `[targets.<n>] kind = "shared"` | *必须* shared —— 进程里会有别人 `dlopen` 它,因此只能有一份(X11、Vulkan loader) |
+| `ldflags` 里含 `-L` | *必须* static —— 包携带了 mcpp 没有编译的预构建归档,放不进 mcpp 自己构建的共享对象 |
+| 分发包(`mcpp pack`) | 它实际随包的那些腿,取自 `[[runtime.artifacts]] role` |
+| 其他 | 两种形态都可以 |
+
+`kind = "lib"` **不是**约束:它是默认值,大多数包写下它并没有做任何选择。
+**没有陈述不等于一条陈述。**
+
+依赖边上的 `linkage` 只在**根工程**的 `[dependencies]` 里生效。依赖图深处的包
+无权决定最终程序的布局;真正必须只有一份共享副本的包,应当在自己的 target 上
+声明。
+
+#### library 目标上的 `soname`
+
+`soname`(§2.2)在 `kind = "lib"` 上同样可以声明。它是一个库被**找到**时用的
+名字,也是 mcpp 构建的那份与第三方携带的同一个库能解析到**同一个文件**的唯一
+途径 —— 而如果声明它就意味着这个包不能再作为静态库被消费,包就无法陈述这件事。
+
+⚠️ 在非 shared 目标上写 `soname` 的描述符,**无法被 2026.8.28.2 之前的 mcpp 读取**
+—— 失败的是整份 manifest,不只是这个键。因此把它发布进索引要等下限抬上去。
+
+#### 符号提供者检查
+
+链接之后,mcpp 会问:映像里的每个符号是不是**恰好有一个**提供者。在 ELF 上
+可执行文件排在最前,因此被静态并进程序的库,会在它与旁边加载的共享库共有的
+每个符号上获胜 —— 共享的那份永远不会被调用,而那个库里的代码跑在一份它并非
+针对其链接的构建上。链接器和加载器都不会为此报任何一句话。
+
+这项检查是**测量**而不是声明:读产物的动态符号表,去掉 copy relocation,只报告
+产物自身闭包里**也**有定义的那些。进程里只有一份副本的安排保持静默。判定记录在
+`target/<triple>/<fp>/resolution.json` 的 `runtime.symbol_provision` 下,带计数
+与分母,CI 不需要 `readelf` 就能读。
+
+默认是警告,`--strict` 下升级为错误。三条出路**有次序**,而次序是要紧的:
+
+1. **让其中一方不再提供这个库** —— 通常是那个携带了依赖图已经在构建的库的副本
+   的包。永远正确。
+2. **让两者解析到同一个文件**:在库的 target 上声明它真正的 `soname`。
+3. **`dependency_linkage`** 改变 mcpp 构建的形态。它会消掉**这一条**报告,但单
+   独用可能把一份变成**两份**:实测在一个暂存了 glib(其 `libgio` 需要
+   `libz.so.1`)、同时静态构建 `compat.zlib` 的图上,切换形态让可执行文件的 88
+   个导出符号归零,然后 `libzlib.so` 与 `libz.so.1` **两个都被加载**。只有在
+   (2) 同时成立时它才真的把两个提供者合成一个。
 
 `private_include_dirs` 指出 **`include_dirs` 中**在本包边界处停住的那些条目:
 本包用它们编译,消费者永远收不到。

@@ -97,11 +97,16 @@ downstream programs can load the library via its standard ABI name through
 `DT_NEEDED` or `dlopen()`. This field only applies to `kind = "shared"`, and the
 value must be a filename basename.
 
-Shared-library targets are currently supported only for Linux/ELF targets. A
-`kind = "shared"` target for macOS or Windows (including a cross build) is
-rejected before planning because mcpp does not yet model Mach-O install names
-or PE import libraries. Use `kind = "lib"` for a static library on those
-targets, or build the shared library for Linux.
+Shared-library targets work on all three binary formats. ELF gets a `.so` with
+its `soname` and a `$ORIGIN` search path; Mach-O gets a `.dylib` whose install
+name is `@rpath/<file>`, so it survives being moved; PE gets both the `.dll`
+the loader opens and the import library the linker consumes, with the export
+list generated from the objects on the MSVC ABI (which exports nothing without
+`__declspec(dllexport)` or a `.def`). See `tests/e2e/08`, `257` and `259`.
+
+A `soname` is meaningful on `kind = "lib"` too — see
+[`dependency_linkage`](#dependency_linkage--static-or-shared-is-the-consumers-decision)
+below, where the form a library takes becomes the consumer's decision.
 
 #### Per-target keys
 
@@ -186,10 +191,106 @@ cxx_runtime  = "self-contained"   # C++ runtime contract (§ below); static_stdl
 target       = "x86_64-linux-musl" # Default build target when no --target is passed
                                    # (≙ cargo build.target; e.g. "ship fully-static")
 macos_deployment_target = "14.0"   # Minimum supported OS version for macOS artifacts (macOS only)
+dependency_linkage = "static"     # How dependencies arrive: static (default) | shared (§ below)
 cache        = "global"           # Global dependency cache: global (default) | local | off (§2.10)
 jobs         = "auto"             # Concurrent compiles: a positive number, or "auto" (§ below)
 bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | off (§ below)
 ```
+
+#### `dependency_linkage` — static or shared is the consumer's decision
+
+```toml
+[build]
+dependency_linkage = "shared"        # whole-graph default; "static" is the default default
+
+[profile.dev]
+dependency_linkage = "shared"        # per profile
+
+[dependencies]
+"compat.zlib" = { version = "1.3.2", linkage = "shared" }   # one package
+```
+
+Until mcpp 2026.8.28.2 a dependency had exactly one shape and the *package
+author* chose it: `kind = "lib"` merged its objects into every consumer's link,
+`kind = "shared"` produced a real shared library. That is the wrong owner for
+the decision. Whether a library should be a separate file at run time is a
+property of the **program being built** — how it is shipped, how often it is
+relinked, whether something else in the process already provides that library.
+
+- **`static`** (default) — the dependency's objects are merged into the images
+  that use it. Byte-for-byte what mcpp has always done; a project that does not
+  write this key builds exactly as before.
+- **`shared`** — mcpp builds the dependency as a shared library beside the
+  artifact and links against it, with `$ORIGIN` (ELF) / `@loader_path` (Mach-O)
+  / the executable's own directory (PE) finding it again after the build
+  directory moves.
+
+⚠️ **This is not `[target.<triple>].linkage`** (§2.7.1). That key answers the
+same-sounding question about the **C library** (a musl `-static` link, MSVC's
+`/MT`). The two are not independent, and the direction matters: a fully static
+image has no interpreter, so it cannot load a shared object at all. On a target
+whose C library is linked statically — which is the **default for musl** —
+`dependency_linkage = "shared"` is refused, and says so.
+
+**A package can say it must be one form**, and only for a real reason:
+
+| The package writes | mcpp reads it as |
+|---|---|
+| `[targets.<n>] kind = "shared"` | *must* be shared — something else in the process will `dlopen` it, so there may only be one copy (X11, a Vulkan loader) |
+| `ldflags` containing `-L` | *must* be static — the package ships prebuilt archives mcpp did not compile and cannot place inside a shared object it builds |
+| a packaged library (`mcpp pack`) | whichever legs it actually ships, from `[[runtime.artifacts]] role` |
+| anything else | either form |
+
+`kind = "lib"` is **not** a constraint: it is the default value, and most
+packages write it without choosing anything. Absence of a statement is not a
+statement.
+
+A per-dependency `linkage` is honoured **only in the root project's**
+`[dependencies]`. A package deep in the graph does not get to decide how the
+final program is laid out; one that genuinely must be a single shared copy says
+so on its own target instead.
+
+#### `soname` on a library target
+
+A `soname` (§2.2) may be declared on `kind = "lib"` as well as
+`kind = "shared"`. It is the name a library is *found* by, and it is the only
+way mcpp's build of a package and a third party's copy of the same library can
+resolve to **one file** instead of two — which a package cannot state if
+declaring it forces the package to stop being consumable as a static library.
+
+⚠️ A descriptor that writes `soname` on a non-shared target cannot be read by
+mcpp releases before 2026.8.28.2 — the whole manifest fails to load, not just
+the key. Publishing one to an index therefore waits for that floor to move.
+
+#### The symbol-provision check
+
+After a link, mcpp asks whether every symbol in the image has exactly **one**
+provider. On ELF an executable is searched first, so a library statically
+merged into the program wins for every symbol it shares with a shared library
+loaded beside it — the shared copy is never called, and code inside that
+library runs against a build it was not linked against. No linker or loader
+diagnostic exists for this.
+
+The check is a measurement, not a declaration: it reads the produced image's
+dynamic symbol table, removes the entries that are copy relocations, and
+reports only those a library in the artifact's own closure **also** defines.
+An arrangement with one copy in the process is silent. The verdict is recorded
+in `target/<triple>/<fp>/resolution.json` under `runtime.symbol_provision`,
+with the count and its denominator, so CI can read it without `readelf`.
+
+It is a warning by default and an error under `--strict`. The ways out are
+ordered, and the order matters:
+
+1. **Stop one side from providing it** — usually a package shipping a copy of a
+   library the graph already builds. Always correct.
+2. **Make both resolve to one file** by declaring the library's real `soname`
+   on its target.
+3. **`dependency_linkage`** changes which form mcpp builds. It removes *this*
+   finding, but on its own it can leave **two** copies loaded instead of one:
+   measured on a graph staging glib (whose `libgio` needs `libz.so.1`) beside a
+   statically built `compat.zlib`, switching the form dropped the executable's
+   88 exported symbols and then loaded both `libzlib.so` and `libz.so.1`. It
+   unifies the two providers only when (2) holds as well.
 
 `private_include_dirs` names the entries **of `include_dirs`** that stop at this
 package's own boundary: this package compiles with them, and a consumer never

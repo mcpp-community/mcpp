@@ -11,6 +11,7 @@ export module mcpp.build.runtime_validation;
 import std;
 import mcpp.build.loader_contract;
 import mcpp.build.plan;
+import mcpp.build.symbol_provision;
 import mcpp.manifest;
 import mcpp.libs.json;
 import mcpp.platform;
@@ -120,6 +121,25 @@ ArtifactVerdict artifact_identity_verdict(
 std::vector<mcpp::build::loader::TagFinding>
 check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
                              const ArtifactSnapshot& before);
+
+// One image's answer to "is every symbol provided once" (issue #519).
+struct SymbolProvisionFinding {
+    std::filesystem::path                       artifact;
+    mcpp::build::symbol_provision::Report       report;
+};
+
+// Evaluate the symbol-provision invariant on the images this run produced.
+//
+// ⚠️ A SEPARATE ENTRY POINT rather than more of validate_changed_artifacts,
+// and the reason is a gate rather than tidiness: that function returns early
+// unless the runtime binding's provider is glibc, because everything it checks
+// is glibc closure physics. This check is ELF physics — a dynamically linked
+// musl image has exactly the same flat namespace — so inheriting that gate
+// would make it silently never run there. Same snapshot, same recording, its
+// own applicability.
+std::vector<SymbolProvisionFinding>
+check_symbol_provision(const mcpp::build::BuildPlan& plan,
+                       const ArtifactSnapshot& before);
 
 } // namespace mcpp::build::runtime_validation
 
@@ -678,6 +698,247 @@ check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
             std::filesystem::remove(path, ec);
             ec.clear();
             std::filesystem::rename(tmp, path, ec);
+        }
+    }
+    return findings;
+}
+
+std::vector<SymbolProvisionFinding>
+check_symbol_provision(const mcpp::build::BuildPlan& plan,
+                       const ArtifactSnapshot& before) {
+    namespace sp = mcpp::build::symbol_provision;
+    std::vector<SymbolProvisionFinding> findings;
+    if constexpr (!mcpp::platform::is_linux) return findings;
+
+    // The flags this build hands the linker, as ONE vector, because the
+    // question is whether ANY of them took the export decision away from
+    // mcpp. Per-unit flags join below; these are the whole-build ones.
+    std::vector<std::string> globalFlags = plan.manifest.buildConfig.ldflags;
+
+    auto searchDirs = runtime_search_dirs(plan);
+
+    // ⚠️ WHAT AN UNCHANGED ARTIFACT KEEPS.
+    //
+    // Re-parsing every image on every drive is what made the loader-tag check
+    // cost 158.7s of a 190s hot run, so an artifact whose stat did not move is
+    // skipped here too. But skipping it must not DROP its verdict: `mcpp test`
+    // drives the backend once per test on an already-built tree, and a
+    // workspace relinks one member at a time. Without this read-back the
+    // record would shrink to "whatever moved last", a conflict found on
+    // Monday would stop being reported on Tuesday, and — worse — the absence
+    // of an entry would read exactly like "checked and clean".
+    const auto resolutionPath = plan.outputDir / "resolution.json";
+    nlohmann::json resolution;
+    {
+        std::ifstream input(resolutionPath);
+        resolution = nlohmann::json::parse(input, nullptr, false);
+    }
+    const auto recorded = [&]() -> nlohmann::json {
+        auto rt = resolution.is_object() ? resolution.find("runtime")
+                                         : resolution.end();
+        if (rt == resolution.end() || !rt->is_object())
+            return nlohmann::json::array();
+        auto entries = rt->find("symbol_provision");
+        if (entries == rt->end() || !entries->is_array())
+            return nlohmann::json::array();
+        return *entries;
+    }();
+    auto stored_for = [&](const std::string& rel) -> const nlohmann::json* {
+        for (auto const& entry : recorded)
+            if (entry.is_object() && entry.value("path", "") == rel) return &entry;
+        return nullptr;
+    };
+
+    // Symbol tables of closure objects, parsed at most once per file. Several
+    // images in one build share almost their whole closure.
+    std::map<std::filesystem::path, std::vector<std::string>> closureCache;
+    auto defines_of = [&](const std::filesystem::path& object)
+        -> const std::vector<std::string>& {
+        auto it = closureCache.find(object);
+        if (it != closureCache.end()) return it->second;
+        std::vector<std::string> names;
+        if (auto symbols = mcpp::platform::elf::inspect_dynamic_symbols(object)) {
+            names.reserve(symbols->defined.size());
+            for (auto const& symbol : symbols->defined) names.push_back(symbol.name);
+            std::ranges::sort(names);
+        }
+        return closureCache.emplace(object, std::move(names)).first->second;
+    };
+
+    bool anyFresh = false;
+    for (auto const& [artifact, oldStamp] : before) {
+        auto now = stamp(artifact);
+        if (!now.exists) continue;
+
+        std::error_code relEc;
+        auto rel = std::filesystem::relative(artifact, plan.outputDir, relEc);
+        auto relStr = (relEc ? artifact : rel).lexically_normal().generic_string();
+
+        // Only images this run actually produced get re-read. An unchanged one
+        // keeps the verdict already on file (see the note above); with none on
+        // file it falls through and is read, so the first build after this
+        // record appeared does not report "never checked" forever.
+        if (now == oldStamp) {
+            if (auto const* prev = stored_for(relStr)) {
+                sp::Report kept;
+                auto status = prev->value("status", "");
+                kept.status = status == "clean"          ? sp::Status::Clean
+                            : status == "conflict"       ? sp::Status::Conflict
+                            : status == "not-applicable" ? sp::Status::NotApplicable
+                                                         : sp::Status::NotEvaluated;
+                kept.exported = prev->value("exported", std::size_t{0});
+                kept.total    = prev->value("dynamic_symbols", std::size_t{0});
+                kept.reason   = prev->value("reason", "");
+                if (auto c = prev->find("conflicts");
+                    c != prev->end() && c->is_array()) {
+                    for (auto const& entry : *c) {
+                        sp::Conflict conflict;
+                        conflict.name   = entry.value("symbol", "");
+                        conflict.isFunc = entry.value("kind", "") == "func";
+                        if (auto by = entry.find("also_provided_by");
+                            by != entry.end() && by->is_array())
+                            for (auto const& label : *by)
+                                if (label.is_string())
+                                    conflict.alsoProvidedBy.push_back(label);
+                        kept.conflicts.push_back(std::move(conflict));
+                    }
+                }
+                findings.push_back({artifact, std::move(kept)});
+                continue;
+            }
+        }
+        anyFresh = true;
+
+        // Which link unit is this? Its own flags matter as much as the
+        // global ones, and the static side of any report is attributed from
+        // the objects it links. Spelled EXACTLY as `snapshot_link_artifacts`
+        // spells it, so the two cannot disagree about which key names which
+        // artifact — a mismatch here loses the unit's own flags silently.
+        const mcpp::build::LinkUnit* unit = nullptr;
+        for (auto const& lu : plan.linkUnits) {
+            if (plan.outputDir / lu.output == artifact) { unit = &lu; break; }
+        }
+
+        auto facts = mcpp::platform::elf::inspect_elf_runtime(artifact);
+        if (!facts) continue;                       // not ELF: no flat namespace
+        // ⚠️ PT_INTERP, not the ELF type. A PIE executable is ET_DYN, exactly
+        // like a shared library, and whether mcpp's toolchain emits PIE is the
+        // payload compiler's default — mcpp passes neither -pie nor -no-pie.
+        // Keying on ET_EXEC would make this check read "nothing to inspect"
+        // the day that default flips, which is indistinguishable from "clean".
+        // An interpreter is what makes an image a program the loader starts.
+        if (facts->interp.empty()) continue;
+
+        std::vector<std::string> flags = globalFlags;
+        if (unit) flags.insert(flags.end(),
+                               unit->linkFlags.begin(), unit->linkFlags.end());
+        if (sp::export_dynamic_requested(flags)) {
+            findings.push_back({artifact, sp::not_applicable(
+                "the link requests exported dynamic symbols")});
+            continue;
+        }
+
+        auto symbols = mcpp::platform::elf::inspect_dynamic_symbols(artifact);
+        if (!symbols) {
+            findings.push_back({artifact, sp::not_evaluated(symbols.error())});
+            continue;
+        }
+        if (!symbols->present) {
+            findings.push_back({artifact, sp::not_applicable(
+                "statically linked: there is no dynamic symbol table")});
+            continue;
+        }
+        auto exported = sp::exported_definitions(*symbols);
+        if (!exported) {
+            findings.push_back({artifact, sp::not_evaluated(
+                "this machine's copy-relocation type is not known to mcpp")});
+            continue;
+        }
+
+        sp::Report report;
+        report.total = symbols->total;
+        report.exported = exported->size();
+        if (exported->empty()) {
+            report.status = sp::Status::Clean;
+            findings.push_back({artifact, std::move(report)});
+            continue;
+        }
+
+        // Stage two. Only reached when the image exports something, which a
+        // normal build does not.
+        auto resolution = mcpp::platform::elf::resolve_runtime_closure(
+            artifact, plan.runtimeBinding, searchDirs);
+        std::vector<sp::Provider> providers;
+        for (auto const& object : resolution.objects) {
+            if (object.artifact == artifact) continue;
+            auto const& names = defines_of(object.artifact);
+            if (names.empty()) continue;
+            providers.push_back(sp::Provider{
+                .label = object.artifact.string(),
+                .defines = names,
+            });
+        }
+        report.conflicts = sp::conflicting_exports(*exported, providers);
+        report.status = report.conflicts.empty() ? sp::Status::Clean
+                                                 : sp::Status::Conflict;
+        findings.push_back({artifact, std::move(report)});
+    }
+
+    // Record, for the same reason the loader-tag contract records: a warning
+    // scrolls past, and `resolution.json` is what CI, `mcpp why runtime` and a
+    // test can read. It also gives a test a FIELD to assert on instead of a
+    // substring of a message — a message whose wording is free to improve.
+    if (!findings.empty() && anyFresh) {
+        const auto& path = resolutionPath;
+        if (!resolution.is_discarded() && resolution.is_object()) {
+            if (auto runtime = resolution.find("runtime");
+                runtime != resolution.end() && runtime->is_object()) {
+                nlohmann::json entries = nlohmann::json::array();
+                for (auto const& finding : findings) {
+                    std::error_code ec;
+                    auto rel = std::filesystem::relative(
+                        finding.artifact, plan.outputDir, ec);
+                    nlohmann::json entry{
+                        {"path", (ec ? finding.artifact : rel)
+                                     .lexically_normal().generic_string()},
+                        {"status", std::string(
+                             sp::to_string(finding.report.status))},
+                        // Always both numbers. `exported: 0` is only evidence
+                        // when `dynamic_symbols` is beside it.
+                        {"exported", finding.report.exported},
+                        {"dynamic_symbols", finding.report.total},
+                    };
+                    if (!finding.report.reason.empty())
+                        entry["reason"] = finding.report.reason;
+                    if (!finding.report.conflicts.empty()) {
+                        nlohmann::json conflicts = nlohmann::json::array();
+                        for (auto const& conflict : finding.report.conflicts)
+                            conflicts.push_back({
+                                {"symbol", conflict.name},
+                                {"kind", conflict.isFunc ? "func" : "object"},
+                                {"also_provided_by", conflict.alsoProvidedBy},
+                            });
+                        entry["conflicts"] = std::move(conflicts);
+                    }
+                    entries.push_back(std::move(entry));
+                }
+                (*runtime)["symbol_provision"] = std::move(entries);
+
+                std::error_code ec;
+                auto tmp = path;
+                tmp += ".tmp";
+                if (std::ofstream output(tmp); output) {
+                    output << resolution.dump(2) << '\n';
+                    output.close();
+                    std::filesystem::rename(tmp, path, ec);
+                    if (ec) {
+                        ec.clear();
+                        std::filesystem::remove(path, ec);
+                        ec.clear();
+                        std::filesystem::rename(tmp, path, ec);
+                    }
+                }
+            }
         }
     }
     return findings;

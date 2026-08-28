@@ -128,6 +128,52 @@ struct RuntimeVerdict {
 std::expected<ElfRuntimeFacts, std::string>
 inspect_elf_runtime(const std::filesystem::path& artifact);
 
+// One entry of a dynamic symbol table that this object DEFINES.
+struct DynamicSymbol {
+    std::string   name;
+    // STT_FUNC (or STT_GNU_IFUNC). Load-bearing rather than informational: a
+    // copy relocation moves DATA out of a shared library into the image that
+    // links it, so it is never a function. A defined FUNC in an executable's
+    // dynamic symbol table therefore has exactly one cause — the linker
+    // exported it so that some shared object's reference would bind to it.
+    bool          isFunc = false;
+    std::uint64_t value = 0;   // st_value; the key a copy relocation matches
+};
+
+// What an ELF object's DYNAMIC symbol table says it provides.
+//
+// Deliberately not folded into ElfRuntimeFacts: every caller of
+// inspect_elf_runtime would then pay for a symbol-table walk, and the runtime
+// closure check — which runs on every changed artifact — does not need one.
+struct DynamicSymbols {
+    // GLOBAL/WEAK entries with st_shndx != SHN_UNDEF.
+    std::vector<DynamicSymbol> defined;
+    // The whole table, including undefined imports. This is the DENOMINATOR a
+    // report quotes: "0 of 217" and "not measured" must not read the same.
+    std::size_t                total = 0;
+    // Addresses named by an R_<machine>_COPY relocation.
+    //
+    // ADDRESS, not name, and that distinction is measured rather than
+    // reasoned: glibc's `environ` is a WEAK alias of `__environ` at the same
+    // address, and only `__environ` appears in the relocation table. Matching
+    // by name reports `environ` as a hijacked symbol in every single
+    // dynamically linked executable.
+    std::set<std::uint64_t>    copyRelocations;
+    // Did we recognise this object's machine well enough to know its COPY
+    // relocation type? False means the copy-relocation set above is EMPTY
+    // BECAUSE IT WAS NOT COMPUTED, not because there are none — a caller must
+    // report "not evaluated" rather than "clean".
+    bool                       copyRelocationsKnown = false;
+    // Does this object have a dynamic symbol table at all? A fully static
+    // link has none, and "nothing to check" is a different answer from
+    // "checked and found nothing".
+    bool                       present = false;
+};
+
+// Read the dynamic symbol table and the copy relocations of one ELF object.
+std::expected<DynamicSymbols, std::string>
+inspect_dynamic_symbols(const std::filesystem::path& object);
+
 RuntimeResolution resolve_runtime_closure(
     const std::filesystem::path& artifact,
     const mcpp::platform::runtime::RuntimeBinding& binding,
@@ -167,6 +213,44 @@ constexpr std::uint64_t kDtVerdef = 0x6ffffffc;
 constexpr std::uint64_t kDtVerdefnum = 0x6ffffffd;
 constexpr std::uint64_t kDtVerneed = 0x6ffffffe;
 constexpr std::uint64_t kDtVerneednum = 0x6fffffff;
+constexpr std::uint64_t kDtHash = 4;
+constexpr std::uint64_t kDtSymtab = 6;
+constexpr std::uint64_t kDtRela = 7;
+constexpr std::uint64_t kDtRelasz = 8;
+constexpr std::uint64_t kDtSyment = 11;
+constexpr std::uint64_t kDtGnuHash = 0x6ffffef5;
+
+// Elf64_Sym / Elf64_Rela are both 24 bytes. This reader is ELF64-only (the
+// dynamic-entry stride above is 16), so there is no 32-bit variant to carry.
+constexpr std::uint64_t kSymEntrySize  = 24;
+constexpr std::uint64_t kRelaEntrySize = 24;
+
+constexpr unsigned char kSttObject   = 1;
+constexpr unsigned char kSttFunc     = 2;
+constexpr unsigned char kSttGnuIfunc = 10;
+constexpr unsigned char kStbLocal    = 0;
+
+// The COPY relocation type, per machine.
+//
+// Machine-dependent by nature, and the table is EXHAUSTIVE-BY-REFUSAL rather
+// than by guessing: an unlisted machine returns nullopt, and the caller then
+// says "not evaluated" instead of treating every defined data symbol as a
+// conflict. A wrong constant here would report a clean image as broken on an
+// architecture nobody tested, which is worse than declining to answer.
+std::optional<std::uint32_t> copy_relocation_type(std::uint16_t machine) {
+    switch (machine) {
+        case 3:   return 5;      // EM_386        R_386_COPY
+        case 20:  return 19;     // EM_PPC        R_PPC_COPY
+        case 21:  return 19;     // EM_PPC64      R_PPC64_COPY
+        case 22:  return 9;      // EM_S390       R_390_COPY
+        case 40:  return 20;     // EM_ARM        R_ARM_COPY
+        case 62:  return 5;      // EM_X86_64     R_X86_64_COPY
+        case 183: return 1024;   // EM_AARCH64    R_AARCH64_COPY
+        case 243: return 4;      // EM_RISCV      R_RISCV_COPY
+        case 258: return 4;      // EM_LOONGARCH  R_LARCH_COPY
+        default:  return std::nullopt;
+    }
+}
 
 struct Reader {
     std::vector<unsigned char> bytes;
@@ -395,7 +479,217 @@ int compare_versions(std::span<const unsigned> lhs,
     return 0;
 }
 
+// How many entries does `.dynsym` have?
+//
+// The dynamic section does not say. Both hash tables do, in different ways,
+// and which one exists is a link-time choice mcpp does not make: its own
+// binaries carry BOTH (`--hash-style=both`), while distribution binaries on
+// this machine carry GNU_HASH alone — measured on /usr/bin/git and /usr/bin/ls.
+// So both readers are required; neither is a fallback for exotic cases.
+std::optional<std::uint64_t> dynsym_count_from_sysv_hash(
+    const Reader& reader, std::uint64_t hashOffset) {
+    // struct { uint32 nbucket; uint32 nchain; ... } — nchain IS the symbol
+    // count, because every symbol occupies one chain slot.
+    auto nchain = reader.u32(hashOffset + 4);
+    if (!nchain) return std::nullopt;
+    return *nchain;
+}
+
+std::optional<std::uint64_t> dynsym_count_from_gnu_hash(
+    const Reader& reader, std::uint64_t hashOffset) {
+    auto nbuckets   = reader.u32(hashOffset);
+    auto symoffset  = reader.u32(hashOffset + 4);
+    auto bloomSize  = reader.u32(hashOffset + 8);
+    if (!nbuckets || !symoffset || !bloomSize) return std::nullopt;
+    if (*nbuckets > (1u << 24) || *bloomSize > (1u << 24)) return std::nullopt;
+
+    // GNU_HASH omits the first `symoffset` symbols (the undefined ones), so
+    // with no hashed symbol at all the table is exactly that long.
+    const auto bucketsAt = hashOffset + 16
+                         + static_cast<std::uint64_t>(*bloomSize) * 8;
+    std::uint32_t maxIndex = 0;
+    for (std::uint32_t i = 0; i < *nbuckets; ++i) {
+        auto bucket = reader.u32(bucketsAt + static_cast<std::uint64_t>(i) * 4);
+        if (!bucket) return std::nullopt;
+        maxIndex = std::max(maxIndex, *bucket);
+    }
+    if (maxIndex < *symoffset) return *symoffset;
+
+    // Walk the chain of the highest bucket to its terminator (low bit set).
+    const auto chainAt = bucketsAt + static_cast<std::uint64_t>(*nbuckets) * 4;
+    std::uint32_t index = maxIndex;
+    for (std::uint32_t guard = 0; guard < (1u << 24); ++guard) {
+        auto word = reader.u32(chainAt
+            + static_cast<std::uint64_t>(index - *symoffset) * 4);
+        if (!word) return std::nullopt;
+        if (*word & 1u) return static_cast<std::uint64_t>(index) + 1;
+        ++index;
+    }
+    return std::nullopt;
+}
+
 } // namespace detail
+
+std::expected<DynamicSymbols, std::string>
+inspect_dynamic_symbols(const std::filesystem::path& object) {
+    detail::Reader reader;
+    std::ifstream input(object, std::ios::binary);
+    if (!input) return std::unexpected(std::format(
+        "cannot open ELF object '{}'", object.string()));
+    reader.bytes.assign(std::istreambuf_iterator<char>(input), {});
+
+    if (reader.bytes.size() < 0x40
+        || reader.bytes[0] != 0x7f || reader.bytes[1] != 'E'
+        || reader.bytes[2] != 'L' || reader.bytes[3] != 'F')
+        return std::unexpected(std::format(
+            "object '{}' is not ELF", object.string()));
+    if (reader.bytes[4] != 2 || reader.bytes[5] != 1)
+        return std::unexpected(std::format(
+            "object '{}' is not ELF64 little-endian", object.string()));
+
+    auto machine   = reader.u16(0x12);
+    auto phoff     = reader.u64(0x20);
+    auto phentsize = reader.u16(0x36);
+    auto phnum     = reader.u16(0x38);
+    if (!machine || !phoff || !phentsize || !phnum || *phentsize < 0x38
+        || *phnum > 4096
+        || !reader.range(*phoff, static_cast<std::uint64_t>(*phentsize) * *phnum))
+        return std::unexpected(std::format(
+            "object '{}' has a truncated ELF program table", object.string()));
+
+    DynamicSymbols out;
+
+    std::vector<detail::Segment> segments;
+    std::optional<detail::Segment> dynamic;
+    for (std::uint16_t i = 0; i < *phnum; ++i) {
+        auto off     = *phoff + static_cast<std::uint64_t>(i) * *phentsize;
+        auto ptype   = reader.u32(off);
+        auto poff    = reader.u64(off + 0x08);
+        auto pvaddr  = reader.u64(off + 0x10);
+        auto pfilesz = reader.u64(off + 0x20);
+        if (!ptype || !poff || !pvaddr || !pfilesz
+            || !reader.range(*poff, *pfilesz))
+            return std::unexpected(std::format(
+                "object '{}' has a truncated ELF segment", object.string()));
+        segments.push_back(detail::Segment{*ptype, *poff, *pvaddr, *pfilesz});
+        if (*ptype == detail::kPtDynamic)
+            dynamic = segments.back();
+    }
+    // No PT_DYNAMIC: a fully static link, or a relocatable object. There is no
+    // dynamic symbol table to read, and `present` stays false so the caller
+    // reports "not applicable" rather than "clean".
+    if (!dynamic || dynamic->filesz % 16 != 0) return out;
+
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> entries;
+    for (std::uint64_t off = dynamic->offset;
+         off + 16 <= dynamic->offset + dynamic->filesz; off += 16) {
+        auto tag   = reader.u64(off);
+        auto value = reader.u64(off + 8);
+        if (!tag || !value) return std::unexpected(std::format(
+            "object '{}' has a truncated dynamic entry", object.string()));
+        if (*tag == detail::kDtNull) break;
+        entries.emplace_back(*tag, *value);
+    }
+    auto first = [&](std::uint64_t tag) -> std::optional<std::uint64_t> {
+        for (auto const& [candidate, value] : entries)
+            if (candidate == tag) return value;
+        return std::nullopt;
+    };
+
+    auto strtabAddr = first(detail::kDtStrtab);
+    auto strtabSize = first(detail::kDtStrsz);
+    auto symtabAddr = first(detail::kDtSymtab);
+    if (!strtabAddr || !strtabSize || !symtabAddr) return out;
+
+    auto strtab = detail::vaddr_to_offset(segments, *strtabAddr, *strtabSize);
+    if (!strtab || !reader.range(*strtab, *strtabSize))
+        return std::unexpected(std::format(
+            "object '{}' has an unmappable dynamic string table", object.string()));
+
+    const auto symEntrySize = first(detail::kDtSyment).value_or(detail::kSymEntrySize);
+    if (symEntrySize < detail::kSymEntrySize) return std::unexpected(std::format(
+        "object '{}' declares a {}-byte dynamic symbol entry", object.string(),
+        symEntrySize));
+
+    std::optional<std::uint64_t> count;
+    if (auto hash = first(detail::kDtHash)) {
+        if (auto at = detail::vaddr_to_offset(segments, *hash, 8))
+            count = detail::dynsym_count_from_sysv_hash(reader, *at);
+    }
+    if (!count) {
+        if (auto hash = first(detail::kDtGnuHash)) {
+            if (auto at = detail::vaddr_to_offset(segments, *hash, 16))
+                count = detail::dynsym_count_from_gnu_hash(reader, *at);
+        }
+    }
+    // Neither hash table was readable. Refuse rather than guess a table
+    // length: a short guess reports a clean image, which is the failure mode
+    // this whole area is about.
+    if (!count) return std::unexpected(std::format(
+        "object '{}' has a dynamic symbol table whose length cannot be "
+        "determined (neither DT_HASH nor DT_GNU_HASH is usable)",
+        object.string()));
+    if (*count > (1u << 24)) return std::unexpected(std::format(
+        "object '{}' declares {} dynamic symbols", object.string(), *count));
+
+    auto symtab = detail::vaddr_to_offset(segments, *symtabAddr,
+                                          symEntrySize * *count);
+    if (!symtab || !reader.range(*symtab, symEntrySize * *count))
+        return std::unexpected(std::format(
+            "object '{}' has an unmappable dynamic symbol table", object.string()));
+
+    out.present = true;
+    out.total = static_cast<std::size_t>(*count);
+    for (std::uint64_t i = 0; i < *count; ++i) {
+        const auto at = *symtab + i * symEntrySize;
+        auto nameOffset = reader.u32(at);
+        auto shndx      = reader.u16(at + 6);
+        auto value      = reader.u64(at + 8);
+        if (!nameOffset || !shndx || !value) return std::unexpected(std::format(
+            "object '{}' has a truncated dynamic symbol", object.string()));
+        if (*shndx == 0) continue;                       // SHN_UNDEF — imported
+        const unsigned char info = reader.bytes[at + 4];
+        const unsigned char bind = static_cast<unsigned char>(info >> 4);
+        const unsigned char type = static_cast<unsigned char>(info & 0x0f);
+        if (bind == detail::kStbLocal) continue;         // not participating
+        if (type != detail::kSttObject && type != detail::kSttFunc
+            && type != detail::kSttGnuIfunc) continue;   // sections, files, TLS
+        auto name = *nameOffset < *strtabSize
+            ? reader.cstr(*strtab + *nameOffset, *strtabSize - *nameOffset)
+            : std::nullopt;
+        if (!name || name->empty()) continue;
+        out.defined.push_back(DynamicSymbol{
+            .name   = std::move(*name),
+            .isFunc = (type == detail::kSttFunc || type == detail::kSttGnuIfunc),
+            .value  = *value,
+        });
+    }
+
+    // Copy relocations. Absent DT_RELA simply means there are none, which is a
+    // real answer — unlike an unrecognised machine, which is not.
+    if (auto type = detail::copy_relocation_type(*machine)) {
+        out.copyRelocationsKnown = true;
+        auto relaAddr = first(detail::kDtRela);
+        auto relaSize = first(detail::kDtRelasz);
+        if (relaAddr && relaSize) {
+            auto rela = detail::vaddr_to_offset(segments, *relaAddr, *relaSize);
+            if (!rela || !reader.range(*rela, *relaSize))
+                return std::unexpected(std::format(
+                    "object '{}' has an unmappable relocation table", object.string()));
+            for (std::uint64_t off = 0;
+                 off + detail::kRelaEntrySize <= *relaSize;
+                 off += detail::kRelaEntrySize) {
+                auto offset = reader.u64(*rela + off);
+                auto info   = reader.u64(*rela + off + 8);
+                if (!offset || !info) return std::unexpected(std::format(
+                    "object '{}' has a truncated relocation", object.string()));
+                if (static_cast<std::uint32_t>(*info & 0xffffffffull) == *type)
+                    out.copyRelocations.insert(*offset);
+            }
+        }
+    }
+    return out;
+}
 
 std::expected<ElfRuntimeFacts, std::string>
 inspect_elf_runtime(const std::filesystem::path& artifact) {
