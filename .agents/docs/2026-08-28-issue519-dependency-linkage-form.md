@@ -806,3 +806,61 @@ mcpp 下限跨过 B1 的发布**,而不是「B1 合入了」。这是一条发�
 2. ⚠️ **「正确的 soname 就一定赢」**(§5.3 末)—— 取决于 `$ORIGIN` 与依赖包
    `runtime_search_dirs` 在 `link_line::UnitTail` 里的相对次序,与 **#304** 合流。
    两条都**不要写进设计当结论**,它们是待测项。
+
+---
+
+## 13. 真实验证:用生态自己的 glib 复现 issue §2
+
+⚠️ 本节是**实测**,不是设计。用的是 `mcpplibs/mcpp-index#245`(eui-neo 的 Linux SNI
+托盘)的需求场景 —— 但**不依赖宿主**:暂存的 glib 及其整条闭包全部取自 xim
+(`xim:glib@2.80.0` / `zlib` / `pcre2` / `libselinux` / `util-linux` / `libffi`),
+引擎里没有任何 glib / zlib / 托盘的知识。
+
+### 13.1 场景
+
+`libgio-2.0.so.0` 的 `DT_NEEDED` 里有 `libz.so.1`(实测,不是构造出来的),
+而索引里 `compat.zlib` 是 `kind = "lib"`。一个同时依赖两者的工程 = issue §2。
+
+### 13.2 读数
+
+```console
+$ mcpp build
+warning: trayapp: 88 symbols in this image are also provided by a library it loads.
+    adler32()  adler32_combine()  ...  and 82 more
+  Also provided by:
+    …/xpkgs/xim-x-zlib/1.3.1/lib/libz.so.1.3.1
+```
+
+| | issue §2 报的 | 本次实测 |
+|---|---|---|
+| exe 里 DEFINED 的 zlib 符号 | 86 | **88** |
+| `LD_DEBUG=bindings` 中 libgio 绑到 exe | 12 次 | 同形状,**含 `inflateGetHeader' [ZLIB_1.2.2]`** —— 带版本的引用绑到无版本的定义 |
+| 有没有任何工具说话 | **没有** | **mcpp 在构建期指名了两个提供者** |
+
+⭐ issue 里那条「同一情形在链接期(跨 `.so` 时)是硬错误,在这里静默通过」
+现在有了构建期的声音。
+
+### 13.3 ⚠️⚠️ 出路的次序被这次实测改掉了
+
+按 `linkage = "shared"` 走一遍:
+
+| | 之前 | 之后 |
+|---|---|---|
+| exe 导出的 zlib 符号 | 88 | **0** |
+| 诊断 | 报 | 静默 |
+| **进程里加载的 zlib** | **1 份** | ⚠️ **2 份**(`libzlib.so` + `libz.so.1`) |
+
+`readelf -d bin/libzlib.so | grep SONAME` → **没有**。这正是 §5.3 推导出的结果,
+现在是实测:**这根轴单独用,会把一个可检测的缺陷换成一个不可检测的缺陷。**
+
+⇒ 诊断文案里三条出路的**次序**因此改了:第一条必须是永远正确的那条
+(让一方不再提供),形态切换排最后并写清它的前提。单测断言的是**次序**,
+不是三个子串都在。
+
+### 13.4 这次验证证明了什么
+
+1. 引擎在**真实 ELF 闭包**上工作(glib/gio + zlib/pcre2/selinux/mount/ffi),
+   不只是在人造 fixture 上;
+2. 两段式谓词在真实图上**没有误报**(vendor 包自身的 `.so` 之间不报);
+3. `dependency_linkage` 的逃生口在真实图上**确实生效**(88 → 0);
+4. ⚠️ 而它的**局限也是真的**,并因此改了文案 —— 这是本次验证最有价值的产出。

@@ -251,9 +251,16 @@ dependency_linkage = "shared"        # 按 profile 覆盖
 `target/<triple>/<fp>/resolution.json` 的 `runtime.symbol_provision` 下,带计数
 与分母,CI 不需要 `readelf` 就能读。
 
-默认是警告,`--strict` 下升级为错误。三条出路,按通常适用的顺序:用
-`dependency_linkage` 给重复的包一个统一形态;让其中一方不再提供这个库;或者给
-两者相同的 `soname`,让它们解析到同一个文件。
+默认是警告,`--strict` 下升级为错误。三条出路**有次序**,而次序是要紧的:
+
+1. **让其中一方不再提供这个库** —— 通常是那个携带了依赖图已经在构建的库的副本
+   的包。永远正确。
+2. **让两者解析到同一个文件**:在库的 target 上声明它真正的 `soname`。
+3. **`dependency_linkage`** 改变 mcpp 构建的形态。它会消掉**这一条**报告,但单
+   独用可能把一份变成**两份**:实测在一个暂存了 glib(其 `libgio` 需要
+   `libz.so.1`)、同时静态构建 `compat.zlib` 的图上,切换形态让可执行文件的 88
+   个导出符号归零,然后 `libzlib.so` 与 `libz.so.1` **两个都被加载**。只有在
+   (2) 同时成立时它才真的把两个提供者合成一个。
 
 `private_include_dirs` 指出 **`include_dirs` 中**在本包边界处停住的那些条目:
 本包用它们编译,消费者永远收不到。

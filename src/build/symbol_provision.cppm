@@ -224,19 +224,34 @@ std::string Report::explain(std::string_view artifact) const {
     body += "  Also provided by:\n";
     for (auto const& label : providers) body += std::format("    {}\n", label);
 
-    // WHY it matters, in the terms the reader can check, then what to do. The
-    // three ways out are not alternatives to taste: the first changes which
-    // form mcpp builds, the second removes a provider, the third makes the two
-    // providers the same file.
+    // WHY it matters, then what to do — IN THE ORDER THAT ACTUALLY WORKS.
+    //
+    // ⚠️ `dependency_linkage = "shared"` is deliberately NOT first, and that
+    // ordering was corrected against a measurement rather than reasoned. On a
+    // real graph (a package staging glib, whose libgio pulls libz.so.1, plus a
+    // statically built compat.zlib) switching the form does remove the
+    // executable's 88 exported symbols — and then TWO zlibs load, because the
+    // library mcpp builds is `libzlib.so` while the reference is to
+    // `libz.so.1`. That is a worse state than the one being reported: two
+    // copies instead of one, and no diagnostic at all, since the check
+    // described above only looks at executables.
+    //
+    // So the first suggestion is the one that is always correct, and the form
+    // switch is offered with the condition that makes it work.
     body +=
         "  The executable is searched first, so the copy inside it wins for\n"
         "  every symbol both provide — the library's own copy is never called,\n"
         "  and code inside that library now runs against a build it was not\n"
         "  linked against.\n"
-        "  Ways out: give the duplicated package a single form with\n"
-        "  `[build] dependency_linkage` or a per-dependency `linkage`; stop one\n"
-        "  side from providing it; or give both the same SONAME so they resolve\n"
-        "  to one file.";
+        "  Ways out, in the order they apply:\n"
+        "    1. stop one side from providing it — usually the package that\n"
+        "       ships a copy of a library the graph already builds;\n"
+        "    2. make both resolve to ONE file: declare the library's real\n"
+        "       SONAME on its target, so the shared copy and the built one are\n"
+        "       the same name;\n"
+        "    3. `[build] dependency_linkage` / a per-dependency `linkage`\n"
+        "       changes which form mcpp builds — it removes THIS finding, but\n"
+        "       it only unifies the two providers when (2) holds as well.";
     return body;
 }
 

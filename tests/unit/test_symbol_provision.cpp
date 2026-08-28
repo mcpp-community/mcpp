@@ -145,9 +145,17 @@ TEST(SymbolProvision, TheReportNamesEveryProviderAndCapsTheSymbolList) {
     EXPECT_NE(text.find("20 symbols"), std::string::npos);
     EXPECT_NE(text.find("and 14 more"), std::string::npos);
     EXPECT_NE(text.find("/pkg/lib/libz.so.1"), std::string::npos);
-    // The three ways out are the point of the message.
-    EXPECT_NE(text.find("dependency_linkage"), std::string::npos);
-    EXPECT_NE(text.find("SONAME"), std::string::npos);
+    // The three ways out are the point of the message, and their ORDER is
+    // load-bearing: switching the form removes this finding while leaving two
+    // copies loaded unless the SONAMEs also match, so it must not be first.
+    auto stop = text.find("stop one side");
+    auto soname = text.find("SONAME");
+    auto form = text.find("dependency_linkage");
+    ASSERT_NE(stop, std::string::npos);
+    ASSERT_NE(soname, std::string::npos);
+    ASSERT_NE(form, std::string::npos);
+    EXPECT_LT(stop, soname);
+    EXPECT_LT(soname, form);
 }
 
 TEST(SymbolProvision, OnlyAConflictIsActionable) {

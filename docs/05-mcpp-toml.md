@@ -278,10 +278,19 @@ An arrangement with one copy in the process is silent. The verdict is recorded
 in `target/<triple>/<fp>/resolution.json` under `runtime.symbol_provision`,
 with the count and its denominator, so CI can read it without `readelf`.
 
-It is a warning by default and an error under `--strict`. Ways out, in the
-order they usually apply: give the duplicated package a single form with
-`dependency_linkage`; stop one side from providing the library; or give both
-the same `soname` so they resolve to one file.
+It is a warning by default and an error under `--strict`. The ways out are
+ordered, and the order matters:
+
+1. **Stop one side from providing it** — usually a package shipping a copy of a
+   library the graph already builds. Always correct.
+2. **Make both resolve to one file** by declaring the library's real `soname`
+   on its target.
+3. **`dependency_linkage`** changes which form mcpp builds. It removes *this*
+   finding, but on its own it can leave **two** copies loaded instead of one:
+   measured on a graph staging glib (whose `libgio` needs `libz.so.1`) beside a
+   statically built `compat.zlib`, switching the form dropped the executable's
+   88 exported symbols and then loaded both `libzlib.so` and `libz.so.1`. It
+   unifies the two providers only when (2) holds as well.
 
 `private_include_dirs` names the entries **of `include_dirs`** that stop at this
 package's own boundary: this package compiles with them, and a consumer never
