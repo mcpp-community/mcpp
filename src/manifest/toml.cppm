@@ -377,6 +377,9 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     for (auto& v : it->second.as_array())
                         if (v.is_string()) out.push_back(v.as_string());
             };
+            if (auto it = tt.find("dependency_linkage");
+                it != tt.end() && it->second.is_string())
+                pr.dependencyLinkage = it->second.as_string();
             read_list("cflags",   pr.cflags);
             read_list("cxxflags", pr.cxxflags);
             read_list("ldflags",  pr.ldflags);
@@ -711,7 +714,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             || k == "features" || k == "default-features"
             || k == "workspace" || k == "visibility"
             || k == "backend"  || k == "tools"
-            || k == "host-module" || k == "reexport";
+            || k == "host-module" || k == "reexport"
+            || k == "linkage";
     };
     // What makes a table an inline dep spec is that it names a SOURCE. This
     // used to be "every key is known", which quietly coupled two unrelated
@@ -776,6 +780,21 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 && spec.visibility != "interface") {
                 return std::unexpected(error(origin, std::format(
                     "[{}.\"{}\"] visibility must be 'public', 'private', or 'interface'",
+                    section, fqName)));
+            }
+        }
+        // #519: `linkage = "shared"` — this consumer wants THIS dependency as a
+        // separate shared library rather than merged into its own images.
+        //
+        // The bare word is unambiguous inside a dependency table (it is the
+        // vocabulary Zig, Conan and vcpkg all use on the edge), while the
+        // whole-graph default has to spell out `dependency_linkage` because
+        // `[target.<triple>].linkage` already means the C library there.
+        if (auto it = sub.find("linkage"); it != sub.end() && it->second.is_string()) {
+            spec.linkage = it->second.as_string();
+            if (spec.linkage != "static" && spec.linkage != "shared") {
+                return std::unexpected(error(origin, std::format(
+                    "[{}.\"{}\"] linkage must be 'static' or 'shared'",
                     section, fqName)));
             }
         }
@@ -1218,6 +1237,18 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string("build.default-profile")) m.buildConfig.defaultProfile = *v;
     else if (auto v = doc->get_string("build.profile"))   m.buildConfig.defaultProfile = *v;  // accepted alias
     if (auto v = doc->get_string("build.cache"))          m.buildConfig.cacheMode = *v;
+    // #519. Validated HERE rather than in prepare_build because the vocabulary
+    // is closed and owned by mcpp: unlike `cache`, whose values interact with
+    // a build mode resolved much later, "static" and "shared" are the whole
+    // domain, and a typo that reaches the resolver would silently mean
+    // "static".
+    if (auto v = doc->get_string("build.dependency_linkage")) {
+        if (*v != "static" && *v != "shared")
+            return std::unexpected(error(origin, std::format(
+                "[build] dependency_linkage = '{}' is invalid; expected "
+                "'static' or 'shared'", *v)));
+        m.buildConfig.dependencyLinkage = *v;
+    }
 
     // [xlings] — build environment (L-1). Subsections mirror .xlings.json 1:1.
     if (auto v = doc->get_string_array("xlings.deps"))  m.xlings.deps = *v;
@@ -1246,6 +1277,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     static constexpr std::string_view kKnownBuildKeys[] = {
         "allow_host_libs", "bmi_schedule", "build_program_timeout", "c_standard",
         "cache", "cflags", "cxxflags", "cxx_runtime", "default-profile", "defines",
+        "dependency_linkage",
         "dialect_cxxflags", "flags", "include_dirs", "include_dirs_after",
         "private_include_dirs",
         "jobs", "ldflags", "macos_deployment_target", "module_extensions", "profile",

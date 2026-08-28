@@ -5,6 +5,7 @@ import mcpp.platform;
 import mcpp.platform.elf_runtime;
 import mcpp.platform.runtime_binding;
 import mcpp.toolchain.post_install;
+import mcpp.build.symbol_provision;
 
 namespace elf = mcpp::platform::elf;
 namespace runtime = mcpp::platform::runtime;
@@ -545,3 +546,67 @@ TEST(RuntimePhysics, NonLinuxValidatorIsATypedNoop) {
 }
 
 } // namespace
+
+// ── the dynamic symbol table (issue #519) ─────────────────────────────────
+//
+// These read THIS TEST BINARY. A hand-built ELF fixture can assert that the
+// parser walks the structures it is given; only a real link can assert that
+// the RULE is right about what a linker actually produces — and the rule was
+// wrong twice before it was measured.
+
+TEST(ElfRuntime, ReadsThisBinarysOwnDynamicSymbols) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF dynamic symbol tables only exist on Linux here";
+
+    auto self = std::filesystem::path("/proc/self/exe");
+    if (!std::filesystem::exists(self)) GTEST_SKIP() << "no /proc/self/exe";
+
+    auto symbols = elf::inspect_dynamic_symbols(self);
+    ASSERT_TRUE(symbols.has_value()) << symbols.error();
+    if (!symbols->present)
+        GTEST_SKIP() << "this test binary is statically linked";
+
+    // The DENOMINATOR has to be real. `exported = 0` out of an unread table
+    // is the reading this whole area exists to make impossible.
+    EXPECT_GT(symbols->total, 0u);
+    EXPECT_TRUE(symbols->copyRelocationsKnown)
+        << "x86_64/aarch64/riscv64 must all be in the COPY relocation table";
+}
+
+TEST(ElfRuntime, ThisBinaryExportsNothingOfItsOwn) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF dynamic symbol tables only exist on Linux here";
+
+    auto self = std::filesystem::path("/proc/self/exe");
+    if (!std::filesystem::exists(self)) GTEST_SKIP() << "no /proc/self/exe";
+
+    auto facts = elf::inspect_elf_runtime(self);
+    ASSERT_TRUE(facts.has_value()) << facts.error();
+    // ⚠️ PT_INTERP, not the ELF type: a PIE executable is ET_DYN exactly like
+    // a shared library, and whether this binary is PIE is the payload
+    // compiler's default rather than mcpp's decision.
+    if (facts->interp.empty())
+        GTEST_SKIP() << "statically linked: no loader, so no flat namespace";
+
+    auto symbols = elf::inspect_dynamic_symbols(self);
+    ASSERT_TRUE(symbols.has_value()) << symbols.error();
+    ASSERT_TRUE(symbols->present);
+
+    auto exported = mcpp::build::symbol_provision::exported_definitions(*symbols);
+    ASSERT_TRUE(exported.has_value());
+
+    // Measured on every mcpp binary: the only defined entries are glibc's
+    // copy relocations (environ, __environ, stdout, stderr,
+    // __libc_single_threaded), and `environ` is a WEAK ALIAS AT THE SAME
+    // ADDRESS as `__environ` with no relocation entry of its own. A
+    // name-keyed filter reports it in every executable ever built.
+    std::vector<std::string> names;
+    for (auto const& e : *exported) names.push_back(e.name);
+    EXPECT_TRUE(names.empty())
+        << "an ordinary mcpp-linked test binary must export nothing of its "
+           "own; got: " << [&] {
+               std::string s;
+               for (auto const& n : names) { s += n; s += ' '; }
+               return s;
+           }();
+}

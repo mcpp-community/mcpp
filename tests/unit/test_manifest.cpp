@@ -133,7 +133,12 @@ soname = "libdep.so.1"
     EXPECT_EQ(m->targets[0].soname, "libdep.so.1");
 }
 
-TEST(Manifest, RejectsSonameOnNonSharedTarget) {
+TEST(Manifest, RejectsSonameOnANonLibraryTarget) {
+    // ⚠️ NARROWED from "non-shared" to "non-library" (#519). A soname is the
+    // name a library is FOUND by, and a package needs to be able to state it
+    // while still being consumed as a static library — otherwise two copies
+    // of one library can never resolve to a single file. An EXECUTABLE still
+    // has no business declaring one.
     constexpr auto src = R"(
 [package]
 name = "app"
@@ -145,7 +150,7 @@ soname = "libapp.so.1"
 )";
     auto m = mcpp::manifest::parse_string(src);
     ASSERT_FALSE(m.has_value());
-    EXPECT_NE(m.error().message.find("soname is only valid for shared targets"),
+    EXPECT_NE(m.error().message.find("soname is only valid for library targets"),
               std::string::npos);
 }
 
@@ -3332,7 +3337,7 @@ name = "depspeckeys"
 version = "0.1.0"
 
 [dependencies.compat]
-everything = { version = "1.0.0", features = ["x"], default-features = false, visibility = "private", backend = "openblas", tools = ["t"], host-module = true, reexport = true }
+everything = { version = "1.0.0", features = ["x"], default-features = false, visibility = "private", backend = "openblas", tools = ["t"], host-module = true, reexport = true, linkage = "shared" }
 bygit      = { git = "https://example.invalid/x.git", tag = "v1", visibility = "interface" }
 bypath     = { path = "../sibling" }
 )";
@@ -3354,6 +3359,133 @@ bypath     = { path = "../sibling" }
     // `backend = "openblas"` is sugar for requesting the backend-<impl> feature.
     EXPECT_NE(std::find(all->features.begin(), all->features.end(), "backend-openblas"),
               all->features.end());
+    EXPECT_EQ(all->linkage, "shared");
+}
+
+// ── #519: the dependency-form axis ────────────────────────────────────────
+
+namespace {
+
+std::expected<mcpp::manifest::Manifest, mcpp::manifest::ManifestError>
+load_inline(std::string_view name, std::string_view body) {
+    auto tmp = std::filesystem::temp_directory_path()
+             / std::format("mcpp_{}_{}", name, std::random_device{}());
+    std::filesystem::create_directories(tmp);
+    auto path = tmp / "mcpp.toml";
+    { std::ofstream os(path); os << body; }
+    return mcpp::manifest::load(path);
+}
+
+} // namespace
+
+TEST(Manifest, DependencyLinkageDefaultsToEmptyMeaningStatic) {
+    auto m = load_inline("deplinkage_default", R"(
+[package]
+name = "x"
+version = "0.1.0"
+)");
+    ASSERT_TRUE(m);
+    EXPECT_TRUE(m->buildConfig.dependencyLinkage.empty());
+}
+
+TEST(Manifest, DependencyLinkageIsAClosedVocabulary) {
+    auto ok = load_inline("deplinkage_ok", R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+dependency_linkage = "shared"
+)");
+    ASSERT_TRUE(ok);
+    EXPECT_EQ(ok->buildConfig.dependencyLinkage, "shared");
+
+    // ⚠️ "dynamic" is the LIBC axis' word. Accepting it here would silently
+    // mean "static", because that is what an unparsed value resolves to.
+    auto bad = load_inline("deplinkage_bad", R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+dependency_linkage = "dynamic"
+)");
+    EXPECT_FALSE(bad);
+}
+
+TEST(Manifest, ProfileDependencyLinkageIsOptionalSoItDoesNotResetBuild) {
+    // Resolving a profile REPLACES the whole Profile struct, so a plain field
+    // would make any declared profile silently undo `[build]`.
+    auto m = load_inline("deplinkage_profile", R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+dependency_linkage = "shared"
+[profile.dev]
+opt = "0"
+[profile.fast]
+dependency_linkage = "static"
+)");
+    ASSERT_TRUE(m);
+    ASSERT_TRUE(m->profiles.contains("dev"));
+    EXPECT_FALSE(m->profiles.at("dev").dependencyLinkage.has_value());
+    ASSERT_TRUE(m->profiles.contains("fast"));
+    ASSERT_TRUE(m->profiles.at("fast").dependencyLinkage.has_value());
+    EXPECT_EQ(*m->profiles.at("fast").dependencyLinkage, "static");
+}
+
+TEST(Manifest, ADependencyEdgeLinkageIsAClosedVocabularyToo) {
+    auto bad = load_inline("edge_linkage_bad", R"(
+[package]
+name = "x"
+version = "0.1.0"
+[dependencies]
+zlib = { version = "1.0.0", linkage = "dynamic" }
+)");
+    EXPECT_FALSE(bad);
+}
+
+TEST(Manifest, ALibraryTargetMayDeclareASoname) {
+    // ⚠️ This used to make the WHOLE MANIFEST FAIL TO LOAD, in both parsers.
+    // A soname is the name a library is FOUND by, and it is the only way two
+    // copies of one library can resolve to a single file — so a package has
+    // to be able to state it while still being consumed as a static library,
+    // which is the normal case.
+    auto m = load_inline("soname_on_lib", R"(
+[package]
+name = "z"
+version = "0.1.0"
+[targets.z]
+kind = "lib"
+soname = "libz.so.1"
+)");
+    ASSERT_TRUE(m) << (m ? "" : m.error().message);
+    ASSERT_EQ(m->targets.size(), 1u);
+    EXPECT_EQ(m->targets[0].soname, "libz.so.1");
+}
+
+TEST(Manifest, ASonameOnABinaryTargetIsStillRefused) {
+    auto m = load_inline("soname_on_bin", R"(
+[package]
+name = "z"
+version = "0.1.0"
+[targets.z]
+kind = "bin"
+main = "src/main.cpp"
+soname = "libz.so.1"
+)");
+    EXPECT_FALSE(m);
+}
+
+TEST(Manifest, ASonameMustStillBeABasename) {
+    auto m = load_inline("soname_path", R"(
+[package]
+name = "z"
+version = "0.1.0"
+[targets.z]
+kind = "lib"
+soname = "lib/libz.so.1"
+)");
+    EXPECT_FALSE(m);
 }
 
 // #359: a manifest written for a NEWER mcpp must still load.

@@ -456,3 +456,33 @@ TEST(CacheKey, TheHeaderSetCarriesNoAbsoluteHome) {
     EXPECT_NE(a.targetHeaderSet, b.targetHeaderSet);
     EXPECT_NE(ck::key_hex(a, pkg()), ck::key_hex(b, pkg()));
 }
+
+// ⚠️ Position-independent code was ABSENT from this key (issue #519).
+//
+// `-fPIC` is whole-build — one shared link unit anywhere and every object in
+// the graph carries it — but the key hashes a package's DECLARED flags, not
+// the ones the flag builder computes, so the two configurations collided.
+// Survivable only while a package's form was fixed by its author. Once a
+// consumer can write `dependency_linkage = "shared"`, a hit across that line
+// hands non-PIC objects to a shared link, and the message names a relocation
+// in a file nobody edited.
+TEST(CacheKey, PicChangesTheKey) {
+    auto b = axes();
+    auto p = pkg();
+    const auto without = ck::key_hex(b, p);
+    b.pic = true;
+    EXPECT_NE(ck::key_hex(b, p), without);
+}
+
+TEST(CacheKey, PicIsRecordedInEntryJsonSoAHitCanBeAudited) {
+    auto b = axes();
+    b.pic = true;
+    auto j = ck::to_json(b, pkg());
+    ASSERT_TRUE(j["profile"].contains("pic"));
+    EXPECT_EQ(j["profile"]["pic"], true);
+}
+
+TEST(CacheKey, PicDefaultsOffSoExistingEntriesKeepTheirIdentity) {
+    ck::BuildAxes fresh;
+    EXPECT_FALSE(fresh.pic);
+}

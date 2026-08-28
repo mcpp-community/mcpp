@@ -46,6 +46,7 @@ import mcpp.freestanding.linkline; // the ISA profile, for the std module comman
 import mcpp.toolchain.post_install;
 import mcpp.toolchain.abi;
 import mcpp.toolchain.triple;
+import mcpp.build.linkage_form;   // #519 — which form each dependency takes
 import mcpp.build.plan;
 import mcpp.build.schedule.policy;
 import mcpp.build.flags;          // compute_flags — the per-role contracts (#418)
@@ -1449,6 +1450,12 @@ prepare_build(bool print_fingerprint,
         //  payloads ship without the LTO plugin; enable via [profile.dist].)
         else                                    { pr.optLevel = "2"; } // release
         if (auto it = m->profiles.find(pname); it != m->profiles.end()) pr = it->second;
+        // #519 — a profile may override the whole-graph form. OPTIONAL, so a
+        // profile that does not mention it leaves `[build]` standing; a plain
+        // value would reset it, because the block above REPLACES `pr` wholesale
+        // with the declared profile.
+        if (pr.dependencyLinkage)
+            m->buildConfig.dependencyLinkage = *pr.dependencyLinkage;
         m->buildConfig.optLevel = pr.optLevel;
         m->buildConfig.debug    = pr.debug;
         m->buildConfig.lto      = pr.lto;
@@ -5746,6 +5753,34 @@ prepare_build(bool print_fingerprint,
                     it != pkg.manifest.featureRequires.end())
                     for (auto& cap : it->second) capRequires.emplace_back(cap, pcap);
             }
+            // `[targets.*] required_features` on a DEPENDENCY.
+            //
+            // ⚠️ THIS GATE EXISTED ONLY FOR THE ROOT. The root's targets are
+            // filtered further down against the root's own active features;
+            // a dependency's were never filtered at all, so a descriptor that
+            // wrote `required_features` on a target got the opposite of what
+            // it asked for: the target was built for EVERY consumer, whether
+            // or not the feature was active. For a `kind = "shared"` target
+            // that is not a cosmetic difference — its mere presence changes
+            // how the whole package is linked into every consumer.
+            //
+            // Gated against THIS package's active set, not the root's. A
+            // feature name is package-scoped, so the root's set is a different
+            // vocabulary that happens to share a type.
+            //
+            // ⚠️ ONE EXCEPTION, and it is not a second rule: a target
+            // requested as a host tool is what was ASKED FOR, so its
+            // `required_features` become that sub-build's inputs instead of a
+            // gate (docs/05 §2.2). That path re-enters prepare_build with the
+            // dependency as the ROOT, so it never reaches this code.
+            std::erase_if(pkg.manifest.targets,
+                          [&](const mcpp::manifest::Target& t) {
+                for (auto const& rf : t.requiredFeatures)
+                    if (std::find(active.begin(), active.end(), rf) == active.end())
+                        return true;
+                return false;
+            });
+
             for (auto& f : active) {
                 auto def = "-DMCPP_FEATURE_" + sanitize(f);
                 pkg.manifest.buildConfig.cflags.push_back(def);
@@ -7705,6 +7740,111 @@ prepare_build(bool print_fingerprint,
         }
     }
 
+    // ── #519: which FORM does each dependency take in this build ────────────
+    //
+    // The decision itself lives in `mcpp.build.linkage_form`, which is a pure,
+    // table-driven function with no filesystem and no manifest knowledge. What
+    // happens here is only the two halves that need this scope: collecting the
+    // facts, and MATERIALISING the answer.
+    //
+    // ⭐ MATERIALISED AS A TARGET KIND, on purpose. A dependency resolved to
+    // the shared form becomes an ordinary `SharedLibrary` target, so every
+    // emitter mcpp already has applies to it unchanged — the ELF soname and
+    // `$ORIGIN`, the PE import library and generated `.def`, the Mach-O
+    // install name. That is the whole reason this axis needs no new backend
+    // code on any of the three formats. It also means `make_plan` READS the
+    // answer instead of deriving it a second time.
+    {
+        namespace lf = mcpp::build::linkage_form;
+
+        lf::Request request;
+        if (auto parsed = lf::parse(m->buildConfig.dependencyLinkage))
+            request.whole = *parsed;
+        request.wholeIsExplicit = !m->buildConfig.dependencyLinkage.empty();
+        // ⚠️ ONLY THE ROOT MANIFEST'S EDGES. See DependencySpec::linkage — a
+        // package deep in the graph imposing a whole-image layout on its
+        // consumer is a supply-chain property, not a convenience.
+        for (auto const& [depName, spec] : m->dependencies) {
+            if (spec.linkage.empty()) continue;
+            if (auto parsed = lf::parse(spec.linkage)) {
+                request.perPackage[depName] = *parsed;
+                auto shortKey = spec.shortName.empty() ? depName : spec.shortName;
+                request.perPackage.emplace(shortKey, *parsed);
+            }
+        }
+        // A non-root edge that writes the key gets its request IGNORED, and
+        // says so — a silently dropped knob is how a knob becomes decoration.
+        for (std::size_t i = 1; i < packages.size(); ++i)
+            for (auto const& [depName, spec] : packages[i].manifest.dependencies)
+                if (!spec.linkage.empty())
+                    mcpp::diag::warning("build/dependency-linkage", std::format(
+                        "'{}' asks for dependency '{}' to be linked as '{}'; only "
+                        "the root project decides link forms, so this is ignored",
+                        packages[i].manifest.package.name, depName, spec.linkage));
+
+        lf::TargetFacts targetFacts;
+        if (auto t = mcpp::toolchain::triple::parse(tc->targetTriple))
+            targetFacts.hasLoader = !t->is_freestanding();
+        // The libc axis. Spelled exactly as `compute_flags` spells it, because
+        // the two must agree about what `-static` means: an image linked that
+        // way has no interpreter, so no shared object can ever be loaded into
+        // it. Two keys with `linkage` in the name, and they are NOT independent.
+        targetFacts.fullStaticLibc =
+            m->buildConfig.linkage == "static"
+            && mcpp::toolchain::target_supports_full_static(
+                   tc->targetTriple, mcpp::platform::supports_full_static);
+
+        std::set<std::string> packagesWithSources;
+        for (auto const& unit : scan.graph.units)
+            packagesWithSources.insert(unit.packageName);
+
+        for (std::size_t i = 1; i < packages.size(); ++i) {
+            auto& pkg = packages[i].manifest;
+            const std::string fq = pkg.package.namespace_.empty()
+                ? pkg.package.name
+                : std::format("{}.{}", pkg.package.namespace_, pkg.package.name);
+
+            lf::PackageFacts facts;
+            facts.label = std::format("{}@{}", fq, pkg.package.version);
+            facts.hasSources = packagesWithSources.contains(fq)
+                            || packagesWithSources.contains(pkg.package.name);
+            facts.carriesForeignLinkInputs =
+                lf::carries_foreign_link_inputs(pkg.buildConfig.ldflags);
+            facts.isDistribution = mcpp::pack::is_distribution_package(pkg);
+            for (auto const& artifact : pkg.runtimeConfig.artifacts) {
+                if (artifact.role == "static-library") facts.shipsStatic = true;
+                if (artifact.role == "shared-library") facts.shipsShared = true;
+            }
+            std::vector<mcpp::manifest::Target*> libraryTargets;
+            for (auto& t : pkg.targets) {
+                if (t.kind == mcpp::manifest::Target::SharedLibrary)
+                    facts.declaredShared = true;
+                if (t.kind == mcpp::manifest::Target::Library)
+                    libraryTargets.push_back(&t);
+            }
+
+            // The request is addressed by whatever the root wrote, so both
+            // spellings are looked up. `resolve` takes the label; give it the
+            // one the request can match.
+            lf::PackageFacts addressed = facts;
+            for (auto const& key : { fq, pkg.package.name }) {
+                if (request.perPackage.contains(key)) { addressed.label = key; break; }
+            }
+            auto allowed = lf::admissible(addressed, targetFacts);
+            auto answer  = lf::resolve(addressed, allowed, request);
+
+            if (!answer.diagnostic.empty())
+                mcpp::diag::degraded("build/dependency-linkage", answer.diagnostic,
+                    "this dependency is linked in the other form, which changes "
+                    "whether its code travels inside the images that use it");
+
+            if (answer.linkage != lf::DepLinkage::Shared) continue;
+            if (facts.isDistribution) continue;   // nothing here to build
+            for (auto* t : libraryTargets)
+                t->kind = mcpp::manifest::Target::SharedLibrary;
+        }
+    }
+
     auto planResult = mcpp::build::make_plan(*m, *tc, fp, scan.graph, report.topoOrder,
                                              packages, *root, ctx.outputDir,
                                              stdBmiPath, stdObjectPath, storeRoots);
@@ -8323,7 +8463,12 @@ prepare_build(bool print_fingerprint,
             // The GLOBAL registry root — the same one `fill_package_config`
             // relativizes against below, so both halves of the key describe
             // payload paths the same way.
-            storeRoots.empty() ? std::filesystem::path{} : storeRoots.front());
+            storeRoots.empty() ? std::filesystem::path{} : storeRoots.front(),
+            // The bit `make_plan` decided and `compute_flags` emits. Reading
+            // it here rather than re-deriving is what keeps the objects a
+            // cache entry HOLDS and the objects a build ASKS FOR describable
+            // by one sentence.
+            ctx.plan.needsPic);
 
         // Sources belonging to each package, package-root-relative and sorted.
         std::vector<std::vector<std::string>> pkgSources(packages.size());

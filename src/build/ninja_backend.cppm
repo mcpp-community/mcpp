@@ -2521,6 +2521,29 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             mcpp::ui::warning(finding.explain());
         }
         stage("loader-tags");
+        // Issue #519 — one library, one provider. Reported through `diag`
+        // rather than `ui::warning` so that `--strict` promotes it in the one
+        // place that policy lives, and so the record is deduplicated across
+        // the several images a workspace build produces.
+        //
+        // NOT an error by default. The arrangement it detects exists in the
+        // wild in artifacts nobody considers broken (/usr/bin/git exports its
+        // own `error` over glibc's), and mcpp's own `kind = "shared"`
+        // dependencies can produce a benign near-miss, so a hard gate on its
+        // first release would stop builds that are fine.
+        for (auto const& finding :
+             mcpp::build::runtime_validation::check_symbol_provision(
+                 plan, runtimeBefore)) {
+            if (!finding.report.actionable()) continue;
+            mcpp::diag::degraded(
+                "build/symbol-provision",
+                finding.report.explain(finding.artifact.filename().string()),
+                "the shared library's own copy of those symbols is never "
+                "called; it runs against the definitions inside this "
+                "executable instead",
+                "see docs/05 `[build] dependency_linkage`");
+        }
+        stage("symbol-provision");
         if (opts.verbose && !out.empty())
             std::fputs(out.c_str(), stdout);
         std::set<std::string> want(opts.ninjaTargets.begin(), opts.ninjaTargets.end());

@@ -443,14 +443,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             return t->is_pe();
         return bool(mcpp::platform::is_windows);
     }();
-    bool need_pic = false;
-    for (auto& lu : plan.linkUnits) {
-        if (lu.kind == LinkUnit::SharedLibrary) {
-            need_pic = true;
-            break;
-        }
-    }
-    std::string pic_flag = (need_pic && !isMsvcDialect && !peTarget) ? " -fPIC" : "";
+    // READ, not re-derived. `make_plan` decides this once and the cache key
+    // hashes the same bit; a second scan here is how the compiler and the
+    // cache came to disagree about which objects they were talking about.
+    std::string pic_flag =
+        (plan.needsPic && !isMsvcDialect && !peTarget) ? " -fPIC" : "";
 
     // Include dirs — this is the TYPED PATH channel (bare paths from the
     // manifest; the dialect prefix is applied here at emission), not the

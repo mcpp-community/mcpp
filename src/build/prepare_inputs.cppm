@@ -272,6 +272,21 @@ std::string canonical_compile_flags(const mcpp::manifest::Manifest& m) {
     s += " debug="; s += m.buildConfig.debug ? "1" : "0";
     s += " lto=";   s += m.buildConfig.lto   ? "1" : "0";
     s += " strip="; s += m.buildConfig.strip ? "1" : "0";
+    // #519 — the same reasoning as the profile knobs above, one axis later.
+    // The REQUEST is folded in rather than the derived `-fPIC`, because this
+    // string is built before the plan exists; the request is what a user
+    // edits and the flag is a function of it. Without this, flipping
+    // `dependency_linkage` reuses the previous configuration's output
+    // directory — measured on a two-package fixture, where both builds landed
+    // in `target/x86_64-linux-gnu/5d4a4a8a584ba471/` and the shared build's
+    // `libcore.so` was left sitting in the static build's `bin/`.
+    //
+    // Only appended when non-empty, so every existing build directory keeps
+    // its identity and this release rebuilds nothing.
+    if (!m.buildConfig.dependencyLinkage.empty()) {
+        s += " deplinkage=";
+        s += m.buildConfig.dependencyLinkage;
+    }
     return s;
 }
 

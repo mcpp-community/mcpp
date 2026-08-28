@@ -39,6 +39,18 @@ struct DependencySpec {
     std::string                 gitRev;         // commit / tag / branch (any one)
     std::string                 gitRefKind;     // "rev" / "tag" / "branch" (for clarity)
     std::string                 visibility = "public"; // public / private / interface
+    // #519 — "static" | "shared" | "" (no request). How the consumer wants
+    // this dependency to arrive in its images.
+    //
+    // ⚠️ HONOURED ONLY ON THE ROOT MANIFEST'S EDGES, and that is a
+    // supply-chain property rather than a simplification. A form is a
+    // whole-image decision: if a dependency four levels down could impose one,
+    // any package at any depth could change how the final program is laid out
+    // without its author saying so — the same reasoning that kept `reexport`
+    // from riding the default-public `visibility` edge. A middle package that
+    // genuinely must be a single shared copy says so on ITS OWN target
+    // (`kind = "shared"`), which is a constraint rather than a request.
+    std::string                 linkage;
     std::vector<std::string>    features;       // requested feature set (long-form dep spec)
     // #355: HOST tools this consumer wants from the dependency — the names of
     // its `kind = "bin"` targets. Requesting one makes mcpp build that target
