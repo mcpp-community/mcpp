@@ -7839,15 +7839,21 @@ prepare_build(bool print_fingerprint,
                     libraryTargets.push_back(&t);
             }
 
-            // The request is addressed by whatever the root wrote, so both
-            // spellings are looked up. `resolve` takes the label; give it the
-            // one the request can match.
-            lf::PackageFacts addressed = facts;
+            // A consumer addresses a dependency by whatever it wrote in
+            // `[dependencies]` — the fully-qualified name or the bare one —
+            // while every message wants the version too. Rather than swapping
+            // the label to whichever spelling matches (which drops the version
+            // from every refusal), make the request answer to the descriptive
+            // label as well.
             for (auto const& key : { fq, pkg.package.name }) {
-                if (request.perPackage.contains(key)) { addressed.label = key; break; }
+                if (auto it = request.perPackage.find(key);
+                    it != request.perPackage.end()) {
+                    request.perPackage.emplace(facts.label, it->second);
+                    break;
+                }
             }
-            auto allowed = lf::admissible(addressed, targetFacts);
-            auto answer  = lf::resolve(addressed, allowed, request);
+            auto allowed = lf::admissible(facts, targetFacts);
+            auto answer  = lf::resolve(facts, allowed, request);
 
             if (!answer.diagnostic.empty())
                 mcpp::diag::degraded("build/dependency-linkage", answer.diagnostic,
