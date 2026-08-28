@@ -76,6 +76,21 @@
   `dependency_linkage` 同样进了工程指纹 —— 否则切换开关会复用上一次配置的
   构建目录(实测:两次构建落在同一个 `target/x86_64-linux-gnu/<fp>/`)。
 
+- **⚠️⚠️ `mcpp pack` 不收合成的共享库,包解开就起不来。**
+
+  ```console
+  $ ./app
+  error while loading shared libraries: libcore.so
+  ```
+
+  闭包来自**运行产物**,而运行的是**暂存目录里的副本** —— 副本旁边的 `bin/`
+  是空的,`$ORIGIN` 解析不到,库于是从不出现在闭包里,也就从不被打包。
+  构建、打包、上传全程无话,失败发生在用户机器上。
+
+  ⚠️ **不是本版引入的**:在 2026.8.26.1 上用作者声明的 `kind = "shared"`
+  依赖同样复现。但 `dependency_linkage` 把它从「12 个自称 shared 的包」
+  变成「任何一个包」都可达,所以在这里修。
+
 - **⚠️ 在非 shared 目标上写 `soname` 会让整份 manifest 加载失败。**
 
   `soname` 是一个库被**找到**时用的名字,也是 mcpp 构建的那份与第三方携带的
