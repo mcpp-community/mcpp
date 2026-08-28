@@ -1,6 +1,11 @@
 # issue #519:依赖的链接形态 —— 一条不变量,两个高度
 
-2026-08-28 · 架构分析 + 设计方案(**待 review,尚未实施**)
+2026-08-28 · 架构分析 + 设计方案 + 落地记录
+
+**状态:已实施并发布为 mcpp `2026.8.28.2`**(`mcpp-community/mcpp#521`,
+合入 `1a49eca`;生态侧 `mcpplibs/mcpp-index#269`,合入 `b2dadae`)。
+§14 是落地记录,§13 是真实验证。⚠️ §7 的分批表是**计划**,§7.1 记的是
+实际发生的事 —— 两者不同,而不同的地方比相同的地方值得读。
 
 核实基线:mcpp `f2dbeec`,mcpp-index `8f5ad30`(2026-08-27)。
 
@@ -999,3 +1004,81 @@ sha256 与描述符声明一致,wrap 层一致。三个平台腿都改成 `{ GLO
 
 ⚠️ 诚实的边界:CN 资产**已发布并逐字节核过**,但没有再做一次「把 GLOBAL 弄坏
 再构建」的强制走 CN 路径实验 —— 那次尝试把磁盘写满了,而它能加的证据有限。
+
+---
+
+## 15. 发布与生态核验
+
+### 15.1 发布链,每一环都取了读数
+
+| 环 | 判据 |
+|---|---|
+| release workflow | 6/6(四个平台 + manifest 封存 + ecosystem publish) |
+| 产物 | 全套齐全,`draft=false pre=false` |
+| **两个镜像** | 四个平台在 GitHub **与** GitCode 都是 `302` —— 自动 `gtc` 那步成功,不需要本地补 |
+| **载荷完整性** | 从 **CN 镜像**下载后**重算** sha256 = `a35aecf1…`,与封存 manifest 声明的一致 |
+| 溯源 | manifest 的 commit = `ab65bfc`,正是 main 上那个九绿的 HEAD |
+| xim-pkgindex | `#709`(15/15)合入 `b584191`,声明同一个 `a35aecf1…` |
+| `latest` | 索引 main 上已是 `2026.8.28.2` |
+
+⭐ **载荷那一行是重算的,不是读 sidecar 的** —— `docs/09` 点名这是唯一值得
+手工做的那条,因为 sidecar 与载荷来自同一次上传,它证明不了自己。
+
+### 15.2 ⚠️ 发布门的对象:是 `origin/main` 的**当前** HEAD
+
+合入产生的九个 run **全部被取消**了 —— 因为我紧接着推了一个纯文档提交。
+所以「合入提交上的 run 绿了」这个判据当时**根本不存在**。
+
+真正的判据是 `origin/main` HEAD(`ab65bfc`)上的 run,九个全绿。
+
+⚠️ 这是本次会话第二次「推送盖掉了正在跑的流水线」:第一次是被取消的 run
+留下了一份装了一半的 sandbox 缓存,毒化了随后三次 `29_toolchain_partial_versions`。
+**一个在跑的 run 是状态,盖掉它的后果不止于「重跑一次」。**
+
+### 15.3 生态核验:干净沙箱,用**已发布的**二进制
+
+`xlings subos use eco-2026-8-28-2 --sandbox`(实测该沙箱连 `/tmp` 与
+`~/.mcpp` 都是新的),xlings 与 mcpp **各配一次** CN 镜像:
+
+```
+xlings update → xim:mcpp@2026.8.28.2 → mcpp 2026.8.28.2
+compat.cjson@1.7.19 从已发布的索引产物解析 → 构建 → 运行 → {"v":42}
+resolution.json: {"dynamic_symbols": 17, "exported": 0, "status": "clean"}
+```
+
+⭐ 最后一行是这条 issue 的机制**在发布产物里**留下的读数,带分母。
+
+⚠️ 对照基线先在 `2026.8.28.1` 上跑过同一套流程,所以这次唯一的变量就是版本号。
+
+### 15.4 ⭐⭐ 闭环:已发布的 mcpp,在已发布的生态里,抓到了这条 issue 本身
+
+同一个干净沙箱,依赖写 `"compat.eui-neo" = "0.5.7"`(从**已发布的索引产物**解析,
+不是本地 checkout):
+
+```console
+$ readelf -d -W bin/tray | grep NEEDED
+  libgio-2.0.so.0   libgobject-2.0.so.0   libglib-2.0.so.0
+$ ./tray
+** WARNING **: SNI: cannot connect to session bus: Could not connect
+eui_tray_init -> 0            # 沙箱里没有会话总线 —— 诚实地失败,不崩
+$ resolution.json → runtime.symbol_provision
+status=conflict  exported=88 of 352  conflicts=88
+providers: ['libz.so.1.3.1']
+```
+
+三件事同时成立:
+
+1. **托盘接上了** —— gio/gobject/glib 在 `NEEDED` 里,桩里一个 `g_dbus` 都没有;
+2. **它诚实地失败** —— 沙箱无会话总线,`eui_tray_init` 返回 0 并且不崩,
+   正是 SNI 后端注释里承诺的行为;
+3. ⭐⭐ **诊断抓到了 issue §2 本身** —— eui-neo 经 libpng 构建的静态 zlib 与
+   gio 加载的 `libz.so.1` 并存,88 个符号,分母 352。
+
+⭐ 这是整条链最有说服力的一处:**不是我造的 fixture,是生态里真实的包;
+不是我本地的引擎,是发布出去的那个二进制。** 而它报告的正是这条 issue
+在 2026-08-27 被写下来时描述的那个缺陷。
+
+⚠️ 而它此刻**还修不掉**:根治要 `compat.zlib` 声明 `soname = "libz.so.1"`,
+那要等索引 `latest` 的 mcpp 下限跨过 2026.8.28.2 —— 也就是刚发布的这一版。
+`mcpplibs/mcpp-index#270` 记着这条,前置判据写在里面。**发布顺序不是流程,
+是这条设计的一部分。**
