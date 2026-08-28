@@ -5768,13 +5768,29 @@ prepare_build(bool print_fingerprint,
             // feature name is package-scoped, so the root's set is a different
             // vocabulary that happens to share a type.
             //
-            // ⚠️ ONE EXCEPTION, and it is not a second rule: a target
-            // requested as a host tool is what was ASKED FOR, so its
-            // `required_features` become that sub-build's inputs instead of a
-            // gate (docs/05 §2.2). That path re-enters prepare_build with the
-            // dependency as the ROOT, so it never reaches this code.
+            // ⚠️⚠️ LIBRARY TARGETS ONLY, and the exclusion is load-bearing.
+            //
+            // A target requested as a HOST TOOL is what was ASKED FOR, so its
+            // `required_features` become that sub-build's INPUTS instead of a
+            // gate — docs/05 §2.2 says so in as many words. An earlier
+            // revision of this gate erased every kind, with a comment claiming
+            // the tool path "re-enters prepare_build with the dependency as
+            // the ROOT, so it never reaches this code". That was written from
+            // memory rather than read: the tool LOOKUP runs several hundred
+            // lines BELOW this point, against this very manifest, and it found
+            // an empty target list. `187_dep_host_tool.sh` caught it.
+            //
+            // Restricting the gate to libraries is not a workaround, it is the
+            // rule: a dependency's `bin` target produces no link unit in this
+            // build (make_plan only walks the ROOT's targets), so leaving it in
+            // place costs nothing. What the gate exists for is the shape where
+            // a target's mere presence changes how the package is linked into
+            // every consumer — and that is exactly a `shared` or `lib` target.
             std::erase_if(pkg.manifest.targets,
                           [&](const mcpp::manifest::Target& t) {
+                if (t.kind != mcpp::manifest::Target::Library
+                    && t.kind != mcpp::manifest::Target::SharedLibrary)
+                    return false;
                 for (auto const& rf : t.requiredFeatures)
                     if (std::find(active.begin(), active.end(), rf) == active.end())
                         return true;
@@ -7840,6 +7856,15 @@ prepare_build(bool print_fingerprint,
 
             if (answer.linkage != lf::DepLinkage::Shared) continue;
             if (facts.isDistribution) continue;   // nothing here to build
+            // ⚠️ A package that ALREADY declares a shared target has decided
+            // for itself, and its remaining library targets are not part of
+            // that decision. Flipping them would change what such a package
+            // builds under the DEFAULT request, which is the one property this
+            // axis promises never to touch. (No package in mcpp-index has both
+            // shapes at once — compat.vulkan's `lib` is overridden to `shared`
+            // on Linux rather than joined by it — but "unreachable today" is
+            // how the last few of these got in.)
+            if (facts.declaredShared) continue;
             for (auto* t : libraryTargets)
                 t->kind = mcpp::manifest::Target::SharedLibrary;
         }
