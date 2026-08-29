@@ -2094,6 +2094,64 @@ See [07 — build.mcpp](07-build-mcpp.md). Naming such a file in
 command: nothing tracks it, and editing the file produces `ninja: no work to
 do`.
 
+### 2.16 `[hooks]` — Project Build Lifecycle Commands
+
+`mcpp build` can run one host-shell command before the build and one command
+for its terminal result:
+
+```toml
+[hooks]
+build_start = "echo build started"
+build_failed = "notify-send 'build failed'"
+build_finished = "notify-send 'build finished'"
+
+# Optional; these are the defaults.
+timeout_seconds = 10
+enabled = true
+side_effect = true
+```
+
+| Key | Type | Default | Meaning |
+|---|---|---:|---|
+| `build_start` | string | — | Runs after project preparation, immediately before the build |
+| `build_failed` | string | — | Runs when the build exits unsuccessfully |
+| `build_finished` | string | — | Runs when the build exits successfully |
+| `timeout_seconds` | positive integer | `10` | Maximum time for each command |
+| `enabled` | bool | `true` | Enables all commands in this table |
+| `side_effect` | bool | `true` | Whether a hook failure makes the overall build fail |
+
+Commands run synchronously in the current project's root directory through the
+host shell (`/bin/sh` or `cmd.exe`). Standard input/output/error keep their
+ordinary terminal behaviour. Missing event commands are skipped.
+
+The lifecycle is:
+
+```text
+build_start
+    ├─ build succeeds → build_finished
+    └─ build fails    → build_failed
+```
+
+`build_failed` and `build_finished` are mutually exclusive. A hook command
+that cannot start, returns non-zero, or exceeds its timeout is a hook failure.
+With `side_effect = false`, mcpp reports a warning and preserves the build's
+result; with `true`, it returns failure. A hook's own failure does not trigger
+another hook.
+
+Hook programs can be installed as ordinary xlings dependencies. For example,
+an audio notifier can keep its sound files inside its own executable rather
+than adding media handling to mcpp:
+
+```toml
+[hooks]
+build_finished = "mcpp-hooks-audioplayer niulai-mm"
+build_failed = "mcpp-hooks-audioplayer niulai-niulai"
+side_effect = false
+
+[xlings]
+deps = ["xim:mcpp-hooks-audioplayer@0.0.1"]
+```
+
 ## Appendix A. Schema Ownership Principle (admission criteria for new fields)
 
 > **Closed syntax, open vocabulary**: whoever owns the parsing semantics defines the keys; whoever owns the domain knowledge defines the values.

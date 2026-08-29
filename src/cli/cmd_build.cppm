@@ -18,6 +18,7 @@ import mcpp.build.stage;
 import mcpp.build.schedule.detach_codegen;
 import mcpp.build.test_targets;
 import mcpp.dyndep;
+import mcpp.hooks;
 import mcpp.log;
 import mcpp.project;
 import mcpp.manifest;
@@ -40,6 +41,25 @@ workspace_fanout_members(bool wantAll, const std::string& package_filter) {
     if (wantAll || (virtualWs && package_filter.empty()))
         return m->workspace.members;
     return std::nullopt;
+}
+
+int run_build_with_hooks(mcpp::build::BuildContext& ctx, bool verbose,
+                         bool no_cache, std::string_view targetOverride) {
+    auto config = mcpp::hooks::load(ctx.projectRoot / "mcpp.toml");
+    if (!config) {
+        mcpp::ui::error(std::format("invalid hook configuration: {}", config.error()));
+        return 2;
+    }
+
+    if (!mcpp::hooks::invoke(*config, mcpp::hooks::Event::BuildStart,
+                             ctx.projectRoot))
+        return 1;
+
+    int rc = mcpp::build::run_build_plan(ctx, verbose, no_cache, targetOverride);
+    auto terminalEvent = rc == 0 ? mcpp::hooks::Event::BuildFinished
+                                 : mcpp::hooks::Event::BuildFailed;
+    bool hookOk = mcpp::hooks::invoke(*config, terminalEvent, ctx.projectRoot);
+    return rc != 0 ? rc : (hookOk ? 0 : 1);
 }
 
 export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
@@ -118,7 +138,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
             auto ctx = mcpp::build::prepare_build(print_fp, /*includeDevDeps=*/false,
                                                   /*extraTargets=*/{}, mo);
             if (!ctx) { std::println(stderr, "error: {}: {}", mp, ctx.error()); rc = 2; continue; }
-            int r = mcpp::build::run_build_plan(*ctx, verbose, no_cache, mo.target_triple);
+            int r = run_build_with_hooks(*ctx, verbose, no_cache, mo.target_triple);
             if (r != 0) rc = r;
         }
         return rc;
@@ -137,8 +157,19 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
         && ov.cache_mode.empty()) {
         auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
         if (root) {
-            if (auto rc = mcpp::build::try_fast_build(*root, verbose, no_cache)) {
-                return *rc;
+            auto config = mcpp::hooks::load(*root / "mcpp.toml");
+            if (!config) {
+                mcpp::ui::error(std::format(
+                    "invalid hook configuration: {}", config.error()));
+                return 2;
+            }
+            // Hooked builds must first prepare the project so xlings-provided
+            // hook programs are available before build_start. Projects with no
+            // active hooks keep the existing fast path unchanged.
+            if (!mcpp::hooks::active(*config)) {
+                if (auto rc = mcpp::build::try_fast_build(*root, verbose, no_cache)) {
+                    return *rc;
+                }
             }
         }
     }
@@ -147,7 +178,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
                                           /*extraTargets=*/{}, ov);
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
 
-    return mcpp::build::run_build_plan(*ctx, verbose, no_cache, ov.target_triple);
+    return run_build_with_hooks(*ctx, verbose, no_cache, ov.target_triple);
 }
 
 export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,

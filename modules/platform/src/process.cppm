@@ -112,6 +112,14 @@ int run_exec_deadline(const std::vector<std::string>& argv,
                       std::chrono::milliseconds deadline,
                       bool* timed_out);
 
+// Run one host-shell command with inherited stdio and a real deadline.
+// POSIX uses /bin/sh; Windows uses cmd.exe. This is for user-authored command
+// strings such as project hooks — programmatic launches should keep using the
+// argv-based run_exec_deadline API above.
+int run_shell_deadline(std::string_view command,
+                       std::chrono::milliseconds deadline,
+                       bool* timed_out);
+
 RunResult capture_exec_deadline(
     const std::vector<std::string>& argv,
     const std::vector<std::pair<std::string, std::string>>& extraEnv,
@@ -656,6 +664,18 @@ int run_exec_deadline(const std::vector<std::string>& argv,
     if (!r.supported) return run_exec(argv, extraEnv);
     if (timed_out) *timed_out = r.timed_out;
     return r.exit_code;
+}
+
+int run_shell_deadline(std::string_view command,
+                       std::chrono::milliseconds deadline,
+                       bool* timed_out)
+{
+    std::vector<std::string> argv;
+    if constexpr (mcpp::platform::is_windows)
+        argv = {"cmd.exe", "/d", "/s", "/c", std::string(command)};
+    else
+        argv = {"/bin/sh", "-c", std::string(command)};
+    return run_exec_deadline(argv, {}, deadline, timed_out);
 }
 
 RunResult capture_exec_deadline(

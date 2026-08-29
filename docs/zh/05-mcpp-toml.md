@@ -1791,6 +1791,59 @@ o.arg("./mkblob.sh").arg("blob.bin").arg("${mcpp.out_dir}/blob.o")
 但 ldflags 是链接命令里的一串字符:没有任何东西跟踪它,改了它得到的是
 `ninja: no work to do`。
 
+### 2.16 `[hooks]` —— 项目构建生命周期命令
+
+`mcpp build` 可以在正式构建前执行一条宿主 Shell 命令,并根据最终结果再执行一条:
+
+```toml
+[hooks]
+build_start = "echo build started"
+build_failed = "notify-send 'build failed'"
+build_finished = "notify-send 'build finished'"
+
+# 可选;以下是默认值。
+timeout_seconds = 10
+enabled = true
+side_effect = true
+```
+
+| 键 | 类型 | 默认值 | 含义 |
+|---|---|---:|---|
+| `build_start` | 字符串 | — | 项目准备完成、正式构建开始前执行 |
+| `build_failed` | 字符串 | — | 构建以失败状态结束时执行 |
+| `build_finished` | 字符串 | — | 构建成功结束时执行 |
+| `timeout_seconds` | 正整数 | `10` | 每条命令的最长执行时间 |
+| `enabled` | 布尔 | `true` | 是否启用本表中的全部命令 |
+| `side_effect` | 布尔 | `true` | Hook 失败是否让本次构建失败 |
+
+命令在当前项目根目录中同步执行,使用宿主 Shell(`/bin/sh` 或 `cmd.exe`),标准输入、
+输出和错误沿用普通终端行为。没有配置的事件直接跳过。
+
+生命周期为:
+
+```text
+build_start
+    ├─ 构建成功 → build_finished
+    └─ 构建失败 → build_failed
+```
+
+`build_failed` 与 `build_finished` 互斥。命令无法启动、返回非零或超过时限均视为
+Hook 失败。`side_effect = false` 时 mcpp 报 warning 并保留原构建结果;设为 `true`
+时返回失败。Hook 自身失败不会再触发另一个 Hook。
+
+Hook 程序可以作为普通 xlings 依赖安装。例如,音频通知程序可以把音频内置进自己的
+可执行文件,无需让 mcpp 处理媒体资源:
+
+```toml
+[hooks]
+build_finished = "mcpp-hooks-audioplayer niulai-mm"
+build_failed = "mcpp-hooks-audioplayer niulai-niulai"
+side_effect = false
+
+[xlings]
+deps = ["xim:mcpp-hooks-audioplayer@0.0.1"]
+```
+
 ## 附录 A. Schema 所有权原则(新字段准入标准)
 
 > **语法封闭,词汇开放**:谁拥有解析语义谁定义键;谁拥有领域知识谁定义值。
