@@ -1,0 +1,17 @@
+[package]
+name    = "graphics-stack"
+version = "0.1.0"
+
+# The whole KMS/DRM stack, from the index. No host paths, no -L/usr/lib.
+[target.'cfg(linux)'.dependencies.compat]
+libgbm  = "2026.08.29"   # buffer allocation out of a DRM device
+libdrm  = "2026.08.30"   # the KMS side: modes, CRTCs, framebuffers
+egl     = "2026.08.30"   # rendering onto those buffers
+wayland = "2026.08.30"   # the display protocol, client and server
+
+# compat.wayland puts only -lwayland-client on the link line, because a
+# dependency's ldflags reach every consumer with no way to opt out. A
+# compositor asks for the server library itself; it resolves out of the same
+# package.
+[target.'cfg(linux)'.build]
+ldflags = ["-lwayland-server"]
