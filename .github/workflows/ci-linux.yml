@@ -124,6 +124,17 @@ jobs:
       - name: Per-subsystem tests (`mcpp test -p <member>`)
         run: |
           set -euo pipefail
+          # ⚠️ `$MCPP_FRESH` comes from the step above, which takes the NEWEST
+          # mcpp anywhere under target/. That is correct in this job because
+          # nothing between the two steps writes another one — but `mcpp pack`
+          # leaves a copy under `target/dist/`, and a pack step inserted above
+          # would silently redirect both this loop and the suite before it to
+          # the packaged binary. Observed locally; kept as a note because the
+          # expression is shared with three other jobs and this is not the
+          # place to change it.
+          case "$MCPP_FRESH" in
+            */target/dist/*) echo "MCPP_FRESH points into target/dist — a pack step now runs before the tests"; exit 1 ;;
+          esac
           members=$(sed -n '/^\[workspace\]/,/^\[/p' mcpp.toml \
                     | grep -oE '"modules/[a-z0-9-]+"' | tr -d '"' | sed 's|modules/||')
           [ -n "$members" ] || { echo "no workspace members found in mcpp.toml"; exit 1; }
