@@ -11,7 +11,7 @@ of those commit messages contains a misdiagnosis that is corrected in §5.
 | Site | Group | Moves when |
 |---|---|---|
 | `mcpp.toml` `[package].version` | **being built** | work starts on a new version |
-| `src/version.cppm` `MCPP_VERSION` | **being built** | same commit as above (compiled-in copy) |
+| `modules/versioning/src/version.cppm` `MCPP_VERSION` | **being built** | same commit as above (compiled-in copy) |
 | `.xlings.json` `[workspace].mcpp` | **bootstrapped from** | separately, *after* a release is installable |
 | `ci-fresh-install.yml` `MCPP_PIN` | **version under test** | **nothing — it is derived at run time** (§5) |
 

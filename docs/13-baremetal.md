@@ -13,7 +13,7 @@ covers the hosted link model this chapter departs from.
 ## Overview
 
 A freestanding target is a target whose `os` field is `none`. The target table
-at `src/toolchain/triple.cppm` carries four of them:
+at `modules/toolchain-model/src/triple.cppm` carries four of them:
 
 | Triple | Tier | C library |
 |---|---|---|
