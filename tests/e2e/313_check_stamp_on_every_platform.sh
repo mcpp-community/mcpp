@@ -67,11 +67,18 @@ out="$("$MCPP" run 2>&1 | tail -1)"
 # declared output goes unproduced -- it leaves the file absent and re-runs that
 # edge on every build afterwards, so a build with no stamp mechanism at all
 # stays green and merely redoes work.
-mapfile -t stamps < <(find target -name 'probe.stamp')
-(( ${#stamps[@]} == 1 )) || {
-    printf '  %s\n' "${stamps[@]}"
-    echo "FAIL: expected exactly one stamp written by the engine, found ${#stamps[@]}"
-    exit 1; }
+# ⚠️ NOT `mapfile`. macOS ships bash 3.2, which does not have it, and this file
+# runs there — `47_cdb_prebuilt_module_path_abs.sh` already says so in its own
+# comment, and every other user of `mapfile` in this suite declares
+# `# requires: gcc`, which macOS never satisfies. So the constraint was written
+# down and the tests that could violate it could not reach macOS to find out.
+# This one did, on its first CI run, with `mapfile: command not found`.
+stamp_count=$(find target -name 'probe.stamp' | wc -l | tr -d '[:space:]')
+if [ "$stamp_count" != "1" ]; then
+    find target -name 'probe.stamp' | sed 's/^/  /'
+    echo "FAIL: expected exactly one stamp written by the engine, found $stamp_count"
+    exit 1
+fi
 
 # And the other half: a satisfied edge is not re-run. Without the stamp this
 # would repeat forever, which is the symptom the exit code hides.
