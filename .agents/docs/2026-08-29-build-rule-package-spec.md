@@ -570,9 +570,19 @@ is made. A replay or guard test that has never been seen red cannot distinguish
 | V6 | A cycle in the host-module graph is reported as a cycle, naming the packages on it | Not as a depth-limit message, which answers a different question |
 | V7 | A non-official package declaring an `mcpp.*` module name warns, and the build still succeeds | Both halves; a test that only checks the warning cannot tell a warning from an error |
 | V8 | The second build of an unchanged project prints none of the above | The whole-project fast path (`try_fast_build`) never reaches `build.mcpp`, so these tests must touch a source first or they measure the fast path |
+| V9 | A `check` whose command never touches its stamp still satisfies its edge, and does not re-run when nothing changed | **Do not assert on the build succeeding.** Measured: ninja does not fail when a declared output goes unproduced — it leaves the file absent and re-runs that edge forever, so the build stays green and the only symptom is work redone. The stamp's existence and the absent re-run are the criteria |
+| V10 | Withdrawing `reexport = true` is caught on a warm cache | Pins the behaviour, not the reason: measured, the refusal fires even with the check below the fast path, because `ctxHash` happens to move as well. The placement is what makes the property hold |
 
 V8 is stated because this repository has read that measurement wrongly twice
 before, once for the directive cache and once for the advisory channel.
+
+**Where each one lives.** V1/V1b/V3/V3b/V7 in `tests/e2e/309`; V4 and the
+dual-role case in `310`; V5/V6/V10 in `311`; V9 in `312` and the
+`examples/08-build-rules` fixture it builds. V2 in
+`tests/unit/test_provisions.cpp`, whose collision cases use designated
+initialisers after a positional one silently asserted on a field it had never
+passed. V8 is a property every one of them relies on rather than a test of its
+own.
 
 ---
 
