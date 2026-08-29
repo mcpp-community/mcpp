@@ -21,7 +21,7 @@ import mcpp.pm.index_refresh;
 import mcpp.pm.index_route;
 import mcpp.pm.index_spec;
 import mcpp.platform.axis;
-import mcpp.platform.xlings;
+import mcpp.xlings;
 
 namespace {
 

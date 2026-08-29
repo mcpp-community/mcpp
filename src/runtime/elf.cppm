@@ -1,15 +1,15 @@
-// mcpp.platform.elf_runtime — Linux ELF runtime-closure facts and physics.
+// mcpp.runtime.elf — Linux ELF runtime-closure facts and physics.
 //
 // This module reads the bytes the loader will read.  It does not invoke
 // readelf/patchelf/ldd and it does not infer a runtime from whichever payload
 // happens to appear first in a directory.  Non-Linux callers get the same
 // typed API, but validation is a no-op because ELF/glibc rules do not apply.
 
-export module mcpp.platform.elf_runtime;
+export module mcpp.runtime.elf;
 
 import std;
 import mcpp.platform;
-import mcpp.platform.runtime_binding;
+import mcpp.runtime.binding;
 
 export namespace mcpp::platform::elf {
 

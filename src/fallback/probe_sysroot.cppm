@@ -11,7 +11,7 @@ module;
 export module mcpp.fallback.probe_sysroot;
 
 import std;
-import mcpp.platform.xlings;
+import mcpp.xlings;
 import mcpp.platform;
 import mcpp.log;
 

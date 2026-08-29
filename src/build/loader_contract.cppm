@@ -28,14 +28,14 @@
 // 1 correct executable out of 73, with the one author who found the problem
 // having no way to carry it to the other 72.
 //
-// This module does not parse ELF. `mcpp.platform.elf_runtime` reads the bytes;
+// This module does not parse ELF. `mcpp.runtime.elf` reads the bytes;
 // this decides what they should have said. Non-ELF formats get
 // `NotApplicable`, so Mach-O and PE need no branches in the callers.
 
 export module mcpp.build.loader_contract;
 
 import std;
-import mcpp.platform.elf_runtime;
+import mcpp.runtime.elf;
 
 export namespace mcpp::build::loader {
 

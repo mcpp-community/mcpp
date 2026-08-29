@@ -5,7 +5,7 @@ import mcpp.freestanding.target;
 import mcpp.freestanding.linkline;
 import mcpp.freestanding.runner;
 import mcpp.toolchain.triple;
-import mcpp.platform.xlings;
+import mcpp.xlings;
 import mcpp.build.build_program;
 
 using namespace mcpp::freestanding;

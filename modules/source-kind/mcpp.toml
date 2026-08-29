@@ -1,0 +1,15 @@
+# mcpp.source_kind — the table that decides what a source file IS.
+#
+# A leaf by construction: classifying a path by extension needs no knowledge of
+# toolchains, manifests or packages, and keeping it that way is what stopped the
+# classification from being re-derived at each call site (#272, #410).
+
+[package]
+name        = "source-kind"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "Source-file role classification for mcpp"
+license     = "Apache-2.0"
+
+[lib]
+path = "src/source_kind.cppm"

@@ -20,6 +20,25 @@ fi
 echo "Using mcpp: $MCPP"
 $MCPP --version
 
+# ⚠️ The suite takes ~20 minutes, which is long enough to be tempting to work
+# through -- and rebuilding mcpp during it swaps the binary UNDER the run.
+# Later tests then measure a different engine from earlier ones, and the report
+# mixes the two without saying so. Measured twice in one session: three tests
+# "failed", all three passed on a stable binary, and the time went into
+# diagnosing regressions that did not exist.
+#
+# A note asking people not to do it is what failed the second time, so the run
+# now records what it started with and says so at the end. It cannot prevent
+# the rebuild; it can refuse to let the results be read as if it had not
+# happened.
+_binary_stamp() {
+    if command -v shasum >/dev/null 2>&1; then shasum -a 256 "$MCPP" | cut -d' ' -f1
+    elif command -v sha256sum >/dev/null 2>&1; then sha256sum "$MCPP" | cut -d' ' -f1
+    else stat -c '%Y %s' "$MCPP" 2>/dev/null || stat -f '%m %z' "$MCPP" 2>/dev/null
+    fi
+}
+MCPP_STAMP_AT_START="$(_binary_stamp)"
+
 # mcpp now resolves MCPP_HOME from the binary's location by default.
 # In tests we exercise the dev binary at build/.../mcpp, so without an
 # explicit override MCPP_HOME would land inside build/ and our cached
@@ -389,6 +408,14 @@ if [[ ${#TIMINGS[@]} -gt 0 ]]; then
     echo "==============================================="
 fi
 echo "E2E Summary: $PASS passed, $FAIL failed, $SKIP skipped"
+if [[ "$(_binary_stamp)" != "$MCPP_STAMP_AT_START" ]]; then
+    echo
+    echo "⚠️  THE BINARY UNDER TEST CHANGED DURING THIS RUN."
+    echo "    $MCPP"
+    echo "    Earlier tests ran a different engine from later ones, so this"
+    echo "    summary describes no single build. Re-run without rebuilding."
+    exit 1
+fi
 if [[ ${#TIMED_OUT_TESTS[@]} -gt 0 ]]; then
     echo "Timed out: ${TIMED_OUT_TESTS[*]}"
 fi

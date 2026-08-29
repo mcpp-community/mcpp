@@ -1,0 +1,18 @@
+import std;
+import mcpp;
+import example.rules.tidy;
+import example.rules.embed;
+
+int main() {
+    // Re-run when a source or an asset appears or disappears. The edges below
+    // track CONTENT; this tracks the set of paths.
+    mcpp::rerun_if_changed_glob("src/**/*.cpp");
+    mcpp::rerun_if_changed_glob("assets/**");
+
+    std::vector<std::string> sources{ "src/main.cpp" };
+    if (!example::rules::tidy::check(sources)) return 1;
+
+    std::vector<std::string> assets{ "assets/greeting.txt" };
+    if (!example::rules::embed::generate(assets)) return 1;
+    return 0;
+}

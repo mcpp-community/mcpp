@@ -4,8 +4,8 @@ import std;
 import mcpp.config;
 import mcpp.manifest;
 import mcpp.platform;
-import mcpp.platform.runtime_binding;
-import mcpp.platform.xlings.runtime_selection;
+import mcpp.runtime.binding;
+import mcpp.xlings.runtime_selection;
 
 namespace runtime = mcpp::xlings::runtime;
 
@@ -152,7 +152,7 @@ TEST(RuntimeBinding, DefaultAlwaysUsesConfiguredMcppHomeDefault) {
     auto selection = runtime::select_runtime(root, std::nullopt, h.dir / "repo");
     ASSERT_TRUE(selection);
     auto binding = mcpp::platform::runtime::resolve_runtime_binding(
-        *selection, {}, h.cfg);
+        *selection, {}, h.cfg.xlingsHome());
     ASSERT_TRUE(binding.has_value()) << binding.error();
     EXPECT_EQ(binding->subosDir, expected);
     EXPECT_EQ(binding->runtimeId, "glibc@2.39");
@@ -177,7 +177,7 @@ TEST(RuntimeBinding, ExplicitDefaultUsesGlobalDefaultButKeepsNamedIdentity) {
     auto selection = runtime::select_runtime(manifest, std::nullopt, h.dir / "repo");
     ASSERT_TRUE(selection);
     auto binding = mcpp::platform::runtime::resolve_runtime_binding(
-        *selection, {}, h.cfg);
+        *selection, {}, h.cfg.xlingsHome());
     ASSERT_TRUE(binding.has_value()) << binding.error();
     EXPECT_EQ(binding->subosDir, expected);
     EXPECT_EQ(binding->provenance, "named_subos");
@@ -197,7 +197,7 @@ TEST(RuntimeBinding, PhysicalSubosViewReconcilesAStaleDeclaredGlibcIdentity) {
     auto selection = runtime::select_runtime(root, std::nullopt, h.dir / "repo");
     ASSERT_TRUE(selection);
     auto binding = mcpp::platform::runtime::resolve_runtime_binding(
-        *selection, {}, h.cfg);
+        *selection, {}, h.cfg.xlingsHome());
     ASSERT_TRUE(binding.has_value()) << binding.error();
 
     EXPECT_EQ(binding->runtimeId, "glibc@2.44");
@@ -226,7 +226,7 @@ TEST(RuntimeBinding, BrokenSubosViewFallsBackOnlyToTheExactDeclaredPayload) {
     auto selection = runtime::select_runtime(root, std::nullopt, h.dir / "repo");
     ASSERT_TRUE(selection);
     auto binding = mcpp::platform::runtime::resolve_runtime_binding(
-        *selection, {}, h.cfg);
+        *selection, {}, h.cfg.xlingsHome());
     ASSERT_TRUE(binding.has_value()) << binding.error();
 
     EXPECT_EQ(binding->runtimeId, "glibc@2.44");
@@ -244,14 +244,14 @@ TEST(RuntimeBinding, NamedSubosIsOwnedByTheRootAndMissingIsHardError) {
     ASSERT_TRUE(selection);
 
     auto missing = mcpp::platform::runtime::resolve_runtime_binding(
-        *selection, {}, h.cfg);
+        *selection, {}, h.cfg.xlingsHome());
     ASSERT_FALSE(missing.has_value());
     EXPECT_NE(missing.error().find("el8"), std::string::npos);
 
     const auto expected = h.dir / "repo" / ".mcpp" / ".xlings" / "subos" / "el8";
     h.write(expected);
     auto binding = mcpp::platform::runtime::resolve_runtime_binding(
-        *selection, {}, h.cfg);
+        *selection, {}, h.cfg.xlingsHome());
     ASSERT_TRUE(binding.has_value()) << binding.error();
     EXPECT_EQ(binding->subosDir, expected);
 }
@@ -270,9 +270,9 @@ TEST(RuntimeBinding, NamedEnvironmentsHaveDistinctContractsAndRoundTrip) {
     h.write(h.dir / "repo" / ".mcpp" / ".xlings" / "subos" / "dev");
 
     auto el8 = mcpp::platform::runtime::resolve_runtime_binding(
-        *el8Selection, {}, h.cfg);
+        *el8Selection, {}, h.cfg.xlingsHome());
     auto dev = mcpp::platform::runtime::resolve_runtime_binding(
-        *devSelection, {}, h.cfg);
+        *devSelection, {}, h.cfg.xlingsHome());
     ASSERT_TRUE(el8);
     ASSERT_TRUE(dev);
     EXPECT_NE(el8->contractHash, dev->contractHash);
@@ -319,7 +319,7 @@ TEST(RuntimeBindingDegradation, UndeclaredSubosStillResolves) {
         h.dir / "repo" / ".mcpp" / ".xlings" / "subos" / "bare");
 
     auto binding = mcpp::platform::runtime::resolve_runtime_binding(
-        *selection, {}, h.cfg);
+        *selection, {}, h.cfg.xlingsHome());
     ASSERT_TRUE(binding.has_value())
         << "absence must degrade, not fail: " << binding.error();
     EXPECT_FALSE(binding->declared);
@@ -342,7 +342,7 @@ TEST(RuntimeBindingDegradation, UndeclaredBindingRoundTrips) {
     std::filesystem::create_directories(
         h.dir / "repo" / ".mcpp" / ".xlings" / "subos" / "bare");
     auto binding = mcpp::platform::runtime::resolve_runtime_binding(
-        *selection, {}, h.cfg);
+        *selection, {}, h.cfg.xlingsHome());
     ASSERT_TRUE(binding.has_value());
 
     auto decoded = mcpp::platform::runtime::deserialize_runtime_binding(
@@ -375,7 +375,7 @@ TEST(RuntimeBindingDegradation, NewerSchemaIsReadNotRefused) {
     })";
 
     auto binding = mcpp::platform::runtime::resolve_runtime_binding(
-        *selection, {}, h.cfg);
+        *selection, {}, h.cfg.xlingsHome());
     ASSERT_TRUE(binding.has_value())
         << "a newer contract must not invalidate an older mcpp: "
         << binding.error();
@@ -395,7 +395,7 @@ TEST(RuntimeBindingDegradation, MissingSubosStillFails) {
                                              h.dir / "repo");
     ASSERT_TRUE(selection);
     auto binding = mcpp::platform::runtime::resolve_runtime_binding(
-        *selection, {}, h.cfg);
+        *selection, {}, h.cfg.xlingsHome());
     ASSERT_FALSE(binding.has_value())
         << "a contradiction must be reported, not degraded";
     EXPECT_NE(binding.error().find("does not exist"), std::string::npos);

@@ -30,7 +30,7 @@ import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.build.hermetic;
 import mcpp.build.runtime_validation;
-import mcpp.platform.elf_runtime;
+import mcpp.runtime.elf;
 import mcpp.build.compile_commands;
 import mcpp.build.cmdlimits;
 import mcpp.diag;
@@ -40,7 +40,7 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;   // shared_soname_flag decides by TARGET, not host
-import mcpp.platform.xlings;
+import mcpp.xlings;
 import mcpp.platform;
 import mcpp.ui;
 import mcpp.log;
@@ -2114,6 +2114,41 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // which is the assumption per-token quoting needs and which #331
             // showed is NOT true of hand-assembled flag blobs.
             cmd += shell_quote_arg(escape_ninja_chars(tok));
+        }
+        // A CHECK's verdict is its exit code; its stamp is bookkeeping the
+        // GRAPH needs. Requiring the command to produce the stamp made the
+        // role unusable for the analysers it exists for — clang-tidy writes
+        // nothing on success — and the obvious workaround, a wrapper script,
+        // cannot be written portably because an action's command is an argv
+        // with no shell assumed. So the engine wraps it: mcpp is already on
+        // disk on every platform it runs on.
+        //
+        // Prepended rather than appended, and the original command is passed
+        // through unchanged after `--`, so a command that DOES write its own
+        // stamp behaves exactly as before: existing files are left alone.
+        //
+        // The `outputs` test is redundant — `directives.cppm` refuses an
+        // action with none at parse time — and is kept because this loop reads
+        // as if it could see one, and a wrapper with no stamp to write would
+        // be a command that swallows its own exit code.
+        if (a.role == mcpp::manifest::BuildAction::Role::Check
+            && !a.outputs.empty()) {
+            // `mcpp_exe_path()`, not `self_exe_path()` directly: this file
+            // already has one spelling of "where am I" and a second would be
+            // the same decision derived twice.
+            //
+            // The absolute path is baked into build.ninja, as every other tool
+            // path in it is. A version change regenerates the file (the version
+            // is in the fingerprint); moving the binary without changing its
+            // version would leave a stale path here, exactly as it would for
+            // the compiler.
+            std::string wrapped =
+                shell_quote_arg(escape_ninja_chars(mcpp_exe_path().string()))
+                + " __action-stamp";
+            for (auto const& o : a.outputs)
+                wrapped += " " + shell_quote_arg(escape_ninja_chars(o));
+            wrapped += " -- " + cmd;
+            cmd = std::move(wrapped);
         }
         append(std::format("rule mcpp_action_{}\n", i));
         append(std::format("  command = {}\n", cmd));

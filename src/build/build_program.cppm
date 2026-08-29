@@ -142,10 +142,27 @@ struct BuildProgramEnv {
     // ordinary mcpp packages (`import mcpp.rules.protobuf;`) instead of a
     // second, non-C++ rule DSL.
     //
-    // (logical module name, absolute path to its interface unit). Compiled with
-    // the SAME flags as build.mcpp itself, in the same directory, which is what
-    // makes the BMI usable at all — see DependencySpec::hostModule.
-    std::vector<std::pair<std::string, std::filesystem::path>> hostModules;
+    // Compiled with the SAME flags as build.mcpp itself, in the same directory,
+    // which is what makes the BMI usable at all — see DependencySpec::hostModule.
+    //
+    // ORDER IS LOAD-BEARING. The compile loop accumulates `moduleFlags` as it
+    // goes, so every entry sees the BMIs of the entries before it. That is the
+    // whole mechanism by which a rule can import another rule: the caller
+    // topologically sorts this list, and nothing else is required.
+    struct HostModuleRef {
+        std::string           logical;
+        std::filesystem::path interface;
+        // False when this module is present ONLY because another rule imports
+        // it. Its BMI must exist for that rule to compile, but this build.mcpp
+        // never declared it, and a package's build-time provisions cross one
+        // further edge only on a `reexport = true` edge. GCC cannot enforce
+        // that — its BMIs are implicit under gcm.cache and reachable by name
+        // whatever the flags say — so mcpp enforces it, and does so on every
+        // platform rather than leaving the rule true only where the compiler
+        // happens to help.
+        bool                  importable = true;
+    };
+    std::vector<HostModuleRef> hostModules;
 };
 
 // The env-var name `hostprogram::xpkg_dir` reads back. One spelling of the
@@ -673,11 +690,11 @@ std::expected<void, std::string> run_build_program(
     // Host modules change what the helper links, so they belong in the identity
     // the cache keys on — otherwise adding or removing a rule package would
     // replay a cached run compiled without it.
-    for (auto const& [logical, ifacePath] : env.hostModules) {
+    for (auto const& hm : env.hostModules) {
         compilerIdentity += "\nhost-module=";
-        compilerIdentity += logical;
+        compilerIdentity += hm.logical;
         compilerIdentity += "@";
-        compilerIdentity += mcpp::toolchain::hash_file(ifacePath);
+        compilerIdentity += mcpp::toolchain::hash_file(hm.interface);
     }
     compilerIdentity += "\nbuild-program-link=";
     compilerIdentity += muslStaticHelper  ? "musl-static-v1"
@@ -685,6 +702,40 @@ std::expected<void, std::string> run_build_program(
                                           : "default-v1";
     std::string programHash  = mcpp::toolchain::hash_file(src);
     std::string compilerHash = mcpp::toolchain::hash_string(compilerIdentity);
+
+    // Read once, here, because the check below has to run BEFORE the cache
+    // fast path returns.
+    std::string srcText;
+    { std::ifstream is(src); std::ostringstream ss; ss << is.rdbuf(); srcText = ss.str(); }
+
+    // A module that is present only as another rule's prerequisite is not part
+    // of this package's declared surface. Refusing the import rather than
+    // letting it work is the difference between a rule that travels and one
+    // that happens to build on whoever's machine: the same source stops
+    // compiling the moment the intermediate rule stops depending on it, or the
+    // moment a Clang user tries it, since only GCC makes the BMI reachable
+    // without the flags.
+    //
+    // ⚠️ AHEAD OF THE FAST PATH ON PURPOSE. Withdrawing `reexport = true` from
+    // an edge leaves the module SET and every interface hash identical, so
+    // nothing in `compilerIdentity` moves. Measured: the replay is prevented
+    // today only because `ctxHash` happens to change too — an incidental
+    // coupling, and the shape this codebase keeps paying for. Asking the
+    // question before the cache is consulted needs no key at all.
+    for (auto const& hm : env.hostModules) {
+        if (hm.importable) continue;
+        if (!imports_module(srcText, hm.logical)) continue;
+        return std::unexpected(std::format(
+            "build.mcpp imports '{}', which reaches this build only as a "
+            "prerequisite of another build rule.\n"
+            "       A rule's build-time provisions cross one further edge only "
+            "when that edge says so.\n"
+            "       Either depend on the package providing '{}' directly, or "
+            "have the rule that owns it re-export it:\n"
+            "         <that rule's package> = {{ ..., host-module = true, "
+            "reexport = true }}",
+            hm.logical, hm.logical));
+    }
 
     // Fast path: declared inputs + contract unchanged → reapply cached
     // directives, no run.
@@ -746,8 +797,8 @@ std::expected<void, std::string> run_build_program(
     // -fmodules, cwd = project root). When it does `import mcpp;`, compile the
     // module, link its object, and run the build.mcpp compile from `bdir` so GCC
     // finds gcm.cache/mcpp.gcm.
-    std::string srcText;
-    { std::ifstream is(src); std::ostringstream ss; ss << is.rdbuf(); srcText = ss.str(); }
+    // `srcText` was read above the cache fast path, which the prerequisite
+    // check needs to run ahead of.
     bool usesModule    = srcText.find("import mcpp") != std::string::npos;
     bool usesStdCompat = imports_module(srcText, "std.compat");
     bool usesStd       = usesStdCompat || imports_module(srcText, "std");
@@ -757,8 +808,8 @@ std::expected<void, std::string> run_build_program(
     // imports. Scanning only build.mcpp made a rule that said `import std;`
     // fail with `module 'std' not found` — the std module was never built,
     // because the program that triggers the build did not mention it.
-    for (auto const& [logical, ifacePath] : env.hostModules) {
-        std::ifstream is(ifacePath);
+    for (auto const& hm : env.hostModules) {
+        std::ifstream is(hm.interface);
         if (!is) continue;  // a missing interface is diagnosed by build_host_module
         std::ostringstream ss; ss << is.rdbuf();
         const std::string t = ss.str();
@@ -766,6 +817,7 @@ std::expected<void, std::string> run_build_program(
         if (imports_module(t, "std.compat")) usesStdCompat = true;
         if (imports_module(t, "std"))        usesStd       = true;
     }
+
     usesStd = usesStd || usesStdCompat;
 
     // The toolchain's own environment (MSVC's INCLUDE / LIB / VSLANG, which
@@ -888,11 +940,11 @@ std::expected<void, std::string> run_build_program(
     // 2026.8.5.1 did — handed them an empty `stdFlags` and failed with
     // `module 'std' not found`.
     std::vector<fs::path> hostModuleObjects;
-    for (auto const& [logical, ifacePath] : env.hostModules) {
+    for (auto const& ref : env.hostModules) {
         std::vector<std::string> use = moduleFlags;
         use.insert(use.end(), stdFlags.begin(), stdFlags.end());
         auto hm = build_host_module(bdir, hostCompiler, base, std_flag, tc,
-                                    compileEnv, logical, ifacePath, use);
+                                    compileEnv, ref.logical, ref.interface, use);
         if (!hm) return std::unexpected(hm.error());
         for (auto& f : hm->useFlags) {
             // GCC's marker is just `-fmodules`, already present when the

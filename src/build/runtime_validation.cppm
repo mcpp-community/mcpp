@@ -15,8 +15,8 @@ import mcpp.build.symbol_provision;
 import mcpp.manifest;
 import mcpp.libs.json;
 import mcpp.platform;
-import mcpp.platform.elf_runtime;
-import mcpp.platform.runtime_binding;
+import mcpp.runtime.elf;
+import mcpp.runtime.binding;
 import mcpp.ui;
 import mcpp.platform.runtime_search;
 
@@ -403,7 +403,7 @@ ValidationReport validate_changed_artifacts(
     const ArtifactSnapshot& before) {
     ValidationReport report;
     if constexpr (!mcpp::platform::is_linux) return report;
-    // Provider dispatch (see mcpp.platform.runtime_binding): what follows is
+    // Provider dispatch (see mcpp.runtime.binding): what follows is
     // ELF/glibc physics, and an identity from another provider — `ucrt@…` on
     // Windows — has no rules here rather than a missing glibc.
     if (plan.runtimeBinding.platform != "linux"

@@ -6,7 +6,7 @@ import std;
 import mcpp.toolchain.model;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.probe;
-import mcpp.platform.xlings;
+import mcpp.xlings;
 import mcpp.platform;
 
 export namespace mcpp::toolchain::clang {

@@ -3,7 +3,7 @@
 
 import std;
 import mcpp.toolchain.post_install;
-import mcpp.platform.xlings;
+import mcpp.xlings;
 import mcpp.config;
 import mcpp.toolchain.registry;
 import mcpp.platform;

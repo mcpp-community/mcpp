@@ -1,0 +1,30 @@
+# manifest — mcpp.toml and the xpkg descriptor, and the vocabulary they are
+# written in.
+#
+# `dep_spec`, `mangle` and `glob` are here rather than in packages of their own
+# because they are not subsystems: a dependency specification, a module-name
+# mangling scheme and a source glob are all part of what a manifest MEANS.
+# Splitting them out would produce three packages that are only ever used
+# together, which is a directory listing rather than a boundary.
+#
+# `dep_spec` in particular used to live under `src/pm/`, above the manifest by
+# directory and below it by nature -- eight of the manifest's twelve back-edges
+# landed on that group.
+[package]
+name        = "manifest"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "Manifest and descriptor parsing for mcpp"
+license     = "Apache-2.0"
+
+[dependencies.mcpp]
+libs        = { path = "../libs" }
+platform    = { path = "../platform" }
+source-kind = { path = "../source-kind" }
+versioning  = { path = "../versioning" }
+
+# Subsystem-level tests. They see only this package, which is what lets them
+# state its contract in isolation; the root `tests/unit/` states the facts two
+# layers must agree on.
+[dev-dependencies.compat]
+gtest = "1.15.2"

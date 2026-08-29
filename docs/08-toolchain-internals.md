@@ -189,7 +189,7 @@ intent, search mechanism, and post-link verdict are persisted in
 `resolution.json` schema 2. `mcpp why runtime` only interprets that stored file;
 re-diagnosis belongs to `xlings doctor`.
 
-### 2.3 The run-time search closure (`src/platform/runtime_search.cppm`)
+### 2.3 The run-time search closure (`modules/platform/src/runtime_search.cppm`)
 
 mcpp passes `--sysroot=<subos>` on the compile **and** link lines, so a library
 the SubOS provides — `-lGL`, `-lX11`, `-lwayland-client` — resolves with no
@@ -253,7 +253,7 @@ must refuse its `-rpath "$XLINGS_SUBOS_LIB"`, because that variable names the
 different physical glibc payload. mcpp emits the farm entry it derived from the
 binding it actually selected.
 
-## 3. The link model (`src/toolchain/linkmodel.cppm`)
+## 3. The link model (`modules/toolchain-model/src/linkmodel.cppm`)
 
 `ToolchainLinkModel` answers exactly one question — *how does mcpp compile and
 link against this toolchain's C library* — and every consumer derives its
@@ -550,7 +550,7 @@ One prediction was wrong, and the correction is the load-bearing part of the
 design. The C library does **not** live inside the toolchain payload, so this
 is not `CLibMode::Sysroot` with a different sysroot. picolibc is a separate
 payload named by the target's own table row
-(`sysroot = xim:picolibc-riscv@1.8.12` in `src/toolchain/triple.cppm`), on the
+(`sysroot = xim:picolibc-riscv@1.8.12` in `modules/toolchain-model/src/triple.cppm`), on the
 same footing as that row's compiler `pin`. Resolving it from the target rather
 than from the toolchain is what keeps a bare-metal *package* from having to
 name a libc, exactly as a hosted package never names glibc.
@@ -636,11 +636,11 @@ answer them.
 |---|---|
 | spec → xim package, frontends | `src/toolchain/registry.cppm` |
 | detect/probe (triple, sysroot, payloads) | `src/toolchain/detect.cppm`, `probe.cppm` |
-| link model + loader resolution | `src/toolchain/linkmodel.cppm` |
+| link model + loader resolution | `modules/toolchain-model/src/linkmodel.cppm` |
 | unified fixup pipeline (patchelf/specs/cfg, marker) | `src/toolchain/post_install.cppm` |
 | install/lifecycle entry | `src/toolchain/lifecycle.cppm`; auto-install entries in `src/build/prepare.cppm` |
-| root runtime selection/binding | `src/platform/xlings/runtime_selection.cppm`, `src/platform/runtime_binding.cppm`, `src/platform/xlings/subos_info.cppm` |
-| generic runtime contract + LinkIntent | `src/manifest/types.cppm`, `src/build/plan.cppm`, `src/build/flags.cppm` |
+| root runtime selection/binding | `src/xlings/runtime_selection.cppm`, `src/runtime/binding.cppm`, `src/xlings/subos_info.cppm` |
+| generic runtime contract + LinkIntent | `modules/manifest/src/types.cppm`, `src/build/plan.cppm`, `src/build/flags.cppm` |
 | stored resolution explanation | `src/build/prepare.cppm`, `src/build/runtime_validation.cppm`, `src/doctor.cppm` |
 | flag assembly (main build) | `src/build/flags.cppm` |
 | `import std;` precompile | `src/toolchain/stdmod.cppm` |

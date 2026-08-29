@@ -10,7 +10,7 @@
 
 ## 概述
 
-freestanding 目标是 `os` 字段为 `none` 的目标。`src/toolchain/triple.cppm`
+freestanding 目标是 `os` 字段为 `none` 的目标。`modules/toolchain-model/src/triple.cppm`
 的目标表中有四个:
 
 | Triple | 档位 | C 库 |

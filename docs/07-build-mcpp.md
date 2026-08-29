@@ -312,13 +312,24 @@ attach:
 | `role` | Outputs | Ordering | Typical |
 |---|---|---|---|
 | `source` | join the compile set | the compile edge consumes them | protoc, a transpiler |
-| `check` | a stamp file | runs **alongside** compilation (set `blocking = true` to gate it) | clang-tidy, a format or ABI check |
+| `check` | a stamp file, written by mcpp | runs **alongside** compilation (set `blocking = true` to gate it) | clang-tidy, a format or ABI check |
 | `object` | join the **link** set | the link edge consumes them | a resource compiler, `objcopy` embedding a blob, a generated `.def`, a pre-built `.o` |
 | `artifact` | a new file | its *inputs* are link outputs, so it runs after the link | codesign, packaging, size budgets |
 
 No phase machinery is involved: ninja's own file dependencies do the
 sequencing, which is also why an `artifact` action cannot double-apply itself
 the way a naive "post-build hook" would.
+
+**A check's command does not have to write its stamp** (mcpp 2026.8.29.1+).
+The verdict is the exit code; the stamp is bookkeeping the graph needs, and
+mcpp creates it when the command succeeds. Before this, every check needed a
+wrapper script to touch the file — and a command is an argv with no shell
+assumed, so that wrapper could not be written portably at all. A command that
+already writes its own stamp is unaffected: an existing file is left alone.
+
+> A missing stamp does **not** fail the build. ninja leaves the declared output
+> absent and re-runs that edge on every build afterwards, which looks like a
+> passing check that is quietly never satisfied.
 
 `object` (2026.8.7.1+) takes an optional `.target("name")`, repeatable. It needs
 a name at all because, unlike `artifact`, it runs *before* the link and so has
@@ -516,6 +527,52 @@ describes — the same declaration that decides which C library the project link
 against, delivered to one more consumer. See
 [chapter 17](17-the-project-environment.md) for what a declared environment is
 and when to want one; `examples/07-project-subos/` is a working project.
+
+## Writing a rule package
+
+A rule — "run protoc over these `.proto` files", "run clang-tidy over these
+sources" — belongs in a package, not copy-pasted into every consumer's
+`build.mcpp`. The mechanism is
+[`host-module = true`](05-mcpp-toml.md); this section is about the shape of
+what goes inside.
+
+The guidance below generalises from `mcpplibs.grpcgen`, the first such package,
+with each of its traits judged individually. It is guidance and not a rule
+because none of it admits a criterion the engine could check.
+
+**Layers must not have a cliff, and each layer must be the composition of the
+one below it.** `generate_all(opt)` *is* `submit(plan_all(opt))`, and
+`.grpc = true` *is* `.plugins = {cpp()}`. Past two knobs a consumer who cannot
+descend writes sixty lines by hand to work around the rule, and those sixty
+lines then drift away from it silently.
+
+**Expose a plan/submit pair.** The bottom layer has to hand back the planned
+edges so a consumer can modify them and submit them again. This is the
+mechanism that makes the previous paragraph true; it is not a naming
+preference.
+
+**Do not reproduce truth the engine already holds.** mcpp writes every action's
+full argv into `build.ninja`, recoverable with `ninja -t commands`. A second
+source of that would only drift. What a rule owns is the other half — which
+knobs produced the command — and that belongs in each edge's `description`.
+
+**Failure and advice use different channels.** mcpp prints what it captured
+from a build program only when the program exits non-zero, so a failure writes
+to stderr and returns non-zero. A message that must be seen on a *successful*
+build has to go through [`mcpp::warning`](#warning--succeeding-and-still-being-heard-2026821-2);
+stderr on success is discarded, which means the wrong channel is silent on
+exactly the builds that needed the message.
+
+**One `(name, version)` names one payload.** mcpp identifies an installed
+package by that pair, so a repackaged rule that keeps its version string does
+not trigger a reinstall and the consumer keeps running the old rule with no
+diagnostic. Which numbering scheme to use is the author's call — versioning in
+lock-step with the wrapped tool is legitimate when the two ship from one tag,
+and tells a consumer something true — but a payload change is a version change.
+
+**Test it through a consumer.** A rule is consumed only by a `build.mcpp`, so
+compiling it proves nothing. Its test is an example project that depends on it,
+builds, and asserts on the produced artefact.
 
 ## Dependencies' build.mcpp (mcpp 0.0.95+)
 

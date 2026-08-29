@@ -21,10 +21,10 @@ import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.triple;
 import mcpp.pack.prebuilt;   // is_distribution_package — a shipped shared lib is not rebuilt
 import mcpp.platform;
-import mcpp.platform.runtime_binding;
+import mcpp.runtime.binding;
 import mcpp.platform.runtime_env_contract;
 import mcpp.platform.runtime_search;
-import mcpp.platform.xlings.subos_info;
+import mcpp.xlings.subos_info;
 
 export namespace mcpp::build {
 

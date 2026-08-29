@@ -24,7 +24,7 @@ import std;
 import mcpp.home;
 import mcpp.libs.toml;
 import mcpp.pm.index_spec;
-import mcpp.platform.xlings;
+import mcpp.xlings;
 import mcpp.platform;
 import mcpp.log;
 import mcpp.fallback.xlings_binary;
@@ -412,7 +412,7 @@ void ensure_sandbox_xlings_binary(const GlobalConfig& /*cfg*/, bool /*quiet*/) n
     // Intentional no-op: xlingsBinary == xlingsHome()/bin/xlings.
 }
 
-// Bootstrap install: delegated to mcpp.platform.xlings module.
+// Bootstrap install: delegated to mcpp.xlings module.
 
 void ensure_sandbox_ninja(const GlobalConfig& cfg, bool quiet,
                           const BootstrapProgressCallback& cb) noexcept

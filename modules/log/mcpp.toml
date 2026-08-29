@@ -1,0 +1,12 @@
+# mcpp.log — leveled diagnostic output.
+#
+# A leaf: `std` and nothing else. That is what makes it separable, and it is
+# also why it is worth separating first — a module every layer reaches for must
+# not be able to reach back.
+
+[package]
+name        = "log"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "Leveled logging for mcpp"
+license     = "Apache-2.0"

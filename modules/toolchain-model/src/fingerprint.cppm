@@ -21,7 +21,17 @@
 export module mcpp.toolchain.fingerprint;
 
 import std;
-import mcpp.toolchain.detect;
+// `Toolchain`, and nothing else. It used to be reached through
+// `mcpp.toolchain.detect`, which re-exports the type it defines in
+// `mcpp.toolchain.model` — so the import named a CONSUMER of the type rather
+// than its provider, and dragged in toolchain detection, xlings and the
+// package manager behind it.
+//
+// That distinction is not cosmetic here. Every module on the build-program
+// side needs this one for `hash_file`, so while this edge pointed at `detect`
+// the whole subsystem was transitively above the package manager and could not
+// be separated from it. Naming the provider is what makes the layering true.
+import mcpp.toolchain.model;
 import mcpp.version;
 
 export namespace mcpp::toolchain {

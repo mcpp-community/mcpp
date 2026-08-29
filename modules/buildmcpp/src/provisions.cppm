@@ -44,6 +44,7 @@ export module mcpp.build.provisions;
 
 import std;
 import mcpp.pm.dep_spec;
+import mcpp.pm.mangle;
 
 export namespace mcpp::build::provisions {
 
@@ -274,6 +275,122 @@ inline std::string contest_note(std::string_view tail, const BareBinding& b) {
         "it resolves to '{}' by the namespace ladder — use the full name to "
         "address a different one",
         tail, list, b.owner);
+}
+
+// ── Host module identity ───────────────────────────────────────────────────
+//
+// A rule's module name is AUTHORED API. prepare.cppm states that rule for
+// ordinary packages already ("Module names are authored API and are not
+// required to mirror package identity"), and the host-module path was the one
+// place in the codebase that derived the name from `package.name` instead of
+// reading what the source declares.
+//
+// The divergence was not merely inconsistent, it was a portability trap.
+// `build_host_module` binds the name differently per compiler family: MSVC
+// passes `/reference <name>=<ifc>` and Clang `-fmodule-file=<name>=<pcm>`,
+// while GCC names nothing at all, because its BMIs are implicit under
+// gcm.cache and keyed by the name the SOURCE declares. A rule whose lib root
+// declared anything other than its package name therefore built under GCC and
+// failed under the other two, reporting a module nobody had written.
+//
+// `fallback` is returned when the interface cannot be read or declares no
+// named module. Both of those are real conditions with better diagnostics
+// elsewhere — `build_host_module` reports a missing interface unit by path —
+// and those diagnostics need a name to report the package WITH.
+inline std::string host_module_name(const std::filesystem::path& interfacePath,
+                                    std::string_view fallback)
+{
+    std::ifstream is(interfacePath);
+    if (!is) return std::string(fallback);
+    std::stringstream buf;
+    buf << is.rdbuf();
+    auto declared = mcpp::pm::declared_module_roots(buf.str());
+    if (declared.empty()) return std::string(fallback);
+    return declared.front();
+}
+
+// One host module as registered for one consumer's build program.
+struct HostModule {
+    std::string           module;     // what `import` in build.mcpp addresses
+    std::string           package;    // fully-qualified package identity
+    // Carried rather than split back out of `package`: the reserved-prefix
+    // rule asks whether the package is in the official namespace, and
+    // re-deriving that from the joined string would be the same decision made
+    // in a second place.
+    std::string           nameSpace;
+    std::filesystem::path interface;
+    // False when this module is in the list only because ANOTHER rule imports
+    // it. It still has to be compiled — a rule cannot build without its own
+    // imports — but the consumer never declared it, and provisions cross one
+    // further edge only on a `reexport = true` edge.
+    bool                  importable = true;
+};
+
+// Two rule packages registering the same module name fails, and it fails in a
+// place that cannot be traced back to the cause. `build_host_module` derives
+// both the BMI and the object filename from the registered name
+// (`bdir / (stem + objExt)`), so the second compile OVERWRITES the first's
+// object — silently — and then the one surviving object is handed to the link
+// twice, once per registered module. Measured, with this check removed:
+//
+//     ld: …/target/.build-mcpp/sharedname.o: in function `initializer for
+//     module sharedname': beta.cppm: multiple definition of `initializer for
+//     module sharedname'; …/sharedname.o: beta.cppm: first defined here
+//
+// One file named twice, one package named twice, and no mention anywhere that
+// two packages are involved or which two. The overwrite is the silent part;
+// the diagnostic is merely unactionable. Refusing here is what turns it into a
+// sentence the reader can act on.
+//
+// Scoped to what one `build.mcpp` can see. Deliberately NOT an index-wide
+// uniqueness rule: `path` dependencies and private registries are invisible to
+// that, and the index carries no such invariant for this to inherit.
+inline std::optional<std::string>
+host_module_collision(const std::vector<HostModule>& mods)
+{
+    std::map<std::string, const HostModule*> seen;
+    for (auto const& m : mods) {
+        auto [it, fresh] = seen.emplace(m.module, &m);
+        if (fresh) continue;
+        return std::format(
+            "two build rules both provide the module '{}':\n"
+            "  {}\n"
+            "      {}\n"
+            "  {}\n"
+            "      {}\n"
+            "A rule's module name is what `import` addresses, so these two are "
+            "indistinguishable to the compiler and one would silently replace "
+            "the other. Rename the module one of them declares, or depend on "
+            "only one of these packages.",
+            m.module,
+            it->second->package, it->second->interface.string(),
+            m.package,           m.interface.string());
+    }
+    return std::nullopt;
+}
+
+// `mcpp.*` reads to a user as an endorsement by the mcpp project, and handing
+// out that impression is a supply-chain statement. It is a WARNING rather than
+// an error because the engine cannot decide who is official: a path
+// dependency, a private mirror and an internal fork are all legitimate and all
+// indistinguishable from here. The message names both halves — the module name
+// and the package identity — because exactly one of them is the surprising one
+// and the reader is better placed to say which.
+inline constexpr std::string_view kReservedModulePrefix = "mcpp.";
+inline constexpr std::string_view kOfficialNamespace    = "mcpp";
+
+inline std::optional<std::string>
+reserved_prefix_warning(std::string_view moduleName,
+                        std::string_view packageNamespace,
+                        std::string_view packageFqn)
+{
+    if (!moduleName.starts_with(kReservedModulePrefix)) return std::nullopt;
+    if (packageNamespace == kOfficialNamespace)         return std::nullopt;
+    return std::format(
+        "build rule '{}' declares the module '{}'; the '{}' prefix is reserved "
+        "for rules maintained by the mcpp project. Nothing breaks — the name "
+        "simply claims an origin the package does not have.",
+        packageFqn, moduleName, kReservedModulePrefix);
 }
 
 } // namespace mcpp::build::provisions

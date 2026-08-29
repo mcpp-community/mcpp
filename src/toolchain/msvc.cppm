@@ -30,7 +30,7 @@ import std;
 import mcpp.platform;
 import mcpp.toolchain.model;
 import mcpp.toolchain.probe;
-import mcpp.platform.xlings;
+import mcpp.xlings;
 
 export namespace mcpp::toolchain::msvc {
 

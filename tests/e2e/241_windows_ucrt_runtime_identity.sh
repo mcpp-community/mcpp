@@ -61,7 +61,7 @@ assert b.get("contract_hash"), "runtime binding has no contract hash"
 # ...and it must NOT have been projected into the private-libc field. That
 # field is read by the loader/patchelf machinery, and ucrt has no payload for
 # it to name — `ucrtbase.dll` is a Windows component. See
-# mcpp.platform.runtime_binding on why the two providers are not isomorphic.
+# mcpp.runtime.binding on why the two providers are not isomorphic.
 assert not b.get("libc"), (
     f"ucrt was projected into `libc` ({b.get('libc')!r}); that field names a "
     "private libc PAYLOAD, and there is no such thing for ucrt")

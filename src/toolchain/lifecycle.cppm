@@ -24,9 +24,9 @@ import mcpp.ui;
 import mcpp.wire;
 import mcpp.libs.json;
 import mcpp.log;
-import mcpp.platform.xlings;
-import mcpp.platform.xlings.runtime_selection;
-import mcpp.platform.runtime_binding;
+import mcpp.xlings;
+import mcpp.xlings.runtime_selection;
+import mcpp.runtime.binding;
 
 namespace mcpp::toolchain {
 
@@ -986,7 +986,7 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         std::string runtimeId;
         std::filesystem::path runtimeLibDir;
         if (auto rb = mcpp::platform::runtime::resolve_runtime_binding(
-                mcpp::xlings::runtime::RuntimeSelection{}, {}, cfg)) {
+                mcpp::xlings::runtime::RuntimeSelection{}, {}, cfg.xlingsHome())) {
             runtimeId = rb->runtimeId;
             if (!rb->libraryDirs.empty()) runtimeLibDir = rb->libraryDirs.front();
         }   // a binding that cannot be resolved degrades below, it does not stop

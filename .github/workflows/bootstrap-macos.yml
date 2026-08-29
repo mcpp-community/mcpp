@@ -73,8 +73,12 @@ jobs:
               set_kind("binary")
               add_files("src/main.cpp")
               add_files("src/**.cppm")
+              -- `modules/` holds packages mcpp links into itself. This
+              -- bootstrap has no package manager, so it compiles their sources
+              -- directly.
+              add_files("modules/*/src/**.cppm")
               add_packages("cmdline")
-              add_includedirs("src/libs/json")
+              add_includedirs("modules/libs/src/json")
               set_policy("build.c++.modules", true)
               -- Static link libc++ for minimal runtime dependencies
               add_ldflags("-static-libstdc++", {force = true})

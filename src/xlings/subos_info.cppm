@@ -1,4 +1,4 @@
-// mcpp.platform.xlings.subos_info — read the `subos_info` block xlings writes into a
+// mcpp.xlings.subos_info — read the `subos_info` block xlings writes into a
 // subos's own `.xlings.json`.
 //
 // WHAT THIS IS FOR
@@ -33,7 +33,7 @@
 //
 // Design: .agents/docs/2026-08-07-xlings-as-runtime-substrate-design.md §3-S3
 
-export module mcpp.platform.xlings.subos_info;
+export module mcpp.xlings.subos_info;
 
 import std;
 import mcpp.libs.json;

@@ -23,6 +23,7 @@ mcpp build && mcpp run
 | 01 | [`examples/01-hello`](../../examples/01-hello/) | 单文件 + `import std` 的最小工程 | 最小工程形态(`mcpp new` 还会生成 `tests/test_smoke.cpp`) |
 | 02 | [`examples/02-with-deps`](../../examples/02-with-deps/) | 引入依赖 `mcpplibs.cmdline` 解析命令行参数 | `[dependencies]`、SemVer、`mcpp.lock` |
 | 03 | [`examples/03-pack-static`](../../examples/03-pack-static/) | 通过 `mcpp pack --mode static` 生成全静态发布包 | `[target.<triple>]` 与 `[pack]` 配置 |
+| 08 | [`examples/08-build-rules`](../../examples/08-build-rules/) | 两个规则包,以及同时用到它们的工程 | `host-module = true`、`[build-dependencies]`、`role = "check"` 的 `mcpp::action` |
 
 ## 推荐阅读顺序
 

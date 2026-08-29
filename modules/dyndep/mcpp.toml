@@ -1,0 +1,10 @@
+# mcpp.dyndep — ninja's dyndep file format.
+#
+# A leaf: it writes a text format, and knows nothing about who asked.
+
+[package]
+name        = "dyndep"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "ninja dyndep emission for mcpp"
+license     = "Apache-2.0"

@@ -1,0 +1,13 @@
+[package]
+name        = "rules-tidy"
+namespace   = "example"
+version     = "0.1.0"
+description = "Per-file source analysis as build-graph nodes (role = check)"
+license     = "Apache-2.0"
+
+# This rule reuses another rule rather than copying it. `[build-dependencies]`
+# is the only declaration site a package owns: `tools` and `host-module` are
+# written by the CONSUMER on an edge, so without this a rule could not request
+# anything on its own behalf — which is why rules used to be leaves.
+[build-dependencies]
+rules-embed = { path = "../rules-embed", host-module = true }

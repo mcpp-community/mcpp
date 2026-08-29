@@ -16,11 +16,11 @@ import mcpp.config;
 import mcpp.libs.json;
 import mcpp.log;
 import mcpp.platform;
-import mcpp.platform.runtime_binding;
+import mcpp.runtime.binding;
 import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.registry;
 import mcpp.ui;
-import mcpp.platform.xlings;
+import mcpp.xlings;
 
 namespace mcpp::toolchain {
 

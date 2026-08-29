@@ -1,4 +1,4 @@
-// mcpp.platform.xlings — unified abstraction layer for all xlings (external package
+// mcpp.xlings — unified abstraction layer for all xlings (external package
 // manager) interactions. Consolidates NDJSON event parsing, subprocess
 // command building, path helpers, and bootstrap progress types that were
 // previously scattered across config.cppm, package_fetcher.cppm, cli.cppm,
@@ -11,7 +11,7 @@ module;
 #include <cstdio>      // stderr
 #include <cstdlib>
 
-export module mcpp.platform.xlings;
+export module mcpp.xlings;
 
 import std;
 import mcpp.pm.compat;

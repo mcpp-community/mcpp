@@ -76,8 +76,12 @@ target("mcpp")
     set_kind("binary")
     add_files("src/main.cpp")
     add_files("src/**.cppm")
+    -- `modules/` holds packages mcpp links into itself. This bootstrap has no
+    -- package manager, so it compiles their sources directly: the separation
+    -- is a boundary for the mcpp build, and a flat file list for this one.
+    add_files("modules/*/src/**.cppm")
     add_packages("cmdline")
-    add_includedirs("src/libs/json")
+    add_includedirs("modules/libs/src/json")
     set_policy("build.c++.modules", true)
 XMAKE
 fi

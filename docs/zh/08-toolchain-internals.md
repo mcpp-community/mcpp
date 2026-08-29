@@ -154,7 +154,7 @@ provider-specific 分支,也拒绝把相关词汇与外部 probe 启动耦合。
 搜索机制与链接后 verdict 写入 `resolution.json` schema 2。
 `mcpp why runtime` 只解释该存储文件;重新诊断由 `xlings doctor` 负责。
 
-### 2.3 运行期搜索闭包(`src/platform/runtime_search.cppm`)
+### 2.3 运行期搜索闭包(`modules/platform/src/runtime_search.cppm`)
 
 mcpp 在**编译与链接**两条线上都发 `--sysroot=<subos>`,所以 subos 提供的库
 (`-lGL`、`-lX11`、`-lwayland-client`)零 flag 就能解析。运行期的搜索路径必须由
@@ -206,7 +206,7 @@ mcpp 还会给它启动的每个进程声明 `XLINGS_SUBOS_LD_PATHS=0` —— �
 (`<mcpp home>/registry`),两者通常指向由**不同物理 glibc 载荷**支撑的不同 farm。
 mcpp 发的是自己从已选 binding 推导出来的那一条。
 
-## 3. 链接模型(`src/toolchain/linkmodel.cppm`)
+## 3. 链接模型(`modules/toolchain-model/src/linkmodel.cppm`)
 
 `ToolchainLinkModel` 只回答一个问题——*如何对该工具链的 C 库编译与链接*——
 全部消费方从它派生 flags:
@@ -447,7 +447,7 @@ loader;`/bin/sh` 有事:它的 `PT_INTERP` 指向**宿主** loader,而且任何�
 
 有一条预测是错的,而这条更正正是整个设计的承重部分。C 库**不在**工具链载荷内,
 因此这并不是换了一个 sysroot 的 `CLibMode::Sysroot`。picolibc 是一份独立载荷,
-由目标自己的表行指名(`src/toolchain/triple.cppm` 中的
+由目标自己的表行指名(`modules/toolchain-model/src/triple.cppm` 中的
 `sysroot = xim:picolibc-riscv@1.8.12`),与该行的编译器 `pin` 处于同一地位。
 从目标而非从工具链解析它,正是裸机**包**不必指名一份 libc 的原因,如同 hosted
 包从不指名 glibc。
@@ -496,11 +496,11 @@ mcpp 把运行时 DLL 部署到产物 exe 旁,这正是该平台对 §3–§4 �
 |---|---|
 | spec → xim 包、前端 | `src/toolchain/registry.cppm` |
 | detect/probe(triple、sysroot、payload)| `src/toolchain/detect.cppm`、`probe.cppm` |
-| 链接模型 + loader 解析 | `src/toolchain/linkmodel.cppm` |
+| 链接模型 + loader 解析 | `modules/toolchain-model/src/linkmodel.cppm` |
 | 统一 fixup 管线(patchelf/specs/cfg、marker)| `src/toolchain/post_install.cppm` |
 | install/lifecycle 入口 | `src/toolchain/lifecycle.cppm`;auto-install 入口在 `src/build/prepare.cppm` |
-| root runtime 选择/binding | `src/platform/xlings/runtime_selection.cppm`、`src/platform/runtime_binding.cppm`、`src/platform/xlings/subos_info.cppm` |
-| 通用 runtime contract + LinkIntent | `src/manifest/types.cppm`、`src/build/plan.cppm`、`src/build/flags.cppm` |
+| root runtime 选择/binding | `src/xlings/runtime_selection.cppm`、`src/runtime/binding.cppm`、`src/xlings/subos_info.cppm` |
+| 通用 runtime contract + LinkIntent | `modules/manifest/src/types.cppm`、`src/build/plan.cppm`、`src/build/flags.cppm` |
 | 存储 resolution 解释 | `src/build/prepare.cppm`、`src/build/runtime_validation.cppm`、`src/doctor.cppm` |
 | flag 组装(主构建)| `src/build/flags.cppm` |
 | `import std;` 预编译 | `src/toolchain/stdmod.cppm` |

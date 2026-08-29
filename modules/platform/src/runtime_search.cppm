@@ -22,7 +22,7 @@
 //
 // Four parties must agree on the ORDER and on what "machine-local" means:
 // the linker command line (`mcpp.build.plan`), the closure resolver
-// (`mcpp.platform.elf_runtime`), `mcpp pack` (which must strip what cannot be
+// (`mcpp.runtime.elf`), `mcpp pack` (which must strip what cannot be
 // shipped), and the recorder (`resolution.json`). A per-caller decision is how
 // this area produced a "validation: pass" for a binary that could not load.
 //

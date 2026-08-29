@@ -5,7 +5,7 @@ import mcpp.build.loader_contract;
 import mcpp.build.graph_shape;
 import mcpp.pack.host_requirements;
 import mcpp.manifest;
-import mcpp.platform.elf_runtime;
+import mcpp.runtime.elf;
 import mcpp.build.runtime_validation;
 
 namespace {

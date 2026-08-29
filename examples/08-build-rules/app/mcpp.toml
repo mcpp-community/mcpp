@@ -1,0 +1,9 @@
+[package]
+name    = "app"
+version = "0.1.0"
+
+# Both rules are BUILD-time only: neither reaches this binary, and neither does
+# anything they depend on.
+[dependencies]
+rules-tidy  = { path = "../rules-tidy",  host-module = true }
+rules-embed = { path = "../rules-embed", host-module = true }
