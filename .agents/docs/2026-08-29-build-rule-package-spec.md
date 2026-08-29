@@ -569,6 +569,42 @@ before, once for the directive cache and once for the advisory channel.
 
 ---
 
+## 9a. The work, and what depends on what
+
+The pieces below were sequenced by what each one makes verifiable, not by size.
+
+```
+  I1 module name from source ─┬─► I3 collision refused
+                              │      (I1 makes new collisions reachable;
+                              │       they must not ship apart)
+                              └─► I2 package-name constraint deleted
+                                     (a consequence, not a task)
+
+  B1 build-only subtree ──────► B2 rule imports its build deps
+       (the fix that stops        (needs a resolved subtree to order)
+        the leak)
+
+  M0 six leaf modules ────────► M1..M3  (blocked on the M0 measurement)
+
+  engine (all of the above) ──► release ──► ecosystem rule packages
+                                              (they cannot be used by anyone
+                                               until the engine ships)
+```
+
+Nine views of the same change, each with the thing it actually decided:
+
+| View | What it decided here |
+|---|---|
+| **Architecture** | The section/request split (3.3). Two orthogonal axes rather than two spellings of one, which is what makes the protobuf case expressible at all. |
+| **Stability** | I1 and I3 ship together. Decoupling the module name from the package name is what makes a new collision reachable, so the refusal cannot lag behind it by a release. |
+| **Simplicity** | B1 replaced a per-edge predicate with forward reachability, and the dual-role case then needed no special case. The diff removes a rule rather than adding one. |
+| **User experience** | Every new refusal names both sides. The collision names two packages and two paths because with one module name shared they are the only way to tell them apart. |
+| **Compatibility** | Measured, not argued: `grpcgen`, the only rule package in the index, registers the identical module name before and after, and its build is byte-identical. `[dependencies]` carrying `tools`/`host-module` is untouched. |
+| **Cross-platform** | I1 exists *because* the three compiler families disagreed. The e2e cannot assert through the successful import, since GCC resolves by the declared name regardless — so it asserts on filenames, which every platform produces. |
+| **Consistency** | `prepare.cppm:3924` already stated "module names are authored API"; `:4780` was the only place contradicting it. The change is a return, not an exception. |
+| **Silent upgrade** | No manifest key was added (I7). A package written for the old engine builds unchanged; a package written for the new one fails to *compile* on an old engine rather than silently losing semantics, which is what the protocol version already guarantees. |
+| **Test coverage** | Each assertion was observed failing against the previous behaviour before it was kept. That is what caught two wrong claims in this document. |
+
 ## 10. The framework in one view
 
 Four layers. The only thing an author writes is L1, and what L1 emits is either
