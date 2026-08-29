@@ -1091,14 +1091,24 @@ Two smaller couplings:
 These are risks with instruments, not objections. Each has a way to be answered
 and none should be argued from first principles.
 
-**Build latency across a package boundary.** mcpp's build is critical-path
-bound: added cores do not help, so any new serialisation is paid in full wall
-clock. mcpp's own manifest sets `bmi_schedule = "on"` precisely so that
-importers start when a BMI is published rather than when the compiler exits.
-Whether that early start survives a package boundary — whether the root's
-compiles wait for `modules/platform`'s BMIs or for its archive — decides whether
-this split is free or expensive. `bench/` is the instrument. Measure before
-moving a single file.
+**Build latency across a package boundary — MEASURED, and it is free.** mcpp's
+build is critical-path bound: added cores do not help, so any new serialisation
+is paid in full wall clock. mcpp's own manifest sets `bmi_schedule = "on"`
+precisely so that importers start when a BMI is published rather than when the
+compiler exits, and whether that early start survives a package boundary was
+the question that decided whether this split was affordable.
+
+Cold build, empty `target/`, same machine:
+
+| | wall clock |
+|---|---|
+| before the split (one package, 158 units) | **51.07s** |
+| after (root + nine `modules/` packages) | **49.52s** |
+
+Within noise of each other, and certainly not the serialisation a boundary
+would impose if the root's compiles had to wait for each dependency's archive.
+The number to watch if this is revisited is the *difference*, not either
+figure — both are dominated by the same critical path.
 
 **Dependency build caching.** A dependency that reports a cache hit and then
 recompiles everything would turn one package into ten times the work.
