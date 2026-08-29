@@ -249,29 +249,33 @@ gh pr merge <pr-number> --merge
 
 ## 项目结构
 
+**`modules/` 放会被链进二进制的独立包，`src/` 放还没分出去的骨架，缩小 `src/`
+就是方向。** 单位是**子系统**不是文件——一文件一包只会把目录列表写成 N 份清单。
+
 ```
+modules/                   ← 独立包，各带 mcpp.toml，由 path 引用，依赖显式声明
+├── libs/                  ← json + toml：文本格式解析器（vendored 与自写）
+├── log/                   ← 分级日志
+├── versioning/            ← mcpp.version + mcpp.version_req
+├── source-kind/           ← 源文件角色表
+├── dyndep/                ← ninja dyndep 发射
+├── platform/              ← 平台抽象层（所有平台相关代码）
+├── manifest/              ← manifest 模型、TOML/xpkg 解析 + 它们所用的词汇
+├── toolchain-model/       ← 工具链「是什么」：triple / model / dialect /
+│                            cppfly / fingerprint / linkmodel
+└── buildmcpp/             ← build.mcpp 契约：协议、指令表、provision、tool store
 src/
 ├── cli.cppm              ← 命令行入口
 ├── config.cppm           ← 全局配置
-├── manifest/             ← manifest 模型、TOML/xpkg 解析
-├── platform/             ← 平台抽象层（所有平台相关代码）
-│   ├── platform.cppm     ← 统一外观模块
-│   ├── common.cppm       ← 平台常量与检测
-│   ├── process.cppm      ← 进程执行（自动 stdin 保护）
-│   ├── fs.cppm           ← 文件系统（exe 路径、文件锁）
-│   ├── shell.cppm        ← Shell 引用
-│   ├── env.cppm          ← 环境变量
-│   ├── terminal.cppm     ← 终端检测
-│   ├── macos.cppm        ← macOS 特有
-│   ├── linux.cppm        ← Linux 特有
-│   └── windows.cppm      ← Windows 特有
-├── build/                ← 构建系统（ninja 后端）
+├── build/                ← 构建系统（ninja 后端、prepare/plan/execute）
 ├── pm/                   ← 包管理子系统
-├── toolchain/            ← 编译器检测管理
+├── toolchain/            ← 工具链「在哪」：探测、registry、gcc/clang/msvc/llvm
 ├── modgraph/             ← 模块图扫描验证
 ├── pack/                 ← 打包发布
-└── xlings.cppm           ← xlings 抽象层
-tests/unit/                ← C++ unit/integration tests (`mcpp test`)
+├── runtime/              ← 运行时契约（binding、ELF 事实）
+└── xlings/               ← xlings 集成
+tests/unit/                ← 跨层单测（`mcpp test`）
+modules/<x>/tests/         ← 子系统单测（`mcpp test -p <x>`，CI 逐个跑）
 tests/e2e/                 ← E2E 测试脚本 (`MCPP=...` + `run_all.sh`)
 docs/                     ← 用户文档
 .agents/docs/             ← 设计文档
@@ -315,7 +319,19 @@ UTF-8 ACP（65001），这类用例会静默变成永远绿的装饰品。参见
 ## 注意事项
 
 - C++23 模块项目，修改模块时注意 import 依赖顺序
-- 平台相关代码统一放 `src/platform/`，不在其他模块中直接使用 `#if defined`
+- 平台相关代码统一放 `modules/platform/`，不在其他模块中直接使用 `#if defined`
+- **新增 `modules/` 包要改四处**（包自己的 mcpp.toml、根的
+  `[dependencies.mcpp]`、根的 `[workspace] members`、两份 xmake 源文件清单），
+  其中三处的遗漏都在**很远的地方**才失败——最坏的一处只在没有 mcpp 的 macOS
+  自举机器上。`.github/tools/check_modules_wiring.sh` 守住它，会在 CI 里跑
+- **import 要指向类型的提供者，不是它的某个消费者。** 一条为拿 `Toolchain` 而
+  `import mcpp.toolchain.detect` 的边（`model` 才是定义处，`detect` 只是转发）
+  把整个 build.mcpp 契约压在了包管理器之上。一行 import 就是「能不能成为独立
+  模块」的全部距离
+- **子系统的单测放 `modules/<x>/tests/`**，跨层的放 `tests/unit/`。前者构建在
+  「只有它自己和它声明的依赖」这个配置里——那是根构建从不产生的配置，也是唯一
+  能抓到「悄悄依赖了未声明之物」的地方。
+  ⚠️ `mcpp test -p <x>` 对没有测试的成员**退 0**
 - E2E 测试应声明所需 capability，并使用隔离的 `MCPP_HOME`；需要网络/索引的脚本
   不得被描述为完全离线
 - 不确定方向时先在 Issue 讨论再动手

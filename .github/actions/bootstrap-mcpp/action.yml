@@ -212,7 +212,12 @@ runs:
       uses: actions/cache@v4
       with:
         path: target
-        key: mcpp-target-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src/**', 'tests/**', 'mcpp.toml', 'mcpp.lock') }}
+        # ⚠️ `modules/**` belongs here as much as `src/**` does. mcpp's own
+        # source lives in both since the subsystem split, and a key that hashed
+        # only one of them would restore a target/ built from different sources
+        # and report success — the failure mode a cache key exists to prevent,
+        # arriving silently.
+        key: mcpp-target-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('src/**', 'modules/**', 'tests/**', 'mcpp.toml', 'mcpp.lock') }}
         restore-keys: |
           mcpp-target-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-
           mcpp-target-${{ runner.os }}-${{ runner.arch }}-

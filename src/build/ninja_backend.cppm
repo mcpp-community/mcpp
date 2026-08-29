@@ -2126,11 +2126,24 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // Prepended rather than appended, and the original command is passed
         // through unchanged after `--`, so a command that DOES write its own
         // stamp behaves exactly as before: existing files are left alone.
+        //
+        // The `outputs` test is redundant — `directives.cppm` refuses an
+        // action with none at parse time — and is kept because this loop reads
+        // as if it could see one, and a wrapper with no stamp to write would
+        // be a command that swallows its own exit code.
         if (a.role == mcpp::manifest::BuildAction::Role::Check
             && !a.outputs.empty()) {
+            // `mcpp_exe_path()`, not `self_exe_path()` directly: this file
+            // already has one spelling of "where am I" and a second would be
+            // the same decision derived twice.
+            //
+            // The absolute path is baked into build.ninja, as every other tool
+            // path in it is. A version change regenerates the file (the version
+            // is in the fingerprint); moving the binary without changing its
+            // version would leave a stale path here, exactly as it would for
+            // the compiler.
             std::string wrapped =
-                shell_quote_arg(escape_ninja_chars(
-                    mcpp::platform::fs::self_exe_path().string()))
+                shell_quote_arg(escape_ninja_chars(mcpp_exe_path().string()))
                 + " __action-stamp";
             for (auto const& o : a.outputs)
                 wrapped += " " + shell_quote_arg(escape_ninja_chars(o));

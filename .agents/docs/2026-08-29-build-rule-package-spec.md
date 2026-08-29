@@ -1,15 +1,36 @@
 # The build-rule package: identity enforced, shape documented
 
-> Status: design. Not implemented.
+> Status: **implemented in 2026.8.29.1** (PR #525). The design is kept as
+> written, with implementation notes and corrections marked in place — including
+> the four claims that measurement overturned, which are the most useful part of
+> it to read.
 > Scope: packages consumed through `host-module = true` — build rules, or
-> plugins — and, in section 12, the proposal to give mcpp's own source tree the
-> same treatment by moving separable units into `modules/`.
+> plugins — and, in section 12, mcpp's own source tree, split into subsystem
+> packages under `modules/`.
 > Supersedes: the 2026-08-05 extensibility architecture, section 10.1 row 4
 > (`mcpp.rules.*` as a reserved prefix), which cannot hold and never did.
 > Relates to: #355 (host tools), #359 (re-exported provisions).
-> Touches (estimate): `src/build/prepare.cppm`, `src/build/hostprogram.cppm`,
-> `src/build/provisions.cppm`, `src/manifest/toml.cppm`, `docs/05-mcpp-toml.md`,
-> `docs/07-build-mcpp.md`, and the Chinese counterparts of both.
+>
+> **What measurement changed while this was being built**, each recorded at the
+> place it applies:
+>
+> 1. The divergent-name import **passes under GCC**, so the obvious e2e
+>    assertion cannot carry I1 on Linux (§2, I1).
+> 2. A module-name collision is a **link error**, not a silent success (§2, I3).
+> 3. A rule's own `[dependencies]` leaking into the consumer's binary went from
+>    read-from-the-code to **measured** (§3.2).
+> 4. "A rule should carry its own version" was **too strong** — grpcgen ships
+>    from one tag with grpc and its CI enforces that (§5).
+>
+> A fifth was found by trying to write the second rule package rather than by
+> reading anything: `role = "check"` could not be written portably, and that is
+> fixed here (§9, open question 4).
+>
+> ⚠️ A sixth is about this document's own method. The descriptor count was
+> first taken from `mcpp-community/mcpp-index`, while `mcpp index list` reports
+> `mcpplibs/mcpp-index` as the default — the right question asked of the wrong
+> object. The conclusion survived (one rule package either way) and the number
+> did not. **Ask what the engine answers, not what the name suggests.**
 
 ---
 
@@ -19,7 +40,9 @@ The mechanism for distributing a build rule as an ordinary package landed in
 2026.8.5.1 and works. What is missing is the specification: what a rule package
 is allowed to be called, what it may depend on, and what shape its interface
 should take. One rule package exists in the index today —
-`mcpplibs::grpcgen 1.83.0`, 491 lines, out of 132 descriptors — so every trait
+`mcpplibs::grpcgen 1.83.0`, 491 lines, out of **133** descriptors in
+`mcpplibs/mcpp-index`, the index `mcpp index list` reports as the default — so
+every trait
 of the abstraction currently rests on a single sample.
 
 This document separates the rules into two tiers, because the two tiers have
@@ -246,7 +269,7 @@ The documentation never promised otherwise. `docs/05-mcpp-toml.md:858` lists
 `build-dependencies` among the keys a `[target.<cfg>]` block accepts, and
 `:1618` mentions Cargo's `[build-dependencies]` as an analogy while describing
 what `host-module = true` does. Neither states that mcpp's own section has an
-effect. No package in the index uses it: a grep over all 132 descriptors and
+effect. No package in the index uses it: a grep over all 133 descriptors and
 their repositories finds the key only inside a design document.
 
 ### 3.2 Why this is the reason a rule is a leaf
@@ -951,7 +974,7 @@ back-edges. Counting them changes the conclusion:
 
 | Candidate | Back-edges into non-leaf groups | Where they are |
 |---|---|---|
-| `platform` | **5** | 3 in `platform/xlings/xlings.cppm` → `pm`; 1 in `platform/xlings/runtime_selection.cppm` → `manifest`; 1 in `platform/runtime_binding.cppm` → `config` |
+| `platform` | **5** | 3 → `pm` and 1 → `manifest`, all four inside what was then `src/platform/xlings/` (now [`src/xlings/`](../../src/xlings/)); 1 → `config`, in what was then `src/platform/runtime_binding.cppm` (now [`src/runtime/binding.cppm`](../../src/runtime/binding.cppm)). §12.7 says why each moved |
 | `manifest` | 12 | 8 → `pm`, and all eight land on `pm.dep_spec`, `pm.index_spec`, `pm.compat`, `pm.dependency_selector`; 4 → `platform` |
 | `toolchain` | 35 | **25 of them → `platform`**, which is downward once `platform` is a package |
 | `modgraph` | 6 | 3 → `toolchain`, 2 → `manifest`, 1 → `platform`; all downward under the layering below |

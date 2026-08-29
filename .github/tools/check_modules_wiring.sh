@@ -117,6 +117,27 @@ done
 [[ -f modules/libs/src/json/json.hpp ]] \
     || bad "modules/libs/src/json/json.hpp is missing, but three files name that path"
 
+# Anything that hashes mcpp's sources has to hash BOTH trees. A cache key that
+# saw only `src/**` would restore a target/ built from different sources and
+# report success -- the exact failure a cache key exists to prevent, arriving
+# silently. Found by sweeping for stale paths after the split, not by a test.
+#
+# ⚠️ THE UNIT IS THE LINE, NOT THE FILE. The first version asked whether the
+# FILE mentioned `modules/**`, and passed — satisfied by the comment sitting
+# above the key explaining why `modules/**` belongs there. A check that a
+# comment can satisfy is checking the prose.
+while IFS= read -r hit; do
+    f="${hit%%:*}"
+    line="${hit#*:}"
+    case "$line" in
+        *"hashFiles('src/**'"*)
+            case "$line" in
+                *"modules/**"*) ;;
+                *) bad "$f hashes src/** but not modules/** on that line — half of mcpp's sources would not invalidate the cache" ;;
+            esac ;;
+    esac
+done < <(grep -rn "hashFiles(" .github/ 2>/dev/null | grep -v 'check_modules_wiring.sh')
+
 if (( fail )); then
     echo
     echo "modules/ wiring is incomplete." >&2

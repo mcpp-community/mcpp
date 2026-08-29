@@ -75,16 +75,23 @@ cd "$REPO_DIR" || { echo "FAIL: cannot cd to $REPO_DIR" >&2; exit 1; }
 #
 # So: a pass here does NOT mean "the tree is audited". It means no NEW direct
 # narrowing was written where this class originates.
+#
+# ⚠️ `modules/manifest/src/glob.cppm` is in scope even though the rest of that
+# package is not. It is the glob walker itself -- the file this guard's
+# background note names -- and it moved out of `src/modgraph/` in the subsystem
+# split. A scope written as directory names shrinks silently when a file moves,
+# and the pass keeps reading the same either way, so the file is named
+# directly rather than inferred from where it currently sits.
 SCAN_DIRS="src/modgraph src/scaffold"
+SCAN_FILES="modules/manifest/src/glob.cppm"
 
 PATTERN='\.(filename|stem)\(\)\.(generic_)?string\(\)'
 
 fail=0
 found=0
 
-for dir in $SCAN_DIRS; do
-  [ -d "$dir" ] || { echo "FAIL: $dir does not exist — this guard has gone stale" >&2; exit 1; }
-  while IFS= read -r file; do
+scan_one() {
+  file="$1"
     # Strip // line comments before matching: several of these files DESCRIBE
     # the forbidden call in prose (that is the point of the comments), and a
     # guard that trips on its own documentation gets deleted.
@@ -100,7 +107,20 @@ for dir in $SCAN_DIRS; do
       echo "        ${text# }" >&2
       fail=1
     done < <(sed 's://.*::' "$file" | grep -nE "$PATTERN")
-  done < <(find "$dir" -type f \( -name '*.cppm' -o -name '*.cpp' -o -name '*.hpp' \) | sort)
+}
+
+for dir in $SCAN_DIRS; do
+  [ -d "$dir" ] || { echo "FAIL: $dir does not exist — this guard has gone stale" >&2; exit 1; }
+  while IFS= read -r f; do scan_one "$f"; done \
+    < <(find "$dir" -type f \( -name '*.cppm' -o -name '*.cpp' -o -name '*.hpp' \) | sort)
+done
+
+for f in $SCAN_FILES; do
+  # Named files are asserted to EXIST. A moved file that silently drops out of
+  # scope is the failure this list was added to prevent, so its absence has to
+  # be louder than its presence.
+  [ -f "$f" ] || { echo "FAIL: $f does not exist — this guard has gone stale" >&2; exit 1; }
+  scan_one "$f"
 done
 
 if [ "$fail" = 1 ]; then
@@ -112,14 +132,14 @@ if [ "$fail" = 1 ]; then
     - mcpp::modgraph::try_narrow(p)               (build-facing; handle nullopt)
   or annotate with `// NARROW-OK: <why this input cannot carry such a name>`.
 
-  Background: mcpp#516, mcpp#230, src/modgraph/glob.cppm.
+  Background: mcpp#516, mcpp#230, modules/manifest/src/glob.cppm.
 EOF
   exit 1
 fi
 
 if [ "$found" = 0 ]; then
-  echo "ok: no direct path narrowing in $SCAN_DIRS"
+  echo "ok: no direct path narrowing in $SCAN_DIRS $SCAN_FILES"
 else
-  echo "ok: every direct narrowing in $SCAN_DIRS carries a NARROW-OK rationale"
+  echo "ok: every direct narrowing in $SCAN_DIRS $SCAN_FILES carries a NARROW-OK rationale"
 fi
 exit 0
