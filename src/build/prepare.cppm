@@ -2994,6 +2994,123 @@ prepare_build(bool print_fingerprint,
                         **cfg2, runtimeSelection.ownerRoot, {}, penv);
             }
 
+            // `[xlings] deps` are DECLARED above and, until now, nothing
+            // installed them (mcpp-index #281 §9).
+            //
+            // `ensure_project_index_dir` writes them into `.mcpp/.xlings.json`
+            // verbatim and stops there, so a manifest saying
+            // `deps = ["xim:mesa"]` produced a file naming mesa, no project
+            // SubOS, and `fatal error: gbm.h: No such file or directory`. The
+            // declaration looked accepted and did nothing — which is the worst
+            // shape a config key can have.
+            //
+            // This is the same "declare it and mcpp provisions it on first use"
+            // contract `[toolchain]` has had all along; that path is a few
+            // hundred lines up ("First run — no toolchain configured …
+            // installing … as default"). A build environment should not have
+            // two grades of declaration.
+            //
+            // ORDER IS LOAD-BEARING: this must run BEFORE the runtime binding
+            // resolves, because a named `[xlings] subos` that does not exist
+            // yet is a hard error ("selected SubOS '…' does not exist;
+            // create/bootstrap that environment"), and provisioning is what
+            // creates it. Placed here, next to the index sync below, both
+            // first-use provisioning steps sit in one place.
+            //
+            // `install_packages` rather than `fetcher.install`: the install
+            // DESTINATION is chosen by package scope (project vs global), and
+            // the project scope is what materializes the project SubOS. It also
+            // carries the live progress UI and captured child errors, matching
+            // the toolchain and custom-index paths.
+            // Only what the MANIFEST declared, deliberately not `penv.deps`.
+            //
+            // A cross-compilation target sysroot is APPENDED to that list a few
+            // lines up, and provisioning it here would change behaviour for
+            // projects that never asked for it: a name that does not resolve
+            // would turn a build that used to proceed into a hard failure. The
+            // contract being added is "what you declared gets installed", and
+            // the sysroot entry is mcpp's own inference rather than the
+            // author's declaration.
+            const auto& declaredDeps = runtimeOwnerManifest.xlings.deps;
+            if (materializeRootRuntime && !declaredDeps.empty()) {
+                const auto stamp = runtimeSelection.ownerRoot / ".mcpp"
+                                 / ".xlings-deps.stamp";
+                // Idempotence by CONTENT, not by existence: editing the list
+                // has to re-provision, and an unchanged list must not pay for
+                // an xlings round-trip on every build.
+                auto join_deps = [&](std::string_view sep) {
+                    std::string out;
+                    for (auto const& d : declaredDeps) {
+                        if (!out.empty()) out += sep;
+                        out += d;
+                    }
+                    return out;
+                };
+                std::string want;
+                for (auto const& d : declaredDeps) { want += d; want += '\n'; }
+                std::string have;
+                if (std::ifstream in{stamp}; in)
+                    have.assign(std::istreambuf_iterator<char>(in), {});
+                if (have != want) {
+                    mcpp::ui::status("Provisioning",
+                        std::format("[xlings] deps ({})",
+                                    join_deps(", ")));
+                    // GLOBAL scope, and the scope is the whole point.
+                    //
+                    // The obvious alternative -- `install_packages` against
+                    // `make_project_xlings_env` -- installs at PROJECT scope,
+                    // and that measurably does not work: on a fresh MCPP_HOME
+                    // the headers land in
+                    // `<proj>/.mcpp/.xlings/subos/_/usr/include` while
+                    // `--sysroot` names `<MCPP_HOME>/registry/subos/default`,
+                    // so `#include <gbm.h>` still failed with the dependency
+                    // installed and declared. Two SubOS views, and the payload
+                    // in the one the compiler does not read.
+                    //
+                    // `make_xlings_env` is the GLOBAL env, so this lands in the
+                    // registry whose SubOS *is* mcpp's sysroot -- the same
+                    // place `[toolchain]` has always installed into. A project
+                    // dependency and a toolchain dependency now agree on where
+                    // they live, which is the only arrangement in which one
+                    // `--sysroot` can see both.
+                    //
+                    // `install_packages` rather than `resolve_xpkg_path`: the
+                    // latter requires `<name>@<version>` and rejects a bare
+                    // `mesa`, while a manifest is entitled to name a package
+                    // without pinning it. install_packages resolves the version
+                    // itself and reports an ambiguous name with its candidates,
+                    // which is the error the author can act on.
+                    // Built with the JSON library rather than by formatting
+                    // the strings in. `deps` is manifest input, so a name
+                    // containing a quote or a backslash would otherwise emit
+                    // malformed JSON and the failure would surface as an
+                    // unrelated xlings parse error naming neither the manifest
+                    // nor the key.
+                    nlohmann::json args;
+                    args["targets"] = declaredDeps;
+                    args["yes"]     = true;
+
+                    mcpp::fetcher::InstallProgressHandler progress;
+                    auto r = mcpp::xlings::call(
+                        mcpp::config::make_xlings_env(**cfg2), "install_packages",
+                        args.dump(), &progress);
+                    if (!r) {
+                        // Shaped like the toolchain failure: say what failed and
+                        // hand back a command the user can run themselves. An
+                        // ambiguous bare name ("mesa" matching two repos) lands
+                        // here, and xlings' own message names the candidates.
+                        return std::unexpected(std::format(
+                            "provisioning [xlings] deps failed: {}\n"
+                            "       you can install them manually with:\n"
+                            "         xlings install {}",
+                            r.error(), join_deps(" ")));
+                    }
+                    std::error_code sec;
+                    std::filesystem::create_directories(stamp.parent_path(), sec);
+                    if (std::ofstream out{stamp}; out) out << want;
+                }
+            }
+
             // On first build, the project index data root may be empty because
             // ensure_project_index_dir only writes .xlings.json but does not
             // trigger clone/link creation. Local path indices are read directly;
