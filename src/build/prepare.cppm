@@ -3090,6 +3090,14 @@ prepare_build(bool print_fingerprint,
         std::size_t                          consumerDepIndex;    // dep_manifests slot of who pushed this child; kMainConsumer for main
         std::filesystem::path                resolveRoot;         // base dir for relative path deps (empty = use project root)
         bool                                 devOnly = false;     // seeded from [dev-dependencies]; inherited by children
+        // Seeded from `[build-dependencies]`, and inherited by children the
+        // same way `devOnly` is. It answers "does this serve the build or the
+        // target", which is a different question from "which build-time
+        // product do I want" — that one is answered per edge by `tools` and
+        // `host-module`, and the two are orthogonal. A package linked into the
+        // target that also provides a tool is written once, in
+        // `[dependencies]`, with a `tools` request on it.
+        bool                                 buildOnly = false;
     };
     std::deque<WorkItem> worklist;
 
@@ -3926,6 +3934,13 @@ prepare_build(bool print_fingerprint,
         // provisions on to this consumer's own consumers?
         bool hostModule = false;
         bool reexport = false;
+        // Did this edge come from `[build-dependencies]`? Such an edge serves
+        // the BUILD and never the target, and the property is inherited by
+        // everything reachable through it. It is a property of the edge and
+        // not of the package: the same package may be an ordinary dependency
+        // of someone else in the same build, and then it does reach the
+        // target.
+        bool buildOnly = false;
     };
     std::vector<DependencyEdge> dependencyEdges;
     namespace dg = mcpp::build::dep_graph;
@@ -3939,7 +3954,7 @@ prepare_build(bool print_fingerprint,
     // path) for each dependency that offers HOST build rules. Same fan-out
     // shape as toolEnvByConsumer, and read by the same two call sites.
     std::map<std::size_t,
-             std::vector<std::pair<std::string, std::filesystem::path>>>
+             std::vector<mcpp::build::BuildProgramEnv::HostModuleRef>>
         hostModulesByConsumer;
     // #359: who can see which build-time provision. Computed once by the
     // provisioning pass below (a fixpoint over `dependencyEdges`, the same
@@ -4280,7 +4295,8 @@ prepare_build(bool print_fingerprint,
     auto recordDependencyEdge =
         [&](std::size_t consumerDepIndex,
             std::size_t dependencyPackageIndex,
-            const mcpp::manifest::DependencySpec& spec)
+            const mcpp::manifest::DependencySpec& spec,
+            bool buildOnly = false)
     {
         const auto consumerPackageIndex = packageIndexForConsumer(consumerDepIndex);
         if (consumerPackageIndex >= packages.size()
@@ -4293,8 +4309,14 @@ prepare_build(bool print_fingerprint,
                 && edge.dependencyPackageIndex == dependencyPackageIndex
                 && edge.visibility == visibility;
         };
-        if (std::find_if(dependencyEdges.begin(), dependencyEdges.end(), same)
-            != dependencyEdges.end()) {
+        auto it = std::find_if(dependencyEdges.begin(), dependencyEdges.end(), same);
+        if (it != dependencyEdges.end()) {
+            // One consumer naming one dependency in BOTH tables. The ordinary
+            // declaration wins, because the build-time path never subtracts
+            // from what the project asked to link — stating the rule the other
+            // way round would let a `[build-dependencies]` line quietly drop a
+            // library the target needs.
+            if (!buildOnly) it->buildOnly = false;
             return;
         }
         dependencyEdges.push_back(DependencyEdge{
@@ -4306,6 +4328,7 @@ prepare_build(bool print_fingerprint,
             .requestedTools = spec.tools,
             .hostModule = spec.hostModule,
             .reexport = spec.reexport,
+            .buildOnly = buildOnly,
         });
     };
 
@@ -4680,6 +4703,19 @@ prepare_build(bool print_fingerprint,
                                 req.version, kMainConsumer, {}, /*devOnly=*/true});
         }
     }
+    // `[build-dependencies]`. Parsed since 0.0.x, merged across workspace
+    // members, conditionalised by target predicate — and until now read by
+    // nothing that made a decision, so writing it produced a manifest that
+    // loaded, no diagnostic, and no effect. Seeded here, and unlike dev-deps
+    // it IS walked transitively: a build dependency's own dependencies are
+    // what make it work, and they inherit its build-only nature.
+    for (auto& [n, s] : m->buildDependencies) {
+        auto req = s;
+        injectForwards(*m, rootActive, n, req);
+        worklist.push_back({n, req, mainPkgLabel + " (build-dep)",
+                            req.version, kMainConsumer, {}, /*devOnly=*/false,
+                            /*buildOnly=*/true});
+    }
 
     while (!worklist.empty()) {
         auto item = std::move(worklist.front());
@@ -4875,7 +4911,8 @@ prepare_build(bool print_fingerprint,
                     });
                     const auto depPackageIndex = packages.size();
                     packages.push_back(makePackageRoot(secStage, *dep_manifests.back()));
-                    recordDependencyEdge(item.consumerDepIndex, depPackageIndex, spec);
+                    recordDependencyEdge(item.consumerDepIndex, depPackageIndex,
+                                         spec, item.buildOnly);
                     auto linkFlagsAdded = propagateLinkFlags(secStage, *dep_manifests.back());
 
                     ResolvedKey mangledKey{key.ns, mangledPackage};
@@ -4911,7 +4948,7 @@ prepare_build(bool print_fingerprint,
                     // no re-fetch needed; just record this consumer edge.
                     recordDependencyEdge(item.consumerDepIndex,
                                          it->second.depIndex + 1,
-                                         spec);
+                                         spec, item.buildOnly);
                     continue;
                 }
 
@@ -4969,7 +5006,7 @@ prepare_build(bool print_fingerprint,
                     makePackageRoot(newRoot, *dep_manifests[it->second.depIndex]);
                 recordDependencyEdge(item.consumerDepIndex,
                                      it->second.depIndex + 1,
-                                     spec);
+                                     spec, item.buildOnly);
 
                 it->second.version            = *merged;
                 it->second.linkFlagsAdded     = std::move(linkFlagsAdded);
@@ -4998,7 +5035,7 @@ prepare_build(bool print_fingerprint,
             if (it->second.depIndex + 1 < packages.size()) {
                 recordDependencyEdge(item.consumerDepIndex,
                                      it->second.depIndex + 1,
-                                     spec);
+                                     spec, item.buildOnly);
             }
             continue;
         }
@@ -5279,7 +5316,8 @@ prepare_build(bool print_fingerprint,
         });
         const auto depPackageIndex = packages.size();
         packages.push_back(makePackageRoot(dep_root, *dep_manifests.back()));
-        recordDependencyEdge(item.consumerDepIndex, depPackageIndex, spec);
+        recordDependencyEdge(item.consumerDepIndex, depPackageIndex, spec,
+                             item.buildOnly);
 
         // Record this dep as resolved so future encounters of the same
         // (ns, name) hit the fast path (skip / merge / conflict).
@@ -5319,7 +5357,26 @@ prepare_build(bool print_fingerprint,
             injectForwards(*dep_manifests.back(), depActive, child_name, childReq);
             worklist.push_back({child_name, childReq, thisDepLabel,
                                 childReq.version, selfIdx, dep_root,
-                                item.devOnly});
+                                item.devOnly, item.buildOnly});
+        }
+        // A dependency's own `[build-dependencies]` — the only channel through
+        // which a package can speak about what IT needs at build time. Both
+        // live channels (`tools`, `host-module`) are written by the CONSUMER
+        // on an edge, so before this a build rule could not request anything
+        // on its own behalf. That, and not a design decision, is why a rule
+        // was a leaf.
+        //
+        // These are build-only regardless of how this package was reached: a
+        // library's build dependency has no business in its consumer's binary
+        // either.
+        for (auto& [child_name, child_spec] :
+                 dep_manifests.back()->buildDependencies) {
+            auto childReq = child_spec;
+            injectForwards(*dep_manifests.back(), depActive, child_name, childReq);
+            worklist.push_back({child_name, childReq,
+                                thisDepLabel + " (build-dep)",
+                                childReq.version, selfIdx, dep_root,
+                                item.devOnly, /*buildOnly=*/true});
         }
     }
 
@@ -6088,19 +6145,102 @@ prepare_build(bool print_fingerprint,
             // build.mcpp without the consumer naming it. The name matching the
             // old loop needed is gone with it: the edge already knows which
             // package it points at.
-            for (std::size_t c = 0; c < provisionGraph.visible.size(); ++c) {
-                for (auto const& pr : provisionGraph.visible[c]) {
+            //
+            // The registered name is the one the rule's SOURCE declares, not
+            // the package's name. See provisions::host_module_name for why the
+            // two had drifted apart and what that cost on Clang and MSVC.
+            std::set<std::string> prefixWarned;
+            // Providers of host modules that THIS package sees directly.
+            auto directHostProviders = [&](std::size_t p) {
+                std::vector<std::size_t> out;
+                if (p >= provisionGraph.visible.size()) return out;
+                for (auto const& pr : provisionGraph.visible[p]) {
                     if (pr.kind != prov::Kind::HostModule) continue;
                     if (pr.provider >= packages.size()) continue;
-                    auto const& depPkg = packages[pr.provider];
-                    auto const& canon = depPkg.manifest.package.name;
-                    // PROBING form: a host-module dependency whose interface
-                    // is `.ixx` resolves to a `src/<tail>.cppm` that does not
-                    // exist, and the consumer's build.mcpp is then handed a
-                    // path to nothing.
-                    auto rel = mcpp::manifest::resolve_lib_root_path(
-                        depPkg.manifest, depPkg.root);
-                    hostModulesByConsumer[c].emplace_back(canon, depPkg.root / rel);
+                    out.push_back(pr.provider);
+                }
+                return out;
+            };
+            auto describe = [&](std::size_t p) {
+                auto const& depPkg = packages[p];
+                auto const& pkg    = depPkg.manifest.package;
+                // PROBING form: a host-module dependency whose interface is
+                // `.ixx` resolves to a `src/<tail>.cppm` that does not exist,
+                // and the consumer's build.mcpp is then handed a path to
+                // nothing.
+                auto rel   = mcpp::manifest::resolve_lib_root_path(
+                    depPkg.manifest, depPkg.root);
+                auto iface = depPkg.root / rel;
+                prov::HostModule hm;
+                hm.module    = prov::host_module_name(iface, pkg.name);
+                hm.package   = pkg.namespace_.empty()
+                             ? pkg.name : pkg.namespace_ + "." + pkg.name;
+                hm.nameSpace = pkg.namespace_;
+                hm.interface = std::move(iface);
+                return hm;
+            };
+            for (std::size_t c = 0; c < provisionGraph.visible.size(); ++c) {
+                const auto direct = directHostProviders(c);
+                if (direct.empty()) continue;
+                std::set<std::size_t> isDirect(direct.begin(), direct.end());
+
+                // Post-order DFS, so a rule's own host modules are compiled
+                // BEFORE it. That ordering is the entire mechanism: the
+                // compile loop in build_program.cppm accumulates the module
+                // flags as it goes, so each entry sees the BMIs of everything
+                // ahead of it, and "a rule may import another rule" needs no
+                // second machinery — only this sort.
+                std::vector<prov::HostModule> ordered;
+                std::set<std::size_t> done;
+                std::vector<std::size_t> path;   // for the cycle diagnostic
+                auto visit = [&](auto&& self, std::size_t p) -> std::expected<void, std::string> {
+                    if (done.contains(p)) return {};
+                    if (std::ranges::find(path, p) != path.end()) {
+                        // A cycle, reported AS a cycle and naming the packages
+                        // on it. A depth limit would answer a different
+                        // question and would answer it later.
+                        std::string ring;
+                        bool started = false;
+                        for (auto q : path) {
+                            if (q == p) started = true;
+                            if (!started) continue;
+                            ring += describe(q).package;
+                            ring += " -> ";
+                        }
+                        ring += describe(p).package;
+                        return std::unexpected(std::format(
+                            "build rules form an import cycle: {}\n"
+                            "       A rule's host modules are compiled before "
+                            "it, so a cycle has no order that could satisfy "
+                            "all of them.", ring));
+                    }
+                    path.push_back(p);
+                    for (auto q : directHostProviders(p))
+                        if (auto r = self(self, q); !r) return r;
+                    path.pop_back();
+                    done.insert(p);
+                    ordered.push_back(describe(p));
+                    ordered.back().importable = isDirect.contains(p);
+                    return {};
+                };
+                for (auto p : direct)
+                    if (auto r = visit(visit, p); !r)
+                        return std::unexpected(r.error());
+
+                if (auto clash = prov::host_module_collision(ordered))
+                    return std::unexpected(*clash);
+                for (auto const& hm : ordered) {
+                    // Warned once per (package, module), not once per consumer:
+                    // a rule re-exported down a chain is visible to every
+                    // package on it, and repeating one naming remark N times
+                    // reads as N problems.
+                    if (auto w = prov::reserved_prefix_warning(
+                            hm.module, hm.nameSpace, hm.package)) {
+                        if (prefixWarned.insert(hm.package + "\x1e" + hm.module).second)
+                            mcpp::diag::warning("build/rule-namespace", *w);
+                    }
+                    hostModulesByConsumer[c].push_back(
+                        {hm.module, hm.interface, hm.importable});
                 }
             }
 
@@ -6125,14 +6265,57 @@ prepare_build(bool print_fingerprint,
             // reference far from here. (The predicate used to be "no consumer
             // other than the root", which said the same thing only while the
             // root was the only possible requester.)
+            //
+            // Stated as FORWARD REACHABILITY rather than as exclusion, and the
+            // difference is not cosmetic.
+            //
+            // The predicate used to be per-edge: "every in-edge into this
+            // package is a host-module edge". That is right about the rule
+            // itself and wrong about everything BEHIND it — a rule's own
+            // `[dependencies]` are reached by ordinary edges, so they kept
+            // their globs and were compiled and LINKED INTO THE CONSUMER'S
+            // BINARY, while the rule could not even import them. Both halves
+            // were wrong, and the sharper harm was that a rule's dependency
+            // versions took part in the consumer's real resolution, so a rule
+            // could create a version conflict in a project that never asked
+            // for one.
+            //
+            // Exclusion would also get the dual-role case backwards. A package
+            // the project depends on directly must stay in the target even
+            // when some rule's build dependencies also reach it: the
+            // build-time path never subtracts from what the project asked to
+            // link. Asking "can the target reach it" answers both cases with
+            // one rule and no special case.
             {
-                std::set<std::size_t> ruleOnly;
-                for (auto const& e : dependencyEdges)
-                    if (e.hostModule) ruleOnly.insert(e.dependencyPackageIndex);
-                for (auto const& e : dependencyEdges)
-                    if (!e.hostModule) ruleOnly.erase(e.dependencyPackageIndex);
-                for (auto d : ruleOnly) {
-                    if (d >= packages.size()) continue;
+                auto reachable = [&](bool targetEdgesOnly) {
+                    std::vector<bool> seen(packages.size(), false);
+                    if (packages.empty()) return seen;
+                    std::vector<std::size_t> stack{0};
+                    seen[0] = true;
+                    while (!stack.empty()) {
+                        auto p = stack.back();
+                        stack.pop_back();
+                        for (auto const& e : dependencyEdges) {
+                            if (e.consumerPackageIndex != p) continue;
+                            if (targetEdgesOnly && (e.hostModule || e.buildOnly))
+                                continue;
+                            auto d = e.dependencyPackageIndex;
+                            if (d >= seen.size() || seen[d]) continue;
+                            seen[d] = true;
+                            stack.push_back(d);
+                        }
+                    }
+                    return seen;
+                };
+                const auto viaTarget = reachable(/*targetEdgesOnly=*/true);
+                const auto viaAny    = reachable(/*targetEdgesOnly=*/false);
+                for (std::size_t d = 1; d < packages.size(); ++d) {
+                    // `viaAny` is the guard that keeps this from acting on a
+                    // package no edge ever mentioned. Such a package is a
+                    // bookkeeping gap, not a build dependency, and clearing
+                    // its sources would turn that gap into an undefined
+                    // reference a long way from here.
+                    if (viaTarget[d] || !viaAny[d]) continue;
                     auto& dm = packages[d].manifest;
                     dm.buildConfig.sources.clear();
                     dm.buildConfig.featureSources.clear();
@@ -6486,7 +6669,7 @@ prepare_build(bool print_fingerprint,
                 bpEnv.toolPaths = tit->second;
             bpEnv.hostModules = hostModulesByConsumer.count(i)
                 ? hostModulesByConsumer.at(i)
-                : std::vector<std::pair<std::string, std::filesystem::path>>{};
+                : decltype(bpEnv.hostModules){};
             auto& bcDep = pkg.manifest.buildConfig;
             const auto mark = markDirectiveTail(pkg.manifest);
             const auto ldN = bcDep.ldflags.size();
@@ -7232,7 +7415,7 @@ prepare_build(bool print_fingerprint,
             bpEnv.toolPaths = tit->second;
         bpEnv.hostModules = hostModulesByConsumer.count(0u)
             ? hostModulesByConsumer.at(0u)
-            : std::vector<std::pair<std::string, std::filesystem::path>>{};
+            : decltype(bpEnv.hostModules){};
         auto& bcRoot = m->buildConfig;
         const auto mark = markDirectiveTail(*m);
         const auto rldN = bcRoot.ldflags.size(), rsrcN = bcRoot.sources.size(),

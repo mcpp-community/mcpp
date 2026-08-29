@@ -1,0 +1,21 @@
+# mcpp.libs.json — nlohmann/json, wrapped as a module of this project.
+#
+# A module this project builds and exports is a module of this project, whoever
+# wrote the code inside. The vendored header stays beside the wrapper rather
+# than in a `libs/` of its own, because "vendored" describes where the source
+# came from and not what the unit is.
+#
+# `include_dirs` is what the root manifest used to carry on its behalf. It is
+# private to this package by construction — a package's build inputs never
+# widen its public interface — which is the whole reason this reads better here
+# than as a line in the consumer's manifest explaining someone else's header.
+
+[package]
+name        = "json"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "nlohmann/json as an mcpp module"
+license     = "MIT"
+
+[build]
+include_dirs = ["src/json"]

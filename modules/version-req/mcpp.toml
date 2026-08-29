@@ -1,0 +1,15 @@
+# mcpp.version_req — SemVer constraint parsing and matching.
+#
+# A leaf, and deliberately separate from `mcpp.version`: this one is about
+# ANY package's version, while that one is about this binary's own identity.
+# Those are different questions and only one of them is reusable.
+
+[package]
+name        = "version-req"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "SemVer requirement parsing for mcpp"
+license     = "Apache-2.0"
+
+[lib]
+path = "src/version_req.cppm"

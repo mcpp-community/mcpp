@@ -206,3 +206,114 @@ TEST(Provisions, AnUnnamespacedPackageIsTheThirdRung) {
     auto b = prov::bind_bare_names({ "grpcgen", "acme.grpcgen" });
     EXPECT_EQ(b["grpcgen"].owner, "grpcgen");
 }
+
+// ── Host module identity ───────────────────────────────────────────────────
+//
+// A rule's module name is authored API. The host-module path used to derive it
+// from `package.name`, which made a divergent name build under GCC (implicit
+// gcm.cache, keyed by the declared name) and fail under Clang and MSVC (both
+// are handed an explicit `<name>=<bmi>` mapping). These pin the reading, the
+// fallback, and the collision that used to be silent.
+
+namespace {
+
+std::filesystem::path write_iface(std::string_view stem, std::string_view body) {
+    auto dir = std::filesystem::temp_directory_path() / "mcpp-prov-tests";
+    std::filesystem::create_directories(dir);
+    auto p = dir / (std::string(stem) + ".cppm");
+    std::ofstream os(p, std::ios::trunc);
+    os << body;
+    return p;
+}
+
+} // namespace
+
+TEST(HostModuleIdentity, TheDeclaredNameWinsOverThePackageName) {
+    auto p = write_iface("declared-wins",
+                         "export module mcpp.build.protobuf;\nimport std;\n");
+    EXPECT_EQ(prov::host_module_name(p, "protobufgen"), "mcpp.build.protobuf");
+}
+
+TEST(HostModuleIdentity, ADottedNameSurvivesWhole) {
+    // `declared_module_roots` is named for module ROOTS as opposed to
+    // partitions; it must not truncate `a.b.c` to `a`, or every namespaced
+    // rule would register under one colliding name.
+    auto p = write_iface("dotted", "export module a.b.c;\n");
+    EXPECT_EQ(prov::host_module_name(p, "fallback"), "a.b.c");
+}
+
+TEST(HostModuleIdentity, AgreementIsTheCommonCaseAndIsUnchanged) {
+    // The zero-break claim: every rule package that works today declares a
+    // name equal to its package name, so the scan returns what the old code
+    // returned.
+    auto p = write_iface("grpcgen", "export module grpcgen;\nimport std;\n");
+    EXPECT_EQ(prov::host_module_name(p, "grpcgen"), "grpcgen");
+}
+
+TEST(HostModuleIdentity, AnUnreadableInterfaceFallsBackToThePackageName) {
+    // build_host_module reports a missing interface unit by path, and that
+    // diagnostic needs a name to report the package with.
+    EXPECT_EQ(prov::host_module_name("/nonexistent/nowhere.cppm", "rulepkg"),
+              "rulepkg");
+}
+
+TEST(HostModuleIdentity, AnInterfaceDeclaringNoModuleFallsBack) {
+    auto p = write_iface("nomodule", "int main() { return 0; }\n");
+    EXPECT_EQ(prov::host_module_name(p, "rulepkg"), "rulepkg");
+}
+
+TEST(HostModuleIdentity, TwoRulesProvidingOneModuleNameAreRefused) {
+    // Designated initialisers on purpose. Positional aggregate init put the
+    // interface path into a field added later, and the test then asserted that
+    // a path it had never passed was absent — a green that meant nothing until
+    // the field order changed under it.
+    std::vector<prov::HostModule> mods{
+        {.module = "tidy", .package = "acme.tidy",
+         .interface = "/a/src/tidy.cppm"},
+        {.module = "tidy", .package = "other.tidy",
+         .interface = "/b/src/rules.cppm"},
+    };
+    auto clash = prov::host_module_collision(mods);
+    ASSERT_TRUE(clash.has_value());
+    // Both identities and both paths are the CONTENT of this diagnostic: with
+    // one module name shared, they are the only way to tell the two apart.
+    EXPECT_NE(clash->find("acme.tidy"), std::string::npos);
+    EXPECT_NE(clash->find("other.tidy"), std::string::npos);
+    EXPECT_NE(clash->find("/a/src/tidy.cppm"), std::string::npos);
+    EXPECT_NE(clash->find("/b/src/rules.cppm"), std::string::npos);
+}
+
+TEST(HostModuleIdentity, DistinctModuleNamesFromOnePackageNameAreFine) {
+    // The mirror of the previous test, and the reason I1 and I3 ship together:
+    // decoupling the names is what makes two packages able to share a package
+    // name while differing in what they declare.
+    std::vector<prov::HostModule> mods{
+        {.module = "tidy",  .package = "acme.rules",
+         .interface = "/a/src/rules.cppm"},
+        {.module = "lints", .package = "other.rules",
+         .interface = "/b/src/rules.cppm"},
+    };
+    EXPECT_FALSE(prov::host_module_collision(mods).has_value());
+}
+
+TEST(ReservedPrefix, AnOutsidePackageClaimingMcppIsWarnedAbout) {
+    auto w = prov::reserved_prefix_warning("mcpp.build.protobuf", "acme",
+                                           "acme.protobufgen");
+    ASSERT_TRUE(w.has_value());
+    EXPECT_NE(w->find("mcpp.build.protobuf"), std::string::npos);
+    EXPECT_NE(w->find("acme.protobufgen"), std::string::npos);
+}
+
+TEST(ReservedPrefix, TheOfficialNamespaceIsSilent) {
+    EXPECT_FALSE(prov::reserved_prefix_warning("mcpp.build.protobuf", "mcpp",
+                                               "mcpp.protobuf").has_value());
+}
+
+TEST(ReservedPrefix, AnOrdinaryNameIsSilent) {
+    EXPECT_FALSE(prov::reserved_prefix_warning("grpcgen", "mcpplibs",
+                                               "mcpplibs.grpcgen").has_value());
+    // `mcppish` is not under the `mcpp.` prefix: the dot is what makes the
+    // claim, and a substring test would have flagged this.
+    EXPECT_FALSE(prov::reserved_prefix_warning("mcppish", "acme",
+                                               "acme.mcppish").has_value());
+}

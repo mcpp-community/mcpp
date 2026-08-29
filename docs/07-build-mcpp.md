@@ -517,6 +517,51 @@ against, delivered to one more consumer. See
 [chapter 17](17-the-project-environment.md) for what a declared environment is
 and when to want one; `examples/07-project-subos/` is a working project.
 
+## Writing a rule package
+
+A rule — "run protoc over these `.proto` files", "run clang-tidy over these
+sources" — belongs in a package, not copy-pasted into every consumer's
+`build.mcpp`. The mechanism is
+[`host-module = true`](05-mcpp-toml.md); this section is about the shape of
+what goes inside.
+
+The guidance below generalises from `mcpplibs.grpcgen`, the first such package,
+with each of its traits judged individually. It is guidance and not a rule
+because none of it admits a criterion the engine could check.
+
+**Layers must not have a cliff, and each layer must be the composition of the
+one below it.** `generate_all(opt)` *is* `submit(plan_all(opt))`, and
+`.grpc = true` *is* `.plugins = {cpp()}`. Past two knobs a consumer who cannot
+descend writes sixty lines by hand to work around the rule, and those sixty
+lines then drift away from it silently.
+
+**Expose a plan/submit pair.** The bottom layer has to hand back the planned
+edges so a consumer can modify them and submit them again. This is the
+mechanism that makes the previous paragraph true; it is not a naming
+preference.
+
+**Do not reproduce truth the engine already holds.** mcpp writes every action's
+full argv into `build.ninja`, recoverable with `ninja -t commands`. A second
+source of that would only drift. What a rule owns is the other half — which
+knobs produced the command — and that belongs in each edge's `description`.
+
+**Failure and advice use different channels.** mcpp prints what it captured
+from a build program only when the program exits non-zero, so a failure writes
+to stderr and returns non-zero. A message that must be seen on a *successful*
+build has to go through [`mcpp::warning`](#warning--succeeding-and-still-being-heard-2026821-2);
+stderr on success is discarded, which means the wrong channel is silent on
+exactly the builds that needed the message.
+
+**Version the rule, not the tool it wraps.** mcpp identifies an installed
+package by `(name, version)`, so a repackaged rule that keeps its version
+string does not trigger a reinstall and the consumer keeps running the old rule
+with no diagnostic. The wrapped tool's version belongs in the description and
+in a constant inside the rule.
+
+**Test it through a consumer.** A rule is consumed only by a `build.mcpp`, so
+compiling it proves nothing. Its test is an example project that depends on it,
+builds, and asserts on the produced artefact.
+
 ## Dependencies' build.mcpp (mcpp 0.0.95+)
 
 A dependency that ships a `build.mcpp` gets it compiled and run too (the

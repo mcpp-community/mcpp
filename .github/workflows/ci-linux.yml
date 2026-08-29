@@ -55,6 +55,13 @@ jobs:
       - name: Check version / xlings pin consistency
         run: bash .github/tools/check_version_pins.sh
 
+      # Same placement and the same reason as the pin check above: adding a
+      # package under `modules/` means editing four files, and three of those
+      # omissions fail later and elsewhere — the worst of them only on a macOS
+      # machine that has no mcpp to rebuild with.
+      - name: Check modules/ wiring
+        run: bash .github/tools/check_modules_wiring.sh
+
       # Same placement, same reason: pure text, no toolchain, under a second.
       #
       # This one is a HARD gate (unlike lint-ci-assertions.sh below) because it

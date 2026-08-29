@@ -859,6 +859,41 @@ gtest = "1.15.2"
 自己失败;包或依赖损坏则报告为构建错误),`mcpp test <pattern>` 与
 `--message-format json` 分别提供过滤与机器可读输出。
 
+### 2.6.1 `[build-dependencies]` —— 构建期依赖(mcpp 2026.8.29.1+)
+
+```toml
+[build-dependencies]
+protobuf = { version = "35.1", tools = ["protoc"] }
+```
+
+段与边上的请求回答的是**两个不同的问题**,把它们混为一谈是建模上的错误,不是写法之争。
+
+- **段**回答:这个包本身进不进目标。`[dependencies]` 进;`[build-dependencies]` 永不进,
+  只能经由它到达的东西也一样。
+- **边上的请求**回答:要它的哪一种构建期产物。`tools = [...]` 要一个宿主可执行文件,
+  `host-module = true` 要一个构建程序可以 import 的模块。
+
+一个包可以同时在两个轴上取值,而 protobuf 正是证明这两个轴必须分开的例子:工程既链接
+`libprotobuf`,构建期又需要 `protoc`。它只写一次,写在 `[dependencies]` 里:
+
+```toml
+[dependencies]
+protobuf = { version = "35.1", tools = ["protoc"] }
+```
+
+`[build-dependencies]` 用于第一个轴无法表达的那种组合 —— 某个包的库不得进入目标,
+而它的工具或规则仍然需要。同一个包同时出现在两张表里不是错误:普通声明胜出,因为
+一行 `[build-dependencies]` 不应该悄悄拿掉目标真正需要的库。
+
+与 `[dev-dependencies]` 不同,这些依赖**会**被传递遍历:一个构建期依赖自己的依赖正是
+让它能工作的东西,并且继承它「只服务构建」的性质。
+
+feature 可以为构建期请求划定范围而无需第二个声明处 —— `[feature-deps.<name>]` 可以给
+一条已经无条件声明的依赖追加 `tools`,所以「按需才要」不需要另开一张表。
+
+> 这个段很早就能被解析,而直到 2026.8.29.1 之前没有任何做决定的代码读它:写下它得到的是
+> 一份能加载的清单、零诊断、零效果。
+
 ### 2.7 `[toolchain]` —— 工具链配置
 
 ```toml
@@ -1541,21 +1576,61 @@ mcpp 会把该包的 lib 根模块**为 host 编译,且与 `build.mcpp` 在同�
 于是规则**有版本、能测试、能通过既有的包管理器分发**,而且是用 **C++** 写的
 —— 不引入第二门语言,这正是 `build.mcpp` 存在的理由。
 
-**模块名就是包的 `name`。** mcpp 用依赖的裸 `package.name`(而**不是**
-`<namespace>.<name>`)注册这个 host 模块,所以规则包的名字必须是合法的 C++ 模块名:
-`grpcgen` 可以,`grpc-rules` 不行 —— 连字符在包名里合法、在模块名里非法,而且报出来
-的是 `module 'grpc_rules' not found`,不会指出名字有问题。
+**模块名是规则源码自己声明的那个**(mcpp 2026.8.29.1+)。`export module
+acme.rules.protobuf;` 就以 `acme.rules.protobuf` 被 import,与包叫什么无关。
+模块名是作者定义的 API,不镜像包身份 —— 普通库包一直遵循的就是这条规则。
+
+2026.8.29.1 之前 host 模块这条路径注册的是裸 `package.name`,于是声明名与包名
+分叉的规则包在 GCC 上能构建、在 Clang 与 MSVC 上失败:GCC 的 BMI 隐式落在
+`gcm.cache` 且按**声明名**索引,而另外两者拿到的是显式的 `<name>=<bmi>` 映射。
+因此包名不再承担任何 C++ 命名约束,`grpc-rules` 重新是合法包名。
+
+**两个规则不得声明同一个模块名。** `import` 寻址的是模块,所以两个这样的包对编译器
+不可区分,而它们的 BMI 与对象文件同名 —— 后者覆盖前者,存活的那个对象被送进链接两次。
+mcpp 拒绝这种情形,并点名两个包与各自的 interface 路径。检查的范围是一次 `build.mcpp`
+能看见的那些规则,不是索引级的全局唯一性 —— `path` 依赖与私有 registry 本来就绕得开。
+
+**`mcpp.` 前缀保留给由 mcpp 项目维护的规则。** 不在 `mcpp` 命名空间下的包声明该前缀
+的模块名时给出一条同时点名两者的警告,构建继续。之所以是警告:引擎判定不了谁是官方,
+`path` 依赖、私有镜像与内部 fork 都合法,而且从这里看都一样。
 
 lib 根必须在 `src/<name>.cppm`(或 `[lib] path` 指向的位置);缺失时报
 *"host module 'x': no interface unit at …"*。
 
-*限制:* 规则接口是单独编译的,因此可以 import `std` 与内置 `mcpp` 模块,
-但不能 import 第三个包。规则包按构造是叶子。
+*仅构建期:* `host-module = true` 的依赖**不会**被编进、也不会被链进本工程的 target,
+它所依赖的东西也不会。它只在 `build.mcpp` 期间运行,别处都不出现。(2026.8.5.2 之前
+它还会被当作普通库再编一遍,这正是规则里 `import mcpp;` 失败的原因:在那第二次编译里
+内置模块并不存在。2026.8.29.1 之前被排除的只有规则本身,它自己的 `[dependencies]`
+仍会被编译并链进消费者的二进制,而规则却 import 不到它们。)
 
-*仅构建期:* `host-module = true` 的依赖**不会**被编进、也不会被链进本工程的 target。
-它只在 `build.mcpp` 期间运行,别处都不出现 —— 与 Cargo 用 `[build-dependencies]`
-划出的是同一条界线。(2026.8.5.2 之前它还会被当作普通库再编一遍,这正是规则里
-`import mcpp;` 失败的原因:在那第二次编译里内置模块并不存在。)
+#### 依赖另一个规则的规则(mcpp 2026.8.29.1+)
+
+规则在自己的 `[build-dependencies]` 里声明所需之物,并可以 import 其中标了
+`host-module = true` 的条目:
+
+```toml
+# 写在规则包自己的清单里
+[build-dependencies]
+globbing = { path = "../globbing", host-module = true }
+```
+
+```cpp
+// 规则自己的接口
+export module tidyrule;
+import std;
+import mcpp;
+import globbing;
+```
+
+mcpp 先编译内层规则,同一条命令、同一套 flag,因此 BMI 的一致性仍是结构性事实而不是
+需要事后校验的性质。
+
+消费者**不可以** import `globbing`:构建期的 provision 只在 `reexport = true` 的边上
+再跨一跳,而 mcpp 自己执行这条规则,不交给编译器 —— 在 GCC 上那个 import 会成功,
+然后在别人的机器上失败。
+
+*限制:* 每个 host 模块只有一个接口单元。带实现单元或多个模块的库还不能作为规则的
+构建期依赖。
 
 #### `reexport = true` —— 由库替用户拉起整条工具链(2026.8.6.2+)
 

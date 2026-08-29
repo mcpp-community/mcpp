@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# check_modules_wiring.sh — every package under `modules/` is wired into all
+# THREE places that have to know about it, and no comment is trusted to keep
+# them in agreement.
+#
+# WHY THIS EXISTS
+#
+# `modules/` holds independent packages that mcpp links into itself. Adding one
+# means editing four files, and three of those edits fail LATER and ELSEWHERE
+# when they are forgotten:
+#
+#   1. modules/<x>/mcpp.toml          the package itself
+#   2. mcpp.toml [dependencies.mcpp]  what makes it importable
+#   3. mcpp.toml [workspace] members  what makes `-p` and `mcpp test` see it
+#   4. the two xmake source lists     the bootstrap and the benchmark, which
+#                                     have no package manager and compile the
+#                                     sources directly
+#
+# Forgetting (2) fails at once and is harmless. Forgetting (3) is invisible
+# until someone runs the member's tests. Forgetting (4) is invisible until the
+# macOS bootstrap runs on a machine with no mcpp — which is the one place that
+# cannot be fixed by rebuilding.
+#
+# This repository has paid for the same shape before: `check_version_pins.sh`
+# exists because a comment saying "keep in lock-step" kept not being read.
+#
+# WHAT THIS CANNOT CATCH: whether a module SHOULD have been split out, and
+# whether the split is layered correctly. Absence of an entry is checkable;
+# absence of judgement is not.
+set -uo pipefail
+cd "$(dirname "$0")/../.."
+
+fail=0
+bad() { echo "FAIL: $*" >&2; fail=1; }
+note() { echo "  $*"; }
+
+[[ -d modules ]] || { echo "no modules/ directory; nothing to check"; exit 0; }
+
+mapfile -t dirs < <(find modules -mindepth 1 -maxdepth 1 -type d | sort)
+(( ${#dirs[@]} > 0 )) || { echo "modules/ is empty; nothing to check"; exit 0; }
+echo "checking ${#dirs[@]} module package(s)"
+
+for d in "${dirs[@]}"; do
+    name="${d#modules/}"
+
+    [[ -f "$d/mcpp.toml" ]] || { bad "$d has no mcpp.toml"; continue; }
+
+    # The package's declared name must match the directory, because the
+    # dependency KEY has to match the package identity and the key is written
+    # against this path. A mismatch is reported by mcpp as "resolved to package
+    # X (mismatch with declared name Y)" from inside resolution, which is a
+    # long way from the line that is wrong.
+    declared=$(grep -oE '^name[[:space:]]*=[[:space:]]*"[^"]+"' "$d/mcpp.toml" \
+               | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+    [[ "$declared" == "$name" ]] \
+        || bad "$d/mcpp.toml declares name = \"$declared\" but the directory is \"$name\""
+
+    ns=$(grep -oE '^namespace[[:space:]]*=[[:space:]]*"[^"]+"' "$d/mcpp.toml" \
+         | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+    [[ "$ns" == "mcpp" ]] \
+        || bad "$d/mcpp.toml has namespace = \"${ns:-<none>}\"; modules of this project use \"mcpp\" so they do not squat bare registry names"
+
+    # (2) importable
+    grep -qE "^[[:space:]]*$name[[:space:]]*=[[:space:]]*\{[[:space:]]*path[[:space:]]*=[[:space:]]*\"modules/$name\"" mcpp.toml \
+        || bad "mcpp.toml [dependencies.mcpp] has no entry for '$name' — it will not be importable"
+
+    # (3) addressable
+    grep -qF "\"modules/$name\"" <(sed -n '/^\[workspace\]/,/^\[/p' mcpp.toml) \
+        || bad "mcpp.toml [workspace] members does not list modules/$name — 'mcpp test -p $name' will not find it"
+
+    # (4) the two package-manager-less builds
+    [[ -d "$d/src" ]] \
+        || bad "$d has no src/ — the xmake source lists glob modules/*/src/**.cppm and would silently miss it"
+done
+
+# The two xmake source lists must actually carry the glob. Asserted by content
+# rather than by trusting the loop above: a renamed pattern would leave every
+# per-module check passing while compiling nothing.
+for f in scripts/bootstrap-macos.sh .github/workflows/bootstrap-macos.yml \
+         bench/projects/mcpp/xmake.lua; do
+    [[ -f "$f" ]] || { bad "$f is missing"; continue; }
+    grep -qF 'modules/*/src/**.cppm' "$f" \
+        || bad "$f does not add modules/*/src/**.cppm — it would build a strict subset of mcpp and report success"
+done
+
+# The vendored json header is reached through a private include dir. Its path
+# appears in three places and has already moved once.
+for f in scripts/bootstrap-macos.sh .github/workflows/bootstrap-macos.yml \
+         bench/projects/mcpp/xmake.lua; do
+    grep -qF 'modules/json/src/json' "$f" \
+        || bad "$f does not add the json include dir (modules/json/src/json)"
+done
+[[ -f modules/json/src/json/json.hpp ]] \
+    || bad "modules/json/src/json/json.hpp is missing, but three files name that path"
+
+if (( fail )); then
+    echo
+    echo "modules/ wiring is incomplete." >&2
+    exit 1
+fi
+echo "OK: modules/ wiring is complete"

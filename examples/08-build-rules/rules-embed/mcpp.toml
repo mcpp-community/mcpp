@@ -1,0 +1,6 @@
+[package]
+name        = "rules-embed"
+namespace   = "example"
+version     = "0.1.0"
+description = "Embed a file as a linkable object (role = object)"
+license     = "Apache-2.0"

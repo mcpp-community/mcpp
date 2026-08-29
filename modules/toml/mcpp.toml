@@ -1,0 +1,11 @@
+# mcpp.libs.toml — the TOML reader mcpp parses manifests with.
+#
+# Hand-written rather than vendored, and a leaf: it imports `std` and nothing
+# else, which is what makes it separable at all.
+
+[package]
+name        = "toml"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "TOML parsing for mcpp"
+license     = "Apache-2.0"

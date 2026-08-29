@@ -980,6 +980,50 @@ gtest = "1.15.2"
 
 `mcpp build` ignores these; `mcpp test` resolves and uses them. `mcpp test` automatically discovers `tests/**/*.cpp` and compiles them into test binaries. The runner is framework-agnostic: each file is an independent binary judged by exit code — a bare `main`, gtest (via `[dev-dependencies]` + `gtest_main`), or any other framework all work identically, and `-- args` are forwarded to every test binary (e.g. `-- --gtest_filter=...`). Note: synthesized test target names may contain `/` (`tests/00-a/0.cpp` → `00-a/0`), unlike `[targets.*]` names — the two namespaces are intentionally separate (test targets never enter the manifest or publishing). Tests are named by their `tests/`-relative path (`tests/00-a/0.cpp` → `00-a/0`), each test compiles in isolation (a broken test fails alone; package/dep breakage is reported as a build error instead), and `mcpp test <pattern>` / `--message-format json` filter and machine-format the run.
 
+### 2.6.1 `[build-dependencies]` — Build-Time Dependencies (mcpp 2026.8.29.1+)
+
+```toml
+[build-dependencies]
+protobuf = { version = "35.1", tools = ["protoc"] }
+```
+
+The section and the per-edge request answer **different questions**, and
+conflating them is a modelling error rather than a matter of spelling.
+
+- The **section** says whether the package itself reaches the target.
+  `[dependencies]` means it does; `[build-dependencies]` means it never does,
+  and neither does anything reachable only through it.
+- The **request on the edge** says which build-time product is wanted.
+  `tools = [...]` asks for a host executable; `host-module = true` asks for a
+  module the build program can import.
+
+A package takes a value on both axes at once, and protobuf is the case that
+proves the axes must stay separate: a project links `libprotobuf` *and* needs
+`protoc` during the build. It is written once, in `[dependencies]`:
+
+```toml
+[dependencies]
+protobuf = { version = "35.1", tools = ["protoc"] }
+```
+
+`[build-dependencies]` is for the combination the first axis cannot otherwise
+express — a package whose library must not reach the target while its tool or
+its rule is still wanted. Naming one package in both tables is not an error:
+the ordinary declaration wins, because a `[build-dependencies]` line must not
+quietly drop a library the target needs.
+
+Unlike `[dev-dependencies]`, these **are** walked transitively: a build
+dependency's own dependencies are what make it work, and they inherit its
+build-only nature.
+
+A feature scopes build-time requests without a second declaration site —
+`[feature-deps.<name>]` may add `tools` to a dependency already declared
+unconditionally, so "only when needed" needs no separate table.
+
+> The section has been parsed since early versions and, until 2026.8.29.1, read
+> by nothing that made a decision: writing it produced a manifest that loaded,
+> no diagnostic, and no effect.
+
 ### 2.7 `[toolchain]` — Toolchain Configuration
 
 ```toml
@@ -1798,24 +1842,73 @@ Rules are therefore versioned, testable and distributable through the package
 manager already in use, written in **C++** — no second language, which is the
 whole point of `build.mcpp` existing.
 
-**The module name is the package's `name`.** mcpp registers the host module
-under the dependency's bare `package.name` (not `<namespace>.<name>`), so a
-rule package's name has to be a legal C++ module name: `grpcgen` works,
-`grpc-rules` does not — the hyphen is fine in a package name and illegal in a
-module name, and the mismatch surfaces as `module 'grpc_rules' not found`
-rather than as a complaint about the name.
+**The module name is what the rule's source declares** (mcpp 2026.8.29.1+).
+`export module acme.rules.protobuf;` is imported as `acme.rules.protobuf`,
+whatever the package is called. Module names are authored API and do not mirror
+package identity — the rule ordinary library packages have always followed.
+
+Until 2026.8.29.1 the host-module path registered the bare `package.name`
+instead, which made a divergent name build under GCC and fail under Clang and
+MSVC: GCC's BMIs are implicit under `gcm.cache` and keyed by the declared name,
+while the other two are handed an explicit `<name>=<bmi>` mapping. Package names
+carry no C++ naming constraint as a result, and `grpc-rules` is a legal package
+name again.
+
+**Two rules may not declare one module name.** `import` addresses the module,
+so two such packages are indistinguishable to the compiler, and their BMIs and
+objects share a filename — the second overwrites the first and the surviving
+object reaches the link twice. mcpp refuses this, naming both packages and both
+interface paths. The check covers the rules one `build.mcpp` can see; it is not
+an index-wide uniqueness rule, which `path` dependencies and private registries
+would escape anyway.
+
+**`mcpp.` is reserved for rules maintained by the mcpp project.** A module name
+under that prefix from a package outside the `mcpp` namespace produces a
+warning naming both, and the build proceeds. It is a warning because the engine
+cannot decide who is official: a `path` dependency, a private mirror and an
+internal fork are all legitimate and indistinguishable from here.
 
 The lib root must be at `src/<name>.cppm` (or wherever `[lib] path` points); a
 missing one is reported as *"host module 'x': no interface unit at …"*.
 
-*Limit:* the rule interface is compiled alone, so it may import `std` and the
-bundled `mcpp` module, but not a third package. A rule package is a leaf.
-
 *Build-time only:* a `host-module = true` dependency is **not** compiled into
-or linked with the target. It exists to run during `build.mcpp` and nowhere
-else — the same separation Cargo draws with `[build-dependencies]`. (Before
-2026.8.5.2 it was also built as an ordinary library, which made `import mcpp;`
-inside a rule fail: the bundled module does not exist in that second compile.)
+or linked with the target, and neither is anything it depends on. It exists to
+run during `build.mcpp` and nowhere else. (Before 2026.8.5.2 it was also built
+as an ordinary library, which made `import mcpp;` inside a rule fail: the
+bundled module does not exist in that second compile. Until 2026.8.29.1 the
+rule itself was excluded but its own `[dependencies]` were not, so they were
+compiled and linked into the consumer's binary while the rule could not import
+them.)
+
+#### A rule that depends on another rule (mcpp 2026.8.29.1+)
+
+A rule declares what it needs in its own `[build-dependencies]`, and may import
+any entry there marked `host-module = true`:
+
+```toml
+# inside the rule package's manifest
+[build-dependencies]
+globbing = { path = "../globbing", host-module = true }
+```
+
+```cpp
+// the rule's own interface
+export module tidyrule;
+import std;
+import mcpp;
+import globbing;
+```
+
+mcpp compiles the inner rule first, in the same command and with the same
+flags, so BMI agreement stays structural rather than checked.
+
+The consumer may **not** import `globbing`: build-time provisions cross one
+further edge only on a `reexport = true` edge, and mcpp enforces that rather
+than leaving it to the compiler, which on GCC would allow the import and then
+fail on someone else's machine.
+
+*Limit:* one interface unit per host module. A library with implementation
+units or several modules cannot yet be a rule's build dependency.
 
 #### `reexport = true` — a library standing up a toolchain for its user (2026.8.6.2+)
 

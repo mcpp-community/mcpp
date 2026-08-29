@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version = "2026.8.28.2"
+version = "2026.8.29.1"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -12,9 +12,6 @@ repo        = "https://github.com/mcpp-community/mcpp"
 # self-host build) back into the optimized profile. Without this the released
 # binary would be -O0. A `--profile`/`--dev`/`--release` flag still overrides.
 default-profile = "release"
-# nlohmann/json.hpp lives in src/libs/json/; expose it to the global
-# module fragment `#include <json.hpp>` in src/libs/json.cppm.
-include_dirs = ["src/libs/json"]
 # Split the module edge: importers start when the BMI is published rather than
 # when the compiler exits. See docs/05-mcpp-toml.md.
 #
@@ -29,7 +26,8 @@ include_dirs = ["src/libs/json"]
 # windows-host cross build to x86_64-linux-musl failed on the BMI edge with
 #
 #     failed: gcm.cache/mcpp.libs.json.gcm
-#     src/libs/json.cppm:3: fatal error: json.hpp: No such file or directory
+#     modules/json/src/json.cppm:3: fatal error: json.hpp: No such file or
+#     directory     (the unit was src/libs/json.cppm when this was diagnosed)
 #
 # because `cmd.exe /c` does not use CreateProcess argument quoting, so the
 # compiler ran with `-I` missing. Fixed in detach_codegen.cppm; see #425.
@@ -66,6 +64,39 @@ linkage = "static"
 # past 0.0.6) understands this, so the legacy quoted form is no longer needed.
 [dependencies]
 mcpplibs.cmdline = "0.0.1"
+
+# `modules/` holds what gets linked into this binary; `src/` is what has not
+# been separated yet, and shrinking it is the direction. Each entry is an
+# independent package with its own manifest, so the thing that used to be a
+# directory convention is now a boundary the build enforces: a module under
+# `modules/` cannot quietly reach back into the engine, because a package
+# cannot depend on its consumer.
+#
+# A dependency KEY must match the package's identity, and these carry the
+# `mcpp` namespace rather than squatting bare `json` / `toml` — dependency
+# names resolve in one flat space, so `json = { path = … }` would take a name
+# the registry may one day want.
+#
+# `[workspace] members` below is what makes `-p` and `mcpp test` address them;
+# it is NOT what makes them importable. That is these path dependencies, and
+# needing both is easy to get wrong because either one alone looks sufficient.
+[dependencies.mcpp]
+json         = { path = "modules/json" }
+toml         = { path = "modules/toml" }
+log          = { path = "modules/log" }
+source-kind  = { path = "modules/source-kind" }
+dyndep       = { path = "modules/dyndep" }
+version-req  = { path = "modules/version-req" }
+
+[workspace]
+members = [
+    "modules/json",
+    "modules/toml",
+    "modules/log",
+    "modules/source-kind",
+    "modules/dyndep",
+    "modules/version-req",
+]
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.
 # Namespace omission means exactly mcpplibs, so the compat wrapper is explicit.

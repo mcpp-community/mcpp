@@ -110,10 +110,16 @@ target("mcpp")
     -- interface units (which is what xlings did), and then this compiles
     -- the interfaces, links nothing, and still reports a time.
     add_files(path.join(MCPP_ROOT, "src/**.cpp"))
+    -- `modules/` holds packages mcpp links into itself, each with its own
+    -- manifest. The comparison has to compile the same set of translation
+    -- units mcpp does, so they are added here as plain sources: xmake has no
+    -- package boundary to model, and a missing boundary is not a missing unit.
+    add_files(path.join(MCPP_ROOT, "modules/*/src/**.cppm"))
 
-    -- mcpp.toml: include_dirs = ["src/libs/json"] — src/libs/json.cppm reaches
-    -- for <json.hpp> from its global module fragment.
-    add_includedirs(path.join(MCPP_ROOT, "src/libs/json"))
+    -- modules/json/mcpp.toml: include_dirs = ["src/json"] — its module reaches
+    -- for <json.hpp> from its global module fragment. Private to that package
+    -- in mcpp's build; a flat include path here.
+    add_includedirs(path.join(MCPP_ROOT, "modules/json/src/json"))
 
     -- mcpp.toml: [dependencies] mcpplibs.cmdline = "0.0.1".
     -- mcpp stages prebuilt objects for this out of its global build cache; xmake
