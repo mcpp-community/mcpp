@@ -3080,16 +3080,20 @@ prepare_build(bool print_fingerprint,
                     // without pinning it. install_packages resolves the version
                     // itself and reports an ambiguous name with its candidates,
                     // which is the error the author can act on.
-                    std::string targets;
-                    for (auto const& d : declaredDeps) {
-                        if (!targets.empty()) targets += ',';
-                        targets += std::format("\"{}\"", d);
-                    }
+                    // Built with the JSON library rather than by formatting
+                    // the strings in. `deps` is manifest input, so a name
+                    // containing a quote or a backslash would otherwise emit
+                    // malformed JSON and the failure would surface as an
+                    // unrelated xlings parse error naming neither the manifest
+                    // nor the key.
+                    nlohmann::json args;
+                    args["targets"] = declaredDeps;
+                    args["yes"]     = true;
+
                     mcpp::fetcher::InstallProgressHandler progress;
                     auto r = mcpp::xlings::call(
                         mcpp::config::make_xlings_env(**cfg2), "install_packages",
-                        std::format(R"({{"targets":[{}],"yes":true}})", targets),
-                        &progress);
+                        args.dump(), &progress);
                     if (!r) {
                         // Shaped like the toolchain failure: say what failed and
                         // hand back a command the user can run themselves. An
