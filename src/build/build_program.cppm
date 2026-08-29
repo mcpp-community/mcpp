@@ -703,6 +703,40 @@ std::expected<void, std::string> run_build_program(
     std::string programHash  = mcpp::toolchain::hash_file(src);
     std::string compilerHash = mcpp::toolchain::hash_string(compilerIdentity);
 
+    // Read once, here, because the check below has to run BEFORE the cache
+    // fast path returns.
+    std::string srcText;
+    { std::ifstream is(src); std::ostringstream ss; ss << is.rdbuf(); srcText = ss.str(); }
+
+    // A module that is present only as another rule's prerequisite is not part
+    // of this package's declared surface. Refusing the import rather than
+    // letting it work is the difference between a rule that travels and one
+    // that happens to build on whoever's machine: the same source stops
+    // compiling the moment the intermediate rule stops depending on it, or the
+    // moment a Clang user tries it, since only GCC makes the BMI reachable
+    // without the flags.
+    //
+    // ⚠️ AHEAD OF THE FAST PATH ON PURPOSE. Withdrawing `reexport = true` from
+    // an edge leaves the module SET and every interface hash identical, so
+    // nothing in `compilerIdentity` moves. Measured: the replay is prevented
+    // today only because `ctxHash` happens to change too — an incidental
+    // coupling, and the shape this codebase keeps paying for. Asking the
+    // question before the cache is consulted needs no key at all.
+    for (auto const& hm : env.hostModules) {
+        if (hm.importable) continue;
+        if (!imports_module(srcText, hm.logical)) continue;
+        return std::unexpected(std::format(
+            "build.mcpp imports '{}', which reaches this build only as a "
+            "prerequisite of another build rule.\n"
+            "       A rule's build-time provisions cross one further edge only "
+            "when that edge says so.\n"
+            "       Either depend on the package providing '{}' directly, or "
+            "have the rule that owns it re-export it:\n"
+            "         <that rule's package> = {{ ..., host-module = true, "
+            "reexport = true }}",
+            hm.logical, hm.logical));
+    }
+
     // Fast path: declared inputs + contract unchanged → reapply cached
     // directives, no run.
     CacheRecord cache = read_cache(bdir);
@@ -763,8 +797,8 @@ std::expected<void, std::string> run_build_program(
     // -fmodules, cwd = project root). When it does `import mcpp;`, compile the
     // module, link its object, and run the build.mcpp compile from `bdir` so GCC
     // finds gcm.cache/mcpp.gcm.
-    std::string srcText;
-    { std::ifstream is(src); std::ostringstream ss; ss << is.rdbuf(); srcText = ss.str(); }
+    // `srcText` was read above the cache fast path, which the prerequisite
+    // check needs to run ahead of.
     bool usesModule    = srcText.find("import mcpp") != std::string::npos;
     bool usesStdCompat = imports_module(srcText, "std.compat");
     bool usesStd       = usesStdCompat || imports_module(srcText, "std");
@@ -784,27 +818,6 @@ std::expected<void, std::string> run_build_program(
         if (imports_module(t, "std"))        usesStd       = true;
     }
 
-    // A module that is present only as another rule's prerequisite is not part
-    // of this package's declared surface. Refusing the import here rather than
-    // letting it work is the difference between a rule that travels and one
-    // that happens to build on whoever's machine: the same source stops
-    // compiling the moment the intermediate rule stops depending on it, or the
-    // moment a Clang user tries it, since only GCC makes the BMI reachable
-    // without the flags.
-    for (auto const& hm : env.hostModules) {
-        if (hm.importable) continue;
-        if (!imports_module(srcText, hm.logical)) continue;
-        return std::unexpected(std::format(
-            "build.mcpp imports '{}', which reaches this build only as a "
-            "prerequisite of another build rule.\n"
-            "       A rule's build-time provisions cross one further edge only "
-            "when that edge says so.\n"
-            "       Either depend on the package providing '{}' directly, or "
-            "have the rule that owns it re-export it:\n"
-            "         <that rule's package> = {{ ..., host-module = true, "
-            "reexport = true }}",
-            hm.logical, hm.logical));
-    }
     usesStd = usesStd || usesStdCompat;
 
     // The toolchain's own environment (MSVC's INCLUDE / LIB / VSLANG, which

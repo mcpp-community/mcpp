@@ -136,6 +136,29 @@ out="$("$MCPP" run 2>&1 | grep '^ANSWER=' | tail -1)"
 [[ "$out" == "ANSWER=7" ]] || {
     echo "FAIL: the re-exported path broke the value: $out"; exit 1; }
 
+# ── 3b. withdrawing reexport is caught on a warm cache ─────────────────────
+# Ordered right after the successful build above, so build.mcpp's cache and the
+# whole-project fast path are both warm. Dropping `reexport` leaves the module
+# SET and every interface hash identical, so nothing in the cache identity
+# moves; the refusal is reached only because it is asked BEFORE the cache is
+# consulted.
+#
+# ⚠️ This assertion does not prove that placement on its own. Measured: with
+# the check below the fast path it still fired here, because `ctxHash` happens
+# to change as well. The placement is what makes the property hold; this pins
+# the behaviour, not the reason.
+cd "$TMP"
+mk_outer ""
+touch app/src/main.cpp   # the whole-project fast path never reaches build.mcpp
+cd app
+if "$MCPP" build > b3b.log 2>&1; then
+    cat b3b.log
+    echo "FAIL: withdrawing reexport was replayed from the build.mcpp cache"
+    exit 1
+fi
+grep -qF "globbing" b3b.log || {
+    cat b3b.log; echo "FAIL: the refusal after cache invalidation does not name the module"; exit 1; }
+
 # ── 4. a cycle is reported as a cycle ──────────────────────────────────────
 cd "$TMP"
 cat >> globbing/mcpp.toml <<'EOF'
