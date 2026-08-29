@@ -27,6 +27,7 @@ examples.
 | 02 | [`examples/02-with-deps`](../examples/02-with-deps/) | Adds the `mcpplibs.cmdline` dependency to parse command-line arguments | `[dependencies]`, SemVer, `mcpp.lock` |
 | 03 | [`examples/03-pack-static`](../examples/03-pack-static/) | Produces a fully static release package via `mcpp pack --mode static` | `[target.<triple>]` and `[pack]` configuration |
 | 08 | [`examples/08-build-rules`](../examples/08-build-rules/) | Two rule packages and a project that uses both | `host-module = true`, `[build-dependencies]`, `mcpp::action` with `role = "check"` |
+| 09 | [`examples/09-graphics-stack`](../examples/09-graphics-stack/) | KMS/DRM -> GBM -> EGL, plus Wayland, with nothing from the host | `compat.libgbm` / `libdrm` / `egl` / `wayland`, SubOS-supplied `GBM_BACKENDS_PATH` |
 
 ## Suggested Reading Order
 
