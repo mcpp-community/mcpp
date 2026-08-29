@@ -278,12 +278,20 @@ int main() {
 | `role` | 输出 | 顺序 | 典型 |
 |---|---|---|---|
 | `source` | 进编译集 | 编译边消费它们 | protoc、转译器 |
-| `check` | 一个 stamp 文件 | **与编译并行**(`blocking = true` 才前置) | clang-tidy、格式/ABI 检查 |
+| `check` | 一个 stamp 文件,由 mcpp 写入 | **与编译并行**(`blocking = true` 才前置) | clang-tidy、格式/ABI 检查 |
 | `object` | 进**链接**集 | 链接边消费它们 | 资源编译器、`objcopy` 嵌 blob、生成的 `.def`、预编译 `.o` |
 | `artifact` | 一个新文件 | 它的**输入**是链接产物,所以在链接之后跑 | 签名、打包、size budget |
 
 全程不涉及任何 phase 机制:顺序由 ninja 自己的文件依赖决定 —— 这也是为什么
 `artifact` 不会像朴素的「post 构建钩子」那样把自己重复施加一遍。
+
+**check 的命令不必自己写 stamp**(mcpp 2026.8.29.1+)。判定是退出码,stamp 是**构建图**
+需要的记账;命令成功时由 mcpp 创建它。在此之前每个 check 都需要一个包装脚本去 touch
+那个文件 —— 而 command 是 argv、不假设有 shell,所以那个包装器**根本没法可移植地写出来**。
+已经自己写 stamp 的命令不受影响:已存在的文件不会被动。
+
+> stamp 缺失**不会**让构建失败。ninja 只是留着那个声明的输出不存在,并在之后**每次构建
+> 都重跑**那条边 —— 看起来像一个通过了的检查,实际上它从未被满足。
 
 `object`(2026.8.7.1+)可选 `.target("name")`,可重复。它之所以需要名字:与
 `artifact` 不同,它跑在链接**之前**,没有 `${mcpp.target_file:…}` 可以反推。

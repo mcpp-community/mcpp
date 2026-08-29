@@ -312,13 +312,24 @@ attach:
 | `role` | Outputs | Ordering | Typical |
 |---|---|---|---|
 | `source` | join the compile set | the compile edge consumes them | protoc, a transpiler |
-| `check` | a stamp file | runs **alongside** compilation (set `blocking = true` to gate it) | clang-tidy, a format or ABI check |
+| `check` | a stamp file, written by mcpp | runs **alongside** compilation (set `blocking = true` to gate it) | clang-tidy, a format or ABI check |
 | `object` | join the **link** set | the link edge consumes them | a resource compiler, `objcopy` embedding a blob, a generated `.def`, a pre-built `.o` |
 | `artifact` | a new file | its *inputs* are link outputs, so it runs after the link | codesign, packaging, size budgets |
 
 No phase machinery is involved: ninja's own file dependencies do the
 sequencing, which is also why an `artifact` action cannot double-apply itself
 the way a naive "post-build hook" would.
+
+**A check's command does not have to write its stamp** (mcpp 2026.8.29.1+).
+The verdict is the exit code; the stamp is bookkeeping the graph needs, and
+mcpp creates it when the command succeeds. Before this, every check needed a
+wrapper script to touch the file — and a command is an argv with no shell
+assumed, so that wrapper could not be written portably at all. A command that
+already writes its own stamp is unaffected: an existing file is left alone.
+
+> A missing stamp does **not** fail the build. ninja leaves the declared output
+> absent and re-runs that edge on every build afterwards, which looks like a
+> passing check that is quietly never satisfied.
 
 `object` (2026.8.7.1+) takes an optional `.target("name")`, repeatable. It needs
 a name at all because, unlike `artifact`, it runs *before* the link and so has

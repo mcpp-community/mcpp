@@ -567,10 +567,26 @@ before, once for the directive cache and once for the advisory channel.
    limit. The question is which objects join the build program's link, and it
    has to be answered before a rule can depend on an ordinary library.
 
-4. **`role = "check"` cannot be written portably, and this is the finding the
-   second rule produced.** Section 4 predicted that writing the next rule
-   without consulting the guidance is what would expose the gaps; attempting a
-   `clangtidy` package is what found this one.
+4. ~~**`role = "check"` cannot be written portably**~~ — **FOUND, AND FIXED IN
+   THIS ROUND.** Section 4 predicted that writing the next rule without
+   consulting the guidance is what would expose the gaps; attempting a
+   `clangtidy` package is what found this one, and it was worth fixing before
+   shipping a rule that only worked on POSIX.
+
+   mcpp now creates a check's stamp when the command exits zero. The engine is
+   the portable wrapper: it is already on disk everywhere mcpp runs, so this
+   needs no shell, no `touch`, and no per-platform spelling. A command that
+   already writes its own stamp is unaffected — existing files are left alone.
+
+   ⚠️ **The obvious assertion does not discriminate.** Measured: ninja does NOT
+   fail when a declared output goes unproduced. It leaves the file absent and
+   re-runs that edge on every subsequent build, so the build stays green and
+   the only symptom is work silently redone. `tests/e2e/312` therefore asserts
+   on the stamp's existence and on the check NOT re-running, and both were seen
+   red with the wrapper removed.
+
+   The original statement of the gap, kept because the reasoning is what found
+   it:
 
    A check's output is a stamp and **the command has to create it**. Analysers
    do not: clang-tidy's verdict is its exit code, and it writes no file on

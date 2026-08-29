@@ -30,6 +30,7 @@ import mcpp.pm.commands;
 import mcpp.toolchain.fingerprint;   // MCPP_VERSION
 import mcpp.wire;
 import mcpp.platform.env;            // --offline → MCPP_OFFLINE
+import mcpp.platform.process;        // __action-stamp runs the checked command
 import mcpp.platform.runtime_search; // linker-wrapper path-injection opt-out
 import mcpp.ui;
 import mcpp.log;
@@ -782,6 +783,63 @@ int run(int argc, char** argv) {
     }
     if (std::string_view(argv[1]) == "help") {
         print_usage();
+        return 0;
+    }
+
+    // `mcpp __action-stamp <stamp>... -- <argv>...` — internal, and absent
+    // from the usage text on purpose: nobody types it, ninja does.
+    //
+    // WHY IT EXISTS. A `role = "check"` action's output is a stamp file, and
+    // until now the COMMAND had to create it. Analysers do not: clang-tidy's
+    // verdict is its exit code and it writes nothing on success. So every
+    // check needed a wrapper script — and an action's command is an argv with
+    // no shell assumed, which is right for Windows and is exactly what made
+    // the wrapper unwritable there. The role with no ecosystem consumer also
+    // had no portable way to acquire one, and that was not a coincidence.
+    //
+    // The engine is the portable wrapper. It is already on disk on every
+    // platform mcpp runs on, so this needs no shell, no `touch`, and no
+    // per-platform spelling.
+    //
+    // A command that already creates its stamp is unaffected: existing files
+    // are left alone, so the pre-2026.8.29.1 wrapper scripts keep working
+    // byte-for-byte.
+    if (std::string_view(argv[1]) == "__action-stamp") {
+        std::vector<std::string> stamps;
+        int i = 2;
+        for (; i < argc && std::string_view(argv[i]) != "--"; ++i)
+            stamps.emplace_back(argv[i]);
+        if (i >= argc || stamps.empty()) {
+            std::println(stderr,
+                "error: __action-stamp requires <stamp>... -- <command>...");
+            return 2;
+        }
+        std::vector<std::string> cmd;
+        for (++i; i < argc; ++i) cmd.emplace_back(argv[i]);
+        if (cmd.empty()) {
+            std::println(stderr, "error: __action-stamp has no command to run");
+            return 2;
+        }
+        // `run_exec`: no shell, stdio inherited. The analyser's own output has
+        // to reach the terminal unchanged — a check that fails is read by a
+        // human, and capturing would either swallow it or reprint it wrapped.
+        const int r = mcpp::platform::process::run_exec(cmd);
+        // The stamps are written ONLY on success. Writing them anyway would
+        // make ninja consider the edge satisfied, so the next build would skip
+        // a check that had never passed.
+        if (r != 0) return r;
+        for (auto const& s : stamps) {
+            std::error_code ec;
+            std::filesystem::path p{s};
+            if (!p.parent_path().empty())
+                std::filesystem::create_directories(p.parent_path(), ec);
+            if (std::filesystem::exists(p, ec)) continue;
+            std::ofstream out(p, std::ios::trunc);
+            if (!out) {
+                std::println(stderr, "error: cannot write check stamp '{}'", s);
+                return 1;
+            }
+        }
         return 0;
     }
 

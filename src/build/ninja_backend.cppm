@@ -2115,6 +2115,28 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // showed is NOT true of hand-assembled flag blobs.
             cmd += shell_quote_arg(escape_ninja_chars(tok));
         }
+        // A CHECK's verdict is its exit code; its stamp is bookkeeping the
+        // GRAPH needs. Requiring the command to produce the stamp made the
+        // role unusable for the analysers it exists for — clang-tidy writes
+        // nothing on success — and the obvious workaround, a wrapper script,
+        // cannot be written portably because an action's command is an argv
+        // with no shell assumed. So the engine wraps it: mcpp is already on
+        // disk on every platform it runs on.
+        //
+        // Prepended rather than appended, and the original command is passed
+        // through unchanged after `--`, so a command that DOES write its own
+        // stamp behaves exactly as before: existing files are left alone.
+        if (a.role == mcpp::manifest::BuildAction::Role::Check
+            && !a.outputs.empty()) {
+            std::string wrapped =
+                shell_quote_arg(escape_ninja_chars(
+                    mcpp::platform::fs::self_exe_path().string()))
+                + " __action-stamp";
+            for (auto const& o : a.outputs)
+                wrapped += " " + shell_quote_arg(escape_ninja_chars(o));
+            wrapped += " -- " + cmd;
+            cmd = std::move(wrapped);
+        }
         append(std::format("rule mcpp_action_{}\n", i));
         append(std::format("  command = {}\n", cmd));
         append(std::format("  description = {} {}\n",

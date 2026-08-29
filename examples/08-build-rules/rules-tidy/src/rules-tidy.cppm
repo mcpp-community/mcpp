@@ -58,7 +58,7 @@ inline std::vector<edge> plan(std::span<const std::string> files,
     for (auto const& f : files) {
         std::string stem = std::filesystem::path(f).stem().string();
         const std::string stamp = opt.out_dir + "/tidy/" + stem + ".stamp";
-        std::vector<std::string> cmd{ "sh", program, stamp, root + "/" + f };
+        std::vector<std::string> cmd{ "sh", program, root + "/" + f };
         if (opt.pass_compile_db) {
             cmd.push_back("-p");
             cmd.push_back("${mcpp.compile_db}");
