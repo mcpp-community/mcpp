@@ -462,30 +462,37 @@ compiled" and not on a log line.
 
 ## 5. Versioning, and a migration hazard
 
-A rule package carries its own semantic version. The version of the upstream
-tool it wraps belongs in the description and in a constant inside the rule, not
-in the version number.
-
-The reason is identity. `grpcgen` is published as version `1.83.0` while its
-tarball tag is `v1.83.0-4`: four different payloads have shared one version
-string. mcpp's identity for an installed package is `(name, version)`, so a
-repackaged rule does not trigger a reinstall, and the consumer keeps running the
-old rule with no diagnostic. This repository has already paid for that shape
+**The invariant is that one `(name, version)` names one payload.** mcpp's
+identity for an installed package is the pair, so a repackaged rule that keeps
+its version string does not trigger a reinstall: the consumer keeps running the
+old rule and nothing says so. This repository has already paid for that shape
 once, in the fourth layer of the stale-index problem, where a descriptor changed
 its artefact without changing its version.
 
-**The migration has a hazard that must be resolved before the move.** If
-`grpcgen` adopts its own versioning starting below `1.83.0`, the index holds both
-`1.83.0` and the new version, and a ranged dependency resolves to the highest
+`grpcgen` is published as version `1.83.0` while its tarball tag is
+`v1.83.0-4`. Four payloads have shared one version string, and that is the
+defect — not the choice of numbering scheme.
+
+**An earlier draft of this section said the version should be the rule's own,
+and that was too strong.** `grpcgen` ships from one tag together with `grpc` and
+`grpc-plugin`, and that repository's CI checks the three never drift apart. The
+coupling has a reason: the rule drives a specific `grpc_cpp_plugin`, so a
+consumer reading `1.83.0` learns something true and useful. Generalising from
+one instance produced a rule that would have made a justified practice look
+wrong; reading that instance's manifest is what corrected it.
+
+So: how the version is chosen is the author's call, and lock-step with the
+wrapped tool is legitimate when they ship together. What is not optional is that
+a payload change is a version change.
+
+**A migration hazard, if an author does renumber.** Adopting a lower version
+leaves the index holding both, and a ranged dependency resolves to the highest
 match — the old one wins permanently. Pointing `latest` at the new version is
 not sufficient; the previous occurrence of this required withdrawing the old
-version from the table.
-
-This document does not assert the resolution rule as verified. Registry version
-selection runs through the xim and xlings path rather than through
-`resolver.cppm`, and the exact call site was not re-read while this was written.
-**Verify it first**, then choose between withdrawing `1.83.0` and starting the
-rule's own versioning above it.
+version from the table. Registry version selection runs through the xim and
+xlings path rather than through `resolver.cppm`, and the exact call site was not
+re-read while this was written, so verify it before relying on the shape of that
+hazard.
 
 ---
 

@@ -552,11 +552,12 @@ build has to go through [`mcpp::warning`](#warning--succeeding-and-still-being-h
 stderr on success is discarded, which means the wrong channel is silent on
 exactly the builds that needed the message.
 
-**Version the rule, not the tool it wraps.** mcpp identifies an installed
-package by `(name, version)`, so a repackaged rule that keeps its version
-string does not trigger a reinstall and the consumer keeps running the old rule
-with no diagnostic. The wrapped tool's version belongs in the description and
-in a constant inside the rule.
+**One `(name, version)` names one payload.** mcpp identifies an installed
+package by that pair, so a repackaged rule that keeps its version string does
+not trigger a reinstall and the consumer keeps running the old rule with no
+diagnostic. Which numbering scheme to use is the author's call — versioning in
+lock-step with the wrapped tool is legitimate when the two ship from one tag,
+and tells a consumer something true — but a payload change is a version change.
 
 **Test it through a consumer.** A rule is consumed only by a `build.mcpp`, so
 compiling it proves nothing. Its test is an example project that depends on it,
