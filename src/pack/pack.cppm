@@ -43,7 +43,7 @@ import mcpp.pack.relocate;
 import mcpp.pack.strip;
 import mcpp.pack.zip;
 import mcpp.platform;
-import mcpp.platform.xlings;
+import mcpp.xlings;
 import mcpp.manifest;
 
 export namespace mcpp::pack {

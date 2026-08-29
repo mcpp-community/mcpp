@@ -1,0 +1,19 @@
+# libs — third-party parsers, wrapped as modules of this project.
+#
+# A module this project builds and exports is a module of this project, whoever
+# wrote the code inside. `json` wraps nlohmann's header; `toml` is written here.
+# They live together because they answer the same question -- "read this text
+# format" -- and because neither imports anything from mcpp.
+#
+# `include_dirs` is what the root manifest used to carry on their behalf. It is
+# private to this package by construction: a package's build inputs never widen
+# its public interface.
+[package]
+name        = "libs"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "Vendored and in-house text-format parsers as mcpp modules"
+license     = "Apache-2.0"
+
+[build]
+include_dirs = ["src/json"]

@@ -154,7 +154,7 @@ provider-specific 分支,也拒绝把相关词汇与外部 probe 启动耦合。
 搜索机制与链接后 verdict 写入 `resolution.json` schema 2。
 `mcpp why runtime` 只解释该存储文件;重新诊断由 `xlings doctor` 负责。
 
-### 2.3 运行期搜索闭包(`src/platform/runtime_search.cppm`)
+### 2.3 运行期搜索闭包(`modules/platform/src/runtime_search.cppm`)
 
 mcpp 在**编译与链接**两条线上都发 `--sysroot=<subos>`,所以 subos 提供的库
 (`-lGL`、`-lX11`、`-lwayland-client`)零 flag 就能解析。运行期的搜索路径必须由
@@ -499,7 +499,7 @@ mcpp 把运行时 DLL 部署到产物 exe 旁,这正是该平台对 §3–§4 �
 | 链接模型 + loader 解析 | `src/toolchain/linkmodel.cppm` |
 | 统一 fixup 管线(patchelf/specs/cfg、marker)| `src/toolchain/post_install.cppm` |
 | install/lifecycle 入口 | `src/toolchain/lifecycle.cppm`;auto-install 入口在 `src/build/prepare.cppm` |
-| root runtime 选择/binding | `src/platform/xlings/runtime_selection.cppm`、`src/platform/runtime_binding.cppm`、`src/platform/xlings/subos_info.cppm` |
+| root runtime 选择/binding | `src/xlings/runtime_selection.cppm`、`src/runtime/binding.cppm`、`src/xlings/subos_info.cppm` |
 | 通用 runtime contract + LinkIntent | `src/manifest/types.cppm`、`src/build/plan.cppm`、`src/build/flags.cppm` |
 | 存储 resolution 解释 | `src/build/prepare.cppm`、`src/build/runtime_validation.cppm`、`src/doctor.cppm` |
 | flag 组装(主构建)| `src/build/flags.cppm` |

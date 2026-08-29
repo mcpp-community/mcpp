@@ -20,7 +20,7 @@ on:
     branches: [ main ]
     paths:
       - 'src/build/build_program.cppm'
-      - 'src/platform/process.cppm'
+      - 'modules/platform/src/process.cppm'
       - 'tests/e2e/168_build_mcpp_musl_host_static.sh'
       - '.github/workflows/ci-aarch64-fresh-install.yml'
   push:

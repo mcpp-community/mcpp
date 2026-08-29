@@ -5,7 +5,7 @@
 // The constant used to live in mcpp.toolchain.fingerprint, next to the struct
 // that folds it into the BMI cache key. That is a reasonable place for a
 // *consumer* of the version and a bad place for the version itself: fingerprint
-// imports mcpp.toolchain.detect, which imports mcpp.platform.xlings, so "what version is
+// imports mcpp.toolchain.detect, which imports mcpp.xlings, so "what version is
 // this binary" transitively dragged in the entire toolchain-detection and
 // package-manager subsystem.
 //

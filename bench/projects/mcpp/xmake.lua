@@ -119,7 +119,7 @@ target("mcpp")
     -- modules/json/mcpp.toml: include_dirs = ["src/json"] — its module reaches
     -- for <json.hpp> from its global module fragment. Private to that package
     -- in mcpp's build; a flat include path here.
-    add_includedirs(path.join(MCPP_ROOT, "modules/json/src/json"))
+    add_includedirs(path.join(MCPP_ROOT, "modules/libs/src/json"))
 
     -- mcpp.toml: [dependencies] mcpplibs.cmdline = "0.0.1".
     -- mcpp stages prebuilt objects for this out of its global build cache; xmake

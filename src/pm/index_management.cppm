@@ -17,7 +17,7 @@ import mcpp.manifest;
 import mcpp.platform;
 import mcpp.project;
 import mcpp.ui;
-import mcpp.platform.xlings;
+import mcpp.xlings;
 
 namespace mcpp::pm {
 

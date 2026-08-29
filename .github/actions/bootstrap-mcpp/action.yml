@@ -13,7 +13,7 @@ inputs:
   xlings-version:
     description: xlings release to bootstrap from
     required: false
-    # Must equal `pinned::kXlingsVersion` in src/platform/xlings/xlings.cppm — enforced by
+    # Must equal `pinned::kXlingsVersion` in src/xlings/xlings.cppm — enforced by
     # .github/tools/check_version_pins.sh, not by this comment. (The previous
     # comment here listed the files to keep in lock-step, and that list was
     # already incomplete; that is why the check exists.)

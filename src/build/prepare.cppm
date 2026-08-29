@@ -67,10 +67,10 @@ import mcpp.build.backend;      // BuildOptions for the tool sub-build
 import mcpp.build.ninja;        // make_ninja_backend — driving that sub-build
 import mcpp.lockfile;
 import mcpp.config;
-import mcpp.platform.xlings;
-import mcpp.platform.xlings.subos_info;
-import mcpp.platform.xlings.runtime_selection;
-import mcpp.platform.runtime_binding;
+import mcpp.xlings;
+import mcpp.xlings.subos_info;
+import mcpp.xlings.runtime_selection;
+import mcpp.runtime.binding;
 import mcpp.platform.runtime_search;
 import mcpp.toolchain.post_install;
 import mcpp.platform;
@@ -1361,7 +1361,7 @@ prepare_build(bool print_fingerprint,
         auto cfgRuntime = get_cfg();
         if (!cfgRuntime) return std::unexpected(cfgRuntime.error());
         auto resolved = mcpp::platform::runtime::resolve_runtime_binding(
-            runtimeSelection, {}, **cfgRuntime);
+            runtimeSelection, {}, (**cfgRuntime).xlingsHome());
         if (!resolved) return std::unexpected(resolved.error());
         runtimeBindingSnapshot = std::move(*resolved);
         // A degradation that nobody prints is indistinguishable from no
@@ -2607,7 +2607,7 @@ prepare_build(bool print_fingerprint,
       //
       // `ucrt@<v>` is a COMPATIBILITY FLOOR, not a payload binding like
       // `glibc@<v>`: ucrtbase.dll is an OS component and mcpp ships no
-      // redistributable for it. See mcpp.platform.runtime_binding.
+      // redistributable for it. See mcpp.runtime.binding.
       if (!tc->windowsSdkVersion.empty()) {
           mcpp::platform::runtime::bind_windows_ucrt(
               runtimeBindingSnapshot, tc->windowsSdkVersion);

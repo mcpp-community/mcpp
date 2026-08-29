@@ -81,7 +81,7 @@ target("mcpp")
     -- is a boundary for the mcpp build, and a flat file list for this one.
     add_files("modules/*/src/**.cppm")
     add_packages("cmdline")
-    add_includedirs("modules/json/src/json")
+    add_includedirs("modules/libs/src/json")
     set_policy("build.c++.modules", true)
 XMAKE
 fi

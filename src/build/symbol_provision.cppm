@@ -47,7 +47,7 @@
 export module mcpp.build.symbol_provision;
 
 import std;
-import mcpp.platform.elf_runtime;
+import mcpp.runtime.elf;
 
 export namespace mcpp::build::symbol_provision {
 

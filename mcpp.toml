@@ -26,7 +26,7 @@ default-profile = "release"
 # windows-host cross build to x86_64-linux-musl failed on the BMI edge with
 #
 #     failed: gcm.cache/mcpp.libs.json.gcm
-#     modules/json/src/json.cppm:3: fatal error: json.hpp: No such file or
+#     modules/libs/src/json.cppm:3: fatal error: json.hpp: No such file or
 #     directory     (the unit was src/libs/json.cppm when this was diagnosed)
 #
 # because `cmd.exe /c` does not use CreateProcess argument quoting, so the
@@ -81,21 +81,27 @@ mcpplibs.cmdline = "0.0.1"
 # it is NOT what makes them importable. That is these path dependencies, and
 # needing both is easy to get wrong because either one alone looks sufficient.
 [dependencies.mcpp]
-json         = { path = "modules/json" }
-toml         = { path = "modules/toml" }
-log          = { path = "modules/log" }
-source-kind  = { path = "modules/source-kind" }
-dyndep       = { path = "modules/dyndep" }
-version-req  = { path = "modules/version-req" }
+libs            = { path = "modules/libs" }
+log             = { path = "modules/log" }
+versioning      = { path = "modules/versioning" }
+source-kind     = { path = "modules/source-kind" }
+dyndep          = { path = "modules/dyndep" }
+platform        = { path = "modules/platform" }
+manifest        = { path = "modules/manifest" }
+toolchain-model = { path = "modules/toolchain-model" }
+buildmcpp       = { path = "modules/buildmcpp" }
 
 [workspace]
 members = [
-    "modules/json",
-    "modules/toml",
+    "modules/libs",
     "modules/log",
+    "modules/versioning",
     "modules/source-kind",
     "modules/dyndep",
-    "modules/version-req",
+    "modules/platform",
+    "modules/manifest",
+    "modules/toolchain-model",
+    "modules/buildmcpp",
 ]
 
 # `mcpp build` ignores [dev-dependencies]; only `mcpp test` resolves them.

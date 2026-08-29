@@ -43,7 +43,7 @@ sha256sums=('SKIP'
 # monotonically increasing pkgver, so derive one from the closest tag plus the
 # commit distance (AUR -git convention): v2026.8.8.4-5-g<hash> →
 # 2026.8.8.4.5.g<hash>. The binary's own version comes from the checked-out
-# source (src/version.cppm), independent of pkgver.
+# source (modules/versioning/src/version.cppm), independent of pkgver.
 pkgver() {
     cd "${srcdir}/mcpp"
     git describe --long --tags | sed 's/^v//; s/-/./g'

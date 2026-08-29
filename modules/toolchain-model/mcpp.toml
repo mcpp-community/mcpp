@@ -1,0 +1,30 @@
+# toolchain-model — what a toolchain IS, separated from finding one.
+#
+# `src/toolchain/` answered two different questions in one directory:
+#
+#   * WHAT a toolchain is -- the target triple grammar, the Toolchain value,
+#     the command dialect, the standard-flag spelling, the fingerprint, the
+#     link model. Pure vocabulary over `platform`.
+#   * WHICH toolchain is on this machine -- detection, the registry, the gcc /
+#     clang / msvc / llvm families, installation. Those reach into xlings and
+#     the package index, and they stay in `src/`.
+#
+# Only the first half is separable, and the split is what lets the build.mcpp
+# contract be a package: `directives` needs the dialect and the fingerprint,
+# and reaching them used to mean reaching toolchain detection behind them.
+[package]
+name        = "toolchain-model"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "Toolchain vocabulary: triples, dialects, fingerprints, link model"
+license     = "Apache-2.0"
+
+[dependencies.mcpp]
+platform   = { path = "../platform" }
+versioning = { path = "../versioning" }
+
+# Subsystem-level tests. They see only this package, which is what lets them
+# state its contract in isolation; the root `tests/unit/` states the facts two
+# layers must agree on.
+[dev-dependencies.compat]
+gtest = "1.15.2"

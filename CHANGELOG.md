@@ -40,12 +40,41 @@
   规则包此前是叶子,而那不是设计选择:两个既有的构建期通道(`tools` /
   `host-module`)都由**消费者**写在边上,规则没有替自己说话的地方。
 
-- **`modules/`。** mcpp 自己的源码树开始分出独立包:`json` / `toml` / `log` /
-  `source-kind` / `dyndep` / `version-req` 六个,各带 mcpp.toml,由 path 引用。
-  按目录分组算强连通分量,21 个组里 17 个缠在一起,但每个组级环都由可数的几条
-  反向边造成 —— `platform` 只有 5 条,其中 4 条在 `platform/xlings/` 里,
-  那是穿着 platform 名字的另一层。`.github/tools/check_modules_wiring.sh` 守住
-  四处必须同步的接线。
+- **`modules/`。** mcpp 自己的源码树按**子系统**分出九个独立包,各带 mcpp.toml、
+  由 path 引用、依赖显式声明:`libs`(json+toml)、`log`、`versioning`、
+  `source-kind`、`dyndep`、`platform`、`manifest`、`toolchain-model`、
+  **`buildmcpp`**(build.mcpp 契约:协议、指令表、provision 模型、tool store)。
+
+  单位是**子系统**不是文件——一文件一包只会把目录列表写成九份清单。
+  `src/` 留构建工具的骨架:prepare / plan / execute、工具链族与探测、pm、pack、
+  cli、xlings、runtime。
+
+  按目录分组算强连通分量,21 个组里 17 个缠在一起,而每个组级环都由**可数的
+  几条反向边**造成。切了三条,每一条都是「模块按位置命名而不是按职责命名」的同一
+  个错误:
+
+  * `src/platform/xlings/` 根本不是 platform,它是 xlings 集成 → `src/xlings/`;
+  * `runtime_binding.cppm` 为读**一个**路径而 import 了整个 `mcpp.config`,
+    把 OS 层压到了配置、xlings 与包管理器之上 → 改成由调用方传路径,文件移到
+    `src/runtime/`;
+  * `toolchain.fingerprint` import 的是 `toolchain.detect`,而它要的
+    `Toolchain` 定义在 `toolchain.model` —— **那条 import 指向的是类型的消费者
+    而不是提供者**,顺带把工具链探测拖了进来。这条是承重的:build.mcpp 侧每个
+    模块都要 `fingerprint` 的 `hash_file`,只要它指着 `detect`,整个契约就传递地
+    坐在包管理器之上,一行 import 就是「能不能成为独立模块」的全部距离。
+
+  `build_program` / `hostprogram`(编译并运行构建程序的那一半)留在 `src/`:
+  它们需要 `toolchain.registry` 与 `toolchain.stdmod`,而**编译并运行一个程序的
+  东西按构造就是工具链消费者**,搬走只会把依赖挪个地方。
+
+- **分层单元测试。** 每个子系统带自己的测试(`mcpp test -p <member>`,CI 逐个跑),
+  根目录保留跨层的那套。两者的红有不同含义:子系统红=契约变了,根目录红=契约没变
+  而消费者漂了。子系统测试还跑在根构建从不产生的配置里——**只有它自己和它声明的
+  依赖**,所以一个悄悄依赖了未声明之物的子系统在根构建里能编过、在这里编不过。
+
+  ⚠️ `mcpp test -p <member>` 对没有测试的成员**退 0**,于是「没有测试」与
+  「测试通过」在 CI 输出里完全一样。`check_modules_wiring.sh` 因此把没有测试的成员
+  逐个打印出来(不判失败——一个 vendored 解析器包确实没有自己的东西要陈述)。
 
 ### 修复
 

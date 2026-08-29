@@ -31,6 +31,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 
 fail=0
+untested=()
 bad() { echo "FAIL: $*" >&2; fail=1; }
 note() { echo "  $*"; }
 
@@ -71,7 +72,30 @@ for d in "${dirs[@]}"; do
     # (4) the two package-manager-less builds
     [[ -d "$d/src" ]] \
         || bad "$d has no src/ — the xmake source lists glob modules/*/src/**.cppm and would silently miss it"
+
+    # (5) tests, REPORTED rather than required.
+    #
+    # `mcpp test -p <member>` exits 0 for a member with no tests, so CI's
+    # per-subsystem loop is green either way and "has no tests" is
+    # indistinguishable from "tests pass" in its output. Naming them here is
+    # what makes the difference visible; failing would be wrong, because a
+    # package of vendored parsers legitimately has nothing of its own to state.
+    n=0
+    [[ -d "$d/tests" ]] && n=$(find "$d/tests" -name '*.cpp' | wc -l)
+    if (( n == 0 )); then
+        untested+=("$name")
+    else
+        note "$name: $n subsystem test file(s)"
+        grep -q '^\[dev-dependencies' "$d/mcpp.toml" \
+            || bad "$d has tests but declares no [dev-dependencies] — they cannot link a framework"
+    fi
 done
+
+if (( ${#untested[@]} )); then
+    echo
+    echo "  no subsystem tests (allowed, and reported so it is not read as a pass):"
+    printf '    %s\n' "${untested[@]}"
+fi
 
 # The two xmake source lists must actually carry the glob. Asserted by content
 # rather than by trusting the loop above: a renamed pattern would leave every
@@ -87,11 +111,11 @@ done
 # appears in three places and has already moved once.
 for f in scripts/bootstrap-macos.sh .github/workflows/bootstrap-macos.yml \
          bench/projects/mcpp/xmake.lua; do
-    grep -qF 'modules/json/src/json' "$f" \
-        || bad "$f does not add the json include dir (modules/json/src/json)"
+    grep -qF 'modules/libs/src/json' "$f" \
+        || bad "$f does not add the json include dir (modules/libs/src/json)"
 done
-[[ -f modules/json/src/json/json.hpp ]] \
-    || bad "modules/json/src/json/json.hpp is missing, but three files name that path"
+[[ -f modules/libs/src/json/json.hpp ]] \
+    || bad "modules/libs/src/json/json.hpp is missing, but three files name that path"
 
 if (( fail )); then
     echo

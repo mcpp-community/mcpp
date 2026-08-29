@@ -17,7 +17,7 @@ export module mcpp.toolchain.registry;
 
 import std;
 import mcpp.platform;
-import mcpp.platform.xlings;
+import mcpp.xlings;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.compat;
 import mcpp.toolchain.gcc;

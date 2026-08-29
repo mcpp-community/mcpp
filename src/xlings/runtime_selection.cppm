@@ -1,4 +1,4 @@
-// mcpp.platform.xlings.runtime_selection — the sole project runtime-selection policy.
+// mcpp.xlings.runtime_selection — the sole project runtime-selection policy.
 //
 // This module chooses a name and an owner.  It deliberately does not inspect
 // the process environment, xlings' active/current state, the compiler path, or
@@ -6,7 +6,7 @@
 // any of them to choose the build OS would make one mcpp.toml mean different
 // ABIs in different shells.
 
-export module mcpp.platform.xlings.runtime_selection;
+export module mcpp.xlings.runtime_selection;
 
 import std;
 import mcpp.manifest;

@@ -14,7 +14,7 @@ export module mcpp.toolchain.probe;
 
 import std;
 import mcpp.toolchain.model;
-import mcpp.platform.xlings;
+import mcpp.xlings;
 import mcpp.platform;
 import mcpp.log;
 import mcpp.fallback.sysroot_complete;

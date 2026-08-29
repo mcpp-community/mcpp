@@ -1,0 +1,41 @@
+# buildmcpp — the build.mcpp CONTRACT, as a package.
+#
+# What mcpp and a build program agree on:
+#
+#   program_protocol   the wire version
+#   directives         the directive table -- one row per instruction, driving
+#                      parse / serialise / apply / cache
+#   provisions         what a dependency hands to a consumer's build program,
+#                      and how far it travels
+#   tool_store         where a host tool built for a build program lives
+#
+# WHAT IS NOT HERE, AND WHY. `build_program.cppm` and `hostprogram.cppm` -- the
+# half that COMPILES and RUNS the program -- stay in `src/`. They need the
+# toolchain registry and the std-module builder, which reach into detection and
+# xlings. That is not an accident of layering: a thing that compiles and runs a
+# program is a toolchain consumer by construction, and pretending otherwise
+# would move the dependency rather than remove it.
+#
+# The contract is the half that travels. It is what a rule package's author and
+# the engine both have to agree on, and it is now versioned and maintained as
+# its own unit.
+[package]
+name        = "buildmcpp"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "The build.mcpp contract: protocol, directive table, provisions"
+license     = "Apache-2.0"
+
+# Each subsystem carries its own tests. They know only this package, so they
+# state the contract in isolation; the root `tests/unit/` states the same facts
+# as the engine consumes them. A change that breaks only the local test is a
+# contract change; one that breaks only the global test is a consumer that had
+# been relying on something the contract never promised.
+[dependencies.mcpp]
+libs            = { path = "../libs" }
+manifest        = { path = "../manifest" }
+source-kind     = { path = "../source-kind" }
+toolchain-model = { path = "../toolchain-model" }
+
+[dev-dependencies.compat]
+gtest = "1.15.2"

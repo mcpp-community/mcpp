@@ -2,8 +2,8 @@
 
 import std;
 import mcpp.platform;
-import mcpp.platform.elf_runtime;
-import mcpp.platform.runtime_binding;
+import mcpp.runtime.elf;
+import mcpp.runtime.binding;
 import mcpp.toolchain.post_install;
 import mcpp.build.symbol_provision;
 

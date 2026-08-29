@@ -1,0 +1,33 @@
+# platform — the operating-system abstraction, as a package.
+#
+# Everything mcpp does that differs by OS: filesystem, process spawning, the
+# target axis vocabulary, ELF/Mach-O/PE facts, path spelling. It imports
+# nothing from mcpp, which is what makes it separable at all -- and it did not
+# start that way.
+#
+# Two edges were cut to get here, and both were the same mistake in different
+# clothes:
+#
+#   * `src/platform/xlings/` was never platform. It is the xlings integration,
+#     which by its nature knows about packages, indexes and manifests, and it
+#     lived under a name that said otherwise. It moved to `src/xlings/`.
+#   * `runtime_binding.cppm` imported the whole of `mcpp.config` to read ONE
+#     path out of it, which put the OS layer above configuration, xlings and
+#     the package manager. The caller passes the path now, and that file --
+#     which describes the xlings runtime contract rather than the OS -- moved
+#     to `src/runtime/` with `elf_runtime.cppm`, its only dependent here.
+#
+# 35 modules import this one. That is the reason to make the boundary a fact
+# the build enforces rather than a directory convention.
+[package]
+name        = "platform"
+namespace   = "mcpp"
+version     = "0.1.0"
+description = "Operating-system abstraction for mcpp"
+license     = "Apache-2.0"
+
+# Subsystem-level tests. They see only this package, which is what lets them
+# state its contract in isolation; the root `tests/unit/` states the same facts
+# as the engine consumes them, and the pair is the cross-check.
+[dev-dependencies.compat]
+gtest = "1.15.2"

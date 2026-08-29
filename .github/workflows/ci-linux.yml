@@ -108,8 +108,31 @@ jobs:
         run: |
           # Use freshly-built mcpp for test (it has --mirror support)
           MCPP_FRESH=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          echo "MCPP_FRESH=$MCPP_FRESH" >> "$GITHUB_ENV"
           "$MCPP_FRESH" self config --mirror GLOBAL
           "$MCPP_FRESH" test
+
+      # Each package under `modules/` carries its own tests, and they are built
+      # as that package ALONE -- a configuration the root suite never produces,
+      # since there every module is linked together. A subsystem that has
+      # quietly come to depend on something it does not declare compiles in the
+      # root build and fails here, which is the whole reason to run both.
+      #
+      # Every member is run, and the loop is derived from the manifest rather
+      # than written out: a list maintained by hand is a list that stops
+      # matching, and `check_modules_wiring.sh` cannot see this file.
+      - name: Per-subsystem tests (`mcpp test -p <member>`)
+        run: |
+          set -euo pipefail
+          members=$(sed -n '/^\[workspace\]/,/^\[/p' mcpp.toml \
+                    | grep -oE '"modules/[a-z0-9-]+"' | tr -d '"' | sed 's|modules/||')
+          [ -n "$members" ] || { echo "no workspace members found in mcpp.toml"; exit 1; }
+          echo "members: $(echo $members | tr '\n' ' ')"
+          for m in $members; do
+            echo "::group::mcpp test -p $m"
+            "$MCPP_FRESH" test -p "$m"
+            echo "::endgroup::"
+          done
 
   # A cold, from-scratch self-host build with the manifest-pinned GCC: the
   # property `build-test` cannot cover, because it builds incrementally on a

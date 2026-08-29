@@ -189,7 +189,7 @@ intent, search mechanism, and post-link verdict are persisted in
 `resolution.json` schema 2. `mcpp why runtime` only interprets that stored file;
 re-diagnosis belongs to `xlings doctor`.
 
-### 2.3 The run-time search closure (`src/platform/runtime_search.cppm`)
+### 2.3 The run-time search closure (`modules/platform/src/runtime_search.cppm`)
 
 mcpp passes `--sysroot=<subos>` on the compile **and** link lines, so a library
 the SubOS provides — `-lGL`, `-lX11`, `-lwayland-client` — resolves with no
@@ -639,7 +639,7 @@ answer them.
 | link model + loader resolution | `src/toolchain/linkmodel.cppm` |
 | unified fixup pipeline (patchelf/specs/cfg, marker) | `src/toolchain/post_install.cppm` |
 | install/lifecycle entry | `src/toolchain/lifecycle.cppm`; auto-install entries in `src/build/prepare.cppm` |
-| root runtime selection/binding | `src/platform/xlings/runtime_selection.cppm`, `src/platform/runtime_binding.cppm`, `src/platform/xlings/subos_info.cppm` |
+| root runtime selection/binding | `src/xlings/runtime_selection.cppm`, `src/runtime/binding.cppm`, `src/xlings/subos_info.cppm` |
 | generic runtime contract + LinkIntent | `src/manifest/types.cppm`, `src/build/plan.cppm`, `src/build/flags.cppm` |
 | stored resolution explanation | `src/build/prepare.cppm`, `src/build/runtime_validation.cppm`, `src/doctor.cppm` |
 | flag assembly (main build) | `src/build/flags.cppm` |

@@ -1,18 +1,21 @@
-// mcpp.platform.runtime_binding — immutable runtime contract snapshot.
+// mcpp.runtime.binding — immutable runtime contract snapshot.
 //
 // RuntimeSelection decides WHICH local development OS is authoritative.  This
 // module reads that exact SubOS once and turns its xlings contract into a value
 // carried by the build plan, fingerprint and fast-path cache.  No later phase
 // is allowed to follow `current`, inspect an active shell, or re-read the file.
 
-export module mcpp.platform.runtime_binding;
+export module mcpp.runtime.binding;
 
 import std;
-import mcpp.config;
+// NOT `mcpp.config`. This module needs ONE path out of it, and importing the
+// whole thing put the platform layer above configuration, xlings and the
+// package manager -- which is what kept `src/platform` from being a package of
+// its own. The caller passes the path; see subos_path.
 import mcpp.libs.json;
 import mcpp.platform;
-import mcpp.platform.xlings.runtime_selection;
-import mcpp.platform.xlings.subos_info;
+import mcpp.xlings.runtime_selection;
+import mcpp.xlings.subos_info;
 
 export namespace mcpp::platform::runtime {
 
@@ -213,10 +216,10 @@ std::string canonical_contract(const RuntimeBinding& binding) {
 
 std::filesystem::path subos_path(
     const mcpp::xlings::runtime::RuntimeSelection& selection,
-    const mcpp::config::GlobalConfig& cfg) {
+    const std::filesystem::path& xlingsHome) {
     using Mode = mcpp::xlings::runtime::RuntimeSelection::Mode;
     if (selection.mode == Mode::McppDefault || selection.subosName == "default")
-        return cfg.xlingsHome() / "subos" / "default";
+        return xlingsHome / "subos" / "default";
     return selection.ownerRoot / ".mcpp" / ".xlings" / "subos"
          / selection.subosName;
 }
@@ -300,10 +303,10 @@ std::expected<RuntimeBinding, std::string>
 resolve_runtime_binding(
     const mcpp::xlings::runtime::RuntimeSelection& selection,
     const std::filesystem::path& /*compiler*/,
-    const mcpp::config::GlobalConfig& cfg) {
+    const std::filesystem::path& xlingsHome) {
     RuntimeBinding out;
     out.selection = selection;
-    out.subosDir = detail::subos_path(selection, cfg).lexically_normal();
+    out.subosDir = detail::subos_path(selection, xlingsHome).lexically_normal();
 
     std::error_code ec;
     if (!std::filesystem::is_directory(out.subosDir, ec)) {

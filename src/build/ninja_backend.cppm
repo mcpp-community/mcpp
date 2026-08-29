@@ -30,7 +30,7 @@ import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.build.hermetic;
 import mcpp.build.runtime_validation;
-import mcpp.platform.elf_runtime;
+import mcpp.runtime.elf;
 import mcpp.build.compile_commands;
 import mcpp.build.cmdlimits;
 import mcpp.diag;
@@ -40,7 +40,7 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.provider;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;   // shared_soname_flag decides by TARGET, not host
-import mcpp.platform.xlings;
+import mcpp.xlings;
 import mcpp.platform;
 import mcpp.ui;
 import mcpp.log;

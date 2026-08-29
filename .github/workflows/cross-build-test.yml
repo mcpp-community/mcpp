@@ -106,7 +106,7 @@ jobs:
       - name: Bootstrap mcpp via xlings
         env:
           XLINGS_NON_INTERACTIVE: '1'
-          # Must equal `pinned::kXlingsVersion` (src/platform/xlings/xlings.cppm) and the
+          # Must equal `pinned::kXlingsVersion` (src/xlings/xlings.cppm) and the
           # xlings the release bundles — enforced by
           # .github/tools/check_version_pins.sh.
           #

@@ -567,6 +567,39 @@ before, once for the directive cache and once for the advisory channel.
    limit. The question is which objects join the build program's link, and it
    has to be answered before a rule can depend on an ordinary library.
 
+4. **`role = "check"` cannot be written portably, and this is the finding the
+   second rule produced.** Section 4 predicted that writing the next rule
+   without consulting the guidance is what would expose the gaps; attempting a
+   `clangtidy` package is what found this one.
+
+   A check's output is a stamp and **the command has to create it**. Analysers
+   do not: clang-tidy's verdict is its exit code, and it writes no file on
+   success. So a check action needs a wrapper — and an action's `command` is an
+   argv with no shell assumed, which is correct for Windows and is exactly what
+   makes the wrapper unwritable there. `tests/e2e/188` and
+   `examples/08-build-rules` both reach for `sh`, and both are therefore POSIX
+   only.
+
+   The consequence is that the role with no ecosystem consumer also has no
+   portable way to acquire one, and that is not a coincidence.
+
+   The stamp is bookkeeping the graph needs, not something an author should
+   have to produce — the contract of a check is already "the exit code is the
+   verdict". Two shapes worth weighing:
+
+   - **mcpp creates the stamp when a check command exits zero** and its
+     declared output does not exist. Backward compatible, since a command that
+     already writes the stamp keeps working, and it needs no new process. It
+     does mean ninja's output is written by something other than the edge's own
+     command.
+   - **mcpp wraps the command** (`mcpp __check --stamp <p> -- <argv…>`). One
+     extra process per check, and the engine is already on disk on every
+     platform, so it is portable by construction.
+
+   Neither is implemented. Until one is, a check rule should say in its own
+   documentation that it requires a POSIX shell, rather than appearing to be
+   portable and failing on a Windows consumer's first build.
+
 ---
 
 ## 9a. The work, and what depends on what
@@ -926,19 +959,34 @@ manifest removes all eight edges at once.
 
 ### 12.3 The layering that falls out of the measurement
 
+**The unit is a SUBSYSTEM, not a file.** A package under `modules/` is a group
+of modules that answer one question and are used together; one file per package
+would turn a directory listing into nine manifests and call it architecture.
+
 ```
-modules/     independent packages, each with its own mcpp.toml, used by path
-  M0   log, version, version_req, source_kind, dyndep, libs(json)
-         6 modules, zero mcpp imports; extractable with no edge cut at all
-  M1   platform, minus platform/xlings/
-         20 files, 4,852 lines; one edge to cut
-  M2   vocabulary: dep_spec, index_spec, compat, dependency_selector
-         ~680 lines; removes manifest's dependency on pm
-  M3   manifest
-         4 files, 5,560 lines
-src/         mcpp itself, including main.cpp and the binary target;
-             everything not yet separated, and shrinking it is the direction
+modules/          independent packages, each with its own mcpp.toml, used by path
+  libs            json + toml — text-format parsers, vendored and in-house
+  log             leveled diagnostics
+  versioning      mcpp.version + mcpp.version_req
+  source-kind     the source-file role table
+  dyndep          ninja dyndep emission
+  platform        the OS abstraction: fs, process, axis, shell, terminal
+  manifest        mcpp.toml and the xpkg descriptor, plus the vocabulary they
+                  are written in (dep_spec, dependency_selector, index_spec,
+                  compat, glob, mangle, targetside)
+  toolchain-model what a toolchain IS — triple, model, dialect, cppfly,
+                  fingerprint, linkmodel
+  buildmcpp       the build.mcpp CONTRACT — program_protocol, directives,
+                  provisions, tool_store
+src/              the build tool's skeleton: prepare, plan, execute, the
+                  toolchain families and detection, pm, pack, cli, xlings,
+                  runtime — and shrinking it is the direction
 ```
+
+Dependencies between them are declared and enforced, not assumed:
+`toolchain-model` → `platform`, `versioning`; `manifest` → `libs`, `platform`,
+`source-kind`, `versioning`; `buildmcpp` → `libs`, `manifest`, `source-kind`,
+`toolchain-model`. `platform` and the five below it declare nothing at all.
 
 **Two directories, not three.** xlings additionally separates `apps/` from
 `modules/`, and that separation earns its place there because xlings produces
@@ -1024,7 +1072,53 @@ from the release, so the pinned version must already understand workspaces plus
 path dependencies. xlings demonstrates the feature works; the pin is the thing
 to check, not the feature.
 
-**Order.** M0 first: six modules, zero edges to cut, and it exercises the whole
-mechanism — workspace member, path dependency, bootstrap, cache, CI — against
-the smallest possible blast radius. If M0 measures badly, nothing further should
-proceed.
+**Order.** The leaves first: six packages with no edges to cut, exercising the
+whole mechanism — workspace member, path dependency, bootstrap, cache, CI —
+against the smallest possible blast radius, before anything with a cut in it.
+
+### 12.7 Where the boundary actually fell, and why
+
+Three edges had to be cut, and each was the same mistake wearing different
+clothes: a module named for where it sat rather than for what it did.
+
+| Cut | What it was |
+|---|---|
+| `src/platform/xlings/` → `src/xlings/` | Not platform. The xlings integration, which by its nature knows about packages, indexes and manifests. Its module names said `mcpp.platform.xlings` while its namespace already said `mcpp::xlings`; the rename made the two agree. |
+| `runtime_binding.cppm` → `src/runtime/` | Imported the whole of `mcpp.config` to read **one** path out of it, which put the OS layer above configuration, xlings and the package manager. The caller passes the path now. |
+| `fingerprint → toolchain.detect` | The type it needed, `Toolchain`, is defined in `mcpp.toolchain.model`; `detect` merely re-exports it. The import named a **consumer** of the type rather than its provider, and dragged toolchain detection behind it. |
+
+That third one is the load-bearing one. Every module on the build-program side
+needs `fingerprint` for `hash_file`, so while that edge pointed at `detect` the
+entire build.mcpp contract sat transitively above the package manager and could
+not be separated from it. One import line was the whole distance.
+
+**What stays in `src/`, and why it is not a defect.** `build_program.cppm` and
+`hostprogram.cppm` — the half that compiles and runs the program — need
+`toolchain.registry` and `toolchain.stdmod`, which reach into detection, the
+compiler families and xlings. A thing that compiles and runs a program is a
+toolchain consumer by construction. Moving it would relocate the dependency
+rather than remove it, and the boundary between the contract and its executor
+is the honest place to stop.
+
+### 12.8 Tests at two altitudes
+
+Each package under `modules/` carries its own tests, and the root keeps a suite
+that crosses layers. The pair produces two distinguishable failures:
+
+| Red | Meaning |
+|---|---|
+| the subsystem's own test | the contract changed |
+| the root's cross-check | the contract held and a consumer drifted |
+| both | the change was made once and propagated — the normal case |
+
+The subsystem tests are also built in a configuration the root suite never
+produces: the package **alone**, with only its declared dependencies present. A
+subsystem that has quietly come to rely on something it does not declare
+compiles in the root build and fails there, which is the reason to run both
+rather than pick one.
+
+⚠️ `mcpp test -p <member>` exits 0 for a member with no tests, so the CI loop is
+green either way and "has no tests" reads exactly like "tests pass".
+`check_modules_wiring.sh` therefore prints which members have none. It does not
+fail on them: a package of vendored parsers legitimately has nothing of its own
+to state.

@@ -30,7 +30,7 @@ import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.platform.process;
 import mcpp.platform.env;
-import mcpp.platform.elf_runtime;
+import mcpp.runtime.elf;
 import mcpp.pm.index_refresh;   // staleness_note for `mcpp why deps`
 import mcpp.project;
 import mcpp.toolchain.detect;
@@ -40,7 +40,7 @@ import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.stdmod;
 import mcpp.toolchain.abi;
 import mcpp.ui;
-import mcpp.platform.xlings;
+import mcpp.xlings;
 
 namespace mcpp::doctor {
 

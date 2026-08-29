@@ -15,7 +15,7 @@
 
 import std;
 import mcpp.build.symbol_provision;
-import mcpp.platform.elf_runtime;
+import mcpp.runtime.elf;
 
 namespace sp = mcpp::build::symbol_provision;
 namespace elf = mcpp::platform::elf;
