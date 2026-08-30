@@ -5,6 +5,13 @@
 // ELF parses.  Verdicts are persisted beside build.ninja and keyed by artifact
 // stat + RuntimeBinding contract so doctor can explain the last result without
 // probing the host again.
+//
+// THE RECORD LIVES IN `.mcpp-runtime-verdicts.json`, NOT IN `resolution.json`.
+// `prepare_build` rewrites the latter from an empty object at the start of
+// every invocation, so a verdict recorded there is deleted before the next run
+// can read it back -- which is what made two of these three passes re-parse
+// every image on every command (#529). `resolution.json` publishes a copy after
+// the link and stays the documented place to read one.
 
 export module mcpp.build.runtime_validation;
 
@@ -116,8 +123,18 @@ ArtifactVerdict artifact_identity_verdict(
 //
 // `before` is the pre-ninja snapshot, same as validate_changed_artifacts takes:
 // an artifact whose stat did not move was not produced by this run, so its
-// verdict is READ BACK from resolution.json instead of re-derived from the ELF.
-// The returned vector still covers every artifact either way.
+// verdict is READ BACK instead of re-derived from the ELF. The returned vector
+// still covers every artifact either way.
+//
+// READ BACK FROM THE SIDECAR, NOT FROM `resolution.json`, and the distinction
+// is the whole of #529. `prepare_build` regenerates `resolution.json` from an
+// empty object at the start of every invocation, so a verdict recorded there
+// was deleted before the next run could find it and the read-back never fired
+// across processes — 1.36 s of a 1.94 s warm `mcpp test`, every time.
+// `.mcpp-runtime-verdicts.json` survives, and `resolution.json` keeps
+// publishing a copy after the link, which is how `sync_resolution_verdict`
+// already handled the runtime verdicts. One authoritative writer, one
+// published view.
 std::vector<mcpp::build::loader::TagFinding>
 check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
                              const ArtifactSnapshot& before);
@@ -259,6 +276,173 @@ std::string cache_key(const mcpp::build::BuildPlan& plan,
     auto relative = std::filesystem::relative(artifact, plan.outputDir, ec);
     return ec ? artifact.lexically_normal().generic_string()
               : relative.lexically_normal().generic_string();
+}
+
+// ── The durable home of the post-link verdicts ──────────────────────────────
+//
+// WHY THESE RECORDS LIVE IN THE SIDECAR AND NOT IN `resolution.json`.
+//
+// Both post-link passes were written with a read-back: an artifact whose stat
+// did not move keeps the verdict already on file instead of being re-parsed,
+// because re-reading every image on every drive is what made the loader-tag
+// check cost 158.7 s of a 190 s hot run. The read-back was correct and it never
+// fired across invocations, because it read `resolution.json` — and
+// `prepare_build` rewrites that file from a FRESH json object at the start of
+// every invocation, carrying neither key. Every run therefore began by deleting
+// the memo its own backend was about to look for.
+//
+// Measured on a ten-link-unit tree with nothing to do: 1.36 s of a 1.94 s
+// `mcpp test`, every time.
+//
+// `resolution.json` keeps publishing both records — `mcpp why runtime`, doctor,
+// e2e 214 and e2e 307 read them there — but it publishes a COPY, written after
+// the link, exactly as `sync_resolution_verdict` already publishes the runtime
+// verdicts. One authoritative writer, one published view.
+constexpr std::string_view kLoaderTagsRecord      = "loader_tags";
+constexpr std::string_view kSymbolProvisionRecord = "symbol_provision";
+
+// WHAT INVALIDATES A STORED VERDICT BESIDES THE ARTIFACT ITSELF.
+//
+// Making the memo durable creates a correctness obligation that did not exist
+// while every answer was recomputed: a verdict about which file satisfies a
+// DT_NEEDED is a function of more than the artifact's stat.
+//
+//   the SubOS farm   `<subos>/lib` is a symlink view rewritten by every
+//                    `xlings install`, and it sits on the artifact's runtime
+//                    search path. Installing a package can change which file
+//                    answers, with the artifact untouched. `.xlings.json` is
+//                    that view's version stamp — `try_fast_build` already
+//                    treats it as one.
+//   the policy       `MCPP_ALLOW_HOST_LIBS` is read from the environment at
+//                    check time and enters no fingerprint, so it can flip a
+//                    verdict with every input file unchanged.
+//
+// Folded into one key rather than compared field by field, so a third input
+// added later has one place to go.
+std::string post_link_key(const mcpp::build::BuildPlan& plan) {
+    std::string material = plan.runtimeBinding.contractHash;
+    material += '\x1f';
+    if (!plan.runtimeBinding.subosDir.empty()) {
+        std::error_code ec;
+        auto stampPath = plan.runtimeBinding.subosDir / ".xlings.json";
+        auto size = std::filesystem::file_size(stampPath, ec);
+        if (!ec) material += std::to_string(size);
+        ec.clear();
+        auto when = std::filesystem::last_write_time(stampPath, ec);
+        if (!ec)
+            material += std::to_string(
+                static_cast<std::int64_t>(when.time_since_epoch().count()));
+    }
+    material += '\x1f';
+    material += host_libs_allowed(plan) ? "host-libs" : "hermetic";
+    std::uint64_t hash = 0xcbf29ce484222325ull;
+    for (unsigned char c : material) { hash ^= c; hash *= 0x100000001b3ull; }
+    return std::format("{:016x}", hash);
+}
+
+// The stored entries for one pass, or an empty array when nothing usable is on
+// file. A key mismatch reads as "nothing stored", which re-derives everything
+// once — the safe direction, and the only one that keeps a stale farm from
+// answering for a fresh one.
+nlohmann::json stored_post_link(const nlohmann::json& doc,
+                                std::string_view name,
+                                std::string_view key) {
+    if (!doc.is_object()) return nlohmann::json::array();
+    if (doc.value("post_link_key", "") != key) return nlohmann::json::array();
+    auto it = doc.find(std::string(name));
+    if (it == doc.end() || !it->is_array()) return nlohmann::json::array();
+    return *it;
+}
+
+// Merge this drive's findings over what is on file, and drop only what has
+// LEFT THE DISK.
+//
+// Pruning on "not in the current plan" is the shape that made the sidecar's own
+// pass cost 1.19 s in an edit-test loop: `mcpp build` and `mcpp test` share one
+// output directory and have different link-unit sets — measured, the test plan
+// contains the nine test binaries and not `bin/app` — so each command deleted
+// the other's verdicts and both paid full price on every alternation. The
+// record is a property of the output directory, not of whichever command last
+// ran against it.
+nlohmann::json merge_post_link(const nlohmann::json& stored,
+                               nlohmann::json fresh,
+                               const std::filesystem::path& outputDir) {
+    std::set<std::string> covered;
+    for (auto const& e : fresh)
+        if (e.is_object()) covered.insert(e.value("path", ""));
+    for (auto const& e : stored) {
+        if (!e.is_object()) continue;
+        auto rel = e.value("path", "");
+        if (rel.empty() || covered.contains(rel)) continue;
+        std::error_code ec;
+        if (!std::filesystem::exists(outputDir / rel, ec)) continue;
+        fresh.push_back(e);
+    }
+    std::sort(fresh.begin(), fresh.end(), [](auto const& a, auto const& b) {
+        return a.value("path", "") < b.value("path", "");
+    });
+    return fresh;
+}
+
+// Store the authoritative copy, then publish the readable one.
+//
+// The publish half is not decoration: `mcpp why runtime`, `mcpp doctor` and two
+// e2e tests read `runtime.<name>` out of `resolution.json`, and that file is the
+// documented place to look (docs/05). What changed is which copy survives an
+// invocation — the sidecar's — so the published one can be regenerated from it
+// rather than being the only one there was.
+void persist_post_link(const mcpp::build::BuildPlan& plan,
+                       std::string_view name, std::string_view key,
+                       const nlohmann::json& entries) {
+    auto doc = read_cache(plan.outputDir);
+    if (!doc.is_object()) doc = nlohmann::json::object();
+    // A key change invalidates the OTHER pass's entries too — they were derived
+    // under the same farm and the same policy — so they go with it rather than
+    // being silently carried across as if they had been re-checked.
+    const bool keyMoved = doc.value("post_link_key", "") != key;
+    if (keyMoved) {
+        doc.erase(std::string(kLoaderTagsRecord));
+        doc.erase(std::string(kSymbolProvisionRecord));
+    }
+    if (keyMoved || doc.value(std::string(name), nlohmann::json::array()) != entries) {
+        doc["post_link_key"] = std::string(key);
+        doc[std::string(name)] = entries;
+        write_cache(plan.outputDir, doc);
+    }
+
+    // THE PUBLISHED COPY IS REWRITTEN UNCONDITIONALLY, and the store above is
+    // not. They have opposite lifetimes: the sidecar survives `prepare_build`,
+    // which is the whole point, while `resolution.json` was regenerated from a
+    // fresh object at the start of this very invocation and therefore carries
+    // nothing yet. Skipping the publish when the CONTENT had not changed left
+    // `runtime.symbol_provision` absent on every warm build — the record was
+    // correct and the documented place to read it was empty, which is the
+    // failure this whole change exists to remove, moved one file over.
+    const auto path = plan.outputDir / "resolution.json";
+    nlohmann::json resolution;
+    {
+        std::ifstream input(path);
+        resolution = nlohmann::json::parse(input, nullptr, false);
+    }
+    if (resolution.is_discarded() || !resolution.is_object()) return;
+    auto runtime = resolution.find("runtime");
+    if (runtime == resolution.end() || !runtime->is_object()) return;
+    (*runtime)[std::string(name)] = entries;
+
+    std::error_code ec;
+    auto tmp = path;
+    tmp += ".tmp";
+    if (std::ofstream output(tmp); output) {
+        output << resolution.dump(2) << '\n';
+        output.close();
+        std::filesystem::rename(tmp, path, ec);
+        if (ec) {
+            ec.clear();
+            std::filesystem::remove(path, ec);
+            ec.clear();
+            std::filesystem::rename(tmp, path, ec);
+        }
+    }
 }
 
 std::vector<std::filesystem::path>
@@ -421,15 +605,24 @@ ValidationReport validate_changed_artifacts(
     doc["schema"] = 1;
     doc["contract_hash"] = plan.runtimeBinding.contractHash;
     auto searchDirs = runtime_search_dirs(plan);
-    std::set<std::string> currentKeys;
-    for (auto const& [artifact, ignored] : before) {
-        (void)ignored;
-        currentKeys.insert(cache_key(plan, artifact));
-    }
+    // AN ARTIFACT LEAVES THIS RECORD WHEN IT LEAVES THE DISK, NOT WHEN IT
+    // LEAVES THE CURRENT COMMAND'S PLAN.
+    //
+    // Pruning against the current plan is correct only if one plan owns the
+    // output directory, and none does: `mcpp build` and `mcpp test` share it
+    // and have different link-unit sets — measured, the test plan carries the
+    // test binaries and not the package's own `bin/`. Each command therefore
+    // deleted the other's verdicts, and an edit-test loop paid the full ELF
+    // re-parse on every alternation (1.19 s of a 3.15 s `mcpp test` on a
+    // ten-unit tree, with nothing to rebuild).
+    //
+    // Disk existence keeps the file bounded — which is what the pruning is for
+    // — without making the record a property of whichever command ran last.
     if (auto artifacts = doc.find("artifacts");
         artifacts != doc.end() && artifacts->is_object()) {
         for (auto it = artifacts->begin(); it != artifacts->end();) {
-            if (!currentKeys.contains(it.key())) {
+            std::error_code existsEc;
+            if (!std::filesystem::exists(plan.outputDir / it.key(), existsEc)) {
                 it = artifacts->erase(it);
                 changedCache = true;
             } else {
@@ -581,32 +774,9 @@ check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
     std::vector<loader::TagFinding> findings;
     if constexpr (!mcpp::platform::is_linux) return findings;
 
-    const auto path = plan.outputDir / "resolution.json";
-    nlohmann::json resolution;
-    {
-        std::ifstream input(path);
-        resolution = nlohmann::json::parse(input, nullptr, false);
-    }
-
-    // What this run actually produced. The parameter used to be spelled
-    // `produced` and then be given the BEFORE snapshot, so every drive
-    // re-parsed every link artifact in the plan — and `mcpp test` drives the
-    // backend once per test on an already-built tree.
-    // MEASURED on the 83-test suite: 158.7 s of a 190 s hot run, 1.87 s x 85
-    // drives, for artifacts that nothing had touched.
-    //
-    // An unchanged artifact keeps the verdict already written to
-    // resolution.json rather than being dropped: a violation must keep being
-    // reported on every build, and "checked and compliant" must stay
-    // distinguishable from "never checked" — which is exactly what a shorter
-    // fix (skip unchanged, record only the fresh ones) would have destroyed.
-    const auto recorded = [&]() -> nlohmann::json {
-        auto rt = resolution.is_object() ? resolution.find("runtime") : resolution.end();
-        if (rt == resolution.end() || !rt->is_object()) return nlohmann::json::array();
-        auto tags = rt->find("loader_tags");
-        if (tags == rt->end() || !tags->is_array()) return nlohmann::json::array();
-        return *tags;
-    }();
+    const auto key = post_link_key(plan);
+    const auto recorded =
+        stored_post_link(read_cache(plan.outputDir), kLoaderTagsRecord, key);
     auto recorded_entry = [&](const std::string& rel) -> const nlohmann::json* {
         for (auto const& e : recorded)
             if (e.is_object() && e.value("path", "") == rel) return &e;
@@ -625,7 +795,6 @@ check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
         return Tag::None;
     };
 
-    bool anyFresh = false;
     for (auto const& [artifact, oldStamp] : before) {
         auto now = stamp(artifact);
         if (!now.exists) continue;
@@ -656,14 +825,9 @@ check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
 
         auto finding = loader::check_artifact(artifact);
         if (finding.form == loader::Form::NotElf) continue;
-        anyFresh = true;
         findings.push_back(std::move(finding));
     }
-    if (findings.empty() || !anyFresh) return findings;
-
-    if (resolution.is_discarded() || !resolution.is_object()) return findings;
-    auto runtime = resolution.find("runtime");
-    if (runtime == resolution.end() || !runtime->is_object()) return findings;
+    if (findings.empty()) return findings;
 
     nlohmann::json entries = nlohmann::json::array();
     for (auto const& finding : findings) {
@@ -684,22 +848,15 @@ check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
                            ? "violation" : "not_checked"},
         });
     }
-    (*runtime)["loader_tags"] = std::move(entries);
-
-    std::error_code ec;
-    auto tmp = path;
-    tmp += ".tmp";
-    if (std::ofstream output(tmp); output) {
-        output << resolution.dump(2) << '\n';
-        output.close();
-        std::filesystem::rename(tmp, path, ec);
-        if (ec) {
-            ec.clear();
-            std::filesystem::remove(path, ec);
-            ec.clear();
-            std::filesystem::rename(tmp, path, ec);
-        }
-    }
+    auto merged = merge_post_link(recorded, std::move(entries), plan.outputDir);
+    // The union is what gets stored, and the store is only rewritten when it
+    // moved -- but the PUBLISHED copy in resolution.json is rewritten every
+    // drive, because `prepare_build` regenerated that file from an empty object
+    // at the start of this invocation. `anyFresh` was the wrong condition on
+    // both counts: a drive that read every verdict back but contributed a link
+    // unit the record had never seen would leave it out, and an absent entry
+    // reads exactly like "checked and clean".
+    persist_post_link(plan, kLoaderTagsRecord, key, merged);
     return findings;
 }
 
@@ -727,22 +884,9 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
     // record would shrink to "whatever moved last", a conflict found on
     // Monday would stop being reported on Tuesday, and — worse — the absence
     // of an entry would read exactly like "checked and clean".
-    const auto resolutionPath = plan.outputDir / "resolution.json";
-    nlohmann::json resolution;
-    {
-        std::ifstream input(resolutionPath);
-        resolution = nlohmann::json::parse(input, nullptr, false);
-    }
-    const auto recorded = [&]() -> nlohmann::json {
-        auto rt = resolution.is_object() ? resolution.find("runtime")
-                                         : resolution.end();
-        if (rt == resolution.end() || !rt->is_object())
-            return nlohmann::json::array();
-        auto entries = rt->find("symbol_provision");
-        if (entries == rt->end() || !entries->is_array())
-            return nlohmann::json::array();
-        return *entries;
-    }();
+    const auto key = post_link_key(plan);
+    const auto recorded =
+        stored_post_link(read_cache(plan.outputDir), kSymbolProvisionRecord, key);
     auto stored_for = [&](const std::string& rel) -> const nlohmann::json* {
         for (auto const& entry : recorded)
             if (entry.is_object() && entry.value("path", "") == rel) return &entry;
@@ -765,7 +909,6 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
         return closureCache.emplace(object, std::move(names)).first->second;
     };
 
-    bool anyFresh = false;
     for (auto const& [artifact, oldStamp] : before) {
         auto now = stamp(artifact);
         if (!now.exists) continue;
@@ -807,8 +950,6 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
                 continue;
             }
         }
-        anyFresh = true;
-
         // Which link unit is this? Its own flags matter as much as the
         // global ones, and the static side of any report is attributed from
         // the objects it links. Spelled EXACTLY as `snapshot_link_artifacts`
@@ -885,14 +1026,14 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
     }
 
     // Record, for the same reason the loader-tag contract records: a warning
-    // scrolls past, and `resolution.json` is what CI, `mcpp why runtime` and a
-    // test can read. It also gives a test a FIELD to assert on instead of a
+    // scrolls past, and the record is what CI, `mcpp why runtime` and a test
+    // can read. It also gives a test a FIELD to assert on instead of a
     // substring of a message — a message whose wording is free to improve.
-    if (!findings.empty() && anyFresh) {
-        const auto& path = resolutionPath;
-        if (!resolution.is_discarded() && resolution.is_object()) {
-            if (auto runtime = resolution.find("runtime");
-                runtime != resolution.end() && runtime->is_object()) {
+    // Stored in the sidecar and published into `resolution.json`; see the
+    // module header for why those are two different files.
+    if (!findings.empty()) {
+        {
+            {
                 nlohmann::json entries = nlohmann::json::array();
                 for (auto const& finding : findings) {
                     std::error_code ec;
@@ -922,22 +1063,9 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
                     }
                     entries.push_back(std::move(entry));
                 }
-                (*runtime)["symbol_provision"] = std::move(entries);
-
-                std::error_code ec;
-                auto tmp = path;
-                tmp += ".tmp";
-                if (std::ofstream output(tmp); output) {
-                    output << resolution.dump(2) << '\n';
-                    output.close();
-                    std::filesystem::rename(tmp, path, ec);
-                    if (ec) {
-                        ec.clear();
-                        std::filesystem::remove(path, ec);
-                        ec.clear();
-                        std::filesystem::rename(tmp, path, ec);
-                    }
-                }
+                auto merged = merge_post_link(recorded, std::move(entries),
+                                              plan.outputDir);
+                persist_post_link(plan, kSymbolProvisionRecord, key, merged);
             }
         }
     }

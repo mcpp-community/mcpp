@@ -101,6 +101,20 @@ struct BuildCacheEntry {
     // Exact immutable snapshot used by the build. Optional distinguishes a
     // current cache from one written by an older mcpp (or a corrupt payload).
     std::optional<mcpp::platform::runtime::RuntimeBinding> runtimeBinding;
+    // Source trees outside `projectRoot` that this build read — `path`
+    // dependencies, which is what workspace members are to each other. The
+    // staleness sweep has to cover them or a NEW FILE appearing in one is
+    // invisible: ninja has no edge for a file that did not exist when
+    // build.ninja was written, so `mcpp build` replays the stale graph and
+    // reports success. See BuildContext::depSourceRoots.
+    std::vector<std::string> depSourceRoots;
+    // Was the block present at all? An EMPTY list is a legitimate answer — a
+    // project with no path dependencies has none — so it cannot stand in for
+    // "this cache predates the field", and the two need opposite treatment:
+    // the first takes the fast path, the second must fall through once so the
+    // list gets written. Same discipline as `subosRecorded` above, and for the
+    // same reason.
+    bool depSourceRootsRecorded = false;
 };
 
 std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& projectRoot) {
@@ -194,6 +208,18 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
             e.cacheMode = line.substr(10);
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        // Count-prefixed, like `runTargets=` above and for the same reason: a
+        // zero-length list and an absent block must not read the same. Absent
+        // means the cache predates the field, and the fast path then declines
+        // once so the next write records it.
+        if (haveNextLine && line.starts_with("depSourceRoots=")) {
+            std::size_t n = 0;
+            try { n = std::stoul(line.substr(15)); } catch (...) { n = 0; }
+            for (std::size_t i = 0; i < n && std::getline(f, line); ++i)
+                e.depSourceRoots.push_back(line);
+            e.depSourceRootsRecorded = true;
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         entries.push_back(std::move(e));
         if (!haveNextLine || line.empty()) break;
     }
@@ -217,7 +243,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::string& runEnvValue = "",
                        const std::string& profile = "",
                        const std::string& cacheMode = "",
-                       const mcpp::platform::runtime::RuntimeBinding& runtimeBinding = {}) {
+                       const mcpp::platform::runtime::RuntimeBinding& runtimeBinding = {},
+                       std::vector<std::string> depSourceRoots = {}) {
     auto path = projectRoot / kBuildCacheFile;
     auto entries = read_build_cache(projectRoot);
 
@@ -236,6 +263,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                              /*subosRecorded=*/true,
                              profile, cacheMode};
     newEntry.runtimeBinding = runtimeBinding;
+    newEntry.depSourceRoots = std::move(depSourceRoots);
+    newEntry.depSourceRootsRecorded = true;
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -274,6 +303,8 @@ void write_build_cache_entries(const std::filesystem::path& path,
               << '\n';
         f << "profile=" << e.profile << '\n';
         f << "cacheMode=" << e.cacheMode << '\n';
+        f << "depSourceRoots=" << e.depSourceRoots.size() << '\n';
+        for (auto& r : e.depSourceRoots) f << r << '\n';
     }
 }
 
@@ -605,7 +636,14 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                           r->runtimeEnvValue,
                           std::move(runTargets), runEnvKey, runEnvValue,
                           ctx.profile, std::string(cache_mode_name(ctx.cacheMode)),
-                          ctx.plan.runtimeBinding);
+                          ctx.plan.runtimeBinding,
+                          [&] {
+                              std::vector<std::string> v;
+                              v.reserve(ctx.depSourceRoots.size());
+                              for (auto const& r : ctx.depSourceRoots)
+                                  v.push_back(r.generic_string());
+                              return v;
+                          }());
     }
 
     // The one place the --strict policy is settled. Degradations reported by
@@ -707,6 +745,48 @@ bool sources_newer_than(const std::filesystem::path& projectRoot,
         if (!mcpp::affects_graph_shape(mcpp::classify(f, extTable))) continue;
         auto ft = std::filesystem::last_write_time(f, ec);
         if (ec || ft > ninjaTime) return true;
+    }
+    return false;
+}
+
+// The same question, asked of a source tree that is not the project's own.
+//
+// WHY THIS IS NOT COVERED BY THE SWEEP ABOVE, AND WHY NINJA DOES NOT COVER IT
+// EITHER. A `path` dependency's translation units are compiled by edges in the
+// SAME build.ninja, so an EDIT to one of its existing files is caught: ninja
+// rebuilds the object, the link output moves, and `artifact_snapshot_unchanged`
+// abandons the fast path afterwards. A NEW FILE has no edge at all. Nothing in
+// the graph mentions it, every recorded timestamp is unmoved, and the fast path
+// replays a build.ninja that predates it — measured, `mcpp build` printed
+// `Finished dev in 0.00s` and the module was never compiled. That is #359's
+// shape ("a GLOB input changes without any existing file's mtime changing")
+// applied to a directory the original fix did not reach.
+//
+// It matters most exactly where it is hardest to notice: members of a workspace
+// depend on one another by `path`, so for a workspace this is not an edge case
+// but the ordinary arrangement.
+//
+// The dependency's own manifest is swept too. A member that gains a target, a
+// `[modules] sources` glob or a `[build]` flag changes what the graph SHOULD
+// be, and none of that is visible from its source files' timestamps.
+bool dep_sources_newer_than(const std::vector<std::string>& depSourceRoots,
+                            std::filesystem::file_time_type ninjaTime,
+                            const mcpp::ExtensionTable& extTable) {
+    std::error_code ec;
+    for (auto const& rootStr : depSourceRoots) {
+        std::filesystem::path depRoot(rootStr);
+        // A dependency directory that has gone away is a resolution question,
+        // not a staleness one: fall through to prepare_build, which reports it
+        // with the dependency's name instead of a bare missing path.
+        if (!std::filesystem::is_directory(depRoot, ec)) { ec.clear(); return true; }
+        auto tomlTime = std::filesystem::last_write_time(depRoot / "mcpp.toml", ec);
+        if (ec) { ec.clear(); return true; }
+        if (tomlTime > ninjaTime) return true;
+        for (auto& f : mcpp::modgraph::expand_glob(depRoot, "src/**/*")) {
+            if (!mcpp::affects_graph_shape(mcpp::classify(f, extTable))) continue;
+            auto ft = std::filesystem::last_write_time(f, ec);
+            if (ec || ft > ninjaTime) return true;
+        }
     }
     return false;
 }
@@ -916,6 +996,14 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     // instead of a hand-rolled recursive_directory_iterator over src/.
     if (sources_newer_than(projectRoot, ninjaTime, want->resourceScripts,
                            want->extTable)) return std::nullopt;
+    // A cache written before this field existed cannot say whether the build
+    // had `path` dependencies, and answering "assume none" is the wrong
+    // half of that guess: it would keep replaying a stale graph for exactly
+    // the projects the field was added for. Decline once; the write below
+    // records the list and every later invocation is fast again.
+    if (!match->depSourceRootsRecorded) return std::nullopt;
+    if (dep_sources_newer_than(match->depSourceRoots, ninjaTime, want->extTable))
+        return std::nullopt;
 
     auto validatedBefore =
         mcpp::build::runtime_validation::validated_artifact_snapshot(
@@ -1042,6 +1130,12 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
 
     if (sources_newer_than(projectRoot, ninjaTime, want->resourceScripts,
                            want->extTable)) return std::nullopt;
+    // Same gate as try_fast_build's, and it has to be BOTH places: `mcpp run`
+    // reaches its binary through this path, so a `run` that skipped the check
+    // would execute an artifact built from a source set that no longer exists.
+    if (!match->depSourceRootsRecorded) return std::nullopt;
+    if (dep_sources_newer_than(match->depSourceRoots, ninjaTime, want->extTable))
+        return std::nullopt;
 
     auto validatedBefore =
         mcpp::build::runtime_validation::validated_artifact_snapshot(

@@ -34,9 +34,17 @@ make_project() {   # dir target-section
 
 # ── Half one: it refuses, and says which two systems ──────────────────────
 #
-# `toolchain = "system"` is the escape hatch that hands the build the PATH
-# compiler. Pointing it at a Windows target is the one arrangement that
-# reproduces CI's fallback without uninstalling anything.
+# `toolchain = "system"` hands the build the PATH compiler; pointing it at a
+# Windows target is the one arrangement that reproduces CI's fallback without
+# uninstalling anything.
+#
+# ⚠️ AND SINCE THE SYSTEM TOOLCHAIN IS REFUSED, THAT REFUSAL IS ALSO AN ANSWER
+# TO THIS TEST'S QUESTION. mcpp builds only with toolchains it manages
+# (`msvc@system` excepted), and the refusal fires before target resolution — so
+# a Windows target can no longer reach a Linux host compiler through this door
+# at all. The invariant holds by a stronger mechanism than the one this test was
+# written against, and BOTH refusals count. What must never happen, and what the
+# else-branch below still fails on, is the build going ahead.
 make_project "$work/mismatch" '[target.x86_64-windows-gnu]
 toolchain = "system"'
 out="$(cd "$work/mismatch" && "$MCPP" build --target x86_64-windows-gnu 2>&1 || true)"
@@ -47,9 +55,22 @@ out="$(cd "$work/mismatch" && "$MCPP" build --target x86_64-windows-gnu 2>&1 || 
 # green-by-silence rather than red. The arrangement either reproduced (the
 # report names two systems) or it did not; only the second is a skip.
 reported="$(printf '%s\n' "$out" | grep -oP 'Target \K\S+ → \S+' | head -1)"
+half_one_done=0
 case "$out" in
   *"different operating systems"*)
     echo "  ok  it refuses rather than building for the wrong system" ;;
+  *"is not supported: mcpp builds only with toolchains it manages"*)
+    # The stronger refusal: the arrangement cannot be expressed any more, so a
+    # Windows target never reaches a Linux compiler through this door.
+    #
+    # ⚠️ AND IT MUST NOT `exit 0` HERE. Half two is independent of half one and
+    # asserts that correct cross builds still go through; leaving early skips
+    # it, and the ecosystem job that runs this file checks that each test "ran
+    # to its conclusion" precisely so an early exit cannot masquerade as a
+    # pass. Caught by that job, not by a local run.
+    echo "  ok  the system toolchain is refused outright, so the mismatch"
+    echo "      this test guards cannot be reached through it"
+    half_one_done=1 ;;
   *)
     asked="${reported%% → *}"
     resolved="${reported##* → }"
@@ -73,15 +94,21 @@ esac
 
 # ⭐ AND THE MESSAGE NAMES BOTH. A refusal that does not say what it resolved
 # to leaves the reader with the same question the report used to answer.
-ok=1
-printf '%s\n' "$out" | grep -q "x86_64-windows-gnu" || ok=0
-printf '%s\n' "$out" | grep -q "linux"              || ok=0
-if [ "$ok" = 1 ]; then
-    echo "  ok  and it names the target asked for and the one resolved"
-else
-    echo "FAIL: the refusal does not name both systems"
-    printf '%s\n' "$out" | head -4 | sed 's/^/        /'
-    exit 1
+#
+# Only asked of the OS-mismatch refusal. The toolchain refusal is a different
+# sentence about a different decision — it never resolved a target at all —
+# and demanding both triples from it would be asserting on the wrong object.
+if [ "$half_one_done" = 0 ]; then
+    ok=1
+    printf '%s\n' "$out" | grep -q "x86_64-windows-gnu" || ok=0
+    printf '%s\n' "$out" | grep -q "linux"              || ok=0
+    if [ "$ok" = 1 ]; then
+        echo "  ok  and it names the target asked for and the one resolved"
+    else
+        echo "FAIL: the refusal does not name both systems"
+        printf '%s\n' "$out" | head -4 | sed 's/^/        /'
+        exit 1
+    fi
 fi
 
 # ── Half two: every correct cross build still goes through ────────────────

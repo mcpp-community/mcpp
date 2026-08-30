@@ -70,6 +70,44 @@ repo        = "https://github.com/user/myapp"  # 仓库地址(可选)
 如果源码在某个档位上 `import std;` 而解析出的工具链在该档位不提供 `std` 模块，
 mcpp 会在编译前失败，并同时报出工具链与工程档位。
 
+值的两种拼法都接受:`standard = "c++26"` 与 `standard = 26`。
+
+当**依赖声明的档位高于当前图**时,mcpp 会在编译前说出来,而不是让它在那个依赖的源码里
+某处失败。见 [workspace §4.2](06-workspace.md)。
+
+#### 方言标志与 `import std` BMI
+
+有些标志会改变标准库头文件**声明出什么**,因此预编译的 `import std` BMI 也必须带着它们一起
+构建。这就是 `[build] dialect_cxxflags` 的用途:它会被施加到 std BMI 预编译、模块扫描
+**以及**图中每一个 TU(依赖也包括在内)。
+
+```toml
+[build]
+dialect_cxxflags = ["-fno-exceptions"]
+```
+
+其中少数几个标志,mcpp 在 `cxxflags` 里发现时会自动提升进这条通道
+(`-freflection`、`-fchar8_t`、`-D_GLIBCXX_USE_CXX11_ABI=…`)—— 混用这些标志的图本来就是
+病态的,任何依赖都不可能对它们持有另一种自洽的意见。
+
+`-fno-exceptions` 与 `-fno-rtti` **不会**被自动提升,因为依赖可以合法地不同意:它们移除的是
+依赖可能正在使用的语言设施,而消费者无权替它做这个决定。留在 `cxxflags` 里,它们会到达每一个
+TU 却到不了预编译,于是构建不可能成功 —— mcpp 在编译前就拒绝,并指出该用哪个键:
+
+```
+error: `-fno-exceptions` changes the language dialect, but the `import std` BMI is
+       precompiled without it, so every importing translation unit will fail with
+       "language dialect differs".
+       Declare it as a dialect flag instead:
+
+         [build]
+         dialect_cxxflags = ["-fno-exceptions"]
+```
+
+这项检查读的是**生效后的**标志集合,所以同一个标志写在 `[profile.<name>] cxxflags` 或
+`[target.…]` 块里同样会被抓到。而当图中根本没有 `import std` 时它不触发 —— 那里它就是一个
+正常工作的按 TU 选项。
+
 ### 2.2 `[targets.<name>]` — 构建目标
 
 ```toml

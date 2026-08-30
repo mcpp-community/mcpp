@@ -83,9 +83,28 @@ std::string version_req_problem(std::string_view spec) {
 
 export namespace mcpp::manifest {
 
+// WHAT A MEMBER MANIFEST IS ALLOWED TO LEAVE OUT.
+//
+// `package.name` and `package.version` are required, and the parser cannot see
+// that a manifest is a workspace MEMBER: a member has no `[workspace]` table of
+// its own, so the file that would relax the rule is the one above it. Passing
+// the fact in keeps the required-field check where it is while letting
+// `[workspace.package]` actually be inheritable — a key that nothing could
+// consume would be a recorded field with no reader, which is the defect these
+// tables exist to remove rather than one to add.
+//
+// The requirement does not disappear. `inherit_workspace_config`'s caller
+// raises it after inheritance, where "still missing" is knowable and the
+// message can name both files.
+struct LoadContext {
+    bool insideWorkspace = false;
+};
+
 std::expected<Manifest, ManifestError> parse_string(std::string_view content,
-                                                    const std::filesystem::path& origin = "mcpp.toml");
-std::expected<Manifest, ManifestError> load(const std::filesystem::path& path);
+                                                    const std::filesystem::path& origin = "mcpp.toml",
+                                                    LoadContext ctx = {});
+std::expected<Manifest, ManifestError> load(const std::filesystem::path& path,
+                                            LoadContext ctx = {});
 
 // For `mcpp new` scaffolding.
 std::string default_template(std::string_view packageName);
@@ -235,7 +254,8 @@ std::optional<std::string> find_disallowed_array_of_tables(
 } // namespace
 
 std::expected<Manifest, ManifestError> parse_string(std::string_view content,
-                                                    const std::filesystem::path& origin) {
+                                                    const std::filesystem::path& origin,
+                                                    LoadContext ctx) {
     auto doc = t::parse(content);
     if (!doc) {
         return std::unexpected(error(origin, doc.error().message, doc.error().where));
@@ -270,7 +290,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         return std::unexpected(error(origin, "missing required [package] section"));
 
     auto name = doc->get_string("package.name");
-    if (!name && !has_workspace)
+    if (!name && !has_workspace && !ctx.insideWorkspace)
         return std::unexpected(error(origin, "missing required field 'package.name'"));
     if (name) m.package.name = *name;
 
@@ -280,7 +300,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string("package.namespace")) m.package.namespace_ = *v;
 
     auto version = doc->get_string("package.version");
-    if (!version && !has_workspace)
+    if (!version && !has_workspace && !ctx.insideWorkspace)
         return std::unexpected(error(origin, "missing required field 'package.version'"));
     if (version) m.package.version = *version;
 
@@ -291,7 +311,29 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string_array("package.platforms")) m.package.platforms = *v;
 
     // [package].standard (M5.0 new home)
-    if (auto v = doc->get_string("package.standard"))    m.package.standard    = *v;
+    if (auto v = doc->get_string("package.standard")) {
+        m.package.standard    = *v;
+        // Recorded HERE, where the key's presence is a fact rather than an
+        // inference. Both spellings count as a declaration; the deprecated
+        // `[language] standard` below is the same statement in an older place.
+        m.package.standardDeclared = true;
+    } else if (auto n = doc->get_int("package.standard")) {
+        // `standard = 26` — WRITTEN BY USERS AND SILENTLY IGNORED UNTIL NOW.
+        //
+        // The key is documented as a string, `get_string` returns nothing for a
+        // bare integer, and the project compiled at the default with no
+        // diagnostic. Measured on the released engine: `standard = 26` produced
+        // `-std=c++23`. Issue #527 writes it that way in three of its examples,
+        // so a reader following the issue got a build that ignored the line
+        // they were told to add.
+        //
+        // Accepted rather than refused because the mapping is unambiguous and
+        // the intent is not in question; an integer that is not a standard
+        // level still goes through `normalize_cpp_standard` below and is
+        // refused there, with that function's list of accepted spellings.
+        m.package.standard = std::format("c++{}", *n);
+        m.package.standardDeclared = true;
+    }
 
     // [language] (M5.0: deprecated, kept for backward compat — drop in M6)
     // Reads to old fields AND mirrors to new package.standard if [package].standard not set.
@@ -300,6 +342,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         m.language.standard = *v;
         // mirror to new home only if [package].standard wasn't explicitly set
         if (!doc->get_string("package.standard")) m.package.standard = *v;
+        m.package.standardDeclared = true;
     } else {
         m.language.standard = m.package.standard;   // keep old field consistent with new
     }
@@ -1987,6 +2030,112 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         if (auto v = doc->get_string_array("workspace.exclude"))
             m.workspace.exclude = *v;
 
+        // [workspace.package] — package metadata every member inherits unless
+        // it declares its own. `name` is absent on purpose: two members cannot
+        // share one, and a workspace able to set it would be describing a
+        // single package.
+        if (auto* wpkg = doc->get_table("workspace.package")) {
+            auto& inh = m.workspace.inherited;
+            // Both spellings, for the same reason `[package] standard` takes
+            // both: the integer form is what people write.
+            std::optional<std::string> wsStd;
+            if (auto v = doc->get_string("workspace.package.standard")) wsStd = *v;
+            else if (auto n = doc->get_int("workspace.package.standard"))
+                wsStd = std::format("c++{}", *n);
+            if (wsStd) {
+                // Normalised HERE so a member inheriting it gets the same
+                // canonical spelling a member declaring it would, and so an
+                // invalid value is reported against the line that wrote it
+                // rather than against whichever member inherited it first.
+                auto cfg = normalize_cpp_standard(*wsStd);
+                if (!cfg) return std::unexpected(error(origin, std::format(
+                    "[workspace.package].standard: {}", cfg.error())));
+                inh.standard = cfg->canonical;
+                inh.standardDeclared = true;
+            }
+            if (auto v = doc->get_string("workspace.package.version"))
+                inh.version = *v;
+            if (auto v = doc->get_string("workspace.package.license"))
+                inh.license = *v;
+            if (auto v = doc->get_string("workspace.package.description"))
+                inh.description = *v;
+            if (auto v = doc->get_string("workspace.package.repo"))
+                inh.repo = *v;
+            if (auto v = doc->get_string_array("workspace.package.authors"))
+                inh.authors = *v;
+            static constexpr std::string_view kKnown[] = {
+                "standard", "version", "license", "description", "repo", "authors",
+            };
+            for (auto& [key, ignored] : *wpkg) {
+                (void)ignored;
+                if (std::ranges::find(kKnown, key) != std::end(kKnown)) continue;
+                // REFUSED, not ignored. A key in a table whose entire purpose
+                // is to propagate is either propagated or reported; silently
+                // dropping it produces a workspace that looks configured and
+                // is not, which is the defect this table was added to fix.
+                return std::unexpected(error(origin, std::format(
+                    "[workspace.package] has no key '{}'. Supported: "
+                    "standard, version, license, description, repo, authors. "
+                    "`name` is per-member by definition.", key)));
+            }
+        }
+
+        // [workspace.build] — the inheritable subset of [build].
+        if (auto* wbuild = doc->get_table("workspace.build")) {
+            auto& b = m.workspace.inherited.build;
+            m.workspace.inherited.buildPresent = true;
+            if (auto v = doc->get_string_array("workspace.build.cflags"))   b.cflags = *v;
+            if (auto v = doc->get_string_array("workspace.build.cxxflags")) b.cxxflags = *v;
+            if (auto v = doc->get_string_array("workspace.build.ldflags"))  b.ldflags = *v;
+            if (auto v = doc->get_string_array("workspace.build.defines"))  b.defines = *v;
+            if (auto v = doc->get_string_array("workspace.build.dialect_cxxflags"))
+                b.dialectCxxflags = *v;
+            if (auto v = doc->get_string_array("workspace.build.include_dirs"))
+                for (auto& d : *v) b.includeDirs.emplace_back(d);
+            if (auto v = doc->get_string_array("workspace.build.include_dirs_after"))
+                for (auto& d : *v) b.includeDirsAfter.emplace_back(d);
+            if (auto v = doc->get_string_array("workspace.build.private_include_dirs"))
+                for (auto& d : *v) b.privateIncludeDirs.emplace_back(d);
+            if (auto v = doc->get_string("workspace.build.c_standard"))  b.cStandard = *v;
+            if (auto v = doc->get_string("workspace.build.linkage"))      b.linkage = *v;
+            if (auto v = doc->get_string("workspace.build.target"))       b.target = *v;
+            if (auto v = doc->get_string("workspace.build.cxx_runtime"))  b.cxxRuntime = *v;
+            if (auto v = doc->get_string("workspace.build.dependency_linkage"))
+                b.dependencyLinkage = *v;
+            if (auto v = doc->get_string("workspace.build.macos_deployment_target"))
+                b.macosDeploymentTarget = *v;
+            static constexpr std::string_view kKnown[] = {
+                "cflags", "cxxflags", "ldflags", "defines", "dialect_cxxflags",
+                "include_dirs", "include_dirs_after", "private_include_dirs",
+                "c_standard", "linkage", "target", "cxx_runtime",
+                "dependency_linkage", "macos_deployment_target",
+            };
+            for (auto& [key, ignored] : *wbuild) {
+                (void)ignored;
+                if (std::ranges::find(kKnown, key) != std::end(kKnown)) continue;
+                // `allow_host_libs` is named explicitly because refusing it is
+                // a decision and not an omission: it turns a correctness gate
+                // off, and a workspace root that could set it once would
+                // disable that gate for members added later by someone who
+                // never read this file. Keys that say HOW TO BUILD are
+                // inheritable; keys that say WHICH CHECK NOT TO RUN stay with
+                // the package whose artifact it is.
+                if (key == "allow_host_libs")
+                    return std::unexpected(error(origin,
+                        "[workspace.build] allow_host_libs is not inheritable. "
+                        "It disables the hermetic-link check for a specific "
+                        "artifact, so it belongs in that package's own [build] "
+                        "table where the person turning it off owns the result."));
+                return std::unexpected(error(origin, std::format(
+                    "[workspace.build] has no key '{}' (or it is not "
+                    "inheritable). Supported: cflags, cxxflags, ldflags, "
+                    "defines, dialect_cxxflags, include_dirs, "
+                    "include_dirs_after, private_include_dirs, c_standard, "
+                    "linkage, target, cxx_runtime, dependency_linkage, "
+                    "macos_deployment_target.", key)));
+            }
+        }
+
         // [workspace.dependencies] — versions that members inherit via .workspace = true.
         if (auto* wdeps = doc->get_table("workspace.dependencies")) {
             for (auto& [k, v] : *wdeps) {
@@ -2216,7 +2365,8 @@ void apply_defaults_and_infer(Manifest& m, const std::filesystem::path& root) {
 
 } // namespace
 
-std::expected<Manifest, ManifestError> load(const std::filesystem::path& path) {
+std::expected<Manifest, ManifestError> load(const std::filesystem::path& path,
+                                            LoadContext ctx) {
     std::ifstream is(path);
     if (!is) {
         return std::unexpected(ManifestError{
@@ -2225,7 +2375,7 @@ std::expected<Manifest, ManifestError> load(const std::filesystem::path& path) {
     }
     std::stringstream ss;
     ss << is.rdbuf();
-    auto m = parse_string(ss.str(), path);
+    auto m = parse_string(ss.str(), path, ctx);
     if (!m) return m;
 
     // M5.0: defaults + target inference (uses filesystem context relative to mcpp.toml).

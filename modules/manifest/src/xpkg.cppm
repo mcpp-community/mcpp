@@ -1201,6 +1201,15 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             if (!v.empty()) {
                 m.language.standard = v;
                 m.package.standard = v;
+                // The second of the two parse paths that must fill this, per
+                // Package::standardDeclared. It is set for the same reason it
+                // is set in toml.cppm — the key was present — and NOT as a
+                // statement that the package requires that level: a descriptor
+                // generator writes `language` for every package, including C
+                // libraries with `import_std = false`. Consumers that need
+                // "the author asked for it" must additionally scope to
+                // author-owned manifests.
+                m.package.standardDeclared = true;
             }
         }
         else if (key == "import_std") {

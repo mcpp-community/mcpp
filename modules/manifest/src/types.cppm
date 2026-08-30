@@ -39,6 +39,32 @@ struct Package {
     std::string                 namespace_;    // xpkg V1 namespace field (0.0.6+); empty = infer from name
     std::string                 version;
     std::string                 standard   = "c++23";   // C++ standard (M5.0: moved from [language])
+    // DID THE AUTHOR WRITE `standard`, or is this the default?
+    //
+    // The two are the same bytes in `standard` and they need opposite
+    // treatment. `[workspace.package] standard` means "use the workspace value
+    // where the member did not say", which is unanswerable without this bit:
+    // inheriting over a member that deliberately pinned c++23 and inheriting
+    // into one that said nothing are the same operation otherwise.
+    //
+    // The cpp20 design doc's §9-Q3 recorded this as the precondition for a
+    // dependency floor check and declined to add it while nothing consumed it.
+    // Workspace inheritance is that consumer, and the floor check is now its
+    // second one.
+    //
+    // MUST BE SET BY BOTH PARSE PATHS. `toml.cppm` reads an author's
+    // `mcpp.toml`; `xpkg.cppm` synthesises a manifest from an index descriptor
+    // and writes `"c++23"` unconditionally before reading `language`. Setting it
+    // in one place only would be the same decision derived twice, which is what
+    // §9-Q3 warned about.
+    //
+    // NOTE FOR THE FLOOR CHECK: an index descriptor declaring `language` sets
+    // this too, and measured over the local registry every descriptor with an
+    // mcpp segment does (782 of 782, 756 of them C libraries carrying a
+    // boilerplate "c++23"). Declaredness alone therefore does NOT mean "the
+    // author asked for it" outside author-owned manifests — see the scope gate
+    // in prepare.cppm.
+    bool                        standardDeclared = false;
     std::string                 description;
     std::string                 license;
     std::vector<std::string>    authors;
@@ -924,10 +950,74 @@ struct PackConfig {
 //
 // Virtual workspace (no [package]): pure management node.
 // Rooted workspace ([package] + [workspace]): root is also a package.
+// THE MERGE DISCIPLINE, STATED ONCE.
+//
+// Four keys were inherited before these tables existed — `[toolchain]`,
+// `[target.<triple>]`, `[indices]` and `[workspace.dependencies]` — under three
+// different rules, none of them written down. That is how the fifth key gets
+// whichever rule its author happened to read. The rule for everything here:
+//
+//   SCALARS   the member wins when it DECLARED the key; otherwise the
+//             workspace value applies. "Declared" is a fact the parser
+//             records, not a comparison against a default — see
+//             Package::standardDeclared for why the difference is load-bearing.
+//
+//   VECTORS   append, workspace first. A member adds to the shared set rather
+//             than restating it, and the workspace flag comes first so a
+//             member's flag can override it on the command line where later
+//             wins. A member that needs to NOT have a workspace flag is a
+//             signal the flag was declared at the wrong altitude.
+//
+//   DEPENDENCIES keep their explicit `x.workspace = true` opt-in, and that
+//             exception is deliberate rather than historical: a dependency is
+//             an EDGE in the resolution graph, and inheriting edges implicitly
+//             would change what a member resolves without the member's manifest
+//             naming it.
+//
+// Implicit-if-absent rather than cargo's per-key `x.workspace = true` for
+// package and build keys, because the drift this exists to remove is a member
+// that FORGOT to opt in. Making inheritance the default makes drift the thing
+// you have to ask for.
+//
+// NOT EVERY KEY IS INHERITABLE. `[build] allow_host_libs` turns a correctness
+// gate off; a workspace root setting it once would disable that gate for every
+// member, including members added later by someone who never read the root
+// manifest. Keys that describe HOW TO BUILD are inheritable; keys that describe
+// WHICH SAFETY CHECK NOT TO RUN stay with the package whose artifact it is.
+struct WorkspaceInherited {
+    // `[workspace.package]` — the subset that is meaningful to share. `name` is
+    // deliberately absent: two members cannot have one name, and a workspace
+    // that could set it would be describing a single package.
+    std::string              standard;
+    bool                     standardDeclared = false;
+    std::string              version;
+    std::string              license;
+    std::string              description;
+    std::string              repo;
+    std::vector<std::string> authors;
+    // `[workspace.build]` — the INHERITABLE SUBSET of `[build]`, and the subset
+    // is a stated list rather than "whatever [build] happens to carry". A key
+    // that is not in it is refused at parse time with the reason, because
+    // silently ignoring a key in a table whose whole purpose is propagation is
+    // the failure this table exists to remove.
+    BuildConfig              build;
+    bool                     buildPresent = false;
+
+    // THERE IS NO `[workspace.target.<triple>]`, DELIBERATELY.
+    //
+    // A plain `[target.<triple>]` block in the workspace root manifest is
+    // ALREADY inherited by every member, per triple, member-wins — that
+    // predates these tables. Adding a second spelling for a capability that
+    // exists would be surface with no function, and two spellings of one rule
+    // is how the two acquire different behaviour later. Documented in docs/05
+    // rather than implemented here.
+};
+
 struct WorkspaceConfig {
     std::vector<std::string>                            members;       // relative paths to member dirs
     std::vector<std::string>                            exclude;       // paths to exclude
     std::map<std::string, DependencySpec>               dependencies;  // [workspace.dependencies]
+    WorkspaceInherited                                  inherited;     // [workspace.package|build|target.*]
     bool                                                present = false;
 };
 
@@ -1221,6 +1311,27 @@ std::vector<std::string> dialect_flags(const BuildConfig& bc);
 // libstdc++/libc++ headers declare, or participates in BMI dialect checks).
 bool is_dialect_flag(std::string_view flag);
 
+// True when `flag` changes the language dialect the standard library BMI is
+// compiled with, but is deliberately NOT auto-promoted into the graph-global
+// set (`-fno-exceptions`, `-fno-rtti`, and their MSVC spellings). See the
+// implementation for why the list is split in two rather than merged.
+//
+// Disjoint from `is_dialect_flag` by construction: a flag is promoted or it is
+// recognised-and-refused, never both, so a caller cannot double-count one.
+bool is_unpromoted_dialect_flag(std::string_view flag);
+
+// The dialect-class flags present in `flags` that will NOT reach the `import
+// std` BMI prebuild — the exact set that makes an importing TU fail with
+// "language dialect differs". Empty when there is nothing to say.
+//
+// `flags` is the EFFECTIVE per-unit set, not `[build] cxxflags`: the same flag
+// arrives from `[profile.<name>] cxxflags`, from `[target.<triple>.build]`, and
+// from a `cfg(...)` block, and all three reach the compile line while none
+// reaches the prebuild. A check that reads one table is silent on three
+// spellings of one mistake.
+std::vector<std::string> dialect_flags_missing_from_prebuild(
+    std::span<const std::string> flags, std::span<const std::string> prebuild);
+
 // The lib root's CONVENTIONAL name: `src/<package-tail>.cppm`, or `[lib] path`
 // when the manifest states one. It does not touch the filesystem, so it is the
 // right answer for a diagnostic or a validator's expectation and the wrong one
@@ -1283,8 +1394,9 @@ std::optional<std::string> validate_target_soname(const Target& t,
 
 bool is_dialect_flag(std::string_view flag) {
     // Deliberately conservative first list (design doc §1.3a):
-    // -fno-exceptions / -fno-rtti stay per-unit until separately reviewed
-    // (dependencies may assume exceptions are available).
+    // -fno-exceptions / -fno-rtti stay per-unit — see
+    // `is_unpromoted_dialect_flag` below for why, and for what now happens
+    // instead of silence.
     static constexpr std::string_view exact[] = {
         "-freflection",  "-fno-reflection",   // P2996 (GCC 16+)
         "-fcontracts",   "-fno-contracts",    // P2900
@@ -1295,6 +1407,66 @@ bool is_dialect_flag(std::string_view flag) {
     // libstdc++ dual-ABI switch changes declared symbols/types wholesale.
     if (flag.starts_with("-D_GLIBCXX_USE_CXX11_ABI=")) return true;
     return false;
+}
+
+bool is_unpromoted_dialect_flag(std::string_view flag) {
+    // THE SECOND TIER, AND WHY THE LIST IS SPLIT AT ALL.
+    //
+    // A flag is AUTO-PROMOTED (the list above) when a graph that mixes it is
+    // ill-formed anyway: `-freflection`, `-fchar8_t` and the libstdc++ dual-ABI
+    // macro change what the standard library headers DECLARE, so no dependency
+    // can hold a coherent different opinion and promoting is the only outcome
+    // that can work.
+    //
+    // A flag is NOT auto-promoted when a dependency can legitimately disagree.
+    // `-fno-exceptions` and `-fno-rtti` remove a language facility the
+    // dependency may use, and the consumer cannot make that decision on its
+    // behalf: promoting them would compile every dependency without exceptions
+    // because the root package asked for it, and the failure would land in
+    // source the user does not own.
+    //
+    // WHAT WAS MISSING WAS THE THIRD OPTION. Left in `cxxflags`, these flags
+    // reach every TU but not the `import std` BMI prebuild, so the compiler
+    // refuses the BMI it was handed:
+    //
+    //   std: error: language dialect differs 'C++23', expected
+    //               'C++23/no-exceptions'
+    //
+    // Recognising them here does not promote them. It lets the build refuse
+    // BEFORE compiling, naming `dialect_cxxflags` — the key that does apply to
+    // the prebuild — instead of leaving the user with a compiler message about
+    // a file mcpp generated.
+    static constexpr std::string_view exact[] = {
+        "-fno-exceptions", "-fexceptions",
+        "-fno-rtti",       "-frtti",
+        // The MSVC spellings of the same two axes. `cl` bakes the choice into
+        // the module the same way it bakes `_MSVC_MT`/`_MSVC_MD` in — which
+        // `stdmod::ensure_built` already threads through for the CRT — so the
+        // mismatch class exists there too. A GNU-only list would make this
+        // check silent on one of the three supported toolchains, and silence
+        // is what it exists to remove.
+        "/EHsc", "/EHs-c-", "/EHa", "/EHac", "/GR", "/GR-",
+    };
+    for (auto e : exact)
+        if (flag == e) return true;
+    return false;
+}
+
+std::vector<std::string> dialect_flags_missing_from_prebuild(
+    std::span<const std::string> flags, std::span<const std::string> prebuild) {
+    std::vector<std::string> out;
+    for (auto const& f : flags) {
+        // An auto-promoted flag is already in `prebuild` by construction, so
+        // asking the membership question covers both tiers with one rule
+        // rather than special-casing the promoted list here — and it stays
+        // correct on the day a flag moves from one tier to the other.
+        if (!is_dialect_flag(f) && !is_unpromoted_dialect_flag(f)) continue;
+        if (std::find(prebuild.begin(), prebuild.end(), f) != prebuild.end())
+            continue;
+        if (std::find(out.begin(), out.end(), f) == out.end())
+            out.push_back(f);
+    }
+    return out;
 }
 
 std::vector<std::string> dialect_flags(const BuildConfig& bc) {

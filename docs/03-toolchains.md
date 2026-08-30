@@ -305,6 +305,55 @@ Pinned toolsets coexist with each other and with a system Visual Studio.
 > that may have been intended. (The family-less `[toolchain] … = "system"` — the PATH
 > compiler — is a separate and deliberate escape hatch, and is unaffected.)
 
+### `[toolchain] … = "system"` — refused
+
+**mcpp builds only with toolchains it manages.** A compiler taken from `PATH` is
+not supported, and the configuration is refused rather than warned about:
+
+```
+error: [toolchain] linux = "system" is not supported: mcpp builds only with
+       toolchains it manages.
+       A compiler taken from PATH cannot be identified or reproduced, so
+       `import std` availability, the runtime closure and "the same build on
+       another machine" all stop being things mcpp can promise.
+       Name one instead — mcpp installs it on first use:
+
+         [toolchain]
+         linux = "gcc@16.1.0"
+
+       or set a machine default with `mcpp toolchain default gcc@16.1.0`, and
+       see `mcpp toolchain list` for what is available.
+```
+
+`msvc@system` is **the one exception** and is a different spelling: it names a
+*family* whose installation mcpp locates and identifies, on the one platform
+where the compiler cannot be redistributed. See the section above.
+
+#### Why the toolchain and the libraries get different answers
+
+mcpp's rule about host dependence is not uniform across axes, and the split is
+deliberate:
+
+- **mcpp itself, and everything the mcpp ecosystem publishes, depends on no
+  host.** Toolchains and payloads come through xlings — the xim index or
+  mcpp-index. This is what makes a build reproducible across machines and Linux
+  distributions.
+- **The toolchain is part of that contract, so it is not the project's to take
+  from the host.** Everything mcpp promises — `import std` availability, a
+  computable runtime closure, the same build on a teammate's machine and in CI
+  — is a statement about a compiler mcpp resolved and can name. A `PATH`
+  compiler makes all of it unverifiable, which is why this one is a refusal.
+- **The libraries a program links are the program's own business.** A project
+  may link a host library or its own `.so`. mcpp says what that costs and names
+  the supported route — declare the provider so it resolves from mcpp-index, and
+  if the index does not carry it yet, contributing the package is the path — but
+  it does not refuse, as long as the result builds and runs. The developer owns
+  the artifact and guarantees it.
+
+A build that provably *cannot* run stays an error on either axis: a runtime
+closure that cannot be satisfied is refused, because the artifact will not
+start. See [binary distribution](12-binary-distribution.md).
+
 ### `msvc@system` — the machine's own Visual Studio
 
 mcpp locates and identifies an installed Visual Studio / Build Tools; it never

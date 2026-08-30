@@ -284,6 +284,47 @@ pinned toolset 之间、以及与系统 Visual Studio 之间都可以共存。
 > `[toolchain] … = "system"` —— 即 PATH 上的编译器 —— 是另一套、也是有意保留的
 > 逃生口,不受影响。)
 
+### `[toolchain] … = "system"` —— 拒绝
+
+**mcpp 只用它自己管理的工具链构建。** `PATH` 上现成的编译器不受支持,该配置会被**拒绝**,
+而不是提示:
+
+```
+error: [toolchain] linux = "system" is not supported: mcpp builds only with
+       toolchains it manages.
+       A compiler taken from PATH cannot be identified or reproduced, so
+       `import std` availability, the runtime closure and "the same build on
+       another machine" all stop being things mcpp can promise.
+       Name one instead — mcpp installs it on first use:
+
+         [toolchain]
+         linux = "gcc@16.1.0"
+
+       or set a machine default with `mcpp toolchain default gcc@16.1.0`, and
+       see `mcpp toolchain list` for what is available.
+```
+
+`msvc@system` 是**唯一的例外**,而且是另一种拼法:它点名的是一个**族**,mcpp 负责定位并识别
+其安装 —— 那是唯一一个编译器不能被重新分发的平台。见上一节。
+
+#### 为什么工具链与库得到的答案不同
+
+mcpp 对 host 依赖的规则并不是各条轴统一的,这个分叉是刻意的:
+
+- **mcpp 自身、以及 mcpp 生态发布的一切,都不依赖任何 host。** 工具链与 payload 都经由
+  xlings 获得 —— xim 索引或 mcpp-index。这正是构建能跨机器、跨 Linux 发行版复现的原因。
+- **工具链属于这份契约,所以它不是工程可以从 host 拿的东西。** mcpp 承诺的每一件事 ——
+  `import std` 可用、运行期闭包可计算、同一份构建在同事机器上和 CI 里一致 —— 都是关于
+  **一个 mcpp 解析出来、叫得出名字的编译器**的陈述。`PATH` 上的编译器让这些全部无法核验,
+  这就是这一条是拒绝的原因。
+- **程序链接哪些库,是程序自己的事。** 工程可以链 host 的库,也可以链自己的 `.so`。mcpp 会
+  说明这样做的代价,并指出受支持的路径 —— 声明该 provider 让它从 mcpp-index 解析;索引尚未
+  收录时,**把包贡献进 mcpp-index** 就是那条路 —— 但只要结果能构建、能运行,就不强行拒绝。
+  产物是开发者的,由他保证。
+
+而"证明跑不起来"的构建在两条轴上都仍然是错误:运行期闭包不可满足时会被拒绝,因为产物根本
+起不来。见[二进制分发](12-binary-distribution.md)。
+
 ### `msvc@system` —— 机器自己的 Visual Studio
 
 mcpp 只负责定位并识别已安装的 Visual Studio / Build Tools,**从不**安装、

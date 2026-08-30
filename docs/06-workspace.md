@@ -151,6 +151,102 @@ linkage   = "static"
 default = "llvm@20.1.7"
 ```
 
+### 4.1 `[workspace.package]` and `[workspace.build]`
+
+Package metadata and build flags shared by every member are declared once at the
+workspace root:
+
+```toml
+[workspace]
+members = ["libs/core", "libs/http", "apps/server"]
+
+[workspace.package]
+standard = 26                  # or "c++26"; both spellings are accepted
+version  = "0.4.2"
+license  = "Apache-2.0"
+authors  = ["example"]
+
+[workspace.build]
+cxxflags         = ["-Wall", "-Wextra"]
+dialect_cxxflags = ["-fno-exceptions"]
+```
+
+A member then declares only what is its own:
+
+```toml
+[package]
+name = "core"
+# standard, version, license and authors are inherited;
+# [workspace.build] cxxflags are inherited
+```
+
+**The merge rule.**
+
+| kind | rule |
+|---|---|
+| scalars (`standard`, `version`, `license`, `c_standard`, `linkage`, …) | the member wins **when it declared the key**; otherwise the workspace value applies |
+| vectors (`cxxflags`, `ldflags`, `defines`, `dialect_cxxflags`, `include_dirs`, …) | append, **workspace first** — so a member's own flag comes later on the command line, where it wins |
+| `[workspace.dependencies]` | explicit opt-in per dependency, `x.workspace = true` (§3) |
+
+"Declared" means the key was written, not that its value differs from the
+default. A member that deliberately pins `standard = "c++23"` under a
+`[workspace.package] standard = 26` keeps c++23; a member that says nothing gets
+c++26. Those two are the same value and opposite intents, which is why the
+distinction is recorded rather than inferred.
+
+Scalars and vectors are inherited **implicitly**, without a per-key opt-in. The
+drift a workspace exists to prevent is a member that forgot to opt in, so
+inheritance is the default and overriding is what has to be stated.
+Dependencies keep their explicit opt-in because a dependency is an edge in the
+resolution graph: inheriting one implicitly would change what a member resolves
+without its own manifest naming it.
+
+**`version` may be omitted by a member** when `[workspace.package]` supplies it.
+It remains required overall — a member with neither is refused, naming both the
+member and the workspace key that would have supplied it.
+
+**Not everything is inheritable.** `[workspace.build] allow_host_libs` is
+refused. It disables the hermetic-link check for a specific artifact, and a
+workspace root able to set it once would disable that check for members added
+later by someone who never read the root manifest. Keys that describe *how to
+build* are inheritable; keys that describe *which safety check not to run* stay
+with the package whose artifact it is. Any other unknown key in
+`[workspace.package]` / `[workspace.build]` is refused too, rather than ignored:
+a key that is silently dropped from a table whose whole purpose is propagation
+produces a workspace that looks configured and is not.
+
+**There is no `[workspace.target.<triple>]`.** A plain `[target.<triple>]` block
+in the workspace root is already inherited by every member, per triple, with the
+member winning. A second spelling for the same capability would be surface with
+no function.
+
+### 4.2 One standard for the whole module graph
+
+A C++ module graph has exactly one standard: BMIs are not compatible across
+levels, so the root package's `standard` is applied to every package in the
+graph, including dependencies. A dependency's own `standard` is not applied.
+
+When a dependency **declares** a level higher than the graph is built at, mcpp
+reports it before compiling:
+
+```
+warning: dependency `render` declares standard = "c++26", and this graph is
+         built at c++23
+  impact: a C++ module graph has one standard, so the dependency's declaration
+          is not applied and its sources are compiled at the graph's level
+  hint:   raise the consumer's standard to "c++26", or declare it once for
+          every member:
+
+            [workspace.package]
+            standard = "c++26"
+```
+
+This is a warning rather than an error — such a build usually succeeds, and it
+is promoted to an error by `--strict`. It is reported only for manifests the
+project author controls (the root package, workspace members, and `path`
+dependencies): a package resolved from an index carries a `standard` written by
+a descriptor generator rather than by the person reading the message.
+
 ## 5. Build Commands
 
 ### 5.1 Building & testing from the Workspace Root
