@@ -808,6 +808,10 @@ struct FastPathIdentity {
     // `[build] target` — the project's DEFAULT cross target, and the reason
     // try_fast_run cannot assume the artifact runs here. See its use.
     std::string defaultTarget;
+    // `[hooks]` with at least one command (#496). Third field down riding on
+    // the same single manifest read, and the only one that can VETO the fast
+    // path rather than describe it — see try_fast_build.
+    bool hooksActive = false;
 };
 
 std::optional<FastPathIdentity>
@@ -822,6 +826,7 @@ fast_path_identity(const std::filesystem::path& projectRoot,
         m->resources.files,
         mcpp::extension_table_for(m->buildConfig.moduleExtensions),
         m->buildConfig.target,
+        m->hooks.active(),
     };
 }
 
@@ -834,6 +839,14 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
 
     auto want = fast_path_identity(projectRoot);
     if (!want) return std::nullopt;
+
+    // #496. A project with build hooks always takes the full path. The fast
+    // path is defined as "skip preparation", and `build_start` is specified to
+    // run AFTER it — a hook program installed as an `[xlings] deps` entry does
+    // not exist until preparation has run. Declining here rather than in
+    // cmd_build keeps the decision next to the manifest that answers it; the
+    // full path then runs the hooks around run_build_plan.
+    if (want->hooksActive) return std::nullopt;
 
     // P3: read multi-entry cache and find the entry matching this
     // (target, profile, cache mode) triple. Matching on the target alone served

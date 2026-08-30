@@ -18,6 +18,7 @@ import mcpp.build.stage;
 import mcpp.build.schedule.detach_codegen;
 import mcpp.build.test_targets;
 import mcpp.dyndep;
+import mcpp.hooks;
 import mcpp.log;
 import mcpp.project;
 import mcpp.manifest;
@@ -40,6 +41,44 @@ workspace_fanout_members(bool wantAll, const std::string& package_filter) {
     if (wantAll || (virtualWs && package_filter.empty()))
         return m->workspace.members;
     return std::nullopt;
+}
+
+// run_build_plan, wrapped in the project's `[hooks]` lifecycle (#496).
+//
+// The hooks come off the context's own manifest, so they are the ones belonging
+// to the package being built — which in a workspace fan-out is the MEMBER, once
+// per member. The lifecycle is deliberately paired: build_finished/build_failed
+// are only ever reached after build_start has run, so a project that could not
+// be prepared at all (bad manifest, unresolvable dependency, no toolchain)
+// fires nothing — its hook programs may be exactly what preparation failed to
+// install.
+int run_build_with_hooks(mcpp::build::BuildContext& ctx, bool verbose,
+                         bool no_cache, std::string_view targetOverride) {
+    auto const& hooks = ctx.manifest.hooks;
+
+    // `during_build` opens first and closes last: its interval is the one that
+    // spans everything below. Its output is discarded unless --verbose, which
+    // is the only way it could interleave into a compiler diagnostic.
+    mcpp::hooks::Span span(hooks, ctx.projectRoot, /*inheritOutput=*/verbose);
+    if (!span.ok()) return 1;
+
+    if (!mcpp::hooks::invoke(hooks, mcpp::hooks::Event::BuildStart,
+                             ctx.projectRoot))
+        return 1;
+
+    int rc = mcpp::build::run_build_plan(ctx, verbose, no_cache, targetOverride);
+
+    // Closed BEFORE the terminal hook. A "build finished" sound competing with
+    // the background music it replaces is the ordering this line settles.
+    bool spanOk = span.finish();
+
+    auto terminalEvent = rc == 0 ? mcpp::hooks::Event::BuildFinished
+                                 : mcpp::hooks::Event::BuildFailed;
+    // The build's own exit code outranks the hook's: `mcpp build` returning
+    // "the notifier failed" for a compile error would answer a question nobody
+    // asked. A hook failure only decides the exit code of a build that worked.
+    bool hookOk = mcpp::hooks::invoke(hooks, terminalEvent, ctx.projectRoot);
+    return rc != 0 ? rc : ((spanOk && hookOk) ? 0 : 1);
 }
 
 export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
@@ -118,7 +157,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
             auto ctx = mcpp::build::prepare_build(print_fp, /*includeDevDeps=*/false,
                                                   /*extraTargets=*/{}, mo);
             if (!ctx) { std::println(stderr, "error: {}: {}", mp, ctx.error()); rc = 2; continue; }
-            int r = mcpp::build::run_build_plan(*ctx, verbose, no_cache, mo.target_triple);
+            int r = run_build_with_hooks(*ctx, verbose, no_cache, mo.target_triple);
             if (r != 0) rc = r;
         }
         return rc;
@@ -137,6 +176,9 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
         && ov.cache_mode.empty()) {
         auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
         if (root) {
+            // A project with active `[hooks]` declines the fast path from
+            // inside try_fast_build, where the manifest that says so is
+            // already loaded.
             if (auto rc = mcpp::build::try_fast_build(*root, verbose, no_cache)) {
                 return *rc;
             }
@@ -147,7 +189,7 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
                                           /*extraTargets=*/{}, ov);
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
 
-    return mcpp::build::run_build_plan(*ctx, verbose, no_cache, ov.target_triple);
+    return run_build_with_hooks(*ctx, verbose, no_cache, ov.target_triple);
 }
 
 export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,

@@ -97,6 +97,56 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
                                   OutputSink         sink,
                                   void*              ctx);
 
+// ─── A child that outlives the call that started it (#496) ───────────────
+//
+// The peer of unixproc::spawn_background, and the same contract: a project
+// `[hooks] during_build` command is owned for the length of the BUILD, so the
+// caller gets a handle it can poll and stop later. Builtins only, like
+// DeadlineRun — HANDLEs travel as integers rather than as a std type.
+//
+// The job object does here what a process group does on POSIX, and does it
+// better in one respect: JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE means the tree
+// dies when the last handle to the job closes, which includes mcpp exiting for
+// ANY reason — Ctrl-C, an unhandled exception, or being killed outright. POSIX
+// needs an explicit signal handler for the same guarantee and still cannot
+// cover `kill -9`.
+struct BackgroundChild {
+    bool               ok      = false;
+    unsigned long long job     = 0;   // HANDLE to the job object
+    unsigned long long process = 0;   // HANDLE to the child
+};
+
+// `inheritStdio == 0` sends the child's output to NUL. A spanning hook writes
+// CONCURRENTLY with ninja and would otherwise interleave into the middle of a
+// compiler diagnostic.
+BackgroundChild spawn_background(const char* commandLine,
+                                 const char* cwd,
+                                 int         inheritStdio);
+
+// 1 = still running, 0 = exited, -1 = unknown. When it returns 0, `exitCode`
+// (if given) receives the process's exit code. Same contract as the POSIX
+// peer, and for the same caller: the `loop` supervisor has to tell "the
+// player finished the track" from "the command does not exist".
+int background_running(unsigned long long process, int* exitCode);
+
+// Closes the job, which terminates the whole tree at once.
+//
+// `graceMs` is accepted for signature parity with the POSIX peer and is NOT
+// spent: Windows has no portable graceful stop for a child with no console and
+// no window of its own, and the call that looks like one
+// (GenerateConsoleCtrlEvent) addresses a process group attached to THIS
+// console — see the implementation for what that cost. The asymmetry with the
+// POSIX side's SIGTERM-then-grace is real and is declared here rather than
+// papered over.
+void background_stop(unsigned long long job, unsigned long long process,
+                     long long graceMs);
+
+// Ctrl-C. The job already covers process death, so this exists only so that a
+// deliberate interrupt stops the tree BEFORE mcpp unwinds, rather than as a
+// side effect of it exiting.
+void guard_job_on_signal(unsigned long long job);
+void clear_job_guard();
+
 } // namespace mcpp::platform::winproc
 
 namespace mcpp::platform::winproc {
@@ -315,6 +365,158 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
     return out;
 }
 
+// ─── Background children ─────────────────────────────────────────────────
+
+namespace {
+
+// Read by a console control handler, which runs on a thread of the OS's
+// choosing. Only the handle is shared, and closing a job handle is atomic from
+// the caller's point of view.
+volatile unsigned long long g_guardedJob = 0;
+
+BOOL WINAPI background_console_handler(DWORD) {
+    const auto job = g_guardedJob;
+    // TerminateJobObject, not CloseHandle: this handler races `background_stop`
+    // on the normal path, and terminating is idempotent while closing the same
+    // handle twice is not. The handle stays valid for whoever closes it.
+    if (job)
+        ::TerminateJobObject(
+            reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(job)), 1);
+    return FALSE;   // FALSE = also run the default handler, i.e. still exit
+}
+
+} // namespace
+
+BackgroundChild spawn_background(const char* commandLine,
+                                 const char* cwd,
+                                 int         inheritStdio)
+{
+    BackgroundChild out;
+    if (!commandLine || !*commandLine) return out;
+
+    HANDLE job = ::CreateJobObjectA(nullptr, nullptr);
+    if (job) {
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli{};
+        jeli.BasicLimitInformation.LimitFlags =
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        ::SetInformationJobObject(job, JobObjectExtendedLimitInformation,
+                                  &jeli, sizeof(jeli));
+    }
+
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength        = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+
+    Handle nulIo;
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
+    if (!inheritStdio) {
+        nulIo.h = ::CreateFileA("NUL", GENERIC_READ | GENERIC_WRITE,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE, &sa,
+                                OPEN_EXISTING, 0, nullptr);
+        if (nulIo.h && nulIo.h != INVALID_HANDLE_VALUE) {
+            si.dwFlags    = STARTF_USESTDHANDLES;
+            si.hStdInput  = nulIo.h;
+            si.hStdOutput = nulIo.h;
+            si.hStdError  = nulIo.h;
+        }
+    }
+
+    PROCESS_INFORMATION pi{};
+    std::string cmdBuf(commandLine);        // CreateProcessA may modify it
+
+    // CREATE_SUSPENDED so the child joins the job BEFORE it can spawn anything
+    // — a grandchild created in that gap would escape the kill, which for a
+    // background player is the difference between "stops" and "plays forever".
+    //
+    // CREATE_NEW_PROCESS_GROUP is the peer of POSIX_SPAWN_SETPGROUP: the child
+    // stops receiving the console's Ctrl-C, which is what makes the guard
+    // below necessary and what stops a stray Ctrl-C from half-killing the tree.
+    const BOOL ok = ::CreateProcessA(
+        nullptr, cmdBuf.data(), nullptr, nullptr,
+        /*bInheritHandles=*/TRUE,
+        CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP
+            | (inheritStdio ? 0u : CREATE_NO_WINDOW),
+        nullptr, (cwd && *cwd) ? cwd : nullptr, &si, &pi);
+    if (!ok) {
+        if (job) ::CloseHandle(job);
+        return out;
+    }
+    if (job) ::AssignProcessToJobObject(job, pi.hProcess);
+    ::ResumeThread(pi.hThread);
+    ::CloseHandle(pi.hThread);
+
+    out.ok      = true;
+    out.job     = static_cast<unsigned long long>(
+                      reinterpret_cast<std::uintptr_t>(job));
+    out.process = static_cast<unsigned long long>(
+                      reinterpret_cast<std::uintptr_t>(pi.hProcess));
+    return out;
+}
+
+int background_running(unsigned long long process, int* exitCode) {
+    if (!process) return -1;
+    auto h = reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(process));
+    const DWORD r = ::WaitForSingleObject(h, 0);
+    if (r == WAIT_TIMEOUT)  return 1;
+    if (r != WAIT_OBJECT_0) return -1;
+    if (exitCode) {
+        DWORD code = 0;
+        ::GetExitCodeProcess(h, &code);
+        *exitCode = static_cast<int>(code);
+    }
+    return 0;
+}
+
+void background_stop(unsigned long long job, unsigned long long process,
+                     long long graceMs)
+{
+    auto procH = process ? reinterpret_cast<HANDLE>(
+                               static_cast<std::uintptr_t>(process))
+                         : nullptr;
+    auto jobH  = job ? reinterpret_cast<HANDLE>(
+                           static_cast<std::uintptr_t>(job))
+                     : nullptr;
+
+    // ⚠️ NO POLITE ASK HERE, AND `graceMs` IS DELIBERATELY UNSPENT.
+    //
+    // The obvious "ask first" is
+    //
+    //     ::GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, ::GetProcessId(procH));
+    //
+    // and it is wrong in a way that does not show up locally. That call
+    // addresses a process GROUP attached to this console, not a process; when
+    // the id does not name a live group of ours — which it does not, once the
+    // child has already exited, and `start /b`-style commands exit at once —
+    // the event reaches everything sharing the console instead. Measured on
+    // the Windows e2e runner: the whole suite died eleven seconds into the
+    // hooks test with exit code -1073741510 (0xC000013A,
+    // STATUS_CONTROL_C_EXIT) and printed no summary at all, because mcpp had
+    // Ctrl-Break'd its own console.
+    //
+    // Windows has no portable graceful stop for a child with no console and no
+    // window of its own. The job IS the mechanism; the POSIX peer's
+    // SIGTERM-then-grace has no equivalent here, and the asymmetry is stated
+    // in the declaration rather than faked with a call that reaches too far.
+    (void)graceMs;
+
+    // Closing a KILL_ON_JOB_CLOSE job takes the whole tree. TerminateProcess
+    // on the child alone would leave whatever it started behind — which for
+    // `start /b cmd /c player` is the player.
+    if (jobH)  ::CloseHandle(jobH);
+    if (procH) ::CloseHandle(procH);
+}
+
+void guard_job_on_signal(unsigned long long job) {
+    g_guardedJob = job;
+    ::SetConsoleCtrlHandler(background_console_handler, TRUE);
+}
+
+void clear_job_guard() {
+    g_guardedJob = 0;
+    ::SetConsoleCtrlHandler(background_console_handler, FALSE);
+}
+
 #else
 
 DeadlineRun capture_with_deadline(const char*, const char* const*, unsigned long,
@@ -322,6 +524,12 @@ DeadlineRun capture_with_deadline(const char*, const char* const*, unsigned long
     // Not Windows: the POSIX launcher in mcpp.platform.process owns this.
     return {};
 }
+
+BackgroundChild spawn_background(const char*, const char*, int) { return {}; }
+int  background_running(unsigned long long, int*) { return -1; }
+void background_stop(unsigned long long, unsigned long long, long long) {}
+void guard_job_on_signal(unsigned long long) {}
+void clear_job_guard() {}
 
 #endif
 

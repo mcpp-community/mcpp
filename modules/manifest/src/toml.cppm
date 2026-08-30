@@ -1520,6 +1520,172 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         }
     }
 
+    // [hooks] — project build lifecycle commands (#496). Parsed HERE rather
+    // than by the module that runs them, for the reason Appendix A of
+    // docs/05-mcpp-toml.md states: mcpp.toml has one grammar and one parser.
+    // A second reader of the same file would report ITS syntax errors in its
+    // own vocabulary — a typo in [package] arriving as "invalid hook
+    // configuration" — and would sit outside the warning/--strict policy every
+    // other section is subject to.
+    if (auto* hooksValue = doc->get("hooks");
+        hooksValue && !hooksValue->is_table()) {
+        return std::unexpected(error(origin,
+            "[hooks] must be a table of lifecycle commands"));
+    }
+    if (auto* ht = doc->get_table("hooks")) {
+        // Bounded above as well as below: the value becomes a
+        // std::chrono::seconds deadline, and "a timeout so large it is not
+        // one" is a mistake worth naming rather than honouring. One constant,
+        // used by both the table-level default and the per-event override, so
+        // the two cannot disagree about what they accept.
+        constexpr std::int64_t kMaxHookTimeout = 24 * 60 * 60;
+
+        // Values are the author's own and visible in front of them: a wrong
+        // type is an error, not a silent default. An unrecognised KEY is a
+        // warning (--strict makes it an error), same split as [build] — so a
+        // manifest written for a later mcpp still loads on this one.
+        //
+        // A command is a string or a table. `spanning` says which INTERVAL the
+        // event names, and that decides which table keys exist: a self-closing
+        // interval can be bounded (`timeout_seconds`) but can never be
+        // restarted (`loop`), and a spanning one is the reverse. A key offered
+        // to the wrong event is an error naming the right one — accepted and
+        // ignored, it would read as "the feature does not work".
+        auto read_command = [&](std::string_view key, HookCommand& out,
+                                bool spanning) -> std::optional<ManifestError> {
+            auto it = ht->find(key);
+            if (it == ht->end()) return std::nullopt;
+
+            auto const& value = it->second;
+            if (value.is_string()) {
+                if (value.as_string().empty())
+                    return error(origin, std::format(
+                        "[hooks].{} must be a non-empty command string", key));
+                out.cmd = value.as_string();
+                return std::nullopt;
+            }
+            if (!value.is_table())
+                return error(origin, std::format(
+                    "[hooks].{} must be a command string or a table with `cmd`",
+                    key));
+
+            auto const& t = value.as_table();
+            auto ci = t.find("cmd");
+            if (ci == t.end() || !ci->second.is_string()
+                || ci->second.as_string().empty())
+                return error(origin, std::format(
+                    "[hooks].{}.cmd must be a non-empty command string", key));
+            out.cmd = ci->second.as_string();
+
+            if (auto ti = t.find("timeout_seconds"); ti != t.end()) {
+                if (spanning)
+                    return error(origin, std::format(
+                        "[hooks].{}.timeout_seconds does not apply: this "
+                        "command runs for as long as the build, which bounds "
+                        "it", key));
+                if (!ti->second.is_int() || ti->second.as_int() <= 0
+                    || ti->second.as_int() > kMaxHookTimeout)
+                    return error(origin, std::format(
+                        "[hooks].{}.timeout_seconds must be a positive integer "
+                        "(seconds, at most {})", key, kMaxHookTimeout));
+                out.timeoutSeconds = static_cast<int>(ti->second.as_int());
+            }
+            if (auto li = t.find("loop"); li != t.end()) {
+                if (!spanning)
+                    return error(origin, std::format(
+                        "[hooks].{}.loop does not apply: this command's "
+                        "interval ends when it exits, so there is nothing to "
+                        "restart. `during_build` is the event that spans the "
+                        "build", key));
+                if (!li->second.is_bool())
+                    return error(origin,
+                        std::format("[hooks].{}.loop must be a boolean", key));
+                out.loop = li->second.as_bool();
+            }
+
+            static constexpr std::string_view kSelfClosingKeys[] = {
+                "cmd", "timeout_seconds" };
+            static constexpr std::string_view kSpanningKeys[] = { "cmd", "loop" };
+            for (auto& [k, _] : t) {
+                bool known = false;
+                if (spanning) {
+                    for (auto kk : kSpanningKeys) if (k == kk) known = true;
+                } else {
+                    for (auto kk : kSelfClosingKeys) if (k == kk) known = true;
+                }
+                if (!known)
+                    m.schemaWarnings.push_back(std::format(
+                        "[hooks].{} has unsupported key '{}' (ignored). Keys: {}.",
+                        key, k, spanning ? "cmd, loop" : "cmd, timeout_seconds"));
+            }
+            return std::nullopt;
+        };
+        for (auto [key, out, spanning] : std::initializer_list<
+                 std::tuple<std::string_view, HookCommand*, bool>>{
+                 {"build_start",    &m.hooks.buildStart,    false},
+                 {"build_failed",   &m.hooks.buildFailed,   false},
+                 {"build_finished", &m.hooks.buildFinished, false},
+                 {"during_build",   &m.hooks.duringBuild,   true}}) {
+            if (auto e = read_command(key, *out, spanning))
+                return std::unexpected(*e);
+        }
+
+        if (auto it = ht->find("timeout_seconds"); it != ht->end()) {
+            if (!it->second.is_int() || it->second.as_int() <= 0
+                || it->second.as_int() > kMaxHookTimeout)
+                return std::unexpected(error(origin, std::format(
+                    "[hooks].timeout_seconds must be a positive integer "
+                    "(seconds, at most {})", kMaxHookTimeout)));
+            m.hooks.timeoutSeconds = static_cast<int>(it->second.as_int());
+        }
+
+        for (auto [key, out] : std::initializer_list<
+                 std::pair<std::string_view, bool*>>{
+                 {"enabled",     &m.hooks.enabled},
+                 {"side_effect", &m.hooks.sideEffect}}) {
+            auto it = ht->find(key);
+            if (it == ht->end()) continue;
+            if (!it->second.is_bool())
+                return std::unexpected(error(origin, std::format(
+                    "[hooks].{} must be a boolean", key)));
+            *out = it->second.as_bool();
+        }
+
+        // ⚠️ THE EXPERIMENTAL GATE, AND THE WHOLE OF IT.
+        //
+        // `[hooks]` is experimental, so it may not decide whether a build
+        // succeeded. Asking for `side_effect = true` is refused rather than
+        // downgraded, because the two possible silent behaviours are both
+        // worse than an error: honouring it ships an experimental feature with
+        // a veto over every build, and ignoring it leaves a project believing
+        // its build is gated on a notifier when nothing is.
+        //
+        // Everything under this line already implements both values. Deleting
+        // this block is what promoting the feature consists of.
+        if (m.hooks.sideEffect)
+            return std::unexpected(error(origin,
+                "[hooks].side_effect = true is not available yet: [hooks] is "
+                "experimental and cannot decide whether a build succeeded. A "
+                "failing hook is reported as a warning and the build keeps its "
+                "own result. Remove the key (the default is false) — it is "
+                "reserved so that manifests do not have to change when the "
+                "feature is promoted."));
+
+        static constexpr std::string_view kKnownHookKeys[] = {
+            "build_start", "build_failed", "build_finished", "during_build",
+            "timeout_seconds", "enabled", "side_effect",
+        };
+        for (auto& [k, _] : *ht) {
+            bool known = false;
+            for (auto kk : kKnownHookKeys) if (k == kk) { known = true; break; }
+            if (!known)
+                m.schemaWarnings.push_back(std::format(
+                    "[hooks] has unsupported key '{}' (ignored). Keys: "
+                    "build_start, build_failed, build_finished, during_build, "
+                    "timeout_seconds, enabled, side_effect.", k));
+        }
+    }
+
     // [lib] — library root convention (cargo-style).
     if (auto v = doc->get_string("lib.path")) {
         m.lib.path = *v;

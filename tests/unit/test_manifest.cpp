@@ -3965,3 +3965,271 @@ cmdline = { version = "0.0.x", features = ["a"] }
         if (w.find("not a requirement") != std::string::npos) found = true;
     EXPECT_TRUE(found);
 }
+
+// ─── [hooks] — project build lifecycle commands (#496) ───────────────────
+//
+// The section is parsed here rather than by the module that runs the commands,
+// so this is where its grammar is pinned. The invocation policy (what a
+// failure costs, when each event fires) is e2e 314's subject.
+
+namespace {
+constexpr std::string_view kHookPreamble = R"(
+[package]
+name = "x"
+version = "0.1.0"
+)";
+
+std::expected<mcpp::manifest::Manifest, mcpp::manifest::ManifestError>
+parse_with_hooks(std::string_view hooksSection) {
+    return mcpp::manifest::parse_string(
+        std::string(kHookPreamble) + std::string(hooksSection));
+}
+}  // namespace
+
+TEST(ManifestHooks, AbsentSectionIsInertButNotDisabled) {
+    auto m = mcpp::manifest::parse_string(kHookPreamble);
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    // `enabled` defaults to true and says nothing about whether there is work
+    // to do; `active()` is the predicate the fast path is allowed to consult.
+    EXPECT_TRUE(m->hooks.enabled);
+    EXPECT_FALSE(m->hooks.active());
+    EXPECT_EQ(m->hooks.timeoutSeconds, 10);
+    // Experimental: a hook may not decide whether a build succeeded, so this
+    // defaults to false and is the only value the parser accepts.
+    EXPECT_FALSE(m->hooks.sideEffect);
+}
+
+// ⚠️ The experimental gate. Refused rather than downgraded: honouring it would
+// give an experimental feature a veto over every build, and ignoring it would
+// leave the project believing its build is gated on a notifier when nothing
+// is. Both silent options are worse than the error.
+TEST(ManifestHooks, SideEffectTrueIsRefusedWhileTheFeatureIsExperimental) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+build_finished = "echo done"
+side_effect = true
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("experimental"), std::string::npos)
+        << m.error().message;
+    EXPECT_NE(m.error().message.find("side_effect"), std::string::npos)
+        << m.error().message;
+}
+
+// The key stays in the vocabulary: writing the value that IS the current
+// behaviour must keep working, so a manifest does not have to change when the
+// feature is promoted.
+TEST(ManifestHooks, SideEffectFalseIsAcceptedSoTheKeyStaysReserved) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+build_finished = "echo done"
+side_effect = false
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    EXPECT_FALSE(m->hooks.sideEffect);
+}
+
+TEST(ManifestHooks, CommandsAndPolicyAreRead) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+build_start = "echo start"
+build_failed = "echo failed"
+build_finished = "echo finished"
+timeout_seconds = 30
+side_effect = false
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    EXPECT_EQ(m->hooks.buildStart.cmd, "echo start");
+    EXPECT_EQ(m->hooks.buildFailed.cmd, "echo failed");
+    EXPECT_EQ(m->hooks.buildFinished.cmd, "echo finished");
+    EXPECT_EQ(m->hooks.timeoutSeconds, 30);
+    EXPECT_FALSE(m->hooks.sideEffect);
+    EXPECT_TRUE(m->hooks.active());
+}
+
+// `enabled = false` has to switch off a table that still names commands —
+// otherwise the only way to silence hooks is to delete them.
+TEST(ManifestHooks, DisabledTableIsNotActive) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+build_start = "echo start"
+enabled = false
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    EXPECT_EQ(m->hooks.buildStart.cmd, "echo start");
+    EXPECT_FALSE(m->hooks.active());
+}
+
+// Policy without a command is not work: a table that only raises the timeout
+// must leave the fast path alone.
+TEST(ManifestHooks, PolicyOnlyTableIsNotActive) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+timeout_seconds = 60
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    EXPECT_FALSE(m->hooks.active());
+    EXPECT_EQ(m->hooks.timeoutSeconds, 60);
+}
+
+// Both ends of the documented range are the range: the largest accepted value
+// is asserted next to the smallest rejected one, so a change to either is a
+// change to a test.
+TEST(ManifestHooks, TheDocumentedTimeoutCeilingIsAccepted) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+build_start = "echo start"
+timeout_seconds = 86400
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    EXPECT_EQ(m->hooks.timeoutSeconds, 86400);
+}
+
+TEST(ManifestHooks, ValueErrorsAreRejectedWithTheKeyNamed) {
+    struct Case { std::string_view section; std::string_view needle; };
+    for (auto const& c : {
+        Case{R"([hooks]
+timeout_seconds = 0)", "timeout_seconds"},
+        Case{R"([hooks]
+timeout_seconds = "10")", "timeout_seconds"},
+        Case{R"([hooks]
+build_start = "")", "build_start"},
+        Case{R"([hooks]
+build_finished = 7)", "build_finished"},
+        Case{R"([hooks]
+enabled = "yes")", "enabled"},
+        Case{R"([hooks]
+side_effect = 1)", "side_effect"},
+        // The upper bound is documented (1–86400), so it is asserted. An
+        // undocumented ceiling and no ceiling look the same from outside.
+        Case{R"([hooks]
+timeout_seconds = 86401)", "timeout_seconds"},
+    }) {
+        auto m = parse_with_hooks(c.section);
+        ASSERT_FALSE(m.has_value()) << c.section;
+        EXPECT_NE(m.error().message.find(c.needle), std::string::npos)
+            << c.section << " -> " << m.error().message;
+    }
+}
+
+// `hooks = "…"` is the shape a user reaches for when they want one command
+// and no table. Saying so beats parsing nothing and running nothing.
+TEST(ManifestHooks, AScalarHooksKeyIsRejected) {
+    auto m = mcpp::manifest::parse_string(R"(
+hooks = "echo hi"
+
+[package]
+name = "x"
+version = "0.1.0"
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("[hooks]"), std::string::npos)
+        << m.error().message;
+}
+
+// An unknown KEY is a warning, not an error — the same split [build] uses.
+// A manifest written for a later mcpp (say, a `build_cancelled` event) still
+// loads on this one, while a typo is still reported.
+TEST(ManifestHooks, UnknownKeyWarnsInsteadOfFailing) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+build_start = "echo start"
+build_stared = "echo typo"
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    bool found = false;
+    for (auto const& w : m->schemaWarnings)
+        if (w.find("build_stared") != std::string::npos) found = true;
+    EXPECT_TRUE(found);
+    EXPECT_TRUE(m->hooks.active());
+}
+
+// ─── The table form, and the interval each event names ───────────────────
+
+TEST(ManifestHooks, ABareStringIsSugarForATable) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+build_start = "echo start"
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    EXPECT_EQ(m->hooks.buildStart.cmd, "echo start");
+    EXPECT_EQ(m->hooks.buildStart.timeoutSeconds, 0);   // 0 = inherit
+    EXPECT_FALSE(m->hooks.buildStart.loop);
+}
+
+// The per-event value wins over the table's, and 0 is what makes "not given"
+// expressible — without it there is no way to tell an inherited 10 from a
+// declared one.
+TEST(ManifestHooks, APerEventTimeoutOverridesTheTableDefault) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+timeout_seconds = 10
+build_finished = { cmd = "slow-notifier", timeout_seconds = 45 }
+build_start = "echo start"
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    EXPECT_EQ(m->hooks.timeout_for(m->hooks.buildFinished), 45);
+    EXPECT_EQ(m->hooks.timeout_for(m->hooks.buildStart), 10);
+}
+
+TEST(ManifestHooks, DuringBuildIsReadAndMakesTheTableActive) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+during_build = { cmd = "play bgm.mp3", loop = true }
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    EXPECT_EQ(m->hooks.duringBuild.cmd, "play bgm.mp3");
+    EXPECT_TRUE(m->hooks.duringBuild.loop);
+    EXPECT_TRUE(m->hooks.active());
+}
+
+// ⭐ The two keys that only exist for one interval. Accepted-and-ignored is
+// the failure mode this rejects: the user writes `loop` on `build_start`,
+// nothing repeats, and the feature looks broken rather than misused. Each
+// message names the event that does support the key.
+TEST(ManifestHooks, AKeyOfferedToTheWrongIntervalIsRejected) {
+    auto loopOnSelfClosing = parse_with_hooks(R"(
+[hooks]
+build_start = { cmd = "play bgm.mp3", loop = true }
+)");
+    ASSERT_FALSE(loopOnSelfClosing.has_value());
+    EXPECT_NE(loopOnSelfClosing.error().message.find("during_build"),
+              std::string::npos) << loopOnSelfClosing.error().message;
+
+    auto timeoutOnSpanning = parse_with_hooks(R"(
+[hooks]
+during_build = { cmd = "play bgm.mp3", timeout_seconds = 30 }
+)");
+    ASSERT_FALSE(timeoutOnSpanning.has_value());
+    EXPECT_NE(timeoutOnSpanning.error().message.find("timeout_seconds"),
+              std::string::npos) << timeoutOnSpanning.error().message;
+}
+
+TEST(ManifestHooks, ATableWithoutCmdIsRejected) {
+    for (std::string_view section : {
+        R"([hooks]
+during_build = { loop = true })",
+        R"([hooks]
+build_start = { cmd = "" })",
+        R"([hooks]
+build_start = 42)",
+    }) {
+        auto m = parse_with_hooks(section);
+        ASSERT_FALSE(m.has_value()) << section;
+        EXPECT_NE(m.error().message.find("cmd"), std::string::npos)
+            << section << " -> " << m.error().message;
+    }
+}
+
+TEST(ManifestHooks, AnUnknownKeyInsideAnEventTableWarns) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+during_build = { cmd = "play bgm.mp3", lopo = true }
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    bool found = false;
+    for (auto const& w : m->schemaWarnings)
+        if (w.find("lopo") != std::string::npos) found = true;
+    EXPECT_TRUE(found);
+    EXPECT_TRUE(m->hooks.active());
+}

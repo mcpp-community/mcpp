@@ -112,6 +112,66 @@ int run_exec_deadline(const std::vector<std::string>& argv,
                       std::chrono::milliseconds deadline,
                       bool* timed_out);
 
+// Run one host-shell command with inherited stdio, a working directory and a
+// real deadline. POSIX uses /bin/sh; Windows uses cmd.exe. This is for
+// user-authored command strings such as project hooks — programmatic launches
+// keep using the argv-based run_exec_deadline API above.
+//
+// `cwd` is where the command runs; empty means "inherit ours". It is a
+// PARAMETER rather than something the caller arranges with a chdir: the
+// process-wide working directory is shared state, and the launchers underneath
+// already carry a per-child cwd (posix_spawn_file_actions_addchdir_np /
+// CreateProcess's lpCurrentDirectory).
+//
+// Returns 127 when the shell itself could not be started — the same code a
+// shell uses for a command it cannot find, and never confusable with a
+// command that ran.
+int run_shell_deadline(std::string_view command,
+                       std::string_view cwd,
+                       std::chrono::milliseconds deadline,
+                       bool* timed_out);
+
+// ─── A shell command mcpp owns for longer than one call (#496) ───────────
+//
+// `run_shell_deadline` owns its child for the length of the call. A project
+// `[hooks] during_build` command is owned for the length of the BUILD, so it
+// is started here, polled while the build runs, and stopped afterwards.
+//
+// The handle is opaque and carries whichever platform's identity is real: a
+// process GROUP on POSIX, a job object on Windows. Neither is a pid, and that
+// is deliberate — the command is user-authored shell, so the thing that must
+// die is a tree, not a process.
+struct BackgroundCommand {
+    bool               ok      = false;
+    long long          group   = 0;   // POSIX: process-group id
+    unsigned long long job     = 0;   // Windows: job object
+    unsigned long long process = 0;   // Windows: the child
+};
+
+// `inheritStdio == false` discards the child's output. That is the right
+// default for anything running alongside the build: its writes would otherwise
+// interleave into the middle of a compiler diagnostic.
+BackgroundCommand start_shell_background(std::string_view command,
+                                         std::string_view cwd,
+                                         bool inheritStdio);
+
+// True while it is still up. When it has exited and `exitCode` is given, the
+// code is written there — "the player finished the track" and "the command
+// does not exist" are the same event to a poller that only answers yes/no, and
+// the `loop` supervisor has to tell them apart.
+bool background_running(const BackgroundCommand& child, int* exitCode = nullptr);
+
+// Asks, waits `grace`, then takes the tree.
+void stop_background(const BackgroundCommand& child,
+                     std::chrono::milliseconds grace);
+
+// Ctrl-C. Registering the child means an interrupted build does not leave it
+// running — which, for the case this exists for, is a background player the
+// user can no longer name. Only one command is guarded at a time; a build owns
+// at most one.
+void guard_background_on_signal(const BackgroundCommand& child);
+void clear_background_guard();
+
 RunResult capture_exec_deadline(
     const std::vector<std::string>& argv,
     const std::vector<std::pair<std::string, std::string>>& extraEnv,
@@ -160,6 +220,23 @@ int extract_exit_code(int raw_status);
 std::string windows_command_from_argv(const std::vector<std::string>& argv);
 std::string windows_wrap_for_cmd_c(std::string_view cmd);
 
+// The command line that runs a USER-AUTHORED shell command through cmd.exe.
+//
+// ⚠️ NOT `windows_command_from_argv({"cmd.exe", "/d", "/s", "/c", command})`.
+// That shape is for a program plus its argv, where CreateProcess's parsing is
+// what has to be satisfied. cmd.exe is not parsed that way: its switches must
+// arrive BARE (quoted, they are no longer switches), and the command tail is
+// governed by the /C quote rule above rather than by argv quoting — so an
+// argv-quoted command arrives carrying a pair cmd does not consume. That is
+// #425 one layer up, and it is why this is its own shape:
+//
+//     cmd.exe /d /s /c "<command>"
+//
+// /s makes the rule unconditional (strip exactly the outer pair), so the
+// command reaches cmd verbatim no matter how many quotes it contains; /d skips
+// AutoRun so a user's registry-installed shell hook cannot alter it.
+std::string windows_shell_command_line(std::string_view command);
+
 } // namespace mcpp::platform::process
 
 // ─── Implementation ──────────────────────────────────────────────────────
@@ -179,6 +256,12 @@ std::string windows_command_from_argv(const std::vector<std::string>& argv) {
 
 std::string windows_wrap_for_cmd_c(std::string_view cmd) {
     return "\"" + std::string(cmd) + "\"";
+}
+
+std::string windows_shell_command_line(std::string_view command) {
+    // One derivation for the outer pair: the same wrap the /c rule above is
+    // written against.
+    return "cmd.exe /d /s /c " + windows_wrap_for_cmd_c(command);
 }
 
 namespace {
@@ -585,12 +668,17 @@ struct BoundedOutcome {
 // `capture == false` runs the child on the caller's stdio: live output, and a
 // real terminal for anything that checks. `run_exec_deadline` needs that; the
 // capturing variants need the pipe.
+// `windowsCommandLine` overrides what the Windows branch launches. Empty (the
+// normal case) means "derive it from argv". A shell command is the one caller
+// that must NOT be derived that way — see windows_shell_command_line — and the
+// POSIX branch is unaffected either way, because it never flattens argv.
 BoundedOutcome dispatch_bounded(
     const std::vector<std::string>& argv,
     const std::vector<std::pair<std::string, std::string>>& extraEnv,
     std::string_view cwd,
     std::chrono::milliseconds deadline,
-    bool capture)
+    bool capture,
+    std::string_view windowsCommandLine = {})
 {
     BoundedOutcome outcome;
 
@@ -617,7 +705,9 @@ BoundedOutcome dispatch_bounded(
         : nullptr;
 
     if constexpr (mcpp::platform::is_windows) {
-        const auto cmd = windows_command_from_argv(argv);
+        const auto cmd = windowsCommandLine.empty()
+                       ? windows_command_from_argv(argv)
+                       : std::string(windowsCommandLine);
         auto r = mcpp::platform::winproc::capture_with_deadline(
             cmd.c_str(), envArg, envCount, cwdArg, ms, sink, &outcome.output);
         outcome.supported = r.supported;
@@ -656,6 +746,95 @@ int run_exec_deadline(const std::vector<std::string>& argv,
     if (!r.supported) return run_exec(argv, extraEnv);
     if (timed_out) *timed_out = r.timed_out;
     return r.exit_code;
+}
+
+int run_shell_deadline(std::string_view command,
+                       std::string_view cwd,
+                       std::chrono::milliseconds deadline,
+                       bool* timed_out)
+{
+    if (timed_out) *timed_out = false;
+    if (command.empty() || deadline.count() <= 0) return 127;
+
+    // argv is what the POSIX branch launches; the Windows branch takes the
+    // shaped command line instead. Both are built here so neither platform's
+    // spelling can drift into a launcher that does not use it.
+    const std::vector<std::string> argv{"/bin/sh", "-c", std::string(command)};
+    auto r = dispatch_bounded(argv, {}, cwd, deadline, /*capture=*/false,
+                              windows_shell_command_line(command));
+    // No fallback to the unbounded launcher here, unlike run_exec_deadline: a
+    // hook's deadline and its working directory are both part of what the
+    // caller asked for, and the unbounded path can honour neither.
+    if (!r.supported) return 127;
+    if (timed_out) *timed_out = r.timed_out;
+    return r.exit_code;
+}
+
+// The same split as dispatch_bounded, for the same reason: POSIX names a
+// program with an argv array, Windows with a single command line. Both
+// spellings are built here so neither can drift into a launcher that does not
+// use it.
+BackgroundCommand start_shell_background(std::string_view command,
+                                         std::string_view cwd,
+                                         bool inheritStdio)
+{
+    BackgroundCommand out;
+    if (command.empty()) return out;
+    const std::string cwdStore(cwd);
+    const char* cwdArg = cwdStore.empty() ? nullptr : cwdStore.c_str();
+
+    if constexpr (mcpp::platform::is_windows) {
+        const auto line = windows_shell_command_line(command);
+        auto r = mcpp::platform::winproc::spawn_background(
+            line.c_str(), cwdArg, inheritStdio ? 1 : 0);
+        out.ok      = r.ok;
+        out.job     = r.job;
+        out.process = r.process;
+    } else {
+        const std::string cmdStore(command);
+        const char* argv[] = {"/bin/sh", "-c", cmdStore.c_str()};
+        auto r = mcpp::platform::unixproc::spawn_background(
+            argv, 3, cwdArg, inheritStdio ? 1 : 0);
+        out.ok    = r.ok;
+        out.group = r.group;
+    }
+    return out;
+}
+
+bool background_running(const BackgroundCommand& child, int* exitCode) {
+    if (!child.ok) return false;
+    if constexpr (mcpp::platform::is_windows)
+        return mcpp::platform::winproc::background_running(child.process,
+                                                           exitCode) == 1;
+    else
+        return mcpp::platform::unixproc::background_running(child.group,
+                                                            exitCode) == 1;
+}
+
+void stop_background(const BackgroundCommand& child,
+                     std::chrono::milliseconds grace)
+{
+    if (!child.ok) return;
+    if constexpr (mcpp::platform::is_windows)
+        mcpp::platform::winproc::background_stop(child.job, child.process,
+                                                 grace.count());
+    else
+        mcpp::platform::unixproc::background_stop(child.group, grace.count());
+}
+
+void guard_background_on_signal(const BackgroundCommand& child) {
+    if (!child.ok) return;
+    if constexpr (mcpp::platform::is_windows)
+        mcpp::platform::winproc::guard_job_on_signal(child.job);
+    else
+        mcpp::platform::unixproc::guard_group_on_signal(child.group);
+}
+
+void clear_background_guard() {
+    if constexpr (mcpp::platform::is_windows)
+        mcpp::platform::winproc::clear_job_guard();
+    else
+        mcpp::platform::unixproc::clear_group_guard();
 }
 
 RunResult capture_exec_deadline(

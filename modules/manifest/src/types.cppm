@@ -931,6 +931,88 @@ struct WorkspaceConfig {
     bool                                                present = false;
 };
 
+// `[hooks]` — project build lifecycle commands (#496).
+//
+// The commands are host-shell strings written by the project author, run by
+// `mcpp build` around the build it performs. See docs/05-mcpp-toml.md §2.16.
+//
+// ⚠️ ONLY THE ROOT PROJECT'S HOOKS ARE EVER RUN. Every manifest mcpp parses
+// carries this field, including a DEPENDENCY's — and `mcpp build` reaches the
+// invoker (mcpp.hooks) with the root project's manifest alone. A dependency
+// that declares hooks is inert by construction, which is the only reason
+// `mcpp add` of a third-party package does not become "run their shell
+// command on my next build". Anything that adds a second call site inherits
+// that responsibility.
+// One event's command. Spelled either as a bare string or as a table — the
+// same string-or-table shape `[dependencies]` and `[resources].version-info`
+// already use, so it adds no parsing semantics.
+struct HookCommand {
+    std::string cmd;
+    // Per-event override of the table's `timeout_seconds`. 0 = inherit. Only
+    // meaningful for a self-closing interval; see below.
+    int         timeoutSeconds = 0;
+    // Restart the command if it exits before its interval closes. Only
+    // `during_build` has an interval that can outlast a run, so this is
+    // REJECTED on the other events rather than accepted and ignored.
+    bool        loop           = false;
+
+    bool empty() const { return cmd.empty(); }
+};
+
+// A hook is a command mcpp OWNS FOR AN INTERVAL; the event names the interval.
+//
+//   build_start / build_finished / build_failed   opens at the event,
+//                                                 closes when the command exits
+//   during_build                                  opens before the build,
+//                                                 closes after it
+//
+// The first three are SELF-CLOSING, and "synchronous" is not a separate mode —
+// it is what an interval closed by the command itself looks like. Everything
+// that reads as a special case for `during_build` falls out of that one
+// difference instead of being declared: `timeout_seconds` bounds one run and
+// so does not apply where the build already bounds it; `loop` restarts a
+// command that ended before its interval did, which a self-closing interval
+// makes impossible.
+//
+// See .agents/docs/2026-08-30-project-build-hooks-owned-intervals.md.
+struct Hooks {
+    HookCommand buildStart;
+    HookCommand buildFailed;
+    HookCommand buildFinished;
+    HookCommand duringBuild;
+
+    int         timeoutSeconds = 10;   // default for one run of a hook command
+    bool        enabled        = true; // whole table
+
+    // ⚠️ EXPERIMENTAL: FALSE, AND CURRENTLY THE ONLY VALUE.
+    //
+    // The key means "a hook failure fails the build". While `[hooks]` is
+    // experimental it does not get to decide that: a hook that fails is
+    // reported as a warning and the build keeps whatever result it earned on
+    // its own. `side_effect = true` is REJECTED by the parser rather than
+    // accepted and ignored — a project that believes its build is gated on a
+    // notifier, and is not, has been told something false.
+    //
+    // The mechanism below it is intact and is what the key will switch on when
+    // the feature graduates; the parser check is the whole of the gate, so
+    // removing it is the whole of the change.
+    bool        sideEffect     = false;
+
+    // "This project has work for `mcpp build` to do." Distinct from `enabled`:
+    // a table that only sets policy keys declares no command, and must leave
+    // the build path it would otherwise divert (the fast path) untouched.
+    bool active() const {
+        return enabled && !(buildStart.empty() && buildFailed.empty()
+                            && buildFinished.empty() && duringBuild.empty());
+    }
+
+    // The bound on one run of `c`. The per-event value wins; 0 means it was
+    // not given, which is what makes "inherit" expressible at all.
+    int timeout_for(const HookCommand& c) const {
+        return c.timeoutSeconds > 0 ? c.timeoutSeconds : timeoutSeconds;
+    }
+};
+
 // [profile.<name>] — bundled build settings (opt level, debug, lto, strip).
 struct Profile {
     std::string optLevel = "2";
@@ -997,6 +1079,7 @@ struct Manifest {
     Resources                   resources;          // [resources] (mcpp#365)
     RuntimeConfig               runtimeConfig;
     XlingsConfig                xlings;             // [xlings] build environment (L-1)
+    Hooks                       hooks;              // [hooks] lifecycle commands (#496)
     std::vector<ConditionalConfig> conditionalConfigs;  // [target.'cfg(...)'.build], deferred
     std::map<std::string, Profile> profiles;   // [profile.<name>]
     // [features] — feature name → implied features ("default" = default set).
