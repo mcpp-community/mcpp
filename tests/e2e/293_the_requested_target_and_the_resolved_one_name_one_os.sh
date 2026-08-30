@@ -55,17 +55,22 @@ out="$(cd "$work/mismatch" && "$MCPP" build --target x86_64-windows-gnu 2>&1 || 
 # green-by-silence rather than red. The arrangement either reproduced (the
 # report names two systems) or it did not; only the second is a skip.
 reported="$(printf '%s\n' "$out" | grep -oP 'Target \K\S+ → \S+' | head -1)"
+half_one_done=0
 case "$out" in
   *"different operating systems"*)
     echo "  ok  it refuses rather than building for the wrong system" ;;
   *"is not supported: mcpp builds only with toolchains it manages"*)
-    # The stronger refusal: the arrangement cannot be expressed any more, so
-    # the Windows target never reaches a Linux compiler. Reported and accepted
-    # as a pass, NOT as a skip — a skip here would stop the test from seeing a
-    # revert, which is what the whole comment above is about.
+    # The stronger refusal: the arrangement cannot be expressed any more, so a
+    # Windows target never reaches a Linux compiler through this door.
+    #
+    # ⚠️ AND IT MUST NOT `exit 0` HERE. Half two is independent of half one and
+    # asserts that correct cross builds still go through; leaving early skips
+    # it, and the ecosystem job that runs this file checks that each test "ran
+    # to its conclusion" precisely so an early exit cannot masquerade as a
+    # pass. Caught by that job, not by a local run.
     echo "  ok  the system toolchain is refused outright, so the mismatch"
     echo "      this test guards cannot be reached through it"
-    exit 0 ;;
+    half_one_done=1 ;;
   *)
     asked="${reported%% → *}"
     resolved="${reported##* → }"
@@ -89,15 +94,21 @@ esac
 
 # ⭐ AND THE MESSAGE NAMES BOTH. A refusal that does not say what it resolved
 # to leaves the reader with the same question the report used to answer.
-ok=1
-printf '%s\n' "$out" | grep -q "x86_64-windows-gnu" || ok=0
-printf '%s\n' "$out" | grep -q "linux"              || ok=0
-if [ "$ok" = 1 ]; then
-    echo "  ok  and it names the target asked for and the one resolved"
-else
-    echo "FAIL: the refusal does not name both systems"
-    printf '%s\n' "$out" | head -4 | sed 's/^/        /'
-    exit 1
+#
+# Only asked of the OS-mismatch refusal. The toolchain refusal is a different
+# sentence about a different decision — it never resolved a target at all —
+# and demanding both triples from it would be asserting on the wrong object.
+if [ "$half_one_done" = 0 ]; then
+    ok=1
+    printf '%s\n' "$out" | grep -q "x86_64-windows-gnu" || ok=0
+    printf '%s\n' "$out" | grep -q "linux"              || ok=0
+    if [ "$ok" = 1 ]; then
+        echo "  ok  and it names the target asked for and the one resolved"
+    else
+        echo "FAIL: the refusal does not name both systems"
+        printf '%s\n' "$out" | head -4 | sed 's/^/        /'
+        exit 1
+    fi
 fi
 
 # ── Half two: every correct cross build still goes through ────────────────
