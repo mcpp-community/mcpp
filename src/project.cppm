@@ -128,6 +128,59 @@ export void inherit_workspace_indices(mcpp::manifest::Manifest& member,
     }
 }
 
+// Is `candidate` one of this workspace's declared members?
+//
+// The membership test is the workspace's OWN `members` list resolved against
+// the workspace root — not "is this path under the workspace directory". A
+// `path` dependency can live inside the tree without being a member (a vendored
+// copy, an example, a scratch package), and a member's flags are exactly what
+// it must not acquire.
+export bool is_workspace_member(const mcpp::manifest::Manifest& workspace,
+                                const std::filesystem::path& wsRoot,
+                                const std::filesystem::path& candidate) {
+    if (!workspace.workspace.present) return false;
+    std::error_code ec;
+    auto want = std::filesystem::weakly_canonical(candidate, ec);
+    if (ec) { ec.clear(); want = candidate.lexically_normal(); }
+    for (auto const& m : workspace.workspace.members) {
+        auto member = std::filesystem::weakly_canonical(wsRoot / m, ec);
+        if (ec) { ec.clear(); member = (wsRoot / m).lexically_normal(); }
+        if (member == want) return true;
+    }
+    return false;
+}
+
+export void inherit_workspace_build(mcpp::manifest::Manifest& member,
+                                    const mcpp::manifest::Manifest& workspace,
+                                    const std::filesystem::path& wsRoot);
+
+// The `[workspace.package]` half on its own — metadata, no paths, so no anchor
+// argument. Second caller: a member reached as a sibling's `path` dependency,
+// which may legally omit `version` because this table supplies it.
+export void inherit_workspace_package(mcpp::manifest::Manifest& member,
+                                      const mcpp::manifest::Manifest& workspace) {
+    const auto& inh = workspace.workspace.inherited;
+    // `standardDeclared` and not `standard != "c++23"`: a member that
+    // deliberately pins c++23 under a c++26 workspace must keep it, and that is
+    // indistinguishable from the default without the bit.
+    if (inh.standardDeclared && !member.package.standardDeclared) {
+        member.package.standard  = inh.standard;
+        member.language.standard = inh.standard;
+        member.package.standardDeclared = true;
+        // `cppStandard` was normalised by the parser from the member's own
+        // value; it has to be re-derived, or the inherited spelling would sit
+        // in `package.standard` while every build surface kept reading the
+        // default out of the normalised copy.
+        if (auto cfg = mcpp::manifest::normalize_cpp_standard(inh.standard))
+            member.cppStandard = *cfg;
+    }
+    if (member.package.version.empty())     member.package.version     = inh.version;
+    if (member.package.license.empty())     member.package.license     = inh.license;
+    if (member.package.description.empty()) member.package.description = inh.description;
+    if (member.package.repo.empty())        member.package.repo        = inh.repo;
+    if (member.package.authors.empty())     member.package.authors     = inh.authors;
+}
+
 // EVERYTHING A MEMBER INHERITS FROM ITS WORKSPACE ROOT, IN ONE FUNCTION.
 //
 // There are two inheritance SITES in prepare_build — the command issued at the
@@ -158,40 +211,34 @@ export void inherit_workspace_config(mcpp::manifest::Manifest& member,
             member.targetOverrides[triple] = entry;
     inherit_workspace_indices(member, workspace, wsRoot);
 
+    // The two halves, each with a second caller of its own: a member reached
+    // as a sibling.s `path` dependency needs both, at two different points.
+    // (The "still missing after inheritance" refusal is
+    //  `workspace_inheritance_error`, called by each site.)
+    inherit_workspace_package(member, workspace);
+    inherit_workspace_build(member, workspace, wsRoot);
+}
+
+// The `[workspace.build]` half on its own.
+//
+// SEPARATE BECAUSE IT HAS A SECOND CALLER. `inherit_workspace_config` runs for
+// the manifest the command names; this runs additionally for every OTHER member
+// pulled in as a `path` dependency — which is what workspace members are to each
+// other, and therefore the ordinary case rather than an exotic one. Without the
+// second call, `mcpp build -p appb` gave `appb` the workspace flags and gave the
+// sibling `liba` none, while compiling both in the same command.
+//
+// `[workspace.package] standard` needs no second call: the standard is imposed
+// graph-wide from the root for BMI-compatibility reasons, which is precisely
+// why this gap stayed invisible until a `[build]` key became inheritable too.
+export void inherit_workspace_build(mcpp::manifest::Manifest& member,
+                                    const mcpp::manifest::Manifest& workspace,
+                                    const std::filesystem::path& wsRoot) {
     const auto& inh = workspace.workspace.inherited;
-
-    // `[workspace.package]`. The standard is the load-bearing one: a C++ module
-    // graph has ONE standard, so a workspace that states it once is how a
-    // monorepo stops depending on every member remembering to.
-    //
-    // `standardDeclared` and not `standard != "c++23"`: a member that
-    // deliberately pins c++23 under a c++26 workspace must keep it, and that is
-    // indistinguishable from the default without the bit.
-    if (inh.standardDeclared && !member.package.standardDeclared) {
-        member.package.standard  = inh.standard;
-        member.language.standard = inh.standard;
-        member.package.standardDeclared = true;
-        // `cppStandard` was normalised by the parser from the member's own
-        // value; it has to be re-derived, or the inherited spelling would sit
-        // in `package.standard` while every build surface kept reading the
-        // default out of the normalised copy. Same class of defect as a
-        // recorded field with no reader, one struct over.
-        if (auto cfg = mcpp::manifest::normalize_cpp_standard(inh.standard))
-            member.cppStandard = *cfg;
-    }
-    if (member.package.version.empty())     member.package.version     = inh.version;
-    // (the "still missing after inheritance" refusal is in
-    //  `workspace_inheritance_error` below — one predicate, both call sites)
-    if (member.package.license.empty())     member.package.license     = inh.license;
-    if (member.package.description.empty()) member.package.description = inh.description;
-    if (member.package.repo.empty())        member.package.repo        = inh.repo;
-    if (member.package.authors.empty())     member.package.authors     = inh.authors;
-
-    // `[workspace.build]`. Vectors append workspace-FIRST so a member's own
-    // flag lands later on the command line, where the compiler lets it win.
-    if (inh.buildPresent) {
-        auto& b = member.buildConfig;
-        const auto& w = inh.build;
+    if (!inh.buildPresent) return;
+    auto& b = member.buildConfig;
+    const auto& w = inh.build;
+    {
         auto prepend = [](auto& dst, const auto& src) {
             if (src.empty()) return;
             dst.insert(dst.begin(), src.begin(), src.end());

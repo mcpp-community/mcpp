@@ -4443,8 +4443,38 @@ prepare_build(bool print_fingerprint,
 
     auto makePackageRoot =
         [&](const std::filesystem::path& packageRoot,
-            const mcpp::manifest::Manifest& manifest)
+            const mcpp::manifest::Manifest& manifestIn)
     {
+        // `[workspace.build]` APPLIES TO EVERY MEMBER, INCLUDING ONE REACHED AS
+        // ANOTHER MEMBER'S `path` DEPENDENCY — WHICH IS THE ORDINARY SHAPE.
+        //
+        // Inheritance runs where the command's own manifest is loaded, so
+        // `mcpp build -p appb` gave `appb` the workspace flags and gave `liba`
+        // none, even though `liba` is a member of the same workspace and is
+        // being compiled by the same command. Measured before this: `-DWS_FLAG`
+        // on the consumer's TUs and not on the sibling's.
+        //
+        // `[workspace.package] standard` did not have the problem, because the
+        // standard is imposed graph-wide from the root for BMI-compatibility
+        // reasons — which is exactly why the gap was invisible until a
+        // `[build]` flag was inheritable too.
+        //
+        // Applied HERE because this is the one funnel both dependency-assembly
+        // sites go through, and because the include directories a few lines
+        // below are captured from the manifest at this moment: a later mutation
+        // would reach the flags and silently not the include dirs.
+        //
+        // Only for MEMBERS. An index or git dependency is not part of the
+        // workspace and must not acquire its flags.
+        mcpp::manifest::Manifest manifest = manifestIn;
+        if (wsManifest && !runtimeWorkspaceRoot.empty()
+            && mcpp::project::is_workspace_member(*wsManifest,
+                                                  runtimeWorkspaceRoot,
+                                                  packageRoot)) {
+            mcpp::project::inherit_workspace_build(manifest, *wsManifest,
+                                                   runtimeWorkspaceRoot);
+        }
+
         mcpp::modgraph::PackageRoot pkg;
         pkg.root = packageRoot;
         pkg.manifest = manifest;
@@ -5442,13 +5472,43 @@ prepare_build(bool print_fingerprint,
                     "{} dependency '{}' (at '{}') has no mcpp.toml",
                     spec.isGit() ? "git" : "path", name, dep_root.string()));
             }
-            auto dm = mcpp::manifest::load(dep_root / "mcpp.toml");
+            // A MEMBER IS A MEMBER HOWEVER IT IS REACHED.
+            //
+            // A workspace member that omits `package.version` because
+            // `[workspace.package]` supplies it is legal — and it is reached
+            // here as a sibling's `path` dependency, which is the ordinary
+            // shape rather than an exotic one. Loading it as an anonymous path
+            // dependency would refuse it for a field the workspace does
+            // provide, and the message would name the member's manifest rather
+            // than the table that answers.
+            //
+            // `is_workspace_member` asks the workspace's own `members` list, so
+            // a vendored copy or an example living inside the tree is still
+            // refused for a missing version, exactly as before.
+            const bool depIsMember =
+                wsManifest && !runtimeWorkspaceRoot.empty()
+                && mcpp::project::is_workspace_member(
+                       *wsManifest, runtimeWorkspaceRoot, dep_root);
+            auto dm = mcpp::manifest::load(
+                dep_root / "mcpp.toml",
+                {.insideWorkspace = depIsMember});
             if (!dm) {
                 return std::unexpected(std::format(
                     "dependency '{}' (at '{}'): {}",
                     name, dep_root.string(), dm.error().format()));
             }
             dep_manifest = std::move(*dm);
+            // The metadata half of the inheritance. The `[build]` half runs in
+            // `makePackageRoot`, where the include directories are captured;
+            // splitting them is what keeps each one at the point its consumer
+            // reads it.
+            if (depIsMember) {
+                mcpp::project::inherit_workspace_package(
+                    *dep_manifest, *wsManifest);
+                if (auto bad = mcpp::project::workspace_inheritance_error(
+                        *dep_manifest, dep_root))
+                    return std::unexpected(*bad);
+            }
             // #229: path/git-dep half of the L1 cfg funnel — mirrors the
             // loadVersionDep call site above (loadFrom's L1 cfg merge, ~1740
             // lines up). Before this fix, path/git deps never ran this merge
