@@ -145,9 +145,16 @@ rm -f disabled.log
 
 # ── The timeout is a real bound, on both host shells ────────────────────
 case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) slow_command="ping -n 6 127.0.0.1 >NUL" ;;
-    *)                    slow_command="sleep 5" ;;
+    MINGW*|MSYS*|CYGWIN*) HOST_WINDOWS=1 ;;
+    *)                    HOST_WINDOWS=0 ;;
 esac
+if [[ $HOST_WINDOWS -eq 1 ]]; then
+    slow_command="ping -n 6 127.0.0.1 >NUL"
+    pause_2s="ping -n 3 127.0.0.1 >NUL"
+else
+    slow_command="sleep 5"
+    pause_2s="sleep 2"
+fi
 write_manifest <<EOF
 [package]
 name = "hookprobe"
@@ -225,6 +232,161 @@ rc=0
 [[ $rc -ne 0 ]] || {
     cat prepare-failed.log; echo "FAIL: a missing path dependency built"; exit 1; }
 expect_log hooks.log
+
+# ── `during_build`: an interval closed by the build, not by the command ──
+#
+# The assertions below are about STATE, never about a log line. "mcpp said it
+# stopped the command" passes whether or not anything stopped; "the file it was
+# appending to has not grown in a second" does not.
+if [[ $HOST_WINDOWS -eq 1 ]]; then
+    cat > writer.cmd <<'EOF'
+@echo off
+:loop
+echo tick>>beat.log
+ping -n 2 127.0.0.1 >NUL
+goto loop
+EOF
+    # `start /b` returns immediately, so the command mcpp starts EXITS and the
+    # writer is left behind it — the job object is the only thing that can
+    # still reach it.
+    writer_with_grandchild="start /b cmd /c writer.cmd"
+else
+    cat > writer.sh <<'EOF'
+while :; do echo tick>>beat.log; sleep 0.2; done
+EOF
+    # The shell mcpp starts forks the writer and waits, so the writer is a
+    # GRANDCHILD. This is the case `kill(pid)` misses and `killpg` catches, and
+    # it is the only assertion that tells the fix from the bug.
+    writer_with_grandchild="sh writer.sh & wait"
+fi
+
+beat_is_frozen() {   # the file grew, and then stopped growing
+    local before after
+    before=$(wc -c < beat.log 2>/dev/null || echo 0)
+    sleep 1
+    after=$(wc -c < beat.log 2>/dev/null || echo 0)
+    [[ "$before" != "0" && "$before" == "$after" ]]
+}
+
+: > hooks.log
+rm -f beat.log
+write_manifest <<EOF
+[package]
+name = "hookprobe"
+version = "0.1.0"
+
+[hooks]
+build_start = "$pause_2s"
+build_finished = "echo finished>>hooks.log"
+during_build = "$writer_with_grandchild"
+EOF
+"$MCPP" build > during-build.log 2>&1 || {
+    cat during-build.log; echo "FAIL: build with during_build failed"; exit 1; }
+beat_is_frozen || {
+    echo "FAIL: during_build kept running after the build (or never ran)"
+    wc -c beat.log 2>/dev/null; exit 1; }
+# The interval closed BEFORE the terminal hook, which is the ordering that
+# keeps a "build finished" sound from playing over the music it replaces.
+expect_log hooks.log finished
+
+# ── `loop` restarts a command that ends before its interval does ────────
+rm -f runs.log
+write_manifest <<EOF
+[package]
+name = "hookprobe"
+version = "0.1.0"
+
+[hooks]
+build_start = "$pause_2s"
+during_build = { cmd = "echo run>>runs.log", loop = true }
+EOF
+"$MCPP" build > loop-on.log 2>&1 || {
+    cat loop-on.log; echo "FAIL: looped during_build failed the build"; exit 1; }
+looped=$(wc -l < runs.log | tr -d ' ')
+[[ "$looped" -ge 2 ]] || {
+    cat loop-on.log; echo "FAIL: loop=true ran $looped time(s), expected >= 2"; exit 1; }
+
+# Without `loop`, the same command runs exactly once — the denominator that
+# makes the count above mean something.
+rm -f runs.log
+write_manifest <<EOF
+[package]
+name = "hookprobe"
+version = "0.1.0"
+
+[hooks]
+build_start = "$pause_2s"
+during_build = "echo run>>runs.log"
+EOF
+"$MCPP" build > loop-off.log 2>&1 || {
+    cat loop-off.log; echo "FAIL: unlooped during_build failed the build"; exit 1; }
+once=$(wc -l < runs.log | tr -d ' ')
+[[ "$once" -eq 1 ]] || {
+    cat loop-off.log; echo "FAIL: loop=false ran $once time(s), expected 1"; exit 1; }
+
+# ── A command that cannot stay up stops, rather than spinning ───────────
+#
+# `loop` on a typo is a fork bomb otherwise. The bound is five consecutive
+# runs that end unsuccessfully within a second.
+write_manifest <<EOF
+[package]
+name = "hookprobe"
+version = "0.1.0"
+
+[hooks]
+build_start = "$pause_2s"
+during_build = { cmd = "mcpp-hook-command-that-does-not-exist", loop = true }
+EOF
+rc=0
+"$MCPP" build > loop-giveup.log 2>&1 || rc=$?
+[[ $rc -ne 0 ]] || {
+    cat loop-giveup.log; echo "FAIL: a during_build that never ran was not fatal"; exit 1; }
+grep -q "error: hook 'during_build' failed to stay up" loop-giveup.log || {
+    cat loop-giveup.log; echo "FAIL: giving up was not reported"; exit 1; }
+
+# ── `loop` on a self-closing event is refused, not ignored ──────────────
+write_manifest <<'EOF'
+[package]
+name = "hookprobe"
+version = "0.1.0"
+
+[hooks]
+build_start = { cmd = "echo start", loop = true }
+EOF
+rc=0
+"$MCPP" build > loop-misplaced.log 2>&1 || rc=$?
+[[ $rc -ne 0 ]] || {
+    cat loop-misplaced.log; echo "FAIL: loop on build_start was accepted"; exit 1; }
+grep -q "during_build" loop-misplaced.log || {
+    cat loop-misplaced.log
+    echo "FAIL: the diagnostic does not name the event that supports loop"; exit 1; }
+
+# ── An interrupted build leaves nothing running ─────────────────────────
+#
+# POSIX only, and the skip is printed rather than silent: sending Ctrl-C to
+# another process on Windows needs a helper this suite does not have, and a
+# test that cannot fail there would read as coverage.
+if [[ $HOST_WINDOWS -eq 1 ]]; then
+    echo "SKIP(within test): Ctrl-C cleanup — no way to signal another process here"
+else
+    rm -f beat.log
+    write_manifest <<EOF
+[package]
+name = "hookprobe"
+version = "0.1.0"
+
+[hooks]
+build_start = "sleep 20"
+during_build = "$writer_with_grandchild"
+EOF
+    "$MCPP" build > interrupted.log 2>&1 &
+    build_pid=$!
+    sleep 3
+    kill -INT "$build_pid" 2>/dev/null || true
+    wait "$build_pid" 2>/dev/null || true
+    beat_is_frozen || {
+        echo "FAIL: Ctrl-C left during_build running"; exit 1; }
+fi
 
 # ── A DEPENDENCY's hooks never run ──────────────────────────────────────
 #

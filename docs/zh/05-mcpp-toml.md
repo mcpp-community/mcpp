@@ -1793,7 +1793,7 @@ o.arg("./mkblob.sh").arg("blob.bin").arg("${mcpp.out_dir}/blob.o")
 
 ### 2.16 `[hooks]` —— 项目构建生命周期命令
 
-`mcpp build` 可以在正式构建前执行一条宿主 Shell 命令,并根据最终结果再执行一条:
+Hook 是 `mcpp build` **在一段区间内持有**的命令,事件名就是那段区间:
 
 ```toml
 [hooks]
@@ -1801,41 +1801,75 @@ build_start = "echo build started"
 build_failed = "notify-send 'build failed'"
 build_finished = "notify-send 'build finished'"
 
+# 与构建并行,构建结束时被停止。
+during_build = { cmd = "mcpp-hooks-audioplayer bgm", loop = true }
+
 # 可选;以下是默认值。
 timeout_seconds = 10
 enabled = true
 side_effect = true
 ```
 
-| 键 | 类型 | 默认值 | 含义 |
+| 键 | 类型 | 默认值 | 它命名的区间 |
 |---|---|---:|---|
-| `build_start` | 字符串 | — | 项目准备完成、正式构建开始前执行 |
-| `build_failed` | 字符串 | — | 构建以失败状态结束时执行 |
-| `build_finished` | 字符串 | — | 构建成功结束时执行 |
-| `timeout_seconds` | 整数,1–86400 | `10` | 每条命令的最长执行时间 |
+| `build_start` | 命令 | — | 项目准备完成后开启,命令退出时闭合 |
+| `build_finished` | 命令 | — | 构建成功后开启,命令退出时闭合 |
+| `build_failed` | 命令 | — | 构建失败后开启,命令退出时闭合 |
+| `during_build` | 命令 | — | 构建开始前开启,构建结束后闭合 |
+| `timeout_seconds` | 整数,1–86400 | `10` | 单次运行的时限 |
 | `enabled` | 布尔 | `true` | 是否启用本表中的全部命令 |
 | `side_effect` | 布尔 | `true` | Hook 失败是否让本次构建失败 |
 
-命令通过宿主 Shell(`/bin/sh` 或 `cmd.exe`)同步执行,工作目录是**项目根目录**——
-不是敲 `mcpp build` 的那个目录,所以 Hook 里的相对路径在哪儿发起构建都指同一处。
-标准输入、输出和错误沿用普通终端行为。没有配置的事件直接跳过。
+前三个区间是**自闭合**的——命令退出,区间就结束。"同步"在这里不是一种单独的模式,
+它就是自闭合区间的样子。`during_build` 是唯一由别的东西闭合的区间,而那两个只对其中
+一种形状有意义的键,是从这一点推出来的,不是额外规定的例外。
+
+命令写成字符串;需要选项时写成表:
+
+| 表内键 | 适用于 | 含义 |
+|---|---|---|
+| `cmd` | 所有事件 | 命令本身,必填 |
+| `timeout_seconds` | 自闭合事件 | 覆盖本表默认值 |
+| `loop` | `during_build` | 命令在区间闭合前退出时重新启动 |
+
+`loop` 写在自闭合事件上、`timeout_seconds` 写在 `during_build` 上,都是**错误**而不是
+被忽略的键:自闭合区间随命令退出而结束,没有东西可重启;而 `during_build` 已经由构建
+定界。一个被接受却什么都不做的键,读起来就是"这功能坏了"。
+
+命令通过宿主 Shell(`/bin/sh` 或 `cmd.exe`)执行,工作目录是**项目根目录**——不是敲
+`mcpp build` 的那个目录,所以 Hook 里的相对路径在哪儿发起构建都指同一处。自闭合命令
+的标准输入、输出和错误沿用普通终端行为。没有配置的事件直接跳过。
 
 生命周期为:
 
 ```text
+during_build 开启
 build_start
-    ├─ 构建成功 → build_finished
-    └─ 构建失败 → build_failed
+    ├─ 构建成功 → during_build 闭合 → build_finished
+    └─ 构建失败 → during_build 闭合 → build_failed
 ```
+
+`during_build` 在终止 Hook **之前**闭合,这样"构建完成"的提示音不会和它要替换掉的
+背景音乐撞在一起。
 
 `build_failed` 与 `build_finished` 互斥,而且两者都只在 `build_start` 已经执行之后
 才可达。项目**准备**阶段就失败的情况——manifest 非法、依赖无法解析、没有可用工具链
 ——一个 Hook 都不触发:此时构建尚未开始,而 Hook 程序本身可能正是准备阶段要装的东西。
 
-命令无法启动、返回非零或超过时限均视为 Hook 失败。`side_effect = false` 时 mcpp 报
-warning 并保留原构建结果;设为 `true` 时返回失败——但构建自身失败时保留它自己的退出码,
-所以 `mcpp build` 不会把一次编译错误报成通知程序的问题。Hook 自身失败不会再触发另一个
-Hook。
+命令无法启动、返回非零或超过时限均视为 Hook 失败。`during_build` 还多一种:开了 `loop`
+的命令**起不来**——连续五次在一秒内以非零状态结束——就不再重启,并被报出来。(很快就
+成功结束的命令,正是 `loop` 被要求重复的那件事,不算失败。)`side_effect = false` 时
+mcpp 报 warning 并保留原构建结果;设为 `true` 时返回失败——但构建自身失败时保留它自己
+的退出码,所以 `mcpp build` 不会把一次编译错误报成通知程序的问题。Hook 自身失败不会再
+触发另一个 Hook。
+
+关于 `during_build` 有两件事值得单独知道:
+
+- **它的输出被丢弃**,因为它与构建并发写出,否则会插进某条编译诊断的中间。要看它的
+  输出就跑 `mcpp build --verbose`。
+- **停止的单位是进程树,不是进程。** `player & wait` 让播放器成为 mcpp 所启动那条命令
+  的孙子进程,只停掉后者会让音频设备在构建结束后仍被占着。mcpp 把命令放进它自己的
+  进程组(Windows 上是 job object)并停止整组,构建被 Ctrl-C 打断时也一样。
 
 作用范围:
 
@@ -1849,9 +1883,9 @@ Hook。
 - 声明了生效的 Hook 就等于让项目放弃空转快路径,因为 `build_start` 规定在准备阶段之后
   执行。对已经是最新状态的带 Hook 项目,`mcpp build` 的代价是一次准备,而不是毫秒级。
 
-`[hooks]` 里不认识的**键**是 warning(`--strict` 下为错误),所以为更新版 mcpp 写的
-manifest 在这一版仍能加载;不认识的**值**——命令不是字符串、`timeout_seconds` 不在
-1–86400 之间——是 manifest 错误。
+`[hooks]` 里、以及某个事件表里不认识的**键**都是 warning(`--strict` 下为错误),所以为更新版 mcpp 写的
+manifest 在这一版仍能加载;不认识的**值**——`cmd` 缺失或不是字符串、`timeout_seconds` 不在
+1–86400 之间、键写给了错误的区间——是 manifest 错误。
 
 > **Hook 是代码,而 `mcpp.toml` 是仓库的一部分。** 构建一个刚克隆下来的项目,会以
 > 执行 `mcpp build` 的那个账户的权限,运行它 `[hooks]` 里写的任何东西。这与
@@ -1863,6 +1897,7 @@ Hook 程序可以作为普通 xlings 依赖安装。例如,音频通知程序可
 
 ```toml
 [hooks]
+during_build = { cmd = "mcpp-hooks-audioplayer bgm", loop = true }
 build_finished = "mcpp-hooks-audioplayer niulai-mm"
 build_failed = "mcpp-hooks-audioplayer niulai-niulai"
 side_effect = false
@@ -1870,6 +1905,9 @@ side_effect = false
 [xlings]
 deps = ["xim:mcpp-hooks-audioplayer@0.0.1"]
 ```
+
+构建全程的背景音乐,加上一段区分结果的提示音;`side_effect = false` 让缺少音频设备
+只是一条 warning,而不是一次失败的构建。
 
 ## 附录 A. Schema 所有权原则(新字段准入标准)
 

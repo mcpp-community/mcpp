@@ -2096,8 +2096,8 @@ do`.
 
 ### 2.16 `[hooks]` — Project Build Lifecycle Commands
 
-`mcpp build` can run one host-shell command before the build and one command
-for its terminal result:
+A hook is a command `mcpp build` **owns for an interval**, and the event names
+the interval:
 
 ```toml
 [hooks]
@@ -2105,34 +2105,61 @@ build_start = "echo build started"
 build_failed = "notify-send 'build failed'"
 build_finished = "notify-send 'build finished'"
 
+# Runs alongside the build and is stopped when it ends.
+during_build = { cmd = "mcpp-hooks-audioplayer bgm", loop = true }
+
 # Optional; these are the defaults.
 timeout_seconds = 10
 enabled = true
 side_effect = true
 ```
 
-| Key | Type | Default | Meaning |
+| Key | Type | Default | The interval it names |
 |---|---|---:|---|
-| `build_start` | string | — | Runs after project preparation, immediately before the build |
-| `build_failed` | string | — | Runs when the build exits unsuccessfully |
-| `build_finished` | string | — | Runs when the build exits successfully |
-| `timeout_seconds` | integer, 1–86400 | `10` | Maximum time for each command |
+| `build_start` | command | — | Opens after project preparation, closes when the command exits |
+| `build_finished` | command | — | Opens after a build that succeeded, closes when the command exits |
+| `build_failed` | command | — | Opens after a build that failed, closes when the command exits |
+| `during_build` | command | — | Opens before the build, closes after it |
+| `timeout_seconds` | integer, 1–86400 | `10` | Bounds one run of a command |
 | `enabled` | bool | `true` | Enables all commands in this table |
 | `side_effect` | bool | `true` | Whether a hook failure makes the overall build fail |
 
-Commands run synchronously through the host shell (`/bin/sh` or `cmd.exe`),
-with the **project root** as their working directory — not the directory
-`mcpp build` was typed in, so a relative path in a hook means the same thing
-wherever the build was started. Standard input/output/error keep their ordinary
-terminal behaviour. Missing event commands are skipped.
+The first three intervals are **self-closing** — they end when the command
+does. "Synchronous" is not a separate mode here; it is what a self-closing
+interval looks like. `during_build` is the one interval closed by something
+else, and the two keys that only make sense for one shape follow from that
+rather than being exceptions.
+
+A command is a string, or a table when it needs options:
+
+| Table key | Applies to | Meaning |
+|---|---|---|
+| `cmd` | every event | The command. Required. |
+| `timeout_seconds` | self-closing events | Overrides the table default for this event |
+| `loop` | `during_build` | Restart the command if it exits before the build ends |
+
+`loop` on a self-closing event and `timeout_seconds` on `during_build` are both
+**errors**, not ignored keys: a self-closing interval ends when its command
+exits, so there is nothing to restart, and `during_build` is already bounded by
+the build. A key that is accepted and does nothing reads as a broken feature.
+
+Commands run through the host shell (`/bin/sh` or `cmd.exe`), with the
+**project root** as their working directory — not the directory `mcpp build`
+was typed in, so a relative path in a hook means the same thing wherever the
+build was started. A self-closing command keeps ordinary terminal
+input/output. Missing event commands are skipped.
 
 The lifecycle is:
 
 ```text
+during_build opens
 build_start
-    ├─ build succeeds → build_finished
-    └─ build fails    → build_failed
+    ├─ build succeeds → during_build closes → build_finished
+    └─ build fails    → during_build closes → build_failed
 ```
+
+`during_build` closes **before** the terminal hook, so a "build finished" sound
+is not competing with the background music it replaces.
 
 `build_failed` and `build_finished` are mutually exclusive, and both are
 reachable only after `build_start` has run. A project that cannot be *prepared*
@@ -2141,10 +2168,26 @@ nothing: it has not started building, and its hook program may be exactly what
 preparation would have installed.
 
 A hook command that cannot start, returns non-zero, or exceeds its timeout is a
-hook failure. With `side_effect = false`, mcpp reports a warning and preserves
-the build's result; with `true`, it returns failure — but a build that failed on
-its own keeps its own exit code, so `mcpp build` never reports a compile error
-as a notifier problem. A hook's own failure does not trigger another hook.
+hook failure. For `during_build` there is one more: a looped command that
+**fails to stay up** — five consecutive runs ending unsuccessfully within a
+second — stops being restarted and is reported. (A command that finishes
+quickly and *successfully* is doing exactly what `loop` was asked to repeat,
+and is not a failure.) With `side_effect = false`, mcpp reports a warning and
+preserves the build's result; with `true`, it returns failure — but a build that
+failed on its own keeps its own exit code, so `mcpp build` never reports a
+compile error as a notifier problem. A hook's own failure does not trigger
+another hook.
+
+Two things are worth knowing about a `during_build` command specifically:
+
+- **Its output is discarded**, because it writes concurrently with the build
+  and would otherwise land in the middle of a compiler diagnostic. Run
+  `mcpp build --verbose` to see it.
+- **It is stopped as a process tree**, not as a process. `player & wait` makes
+  the player a grandchild of the command mcpp started, and stopping only the
+  latter would leave the audio device held after the build. mcpp puts the
+  command in its own process group (a job object on Windows) and stops that,
+  including when the build is interrupted with Ctrl-C.
 
 Scope, precisely:
 
@@ -2162,9 +2205,10 @@ Scope, precisely:
   already-current hooked project to cost a preparation pass rather than
   milliseconds.
 
-An unrecognised key in `[hooks]` is a warning (an error under `--strict`), so a
-manifest written for a newer mcpp still loads. An unrecognised *value* — a
-non-string command, a `timeout_seconds` outside 1–86400 — is a manifest error.
+An unrecognised key in `[hooks]`, or inside one event's table, is a warning (an
+error under `--strict`), so a manifest written for a newer mcpp still loads. An
+unrecognised *value* — a missing or non-string `cmd`, a `timeout_seconds`
+outside 1–86400, a key offered to the wrong interval — is a manifest error.
 
 > **A hook is code, and `mcpp.toml` is part of the repository.** Building a
 > freshly cloned project runs whatever its `[hooks]` say, with the privileges
@@ -2178,6 +2222,7 @@ than adding media handling to mcpp:
 
 ```toml
 [hooks]
+during_build = { cmd = "mcpp-hooks-audioplayer bgm", loop = true }
 build_finished = "mcpp-hooks-audioplayer niulai-mm"
 build_failed = "mcpp-hooks-audioplayer niulai-niulai"
 side_effect = false
@@ -2185,6 +2230,10 @@ side_effect = false
 [xlings]
 deps = ["xim:mcpp-hooks-audioplayer@0.0.1"]
 ```
+
+Background music for the length of the build, a different sound for how it
+ended, and `side_effect = false` so that a missing audio device is a warning
+rather than a failed build.
 
 ## Appendix A. Schema Ownership Principle (admission criteria for new fields)
 

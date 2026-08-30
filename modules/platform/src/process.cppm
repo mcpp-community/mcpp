@@ -131,6 +131,47 @@ int run_shell_deadline(std::string_view command,
                        std::chrono::milliseconds deadline,
                        bool* timed_out);
 
+// ─── A shell command mcpp owns for longer than one call (#496) ───────────
+//
+// `run_shell_deadline` owns its child for the length of the call. A project
+// `[hooks] during_build` command is owned for the length of the BUILD, so it
+// is started here, polled while the build runs, and stopped afterwards.
+//
+// The handle is opaque and carries whichever platform's identity is real: a
+// process GROUP on POSIX, a job object on Windows. Neither is a pid, and that
+// is deliberate — the command is user-authored shell, so the thing that must
+// die is a tree, not a process.
+struct BackgroundCommand {
+    bool               ok      = false;
+    long long          group   = 0;   // POSIX: process-group id
+    unsigned long long job     = 0;   // Windows: job object
+    unsigned long long process = 0;   // Windows: the child
+};
+
+// `inheritStdio == false` discards the child's output. That is the right
+// default for anything running alongside the build: its writes would otherwise
+// interleave into the middle of a compiler diagnostic.
+BackgroundCommand start_shell_background(std::string_view command,
+                                         std::string_view cwd,
+                                         bool inheritStdio);
+
+// True while it is still up. When it has exited and `exitCode` is given, the
+// code is written there — "the player finished the track" and "the command
+// does not exist" are the same event to a poller that only answers yes/no, and
+// the `loop` supervisor has to tell them apart.
+bool background_running(const BackgroundCommand& child, int* exitCode = nullptr);
+
+// Asks, waits `grace`, then takes the tree.
+void stop_background(const BackgroundCommand& child,
+                     std::chrono::milliseconds grace);
+
+// Ctrl-C. Registering the child means an interrupted build does not leave it
+// running — which, for the case this exists for, is a background player the
+// user can no longer name. Only one command is guarded at a time; a build owns
+// at most one.
+void guard_background_on_signal(const BackgroundCommand& child);
+void clear_background_guard();
+
 RunResult capture_exec_deadline(
     const std::vector<std::string>& argv,
     const std::vector<std::pair<std::string, std::string>>& extraEnv,
@@ -727,6 +768,73 @@ int run_shell_deadline(std::string_view command,
     if (!r.supported) return 127;
     if (timed_out) *timed_out = r.timed_out;
     return r.exit_code;
+}
+
+// The same split as dispatch_bounded, for the same reason: POSIX names a
+// program with an argv array, Windows with a single command line. Both
+// spellings are built here so neither can drift into a launcher that does not
+// use it.
+BackgroundCommand start_shell_background(std::string_view command,
+                                         std::string_view cwd,
+                                         bool inheritStdio)
+{
+    BackgroundCommand out;
+    if (command.empty()) return out;
+    const std::string cwdStore(cwd);
+    const char* cwdArg = cwdStore.empty() ? nullptr : cwdStore.c_str();
+
+    if constexpr (mcpp::platform::is_windows) {
+        const auto line = windows_shell_command_line(command);
+        auto r = mcpp::platform::winproc::spawn_background(
+            line.c_str(), cwdArg, inheritStdio ? 1 : 0);
+        out.ok      = r.ok;
+        out.job     = r.job;
+        out.process = r.process;
+    } else {
+        const std::string cmdStore(command);
+        const char* argv[] = {"/bin/sh", "-c", cmdStore.c_str()};
+        auto r = mcpp::platform::unixproc::spawn_background(
+            argv, 3, cwdArg, inheritStdio ? 1 : 0);
+        out.ok    = r.ok;
+        out.group = r.group;
+    }
+    return out;
+}
+
+bool background_running(const BackgroundCommand& child, int* exitCode) {
+    if (!child.ok) return false;
+    if constexpr (mcpp::platform::is_windows)
+        return mcpp::platform::winproc::background_running(child.process,
+                                                           exitCode) == 1;
+    else
+        return mcpp::platform::unixproc::background_running(child.group,
+                                                            exitCode) == 1;
+}
+
+void stop_background(const BackgroundCommand& child,
+                     std::chrono::milliseconds grace)
+{
+    if (!child.ok) return;
+    if constexpr (mcpp::platform::is_windows)
+        mcpp::platform::winproc::background_stop(child.job, child.process,
+                                                 grace.count());
+    else
+        mcpp::platform::unixproc::background_stop(child.group, grace.count());
+}
+
+void guard_background_on_signal(const BackgroundCommand& child) {
+    if (!child.ok) return;
+    if constexpr (mcpp::platform::is_windows)
+        mcpp::platform::winproc::guard_job_on_signal(child.job);
+    else
+        mcpp::platform::unixproc::guard_group_on_signal(child.group);
+}
+
+void clear_background_guard() {
+    if constexpr (mcpp::platform::is_windows)
+        mcpp::platform::winproc::clear_job_guard();
+    else
+        mcpp::platform::unixproc::clear_group_guard();
 }
 
 RunResult capture_exec_deadline(

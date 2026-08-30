@@ -931,11 +931,45 @@ struct WorkspaceConfig {
 // `mcpp add` of a third-party package does not become "run their shell
 // command on my next build". Anything that adds a second call site inherits
 // that responsibility.
+// One event's command. Spelled either as a bare string or as a table — the
+// same string-or-table shape `[dependencies]` and `[resources].version-info`
+// already use, so it adds no parsing semantics.
+struct HookCommand {
+    std::string cmd;
+    // Per-event override of the table's `timeout_seconds`. 0 = inherit. Only
+    // meaningful for a self-closing interval; see below.
+    int         timeoutSeconds = 0;
+    // Restart the command if it exits before its interval closes. Only
+    // `during_build` has an interval that can outlast a run, so this is
+    // REJECTED on the other events rather than accepted and ignored.
+    bool        loop           = false;
+
+    bool empty() const { return cmd.empty(); }
+};
+
+// A hook is a command mcpp OWNS FOR AN INTERVAL; the event names the interval.
+//
+//   build_start / build_finished / build_failed   opens at the event,
+//                                                 closes when the command exits
+//   during_build                                  opens before the build,
+//                                                 closes after it
+//
+// The first three are SELF-CLOSING, and "synchronous" is not a separate mode —
+// it is what an interval closed by the command itself looks like. Everything
+// that reads as a special case for `during_build` falls out of that one
+// difference instead of being declared: `timeout_seconds` bounds one run and
+// so does not apply where the build already bounds it; `loop` restarts a
+// command that ended before its interval did, which a self-closing interval
+// makes impossible.
+//
+// See .agents/docs/2026-08-30-project-build-hooks-owned-intervals.md.
 struct Hooks {
-    std::string buildStart;
-    std::string buildFailed;
-    std::string buildFinished;
-    int         timeoutSeconds = 10;   // per command
+    HookCommand buildStart;
+    HookCommand buildFailed;
+    HookCommand buildFinished;
+    HookCommand duringBuild;
+
+    int         timeoutSeconds = 10;   // default for one run of a hook command
     bool        enabled        = true; // whole table
     // Whether a hook failure fails the build. False downgrades it to a
     // warning and preserves whatever the build itself returned.
@@ -946,7 +980,13 @@ struct Hooks {
     // the build path it would otherwise divert (the fast path) untouched.
     bool active() const {
         return enabled && !(buildStart.empty() && buildFailed.empty()
-                            && buildFinished.empty());
+                            && buildFinished.empty() && duringBuild.empty());
+    }
+
+    // The bound on one run of `c`. The per-event value wins; 0 means it was
+    // not given, which is what makes "inherit" expressible at all.
+    int timeout_for(const HookCommand& c) const {
+        return c.timeoutSeconds > 0 ? c.timeoutSeconds : timeoutSeconds;
     }
 };
 

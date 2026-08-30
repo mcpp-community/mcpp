@@ -56,18 +56,29 @@ int run_build_with_hooks(mcpp::build::BuildContext& ctx, bool verbose,
                          bool no_cache, std::string_view targetOverride) {
     auto const& hooks = ctx.manifest.hooks;
 
+    // `during_build` opens first and closes last: its interval is the one that
+    // spans everything below. Its output is discarded unless --verbose, which
+    // is the only way it could interleave into a compiler diagnostic.
+    mcpp::hooks::Span span(hooks, ctx.projectRoot, /*inheritOutput=*/verbose);
+    if (!span.ok()) return 1;
+
     if (!mcpp::hooks::invoke(hooks, mcpp::hooks::Event::BuildStart,
                              ctx.projectRoot))
         return 1;
 
     int rc = mcpp::build::run_build_plan(ctx, verbose, no_cache, targetOverride);
+
+    // Closed BEFORE the terminal hook. A "build finished" sound competing with
+    // the background music it replaces is the ordering this line settles.
+    bool spanOk = span.finish();
+
     auto terminalEvent = rc == 0 ? mcpp::hooks::Event::BuildFinished
                                  : mcpp::hooks::Event::BuildFailed;
     // The build's own exit code outranks the hook's: `mcpp build` returning
     // "the notifier failed" for a compile error would answer a question nobody
     // asked. A hook failure only decides the exit code of a build that worked.
     bool hookOk = mcpp::hooks::invoke(hooks, terminalEvent, ctx.projectRoot);
-    return rc != 0 ? rc : (hookOk ? 0 : 1);
+    return rc != 0 ? rc : ((spanOk && hookOk) ? 0 : 1);
 }
 
 export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {

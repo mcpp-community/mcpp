@@ -4007,9 +4007,9 @@ timeout_seconds = 30
 side_effect = false
 )");
     ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
-    EXPECT_EQ(m->hooks.buildStart, "echo start");
-    EXPECT_EQ(m->hooks.buildFailed, "echo failed");
-    EXPECT_EQ(m->hooks.buildFinished, "echo finished");
+    EXPECT_EQ(m->hooks.buildStart.cmd, "echo start");
+    EXPECT_EQ(m->hooks.buildFailed.cmd, "echo failed");
+    EXPECT_EQ(m->hooks.buildFinished.cmd, "echo finished");
     EXPECT_EQ(m->hooks.timeoutSeconds, 30);
     EXPECT_FALSE(m->hooks.sideEffect);
     EXPECT_TRUE(m->hooks.active());
@@ -4024,7 +4024,7 @@ build_start = "echo start"
 enabled = false
 )");
     ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
-    EXPECT_EQ(m->hooks.buildStart, "echo start");
+    EXPECT_EQ(m->hooks.buildStart.cmd, "echo start");
     EXPECT_FALSE(m->hooks.active());
 }
 
@@ -4108,6 +4108,96 @@ build_stared = "echo typo"
     bool found = false;
     for (auto const& w : m->schemaWarnings)
         if (w.find("build_stared") != std::string::npos) found = true;
+    EXPECT_TRUE(found);
+    EXPECT_TRUE(m->hooks.active());
+}
+
+// ─── The table form, and the interval each event names ───────────────────
+
+TEST(ManifestHooks, ABareStringIsSugarForATable) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+build_start = "echo start"
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    EXPECT_EQ(m->hooks.buildStart.cmd, "echo start");
+    EXPECT_EQ(m->hooks.buildStart.timeoutSeconds, 0);   // 0 = inherit
+    EXPECT_FALSE(m->hooks.buildStart.loop);
+}
+
+// The per-event value wins over the table's, and 0 is what makes "not given"
+// expressible — without it there is no way to tell an inherited 10 from a
+// declared one.
+TEST(ManifestHooks, APerEventTimeoutOverridesTheTableDefault) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+timeout_seconds = 10
+build_finished = { cmd = "slow-notifier", timeout_seconds = 45 }
+build_start = "echo start"
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    EXPECT_EQ(m->hooks.timeout_for(m->hooks.buildFinished), 45);
+    EXPECT_EQ(m->hooks.timeout_for(m->hooks.buildStart), 10);
+}
+
+TEST(ManifestHooks, DuringBuildIsReadAndMakesTheTableActive) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+during_build = { cmd = "play bgm.mp3", loop = true }
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    EXPECT_EQ(m->hooks.duringBuild.cmd, "play bgm.mp3");
+    EXPECT_TRUE(m->hooks.duringBuild.loop);
+    EXPECT_TRUE(m->hooks.active());
+}
+
+// ⭐ The two keys that only exist for one interval. Accepted-and-ignored is
+// the failure mode this rejects: the user writes `loop` on `build_start`,
+// nothing repeats, and the feature looks broken rather than misused. Each
+// message names the event that does support the key.
+TEST(ManifestHooks, AKeyOfferedToTheWrongIntervalIsRejected) {
+    auto loopOnSelfClosing = parse_with_hooks(R"(
+[hooks]
+build_start = { cmd = "play bgm.mp3", loop = true }
+)");
+    ASSERT_FALSE(loopOnSelfClosing.has_value());
+    EXPECT_NE(loopOnSelfClosing.error().message.find("during_build"),
+              std::string::npos) << loopOnSelfClosing.error().message;
+
+    auto timeoutOnSpanning = parse_with_hooks(R"(
+[hooks]
+during_build = { cmd = "play bgm.mp3", timeout_seconds = 30 }
+)");
+    ASSERT_FALSE(timeoutOnSpanning.has_value());
+    EXPECT_NE(timeoutOnSpanning.error().message.find("timeout_seconds"),
+              std::string::npos) << timeoutOnSpanning.error().message;
+}
+
+TEST(ManifestHooks, ATableWithoutCmdIsRejected) {
+    for (std::string_view section : {
+        R"([hooks]
+during_build = { loop = true })",
+        R"([hooks]
+build_start = { cmd = "" })",
+        R"([hooks]
+build_start = 42)",
+    }) {
+        auto m = parse_with_hooks(section);
+        ASSERT_FALSE(m.has_value()) << section;
+        EXPECT_NE(m.error().message.find("cmd"), std::string::npos)
+            << section << " -> " << m.error().message;
+    }
+}
+
+TEST(ManifestHooks, AnUnknownKeyInsideAnEventTableWarns) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+during_build = { cmd = "play bgm.mp3", lopo = true }
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    bool found = false;
+    for (auto const& w : m->schemaWarnings)
+        if (w.find("lopo") != std::string::npos) found = true;
     EXPECT_TRUE(found);
     EXPECT_TRUE(m->hooks.active());
 }
