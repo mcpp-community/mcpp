@@ -357,9 +357,25 @@ std::vector<std::filesystem::path>
 expand_manifest_include_entry(const std::filesystem::path& root,
                               const std::filesystem::path& inc);
 
+// How a package is named when one part of the plan has to be matched against
+// another. `CompileUnit::packageName` and `BuildAction::packageName` are both
+// this, and mcpp#534's ordering edge joins them — so it is exported rather
+// than re-derived at the second call site, which is how the same decision
+// ends up spelled two ways.
+std::string qualified_package_name(const mcpp::manifest::Manifest& manifest);
+
 } // namespace mcpp::build
 
 namespace mcpp::build {
+
+std::string qualified_package_name(const mcpp::manifest::Manifest& manifest) {
+    if (!manifest.package.namespace_.empty()
+        && manifest.package.name.starts_with(manifest.package.namespace_ + ".")) {
+        return manifest.package.name;
+    }
+    if (manifest.package.namespace_.empty()) return manifest.package.name;
+    return manifest.package.namespace_ + "." + manifest.package.name;
+}
 
 namespace {
 
@@ -377,15 +393,6 @@ std::string sanitize_for_path(std::string_view module_name) {
 // the planner and `mcpp pack` cannot answer "what is this object called"
 // differently. This alias keeps the local spelling every call site below uses.
 using mcpp::object_filename_for;
-
-std::string qualified_package_name(const mcpp::manifest::Manifest& manifest) {
-    if (!manifest.package.namespace_.empty()
-        && manifest.package.name.starts_with(manifest.package.namespace_ + ".")) {
-        return manifest.package.name;
-    }
-    if (manifest.package.namespace_.empty()) return manifest.package.name;
-    return manifest.package.namespace_ + "." + manifest.package.name;
-}
 
 std::vector<std::string> dependency_name_candidates(
     const std::string& depName,

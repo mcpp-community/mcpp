@@ -33,8 +33,40 @@ export namespace mcpp::fallback {
 // Marker file name written into xpkg directories after successful install.
 inline constexpr std::string_view kInstallMarker = ".mcpp_ok";
 
+// Did the package put anything in its own directory?
+//
+// ⭐⭐ THE MARKER IS ONLY AS GOOD AS THE EVIDENCE IT IS WRITTEN FROM, and for
+// three releases that evidence was `exitCode == 0 && exists(verdir)` — the
+// installer's own report plus a directory the installer creates before it does
+// any work. mcpp#533: a package-identity collision made xlings skip the
+// descriptor's `install()`, the version directory was created anyway, mcpp
+// stamped it complete, and the build failed four layers later in a linker
+// command line. Because the stamp is what `is_install_complete` reads, the
+// wrong state then survived every subsequent build.
+//
+// So: at least one entry that neither mcpp nor xlings wrote. That is the
+// observed signature exactly — the directory held `.mcpp_ok`,
+// `.xpkg-install.json` and `mcpp_generated/` and nothing else — and it needs
+// no knowledge of what the descriptor was supposed to produce.
+//
+// ⚠️ DELIBERATELY WEAK, in both directions. It cannot tell a RIGHT tree from a
+// wrong one, and it must not: a package that legitimately installs no payload
+// exists (xlings has type-only packages, and #531 provisions `[xlings] deps`
+// for packages mcpp consumes nothing from). So the caller WITHHOLDS THE MARKER
+// rather than failing — the marker means "verified", we could not verify, and
+// saying so costs one cheap re-check per build because xlings short-circuits
+// its own install. If the package really was needed, the build now fails at
+// the empty link unit, which names the target.
+bool payload_is_substantive(const std::filesystem::path& xpkgDir);
+
 // Check whether an xpkg directory has the .mcpp_ok marker.
 // STRICT marker-only — does not fall back to legacy heuristics.
+//
+// …with one exception, which is what makes the mcpp#533 fix reach a machine
+// that already hit the bug: a marker over a directory holding nothing but
+// mcpp's and xlings' own bookkeeping is not evidence, whoever wrote it. A
+// store poisoned before this check existed heals on the next build instead of
+// requiring the user to know which directory to delete.
 bool is_install_complete(const std::filesystem::path& xpkgDir);
 
 // Heuristic check for pre-.mcpp_ok packages (upgrade compat).
@@ -132,8 +164,42 @@ bool has_marker(const std::filesystem::path& xpkgDir) {
     return std::filesystem::exists(xpkgDir / std::string(kInstallMarker));
 }
 
+bool payload_is_substantive(const std::filesystem::path& xpkgDir) {
+    // Everything mcpp or xlings writes into a version directory itself. Kept
+    // here, beside `kInstallMarker`, because that is the list's subject — and
+    // an entry added by either tool has to be added here or this predicate
+    // starts calling an empty install substantive again.
+    //
+    //   .mcpp_ok            mcpp's completeness marker (kInstallMarker)
+    //   .xpkg-install.json  xlings' install record
+    //   mcpp_generated/     mcpp's `generated_files` synthesis
+    static constexpr std::string_view kSelfWritten[] = {
+        kInstallMarker, ".xpkg-install.json", "mcpp_generated",
+    };
+    std::error_code ec;
+    if (!std::filesystem::is_directory(xpkgDir, ec)) return false;
+    for (auto const& e : std::filesystem::directory_iterator(xpkgDir, ec)) {
+        auto name = e.path().filename().string();
+        bool self = false;
+        for (auto s : kSelfWritten) if (name == s) { self = true; break; }
+        if (!self) return true;
+    }
+    return false;
+}
+
 bool is_install_complete(const std::filesystem::path& xpkgDir) {
     if (!std::filesystem::exists(xpkgDir)) return false;
+    // The marker is necessary but not sufficient — see payload_is_substantive.
+    // This is the arm that heals a store poisoned by mcpp#533 before the fix
+    // existed: the stale `.mcpp_ok` stops being believed, the install is
+    // retried, and nobody has to be told which directory to remove.
+    if (std::filesystem::exists(xpkgDir / std::string(kInstallMarker))
+        && !payload_is_substantive(xpkgDir)) {
+        mcpp::log::verbose("integrity", std::format(
+            "{}: marked complete but holds nothing the package installed — "
+            "treating as incomplete", xpkgDir.string()));
+        return false;
+    }
 
     // STRICT marker-only.
     // Used on the install/resolve path — half-extracted dirs with bin/

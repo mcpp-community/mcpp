@@ -152,7 +152,23 @@ ValidateReport validate(const Graph&                    g,
                 if (was_explicit) {
                     r.errors.push_back({lib_root_rel, std::format(
                         "[lib].path '{}' does not exist", lib_root_rel.string())});
-                } else {
+                } else if (std::ranges::any_of(g.units, [](auto const& u) {
+                               return u.provides.has_value();
+                           })) {
+                    // ⚠️ THE PREDICATE ABOVE IS `has_lib_target` — "does this
+                    // produce a library" — and the property this warning is
+                    // about is "is this a C++ MODULE library". They came apart
+                    // the moment the index grew source-built C packages
+                    // (mcpp#533): `[targets.x] kind = "shared"` over a tree of
+                    // `.c` files warned that `src/<name>.cppm` was missing, and
+                    // a C library has no lib root to miss. Worse, the warning
+                    // is emitted while validating a DEPENDENCY, so one such
+                    // package printed it in every consumer's build.
+                    //
+                    // A package with no module interface anywhere has no lib
+                    // root by construction. One that has some, but not the
+                    // conventional one, is the case the warning exists for and
+                    // still gets it.
                     r.warnings.push_back({lib_root_rel, std::format(
                         "lib target without conventional lib root '{}' "
                         "(create the file or set [lib].path)",

@@ -300,6 +300,18 @@ struct BuildAction {
     enum class Role { Source, Check, Object, Artifact };
 
     std::string                        id;        // diagnostics + edge naming
+    // Which package's `build.mcpp` declared this. Filled by the engine when
+    // actions are collected into the plan, NOT by the build program — the
+    // program does not know, and the engine already does.
+    //
+    // Load-bearing, not bookkeeping: the ordering edge an action needs is
+    // scoped to the declaring package, because `include_dir` colours only that
+    // package's own translation units. A build-wide ordering would express a
+    // dependency that does not exist and put it on the critical path of a
+    // build whose wall clock is dominated by one. Spelled the same way
+    // `CompileUnit::packageName` is (`qualified_package_name`), because the
+    // two are matched against each other.
+    std::string                        packageName;
     Role                               role = Role::Source;
     std::vector<std::string>           inputs;    // absolute or package-relative
     std::vector<std::string>           outputs;   // ditto; declared, see INV-D

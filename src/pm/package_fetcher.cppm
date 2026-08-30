@@ -1093,8 +1093,27 @@ Fetcher::resolve_xpkg_path(std::string_view target,
             return std::unexpected(inst.error());
         }
         if (inst->exitCode == 0 && std::filesystem::exists(verdir)) {
-            // Normal success path.
-            mcpp::fallback::mark_install_complete(verdir);
+            // Normal success path — but "the callee exited 0 and the directory
+            // it creates before doing any work exists" is not evidence that
+            // anything was installed. mcpp#533: a package-identity collision
+            // made xlings skip the descriptor's `install()` while still
+            // reporting success, and stamping that state cemented it, because
+            // `.mcpp_ok` is what the fast path above reads.
+            //
+            // Withheld rather than failed: a package can legitimately install
+            // no payload, and refusing here would break those. The cost of
+            // being wrong is one cheap re-check next build (xlings
+            // short-circuits its own install); the cost of the marker being
+            // wrong is permanent.
+            if (mcpp::fallback::payload_is_substantive(verdir)) {
+                mcpp::fallback::mark_install_complete(verdir);
+            } else {
+                mcpp::log::warn("fetcher", std::format(
+                    "'{}@{}' reported a successful install but {} holds "
+                    "nothing the package installed — not marking it complete",
+                    parsed.packageName, parsed.version,
+                    verdir.string()));
+            }
             stash.commit();
             return make_payload();
         }

@@ -46,10 +46,13 @@ namespace pinned {
     // actions, which is how CI's sandbox sat on 0.4.30 unnoticed while
     // everything else had moved on. Don't reintroduce a hand-maintained list.
     //
-    // ⚠️ 2026.8.27.5 is a FLOOR, not just the current pick. Below 2026.8.27.2
-    // the bundled xlings takes a subos's runtime binding from a compiled-in
-    // constant, so a home can declare one glibc and install another the
-    // moment the index publishes a packaging revision -- and mcpp is the
+    // ⚠️ THIS IS A FLOOR, not just the current pick, and it has been raised
+    // twice for reasons that both still hold.
+    //
+    // First, at 2026.8.27.5. Below 2026.8.27.2 the bundled xlings takes a
+    // subos's runtime binding from a compiled-in constant, so a home can
+    // declare one glibc and install another the moment the index publishes a
+    // packaging revision -- and mcpp is the
     // party that notices, because select_glibc_payload_lib looks up the
     // payload directory by the binding's exact version and refuses to fall
     // back:
@@ -62,7 +65,24 @@ namespace pinned {
     // 2026.8.27.4 and .5, which read the index, stayed consistent. .5 also
     // makes the declaration outrank the index during resolution, so it holds
     // even when `latest` is not the highest entry in the table.
-    inline constexpr std::string_view kXlingsVersion   = "2026.8.27.5";
+    //
+    // Second, at 2026.8.30.2 (mcpp#533). Below it, xlings answered "is this
+    // package already installed" from the xvm version database keyed on the
+    // BARE SHORT NAME, so a package skipped its own `install()` whenever any
+    // other namespace held the same `<name>@<version>` —
+    // `compat:libdrm@2.4.123` against the
+    // `xim:libdrm@2.4.123` that Mesa pulls in. The descriptor's tree was never
+    // built, and mcpp is again the party that notices, four layers later:
+    //
+    //   /bin/sh: 1: -shared: not found
+    //
+    // mcpp now refuses that link unit by name and withholds `.mcpp_ok` from a
+    // directory holding nothing the package installed, so the failure is
+    // legible on any client. Only a client at or above this floor INSTALLS
+    // correctly — which is why this is a floor and not a preference, and why
+    // an index must still not publish a deliberately colliding
+    // `<name>@<version>` (see .agents/docs/2026-08-30-cross-repo-fix-plan §1).
+    inline constexpr std::string_view kXlingsVersion   = "2026.8.30.2";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 

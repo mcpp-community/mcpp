@@ -277,13 +277,22 @@ int main() {
 
 | `role` | 输出 | 顺序 | 典型 |
 |---|---|---|---|
-| `source` | 进编译集 | 编译边消费它们 | protoc、转译器 |
-| `check` | 一个 stamp 文件,由 mcpp 写入 | **与编译并行**(`blocking = true` 才前置) | clang-tidy、格式/ABI 检查 |
+| `source` | 可编译的进编译集,其余只产出、不编译 | **声明它的那个包的每条编译边都等它** | protoc、转译器、协议/IDL 生成器 |
+| `check` | 一个 stamp 文件,由 mcpp 写入 | 与编译并行;`blocking = true` 让该包的编译边等它 | clang-tidy、格式/ABI 检查 |
 | `object` | 进**链接**集 | 链接边消费它们 | 资源编译器、`objcopy` 嵌 blob、生成的 `.def`、预编译 `.o` |
 | `artifact` | 一个新文件 | 它的**输入**是链接产物,所以在链接之后跑 | 签名、打包、size budget |
 
-全程不涉及任何 phase 机制:顺序由 ninja 自己的文件依赖决定 —— 这也是为什么
-`artifact` 不会像朴素的「post 构建钩子」那样把自己重复施加一遍。
+全程不涉及任何 phase 机制。`object` 与 `artifact` 由 ninja 自己的文件依赖定序 ——
+这也是为什么 `artifact` 不会像朴素的「post 构建钩子」那样把自己重复施加一遍。
+`source` 与 blocking 的 `check` 则由一条 order-only 边定序:从声明它的那个包的
+编译边,指向该包的 action 产物。
+
+> **`source` 为什么需要这条边(mcpp 2026.8.30.2+)。** 生成的 `.cpp` 会成为编译它
+> 那条边的输入,所以顺序是白得的。生成的**头文件**永远不会:它是通过 `-I` 找到的,
+> 而能记录它的 depfile 要等到某次编译成功之后才存在。在此之前,一个产物全是头文件的
+> action 在 `build.ninja` 里有节点却无人可达 —— 不在 `default`、不在 goal 集、没有
+> 任何边消费它 —— 于是它从不执行,而编译器读到的是 mcpp 为已声明产物写下的那个空占位
+> 文件。这条边**按包**划分,因为 `include_dir` 只染色声明它的那个包自己的 TU。
 
 **check 的命令不必自己写 stamp**(mcpp 2026.8.29.1+)。判定是退出码,stamp 是**构建图**
 需要的记账;命令成功时由 mcpp 创建它。在此之前每个 check 都需要一个包装脚本去 touch

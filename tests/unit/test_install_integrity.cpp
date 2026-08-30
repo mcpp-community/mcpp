@@ -155,3 +155,87 @@ TEST(InstallIntegrityStash, NoopWhenAlreadyComplete) {
 
     fs::remove_all(root);
 }
+
+// ─── mcpp#533: the marker is only as good as the evidence behind it ─────────
+//
+// `.mcpp_ok` used to be written from `exitCode == 0 && exists(verdir)` — the
+// installer's own report, plus a directory the installer creates before doing
+// any work. A package-identity collision made xlings skip the descriptor's
+// `install()` while still reporting success; mcpp stamped the result complete,
+// and because the stamp is what `is_install_complete` reads, the wrong state
+// then survived every later build.
+//
+// The observed directory held exactly three entries — `.mcpp_ok`,
+// `.xpkg-install.json`, `mcpp_generated/` — and nothing else. That signature
+// needs no knowledge of what the descriptor was supposed to build.
+
+namespace {
+
+// Everything mcpp and xlings write into a version directory themselves.
+// Written out rather than taken from the code under test: this list IS the
+// claim, and sharing it would let both sides drift together.
+void make_self_written_only(const fs::path& verdir) {
+    write_file(verdir / ".mcpp_ok", "1\n");
+    write_file(verdir / ".xpkg-install.json", "{}\n");
+    write_file(verdir / "mcpp_generated" / "libdrm" / "lib" / "libdrm.so", "");
+}
+
+}  // namespace
+
+TEST(InstallEvidence, ADirectoryHoldingOnlyOurOwnFilesIsNotAPayload) {
+    auto dir = make_tempdir("mcpp-evidence-self");
+    auto verdir = dir / "compat-x-libdrm" / "2.4.123";
+    make_self_written_only(verdir);
+
+    EXPECT_FALSE(mcpp::fallback::payload_is_substantive(verdir));
+    fs::remove_all(dir);
+}
+
+TEST(InstallEvidence, OneEntryTheInstallWroteIsEnough) {
+    auto dir = make_tempdir("mcpp-evidence-real");
+    auto verdir = dir / "compat-x-libdrm" / "2.4.123";
+    make_self_written_only(verdir);
+    // …plus the tree the descriptor's install() was supposed to build.
+    write_file(verdir / "include" / "drm.h", "#pragma once\n");
+
+    EXPECT_TRUE(mcpp::fallback::payload_is_substantive(verdir));
+    fs::remove_all(dir);
+}
+
+// ⭐ THE HALF THAT MAKES THE UPGRADE SEAMLESS. `is_install_complete` is
+// marker-only by design, so a store poisoned before this check existed carries
+// a `.mcpp_ok` that short-circuits forever. Guarding only the WRITE site would
+// help users who have not hit the bug and do nothing for the ones who filed
+// it. Nobody should have to be told which directory to delete.
+TEST(InstallEvidence, AStaleMarkerOverAnEmptyPayloadDoesNotCountAsComplete) {
+    auto dir = make_tempdir("mcpp-evidence-heal");
+    auto verdir = dir / "compat-x-libdrm" / "2.4.123";
+    make_self_written_only(verdir);
+    ASSERT_TRUE(has_ok_marker(verdir));   // the poisoned state, exactly
+
+    EXPECT_FALSE(mcpp::fallback::is_install_complete(verdir));
+    fs::remove_all(dir);
+}
+
+// The other direction, which is the one that would make every build slower if
+// it were wrong: a real install must still be believed on the strength of its
+// marker, without re-running anything.
+TEST(InstallEvidence, ARealInstallIsStillCompleteOnItsMarker) {
+    auto dir = make_tempdir("mcpp-evidence-good");
+    auto verdir = dir / "xim-x-gcc" / "16.1.0";
+    make_legacy_pkg(verdir, "payload");
+    write_file(verdir / ".mcpp_ok", "1\n");
+
+    EXPECT_TRUE(mcpp::fallback::payload_is_substantive(verdir));
+    EXPECT_TRUE(mcpp::fallback::is_install_complete(verdir));
+    fs::remove_all(dir);
+}
+
+// An absent directory is absent, not incomplete — the new arm must not change
+// what the function says about a package that was never installed.
+TEST(InstallEvidence, AnAbsentDirectoryIsStillJustAbsent) {
+    auto dir = make_tempdir("mcpp-evidence-absent");
+    EXPECT_FALSE(mcpp::fallback::is_install_complete(dir / "nothing" / "here"));
+    EXPECT_FALSE(mcpp::fallback::payload_is_substantive(dir / "nothing" / "here"));
+    fs::remove_all(dir);
+}

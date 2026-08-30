@@ -387,8 +387,17 @@ std::string action_error(const Directives& d);
 // Never truncates an existing file: after the first build the real content is
 // there, and rewriting it would make ninja think the input changed on every
 // prepare.
+//
+// ⚠️ ONLY FOR OUTPUTS THAT ARE TRANSLATION UNITS, which is why this needs the
+// table. A placeholder exists so the SCAN has something to read, and the scan
+// never reads a header — but writing one anyway turned "the generator did not
+// run" into "the header is empty", and mcpp#534 was diagnosed as a race for
+// exactly that reason: the file was on disk, so the action looked like it had
+// run. A missing file is the honest report, and after the ordering fix the
+// generator runs before anything reads it either way.
 void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,
-                     const std::filesystem::path& pkgRoot);
+                     const std::filesystem::path& pkgRoot,
+                     const mcpp::ExtensionTable& extensions);
 
 // Does this action output belong in the COMPILE set?
 //
@@ -773,7 +782,8 @@ bool is_compilable_output(const fs::path& p, const mcpp::ExtensionTable& t) {
 }
 
 void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,
-                     const fs::path& pkgRoot) {
+                     const fs::path& pkgRoot,
+                     const mcpp::ExtensionTable& extensions) {
     for (auto& a : actions) {
         auto absolutize = [&](std::vector<std::string>& v) {
             for (auto& p : v) {
@@ -788,6 +798,11 @@ void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,
         if (a.role != mcpp::manifest::BuildAction::Role::Source) continue;
         for (auto const& o : a.outputs) {
             if (o.find("${mcpp.") != std::string::npos) continue;
+            // A placeholder exists so the scan has a translation unit to read.
+            // A header is not one — nothing scans it, and the empty file it
+            // used to leave behind is what made a generator that never ran
+            // look like one that had (mcpp#534).
+            if (!is_compilable_output(o, extensions)) continue;
             std::error_code ec;
             fs::path p(o);
             if (fs::exists(p, ec)) continue;      // real content already there

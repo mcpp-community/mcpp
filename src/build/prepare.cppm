@@ -4237,15 +4237,17 @@ prepare_build(bool print_fingerprint,
             mm.buildConfig.actions.begin()
                 + static_cast<std::ptrdiff_t>(firstNewAction),
             mm.buildConfig.actions.end());
-        mcpp::build::directives::prepare_actions(fresh, pkgRoot);
+        // The package that DECLARED the outputs classifies them: a dependency
+        // generating a `.ixx` asks its own manifest, not the root project's.
+        // Built once per package, not once per output — and BEFORE
+        // `prepare_actions`, which needs the same table to decide which
+        // outputs get a placeholder (a header does not; see mcpp#534).
+        const auto pkgExtTable =
+            mcpp::extension_table_for(mm.buildConfig.moduleExtensions);
+        mcpp::build::directives::prepare_actions(fresh, pkgRoot, pkgExtTable);
         std::copy(fresh.begin(), fresh.end(),
                   mm.buildConfig.actions.begin()
                       + static_cast<std::ptrdiff_t>(firstNewAction));
-        // The package that DECLARED the outputs classifies them: a dependency
-        // generating a `.ixx` asks its own manifest, not the root project's.
-        // Built once per package, not once per output.
-        const auto pkgExtTable =
-            mcpp::extension_table_for(mm.buildConfig.moduleExtensions);
         for (auto const& a : fresh) {
             if (a.role != mcpp::manifest::BuildAction::Role::Source) continue;
             for (auto const& o : a.outputs) {
@@ -8295,10 +8297,16 @@ prepare_build(bool print_fingerprint,
             return s;
         };
         auto collect = [&](const mcpp::manifest::Manifest& mm) {
+            // The declaring package, recorded here because this is the only
+            // place that knows it: the build program emitted the action, and a
+            // program has no idea which package the engine loaded it for.
+            // mcpp#534's ordering edge is scoped to this name.
+            auto owner = mcpp::build::qualified_package_name(mm);
             for (auto a : mm.buildConfig.actions) {
                 for (auto& x : a.inputs)  x = substitute(x);
                 for (auto& x : a.outputs) x = substitute(x);
                 for (auto& x : a.command) x = substitute(x);
+                a.packageName = owner;
                 ctx.plan.actions.push_back(std::move(a));
             }
         };
@@ -9423,6 +9431,53 @@ prepare_build(bool print_fingerprint,
                 std::filesystem::rename(tmp, path, ec);
             }
         }
+    }
+
+    // ── A link unit with no inputs is not a build (mcpp#533) ────────────────
+    //
+    // Checked HERE, last, because objects arrive from three places and each
+    // one is legitimate: the compile set, a `role = "object"` action
+    // (`lu.objects.emplace_back` above), and a Windows resource unit. A check
+    // placed before any of them would refuse a unit that was about to be
+    // filled. If a fourth source is ever added, it must land before this line.
+    //
+    // ⚠️ WHY THIS IS AN ERROR AND NOT A WARNING. The two library kinds fail
+    // differently and BOTH failures are worse than this message:
+    //
+    //   shared — `$cc -shared` over an empty response file. Measured on
+    //            gcc 16.1.0: `gcc: fatal error: no input files`, which names
+    //            the driver and not the target. Before `cc` was emitted
+    //            unconditionally it was `/bin/sh: 1: -shared: not found`,
+    //            which names neither.
+    //   static — `ar rcs libfoo.a` with no members. Measured: exit 0, an
+    //            8-byte archive, and a build that REPORTS SUCCESS. Every
+    //            consumer then fails with undefined symbols, one repository
+    //            further from the cause.
+    //
+    // The silent one is why this is not merely a nicer diagnostic. mcpp#533
+    // reached here because a dependency's `install()` was skipped over a
+    // package-identity collision, leaving a version directory with no source
+    // tree; the shape is the same for any package whose sources fail to
+    // materialise, which is why the check is on the link unit rather than on
+    // the install path.
+    for (auto const& lu : ctx.plan.linkUnits) {
+        if (!lu.objects.empty()) continue;
+        const char* kindName =
+              lu.kind == mcpp::build::LinkUnit::SharedLibrary ? "shared library"
+            : lu.kind == mcpp::build::LinkUnit::StaticLibrary ? "static library"
+            : lu.kind == mcpp::build::LinkUnit::TestBinary    ? "test binary"
+                                                              : "binary";
+        return std::unexpected(std::format(
+            "target '{}' ({}) has no inputs to link\n"
+            "       no translation unit and no `role = \"object\"` action "
+            "output reached it, and an empty link is not a build: `ar` writes "
+            "an empty archive and reports success, so this would otherwise "
+            "surface as undefined symbols in whatever consumes '{}'\n"
+            "       if '{}' is an installed dependency, its package directory "
+            "has no sources — reinstall it and check that its descriptor's "
+            "install step ran",
+            lu.targetName, kindName, lu.output.generic_string(),
+            lu.targetName));
     }
 
     return ctx;
