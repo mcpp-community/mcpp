@@ -50,10 +50,13 @@ answer: the whole chain, done the recommended way, declaring dependencies.
 
 ```toml
 [target.'cfg(linux)'.dependencies.compat]
-libdrm  = "2.4.134"
-libgbm  = "25.0.7"
-egl     = "1.7.0"
-wayland = "2026.08.30"
+libdrm = "2.4.134"
+libgbm = "25.0.7"
+egl    = "1.7.0"
+
+[target.'cfg(linux)'.dependencies.freedesktop]
+wayland        = "1.26.0"
+wayland-server = "1.26.0"
 ```
 
 That is the entire configuration. `src/main.cpp` then includes `<gbm.h>`,
@@ -80,47 +83,49 @@ BIN=target/x86_64-linux-gnu/*/bin/graphics-stack
 ```
 
 ```
-<project>/target/.../bin/libdrm.so.2        <- built from source, by this build
+<project>/bin/libdrm.so.2                    <- built by this build
+<project>/bin/libwayland-client.so.0         <- built by this build
+<project>/bin/libwayland-server.so.0         <- built by this build
+<project>/bin/libffi.so.8                    <- built by this build
 compat-x-libgbm/25.0.7/…/libgbm.so.1
 compat-x-egl/1.7.0/…/libEGL.so.1
-compat-x-wayland/…/libwayland-client.so.0
-compat-x-wayland/…/libwayland-server.so.0
 xim-x-expat/2.6.2/lib/libexpat.so.1
 xim-x-gcc/16.1.0/lib64/libgcc_s.so.1
+xim-x-gcc/16.1.0/lib64/libstdc++.so.6
 xim-x-glibc/2.44/lib64/libc.so.6
 xim-x-glibc/2.44/lib64/libm.so.6
-xim-x-libffi/3.4.4/lib/libffi.so.8
 xim-x-libglvnd/1.7.0.1/lib/libGLdispatch.so.0
 ```
 
-Nothing is under `/usr/lib` or `/lib64`. Two things in that list are worth
-reading closely.
+Nothing is under `/usr/lib` or `/lib64`. Two things there are worth reading
+closely.
 
-**The first line.** `libdrm.so.2` resolves to this project's own build output,
-not to the `xim-x-libdrm` the Mesa payload was linked against — even though
-`libgbm.so.1` has a DT_NEEDED on that soname and an absolute RUNPATH pointing
-into the payload. The consumer links libdrm directly, so it is mapped first,
-and Mesa's GBM binds to it: the `gbm_bo_create` above ran through it.
+**The first four lines.** They are this project's own build output, not the
+ecosystem's copies — including `libdrm.so.2`, even though Mesa's `libgbm.so.1`
+has a DT_NEEDED on that soname and an absolute RUNPATH into the payload. The
+consumer links them directly, so they are mapped first, and Mesa binds to them:
+the `gbm_bo_create` above ran through this libdrm.
 
-**The bottom half.** `libexpat`, `libffi` and `libGLdispatch` are *transitive* —
-nothing in `mcpp.toml` names them. They are what a directly linked
-`libgbm.so.1` cascades into, and resolving that cascade is exactly what a host
-`-L/usr/lib` cannot do from inside a private loader.
+**`libffi` and `libGLdispatch`.** Nothing in `mcpp.toml` names either.
+`libffi.so.8` is what `libwayland-client` dispatches protocol messages through,
+`libGLdispatch` is what libEGL's vendor dispatch needs — the cascade a directly
+linked library pulls behind it, which is exactly what a host `-L/usr/lib`
+cannot resolve from inside a private loader.
 
 ## The packages
 
-Two of them are built from source and two bind the ecosystem's Mesa, and the
-split is not arbitrary. A library is built from source when upstream ships it
-as a **separable unit**; it is bound when it is an internal build target of a
-project the ecosystem already owns, where building it would mean forking that
-project.
+Three are built from source and two bind the ecosystem's Mesa, and the split is
+not arbitrary. A library is built from source when upstream ships it as a
+**separable unit**; it is bound when it is an internal build target of a project
+the ecosystem already owns, where building it would mean forking that project.
 
 | package | | what it gives you |
 |---|---|---|
 | `compat.libdrm` | source | `drmModeGetResources`, `drmModeAddFB2`, `drmModeSetCrtc` — the KMS side |
 | `compat.libgbm` | binds `xim:mesa` | `gbm_create_device`, `gbm_bo_create` — buffers out of a DRM device |
 | `compat.egl` | binds `xim:libglvnd` | `eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, …)` — rendering onto them |
-| `compat.wayland` | binds `xim:wayland` | client and server libraries for the display protocol |
+| `freedesktop.wayland` | source | `libwayland-client.so.0`, and `import wayland.client;` |
+| `freedesktop.wayland-server` | source | `libwayland-server.so.0`, and `import wayland.server;` |
 
 libdrm passes the test — an independent freedesktop project with its own
 releases — so it is compiled here, five translation units with no dependencies
@@ -128,6 +133,14 @@ at all. GBM fails it: `src/gbm/meson.build` is `link_with: [libloader]`, and
 `libloader` wants `idep_mesautil`, roughly 120 TUs of Mesa's internal utility
 library for one function. It is also a *loader*, and the backends it dlopens
 are Mesa's own, so built apart from Mesa it would have nothing to load.
+
+Wayland passes it too, but needed more than a descriptor: its libraries are
+mostly **generated** — `protocol/wayland.xml` describes every interface and
+`wayland-scanner` emits ~13,000 lines from it — and the generator is a C program
+in the same tree that must be compiled first. That does not fit an inline index
+descriptor, so it lives in [mcpplibs/wayland](https://github.com/mcpplibs/wayland),
+a fork that patches no upstream file. Client and server are two packages because
+they are two distinct SONAMEs and Mesa's `libEGL_mesa` has DT_NEEDED on **both**.
 
 **A payload carrying the same library is not a reason to bind**, which is worth
 saying because it looks like one. Mesa's `libgbm.so.1` has a DT_NEEDED on
@@ -161,18 +174,19 @@ puts it (Valve's pressure-vessel, Nix, Conda all do exactly this). Here
 the processes it launches, so it is simply already set — which is why the
 program prints it rather than computing it.
 
-**`compat.wayland` puts only `-lwayland-client` on the link line**, and this
-example adds the other half itself:
+**The wayland client and server are separate packages**, and this example asks
+for both because it creates a `wl_display` on the server side. That is not a
+packaging quirk: they are two SONAMEs, Mesa's `libEGL_mesa` carries DT_NEEDED on
+each, and mcpp links every library target in a package against all of that
+package's sources — so one package cannot emit two libraries with disjoint
+contents. A client-only program drops the second line and links only
+`libwayland-client.so.0`.
 
-```toml
-[target.'cfg(linux)'.build]
-ldflags = ["-lwayland-server"]
-```
-
-A dependency's `ldflags` reach every consumer with no way to opt out, so a
-package that forced `libwayland-server` on every client would be unfixable
-downstream. All four wayland libraries are present; a compositor asks for the
-one it needs and it resolves out of the same package.
+Both also ship a C++23 module wrapper. `import wayland.client;` in place of
+`#include <wayland-client.h>` changes nothing else — every exported name is
+upstream's, spelled upstream's way — so this file could switch one line at a
+time. It uses the headers here because that is what a ported project looks like
+on day one.
 
 ## Running it
 
