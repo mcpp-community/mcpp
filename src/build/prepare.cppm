@@ -2186,30 +2186,52 @@ prepare_build(bool print_fingerprint,
                     chosenBy));
         }
       } else if (tcSpec.has_value() && *tcSpec == "system") {
-        // Explicit user opt-in to system PATH compiler — kept as escape hatch.
+        // REFUSED. THE COMPILER IS THE ONE AXIS THAT IS NOT THE PROJECT'S TO
+        // TAKE FROM THE HOST.
         //
-        // WARNED, NOT REFUSED, and the boundary is "does it build and run".
-        // mcpp itself depends on no host: its toolchains, its payloads and
-        // everything the ecosystem publishes are resolved from the xim index.
-        // A USER'S OWN PROJECT may decide otherwise, and that decision is
-        // theirs to guarantee — measured, this configuration compiles a
-        // project using `import std` on a host that has a new enough compiler.
-        // Refusing it would break working setups to enforce a preference; the
-        // honest response is to say once what it costs and where the supported
-        // version of the same thing lives.
+        // mcpp's host-dependence policy is not uniform across axes, and the
+        // split is the point rather than an inconsistency:
         //
-        // `explicit_compiler` is deliberately left empty here: `detect` below
-        // resolves the PATH compiler and records the absolute path in
-        // `tc->binaryPath`. Everything that needs a compiler PATH must read it
-        // from there — see host_tc_for_build_program, which did not, and spawned
-        // the empty string instead (#527).
-        mcpp::diag::degraded(
-            "build/toolchain",
-            "[toolchain] system selects a compiler from PATH",
-            "this build depends on what this host has installed, so it is not "
-            "reproducible on another machine and cannot be checked by CI",
-            mcpp::diag::host_route_hint(
-                mcpp::diag::HostDependence::Toolchain));
+        //   LIBRARIES are the program's business. A project may link a host
+        //   library or its own `.so`; mcpp says what that costs and what the
+        //   supported route is, and does not refuse as long as the result
+        //   builds and runs. The developer owns the artifact and guarantees it.
+        //
+        //   THE TOOLCHAIN is mcpp's own contract. Everything mcpp promises —
+        //   that `import std` is available, that the runtime closure is
+        //   computable, that two machines and CI produce the same build — is a
+        //   statement about a compiler mcpp resolved and can identify. A
+        //   compiler picked off `PATH` makes every one of those promises
+        //   unverifiable, and a build tool that cannot state what it built with
+        //   is answering in the wrong version (see
+        //   `.agents/docs/…a-build-must-be-able-to-state-its-own-version`).
+        //
+        // So this is refused rather than warned about, and it is refused HERE,
+        // before any resolution work, so the message is the first thing the
+        // user sees rather than a consequence three layers down.
+        //
+        // `msvc@system` is a different spelling and stays supported: it names a
+        // FAMILY whose installation mcpp locates and identifies, on the one
+        // platform where the compiler cannot be redistributed.
+        return std::unexpected(std::format(
+            "[toolchain] {} = \"system\" is not supported: mcpp builds only "
+            "with toolchains it manages.\n"
+            "       A compiler taken from PATH cannot be identified or "
+            "reproduced, so `import std` availability, the runtime closure and "
+            "\"the same build on another machine\" all stop being things mcpp "
+            "can promise.\n"
+            "       Name one instead — mcpp installs it on first use:\n"
+            "\n"
+            "         [toolchain]\n"
+            "         {} = \"gcc@16.1.0\"\n"
+            "\n"
+            "       or set a machine default with `mcpp toolchain default "
+            "gcc@16.1.0`, and see `mcpp toolchain list` for what is available.\n"
+            "       (On Windows, `msvc@system` is different and remains "
+            "supported: it names a family whose installation mcpp locates.)\n"
+            "       Host LIBRARIES are a separate question and are not refused "
+            "— a project may link them and owns the result.",
+            kCurrentPlatform, kCurrentPlatform));
       } else if (mcpp::platform::env::offline_mode()
                || mcpp::platform::env::no_auto_install()) {
         // CI / offline / test opt-out: hard-error instead of silently
@@ -8234,22 +8256,31 @@ prepare_build(bool print_fingerprint,
     // cache key drifted apart in the first place (#344).
     // Which source trees does the fast path have to watch besides this one?
     //
-    // A package whose root is neither under `projectRoot` nor under a store
-    // root is a `path` dependency — the shape every workspace member takes
-    // towards its siblings — and its sources are read on every build. The
-    // store test is the same `path_is_under_any` the cache-address code uses a
-    // few hundred lines below, so "came from a store" has one definition.
+    // A package whose root is neither under `projectRoot` nor under a directory
+    // mcpp OWNS is a `path` dependency — the shape every workspace member takes
+    // towards its siblings — and its sources are read on every build. See
+    // BuildContext::depSourceRoots for what the list is for.
     //
-    // Store packages are deliberately excluded: a payload directory is written
-    // once at install time and never edited, so sweeping it would cost a
-    // directory walk per dependency on every invocation and could never report
-    // anything. See BuildContext::depSourceRoots for what this is for.
+    // WHAT IS EXCLUDED, AND WHY IT IS "WHO WROTE THE DIRECTORY" RATHER THAN
+    // "WHICH KIND OF DEPENDENCY". An xpkg payload under the store is written
+    // once at install time and never edited. A git checkout under
+    // `<mcpp home>/git/<hash>` is a pinned revision in a hash-addressed
+    // directory: changing the revision changes the directory name, and the
+    // manifest that names it is already swept. Neither can change under a warm
+    // build, so sweeping them would buy nothing and cost a directory walk per
+    // dependency on every invocation — which is the fast path this whole change
+    // exists to keep.
+    //
+    // A `path` dependency is the opposite on both counts: it is the user's
+    // working tree, and editing it is the point.
     {
+        std::vector<std::filesystem::path> owned = storeRoots;
+        owned.push_back(mcpp::home::root());
         std::vector<std::filesystem::path> roots;
         for (std::size_t i = 1; i < packages.size(); ++i) {
             const auto& pkgRoot = packages[i].root;
             if (pkgRoot.empty()) continue;
-            if (mcpp::build::path_is_under_any(pkgRoot, storeRoots)) continue;
+            if (mcpp::build::path_is_under_any(pkgRoot, owned)) continue;
             auto normalized = pkgRoot.lexically_normal();
             if (normalized == root->lexically_normal()) continue;
             if (std::find(roots.begin(), roots.end(), normalized) == roots.end())

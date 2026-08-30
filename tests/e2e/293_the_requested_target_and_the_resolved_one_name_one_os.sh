@@ -34,9 +34,17 @@ make_project() {   # dir target-section
 
 # ── Half one: it refuses, and says which two systems ──────────────────────
 #
-# `toolchain = "system"` is the escape hatch that hands the build the PATH
-# compiler. Pointing it at a Windows target is the one arrangement that
-# reproduces CI's fallback without uninstalling anything.
+# `toolchain = "system"` hands the build the PATH compiler; pointing it at a
+# Windows target is the one arrangement that reproduces CI's fallback without
+# uninstalling anything.
+#
+# ⚠️ AND SINCE THE SYSTEM TOOLCHAIN IS REFUSED, THAT REFUSAL IS ALSO AN ANSWER
+# TO THIS TEST'S QUESTION. mcpp builds only with toolchains it manages
+# (`msvc@system` excepted), and the refusal fires before target resolution — so
+# a Windows target can no longer reach a Linux host compiler through this door
+# at all. The invariant holds by a stronger mechanism than the one this test was
+# written against, and BOTH refusals count. What must never happen, and what the
+# else-branch below still fails on, is the build going ahead.
 make_project "$work/mismatch" '[target.x86_64-windows-gnu]
 toolchain = "system"'
 out="$(cd "$work/mismatch" && "$MCPP" build --target x86_64-windows-gnu 2>&1 || true)"
@@ -50,6 +58,14 @@ reported="$(printf '%s\n' "$out" | grep -oP 'Target \K\S+ → \S+' | head -1)"
 case "$out" in
   *"different operating systems"*)
     echo "  ok  it refuses rather than building for the wrong system" ;;
+  *"is not supported: mcpp builds only with toolchains it manages"*)
+    # The stronger refusal: the arrangement cannot be expressed any more, so
+    # the Windows target never reaches a Linux compiler. Reported and accepted
+    # as a pass, NOT as a skip — a skip here would stop the test from seeing a
+    # revert, which is what the whole comment above is about.
+    echo "  ok  the system toolchain is refused outright, so the mismatch"
+    echo "      this test guards cannot be reached through it"
+    exit 0 ;;
   *)
     asked="${reported%% → *}"
     resolved="${reported##* → }"

@@ -5,6 +5,13 @@
 // ELF parses.  Verdicts are persisted beside build.ninja and keyed by artifact
 // stat + RuntimeBinding contract so doctor can explain the last result without
 // probing the host again.
+//
+// THE RECORD LIVES IN `.mcpp-runtime-verdicts.json`, NOT IN `resolution.json`.
+// `prepare_build` rewrites the latter from an empty object at the start of
+// every invocation, so a verdict recorded there is deleted before the next run
+// can read it back -- which is what made two of these three passes re-parse
+// every image on every command (#529). `resolution.json` publishes a copy after
+// the link and stays the documented place to read one.
 
 export module mcpp.build.runtime_validation;
 
@@ -116,8 +123,18 @@ ArtifactVerdict artifact_identity_verdict(
 //
 // `before` is the pre-ninja snapshot, same as validate_changed_artifacts takes:
 // an artifact whose stat did not move was not produced by this run, so its
-// verdict is READ BACK from resolution.json instead of re-derived from the ELF.
-// The returned vector still covers every artifact either way.
+// verdict is READ BACK instead of re-derived from the ELF. The returned vector
+// still covers every artifact either way.
+//
+// READ BACK FROM THE SIDECAR, NOT FROM `resolution.json`, and the distinction
+// is the whole of #529. `prepare_build` regenerates `resolution.json` from an
+// empty object at the start of every invocation, so a verdict recorded there
+// was deleted before the next run could find it and the read-back never fired
+// across processes — 1.36 s of a 1.94 s warm `mcpp test`, every time.
+// `.mcpp-runtime-verdicts.json` survives, and `resolution.json` keeps
+// publishing a copy after the link, which is how `sync_resolution_verdict`
+// already handled the runtime verdicts. One authoritative writer, one
+// published view.
 std::vector<mcpp::build::loader::TagFinding>
 check_and_record_loader_tags(const mcpp::build::BuildPlan& plan,
                              const ArtifactSnapshot& before);
@@ -1009,9 +1026,11 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
     }
 
     // Record, for the same reason the loader-tag contract records: a warning
-    // scrolls past, and `resolution.json` is what CI, `mcpp why runtime` and a
-    // test can read. It also gives a test a FIELD to assert on instead of a
+    // scrolls past, and the record is what CI, `mcpp why runtime` and a test
+    // can read. It also gives a test a FIELD to assert on instead of a
     // substring of a message — a message whose wording is free to improve.
+    // Stored in the sidecar and published into `resolution.json`; see the
+    // module header for why those are two different files.
     if (!findings.empty()) {
         {
             {

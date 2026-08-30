@@ -305,45 +305,54 @@ Pinned toolsets coexist with each other and with a system Visual Studio.
 > that may have been intended. (The family-less `[toolchain] … = "system"` — the PATH
 > compiler — is a separate and deliberate escape hatch, and is unaffected.)
 
-### `[toolchain] … = "system"` — the PATH compiler
+### `[toolchain] … = "system"` — refused
 
-The escape hatch: mcpp uses whatever C++ compiler is on `PATH` instead of
-resolving one from the xim index. It works for the whole build, `build.mcpp`
-included.
-
-It is not recommended, and mcpp says so once per build:
+**mcpp builds only with toolchains it manages.** A compiler taken from `PATH` is
+not supported, and the configuration is refused rather than warned about:
 
 ```
-warning: [toolchain] system selects a compiler from PATH
-  impact: this build depends on what this host has installed, so it is not
-          reproducible on another machine and cannot be checked by CI
-  hint:   mcpp resolves its own toolchains from the xim index so that
-          `import std` and the runtime closure are guaranteed on every host;
-          declare one with [toolchain] linux = "gcc@16.1.0" (or
-          `mcpp toolchain default`) to get the same compiler here, on a
-          teammate's machine and in CI
+error: [toolchain] linux = "system" is not supported: mcpp builds only with
+       toolchains it manages.
+       A compiler taken from PATH cannot be identified or reproduced, so
+       `import std` availability, the runtime closure and "the same build on
+       another machine" all stop being things mcpp can promise.
+       Name one instead — mcpp installs it on first use:
+
+         [toolchain]
+         linux = "gcc@16.1.0"
+
+       or set a machine default with `mcpp toolchain default gcc@16.1.0`, and
+       see `mcpp toolchain list` for what is available.
 ```
 
-It is a warning and not a refusal, and that division is the general rule for
-host dependence in mcpp:
+`msvc@system` is **the one exception** and is a different spelling: it names a
+*family* whose installation mcpp locates and identifies, on the one platform
+where the compiler cannot be redistributed. See the section above.
+
+#### Why the toolchain and the libraries get different answers
+
+mcpp's rule about host dependence is not uniform across axes, and the split is
+deliberate:
 
 - **mcpp itself, and everything the mcpp ecosystem publishes, depends on no
-  host.** Toolchains, payloads and libraries come through xlings — the xim index
-  or mcpp-index. This is what makes a build reproducible across machines and
-  Linux distributions.
-- **A user's own project may choose otherwise, and that choice is theirs to
-  guarantee.** mcpp warns and names the supported route; it does not refuse, as
-  long as the result builds and runs. `--strict` turns the warning into an
-  error, which is how a CI job enforces "no host dependencies" for a repository
-  that wants that.
+  host.** Toolchains and payloads come through xlings — the xim index or
+  mcpp-index. This is what makes a build reproducible across machines and Linux
+  distributions.
+- **The toolchain is part of that contract, so it is not the project's to take
+  from the host.** Everything mcpp promises — `import std` availability, a
+  computable runtime closure, the same build on a teammate's machine and in CI
+  — is a statement about a compiler mcpp resolved and can name. A `PATH`
+  compiler makes all of it unverifiable, which is why this one is a refusal.
+- **The libraries a program links are the program's own business.** A project
+  may link a host library or its own `.so`. mcpp says what that costs and names
+  the supported route — declare the provider so it resolves from mcpp-index, and
+  if the index does not carry it yet, contributing the package is the path — but
+  it does not refuse, as long as the result builds and runs. The developer owns
+  the artifact and guarantees it.
 
-A build that provably *cannot* run is a different matter and stays an error: a
-runtime closure that cannot be satisfied is refused, because the artifact will
-not start. See [binary distribution](12-binary-distribution.md).
-
-The same wording appears wherever a host dependency is taken — a host library on
-the link line points at mcpp-index instead, and notes that contributing the
-package there is the supported route when the index does not carry it yet.
+A build that provably *cannot* run stays an error on either axis: a runtime
+closure that cannot be satisfied is refused, because the artifact will not
+start. See [binary distribution](12-binary-distribution.md).
 
 ### `msvc@system` — the machine's own Visual Studio
 
