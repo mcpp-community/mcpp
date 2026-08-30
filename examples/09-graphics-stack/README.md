@@ -10,15 +10,28 @@ mcpp run
 ```
 == the graphics stack, resolved from the index ==
   GBM_BACKENDS_PATH = …/subos/default/usr/lib/gbm
-  wl_display_create        0x2e8d8be0
+  wl_display_create        0x3f798be0
 -- DRM node -> GBM device -> EGL display --
   /dev/dri/renderD128
   drm driver               nvidia-drm
-  gbm_create_device        0x2e942f30
-  eglGetPlatformDisplay    0x2e9bd390
+  gbm_create_device        0x3f802f30
+  gbm_bo_create            (driver declined this format/usage)
+  eglGetPlatformDisplay    0x3f87d5b0
+  eglInitialize            EGL 1.5, vendor Mesa Project
+  /dev/dri/card0
+  drm driver               simpledrm
+  gbm_create_device        0x3f802f30
+  gbm_bo_create            256x256 stride=1024 modifier=0xffffffffffffff
+  eglGetPlatformDisplay    0x3f87d5b0
   eglInitialize            EGL 1.5, vendor Mesa Project
 done.
 ```
+
+That is one real run on a two-node machine, kept unabridged because the
+difference between the nodes is the point: `simpledrm` allocated the buffer and
+reported the driver's own stride and modifier, while NVIDIA's GBM backend
+declined that format/usage combination. Both are the libraries answering — this
+is the stack working, not a smoke test.
 
 ## What this example is for
 
@@ -37,9 +50,9 @@ answer: the whole chain, done the recommended way, declaring dependencies.
 
 ```toml
 [target.'cfg(linux)'.dependencies.compat]
-libgbm  = "2026.08.29"
-libdrm  = "2026.08.30"
-egl     = "2026.08.30"
+libdrm  = "2.4.134"
+libgbm  = "25.0.7"
+egl     = "1.7.0"
 wayland = "2026.08.30"
 ```
 
@@ -48,17 +61,18 @@ That is the entire configuration. `src/main.cpp` then includes `<gbm.h>`,
 upstream APIs — nothing in it is mcpp-specific, so code written against these
 libraries anywhere else compiles here unchanged.
 
-And it does the real thing rather than proving a symbol resolves: it opens
-`/dev/dri/renderD128`, builds a genuine `gbm_device` from that fd, hands it to
-`eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, …)` and initializes EGL against a
-real driver. A `gbm_create_device(-1)` on an invalid fd returns `NULL` and
-tells you nothing about whether the stack works; this reaches
-`EGL 1.5, vendor Mesa Project`.
+And it does the real thing rather than proving a symbol resolves: it opens a
+DRM node, builds a genuine `gbm_device` from that fd, **allocates actual GPU
+memory** with `gbm_bo_create` and reads back the stride and modifier the driver
+chose, then hands the device to
+`eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, …)` and initializes EGL. A
+`gbm_create_device(-1)` on an invalid fd returns `NULL` and tells you nothing
+about whether the stack works; this reaches `EGL 1.5, vendor Mesa Project`.
 
 ## Checking the claim
 
-"Host-free" is easy to assert, so it is worth resolving the artifact's closure
-through the private loader it actually uses and looking at every path:
+"Host-free" is easy to assert, so resolve the artifact's closure through the
+private loader it actually uses and look at every path:
 
 ```bash
 BIN=target/x86_64-linux-gnu/*/bin/graphics-stack
@@ -66,11 +80,11 @@ BIN=target/x86_64-linux-gnu/*/bin/graphics-stack
 ```
 
 ```
-compat-x-egl/2026.08.30/…/libEGL.so.1
-compat-x-libdrm/2026.08.30/…/libdrm.so.2
-compat-x-libgbm/2026.08.29/…/libgbm.so.1
-compat-x-wayland/2026.08.30/…/libwayland-client.so.0
-compat-x-wayland/2026.08.30/…/libwayland-server.so.0
+<project>/target/.../bin/libdrm.so.2        <- built from source, by this build
+compat-x-libgbm/25.0.7/…/libgbm.so.1
+compat-x-egl/1.7.0/…/libEGL.so.1
+compat-x-wayland/…/libwayland-client.so.0
+compat-x-wayland/…/libwayland-server.so.0
 xim-x-expat/2.6.2/lib/libexpat.so.1
 xim-x-gcc/16.1.0/lib64/libgcc_s.so.1
 xim-x-glibc/2.44/lib64/libc.so.6
@@ -79,29 +93,55 @@ xim-x-libffi/3.4.4/lib/libffi.so.8
 xim-x-libglvnd/1.7.0.1/lib/libGLdispatch.so.0
 ```
 
-Every entry is under the registry; none is under `/usr/lib` or `/lib64`. Note
-the bottom half especially — `libexpat`, `libffi` and `libGLdispatch` are
-*transitive*: nothing in `mcpp.toml` names them. They are what a directly
-linked `libgbm.so.1` cascades into, and resolving that cascade is exactly what
-the host path cannot do from inside a private loader. Declaring the four
-dependencies resolved all eleven.
+Nothing is under `/usr/lib` or `/lib64`. Two things in that list are worth
+reading closely.
+
+**The first line.** `libdrm.so.2` resolves to this project's own build output,
+not to the `xim-x-libdrm` the Mesa payload was linked against — even though
+`libgbm.so.1` has a DT_NEEDED on that soname and an absolute RUNPATH pointing
+into the payload. The consumer links libdrm directly, so it is mapped first,
+and Mesa's GBM binds to it: the `gbm_bo_create` above ran through it.
+
+**The bottom half.** `libexpat`, `libffi` and `libGLdispatch` are *transitive* —
+nothing in `mcpp.toml` names them. They are what a directly linked
+`libgbm.so.1` cascades into, and resolving that cascade is exactly what a host
+`-L/usr/lib` cannot do from inside a private loader.
 
 ## The packages
 
-None of them vendors a source tree. Mesa, libdrm, libglvnd and wayland are
-already in the ecosystem (`xim:mesa`, `xim:libdrm`, `xim:libglvnd`,
-`xim:wayland`), so each package is a thin binding: it declares the ecosystem
-package it needs and exposes that payload's headers and libraries to the
-compiler. Building second copies would put two `libgbm.so.1` — or two
-`libdrm.so.2`, or a second EGL dispatch library — in a process that already
-loads Mesa's.
+Two of them are built from source and two bind the ecosystem's Mesa, and the
+split is not arbitrary. A library is built from source when upstream ships it
+as a **separable unit**; it is bound when it is an internal build target of a
+project the ecosystem already owns, where building it would mean forking that
+project.
 
-| package | what it gives you |
-|---|---|
-| `compat.libgbm` | `gbm_create_device`, `gbm_bo_create` — buffers out of a DRM device |
-| `compat.libdrm` | `drmModeGetResources`, `drmModeAddFB2`, `drmModeSetCrtc` — the KMS side |
-| `compat.egl` | `eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, …)` — rendering onto them |
-| `compat.wayland` | client and server libraries for the display protocol |
+| package | | what it gives you |
+|---|---|---|
+| `compat.libdrm` | source | `drmModeGetResources`, `drmModeAddFB2`, `drmModeSetCrtc` — the KMS side |
+| `compat.libgbm` | binds `xim:mesa` | `gbm_create_device`, `gbm_bo_create` — buffers out of a DRM device |
+| `compat.egl` | binds `xim:libglvnd` | `eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, …)` — rendering onto them |
+| `compat.wayland` | binds `xim:wayland` | client and server libraries for the display protocol |
+
+libdrm passes the test — an independent freedesktop project with its own
+releases — so it is compiled here, five translation units with no dependencies
+at all. GBM fails it: `src/gbm/meson.build` is `link_with: [libloader]`, and
+`libloader` wants `idep_mesautil`, roughly 120 TUs of Mesa's internal utility
+library for one function. It is also a *loader*, and the backends it dlopens
+are Mesa's own, so built apart from Mesa it would have nothing to load.
+
+**A payload carrying the same library is not a reason to bind**, which is worth
+saying because it looks like one. Mesa's `libgbm.so.1` has a DT_NEEDED on
+`libdrm.so.2` and an absolute RUNPATH into the payload's copy — and in this
+program that RUNPATH loses. A soname already in the link map is reused, so
+ld.so never searches for it again: the `libdrm.so.2` this project linked is
+mapped first, exactly one is loaded, and Mesa's GBM allocated the buffer above
+through it. That only holds because the package builds a *shared* library with
+the canonical soname; merged into the consumer as objects there would be two
+copies of libdrm's internal state over one set of file descriptors.
+
+`compat.egl` is a binding for a duller reason: libglvnd IS separable, but
+`libEGL.so` also needs its Python-generated dispatch stubs, `winsys_dispatch`
+and the whole of `libGLdispatch.so`, so it has not been done yet.
 
 One honest gap, since "Mesa/Vulkan" usually get named together: Vulkan is not
 part of this example and is not in the same state. `compat.vulkan-runtime`

@@ -83,6 +83,21 @@ int main()
         if (gbm_device *gbm = gbm_create_device(fd)) {
             report("gbm_create_device", gbm);
 
+            // Actually allocate GPU memory. Creating the device only proves the
+            // backend loaded; a buffer object is the thing a compositor hands
+            // to drmModeAddFB2 for scanout, and its stride and modifier come
+            // back from the driver rather than from libgbm.
+            if (gbm_bo *bo = gbm_bo_create(gbm, 256, 256, GBM_FORMAT_XRGB8888,
+                                           GBM_BO_USE_RENDERING)) {
+                std::printf("  %-24s 256x256 stride=%u modifier=0x%llx\n",
+                            "gbm_bo_create", gbm_bo_get_stride(bo),
+                            (unsigned long long)gbm_bo_get_modifier(bo));
+                gbm_bo_destroy(bo);
+            } else {
+                std::printf("  %-24s (driver declined this format/usage)\n",
+                            "gbm_bo_create");
+            }
+
             EGLDisplay dpy =
                 eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, gbm, nullptr);
             report("eglGetPlatformDisplay", dpy);

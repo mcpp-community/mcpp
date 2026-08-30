@@ -3,10 +3,17 @@ name    = "graphics-stack"
 version = "0.1.0"
 
 # The whole KMS/DRM stack, from the index. No host paths, no -L/usr/lib.
+#
+# The versions are the upstream projects' own release numbers, and two of these
+# packages are BUILT FROM SOURCE here while two bind the ecosystem's Mesa. The
+# split is not arbitrary: a library is built from source when upstream ships it
+# as a separable unit, and bound when it is an internal target of a project the
+# ecosystem already owns. libdrm passes that test; GBM does not — it is a build
+# target inside Mesa, and a loader whose backends are Mesa's own.
 [target.'cfg(linux)'.dependencies.compat]
-libgbm  = "2026.08.29"   # buffer allocation out of a DRM device
-libdrm  = "2026.08.30"   # the KMS side: modes, CRTCs, framebuffers
-egl     = "2026.08.30"   # rendering onto those buffers
+libdrm  = "2.4.134"      # source-built; the KMS side: modes, CRTCs, framebuffers
+libgbm  = "25.0.7"       # Mesa's GBM: buffer allocation out of a DRM device
+egl     = "1.7.0"        # libglvnd's EGL dispatch: rendering onto those buffers
 wayland = "2026.08.30"   # the display protocol, client and server
 
 # compat.wayland puts only -lwayland-client on the link line, because a
