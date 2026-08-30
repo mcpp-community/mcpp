@@ -149,4 +149,40 @@ grep -q "package.version" novers.log || {
     exit 1
 }
 
+# ── a SIBLING member reached as a `path` dependency inherits too ────────────
+#
+# THE ORDINARY WORKSPACE SHAPE, AND THE ONE THAT WAS MISSED. Inheritance runs
+# where the command's own manifest is loaded, so `mcpp build -p consumer` gave
+# the consumer the workspace flags and gave the sibling none — while compiling
+# both in the same command. `[workspace.package] standard` hid the gap, because
+# the standard is imposed graph-wide from the root for BMI compatibility and
+# reached the sibling anyway.
+#
+# The negative is in the same fixture on purpose: a `path` dependency that is
+# NOT a member (a vendored copy, an example) must not acquire the flags, and a
+# fix that inherited to every path dependency would pass the positive alone.
+cat > mcpp.toml <<'EOF'
+[workspace]
+members = ["silent", "pinned", "adds", "consumer"]
+
+[workspace.package]
+standard = 26
+version  = "0.4.2"
+
+[workspace.build]
+cxxflags = ["-DFROM_WORKSPACE=1"]
+EOF
+mkdir -p consumer/src vendored/src
+printf '[package]\nname = "consumer"\n\n[dependencies]\nadds = { path = "../adds" }\nvend = { path = "../vendored" }\n' > consumer/mcpp.toml
+printf 'import addslib;\nimport vend;\nint main(){ return addslib()+vend_v()==3 ? 0 : 1; }\n' > consumer/src/main.cpp
+# `adds` becomes a library so it can be imported; its own source asserts it saw
+# the workspace flag while being built as somebody else's dependency.
+printf '[package]\nname = "adds"\n\n[targets.adds]\nkind = "lib"\n\n[build]\ncxxflags = ["-DFROM_MEMBER=1"]\n' > adds/mcpp.toml
+rm -f adds/src/main.cpp
+printf '#ifndef FROM_WORKSPACE\n#error "a SIBLING member built as a path dependency did not inherit"\n#endif\nexport module addslib;\nexport int addslib(){ return 1; }\n' > adds/src/addslib.cppm
+printf '[package]\nname = "vend"\nversion = "0.1.0"\n\n[targets.vend]\nkind = "lib"\n' > vendored/mcpp.toml
+printf '#ifdef FROM_WORKSPACE\n#error "a NON-member path dependency must not acquire workspace flags"\n#endif\nexport module vend;\nexport int vend_v(){ return 2; }\n' > vendored/src/vend.cppm
+
+"$MCPP" build -p consumer > sibling.log 2>&1 || { cat sibling.log; exit 1; }
+
 echo "PASS: 321_workspace_inheritance"

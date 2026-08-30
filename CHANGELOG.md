@@ -78,6 +78,14 @@
   没有 `[workspace.target.<triple>]`:根里普通的 `[target.<triple>]` 本来就按 triple
   被成员继承,为同一能力再加一种拼法只增加接口面。
 
+  ⚠️ **继承作用到每一个成员,包括「作为兄弟成员的 `path` 依赖被编译」的那个**
+  —— 也就是成员互相依赖这种最普通的形态。而 `path` 依赖里**不是成员**的那些
+  (vendored 副本、example)不会获得这些标志:成员资格问的是 workspace 自己的
+  `members` 列表,不是「这个路径在不在 workspace 目录下」。
+
+  ⚠️ `[workspace.build] include_dirs` 里的相对路径按 **workspace 根**锚定(#224):
+  它是在根 manifest 里写的,按各成员自己的目录解析会指向不存在的地方。
+
 - **依赖声明了高于当前图的标准时会说出来。** C++ 模块图只有一个标准,依赖自己的
   `standard` 不生效 —— 这是对的;缺的是它一直不说。degraded 级别(`--strict` 提升),
   且**只对工程作者自己拥有的 manifest 生效**:索引里带 mcpp 段的描述符 782 个全都声明了
