@@ -1,6 +1,23 @@
 # Four issues, measured: #527 (workspace half), #529, #535, #537
 
-> Status: analysis and design. No code changed.
+> Status: **shipped in 2026.8.30.2** (#538, #539). The analysis and the design
+> below are kept as written, including the two conclusions that later reversed —
+> §13 records what changed and why, because the reasoning that produced a wrong
+> answer is more useful than a document that only ever agreed with itself.
+>
+> What shipped, and what did not:
+>
+> | item | shipped |
+> |---|---|
+> | D1 / D1a / D2 durable post-link records | yes — `mcpp test` after a build, 3.15 s → 0.36 s |
+> | D3a staleness sweep covers `path` dependency roots | yes |
+> | D10 / D11 / D12 `[workspace.package]` + `[workspace.build]` | yes, including to a member reached as a sibling's dependency (#539) |
+> | D13 / D13a dependency standard floor | yes, degraded, author-owned manifests only |
+> | D14 dialect flag not in the `import std` prebuild | yes, refused, root package only |
+> | D15 `[toolchain] system` | **REFUSED** — see §7; this reverses what §1.2 first proposed |
+> | D3 fast path honours `-p` | no — D3a landed, D3 did not |
+> | D4 test fast path, D5 / D6 tool store, D7, D8 / D9 provenance, RFC 4 | no |
+>
 > Baseline: `origin/main` @ `f4cb9a1`. The working tree at the time of writing
 > was 33 commits behind and predates the `modules/` split, so every line anchor
 > below was read from a detached worktree at `origin/main`, not from the
