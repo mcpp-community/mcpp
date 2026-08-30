@@ -284,6 +284,38 @@ pinned toolset 之间、以及与系统 Visual Studio 之间都可以共存。
 > `[toolchain] … = "system"` —— 即 PATH 上的编译器 —— 是另一套、也是有意保留的
 > 逃生口,不受影响。)
 
+### `[toolchain] … = "system"` —— PATH 上的编译器
+
+逃生口:mcpp 使用 `PATH` 上现成的 C++ 编译器,而不从 xim 索引解析一个。整个构建都走它,
+`build.mcpp` 也不例外。
+
+不推荐,而且 mcpp 每次构建会明说一次:
+
+```
+warning: [toolchain] system selects a compiler from PATH
+  impact: this build depends on what this host has installed, so it is not
+          reproducible on another machine and cannot be checked by CI
+  hint:   mcpp resolves its own toolchains from the xim index so that
+          `import std` and the runtime closure are guaranteed on every host;
+          declare one with [toolchain] linux = "gcc@16.1.0" (or
+          `mcpp toolchain default`) to get the same compiler here, on a
+          teammate's machine and in CI
+```
+
+它是 warning 而不是拒绝。这条分界就是 mcpp 对待 host 依赖的总规则:
+
+- **mcpp 自身、以及 mcpp 生态发布的一切,都不依赖任何 host。** 工具链、payload、库都经由
+  xlings 获得 —— xim 索引或 mcpp-index。这正是构建能跨机器、跨 Linux 发行版复现的原因。
+- **用户自己的工程可以另做选择,而这个选择由他自己保证。** mcpp 提示并指出受支持的路径,
+  但只要结果能构建、能运行,就不强行拒绝。`--strict` 会把该提示变成错误 —— 需要"零 host
+  依赖"的仓库,CI 就用它来强制。
+
+而"证明跑不起来"的构建是另一回事,仍然是错误:运行期闭包不可满足时会被拒绝,因为产物根本
+起不来。见[二进制分发](12-binary-distribution.md)。
+
+同样的措辞会出现在每一处取用 host 的地方 —— 链接行上的 host 库会改为指向 mcpp-index,并说明
+索引尚未收录时,**把包贡献进 mcpp-index** 才是受支持的路径。
+
 ### `msvc@system` —— 机器自己的 Visual Studio
 
 mcpp 只负责定位并识别已安装的 Visual Studio / Build Tools,**从不**安装、

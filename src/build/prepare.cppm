@@ -588,6 +588,23 @@ export struct BuildContext {
     mcpp::xlings::runtime::RuntimeSelection runtimeSelection;
     mcpp::platform::runtime::RuntimeBinding runtimeBinding;
     std::filesystem::path           projectRoot;
+    // THE SOURCE TREES THIS BUILD READ THAT ARE NOT UNDER `projectRoot`.
+    //
+    // A `path` dependency — which is what every workspace member is to its
+    // siblings — contributes translation units from a directory the fast path
+    // has no way to name. `sources_newer_than` sweeps the project being built,
+    // so a NEW FILE appearing in such a tree is invisible to it: ninja cannot
+    // report an edge that was never emitted, and the fast path replays a
+    // build.ninja that predates the file. Measured before this field existed:
+    // `mcpp build` printed `Finished dev in 0.00s` and the module was never
+    // compiled.
+    //
+    // Recorded rather than re-derived, because the authoritative answer is
+    // which packages this build ACTUALLY read from source — the fast path
+    // cannot resolve dependencies without becoming prepare_build, and a second
+    // derivation would drift from the first exactly when a resolution rule
+    // changes. Written into `.build_cache`; see BuildCacheEntry::depSourceRoots.
+    std::vector<std::filesystem::path> depSourceRoots;
     std::filesystem::path           outputDir;
     std::filesystem::path           stdBmi;
     std::filesystem::path           stdObject;
@@ -1024,6 +1041,17 @@ prepare_build(bool print_fingerprint,
         ? std::expected<mcpp::manifest::Manifest, mcpp::manifest::ManifestError>(
               *overrides.preloaded_manifest)
         : mcpp::manifest::load(*root / "mcpp.toml");
+    // A COMMAND ISSUED INSIDE A MEMBER DIRECTORY loads that member's manifest
+    // here, before anything knows a workspace is above it — so a member relying
+    // on `[workspace.package]` for a required field would be refused by the
+    // parser before inheritance could supply it. Retried, not reordered: the
+    // workspace lookup walks the tree reading manifests, and paying that on
+    // every build to serve the error path would be the wrong trade. The
+    // requirement still holds; it is enforced after inheritance, where "still
+    // missing" is knowable.
+    if (!m && !overrides.preloaded_manifest
+           && !mcpp::project::find_workspace_root(*root).empty())
+        m = mcpp::manifest::load(*root / "mcpp.toml", {.insideWorkspace = true});
     if (!m) return std::unexpected(m.error().format());
 
     // ⚠️ AND ONLY FOR THE ROOT. A layer name this engine does not know is a
@@ -1088,7 +1116,8 @@ prepare_build(bool print_fingerprint,
             // Virtual workspace: find a member with a binary target, or use last member.
             for (auto& mp : m->workspace.members) {
                 auto memberDir = *root / mp;
-                auto mm = mcpp::manifest::load(memberDir / "mcpp.toml");
+                auto mm = mcpp::manifest::load(memberDir / "mcpp.toml",
+                                               {.insideWorkspace = true});
                 if (!mm) continue;
                 for (auto& t : mm->targets) {
                     if (t.kind == mcpp::manifest::Target::Binary) {
@@ -1112,30 +1141,18 @@ prepare_build(bool print_fingerprint,
             }
             runtimeWorkspaceRoot = *root;
             wsManifest = std::move(*m);  // preserve workspace manifest
-            m = mcpp::manifest::load(memberDir / "mcpp.toml");
+            m = mcpp::manifest::load(memberDir / "mcpp.toml",
+                                     {.insideWorkspace = true});
             if (!m) return std::unexpected(std::format(
                 "workspace member '{}': {}", targetMember, m.error().format()));
 
-            // Merge workspace dependency versions/paths. `*root` is still the
-            // WORKSPACE root here (the `root = memberDir` reassignment below
-            // hasn't happened yet), so it anchors any relative `path` in
-            // `[workspace.dependencies]` (#224).
-            mcpp::project::merge_workspace_deps(*m, *wsManifest, *root);
-
-            // Inherit workspace toolchain if member doesn't define one
-            if (m->toolchain.byPlatform.empty()) {
-                m->toolchain = wsManifest->toolchain;
-            }
-            // Inherit workspace target overrides
-            for (auto& [triple, entry] : wsManifest->targetOverrides) {
-                if (!m->targetOverrides.contains(triple)) {
-                    m->targetOverrides[triple] = entry;
-                }
-            }
-            // Inherit workspace indices if member doesn't define any. `*root`
-            // is still the workspace root here, which is what a relative
-            // `[indices].path` was written against (#224).
-            mcpp::project::inherit_workspace_indices(*m, *wsManifest, *root);
+            // ONE call, not a hand-copied list. `*root` is still the WORKSPACE
+            // root here (the `root = memberDir` reassignment below has not
+            // happened yet), which is what a relative `[indices].path` or
+            // `[workspace.dependencies] path` was written against (#224).
+            mcpp::project::inherit_workspace_config(*m, *wsManifest, *root);
+            if (auto bad = mcpp::project::workspace_inheritance_error(*m, memberDir))
+                return std::unexpected(*bad);
 
             mcpp::ui::status("Workspace", std::format("building member '{}'", targetMember));
             root = memberDir;
@@ -1148,19 +1165,13 @@ prepare_build(bool print_fingerprint,
             if (wsm && wsm->workspace.present) {
                 runtimeWorkspaceRoot = wsRoot;
                 wsManifest = std::move(*wsm);
-                // #224: anchor relative `path`/`[indices].path` to the
-                // workspace root, not this member's own directory.
-                mcpp::project::merge_workspace_deps(*m, *wsManifest, wsRoot);
-                if (m->toolchain.byPlatform.empty()) {
-                    m->toolchain = wsManifest->toolchain;
-                }
-                for (auto& [triple, entry] : wsManifest->targetOverrides) {
-                    if (!m->targetOverrides.contains(triple)) {
-                        m->targetOverrides[triple] = entry;
-                    }
-                }
-                // Inherit workspace indices if member doesn't define any
-                mcpp::project::inherit_workspace_indices(*m, *wsManifest, wsRoot);
+                // The SECOND inheritance site, and it calls the same function
+                // as the first for that reason. #224: relative `path` and
+                // `[indices].path` anchor to the workspace root, not to this
+                // member's own directory.
+                mcpp::project::inherit_workspace_config(*m, *wsManifest, wsRoot);
+                if (auto bad = mcpp::project::workspace_inheritance_error(*m, *root))
+                    return std::unexpected(*bad);
             }
         }
     }
@@ -1188,6 +1199,7 @@ prepare_build(bool print_fingerprint,
         std::error_code wdEc;
         std::filesystem::create_directories(workRoot, wdEc);
     }
+
     if (m->package.sourceProvenance.empty()) {
         m->package.sourceProvenance =
             "path+" + root->lexically_normal().generic_string();
@@ -1467,6 +1479,22 @@ prepare_build(bool print_fingerprint,
         m->buildConfig.ldflags.insert(m->buildConfig.ldflags.end(),
                                       pr.ldflags.begin(), pr.ldflags.end());
     }
+
+    // Every directory a package payload may legitimately have been INSTALLED
+    // into: the global registry, plus the two project-local data roots a custom
+    // git index installs into. Defined HERE, above its first use, because three
+    // separate questions now depend on the same answer — where a dependency's
+    // cache address is anchored, whether its sources came from a store at all,
+    // and whether a `standard` declaration in its manifest was written by an
+    // author or by a descriptor generator. One definition, three uses; deriving
+    // the same fact twice is how two of them start disagreeing.
+    const auto storeRoots = [&]() -> std::vector<std::filesystem::path> {
+        std::vector<std::filesystem::path> roots;
+        if (auto c = get_cfg()) roots.push_back((*c)->xlingsHome() / "data" / "xpkgs");
+        for (auto& d : mcpp::config::project_xlings_data_roots(workRoot))
+            roots.push_back(d / "xpkgs");
+        return roots;
+    }();
 
     // [package] platforms — fixed vocabulary owned by mcpp (it owns the
     // target/triple system). Unknown values: warning, or error under --strict.
@@ -2159,6 +2187,29 @@ prepare_build(bool print_fingerprint,
         }
       } else if (tcSpec.has_value() && *tcSpec == "system") {
         // Explicit user opt-in to system PATH compiler — kept as escape hatch.
+        //
+        // WARNED, NOT REFUSED, and the boundary is "does it build and run".
+        // mcpp itself depends on no host: its toolchains, its payloads and
+        // everything the ecosystem publishes are resolved from the xim index.
+        // A USER'S OWN PROJECT may decide otherwise, and that decision is
+        // theirs to guarantee — measured, this configuration compiles a
+        // project using `import std` on a host that has a new enough compiler.
+        // Refusing it would break working setups to enforce a preference; the
+        // honest response is to say once what it costs and where the supported
+        // version of the same thing lives.
+        //
+        // `explicit_compiler` is deliberately left empty here: `detect` below
+        // resolves the PATH compiler and records the absolute path in
+        // `tc->binaryPath`. Everything that needs a compiler PATH must read it
+        // from there — see host_tc_for_build_program, which did not, and spawned
+        // the empty string instead (#527).
+        mcpp::diag::degraded(
+            "build/toolchain",
+            "[toolchain] system selects a compiler from PATH",
+            "this build depends on what this host has installed, so it is not "
+            "reproducible on another machine and cannot be checked by CI",
+            mcpp::diag::host_route_hint(
+                mcpp::diag::HostDependence::Toolchain));
       } else if (mcpp::platform::env::offline_mode()
                || mcpp::platform::env::no_auto_install()) {
         // CI / offline / test opt-out: hard-error instead of silently
@@ -2822,8 +2873,32 @@ prepare_build(bool print_fingerprint,
             t.cAbiPrebuilt = true;
             return t;
         };
+        // `explicit_compiler` IS EMPTY FOR ONE RESOLUTION PATH, AND THIS IS
+        // THE ONLY CALLER THAT NOTICED BY CRASHING (#527).
+        //
+        // Every branch that resolves a toolchain from the index assigns
+        // `explicit_compiler`; the `[toolchain] system` branch does not, because
+        // it has nothing to assign yet — `detect` finds the PATH compiler a few
+        // hundred lines below and stores the resolved ABSOLUTE path in
+        // `tc->binaryPath`. The main build reads the compiler from `tc` and is
+        // fine; this closure returned the local variable and handed "" to
+        // `posix_spawnp`, which is `exit 127: posix_spawnp('') failed`.
+        //
+        // AND THE FIX IS NOT "SUPPORT THE HOST". `tc->binaryPath` is the
+        // compiler this build is ALREADY using for every other translation
+        // unit; build.mcpp is compiled with the project's toolchain by
+        // definition (see this lambda's header). Reading it from the place it
+        // was resolved makes the two paths agree — it grants no capability the
+        // project did not already have, and the host-dependence warning at the
+        // `system` branch is what states the cost.
+        //
+        // The CROSS branch below is a different question and deliberately
+        // unchanged: there `explicit_compiler` is empty because NO host
+        // toolchain was resolved at all, and its classified refusal is correct.
         if (overrides.target_triple.empty())
-            return std::pair{explicit_compiler, as_host(*tc)};
+            return std::pair{
+                explicit_compiler.empty() ? tc->binaryPath : explicit_compiler,
+                as_host(*tc)};
         if (hostTcCache)
             return std::pair{hostTcCache->first, as_host(hostTcCache->second)};
         if (!tcSpec || *tcSpec == "system" || tcSpecIsMsvc) {
@@ -7680,6 +7755,147 @@ prepare_build(bool print_fingerprint,
     }
 
     bool needsStdModule = graph_or_targets_import_std(scan.graph, *m, *root);
+
+    // A DEPENDENCY THAT DECLARED A HIGHER STANDARD THAN THE GRAPH IS BUILT AT.
+    //
+    // A C++ module graph has ONE standard — cross-level BMIs are hard
+    // incompatible — so the root package's level is imposed graph-wide, and a
+    // dependency's `standard` is parsed and then discarded. That is correct and
+    // is not the defect. The defect is the silence: a package that declared
+    // c++26 because it needs c++26 is compiled at whatever the consumer says,
+    // and fails — if it fails at all — with a compiler error inside a
+    // translation unit the user does not own, naming neither package nor the
+    // mechanism.
+    //
+    // SCOPED TO MANIFESTS THE PROJECT AUTHOR CONTROLS, and that scope is the
+    // whole reason this check is shippable. The cpp20 design doc's §9-Q3
+    // declined it because the default and a declaration were indistinguishable;
+    // `standardDeclared` fixes that for `mcpp.toml`, and NOT for the index:
+    // measured over the local registry, every descriptor with an mcpp segment
+    // declares `language` (782 of 782), and 756 of those 774 packages are C
+    // libraries with `import_std = false` carrying a boilerplate "c++23". A
+    // check that trusted declaredness everywhere would fire against essentially
+    // the whole index for any root at c++20 — exactly the outcome §9-Q3
+    // refused, reached through a different door.
+    //
+    // DEGRADED, NOT AN ERROR. The condition is not a proven failure: a package
+    // declaring c++26 compiles perfectly well at c++23 whenever it happens not
+    // to use a C++26 construct, and that is a working configuration today for
+    // anyone who wrote the key aspirationally. `--strict` promotes it.
+    {
+        const auto graphLevel = m->cppStandard.level;
+        for (std::size_t i = 1; i < packages.size(); ++i) {
+            auto const& pkg = packages[i];
+            if (!pkg.manifest.package.standardDeclared) continue;
+            // The scope gate. A package whose root is under a store directory
+            // arrived from an index and its declaration was written by a
+            // descriptor generator, not by the person reading this diagnostic.
+            if (mcpp::build::path_is_under_any(pkg.root, storeRoots))
+                continue;
+            auto declared = mcpp::manifest::normalize_cpp_standard(
+                pkg.manifest.package.standard);
+            if (!declared || declared->level <= graphLevel) continue;
+            mcpp::diag::degraded(
+                "build/standard",
+                std::format("dependency `{}` declares standard = \"{}\", and "
+                            "this graph is built at {}",
+                            pkg.manifest.package.name,
+                            declared->canonical, m->cppStandard.canonical),
+                "a C++ module graph has one standard, so the dependency's "
+                "declaration is not applied and its sources are compiled at the "
+                "graph's level",
+                std::format(
+                    "raise the consumer's standard to \"{}\", or declare it "
+                    "once for every member:\n\n  [workspace.package]\n  "
+                    "standard = \"{}\"", declared->canonical, declared->canonical));
+        }
+    }
+
+    // A DIALECT FLAG THAT REACHES EVERY TU AND NOT THE `import std` PREBUILD
+    // IS A BUILD THAT CANNOT SUCCEED, AND MCPP KNOWS IT BEFORE COMPILING.
+    //
+    // `[build] cxxflags = ["-fno-exceptions"]` is applied to each translation
+    // unit; the std BMI in `stdFlagAndDialect` is precompiled without it,
+    // because only `dialect_flags()` rides that channel. Every importer then
+    // fails inside a file mcpp generated:
+    //
+    //   std: error: language dialect differs 'C++23', expected
+    //               'C++23/no-exceptions'
+    //   std: error: failed to read compiled module: Bad file data
+    //
+    // The message names the mechanism and not the key, so the way out
+    // (`dialect_cxxflags`, which IS applied to the prebuild, the scan and every
+    // TU) is not discoverable from it. Both facts are known here: whether the
+    // graph imports `std`, and which flags reached the prebuild.
+    //
+    // REFUSED RATHER THAN WARNED, and that is the same rule the host-dependence
+    // diagnostics follow from the other side: this build provably cannot
+    // succeed, so there is no user decision to respect. Contrast
+    // `[toolchain] system`, which builds and runs and is therefore warned about.
+    //
+    // GATED ON `needsStdModule` — without `import std` in the graph there is no
+    // prebuilt BMI to disagree with, and `-fno-exceptions` is then an ordinary
+    // per-unit flag that works. A check that refused in both cases would have
+    // stopped testing the condition it claims to test.
+    if (needsStdModule) {
+        const auto prebuilt = mcpp::toolchain::cppfly::effective_dialect_flags(
+            *tc, m->cppStandard.experimental,
+            mcpp::manifest::dialect_flags(m->buildConfig));
+        // THE ROOT PACKAGE ONLY, and the narrowing is a correctness bound
+        // rather than a shortcut.
+        //
+        // A dependency carrying the same flag fails identically — but only if
+        // ITS OWN translation units import `std`. `needsStdModule` is a
+        // property of the whole graph: a C++ wrapper package that uses no std
+        // module can carry `-fno-exceptions` in its `[build] cxxflags` and
+        // compile perfectly well inside a graph whose ROOT imports std.
+        // Refusing there would stop a build that works, which is the one thing
+        // a refusal must never do — the rule is "provably cannot build", and
+        // for a dependency this evidence does not prove it.
+        //
+        // Extending it needs a per-package answer to "does this package import
+        // std", which the scan graph holds and does not expose in that shape.
+        // Recorded here so the next person meets the reason and not the gap.
+        for (auto const& pkg : std::span{packages}.first(1)) {
+            auto missing = mcpp::manifest::dialect_flags_missing_from_prebuild(
+                pkg.manifest.buildConfig.cxxflags, prebuilt);
+            if (missing.empty()) continue;
+            std::string list;
+            for (auto const& f : missing) {
+                if (!list.empty()) list += ", ";
+                list += '`'; list += f; list += '`';
+            }
+            // NAMES THE FLAG, NOT THE TABLE IT CAME FROM. The same flag
+            // reaches the compile line from `[build] cxxflags`, from
+            // `[profile.<name>] cxxflags` and from a `[target.…]` / `cfg(...)`
+            // block; by the time it is read here they have been merged, and
+            // asserting one of them would be wrong two times in three.
+            return std::unexpected(std::format(
+                "{} changes the language dialect{}, but the `import std` BMI is "
+                "precompiled without it, so every importing translation unit "
+                "will fail with \"language dialect differs\".\n"
+                "       Declare it as a dialect flag instead — that channel is "
+                "applied to the std BMI prebuild, the module scan and every TU "
+                "in the graph:\n"
+                "\n"
+                "         [build]\n"
+                "         dialect_cxxflags = [{}]\n"
+                "\n"
+                "       It belongs in `[build]` and not in a profile or a "
+                "per-target block: a dialect the standard library was not built "
+                "with cannot be held by one package or one profile alone.",
+                list, std::string{},
+                [&] {
+                    std::string q;
+                    for (auto const& f : missing) {
+                        if (!q.empty()) q += ", ";
+                        q += '"'; q += f; q += '"';
+                    }
+                    return q;
+                }()));
+        }
+    }
+
     // A standard library that came from a PACKAGE brings its own module
     // source, because the compiler cannot be asked for one it does not have.
     //
@@ -8016,13 +8232,31 @@ prepare_build(bool print_fingerprint,
     // whether a package's sources really came from a store. ONE definition,
     // two uses — deriving the same fact twice is how the object layout and the
     // cache key drifted apart in the first place (#344).
-    const auto storeRoots = [&]() -> std::vector<std::filesystem::path> {
+    // Which source trees does the fast path have to watch besides this one?
+    //
+    // A package whose root is neither under `projectRoot` nor under a store
+    // root is a `path` dependency — the shape every workspace member takes
+    // towards its siblings — and its sources are read on every build. The
+    // store test is the same `path_is_under_any` the cache-address code uses a
+    // few hundred lines below, so "came from a store" has one definition.
+    //
+    // Store packages are deliberately excluded: a payload directory is written
+    // once at install time and never edited, so sweeping it would cost a
+    // directory walk per dependency on every invocation and could never report
+    // anything. See BuildContext::depSourceRoots for what this is for.
+    {
         std::vector<std::filesystem::path> roots;
-        if (auto c = get_cfg()) roots.push_back((*c)->xlingsHome() / "data" / "xpkgs");
-        for (auto& d : mcpp::config::project_xlings_data_roots(workRoot))
-            roots.push_back(d / "xpkgs");
-        return roots;
-    }();
+        for (std::size_t i = 1; i < packages.size(); ++i) {
+            const auto& pkgRoot = packages[i].root;
+            if (pkgRoot.empty()) continue;
+            if (mcpp::build::path_is_under_any(pkgRoot, storeRoots)) continue;
+            auto normalized = pkgRoot.lexically_normal();
+            if (normalized == root->lexically_normal()) continue;
+            if (std::find(roots.begin(), roots.end(), normalized) == roots.end())
+                roots.push_back(std::move(normalized));
+        }
+        ctx.depSourceRoots = std::move(roots);
+    }
     // ─── Prebuilt dependencies: check before planning to link them ─────
     //
     // Here rather than at each place a dependency manifest is loaded, because

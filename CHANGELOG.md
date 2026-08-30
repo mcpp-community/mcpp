@@ -3,6 +3,89 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.8.30.2] — 2026-08-30
+
+六处缺陷,来自 #527 / #529 的分析,外加一处在实现 review 时挖出来、没有人报过的。
+它们分属两族:**记录存在而做决定的代码不读它**,以及**运行期搜索路径把「声明的」
+和「这台机器碰巧装了的」混在一起**。
+
+完整分析、量化与设计见
+[`.agents/docs/2026-08-30-issues-527-529-535-537-analysis-and-design.md`](.agents/docs/2026-08-30-issues-527-529-535-537-analysis-and-design.md)。
+
+> **host 依赖的分界是「能不能构建并运行」,不是「干不干净」。** mcpp 自身与生态
+> 发布的一切都不依赖 host;用户自己的工程可以另做选择,那是他自己保证的事 ——
+> mcpp 提示并指出受支持的路径,但不强行拒绝。而「证明跑不起来」仍然是错误。
+
+### 修复
+
+- **`mcpp test` 每次调用都在重算一份没有变化的答案(#529)。** 两个 post-link ELF
+  pass 都写了读回优化(stat 没变 ⇒ 复用上次判定),而 `prepare_build` 每次调用都用
+  一个**全新的 json 对象**重写 `resolution.json` —— 那里面没有这两条记录。于是每次
+  调用一开始,就把自己后端待会儿要找的备忘录删掉了。
+
+  记录改存进 `.mcpp-runtime-verdicts.json`(它本来就活得过 `prepare_build`),
+  `resolution.json` 继续发布一份副本 —— 这正是 `sync_resolution_verdict` 已有的
+  形态。同时:
+  - 剪枝的判据从「不在本次 plan 里」改为「产物已不在磁盘上」。`mcpp build` 与
+    `mcpp test` 共用一个输出目录而 link unit 集合不同,前一个判据让两条命令互删
+    对方的记录;
+  - 记录的失效键纳入 SubOS farm 的 `.xlings.json` 时间戳与 `MCPP_ALLOW_HOST_LIBS`
+    —— 让备忘录持久化,就产生了一条以前不存在的正确性义务。
+
+  实测(10 个 link unit,每个 11.5MB,全热):
+
+  | | 之前 | 之后 |
+  |---|---|---|
+  | `mcpp build -p <member>` | 0.70s | 0.32s |
+  | `mcpp test -p <member>`(紧接 build) | 3.15s | **0.36s** |
+  | `mcpp test -p <member>`(连续) | 1.95s | 0.40s |
+
+- **`path` 依赖里新增一个源文件,fast path 看不见。** 陈旧性扫描只覆盖被构建的那个
+  工程,于是 `mcpp build` 报 `Finished dev in 0.00s`,而那个模块从没编译过。内容改动
+  之所以还能被抓到,靠的不是扫描,是 ninja 重链后的事后放弃。这是 #359 那条形态
+  ("glob 输入变了而现存文件的 mtime 一个没动")在它当年没有覆盖到的目录里。
+  workspace 成员之间就是 `path` 依赖,所以这不是边角情况。
+
+- **`[toolchain] system` 配合 `build.mcpp` 直接崩溃(#527 Bug 1)。**
+  `posix_spawnp('') failed (error 2)`。解析出的编译器绝对路径一直在 `tc->binaryPath`
+  里,只是没有交给 `build.mcpp` 的编译闭包。**修的是一个没赋值的变量,不是加 host
+  支持** —— 同一份 manifest 去掉 `build.mcpp` 本来就能构建。
+
+- **`standard = 26`(不带引号)被静默忽略。** 键被文档写成字符串,而 `get_string` 对
+  裸整数返回空,于是工程按默认档位编译、零诊断。#527 自己的三处示例就是这么写的。
+  两种拼法现在都接受。
+
+### 新增
+
+- **`[workspace.package]` 与 `[workspace.build]`(#527 Bug 2 / RFC 3)。** workspace 根
+  的 `[build]` 此前完全没有传给成员;现在标量按「成员**声明过**就成员优先」继承,
+  向量按 workspace 在前追加。
+
+  「声明过」是**解析时记录的事实**,不是与默认值比较得出的推断 —— 成员在
+  `standard = 26` 的 workspace 下刻意写 `standard = "c++23"` 必须保住,而那与默认值
+  同为一串字节。这正是 cpp20 设计文档 §9-Q3 记下的前置条件。
+
+  `allow_host_libs` 明确不可继承:它关掉的是某个具体产物的检查,workspace 根设一次
+  就等于替所有后来加入的成员也关掉了。`[workspace.package]` / `[workspace.build]` 里
+  不认识的键会被**拒绝**而不是忽略。
+
+  没有 `[workspace.target.<triple>]`:根里普通的 `[target.<triple>]` 本来就按 triple
+  被成员继承,为同一能力再加一种拼法只增加接口面。
+
+- **依赖声明了高于当前图的标准时会说出来。** C++ 模块图只有一个标准,依赖自己的
+  `standard` 不生效 —— 这是对的;缺的是它一直不说。degraded 级别(`--strict` 提升),
+  且**只对工程作者自己拥有的 manifest 生效**:索引里带 mcpp 段的描述符 782 个全都声明了
+  `language`,其中 756/774 是 `import_std = false` 的 C 库带的样板值,信任「声明过」会
+  让 c++20 的根工程对着整个索引报警。
+
+- **方言标志没进 `import std` 预编译时,在编译前拒绝。** `[build] cxxflags` 里的
+  `-fno-exceptions` / `-fno-rtti` 会到达每个 TU 却到不了 std BMI 预编译,于是每个
+  importer 都在 mcpp 生成的文件里失败,而报错只讲机制不讲那个键。现在提前拒绝并指出
+  `dialect_cxxflags`。读的是**生效后**的标志集合(`[build]` / `[profile.*]` /
+  `[target.…]` 都算),并且在图中没有 `import std` 时不触发。
+
+  这两个标志仍然**不自动提升**:依赖可以合法地不同意,消费者无权替它决定。
+
 ## [2026.8.29.1] — 2026-08-29
 
 构建规则以普通包分发的机制自 2026.8.5.1 就能用,而**规范**一直没有:一个规则包

@@ -305,6 +305,46 @@ Pinned toolsets coexist with each other and with a system Visual Studio.
 > that may have been intended. (The family-less `[toolchain] … = "system"` — the PATH
 > compiler — is a separate and deliberate escape hatch, and is unaffected.)
 
+### `[toolchain] … = "system"` — the PATH compiler
+
+The escape hatch: mcpp uses whatever C++ compiler is on `PATH` instead of
+resolving one from the xim index. It works for the whole build, `build.mcpp`
+included.
+
+It is not recommended, and mcpp says so once per build:
+
+```
+warning: [toolchain] system selects a compiler from PATH
+  impact: this build depends on what this host has installed, so it is not
+          reproducible on another machine and cannot be checked by CI
+  hint:   mcpp resolves its own toolchains from the xim index so that
+          `import std` and the runtime closure are guaranteed on every host;
+          declare one with [toolchain] linux = "gcc@16.1.0" (or
+          `mcpp toolchain default`) to get the same compiler here, on a
+          teammate's machine and in CI
+```
+
+It is a warning and not a refusal, and that division is the general rule for
+host dependence in mcpp:
+
+- **mcpp itself, and everything the mcpp ecosystem publishes, depends on no
+  host.** Toolchains, payloads and libraries come through xlings — the xim index
+  or mcpp-index. This is what makes a build reproducible across machines and
+  Linux distributions.
+- **A user's own project may choose otherwise, and that choice is theirs to
+  guarantee.** mcpp warns and names the supported route; it does not refuse, as
+  long as the result builds and runs. `--strict` turns the warning into an
+  error, which is how a CI job enforces "no host dependencies" for a repository
+  that wants that.
+
+A build that provably *cannot* run is a different matter and stays an error: a
+runtime closure that cannot be satisfied is refused, because the artifact will
+not start. See [binary distribution](12-binary-distribution.md).
+
+The same wording appears wherever a host dependency is taken — a host library on
+the link line points at mcpp-index instead, and notes that contributing the
+package there is the supported route when the index does not carry it yet.
+
 ### `msvc@system` — the machine's own Visual Studio
 
 mcpp locates and identifies an installed Visual Studio / Build Tools; it never

@@ -50,6 +50,24 @@ void degraded(std::string_view domain, std::string_view what,
 void warning(std::string_view domain, std::string_view what,
              std::string_view hint = {});
 
+// WHAT A HOST DEPENDENCE COSTS, AND WHERE THE SUPPORTED VERSION LIVES.
+//
+// mcpp and everything the ecosystem publishes depend on no host; a user's own
+// project may, and that choice is warned about rather than refused for as long
+// as the result builds and runs. What makes such a warning actionable is not
+// "do not do this" — the developer has already decided — but the route back:
+// the same capability, resolved the same way on every machine and in CI.
+//
+// One function because three call sites (a PATH toolchain, a host library on
+// the link line, `allow_host_libs`) each spelling the sentence their own way is
+// how the three drift into three different pieces of advice for one decision.
+enum class HostDependence {
+    Toolchain,   // a compiler taken from PATH rather than resolved from xim
+    Library,     // a library taken from the host rather than from mcpp-index
+};
+
+std::string_view host_route_hint(HostDependence kind);
+
 // Records render as they are reported (see the implementation note), so this
 // only settles the --strict policy and clears the run's state. Returns false
 // when `strict` is set and at least one Degraded was recorded, meaning the
@@ -113,6 +131,24 @@ void warning(std::string_view domain, std::string_view what,
              std::string_view hint) {
     push(Record{Severity::Warning, std::string(domain), std::string(what),
                 std::string{}, std::string(hint)});
+}
+
+std::string_view host_route_hint(HostDependence kind) {
+    switch (kind) {
+        case HostDependence::Toolchain:
+            return "mcpp resolves its own toolchains from the xim index so that "
+                   "`import std` and the runtime closure are guaranteed on every "
+                   "host; declare one with [toolchain] linux = \"gcc@16.1.0\" "
+                   "(or `mcpp toolchain default`) to get the same compiler here, "
+                   "on a teammate's machine and in CI";
+        case HostDependence::Library:
+            return "declare the provider as a dependency so mcpp resolves it "
+                   "from mcpp-index; if mcpp-index does not carry it yet, "
+                   "contributing the package is the supported route, and the "
+                   "dependency then resolves the same way on every machine and "
+                   "in CI";
+    }
+    return {};
 }
 
 bool flush(bool strict) {

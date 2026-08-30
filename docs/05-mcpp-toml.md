@@ -72,6 +72,47 @@ Two properties worth knowing:
 If the sources `import std;` at a level the resolved toolchain does not provide the `std`
 module for, mcpp fails before compiling and names both the toolchain and the project level.
 
+Both spellings of the value are accepted: `standard = "c++26"` and `standard = 26`.
+
+When a **dependency declares a level above the graph's**, mcpp says so before compiling
+rather than letting it fail somewhere inside that dependency's sources. See
+[workspace §4.2](06-workspace.md).
+
+#### Dialect flags and the `import std` BMI
+
+Some flags change what the standard library's headers declare, so the precompiled `import std`
+BMI has to be built with them too. That is what `[build] dialect_cxxflags` is for: it is
+applied to the std BMI prebuild, the module scan **and** every translation unit in the graph,
+including dependencies.
+
+```toml
+[build]
+dialect_cxxflags = ["-fno-exceptions"]
+```
+
+mcpp promotes a few flags into that channel automatically when it finds them in `cxxflags`
+(`-freflection`, `-fchar8_t`, `-D_GLIBCXX_USE_CXX11_ABI=…`) — a graph that mixes those is
+ill-formed anyway, so no dependency can hold a different opinion about them.
+
+`-fno-exceptions` and `-fno-rtti` are **not** promoted, because a dependency can legitimately
+disagree: they remove a language facility the dependency may use, and the consumer cannot make
+that choice on its behalf. Left in `cxxflags` they reach every TU and not the prebuild, so the
+build cannot succeed — mcpp refuses it before compiling and names the key:
+
+```
+error: `-fno-exceptions` changes the language dialect, but the `import std` BMI is
+       precompiled without it, so every importing translation unit will fail with
+       "language dialect differs".
+       Declare it as a dialect flag instead:
+
+         [build]
+         dialect_cxxflags = ["-fno-exceptions"]
+```
+
+The check reads the **effective** flags, so it fires for the same flag written in
+`[profile.<name>] cxxflags` or in a `[target.…]` block. It does not fire when nothing in the
+graph imports `std`, where the flag is an ordinary per-unit option that works.
+
 ### 2.2 `[targets.<name>]` — Build Targets
 
 ```toml

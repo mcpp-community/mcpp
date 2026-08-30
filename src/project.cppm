@@ -128,6 +128,121 @@ export void inherit_workspace_indices(mcpp::manifest::Manifest& member,
     }
 }
 
+// EVERYTHING A MEMBER INHERITS FROM ITS WORKSPACE ROOT, IN ONE FUNCTION.
+//
+// There are two inheritance SITES in prepare_build — the command issued at the
+// workspace root with `-p <member>`, and the command issued inside a member
+// directory — and until this function existed they were two hand-copied lists
+// of the same merges. A fifth key added to one of them is a defect that
+// compiles, which is exactly how `[build]` came to be inherited by neither
+// (#527 Bug 2).
+//
+// The discipline is stated on `WorkspaceInherited`: scalars are taken when the
+// member did not DECLARE the key, vectors append with the workspace first, and
+// dependencies keep their explicit `.workspace = true` opt-in because they are
+// graph edges. `[toolchain]`, `[target.<triple>]` and `[indices]` were already
+// inherited before these tables existed and keep the behaviour they had.
+//
+// `wsRoot` anchors relative paths: an `[indices].path` or a
+// `[workspace.dependencies] path` was written against the WORKSPACE ROOT, and
+// re-anchoring it to the member directory is #224.
+export void inherit_workspace_config(mcpp::manifest::Manifest& member,
+                                     const mcpp::manifest::Manifest& workspace,
+                                     const std::filesystem::path& wsRoot) {
+    merge_workspace_deps(member, workspace, wsRoot);
+
+    if (member.toolchain.byPlatform.empty())
+        member.toolchain = workspace.toolchain;
+    for (auto& [triple, entry] : workspace.targetOverrides)
+        if (!member.targetOverrides.contains(triple))
+            member.targetOverrides[triple] = entry;
+    inherit_workspace_indices(member, workspace, wsRoot);
+
+    const auto& inh = workspace.workspace.inherited;
+
+    // `[workspace.package]`. The standard is the load-bearing one: a C++ module
+    // graph has ONE standard, so a workspace that states it once is how a
+    // monorepo stops depending on every member remembering to.
+    //
+    // `standardDeclared` and not `standard != "c++23"`: a member that
+    // deliberately pins c++23 under a c++26 workspace must keep it, and that is
+    // indistinguishable from the default without the bit.
+    if (inh.standardDeclared && !member.package.standardDeclared) {
+        member.package.standard  = inh.standard;
+        member.language.standard = inh.standard;
+        member.package.standardDeclared = true;
+        // `cppStandard` was normalised by the parser from the member's own
+        // value; it has to be re-derived, or the inherited spelling would sit
+        // in `package.standard` while every build surface kept reading the
+        // default out of the normalised copy. Same class of defect as a
+        // recorded field with no reader, one struct over.
+        if (auto cfg = mcpp::manifest::normalize_cpp_standard(inh.standard))
+            member.cppStandard = *cfg;
+    }
+    if (member.package.version.empty())     member.package.version     = inh.version;
+    // (the "still missing after inheritance" refusal is in
+    //  `workspace_inheritance_error` below — one predicate, both call sites)
+    if (member.package.license.empty())     member.package.license     = inh.license;
+    if (member.package.description.empty()) member.package.description = inh.description;
+    if (member.package.repo.empty())        member.package.repo        = inh.repo;
+    if (member.package.authors.empty())     member.package.authors     = inh.authors;
+
+    // `[workspace.build]`. Vectors append workspace-FIRST so a member's own
+    // flag lands later on the command line, where the compiler lets it win.
+    if (inh.buildPresent) {
+        auto& b = member.buildConfig;
+        const auto& w = inh.build;
+        auto prepend = [](auto& dst, const auto& src) {
+            if (src.empty()) return;
+            dst.insert(dst.begin(), src.begin(), src.end());
+        };
+        prepend(b.cflags,   w.cflags);
+        prepend(b.cxxflags, w.cxxflags);
+        prepend(b.ldflags,  w.ldflags);
+        prepend(b.defines,  w.defines);
+        prepend(b.dialectCxxflags, w.dialectCxxflags);
+        prepend(b.includeDirs,        w.includeDirs);
+        prepend(b.includeDirsAfter,   w.includeDirsAfter);
+        prepend(b.privateIncludeDirs, w.privateIncludeDirs);
+        if (b.cStandard.empty())            b.cStandard            = w.cStandard;
+        if (b.linkage.empty())              b.linkage              = w.linkage;
+        if (b.target.empty())               b.target               = w.target;
+        if (b.cxxRuntime.empty())           b.cxxRuntime           = w.cxxRuntime;
+        if (b.dependencyLinkage.empty())    b.dependencyLinkage    = w.dependencyLinkage;
+        if (b.macosDeploymentTarget.empty())
+            b.macosDeploymentTarget = w.macosDeploymentTarget;
+    }
+}
+
+// The required-field check, asked at the one point where it is answerable.
+//
+// `mcpp.manifest`'s parser cannot enforce `package.name` / `package.version` on
+// a workspace member, because a member manifest carries no evidence that it is
+// one. Deferring the check is not relaxing it: it runs here, after inheritance,
+// and the message can name the workspace table that would have supplied the
+// value — which the parser could not have done either.
+export std::optional<std::string> workspace_inheritance_error(
+    const mcpp::manifest::Manifest& member,
+    const std::filesystem::path& memberDir) {
+    auto missing = [&](std::string_view field, std::string_view wsKey)
+        -> std::optional<std::string> {
+        return std::format(
+            "{}: missing required field '{}', and the workspace root does not "
+            "supply it either.\n"
+            "       Declare it in the member, or once for every member:\n"
+            "\n"
+            "         [workspace.package]\n"
+            "         {} = \"...\"",
+            (memberDir / "mcpp.toml").string(), field, wsKey);
+    };
+    if (member.package.name.empty())
+        return std::format("{}: missing required field 'package.name'. "
+                           "A workspace cannot supply it: members do not share "
+                           "a name.", (memberDir / "mcpp.toml").string());
+    if (member.package.version.empty()) return missing("package.version", "version");
+    return std::nullopt;
+}
+
 // Resolve which member directory a workspace command acts on, for the
 // single-member case. Shares the match rule (basename OR member path) with
 // prepare_build's member switch, so `build -p X` and `test -p X` agree.

@@ -151,6 +151,89 @@ linkage   = "static"
 default = "llvm@20.1.7"
 ```
 
+### 4.1 `[workspace.package]` 与 `[workspace.build]`
+
+所有成员共享的包元信息与构建标志,在 workspace 根声明一次:
+
+```toml
+[workspace]
+members = ["libs/core", "libs/http", "apps/server"]
+
+[workspace.package]
+standard = 26                  # 也可写 "c++26",两种拼法都接受
+version  = "0.4.2"
+license  = "Apache-2.0"
+authors  = ["example"]
+
+[workspace.build]
+cxxflags         = ["-Wall", "-Wextra"]
+dialect_cxxflags = ["-fno-exceptions"]
+```
+
+成员只声明属于它自己的部分:
+
+```toml
+[package]
+name = "core"
+# standard / version / license / authors 继承自 workspace
+# [workspace.build] 的 cxxflags 也继承
+```
+
+**合并规则。**
+
+| 类别 | 规则 |
+|---|---|
+| 标量(`standard`、`version`、`license`、`c_standard`、`linkage` 等) | 成员**声明了该键**时成员优先;否则取 workspace 的值 |
+| 向量(`cxxflags`、`ldflags`、`defines`、`dialect_cxxflags`、`include_dirs` 等) | 追加,**workspace 在前** —— 成员自己的标志排在命令行后面,后者生效 |
+| `[workspace.dependencies]` | 逐依赖显式选择加入,`x.workspace = true`(§3) |
+
+"声明了"指的是**这个键被写过**,而不是它的值与默认值不同。成员在
+`[workspace.package] standard = 26` 之下刻意写 `standard = "c++23"`,得到的就是
+c++23;什么都不写的成员得到 c++26。这两种情况的值相同而意图相反,所以这个事实是被
+**记录**下来的,而不是推断出来的。
+
+标量与向量是**隐式继承**,不需要逐键选择加入。workspace 要消除的漂移正是"某个成员忘了
+选择加入",所以继承是默认行为,覆盖才是需要主动表达的动作。依赖保留显式选择加入,因为
+依赖是解析图上的一条**边**:隐式继承一条边,会在成员自己的 manifest 只字未提的情况下改变
+它解析到什么。
+
+**成员可以省略 `version`**,只要 `[workspace.package]` 提供了它。这个字段整体上仍是必需的
+—— 两边都没有时会被拒绝,并同时指出成员文件和本该提供它的 workspace 键。
+
+**并非所有键都可继承。** `[workspace.build] allow_host_libs` 会被拒绝:它关掉的是某个具体
+产物的 hermetic 链接检查,而 workspace 根若能设置一次,就等于替所有后来加入的成员也关掉了
+这项检查 —— 而那些成员的作者可能从没读过根 manifest。**描述"如何构建"的键可继承;描述
+"不要跑哪项安全检查"的键留在产物所属的那个包里。** `[workspace.package]` /
+`[workspace.build]` 中其他不认识的键同样会被拒绝而不是忽略:一个以"传播"为唯一目的的表,
+若能静默丢弃某个键,产出的就是"看起来配置好了、实际没有"的 workspace。
+
+**没有 `[workspace.target.<triple>]`。** workspace 根里一个普通的 `[target.<triple>]` 块
+本来就会按 triple 逐项被所有成员继承(成员优先)。为同一能力再加一种拼法,只会增加接口面
+而不增加功能。
+
+### 4.2 整个模块图只有一个标准
+
+C++ 模块图有且只有一个标准:BMI 跨档位不兼容,因此根包的 `standard` 会施加到图中每一个包,
+依赖也不例外。依赖自己的 `standard` 不会被应用。
+
+当依赖**声明**了高于当前图的档位时,mcpp 在编译前就报出来:
+
+```
+warning: dependency `render` declares standard = "c++26", and this graph is
+         built at c++23
+  impact: a C++ module graph has one standard, so the dependency's declaration
+          is not applied and its sources are compiled at the graph's level
+  hint:   raise the consumer's standard to "c++26", or declare it once for
+          every member:
+
+            [workspace.package]
+            standard = "c++26"
+```
+
+这是 warning 而不是 error —— 这类构建通常仍然成功;`--strict` 会把它提升为错误。它只对
+**工程作者自己拥有的 manifest** 生效(根包、workspace 成员、`path` 依赖):从索引解析来的
+包,其 `standard` 是描述符生成器写的,不是读到这条消息的人写的。
+
 ## 5. 构建命令
 
 ### 5.1 从工作空间根目录构建与测试
