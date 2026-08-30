@@ -196,10 +196,10 @@ distinction is recorded rather than inferred.
 
 Scalars and vectors are inherited **implicitly**, without a per-key opt-in. The
 drift a workspace exists to prevent is a member that forgot to opt in, so
-inheritance is the default and overriding is the thing you ask for. Dependencies
-keep their explicit opt-in because a dependency is an edge in the resolution
-graph: inheriting one implicitly would change what a member resolves without its
-own manifest naming it.
+inheritance is the default and overriding is what has to be stated.
+Dependencies keep their explicit opt-in because a dependency is an edge in the
+resolution graph: inheriting one implicitly would change what a member resolves
+without its own manifest naming it.
 
 **`version` may be omitted by a member** when `[workspace.package]` supplies it.
 It remains required overall — a member with neither is refused, naming both the

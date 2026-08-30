@@ -77,32 +77,47 @@ The rule, in the maintainer's terms:
 > host. Where something must be depended on, it arrives through the xlings
 > system — mcpp-index or the xim package index.**
 >
-> **A user's own project depends on no host by default, and the developer may
-> choose otherwise. That choice is theirs to guarantee. It is not recommended,
-> it is warned about, and it is not refused as long as the result builds and
-> runs.**
+> **A user's own project may depend on the host in the LIBRARIES it links —
+> its own `.so`, or one the machine provides. That choice is theirs to
+> guarantee. It is not recommended, it is warned about, and it is not refused
+> as long as the result builds and runs.**
+>
+> **The TOOLCHAIN is not that axis. mcpp builds only with toolchains it
+> manages: `[toolchain] … = "system"` is refused, with `msvc@system` the single
+> exception.**
 
-Two consequences that settle every open severity question in this document:
+**The rule is per axis, and that is the correction this document needed.** An
+earlier draft applied one boundary — "does it build and run" — to everything,
+and concluded that `toolchain = "system"` should be warned about because it
+does build and run (measured, §7). That conclusion was wrong, and the reason is
+not that the measurement was wrong:
 
-**The refuse/warn boundary is "can this be built and run", not "is this
-tidy".** A closure that cannot be satisfied is refused, because the artifact
-provably cannot start — that is physics, not policy, and the existing
-`libcap` refusal is correct exactly as it stands. A closure that *is* satisfied
-by a host-supplied library builds and runs, so it is warned about and allowed.
-Applying the rule to every item here:
+> Everything mcpp promises — that `import std` is available, that the runtime
+> closure is computable, that two machines and CI produce the same build — is a
+> statement about **a compiler mcpp resolved and can identify**. A compiler
+> picked off `PATH` makes every one of those unverifiable. The libraries a
+> program links carry no such promise: they are the program's own dependencies,
+> and the developer who chose them owns the artifact.
 
-| item | builds and runs? | severity |
+So the compiler is part of mcpp's contract and is not the project's to take
+from the host, while the libraries are exactly the project's to choose. Applying
+that to every item here:
+
+| item | axis | severity |
 |---|---|---|
-| unsatisfiable closure (existing) | no | error — unchanged |
-| D14 dialect flag not in the BMI | no, provably | error |
-| D6 host tool with an unsatisfiable closure | no | error, at the point the tool is built |
-| D8 host or farm-supplied provider | yes | warning |
-| D13 dependency declares a higher standard | yes, usually | warning |
-| D15 `toolchain = "system"` | yes — measured (§7) | warning, and the crash is fixed by making it work |
+| D15 `toolchain = "system"` | toolchain — mcpp's contract | **error**, `msvc@system` excepted |
+| unsatisfiable closure (existing) | library, and provably cannot run | error — unchanged |
+| D14 dialect flag not in the BMI | toolchain dialect, provably cannot build | error |
+| D6 host tool with an unsatisfiable closure | library, cannot run | error, where the tool is built |
+| D8 host or farm-supplied provider | library, runs | warning |
+| D13 dependency declares a higher standard | neither; a graph-shape statement that still builds | warning |
 
-**A warning about host dependence names the way back to the ecosystem.** Not
-"do not do this", which the developer has already decided; the actionable
-sentence is where the supported version of the same thing lives:
+Within the library axis the old boundary still holds and is still the right
+one: refused when the artifact provably cannot start, warned when it runs.
+
+**A warning about a host LIBRARY names the way back to the ecosystem.** Not "do
+not do this", which the developer has already decided; the actionable sentence
+is where the supported version of the same thing lives:
 
 ```
 note: mcpp builds against no host library by default, so this artifact is not
@@ -113,9 +128,11 @@ note: mcpp builds against no host library by default, so this artifact is not
       the same way on every machine and in CI.
 ```
 
-One vocabulary, used by D8, D15 and the existing `allow_host_libs` note, so a
-developer meets the same sentence wherever they touch the host. Writing it
-three times in three wordings is how the three drift.
+One vocabulary, used by D8 and the existing `allow_host_libs` note, so a
+developer meets the same sentence wherever they touch a host library. Writing
+it twice in two wordings is how the two drift. The toolchain refusal is
+deliberately NOT that sentence: it is not advice about a trade-off, it is a
+statement that the configuration is unsupported.
 
 ---
 
@@ -991,7 +1008,7 @@ would be careless to reproduce it in the fix for it.
 
 ---
 
-## 7. #527 Bug 1 — an unfilled variable, not a policy boundary
+## 7. #527 Bug 1 — a crash where a refusal belonged
 
 Reproduced verbatim:
 
@@ -1029,93 +1046,86 @@ document's first conclusion, and §1.2 corrects it: the cross branch refuses
 because nothing was resolved, whereas on the native path something *was*
 resolved and simply was not handed over.
 
-**D15 — fill in the host compiler and warn; do not refuse.** This reverses
-what this document proposed before the §1.2 policy was stated, and the reversal
-follows from the policy rather than from taste.
+**D15 — refuse `[toolchain] system`, with `msvc@system` the one exception.**
+This reverses what an earlier draft of this document proposed, and the reversal
+comes from §1.2's corrected form: the boundary is per axis, and the toolchain is
+not the axis a project may take from the host.
 
-`[toolchain] system` is a **user project's** opt-in to the host, not mcpp
-depending on a host. The rule for that case is: not recommended, warned about,
-not refused as long as it builds and runs. And it does build and run —
-measured below. The one place it does not is `build.mcpp`, and that is not a
-policy boundary, it is an unfilled variable: the `system` branch leaves
-`explicit_compiler` empty and the native branch of `host_tc_for_build_program`
-hands the empty string to `posix_spawnp`. `tc->binaryPath` already holds the
-resolved absolute path, put there by `toolchain::detect` on the same
-invocation.
+The crash itself is real and its diagnosis stands. `explicit_compiler` is left
+empty by the `system` branch — it has nothing to assign until `detect` finds the
+PATH compiler and stores the absolute path in `tc->binaryPath` — and the native
+branch of `host_tc_for_build_program` returned the local variable, handing `""`
+to `posix_spawnp`. The main build read the compiler from `tc` and worked, which
+is why only `build.mcpp` died.
 
-So the reporter's patch is the correct change, for a reason the report did not
-give. It is not host-native support (that is RFC 1: `sysroot = "system"`, no
-private `PT_INTERP`, no injected RPATH — still out of scope and untouched). It
-is making one existing escape hatch behave the same way on both of its paths.
-A user whose project builds today acquires no new capability; they stop hitting
-a crash when they add a `build.mcpp`.
-
-What is added alongside it is the §1.2 warning, once per build, naming the
-xlings route:
+What changed is the conclusion drawn from it. Filling the variable makes the
+escape hatch consistent, and a consistent unsupported configuration is still an
+unsupported configuration. **A refusal that arrives as a crash three layers down
+is not a policy; it is a bug wearing one.** So the fix is the refusal the
+configuration always warranted, raised where the specification is read:
 
 ```
-warning: [toolchain] system selects a compiler from PATH, so this build is not
-         reproducible on another machine and depends on what this host has
-         installed. mcpp resolves its own toolchains precisely so that
-         `import std` and the runtime closure are guaranteed everywhere.
-         The supported route is [toolchain] linux = "gcc@16.1.0" (or
-         `mcpp toolchain default`), which mcpp resolves from the xim index.
+error: [toolchain] linux = "system" is not supported: mcpp builds only with
+       toolchains it manages.
+       A compiler taken from PATH cannot be identified or reproduced, so
+       `import std` availability, the runtime closure and "the same build on
+       another machine" all stop being things mcpp can promise.
+       Name one instead — mcpp installs it on first use:
+
+         [toolchain]
+         linux = "gcc@16.1.0"
+
+       or set a machine default with `mcpp toolchain default gcc@16.1.0`, and
+       see `mcpp toolchain list` for what is available.
+       (On Windows, `msvc@system` is different and remains supported: it names
+       a family whose installation mcpp locates.)
+       Host LIBRARIES are a separate question and are not refused — a project
+       may link them and owns the result.
 ```
 
-Measured, the same manifest with the `build.mcpp` removed — the configuration
-this warning attaches to, which works and must keep working:
+The last two lines are load-bearing rather than courtesy. A Windows user
+reading a blanket "system is not supported" would reasonably conclude
+`msvc@system` had been removed, and a user who came here from a host-library
+warning would reasonably conclude the two axes had merged. Both are wrong, and
+neither is inferable from the refusal without saying so.
 
-```
-$ cat mcpp.toml
-[package] name = "demo2" ... standard = 23
-[toolchain] linux = "system"
-$ cat src/main.cpp
-import std;
-int main(){ std::println("ok"); return 0; }
-$ mcpp build
-   Compiling demo2 v0.1.0 (.)
-    Finished dev [unoptimized + debuginfo] in 2.04s
-```
+**That the configuration works today is not an argument against refusing it.**
+Measured, `[toolchain] system` compiles a project using `import std` in 2.04 s
+on a host with a new enough compiler. The measurement was right and the
+inference from it was wrong: what mcpp promises is not "this compiled here",
+it is "this compiles the same way elsewhere", and a PATH compiler cannot
+support that sentence no matter how well it performs on one machine.
 
-The escape hatch resolves a PATH compiler, `import std` works on this host, and
-the build succeeds. A1's "not supported" is a statement about what mcpp
-*guarantees* — and the guarantee is what the warning is for. The hole is
-exactly one path wide.
+**The cross-target branch is unchanged.** There `explicit_compiler` is empty for
+a different reason — no host toolchain was resolved at all — and its classified
+`refusal::Code::HostToolToolchain` remains the right answer.
 
-**`import std` in `build.mcpp` is already defended, so filling the path does
-not create a new failure mode.** `build_program.cppm:867` refuses with "build
-.mcpp uses `import std;` but the host toolchain ({}) …" when the resolved host
-compiler lacks it. A PATH compiler too old for `import std` therefore produces
-that named refusal rather than a compiler error, which is the behaviour any
-declared toolchain already gets.
+**Three existing tests referenced the escape hatch, and each needed a different
+answer.** Recorded because two of them would have gone on passing:
 
-**The cross-target branch is a separate decision and is deliberately left
-alone.** There, `explicit_compiler` is empty for a different reason — no host
-toolchain has been resolved at all — and the existing classified refusal
-(`refusal::Code::HostToolToolchain`) is the right answer. Whether `system`
-should also satisfy the cross branch, by resolving the PATH compiler as the
-host side of a cross build, is a real question with a real answer, and it is
-not this defect. Changing both at once would make the fix untestable against
-the reproduction.
+| test | what happened | what it needed |
+|---|---|---|
+| `14_toolchain_fallback` | asserted only that `system` did NOT produce "no toolchain configured" — a predicate any other error also satisfies. It passed while its stated intent inverted. | assert the refusal on its own terms, both halves |
+| `293_…_name_one_os` | used `system` to point a Linux compiler at a Windows target; the refusal fires first, so it began taking its skip branch — which its own header says must be earned or the test cannot see a revert | accept the refusal as a PASS branch with its reason: the door it guarded is now closed entirely |
+| `105_asm_sources_nasm` | genuinely unaffected — its broken-`MCPP_HOME` bootstrap error still fires first | nothing; verified rather than assumed |
 
-**Criterion.** Four assertions, and the last is the one that keeps the fix
+A negative-only assertion cannot distinguish "it worked" from "it failed
+differently", and a skip cannot distinguish "not applicable here" from "this
+test stopped testing". Both traps were live in this change.
+
+**Criterion.** Five assertions, and the last is the one that keeps the fix
 honest:
 
-- `toolchain = "system"` with a `build.mcpp`, native: builds, and
-  `posix_spawnp` is never called with an empty path.
-- The same, where the PATH compiler lacks `import std` and `build.mcpp` uses
-  it: the named refusal from `build_program.cppm`, not a raw compiler error.
-- The same under `--target <cross>`: still the classified
-  `HostToolToolchain` refusal, unchanged.
-- `toolchain = "system"` **without** a `build.mcpp` still builds — the
-  denominator, and the assertion that fails if the fix was written as a
-  refusal.
-- The warning appears exactly once per build in all of the above, and does not
-  appear for a project with a declared toolchain. A policy warning that fires
-  on a compliant project is worse than none, because it teaches people to
-  ignore the channel.
-
----
+- `[toolchain] system` is refused with no `build.mcpp`, and with one, and the
+  refusal reaches the user before the build program is compiled — no
+  `posix_spawnp`, no `build.mcpp compiling` line.
+- `MCPP_TOOLCHAIN=system` is refused identically: one policy cannot have two
+  answers depending on which channel stated it.
+- The message names what to write instead, the command that lists the choices,
+  the `msvc@system` exception, and the library axis.
+- A project with no `[toolchain]` at all **still builds**, and does not see the
+  refusal — the denominator, without which "refuse everything" satisfies every
+  assertion above.
 
 ## 8. #527 RFC 4 — the aggregate `compile_commands.json`
 
@@ -1151,16 +1161,17 @@ page.
   and "the member said c++23" are the same bytes today, and shipping the table
   without D10 produces an inheritance rule that silently overrides deliberate
   member pins.
-- **Refusing `[toolchain] system`, in any spelling.** §7. This document
-  proposed it and the §1.2 policy overturned it: a user project's opt-in to the
-  host is warned about, not refused, when it builds and runs — and measured, it
-  does. The reporter's `explicit_compiler.empty() ? tc->binaryPath : …` patch
-  is adopted, on the narrower ground that it fills an unset variable rather
-  than that it adds host support.
+- **Filling in the host compiler so `[toolchain] system` works consistently.**
+  §7. An earlier draft of this document proposed exactly that, on the ground
+  that the configuration builds and runs. It does; that is not the question.
+  The toolchain is mcpp's own contract and is refused, so the reporter's
+  `explicit_compiler.empty() ? tc->binaryPath : …` patch is NOT adopted.
 - **Any of this being read as movement on RFC 1.** `sysroot = "system"`,
   suppressing the private `PT_INTERP`, and not injecting RPATH remain out of
-  scope and untouched. D15 changes which string is passed to one `posix_spawn`;
-  it changes nothing about how artifacts are linked or loaded.
+  scope and untouched. D15 moves in the opposite direction from RFC 1: it
+  narrows what the host may supply rather than widening it.
+- **Refusing a host LIBRARY.** §1.2. That axis is the project's own, and the
+  answer there stays a warning that names the mcpp-index route.
 - **Removing the SubOS farm from host tool `RPATH`s as the fix for #535.**
   §3.3/D7. It trades a silent wrong answer for a hard failure in a different
   set of cases, and D8 makes the farm's contribution visible without that
@@ -1190,7 +1201,7 @@ Ordered by what unblocks what, not by severity.
 | 1 | D10 (declaredness on inheritable keys, both parse paths) | D12, D13; nothing in §5 is correct without it |
 | 2 | D1, D1a, D2 (records move to the surviving sidecar; key covers farm and policy; prune on disk absence, not on plan absence) | #529's dominant cost; independent of everything else. D1 without D1a trades slow-and-correct for fast-and-stale; D1 without D2 leaves the developer loop paying |
 | 3 | D11, D12 (stated merge discipline; the three workspace tables) | #527 Bug 2, RFC 3 |
-| 4 | D15 (fill the host compiler path; add the §1.2 warning) | #527 Bug 1. A one-line assignment plus one diagnostic; smallest item here |
+| 4 | D15 (refuse `[toolchain] system`; `msvc@system` excepted) | #527 Bug 1. One refusal plus three existing tests that referenced the escape hatch |
 | 5 | D14 (dialect flag refusal), incl. the MSVC spellings or a stated GNU-only scope | #527 RFC 2 |
 | 6 | D3a (staleness sweep covers `path` dependency source roots) | a defect on its own; D3's precondition |
 | 7 | D8, D9 (provenance per `DT_NEEDED`, published, feeding `host_requirements`) | #537, the safe half of #535, and truthful `mcpp pack` host requirements |
@@ -1431,7 +1442,7 @@ If the closure still cannot be satisfied, the failure moves to where the tool
 is built and names it, instead of arriving as a loader error inside an
 unrelated package's `build.mcpp`.
 
-### 11.7 `toolchain = "system"` builds consistently, and says what it costs (D15)
+### 11.7 `toolchain = "system"` is refused, and says what to write instead (D15)
 
 Before, adding a `build.mcpp` to a project that otherwise builds:
 
@@ -1442,22 +1453,31 @@ error: build.mcpp failed to compile (exit 127):
 posix_spawnp('') failed (error 2): No such file or directory
 ```
 
-After:
+After — and with or without the `build.mcpp`, because the configuration itself
+is what is refused:
 
 ```
 $ mcpp build
-warning: [toolchain] system selects a compiler from PATH, so this build is not
-         reproducible on another machine and depends on what this host has
-         installed. The supported route is [toolchain] linux = "gcc@16.1.0"
-         (or `mcpp toolchain default`), which mcpp resolves from the xim index.
-  build.mcpp compiling
-   Compiling demo v0.1.0 (.)
-    Finished dev [unoptimized + debuginfo] in 2.11s
+error: [toolchain] linux = "system" is not supported: mcpp builds only with
+       toolchains it manages.
+       A compiler taken from PATH cannot be identified or reproduced, so
+       `import std` availability, the runtime closure and "the same build on
+       another machine" all stop being things mcpp can promise.
+       Name one instead — mcpp installs it on first use:
+
+         [toolchain]
+         linux = "gcc@16.1.0"
+
+       or set a machine default with `mcpp toolchain default gcc@16.1.0`, and
+       see `mcpp toolchain list` for what is available.
+       (On Windows, `msvc@system` is different and remains supported.)
+       Host LIBRARIES are a separate question and are not refused.
 ```
 
-The user keeps the choice they made and is told once what it costs and where
-the supported version lives. A project with a declared toolchain sees no new
-output at all.
+A project that used the escape hatch has to name a toolchain, which mcpp
+installs on first use. A project with a declared toolchain sees no new output
+at all, and a project that links host **libraries** is untouched — that is the
+other axis, and its answer is still a warning.
 
 ### 11.8 Adding a file to a `path` dependency is no longer invisible (D3a)
 
@@ -1624,7 +1644,7 @@ one more case:
 | D11/D12 | the implicit-if-absent discipline of `toolchain`/`[target.*]`/`[indices]` |
 | D13 | the floor check §9-Q3 specified and deferred |
 | D14 | `is_dialect_flag`, one list with a second consumer |
-| D15 | `tc->binaryPath`, resolved on the same invocation |
+| D15 | the toolchain specification is read in one place; the refusal joins the branches already there |
 
 The one genuinely new statement is §1.2, and it is a policy rather than a
 mechanism: **mcpp depends on no host; a user project may, and is warned rather
@@ -1678,7 +1698,7 @@ as defects, and one of them found a defect that no issue reports.
 | "a farm-origin provider that no dependency declares" | Wrong predicate. The farm is a symlink view *of installed packages*, so declared dependencies routinely resolve through it; #532's eleven-entry closure would have been reported wholesale. The predicate must canonicalise and ask who owns the file | §4.2, D8 |
 | D13 as an error | Would turn green builds red with no defect behind them: a package declaring `standard = 26` compiles fine at 23 unless it uses a C++26 construct. Degraded first, `--strict` promotes | §5.5, D13 |
 | D14 reading `[build] cxxflags` | Three other tables reach the compile line and not the BMI prebuild. Reading one table reproduces, inside the fix, the exact shape being fixed | §6.4 |
-| "refuse `[toolchain] system`" | Measured: that configuration builds a project with `import std` today, in 2.04 s. Only the `build.mcpp` path is broken. A blanket refusal would break working setups | §7, D15 (first correction) |
+| "refuse `[toolchain] system`" | Measured: that configuration builds a project with `import std` today, in 2.04 s -- so an earlier draft proposed filling the variable and warning. §1.2 was then corrected per axis and the refusal reinstated: the measurement was right, the inference from it was not. See the third round below | §7, D15 |
 
 **Second round, after the host-dependence policy was stated (§1.2).** The
 policy — mcpp depends on no host; a user project may, and is warned rather than
@@ -1707,3 +1727,23 @@ found a real defect that is not their defect, and the remaining time is
 somewhere this document has not looked. The first thing to ask them for is the
 `MCPP_VERBOSE=1` stage decomposition of one warm `mcpp test`; it is four lines
 and it settles the question.
+
+**Third round: the host-dependence rule is per AXIS, not one boundary.**
+
+§1.2's first form applied a single test — "does it build and run" — to
+everything, and D15 followed it to "warn, do not refuse". That was wrong, and
+the error was not in the measurement:
+
+| claim as it stood | what the corrected policy showed | where |
+|---|---|---|
+| one boundary for all host dependence | Two axes with different owners. The **toolchain** is mcpp's contract — `import std` availability, a computable closure, the same build elsewhere are all statements about a compiler mcpp resolved and can name — so it is refused. The **libraries** a program links are the program's own, and stay a warning | §1.2 |
+| D15 fills the compiler path and warns | Reinstated as a refusal. Filling it makes an unsupported configuration *consistent*, which is not the same as making it supported; and a refusal that arrives as `posix_spawnp('')` three layers down is a bug wearing a policy | §7, D15 |
+| `mcpp.diag::host_route_hint` shared by D8 and D15 | With the toolchain axis refusing rather than warning, and the library work not in this change, the helper had no consumer. Reverted — an unread field is the defect this document is about | §1.2 |
+| three existing tests "still pass" | Two passed for the wrong reason. `14_toolchain_fallback`'s only assertion was a negative that any other error satisfies, and `293` began taking a skip its own header says must be earned. Verified by reading the branch each took, not the exit code | §7 |
+
+The general lesson is the one this document keeps finding from the other side:
+**a rule stated once, uniformly, is easier to write than one stated per axis —
+and when the axes have different owners, the uniform version is wrong.** The
+measurement that `system` builds and runs was correct and load-bearing for the
+library axis; carrying it across to the toolchain axis is what produced a
+proposal the maintainer had already declined on the issue.
