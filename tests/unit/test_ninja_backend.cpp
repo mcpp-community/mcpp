@@ -1632,3 +1632,200 @@ TEST(LinkFailureAdvice, CarriesNoVersionLiteral) {
     ASSERT_FALSE(advice.empty());
     EXPECT_EQ(advice.find("0."), std::string::npos) << advice;
 }
+
+// ═══ mcpp#533 / mcpp#534: emitter self-checks ══════════════════════════════
+
+// ── A rule's command must begin with a program (mcpp#533) ──────────────────
+//
+// `c_shared` is `$cc -shared $in -o $out …`, and `cc` was emitted only when
+// the COMPILE set held a C or asm unit — a property that says nothing about
+// which LINK rules exist. A package with no sources still selected `c_shared`,
+// `$cc` expanded to nothing, and `/bin/sh` was handed `-shared` as the program
+// name. Twenty-six lines below `cc`, this file already carried the rule that
+// prevents it, written for `c_ldflags` and never applied to its sibling.
+//
+// ⭐ The checker is exported so it can be asserted against manifests
+// `emit_ninja_string` is supposed never to produce. A test that could only
+// reach it through a BuildPlan could not show the checker works at all.
+
+TEST(NinjaEmitterGuards, ARuleWhoseCommandStartsWithAnUndefinedVariableIsRefused) {
+    const std::string manifest =
+        "cxx = /usr/bin/g++\n"
+        "\n"
+        "rule c_shared\n"
+        "  command = $cc -shared $in -o $out\n"
+        "  description = SHARED $out\n";
+    auto bad = check_rule_commands_name_a_program(manifest);
+    ASSERT_TRUE(bad.has_value()) << manifest;
+    EXPECT_NE(bad->find("c_shared"), std::string::npos) << *bad;
+    EXPECT_NE(bad->find("$cc"), std::string::npos) << *bad;
+}
+
+TEST(NinjaEmitterGuards, ARuleWhoseLeadingVariableIsDefinedButEmptyIsRefused) {
+    const std::string manifest =
+        "cc =\n"
+        "\n"
+        "rule c_link\n"
+        "  command = $cc $in -o $out\n";
+    EXPECT_TRUE(check_rule_commands_name_a_program(manifest).has_value());
+}
+
+// The negatives, which are what stop this from being an always-fires check.
+// Note especially `$soname_flag`: variables set per-EDGE are legitimately
+// undefined at the top level, and expanding them to nothing is a feature
+// several rules depend on. That is why this guard is about the first token and
+// not about undefined variables in general — the general form would have
+// needed an allowlist, and a hand-maintained exception list is the shape this
+// file has been burned by twice.
+TEST(NinjaEmitterGuards, WellFormedRulesAndOptionalPerEdgeVariablesPass) {
+    const std::string manifest =
+        "cc = /usr/bin/gcc\n"
+        "cxx = /usr/bin/g++\n"
+        "\n"
+        "rule c_shared\n"
+        "  command = $cc -shared $in -o $out $soname_flag $unit_ldflags\n"
+        "\n"
+        "rule literal_tool\n"
+        "  command = /usr/bin/strip $in\n"
+        "\n"
+        "rule rule_local\n"
+        "  tool = /usr/bin/objcopy\n"
+        "  command = $tool -O binary $in $out\n";
+    auto bad = check_rule_commands_name_a_program(manifest);
+    EXPECT_FALSE(bad.has_value()) << (bad ? *bad : std::string{});
+}
+
+// The emitter's own output must satisfy its own guard — including the case
+// that produced the defect: a plan whose compile set has no C or asm unit.
+TEST(NinjaEmitterGuards, EmittedManifestsAlwaysNameAProgram) {
+    auto plan = minimal_plan();
+    auto ninja = emit_ninja_string(plan);
+    auto bad = check_rule_commands_name_a_program(ninja);
+    EXPECT_FALSE(bad.has_value()) << (bad ? *bad : std::string{});
+
+    // `cc` unconditionally, not "when something C is being compiled".
+    EXPECT_NE(ninja.find("\ncc        = "), std::string::npos)
+        << "cc is not defined in a plan with no C sources — this is mcpp#533\n"
+        << ninja;
+}
+
+// ── A package's compiles wait for its generators (mcpp#534) ────────────────
+
+namespace {
+
+// A plan with one package that generates a HEADER and compiles a source. The
+// header is the whole point: a generated `.cpp` becomes an edge input and is
+// ordered for free, a generated `.h` is reached through `-I` and never appears
+// as an input at all.
+BuildPlan plan_with_generated_header() {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/uses_header.cpp",
+        .kind = mcpp::SourceKind::Cxx,
+        .object = "obj/uses_header.o",
+        .packageName = "gen_pkg",
+    });
+    mcpp::manifest::BuildAction a;
+    a.id = "gen:header";
+    a.packageName = "gen_pkg";
+    a.role = mcpp::manifest::BuildAction::Role::Source;
+    a.command = {"/bin/true"};
+    a.outputs = {"out/generated.h"};
+    plan.actions.push_back(std::move(a));
+    return plan;
+}
+
+}  // namespace
+
+TEST(ActionOrdering, AGeneratedHeaderGetsAPhonyAndTheCompileEdgeWaitsForIt) {
+    auto ninja = emit_ninja_string(plan_with_generated_header());
+
+    EXPECT_NE(ninja.find("build mcpp-actions-gen_pkg : phony"), std::string::npos)
+        << ninja;
+    EXPECT_NE(ninja.find("|| mcpp-actions-gen_pkg"), std::string::npos)
+        << "the compile edge does not wait for the generator\n" << ninja;
+}
+
+// ⚠️ THE DENOMINATOR. "every edge that should carry the ordering does" is
+// vacuously true when no edge does — and that vacuum is exactly the state this
+// change fixes, so the count of edges is asserted separately from the count
+// that carries it. A bare equality would have passed against the defect.
+TEST(ActionOrdering, EveryCompileEdgeOfThatPackageCarriesIt) {
+    auto ninja = emit_ninja_string(plan_with_generated_header());
+
+    const auto edges = count_occurrences(ninja, "build obj/uses_header.o :");
+    const auto ordered =
+        count_occurrences(ninja, "|| mcpp-actions-gen_pkg");
+    EXPECT_GT(edges, 0u) << "no compile edge was emitted at all — the "
+                            "assertion below would describe nothing\n" << ninja;
+    EXPECT_GE(ordered, edges) << ninja;
+}
+
+// A package with no gating action gets no phony, and its edges are untouched.
+// Without this the change would read as "always add an order-only edge", which
+// is not what it does and would serialise builds that have nothing to wait for.
+TEST(ActionOrdering, APackageWithNoActionsIsUnchanged) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/plain.cpp",
+        .kind = mcpp::SourceKind::Cxx,
+        .object = "obj/plain.o",
+        .packageName = "plain_pkg",
+    });
+    auto ninja = emit_ninja_string(plan);
+    EXPECT_EQ(ninja.find("mcpp-actions-plain_pkg"), std::string::npos) << ninja;
+}
+
+// `Object` and `Artifact` really are ordered by file dependency — their
+// outputs are link inputs and their inputs are link outputs — so pulling them
+// into the phony would add an edge that expresses nothing. This is the half of
+// the original comment that was true, and it has to stay true.
+TEST(ActionOrdering, ObjectRoleActionsDoNotJoinTheCompileGate) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/x.cpp",
+        .kind = mcpp::SourceKind::Cxx,
+        .object = "obj/x.o",
+        .packageName = "obj_pkg",
+    });
+    mcpp::manifest::BuildAction a;
+    a.id = "blob";
+    a.packageName = "obj_pkg";
+    a.role = mcpp::manifest::BuildAction::Role::Object;
+    a.command = {"/bin/true"};
+    a.outputs = {"out/blob.o"};
+    plan.actions.push_back(std::move(a));
+
+    auto ninja = emit_ninja_string(plan);
+    EXPECT_EQ(ninja.find("mcpp-actions-obj_pkg"), std::string::npos) << ninja;
+}
+
+// A non-blocking check runs alongside compilation; a blocking one precedes it.
+// `blocking` was typed, transported, parsed, documented in two languages and
+// demonstrated in a shipped example — and read by nothing, which made it a
+// no-op with a paper trail.
+TEST(ActionOrdering, BlockingDecidesWhetherACheckGatesTheCompile) {
+    auto make = [](bool blocking) {
+        auto plan = minimal_plan();
+        plan.compileUnits.push_back({
+            .source = "src/c.cpp",
+            .kind = mcpp::SourceKind::Cxx,
+            .object = "obj/c.o",
+            .packageName = "chk_pkg",
+        });
+        mcpp::manifest::BuildAction a;
+        a.id = "tidy";
+        a.packageName = "chk_pkg";
+        a.role = mcpp::manifest::BuildAction::Role::Check;
+        a.blocking = blocking;
+        a.command = {"/bin/true"};
+        a.outputs = {"out/tidy.stamp"};
+        plan.actions.push_back(std::move(a));
+        return emit_ninja_string(plan);
+    };
+
+    EXPECT_NE(make(true).find("|| mcpp-actions-chk_pkg"), std::string::npos)
+        << "blocking = true did not gate the compile";
+    EXPECT_EQ(make(false).find("mcpp-actions-chk_pkg"), std::string::npos)
+        << "blocking = false gated the compile anyway";
+}

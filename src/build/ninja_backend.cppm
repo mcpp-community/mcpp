@@ -65,6 +65,18 @@ std::string emit_ninja_string(const BuildPlan& plan);
 std::string filter_ninja_output(std::string_view output,
                                 std::span<const std::string> commandPrefixes);
 
+// Emitter self-check: every ninja rule's command must begin with a program.
+//
+// Exported so the invariant can be stated against hand-written manifests as
+// well as generated ones — the interesting cases (a rule referencing a
+// variable nothing defines) are ones `emit_ninja_string` is supposed never to
+// produce, so a test that could only reach it through a BuildPlan could not
+// assert the checker works. Returns the diagnostic, or nullopt when every
+// rule is well-formed. See the definition for why this is not the more
+// obvious "no undefined variables" check.
+std::optional<std::string> check_rule_commands_name_a_program(
+        const std::string& manifest);
+
 // Advice appended to a failed build whose linker output names a replaceable
 // function nothing in the graph defines. Empty when there is nothing to add.
 //
@@ -420,6 +432,32 @@ runtime_env_for_dirs(const std::vector<std::filesystem::path>& dirs) {
     return std::pair{std::move(key), std::move(value)};
 }
 
+// ── mcpp#534: which actions gate compilation, and what the gate is called ──
+//
+// Both the emitter and the post-emit self-check need these, and they are the
+// same question asked twice — so they are functions, not two lambdas that
+// happen to agree today. The whole defect being fixed here was a second
+// derivation of an ordering decision drifting away from the first.
+
+// `Object` outputs are link inputs and `Artifact` inputs are link outputs, so
+// ninja's file dependencies already order both. `Source` may produce a header,
+// which is never an edge input, and a `Check` gates compilation exactly when it
+// says it does — the `blocking` flag, which nothing read before mcpp#534.
+bool action_precedes_compilation(const mcpp::manifest::BuildAction& a) {
+    return a.role == mcpp::manifest::BuildAction::Role::Source
+        || (a.role == mcpp::manifest::BuildAction::Role::Check && a.blocking);
+}
+
+// A phony per package. Not a path — ninja resolves it in the build dir, and no
+// rule produces a file by this name (same contract as `kGoalPhony`).
+std::string action_phony_name(std::string_view pkg) {
+    std::string s = "mcpp-actions-";
+    for (char c : pkg)
+        s += (std::isalnum(static_cast<unsigned char>(c)) || c == '.'
+              || c == '_' || c == '-') ? c : '_';
+    return s;
+}
+
 }  // namespace
 
 std::string link_failure_advice(std::string_view output) {
@@ -591,9 +629,28 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     const bool need_ios_init_shim = flags.needsStreamInitShim;
     append(std::format("cxx       = {}\n", escape_ninja_path(flags.cxxBinary)));
     append(std::format("cxxflags  = {}\n", flags.cxx));
-    if (need_c_rule || need_asm_rule || need_ios_init_shim) {  // asm_object drives the C compiler too
-        append(std::format("cc        = {}\n", escape_ninja_path(flags.ccBinary)));
-    }
+    // ALWAYS emitted, for the reason `c_ldflags` is, 26 lines below — and the
+    // two are referenced by the SAME rules. mcpp#426 recorded that reasoning
+    // for one variable of `c_link`/`c_shared` and left the other conditional
+    // on `need_c_rule || need_asm_rule || need_ios_init_shim` (asm_object
+    // drives the C compiler too), which is a property of the COMPILE set and
+    // says nothing about which LINK rules exist.
+    //
+    // mcpp#533 is what that cost. A package whose install was skipped has zero
+    // compile units, so `need_c_rule` is false; its shared-library unit still
+    // selects `c_shared`, `$cc` expands to nothing, and the shell is handed
+    // `-shared` as a program name:
+    //
+    //   /bin/sh: 1: -shared: not found
+    //
+    // ⚠️ THIS IS NOT THE FIX FOR THAT, and must not be mistaken for one. It
+    // makes the message name the linker instead of the shell; the defect is
+    // that a link unit had no inputs, and `prepare.cppm` refuses that now. On
+    // its own this line would only make the shared case quieter — and the
+    // static case, which goes to `ar` and produces an empty archive with exit
+    // 0, it does not touch at all. `check_undefined_ninja_variables` below is
+    // what stops the class.
+    append(std::format("cc        = {}\n", escape_ninja_path(flags.ccBinary)));
     if (need_c_rule || need_ios_init_shim) {
         append(std::format("cflags    = {}\n", flags.cc));
     }
@@ -1535,6 +1592,51 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         }
     }
 
+    // ── A package's generated inputs come before that package's compiles ────
+    //
+    // mcpp#534. The comment on the action block below used to claim ordering
+    // needed no special handling, because "a Source action's outputs ARE the
+    // compile edge's inputs". That holds for a generated TRANSLATION UNIT and
+    // fails for a generated HEADER, which is never an edge input — it is
+    // reached through `-I`, and the depfile that would record it does not
+    // exist until a compile has already succeeded. Measured: an action whose
+    // only output was a header had a node in the manifest that nothing could
+    // reach, so ninja never ran it, and the compile read the zero-byte
+    // placeholder `prepare_actions` leaves behind. Five consecutive builds,
+    // same result — not a race, never run.
+    //
+    // ⭐ PER PACKAGE, not per build. `include_dir` colours only the declaring
+    // package's own TUs (docs/07-build-mcpp.md), so a generated header is
+    // visible to exactly one package and a build-wide phony would encode a
+    // dependency that does not exist. It would also land on the critical path
+    // of a build whose wall clock IS its critical path.
+    //
+    // Same mechanism as the staged-cache phony above, for the same reason
+    // (mcpp#274: one word per edge, not a list) — and deliberately the same
+    // code path, so a future edge kind cannot pick up one and miss the other.
+    //
+    // `action_precedes_compilation` and `action_phony_name` are file-scope
+    // functions rather than lambdas here, because `check_action_ordering`
+    // asks the identical questions after the manifest is written.
+    std::map<std::string, std::vector<std::string>> actionOutputsByPackage;
+    for (auto const& a : plan.actions) {
+        if (!action_precedes_compilation(a)) continue;
+        if (a.packageName.empty()) continue;   // nothing to scope it to
+        auto& outs = actionOutputsByPackage[a.packageName];
+        for (auto const& o : a.outputs) outs.push_back(escape_ninja_path(o));
+    }
+    // The phony edges themselves are emitted after the action rules, below;
+    // ninja resolves the whole manifest before building, so a forward
+    // reference here is fine and keeps each block's emission local.
+    const auto order_only_for = [&](const CompileUnit& cu) {
+        auto it = actionOutputsByPackage.find(cu.packageName);
+        if (it == actionOutputsByPackage.end() || it->second.empty())
+            return stagedOrderOnly;
+        auto phony = action_phony_name(cu.packageName);
+        return stagedOrderOnly.empty() ? " || " + phony
+                                       : stagedOrderOnly + " " + phony;
+    };
+
     if (dyndep) {
         // ── Phase 1: scan edges (one .ddi per TU). ──────────────────────
         // .ddi is placed beside the object so multi-version mangling can
@@ -1555,7 +1657,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             auto ddi = (cu.object.parent_path() / cu.source.filename()).string() + ".ddi";
             ddi_paths.push_back(ddi);
             append(std::format("build {} : cxx_scan {}{}\n", escape_ninja_path(ddi),
-                               escape_ninja_path(cu.source), stagedOrderOnly));
+                               escape_ninja_path(cu.source), order_only_for(cu)));
             // `-o` and `-fdeps-target` are DIFFERENT under the split shape and
             // must not share a variable. The scan writes a throwaway object to
             // `-o`, but the dyndep file has to bind the BMI edge — that is the
@@ -1680,7 +1782,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                     std::string e = std::format("build {} : cxx_module_bmi {} | {}",
                                                 bmi, escape_ninja_path(cu.source),
                                                 it->second);
-                    e += stagedOrderOnly;
+                    e += order_only_for(cu);
                     e += "\n  dyndep = " + it->second + "\n";
                     e += "  bmi_out = " + bmi + "\n";
                     e += "  obj_out = " + obj + "\n";
@@ -1751,7 +1853,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                                                     out, rule,
                                                     escape_ninja_path(cu.source),
                                                     it->second);
-                        e += stagedOrderOnly;
+                        e += order_only_for(cu);
                         e += "\n  dyndep = " + it->second + "\n";
                         if (auto inc = local_include_flags(cu, dial); !inc.empty())
                             e += "  local_includes =" + inc + "\n";
@@ -1775,7 +1877,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                 auto it = ddi_to_dd.find(ddi);
                 if (it != ddi_to_dd.end()) {
                     out_line += " | " + it->second;
-                    out_line += stagedOrderOnly;
+                    out_line += order_only_for(cu);
                     out_line += "\n  dyndep = " + it->second;
                     // P2: set bmi_out for the copy_if_different logic in cxx_module.
                     if (cu.providesModule) {
@@ -1783,10 +1885,10 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                     }
                     out_line += "\n";
                 } else {
-                    out_line += stagedOrderOnly + "\n";
+                    out_line += order_only_for(cu) + "\n";
                 }
             } else {
-                out_line += stagedOrderOnly + "\n";
+                out_line += order_only_for(cu) + "\n";
             }
             if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
@@ -1838,7 +1940,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             out_line += std::format(" : {} {}", rule, escape_ninja_path(cu.source));
             if (!implicit.empty())
                 out_line += " |" + implicit;
-            out_line += stagedOrderOnly;
+            out_line += order_only_for(cu);
             out_line += "\n";
             if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
@@ -2087,12 +2189,32 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     // ── Declared build-graph nodes (`mcpp:action=`) ─────────────────────────
     //
-    // One rule + one edge per action. Ordering needs no special handling: a
-    // Source action's outputs ARE the compile edge's inputs, and an Artifact
-    // action's inputs ARE the link edge's outputs, so ninja's own file
-    // dependencies sequence everything. That is the entire reason this is a
-    // graph node rather than a phase — the alternative (a post hook) would
-    // have to re-derive the ordering by hand and would still lose incrementality.
+    // One rule + one edge per action. Ordering comes from two sources, and
+    // which one applies is a property of the ROLE:
+    //
+    //   Object    its outputs ARE the link edge's inputs
+    //   Artifact  its inputs ARE the link edge's outputs
+    //             — for these two, ninja's own file dependencies sequence
+    //               everything, and nothing else is needed.
+    //
+    //   Source    its outputs MAY be compile-edge inputs, and may equally be
+    //   Check     headers, which are never edge inputs at all
+    //             — for these, the declaring package's compile edges take the
+    //               action phony as an order-only prerequisite (see
+    //               `order_only_for`, far above).
+    //
+    // ⚠️ THIS COMMENT USED TO CLAIM THE FIRST ROW FOR ALL FOUR. "A Source
+    // action's outputs ARE the compile edge's inputs" is true of a generated
+    // `.cpp` and false of a generated `.h`: `adoptActionOutputs` deliberately
+    // does not adopt a non-TU into the compile set, so nothing consumed the
+    // header, nothing defaulted it, and the node sat in the manifest
+    // unreachable. mcpp#534 was filed as an intermittent race; it was not one.
+    // The action never ran at all, and what the compiler read was the
+    // zero-byte placeholder `prepare_actions` writes.
+    //
+    // The reason this is a graph node rather than a phase is unchanged: a post
+    // hook would have to re-derive the ordering by hand and would still lose
+    // incrementality.
     std::string actionDefaults;
     for (std::size_t i = 0; i < plan.actions.size(); ++i) {
         auto const& a = plan.actions[i];
@@ -2164,17 +2286,40 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         for (auto const& in : a.inputs) ins += " " + escape_ninja_path(in);
         append(std::format("build{} : mcpp_action_{}{}\n", outs, i, ins));
         append("\n");
-        // A Source action's outputs are already reachable through the compile
-        // edges that consume them, and an Object action's through the link edge
-        // that lists them. Check and Artifact outputs are terminal, so without
-        // this nothing would ever ask for them — and under explicit ninja goals
-        // (#274) an edge reachable only via `default` is skipped, which is
-        // exactly how the soname aliases went missing in 0.0.104.
+        // A Source action's outputs are reachable through the phony its
+        // package's compile edges name, and an Object action's through the
+        // link edge that lists them. Check and Artifact outputs are terminal,
+        // so without this nothing would ever ask for them — and under explicit
+        // ninja goals (#274) an edge reachable only via `default` is skipped,
+        // which is exactly how the soname aliases went missing in 0.0.104.
+        //
+        // A BLOCKING check is in the phony as well, and still belongs here:
+        // its verdict is wanted even in a build whose goal set names no object
+        // of that package.
         if (a.role != mcpp::manifest::BuildAction::Role::Source &&
             a.role != mcpp::manifest::BuildAction::Role::Object)
             for (auto const& o : a.outputs)
                 actionDefaults += " " + escape_ninja_path(o);
     }
+
+    // The phonies `order_only_for` promised, one per package that declares an
+    // action which must precede its compiles. Emitted here, after the edges
+    // that produce their members, purely for readability — ninja resolves the
+    // whole manifest before building anything.
+    //
+    // ⚠️ A Source action's outputs enter the graph ONLY through this edge.
+    // They are deliberately not in `default` (above), because being reachable
+    // two ways is how the 0.0.104 soname aliases went missing under explicit
+    // goals. So if this loop stops emitting, the header-only case of mcpp#534
+    // comes straight back — `check_action_ordering` below is what says so.
+    if (!actionOutputsByPackage.empty()) append("\n");
+    for (auto const& [pkg, outs] : actionOutputsByPackage) {
+        if (outs.empty()) continue;
+        append("build " + action_phony_name(pkg) + " : phony");
+        for (auto const& o : outs) append(" " + o);
+        append("\n");
+    }
+    if (!actionOutputsByPackage.empty()) append("\n");
 
     if (!plan.linkUnits.empty() || !actionDefaults.empty()) {
         std::string defaults;
@@ -2235,6 +2380,216 @@ std::string append_goal_phony(std::string& manifest,
 // Scanning the emitted manifest rather than instrumenting each emit site is
 // deliberate — a new edge kind is then covered the day it is added, which is
 // precisely how the previous seven slipped through.
+// Every compile edge of a package that generates its own inputs must wait for
+// them (mcpp#534).
+//
+// ⭐ WHY A SCAN AND NOT CARE. The order-only string is appended at SEVEN call
+// sites — the scan edge, three dyndep object edges, two static-mode object
+// edges and the asm edge — and an eighth added later without it reintroduces
+// the defect for that edge kind, silently, in exactly the shape that took a
+// filed issue and a five-run experiment to characterise. `emit_ninja_string`
+// knows both halves (which packages declare gating actions, and which objects
+// belong to which package), so it can check its own output; being careful at
+// seven sites is not a mechanism.
+//
+// Same argument, same call site and same shape as
+// `check_inline_command_lengths`, whose comment says it outright: scanning the
+// emitted manifest covers a new edge kind the day it is added.
+//
+// ⚠️ THE DENOMINATOR IS PART OF THE CHECK. "every edge that should carry it
+// does" is vacuously true when no edge should, which is precisely today's
+// state — so a package with gating actions and zero matched compile edges is
+// itself the failure, not a pass.
+std::optional<std::string> check_action_ordering(const std::string& manifest,
+                                                 const BuildPlan& plan) {
+    std::set<std::string> gating;                 // packages with such actions
+    for (auto const& a : plan.actions)
+        if (action_precedes_compilation(a) && !a.packageName.empty()
+            && !a.outputs.empty())
+            gating.insert(a.packageName);
+    if (gating.empty()) return std::nullopt;
+
+    // object path -> owning package, for the packages that matter.
+    std::map<std::string, std::string> ownerOf;
+    for (auto const& cu : plan.compileUnits) {
+        if (!gating.contains(cu.packageName)) continue;
+        if (cu.servedFromCache) continue;         // staged, never compiled here
+        ownerOf.emplace(escape_ninja_path(cu.object), cu.packageName);
+    }
+
+    std::map<std::string, int> seen;              // package -> edges checked
+    for (auto line : manifest | std::views::split('\n')) {
+        std::string_view l{line.begin(), line.end()};
+        if (!l.starts_with("build ")) continue;
+        auto colon = l.find(" : ");
+        if (colon == std::string_view::npos) continue;
+        auto outs = l.substr(6, colon - 6);
+        // An edge may declare several outputs; any one of them being a
+        // tracked object makes the edge a compile edge for that package.
+        for (auto const& [obj, pkg] : ownerOf) {
+            if (outs != obj
+                && outs.find(obj) == std::string_view::npos) continue;
+            ++seen[pkg];
+            auto phony = action_phony_name(pkg);
+            if (l.find(phony) == std::string_view::npos)
+                return std::format(
+                    "internal: compile edge '{}' belongs to package '{}', "
+                    "which generates its own inputs, but the edge does not "
+                    "wait for '{}'.\n"
+                    "       A generated header is reached through -I and is "
+                    "never an edge input, so without this ninja may compile "
+                    "before the generator runs (mcpp#534).\n"
+                    "       This is a build-emitter defect; please report it.",
+                    outs, pkg, phony);
+            break;
+        }
+    }
+
+    for (auto const& pkg : gating) {
+        if (seen[pkg] > 0) continue;
+        // No compile edge of this package was found to check. That is either a
+        // package whose sources are all cache-staged — legitimate — or the
+        // emitter no longer producing what this check reads, which would make
+        // every assertion above pass by describing nothing.
+        bool anyLive = false;
+        for (auto const& cu : plan.compileUnits)
+            if (cu.packageName == pkg && !cu.servedFromCache) { anyLive = true; break; }
+        if (!anyLive) continue;
+        return std::format(
+            "internal: package '{}' generates its own inputs and has compile "
+            "units, but no compile edge for it was found in the manifest — "
+            "the ordering guard cannot see what it is supposed to check.\n"
+            "       This is a build-emitter defect; please report it.",
+            pkg);
+    }
+    return std::nullopt;
+}
+
+// A rule's command must begin with a program.
+//
+// ⭐ WHY THIS SHAPE, and not "no rule may reference an undefined variable".
+// ninja expands an undefined variable to the empty string, which is a FEATURE
+// several rules here depend on: `$soname_flag`, `$implib_flag`, `$def_flag`
+// and `$unit_ldflags` are set per-edge and absent on purpose everywhere else,
+// so a general undefined-variable check would need an allowlist of the ones
+// that are optional — and a hand-maintained list of exceptions is the shape
+// this file has been burned by twice already.
+//
+// The FIRST token has no such ambiguity. Whatever else a command line may
+// legitimately omit, it cannot omit the program. So the invariant needs no
+// exceptions, and it is exactly the one mcpp#533 violated: `c_shared` is
+// `$cc -shared $in -o $out …`, `cc` was emitted only when the compile set
+// contained a C or asm unit, and a package with no sources at all still
+// reached the rule. `$cc` expanded to nothing, and `/bin/sh` was handed
+// `-shared` as the program name.
+//
+// Scanning the emitted manifest rather than instrumenting each emit site is
+// deliberate, for the reason `check_inline_command_lengths` states above it: a
+// rule added later is covered the day it is added. Three `c_link`/`c_shared`
+// emissions across two dialect branches already exist, and reasoning about
+// which of them is reachable with which variables defined is precisely the
+// work this removes.
+//
+// Rule-local variables count as defined — a rule may set its own — and so does
+// a leading `$$`, which is a literal `$` and not a reference at all.
+std::optional<std::string> check_rule_commands_name_a_program(
+        const std::string& manifest) {
+    // Top-level `name = value`. Column 0 only: an indented assignment belongs
+    // to whatever rule or edge precedes it.
+    std::map<std::string, std::string> topLevel;
+    for (auto line : manifest | std::views::split('\n')) {
+        std::string_view l{line.begin(), line.end()};
+        if (l.empty() || l.front() == ' ' || l.front() == '\t') continue;
+        if (l.starts_with("rule ") || l.starts_with("build ")
+            || l.starts_with("default") || l.starts_with("#")) continue;
+        auto eq = l.find('=');
+        if (eq == std::string_view::npos) continue;
+        auto name = l.substr(0, eq);
+        while (!name.empty() && name.back() == ' ') name.remove_suffix(1);
+        if (name.empty()
+            || name.find(' ') != std::string_view::npos) continue;
+        auto value = l.substr(eq + 1);
+        while (!value.empty() && value.front() == ' ') value.remove_prefix(1);
+        topLevel.emplace(std::string(name), std::string(value));
+    }
+
+    std::string rule;                        // current rule, empty outside one
+    std::set<std::string> ruleLocal;         // variables that rule defines
+    std::string pendingCommand;              // its command, checked at rule end
+    bool haveCommand = false;
+
+    // Returns the diagnostic, or nullopt when the command is fine.
+    auto verdict = [&]() -> std::optional<std::string> {
+        if (!haveCommand) return std::nullopt;
+        std::string_view cmd{pendingCommand};
+        while (!cmd.empty() && (cmd.front() == ' ' || cmd.front() == '\t'))
+            cmd.remove_prefix(1);
+        if (cmd.empty())
+            return std::format("ninja rule '{}' has an empty command", rule);
+        if (cmd.front() != '$') return std::nullopt;      // a literal program
+        if (cmd.size() >= 2 && cmd[1] == '$') return std::nullopt;  // literal $
+        std::string_view name = cmd.substr(1);
+        if (!name.empty() && name.front() == '{') {
+            auto close = name.find('}');
+            if (close == std::string_view::npos) return std::nullopt;
+            name = name.substr(1, close - 1);
+        } else {
+            std::size_t n = 0;
+            while (n < name.size()
+                   && (std::isalnum(static_cast<unsigned char>(name[n]))
+                       || name[n] == '_' || name[n] == '.' || name[n] == '-'))
+                ++n;
+            name = name.substr(0, n);
+        }
+        if (name.empty()) return std::nullopt;
+        std::string key(name);
+        if (ruleLocal.contains(key)) return std::nullopt;
+        auto it = topLevel.find(key);
+        if (it == topLevel.end())
+            return std::format(
+                "ninja rule '{}' begins its command with ${}, which no "
+                "variable defines — ninja expands it to nothing and the "
+                "shell would run the next argument as the program.\n"
+                "       This is a build-emitter defect, not a project error; "
+                "please report it with the failing project.",
+                rule, key);
+        if (it->second.empty())
+            return std::format(
+                "ninja rule '{}' begins its command with ${}, which is "
+                "defined but empty — the shell would run the next argument "
+                "as the program.\n"
+                "       This is a build-emitter defect, not a project error; "
+                "please report it with the failing project.",
+                rule, key);
+        return std::nullopt;
+    };
+
+    for (auto line : manifest | std::views::split('\n')) {
+        std::string_view l{line.begin(), line.end()};
+        const bool indented = !l.empty() && (l.front() == ' ' || l.front() == '\t');
+        if (!indented) {
+            if (auto bad = verdict()) return bad;         // close the previous
+            rule.clear(); ruleLocal.clear();
+            pendingCommand.clear(); haveCommand = false;
+            if (l.starts_with("rule ")) rule = std::string(l.substr(5));
+            continue;
+        }
+        if (rule.empty()) continue;                       // an edge's binding
+        auto body = l;
+        while (!body.empty() && (body.front() == ' ' || body.front() == '\t'))
+            body.remove_prefix(1);
+        auto eq = body.find('=');
+        if (eq == std::string_view::npos) continue;
+        auto name = body.substr(0, eq);
+        while (!name.empty() && name.back() == ' ') name.remove_suffix(1);
+        auto value = body.substr(eq + 1);
+        while (!value.empty() && value.front() == ' ') value.remove_prefix(1);
+        if (name == "command") { pendingCommand = std::string(value); haveCommand = true; }
+        else if (!name.empty()) ruleLocal.emplace(name);
+    }
+    return verdict();
+}
+
 std::optional<std::string> check_inline_command_lengths(const std::string& manifest) {
     std::set<std::string> rspRules;
     std::string current;
@@ -2319,6 +2674,17 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     // neither the edge nor the reason.
     if (auto over = check_inline_command_lengths(manifest))
         return std::unexpected(BuildError{*over, ninja_path});
+    // Same backstop, same reason, one class over: a rule whose command begins
+    // with a variable that is not defined runs the REST of the command as a
+    // program. mcpp#533 spent four layers of a user's time on
+    // `/bin/sh: 1: -shared: not found`, which is that sentence.
+    if (auto bad = check_rule_commands_name_a_program(manifest))
+        return std::unexpected(BuildError{*bad, ninja_path});
+    // mcpp#534: a package that generates its own inputs must have every
+    // compile edge waiting on them. Checked against the plan, not just the
+    // text, because the interesting half is the denominator.
+    if (auto bad = check_action_ordering(manifest, plan))
+        return std::unexpected(BuildError{*bad, ninja_path});
     auto goalArg = append_goal_phony(manifest, opts.ninjaTargets);
     write_file(ninja_path, manifest);
     stage("write-ninja");

@@ -311,14 +311,27 @@ attach:
 
 | `role` | Outputs | Ordering | Typical |
 |---|---|---|---|
-| `source` | join the compile set | the compile edge consumes them | protoc, a transpiler |
-| `check` | a stamp file, written by mcpp | runs **alongside** compilation (set `blocking = true` to gate it) | clang-tidy, a format or ABI check |
+| `source` | compilable ones join the compile set; the rest are produced but not compiled | **every compile edge of the declaring package waits for them** | protoc, a transpiler, a protocol/IDL generator |
+| `check` | a stamp file, written by mcpp | runs **alongside** compilation; `blocking = true` makes the package's compile edges wait for it | clang-tidy, a format or ABI check |
 | `object` | join the **link** set | the link edge consumes them | a resource compiler, `objcopy` embedding a blob, a generated `.def`, a pre-built `.o` |
 | `artifact` | a new file | its *inputs* are link outputs, so it runs after the link | codesign, packaging, size budgets |
 
-No phase machinery is involved: ninja's own file dependencies do the
-sequencing, which is also why an `artifact` action cannot double-apply itself
-the way a naive "post-build hook" would.
+No phase machinery is involved. `object` and `artifact` are sequenced by
+ninja's own file dependencies — which is also why an `artifact` action cannot
+double-apply itself the way a naive "post-build hook" would. `source` and a
+blocking `check` are sequenced by an order-only edge from the declaring
+package's compile edges to that package's action outputs.
+
+> **Why `source` needs the edge (mcpp 2026.8.30.2+).** A generated `.cpp`
+> becomes an input of the edge that compiles it, so it was ordered for free. A
+> generated **header** never does: it is reached through `-I`, and the depfile
+> that would record it does not exist until a compile has already succeeded.
+> Before this, an action whose outputs were all headers had a node in
+> `build.ninja` that nothing could reach — not `default`, not the goal set, no
+> consuming edge — so it never ran, and what the compiler read was the empty
+> placeholder mcpp writes for a declared output. The ordering is **per
+> package**, because `include_dir` colours only the declaring package's own
+> translation units.
 
 **A check's command does not have to write its stamp** (mcpp 2026.8.29.1+).
 The verdict is the exit code; the stamp is bookkeeping the graph needs, and
