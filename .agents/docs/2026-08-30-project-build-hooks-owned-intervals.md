@@ -159,6 +159,17 @@ Windows: the job object is closed, which terminates the tree at once. There is
 no graceful equivalent that does not require enumerating the job's processes
 and posting window messages; the asymmetry is stated rather than hidden.
 
+⚠️ The obvious symmetry — "ask with `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT,
+pid)` first" — was written, and it is wrong in a way no local run shows. That
+call addresses a process GROUP attached to the caller's console, not a process.
+When the id does not name a live group of ours (and it does not, once the child
+has exited — `start /b`-style commands exit immediately) the event reaches
+everything sharing the console. Measured on the Windows e2e runner: the entire
+suite died eleven seconds into the hooks test with exit code `-1073741510`
+(`0xC000013A`, `STATUS_CONTROL_C_EXIT`) and printed no summary, because mcpp had
+sent Ctrl-Break to its own console. The design said Windows has no graceful stop;
+the first implementation did not believe it. The code now matches the design.
+
 ## Output
 
 A self-closing hook inherits stdio, which is safe because nothing else is

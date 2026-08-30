@@ -129,11 +129,15 @@ BackgroundChild spawn_background(const char* commandLine,
 // player finished the track" from "the command does not exist".
 int background_running(unsigned long long process, int* exitCode);
 
-// Closes the job, which terminates the whole tree at once. `graceMs` is
-// accepted for signature parity with the POSIX side and is spent waiting for
-// the child to leave on its own after the console-control event; Windows has
-// no portable graceful stop for a process with no window and no console of its
-// own, and pretending otherwise would be a promise this cannot keep.
+// Closes the job, which terminates the whole tree at once.
+//
+// `graceMs` is accepted for signature parity with the POSIX peer and is NOT
+// spent: Windows has no portable graceful stop for a child with no console and
+// no window of its own, and the call that looks like one
+// (GenerateConsoleCtrlEvent) addresses a process group attached to THIS
+// console — see the implementation for what that cost. The asymmetry with the
+// POSIX side's SIGTERM-then-grace is real and is declared here rather than
+// papered over.
 void background_stop(unsigned long long job, unsigned long long process,
                      long long graceMs);
 
@@ -474,17 +478,31 @@ void background_stop(unsigned long long job, unsigned long long process,
                            static_cast<std::uintptr_t>(job))
                      : nullptr;
 
-    // Ask first. A child created with CREATE_NEW_PROCESS_GROUP is its own
-    // group, so this reaches it and nothing else — including not reaching
-    // mcpp, which is the reason the group exists.
-    if (procH && graceMs > 0) {
-        ::GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, ::GetProcessId(procH));
-        ::WaitForSingleObject(procH, static_cast<DWORD>(graceMs));
-    }
+    // ⚠️ NO POLITE ASK HERE, AND `graceMs` IS DELIBERATELY UNSPENT.
+    //
+    // The obvious "ask first" is
+    //
+    //     ::GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, ::GetProcessId(procH));
+    //
+    // and it is wrong in a way that does not show up locally. That call
+    // addresses a process GROUP attached to this console, not a process; when
+    // the id does not name a live group of ours — which it does not, once the
+    // child has already exited, and `start /b`-style commands exit at once —
+    // the event reaches everything sharing the console instead. Measured on
+    // the Windows e2e runner: the whole suite died eleven seconds into the
+    // hooks test with exit code -1073741510 (0xC000013A,
+    // STATUS_CONTROL_C_EXIT) and printed no summary at all, because mcpp had
+    // Ctrl-Break'd its own console.
+    //
+    // Windows has no portable graceful stop for a child with no console and no
+    // window of its own. The job IS the mechanism; the POSIX peer's
+    // SIGTERM-then-grace has no equivalent here, and the asymmetry is stated
+    // in the declaration rather than faked with a call that reaches too far.
+    (void)graceMs;
 
-    // Then take the tree. Closing a KILL_ON_JOB_CLOSE job is the whole
-    // mechanism: TerminateProcess on the child alone would leave whatever it
-    // started behind.
+    // Closing a KILL_ON_JOB_CLOSE job takes the whole tree. TerminateProcess
+    // on the child alone would leave whatever it started behind — which for
+    // `start /b cmd /c player` is the player.
     if (jobH)  ::CloseHandle(jobH);
     if (procH) ::CloseHandle(procH);
 }
