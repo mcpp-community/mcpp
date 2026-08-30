@@ -201,9 +201,32 @@ export void inherit_workspace_config(mcpp::manifest::Manifest& member,
         prepend(b.ldflags,  w.ldflags);
         prepend(b.defines,  w.defines);
         prepend(b.dialectCxxflags, w.dialectCxxflags);
-        prepend(b.includeDirs,        w.includeDirs);
-        prepend(b.includeDirsAfter,   w.includeDirsAfter);
-        prepend(b.privateIncludeDirs, w.privateIncludeDirs);
+        // A RELATIVE INCLUDE DIRECTORY IN THE WORKSPACE MANIFEST WAS WRITTEN
+        // AGAINST THE WORKSPACE ROOT, and every member would otherwise resolve
+        // it against its own directory.
+        //
+        // This is #224 for a new key: `[indices].path` and
+        // `[workspace.dependencies] path` are anchored for exactly this reason,
+        // and a third relative-path key that skipped it would silently point at
+        // `<member>/shared/inc` for a directory that lives at
+        // `<workspace>/shared/inc`. The failure is a missing header, three
+        // members deep, naming neither the manifest that declared it nor the
+        // root it was declared against.
+        //
+        // Anchored rather than refused: an absolute include directory is
+        // already accepted by `expandIncludeDirs`, so the anchored form needs
+        // no new handling downstream.
+        auto anchored = [&](const std::vector<std::filesystem::path>& src) {
+            std::vector<std::filesystem::path> out;
+            out.reserve(src.size());
+            for (auto const& d : src)
+                out.push_back(d.is_absolute() ? d
+                                              : (wsRoot / d).lexically_normal());
+            return out;
+        };
+        prepend(b.includeDirs,        anchored(w.includeDirs));
+        prepend(b.includeDirsAfter,   anchored(w.includeDirsAfter));
+        prepend(b.privateIncludeDirs, anchored(w.privateIncludeDirs));
         if (b.cStandard.empty())            b.cStandard            = w.cStandard;
         if (b.linkage.empty())              b.linkage              = w.linkage;
         if (b.target.empty())               b.target               = w.target;

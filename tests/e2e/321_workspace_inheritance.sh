@@ -24,7 +24,8 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
 
-mkdir -p silent/src pinned/src adds/src
+mkdir -p silent/src pinned/src adds/src shared/inc
+printf '#define SHARED_HEADER_FOUND 1\n' > shared/inc/shared.h
 
 cat > mcpp.toml <<'EOF'
 [workspace]
@@ -36,7 +37,8 @@ version  = "0.4.2"
 license  = "Apache-2.0"
 
 [workspace.build]
-cxxflags = ["-DFROM_WORKSPACE=1"]
+cxxflags     = ["-DFROM_WORKSPACE=1"]
+include_dirs = ["shared/inc"]
 EOF
 
 # `version` is deliberately absent from every member: it is a required field,
@@ -46,7 +48,12 @@ printf '[package]\nname = "silent"\n' > silent/mcpp.toml
 printf '[package]\nname = "pinned"\nstandard = "c++23"\n' > pinned/mcpp.toml
 printf '[package]\nname = "adds"\n\n[build]\ncxxflags = ["-DFROM_MEMBER=1"]\n' > adds/mcpp.toml
 for m in silent pinned adds; do
-    printf '#ifndef FROM_WORKSPACE\n#error "workspace [build] did not reach the member"\n#endif\nint main(){return 0;}\n' > "$m/src/main.cpp"
+    # The include also proves the workspace-relative path was anchored to the
+    # WORKSPACE ROOT and not to each member: `shared/inc` lives at
+    # `<workspace>/shared/inc`, and resolving it per-member would look for
+    # `<member>/shared/inc` and fail with a missing header three members deep,
+    # naming neither the manifest that declared it nor the root it meant.
+    printf '#include <shared.h>\n#if !defined(FROM_WORKSPACE) || !defined(SHARED_HEADER_FOUND)\n#error "workspace [build] did not reach the member"\n#endif\nint main(){return 0;}\n' > "$m/src/main.cpp"
 done
 
 flags_of() {  # $1 = member dir
