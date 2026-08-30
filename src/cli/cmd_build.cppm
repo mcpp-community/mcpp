@@ -43,22 +43,30 @@ workspace_fanout_members(bool wantAll, const std::string& package_filter) {
     return std::nullopt;
 }
 
+// run_build_plan, wrapped in the project's `[hooks]` lifecycle (#496).
+//
+// The hooks come off the context's own manifest, so they are the ones belonging
+// to the package being built — which in a workspace fan-out is the MEMBER, once
+// per member. The lifecycle is deliberately paired: build_finished/build_failed
+// are only ever reached after build_start has run, so a project that could not
+// be prepared at all (bad manifest, unresolvable dependency, no toolchain)
+// fires nothing — its hook programs may be exactly what preparation failed to
+// install.
 int run_build_with_hooks(mcpp::build::BuildContext& ctx, bool verbose,
                          bool no_cache, std::string_view targetOverride) {
-    auto config = mcpp::hooks::load(ctx.projectRoot / "mcpp.toml");
-    if (!config) {
-        mcpp::ui::error(std::format("invalid hook configuration: {}", config.error()));
-        return 2;
-    }
+    auto const& hooks = ctx.manifest.hooks;
 
-    if (!mcpp::hooks::invoke(*config, mcpp::hooks::Event::BuildStart,
+    if (!mcpp::hooks::invoke(hooks, mcpp::hooks::Event::BuildStart,
                              ctx.projectRoot))
         return 1;
 
     int rc = mcpp::build::run_build_plan(ctx, verbose, no_cache, targetOverride);
     auto terminalEvent = rc == 0 ? mcpp::hooks::Event::BuildFinished
                                  : mcpp::hooks::Event::BuildFailed;
-    bool hookOk = mcpp::hooks::invoke(*config, terminalEvent, ctx.projectRoot);
+    // The build's own exit code outranks the hook's: `mcpp build` returning
+    // "the notifier failed" for a compile error would answer a question nobody
+    // asked. A hook failure only decides the exit code of a build that worked.
+    bool hookOk = mcpp::hooks::invoke(hooks, terminalEvent, ctx.projectRoot);
     return rc != 0 ? rc : (hookOk ? 0 : 1);
 }
 
@@ -157,19 +165,11 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
         && ov.cache_mode.empty()) {
         auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
         if (root) {
-            auto config = mcpp::hooks::load(*root / "mcpp.toml");
-            if (!config) {
-                mcpp::ui::error(std::format(
-                    "invalid hook configuration: {}", config.error()));
-                return 2;
-            }
-            // Hooked builds must first prepare the project so xlings-provided
-            // hook programs are available before build_start. Projects with no
-            // active hooks keep the existing fast path unchanged.
-            if (!mcpp::hooks::active(*config)) {
-                if (auto rc = mcpp::build::try_fast_build(*root, verbose, no_cache)) {
-                    return *rc;
-                }
+            // A project with active `[hooks]` declines the fast path from
+            // inside try_fast_build, where the manifest that says so is
+            // already loaded.
+            if (auto rc = mcpp::build::try_fast_build(*root, verbose, no_cache)) {
+                return *rc;
             }
         }
     }

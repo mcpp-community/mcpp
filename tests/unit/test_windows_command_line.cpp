@@ -66,6 +66,51 @@ TEST(WindowsCommandLine, EmbeddedQuotesAreEscaped) {
     EXPECT_EQ(q, "\"a\\\"b\"");
 }
 
+// ─── A user-authored shell command (project `[hooks]`, #496) ─────────────
+//
+// What cmd.exe does with `/c <tail>` when /S is given: strip the first
+// character and the last quote character, run the rest. Modelling it here is
+// the whole point — the assertion is "the author's command arrives verbatim",
+// not "the string looks plausible".
+static std::string cmd_c_tail_under_slash_s(std::string_view line) {
+    constexpr std::string_view kPrefix = "cmd.exe /d /s /c ";
+    EXPECT_TRUE(line.starts_with(kPrefix)) << line;
+    std::string tail(line.substr(kPrefix.size()));
+    if (tail.empty() || tail.front() != '"') return tail;   // rule does not fire
+    tail.erase(0, 1);
+    tail.erase(tail.rfind('"'), 1);
+    return tail;
+}
+
+// The switches must arrive BARE. Quoted (`"cmd.exe" "/d" "/s" "/c" "..."`,
+// which is what windows_command_from_argv produces for the same argv) they
+// are no longer switches, and the command tail keeps a quote pair cmd never
+// consumes — the CI failure this shape exists to prevent.
+TEST(WindowsCommandLine, ShellCommandKeepsCmdSwitchesBare) {
+    auto line = proc::windows_shell_command_line("echo hi");
+    EXPECT_TRUE(line.starts_with("cmd.exe /d /s /c ")) << line;
+    EXPECT_EQ(line.find("\"/c\""), std::string::npos) << line;
+}
+
+// A redirect is the ordinary case for a hook that appends to a log, and it is
+// also the case argv quoting destroys: `>` inside a quoted argument is a
+// literal, not a redirect.
+TEST(WindowsCommandLine, ShellCommandDeliversARedirectVerbatim) {
+    constexpr std::string_view command = "echo start>>hooks.log";
+    EXPECT_EQ(cmd_c_tail_under_slash_s(proc::windows_shell_command_line(command)),
+              command);
+}
+
+// More than one interior quote pair is exactly where the /C rule bites, and
+// where the "wrap once" shape earns its keep: whatever the author wrote comes
+// back byte for byte.
+TEST(WindowsCommandLine, ShellCommandDeliversQuotedPathsVerbatim) {
+    constexpr std::string_view command =
+        R"("C:\Program Files\notify\notify.exe" --title "build done")";
+    EXPECT_EQ(cmd_c_tail_under_slash_s(proc::windows_shell_command_line(command)),
+              command);
+}
+
 // The POSIX half must keep its own convention — a shared helper that
 // silently applied Windows quoting on Linux would break every sh command.
 TEST(WindowsCommandLine, PosixQuotingIsUnaffected) {

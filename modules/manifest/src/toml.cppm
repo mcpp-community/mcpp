@@ -1520,6 +1520,81 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         }
     }
 
+    // [hooks] — project build lifecycle commands (#496). Parsed HERE rather
+    // than by the module that runs them, for the reason Appendix A of
+    // docs/05-mcpp-toml.md states: mcpp.toml has one grammar and one parser.
+    // A second reader of the same file would report ITS syntax errors in its
+    // own vocabulary — a typo in [package] arriving as "invalid hook
+    // configuration" — and would sit outside the warning/--strict policy every
+    // other section is subject to.
+    if (auto* hooksValue = doc->get("hooks");
+        hooksValue && !hooksValue->is_table()) {
+        return std::unexpected(error(origin,
+            "[hooks] must be a table of lifecycle commands"));
+    }
+    if (auto* ht = doc->get_table("hooks")) {
+        // Values are the author's own and visible in front of them: a wrong
+        // type is an error, not a silent default. An unrecognised KEY is a
+        // warning (--strict makes it an error), same split as [build] — so a
+        // manifest written for a later mcpp still loads on this one.
+        auto read_command = [&](std::string_view key, std::string& out)
+            -> std::optional<ManifestError> {
+            auto it = ht->find(key);
+            if (it == ht->end()) return std::nullopt;
+            if (!it->second.is_string() || it->second.as_string().empty())
+                return error(origin, std::format(
+                    "[hooks].{} must be a non-empty command string", key));
+            out = it->second.as_string();
+            return std::nullopt;
+        };
+        for (auto [key, out] : std::initializer_list<
+                 std::pair<std::string_view, std::string*>>{
+                 {"build_start",    &m.hooks.buildStart},
+                 {"build_failed",   &m.hooks.buildFailed},
+                 {"build_finished", &m.hooks.buildFinished}}) {
+            if (auto e = read_command(key, *out)) return std::unexpected(*e);
+        }
+
+        if (auto it = ht->find("timeout_seconds"); it != ht->end()) {
+            // Bounded above as well as below: the value becomes a
+            // std::chrono::seconds deadline, and "a timeout so large it is not
+            // one" is a mistake worth naming rather than honouring.
+            constexpr std::int64_t kMaxTimeout = 24 * 60 * 60;
+            if (!it->second.is_int() || it->second.as_int() <= 0
+                || it->second.as_int() > kMaxTimeout)
+                return std::unexpected(error(origin, std::format(
+                    "[hooks].timeout_seconds must be a positive integer "
+                    "(seconds, at most {})", kMaxTimeout)));
+            m.hooks.timeoutSeconds = static_cast<int>(it->second.as_int());
+        }
+
+        for (auto [key, out] : std::initializer_list<
+                 std::pair<std::string_view, bool*>>{
+                 {"enabled",     &m.hooks.enabled},
+                 {"side_effect", &m.hooks.sideEffect}}) {
+            auto it = ht->find(key);
+            if (it == ht->end()) continue;
+            if (!it->second.is_bool())
+                return std::unexpected(error(origin, std::format(
+                    "[hooks].{} must be a boolean", key)));
+            *out = it->second.as_bool();
+        }
+
+        static constexpr std::string_view kKnownHookKeys[] = {
+            "build_start", "build_failed", "build_finished",
+            "timeout_seconds", "enabled", "side_effect",
+        };
+        for (auto& [k, _] : *ht) {
+            bool known = false;
+            for (auto kk : kKnownHookKeys) if (k == kk) { known = true; break; }
+            if (!known)
+                m.schemaWarnings.push_back(std::format(
+                    "[hooks] has unsupported key '{}' (ignored). Keys: "
+                    "build_start, build_failed, build_finished, "
+                    "timeout_seconds, enabled, side_effect.", k));
+        }
+    }
+
     // [lib] — library root convention (cargo-style).
     if (auto v = doc->get_string("lib.path")) {
         m.lib.path = *v;

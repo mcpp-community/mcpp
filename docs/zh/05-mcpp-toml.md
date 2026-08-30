@@ -1812,12 +1812,13 @@ side_effect = true
 | `build_start` | 字符串 | — | 项目准备完成、正式构建开始前执行 |
 | `build_failed` | 字符串 | — | 构建以失败状态结束时执行 |
 | `build_finished` | 字符串 | — | 构建成功结束时执行 |
-| `timeout_seconds` | 正整数 | `10` | 每条命令的最长执行时间 |
+| `timeout_seconds` | 整数,1–86400 | `10` | 每条命令的最长执行时间 |
 | `enabled` | 布尔 | `true` | 是否启用本表中的全部命令 |
 | `side_effect` | 布尔 | `true` | Hook 失败是否让本次构建失败 |
 
-命令在当前项目根目录中同步执行,使用宿主 Shell(`/bin/sh` 或 `cmd.exe`),标准输入、
-输出和错误沿用普通终端行为。没有配置的事件直接跳过。
+命令通过宿主 Shell(`/bin/sh` 或 `cmd.exe`)同步执行,工作目录是**项目根目录**——
+不是敲 `mcpp build` 的那个目录,所以 Hook 里的相对路径在哪儿发起构建都指同一处。
+标准输入、输出和错误沿用普通终端行为。没有配置的事件直接跳过。
 
 生命周期为:
 
@@ -1827,9 +1828,35 @@ build_start
     └─ 构建失败 → build_failed
 ```
 
-`build_failed` 与 `build_finished` 互斥。命令无法启动、返回非零或超过时限均视为
-Hook 失败。`side_effect = false` 时 mcpp 报 warning 并保留原构建结果;设为 `true`
-时返回失败。Hook 自身失败不会再触发另一个 Hook。
+`build_failed` 与 `build_finished` 互斥,而且两者都只在 `build_start` 已经执行之后
+才可达。项目**准备**阶段就失败的情况——manifest 非法、依赖无法解析、没有可用工具链
+——一个 Hook 都不触发:此时构建尚未开始,而 Hook 程序本身可能正是准备阶段要装的东西。
+
+命令无法启动、返回非零或超过时限均视为 Hook 失败。`side_effect = false` 时 mcpp 报
+warning 并保留原构建结果;设为 `true` 时返回失败——但构建自身失败时保留它自己的退出码,
+所以 `mcpp build` 不会把一次编译错误报成通知程序的问题。Hook 自身失败不会再触发另一个
+Hook。
+
+作用范围:
+
+- 只有 `mcpp build` 执行 Hook。`mcpp run`、`mcpp test` 和
+  `mcpp build --configure-only` 同样会构建,但有意不执行。
+- Hook 属于**被构建的那个包**。workspace 展开时就是逐个成员:各自的 `[hooks]`、
+  各自的构建、各自的根目录。**虚拟** workspace 根(只有 `[workspace]` 没有
+  `[package]`)不构建任何东西,写在那里的 `[hooks]` 永不触发。
+- 依赖的 `[hooks]` 永不执行,只有根项目的会——装一个包不会把包作者的 Shell 命令
+  变成消费方构建的一部分。
+- 声明了生效的 Hook 就等于让项目放弃空转快路径,因为 `build_start` 规定在准备阶段之后
+  执行。对已经是最新状态的带 Hook 项目,`mcpp build` 的代价是一次准备,而不是毫秒级。
+
+`[hooks]` 里不认识的**键**是 warning(`--strict` 下为错误),所以为更新版 mcpp 写的
+manifest 在这一版仍能加载;不认识的**值**——命令不是字符串、`timeout_seconds` 不在
+1–86400 之间——是 manifest 错误。
+
+> **Hook 是代码,而 `mcpp.toml` 是仓库的一部分。** 构建一个刚克隆下来的项目,会以
+> 执行 `mcpp build` 的那个账户的权限,运行它 `[hooks]` 里写的任何东西。这与
+> `build.mcpp`([07 — build.mcpp](07-build-mcpp.md))已经要求的信任是同一份;
+> `[hooks]` 扩大的是它的范围,而不是引入了一份新的信任。
 
 Hook 程序可以作为普通 xlings 依赖安装。例如,音频通知程序可以把音频内置进自己的
 可执行文件,无需让 mcpp 处理媒体资源:

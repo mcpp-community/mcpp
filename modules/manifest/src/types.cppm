@@ -919,6 +919,37 @@ struct WorkspaceConfig {
     bool                                                present = false;
 };
 
+// `[hooks]` — project build lifecycle commands (#496).
+//
+// The commands are host-shell strings written by the project author, run by
+// `mcpp build` around the build it performs. See docs/05-mcpp-toml.md §2.16.
+//
+// ⚠️ ONLY THE ROOT PROJECT'S HOOKS ARE EVER RUN. Every manifest mcpp parses
+// carries this field, including a DEPENDENCY's — and `mcpp build` reaches the
+// invoker (mcpp.hooks) with the root project's manifest alone. A dependency
+// that declares hooks is inert by construction, which is the only reason
+// `mcpp add` of a third-party package does not become "run their shell
+// command on my next build". Anything that adds a second call site inherits
+// that responsibility.
+struct Hooks {
+    std::string buildStart;
+    std::string buildFailed;
+    std::string buildFinished;
+    int         timeoutSeconds = 10;   // per command
+    bool        enabled        = true; // whole table
+    // Whether a hook failure fails the build. False downgrades it to a
+    // warning and preserves whatever the build itself returned.
+    bool        sideEffect     = true;
+
+    // "This project has work for `mcpp build` to do." Distinct from `enabled`:
+    // a table that only sets policy keys declares no command, and must leave
+    // the build path it would otherwise divert (the fast path) untouched.
+    bool active() const {
+        return enabled && !(buildStart.empty() && buildFailed.empty()
+                            && buildFinished.empty());
+    }
+};
+
 // [profile.<name>] — bundled build settings (opt level, debug, lto, strip).
 struct Profile {
     std::string optLevel = "2";
@@ -985,6 +1016,7 @@ struct Manifest {
     Resources                   resources;          // [resources] (mcpp#365)
     RuntimeConfig               runtimeConfig;
     XlingsConfig                xlings;             // [xlings] build environment (L-1)
+    Hooks                       hooks;              // [hooks] lifecycle commands (#496)
     std::vector<ConditionalConfig> conditionalConfigs;  // [target.'cfg(...)'.build], deferred
     std::map<std::string, Profile> profiles;   // [profile.<name>]
     // [features] — feature name → implied features ("default" = default set).

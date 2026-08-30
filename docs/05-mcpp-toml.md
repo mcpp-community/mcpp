@@ -2116,13 +2116,15 @@ side_effect = true
 | `build_start` | string | — | Runs after project preparation, immediately before the build |
 | `build_failed` | string | — | Runs when the build exits unsuccessfully |
 | `build_finished` | string | — | Runs when the build exits successfully |
-| `timeout_seconds` | positive integer | `10` | Maximum time for each command |
+| `timeout_seconds` | integer, 1–86400 | `10` | Maximum time for each command |
 | `enabled` | bool | `true` | Enables all commands in this table |
 | `side_effect` | bool | `true` | Whether a hook failure makes the overall build fail |
 
-Commands run synchronously in the current project's root directory through the
-host shell (`/bin/sh` or `cmd.exe`). Standard input/output/error keep their
-ordinary terminal behaviour. Missing event commands are skipped.
+Commands run synchronously through the host shell (`/bin/sh` or `cmd.exe`),
+with the **project root** as their working directory — not the directory
+`mcpp build` was typed in, so a relative path in a hook means the same thing
+wherever the build was started. Standard input/output/error keep their ordinary
+terminal behaviour. Missing event commands are skipped.
 
 The lifecycle is:
 
@@ -2132,11 +2134,43 @@ build_start
     └─ build fails    → build_failed
 ```
 
-`build_failed` and `build_finished` are mutually exclusive. A hook command
-that cannot start, returns non-zero, or exceeds its timeout is a hook failure.
-With `side_effect = false`, mcpp reports a warning and preserves the build's
-result; with `true`, it returns failure. A hook's own failure does not trigger
-another hook.
+`build_failed` and `build_finished` are mutually exclusive, and both are
+reachable only after `build_start` has run. A project that cannot be *prepared*
+— an invalid manifest, an unresolvable dependency, no usable toolchain — fires
+nothing: it has not started building, and its hook program may be exactly what
+preparation would have installed.
+
+A hook command that cannot start, returns non-zero, or exceeds its timeout is a
+hook failure. With `side_effect = false`, mcpp reports a warning and preserves
+the build's result; with `true`, it returns failure — but a build that failed on
+its own keeps its own exit code, so `mcpp build` never reports a compile error
+as a notifier problem. A hook's own failure does not trigger another hook.
+
+Scope, precisely:
+
+- Only `mcpp build` runs hooks. `mcpp run`, `mcpp test` and
+  `mcpp build --configure-only` build too, and deliberately do not.
+- Hooks belong to the **package being built**. In a workspace fan-out that is
+  each member in turn — its own `[hooks]`, around its own build, in its own
+  root. A *virtual* workspace root (`[workspace]` with no `[package]`) builds
+  nothing, so a `[hooks]` table there never fires.
+- A dependency's `[hooks]` is never run. Only the root project's — installing a
+  package cannot make its author's shell command part of the consuming
+  project's build.
+- Declaring an active hook opts the project out of the no-op fast path, because
+  `build_start` is specified to run after preparation. Expect `mcpp build` on an
+  already-current hooked project to cost a preparation pass rather than
+  milliseconds.
+
+An unrecognised key in `[hooks]` is a warning (an error under `--strict`), so a
+manifest written for a newer mcpp still loads. An unrecognised *value* — a
+non-string command, a `timeout_seconds` outside 1–86400 — is a manifest error.
+
+> **A hook is code, and `mcpp.toml` is part of the repository.** Building a
+> freshly cloned project runs whatever its `[hooks]` say, with the privileges
+> of whoever invoked `mcpp build`. This is the same trust `build.mcpp` already
+> asks for ([07 — build.mcpp](07-build-mcpp.md)); `[hooks]` widens its reach
+> rather than introducing it.
 
 Hook programs can be installed as ordinary xlings dependencies. For example,
 an audio notifier can keep its sound files inside its own executable rather
