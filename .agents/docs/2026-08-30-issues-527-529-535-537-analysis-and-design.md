@@ -1747,3 +1747,21 @@ and when the axes have different owners, the uniform version is wrong.** The
 measurement that `system` builds and runs was correct and load-bearing for the
 library axis; carrying it across to the toolchain axis is what produced a
 proposal the maintainer had already declined on the issue.
+
+**Fourth round: does the new key reach everything it says it reaches?**
+
+Asked of the shipped implementation rather than of the design, and it did not.
+
+| claim as shipped | what measurement showed | where |
+|---|---|---|
+| `[workspace.build]` applies to every member | Only to the member the command names. A sibling compiled as its `path` dependency — the ordinary workspace shape — got none of the flags, in the same command. `[workspace.package] standard` hid it, because the standard is imposed graph-wide from the root for BMI compatibility and reached the sibling anyway | §5.5 |
+| a member may omit `version` when the workspace supplies it | True where the command names it; false where it is reached as a sibling's dependency, which refused it for a field the workspace does provide | §5.5 |
+| `[workspace.build] include_dirs` inherits | It did, verbatim — so a relative path written at the workspace root was resolved against each MEMBER's directory. #224 for a third key, found by re-reading the merge | §5.5, D11 |
+
+The shape all three share: **a rule was implemented at the one place its first
+consumer reads it, and the key has more than one consumer.** The inheritance
+site, the dependency load site and the package-assembly site each read a
+different half, and a fix placed at any one of them is silent at the other two.
+That is the same sentence as §2's defect, one layer up — which is why "who else
+reads this?" is the question worth asking of every new key, and why the
+denominator in each new test is a case that a single-site fix would still pass.
