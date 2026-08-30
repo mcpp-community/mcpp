@@ -1,3 +1,6 @@
+[indices]
+freedesktop = { path = "/home/speak/workspace/github/mcpplibs/mcpp-index" }
+
 [package]
 name     = "graphics-stack"
 version  = "0.1.0"
@@ -35,7 +38,7 @@ libgbm = "25.0.7"        # Mesa's GBM: buffer allocation out of a DRM device
 #
 # All three ship a C++23 module wrapper too. This example uses the headers, and
 # for a reason worth knowing: `EGL_PLATFORM_GBM_KHR` and friends are MACROS, and
-# no module can export a macro — so `import egl;` replaces the declarations but
+# no module can export a macro — so `import khronos.egl;` replaces the declarations but
 # never the `#include <EGL/eglext.h>` that the constants come from.
 [target.'cfg(linux)'.dependencies.freedesktop]
 wayland        = "1.26.0"

@@ -53,9 +53,9 @@ answer: the whole chain, done the recommended way, declaring dependencies.
 [target.'cfg(linux)'.dependencies.compat]
 libdrm = "2.4.134"
 libgbm = "25.0.7"
-egl    = "1.7.0"
 
 [target.'cfg(linux)'.dependencies.freedesktop]
+egl            = "1.7.0"
 wayland        = "1.26.0"
 wayland-server = "1.26.0"
 ```
@@ -85,27 +85,34 @@ BIN=target/x86_64-linux-gnu/*/bin/graphics-stack
 
 ```
 <project>/bin/libdrm.so.2                    <- built by this build
+<project>/bin/libEGL.so.1                    <- built by this build
+<project>/bin/libGLdispatch.so.0             <- built by this build
 <project>/bin/libwayland-client.so.0         <- built by this build
 <project>/bin/libwayland-server.so.0         <- built by this build
 <project>/bin/libffi.so.8                    <- built by this build
 compat-x-libgbm/25.0.7/…/libgbm.so.1
-compat-x-egl/1.7.0/…/libEGL.so.1
 xim-x-expat/2.6.2/lib/libexpat.so.1
 xim-x-gcc/16.1.0/lib64/libgcc_s.so.1
 xim-x-gcc/16.1.0/lib64/libstdc++.so.6
 xim-x-glibc/2.44/lib64/libc.so.6
 xim-x-glibc/2.44/lib64/libm.so.6
-xim-x-libglvnd/1.7.0.1/lib/libGLdispatch.so.0
 ```
 
-Nothing is under `/usr/lib` or `/lib64`. Two things there are worth reading
+Nothing is under `/usr/lib` or `/lib64`. Three things there are worth reading
 closely.
 
-**The first four lines.** They are this project's own build output, not the
+**The first six lines.** They are this project's own build output, not the
 ecosystem's copies — including `libdrm.so.2`, even though Mesa's `libgbm.so.1`
 has a DT_NEEDED on that soname and an absolute RUNPATH into the payload. The
 consumer links them directly, so they are mapped first, and Mesa binds to them:
 the `gbm_bo_create` above ran through this libdrm.
+
+**`libEGL.so.1` and `libGLdispatch.so.0` are on that list.** The ecosystem's
+`xim:libglvnd` carries both under the same sonames, and it is installed on this
+machine — but only one library per soname is ever mapped and nothing warns
+about the loser, so "EGL worked" is not evidence that *this* EGL worked. The
+index's test member pins it from the other direction with `dladdr`, and this
+example prints `EGL 1.5, vendor Mesa Project` through the build above.
 
 **`libffi` and `libGLdispatch`.** Nothing in `mcpp.toml` names either.
 `libffi.so.8` is what `libwayland-client` dispatches protocol messages through,
@@ -113,9 +120,18 @@ the `gbm_bo_create` above ran through this libdrm.
 linked library pulls behind it, which is exactly what a host `-L/usr/lib`
 cannot resolve from inside a private loader.
 
+**Verified with the host present, not absent.** The same program was built and
+run from scratch inside `xlings subos use … --sandbox --gpu`, in a synthetic
+home where none of this machine's checkouts or caches reach — and where `/usr`
+is still the host's, so `/usr/lib/x86_64-linux-gnu/libEGL.so.1`,
+`libgbm.so.1`, `libdrm.so.2` and `libwayland-client.so.0` are all present and
+reachable. Every graphics library still resolved to the project's own output or
+the ecosystem payload. "Nothing from the host" is a claim about what *wins*,
+not about what exists.
+
 ## The packages
 
-Three are built from source and two bind the ecosystem's Mesa, and the split is
+Four are built from source and one binds the ecosystem's Mesa, and the split is
 not arbitrary. A library is built from source when upstream ships it as a
 **separable unit**; it is bound when it is an internal build target of a project
 the ecosystem already owns, where building it would mean forking that project.
@@ -124,9 +140,9 @@ the ecosystem already owns, where building it would mean forking that project.
 |---|---|---|
 | `compat.libdrm` | source | `drmModeGetResources`, `drmModeAddFB2`, `drmModeSetCrtc` — the KMS side |
 | `compat.libgbm` | binds `xim:mesa` | `gbm_create_device`, `gbm_bo_create` — buffers out of a DRM device |
-| `freedesktop.egl` | source | `eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, …)` — rendering onto them, and `import egl;` |
-| `freedesktop.wayland` | source | `libwayland-client.so.0`, and `import wayland.client;` |
-| `freedesktop.wayland-server` | source | `libwayland-server.so.0`, and `import wayland.server;` |
+| `freedesktop.egl` | source | `eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, …)` — rendering onto them, and `import khronos.egl;` |
+| `freedesktop.wayland` | source | `libwayland-client.so.0`, and `import freedesktop.wayland.client;` |
+| `freedesktop.wayland-server` | source | `libwayland-server.so.0`, and `import freedesktop.wayland.server;` |
 
 **Four of the five are source builds.** GBM is the only binding, and the
 paragraphs below are about why the line falls where it does.
@@ -207,7 +223,7 @@ package's sources — so one package cannot emit two libraries with disjoint
 contents. A client-only program drops the second line and links only
 `libwayland-client.so.0`.
 
-Both also ship a C++23 module wrapper. `import wayland.client;` in place of
+Both also ship a C++23 module wrapper. `import freedesktop.wayland.client;` in place of
 `#include <wayland-client.h>` changes nothing else — every exported name is
 upstream's, spelled upstream's way — so this file could switch one line at a
 time. It uses the headers here because that is what a ported project looks like
