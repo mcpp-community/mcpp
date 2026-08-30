@@ -1,5 +1,10 @@
 // mcpp.hooks — running the project's `[hooks]` lifecycle commands.
 //
+// ⚠️ EXPERIMENTAL. A hook cannot currently change whether a build succeeded:
+// every failure is a warning, and `side_effect = true` is refused by the
+// manifest parser. Only the ROOT project's hooks are ever run — a dependency's
+// `[hooks]` is inert. See docs/05-mcpp-toml.md §2.16.
+//
 // The CONFIGURATION is not parsed here: `[hooks]` is a section of mcpp.toml
 // and mcpp.toml has one parser (mcpp.manifest). What lives here is the part
 // that is policy rather than grammar — when a command runs, what a failure
@@ -72,7 +77,7 @@ private:
     bool                  declared_      = false;
     bool                  started_       = false;
     bool                  closed_        = false;
-    bool                  sideEffect_    = true;
+    bool                  sideEffect_    = false;
     bool                  ok_            = true;
     std::atomic<bool>     stop_{false};
     std::atomic<bool>     gaveUp_{false};
@@ -125,6 +130,13 @@ event_command(const mcpp::manifest::Hooks& hooks, Event event) {
 // four of them (cannot start, non-zero, timed out, failed to stay up). The
 // message is identical either way; only its severity and the build's fate
 // differ.
+//
+// ⚠️ WHILE `[hooks]` IS EXPERIMENTAL, `sideEffect` IS ALWAYS FALSE — the
+// manifest parser refuses `side_effect = true` (see
+// modules/manifest/src/toml.cppm). The `true` branch below is therefore
+// unreachable today ON PURPOSE: it is the behaviour the key will select when
+// the feature is promoted, and keeping it here means promotion is a deletion
+// in the parser rather than a reconstruction here.
 bool report_hook_failure_flag(bool sideEffect, const std::string& message) {
     if (sideEffect) {
         mcpp::ui::error(message);

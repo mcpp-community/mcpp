@@ -971,9 +971,20 @@ struct Hooks {
 
     int         timeoutSeconds = 10;   // default for one run of a hook command
     bool        enabled        = true; // whole table
-    // Whether a hook failure fails the build. False downgrades it to a
-    // warning and preserves whatever the build itself returned.
-    bool        sideEffect     = true;
+
+    // ⚠️ EXPERIMENTAL: FALSE, AND CURRENTLY THE ONLY VALUE.
+    //
+    // The key means "a hook failure fails the build". While `[hooks]` is
+    // experimental it does not get to decide that: a hook that fails is
+    // reported as a warning and the build keeps whatever result it earned on
+    // its own. `side_effect = true` is REJECTED by the parser rather than
+    // accepted and ignored — a project that believes its build is gated on a
+    // notifier, and is not, has been told something false.
+    //
+    // The mechanism below it is intact and is what the key will switch on when
+    // the feature graduates; the parser check is the whole of the gate, so
+    // removing it is the whole of the change.
+    bool        sideEffect     = false;
 
     // "This project has work for `mcpp build` to do." Distinct from `enabled`:
     // a table that only sets policy keys declares no command, and must leave

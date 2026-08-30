@@ -178,6 +178,37 @@ would interleave into the middle of a compiler diagnostic. Its output is
 therefore discarded by default, and inherited under `--verbose` — no new schema
 key, and the answer to "why is there no music" is one flag away.
 
+## Shipping it experimental
+
+The feature ships with `side_effect` defaulting to **false** and `true`
+*refused* by the manifest parser. A hook therefore cannot change whether a
+build succeeded: every failure is a warning and `mcpp build` keeps the result
+it earned on its own.
+
+Refused rather than downgraded, because both silent behaviours are worse than
+an error. Honouring `true` ships an experimental feature with a veto over every
+build. Ignoring it leaves a project believing its build is gated on a notifier
+when nothing is — the "accepted and does nothing" shape this design rejects
+everywhere else (`loop` on a self-closing event, `timeout_seconds` on
+`during_build`), so it would be inconsistent to make an exception for the one
+key whose wrong answer is invisible.
+
+The key stays in the schema so manifests do not have to change when the feature
+is promoted, and the mechanism under it already implements both values — the
+`sideEffect == true` branch in `mcpp.hooks` is unreachable today ON PURPOSE.
+**Promotion is the deletion of one block in the parser**, not a
+reconstruction. That is the property to preserve when editing either side.
+
+Two further limits are permanent rather than provisional and should not be read
+as part of the experiment:
+
+- Only the ROOT project's hooks run. A dependency's `[hooks]` is inert by
+  construction — there is exactly one `Span` construction and there are exactly
+  two `invoke` call sites, all in `run_build_with_hooks`, all fed from the
+  context's own manifest.
+- Only `mcpp build` runs hooks. `mcpp run`, `mcpp test` and
+  `mcpp build --configure-only` build too, and deliberately do not.
+
 ## Criteria
 
 The assertions this design has to earn are about *state*, not about log lines —
@@ -202,3 +233,7 @@ The assertions this design has to earn are about *state*, not about log lines �
    rather than papered over with a test that passes vacuously.
 7. **A self-closing event rejects `loop`.** Otherwise the key is accepted,
    does nothing, and the user concludes the feature does not work.
+8. **`side_effect = true` is refused, and every failure mode is a warning.**
+   Two assertions, not one: the exit code says the hook had no vote, and the
+   warning says the failure was not swallowed. A test that checked only the
+   exit code would pass just as well if hooks had stopped running altogether.

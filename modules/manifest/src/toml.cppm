@@ -1651,6 +1651,26 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             *out = it->second.as_bool();
         }
 
+        // ⚠️ THE EXPERIMENTAL GATE, AND THE WHOLE OF IT.
+        //
+        // `[hooks]` is experimental, so it may not decide whether a build
+        // succeeded. Asking for `side_effect = true` is refused rather than
+        // downgraded, because the two possible silent behaviours are both
+        // worse than an error: honouring it ships an experimental feature with
+        // a veto over every build, and ignoring it leaves a project believing
+        // its build is gated on a notifier when nothing is.
+        //
+        // Everything under this line already implements both values. Deleting
+        // this block is what promoting the feature consists of.
+        if (m.hooks.sideEffect)
+            return std::unexpected(error(origin,
+                "[hooks].side_effect = true is not available yet: [hooks] is "
+                "experimental and cannot decide whether a build succeeded. A "
+                "failing hook is reported as a warning and the build keeps its "
+                "own result. Remove the key (the default is false) — it is "
+                "reserved so that manifests do not have to change when the "
+                "feature is promoted."));
+
         static constexpr std::string_view kKnownHookKeys[] = {
             "build_start", "build_failed", "build_finished", "during_build",
             "timeout_seconds", "enabled", "side_effect",

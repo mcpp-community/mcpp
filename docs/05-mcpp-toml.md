@@ -2094,7 +2094,15 @@ See [07 — build.mcpp](07-build-mcpp.md). Naming such a file in
 command: nothing tracks it, and editing the file produces `ninja: no work to
 do`.
 
-### 2.16 `[hooks]` — Project Build Lifecycle Commands
+### 2.16 `[hooks]` — Project Build Lifecycle Commands (experimental)
+
+> **Experimental.** A hook cannot currently decide whether a build succeeded.
+> Every hook failure is reported as a **warning** and `mcpp build` keeps the
+> result it earned on its own; `side_effect = true` is refused with an error
+> rather than honoured. The key stays in the schema so that manifests written
+> today do not have to change when the feature is promoted. Two further limits
+> are permanent rather than provisional: only the root project's hooks run, and
+> only `mcpp build` runs them.
 
 A hook is a command `mcpp build` **owns for an interval**, and the event names
 the interval:
@@ -2111,7 +2119,7 @@ during_build = { cmd = "mcpp-hooks-audioplayer bgm", loop = true }
 # Optional; these are the defaults.
 timeout_seconds = 10
 enabled = true
-side_effect = true
+side_effect = false           # `true` is refused while this is experimental
 ```
 
 | Key | Type | Default | The interval it names |
@@ -2122,7 +2130,7 @@ side_effect = true
 | `during_build` | command | — | Opens before the build, closes after it |
 | `timeout_seconds` | integer, 1–86400 | `10` | Bounds one run of a command |
 | `enabled` | bool | `true` | Enables all commands in this table |
-| `side_effect` | bool | `true` | Whether a hook failure makes the overall build fail |
+| `side_effect` | bool | `false` | Whether a hook failure makes the build fail. **Reserved** — only `false` is accepted while this is experimental |
 
 The first three intervals are **self-closing** — they end when the command
 does. "Synchronous" is not a separate mode here; it is what a self-closing
@@ -2172,11 +2180,24 @@ hook failure. For `during_build` there is one more: a looped command that
 **fails to stay up** — five consecutive runs ending unsuccessfully within a
 second — stops being restarted and is reported. (A command that finishes
 quickly and *successfully* is doing exactly what `loop` was asked to repeat,
-and is not a failure.) With `side_effect = false`, mcpp reports a warning and
-preserves the build's result; with `true`, it returns failure — but a build that
-failed on its own keeps its own exit code, so `mcpp build` never reports a
-compile error as a notifier problem. A hook's own failure does not trigger
-another hook.
+and is not a failure.) Every one of those is reported as a **warning**, and the
+build keeps the result it earned on its own — while `[hooks]` is experimental
+it does not get a vote. A hook's own failure does not trigger another hook.
+
+`side_effect = true` is what will change that, and asking for it today is an
+error:
+
+```text
+error: mcpp.toml: error: [hooks].side_effect = true is not available yet:
+[hooks] is experimental and cannot decide whether a build succeeded. …
+```
+
+Refused rather than quietly downgraded, because both silent options are worse:
+honouring it would give an experimental feature a veto over every build, and
+ignoring it would leave a project believing its build is gated on a notifier
+when nothing is. When the feature is promoted, `true` will mean "a hook failure
+fails the build" — and a build that failed on its own will still keep its own
+exit code, so `mcpp build` never reports a compile error as a notifier problem.
 
 Two things are worth knowing about a `during_build` command specifically:
 
@@ -2197,9 +2218,11 @@ Scope, precisely:
   each member in turn — its own `[hooks]`, around its own build, in its own
   root. A *virtual* workspace root (`[workspace]` with no `[package]`) builds
   nothing, so a `[hooks]` table there never fires.
-- A dependency's `[hooks]` is never run. Only the root project's — installing a
-  package cannot make its author's shell command part of the consuming
-  project's build.
+- A dependency's `[hooks]` is **skipped**, always. Only the root project's run.
+  Every manifest mcpp parses carries the section, a dependency's included, and
+  nothing reads it — which is what keeps `mcpp add` from meaning "run this
+  author's shell command on my next build". This is a property of the design,
+  not a default awaiting a switch.
 - Declaring an active hook opts the project out of the no-op fast path, because
   `build_start` is specified to run after preparation. Expect `mcpp build` on an
   already-current hooked project to cost a preparation pass rather than
@@ -2231,9 +2254,11 @@ side_effect = false
 deps = ["xim:mcpp-hooks-audioplayer@0.0.1"]
 ```
 
-Background music for the length of the build, a different sound for how it
-ended, and `side_effect = false` so that a missing audio device is a warning
-rather than a failed build.
+Background music for the length of the build, and a different sound for how it
+ended. `side_effect = false` is written out rather than left to the default:
+it is the value this manifest wants on its own terms — a missing audio device
+should never fail a build — so it will still say so once the key has more than
+one accepted value.
 
 ## Appendix A. Schema Ownership Principle (admission criteria for new fields)
 

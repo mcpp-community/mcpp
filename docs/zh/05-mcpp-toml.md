@@ -1791,7 +1791,13 @@ o.arg("./mkblob.sh").arg("blob.bin").arg("${mcpp.out_dir}/blob.o")
 但 ldflags 是链接命令里的一串字符:没有任何东西跟踪它,改了它得到的是
 `ninja: no work to do`。
 
-### 2.16 `[hooks]` —— 项目构建生命周期命令
+### 2.16 `[hooks]` —— 项目构建生命周期命令(实验性)
+
+> **实验性。** Hook 目前**不能**决定一次构建成功与否。所有 Hook 失败都以
+> **warning** 报出,`mcpp build` 保留它自己挣来的结果;`side_effect = true`
+> 会被报错拒绝,而不是被采纳。这个键保留在 schema 里,这样今天写下的 manifest
+> 在该功能转正时无需改动。另有两条限制是永久的、不是临时的:**只有根项目的 Hook
+> 会执行**,而且**只有 `mcpp build` 会执行它们**。
 
 Hook 是 `mcpp build` **在一段区间内持有**的命令,事件名就是那段区间:
 
@@ -1807,7 +1813,7 @@ during_build = { cmd = "mcpp-hooks-audioplayer bgm", loop = true }
 # 可选;以下是默认值。
 timeout_seconds = 10
 enabled = true
-side_effect = true
+side_effect = false           # 实验期内 `true` 会被拒绝
 ```
 
 | 键 | 类型 | 默认值 | 它命名的区间 |
@@ -1818,7 +1824,7 @@ side_effect = true
 | `during_build` | 命令 | — | 构建开始前开启,构建结束后闭合 |
 | `timeout_seconds` | 整数,1–86400 | `10` | 单次运行的时限 |
 | `enabled` | 布尔 | `true` | 是否启用本表中的全部命令 |
-| `side_effect` | 布尔 | `true` | Hook 失败是否让本次构建失败 |
+| `side_effect` | 布尔 | `false` | Hook 失败是否让本次构建失败。**保留键**——实验期内只接受 `false` |
 
 前三个区间是**自闭合**的——命令退出,区间就结束。"同步"在这里不是一种单独的模式,
 它就是自闭合区间的样子。`during_build` 是唯一由别的东西闭合的区间,而那两个只对其中
@@ -1858,10 +1864,21 @@ build_start
 
 命令无法启动、返回非零或超过时限均视为 Hook 失败。`during_build` 还多一种:开了 `loop`
 的命令**起不来**——连续五次在一秒内以非零状态结束——就不再重启,并被报出来。(很快就
-成功结束的命令,正是 `loop` 被要求重复的那件事,不算失败。)`side_effect = false` 时
-mcpp 报 warning 并保留原构建结果;设为 `true` 时返回失败——但构建自身失败时保留它自己
-的退出码,所以 `mcpp build` 不会把一次编译错误报成通知程序的问题。Hook 自身失败不会再
-触发另一个 Hook。
+成功结束的命令,正是 `loop` 被要求重复的那件事,不算失败。)以上每一种都以 **warning**
+报出,构建保留它自己挣来的结果——`[hooks]` 还在实验期,它没有投票权。Hook 自身失败不会
+再触发另一个 Hook。
+
+改变这一点的正是 `side_effect = true`,而今天写它是一个错误:
+
+```text
+error: mcpp.toml: error: [hooks].side_effect = true is not available yet:
+[hooks] is experimental and cannot decide whether a build succeeded. …
+```
+
+是拒绝而不是悄悄降级,因为两种沉默的做法都更糟:采纳它等于让一个实验性功能对每一次
+构建都有否决权;忽略它则让项目以为自己的构建被通知程序把着关,而实际上没有。功能转正
+后,`true` 的含义是"Hook 失败让构建失败"——而构建自身失败时仍保留它自己的退出码,所以
+`mcpp build` 不会把一次编译错误报成通知程序的问题。
 
 关于 `during_build` 有两件事值得单独知道:
 
@@ -1878,8 +1895,9 @@ mcpp 报 warning 并保留原构建结果;设为 `true` 时返回失败——但
 - Hook 属于**被构建的那个包**。workspace 展开时就是逐个成员:各自的 `[hooks]`、
   各自的构建、各自的根目录。**虚拟** workspace 根(只有 `[workspace]` 没有
   `[package]`)不构建任何东西,写在那里的 `[hooks]` 永不触发。
-- 依赖的 `[hooks]` 永不执行,只有根项目的会——装一个包不会把包作者的 Shell 命令
-  变成消费方构建的一部分。
+- 依赖的 `[hooks]` **一律跳过**,只有根项目的会执行。mcpp 解析的每一份 manifest 都
+  带着这一节,依赖的也带,而没有任何东西去读它——这正是"装一个包"不会变成"在我下次
+  构建时跑包作者的 Shell 命令"的原因。这是设计的性质,不是一个等着被打开的默认值。
 - 声明了生效的 Hook 就等于让项目放弃空转快路径,因为 `build_start` 规定在准备阶段之后
   执行。对已经是最新状态的带 Hook 项目,`mcpp build` 的代价是一次准备,而不是毫秒级。
 
@@ -1906,8 +1924,9 @@ side_effect = false
 deps = ["xim:mcpp-hooks-audioplayer@0.0.1"]
 ```
 
-构建全程的背景音乐,加上一段区分结果的提示音;`side_effect = false` 让缺少音频设备
-只是一条 warning,而不是一次失败的构建。
+构建全程的背景音乐,加上一段区分结果的提示音。`side_effect = false` 写出来而不是靠
+默认值:它是这份 manifest 自己就想要的值——缺个音频设备不该让构建失败——所以等这个键
+有了不止一个可接受的值之后,它仍然会这么写。
 
 ## 附录 A. Schema 所有权原则(新字段准入标准)
 

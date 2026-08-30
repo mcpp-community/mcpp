@@ -3994,7 +3994,39 @@ TEST(ManifestHooks, AbsentSectionIsInertButNotDisabled) {
     EXPECT_TRUE(m->hooks.enabled);
     EXPECT_FALSE(m->hooks.active());
     EXPECT_EQ(m->hooks.timeoutSeconds, 10);
-    EXPECT_TRUE(m->hooks.sideEffect);
+    // Experimental: a hook may not decide whether a build succeeded, so this
+    // defaults to false and is the only value the parser accepts.
+    EXPECT_FALSE(m->hooks.sideEffect);
+}
+
+// ⚠️ The experimental gate. Refused rather than downgraded: honouring it would
+// give an experimental feature a veto over every build, and ignoring it would
+// leave the project believing its build is gated on a notifier when nothing
+// is. Both silent options are worse than the error.
+TEST(ManifestHooks, SideEffectTrueIsRefusedWhileTheFeatureIsExperimental) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+build_finished = "echo done"
+side_effect = true
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("experimental"), std::string::npos)
+        << m.error().message;
+    EXPECT_NE(m.error().message.find("side_effect"), std::string::npos)
+        << m.error().message;
+}
+
+// The key stays in the vocabulary: writing the value that IS the current
+// behaviour must keep working, so a manifest does not have to change when the
+// feature is promoted.
+TEST(ManifestHooks, SideEffectFalseIsAcceptedSoTheKeyStaysReserved) {
+    auto m = parse_with_hooks(R"(
+[hooks]
+build_finished = "echo done"
+side_effect = false
+)");
+    ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    EXPECT_FALSE(m->hooks.sideEffect);
 }
 
 TEST(ManifestHooks, CommandsAndPolicyAreRead) {

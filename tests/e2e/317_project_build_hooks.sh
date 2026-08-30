@@ -64,7 +64,7 @@ build_failed = "echo failed>>hooks.log"
 build_finished = "echo finished>>hooks.log"
 timeout_seconds = 10
 enabled = true
-side_effect = true
+side_effect = false
 EOF
 
 # Invoked BELOW the project root: a hook's relative paths belong to the root,
@@ -94,7 +94,35 @@ cat > src/main.cpp <<'EOF'
 int main() { return 0; }
 EOF
 
-# ── side_effect = false: reported, but the build keeps its own result ────
+# ── A failing hook is REPORTED and the build keeps its own result ───────
+#
+# While `[hooks]` is experimental it may not decide whether a build succeeded.
+# The build below succeeds with a hook that cannot run at all, and the two
+# assertions are both needed: the exit code says the hook had no vote, and the
+# warning says it was not silently swallowed.
+write_manifest <<'EOF'
+[package]
+name = "hookprobe"
+version = "0.1.0"
+
+[hooks]
+build_finished = "mcpp-hook-command-that-does-not-exist"
+EOF
+"$MCPP" build > ignored-hook-failure.log 2>&1 || {
+    cat ignored-hook-failure.log
+    echo "FAIL: a failing hook changed the build result"; exit 1; }
+grep -q "warning: hook 'build_finished' exited with status" ignored-hook-failure.log || {
+    cat ignored-hook-failure.log; echo "FAIL: the hook failure was not reported"; exit 1; }
+# `if grep` rather than `grep && { }`: a NEGATIVE assertion written with `&&`
+# leaves the list's exit status as grep's, and reading that under `set -e` is
+# an argument this file should not be having.
+if grep -q "error: hook 'build_finished'" ignored-hook-failure.log; then
+    cat ignored-hook-failure.log
+    echo "FAIL: an experimental hook failure was reported as an error"; exit 1
+fi
+
+# The explicit spelling of the current behaviour keeps working, so a manifest
+# does not have to change when the feature is promoted.
 write_manifest <<'EOF'
 [package]
 name = "hookprobe"
@@ -104,27 +132,30 @@ version = "0.1.0"
 build_finished = "mcpp-hook-command-that-does-not-exist"
 side_effect = false
 EOF
-"$MCPP" build > ignored-hook-failure.log 2>&1 || {
-    cat ignored-hook-failure.log
-    echo "FAIL: side_effect=false changed build success"; exit 1; }
-grep -q "warning: hook 'build_finished' exited with status" ignored-hook-failure.log || {
-    cat ignored-hook-failure.log; echo "FAIL: ignored hook failure was not reported"; exit 1; }
+"$MCPP" build > explicit-false.log 2>&1 || {
+    cat explicit-false.log; echo "FAIL: side_effect=false was not accepted"; exit 1; }
 
-# ── The same failure is fatal under the default side_effect = true ──────
+# ── `side_effect = true` is REFUSED, not quietly downgraded ─────────────
+#
+# Honouring it would give an experimental feature a veto over every build;
+# ignoring it would leave the project believing its build is gated on a
+# notifier when nothing is. Both silent options are worse than an error.
 write_manifest <<'EOF'
 [package]
 name = "hookprobe"
 version = "0.1.0"
 
 [hooks]
-build_finished = "mcpp-hook-command-that-does-not-exist"
+build_finished = "echo done"
+side_effect = true
 EOF
 rc=0
-"$MCPP" build > fatal-hook-failure.log 2>&1 || rc=$?
+"$MCPP" build > side-effect-true.log 2>&1 || rc=$?
 [[ $rc -ne 0 ]] || {
-    cat fatal-hook-failure.log; echo "FAIL: fatal hook failure returned success"; exit 1; }
-grep -q "error: hook 'build_finished' exited with status" fatal-hook-failure.log || {
-    cat fatal-hook-failure.log; echo "FAIL: fatal hook failure was not reported"; exit 1; }
+    cat side-effect-true.log; echo "FAIL: side_effect=true was accepted"; exit 1; }
+grep -q "experimental" side-effect-true.log || {
+    cat side-effect-true.log
+    echo "FAIL: the refusal does not say why"; exit 1; }
 
 # ── enabled = false switches off a table that still names commands ──────
 write_manifest <<'EOF'
@@ -164,10 +195,11 @@ version = "0.1.0"
 build_finished = "$slow_command"
 timeout_seconds = 1
 EOF
-rc=0
-"$MCPP" build > timeout.log 2>&1 || rc=$?
-[[ $rc -ne 0 ]] || { cat timeout.log; echo "FAIL: timed-out hook returned success"; exit 1; }
-expect_line timeout.log "error: hook 'build_finished' timed out after 1s"
+"$MCPP" build > timeout.log 2>&1 || {
+    cat timeout.log; echo "FAIL: a timed-out hook changed the build result"; exit 1; }
+# The bound is real even though the build survives it: without the timeout the
+# command would have run for five seconds, and the line below would be absent.
+expect_line timeout.log "warning: hook 'build_finished' timed out after 1s"
 
 # ── An invalid value fails the manifest, before any command runs ────────
 #
@@ -337,11 +369,12 @@ version = "0.1.0"
 build_start = "$pause_2s"
 during_build = { cmd = "mcpp-hook-command-that-does-not-exist", loop = true }
 EOF
-rc=0
-"$MCPP" build > loop-giveup.log 2>&1 || rc=$?
-[[ $rc -ne 0 ]] || {
-    cat loop-giveup.log; echo "FAIL: a during_build that never ran was not fatal"; exit 1; }
-grep -q "error: hook 'during_build' failed to stay up" loop-giveup.log || {
+# The build still succeeds — an experimental hook has no vote — but giving up
+# has to be VISIBLE, or a silent spin and a silent stop look identical.
+"$MCPP" build > loop-giveup.log 2>&1 || {
+    cat loop-giveup.log
+    echo "FAIL: a during_build that never ran changed the build result"; exit 1; }
+grep -q "warning: hook 'during_build' failed to stay up" loop-giveup.log || {
     cat loop-giveup.log; echo "FAIL: giving up was not reported"; exit 1; }
 
 # ── `loop` on a self-closing event is refused, not ignored ──────────────
