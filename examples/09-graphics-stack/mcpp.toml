@@ -8,19 +8,36 @@ standard = "c++23"
 # The versions are the upstream projects' own release numbers, and the shapes
 # differ on one criterion: a library is BUILT FROM SOURCE when upstream ships it
 # as a separable unit, and BOUND to the ecosystem's payload when it is an
-# internal target of a project the ecosystem already owns. libdrm and wayland
-# pass that test; GBM does not — it is a build target inside Mesa, and a loader
-# whose backends are Mesa's own.
+# internal target of a project the ecosystem already owns.
+#
+# Exactly ONE of the four is a binding, and it is GBM: it is a build target
+# inside Mesa (`src/gbm/meson.build` is `link_with: [libloader]`, which wants
+# ~120 TUs of Mesa's internal util library for one function), and it is a
+# LOADER whose backends are Mesa's own `dri_gbm.so` — built apart from Mesa it
+# would have nothing to load. libdrm, EGL and wayland all pass the test and are
+# built from source.
 [target.'cfg(linux)'.dependencies.compat]
 libdrm = "2.4.134"       # source-built; the KMS side: modes, CRTCs, framebuffers
 libgbm = "25.0.7"        # Mesa's GBM: buffer allocation out of a DRM device
-egl    = "1.7.0"         # libglvnd's EGL dispatch: rendering onto those buffers
 
-# wayland is source-built too, out of mcpplibs/wayland — the client and the
-# server are distinct SONAMEs that Mesa's libEGL_mesa needs BOTH of, so they are
-# two packages rather than one with an ldflags escape hatch. Each also ships a
-# C++23 module wrapper; this example uses the headers, and 09's sibling text
-# explains what `import wayland.client;` would change (nothing but the include).
+# These three are source builds out of forks that add mcpp support and patch no
+# upstream file.
+#
+# wayland is two packages rather than one with an ldflags escape hatch: the
+# client and the server are distinct SONAMEs that Mesa's libEGL_mesa needs BOTH
+# of, and mcpp links every library target against all of a package's sources.
+#
+# egl is libglvnd's vendor-neutral dispatch — the piece that makes GBM useful
+# for RENDERING rather than only for allocation. It also carries
+# `libGLdispatch.so.0`, as a sibling workspace member reached by a path
+# dependency rather than as a second index entry, because being the ONE dispatch
+# point in a process is what GLVND is for.
+#
+# All three ship a C++23 module wrapper too. This example uses the headers, and
+# for a reason worth knowing: `EGL_PLATFORM_GBM_KHR` and friends are MACROS, and
+# no module can export a macro — so `import egl;` replaces the declarations but
+# never the `#include <EGL/eglext.h>` that the constants come from.
 [target.'cfg(linux)'.dependencies.freedesktop]
 wayland        = "1.26.0"
 wayland-server = "1.26.0"
+egl            = "1.7.0"

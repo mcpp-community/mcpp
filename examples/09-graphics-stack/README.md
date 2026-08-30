@@ -9,7 +9,8 @@ mcpp run
 
 ```
 == the graphics stack, resolved from the index ==
-  GBM_BACKENDS_PATH = …/subos/default/usr/lib/gbm
+  GBM_BACKENDS_PATH         = …/subos/default/usr/lib/gbm
+  __EGL_VENDOR_LIBRARY_DIRS = …/subos/default/share/glvnd/egl_vendor.d
   wl_display_create        0x3f798be0
 -- DRM node -> GBM device -> EGL display --
   /dev/dri/renderD128
@@ -123,9 +124,12 @@ the ecosystem already owns, where building it would mean forking that project.
 |---|---|---|
 | `compat.libdrm` | source | `drmModeGetResources`, `drmModeAddFB2`, `drmModeSetCrtc` — the KMS side |
 | `compat.libgbm` | binds `xim:mesa` | `gbm_create_device`, `gbm_bo_create` — buffers out of a DRM device |
-| `compat.egl` | binds `xim:libglvnd` | `eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, …)` — rendering onto them |
+| `freedesktop.egl` | source | `eglGetPlatformDisplay(EGL_PLATFORM_GBM_KHR, …)` — rendering onto them, and `import egl;` |
 | `freedesktop.wayland` | source | `libwayland-client.so.0`, and `import wayland.client;` |
 | `freedesktop.wayland-server` | source | `libwayland-server.so.0`, and `import wayland.server;` |
+
+**Four of the five are source builds.** GBM is the only binding, and the
+paragraphs below are about why the line falls where it does.
 
 libdrm passes the test — an independent freedesktop project with its own
 releases — so it is compiled here, five translation units with no dependencies
@@ -152,9 +156,20 @@ through it. That only holds because the package builds a *shared* library with
 the canonical soname; merged into the consumer as objects there would be two
 copies of libdrm's internal state over one set of file descriptors.
 
-`compat.egl` is a binding for a duller reason: libglvnd IS separable, but
-`libEGL.so` also needs its Python-generated dispatch stubs, `winsys_dispatch`
-and the whole of `libGLdispatch.so`, so it has not been done yet.
+EGL used to be the exception that proved the criterion was being applied
+loosely. It was a binding for a duller reason than GBM's — libglvnd IS
+separable, but `libEGL.so` also needs its generated dispatch stubs,
+`winsys_dispatch` and the whole of `libGLdispatch.so`, so it simply had not
+been done. "Not done yet" is not a shape, so it is now a source build out of
+[mcpplibs/libglvnd](https://github.com/mcpplibs/libglvnd), and the dispatch
+tables upstream generates with ~1000 lines of Python are checked into that fork
+and diffed by its CI rather than regenerated during your build.
+
+That package also carries `libGLdispatch.so.0`, as a **sibling workspace member
+reached by a path dependency** rather than as a second index entry. GLVND
+exists to be the one dispatch point in a process; two index entries would let a
+project name both and resolve two instances, and — by the same soname-reuse
+rule as above — one would be mapped and the other silently discarded.
 
 One honest gap, since "Mesa/Vulkan" usually get named together: Vulkan is not
 part of this example and is not in the same state. `compat.vulkan-runtime`
@@ -164,15 +179,25 @@ to bind to yet. The GBM/KMS/EGL/Wayland stack above has no such edge.
 
 ## Two things worth knowing
 
-**`GBM_BACKENDS_PATH` is not set by any of these packages.** libgbm is a
-loader: `gbm_create_device()` dlopens `<path>/<driver>_gbm.so`, and the path
-Mesa compiles in is `/usr/lib/gbm` — correct on a distribution, wrong the
-moment the payload lives anywhere else. Setting that variable is Mesa's own
-mechanism and the *environment's* job, which is where every relocated stack
-puts it (Valve's pressure-vessel, Nix, Conda all do exactly this). Here
-`xim:mesa` declares it into the SubOS and mcpp carries SubOS declarations into
-the processes it launches, so it is simply already set — which is why the
-program prints it rather than computing it.
+**Neither `GBM_BACKENDS_PATH` nor `__EGL_VENDOR_LIBRARY_DIRS` is set by any of
+these packages**, and both are needed, because two of the five are *loaders*.
+`gbm_create_device()` dlopens `<path>/<driver>_gbm.so`; `eglInitialize()`
+dlopens whatever a JSON file in the vendor directory names. The paths upstream
+compiles in — `/usr/lib/gbm`, `<prefix>/share/glvnd/egl_vendor.d` — are correct
+on a distribution and wrong the moment the payload lives anywhere else.
+
+Those two variables are Mesa's and GLVND's own mechanisms, and setting them is
+the *environment's* job, which is where every relocated stack puts it (Valve's
+pressure-vessel, Nix, Conda all do exactly this). Here `xim:mesa` declares both
+into the SubOS and mcpp carries SubOS declarations into the processes it
+launches, so they are simply already set — which is why the program prints them
+rather than computing them.
+
+`freedesktop.egl` goes one step further and compiles in an **empty** default
+rather than upstream's. A wrong compiled-in path is worse than no path: it
+would make a missing declaration load the *host's* driver into a sandboxed
+process, silently and successfully. Empty makes the same situation say "no
+vendor found".
 
 **The wayland client and server are separate packages**, and this example asks
 for both because it creates a `wl_display` on the server side. That is not a

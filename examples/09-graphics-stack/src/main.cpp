@@ -10,7 +10,7 @@
 #include <xf86drm.h>          // compat.libdrm
 #include <xf86drmMode.h>
 #include <drm_fourcc.h>
-#include <EGL/egl.h>          // compat.egl
+#include <EGL/egl.h>          // freedesktop.egl
 #include <EGL/eglext.h>
 #include <wayland-client.h>   // compat.wayland
 #include <wayland-server-core.h>
@@ -43,13 +43,18 @@ int main()
 {
     std::puts("== the graphics stack, resolved from the index ==");
 
-    // Where the GBM backends are found. Nothing in this program and nothing in
-    // compat.libgbm sets this: `xim:mesa` declares it into the SubOS through
-    // the graphics discovery layer, and mcpp carries SubOS declarations into
-    // the processes it launches.
-    const char *backends = std::getenv("GBM_BACKENDS_PATH");
-    std::printf("  GBM_BACKENDS_PATH = %s\n",
-                backends ? backends : "<unset — the ecosystem did not supply it>");
+    // Where the two LOADERS in this stack find what they dlopen. Nothing in
+    // this program and none of the packages sets either: `xim:mesa` declares
+    // both into the SubOS through the graphics discovery layer, and mcpp
+    // carries SubOS declarations into the processes it launches.
+    //
+    // GBM_BACKENDS_PATH        -> gbm_create_device() dlopens <path>/<drv>_gbm.so
+    // __EGL_VENDOR_LIBRARY_DIRS -> eglInitialize() dlopens what a JSON there names
+    for (const char *name : {"GBM_BACKENDS_PATH", "__EGL_VENDOR_LIBRARY_DIRS"}) {
+        const char *value = std::getenv(name);
+        std::printf("  %-25s = %s\n", name,
+                    value ? value : "<unset — the ecosystem did not supply it>");
+    }
 
     // Wayland: build a server-side display. No socket is bound, so this needs
     // no session and no privileges — the cheapest proof the library is live.
