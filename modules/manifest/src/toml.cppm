@@ -530,11 +530,18 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     // "unsupported" would deny a documented plan; saying nothing
                     // is what let it look implemented.
                     if (fkey == "deps") {
+                        // ⚠️ THE SPELLING NAMED HERE HAS TO EXIST. The first
+                        // draft of this message offered `optional = true`,
+                        // which mcpp has never had — a diagnostic that sends
+                        // its reader to a key the parser does not know is the
+                        // same defect as the warnings this release removes,
+                        // just one layer out. `[feature-deps.<name>]` is the
+                        // documented mechanism (docs/05 §2.8.2).
                         m.schemaWarnings.push_back(std::format(
-                            "[features].{}.deps is reserved for a later stage and "
-                            "is not read yet (ignored). Declare dependencies in "
-                            "[dependencies] and gate them with "
-                            "`optional = true` + `implies`.", fname));
+                            "[features].{}.deps is reserved for a later stage "
+                            "and is not read yet (ignored). To pull in a "
+                            "dependency when this feature is active, declare it "
+                            "under [feature-deps.{}].", fname, fname));
                         continue;
                     }
                     std::string supported;

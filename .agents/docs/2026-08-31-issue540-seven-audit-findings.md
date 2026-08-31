@@ -532,6 +532,13 @@ pass that always fires both produce a green single-leg test.
 
 ### 6.9 D16 — the third option: finish the channel that already exists
 
+> **Not taken.** D9 shipped instead, for the cost-floor reason argued at the end
+> of this section: a package wanting one conditional flag should not have to
+> ship and run a C++ program. **D16a was taken anyway**, because it is a defect
+> rather than an option — `docs/05` described `target_libc()` as the resolved C
+> library when it names the payload, and that misleads authors under any of the
+> three answers. D16b and D16c were not needed once the declarative axis worked.
+
 Do not build a predicate axis. Close the three gaps in §6.7 instead:
 
 - **D16a.** Make the resolved `c-abi` reachable from a build program — either by
@@ -689,7 +696,7 @@ The #531 path does neither. §12 is what that costs.
 | 5 | D1 + D3 + D2a + D4 — the text corrections and the `[features]` check | mechanical; no interaction with anything above |
 | 6 | D11 — `docs/13` and `docs/17`, four files | after 2, so the documents describe the gated behaviour |
 | 7 | **D16a** — `target_libc()` reports the payload ref while `docs/05` calls it the resolved C library (§6.7 item 2) | a defect on its own terms, required under all three options below, and it misleads package authors today |
-| 8 | D9 / D16 / D10 — the declarative axis, the imperative channel, or withdrawal | the only item needing a decision rather than an implementation |
+| 8 | D9 / D16 / D10 — the declarative axis, the imperative channel, or withdrawal | the only item needing a decision rather than an implementation. **Decided: D9**, plus D16a because it is a defect either way (§6.9) |
 | 9 | D15 — the tests §12.4 names | after the behaviour they assert exists |
 
 Items 1 through 7 are unambiguous. Item 8 wants a maintainer's answer, and D8

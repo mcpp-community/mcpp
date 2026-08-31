@@ -1150,7 +1150,7 @@ simd       = { sources = ["src/simd/**"], flags = [
 
 - **表形式恰好接受** `implies`、`forward`、`defines`、`sources`、`flags`、
   `requires`、`provides`。其余键会被报成一条 schema 警告并忽略(mcpp 2026.9.1.1+);
-  `deps` 单独报为「保留」,因为它是计划中的而不是写错的。在该版本之前,`[features]`
+  `deps` 单独报为「保留」(它是计划中的而不是写错的),并指向 `[feature-deps.<name>]`。在该版本之前,`[features]`
   是唯一一个完全没有 schema 检查的结构化段落 —— 把 `include_dirs` 误写进 feature 里
   会零诊断地构建成功,而同样的错误写在 `[build]` 里会被报出来。
 - `defines` 为**裸**宏名(不带 `-D`);feature 激活时每个脱糖为 `-D<x>`,加到该包

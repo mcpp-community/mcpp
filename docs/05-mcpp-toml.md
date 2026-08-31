@@ -1331,8 +1331,8 @@ simd       = { sources = ["src/simd/**"], flags = [
 
 - **The table form accepts exactly** `implies`, `forward`, `defines`, `sources`,
   `flags`, `requires`, `provides`. Anything else is reported as a schema warning
-  and ignored (mcpp 2026.9.1.1+); `deps` is reported separately as reserved,
-  because it is planned rather than wrong. Before that release `[features]` was
+  and ignored (mcpp 2026.9.1.1+); `deps` is reported separately as reserved and
+  points at `[feature-deps.<name>]`. Before that release `[features]` was
   the one structured section with no schema check at all, so a misplaced
   `include_dirs` inside a feature built successfully with no diagnostic while
   the identical mistake in `[build]` was reported.
