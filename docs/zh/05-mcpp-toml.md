@@ -1845,9 +1845,6 @@ build_start = "echo build started"
 build_failed = "notify-send 'build failed'"
 build_finished = "notify-send 'build finished'"
 
-# 与构建并行,构建结束时被停止。
-during_build = { cmd = "mcpp-hooks-audioplayer bgm", loop = true }
-
 # 可选;以下是默认值。
 timeout_seconds = 10
 enabled = true
@@ -1893,8 +1890,7 @@ build_start
     └─ 构建失败 → during_build 闭合 → build_failed
 ```
 
-`during_build` 在终止 Hook **之前**闭合,这样"构建完成"的提示音不会和它要替换掉的
-背景音乐撞在一起。
+`during_build` 在终止 Hook **之前**闭合,因此两条命令不会重叠执行。
 
 `build_failed` 与 `build_finished` 互斥,而且两者都只在 `build_start` 已经执行之后
 才可达。项目**准备**阶段就失败的情况——manifest 非法、依赖无法解析、没有可用工具链
@@ -1953,7 +1949,6 @@ Hook 程序可以作为普通 xlings 依赖安装。例如,音频通知程序可
 
 ```toml
 [hooks]
-during_build = { cmd = "mcpp-hooks-audioplayer bgm", loop = true }
 build_finished = "mcpp-hooks-audioplayer niulai-mm"
 build_failed = "mcpp-hooks-audioplayer niulai-niulai"
 side_effect = false
@@ -1962,9 +1957,9 @@ side_effect = false
 deps = ["xim:mcpp-hooks-audioplayer@0.0.1"]
 ```
 
-构建全程的背景音乐,加上一段区分结果的提示音。`side_effect = false` 写出来而不是靠
-默认值:它是这份 manifest 自己就想要的值——缺个音频设备不该让构建失败——所以等这个键
-有了不止一个可接受的值之后,它仍然会这么写。
+根据构建成功或失败播放不同提示音。`side_effect = false` 写出来而不是靠默认值:它是
+这份 manifest 自己就想要的值——缺个音频设备不该让构建失败——所以等这个键有了不止
+一个可接受的值之后,它仍然会这么写。
 
 ## 附录 A. Schema 所有权原则(新字段准入标准)
 
