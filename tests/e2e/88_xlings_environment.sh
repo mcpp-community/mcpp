@@ -20,7 +20,19 @@ version = "0.1.0"
 
 [xlings]
 # Host build-tools the project wants available (xlings "deps").
-deps = ["make@4.4", "cmake@3.28"]
+#
+# ⚠️ THE VERSION HAS TO EXIST, AND UNTIL 2026.9.1.1 IT DID NOT HAVE TO.
+# This read `make@4.4, cmake@3.28`; the index carries make 4.3 and cmake
+# 4.4.2/4.0.2, so neither has ever resolved. That was invisible because #531's
+# provisioning did not read its own result — every failure xlings reported was
+# taken as success — so this test asserted materialization on top of an install
+# that never happened, which is the state #531 was written to end. Now the
+# failure is reported and the build stops, which is what makes the fixture's
+# error visible at last.
+#
+# `ninja@1.12.1` is deliberate: it is already installed anywhere mcpp can
+# build, so provisioning short-circuits and this test still costs no download.
+deps = ["ninja@1.12.1"]
 # A named per-project sandbox.
 subos = "dev"
 
@@ -49,7 +61,7 @@ J=.mcpp/.xlings.json
 [ -f "$J" ] || { echo "FAIL: $J was not written"; ls -la .mcpp 2>/dev/null; exit 1; }
 echo "--- $J ---"; cat "$J"
 grep -q '"deps"'           "$J" || { echo "FAIL: deps not materialized"; exit 1; }
-grep -q 'make@4.4'         "$J" || { echo "FAIL: deps entry missing"; exit 1; }
+grep -q 'ninja@1.12.1'     "$J" || { echo "FAIL: deps entry missing"; exit 1; }
 grep -q '"subos": "dev"'   "$J" || { echo "FAIL: subos not materialized"; exit 1; }
 grep -q '"workspace"'      "$J" || { echo "FAIL: workspace not materialized"; exit 1; }
 grep -q '"ninja": "1.12.1"' "$J" || { echo "FAIL: workspace pin missing"; exit 1; }
