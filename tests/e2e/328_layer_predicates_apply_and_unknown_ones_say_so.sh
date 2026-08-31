@@ -181,4 +181,39 @@ set -e
 [ "$rc" -ne 0 ] || { cat unknown/s.log; echo "FAIL: --strict did not turn the warning into an error"; exit 1; }
 echo "  ok  --strict makes it an error"
 
+# ── (4) a layer predicate cannot select dependencies, and says so ───────────
+#
+# A layer is resolved FROM the dependency graph, so a dependency chosen by one
+# would decide the answer it is asking for — docs/14 states the limit. The limit
+# is not the interesting part; being told about it is. By the time the layer
+# pass runs, dependency resolution is over, so such a section would otherwise be
+# dropped in exactly the silence this whole test exists to end.
+#
+# ⚠️ AND THE BUILD INPUTS UNDER THE SAME PREDICATE MUST STILL APPLY. A warning
+# that quietly disabled the rest of the section would trade one silent drop for
+# another.
+mkdir -p depcond/src
+cat > depcond/mcpp.toml <<EOF
+[package]
+name    = "depcond"
+version = "0.1.0"
+
+[target.'cfg(c-abi = "$NOTCABI")'.dependencies]
+never-resolved = "1.0.0"
+
+[target.'cfg(c-abi = "$CABI")'.build]
+defines = ["INPUTS_STILL_APPLY=1"]
+EOF
+cat > depcond/src/main.cpp <<'EOF'
+#ifndef INPUTS_STILL_APPLY
+#error "the warning about dependencies also suppressed the build inputs"
+#endif
+int main() { return 0; }
+EOF
+( cd depcond && "$MCPP" build > d.log 2>&1 ) || {
+    cat depcond/d.log; echo "FAIL: a layer-conditioned dependency must warn, not fail"; exit 1; }
+grep -q "conditions dependencies on a target-side layer" depcond/d.log || {
+    cat depcond/d.log; echo "FAIL: no diagnostic for a layer-conditioned dependency"; exit 1; }
+echo "  ok  a layer-conditioned dependency is reported, and the build inputs still apply"
+
 echo "PASS: 328 layer predicates apply, and unknown ones say so"
