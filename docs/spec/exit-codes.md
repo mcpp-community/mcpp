@@ -90,9 +90,28 @@ issue;`1` 通常不是。
 
 ## 4. 当前实现与本规范的差异
 
-无。§2 的六个码是 `src/` 中出现的全部进程退出码(2026-09-01 穷举核对:
-`return 0/1/2/4/127`、`main.cpp` 的 `rc = 70`;`3`、`5`、`9`、`19`、`23` 这几个数出现
-在严重性排序、ELF 重定位类型表与 MSVC 版本解析里,均不是退出码)。
+无。§2 的六个码是 `src/` 中出现的全部进程退出码。
+
+2026-09-01 穷举核对,记录方法与读数,因为「我数了一遍」不是判据:
+
+    $ grep -rhoE "return [0-9]+;" src/ --include=*.cppm --include=*.cpp | sort -u
+    return 0;  return 1;  return 2;  return 3;  return 4;  return 5;
+    return 9;  return 19; return 20; return 23; return 127; return 1024;
+
+逐个归类:
+
+| 数 | 是退出码? | 出处 |
+|---|---|---|
+| `0` `1` `2` `127` | 是 | 全仓;`127` 在 `cli.cppm` |
+| `4` | 是,**11 处,全部同一个原因** | `config::load_or_init` 失败:`index_management.cppm`×6、`doctor.cppm`×2、`pack/pipeline.cppm`、`cli/cmd_toolchain.cppm`、`pm/commands.cppm` 各 1 |
+| `70` | 是 | `main.cpp` 的 `rc = 70`(`EX_SOFTWARE`),两处 |
+| `3` | 否 | `runtime_validation.cppm` 的 `status_severity()` —— 严重性排序 |
+| `4` `5` `9` `19` `20` `1024` | 否 | `runtime/elf.cppm` 的 ELF 重定位类型表(`R_RISCV_COPY` / `R_X86_64_COPY` / …) |
+| `23` | 否 | `toolchain/msvc.cppm` 的版本解析 |
+
+⚠️ `4` 同时出现在两栏,这正是为什么这张表按**出处**而不是按数字归类:同一个字面量在
+一个文件里是退出码,在另一个文件里是 `EM_RISCV` 的重定位类型。仅凭 `grep "return 4"`
+数出来的 13 处里,有 2 处不是退出码。
 
 ## 5. 变更记录
 
