@@ -106,6 +106,53 @@ n=$(grep -o '\-DPROBE_ONCE=1' once/compile_commands.json | wc -l | tr -d ' ')
     exit 1; }
 echo "  ok  a predicate naming both a triple key and a layer applies exactly once"
 
+# ── (2b) …and it reaches a DEPENDENCY, which is the motivating case ─────────
+#
+# ⚠️ EVERY LEG ABOVE IS SATISFIED BY A PASS THAT ONLY PATCHES packages[0].
+# docs/14 writes this feature for "a package supplying a layer [that] frequently
+# supports several implementations of the layer beneath it" — a LIBRARY, reached
+# as someone's dependency. The build.mcpp tail that shares this pass's window
+# patches the root alone, correctly for its own purpose, so copying that shape
+# would have left the one package this feature exists for unserved and every
+# root-only assertion still green.
+mkdir -p dep/app/src dep/lib/src
+cat > dep/lib/mcpp.toml <<EOF
+[package]
+name    = "layerlib"
+version = "0.1.0"
+
+[target.'cfg(c-abi = "$CABI")'.build]
+defines = ["LIB_MATCHED=1"]
+
+[target.'cfg(c-abi = "$NOTCABI")'.build]
+defines = ["LIB_MUST_NOT_APPLY=1"]
+EOF
+cat > dep/lib/src/layerlib.cppm <<'EOF'
+export module layerlib;
+#ifndef LIB_MATCHED
+#error "a DEPENDENCY's matching cfg(c-abi = ...) section did not apply"
+#endif
+#ifdef LIB_MUST_NOT_APPLY
+#error "a DEPENDENCY's non-matching cfg(c-abi = ...) section applied"
+#endif
+export int lib_answer() { return 42; }
+EOF
+cat > dep/app/mcpp.toml <<'EOF'
+[package]
+name    = "app"
+version = "0.1.0"
+
+[dependencies]
+layerlib = { path = "../lib" }
+EOF
+cat > dep/app/src/main.cpp <<'EOF'
+import layerlib;
+int main() { return lib_answer() == 42 ? 0 : 1; }
+EOF
+( cd dep/app && "$MCPP" build > b.log 2>&1 ) || {
+    cat dep/app/b.log; echo "FAIL: layer predicates did not reach a dependency"; exit 1; }
+echo "  ok  a layer predicate reaches a dependency, and its negative leg holds"
+
 # ── (3) an unknown key is reported, and --strict makes it an error ──────────
 mkdir -p unknown/src
 cat > unknown/mcpp.toml <<'EOF'
