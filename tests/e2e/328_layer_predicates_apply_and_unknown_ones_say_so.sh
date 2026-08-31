@@ -51,6 +51,18 @@ echo "  ..  this host resolves c-abi = '$CABI'"
 NOTCABI="not-${CABI}"
 
 # ── (1) + (2) a matching layer predicate applies; a non-matching one does not ──
+#
+# ⚠️ THE TRIPLE HALF OF THE COMBINED PREDICATE IS any(unix, windows), NOT unix.
+# The point of that leg is that a triple key and a layer key COMBINE, so its
+# triple half has to be true everywhere this test runs. Written as bare unix it
+# was true on Linux and macOS and false on Windows, where all(...) then
+# correctly evaluated false and the fixture's #error fired. CI caught it; the
+# feature was right and the test was not.
+#
+# ⚠️ AND THESE NOTES LIVE OUTSIDE THE HEREDOCS. The fixtures below interpolate
+# $CABI, so their heredocs are unquoted — which makes backticks in a comment
+# command substitution. The first version of this note sat inside one and the
+# suite printed `syntax error: unexpected end of file` while still passing.
 mkdir -p layers/src
 cat > layers/mcpp.toml <<EOF
 [package]
@@ -63,7 +75,7 @@ defines = ["PROBE_MATCHED=1"]
 [target.'cfg(c-abi = "$NOTCABI")'.build]
 defines = ["PROBE_MUST_NOT_APPLY=1"]
 
-[target.'cfg(all(unix, c-abi = "$CABI"))'.build]
+[target.'cfg(all(any(unix, windows), c-abi = "$CABI"))'.build]
 defines = ["PROBE_COMBINED=1"]
 EOF
 cat > layers/src/main.cpp <<'EOF'
@@ -93,13 +105,14 @@ cat > once/mcpp.toml <<EOF
 name    = "once"
 version = "0.1.0"
 
-[target.'cfg(any(unix, c-abi = "$CABI"))'.build]
+[target.'cfg(any(unix, windows, c-abi = "$CABI"))'.build]
 defines = ["PROBE_ONCE=1"]
 EOF
 echo 'int main() { return 0; }' > once/src/main.cpp
 ( cd once && "$MCPP" build > b.log 2>&1 ) || {
     cat once/b.log; echo "FAIL: the mixed-predicate build errored"; exit 1; }
-n=$(grep -o '\-DPROBE_ONCE=1' once/compile_commands.json | wc -l | tr -d ' ')
+# Both spellings: a Windows self-host may drive MSVC, which takes `/D`.
+n=$(grep -oE '[-/]DPROBE_ONCE=1' once/compile_commands.json | wc -l | tr -d ' ')
 [ "$n" -eq 1 ] || {
     echo "FAIL: a predicate with both a triple leg and a layer leg contributed $n times, expected 1"
     grep -o '\-DPROBE_ONCE=1' once/compile_commands.json
