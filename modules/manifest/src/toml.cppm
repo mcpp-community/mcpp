@@ -504,6 +504,60 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 if (auto fwd = mcpp::pm::split_feature_forward_token(tok))
                     m.featureForwards[fname].push_back(std::move(*fwd));
             m.featuresMap[fname] = std::move(localImplies);
+
+            // #540: the table form is the ONE structured manifest section that
+            // had no schema check, so `include_dirs` written inside a feature
+            // built successfully with zero diagnostics — while the identical
+            // misplacement in `[build]` or `[target.<pred>.build]` is reported.
+            //
+            // MUST stay in sync with the reads above. Warning, not error, and
+            // root-manifest-only in effect (prepare surfaces schemaWarnings for
+            // the root before any dependency manifest is loaded), so a package
+            // may adopt a future key before its consumers upgrade — the same
+            // property #515 measured for `[build] private_include_dirs`.
+            if (fval.is_table()) {
+                static constexpr std::string_view kKnownFeatureKeys[] = {
+                    "defines", "flags", "forward", "implies", "provides",
+                    "requires", "sources",
+                };
+                for (auto& [fkey, fignored] : fval.as_table()) {
+                    (void)fignored;
+                    if (std::ranges::find(kKnownFeatureKeys, fkey)
+                        != std::end(kKnownFeatureKeys)) continue;
+                    // `deps` is named apart because it is RESERVED rather than
+                    // wrong: the comment above this block has promised it since
+                    // Feature System v2 and nothing reads it yet. Saying
+                    // "unsupported" would deny a documented plan; saying nothing
+                    // is what let it look implemented.
+                    if (fkey == "deps") {
+                        // ⚠️ THE SPELLING NAMED HERE HAS TO EXIST. The first
+                        // draft of this message offered `optional = true`,
+                        // which mcpp has never had — a diagnostic that sends
+                        // its reader to a key the parser does not know is the
+                        // same defect as the warnings this release removes,
+                        // just one layer out. `[feature-deps.<name>]` is the
+                        // documented mechanism (docs/05 §2.8.2).
+                        m.schemaWarnings.push_back(std::format(
+                            "[features].{}.deps is reserved for a later stage "
+                            "and is not read yet (ignored). To pull in a "
+                            "dependency when this feature is active, declare it "
+                            "under [feature-deps.{}].", fname, fname));
+                        continue;
+                    }
+                    std::string supported;
+                    for (auto k : kKnownFeatureKeys) {
+                        if (!supported.empty()) supported += ", ";
+                        supported += k;
+                    }
+                    m.schemaWarnings.push_back(std::format(
+                        "[features].{} has unsupported key '{}' (ignored). "
+                        "Supported keys: {}. A feature contributes build INPUTS "
+                        "through `sources`, `defines` and `flags`; include "
+                        "directories and compiler flags belong to [build] or to "
+                        "a `flags` entry, not directly to the feature.",
+                        fname, fkey, supported));
+                }
+            }
         }
     }
 
@@ -1325,6 +1379,12 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         "private_include_dirs",
         "jobs", "ldflags", "macos_deployment_target", "module_extensions", "profile",
         "sources", "static_stdlib", "target",
+        // #540: read a few hundred lines above and, until now, absent here —
+        // the SECOND drift of this list, and the comment below narrates the
+        // first. Moved to `[build]` by #494 precisely so their flags could be
+        // conditioned; a manifest writing the documented spelling was told the
+        // key had been ignored while it was taking effect.
+        "std-compat-module", "std-module", "std-module-flags",
     };
     if (auto* bt = doc->get_table("build")) {
         for (auto& [key, _] : *bt) {
@@ -1945,6 +2005,22 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 // a set of build inputs, so it reads the same way.
                 read_paths("include_dirs",       cc.inputs.includeDirs);
                 read_paths("include_dirs_after", cc.inputs.includeDirsAfter);
+                // #540: two BuildInputs members the list below claimed to carry
+                // and this loop never read.
+                //
+                // `std-module-flags` is the one #494 moved into `[build]` FOR
+                // this axis — its comment on the struct member says membership
+                // "is what makes the cfg axis carry it", with `-D_GNU_SOURCE`
+                // right for musl and glibc and wrong for picolibc as the case.
+                // The member and the merge landed; the read did not.
+                //
+                // `private_include_dirs` is worse: the xpkg descriptor's
+                // `target_cfg` block, the OTHER grammar for this same axis,
+                // accepts it (xpkg.cppm) — so one spelling of a conditional
+                // private include dir worked and the other reported the key as
+                // unsupported.
+                read_list ("std-module-flags",     cc.inputs.stdModuleFlags);
+                read_paths("private_include_dirs", cc.inputs.privateIncludeDirs);
                 if (auto f = bt.find("flags"); f != bt.end()) {
                     if (auto err = parse_glob_flags_value(
                             f->second,
@@ -1960,24 +2036,35 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 // with types.cppm's BuildInputs.
                 static constexpr std::string_view kKnownConditionalBuildKeys[] = {
                     "cflags", "cxxflags", "defines", "flags",
-                    "include_dirs", "include_dirs_after", "ldflags", "sources",
+                    "include_dirs", "include_dirs_after", "ldflags",
+                    "private_include_dirs", "sources", "std-module-flags",
                 };
                 for (auto& [key, _] : bt) {
                     bool known = false;
                     for (auto k : kKnownConditionalBuildKeys)
                         if (key == k) { known = true; break; }
                     if (!known) {
+                        // ⚠️ THE LIST IN THE MESSAGE IS THE SAME LIST, for the
+                        // reason spelled out at kKnownBuildKeys: a hand-written
+                        // second copy of a vocabulary drifts, and the drift
+                        // surfaces as a message that names the wrong set. This
+                        // one had spelled the eight keys out in prose and was
+                        // two members behind the struct it claims to mirror.
+                        std::string supported;
+                        for (auto k : kKnownConditionalBuildKeys) {
+                            if (!supported.empty()) supported += ", ";
+                            supported += k;
+                        }
                         m.schemaWarnings.push_back(std::format(
                             "[target.{}.build] has unsupported key '{}' (ignored). "
                             "A conditional section may only contribute build INPUTS: "
-                            "sources, cflags, cxxflags, ldflags, defines, flags, "
-                            "include_dirs, include_dirs_after. Selection knobs "
+                            "{}. Selection knobs "
                             "(target, linkage) and profile settings are resolved "
                             "before the predicate is evaluated and cannot be "
                             "conditioned; the C++ runtime contract IS "
                             "per-target, but it is spelled "
                             "[target.<triple>].cxx_runtime, beside `linkage`.",
-                            triple, key));
+                            triple, key, supported));
                     }
                 }
             }

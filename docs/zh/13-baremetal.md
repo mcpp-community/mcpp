@@ -497,10 +497,18 @@ error: no runner is configured for 'riscv64-none-elf' — a freestanding artifac
 板级支持包是一个普通的 mcpp 包。它在 `[xlings] deps` 下声明所需的模拟器,为消费者
 导出一个 C++ 模块,并从 `build.mcpp` 发出它的板级事实。
 
-⚠️ **`[xlings] deps` 里的声明不是安装触发器。** 它让 `mcpp::xpkg_dir` 能回答「那个包
-落在哪」,自己不装任何东西。写在索引描述符平台 `deps` 里的板级包,其模拟器**随包安装**,
-遇不到这件事;而一个自己声明模拟器的工程 —— 因为没有哪个板级包服务它的那些机器 ——
-会在干净机器上拿到空的 `xpkg_dir`,此时必须说出来:
+**`[xlings] deps` 里的声明会在首次构建时供给该包**(2026.8.29 起)。它同时让
+`mcpp::xpkg_dir` 能回答「那个包落在哪」。两半都要紧:同一条声明既装上模拟器,也告诉
+构建程序它装到了哪。
+
+这次供给用的正是 `[toolchain]` 一直以来的契约 —— 声明它,mcpp 在首次使用时装上 ——
+并且遵守同样两个开关:在 `--offline` / `MCPP_OFFLINE` 或 `MCPP_NO_AUTO_INSTALL` 下
+mcpp 转为拒绝,并列出包名以便手动安装。
+
+⚠️ **构建程序仍然不得假定目录存在。** 供给发生在**声明**了这些 deps 的那个包上;
+构建程序可以从没有发生过供给的路径被走到 —— 一个自己什么都没声明的工程的依赖、
+上面两个开关拒绝掉的环境 —— 所以 `xpkg_dir` 仍可能返回空,此时必须说出来,而不是
+发出一个坏掉的 runner:
 
 ```cpp
 if (const char* dir = mcpp::xpkg_dir("xim", "qemu-riscv"); dir && *dir) {

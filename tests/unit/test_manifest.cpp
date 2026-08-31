@@ -576,6 +576,217 @@ defines = ["TEST_USE_MODULES", "VALUE=42"]
         << (m->schemaWarnings.empty() ? "" : m->schemaWarnings[0]);
 }
 
+// ── #540: the three vocabularies, and the drift that keeps happening ────────
+//
+// `kKnownBuildKeys`, `kKnownConditionalBuildKeys` and the xpkg `target_cfg`
+// list are hand-written transcriptions of sets that exist elsewhere in
+// machine-readable form — the `doc->get_*()` reads immediately above them, and
+// `BuildInputs`'s member list. All three had drifted, in different directions,
+// and `kKnownBuildKeys` had drifted TWICE: the comment beside it narrates the
+// `bmi_schedule` occurrence in detail while three keys eight lines above it
+// were in the same state.
+//
+// The user-visible cost is not a missing warning. It is a warning that is
+// FALSE — "[build] has unsupported key 'std-module' (ignored)" for a key read
+// a few hundred lines above and taking full effect — which is worse than
+// silence, because the only sentence mcpp offers about the key says the
+// opposite of what happens.
+//
+// ⚠️ THE LIST BELOW IS ANOTHER COPY, AND THAT IS THE POINT. A copy that fails
+// loudly when it disagrees is the whole difference from the arrangement that
+// let this happen twice. Add a key to the parser, add it here; if you forget,
+// the negative control at the bottom of each test still passes and this one
+// goes red.
+TEST(Manifest, EveryBuildKeyTheParserReadsIsAccepted) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+allow_host_libs       = false
+bmi_schedule          = "auto"
+build_program_timeout = 120
+c_standard            = "c17"
+cache                 = "local"
+cflags                = ["-Wall"]
+cxxflags              = ["-Wall"]
+cxx_runtime           = "self-contained"
+default-profile       = "release"
+defines               = ["A=1"]
+dependency_linkage    = "static"
+dialect_cxxflags      = ["-fno-rtti"]
+include_dirs          = ["include"]
+include_dirs_after    = ["compat"]
+private_include_dirs  = ["internal"]
+jobs                  = 4
+ldflags               = ["-Wl,--as-needed"]
+macos_deployment_target = "14.0"
+module_extensions     = [".ixx"]
+flags                 = []
+profile               = "release"
+target                = "x86_64-linux-gnu"
+sources               = ["src/**/*.cpp"]
+static_stdlib         = false
+std-module            = "gen/std.cppm"
+std-compat-module     = "gen/std.compat.cppm"
+std-module-flags      = ["-D_GNU_SOURCE"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    std::string all;
+    for (auto const& w : m->schemaWarnings) { all += w; all += '\n'; }
+    EXPECT_TRUE(m->schemaWarnings.empty())
+        << "a key the parser reads was reported as unsupported:\n" << all;
+    // The three that were absent, asserted individually so a regression names
+    // itself rather than arriving as "some warning appeared".
+    EXPECT_EQ(m->stdModule,       "gen/std.cppm");
+    EXPECT_EQ(m->stdCompatModule, "gen/std.compat.cppm");
+    ASSERT_EQ(m->buildConfig.stdModuleFlags.size(), 1u);
+    EXPECT_EQ(m->buildConfig.stdModuleFlags[0], "-D_GNU_SOURCE");
+}
+
+// The negative control. Without it the test above passes against a parser whose
+// unknown-key check has been deleted outright, which is the failure mode a
+// "no warnings" assertion invites.
+TEST(Manifest, AnUnknownBuildKeyIsStillReported) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[build]
+std_module = "gen/std.cppm"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->schemaWarnings.size(), 1u);
+    // The underscore spelling is the plausible typo for the hyphenated key, so
+    // it is the one worth holding: accepting it silently is how `schedule` got
+    // in while `bmi_schedule` was being reported as unsupported.
+    EXPECT_NE(m->schemaWarnings[0].find("std_module"), std::string::npos)
+        << m->schemaWarnings[0];
+    // The message must carry the SAME list the check uses — it used to be a
+    // third hand-written copy and had drifted from both others.
+    EXPECT_NE(m->schemaWarnings[0].find("std-module"), std::string::npos)
+        << "the message must name the supported keys it actually checks against";
+}
+
+// `kKnownConditionalBuildKeys`' own comment says its vocabulary "is exactly
+// that struct's members" and "MUST stay in sync with the reads above and with
+// types.cppm's BuildInputs". It was two members short of that claim, and one of
+// the two — `private_include_dirs` — is ACCEPTED by the xpkg descriptor's
+// `target_cfg` block, the other grammar for this same axis. So one spelling of
+// a conditional private include directory worked and the other reported the
+// key as unsupported.
+TEST(Manifest, EveryConditionalBuildKeyTheAxisCarriesIsAccepted) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.'cfg(linux)'.build]
+cflags               = ["-Wall"]
+cxxflags             = ["-Wall"]
+defines              = ["A=1"]
+include_dirs         = ["include"]
+include_dirs_after   = ["compat"]
+ldflags              = ["-Wl,--as-needed"]
+private_include_dirs = ["internal"]
+sources              = ["src/extra.cpp"]
+std-module-flags     = ["-D_GNU_SOURCE"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    std::string all;
+    for (auto const& w : m->schemaWarnings) { all += w; all += '\n'; }
+    EXPECT_TRUE(m->schemaWarnings.empty())
+        << "a BuildInputs member the axis carries was reported unsupported:\n" << all;
+    ASSERT_EQ(m->conditionalConfigs.size(), 1u);
+    auto const& in = m->conditionalConfigs[0].inputs;
+    // #494 moved `std-module-flags` onto BuildInputs specifically so this axis
+    // could carry it — "membership here is what makes the cfg axis carry it",
+    // with -D_GNU_SOURCE right for musl and glibc and wrong for picolibc as the
+    // stated case. The member and the merge landed; the READ did not.
+    ASSERT_EQ(in.stdModuleFlags.size(), 1u);
+    EXPECT_EQ(in.stdModuleFlags[0], "-D_GNU_SOURCE");
+    ASSERT_EQ(in.privateIncludeDirs.size(), 1u);
+    EXPECT_EQ(in.privateIncludeDirs[0].generic_string(), "internal");
+}
+
+TEST(Manifest, AnUnknownConditionalBuildKeyIsStillReported) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.'cfg(linux)'.build]
+static_stdlib = true
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->schemaWarnings.size(), 1u);
+    EXPECT_NE(m->schemaWarnings[0].find("static_stdlib"), std::string::npos)
+        << m->schemaWarnings[0];
+    // Built from the list, not written beside it: the prose form named eight
+    // keys and was two behind the check it was describing.
+    EXPECT_NE(m->schemaWarnings[0].find("std-module-flags"), std::string::npos)
+        << "the message must be generated from the same list the check uses";
+}
+
+// #540: `[features]` was the one structured section with no schema check at
+// all, so a misplaced `include_dirs` inside a feature built successfully with
+// zero diagnostics — while the identical misplacement in `[build]` or
+// `[target.<pred>.build]` is reported.
+TEST(Manifest, EveryFeatureKeyTheParserReadsIsAccepted) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[features]
+full = { implies = ["fast"], forward = ["dep/feat"], defines = ["WITH_FULL"], sources = ["src/full.cpp"], requires = ["cap"], provides = ["cap2"], flags = [] }
+fast = []
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    std::string all;
+    for (auto const& w : m->schemaWarnings) { all += w; all += '\n'; }
+    EXPECT_TRUE(m->schemaWarnings.empty())
+        << "a feature key the parser reads was reported as unsupported:\n" << all;
+}
+
+TEST(Manifest, AnUnknownFeatureKeyIsReported) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[features]
+fast = { implies = [], include_dirs = ["nope"] }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->schemaWarnings.size(), 1u);
+    EXPECT_NE(m->schemaWarnings[0].find("include_dirs"), std::string::npos)
+        << m->schemaWarnings[0];
+    EXPECT_NE(m->schemaWarnings[0].find("fast"), std::string::npos)
+        << "the message must name WHICH feature carries the key";
+}
+
+// `deps` is reserved rather than wrong — the parser's own comment has promised
+// it since Feature System v2 — so it is reported as reserved. Saying
+// "unsupported" would deny a documented plan; saying nothing is what let it
+// look implemented.
+TEST(Manifest, AReservedFeatureKeySaysItIsReserved) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[features]
+fast = { implies = [], deps = ["zlib"] }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->schemaWarnings.size(), 1u);
+    EXPECT_NE(m->schemaWarnings[0].find("reserved"), std::string::npos)
+        << m->schemaWarnings[0];
+}
+
 // #296: `defines` is a BuildInputs member, NOT a BuildConfig-only field — so
 // the cfg axis carries it like any other build input. This is the regression
 // that matters: a platform-only macro must be expressible, because a key that

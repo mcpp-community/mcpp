@@ -100,14 +100,25 @@ A request that does not yet know what it will be given must not write into the
 channel the protocol owns. Combined with §1, a client's rule is complete: no
 JSON on stdout means "not supported", whatever the reason.
 
-Exit codes:
+Exit codes **of the enveloped commands** — the kinds `--protocol-version`
+advertises. This table is scoped to them on purpose; a code another command
+returns is not in it, and adding one would document something these commands
+cannot produce. The full mapping across all of mcpp is
+[the exit-code contract](spec/exit-codes.md).
 
 | code | meaning |
 |---|---|
 | 0 | success |
+| 1 | the command ran and failed — see stderr, and `diagnostics` when stdout carries an envelope |
 | 2 | usage error — unknown option, unsupported value |
 | 70 | internal error (uncaught exception) |
 | 127 | unknown command |
+
+⚠️ **`1` can arrive with an envelope on stdout.** `mcpp xpkg parse` reports a
+descriptor that violates the name form as JSON *and* exits 1: the document is
+the answer, and the exit code says the answer is a rejection. §1 still holds —
+parse stdout, do not branch on the code — but a client that treats any non-zero
+exit as "no output" will discard a document it was given.
 
 ## 4. Effects — what a command does before it prints
 
@@ -308,6 +319,16 @@ them apart:
 A field was added rather than `cLibrary` renamed or `mode` widened, because §6
 promises that fields are added and never removed and that a field's meaning
 never changes.
+
+⚠️ **`layers[].interface` changed VALUE for a payload-supplied glibc in
+2026.9.1.1** — from `gnu` to `glibc`, and on Windows from `gnu` to `ucrt`. The
+field's meaning is unchanged (it still names the implementation), so §6 holds;
+what changed is that it stopped reporting the triple's env segment, which is a
+request rather than an implementation and is not the name of any C library. The
+values are now the ones [14 — The Target Side](14-target-side.md) has always
+listed, and a package may compare against them in a `cfg(c-abi = …)` predicate.
+A client keying on the literal `gnu` needs updating; `musl`, `picolibc` and
+`libSystem` are unaffected.
 
 ⭐ **`reason` is a token, not a sentence.** The refusal's message is still
 written for a person and still names the target, the rule and the way out — but

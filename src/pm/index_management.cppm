@@ -127,8 +127,14 @@ export int index_remove(const std::string& name) {
 //
 // NOTE on `name`: it only filters the PROJECT-level custom indices below. The
 // global repos are always synced wholesale because `xlings update` has no
-// per-index mode to call. Tracked as a follow-up; the help text says "if given,
-// update only this index", which is not what happens for the global set.
+// per-index mode to call. Still tracked as a follow-up — the fix is upstream,
+// in xlings.
+//
+// #540: the CLI now says this too. It used to promise "If given, update only
+// this index", so the only place the limitation was written down was this
+// comment, which nobody typing the command can read. A limitation recorded
+// where only its implementers look is indistinguishable, from outside, from a
+// feature that is broken.
 export int index_update(const std::string& filterName) {
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }

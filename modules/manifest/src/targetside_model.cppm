@@ -443,11 +443,40 @@ struct Inputs {
 // all: mcpp ships those payloads and knows what is inside them. What must never
 // be written here is what a PACKAGE supplies — that is the difference the
 // reserved-capability grammar exists to keep.
+// ⚠️ THE TRIPLE'S ENV SEGMENT IS A TRIPLE SPELLING, NOT A C LIBRARY'S NAME, AND
+// THE TWO COINCIDE ONLY SOMETIMES. `musl` is both. `gnu` is neither: on Linux it
+// means glibc, and on Windows it names the MinGW flavour of the toolchain, whose
+// C runtime is the same UCRT the MSVC flavour links.
+//
+// Returning the segment verbatim reported `c-abi gnu (payload)` for an ordinary
+// Linux build while docs/14 has always named the implementations `glibc`,
+// `musl`, `picolibc` — and e2e 296's own header describes the report it expects
+// as `c-abi glibc (payload)`. That was a cosmetic disagreement for as long as
+// the value was only printed. It stopped being cosmetic when
+// `[target.'cfg(c-abi = "glibc")'.build]` became a predicate a user writes: the
+// documented spelling would have matched nothing, silently, which is the exact
+// defect class this release exists to remove.
+//
+// The REQUEST keeps the segment's spelling — `requestedCAbi` is the triple's
+// env verbatim by definition (docs/spec/target-side.md §3.4) — so the two are
+// compared through `c_abi_request_satisfied` rather than by equality.
 inline std::string payload_libc_name(std::string_view os, std::string_view env) {
+    if (env == "gnu") return os == "windows" ? "ucrt" : "glibc";
     if (!env.empty()) return std::string(env);
     if (os == "macos")   return "libSystem";
     if (os == "windows") return "ucrt";
     return "glibc";
+}
+
+// Does the resolved C library answer what the triple's env segment asked for?
+// Equality plus the one alias the segment carries, so that renaming the ANSWER
+// above does not turn every `-gnu` build into a reported request mismatch.
+inline bool c_abi_request_satisfied(std::string_view requested,
+                                    std::string_view resolved) {
+    if (requested == resolved) return true;
+    if (requested == "gnu")   return resolved == "glibc" || resolved == "ucrt";
+    if (requested == "glibc") return resolved == "gnu";
+    return false;
 }
 
 // An xpkg reference is `<namespace>:<name>[@<version>]`; the interface a reader
@@ -711,7 +740,11 @@ inline std::optional<std::string> check_request(const TargetSide& ts) {
         return std::nullopt;
     if (ts.requestedCAbi.empty()) return std::nullopt;
     if (ts.cAbi.absent()) return std::nullopt;
-    if (ts.cAbi.interfaceName == ts.requestedCAbi) return std::nullopt;
+    // Through the alias helper, not by equality: the request keeps the triple's
+    // `gnu` spelling and the answer now names the library (`glibc`/`ucrt`), so
+    // plain equality would report a mismatch on every ordinary `-gnu` build.
+    if (c_abi_request_satisfied(ts.requestedCAbi, ts.cAbi.interfaceName))
+        return std::nullopt;
     // A prebuilt or payload C library IS what the request selected — the
     // request is how it was selected. Only a supplier chosen by something else
     // can disagree with it.
@@ -880,7 +913,7 @@ inline std::string format_report(const TargetSide& ts, std::string_view targetNa
     if (ts.envAxis == EnvAxis::ObjectFormat
         && !ts.requestedCAbi.empty()
         && !ts.cAbi.absent() && ts.cAbi.fromGraph()
-        && ts.cAbi.interfaceName != ts.requestedCAbi) {
+        && !c_abi_request_satisfied(ts.requestedCAbi, ts.cAbi.interfaceName)) {
         head += std::format("   ({} selects {}, not a C library)",
                             ts.requestedCAbi,
                             env_axis_noun(ts.envAxis, ts.requestedCAbi));

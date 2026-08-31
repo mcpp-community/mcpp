@@ -106,7 +106,7 @@ TEST(TargetSideResolve, TraditionalStackTakesEveryLayerFromThePayload) {
     EXPECT_EQ(r.cAbi.origin,      ts::Origin::Payload);
     EXPECT_EQ(r.cxx.origin,       ts::Origin::Payload);
     EXPECT_EQ(r.kernelAbi.interfaceName, "linux");
-    EXPECT_EQ(r.cAbi.interfaceName,      "gnu");
+    EXPECT_EQ(r.cAbi.interfaceName,      "glibc");
     EXPECT_EQ(r.cxx.interfaceName,       "libc++");
     EXPECT_FALSE(r.system_from_graph());
 }
@@ -342,8 +342,34 @@ TEST(TargetSideResolve, ThePayloadCLibraryIsNamedForItsPlatform) {
     win.targetEnv = "";
     EXPECT_EQ(ts::resolve(win).cAbi.interfaceName, "ucrt");
 
-    EXPECT_EQ(ts::resolve(payload_linux()).cAbi.interfaceName, "gnu")
-        << "a triple that states its env keeps stating it";
+    // #540: the layer names the LIBRARY, never the triple's env segment. `musl`
+    // is both spellings at once and hid the difference; `gnu` is not the name of
+    // any C library, and on Windows it does not even mean the same one.
+    EXPECT_EQ(ts::resolve(payload_linux()).cAbi.interfaceName, "glibc")
+        << "the env segment `gnu` asks for a C library; the layer answers glibc";
+
+    auto winGnu = payload_linux();
+    winGnu.targetOs  = "windows";
+    winGnu.targetEnv = "gnu";
+    EXPECT_EQ(ts::resolve(winGnu).cAbi.interfaceName, "ucrt")
+        << "on Windows `-gnu` names the MinGW toolchain flavour, not glibc";
+
+    auto musl = payload_linux();
+    musl.targetEnv = "musl";
+    EXPECT_EQ(ts::resolve(musl).cAbi.interfaceName, "musl")
+        << "the one env segment that IS a C library name is unchanged";
+}
+
+// The rename above must not turn every ordinary `-gnu` build into a reported
+// request mismatch: the request keeps the triple's spelling by definition
+// (docs/spec/target-side.md §3.4) and the answer now names the library.
+TEST(TargetSideResolve, TheEnvRequestIsSatisfiedByTheLibraryItNames) {
+    EXPECT_TRUE(ts::c_abi_request_satisfied("gnu",   "glibc"));
+    EXPECT_TRUE(ts::c_abi_request_satisfied("gnu",   "ucrt"));
+    EXPECT_TRUE(ts::c_abi_request_satisfied("musl",  "musl"));
+    EXPECT_TRUE(ts::c_abi_request_satisfied("glibc", "gnu"));
+    EXPECT_FALSE(ts::c_abi_request_satisfied("gnu",  "musl"));
+    EXPECT_FALSE(ts::c_abi_request_satisfied("musl", "glibc"));
 }
 
 TEST(TargetSideResolve, TheCompilerIsALayerAndItIsAlwaysThePayloads) {

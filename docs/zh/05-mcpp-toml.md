@@ -978,13 +978,24 @@ cxxflags = ["-march=x86-64-v2"]
   只有它的依赖集合受限定),以及带 `cflags` / `cxxflags` / `ldflags` / `sources`
   的 `build`(mcpp 0.0.95+ —— 条件源码 glob,例如把 `src/x86/**/*.asm` 收在
   `cfg(arch = "x86_64")` 之后;`!` 排除 glob 在此同样有效),再加 `flags` 与
-  `include_dirs` / `include_dirs_after`(mcpp 0.0.102+)。
+  `include_dirs` / `include_dirs_after`(mcpp 0.0.102+),
+  以及 `private_include_dirs` 与 `std-module-flags`(mcpp 2026.9.1.1+)。
 - **`build` 接受的恰好是*可叠加的构建输入*集合** —— 那些以追加方式合并、
-  并在谓词求值之后被消费的东西。`linkage`、`target` 与档案开关刻意不在其中:
-  它们是**目标选择的输入**(用一个针对 `target` 求值的谓词去条件化 `target`
-  是循环的),或者需要覆盖而非追加的语义。
+  并在谓词求值之后被消费的东西,也就是 `BuildInputs` 的成员表。`linkage`、`target`
+  与档案开关刻意不在其中:它们是**目标选择的输入**(用一个针对 `target` 求值的谓词
+  去条件化 `target` 是循环的),或者需要覆盖而非追加的语义。
+  集合之外的键会被报出并忽略;消息里列出的正是它比对用的那份集合,因此不会与检查漂移。
 - **按解析后的目标求值** —— 交叉构建取 `--target` 三元组,否则取宿主。因此原生
   Linux 构建**根本不会下载** `[target.windows]` 依赖。
+- **谓词的键**:`os`、`arch`、`family`、`env` —— 三元组的坐标 —— 以及自 mcpp
+  2026.9.1.1 起的五个目标侧层名 `compiler`、`compiler-runtime`、`kernel-abi`、
+  `c-abi`、`c++-abi`(见[14 —— 目标侧](14-target-side.md))。裸词
+  `linux` / `macos` / `windows` / `unix` 是对应 `os` / `family` 判定的糖。
+  集合之外的键会被报成一条 schema 警告,且该段不生效 —— 它过去静默地求值为假,
+  而那与「这一段本就不该匹配」读数完全相同。
+- **层谓词不能选择依赖。** 层是**从**依赖图解析出来的,因此由它选出的依赖会决定它
+  正在询问的那个答案。`[target.'cfg(c-abi = "musl")'.dependencies]` 会被报出并忽略;
+  同一谓词下的 `build` 输入照常生效。
 - **优先级**:精确三元组表胜过 `cfg`/别名表;多个命中的谓词表,其 flag 按序拼接。
   条件项追加在无条件 `[build]` 项**之后**,因此在 GNU「最后一个 flag 生效」的
   规则下,条件规则会覆盖更宽的无条件规则。这正是让按 OS **移除**成为可表达的原因:
@@ -1030,8 +1041,15 @@ sysroot = ""                          # no C library at all
 取值是 xpkg 引用或空字符串;裸名在解析清单时即被拒绝,因为接受它会导致什么都不安装,
 然后在很晚的时候以「缺少 libc」失败。
 
-构建程序可以询问解析到的是哪份 C 库:`mcpp::target_libc()` 返回其包名,
-`mcpp::target_libc_profile()` 返回目标 ISA 档位对应的子目录。零 libc 档上两者均为空。
+构建程序可以询问供给 sysroot 的是哪个 C 库**载荷**:`mcpp::target_libc()` 返回该包的
+名字,`mcpp::target_libc_profile()` 返回目标 ISA 档位对应的子目录。零 libc 档上两者均
+为空。
+
+⚠️ **这与「目标侧解析出的 C 库是哪一个」不是同一个问题。** `target_libc()` 命名的是
+mcpp 装上的那个载荷,而这个值是目标侧解析的一项**输入** —— 依赖图里的包可以改为供给
+C 库,那时解析出的 `c-abi` 就不是这里返回的东西。要按已解析的层分支,请用层谓词:
+`[target.'cfg(c-abi = "musl")'.build]`(见[14 —— 目标侧](14-target-side.md))。
+这一段在 2026.9.1.1 之前写的是「解析到的是哪份 C 库」,那是两者里错的那一个。
 参见[13 —— 裸机与 freestanding 目标](13-baremetal.md)。
 
 ### 2.7.2 裸机(`os = none`)—— freestanding target
@@ -1130,6 +1148,11 @@ simd       = { sources = ["src/simd/**"], flags = [
                  { glob = "src/simd/**/*.avx2.cpp", cxxflags = ["-mavx2"] } ] }
 ```
 
+- **表形式恰好接受** `implies`、`forward`、`defines`、`sources`、`flags`、
+  `requires`、`provides`。其余键会被报成一条 schema 警告并忽略(mcpp 2026.9.1.1+);
+  `deps` 单独报为「保留」(它是计划中的而不是写错的),并指向 `[feature-deps.<name>]`。在该版本之前,`[features]`
+  是唯一一个完全没有 schema 检查的结构化段落 —— 把 `include_dirs` 误写进 feature 里
+  会零诊断地构建成功,而同样的错误写在 `[build]` 里会被报出来。
 - `defines` 为**裸**宏名(不带 `-D`);feature 激活时每个脱糖为 `-D<x>`,加到该包
   自己的编译上——与 `[targets.*] defines` 完全一致。按约定仅限包**自有**的带命名
   空间宏:feature **不**注入自由的包级 `cflags`/`ldflags`,否则会破坏加性的 feature

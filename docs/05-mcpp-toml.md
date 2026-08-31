@@ -1114,16 +1114,31 @@ for arch/env conditions and combinators.
   `build` with `cflags` / `cxxflags` / `ldflags` / `sources` (mcpp 0.0.95+ —
   conditional source globs, e.g. gating `src/x86/**/*.asm` behind
   `cfg(arch = "x86_64")`; `!`-exclusion globs work here too), plus `flags` and
-  `include_dirs` / `include_dirs_after` (mcpp 0.0.102+).
+  `include_dirs` / `include_dirs_after` (mcpp 0.0.102+), plus
+  `private_include_dirs` and `std-module-flags` (mcpp 2026.9.1.1+).
 - **What `build` accepts is exactly the set of *additive build inputs*** — the
   things that combine by appending and are consumed after the predicate is
-  evaluated. `linkage`, `target`, and the profile knobs are deliberately not
-  among them: they are *inputs to* target selection (conditioning `target` on
-  a predicate evaluated against `target` is circular), or they need
-  override-rather-than-append semantics.
+  evaluated, which is the member list of `BuildInputs`. `linkage`, `target`,
+  and the profile knobs are deliberately not among them: they are *inputs to*
+  target selection (conditioning `target` on a predicate evaluated against
+  `target` is circular), or they need override-rather-than-append semantics.
+  A key outside the set is reported and ignored; the message lists the set it
+  checked against, so it cannot drift from the check.
 - **Evaluated against the resolved target** — the `--target` triple for a cross
   build, otherwise the host. So a native Linux build never even *downloads* a
   `[target.windows]` dependency.
+- **Predicate keys**: `os`, `arch`, `family`, `env` — the triple's coordinates —
+  and, from mcpp 2026.9.1.1, the five target-side layer names `compiler`,
+  `compiler-runtime`, `kernel-abi`, `c-abi`, `c++-abi`
+  ([14 — The Target Side](14-target-side.md)). Barewords `linux` / `macos` /
+  `windows` / `unix` are sugar for the matching `os` / `family` test. A key
+  outside this set is reported as a schema warning and the section does not
+  apply — it used to answer false in silence, which is indistinguishable from
+  a section that correctly did not match.
+- **A layer predicate cannot select dependencies.** A layer is resolved *from*
+  the dependency graph, so a dependency chosen by one would decide the answer
+  it is asking for. `[target.'cfg(c-abi = "musl")'.dependencies]` is reported
+  and ignored; the `build` inputs under the same predicate do apply.
 - **Precedence**: an exact-triple table wins over a `cfg`/alias table; multiple
   matching predicate tables have their flags concatenated. Conditional entries
   are appended **after** the unconditional `[build]` ones, so under GNU
@@ -1178,10 +1193,20 @@ The value is an xpkg reference or the empty string; a bare name is rejected when
 the manifest is parsed, because accepting it would install nothing and then fail
 much later naming a missing libc.
 
-A build program can ask which C library was resolved: `mcpp::target_libc()`
-returns its package name and `mcpp::target_libc_profile()` the sub-directory for
-the target's ISA profile. Both are empty on the zero-libc tier. See
+A build program can ask which C library **payload** supplies the sysroot:
+`mcpp::target_libc()` returns that package's name and
+`mcpp::target_libc_profile()` the sub-directory for the target's ISA profile.
+Both are empty on the zero-libc tier. See
 [13 — Bare-Metal and Freestanding Targets](13-baremetal.md).
+
+⚠️ **That is not the same question as "which C library did the target side
+resolve to".** `target_libc()` names the payload mcpp installed, and that value
+is an *input* to target-side resolution — a package in the dependency graph can
+supply the C library instead, in which case the resolved `c-abi` is not what
+this returns. To branch on the resolved layer, use a layer predicate:
+`[target.'cfg(c-abi = "musl")'.build]` ([14 — The Target
+Side](14-target-side.md)). This paragraph said "which C library was resolved"
+until 2026.9.1.1, which was the wrong one of the two.
 
 ### 2.7.2 Bare metal (`os = none`) — freestanding targets
 
@@ -1304,6 +1329,13 @@ simd       = { sources = ["src/simd/**"], flags = [
                  { glob = "src/simd/**/*.avx2.cpp", cxxflags = ["-mavx2"] } ] }
 ```
 
+- **The table form accepts exactly** `implies`, `forward`, `defines`, `sources`,
+  `flags`, `requires`, `provides`. Anything else is reported as a schema warning
+  and ignored (mcpp 2026.9.1.1+); `deps` is reported separately as reserved and
+  points at `[feature-deps.<name>]`. Before that release `[features]` was
+  the one structured section with no schema check at all, so a misplaced
+  `include_dirs` inside a feature built successfully with no diagnostic while
+  the identical mistake in `[build]` was reported.
 - `defines` are **bare** macro names (no `-D`); each desugars to `-D<x>` on the
   package's own compile when the feature is active — exactly like `[targets.*]
   defines`. They are restricted by convention to the package's **own** namespaced

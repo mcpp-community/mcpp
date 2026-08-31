@@ -555,12 +555,22 @@ A board-support package is an ordinary mcpp package. It declares the emulator
 it needs under `[xlings] deps`, exports one C++ module for consumers, and emits
 its board facts from `build.mcpp`.
 
-⚠️ **A declaration under `[xlings] deps` is not an install trigger.** It is what
-lets `mcpp::xpkg_dir` answer *"where did that package land"*; it installs
-nothing. A board package listed in the index descriptor's platform `deps` gets
-its emulator installed with it, and never meets this. A project that declares
-its own — because no board package serves its machines — will find `xpkg_dir`
-empty on a clean machine and must say so:
+**A declaration under `[xlings] deps` provisions the package on the first
+build** (since 2026.8.29). It is also what lets `mcpp::xpkg_dir` answer *"where
+did that package land"*. Both halves matter: the same declaration installs the
+emulator and tells the build program where it went.
+
+The provisioning is the contract `[toolchain]` has always had — declare it,
+mcpp installs it on first use — and it obeys the same two knobs: under
+`--offline` / `MCPP_OFFLINE` or `MCPP_NO_AUTO_INSTALL` mcpp refuses instead,
+naming the packages so they can be installed out of band.
+
+⚠️ **A build program still must not assume the directory exists.** Provisioning
+runs for the package that DECLARES the deps; a build program can be reached
+through paths where that has not happened — a dependency of a project that
+declares nothing, an environment where the knobs above refused — so
+`xpkg_dir` may still come back empty and the program must say so rather than
+emitting a broken runner:
 
 ```cpp
 if (const char* dir = mcpp::xpkg_dir("xim", "qemu-riscv"); dir && *dir) {

@@ -52,7 +52,31 @@ namespace cfgpred {
 // and the failure surfaces at link time naming a symbol instead of a predicate.
 // manifest/types.cppm's ConditionalConfig has documented the fallback since it
 // was written; this makes the bare-triple branch honour it.
-struct Ctx { std::string os, arch, family, env, triple; };
+// The five target-side layers (docs/14) join the triple coordinates here, but
+// they arrive LATER and from a different place: the triple is known before
+// dependency resolution, a layer only after it, because a package in the graph
+// may supply the C library. `layersKnown` is the difference, and it is a member
+// rather than an inference from emptiness because "no layer resolved" and "not
+// resolved yet" are different answers and only one of them may be reported.
+//
+// ⚠️ `compiler` carries the FAMILY (`llvm`), never the driver (`clang`) — #494
+// settled that, on the grounds that every place a user writes the name they
+// write the family, and reporting the driver would make
+// `requires = ["mcpp:compiler=llvm"]` permanently unsatisfiable.
+struct Ctx {
+    std::string os, arch, family, env, triple;
+    bool        layersKnown = false;
+    std::string compiler, compilerRuntime, kernelAbi, cAbi, cxxAbi;
+
+    std::string_view layer_value(std::string_view k) const {
+        if (k == "compiler")         return compiler;
+        if (k == "compiler-runtime") return compilerRuntime;
+        if (k == "kernel-abi")       return kernelAbi;
+        if (k == "c-abi")            return cAbi;
+        if (k == "c++-abi")          return cxxAbi;
+        return {};
+    }
+};
 
 // Derive the cfg context from the resolved --target triple, falling back to
 // the host for a native build. Parsing goes through triple.cppm — the single
@@ -86,16 +110,59 @@ inline Ctx context_for(std::string_view targetTriple) {
     return c;
 }
 
+// ── The cfg() vocabulary ────────────────────────────────────────────────────
+//
+// ⚠️ ONE LIST PER CATEGORY, AND EVERY READER READS IT. #540 found four
+// hand-written copies of other vocabularies in this repository, all drifted;
+// the diagnostic added below would have been the fifth if it had transcribed
+// these names instead of sharing them.
+//
+// TRIPLE keys are answerable from the target triple alone, which is what the
+// conditional merge has before dependency resolution. LAYER keys name a
+// target-side layer (docs/14) and are answerable only after the graph is
+// resolved — see `merge_layer_conditional_config` in prepare.cppm for the
+// second pass that evaluates them.
+inline constexpr std::string_view kCfgTripleKeys[] = {
+    "arch", "env", "family", "os",
+};
+inline constexpr std::string_view kCfgLayerKeys[] = {
+    "c++-abi", "c-abi", "compiler", "compiler-runtime", "kernel-abi",
+};
+inline constexpr std::string_view kCfgBarewords[] = {
+    "linux", "macos", "unix", "windows",
+};
+
+inline bool is_cfg_layer_key(std::string_view k) {
+    return std::ranges::find(kCfgLayerKeys, k) != std::end(kCfgLayerKeys);
+}
+
 // Recursive-descent evaluator over the inside of `cfg(...)`:
 //   expr := all(list) | any(list) | not(expr) | key="value" | bareword
-//   key  ∈ {os, arch, family, env}   bareword ∈ {windows, unix, linux, macos}
+//   key  ∈ kCfgTripleKeys ∪ kCfgLayerKeys   bareword ∈ kCfgBarewords
+//
+// ⚠️ THE EVALUATOR IS ALSO THE VALIDATOR. `seenKeys`/`seenWords` let one
+// traversal answer three questions — does it match, does it name a layer, does
+// it name anything at all — because a separate validator would be a SECOND
+// parser of the same grammar, and this repository has already paid for one of
+// those (`[hooks]` re-parsing mcpp.toml and reporting every TOML error as an
+// invalid hook configuration).
 struct Parser {
     std::string_view s; std::size_t i = 0; const Ctx& c;
+    std::vector<std::string>* seenKeys  = nullptr;  // every `key=` key, in order
+    std::vector<std::string>* seenWords = nullptr;  // every bareword
     void ws() { while (i < s.size() && std::isspace((unsigned char)s[i])) ++i; }
     bool eat(char ch) { ws(); if (i < s.size() && s[i] == ch) { ++i; return true; } return false; }
     std::string ident() {
         ws(); std::size_t b = i;
-        while (i < s.size() && (std::isalnum((unsigned char)s[i]) || s[i] == '_')) ++i;
+        // ⚠️ `-` and `+` ARE IDENTIFIER CHARACTERS, because the layer names are
+        // `c-abi`, `c++-abi`, `compiler-runtime` and `kernel-abi`. Without them
+        // `cfg(c-abi = "musl")` scanned as the bareword `c` followed by
+        // garbage, so the one thing a diagnostic could report was the letter
+        // `c`. No valid pre-existing predicate contains either character
+        // outside a quoted value, so widening the scanner changes nothing that
+        // used to parse.
+        while (i < s.size() && (std::isalnum((unsigned char)s[i])
+                                || s[i] == '_' || s[i] == '-' || s[i] == '+')) ++i;
         return std::string(s.substr(b, i - b));
     }
     std::string str() {
@@ -104,17 +171,25 @@ struct Parser {
         auto v = std::string(s.substr(b, i - b)); if (i < s.size()) ++i; return v;
     }
     bool match_alias(const std::string& a) {
+        if (seenWords) seenWords->push_back(a);
         if (a == "windows") return c.os == "windows";
         if (a == "linux")   return c.os == "linux";
         if (a == "macos")   return c.os == "macos";
         if (a == "unix")    return c.family == "unix";
-        return false;  // unknown bareword → no match
+        return false;  // unknown bareword → no match, and `seenWords` reports it
     }
     bool match_kv(const std::string& k, const std::string& v) {
+        if (seenKeys) seenKeys->push_back(k);
         if (k == "os")     return c.os == v;
         if (k == "arch")   return c.arch == v;
         if (k == "family") return c.family == v;
         if (k == "env")    return c.env == v;
+        // A layer key is not answerable until the target side is resolved. In
+        // the first (triple-only) pass this returns false and the section is
+        // skipped — which is correct, because the second pass owns it and would
+        // otherwise append the same inputs twice through `append()`.
+        if (is_cfg_layer_key(k))
+            return c.layersKnown && c.layer_value(k) == v;
         return false;
     }
     bool expr() {
@@ -171,6 +246,72 @@ inline bool matches(const std::string& predicate, const Ctx& c) {
             return p->str() == rt->str();
     }
     return predicate == triple;
+}
+
+// ── One traversal, three answers ────────────────────────────────────────────
+//
+// `scan_predicate` runs the REAL evaluator with a throwaway context purely to
+// record which tokens the predicate names. Everything below derives from it, so
+// the grammar has exactly one implementation and a predicate that the evaluator
+// cannot answer is, by construction, a predicate the diagnostic reports.
+struct PredicateScan {
+    std::vector<std::string> keys;       // every `key=` key, in order
+    std::vector<std::string> barewords;  // every bareword
+};
+
+inline PredicateScan scan_predicate(const std::string& predicate) {
+    PredicateScan out;
+    std::string_view k = predicate;
+    // Only the `cfg(...)` namespace. A bare alias or a bare triple is the
+    // documented escape hatch — `matches()` falls back to an exact string
+    // comparison for keys it cannot parse — and validating it would reject the
+    // explicit-section spelling that hatch exists to allow.
+    if (k.starts_with("cfg(") && k.ends_with(")")) {
+        Ctx scratch;
+        Parser p{ k.substr(4, k.size() - 5), 0, scratch, &out.keys, &out.barewords };
+        (void)p.expr();
+    }
+    return out;
+}
+
+// True when the predicate names a target-side layer and therefore cannot be
+// answered before dependency resolution. This is the classifier that keeps the
+// two merge passes disjoint: `append()` is additive, so a section evaluated by
+// both would contribute its inputs twice.
+inline bool uses_layer(const std::string& predicate) {
+    auto scan = scan_predicate(predicate);
+    return std::ranges::any_of(scan.keys,
+                               [](auto const& k) { return is_cfg_layer_key(k); });
+}
+
+// Tokens outside the vocabulary. A predicate naming one of these used to
+// evaluate to false in silence, which is indistinguishable from a predicate
+// that correctly did not apply — so `[target.'cfg(c-abi = "musl")'.build]` was
+// dropped without a word for the entire time docs/14 documented it.
+inline std::vector<std::string> unknown_tokens(const std::string& predicate) {
+    auto scan = scan_predicate(predicate);
+    std::vector<std::string> out;
+    auto add = [&](const std::string& t) {
+        if (t.empty()) return;
+        if (std::ranges::find(out, t) == out.end()) out.push_back(t);
+    };
+    for (auto const& k : scan.keys)
+        if (std::ranges::find(kCfgTripleKeys, k) == std::end(kCfgTripleKeys)
+            && !is_cfg_layer_key(k))
+            add(k);
+    for (auto const& w : scan.barewords)
+        if (std::ranges::find(kCfgBarewords, w) == std::end(kCfgBarewords))
+            add(w);
+    return out;
+}
+
+// The message body, built FROM the vocabulary rather than beside it.
+inline std::string vocabulary_sentence() {
+    std::string keys, words;
+    for (auto k : kCfgTripleKeys) { if (!keys.empty()) keys += ", "; keys += k; }
+    for (auto k : kCfgLayerKeys)  { if (!keys.empty()) keys += ", "; keys += k; }
+    for (auto w : kCfgBarewords)  { if (!words.empty()) words += ", "; words += w; }
+    return std::format("Supported keys: {}. Supported barewords: {}.", keys, words);
 }
 
 }  // namespace cfgpred

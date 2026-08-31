@@ -3,6 +3,99 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.9.1.1] — 2026-09-01
+
+#540 的七条审计,加上核验它们时挖出的四条没有人报过的。它们几乎全是同一族:
+**mcpp 关于自己说了一句话,而 mcpp 不遵守它。**
+
+完整核验、量化与设计见
+[`.agents/docs/2026-08-31-issue540-seven-audit-findings.md`](.agents/docs/2026-08-31-issue540-seven-audit-findings.md)。
+
+> **一条规则写在一处,却由它的一份手抄件来执行。** `kKnownBuildKeys`、
+> `kKnownConditionalBuildKeys` 与 xpkg 的 `target_cfg` 列表,都是别处已有机器可读
+> 形式(紧挨其上的 `doc->get_*()` 读取点、`BuildInputs` 的成员表)的转录,三份都
+> 漂移了 —— 而 `kKnownBuildKeys` 漂移了**两次**,第二次就发生在描述第一次的注释上方
+> 八行。代价不是少了一条警告,而是**一条假的警告**:`[build] has unsupported key
+> 'std-module' (ignored)`,说的与实际发生的事情正相反。
+
+### 修复
+
+- **`[xlings] deps` 的供给从不检查自己是否成功。**(它的第一个真实受害者是本仓库自己的 e2e 88 —— 见 CHANGELOG 末尾) `xlings::call` 返回
+  `expected<CallResult, string>`,只要子进程跑起来就处于**值**态 —— 能力自身的状态
+  在 `CallResult` 里面,因为 xlings 讲完 NDJSON 协议后按设计退 0。调用点只测了
+  `if (!r)`,于是 xlings 能报出的每一种失败都被读成了成功:
+
+  ```
+  $ mcpp build                      # deps = ["definitely-not-a-real-package"]
+  Provisioning [xlings] deps (definitely-not-a-real-package)
+      Finished dev [unoptimized + debuginfo] in 0.12s
+  ```
+
+  记号随后把这次假成功变成**永久**的 —— 下一次构建连 `Provisioning` 都不再打印。
+  #531 自己的注释写着它修的缺陷是「声明看起来被接受了却什么都没做,这是一个配置键
+  能有的最坏形态」;没人读结果,它的修法重现了那个形态。正确写法就在同一个文件里
+  ——依赖安装路径写的是 `if (r && r->exitCode != 0 && …)`。
+
+- **该路径不认 `MCPP_OFFLINE`,也不认 `MCPP_NO_AUTO_INSTALL`。** 它自称与
+  `[toolchain]` 平权,而那条先例在任一开关下**硬错**并且报出触发的是哪一个。现在
+  两个都认,拦的是安装**动作**而不是整块 —— 已供给好的工程仍然离线构建得出来。
+
+- **记号记录的是全局效果,却存在项目里。** 安装落在 registry(刻意如此,原注释说明
+  了理由),而 `<project>/.mcpp/.xlings-deps.stamp` 记着它。清掉或换掉 `MCPP_HOME`,
+  项目仍然声称已装;`mcpp clean` 只删 `target/`,也清不掉。改按依赖列表的哈希存进
+  registry,并且**只在成功时写**。
+
+- **`[build] std-module` / `std-compat-module` / `std-module-flags` 被读取,却被报成
+  unsupported。** 三个键在 #494 被移入 `[build]` 正是为了让它们可条件化,而
+  `kKnownBuildKeys` 从未收录 —— 唯一一句关于它们的话说反了。
+
+- **条件轴拒绝 `BuildInputs` 的两个成员。** `std-module-flags`(#494 就是为这条轴
+  才把它挪上来的)与 `private_include_dirs` —— 后者更严重:xpkg 描述符的
+  `target_cfg` 块,也就是**同一条轴的另一套语法**,是接受它的。两条列表的消息现在都
+  由列表本身生成。
+
+- **`[features]` 是唯一一个完全没有 schema 检查的结构化段落。** 把 `include_dirs`
+  误写进 feature 里会零诊断地构建成功,而同样的错误写在 `[build]` 里会被报出来。
+
+- **`mcpp build --help` / `mcpp test --help` 说默认档位是 release,而它是 dev。**
+  六处说得对(解析器、它的注释、docs/05、一条 e2e、mcpp 自己的 mcpp.toml、
+  `mcpp pack --help`),两处说错。`prepare.cppm` 里那条字段注释是没被报告的第三处。
+
+- **`mcpp index update <name>` 承诺按索引筛选,而它只筛项目级索引。** 限制此前只写在
+  一条注释里 —— 一个只有实现者看得到的地方,从外面看与「这功能坏了」无从区分。
+
+### 新增
+
+- **`[target.'cfg(<层> = "…")'.build]` —— 按已解析目标侧条件化(#494 / #540)。**
+  docs/14 用一整节记载了这个能力,包括为什么它不能用 feature 选择代替;而
+  `cfgpred::Ctx` 只由三元组构造,所以每一个这样的段落都被**静默**丢弃,包成功构建
+  在错误的 C 库配置上。五个层名 `compiler` / `compiler-runtime` / `kernel-abi` /
+  `c-abi` / `c++-abi` 现在是谓词的键,可与三元组键在 `all`/`any`/`not` 下组合。
+
+  ⚠️ 层谓词**不能**选择依赖 —— 层是从依赖图解析出来的 —— 这种段落会被报出并忽略,
+  而不是被静默丢弃。
+
+- **mcpp 不认识的 cfg 键会被报出来。** 求值器过去对未知键返回假,而那与「这一段本就
+  不该匹配」读数完全相同。词汇表从求值器**导出**而不是被转录 —— 否则这条诊断自己就
+  会成为本次发布正在修的那第五份手抄件。
+
+- **[`docs/spec/exit-codes.md`](docs/spec/exit-codes.md)(SPEC-003)。** 2026-08-08
+  的协议设计文档 §R4 把这份契约指派给了 `docs/spec/`,它一直没有写。`docs/11` 那张表
+  落地的是 usage/internal 的一半;命令**跑了并且失败**时返回的 `1` 既不在表里也不在
+  别处 —— 而按信封命令划定的那张表**给不出** `4`。
+
+### 变更
+
+- **`c-abi` 层报的是库名,不再是三元组的 env 段。** 二者在 `musl` 上重合,在 `gnu`
+  上分叉:Linux 上它请求的是 glibc,Windows 上它命名的是工具链的 MinGW 形态,而后者
+  的 C 运行时是 UCRT。docs/14 一直把实现列作 `glibc`/`musl`/`picolibc`,e2e 296 的
+  文件头也把它期望的报告写作 `c-abi glibc (payload)`。在这个值只被打印的年代这只是
+  措辞不一致;它现在是用户书写的谓词值。请求那一侧保留三元组的拼写(规范 §3.4),
+  两者经 `c_abi_request_satisfied` 比较而非按相等。
+
+- **`mcpp::target_libc()` 的文档改为它实际回答的问题** —— 供给 sysroot 的那个**载荷**
+  包,而这个值是目标侧解析的一项**输入**。要按已解析的层分支,用层谓词。
+
 ## [2026.8.30.2] — 2026-08-30
 
 六处缺陷,来自 #527 / #529 的分析,外加一处在实现 review 时挖出来、没有人报过的。
