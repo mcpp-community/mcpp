@@ -3312,10 +3312,8 @@ prepare_build(bool print_fingerprint,
                         legacy.assign(std::istreambuf_iterator<char>(in), {});
                     return legacy == want;
                 };
-                if (have != want) {
-                    // Set by the gate below when a legacy stamp lets an
-                    // offline build proceed without an attempt.
-                    bool provisioned = false;
+                bool needProvision = (have != want);
+                if (needProvision) {
                     // ⚠️ THE AUTO-INSTALL GATE, WHICH THIS PATH DID NOT HAVE.
                     //
                     // `[toolchain]` is the precedent this whole mechanism cites
@@ -3369,9 +3367,10 @@ prepare_build(bool print_fingerprint,
                         // Deliberately NOT writing the registry stamp: nothing
                         // here verified anything, and a record of a check that
                         // did not happen is the defect this release removes.
-                        provisioned = true;
+                        needProvision = false;
                     }
-                    if (!provisioned) {
+                }
+                if (needProvision) {
                     mcpp::ui::status("Provisioning",
                         std::format("[xlings] deps ({})",
                                     join_deps(", ")));
@@ -3473,7 +3472,6 @@ prepare_build(bool print_fingerprint,
                     std::error_code sec;
                     std::filesystem::create_directories(stamp.parent_path(), sec);
                     if (std::ofstream out{stamp}; out) out << want;
-                    }   // if (!provisioned)
                 }
             }
 
