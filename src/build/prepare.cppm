@@ -3257,8 +3257,15 @@ prepare_build(bool print_fingerprint,
                 // blocked on `resolve_xpkg_path` requiring `<name>@<version>`
                 // while a manifest is entitled to name a package unpinned.
                 const auto stampDir = mcpp::home::root() / "provisioned";
+                // `std::uint64_t`, not `std::size_t`: the offset basis below is
+                // a 64-bit constant and a 32-bit host would truncate it, giving
+                // that host a different key space for no reason anyone could
+                // see. A collision is not a correctness problem either way —
+                // the file stores the LIST and the comparison below is against
+                // its content, so two lists sharing a key re-provision rather
+                // than silently adopt each other's record.
                 auto stamp_key = [&] {
-                    std::size_t h = 1469598103934665603ull;   // FNV-1a
+                    std::uint64_t h = 1469598103934665603ull;   // FNV-1a
                     for (auto const& d : declaredDeps)
                         for (unsigned char ch : d + "\n")
                             { h ^= ch; h *= 1099511628211ull; }
