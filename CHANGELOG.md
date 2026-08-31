@@ -20,7 +20,7 @@
 
 ### 修复
 
-- **`[xlings] deps` 的供给从不检查自己是否成功。** `xlings::call` 返回
+- **`[xlings] deps` 的供给从不检查自己是否成功。**(它的第一个真实受害者是本仓库自己的 e2e 88 —— 见 CHANGELOG 末尾) `xlings::call` 返回
   `expected<CallResult, string>`,只要子进程跑起来就处于**值**态 —— 能力自身的状态
   在 `CallResult` 里面,因为 xlings 讲完 NDJSON 协议后按设计退 0。调用点只测了
   `if (!r)`,于是 xlings 能报出的每一种失败都被读成了成功:

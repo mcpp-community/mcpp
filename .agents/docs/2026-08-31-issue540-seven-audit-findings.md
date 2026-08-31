@@ -857,6 +857,22 @@ only ever written for a provisioning that actually succeeded.
 *materialized into* `.xlings.json` — true before #531, and exactly the "declared
 and nothing happened" state the change was made to end.
 
+> **Confirmed harder than predicted, by implementing D12.** That test's fixture
+> declares `deps = ["make@4.4", "cmake@3.28"]`. The index carries make **4.3**
+> and cmake **4.4.2 / 4.0.2** — *neither version has ever existed*. The test
+> passed anyway, for the whole life of #531, because the provisioning did not
+> read its own result: xlings answered `E_NOT_FOUND` and mcpp called it done.
+>
+> So the repository's own most direct coverage of `[xlings] deps` was asserting
+> materialization on top of an install that never happened. D12's first catch,
+> before any user's, was this test. The fixture now names `ninja@1.12.1` —
+> already installed anywhere mcpp can build, so provisioning short-circuits and
+> the test still costs no download.
+>
+> ⭐ The general shape: **a fixture's values stop being arbitrary the moment
+> something starts checking them.** These two were free-form strings for as long
+> as the only assertion was "does this text reach that file".
+
 **D15**, in the order they can be written:
 
 1. **Knob parity, network-free.** `MCPP_NO_AUTO_INSTALL=1` with a declared dep
