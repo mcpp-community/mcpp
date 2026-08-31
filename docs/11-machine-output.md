@@ -320,6 +320,16 @@ A field was added rather than `cLibrary` renamed or `mode` widened, because §6
 promises that fields are added and never removed and that a field's meaning
 never changes.
 
+⚠️ **`layers[].interface` changed VALUE for a payload-supplied glibc in
+2026.9.1.1** — from `gnu` to `glibc`, and on Windows from `gnu` to `ucrt`. The
+field's meaning is unchanged (it still names the implementation), so §6 holds;
+what changed is that it stopped reporting the triple's env segment, which is a
+request rather than an implementation and is not the name of any C library. The
+values are now the ones [14 — The Target Side](14-target-side.md) has always
+listed, and a package may compare against them in a `cfg(c-abi = …)` predicate.
+A client keying on the literal `gnu` needs updating; `musl`, `picolibc` and
+`libSystem` are unaffected.
+
 ⭐ **`reason` is a token, not a sentence.** The refusal's message is still
 written for a person and still names the target, the rule and the way out — but
 a program classifying the outcome reads `reason`:

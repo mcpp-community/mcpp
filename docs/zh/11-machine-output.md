@@ -283,6 +283,14 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 是**新增一个字段**而不是给 `cLibrary` 改名或给 `mode` 加取值,因为 §6 承诺字段
 只增不删、且一个字段的含义永不改变。
 
+⚠️ **2026.9.1.1 起,载荷供给的 glibc 让 `layers[].interface` 的**取值**变了** ——
+从 `gnu` 变为 `glibc`,Windows 上从 `gnu` 变为 `ucrt`。字段的**含义**没变(它仍然是
+「哪个实现」),所以 §6 仍然成立;变的是它不再报三元组的 env 段 —— 那是一次请求而
+不是一个实现,也不是任何一个 C 库的名字。现在的取值就是
+[14 —— 目标侧](14-target-side.md)一直列着的那些,并且包可以在
+`cfg(c-abi = …)` 谓词里与它们比较。按字面量 `gnu` 取值的客户端需要更新;
+`musl`、`picolibc`、`libSystem` 不受影响。
+
 ⭐ **`reason` 是一个记号,不是一句话。** 拒绝的消息仍然写给人看,仍然点名目标、
 规则与出路;而一个要给结果分类的程序读 `reason`:
 
