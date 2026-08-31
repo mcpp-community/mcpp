@@ -348,7 +348,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
                 .help("Build only the named workspace member"))
             .option(cl::Option("profile").takes_value().value_name("NAME")
-                .help("Build profile: release (default) | dev | dist | <[profile.*] name>"))
+                .help("Build profile: dev (default) | release | dist | <[profile.*] name>"))
             .option(cl::Option("release").help("Shorthand for --profile release"))
             .option(cl::Option("dev").help("Shorthand for --profile dev (-O0 -g)"))
             .option(cl::Option("features").takes_value().value_name("LIST")
@@ -411,7 +411,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("workspace-timeout").takes_value().value_name("SECS")
                 .help("Stop the --workspace fan-out after SECS seconds and report what did run (default 0 = no limit)"))
             .option(cl::Option("profile").takes_value().value_name("NAME")
-                .help("Build profile for the test build: release (default) | dev | dist | <[profile.*] name>"))
+                .help("Build profile for the test build: dev (default) | release | dist | <[profile.*] name>"))
             .option(cl::Option("features").takes_value().value_name("LIST")
                 .help("Activate root-package features for the test build (comma-separated)"))
             .option(cl::Option("cap").takes_value().value_name("LIST")
@@ -641,8 +641,18 @@ int run(int argc, char** argv) {
                 .description("Remove a registry")
                 .arg(cl::Arg("name").help("Registry name").required()))
             .subcommand(cl::App("update")
-                .description("Refresh local registry clones")
-                .arg(cl::Arg("name").help("If given, update only this index")))
+                // #540: the argument selects among the PROJECT's custom
+                // indices only. The global repos are always synced wholesale,
+                // because `xlings update` has no per-index mode to call — a
+                // limitation index_management.cppm has recorded as a follow-up
+                // since it was written, in a comment no one typing the command
+                // can read. Saying it here is not the fix; it is the honest
+                // description until the upstream mode exists.
+                .description("Refresh local registry clones "
+                             "(global repos always sync in full)")
+                .arg(cl::Arg("name").help(
+                    "Update only this PROJECT-level custom index "
+                    "(the global repos sync regardless)")))
             .subcommand(cl::App("status")
                 .description("Show local index presence/freshness (offline)"))
             .subcommand(cl::App("pin")

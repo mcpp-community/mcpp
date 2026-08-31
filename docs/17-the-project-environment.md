@@ -111,9 +111,18 @@ gives the full rule.
   question does not arise.
 
 Against that: an isolated environment is a directory that has to be created and
-populated before the first build, and mcpp will not do it. A project whose
-tools are ordinary and whose versions do not matter is better off declaring
-nothing and inheriting the machine's.
+populated, and the first build pays for it. Since 2026.8.29 mcpp does that
+work — a declared `[xlings] deps` is provisioned on first use, and a named
+`[xlings] subos` that does not exist yet is created rather than refused — but
+the cost is real: the first build on a clean machine downloads and installs
+before it compiles anything. A project whose tools are ordinary and whose
+versions do not matter is better off declaring nothing and inheriting the
+machine's.
+
+Under `--offline` / `MCPP_OFFLINE` or `MCPP_NO_AUTO_INSTALL`, mcpp refuses
+instead of installing, and names the packages so they can be provisioned
+out of band — the same two knobs `[toolchain]` honours, for the same reason: an
+unasked-for download is not something a build decides on a project's behalf.
 
 ## 6. What belongs somewhere else
 

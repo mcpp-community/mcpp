@@ -32,6 +32,7 @@
 |---|---|---|---|---|
 | [SPEC-001](package-identity.md) | 包身份(`package.namespace` / `package.name`)、`[dependencies]` 选择器与匹配机制 | 评审中 v1.1 | 2026-08-03 | mcpp >= 0.0.106 |
 | [SPEC-002](target-side.md) | 目标侧模型与能力声明(`mcpp:` 保留命名空间、五层、三条规则) | 评审中 v1.0 | 2026-08-24 | mcpp >= 2026.8.24.2 |
+| [SPEC-003](exit-codes.md) | 退出码契约(分类、语义、稳定性承诺) | 评审中 v1.0 | 2026-09-01 | mcpp >= 2026.9.1.1 |
 
 ## 文档约定
 

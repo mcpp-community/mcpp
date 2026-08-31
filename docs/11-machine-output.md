@@ -100,14 +100,25 @@ A request that does not yet know what it will be given must not write into the
 channel the protocol owns. Combined with §1, a client's rule is complete: no
 JSON on stdout means "not supported", whatever the reason.
 
-Exit codes:
+Exit codes **of the enveloped commands** — the kinds `--protocol-version`
+advertises. This table is scoped to them on purpose; a code another command
+returns is not in it, and adding one would document something these commands
+cannot produce. The full mapping across all of mcpp is
+[the exit-code contract](spec/exit-codes.md).
 
 | code | meaning |
 |---|---|
 | 0 | success |
+| 1 | the command ran and failed — see stderr, and `diagnostics` when stdout carries an envelope |
 | 2 | usage error — unknown option, unsupported value |
 | 70 | internal error (uncaught exception) |
 | 127 | unknown command |
+
+⚠️ **`1` can arrive with an envelope on stdout.** `mcpp xpkg parse` reports a
+descriptor that violates the name form as JSON *and* exits 1: the document is
+the answer, and the exit code says the answer is a rejection. §1 still holds —
+parse stdout, do not branch on the code — but a client that treats any non-zero
+exit as "no output" will discard a document it was given.
 
 ## 4. Effects — what a command does before it prints
 

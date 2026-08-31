@@ -15,7 +15,7 @@ C 库与 C++ 运行时从哪里来。mcpp 在依赖图解析完成之后解析�
 | `compiler` | 执行编译的程序 | `llvm`、`gcc`、`msvc` |
 | `compiler-runtime` | 编译器自身的运行时:整数与浮点 builtins、展开器 | `compiler-rt` 与 `libunwind`、`libgcc` |
 | `kernel-abi` | 平台接口或其等价物 | `linux`、`windows`、`darwin`、`openkal` |
-| `c-abi` | C 库 | `glibc`、`musl`、`picolibc` |
+| `c-abi` | C 库 | `glibc`、`musl`、`picolibc`、`ucrt`、`libSystem` |
 | `c++-abi` | C++ 库及其 ABI 运行时 | `libc++` 与 `libc++abi`、`libstdc++`、MSVC STL |
 
 ### 成为层的判据
@@ -223,9 +223,32 @@ include_dirs = ["config/picolibc"]
 若此处要求一次特性选择,将迫使工程重述目标三元组或其依赖图已经确立的事实,
 并允许两处陈述互相矛盾。
 
+谓词的键就是五个层名,值就是本章开头那张表里的接口名 —— 与 `Target` 报告打印的是
+同一批字符串。它们可以与三元组键在 `all`/`any`/`not` 下组合:
+
+```toml
+[target.'cfg(all(linux, c-abi = "musl"))'.build]
+cxxflags = ["-D_GNU_SOURCE"]
+```
+
+⚠️ **层名的是库,不是三元组的 env 段。** 二者在 `musl` 上重合,在 `gnu` 上分叉:
+在 Linux 上该段请求的是 glibc,在 Windows 上它命名的是工具链的 MinGW 形态,
+而后者的 C 运行时与 MSVC 形态链接的是同一个 UCRT。写法是 `c-abi = "glibc"`,
+而非 `c-abi = "gnu"`;与答案相对的那个「请求」是 `env = "gnu"` —— 另一个问题
+(`docs/spec/target-side.md` §3.4)。
+
+⚠️ **`env` 与 `c-abi` 不可互换。** `env` 是三元组**请求**的东西;`c-abi` 是图与载荷
+**回答**的东西。依赖图里的 `openkal-musl` 会在 `x86_64-linux-gnu` 三元组下供给 musl,
+而只有 `c-abi` 看得见这件事。
+
 这些谓词仅在 `[build]` 段中可用。目标侧在依赖解析之后才被解析,
-因此由它选择的依赖将构成环。一个在不同 C 库下需要不同依赖的包,
+因此由它选择的依赖将构成环;`[target.'cfg(<层> = …)'.dependencies]` 会被报出并忽略,
+而不是被静默丢弃。一个在不同 C 库下需要不同依赖的包,
 按 C 库拆分,或依赖其并集并在 `[build]` 中选择源码。
+
+mcpp 不认识的键 —— 打错的字,或来自更新版本 mcpp 的谓词 —— 会被报成一条 schema
+警告,并且该段不生效。它过去是静默地求值为假,而那与「这一段本就不该匹配」读数完全
+相同。
 
 ## 诊断
 

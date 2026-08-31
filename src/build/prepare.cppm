@@ -253,6 +253,13 @@ void merge_conditional_config(mcpp::manifest::Manifest& m,
     const bool generatedPackage = mcpp::pack::is_distribution_package(m);
 
     for (auto const& cc : m.conditionalConfigs) {
+        // ⚠️ THE TWO PASSES MUST BE DISJOINT, AND `matches()` ALONE DOES NOT
+        // MAKE THEM SO. A layer key answers false here because `layersKnown` is
+        // false — but `cfg(any(linux, c-abi = "musl"))` still matches on its
+        // triple leg, and the second pass would match it again and `append()`
+        // the same inputs twice. Membership, not the answer, decides ownership:
+        // a predicate that NAMES a layer belongs to the second pass entirely.
+        if (cfgpred::uses_layer(cc.predicate)) continue;
         if (!cfgpred::matches(cc.predicate, ctx)) continue;
         const bool neutralWins = generatedPackage
                               && (!cc.linkLibraryDirs.empty() || !cc.libraries.empty());
@@ -326,6 +333,57 @@ void fold_build_defines_into_flags(mcpp::manifest::BuildConfig& bc) {
         bc.cxxflags.push_back("-D" + d);
     }
     bc.defines.clear();
+}
+
+// ── The SECOND conditional pass: predicates that name a target-side layer ────
+//
+// #540/#494. `docs/14` documents a package adapting to the C library it was
+// built over — `[target.'cfg(c-abi = "musl")'.build] std-module-flags =
+// ["-D_GNU_SOURCE"]`, wrong for picolibc — and `stdModuleFlags` was moved onto
+// BuildInputs FOR this, its member comment saying membership "is what makes the
+// cfg axis carry it". Nothing evaluated the predicate: `cfgpred::Ctx` was built
+// from the triple alone, so every such section was dropped in silence and the
+// package built with the wrong C-library configuration, successfully.
+//
+// WHY A SECOND PASS AND NOT AN EARLIER CONTEXT. A layer is answerable only
+// after dependency resolution — a package in the graph may supply the C library
+// (openkal-musl under a `-gnu` triple), which is exactly why the triple's `env`
+// segment is a REQUEST and not the answer (docs/spec/target-side.md §3.4). The
+// first merge runs before resolution because conditional DEPENDENCIES have to.
+//
+// WHERE IT RUNS. Between `tsd::resolve` and the P1689 scan — the same window in
+// which build.mcpp already contributes build inputs by mirroring into
+// `packages[0]`. Everything downstream reads the snapshot from there on: the
+// scan, `stdModuleFlags` collection, the fingerprint, and `compute_flags`.
+//
+// SCOPE. Build INPUTS only, which is what docs/14 promises ("available in
+// [build] sections only"). Dependencies are excluded by construction — they are
+// already resolved by now — and a section that tries is reported rather than
+// silently ignored; see `warn_layer_predicate_dependencies`.
+bool merge_layer_conditional_config(mcpp::manifest::Manifest& m,
+                                    const cfgpred::Ctx& ctx)
+{
+    bool any = false;
+    for (auto const& cc : m.conditionalConfigs) {
+        if (!cfgpred::uses_layer(cc.predicate)) continue;
+        if (!cfgpred::matches(cc.predicate, ctx)) continue;
+        any = true;
+        mcpp::manifest::append(m.buildConfig, cc.inputs);
+        // Same mirror the first pass does: `modules.sources` is the scanner's
+        // own view and is not a BuildInputs member.
+        for (auto const& s : cc.inputs.sources)
+            m.modules.sources.push_back(s);
+        for (auto const& d : cc.linkLibraryDirs)
+            m.runtimeConfig.linkIntent.linkLibraryDirs.push_back(d);
+        for (auto const& l : cc.libraries)
+            m.runtimeConfig.linkIntent.libraries.push_back(l);
+    }
+    // Re-fold only when something was added. The call is safe either way — the
+    // function clears `defines` after folding and says so — but skipping it
+    // keeps this pass a no-op for the overwhelming majority of manifests, which
+    // name no layer at all.
+    if (any) fold_build_defines_into_flags(m.buildConfig);
+    return any;
 }
 
 // Feature-activation closure — THE single implementation (build.mcpp env
@@ -764,7 +822,12 @@ export struct BuildOverrides {
     std::string target_triple;       // empty = host triple, fall through to [toolchain]
     bool        force_static = false; // --static (or implied by musl target)
     std::string package_filter;      // -p <name>: only build this workspace member
-    std::string profile;             // --profile <name> (default "release")
+    // --profile <name>. Empty = fall through to `[build] default-profile`, then
+    // to `profile_fallback` below, whose own default is "dev". The comment here
+    // said "release" for as long as `mcpp build --help` did, and neither had
+    // been true since the global default moved (see resolve_profile_name and
+    // tests/e2e/87_build_default_profile.sh).
+    std::string profile;
     // What `resolve_profile_name` falls back to when neither the command line
     // nor `[build] default-profile` says. Empty = "dev", which is every
     // interactive command. `mcpp pack` sets "release": see resolve_profile_name.
@@ -1231,6 +1294,54 @@ prepare_build(bool print_fingerprint,
 
     // Inject synthetic targets (e.g. test binaries from `mcpp test`).
     for (auto& t : extraTargets) m->targets.push_back(t);
+
+    // #540: a cfg() predicate mcpp cannot evaluate must say so.
+    //
+    // ⚠️ A PREDICATE THAT ANSWERS FALSE AND A PREDICATE THAT WAS NEVER
+    // UNDERSTOOD USED TO READ THE SAME. `cfgpred` returns false for an unknown
+    // key and for an unknown bareword, and a `[target.<pred>.build]` section
+    // whose predicate is false is dropped without a word — so a typo, and every
+    // `cfg(c-abi = …)` section docs/14 documented before this release, produced
+    // a successful build configured as if the section had not been written.
+    //
+    // Reported here rather than in the manifest parser because the vocabulary
+    // lives with the evaluator, and a second copy of it in `toml.cppm` is the
+    // exact defect this release is fixing four other instances of.
+    //
+    // Scoped to the root manifest by where it sits, which matches the existing
+    // policy for every other schema warning: a dependency may adopt a predicate
+    // a consumer's older mcpp does not know, and its build stays quiet.
+    for (auto const& cc : m->conditionalConfigs) {
+        auto unknown = cfgpred::unknown_tokens(cc.predicate);
+        if (!unknown.empty()) {
+            std::string names;
+            for (auto const& u : unknown) {
+                if (!names.empty()) names += ", ";
+                names += '\'' + u + '\'';
+            }
+            m->schemaWarnings.push_back(std::format(
+                "[target.'{}'] names {} in its cfg() predicate, which mcpp does "
+                "not know, so the section never applies (ignored). {}",
+                cc.predicate, names, cfgpred::vocabulary_sentence()));
+        }
+        // A layer is resolved AFTER dependency resolution, so a dependency
+        // selected by one would form a cycle with the resolution that produces
+        // the answer — docs/14 states this. The section's build inputs are
+        // honoured by the second pass; its dependencies cannot be, and saying
+        // so is the difference between a documented limit and a silent drop.
+        if (cfgpred::uses_layer(cc.predicate)
+            && !(cc.dependencies.empty() && cc.devDependencies.empty()
+                 && cc.buildDependencies.empty() && cc.featureDeps.empty())) {
+            m->schemaWarnings.push_back(std::format(
+                "[target.'{}'] conditions dependencies on a target-side layer "
+                "(ignored). A layer is resolved from the dependency graph, so a "
+                "dependency chosen by one would decide the answer it is asking "
+                "for. Build inputs under this predicate DO apply; move the "
+                "dependency to an unconditional [dependencies] entry, or "
+                "condition it on the triple instead.",
+                cc.predicate));
+        }
+    }
 
     // Surface non-fatal manifest schema warnings (e.g. unsupported [targets.*]
     // keys). Under --strict they become errors — same policy as the
@@ -3130,8 +3241,30 @@ prepare_build(bool print_fingerprint,
             // author's declaration.
             const auto& declaredDeps = runtimeOwnerManifest.xlings.deps;
             if (materializeRootRuntime && !declaredDeps.empty()) {
-                const auto stamp = runtimeSelection.ownerRoot / ".mcpp"
-                                 / ".xlings-deps.stamp";
+                // ⚠️⚠️ THE STAMP RECORDS A GLOBAL EFFECT, SO IT LIVES WHERE THE
+                // EFFECT DOES. It used to sit in `<project>/.mcpp/`, while the
+                // installation goes to the registry a few lines below — the
+                // scope difference is deliberate and explained there. Two
+                // consequences followed from the mismatch: wiping or replacing
+                // `MCPP_HOME` left a project still claiming the packages were
+                // installed, and `mcpp clean` (which removes `target/` and
+                // never `.mcpp/`) could not clear it. Keyed by the LIST, not by
+                // the project, because the installation is shared: two projects
+                // declaring the same packages should pay for it once.
+                //
+                // This still does not survive a user's `xlings remove`. No
+                // stamp does; the honest fix is a presence check, and it is
+                // blocked on `resolve_xpkg_path` requiring `<name>@<version>`
+                // while a manifest is entitled to name a package unpinned.
+                const auto stampDir = mcpp::home::root() / "provisioned";
+                auto stamp_key = [&] {
+                    std::size_t h = 1469598103934665603ull;   // FNV-1a
+                    for (auto const& d : declaredDeps)
+                        for (unsigned char ch : d + "\n")
+                            { h ^= ch; h *= 1099511628211ull; }
+                    return std::format("xlings-deps-{:016x}", h);
+                };
+                const auto stamp = stampDir / stamp_key();
                 // Idempotence by CONTENT, not by existence: editing the list
                 // has to re-provision, and an unchanged list must not pay for
                 // an xlings round-trip on every build.
@@ -3148,7 +3281,90 @@ prepare_build(bool print_fingerprint,
                 std::string have;
                 if (std::ifstream in{stamp}; in)
                     have.assign(std::istreambuf_iterator<char>(in), {});
+                // The stamp the previous location left behind. Read, never
+                // deleted: an older mcpp sharing the checkout still uses it,
+                // and a stale extra file is cheaper than a downgrade that
+                // re-provisions on every build.
+                //
+                // ⚠️ IT DOES NOT MEAN "PROVISIONED SUCCESSFULLY". The release
+                // that wrote it did not read the result — that is the defect
+                // above — so it means only "this list was attempted". Treating
+                // it as proof would carry the bug across the very upgrade that
+                // fixes it: a project whose dependency never installed would
+                // adopt the stamp and stay silently broken.
+                //
+                // So it is consulted in ONE place, below, where the alternative
+                // is worse: the auto-install gate. Online, nothing is adopted
+                // and every project re-provisions once, which is a cheap round
+                // trip that re-validates the claim.
+                const auto legacyStamp = runtimeSelection.ownerRoot / ".mcpp"
+                                       / ".xlings-deps.stamp";
+                auto legacy_stamp_matches = [&] {
+                    std::string legacy;
+                    if (std::ifstream in{legacyStamp}; in)
+                        legacy.assign(std::istreambuf_iterator<char>(in), {});
+                    return legacy == want;
+                };
                 if (have != want) {
+                    // Set by the gate below when a legacy stamp lets an
+                    // offline build proceed without an attempt.
+                    bool provisioned = false;
+                    // ⚠️ THE AUTO-INSTALL GATE, WHICH THIS PATH DID NOT HAVE.
+                    //
+                    // `[toolchain]` is the precedent this whole mechanism cites
+                    // ("the same 'declare it and mcpp provisions it on first
+                    // use' contract"), and that path refuses on either knob and
+                    // names the one that fired — see the auto-install branch
+                    // above. This one honoured neither, so a CI exporting
+                    // MCPP_NO_AUTO_INSTALL specifically to prevent an unasked
+                    // download got one anyway, from a path that had never heard
+                    // of the variable.
+                    //
+                    // Placed inside `have != want`, so it gates the ATTEMPT and
+                    // not the block: a project whose packages are already
+                    // provisioned still builds offline, which is the behaviour
+                    // that would otherwise regress.
+                    if (mcpp::platform::env::offline_mode()
+                        || mcpp::platform::env::no_auto_install()) {
+                        // ⚠️ THE ONE PLACE THE LEGACY STAMP IS TRUSTED, and the
+                        // reason is that relocating a record must not refuse a
+                        // build that worked yesterday. Every project that had
+                        // already provisioned carries the old stamp and no new
+                        // one, so on the first build after upgrading it reads
+                        // as un-provisioned — and here, with the network shut
+                        // off, there is no way to find out otherwise. Refusing
+                        // would be a regression caused entirely by moving a
+                        // file, which is the least defensible kind.
+                        //
+                        // Proceeding is the pre-upgrade behaviour exactly: if
+                        // the packages really are missing, the build fails
+                        // downstream on a missing header, as it did before.
+                        // The registry stamp is NOT written — nothing here
+                        // verified anything.
+                        if (!legacy_stamp_matches()) {
+                            std::string_view release =
+                                mcpp::platform::env::offline_mode()
+                                ? "drop --offline / unset MCPP_OFFLINE"
+                                : "unset MCPP_NO_AUTO_INSTALL";
+                            return std::unexpected(std::format(
+                                "[xlings] deps are declared but not provisioned, "
+                                "and auto-install is off.\n"
+                                "       declared: {}\n"
+                                "       install them yourself with:\n"
+                                "         xlings install {}\n"
+                                "       or {} to let mcpp do it.",
+                                join_deps(", "), join_deps(" "), release));
+                        }
+                        mcpp::log::verbose("xlings",
+                            "[xlings] deps: auto-install is off and this project "
+                            "carries a pre-2026.9.1.1 provisioning stamp for the "
+                            "same list; proceeding without re-checking");
+                        // Deliberately NOT writing the registry stamp: nothing
+                        // here verified anything, and a record of a check that
+                        // did not happen is the defect this release removes.
+                        provisioned = true;
+                    }
+                    if (!provisioned) {
                     mcpp::ui::status("Provisioning",
                         std::format("[xlings] deps ({})",
                                     join_deps(", ")));
@@ -3191,7 +3407,48 @@ prepare_build(bool print_fingerprint,
                     auto r = mcpp::xlings::call(
                         mcpp::config::make_xlings_env(**cfg2), "install_packages",
                         args.dump(), &progress);
-                    if (!r) {
+                    // ⚠️⚠️ `if (!r)` IS NOT THE FAILURE TEST, AND TESTING ONLY
+                    // IT MADE THIS PATH REPORT SUCCESS FOR EVERY FAILURE XLINGS
+                    // CAN REPORT.
+                    //
+                    // `xlings::call` returns `expected<CallResult, string>` and
+                    // is in the VALUE state whenever the child ran at all — the
+                    // error channel means "the call did not happen". A
+                    // capability's own status arrives inside `CallResult`,
+                    // parsed off the NDJSON `{"kind":"result","exitCode":N}`
+                    // line, because the xlings process itself exits 0 by design
+                    // once it has spoken the protocol.
+                    //
+                    // Measured before this fix: a manifest declaring a package
+                    // that cannot exist printed `Provisioning [xlings] deps
+                    // (…)`, xlings answered `E_NOT_FOUND` with `exitCode: 1`,
+                    // and mcpp stamped it as done and reported a successful
+                    // build. #531 was written because "the declaration looked
+                    // accepted and did nothing" is the worst shape a config key
+                    // can have; unread, its own fix reproduced that shape and
+                    // the stamp made it permanent.
+                    //
+                    // The correct idiom is not new — the dependency install
+                    // path in this same file reads `r->exitCode` — it was
+                    // simply not applied here.
+                    const bool called   = r.has_value();
+                    const int  childRc  = called ? r->exitCode : -1;
+                    if (!called || childRc != 0) {
+                        // Prefer xlings' own message: for an unresolvable name
+                        // it names the repos it searched and whether the index
+                        // is current, which is the part the author can act on.
+                        std::string why = !called ? r.error()
+                            : (r->error ? r->error->message
+                                        : std::format("xlings exited {}", childRc));
+                        if (auto captured = progress.captured_error();
+                            !captured.empty() && called && !r->error)
+                            why = captured;
+                        // The hint is where "run `xlings update` if the package
+                        // was just published" lives, and for the commonest
+                        // failure — a name that is not in the synced index —
+                        // it is the whole of the actionable content.
+                        if (called && r->error && !r->error->hint.empty())
+                            why += "\n       " + r->error->hint;
                         // Shaped like the toolchain failure: say what failed and
                         // hand back a command the user can run themselves. An
                         // ambiguous bare name ("mesa" matching two repos) lands
@@ -3200,11 +3457,16 @@ prepare_build(bool print_fingerprint,
                             "provisioning [xlings] deps failed: {}\n"
                             "       you can install them manually with:\n"
                             "         xlings install {}",
-                            r.error(), join_deps(" ")));
+                            why, join_deps(" ")));
                     }
+                    // Written only on success, for the same reason the check
+                    // above exists: a stamp is a record that the effect
+                    // happened, and recording an effect that did not is worse
+                    // than not recording it — the next build skips the attempt.
                     std::error_code sec;
                     std::filesystem::create_directories(stamp.parent_path(), sec);
                     if (std::ofstream out{stamp}; out) out << want;
+                    }   // if (!provisioned)
                 }
             }
 
@@ -7065,6 +7327,12 @@ prepare_build(bool print_fingerprint,
     }
 
     mcpp::targetside::TargetSide resolvedTargetSide;
+    // Whether the block below ran at all. `resolvedTargetSide` is default
+    // constructed, so "no layer resolved" and "resolution has not happened"
+    // read identically off its members — and the layer-conditional pass must
+    // tell them apart: the first is an answer a predicate may legitimately
+    // fail to match, the second means the pass has no business running.
+    bool targetSideResolved = false;
 
     // What the packages supplying the target side's layers publish: the header
     // directories and interface flags the whole build is compiled against.
@@ -7349,6 +7617,7 @@ prepare_build(bool print_fingerprint,
         }
 
         resolvedTargetSide = tsd::resolve(in);
+        targetSideResolved = true;
 
         // ⭐⭐ RECORDED ON THE TOOLCHAIN THE MOMENT IT IS KNOWN, because three
         // producers of a compile line need it and only one of them can see
@@ -7641,6 +7910,82 @@ prepare_build(bool print_fingerprint,
         }
         mcpp::ui::info("Target", tsd::format_report(
             resolvedTargetSide, reportedTargetName, mcpp::log::is_verbose()));
+    }
+
+    // ── L1b: conditional sections whose predicate names a target-side layer ──
+    //
+    // The second half of the conditional axis, and it runs HERE for the same
+    // reason the root build.mcpp below does: the target side is now resolved,
+    // and from this point on everything that consumes build inputs — the P1689
+    // scan, the `stdModuleFlags` collection, the fingerprint, `compute_flags` —
+    // reads `packages[]` and `*m`, both of which are still writable.
+    //
+    // ⚠️ EVERY PACKAGE, NOT JUST THE ROOT. The build.mcpp mirror below patches
+    // `packages[0]`, which is right for build.mcpp because a build program
+    // speaks for its own package and the dep loop already handled the others.
+    // Here the motivating case IS a dependency — a package supplying one C++
+    // runtime over several C libraries — so patching only the root would leave
+    // the one package this feature exists for unserved.
+    //
+    // `*m` as well as the snapshots: `canonical_compile_flags(*m)` feeds the
+    // fingerprint, so a contribution reaching the snapshots and not the
+    // manifest would compile with flags the fingerprint does not describe.
+    // ⚠️⚠️ MUTATING `pkg.manifest` IS NOT ENOUGH, AND THAT IS THE WHOLE
+    // DIFFICULTY OF A LATE PRODUCER. `makePackageRoot` snapshots the manifest's
+    // build inputs into `privateBuild` / `linkUsage`, and the compile and link
+    // edges read THOSE. The build.mcpp tail below solves the identical problem
+    // with `directives::mark` + `fold_private_tail`, so this uses the same two
+    // helpers rather than a second mechanism — measured first: writing only
+    // `pkg.manifest.buildConfig` produced a build in which every layer
+    // predicate matched and no flag reached the compiler.
+    if (targetSideResolved) {
+        auto layerCtx = cfgpred::context_for(overrides.target_triple);
+        layerCtx.layersKnown     = true;
+        layerCtx.compiler        = resolvedTargetSide.compiler.interfaceName;
+        layerCtx.compilerRuntime = resolvedTargetSide.compilerRuntime.interfaceName;
+        layerCtx.kernelAbi       = resolvedTargetSide.kernelAbi.interfaceName;
+        layerCtx.cAbi            = resolvedTargetSide.cAbi.interfaceName;
+        layerCtx.cxxAbi          = resolvedTargetSide.cxx.interfaceName;
+        // The root manifest feeds `canonical_compile_flags`, and therefore the
+        // fingerprint: a contribution reaching the snapshots but not `*m` would
+        // compile with flags the fingerprint does not describe, and the next
+        // build would call that a cache hit.
+        merge_layer_conditional_config(*m, layerCtx);
+        for (auto& pkg : packages) {
+            const auto mark  = markDirectiveTail(pkg.manifest);
+            const auto ldN   = pkg.manifest.buildConfig.ldflags.size();
+            const auto privN = pkg.manifest.buildConfig.privateIncludeDirs.size();
+            if (!merge_layer_conditional_config(pkg.manifest, layerCtx)) continue;
+            // cflags / cxxflags / include_dirs / include_dirs_after.
+            foldDirectiveTailIntoPrivateBuild(pkg, pkg.manifest, mark);
+            // ldflags: the link reads linkUsage.
+            pkg.linkUsage.ldflags.insert(
+                pkg.linkUsage.ldflags.end(),
+                pkg.manifest.buildConfig.ldflags.begin()
+                    + static_cast<std::ptrdiff_t>(ldN),
+                pkg.manifest.buildConfig.ldflags.end());
+            // private_include_dirs: expanded at makePackageRoot and folded into
+            // privateBuild.includeDirs, which is what keeps them OUT of
+            // publicUsage. A conditional entry has to take the same route or a
+            // vendored header overlay would reach every consumer — the blast
+            // radius e2e 304 exists to hold.
+            for (auto it = pkg.manifest.buildConfig.privateIncludeDirs.begin()
+                            + static_cast<std::ptrdiff_t>(privN);
+                 it != pkg.manifest.buildConfig.privateIncludeDirs.end(); ++it) {
+                if (it->is_absolute()) {
+                    auto n = *it; n.make_preferred();
+                    if (std::ranges::find(pkg.privateBuild.includeDirs, n)
+                        == pkg.privateBuild.includeDirs.end())
+                        pkg.privateBuild.includeDirs.push_back(std::move(n));
+                    continue;
+                }
+                for (auto& dir : mcpp::modgraph::expand_dir_glob(
+                         pkg.root, it->generic_string()))
+                    if (std::ranges::find(pkg.privateBuild.includeDirs, dir)
+                        == pkg.privateBuild.includeDirs.end())
+                        pkg.privateBuild.includeDirs.push_back(dir);
+            }
+        }
     }
 
     // ── L3: ROOT build.mcpp (moved after dependency resolution, design §3.1

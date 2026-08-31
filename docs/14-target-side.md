@@ -17,7 +17,7 @@ The target side of a build consists of five layers.
 | `compiler` | the program that compiles | `llvm`, `gcc`, `msvc` |
 | `compiler-runtime` | the compiler's own runtime: integer and floating-point builtins, the unwinder | `compiler-rt` with `libunwind`, `libgcc` |
 | `kernel-abi` | the platform interface, or its equivalent | `linux`, `windows`, `darwin`, `openkal` |
-| `c-abi` | the C library | `glibc`, `musl`, `picolibc` |
+| `c-abi` | the C library | `glibc`, `musl`, `picolibc`, `ucrt`, `libSystem` |
 | `c++-abi` | the C++ library and its ABI runtime | `libc++` with `libc++abi`, `libstdc++`, MSVC STL |
 
 ### Membership Criteria
@@ -263,10 +263,38 @@ Requiring a feature selection for this would oblige a project to restate what
 the target triple or its dependency graph has already established, and permit
 the two statements to disagree.
 
+The predicate keys are the five layer names, and their values are the interface
+names in the table at the top of this chapter — the same strings the `Target`
+report prints. They combine with the triple keys under `all`/`any`/`not`:
+
+```toml
+[target.'cfg(all(linux, c-abi = "musl"))'.build]
+cxxflags = ["-D_GNU_SOURCE"]
+```
+
+⚠️ **A layer names the library, not the triple's env segment.** They coincide
+for `musl` and diverge for `gnu`: on Linux that segment asks for glibc, and on
+Windows it names the MinGW flavour of the toolchain, whose C runtime is the same
+UCRT the MSVC flavour links. The spelling is `c-abi = "glibc"`, never
+`c-abi = "gnu"`; the request, as opposed to the answer, is `env = "gnu"` — a
+different question (`docs/spec/target-side.md` §3.4).
+
+⚠️ **`env` and `c-abi` are not interchangeable.** `env` is what the triple
+*asked* for; `c-abi` is what the graph and the payload *answered*. An
+`openkal-musl` in the dependency graph supplies musl under an `x86_64-linux-gnu`
+triple, and only `c-abi` sees that.
+
 These predicates are available in `[build]` sections only. The target side is
 resolved after dependency resolution, so a dependency selected by one would
-form a cycle. A package whose C libraries require different dependencies is
-split per C library, or depends on the union and selects sources in `[build]`.
+form a cycle; `[target.'cfg(<layer> = …)'.dependencies]` is reported and
+ignored rather than silently dropped. A package whose C libraries require
+different dependencies is split per C library, or depends on the union and
+selects sources in `[build]`.
+
+A key mcpp does not know — a typo, or a predicate from a newer mcpp — is
+reported as a schema warning and the section does not apply. It used to
+evaluate to false in silence, which reads exactly like a section that correctly
+did not match.
 
 ## Diagnostics
 
