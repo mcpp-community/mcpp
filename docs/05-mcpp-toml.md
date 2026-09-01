@@ -2186,9 +2186,6 @@ build_start = "echo build started"
 build_failed = "notify-send 'build failed'"
 build_finished = "notify-send 'build finished'"
 
-# Runs alongside the build and is stopped when it ends.
-during_build = { cmd = "mcpp-hooks-audioplayer bgm", loop = true }
-
 # Optional; these are the defaults.
 timeout_seconds = 10
 enabled = true
@@ -2239,8 +2236,8 @@ build_start
     └─ build fails    → during_build closes → build_failed
 ```
 
-`during_build` closes **before** the terminal hook, so a "build finished" sound
-is not competing with the background music it replaces.
+`during_build` closes **before** the terminal hook, so the two commands never
+overlap.
 
 `build_failed` and `build_finished` are mutually exclusive, and both are
 reachable only after `build_start` has run. A project that cannot be *prepared*
@@ -2318,7 +2315,6 @@ than adding media handling to mcpp:
 
 ```toml
 [hooks]
-during_build = { cmd = "mcpp-hooks-audioplayer bgm", loop = true }
 build_finished = "mcpp-hooks-audioplayer niulai-mm"
 build_failed = "mcpp-hooks-audioplayer niulai-niulai"
 side_effect = false
@@ -2327,11 +2323,10 @@ side_effect = false
 deps = ["xim:mcpp-hooks-audioplayer@0.0.1"]
 ```
 
-Background music for the length of the build, and a different sound for how it
-ended. `side_effect = false` is written out rather than left to the default:
-it is the value this manifest wants on its own terms — a missing audio device
-should never fail a build — so it will still say so once the key has more than
-one accepted value.
+A different sound for a successful or failed build. `side_effect = false` is
+written out rather than left to the default: it is the value this manifest
+wants on its own terms — a missing audio device should never fail a build — so
+it will still say so once the key has more than one accepted value.
 
 ## Appendix A. Schema Ownership Principle (admission criteria for new fields)
 
