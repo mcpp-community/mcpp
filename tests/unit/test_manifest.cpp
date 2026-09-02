@@ -2,6 +2,7 @@
 
 import std;
 import mcpp.manifest;
+import mcpp.libs.toml;
 import mcpp.pm.dep_spec;
 import mcpp.platform.axis;
 import mcpp.platform;
@@ -4443,4 +4444,111 @@ during_build = { cmd = "play bgm.mp3", lopo = true }
         if (w.find("lopo") != std::string::npos) found = true;
     EXPECT_TRUE(found);
     EXPECT_TRUE(m->hooks.active());
+}
+
+// ─── #544: array keys in the [target.<triple>] sweep; [xlings] per host ────
+
+// The sweep skipped arrays by design (so that `runner`, an array it reads, was
+// not reported as unsupported), which also let an array-valued typo pass in
+// silence and left `runner` out of the "supported keys" list. Both halves of
+// the issue's third ask are pinned here; TargetRunnerParsesAndDoesNotWarn
+// above keeps the other direction (the real key stays unreported).
+TEST(Manifest, TargetSweepReportsArrayTyposAndListsRunner) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[target.aarch64-linux-musl]
+runnerX = ["qemu-aarch64-static"]
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->schemaWarnings.size(), 1u);
+    EXPECT_NE(m->schemaWarnings[0].find("'runnerX'"), std::string::npos) << m->schemaWarnings[0];
+    EXPECT_NE(m->schemaWarnings[0].find(
+                  "Supported keys: cxx_runtime, linkage, runner, sysroot, toolchain"),
+              std::string::npos) << m->schemaWarnings[0];
+}
+
+// `[xlings]` mirrors `.xlings.json`, whose values may be an object keyed by
+// platform. The parser resolves the form against this host at load, so the
+// assertions below are written in terms of host_platform_key() rather than a
+// fixed platform: the same test file runs on all three CI hosts.
+TEST(Manifest, XlingsDepsAcceptPerPlatformEntries) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings]
+deps = ["xim:ninja", { linux = "qemu-user-aarch64" }, { windows = "nasm", default = "yasm" }]
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    const auto host = mcpp::manifest::host_platform_key();
+    std::vector<std::string> want{"xim:ninja"};
+    if (host == "linux") want.push_back("qemu-user-aarch64");
+    want.push_back(host == "windows" ? "nasm" : "yasm");
+    EXPECT_EQ(m->xlings.deps, want);
+}
+
+TEST(Manifest, XlingsWorkspaceAcceptsPerPlatformValues) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+gcc = { linux = "15.1.0" }
+llvm = { macos = "20", default = "22" }
+xmake = "3.0.7"
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    const auto host = mcpp::manifest::host_platform_key();
+    if (host == "linux") EXPECT_EQ(m->xlings.workspace.at("gcc"), "15.1.0");
+    else                 EXPECT_EQ(m->xlings.workspace.count("gcc"), 0u);
+    EXPECT_EQ(m->xlings.workspace.at("llvm"), host == "macos" ? "20" : "22");
+    EXPECT_EQ(m->xlings.workspace.at("xmake"), "3.0.7");
+}
+
+TEST(Manifest, XlingsUnknownPlatformKeyIsAnError) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings]
+deps = [{ linxu = "qemu-user-aarch64" }]
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("linxu"), std::string::npos) << m.error().message;
+    EXPECT_NE(m.error().message.find("linux, macos, windows, default"), std::string::npos)
+        << m.error().message;
+    EXPECT_NE(m.error().message.find("deps[0]"), std::string::npos) << m.error().message;
+}
+
+TEST(Manifest, XlingsWorkspaceNonStringLeafIsAnError) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+gcc = { linux = 15 }
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("[xlings.workspace] gcc"), std::string::npos)
+        << m.error().message;
+}
+
+// The resolution rule itself, with the platform passed explicitly so all
+// three hosts' answers are asserted on every host.
+TEST(Manifest, ResolveHostValueTable) {
+    using mcpp::manifest::resolve_host_value;
+    auto d = mcpp::libs::toml::parse(R"(v = { linux = "a", macosx = "b", default = "c" })");
+    ASSERT_TRUE(d.has_value());
+    const auto& v = d->root().at("v");
+    EXPECT_EQ(resolve_host_value(v, "linux").value().value(), "a");
+    EXPECT_EQ(resolve_host_value(v, "macos").value().value(), "b");   // macosx alias
+    EXPECT_EQ(resolve_host_value(v, "windows").value().value(), "c");
+    auto e = mcpp::libs::toml::parse(R"(v = { linux = "a" })");
+    ASSERT_TRUE(e.has_value());
+    EXPECT_FALSE(resolve_host_value(e->root().at("v"), "windows").value().has_value());
+    auto s = mcpp::libs::toml::parse(R"(v = "plain")");
+    ASSERT_TRUE(s.has_value());
+    EXPECT_EQ(resolve_host_value(s->root().at("v"), "windows").value().value(), "plain");
 }

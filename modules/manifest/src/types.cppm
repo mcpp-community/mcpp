@@ -760,6 +760,11 @@ struct RuntimeConfig {
 // (env vars applied by xvm shims). See
 // .agents/docs/2026-06-29-manifest-environment-and-platform-design.md (L-1).
 struct XlingsConfig {
+    // Both lists are already resolved for THIS host: a manifest may write an
+    // entry or a value as `{ linux = "...", default = "..." }` (the form
+    // xlings' own `.xlings.json` accepts), and the parser keeps what applies
+    // here and drops what does not. Readers see a flat list and need no
+    // platform logic of their own. See `resolve_host_value` in toml.cppm.
     std::vector<std::string>           deps;       // → .xlings.json "deps"
     std::map<std::string, std::string> workspace;  // → "workspace" (tool → version)
     std::string                        subos;      // → "subos" (named project sandbox)
