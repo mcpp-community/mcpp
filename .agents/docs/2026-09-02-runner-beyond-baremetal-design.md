@@ -908,6 +908,16 @@ fails when something is thrown, so a destructor run during the unwind is what
 separates the two. It answers `yes` under the emulator, which means the runner
 carried a working C++ runtime rather than merely starting the process.
 
+The same consumer was then built for three targets from the same SubOS, to
+establish that the release did not narrow what the ecosystem resolves:
+
+```
+x86_64-linux:        BUILD-OK
+aarch64-linux-musl:  BUILD-OK
+x86_64-windows-gnu:  BUILD-OK
+host run:            RUN-OK
+```
+
 ### 13.4 Release state
 
 | | |
