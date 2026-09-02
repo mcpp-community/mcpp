@@ -459,12 +459,22 @@ struct RunnerChoice {
     bool freestanding = false;          // an EMPTY tmpl is fatal when true
     bool fromManifest = false;          // the consumer overrode a dependency's
     bool ignored = false;               // --no-runner dropped a declared template
+    // The spelling that names this target in the manifest: the canonical form,
+    // which is also the output directory's name and the key every
+    // `[target.<triple>]` reader resolves. Every diagnostic below prints this
+    // rather than `tc.targetTriple`, because each one either names the key the
+    // author wrote or prints a key to paste, and the driver's own spelling is
+    // neither — on macOS it is `arm64-apple-darwin24.6.0`, which no
+    // `[target.…]` lookup matches. Derived here, once, so the lookup and the
+    // message it produces cannot disagree about which target they mean.
+    std::string tripleKey;
 };
 
 RunnerChoice choose_runner(const BuildContext& ctx, bool noRunner = false) {
     RunnerChoice c;
-    if (auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple))
-        c.freestanding = ft->is_freestanding();
+    const auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
+    if (ft) c.freestanding = ft->is_freestanding();
+    c.tripleKey = ft ? ft->str() : ctx.tc.targetTriple;
     // Two producers, ordinary precedence: what the author of THIS project
     // wrote beats what a dependency supplied. The dependency is the normal
     // case on bare metal (a board-support package computes the emulator's
@@ -485,10 +495,9 @@ RunnerChoice choose_runner(const BuildContext& ctx, bool noRunner = false) {
         return it != ctx.manifest.targetOverrides.end() && !it->second.runner.empty()
              ? &it->second : nullptr;
     };
-    const mcpp::manifest::TargetEntry* entry = nullptr;
-    if (auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple))
-        entry = lookup(ft->str());
-    if (!entry) entry = lookup(ctx.tc.targetTriple);
+    const mcpp::manifest::TargetEntry* entry = lookup(c.tripleKey);
+    if (!entry && c.tripleKey != ctx.tc.targetTriple)
+        entry = lookup(ctx.tc.targetTriple);
     if (entry) {
         c.tmpl = entry->runner;
         c.fromManifest = !ctx.manifest.buildConfig.runner.empty();
@@ -1385,7 +1394,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
         if (!found.program) {
             std::println(stderr, "error: {}",
                 mcpp::build::runner_lookup::not_found_message(
-                    ctx->tc.targetTriple, tmpl.front(), found.searched));
+                    choice.tripleKey, tmpl.front(), found.searched));
             return 2;
         }
         tmpl.front() = found.program->string();
@@ -1429,7 +1438,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
             std::println(stderr, "error: {}", spawn_failed_message(argv.front(), spawnErr));
         else if (classify(spawnErr) == SpawnClass::Unloadable)
             std::println(stderr, "error: {}",
-                         unrunnable_message(ctx->tc.targetTriple, exe, spawnErr));
+                         unrunnable_message(choice.tripleKey, exe, spawnErr));
         else
             std::println(stderr, "error: {}", spawn_failed_message(exe.string(), spawnErr));
         return 2;
@@ -1878,7 +1887,7 @@ export int run_tests(std::span<const std::string> passthrough,
             runnerTmpl.front(), ctx->xlingsDepBinDirs, pathEnv ? pathEnv : "");
         if (found.program) runnerTmpl.front() = found.program->string();
         else invocationNotRunReason = mcpp::build::runner_lookup::not_found_message(
-            ctx->tc.targetTriple, runnerTmpl.front(), found.searched);
+            runnerChoice.tripleKey, runnerTmpl.front(), found.searched);
     }
     // Set by the first worker whose spawn the kernel refused; every worker
     // checks it before spawning. Workers already past the check may be
@@ -1964,8 +1973,8 @@ export int run_tests(std::span<const std::string> passthrough,
                             "this host cannot execute {} artifacts: {} (error {}); "
                             "declare [target.{}].runner, or pass --no-runner on a "
                             "host that can",
-                            ctx->tc.targetTriple, errno_text(spawnErr), spawnErr,
-                            ctx->tc.targetTriple);
+                            runnerChoice.tripleKey, errno_text(spawnErr), spawnErr,
+                            runnerChoice.tripleKey);
                     else
                         reason = spawn_failed_message(r.argv.front(), spawnErr);
                     if (!hostCannotRun.exchange(true)) {
