@@ -492,6 +492,12 @@ error: no runner is configured for 'riscv64-none-elf' — a freestanding artifac
        A board-support package normally supplies this so you do not have to.
 ```
 
+这个键不限于裸机。hosted 交叉目标 —— x86_64 宿主上的 `aarch64-linux-musl` 产物 ——
+使用同一个 `[target.<triple>].runner`,以 `qemu-aarch64-static` 这类用户态模拟器代替
+系统模拟器;在这类目标上,缺少 runner 在内核拒绝产物之前不是错误。hosted 目标的规则、
+`--no-runner` 出口与 `mcpp test` 的未运行报告见 [5 —— mcpp.toml](05-mcpp-toml.md)
+§2.7.3。
+
 ## 编写板级支持包
 
 板级支持包是一个普通的 mcpp 包。它在 `[xlings] deps` 下声明所需的模拟器,为消费者

@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
+#include <cerrno>
 #include <cstdlib>
+#include <fstream>
 
 import std;
 import mcpp.platform.process;
@@ -95,6 +97,122 @@ TEST(RunExec, InjectedEnvSurvivesShellChildChain) {
         {"/bin/sh", "-c", "[ \"$MCPP_TEST_CONTRACT\" = hello ]"},
         {{"MCPP_TEST_CONTRACT", "hello"}});
     EXPECT_EQ(rc, 0);
+}
+
+// ── spawn failures are typed, reported once, and never retried (#544) ──────
+//
+// The invariant the bounded launcher's DeadlineRun comment states ("could not
+// spawn" and "ran and failed" must not share an exit code) was defeated one
+// layer down: run_exec turned every posix_spawnp failure into a bare 127 with
+// nothing printed, and both deadline wrappers fell back to it, spawning a
+// second time and discarding the first errno. `mcpp run --target
+// aarch64-linux-musl` on a host without an emulator printed "Running …", a
+// blank line, and exited 1.
+
+TEST(RunExec, MissingProgramReportsOnStderrWhenCallerDoesNotAsk) {
+    testing::internal::CaptureStderr();
+    int rc = process::run_exec({"/no/such/program/mcpp-run-xyz"});
+    auto err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(rc, 127);
+    EXPECT_NE(err.find("/no/such/program/mcpp-run-xyz"), std::string::npos) << err;
+    EXPECT_NE(err.find("error 2"), std::string::npos) << err;
+}
+
+TEST(RunExec, MissingProgramTypesErrnoWhenCallerAsks) {
+    int spawnErr = 0;
+    testing::internal::CaptureStderr();
+    int rc = process::run_exec({"/no/such/program/mcpp-run-xyz"}, {}, &spawnErr);
+    auto err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(rc, 127);
+    EXPECT_EQ(spawnErr, ENOENT);
+    EXPECT_TRUE(err.empty()) << err;   // the caller owns the report
+}
+
+#if defined(__linux__)
+// Linux only, and that is a MEASUREMENT (CI, macOS 14 ARM64, 2026-09-02): on
+// macOS posix_spawnp handles ENOEXEC the way execvp does — it runs the file
+// through /bin/sh — so the child IS spawned (spawn_error stays 0) and it is the
+// shell that exits non-zero. The kernel's own refusal of a wrong-architecture
+// Mach-O (EBADARCH) is a different reading and is not what this file
+// synthesises. `mcpp run`'s "this host cannot execute" typing therefore fires
+// on Linux for any unloadable file and on macOS only for a real foreign
+// binary; see the design's open question 1.
+TEST(RunExec, UnloadableArtifactIsENOEXEC) {
+    // An executable file with no loader magic: the kernel refuses it with
+    // ENOEXEC. glibc's posix_spawnp does not retry through /bin/sh the way
+    // execvp does, so the errno reaches the caller untouched. This is the
+    // reading `mcpp run` turns into "this host cannot execute the artifact".
+    auto dir = std::filesystem::temp_directory_path() / "mcpp-enoexec-test";
+    std::filesystem::create_directories(dir);
+    auto f = dir / "not-an-elf";
+    { std::ofstream o(f, std::ios::binary); o << "\x7f" "NOT" "\x00\x00\x00\x00"; }
+    std::filesystem::permissions(f, std::filesystem::perms::owner_all);
+    int spawnErr = 0;
+    int rc = process::run_exec({f.string()}, {}, &spawnErr);
+    EXPECT_EQ(rc, 127);
+    EXPECT_EQ(spawnErr, ENOEXEC);
+}
+#endif
+
+TEST(RunExec, SpawnedChildLeavesSpawnErrorZero) {
+    int spawnErr = -1;
+    EXPECT_EQ(process::run_exec({"/bin/sh", "-c", "exit 7"}, {}, &spawnErr), 7);
+    EXPECT_EQ(spawnErr, 0);
+}
+
+TEST(CaptureExec, MissingProgramTypesErrnoWhenCallerAsks) {
+    int spawnErr = 0;
+    auto r = process::capture_exec({"/no/such/program/mcpp-capture-typed"}, {}, {}, &spawnErr);
+    EXPECT_EQ(r.exit_code, 127);
+    EXPECT_EQ(spawnErr, ENOENT);
+    EXPECT_TRUE(r.output.empty()) << r.output;
+}
+
+TEST(RunExecDeadline, SpawnFailureIsTypedAndNotRetried) {
+    int spawnErr = 0;
+    bool timedOut = true;
+    testing::internal::CaptureStderr();
+    int rc = process::run_exec_deadline({"/no/such/program/mcpp-dl-xyz"}, {},
+                                        std::chrono::milliseconds(5000), &timedOut,
+                                        &spawnErr);
+    auto err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(rc, 127);
+    EXPECT_EQ(spawnErr, ENOENT);
+    EXPECT_FALSE(timedOut);
+    EXPECT_TRUE(err.empty()) << err;
+}
+
+TEST(RunExecDeadline, SpawnFailureIsReportedWhenCallerDoesNotAsk) {
+    bool timedOut = true;
+    testing::internal::CaptureStderr();
+    int rc = process::run_exec_deadline({"/no/such/program/mcpp-dl-untyped"}, {},
+                                        std::chrono::milliseconds(5000), &timedOut);
+    auto err = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(rc, 127);
+    EXPECT_FALSE(timedOut);
+    EXPECT_NE(err.find("mcpp-dl-untyped"), std::string::npos) << err;
+    EXPECT_NE(err.find("error 2"), std::string::npos) << err;
+}
+
+TEST(CaptureExecDeadline, SpawnFailureIsTypedInOutcome) {
+    int spawnErr = 0;
+    bool timedOut = true;
+    auto r = process::capture_exec_deadline({"/no/such/program/mcpp-cdl-xyz"}, {},
+                                            std::chrono::milliseconds(5000), &timedOut,
+                                            {}, &spawnErr);
+    EXPECT_EQ(r.exit_code, 127);
+    EXPECT_EQ(spawnErr, ENOENT);
+    EXPECT_FALSE(timedOut);
+    EXPECT_TRUE(r.output.empty()) << r.output;
+}
+
+TEST(CaptureExecDeadline, SpawnFailureIsInOutputWhenCallerDoesNotAsk) {
+    bool timedOut = true;
+    auto r = process::capture_exec_deadline({"/no/such/program/mcpp-cdl-untyped"}, {},
+                                            std::chrono::milliseconds(5000), &timedOut);
+    EXPECT_EQ(r.exit_code, 127);
+    EXPECT_NE(r.output.find("mcpp-cdl-untyped"), std::string::npos) << r.output;
+    EXPECT_NE(r.output.find("error 2"), std::string::npos) << r.output;
 }
 
 #else  // _WIN32

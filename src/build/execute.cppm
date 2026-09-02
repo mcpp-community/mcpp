@@ -16,6 +16,7 @@ import mcpp.diag;
 import mcpp.build.plan;
 import mcpp.toolchain.triple;
 import mcpp.freestanding.runner;
+import mcpp.build.runner_lookup;    // #544: where the runner's program is
 import mcpp.freestanding.linkline;
 import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
 import mcpp.build.backend;
@@ -115,6 +116,14 @@ struct BuildCacheEntry {
     // list gets written. Same discipline as `subosRecorded` above, and for the
     // same reason.
     bool depSourceRootsRecorded = false;
+    // Did the build this entry records have a runner declared for its target
+    // (#544)? The run fast path executes the artifact bare and has no manifest
+    // to read a template from, so an entry with a runner is a miss for it —
+    // the prepare path then consults choose_runner as the first `mcpp run`
+    // did. Absent on caches written before the field: false, which is the
+    // pre-#544 behaviour and correct for every entry such a cache could hold
+    // (a hosted runner was never consulted then, so none was ever used).
+    bool runnerDeclared = false;
 };
 
 std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& projectRoot) {
@@ -220,6 +229,11 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
             e.depSourceRootsRecorded = true;
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        // Optional `runner=0|1` (#544). Absent ⇒ false; see the field.
+        if (haveNextLine && line.starts_with("runner=")) {
+            e.runnerDeclared = (line.substr(7) == "1");
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         entries.push_back(std::move(e));
         if (!haveNextLine || line.empty()) break;
     }
@@ -244,7 +258,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::string& profile = "",
                        const std::string& cacheMode = "",
                        const mcpp::platform::runtime::RuntimeBinding& runtimeBinding = {},
-                       std::vector<std::string> depSourceRoots = {}) {
+                       std::vector<std::string> depSourceRoots = {},
+                       bool runnerDeclared = false) {
     auto path = projectRoot / kBuildCacheFile;
     auto entries = read_build_cache(projectRoot);
 
@@ -265,6 +280,7 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     newEntry.runtimeBinding = runtimeBinding;
     newEntry.depSourceRoots = std::move(depSourceRoots);
     newEntry.depSourceRootsRecorded = true;
+    newEntry.runnerDeclared = runnerDeclared;
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -305,6 +321,7 @@ void write_build_cache_entries(const std::filesystem::path& path,
         f << "cacheMode=" << e.cacheMode << '\n';
         f << "depSourceRoots=" << e.depSourceRoots.size() << '\n';
         for (auto& r : e.depSourceRoots) f << r << '\n';
+        f << "runner=" << (e.runnerDeclared ? 1 : 0) << '\n';
     }
 }
 
@@ -424,30 +441,72 @@ compute_subos_env(const mcpp::build::BuildPlan& plan) {
 // does not fail when you add the second derivation, it fails later, when one
 // of them gains a rule the other does not.
 //
-// Returns an empty argv for a hosted target — the caller runs the artifact
-// directly, as it always did.
+// Returns an empty argv when nothing is declared — the caller runs the
+// artifact directly.
+//
+// Read for EVERY target (#544). The freestanding predicate used to gate this
+// read, which is how a runner declared under a hosted cross triple
+// (`[target.aarch64-linux-musl].runner` on an x86_64 host) was parsed,
+// validated, documented and never consulted: `mcpp run` exec'd the artifact
+// bare, the kernel refused it with ENOEXEC, and nothing said so. The
+// predicate now decides exactly one thing — whether an absent runner is fatal
+// before any spawn is attempted — and `RunnerChoice::freestanding` keeps that
+// meaning. Whether THIS host can execute a hosted artifact is not predicted
+// here or anywhere: mcpp does what the project declared, or attempts the
+// launch and reports what the kernel answered (design §3, P1).
 struct RunnerChoice {
     std::vector<std::string> tmpl;      // empty = execute the artifact directly
-    bool freestanding = false;          // a runner is REQUIRED when true
+    bool freestanding = false;          // an EMPTY tmpl is fatal when true
     bool fromManifest = false;          // the consumer overrode a dependency's
+    bool ignored = false;               // --no-runner dropped a declared template
+    // The spelling that names this target in the manifest: the canonical form,
+    // which is also the output directory's name and the key every
+    // `[target.<triple>]` reader resolves. Every diagnostic below prints this
+    // rather than `tc.targetTriple`, because each one either names the key the
+    // author wrote or prints a key to paste, and the driver's own spelling is
+    // neither — on macOS it is `arm64-apple-darwin24.6.0`, which no
+    // `[target.…]` lookup matches. Derived here, once, so the lookup and the
+    // message it produces cannot disagree about which target they mean.
+    std::string tripleKey;
 };
 
-RunnerChoice choose_runner(const BuildContext& ctx) {
+RunnerChoice choose_runner(const BuildContext& ctx, bool noRunner = false) {
     RunnerChoice c;
-    auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
-    if (!ft || !ft->is_freestanding()) return c;
-    c.freestanding = true;
+    const auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
+    if (ft) c.freestanding = ft->is_freestanding();
+    c.tripleKey = ft ? ft->str() : ctx.tc.targetTriple;
     // Two producers, ordinary precedence: what the author of THIS project
     // wrote beats what a dependency supplied. The dependency is the normal
-    // case (a board-support package computes the emulator's absolute path);
-    // the manifest key exists for swapping `-bios default` for
-    // `-bios none -semihosting` while debugging.
+    // case on bare metal (a board-support package computes the emulator's
+    // absolute path); the manifest key exists for swapping `-bios default`
+    // for `-bios none -semihosting` while debugging, and — on a hosted cross
+    // triple — for naming the user-mode emulator at all.
     c.tmpl = ctx.manifest.buildConfig.runner;
-    if (auto it = ctx.manifest.targetOverrides.find(ctx.tc.targetTriple);
-        it != ctx.manifest.targetOverrides.end() && !it->second.runner.empty()) {
-        c.tmpl = it->second.runner;
+    // The manifest key is the CANONICAL spelling — `aarch64-macos`, the name
+    // of the output directory and the key every other `[target.<triple>]`
+    // reader uses (prepare.cppm resolves overrides by `t.str()`). The
+    // toolchain's own `targetTriple` is what the driver reported, which on a
+    // Linux host happens to be the canonical spelling and on macOS is
+    // `arm64-apple-darwin24.6.0`. Looking up the raw spelling alone matched on
+    // Linux and never on macOS (measured on CI, 2026-09-02); the raw form is
+    // kept as a fallback for a triple the parser does not know.
+    auto lookup = [&](std::string_view key) {
+        auto it = ctx.manifest.targetOverrides.find(std::string(key));
+        return it != ctx.manifest.targetOverrides.end() && !it->second.runner.empty()
+             ? &it->second : nullptr;
+    };
+    const mcpp::manifest::TargetEntry* entry = lookup(c.tripleKey);
+    if (!entry && c.tripleKey != ctx.tc.targetTriple)
+        entry = lookup(ctx.tc.targetTriple);
+    if (entry) {
+        c.tmpl = entry->runner;
         c.fromManifest = !ctx.manifest.buildConfig.runner.empty();
     }
+    // `--no-runner` is the operator on THIS host stating a host fact the
+    // manifest cannot carry: the triple is native here. On a freestanding
+    // target that leaves nothing to execute, and the caller's existing
+    // no-runner error is the correct answer.
+    if (noRunner && !c.tmpl.empty()) { c.tmpl.clear(); c.ignored = true; }
     return c;
 }
 
@@ -643,7 +702,10 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                               for (auto const& r : ctx.depSourceRoots)
                                   v.push_back(r.generic_string());
                               return v;
-                          }());
+                          }(),
+                          // #544: the run fast path declines an entry whose
+                          // target has a runner declared — see the field.
+                          !choose_runner(ctx).tmpl.empty());
     }
 
     // The one place the --strict policy is settled. Degradations reported by
@@ -1070,6 +1132,13 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
         }
     }
     if (!match || match->runTargets.empty()) return std::nullopt;
+    // A runner declared for the host target (a wrapper such as valgrind, or
+    // a triple that is native here but carries an emulator) is consulted on
+    // the prepare path through choose_runner. This path has no manifest to
+    // read the template from, and executing the artifact bare here while the
+    // other door wraps it would make the second `mcpp run` behave differently
+    // from the first. The entry records the fact; the fast path declines.
+    if (match->runnerDeclared) return std::nullopt;
 
     auto outputDirStr = match->outputDir;
     auto ninjaProgram = match->ninjaProgram;
@@ -1178,7 +1247,23 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
              }))
         childEnv.push_back(std::move(kv));
 
-    return mcpp::platform::process::run_exec(argv, childEnv) == 0 ? 0 : 1;
+    // Same contract as the prepare path below: a refused spawn is reported
+    // and exits 2, never folded into the artifact's own exit status (#544).
+    // No runner can be declared for an entry this path accepts (see the
+    // `runnerDeclared` gate above), so the artifact is the only thing that
+    // could have been refused.
+    int spawnErr = 0;
+    const int exitRc = mcpp::platform::process::run_exec(argv, childEnv, &spawnErr);
+    if (spawnErr != 0) {
+        using namespace mcpp::build::runner_lookup;
+        const auto triple = mcpp::toolchain::triple::host_triple().str();
+        if (classify(spawnErr) == SpawnClass::Unloadable)
+            std::println(stderr, "error: {}", unrunnable_message(triple, exe, spawnErr));
+        else
+            std::println(stderr, "error: {}", spawn_failed_message(exe.string(), spawnErr));
+        return 2;
+    }
+    return exitRc == 0 ? 0 : 1;
 }
 
 // `mcpp run` driver: build, locate the binary target, exec it with the
@@ -1193,7 +1278,8 @@ export int build_run_target(const std::optional<std::string>& targetName,
                             const std::string& package_filter = {},
                             const std::string& cache_mode = {},
                             bool no_cache = false,
-                            const std::string& target_triple = {}) {
+                            const std::string& target_triple = {},
+                            bool no_runner = false) {
     // mcpp#225 (E2): reuse the resolved build cache when it's still fresh,
     // skipping prepare_build's toolchain resolution + modgraph scan
     // entirely — mirrors cmd_build's try_fast_build fast path. The cached
@@ -1204,8 +1290,12 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // A --cache/--no-cache override also bypasses the fast path, for the same
     // reason --profile does: the cached build.ninja was generated under the
     // previous mode, so reusing it would silently ignore the flag.
+    // `--no-runner` bypasses it too: the fast path executes the artifact bare,
+    // and it only takes an entry that records no runner (see runnerDeclared),
+    // so with the flag there is nothing for it to ignore — and it has no
+    // manifest to print the note against.
     if (package_filter.empty() && cache_mode.empty() && !no_cache
-        && target_triple.empty()) {
+        && target_triple.empty() && !no_runner) {
         if (auto root = mcpp::project::find_manifest_root(std::filesystem::current_path())) {
             if (auto rc = try_fast_run(*root, targetName, passthrough)) {
                 return *rc;
@@ -1261,41 +1351,57 @@ export int build_run_target(const std::optional<std::string>& targetName,
     auto exe = ctx->outputDir / chosen->output;
     auto pathCtx = mcpp::fetcher::make_path_ctx(/*cfg=*/nullptr, ctx->projectRoot);
     std::vector<std::string> argv;
-    // A freestanding artifact is not executable on this machine by
-    // construction — wrong ISA, no loader, and it expects to own the address
-    // space. Exec'ing it directly gives "Exec format error", which describes
-    // the symptom and not the situation. The runner template says how to stand
-    // something in front of it; mcpp never guesses one, because which emulator
-    // and which machine model are board facts (see mcpp.freestanding.runner).
-    bool freestandingRun = false;
-    if (auto ft = mcpp::toolchain::triple::parse(ctx->tc.targetTriple))
-        freestandingRun = ft->is_freestanding();
-    if (freestandingRun) {
-        // Two producers, and the precedence is the ordinary one: what the
-        // author of THIS project wrote beats what a dependency supplied.
-        //
-        // The dependency is the normal case — a board-support package knows
-        // the emulator, its machine model and its firmware mode, and computes
-        // the absolute path that a static manifest cannot. The explicit key
-        // exists for the other case: swapping `-bios default` for
-        // `-bios none -semihosting` while debugging is a legitimate thing to
-        // want, and removing that ability to make the BSP authoritative would
-        // trade one problem for a worse one.
-        const auto choice = choose_runner(*ctx);
+    // An artifact this machine cannot execute — a freestanding image by
+    // construction, a hosted cross artifact by circumstance — needs something
+    // to stand in front of it. The runner template says what; mcpp never
+    // guesses one, because which emulator and which machine model are facts
+    // about the board or the host (see mcpp.freestanding.runner and
+    // mcpp.build.runner_lookup). One read point decides for both `run` and
+    // `test`: choose_runner.
+    //
+    // Two producers, and the precedence is the ordinary one: what the author
+    // of THIS project wrote beats what a dependency supplied. The dependency
+    // is the normal case on bare metal — a board-support package knows the
+    // emulator, its machine model and its firmware mode, and computes the
+    // absolute path that a static manifest cannot. The explicit key exists for
+    // the other case: swapping `-bios default` for `-bios none -semihosting`
+    // while debugging, or naming `qemu-aarch64-static` for a cross target.
+    const auto choice = choose_runner(*ctx, no_runner);
+    if (choice.ignored)
+        mcpp::ui::info("note", std::format(
+            "--no-runner: ignoring the runner declared for {}", choice.tripleKey));
+    if (choice.fromManifest)
+        mcpp::ui::info("note", std::format(
+            "[target.{}].runner overrides the runner a dependency supplied",
+            choice.tripleKey));
+    if (choice.freestanding && choice.tmpl.empty()) {
+        std::println(stderr, "error: {}",
+            mcpp::freestanding::no_runner_message(choice.tripleKey));
+        return 2;
+    }
+    if (!choice.tmpl.empty()) {
+        // The program is located by mcpp, not by posix_spawnp: a declared
+        // payload's bin/ first, then PATH — see runner_lookup for the shim
+        // measurement that makes the order matter. Not found anywhere is
+        // decided here, before any spawn, and is an error rather than a
+        // fallback to bare execution (#544, D1): running the artifact under a
+        // different interpreter with different arguments is the failure the
+        // runner key exists to prevent.
         auto tmpl = choice.tmpl;
-        if (choice.fromManifest)
-            mcpp::ui::info("note", std::format(
-                "[target.{}].runner overrides the runner a dependency supplied",
-                ctx->tc.targetTriple));
-        if (tmpl.empty()) {
+        const char* pathEnv = std::getenv("PATH");
+        auto found = mcpp::build::runner_lookup::locate(
+            tmpl.front(), ctx->xlingsDepBinDirs, pathEnv ? pathEnv : "");
+        if (!found.program) {
             std::println(stderr, "error: {}",
-                mcpp::freestanding::no_runner_message(ctx->tc.targetTriple));
+                mcpp::build::runner_lookup::not_found_message(
+                    choice.tripleKey, tmpl.front(), found.searched));
             return 2;
         }
+        tmpl.front() = found.program->string();
         argv = mcpp::freestanding::expand(tmpl, exe);
         for (auto& a : passthrough) argv.push_back(a);
         mcpp::ui::status("Running", std::format(
-            "`{} … {}`", tmpl.front(),
+            "`{} … {}`", choice.tmpl.front(),
             mcpp::ui::shorten_path(exe, pathCtx)));
     } else {
         argv.push_back(exe.string());
@@ -1316,7 +1422,28 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // Direct exec (no /bin/sh): the loader env reaches ONLY the target child,
     // never mcpp or a host shell. Fixes the bundled-glibc-vs-host-libtinfo
     // crash on newer-glibc distros.
-    return mcpp::platform::process::run_exec(argv, childEnv) == 0 ? 0 : 1;
+    //
+    // A refused spawn is typed and reported here, and exits 2 — the code the
+    // freestanding no-runner path already uses for "could not start", distinct
+    // from 1, which keeps meaning "ran and failed". With a runner the failure
+    // is the runner's own (verbatim errno, no advice); without one, ENOEXEC
+    // is the kernel saying this host cannot load the artifact, and the message
+    // carries the key that would change that. Anything else is reported as
+    // itself — EACCES is a permission problem, not an absence.
+    int spawnErr = 0;
+    const int rc = mcpp::platform::process::run_exec(argv, childEnv, &spawnErr);
+    if (spawnErr != 0) {
+        using namespace mcpp::build::runner_lookup;
+        if (!choice.tmpl.empty())
+            std::println(stderr, "error: {}", spawn_failed_message(argv.front(), spawnErr));
+        else if (classify(spawnErr) == SpawnClass::Unloadable)
+            std::println(stderr, "error: {}",
+                         unrunnable_message(choice.tripleKey, exe, spawnErr));
+        else
+            std::println(stderr, "error: {}", spawn_failed_message(exe.string(), spawnErr));
+        return 2;
+    }
+    return rc == 0 ? 0 : 1;
 }
 
 export enum class TestMessageFormat { Human, Json };
@@ -1325,6 +1452,10 @@ export struct TestOptions {
     std::string        filter;   // substring match on the path-based test name; empty = all
     TestMessageFormat  format = TestMessageFormat::Human;
     bool               list = false;   // enumerate only, no build/run
+    // `--no-runner`: run the test binaries directly, ignoring a declared
+    // runner — the operator on this host stating that the triple is native
+    // here, a fact the manifest has no axis for (#544, D3).
+    bool               noRunner = false;
     // Per-test RUN deadline. The default is deliberately non-zero: `mcpp test`
     // is something CI runs unattended, and an unbounded default makes a single
     // hung test able to consume the whole job with nothing to show for it.
@@ -1351,6 +1482,12 @@ export struct TestOptions {
 export struct TestRunSummary {
     int       passed    = 0;
     int       failed    = 0;
+    // Tests that were built and not executed, with the one reason that applies
+    // to all of them (#544): this host cannot load the artifacts, or the
+    // declared runner could not be found or started. Not a failure — the
+    // test did not run — and not a pass either: the exit code is 2.
+    int         notRun  = 0;
+    std::string notRunReason;
     long long buildMs   = 0;   // Phase A + bulk pass + per-test drives
     long long runMs     = 0;   // the test binaries' own execution
     long long elapsedMs = 0;   // wall clock for the whole member
@@ -1526,12 +1663,18 @@ export int run_tests(std::span<const std::string> passthrough,
     //    the rest still build and run.
     struct TestResult {
         std::string name;
-        enum class St { Pass, CompileFail, RunFail } status;
+        // `NotRun` (#544): built, and not executed — the host cannot load the
+        // artifact, or the declared runner could not be found or started.
+        // Reporting that as `RunFail (exit 127)` states that the test ran and
+        // returned 127, which is false and indistinguishable from a missing
+        // program; reporting it as a pass would be read as one.
+        enum class St { Pass, CompileFail, RunFail, NotRun } status;
         int         exitCode = 0;
         std::string compileOutput;
         std::string runOutput;
         long long   durationMs = 0;    // build+run wall time for THIS test
         bool        timedOut = false;  // killed by --timeout
+        std::string reason;            // NotRun only: why, in one sentence
     };
     std::vector<TestResult> results;
 
@@ -1542,17 +1685,20 @@ export int run_tests(std::span<const std::string> passthrough,
         if (!json) return;
         const char* st = r.status == TestResult::St::Pass ? "pass"
                        : r.status == TestResult::St::CompileFail ? "compile_fail"
-                                                                 : "run_fail";
+                       : r.status == TestResult::St::NotRun ? "not_run"
+                                                            : "run_fail";
         std::string signal = (r.exitCode > 128 && r.exitCode < 128 + 65)
             ? std::to_string(r.exitCode - 128) : "null";
         std::println("{{\"member\":\"{}\",\"test\":\"{}\",\"status\":\"{}\","
                      "\"exit_code\":{},\"signal\":{},"
                      "\"duration_ms\":{},\"timed_out\":{},"
-                     "\"compile_output\":\"{}\",\"run_output\":\"{}\"}}",
+                     "\"compile_output\":\"{}\",\"run_output\":\"{}\","
+                     "\"reason\":\"{}\"}}",
                      test_json_escape(memberName),
                      test_json_escape(r.name), st, r.exitCode, signal, r.durationMs,
                      r.timedOut ? "true" : "false",
-                     test_json_escape(r.compileOutput), test_json_escape(r.runOutput));
+                     test_json_escape(r.compileOutput), test_json_escape(r.runOutput),
+                     test_json_escape(r.reason));
         std::fflush(stdout);
     };
 
@@ -1708,6 +1854,48 @@ export int run_tests(std::span<const std::string> passthrough,
     // the terminal interleaves them line by line, which does not just look
     // untidy — it makes a failing assertion unattributable, and the whole
     // reason the per-test loop exists is attribution.
+    // How the test binaries are executed — the SAME runner `mcpp run` uses,
+    // resolved ONCE per invocation (#544). One read point, two callers; and
+    // one lookup, because every test of an invocation shares a target, so
+    // "the runner's program is not there" is a fact about the invocation and
+    // is reported once rather than once per test.
+    //
+    // Nothing else about the test model changes, and that is a measured
+    // result rather than a simplification: semihosting propagates the
+    // firmware's `main` return value to the emulator's exit code
+    // (`return 7` → qemu exits 7, verified), so "exit code is the verdict"
+    // holds under a runner exactly as it does on the host.
+    const auto runnerChoice = choose_runner(*ctx, testOpts.noRunner);
+    if (runnerChoice.ignored && !json)
+        mcpp::ui::info("note", std::format(
+            "--no-runner: ignoring the runner declared for {}", runnerChoice.tripleKey));
+    if (runnerChoice.fromManifest && !json)
+        mcpp::ui::info("note", std::format(
+            "[target.{}].runner overrides the runner a dependency supplied",
+            runnerChoice.tripleKey));
+    if (runnerChoice.freestanding && runnerChoice.tmpl.empty()) {
+        std::println(stderr, "error: {}",
+            mcpp::freestanding::no_runner_message(runnerChoice.tripleKey));
+        return 2;
+    }
+    std::vector<std::string> runnerTmpl = runnerChoice.tmpl;
+    // Non-empty ⇒ no test is spawned; every one is reported NotRun with it.
+    std::string invocationNotRunReason;
+    if (!runnerTmpl.empty()) {
+        const char* pathEnv = std::getenv("PATH");
+        auto found = mcpp::build::runner_lookup::locate(
+            runnerTmpl.front(), ctx->xlingsDepBinDirs, pathEnv ? pathEnv : "");
+        if (found.program) runnerTmpl.front() = found.program->string();
+        else invocationNotRunReason = mcpp::build::runner_lookup::not_found_message(
+            runnerChoice.tripleKey, runnerTmpl.front(), found.searched);
+    }
+    // Set by the first worker whose spawn the kernel refused; every worker
+    // checks it before spawning. Workers already past the check may be
+    // refused the same way — harmless, a refused spawn has no side effects —
+    // and each such result is NotRun, not RunFail. The reason is printed once.
+    std::atomic<bool> hostCannotRun{false};
+    std::string       hostCannotRunReason;
+
     auto run_tests_now = [&](std::vector<Runnable>& list) {
         if (list.empty()) return;
         const bool capture = json || list.size() > 1;
@@ -1737,24 +1925,69 @@ export int run_tests(std::span<const std::string> passthrough,
                 // for a test that ran in 30ms is not a slow test, it is a
                 // mislabelled one. The phase's own wall time is measured
                 // separately by `tRunPhase` below.
+                // Nothing to spawn when the invocation already knows the
+                // answer: the runner is missing, or an earlier spawn was
+                // refused by the kernel. Recorded as NotRun with that reason.
+                if (!invocationNotRunReason.empty() || hostCannotRun.load()) {
+                    std::scoped_lock lock(reportMutex);
+                    if (!json) mcpp::ui::plain(std::format("{} ... not run", r.name));
+                    results.push_back({r.name, TestResult::St::NotRun, 0, {}, {}, 0, false,
+                                       invocationNotRunReason.empty() ? hostCannotRunReason
+                                                                      : invocationNotRunReason});
+                    std::fflush(stdout);
+                    emit_json(results.back());
+                    continue;
+                }
+
                 const auto tStart = std::chrono::steady_clock::now();
                 bool timedOut = false;
                 int exitCode = 0;
+                int spawnErr = 0;
                 std::string runOutput;
                 if (capture) {
                     auto rr = mcpp::platform::process::capture_exec_deadline(
-                        r.argv, r.env, deadline, &timedOut);
+                        r.argv, r.env, deadline, &timedOut, {}, &spawnErr);
                     exitCode  = rr.exit_code;
                     runOutput = std::move(rr.output);
                 } else {
                     mcpp::ui::status("Running", std::format("bin/{}", r.name));
                     exitCode = mcpp::platform::process::run_exec_deadline(
-                        r.argv, r.env, deadline, &timedOut);
+                        r.argv, r.env, deadline, &timedOut, &spawnErr);
                 }
                 auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - tStart).count();
 
                 std::scoped_lock lock(reportMutex);
+                if (spawnErr != 0) {
+                    // Refused before it ran (#544). With a runner the failure
+                    // is the runner's own; without one, ENOEXEC is the kernel
+                    // saying this host cannot load the artifact. Either way
+                    // it is a fact about the invocation, so it is printed once
+                    // and every later test is NotRun without a spawn.
+                    using namespace mcpp::build::runner_lookup;
+                    std::string reason;
+                    if (!runnerTmpl.empty())
+                        reason = spawn_failed_message(r.argv.front(), spawnErr);
+                    else if (classify(spawnErr) == SpawnClass::Unloadable)
+                        reason = std::format(
+                            "this host cannot execute {} artifacts: {} (error {}); "
+                            "declare [target.{}].runner, or pass --no-runner on a "
+                            "host that can",
+                            runnerChoice.tripleKey, errno_text(spawnErr), spawnErr,
+                            runnerChoice.tripleKey);
+                    else
+                        reason = spawn_failed_message(r.argv.front(), spawnErr);
+                    if (!hostCannotRun.exchange(true)) {
+                        hostCannotRunReason = reason;
+                        if (!json) mcpp::ui::warning(reason);
+                    }
+                    if (!json) mcpp::ui::plain(std::format("{} ... not run", r.name));
+                    results.push_back({r.name, TestResult::St::NotRun, 0, {}, {}, ms, false,
+                                       reason});
+                    std::fflush(stdout);
+                    emit_json(results.back());
+                    continue;
+                }
                 if (timedOut) {
                     if (!json) mcpp::ui::plain(std::format(
                         "{} ... FAIL (timeout after {}s)", r.name, testOpts.timeoutSecs));
@@ -1846,30 +2079,11 @@ export int run_tests(std::span<const std::string> passthrough,
 
         auto exe = ctx->outputDir / lu.output;
 
-        // A freestanding test image cannot run here either, and the answer is
-        // the SAME runner `mcpp run` uses — one read point, two callers.
-        //
-        // Nothing else about the test model changes, and that is a measured
-        // result rather than a simplification: semihosting propagates the
-        // firmware's `main` return value to the emulator's exit code
-        // (`return 7` → qemu exits 7, verified), so "exit code is the verdict"
-        // holds on bare metal exactly as it does on the host. An earlier plan
-        // called for a structured stdout protocol because it assumed there was
-        // no exit code to read; there is.
+        // Through the runner resolved once above, or bare. The runner's
+        // program was located already; only the artifact changes per test.
         std::vector<std::string> argv;
-        {
-            const auto choice = choose_runner(*ctx);
-            if (choice.freestanding) {
-                if (choice.tmpl.empty()) {
-                    std::println(stderr, "error: {}",
-                        mcpp::freestanding::no_runner_message(ctx->tc.targetTriple));
-                    return 2;
-                }
-                argv = mcpp::freestanding::expand(choice.tmpl, exe);
-            } else {
-                argv.push_back(exe.string());
-            }
-        }
+        if (runnerTmpl.empty()) argv.push_back(exe.string());
+        else                    argv = mcpp::freestanding::expand(runnerTmpl, exe);
         for (auto& a : passthrough) argv.push_back(a);
 
         std::vector<std::pair<std::string, std::string>> childEnv;
@@ -1907,14 +2121,22 @@ export int run_tests(std::span<const std::string> passthrough,
     // 7. Summary.
     int passed = 0;
     int failed = 0;
+    int notRun = 0;
+    std::string notRunReason;
     std::vector<std::string> failures;
     for (auto& r : results) {
         if (r.status == TestResult::St::Pass) ++passed;
+        else if (r.status == TestResult::St::NotRun) {
+            ++notRun;
+            if (notRunReason.empty()) notRunReason = r.reason;
+        }
         else { ++failed; failures.push_back(r.name); }
     }
 
     summary.passed = passed;
     summary.failed = failed;
+    summary.notRun = notRun;
+    summary.notRunReason = notRunReason;
 
     // "build X + run Y" rather than one merged number: on a member whose tests
     // are cheap but whose link is not, those two are three orders of magnitude
@@ -1924,30 +2146,50 @@ export int run_tests(std::span<const std::string> passthrough,
                               static_cast<double>(summary.buildMs)   / 1000.0,
                               static_cast<double>(summary.runMs)     / 1000.0);
 
+    // 1 keeps meaning "a test ran and failed". 2 is "could not establish the
+    // answer": the code the freestanding no-runner path already returns for
+    // the same situation, and never 0 — a green exit with N tests not run is
+    // the reading this repository has recorded as its most frequent false
+    // pass (#544, D2).
+    const int rc = failed ? 1 : (notRun ? 2 : 0);
+
     if (json) {
         std::println("{{\"summary\":{{\"member\":\"{}\",\"passed\":{},\"failed\":{},"
+                     "\"not_run\":{},\"not_run_reason\":\"{}\","
                      "\"elapsed_ms\":{},\"build_ms\":{},\"run_ms\":{}}}}}",
                      test_json_escape(memberName), passed, failed,
+                     notRun, test_json_escape(notRunReason),
                      summary.elapsedMs, summary.buildMs, summary.runMs);
         std::fflush(stdout);
-        return failed == 0 ? 0 : 1;
+        return rc;
+    }
+
+    // The count is in the summary line at the same weight as failures, with
+    // its reason: a quiet skip is read as a pass. First line of the reason
+    // only — the full text was printed when it was established.
+    auto counts = std::format("{} passed; {} failed", passed, failed);
+    if (notRun) {
+        auto firstLine = notRunReason.substr(0, notRunReason.find('\n'));
+        counts += std::format("; {} not run ({})", notRun, firstLine);
     }
 
     std::println("");
-    if (failed == 0) {
+    if (rc == 0) {
         mcpp::ui::status("test result",
-            std::format("ok. {} passed; 0 failed; finished in {}", passed, timing));
+            std::format("ok. {}; finished in {}", counts, timing));
         return 0;
     }
     mcpp::ui::error(std::format(
-        "test result: FAILED. {} passed; {} failed; finished in {}",
-        passed, failed, timing));
-    std::println("");
-    std::println("failures:");
-    for (auto& n : failures) std::println("    {}", n);
-    // (Each compile failure's diagnostics already printed inline under its
-    // FAIL line in Phase B — the summary stays a compact name list.)
-    return 1;
+        "test result: {}. {}; finished in {}",
+        failed ? "FAILED" : "NOT RUN", counts, timing));
+    if (failed) {
+        std::println("");
+        std::println("failures:");
+        for (auto& n : failures) std::println("    {}", n);
+        // (Each compile failure's diagnostics already printed inline under its
+        // FAIL line in Phase B — the summary stays a compact name list.)
+    }
+    return rc;
 }
 
 // `mcpp clean` driver.

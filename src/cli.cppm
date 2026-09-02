@@ -59,7 +59,7 @@ void print_usage() {
     std::println("  mcpp new <name>                      Create a new package skeleton");
     std::println("  mcpp build [options]                 Build the current package");
     std::println("  mcpp run [target] [-- args...]       Build + run a binary target");
-    std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --timeout, --build-timeout, --message-format json)");
+    std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --timeout, --build-timeout, --message-format json, --no-runner)");
     std::println("  mcpp clean [--bmi-cache]             Remove target/ (and optionally the build cache)");
     std::println("  mcpp add [ns.]pkg@ver                Add an exact dependency to mcpp.toml");
     std::println("  mcpp remove [ns.]pkg                 Remove an exact dependency from mcpp.toml");
@@ -391,6 +391,8 @@ int run(int argc, char** argv) {
                 .help("Global dependency cache: global (default) | local | off"))
             .option(cl::Option("no-cache")
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
+            .option(cl::Option("no-runner")
+                .help("Execute the artifact directly, ignoring any [target.<triple>].runner (a host that runs it natively)"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_run(p, std::span<const std::string>(passthrough));
             })))
@@ -404,6 +406,8 @@ int run(int argc, char** argv) {
                 .help("Output format: human (default) | json (NDJSON, one record per test)"))
             .option(cl::Option("list")
                 .help("List (filtered) tests without building or running them"))
+            .option(cl::Option("no-runner")
+                .help("Run test binaries directly, ignoring any [target.<triple>].runner (a host that runs them natively)"))
             .option(cl::Option("timeout").takes_value().value_name("SECS")
                 .help("Kill a test still RUNNING after SECS seconds (default 300; 0 = no limit)"))
             .option(cl::Option("build-timeout").takes_value().value_name("SECS")

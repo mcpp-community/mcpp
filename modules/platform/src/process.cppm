@@ -82,17 +82,33 @@ RunResult capture_with_env(
 // calling process environment is never mutated, so a target's loader vars
 // (LD_LIBRARY_PATH) cannot poison mcpp itself or any sibling host process.
 // Returns a platform-normalized exit code, or 127 if exec fails.
+//
+// ⚠️ A SPAWN FAILURE IS REPORTED EXACTLY ONCE AND NEVER DROPPED (#544). Every
+// launcher below follows one rule: when the child could not be started it
+// returns 127 and either (a) stores the errno in `*spawn_error` and prints
+// nothing, because a caller that asked for the errno owns the report, or
+// (b) with `spawn_error == nullptr`, reports it itself — on stderr here, into
+// `output` for the capturing variants. Before this rule `run_exec` turned
+// every posix_spawnp failure into a bare 127: `mcpp run` on an artifact the
+// kernel refused printed "Running …", a blank line, and exited 1.
+//
+// `*spawn_error` is 0 whenever the child was spawned, whatever it then did.
+// On the residual Windows std::system branch the launch cannot be told apart
+// from the child, so it stays 0 and the shell's own message is what is seen.
 int run_exec(const std::vector<std::string>& argv,
-             const std::vector<std::pair<std::string, std::string>>& extraEnv = {});
+             const std::vector<std::pair<std::string, std::string>>& extraEnv = {},
+             int* spawn_error = nullptr);
 
 // Same as run_exec but captures stdout AND stderr combined (replaces the old
 // `… 2>&1` redirect) into RunResult::output. Required because the only consumer
 // (ninja fast-path) parses error text — which ninja writes to stderr — via
 // is_stale_ninja_failure / filter_ninja_output. No shell → no quoting/injection.
+// `spawn_error`: the same contract as run_exec's.
 RunResult capture_exec(
     const std::vector<std::string>& argv,
     const std::vector<std::pair<std::string, std::string>>& extraEnv = {},
-    std::string_view cwd = {});
+    std::string_view cwd = {},
+    int* spawn_error = nullptr);
 
 // Deadline variants: kill the child once `deadline` elapses and set
 // *timed_out. A zero deadline means no limit.
@@ -107,10 +123,13 @@ RunResult capture_exec(
 // through to the unbounded launcher, so every timeout knob (`mcpp test
 // --timeout`, `--build-timeout`, `[build] build_program_timeout`) was a silent
 // no-op there — set, reported nowhere, and doing nothing.
+// `spawn_error`: run_exec's contract. A refused spawn is typed here from the
+// bounded launcher's own attempt; there is no second spawn.
 int run_exec_deadline(const std::vector<std::string>& argv,
                       const std::vector<std::pair<std::string, std::string>>& extraEnv,
                       std::chrono::milliseconds deadline,
-                      bool* timed_out);
+                      bool* timed_out,
+                      int* spawn_error = nullptr);
 
 // Run one host-shell command with inherited stdio, a working directory and a
 // real deadline. POSIX uses /bin/sh; Windows uses cmd.exe. This is for
@@ -172,12 +191,15 @@ void stop_background(const BackgroundCommand& child,
 void guard_background_on_signal(const BackgroundCommand& child);
 void clear_background_guard();
 
+// `spawn_error`: run_exec's contract; with it null a refused spawn is
+// formatted into `output`, as capture_exec does.
 RunResult capture_exec_deadline(
     const std::vector<std::string>& argv,
     const std::vector<std::pair<std::string, std::string>>& extraEnv,
     std::chrono::milliseconds deadline,
     bool* timed_out,
-    std::string_view cwd = {});
+    std::string_view cwd = {},
+    int* spawn_error = nullptr);
 
 // Run `command` silently (discard stdout/stderr).
 // On POSIX, stdin is automatically redirected from /dev/null.
@@ -335,6 +357,21 @@ int normalize_exit_code(int rc) {
 #endif
 }
 
+// The one sentence every launcher prints for a refused spawn. Platform-neutral
+// on purpose: the bounded launchers on both platforms now hand their spawn
+// error up (DeadlineRun::spawn_error), and the wrappers that receive it are
+// compiled everywhere. `error` is an errno on POSIX and a GetLastError() value
+// on Windows; the category below renders each in its own vocabulary.
+std::string spawn_failure(std::string_view program, int error) {
+#if defined(_WIN32)
+    return std::format("CreateProcess('{}') failed (error {}): {}\n",
+                       program, error, std::system_category().message(error));
+#else
+    return std::format("posix_spawnp('{}') failed (error {}): {}\n",
+                       program, error, std::generic_category().message(error));
+#endif
+}
+
 #if defined(__linux__) || defined(__APPLE__)
 // Portable accessor for the host environment block. On Apple, `environ` is
 // only linkable from executables (not dylibs), so _NSGetEnviron() is the
@@ -387,11 +424,6 @@ std::vector<std::string> merged_environ(
         out.emplace_back(entry);
     }
     return out;
-}
-
-std::string spawn_failure(std::string_view program, int error) {
-    return std::format("posix_spawnp('{}') failed (error {}): {}\n",
-                       program, error, std::generic_category().message(error));
 }
 #else
 // Build a shell command line from an argv vector (Windows + residual non-POSIX
@@ -550,8 +582,10 @@ int run_passthrough(std::string_view command, std::string* output) {
 // child-only env isolation, move it onto a CreateProcess/_spawn equivalent and
 // delete the residual shell branch below.
 int run_exec(const std::vector<std::string>& argv,
-             const std::vector<std::pair<std::string, std::string>>& extraEnv)
+             const std::vector<std::pair<std::string, std::string>>& extraEnv,
+             int* spawn_error)
 {
+    if (spawn_error) *spawn_error = 0;
     if (argv.empty()) return 127;
 #if defined(__linux__) || defined(__APPLE__)
     auto envStore = merged_environ(extraEnv);
@@ -563,8 +597,15 @@ int run_exec(const std::vector<std::string>& argv,
     cargv.push_back(nullptr);
 
     pid_t pid = 0;
-    if (::posix_spawnp(&pid, cargv[0], nullptr, nullptr, cargv.data(), envp.data()) != 0)
-        return 127;  // spawn failed (e.g. program not found)
+    if (int sp = ::posix_spawnp(&pid, cargv[0], nullptr, nullptr, cargv.data(), envp.data());
+        sp != 0) {
+        // Reported once: by the caller when it asked for the errno, here
+        // otherwise. Never dropped — the errno in hand at this line is the
+        // whole difference between "Exec format error" and a blank line.
+        if (spawn_error) *spawn_error = sp;
+        else std::fputs(spawn_failure(argv.front(), sp).c_str(), stderr);
+        return 127;
+    }
     int status = 0;
     while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
     return normalize_exit_code(status);
@@ -579,9 +620,11 @@ int run_exec(const std::vector<std::string>& argv,
 RunResult capture_exec(
     const std::vector<std::string>& argv,
     const std::vector<std::pair<std::string, std::string>>& extraEnv,
-    std::string_view cwd)
+    std::string_view cwd,
+    int* spawn_error)
 {
     RunResult result;
+    if (spawn_error) *spawn_error = 0;
     if (argv.empty()) { result.exit_code = 127; return result; }
 #if defined(__linux__) || defined(__APPLE__)
     // posix_spawn + a pipe; stdout and stderr both go to the pipe so the
@@ -616,7 +659,8 @@ RunResult capture_exec(
     if (sp != 0) {
         ::close(fds[0]);
         result.exit_code = 127;
-        result.output = spawn_failure(argv.front(), sp);
+        if (spawn_error) *spawn_error = sp;
+        else result.output = spawn_failure(argv.front(), sp);
         return result;
     }
 
@@ -662,6 +706,7 @@ struct BoundedOutcome {
     bool        supported = false;
     int         exit_code = 0;
     bool        timed_out = false;
+    int         spawn_error = 0;   // see DeadlineRun::spawn_error in either launcher
     std::string output;
 };
 
@@ -713,6 +758,7 @@ BoundedOutcome dispatch_bounded(
         outcome.supported = r.supported;
         outcome.exit_code = r.exit_code;
         outcome.timed_out = r.timed_out;
+        outcome.spawn_error = r.spawn_error;
     } else {
         std::vector<const char*> argvPtrs;
         argvPtrs.reserve(argv.size());
@@ -723,6 +769,7 @@ BoundedOutcome dispatch_bounded(
         outcome.supported = r.supported;
         outcome.exit_code = r.exit_code;
         outcome.timed_out = r.timed_out;
+        outcome.spawn_error = r.spawn_error;
     }
     return outcome;
 }
@@ -731,10 +778,12 @@ BoundedOutcome dispatch_bounded(
 int run_exec_deadline(const std::vector<std::string>& argv,
                       const std::vector<std::pair<std::string, std::string>>& extraEnv,
                       std::chrono::milliseconds deadline,
-                      bool* timed_out)
+                      bool* timed_out,
+                      int* spawn_error)
 {
     if (timed_out) *timed_out = false;
-    if (deadline.count() <= 0) return run_exec(argv, extraEnv);
+    if (spawn_error) *spawn_error = 0;
+    if (deadline.count() <= 0) return run_exec(argv, extraEnv, spawn_error);
     if (argv.empty()) return 127;
 
     // capture=false: identical stdio behaviour to `run_exec` — the child writes
@@ -743,7 +792,17 @@ int run_exec_deadline(const std::vector<std::string>& argv,
     // undo the observability work that path exists for (and would hide gtest's
     // colors by making its stdout a pipe).
     auto r = dispatch_bounded(argv, extraEnv, {}, deadline, /*capture=*/false);
-    if (!r.supported) return run_exec(argv, extraEnv);
+    if (!r.supported) {
+        // Attempted and refused: the errno is in hand, so type it or report
+        // it here. Spawning again through run_exec — what this did before —
+        // paid for a second refusal and threw the first errno away (#544).
+        if (r.spawn_error != 0) {
+            if (spawn_error) *spawn_error = r.spawn_error;
+            else std::fputs(spawn_failure(argv.front(), r.spawn_error).c_str(), stderr);
+            return 127;
+        }
+        return run_exec(argv, extraEnv, spawn_error);   // no bounded launcher here
+    }
     if (timed_out) *timed_out = r.timed_out;
     return r.exit_code;
 }
@@ -842,19 +901,30 @@ RunResult capture_exec_deadline(
     const std::vector<std::pair<std::string, std::string>>& extraEnv,
     std::chrono::milliseconds deadline,
     bool* timed_out,
-    std::string_view cwd)
+    std::string_view cwd,
+    int* spawn_error)
 {
     if (timed_out) *timed_out = false;
-    if (deadline.count() <= 0) return capture_exec(argv, extraEnv, cwd);
+    if (spawn_error) *spawn_error = 0;
+    if (deadline.count() <= 0) return capture_exec(argv, extraEnv, cwd, spawn_error);
     RunResult result;
     if (argv.empty()) { result.exit_code = 127; return result; }
 
     auto r = dispatch_bounded(argv, extraEnv, cwd, deadline, /*capture=*/true);
     // `supported == false` means the child COULD NOT BE SPAWNED — not that it
     // ran and failed. Reporting those the same way would hide a launcher
-    // problem behind a child's exit code, so fall back to the untimed path and
-    // let it produce the real diagnostic.
-    if (!r.supported) return capture_exec(argv, extraEnv, cwd);
+    // problem behind a child's exit code. When the launcher attempted the
+    // spawn, its errno is the diagnostic and there is nothing to retry; only
+    // a build with no bounded launcher at all falls back to the untimed path.
+    if (!r.supported) {
+        if (r.spawn_error != 0) {
+            result.exit_code = 127;
+            if (spawn_error) *spawn_error = r.spawn_error;
+            else result.output = spawn_failure(argv.front(), r.spawn_error);
+            return result;
+        }
+        return capture_exec(argv, extraEnv, cwd, spawn_error);
+    }
     result.exit_code = r.exit_code;
     result.output    = std::move(r.output);
     if (timed_out) *timed_out = r.timed_out;

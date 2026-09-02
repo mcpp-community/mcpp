@@ -100,6 +100,57 @@ struct LoadContext {
     bool insideWorkspace = false;
 };
 
+// ─── `[xlings]` values per host platform (#544, D7) ─────────────────────────
+//
+// xlings' own `.xlings.json` lets a `workspace` value be an object keyed by
+// platform — `{ "linux": "15.1.0", "default": "22" }` — and resolves it
+// against the host it runs on: the host's key wins, `default` is the
+// fallback, and no match at all means the entry is absent on that host.
+// `[xlings]` claims to mirror that file 1:1, but its parser accepted only
+// strings and dropped a table value in silence. `deps` has no xlings-side
+// reader (mcpp reads the list and calls `install_packages` itself), so its
+// per-platform form is mcpp's to define, and it takes the same one: an entry
+// is a string or a `{ <platform> = "<package>" }` table.
+//
+// Resolved HERE, at load, against this host. `[xlings]` describes the
+// environment of the machine mcpp runs on, so the host is the right axis, and
+// resolving once keeps every downstream reader — the provisioning pass, its
+// stamp, the build-program hand-off — on the flat list it already reads.
+//
+// The keys are mcpp's OS names, `linux` / `macos` / `windows`, plus `default`;
+// `macosx` is accepted as xlings' own spelling of `macos`. An unknown key is a
+// hard error, not a dropped entry: a typo'd platform that silently declared
+// nothing is the shape #531 was filed for.
+inline std::string_view host_platform_key() {
+    if constexpr (mcpp::platform::is_windows) return "windows";
+    else if constexpr (mcpp::platform::is_macos) return "macos";
+    else return "linux";
+}
+
+inline std::expected<std::optional<std::string>, std::string>
+resolve_host_value(const mcpp::libs::toml::Value& v, std::string_view host) {
+    if (v.is_string()) return std::optional<std::string>{v.as_string()};
+    if (!v.is_table())
+        return std::unexpected(std::string(
+            "expected a string or a { <platform> = \"...\" } table"));
+    static constexpr std::string_view kKnown[] = {
+        "linux", "macos", "macosx", "windows", "default",
+    };
+    std::optional<std::string> chosen, fallback;
+    for (auto& [k, val] : v.as_table()) {
+        if (std::ranges::find(kKnown, k) == std::ranges::end(kKnown))
+            return std::unexpected(std::format(
+                "unknown platform key '{}'; expected one of linux, macos, windows, default", k));
+        if (!val.is_string())
+            return std::unexpected(std::format("platform key '{}' must be a string", k));
+        const std::string_view canon = (k == "macosx") ? "macos" : std::string_view(k);
+        if (canon == host)            chosen   = val.as_string();
+        else if (canon == "default")  fallback = val.as_string();
+    }
+    if (chosen) return chosen;
+    return fallback;   // may be nullopt: not declared on this host
+}
+
 std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                                                     const std::filesystem::path& origin = "mcpp.toml",
                                                     LoadContext ctx = {});
@@ -270,13 +321,19 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         "target.*.build.flags",  // #258 — middle segment is the cfg predicate
         "runtime.requirements",
         "runtime.artifacts",
+        // #544: `deps = [{ linux = "..." }]` — every entry a per-platform
+        // table — is the same Value shape as `[[xlings.deps]]`, and the guard
+        // cannot tell the inline form from the doubled-bracket typo. The
+        // reader below type-checks every entry, so nothing is silently
+        // dropped on this path either way.
+        "xlings.deps",
     };
     if (auto badPath = find_disallowed_array_of_tables(doc->root(), "", kAllowedArraysOfTables)) {
         return std::unexpected(error(origin, std::format(
             "[[{}]] (array-of-tables) is not allowed for section '{}'; "
             "array-of-tables syntax is only supported for [[build.flags]], "
-            "[[features.<name>.flags]], [[runtime.requirements]], and "
-            "[[runtime.artifacts]]",
+            "[[features.<name>.flags]], [[runtime.requirements]], "
+            "[[runtime.artifacts]], and [xlings] deps entries",
             *badPath, *badPath)));
     }
 
@@ -1347,15 +1404,30 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         m.buildConfig.dependencyLinkage = *v;
     }
 
-    // [xlings] — build environment (L-1). Subsections mirror .xlings.json 1:1.
-    if (auto v = doc->get_string_array("xlings.deps"))  m.xlings.deps = *v;
+    // [xlings] — build environment (L-1). Subsections mirror .xlings.json 1:1,
+    // including its per-platform value form, resolved here for this host
+    // (see resolve_host_value above).
+    if (auto* arr = doc->get("xlings.deps"); arr && arr->is_array()) {
+        std::size_t i = 0;
+        for (auto& el : arr->as_array()) {
+            auto r = resolve_host_value(el, host_platform_key());
+            if (!r) return std::unexpected(error(origin,
+                std::format("[xlings] deps[{}]: {}", i, r.error())));
+            if (*r) m.xlings.deps.push_back(**r);
+            ++i;
+        }
+    }
     if (doc->get("xlings.subos")) {
         m.xlings.subosDeclared = true;
         if (auto v = doc->get_string("xlings.subos")) m.xlings.subos = *v;
     }
     if (auto* wt = doc->get_table("xlings.workspace"))
-        for (auto& [k, val] : *wt)
-            if (val.is_string()) m.xlings.workspace[k] = val.as_string();
+        for (auto& [k, val] : *wt) {
+            auto r = resolve_host_value(val, host_platform_key());
+            if (!r) return std::unexpected(error(origin,
+                std::format("[xlings.workspace] {}: {}", k, r.error())));
+            if (*r) m.xlings.workspace[k] = **r;
+        }
     if (auto* et = doc->get_table("xlings.envs"))
         for (auto& [k, val] : *et)
             if (val.is_string()) m.xlings.envs[k] = val.as_string();
@@ -1913,12 +1985,12 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 }
             }
 
-            // Unsupported SCALAR keys are REPORTED, not dropped.
+            // Unsupported scalar and array keys are REPORTED, not dropped.
             // `[targets.<name>]` has done this since #249; this table did not,
             // so a key that looks plausible — `cxx_runtime_tests` was the real
             // one — was accepted in silence and had no effect (#418).
             //
-            // ⚠️ SCALARS ONLY, AND THAT IS THE POINT. The sub-TABLES here are the
+            // ⚠️ NO SUB-TABLES, AND THAT IS THE POINT. The sub-TABLES here are the
             // conditional channel (`[target.<pred>.build]`, `.dependencies`,
             // `.dev-dependencies`, `.build-dependencies`, `.feature-deps`) and
             // TOML presents each as a key of this table. A hand-written list of
@@ -1930,32 +2002,33 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // warned about `[target.'cfg(unix)'.dependencies]`, a documented
             // feature with its own e2e.
             //
-            // Restricting the check to scalars removes the coupling entirely:
+            // Restricting the check to non-tables removes the coupling entirely:
             // new conditional sections need no change here, and the reported
-            // case — a scalar that does nothing — is still caught.
+            // case — a key that does nothing — is still caught.
+            //
+            // Scalars AND arrays (#544). The sweep used to skip arrays, which
+            // kept it from reporting `runner` as unsupported while honouring
+            // it — but it also let `runnerX = [...]` pass in silence, and its
+            // list of supported keys omitted the one array this table reads.
+            // Two lists, one per type, so an array typo is reported and a
+            // correctly spelled array is not; the message prints both in one
+            // alphabetical line, because a reader of the warning should not
+            // have to know a key's type to find it there.
             static constexpr std::string_view kKnownTargetScalars[] = {
                 "cxx_runtime", "linkage", "sysroot", "toolchain",
             };
+            static constexpr std::string_view kKnownTargetArrays[] = { "runner" };
             for (auto& [key, value] : body) {
                 if (value.is_table()) continue;   // the conditional channel
-                // ...and arrays, which this sweep was never about. It checks
-                // SCALARS ("a scalar that does nothing"), and `runner` is an
-                // array read a few lines above — reaching here it was reported
-                // as "unsupported key 'runner' (ignored)" while in fact being
-                // honoured, which is worse than either being true.
-                if (value.is_array()) continue;
-                bool known = false;
-                for (auto k : kKnownTargetScalars) if (key == k) { known = true; break; }
-                if (known) continue;
-                std::string supported;
-                for (auto k : kKnownTargetScalars) {
-                    if (!supported.empty()) supported += ", ";
-                    supported += k;
-                }
+                const std::span<const std::string_view> known = value.is_array()
+                    ? std::span<const std::string_view>(kKnownTargetArrays)
+                    : std::span<const std::string_view>(kKnownTargetScalars);
+                if (std::ranges::find(known, key) != known.end()) continue;
                 m.schemaWarnings.push_back(std::format(
-                    "[target.{}] has unsupported key '{}' (ignored). Supported keys: {}. "
+                    "[target.{}] has unsupported key '{}' (ignored). Supported keys: "
+                    "cxx_runtime, linkage, runner, sysroot, toolchain. "
                     "Per-role contracts go in [build].cxx_runtime's table form.",
-                    triple, key, supported));
+                    triple, key));
             }
             m.targetOverrides[canon_triple(triple)] = std::move(e);
 

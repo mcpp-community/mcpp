@@ -73,6 +73,12 @@ struct DeadlineRun {
     bool supported = false;
     int  exit_code = 0;
     bool timed_out = false;
+    // Non-zero when `supported` is false BECAUSE CreateProcess was attempted
+    // and refused: its GetLastError() value. Zero with `supported` false means
+    // this build has no bounded launcher. Same contract as the POSIX peer,
+    // whose value is an errno; the caller reports the number verbatim and
+    // does not spawn again (#544).
+    int  spawn_error = 0;
 };
 
 // Receives stdout+stderr as it arrives. Called on the calling thread only.
@@ -305,7 +311,7 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
         envBlock.data(),
         (cwd && *cwd) ? cwd : nullptr,
         &si, &pi);
-    if (!ok) return out;
+    if (!ok) { out.spawn_error = static_cast<int>(::GetLastError()); return out; }
 
     Handle proc;   proc.h   = pi.hProcess;
     Handle thread; thread.h = pi.hThread;

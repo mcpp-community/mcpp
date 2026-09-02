@@ -124,6 +124,19 @@ instead of installing, and names the packages so they can be provisioned
 out of band — the same two knobs `[toolchain]` honours, for the same reason: an
 unasked-for download is not something a build decides on a project's behalf.
 
+The declaration is provisioned on every host that builds the project, and a
+package the host cannot install is an error, not a skipped entry. A tool that
+exists for one host platform only is therefore declared for that platform
+(2026.9.2.1): `deps = [{ linux = "qemu-user-aarch64" }]` declares the emulator
+on Linux and nothing elsewhere. The keys and the resolution rule are in
+chapter 5, §2.13.
+
+**The runner.** A program under `[xlings] deps` is also where
+`[target.<triple>].runner` looks first for its first element, before `PATH`
+(chapter 5, §2.7.3). The two keys together provision a user-mode emulator on a
+CI host and execute a cross-built artifact through it, without the manifest
+naming the payload's path.
+
 ## 6. What belongs somewhere else
 
 | Need | Where it goes |

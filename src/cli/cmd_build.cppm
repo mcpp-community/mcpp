@@ -213,8 +213,12 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     std::string target_triple;
     if (auto tt = parsed.value("target"))        target_triple = *tt;
     if (auto tt = parsed.value("target-triple")) target_triple = *tt;
+    // --no-runner: "this host can execute the artifact" is a fact about the
+    // host, and the manifest has no host axis to state it on (#544, D3).
+    const bool no_runner = parsed.is_flag_set("no-runner");
     return mcpp::build::build_run_target(targetName, passthrough, package_filter,
-                                         cache_mode, no_cache, target_triple);
+                                         cache_mode, no_cache, target_triple,
+                                         no_runner);
 }
 
 export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
@@ -238,6 +242,7 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     mcpp::build::TestOptions to;
     if (parsed.positional_count() > 0) to.filter = parsed.positional(0);
     to.list = parsed.is_flag_set("list");
+    to.noRunner = parsed.is_flag_set("no-runner");   // see cmd_run
     // The three deadlines share one parser: they differ only in what they
     // bound, not in how they are spelled. 0 always means "no limit" — for
     // --timeout that now has to be asked for rather than being the default.
@@ -280,9 +285,10 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
 
         int rc = 0;
         std::vector<std::string> failed;
-        std::vector<std::string> notRun;
+        std::vector<std::string> notRun;        // --workspace-timeout reached
+        std::vector<std::string> unrunnable;    // tests built, none executed (#544)
         std::vector<std::pair<std::string, long long>> memberTimes;
-        int totalPassed = 0, totalFailed = 0;
+        int totalPassed = 0, totalFailed = 0, totalNotRun = 0;
         auto tWs = std::chrono::steady_clock::now();
         auto ws_ms = [&tWs] {
             return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -309,9 +315,19 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
             int r = mcpp::build::run_tests(passthrough, mo, to, &sum);
             totalPassed += sum.passed;
             totalFailed += sum.failed;
+            totalNotRun += sum.notRun;
             memberTimes.emplace_back(mp, sum.elapsedMs);
             auto secs = static_cast<double>(sum.elapsedMs) / 1000.0;
-            if (r != 0) {
+            if (r == 2 && sum.failed == 0 && sum.notRun > 0) {
+                // Built and not executed (#544): the member did not fail, and
+                // it did not pass. 2 outranks 0 and yields to 1, as it does
+                // for a single member.
+                if (rc == 0) rc = 2;
+                unrunnable.push_back(mp);
+                mcpp::ui::status("Workspace",
+                    std::format("member '{}' ({}/{}) NOT RUN — {} passed, {} not run in {:.2f}s",
+                                mp, idx, members->size(), sum.passed, sum.notRun, secs));
+            } else if (r != 0) {
                 rc = r;
                 failed.push_back(mp);
                 mcpp::ui::status("Workspace",
@@ -344,10 +360,16 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
                 }
                 return s;
             };
+            // `not_run` keeps its meaning (members the --workspace-timeout
+            // stopped before they started); `tests_not_run` and
+            // `unrunnable_members` are #544's — tests that were built and not
+            // executed, and the members all of whose tests were.
             std::println("{{\"workspace_summary\":{{\"members\":{},\"passed\":{},\"failed\":{},"
-                         "\"failed_members\":[{}],\"not_run\":[{}],\"elapsed_ms\":{}}}}}",
-                         members->size(), totalPassed, totalFailed,
-                         join(failed), join(notRun), wsElapsed);
+                         "\"tests_not_run\":{},"
+                         "\"failed_members\":[{}],\"unrunnable_members\":[{}],"
+                         "\"not_run\":[{}],\"elapsed_ms\":{}}}}}",
+                         members->size(), totalPassed, totalFailed, totalNotRun,
+                         join(failed), join(unrunnable), join(notRun), wsElapsed);
             std::fflush(stdout);
             return rc;
         }
@@ -370,19 +392,27 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
             for (auto& f : v) { if (!s.empty()) s += ", "; s += f; }
             return s;
         };
-        if (failed.empty() && notRun.empty())
+        // The not-run count is in the line whenever it is non-zero, at the
+        // same weight as the failure count (#544): a member whose tests were
+        // built and not executed must not read as a passing member.
+        std::string notRunCounts = totalNotRun
+            ? std::format("; {} not run", totalNotRun) : std::string{};
+        if (failed.empty() && notRun.empty() && unrunnable.empty())
             mcpp::ui::status("workspace result",
-                std::format("ok. {} member(s); {} passed; 0 failed; finished in {:.2f}s",
-                            members->size(), totalPassed,
+                std::format("ok. {} member(s); {} passed; 0 failed{}; finished in {:.2f}s",
+                            members->size(), totalPassed, notRunCounts,
                             static_cast<double>(wsElapsed) / 1000.0));
         else
             mcpp::ui::error(std::format(
-                "workspace test: {}/{} member(s) failed; {} passed; {} failed; "
+                "workspace test: {}/{} member(s) failed; {} passed; {} failed{}; "
                 "finished in {:.2f}s",
-                failed.size(), members->size(), totalPassed, totalFailed,
+                failed.size(), members->size(), totalPassed, totalFailed, notRunCounts,
                 static_cast<double>(wsElapsed) / 1000.0));
         if (!failed.empty())
             mcpp::ui::plain(std::format("    failed members: {}", join_names(failed)));
+        if (!unrunnable.empty())
+            mcpp::ui::plain(std::format("    not run (no runner on this host): {}",
+                                        join_names(unrunnable)));
         if (!notRun.empty())
             mcpp::ui::plain(std::format(
                 "    not run (--workspace-timeout {}s reached): {}",

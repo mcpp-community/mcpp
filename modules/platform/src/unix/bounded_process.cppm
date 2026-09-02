@@ -63,6 +63,14 @@ struct DeadlineRun {
     bool supported = false;
     int  exit_code = 0;
     bool timed_out = false;
+    // Non-zero when `supported` is false BECAUSE the spawn was attempted and
+    // refused: the errno posix_spawnp returned. Zero with `supported` false
+    // means this build has no bounded launcher at all. The two need opposite
+    // treatment one layer up — the first is reported with its errno, the
+    // second falls back to the unbounded launcher — and before this field
+    // existed both read the same, so the caller spawned a second time and
+    // discarded the errno the first attempt had in hand (#544).
+    int  spawn_error = 0;
 };
 
 using OutputSink = void (*)(void* ctx, const char* data, unsigned long len);
@@ -227,7 +235,7 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
     int sp = ::posix_spawnp(&pid, cargv[0], &fa, nullptr, cargv.data(), envp.data());
     ::posix_spawn_file_actions_destroy(&fa);
     if (capture) ::close(fds[1]);
-    if (sp != 0) { if (capture) ::close(fds[0]); return out; }
+    if (sp != 0) { out.spawn_error = sp; if (capture) ::close(fds[0]); return out; }
 
     // Non-blocking reads so the deadline is still checked while the child is
     // quiet. A blocking read on a silent, hung child is exactly the hang this
