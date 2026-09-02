@@ -190,6 +190,25 @@ runner  = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
 firmware mode to use are board facts, and an engine that guesses one is an
 engine a different board has to fight.
 
+A hosted cross target takes the same key with a user-mode emulator
+(2026.9.2.1). An `aarch64-linux-musl` artifact built on an x86_64 host is
+executed through `qemu-aarch64-static` when the project declares it, and the
+package that provides the emulator is declared for the hosts that can install
+it:
+
+```toml
+[xlings]
+deps = [{ linux = "qemu-user-aarch64" }]
+
+[target.aarch64-linux-musl]
+runner = ["qemu-aarch64-static"]
+```
+
+Without the key, `mcpp run` reports the kernel's refusal (`Exec format error`)
+and the key to write, and `mcpp test` reports every test as not run and exits
+2. A host that executes the artifact natively passes `--no-runner`. The rules
+are in [5 — mcpp.toml](05-mcpp-toml.md), §2.7.3.
+
 ### The Source Is The Same, The Program Is Not
 
 "The same source" is a claim about the toolchain and the standard library, and

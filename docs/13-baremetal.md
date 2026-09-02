@@ -549,6 +549,14 @@ error: no runner is configured for 'riscv64-none-elf' — a freestanding artifac
        A board-support package normally supplies this so you do not have to.
 ```
 
+The key is not specific to bare metal. A hosted cross target — an
+`aarch64-linux-musl` artifact on an x86_64 host — takes the same
+`[target.<triple>].runner`, with a user-mode emulator such as
+`qemu-aarch64-static` in place of the system emulator; on such a target an
+absent runner is not an error until the kernel refuses the artifact. The rules
+for hosted targets, the `--no-runner` escape and the not-run reporting of
+`mcpp test` are in [5 — mcpp.toml](05-mcpp-toml.md), §2.7.3.
+
 ## Writing a board-support package
 
 A board-support package is an ordinary mcpp package. It declares the emulator

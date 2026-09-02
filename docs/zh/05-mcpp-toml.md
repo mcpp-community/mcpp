@@ -952,7 +952,7 @@ linkage   = "static"
 |---|---|---|
 | **裸 OS 别名** | 单个 OS / 族 —— 简洁且常用的形式 | `[target.windows]`、`[target.unix]` |
 | **`cfg(...)` 谓词** | 复合条件(arch / env / 组合子) | `[target.'cfg(all(linux, not(arch = "aarch64")))']` |
-| **精确三元组** | 某个具体目标(同时承载 `toolchain` / `linkage`) | `[target.x86_64-linux-musl]` |
+| **精确三元组** | 某个具体目标(同时承载 `toolchain` / `linkage` / `sysroot` / `runner`,见 §2.7.3) | `[target.x86_64-linux-musl]` |
 
 一个选择器可以承载平台条件的**依赖**与**构建 flag**:
 
@@ -1121,6 +1121,63 @@ mcpp **刻意不提供默认 runner**。用哪个模拟器、哪个机器型号�
 事实 —— 同一 ISA 的两块板需要不同 argv(OpenSBI 启动用 `-bios default`,picolibc
 镜像用 `-bios none -semihosting`)—— 引擎一旦猜一个,另一块板就得跟它打架。板级
 支持包通常会提供它。
+
+### 2.7.3 hosted 目标上的 `runner`(2026.9.2.1+)
+
+`[target.<triple>].runner` 对每一个精确三元组生效,不限于裸机。一个 hosted 交叉产物
+—— 在 x86_64 机器上构建的 `aarch64-linux-musl` —— 有的宿主能直接执行(binfmt_misc
+注册了 qemu-user),有的宿主以 `Exec format error` 拒绝;属于哪一种是机器的性质,不是
+三元组的性质。mcpp 不预测它:要么通过工程声明的 runner 执行产物,要么尝试直接执行并
+报告内核的回答。
+
+```toml
+[target.aarch64-linux-musl]
+runner = ["qemu-aarch64-static"]
+```
+
+规则对 `mcpp run` 与 `mcpp test` 相同:
+
+- **声明了 runner 就使用它。** 其第一个元素由 mcpp 定位:先在 `[xlings] deps`(§2.13)
+  声明的每个载荷的 `bin/` 目录里找,再找 `PATH`。`PATH` 上的裸名会命中 xvm shim,而
+  shim 按当前 SubOS 而非按包作答;先查载荷,runner 才能直接写工程声明过的程序名。
+- **声明的 runner 找不到或启动不了是错误**,错误里带程序名、搜索过的目录和 errno。
+  不回落到直接执行:让产物在另一个解释器下带着另一组参数运行,正是这个键要防止的
+  失败。
+- **没有 runner 且内核拒绝产物:** `mcpp run` 报告拒绝原因与应当写的键,退出码 2。
+  `mcpp test` 把每个测试报告为未运行,原因只打印一次,退出码 2(§2.7.3.1)。
+- **`--no-runner`** 直接执行产物并忽略声明的 runner。它陈述的是关于本机的事实 ——
+  这个三元组在本机是原生的 —— 清单没有承载它的轴;为 x86_64 开发者写的 runner 在
+  aarch64 机器上仍可用。
+
+通过 `[xlings] deps` 装模拟器是 CI 任务或单一宿主类别工程的形态。索引里的
+`qemu-user-aarch64` 只为 x86_64 Linux 构建,而 `[xlings] deps` 在每台构建本工程的
+宿主上都会 provisioning,所以条目按平台写(§2.13):
+
+```toml
+[xlings]
+deps = [{ linux = "qemu-user-aarch64" }]
+
+[target.aarch64-linux-musl]
+runner = ["qemu-aarch64-static"]
+```
+
+宿主装不了的包是硬构建错误,所以不带平台形式的条目会让工程在 macOS 与 Windows 上
+无法构建。同样没有这个包的 Linux/aarch64 宿主传 `--no-runner`。
+
+#### 2.7.3.1 `mcpp test` 与未运行的测试
+
+产物在本机无法执行的测试既没有通过也没有失败。`mcpp test` 把它报告为**未运行**,
+在确立原因时打印一次,在汇总里重复原因的第一行,退出码 2:
+
+```
+warning: this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); declare [target.aarch64-linux-musl].runner, or pass --no-runner on a host that can
+smoke ... not run
+error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (build 0.39s + run 0.00s)
+```
+
+退出码 1 含义不变 —— 有测试运行并失败;0 表示每个测试都运行并通过。
+`--message-format json` 在每条记录上带 `"status":"not_run"` 与 `reason`,在汇总记录上
+带 `not_run` / `not_run_reason`(见 [11 —— 机器可读输出](11-machine-output.md))。
 
 ### 2.8 `[features]` —— Feature(Cargo 风格,可加性)
 
@@ -1554,6 +1611,24 @@ OPENBLAS_NUM_THREADS = "1"
 (工具→版本固定)、`subos`(命名沙箱)、`[xlings.envs]`(环境变量)。用它声明构建所需的
 host 工具(`make`/`cmake`/`protoc`…)、按项目固定工具版本、或设构建期环境变量——无需手改
 `.xlings.json`。`[toolchain]`(§2.7)仍是编译器的便捷简写;`[xlings.workspace]` 是其通用形式。
+
+**按宿主平台取值(2026.9.2.1+)。** `deps` 的一个条目与 `[xlings.workspace]` 的一个值可以是
+按平台为键的表,即 xlings 自身 `.xlings.json` 对 `workspace` 接受的形式:
+
+```toml
+[xlings]
+deps = ["xim:ninja", { linux = "qemu-user-aarch64" }, { windows = "nasm", default = "yasm" }]
+
+[xlings.workspace]
+gcc  = { linux = "15.1.0" }
+llvm = { macos = "20", default = "22" }
+```
+
+键为 `linux`、`macos`、`windows` 与 `default`;`macosx` 作为 xlings 对 `macos` 的拼写也被
+接受。mcpp 在加载清单时按运行它的宿主解析这张表:宿主对应的键优先,`default` 兜底,两者
+都没有时该条目在本宿主上不作声明 —— 是缺席,不是空值。未知的键是错误,不是被丢弃的条目。
+这条轴只到宿主操作系统:一个包存在于该 OS 但不存在于该架构时,在那台宿主上仍是
+provisioning 错误。
 
 `subos` 选择根项目用于 build/run 的**本地开发 OS 环境**。未声明该键时固定使用 mcpp 已初始化、
 经 release 验证的 `McppDefault`;`subos = "default"` 则仍是显式的

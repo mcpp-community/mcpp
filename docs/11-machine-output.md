@@ -358,3 +358,54 @@ from the same resolution a build performs, which may fetch packages, install a
 payload and run a dependency's build program. A client gates on that table
 *before* running anything, so an omission would be a safety claim that is not
 true.
+
+### `mcpp test --message-format json` — the test stream
+
+```
+mcpp test [pattern] [--workspace] --message-format json
+```
+
+This stream predates the envelope of §2 and is not wrapped in it: it is NDJSON,
+one record per test as each finishes, then one summary record per member. A
+`--workspace` run ends with one `workspace_summary` record. The §6 guarantees
+apply to it — fields are added and never removed, and a field's meaning never
+changes — and the fields below are the contract as of 2026.9.2.1.
+
+Per test:
+
+| field | |
+|---|---|
+| `member` | the workspace member, or `""` outside a workspace |
+| `test` | the path-based test name (`tests/00-a/0.cpp` → `00-a/0`) |
+| `status` | `pass`, `compile_fail`, `run_fail`, or `not_run` |
+| `exit_code` | the test's exit status; `0` for `not_run` |
+| `signal` | the signal number when the status encodes one, else `null` |
+| `duration_ms` | build+run wall time of this test |
+| `timed_out` | `true` when `--timeout` killed it (`run_fail`) |
+| `compile_output`, `run_output` | captured diagnostics |
+| `reason` | `not_run` only: why, in one sentence; `""` otherwise |
+
+Summary record, `{"summary": {...}}`:
+
+| field | |
+|---|---|
+| `member`, `passed`, `failed` | counts |
+| `not_run` | tests that were built and not executed |
+| `not_run_reason` | the reason shared by all of them, or `""` |
+| `elapsed_ms`, `build_ms`, `run_ms` | wall time, split |
+
+⚠️ **`not_run` is neither `pass` nor `run_fail`, and the exit code says so
+(2026.9.2.1).** A test is `not_run` when this host cannot load its artifact
+(`Exec format error` on a cross target with no runner declared), or when the
+declared `[target.<triple>].runner` could not be found or started. The
+condition is a fact about the invocation: it is established once, the
+remaining tests are reported `not_run` without being started, and the process
+exits **2**. Exit 1 keeps meaning "a test ran and failed"; exit 0 means every
+test ran and passed. A client that read the exit code alone as pass/fail must
+handle 2, and a client that inferred "everything passed" from `failed == 0`
+must also read `not_run`.
+
+`workspace_summary` adds `tests_not_run` (the sum over members) and
+`unrunnable_members` (members all of whose tests were `not_run`), alongside the
+existing `not_run` list, which continues to name members the
+`--workspace-timeout` stopped before they started.

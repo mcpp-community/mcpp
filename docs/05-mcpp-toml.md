@@ -1086,7 +1086,7 @@ The selector `<sel>` has three forms:
 |---|---|---|
 | **bare OS alias** | a single OS / family — the concise, common form | `[target.windows]`, `[target.unix]` |
 | **`cfg(...)` predicate** | a compound condition (arch / env / combinators) | `[target.'cfg(all(linux, not(arch = "aarch64")))']` |
-| **exact triple** | one specific target (also carries `toolchain` / `linkage`) | `[target.x86_64-linux-musl]` |
+| **exact triple** | one specific target (also carries `toolchain` / `linkage` / `sysroot` / `runner`; see §2.7.3) | `[target.x86_64-linux-musl]` |
 
 A selector may carry platform-conditional **dependencies** and **build flags**:
 
@@ -1283,6 +1283,75 @@ model and which firmware mode are board facts — two boards on the same ISA nee
 different argv (`-bios default` for an OpenSBI boot, `-bios none -semihosting`
 for a picolibc image) — and an engine that guesses one is an engine the other
 board has to fight. A board-support package normally supplies it.
+
+### 2.7.3 `runner` on a hosted target (2026.9.2.1+)
+
+`[target.<triple>].runner` applies to every exact triple, not only to bare
+metal. A hosted cross artifact — `aarch64-linux-musl` built on an x86_64
+machine — is executable by some hosts (binfmt_misc with qemu-user registered)
+and refused by others with `Exec format error`, and which of the two applies is
+a property of the machine, not of the triple. mcpp does not predict it. It
+either executes the artifact through the runner the project declared, or it
+attempts direct execution and reports what the kernel answered.
+
+```toml
+[target.aarch64-linux-musl]
+runner = ["qemu-aarch64-static"]
+```
+
+The rules, for `mcpp run` and `mcpp test` alike:
+
+- **A declared runner is used.** Its first element is located by mcpp: first in
+  the `bin/` directory of each payload declared under `[xlings] deps` (§2.13),
+  then on `PATH`. A bare name on `PATH` resolves to an xvm shim, which answers
+  for the current SubOS rather than for the package; the payload lookup is what
+  lets a runner name a program the project declared.
+- **A declared runner that cannot be found or started is an error**, with the
+  program, the directories searched and the errno. There is no fallback to
+  direct execution: running the artifact under a different interpreter with
+  different arguments is the failure the key exists to prevent.
+- **No runner, and the kernel refuses the artifact:** `mcpp run` reports the
+  refusal and the key to write, and exits 2. `mcpp test` reports every test as
+  not run, with the reason once, and exits 2 (§2.7.3.1).
+- **`--no-runner`** executes the artifact directly and ignores a declared
+  runner. It states a fact about this host — the triple is native here — that
+  the manifest has no axis to carry; a project whose runner was written for
+  x86_64 developers is still readable on an aarch64 machine.
+
+Provisioning the emulator through `[xlings] deps` is the form for a CI job or
+a project built on one host class. `qemu-user-aarch64` in the index is built
+for x86_64 Linux only, and `[xlings] deps` provisions on every host that builds
+the project, so the entry is written per platform (§2.13):
+
+```toml
+[xlings]
+deps = [{ linux = "qemu-user-aarch64" }]
+
+[target.aarch64-linux-musl]
+runner = ["qemu-aarch64-static"]
+```
+
+A package the host cannot install is a hard build error, so an entry without
+the platform form would make the project unbuildable on macOS and Windows. The
+Linux/aarch64 host, where the package does not exist either, passes
+`--no-runner`.
+
+#### 2.7.3.1 `mcpp test` and tests that were not run
+
+A test whose artifact this host cannot execute has neither passed nor failed.
+`mcpp test` reports it as **not run**, prints the reason once when it is
+established, repeats the first line of the reason in the summary, and exits 2:
+
+```
+warning: this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); declare [target.aarch64-linux-musl].runner, or pass --no-runner on a host that can
+smoke ... not run
+error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute aarch64-linux-musl artifacts: Exec format error (error 8); ...); finished in 0.41s (build 0.39s + run 0.00s)
+```
+
+Exit code 1 keeps its meaning — a test ran and failed — and 0 means every test
+ran and passed. `--message-format json` carries `"status":"not_run"` and a
+`reason` on each record, and `not_run` / `not_run_reason` on the summary
+record (see [11 — Machine-Readable Output](11-machine-output.md)).
 
 ### 2.8 `[features]` — Features (Cargo-style, additive)
 
@@ -1819,6 +1888,27 @@ layer): `deps` (host build-tools), `[xlings.workspace]` (tool→version pins),
 build needs (`make`/`cmake`/`protoc`/…), pin tool versions per project, or set
 build-time env vars — without hand-editing `.xlings.json`. `[toolchain]` (§2.7) remains
 the ergonomic shorthand for the compiler; `[xlings.workspace]` is the general form.
+
+**Values per host platform (2026.9.2.1+).** A `deps` entry and a
+`[xlings.workspace]` value may be a table keyed by platform, the form xlings'
+own `.xlings.json` accepts for `workspace`:
+
+```toml
+[xlings]
+deps = ["xim:ninja", { linux = "qemu-user-aarch64" }, { windows = "nasm", default = "yasm" }]
+
+[xlings.workspace]
+gcc  = { linux = "15.1.0" }
+llvm = { macos = "20", default = "22" }
+```
+
+The keys are `linux`, `macos`, `windows` and `default`; `macosx` is accepted as
+xlings' spelling of `macos`. mcpp resolves the table against the host it runs
+on when the manifest is loaded: the host's key wins, `default` is the fallback,
+and a table with neither declares nothing on that host — the entry is absent,
+not empty. An unknown key is an error rather than a dropped entry. The axis is
+the host operating system only; a package that exists for the OS but not for
+the architecture is still a provisioning error on that host.
 
 `subos` selects the root project's **local build/run OS environment**. If the
 key is absent, mcpp uses its initialized, release-verified `McppDefault` SubOS;

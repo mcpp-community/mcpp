@@ -164,6 +164,22 @@ runner  = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
 `sysroot = ""` 选定零 libc 档。使用哪个机器模型与哪种固件模式是板子的事实,
 而一个去猜测它的引擎,是另一块板子必须与之搏斗的引擎。
 
+hosted 交叉目标使用同一个键,配用户态模拟器(2026.9.2.1)。在 x86_64 宿主上构建的
+`aarch64-linux-musl` 产物,在工程声明后通过 `qemu-aarch64-static` 执行;提供模拟器的包
+按能安装它的宿主声明:
+
+```toml
+[xlings]
+deps = [{ linux = "qemu-user-aarch64" }]
+
+[target.aarch64-linux-musl]
+runner = ["qemu-aarch64-static"]
+```
+
+没有这个键时,`mcpp run` 报告内核的拒绝(`Exec format error`)与应当写的键,`mcpp test`
+把每个测试报告为未运行并以 2 退出。能原生执行该产物的宿主传 `--no-runner`。规则见
+[5 —— mcpp.toml](05-mcpp-toml.md) §2.7.3。
+
 ### 源码是同一份,程序不是
 
 「同一份源码」是关于工具链与标准库的断言,而它成立:`import std` 可用,
