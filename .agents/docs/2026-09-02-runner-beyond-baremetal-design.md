@@ -565,6 +565,34 @@ text and JSON change.
 `PATH`. The mechanism a user must understand is one sentence: mcpp uses the
 runner you declared, and tells you what the kernel said when there is none.
 
+
+**Consistency.** One key, one lookup, one set of messages, and both doors use
+them. `mcpp run` and `mcpp test` read the same `choose_runner`; the runner's
+program is located by the same `locate` on both; the not-found and unrunnable
+sentences are written once in `mcpp.build.runner_lookup` and printed from four
+call sites. The triple those messages name is the one the lookup used, because
+it is the same field. Where a second derivation existed it was removed rather
+than kept in step: the triple was parsed three times in `choose_runner` and is
+now parsed once.
+
+**Upgrading without noticing.** No manifest key is added, so a project written
+for this version loads on an older mcpp; no cache is invalidated, because
+`.build_cache` gains an optional line that an older reader treats as the end of
+its data and a newer reader defaults to `false`; and `[xlings]` values that
+are strings keep parsing as strings. The three behaviour changes a project can
+notice are stated in section 8's Compatibility paragraph and in the changelog,
+and each is a case that was previously silent: a runner that was never
+consulted, a spawn failure that printed nothing, and a table value that was
+dropped.
+
+**What a person sees.** Every failure names the thing that failed and the edit
+that would change it: the program and the directories searched, or the kernel's
+own sentence and the key to paste. Nothing reports a state it did not observe —
+a test that did not run is not called a failure, and a spawn that was refused
+is not given the child's exit code. The one flag added is the one fact the
+manifest cannot hold, and it prints a note when it takes effect, so a
+transcript shows the deviation rather than hiding it.
+
 ## 9. Rejected alternatives
 
 **A host-capability oracle.** Deciding before spawning, from the triple plus
@@ -749,3 +777,143 @@ Listed so the change can be sized and split. Each line is one concern.
   each one's `docs/zh/` twin, which CI enforces.
 - `tests/e2e/`: one new script covering the table in section 11;
   `tests/unit/`: the launcher invariant.
+
+## 13. Verification of the release
+
+The design was implemented in PR #545 and released as 2026.9.2.1. What follows
+is what was observed, not what was expected: the commands, and the lines they
+produced.
+
+### 13.1 What CI established
+
+All 37 checks on the PR and all nine workflows on the merge commit
+(`8de3847`) are green. Two of the checks were red before commits made during
+the merge review and are recorded here because their failure was informative
+rather than incidental.
+
+`tests/unit/test_process_run_exec.cpp` asserted `ENOEXEC` from a file the host
+cannot load. On macOS `posix_spawnp` does not answer `ENOEXEC` for such a
+file — it runs it through `/bin/sh` — so the assertion is Linux-only and now
+says so. This is open question 1 of section 10, answered in the direction the
+question anticipated: the platform's refusal is not the same refusal
+everywhere, which is why nothing in the design predicts it.
+
+e2e 330 §3 failed only on macOS ARM64. `choose_runner` resolves the manifest
+key against the canonical triple, while the six diagnostics it feeds printed
+`tc.targetTriple`, the spelling the driver reports. The two strings are equal
+on Linux and differ on macOS (`aarch64-macos` against
+`arm64-apple-darwin24.6.0`). Three of the six print a `[target.<triple>]`
+block for the reader to paste, so on macOS the advice named a key that no
+lookup resolves. `RunnerChoice::tripleKey` is now derived once, beside the
+lookup that uses it.
+
+### 13.2 The sandbox verification
+
+The wiring that section 11 does not cover with an e2e — `[xlings] deps` to
+`BuildContext::xlingsDepBinDirs` to `runner_lookup::locate` — is established
+here, on the published artefacts, in a SubOS created for this purpose:
+
+```
+xlings update
+xlings subos new e544-0902
+xlings subos use e544-0902 --sandbox --cmd '<the script below>'
+```
+
+```sh
+mcpp self config --mirror CN
+
+mcpp new xrun && cd xrun
+cat >> mcpp.toml <<'TOML'
+[xlings]
+deps = [{ linux = "qemu-user-aarch64" }]
+
+[target.aarch64-linux-musl]
+runner = ["qemu-aarch64-static"]
+TOML
+mcpp run  --target aarch64-linux-musl        # A
+mcpp test --target aarch64-linux-musl        # B
+command -v qemu-aarch64-static               # C
+# then: remove the runner key, patch e_machine to 0xffff, repeat  # D, E
+```
+
+Observed, in order:
+
+```
+=== identity ===
+mcpp 2026.9.2.1
+
+=== A. cross build + run through the declared runner ===
+ Downloading xim:qemu-user-aarch64@7.2.0
+     Running `qemu-aarch64-static … target/aarch64-linux-musl/…/bin/xrun`
+CROSS-RAN
+
+=== B. mcpp test through the runner ===
+ test result ok. 1 passed; 0 failed; finished in 0.19s (build 0.06s + run 0.02s)
+
+=== C. the payload lookup wins over the PATH shim ===
+sandbox_verify.sh: line 58: qemu-aarch64-static: command not found
+
+=== D. no runner declared, artifact this host cannot load ===
+error: this host cannot execute '…/bin/xrun': Exec format error (error 8).
+       The artifact was built for 'aarch64-linux-musl'. Declare how to run it here:
+
+           [target.aarch64-linux-musl]
+           runner = ["qemu-aarch64-static"]
+
+=== E. mcpp test reports not-run and exits 2 ===
+error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot execute
+aarch64-linux-musl artifacts: Exec format error (error 8); declare
+[target.aarch64-linux-musl].runner, or pass --no-runner on a host that can)
+```
+
+**C is the criterion, and it reads as a failure.** `qemu-aarch64-static` is not
+on `PATH` in this SubOS at all, and A and B had already executed the artifact
+through it. The only path by which the program could have been found is the
+`bin/` of the payload that `deps = [{ linux = "qemu-user-aarch64" }]`
+provisioned, which is the chain no e2e covers. On the development host the same
+section reads differently and says the same thing: the bare name resolves to an
+xvm shim that answers `qemu-aarch64-static is not installed in this subos (_)`,
+while the build had just run through the payload copy.
+
+D and E patch `e_machine` to `0xffff` rather than relying on the artifact's own
+architecture. This host registers `qemu-aarch64` in `binfmt_misc` with flags
+`PO`, so an unpatched `aarch64-linux-musl` binary starts here — the asymmetry
+section 2 measured, and the reason no criterion depends on which machine runs
+it. The scripts re-read the patched bytes after the run, so a rebuild between
+the patch and the launch fails the check rather than passing it silently.
+
+### 13.3 The published ecosystem
+
+The same SubOS, an `openkal-llvm-runtime` consumer built for
+`aarch64-linux-musl` and executed through the declared runner:
+
+```
+    Resolved llvm@22.1.8 → aarch64-linux-musl → …/xim-x-llvm/22.1.8/bin/clang++
+             required by openkal-llvm-runtime@0.1.3 (`requires = ["mcpp:compiler=llvm"]`)
+      Target aarch64-linux-musl → aarch64-unknown-linux-musl
+             compiler-runtime  compiler-rt    (openkal-llvm-runtime@0.1.3, graph)
+             kernel-abi        openkal        (openkal-linux@0.5.4, graph)
+             c-abi             musl           (openkal-musl@0.3.5, graph)
+             c++-abi           libc++         (openkal-llvm-runtime@0.1.3, graph)
+     Running `qemu-aarch64-static … target/aarch64-linux-musl/…/bin/xkal`
+
+preopened directories        2
+…
+unwinding runs destructors   yes
+sorted sample                [1, 2, 3, 7, 8, 9] (sum 30)
+```
+
+The unwinding row is the strictest of them: an absent unwinder links and only
+fails when something is thrown, so a destructor run during the unwind is what
+separates the two. It answers `yes` under the emulator, which means the runner
+carried a working C++ runtime rather than merely starting the process.
+
+### 13.4 Release state
+
+| | |
+|---|---|
+| Tag | `v2026.9.2.1` at `8de3847` |
+| GitHub release | four platform payloads, sidecars, and a sealed `mcpp-release.json` |
+| GitCode mirror | the eight versioned assets present; `linux-x86_64` and `linux-aarch64` re-downloaded and their SHA256 recomputed against the GitHub sidecars, equal. The versionless aliases and `mcpp-release.json` are absent there, as they are for 2026.9.1.1 — `mirror_res.sh` mirrors versioned payloads only |
+| Index | `openxlings/xim-pkgindex` `latest` at 2026.9.2.1 (`ff0996e`), with that commit's `Publish Index Artifact` run green — the artefact `xlings install` consumes |
+| Clean-room install | `xlings install mcpp@2026.9.2.1 -y` in a fresh sandbox, then `mcpp --version` → `mcpp 2026.9.2.1` |
