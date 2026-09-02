@@ -708,11 +708,25 @@ the bounded launcher reports a spawn failure. Section 1 shows these are one
 defect seen from two sides; a test that covers only the untimed path leaves
 the doubled spawn in place.
 
-**What is not exercised.** Provisioning `qemu-user-aarch64` through
-`[xlings] deps` is not an e2e criterion: it needs network, an x86_64 host,
-and a registry, and the provisioning pass has its own coverage from #531. The
-payload-`bin/` rule is exercised with a locally staged package directory
-instead (third row).
+**What the e2e does not exercise, and what does.** Provisioning
+`qemu-user-aarch64` through `[xlings] deps` is not an e2e criterion: it needs
+network, an x86_64 host and a registry, and the provisioning pass has its own
+coverage from #531. Neither is the payload-`bin/` rule, and the third row of
+the table above is therefore not an e2e row. Staging a package into the store
+to obtain one was considered and rejected: the store is shared with the
+machine's real payloads, and a declared package that is not installable is a
+hard build error, so a synthetic entry cannot be declared without the
+provisioning pass refusing it first.
+
+The rule is covered on two levels instead. `locate`'s ordering — a payload
+`bin/` before `PATH`, a non-executable file skipped, every directory recorded
+— is asserted directly in `tests/unit/test_runner_lookup.cpp`. The wiring from
+`[xlings] deps` through `BuildContext::xlingsDepBinDirs` to that call is
+asserted by the sandbox verification (section 13), where `qemu-aarch64-static`
+resolves through the declared payload while the same bare name on `PATH` is an
+xvm shim that answers for the current SubOS. That verification is the only
+place all three parts are present at once, and it is a required step of the
+release rather than an optional one.
 
 ## 12. Implementation surface
 
