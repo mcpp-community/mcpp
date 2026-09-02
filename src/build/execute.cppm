@@ -1369,14 +1369,14 @@ export int build_run_target(const std::optional<std::string>& targetName,
     const auto choice = choose_runner(*ctx, no_runner);
     if (choice.ignored)
         mcpp::ui::info("note", std::format(
-            "--no-runner: ignoring the runner declared for {}", ctx->tc.targetTriple));
+            "--no-runner: ignoring the runner declared for {}", choice.tripleKey));
     if (choice.fromManifest)
         mcpp::ui::info("note", std::format(
             "[target.{}].runner overrides the runner a dependency supplied",
-            ctx->tc.targetTriple));
+            choice.tripleKey));
     if (choice.freestanding && choice.tmpl.empty()) {
         std::println(stderr, "error: {}",
-            mcpp::freestanding::no_runner_message(ctx->tc.targetTriple));
+            mcpp::freestanding::no_runner_message(choice.tripleKey));
         return 2;
     }
     if (!choice.tmpl.empty()) {
@@ -1868,14 +1868,14 @@ export int run_tests(std::span<const std::string> passthrough,
     const auto runnerChoice = choose_runner(*ctx, testOpts.noRunner);
     if (runnerChoice.ignored && !json)
         mcpp::ui::info("note", std::format(
-            "--no-runner: ignoring the runner declared for {}", ctx->tc.targetTriple));
+            "--no-runner: ignoring the runner declared for {}", runnerChoice.tripleKey));
     if (runnerChoice.fromManifest && !json)
         mcpp::ui::info("note", std::format(
             "[target.{}].runner overrides the runner a dependency supplied",
-            ctx->tc.targetTriple));
+            runnerChoice.tripleKey));
     if (runnerChoice.freestanding && runnerChoice.tmpl.empty()) {
         std::println(stderr, "error: {}",
-            mcpp::freestanding::no_runner_message(ctx->tc.targetTriple));
+            mcpp::freestanding::no_runner_message(runnerChoice.tripleKey));
         return 2;
     }
     std::vector<std::string> runnerTmpl = runnerChoice.tmpl;
