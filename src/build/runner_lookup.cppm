@@ -101,10 +101,12 @@ inline std::string errno_text(int e) {
 
 inline std::string not_found_message(std::string_view triple, std::string_view argv0,
                                      std::span<const std::filesystem::path> searched) {
+    // The first line stands on its own: `mcpp test` repeats it in its summary.
     std::string dirs;
     for (auto const& d : searched) dirs += "\n           " + d.string();
     return std::format(
-        "runner '{}' for '{}' was not found. Searched:{}\n"
+        "runner '{}' for '{}' was not found on any search path.\n"
+        "       Searched:{}\n"
         "       Declare the package that provides it under [xlings] deps, or "
         "install it on PATH.\n"
         "       Pass --no-runner to execute the artifact directly on this host.",

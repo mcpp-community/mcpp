@@ -663,6 +663,15 @@ export struct BuildContext {
     // derivation would drift from the first exactly when a resolution rule
     // changes. Written into `.build_cache`; see BuildCacheEntry::depSourceRoots.
     std::vector<std::filesystem::path> depSourceRoots;
+    // `<payload>/bin` of every installed `[xlings] deps` payload of the
+    // runtime-owner manifest, in declaration order (#544). Read by
+    // choose_runner's lookup (mcpp.build.runner_lookup) so a runner may name
+    // a program the project declared without writing the payload's
+    // home-and-version path into the manifest. Computed by the same
+    // resolution `fillXpkgDirs` uses for build programs; a payload that is
+    // declared but not installed contributes nothing, and the lookup then
+    // continues to PATH.
+    std::vector<std::filesystem::path> xlingsDepBinDirs;
     std::filesystem::path           outputDir;
     std::filesystem::path           stdBmi;
     std::filesystem::path           stdObject;
@@ -8697,6 +8706,20 @@ prepare_build(bool print_fingerprint,
                 roots.push_back(std::move(normalized));
         }
         ctx.depSourceRoots = std::move(roots);
+    }
+    // Where a runner may find the programs this project declared (#544). The
+    // same resolution `fillXpkgDirs` hands to build programs, kept as
+    // directories rather than env vars because the reader is mcpp's own
+    // lookup, not a child process. See BuildContext::xlingsDepBinDirs.
+    if (!runtimeOwnerManifest.xlings.deps.empty()) {
+        if (auto cfg = get_cfg()) {
+            auto xlEnv = mcpp::config::make_xlings_env(**cfg);
+            for (auto const& spec : runtimeOwnerManifest.xlings.deps) {
+                auto ref = mcpp::xlings::paths::parse_xpkg_ref(spec);
+                if (auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref))
+                    ctx.xlingsDepBinDirs.push_back(*dir / "bin");
+            }
+        }
     }
     // ─── Prebuilt dependencies: check before planning to link them ─────
     //
