@@ -128,11 +128,20 @@ TEST(RunExec, MissingProgramTypesErrnoWhenCallerAsks) {
     EXPECT_TRUE(err.empty()) << err;   // the caller owns the report
 }
 
+#if defined(__linux__)
+// Linux only, and that is a MEASUREMENT (CI, macOS 14 ARM64, 2026-09-02): on
+// macOS posix_spawnp handles ENOEXEC the way execvp does — it runs the file
+// through /bin/sh — so the child IS spawned (spawn_error stays 0) and it is the
+// shell that exits non-zero. The kernel's own refusal of a wrong-architecture
+// Mach-O (EBADARCH) is a different reading and is not what this file
+// synthesises. `mcpp run`'s "this host cannot execute" typing therefore fires
+// on Linux for any unloadable file and on macOS only for a real foreign
+// binary; see the design's open question 1.
 TEST(RunExec, UnloadableArtifactIsENOEXEC) {
     // An executable file with no loader magic: the kernel refuses it with
-    // ENOEXEC. posix_spawnp does not retry through /bin/sh the way execvp
-    // does, so the errno reaches the caller untouched. This is the reading
-    // `mcpp run` turns into "this host cannot execute the artifact".
+    // ENOEXEC. glibc's posix_spawnp does not retry through /bin/sh the way
+    // execvp does, so the errno reaches the caller untouched. This is the
+    // reading `mcpp run` turns into "this host cannot execute the artifact".
     auto dir = std::filesystem::temp_directory_path() / "mcpp-enoexec-test";
     std::filesystem::create_directories(dir);
     auto f = dir / "not-an-elf";
@@ -143,6 +152,7 @@ TEST(RunExec, UnloadableArtifactIsENOEXEC) {
     EXPECT_EQ(rc, 127);
     EXPECT_EQ(spawnErr, ENOEXEC);
 }
+#endif
 
 TEST(RunExec, SpawnedChildLeavesSpawnErrorZero) {
     int spawnErr = -1;

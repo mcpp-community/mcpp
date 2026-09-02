@@ -609,7 +609,15 @@ If a use appears, the flag is additive.
 
 1. **macOS.** Measure `posix_spawn` against a wrong-architecture Mach-O.
    `EBADARCH` and `ENOEXEC` must both map to UNRUNNABLE, and the mapping must be
-   measured, not assumed.
+   measured, not assumed. Half measured on 2026-09-02 (PR #545, macOS 14
+   ARM64 CI): `posix_spawnp` on an executable file whose content is not a
+   loadable format does not return `ENOEXEC`; it spawns the file through
+   `/bin/sh`, as `execvp` does, and the shell exits non-zero with
+   `spawn_error == 0`. The `ENOEXEC` unit test is therefore Linux-only, and
+   on macOS the "this host cannot execute" typing is reachable only for a
+   refusal the kernel reports as an error (`EBADARCH` on a real foreign
+   Mach-O), which remains unmeasured. The implementation maps `EBADARCH` to
+   UNRUNNABLE where the macro is defined; nothing asserts it yet.
 2. **Windows.** Determine whether the launcher must be moved onto
    `CreateProcess` before the failure can be typed at all. Wine is not evidence
    for Windows.
