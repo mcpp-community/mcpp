@@ -298,10 +298,18 @@ For the resolved target, in order:
 
 The per-triple key is already the scoping mechanism for "this runner belongs to
 that cross target": a runner written under `[target.aarch64-linux-musl]` is not
-found when the host target is resolved, because the lookup is
-`targetOverrides.find(ctx.tc.targetTriple)` and the key is stored canonicalised
-(`toml.cppm:1825-1830, :1960`). No new key is needed to express applicability
-along the target axis.
+found when the host target is resolved, because the key is stored canonicalised
+(`toml.cppm:1825-1830, :1960`) and looked up by the resolved target. No new key
+is needed to express applicability along the target axis.
+
+The lookup key is the canonical spelling, `triple::parse(tc.targetTriple)->str()`,
+which is the output directory's name and the key every other
+`[target.<triple>]` reader in `prepare.cppm` resolves. The draft looked up
+`tc.targetTriple` as the driver reported it; on a Linux host that is the
+canonical spelling and on macOS it is `arm64-apple-darwin24.6.0`, so
+`[target.aarch64-macos].runner` matched on Linux hosts and never on macOS
+(measured on PR #545's macOS e2e shard, 2026-09-02). The raw spelling stays as
+a fallback for a triple the parser does not know.
 
 What the key cannot express is the host axis, and this is the limit D3 and D4
 respond to: the same triple is foreign on one host and native on another, and

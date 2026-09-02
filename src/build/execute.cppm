@@ -472,9 +472,25 @@ RunnerChoice choose_runner(const BuildContext& ctx, bool noRunner = false) {
     // for `-bios none -semihosting` while debugging, and — on a hosted cross
     // triple — for naming the user-mode emulator at all.
     c.tmpl = ctx.manifest.buildConfig.runner;
-    if (auto it = ctx.manifest.targetOverrides.find(ctx.tc.targetTriple);
-        it != ctx.manifest.targetOverrides.end() && !it->second.runner.empty()) {
-        c.tmpl = it->second.runner;
+    // The manifest key is the CANONICAL spelling — `aarch64-macos`, the name
+    // of the output directory and the key every other `[target.<triple>]`
+    // reader uses (prepare.cppm resolves overrides by `t.str()`). The
+    // toolchain's own `targetTriple` is what the driver reported, which on a
+    // Linux host happens to be the canonical spelling and on macOS is
+    // `arm64-apple-darwin24.6.0`. Looking up the raw spelling alone matched on
+    // Linux and never on macOS (measured on CI, 2026-09-02); the raw form is
+    // kept as a fallback for a triple the parser does not know.
+    auto lookup = [&](std::string_view key) {
+        auto it = ctx.manifest.targetOverrides.find(std::string(key));
+        return it != ctx.manifest.targetOverrides.end() && !it->second.runner.empty()
+             ? &it->second : nullptr;
+    };
+    const mcpp::manifest::TargetEntry* entry = nullptr;
+    if (auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple))
+        entry = lookup(ft->str());
+    if (!entry) entry = lookup(ctx.tc.targetTriple);
+    if (entry) {
+        c.tmpl = entry->runner;
         c.fromManifest = !ctx.manifest.buildConfig.runner.empty();
     }
     // `--no-runner` is the operator on THIS host stating a host fact the

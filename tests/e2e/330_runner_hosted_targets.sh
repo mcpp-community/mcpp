@@ -42,12 +42,15 @@ cat > tests/one.cpp <<'EOF'
 int main() { return 0; }
 EOF
 
-# The host triple as the manifest spells it. Read from the engine rather than
-# guessed: `[target.<triple>]` is matched against the resolved target.
+# The host triple as the manifest spells it: the CANONICAL form, which is the
+# name of the output directory (`target/<triple>/…`) and the key every
+# `[target.<triple>]` reader resolves. Read from the engine rather than
+# guessed. Not the "Target … → …" status line: on macOS that prints the
+# driver's own spelling (`arm64-apple-darwin24.6.0`), which is not the key —
+# and the first version of this test used it and failed only on macOS.
 out=$("$MCPP" build 2>&1) || fail "initial build: $out"
-HOST=$(sed -n 's/.*Target \([^ ]*\) → .*/\1/p' <<<"$out" | head -1)
-[[ -n "$HOST" ]] || HOST=$(ls target | head -1)
-[[ -n "$HOST" ]] || fail "could not determine the host triple from: $out"
+HOST=$(ls target | head -1)
+[[ -n "$HOST" ]] || fail "could not determine the host triple from target/: $out"
 
 cat > "$TMP/runner.sh" <<'EOF'
 #!/bin/sh
