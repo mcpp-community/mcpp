@@ -3,6 +3,79 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.9.2.1] — 2026-09-02
+
+`[target.<triple>].runner` 对每一个目标生效,启动失败不再无声,`mcpp test` 把跑不起来
+的测试报成 not run 并退 2,`[xlings]` 的值可以按宿主平台给出。
+
+设计与实测见
+[`.agents/docs/2026-09-02-runner-beyond-baremetal-design.md`](.agents/docs/2026-09-02-runner-beyond-baremetal-design.md)。
+
+> **一个键被解析、被类型检查、被文档记录,而读它的那处代码在读之前就返回了。**
+> `choose_runner` 在 `os == "none"` 之外一律返回空模板,于是宿主交叉目标
+> (x86_64 上构建的 `aarch64-linux-musl`)的 runner 从未被查询过:`mcpp run` 裸执行
+> 产物,内核以 `ENOEXEC` 拒绝,而 `run_exec` 把这次拒绝变成一个不打印任何东西的
+> 127。同一层的有界启动器在自己的声明里写着「『起不来』与『跑了但失败』不能共用
+> 一个退出码」,而它的两个调用方都靠**再 spawn 一次**来回落,把第一次的 errno 丢掉。
+
+### 修复
+
+- **`[target.<triple>].runner` 对每个目标生效。** freestanding 谓词只决定一件事:
+  没有 runner 时是否在任何 spawn 之前就失败。宿主能不能执行一个外来 ISA 的产物不再
+  被预测 —— 这台机器上 `binfmt_misc` 注册了 qemu-user 就能跑,报告 #544 的那台不能,
+  而两者的三元组相同。mcpp 要么执行工程声明的 runner,要么尝试启动并报告内核的回答。
+
+- **runner 的程序由 mcpp 定位,不由 `posix_spawnp` 定位。** 先在 `[xlings] deps`
+  声明的每个载荷的 `bin/` 里找,再走 `PATH`。裸名在 `PATH` 上解析到的是 xvm 垫片,
+  而垫片按**当前 SubOS** 回答而不是按包所在的位置回答(e2e 130 在 CI 里记录过这一条:
+  同一个 job 里 `qemu-system-riscv64 --version` 成功,而 `mcpp run` 执行同一个裸名
+  得到「未安装」)。「哪儿都找不到」在任何 spawn 之前判定,并且是错误而不是回落到
+  裸执行:让产物在另一个解释器下带着另一组参数运行,正是这个键存在要防止的失败。
+
+- **启动失败被定型并且只被报告一次。** `DeadlineRun` 与 `BoundedOutcome` 带上
+  spawn 错误码;`run_exec`、`capture_exec` 与两个 deadline 包装各多一个末位
+  `int* spawn_error`。调用方要了错误码就由调用方报告,没要就由启动器自己报告。
+  没有第二次 spawn。
+
+- **`mcpp test` 有了第四种状态。** 产物这台宿主装载不了的测试既没有通过也没有失败。
+  它被报成 **not run**,原因在确立时打印一次,在汇总行里以与失败同等的分量再出现一次,
+  退出码是 2 —— freestanding 的 no-runner 路径对同一种处境早就用这个码。1 保持
+  「跑了并且失败」,0 保持「每个测试都跑了并且通过」。`--message-format json` 带上
+  `"status":"not_run"` 与每条记录的 `reason`,汇总记录带上 `not_run` /
+  `not_run_reason`;`--workspace` 另加 `tests_not_run` 与 `unrunnable_members`。
+
+- **`--no-runner`,`mcpp run` 与 `mcpp test` 都接受。** 「这台宿主能直接执行该产物」
+  是关于宿主的事实,而 manifest 没有宿主轴:`[target.<triple>]` 按目标索引,
+  `[xlings] deps` 没有任何索引。为 x86_64 开发者写的 runner 在 aarch64 宿主上同样会
+  被读到,而那里模拟器既无用也装不上。旗标由那台宿主上的操作者给出,因为只有那里
+  知道这件事。
+
+- **`[xlings]` 的值可以按宿主平台给出。** `deps` 的一项与 `[xlings.workspace]` 的一个
+  值都可以写成 `{ linux = "...", macos = "...", windows = "...", default = "..." }` ——
+  xlings 自己的 `.xlings.json` 对 `workspace` 接受的就是这个形式,`macosx` 作为它的
+  拼法一并接受。在 manifest 加载时对本机解析,因此下游每一个读者看到的仍然是一张平表。
+  未知的平台键是硬错误。在此之前 `[xlings.workspace]` 会**静默丢掉**一个表值,而
+  `[xlings] deps` 根本没有条件化形式 —— 这让 `deps = ["qemu-user-aarch64"]`
+  (索引里只为 x86_64 构建的包)在其余每一类宿主上都是硬构建错误。
+
+- **`[target.<triple>]` 的未知键普查覆盖数组。** `runnerX = ["x"]` 会被报出来,
+  而支持键的清单里补上了 `runner` —— 此前普查刻意跳过数组,代价是这张表读取的唯一
+  一个数组键既不在清单里,拼错了也无人报告。
+
+- **诊断名出的是规范拼法。** 六处消息此前打印驱动报出的三元组;其中三处打印的是
+  一段供粘贴的 `[target.<triple>]`,而在 macOS 上那是 `arm64-apple-darwin24.6.0`,
+  没有任何 `[target.…]` 查询会命中它。`RunnerChoice::tripleKey` 与查询本身在同一处
+  求出,两者不可能各说各的。
+
+### 行为变化
+
+- 宿主三元组下已经声明的 `runner` 从此生效。在其程序缺失的宿主上,`mcpp run` /
+  `mcpp test` 现在带消息失败,而不是静默裸跑产物;`--no-runner` 是出口。
+- 此前对跑不起来的产物报 `FAIL (exit 127)` 的 `mcpp test` 现在报 `NOT RUN` 并退 2
+  (仍然非零,CI 作业不会因此改变颜色)。
+- `[xlings] deps` 与 `[xlings.workspace]` 接受表值;带未知平台键的表此前被丢弃,
+  现在是错误。
+
 ## [2026.9.1.1] — 2026-09-01
 
 #540 的七条审计,加上核验它们时挖出的四条没有人报过的。它们几乎全是同一族:
