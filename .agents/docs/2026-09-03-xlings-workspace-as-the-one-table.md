@@ -107,23 +107,24 @@ both keys (2026.9.2.1) and it survives the merge unmodified.
 
 ## 4. What mcpp writes into `.xlings.json`
 
-This is the decision the rest depends on, and it is xlings' to make.
+**Decided (2026-09-03): mcpp writes `workspace`, and nothing else changes.**
+The correspondence between `[xlings]` and `.xlings.json` is one to one in name
+and in meaning, so `[xlings.workspace]` materialises as the file's `workspace`
+object and the merged semantics is xlings' own. The `deps` array stops being
+emitted when `deps` is retired.
 
-**Option A: mcpp writes only `workspace`.** The materialisation stops emitting
-a `deps` array; every entry lands in the `workspace` object, and xlings
-provisions from it. This is the shape the proposal is written to, and it holds
-only if xlings provisions from `workspace`. If it does not, a project that
-migrated would build on a machine where the packages happen to be installed and
-fail on a clean one, which is the failure mode with the longest detection
-delay.
+The alternative — deriving a `deps` array from `workspace` when writing — is
+rejected. It is a translation layer, which §2.13 refuses, and it would put the
+same statement in the file twice, which is the drift shape section 1 exists to
+remove.
 
-**Option B: mcpp derives a `deps` array from `workspace` when writing.** mcpp
-keeps one table in `mcpp.toml` and emits both fields. This works whatever
-xlings does, and it is a translation layer of exactly the kind §2.13 refuses.
-It is acceptable only as a transitional step with a stated end.
-
-The recommendation is A, conditional on Q1 and Q2. B is the fallback and must
-be labelled transitional in the code rather than left to look permanent.
+One consequence for section 3's W2. mcpp does not only pass the author's
+entries through: it appends the target's C library to the same channel
+(`prepare.cppm:3186-3194`), and the value comes from the target row as
+`xim:picolibc-riscv@1.8.12` — a namespaced reference with a version. So a
+workspace key that cannot carry a namespace would make mcpp unable to express
+its own injected entry, not merely inconvenience an author. W2 is a
+prerequisite rather than a preference.
 
 ## 5. What provisioning means after the merge
 
@@ -292,3 +293,108 @@ this repository has read that measurement wrongly twice.
    when a package ships several programs.
 5. **Phase 3's floor.** Which mcpp version the migrating packages declare, and
    whether the index sweep is a release gate or a one-off.
+
+## 12. The section as a whole
+
+The proposal changes one field of a section whose other fields are unaffected.
+This is what `[xlings]` is at `4d99864`, so that a review of the change can see
+what it is being made against.
+
+### 12.1 Field correspondence
+
+| `mcpp.toml` | `.xlings.json` | Shape | Readers in mcpp |
+|---|---|---|---|
+| `[xlings] deps` | `deps` | array of package references | five (§1); retired by this proposal |
+| `[xlings.workspace]` | `workspace` | object, name to version | one, the materialisation; five after this proposal |
+| `[xlings] subos` | `subos` | string | the materialisation, and `select_runtime` |
+| `[xlings.envs]` | `envs` | object, name to value | one, the materialisation |
+| `[indices]` (not under `[xlings]`) | `index_repos` | array of repo objects | `ensure_project_index_dir` |
+| — | `lang`, `mirror` | strings | written by mcpp unconditionally |
+
+Names and meanings correspond one to one, and mcpp adds no key of its own. The
+file is written by `seed_xlings_json` (`src/xlings/xlings.cppm`), each field
+emitted only when non-empty.
+
+### 12.2 Three places mcpp is not a pure mirror
+
+Stated because a "1:1, no translation layer" claim is checkable, and these are
+the exceptions to it.
+
+1. **mcpp appends an entry the manifest did not write.** The target's C library
+   is added to the package channel, deduplicated, when the target row names one
+   (`prepare.cppm:3186-3194`). It rides that channel rather than having one of
+   its own so that one materialisation can be wrong instead of two. It is also
+   the reason §3's W2 is a prerequisite.
+2. **What is written is already resolved for this host.** A per-platform value
+   is collapsed at manifest load (`resolve_host_value`), so the file is a
+   materialisation for this machine rather than a copy of the declaration. §7
+   is the consequence.
+3. **`lang` and `mirror` are mcpp's, not the manifest's.** They come from
+   mcpp's own configuration and are always present in the file.
+
+### 12.3 Ownership: who declares the environment
+
+One rule, in `mcpp.xlings.runtime_selection`, whose header states what it
+deliberately does not read: the process environment, xlings' active or current
+state, the compiler path, and dependency manifests. Allowing any of them would
+make one `mcpp.toml` mean different ABIs in different shells.
+
+- In a workspace build the **workspace root** owns the declaration, even after
+  the package manifest switches to a selected member. An independently built
+  member is its own owner.
+- A dependency's `[xlings]` is never consulted and never propagated. A
+  library's declaration applies when it is a root, not when its sources are
+  consumed by another root.
+- The file is written under the owner's root
+  (`<ownerRoot>/.mcpp/.xlings.json`). When the owner is not the directory mcpp
+  writes into, two files are written: indices to the work root, the environment
+  to the owner root.
+- Nothing is written at all unless the project declares indices, or declares
+  `[xlings]`, or the target row names a C library
+  (`materializeRootRuntime`, `prepare.cppm:3179-3181`).
+
+### 12.4 `subos`: presence is semantic, and mcpp only reads
+
+- **Absent** selects mcpp's initialised, release-verified `McppDefault`.
+  **`subos = "default"`** is an explicit `NamedSubos("default")`. A string alone
+  cannot distinguish absence from an empty value, which is why the manifest
+  carries `subosDeclared` beside it.
+- The name is validated as a portable identifier (letters, digits, `.`, `_`,
+  `-`); anything else is a manifest error naming the value.
+- There is **no CLI or environment override**, and no implicit following of
+  xlings' active or current SubOS.
+- A named SubOS that does not exist is a **hard error**, never a fallback:
+  falling back would substitute a different environment for the one the
+  manifest named. Creating and populating one is xlings' layer
+  (`xlings subos new`); mcpp reads an environment and never creates one.
+- An environment that exists but carries no `subos_info` **degrades**: the
+  runtime binding reports inconclusive, a note is printed, and the build
+  continues.
+- On Linux the selection also fixes the loader and C library contract, so two
+  SubOS names produce separately fingerprinted objects.
+- Only a **declared** SubOS puts its `bin/` at the front of `build.mcpp`'s
+  `PATH` (`projectSubosBin` is non-empty only for `Mode::NamedSubos`,
+  `prepare.cppm:1389`). A project that declares nothing inherits the `PATH`
+  mcpp was started with, byte for byte.
+
+### 12.5 `envs` is not the environment a program runs in
+
+Two channels are easy to confuse and are unrelated:
+
+- `[xlings.envs]` is materialised into `.xlings.json` and read by xlings for
+  the **tool** environment. mcpp has exactly one reader for it, the
+  materialisation.
+- `compute_subos_env` (`src/build/execute.cppm:418`) builds the environment a
+  built program is **run** with, and it derives from `plan.runtimeBinding` —
+  the SubOS's own `subos_info` — not from `[xlings.envs]`.
+
+A value written under `[xlings.envs]` therefore does not reach `mcpp run`'s
+child. Whether it should is a separate question from this proposal and is not
+answered here.
+
+### 12.6 What this proposal does not touch
+
+`subos`, `envs`, `[indices]`, the ownership rule, the write conditions and the
+`PATH` contract are unchanged. The change is confined to which of the two
+package-shaped fields exists, and to the resolution loss §7 describes, which
+the merged field inherits.
