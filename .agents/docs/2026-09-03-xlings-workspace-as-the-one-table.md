@@ -118,28 +118,44 @@ environment and leaves its version open, which is exactly what `deps = ["cmake"]
 means today. No `*` and no `latest` is introduced: `""` is the form the file
 already has, and it maps onto an install target with no `@version`.
 
-**W2. The namespace is undefined in this position today, and defining it is
-xlings' call.** No workspace key anywhere carries one: not in the authored
-example above, and not in 1635 version-database targets or 546 SubOS entries on
-the development host. The colon appears only on the version side, where a
-scope qualifies where a version came from — `"mcpp": {"active":
-"xim:2026.8.30.2", …}`, one target holding both scoped and unscoped versions.
+**W2. Decided (2026-09-03): both positions are accepted, and mcpp normalises.**
+The namespace can ride the version or the key, the two are mechanically
+interconvertible, and an author should not have to remember which one this
+table wants:
 
-But that is a statement about **resolution**, and the namespace is needed for
-**installation**, and nothing derives an install address from a workspace entry
-today, because nothing installs from `workspace` at all (§13.2). The moment
-mcpp does, the question becomes real and has two candidate answers:
+```toml
+[xlings.workspace]
+picolibc-riscv         = "xim:1.8.12"   # scope on the version
+"xim:picolibc-riscv"   = "1.8.12"       # namespace on the key — quotes REQUIRED
+qemu-riscv             = { linux = "xim:9.2.4-1" }   # composes with W3
+```
 
-| Form | Reads | Costs |
-|---|---|---|
-| `picolibc-riscv = "xim:1.8.12"` | key is the xvm target; the scope rides the version, as the version database already spells it | the address is assembled from two halves |
-| `"xim:picolibc-riscv" = "1.8.12"` | key is the install address, as `deps` spells it | the key is no longer the name the shim looks up, so resolution has to strip it |
+Four rules make that one fact rather than two:
 
-The second is closer to `deps` and to how a person thinks about a package; the
-first is closer to what the file already contains. Either works if the rule is
-stated once — what must not happen is both being accepted, which would put one
-fact in two spellings. **This is the one item in section 3 that is a request
-rather than a finding.**
+1. **mcpp writes one form.** Whatever was authored, the materialised
+   `.xlings.json` carries the file's own convention: the key is the bare xvm
+   target and the scope rides the version. So the file never holds two
+   spellings, and everything downstream of it sees one.
+2. **The install address is assembled from the pair**, whichever half carried
+   the namespace: `xim` + `picolibc-riscv` + `1.8.12`.
+3. **Stating the namespace twice and differently is a hard error** naming both
+   halves — `"xim:foo" = "other:1.0"` is not a merge to resolve. So is naming
+   one package under both spellings in the same table.
+4. **The key form needs quotes, and the documentation must show them.** TOML
+   bare keys are `[A-Za-z0-9_-]`; mcpp's own lexer matches the specification
+   (`is_bare_key_char`, `modules/libs/src/toml.cppm:150`). Measured on the
+   2026.9.2.1 binary:
+
+   ```
+   xim:picolibc-riscv = "1.8.12"     → error: mcpp.toml:6:4: error: expected …
+   "xim:picolibc-riscv" = "1.8.12"   → loads
+   ```
+
+   The unquoted form fails with a parser message that says nothing about
+   namespaces, so the example in the documentation carries the quotes.
+
+The earlier rule that a colon in a key is an error is withdrawn: the colon is
+now meaningful there.
 
 **W3. The per-platform form is xlings' own, and its native keys are
 `linux`, `windows`, `macosx` and `default`** (`platform::OS_NAME` per
