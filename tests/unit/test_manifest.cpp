@@ -4520,7 +4520,8 @@ deps = [{ linxu = "qemu-user-aarch64" }]
 )");
     ASSERT_FALSE(m.has_value());
     EXPECT_NE(m.error().message.find("linxu"), std::string::npos) << m.error().message;
-    EXPECT_NE(m.error().message.find("linux, macosx, windows, default"), std::string::npos)
+    EXPECT_NE(m.error().message.find("linux, macosx (or macos), windows, default"),
+              std::string::npos)
         << m.error().message;
     EXPECT_NE(m.error().message.find("deps[0]"), std::string::npos) << m.error().message;
 }
@@ -4705,4 +4706,38 @@ OPENBLAS_NUM_THREADS = "1"
     ASSERT_FALSE(m.has_value());
     EXPECT_NE(m.error().message.find("[xlings.envs]"), std::string::npos)
         << m.error().message;
+}
+
+// `macos` and `macosx` are one platform under two vocabularies — mcpp's triple
+// says the first, a descriptor and xlings' project file say the second. The
+// rule lives in mcpp.platform.axis; this asserts the manifest reaches it,
+// on every host, by resolving explicitly rather than against this one.
+TEST(Manifest, XlingsWorkspaceAcceptsBothMacosSpellings) {
+    auto with_macos = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+llvm = { macos = "20", default = "22" }
+)");
+    ASSERT_TRUE(with_macos.has_value()) << with_macos.error().format();
+    auto with_macosx = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+llvm = { macosx = "20", default = "22" }
+)");
+    ASSERT_TRUE(with_macosx.has_value()) << with_macosx.error().format();
+    // Same platform, so the same per-platform declaration and the same
+    // host-resolved answer, whichever way it was written.
+    EXPECT_EQ(with_macos->xlings.workspaceByPlatform,
+              with_macosx->xlings.workspaceByPlatform);
+    EXPECT_EQ(with_macos->xlings.workspace, with_macosx->xlings.workspace);
+    EXPECT_NE(std::ranges::find(with_macos->xlings.workspaceByPlatform.at("macosx"),
+                                "llvm@20"),
+              with_macos->xlings.workspaceByPlatform.at("macosx").end());
+    EXPECT_NE(std::ranges::find(with_macos->xlings.workspaceByPlatform.at("linux"),
+                                "llvm@22"),
+              with_macos->xlings.workspaceByPlatform.at("linux").end());
 }

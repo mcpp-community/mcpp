@@ -12,6 +12,7 @@ import mcpp.version_req;
 import mcpp.pm.dependency_selector;
 import mcpp.pm.index_spec;
 import mcpp.platform;
+import mcpp.platform.axis;   // the one macos/macosx spelling rule
 
 // ⚠️ ANONYMOUS NAMESPACE, AND THIS COST TWO WINDOWS JOBS TO LEARN.
 //
@@ -119,14 +120,16 @@ struct LoadContext {
 // list. The unresolved declaration is kept beside it in
 // `XlingsConfig::workspaceByPlatform`, because the descriptor emitter needs
 // every platform at once and cannot re-derive what was already collapsed.
+//
+// ⚠️ `macos` AND `macosx` ARE ONE PLATFORM, AND THE RULE IS NOT WRITTEN HERE.
+// mcpp's triple vocabulary says `macos`; a descriptor and xlings' project file
+// say `macosx`. `mcpp::platform::xpkg_platform_key_for` is the one place that
+// knows, and `xpkg_platform` is the host in the same vocabulary — an earlier
+// draft of this section hand-rolled both, which is the second copy of a rule
+// this file exists to avoid.
 inline std::string_view host_platform_key() {
-    if constexpr (mcpp::platform::is_windows) return "windows";
-    else if constexpr (mcpp::platform::is_macos) return "macosx";
-    else return "linux";
+    return mcpp::platform::xpkg_platform;
 }
-
-// The three platforms a descriptor has a block for, in xlings' spelling.
-inline constexpr std::string_view kXlingsPlatforms[] = {"linux", "macosx", "windows"};
 
 // Split `<scope>:<rest>` on the FIRST colon. xlings writes a namespace this
 // way on a version (`"mcpp": "xim:2026.8.30.2"` in a real subos file) and mcpp
@@ -148,15 +151,16 @@ platform_values(const mcpp::libs::toml::Value& v) {
         return std::unexpected(std::string(
             "expected a string or a { <platform> = \"...\" } table"));
     for (auto& [k, val] : v.as_table()) {
-        std::string canon = (k == "macos") ? "macosx" : k;
-        const bool known = canon == "default"
-            || std::ranges::find(kXlingsPlatforms, canon) != std::ranges::end(kXlingsPlatforms);
-        if (!known)
+        auto canon = k == "default"
+            ? std::optional<std::string_view>("default")
+            : mcpp::platform::xpkg_platform_key_for(k);
+        if (!canon)
             return std::unexpected(std::format(
-                "unknown platform key '{}'; expected one of linux, macosx, windows, default", k));
+                "unknown platform key '{}'; expected one of linux, macosx "
+                "(or macos), windows, default", k));
         if (!val.is_string())
             return std::unexpected(std::format("platform key '{}' must be a string", k));
-        out.emplace_back(std::move(canon), val.as_string());
+        out.emplace_back(std::string(*canon), val.as_string());
     }
     return out;
 }
@@ -166,9 +170,10 @@ platform_values(const mcpp::libs::toml::Value& v) {
 inline std::optional<std::string>
 value_for_platform(const std::vector<std::pair<std::string, std::string>>& vals,
                    std::string_view platform) {
-    // The alias is folded on BOTH sides: a caller may name the host `macos`
-    // (mcpp's spelling elsewhere) while the stored key is canonical.
-    const std::string_view want = (platform == "macos") ? "macosx" : platform;
+    // Folded on BOTH sides: a caller may name the host `macos` (mcpp's triple
+    // spelling) while the stored key is already canonical.
+    const std::string_view want =
+        mcpp::platform::xpkg_platform_key_for(platform).value_or(platform);
     auto pick = [&](std::string_view k) -> std::optional<std::string> {
         for (auto const& [key, v] : vals) if (key == k) return v;
         return std::nullopt;
@@ -1505,7 +1510,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // Every platform, for the descriptor emitter. Resolved per
             // platform rather than stored raw: the emitter wants the answer,
             // and `default` is part of producing it.
-            for (auto plat : kXlingsPlatforms) {
+            for (auto plat : mcpp::platform::xpkg_platforms) {
                 auto v = value_for_platform(*vals, plat);
                 if (!v) continue;
                 auto e = make_xlings_entry(k, *v);

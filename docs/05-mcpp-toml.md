@@ -1909,9 +1909,11 @@ The namespace may be written on either half. Writing it on the key requires
 halves with different values is an error, and so is naming one package twice
 under two spellings.
 
-Platform keys are xlings' own — `linux`, `macosx`, `windows` — plus `default`;
-`macos` is accepted as an alias. A table with no key for this host and no
-`default` declares nothing here.
+Platform keys are xlings' own — `linux`, `macosx`, `windows` — plus `default`.
+`macos` and `macosx` are the same platform written in two vocabularies (mcpp's
+triples say one, descriptors and xlings' project file say the other) and both
+are accepted wherever a platform is named. A table with no key for this host
+and no `default` declares nothing here.
 
 #### Which version a tool the project did not name resolves to
 
