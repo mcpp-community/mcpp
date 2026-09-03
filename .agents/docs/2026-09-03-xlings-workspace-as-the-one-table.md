@@ -102,20 +102,20 @@ manifest therefore accepts a version, a prefix, or `latest`, and "must exist,
 version unconstrained" is spelled `latest`. Measured on three real subos files
 on the development host: every stored value is concrete.
 
-**W2. The authoring key may carry a namespace; the file's key never does.**
-Every workspace key in those same three files is a bare xvm target name —
-`cc`, `ar`, `mcpp`, `binutils`, even `crt1.o` — and none contains a colon. That
-is the name the shim looks up. A namespace belongs to the *install address*
-(`xim:picolibc-riscv@1.8.12`), which is a different vocabulary: xlings itself
-keeps them apart, and `parse_ns_version` handles a scope prefix on the
-**version** (`local:0.4.47`), not a namespace on the key.
+**W2. The namespace goes on the version, and that needs no new rule.**
+`.xlings.json` already spells a namespaced entry as `target = "<ns>:<version>"`:
+`parse_ns_version` splits on the first colon and `make_ns_version` builds it
+(`src/core/xvm/db.cpp:10-20`), and a real subos on the development host holds
+`"mcpp": {"active": "xim:2026.8.30.2", …}`. So the form is
 
-So mcpp accepts `"xim:picolibc-riscv" = "1.8.12"` as an authoring key, uses the
-full address when it provisions, and writes the bare `picolibc-riscv` into the
-file's `workspace`. This is not a translation layer; it is the same split
-xlings makes between what you install and what you resolve. It is also what
-lets mcpp express its own injected entry, whose value from the target row is a
-namespaced address (§4).
+```toml
+[xlings.workspace]
+picolibc-riscv = "xim:1.8.12"
+```
+
+with the key being the xvm target and the namespace riding the value, exactly
+as the file writes it. mcpp accepts what xlings already accepts, and the
+target's C library that mcpp injects (§4) is expressible in the same shape.
 
 **W3. The per-platform value form is unchanged.** It is already accepted on
 both keys (2026.9.2.1) and it survives the merge unmodified.
@@ -145,13 +145,12 @@ If xlings later provisions from `workspace`, the `deps` half of the emission
 can be dropped without touching `mcpp.toml` or any manifest. That is the
 end-state, and it is a change on the xlings side, not here.
 
-One consequence for section 3's W2. mcpp does not only pass the author's
-entries through: it appends the target's C library to the same channel
-(`prepare.cppm:3186-3194`), and the value comes from the target row as
-`xim:picolibc-riscv@1.8.12` — a namespaced reference with a version. So a
-workspace key that cannot carry a namespace would make mcpp unable to express
-its own injected entry, not merely inconvenience an author. W2 is a
-prerequisite rather than a preference.
+One consequence for section 3. The target's C library that mcpp appends
+(`prepare.cppm:3186-3194`) arrives from the target row as
+`xim:picolibc-riscv@1.8.12`, an install address. As a workspace entry it is
+`picolibc-riscv = "xim:1.8.12"` — the same two facts, in the shape the file
+already uses. mcpp splits the address once, at the point it builds the entry;
+nothing downstream sees two spellings.
 
 ## 5. What provisioning means after the merge
 
@@ -175,35 +174,36 @@ the documented claim rather than away from it: an entry that was a pin becomes
 a pin that is also honoured. Section 9 makes it a criterion rather than an
 assumption.
 
-## 6. Migration, and what "retired" means
+## 6. Migration: one release, not a deprecation window
 
-`deps` is not deleted. Three phases, each with a criterion.
+The population is three manifests. `aarch64-virt-rt`, `riscv-virt-rt` and
+`std-freestanding` each declare one `[xlings] deps` entry of the form
+`xim:<name>@<version>`; mcpp's own `mcpp.toml` declares no `[xlings]` section
+at all. A three-phase deprecation exists to give an ecosystem time it does not
+need here, so the migration is a single release: the packages are edited and
+republished with the new form, and `deps` is refused in the same version that
+introduces the merged reader.
 
-**Phase 1 — the merged reader.** `workspace` gains provisioning, the payload
-directory hand-off (`MCPP_XPKG_*_DIR`) and the runner lookup path. `deps` keeps
-working exactly as it does and is documented as deprecated. A manifest that
-names one package in both, with different versions, is a hard error naming both
-lines: the drift of section 1 becomes unrepresentable at the moment the second
-reader appears rather than later.
+What "refused" must mean, and this is the part that does not bend: `deps` stops
+being honoured by becoming a **hard error that names the replacement**, never
+by becoming a key nobody reads. `[xlings]` has no unknown-key sweep — no
+`kKnownXlings` list exists in `toml.cppm` — so a silently dropped key would be
+read by nobody and reported by nobody, which is the shape #531 exists to
+prevent.
 
-**Phase 2 — the warning.** A manifest using `deps` builds and prints one
-advisory naming the `[xlings.workspace]` line to write instead. The advisory is
-per package, so the message is the edit.
+Ordering, because the three packages are consumed by projects that may be built
+with either engine:
 
-**Phase 3 — refusal, never silence.** `deps` stops being honoured and becomes a
-hard error that names the replacement. It must not become an unknown key:
-`[xlings]` has no unknown-key sweep (verified — no `kKnownXlings` list exists
-in `toml.cppm`), so a removed key would be read by nobody and reported by
-nobody, which is the shape #531 exists to prevent. Phase 3 is gated on an index
-sweep showing no published manifest still uses `deps`, and on an mcpp floor in
-the packages that migrate.
+1. The merged reader ships, accepting `workspace` and refusing `deps` with a
+   message naming the line to write.
+2. The three packages are republished with `[xlings.workspace]` and an mcpp
+   floor at that version.
+3. An index sweep confirms no other published manifest declares `deps`. The
+   local checkouts are not the ecosystem; the sweep is what makes the claim.
 
-**The ecosystem denominator is small.** Measured across the local `mcpplibs`
-checkouts: three manifests declare `[xlings] deps`
-(`aarch64-virt-rt`, `riscv-virt-rt`, `std-freestanding`), one entry each, all
-of the form `xim:<name>@<version>`. mcpp's own `mcpp.toml` declares no
-`[xlings]` section. The index has to be swept before Phase 3; the local
-denominator is not the ecosystem.
+Step 3 gates nothing on the mcpp side — it is a check that the denominator was
+what it looked like. If it turns up manifests nobody knew about, the refusal in
+step 1 becomes an advisory for one release and the window opens after all.
 
 ## 7. The packaging map, and a loss the current implementation has
 
@@ -321,8 +321,9 @@ that was open is part of how the design was reached.
 4. **Does binding a package determine its programs' versions?** Yes, and the
    expansion happens when the entry is honoured rather than when it is merged
    (§15.1).
-5. **Phase 3's floor.** Open. Which mcpp version the migrating packages
-   declare, and whether the index sweep is a release gate or a one-off.
+5. **The migration window.** Answered by the denominator: three manifests, so
+   no window (§6). The index sweep confirms the denominator rather than gating
+   the change.
 
 The one decision left for review is D8 (§15.1): the provisioning pass sends
 `useAfterInstall: true`, so a declared version becomes the active one in the
@@ -507,6 +508,30 @@ workspace replaces the global one. That belongs in `docs/17`.
 **A `workspace` entry installs nothing.** No install path reads it. This
 answers Q1: xlings does not provision from `workspace`, which is why section 4
 was revised rather than kept.
+
+### 13.3.1 What a workspace key is: an xvm target, of any kind
+
+Measured on the development host's default SubOS, 546 entries:
+
+```
+binutils = 2.42     ar = 2.42      as = 2.42      ld = 2.42
+gcc      = 16.1.0   g++ = 16.1.0   cc = 16.1.0
+mcpp     = xim:2026.8.30.2
+Scrt1.o, crt1.o, crti.o, crtn.o, glibc.files.1 … glibc.files.101
+```
+
+Package roots, the programs of those packages, and file assets all live in one
+namespace, each with `{active, installed}`. A package root and its programs
+carry the **same version** because they are members of one release and
+`cmd_use` wrote them together (§15.1) — that identity is the group expansion's
+own footprint in the data.
+
+So "the workspace holds packages" and "the workspace holds programs" are both
+half-right: it holds xvm targets, and a package's root is one of them. Writing
+the package in a manifest is therefore a legitimate entry, and its programs
+receive the same version when the entry is honoured. Writing a program is
+equally legitimate and selects the same release. What a key never carries is a
+namespace; that rides the value (§3 W2).
 
 ### 13.4 `envs` has no reader anywhere
 
