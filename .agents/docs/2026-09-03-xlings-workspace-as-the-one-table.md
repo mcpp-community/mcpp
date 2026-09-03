@@ -16,11 +16,15 @@ one table, an entry means "this project uses this at this version, provision it
 if absent", and `deps` is retired through a deprecation path rather than a
 removal.
 
-Two things the change is not. It is not a translation layer: `[xlings]` mirrors
-xlings' own `.xlings.json` 1:1, and the merged semantics is the one xlings
-already has, so mcpp is following the schema rather than inventing one. And it
-does not weaken any existing behaviour: a declaration that cannot be satisfied
-stays a hard build error, which is the property #531 was filed to obtain.
+The merge is in `mcpp.toml`, not in the file mcpp writes. `.xlings.json` keeps
+both fields, because xlings reads them in two different places and neither
+subsumes the other (section 13). One authored entry therefore materialises as
+one `deps` element and one `workspace` member: not a translation, but one
+statement written where each of its two halves is read.
+
+The change does not weaken any existing behaviour: a declaration that cannot be
+satisfied stays a hard build error, which is the property #531 was filed to
+obtain.
 
 ## 1. What the two keys are today
 
@@ -531,3 +535,111 @@ section half-audited.
 | §11 Q1 | open | answered: xlings does not provision from `workspace` |
 | §12.1 | `envs` reader: "the materialisation" | no reader on either side |
 | §12.5 | `[xlings.envs]` is read by xlings for the tool environment | it is read by nothing |
+
+## 14. What mcpp's own documentation must say
+
+The inheritance rule of §13.3 is the behaviour an author most needs and the one
+mcpp states nowhere. It is not introduced by this proposal; it is being written
+down because the proposal makes `workspace` the key everybody writes.
+
+**`docs/05-mcpp-toml.md` §2.13** gains the rule as a table, next to the
+`[xlings.workspace]` description:
+
+| The project declares | The version of a tool it did not name comes from |
+|---|---|
+| `[xlings.workspace]`, no `subos` | the machine's global workspace; the project's own entries win over it |
+| `[xlings.workspace]` and `subos = "<name>"` | that SubOS's own workspace; the global one does not apply |
+| neither | the machine's global workspace |
+
+with one sentence for why the middle row is not an omission: a named SubOS is a
+different environment with its own installed set, and carrying the host's pins
+into it would name versions that are not there.
+
+**`docs/17-the-project-environment.md`** gains the consequence, because that
+chapter is where `subos` is chosen: declaring a SubOS changes which version
+pins apply, and a project that relied on the machine's pins has to state them
+itself once it names an environment. The chapter already says mcpp reads an
+environment and never creates one; this is the other half of what the
+declaration decides.
+
+**`docs/13-baremetal.md`** needs no change: it declares packages, not versions.
+
+Each with its `docs/zh/` twin, which CI enforces.
+
+A criterion, so the paragraph is not the only record: a project that pins a
+tool and declares a SubOS resolves that tool to its pin, and a tool it does not
+pin resolves inside the SubOS rather than to the host's global choice. It is an
+e2e over two SubOS environments and one tool installed at two versions.
+
+## 15. Self-review
+
+Read against the code a second time, 2026-09-03. Three findings; the first is
+the one that changes the proposal.
+
+### 15.1 A project-file `workspace` entry does not expand a binding group
+
+Programs are resolved by name. The shim reads `Config::effective_workspace()`
+and looks up **the program's own name** (`src/core/xvm/shim.cpp:409-412`), and
+the merge that produces that map is a plain per-key merge
+(`config.cpp:846-864`). Neither consults the version database, so neither
+expands a package into its members.
+
+Expansion happens somewhere else: `cmd_use` resolves the whole release through
+`resolve_binding_selection` and writes one workspace entry **per member**
+(`src/core/xvm/commands.cpp:763-772`). That is why using either a package name
+or one of its programs switches all of them — the group is expanded at the
+moment of the switch, and what lands in the file is already per-member.
+
+A project manifest does not go through `cmd_use`. Its `workspace` object is
+read as a layer, verbatim. So:
+
+```toml
+[xlings.workspace]
+qemu-riscv = "9.2.4-1"      # the package, and the umbrella node
+```
+
+pins the node named `qemu-riscv`, which nothing invokes, and leaves
+`qemu-system-riscv64` to be resolved by the layer underneath. On a machine with
+two versions installed and the newer one active, the project's pin is silently
+inert — the exact shape the merge was meant to remove.
+
+Three ways out, and this is the decision the proposal now needs most:
+
+1. **Expand at read time.** When a project layer names a group root, resolve
+   the group and apply the version to every member. Correct and invisible to
+   authors, and it puts version-database knowledge into the merge, which is
+   xlings' side to accept or refuse.
+2. **Expand at materialisation.** mcpp writes one `workspace` member per group
+   member. mcpp does not have the version database, so it cannot.
+3. **Require program names for pinning.** The author writes
+   `qemu-system-riscv64 = "9.2.4-1"`. This works today with no change anywhere
+   — and it re-opens the split the proposal closes, because provisioning needs
+   the package (`qemu-user-aarch64`) while pinning needs the program
+   (`qemu-aarch64-static`), and §13 measured that those names differ.
+
+Option 1 is the recommendation. Option 3 is honest about today and should be
+what the documentation says until 1 exists.
+
+### 15.2 "Retired" means the manifest key, never the file field
+
+Section 6 reads as though `deps` disappears. It does not: §4 keeps emitting the
+`deps` array into `.xlings.json`, because that is the only key xlings' install
+path reads. What is retired is the key an author writes in `mcpp.toml`. Every
+occurrence of "retired" in sections 0, 6 and 12 means that and only that, and
+the phases apply to the manifest surface alone.
+
+### 15.3 Section 12.6 is no longer true as written
+
+It says the proposal touches neither `subos` nor `envs`. It touches both,
+though not their behaviour: §13.4 asks for a decision on `envs`, which is
+written by mcpp and read by nobody, and §14 adds documentation for what `subos`
+does to the inheritance chain. Neither changes an effect; both change what the
+project states about itself, which is the part this document is for.
+
+### 15.4 What survived the review unchanged
+
+The two facts section 1 rests on. The general form still installs nothing while
+its documented shorthand installs, and nothing still compares the two keys when
+both name one package. §13 strengthened rather than weakened them: xlings makes
+the same split in the same direction, which is why the merge belongs in the
+manifest and not in the file.
