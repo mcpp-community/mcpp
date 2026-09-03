@@ -120,6 +120,42 @@ std::string platform_block(std::string_view version, const ReleaseInfo::PerPlatf
         version, lua_escape(pp.url), lua_escape(pp.sha256));
 }
 
+// The install-time edge of a published package, per platform.
+//
+// A consumer that runs `mcpp add <pkg>` gets whatever this names installed
+// alongside it. Nothing emitted it before, so a package declaring an
+// environment had its edge written into the descriptor by hand — which is how
+// `riscv-virt-rt` 0.3.0 shipped without the C library its own target row named,
+// and why that file now carries thirty lines explaining the removal.
+//
+// The declaration is read UNRESOLVED (`workspaceByPlatform`), because a
+// descriptor has a block per platform and the host resolution has already
+// discarded two of the three. Emitting from the host-resolved list instead
+// would produce a descriptor whose edges depend on which machine packed it,
+// and nothing downstream could tell.
+//
+// ⚠️ A package still on the superseded `[xlings] deps` emits NO edge, exactly
+// as before. That is not an oversight: `deps` is resolved for the host at
+// load, so the per-platform declaration a descriptor needs is already gone by
+// the time this runs, and writing the host's answer into all three blocks
+// would be the machine-dependent descriptor this comment rejects. The
+// advisory that key raises tells its author how to obtain an edge.
+std::string platform_deps_block(
+    const std::map<std::string, std::vector<std::string>>& byPlatform,
+    std::string_view platform)
+{
+    auto it = byPlatform.find(std::string(platform));
+    if (it == byPlatform.end() || it->second.empty()) return {};
+    std::string out = "            deps = {";
+    bool first = true;
+    for (auto const& address : it->second) {
+        out += std::format("{} {}", first ? "" : ",", lua_escape(address));
+        first = false;
+    }
+    out += " },\n";
+    return out;
+}
+
 } // namespace
 
 std::string emit_xpkg(const mcpp::manifest::Manifest&  manifest,
@@ -161,9 +197,13 @@ std::string emit_xpkg(const mcpp::manifest::Manifest&  manifest,
     out += "    type = \"package\",\n\n";
 
     out += "    xpm = {\n";
-    out += "        linux   = {\n" + platform_block(release.version, release.linux)   + "        },\n";
-    out += "        macosx  = {\n" + platform_block(release.version, release.macosx)  + "        },\n";
-    out += "        windows = {\n" + platform_block(release.version, release.windows) + "        },\n";
+    const auto& byPlatform = manifest.xlings.workspaceByPlatform;
+    out += "        linux   = {\n" + platform_deps_block(byPlatform, "linux")
+         + platform_block(release.version, release.linux)   + "        },\n";
+    out += "        macosx  = {\n" + platform_deps_block(byPlatform, "macosx")
+         + platform_block(release.version, release.macosx)  + "        },\n";
+    out += "        windows = {\n" + platform_deps_block(byPlatform, "windows")
+         + platform_block(release.version, release.windows) + "        },\n";
     out += "    },\n\n";
 
     out += "    mcpp = {\n";

@@ -500,10 +500,11 @@ error: no runner is configured for 'riscv64-none-elf' — a freestanding artifac
 
 ## 编写板级支持包
 
-板级支持包是一个普通的 mcpp 包。它在 `[xlings] deps` 下声明所需的模拟器,为消费者
+板级支持包是一个普通的 mcpp 包。它在 `[xlings.workspace]` 下声明所需的模拟器,为消费者
 导出一个 C++ 模块,并从 `build.mcpp` 发出它的板级事实。
 
-**`[xlings] deps` 里的声明会在首次构建时供给该包**(2026.8.29 起)。它同时让
+**那里的声明会在首次构建时供给该包**(2026.8.29 起;这张表自 2026.9.3.1 起是
+`[xlings.workspace]`,旧的 `[xlings] deps` 仍然生效并会说明这一点)。它同时让
 `mcpp::xpkg_dir` 能回答「那个包落在哪」。两半都要紧:同一条声明既装上模拟器,也告诉
 构建程序它装到了哪。
 
@@ -601,8 +602,8 @@ int main() {
 该包的清单只声明模拟器,别无其他:
 
 ```toml
-[xlings]
-deps = ["xim:qemu-riscv@9.2.4-1"]
+[xlings.workspace]
+qemu-riscv = "xim:9.2.4-1"
 ```
 
 在这块板子上链接 `clang_rt.builtins` 不是可选项。picolibc 通过 ryu 格式化浮点值,

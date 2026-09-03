@@ -560,11 +560,12 @@ for hosted targets, the `--no-runner` escape and the not-run reporting of
 ## Writing a board-support package
 
 A board-support package is an ordinary mcpp package. It declares the emulator
-it needs under `[xlings] deps`, exports one C++ module for consumers, and emits
-its board facts from `build.mcpp`.
+it needs under `[xlings.workspace]`, exports one C++ module for consumers, and
+emits its board facts from `build.mcpp`.
 
-**A declaration under `[xlings] deps` provisions the package on the first
-build** (since 2026.8.29). It is also what lets `mcpp::xpkg_dir` answer *"where
+**A declaration there provisions the package on the first build** (since
+2026.8.29; the table is `[xlings.workspace]` since 2026.9.3.1, and the older
+`[xlings] deps` still works and says so). It is also what lets `mcpp::xpkg_dir` answer *"where
 did that package land"*. Both halves matter: the same declaration installs the
 emulator and tells the build program where it went.
 
@@ -669,8 +670,8 @@ int main() {
 The package's manifest declares the emulator and nothing else:
 
 ```toml
-[xlings]
-deps = ["xim:qemu-riscv@9.2.4-1"]
+[xlings.workspace]
+qemu-riscv = "xim:9.2.4-1"
 ```
 
 Linking `clang_rt.builtins` is not optional on this board. picolibc formats

@@ -752,30 +752,58 @@ struct RuntimeConfig {
     LinkIntent                      linkIntent;
 };
 
-// `[xlings]` — the project's build ENVIRONMENT (L-1). The subsection names mirror
-// xlings' own `.xlings.json` schema 1:1, so mcpp materializes them verbatim into
-// `<proj>/.mcpp/.xlings.json` (no translation layer): `deps` (host build-tools
-// installed by xlings), `[xlings.workspace]` (tool→version pins, the general form
-// of `[toolchain]`), `subos` (a named per-project sandbox), `[xlings.envs]`
-// (env vars applied by xvm shims). See
+// `[xlings]` — mcpp's manifest surface for xlings' LOCAL PROJECT MECHANISM.
+//
+// Not a schema of mcpp's own: it is what a project writes into the project
+// `.xlings.json` that gives a directory its own environment, and mcpp
+// materializes it into `<proj>/.mcpp/.xlings.json` verbatim.
+//
+// `[xlings.workspace]` is the one table an author writes: an entry names a
+// package and the version the project uses it at. mcpp both provisions it and
+// materializes it as a resolution pin, which are the file's two fields and
+// xlings' two consumers.
+//
+// `deps` is the pre-2026.9.3 spelling of the same statement. It is still
+// honoured and is reported, because refusing it would reach a DEPENDENCY's
+// manifest that a consumer pinning that package cannot edit.
+//
+// `envs` is gone: it was materialized here and read by nothing, while the
+// documentation described an effect it did not have.
+//
+// See .agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md, and
 // .agents/docs/2026-06-29-manifest-environment-and-platform-design.md (L-1).
 struct XlingsConfig {
-    // Both lists are already resolved for THIS host: a manifest may write an
-    // entry or a value as `{ linux = "...", default = "..." }` (the form
-    // xlings' own `.xlings.json` accepts), and the parser keeps what applies
-    // here and drops what does not. Readers see a flat list and need no
-    // platform logic of their own. See `resolve_host_value` in toml.cppm.
-    std::vector<std::string>           deps;       // → .xlings.json "deps"
-    std::map<std::string, std::string> workspace;  // → "workspace" (tool → version)
-    std::string                        subos;      // → "subos" (named project sandbox)
+    // The install addresses `[xlings.workspace]` asks for, resolved for THIS
+    // host: `[<ns>:]<target>[@<version>]`. Derived rather than authored — the
+    // provisioning pass, `fillXpkgDirs`, `xlingsDepBinDirs` and the `deps`
+    // array of the materialised `.xlings.json` all read this, and none of them
+    // has to know that a namespace may be written on either half of an entry.
+    std::vector<std::string>           deps;
+    // The resolution layer, resolved for THIS host: target → `[<ns>:]<version>`,
+    // empty when the entry asked only for presence. Materialised as the file's
+    // `workspace` object, which is a layer xlings merges over the machine's.
+    std::map<std::string, std::string> workspace;
+    // The same declaration for every platform, resolved but not collapsed:
+    // platform → the install addresses that apply there. Only the descriptor
+    // emitter reads it, because `xpm.<platform>.deps` needs all three at once
+    // and the host resolution above has already discarded two.
+    //
+    // ⚠️ A VECTOR, NOT A NESTED MAP, AND NOT A STYLE CHOICE. Spelling this
+    // `map<string, map<string, string>>` compiles the module and then produces
+    // a TRUNCATED BMI under GCC 16: consumers fail with
+    // `failed to read compiled module cluster N: Bad file data` and
+    // `failed to load pendings for 'std::map'`, pointing at an unrelated file.
+    // Measured while implementing this. The emitter needs the addresses and
+    // never the keys, so the inner map bought nothing.
+    std::map<std::string, std::vector<std::string>> workspaceByPlatform;
+    std::string                        subos;      // → .xlings.json "subos"
     // Presence is semantic: an absent key selects McppDefault, while an
     // explicitly written `subos = "default"` selects NamedSubos("default").
     // A string alone cannot distinguish absence from an invalid empty value.
     bool                               subosDeclared = false;
-    std::map<std::string, std::string> envs;       // → "envs" (env var → value)
 
     bool empty() const {
-        return deps.empty() && workspace.empty() && !subosDeclared && envs.empty();
+        return deps.empty() && workspace.empty() && !subosDeclared;
     }
 };
 

@@ -3,6 +3,54 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.9.3.1] — 2026-09-03
+
+`[xlings]` 收敛成一张表。`[xlings.workspace]` 说出工程用哪个包、用哪个版本,mcpp
+既供给它也把它物化成解析用的钉;`deps` 被取代;`envs` 移除;发布出去的描述符第一次
+带上安装期的边。
+
+设计与全部实测见
+[`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`](.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md)。
+
+> **一般形态比它自己的简写弱。** `docs/05` §2.13 写着 `[toolchain]` 是编译器那一项
+> 的便捷写法、`[xlings.workspace]` 是一般形态;而 `[toolchain]` 会装
+> (`resolve_xpkg_path(…, autoInstall=…)`),一般形态什么都不装。两个键说的是同一件
+> 事,差别只在 mcpp 拿这句话去做什么 —— 而它们对应的那套机制,书写面只有一个。
+
+### 变更
+
+- **`[xlings.workspace]` 成为唯一的表。** 一条条目产出两个投影:一个安装地址
+  (`[<ns>:]<target>[@<version>]`,供给用)与一份解析钉(`[<ns>:]<version>`,写进
+  `.xlings.json` 的 `workspace` 对象)。命名空间写在键上或版本上都接受——
+  `"xim:picolibc-riscv" = "1.8.12"` 与 `picolibc-riscv = "xim:1.8.12"` 是同一条,
+  写在键上必须带引号(TOML 裸键不能含冒号);两半都写且不一致是错误。`""` 表示
+  「存在即可,版本不限」,这是手写项目文件里已经在用的拼法。平台键取 xlings 自己的
+  `linux` / `macosx` / `windows` / `default`,`macos` 作为别名保留。
+
+- **`deps` 被取代,但仍然生效并被报告。** 报告里给出该写的那一行。**不拒绝**——拒绝
+  会落到依赖的 manifest 上,而钉了那个包精确版本的工程改不了它。同一个包在两张表里
+  给出两个版本则是硬错误:两者按顺序供给而后者赢得钉,接受它等于装一个、解析另一个。
+
+- **`[xlings.envs]` 移除。** 它曾被物化进 `.xlings.json` 而没有任何东西读它:
+  xlings 里两处 `envs` 分别属于某个程序的 shim 记录和某个 SubOS 的 provider 段,
+  都不是这个形状;mcpp 自己给程序的运行环境来自 runtime binding。现在这个键是错误
+  ——**一个什么都不做的键,在有东西声称它有效果时更坏**。
+
+- **发布的描述符带上 `xpm.<platform>.deps`。** 此前 `mcpp emit xpkg` 一个字都不写,
+  安装期的边只能手写进 `xpkg.lua` —— `riscv-virt-rt` 0.3.0 因此发出去时没有它自己
+  目标行指名的 C 库。声明按**未解析**的形态保留在 `workspaceByPlatform` 里,因为
+  描述符每个平台一块,而按本机解析已经丢掉了另外两个。
+
+- **`[xlings]` 的三档继承写进文档。** 不写 `subos` 就是机器的环境加上工程自己的条目;
+  写了 `subos` 就是隔离,机器那层不参与;工程内执行的 `xlings use` 压过两者。这条
+  行为一直如此,而 mcpp 此前一字未提。
+
+### 行为变化
+
+- `[xlings.envs]` 从被忽略变成硬错误。索引里没有任何包用过它。
+- `[xlings] deps` 仍然生效,但会打印一条指出替代写法的警告;`--strict` 下它是错误。
+- 同一个包在 `deps` 与 `[xlings.workspace]` 里给出不同版本,现在被拒绝。
+
 ## [2026.9.2.1] — 2026-09-02
 
 `[target.<triple>].runner` 对每一个目标生效,启动失败不再无声,`mcpp test` 把跑不起来

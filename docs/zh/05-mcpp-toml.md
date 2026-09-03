@@ -1591,54 +1591,74 @@ platforms = ["linux", "macos", "windows"]
 两者都只是 warning,绝不报错:覆盖度属于发布纪律,而能作判断的人看的是发布,
 不是这一次构建。
 
-### 2.13 `[xlings]` — 构建环境
+### 2.13 `[xlings]` — 工程的环境
+
+```toml
+[xlings.workspace]                 # 这个工程的环境里有什么
+cmake                   = "3.28"
+picolibc-riscv          = "xim:1.8.12"     # 命名空间写在版本上
+"xim:qemu-user-aarch64" = "7.2.0"          # 或写在键上 —— 必须带引号
+code                    = ""               # 存在即可,版本不限
+llvm                    = { macosx = "20", default = "22" }
+```
 
 ```toml
 [xlings]
-deps  = ["make@4.4", "cmake@3.28", "python@3.13"]   # 要供给的 host 构建工具
-subos = "dev"                                        # 命名的项目级沙箱
-
-[xlings.workspace]                                   # 固定工具版本([toolchain] 的通用形式)
-clang = "20.1.7"
-
-[xlings.envs]                                        # 应用到工具环境的环境变量
-OPENBLAS_NUM_THREADS = "1"
+subos = "dev"                      # 指名的隔离环境
 ```
 
-声明项目的**构建环境**,经 xlings(mcpp 的底座)供给。子段名与 xlings 自身的
-`.xlings.json` schema **1:1** 对齐,因此 mcpp 把它们**原样**物化进
-`<项目>/.mcpp/.xlings.json`(无翻译层):`deps`(host 构建工具)、`[xlings.workspace]`
-(工具→版本固定)、`subos`(命名沙箱)、`[xlings.envs]`(环境变量)。用它声明构建所需的
-host 工具(`make`/`cmake`/`protoc`…)、按项目固定工具版本、或设构建期环境变量——无需手改
-`.xlings.json`。`[toolchain]`(§2.7)仍是编译器的便捷简写;`[xlings.workspace]` 是其通用形式。
+`[xlings]` 是 mcpp 对 **xlings local project 机制**的书写面:让一个目录拥有自己
+环境的那份项目 `.xlings.json`。子段名与含义都是那份文件的,mcpp 原样物化进
+`<project>/.mcpp/.xlings.json`,没有翻译层。
 
-**按宿主平台取值(2026.9.2.1+)。** `deps` 的一个条目与 `[xlings.workspace]` 的一个值可以是
-按平台为键的表,即 xlings 自身 `.xlings.json` 对 `workspace` 接受的形式:
+**`[xlings.workspace]` 是唯一的表。** 一条条目写出工程用哪个包、用哪个版本。
+mcpp 既供给它——机器上没有就装,有就映射——也把它物化成解析用的钉,于是工程写下
+的版本就是它的工具解析到的版本。
 
-```toml
-[xlings]
-deps = ["xim:ninja", { linux = "qemu-user-aarch64" }, { windows = "nasm", default = "yasm" }]
+#### 条目的形式
 
-[xlings.workspace]
-gcc  = { linux = "15.1.0" }
-llvm = { macos = "20", default = "22" }
-```
+| 形式 | 含义 |
+|---|---|
+| `cmake = "3.28"` | 该版本 |
+| `llvm = "22"` | 已装的最高 `22.*`;版本前缀会被解析 |
+| `code = ""` | 存在即可,版本不限 |
+| `picolibc-riscv = "xim:1.8.12"` | 来自 `xim` 索引 |
+| `"xim:picolibc-riscv" = "1.8.12"` | 同一条,命名空间写在键上 |
+| `llvm = { macosx = "20", default = "22" }` | 按宿主平台 |
 
-键为 `linux`、`macos`、`windows` 与 `default`;`macosx` 作为 xlings 对 `macos` 的拼写也被
-接受。mcpp 在加载清单时按运行它的宿主解析这张表:宿主对应的键优先,`default` 兜底,两者
-都没有时该条目在本宿主上不作声明 —— 是缺席,不是空值。未知的键是错误,不是被丢弃的条目。
-这条轴只到宿主操作系统:一个包存在于该 OS 但不存在于该架构时,在那台宿主上仍是
-provisioning 错误。
+命名空间写在哪一半都可以。写在键上**必须带引号**,因为 TOML 的裸键不能含冒号。
+两半都写且不一致是错误;同一个包用两种拼法出现两次也是错误。
 
-`subos` 选择根项目用于 build/run 的**本地开发 OS 环境**。未声明该键时固定使用 mcpp 已初始化、
-经 release 验证的 `McppDefault`;`subos = "default"` 则仍是显式的
-`NamedSubos("default")`。没有 CLI/环境变量 override,也不会隐式跟随 xlings active/current。
+平台键是 xlings 自己的 —— `linux`、`macosx`、`windows`,外加 `default`。`macos`
+与 `macosx` 是同一个平台的两套词汇(mcpp 的三元组说前者,描述符与 xlings 的项目
+文件说后者),**凡是点名平台的地方两者都接受**。表里既没有本机这一项也没有
+`default`,就表示在这里什么都不声明。
 
-在 Linux 上,所选环境同时固定 loader/libc contract,所以 `el8`、`trixie` 可在同一机器共存,
-并进入不同构建指纹。workspace 整体构建时由 workspace root 覆盖 member 声明;member/依赖中的
-SubOS 不传递——库只有作为独立 root 开发时才使用自己的声明,作为别人的源码依赖时使用消费者
-root 的环境。指定的命名 SubOS 不存在、缺少或使用不兼容 runtime contract 都会直接报错,不会
-回退 default/active/编译器烙入状态。参见 docs/08-toolchain-internals.md §2.1。
+#### 工程没点名的工具,其版本的来源
+
+| 工程声明了 | 版本来自 |
+|---|---|
+| `[xlings.workspace]`,无 `subos` | 机器的环境,工程自己的条目叠在上面 |
+| `[xlings.workspace]` 与 `subos = "<名>"` | 那个环境自己的 workspace;机器的不适用 |
+| 两者都没有 | 机器的环境 |
+
+中间那行不是遗漏。指名的环境有自己的已安装集合,把机器的版本带进去会指向那里不
+存在的版本。**写 subos 就是要隔离,不写就是要机器的环境加上自己的条目。**
+
+在工程内执行的 `xlings use` 压过这张表,直到 mcpp 重写环境为止——它是最后合并的
+那一层。
+
+#### `deps`,已被取代
+
+`deps = ["xim:qemu-riscv@9.2.4-1"]` 是同一句话在 2026.9.3 之前的拼法。它仍然生效,
+并且会被报告一次,同时给出该写的 `[xlings.workspace]` 那一行。**不拒绝**——拒绝会
+落到**依赖**的 manifest 上,而钉了那个包精确版本的工程改不了它。
+
+#### `envs`,已移除
+
+`[xlings.envs]` 曾被物化进 `.xlings.json`,而没有任何东西读它:程序的环境由它自己
+的包声明,环境的环境由那个环境声明。现在这个键是错误,并同时点名这两者。索引里没有
+任何包用过它。
 
 ### 2.14 依赖产出的 host 工具(mcpp 2026.8.5.1+)
 

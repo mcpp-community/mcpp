@@ -37,12 +37,10 @@ deps = ["ninja@1.12.1"]
 subos = "dev"
 
 [xlings.workspace]
-# Pin a tool version (the general form of [toolchain]).
+# The one table (2026.9.3.1+). The same statement as the `deps` line above,
+# which is deliberate: the two must collapse to one entry rather than ask
+# xlings to install one package twice.
 ninja = "1.12.1"
-
-[xlings.envs]
-# Env vars applied by xvm shims.
-APP_BUILD_ENV = "1"
 EOF
 echo 'int main() { return 0; }' > app/src/main.cpp
 
@@ -65,7 +63,12 @@ grep -q 'ninja@1.12.1'     "$J" || { echo "FAIL: deps entry missing"; exit 1; }
 grep -q '"subos": "dev"'   "$J" || { echo "FAIL: subos not materialized"; exit 1; }
 grep -q '"workspace"'      "$J" || { echo "FAIL: workspace not materialized"; exit 1; }
 grep -q '"ninja": "1.12.1"' "$J" || { echo "FAIL: workspace pin missing"; exit 1; }
-grep -q '"envs"'           "$J" || { echo "FAIL: envs not materialized"; exit 1; }
-grep -q '"APP_BUILD_ENV": "1"' "$J" || { echo "FAIL: env var missing"; exit 1; }
+grep -q '"envs"'           "$J" && { echo "FAIL: envs is materialized and nothing reads it"; exit 1; }
+# One statement, one entry: `deps` and `[xlings.workspace]` agree here, and the
+# materialized list must not name the package twice.
+[ "$(grep -o 'ninja@1.12.1' "$J" | wc -l)" -eq 1 ] \
+    || { echo "FAIL: the same statement was materialized twice"; exit 1; }
+# The superseded key is reported, with the line to write instead.
+grep -q '\[xlings.workspace\]' b.log || { echo "FAIL: no advisory for [xlings] deps"; cat b.log; exit 1; }
 
 echo "OK"

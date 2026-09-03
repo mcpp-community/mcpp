@@ -12,6 +12,7 @@ import mcpp.version_req;
 import mcpp.pm.dependency_selector;
 import mcpp.pm.index_spec;
 import mcpp.platform;
+import mcpp.platform.axis;   // the one macos/macosx spelling rule
 
 // ⚠️ ANONYMOUS NAMESPACE, AND THIS COST TWO WINDOWS JOBS TO LEARN.
 //
@@ -100,55 +101,145 @@ struct LoadContext {
     bool insideWorkspace = false;
 };
 
-// ─── `[xlings]` values per host platform (#544, D7) ─────────────────────────
+// ─── `[xlings]`: mcpp's surface for xlings' local project mechanism ─────────
 //
-// xlings' own `.xlings.json` lets a `workspace` value be an object keyed by
-// platform — `{ "linux": "15.1.0", "default": "22" }` — and resolves it
-// against the host it runs on: the host's key wins, `default` is the
-// fallback, and no match at all means the entry is absent on that host.
-// `[xlings]` claims to mirror that file 1:1, but its parser accepted only
-// strings and dropped a table value in silence. `deps` has no xlings-side
-// reader (mcpp reads the list and calls `install_packages` itself), so its
-// per-platform form is mcpp's to define, and it takes the same one: an entry
-// is a string or a `{ <platform> = "<package>" }` table.
+// `[xlings]` is not a schema of mcpp's own. It is what a project writes into
+// xlings' project `.xlings.json`, and every rule below is that file's rule.
 //
-// Resolved HERE, at load, against this host. `[xlings]` describes the
-// environment of the machine mcpp runs on, so the host is the right axis, and
-// resolving once keeps every downstream reader — the provisioning pass, its
-// stamp, the build-program hand-off — on the flat list it already reads.
+// A value is a string or an object keyed by platform, and xlings resolves the
+// object against the host it runs on: the host's key wins, `default` is the
+// fallback, and no match with no default means the entry is absent there
+// (`resolve_platform_workspace_value_`, xlings `src/core/xvm/db.cppm`). The
+// keys are xlings' own OS names — `linux`, `macosx`, `windows` — plus
+// `default`; `macos` is accepted as an alias because mcpp spells it that way
+// elsewhere. An unknown key is an error rather than a dropped entry: a
+// mis-typed platform that silently declared nothing is the shape #531 was
+// filed for.
 //
-// The keys are mcpp's OS names, `linux` / `macos` / `windows`, plus `default`;
-// `macosx` is accepted as xlings' own spelling of `macos`. An unknown key is a
-// hard error, not a dropped entry: a typo'd platform that silently declared
-// nothing is the shape #531 was filed for.
+// Resolved for THIS host at load, so every downstream reader stays on a flat
+// list. The unresolved declaration is kept beside it in
+// `XlingsConfig::workspaceByPlatform`, because the descriptor emitter needs
+// every platform at once and cannot re-derive what was already collapsed.
+//
+// ⚠️ `macos` AND `macosx` ARE ONE PLATFORM, AND THE RULE IS NOT WRITTEN HERE.
+// mcpp's triple vocabulary says `macos`; a descriptor and xlings' project file
+// say `macosx`. `mcpp::platform::xpkg_platform_key_for` is the one place that
+// knows, and `xpkg_platform` is the host in the same vocabulary — an earlier
+// draft of this section hand-rolled both, which is the second copy of a rule
+// this file exists to avoid.
 inline std::string_view host_platform_key() {
-    if constexpr (mcpp::platform::is_windows) return "windows";
-    else if constexpr (mcpp::platform::is_macos) return "macos";
-    else return "linux";
+    return mcpp::platform::xpkg_platform;
 }
 
-inline std::expected<std::optional<std::string>, std::string>
-resolve_host_value(const mcpp::libs::toml::Value& v, std::string_view host) {
-    if (v.is_string()) return std::optional<std::string>{v.as_string()};
+// Split `<scope>:<rest>` on the FIRST colon. xlings writes a namespace this
+// way on a version (`"mcpp": "xim:2026.8.30.2"` in a real subos file) and mcpp
+// additionally accepts it on the key, so one splitter serves both halves.
+inline std::pair<std::string, std::string> split_scope(std::string_view s) {
+    auto pos = s.find(':');
+    if (pos == std::string_view::npos) return {"", std::string(s)};
+    return {std::string(s.substr(0, pos)), std::string(s.substr(pos + 1))};
+}
+
+// Every platform a value speaks for. A plain string yields the single key
+// `"*"`, meaning "on every platform"; an object yields its own keys, canonical
+// (`macos` folded to `macosx`), with `default` kept as itself.
+inline std::expected<std::vector<std::pair<std::string, std::string>>, std::string>
+platform_values(const mcpp::libs::toml::Value& v) {
+    std::vector<std::pair<std::string, std::string>> out;
+    if (v.is_string()) { out.emplace_back("*", v.as_string()); return out; }
     if (!v.is_table())
         return std::unexpected(std::string(
             "expected a string or a { <platform> = \"...\" } table"));
-    static constexpr std::string_view kKnown[] = {
-        "linux", "macos", "macosx", "windows", "default",
-    };
-    std::optional<std::string> chosen, fallback;
     for (auto& [k, val] : v.as_table()) {
-        if (std::ranges::find(kKnown, k) == std::ranges::end(kKnown))
+        auto canon = k == "default"
+            ? std::optional<std::string_view>("default")
+            : mcpp::platform::xpkg_platform_key_for(k);
+        if (!canon)
             return std::unexpected(std::format(
-                "unknown platform key '{}'; expected one of linux, macos, windows, default", k));
+                "unknown platform key '{}'; expected one of linux, macosx "
+                "(or macos), windows, default", k));
         if (!val.is_string())
             return std::unexpected(std::format("platform key '{}' must be a string", k));
-        const std::string_view canon = (k == "macosx") ? "macos" : std::string_view(k);
-        if (canon == host)            chosen   = val.as_string();
-        else if (canon == "default")  fallback = val.as_string();
+        out.emplace_back(std::string(*canon), val.as_string());
     }
-    if (chosen) return chosen;
-    return fallback;   // may be nullopt: not declared on this host
+    return out;
+}
+
+// The value that applies on `platform`, or nullopt when the entry is absent
+// there. `"*"` outranks nothing: a plain string is the whole answer.
+inline std::optional<std::string>
+value_for_platform(const std::vector<std::pair<std::string, std::string>>& vals,
+                   std::string_view platform) {
+    // Folded on BOTH sides: a caller may name the host `macos` (mcpp's triple
+    // spelling) while the stored key is already canonical.
+    const std::string_view want =
+        mcpp::platform::xpkg_platform_key_for(platform).value_or(platform);
+    auto pick = [&](std::string_view k) -> std::optional<std::string> {
+        for (auto const& [key, v] : vals) if (key == k) return v;
+        return std::nullopt;
+    };
+    if (auto v = pick("*"))    return v;
+    if (auto v = pick(want))   return v;
+    return pick("default");
+}
+
+// Retained so the pre-#544 spelling of a `deps` entry keeps parsing while the
+// key is deprecated.
+inline std::expected<std::optional<std::string>, std::string>
+resolve_host_value(const mcpp::libs::toml::Value& v, std::string_view host) {
+    auto vals = platform_values(v);
+    if (!vals) return std::unexpected(vals.error());
+    return value_for_platform(*vals, host);
+}
+
+// One `[xlings.workspace]` entry, normalised.
+//
+// `target` is the xvm target the shim looks up and the key the file carries;
+// `ns` is the index namespace, which qualifies where a version comes from and
+// may be written on either half; `version` is empty when the entry asks only
+// for presence, which is what `""` means in an authored project file.
+struct XlingsEntry {
+    std::string ns, target, version;
+    // `[<ns>:]<target>[@<version>]` — what `install_packages` is asked for.
+    std::string address() const {
+        std::string a = ns.empty() ? target : ns + ":" + target;
+        if (!version.empty()) a += "@" + version;
+        return a;
+    }
+    // `[<ns>:]<version>` — what the file's `workspace` object carries. A scope
+    // qualifies a version, so with no version there is nothing to qualify.
+    std::string pin() const {
+        if (version.empty()) return {};
+        return ns.empty() ? version : ns + ":" + version;
+    }
+};
+
+// The inverse: `[<ns>:]<target>[@<version>]` back into its parts. Used by the
+// `deps` compatibility path, which receives an address and has to say what the
+// equivalent `[xlings.workspace]` line is — and to compare it against one.
+inline XlingsEntry parse_address(std::string_view address) {
+    auto at = address.find('@');
+    auto head = at == std::string_view::npos ? address : address.substr(0, at);
+    auto version = at == std::string_view::npos ? std::string_view{}
+                                                : address.substr(at + 1);
+    auto [ns, target] = split_scope(head);
+    return XlingsEntry{ ns, target, std::string(version) };
+}
+
+// Combine the two halves a namespace may be written on. Both may carry it;
+// disagreeing is an error rather than a precedence rule, because a precedence
+// rule would make one of the two spellings silently ineffective.
+inline std::expected<XlingsEntry, std::string>
+make_xlings_entry(std::string_view key, std::string_view value) {
+    auto [keyNs, target] = split_scope(key);
+    auto [valNs, version] = split_scope(value);
+    if (target.empty())
+        return std::unexpected(std::string("names no package"));
+    if (!keyNs.empty() && !valNs.empty() && keyNs != valNs)
+        return std::unexpected(std::format(
+            "namespace '{}' on the key and '{}' on the version disagree; "
+            "write it once", keyNs, valNs));
+    return XlingsEntry{ keyNs.empty() ? valNs : keyNs, target, version };
 }
 
 std::expected<Manifest, ManifestError> parse_string(std::string_view content,
@@ -1404,33 +1495,108 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         m.buildConfig.dependencyLinkage = *v;
     }
 
-    // [xlings] — build environment (L-1). Subsections mirror .xlings.json 1:1,
-    // including its per-platform value form, resolved here for this host
-    // (see resolve_host_value above).
-    if (auto* arr = doc->get("xlings.deps"); arr && arr->is_array()) {
-        std::size_t i = 0;
-        for (auto& el : arr->as_array()) {
-            auto r = resolve_host_value(el, host_platform_key());
-            if (!r) return std::unexpected(error(origin,
-                std::format("[xlings] deps[{}]: {}", i, r.error())));
-            if (*r) m.xlings.deps.push_back(**r);
-            ++i;
+    // [xlings] — the project's environment, in the vocabulary of xlings' local
+    // project mechanism. `[xlings.workspace]` is the one table: an entry names
+    // a package the project uses and the version it uses it at, and mcpp both
+    // provisions it and materialises it as a resolution pin.
+    if (auto* wt = doc->get_table("xlings.workspace")) {
+        // target → the spelling it was written under, so a duplicate can name
+        // both rather than pick one.
+        std::map<std::string, std::string> writtenAs;
+        for (auto& [k, val] : *wt) {
+            auto vals = platform_values(val);
+            if (!vals) return std::unexpected(error(origin,
+                std::format("[xlings.workspace] {}: {}", k, vals.error())));
+            // Every platform, for the descriptor emitter. Resolved per
+            // platform rather than stored raw: the emitter wants the answer,
+            // and `default` is part of producing it.
+            for (auto plat : mcpp::platform::xpkg_platforms) {
+                auto v = value_for_platform(*vals, plat);
+                if (!v) continue;
+                auto e = make_xlings_entry(k, *v);
+                if (!e) return std::unexpected(error(origin,
+                    std::format("[xlings.workspace] {}: {}", k, e.error())));
+                m.xlings.workspaceByPlatform[std::string(plat)].push_back(e->address());
+            }
+            auto hostValue = value_for_platform(*vals, host_platform_key());
+            if (!hostValue) continue;   // not declared on this host
+            auto entry = make_xlings_entry(k, *hostValue);
+            if (!entry) return std::unexpected(error(origin,
+                std::format("[xlings.workspace] {}: {}", k, entry.error())));
+            if (auto prev = writtenAs.find(entry->target); prev != writtenAs.end())
+                return std::unexpected(error(origin, std::format(
+                    "[xlings.workspace] names '{}' twice, as '{}' and as '{}'; "
+                    "write it once", entry->target, prev->second, k)));
+            writtenAs.emplace(entry->target, k);
+            m.xlings.workspace[entry->target] = entry->pin();
+            m.xlings.deps.push_back(entry->address());
         }
     }
     if (doc->get("xlings.subos")) {
         m.xlings.subosDeclared = true;
         if (auto v = doc->get_string("xlings.subos")) m.xlings.subos = *v;
     }
-    if (auto* wt = doc->get_table("xlings.workspace"))
-        for (auto& [k, val] : *wt) {
-            auto r = resolve_host_value(val, host_platform_key());
+    // `deps` is the pre-2026.9.3 spelling of the same statement. It is still
+    // honoured, and reported: refusing it would reach a DEPENDENCY's manifest,
+    // and a consumer that pinned an exact version of that package cannot edit
+    // it. See .agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md §2.4.
+    if (auto* arr = doc->get("xlings.deps"); arr && arr->is_array()) {
+        std::size_t i = 0;
+        std::string replacement;
+        for (auto& el : arr->as_array()) {
+            auto r = resolve_host_value(el, host_platform_key());
             if (!r) return std::unexpected(error(origin,
-                std::format("[xlings.workspace] {}: {}", k, r.error())));
-            if (*r) m.xlings.workspace[k] = **r;
+                std::format("[xlings] deps[{}]: {}", i, r.error())));
+            ++i;
+            if (!*r) continue;
+            const auto entry = parse_address(**r);
+            // One package in both tables, said two ways, is refused. They are
+            // provisioned in list order while the LAST wins the pin, so
+            // accepting it would install one and resolve the other — the drift
+            // this release removes, reached through the compatibility path.
+            // Compared on the whole pin, not on the version: two namespaces at
+            // one version are two packages sharing a name.
+            if (auto pinned = m.xlings.workspace.find(entry.target);
+                pinned != m.xlings.workspace.end() && pinned->second == entry.pin()) {
+                // The same statement in both tables. Not an error and not two
+                // entries: appending it again would ask xlings to install one
+                // package twice, so only the advisory below is produced.
+                replacement += std::format("\n           {} = \"{}\"",
+                                           entry.target, entry.pin());
+                continue;
+            } else if (pinned != m.xlings.workspace.end()) {
+                auto say = [](const std::string& p) {
+                    return p.empty() ? std::string("unconstrained") : p;
+                };
+                return std::unexpected(error(origin, std::format(
+                    "'{}' is named in both [xlings] deps ({}) and "
+                    "[xlings.workspace] ({}); keep the [xlings.workspace] line "
+                    "and delete the other",
+                    entry.target, say(entry.pin()), say(pinned->second))));
+            }
+            m.xlings.deps.push_back(**r);
+            // Show the author the line to write, not merely that one exists.
+            replacement += std::format("\n           {} = \"{}\"",
+                                       entry.target, entry.pin());
         }
-    if (auto* et = doc->get_table("xlings.envs"))
-        for (auto& [k, val] : *et)
-            if (val.is_string()) m.xlings.envs[k] = val.as_string();
+        if (!replacement.empty())
+            m.schemaWarnings.push_back(std::format(
+                "[xlings] deps is superseded by [xlings.workspace] and will stop "
+                "being read. It is honoured for now. Write instead:\n"
+                "       [xlings.workspace]{}", replacement));
+    }
+    // `envs` is refused. It was materialised into `.xlings.json` and read by
+    // nobody: every `envs` consumer in xlings is either a program's own shim
+    // record or a SubOS's provider sections, and neither is this shape. The
+    // documentation described an effect that did not occur, which is why this
+    // is an error rather than a warning — a key that does nothing is worse
+    // when something claims it does.
+    if (doc->get("xlings.envs"))
+        return std::unexpected(error(origin,
+            "[xlings.envs] is not read by anything and has been removed. It "
+            "never reached the tool environment:\n"
+            "       a program's environment is declared by its own package, "
+            "and a SubOS's by that SubOS."));
     if (auto v = doc->get_string("build.macos_deployment_target"))
         m.buildConfig.macosDeploymentTarget = *v;
 

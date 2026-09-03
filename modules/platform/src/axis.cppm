@@ -32,6 +32,25 @@ import mcpp.platform;
 
 export namespace mcpp::platform {
 
+// THE spelling rule, and the only one.
+//
+// One platform has two names: the triple vocabulary says `macos`, an xpkg
+// descriptor and xlings' own project file say `macosx`. Every place that has
+// to accept both — a target's `os` token, a `[xlings.workspace]` platform
+// table, a descriptor's per-OS section — asks here, so the alias cannot be
+// half-known. `nullopt` means the token names no platform at all, which the
+// caller decides how to treat: `for_os` falls back to the host, a manifest
+// parser reports it.
+inline std::optional<std::string_view> xpkg_platform_key_for(std::string_view os) {
+    if (os == "macos" || os == "macosx") return "macosx";
+    if (os == "windows")                 return "windows";
+    if (os == "linux")                   return "linux";
+    return std::nullopt;
+}
+
+// The three keys a descriptor has a block for, in that vocabulary.
+inline constexpr std::string_view xpkg_platforms[] = {"linux", "macosx", "windows"};
+
 // A resolved xpkg platform key. Only obtainable through one of the axis
 // types below, so possession of one implies somebody decided which axis it
 // came from.
@@ -66,12 +85,11 @@ public:
     // "macos" where xpkg descriptors say "macosx"; that translation lives
     // here so no caller has to remember it.
     static TargetPlatform for_os(std::string_view tripleOs) {
-        if (tripleOs == "macos" || tripleOs == "macosx") return TargetPlatform("macosx");
-        if (tripleOs == "windows")                       return TargetPlatform("windows");
-        if (tripleOs == "linux")                         return TargetPlatform("linux");
         // Unknown/absent os token: fall back to the host, which is what the
         // whole code base did unconditionally before #254.
-        return TargetPlatform(std::string(mcpp::platform::xpkg_platform));
+        return TargetPlatform(std::string(
+            xpkg_platform_key_for(tripleOs)
+                .value_or(mcpp::platform::xpkg_platform)));
     }
 
     // For tooling that walks platforms it is not running on and is not
