@@ -17,7 +17,9 @@ warning: project-subos: this project's subos is populated
 ```toml
 [xlings]
 subos = "default"
-deps  = ["xim:qemu-riscv@9.2.4-1"]
+
+[xlings.workspace]
+qemu-riscv = "xim:9.2.4-1"
 ```
 
 `subos` names the environment this project builds in. mcpp already used that

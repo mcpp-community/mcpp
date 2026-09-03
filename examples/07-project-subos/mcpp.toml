@@ -22,4 +22,9 @@ description = "A build program that finds its tools in an environment the projec
 # design. See README.md.
 [xlings]
 subos = "default"
-deps  = ["xim:qemu-riscv@9.2.4-1"]
+
+# The one table (2026.9.3.1+): an entry names a package and the version this
+# project uses it at. mcpp provisions it and pins it, which is why the emulator
+# below is both installed on the first build and the one the project resolves.
+[xlings.workspace]
+qemu-riscv = "xim:9.2.4-1"
