@@ -91,20 +91,31 @@ llvm              = { macos = "20", default = "22" }
 
 Three decisions the table needs, listed for review.
 
-**W1. `"*"` means "any version, and it must be present".** `deps` accepts an
-entry with no version (`deps = ["cmake"]`), and a map keyed by name has no way
-to say "no constraint" other than a value that means it. Without `"*"` every
-author who does not care about a version is forced to invent one, and a pinned
-version nobody chose is worse than no pin.
+**W1. There is no `"*"`, and none should be invented.** xlings already has two
+spellings for "not an exact version": a version **prefix**, which
+`match_version` resolves to the highest match (`src/core/xvm/db.cpp:411` — `22`
+selects `22.1.8`), and `latest`, which `cmd_use` resolves to the highest
+installed version before writing (`commands.cpp:592-607`). Both are **input**
+spellings: what lands in a workspace file is always a concrete version, which
+is why a stored `latest` would fail at shim time rather than mean anything. The
+manifest therefore accepts a version, a prefix, or `latest`, and "must exist,
+version unconstrained" is spelled `latest`. Measured on three real subos files
+on the development host: every stored value is concrete.
 
-**W2. A key may carry a namespace prefix.** `deps` accepts `xim:name`, and the
-namespace is load-bearing: `parse_xpkg_ref` splits it and `xpkg_payload`
-resolves against it. If a workspace key cannot hold a colon, the namespace has
-to move into the value, and the value position is already taken by the
-per-platform table form. Whether xlings' workspace keys accept a colon is
-question Q1 of section 11; the answer decides between the key form above and a
-`{ namespace = "xim", version = "1.8.12" }` value form, which would be a second
-table shape and is worse.
+**W2. The authoring key may carry a namespace; the file's key never does.**
+Every workspace key in those same three files is a bare xvm target name —
+`cc`, `ar`, `mcpp`, `binutils`, even `crt1.o` — and none contains a colon. That
+is the name the shim looks up. A namespace belongs to the *install address*
+(`xim:picolibc-riscv@1.8.12`), which is a different vocabulary: xlings itself
+keeps them apart, and `parse_ns_version` handles a scope prefix on the
+**version** (`local:0.4.47`), not a namespace on the key.
+
+So mcpp accepts `"xim:picolibc-riscv" = "1.8.12"` as an authoring key, uses the
+full address when it provisions, and writes the bare `picolibc-riscv` into the
+file's `workspace`. This is not a translation layer; it is the same split
+xlings makes between what you install and what you resolve. It is also what
+lets mcpp express its own injected entry, whose value from the target row is a
+namespaced address (§4).
 
 **W3. The per-platform value form is unchanged.** It is already accepted on
 both keys (2026.9.2.1) and it survives the merge unmodified.
@@ -295,20 +306,28 @@ this repository has read that measurement wrongly twice.
 
 ## 11. Open questions
 
-1. **Does xlings provision from `workspace`?** Section 4 depends on it. If it
-   does not, the answer decides between adding it there and Option B here.
-2. **Do xlings' workspace keys accept a namespace prefix (`xim:name`)?** W2
-   depends on it. A workspace key becomes a shim name in xvm, which is the
-   reason to doubt it.
-3. **Is `"*"` already spelled something else in xlings?** W1 should take the
-   existing spelling rather than introduce one.
-4. **Does a workspace entry bind the package or one program?** The
-   `qemu-riscv` descriptor adds an umbrella node for the package name beside
-   the two program nodes, so both are addressable; whether binding the package
-   determines its programs' versions is the property the merged table relies on
-   when a package ships several programs.
-5. **Phase 3's floor.** Which mcpp version the migrating packages declare, and
-   whether the index sweep is a release gate or a one-off.
+Answered on 2026-09-03 and kept here with their answers, because a question
+that was open is part of how the design was reached.
+
+1. **Does xlings provision from `workspace`?** No. `deps` is the only key any
+   install path reads (§13.2). Hence §4: the merge is in `mcpp.toml` and the
+   file keeps both fields.
+2. **Do workspace keys accept a namespace prefix?** The file's keys never carry
+   one; the namespace belongs to the install address (§3 W2). mcpp accepts it
+   in the authored key and writes the bare target name.
+3. **Is `"*"` already spelled something else?** Yes, two ways: a version prefix
+   and `latest`, both resolved before anything is stored (§3 W1). No new
+   spelling is introduced.
+4. **Does binding a package determine its programs' versions?** Yes, and the
+   expansion happens when the entry is honoured rather than when it is merged
+   (§15.1).
+5. **Phase 3's floor.** Open. Which mcpp version the migrating packages
+   declare, and whether the index sweep is a release gate or a one-off.
+
+The one decision left for review is D8 (§15.1): the provisioning pass sends
+`useAfterInstall: true`, so a declared version becomes the active one in the
+project's own layer rather than being installed beside whatever is already
+active.
 
 ## 12. The section as a whole
 
@@ -513,19 +532,18 @@ SubOS's own `subos_info`, and never consults `[xlings.envs]`. The sentence in
 `docs/05-mcpp-toml.md` §2.13 that calls it "env vars applied to the tool
 environment" describes an effect that does not occur.
 
-Three ways out, and the choice is not this document's to make:
+**Decided (2026-09-03): `envs` is retired, not wired.** xlings never supported
+a project-level flat `envs` object and does not need to: `[xlings]` exists to
+align with xlings' project-level isolated environment, and the two `envs`
+structures that do exist there belong to a program's shim and to a SubOS's own
+metadata. Neither is something a consuming project should be writing.
 
-- **Wire it in xlings**: give the project file a flat `envs` object that the
-  tool environment applies. The key already exists in mcpp and in the file.
-- **Map it onto `xvm`'s per-program `envs`**: possible only if the manifest
-  says which program each variable belongs to, which `[xlings.envs]` does not.
-- **Retire it**, on the same three-phase path §6 gives `deps`, and for the same
-  reason: a key that is read by nobody is the shape #531 exists to prevent, and
-  it is worse here because the documentation states an effect.
-
-The recommendation is to decide before this proposal ships, because retiring
-`deps` while leaving a second dead key in the same section would leave the
-section half-audited.
+It follows the same three phases §6 gives `deps`, and for a stronger reason: a
+key read by nobody is the shape #531 exists to prevent, and this one is
+additionally documented as having an effect. Phase 1 is the documentation
+correction, which can ship immediately and independently of everything else in
+this document — `docs/05-mcpp-toml.md` §2.13 and its Chinese twin currently
+state an effect that does not occur.
 
 ### 13.5 Corrections this section makes to the rest of the document
 
@@ -576,49 +594,60 @@ e2e over two SubOS environments and one tool installed at two versions.
 Read against the code a second time, 2026-09-03. Three findings; the first is
 the one that changes the proposal.
 
-### 15.1 A project-file `workspace` entry does not expand a binding group
+### 15.1 Withdrawn: the expansion happens, in the action rather than in the merge
 
-Programs are resolved by name. The shim reads `Config::effective_workspace()`
-and looks up **the program's own name** (`src/core/xvm/shim.cpp:409-412`), and
-the merge that produces that map is a plain per-key merge
-(`config.cpp:846-864`). Neither consults the version database, so neither
-expands a package into its members.
+The first version of this section claimed that a project-file `workspace` entry
+cannot pin a package's programs, because the merge is per-key and the shim
+looks up a program's own name. Both halves are true and the conclusion does not
+follow. It reads the declaration as something mcpp only writes down, and this
+proposal is that mcpp acts on it.
 
-Expansion happens somewhere else: `cmd_use` resolves the whole release through
-`resolve_binding_selection` and writes one workspace entry **per member**
-(`src/core/xvm/commands.cpp:763-772`). That is why using either a package name
-or one of its programs switches all of them — the group is expanded at the
-moment of the switch, and what lands in the file is already per-member.
+The mechanism, read through:
 
-A project manifest does not go through `cmd_use`. Its `workspace` object is
-read as a layer, verbatim. So:
+1. mcpp provisions each entry through the `install_packages` capability.
+2. `xim`'s installer, having installed, calls `xvm::cmd_use(name, version)`
+   for the requested target (`src/core/xim/commands.cpp:693`).
+3. `cmd_use` resolves the whole release with `resolve_binding_selection` and
+   writes one workspace entry **per member**
+   (`src/core/xvm/commands.cpp:763-772`); the installer's own note says the
+   same — "`cmd_use` creates shims for every member of the release it switches
+   to" (`installer.cpp:1986`).
+4. `Config::workspace_mut()` returns the **project's** SubOS workspace whenever
+   a project config is loaded (`config.cpp:1163-1168`), so those per-member
+   entries land in the project's own layer, which the merge applies last. The
+   machine's global choice is not disturbed.
 
-```toml
-[xlings.workspace]
-qemu-riscv = "9.2.4-1"      # the package, and the umbrella node
+So naming a package root in the manifest does pin its programs: the group is
+expanded when the entry is honoured, and what lands in the file is already
+per-member. The declaration is the input to that action, not a layer expected
+to expand itself.
+
+**What the review did find is one flag.** Activation after install is
+conditional (`installer.cpp` `activate_requested_targets`):
+
+```cpp
+auto active = xvm::get_active_version(Config::effective_workspace(), match.name);
+if ((active.empty() || useAfterInstall) && has_version(db, match.name, match.version))
+    cmd_use(match.name, match.version, stream);
+else if (!active.empty() && active != match.version)
+    // declining to switch is a decision, and it used to be a silent one
 ```
 
-pins the node named `qemu-riscv`, which nothing invokes, and leaves
-`qemu-system-riscv64` to be resolved by the layer underneath. On a machine with
-two versions installed and the newer one active, the project's pin is silently
-inert — the exact shape the merge was meant to remove.
+Install activates only when **nothing is active yet**, unless the caller asks
+otherwise. mcpp's provisioning pass sends `{"targets": […], "yes": true}` and
+nothing else, so on a machine where another version of that name is already
+active, the declared version is installed and not the one that runs.
 
-Three ways out, and this is the decision the proposal now needs most:
+That is tolerable for `deps`, whose meaning is "must exist". It is not
+tolerable for a table whose meaning is "at this version": a constraint that
+installs without activating is not a constraint. The capability already takes
+the flag — `useAfterInstall`, documented as "Activate the installed version
+even if another version is currently active" (`src/capabilities.cpp:81`) — so
+the change is one field in the request mcpp already sends.
 
-1. **Expand at read time.** When a project layer names a group root, resolve
-   the group and apply the version to every member. Correct and invisible to
-   authors, and it puts version-database knowledge into the merge, which is
-   xlings' side to accept or refuse.
-2. **Expand at materialisation.** mcpp writes one `workspace` member per group
-   member. mcpp does not have the version database, so it cannot.
-3. **Require program names for pinning.** The author writes
-   `qemu-system-riscv64 = "9.2.4-1"`. This works today with no change anywhere
-   — and it re-opens the split the proposal closes, because provisioning needs
-   the package (`qemu-user-aarch64`) while pinning needs the program
-   (`qemu-aarch64-static`), and §13 measured that those names differ.
-
-Option 1 is the recommendation. Option 3 is honest about today and should be
-what the documentation says until 1 exists.
+**Decision D8: the provisioning pass passes `useAfterInstall: true`.** Its
+blast radius is the project's own SubOS layer, per point 4 above, which is what
+makes it safe to do unconditionally rather than behind another key.
 
 ### 15.2 "Retired" means the manifest key, never the file field
 
