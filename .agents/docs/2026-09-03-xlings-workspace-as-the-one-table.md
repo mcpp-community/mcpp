@@ -197,8 +197,17 @@ not theirs to edit, and refusing it punishes the wrong person.
 3. An index sweep confirms no other published manifest declares it. When the
    advisory has been silent across a release, the dependency path refuses too.
 
-**What does not bend:** `deps` is refused with a message, never dropped in
-silence. `[xlings]` has no unknown-key sweep — no `kKnownXlings` list exists in
+**A limit of the advisory, stated rather than implied.** It rides
+`schemaWarnings`, which `prepare` prints for the ROOT manifest and escalates
+under `--strict`. A dependency's schema warnings are attached and not printed
+today — a pre-existing gap in how mcpp surfaces them, not one this change
+introduces. So a consumer of an unmigrated package is not told; the package's
+own author is, the moment they build it. Surfacing dependency schema warnings
+is worth doing and is a change of its own, because it would also surface every
+unrelated warning those manifests carry.
+
+**What does not bend:** `deps` is honoured or refused with a message, never
+dropped in silence. `[xlings]` has no unknown-key sweep — no `kKnownXlings` list exists in
 `toml.cppm` — so a removed key would be read by nobody and reported by nobody,
 which is the shape #531 exists to prevent.
 
