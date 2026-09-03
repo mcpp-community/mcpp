@@ -4503,7 +4503,10 @@ xmake = "3.0.7"
     const auto host = mcpp::manifest::host_platform_key();
     if (host == "linux") EXPECT_EQ(m->xlings.workspace.at("gcc"), "15.1.0");
     else                 EXPECT_EQ(m->xlings.workspace.count("gcc"), 0u);
-    EXPECT_EQ(m->xlings.workspace.at("llvm"), host == "macos" ? "20" : "22");
+    // `host_platform_key()` is xlings' spelling, `macosx`, since 2026.9.3.1.
+    // Comparing against "macos" here made this the one assertion in the file
+    // that could only fail on a macOS runner — and it did.
+    EXPECT_EQ(m->xlings.workspace.at("llvm"), host == "macosx" ? "20" : "22");
     EXPECT_EQ(m->xlings.workspace.at("xmake"), "3.0.7");
 }
 

@@ -1552,7 +1552,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // Compared on the whole pin, not on the version: two namespaces at
             // one version are two packages sharing a name.
             if (auto pinned = m.xlings.workspace.find(entry.target);
-                pinned != m.xlings.workspace.end() && pinned->second != entry.pin()) {
+                pinned != m.xlings.workspace.end() && pinned->second == entry.pin()) {
+                // The same statement in both tables. Not an error and not two
+                // entries: appending it again would ask xlings to install one
+                // package twice, so only the advisory below is produced.
+                replacement += std::format("\n           {} = \"{}\"",
+                                           entry.target, entry.pin());
+                continue;
+            } else if (pinned != m.xlings.workspace.end()) {
                 auto say = [](const std::string& p) {
                     return p.empty() ? std::string("unconstrained") : p;
                 };

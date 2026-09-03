@@ -79,9 +79,6 @@ members = ["app"]
 
 [xlings]
 subos = "root-el8"
-
-[xlings.envs]
-ROOT_ONLY = "1"
 EOF
 cat >"$ws/app/mcpp.toml" <<'EOF'
 [package]
