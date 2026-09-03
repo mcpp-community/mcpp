@@ -221,8 +221,8 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 # CAPS+=() calls above by tests/e2e/README or by reading them -- keep it in
 # sync when adding a capability.
 KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx jq llvm macos mingw
-            mingw-cross msvc musl nasm no-msvc pack patchelf python3 qemu-riscv
-            scan-deps symlink unix-shell windows wine xlings-msvc)
+            mingw-cross msvc musl nasm no-msvc pack patchelf python3 qemu-arm
+            qemu-riscv scan-deps symlink unix-shell windows wine xlings-msvc)
 
 bad_tokens=0
 for tf in "$HERE"/[0-9]*.sh; do
