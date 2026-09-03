@@ -381,9 +381,6 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // package is compiled with the consuming target's own flags, so the ABI
     // agreement holds by construction and there is no multilib at all.
     //
-    // Two rows are `verified` because two have a board and an emulator that
-    // runs them; the rest build and are `preview`, the same standard applied to
-    // `aarch64-none-elf` and `x86_64-none-elf` when they landed.
     // ⚠️ THE TIER COLUMN RECORDS WHAT WAS RUN, NOT WHAT WAS REASONED. Measured
     // 2026-09-04 under `xim:qemu-arm@9.2.4-1`: each `verified` row below built
     // an image that BOOTED on the named machine and printed over semihosting —
