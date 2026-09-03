@@ -152,10 +152,18 @@ keep that one fact rather than two:
    `mcpp.toml:6:4: error: expected …`, which says nothing about namespaces, so
    the documentation shows the quotes.
 
-**W3. The per-platform value form is xlings' own.** Native keys are `linux`,
-`windows`, `macosx` and `default` (`platform::OS_NAME`, resolved by
-`resolve_platform_workspace_value_`). mcpp additionally accepts `macos`, a
-superset that stays; the documentation shows `macosx` as the aligned spelling.
+**W3. The per-platform value form is xlings' own, and the alias is one rule.**
+Native keys are `linux`, `windows`, `macosx` and `default`
+(`platform::OS_NAME`, resolved by `resolve_platform_workspace_value_`). mcpp
+accepts `macos` as well, because that is what its own triples say — one
+platform under two vocabularies.
+
+The fold belongs in one place, and mcpp already had one: `TargetPlatform::for_os`
+knew it. The implementation therefore lifts it into
+`mcpp::platform::xpkg_platform_key_for`, which `for_os` and the manifest parser
+both call, and takes the host key from `mcpp::platform::xpkg_platform` rather
+than a second `#if`. An earlier draft of this section hand-rolled both, which
+would have been the third copy of a two-line table.
 
 ### 2.3 What mcpp writes into the file
 
