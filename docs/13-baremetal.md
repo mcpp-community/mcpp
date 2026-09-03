@@ -59,6 +59,95 @@ Cortex-M needs no `lldEmulation` column entry: clang has a *BareMetal* toolchain
 for arm, so these triples reach `ld.lld` through the driver as the RISC-V and
 aarch64 rows do. 32-bit ARM has no `-mcmodel` axis, so that column is empty too.
 
+### Dead-section elimination
+
+Freestanding builds compile with `-ffunction-sections -fdata-sections` and link
+with `--gc-sections`. Both halves belong to the engine rather than to a project
+because a dependency's translation units must carry them, and a project cannot
+reach those.
+
+The flags became necessary rather than merely economical when a C library began
+arriving from the dependency graph. A dependency's object files enter the link
+unconditionally, unlike an archive member, which is pulled only while its symbol
+is undefined. That costs nothing when the C library is a prebuilt archive and
+the target has megabytes; a Cortex-M part has kilobytes, and without dead-section
+elimination every image would carry the whole of the C library.
+
+⚠️ **A linker script becomes load-bearing in a new way.** An interrupt vector
+table is referenced by nothing — the hardware reads it by address — so
+`--gc-sections` collects it. A board's script must say `KEEP(*(.vectors))`.
+Measured: with the `KEEP` present, a function nothing calls is dropped, the
+table survives, and the image boots.
+
+⚠️ The last two rows default to no C library, and that is a statement rather
+than an omission: the first consumer of both rows — the `openarch` layer of
+machine mechanism — references no C library symbol, and if no row defaulted to
+this tier there would be nothing demonstrating the tier works.
+⭐ **A build for those rows is declarable, not absent** (mcpp 2026.8.21.3+).
+`xim:picolibc-aarch64` and `xim:picolibc-x86` are in the index; a project that
+wants one names it the same way it would choose a different one:
+
+```toml
+[target.aarch64-none-elf]
+sysroot = "xim:picolibc-aarch64@1.8.12"
+``` An empty column means exactly what
+`[target.<triple>].sysroot = ""` means in a manifest, so a project targeting one
+begins on the zero-libc tier without asking. A project that wants a C library on
+those targets declares one, which is also how it would choose a different one.
+
+Such a target needs no per-host cross toolchain. clang and lld are
+cross-compilers by construction — one binary emits every target it was built
+with — so the target table pins `llvm@22.1.8` on every host, and any machine
+that can install the LLVM payload can produce an image for any of the four.
+
+### The x86_64 row is not four strings
+
+⚠️ **A target row is normally an entry in two tables and nothing else. This one
+needed engine code, and the reason is a property of clang rather than of the
+instruction set.**
+
+clang selects a toolchain from the triple. It has a *BareMetal* toolchain for
+arm, aarch64 and riscv, which links with `ld.lld` directly; it has none for
+x86_64, so every spelling of a bare x86_64 triple falls through to the generic
+GCC toolchain — whose linker is the **host's `g++`**:
+
+```
+g++: error: unrecognized command-line option '-fuse-ld=/…/llvm/22.1.8/bin/ld.lld'
+```
+
+Measured for `x86_64-none-elf`, `x86_64-unknown-none-elf`, `x86_64-unknown-none`,
+`x86_64-elf`, `x86_64-none-none` and `x86_64-unknown-unknown`, and unchanged by
+`-fuse-ld=lld`, `--ld-path=`, `--gcc-toolchain=` or `-B`. The one thing that
+does change it is putting `linux` in the OS position, which makes clang link
+directly and adds eight host `-L` paths to a bare-metal link.
+
+Neither outcome is acceptable: routing through a host `g++` makes the row work
+on a Linux host and nowhere else, and host search paths on a freestanding link
+are the hermeticity this engine exists to keep. So the row carries a fifth
+column, `lldEmulation`, and when it is set the engine drives the link with
+`ld.lld` itself. The flag vocabulary changes with the tool — `-Map=` rather than
+`-Wl,-Map=`, `-m elf_x86_64` rather than `--target=` — and the driver-only flags
+(`-nostdlib++`, the loader tag) are dropped rather than translated.
+
+The column is empty for the riscv and aarch64 rows. Their driver already reaches
+lld, and changing a working link to make three rows look alike is how a
+regression is introduced.
+
+### `-mno-red-zone` is part of the target, not a preference
+
+The System V x86-64 ABI reserves 128 bytes below `rsp` that a leaf function may
+use without adjusting the stack pointer, because on a hosted system nothing else
+writes there. On bare metal the processor pushes an interrupt frame at `rsp` —
+into the red zone — and the interrupted leaf resumes to find its locals
+overwritten. There is no fault and no diagnostic, and it happens only when an
+interrupt arrives inside a leaf.
+
+There is no bare-metal x86_64 program for which the red zone is safe, so the
+flag is a property of the row rather than something a project remembers. It
+reaches the command line through a new `extra` column in the ISA-profile table,
+which exists because `-march`/`-mabi`/`-mcmodel` could not express it. RISC-V
+and aarch64 have no equivalent, which is why the column did not exist before.
+
 Three things a bare-metal build requires are not properties of the ISA, and
 mcpp does not attempt to derive them: which startup object and libraries to
 select, which linker script describes the machine's memory, and how to execute

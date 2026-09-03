@@ -1,9 +1,16 @@
 #!/usr/bin/env bash
 # requires: llvm unix-shell qemu-arm
-# Cortex-M: the M-profile rows build and boot, and honour the float ABI.
+# Cortex-M: the M-profile rows build, boot, and collect what nothing calls.
 #
-# ⚠️ THE PROPERTY THAT MATTERS HERE IS THE ONE A REASONED TABLE WOULD HAVE GOT
-# WRONG:
+# ⚠️ THE ROWS THAT MATTER HERE ARE THE ONES A REASONED TABLE WOULD HAVE GOT
+# WRONG. Two properties are asserted that a build alone cannot show:
+#
+#   * `--gc-sections` reaches a bare-metal link. Without it a C library that
+#     arrives from the dependency graph — object files, which enter a link
+#     unconditionally — puts its whole self into every image, and a Cortex-M
+#     part has kilobytes. The assertion is that a function nothing calls is
+#     ABSENT from the image while the interrupt vector table, which nothing
+#     references either, SURVIVES because the script says KEEP.
 #
 #   * the soft-float rows do not emit FPU instructions. `thumbv7em`'s
 #     architecture implies an FPU, so clang emits `vmul.f32` for a float
@@ -63,14 +70,17 @@ inline void sh(int op, const void* a) {
 }
 extern "C" unsigned __stack_top;
 
+// Referenced by nothing. The image must not contain it.
+extern "C" void collected_because_nothing_calls_it() { sh(0x04, (void*)"UNREACHABLE\n"); }
+
 extern "C" void Reset_Handler() {
     sh(0x04, (void*)"cortex-m ok\n");
     sh(0x18, (void*)0x20026);          // semihosting SYS_EXIT, ADP_Stopped_ApplicationExit
     for (;;) {}
 }
 
-// Referenced by nothing — the hardware reads it by address, which is why the
-// linker script says KEEP.
+// Referenced by nothing either — the hardware reads it by address. It survives
+// only because the linker script says KEEP.
 extern "C" __attribute__((section(".vectors"), used))
 void* const vectors[] = { (void*)&__stack_top, (void*)Reset_Handler };
 CPP
@@ -109,10 +119,12 @@ boot_row() {              # triple machine cpuflag flash_org flash_len ram_org r
     elf=$(find target -type f -name mcu | head -1)
     [ -n "$elf" ] || { echo "FAIL: $triple produced no artefact"; exit 1; }
 
-    # The vector table is present: it is what the machine fetches at reset, and
-    # an image without it boots into nothing.
+    # gc-sections: the dead function is gone, the vector table is not.
+    if [ "$("$NM" "$elf" | grep -c collected_because_nothing_calls_it)" != "0" ]; then
+        echo "FAIL: $triple kept a function nothing calls (--gc-sections not applied)"; exit 1
+    fi
     if [ "$("$NM" "$elf" | grep -c vectors)" != "1" ]; then
-        echo "FAIL: $triple has no vector table"; exit 1
+        echo "FAIL: $triple lost the vector table (KEEP not honoured)"; exit 1
     fi
 
     local out
@@ -184,4 +196,4 @@ case "$soft_out" in
        echo "$soft_out" | tail -5 | sed 's/^/      /'; exit 1 ;;
 esac
 
-echo "PASS: cortex-m rows build, boot and honour the float ABI"
+echo "PASS: cortex-m rows build, boot, collect dead code and honour the float ABI"

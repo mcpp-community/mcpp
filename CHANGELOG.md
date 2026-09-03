@@ -5,7 +5,7 @@
 
 ## [2026.9.4.1] — 2026-09-04
 
-Cortex-M 落地为七个目标行。
+Cortex-M 落地为七个目标行,freestanding 链接开启死代码段消除。
 
 裸机目标表从四行增至十一行。M-profile 是七行而不是一行:为 `thumbv7em` 构建的
 目标文件使用 Cortex-M0 没有的指令,两种拼写产出互不兼容的目标文件,而表存在的
@@ -22,6 +22,13 @@ target = "thumbv7em-none-eabihf"
 没有 FPU 的 Cortex-M4 上于运行期触发异常,而编译与链接都是干净的。每个软浮点行
 因此携带 `-mfpu=none`,包括架构本来就没有 FPU 的那几行 —— 一行陈述它保证的性质,
 而不是从一个可以改变的默认值继承它。
+
+freestanding 编译加 `-ffunction-sections -fdata-sections`、链接加 `--gc-sections`。
+依赖的目标文件无条件进入链接(不像归档成员那样按未定义符号拉取),当 C 库改由
+依赖图提供时,没有死代码段消除的镜像会装进整份 C 库,而 Cortex-M 器件只有几十 KB。
+
+⚠️ **链接脚本因此以新的方式承重**:中断向量表不被任何东西引用,`--gc-sections`
+会回收它,板级脚本必须写 `KEEP(*(.vectors))`。
 
 同时回填了 `docs/13` 中两条已被 2026.8.28.2 推翻的限制:当图中有包提供
 `hosted-standard-library` 时,裸机目标上的异常、RTTI 与 `import std` 均可用。

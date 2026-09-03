@@ -291,6 +291,30 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // `-ffreestanding` so the ordering of this function's output stays a
     // function of the table rather than of the row.
     for (auto flag : s.extra) out.emplace_back(flag);
+    // ⭐⭐ ONE SECTION PER FUNCTION, SO THE LINKER CAN DROP WHAT NOTHING CALLS.
+    //
+    // These two flags do nothing on their own; they are the half of
+    // `--gc-sections` that has to happen at compile time, and the link half is
+    // in mcpp.freestanding.linkline. Both halves are here rather than left to a
+    // project because a dependency's translation units must carry them too, and
+    // a project cannot reach those.
+    //
+    // ⚠️ WHY THIS BECAME NECESSARY RATHER THAN MERELY NICE. A dependency's
+    // object files enter the link unconditionally (docs/13), unlike an archive
+    // member, which is pulled only while its symbol is undefined. That costs
+    // nothing when the C library is a prebuilt archive and the target has
+    // megabytes — the arrangement every bare-metal row had until now. A C
+    // library that arrives from the dependency graph is object files, and a
+    // Cortex-M part has kilobytes: without this, every image carries the whole
+    // of the C library whether or not it calls into it.
+    //
+    // ⚠️ AND IT MAKES A LINKER SCRIPT LOAD-BEARING IN A NEW WAY: an interrupt
+    // vector table is referenced by nothing — the hardware reads it by address
+    // — so `--gc-sections` collects it. A board's script must say
+    // `KEEP(*(.vectors))`. Measured: with the KEEP present, a dead function is
+    // dropped and the table survives; the image boots.
+    out.emplace_back("-ffunction-sections");
+    out.emplace_back("-fdata-sections");
     // ⭐ AND `-ffreestanding` ITSELF IS ONE OF THE THINGS THE GRAPH DECIDES.
     //
     // The paragraph above this function names what the flag changes: "no `main`
