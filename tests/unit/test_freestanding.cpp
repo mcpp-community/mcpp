@@ -529,19 +529,3 @@ TEST(FreestandingTarget, MProfileRowsNeedNoCodeModelAndNoDirectLldDriving) {
     }
     EXPECT_GT(rows, 0);
 }
-
-// The compile half of `--gc-sections`, which has to hold for EVERY freestanding
-// target rather than only the M-profile ones: a dependency's translation units
-// carry these flags too, and a project cannot reach those.
-TEST(FreestandingTarget, EveryRowCompilesWithPerFunctionSections) {
-    int rows = 0;
-    for (const auto& spec : mcpp::freestanding::known()) {
-        ++rows;
-        auto flags = mcpp::freestanding::compile_flags(spec);
-        EXPECT_NE(std::find(flags.begin(), flags.end(), "-ffunction-sections"),
-                  flags.end()) << spec.triple;
-        EXPECT_NE(std::find(flags.begin(), flags.end(), "-fdata-sections"),
-                  flags.end()) << spec.triple;
-    }
-    EXPECT_GT(rows, 0);
-}

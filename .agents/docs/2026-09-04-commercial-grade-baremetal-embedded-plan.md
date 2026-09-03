@@ -436,9 +436,38 @@ v1 按工程依赖把 E 整个排到 P2。自审:**其中一半没有工程依�
 | 条目 | 状态 |
 |---|---|
 | Cortex-M 目标行 | ✅ **七行**,`kKnownTargets` 与 `freestanding::kTable` 各七行 |
-| D11 死代码段消除 | ✅ `-ffunction-sections -fdata-sections` + `--gc-sections`(驱动路径与直接 lld 路径) |
+| D11 死代码段消除 | ❌ **撤出本 PR** —— 实测打断 Windows 宿主上的 openkal 交叉构建,见 §10.1 |
 | `docs/13` 回填两条失效限制 | ✅ 中英双份 |
 | 判据 | ✅ e2e 332(四行在 QEMU 中启动)+ 三条单测;CI `bare-metal e2e` 作业已绿 |
+
+### ⚠️⚠️ 10.1 D11 被实测挡住,而挡住它的机制尚未查清
+
+`--gc-sections` 在本机(Linux 宿主)与 CI 的裸机作业上都正确;它打断的是
+**openkal 在 Windows 宿主上的交叉构建**:
+
+```
+lld: error: unable to find library -lntdll
+lld: error: unable to find library -lkernel32   (等五条)
+```
+
+判据是三次对照,不是推理:
+
+| 分支 | `build 3 targets on windows` |
+|---|---|
+| `main`(workflow_dispatch 对照) | ✅ |
+| 本 PR(含 gc-sections,三次) | ❌ |
+| `bisect/no-gc-sections`(只去掉 gc-sections) | ✅ |
+
+⚠️ **而这条与我的机制模型矛盾**:两处 `gc-sections` 都在 `isFreestandingTarget`
+之内,`x86_64-windows-gnu` 不该进那个分支;本机 Linux→Windows 交叉**能成功**,且
+失败的链接行里的 `-Wl,--gc-sections` 经核对来自 **openkal-windows 自己的清单**
+而不是引擎。失败的真正现象是链接行**缺了 `-L<openkal-windows 的 out 目录>`** ——
+那个目录里正是它生成的 `libntdll.a` 等导入库。
+
+⇒ **测量胜过模型**:一个我解释不了的改动不该合入。D11 退回待办,并带上这条判据 ——
+它同时是「图来源 C 库」那条路线必须先解决的前置。⭐ 附带发现:openkal 的包**已经
+在自己的清单里用 `-ffunction-sections` 与 `-Wl,--gc-sections`**,所以引擎侧是否
+需要再发一份,本身也要重新论证。
 
 ### ⚠️ 实施推翻的两处方案原文
 
@@ -463,6 +492,8 @@ clang 对一次 float 乘法仍发出 `vmul.f32` —— 在没有 FPU 的 Cortex
 单元测试报出了它。⇒ **一行陈述它保证的性质,而不是从一个可以改变的默认值继承它。**
 
 ### 未实施(按方案原顺序)
+
+**D11 死代码段消除**(见 §10.1,已从本 PR 撤出,带判据)·
 
 `P0` 的 `mcpplibs/picolibc` + `compiler-rt-builtins` 源码包(§3.1.1)· 板级包三个 ·
 `P0'` 的 `xim:probe-rs` 与 E 轴零工程项 · `P1`/`P1'` 真机 · `P1'` 槽表 ·
