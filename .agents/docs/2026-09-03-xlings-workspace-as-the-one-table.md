@@ -175,13 +175,26 @@ Three manifests declare `[xlings] deps` — `aarch64-virt-rt`, `riscv-virt-rt`,
 mcpp's own `mcpp.toml` declares no `[xlings]` section. A deprecation window
 buys nothing at that size.
 
-1. The merged reader ships, and `deps` becomes a hard error naming the line to
-   write instead.
+**Corrected during implementation (2026-09-03): step 1 refuses in the root
+manifest and advises in a dependency's.** The denominator argument counts
+manifests that declare the key, and it is the wrong denominator: those three
+packages are *consumed*, and a consumer pins an exact version. A refusal that
+reached a dependency's manifest would make `riscv-virt-rt@0.6.0` unbuildable on
+the new engine for everyone who pinned it, and no republished version reaches
+them until each consumer re-pins. That is the shape this repository has already
+paid for once — a consumer must ship before the thing it depends on moves.
+
+The asymmetry is not a hedge. A root manifest is the author's own file and they
+can fix it in the same minute they read the message; a dependency's manifest is
+not theirs to edit, and refusing it punishes the wrong person.
+
+1. The merged reader ships. `[xlings] deps` in the **root** manifest is a hard
+   error naming the line to write; in a **dependency's** manifest it is
+   honoured and reported once, naming the package.
 2. The three packages are republished with `[xlings.workspace]` and an mcpp
    floor.
-3. An index sweep confirms the denominator. It gates nothing; if it finds
-   manifests nobody knew about, step 1's refusal becomes an advisory for one
-   release and a window opens after all.
+3. An index sweep confirms no other published manifest declares it. When the
+   advisory has been silent across a release, the dependency path refuses too.
 
 **What does not bend:** `deps` is refused with a message, never dropped in
 silence. `[xlings]` has no unknown-key sweep — no `kKnownXlings` list exists in
@@ -502,3 +515,65 @@ The two that mattered: reading a SubOS **state** file as though it were an
 authored **project** file, and asserting a blast radius without checking which
 environment the call runs in. Both were arguments from the shape of the code
 rather than from what it does.
+
+## 16. Implementation plan
+
+Eight tasks. T1 is the only one everything else waits on; T2, T3 and T4 are
+independent of each other; T7 runs after the release.
+
+```
+T1 manifest ──┬── T2 provisioning scope ──┐
+              ├── T3 xlings module        ├── T5 docs ── T6 tests ── T8 release
+              └── T4 descriptor emitter ──┘                              │
+                                                          T7 ecosystem ──┘
+```
+
+| # | Task | Files | Depends on |
+|---|---|---|---|
+| T1 | The merged table: parse, both namespace positions, `""`, per-platform, `workspaceByPlatform`, `deps` root-refusal and dependency-advisory, `envs` refusal | `modules/manifest/src/{toml,types}.cppm` | — |
+| T2 | Provisioning in project scope; the materialisation feeds both file fields | `src/build/prepare.cppm` | T1 |
+| T3 | `ProjectEnv` and `seed_xlings_json` lose `envs` | `src/xlings/xlings.cppm` | T1 |
+| T4 | `xpm.<platform>.deps` in the emitted descriptor | `src/pm/publisher.cppm` | T1 |
+| T5 | `docs/05` §2.13, `docs/17`, both `docs/zh/` twins | docs | T1-T4 |
+| T6 | Unit tests and one e2e | `tests/` | T1-T4 |
+| T7 | The three packages republish | `mcpplibs/{aarch64-virt-rt,riscv-virt-rt,std-freestanding}` | T8 |
+| T8 | Version, CI, self-review, merge, release, sandbox | — | T5, T6 |
+
+### 16.1 What each axis demands of the implementation
+
+**Architecture.** One authored key, one derived list, one provisioning pass in
+one scope. `XlingsConfig::deps` becomes the derived install addresses, so every
+existing reader — the pass, `fillXpkgDirs`, `xlingsDepBinDirs`, the file's
+`deps` array — keeps reading the field it reads today and none of them learns
+about namespaces.
+
+**Stability.** The scope change moves writes off a workspace shared by every
+project on the machine. Nothing else about the pass changes: its result check,
+its stamp, its offline gates.
+
+**Simplicity.** No new mechanism on either side, and the diff is smaller than
+the design: the parse produces two projections and everything downstream is
+untouched.
+
+**User experience.** A key that never worked stops being documented as working;
+a key that did two jobs becomes one; and a version a project declares is the
+one that runs.
+
+**Compatibility.** No manifest key is added. `[xlings] deps` keeps working in a
+dependency and is reported once. `[xlings.envs]` is refused, and no manifest in
+the ecosystem uses it — measured across the local checkouts.
+
+**Cross-platform.** `workspaceByPlatform` keeps the unresolved declaration, so
+the descriptor a Linux host emits carries the Windows edge.
+
+**Consistency.** The platform vocabulary becomes xlings' own (`macosx` shown,
+`macos` still accepted), and the namespace may be written in either position
+because both are already spellings the ecosystem uses.
+
+**Upgrading without noticing.** The stamp key changes with the declared set, so
+one re-provision per project and then nothing. No cache is invalidated, no
+output path moves, and a manifest written for this loads on an older mcpp.
+
+**Test coverage.** Five of the twelve criteria fail on the current engine and
+are the ones that prove the change; C11 exists because this repository has
+twice measured a fast path instead of the thing under test.
