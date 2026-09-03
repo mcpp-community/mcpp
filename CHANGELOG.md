@@ -3,6 +3,36 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.9.4.1] — 2026-09-04
+
+Cortex-M 落地为七个目标行,freestanding 链接开启死代码段消除。
+
+裸机目标表从四行增至十一行。M-profile 是七行而不是一行:为 `thumbv7em` 构建的
+目标文件使用 Cortex-M0 没有的指令,两种拼写产出互不兼容的目标文件,而表存在的
+理由正是让 `--target <triple>` 单独足以产出正确的目标文件。
+
+```toml
+[build]
+target = "thumbv7em-none-eabihf"
+```
+
+⚠️ **浮点 ABI 不决定 FPU 是否被使用。** `eabi`/`eabihf` 由 clang 从 triple 读出,
+它约束浮点值如何跨越函数边界,不约束函数内部发什么指令 —— 而 `thumbv7em` 架构
+蕴含 FPv4-SP。实测:软浮点 ABI 下 clang 对一次 float 乘法仍发出 `vmul.f32`,在
+没有 FPU 的 Cortex-M4 上于运行期触发异常,而编译与链接都是干净的。每个软浮点行
+因此携带 `-mfpu=none`,包括架构本来就没有 FPU 的那几行 —— 一行陈述它保证的性质,
+而不是从一个可以改变的默认值继承它。
+
+freestanding 编译加 `-ffunction-sections -fdata-sections`、链接加 `--gc-sections`。
+依赖的目标文件无条件进入链接(不像归档成员那样按未定义符号拉取),当 C 库改由
+依赖图提供时,没有死代码段消除的镜像会装进整份 C 库,而 Cortex-M 器件只有几十 KB。
+
+⚠️ **链接脚本因此以新的方式承重**:中断向量表不被任何东西引用,`--gc-sections`
+会回收它,板级脚本必须写 `KEEP(*(.vectors))`。
+
+同时回填了 `docs/13` 中两条已被 2026.8.28.2 推翻的限制:当图中有包提供
+`hosted-standard-library` 时,裸机目标上的异常、RTTI 与 `import std` 均可用。
+
 ## [2026.9.3.2] — 2026-09-03
 
 `[xlings.workspace]` 的**推荐书写形态**定为命名空间在键上,官方包全部使用它;

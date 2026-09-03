@@ -84,6 +84,18 @@ case "$OS" in
         # qemu-riscv: the emulator a bare-metal riscv artifact runs in
         # (xim:qemu-riscv, or any qemu-system-riscv64 on PATH).
         command -v qemu-system-riscv64 &>/dev/null && CAPS+=(qemu-riscv)
+        # qemu-arm: the emulator an M-profile artifact runs in. Unlike
+        # `qemu-riscv` this also looks inside the xim payload, because
+        # `xim:qemu-arm` installs no shim for `qemu-system-arm` on every host
+        # and the tests address it by absolute path out of the payload anyway.
+        # Probing only PATH would report the capability absent on a machine
+        # that has it, and the test would skip while looking supported.
+        if command -v qemu-system-arm &>/dev/null \
+           || ls "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-qemu-arm/*/bin/qemu-system-arm \
+                 &>/dev/null \
+           || ls "$HOME"/.xlings/data/xpkgs/xim-x-qemu-arm/*/bin/qemu-system-arm &>/dev/null; then
+            CAPS+=(qemu-arm)
+        fi
         # pack capability: ELF + patchelf both required
         if [[ " ${CAPS[*]} " == *" patchelf "* ]]; then
             CAPS+=(pack)

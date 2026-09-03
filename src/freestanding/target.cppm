@@ -108,6 +108,46 @@ inline constexpr std::string_view kX86_64NoneExtra[] = {
     "-mno-red-zone",
 };
 
+// ⚠️ THE SOFT-FLOAT M-PROFILE ROWS, AND WHY THE FLOAT ABI IS NOT ENOUGH.
+//
+// `thumbv7em-none-eabi` and `-eabihf` differ in their float ABI, and clang
+// derives that from the triple with no help from us (measured, `-###`:
+// `-mfloat-abi soft` and `hard` respectively). It would be reasonable to stop
+// there. Measured on llvm 22.1.8, that is wrong:
+//
+//     clang --target=thumbv7em-none-eabi -O2 -S   (float a*b+1.0f)
+//         vmul.f32                                ← an FPU instruction
+//
+// The float ABI governs how floating-point values cross a function boundary.
+// It does not govern whether the compiler may USE the FPU inside one, and the
+// `thumbv7em` architecture implies FPv4-SP, so clang emits FPU instructions
+// under either ABI. A plain Cortex-M4 — the part this row exists to serve,
+// since the -eabihf row serves M4F — has no FPU, and the instruction faults.
+//
+// ⚠️ The failure is a hard fault at run time on real silicon, with a clean
+// compile and a clean link. It is the shape this table exists to prevent.
+//
+// `-mfpu=none` restores the property the row's name claims. Measured: the
+// instruction count returns to zero, and the `-eabihf` rows must NOT receive
+// this flag — there it would discard the FPU the row exists to use.
+//
+// ⚠️ EVERY SOFT ROW CARRIES IT, INCLUDING THE ONES WHERE NOTHING WAS MEASURED.
+//
+// Only `thumbv7em-none-eabi` was observed emitting an FPU instruction;
+// `thumbv6m`, `thumbv7m` and `thumbv8m.base` describe architectures with no FPU
+// at all, and `thumbv8m.main-none-eabi` emits none today because its default
+// CPU is `generic`. Applying the flag only where a count was non-zero would
+// make the table record a MEASUREMENT rather than a GUARANTEE, and the rows
+// would then differ for a reason no reader could see.
+//
+// A row states the property it promises. `-mfpu=none` is accepted on all four
+// (measured), costs nothing where there is no FPU, and is what a unit test can
+// quantify over — which is the only place this rule can be stated, since a
+// build of any one row cannot speak for the others.
+inline constexpr std::string_view kThumbSoftExtra[] = {
+    "-mfpu=none",
+};
+
 // ⚠️ THE `libdir` COLUMN WAS EMPTY ON THE LAST TWO ROWS UNTIL 2026-08-21, AND
 // THAT WAS CORRECT UNTIL THE DAY IT WAS NOT.
 //
@@ -184,6 +224,31 @@ inline constexpr Spec kTable[] = {
     // resolves no C library, so a value here could never be checked.
     { "x86_64-none-elf",    "x86-64",   "sysv",  "small",  "x86-64/sysv", kX86_64NoneExtra,
       "elf_x86_64" },
+    // ── Cortex-M ────────────────────────────────────────────────────────────
+    //
+    // `mcmodel` is EMPTY on every row: 32-bit ARM has no `-mcmodel` axis, and
+    // `compile_flags` already omits the flag when this column is empty.
+    //
+    // `lldEmulation` is EMPTY on every row, and that was measured rather than
+    // assumed. clang has a BareMetal toolchain for arm, so these triples reach
+    // `ld.lld` through the driver exactly as the riscv and aarch64 rows do —
+    // the x86_64 row's problem does not recur here. Verified end to end: a
+    // freestanding thumb object links under `ld.lld` and boots under QEMU.
+    //
+    // `libdir` is EMPTY on every row because `sysroot` is (see the target
+    // table): the column is read only when a sysroot has been resolved, and a
+    // value here could never be checked.
+    //
+    // ⚠️ `-mabi=aapcs`, matching the aarch64 row and for the same reason: on
+    // ARM `-mabi` names a procedure call standard, not a data model.
+    //  triple                     march         mabi     mcmodel libdir  extra
+    { "thumbv6m-none-eabi",      "armv6-m",    "aapcs", "", "", kThumbSoftExtra },
+    { "thumbv7m-none-eabi",      "armv7-m",    "aapcs", "", "", kThumbSoftExtra },
+    { "thumbv7em-none-eabi",     "armv7e-m",   "aapcs", "", "", kThumbSoftExtra },
+    { "thumbv7em-none-eabihf",   "armv7e-m",   "aapcs", "", "" },
+    { "thumbv8m.base-none-eabi", "armv8-m.base","aapcs","", "", kThumbSoftExtra },
+    { "thumbv8m.main-none-eabi", "armv8-m.main","aapcs","", "", kThumbSoftExtra },
+    { "thumbv8m.main-none-eabihf","armv8-m.main","aapcs","", "" },
 };
 
 // The single read point. Returns nullopt for anything that is not a known
@@ -226,6 +291,30 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // `-ffreestanding` so the ordering of this function's output stays a
     // function of the table rather than of the row.
     for (auto flag : s.extra) out.emplace_back(flag);
+    // ⭐⭐ ONE SECTION PER FUNCTION, SO THE LINKER CAN DROP WHAT NOTHING CALLS.
+    //
+    // These two flags do nothing on their own; they are the half of
+    // `--gc-sections` that has to happen at compile time, and the link half is
+    // in mcpp.freestanding.linkline. Both halves are here rather than left to a
+    // project because a dependency's translation units must carry them too, and
+    // a project cannot reach those.
+    //
+    // ⚠️ WHY THIS BECAME NECESSARY RATHER THAN MERELY NICE. A dependency's
+    // object files enter the link unconditionally (docs/13), unlike an archive
+    // member, which is pulled only while its symbol is undefined. That costs
+    // nothing when the C library is a prebuilt archive and the target has
+    // megabytes — the arrangement every bare-metal row had until now. A C
+    // library that arrives from the dependency graph is object files, and a
+    // Cortex-M part has kilobytes: without this, every image carries the whole
+    // of the C library whether or not it calls into it.
+    //
+    // ⚠️ AND IT MAKES A LINKER SCRIPT LOAD-BEARING IN A NEW WAY: an interrupt
+    // vector table is referenced by nothing — the hardware reads it by address
+    // — so `--gc-sections` collects it. A board's script must say
+    // `KEEP(*(.vectors))`. Measured: with the KEEP present, a dead function is
+    // dropped and the table survives; the image boots.
+    out.emplace_back("-ffunction-sections");
+    out.emplace_back("-fdata-sections");
     // ⭐ AND `-ffreestanding` ITSELF IS ONE OF THE THINGS THE GRAPH DECIDES.
     //
     // The paragraph above this function names what the flag changes: "no `main`
