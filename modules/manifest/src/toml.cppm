@@ -209,6 +209,18 @@ struct XlingsEntry {
     }
 };
 
+// The inverse: `[<ns>:]<target>[@<version>]` back into its parts. Used by the
+// `deps` compatibility path, which receives an address and has to say what the
+// equivalent `[xlings.workspace]` line is — and to compare it against one.
+inline XlingsEntry parse_address(std::string_view address) {
+    auto at = address.find('@');
+    auto head = at == std::string_view::npos ? address : address.substr(0, at);
+    auto version = at == std::string_view::npos ? std::string_view{}
+                                                : address.substr(at + 1);
+    auto [ns, target] = split_scope(head);
+    return XlingsEntry{ ns, target, std::string(version) };
+}
+
 // Combine the two halves a namespace may be written on. Both may carry it;
 // disagreeing is an error rather than a precedence rule, because a precedence
 // rule would make one of the two spellings silently ineffective.
@@ -1532,37 +1544,28 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 std::format("[xlings] deps[{}]: {}", i, r.error())));
             ++i;
             if (!*r) continue;
-            // One package in both tables with two versions is refused. The
-            // two are provisioned in list order and the LAST one wins the
-            // pin, so accepting it would install one version and resolve the
-            // other — the drift this release exists to remove, arrived at
-            // through the compatibility path.
-            {
-                auto at2 = (*r)->find('@');
-                auto addr2 = at2 == std::string::npos ? **r : (*r)->substr(0, at2);
-                auto ver2  = at2 == std::string::npos ? std::string{} : (*r)->substr(at2 + 1);
-                auto [ns2, target2] = split_scope(addr2);
-                if (auto it2 = m.xlings.workspace.find(target2);
-                    it2 != m.xlings.workspace.end()) {
-                    auto [pinNs, pinVer] = split_scope(it2->second);
-                    if (pinVer != ver2)
-                        return std::unexpected(error(origin, std::format(
-                            "'{}' is named in both [xlings] deps (version '{}') "
-                            "and [xlings.workspace] (version '{}'); "
-                            "keep the [xlings.workspace] line and delete the other",
-                            target2, ver2.empty() ? "unconstrained" : ver2,
-                            pinVer.empty() ? "unconstrained" : pinVer)));
-                }
+            const auto entry = parse_address(**r);
+            // One package in both tables, said two ways, is refused. They are
+            // provisioned in list order while the LAST wins the pin, so
+            // accepting it would install one and resolve the other — the drift
+            // this release removes, reached through the compatibility path.
+            // Compared on the whole pin, not on the version: two namespaces at
+            // one version are two packages sharing a name.
+            if (auto pinned = m.xlings.workspace.find(entry.target);
+                pinned != m.xlings.workspace.end() && pinned->second != entry.pin()) {
+                auto say = [](const std::string& p) {
+                    return p.empty() ? std::string("unconstrained") : p;
+                };
+                return std::unexpected(error(origin, std::format(
+                    "'{}' is named in both [xlings] deps ({}) and "
+                    "[xlings.workspace] ({}); keep the [xlings.workspace] line "
+                    "and delete the other",
+                    entry.target, say(entry.pin()), say(pinned->second))));
             }
             m.xlings.deps.push_back(**r);
-            // Show the author the line to write. The address form
-            // `<ns>:<name>@<version>` becomes a key and a version.
-            auto at = (*r)->find('@');
-            auto addr = at == std::string::npos ? **r : (*r)->substr(0, at);
-            auto ver  = at == std::string::npos ? std::string{} : (*r)->substr(at + 1);
-            auto [ns, target] = split_scope(addr);
-            replacement += std::format("\n           {} = \"{}{}\"",
-                                       target, ns.empty() ? "" : ns + ":", ver);
+            // Show the author the line to write, not merely that one exists.
+            replacement += std::format("\n           {} = \"{}\"",
+                                       entry.target, entry.pin());
         }
         if (!replacement.empty())
             m.schemaWarnings.push_back(std::format(
