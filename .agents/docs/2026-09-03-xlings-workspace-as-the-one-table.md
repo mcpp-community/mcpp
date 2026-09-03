@@ -81,12 +81,12 @@ is written under.
 
 ```toml
 [xlings.workspace]
-cmake             = "3.28"
-qemu-riscv        = "9.2.4-1"
-"xim:picolibc-riscv" = "1.8.12"
-make              = "*"
-gcc               = { linux = "15.1.0" }
-llvm              = { macos = "20", default = "22" }
+cmake          = "3.28"
+qemu-riscv     = "9.2.4-1"
+picolibc-riscv = "xim:1.8.12"
+make           = "latest"
+gcc            = { linux = "15.1.0" }
+llvm           = { macos = "20", default = "22" }
 ```
 
 Three decisions the table needs, listed for review.
@@ -102,20 +102,48 @@ manifest therefore accepts a version, a prefix, or `latest`, and "must exist,
 version unconstrained" is spelled `latest`. Measured on three real subos files
 on the development host: every stored value is concrete.
 
-**W2. The namespace goes on the version, and that needs no new rule.**
-`.xlings.json` already spells a namespaced entry as `target = "<ns>:<version>"`:
-`parse_ns_version` splits on the first colon and `make_ns_version` builds it
-(`src/core/xvm/db.cpp:10-20`), and a real subos on the development host holds
-`"mcpp": {"active": "xim:2026.8.30.2", …}`. So the form is
+**W2. The namespace goes on the version, not on the key — and the key form was
+checked rather than assumed.** Measured on the development host: 1635 targets
+in the version database and 546 workspace entries in the default SubOS, and
+**not one key contains a colon**. The colon appears on the other side:
+`"mcpp": {"active": "xim:2026.8.30.2", …}`.
+
+`ns:name` as a key was considered and does not work, for a reason stronger than
+convention. A workspace key is looked up by the name a program is **invoked
+as** (`get_active_version(workspace, program_name)`,
+`src/core/xvm/shim.cpp:409-412`); nothing is ever invoked as
+`xim:picolibc-riscv`, so such a key would be read by nobody — the shape §6
+refuses for `deps`.
+
+And the namespace is not a property of the tool. It qualifies **where a version
+came from**, which is why one target legitimately carries both scoped and
+unscoped versions at once. Measured, on this machine, for `mcpp` itself:
+
+```
+"mcpp": { "active": "xim:2026.8.30.2",
+          "installed": ["2026.8.21.1", …, "xim:2026.8.28.2", "xim:2026.8.30.1"] }
+```
+
+Eight versions of one target, some from the xim index and some not. Moving the
+namespace onto the key would split that into two targets, and `mcpp` on `PATH`
+would resolve to whichever half won — which is the same defect in the small
+that `ar` from two providers would be in the large.
+
+So the form is:
 
 ```toml
 [xlings.workspace]
 picolibc-riscv = "xim:1.8.12"
 ```
 
-with the key being the xvm target and the namespace riding the value, exactly
-as the file writes it. mcpp accepts what xlings already accepts, and the
-target's C library that mcpp injects (§4) is expressible in the same shape.
+the key being the xvm target and the namespace riding the value, exactly as the
+file writes it. mcpp reconstructs the install address `xim:picolibc-riscv@1.8.12`
+from the pair when it provisions, so nothing is lost, and the C library mcpp
+injects (§4) is expressible in the same shape.
+
+A key containing a colon is a **hard error naming the correct form**, rather
+than a second accepted spelling: one fact, one way to write it, is the whole
+argument of this document applied to itself.
 
 **W3. The per-platform value form is unchanged.** It is already accepted on
 both keys (2026.9.2.1) and it survives the merge unmodified.
