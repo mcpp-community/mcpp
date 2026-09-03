@@ -1875,7 +1875,10 @@ picolibc-riscv          = "xim:1.8.12"     # namespace on the version
 "xim:qemu-user-aarch64" = "7.2.0"          # or on the key - quotes required
 code                    = ""               # present; version unconstrained
 llvm                    = { macosx = "20", default = "22" }
+```
 
+```toml
+[xlings]
 subos = "dev"                      # a named, isolated environment
 ```
 

@@ -1600,7 +1600,10 @@ picolibc-riscv          = "xim:1.8.12"     # 命名空间写在版本上
 "xim:qemu-user-aarch64" = "7.2.0"          # 或写在键上 —— 必须带引号
 code                    = ""               # 存在即可,版本不限
 llvm                    = { macosx = "20", default = "22" }
+```
 
+```toml
+[xlings]
 subos = "dev"                      # 指名的隔离环境
 ```
 

@@ -315,6 +315,12 @@ struct XlingsConfig {
 
 `resolve_host_value` already knows which platform each value belongs to.
 
+A package still on `deps` emits no edge, as before. Its declaration is
+host-resolved at load, so the per-platform information a descriptor needs is
+gone by the time the emitter runs, and writing the host's answer into all three
+blocks would be the machine-dependent descriptor this section exists to
+prevent. The advisory tells its author how to obtain one.
+
 ## 6. Documentation
 
 **`docs/05` §2.13** gains the inheritance rule as a table, next to
