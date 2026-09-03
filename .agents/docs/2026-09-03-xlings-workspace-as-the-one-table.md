@@ -1,101 +1,110 @@
-# `[xlings]`: one table, and `deps` retired
+# `[xlings]` is mcpp's surface for xlings' local project mechanism
 
 Date: 2026-09-03. Status: design, awaiting review. Not implemented.
-Baseline: `origin/main` at `4d99864` (2026.9.2.1). Every code reference below
-was read at that commit.
-Relates to: #531 (provisioning reads its result), #544 (per-platform values),
-and the packaging map that does not exist yet (section 7).
+Baseline: `origin/main` at `4d99864` (2026.9.2.1), and the xlings working tree
+at `openxlings/xlings`. Every code reference was read at those trees.
+Relates to: #531 (provisioning reads its result), #544 (per-platform values).
+
+This document was rewritten after the review discussion rather than amended.
+Section 15 records what the discussion changed, so that positions this document
+no longer holds are still findable.
 
 ## 0. Summary
 
-`[xlings] deps` and `[xlings.workspace]` state the same thing about a project —
-which package, at which version — and differ only in what mcpp then does with
-the statement. That difference is not a property of the declaration, and the
-proposal is to stop encoding it in the key: `[xlings.workspace]` becomes the
-one table, an entry means "this project uses this at this version, provision it
-if absent", and `deps` is retired through a deprecation path rather than a
-removal.
+`[xlings]` is not a section of mcpp's own invention. It is mcpp's manifest
+surface for **xlings' local project mechanism**: the project `.xlings.json`
+that gives a directory its own environment. Every question below has the same
+form — what does that mechanism already do, and is mcpp asking it correctly.
 
-The merge is in `mcpp.toml`, not in the file mcpp writes. `.xlings.json` keeps
-both fields, because xlings reads them in two different places and neither
-subsumes the other (section 13). One authored entry therefore materialises as
-one `deps` element and one `workspace` member: not a translation, but one
-statement written where each of its two halves is read.
+Three changes follow, and one of them is a defect rather than a design.
 
-The change does not weaken any existing behaviour: a declaration that cannot be
-satisfied stays a hard build error, which is the property #531 was filed to
-obtain.
+1. **`workspace` becomes the one table**; `deps` is retired from the manifest.
+   The two state the same thing and differ only in what mcpp then does with the
+   statement, and the mechanism they map onto has one authored surface.
+2. **Provisioning moves into project scope.** mcpp calls xlings with a global
+   environment today, so the install writes into a workspace shared by every
+   mcpp project while programs resolve through the project's own layers. That
+   one argument is behind three measured symptoms.
+3. **`envs` is retired.** It has no reader in xlings and none in mcpp, and
+   `docs/05` documents an effect it does not have.
 
-## 1. What the two keys are today
+Nothing here requires a new mechanism on either side. The manifest keeps its
+correspondence with the file, and the file keeps both of its package-shaped
+fields, because xlings reads them in two different places.
 
-Facts, read at `4d99864`.
+## 1. The mechanism mcpp is speaking to
 
-| | `deps` | `[xlings.workspace]` |
+xlings gives a directory its own environment when it finds a project
+`.xlings.json`:
+
+| Key | What xlings does with it |
+|---|---|
+| `deps` | the array a bare `xlings install` installs (`src/core/cmdprocessor.cpp:163-196`) |
+| `workspace` | a version-resolution layer merged into the project's effective pins (`config.cpp:660`, `:846`) |
+| `subos` | names the project's environment; absent means an anonymous one (`config.cpp:273-283`) |
+| `index_repos`, `mirror`, `lang` | project overrides of the machine's settings |
+
+**Discovery.** xlings walks the current directory upward for a `.xlings.json`,
+stops at any directory that also holds a `subos/` — that signature is an xlings
+home, never a project — and otherwise falls back to `XLINGS_PROJECT_DIR`
+(`config.cpp:765-799`). mcpp writes `<project>/.mcpp/.xlings.json`, one level
+below what a walk from the project root inspects, so the file is reached
+through the environment variable.
+
+**Resolution layers.** `merge_workspace_into_` assigns rather than inserts, so
+in `merged_workspace` (`config.cpp:846-864`) the later layer wins:
+
+| Project mode | Layers, in merge order | Effect |
 |---|---|---|
-| Shape | ordered array of package references | map, name to version |
-| Reference form | `name`, `name@version`, `ns:name@version` | key is a bare name |
-| Readers in mcpp | five | one |
-| Provisioning | `install_packages`, result read, hard error, stamped on success | none |
-| Reaches `build.mcpp` | `MCPP_XPKG_<NAME>_DIR` per installed payload | nothing |
-| Reaches the runner lookup | payload `bin/`, in declaration order | nothing |
+| **Anonymous** — a project file, no `subos` | global, project manifest, project SubOS | the machine's environment with the project's entries laid over it |
+| **Named** — `subos = "<name>"` | project manifest, project SubOS | an isolated space; the machine's layer is not merged |
+| no project file | global | — |
 
-The five readers of `deps`: the parser (`modules/manifest/src/toml.cppm:1410`),
-the materialisation into `.mcpp/.xlings.json`
-(`src/build/prepare.cppm:3196`), the provisioning pass
-(`prepare.cppm:3420-3482`), `fillXpkgDirs`
-(`prepare.cppm:4549`), and `BuildContext::xlingsDepBinDirs`
-(`prepare.cppm:8707`, added in 2026.9.2.1). The one reader of `workspace` is
-the materialisation, `prepare.cppm:3197-3198`; mcpp never acts on it.
+The developer chooses the strength by naming a SubOS or not. Both rows are the
+mechanism working as specified; neither is an omission.
 
-**The general form is weaker than its own shorthand.** `docs/05-mcpp-toml.md`
-§2.13 states that `[toolchain]` is "the ergonomic shorthand for the compiler"
-and `[xlings.workspace]` is "the general form". The shorthand installs:
-`[toolchain]`'s spec reaches `resolve_xpkg_path(pkg.target(),
-/*autoInstall=*/…)` at `prepare.cppm:2212`, and the `build.mcpp` host resolve
-does the same at `:3067`. The general form installs nothing. A general form
-that cannot express what its shorthand does is not general.
+**Where a project's SubOS lives.** Under the project, always
+(`config.cpp:348-353`): `<projectDir>/.xlings/subos/<name>` when named,
+`<projectDir>/.xlings/subos/_` when anonymous. For mcpp the project directory
+is `<project>/.mcpp`.
 
-**Nothing compares the two when both name one package.** A manifest may write
-`deps = ["make@4.4"]` and `[xlings.workspace] make = "4.5"`. mcpp provisions
-4.4 and writes both statements into `.xlings.json`; no code path in mcpp reads
-the pair. This is the drift shape the repository has paid for repeatedly, and
-merging the keys removes it by construction rather than by adding a check.
+**Installing an existing payload maps it rather than fetching it.** The
+installer checks that the payload exists and is registered to the package, sets
+`payloadInstalled` and skips the install hook
+(`src/core/xim/installer.cpp:2740-2775`).
 
-## 2. Why they are one thing
+**Activation is automatic when nothing is active for that name**
+(`activate_requested_targets`, same file):
 
-A version constraint and an installation are the same statement seen at two
-moments. "This project uses cmake 3.28" is what the build environment must be;
-whether cmake is already present decides whether anything has to be fetched,
-and that is a fact about the machine, not about the project. xlings' own
-`workspace` carries that reading, which is why the mcpp side has one reader:
-there was nothing for mcpp to decide.
-
-Keeping two keys forces every author to answer a question the manifest should
-not ask — "do I want this installed, or only pinned?" — whose honest answer is
-always "installed if it is not there". The one case that looks like a
-counterexample, pinning a tool the project may never invoke, is not one: an
-entry naming a tool the project does not use is noise regardless of the key it
-is written under.
-
-## 3. The schema after the change
-
-```toml
-[xlings.workspace]
-cmake          = "3.28"
-qemu-riscv     = "9.2.4-1"
-picolibc-riscv = "xim:1.8.12"
-make           = "latest"
-gcc            = { linux = "15.1.0" }
-llvm           = { macos = "20", default = "22" }
+```cpp
+auto active = xvm::get_active_version(Config::effective_workspace(), match.name);
+if ((active.empty() || useAfterInstall) && has_version(db, match.name, match.version))
+    cmd_use(match.name, match.version, stream);
+else if (!active.empty() && active != match.version)
+    // declining to switch is a decision, and it used to be a silent one
 ```
 
-Three decisions the table needs, listed for review.
+`cmd_use` resolves the whole binding group through `resolve_binding_selection`
+and writes one workspace entry **per member** (`xvm/commands.cpp:763-772`),
+which is why using either a package root or one of its programs selects the
+same release, and why a root and its programs carry one version.
 
-These are settled against the **authored project file**, not against a SubOS
-state file. The two are different artifacts: a state file is what `cmd_use`
-writes (`{active, installed}` records, one per binding-group member), while a
-project file is what a person writes. `mcpp-community/d2mcpp/.xlings.json` is a
-published example of the latter:
+## 2. Change one: `workspace` is the one table
+
+### 2.1 Why the split cannot be defended
+
+**The general form is weaker than its own shorthand.** `docs/05` §2.13 states
+that `[toolchain]` is "the ergonomic shorthand for the compiler" and
+`[xlings.workspace]` is "the general form". The shorthand installs
+(`resolve_xpkg_path(…, autoInstall=…)`, `prepare.cppm:2212` and `:3067`); the
+general form installs nothing.
+
+**Nothing compares the two when both name one package.** `deps = ["make@4.4"]`
+beside `workspace.make = "4.5"` provisions 4.4, writes both into the file, and
+no code path in mcpp reads the pair.
+
+**The authored surface of the mechanism is `workspace`.** A published example
+is `mcpp-community/d2mcpp/.xlings.json`:
 
 ```json
 {
@@ -108,537 +117,203 @@ published example of the latter:
 }
 ```
 
-**W1. "Version unconstrained" is the empty string, and it is already in use.**
-`"code": ""` in the example above is the spelling. `resolve_platform_workspace_value_`
-returns it unchanged and `workspace_from_json` stores it
-(`src/core/xvm/db.cppm:383`, `db.cpp:1100-1110`); downstream, an empty value is
-read as "this entry claims no version" (`Config::version_origin`'s `claims`
-predicate, `config.cpp:1108-1112`). So the entry names a member of the
-environment and leaves its version open, which is exactly what `deps = ["cmake"]`
-means today. No `*` and no `latest` is introduced: `""` is the form the file
-already has, and it maps onto an install target with no `@version`.
-
-**W2. Decided (2026-09-03): both positions are accepted, and mcpp normalises.**
-The namespace can ride the version or the key, the two are mechanically
-interconvertible, and an author should not have to remember which one this
-table wants:
+### 2.2 The schema
 
 ```toml
 [xlings.workspace]
-picolibc-riscv         = "xim:1.8.12"   # scope on the version
-"xim:picolibc-riscv"   = "1.8.12"       # namespace on the key — quotes REQUIRED
-qemu-riscv             = { linux = "xim:9.2.4-1" }   # composes with W3
+cmake                   = "3.28"
+code                    = ""                     # present; version unconstrained
+picolibc-riscv          = "xim:1.8.12"           # namespace on the version
+"xim:qemu-user-aarch64" = "7.2.0"                # or on the key - quotes REQUIRED
+gcc                     = { linux = "15.1.0" }
+llvm                    = { macosx = "20", default = "22" }
 ```
 
-Four rules make that one fact rather than two:
+**W1. "Version unconstrained" is the empty string.** `"code": ""` is already in
+use above. The resolver returns it unchanged (`src/core/xvm/db.cppm:383`) and an
+empty value reads downstream as claiming no version (`Config::version_origin`'s
+`claims`, `config.cpp:1108-1112`). It maps to an install target with no
+`@version`, which is what `deps = ["cmake"]` means today. No `*` and no
+`latest` is introduced: both are input spellings, resolved before anything is
+stored.
 
-1. **mcpp writes one form.** Whatever was authored, the materialised
-   `.xlings.json` carries the file's own convention: the key is the bare xvm
-   target and the scope rides the version. So the file never holds two
-   spellings, and everything downstream of it sees one.
-2. **The install address is assembled from the pair**, whichever half carried
-   the namespace: `xim` + `picolibc-riscv` + `1.8.12`.
-3. **Stating the namespace twice and differently is a hard error** naming both
-   halves — `"xim:foo" = "other:1.0"` is not a merge to resolve. So is naming
-   one package under both spellings in the same table.
-4. **The key form needs quotes, and the documentation must show them.** TOML
-   bare keys are `[A-Za-z0-9_-]`; mcpp's own lexer matches the specification
-   (`is_bare_key_char`, `modules/libs/src/toml.cppm:150`). Measured on the
-   2026.9.2.1 binary:
+**W2. The namespace may ride either half, and mcpp normalises.** Four rules
+keep that one fact rather than two:
 
-   ```
-   xim:picolibc-riscv = "1.8.12"     → error: mcpp.toml:6:4: error: expected …
-   "xim:picolibc-riscv" = "1.8.12"   → loads
-   ```
+1. mcpp materialises the file's own convention only — bare target as the key,
+   scope on the version — so the file never holds two spellings.
+2. The install address is assembled from the pair, whichever half carried it.
+3. Stating it twice and differently (`"xim:foo" = "other:1.0"`) is a hard error
+   naming both halves, as is naming one package under both spellings.
+4. The key form needs quotes. TOML bare keys are `[A-Za-z0-9_-]` and mcpp's
+   lexer matches (`modules/libs/src/toml.cppm:150`); measured on the 2026.9.2.1
+   binary, `xim:picolibc-riscv = "1.8.12"` fails with
+   `mcpp.toml:6:4: error: expected …`, which says nothing about namespaces, so
+   the documentation shows the quotes.
 
-   The unquoted form fails with a parser message that says nothing about
-   namespaces, so the example in the documentation carries the quotes.
+**W3. The per-platform value form is xlings' own.** Native keys are `linux`,
+`windows`, `macosx` and `default` (`platform::OS_NAME`, resolved by
+`resolve_platform_workspace_value_`). mcpp additionally accepts `macos`, a
+superset that stays; the documentation shows `macosx` as the aligned spelling.
 
-The earlier rule that a colon in a key is an error is withdrawn: the colon is
-now meaningful there.
+### 2.3 What mcpp writes into the file
 
-**W3. The per-platform form is xlings' own, and its native keys are
-`linux`, `windows`, `macosx` and `default`** (`platform::OS_NAME` per
-`modules/platform/src/platform/*.cppm`, resolved by
-`resolve_platform_workspace_value_`). mcpp additionally accepts `macos` as an
-alias, which is a superset and stays; the documentation should show `macosx`
-as the aligned spelling.
+One authored entry materialises as one `deps` element **and** one `workspace`
+member. That is not a translation layer: the file's two fields have two
+consumers in xlings — `deps` for a bare `xlings install`, `workspace` for
+resolution — and neither subsumes the other. Writing only `workspace` would
+leave a project that builds where the packages happen to be installed and fails
+on a clean machine.
 
-## 4. What mcpp writes into `.xlings.json`
+If xlings later installs from `workspace`, the `deps` half of the emission can
+be dropped without touching any manifest.
 
-**Decided (2026-09-03), and revised the same day against the xlings source
-(§13): the merge belongs in `mcpp.toml`, and the file keeps both fields.**
+### 2.4 Migration: one release
 
-One authoring key. When mcpp materialises it, an entry becomes a `deps` element
-*and* a `workspace` member, because the file's two fields have two different
-consumers in xlings and neither subsumes the other: `deps` is the install
-trigger read by a bare `xlings install` (`src/core/cmdprocessor.cpp:163`), and
-`workspace` is a version-resolution layer merged into the project's effective
-pins (`src/core/config.cpp:660`, `:846`). Emitting both is not a translation
-layer — it is the faithful materialisation of one statement, "use this at this
-version, provision it if absent", into the two places xlings reads those two
-halves.
+Three manifests declare `[xlings] deps` — `aarch64-virt-rt`, `riscv-virt-rt`,
+`std-freestanding`, one entry each of the form `xim:<name>@<version>` — and
+mcpp's own `mcpp.toml` declares no `[xlings]` section. A deprecation window
+buys nothing at that size.
 
-The earlier draft of this section proposed writing only `workspace` and letting
-xlings provision from it. §13 measures that xlings does not: `deps` is the only
-key its install path reads. Writing only `workspace` would have produced a
-project that builds where the packages happen to be installed and fails on a
-clean machine, which is the failure this document exists to avoid.
-
-If xlings later provisions from `workspace`, the `deps` half of the emission
-can be dropped without touching `mcpp.toml` or any manifest. That is the
-end-state, and it is a change on the xlings side, not here.
-
-One consequence for section 3. The target's C library that mcpp appends
-(`prepare.cppm:3186-3194`) arrives from the target row as
-`xim:picolibc-riscv@1.8.12`, an install address. As a workspace entry it is
-`picolibc-riscv = "xim:1.8.12"` — the same two facts, in the shape the file
-already uses. mcpp splits the address once, at the point it builds the entry;
-nothing downstream sees two spellings.
-
-## 5. What provisioning means after the merge
-
-The provisioning pass keeps its current contract, with the input widened from
-`deps` to the merged table:
-
-- The result is read, not assumed. `xlings::call` is in the value state
-  whenever the child ran, and the capability's status is inside `CallResult`;
-  the check stays `!called || childRc != 0` (`prepare.cppm:3448`).
-- A failure is a hard build error naming the manual command, as today.
-- The stamp is written only on success, and it is keyed on the hash of the
-  declared set, so the merged table changes the hash and every project
-  re-provisions once after upgrading. That is correct: the declared set is a
-  different set.
-- `MCPP_OFFLINE` and `MCPP_NO_AUTO_INSTALL` gate the install action and not the
-  whole block, as today.
-
-**The one behaviour change is for `workspace` entries that exist now.** They
-start being provisioned. The population is small and the direction is toward
-the documented claim rather than away from it: an entry that was a pin becomes
-a pin that is also honoured. Section 9 makes it a criterion rather than an
-assumption.
-
-## 6. Migration: one release, not a deprecation window
-
-The population is three manifests. `aarch64-virt-rt`, `riscv-virt-rt` and
-`std-freestanding` each declare one `[xlings] deps` entry of the form
-`xim:<name>@<version>`; mcpp's own `mcpp.toml` declares no `[xlings]` section
-at all. A three-phase deprecation exists to give an ecosystem time it does not
-need here, so the migration is a single release: the packages are edited and
-republished with the new form, and `deps` is refused in the same version that
-introduces the merged reader.
-
-What "refused" must mean, and this is the part that does not bend: `deps` stops
-being honoured by becoming a **hard error that names the replacement**, never
-by becoming a key nobody reads. `[xlings]` has no unknown-key sweep — no
-`kKnownXlings` list exists in `toml.cppm` — so a silently dropped key would be
-read by nobody and reported by nobody, which is the shape #531 exists to
-prevent.
-
-Ordering, because the three packages are consumed by projects that may be built
-with either engine:
-
-1. The merged reader ships, accepting `workspace` and refusing `deps` with a
-   message naming the line to write.
+1. The merged reader ships, and `deps` becomes a hard error naming the line to
+   write instead.
 2. The three packages are republished with `[xlings.workspace]` and an mcpp
-   floor at that version.
-3. An index sweep confirms no other published manifest declares `deps`. The
-   local checkouts are not the ecosystem; the sweep is what makes the claim.
+   floor.
+3. An index sweep confirms the denominator. It gates nothing; if it finds
+   manifests nobody knew about, step 1's refusal becomes an advisory for one
+   release and a window opens after all.
 
-Step 3 gates nothing on the mcpp side — it is a check that the denominator was
-what it looked like. If it turns up manifests nobody knew about, the refusal in
-step 1 becomes an advisory for one release and the window opens after all.
+**What does not bend:** `deps` is refused with a message, never dropped in
+silence. `[xlings]` has no unknown-key sweep — no `kKnownXlings` list exists in
+`toml.cppm` — so a removed key would be read by nobody and reported by nobody,
+which is the shape #531 exists to prevent.
 
-## 7. The packaging map, and a loss the current implementation has
+## 3. Change two: provisioning runs in project scope
 
-The reason a `deps`-shaped list exists in the first place is that a published
-package's install-time edge lives in the descriptor, as
-`xpm.<platform>.deps`. That mapping does not exist in mcpp:
-`src/publish/xpkg_emit.cppm` mentions neither `xlings` nor `deps`, and nothing
-in `src/pack` or `src/publish` emits a platform `deps` table. A package that
-declares `[xlings] deps` today gets a descriptor without it, and the edge is
-written by hand — which is why `riscv-virt-rt` carries a thirty-line comment
-about the release where the hand-written edge was removed and the C library
-stopped being installed.
+### 3.1 The defect
 
-**The per-platform resolution shipped in 2026.9.2.1 is lossy for this path.**
-`XlingsConfig::deps` and `::workspace` hold values already resolved for the
-running host (`modules/manifest/src/types.cppm`, and `resolve_host_value` in
-`toml.cppm`), and the unresolved entries are discarded. An emitter needs all
-platforms at once: `xpm.linux.deps` and `xpm.windows.deps` are two tables, and
-a manifest loaded on Linux can no longer produce the second. Packing on macOS
-would emit a descriptor missing the Linux edge, and nothing would say so.
+```cpp
+mcpp::xlings::call(mcpp::config::make_xlings_env(**cfg2), "install_packages", …)
+```
 
-The fix is additive and belongs with this work because the merged table
-inherits the same loss:
+`prepare.cppm:3421`. `make_xlings_env` carries no `projectDir`
+(`src/config.cpp:129`), so no `XLINGS_PROJECT_DIR` reaches the child and the
+cwd walk finds nothing. The child runs in **global** scope against mcpp's
+registry home, and three symptoms follow:
+
+1. **The install's view and the shim's view disagree.** Records land in the
+   registry's global workspace; a program invoked from the project resolves
+   through the project's layers. This is the
+   `qemu-aarch64-static is not installed in this subos (_)` measured during the
+   2026.9.2.1 verification, and the reason the runner needed a
+   payload-directory lookup.
+2. **`active` is read from a workspace shared by every mcpp project** on the
+   machine, so the auto-activation decides against a state no project owns.
+3. **Forcing the switch there would let two checkouts flip each other**, which
+   is why the decline is protective in this scope rather than obstructive.
+
+### 3.2 The fix, and why nothing else is needed
+
+Call with `make_project_xlings_env(cfg, root)`. The child then runs in project
+scope: the installed set and the activation records land in the project's own
+SubOS, and the view the install writes is the view the shim reads.
+
+**No flag, and no explicit switch.** With the declaration materialised into the
+project file's `workspace`, §1's merge already makes it authoritative —
+Anonymous puts the project layer over the global one, Named does not merge the
+global one at all. `activate_requested_targets` does not fire in that situation
+and should not: the merged view already answers with the declared version.
+
+An earlier draft proposed `useAfterInstall: true` and an explicit `use_version`
+per entry. Both are withdrawn (§15).
+
+**One precondition, checked.** The scope fix works only if xlings accepts
+`<project>/.mcpp` as a project directory, and §1's discovery rule rejects any
+directory holding a `subos/`. It does not fire here: a project's SubOS lives at
+`<projectDir>/.xlings/subos/<name>`, so what would have to exist is
+`<project>/.mcpp/subos`, and nothing creates it — measured on
+`mcpplibs/riscv-virt-rt/.mcpp/`, which holds only `.xlings.json`. It is worth
+an assertion rather than a memory: anything that later writes a bare `subos/`
+under `.mcpp` would make mcpp's own project file invisible to xlings, silently
+and everywhere at once.
+
+### 3.3 Provisioning otherwise keeps its contract
+
+- The result is read, not assumed: `!called || childRc != 0`
+  (`prepare.cppm:3448`).
+- A failure is a hard build error naming the manual command.
+- The stamp is written only on success and keyed on the hash of the declared
+  set, so the merged table re-provisions once per project after the upgrade and
+  the common build performs nothing.
+- `MCPP_OFFLINE` and `MCPP_NO_AUTO_INSTALL` gate the install action, not the
+  block.
+
+### 3.4 Two consequences to write down
+
+**The project SubOS layer outranks the project manifest.** It merges last, so
+an explicit `xlings use` inside the project beats what `mcpp.toml` declares
+until the manifest is re-materialised. Defensible — an action a person took
+beats a file — but not obvious.
+
+**A declared version that was never installed already fails with the right
+words**: `"{}@{} is the version this project asks for"`
+(`src/core/xvm/shim.cpp:495`). Provisioning is what prevents it; that
+diagnostic is what happens when provisioning was skipped, and it names the
+project rather than the machine.
+
+## 4. Change three: `envs` is retired
+
+Every `envs` consumer in xlings is one of two structures, and neither is the
+flat object mcpp writes:
+
+1. `xvm`'s `VData::envs` — variables attached to **one program's** shim, stored
+   in the version database (`xvm/db.cpp:724`, `xvm/shim.cpp:337`), set through
+   `xvm add --env`.
+2. A SubOS's `subos_info.envs` — an object of **provider sections** keyed by
+   binding (`subos/manifest.cpp:197-290`).
+
+Searching the source for `contains("envs")` and `["envs"]` outside those files
+and the doctor that checks them returns nothing. mcpp's own run environment
+comes from `plan.runtimeBinding` (`execute.cppm:418`), never from
+`[xlings.envs]`.
+
+So the key is written by mcpp and read by nobody, while `docs/05` §2.13 calls
+it "env vars applied to the tool environment". It is retired on the path of
+§2.4, and **the documentation correction ships first and independently**: a
+sentence stating an effect that does not occur is the more urgent half.
+
+## 5. The packaging map, and the loss 2026.9.2.1 introduced for it
+
+A published package's install-time edge lives in its descriptor as
+`xpm.<platform>.deps`. mcpp does not emit it: `src/publish/xpkg_emit.cppm`
+mentions neither `xlings` nor `deps`, and nothing in `src/pack` or
+`src/publish` writes a platform `deps` table. That is why `riscv-virt-rt`
+carries a thirty-line comment about the release where the hand-written edge was
+removed and the C library stopped being installed.
+
+**The per-platform resolution shipped in 2026.9.2.1 is lossy for that path.**
+`XlingsConfig` holds values already resolved for the running host, and the
+unresolved entries are discarded. An emitter needs every platform at once, so a
+manifest loaded on Linux cannot produce `xpm.windows.deps`, and packing on
+macOS would emit a descriptor missing the Linux edge with nothing said.
+
+The fix is additive, and the merged table inherits the same loss:
 
 ```cpp
 struct XlingsConfig {
     std::map<std::string, std::string> workspace;   // resolved for THIS host
-    // The declaration as written, per platform, for consumers that are not
-    // this host: the descriptor emitter needs every platform's entries at
-    // once. The build path never reads this.
+    // The declaration as written, per platform, for the descriptor emitter,
+    // which needs every platform at once. The build path never reads this.
     std::map<std::string, std::map<std::string, std::string>> workspaceByPlatform;
 };
 ```
 
-`resolve_host_value` already knows which platform each key belongs to; keeping
-a second copy costs one insertion. The criterion is section 9's C4: packing on
-one host emits every platform's edge, and it fails today because the emitter
-does not exist.
+`resolve_host_value` already knows which platform each value belongs to.
 
-## 8. Axes
+## 6. Documentation
 
-**Structure.** One declaration site for "what this project's environment
-contains", one reader set, one provisioning pass. The count of things that can
-disagree about a package's version drops from two to zero.
-
-**Compatibility.** Phase 1 adds no manifest key and removes none, so a manifest
-written for it loads on an older mcpp; there, a `workspace` entry is a pin that
-installs nothing, which is what it means today. The reverse direction —
-an older manifest on a newer mcpp — is unchanged through Phase 2.
-
-**Upgrading.** The provisioning stamp is keyed on the declared set, so the
-first build after the merge re-provisions once per project and then behaves as
-before. No cache is invalidated and no output path changes.
-
-**Consistency.** The general form gains what its shorthand already does. The
-`[toolchain]`/`[xlings.workspace]` relationship stated in §2.13 becomes true
-rather than aspirational.
-
-**Cross-platform.** The per-platform value form is unchanged; section 7 makes
-it survive to the one consumer that needs the unresolved form.
-
-**What a person sees.** One table instead of two, and one question fewer to
-answer when writing it. Every failure keeps naming the package and the manual
-command.
-
-## 9. Test criteria
-
-Each must be observed failing before the corresponding change.
-
-| # | Criterion | Note |
-|---|---|---|
-| C1 | A `[xlings.workspace]` entry for a package that is not installed provisions it, and its payload directory reaches `build.mcpp` as `MCPP_XPKG_<NAME>_DIR` | Assert on the value the program read, not on a log line |
-| C2 | A `workspace` entry that cannot be provisioned fails the build with the manual command in the message | The existing `deps` diagnostic, reached from the new input |
-| C3 | One package named in both `deps` and `workspace` with different versions is a hard error naming both lines | Must be seen to fail on a manifest that today builds and silently provisions the `deps` version |
-| C4 | Packing a project whose table has per-platform entries emits `xpm.<platform>.deps` for every platform, from any host | Fails today because the emitter does not exist; the assertion is on the emitted descriptor, not on the manifest |
-| C5 | A `workspace` entry with `"*"` provisions the package and pins nothing | Both halves; a test that only checks the install cannot tell a wildcard from a version |
-| C6 | A migrated `riscv-virt-rt` resolves its emulator on a clean machine | The ecosystem case, run in a sandbox, because "installed already" is the state that hides this |
-| C7 | The second build of an unchanged project provisions nothing and prints nothing | The stamp; and the whole-project fast path never reaches this code, so the test must touch a source first |
-
-C3 and C4 are the two that fail on the current engine. C7 is stated because
-this repository has read that measurement wrongly twice.
-
-## 10. Implementation surface
-
-- `modules/manifest/src/toml.cppm`: `workspace` gains the reference forms
-  `deps` accepts (namespace prefix, `"*"`); `workspaceByPlatform` retained;
-  the `deps`/`workspace` conflict check; the Phase 2 advisory.
-- `modules/manifest/src/types.cppm`: `XlingsConfig` fields and their comments.
-- `src/build/prepare.cppm`: the provisioning pass, `fillXpkgDirs` and
-  `xlingsDepBinDirs` read the merged table; the materialisation emits what
-  section 4 decides.
-- `src/xlings/xlings.cppm`: `ProjectEnv` and `seed_xlings_json`, per section 4.
-- `src/publish/xpkg_emit.cppm`: the `xpm.<platform>.deps` map (new).
-- `docs/05-mcpp-toml.md` §2.13, `docs/13-baremetal.md`, `docs/17`, and each
-  `docs/zh/` twin, which CI enforces.
-- `tests/unit/test_manifest.cpp`, a new e2e for C1/C2/C3, and the packing
-  criterion C4.
-- Ecosystem: `aarch64-virt-rt`, `riscv-virt-rt`, `std-freestanding` migrate
-  after Phase 1 ships, each with an mcpp floor.
-
-## 11. Open questions
-
-Answered on 2026-09-03 and kept here with their answers, because a question
-that was open is part of how the design was reached.
-
-1. **Does xlings provision from `workspace`?** No. `deps` is the only key any
-   install path reads (§13.2). Hence §4: the merge is in `mcpp.toml` and the
-   file keeps both fields.
-2. **Do workspace keys accept a namespace prefix?** The file's keys never carry
-   one; the namespace belongs to the install address (§3 W2). mcpp accepts it
-   in the authored key and writes the bare target name.
-3. **Is `"*"` already spelled something else?** Yes, two ways: a version prefix
-   and `latest`, both resolved before anything is stored (§3 W1). No new
-   spelling is introduced.
-4. **Does binding a package determine its programs' versions?** Yes, and the
-   expansion happens when the entry is honoured rather than when it is merged
-   (§15.1).
-5. **The migration window.** Answered by the denominator: three manifests, so
-   no window (§6). The index sweep confirms the denominator rather than gating
-   the change.
-
-The one decision left for review is D8 (§15.1): the provisioning pass sends
-`useAfterInstall: true`, so a declared version becomes the active one in the
-project's own layer rather than being installed beside whatever is already
-active.
-
-## 12. The section as a whole
-
-The proposal changes one field of a section whose other fields are unaffected.
-This is what `[xlings]` is at `4d99864`, so that a review of the change can see
-what it is being made against.
-
-### 12.1 Field correspondence
-
-| `mcpp.toml` | `.xlings.json` | Shape | Readers in mcpp |
-|---|---|---|---|
-| `[xlings] deps` | `deps` | array of package references | five (§1); retired by this proposal |
-| `[xlings.workspace]` | `workspace` | object, name to version | one, the materialisation; five after this proposal |
-| `[xlings] subos` | `subos` | string | the materialisation, and `select_runtime` |
-| `[xlings.envs]` | `envs` | object, name to value | one, the materialisation |
-| `[indices]` (not under `[xlings]`) | `index_repos` | array of repo objects | `ensure_project_index_dir` |
-| — | `lang`, `mirror` | strings | written by mcpp unconditionally |
-
-Names and meanings correspond one to one, and mcpp adds no key of its own. The
-file is written by `seed_xlings_json` (`src/xlings/xlings.cppm`), each field
-emitted only when non-empty.
-
-### 12.2 Three places mcpp is not a pure mirror
-
-Stated because a "1:1, no translation layer" claim is checkable, and these are
-the exceptions to it.
-
-1. **mcpp appends an entry the manifest did not write.** The target's C library
-   is added to the package channel, deduplicated, when the target row names one
-   (`prepare.cppm:3186-3194`). It rides that channel rather than having one of
-   its own so that one materialisation can be wrong instead of two. It is also
-   the reason §3's W2 is a prerequisite.
-2. **What is written is already resolved for this host.** A per-platform value
-   is collapsed at manifest load (`resolve_host_value`), so the file is a
-   materialisation for this machine rather than a copy of the declaration. §7
-   is the consequence.
-3. **`lang` and `mirror` are mcpp's, not the manifest's.** They come from
-   mcpp's own configuration and are always present in the file.
-
-### 12.3 Ownership: who declares the environment
-
-One rule, in `mcpp.xlings.runtime_selection`, whose header states what it
-deliberately does not read: the process environment, xlings' active or current
-state, the compiler path, and dependency manifests. Allowing any of them would
-make one `mcpp.toml` mean different ABIs in different shells.
-
-- In a workspace build the **workspace root** owns the declaration, even after
-  the package manifest switches to a selected member. An independently built
-  member is its own owner.
-- A dependency's `[xlings]` is never consulted and never propagated. A
-  library's declaration applies when it is a root, not when its sources are
-  consumed by another root.
-- The file is written under the owner's root
-  (`<ownerRoot>/.mcpp/.xlings.json`). When the owner is not the directory mcpp
-  writes into, two files are written: indices to the work root, the environment
-  to the owner root.
-- Nothing is written at all unless the project declares indices, or declares
-  `[xlings]`, or the target row names a C library
-  (`materializeRootRuntime`, `prepare.cppm:3179-3181`).
-
-### 12.4 `subos`: presence is semantic, and mcpp only reads
-
-- **Absent** selects mcpp's initialised, release-verified `McppDefault`.
-  **`subos = "default"`** is an explicit `NamedSubos("default")`. A string alone
-  cannot distinguish absence from an empty value, which is why the manifest
-  carries `subosDeclared` beside it.
-- The name is validated as a portable identifier (letters, digits, `.`, `_`,
-  `-`); anything else is a manifest error naming the value.
-- There is **no CLI or environment override**, and no implicit following of
-  xlings' active or current SubOS.
-- A named SubOS that does not exist is a **hard error**, never a fallback:
-  falling back would substitute a different environment for the one the
-  manifest named. Creating and populating one is xlings' layer
-  (`xlings subos new`); mcpp reads an environment and never creates one.
-- An environment that exists but carries no `subos_info` **degrades**: the
-  runtime binding reports inconclusive, a note is printed, and the build
-  continues.
-- On Linux the selection also fixes the loader and C library contract, so two
-  SubOS names produce separately fingerprinted objects.
-- Only a **declared** SubOS puts its `bin/` at the front of `build.mcpp`'s
-  `PATH` (`projectSubosBin` is non-empty only for `Mode::NamedSubos`,
-  `prepare.cppm:1389`). A project that declares nothing inherits the `PATH`
-  mcpp was started with, byte for byte.
-
-### 12.5 `envs` is not the environment a program runs in
-
-Two channels are easy to confuse and are unrelated:
-
-- `[xlings.envs]` is materialised into `.xlings.json` and read by xlings for
-  the **tool** environment. mcpp has exactly one reader for it, the
-  materialisation.
-- `compute_subos_env` (`src/build/execute.cppm:418`) builds the environment a
-  built program is **run** with, and it derives from `plan.runtimeBinding` —
-  the SubOS's own `subos_info` — not from `[xlings.envs]`.
-
-A value written under `[xlings.envs]` therefore does not reach `mcpp run`'s
-child. Whether it should is a separate question from this proposal and is not
-answered here.
-
-### 12.6 What this proposal does not touch
-
-`subos`, `envs`, `[indices]`, the ownership rule, the write conditions and the
-`PATH` contract are unchanged. The change is confined to which of the two
-package-shaped fields exists, and to the resolution loss §7 describes, which
-the merged field inherits.
-
-## 13. What the four fields actually do, measured in the xlings source
-
-Read at `/home/speak/workspace/github/openxlings/xlings`, 2026-09-03. Section 4
-and question Q1 of section 11 are answered here; section 12.5 is corrected.
-
-### 13.1 How the file is found at all
-
-xlings locates a project config by walking the current directory upward for a
-`.xlings.json`, stopping at any directory that also contains a `subos/` — that
-signature means "an xlings home", never a project — and, failing that, by
-reading `XLINGS_PROJECT_DIR` (`src/core/config.cpp:765-799`).
-
-mcpp writes `<project>/.mcpp/.xlings.json` and passes
-`XLINGS_PROJECT_DIR=<project>/.mcpp`, so the file is reached through the
-environment variable, not the walk. A person standing in the project root and
-running `xlings` does not see it: the walk looks for `<project>/.xlings.json`,
-one level up from where mcpp writes. Measured on a real materialisation
-(`mcpplibs/riscv-virt-rt/.mcpp/.xlings.json`), whose `.mcpp/` holds no `subos/`
-and therefore does not trip the home boundary.
-
-### 13.2 `deps` is the only install trigger, on both sides
-
-`install_from_project_config` (`src/core/cmdprocessor.cpp:163-196`) is the
-no-argument `xlings install`. It reads `deps`, errors when the key is absent or
-is not an array, and installs each entry through
-`xmake xim -P <home> -- <target> -y`. It reads no other key.
-
-mcpp's own provisioning does not use that path: it calls the `install_packages`
-capability with targets it read from `mcpp.toml` itself. So the `deps` array in
-the file serves a different consumer — a person running bare `xlings install` —
-than the pass that makes `mcpp build` work.
-
-### 13.3 `workspace` is a version layer, and a named subos drops the global one
-
-The project file's `workspace` object is read into `projectWorkspace_`
-(`config.cpp:660-662`) and becomes one layer of the effective pins.
-`merged_workspace` (`config.cpp:846-864`) resolves them:
-
-| Project subos mode | Layers merged, later winning |
-|---|---|
-| `Named` (the file declares `subos`) | project manifest, then that subos's own workspace |
-| `Anonymous` (project file, no `subos`) | global, then project manifest, then the project subos |
-| no project config | global only |
-
-**Pinning a few and inheriting the rest is what the Anonymous row does.** A
-project that writes `[xlings.workspace]` and no `subos` starts from the global
-workspace and merges its own entries on top, so every tool it does not name
-keeps the machine's version. This is the common shape for an mcpp project and
-it works as an author would expect.
-
-**A named subos does not inherit the global layer, and that is deliberate
-rather than an omission.** A named SubOS is a different environment with its
-own installed set; carrying the host's pins into it would name versions that
-environment does not have. Its own `workspace` — stored in
-`<subos>/.xlings.json` and merged as the last layer — is what it inherits from
-instead. A SubOS created with `xlings subos new <name> --from <base>` receives
-the base's workspace map by copy at creation (`src/core/subos.cpp:978`); that
-is a one-time inheritance, not a live link.
-
-**Nothing falls back silently when no layer names a tool.** The shim reads
-`Config::effective_workspace()` and, finding no active version, produces a
-diagnostic rather than choosing one (`src/core/xvm/shim.cpp:408-460`:
-`xvm.no_active_version`, or the "installed in this subos, but no version is
-active" form). The `qemu-aarch64-static is not installed in this subos (_)`
-line measured during the 2026.9.2.1 verification is that path.
-
-What mcpp does not state today is the first two paragraphs: that declaring
-`[xlings] subos` changes which pins apply, and that the environment's own
-workspace replaces the global one. That belongs in `docs/17`.
-
-**A `workspace` entry installs nothing.** No install path reads it. This
-answers Q1: xlings does not provision from `workspace`, which is why section 4
-was revised rather than kept.
-
-### 13.3.1 Two artifacts share the name `.xlings.json`
-
-They must not be measured for each other, and this document did so once.
-
-**The authored project file** is what a person writes and what mcpp
-materialises: `workspace` maps a name to a version string or to a
-platform-conditional object, and nothing else. `d2mcpp/.xlings.json` is the
-published example (§3).
-
-**A SubOS state file** is what `cmd_use` writes: the same key space, but each
-value is an `{active, installed[]}` record, and the keys are every member of
-every release ever switched to. On the development host's default SubOS that is
-546 entries, including package roots, their programs, and file assets:
-
-```
-binutils = 2.42     ar = 2.42      as = 2.42      ld = 2.42
-gcc      = 16.1.0   g++ = 16.1.0   cc = 16.1.0
-Scrt1.o, crt1.o, crti.o, crtn.o, glibc.files.1 … glibc.files.101
-```
-
-A package root and its programs carry the same version there because they are
-members of one release and `cmd_use` wrote them together (§15.1). That identity
-is the group expansion's footprint, and it is why writing a package root in a
-project file pins its programs: the expansion happens when the entry is
-honoured.
-
-The parser accepts both shapes for a value and disambiguates by reserved keys —
-an `active` or `installed` key marks the state form, anything else is read as
-the project form (`src/core/xvm/db.cppm:405-420`). So the two files are one
-schema seen at two stages, and the project form is the one mcpp's `[xlings]`
-mirrors.
-
-### 13.4 `envs` has no reader anywhere
-
-Every `envs` consumer in the xlings source is one of two structures, and
-neither is the flat object mcpp writes:
-
-1. `xvm`'s `VData::envs` — environment variables attached to **one program's**
-   shim, stored in the version database and applied when the shim runs
-   (`src/core/xvm/db.cpp:724`, `src/core/xvm/shim.cpp:337`). Set through
-   `xvm add --env`, not through any project file.
-2. A SubOS's `subos_info.envs` — "an object of **provider sections**" keyed by
-   binding (`src/core/subos/manifest.cpp:197-290`), part of the environment's
-   own metadata.
-
-Searching the whole source for `contains("envs")` and `["envs"]` outside those
-two files and the doctor that checks them returns nothing. There is no reader
-for a flat name-to-value `envs` object in a project or home `.xlings.json`.
-
-**So `[xlings.envs]` is written by mcpp and read by nobody.** It does not reach
-a built program's environment either: `compute_subos_env`
-(`src/build/execute.cppm:418`) derives that from `plan.runtimeBinding`, the
-SubOS's own `subos_info`, and never consults `[xlings.envs]`. The sentence in
-`docs/05-mcpp-toml.md` §2.13 that calls it "env vars applied to the tool
-environment" describes an effect that does not occur.
-
-**Decided (2026-09-03): `envs` is retired, not wired.** xlings never supported
-a project-level flat `envs` object and does not need to: `[xlings]` exists to
-align with xlings' project-level isolated environment, and the two `envs`
-structures that do exist there belong to a program's shim and to a SubOS's own
-metadata. Neither is something a consuming project should be writing.
-
-It follows the same three phases §6 gives `deps`, and for a stronger reason: a
-key read by nobody is the shape #531 exists to prevent, and this one is
-additionally documented as having an effect. Phase 1 is the documentation
-correction, which can ship immediately and independently of everything else in
-this document — `docs/05-mcpp-toml.md` §2.13 and its Chinese twin currently
-state an effect that does not occur.
-
-### 13.5 Corrections this section makes to the rest of the document
-
-| Where | Was | Is |
-|---|---|---|
-| §4 | mcpp writes only `workspace` | mcpp writes both fields; the merge is in `mcpp.toml` |
-| §11 Q1 | open | answered: xlings does not provision from `workspace` |
-| §12.1 | `envs` reader: "the materialisation" | no reader on either side |
-| §12.5 | `[xlings.envs]` is read by xlings for the tool environment | it is read by nothing |
-
-## 14. What mcpp's own documentation must say
-
-The inheritance rule of §13.3 is the behaviour an author most needs and the one
-mcpp states nowhere. It is not introduced by this proposal; it is being written
-down because the proposal makes `workspace` the key everybody writes.
-
-**`docs/05-mcpp-toml.md` §2.13** gains the rule as a table, next to the
-`[xlings.workspace]` description:
+**`docs/05` §2.13** gains the inheritance rule as a table, next to
+`[xlings.workspace]`:
 
 | The project declares | The version of a tool it did not name comes from |
 |---|---|
@@ -646,206 +321,184 @@ down because the proposal makes `workspace` the key everybody writes.
 | `[xlings.workspace]` and `subos = "<name>"` | that SubOS's own workspace; the global one does not apply |
 | neither | the machine's global workspace |
 
-with one sentence for why the middle row is not an omission: a named SubOS is a
-different environment with its own installed set, and carrying the host's pins
-into it would name versions that are not there.
+with one sentence for why the middle row is not an omission, the two namespace
+spellings **with the quotes shown**, `""` for an unconstrained version, and
+`macosx` as the aligned platform key.
 
-**`docs/17-the-project-environment.md`** gains the consequence, because that
-chapter is where `subos` is chosen: declaring a SubOS changes which version
-pins apply, and a project that relied on the machine's pins has to state them
-itself once it names an environment. The chapter already says mcpp reads an
-environment and never creates one; this is the other half of what the
-declaration decides.
+**`docs/17`** gains the consequence where `subos` is chosen: declaring a SubOS
+changes which pins apply, and a project that relied on the machine's tools has
+to declare them once it names an environment. It also gains §3.4's first
+paragraph.
 
-**`docs/13-baremetal.md`** needs no change: it declares packages, not versions.
+**`docs/05` §2.13's `envs` sentence is corrected** (§4), independently and
+first.
 
-Each with its `docs/zh/` twin, which CI enforces.
+`docs/13` needs no change: it declares packages, not versions. Each file with
+its `docs/zh/` twin, which CI enforces.
 
-A criterion, so the paragraph is not the only record: a project that pins a
-tool and declares a SubOS resolves that tool to its pin, and a tool it does not
-pin resolves inside the SubOS rather than to the host's global choice. It is an
-e2e over two SubOS environments and one tool installed at two versions.
+## 7. Axes
 
-## 15. Self-review
+**Structure.** One declaration site for what the project's environment
+contains, one reader set, one provisioning pass — and the pass now runs in the
+scope its effects are read from. The count of things that can disagree about a
+package's version drops from two to zero.
 
-Read against the code a second time, 2026-09-03. Three findings; the first is
-the one that changes the proposal.
+**Stability.** Every decision is a value the project wrote or an answer xlings
+gave. The scope fix removes a shared mutable workspace from the path, which is
+the class of state two projects can fight over.
 
-### 15.1 Withdrawn: the expansion happens, in the action rather than in the merge
+**Compatibility.** No manifest key is added. A manifest written for this loads
+on an older mcpp, where a `workspace` entry is a pin that installs nothing —
+what it means there today.
 
-The first version of this section claimed that a project-file `workspace` entry
-cannot pin a package's programs, because the merge is per-key and the shim
-looks up a program's own name. Both halves are true and the conclusion does not
-follow. It reads the declaration as something mcpp only writes down, and this
-proposal is that mcpp acts on it.
+**Upgrading.** The stamp is keyed on the declared set, so the first build after
+the change re-provisions once per project and then behaves as before. No cache
+is invalidated and no output path changes.
 
-The mechanism, read through:
+**Consistency.** The general form gains what its shorthand already does, and
+§2.13's claim about `[toolchain]` becomes true rather than aspirational.
 
-1. mcpp provisions each entry through the `install_packages` capability.
-2. `xim`'s installer, having installed, calls `xvm::cmd_use(name, version)`
-   for the requested target (`src/core/xim/commands.cpp:693`).
-3. `cmd_use` resolves the whole release with `resolve_binding_selection` and
-   writes one workspace entry **per member**
-   (`src/core/xvm/commands.cpp:763-772`); the installer's own note says the
-   same — "`cmd_use` creates shims for every member of the release it switches
-   to" (`installer.cpp:1986`).
-4. `Config::workspace_mut()` returns the **project's** SubOS workspace whenever
-   a project config is loaded (`config.cpp:1163-1168`), so those per-member
-   entries land in the project's own layer, which the merge applies last. The
-   machine's global choice is not disturbed.
+**Cross-platform.** The per-platform form is xlings' own and is unchanged; §5
+makes it survive to the one consumer that needs it unresolved.
 
-So naming a package root in the manifest does pin its programs: the group is
-expanded when the entry is honoured, and what lands in the file is already
-per-member. The declaration is the input to that action, not a layer expected
-to expand itself.
+**What a person sees.** One table instead of two, one question fewer when
+writing it, and a declared version that is honoured on a machine that had
+another one active.
 
-**What the review did find is one flag.** Activation after install is
-conditional (`installer.cpp` `activate_requested_targets`):
+## 8. Test criteria
 
-```cpp
-auto active = xvm::get_active_version(Config::effective_workspace(), match.name);
-if ((active.empty() || useAfterInstall) && has_version(db, match.name, match.version))
-    cmd_use(match.name, match.version, stream);
-else if (!active.empty() && active != match.version)
-    // declining to switch is a decision, and it used to be a silent one
-```
+Each must be observed failing before the corresponding change.
 
-Install activates only when **nothing is active yet**, unless the caller asks
-otherwise. mcpp's provisioning pass sends `{"targets": […], "yes": true}` and
-nothing else, so on a machine where another version of that name is already
-active, the declared version is installed and not the one that runs.
-
-That is tolerable for `deps`, whose meaning is "must exist". It is not
-tolerable for a table whose meaning is "at this version": a constraint that
-installs without activating is not a constraint. The capability already takes
-the flag — `useAfterInstall`, documented as "Activate the installed version
-even if another version is currently active" (`src/capabilities.cpp:81`) — so
-the change is one field in the request mcpp already sends.
-
-**Decision D8: the provisioning pass passes `useAfterInstall: true`.** Its
-blast radius is the project's own SubOS layer, per point 4 above, which is what
-makes it safe to do unconditionally rather than behind another key.
-
-### 15.2 "Retired" means the manifest key, never the file field
-
-Section 6 reads as though `deps` disappears. It does not: §4 keeps emitting the
-`deps` array into `.xlings.json`, because that is the only key xlings' install
-path reads. What is retired is the key an author writes in `mcpp.toml`. Every
-occurrence of "retired" in sections 0, 6 and 12 means that and only that, and
-the phases apply to the manifest surface alone.
-
-### 15.3 Section 12.6 is no longer true as written
-
-It says the proposal touches neither `subos` nor `envs`. It touches both,
-though not their behaviour: §13.4 asks for a decision on `envs`, which is
-written by mcpp and read by nobody, and §14 adds documentation for what `subos`
-does to the inheritance chain. Neither changes an effect; both change what the
-project states about itself, which is the part this document is for.
-
-### 15.4 What survived the review unchanged
-
-The two facts section 1 rests on. The general form still installs nothing while
-its documented shorthand installs, and nothing still compares the two keys when
-both name one package. §13 strengthened rather than weakened them: xlings makes
-the same split in the same direction, which is why the merge belongs in the
-manifest and not in the file.
-
-## 16. D8 withdrawn: the merge already does it, once the scope is right
-
-The requirement — a declared tool at a declared version is installed if absent
-and active afterwards — needs no flag, no explicit switch and no new rule. It
-needs mcpp to ask in the right environment. Everything else is already built.
-
-### 16.1 Both halves are native
-
-**Mapping rather than reinstalling.** The installer checks whether the payload
-exists and is registered to this package, sets `payloadInstalled` and skips the
-install hook (`src/core/xim/installer.cpp:2740-2775`). An already-present
-payload is mapped; only a missing one is fetched.
-
-**The declaration outranking the machine.** `merge_workspace_into_` assigns
-rather than inserts (`src/core/config.cpp`), so in `merged_workspace` the later
-layer wins:
-
-| Mode | Layers, in merge order | What wins |
+| # | Criterion | Note |
 |---|---|---|
-| Anonymous | global, project manifest, project SubOS | the project's declaration beats the machine's |
-| Named | project manifest, project SubOS | the machine's layer is not present at all |
+| C1 | A `workspace` entry for a package that is not installed provisions it, and its payload directory reaches `build.mcpp` as `MCPP_XPKG_<NAME>_DIR` | assert on the value the program read |
+| C2 | A `workspace` entry that cannot be provisioned fails the build with the manual command in the message | the existing diagnostic, reached from the new input |
+| C3 | One package named in both `deps` and `workspace` is refused naming both lines | must be seen failing on a manifest that today builds and silently provisions the `deps` version |
+| C4 | Packing a project whose table has per-platform entries emits `xpm.<platform>.deps` for every platform, from any host | fails today: no emitter |
+| C5 | An entry with `""` provisions the package and pins nothing | both halves |
+| C6 | A project declaring a version different from the machine's active one builds and runs against the declared version, in Anonymous mode | fails today: the scope |
+| C7 | The machine's global workspace file is unchanged after C6 | fails today: the scope |
+| C8 | Two checkouts declaring different versions of one tool each get their own, in one session | fails today: the scope |
+| C9 | A Named SubOS project resolves what it declared plus what its environment holds; a tool it did not declare fails naming that environment | makes the developer's choice visible |
+| C10 | A declared version never installed fails at the shim with the "version this project asks for" wording | not a bare "not found" |
+| C11 | The second build of an unchanged project provisions nothing and prints nothing | the stamp; the whole-project fast path never reaches this code, so touch a source first |
+| C12 | A migrated `riscv-virt-rt` resolves its emulator on a clean machine | the ecosystem case, in a sandbox |
+| C13 | `<project>/.mcpp` is loaded by xlings as a project directory, not skipped as an xlings home | §3.2's precondition; assert on an effect, since a skip degrades to the current behaviour and would otherwise look like success |
 
-So a project that declares `gcc = "15.1.0"` resolves `gcc` to 15.1.0 even on a
-machine whose global workspace is on 16.1.0 — because mcpp materialises that
-declaration into the project file's `workspace` object (§4), which is a layer
-that beats global. The developer chooses the strength by choosing the mode:
-name a SubOS for an isolated space, or leave it anonymous and get the machine's
-environment with the project's own entries laid over it.
+C3, C4, C6, C7 and C8 fail on the current engine. C11 is stated because this
+repository has read that measurement wrongly twice.
 
-Nothing has to force anything. `activate_requested_targets` does not fire in
-this situation, and correctly: the merged view already answers with the
-declared version, so there is nothing to switch.
+## 9. Implementation surface
 
-### 16.2 What is actually wrong today: mcpp provisions in the wrong scope
+- `modules/manifest/src/toml.cppm`: `workspace` accepts the reference forms
+  `deps` accepts (namespace on either half, `""`); `workspaceByPlatform`
+  retained; the `deps` refusal; the duplicate-namespace error.
+- `modules/manifest/src/types.cppm`: `XlingsConfig` fields and comments.
+- `src/build/prepare.cppm`: the provisioning pass reads the merged table and
+  calls with `make_project_xlings_env`; `fillXpkgDirs` and `xlingsDepBinDirs`
+  read the merged table; the materialisation emits both file fields.
+- `src/xlings/xlings.cppm`: `ProjectEnv` and `seed_xlings_json`.
+- `src/publish/xpkg_emit.cppm`: the `xpm.<platform>.deps` map (new).
+- `docs/05` §2.13, `docs/17`, and each `docs/zh/` twin.
+- `tests/unit/test_manifest.cpp`; new e2e for C1, C2, C3, C5, C6, C7, C8, C9;
+  the packing criterion C4.
+- Ecosystem: `aarch64-virt-rt`, `riscv-virt-rt`, `std-freestanding` migrate
+  after step 1, each with an mcpp floor.
 
-The provisioning pass calls
+## 10. Rejected and withdrawn
 
-```cpp
-mcpp::xlings::call(mcpp::config::make_xlings_env(**cfg2), "install_packages", …)
-```
+**Writing only `workspace` into the file.** xlings does not install from it
+(§1); the project would build where the packages happen to be installed.
 
-(`prepare.cppm:3421`), and `make_xlings_env` carries no `projectDir`
-(`src/config.cpp:129`), so no `XLINGS_PROJECT_DIR` reaches the child and the
-cwd walk finds nothing — mcpp writes `<project>/.mcpp/.xlings.json`, one level
-below the directory a walk from the project root inspects. The child runs in
-**global** scope against mcpp's registry home.
+**`useAfterInstall: true`.** Not needed once the scope is right (§3.2), and it
+cannot be verified: a forced switch that fails is a `log::warn` inside a call
+that exits zero.
 
-That single fact produces every symptom in this section:
+**An explicit `use_version` per entry.** Same reason. It was proposed to obtain
+the exit code the forced install discards; with the merge doing the work there
+is nothing to switch.
 
-1. The install's records land in the registry's global workspace, while a
-   program invoked from the project resolves through the project's layers. The
-   two views disagree, which is the
-   `qemu-aarch64-static is not installed in this subos (_)` measured during the
-   2026.9.2.1 verification — and the reason the runner needed a
-   payload-directory lookup at all.
-2. `active` is read from a workspace shared by every mcpp project on the
-   machine, so the auto-activation decides against a state no project owns.
-3. Any attempt to force the switch would write into that shared workspace,
-   letting two checkouts flip each other.
+**A three-phase deprecation for `deps`.** The denominator is three manifests
+(§2.4).
 
-**The fix is the scope, not a flag**: provision with
-`make_project_xlings_env(cfg, root)`. The child then runs in project scope, the
-installed set and activation records land in the project's own SubOS
-(`config.cpp:348-353` puts it under `<project>/.mcpp/.xlings/subos/…`), and the
-view the install writes is the view the shim reads.
+**Wiring `envs`.** Neither xlings structure is what a consuming project should
+write (§4).
 
-**D8 is withdrawn.** `useAfterInstall` is not passed, and no `use_version` call
-is added. The provisioning pass keeps its shape and changes one argument.
+**A namespace-only key, or a namespace-only value.** Both are accepted, because
+neither is more natural and the two are mechanically interconvertible; what is
+refused is holding both at once with different values (§2.2 W2).
 
-### 16.3 Two consequences to write down rather than discover
+## 11. Open questions
 
-**The project SubOS layer outranks the project manifest.** It is merged last,
-so an explicit `xlings use` performed inside the project beats what
-`mcpp.toml` declares, until the manifest is re-materialised. That is defensible
-— an action a person took beats a file — but it is not obvious, and it belongs
-in the documentation next to the table above.
+None blocking. Two items are scheduling rather than design: which mcpp floor
+the three migrating packages declare, and whether the index sweep of §2.4 is a
+release gate or a one-off.
 
-**A declared version that is not installed fails at the shim, with the right
-words.** Resolution finds the pin, `match_version` finds no such installed
-version, and the diagnostic is already
-`"{}@{} is the version this project asks for"` (`src/core/xvm/shim.cpp:495`).
-Provisioning is what prevents it; the diagnostic is what happens if
-provisioning was skipped, and it names the project rather than the machine.
+## 12. Appendix: measurements
 
-### 16.4 What to verify
-
-| # | Criterion |
+| Claim | How it was checked |
 |---|---|
-| A1 | A project declaring a version different from the machine's active one builds and runs against the declared version, in Anonymous mode |
-| A2 | The machine's global workspace file is unchanged after that build |
-| A3 | Two checkouts declaring different versions of one tool each get their own, in one session |
-| A4 | An entry with `""` on a machine where another version is active leaves that version active |
-| A5 | A Named SubOS project resolves only what it declared plus what its environment holds, and a tool it did not declare fails naming that environment |
-| A6 | The second build of an unchanged project performs no install |
-| A7 | A declared version that was never installed fails at the shim with the "version this project asks for" wording, not with a bare "not found" |
+| A workspace key is an xvm target of any kind | the development host's default SubOS: `binutils`/`ar`/`as`/`ld` all 2.42, `gcc`/`g++`/`cc` all 16.1.0, plus `crt1.o` and `glibc.files.N`; 546 entries |
+| A package root and its programs carry one version | same, and `cmd_use` writes one entry per binding-group member |
+| No key carries a namespace | 1635 version-database targets and 546 workspace entries, zero colons; the authored `d2mcpp` file likewise |
+| A namespace does appear on a version | `"mcpp": {"active": "xim:2026.8.30.2", …}`, one target holding scoped and unscoped versions at once |
+| `""` is the unconstrained spelling | `d2mcpp/.xlings.json`, and `claims` treating an empty value as no claim |
+| The unquoted `ns:name` key is a TOML error | run on the 2026.9.2.1 binary: `mcpp.toml:6:4: error: expected …` |
+| Provisioning runs in global scope | `make_xlings_env` has no `projectDir`; the file mcpp writes is one level below the walk |
+| `envs` has no reader | exhaustive search of the xlings source |
 
-A1, A2 and A3 fail today for one reason, the scope of `make_xlings_env`, and
-pass together once it changes. A5 is the Named branch of the table in §16.1 and
-is what makes the developer's choice visible.
+## 13. Two artifacts share the name `.xlings.json`
+
+They must not be measured for each other, and an earlier draft of this document
+did so.
+
+**The authored project file** is what a person writes and what mcpp
+materialises: `workspace` maps a name to a version string or to a
+platform-conditional object.
+
+**A SubOS state file** is what `cmd_use` writes: the same key space, but each
+value is an `{active, installed[]}` record and the keys are every member of
+every release ever switched to.
+
+The parser accepts both shapes and disambiguates by reserved keys — an `active`
+or `installed` key marks the state form (`xvm/db.cppm:405-420`). One schema,
+two stages; the project form is the one `[xlings]` mirrors.
+
+## 14. `subos`, unchanged by this proposal and stated for completeness
+
+- **Absent** selects mcpp's initialised `McppDefault`; **`subos = "default"`**
+  is an explicit `NamedSubos("default")`. `subosDeclared` carries the
+  difference, because a string alone cannot.
+- The name is validated as a portable identifier; anything else is a manifest
+  error naming the value.
+- There is **no CLI or environment override**, and no implicit following of
+  xlings' active SubOS.
+- A named SubOS that does not exist is a **hard error**, never a fallback.
+  Creating one is xlings' layer; mcpp reads an environment and never creates
+  one.
+- An environment with no `subos_info` **degrades**: the runtime binding reports
+  inconclusive, a note is printed, the build continues.
+- On Linux the selection also fixes the loader and C library contract.
+- Only a **declared** SubOS puts its `bin/` at the front of `build.mcpp`'s
+  `PATH` (`prepare.cppm:1389`).
+
+## 15. What the review changed
+
+Recorded because a position that was held and abandoned is part of how this was
+reached, and because two of these were wrong in a way worth remembering.
+
+| Held | Replaced by | Why |
+|---|---|---|
+| mcpp writes only `workspace` into the file | both fields (§2.3) | xlings installs from `deps` only |
+| A manifest `workspace` entry cannot pin a package's programs | it can (§1) | expansion happens in `cmd_use`, which provisioning triggers; the merge was never where it happens |
+| Activation lands in the project's own layer, so forcing is contained | it lands in the registry's global workspace (§3.1) | `make_xlings_env` carries no `projectDir` |
+| `useAfterInstall: true`, then an explicit `use_version` per entry | neither (§3.2) | the merge already makes the declaration authoritative once the scope is right |
+| `"*"` for an unconstrained version | `""` (§2.2 W1) | the authored form already exists and is in use |
+| The namespace must go on the version; a colon in a key is an error | either half is accepted (§2.2 W2) | both are interconvertible; the error is holding two that disagree |
+| A three-phase deprecation | one release (§2.4) | three manifests |
+| Keys are program names | keys are xvm targets, roots included (§12) | measured |
+
+The two that mattered: reading a SubOS **state** file as though it were an
+authored **project** file, and asserting a blast radius without checking which
+environment the call runs in. Both were arguments from the shape of the code
+rather than from what it does.
