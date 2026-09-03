@@ -612,3 +612,68 @@ output path moves, and a manifest written for this loads on an older mcpp.
 **Test coverage.** Five of the twelve criteria fail on the current engine and
 are the ones that prove the change; C11 exists because this repository has
 twice measured a fast path instead of the thing under test.
+
+## 17. Verification of the release
+
+Released as 2026.9.3.1 (`bcf02f8`, tag `v2026.9.3.1`). What follows is what was
+observed.
+
+### 17.1 CI
+
+All 36 checks on PR #548 and all nine workflows on the merge commit are green.
+Three failures preceded them and each was informative rather than incidental;
+§15.1 records them.
+
+### 17.2 The sandbox, on the published binary
+
+```
+xlings update && xlings subos new e931-0903
+xlings subos use e931-0903 --sandbox --cmd '<the script>'
+```
+
+```
+=== identity ===
+mcpp 2026.9.3.1
+  Configured xlings mirror = CN
+
+=== A. an entry provisions and the payload reaches build.mcpp ===
+warning: app: /home/…/registry/data/xpkgs/xim-x-ninja/1.12.1
+    Finished dev [unoptimized + debuginfo] in 0.67s
+
+=== B. both namespace positions are one entry ===
+   materialised: {"ninja": "xim:1.12.1"}
+
+=== C. "" asks for presence only ===
+=== D. deps still works and says what to write ===
+=== E. envs is refused, naming the key ===
+=== F. one package in two tables with two versions is refused ===
+
+=== G. the descriptor carries the install-time edge ===
+        linux   = { deps = { "ninja@1.12.1", "xim:qemu-user-aarch64@7.2.0" }, … },
+        macosx  = { deps = { "ninja@1.12.1" }, … },
+        windows = { deps = { "ninja@1.12.1" }, … },
+
+=== H. the published ecosystem still builds ===
+SANDBOX-OK
+```
+
+B is the one worth reading twice. The entry was written with the namespace on
+the key (`"xim:ninja" = "1.12.1"`) and the materialised file carries the form
+the file itself uses — bare target, scope on the version. One authored fact,
+one spelling downstream.
+
+G shows the loss §5 describes being avoided: the emitter is running on Linux
+and the Windows and macOS blocks carry what those platforms declared, not what
+this host resolved. The `qemu-user-aarch64` entry, declared `{ linux = … }`,
+appears in exactly one block.
+
+### 17.3 Release state
+
+| | |
+|---|---|
+| Tag | `v2026.9.3.1` at `bcf02f8` |
+| GitHub release | four platform payloads, sidecars, sealed `mcpp-release.json` |
+| GitCode mirror | the eight versioned assets present; `linux-x86_64` and `linux-aarch64` re-downloaded and their SHA256 recomputed against the GitHub sidecars, equal, and equal again to what the index PR recorded |
+| Index | `latest` at 2026.9.3.1 (`6da9ad5`), that commit's `Publish Index Artifact` green |
+| Clean-room install | `xlings install mcpp@2026.9.3.1` in a fresh SubOS, then `mcpp --version` |
+| Bootstrap pin | moved to 2026.9.3.1 after the above, direct to `main` |
