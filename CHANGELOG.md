@@ -3,6 +3,30 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.9.3.2] — 2026-09-03
+
+`[xlings.workspace]` 的**推荐书写形态**定为命名空间在键上,官方包全部使用它;
+mcpp 打印的建议行随之改成同一形态。
+
+```toml
+[xlings.workspace]
+"xim:picolibc-riscv" = "1.8.12"
+```
+
+> **建议行是会被照抄的。** `[xlings] deps` 的替代提示此前给出的是
+> `picolibc-riscv = "xim:1.8.12"` —— 命名空间在版本上。那种形态仍然接受,但它是
+> **物化出来的文件**所用的词汇(那里的键是 xvm target,scope 限定版本),不是作者
+> 书写的词汇(先点名一个包,再说用它的哪个版本)。一个教人写非推荐形态的提示,会
+> 把约定推向它自己的反面。
+
+### 变更
+
+- `[xlings] deps` 的替代提示改为推荐形态,键带引号(TOML 裸键不能含冒号)。
+- `docs/05` §2.13 明确写出推荐形态与它的理由,并说明另一种形态为何仍然接受;
+  `docs/13` 与 `examples/07-project-subos` 的示例改成推荐形态。中英双份。
+
+行为不变:两种形态解析结果完全相同,物化出来的 `.xlings.json` 也不变。
+
 ## [2026.9.3.1] — 2026-09-03
 
 `[xlings]` 收敛成一张表。`[xlings.workspace]` 说出工程用哪个包、用哪个版本,mcpp

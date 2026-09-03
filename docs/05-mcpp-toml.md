@@ -1870,11 +1870,10 @@ who can judge it is looking at the release, not at this build.
 
 ```toml
 [xlings.workspace]                 # what this project's environment contains
-cmake                   = "3.28"
-picolibc-riscv          = "xim:1.8.12"     # namespace on the version
-"xim:qemu-user-aarch64" = "7.2.0"          # or on the key - quotes required
-code                    = ""               # present; version unconstrained
-llvm                    = { macosx = "20", default = "22" }
+cmake                    = "3.28"
+"xim:picolibc-riscv"     = "1.8.12"        # a namespaced package - quotes required
+code                     = ""              # present; version unconstrained
+llvm                     = { macosx = "20", default = "22" }
 ```
 
 ```toml
@@ -1900,14 +1899,20 @@ to.
 | `cmake = "3.28"` | that version |
 | `llvm = "22"` | the highest installed `22.*`; a version prefix resolves |
 | `code = ""` | present, version unconstrained |
-| `picolibc-riscv = "xim:1.8.12"` | from the `xim` index |
-| `"xim:picolibc-riscv" = "1.8.12"` | the same entry, namespace written on the key |
+| `"xim:picolibc-riscv" = "1.8.12"` | a package from the `xim` index |
 | `llvm = { macosx = "20", default = "22" }` | per host platform |
 
-The namespace may be written on either half. Writing it on the key requires
-**quotes**, because a TOML bare key cannot contain a colon. Writing it on both
-halves with different values is an error, and so is naming one package twice
-under two spellings.
+**A namespaced package is written `"<namespace>:<name>" = "<version>"`, and the
+quotes are required** — a TOML bare key cannot contain a colon. That is the
+recommended form and the one every official package uses: an entry names a
+package and then says which version of it, so the namespace belongs to the
+name.
+
+The namespace is also accepted on the version (`picolibc-riscv = "xim:1.8.12"`),
+because that is what the materialised `.xlings.json` carries — a key there is an
+xvm target and the scope qualifies the version. Two vocabularies, one entry.
+Writing it on both halves with different values is an error, and so is naming
+one package twice under two spellings.
 
 Platform keys are xlings' own — `linux`, `macosx`, `windows` — plus `default`.
 `macos` and `macosx` are the same platform written in two vocabularies (mcpp's

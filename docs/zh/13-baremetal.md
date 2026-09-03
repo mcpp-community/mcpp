@@ -603,7 +603,7 @@ int main() {
 
 ```toml
 [xlings.workspace]
-qemu-riscv = "xim:9.2.4-1"
+"xim:qemu-riscv" = "9.2.4-1"
 ```
 
 在这块板子上链接 `clang_rt.builtins` 不是可选项。picolibc 通过 ryu 格式化浮点值,

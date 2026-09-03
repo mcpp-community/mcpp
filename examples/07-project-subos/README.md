@@ -19,7 +19,7 @@ warning: project-subos: this project's subos is populated
 subos = "default"
 
 [xlings.workspace]
-qemu-riscv = "xim:9.2.4-1"
+"xim:qemu-riscv" = "9.2.4-1"
 ```
 
 `subos` names the environment this project builds in. mcpp already used that

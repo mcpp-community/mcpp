@@ -671,7 +671,7 @@ The package's manifest declares the emulator and nothing else:
 
 ```toml
 [xlings.workspace]
-qemu-riscv = "xim:9.2.4-1"
+"xim:qemu-riscv" = "9.2.4-1"
 ```
 
 Linking `clang_rt.builtins` is not optional on this board. picolibc formats
