@@ -21,10 +21,11 @@ Three changes follow, and one of them is a defect rather than a design.
 1. **`workspace` becomes the one table**; `deps` is retired from the manifest.
    The two state the same thing and differ only in what mcpp then does with the
    statement, and the mechanism they map onto has one authored surface.
-2. **Provisioning moves into project scope.** mcpp calls xlings with a global
-   environment today, so the install writes into a workspace shared by every
-   mcpp project while programs resolve through the project's own layers. That
-   one argument is behind three measured symptoms.
+2. ~~Provisioning moves into project scope.~~ **Withdrawn during
+   implementation** (§3): the call site records a measurement showing that
+   project scope puts payloads in a SubOS the compiler's `--sysroot` does not
+   name. The scope stays global; what the declaration decides is unchanged,
+   because resolution reads the project's `workspace` layer either way.
 3. **`envs` is retired.** It has no reader in xlings and none in mcpp, and
    `docs/05` documents an effect it does not have.
 
@@ -201,78 +202,51 @@ silence. `[xlings]` has no unknown-key sweep — no `kKnownXlings` list exists i
 `toml.cppm` — so a removed key would be read by nobody and reported by nobody,
 which is the shape #531 exists to prevent.
 
-## 3. Change two: provisioning runs in project scope
+## 3. Change two, withdrawn during implementation: the scope stays global
 
-### 3.1 The defect
+The design proposed moving the provisioning call from `make_xlings_env` to
+`make_project_xlings_env`, on the reasoning that the install should write where
+the shim reads. Implementing it turned up a comment at the call site recording
+that this was tried and measured:
 
-```cpp
-mcpp::xlings::call(mcpp::config::make_xlings_env(**cfg2), "install_packages", …)
-```
+> GLOBAL scope, and the scope is the whole point. The obvious alternative —
+> `install_packages` against `make_project_xlings_env` — installs at PROJECT
+> scope, and that measurably does not work: on a fresh `MCPP_HOME` the headers
+> land in `<proj>/.mcpp/.xlings/subos/_/usr/include` while `--sysroot` names
+> `<MCPP_HOME>/registry/subos/default`, so `#include <gbm.h>` still failed with
+> the dependency installed and declared. Two SubOS views, and the payload in
+> the one the compiler does not read.
 
-`prepare.cppm:3421`. `make_xlings_env` carries no `projectDir`
-(`src/config.cpp:129`), so no `XLINGS_PROJECT_DIR` reaches the child and the
-cwd walk finds nothing. The child runs in **global** scope against mcpp's
-registry home, and three symptoms follow:
+The premise the design rested on — that the install destination is chosen by
+package scope rather than by transport — is contradicted by that measurement.
+**Change two is withdrawn.** The call keeps `make_xlings_env`.
 
-1. **The install's view and the shim's view disagree.** Records land in the
-   registry's global workspace; a program invoked from the project resolves
-   through the project's layers. This is the
-   `qemu-aarch64-static is not installed in this subos (_)` measured during the
-   2026.9.2.1 verification, and the reason the runner needed a
-   payload-directory lookup.
-2. **`active` is read from a workspace shared by every mcpp project** on the
-   machine, so the auto-activation decides against a state no project owns.
-3. **Forcing the switch there would let two checkouts flip each other**, which
-   is why the decline is protective in this scope rather than obstructive.
+### 3.1 What that leaves true, and what it leaves unsolved
 
-### 3.2 The fix, and why nothing else is needed
+**The declaration still wins at resolution.** mcpp materialises
+`[xlings.workspace]` into the project file's `workspace` object, and that is a
+layer `merged_workspace` applies over the machine's (§1). So a project
+declaring a version resolves to it inside the project regardless of where the
+payload was installed. Provisioning only has to make the payload exist, which
+global scope does.
 
-Call with `make_project_xlings_env(cfg, root)`. The child then runs in project
-scope: the installed set and the activation records land in the project's own
-SubOS, and the view the install writes is the view the shim reads.
+**Two views still disagree about the installed set.** A payload installed into
+the registry is not in the project SubOS's `installed[]`, so a shim invoked in
+the project can resolve the declared version and still report
+`… is not installed in this subos (_)`. That is the line the 2026.9.2.1
+verification recorded, and the reason the runner resolves a program through the
+declared payload's `bin/` before consulting `PATH`.
 
-**No flag, and no explicit switch.** With the declaration materialised into the
-project file's `workspace`, §1's merge already makes it authoritative —
-Anonymous puts the project layer over the global one, Named does not merge the
-global one at all. `activate_requested_targets` does not fire in that situation
-and should not: the merged view already answers with the declared version.
+That mismatch is real and is not addressed here. It is a question about which
+environment mcpp's own `--sysroot` names — the registry SubOS today — and
+answering it means changing where mcpp points the compiler, not where it points
+an install. That is a larger change than this document, and the runner lookup
+is a working compensation for its user-visible half.
 
-An earlier draft proposed `useAfterInstall: true` and an explicit `use_version`
-per entry. Both are withdrawn (§15).
-
-**One precondition, checked.** The scope fix works only if xlings accepts
-`<project>/.mcpp` as a project directory, and §1's discovery rule rejects any
-directory holding a `subos/`. It does not fire here: a project's SubOS lives at
-`<projectDir>/.xlings/subos/<name>`, so what would have to exist is
-`<project>/.mcpp/subos`, and nothing creates it — measured on
-`mcpplibs/riscv-virt-rt/.mcpp/`, which holds only `.xlings.json`. It is worth
-an assertion rather than a memory: anything that later writes a bare `subos/`
-under `.mcpp` would make mcpp's own project file invisible to xlings, silently
-and everywhere at once.
-
-### 3.3 Provisioning otherwise keeps its contract
-
-- The result is read, not assumed: `!called || childRc != 0`
-  (`prepare.cppm:3448`).
-- A failure is a hard build error naming the manual command.
-- The stamp is written only on success and keyed on the hash of the declared
-  set, so the merged table re-provisions once per project after the upgrade and
-  the common build performs nothing.
-- `MCPP_OFFLINE` and `MCPP_NO_AUTO_INSTALL` gate the install action, not the
-  block.
-
-### 3.4 Two consequences to write down
-
-**The project SubOS layer outranks the project manifest.** It merges last, so
-an explicit `xlings use` inside the project beats what `mcpp.toml` declares
-until the manifest is re-materialised. Defensible — an action a person took
-beats a file — but not obvious.
-
-**A declared version that was never installed already fails with the right
-words**: `"{}@{} is the version this project asks for"`
-(`src/core/xvm/shim.cpp:495`). Provisioning is what prevents it; that
-diagnostic is what happens when provisioning was skipped, and it names the
-project rather than the machine.
+**What is not done, and why it is not a gap in this change:** nothing in the
+merged table depends on the scope. `deps` and `workspace` are two projections
+of one entry either way, and the entry provisions and resolves exactly as it
+did before.
 
 ## 4. Change three: `envs` is retired
 

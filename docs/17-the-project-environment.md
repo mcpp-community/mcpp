@@ -63,6 +63,26 @@ Declaring it is what puts it there.
 the declared environment the default answer; everything else stays reachable
 behind it.
 
+### 2.1 Which version pins apply (2026.9.3+)
+
+Naming an environment also changes where a tool's version comes from. A
+project's own `[xlings.workspace]` entries always win; what differs is what
+they are laid over:
+
+| The project declares | The version of a tool it did not name comes from |
+|---|---|
+| `[xlings.workspace]`, no `subos` | the machine's environment |
+| `[xlings.workspace]` and `subos = "<name>"` | that environment's own workspace; the machine's does not apply |
+
+The second row is what isolation means. A named environment has its own
+installed set, and carrying the machine's versions into it would name versions
+that are not there — so a project that relied on the machine's tools has to
+declare them once it names an environment.
+
+An `xlings use` performed inside the project outranks both, until mcpp rewrites
+the environment: it is the layer merged last, and an action a person took
+should beat a file.
+
 ## 3. What the declaration does not decide
 
 `[xlings] deps` names packages to be present in the environment, and each one's

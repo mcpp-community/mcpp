@@ -4517,7 +4517,7 @@ deps = [{ linxu = "qemu-user-aarch64" }]
 )");
     ASSERT_FALSE(m.has_value());
     EXPECT_NE(m.error().message.find("linxu"), std::string::npos) << m.error().message;
-    EXPECT_NE(m.error().message.find("linux, macos, windows, default"), std::string::npos)
+    EXPECT_NE(m.error().message.find("linux, macosx, windows, default"), std::string::npos)
         << m.error().message;
     EXPECT_NE(m.error().message.find("deps[0]"), std::string::npos) << m.error().message;
 }
@@ -4551,4 +4551,155 @@ TEST(Manifest, ResolveHostValueTable) {
     auto s = mcpp::libs::toml::parse(R"(v = "plain")");
     ASSERT_TRUE(s.has_value());
     EXPECT_EQ(resolve_host_value(s->root().at("v"), "windows").value().value(), "plain");
+}
+
+// ── `[xlings.workspace]` as the one table (2026-09-03) ─────────────────────
+//
+// The design is `.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md`.
+// Each entry produces two projections — an install address and a resolution
+// pin — and the assertions are on both, because a test that checked only one
+// could not tell a dropped namespace from a dropped version.
+
+TEST(Manifest, XlingsWorkspaceProducesAnAddressAndAPin) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+cmake = "3.28"
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->xlings.workspace.at("cmake"), "3.28");
+    ASSERT_EQ(m->xlings.deps.size(), 1u);
+    EXPECT_EQ(m->xlings.deps[0], "cmake@3.28");
+}
+
+TEST(Manifest, XlingsWorkspaceNamespaceOnEitherHalfIsTheSameEntry) {
+    auto onValue = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+picolibc-riscv = "xim:1.8.12"
+)");
+    ASSERT_TRUE(onValue.has_value()) << onValue.error().format();
+    auto onKey = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+"xim:picolibc-riscv" = "1.8.12"
+)");
+    ASSERT_TRUE(onKey.has_value()) << onKey.error().format();
+    EXPECT_EQ(onValue->xlings.deps, onKey->xlings.deps);
+    EXPECT_EQ(onValue->xlings.workspace, onKey->xlings.workspace);
+    EXPECT_EQ(onValue->xlings.deps.at(0), "xim:picolibc-riscv@1.8.12");
+    EXPECT_EQ(onValue->xlings.workspace.at("picolibc-riscv"), "xim:1.8.12");
+}
+
+TEST(Manifest, XlingsWorkspaceDisagreeingNamespacesAreRefused) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+"xim:foo" = "other:1.0"
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("xim"), std::string::npos) << m.error().message;
+    EXPECT_NE(m.error().message.find("other"), std::string::npos) << m.error().message;
+}
+
+TEST(Manifest, XlingsWorkspaceNamingOnePackageTwiceIsRefused) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+foo = "1.0"
+"xim:foo" = "2.0"
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("twice"), std::string::npos) << m.error().message;
+    EXPECT_NE(m.error().message.find("xim:foo"), std::string::npos) << m.error().message;
+}
+
+// `""` is the authored spelling for "present, version unconstrained"; it is
+// what `d2mcpp/.xlings.json` already writes. Both halves are asserted: an
+// address with no `@`, and no pin at all.
+TEST(Manifest, XlingsWorkspaceEmptyVersionAsksOnlyForPresence) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+code = ""
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->xlings.deps.at(0), "code");
+    EXPECT_TRUE(m->xlings.workspace.at("code").empty());
+}
+
+// The descriptor emitter needs every platform, and the host resolution has
+// already discarded two of them — so the unresolved declaration is kept.
+TEST(Manifest, XlingsWorkspaceKeepsEveryPlatformForTheEmitter) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+qemu = { linux = "9.2.4-1", windows = "9.2.4-2" }
+ninja = "1.12.1"
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    const auto& byPlat = m->xlings.workspaceByPlatform;
+    ASSERT_TRUE(byPlat.contains("linux"));
+    ASSERT_TRUE(byPlat.contains("windows"));
+    EXPECT_NE(std::ranges::find(byPlat.at("linux"), "qemu@9.2.4-1"),
+              byPlat.at("linux").end());
+    EXPECT_NE(std::ranges::find(byPlat.at("windows"), "qemu@9.2.4-2"),
+              byPlat.at("windows").end());
+    // A plain string speaks for every platform, macosx included, even though
+    // `qemu` named none there.
+    ASSERT_TRUE(byPlat.contains("macosx"));
+    EXPECT_NE(std::ranges::find(byPlat.at("macosx"), "ninja@1.12.1"),
+              byPlat.at("macosx").end());
+    EXPECT_EQ(std::ranges::find(byPlat.at("macosx"), "qemu@9.2.4-1"),
+              byPlat.at("macosx").end());
+}
+
+// `deps` is honoured and reported. Refusing it would reach a DEPENDENCY's
+// manifest, which a consumer that pinned that package cannot edit.
+TEST(Manifest, XlingsDepsIsHonouredAndReported) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings]
+deps = ["xim:qemu-riscv@9.2.4-1"]
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->xlings.deps.at(0), "xim:qemu-riscv@9.2.4-1");
+    ASSERT_EQ(m->schemaWarnings.size(), 1u);
+    EXPECT_NE(m->schemaWarnings[0].find("[xlings.workspace]"), std::string::npos)
+        << m->schemaWarnings[0];
+    // The message shows the line to write, not merely that a line exists.
+    EXPECT_NE(m->schemaWarnings[0].find("qemu-riscv = \"xim:9.2.4-1\""),
+              std::string::npos) << m->schemaWarnings[0];
+}
+
+// `envs` was materialised and read by nothing, while the documentation said it
+// reached the tool environment. A key that does nothing is worse when
+// something claims it does, so this is an error rather than a warning.
+TEST(Manifest, XlingsEnvsIsRefused) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.envs]
+OPENBLAS_NUM_THREADS = "1"
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("[xlings.envs]"), std::string::npos)
+        << m.error().message;
 }

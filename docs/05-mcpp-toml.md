@@ -1866,63 +1866,80 @@ built" means is the same question `--target` answers (docs/08 §7.4).
 Both are warnings, never errors: coverage is release discipline, and the person
 who can judge it is looking at the release, not at this build.
 
-### 2.13 `[xlings]` — Build Environment
+### 2.13 `[xlings]` — the project's environment
 
 ```toml
-[xlings]
-deps  = ["make@4.4", "cmake@3.28", "python@3.13"]   # host build-tools to provision
-subos = "dev"                                        # a named per-project sandbox
+[xlings.workspace]                 # what this project's environment contains
+cmake                   = "3.28"
+picolibc-riscv          = "xim:1.8.12"     # namespace on the version
+"xim:qemu-user-aarch64" = "7.2.0"          # or on the key - quotes required
+code                    = ""               # present; version unconstrained
+llvm                    = { macosx = "20", default = "22" }
 
-[xlings.workspace]                                   # pin tool versions (general form of [toolchain])
-clang = "20.1.7"
-
-[xlings.envs]                                        # env vars applied to the tool environment
-OPENBLAS_NUM_THREADS = "1"
+subos = "dev"                      # a named, isolated environment
 ```
 
-Declares the project's **build environment**, provisioned through xlings (which mcpp
-is built on). The subsection names mirror xlings' own `.xlings.json` schema **1:1**, so
-mcpp materializes them verbatim into `<project>/.mcpp/.xlings.json` (no translation
-layer): `deps` (host build-tools), `[xlings.workspace]` (tool→version pins),
-`subos` (a named sandbox), `[xlings.envs]` (env vars). Use it to declare host tools a
-build needs (`make`/`cmake`/`protoc`/…), pin tool versions per project, or set
-build-time env vars — without hand-editing `.xlings.json`. `[toolchain]` (§2.7) remains
-the ergonomic shorthand for the compiler; `[xlings.workspace]` is the general form.
+`[xlings]` is mcpp's surface for **xlings' local project mechanism**: the
+project `.xlings.json` that gives a directory its own environment. The
+subsection names and their meanings are that file's, and mcpp materializes them
+into `<project>/.mcpp/.xlings.json` with no translation layer.
 
-**Values per host platform (2026.9.2.1+).** A `deps` entry and a
-`[xlings.workspace]` value may be a table keyed by platform, the form xlings'
-own `.xlings.json` accepts for `workspace`:
+**`[xlings.workspace]` is the one table.** An entry names a package and the
+version this project uses it at. mcpp provisions it — installing it when the
+machine does not have it, mapping it when it does — and materializes it as a
+resolution pin, so the version the project named is the one its tools resolve
+to.
 
-```toml
-[xlings]
-deps = ["xim:ninja", { linux = "qemu-user-aarch64" }, { windows = "nasm", default = "yasm" }]
+#### Writing an entry
 
-[xlings.workspace]
-gcc  = { linux = "15.1.0" }
-llvm = { macos = "20", default = "22" }
-```
+| Form | Means |
+|---|---|
+| `cmake = "3.28"` | that version |
+| `llvm = "22"` | the highest installed `22.*`; a version prefix resolves |
+| `code = ""` | present, version unconstrained |
+| `picolibc-riscv = "xim:1.8.12"` | from the `xim` index |
+| `"xim:picolibc-riscv" = "1.8.12"` | the same entry, namespace written on the key |
+| `llvm = { macosx = "20", default = "22" }` | per host platform |
 
-The keys are `linux`, `macos`, `windows` and `default`; `macosx` is accepted as
-xlings' spelling of `macos`. mcpp resolves the table against the host it runs
-on when the manifest is loaded: the host's key wins, `default` is the fallback,
-and a table with neither declares nothing on that host — the entry is absent,
-not empty. An unknown key is an error rather than a dropped entry. The axis is
-the host operating system only; a package that exists for the OS but not for
-the architecture is still a provisioning error on that host.
+The namespace may be written on either half. Writing it on the key requires
+**quotes**, because a TOML bare key cannot contain a colon. Writing it on both
+halves with different values is an error, and so is naming one package twice
+under two spellings.
 
-`subos` selects the root project's **local build/run OS environment**. If the
-key is absent, mcpp uses its initialized, release-verified `McppDefault` SubOS;
-`subos = "default"` is an explicit `NamedSubos("default")` selection. There is
-no CLI/environment override and no implicit following of xlings active/current.
+Platform keys are xlings' own — `linux`, `macosx`, `windows` — plus `default`;
+`macos` is accepted as an alias. A table with no key for this host and no
+`default` declares nothing here.
 
-On Linux the selected environment also fixes the loader/libc contract, so
-`subos = "el8"` and `subos = "trixie"` can coexist and produce separately
-fingerprinted objects. A workspace root overrides member declarations during a
-workspace build. Dependency/member SubOS declarations are non-transitive: a
-library's declaration applies when it is an independent root, not when its
-sources are consumed by another root. A missing named SubOS or missing/
-incompatible runtime contract is an error, never a fallback. See
-docs/08-toolchain-internals.md §2.1.
+#### Which version a tool the project did not name resolves to
+
+| The project declares | The version comes from |
+|---|---|
+| `[xlings.workspace]`, no `subos` | the machine's environment, with the project's own entries laid over it |
+| `[xlings.workspace]` and `subos = "<name>"` | that environment's own workspace; the machine's does not apply |
+| neither | the machine's environment |
+
+The middle row is not an omission. A named environment has its own installed
+set, and carrying the machine's versions into it would name versions that are
+not there. Naming one is how a project asks for isolation; leaving it out is
+how it asks for the machine's environment with its own entries on top.
+
+An `xlings use` performed inside the project outranks this table until mcpp
+rewrites the environment, because it is the layer merged last.
+
+#### `deps`, superseded
+
+`deps = ["xim:qemu-riscv@9.2.4-1"]` is the pre-2026.9.3 spelling of the same
+statement. It is still honoured and is reported once, with the
+`[xlings.workspace]` line to write instead. It is not refused, because a
+refusal would reach a *dependency's* manifest, which a project that pinned an
+exact version of that package cannot edit.
+
+#### `envs`, removed
+
+`[xlings.envs]` was materialized into `.xlings.json` and read by nothing: a
+program's environment is declared by its own package, and an environment's by
+that environment. The key is now an error naming both. Nothing in the index
+used it.
 
 ### 2.14 Host tools from a dependency (mcpp 2026.8.5.1+)
 

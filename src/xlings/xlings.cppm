@@ -375,9 +375,10 @@ struct ProjectEnv {
     std::vector<std::string>                          deps;       // → "deps"
     std::vector<std::pair<std::string,std::string>>   workspace;  // → "workspace"
     std::string                                       subos;      // → "subos"
-    std::vector<std::pair<std::string,std::string>>   envs;       // → "envs"
+    // No `envs`: the key was materialised here and read by nothing. See
+    // .agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md §4.
     bool empty() const {
-        return deps.empty() && workspace.empty() && subos.empty() && envs.empty();
+        return deps.empty() && workspace.empty() && subos.empty();
     }
 };
 
@@ -1509,7 +1510,6 @@ void seed_xlings_json(const Env& env,
     if (!penv.workspace.empty()) emit_obj("workspace", penv.workspace);
     if (!penv.subos.empty())
         json += std::format("  \"subos\": \"{}\",\n", json_escape(penv.subos));
-    if (!penv.envs.empty()) emit_obj("envs", penv.envs);
     json += "  \"lang\": \"en\",\n";
     json += std::format("  \"mirror\": \"{}\"\n", json_escape(mirror));
     json += "}\n";

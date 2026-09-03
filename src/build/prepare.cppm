@@ -3196,8 +3196,6 @@ prepare_build(bool print_fingerprint,
                 penv.subos = runtimeOwnerManifest.xlings.subos;
                 for (auto const& [k, v] : runtimeOwnerManifest.xlings.workspace)
                     penv.workspace.emplace_back(k, v);
-                for (auto const& [k, v] : runtimeOwnerManifest.xlings.envs)
-                    penv.envs.emplace_back(k, v);
             }
             if (runtimeSelection.ownerRoot == workRoot) {
                 mcpp::config::ensure_project_index_dir(
