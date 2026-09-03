@@ -509,6 +509,35 @@ reached, and because two of these were wrong in a way worth remembering.
 | A three-phase deprecation | one release (§2.4) | three manifests |
 | Keys are program names | keys are xvm targets, roots included (§12) | measured |
 
+### 15.1 What implementation found that the design did not
+
+Four things, and three of them were only visible once the code ran.
+
+**A nested `std::map` in an exported module truncates the BMI.** `XlingsConfig`
+first carried `map<string, map<string, string>>`. The module compiled and the
+BMI it wrote was unreadable: consumers failed with `Bad file data` and
+`failed to load pendings for 'std::map'`, pointing at an unrelated file's
+ordinary `std::map` alias. The emitter needs the addresses and never the inner
+keys, so a `vector` costs nothing and the field is one. xlings' own source
+carries a note about the same GCC 16 shape, with a different workaround.
+
+**The removed key's first casualties were this repository's own fixtures.**
+e2e 88 and 205 declared `[xlings.envs]` and went red on CI, not locally,
+because the local run had not reached them. That is the expected shape of
+removing a key that did nothing: the things that used it were the things that
+did not depend on it working.
+
+**One assertion could only fail on macOS, and did.**
+`Manifest.XlingsWorkspaceAcceptsPerPlatformValues` compared
+`host_platform_key()` against `"macos"`, and aligning that function with
+xlings' `macosx` made the comparison false on exactly one of the three hosts.
+The test was written in terms of the function so it would run everywhere; the
+literal on the other side of the comparison is what defeated that.
+
+**`deps` and `workspace` agreeing is not two entries.** Both feed the same
+derived list, so the same statement written twice asked xlings to install one
+package twice. It collapses, and only the advisory is produced.
+
 The two that mattered: reading a SubOS **state** file as though it were an
 authored **project** file, and asserting a blast radius without checking which
 environment the call runs in. Both were arguments from the shape of the code
