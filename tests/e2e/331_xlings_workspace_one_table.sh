@@ -62,8 +62,10 @@ out=$(declare_and_build '[xlings]
 deps = ["xim:mcpp-e2e-absent@1.0"]')
 grep -q "xim:mcpp-e2e-absent@1.0" <<<"$out" || fail "deps entry not provisioned: $out"
 grep -q "\[xlings.workspace\]" <<<"$out" || fail "no advisory naming the new table: $out"
-grep -q 'mcpp-e2e-absent = "xim:1.0"' <<<"$out" \
-    || fail "the advisory does not show the line to write: $out"
+# The recommended spelling, which is the namespace on the KEY: an author names
+# a package and then says which version of it.
+grep -q '"xim:mcpp-e2e-absent" = "1.0"' <<<"$out" \
+    || fail "the advisory does not show the recommended line to write: $out"
 
 # ── 5. one package in both tables, two versions, is refused ───────────────
 out=$(declare_and_build '[xlings]

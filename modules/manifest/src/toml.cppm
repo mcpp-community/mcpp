@@ -212,6 +212,20 @@ struct XlingsEntry {
         if (version.empty()) return {};
         return ns.empty() ? version : ns + ":" + version;
     }
+    // The RECOMMENDED authored spelling, which is not the same thing as the
+    // materialised one. A manifest names a package and then says which version
+    // of it, so the namespace belongs to the package and rides the key:
+    //
+    //     "xim:qemu-riscv" = "9.2.4-1"
+    //
+    // The other position is accepted and is what the file itself carries,
+    // because a `.xlings.json` key is an xvm target and the scope there
+    // qualifies the version. Two vocabularies, one entry; mcpp suggests the
+    // one an author writes.
+    std::string authored_line() const {
+        auto key = ns.empty() ? target : std::format("\"{}:{}\"", ns, target);
+        return std::format("{} = \"{}\"", key, version);
+    }
 };
 
 // The inverse: `[<ns>:]<target>[@<version>]` back into its parts. Used by the
@@ -1561,8 +1575,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 // The same statement in both tables. Not an error and not two
                 // entries: appending it again would ask xlings to install one
                 // package twice, so only the advisory below is produced.
-                replacement += std::format("\n           {} = \"{}\"",
-                                           entry.target, entry.pin());
+                replacement += "\n           " + entry.authored_line();
                 continue;
             } else if (pinned != m.xlings.workspace.end()) {
                 auto say = [](const std::string& p) {
@@ -1575,9 +1588,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     entry.target, say(entry.pin()), say(pinned->second))));
             }
             m.xlings.deps.push_back(**r);
-            // Show the author the line to write, not merely that one exists.
-            replacement += std::format("\n           {} = \"{}\"",
-                                       entry.target, entry.pin());
+            // Show the author the line to write, in the recommended spelling.
+            replacement += "\n           " + entry.authored_line();
         }
         if (!replacement.empty())
             m.schemaWarnings.push_back(std::format(

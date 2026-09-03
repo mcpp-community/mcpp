@@ -27,4 +27,4 @@ subos = "default"
 # project uses it at. mcpp provisions it and pins it, which is why the emulator
 # below is both installed on the first build and the one the project resolves.
 [xlings.workspace]
-qemu-riscv = "xim:9.2.4-1"
+"xim:qemu-riscv" = "9.2.4-1"

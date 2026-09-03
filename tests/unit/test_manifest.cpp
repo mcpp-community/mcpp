@@ -4687,8 +4687,10 @@ deps = ["xim:qemu-riscv@9.2.4-1"]
     ASSERT_EQ(m->schemaWarnings.size(), 1u);
     EXPECT_NE(m->schemaWarnings[0].find("[xlings.workspace]"), std::string::npos)
         << m->schemaWarnings[0];
-    // The message shows the line to write, not merely that a line exists.
-    EXPECT_NE(m->schemaWarnings[0].find("qemu-riscv = \"xim:9.2.4-1\""),
+    // The message shows the line to write, in the RECOMMENDED spelling: the
+    // namespace on the key, which is what an author writes and what every
+    // official package uses.
+    EXPECT_NE(m->schemaWarnings[0].find("\"xim:qemu-riscv\" = \"9.2.4-1\""),
               std::string::npos) << m->schemaWarnings[0];
 }
 

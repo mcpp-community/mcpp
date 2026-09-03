@@ -1595,11 +1595,10 @@ platforms = ["linux", "macos", "windows"]
 
 ```toml
 [xlings.workspace]                 # 这个工程的环境里有什么
-cmake                   = "3.28"
-picolibc-riscv          = "xim:1.8.12"     # 命名空间写在版本上
-"xim:qemu-user-aarch64" = "7.2.0"          # 或写在键上 —— 必须带引号
-code                    = ""               # 存在即可,版本不限
-llvm                    = { macosx = "20", default = "22" }
+cmake                    = "3.28"
+"xim:picolibc-riscv"     = "1.8.12"        # 带命名空间的包 —— 必须带引号
+code                     = ""              # 存在即可,版本不限
+llvm                     = { macosx = "20", default = "22" }
 ```
 
 ```toml
@@ -1622,12 +1621,16 @@ mcpp 既供给它——机器上没有就装,有就映射——也把它物化�
 | `cmake = "3.28"` | 该版本 |
 | `llvm = "22"` | 已装的最高 `22.*`;版本前缀会被解析 |
 | `code = ""` | 存在即可,版本不限 |
-| `picolibc-riscv = "xim:1.8.12"` | 来自 `xim` 索引 |
-| `"xim:picolibc-riscv" = "1.8.12"` | 同一条,命名空间写在键上 |
+| `"xim:picolibc-riscv" = "1.8.12"` | 来自 `xim` 索引的包 |
 | `llvm = { macosx = "20", default = "22" }` | 按宿主平台 |
 
-命名空间写在哪一半都可以。写在键上**必须带引号**,因为 TOML 的裸键不能含冒号。
-两半都写且不一致是错误;同一个包用两种拼法出现两次也是错误。
+**带命名空间的包写成 `"<命名空间>:<名字>" = "<版本>"`,引号必需** —— TOML 的裸键
+不能含冒号。这是**推荐形态,也是所有官方包使用的形态**:一条条目先点名一个包,
+再说用它的哪个版本,所以命名空间属于名字。
+
+命名空间写在版本上(`picolibc-riscv = "xim:1.8.12"`)同样接受,因为物化出来的
+`.xlings.json` 里正是那种形态 —— 那里的键是 xvm target,scope 限定的是版本。
+两套词汇,同一条条目。两半都写且不一致是错误;同一个包用两种拼法出现两次也是错误。
 
 平台键是 xlings 自己的 —— `linux`、`macosx`、`windows`,外加 `default`。`macos`
 与 `macosx` 是同一个平台的两套词汇(mcpp 的三元组说前者,描述符与 xlings 的项目
