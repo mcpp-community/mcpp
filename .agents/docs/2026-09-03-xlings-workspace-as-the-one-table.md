@@ -749,3 +749,112 @@ its documented shorthand installs, and nothing still compares the two keys when
 both name one package. §13 strengthened rather than weakened them: xlings makes
 the same split in the same direction, which is why the merge belongs in the
 manifest and not in the file.
+
+## 16. D8 in full: how mcpp makes a declared version the active one
+
+The requirement is one sentence — a declared tool at a declared version is
+installed if absent and active afterwards — and it needs three facts before it
+can be designed.
+
+### 16.1 xlings already auto-activates, and states when it will not
+
+`activate_requested_targets` in the installer:
+
+```cpp
+auto active = xvm::get_active_version(Config::effective_workspace(), match.name);
+if ((active.empty() || useAfterInstall) && has_version(db, match.name, match.version))
+    cmd_use(match.name, match.version, stream);
+else if (!active.empty() && active != match.version)
+    // declining to switch is a decision, and it used to be a silent one
+```
+
+So installing activates **when nothing is active for that name**, and otherwise
+declines and says so. The declined case is the one that matters here: `active`
+is read from the **merged** view, so a version active in the machine's global
+layer is enough to make the project's own declaration lose.
+
+### 16.2 Activation lands inside the project, not on the machine
+
+`cmd_use` writes to `Config::workspace_mut()`, which returns the project's SubOS
+workspace whenever a project config is loaded (`config.cpp:1163-1168`), and
+that directory is under the project:
+
+```cpp
+// config.cpp:348-353
+if (!projectSubosName_.empty()) return projectDir_ / ".xlings" / "subos" / projectSubosName_;
+if (projectSubosMode_ == Anonymous) return projectDir_ / ".xlings" / "subos" / "_";
+```
+
+For mcpp the project dir is `<project>/.mcpp`, so the layer written is
+`<project>/.mcpp/.xlings/subos/{<name>|_}/.xlings.json`. Two checkouts that
+declare different versions of one tool cannot disturb each other, and the
+machine's global choice is not touched. That is what makes forcing activation
+safe to do without a further opt-in.
+
+### 16.3 The rule falls out of the two value spellings
+
+W1 gave the manifest two ways to write an entry, and they ask for different
+things:
+
+| Entry | The project is asking for | Activation |
+|---|---|---|
+| `picolibc-riscv = "1.8.12"` | this version | force it |
+| `code = ""` | presence, version unconstrained | do not force; xlings' own rule applies |
+
+Forcing on an unconstrained entry would change a version the project never
+named, on a machine where something was already active. The empty spelling is
+the author saying they do not care, and mcpp should not decide for them.
+
+### 16.4 Requesting activation is not the same as obtaining it
+
+This is the part that decides the shape. When `install_packages` forces the
+switch and the switch fails, the installer logs a **warning** and the call
+still exits zero:
+
+```cpp
+if (useRet != 0)
+    log::warn("failed to activate {}@{} in current subos", match.name, match.version);
+```
+
+So `useAfterInstall: true` alone gives mcpp a request whose outcome it cannot
+read — the exact shape #531 was filed for, arrived at from the other side. The
+`use_version` capability, by contrast, returns `cmd_use`'s own exit code
+(`src/capabilities.cpp:208-220`), which mcpp can check.
+
+### 16.5 The proposed shape
+
+1. **One `install_packages` batch, unforced**, for every declared entry, as
+   today. Its result is already read (`!called || childRc != 0`), and its
+   failure keeps naming the manual command.
+2. **Then one `use_version` per entry that named a version**, exit code
+   checked. A failure is a hard build error naming the tool, the version and
+   the layer, because the manifest asked for something the environment did not
+   give.
+3. **Nothing extra for `""` entries.** Presence was the whole request, and step
+   1 satisfied it.
+4. The provisioning **stamp covers both steps**, so the common build performs
+   neither. Its key is the hash of the declared set, so editing a version
+   re-runs the pair once.
+
+The cost is N calls for N versioned entries on the rare path. The alternative —
+a second forced `install_packages` batch — is one call, and it buys that by
+giving up the exit code, which is the thing being paid for.
+
+`use_version` takes a plain name ("Use plain name (e.g. gcc not xim:gcc)"), so
+mcpp passes the target without its namespace and keeps the namespace for the
+install address only (§3 W2).
+
+### 16.6 What to verify
+
+| # | Criterion |
+|---|---|
+| A1 | A project declaring a version different from the machine's active one builds and runs against the declared version |
+| A2 | The machine's global workspace is unchanged after that build, measured on the file |
+| A3 | Two checkouts declaring different versions of one tool each get their own, in one session |
+| A4 | An entry with `""` on a machine where another version is active leaves that version active |
+| A5 | A `use_version` that fails ends the build with a message naming tool, version and layer — not a warning |
+| A6 | The second build of an unchanged project performs no install and no switch |
+
+A5 is the one that must be seen failing first: with `useAfterInstall` and
+without the explicit switch, the same situation produces a warning inside a
+successful build, which is what the design is choosing against.
