@@ -750,38 +750,42 @@ both name one package. §13 strengthened rather than weakened them: xlings makes
 the same split in the same direction, which is why the merge belongs in the
 manifest and not in the file.
 
-## 16. D8: the question is which environment mcpp provisions into
+## 16. D8 withdrawn: the merge already does it, once the scope is right
 
-The requirement is one sentence — a declared tool at a declared version is
-installed if absent and active afterwards. It looked like a flag. It is not.
+The requirement — a declared tool at a declared version is installed if absent
+and active afterwards — needs no flag, no explicit switch and no new rule. It
+needs mcpp to ask in the right environment. Everything else is already built.
 
-### 16.1 xlings already does the whole job, correctly
+### 16.1 Both halves are native
 
-Installing an already-present payload does not reinstall it. The installer
-checks whether the payload exists and is registered to this package, sets
-`payloadInstalled` and skips the install hook
-(`src/core/xim/installer.cpp:2740-2775`), then proceeds to the mapping and
-activation steps. So "map when the payload is there, install when it is not" is
-the existing behaviour, not something to build.
+**Mapping rather than reinstalling.** The installer checks whether the payload
+exists and is registered to this package, sets `payloadInstalled` and skips the
+install hook (`src/core/xim/installer.cpp:2740-2775`). An already-present
+payload is mapped; only a missing one is fetched.
 
-Activation is equally native. `activate_requested_targets` switches whenever
-**nothing is active for that name**:
+**The declaration outranking the machine.** `merge_workspace_into_` assigns
+rather than inserts (`src/core/config.cpp`), so in `merged_workspace` the later
+layer wins:
 
-```cpp
-auto active = xvm::get_active_version(Config::effective_workspace(), match.name);
-if ((active.empty() || useAfterInstall) && has_version(db, match.name, match.version))
-    cmd_use(match.name, match.version, stream);
-else if (!active.empty() && active != match.version)
-    // declining to switch is a decision, and it used to be a silent one
-```
+| Mode | Layers, in merge order | What wins |
+|---|---|---|
+| Anonymous | global, project manifest, project SubOS | the project's declaration beats the machine's |
+| Named | project manifest, project SubOS | the machine's layer is not present at all |
 
-Both halves of the requirement are therefore already implemented. What decides
-whether mcpp gets them is the environment it asks in.
+So a project that declares `gcc = "15.1.0"` resolves `gcc` to 15.1.0 even on a
+machine whose global workspace is on 16.1.0 — because mcpp materialises that
+declaration into the project file's `workspace` object (§4), which is a layer
+that beats global. The developer chooses the strength by choosing the mode:
+name a SubOS for an isolated space, or leave it anonymous and get the machine's
+environment with the project's own entries laid over it.
 
-### 16.2 Corrected: mcpp provisions into the registry home, not into the project
+Nothing has to force anything. `activate_requested_targets` does not fire in
+this situation, and correctly: the merged view already answers with the
+declared version, so there is nothing to switch.
 
-An earlier draft of this section claimed activation lands in the project's own
-layer. It does not. The provisioning pass calls
+### 16.2 What is actually wrong today: mcpp provisions in the wrong scope
+
+The provisioning pass calls
 
 ```cpp
 mcpp::xlings::call(mcpp::config::make_xlings_env(**cfg2), "install_packages", …)
@@ -790,89 +794,58 @@ mcpp::xlings::call(mcpp::config::make_xlings_env(**cfg2), "install_packages", �
 (`prepare.cppm:3421`), and `make_xlings_env` carries no `projectDir`
 (`src/config.cpp:129`), so no `XLINGS_PROJECT_DIR` reaches the child and the
 cwd walk finds nothing — mcpp writes `<project>/.mcpp/.xlings.json`, one level
-below the directory a walk from the project root inspects. The child therefore
-runs in **global** scope against mcpp's registry home, where
-`Config::workspace_mut()` is the global workspace and `effective_workspace()`
-is the global workspace.
+below the directory a walk from the project root inspects. The child runs in
+**global** scope against mcpp's registry home.
 
-Three consequences follow, and they explain measurements this repository
-already has:
+That single fact produces every symptom in this section:
 
-1. `active` is read from a workspace shared by **every mcpp project on the
-   machine**, so a version another project activated is enough to make this
-   project's declaration lose.
-2. Forcing the switch there would let two checkouts flip each other. The
-   decline is protective in this scope, not obstructive.
-3. The install's view and the shim's view disagree. The install activates in
-   the registry's global workspace; a program invoked from the project
-   directory resolves through the project's own layers. That is exactly the
+1. The install's records land in the registry's global workspace, while a
+   program invoked from the project resolves through the project's layers. The
+   two views disagree, which is the
    `qemu-aarch64-static is not installed in this subos (_)` measured during the
-   2026.9.2.1 verification, and the reason mcpp had to add a payload-directory
-   lookup for the runner at all (§13.2 of the runner design).
+   2026.9.2.1 verification — and the reason the runner needed a
+   payload-directory lookup at all.
+2. `active` is read from a workspace shared by every mcpp project on the
+   machine, so the auto-activation decides against a state no project owns.
+3. Any attempt to force the switch would write into that shared workspace,
+   letting two checkouts flip each other.
 
-### 16.3 The two designs
+**The fix is the scope, not a flag**: provision with
+`make_project_xlings_env(cfg, root)`. The child then runs in project scope, the
+installed set and activation records land in the project's own SubOS
+(`config.cpp:348-353` puts it under `<project>/.mcpp/.xlings/subos/…`), and the
+view the install writes is the view the shim reads.
 
-**Design P — provision in the project's environment.** mcpp calls with
-`make_project_xlings_env(cfg, root)`, so `XLINGS_PROJECT_DIR=<project>/.mcpp`
-and the child runs in project scope. `Config::workspace_mut()` is then the
-project's own SubOS workspace at `<project>/.mcpp/.xlings/subos/{name|_}`
-(`config.cpp:348-353`), and `effective_workspace()` includes the project's
-layers.
+**D8 is withdrawn.** `useAfterInstall` is not passed, and no `use_version` call
+is added. The provisioning pass keeps its shape and changes one argument.
 
-Under P, xlings' native behaviour is what is wanted and no flag is needed —
-with one condition. In **Anonymous** mode the merge still includes the global
-layer (§13.3), so a globally active version still shadows the declaration. In
-**Named** mode the global layer is dropped, `active` is empty for a name the
-project has not pinned, and the install activates exactly what was declared.
-So P is "provision in the project scope, and the project's environment is its
-own SubOS".
+### 16.3 Two consequences to write down rather than discover
 
-**Design G — keep provisioning globally, and force.** Pass
-`useAfterInstall: true`. It makes the declaration win, and it makes two
-checkouts fight over one shared workspace. It also cannot be verified: a forced
-switch that fails is a `log::warn` inside a call that exits zero
-(`installer.cpp`), so mcpp would hold a request whose outcome it cannot read.
+**The project SubOS layer outranks the project manifest.** It is merged last,
+so an explicit `xlings use` performed inside the project beats what
+`mcpp.toml` declares, until the manifest is re-materialised. That is defensible
+— an action a person took beats a file — but it is not obvious, and it belongs
+in the documentation next to the table above.
 
-**P is the recommendation**, and it is the one that matches what `[xlings]`
-claims to be — a project-level isolated environment. G's forcing is not needed
-once the scope is right, and G's shared workspace is the thing the isolation
-exists to avoid.
+**A declared version that is not installed fails at the shim, with the right
+words.** Resolution finds the pin, `match_version` finds no such installed
+version, and the diagnostic is already
+`"{}@{} is the version this project asks for"` (`src/core/xvm/shim.cpp:495`).
+Provisioning is what prevents it; the diagnostic is what happens if
+provisioning was skipped, and it names the project rather than the machine.
 
-### 16.4 What P costs, and what has to be decided with it
-
-P is not free, and the cost is the same fact §13.3 records: a Named SubOS does
-not inherit the machine's global pins. A project that declares one gets an
-environment holding what it declared and what was installed into it, and
-nothing else. That is isolation working as specified, and it is a change for
-every project that today relies on the machine's tools being visible.
-
-So P carries one decision that is not mcpp's alone:
-
-**Does an mcpp project's environment inherit the machine's, or not?**
-
-- Inheriting (Anonymous) keeps every existing project building and leaves the
-  declaration able to lose to a globally active version.
-- Not inheriting (Named) makes the declaration authoritative and requires the
-  project to declare everything it uses.
-
-A middle position exists and should be considered rather than assumed away:
-provision in project scope while staying Anonymous, and accept that a declared
-version can still lose to a globally active one — then report that case rather
-than silently accepting it. The installer already emits the sentence; mcpp
-would have to read it, which returns to the verification problem G has.
-
-### 16.5 What to verify, whichever is chosen
+### 16.4 What to verify
 
 | # | Criterion |
 |---|---|
-| A1 | A project declaring a version different from the machine's active one builds and runs against the declared version |
+| A1 | A project declaring a version different from the machine's active one builds and runs against the declared version, in Anonymous mode |
 | A2 | The machine's global workspace file is unchanged after that build |
 | A3 | Two checkouts declaring different versions of one tool each get their own, in one session |
 | A4 | An entry with `""` on a machine where another version is active leaves that version active |
-| A5 | A declared version that could not be made active ends the build with a message naming tool, version and layer — never a warning inside a successful build |
-| A6 | The second build of an unchanged project performs no install and no switch |
-| A7 | A program the project did not declare still resolves, or fails with a message naming the environment it was looked up in |
+| A5 | A Named SubOS project resolves only what it declared plus what its environment holds, and a tool it did not declare fails naming that environment |
+| A6 | The second build of an unchanged project performs no install |
+| A7 | A declared version that was never installed fails at the shim with the "version this project asks for" wording, not with a bare "not found" |
 
-A2 and A3 are the ones that fail under G today. A7 is the one that changes
-meaning between the two branches of §16.4, and it is where the decision becomes
-visible to a user.
+A1, A2 and A3 fail today for one reason, the scope of `make_xlings_env`, and
+pass together once it changes. A5 is the Named branch of the table in §16.1 and
+is what makes the developer's choice visible.
