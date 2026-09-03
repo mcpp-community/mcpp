@@ -382,6 +382,11 @@ the right toolchain payload is resolved and installed automatically.
 | `aarch64-macos`       | llvm *(macOS default)* | ✅ |
 | `riscv64-none-elf`    | llvm 22 — bare metal, no OS; needs no per-host cross payload ² | ✅ |
 | `riscv32-none-elf`    | llvm 22 — bare metal, no OS; needs no per-host cross payload ² | ✅ |
+| `thumbv6m-none-eabi`  | llvm 22 — Cortex-M0/M0+/M1, bare metal ² | ✅ |
+| `thumbv7m-none-eabi`  | llvm 22 — Cortex-M3, bare metal ² | ✅ |
+| `thumbv7em-none-eabihf` | llvm 22 — Cortex-M4F/M7F, hard float ² | ✅ |
+| `thumbv8m.main-none-eabi` | llvm 22 — Cortex-M33/M55, soft float ² | ✅ |
+| `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22 — builds and links; no emulator run recorded | 🔄 |
 | `riscv64-linux-musl`  | — | 🔄 |
 | `aarch64-linux-gnu`   | — | 🔄 |
 | `x86_64-macos`        | — | 🔄 |
