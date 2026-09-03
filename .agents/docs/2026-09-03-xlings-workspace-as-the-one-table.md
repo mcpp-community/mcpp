@@ -455,10 +455,31 @@ The project file's `workspace` object is read into `projectWorkspace_`
 | `Anonymous` (project file, no `subos`) | global, then project manifest, then the project subos |
 | no project config | global only |
 
-**A named subos drops the global workspace entirely.** A project that declares
-`[xlings] subos` therefore loses the machine's global pins for every tool it
-does not pin itself, and nothing in mcpp says so today. That is a property of
-`subos`, not of this proposal, and it belongs in `docs/17`.
+**Pinning a few and inheriting the rest is what the Anonymous row does.** A
+project that writes `[xlings.workspace]` and no `subos` starts from the global
+workspace and merges its own entries on top, so every tool it does not name
+keeps the machine's version. This is the common shape for an mcpp project and
+it works as an author would expect.
+
+**A named subos does not inherit the global layer, and that is deliberate
+rather than an omission.** A named SubOS is a different environment with its
+own installed set; carrying the host's pins into it would name versions that
+environment does not have. Its own `workspace` — stored in
+`<subos>/.xlings.json` and merged as the last layer — is what it inherits from
+instead. A SubOS created with `xlings subos new <name> --from <base>` receives
+the base's workspace map by copy at creation (`src/core/subos.cpp:978`); that
+is a one-time inheritance, not a live link.
+
+**Nothing falls back silently when no layer names a tool.** The shim reads
+`Config::effective_workspace()` and, finding no active version, produces a
+diagnostic rather than choosing one (`src/core/xvm/shim.cpp:408-460`:
+`xvm.no_active_version`, or the "installed in this subos, but no version is
+active" form). The `qemu-aarch64-static is not installed in this subos (_)`
+line measured during the 2026.9.2.1 verification is that path.
+
+What mcpp does not state today is the first two paragraphs: that declaring
+`[xlings] subos` changes which pins apply, and that the environment's own
+workspace replaces the global one. That belongs in `docs/17`.
 
 **A `workspace` entry installs nothing.** No install path reads it. This
 answers Q1: xlings does not provision from `workspace`, which is why section 4
