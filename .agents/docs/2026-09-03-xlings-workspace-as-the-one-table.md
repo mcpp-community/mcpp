@@ -91,62 +91,62 @@ llvm           = { macos = "20", default = "22" }
 
 Three decisions the table needs, listed for review.
 
-**W1. There is no `"*"`, and none should be invented.** xlings already has two
-spellings for "not an exact version": a version **prefix**, which
-`match_version` resolves to the highest match (`src/core/xvm/db.cpp:411` — `22`
-selects `22.1.8`), and `latest`, which `cmd_use` resolves to the highest
-installed version before writing (`commands.cpp:592-607`). Both are **input**
-spellings: what lands in a workspace file is always a concrete version, which
-is why a stored `latest` would fail at shim time rather than mean anything. The
-manifest therefore accepts a version, a prefix, or `latest`, and "must exist,
-version unconstrained" is spelled `latest`. Measured on three real subos files
-on the development host: every stored value is concrete.
+These are settled against the **authored project file**, not against a SubOS
+state file. The two are different artifacts: a state file is what `cmd_use`
+writes (`{active, installed}` records, one per binding-group member), while a
+project file is what a person writes. `mcpp-community/d2mcpp/.xlings.json` is a
+published example of the latter:
 
-**W2. The namespace goes on the version, not on the key — and the key form was
-checked rather than assumed.** Measured on the development host: 1635 targets
-in the version database and 546 workspace entries in the default SubOS, and
-**not one key contains a colon**. The colon appears on the other side:
-`"mcpp": {"active": "xim:2026.8.30.2", …}`.
-
-`ns:name` as a key was considered and does not work, for a reason stronger than
-convention. A workspace key is looked up by the name a program is **invoked
-as** (`get_active_version(workspace, program_name)`,
-`src/core/xvm/shim.cpp:409-412`); nothing is ever invoked as
-`xim:picolibc-riscv`, so such a key would be read by nobody — the shape §6
-refuses for `deps`.
-
-And the namespace is not a property of the tool. It qualifies **where a version
-came from**, which is why one target legitimately carries both scoped and
-unscoped versions at once. Measured, on this machine, for `mcpp` itself:
-
-```
-"mcpp": { "active": "xim:2026.8.30.2",
-          "installed": ["2026.8.21.1", …, "xim:2026.8.28.2", "xim:2026.8.30.1"] }
+```json
+{
+  "workspace": {
+    "d2x": "2026.08.02.2",
+    "mdbook": "0.4.43",
+    "code": "",
+    "mcpp": { "linux": "2026.8.2.1", "macosx": "2026.8.2.1", "windows": "2026.8.2.1" }
+  }
+}
 ```
 
-Eight versions of one target, some from the xim index and some not. Moving the
-namespace onto the key would split that into two targets, and `mcpp` on `PATH`
-would resolve to whichever half won — which is the same defect in the small
-that `ar` from two providers would be in the large.
+**W1. "Version unconstrained" is the empty string, and it is already in use.**
+`"code": ""` in the example above is the spelling. `resolve_platform_workspace_value_`
+returns it unchanged and `workspace_from_json` stores it
+(`src/core/xvm/db.cppm:383`, `db.cpp:1100-1110`); downstream, an empty value is
+read as "this entry claims no version" (`Config::version_origin`'s `claims`
+predicate, `config.cpp:1108-1112`). So the entry names a member of the
+environment and leaves its version open, which is exactly what `deps = ["cmake"]`
+means today. No `*` and no `latest` is introduced: `""` is the form the file
+already has, and it maps onto an install target with no `@version`.
 
-So the form is:
+**W2. The namespace is undefined in this position today, and defining it is
+xlings' call.** No workspace key anywhere carries one: not in the authored
+example above, and not in 1635 version-database targets or 546 SubOS entries on
+the development host. The colon appears only on the version side, where a
+scope qualifies where a version came from — `"mcpp": {"active":
+"xim:2026.8.30.2", …}`, one target holding both scoped and unscoped versions.
 
-```toml
-[xlings.workspace]
-picolibc-riscv = "xim:1.8.12"
-```
+But that is a statement about **resolution**, and the namespace is needed for
+**installation**, and nothing derives an install address from a workspace entry
+today, because nothing installs from `workspace` at all (§13.2). The moment
+mcpp does, the question becomes real and has two candidate answers:
 
-the key being the xvm target and the namespace riding the value, exactly as the
-file writes it. mcpp reconstructs the install address `xim:picolibc-riscv@1.8.12`
-from the pair when it provisions, so nothing is lost, and the C library mcpp
-injects (§4) is expressible in the same shape.
+| Form | Reads | Costs |
+|---|---|---|
+| `picolibc-riscv = "xim:1.8.12"` | key is the xvm target; the scope rides the version, as the version database already spells it | the address is assembled from two halves |
+| `"xim:picolibc-riscv" = "1.8.12"` | key is the install address, as `deps` spells it | the key is no longer the name the shim looks up, so resolution has to strip it |
 
-A key containing a colon is a **hard error naming the correct form**, rather
-than a second accepted spelling: one fact, one way to write it, is the whole
-argument of this document applied to itself.
+The second is closer to `deps` and to how a person thinks about a package; the
+first is closer to what the file already contains. Either works if the rule is
+stated once — what must not happen is both being accepted, which would put one
+fact in two spellings. **This is the one item in section 3 that is a request
+rather than a finding.**
 
-**W3. The per-platform value form is unchanged.** It is already accepted on
-both keys (2026.9.2.1) and it survives the merge unmodified.
+**W3. The per-platform form is xlings' own, and its native keys are
+`linux`, `windows`, `macosx` and `default`** (`platform::OS_NAME` per
+`modules/platform/src/platform/*.cppm`, resolved by
+`resolve_platform_workspace_value_`). mcpp additionally accepts `macos` as an
+alias, which is a superset and stays; the documentation should show `macosx`
+as the aligned spelling.
 
 ## 4. What mcpp writes into `.xlings.json`
 
@@ -537,29 +537,37 @@ workspace replaces the global one. That belongs in `docs/17`.
 answers Q1: xlings does not provision from `workspace`, which is why section 4
 was revised rather than kept.
 
-### 13.3.1 What a workspace key is: an xvm target, of any kind
+### 13.3.1 Two artifacts share the name `.xlings.json`
 
-Measured on the development host's default SubOS, 546 entries:
+They must not be measured for each other, and this document did so once.
+
+**The authored project file** is what a person writes and what mcpp
+materialises: `workspace` maps a name to a version string or to a
+platform-conditional object, and nothing else. `d2mcpp/.xlings.json` is the
+published example (§3).
+
+**A SubOS state file** is what `cmd_use` writes: the same key space, but each
+value is an `{active, installed[]}` record, and the keys are every member of
+every release ever switched to. On the development host's default SubOS that is
+546 entries, including package roots, their programs, and file assets:
 
 ```
 binutils = 2.42     ar = 2.42      as = 2.42      ld = 2.42
 gcc      = 16.1.0   g++ = 16.1.0   cc = 16.1.0
-mcpp     = xim:2026.8.30.2
 Scrt1.o, crt1.o, crti.o, crtn.o, glibc.files.1 … glibc.files.101
 ```
 
-Package roots, the programs of those packages, and file assets all live in one
-namespace, each with `{active, installed}`. A package root and its programs
-carry the **same version** because they are members of one release and
-`cmd_use` wrote them together (§15.1) — that identity is the group expansion's
-own footprint in the data.
+A package root and its programs carry the same version there because they are
+members of one release and `cmd_use` wrote them together (§15.1). That identity
+is the group expansion's footprint, and it is why writing a package root in a
+project file pins its programs: the expansion happens when the entry is
+honoured.
 
-So "the workspace holds packages" and "the workspace holds programs" are both
-half-right: it holds xvm targets, and a package's root is one of them. Writing
-the package in a manifest is therefore a legitimate entry, and its programs
-receive the same version when the entry is honoured. Writing a program is
-equally legitimate and selects the same release. What a key never carries is a
-namespace; that rides the value (§3 W2).
+The parser accepts both shapes for a value and disambiguates by reserved keys —
+an `active` or `installed` key marks the state form, anything else is read as
+the project form (`src/core/xvm/db.cppm:405-420`). So the two files are one
+schema seen at two stages, and the project form is the one mcpp's `[xlings]`
+mirrors.
 
 ### 13.4 `envs` has no reader anywhere
 
