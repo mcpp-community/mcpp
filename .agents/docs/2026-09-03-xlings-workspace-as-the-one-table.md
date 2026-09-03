@@ -192,10 +192,19 @@ not theirs to edit, and refusing it punishes the wrong person.
 1. The merged reader ships. `[xlings] deps` in the **root** manifest is a hard
    error naming the line to write; in a **dependency's** manifest it is
    honoured and reported once, naming the package.
-2. The three packages are republished with `[xlings.workspace]` and an mcpp
-   floor.
+2. The three packages are republished with `[xlings.workspace]` — **not in
+   this cycle, and the reason is a silent regression rather than caution.** An
+   older mcpp parses `[xlings.workspace]` perfectly well and provisions nothing
+   from it, so a package that migrated before its consumers moved would stop
+   installing its emulator on every older engine, with no message anywhere.
+   That is worse than the advisory it would silence. The migration is safe once
+   the index's `latest` mcpp provisions from the table, and a floor in the
+   package makes the older engine refuse instead of degrade.
 3. An index sweep confirms no other published manifest declares it. When the
    advisory has been silent across a release, the dependency path refuses too.
+
+What this cycle does instead is verify: the three packages build on the new
+engine, produce the advisory, and provision exactly as before.
 
 **A limit of the advisory, stated rather than implied.** It rides
 `schemaWarnings`, which `prepare` prints for the ROOT manifest and escalates
@@ -519,7 +528,7 @@ T1 manifest ──┬── T2 provisioning scope ──┐
 | T4 | `xpm.<platform>.deps` in the emitted descriptor | `src/pm/publisher.cppm` | T1 |
 | T5 | `docs/05` §2.13, `docs/17`, both `docs/zh/` twins | docs | T1-T4 |
 | T6 | Unit tests and one e2e | `tests/` | T1-T4 |
-| T7 | The three packages republish | `mcpplibs/{aarch64-virt-rt,riscv-virt-rt,std-freestanding}` | T8 |
+| T7 | The three packages are verified on the new engine; the republish waits for the floor (§2.4) | `mcpplibs/{aarch64-virt-rt,riscv-virt-rt,std-freestanding}` | T8 |
 | T8 | Version, CI, self-review, merge, release, sandbox | — | T5, T6 |
 
 ### 16.1 What each axis demands of the implementation
