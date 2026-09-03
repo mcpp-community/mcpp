@@ -107,16 +107,28 @@ both keys (2026.9.2.1) and it survives the merge unmodified.
 
 ## 4. What mcpp writes into `.xlings.json`
 
-**Decided (2026-09-03): mcpp writes `workspace`, and nothing else changes.**
-The correspondence between `[xlings]` and `.xlings.json` is one to one in name
-and in meaning, so `[xlings.workspace]` materialises as the file's `workspace`
-object and the merged semantics is xlings' own. The `deps` array stops being
-emitted when `deps` is retired.
+**Decided (2026-09-03), and revised the same day against the xlings source
+(§13): the merge belongs in `mcpp.toml`, and the file keeps both fields.**
 
-The alternative — deriving a `deps` array from `workspace` when writing — is
-rejected. It is a translation layer, which §2.13 refuses, and it would put the
-same statement in the file twice, which is the drift shape section 1 exists to
-remove.
+One authoring key. When mcpp materialises it, an entry becomes a `deps` element
+*and* a `workspace` member, because the file's two fields have two different
+consumers in xlings and neither subsumes the other: `deps` is the install
+trigger read by a bare `xlings install` (`src/core/cmdprocessor.cpp:163`), and
+`workspace` is a version-resolution layer merged into the project's effective
+pins (`src/core/config.cpp:660`, `:846`). Emitting both is not a translation
+layer — it is the faithful materialisation of one statement, "use this at this
+version, provision it if absent", into the two places xlings reads those two
+halves.
+
+The earlier draft of this section proposed writing only `workspace` and letting
+xlings provision from it. §13 measures that xlings does not: `deps` is the only
+key its install path reads. Writing only `workspace` would have produced a
+project that builds where the packages happen to be installed and fails on a
+clean machine, which is the failure this document exists to avoid.
+
+If xlings later provisions from `workspace`, the `deps` half of the emission
+can be dropped without touching `mcpp.toml` or any manifest. That is the
+end-state, and it is a change on the xlings side, not here.
 
 One consequence for section 3's W2. mcpp does not only pass the author's
 entries through: it appends the target's C library to the same channel
@@ -398,3 +410,103 @@ answered here.
 `PATH` contract are unchanged. The change is confined to which of the two
 package-shaped fields exists, and to the resolution loss §7 describes, which
 the merged field inherits.
+
+## 13. What the four fields actually do, measured in the xlings source
+
+Read at `/home/speak/workspace/github/openxlings/xlings`, 2026-09-03. Section 4
+and question Q1 of section 11 are answered here; section 12.5 is corrected.
+
+### 13.1 How the file is found at all
+
+xlings locates a project config by walking the current directory upward for a
+`.xlings.json`, stopping at any directory that also contains a `subos/` — that
+signature means "an xlings home", never a project — and, failing that, by
+reading `XLINGS_PROJECT_DIR` (`src/core/config.cpp:765-799`).
+
+mcpp writes `<project>/.mcpp/.xlings.json` and passes
+`XLINGS_PROJECT_DIR=<project>/.mcpp`, so the file is reached through the
+environment variable, not the walk. A person standing in the project root and
+running `xlings` does not see it: the walk looks for `<project>/.xlings.json`,
+one level up from where mcpp writes. Measured on a real materialisation
+(`mcpplibs/riscv-virt-rt/.mcpp/.xlings.json`), whose `.mcpp/` holds no `subos/`
+and therefore does not trip the home boundary.
+
+### 13.2 `deps` is the only install trigger, on both sides
+
+`install_from_project_config` (`src/core/cmdprocessor.cpp:163-196`) is the
+no-argument `xlings install`. It reads `deps`, errors when the key is absent or
+is not an array, and installs each entry through
+`xmake xim -P <home> -- <target> -y`. It reads no other key.
+
+mcpp's own provisioning does not use that path: it calls the `install_packages`
+capability with targets it read from `mcpp.toml` itself. So the `deps` array in
+the file serves a different consumer — a person running bare `xlings install` —
+than the pass that makes `mcpp build` work.
+
+### 13.3 `workspace` is a version layer, and a named subos drops the global one
+
+The project file's `workspace` object is read into `projectWorkspace_`
+(`config.cpp:660-662`) and becomes one layer of the effective pins.
+`merged_workspace` (`config.cpp:846-864`) resolves them:
+
+| Project subos mode | Layers merged, later winning |
+|---|---|
+| `Named` (the file declares `subos`) | project manifest, then that subos's own workspace |
+| `Anonymous` (project file, no `subos`) | global, then project manifest, then the project subos |
+| no project config | global only |
+
+**A named subos drops the global workspace entirely.** A project that declares
+`[xlings] subos` therefore loses the machine's global pins for every tool it
+does not pin itself, and nothing in mcpp says so today. That is a property of
+`subos`, not of this proposal, and it belongs in `docs/17`.
+
+**A `workspace` entry installs nothing.** No install path reads it. This
+answers Q1: xlings does not provision from `workspace`, which is why section 4
+was revised rather than kept.
+
+### 13.4 `envs` has no reader anywhere
+
+Every `envs` consumer in the xlings source is one of two structures, and
+neither is the flat object mcpp writes:
+
+1. `xvm`'s `VData::envs` — environment variables attached to **one program's**
+   shim, stored in the version database and applied when the shim runs
+   (`src/core/xvm/db.cpp:724`, `src/core/xvm/shim.cpp:337`). Set through
+   `xvm add --env`, not through any project file.
+2. A SubOS's `subos_info.envs` — "an object of **provider sections**" keyed by
+   binding (`src/core/subos/manifest.cpp:197-290`), part of the environment's
+   own metadata.
+
+Searching the whole source for `contains("envs")` and `["envs"]` outside those
+two files and the doctor that checks them returns nothing. There is no reader
+for a flat name-to-value `envs` object in a project or home `.xlings.json`.
+
+**So `[xlings.envs]` is written by mcpp and read by nobody.** It does not reach
+a built program's environment either: `compute_subos_env`
+(`src/build/execute.cppm:418`) derives that from `plan.runtimeBinding`, the
+SubOS's own `subos_info`, and never consults `[xlings.envs]`. The sentence in
+`docs/05-mcpp-toml.md` §2.13 that calls it "env vars applied to the tool
+environment" describes an effect that does not occur.
+
+Three ways out, and the choice is not this document's to make:
+
+- **Wire it in xlings**: give the project file a flat `envs` object that the
+  tool environment applies. The key already exists in mcpp and in the file.
+- **Map it onto `xvm`'s per-program `envs`**: possible only if the manifest
+  says which program each variable belongs to, which `[xlings.envs]` does not.
+- **Retire it**, on the same three-phase path §6 gives `deps`, and for the same
+  reason: a key that is read by nobody is the shape #531 exists to prevent, and
+  it is worse here because the documentation states an effect.
+
+The recommendation is to decide before this proposal ships, because retiring
+`deps` while leaving a second dead key in the same section would leave the
+section half-audited.
+
+### 13.5 Corrections this section makes to the rest of the document
+
+| Where | Was | Is |
+|---|---|---|
+| §4 | mcpp writes only `workspace` | mcpp writes both fields; the merge is in `mcpp.toml` |
+| §11 Q1 | open | answered: xlings does not provision from `workspace` |
+| §12.1 | `envs` reader: "the materialisation" | no reader on either side |
+| §12.5 | `[xlings.envs]` is read by xlings for the tool environment | it is read by nothing |
