@@ -154,7 +154,14 @@ for tc in $(compilers); do
     # `openkal-opensbi`(RISC-V 的监管者接口)并编译失败。
     #
     # 裸机 × 图由 135/136/292 用正确的包覆盖。这里跳过并说出来。
-    if [ "$MODE" = graph ] && printf '%s' "$t" | grep -q -- '-none-elf$'; then
+    #
+    # ⚠️ THE SAME PREDICATE AS THE PROBE BELOW, AND IT HAD THE SAME DEFECT.
+    # Written as `-none-elf$`, this skipped only the four targets that spell
+    # their environment `elf`; the Cortex-M rows spell it `eabi`/`eabihf`, so
+    # they were NOT skipped and produced fourteen graph cells describing a
+    # combination this paragraph says is out of scope. One rule, two copies —
+    # changing one and missing the other is how it failed.
+    if [ "$MODE" = graph ] && printf '%s' "$t" | grep -qE -- '-none-[a-z0-9]+$'; then
         echo "scan: 略过 graph × $t —— 裸机行不在这套依赖的论域内" >&2
         continue
     fi
@@ -170,7 +177,16 @@ for tc in $(compilers); do
     # 的失败 —— 零 libc 的目标本来就没有 `<cstdio>`,是探针问错了问题。
     #
     # ⭐ 一个自己就编不过的探针,产出的整列都是关于探针的。
-    if [ "$MODE" != graph ] && printf '%s' "$t" | grep -q -- '-none-elf$'; then
+    #
+    # ⚠️ AND THE PREDICATE IS THE OS FIELD, NOT A FILENAME SUFFIX. This read
+    # `-none-elf$` until 2026-09-04, which is a spelling rather than a property:
+    # the Cortex-M rows are `…-none-eabi` and `…-none-eabihf`, so they fell into
+    # the hosted branch, got `#include <cstdio>` — and produced a whole column of
+    # `build-failed` describing the probe rather than the target. Exactly the
+    # defect the paragraph above records, reintroduced by matching a substring.
+    #
+    # A freestanding triple is `arch-none-env`; the OS field is what says so.
+    if [ "$MODE" != graph ] && printf '%s' "$t" | grep -qE -- '-none-[a-z0-9]+$'; then
         printf 'extern "C" void kmain() { for (volatile int i = 0; i < 1; ++i) {} }\n' > src/main.cpp
         printf '\n[target.%s]\nsysroot = ""\n' "$t" >> mcpp.toml
     else

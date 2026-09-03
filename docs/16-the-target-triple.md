@@ -428,6 +428,13 @@ other's rows.
 | `riscv32-none-elf` | verified | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
 | `aarch64-none-elf` | preview | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
 | `x86_64-none-elf` | preview | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
+| `thumbv6m-none-eabi` | verified | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
+| `thumbv7m-none-eabi` | verified | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
+| `thumbv7em-none-eabi` | preview | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
+| `thumbv7em-none-eabihf` | verified | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
+| `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
+| `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
+| `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
 
 `✅ payload` a toolchain payload here produces it · `⚙ graph` no payload, but a
 dependency can supply the system · `✅ system` located on the machine, not

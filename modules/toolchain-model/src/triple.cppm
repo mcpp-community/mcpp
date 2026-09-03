@@ -351,6 +351,49 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // above `aarch64-none-elf`: the first consumer is `openarch`, which
     // references no C library symbol.
     { "x86_64-none-elf",       "preview",   "bare","llvm@22.1.8","",                            true  },
+    // ── Cortex-M ────────────────────────────────────────────────────────────
+    //
+    // ⚠️ SEVEN ROWS AND NOT ONE, BECAUSE "Cortex-M" IS NOT AN INSTRUCTION SET.
+    //
+    // Every other bare-metal family here is one row per architecture. M-profile
+    // is not: an object built for `thumbv7em` uses instructions a Cortex-M0
+    // does not have, and one built for `thumbv6m` runs on both but leaves the
+    // larger part unused. The two spellings are not a preference a board
+    // expresses — they produce incompatible objects — so they are rows.
+    //
+    // The rule this table states about itself governs: it exists so that
+    // `--target <triple>` ALONE is enough to produce a correct object file. A
+    // single `arm-none-eabi` row plus an `-mcpu` the project remembers would
+    // move a correctness decision out of the table and into every manifest.
+    //
+    // ⭐ THE `eabi`/`eabihf` SUFFIX IS THE FLOAT ABI, AND CLANG ALREADY READS
+    // IT. Measured on llvm 22.1.8 (`-###`, `-cc1` line): `thumbv7em-none-eabi`
+    // gives `-mfloat-abi soft` and `-none-eabihf` gives `hard`, with no flag
+    // from us. So the ABI needs no entry in the ISA table's `extra` column —
+    // only the FPU does, and only on the soft rows. See `kThumbSoftExtra`.
+    //
+    // ⚠️ `sysroot` IS EMPTY ON EVERY ROW, AND THAT IS THE POINT RATHER THAN A
+    // GAP. The three older bare-metal families name an `xim:` payload here; a C
+    // library for these targets arrives from the DEPENDENCY GRAPH instead
+    // (`mcpp:c-abi=picolibc`, docs/14). A prebuilt payload would have to ship
+    // one multilib per row — seven here — and the `libdir` column would have to
+    // match its layout byte for byte, which is the defect #481 fixed. A source
+    // package is compiled with the consuming target's own flags, so the ABI
+    // agreement holds by construction and there is no multilib at all.
+    //
+    // ⚠️ THE TIER COLUMN RECORDS WHAT WAS RUN, NOT WHAT WAS REASONED. Measured
+    // 2026-09-04 under `xim:qemu-arm@9.2.4-1`: each `verified` row below built
+    // an image that BOOTED on the named machine and printed over semihosting —
+    // thumbv6m on `microbit`, thumbv7m on `mps2-an385`, thumbv7em-eabihf on
+    // `mps2-an386`, thumbv8m.main-eabi on `mps2-an505`. The three `preview`
+    // rows build and link; no emulator run has been recorded for them.
+    { "thumbv6m-none-eabi",    "verified",  "bare","llvm@22.1.8","",                            true  },
+    { "thumbv7m-none-eabi",    "verified",  "bare","llvm@22.1.8","",                            true  },
+    { "thumbv7em-none-eabi",   "preview",   "bare","llvm@22.1.8","",                            true  },
+    { "thumbv7em-none-eabihf", "verified",  "bare","llvm@22.1.8","",                            true  },
+    { "thumbv8m.base-none-eabi","preview",  "bare","llvm@22.1.8","",                            true  },
+    { "thumbv8m.main-none-eabi","verified", "bare","llvm@22.1.8","",                            true  },
+    { "thumbv8m.main-none-eabihf","preview","bare","llvm@22.1.8","",                            true  },
 };
 
 inline std::span<const TargetInfo> known_targets() { return kKnownTargets; }

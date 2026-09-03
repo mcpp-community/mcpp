@@ -84,6 +84,18 @@ case "$OS" in
         # qemu-riscv: the emulator a bare-metal riscv artifact runs in
         # (xim:qemu-riscv, or any qemu-system-riscv64 on PATH).
         command -v qemu-system-riscv64 &>/dev/null && CAPS+=(qemu-riscv)
+        # qemu-arm: the emulator an M-profile artifact runs in. Unlike
+        # `qemu-riscv` this also looks inside the xim payload, because
+        # `xim:qemu-arm` installs no shim for `qemu-system-arm` on every host
+        # and the tests address it by absolute path out of the payload anyway.
+        # Probing only PATH would report the capability absent on a machine
+        # that has it, and the test would skip while looking supported.
+        if command -v qemu-system-arm &>/dev/null \
+           || ls "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-qemu-arm/*/bin/qemu-system-arm \
+                 &>/dev/null \
+           || ls "$HOME"/.xlings/data/xpkgs/xim-x-qemu-arm/*/bin/qemu-system-arm &>/dev/null; then
+            CAPS+=(qemu-arm)
+        fi
         # pack capability: ELF + patchelf both required
         if [[ " ${CAPS[*]} " == *" patchelf "* ]]; then
             CAPS+=(pack)
@@ -209,8 +221,8 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 # CAPS+=() calls above by tests/e2e/README or by reading them -- keep it in
 # sync when adding a capability.
 KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx jq llvm macos mingw
-            mingw-cross msvc musl nasm no-msvc pack patchelf python3 qemu-riscv
-            scan-deps symlink unix-shell windows wine xlings-msvc)
+            mingw-cross msvc musl nasm no-msvc pack patchelf python3 qemu-arm
+            qemu-riscv scan-deps symlink unix-shell windows wine xlings-msvc)
 
 bad_tokens=0
 for tf in "$HERE"/[0-9]*.sh; do

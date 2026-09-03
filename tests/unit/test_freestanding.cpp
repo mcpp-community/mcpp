@@ -469,3 +469,79 @@ TEST(FreestandingTarget, EveryIsaProfileHasABareRowInTheTargetTable) {
             << spec.triple << " has an ISA profile but is not marked bare";
     }
 }
+
+// ── Cortex-M ────────────────────────────────────────────────────────────────
+//
+// ⭐ THESE ARE RULES OVER THE TABLE, WHICH IS THE ONLY PLACE THEY CAN BE
+// STATED. The e2e boots four M-profile images and measures instruction counts,
+// but it can only speak about the rows it happens to exercise. A rule quantified
+// over every row is what stops the eighth one from being added wrong, and the
+// property it protects is invisible in a build: a soft-float row that reaches
+// the FPU compiles, links, and faults on real silicon.
+
+namespace {
+bool is_m_profile(std::string_view triple) { return triple.starts_with("thumb"); }
+bool has_flag(const mcpp::freestanding::Spec& s, std::string_view f) {
+    for (auto e : s.extra) if (e == f) return true;
+    return false;
+}
+}  // namespace
+
+// The pair that the float-ABI suffix does NOT settle on its own. clang reads
+// `eabi`/`eabihf` and sets `-mfloat-abi` accordingly, but the ABI governs how
+// floats cross a call boundary, not whether the compiler may use the FPU inside
+// one — and `thumbv7em` implies an FPU. Measured on llvm 22.1.8: without
+// `-mfpu=none` the soft row emits `vmul.f32`.
+TEST(FreestandingTarget, SoftFloatMProfileRowsDisableTheFpu) {
+    int soft = 0, hard = 0;
+    for (const auto& spec : mcpp::freestanding::known()) {
+        if (!is_m_profile(spec.triple)) continue;
+        if (spec.triple.ends_with("-eabihf")) {
+            ++hard;
+            EXPECT_FALSE(has_flag(spec, "-mfpu=none"))
+                << spec.triple << " is a hard-float row and must not discard the FPU";
+        } else {
+            ++soft;
+            EXPECT_TRUE(has_flag(spec, "-mfpu=none"))
+                << spec.triple
+                << " is a soft-float row without -mfpu=none: it will emit FPU"
+                   " instructions that fault on a part with no FPU";
+        }
+    }
+    // ⚠️ A denominator, because a loop that never ran satisfies every EXPECT
+    // above. Both halves must be non-empty for the contrast to mean anything.
+    EXPECT_GT(soft, 0);
+    EXPECT_GT(hard, 0);
+}
+
+// 32-bit ARM has no `-mcmodel`, and clang has a BareMetal toolchain for arm so
+// its driver reaches `ld.lld` without the x86_64 row's workaround. Both columns
+// being empty is what says so; a filled one would be a value nothing checks.
+TEST(FreestandingTarget, MProfileRowsNeedNoCodeModelAndNoDirectLldDriving) {
+    int rows = 0;
+    for (const auto& spec : mcpp::freestanding::known()) {
+        if (!is_m_profile(spec.triple)) continue;
+        ++rows;
+        EXPECT_TRUE(spec.mcmodel.empty()) << spec.triple << " has no -mcmodel axis";
+        EXPECT_TRUE(spec.lldEmulation.empty())
+            << spec.triple << " reaches ld.lld through the clang driver";
+        EXPECT_EQ(spec.mabi, "aapcs") << spec.triple;
+    }
+    EXPECT_GT(rows, 0);
+}
+
+// The compile half of `--gc-sections`, which has to hold for EVERY freestanding
+// target rather than only the M-profile ones: a dependency's translation units
+// carry these flags too, and a project cannot reach those.
+TEST(FreestandingTarget, EveryRowCompilesWithPerFunctionSections) {
+    int rows = 0;
+    for (const auto& spec : mcpp::freestanding::known()) {
+        ++rows;
+        auto flags = mcpp::freestanding::compile_flags(spec);
+        EXPECT_NE(std::find(flags.begin(), flags.end(), "-ffunction-sections"),
+                  flags.end()) << spec.triple;
+        EXPECT_NE(std::find(flags.begin(), flags.end(), "-fdata-sections"),
+                  flags.end()) << spec.triple;
+    }
+    EXPECT_GT(rows, 0);
+}

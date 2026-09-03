@@ -89,6 +89,9 @@ inline std::string link_flags(const Spec& s, const LinkInputs& in,
     // suggesting it does.
     for (auto const& f : compile_flags(s)) { out += ' '; out += f; }
     out += " -nostdlib -nostartfiles -static";
+    // The link half of the pair set in mcpp.freestanding.target's
+    // `compile_flags`. Routed through the driver, hence `-Wl,`.
+    out += " -Wl,--gc-sections";
     if (!in.lld.empty())
         out += " -fuse-ld=" + esc(in.lld);
     // ⚠️ BEFORE the libraries the board selects, and it has to be on THIS line
@@ -129,6 +132,11 @@ inline std::string link_flags_direct(const Spec& s, const LinkInputs& in,
     // No loader exists, so an image must not name one. The driver line reaches
     // this through `-static`; here it is said to the linker.
     out += " --no-dynamic-linker";
+    // Said to the linker directly here, as `-Wl,--gc-sections` is said through
+    // the driver on the line above. The two paths must agree: a target whose
+    // link is driven by `ld.lld` itself would otherwise keep every section its
+    // dependencies emit, and the difference would show only as size.
+    out += " --gc-sections";
     if (!in.sysrootLib.empty())
         out += " -L" + esc(in.sysrootLib);
     if (!in.linkerScript.empty())

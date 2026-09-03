@@ -13,7 +13,7 @@ covers the hosted link model this chapter departs from.
 ## Overview
 
 A freestanding target is a target whose `os` field is `none`. The target table
-at `modules/toolchain-model/src/triple.cppm` carries four of them:
+at `modules/toolchain-model/src/triple.cppm` carries eleven of them:
 
 | Triple | Tier | C library |
 |---|---|---|
@@ -21,10 +21,63 @@ at `modules/toolchain-model/src/triple.cppm` carries four of them:
 | `riscv32-none-elf` | verified | `xim:picolibc-riscv` |
 | `aarch64-none-elf` | preview | none by default — the zero-libc tier; `xim:picolibc-aarch64` is declarable |
 | `x86_64-none-elf` | preview | none by default — the zero-libc tier; `xim:picolibc-x86` is declarable |
+| `thumbv6m-none-eabi` | verified | none by default — Cortex-M0/M0+/M1 |
+| `thumbv7m-none-eabi` | verified | none by default — Cortex-M3 |
+| `thumbv7em-none-eabi` | preview | none by default — Cortex-M4/M7, soft float |
+| `thumbv7em-none-eabihf` | verified | none by default — Cortex-M4F/M7F, hard float |
+| `thumbv8m.base-none-eabi` | preview | none by default — Cortex-M23 |
+| `thumbv8m.main-none-eabi` | verified | none by default — Cortex-M33/M55, soft float |
+| `thumbv8m.main-none-eabihf` | preview | none by default — Cortex-M33F/M55F, hard float |
 
 `verified` means an image has been built **and run** for the row. `preview`
-means it builds and has been observed to run, but is not yet covered by the
-engine's own emulator jobs.
+means it builds and links, and no emulator run has been recorded.
+
+### M-profile is seven rows rather than one
+
+Every other bare-metal family above is one row per architecture. Cortex-M is
+not. An object built for `thumbv7em` uses instructions a Cortex-M0 does not
+have, and the two spellings produce incompatible objects rather than expressing
+a preference. The table exists so that `--target <triple>` alone suffices to
+produce a correct object file; a single `arm-none-eabi` row plus an `-mcpu` that
+each project remembered would move a correctness decision out of the table and
+into every manifest.
+
+The `eabi`/`eabihf` suffix is the float ABI, and clang derives it from the
+triple without help: measured on llvm 22.1.8, `thumbv7em-none-eabi` yields
+`-mfloat-abi soft` and `thumbv7em-none-eabihf` yields `hard`.
+
+⚠️ **The float ABI does not settle whether the FPU is used.** It governs how
+floating-point values cross a function boundary, not what the compiler may emit
+inside one, and the `thumbv7em` architecture implies FPv4-SP. Measured: under
+the soft-float ABI clang still emits `vmul.f32` for a float multiply. On a
+Cortex-M4 without an FPU that instruction faults at run time, after a clean
+compile and a clean link. Every soft-float row therefore carries `-mfpu=none`,
+including the rows describing architectures that have no FPU at all — a row
+states the property it guarantees rather than inheriting it from a default.
+
+Cortex-M needs no `lldEmulation` column entry: clang has a *BareMetal* toolchain
+for arm, so these triples reach `ld.lld` through the driver as the RISC-V and
+aarch64 rows do. 32-bit ARM has no `-mcmodel` axis, so that column is empty too.
+
+### Dead-section elimination
+
+Freestanding builds compile with `-ffunction-sections -fdata-sections` and link
+with `--gc-sections`. Both halves belong to the engine rather than to a project
+because a dependency's translation units must carry them, and a project cannot
+reach those.
+
+The flags became necessary rather than merely economical when a C library began
+arriving from the dependency graph. A dependency's object files enter the link
+unconditionally, unlike an archive member, which is pulled only while its symbol
+is undefined. That costs nothing when the C library is a prebuilt archive and
+the target has megabytes; a Cortex-M part has kilobytes, and without dead-section
+elimination every image would carry the whole of the C library.
+
+⚠️ **A linker script becomes load-bearing in a new way.** An interrupt vector
+table is referenced by nothing — the hardware reads it by address — so
+`--gc-sections` collects it. A board's script must say `KEEP(*(.vectors))`.
+Measured: with the `KEEP` present, a function nothing calls is dropped, the
+table survives, and the image boots.
 
 ⚠️ The last two rows default to no C library, and that is a statement rather
 than an omission: the first consumer of both rows — the `openarch` layer of
@@ -190,8 +243,8 @@ by pointing `main` at the source file that carries `_start`.
 | Linker selection | `ld.lld` is addressed by **absolute path**, derived from the driver's own directory. `-fuse-ld=lld` resolves by name and finds GNU ld on any machine with binutils earlier on `PATH`, which then fails with `unrecognised emulation mode: elf64lriscv`. |
 | ISA flags | `-march`, `-mabi` and `-mcmodel` come from one row per target in `src/freestanding/target.cppm`, so `--target <triple>` alone is sufficient to produce a correct object file. |
 | C library | The **target's**, resolved by mcpp from the target's own table row exactly as the compiler is. A bare-metal project declares no libc, just as a hosted project declares no glibc. The engine places the sysroot's library directory on the link search path, so a board-support package selects out of it by bare name (`-lc`, `-lcrt0-semihost`). |
-| Exceptions and RTTI | Off on every translation unit in the graph, including a dependency's. There is no unwinder and no `libc++abi`, so nothing can throw; `std::optional::value()` alone would otherwise reference `__cxa_throw` and three further undefined symbols. The setting belongs to the target rather than to a project's `cxxflags` because a BMI records it, and a dependency compiled with exceptions cannot be imported by a unit without them. |
-| `import std` | Unavailable, and rejected at configure time with a diagnostic rather than at link time. |
+| Exceptions and RTTI | Off on every translation unit in the graph, including a dependency's, **unless a package supplies a C++ runtime built for this target**. There is otherwise no unwinder and no `libc++abi`, so nothing can throw; `std::optional::value()` alone would reference `__cxa_throw` and three further undefined symbols. The setting belongs to the target rather than to a project's `cxxflags` because a BMI records it, and a dependency compiled with exceptions cannot be imported by a unit without them. A package declaring `provides = ["hosted-standard-library"]` reverses the default: exceptions and RTTI are enabled, `-ffreestanding` is dropped, and `-fasynchronous-unwind-tables` is added. |
+| `import std` | Available when a package in the graph provides `hosted-standard-library` and names its own `std` module source; otherwise rejected at configure time with a diagnostic rather than at link time. |
 | Entry point | `int main()` is available whenever something supplies a `crt0`. A board-support package normally does. |
 | Default linkage | Static, and not as a preference: there is no loader, so there is no other option. |
 
@@ -716,7 +769,7 @@ targets, but that expectation is **not** covered by a test.
 | Limitation | Observed behaviour |
 |---|---|
 | `std::format`, `std::sort` over builtin scalar types, and a complete `std::string` | Fail at **link** time naming the undefined symbol. libc++ places these entities in the compiled library — the scalar `__sort` instantiations are `extern template`, with no macro that disables them — so a target-built `libc++.a` is required. No such payload is published. |
-| Exceptions and RTTI | Disabled across the whole graph. `try`/`catch` is unavailable at compile time. A board shipping a target-built `libc++abi` and unwinder has a genuine case for re-enabling them; that is the point at which this becomes a manifest key. |
+| Exceptions and RTTI | Disabled across the whole graph **unless a package provides `hosted-standard-library`**, which `mcpplibs/openkal-llvm-runtime` does by carrying `libc++`, `libc++abi` and `libunwind` configured for the target. Without such a package `try`/`catch` remains unavailable at compile time. |
 | Board coverage | One board family. `riscv32-none-elf` demonstrates that the ISA table is data, not that a second machine has been ported. ARM Cortex-M has not been attempted. |
 | C library substitution | Expressible since 2026.8.20.2 through `[target.<triple>].sysroot`, and **verified only for the empty value** (the zero-libc tier). Pointing it at a different C library is accepted and installed through the same channel, but no second bare-metal C library is published, so that path is untested. |
 | `qemu-riscv` on `win32-arm64` | The upstream package publishes no asset for that host, so installation fails on it. The failure is correct rather than silent, but the host cannot run a bare-metal image. |

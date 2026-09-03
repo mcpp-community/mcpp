@@ -11,7 +11,7 @@
 ## 概述
 
 freestanding 目标是 `os` 字段为 `none` 的目标。`modules/toolchain-model/src/triple.cppm`
-的目标表中有四个:
+的目标表中有十一个:
 
 | Triple | 档位 | C 库 |
 |---|---|---|
@@ -19,9 +19,53 @@ freestanding 目标是 `os` 字段为 `none` 的目标。`modules/toolchain-mode
 | `riscv32-none-elf` | verified | `xim:picolibc-riscv` |
 | `aarch64-none-elf` | preview | 默认无 —— 零 libc 层;`xim:picolibc-aarch64` 可声明 |
 | `x86_64-none-elf` | preview | 默认无 —— 零 libc 层;`xim:picolibc-x86` 可声明 |
+| `thumbv6m-none-eabi` | verified | 默认无 —— Cortex-M0/M0+/M1 |
+| `thumbv7m-none-eabi` | verified | 默认无 —— Cortex-M3 |
+| `thumbv7em-none-eabi` | preview | 默认无 —— Cortex-M4/M7,软浮点 |
+| `thumbv7em-none-eabihf` | verified | 默认无 —— Cortex-M4F/M7F,硬浮点 |
+| `thumbv8m.base-none-eabi` | preview | 默认无 —— Cortex-M23 |
+| `thumbv8m.main-none-eabi` | verified | 默认无 —— Cortex-M33/M55,软浮点 |
+| `thumbv8m.main-none-eabihf` | preview | 默认无 —— Cortex-M33F/M55F,硬浮点 |
 
-`verified` 意味着该行的镜像被构建**并被运行**过。`preview` 意味着它构建得出、
-也被观察到能运行,但尚未纳入引擎自己的模拟器作业。
+`verified` 意味着该行的镜像被构建**并被运行**过。`preview` 意味着它构建并链接得出,
+尚无模拟器运行记录。
+
+### M-profile 是七行而不是一行
+
+上面每一个裸机族都是一个架构一行。Cortex-M 不是:为 `thumbv7em` 构建的目标文件
+使用 Cortex-M0 没有的指令,两种拼写产出的是互不兼容的目标文件,而不是一种偏好。
+这张表存在,是为了让 `--target <triple>` 单独就足以产出正确的目标文件;若只写一行
+`arm-none-eabi` 再让每个工程各自记住一个 `-mcpu`,就把一个正确性决定从表里搬进了
+每一份清单。
+
+`eabi`/`eabihf` 后缀即浮点 ABI,clang 直接从 triple 读出它:实测 llvm 22.1.8,
+`thumbv7em-none-eabi` 得到 `-mfloat-abi soft`,`thumbv7em-none-eabihf` 得到 `hard`。
+
+⚠️ **浮点 ABI 并不决定 FPU 是否被使用。** 它约束浮点值如何跨越函数边界,不约束
+编译器在函数内部可以发什么指令,而 `thumbv7em` 架构蕴含 FPv4-SP。实测:在软浮点
+ABI 下,clang 对一次 float 乘法仍然发出 `vmul.f32`。在没有 FPU 的 Cortex-M4 上,
+这条指令在运行期触发异常 —— 而编译与链接都是干净的。因此每一个软浮点行都携带
+`-mfpu=none`,**包括那些架构本来就没有 FPU 的行**:一行应当陈述它所保证的性质,
+而不是从一个随时可以改变的默认值继承它。
+
+Cortex-M 不需要 `lldEmulation` 列:clang 有面向 arm 的 *BareMetal* 工具链,这些
+triple 与 RISC-V、aarch64 各行一样经驱动到达 `ld.lld`。32 位 ARM 没有 `-mcmodel`
+这个轴,所以该列同样为空。
+
+### 死代码段消除
+
+freestanding 构建以 `-ffunction-sections -fdata-sections` 编译,以 `--gc-sections`
+链接。两半都属于引擎而不属于工程,因为依赖的翻译单元也必须带上它们,而工程够不到
+那些单元。
+
+这两个标志从「划算」变成「必需」,发生在 C 库开始由依赖图提供的时候。依赖的目标
+文件是**无条件**进入链接的,不像归档成员那样只在符号仍未定义时才被拉入。当 C 库是
+预编译归档、目标又有若干兆字节时,这不花什么代价;而 Cortex-M 器件只有几十 KB,
+没有死代码段消除,每个镜像都会装进整份 C 库。
+
+⚠️ **链接脚本因此以一种新的方式承重。** 中断向量表不被任何东西引用 —— 硬件按地址
+读取它 —— 所以 `--gc-sections` 会把它回收。板级脚本必须写 `KEEP(*(.vectors))`。
+实测:有这条 `KEEP` 时,无人调用的函数被丢弃、向量表被保留、镜像能够启动。
 
 ⚠️ 后两行**默认**没有 C 库,这是声明而非遗漏:这两行的第一个消费者 —— 机器机制层
 `openarch` —— 一个 C 库符号都不引用,而**如果四行里没有一行默认在这一层,就没有
@@ -167,8 +211,8 @@ extern "C" int main() {
 | 链接器选择 | `ld.lld` 按**绝对路径**寻址,由驱动自身所在目录推导。`-fuse-ld=lld` 按名字解析,在任何 binutils 位于 `PATH` 更靠前位置的机器上都会找到 GNU ld,随后以 `unrecognised emulation mode: elf64lriscv` 失败。 |
 | ISA 参数 | `-march`、`-mabi` 与 `-mcmodel` 来自 `src/freestanding/target.cppm` 中每个目标一行的表,因此仅凭 `--target <triple>` 就足以产出正确的目标文件。 |
 | C 库 | 属于**目标**,由 mcpp 从目标自己的表行解析,与解析编译器的方式完全一致。裸机工程不声明 libc,正如宿主工程不声明 glibc。引擎把 sysroot 的库目录放入链接搜索路径,板级支持包因此可以按裸名从中选取(`-lc`、`-lcrt0-semihost`)。 |
-| 异常与 RTTI | 在图中每个翻译单元上都关闭,包括依赖的翻译单元。没有 unwinder 也没有 `libc++abi`,因此任何东西都无法抛出;仅 `std::optional::value()` 一处就会引用 `__cxa_throw` 以及另外三个未定义符号。该设定属于目标而非工程的 `cxxflags`,因为 BMI 会记录它,而带异常编出的依赖无法被不带异常的单元导入。 |
-| `import std` | 不可用,并且在配置期以诊断拒绝,而不是在链接期失败。 |
+| 异常与 RTTI | 在图中每个翻译单元上都关闭,包括依赖的翻译单元,**除非有包提供为该目标构建的 C++ 运行时**。否则既没有 unwinder 也没有 `libc++abi`,任何东西都无法抛出;仅 `std::optional::value()` 一处就会引用 `__cxa_throw` 以及另外三个未定义符号。该设定属于目标而非工程的 `cxxflags`,因为 BMI 会记录它,而带异常编出的依赖无法被不带异常的单元导入。声明 `provides = ["hosted-standard-library"]` 的包会翻转这个默认:异常与 RTTI 开启,`-ffreestanding` 被去掉,并加上 `-fasynchronous-unwind-tables`。 |
+| `import std` | 当图中有包提供 `hosted-standard-library` 并指明自己的 `std` 模块源码时可用;否则在配置期以诊断拒绝,而不是在链接期失败。 |
 | 入口点 | 只要有东西提供 `crt0`,`int main()` 就可用。板级支持包通常提供它。 |
 | 默认链接方式 | 静态,而且这不是偏好:没有加载器,因此没有别的选项。 |
 
@@ -643,7 +687,7 @@ int main() {
 | 边界 | 观察到的行为 |
 |---|---|
 | `std::format`、内建标量类型上的 `std::sort`、以及完整的 `std::string` | 在**链接**期失败并点名未定义符号。libc++ 把这些实体放在编译版库中 —— 标量 `__sort` 的实例化是 `extern template`,没有可用于关闭它们的宏 —— 因此需要为目标编出的 `libc++.a`。该载荷尚未发布。 |
-| 异常与 RTTI | 在整张图上关闭。`try`/`catch` 在编译期即不可用。一块随包提供目标版 `libc++abi` 与 unwinder 的板子有重新开启它们的正当理由;那也正是这一项应当成为一个清单键的时刻。 |
+| 异常与 RTTI | 在整张图上关闭,**除非有包提供 `hosted-standard-library`** —— `mcpplibs/openkal-llvm-runtime` 就通过携带为该目标配置过的 `libc++`、`libc++abi` 与 `libunwind` 做到了这一点。没有这样的包时,`try`/`catch` 在编译期仍不可用。 |
 | 板子覆盖面 | 只有一个板级家族。`riscv32-none-elf` 证明的是 ISA 表为数据,而不是已移植第二台机器。ARM Cortex-M 尚未尝试。 |
 | 替换 C 库 | 自 2026.8.20.2 起可经 `[target.<triple>].sysroot` 表达,而**仅空值一侧经过验证**(零 libc 档)。指向另一份 C 库同样被接受并经同一通道安装,但生态中没有第二份裸机 C 库,该路径未经测试。 |
 | `win32-arm64` 上的 `qemu-riscv` | 上游包未为该宿主发布资产,因此在其上安装会失败。该失败是正确的而非静默的,但该宿主无法运行裸机镜像。 |

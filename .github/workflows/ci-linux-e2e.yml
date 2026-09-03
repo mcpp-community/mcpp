@@ -114,7 +114,7 @@ jobs:
   # test, and assert its PASS line appeared. A skip fails this job.
   # ──────────────────────────────────────────────────────────────────
   baremetal:
-    name: bare-metal e2e (riscv64-none-elf, qemu)
+    name: bare-metal e2e (riscv64-none-elf + cortex-m, qemu)
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -153,6 +153,18 @@ jobs:
           XLINGS_HOME="${MCPP_HOME:-$HOME/.mcpp}/registry" \
             "$XLINGS_BIN" install xim:picolibc-riscv -y
           test -d "${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-picolibc-riscv"
+          # ⚠️ The M-profile emulator, in BOTH homes for the reason above.
+          # `xim:qemu-arm` carries `qemu-system-arm` as well as
+          # `qemu-system-aarch64`; test 332 addresses it by absolute path out of
+          # the payload, so what matters is that the payload EXISTS in the home
+          # mcpp uses rather than that a shim resolves.
+          "$XLINGS_BIN" install xim:qemu-arm -y
+          XLINGS_HOME="${MCPP_HOME:-$HOME/.mcpp}/registry" \
+            "$XLINGS_BIN" install xim:qemu-arm -y
+          # Reachable AND runnable before the tests, so that a missing emulator
+          # fails this step rather than silently skipping test 332.
+          ls "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-qemu-arm/*/bin/qemu-system-arm \
+            | sort -V | tail -1 | xargs -I{} {} --version | head -1
 
       - name: Bare-metal e2e
         timeout-minutes: 25
@@ -175,7 +187,8 @@ jobs:
           for t in tests/e2e/130_freestanding_riscv_build_and_run.sh \
                    tests/e2e/131_freestanding_bsp_supplies_everything.sh \
                    tests/e2e/132_freestanding_test_and_artifacts.sh \
-                   tests/e2e/133_freestanding_std_subset.sh; do
+                   tests/e2e/133_freestanding_std_subset.sh \
+                   tests/e2e/332_cortex_m_builds_and_boots.sh; do
             echo "=== $t ==="
             bash "$t" 2>&1 | tee "$(basename "$t").log"
             rc=${PIPESTATUS[0]}
@@ -196,6 +209,18 @@ jobs:
           grep -q 'PASS: the freestanding std subset' \
             133_freestanding_std_subset.sh.log || {
             echo "133 (std subset) skipped on the runner that must run it"; exit 1; }
+          # ⚠️ 332 declares `# requires: qemu-arm`, which no sharded runner has
+          # — so on the shards it exits 0 without running. This job is the only
+          # place its PASS line can be demanded.
+          grep -q 'PASS: cortex-m rows build, boot' \
+            332_cortex_m_builds_and_boots.sh.log || {
+            echo "332 (cortex-m) skipped on the runner that must run it"; exit 1; }
+          # ⭐ And a count, because four `grep -q` calls that each matched say
+          # nothing about how many rows the script actually booted: a fixture
+          # that stopped iterating would still print its PASS line.
+          booted=$(grep -c 'booted on ' 332_cortex_m_builds_and_boots.sh.log || true)
+          [ "$booted" = "4" ] || {
+            echo "332 booted $booted rows, expected 4"; exit 1; }
 
   # ──────────────────────────────────────────────────────────────────
   # Hermetic (no host toolchain): the ONLY environment class that
