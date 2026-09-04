@@ -88,6 +88,35 @@ bound and therefore no claim.
 This is reported rather than enforced: a project that compiles no device code
 is unaffected by an incompatible pair.
 
+## Whether the device compiler can reach its own back-end
+
+A toolkit can be installed, complete and on `PATH` and still fail at its first
+stage. nvcc runs `cicc`, `cudafe++`, `ptxas` and `fatbinary` as bare names, on
+a `PATH` it prepends itself from an `nvcc.profile` beside its own binary. On
+Debian-family packaging that profile is a symlink into `/etc`, so a container
+or sandbox that replaces `/etc` removes it. nvcc then keeps the ambient `PATH`
+and reports:
+
+```
+sh: 1: cicc: not found
+```
+
+The message names neither nvcc nor the profile, and nothing about the toolkit
+is missing, so the obvious checks all pass. `mcpp self doctor` asks nvcc for
+its plan instead of assuming one:
+
+```
+$ mcpp self doctor
+    Checking device toolkit
+warning: nvcc cannot reach its own back-end: it invokes 'cicc' by name, and
+         that name does not resolve on the search path it states.
+```
+
+The plan comes from `nvcc --dryrun`, which prints the stages and the `PATH`
+nvcc will use without compiling anything. A dryrun that produces no plan --
+there is no nvcc, or the output is not one -- yields no finding, because a
+probe that reaches no answer must not invent one.
+
 ## Declaring what a build targets
 
 ```toml

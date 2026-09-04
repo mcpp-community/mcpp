@@ -56,3 +56,94 @@ TEST(DeviceHost, AnUnknownVersionMakesNoClaimEither) {
     auto b = parse_host_config(kCuda120);
     EXPECT_TRUE(host_compiler_accepted(b, "gcc", 0));
 }
+
+// ── The plan nvcc states, and the one thing that goes missing from it ──────
+//
+// Both fixtures are real `nvcc --dryrun` output, CUDA 12.0, with the
+// temporary paths shortened. They differ in exactly one line: the working
+// host states a PATH, and the sandbox -- whose /etc is replaced, so the
+// `nvcc.profile` symlinked into it is gone -- states none. Every other line,
+// including the stages nvcc will invoke, is identical.
+
+using mcpp::toolchain::parse_dryrun;
+
+namespace {
+
+constexpr std::string_view kPlanWithProfile = R"(#$ _NVVM_BRANCH_=nvvm
+#$ _SPACE_= 
+#$ _HERE_=/usr/lib/nvidia-cuda-toolkit/bin
+#$ _TARGET_SIZE_=64
+#$ NVVMIR_LIBRARY_DIR=/usr/lib/nvidia-cuda-toolkit/libdevice
+#$ PATH=/usr/lib/nvidia-cuda-toolkit/bin:/usr/local/bin:/usr/bin:/bin
+#$ LIBRARIES=  -L/usr/lib/x86_64-linux-gnu/stubs
+#$ gcc -D__CUDA_ARCH_LIST__=520 -E -x c++ -m64 "/tmp/X" -o "/tmp/X" 
+#$ cudafe++ --c++17 --gnu_version=130300 --m64 "/tmp/X" 
+#$ cicc --c++17 -arch compute_52 -m64 "/tmp/X" -o "/tmp/X"
+#$ ptxas -arch=sm_52 -m64 "/tmp/X"  -o "/tmp/X" 
+#$ fatbinary -64 --cicc-cmdline="-ftz=0 " "--image3=kind=elf,sm=52,file=/tmp/X" 
+#$ rm /tmp/X
+)";
+
+// The same run with the PATH assignment removed: what nvcc emits when it
+// cannot read its own profile.
+constexpr std::string_view kPlanWithoutProfile = R"(#$ _NVVM_BRANCH_=nvvm
+#$ _SPACE_= 
+#$ _HERE_=/usr/lib/nvidia-cuda-toolkit/bin
+#$ _TARGET_SIZE_=64
+#$ LIBRARIES=  -L/usr/lib/x86_64-linux-gnu/stubs
+#$ gcc -D__CUDA_ARCH_LIST__=520 -E -x c++ -m64 "/tmp/X" -o "/tmp/X" 
+#$ cudafe++ --c++17 --gnu_version=130300 --m64 "/tmp/X" 
+#$ cicc --c++17 -arch compute_52 -m64 "/tmp/X" -o "/tmp/X"
+#$ ptxas -arch=sm_52 -m64 "/tmp/X"  -o "/tmp/X" 
+#$ fatbinary -64 --cicc-cmdline="-ftz=0 " "--image3=kind=elf,sm=52,file=/tmp/X" 
+#$ rm /tmp/X
+)";
+
+} // namespace
+
+TEST(DeviceDryRun, CollectsTheStagesAndThePathNvccStates) {
+    auto plan = parse_dryrun(kPlanWithProfile);
+    EXPECT_EQ(plan.searchPath,
+              "/usr/lib/nvidia-cuda-toolkit/bin:/usr/local/bin:/usr/bin:/bin");
+    EXPECT_EQ(plan.programs,
+              (std::vector<std::string>{"gcc", "cudafe++", "cicc", "ptxas",
+                                        "fatbinary", "rm"}));
+}
+
+TEST(DeviceDryRun, TheMissingProfileShowsUpAsAnAbsentPathAssignment) {
+    // This is the whole of the difference the check keys on. The stages are
+    // the same; only the path they will be resolved against is gone.
+    auto broken = parse_dryrun(kPlanWithoutProfile);
+    auto intact = parse_dryrun(kPlanWithProfile);
+    EXPECT_TRUE(broken.searchPath.empty());
+    EXPECT_EQ(broken.programs, intact.programs);
+}
+
+TEST(DeviceDryRun, AssignmentsAreNotMistakenForStages) {
+    auto plan = parse_dryrun(kPlanWithProfile);
+    // `LIBRARIES=  -L...` and `_SPACE_= ` both parse as assignments, and
+    // neither names a program. Reading either as a stage would report a
+    // missing tool that nvcc never intended to run.
+    for (auto const& p : plan.programs) {
+        EXPECT_EQ(p.find('='), std::string::npos);
+        EXPECT_NE(p, "LIBRARIES");
+        EXPECT_NE(p, "_SPACE_");
+    }
+}
+
+TEST(DeviceDryRun, StagesNamedByPathAreLeftAlone) {
+    // A stage nvcc spells out resolves without the search path, so it is not
+    // a candidate for "cannot be found on PATH".
+    auto plan = parse_dryrun("#$ PATH=/bin\n"
+                             "#$ /opt/cuda/bin/cicc --c++17\n"
+                             "#$ ptxas -arch=sm_52\n");
+    EXPECT_EQ(plan.programs, (std::vector<std::string>{"ptxas"}));
+}
+
+TEST(DeviceDryRun, TextThatIsNotAPlanYieldsNoStages) {
+    // A spawn that failed because there is no nvcc lands here. No stages
+    // means no finding: the probe reached no answer and invents none.
+    auto plan = parse_dryrun("mcpp: failed to spawn 'nvcc': No such file\n");
+    EXPECT_TRUE(plan.programs.empty());
+    EXPECT_TRUE(plan.searchPath.empty());
+}

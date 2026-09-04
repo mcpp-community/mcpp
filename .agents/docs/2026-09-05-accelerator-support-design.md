@@ -1280,3 +1280,54 @@ xim:mcpp@2026.9.5.1 installed, but 'mcpp' still resolves to 2026.9.4.3
 「引擎侧的新键要等 #559 发布之后,索引里的包才能使用」—— 2026.9.5.1 已发布,
 `accel`、`[package] accelerators`、`cfg(accelerator=…)` 现在都可以出现在索引包里。
 下一个用到它们的包需要在描述符里声明 mcpp 版本下限。
+
+### 15.7 ⭐⭐ 又一条判据:从**发布的源码 tarball**跑示例,它红了
+
+前六项用的是发布的引擎,但用的是工作树里的示例。补一条:
+从 `mcpp-2026.9.5.1.tar.gz` 解出 `examples/09-cuda-kernel`,用发布的引擎构建。
+**在沙箱里失败**:
+
+```
+sh: 1: cicc: not found
+```
+
+而同一个示例在宿主上输出 `12 24 36 48`。单变量隔离(同一条 nvcc 命令,只改一个东西):
+
+| 环境 | 结果 |
+|---|---|
+| 沙箱默认 | `sh: 1: cicc: not found` |
+| 沙箱 + `PATH=/usr/lib/nvidia-cuda-toolkit/bin:$PATH` | 产出 `.o` |
+| 沙箱 + PATH + `NVVMIR_LIBRARY_DIR` | 产出 `.o` |
+
+⇒ **唯一缺的是一条 PATH**。它来自 `/etc/nvcc.profile`,而 Debian 系把
+`/usr/lib/nvidia-cuda-toolkit/bin/nvcc.profile` 做成指向 `/etc` 的符号链接 ——
+subos 沙箱替换了 `/etc`,那条链接因此断开。
+
+⚠️ **这不是 mcpp 的缺陷,但 mcpp 的诊断对它一言不发。** 工具包完整、nvcc 在
+`PATH` 上、`crt/host_config.h` 读得到、`self doctor` 那一节照常打印,
+**每一个显而易见的检查都通过**,而用户拿到的是一条既不提 nvcc 也不提 profile
+的消息。这与 §5.2 的宿主编译器上界是同一个类别:失败很晚,消息指向一个用户
+没有选择过的东西。
+
+**已实现的检查**(`mcpp.toolchain.devicehost` 的 `parse_dryrun` + doctor 的
+`unreachable_device_stage`):`nvcc --dryrun` 打印它将要运行的阶段与它将要使用的
+`PATH` 而不编译任何东西;mcpp 解析这份计划,逐个解析其中的裸名,报出第一个解析
+不到的。**判据取自 nvcc 自己,不是抄一张目录表** —— 与 §14.1 第 5 行读
+`crt/host_config.h` 而非内置版本表是同一条原则。
+
+⭐ **两侧对照都跑了**(否则这条判据可能永远沉默或永远报警):
+
+| 对照 | `cannot reach its own back-end` |
+|---|---|
+| 真 nvcc(profile 可读) | 0 次 |
+| 把 nvcc 复制到无 profile 的目录后放在 PATH 前 | 1 次,点名 `cicc` |
+
+点名的是 `cicc` 而不是计划里更靠前的 `cudafe++`,因为 Debian 把
+`cudafe++`/`ptxas`/`fatbinary` 装进了 `/usr/bin` 而 `cicc` 只在工具包目录里 ——
+**与真实失败点名的那一个一致**。
+
+⚠️ **没有为它写 e2e。** 它需要 nvcc,而 CI 没有;一条 `# requires: nvcc` 的
+e2e 会在两个 shard 上都跳过并退 0,那是一条永远不跑的判据(memory
+`e2e-requires-llvm-never-runs-on-shards` 记的就是这个)。覆盖是:解析器的五条
+单测(夹具是两份**真实**的 dryrun 输出,差别恰好是那一行 PATH),加上上表那次
+手工两侧对照。

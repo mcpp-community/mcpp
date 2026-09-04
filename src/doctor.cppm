@@ -102,6 +102,64 @@ export int env_report() {
 }
 
 // `mcpp self doctor`.
+// Which back-end stage nvcc names but cannot resolve, if any.
+//
+// Nothing is compiled: `--dryrun` prints the plan and stops. std::nullopt
+// covers three unlike situations on purpose -- there is no nvcc, the dryrun
+// produced no plan, and every stage in the plan resolves -- because only a
+// named unresolvable stage is a finding. A probe that cannot reach an answer
+// must not manufacture one.
+std::optional<std::string> unreachable_device_stage() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+
+    const auto probe = fs::temp_directory_path(ec) / "mcpp-nvcc-dryrun";
+    if (ec) return std::nullopt;
+    fs::remove_all(probe, ec);
+    ec.clear();
+    fs::create_directories(probe, ec);
+    if (ec) return std::nullopt;
+    struct Cleanup {
+        fs::path dir;
+        ~Cleanup() { std::error_code e; fs::remove_all(dir, e); }
+    } const cleanup{probe};
+
+    const auto source = probe / "empty.cu";
+    { std::ofstream out(source); if (!out) return std::nullopt; }
+
+    // A spawn that fails because there is no nvcc yields text with no `#$`
+    // lines, hence an empty plan, hence no finding. No separate check needed.
+    const auto run = mcpp::platform::process::capture_exec(
+        {"nvcc", "--dryrun", "-c", source.string(),
+         "-o", (probe / "empty.o").string()});
+
+    const auto plan = mcpp::toolchain::parse_dryrun(run.output);
+    if (plan.programs.empty()) return std::nullopt;
+
+    std::string search = plan.searchPath;
+    if (search.empty())
+        if (const char* p = std::getenv("PATH"); p) search = p;
+    if (search.empty()) return std::nullopt;
+
+    std::vector<fs::path> dirs;
+    for (std::size_t pos = 0; pos <= search.size(); ) {
+        const auto sep  = search.find(':', pos);
+        const auto stop = sep == std::string::npos ? search.size() : sep;
+        if (stop > pos) dirs.emplace_back(search.substr(pos, stop - pos));
+        pos = stop + 1;
+    }
+
+    for (auto const& program : plan.programs) {
+        bool found = false;
+        for (auto const& dir : dirs) {
+            if (fs::exists(dir / program, ec)) { found = true; break; }
+            ec.clear();
+        }
+        if (!found) return program;
+    }
+    return std::nullopt;
+}
+
 export int doctor_report() {
     int warns = 0, errors = 0;
     auto ok    = [](std::string_view m) { mcpp::ui::status("ok", m); };
@@ -649,6 +707,33 @@ export int doctor_report() {
                         family == "gcc" ? bounds.gccMax : bounds.clangMax,
                         header->string()));
                 }
+            }
+
+            // WHETHER nvcc CAN REACH ITS OWN BACK-END
+            //
+            // A toolkit can be present, complete and on PATH and still fail
+            // at the first stage, because nvcc resolves cicc, ptxas and
+            // fatbinary as bare names on a PATH it prepends from an
+            // `nvcc.profile` beside its binary. A container or sandbox that
+            // replaces /etc removes that profile -- it is a symlink into it
+            // on Debian-family packaging -- and nvcc then states no PATH and
+            // reports `sh: 1: cicc: not found`. The message names neither
+            // nvcc nor the profile, and nothing about the toolkit is missing,
+            // so the user has nowhere to look.
+            //
+            // Asked rather than assumed: `--dryrun` prints the plan without
+            // running it, so the answer is nvcc's own.
+            if (auto missing = unreachable_device_stage(); missing) {
+                warn(std::format(
+                    "nvcc cannot reach its own back-end: it invokes '{}' by "
+                    "name, and that name does not resolve on the search path "
+                    "it states.\n"
+                    "         The toolkit is installed; what is missing is the "
+                    "`nvcc.profile` that prepends the toolkit's own bin "
+                    "directory. This is what a container or sandbox that "
+                    "replaces /etc removes. Device code will fail to compile "
+                    "with a message naming only '{}'.",
+                    *missing, *missing));
             }
         }
     }
