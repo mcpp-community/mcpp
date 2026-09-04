@@ -598,6 +598,25 @@ artifact:
 ⇒ 需在**绑定**这一级拒绝:同一 capability 的多 provider 必须走
 `optional = true` + 互斥 feature。**R6 与 R7 都压在这条上。**
 
+#### ⚠️⚠️ 这条按原样无法实现,2026-09-05 实施时发现
+
+决定 4 是「先修」,而写实现时它立不住:
+
+- **不能对「一个 capability 有多个 provider 在图里」一律报错。** `docs/05-mcpp-toml.md`
+  §2.8.1 把 OpenBLAS / MKL 这类**导出不同符号集、按链接选择**的库明确写成**正常用法**,
+  一律报错会把它们一起拒掉,而那是一个已发布的、有文档的行为。
+- **也不能只对「符号重叠的」报错**,因为绑定发生在**任何目标文件存在之前**,
+  引擎那时读不到符号。`symbol_provision` 能读,但它在链接之后 —— 这正是本条要提前的那一刻。
+
+⇒ 缺的是**一个声明**:某个 capability 的 provider 是否互斥,只有能力的定义者知道。
+形如 `provides = ["gpu-blas"]` 之外再声明 `exclusive = true`,或让 capability 本身
+带一个「同名符号」的性质。**这是一个新的 manifest 键与一次设计决定,不是一次实现。**
+
+因此本轮**没有实现决定 4**,理由不是排期而是它需要先被重新设计。
+⭐ 与之相关的观察:R6 / R7 目前并不真的被它阻塞 —— 互斥 feature 已经能表达这件事
+(`examples` 与索引里的 `compat.*` 都这么用),缺的只是**在用户写错时报错**,
+而不是**能不能写对**。
+
 ---
 
 ## 8. 生态闭环(决定 10)
@@ -1058,6 +1077,28 @@ accelerators = ["cuda", "rocm"]          # [提议] 同一形状:支持面声明
 | **L3a** | 自建最小多后端夹具(**源码分发**) | 同一份源码,消费者按自己的 `archs` 编出可用产物;不涉及二进制发布 |
 | **L3b** | ggml(**二进制分发**) | 同一份源码,`--features cuda` 与 `--features rocm` 产出 `accel` 不同的两个产物;CPU-only 变体排第一(§11.2) |
 | **8** | 形态 B(SYCL/OpenMP) | 换 `[toolchain]` 后产物里出现设备段;offload 载荷有 `nvptx-none` 的 `libgomp` 插件 |
+
+#### 2026.9.5.1 实际落地了哪些阶段
+
+| 阶段 | 状态 | 证据 |
+|---|---|---|
+| 0a 兼容性探针 | ✅ | `xpkg.cppm` 读取器对未知键 skip;`mcpp.toml` 的 `runtime.artifacts` 是封闭白名单,已加 `accel` |
+| 0b 形态 B 探针 | ❌ 未做 | 本机无 SYCL 工具链,做了无法真实验证 |
+| 0c 规则包原型 | ✅ | `examples/09-cuda-kernel`,RTX 4080 上 `mcpp run` 输出 `12 24 36 48` |
+| 1 capability 边界 | ❌ **未做,且需重新设计**(见 §7.4 的补注) |
+| 2 `accel` + `tag_check` | ✅ | 单测 12 条 + e2e 600;真实拒绝消息见 §14 |
+| 3 `SourceKind::Device` | ✅ | 单测 6 条;`.cuh` 进 header 轴 |
+| 4 `accelerator` 多值 layer | ✅ | 单测 7 条;语义按 §3.4 修正后的一行 |
+| 5 逐 glob 收窄 | ❌ 未做 | 依赖 device target(阶段外),本轮 device 编译走规则包 |
+| 6 `-ccbin` 配对 | ⚠️ 部分 | 引擎侧读上界并在 `mcpp self doctor` 报告;**钉定**发生在规则包里,不在引擎里 |
+| 7 device link | ❌ 未做 | 依赖 device target |
+| L1/L2 索引包 | ⚠️ 部分 | `compat.cuda-runtime` 已合入并发布并沙箱验证;`rules-cuda` 目前是 `examples/` 里的 path 包,尚未收录进索引 |
+| L0 / L3 / 8 | ❌ 未做 | 见上 |
+
+⚠️ **决定 3(逐 glob 收窄第一版就做)与决定 4(capability 边界先修)都没有落地。**
+前者依赖 device target 这一原语,而本轮 device 编译走的是规则包路线(设计 §12 阶段 0c
+本来就排在引擎 device target 之前);后者见 §7.4 的补注 —— 它需要先被重新设计。
+两条都不是「忘了」,但都与拍板时的意图有出入,记在这里而不是让阶段表替它们含糊过去。
 
 ⚠️ **0a 是前置不是并行**:它若答「失败」,阶段 2 的形状要改。
 
