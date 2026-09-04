@@ -218,14 +218,21 @@ error: [targets.kernels] backend = "cuda" requires `archs`.
 **[已有]** `kCfgLayerKeys` 现有五项,由 `merge_layer_conditional_config` 的**第二趟**
 在目标侧解析后求值,未知键有 `unknown_tokens()` 诊断。加 `accelerator` 是加一项。
 
-⚠️ 但它必须是**多值** layer(现有五项都是单值),且组合子语义要写死:
+⚠️ 但它必须是**多值** layer(现有五项都是单值),而语义只有一行:
 
-- `accelerator = "cuda"` ⟺ 集合**恰好是** `{cuda}`
-- `any(accelerator = "cuda")` ⟺ `cuda ∈` 集合
-- `all(accelerator = "cuda", accelerator = "rocm")` ⟺ 两者都在集合里
+> **`accelerator = "<x>"` ⟺ `<x> ∈` 集合。处处如此。**
 
-⭐ 比引入第二个谓词好在:**没有新词汇,只是让已有组合子在多值 layer 上有定义。**
-代价是要写清这三行 —— 而这三行本来就该写清。
+`any` / `all` / `not` 作为普通布尔组合子在其上组合,不改变操作数的含义。
+单后端构建的集合是 `{cuda}`,于是它对 `accelerator = "cuda"` 答真、
+对 `accelerator = "rocm"` 答假 —— 这正是 R2/R7 需要的;
+多后端构建的集合是 `{cuda, rocm}`,两者都答真 —— 这正是 R5 需要的。
+
+⚠️⚠️ **本节最初写的是另一套语义**(裸键表示集合相等、`any(...)` 才表示成员判定),
+实施时发现它是错的:让组合子改变操作数的含义,会使
+`all(accelerator = "cuda", accelerator = "rocm")` 变成**不可满足**,
+而不是「两个后端都启用」。改为处处成员判定之后,不但正确,而且
+**用户少学一条规则** —— R5 的 manifest 里也不再需要写 `any(...)`。
+详见 §14.1 第 1 条。实现里这个差异只落在一个函数(`Ctx::layer_matches`)上。
 
 ### 3.5 P5 —— 规则包,`backend` 走 capability
 
