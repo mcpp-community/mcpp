@@ -677,6 +677,11 @@ export struct BuildContext {
     // build cache records it so `mcpp run`'s fast path declines an entry a
     // plain `mcpp build` wrote — see BuildCacheEntry::runTierPending.
     bool runTierPending = false;
+    // What `--features` asked for, verbatim. Carried so the build cache entry
+    // can record the set its artefacts were built with — the output directory
+    // is keyed on a fingerprint that includes the features and the entry was
+    // not, which let a plain build serve a featured artefact.
+    std::string activeFeatureRequest;
     std::filesystem::path           outputDir;
     std::filesystem::path           stdBmi;
     std::filesystem::path           stdObject;
@@ -8828,6 +8833,7 @@ prepare_build(bool print_fingerprint,
     ctx.runtimeSelection = runtimeSelection;
     ctx.runtimeBinding = runtimeBindingSnapshot;
     ctx.profile     = effectiveProfile;
+    ctx.activeFeatureRequest = overrides.features;
     ctx.compilerChoice = { std::string(tc_origin_name(tcOrigin)),
                            graphCompilerRequiredBy,
                            graphCompilerReplaced.empty() ? pinReplacedDefault

@@ -221,12 +221,20 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     // what `mcpp run` has always meant.
     std::string runner_name;
     if (auto rn = parsed.value("runner")) runner_name = *rn;
+    // The same two axes `build` and `test` take, read the same way. `--release`
+    // and `--dev` are the shorthands the other verbs already accept.
+    std::string features, profile;
+    if (auto fs = parsed.value("features")) features = *fs;
+    if (auto pr = parsed.value("profile"))  profile  = *pr;
+    if (parsed.is_flag_set("release"))      profile  = "release";
+    if (parsed.is_flag_set("dev"))          profile  = "dev";
     if (parsed.is_flag_set("list-runners"))
         return mcpp::build::list_runners(package_filter, cache_mode, no_cache,
-                                         target_triple);
+                                         target_triple, features, profile);
     return mcpp::build::build_run_target(targetName, passthrough, package_filter,
                                          cache_mode, no_cache, target_triple,
-                                         no_runner, runner_name);
+                                         no_runner, runner_name, features,
+                                         profile);
 }
 
 export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,

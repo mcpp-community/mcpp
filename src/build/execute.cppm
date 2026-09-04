@@ -139,6 +139,22 @@ struct BuildCacheEntry {
     // every entry such a cache could hold, because no manifest could express
     // the tier.
     bool runTierPending = false;
+    // ⚠️⚠️ THE FEATURE SET THIS ENTRY'S ARTEFACTS WERE BUILT WITH.
+    //
+    // The entry is keyed on (target, profile, cache mode) and was matched on
+    // those three alone, while the OUTPUT DIRECTORY is keyed on a fingerprint
+    // that includes the features. So `mcpp build --features loud` wrote an
+    // entry pointing at the loud output directory, and the next plain
+    // `mcpp build` matched it and reported success in 0.00s — serving the
+    // featured artefact to a request that asked for none.
+    //
+    // Measured before this field existed: three builds of one project printed
+    // `quiet`, `LOUD`, `LOUD`. The third had no feature on.
+    //
+    // Absent on caches written before the field: empty, which reads as "no
+    // features" — correct for every entry such a cache could hold whose
+    // request also has none, and a miss otherwise, which is the safe direction.
+    std::string features;
 };
 
 std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& projectRoot) {
@@ -254,6 +270,11 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
             e.runTierPending = (line.substr(8) == "1");
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        // Optional `features=<list>`. Absent ⇒ empty; see the field.
+        if (haveNextLine && line.starts_with("features=")) {
+            e.features = line.substr(9);
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         entries.push_back(std::move(e));
         if (!haveNextLine || line.empty()) break;
     }
@@ -264,6 +285,25 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
 // and the writer of this file sit next to each other.
 void write_build_cache_entries(const std::filesystem::path& path,
                                const std::vector<BuildCacheEntry>& entries);
+
+// `a, b` and `b a` are one request. Normalised on both sides of the comparison
+// — the entry stores this form and the fast path computes it — so a cache hit
+// depends on the SET rather than on how it was typed.
+std::string normalize_features(std::string_view raw) {
+    std::vector<std::string> toks;
+    for (std::size_t i = 0; i < raw.size();) {
+        auto c = raw.find_first_of(", ", i);
+        auto t = raw.substr(i, c == std::string_view::npos ? c : c - i);
+        if (!t.empty()) toks.emplace_back(t);
+        if (c == std::string_view::npos) break;
+        i = c + 1;
+    }
+    std::ranges::sort(toks);
+    toks.erase(std::unique(toks.begin(), toks.end()), toks.end());
+    std::string out;
+    for (auto const& t : toks) { if (!out.empty()) out += ','; out += t; }
+    return out;
+}
 
 void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::filesystem::path& outputDir,
@@ -280,7 +320,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                        const mcpp::platform::runtime::RuntimeBinding& runtimeBinding = {},
                        std::vector<std::string> depSourceRoots = {},
                        bool runnerDeclared = false,
-                       bool runTierPending = false) {
+                       bool runTierPending = false,
+                       const std::string& features = {}) {
     auto path = projectRoot / kBuildCacheFile;
     auto entries = read_build_cache(projectRoot);
 
@@ -303,6 +344,7 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     newEntry.depSourceRootsRecorded = true;
     newEntry.runnerDeclared = runnerDeclared;
     newEntry.runTierPending = runTierPending;
+    newEntry.features = features;
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -345,6 +387,7 @@ void write_build_cache_entries(const std::filesystem::path& path,
         for (auto& r : e.depSourceRoots) f << r << '\n';
         f << "runner=" << (e.runnerDeclared ? 1 : 0) << '\n';
         f << "runtier=" << (e.runTierPending ? 1 : 0) << '\n';
+        f << "features=" << e.features << '\n';
     }
 }
 
@@ -764,7 +807,12 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                           !choose_runner(ctx).tmpl.empty(),
                           // …and one written by a build that left a run-tier
                           // tool uninstalled, for the same reason.
-                          ctx.runTierPending);
+                          ctx.runTierPending,
+                          // The feature set these artefacts were built with:
+                          // the entry is matched on it, because the output
+                          // directory is keyed on a fingerprint that includes
+                          // it and the entry was not.
+                          normalize_features(ctx.activeFeatureRequest));
     }
 
     // The one place the --strict policy is settled. Degradations reported by
@@ -1013,11 +1061,15 @@ struct FastPathIdentity {
     // the same single manifest read, and the only one that can VETO the fast
     // path rather than describe it — see try_fast_build.
     bool hooksActive = false;
+    // What `--features` asked for, normalised so that spelling and order
+    // cannot make two identical requests compare unequal.
+    std::string features;
 };
 
 std::optional<FastPathIdentity>
 fast_path_identity(const std::filesystem::path& projectRoot,
-                   std::string_view profileOverride = "") {
+                   std::string_view profileOverride = "",
+                   std::string_view featuresRequested = "") {
     auto m = mcpp::manifest::load(projectRoot / "mcpp.toml");
     if (!m) return std::nullopt;
     return FastPathIdentity{
@@ -1028,6 +1080,7 @@ fast_path_identity(const std::filesystem::path& projectRoot,
         mcpp::extension_table_for(m->buildConfig.moduleExtensions),
         m->buildConfig.target,
         m->hooks.active(),
+        normalize_features(featuresRequested),
     };
 }
 
@@ -1040,11 +1093,19 @@ fast_path_identity(const std::filesystem::path& projectRoot,
 // what THIS graph supplies, which is knowable only after resolution.
 export int list_runners(const std::string& package_filter,
                         const std::string& cache_mode, bool no_cache,
-                        const std::string& target_triple) {
+                        const std::string& target_triple,
+                        // Which runners exist DEPENDS on the features: a board
+                        // package supplies a different set for an emulator and
+                        // for a probe. Reporting them without the axis that
+                        // selects them would answer a question nobody asked.
+                        const std::string& features = {},
+                        const std::string& profile = {}) {
     mcpp::build::BuildOverrides ov;
     ov.package_filter = package_filter;
     ov.cache_mode     = no_cache ? std::string("off") : cache_mode;
     ov.target_triple  = target_triple;
+    ov.features       = features;
+    ov.profile        = profile;
     // Reporting what `mcpp run` would do means resolving what `mcpp run`
     // resolves, tool tiers included — otherwise this command would list a
     // runner whose program it had declined to install.
@@ -1113,7 +1174,7 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     const BuildCacheEntry* match = nullptr;
     for (auto& e : entries) {
         if (e.targetTriple == currentTarget && e.profile == want->profile
-            && e.cacheMode == want->cacheMode) {
+            && e.cacheMode == want->cacheMode && e.features == want->features) {
             match = &e;
             break;
         }
@@ -1245,7 +1306,7 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     const BuildCacheEntry* match = nullptr;
     for (auto& e : entries) {
         if (e.targetTriple.empty() && e.profile == want->profile
-            && e.cacheMode == want->cacheMode) {
+            && e.cacheMode == want->cacheMode && e.features == want->features) {
             match = &e;
             break;
         }
@@ -1407,7 +1468,24 @@ export int build_run_target(const std::optional<std::string>& targetName,
                             // Empty is the default runner — `mcpp run`. Any
                             // other value came from `--runner <name>` and the
                             // engine has never seen it before.
-                            std::string_view runner_name = {}) {
+                            std::string_view runner_name = {},
+                            // ⭐⭐ THE TWO AXES `build` AND `test` HAVE ALWAYS
+                            // TAKEN, AND `run` DID NOT.
+                            //
+                            // Both change WHAT IS BUILT, so a `run` that could
+                            // not express them could only ever execute whatever
+                            // a previous `build` happened to leave behind — and
+                            // there is no spelling of `mcpp run` that runs a
+                            // release artefact, or one built with a feature on.
+                            //
+                            // It is the shape the whole device surface is built
+                            // around: a board package expresses "emulator" and
+                            // "hardware" as features, so `mcpp run --features
+                            // hardware` is the command a developer types when
+                            // the board arrives. Without this it was the one
+                            // scenario the design's own example could not run.
+                            const std::string& features = {},
+                            const std::string& profile = {}) {
     // mcpp#225 (E2): reuse the resolved build cache when it's still fresh,
     // skipping prepare_build's toolchain resolution + modgraph scan
     // entirely — mirrors cmd_build's try_fast_build fast path. The cached
@@ -1424,6 +1502,11 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // manifest to print the note against.
     if (package_filter.empty() && cache_mode.empty() && !no_cache
         && target_triple.empty() && !no_runner
+        // ⚠️ AND NEITHER NEW AXIS IS SET. The cached entry was written for
+        // whichever feature set and profile the last build used; taking it
+        // here would silently ignore the flag, which is the same reason
+        // `--cache` and `--profile` bypass it in `cmd_build`.
+        && features.empty() && profile.empty()
         // ⚠️⚠️ THE FAST PATH IS `run`'s, AND ONLY `run`'s.
         //
         // It exec's the cached artefact directly — that IS its definition — so
@@ -1448,6 +1531,8 @@ export int build_run_target(const std::optional<std::string>& targetName,
     ov.package_filter = package_filter;
     ov.cache_mode     = cache_mode;
     ov.target_triple  = target_triple;
+    ov.features       = features;
+    ov.profile        = profile;
     // This verb executes what it builds, so the `when = "run"` tool tier is
     // part of what has to exist. `mcpp build` does not set it, which is the
     // whole of the difference the tier buys.
