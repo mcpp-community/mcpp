@@ -67,6 +67,11 @@ struct Ctx {
     std::string os, arch, family, env, triple;
     bool        layersKnown = false;
     std::string compiler, compilerRuntime, kernelAbi, cAbi, cxxAbi;
+    // The first MULTI-VALUED layer. One build can enable several accelerator
+    // backends at once, which is what an inference framework shipping CUDA and
+    // ROCm device code in one artifact requires, so this layer holds a set
+    // rather than the single answer the other five hold.
+    std::vector<std::string> accelerators;
 
     std::string_view layer_value(std::string_view k) const {
         if (k == "compiler")         return compiler;
@@ -75,6 +80,22 @@ struct Ctx {
         if (k == "c-abi")            return cAbi;
         if (k == "c++-abi")          return cxxAbi;
         return {};
+    }
+
+    // THE SINGLE PLACE THE MULTI-VALUED CASE DIFFERS.
+    //
+    // A multi-valued layer compares by MEMBERSHIP, and it does so everywhere —
+    // not only inside `any(...)`. The alternative, letting `any(...)` mean
+    // membership while a bare key meant set equality, would make a combinator
+    // change the meaning of its operand: `all(accelerator = "cuda",
+    // accelerator = "rocm")` would then be unsatisfiable rather than "both
+    // backends are enabled". Membership everywhere keeps `any`/`all`/`not`
+    // pure boolean combinators, and a single-backend build still answers
+    // `accelerator = "cuda"` true and `accelerator = "rocm"` false.
+    bool layer_matches(std::string_view k, std::string_view v) const {
+        if (k == "accelerator")
+            return std::ranges::find(accelerators, v) != accelerators.end();
+        return layer_value(k) == v;
     }
 };
 
@@ -126,7 +147,8 @@ inline constexpr std::string_view kCfgTripleKeys[] = {
     "arch", "env", "family", "os",
 };
 inline constexpr std::string_view kCfgLayerKeys[] = {
-    "c++-abi", "c-abi", "compiler", "compiler-runtime", "kernel-abi",
+    "accelerator", "c++-abi", "c-abi", "compiler", "compiler-runtime",
+    "kernel-abi",
 };
 inline constexpr std::string_view kCfgBarewords[] = {
     "linux", "macos", "unix", "windows",
@@ -189,7 +211,7 @@ struct Parser {
         // skipped — which is correct, because the second pass owns it and would
         // otherwise append the same inputs twice through `append()`.
         if (is_cfg_layer_key(k))
-            return c.layersKnown && c.layer_value(k) == v;
+            return c.layersKnown && c.layer_matches(k, v);
         return false;
     }
     bool expr() {
