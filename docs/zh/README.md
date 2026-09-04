@@ -22,6 +22,7 @@
 - [17 - 项目环境](17-the-project-environment.md)
 - [18 - 抵达一台设备](18-devices.md)
 - [19 - 受支持的版本与兼容性](19-supported-versions.md)
+- [20 - 加速器](20-accelerators.md)
 
 ## 规范文档
 
