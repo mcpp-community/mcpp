@@ -13,6 +13,13 @@ import_std = true
 [dependencies]
 rules-cuda = { path = "../rules-cuda", host-module = true }
 
+# The driver's userspace library, reached through an index package that owns
+# the one hop mcpp needs: a directory on the artifact's runtime search path.
+# mcpp's private loader does not consult /usr/lib, so without it the statically
+# linked CUDA runtime cannot dlopen the driver.
+[dependencies.compat]
+cuda-runtime = "2026.09.05"
+
 # The driver's userspace library, reached through the sentinel package.
 #
 # It is the one CUDA component that cannot be an ordinary payload: NVIDIA's
