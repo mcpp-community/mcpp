@@ -1146,7 +1146,22 @@ xim 的 `hostlib.lua` 还记着这条规则的来历:**四处各自探测,三处
 device link / RDC、含设备代码的静态库、Metal(本机无 macOS)、
 xim 的 CUDA 工具链载荷。每一项在 §12 都有独立判据。
 
-⚠️ **一处诚实的缺口**:`examples/09-cuda-kernel` 目前仍需
-`LD_LIBRARY_PATH` 指向 sentinel 才能 `mcpp run`,因为它不能依赖尚未发布的
-`compat.cuda-runtime`。这是跨仓库发布顺序(§8.2 的环)的直接体现,
-索引 PR 合入并发布后即可去掉,示例的 README 已写明这一点。
+### 14.6 §8.2 的环被实际走了一遍,并且闭合了
+
+设计说跨仓库顺序是硬的,而这一轮把它走完了:
+
+1. 引擎侧改动进 PR #559(未发布);
+2. `compat.cuda-runtime` 只用现有键,因此**不必等引擎发布**,独立进 mcpp-index #346;
+3. #346 合入后,**判据是 `Publish Index Artifact` 在合入的那个 commit 上绿**
+   —— 不是「PR 绿」,也不是「main 有这个文件」。实测该 workflow 在 `a6f625e3` 上
+   completed/success 之后,`mcpp index update` 才能解析到它;
+4. 于是示例把 `LD_LIBRARY_PATH` 的绕法换成一条普通依赖,`mcpp run` 无环境变量直接输出
+   `12 24 36 48`。
+
+⭐ 第 3 步是 memory `index-stale-but-marker-fresh` 记的第五层:
+**xlings 消费的是 `artifact:<sha>`**,所以「合入了」与「能用了」之间还隔着一个 workflow。
+本轮没有踩到它,因为事先按那条记忆等了发布再验证。
+
+⚠️ 仍未闭合的是另一件事:**引擎侧的新键要等 #559 发布之后,索引里的包才能使用**。
+`compat.cuda-runtime` 恰好一个新键都没用到,所以这一轮绕开了;
+下一个用到 `accel` 字段的索引包不会这么幸运。
