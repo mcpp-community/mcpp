@@ -677,3 +677,91 @@ MCPP_NO_AUTO_INSTALL=1 mcpp run      的输出里 必须 出现 run 档的工具
 * 批 2、批 5 与批 1'/1" **互不依赖**,可同时进行。
 * 批 4 依赖批 1'(要有 Cortex-M 后端才能在上面实现 `arch_trap_switch`)。
 * 批 6 独立,任何时候都能做;它只在批 3 的 `hardware` feature 要真跑时才成为阻塞。
+
+## 17. Measured outcomes of the ecosystem batch (2026-09-04)
+
+This section records what the implementation measured, including the two places
+where a decision written earlier in this document was wrong.
+
+### 17.1 A package that vendors upstream sources takes upstream's identity
+
+The rule the batch now follows is that both halves of a package's identity come
+from upstream when the content does. `picolibc.picolibc` and
+`llvm.compiler-rt-builtins` are named for the projects whose code they carry,
+and are versioned `1.8.12` and `22.1.8` for the releases they vendor. Only a
+package whose content this organisation wrote takes `mcpplibs` — `cortex-m-rt`,
+`openarch`, and the two board packages do.
+
+The claim is verified rather than asserted. Every one of picolibc's 2109
+vendored files is byte-identical to the upstream 1.8.12 release, whose
+`meson.build` declares that version; every one of the 347 vendored builtins is
+byte-identical to `compiler-rt/lib/builtins` at the tag `llvmorg-22.1.8`. Both
+comparisons were made file by file against upstream, not inferred from a
+directory name.
+
+A packaging change moves a fourth segment, which is what allows the first three
+to stay upstream's. `1.8.12.3` is upstream 1.8.12 with this organisation's third
+packaging of it.
+
+### 17.2 A BARE REQUIREMENT IN mcpp IS AN EXACT PIN, NOT A CARET
+
+Two releases shipped broken because of a belief this document did not check.
+`mcpp.version_req` documents a caret default — `"1.2.3"` means `>=1.2.3, <2.0.0`
+— and that is true of the MATCHING grammar and false of the RESOLUTION path.
+`mcpp::pm::is_version_constraint` returns false for a bare number, so
+`resolveSemver` never runs and the literal string becomes the wire address.
+
+Measured, with only `22.1.8.2` in the index and a dependency written `"22.1.8"`:
+
+    Downloading llvm.compiler-rt-builtins v22.1.8
+    error: package 'llvm.compiler-rt-builtins@22.1.8' install path missing after fetch
+
+xlings had resolved the requirement to the real version and installed it; mcpp
+then looked for a directory named after the requirement. THE DIAGNOSTIC NAMES
+THE SYMPTOM AND NOT THE CAUSE, which is why the belief survived being tested —
+"install path missing after fetch" reads like a corrupt download.
+
+The consequence for the scheme in 17.1 is that a consumer writes the packaging
+revision in full, and a packaging release costs a re-pin in every consumer. That
+is the same cost every other version bump has here, and it is stated in both
+manifests so the next reader does not rediscover it.
+
+### 17.3 A dependency path that escapes the package cannot be released
+
+Both broken releases carried a `path = "../sibling"` override, which is how each
+package is developed against an unreleased neighbour. IT IS INVISIBLE TO THE
+PUBLISHING REPOSITORY'S OWN CI, because the sibling is there: the build succeeds
+and the job is green. It fails only for a consumer, after the version has been
+published and mirrored.
+
+Both repositories now refuse it in CI, and the index audit checks published
+manifests for it as well — the audit that passed the broken release checked
+identity, version and checksum, and none of those three were wrong.
+
+### 17.4 A `main` that returns hung for ever
+
+`cortex-m-rt` called `board_main` for effect and then spun, on the reasoning
+that a freestanding entry has no caller to report to. C defines returning from
+`main` as `exit(status)`, and both tiers have somewhere to report: with a C
+library, `exit` runs the `atexit` handlers and flushes the streams; with none,
+semihosting is how the package's own console already reached the host.
+
+EVERY TEST OF THE PACKAGE TOOK THE ONE PATH THAT WORKED, because the template
+writes an explicit `board::exit(0)`. A program ending in `return 0` printed its
+output and then ran until something killed it. The CI step added for it imposes
+its own `timeout`, since a regression does not fail but hangs.
+
+### 17.5 Open: `mcpp run` folds every non-zero exit status to 1
+
+Measured on a hosted target: a program whose `main` returns 3 causes `mcpp run`
+to exit 1. Both spawn sites end in `return rc == 0 ? 0 : 1`, deliberately, so
+that 2 can mean "could not start" as distinct from 1 meaning "ran and failed".
+The freestanding path behaves the same way: qemu returns 3 and `mcpp run`
+reports 1.
+
+This is a documented-by-code contract rather than an accident, so it is recorded
+here rather than changed. It is worth deciding, because the universal command
+surface is the claim that running on a device is like running hosted, and a
+hosted `run` that cannot report a program's status is not that. Changing it
+means choosing what mcpp's own failures return once the child's status is
+passed through.
