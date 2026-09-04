@@ -1070,3 +1070,83 @@ v4 的六条已全部拍板(决定 11–16)。真正剩下的:
    影响 RK-4(谁来编)与 §11.2 的顺序保证。
 4. **规则包提供节名表的接口形状**(决定 13)—— 是规则包的模块导出一个函数,
    还是描述符里的一张静态表?后者更适合「引擎不加载规则包也要能核验产物」。
+
+---
+
+## 14. 实施后的自我 review(2026-09-05,PR #559 / mcpp-index #346)
+
+本节只记**实施推翻了设计的地方**,以及生态级的观察。通过的不记。
+
+### 14.1 设计被实施推翻的五处
+
+| # | 设计说 | 实测 | 影响 |
+|---|---|---|---|
+| 1 | `any(accelerator=…)` 表示成员判定,裸键表示集合相等(§3.4 三行语义) | **错的。** 让组合子改变操作数含义会使 `all(a="cuda", a="rocm")` 变成不可满足而不是「两者都启用」 | 改为**处处成员判定**,组合子保持纯布尔。**用户少学一条规则**,`cfg(accelerator="cuda")` 直接可用 |
+| 2 | 「xpkg 已确认 skip 未知键 ⇒ RK-2 等级下调」 | **只对一条路成立。** 已发布描述符的读取器确实 skip;而**打包后的 `mcpp.toml` 的 `runtime.artifacts` 是封闭白名单,未知键直接报错** | RK-2 在 mcpp.toml 这条路上是真的。两个读取器两种策略,设计只查了一个 |
+| 3 | 形态 B 需要一个新的工具链家族(§5.0 倾向) | **不需要。** DPC++ 就是 clang:同 driver、同 GNU flag、同 BMI。`Family` 封闭枚举一处都不用动 | 形态 B 的工程量从「加家族」降到「加载荷变体 + 能力位」 |
+| 4 | nvc++ 提供 `-stdpar`,看起来属于形态 B | **属于形态 A。** HPC SDK 自述主标准是 C++17,无 modules ⇒ 当不了 `import std` 工程的宿主编译器 | 它只能作设备编译器,与 nvcc 同类 |
+| 5 | 宿主编译器上界内置一张按 CUDA 版本的表(§5.2 备选) | **应当读 `crt/host_config.h`。** 表是某一个 release 的拷贝,下一版就静默过时 | 一个 mcpp 从未见过的 toolkit 也能作答;解析不了的头文件不产生断言 |
+
+⭐ 第 1 条值得单独说:它是**实施让设计变简单**的一次,而不是变复杂。
+
+### 14.2 生态强制执行了设计原则,而不是相反
+
+三次实测里,**生态自己拦下了我想走的近路**:
+
+1. **链宿主 `libcudart` 被拒。** mcpp 的运行期闭包校验报
+   *"Its PT_INTERP is a private loader, so the host's /usr/lib is NOT consulted"*,
+   并指向 `xlings install <pkg>`。**这不是我设计的,是引擎已有的。**
+   §5.0b 的「少依赖 host」不是一条建议,是被执行的规则。
+2. **`allow_host_libs = true` 不够。** 闭包校验比它更强。只能改成静态链接可再分发的一半,
+   把宿主依赖收敛到 `libcuda.so.1` 这一个不可消除的点。
+3. **`[xlings] deps` 只对 ROOT 工程 materialize。** 索引里 `riscv-virt-rt` 的注释已经写着
+   这条,并给出正解:包级的安装边是 `xpm.<platform>.deps`。
+
+⇒ **生态的既有约束比我的设计更严,而且它们是对的。**
+
+### 14.3 ⚠️⚠️ 我自己犯的两个错,都是本文档反复警告过的形状
+
+**其一,重复了一处被明令禁止重复的探测。** `compat.cuda-runtime` 的第一版自己抄了一份
+宿主 `libcuda` 探测,而 xim 的 sentinel recipe 原文写着:
+
+> Single source of truth for "where is host libcuda" → all GPU xpkgs read from
+> `pkginfo.dep_install_dir(...)` and **don't reimplement ldconfig probing each**
+
+xim 的 `hostlib.lua` 还记着这条规则的来历:**四处各自探测,三处是错的**,
+每一处都是同一个「假设目录布局」的错误。我写了第五处。
+**是 review 抓出来的,不是我自己发现的。**
+
+**其二,凭印象写下了一条「为什么需要」的理由,而它是错的。**
+第一版还抓了 `libnvidia-ptxjitcompiler`,PR 正文写「没有它前向兼容会静默失效」。
+实测:只编 `compute_80`、只让 `libcuda.so.1` 可见,在 sm_89 上 JIT 成功(`jit result=99`)。
+驱动通过自己的路径加载兄弟库。**三个 pattern 全是多余的。**
+
+⭐ 这正是 memory `reasons-written-from-memory-kill-good-fixes` 的镜像:
+凭印象写的理由既能否掉正确修法,也能**留下多余实现**,而**结论会被复查,理由不会**。
+
+### 14.4 生态级:一个跨工具的缺陷
+
+`xlings install` 会把**由 mcpp 安装的**裸名 shim 从 subos 的 `bin/` 里剪掉,
+包括 `mcpp` 自己,即使那次安装是 already-installed 的 no-op。
+已受控复现(13 条 → 6 条,删掉 7 条),已提 openxlings/xlings#582。
+
+⭐ 形状是:**两个工具写同一个 shim 目录,其中一个把另一个的条目当作陈旧项。**
+这与本文档 §1 的主题同构 —— 一个字段两个写者,而其中一个不知道另一个存在。
+
+### 14.5 本轮的覆盖与未覆盖
+
+**已落地并真机验证**(RTX 4080 / CUDA 12.0 / 驱动 550.144.03):
+`SourceKind::Device`、`accelerator` 多值 layer、`accel` 身份维与 `tag_check`、
+描述符与构建请求两端接线、宿主/设备编译器配对(`mcpp self doctor`)、
+`--accel` / `--no-accel`、`[package] accelerators`、docs 20 章中英双份、e2e 600、
+`examples/09-cuda-kernel`(`mcpp run` 输出 `12 24 36 48`)、
+`compat.cuda-runtime`(farm 单条链向 sentinel)。
+
+**未做,且理由是「做了无法真实验证」**:形态 B(本机无 SYCL 工具链)、
+device link / RDC、含设备代码的静态库、Metal(本机无 macOS)、
+xim 的 CUDA 工具链载荷。每一项在 §12 都有独立判据。
+
+⚠️ **一处诚实的缺口**:`examples/09-cuda-kernel` 目前仍需
+`LD_LIBRARY_PATH` 指向 sentinel 才能 `mcpp run`,因为它不能依赖尚未发布的
+`compat.cuda-runtime`。这是跨仓库发布顺序(§8.2 的环)的直接体现,
+索引 PR 合入并发布后即可去掉,示例的 README 已写明这一点。
