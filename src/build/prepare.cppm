@@ -8750,13 +8750,38 @@ prepare_build(bool print_fingerprint,
     // same resolution `fillXpkgDirs` hands to build programs, kept as
     // directories rather than env vars because the reader is mcpp's own
     // lookup, not a child process. See BuildContext::xlingsDepBinDirs.
-    if (!runtimeOwnerManifest.xlings.deps.empty()) {
-        if (auto cfg = get_cfg()) {
-            auto xlEnv = mcpp::config::make_xlings_env(**cfg);
-            for (auto const& spec : runtimeOwnerManifest.xlings.deps) {
-                auto ref = mcpp::xlings::paths::parse_xpkg_ref(spec);
-                if (auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref))
-                    ctx.xlingsDepBinDirs.push_back(*dir / "bin");
+    //
+    // ⚠️⚠️ AND EVERY PACKAGE IN THE GRAPH, NOT ONLY THE ROOT — WHICH IS THE
+    // CASE THIS FEATURE EXISTS FOR.
+    //
+    // A board-support package is precisely the thing that knows which emulator
+    // or probe reaches its machine, and it declares that emulator under its own
+    // `[xlings] deps`. Collecting only the ROOT's declarations meant a runner
+    // could name a program by bare name only when the CONSUMER had also
+    // declared it — which is the duplication the board package exists to
+    // remove. Measured on `mcpplibs/aarch64-virt-rt`: with the board naming
+    // `qemu-system-aarch64` bare, `mcpp run` searched PATH, found the shim or
+    // nothing, and reported a missing runner while the emulator sat installed
+    // in the payload the board had declared.
+    //
+    // Ordering is root-first: a consumer that declares its own payload gets to
+    // decide, and a dependency supplies the answer when the consumer said
+    // nothing. A payload that is declared but not installed contributes
+    // nothing, and the lookup continues to PATH.
+    {
+        std::vector<std::string> xlingsSpecs = runtimeOwnerManifest.xlings.deps;
+        for (auto const& pkg : packages)
+            for (auto const& spec : pkg.manifest.xlings.deps)
+                if (std::ranges::find(xlingsSpecs, spec) == xlingsSpecs.end())
+                    xlingsSpecs.push_back(spec);
+        if (!xlingsSpecs.empty()) {
+            if (auto cfg = get_cfg()) {
+                auto xlEnv = mcpp::config::make_xlings_env(**cfg);
+                for (auto const& spec : xlingsSpecs) {
+                    auto ref = mcpp::xlings::paths::parse_xpkg_ref(spec);
+                    if (auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref))
+                        ctx.xlingsDepBinDirs.push_back(*dir / "bin");
+                }
             }
         }
     }

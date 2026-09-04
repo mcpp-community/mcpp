@@ -52,7 +52,10 @@ mcpp::run_exclusive();                  // this target's runs cannot overlap
 ```
 
 ⭐ **Name the program, not its path.** mcpp locates it: the `bin/` of a payload
-this package declared under `[xlings] deps` first, then `PATH`. Writing an
+declared under `[xlings] deps` by **any package in the graph** — the consuming
+project first, then its dependencies — and then `PATH`. A board-support package
+is precisely the thing that knows which emulator or probe reaches its machine,
+so it declares that payload itself and the consumer declares nothing. Writing an
 absolute path computed from `mcpp::xpkg_dir` is unnecessary, and it introduces a
 failure mode — a declaration is not an install, so the lookup can return empty
 and leave no runner configured with nothing said about why. Naming the program
