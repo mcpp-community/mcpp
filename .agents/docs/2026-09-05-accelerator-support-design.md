@@ -1213,3 +1213,70 @@ xim 的 CUDA 工具链载荷。每一项在 §12 都有独立判据。
 ⚠️ 仍未闭合的是另一件事:**引擎侧的新键要等 #559 发布之后,索引里的包才能使用**。
 `compat.cuda-runtime` 恰好一个新键都没用到,所以这一轮绕开了;
 下一个用到 `accel` 字段的索引包不会这么幸运。
+
+---
+
+## 15. 发布后的验证(2026.9.5.1)
+
+§14 写在合入之时,当时引擎侧的改动尚未发布。本节记发布之后**用发布物**跑完的
+验证,以及它暴露的两件事。
+
+### 15.1 发布物
+
+`v2026.9.5.1`,GitHub 与 GitCode 两处资产齐备,sha256 逐个核对一致。
+`ci-fresh-install` 在合入 commit `960f5b4e` 上覆盖 macOS(含 Homebrew)、
+Windows(2022 / 2025 / 无 Visual Studio)与六个 Linux 发行版
+(debian-11 / debian-testing / ubuntu-2004 / fedora / arch / tumbleweed)。
+
+### 15.2 六项判据,全部用发布物,在新建的干净 subos 里
+
+| # | 判据 | 结果 |
+|---|---|---|
+| A | 发布物自述版本 | `mcpp 2026.9.5.1` |
+| B | CN mirror 可配置 | `Configured xlings mirror = CN` |
+| C | `self doctor` 报出宿主/设备编译器配对 | `cuda will refuse this host compiler: gcc 13 exceeds the bound of 12 stated in /usr/include/crt/host_config.h` |
+| D | `accel` 维拒绝不匹配的产物,并点名维度、两侧取值、该轴可行的补救 | 拒绝消息同时含 `accel`、`sm_90f`、`sm_86`、`--no-accel` |
+| E | `--no-accel` 放行 | 通过 |
+| F | 索引包 `compat.cuda-runtime` 让驱动可达,**无需任何环境变量** | `OK: driver reachable, cuInit=0x7a828447cbc0` |
+
+### 15.3 ⭐ F 之后跑了一次对照
+
+`dlopen` 成功既可能是包起了作用,也可能是宿主泄漏。去掉
+`compat.cuda-runtime` 依赖、其余不变,得到
+`CONTROL-OK: driver NOT reachable without the package`。
+⇒ **F 测的是包**。私有 loader 挡住了宿主的 `libcuda.so.1`,
+只有该包的 `runtime.library_dirs` 让它可达 —— 这与 §14.2 的第一条互为正反面:
+同一个机制既拒绝了我链宿主库,也让「声明了才可达」成为可核验的性质。
+
+### 15.4 ⚠️⚠️ 第一次跑这套判据是假绿
+
+把脚本塞进 `xlings subos use <name> --sandbox --cmd "$(...)"` 时遇到引号问题,
+我用 `sed '1d'` 删掉了第一行 —— 而**第一行正是 `set -euo pipefail`**;
+同时版本参数传成了空串。合起来:安装步骤什么都没装(跑的还是上一个发布版),
+后面每一段失败都继续往下走,C/D/E 三段一个断言都没生效,
+而脚本**照常打印出结尾的「全部完成」**。
+
+⭐ 两条修法,都要:**断言不能靠 `set -e` 独自承重**(每步显式 `|| fail "…"`),
+**为传输问题改脚本时改的是引用方式,不是脚本内容**。
+重写后第一次运行立刻红在 A,这才引出下一节。
+
+### 15.5 ⚠️ 沙箱里 PATH 上的 `mcpp` 仍解析到旧版
+
+`xlings install mcpp@2026.9.5.1` 在沙箱里成功,但裸名 shim 仍指向 2026.9.4.3。
+xlings 自己诚实报出了这一点(`xim/commands.cppm`):
+
+```
+xim:mcpp@2026.9.5.1 installed, but 'mcpp' still resolves to 2026.9.4.3
+  — `xlings use mcpp 2026.9.5.1` to switch
+```
+
+⭐ 因此**验证发布物一律直接用 store 路径**
+`~/.xlings/data/xpkgs/xim-x-mcpp/<version>/bin/mcpp`,不要信 PATH。
+这与 §14.4 记的 shim 剪除缺陷(openxlings/xlings#582)是同一个目录的两个问题:
+**两个工具写同一个 shim 目录,而它的状态不是任何一方单独决定的。**
+
+### 15.6 §14.6 末尾那条待办已解除
+
+「引擎侧的新键要等 #559 发布之后,索引里的包才能使用」—— 2026.9.5.1 已发布,
+`accel`、`[package] accelerators`、`cfg(accelerator=…)` 现在都可以出现在索引包里。
+下一个用到它们的包需要在描述符里声明 mcpp 版本下限。
