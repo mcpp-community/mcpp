@@ -127,14 +127,28 @@ boot_row() {              # triple machine cpuflag flash_org flash_len ram_org r
         echo "FAIL: $triple lost the vector table (KEEP not honoured)"; exit 1
     fi
 
-    local out
-    out=$(timeout 30 "$QEMU" -machine "$machine" $cpuflag -nographic -semihosting \
-                             -no-reboot -kernel "$elf" 2>&1 | head -3)
+    local out rc
+    # ⚠️⚠️ NOT `qemu | head`, AND THE EXIT STATUS IS A SECOND ASSERTION.
+    #
+    # `$?` after a pipeline is the LAST command's status, so piping into `head`
+    # would read head's 0 and the check below would be vacuous. It is not a
+    # theoretical concern: `SYS_EXIT` (0x18) takes its reason in r1 directly
+    # while the `{reason, code}` block is `SYS_EXIT_EXTENDED` (0x20), and a
+    # board that confuses them prints every expected line and then reports the
+    # WRONG status. Measured in `mcpplibs/openarch`, where an example printed
+    # its success line and exited 1.
+    set +e
+    timeout 30 "$QEMU" -machine "$machine" $cpuflag -nographic -semihosting \
+                       -no-reboot -kernel "$elf" > qemu.log 2>&1
+    rc=$?
+    set -e
+    out=$(head -3 qemu.log)
     case "$out" in
         *"cortex-m ok"*) ;;
         *) echo "FAIL: $triple did not boot on $machine; got: $out"; exit 1 ;;
     esac
-    echo "  ok  $triple booted on $machine"
+    [ "$rc" = "0" ] || { echo "FAIL: $triple booted but exited $rc"; exit 1; }
+    echo "  ok  $triple booted on $machine and exited 0"
     ran=$((ran + 1))
 }
 

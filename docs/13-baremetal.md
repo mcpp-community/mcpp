@@ -43,14 +43,18 @@ asked what a *32-bit* machine's entry looks like — short descriptors are 32 bi
 wide, long (LPAE) ones 64. That question cannot be put to a machine with no
 entries, which is why `openarch`'s Cortex-M backend declines the capability.
 
-**The semihosting exit call is not spelled the way M-profile spells it.**
-`SYS_EXIT` (`0x18`) on AArch32 takes the reason code in `r1` *directly*; the
-`{reason, code}` block a Cortex-M board passes is `SYS_EXIT_EXTENDED` (`0x20`),
-which exists because a 32-bit `r1` cannot carry both. Measured: passing the
-block to `0x18` prints correctly and then reports the wrong exit status, so a
-board that only checks its output cannot see the difference. This is a *board*
-fact rather than a target fact; it is recorded here because it is where the next
-person writing such a board will look.
+**The semihosting exit call has two spellings and only one of them carries a
+status.** `SYS_EXIT` (`0x18`) takes its reason code in `r1` *directly*; the
+`{reason, code}` block is `SYS_EXIT_EXTENDED` (`0x20`), which exists because a
+32-bit `r1` cannot carry both a reason and a status. Passing the block to `0x18`
+prints everything correctly and then reports the **wrong** exit status.
+
+⚠️ This is an *AArch32* fact and applies to M-profile as much as to A-profile.
+Measured twice: an ARMv7-A image exiting 0 reported 1, and an `openarch`
+Cortex-M example printed `both tasks observed preemption` and exited 1 — every
+assertion on its output passed. A board that only checks what it printed cannot
+see the difference, which is why `tests/e2e/332` and `336` both read `$?`, and
+both take it from the emulator rather than from the tail of a pipeline.
 
 ### M-profile is seven rows rather than one
 
