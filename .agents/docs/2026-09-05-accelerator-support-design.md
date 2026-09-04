@@ -1092,7 +1092,7 @@ accelerators = ["cuda", "rocm"]          # [提议] 同一形状:支持面声明
 | 5 逐 glob 收窄 | ❌ 未做 | 依赖 device target(阶段外),本轮 device 编译走规则包 |
 | 6 `-ccbin` 配对 | ⚠️ 部分 | 引擎侧读上界并在 `mcpp self doctor` 报告;**钉定**发生在规则包里,不在引擎里。PR #560 追加一条同族检查:nvcc 能否够到自己的后端(§15.7) |
 | 7 device link | ❌ 未做 | 依赖 device target |
-| L1/L2 索引包 | ⚠️ 部分 | `compat.cuda-runtime` 已合入并发布并沙箱验证;`rules-cuda` 目前是 `examples/` 里的 path 包,尚未收录进索引 |
+| L1/L2 索引包 | ⚠️ 部分 | `compat.cuda-runtime` 已合入并发布并沙箱验证;`compat.cublas` 与 `rules-cuda` 各有一条**实测出来的阻碍**,见 §15.8 —— 缺的是授权不是实现 |
 | L0 / L3 / 8 | ❌ 未做 | 见上 |
 
 ⚠️ **决定 3(逐 glob 收窄第一版就做)与决定 4(capability 边界先修)都没有落地。**
@@ -1331,3 +1331,37 @@ e2e 会在两个 shard 上都跳过并退 0,那是一条永远不跑的判据(me
 `e2e-requires-llvm-never-runs-on-shards` 记的就是这个)。覆盖是:解析器的五条
 单测(夹具是两份**真实**的 dryrun 输出,差别恰好是那一行 PATH),加上上表那次
 手工两侧对照。
+
+### 15.8 L1/L2 为什么停在一个包:两条实测出来的阻碍,都不是工作量
+
+用户要求「补充**几个**流行的运行时/库/框架/SDK 到 mcpp index / xim 生态」。
+本轮落地并验证的只有 `compat.cuda-runtime` 一个。停在这里的理由是测出来的:
+
+**其一,`compat.cublas` 在索引现有的两种形态里都不成立。** 索引里的包分两类:
+
+| 形态 | 例子 | 适用 |
+|---|---|---|
+| 从上游源码编译 | `compat.curl`、`compat.freetype`、`compat.ffmpeg` | 有源码 |
+| farm 宿主库 + `runtime.library_dirs` + `dlopen_libs` | `compat.glx-runtime`、`compat.vulkan-runtime`、`compat.cuda-runtime` | 运行期 **dlopen** 的宿主驱动 |
+
+cuBLAS 两者都不是:**没有源码**,而且是**必须链接**的闭源二进制。
+⭐ 实测过链接路径确实可行 —— 闭包校验的拒绝
+(*"Its PT_INTERP is a private loader"*)对**链接**的库与对 dlopen 的库一样发生,
+而包自己声明 `runtime.library_dirs` 就能满足它。所以形态上做得出来。
+⚠️ 但索引里 `ldflags` 的既有用法**全部**是系统级的
+(`-pthread`、`-lrt`、`-ladvapi32`、macOS framework),**没有一个链接第三方宿主二进制库**。
+开这个先例会把一次构建钉死在某一台机器的 cuBLAS 版本上,与「少依赖 host」相反。
+
+⇒ **正确形态是 xim 载荷**,携带 NVIDIA 的可再分发件。而那要回答 RK-3(体积)
+与 RK-5(许可)两个问题,并向 GitCode 上传一份大体积的 NVIDIA 二进制 ——
+**这是一个决定,不是一次实现**,不该由实施方单方面做。
+
+**其二,`rules-cuda` 进索引要先有它自己的仓库。** 索引里已有的两个规则包
+(`mcpplibs/clangtidy`、`grpcgen`)都是 `mcpp = "*/mcpp.toml"` 指向**独立仓库的
+release tarball**,并各带一份 GitCode 镜像。把 `examples/09-cuda-kernel/rules-cuda`
+搬进索引因此需要**新建一个公开仓库**并打 tag。
+⚠️ 而且不能只做一半:索引里一份、示例里再留一份,就是第 §14.3 那个「重复了一处
+本不该重复的东西」的形状 —— 要搬就要同时把示例改成消费索引里的那一个。
+
+⇒ 两条都记在这里,而不是让 §12 的 L1/L2 行用「未做」含糊过去。
+它们缺的是一个授权,不是一段实现。
