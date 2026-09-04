@@ -148,6 +148,22 @@ inline constexpr std::string_view kThumbSoftExtra[] = {
     "-mfpu=none",
 };
 
+// ⭐⭐ AND THE SAME RULE ON A-PROFILE, WHERE IT WAS MEASURED SEPARATELY RATHER
+// THAN ASSUMED TO CARRY OVER.
+//
+// `armv7a-none-eabi` is a different architecture from `thumbv7em`, so the
+// M-profile measurement above says nothing about it. Measured on llvm 22.1.8,
+// the same float multiply:
+//
+//     clang --target=armv7a-none-eabi -march=armv7-a -O2 -S   →  1 vmul/vmla
+//     …the same, with -mfpu=none                              →  0
+//
+// A Cortex-A without a VFP is unusual and permitted, and a Cortex-R more so.
+// The row states the property its name claims, exactly as the M rows do.
+inline constexpr std::string_view kArmSoftExtra[] = {
+    "-mfpu=none",
+};
+
 // ⚠️ THE `libdir` COLUMN WAS EMPTY ON THE LAST TWO ROWS UNTIL 2026-08-21, AND
 // THAT WAS CORRECT UNTIL THE DAY IT WAS NOT.
 //
@@ -249,6 +265,38 @@ inline constexpr Spec kTable[] = {
     { "thumbv8m.base-none-eabi", "armv8-m.base","aapcs","", "", kThumbSoftExtra },
     { "thumbv8m.main-none-eabi", "armv8-m.main","aapcs","", "", kThumbSoftExtra },
     { "thumbv8m.main-none-eabihf","armv8-m.main","aapcs","", "" },
+    // ── ARMv7-A (Cortex-A, 32-bit) ──────────────────────────────────────────
+    //
+    // ⭐ THE FIRST 32-BIT MACHINE WITH A MEMORY MANAGEMENT UNIT, AND THAT IS
+    // WHY IT IS HERE RATHER THAN BEING A SECOND SPELLING OF THE M ROWS.
+    //
+    // Every other 32-bit row in this table is M-profile: an MPU that describes
+    // regions by base and limit, and no page-table entry at all. A-profile has
+    // a real MMU with a page-table walker, so it is the first target on which
+    // an address-space abstraction has to answer what a 32-bit machine's entry
+    // looks like — short descriptors are 32 bits wide, long (LPAE) ones 64.
+    // That question cannot be asked on a machine with no entries.
+    //
+    // ⚠️ `mcmodel` and `libdir` are empty for the reasons the M rows give.
+    // `lldEmulation` is empty because clang's BareMetal toolchain covers arm:
+    // measured, the driver reaches `ld.lld` and the x86_64 row's problem does
+    // not recur.
+    //
+    // ⚠️ THE TIER IS `verified` AND THE MEASUREMENT IS NAMED. 2026-09-04 under
+    // `xim:qemu-arm@9.2.4-1`: both rows built an image that BOOTED on
+    // `-M virt -cpu cortex-a15`, printed over semihosting and reported its exit
+    // status.
+    //
+    // ⚠️ AND THE SEMIHOSTING EXIT CALL IS NOT SPELLED THE WAY M-PROFILE SPELLS
+    // IT. `SYS_EXIT` (0x18) on AArch32 takes the reason code in `r1` directly;
+    // the `{reason, code}` block every Cortex-M board here passes is
+    // `SYS_EXIT_EXTENDED` (0x20), which exists because a 32-bit `r1` cannot
+    // carry both. Passing the block to 0x18 prints correctly and then reports
+    // the WRONG exit status — measured: a program exiting 0 reported 1. That is
+    // a board fact rather than a target fact, recorded here because it is where
+    // the next person to write such a board will look.
+    { "armv7a-none-eabi",        "armv7-a",    "aapcs", "", "", kArmSoftExtra },
+    { "armv7a-none-eabihf",      "armv7-a",    "aapcs", "", "" },
 };
 
 // The single read point. Returns nullopt for anything that is not a known
