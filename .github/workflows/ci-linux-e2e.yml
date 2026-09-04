@@ -189,7 +189,8 @@ jobs:
                    tests/e2e/132_freestanding_test_and_artifacts.sh \
                    tests/e2e/133_freestanding_std_subset.sh \
                    tests/e2e/332_cortex_m_builds_and_boots.sh \
-                   tests/e2e/336_armv7a_builds_and_boots.sh; do
+                   tests/e2e/336_armv7a_builds_and_boots.sh \
+                   tests/e2e/338_cortex_m_picolibc_sysroot.sh; do
             echo "=== $t ==="
             bash "$t" 2>&1 | tee "$(basename "$t").log"
             rc=${PIPESTATUS[0]}
@@ -231,6 +232,15 @@ jobs:
           a32=$(grep -c 'booted on virt' 336_armv7a_builds_and_boots.sh.log || true)
           [ "$a32" = "2" ] || {
             echo "336 booted $a32 rows, expected 2"; exit 1; }
+          # ⚠️ 338 SKIPS UNTIL `xim:picolibc-arm` IS PUBLISHED, and a skip here
+          # is legitimate rather than a defect — the payload is a separate
+          # release. So its PASS line is NOT demanded; what IS demanded is that
+          # the script either passed or said why, which is what distinguishes a
+          # skip from a silent zero-exit.
+          grep -qE 'PASS: a Cortex-M project opts into picolibc|SKIP: picolibc-arm is not installed' \
+            338_cortex_m_picolibc_sysroot.sh.log || {
+            cat 338_cortex_m_picolibc_sysroot.sh.log
+            echo "338 neither passed nor reported why it did not run"; exit 1; }
 
   # ──────────────────────────────────────────────────────────────────
   # Hermetic (no host toolchain): the ONLY environment class that

@@ -251,20 +251,38 @@ inline constexpr Spec kTable[] = {
     // the x86_64 row's problem does not recur here. Verified end to end: a
     // freestanding thumb object links under `ld.lld` and boots under QEMU.
     //
-    // `libdir` is EMPTY on every row because `sysroot` is (see the target
-    // table): the column is read only when a sysroot has been resolved, and a
-    // value here could never be checked.
+    // ⚠️⚠️ `libdir` IS THE TRIPLE HERE, NOT `<march>/<mabi>` LIKE EVERY OTHER
+    // ROW, AND THE DIFFERENCE IS AN ABI SUBSTITUTION THAT NOTHING REPORTS.
+    //
+    // The column names the sub-directory a multilib C library uses, and on
+    // riscv `<march>/<mabi>` separates every profile because `mabi` there IS
+    // the float ABI — `lp64d` and `lp64` are different values. On ARM `mabi`
+    // names the PROCEDURE CALL STANDARD and is `aapcs` for both variants, while
+    // the float ABI lives in this triple's `eabi`/`eabihf` suffix. So
+    // `armv7e-m/aapcs` would name ONE directory for two incompatible libraries.
+    //
+    // Measured while building `xim:picolibc-arm`: under the sibling convention
+    // the seven profiles collapsed into five directories and
+    // `armv7e-m/aapcs/libc.a` came out carrying `Tag_ABI_HardFP_use` — the
+    // hard-float build, sitting exactly where a soft-float program would find
+    // it. Nothing failed at build time.
+    //
+    // ⚠️ Filling this does NOT give these rows a C library by default: the
+    // column is read only once a sysroot has been resolved, and the target
+    // table still binds none. The zero-libc tier stays the default and
+    // `[target.<triple>] sysroot = "xim:picolibc-arm@1.8.12"` is the opt-in.
+    // This makes the opt-in work; it does not take the opt-out away.
     //
     // ⚠️ `-mabi=aapcs`, matching the aarch64 row and for the same reason: on
     // ARM `-mabi` names a procedure call standard, not a data model.
     //  triple                     march         mabi     mcmodel libdir  extra
-    { "thumbv6m-none-eabi",      "armv6-m",    "aapcs", "", "", kThumbSoftExtra },
-    { "thumbv7m-none-eabi",      "armv7-m",    "aapcs", "", "", kThumbSoftExtra },
-    { "thumbv7em-none-eabi",     "armv7e-m",   "aapcs", "", "", kThumbSoftExtra },
-    { "thumbv7em-none-eabihf",   "armv7e-m",   "aapcs", "", "" },
-    { "thumbv8m.base-none-eabi", "armv8-m.base","aapcs","", "", kThumbSoftExtra },
-    { "thumbv8m.main-none-eabi", "armv8-m.main","aapcs","", "", kThumbSoftExtra },
-    { "thumbv8m.main-none-eabihf","armv8-m.main","aapcs","", "" },
+    { "thumbv6m-none-eabi",      "armv6-m",    "aapcs", "", "thumbv6m-none-eabi", kThumbSoftExtra },
+    { "thumbv7m-none-eabi",      "armv7-m",    "aapcs", "", "thumbv7m-none-eabi", kThumbSoftExtra },
+    { "thumbv7em-none-eabi",     "armv7e-m",   "aapcs", "", "thumbv7em-none-eabi", kThumbSoftExtra },
+    { "thumbv7em-none-eabihf",   "armv7e-m",   "aapcs", "", "thumbv7em-none-eabihf" },
+    { "thumbv8m.base-none-eabi", "armv8-m.base","aapcs","", "thumbv8m.base-none-eabi", kThumbSoftExtra },
+    { "thumbv8m.main-none-eabi", "armv8-m.main","aapcs","", "thumbv8m.main-none-eabi", kThumbSoftExtra },
+    { "thumbv8m.main-none-eabihf","armv8-m.main","aapcs","", "thumbv8m.main-none-eabihf" },
     // ── ARMv7-A (Cortex-A, 32-bit) ──────────────────────────────────────────
     //
     // ⭐ THE FIRST 32-BIT MACHINE WITH A MEMORY MANAGEMENT UNIT, AND THAT IS
@@ -295,8 +313,18 @@ inline constexpr Spec kTable[] = {
     // the WRONG exit status — measured: a program exiting 0 reported 1. That is
     // a board fact rather than a target fact, recorded here because it is where
     // the next person to write such a board will look.
-    { "armv7a-none-eabi",        "armv7-a",    "aapcs", "", "", kArmSoftExtra },
-    { "armv7a-none-eabihf",      "armv7-a",    "aapcs", "", "" },
+    //
+    // ⚠️ `libdir` IS THE TRIPLE HERE TOO, AND FOR THE SAME REASON AS THE
+    // M ROWS — even though no package carries an A-profile multilib yet.
+    //
+    // The column is a CONVENTION about where a sysroot puts a profile, not a
+    // claim that one exists: it is read only after a sysroot has been resolved,
+    // and an absent directory is skipped. Leaving it empty would leave the next
+    // A-profile payload free to choose `<march>/<mabi>` — which maps these two
+    // incompatible libraries onto one directory, exactly as it did for
+    // `armv7e-m` when `xim:picolibc-arm` was first built.
+    { "armv7a-none-eabi",        "armv7-a",    "aapcs", "", "armv7a-none-eabi", kArmSoftExtra },
+    { "armv7a-none-eabihf",      "armv7-a",    "aapcs", "", "armv7a-none-eabihf" },
 };
 
 // The single read point. Returns nullopt for anything that is not a known
