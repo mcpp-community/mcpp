@@ -1,0 +1,42 @@
+[package]
+name         = "cuda-saxpy"
+namespace    = "example"
+version      = "0.1.0"
+description  = "A CUDA kernel behind a seam module"
+accelerators = ["cuda"]
+
+[language]
+standard   = "c++23"
+modules    = true
+import_std = true
+
+[dependencies]
+rules-cuda = { path = "../rules-cuda", host-module = true }
+
+# The driver's userspace library, reached through the sentinel package.
+#
+# It is the one CUDA component that cannot be an ordinary payload: NVIDIA's
+# driver licence forbids redistributing it, and it is in ABI lockstep with the
+# kernel module, so a version of it is meaningless outside the machine it came
+# from. The sentinel installs a symlink to whatever the host has, which gives
+# mcpp a path it can put on the artifact's runtime search path — mcpp's private
+# loader does not consult /usr/lib, so without this the statically linked CUDA
+# runtime cannot dlopen the driver and reports it as missing.
+[xlings]
+deps = [{ linux = "libcuda-host-link" }]
+
+[build]
+# The CUDA runtime is linked STATICALLY. mcpp refuses a dynamic link against
+# the host's libcudart because its private loader does not consult /usr/lib,
+# and it is right to: such an artifact is not self-contained. Linking the
+# redistributable half in leaves exactly one host dependency, libcuda.so.1,
+# which is the driver and genuinely cannot be redistributed — that is what the
+# libcuda-host-link sentinel package in xim exists for.
+accel    = "cuda12.0+{sm_89} ptx>=89"
+include_dirs = ["include"]
+ldflags  = ["-L/usr/local/cuda/lib64", "-L/usr/lib/x86_64-linux-gnu",
+            "-lcudart_static", "-lrt", "-lpthread", "-ldl"]
+
+[targets.cuda-saxpy]
+kind = "bin"
+main = "src/main.cpp"

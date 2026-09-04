@@ -534,6 +534,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string("package.repo"))        m.package.repo        = *v;
     if (auto v = doc->get_string_array("package.authors")) m.package.authors  = *v;
     if (auto v = doc->get_string_array("package.platforms")) m.package.platforms = *v;
+    if (auto v = doc->get_string_array("package.accelerators"))
+        m.package.accelerators = *v;
 
     // [package].standard (M5.0 new home)
     if (auto v = doc->get_string("package.standard")) {
@@ -1751,6 +1753,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     //
     // MUST stay in sync with the `doc->get_*("build.<key>")` reads above.
     static constexpr std::string_view kKnownBuildKeys[] = {
+        "accel",
         "allow_host_libs", "bmi_schedule", "build_program_timeout", "c_standard",
         "cache", "cflags", "cxxflags", "cxx_runtime", "default-profile", "defines",
         "dependency_linkage",

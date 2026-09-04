@@ -70,6 +70,15 @@ struct Package {
     std::vector<std::string>    authors;
     std::string                 repo;
     std::vector<std::string>    platforms;     // declared supported platforms (CI matrix hint)
+    // Accelerator backends this package supports, declared in the same spirit
+    // as `platforms`: a statement of intent and a CI-matrix hint, not a gate.
+    //
+    // The pair is deliberate and the two must not be confused. `accelerators`
+    // is what a SOURCE package says it can be built for; `accel` on a built
+    // artifact is what that binary actually carries. A declaration is written
+    // by hand and can be aspirational; the artifact field is measured from the
+    // build and is what a consumer is refused against.
+    std::vector<std::string>    accelerators;
     // Resolution source carried into machine-readable runtime provenance.
     // Version dependencies use `index+<name>@<snapshot>`; path/git packages
     // use their corresponding immutable-or-local source spelling.  Parsing a

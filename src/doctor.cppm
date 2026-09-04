@@ -1099,6 +1099,17 @@ export int why_report(const std::string& topic) {
             }
             std::println("  declared platforms: {}  (CI matrix hint)", ps);
         }
+        // The declaration, beside the platform one it mirrors. What a build
+        // actually targets is a different question and a different field
+        // (`[build] accel` / --accel), reported by the build itself.
+        if (!ctx->manifest.package.accelerators.empty()) {
+            std::string as;
+            for (auto& a : ctx->manifest.package.accelerators) {
+                if (!as.empty()) as += ", ";
+                as += a;
+            }
+            std::println("  declared accelerators: {}  (CI matrix hint)", as);
+        }
     }
     if (all) (void)print_stored_runtime_resolution();
     // ⭐ WHERE A NAMED RUNNER BECOMES DISCOVERABLE.
