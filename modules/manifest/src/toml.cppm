@@ -1905,8 +1905,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             std::string path;
             auto const& table = value.as_table();
             for (auto const& [key, _] : table) {
+                // ⚠️ A CLOSED whitelist: an unrecognised key is an error here,
+                // unlike the published xpkg descriptor, whose reader collects
+                // and skips one. The two readers differ on purpose — a typo in
+                // a hand-written manifest should be loud — but it means adding
+                // a key to THIS table is a compatibility event: an mcpp that
+                // predates the key refuses the whole manifest rather than
+                // ignoring the field. See the accelerator design's RK-2.
                 if (key != "role" && key != "path" && key != "provenance"
-                    && key != "abi" && key != "digest"
+                    && key != "abi" && key != "accel" && key != "digest"
                     && key != "host_fingerprint") {
                     return std::unexpected(error(origin, std::format(
                         "runtime.artifacts[{}] has unsupported key '{}'",
@@ -1917,6 +1924,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 || !table_string(table, "path", path)
                 || !table_string(table, "provenance", artifact.provenance)
                 || !table_string(table, "abi", artifact.abi)
+                || !table_string(table, "accel", artifact.accel)
                 || !table_string(table, "digest", artifact.digest)
                 || !table_string(table, "host_fingerprint",
                                  artifact.hostFingerprint)) {
