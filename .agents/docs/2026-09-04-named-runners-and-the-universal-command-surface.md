@@ -765,3 +765,43 @@ surface is the claim that running on a device is like running hosted, and a
 hosted `run` that cannot report a program's status is not that. Changing it
 means choosing what mcpp's own failures return once the child's status is
 passed through.
+
+### 17.6 Open: `mcpp run`'s ninja spins at 100% of one core with nothing to do
+
+Observed three times during the sandbox verification — twice on
+`riscv64-none-elf`, once on `aarch64-none-elf` — always on the `mcpp run` that
+follows a `mcpp build` in the same project.
+
+What was measured while it was happening:
+
+| observation | reading |
+|---|---|
+| ninja processes | 3, each at 99.9% CPU |
+| child processes of each | **zero** — no compiler was running |
+| system time (`stime`) | **0** — a pure user-space loop, not an I/O wait |
+| the graph | 8 edges, every output present, no missing input, no future mtime |
+| host load | 3.65 on 32 cores, i.e. one core each and nothing else |
+
+So ninja had no work and burned 27 minutes of CPU deciding that.
+
+IT IS NOT THE GRAPH. The same project built and run on the host completes in
+about two seconds, and its `build.ninja` carries the same two `stage_file` edges
+— the build-cache staging that first looked like the correlation. Running the
+same ninja binary over the same directory by hand exits 0.
+
+IT DOES NOT REPRODUCE ON DEMAND. Re-running both sequences afterwards inside the
+same sandbox — `mcpp run` alone, and `mcpp build` followed by `mcpp run` —
+succeeded, printing the program's output and exiting 0. Whatever the trigger is,
+it is not the command sequence by itself.
+
+One difference is recorded without a claim attached: the sandbox's ninja and the
+host's are DIFFERENT BINARIES AT THE SAME VERSION — 273768 bytes dynamically
+linked against 2202320 bytes static, different SHA-256, both answering `1.12.1`.
+That is worth resolving on its own terms, since it means "ninja 1.12.1" does not
+name one artefact, but it has not been shown to cause this.
+
+A DETERMINISTIC COROLLARY, WORTH FIXING WHATEVER THE CAUSE IS: killing `mcpp
+run` does not kill the ninja it spawned. Each timed-out step left an orphan
+spinning at 100% of a core with its working directory already deleted, and one
+survived the removal of the whole sandbox it belonged to. Any CI that wraps
+`mcpp` in `timeout` leaks a busy core per timeout.
