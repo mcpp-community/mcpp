@@ -21,7 +21,13 @@ mcpp run                        # the default runner
 mcpp run --runner flash         # a named one
 mcpp run --list-runners         # what this project supplies
 mcpp why runners                # the same list, beside everything else resolved
+mcpp run --features hardware    # the same board, reached the other way
 ```
+
+`mcpp run` takes `--features` and `--profile`, the same axes `mcpp build` and
+`mcpp test` take. That is what makes the line above a command rather than a
+manifest edit: a board package expresses its two environments as features, so
+selecting one is the same act as selecting any other feature.
 
 `mcpp run` is the whole of the common case, including on real hardware. On a
 device, running a program means writing it, resetting, attaching to its output

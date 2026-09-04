@@ -106,6 +106,25 @@ M-profile:MPU 按基址与上限描述区域,没有页表项。A-profile 有真�
 而不是它要陈述的性质。新行加进来时规则适用而测试**静默跳过**了它们,每条断言依然通过。
 谓词已改为「32 位 ARM」。
 
+### ⭐ `mcpp run` 接受 `--features` 与 `--profile`
+
+`build` 与 `test` 一直有这两条轴,`run` 没有 —— 于是 `run` **只能执行上一次 `build`
+恰好留下的东西**:没有任何一种写法能跑一个 release 产物,或一个开了 feature 的产物。
+
+⚠️ 而这正是整个设备面赖以成立的形状:板级包把「模拟器」与「真板」表达成 feature,
+所以 `mcpp run --features hardware` 才是板子到手那天开发者敲的命令。**方案里唯一一个
+自己跑不起来的场景就是它。**
+
+### ⚠️⚠️ 顺带修掉一个既有缺陷:构建缓存不看 feature
+
+缓存条目按 (target, profile, cache mode) 索引,而**输出目录按含 feature 的指纹索引**。
+于是 `mcpp build --features loud` 写下的条目指向 loud 的目录,下一次**不带 feature 的**
+`mcpp build` 命中它、0.00s 报成功,**把带 feature 的产物交给一个没要 feature 的请求**。
+
+实测(修复前):同一个工程连续三次构建打印 `quiet`、`LOUD`、`LOUD`。
+
+条目现在记录它的 feature 集合(归一化,`a,b` 与 `b a` 同一);两条快路径都比对它。
+
 ### 发现性
 
 `mcpp why runners` 列出本工程提供的 runner,与其余解析结果并列;

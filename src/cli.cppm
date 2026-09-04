@@ -417,6 +417,24 @@ int run(int argc, char** argv) {
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .option(cl::Option("no-runner")
                 .help("Execute the artifact directly, ignoring any [target.<triple>].runner (a host that runs it natively)"))
+            // ⭐⭐ THE TWO AXES `build` AND `test` HAVE ALWAYS TAKEN.
+            //
+            // Both decide WHAT IS BUILT, so without them `run` could only
+            // execute whatever a previous `build` happened to leave behind —
+            // there was no spelling of `mcpp run` that ran a release artefact,
+            // or one built with a feature on.
+            //
+            // It is the shape the device surface is built around: a board
+            // package expresses "emulator" and "hardware" as features, so
+            // `mcpp run --features hardware` is what a developer types when the
+            // board arrives. That was the one scenario the design could not
+            // actually run.
+            .option(cl::Option("features").takes_value().value_name("LIST")
+                .help("Activate features (comma/space separated), same axis as `mcpp build --features`"))
+            .option(cl::Option("profile").takes_value().value_name("NAME")
+                .help("Build profile to run (dev | release | <custom>)"))
+            .option(cl::Option("release").help("Shorthand for --profile release"))
+            .option(cl::Option("dev").help("Shorthand for --profile dev"))
             // ⭐⭐ THE WAY TO REACH THE ARTEFACT, BY NAME.
             //
             // `mcpp run` is universal — every domain has one. HOW the artefact
