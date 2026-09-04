@@ -559,3 +559,48 @@ TEST(FreestandingTarget, EveryRowCompilesWithPerFunctionSections) {
     }
     EXPECT_GT(rows, 0);
 }
+
+// ⚠️⚠️ THE MULTILIB KEY IS NOT `<march>/<mabi>` ON ARM, AND ASSUMING IT WAS
+// PRODUCES AN ABI SUBSTITUTION THAT NOTHING REPORTS.
+//
+// The column names the sub-directory a multilib C library uses. On riscv,
+// `<march>/<mabi>` separates every profile because `mabi` there IS the float
+// ABI — `lp64d` and `lp64` are different values. On ARM `mabi` names the
+// procedure call standard and is `aapcs` for both variants, while the float ABI
+// lives in the triple's `eabi`/`eabihf` suffix.
+//
+// Measured while building `xim:picolibc-arm`: under the sibling convention the
+// seven M-profile profiles collapsed into five directories, and
+// `armv7e-m/aapcs/libc.a` came out carrying `Tag_ABI_HardFP_use` — the
+// hard-float build, where a soft-float program would find it. Nothing failed.
+//
+// So the assertion is not "libdir is non-empty": it is that the soft and hard
+// variants of ONE architecture name DIFFERENT directories, which is the
+// property the layout exists to preserve.
+TEST(FreestandingTarget, Arm32SoftAndHardVariantsNameDifferentLibdirs) {
+    std::map<std::string, std::vector<std::string>> byMarch;
+    int rows = 0;
+    for (const auto& spec : mcpp::freestanding::known()) {
+        if (!is_arm32(spec.triple)) continue;
+        ++rows;
+        EXPECT_FALSE(spec.libdir.empty())
+            << spec.triple << " has no libdir, so an opt-in sysroot cannot be found";
+        byMarch[std::string(spec.march)].push_back(std::string(spec.libdir));
+    }
+    EXPECT_GT(rows, 0);
+
+    int pairs = 0;
+    for (auto const& [march, dirs] : byMarch) {
+        if (dirs.size() < 2) continue;
+        ++pairs;
+        std::set<std::string> distinct(dirs.begin(), dirs.end());
+        EXPECT_EQ(distinct.size(), dirs.size())
+            << march << " maps " << dirs.size() << " rows onto "
+            << distinct.size() << " directories: a soft-float program would "
+               "link a hard-float library, silently";
+    }
+    // ⚠️ A denominator. If no architecture had two rows the loop above would
+    // assert nothing, and the property would be untested rather than held.
+    EXPECT_GT(pairs, 0) << "no architecture carries both float ABIs; the check "
+                           "above quantified over nothing";
+}

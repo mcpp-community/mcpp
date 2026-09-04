@@ -5,6 +5,33 @@
 
 ## [2026.9.4.2] — 2026-09-04
 
+### ⭐⭐ Cortex-M 有 C 库了:`libdir` 填上,而它的键是**三元组**
+
+`xim:picolibc-arm@1.8.12` 带七个多库(picolibc + compiler-rt builtins,同一个
+LLVM 一起构建)。工程一行选入:
+
+```toml
+[target.thumbv7m-none-eabi]
+sysroot = "xim:picolibc-arm@1.8.12"
+```
+
+⚠️⚠️ **`libdir` 这一列在 ARM 上是三元组,不是 `<march>/<mabi>`,而差别是一次
+无人报告的 ABI 替换。** riscv 的 `mabi` **就是**浮点 ABI(`lp64d` 与 `lp64` 是
+两个值);ARM 的 `mabi` 是过程调用标准,两个变体都是 `aapcs`,浮点 ABI 在三元组的
+`eabi`/`eabihf` 后缀里。于是 `armv7e-m/aapcs` 会给两份互不兼容的库命名同一个目录。
+
+实测(构建 `xim:picolibc-arm` 时):按 `<march>/<mabi>`,七个档位塌成五个目录,
+`armv7e-m/aapcs/libc.a` 带着 `Tag_ABI_HardFP_use` —— 硬浮点的构建,坐在软浮点
+程序会去找它的位置上。**构建期什么都没报。**
+
+⭐ 填这一列**不**给这些行默认配 C 库:只有解析出 sysroot 之后才会读它,目标表仍然
+不绑定任何一个。零 libc 仍是默认,这只是让选入这件事能成立。
+
+判据是浮点 ABI 而不是「链接通过」:`tests/e2e/338` 构建**软浮点**那一行,断言产物
+里没有硬浮点 ABI 标记,然后启动它并读退出码。⚠️ 并且断言产物**不为空** —— 实测:
+缺了 crt0 的链接会成功并报 `Size fw  text 0 data 0`,一个格式良好、什么都没有的
+ELF,任何只看 `Finished` 的检查都会放行。
+
 runner 有了名字,工具有了档位,`--locked` 成为断言,`mcpp emit sbom`。
 
 ### ⭐⭐ 一条命令,加具名的例外
