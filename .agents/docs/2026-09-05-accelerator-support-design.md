@@ -1090,7 +1090,7 @@ accelerators = ["cuda", "rocm"]          # [提议] 同一形状:支持面声明
 | 3 `SourceKind::Device` | ✅ | 单测 6 条;`.cuh` 进 header 轴 |
 | 4 `accelerator` 多值 layer | ✅ | 单测 7 条;语义按 §3.4 修正后的一行 |
 | 5 逐 glob 收窄 | ❌ 未做 | 依赖 device target(阶段外),本轮 device 编译走规则包 |
-| 6 `-ccbin` 配对 | ⚠️ 部分 | 引擎侧读上界并在 `mcpp self doctor` 报告;**钉定**发生在规则包里,不在引擎里 |
+| 6 `-ccbin` 配对 | ⚠️ 部分 | 引擎侧读上界并在 `mcpp self doctor` 报告;**钉定**发生在规则包里,不在引擎里。PR #560 追加一条同族检查:nvcc 能否够到自己的后端(§15.7) |
 | 7 device link | ❌ 未做 | 依赖 device target |
 | L1/L2 索引包 | ⚠️ 部分 | `compat.cuda-runtime` 已合入并发布并沙箱验证;`rules-cuda` 目前是 `examples/` 里的 path 包,尚未收录进索引 |
 | L0 / L3 / 8 | ❌ 未做 | 见上 |
