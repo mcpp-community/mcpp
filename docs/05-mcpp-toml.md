@@ -791,6 +791,22 @@ Linux and macOS perform no such conversion, so nothing is skipped there. A
 package that builds on one and not the other, with an
 `internal: unhandled exception` from a code-page message, was mcpp#516.
 
+### 2.3.1 `[build] accel` — the accelerator this build targets
+
+```toml
+[build]
+accel = "cuda12.8+{sm_80,sm_90f} ptx>=90"
+```
+
+Which device backends and architectures this build compiles for. Overridden for
+one build by `--accel`, the relationship `--target` has with `[toolchain]`;
+`--no-accel` requests none explicitly, which is how a CPU-only variant of a
+package that also publishes device builds is selected.
+
+The value is compared against the `accel` field of any prebuilt artifact the
+build consumes, and a build asking for none is satisfied by every artifact. See
+[20 — Accelerators](20-accelerators.md).
+
 ### 2.4 `[lib]` — Library Root Module Convention
 
 ```toml
@@ -1865,6 +1881,21 @@ built" means is the same question `--target` answers (docs/08 §7.4).
 
 Both are warnings, never errors: coverage is release discipline, and the person
 who can judge it is looking at the release, not at this build.
+
+### 2.12b `[package] accelerators` — Accelerator Declaration
+
+```toml
+[package]
+accelerators = ["cuda", "rocm"]
+```
+
+Declares the accelerator backends the package supports. Mirrors `platforms`: a
+statement of intent and a CI-matrix hint, shown by `mcpp why`, never a gate.
+
+Distinct from an artifact's `accel` field on purpose. A declaration is written
+by hand and may be aspirational; `accel` is measured from the build that
+produced a binary and is what a consumer is refused against. See
+[20 — Accelerators](20-accelerators.md).
 
 ### 2.13 `[xlings]` — the project's environment
 

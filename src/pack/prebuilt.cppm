@@ -104,9 +104,16 @@ check_prebuilt(const mcpp::manifest::Manifest& m, const PrebuiltCheck& in)
             accepted = true;
             continue;
         }
-        publishedTags.push_back(a.abi);
+        // The device dimension is not part of the tag string, so a listing
+        // that printed only the tag would show two indistinguishable lines for
+        // a package publishing a CPU and a device build of the same triple.
+        publishedTags.push_back(a.accel.empty()
+                                    ? a.abi
+                                    : std::format("{}  accel={}", a.abi, a.accel));
         auto published = parse_abi_tag(a.abi);
         if (!published) { accepted = true; continue; }   // unreadable → lenient
+        // The device dimension travels beside the tag rather than inside it.
+        published->accel = parse_accel(a.accel);
         auto bad = tag_check(*published, in.current);
         if (bad.empty()) { accepted = true; break; }
         // Keep the CLOSEST refusal to show: the one that disagrees least is
@@ -121,16 +128,35 @@ check_prebuilt(const mcpp::manifest::Manifest& m, const PrebuiltCheck& in)
         std::string tags;
         for (auto const& t : publishedTags) tags += std::format("\n                   {}", t);
         std::string why;
-        for (auto const& b : bestRefusal)
+        bool accelOnly = !bestRefusal.empty();
+        for (auto const& b : bestRefusal) {
             why += std::format("\n    {:<9} needs {}, this build has {}", b.dimension, b.need, b.got);
+            if (b.dimension != "accel") accelOnly = false;
+        }
+        // The remedy differs by dimension, and the generic one is actively
+        // misleading for the device axis: pinning [toolchain] cannot change
+        // which GPU architecture a build targets.
+        const std::string fix = accelOnly
+            ? std::string(
+                "  fix: build for an architecture the package carries (--accel), or take\n"
+                "       a variant that carries no device code (--no-accel), or ask the\n"
+                "       publisher for one covering yours.")
+            : std::string(
+                "  fix: ask the publisher for a build matching your toolchain, or pin\n"
+                "       [toolchain] to the one the package was built with.");
+        // The device dimension travels beside the tag, so the summary line has
+        // to name it too or it contradicts the per-dimension list below.
+        const std::string current = in.current.accel.empty()
+            ? in.current.str()
+            : std::format("{}  accel={}", in.current.str(),
+                          accel_str(in.current.accel));
         return std::unexpected(std::format(
             "{}: no prebuilt artifact matches this toolchain.\n"
             "  your toolchain : {}\n"
             "  published tags :{}\n"
             "  closest is {}, and it differs on:{}\n"
-            "  fix: ask the publisher for a build matching your toolchain, or pin\n"
-            "       [toolchain] to the one the package was built with.",
-            in.packageLabel, in.current.str(), tags, bestRefusalTag, why));
+            "{}",
+            in.packageLabel, current, tags, bestRefusalTag, why, fix));
     }
 
     // ── 3. the interface is the one the binaries were built from ──────

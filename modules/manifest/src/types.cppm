@@ -70,6 +70,15 @@ struct Package {
     std::vector<std::string>    authors;
     std::string                 repo;
     std::vector<std::string>    platforms;     // declared supported platforms (CI matrix hint)
+    // Accelerator backends this package supports, declared in the same spirit
+    // as `platforms`: a statement of intent and a CI-matrix hint, not a gate.
+    //
+    // The pair is deliberate and the two must not be confused. `accelerators`
+    // is what a SOURCE package says it can be built for; `accel` on a built
+    // artifact is what that binary actually carries. A declaration is written
+    // by hand and can be aspirational; the artifact field is measured from the
+    // build and is what a consumer is refused against.
+    std::vector<std::string>    accelerators;
     // Resolution source carried into machine-readable runtime provenance.
     // Version dependencies use `index+<name>@<snapshot>`; path/git packages
     // use their corresponding immutable-or-local source spelling.  Parsing a
@@ -570,6 +579,11 @@ struct BuildConfig : BuildInputs {
     // Scoped to the declaring package — a dependency is classified by its own
     // manifest, never by its consumer's.
     std::vector<std::string>            moduleExtensions;
+    // [build] accel — which accelerator backends and device architectures this
+    // build targets, in the wire form mcpp.pack.abi_tag reads. Empty means the
+    // build asks for none, and then every prebuilt artifact satisfies it
+    // vacuously; ordering in the descriptor is what makes the CPU variant win.
+    std::string                         accel;
     // [build] build_program_timeout — seconds this package's build.mcpp may
     // run before mcpp kills it. 0 = no limit; nullopt = use the built-in 600.
     //
@@ -752,6 +766,14 @@ struct RuntimeArtifact {
     std::filesystem::path path;
     std::string           provenance;
     std::string           abi;
+    // What device code this artifact carries, in the wire form
+    // mcpp.pack.abi_tag reads: `cuda12.8+{sm_80,sm_90f} ptx>=90`.
+    //
+    // A separate field rather than a segment of `abi`, because an architecture
+    // list is a set and the tag is a dash-joined string whose triple already
+    // carries a variable number of dashes. Empty means the artifact carries no
+    // device code, which constrains nothing.
+    std::string           accel;
     std::string           digest;
     std::string           hostFingerprint;
 };

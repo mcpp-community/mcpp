@@ -90,6 +90,13 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
     mcpp::build::BuildOverrides ov;
     if (auto t = parsed.value("target")) ov.target_triple = *t;
+    // --accel / --no-accel stand to `[build] accel` exactly as --target stands
+    // to [toolchain]: the manifest declares, the command line overrides for one
+    // build. --no-accel is not the absence of --accel; it is an explicit
+    // request for none, which is what a user needs in order to take a CPU-only
+    // variant of a package that also publishes device builds.
+    if (parsed.is_flag_set("no-accel"))       ov.accel = "(none)";
+    else if (auto a = parsed.value("accel"))  ov.accel = *a;
     if (auto p = parsed.value("package")) ov.package_filter = *p;
     // --cache global|local|off. --no-cache is the deprecated alias for off; the
     // old flag only ever cleared target/, which says nothing about a cache, so

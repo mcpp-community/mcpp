@@ -690,6 +690,20 @@ warning: 'C:/.../pkg/test/www' contains names this system's active code page can
 Linux 与 macOS 不做这种转换,因此那里不会跳过任何名字。一个包在一边能构建、在另一
 边报 `internal: unhandled exception` 并指向代码页,就是 mcpp#516。
 
+### 2.3.1 `[build] accel` — 本次构建面向的加速器
+
+```toml
+[build]
+accel = "cuda12.8+{sm_80,sm_90f} ptx>=90"
+```
+
+本次构建为哪些设备后端与架构编译。单次构建可用 `--accel` 覆盖 ——
+这与 `--target` 对 `[toolchain]` 的关系相同;`--no-accel` 是显式请求「不要加速器」,
+也就是在一个同时发布了设备构建的包中选中 CPU-only 变体的方式。
+
+该取值会与构建所消费的任何预建产物的 `accel` 字段比较,而请求为空的构建被任何产物满足。
+见 [20 — 加速器](20-accelerators.md)。
+
 ### 2.4 `[lib]` — 库根模块约定
 
 ```toml
@@ -1590,6 +1604,20 @@ platforms = ["linux", "macos", "windows"]
 
 两者都只是 warning,绝不报错:覆盖度属于发布纪律,而能作判断的人看的是发布,
 不是这一次构建。
+
+### 2.12b `[package] accelerators` — 加速器声明
+
+```toml
+[package]
+accelerators = ["cuda", "rocm"]
+```
+
+声明该包支持的加速器后端。与 `platforms` 同形:一个意图声明与 CI 矩阵提示,
+由 `mcpp why` 展示,**不是门**。
+
+与产物的 `accel` 字段刻意不同。声明由人手写、可以是期望值;`accel` 是从产生该二进制的
+那次构建测量出来的,并且是消费者被拒绝时所依据的东西。见
+[20 — 加速器](20-accelerators.md)。
 
 ### 2.13 `[xlings]` — 工程的环境
 

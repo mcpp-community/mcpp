@@ -534,6 +534,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string("package.repo"))        m.package.repo        = *v;
     if (auto v = doc->get_string_array("package.authors")) m.package.authors  = *v;
     if (auto v = doc->get_string_array("package.platforms")) m.package.platforms = *v;
+    if (auto v = doc->get_string_array("package.accelerators"))
+        m.package.accelerators = *v;
 
     // [package].standard (M5.0 new home)
     if (auto v = doc->get_string("package.standard")) {
@@ -1524,6 +1526,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             return std::unexpected(error(origin, *err));
         m.buildConfig.moduleExtensions = *v;
     }
+    // [build] accel — the accelerator backends and device architectures this
+    // build targets. One spelling with the descriptor field and the diagnostic,
+    // so what a user writes is what a refusal prints back at them.
+    if (auto v = doc->get_string("build.accel")) m.buildConfig.accel = *v;
     // [build] build_program_timeout — seconds a build.mcpp may run; 0 = no
     // limit. `optional` is load-bearing: with a plain int, "absent" and
     // "explicitly 0" would be the same value, and every project that never
@@ -1747,6 +1753,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     //
     // MUST stay in sync with the `doc->get_*("build.<key>")` reads above.
     static constexpr std::string_view kKnownBuildKeys[] = {
+        "accel",
         "allow_host_libs", "bmi_schedule", "build_program_timeout", "c_standard",
         "cache", "cflags", "cxxflags", "cxx_runtime", "default-profile", "defines",
         "dependency_linkage",
@@ -1901,8 +1908,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             std::string path;
             auto const& table = value.as_table();
             for (auto const& [key, _] : table) {
+                // ⚠️ A CLOSED whitelist: an unrecognised key is an error here,
+                // unlike the published xpkg descriptor, whose reader collects
+                // and skips one. The two readers differ on purpose — a typo in
+                // a hand-written manifest should be loud — but it means adding
+                // a key to THIS table is a compatibility event: an mcpp that
+                // predates the key refuses the whole manifest rather than
+                // ignoring the field. See the accelerator design's RK-2.
                 if (key != "role" && key != "path" && key != "provenance"
-                    && key != "abi" && key != "digest"
+                    && key != "abi" && key != "accel" && key != "digest"
                     && key != "host_fingerprint") {
                     return std::unexpected(error(origin, std::format(
                         "runtime.artifacts[{}] has unsupported key '{}'",
@@ -1913,6 +1927,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 || !table_string(table, "path", path)
                 || !table_string(table, "provenance", artifact.provenance)
                 || !table_string(table, "abi", artifact.abi)
+                || !table_string(table, "accel", artifact.accel)
                 || !table_string(table, "digest", artifact.digest)
                 || !table_string(table, "host_fingerprint",
                                  artifact.hostFingerprint)) {

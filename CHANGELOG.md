@@ -3,6 +3,51 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.9.5.1] — 2026-09-05
+
+### ⭐⭐ 加速器支持:设备编译单元、产物身份的加速器维、以及没人做的宿主编译器配对
+
+一个为某个计算能力编译的库,被另一个计算能力的构建消费时,链接干净地完成,
+程序在第一次 kernel 启动时失败,消息里既没有包名也没有任何一侧期望的架构。
+C++ 构建生态里没有任何一个系统把「这个二进制是为哪个架构编的」记进它的身份 ——
+这是整个品类的空白,不是 mcpp 特有的。
+
+**`SourceKind::Device`。** `.cu` 与 `.hip` 是设备编译单元:从不被扫描 import,
+从不产出 BMI —— 没有任何设备编译器接受 C++20 modules。`.cuh` / `.hiph` 是头文件,
+改动其一仍使快路径失效。设备扩展名**刻意不进默认 source glob**,理由与内置模块
+扩展名表停在 `.cppm` 的理由相同:放宽它会让一个 vendored 了设备源码、在别处构建
+它的已发布包在下次升级后突然开始编译它,而这是作者无法修复的破坏。
+
+**产物身份的加速器维。** 携带设备代码的产物把它记在兼容性标签旁边,`tag_check`
+比较它。成员判定按两条硬件里真实存在的机制放宽:家族目标覆盖同 major、minor 不低
+于它的范围;内嵌的可移植形式覆盖下界之上的一切。AMD 两者都没有,靠 archs 一侧的
+generic target 取得同样的覆盖,所以空的下界不放宽任何东西。
+
+字段与标签并列而不是标签的一段,因为架构列表是集合,而标签是用 `-` 拼接、
+其 triple 本身含数量不定 `-` 的字符串。一个比较器,两个存储位置。
+
+**`accelerator` 作为多值 cfg layer。** 一次构建可以同时启用多个后端。比较是处处
+成员判定,而不是只在 `any(...)` 里 —— 让组合子改变操作数含义会使
+`all(accelerator = "cuda", accelerator = "rocm")` 变成不可满足,而不是「两者都启用」。
+
+**宿主编译器上界,读而不抄。** nvcc 拒绝比它在自己的 `crt/host_config.h` 里声明的
+上界更新的宿主编译器,而 mcpp 的载荷常常更新。因为宿主编译器由 mcpp 提供,
+它可以在任何编译发生之前作答。上界从工具包读出,所以一个 mcpp 从未见过的工具包
+同样能作答;解析不了的头文件不产生上界,也就不产生断言。
+
+**`[build] accel` / `--accel` / `--no-accel`,以及 `[package] accelerators`。**
+前三者之间的关系与 `[toolchain]` 和 `--target` 相同。`--no-accel` 是显式请求
+「不要加速器」,这是在一个同时发布了设备构建的包中选中 CPU-only 变体的方式。
+`[package] accelerators` 与 `platforms` 同形,并刻意与产物的 `accel` 是不同字段:
+声明由人手写,产物字段从构建测量。
+
+真机验证(RTX 4080 / CUDA 12.0 / 驱动 550.144.03):`examples/09-cuda-kernel`
+经规则包编出设备岛并运行,`mcpp run` 输出 `12 24 36 48`。
+
+设计与调研:`.agents/docs/2026-09-05-accelerator-support-design.md`、
+`.agents/docs/2026-09-04-ai-accelerator-toolchain-ecosystem-survey.md`。
+新增手册章节 `docs/20-accelerators.md`(中英双份)。
+
 ## [2026.9.4.3] — 2026-09-04
 
 ### ⭐⭐ `mcpp run` 报告程序自己的退出码

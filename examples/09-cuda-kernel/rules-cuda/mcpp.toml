@@ -1,0 +1,6 @@
+[package]
+name        = "rules-cuda"
+namespace   = "example"
+version     = "0.1.0"
+description = "Compile CUDA device translation units with nvcc (role = object)"
+license     = "Apache-2.0"
