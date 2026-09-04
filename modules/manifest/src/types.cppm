@@ -456,6 +456,31 @@ struct BuildConfig : BuildInputs {
     // argv that is neither one's, and it would fail at exec time with no
     // indication of which package contributed which token.
     std::vector<std::string>            runner;
+    // ⭐⭐ THE THREE SIBLINGS OF `runner`, AND WHY THEY ARE SLOTS RATHER THAN
+    // COMMANDS.
+    //
+    // Executing an artifact, writing it to a device, watching what it prints
+    // and attaching a debugger are one shape: an argv that the BOARD knows and
+    // a TOOL performs, addressed by absolute path, with the artifact appended
+    // or substituted for `{}`. `runner` has carried that shape since 2026.8.19;
+    // three special-case commands would have carried it three more times.
+    //
+    // ⚠️ THEY ARE NOT INTERCHANGEABLE, AND THE DIFFERENCE IS THE PROCESS AND
+    // NOT THE ARGV. `run` and `flash` finish and report an exit code; `monitor`
+    // and `debug` do not end on their own, so "the process is still alive" is
+    // success for them and a hang for the other two. That is `Semantics`, which
+    // the engine reads from the slot rather than from the tokens — no argv can
+    // say which of the two it is.
+    std::vector<std::string>            flash;
+    std::vector<std::string>            monitor;
+    std::vector<std::string>            debugger;
+    // ⚠️ ONE BOARD IS A MUTEX, AND NOTHING ELSE IN THE BUILD IS.
+    //
+    // `mcpp test` runs test binaries on a pool of workers. An emulator takes
+    // N instances happily; a physical board takes one, and two probes reaching
+    // for the same device do not fail — they interleave. The board knows this
+    // about itself, so it says so, and a project never has to remember `-j1`.
+    bool                                runnerExclusive = false;
 
     // Was `sources` WRITTEN, as opposed to merely being empty?
     //
@@ -819,6 +844,13 @@ struct TargetEntry {
     // engine a different board has to fight. The artifact path is appended, or
     // substituted for `{}` when the template contains it.
     std::vector<std::string>            runner;
+    // The project's override for each of `runner`'s siblings, on the same axis
+    // and with the same precedence: what the author of THIS project wrote beats
+    // what a dependency supplied, and the override is reported rather than
+    // applied in silence.
+    std::vector<std::string>            flash;
+    std::vector<std::string>            monitor;
+    std::vector<std::string>            debugger;
     // #336 — per-target C++ runtime contract, same vocabulary as
     // [build].cxx_runtime and overriding it for this triple. It lives HERE,
     // beside `linkage`, rather than in the `cfg(...)` conditional channel:

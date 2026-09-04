@@ -29,6 +29,7 @@ import mcpp.cli.cmd_toolchain;
 import mcpp.pm.commands;
 import mcpp.toolchain.fingerprint;   // MCPP_VERSION
 import mcpp.wire;
+import mcpp.cli.cmd_sbom;
 import mcpp.platform.env;            // --offline → MCPP_OFFLINE
 import mcpp.platform.process;        // __action-stamp runs the checked command
 import mcpp.platform.runtime_search; // linker-wrapper path-injection opt-out
@@ -92,6 +93,7 @@ void print_usage() {
     std::println("  --no-cache                           Deprecated alias for --cache=off (clears the build dir)");
     std::println("  --no-color                           Disable colored output");
     std::println("  --offline                            Never touch the network (also: MCPP_OFFLINE=1)");
+    std::println("  --locked                             Fail if resolution differs from mcpp.lock (also: --frozen, MCPP_LOCKED=1)");
     std::println("  --jobs N|auto, -j                    Concurrent compiles ('auto' = cores + free RAM)");
     std::println("  --toolchain SPEC                     Use this toolchain for one build (e.g. llvm@22.1.8)");
     std::println("");
@@ -167,6 +169,18 @@ int run(int argc, char** argv) {
         // need a parameter threaded down. Same shape as MCPP_VERBOSE above, and
         // it makes `MCPP_OFFLINE=1` and `--offline` literally the same switch.
         else if (a == "--offline") mcpp::platform::env::set("MCPP_OFFLINE", "1");
+        // ⭐ `--locked` rides the same side channel, and for the stronger form
+        // of the same reason: its consumer is the resolution write point deep
+        // in mcpp.build.prepare, and it applies to every command that resolves
+        // — build, run, test, flash, monitor, debug — so a per-subcommand
+        // option would have to be declared six times and threaded six times.
+        //
+        // It asserts rather than pins: the resolution that happens must equal
+        // the one mcpp.lock records, and a difference is reported naming the
+        // package that moved. See the check itself for why assertion is the
+        // half that reproducibility needs first.
+        else if (a == "--locked" || a == "--frozen")
+            mcpp::platform::env::set("MCPP_LOCKED", "1");
         // --jobs rides the same side channel as --offline, for the same reason
         // recorded there: its consumer is deep in mcpp.build.execute and
         // threading a parameter down would touch every caller in between.
@@ -309,6 +323,16 @@ int run(int argc, char** argv) {
         .option(cl::Option("offline")
             .help("Never touch the network (index refresh, downloads, toolchain install)")
             .global())
+        // Declared here as well as read in the pre-pass: the pre-pass sets the
+        // env var, and this makes the parser accept the token instead of
+        // rejecting it as unknown. Both halves are needed, which is exactly the
+        // arrangement `--offline` above already has.
+        .option(cl::Option("locked")
+            .help("Fail if dependency resolution differs from mcpp.lock")
+            .global())
+        .option(cl::Option("frozen")
+            .help("Alias for --locked")
+            .global())
         // Answers "what do you speak" without spawning a command that might
         // fail. An optimisation, NOT the client's detection rule: on any mcpp
         // predating it this is itself an unknown option, so a client must
@@ -395,6 +419,58 @@ int run(int argc, char** argv) {
                 .help("Execute the artifact directly, ignoring any [target.<triple>].runner (a host that runs it natively)"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_run(p, std::span<const std::string>(passthrough));
+            })))
+        // ⭐ `run`'s three siblings, declared from the same shape. Each builds
+        // the project, resolves one device slot and performs the argv the board
+        // supplied. `monitor` and `debug` do not terminate on their own — the
+        // operator ends them — which the engine reads from the slot rather than
+        // from the tokens (mcpp.build.directives::semantics_of).
+        .subcommand(cl::App("flash")
+            .description("Build + write the artifact to a device (board supplies the argv)")
+            .arg(cl::Arg("bin").help("Binary name (optional)"))
+            .option(cl::Option("target").takes_value().value_name("TRIPLE")
+                .help("Cross target triple (same axis as `mcpp build --target`)"))
+            .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
+                .help("Only the named workspace member"))
+            .option(cl::Option("cache").takes_value().value_name("MODE")
+                .help("Global dependency cache: global (default) | local | off"))
+            .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
+                return cmd_flash(p, std::span<const std::string>(passthrough));
+            })))
+        .subcommand(cl::App("monitor")
+            .description("Attach to the device's console (runs until you end it)")
+            .arg(cl::Arg("bin").help("Binary name (optional)"))
+            .option(cl::Option("target").takes_value().value_name("TRIPLE")
+                .help("Cross target triple (same axis as `mcpp build --target`)"))
+            .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
+                .help("Only the named workspace member"))
+            .option(cl::Option("cache").takes_value().value_name("MODE")
+                .help("Global dependency cache: global (default) | local | off"))
+            .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
+                return cmd_monitor(p, std::span<const std::string>(passthrough));
+            })))
+        .subcommand(cl::App("debug")
+            .description("Start the device's debug server (runs until you end it; attach your own client)")
+            .arg(cl::Arg("bin").help("Binary name (optional)"))
+            .option(cl::Option("target").takes_value().value_name("TRIPLE")
+                .help("Cross target triple (same axis as `mcpp build --target`)"))
+            .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
+                .help("Only the named workspace member"))
+            .option(cl::Option("cache").takes_value().value_name("MODE")
+                .help("Global dependency cache: global (default) | local | off"))
+            .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
+                return cmd_debug(p, std::span<const std::string>(passthrough));
+            })))
+        // ⭐ The dependency graph in the shape a procurement or security review
+        // asks for. Reads mcpp.lock rather than resolving: an SBOM that
+        // described a different graph from the one that was built would be
+        // worse than none.
+        .subcommand(cl::App("sbom")
+            .description("Write a CycloneDX bill of materials for the recorded resolution")
+            .option(cl::Option("output").short_name('o').takes_value().value_name("FILE")
+                .help("Write to FILE instead of stdout"))
+            .action(wrap_rc([](const cl::ParsedArgs& p) {
+                return mcpp::cli::cmd_sbom(p);
             })))
         .subcommand(cl::App("test")
             .description("Build + run all tests/**/*.cpp (after `--`, args go to each test binary)")
@@ -930,7 +1006,8 @@ int run(int argc, char** argv) {
             // command" into "add a command AND remember to bump a number",
             // and the compiler only catches the direction that overflows.
             static constexpr std::array known = std::to_array<std::string_view>({
-                "new", "build", "run", "test", "clean", "add", "remove",
+                "new", "build", "run", "flash", "monitor", "debug", "sbom",
+                "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
                 "version", "dyndep", "why", "resolve", "stage", "bmi-equal", "coff-def",

@@ -4552,6 +4552,11 @@ prepare_build(bool print_fingerprint,
     // Which dependency supplied the runner, for the exactly-one-provider
     // error below. A name rather than a bool: the message has to name both.
     std::string runnerProvider;
+    // ⚠️ ONE PROVIDER PER DEVICE SLOT, TRACKED PER SLOT. `runner` has had this
+    // rule since #544; `flash`, `monitor` and `debug` inherit it, and each
+    // needs its OWN provider name — a board may legitimately supply a runner
+    // while a different package supplies the debug server.
+    std::string flashProvider, monitorProvider, debuggerProvider;
 
     auto fillXpkgDirs = [&](mcpp::build::BuildProgramEnv& e,
                             const mcpp::manifest::Manifest& owner) {
@@ -7225,6 +7230,10 @@ prepare_build(bool print_fingerprint,
             const auto ldN = bcDep.ldflags.size();
             const auto actN = bcDep.actions.size();
             const auto runnerN = bcDep.runner.size();
+            const auto flashN = bcDep.flash.size();
+            const auto monitorN = bcDep.monitor.size();
+            const auto debuggerN = bcDep.debugger.size();
+            const bool exclusiveBefore = bcDep.runnerExclusive;
             if (auto r = mcpp::build::run_build_program(
                     pkg.manifest, pkg.root, host->first, host->second,
                     pkg.manifest.cppStandard, bpEnv);
@@ -7253,23 +7262,58 @@ prepare_build(bool print_fingerprint,
             // with nothing to say which package contributed which token. So
             // the second provider is a hard error that names BOTH, because
             // naming only the loser tells the reader half of what they need.
-            if (bcDep.runner.size() > runnerN) {
+            // ⭐⭐ FOUR SLOTS, ONE RULE, APPLIED BY A LOOP.
+            //
+            // This block existed for `runner` alone and stated the rule that
+            // matters: link flags from two dependencies concatenate and that is
+            // correct, but two runners cannot — appending produces an argv that
+            // is neither one's. Its three siblings have exactly the same
+            // property, so they are handled here rather than copied below it.
+            //
+            // ⚠️ MISSING THIS SITE IS HOW THE FEATURE FAILED FIRST. `apply()`
+            // in the directives module merges a package's own directives into
+            // its own config; THIS is where a dependency's RunGlobal entries
+            // reach the ROOT. Wiring only the first left `mcpp flash` reporting
+            // "no flash is configured" while `mcpp run` found the runner the
+            // same package supplied in the same build program — measured.
+            struct SlotForward {
+                std::string_view                              name;
+                std::vector<std::string> mcpp::manifest::BuildConfig::* member;
+                std::size_t                                   before;
+                std::string*                                  provider;
+            };
+            const SlotForward forwards[] = {
+                { "runner",  &mcpp::manifest::BuildConfig::runner,   runnerN,   &runnerProvider },
+                { "flash",   &mcpp::manifest::BuildConfig::flash,    flashN,    &flashProvider },
+                { "monitor", &mcpp::manifest::BuildConfig::monitor,  monitorN,  &monitorProvider },
+                { "debug",   &mcpp::manifest::BuildConfig::debugger, debuggerN, &debuggerProvider },
+            };
+            for (auto const& f : forwards) {
+                auto& depVec = bcDep.*(f.member);
+                if (depVec.size() <= f.before) continue;
                 std::vector<std::string> supplied(
-                    bcDep.runner.begin() + static_cast<std::ptrdiff_t>(runnerN),
-                    bcDep.runner.end());
-                if (!m->buildConfig.runner.empty() && !runnerProvider.empty()) {
+                    depVec.begin() + static_cast<std::ptrdiff_t>(f.before),
+                    depVec.end());
+                auto& rootVec = m->buildConfig.*(f.member);
+                if (!rootVec.empty() && !f.provider->empty()) {
                     return std::unexpected(std::format(
-                        "two dependencies both supply a runner for this target: "
+                        "two dependencies both supply a {} for this target: "
                         "'{}' and '{}'.\n"
-                        "       A runner is how the artifact is EXECUTED — there "
-                        "can only be one.\n"
+                        "       A {} is how the artifact is reached — there can "
+                        "only be one.\n"
                         "       Drop one of them, or override both with an "
-                        "explicit [target.<triple>].runner.",
-                        runnerProvider, pkg.manifest.package.name));
+                        "explicit [target.<triple>].{}.",
+                        f.name, *f.provider, pkg.manifest.package.name,
+                        f.name, f.name));
                 }
-                m->buildConfig.runner = std::move(supplied);
-                runnerProvider = pkg.manifest.package.name;
+                rootVec = std::move(supplied);
+                *f.provider = pkg.manifest.package.name;
             }
+            // ⚠️ A CLAIM THAT ONLY EVER TIGHTENS. If any package in the graph
+            // knows the device is a mutex, it is one; a later package that says
+            // nothing must not relax it.
+            if (bcDep.runnerExclusive && !exclusiveBefore)
+                m->buildConfig.runnerExclusive = true;
             m->buildConfig.ldflags.insert(m->buildConfig.ldflags.end(),
                 bcDep.ldflags.begin() + ldN, bcDep.ldflags.end());
         }
@@ -9862,6 +9906,52 @@ prepare_build(bool print_fingerprint,
         }
         if (!lock.packages.empty() || !lock.indices.empty()) {
             auto lockPath = workRoot / "mcpp.lock";
+            // ⭐⭐ `--locked` ASSERTS THAT THIS RESOLUTION IS THE RECORDED ONE.
+            //
+            // The file has always been written after the walk and never read
+            // back as a constraint; its own header says so ("does not yet pin
+            // future builds"). Making it an input to resolution is a change to
+            // the resolver. Making it an ASSERTION is not, and it is the half
+            // that reproducibility actually needs: a release build, a CI job or
+            // an audit can demand that what resolved today is what was recorded,
+            // and find out when it is not.
+            //
+            // ⚠️ THE FAILURE NAMES THE DIFFERENCE. "The lock is out of date" is
+            // true and useless; which package moved, from which version to
+            // which, is what the reader does something about.
+            if (mcpp::platform::env::get("MCPP_LOCKED").value_or("") == "1") {
+                auto prior = mcpp::lockfile::load(lockPath);
+                if (!prior) {
+                    return std::unexpected(std::format(
+                        "--locked was given and there is no readable mcpp.lock at {}\n"
+                        "       Run the same command without --locked once to record "
+                        "this resolution, then commit mcpp.lock.",
+                        lockPath.string()));
+                }
+                auto key = [](const mcpp::lockfile::LockedPackage& p) {
+                    return p.namespace_.empty() ? p.name
+                                                : p.namespace_ + "." + p.name;
+                };
+                std::map<std::string, std::string> was, now;
+                for (auto const& p : prior->packages) was[key(p)] = p.version;
+                for (auto const& p : lock.packages)    now[key(p)] = p.version;
+                std::vector<std::string> drift;
+                for (auto const& [k, v] : now) {
+                    auto it = was.find(k);
+                    if (it == was.end())      drift.push_back(k + " " + v + " (not in the lock)");
+                    else if (it->second != v) drift.push_back(k + " " + it->second + " -> " + v);
+                }
+                for (auto const& [k, v] : was)
+                    if (!now.contains(k)) drift.push_back(k + " " + v + " (no longer resolved)");
+                if (!drift.empty()) {
+                    std::string msg = "--locked was given and this resolution "
+                                      "differs from mcpp.lock:";
+                    for (auto const& d : drift) msg += "\n         " + d;
+                    msg += "\n       Re-run without --locked to update the lock, "
+                           "or pin the dependency that moved.";
+                    return std::unexpected(msg);
+                }
+            }
             (void)mcpp::lockfile::write(lock, lockPath);
         }
 

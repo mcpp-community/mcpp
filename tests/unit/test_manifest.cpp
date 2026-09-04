@@ -4465,7 +4465,8 @@ runnerX = ["qemu-aarch64-static"]
     ASSERT_EQ(m->schemaWarnings.size(), 1u);
     EXPECT_NE(m->schemaWarnings[0].find("'runnerX'"), std::string::npos) << m->schemaWarnings[0];
     EXPECT_NE(m->schemaWarnings[0].find(
-                  "Supported keys: cxx_runtime, linkage, runner, sysroot, toolchain"),
+                  "Supported keys: cxx_runtime, debug, flash, linkage, monitor, runner, "
+        "sysroot, toolchain"),
               std::string::npos) << m->schemaWarnings[0];
 }
 

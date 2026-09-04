@@ -68,6 +68,24 @@ inline void include_dir_after(const char* dir)    { std::printf("mcpp:include-di
 // claiming to know how to run the artifact is a configuration error, and mcpp
 // reports it naming both rather than merging them.
 inline void runner(const char* token)             { std::printf("mcpp:runner=%s\n", token); }
+// ⭐ `runner`'s three siblings. Same shape, one token per call, because argv is
+// ordered and a single string cannot say where the boundaries are.
+//
+//   flash    write the artefact to the device      (ends; exit code is the verdict)
+//   monitor  watch what the device prints          (runs until the operator ends it)
+//   debug    start the device's debug SERVER       (runs until the operator ends it)
+//
+// A board that serves both an emulator and real silicon emits different argv
+// under `mcpp::has_feature(...)`; the engine reads the slots and knows nothing
+// about which environment was chosen.
+inline void flash(const char* token)              { std::printf("mcpp:flash=%s\n", token); }
+inline void monitor(const char* token)            { std::printf("mcpp:monitor=%s\n", token); }
+inline void debug(const char* token)              { std::printf("mcpp:debug=%s\n", token); }
+// ⚠️ THE DEVICE IS A MUTEX. Declared by the BOARD, because the board is what
+// knows whether "this target" is one piece of silicon on one probe or an
+// emulator that takes as many instances as there are cores. `mcpp test` clamps
+// its worker pool when this is set, so a project never has to remember `-j1`.
+inline void runner_exclusive()                    { std::printf("mcpp:runner-exclusive=1\n"); }
 
 // Say something to the user and keep going.
 //

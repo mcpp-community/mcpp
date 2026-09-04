@@ -2142,24 +2142,43 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // artifact cannot execute here. An ARRAY, so it is neither a
             // scalar (the unknown-key sweep below skips it by type) nor part
             // of the conditional sub-table channel.
-            if (auto it = body.find("runner"); it != body.end()) {
+            //
+            // ⭐ FOUR KEYS, ONE LOOP. `runner` was alone until `flash`,
+            // `monitor` and `debug` joined it, and they are the same key in
+            // every respect a parser can see: an array of strings, empty is an
+            // error, non-strings are an error. Writing the second one out by
+            // hand is how the third and fourth acquire slightly different
+            // diagnostics.
+            struct DeviceKey { std::string_view name; std::vector<std::string> TargetEntry::*into; };
+            static constexpr std::string_view kExample =
+                "[\"qemu-system-riscv64\", \"-kernel\"]";
+            const DeviceKey kDeviceKeys[] = {
+                { "runner",  &TargetEntry::runner  },
+                { "flash",   &TargetEntry::flash   },
+                { "monitor", &TargetEntry::monitor },
+                { "debug",   &TargetEntry::debugger },
+            };
+            for (auto const& dk : kDeviceKeys) {
+                auto it = body.find(std::string(dk.name));
+                if (it == body.end()) continue;
                 if (!it->second.is_array()) {
                     return std::unexpected(error(origin, std::format(
-                        "[target.{}].runner must be an array of strings, "
-                        "e.g. runner = [\"qemu-system-riscv64\", \"-kernel\"]",
-                        triple)));
+                        "[target.{}].{} must be an array of strings, e.g. {} = {}",
+                        triple, dk.name, dk.name, kExample)));
                 }
+                auto& dest = e.*(dk.into);
                 for (auto& el : it->second.as_array()) {
                     if (!el.is_string()) {
                         return std::unexpected(error(origin, std::format(
-                            "[target.{}].runner must contain only strings", triple)));
+                            "[target.{}].{} must contain only strings",
+                            triple, dk.name)));
                     }
-                    e.runner.push_back(el.as_string());
+                    dest.push_back(el.as_string());
                 }
-                if (e.runner.empty()) {
+                if (dest.empty()) {
                     return std::unexpected(error(origin, std::format(
-                        "[target.{}].runner is empty — an empty template would "
-                        "run nothing and report success", triple)));
+                        "[target.{}].{} is empty — an empty template would do "
+                        "nothing and report success", triple, dk.name)));
                 }
             }
 
@@ -2195,7 +2214,9 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             static constexpr std::string_view kKnownTargetScalars[] = {
                 "cxx_runtime", "linkage", "sysroot", "toolchain",
             };
-            static constexpr std::string_view kKnownTargetArrays[] = { "runner" };
+            static constexpr std::string_view kKnownTargetArrays[] = {
+                "debug", "flash", "monitor", "runner",
+            };
             for (auto& [key, value] : body) {
                 if (value.is_table()) continue;   // the conditional channel
                 const std::span<const std::string_view> known = value.is_array()
@@ -2204,7 +2225,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 if (std::ranges::find(known, key) != known.end()) continue;
                 m.schemaWarnings.push_back(std::format(
                     "[target.{}] has unsupported key '{}' (ignored). Supported keys: "
-                    "cxx_runtime, linkage, runner, sysroot, toolchain. "
+                    "cxx_runtime, debug, flash, linkage, monitor, runner, sysroot, "
+                    "toolchain. "
                     "Per-role contracts go in [build].cxx_runtime's table form.",
                     triple, key));
             }

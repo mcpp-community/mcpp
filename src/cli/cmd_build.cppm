@@ -12,6 +12,7 @@ import std;
 import mcpplibs.cmdline;
 import mcpp.build.prepare;
 import mcpp.build.execute;
+import mcpp.build.directives;      // the device-slot table
 import mcpp.build.configure;
 import mcpp.build.coff_exports;
 import mcpp.build.stage;
@@ -190,6 +191,44 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
 
     return run_build_with_hooks(*ctx, verbose, no_cache, ov.target_triple);
+}
+
+// ⭐ `run`, `flash`, `monitor` and `debug` differ by one argument.
+//
+// Each builds the project, resolves one device slot and performs the argv it
+// finds. Writing four functions would write the flag parsing four times, and
+// the flags are not the interesting part — the slot is.
+int device_action_command(const mcpplibs::cmdline::ParsedArgs& parsed,
+                          std::span<const std::string> passthrough,
+                          mcpp::build::directives::Slot slot) {
+    std::optional<std::string> targetName;
+    if (parsed.positional_count() > 0) targetName = parsed.positional(0);
+    std::string package_filter;
+    if (auto p = parsed.value("package")) package_filter = *p;
+    std::string cache_mode;
+    bool no_cache = parsed.is_flag_set("no-cache");
+    if (auto c = parsed.value("cache")) cache_mode = *c;
+    else if (no_cache)                  cache_mode = "off";
+    std::string target_triple;
+    if (auto tt = parsed.value("target"))        target_triple = *tt;
+    if (auto tt = parsed.value("target-triple")) target_triple = *tt;
+    const bool no_runner = parsed.is_flag_set("no-runner");
+    return mcpp::build::build_run_target(targetName, passthrough, package_filter,
+                                         cache_mode, no_cache, target_triple,
+                                         no_runner, slot);
+}
+
+export int cmd_flash(const mcpplibs::cmdline::ParsedArgs& p,
+                     std::span<const std::string> extra) {
+    return device_action_command(p, extra, mcpp::build::directives::Slot::Flash);
+}
+export int cmd_monitor(const mcpplibs::cmdline::ParsedArgs& p,
+                       std::span<const std::string> extra) {
+    return device_action_command(p, extra, mcpp::build::directives::Slot::Monitor);
+}
+export int cmd_debug(const mcpplibs::cmdline::ParsedArgs& p,
+                     std::span<const std::string> extra) {
+    return device_action_command(p, extra, mcpp::build::directives::Slot::Debug);
 }
 
 export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,

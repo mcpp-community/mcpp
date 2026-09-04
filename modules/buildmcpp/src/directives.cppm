@@ -76,6 +76,24 @@ enum class Slot : std::size_t {
     // is neither a compile input nor a link input, and putting it in LdFlags
     // would put an emulator's argv on the linker command line.
     Runner,
+    // ⭐⭐ THE THREE SIBLINGS OF `Runner`, AND THE COLUMN THAT SEPARATES THEM.
+    //
+    // Writing an artefact to a device, watching what it prints and attaching a
+    // debugger have `Runner`'s shape exactly: an argv the BOARD knows and a
+    // TOOL performs. They are slots for the same reason `Runner` is one — an
+    // emulator's argv is neither a compile input nor a link input.
+    //
+    // ⚠️ WHAT NO ARGV CAN SAY IS WHICH ONE ENDS. `Runner` and `Flash` finish
+    // and hand back an exit code; `Monitor` and `Debug` do not terminate on
+    // their own, so for them a live process IS the success condition and for
+    // the other two it is a hang. `semantics_of` below answers that from the
+    // SLOT, because the tokens cannot.
+    Flash,
+    Monitor,
+    Debug,
+    // Not an argv at all: a board stating that it is a mutex. See
+    // `BuildConfig::runnerExclusive`.
+    RunnerExclusive,
     CxxFlags,
     CFlags,
     LdFlags,
@@ -103,6 +121,51 @@ enum class Slot : std::size_t {
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
+
+// ⭐⭐ HOW A DEVICE ACTION'S PROCESS ENDS, WHICH IS A PROPERTY OF THE SLOT.
+//
+// The four device slots share an argv shape and differ in exactly one way that
+// the engine has to act on: whether the process is expected to terminate.
+//
+//   OneShot    `run`, `flash` — runs to completion; the exit code is the verdict
+//   LongLived  `monitor`, `debug` — has no natural end; the operator ends it,
+//              and a non-zero status after Ctrl-C is that, not a failure
+//
+// ⚠️ NO TOKEN IN THE TEMPLATE CARRIES THIS. `openocd -c "program {} verify
+// reset exit"` terminates and `openocd -c "init"` does not, and both are
+// spelled the same way up to the argument the board chose. So it is read from
+// the slot, and a board cannot get it wrong by writing its argv differently.
+//
+// ⚠️ AND `debug` IS `LongLived` RATHER THAN A THIRD VALUE. It starts a GDB
+// SERVER; the client that attaches to it is the user's debugger or their IDE,
+// which reaches mcpp through the machine-output protocol (docs/11) and not
+// through this table. Driving the client would put mcpp in the middle of a
+// session it has nothing to add to.
+enum class Semantics { OneShot, LongLived };
+
+inline constexpr Semantics semantics_of(Slot s) {
+    return (s == Slot::Monitor || s == Slot::Debug) ? Semantics::LongLived
+                                                    : Semantics::OneShot;
+}
+
+// The device slots, in the order a user meets them. Iterated rather than
+// hand-listed wherever all four must be handled, so a fifth cannot be added to
+// one site and missed at another.
+inline constexpr Slot kDeviceSlots[] = { Slot::Runner, Slot::Flash,
+                                         Slot::Monitor, Slot::Debug };
+
+// The user-facing name of a device slot: the `mcpp <name>` subcommand, the
+// `[target.<triple>].<name>` key and the `mcpp:<name>=` directive are all this
+// one string, which is why it has a single read point.
+inline constexpr std::string_view device_slot_name(Slot s) {
+    switch (s) {
+        case Slot::Runner:  return "runner";
+        case Slot::Flash:   return "flash";
+        case Slot::Monitor: return "monitor";
+        case Slot::Debug:   return "debug";
+        default:            return {};
+    }
+}
 
 // Who sees the value. The field that must be answered for every new directive.
 enum class Scope {
@@ -166,7 +229,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 16> kTable{{
+inline constexpr std::array<Def, 20> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -212,6 +275,10 @@ inline constexpr std::array<Def, 16> kTable{{
     // OWNER home — measured in CI as `xlings: '…' is not installed` from a job
     // where the same name had answered `--version` two steps earlier.
     {"runner",              "runner",            Slot::Runner,           Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              4},
+    {"flash",               "flash",             Slot::Flash,            Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              6},
+    {"monitor",             "monitor",           Slot::Monitor,          Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              6},
+    {"debug",               "debug",             Slot::Debug,            Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              6},
+    {"runner-exclusive",    "runner-exclusive",  Slot::RunnerExclusive,  Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              6},
     {"link-script",         "ldflag",            Slot::LdFlags,          Scope::LinkGlobal,     Transform::LinkerScript,  false, "",                           "",                                              3},
     {"include-dir",         "include-dir",       Slot::IncludeDirs,      Scope::PackagePrivate, Transform::AbsPath,       false, "",                           "",                                              1},
     {"include-dir-after",   "include-dir-after", Slot::IncludeDirsAfter, Scope::PackagePrivate, Transform::AbsPath,       false, "",                           "",                                              1},
@@ -668,6 +735,9 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     auto const& c        = d.at(Slot::CFlags);
     auto const& ld       = d.at(Slot::LdFlags);
     auto const& runner   = d.at(Slot::Runner);
+    auto const& flash    = d.at(Slot::Flash);
+    auto const& monitor  = d.at(Slot::Monitor);
+    auto const& debugTpl = d.at(Slot::Debug);
     auto const& defines  = d.at(Slot::Defines);
 
     bc.cxxflags.insert(bc.cxxflags.end(), cxx.begin(), cxx.end());
@@ -675,6 +745,14 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     bc.ldflags.insert(bc.ldflags.end(), ld.begin(), ld.end());
     // Appended in emission order — the tokens ARE the argv.
     bc.runner.insert(bc.runner.end(), runner.begin(), runner.end());
+    bc.flash.insert(bc.flash.end(), flash.begin(), flash.end());
+    bc.monitor.insert(bc.monitor.end(), monitor.begin(), monitor.end());
+    bc.debugger.insert(bc.debugger.end(), debugTpl.begin(), debugTpl.end());
+    // ⚠️ ANY non-empty value sets it, and there is deliberately no way to unset
+    // it from a second package. Exclusivity is a claim about the DEVICE: if one
+    // package in the graph knows the target is a mutex, it is one, and a later
+    // package saying nothing must not relax that.
+    if (!d.at(Slot::RunnerExclusive).empty()) bc.runnerExclusive = true;
     // cfg defines colour BOTH language channels — the one slot that fans out.
     bc.cflags.insert(bc.cflags.end(), defines.begin(), defines.end());
     bc.cxxflags.insert(bc.cxxflags.end(), defines.begin(), defines.end());
