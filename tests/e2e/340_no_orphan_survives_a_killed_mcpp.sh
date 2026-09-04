@@ -33,12 +33,23 @@ work="$(mktemp -d)"; trap 'rm -rf "$work"' EXIT
 cd "$work"
 mkdir -p src
 
-# Counting by executable name, not by a `pgrep -f` pattern: this script's own
-# command line contains the word, and a pattern match finds itself.
+# COUNTING BY EXECUTABLE NAME AND BY WORKING DIRECTORY, AND BOTH HALVES MATTER.
+#
+# Not by a `pgrep -f` pattern: this script's own command line contains the word,
+# and a pattern match finds itself.
+#
+# And not every ninja on the machine: a build server, a developer's second
+# checkout, or another test running in parallel can start one inside this
+# check's window, and a baseline taken before the build does not cover a process
+# that appears during it. Measured in an ecosystem sandbox — which shares the
+# host's PID namespace — where an unrelated session's ninja in a different
+# project failed this assertion. The predicate was right and the object was
+# wrong.
 count_ninja() {
   local n=0 p
   for p in /proc/[0-9]*; do
-    [[ "$(cat "$p/comm" 2>/dev/null)" == "ninja" ]] && n=$((n+1))
+    [[ "$(cat "$p/comm" 2>/dev/null)" == "ninja" ]] || continue
+    case "$(readlink "$p/cwd" 2>/dev/null)" in "$work"*) n=$((n+1));; esac
   done
   echo "$n"
 }
