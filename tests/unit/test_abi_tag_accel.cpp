@@ -130,3 +130,32 @@ TEST(AbiTagAccel, AccelDoesNotMaskTheCxxDimensions) {
     ASSERT_EQ(bad.size(), 1u);
     EXPECT_EQ(bad[0].dimension, "compiler");
 }
+
+// ─── The wire form round-trips ─────────────────────────────────────────────
+
+TEST(AbiTagAccel, TheWireFormRoundTrips) {
+    std::vector<mcpp::pack::AccelSet> sets{
+        cuda({"sm_80", "sm_90f"}, "90"),
+        mcpp::pack::AccelSet{ .backend = "rocm", .version = "6.4",
+                              .archs = {"gfx942", "gfx10-3-generic"} },
+    };
+    auto text = mcpp::pack::accel_str(sets);
+    auto back = mcpp::pack::parse_accel(text);
+    ASSERT_EQ(back.size(), 2u);
+    EXPECT_EQ(back[0].backend,  "cuda");
+    EXPECT_EQ(back[0].version,  "12.8");
+    EXPECT_EQ(back[0].archs,    (std::vector<std::string>{"sm_80", "sm_90f"}));
+    EXPECT_EQ(back[0].ptxFloor, "90");
+    EXPECT_EQ(back[1].backend,  "rocm");
+    EXPECT_EQ(back[1].archs,    (std::vector<std::string>{"gfx942", "gfx10-3-generic"}));
+    EXPECT_TRUE(back[1].ptxFloor.empty());
+    EXPECT_EQ(mcpp::pack::accel_str(back), text);
+}
+
+TEST(AbiTagAccel, UnparseableTextMeansNoDeviceCode) {
+    // The safe answer, and the same one a descriptor that never mentioned the
+    // dimension gives: an artifact that states nothing constrains nothing.
+    EXPECT_TRUE(mcpp::pack::parse_accel("").empty());
+    EXPECT_TRUE(mcpp::pack::parse_accel("(none)").empty());
+    EXPECT_TRUE(mcpp::pack::parse_accel("12.8+{sm_90}").empty());  // no backend
+}

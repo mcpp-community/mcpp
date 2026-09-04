@@ -367,6 +367,10 @@ int run(int argc, char** argv) {
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .option(cl::Option("target").takes_value().help(
                 "Build for <triple> (e.g. x86_64-linux-musl); looks up [target.<triple>] in mcpp.toml"))
+            .option(cl::Option("accel").takes_value().value_name("SPEC")
+                .help("Device backends and architectures, e.g. 'cuda12.8+{sm_89}'; overrides [build] accel"))
+            .option(cl::Option("no-accel")
+                .help("Target no accelerator, ignoring [build] accel"))
             .option(cl::Option("static").help(
                 "Force static linking (-static). On Linux, prefer pairing with --target <arch>-linux-musl"))
             .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")

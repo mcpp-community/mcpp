@@ -1941,6 +1941,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                             else if (field == "path") path = std::move(value);
                             else if (field == "provenance") artifact.provenance = std::move(value);
                             else if (field == "abi") artifact.abi = std::move(value);
+                            else if (field == "accel") artifact.accel = std::move(value);
                             else if (field == "digest") artifact.digest = std::move(value);
                             else if (field == "host_fingerprint")
                                 artifact.hostFingerprint = std::move(value);

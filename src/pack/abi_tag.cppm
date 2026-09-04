@@ -143,8 +143,21 @@ struct TagMismatch {
 // is compared as a floor, not for equality.
 std::vector<TagMismatch> tag_check(const AbiTag& published, const AbiTag& current);
 
-// One backend rendered for a diagnostic: `cuda12.8+{sm_80,sm_90} ptx>=80`.
+// The wire and diagnostic form of the device dimension:
+//
+//     cuda12.8+{sm_80,sm_90f} ptx>=90, rocm6.4+{gfx942}
+//
+// ONE form for both, so what a descriptor stores is what a refusal prints and
+// a reader never has to hold two spellings of the same fact in their head.
+// The backend is the leading run of letters and the version is what follows,
+// which parses because every backend name is alphabetic and every version
+// starts with a digit.
 std::string accel_str(std::span<const AccelSet> sets);
+
+// The inverse. Unparseable input yields an empty vector, which the comparison
+// reads as "carries no device code" — the same answer as a descriptor that
+// never mentioned the dimension, and the safe one.
+std::vector<AccelSet> parse_accel(std::string_view s);
 
 // The `c++NN` segment as its numeric level, or 0 when unparseable.
 int standard_level(std::string_view standardSegment);
@@ -220,6 +233,64 @@ std::string accel_str(std::span<const AccelSet> sets) {
         }
         out += '}';
         if (!a.ptxFloor.empty()) { out += " ptx>="; out += a.ptxFloor; }
+    }
+    return out;
+}
+
+namespace {
+
+std::string_view trim_sv(std::string_view s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);
+    while (!s.empty() && (s.back()  == ' ' || s.back()  == '\t')) s.remove_suffix(1);
+    return s;
+}
+
+} // namespace
+
+std::vector<AccelSet> parse_accel(std::string_view s) {
+    std::vector<AccelSet> out;
+    for (std::size_t i = 0; i <= s.size(); ) {
+        auto comma = s.find(',', i);
+        // A comma inside `{...}` separates architectures, not backends.
+        auto open  = s.find('{', i);
+        auto close = s.find('}', i);
+        if (open != std::string_view::npos && close != std::string_view::npos
+            && comma != std::string_view::npos && comma > open && comma < close)
+            comma = s.find(',', close);
+        auto chunk = trim_sv(comma == std::string_view::npos
+                                 ? s.substr(i)
+                                 : s.substr(i, comma - i));
+        i = comma == std::string_view::npos ? s.size() + 1 : comma + 1;
+        if (chunk.empty() || chunk == "(none)") continue;
+
+        AccelSet a;
+        auto plus = chunk.find('+');
+        auto head = trim_sv(plus == std::string_view::npos ? chunk : chunk.substr(0, plus));
+        std::size_t n = 0;
+        while (n < head.size() && std::isalpha(static_cast<unsigned char>(head[n]))) ++n;
+        if (n == 0) continue;                        // no backend: not our form
+        a.backend = std::string(head.substr(0, n));
+        a.version = std::string(head.substr(n));
+
+        if (plus != std::string_view::npos) {
+            auto tail = chunk.substr(plus + 1);
+            if (auto o = tail.find('{'); o != std::string_view::npos) {
+                auto c = tail.find('}', o);
+                auto archs = tail.substr(o + 1,
+                    c == std::string_view::npos ? std::string_view::npos : c - o - 1);
+                for (std::size_t j = 0; j <= archs.size(); ) {
+                    auto k = archs.find(',', j);
+                    auto one = trim_sv(k == std::string_view::npos
+                                           ? archs.substr(j) : archs.substr(j, k - j));
+                    if (!one.empty()) a.archs.emplace_back(one);
+                    if (k == std::string_view::npos) break;
+                    j = k + 1;
+                }
+            }
+            if (auto pf = tail.find("ptx>="); pf != std::string_view::npos)
+                a.ptxFloor = std::string(trim_sv(tail.substr(pf + 5)));
+        }
+        out.push_back(std::move(a));
     }
     return out;
 }

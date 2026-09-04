@@ -839,6 +839,10 @@ export struct BuildOverrides {
     std::shared_ptr<const mcpp::platform::runtime::RuntimeBinding>
         inherited_runtime_binding;
     std::string target_triple;       // empty = host triple, fall through to [toolchain]
+    // --accel: the device backends and architectures this build targets, in
+    // the wire form mcpp.pack.abi_tag reads. Overrides `[build] accel`, the
+    // same relationship --target has with [toolchain].
+    std::string accel;
     bool        force_static = false; // --static (or implied by musl target)
     std::string package_filter;      // -p <name>: only build this workspace member
     // --profile <name>. Empty = fall through to `[build] default-profile`, then
@@ -8994,8 +8998,14 @@ prepare_build(bool print_fingerprint,
                   auto t = mcpp::toolchain::triple::parse(tc->targetTriple);
                   return t ? t->str() : tc->targetTriple;
               }();
-        const auto currentTag = mcpp::pack::cxx_surface_tag(
+        auto currentTag = mcpp::pack::cxx_surface_tag(
             *tc, canonicalTriple, m->cppStandard.level);
+        // What THIS build targets on the device axis. Absent means it asks for
+        // no accelerator, and every artifact then satisfies it vacuously —
+        // which is correct, and is why a descriptor lists its CPU-only variant
+        // first: the first accepted artifact wins.
+        currentTag.accel = mcpp::pack::parse_accel(
+            overrides.accel.empty() ? m->buildConfig.accel : overrides.accel);
         for (std::size_t i = 1; i < packages.size(); ++i) {
             auto const& pkg = packages[i];
             if (!mcpp::pack::is_distribution_package(pkg.manifest)) continue;

@@ -1524,6 +1524,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             return std::unexpected(error(origin, *err));
         m.buildConfig.moduleExtensions = *v;
     }
+    // [build] accel — the accelerator backends and device architectures this
+    // build targets. One spelling with the descriptor field and the diagnostic,
+    // so what a user writes is what a refusal prints back at them.
+    if (auto v = doc->get_string("build.accel")) m.buildConfig.accel = *v;
     // [build] build_program_timeout — seconds a build.mcpp may run; 0 = no
     // limit. `optional` is load-bearing: with a plain int, "absent" and
     // "explicitly 0" would be the same value, and every project that never

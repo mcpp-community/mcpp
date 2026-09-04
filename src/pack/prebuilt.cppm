@@ -107,6 +107,8 @@ check_prebuilt(const mcpp::manifest::Manifest& m, const PrebuiltCheck& in)
         publishedTags.push_back(a.abi);
         auto published = parse_abi_tag(a.abi);
         if (!published) { accepted = true; continue; }   // unreadable → lenient
+        // The device dimension travels beside the tag rather than inside it.
+        published->accel = parse_accel(a.accel);
         auto bad = tag_check(*published, in.current);
         if (bad.empty()) { accepted = true; break; }
         // Keep the CLOSEST refusal to show: the one that disagrees least is
