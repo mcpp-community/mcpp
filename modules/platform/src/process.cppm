@@ -189,7 +189,7 @@ void stop_background(const BackgroundCommand& child,
 // user can no longer name. Only one command is guarded at a time; a build owns
 // at most one.
 void guard_background_on_signal(const BackgroundCommand& child);
-void clear_background_guard();
+void clear_background_guard(const BackgroundCommand& child);
 
 // `spawn_error`: run_exec's contract; with it null a refused spawn is
 // formatted into `output`, as capture_exec does.
@@ -596,9 +596,32 @@ int run_exec(const std::vector<std::string>& argv,
     for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
     cargv.push_back(nullptr);
 
+    // THE CHILD GETS ITS OWN PROCESS GROUP, AND mcpp KILLS THAT GROUP IF IT IS
+    // ITSELF KILLED.
+    //
+    // Without this, terminating mcpp leaves the child running. Measured: every
+    // `timeout`-terminated `mcpp run` left an orphaned ninja spinning at 100%
+    // of a core, and one of them outlived the removal of the entire sandbox it
+    // belonged to — its working directory read `(deleted)` and it was still
+    // burning a core half an hour later. Any CI that wraps mcpp in `timeout`
+    // leaks a busy core per timeout.
+    //
+    // The group rather than the pid, because the child starts children of its
+    // own: killing ninja alone would leave its compilers behind.
+    //
+    // A signal is not enough on its own, which is why the guard sends SIGKILL.
+    // ninja records a signal in a flag and acts on it where it waits for a
+    // subprocess; a ninja with no command running never reaches that check, so
+    // a polite signal is recorded and never obeyed.
+    posix_spawnattr_t attr;
+    ::posix_spawnattr_init(&attr);
+    ::posix_spawnattr_setpgroup(&attr, 0);       // 0 ⇒ new group, id == pid
+    ::posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+
     pid_t pid = 0;
-    if (int sp = ::posix_spawnp(&pid, cargv[0], nullptr, nullptr, cargv.data(), envp.data());
-        sp != 0) {
+    int sp = ::posix_spawnp(&pid, cargv[0], nullptr, &attr, cargv.data(), envp.data());
+    ::posix_spawnattr_destroy(&attr);
+    if (sp != 0) {
         // Reported once: by the caller when it asked for the errno, here
         // otherwise. Never dropped — the errno in hand at this line is the
         // whole difference between "Exec format error" and a blank line.
@@ -606,14 +629,42 @@ int run_exec(const std::vector<std::string>& argv,
         else std::fputs(spawn_failure(argv.front(), sp).c_str(), stderr);
         return 127;
     }
+    mcpp::platform::unixproc::guard_group_on_signal(pid);
     int status = 0;
     while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
+    mcpp::platform::unixproc::unguard_group(pid);
     return normalize_exit_code(status);
 #else
+    // THE SAME OWNERSHIP AS THE POSIX BRANCH, EXPRESSED IN THIS PLATFORM'S TERMS.
+    //
+    // `std::system` gave the child away: it runs through a cmd.exe mcpp does not
+    // hold a handle to, so terminating mcpp left the tree running exactly as the
+    // POSIX branch did before its process group. A job object with
+    // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE is the equivalent unit — it takes the
+    // whole tree, which matters here for the same reason the group does there:
+    // the child starts compilers of its own.
+    //
+    // The command line is built by the same `windows_shell_command_line` the
+    // rest of this file uses, so the cmd.exe quoting rule has ONE derivation.
+    // Re-deriving it here is how `/d /s /c` loses an argument.
     std::string prefix = mcpp::platform::env::build_env_prefix(extraEnv);
     // wrap only — run_exec inherits stdio on purpose (see finalize_shell_command).
-    std::string cmd = wrap_for_cmd_c(prefix + command_from_argv(argv));
-    return normalize_exit_code(std::system(cmd.c_str()));
+    std::string cmd = windows_shell_command_line(prefix + command_from_argv(argv));
+    auto child = mcpp::platform::winproc::spawn_background(cmd.c_str(), nullptr, 1);
+    if (!child.ok) {
+        const int refused = static_cast<int>(child.refused);
+        if (spawn_error) *spawn_error = refused;
+        else std::fputs(spawn_failure(argv.front(), refused).c_str(), stderr);
+        return 127;
+    }
+    mcpp::platform::winproc::guard_job_on_signal(child.job);
+    int code = 127;
+    mcpp::platform::winproc::wait_background(child.process, &code);
+    mcpp::platform::winproc::unguard_job(child.job);
+    // Closes both handles; the child has already exited, so this is cleanup
+    // rather than a kill.
+    mcpp::platform::winproc::background_stop(child.job, child.process, 0);
+    return code;
 #endif
 }
 
@@ -652,10 +703,22 @@ RunResult capture_exec(
     ::posix_spawn_file_actions_addclose(&fa, fds[0]);
     ::posix_spawn_file_actions_addclose(&fa, fds[1]);
 
+    // Owned exactly as `run_exec`'s child is, and for the same reason: this is
+    // the launcher a FULL build uses, so a `mcpp build` interrupted here is the
+    // common case rather than the rare one. Fixing only `run_exec` left the
+    // orphan in place — measured, with the two launchers giving opposite
+    // answers to the same test.
+    posix_spawnattr_t attr;
+    ::posix_spawnattr_init(&attr);
+    ::posix_spawnattr_setpgroup(&attr, 0);
+    ::posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+
     pid_t pid = 0;
-    int sp = ::posix_spawnp(&pid, cargv[0], &fa, nullptr, cargv.data(), envp.data());
+    int sp = ::posix_spawnp(&pid, cargv[0], &fa, &attr, cargv.data(), envp.data());
+    ::posix_spawnattr_destroy(&attr);
     ::posix_spawn_file_actions_destroy(&fa);
     ::close(fds[1]);
+    if (sp == 0) mcpp::platform::unixproc::guard_group_on_signal(pid);
     if (sp != 0) {
         ::close(fds[0]);
         result.exit_code = 127;
@@ -671,6 +734,7 @@ RunResult capture_exec(
     ::close(fds[0]);
     int status = 0;
     while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
+    mcpp::platform::unixproc::unguard_group(pid);
     result.exit_code = normalize_exit_code(status);
     return result;
 #else
@@ -889,11 +953,14 @@ void guard_background_on_signal(const BackgroundCommand& child) {
         mcpp::platform::unixproc::guard_group_on_signal(child.group);
 }
 
-void clear_background_guard() {
+// Releases THIS child, not the guard as a whole: a build's ninja is guarded at
+// the same time as a spanning hook, and disarming everything when either
+// finishes would leave the other able to outlive mcpp.
+void clear_background_guard(const BackgroundCommand& child) {
     if constexpr (mcpp::platform::is_windows)
-        mcpp::platform::winproc::clear_job_guard();
+        mcpp::platform::winproc::unguard_job(child.job);
     else
-        mcpp::platform::unixproc::clear_group_guard();
+        mcpp::platform::unixproc::unguard_group(child.group);
 }
 
 RunResult capture_exec_deadline(

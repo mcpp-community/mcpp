@@ -36,6 +36,7 @@ module;
 #include <cerrno>        // errno, EINTR
 #include <fcntl.h>       // fcntl O_NONBLOCK
 #include <time.h>        // nanosleep
+#include <cstdio>        // fputs, stderr — the out-of-slots diagnostic
 #if defined(__APPLE__)
 #include <crt_externs.h> // _NSGetEnviron
 #endif
@@ -142,7 +143,19 @@ void background_stop(long long group, long long graceMs);
 //
 // The handler does the minimum that is async-signal-safe: killpg (which is),
 // then the default action.
+// A REGISTRY AND NOT ONE SLOT, BECAUSE THERE IS MORE THAN ONE OWNER.
+//
+// A spanning `[hooks]` command is guarded for the length of the build, and the
+// build's own ninja is guarded for the length of its run — concurrently. With a
+// single slot the second registration overwrites the first, so killing mcpp
+// mid-build would take down ninja and leave the hook's process running, which
+// is the exact outcome the guard exists to prevent.
+//
+// Fixed capacity and no allocation: the handler reads this array and may not
+// allocate. Registering past capacity fails loudly rather than silently
+// dropping a group, because a dropped group is an orphan nobody will find.
 void guard_group_on_signal(long long group);
+void unguard_group(long long group);
 void clear_group_guard();
 
 } // namespace mcpp::platform::unixproc
@@ -293,14 +306,23 @@ namespace {
 // Read by a signal handler, so `volatile sig_atomic_t` and nothing else: the
 // handler may run between any two instructions and may not lock, allocate, or
 // call anything that is not async-signal-safe. 0 means "nothing to clean up".
-volatile sig_atomic_t g_guardedGroup = 0;
+constexpr int kMaxGuardedGroups = 8;
+volatile sig_atomic_t g_guardedGroups[kMaxGuardedGroups] = {};
 
 extern "C" void background_signal_handler(int sig) {
-    const auto group = g_guardedGroup;
     // killpg is async-signal-safe. SIGKILL rather than SIGTERM: this is the
     // path where mcpp is about to stop existing, and there is nobody left to
     // escalate if the group ignores the polite request.
-    if (group > 0) ::killpg(static_cast<pid_t>(group), SIGKILL);
+    //
+    // SIGKILL also settles a case SIGTERM does not. ninja records a signal in a
+    // flag and acts on it only where it waits for a subprocess; a ninja with no
+    // command running never reaches that check, so a polite signal is recorded
+    // and never obeyed. Measured: an orphaned ninja spinning at 100% of a core
+    // outlived the removal of the entire sandbox it belonged to.
+    for (int i = 0; i < kMaxGuardedGroups; ++i) {
+        const auto group = g_guardedGroups[i];
+        if (group > 0) ::killpg(static_cast<pid_t>(group), SIGKILL);
+    }
     // Die of the signal we were sent, so the exit status is the one the shell
     // and any outer script expect from a Ctrl-C.
     ::signal(sig, SIG_DFL);
@@ -402,14 +424,45 @@ void background_stop(long long group, long long graceMs) {
 }
 
 void guard_group_on_signal(long long group) {
-    g_guardedGroup = static_cast<sig_atomic_t>(group);
-    ::signal(SIGINT,  background_signal_handler);
-    ::signal(SIGTERM, background_signal_handler);
-    ::signal(SIGHUP,  background_signal_handler);
+    if (group <= 0) return;
+    for (int i = 0; i < kMaxGuardedGroups; ++i) {
+        if (g_guardedGroups[i] == 0) {
+            g_guardedGroups[i] = static_cast<sig_atomic_t>(group);
+            ::signal(SIGINT,  background_signal_handler);
+            ::signal(SIGTERM, background_signal_handler);
+            ::signal(SIGHUP,  background_signal_handler);
+            return;
+        }
+    }
+    // Out of slots. Say so rather than return silently: an unguarded group is
+    // a process that outlives mcpp, and the whole point of this file is that
+    // such a process is never acceptable.
+    std::fputs("mcpp: internal: more than 8 concurrently guarded process "
+               "groups; the newest is NOT guarded and may outlive mcpp\n",
+               stderr);
+}
+
+// Removing the group this call owns, rather than clearing the array, is what
+// makes concurrent owners safe: a nested or overlapping run must not disarm
+// the guard an outer one still needs.
+void unguard_group(long long group) {
+    if (group <= 0) return;
+    bool any = false;
+    for (int i = 0; i < kMaxGuardedGroups; ++i) {
+        if (g_guardedGroups[i] == static_cast<sig_atomic_t>(group))
+            g_guardedGroups[i] = 0;
+        else if (g_guardedGroups[i] != 0)
+            any = true;
+    }
+    if (!any) {
+        ::signal(SIGINT,  SIG_DFL);
+        ::signal(SIGTERM, SIG_DFL);
+        ::signal(SIGHUP,  SIG_DFL);
+    }
 }
 
 void clear_group_guard() {
-    g_guardedGroup = 0;
+    for (int i = 0; i < kMaxGuardedGroups; ++i) g_guardedGroups[i] = 0;
     ::signal(SIGINT,  SIG_DFL);
     ::signal(SIGTERM, SIG_DFL);
     ::signal(SIGHUP,  SIG_DFL);
@@ -431,6 +484,7 @@ BackgroundChild spawn_background(const char* const*, unsigned long,
 int  background_running(long long, int*) { return -1; }
 void background_stop(long long, long long) {}
 void guard_group_on_signal(long long) {}
+void unguard_group(long long) {}
 void clear_group_guard() {}
 
 #endif

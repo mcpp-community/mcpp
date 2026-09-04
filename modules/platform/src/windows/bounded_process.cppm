@@ -55,6 +55,7 @@ module;
 #define NOMINMAX
 #endif
 #include <windows.h>
+#include <cstdio>       // fputs, stderr — the out-of-slots diagnostic
 #endif
 
 export module mcpp.platform.windows.bounded_process;
@@ -120,6 +121,11 @@ struct BackgroundChild {
     bool               ok      = false;
     unsigned long long job     = 0;   // HANDLE to the job object
     unsigned long long process = 0;   // HANDLE to the child
+    // GetLastError() from a refused CreateProcess. Carried rather than dropped
+    // for the reason the POSIX peer carries errno: the code in hand at the
+    // failure is the whole difference between "not found" and "not executable",
+    // and a caller that maps a spawn failure onto an exit status needs it.
+    unsigned long      refused = 0;
 };
 
 // `inheritStdio == 0` sends the child's output to NUL. A spanning hook writes
@@ -150,8 +156,17 @@ void background_stop(unsigned long long job, unsigned long long process,
 // Ctrl-C. The job already covers process death, so this exists only so that a
 // deliberate interrupt stops the tree BEFORE mcpp unwinds, rather than as a
 // side effect of it exiting.
+// A REGISTRY AND NOT ONE SLOT, for the reason the POSIX peer gives: a spanning
+// `[hooks]` command and the build's own ninja are guarded at the same time, and
+// a single slot lets the second registration disarm the first.
 void guard_job_on_signal(unsigned long long job);
+void unguard_job(unsigned long long job);
 void clear_job_guard();
+
+// Wait for a child started by `spawn_background` and return its exit code.
+// Blocking, so an owned run costs no polling latency; `background_running` stays
+// for the supervisor that must not block.
+int wait_background(unsigned long long process, int* exitCode);
 
 } // namespace mcpp::platform::winproc
 
@@ -378,16 +393,19 @@ namespace {
 // Read by a console control handler, which runs on a thread of the OS's
 // choosing. Only the handle is shared, and closing a job handle is atomic from
 // the caller's point of view.
-volatile unsigned long long g_guardedJob = 0;
+constexpr int kMaxGuardedJobs = 8;
+volatile unsigned long long g_guardedJobs[kMaxGuardedJobs] = {};
 
 BOOL WINAPI background_console_handler(DWORD) {
-    const auto job = g_guardedJob;
     // TerminateJobObject, not CloseHandle: this handler races `background_stop`
     // on the normal path, and terminating is idempotent while closing the same
     // handle twice is not. The handle stays valid for whoever closes it.
-    if (job)
-        ::TerminateJobObject(
-            reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(job)), 1);
+    for (int i = 0; i < kMaxGuardedJobs; ++i) {
+        const auto job = g_guardedJobs[i];
+        if (job)
+            ::TerminateJobObject(
+                reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(job)), 1);
+    }
     return FALSE;   // FALSE = also run the default handler, i.e. still exit
 }
 
@@ -445,6 +463,7 @@ BackgroundChild spawn_background(const char* commandLine,
             | (inheritStdio ? 0u : CREATE_NO_WINDOW),
         nullptr, (cwd && *cwd) ? cwd : nullptr, &si, &pi);
     if (!ok) {
+        out.refused = ::GetLastError();
         if (job) ::CloseHandle(job);
         return out;
     }
@@ -514,13 +533,41 @@ void background_stop(unsigned long long job, unsigned long long process,
 }
 
 void guard_job_on_signal(unsigned long long job) {
-    g_guardedJob = job;
-    ::SetConsoleCtrlHandler(background_console_handler, TRUE);
+    if (!job) return;
+    for (int i = 0; i < kMaxGuardedJobs; ++i) {
+        if (g_guardedJobs[i] == 0) {
+            g_guardedJobs[i] = job;
+            ::SetConsoleCtrlHandler(background_console_handler, TRUE);
+            return;
+        }
+    }
+    std::fputs("mcpp: internal: more than 8 concurrently guarded jobs; the "
+               "newest is NOT guarded and may outlive mcpp\n", stderr);
+}
+
+void unguard_job(unsigned long long job) {
+    if (!job) return;
+    bool any = false;
+    for (int i = 0; i < kMaxGuardedJobs; ++i) {
+        if (g_guardedJobs[i] == job) g_guardedJobs[i] = 0;
+        else if (g_guardedJobs[i] != 0) any = true;
+    }
+    if (!any) ::SetConsoleCtrlHandler(background_console_handler, FALSE);
 }
 
 void clear_job_guard() {
-    g_guardedJob = 0;
+    for (int i = 0; i < kMaxGuardedJobs; ++i) g_guardedJobs[i] = 0;
     ::SetConsoleCtrlHandler(background_console_handler, FALSE);
+}
+
+int wait_background(unsigned long long process, int* exitCode) {
+    HANDLE h = reinterpret_cast<HANDLE>(process);
+    if (!h) return -1;
+    ::WaitForSingleObject(h, INFINITE);
+    DWORD code = 0;
+    if (!::GetExitCodeProcess(h, &code)) return -1;
+    if (exitCode) *exitCode = static_cast<int>(code);
+    return 0;
 }
 
 #else
@@ -535,7 +582,9 @@ BackgroundChild spawn_background(const char*, const char*, int) { return {}; }
 int  background_running(unsigned long long, int*) { return -1; }
 void background_stop(unsigned long long, unsigned long long, long long) {}
 void guard_job_on_signal(unsigned long long) {}
+void unguard_job(unsigned long long) {}
 void clear_job_guard() {}
+int  wait_background(unsigned long long, int*) { return -1; }
 
 #endif
 

@@ -179,7 +179,38 @@ output, and a warning would land in the middle of it.
 Both spellings are produced from the same source, so they always describe the
 same thing — one answer, two shapes.
 
-## 6. Stability guarantees
+## 6. Exit status
+
+`mcpp run` REPORTS THE PROGRAM'S OWN EXIT STATUS. Three bands divide the space,
+and only the first belongs to the program:
+
+| range | meaning |
+|---|---|
+| `0`–`124` | the program ran; this is its own status, passed through unchanged |
+| `125`–`127` | the spawn was attempted and refused — `127` not found, `126` found but not executable, `125` anything else |
+| `2` | mcpp refused before attempting anything: a usage, configuration or resolution error |
+
+Until 2026.9.4.3 every non-zero status was folded to `1`, so that `2` could mean
+"could not start" as distinct from "ran and failed". The distinction was worth
+keeping; the price was not. A program whose `main` returned `3` made `mcpp run`
+exit `1`, and a bare-metal image that qemu reported as `3` arrived as `1` as
+well — so the command this project tells people to type could not be branched on.
+
+The middle band is the one `env`, `timeout` and `nice` already use and that
+shells document, so `126` and `127` arrive with their usual meanings rather than
+as numbers this project allocated.
+
+A PROGRAM MAY ITSELF EXIT `125`–`127`, AND mcpp DOES NOT TRY TO DISAMBIGUATE BY
+NUMBER. What separates the two is that a launcher failure always writes a reason
+to stderr and a program's own status never does. A client that must be certain
+should read stderr, or use `--format json` where the status is a field rather
+than a channel.
+
+`mcpp test` is unchanged and remains `0` or `1`: it aggregates many programs, so
+there is no single status to pass through. Per-test codes are in the JSON
+stream's `exit_code` field (§8).
+
+## 7. Stability guarantees
 
 For each `kind`, within a `kindVersion`:
 
@@ -194,7 +225,7 @@ schema — `xlings interface --list` declares 20 capabilities whose
 `outputSchema` is, for all 20, only `{"exitCode": integer}`, and a client that
 sees a version number assumes there is a contract behind it.
 
-## 7. Kinds
+## 8. Kinds
 
 ### `mcpp.env` — where mcpp keeps things
 
@@ -316,13 +347,13 @@ them apart:
                 "impl": "openkal-musl@0.3.5", "origin": "graph" } ]
 ```
 
-A field was added rather than `cLibrary` renamed or `mode` widened, because §6
+A field was added rather than `cLibrary` renamed or `mode` widened, because §7
 promises that fields are added and never removed and that a field's meaning
 never changes.
 
 ⚠️ **`layers[].interface` changed VALUE for a payload-supplied glibc in
 2026.9.1.1** — from `gnu` to `glibc`, and on Windows from `gnu` to `ucrt`. The
-field's meaning is unchanged (it still names the implementation), so §6 holds;
+field's meaning is unchanged (it still names the implementation), so §7 holds;
 what changed is that it stopped reporting the triple's env segment, which is a
 request rather than an implementation and is not the name of any C library. The
 values are now the ones [14 — The Target Side](14-target-side.md) has always
@@ -367,7 +398,7 @@ mcpp test [pattern] [--workspace] --message-format json
 
 This stream predates the envelope of §2 and is not wrapped in it: it is NDJSON,
 one record per test as each finishes, then one summary record per member. A
-`--workspace` run ends with one `workspace_summary` record. The §6 guarantees
+`--workspace` run ends with one `workspace_summary` record. The §7 guarantees
 apply to it — fields are added and never removed, and a field's meaning never
 changes — and the fields below are the contract as of 2026.9.2.1.
 

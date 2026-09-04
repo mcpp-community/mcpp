@@ -5,6 +5,7 @@
 module;
 #include <cstdio>
 #include <cstdlib>
+#include <cerrno>      // ENOENT/EACCES/ENOEXEC — the launcher status band
 
 export module mcpp.build.execute;
 
@@ -41,6 +42,43 @@ import mcpp.project;
 import mcpp.ui;
 
 namespace mcpp::build {
+
+// ─── The exit status of a run ────────────────────────────────────────
+//
+// `mcpp run` REPORTS THE PROGRAM'S OWN EXIT STATUS, AND NOTHING BELOW 125
+// BELONGS TO mcpp.
+//
+// It used to fold every non-zero status to 1, so that 2 could mean "could not
+// start" as distinct from "ran and failed". The distinction was worth keeping;
+// the price was not. Measured before the change: a program whose `main` returns
+// 3 made `mcpp run` exit 1, and a bare-metal image that qemu reported as 3
+// arrived as 1 as well. A command that cannot report a status is one nobody can
+// use in a script, and this ecosystem tells people that running on a device is
+// like running hosted.
+//
+// The band is the one `env`, `timeout` and `nice` already use and that shells
+// document, so 126 and 127 arrive with their usual meanings rather than as
+// numbers this project allocated:
+//
+//   127  the program was not found
+//   126  it was found and could not be executed (permission, wrong format)
+//   125  the launcher itself failed for some other reason
+//
+// A program that legitimately exits 125-127 is indistinguishable from these,
+// which is the residual cost and the reason the message on stderr is not
+// optional: a launcher failure always prints why, a program's own status never
+// does.
+int launcher_status(int spawnErrno) {
+    switch (spawnErrno) {
+        case ENOENT:
+        case ESRCH:    return 127;
+        case EACCES:
+        case EPERM:
+        case ENOEXEC:
+        case EISDIR:   return 126;
+        default:       return 125;
+    }
+}
 
 // ─── P0: build cache for fast-path rebuilds ─────────────────────────
 
@@ -979,6 +1017,23 @@ std::optional<int> run_ninja_fast(const std::string& ninjaProgram,
     argv.push_back("-C");
     argv.push_back(outputDir.string());
     if (verbose) argv.push_back("-v");
+    // MCPP_NINJA_DEBUG: append ninja's own `-d` topics. The one instrument that
+    // works on a process nobody can attach to.
+    //
+    // A ninja that spins with no command running has been observed three times
+    // in fresh sandboxes, and neither gdb nor perf can reach it there
+    // (ptrace_scope=1, perf_event_paranoid=4); making gdb its parent stops the
+    // spin happening at all. `-d explain` prints the dirtiness decision as it
+    // is made, so a ninja re-deciding the same edge names that edge in its own
+    // output — which is readable from the log the runner already captures.
+    //
+    // Unset by default and unset in CI. It changes nothing but ninja's
+    // verbosity, and it is spelled as a topic list rather than a boolean so
+    // that `-d stats` and `-d keeprsp` are reachable without another variable.
+    if (const char* topics = std::getenv("MCPP_NINJA_DEBUG"); topics && *topics) {
+        argv.push_back("-d");
+        argv.push_back(topics);
+    }
 
     std::vector<std::pair<std::string, std::string>> childEnv;
     if (runtimeEnvKey == "@env") {
@@ -1431,8 +1486,8 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
              }))
         childEnv.push_back(std::move(kv));
 
-    // Same contract as the prepare path below: a refused spawn is reported
-    // and exits 2, never folded into the artifact's own exit status (#544).
+    // Same contract as the prepare path below: a refused spawn is reported and
+    // exits in the 125-127 band, never folded into the artifact's own status.
     // No runner can be declared for an entry this path accepts (see the
     // `runnerDeclared` gate above), so the artifact is the only thing that
     // could have been refused.
@@ -1445,9 +1500,9 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
             std::println(stderr, "error: {}", unrunnable_message(triple, exe, spawnErr));
         else
             std::println(stderr, "error: {}", spawn_failed_message(exe.string(), spawnErr));
-        return 2;
+        return launcher_status(spawnErr);
     }
-    return exitRc == 0 ? 0 : 1;
+    return exitRc;
 }
 
 // `mcpp run` driver: build, locate the binary target, exec it with the
@@ -1692,13 +1747,12 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // never mcpp or a host shell. Fixes the bundled-glibc-vs-host-libtinfo
     // crash on newer-glibc distros.
     //
-    // A refused spawn is typed and reported here, and exits 2 — the code the
-    // freestanding no-runner path already uses for "could not start", distinct
-    // from 1, which keeps meaning "ran and failed". With a runner the failure
-    // is the runner's own (verbatim errno, no advice); without one, ENOEXEC
-    // is the kernel saying this host cannot load the artifact, and the message
-    // carries the key that would change that. Anything else is reported as
-    // itself — EACCES is a permission problem, not an absence.
+    // A refused spawn is typed and reported here, and exits in the 125-127 band
+    // — never inside the range the program itself owns. With a runner the
+    // failure is the runner's own (verbatim errno, no advice); without one,
+    // ENOEXEC is the kernel saying this host cannot load the artifact, and the
+    // message carries the key that would change that. Anything else is reported
+    // as itself — EACCES is a permission problem, not an absence.
     int spawnErr = 0;
     const int rc = mcpp::platform::process::run_exec(argv, childEnv, &spawnErr);
     if (spawnErr != 0) {
@@ -1710,9 +1764,9 @@ export int build_run_target(const std::optional<std::string>& targetName,
                          unrunnable_message(choice.tripleKey, exe, spawnErr));
         else
             std::println(stderr, "error: {}", spawn_failed_message(exe.string(), spawnErr));
-        return 2;
+        return launcher_status(spawnErr);
     }
-    return rc == 0 ? 0 : 1;
+    return rc;
 }
 
 export enum class TestMessageFormat { Human, Json };
