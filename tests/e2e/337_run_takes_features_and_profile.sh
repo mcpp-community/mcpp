@@ -85,19 +85,37 @@ want "$again" "dev"   "a plain run inherited the previous --release"
 #
 # Measured before the fix: three builds of one project printed
 # `quiet`, `LOUD`, `LOUD`.
-artifact() { find target -type f -name featrun -newermt '-1 day' | head -1; }
+# ⚠️⚠️ THE ASSERTION IS ON WHAT THE CACHE ENTRY RECORDS, NOT ON WHICH FILE A
+# `find` HAPPENS TO RETURN FIRST.
+#
+# The first version of this block ran `find target -name featrun | head -1`.
+# Two output directories exist by then — one per feature set — and which one
+# `find` walks first is filesystem order. It passed locally and failed on CI,
+# which is the signature of an assertion that depends on something nobody
+# chose.
+#
+# What the fix actually changed is the ENTRY: it now records the feature set its
+# artefacts were built with, and both fast paths compare it. Entries are written
+# most-recently-used first, so the first `features=` line in the cache belongs
+# to the build that just ran — and reading it is exact.
+mru_features() { awk -F= '/^features=/{print $2; exit}' target/.build_cache; }
 
 rm -rf target
 "$MCPP" build >/dev/null 2>&1
-first="$(./"$(artifact)")"
+[ -z "$(mru_features)" ] || {
+    echo "FAIL: a plain build recorded features '$(mru_features)'"; exit 1; }
+
 "$MCPP" build --features loud >/dev/null 2>&1
+[ "$(mru_features)" = "loud" ] || {
+    echo "FAIL: --features loud recorded '$(mru_features)', expected loud"; exit 1; }
+
+# ⚠️ THE ONE THAT CAUGHT THE PRE-EXISTING DEFECT. Before the entry carried a
+# feature set, this plain build matched the entry `--features loud` had written,
+# reported success in 0.00s and left the loud artefact in place. Measured: three
+# consecutive builds of one project printed `quiet`, `LOUD`, `LOUD`.
 "$MCPP" build >/dev/null 2>&1
-third="$(./"$(artifact)")"
-case "$first" in *quiet*) ;; *) echo "FAIL: the first build was not plain"; exit 1 ;; esac
-case "$third" in
-    *quiet*) ;;
-    *) echo "FAIL: a plain build after --features served the featured artefact"
-       echo "      first=$first third=$third"; exit 1 ;;
-esac
+[ -z "$(mru_features)" ] || {
+    echo "FAIL: a plain build after --features matched an entry recorded as '$(mru_features)'"
+    exit 1; }
 
 echo "PASS: mcpp run takes --features and --profile, and the fast path honours both"
