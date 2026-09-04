@@ -398,6 +398,49 @@ accel = { backend = "openmp", archs = ["nvptx-none"] }
 `import std`。一个主标准是 C++17、无 modules 的编译器编不了它们。
 ⇒ nvc++ 只能作为**某些目标的设备编译器**出现,与 nvcc 同类,走规则包。
 
+### 5.0b ⭐⭐ 宿主依赖:轴已经划好了,而且 xim 里已经有半边
+
+设计原则(用户长期约束):**尽量走 xlings 生态,越少依赖 host 越好。**
+
+这条在本课题上不需要新规则 —— memory 里已有的轴划分逐字适用:
+
+> **工具链 = mcpp 的契约 ⇒ 拒绝 `system`;程序链接的库 = 程序自己的事 ⇒ warn 指回 mcpp-index**
+
+套到加速器上,轴是这样切的:
+
+| 组件 | 归属 | 理由 |
+|---|---|---|
+| `nvcc`、`ptxas`、`nvlink`、`fatbinary`、CRT 头 | **xim 载荷** | 它是工具链,是 mcpp 的契约。NVIDIA 的 redist 清单允许再分发 |
+| `cudart`、`cublas`、`cudnn` 等运行库 | **xim 载荷**(mcpp-index 侧的 `compat.*` 消费) | 同样可再分发 |
+| **`libcuda.so.1`(驱动 userspace)** | ⚠️ **不可分发,只能指向 host** | 驱动 EULA 禁止第三方再分发,且它与内核模块严格 ABI 锁步 |
+
+⭐⭐ **xim 里已经有这条轴的下半边**:`pkgs/l/libcuda-host-link.lua` 是一个
+**sentinel 包**,只装一个指向 host `libcuda.so.1` 的符号链接,recipe 自己写明:
+
+> DOES NOT: Redistribute libcuda.so.1. The NVIDIA Driver EULA forbids
+> third-party redistribution, and even if it didn't, the userspace lib is in
+> strict ABI lockstep with the kernel module — versioning it as an xpkg is
+> impossible.
+
+而且它已经解决了「消费者各自探测 host」的问题:所有 GPU 包读
+`pkginfo.dep_install_dir("libcuda-host-link").."/lib/libcuda.so.1"`,
+不各自重实现 ldconfig 探测;宿主库的定位统一走 `libs/hostlib.lua`
+(`ldconfig -p` + ELF class 过滤 + first-hit,并有 CI 不变量
+「no recipe enumerates distro library directories」)。
+
+#### 由此得到的三条实施要求
+
+1. **mcpp 的设备规则包不得从 `PATH` 取 `nvcc`。** 它必须解析到 xim 载荷的路径,
+   与现有 `[xlings] deps` 的载荷查找同一条路(`mcpp.build.runner_lookup` 的形状)。
+   本机的 `/usr/bin/nvcc` 只能作为**开发期的回落**,且必须在诊断里说明它来自 host。
+2. **缺的是上半边:xim 里还没有 CUDA 工具链包。** 按 NVIDIA 的 redist 组件划分,
+   编译只需要 `cuda_nvcc` + `cuda_cudart`(百 MB 级,不是把整个 toolkit 打进去的 GB 级)
+   —— 这与 Bazel hermetic CUDA 的按组件取法一致(报告 §2.5)。
+3. ⭐ **这让 §5.2 的宿主编译器配对从「校验」升级为「可满足」**:mcpp 同时提供
+   CUDA 版本(xim)与宿主编译器(载荷),所以它可以**选一对兼容的**,
+   而不只是在不兼容时报错。本机的现状(载荷 gcc 16.1.0 + host nvcc 12.0,
+   上界是 gcc 12)正是「只有校验、无法满足」的样子。
+
 ### 5.1 本轮只做「可分发」这一档
 
 | 载荷 | 用于 | 备注 |
