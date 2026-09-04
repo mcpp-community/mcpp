@@ -183,10 +183,26 @@ The comparison is membership, so a build enabling both CUDA and ROCm answers
 true to each. `any`, `all` and `not` compose over it as ordinary boolean
 combinators.
 
+## Two boundaries worth stating
+
+**`--accel` is a `build` option**, alongside `--static` and `--toolchain`, and
+is not repeated on `run`, `test` or `pack`. Those read `[build] accel` from the
+manifest like every other build input; the flag exists for overriding one
+build, which is the case `build` covers.
+
+**`mcpp pack` does not emit the `accel` field.** It could write whatever the
+manifest declared, and that is exactly why it does not: the field states what an
+artifact *carries*, and mcpp does not yet compile device code itself — form A
+goes through a build-rule package, so mcpp has nothing to measure. Recording a
+declaration in a field whose meaning is "measured" would make the identity lie
+in precisely the way the dimension exists to prevent. A publisher writes the
+field explicitly today, which is what index descriptors do; `mcpp pack` will
+emit it once `kind = "device"` puts the device compilation inside mcpp.
+
 ## Not implemented
 
-The whole-target shape (SYCL, OpenMP offload, stdpar), device linking for
-relocatable device code, static libraries containing device code, and
+The whole-target shape (SYCL, OpenMP offload, stdpar), device targets and the
+device linking they imply, static libraries containing device code, and
 accelerator payloads supplied through xim. See
 `.agents/docs/2026-09-05-accelerator-support-design.md` for the design these
 follow from.

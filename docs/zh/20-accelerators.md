@@ -155,8 +155,21 @@ cxxflags = ["-DMYAPP_ROCM"]
 比较是**成员判定**,因此一次同时启用 CUDA 与 ROCm 的构建对两者都答真。
 `any`、`all`、`not` 作为普通布尔组合子在其上组合。
 
+## 两条值得写明的边界
+
+**`--accel` 是 `build` 的选项**,与 `--static`、`--toolchain` 同级,
+不在 `run`、`test`、`pack` 上重复。那些命令与读取任何其它构建输入一样,
+从 manifest 读 `[build] accel`;这个 flag 的用途是覆盖单次构建,而那正是 `build` 覆盖的场景。
+
+**`mcpp pack` 不写 `accel` 字段。** 它本可以把 manifest 声明的值写进去,
+而这恰恰是它不这么做的理由:该字段陈述产物**携带**了什么,
+而 mcpp 目前不自己编译设备代码 —— 形态 A 走规则包,mcpp 没有可测量的对象。
+把一个声明写进一个含义是「测量值」的字段,会让身份**恰好以该维度要防止的方式**说谎。
+今天由发布者显式写这个字段,索引描述符就是这么做的;
+等 `kind = "device"` 把设备编译放进 mcpp 之后,`mcpp pack` 才会发它。
+
 ## 尚未实现
 
-整目标形态(SYCL、OpenMP offload、stdpar)、可重定位设备代码的 device link、
+整目标形态(SYCL、OpenMP offload、stdpar)、device target 及其隐含的 device link、
 含设备代码的静态库,以及经由 xim 提供的加速器载荷。这些所依据的设计见
 `.agents/docs/2026-09-05-accelerator-support-design.md`。
