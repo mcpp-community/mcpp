@@ -240,6 +240,69 @@ inline XlingsEntry parse_address(std::string_view address) {
     return XlingsEntry{ ns, target, std::string(version) };
 }
 
+// An entry's value, split into the part that names a version and the tier that
+// part belongs to.
+//
+// ⭐ `{ version = "…", when = "…" }` IS THE SAME SHAPE A DEPENDENCY ALREADY
+// HAS. mcpp writes `dep = "1.0"` or `dep = { version = "1.0", features = [] }`,
+// and a tool entry now writes `"xim:probe-rs" = "0.24.0"` or
+// `{ version = "0.24.0", when = "run" }`. One table, richer entries — rather
+// than a second table per tier, which `[xlings.workspace]` was made the one
+// table specifically to avoid.
+//
+// The two spellings cannot be confused. A platform table's keys are `linux`,
+// `macosx`, `macos`, `windows` and `default`; the scoped table's are `version`
+// and `when`, and neither set contains a member of the other. So the presence
+// of either key decides, and the `version` it carries may itself be a platform
+// table.
+struct WhenSplit {
+    const mcpp::libs::toml::Value* value = nullptr;   // string, or platform table
+    ToolWhen                       when  = ToolWhen::Always;
+};
+
+inline std::expected<ToolWhen, std::string> parse_when(std::string_view w) {
+    if (w == "build")  return ToolWhen::Build;
+    if (w == "run")    return ToolWhen::Run;
+    if (w == "dev")    return ToolWhen::Dev;
+    if (w == "always") return ToolWhen::Always;
+    return std::unexpected(std::format(
+        "when = '{}' is not a tier; expected 'build', 'run' or 'dev' "
+        "(omit it for the default, which is every build)", w));
+}
+
+inline std::expected<WhenSplit, std::string>
+split_when(const mcpp::libs::toml::Value& v) {
+    if (!v.is_table()) return WhenSplit{ &v, ToolWhen::Always };
+    const auto& t = v.as_table();
+    auto itVer  = t.find("version");
+    auto itWhen = t.find("when");
+    if (itVer == t.end() && itWhen == t.end())
+        return WhenSplit{ &v, ToolWhen::Always };   // a platform table
+    // ⚠️ A SCOPED ENTRY MUST NAME ITS VERSION KEY EVEN TO LEAVE IT EMPTY.
+    // `{ when = "run" }` alone reads as "present, unconstrained, run tier",
+    // which is a meaningful thing to say — but so is a typo of `version`, and
+    // the two would be indistinguishable. The key is required, `""` says
+    // unconstrained, and a table carrying anything else is refused by name.
+    for (auto const& [k, _] : t)
+        if (k != "version" && k != "when")
+            return std::unexpected(std::format(
+                "unknown key '{}' in a scoped entry; expected 'version' and "
+                "'when'", k));
+    if (itVer == t.end())
+        return std::unexpected(std::string(
+            "a scoped entry needs 'version' (write version = \"\" for "
+            "\"present, any version\")"));
+    WhenSplit out{ &itVer->second, ToolWhen::Always };
+    if (itWhen != t.end()) {
+        if (!itWhen->second.is_string())
+            return std::unexpected(std::string("'when' must be a string"));
+        auto w = parse_when(itWhen->second.as_string());
+        if (!w) return std::unexpected(w.error());
+        out.when = *w;
+    }
+    return out;
+}
+
 // Combine the two halves a namespace may be written on. Both may carry it;
 // disagreeing is an error rather than a precedence rule, because a precedence
 // rule would make one of the two spellings silently ineffective.
@@ -1518,7 +1581,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         // both rather than pick one.
         std::map<std::string, std::string> writtenAs;
         for (auto& [k, val] : *wt) {
-            auto vals = platform_values(val);
+            auto scoped = split_when(val);
+            if (!scoped) return std::unexpected(error(origin,
+                std::format("[xlings.workspace] {}: {}", k, scoped.error())));
+            auto vals = platform_values(*scoped->value);
             if (!vals) return std::unexpected(error(origin,
                 std::format("[xlings.workspace] {}: {}", k, vals.error())));
             // Every platform, for the descriptor emitter. Resolved per
@@ -1544,6 +1610,65 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             writtenAs.emplace(entry->target, k);
             m.xlings.workspace[entry->target] = entry->pin();
             m.xlings.deps.push_back(entry->address());
+            if (scoped->when != ToolWhen::Always)
+                m.xlings.depWhen[entry->address()] = scoped->when;
+        }
+    }
+    // `[feature-xlings.<feature>]` — the same table, gated on a feature of the
+    // package that declared it.
+    //
+    // ⭐ THE SPELLING IS `[feature-deps.<feature>]`'s, DELIBERATELY. A feature
+    // that pulls in a package and a feature that pulls in a tool are the same
+    // statement about the same feature, and inventing a second syntax for the
+    // second would make an author learn a rule that buys nothing. The keys
+    // differ because the things named differ: a package name there, an xim
+    // address here.
+    //
+    // ⚠️ A FEATURE NAME THAT NO `[features]` DECLARES IS REPORTED. A
+    // `[feature-xlings.hardwear]` activates for nobody and installs nothing,
+    // and the tool it names is the one whose absence is hardest to diagnose:
+    // the build succeeds and the device is simply never reachable.
+    //
+    // A warning rather than an error, on the same reasoning as the
+    // `[features]` schema check above — it is surfaced for the ROOT manifest
+    // before any dependency's is loaded, so a package may adopt a feature its
+    // consumers' engines do not yet know without breaking them.
+    if (auto* ft = doc->get_table("feature-xlings")) {
+        for (auto& [feature, tbl] : *ft) {
+            if (!m.featuresMap.contains(feature)) {
+                std::string known;
+                for (auto const& [f, _] : m.featuresMap) {
+                    if (!known.empty()) known += ", ";
+                    known += f;
+                }
+                m.schemaWarnings.push_back(std::format(
+                    "[feature-xlings.{}] names a feature no [features] table "
+                    "declares, so nothing it lists is ever installed. {}",
+                    feature, known.empty()
+                        ? std::string("This package declares no features.")
+                        : std::format("Declared features: {}.", known)));
+            }
+            if (!tbl.is_table())
+                return std::unexpected(error(origin, std::format(
+                    "[feature-xlings.{}] must be a table of package = version",
+                    feature)));
+            for (auto& [k, val] : tbl.as_table()) {
+                auto scoped = split_when(val);
+                if (!scoped) return std::unexpected(error(origin, std::format(
+                    "[feature-xlings.{}] {}: {}", feature, k, scoped.error())));
+                auto vals = platform_values(*scoped->value);
+                if (!vals) return std::unexpected(error(origin, std::format(
+                    "[feature-xlings.{}] {}: {}", feature, k, vals.error())));
+                auto hostValue = value_for_platform(*vals, host_platform_key());
+                if (!hostValue) continue;   // not declared on this host
+                auto entry = make_xlings_entry(k, *hostValue);
+                if (!entry) return std::unexpected(error(origin, std::format(
+                    "[feature-xlings.{}] {}: {}", feature, k, entry.error())));
+                m.xlings.featureDeps[feature].push_back(entry->address());
+                m.xlings.featurePins[entry->address()] = entry->pin();
+                if (scoped->when != ToolWhen::Always)
+                    m.xlings.depWhen[entry->address()] = scoped->when;
+            }
         }
     }
     if (doc->get("xlings.subos")) {
@@ -2142,6 +2267,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // artifact cannot execute here. An ARRAY, so it is neither a
             // scalar (the unknown-key sweep below skips it by type) nor part
             // of the conditional sub-table channel.
+            // `runner` — the argv template `mcpp run` uses for a target whose
+            // artefact cannot execute here. An ARRAY, so it is neither a
+            // scalar (the unknown-key sweep below skips it by type) nor part
+            // of the conditional sub-table channel.
             if (auto it = body.find("runner"); it != body.end()) {
                 if (!it->second.is_array()) {
                     return std::unexpected(error(origin, std::format(
@@ -2160,6 +2289,45 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     return std::unexpected(error(origin, std::format(
                         "[target.{}].runner is empty — an empty template would "
                         "run nothing and report success", triple)));
+                }
+            }
+
+            // ⭐ `[target.<triple>.runners]` — the NAMED ways of reaching this
+            // target's artefact, one key per name.
+            //
+            // The engine knows none of these names. `flash`, `monitor`,
+            // `debug`, `serve`, `deploy`, `submit` are all the same thing to
+            // it: an argv a package supplies and `mcpp <name>` performs. A
+            // fixed set of keys here would decide, in the engine, which domains
+            // are expressible.
+            if (auto it = body.find("runners"); it != body.end()) {
+                if (!it->second.is_table()) {
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].runners must be a table of name = [argv], "
+                        "e.g. [target.{}.runners] then flash = [\"probe-rs\", "
+                        "\"download\", \"{{}}\"]", triple, triple)));
+                }
+                for (auto& [name, val] : it->second.as_table()) {
+                    if (!val.is_array()) {
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}.runners].{} must be an array of strings",
+                            triple, name)));
+                    }
+                    std::vector<std::string> argv;
+                    for (auto& el : val.as_array()) {
+                        if (!el.is_string()) {
+                            return std::unexpected(error(origin, std::format(
+                                "[target.{}.runners].{} must contain only strings",
+                                triple, name)));
+                        }
+                        argv.push_back(el.as_string());
+                    }
+                    if (argv.empty()) {
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}.runners].{} is empty — an empty template "
+                            "would do nothing and report success", triple, name)));
+                    }
+                    e.namedRunners[name] = std::move(argv);
                 }
             }
 
@@ -2204,7 +2372,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 if (std::ranges::find(known, key) != known.end()) continue;
                 m.schemaWarnings.push_back(std::format(
                     "[target.{}] has unsupported key '{}' (ignored). Supported keys: "
-                    "cxx_runtime, linkage, runner, sysroot, toolchain. "
+                    "cxx_runtime, linkage, runner, sysroot, toolchain, plus the "
+                    "[target.<triple>.runners] table for named runners. "
                     "Per-role contracts go in [build].cxx_runtime's table form.",
                     triple, key));
             }

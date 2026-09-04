@@ -68,6 +68,22 @@ inline void include_dir_after(const char* dir)    { std::printf("mcpp:include-di
 // claiming to know how to run the artifact is a configuration error, and mcpp
 // reports it naming both rather than merging them.
 inline void runner(const char* token)             { std::printf("mcpp:runner=%s\n", token); }
+// ⭐ A NAMED way of reaching the artefact. The engine learns the name from
+// here and knows nothing else about it, so `flash`, `serve`, `deploy`,
+// `submit` and `logcat` cost the same: nothing.
+//
+// One token per call, because argv is ordered and a single string cannot say
+// where its boundaries are. The user reaches it with `mcpp run --runner <name>`.
+inline void runner(const char* name, const char* token) {
+    std::printf("mcpp:runner-named=%s:%s\n", name, token);
+}
+// This named runner has no natural end — a console monitor, a debug server.
+// ⚠️ DECLARED RATHER THAN DERIVED FROM THE NAME: the engine has no list of
+// names to derive it from, which is the point.
+inline void runner_longlived(const char* name) {
+    std::printf("mcpp:runner-longlived=%s\n", name);
+}
+inline void run_exclusive()                    { std::printf("mcpp:run-exclusive=1\n"); }
 
 // Say something to the user and keep going.
 //

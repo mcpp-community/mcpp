@@ -12,6 +12,7 @@ import std;
 import mcpplibs.cmdline;
 import mcpp.build.prepare;
 import mcpp.build.execute;
+import mcpp.build.directives;      // the device-slot table
 import mcpp.build.configure;
 import mcpp.build.coff_exports;
 import mcpp.build.stage;
@@ -216,9 +217,16 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     // --no-runner: "this host can execute the artifact" is a fact about the
     // host, and the manifest has no host axis to state it on (#544, D3).
     const bool no_runner = parsed.is_flag_set("no-runner");
+    // The named way to reach the artefact. Empty = the default runner, which is
+    // what `mcpp run` has always meant.
+    std::string runner_name;
+    if (auto rn = parsed.value("runner")) runner_name = *rn;
+    if (parsed.is_flag_set("list-runners"))
+        return mcpp::build::list_runners(package_filter, cache_mode, no_cache,
+                                         target_triple);
     return mcpp::build::build_run_target(targetName, passthrough, package_filter,
                                          cache_mode, no_cache, target_triple,
-                                         no_runner);
+                                         no_runner, runner_name);
 }
 
 export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,

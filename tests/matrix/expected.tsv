@@ -99,6 +99,8 @@ payload	linux-aarch64	thumbv7m-none-eabi	gcc@16.1.0	-	-	-	-	-	unsupported	capabi
 payload	linux-aarch64	thumbv8m.base-none-eabi	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-aarch64	thumbv8m.main-none-eabi	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-aarch64	thumbv8m.main-none-eabihf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux-aarch64	armv7a-none-eabi	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux-aarch64	armv7a-none-eabihf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-aarch64	x86_64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	host-cannot-serve
 payload	linux-aarch64	x86_64-macos	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
 payload	linux-aarch64	x86_64-none-elf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
@@ -128,7 +130,11 @@ payload	linux-x86_64	thumbv8m.base-none-eabi	llvm@22.1.8	thumbv8m.base-none-eabi
 payload	linux-x86_64	thumbv8m.main-none-eabi	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-x86_64	thumbv8m.main-none-eabi	llvm@22.1.8	thumbv8m.main-none-eabi	payload	-	-	-	ok	none
 payload	linux-x86_64	thumbv8m.main-none-eabihf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux-x86_64	armv7a-none-eabi	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
+payload	linux-x86_64	armv7a-none-eabihf	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 payload	linux-x86_64	thumbv8m.main-none-eabihf	llvm@22.1.8	thumbv8m.main-none-eabihf	payload	-	-	-	ok	none
+payload	linux-x86_64	armv7a-none-eabi	llvm@22.1.8	armv7a-none-eabi	payload	-	-	-	ok	none
+payload	linux-x86_64	armv7a-none-eabihf	llvm@22.1.8	armv7a-none-eabihf	payload	-	-	-	ok	none
 payload	linux-x86_64	x86_64-linux-gnu	gcc@16.1.0	x86_64-unknown-linux-gnu	subos	gnu(payload)	libstdc++(payload)	-	ok	none
 payload	linux-x86_64	x86_64-linux-gnu	llvm@22.1.8	x86_64-unknown-linux-gnu	payload	gnu(payload)	libc++(payload)	-	ok	none
 payload	linux-x86_64	x86_64-linux-musl	gcc@16.1.0	x86_64-unknown-linux-musl	payload	musl(payload)	libstdc++(payload)	-	ok	none
@@ -155,6 +161,8 @@ payload	macos-arm64	thumbv7m-none-eabi	llvm@22.1.8	thumbv7m-none-eabi	host	-	-	-
 payload	macos-arm64	thumbv8m.base-none-eabi	llvm@22.1.8	thumbv8m.base-none-eabi	host	-	-	-	ok	none
 payload	macos-arm64	thumbv8m.main-none-eabi	llvm@22.1.8	thumbv8m.main-none-eabi	host	-	-	-	ok	none
 payload	macos-arm64	thumbv8m.main-none-eabihf	llvm@22.1.8	thumbv8m.main-none-eabihf	host	-	-	-	ok	none
+payload	macos-arm64	armv7a-none-eabi	llvm@22.1.8	armv7a-none-eabi	host	-	-	-	ok	none
+payload	macos-arm64	armv7a-none-eabihf	llvm@22.1.8	armv7a-none-eabihf	host	-	-	-	ok	none
 payload	macos-arm64	x86_64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	convention-unreplaced
 payload	macos-arm64	x86_64-macos	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
 payload	macos-arm64	x86_64-none-elf	llvm@22.1.8	x86_64-none-elf	host	-	-	-	ok	none
@@ -185,7 +193,11 @@ payload	windows-x86_64	thumbv8m.base-none-eabi	msvc@system	-	-	-	-	-	unsupported
 payload	windows-x86_64	thumbv8m.main-none-eabi	llvm@22.1.8	thumbv8m.main-none-eabi	none	-	-	-	ok	none
 payload	windows-x86_64	thumbv8m.main-none-eabi	msvc@system	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	thumbv8m.main-none-eabihf	llvm@22.1.8	thumbv8m.main-none-eabihf	none	-	-	-	ok	none
+payload	windows-x86_64	armv7a-none-eabi	llvm@22.1.8	armv7a-none-eabi	none	-	-	-	ok	none
+payload	windows-x86_64	armv7a-none-eabihf	llvm@22.1.8	armv7a-none-eabihf	none	-	-	-	ok	none
 payload	windows-x86_64	thumbv8m.main-none-eabihf	msvc@system	-	-	-	-	-	unsupported	capability-pin
+payload	windows-x86_64	armv7a-none-eabi	msvc@system	-	-	-	-	-	unsupported	capability-pin
+payload	windows-x86_64	armv7a-none-eabihf	msvc@system	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	x86_64-linux-musl	llvm@22.1.8	-	-	-	-	-	unsupported	convention-unreplaced
 payload	windows-x86_64	x86_64-linux-musl	msvc@system	-	-	-	-	-	unsupported	convention-unreplaced
 payload	windows-x86_64	x86_64-macos	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned

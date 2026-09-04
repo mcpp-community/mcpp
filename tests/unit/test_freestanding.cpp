@@ -480,7 +480,15 @@ TEST(FreestandingTarget, EveryIsaProfileHasABareRowInTheTargetTable) {
 // the FPU compiles, links, and faults on real silicon.
 
 namespace {
-bool is_m_profile(std::string_view triple) { return triple.starts_with("thumb"); }
+// ⚠️ EVERY 32-BIT ARM ROW, NOT ONLY THE M-PROFILE ONES. The first version of
+// this predicate was `starts_with("thumb")` — a SPELLING rather than the
+// property the rule is about. When `armv7a-none-eabi` was added, the rule
+// applied to it and this test did not, silently: the loop simply skipped the
+// new rows and every assertion still passed. The property is "32-bit ARM with
+// a float-ABI suffix", and both spellings have it.
+bool is_arm32(std::string_view triple) {
+    return triple.starts_with("thumb") || triple.starts_with("armv");
+}
 bool has_flag(const mcpp::freestanding::Spec& s, std::string_view f) {
     for (auto e : s.extra) if (e == f) return true;
     return false;
@@ -492,10 +500,10 @@ bool has_flag(const mcpp::freestanding::Spec& s, std::string_view f) {
 // floats cross a call boundary, not whether the compiler may use the FPU inside
 // one — and `thumbv7em` implies an FPU. Measured on llvm 22.1.8: without
 // `-mfpu=none` the soft row emits `vmul.f32`.
-TEST(FreestandingTarget, SoftFloatMProfileRowsDisableTheFpu) {
+TEST(FreestandingTarget, SoftFloatArm32RowsDisableTheFpu) {
     int soft = 0, hard = 0;
     for (const auto& spec : mcpp::freestanding::known()) {
-        if (!is_m_profile(spec.triple)) continue;
+        if (!is_arm32(spec.triple)) continue;
         if (spec.triple.ends_with("-eabihf")) {
             ++hard;
             EXPECT_FALSE(has_flag(spec, "-mfpu=none"))
@@ -512,15 +520,21 @@ TEST(FreestandingTarget, SoftFloatMProfileRowsDisableTheFpu) {
     // above. Both halves must be non-empty for the contrast to mean anything.
     EXPECT_GT(soft, 0);
     EXPECT_GT(hard, 0);
+    // And the A-profile rows are in the denominator, which is the half a
+    // spelling-based predicate lost without failing.
+    int a_profile = 0;
+    for (const auto& spec : mcpp::freestanding::known())
+        if (spec.triple.starts_with("armv")) ++a_profile;
+    EXPECT_GT(a_profile, 0);
 }
 
 // 32-bit ARM has no `-mcmodel`, and clang has a BareMetal toolchain for arm so
 // its driver reaches `ld.lld` without the x86_64 row's workaround. Both columns
 // being empty is what says so; a filled one would be a value nothing checks.
-TEST(FreestandingTarget, MProfileRowsNeedNoCodeModelAndNoDirectLldDriving) {
+TEST(FreestandingTarget, Arm32RowsNeedNoCodeModelAndNoDirectLldDriving) {
     int rows = 0;
     for (const auto& spec : mcpp::freestanding::known()) {
-        if (!is_m_profile(spec.triple)) continue;
+        if (!is_arm32(spec.triple)) continue;
         ++rows;
         EXPECT_TRUE(spec.mcmodel.empty()) << spec.triple << " has no -mcmodel axis";
         EXPECT_TRUE(spec.lldEmulation.empty())

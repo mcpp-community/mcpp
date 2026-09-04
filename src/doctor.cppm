@@ -1025,6 +1025,32 @@ export int why_report(const std::string& topic) {
         }
     }
     if (all) (void)print_stored_runtime_resolution();
+    // ⭐ WHERE A NAMED RUNNER BECOMES DISCOVERABLE.
+    //
+    // The engine knows no runner names, which is what keeps `mcpp flash` from
+    // being a top-level command that is dead in every project that is not
+    // firmware. The cost of that is that nothing in `--help` can list what a
+    // particular project supplies — so the place that already answers "what
+    // did this project resolve to" answers this too. `mcpp run --list-runners`
+    // is the same read, reported alone.
+    if (all || topic == "runners") {
+        const auto& bc = ctx->manifest.buildConfig;
+        std::println("runners:");
+        if (bc.runner.empty() && bc.namedRunners.empty()) {
+            std::println("  (none; `mcpp run` executes the artifact directly)");
+        } else {
+            auto join = [](const std::vector<std::string>& v) {
+                std::string o;
+                for (auto const& t : v) { if (!o.empty()) o += ' '; o += t; }
+                return o;
+            };
+            if (!bc.runner.empty())
+                std::println("  (default)  {}", join(bc.runner));
+            for (auto const& [name, r] : bc.namedRunners)
+                std::println("  --runner {}  {}{}", name, join(r.argv),
+                             r.longLived ? "   (long-lived)" : "");
+        }
+    }
     if (all || topic == "deps") {
         // Which index answered, and how stale it is. Since #315 a build only
         // refreshes on a resolution miss, so "why did I get this version"

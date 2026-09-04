@@ -11,7 +11,7 @@
 ## 概述
 
 freestanding 目标是 `os` 字段为 `none` 的目标。`modules/toolchain-model/src/triple.cppm`
-的目标表中有十一个:
+的目标表中有十三个:
 
 | Triple | 档位 | C 库 |
 |---|---|---|
@@ -26,9 +26,24 @@ freestanding 目标是 `os` 字段为 `none` 的目标。`modules/toolchain-mode
 | `thumbv8m.base-none-eabi` | preview | 默认无 —— Cortex-M23 |
 | `thumbv8m.main-none-eabi` | verified | 默认无 —— Cortex-M33/M55,软浮点 |
 | `thumbv8m.main-none-eabihf` | preview | 默认无 —— Cortex-M33F/M55F,硬浮点 |
+| `armv7a-none-eabi` | verified | 默认无 —— Cortex-A 32 位,软浮点 |
+| `armv7a-none-eabihf` | verified | 默认无 —— Cortex-A 32 位,硬浮点 |
 
 `verified` 意味着该行的镜像被构建**并被运行**过。`preview` 意味着它构建并链接得出,
 尚无模拟器运行记录。
+
+### ARMv7-A 是第一个带内存管理单元的 32 位行
+
+上表其余每一个 32 位行都是 M-profile:MPU 按基址与上限描述区域,根本没有页表项。
+A-profile 有真正的 MMU 与页表走查器,所以它是第一个能被问「**32 位**机器的页表项长
+什么样」的目标 —— 短描述符 32 位宽,长描述符(LPAE)64 位。这个问题无法向一台没有
+页表项的机器提出,这正是 `openarch` 的 Cortex-M 后端不声明该能力的原因。
+
+**半主机的退出调用与 M-profile 的拼法不同。** AArch32 的 `SYS_EXIT`(`0x18`)把
+原因码**直接**放在 `r1` 里;Cortex-M 板级代码传的那个 `{reason, code}` 块是
+`SYS_EXIT_EXTENDED`(`0x20`),它存在的理由正是 32 位的 `r1` 装不下两者。实测:把
+块传给 `0x18`,打印正确而**退出状态是错的** —— 只看输出的板子看不出这个差别。这是
+**板**的事实而不是目标的事实,记在这里是因为下一个写这种板的人会来这里找。
 
 ### M-profile 是七行而不是一行
 

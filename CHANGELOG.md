@@ -3,6 +3,117 @@
 > 本文件追踪 `mcpp-community/mcpp` 公开仓的版本演进。
 > 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [2026.9.4.2] — 2026-09-04
+
+runner 有了名字,工具有了档位,`--locked` 成为断言,`mcpp emit sbom`。
+
+### ⭐⭐ 一条命令,加具名的例外
+
+`mcpp run` 覆盖常见情形的**全部,真实硬件也一样**。在设备上「运行一个程序」意味着
+写进去、复位、接上输出、读回退出状态 —— 这是**一条**命令(`probe-rs run`、
+`qemu-system-* -kernel`),不是几条。板级包把它作为**默认** runner,于是开发者从
+模拟器换到真板时,**敲的命令不变**。
+
+```bash
+mcpp run                     # 默认;模拟器与真板同一条
+mcpp run --runner flash      # 具名的例外:只写不跑、看串口、起调试服务端、擦片
+mcpp run --list-runners      # 这个工程提供了哪些
+```
+
+⚠️ **引擎不认识任何 runner 名字。** `flash`、`serve`、`deploy`、`submit`、
+`logcat` 对它一样陌生。**引擎里若有一份固定的名字表,就等于由引擎决定哪些领域可被
+表达** —— 一个 web 包将无法自己加 `serve`。
+
+⭐ **写程序名,不要写路径。** mcpp 先找本包 `[xlings] deps` 声明的载荷 `bin/`,
+再找 `PATH`。用 `xpkg_dir` 拼绝对路径是多余的,而且引入了一个失败模式:声明不是
+安装,查询返回空则没有配置任何 runner 而无话可说。
+
+⚠️ 是否终止由 `mcpp::runner_longlived(name)` **声明**:
+`openocd -c "program … exit"` 会终止而 `openocd -c "init"` 不会,拼写到最后一个
+参数为止都一样,没有任何 argv 能表达这个区别。
+
+`mcpp::run_exclusive()` 陈述「这个目标的运行不能重叠」—— 对一块板、一张 GPU、
+一个串口、一个单席位 license 同样成立,`mcpp test` 据此串行化。
+
+### `--locked`
+
+锁一直是解析之后写、从不读回。现在它是断言:发生的解析必须等于记录的解析,不等则
+**点名移动了的包与两个版本**。
+
+⚠️⚠️ **它绝不能遇上快路径。** 实测:加闸之前,一份被故意改坏的锁通过了
+`mcpp build --locked` 并打印 `Finished` —— 旗标被接受、构建正确、**断言从未跑到**。
+
+### `mcpp emit sbom`
+
+CycloneDX 1.5,覆盖**已记录**的解析。⚠️ 读锁而不是重新解析 —— 一份描述了与所构建
+者不同的图的文档比没有更糟。归在 `emit` 之下而不是新开一级命令:`emit` 已经是
+「生成描述本工程的文档」。
+
+### ⭐⭐ 工具有了档位,而且依赖声明的工具现在真的会被装
+
+包依赖从一开始就有 `[dependencies]` / `[build-dependencies]` / `[dev-dependencies]`
+这条轴,工具只有一张表。一个同时点名模拟器与调试探针的板级包,会把两个都装给每一位
+消费者,包括只想把库编出来的那一位。
+
+```toml
+[xlings.workspace]
+"xim:qemu-arm"  = "9.2.4-1"                             # 不写就是从前的行为
+"xim:probe-rs"  = { version = "0.24.0", when = "run"   }
+
+[feature-xlings.hardware]
+"xim:probe-rs"  = "0.24.0"                              # 不要这个 feature 就永不下载
+```
+
+| `when` | 由谁安装 | 传播到消费者 |
+|---|---|---|
+| *(不写)* | 每个构建命令 | 是 |
+| `build` | 每个构建命令 | 是 |
+| `run` | `mcpp run`、`mcpp test` | 是 |
+| `dev` | 只有声明它的那个包作为根时 | **否** |
+
+⭐ **不写 `when` 保持今天的行为,所以没有迁移。**
+
+⚠️⚠️ **同时:`[xlings.workspace]` 的供给扩到全图。** 在此之前只有根工程的声明会被
+安装,而查找(runner 按裸名找程序)已经跨全图 —— **在没有任何东西安装过的目录里
+查找,是只可能失败的查找**。两者现在由同一个表达式定义。
+
+⚠️ 档位带来的一个危险已被堵上:`mcpp build` 装得比 `mcpp run` 需要的少,而 run 的
+快路径正是为跳过那一步存在的。构建缓存记下「这次构建留下了未安装的 run 档工具」,
+`mcpp run` 的快路径据此拒绝该条目 —— 与它拒绝声明了 runner 的条目同理。
+
+判据不测「装成了没有」,而测**mcpp 要装什么**:`MCPP_NO_AUTO_INSTALL=1` 下拒绝供给
+并**点名它本来要装的集合**,于是 `build` 与 `run` 两条命令的差集就是被测的性质,
+一次下载都不需要(`tests/e2e/335`)。
+
+### ⭐ ARMv7-A:第一个带内存管理单元的 32 位目标行
+
+`armv7a-none-eabi` 与 `armv7a-none-eabihf` 两行,`verified`。表里其余每个 32 位行都是
+M-profile:MPU 按基址与上限描述区域,没有页表项。A-profile 有真正的 MMU,于是它是第一个
+能被问「**32 位**机器的页表项长什么样」的目标 —— 这正是 openarch 的地址空间抽象从未被
+一台 32 位机器问过的问题。
+
+实测 2026-09-04(`xim:qemu-arm@9.2.4-1`):两行都在 `-M virt -cpu cortex-a15` 上启动、
+经半主机打印并报回退出状态。
+
+⚠️ **软浮点行同样需要 `-mfpu=none`,而这是在这个架构上重新实测的**,不是从 M-profile
+推过来的:`armv7a-none-eabi` 在软浮点 ABI 下对一次 float 乘法仍发出 VFP 指令。
+
+⚠️ **半主机的退出调用与 M-profile 拼法不同。** AArch32 的 `SYS_EXIT`(`0x18`)把原因码
+**直接**放在 `r1`;Cortex-M 传的 `{reason, code}` 块是 `SYS_EXIT_EXTENDED`(`0x20`)。
+实测:把块传给 `0x18` 打印正确而**退出状态是错的**,只看输出的测试看不出来。
+
+⭐ 那条量化 `-mfpu=none` 的单元测试,谓词曾是 `starts_with("thumb")` —— 一个**拼法**
+而不是它要陈述的性质。新行加进来时规则适用而测试**静默跳过**了它们,每条断言依然通过。
+谓词已改为「32 位 ARM」。
+
+### 发现性
+
+`mcpp why runners` 列出本工程提供的 runner,与其余解析结果并列;
+`mcpp run --list-runners` 是同一份读取,单独报告。
+
+新增 `docs/18-devices.md`、`docs/19-supported-versions.md`(中英双份)。
+指令协议版本 6。
+
 ## [2026.9.4.1] — 2026-09-04
 
 Cortex-M 落地为七个目标行,freestanding 链接开启死代码段消除。

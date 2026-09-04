@@ -151,7 +151,12 @@ exists for one host platform only is therefore declared for that platform
 on Linux and nothing elsewhere. The keys and the resolution rule are in
 chapter 5, §2.13.
 
-**The runner.** A program under `[xlings] deps` is also where
+**Which verbs install it.** An entry may name a tier —
+`{ version = "0.24.0", when = "run" }` — and a `[feature-xlings.<feature>]`
+table gates one on a feature. A tool the project will not use is then not
+downloaded: chapter 5, §2.13. Omitting the tier is the historical behaviour.
+
+**The runner.** A program under `[xlings.workspace]` is also where
 `[target.<triple>].runner` looks first for its first element, before `PATH`
 (chapter 5, §2.7.3). The two keys together provision a user-mode emulator on a
 CI host and execute a cross-built artifact through it, without the manifest
@@ -164,7 +169,8 @@ naming the payload's path.
 | a library the program links | `[dependencies]` |
 | the compiler | `[toolchain]`, chapter 3 |
 | a host tool a dependency produces | `tools = [...]`, chapter 7 |
-| a tool present in the environment | `[xlings] deps` |
+| a tool present in the environment | `[xlings.workspace]` |
+| a tool only one verb or one feature needs | `when = "run"`, `[feature-xlings.<f>]` |
 | which environment | `[xlings] subos` |
 
 ## 7. Related chapters

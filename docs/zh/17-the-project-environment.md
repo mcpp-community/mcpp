@@ -122,7 +122,11 @@ create/bootstrap that environment instead of falling back to active/default
 `deps = [{ linux = "qemu-user-aarch64" }]` 在 Linux 上声明这个模拟器,在别处什么都不声明。
 键与解析规则见第 5 章 §2.13。
 
-**runner。** `[xlings] deps` 下的程序也是 `[target.<triple>].runner` 查找其第一个元素
+**哪些命令会安装它。** 一条条目可以带档位 —— `{ version = "0.24.0", when = "run" }` ——
+`[feature-xlings.<feature>]` 则把工具挂在某个 feature 上。用不到的工具因此不会被下载:
+见第 5 章 §2.13。不写档位就是从前的行为。
+
+**runner。** `[xlings.workspace]` 下的程序也是 `[target.<triple>].runner` 查找其第一个元素
 的首选位置,在 `PATH` 之前(第 5 章 §2.7.3)。两个键合起来,在 CI 宿主上供给用户态模拟器,
 并通过它执行交叉构建的产物,而清单不必写出载荷的路径。
 
@@ -133,7 +137,8 @@ create/bootstrap that environment instead of falling back to active/default
 | 程序链接的库 | `[dependencies]` |
 | 编译器 | `[toolchain]`,第 3 章 |
 | 依赖产出的宿主工具 | `tools = [...]`,第 7 章 |
-| 环境里要有的工具 | `[xlings] deps` |
+| 环境里要有的工具 | `[xlings.workspace]` |
+| 只有某个命令或某个 feature 需要的工具 | `when = "run"`、`[feature-xlings.<f>]` |
 | 用哪个环境 | `[xlings] subos` |
 
 ## 7. 相关章节

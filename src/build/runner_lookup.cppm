@@ -107,7 +107,7 @@ inline std::string not_found_message(std::string_view triple, std::string_view a
     return std::format(
         "runner '{}' for '{}' was not found on any search path.\n"
         "       Searched:{}\n"
-        "       Declare the package that provides it under [xlings] deps, or "
+        "       Declare the package that provides it under [xlings.workspace], or "
         "install it on PATH.\n"
         "       Pass --no-runner to execute the artifact directly on this host.",
         argv0, triple, dirs);

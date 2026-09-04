@@ -51,7 +51,12 @@ export namespace mcpp::build::program_protocol {
 // COMPILE, because the bundled module that engine ships has no such function.
 // That is the same cost `link-script` carried into v3 and is stated here so
 // the next reader does not look for a protocol path that never runs.
-inline constexpr int kProtocolVersion = 5;
+// v6: adds `flash`, `monitor`, `debug` and `runner-exclusive` — `runner`'s
+// three siblings and the claim that a device admits one user at a time. Same
+// cost as v5's: a package calling `mcpp::flash()` fails on an older engine at
+// the build.mcpp COMPILE, because that engine's bundled module has no such
+// function, not through a protocol refusal.
+inline constexpr int kProtocolVersion = 6;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

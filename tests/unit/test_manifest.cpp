@@ -4743,3 +4743,113 @@ llvm = { macosx = "20", default = "22" }
                                 "llvm@22"),
               with_macos->xlings.workspaceByPlatform.at("linux").end());
 }
+
+// ─── Tool tiers: `when` on an entry, and `[feature-xlings.<f>]` ────────────
+//
+// ⭐ THE TWO SPELLINGS OF A TABLE MUST NOT BE CONFUSABLE. `[xlings.workspace]`
+// already accepted an object keyed by platform; the tier form is an object
+// keyed by `version` and `when`. Neither key set contains a member of the
+// other, so the presence of `version`/`when` decides — and this test is what
+// says so, because nothing in the parser's shape forces it.
+TEST(Manifest, XlingsWorkspaceEntryTiers) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+plain  = "1.0"
+built  = { version = "2.0", when = "build" }
+ran    = { version = "3.0", when = "run" }
+devd   = { version = "4.0", when = "dev" }
+anyver = { version = "",    when = "run" }
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    using W = mcpp::manifest::ToolWhen;
+    // An entry with no `when` is on the tier every verb installs. That is the
+    // pre-2026.9.4.2 behaviour, and it is the reason no manifest has to change.
+    EXPECT_EQ(m->xlings.when_of("plain@1.0"),  W::Always);
+    EXPECT_EQ(m->xlings.when_of("built@2.0"),  W::Build);
+    EXPECT_EQ(m->xlings.when_of("ran@3.0"),    W::Run);
+    EXPECT_EQ(m->xlings.when_of("devd@4.0"),   W::Dev);
+    // A tier does not change the address, only when it is asked for. An entry
+    // that names no version asks for presence, exactly as the plain spelling
+    // does — the address carries no `@`.
+    EXPECT_EQ(m->xlings.when_of("anyver"),     W::Run);
+    EXPECT_EQ(m->xlings.workspace.at("plain"), "1.0");
+    EXPECT_EQ(m->xlings.workspace.at("ran"),   "3.0");
+    EXPECT_TRUE(m->xlings.workspace.at("anyver").empty());
+}
+
+TEST(Manifest, XlingsWorkspacePlatformTableStillParses) {
+    // The regression this pair guards: adding the tier form must not make a
+    // platform table read as a malformed tier table.
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+llvm = { macos = "20", default = "22" }
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->xlings.when_of(m->xlings.deps.at(0)), mcpp::manifest::ToolWhen::Always);
+}
+
+TEST(Manifest, XlingsWorkspaceBadTierIsAnError) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+tool = { version = "1.0", when = "sometimes" }
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("sometimes"), std::string::npos)
+        << m.error().message;
+    EXPECT_NE(m.error().message.find("'build', 'run' or 'dev'"), std::string::npos)
+        << m.error().message;
+}
+
+TEST(Manifest, XlingsWorkspaceScopedEntryNeedsVersion) {
+    // `{ when = "run" }` and a typo of `version` are indistinguishable, so the
+    // key is required and `""` is how "any version" is said.
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[xlings.workspace]
+tool = { versoin = "1.0", when = "run" }
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("versoin"), std::string::npos)
+        << m.error().message;
+}
+
+TEST(Manifest, FeatureXlingsIsGatedAndReported) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name = "app"
+version = "0.1.0"
+[features]
+default  = ["emulator"]
+emulator = {}
+hardware = {}
+[feature-xlings.hardware]
+"xim:probe-rs" = "0.24.0"
+[feature-xlings.hardwear]
+"xim:typo" = "1.0"
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->xlings.featureDeps.count("hardware"), 1u);
+    EXPECT_EQ(m->xlings.featureDeps.at("hardware").at(0), "xim:probe-rs@0.24.0");
+    // A feature-gated tool is NOT in the unconditional list; a consumer that
+    // never activates the feature never asks for it.
+    EXPECT_EQ(std::ranges::find(m->xlings.deps, "xim:probe-rs@0.24.0"),
+              m->xlings.deps.end());
+    // ⚠️ A misspelt feature installs nothing and says nothing, which is the
+    // shape #531 was filed for. Reported as a schema warning rather than an
+    // error, so a package may adopt a feature before its consumers upgrade.
+    bool sawTypo = false;
+    for (auto const& w : m->schemaWarnings)
+        if (w.find("hardwear") != std::string::npos) sawTypo = true;
+    EXPECT_TRUE(sawTypo) << "no warning for [feature-xlings.hardwear]";
+}

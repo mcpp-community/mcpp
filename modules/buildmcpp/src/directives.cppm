@@ -76,6 +76,28 @@ enum class Slot : std::size_t {
     // is neither a compile input nor a link input, and putting it in LdFlags
     // would put an emulator's argv on the linker command line.
     Runner,
+    // ⭐⭐ A NAMED WAY OF REACHING THE ARTEFACT. ONE SLOT, ANY NUMBER OF NAMES.
+    //
+    // `Runner` above is the default — how the artefact is EXECUTED. Writing it
+    // to a device, watching what it prints, starting a debug server, deploying
+    // it, serving it: all the same shape, an argv the PACKAGE supplies, and the
+    // only thing that distinguishes them is a name.
+    //
+    // ⚠️ THE NAME IS DATA. An earlier version gave `flash`, `monitor` and
+    // `debug` their own slots — which put EMBEDDED vocabulary in the engine,
+    // so a web package could not add `serve` nor a cluster package `submit`
+    // without an engine release. The value here is `<name>:<token>`, one token
+    // per line as argv requires, and the engine never learns a name.
+    NamedRunner,
+    // Marks a named runner as having no natural end (`<name>`). Declared rather
+    // than derived: `openocd -c "program … exit"` terminates and
+    // `openocd -c "init"` does not, spelled alike up to the argument the
+    // package chose, and deriving it from a name would work only for names the
+    // engine knows.
+    RunnerLongLived,
+    // Not an argv: a package stating that this target's device admits one user
+    // at a time. See `BuildConfig::runExclusive`.
+    RunExclusive,
     CxxFlags,
     CFlags,
     LdFlags,
@@ -103,6 +125,15 @@ enum class Slot : std::size_t {
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
+
+// ⚠️ THERE IS DELIBERATELY NO LIST OF ACTION NAMES HERE.
+//
+// An earlier version carried `kDeviceSlots`, `device_slot_name()` and a
+// `Semantics` function switching on four hardcoded values. Every one of them
+// was a place the engine decided which domains were expressible. What replaced
+// them is a map keyed by whatever a package wrote, and a `longLived` flag the
+// package sets — so `flash`, `serve`, `submit` and `logcat` are the same kind
+// of thing to this file, which is to say: nothing it knows about.
 
 // Who sees the value. The field that must be answered for every new directive.
 enum class Scope {
@@ -166,7 +197,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 16> kTable{{
+inline constexpr std::array<Def, 19> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -212,6 +243,9 @@ inline constexpr std::array<Def, 16> kTable{{
     // OWNER home — measured in CI as `xlings: '…' is not installed` from a job
     // where the same name had answered `--version` two steps earlier.
     {"runner",              "runner",            Slot::Runner,           Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              4},
+    {"runner-named",        "runner-named",      Slot::NamedRunner,      Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              6},
+    {"runner-longlived",    "runner-longlived",  Slot::RunnerLongLived,  Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              6},
+    {"run-exclusive",    "run-exclusive",  Slot::RunExclusive,  Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              6},
     {"link-script",         "ldflag",            Slot::LdFlags,          Scope::LinkGlobal,     Transform::LinkerScript,  false, "",                           "",                                              3},
     {"include-dir",         "include-dir",       Slot::IncludeDirs,      Scope::PackagePrivate, Transform::AbsPath,       false, "",                           "",                                              1},
     {"include-dir-after",   "include-dir-after", Slot::IncludeDirsAfter, Scope::PackagePrivate, Transform::AbsPath,       false, "",                           "",                                              1},
@@ -675,6 +709,20 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     bc.ldflags.insert(bc.ldflags.end(), ld.begin(), ld.end());
     // Appended in emission order — the tokens ARE the argv.
     bc.runner.insert(bc.runner.end(), runner.begin(), runner.end());
+    // ⭐ `<name>:<token>`, split on the FIRST colon. A token may contain colons
+    // (a Windows path, a URL); a name may not, which is what makes the first
+    // one unambiguous.
+    for (auto const& entry : d.at(Slot::NamedRunner)) {
+        auto sep = entry.find(':');
+        if (sep == std::string::npos || sep == 0) continue;
+        bc.namedRunners[entry.substr(0, sep)].argv.push_back(entry.substr(sep + 1));
+    }
+    for (auto const& name : d.at(Slot::RunnerLongLived))
+        bc.namedRunners[name].longLived = true;
+    // ⚠️ ANY non-empty value sets it, and nothing can unset it. Exclusivity is a
+    // claim about the DEVICE: if one package knows the target is a mutex, it is
+    // one, and a later package saying nothing must not relax that.
+    if (!d.at(Slot::RunExclusive).empty()) bc.runExclusive = true;
     // cfg defines colour BOTH language channels — the one slot that fans out.
     bc.cflags.insert(bc.cflags.end(), defines.begin(), defines.end());
     bc.cxxflags.insert(bc.cxxflags.end(), defines.begin(), defines.end());

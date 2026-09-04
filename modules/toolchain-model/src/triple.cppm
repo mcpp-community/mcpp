@@ -394,6 +394,24 @@ inline constexpr TargetInfo kKnownTargets[] = {
     { "thumbv8m.base-none-eabi","preview",  "bare","llvm@22.1.8","",                            true  },
     { "thumbv8m.main-none-eabi","verified", "bare","llvm@22.1.8","",                            true  },
     { "thumbv8m.main-none-eabihf","preview","bare","llvm@22.1.8","",                            true  },
+    // ── ARMv7-A (Cortex-A, 32-bit) ──────────────────────────────────────────
+    //
+    // ⭐ NOT A SECOND SPELLING OF THE M ROWS. A-profile has a memory management
+    // unit and a page-table walker; M-profile has an MPU and no page-table
+    // entry at all. It is the first 32-bit machine in this table on which an
+    // address space can be described, which is precisely the question the
+    // openarch layer has never been able to ask of a 32-bit target.
+    //
+    // ⚠️ `verified` records what was RUN. Measured 2026-09-04 under
+    // `xim:qemu-arm@9.2.4-1`: both rows booted on `-M virt -cpu cortex-a15` and
+    // printed over semihosting. The soft row carries `-mfpu=none` for the
+    // reason `kThumbSoftExtra` gives, measured again on this architecture
+    // rather than carried over from M-profile.
+    //
+    // `sysroot` is empty, the zero-libc tier, exactly as for the M rows: a C
+    // library for these targets arrives from the dependency graph.
+    { "armv7a-none-eabi",      "verified",  "bare","llvm@22.1.8","",                            true  },
+    { "armv7a-none-eabihf",    "verified",  "bare","llvm@22.1.8","",                            true  },
 };
 
 inline std::span<const TargetInfo> known_targets() { return kKnownTargets; }

@@ -17,6 +17,7 @@ import mcpp.build.plan;
 import mcpp.toolchain.triple;
 import mcpp.freestanding.runner;
 import mcpp.build.runner_lookup;    // #544: where the runner's program is
+import mcpp.build.directives;      // the device-slot table: run / flash / monitor / debug
 import mcpp.freestanding.linkline;
 import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
 import mcpp.build.backend;
@@ -124,6 +125,20 @@ struct BuildCacheEntry {
     // pre-#544 behaviour and correct for every entry such a cache could hold
     // (a hosted runner was never consulted then, so none was ever used).
     bool runnerDeclared = false;
+    // Did the graph declare a tool on the `when = "run"` tier that this build
+    // did NOT provision?
+    //
+    // ⚠️ A BUILD INSTALLS LESS THAN A RUN NEEDS, WHICH IS THE POINT OF THE
+    // TIER AND ALSO ITS ONE HAZARD. `mcpp build` requests the build tier; a
+    // later `mcpp run` requests more. The fast path exists precisely to skip
+    // the pass that would install the difference, so an entry written by a
+    // build that saw run-tier entries is a miss for it — exactly as an entry
+    // recording a runner is.
+    //
+    // Absent on caches written before the field: false, which is correct for
+    // every entry such a cache could hold, because no manifest could express
+    // the tier.
+    bool runTierPending = false;
 };
 
 std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& projectRoot) {
@@ -234,6 +249,11 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
             e.runnerDeclared = (line.substr(7) == "1");
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        // Optional `runtier=0|1`. Absent ⇒ false; see the field.
+        if (haveNextLine && line.starts_with("runtier=")) {
+            e.runTierPending = (line.substr(8) == "1");
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         entries.push_back(std::move(e));
         if (!haveNextLine || line.empty()) break;
     }
@@ -259,7 +279,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::string& cacheMode = "",
                        const mcpp::platform::runtime::RuntimeBinding& runtimeBinding = {},
                        std::vector<std::string> depSourceRoots = {},
-                       bool runnerDeclared = false) {
+                       bool runnerDeclared = false,
+                       bool runTierPending = false) {
     auto path = projectRoot / kBuildCacheFile;
     auto entries = read_build_cache(projectRoot);
 
@@ -281,6 +302,7 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     newEntry.depSourceRoots = std::move(depSourceRoots);
     newEntry.depSourceRootsRecorded = true;
     newEntry.runnerDeclared = runnerDeclared;
+    newEntry.runTierPending = runTierPending;
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -322,6 +344,7 @@ void write_build_cache_entries(const std::filesystem::path& path,
         f << "depSourceRoots=" << e.depSourceRoots.size() << '\n';
         for (auto& r : e.depSourceRoots) f << r << '\n';
         f << "runner=" << (e.runnerDeclared ? 1 : 0) << '\n';
+        f << "runtier=" << (e.runTierPending ? 1 : 0) << '\n';
     }
 }
 
@@ -459,6 +482,7 @@ struct RunnerChoice {
     bool freestanding = false;          // an EMPTY tmpl is fatal when true
     bool fromManifest = false;          // the consumer overrode a dependency's
     bool ignored = false;               // --no-runner dropped a declared template
+    bool longLived = false;             // declared by the package; no natural end
     // The spelling that names this target in the manifest: the canonical form,
     // which is also the output directory's name and the key every
     // `[target.<triple>]` reader resolves. Every diagnostic below prints this
@@ -470,18 +494,33 @@ struct RunnerChoice {
     std::string tripleKey;
 };
 
-RunnerChoice choose_runner(const BuildContext& ctx, bool noRunner = false) {
+// ⭐⭐ ONE READER FOR FOUR SLOTS, PARAMETERISED BY THE SLOT.
+//
+// `run`, `flash`, `monitor` and `debug` resolve identically: a dependency
+// supplies a template, the project may override it on the same axis, the
+// override is reported, and the canonical triple spelling is the lookup key.
+// Every one of those four facts was learned the hard way for `runner` alone
+// (#544, and the macOS `arm64-apple-darwin24.6.0` mismatch measured on CI).
+// Copying the function three times would copy the four facts three times and
+// let them drift apart — the shape this file's own header warns about.
+//
+// `which` selects the slot; everything else is shared.
+RunnerChoice choose_device_action(const BuildContext& ctx,
+                                  std::string_view which,
+                                  bool noRunner = false) {
     RunnerChoice c;
+    const bool isDefault = which.empty();
     const auto ft = mcpp::toolchain::triple::parse(ctx.tc.targetTriple);
     if (ft) c.freestanding = ft->is_freestanding();
     c.tripleKey = ft ? ft->str() : ctx.tc.targetTriple;
-    // Two producers, ordinary precedence: what the author of THIS project
-    // wrote beats what a dependency supplied. The dependency is the normal
-    // case on bare metal (a board-support package computes the emulator's
-    // absolute path); the manifest key exists for swapping `-bios default`
-    // for `-bios none -semihosting` while debugging, and — on a hosted cross
-    // triple — for naming the user-mode emulator at all.
-    c.tmpl = ctx.manifest.buildConfig.runner;
+    // The graph's answer: the default runner, or a named one a package supplied.
+    if (isDefault) {
+        c.tmpl = ctx.manifest.buildConfig.runner;
+    } else if (auto it = ctx.manifest.buildConfig.namedRunners.find(std::string(which));
+               it != ctx.manifest.buildConfig.namedRunners.end()) {
+        c.tmpl      = it->second.argv;
+        c.longLived = it->second.longLived;
+    }
     // The manifest key is the CANONICAL spelling — `aarch64-macos`, the name
     // of the output directory and the key every other `[target.<triple>]`
     // reader uses (prepare.cppm resolves overrides by `t.str()`). The
@@ -492,15 +531,25 @@ RunnerChoice choose_runner(const BuildContext& ctx, bool noRunner = false) {
     // kept as a fallback for a triple the parser does not know.
     auto lookup = [&](std::string_view key) {
         auto it = ctx.manifest.targetOverrides.find(std::string(key));
-        return it != ctx.manifest.targetOverrides.end() && !it->second.runner.empty()
-             ? &it->second : nullptr;
+        const mcpp::manifest::TargetEntry* none = nullptr;
+        if (it == ctx.manifest.targetOverrides.end()) return none;
+        if (isDefault) return it->second.runner.empty() ? none : &it->second;
+        auto nr = it->second.namedRunners.find(std::string(which));
+        return (nr != it->second.namedRunners.end() && !nr->second.empty())
+             ? &it->second : none;
     };
     const mcpp::manifest::TargetEntry* entry = lookup(c.tripleKey);
     if (!entry && c.tripleKey != ctx.tc.targetTriple)
         entry = lookup(ctx.tc.targetTriple);
     if (entry) {
-        c.tmpl = entry->runner;
-        c.fromManifest = !ctx.manifest.buildConfig.runner.empty();
+        if (isDefault) {
+            c.fromManifest = !ctx.manifest.buildConfig.runner.empty();
+            c.tmpl = entry->runner;
+        } else {
+            c.fromManifest = ctx.manifest.buildConfig.namedRunners.contains(
+                std::string(which));
+            c.tmpl = entry->namedRunners.at(std::string(which));
+        }
     }
     // `--no-runner` is the operator on THIS host stating a host fact the
     // manifest cannot carry: the triple is native here. On a freestanding
@@ -508,6 +557,13 @@ RunnerChoice choose_runner(const BuildContext& ctx, bool noRunner = false) {
     // no-runner error is the correct answer.
     if (noRunner && !c.tmpl.empty()) { c.tmpl.clear(); c.ignored = true; }
     return c;
+}
+
+RunnerChoice choose_runner(const BuildContext& ctx, bool noRunner) {
+    return choose_device_action(ctx, std::string_view{}, noRunner);
+}
+RunnerChoice choose_runner(const BuildContext& ctx) {
+    return choose_device_action(ctx, std::string_view{}, false);
 }
 
 // The capacity number, printed because capacity is the constraint.
@@ -705,7 +761,10 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                           }(),
                           // #544: the run fast path declines an entry whose
                           // target has a runner declared — see the field.
-                          !choose_runner(ctx).tmpl.empty());
+                          !choose_runner(ctx).tmpl.empty(),
+                          // …and one written by a build that left a run-tier
+                          // tool uninstalled, for the same reason.
+                          ctx.runTierPending);
     }
 
     // The one place the --strict policy is settled. Degradations reported by
@@ -974,10 +1033,66 @@ fast_path_identity(const std::filesystem::path& projectRoot,
 
 // Try to fast-path: if build.ninja is newer than all inputs, just run ninja.
 // Returns exit code on fast-path, or nullopt if full rebuild needed.
+// ⭐ WHAT THIS PROJECT CAN DO, AS OPPOSED TO WHAT THE ENGINE SUPPORTS.
+//
+// The engine knows no runner names, so it cannot print a static list of them —
+// and that is the useful property, not a limitation. What a reader wants is
+// what THIS graph supplies, which is knowable only after resolution.
+export int list_runners(const std::string& package_filter,
+                        const std::string& cache_mode, bool no_cache,
+                        const std::string& target_triple) {
+    mcpp::build::BuildOverrides ov;
+    ov.package_filter = package_filter;
+    ov.cache_mode     = no_cache ? std::string("off") : cache_mode;
+    ov.target_triple  = target_triple;
+    // Reporting what `mcpp run` would do means resolving what `mcpp run`
+    // resolves, tool tiers included — otherwise this command would list a
+    // runner whose program it had declined to install.
+    ov.will_run       = true;
+    auto ctx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
+                             /*extraTargets=*/{}, ov);
+    if (!ctx) { mcpp::ui::error(ctx.error()); return 2; }
+
+    const auto& bc = ctx->manifest.buildConfig;
+    const auto ft  = mcpp::toolchain::triple::parse(ctx->tc.targetTriple);
+    const std::string key = ft ? ft->str() : ctx->tc.targetTriple;
+    std::println("Target {}", key);
+
+    if (bc.runner.empty() && bc.namedRunners.empty()) {
+        std::println("  (none — this project reaches its artifact by executing it)");
+        return 0;
+    }
+    if (!bc.runner.empty())
+        std::println("  {:<12} {}", "(default)", bc.runner.front());
+    for (auto const& [name, nr] : bc.namedRunners) {
+        std::println("  {:<12} {}{}", name,
+                     nr.argv.empty() ? std::string("(no argv)") : nr.argv.front(),
+                     nr.longLived ? "   [long-lived]" : "");
+    }
+    if (bc.runExclusive)
+        std::println("  note: this target's runs cannot overlap; `mcpp test` "
+                     "serialises them");
+    return 0;
+}
+
 export std::optional<int> try_fast_build(const std::filesystem::path& projectRoot,
                                   bool verbose, bool no_cache,
                                   std::string_view currentTarget = "") {
     if (no_cache) return std::nullopt;
+
+    // ⚠️⚠️ `--locked` MUST NOT MEET THE FAST PATH, OR IT ASSERTS NOTHING.
+    //
+    // The check it names lives at the resolution write point, and the fast path
+    // exists precisely to skip resolution. Measured before this line existed: a
+    // deliberately corrupted mcpp.lock passed `mcpp build --locked` and printed
+    // "Finished" — the flag was accepted, the build was correct, and the
+    // assertion never ran. A criterion that is skipped is worse than one that
+    // is absent, because the green is read as a verification.
+    //
+    // Declining the fast path is the whole fix: `--locked` is for release
+    // builds, audits and CI, none of which are the case the fast path serves.
+    if (mcpp::platform::env::get("MCPP_LOCKED").value_or("") == "1")
+        return std::nullopt;
 
     auto want = fast_path_identity(projectRoot);
     if (!want) return std::nullopt;
@@ -1097,6 +1212,10 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
 std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
                                 const std::optional<std::string>& targetName,
                                 std::span<const std::string> passthrough) {
+    // Same reason as try_fast_build's: this path skips resolution, and
+    // `--locked` is an assertion about resolution.
+    if (mcpp::platform::env::get("MCPP_LOCKED").value_or("") == "1")
+        return std::nullopt;
     auto want = fast_path_identity(projectRoot);
     if (!want) return std::nullopt;
 
@@ -1139,6 +1258,10 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     // other door wraps it would make the second `mcpp run` behave differently
     // from the first. The entry records the fact; the fast path declines.
     if (match->runnerDeclared) return std::nullopt;
+    // The same reasoning one axis over: this entry was written by a verb that
+    // installed less than a run needs, so taking it would execute with a
+    // declared tool absent. prepare_build provisions the difference.
+    if (match->runTierPending) return std::nullopt;
 
     auto outputDirStr = match->outputDir;
     auto ninjaProgram = match->ninjaProgram;
@@ -1279,7 +1402,12 @@ export int build_run_target(const std::optional<std::string>& targetName,
                             const std::string& cache_mode = {},
                             bool no_cache = false,
                             const std::string& target_triple = {},
-                            bool no_runner = false) {
+                            bool no_runner = false,
+                            // ⭐ The NAME of the way to reach the artefact.
+                            // Empty is the default runner — `mcpp run`. Any
+                            // other value came from `--runner <name>` and the
+                            // engine has never seen it before.
+                            std::string_view runner_name = {}) {
     // mcpp#225 (E2): reuse the resolved build cache when it's still fresh,
     // skipping prepare_build's toolchain resolution + modgraph scan
     // entirely — mirrors cmd_build's try_fast_build fast path. The cached
@@ -1295,7 +1423,18 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // so with the flag there is nothing for it to ignore — and it has no
     // manifest to print the note against.
     if (package_filter.empty() && cache_mode.empty() && !no_cache
-        && target_triple.empty() && !no_runner) {
+        && target_triple.empty() && !no_runner
+        // ⚠️⚠️ THE FAST PATH IS `run`'s, AND ONLY `run`'s.
+        //
+        // It exec's the cached artefact directly — that IS its definition — so
+        // for `flash`, `monitor` or `debug` it would run the program on the
+        // BUILD HOST and report success, having done none of what was asked.
+        // Measured while writing e2e 333: `mcpp flash` printed
+        // "Running target/…/bin/p".
+        //
+        // The guard is the slot rather than a flag, because the property that
+        // makes the fast path wrong here is what the slot means.
+        && runner_name.empty()) {
         if (auto root = mcpp::project::find_manifest_root(std::filesystem::current_path())) {
             if (auto rc = try_fast_run(*root, targetName, passthrough)) {
                 return *rc;
@@ -1309,6 +1448,10 @@ export int build_run_target(const std::optional<std::string>& targetName,
     ov.package_filter = package_filter;
     ov.cache_mode     = cache_mode;
     ov.target_triple  = target_triple;
+    // This verb executes what it builds, so the `when = "run"` tool tier is
+    // part of what has to exist. `mcpp build` does not set it, which is the
+    // whole of the difference the tier buys.
+    ov.will_run       = true;
     auto ctx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
                              /*extraTargets=*/{}, ov);
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
@@ -1366,15 +1509,50 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // absolute path that a static manifest cannot. The explicit key exists for
     // the other case: swapping `-bios default` for `-bios none -semihosting`
     // while debugging, or naming `qemu-aarch64-static` for a cross target.
-    const auto choice = choose_runner(*ctx, no_runner);
+    const bool isRunSlot = runner_name.empty();
+    const std::string slotName{runner_name};
+    const auto choice = choose_device_action(*ctx, runner_name, no_runner);
     if (choice.ignored)
         mcpp::ui::info("note", std::format(
             "--no-runner: ignoring the runner declared for {}", choice.tripleKey));
     if (choice.fromManifest)
         mcpp::ui::info("note", std::format(
-            "[target.{}].runner overrides the runner a dependency supplied",
-            choice.tripleKey));
-    if (choice.freestanding && choice.tmpl.empty()) {
+            "[target.{}] overrides the {} a dependency supplied",
+            choice.tripleKey,
+            isRunSlot ? std::string("runner")
+                      : std::format("runner '{}'", slotName)));
+    // ⚠️ THE THREE NEW SLOTS HAVE NO FALLBACK, AND `run` STILL DOES.
+    //
+    // An artefact with no runner on a hosted target is executed directly, and
+    // that is right: the host can run it. There is no such reading of "no
+    // flasher" — nothing else writes an image to a device — so an empty
+    // template is an error for those three on EVERY target, not only a
+    // freestanding one. Saying "nothing is configured" beats doing something
+    // that was never asked for.
+    if (!isRunSlot && choice.tmpl.empty()) {
+        // ⚠️ AND THE MESSAGE LISTS WHAT THIS PROJECT DOES HAVE. A name the
+        // engine does not know is usually a typo or a missing feature, and
+        // "no such runner" alone leaves the reader guessing which.
+        std::string have;
+        for (auto const& [n, _] : ctx->manifest.buildConfig.namedRunners)
+            have += (have.empty() ? "" : ", ") + n;
+        std::println(stderr,
+            "error: this project has no runner named '{}' for '{}'.\n"
+            "       Available: {}\n"
+            "       A package supplies one with `mcpp::runner(\"{}\", …)`, or a\n"
+            "       project declares it:\n"
+            "\n"
+            "           [target.{}.runners]\n"
+            "           {} = [\"<tool>\", \"<args>\", \"{{}}\"]\n"
+            "\n"
+            "       The artefact path is appended, or substituted for `{{}}`.",
+            slotName, choice.tripleKey,
+            have.empty() ? "(none — no package in this graph supplies a named runner)"
+                         : have,
+            slotName, choice.tripleKey, slotName);
+        return 2;
+    }
+    if (isRunSlot && choice.freestanding && choice.tmpl.empty()) {
         std::println(stderr, "error: {}",
             mcpp::freestanding::no_runner_message(choice.tripleKey));
         return 2;
@@ -1400,9 +1578,15 @@ export int build_run_target(const std::optional<std::string>& targetName,
         tmpl.front() = found.program->string();
         argv = mcpp::freestanding::expand(tmpl, exe);
         for (auto& a : passthrough) argv.push_back(a);
-        mcpp::ui::status("Running", std::format(
-            "`{} … {}`", choice.tmpl.front(),
-            mcpp::ui::shorten_path(exe, pathCtx)));
+        // ⭐ The status word is the NAME the package chose, capitalised. The
+        // engine has no table of verbs to look one up in, which is the point:
+        // `Serve`, `Submit` and `Flash` all read correctly and none is known
+        // here.
+        std::string verb = isRunSlot ? std::string("Running") : slotName;
+        if (!isRunSlot && !verb.empty())
+            verb[0] = static_cast<char>(std::toupper(verb[0]));
+        mcpp::ui::status(verb, std::format("`{} … {}`", choice.tmpl.front(),
+                                           mcpp::ui::shorten_path(exe, pathCtx)));
     } else {
         argv.push_back(exe.string());
         for (auto& a : passthrough) argv.push_back(a);
@@ -1590,6 +1774,10 @@ export int run_tests(std::span<const std::string> passthrough,
     }
 
     // 3. prepare_build with dev-deps enabled + synthetic targets.
+    // A test binary is executed, so the run tier applies here exactly as it
+    // does to `mcpp run` — `[xlings.workspace]` has no separate `test` tier
+    // because there is no separate need.
+    overrides.will_run = true;
     auto ctx = prepare_build(/*print_fp=*/false,
                              /*includeDevDeps=*/true,
                              std::move(testTargets),
@@ -1901,8 +2089,29 @@ export int run_tests(std::span<const std::string> passthrough,
         const bool capture = json || list.size() > 1;
         const auto deadline = std::chrono::milliseconds(
             static_cast<long long>(testOpts.timeoutSecs) * 1000);
+        // ⚠️⚠️ A PHYSICAL BOARD IS A MUTEX, AND NOTHING ELSE THIS POOL HAS EVER
+        // SCHEDULED WAS ONE.
+        //
+        // An emulator takes N concurrent instances; a probe attached to one
+        // board does not. Two `probe-rs` processes reaching for the same device
+        // do not fail cleanly — they interleave, and the verdict they produce is
+        // about neither test. Nothing in the argv says which case this is, so
+        // the BOARD says it, once, with `mcpp:run-exclusive=1`, and the
+        // project never has to remember `-j1`.
+        //
+        // Clamped rather than made an error: an exclusive target with one test
+        // is an ordinary run, and refusing it would turn a correct
+        // configuration into a failure.
+        const bool exclusiveDevice = ctx->manifest.buildConfig.runExclusive
+                                  && !runnerChoice.tmpl.empty();
+        const int runJobsHere = exclusiveDevice ? 1 : runJobs;
+        if (exclusiveDevice && runJobs > 1 && list.size() > 1) {
+            mcpp::ui::info("note", std::format(
+                "the target declares an exclusive device, so {} tests run one at "
+                "a time", list.size()));
+        }
         const int workers = capture
-            ? std::min<int>(runJobs, static_cast<int>(list.size())) : 1;
+            ? std::min<int>(runJobsHere, static_cast<int>(list.size())) : 1;
 
         auto tRunPhase = std::chrono::steady_clock::now();
         std::atomic<std::size_t> next{0};

@@ -13,7 +13,7 @@ covers the hosted link model this chapter departs from.
 ## Overview
 
 A freestanding target is a target whose `os` field is `none`. The target table
-at `modules/toolchain-model/src/triple.cppm` carries eleven of them:
+at `modules/toolchain-model/src/triple.cppm` carries thirteen of them:
 
 | Triple | Tier | C library |
 |---|---|---|
@@ -28,9 +28,29 @@ at `modules/toolchain-model/src/triple.cppm` carries eleven of them:
 | `thumbv8m.base-none-eabi` | preview | none by default — Cortex-M23 |
 | `thumbv8m.main-none-eabi` | verified | none by default — Cortex-M33/M55, soft float |
 | `thumbv8m.main-none-eabihf` | preview | none by default — Cortex-M33F/M55F, hard float |
+| `armv7a-none-eabi` | verified | none by default — Cortex-A 32-bit, soft float |
+| `armv7a-none-eabihf` | verified | none by default — Cortex-A 32-bit, hard float |
 
 `verified` means an image has been built **and run** for the row. `preview`
 means it builds and links, and no emulator run has been recorded.
+
+### ARMv7-A is the first 32-bit row with a memory management unit
+
+Every other 32-bit row above is M-profile: an MPU that describes regions by base
+and limit, and no page-table entry at all. A-profile has a real MMU with a
+walker, so it is the first target on which an address-space abstraction can be
+asked what a *32-bit* machine's entry looks like — short descriptors are 32 bits
+wide, long (LPAE) ones 64. That question cannot be put to a machine with no
+entries, which is why `openarch`'s Cortex-M backend declines the capability.
+
+**The semihosting exit call is not spelled the way M-profile spells it.**
+`SYS_EXIT` (`0x18`) on AArch32 takes the reason code in `r1` *directly*; the
+`{reason, code}` block a Cortex-M board passes is `SYS_EXIT_EXTENDED` (`0x20`),
+which exists because a 32-bit `r1` cannot carry both. Measured: passing the
+block to `0x18` prints correctly and then reports the wrong exit status, so a
+board that only checks its output cannot see the difference. This is a *board*
+fact rather than a target fact; it is recorded here because it is where the next
+person writing such a board will look.
 
 ### M-profile is seven rows rather than one
 

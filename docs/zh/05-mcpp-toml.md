@@ -1637,6 +1637,57 @@ mcpp 既供给它——机器上没有就装,有就映射——也把它物化�
 文件说后者),**凡是点名平台的地方两者都接受**。表里既没有本机这一项也没有
 `default`,就表示在这里什么都不声明。
 
+#### `when` —— 哪些命令需要这个工具(mcpp 2026.9.4.2+)
+
+```toml
+[xlings.workspace]
+"xim:qemu-arm"   = "9.2.4-1"                             # 每次构建都装,与从前一样
+"xim:codegen"    = { version = "1.0",    when = "build" }
+"xim:probe-rs"   = { version = "0.24.0", when = "run"   }
+"xim:clang-tidy" = { version = "20",     when = "dev"   }
+```
+
+包依赖从一开始就有这条轴 —— `[dependencies]`、`[build-dependencies]`、
+`[dev-dependencies]`。工具只有一张表,于是一个同时点名模拟器与调试探针的板级支持包
+会把两个都装给每一位消费者,包括只想把库编出来的那一位。
+
+| `when` | 由谁安装 | 是否传播到消费者 |
+|---|---|---|
+| *(不写)* | 每个构建命令 | 是 |
+| `build` | 每个构建命令 | 是 |
+| `run` | `mcpp run`、`mcpp test` | 是 |
+| `dev` | 只有声明它的那个包作为根时 | **否** |
+
+**不写 `when` 就是 2026.9.4.2 之前的行为**,所以没有任何清单需要改。收窄是可选动作,
+不是作者必须回答的新问题。
+
+`dev` 是唯一不传播的一档。它的含义是「声明它的那个包自己在被开发时」,所以依赖的
+`dev` 条目永远不会为消费者安装。其余各档都会到达消费者 —— 这正是板级包知道自己机器
+的意义:它声明一次模拟器,每一位消费者都拿得到。
+
+档位写在**条目**上而不是另开一张表,理由与 `[dependencies]` 同时接受 `dep = "1.0"`
+和 `dep = { version = "1.0", features = [...] }` 是同一条。带档位的条目**必须**写出
+`version`,哪怕留空(`version = ""` 表示「存在即可,版本不限」)—— 否则
+`{ when = "run" }` 与写错的 `version` 键无法区分。
+
+#### `[feature-xlings.<feature>]` —— 某个 feature 才需要的工具
+
+```toml
+[features]
+default  = ["emulator"]
+emulator = {}
+hardware = {}
+
+[feature-xlings.hardware]
+"xim:probe-rs" = "0.24.0"
+```
+
+同一张表,按 feature 门控,拼法沿用 `[feature-deps.<feature>]`。**不要 `hardware`
+的消费者永远不会下载探针驱动。** 这里的条目同样接受 `when`。
+
+`[features]` 里没有声明过的 feature 名会作为 schema 警告报出:它对谁都不激活、什么
+都不装,而这种工具的缺席只表现为「设备就是连不上」,是最难诊断的一种。
+
 #### 工程没点名的工具,其版本的来源
 
 | 工程声明了 | 版本来自 |

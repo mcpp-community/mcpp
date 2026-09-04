@@ -386,6 +386,7 @@ the right toolchain payload is resolved and installed automatically.
 | `thumbv7m-none-eabi`  | llvm 22 — Cortex-M3, bare metal ² | ✅ |
 | `thumbv7em-none-eabihf` | llvm 22 — Cortex-M4F/M7F, hard float ² | ✅ |
 | `thumbv8m.main-none-eabi` | llvm 22 — Cortex-M33/M55, soft float ² | ✅ |
+| `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 22 — Cortex-A 32-bit, bare metal ² | ✅ |
 | `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22 — builds and links; no emulator run recorded | 🔄 |
 | `riscv64-linux-musl`  | — | 🔄 |
 | `aarch64-linux-gnu`   | — | 🔄 |

@@ -29,6 +29,7 @@ import mcpp.cli.cmd_toolchain;
 import mcpp.pm.commands;
 import mcpp.toolchain.fingerprint;   // MCPP_VERSION
 import mcpp.wire;
+import mcpp.cli.cmd_sbom;
 import mcpp.platform.env;            // --offline → MCPP_OFFLINE
 import mcpp.platform.process;        // __action-stamp runs the checked command
 import mcpp.platform.runtime_search; // linker-wrapper path-injection opt-out
@@ -92,6 +93,7 @@ void print_usage() {
     std::println("  --no-cache                           Deprecated alias for --cache=off (clears the build dir)");
     std::println("  --no-color                           Disable colored output");
     std::println("  --offline                            Never touch the network (also: MCPP_OFFLINE=1)");
+    std::println("  --locked                             Fail if resolution differs from mcpp.lock (also: --frozen, MCPP_LOCKED=1)");
     std::println("  --jobs N|auto, -j                    Concurrent compiles ('auto' = cores + free RAM)");
     std::println("  --toolchain SPEC                     Use this toolchain for one build (e.g. llvm@22.1.8)");
     std::println("");
@@ -167,6 +169,18 @@ int run(int argc, char** argv) {
         // need a parameter threaded down. Same shape as MCPP_VERBOSE above, and
         // it makes `MCPP_OFFLINE=1` and `--offline` literally the same switch.
         else if (a == "--offline") mcpp::platform::env::set("MCPP_OFFLINE", "1");
+        // ⭐ `--locked` rides the same side channel, and for the stronger form
+        // of the same reason: its consumer is the resolution write point deep
+        // in mcpp.build.prepare, and it applies to every command that resolves
+        // — build, run, test, flash, monitor, debug — so a per-subcommand
+        // option would have to be declared six times and threaded six times.
+        //
+        // It asserts rather than pins: the resolution that happens must equal
+        // the one mcpp.lock records, and a difference is reported naming the
+        // package that moved. See the check itself for why assertion is the
+        // half that reproducibility needs first.
+        else if (a == "--locked" || a == "--frozen")
+            mcpp::platform::env::set("MCPP_LOCKED", "1");
         // --jobs rides the same side channel as --offline, for the same reason
         // recorded there: its consumer is deep in mcpp.build.execute and
         // threading a parameter down would touch every caller in between.
@@ -309,6 +323,16 @@ int run(int argc, char** argv) {
         .option(cl::Option("offline")
             .help("Never touch the network (index refresh, downloads, toolchain install)")
             .global())
+        // Declared here as well as read in the pre-pass: the pre-pass sets the
+        // env var, and this makes the parser accept the token instead of
+        // rejecting it as unknown. Both halves are needed, which is exactly the
+        // arrangement `--offline` above already has.
+        .option(cl::Option("locked")
+            .help("Fail if dependency resolution differs from mcpp.lock")
+            .global())
+        .option(cl::Option("frozen")
+            .help("Alias for --locked")
+            .global())
         // Answers "what do you speak" without spawning a command that might
         // fail. An optimisation, NOT the client's detection rule: on any mcpp
         // predating it this is itself an unknown option, so a client must
@@ -393,6 +417,24 @@ int run(int argc, char** argv) {
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .option(cl::Option("no-runner")
                 .help("Execute the artifact directly, ignoring any [target.<triple>].runner (a host that runs it natively)"))
+            // ⭐⭐ THE WAY TO REACH THE ARTEFACT, BY NAME.
+            //
+            // `mcpp run` is universal — every domain has one. HOW the artefact
+            // is reached is not: an MCU is flashed, a service is deployed, a
+            // job is submitted. That variation belongs in an OPTION, because a
+            // top-level `mcpp flash` is a dead command in every project that is
+            // not firmware, and a top-level command surface that varies per
+            // project is worse still.
+            //
+            // The engine knows no names. A package supplies them with
+            // `mcpp::runner("<name>", …)`; a project overrides them under
+            // `[target.<triple>.runners]`; `--list-runners` reports what THIS
+            // project has, which beats a static list of what the engine
+            // theoretically supports.
+            .option(cl::Option("runner").takes_value().value_name("NAME")
+                .help("Reach the artifact by a named runner a package supplied; see --list-runners"))
+            .option(cl::Option("list-runners")
+                .help("List the named runners this project supplies, and exit"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_run(p, std::span<const std::string>(passthrough));
             })))
@@ -438,8 +480,8 @@ int run(int argc, char** argv) {
             .option(cl::Option("bmi-cache").help("Also wipe the global build cache (see `mcpp cache clean`)"))
             .action(wrap_rc(cmd_clean)))
         .subcommand(cl::App("why")
-            .description("Explain how the toolchain / runtime / deps were resolved")
-            .arg(cl::Arg("topic").help("toolchain | runtime | deps (default: all)"))
+            .description("Explain how the toolchain / runtime / deps / runners were resolved")
+            .arg(cl::Arg("topic").help("toolchain | runtime | deps | runners (default: all)"))
             // ⭐ `--target` / `--toolchain` make this a QUERY rather than a
             // report on the current directory's default: "what would a build
             // for THIS pair resolve to" is the question the target matrix asks
@@ -453,7 +495,7 @@ int run(int argc, char** argv) {
             .action(wrap_rc(cmd_why)))
         .subcommand(cl::App("resolve")
             .description("Re-resolve the build plan and explain it")
-            .option(cl::Option("explain").help("Print resolved toolchain / runtime / deps"))
+            .option(cl::Option("explain").help("Print resolved toolchain / runtime / deps / runners"))
             .action(wrap_rc(cmd_why)))
         .subcommand(cl::App("add")
             .description("Add a dependency to mcpp.toml")
@@ -520,7 +562,7 @@ int run(int argc, char** argv) {
 
         // ─── emit (one nested subcommand: xpkg) ────────────────────────
         .subcommand(cl::App("emit")
-            .description("Generate package descriptor (xpkg)")
+            .description("Generate a document describing this project (xpkg, sbom)")
             .subcommand(cl::App("xpkg")
                 .description("Generate xpkg Lua entry")
                 .option(cl::Option("version").short_name('V').takes_value().value_name("VER")
@@ -531,8 +573,17 @@ int run(int argc, char** argv) {
                     .help("Package namespace for the emitted descriptor "
                           "(overrides [package] namespace). Emits both "
                           "`namespace` and the fully-qualified `name`")))
+            // ⭐ `sbom` belongs HERE rather than at the top level: `emit`
+            // already means "generate a document describing this project" and
+            // already carries `-o`. A separate `mcpp sbom` would be a second
+            // spelling of an abstraction that exists.
+            .subcommand(cl::App("sbom")
+                .description("Write a CycloneDX bill of materials for the recorded resolution")
+                .option(cl::Option("output").short_name('o').takes_value().value_name("FILE")
+                    .help("Write to file instead of stdout")))
             .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
-                return dispatch_sub("emit", p, {{"xpkg", cmd_emit_xpkg}});
+                return dispatch_sub("emit", p, {{"xpkg", cmd_emit_xpkg},
+                                                {"sbom", mcpp::cli::cmd_sbom}});
             })))
 
         // ─── xpkg (descriptor tooling: parse) ──────────────────────────

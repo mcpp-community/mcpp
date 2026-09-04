@@ -1920,6 +1920,65 @@ triples say one, descriptors and xlings' project file say the other) and both
 are accepted wherever a platform is named. A table with no key for this host
 and no `default` declares nothing here.
 
+#### `when` — which verbs need this tool (mcpp 2026.9.4.2+)
+
+```toml
+[xlings.workspace]
+"xim:qemu-arm"  = "9.2.4-1"                             # every build, as before
+"xim:codegen"   = { version = "1.0",    when = "build" }
+"xim:probe-rs"  = { version = "0.24.0", when = "run"   }
+"xim:clang-tidy"= { version = "20",     when = "dev"   }
+```
+
+Package dependencies have had this axis since the beginning —
+`[dependencies]`, `[build-dependencies]`, `[dev-dependencies]`. Tools had one
+list, so a board-support package that named both an emulator and a debug probe
+installed both for every consumer, including one that only wanted the library
+to compile.
+
+| `when` | Installed by | Reaches a consumer |
+|---|---|---|
+| *(omitted)* | every verb that builds | yes |
+| `build` | every verb that builds | yes |
+| `run` | `mcpp run`, `mcpp test` | yes |
+| `dev` | only the package that declared it, as the root | **no** |
+
+**Omitting `when` is the pre-2026.9.4.2 behaviour exactly**, so no manifest has
+to change. Narrowing is optional; it is not a question an author has to answer.
+
+`dev` is the only tier that does not propagate. It means *"while the package
+that declared this is itself being developed"*, so a dependency's `dev` entry is
+never installed for a consumer. Every other tier does reach one, which is the
+point of a board package knowing its own machine: it declares the emulator once
+and every consumer gets it.
+
+The tier is written on the entry rather than as a second table, on the same
+reasoning that makes `[dependencies]` accept both `dep = "1.0"` and
+`dep = { version = "1.0", features = [...] }`. A scoped entry must name
+`version` even to leave it empty (`version = ""` means *present, any version*),
+because `{ when = "run" }` and a misspelt `version` key would otherwise be
+indistinguishable.
+
+#### `[feature-xlings.<feature>]` — a tool a feature needs
+
+```toml
+[features]
+default  = ["emulator"]
+emulator = {}
+hardware = {}
+
+[feature-xlings.hardware]
+"xim:probe-rs" = "0.24.0"
+```
+
+The same table, gated on a feature, spelled the way `[feature-deps.<feature>]`
+is. A consumer who never asks for `hardware` never downloads a probe driver.
+Entries here accept `when` exactly as the unconditional ones do.
+
+A feature name no `[features]` table declares is reported as a schema warning:
+it activates for nobody and installs nothing, and a tool whose absence is only
+visible as *"the device is never reachable"* is the hardest kind to diagnose.
+
 #### Which version a tool the project did not name resolves to
 
 | The project declares | The version comes from |
