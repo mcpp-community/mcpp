@@ -39,6 +39,35 @@ struct HostCompilerBounds {
 // Parse the two guards out of a `crt/host_config.h`.
 HostCompilerBounds parse_host_config(std::string_view header);
 
+// The plan nvcc states for one compilation: the search path it will use, and
+// the programs it will invoke by bare name.
+//
+// WHY THE PLAN IS ASKED FOR RATHER THAN ASSUMED
+//
+// nvcc runs its back-end stages -- cicc, ptxas, fatbinary, nvlink -- as bare
+// names, on a PATH it prepends itself from an `nvcc.profile` beside its own
+// binary. Where those stages live is therefore not a property of the toolkit
+// layout that mcpp could tabulate: it is whatever that profile says. When the
+// profile is unreachable -- a container or sandbox that replaces /etc, where
+// the profile is a symlink into it -- nvcc states no PATH, keeps the ambient
+// one, and fails at the first stage with `sh: 1: cicc: not found`. That
+// message names neither nvcc nor the profile, and the toolkit is present and
+// intact, so every obvious check passes. `--dryrun` prints the same plan
+// without running it, which is how the question is answered before a
+// compilation is attempted.
+struct DeviceDryRun {
+    // The PATH nvcc assigns itself. Empty means it assigned none, in which
+    // case the ambient PATH is what its stages will be resolved against.
+    std::string              searchPath;
+    // Stages invoked by bare name, in first-appearance order, deduplicated.
+    // A stage named by an absolute or relative path resolves on its own and
+    // is not collected.
+    std::vector<std::string> programs;
+};
+
+// Parse the `#$` lines of `nvcc --dryrun` output.
+DeviceDryRun parse_dryrun(std::string_view text);
+
 // Is `major` of `family` ("gcc" | "clang") within the bounds? A family the
 // header said nothing about is accepted: silence is not a refusal.
 bool host_compiler_accepted(const HostCompilerBounds& b,
@@ -85,6 +114,51 @@ HostCompilerBounds parse_host_config(std::string_view header) {
         if (exclusive > 0) b.clangMax = exclusive - 1;
     }
     return b;
+}
+
+DeviceDryRun parse_dryrun(std::string_view text) {
+    DeviceDryRun plan;
+
+    for (std::size_t pos = 0; pos <= text.size(); ) {
+        const auto eol  = text.find('\n', pos);
+        const auto stop = eol == std::string_view::npos ? text.size() : eol;
+        std::string_view line = text.substr(pos, stop - pos);
+        pos = stop + 1;   // past the end after the last line: the loop stops
+
+        // Every line nvcc contributes is prefixed; anything else is a
+        // diagnostic and says nothing about the plan.
+        constexpr std::string_view kPrefix = "#$ ";
+        if (!line.starts_with(kPrefix)) continue;
+        line.remove_prefix(kPrefix.size());
+        while (!line.empty() && (line.front() == ' ' || line.front() == '\t'))
+            line.remove_prefix(1);
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+            line.remove_suffix(1);
+        if (line.empty()) continue;
+
+        // The first token ends at whitespace or at the `=` of an assignment,
+        // whichever comes first. An assignment is `NAME=value` with no space
+        // before the `=`; a command is anything else.
+        std::size_t end = 0;
+        while (end < line.size() && line[end] != ' ' && line[end] != '\t'
+               && line[end] != '=')
+            ++end;
+
+        if (end < line.size() && line[end] == '=') {
+            if (line.substr(0, end) == "PATH")
+                plan.searchPath = std::string(line.substr(end + 1));
+            continue;
+        }
+
+        std::string_view program = line.substr(0, end);
+        // A stage nvcc names by path resolves without the search path.
+        if (program.find('/') != std::string_view::npos
+            || program.find('\\') != std::string_view::npos
+            || program.starts_with("\"")) continue;
+        if (std::ranges::find(plan.programs, program) == plan.programs.end())
+            plan.programs.emplace_back(program);
+    }
+    return plan;
 }
 
 bool host_compiler_accepted(const HostCompilerBounds& b,

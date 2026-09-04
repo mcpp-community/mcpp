@@ -1090,9 +1090,9 @@ accelerators = ["cuda", "rocm"]          # [提议] 同一形状:支持面声明
 | 3 `SourceKind::Device` | ✅ | 单测 6 条;`.cuh` 进 header 轴 |
 | 4 `accelerator` 多值 layer | ✅ | 单测 7 条;语义按 §3.4 修正后的一行 |
 | 5 逐 glob 收窄 | ❌ 未做 | 依赖 device target(阶段外),本轮 device 编译走规则包 |
-| 6 `-ccbin` 配对 | ⚠️ 部分 | 引擎侧读上界并在 `mcpp self doctor` 报告;**钉定**发生在规则包里,不在引擎里 |
+| 6 `-ccbin` 配对 | ⚠️ 部分 | 引擎侧读上界并在 `mcpp self doctor` 报告;**钉定**发生在规则包里,不在引擎里。PR #560 追加一条同族检查:nvcc 能否够到自己的后端(§15.7) |
 | 7 device link | ❌ 未做 | 依赖 device target |
-| L1/L2 索引包 | ⚠️ 部分 | `compat.cuda-runtime` 已合入并发布并沙箱验证;`rules-cuda` 目前是 `examples/` 里的 path 包,尚未收录进索引 |
+| L1/L2 索引包 | ⚠️ 部分 | `compat.cuda-runtime` 已合入并发布并沙箱验证;`compat.cublas` 与 `rules-cuda` 各有一条**实测出来的阻碍**,见 §15.8 —— 缺的是授权不是实现 |
 | L0 / L3 / 8 | ❌ 未做 | 见上 |
 
 ⚠️ **决定 3(逐 glob 收窄第一版就做)与决定 4(capability 边界先修)都没有落地。**
@@ -1213,3 +1213,155 @@ xim 的 CUDA 工具链载荷。每一项在 §12 都有独立判据。
 ⚠️ 仍未闭合的是另一件事:**引擎侧的新键要等 #559 发布之后,索引里的包才能使用**。
 `compat.cuda-runtime` 恰好一个新键都没用到,所以这一轮绕开了;
 下一个用到 `accel` 字段的索引包不会这么幸运。
+
+---
+
+## 15. 发布后的验证(2026.9.5.1)
+
+§14 写在合入之时,当时引擎侧的改动尚未发布。本节记发布之后**用发布物**跑完的
+验证,以及它暴露的两件事。
+
+### 15.1 发布物
+
+`v2026.9.5.1`,GitHub 与 GitCode 两处资产齐备,sha256 逐个核对一致。
+`ci-fresh-install` 在合入 commit `960f5b4e` 上覆盖 macOS(含 Homebrew)、
+Windows(2022 / 2025 / 无 Visual Studio)与六个 Linux 发行版
+(debian-11 / debian-testing / ubuntu-2004 / fedora / arch / tumbleweed)。
+
+### 15.2 六项判据,全部用发布物,在新建的干净 subos 里
+
+| # | 判据 | 结果 |
+|---|---|---|
+| A | 发布物自述版本 | `mcpp 2026.9.5.1` |
+| B | CN mirror 可配置 | `Configured xlings mirror = CN` |
+| C | `self doctor` 报出宿主/设备编译器配对 | `cuda will refuse this host compiler: gcc 13 exceeds the bound of 12 stated in /usr/include/crt/host_config.h` |
+| D | `accel` 维拒绝不匹配的产物,并点名维度、两侧取值、该轴可行的补救 | 拒绝消息同时含 `accel`、`sm_90f`、`sm_86`、`--no-accel` |
+| E | `--no-accel` 放行 | 通过 |
+| F | 索引包 `compat.cuda-runtime` 让驱动可达,**无需任何环境变量** | `OK: driver reachable, cuInit=0x7a828447cbc0` |
+
+### 15.3 ⭐ F 之后跑了一次对照
+
+`dlopen` 成功既可能是包起了作用,也可能是宿主泄漏。去掉
+`compat.cuda-runtime` 依赖、其余不变,得到
+`CONTROL-OK: driver NOT reachable without the package`。
+⇒ **F 测的是包**。私有 loader 挡住了宿主的 `libcuda.so.1`,
+只有该包的 `runtime.library_dirs` 让它可达 —— 这与 §14.2 的第一条互为正反面:
+同一个机制既拒绝了我链宿主库,也让「声明了才可达」成为可核验的性质。
+
+### 15.4 ⚠️⚠️ 第一次跑这套判据是假绿
+
+把脚本塞进 `xlings subos use <name> --sandbox --cmd "$(...)"` 时遇到引号问题,
+我用 `sed '1d'` 删掉了第一行 —— 而**第一行正是 `set -euo pipefail`**;
+同时版本参数传成了空串。合起来:安装步骤什么都没装(跑的还是上一个发布版),
+后面每一段失败都继续往下走,C/D/E 三段一个断言都没生效,
+而脚本**照常打印出结尾的「全部完成」**。
+
+⭐ 两条修法,都要:**断言不能靠 `set -e` 独自承重**(每步显式 `|| fail "…"`),
+**为传输问题改脚本时改的是引用方式,不是脚本内容**。
+重写后第一次运行立刻红在 A,这才引出下一节。
+
+### 15.5 ⚠️ 沙箱里 PATH 上的 `mcpp` 仍解析到旧版
+
+`xlings install mcpp@2026.9.5.1` 在沙箱里成功,但裸名 shim 仍指向 2026.9.4.3。
+xlings 自己诚实报出了这一点(`xim/commands.cppm`):
+
+```
+xim:mcpp@2026.9.5.1 installed, but 'mcpp' still resolves to 2026.9.4.3
+  — `xlings use mcpp 2026.9.5.1` to switch
+```
+
+⭐ 因此**验证发布物一律直接用 store 路径**
+`~/.xlings/data/xpkgs/xim-x-mcpp/<version>/bin/mcpp`,不要信 PATH。
+这与 §14.4 记的 shim 剪除缺陷(openxlings/xlings#582)是同一个目录的两个问题:
+**两个工具写同一个 shim 目录,而它的状态不是任何一方单独决定的。**
+
+### 15.6 §14.6 末尾那条待办已解除
+
+「引擎侧的新键要等 #559 发布之后,索引里的包才能使用」—— 2026.9.5.1 已发布,
+`accel`、`[package] accelerators`、`cfg(accelerator=…)` 现在都可以出现在索引包里。
+下一个用到它们的包需要在描述符里声明 mcpp 版本下限。
+
+### 15.7 ⭐⭐ 又一条判据:从**发布的源码 tarball**跑示例,它红了
+
+前六项用的是发布的引擎,但用的是工作树里的示例。补一条:
+从 `mcpp-2026.9.5.1.tar.gz` 解出 `examples/09-cuda-kernel`,用发布的引擎构建。
+**在沙箱里失败**:
+
+```
+sh: 1: cicc: not found
+```
+
+而同一个示例在宿主上输出 `12 24 36 48`。单变量隔离(同一条 nvcc 命令,只改一个东西):
+
+| 环境 | 结果 |
+|---|---|
+| 沙箱默认 | `sh: 1: cicc: not found` |
+| 沙箱 + `PATH=/usr/lib/nvidia-cuda-toolkit/bin:$PATH` | 产出 `.o` |
+| 沙箱 + PATH + `NVVMIR_LIBRARY_DIR` | 产出 `.o` |
+
+⇒ **唯一缺的是一条 PATH**。它来自 `/etc/nvcc.profile`,而 Debian 系把
+`/usr/lib/nvidia-cuda-toolkit/bin/nvcc.profile` 做成指向 `/etc` 的符号链接 ——
+subos 沙箱替换了 `/etc`,那条链接因此断开。
+
+⚠️ **这不是 mcpp 的缺陷,但 mcpp 的诊断对它一言不发。** 工具包完整、nvcc 在
+`PATH` 上、`crt/host_config.h` 读得到、`self doctor` 那一节照常打印,
+**每一个显而易见的检查都通过**,而用户拿到的是一条既不提 nvcc 也不提 profile
+的消息。这与 §5.2 的宿主编译器上界是同一个类别:失败很晚,消息指向一个用户
+没有选择过的东西。
+
+**已实现的检查**(`mcpp.toolchain.devicehost` 的 `parse_dryrun` + doctor 的
+`unreachable_device_stage`):`nvcc --dryrun` 打印它将要运行的阶段与它将要使用的
+`PATH` 而不编译任何东西;mcpp 解析这份计划,逐个解析其中的裸名,报出第一个解析
+不到的。**判据取自 nvcc 自己,不是抄一张目录表** —— 与 §14.1 第 5 行读
+`crt/host_config.h` 而非内置版本表是同一条原则。
+
+⭐ **两侧对照都跑了**(否则这条判据可能永远沉默或永远报警):
+
+| 对照 | `cannot reach its own back-end` |
+|---|---|
+| 真 nvcc(profile 可读) | 0 次 |
+| 把 nvcc 复制到无 profile 的目录后放在 PATH 前 | 1 次,点名 `cicc` |
+
+点名的是 `cicc` 而不是计划里更靠前的 `cudafe++`,因为 Debian 把
+`cudafe++`/`ptxas`/`fatbinary` 装进了 `/usr/bin` 而 `cicc` 只在工具包目录里 ——
+**与真实失败点名的那一个一致**。
+
+⚠️ **没有为它写 e2e。** 它需要 nvcc,而 CI 没有;一条 `# requires: nvcc` 的
+e2e 会在两个 shard 上都跳过并退 0,那是一条永远不跑的判据(memory
+`e2e-requires-llvm-never-runs-on-shards` 记的就是这个)。覆盖是:解析器的五条
+单测(夹具是两份**真实**的 dryrun 输出,差别恰好是那一行 PATH),加上上表那次
+手工两侧对照。
+
+### 15.8 L1/L2 为什么停在一个包:两条实测出来的阻碍,都不是工作量
+
+用户要求「补充**几个**流行的运行时/库/框架/SDK 到 mcpp index / xim 生态」。
+本轮落地并验证的只有 `compat.cuda-runtime` 一个。停在这里的理由是测出来的:
+
+**其一,`compat.cublas` 在索引现有的两种形态里都不成立。** 索引里的包分两类:
+
+| 形态 | 例子 | 适用 |
+|---|---|---|
+| 从上游源码编译 | `compat.curl`、`compat.freetype`、`compat.ffmpeg` | 有源码 |
+| farm 宿主库 + `runtime.library_dirs` + `dlopen_libs` | `compat.glx-runtime`、`compat.vulkan-runtime`、`compat.cuda-runtime` | 运行期 **dlopen** 的宿主驱动 |
+
+cuBLAS 两者都不是:**没有源码**,而且是**必须链接**的闭源二进制。
+⭐ 实测过链接路径确实可行 —— 闭包校验的拒绝
+(*"Its PT_INTERP is a private loader"*)对**链接**的库与对 dlopen 的库一样发生,
+而包自己声明 `runtime.library_dirs` 就能满足它。所以形态上做得出来。
+⚠️ 但索引里 `ldflags` 的既有用法**全部**是系统级的
+(`-pthread`、`-lrt`、`-ladvapi32`、macOS framework),**没有一个链接第三方宿主二进制库**。
+开这个先例会把一次构建钉死在某一台机器的 cuBLAS 版本上,与「少依赖 host」相反。
+
+⇒ **正确形态是 xim 载荷**,携带 NVIDIA 的可再分发件。而那要回答 RK-3(体积)
+与 RK-5(许可)两个问题,并向 GitCode 上传一份大体积的 NVIDIA 二进制 ——
+**这是一个决定,不是一次实现**,不该由实施方单方面做。
+
+**其二,`rules-cuda` 进索引要先有它自己的仓库。** 索引里已有的两个规则包
+(`mcpplibs/clangtidy`、`grpcgen`)都是 `mcpp = "*/mcpp.toml"` 指向**独立仓库的
+release tarball**,并各带一份 GitCode 镜像。把 `examples/09-cuda-kernel/rules-cuda`
+搬进索引因此需要**新建一个公开仓库**并打 tag。
+⚠️ 而且不能只做一半:索引里一份、示例里再留一份,就是第 §14.3 那个「重复了一处
+本不该重复的东西」的形状 —— 要搬就要同时把示例改成消费索引里的那一个。
+
+⇒ 两条都记在这里,而不是让 §12 的 L1/L2 行用「未做」含糊过去。
+它们缺的是一个授权,不是一段实现。

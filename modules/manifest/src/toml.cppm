@@ -1908,7 +1908,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             std::string path;
             auto const& table = value.as_table();
             for (auto const& [key, _] : table) {
-                // ⚠️ A CLOSED whitelist: an unrecognised key is an error here,
+                // THIS IS A CLOSED WHITELIST: an unrecognised key is an error here,
                 // unlike the published xpkg descriptor, whose reader collects
                 // and skips one. The two readers differ on purpose — a typo in
                 // a hand-written manifest should be loud — but it means adding

@@ -69,6 +69,33 @@ warning: cuda will refuse this host compiler: gcc 13 exceeds the bound of 12
 
 这是报告而非强制:一个不编译任何设备代码的工程,不受不兼容配对的影响。
 
+## 设备编译器能否够到自己的后端
+
+一个工具包可以安装完整、就在 `PATH` 上,却仍然在第一个阶段失败。
+nvcc 以裸名调用 `cicc`、`cudafe++`、`ptxas` 与 `fatbinary`,依赖的是它自己
+从紧邻其二进制的 `nvcc.profile` 前置进来的一条 `PATH`。在 Debian 系的打包里,
+那个 profile 是指向 `/etc` 的符号链接,于是任何替换了 `/etc` 的容器或沙箱都会移除它。
+nvcc 随即沿用环境里原有的 `PATH`,并报出:
+
+```
+sh: 1: cicc: not found
+```
+
+这条消息既没有提到 nvcc,也没有提到 profile,而工具包本身一样不缺,
+于是所有显而易见的检查都会通过。`mcpp self doctor` 因此去问 nvcc 要它的计划,
+而不是假设一份:
+
+```
+$ mcpp self doctor
+    Checking device toolkit
+warning: nvcc cannot reach its own back-end: it invokes 'cicc' by name, and
+         that name does not resolve on the search path it states.
+```
+
+计划来自 `nvcc --dryrun` —— 它打印各个阶段与 nvcc 将要使用的 `PATH`,
+而不编译任何东西。一次没有产生计划的 dryrun(没有 nvcc,或输出不是一份计划)
+不产生任何结论:一个够不到答案的探测不应当发明一个。
+
 ## 声明一次构建的目标
 
 ```toml
