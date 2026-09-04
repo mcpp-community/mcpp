@@ -113,12 +113,17 @@ std::optional<std::string> unreachable_device_stage() {
     namespace fs = std::filesystem;
     std::error_code ec;
 
-    const auto probe = fs::temp_directory_path(ec) / "mcpp-nvcc-dryrun";
+    // A fresh directory per run, on the pattern the p1689 scanner already
+    // uses. A fixed name under the shared temporary directory would be a
+    // path another user can create first, and the `remove_all` that a fixed
+    // name needs in order to be reusable is the part that makes that matter.
+    const auto probe = fs::temp_directory_path(ec)
+                     / std::format("mcpp_nvcc_dryrun_{}", std::random_device{}());
     if (ec) return std::nullopt;
-    fs::remove_all(probe, ec);
-    ec.clear();
-    fs::create_directories(probe, ec);
-    if (ec) return std::nullopt;
+    // The return value, not `ec`: create_directory reports an existing
+    // directory by returning false without setting an error, and proceeding
+    // into a directory this process did not create is the case being avoided.
+    if (!fs::create_directory(probe, ec) || ec) return std::nullopt;
     struct Cleanup {
         fs::path dir;
         ~Cleanup() { std::error_code e; fs::remove_all(dir, e); }
