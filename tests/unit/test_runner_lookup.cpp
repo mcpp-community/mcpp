@@ -72,7 +72,7 @@ TEST(RunnerLookup, NotFoundListsEveryDirectorySearched) {
     EXPECT_NE(msg.find("aarch64-linux-musl"), std::string::npos) << msg;
     EXPECT_NE(msg.find((root / "a" / "bin").string()), std::string::npos) << msg;
     EXPECT_NE(msg.find((root / "p2").string()), std::string::npos) << msg;
-    EXPECT_NE(msg.find("[xlings] deps"), std::string::npos) << msg;
+    EXPECT_NE(msg.find("[xlings.workspace]"), std::string::npos) << msg;
     EXPECT_NE(msg.find("--no-runner"), std::string::npos) << msg;
 }
 

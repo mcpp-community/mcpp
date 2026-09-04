@@ -5,7 +5,7 @@
 
 ## [2026.9.4.2] — 2026-09-04
 
-runner 有了名字,`--locked` 成为断言,`mcpp emit sbom`。
+runner 有了名字,工具有了档位,`--locked` 成为断言,`mcpp emit sbom`。
 
 ### ⭐⭐ 一条命令,加具名的例外
 
@@ -48,6 +48,47 @@ mcpp run --list-runners      # 这个工程提供了哪些
 CycloneDX 1.5,覆盖**已记录**的解析。⚠️ 读锁而不是重新解析 —— 一份描述了与所构建
 者不同的图的文档比没有更糟。归在 `emit` 之下而不是新开一级命令:`emit` 已经是
 「生成描述本工程的文档」。
+
+### ⭐⭐ 工具有了档位,而且依赖声明的工具现在真的会被装
+
+包依赖从一开始就有 `[dependencies]` / `[build-dependencies]` / `[dev-dependencies]`
+这条轴,工具只有一张表。一个同时点名模拟器与调试探针的板级包,会把两个都装给每一位
+消费者,包括只想把库编出来的那一位。
+
+```toml
+[xlings.workspace]
+"xim:qemu-arm"  = "9.2.4-1"                             # 不写就是从前的行为
+"xim:probe-rs"  = { version = "0.24.0", when = "run"   }
+
+[feature-xlings.hardware]
+"xim:probe-rs"  = "0.24.0"                              # 不要这个 feature 就永不下载
+```
+
+| `when` | 由谁安装 | 传播到消费者 |
+|---|---|---|
+| *(不写)* | 每个构建命令 | 是 |
+| `build` | 每个构建命令 | 是 |
+| `run` | `mcpp run`、`mcpp test` | 是 |
+| `dev` | 只有声明它的那个包作为根时 | **否** |
+
+⭐ **不写 `when` 保持今天的行为,所以没有迁移。**
+
+⚠️⚠️ **同时:`[xlings.workspace]` 的供给扩到全图。** 在此之前只有根工程的声明会被
+安装,而查找(runner 按裸名找程序)已经跨全图 —— **在没有任何东西安装过的目录里
+查找,是只可能失败的查找**。两者现在由同一个表达式定义。
+
+⚠️ 档位带来的一个危险已被堵上:`mcpp build` 装得比 `mcpp run` 需要的少,而 run 的
+快路径正是为跳过那一步存在的。构建缓存记下「这次构建留下了未安装的 run 档工具」,
+`mcpp run` 的快路径据此拒绝该条目 —— 与它拒绝声明了 runner 的条目同理。
+
+判据不测「装成了没有」,而测**mcpp 要装什么**:`MCPP_NO_AUTO_INSTALL=1` 下拒绝供给
+并**点名它本来要装的集合**,于是 `build` 与 `run` 两条命令的差集就是被测的性质,
+一次下载都不需要(`tests/e2e/335`)。
+
+### 发现性
+
+`mcpp why runners` 列出本工程提供的 runner,与其余解析结果并列;
+`mcpp run --list-runners` 是同一份读取,单独报告。
 
 新增 `docs/18-devices.md`、`docs/19-supported-versions.md`(中英双份)。
 指令协议版本 6。

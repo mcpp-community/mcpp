@@ -20,6 +20,7 @@ performs, with the artifact appended or substituted for `{}`.
 mcpp run                        # the default runner
 mcpp run --runner flash         # a named one
 mcpp run --list-runners         # what this project supplies
+mcpp why runners                # the same list, beside everything else resolved
 ```
 
 `mcpp run` is the whole of the common case, including on real hardware. On a

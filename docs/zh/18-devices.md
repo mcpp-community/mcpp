@@ -15,6 +15,7 @@
 mcpp run                        # 默认 runner
 mcpp run --runner flash         # 具名的
 mcpp run --list-runners         # 这个工程提供了哪些
+mcpp why runners                # 同一份清单,与其余解析结果并列
 ```
 
 **`mcpp run` 覆盖了常见情形的全部,真实硬件也一样。** 在设备上,「运行一个程序」

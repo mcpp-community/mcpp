@@ -432,7 +432,7 @@ int run(int argc, char** argv) {
             // project has, which beats a static list of what the engine
             // theoretically supports.
             .option(cl::Option("runner").takes_value().value_name("NAME")
-                .help("Reach the artifact by a named runner a package supplied (flash, deploy, serve, …)"))
+                .help("Reach the artifact by a named runner a package supplied; see --list-runners"))
             .option(cl::Option("list-runners")
                 .help("List the named runners this project supplies, and exit"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
@@ -480,8 +480,8 @@ int run(int argc, char** argv) {
             .option(cl::Option("bmi-cache").help("Also wipe the global build cache (see `mcpp cache clean`)"))
             .action(wrap_rc(cmd_clean)))
         .subcommand(cl::App("why")
-            .description("Explain how the toolchain / runtime / deps were resolved")
-            .arg(cl::Arg("topic").help("toolchain | runtime | deps (default: all)"))
+            .description("Explain how the toolchain / runtime / deps / runners were resolved")
+            .arg(cl::Arg("topic").help("toolchain | runtime | deps | runners (default: all)"))
             // ⭐ `--target` / `--toolchain` make this a QUERY rather than a
             // report on the current directory's default: "what would a build
             // for THIS pair resolve to" is the question the target matrix asks
@@ -495,7 +495,7 @@ int run(int argc, char** argv) {
             .action(wrap_rc(cmd_why)))
         .subcommand(cl::App("resolve")
             .description("Re-resolve the build plan and explain it")
-            .option(cl::Option("explain").help("Print resolved toolchain / runtime / deps"))
+            .option(cl::Option("explain").help("Print resolved toolchain / runtime / deps / runners"))
             .action(wrap_rc(cmd_why)))
         .subcommand(cl::App("add")
             .description("Add a dependency to mcpp.toml")

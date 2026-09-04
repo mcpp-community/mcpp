@@ -672,6 +672,11 @@ export struct BuildContext {
     // declared but not installed contributes nothing, and the lookup then
     // continues to PATH.
     std::vector<std::filesystem::path> xlingsDepBinDirs;
+    // True when the graph declared a `when = "run"` tool that THIS invocation
+    // did not provision, because it was not going to execute anything. The
+    // build cache records it so `mcpp run`'s fast path declines an entry a
+    // plain `mcpp build` wrote — see BuildCacheEntry::runTierPending.
+    bool runTierPending = false;
     std::filesystem::path           outputDir;
     std::filesystem::path           stdBmi;
     std::filesystem::path           stdObject;
@@ -845,6 +850,14 @@ export struct BuildOverrides {
     bool        strict = false;      // --strict: schema warnings become errors
     std::string capabilities;        // --cap blas=openblas,lapack=mkl (provider pins)
     std::string cache_mode;          // --cache global|local|off ("" = unset)
+    // Whether the caller intends to EXECUTE what it builds, which is what
+    // decides the `when = "run"` tool tier. `mcpp run` and `mcpp test` set it;
+    // `mcpp build`, `mcpp pack` and every internal sub-build do not.
+    //
+    // ⚠️ A SEPARATE FLAG FROM `includeDevDeps`, THOUGH `mcpp test` SETS BOTH.
+    // One says which PACKAGES enter the graph, the other which TOOLS are
+    // installed, and `mcpp run` needs the second without the first.
+    bool        will_run = false;
 };
 
 // ── git dependency helpers ──────────────────────────────────────────────────
@@ -1018,6 +1031,310 @@ void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
     }
 }
 
+// ── Tool tiers: which of a manifest's declared packages this verb needs ─────
+//
+// ⭐⭐ THE AXIS PACKAGE DEPENDENCIES HAVE HAD SINCE THE BEGINNING, AND TOOLS
+// DID NOT.
+//
+// A board-support package names an emulator (needed to run) and a debug probe
+// (needed to reach real hardware). Before this, declaring either installed
+// both, for everyone, on every `mcpp build` — including a consumer who only
+// wanted the library to compile. Packages have `[dependencies]`,
+// `[build-dependencies]` and `[dev-dependencies]`; tools had one list.
+//
+// The tier is written on the ENTRY (`when = "run"`), not as a second table:
+// `[xlings.workspace]` was made the one table on purpose, and the entry-level
+// spelling is the one `[dependencies]` already uses for the same kind of
+// refinement.
+//
+// ⚠️ `Dev` IS THE ONLY TIER THAT DOES NOT PROPAGATE. It means "when the package
+// that declared it is itself being developed", so `isRoot` decides it. Every
+// other tier reaches a consumer, which is the whole point of a board package
+// knowing its own machine.
+enum class ToolPurpose { Build, Run };
+
+std::vector<std::string>
+applicable_xlings_addresses(const mcpp::manifest::Manifest& man,
+                            const std::vector<std::string>& activeFeatures,
+                            ToolPurpose purpose, bool isRoot) {
+    using W = mcpp::manifest::ToolWhen;
+    std::vector<std::string> out;
+    auto wanted = [&](const std::string& address) {
+        switch (man.xlings.when_of(address)) {
+            case W::Always: return true;
+            case W::Build:  return true;
+            case W::Run:    return purpose == ToolPurpose::Run;
+            case W::Dev:    return isRoot;
+        }
+        return true;
+    };
+    auto add = [&](const std::string& address) {
+        if (!wanted(address)) return;
+        if (std::ranges::find(out, address) == out.end()) out.push_back(address);
+    };
+    for (auto const& a : man.xlings.deps) add(a);
+    // `[feature-xlings.<f>]` contributes only while `<f>` is active. A consumer
+    // that never asks for `hardware` never downloads a probe driver — which is
+    // the same mechanism `[feature-deps]` gives a package, applied to tools.
+    for (auto const& f : activeFeatures)
+        if (auto it = man.xlings.featureDeps.find(f);
+            it != man.xlings.featureDeps.end())
+            for (auto const& a : it->second) add(a);
+    return out;
+}
+
+// Install a set of `[xlings.workspace]` addresses, and record that the list was
+// done.
+//
+// ⭐ EXTRACTED SO THE DEPENDENCY GRAPH CAN USE THE SAME PATH. This was the
+// root project's provisioning, inline and reachable only from there. A
+// board-support package that declares the emulator its machine needs is
+// precisely the thing that should say so once, and a consumer that has to
+// repeat the declaration to get it installed is the duplication such a package
+// exists to remove — so the graph pass calls this with what the dependencies
+// declared, under the same stamp discipline and the same auto-install gate.
+//
+// `label` names the caller in every message, because "which of the two passes
+// is this" is the first thing a reader of the failure needs.
+std::expected<void, std::string>
+provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
+                           const std::vector<std::string>& declaredDeps,
+                           const std::filesystem::path& legacyStampRoot,
+                           std::string_view label) {
+    if (declaredDeps.empty()) return {};
+            // ⚠️⚠️ THE STAMP RECORDS A GLOBAL EFFECT, SO IT LIVES WHERE THE
+            // EFFECT DOES. It used to sit in `<project>/.mcpp/`, while the
+            // installation goes to the registry a few lines below — the
+            // scope difference is deliberate and explained there. Two
+            // consequences followed from the mismatch: wiping or replacing
+            // `MCPP_HOME` left a project still claiming the packages were
+            // installed, and `mcpp clean` (which removes `target/` and
+            // never `.mcpp/`) could not clear it. Keyed by the LIST, not by
+            // the project, because the installation is shared: two projects
+            // declaring the same packages should pay for it once.
+            //
+            // This still does not survive a user's `xlings remove`. No
+            // stamp does; the honest fix is a presence check, and it is
+            // blocked on `resolve_xpkg_path` requiring `<name>@<version>`
+            // while a manifest is entitled to name a package unpinned.
+            const auto stampDir = mcpp::home::root() / "provisioned";
+            // `std::uint64_t`, not `std::size_t`: the offset basis below is
+            // a 64-bit constant and a 32-bit host would truncate it, giving
+            // that host a different key space for no reason anyone could
+            // see. A collision is not a correctness problem either way —
+            // the file stores the LIST and the comparison below is against
+            // its content, so two lists sharing a key re-provision rather
+            // than silently adopt each other's record.
+            auto stamp_key = [&] {
+                std::uint64_t h = 1469598103934665603ull;   // FNV-1a
+                for (auto const& d : declaredDeps)
+                    for (unsigned char ch : d + "\n")
+                        { h ^= ch; h *= 1099511628211ull; }
+                return std::format("xlings-deps-{:016x}", h);
+            };
+            const auto stamp = stampDir / stamp_key();
+            // Idempotence by CONTENT, not by existence: editing the list
+            // has to re-provision, and an unchanged list must not pay for
+            // an xlings round-trip on every build.
+            auto join_deps = [&](std::string_view sep) {
+                std::string out;
+                for (auto const& d : declaredDeps) {
+                    if (!out.empty()) out += sep;
+                    out += d;
+                }
+                return out;
+            };
+            std::string want;
+            for (auto const& d : declaredDeps) { want += d; want += '\n'; }
+            std::string have;
+            if (std::ifstream in{stamp}; in)
+                have.assign(std::istreambuf_iterator<char>(in), {});
+            // The stamp the previous location left behind. Read, never
+            // deleted: an older mcpp sharing the checkout still uses it,
+            // and a stale extra file is cheaper than a downgrade that
+            // re-provisions on every build.
+            //
+            // ⚠️ IT DOES NOT MEAN "PROVISIONED SUCCESSFULLY". The release
+            // that wrote it did not read the result — that is the defect
+            // above — so it means only "this list was attempted". Treating
+            // it as proof would carry the bug across the very upgrade that
+            // fixes it: a project whose dependency never installed would
+            // adopt the stamp and stay silently broken.
+            //
+            // So it is consulted in ONE place, below, where the alternative
+            // is worse: the auto-install gate. Online, nothing is adopted
+            // and every project re-provisions once, which is a cheap round
+            // trip that re-validates the claim.
+            const auto legacyStamp = legacyStampRoot / ".mcpp" / ".xlings-deps.stamp";
+            auto legacy_stamp_matches = [&] {
+                std::string legacy;
+                if (std::ifstream in{legacyStamp}; in)
+                    legacy.assign(std::istreambuf_iterator<char>(in), {});
+                return legacy == want;
+            };
+            bool needProvision = (have != want);
+            if (needProvision) {
+                // ⚠️ THE AUTO-INSTALL GATE, WHICH THIS PATH DID NOT HAVE.
+                //
+                // `[toolchain]` is the precedent this whole mechanism cites
+                // ("the same 'declare it and mcpp provisions it on first
+                // use' contract"), and that path refuses on either knob and
+                // names the one that fired — see the auto-install branch
+                // above. This one honoured neither, so a CI exporting
+                // MCPP_NO_AUTO_INSTALL specifically to prevent an unasked
+                // download got one anyway, from a path that had never heard
+                // of the variable.
+                //
+                // Placed inside `have != want`, so it gates the ATTEMPT and
+                // not the block: a project whose packages are already
+                // provisioned still builds offline, which is the behaviour
+                // that would otherwise regress.
+                if (mcpp::platform::env::offline_mode()
+                    || mcpp::platform::env::no_auto_install()) {
+                    // ⚠️ THE ONE PLACE THE LEGACY STAMP IS TRUSTED, and the
+                    // reason is that relocating a record must not refuse a
+                    // build that worked yesterday. Every project that had
+                    // already provisioned carries the old stamp and no new
+                    // one, so on the first build after upgrading it reads
+                    // as un-provisioned — and here, with the network shut
+                    // off, there is no way to find out otherwise. Refusing
+                    // would be a regression caused entirely by moving a
+                    // file, which is the least defensible kind.
+                    //
+                    // Proceeding is the pre-upgrade behaviour exactly: if
+                    // the packages really are missing, the build fails
+                    // downstream on a missing header, as it did before.
+                    // The registry stamp is NOT written — nothing here
+                    // verified anything.
+                    if (!legacy_stamp_matches()) {
+                        std::string_view release =
+                            mcpp::platform::env::offline_mode()
+                            ? "drop --offline / unset MCPP_OFFLINE"
+                            : "unset MCPP_NO_AUTO_INSTALL";
+                        return std::unexpected(std::format(
+                            "{} are declared but not provisioned, "
+                            "and auto-install is off.\n"
+                            "       declared: {}\n"
+                            "       install them yourself with:\n"
+                            "         xlings install {}\n"
+                            "       or {} to let mcpp do it.",
+                            label, join_deps(", "), join_deps(" "), release));
+                    }
+                    mcpp::log::verbose("xlings",
+                        std::format("{}: auto-install is off and this project "
+                        "carries a pre-2026.9.1.1 provisioning stamp for the "
+                        "same list; proceeding without re-checking", label));
+                    // Deliberately NOT writing the registry stamp: nothing
+                    // here verified anything, and a record of a check that
+                    // did not happen is the defect this release removes.
+                    needProvision = false;
+                }
+            }
+            if (needProvision) {
+                mcpp::ui::status("Provisioning",
+                    std::format("{} ({})", label, join_deps(", ")));
+                // GLOBAL scope, and the scope is the whole point.
+                //
+                // The obvious alternative -- `install_packages` against
+                // `make_project_xlings_env` -- installs at PROJECT scope,
+                // and that measurably does not work: on a fresh MCPP_HOME
+                // the headers land in
+                // `<proj>/.mcpp/.xlings/subos/_/usr/include` while
+                // `--sysroot` names `<MCPP_HOME>/registry/subos/default`,
+                // so `#include <gbm.h>` still failed with the dependency
+                // installed and declared. Two SubOS views, and the payload
+                // in the one the compiler does not read.
+                //
+                // `make_xlings_env` is the GLOBAL env, so this lands in the
+                // registry whose SubOS *is* mcpp's sysroot -- the same
+                // place `[toolchain]` has always installed into. A project
+                // dependency and a toolchain dependency now agree on where
+                // they live, which is the only arrangement in which one
+                // `--sysroot` can see both.
+                //
+                // `install_packages` rather than `resolve_xpkg_path`: the
+                // latter requires `<name>@<version>` and rejects a bare
+                // `mesa`, while a manifest is entitled to name a package
+                // without pinning it. install_packages resolves the version
+                // itself and reports an ambiguous name with its candidates,
+                // which is the error the author can act on.
+                // Built with the JSON library rather than by formatting
+                // the strings in. `deps` is manifest input, so a name
+                // containing a quote or a backslash would otherwise emit
+                // malformed JSON and the failure would surface as an
+                // unrelated xlings parse error naming neither the manifest
+                // nor the key.
+                nlohmann::json args;
+                args["targets"] = declaredDeps;
+                args["yes"]     = true;
+
+                mcpp::fetcher::InstallProgressHandler progress;
+                auto r = mcpp::xlings::call(
+                    mcpp::config::make_xlings_env(cfg), "install_packages",
+                    args.dump(), &progress);
+                // ⚠️⚠️ `if (!r)` IS NOT THE FAILURE TEST, AND TESTING ONLY
+                // IT MADE THIS PATH REPORT SUCCESS FOR EVERY FAILURE XLINGS
+                // CAN REPORT.
+                //
+                // `xlings::call` returns `expected<CallResult, string>` and
+                // is in the VALUE state whenever the child ran at all — the
+                // error channel means "the call did not happen". A
+                // capability's own status arrives inside `CallResult`,
+                // parsed off the NDJSON `{"kind":"result","exitCode":N}`
+                // line, because the xlings process itself exits 0 by design
+                // once it has spoken the protocol.
+                //
+                // Measured before this fix: a manifest declaring a package
+                // that cannot exist printed `Provisioning [xlings] deps
+                // (…)`, xlings answered `E_NOT_FOUND` with `exitCode: 1`,
+                // and mcpp stamped it as done and reported a successful
+                // build. #531 was written because "the declaration looked
+                // accepted and did nothing" is the worst shape a config key
+                // can have; unread, its own fix reproduced that shape and
+                // the stamp made it permanent.
+                //
+                // The correct idiom is not new — the dependency install
+                // path in this same file reads `r->exitCode` — it was
+                // simply not applied here.
+                const bool called   = r.has_value();
+                const int  childRc  = called ? r->exitCode : -1;
+                if (!called || childRc != 0) {
+                    // Prefer xlings' own message: for an unresolvable name
+                    // it names the repos it searched and whether the index
+                    // is current, which is the part the author can act on.
+                    std::string why = !called ? r.error()
+                        : (r->error ? r->error->message
+                                    : std::format("xlings exited {}", childRc));
+                    if (auto captured = progress.captured_error();
+                        !captured.empty() && called && !r->error)
+                        why = captured;
+                    // The hint is where "run `xlings update` if the package
+                    // was just published" lives, and for the commonest
+                    // failure — a name that is not in the synced index —
+                    // it is the whole of the actionable content.
+                    if (called && r->error && !r->error->hint.empty())
+                        why += "\n       " + r->error->hint;
+                    // Shaped like the toolchain failure: say what failed and
+                    // hand back a command the user can run themselves. An
+                    // ambiguous bare name ("mesa" matching two repos) lands
+                    // here, and xlings' own message names the candidates.
+                    return std::unexpected(std::format(
+                        "provisioning {} failed: {}\n"
+                        "       you can install them manually with:\n"
+                        "         xlings install {}",
+                        label, why, join_deps(" ")));
+                }
+                // Written only on success, for the same reason the check
+                // above exists: a stamp is a record that the effect
+                // happened, and recording an effect that did not is worse
+                // than not recording it — the next build skips the attempt.
+                std::error_code sec;
+                std::filesystem::create_directories(stamp.parent_path(), sec);
+                if (std::ofstream out{stamp}; out) out << want;
+            }
+    return {};
+}
+
 std::string with_index_cause(std::string msg) {
     if (auto hint = mcpp::pm::unusable_index_hint(); !hint.empty())
         msg += "\n" + hint;
@@ -1031,6 +1348,12 @@ prepare_build(bool print_fingerprint,
               bool includeDevDeps = false,
               std::vector<mcpp::manifest::Target> extraTargets = {},
               BuildOverrides overrides = {}) {
+    // Which tool tiers this invocation needs. Named once so the two
+    // provisioning passes cannot disagree — a `mcpp build` that installed the
+    // run tier and a `mcpp run` that did not would be the same defect twice.
+    const ToolPurpose toolPurpose =
+        overrides.will_run ? ToolPurpose::Run : ToolPurpose::Build;
+
     // A refusal decided early and released late. `host_can_serve` answers
     // "does a payload on this machine produce this target", which is knowable
     // before dependency resolution and is only half the question: a package in
@@ -3196,6 +3519,25 @@ prepare_build(bool print_fingerprint,
                 penv.subos = runtimeOwnerManifest.xlings.subos;
                 for (auto const& [k, v] : runtimeOwnerManifest.xlings.workspace)
                     penv.workspace.emplace_back(k, v);
+                // `[feature-xlings.<f>]` becomes part of the project's
+                // environment only while `<f>` is active. It is written into
+                // the same two fields, because from xlings' side there is no
+                // such thing as a feature: the file states what this project
+                // uses, and the feature decided that.
+                for (auto const& f :
+                         feature_closure(runtimeOwnerManifest,
+                                         parse_feature_request(overrides.features)))
+                    if (auto it = runtimeOwnerManifest.xlings.featureDeps.find(f);
+                        it != runtimeOwnerManifest.xlings.featureDeps.end())
+                        for (auto const& address : it->second) {
+                            if (std::ranges::find(penv.deps, address) == penv.deps.end())
+                                penv.deps.push_back(address);
+                            const auto entry =
+                                mcpp::manifest::parse_address(address);
+                            if (std::ranges::none_of(penv.workspace,
+                                    [&](auto const& kv) { return kv.first == entry.target; }))
+                                penv.workspace.emplace_back(entry.target, entry.pin());
+                        }
             }
             if (runtimeSelection.ownerRoot == workRoot) {
                 mcpp::config::ensure_project_index_dir(
@@ -3246,240 +3588,20 @@ prepare_build(bool print_fingerprint,
             // contract being added is "what you declared gets installed", and
             // the sysroot entry is mcpp's own inference rather than the
             // author's declaration.
-            const auto& declaredDeps = runtimeOwnerManifest.xlings.deps;
+            // Only the tiers this verb needs, and only what the ROOT
+            // declared. The graph's own declarations are provisioned after
+            // resolution, which is the first moment they are known — see the
+            // second pass near `xlingsDepBinDirs`.
+            const auto declaredDeps = applicable_xlings_addresses(
+                runtimeOwnerManifest,
+                feature_closure(runtimeOwnerManifest,
+                                parse_feature_request(overrides.features)),
+                toolPurpose, /*isRoot=*/true);
             if (materializeRootRuntime && !declaredDeps.empty()) {
-                // ⚠️⚠️ THE STAMP RECORDS A GLOBAL EFFECT, SO IT LIVES WHERE THE
-                // EFFECT DOES. It used to sit in `<project>/.mcpp/`, while the
-                // installation goes to the registry a few lines below — the
-                // scope difference is deliberate and explained there. Two
-                // consequences followed from the mismatch: wiping or replacing
-                // `MCPP_HOME` left a project still claiming the packages were
-                // installed, and `mcpp clean` (which removes `target/` and
-                // never `.mcpp/`) could not clear it. Keyed by the LIST, not by
-                // the project, because the installation is shared: two projects
-                // declaring the same packages should pay for it once.
-                //
-                // This still does not survive a user's `xlings remove`. No
-                // stamp does; the honest fix is a presence check, and it is
-                // blocked on `resolve_xpkg_path` requiring `<name>@<version>`
-                // while a manifest is entitled to name a package unpinned.
-                const auto stampDir = mcpp::home::root() / "provisioned";
-                // `std::uint64_t`, not `std::size_t`: the offset basis below is
-                // a 64-bit constant and a 32-bit host would truncate it, giving
-                // that host a different key space for no reason anyone could
-                // see. A collision is not a correctness problem either way —
-                // the file stores the LIST and the comparison below is against
-                // its content, so two lists sharing a key re-provision rather
-                // than silently adopt each other's record.
-                auto stamp_key = [&] {
-                    std::uint64_t h = 1469598103934665603ull;   // FNV-1a
-                    for (auto const& d : declaredDeps)
-                        for (unsigned char ch : d + "\n")
-                            { h ^= ch; h *= 1099511628211ull; }
-                    return std::format("xlings-deps-{:016x}", h);
-                };
-                const auto stamp = stampDir / stamp_key();
-                // Idempotence by CONTENT, not by existence: editing the list
-                // has to re-provision, and an unchanged list must not pay for
-                // an xlings round-trip on every build.
-                auto join_deps = [&](std::string_view sep) {
-                    std::string out;
-                    for (auto const& d : declaredDeps) {
-                        if (!out.empty()) out += sep;
-                        out += d;
-                    }
-                    return out;
-                };
-                std::string want;
-                for (auto const& d : declaredDeps) { want += d; want += '\n'; }
-                std::string have;
-                if (std::ifstream in{stamp}; in)
-                    have.assign(std::istreambuf_iterator<char>(in), {});
-                // The stamp the previous location left behind. Read, never
-                // deleted: an older mcpp sharing the checkout still uses it,
-                // and a stale extra file is cheaper than a downgrade that
-                // re-provisions on every build.
-                //
-                // ⚠️ IT DOES NOT MEAN "PROVISIONED SUCCESSFULLY". The release
-                // that wrote it did not read the result — that is the defect
-                // above — so it means only "this list was attempted". Treating
-                // it as proof would carry the bug across the very upgrade that
-                // fixes it: a project whose dependency never installed would
-                // adopt the stamp and stay silently broken.
-                //
-                // So it is consulted in ONE place, below, where the alternative
-                // is worse: the auto-install gate. Online, nothing is adopted
-                // and every project re-provisions once, which is a cheap round
-                // trip that re-validates the claim.
-                const auto legacyStamp = runtimeSelection.ownerRoot / ".mcpp"
-                                       / ".xlings-deps.stamp";
-                auto legacy_stamp_matches = [&] {
-                    std::string legacy;
-                    if (std::ifstream in{legacyStamp}; in)
-                        legacy.assign(std::istreambuf_iterator<char>(in), {});
-                    return legacy == want;
-                };
-                bool needProvision = (have != want);
-                if (needProvision) {
-                    // ⚠️ THE AUTO-INSTALL GATE, WHICH THIS PATH DID NOT HAVE.
-                    //
-                    // `[toolchain]` is the precedent this whole mechanism cites
-                    // ("the same 'declare it and mcpp provisions it on first
-                    // use' contract"), and that path refuses on either knob and
-                    // names the one that fired — see the auto-install branch
-                    // above. This one honoured neither, so a CI exporting
-                    // MCPP_NO_AUTO_INSTALL specifically to prevent an unasked
-                    // download got one anyway, from a path that had never heard
-                    // of the variable.
-                    //
-                    // Placed inside `have != want`, so it gates the ATTEMPT and
-                    // not the block: a project whose packages are already
-                    // provisioned still builds offline, which is the behaviour
-                    // that would otherwise regress.
-                    if (mcpp::platform::env::offline_mode()
-                        || mcpp::platform::env::no_auto_install()) {
-                        // ⚠️ THE ONE PLACE THE LEGACY STAMP IS TRUSTED, and the
-                        // reason is that relocating a record must not refuse a
-                        // build that worked yesterday. Every project that had
-                        // already provisioned carries the old stamp and no new
-                        // one, so on the first build after upgrading it reads
-                        // as un-provisioned — and here, with the network shut
-                        // off, there is no way to find out otherwise. Refusing
-                        // would be a regression caused entirely by moving a
-                        // file, which is the least defensible kind.
-                        //
-                        // Proceeding is the pre-upgrade behaviour exactly: if
-                        // the packages really are missing, the build fails
-                        // downstream on a missing header, as it did before.
-                        // The registry stamp is NOT written — nothing here
-                        // verified anything.
-                        if (!legacy_stamp_matches()) {
-                            std::string_view release =
-                                mcpp::platform::env::offline_mode()
-                                ? "drop --offline / unset MCPP_OFFLINE"
-                                : "unset MCPP_NO_AUTO_INSTALL";
-                            return std::unexpected(std::format(
-                                "[xlings] deps are declared but not provisioned, "
-                                "and auto-install is off.\n"
-                                "       declared: {}\n"
-                                "       install them yourself with:\n"
-                                "         xlings install {}\n"
-                                "       or {} to let mcpp do it.",
-                                join_deps(", "), join_deps(" "), release));
-                        }
-                        mcpp::log::verbose("xlings",
-                            "[xlings] deps: auto-install is off and this project "
-                            "carries a pre-2026.9.1.1 provisioning stamp for the "
-                            "same list; proceeding without re-checking");
-                        // Deliberately NOT writing the registry stamp: nothing
-                        // here verified anything, and a record of a check that
-                        // did not happen is the defect this release removes.
-                        needProvision = false;
-                    }
-                }
-                if (needProvision) {
-                    mcpp::ui::status("Provisioning",
-                        std::format("[xlings] deps ({})",
-                                    join_deps(", ")));
-                    // GLOBAL scope, and the scope is the whole point.
-                    //
-                    // The obvious alternative -- `install_packages` against
-                    // `make_project_xlings_env` -- installs at PROJECT scope,
-                    // and that measurably does not work: on a fresh MCPP_HOME
-                    // the headers land in
-                    // `<proj>/.mcpp/.xlings/subos/_/usr/include` while
-                    // `--sysroot` names `<MCPP_HOME>/registry/subos/default`,
-                    // so `#include <gbm.h>` still failed with the dependency
-                    // installed and declared. Two SubOS views, and the payload
-                    // in the one the compiler does not read.
-                    //
-                    // `make_xlings_env` is the GLOBAL env, so this lands in the
-                    // registry whose SubOS *is* mcpp's sysroot -- the same
-                    // place `[toolchain]` has always installed into. A project
-                    // dependency and a toolchain dependency now agree on where
-                    // they live, which is the only arrangement in which one
-                    // `--sysroot` can see both.
-                    //
-                    // `install_packages` rather than `resolve_xpkg_path`: the
-                    // latter requires `<name>@<version>` and rejects a bare
-                    // `mesa`, while a manifest is entitled to name a package
-                    // without pinning it. install_packages resolves the version
-                    // itself and reports an ambiguous name with its candidates,
-                    // which is the error the author can act on.
-                    // Built with the JSON library rather than by formatting
-                    // the strings in. `deps` is manifest input, so a name
-                    // containing a quote or a backslash would otherwise emit
-                    // malformed JSON and the failure would surface as an
-                    // unrelated xlings parse error naming neither the manifest
-                    // nor the key.
-                    nlohmann::json args;
-                    args["targets"] = declaredDeps;
-                    args["yes"]     = true;
-
-                    mcpp::fetcher::InstallProgressHandler progress;
-                    auto r = mcpp::xlings::call(
-                        mcpp::config::make_xlings_env(**cfg2), "install_packages",
-                        args.dump(), &progress);
-                    // ⚠️⚠️ `if (!r)` IS NOT THE FAILURE TEST, AND TESTING ONLY
-                    // IT MADE THIS PATH REPORT SUCCESS FOR EVERY FAILURE XLINGS
-                    // CAN REPORT.
-                    //
-                    // `xlings::call` returns `expected<CallResult, string>` and
-                    // is in the VALUE state whenever the child ran at all — the
-                    // error channel means "the call did not happen". A
-                    // capability's own status arrives inside `CallResult`,
-                    // parsed off the NDJSON `{"kind":"result","exitCode":N}`
-                    // line, because the xlings process itself exits 0 by design
-                    // once it has spoken the protocol.
-                    //
-                    // Measured before this fix: a manifest declaring a package
-                    // that cannot exist printed `Provisioning [xlings] deps
-                    // (…)`, xlings answered `E_NOT_FOUND` with `exitCode: 1`,
-                    // and mcpp stamped it as done and reported a successful
-                    // build. #531 was written because "the declaration looked
-                    // accepted and did nothing" is the worst shape a config key
-                    // can have; unread, its own fix reproduced that shape and
-                    // the stamp made it permanent.
-                    //
-                    // The correct idiom is not new — the dependency install
-                    // path in this same file reads `r->exitCode` — it was
-                    // simply not applied here.
-                    const bool called   = r.has_value();
-                    const int  childRc  = called ? r->exitCode : -1;
-                    if (!called || childRc != 0) {
-                        // Prefer xlings' own message: for an unresolvable name
-                        // it names the repos it searched and whether the index
-                        // is current, which is the part the author can act on.
-                        std::string why = !called ? r.error()
-                            : (r->error ? r->error->message
-                                        : std::format("xlings exited {}", childRc));
-                        if (auto captured = progress.captured_error();
-                            !captured.empty() && called && !r->error)
-                            why = captured;
-                        // The hint is where "run `xlings update` if the package
-                        // was just published" lives, and for the commonest
-                        // failure — a name that is not in the synced index —
-                        // it is the whole of the actionable content.
-                        if (called && r->error && !r->error->hint.empty())
-                            why += "\n       " + r->error->hint;
-                        // Shaped like the toolchain failure: say what failed and
-                        // hand back a command the user can run themselves. An
-                        // ambiguous bare name ("mesa" matching two repos) lands
-                        // here, and xlings' own message names the candidates.
-                        return std::unexpected(std::format(
-                            "provisioning [xlings] deps failed: {}\n"
-                            "       you can install them manually with:\n"
-                            "         xlings install {}",
-                            why, join_deps(" ")));
-                    }
-                    // Written only on success, for the same reason the check
-                    // above exists: a stamp is a record that the effect
-                    // happened, and recording an effect that did not is worse
-                    // than not recording it — the next build skips the attempt.
-                    std::error_code sec;
-                    std::filesystem::create_directories(stamp.parent_path(), sec);
-                    if (std::ofstream out{stamp}; out) out << want;
-                }
+                if (auto pv = provision_xlings_addresses(
+                        **cfg2, declaredDeps, runtimeSelection.ownerRoot,
+                        "[xlings.workspace] entries");
+                    !pv) return std::unexpected(pv.error());
             }
 
             // On first build, the project index data root may be empty because
@@ -3517,6 +3639,12 @@ prepare_build(bool print_fingerprint,
     }
 
     std::vector<mcpp::modgraph::PackageRoot> packages;
+    // The features each package ends up built with, index-aligned with
+    // `packages`. Recorded at activation because the passes that run after it
+    // — `[feature-xlings]` provisioning among them — otherwise have no way to
+    // ask, and re-deriving it there would be a second copy of the aggregation
+    // rule.
+    std::vector<std::vector<std::string>> activeFeaturesByPackage;
     packages.push_back({*root, *m});
 
     // dep_manifests is kept around purely so the build plan can move it
@@ -5210,6 +5338,7 @@ prepare_build(bool print_fingerprint,
     std::vector<std::string> rootActive = feature_closure(*m, rootReq, true);
     if (auto fe = validateForwards(*m, rootActive, m->package.name); !fe)
         return std::unexpected(fe.error());
+    activeFeaturesByPackage.assign(1, rootActive);
 
     // Seed the worklist from the main manifest. Dev-deps only when the
     // caller wants them; they're never propagated transitively.
@@ -6655,7 +6784,12 @@ prepare_build(bool print_fingerprint,
             // depDefaultFeatures carries the consumer's `default-features = false`
             // (#242): when opted out, the dep's [features].default is not seeded.
             apply(packages[i], req, depDefaultFeatures);
+            if (activeFeaturesByPackage.size() <= i)
+                activeFeaturesByPackage.resize(i + 1);
+            activeFeaturesByPackage[i] =
+                feature_closure(packages[i].manifest, req, depDefaultFeatures);
         }
+        activeFeaturesByPackage.resize(packages.size());
 
         // ── #355: HOST tool provisioning ────────────────────────────────────
         //
@@ -8768,12 +8902,61 @@ prepare_build(bool print_fingerprint,
     // decide, and a dependency supplies the answer when the consumer said
     // nothing. A payload that is declared but not installed contributes
     // nothing, and the lookup continues to PATH.
+    //
+    // ⭐⭐ AND THE SET COLLECTED HERE IS ALSO THE SET PROVISIONED. Looking in a
+    // directory that nothing installed is a lookup that can only fail, and the
+    // engine had exactly that shape: a dependency's declaration was searched
+    // and never acted on. The two definitions are one expression below, so
+    // they cannot drift — the third of the three hazards §12.6 named.
     {
-        std::vector<std::string> xlingsSpecs = runtimeOwnerManifest.xlings.deps;
-        for (auto const& pkg : packages)
-            for (auto const& spec : pkg.manifest.xlings.deps)
-                if (std::ranges::find(xlingsSpecs, spec) == xlingsSpecs.end())
-                    xlingsSpecs.push_back(spec);
+        std::vector<std::string> xlingsSpecs = applicable_xlings_addresses(
+            runtimeOwnerManifest, activeFeaturesByPackage.empty()
+                ? std::vector<std::string>{} : activeFeaturesByPackage[0],
+            toolPurpose, /*isRoot=*/true);
+        // Everything the GRAPH declared, on the tiers this verb needs. `isRoot`
+        // is false for every one of them, which is what makes `when = "dev"`
+        // stop at the package that wrote it.
+        std::vector<std::string> fromGraph;
+        for (std::size_t i = 0; i < packages.size(); ++i) {
+            const auto& man = packages[i].manifest;
+            const auto feats = i < activeFeaturesByPackage.size()
+                ? activeFeaturesByPackage[i] : std::vector<std::string>{};
+            for (auto const& spec : applicable_xlings_addresses(
+                     man, feats, toolPurpose, /*isRoot=*/i == 0)) {
+                if (std::ranges::find(xlingsSpecs, spec) != xlingsSpecs.end())
+                    continue;
+                if (std::ranges::find(fromGraph, spec) == fromGraph.end())
+                    fromGraph.push_back(spec);
+            }
+        }
+        // ⚠️ THE ROOT'S OWN PASS RAN LONG AGO, AND THIS ONE MUST NOT REPEAT IT.
+        // The stamp is keyed by the LIST, so provisioning root+graph together
+        // would key a different list than the early pass wrote and re-run an
+        // xlings round trip on every build. Only what the graph added is
+        // provisioned here, under its own key.
+        if (!fromGraph.empty()) {
+            if (auto cfg = get_cfg()) {
+                if (auto pv = provision_xlings_addresses(
+                        **cfg, fromGraph, *root,
+                        "[xlings.workspace] entries declared by dependencies");
+                    !pv) return std::unexpected(pv.error());
+            }
+        }
+        xlingsSpecs.insert(xlingsSpecs.end(), fromGraph.begin(), fromGraph.end());
+        // What a RUN would additionally have asked for. Recorded rather than
+        // installed: this verb is not running anything, and installing it
+        // anyway is the behaviour the tier exists to remove.
+        if (toolPurpose == ToolPurpose::Build) {
+            for (std::size_t i = 0; i < packages.size() && !ctx.runTierPending; ++i) {
+                const auto& man = packages[i].manifest;
+                const auto feats = i < activeFeaturesByPackage.size()
+                    ? activeFeaturesByPackage[i] : std::vector<std::string>{};
+                for (auto const& spec : applicable_xlings_addresses(
+                         man, feats, ToolPurpose::Run, /*isRoot=*/i == 0))
+                    if (std::ranges::find(xlingsSpecs, spec) == xlingsSpecs.end())
+                        { ctx.runTierPending = true; break; }
+            }
+        }
         if (!xlingsSpecs.empty()) {
             if (auto cfg = get_cfg()) {
                 auto xlEnv = mcpp::config::make_xlings_env(**cfg);

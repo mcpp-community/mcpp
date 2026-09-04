@@ -125,6 +125,20 @@ struct BuildCacheEntry {
     // pre-#544 behaviour and correct for every entry such a cache could hold
     // (a hosted runner was never consulted then, so none was ever used).
     bool runnerDeclared = false;
+    // Did the graph declare a tool on the `when = "run"` tier that this build
+    // did NOT provision?
+    //
+    // ⚠️ A BUILD INSTALLS LESS THAN A RUN NEEDS, WHICH IS THE POINT OF THE
+    // TIER AND ALSO ITS ONE HAZARD. `mcpp build` requests the build tier; a
+    // later `mcpp run` requests more. The fast path exists precisely to skip
+    // the pass that would install the difference, so an entry written by a
+    // build that saw run-tier entries is a miss for it — exactly as an entry
+    // recording a runner is.
+    //
+    // Absent on caches written before the field: false, which is correct for
+    // every entry such a cache could hold, because no manifest could express
+    // the tier.
+    bool runTierPending = false;
 };
 
 std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& projectRoot) {
@@ -235,6 +249,11 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
             e.runnerDeclared = (line.substr(7) == "1");
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        // Optional `runtier=0|1`. Absent ⇒ false; see the field.
+        if (haveNextLine && line.starts_with("runtier=")) {
+            e.runTierPending = (line.substr(8) == "1");
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         entries.push_back(std::move(e));
         if (!haveNextLine || line.empty()) break;
     }
@@ -260,7 +279,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                        const std::string& cacheMode = "",
                        const mcpp::platform::runtime::RuntimeBinding& runtimeBinding = {},
                        std::vector<std::string> depSourceRoots = {},
-                       bool runnerDeclared = false) {
+                       bool runnerDeclared = false,
+                       bool runTierPending = false) {
     auto path = projectRoot / kBuildCacheFile;
     auto entries = read_build_cache(projectRoot);
 
@@ -282,6 +302,7 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     newEntry.depSourceRoots = std::move(depSourceRoots);
     newEntry.depSourceRootsRecorded = true;
     newEntry.runnerDeclared = runnerDeclared;
+    newEntry.runTierPending = runTierPending;
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -323,6 +344,7 @@ void write_build_cache_entries(const std::filesystem::path& path,
         f << "depSourceRoots=" << e.depSourceRoots.size() << '\n';
         for (auto& r : e.depSourceRoots) f << r << '\n';
         f << "runner=" << (e.runnerDeclared ? 1 : 0) << '\n';
+        f << "runtier=" << (e.runTierPending ? 1 : 0) << '\n';
     }
 }
 
@@ -739,7 +761,10 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                           }(),
                           // #544: the run fast path declines an entry whose
                           // target has a runner declared — see the field.
-                          !choose_runner(ctx).tmpl.empty());
+                          !choose_runner(ctx).tmpl.empty(),
+                          // …and one written by a build that left a run-tier
+                          // tool uninstalled, for the same reason.
+                          ctx.runTierPending);
     }
 
     // The one place the --strict policy is settled. Degradations reported by
@@ -1020,6 +1045,10 @@ export int list_runners(const std::string& package_filter,
     ov.package_filter = package_filter;
     ov.cache_mode     = no_cache ? std::string("off") : cache_mode;
     ov.target_triple  = target_triple;
+    // Reporting what `mcpp run` would do means resolving what `mcpp run`
+    // resolves, tool tiers included — otherwise this command would list a
+    // runner whose program it had declined to install.
+    ov.will_run       = true;
     auto ctx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
                              /*extraTargets=*/{}, ov);
     if (!ctx) { mcpp::ui::error(ctx.error()); return 2; }
@@ -1229,6 +1258,10 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     // other door wraps it would make the second `mcpp run` behave differently
     // from the first. The entry records the fact; the fast path declines.
     if (match->runnerDeclared) return std::nullopt;
+    // The same reasoning one axis over: this entry was written by a verb that
+    // installed less than a run needs, so taking it would execute with a
+    // declared tool absent. prepare_build provisions the difference.
+    if (match->runTierPending) return std::nullopt;
 
     auto outputDirStr = match->outputDir;
     auto ninjaProgram = match->ninjaProgram;
@@ -1415,6 +1448,10 @@ export int build_run_target(const std::optional<std::string>& targetName,
     ov.package_filter = package_filter;
     ov.cache_mode     = cache_mode;
     ov.target_triple  = target_triple;
+    // This verb executes what it builds, so the `when = "run"` tool tier is
+    // part of what has to exist. `mcpp build` does not set it, which is the
+    // whole of the difference the tier buys.
+    ov.will_run       = true;
     auto ctx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
                              /*extraTargets=*/{}, ov);
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
@@ -1737,6 +1774,10 @@ export int run_tests(std::span<const std::string> passthrough,
     }
 
     // 3. prepare_build with dev-deps enabled + synthetic targets.
+    // A test binary is executed, so the run tier applies here exactly as it
+    // does to `mcpp run` — `[xlings.workspace]` has no separate `test` tier
+    // because there is no separate need.
+    overrides.will_run = true;
     auto ctx = prepare_build(/*print_fp=*/false,
                              /*includeDevDeps=*/true,
                              std::move(testTargets),

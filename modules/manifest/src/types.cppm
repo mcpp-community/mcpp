@@ -806,6 +806,36 @@ struct RuntimeConfig {
 //
 // See .agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md, and
 // .agents/docs/2026-06-29-manifest-environment-and-platform-design.md (L-1).
+
+// WHEN an entry's package is needed, which is the axis package dependencies
+// have had since the beginning (`[dependencies]` / `[build-dependencies]` /
+// `[dev-dependencies]`) and tools did not.
+//
+// ⭐ `always` IS WHAT AN ENTRY WITHOUT `when` GETS, AND IT IS TODAY'S
+// BEHAVIOUR EXACTLY. Narrowing is an optional action, never a question an
+// author has to answer, so no manifest needs to change.
+//
+// ⚠️ `dev` IS THE ONLY TIER THAT DOES NOT PROPAGATE. It means "when the package
+// that declared this is itself being developed", so a dependency's `dev` entry
+// is never installed for a consumer. The other three reach a consumer, because
+// a board-support package that knows which emulator runs its machine is
+// precisely the thing that should say so once.
+enum class ToolWhen {
+    Always,   // no `when`: provisioned by every verb that builds
+    Build,    // `mcpp build` onwards — the same as Always today, named
+    Run,      // only when the artefact is to be executed (`run`, `test`)
+    Dev       // only for the package that declared it, as the root
+};
+
+inline std::string_view to_string(ToolWhen w) {
+    switch (w) {
+        case ToolWhen::Build: return "build";
+        case ToolWhen::Run:   return "run";
+        case ToolWhen::Dev:   return "dev";
+        default:              return "always";
+    }
+}
+
 struct XlingsConfig {
     // The install addresses `[xlings.workspace]` asks for, resolved for THIS
     // host: `[<ns>:]<target>[@<version>]`. Derived rather than authored — the
@@ -830,14 +860,37 @@ struct XlingsConfig {
     // Measured while implementing this. The emitter needs the addresses and
     // never the keys, so the inner map bought nothing.
     std::map<std::string, std::vector<std::string>> workspaceByPlatform;
+    // address → tier, for every address in `deps`. An entry that wrote no
+    // `when` is absent here and reads as `Always` through `when_of` below.
+    //
+    // ⚠️ BESIDE `deps` RATHER THAN INSIDE IT. `deps` is materialised into
+    // `.xlings.json` verbatim, and that file has no such axis — folding the
+    // tier into the address would put a word xlings does not parse into a
+    // field xlings reads.
+    std::map<std::string, ToolWhen>    depWhen;
+    // `[feature-xlings.<feature>]` — the same table, gated on a feature of the
+    // package that declared it. feature → the install addresses it adds,
+    // resolved for THIS host. A consumer that never activates the feature
+    // never downloads them.
+    std::map<std::string, std::vector<std::string>> featureDeps;
+    // The pins those feature-gated entries carry, on the same axis as
+    // `workspace`: address → `[<ns>:]<version>`. Merged into the materialised
+    // `workspace` object only when the feature is active.
+    std::map<std::string, std::string> featurePins;
     std::string                        subos;      // → .xlings.json "subos"
     // Presence is semantic: an absent key selects McppDefault, while an
     // explicitly written `subos = "default"` selects NamedSubos("default").
     // A string alone cannot distinguish absence from an invalid empty value.
     bool                               subosDeclared = false;
 
+    ToolWhen when_of(std::string_view address) const {
+        auto it = depWhen.find(std::string(address));
+        return it == depWhen.end() ? ToolWhen::Always : it->second;
+    }
+
     bool empty() const {
-        return deps.empty() && workspace.empty() && !subosDeclared;
+        return deps.empty() && workspace.empty() && featureDeps.empty()
+            && !subosDeclared;
     }
 };
 
