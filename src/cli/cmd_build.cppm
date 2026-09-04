@@ -193,44 +193,6 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     return run_build_with_hooks(*ctx, verbose, no_cache, ov.target_triple);
 }
 
-// ⭐ `run`, `flash`, `monitor` and `debug` differ by one argument.
-//
-// Each builds the project, resolves one device slot and performs the argv it
-// finds. Writing four functions would write the flag parsing four times, and
-// the flags are not the interesting part — the slot is.
-int device_action_command(const mcpplibs::cmdline::ParsedArgs& parsed,
-                          std::span<const std::string> passthrough,
-                          mcpp::build::directives::Slot slot) {
-    std::optional<std::string> targetName;
-    if (parsed.positional_count() > 0) targetName = parsed.positional(0);
-    std::string package_filter;
-    if (auto p = parsed.value("package")) package_filter = *p;
-    std::string cache_mode;
-    bool no_cache = parsed.is_flag_set("no-cache");
-    if (auto c = parsed.value("cache")) cache_mode = *c;
-    else if (no_cache)                  cache_mode = "off";
-    std::string target_triple;
-    if (auto tt = parsed.value("target"))        target_triple = *tt;
-    if (auto tt = parsed.value("target-triple")) target_triple = *tt;
-    const bool no_runner = parsed.is_flag_set("no-runner");
-    return mcpp::build::build_run_target(targetName, passthrough, package_filter,
-                                         cache_mode, no_cache, target_triple,
-                                         no_runner, slot);
-}
-
-export int cmd_flash(const mcpplibs::cmdline::ParsedArgs& p,
-                     std::span<const std::string> extra) {
-    return device_action_command(p, extra, mcpp::build::directives::Slot::Flash);
-}
-export int cmd_monitor(const mcpplibs::cmdline::ParsedArgs& p,
-                       std::span<const std::string> extra) {
-    return device_action_command(p, extra, mcpp::build::directives::Slot::Monitor);
-}
-export int cmd_debug(const mcpplibs::cmdline::ParsedArgs& p,
-                     std::span<const std::string> extra) {
-    return device_action_command(p, extra, mcpp::build::directives::Slot::Debug);
-}
-
 export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
             std::span<const std::string> passthrough) {
     // The action lambda has already split argv at the first "--" and
@@ -255,9 +217,16 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     // --no-runner: "this host can execute the artifact" is a fact about the
     // host, and the manifest has no host axis to state it on (#544, D3).
     const bool no_runner = parsed.is_flag_set("no-runner");
+    // The named way to reach the artefact. Empty = the default runner, which is
+    // what `mcpp run` has always meant.
+    std::string runner_name;
+    if (auto rn = parsed.value("runner")) runner_name = *rn;
+    if (parsed.is_flag_set("list-runners"))
+        return mcpp::build::list_runners(package_filter, cache_mode, no_cache,
+                                         target_triple);
     return mcpp::build::build_run_target(targetName, passthrough, package_filter,
                                          cache_mode, no_cache, target_triple,
-                                         no_runner);
+                                         no_runner, runner_name);
 }
 
 export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,

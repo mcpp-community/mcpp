@@ -417,60 +417,26 @@ int run(int argc, char** argv) {
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .option(cl::Option("no-runner")
                 .help("Execute the artifact directly, ignoring any [target.<triple>].runner (a host that runs it natively)"))
+            // ⭐⭐ THE WAY TO REACH THE ARTEFACT, BY NAME.
+            //
+            // `mcpp run` is universal — every domain has one. HOW the artefact
+            // is reached is not: an MCU is flashed, a service is deployed, a
+            // job is submitted. That variation belongs in an OPTION, because a
+            // top-level `mcpp flash` is a dead command in every project that is
+            // not firmware, and a top-level command surface that varies per
+            // project is worse still.
+            //
+            // The engine knows no names. A package supplies them with
+            // `mcpp::runner("<name>", …)`; a project overrides them under
+            // `[target.<triple>.runners]`; `--list-runners` reports what THIS
+            // project has, which beats a static list of what the engine
+            // theoretically supports.
+            .option(cl::Option("runner").takes_value().value_name("NAME")
+                .help("Reach the artifact by a named runner a package supplied (flash, deploy, serve, …)"))
+            .option(cl::Option("list-runners")
+                .help("List the named runners this project supplies, and exit"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_run(p, std::span<const std::string>(passthrough));
-            })))
-        // ⭐ `run`'s three siblings, declared from the same shape. Each builds
-        // the project, resolves one device slot and performs the argv the board
-        // supplied. `monitor` and `debug` do not terminate on their own — the
-        // operator ends them — which the engine reads from the slot rather than
-        // from the tokens (mcpp.build.directives::semantics_of).
-        .subcommand(cl::App("flash")
-            .description("Build + write the artifact to a device (board supplies the argv)")
-            .arg(cl::Arg("bin").help("Binary name (optional)"))
-            .option(cl::Option("target").takes_value().value_name("TRIPLE")
-                .help("Cross target triple (same axis as `mcpp build --target`)"))
-            .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
-                .help("Only the named workspace member"))
-            .option(cl::Option("cache").takes_value().value_name("MODE")
-                .help("Global dependency cache: global (default) | local | off"))
-            .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
-                return cmd_flash(p, std::span<const std::string>(passthrough));
-            })))
-        .subcommand(cl::App("monitor")
-            .description("Attach to the device's console (runs until you end it)")
-            .arg(cl::Arg("bin").help("Binary name (optional)"))
-            .option(cl::Option("target").takes_value().value_name("TRIPLE")
-                .help("Cross target triple (same axis as `mcpp build --target`)"))
-            .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
-                .help("Only the named workspace member"))
-            .option(cl::Option("cache").takes_value().value_name("MODE")
-                .help("Global dependency cache: global (default) | local | off"))
-            .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
-                return cmd_monitor(p, std::span<const std::string>(passthrough));
-            })))
-        .subcommand(cl::App("debug")
-            .description("Start the device's debug server (runs until you end it; attach your own client)")
-            .arg(cl::Arg("bin").help("Binary name (optional)"))
-            .option(cl::Option("target").takes_value().value_name("TRIPLE")
-                .help("Cross target triple (same axis as `mcpp build --target`)"))
-            .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
-                .help("Only the named workspace member"))
-            .option(cl::Option("cache").takes_value().value_name("MODE")
-                .help("Global dependency cache: global (default) | local | off"))
-            .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
-                return cmd_debug(p, std::span<const std::string>(passthrough));
-            })))
-        // ⭐ The dependency graph in the shape a procurement or security review
-        // asks for. Reads mcpp.lock rather than resolving: an SBOM that
-        // described a different graph from the one that was built would be
-        // worse than none.
-        .subcommand(cl::App("sbom")
-            .description("Write a CycloneDX bill of materials for the recorded resolution")
-            .option(cl::Option("output").short_name('o').takes_value().value_name("FILE")
-                .help("Write to FILE instead of stdout"))
-            .action(wrap_rc([](const cl::ParsedArgs& p) {
-                return mcpp::cli::cmd_sbom(p);
             })))
         .subcommand(cl::App("test")
             .description("Build + run all tests/**/*.cpp (after `--`, args go to each test binary)")
@@ -596,7 +562,7 @@ int run(int argc, char** argv) {
 
         // ─── emit (one nested subcommand: xpkg) ────────────────────────
         .subcommand(cl::App("emit")
-            .description("Generate package descriptor (xpkg)")
+            .description("Generate a document describing this project (xpkg, sbom)")
             .subcommand(cl::App("xpkg")
                 .description("Generate xpkg Lua entry")
                 .option(cl::Option("version").short_name('V').takes_value().value_name("VER")
@@ -607,8 +573,17 @@ int run(int argc, char** argv) {
                     .help("Package namespace for the emitted descriptor "
                           "(overrides [package] namespace). Emits both "
                           "`namespace` and the fully-qualified `name`")))
+            // ⭐ `sbom` belongs HERE rather than at the top level: `emit`
+            // already means "generate a document describing this project" and
+            // already carries `-o`. A separate `mcpp sbom` would be a second
+            // spelling of an abstraction that exists.
+            .subcommand(cl::App("sbom")
+                .description("Write a CycloneDX bill of materials for the recorded resolution")
+                .option(cl::Option("output").short_name('o').takes_value().value_name("FILE")
+                    .help("Write to file instead of stdout")))
             .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
-                return dispatch_sub("emit", p, {{"xpkg", cmd_emit_xpkg}});
+                return dispatch_sub("emit", p, {{"xpkg", cmd_emit_xpkg},
+                                                {"sbom", mcpp::cli::cmd_sbom}});
             })))
 
         // ─── xpkg (descriptor tooling: parse) ──────────────────────────
@@ -1006,8 +981,7 @@ int run(int argc, char** argv) {
             // command" into "add a command AND remember to bump a number",
             // and the compiler only catches the direction that overflows.
             static constexpr std::array known = std::to_array<std::string_view>({
-                "new", "build", "run", "flash", "monitor", "debug", "sbom",
-                "test", "clean", "add", "remove",
+                "new", "build", "run", "test", "clean", "add", "remove",
                 "update", "search", "publish", "pack", "emit", "xpkg",
                 "toolchain", "cache", "index", "self", "explain",
                 "version", "dyndep", "why", "resolve", "stage", "bmi-equal", "coff-def",

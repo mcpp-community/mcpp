@@ -56,10 +56,10 @@ error: --locked was given and this resolution differs from mcpp.lock:
 
 ## 物料清单
 
-`mcpp sbom` 写出一份描述**已记录**解析的 CycloneDX 1.5 文档:
+`mcpp emit sbom` 写出一份描述**已记录**解析的 CycloneDX 1.5 文档:
 
 ```bash
-mcpp sbom -o sbom.json
+mcpp emit sbom -o sbom.json
 ```
 
 它读 `mcpp.lock` 而不是重新解析,因为一份描述了与所构建者不同的图的文档,比没有

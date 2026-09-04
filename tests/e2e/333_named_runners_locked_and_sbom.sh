@@ -27,36 +27,36 @@ cat > mcpp.toml <<'TOML'
 name    = "p"
 version = "0.1.0"
 
-[target.x86_64-linux-gnu]
+[target.x86_64-linux-gnu.runners]
 flash   = ["/bin/sh", "-c", "echo FLASHED $0"]
 monitor = ["/bin/sh", "-c", "echo MONITORED $0"]
 TOML
 
 "$MCPP" build >/dev/null 2>&1 || { echo "FAIL: build"; exit 1; }
 
-out=$("$MCPP" flash 2>&1) || { echo "FAIL: mcpp flash exited non-zero"; echo "$out"; exit 1; }
+out=$("$MCPP" run --runner flash 2>&1) || { echo "FAIL: run --runner flash exited non-zero"; echo "$out"; exit 1; }
 case "$out" in *FLASHED*) ;; *) echo "FAIL: flash did not perform the declared argv"; echo "$out"; exit 1 ;; esac
-echo "  ok  mcpp flash performs [target.*].flash"
+echo "  ok  run --runner flash performs [target.*.runners].flash"
 
-out=$("$MCPP" monitor 2>&1) || { echo "FAIL: mcpp monitor exited non-zero"; exit 1; }
+out=$("$MCPP" run --runner monitor 2>&1) || { echo "FAIL: run --runner monitor exited non-zero"; exit 1; }
 case "$out" in *MONITORED*) ;; *) echo "FAIL: monitor did not perform its own slot"; exit 1 ;; esac
-echo "  ok  mcpp monitor performs its own slot, not flash's"
+echo "  ok  run --runner monitor performs its own entry, not flash's"
 
 # ⚠️ THE SLOT THAT IS NOT DECLARED MUST BE REFUSED BY NAME. An engine that fell
 # back to executing the artefact would "succeed" at flashing by running the
 # program on the build host, which is the failure the slot exists to prevent.
-if out=$("$MCPP" debug 2>&1); then
-    echo "FAIL: mcpp debug succeeded with no debug template declared"; exit 1
+if out=$("$MCPP" run --runner debug 2>&1); then
+    echo "FAIL: an undeclared runner name succeeded"; exit 1
 fi
 case "$out" in
-    *"no debug is configured"*) ;;
+    *"no runner named"*) ;;
     *) echo "FAIL: the refusal does not name the slot"; echo "$out"; exit 1 ;;
 esac
 case "$out" in
-    *"debug = ["*) ;;
-    *) echo "FAIL: the refusal does not show a pasteable key"; exit 1 ;;
+    *"Available:"*) ;;
+    *) echo "FAIL: the refusal does not list what this project has"; exit 1 ;;
 esac
-echo "  ok  an undeclared slot is refused by name, with the key to paste"
+echo "  ok  an undeclared name is refused, listing what this project does have"
 
 # ── D: --locked asserts the recorded resolution ────────────────────────────
 mkdir -p "$work/q/src"
@@ -102,7 +102,7 @@ echo "  ok  --locked names the package that moved and both versions"
 mv mcpp.lock.bak mcpp.lock
 
 # ── E: the bill of materials describes the RECORDED resolution ─────────────
-"$MCPP" sbom -o sbom.json >/dev/null 2>&1 || { echo "FAIL: mcpp sbom"; exit 1; }
+"$MCPP" emit sbom -o sbom.json >/dev/null 2>&1 || { echo "FAIL: mcpp emit sbom"; exit 1; }
 python3 - <<'PY' || exit 1
 import json, sys
 d = json.load(open("sbom.json"))
@@ -125,7 +125,7 @@ PY
 # ⭐ AND IT REPORTS WHAT WAS RECORDED, NOT WHAT WOULD RESOLVE NOW. This is the
 # one property an SBOM must have, so it is asserted rather than assumed.
 sed -i.bak 's/version = "0.0.1"/version = "7.7.7"/' mcpp.lock
-"$MCPP" sbom -o sbom2.json >/dev/null 2>&1 || { echo "FAIL: mcpp sbom (2)"; exit 1; }
+"$MCPP" emit sbom -o sbom2.json >/dev/null 2>&1 || { echo "FAIL: mcpp emit sbom (2)"; exit 1; }
 python3 - <<'PY' || exit 1
 import json
 d = json.load(open("sbom2.json"))
@@ -163,11 +163,14 @@ import mcpp;
 import std;
 int main() {
     if (mcpp::has_feature("hardware")) {
-        for (auto a : {"/bin/sh", "-c", "echo PROBE $0"}) mcpp::flash(a);
-        for (auto a : {"/bin/sh", "-c", "echo GDBSERVER $0"}) mcpp::debug(a);
-        mcpp::runner_exclusive();
+        // The DEFAULT runner, not a named one. On real hardware "run" means
+        // flash + reset + attach + report — one command — which is why
+        // `mcpp run` needs no extra argument here.
+        for (auto a : {"/bin/sh", "-c", "echo PROBE-RUN $0"}) mcpp::runner(a);
+        for (auto a : {"/bin/sh", "-c", "echo GDBSERVER $0"}) mcpp::runner("debug", a);
+        mcpp::run_exclusive();
     } else {
-        for (auto a : {"/bin/sh", "-c", "echo EMULATOR $0"}) mcpp::flash(a);
+        for (auto a : {"/bin/sh", "-c", "echo EMULATOR-RUN $0"}) mcpp::runner(a);
     }
     return 0;
 }
@@ -184,30 +187,34 @@ consumer_manifest() {
 
 consumer_manifest ''
 rm -rf target
-out=$("$MCPP" flash 2>&1) || { echo "FAIL: flash under the default feature"; echo "$out"; exit 1; }
-case "$out" in *EMULATOR*) ;; *) echo "FAIL: default feature did not select the emulator argv"; echo "$out"; exit 1 ;; esac
-echo "  ok  a dependency's flash slot reaches the consumer"
+out=$("$MCPP" run 2>&1) || { echo "FAIL: run under the default feature"; echo "$out"; exit 1; }
+case "$out" in *EMULATOR-RUN*) ;; *) echo "FAIL: default feature did not select the emulator argv"; echo "$out"; exit 1 ;; esac
+echo "  ok  plain run uses the dependency's default runner"
 
 consumer_manifest ', features = ["hardware"]'
 rm -rf target
-out=$("$MCPP" flash 2>&1) || { echo "FAIL: flash under features=[hardware]"; echo "$out"; exit 1; }
+# ⭐⭐ THE 80% CASE: THE COMMAND DOES NOT CHANGE. On hardware "run" means
+# flash-and-go, so the feature redefines the DEFAULT runner rather than adding
+# a named one. A design requiring `--runner flash` here would have made the
+# most common action the one needing an extra argument.
+out=$("$MCPP" run 2>&1) || { echo "FAIL: run under features=[hardware]"; echo "$out"; exit 1; }
 case "$out" in
-    *PROBE*) ;;
-    *EMULATOR*) echo "FAIL: the feature did not change the slot"; exit 1 ;;
-    *) echo "FAIL: unexpected flash output"; echo "$out"; exit 1 ;;
+    *PROBE-RUN*) ;;
+    *EMULATOR-RUN*) echo "FAIL: the feature did not move the default runner"; exit 1 ;;
+    *) echo "FAIL: unexpected run output"; echo "$out"; exit 1 ;;
 esac
-echo "  ok  the SAME package serves hardware when the consumer asks for it"
+echo "  ok  the SAME command serves hardware — the feature moved the default"
 
 # The hardware arm supplies a debug server; the emulator arm does not. That
 # asymmetry is the point: a slot is absent when the environment has no such
 # thing, and absence is reported rather than faked.
-out=$("$MCPP" debug 2>&1) || { echo "FAIL: debug under features=[hardware]"; echo "$out"; exit 1; }
+out=$("$MCPP" run --runner debug 2>&1) || { echo "FAIL: debug under features=[hardware]"; echo "$out"; exit 1; }
 case "$out" in *GDBSERVER*) ;; *) echo "FAIL: debug slot did not arrive"; echo "$out"; exit 1 ;; esac
 consumer_manifest ''
 rm -rf target
-if out=$("$MCPP" debug 2>&1); then
-    echo "FAIL: debug succeeded under the emulator feature, which supplies none"; exit 1
+if out=$("$MCPP" run --runner debug 2>&1); then
+    echo "FAIL: --runner debug succeeded under emulator, which supplies none"; exit 1
 fi
-echo "  ok  a slot the chosen environment does not supply is refused, not faked"
+echo "  ok  a runner the chosen environment lacks is refused, not faked"
 
-echo "PASS: device slots, --locked and sbom"
+echo "PASS: named runners, --locked and emit sbom"

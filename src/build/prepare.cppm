@@ -4552,11 +4552,10 @@ prepare_build(bool print_fingerprint,
     // Which dependency supplied the runner, for the exactly-one-provider
     // error below. A name rather than a bool: the message has to name both.
     std::string runnerProvider;
-    // ⚠️ ONE PROVIDER PER DEVICE SLOT, TRACKED PER SLOT. `runner` has had this
-    // rule since #544; `flash`, `monitor` and `debug` inherit it, and each
-    // needs its OWN provider name — a board may legitimately supply a runner
-    // while a different package supplies the debug server.
-    std::string flashProvider, monitorProvider, debuggerProvider;
+    // ⚠️ ONE PROVIDER PER RUNNER NAME. `runner` has had this rule since #544;
+    // a NAMED runner inherits it per name, because a board may legitimately
+    // supply `flash` while a different package supplies `monitor`.
+    std::map<std::string, std::string> namedRunnerProvider;
 
     auto fillXpkgDirs = [&](mcpp::build::BuildProgramEnv& e,
                             const mcpp::manifest::Manifest& owner) {
@@ -7230,10 +7229,8 @@ prepare_build(bool print_fingerprint,
             const auto ldN = bcDep.ldflags.size();
             const auto actN = bcDep.actions.size();
             const auto runnerN = bcDep.runner.size();
-            const auto flashN = bcDep.flash.size();
-            const auto monitorN = bcDep.monitor.size();
-            const auto debuggerN = bcDep.debugger.size();
-            const bool exclusiveBefore = bcDep.runnerExclusive;
+            auto namedBefore = bcDep.namedRunners;   // by value: the delta below
+            const bool exclusiveBefore = bcDep.runExclusive;
             if (auto r = mcpp::build::run_build_program(
                     pkg.manifest, pkg.root, host->first, host->second,
                     pkg.manifest.cppStandard, bpEnv);
@@ -7262,58 +7259,58 @@ prepare_build(bool print_fingerprint,
             // with nothing to say which package contributed which token. So
             // the second provider is a hard error that names BOTH, because
             // naming only the loser tells the reader half of what they need.
-            // ⭐⭐ FOUR SLOTS, ONE RULE, APPLIED BY A LOOP.
+            // ⭐⭐ THE DEFAULT RUNNER AND EVERY NAMED ONE, BY ONE RULE.
             //
-            // This block existed for `runner` alone and stated the rule that
-            // matters: link flags from two dependencies concatenate and that is
-            // correct, but two runners cannot — appending produces an argv that
-            // is neither one's. Its three siblings have exactly the same
-            // property, so they are handled here rather than copied below it.
+            // Link flags from two dependencies concatenate and that is correct;
+            // two runners for the same name cannot — appending produces an argv
+            // that is neither one's and fails at exec with nothing to say which
+            // package contributed which token.
             //
             // ⚠️ MISSING THIS SITE IS HOW THE FEATURE FAILED FIRST. `apply()`
-            // in the directives module merges a package's own directives into
-            // its own config; THIS is where a dependency's RunGlobal entries
-            // reach the ROOT. Wiring only the first left `mcpp flash` reporting
-            // "no flash is configured" while `mcpp run` found the runner the
-            // same package supplied in the same build program — measured.
-            struct SlotForward {
-                std::string_view                              name;
-                std::vector<std::string> mcpp::manifest::BuildConfig::* member;
-                std::size_t                                   before;
-                std::string*                                  provider;
-            };
-            const SlotForward forwards[] = {
-                { "runner",  &mcpp::manifest::BuildConfig::runner,   runnerN,   &runnerProvider },
-                { "flash",   &mcpp::manifest::BuildConfig::flash,    flashN,    &flashProvider },
-                { "monitor", &mcpp::manifest::BuildConfig::monitor,  monitorN,  &monitorProvider },
-                { "debug",   &mcpp::manifest::BuildConfig::debugger, debuggerN, &debuggerProvider },
-            };
-            for (auto const& f : forwards) {
-                auto& depVec = bcDep.*(f.member);
-                if (depVec.size() <= f.before) continue;
+            // merges a package's directives into its OWN config; this is where a
+            // dependency's RunGlobal entries reach the ROOT. Wiring only the
+            // first left `mcpp run --runner flash` reporting "no such runner"
+            // while `mcpp run` found the runner the same build program emitted
+            // three lines away — measured.
+            if (bcDep.runner.size() > runnerN) {
                 std::vector<std::string> supplied(
-                    depVec.begin() + static_cast<std::ptrdiff_t>(f.before),
-                    depVec.end());
-                auto& rootVec = m->buildConfig.*(f.member);
-                if (!rootVec.empty() && !f.provider->empty()) {
+                    bcDep.runner.begin() + static_cast<std::ptrdiff_t>(runnerN),
+                    bcDep.runner.end());
+                if (!m->buildConfig.runner.empty() && !runnerProvider.empty()) {
                     return std::unexpected(std::format(
-                        "two dependencies both supply a {} for this target: "
+                        "two dependencies both supply a runner for this target: "
                         "'{}' and '{}'.\n"
-                        "       A {} is how the artifact is reached — there can "
-                        "only be one.\n"
+                        "       A runner is how the artifact is reached — there "
+                        "can only be one.\n"
                         "       Drop one of them, or override both with an "
-                        "explicit [target.<triple>].{}.",
-                        f.name, *f.provider, pkg.manifest.package.name,
-                        f.name, f.name));
+                        "explicit [target.<triple>].runner.",
+                        runnerProvider, pkg.manifest.package.name));
                 }
-                rootVec = std::move(supplied);
-                *f.provider = pkg.manifest.package.name;
+                m->buildConfig.runner = std::move(supplied);
+                runnerProvider = pkg.manifest.package.name;
             }
-            // ⚠️ A CLAIM THAT ONLY EVER TIGHTENS. If any package in the graph
-            // knows the device is a mutex, it is one; a later package that says
-            // nothing must not relax it.
-            if (bcDep.runnerExclusive && !exclusiveBefore)
-                m->buildConfig.runnerExclusive = true;
+            for (auto const& [name, nr] : bcDep.namedRunners) {
+                auto before = namedBefore.find(name);
+                const bool grew = (before == namedBefore.end())
+                               || nr.argv.size() > before->second.argv.size()
+                               || (nr.longLived && !before->second.longLived);
+                if (!grew) continue;
+                auto& slot = m->buildConfig.namedRunners[name];
+                auto& who  = namedRunnerProvider[name];
+                if (!slot.argv.empty() && !who.empty()) {
+                    return std::unexpected(std::format(
+                        "two dependencies both supply a runner named '{}' for "
+                        "this target: '{}' and '{}'.\n"
+                        "       Drop one of them, or override both with an "
+                        "explicit [target.<triple>.runners].{}.",
+                        name, who, pkg.manifest.package.name, name));
+                }
+                slot = nr;
+                who  = pkg.manifest.package.name;
+            }
+            // ⚠️ A CLAIM THAT ONLY EVER TIGHTENS.
+            if (bcDep.runExclusive && !exclusiveBefore)
+                m->buildConfig.runExclusive = true;
             m->buildConfig.ldflags.insert(m->buildConfig.ldflags.end(),
                 bcDep.ldflags.begin() + ldN, bcDep.ldflags.end());
         }

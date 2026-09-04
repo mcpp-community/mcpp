@@ -64,11 +64,11 @@ resolver.
 
 ## Bill of materials
 
-`mcpp sbom` writes a CycloneDX 1.5 document describing the **recorded**
+`mcpp emit sbom` writes a CycloneDX 1.5 document describing the **recorded**
 resolution:
 
 ```bash
-mcpp sbom -o sbom.json
+mcpp emit sbom -o sbom.json
 ```
 
 It reads `mcpp.lock` rather than resolving again, because a document describing
