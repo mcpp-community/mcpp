@@ -357,3 +357,97 @@ discovery.
 Everything except item 4 can start without further input. Item 4 is a
 compatibility decision about a published contract, and the recommendation in
 §4.2 is a recommendation rather than a conclusion.
+
+---
+
+## 7. Outcomes (2026-09-04, same day)
+
+All four items were implemented, one pull request per repository. What follows
+records what was measured, including two places where a first attempt passed
+without testing anything.
+
+| gap | delivered | where |
+|---|---|---|
+| 1 | openarch 0.9.0: ARMv7-A backend, `arch_pte_entry_bytes()` | openarch #9 |
+| 2 | `when = "run"` on both boards, with the pair asserted | riscv-virt-rt #5, aarch64-virt-rt #3 |
+| 3 | `mcpp run` reports the program's status | mcpp #555 |
+| 4 | mcpp kills its child; `MCPP_NINJA_DEBUG`; ninja pinned by checksum | mcpp #555, xim-pkgindex #756 |
+
+### 7.1 Gap 1: the answer is "no, and here is the missing query"
+
+The width question is settled. ARMv7-A's short-descriptor entry is 32 bits and
+FITS in the `arch_u64` the interface carries, so the carrier did not change —
+but nothing could ask how wide the storage is, and a kernel sizing a table from
+`sizeof(arch::pte)` builds one twice as large as the hardware walks. Nothing
+diagnoses that: the table is well formed, the entries are correct, and the
+machine reads the gaps.
+
+`arch_pte_entry_bytes()` is the addition, implemented by all five backends. The
+header's own claim — "a page-table entry is 64 bits on every machine here" — was
+corrected rather than left standing.
+
+Asserted twice, because one place cannot cover both halves: `tests/pte_encoding`
+compares the encoder against a descriptor written out from the architecture
+manual, and a CI job boots a program on qemu `-M virt -cpu cortex-a15` that
+reads the width back THROUGH THE ABI and exits 0 only if it is 4. Measured:
+`armv7a pte width 4, entry fits 32 bits`, exit 0.
+
+`openarch:preemption` is withheld on this machine. The resumption address lives
+on the SVC stack rather than in a register, so a trap-time switch is well
+defined only if the resumed context was suspended the same way — a real design,
+and not one this backend has measured. Withholding it refuses a consumer by
+name at resolution, which is the mechanism Cortex-M already uses for
+`openarch:address-space`.
+
+### 7.2 Gap 2: the criterion needed an isolated home
+
+The tier itself was two lines. The assertion was not: on a machine where the
+emulator is already installed, `MCPP_NO_AUTO_INSTALL` has nothing to report, so
+BOTH halves read empty and the step passes without testing anything. Measured in
+exactly that state before the step was moved to an isolated `MCPP_HOME`.
+
+With one, the pair is decisive and needs no download: a build names the emulator
+zero times, and a run refuses with `declared but not provisioned` naming
+`xim:qemu-riscv@9.2.4-1`. CI reports `ok build asks for no emulator, run asks
+for xim:qemu-riscv` on both boards.
+
+### 7.3 Gap 3: three bands, and 2 stays where it is
+
+`mcpp run` passes the child's status through. Spawn refusals move to 125-127,
+the band `env`, `timeout` and `nice` already use. mcpp's own refusals BEFORE a
+spawn — no binary target, no runner declared, a runner not on PATH — keep exit
+2, which is what every other mcpp command uses, so no existing script that
+tests for it changes meaning. Only the case where the program never ran moved.
+
+`mcpp test` is unchanged at 0/1: it aggregates many programs and has no single
+status to pass through.
+
+### 7.4 Gap 4: the fix, and what the test had to be to catch it
+
+Fixing `run_exec` alone left the orphan in place, because a full build spawns
+ninja through `capture_exec`. The A/B caught it; reading the code had not.
+
+THE TEST SIGNALS mcpp's PID ALONE. `timeout` and Ctrl-C both signal the process
+group and reached ninja even before the fix, so a test built on `timeout` passes
+either way — the first version of this test did exactly that. The second version
+used 200 parallel translation units and passed against a defective build because
+a 32-core host finished the batch inside the ten-second window. `--jobs 1` makes
+the window deterministic by construction. The final test FAILS against the
+released 2026.9.4.2, naming the orphan and its `(deleted)` working directory.
+
+The spin's cause remains unestablished and §1.3 stands. `MCPP_NINJA_DEBUG`
+appends `-d explain` to both ninja launches so the next occurrence can be read
+rather than guessed at.
+
+### 7.5 A finding the ninja work turned up
+
+`xim:ninja@1.12.1` now carries a checksum. While computing it, a stronger fact
+than §1.5's appeared: this machine holds ninja binaries at THREE distinct sizes
+under that one version, and the twelve copies at 290152 bytes have twelve
+DIFFERENT SHA-256 values.
+
+Same size and different content is the signature of in-place patching, which
+xlings does to installed binaries. So an installed ninja cannot be compared
+against a published checksum at all — only the downloaded archive can, which is
+what the checksum added here covers. A clean-home install was verified to fetch,
+verify and produce the 2202320-byte static binary the descriptor describes.
