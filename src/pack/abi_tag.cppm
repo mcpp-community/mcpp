@@ -52,11 +52,34 @@ export namespace mcpp::pack {
 // A parsed compatibility tag. An EMPTY dimension means "not constrained",
 // never "unknown": the producer decides what to name, and a consumer must not
 // invent a constraint the artifact did not declare.
+// WHAT DEVICE CODE AN ARTIFACT CARRIES, for one backend.
+//
+// A PARALLEL FIELD RATHER THAN A TAG SEGMENT, on purpose. The tag is `-`
+// joined and parsed from the end, and an architecture list is a SET: joining
+// it in would put separators inside a segment of a dash-delimited string whose
+// triple already contains a variable number of dashes. A file name is the
+// wrong place to carry a set. `tag_check` still compares it, so there is one
+// comparator and two storage locations rather than a second comparator.
+struct AccelSet {
+    std::string backend;                // "cuda" | "rocm" | … — never empty
+    std::string version;                // toolkit version; empty = unconstrained
+    std::vector<std::string> archs;     // real device code actually emitted
+    // The virtual architecture whose portable form is embedded, if any. NVIDIA
+    // embeds PTX so later hardware can JIT; AMD has no equivalent and obtains
+    // the same reach through family targets on the `archs` side instead. An
+    // empty floor must therefore widen nothing.
+    std::string ptxFloor;
+};
+
 struct AbiTag {
     std::string triple;     // canonical, e.g. "x86_64-linux-gnu" (never empty)
     std::string compiler;   // "gcc16"       — empty on a C-surface tag
     std::string stdlib;     // "libstdcxx16" — empty on a C-surface tag
     std::string standard;   // "c++23"       — empty on a C-surface tag
+    // Empty means the artifact carries no device code, which is why a CPU-only
+    // library is usable by every build: the same don't-care rule as the four
+    // above, reaching one dimension further.
+    std::vector<AccelSet> accel;
 
     bool c_surface() const { return compiler.empty() && stdlib.empty() && standard.empty(); }
 
@@ -120,8 +143,24 @@ struct TagMismatch {
 // is compared as a floor, not for equality.
 std::vector<TagMismatch> tag_check(const AbiTag& published, const AbiTag& current);
 
+// One backend rendered for a diagnostic: `cuda12.8+{sm_80,sm_90} ptx>=80`.
+std::string accel_str(std::span<const AccelSet> sets);
+
 // The `c++NN` segment as its numeric level, or 0 when unparseable.
 int standard_level(std::string_view standardSegment);
+
+// The numeric level of a device architecture, or 0 when it is not of the
+// numbered `sm_`/`compute_` shape. AMD's `gfx942` answers 0 on purpose: it
+// carries no ordering that means anything here, so it compares by equality.
+int accel_arch_level(std::string_view arch);
+
+// Does the device code `published` names cover `wantedArch`?
+bool accel_arch_covers(std::string_view published, std::string_view wantedArch);
+
+// Does `published` satisfy every backend and architecture `wanted` asks for?
+// An empty `published` is unconstrained; an empty `wanted` is satisfied.
+bool accel_accepts(std::span<const AccelSet> published,
+                   std::span<const AccelSet> wanted);
 
 } // namespace mcpp::pack
 
@@ -165,6 +204,97 @@ AbiTag cxx_surface_tag(const mcpp::toolchain::Toolchain& tc,
     t.stdlib   = stdlib_token(tc.stdlibId) + major_of(tc.stdlibVersion);
     t.standard = std::format("c++{}", cppLevel);
     return t;
+}
+
+std::string accel_str(std::span<const AccelSet> sets) {
+    if (sets.empty()) return "(none)";
+    std::string out;
+    for (auto const& a : sets) {
+        if (!out.empty()) out += ", ";
+        out += a.backend;
+        out += a.version;
+        out += "+{";
+        for (std::size_t i = 0; i < a.archs.size(); ++i) {
+            if (i) out += ',';
+            out += a.archs[i];
+        }
+        out += '}';
+        if (!a.ptxFloor.empty()) { out += " ptx>="; out += a.ptxFloor; }
+    }
+    return out;
+}
+
+int accel_arch_level(std::string_view arch) {
+    auto digits = arch;
+    if      (digits.starts_with("sm_"))      digits.remove_prefix(3);
+    else if (digits.starts_with("compute_")) digits.remove_prefix(8);
+    int level = 0, n = 0;
+    for (char c : digits) {
+        if (!std::isdigit(static_cast<unsigned char>(c))) break;
+        level = level * 10 + (c - '0');
+        ++n;
+    }
+    return n == 0 ? 0 : level;
+}
+
+namespace {
+
+// The trailing letter of a qualified target, or '\0'.
+//
+//   sm_90    baseline      that compute capability
+//   sm_90f   family        same major, equal-or-higher minor
+//   sm_90a   architecture  that compute capability and no other
+char accel_arch_suffix(std::string_view arch) {
+    if (arch.empty()) return '\0';
+    char last = arch.back();
+    return (last == 'f' || last == 'a') ? last : '\0';
+}
+
+} // namespace
+
+bool accel_arch_covers(std::string_view published, std::string_view wantedArch) {
+    if (published == wantedArch) return true;
+    int have = accel_arch_level(published);
+    int want = accel_arch_level(wantedArch);
+    // Not the numbered shape on either side: equality was the only question
+    // available, and it has been answered.
+    if (have == 0 || want == 0) return false;
+    if (accel_arch_suffix(published) == 'f')
+        return have / 10 == want / 10 && want % 10 >= have % 10;
+    // Baseline and architecture-specific targets cover exactly their own
+    // compute capability. Forward reach for those comes from embedded portable
+    // code, which is ptxFloor's question rather than this one.
+    return have == want;
+}
+
+bool accel_accepts(std::span<const AccelSet> published,
+                   std::span<const AccelSet> wanted)
+{
+    if (published.empty()) return true;      // carries no device code
+    for (auto const& want : wanted) {
+        const AccelSet* have = nullptr;
+        for (auto const& p : published)
+            if (p.backend == want.backend) { have = &p; break; }
+        if (!have) return false;
+        // Minor version compatibility is real inside one major release family
+        // and absent across families, so the major is compared and the minor
+        // is not.
+        if (!have->version.empty() && !want.version.empty()
+            && major_of(have->version) != major_of(want.version))
+            return false;
+        int floor = have->ptxFloor.empty() ? 0 : accel_arch_level(have->ptxFloor);
+        for (auto const& a : want.archs) {
+            bool ok = false;
+            for (auto const& p : have->archs)
+                if (accel_arch_covers(p, a)) { ok = true; break; }
+            if (!ok && floor != 0) {
+                int lvl = accel_arch_level(a);
+                ok = lvl != 0 && lvl >= floor;
+            }
+            if (!ok) return false;
+        }
+    }
+    return true;
 }
 
 int standard_level(std::string_view seg) {
@@ -225,6 +355,16 @@ std::vector<TagMismatch> tag_check(const AbiTag& published, const AbiTag& curren
         if (need != 0 && got != 0 && got < need)
             out.push_back({ "standard", published.standard, current.standard });
     }
+
+    // The device dimension. Reported as ONE mismatch rather than one per
+    // backend: a consumer cannot act on "cuda disagrees and rocm disagrees"
+    // any differently than on "this artifact's device code does not cover the
+    // target", and the closest-refusal selection in prebuilt.cppm ranks
+    // candidates by how many dimensions disagree.
+    if (!accel_accepts(published.accel, current.accel))
+        out.push_back({ "accel",
+                        accel_str(published.accel),
+                        accel_str(current.accel) });
     return out;
 }
 
