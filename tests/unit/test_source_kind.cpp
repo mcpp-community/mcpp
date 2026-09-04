@@ -225,3 +225,67 @@ TEST(SourceKind, ModuleInterfaceLangFlagIsPerCompilerAndNotInterchangeable) {
                     mcpp::toolchain::CompilerId::MSVC})
         EXPECT_FALSE(traits_for(id).moduleInterfaceLangFlag.empty());
 }
+
+// ─── T-6. Device translation units ─────────────────────────────────────────
+//
+// A device TU is compiled by a vendor compiler (nvcc, hipcc) that mcpp does
+// not drive directly, and no such compiler accepts C++20 modules. The kind
+// therefore states the GRAPH ROLE — "not scanned, no BMI" — and says nothing
+// about the language, which is what lets one kind cover CUDA C++, HIP, and
+// dialects that are not C++ at all.
+
+TEST(SourceKind, ClassifiesDeviceTranslationUnits) {
+    auto t = mcpp::builtin_extension_table();
+    EXPECT_EQ(mcpp::classify("src/k.cu",  t), SourceKind::Device);
+    EXPECT_EQ(mcpp::classify("src/k.hip", t), SourceKind::Device);
+}
+
+TEST(SourceKind, DeviceHeadersAffectGraphShape) {
+    // `.cuh` reaches a device TU through the preprocessor, so editing one can
+    // change what the graph should be. Leaving it in `Other` is why a project
+    // would see "edited the kernel header, nothing rebuilt".
+    auto t = mcpp::builtin_extension_table();
+    EXPECT_EQ(mcpp::classify("src/k.cuh",  t), SourceKind::Header);
+    EXPECT_EQ(mcpp::classify("src/k.hiph", t), SourceKind::Header);
+    EXPECT_TRUE(mcpp::affects_graph_shape(SourceKind::Header));
+}
+
+TEST(SourceKind, DevicePredicates) {
+    // Scan-exempt for the same reason assembly is: a device TU carries no
+    // `import`, so there is nothing for P1689 to answer.
+    EXPECT_TRUE (mcpp::is_scan_exempt(SourceKind::Device));
+    EXPECT_FALSE(mcpp::produces_bmi(SourceKind::Device));
+    EXPECT_FALSE(mcpp::is_cxx_like(SourceKind::Device));
+    EXPECT_FALSE(mcpp::links_unconditionally(SourceKind::Device));
+    // Absent for the same reason assembly is absent: the content change is
+    // tracked by ninja, and a NEW file is `glob_inputs_stale`'s question.
+    EXPECT_FALSE(mcpp::affects_graph_shape(SourceKind::Device));
+    EXPECT_EQ(mcpp::to_string(SourceKind::Device), "device");
+}
+
+TEST(SourceKind, DeviceExtensionsAreNotInTheDefaultGlob) {
+    // Same compatibility argument as the built-in module-extension table: a
+    // published package that vendors a `.cu` it builds elsewhere must not
+    // start compiling it on the next mcpp upgrade. Device sources are opted
+    // into by naming them in a `kind = "device"` target.
+    auto globs = mcpp::default_source_globs(mcpp::builtin_extension_table());
+    for (auto const& g : globs) {
+        EXPECT_EQ(g.find(".cu"),  std::string::npos) << g;
+        EXPECT_EQ(g.find(".hip"), std::string::npos) << g;
+    }
+    EXPECT_EQ(mcpp::default_source_globs_note(mcpp::builtin_extension_table())
+                  .find("cu"), std::string::npos);
+}
+
+TEST(SourceKind, DeviceObjectsUseTheCollisionProofName) {
+    // `k.cu` and `k.cpp` in one directory are common in a mixed project; the
+    // stem-named form would give both `k.o`.
+    EXPECT_EQ(mcpp::object_filename_for("src/k.cu", ".o"),  "k.cu.o");
+    EXPECT_EQ(mcpp::object_filename_for("src/k.hip", ".o"), "k.hip.o");
+}
+
+TEST(SourceKind, DeviceExtensionsCannotBeClaimedAsModuleInterfaces) {
+    auto err = mcpp::validate_module_extensions(std::vector<std::string>{".cu"});
+    ASSERT_TRUE(err.has_value());
+    EXPECT_NE(err->find(".cu"), std::string::npos);
+}

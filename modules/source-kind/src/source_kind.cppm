@@ -64,6 +64,15 @@ enum class SourceKind {
     GasAsm,
     // NASM syntax.
     NasmAsm,
+    // Compiled by a vendor device compiler mcpp does not drive directly
+    // (nvcc, hipcc). Never scanned for imports and never produces a BMI: no
+    // such compiler accepts C++20 modules, so a device unit cannot be one.
+    //
+    // The kind states the GRAPH ROLE, not the language. That is deliberate:
+    // it lets one kind cover CUDA C++, HIP, and device dialects that are not
+    // C++ at all (Intel Gaudi's TPC-C is derived from C99), without the
+    // classification table growing a row per vendor.
+    Device,
     // Not compiled, but editing one can change what the graph should be.
     Header,
     // Not a build input.
@@ -219,6 +228,11 @@ constexpr std::string_view kCExtensions[]      = { ".c", ".m" };
 constexpr std::string_view kGasExtensions[]    = { ".S", ".s" };
 constexpr std::string_view kNasmExtensions[]   = { ".asm" };
 constexpr std::string_view kHeaderExtensions[] = { ".h", ".hpp", ".hh", ".hxx" };
+// Device sources and the headers they include. The headers are classified as
+// `Header` rather than `Device` because their role is the header role: they
+// are not compiled, and editing one can change what the graph should be.
+constexpr std::string_view kDeviceExtensions[]       = { ".cu", ".hip" };
+constexpr std::string_view kDeviceHeaderExtensions[] = { ".cuh", ".hiph" };
 
 bool contains(std::span<const std::string_view> set, std::string_view ext) {
     for (auto e : set) if (e == ext) return true;
@@ -234,6 +248,7 @@ std::string_view to_string(SourceKind k) {
         case SourceKind::C:               return "c";
         case SourceKind::GasAsm:          return "gas";
         case SourceKind::NasmAsm:         return "nasm";
+        case SourceKind::Device:          return "device";
         case SourceKind::Header:          return "header";
         case SourceKind::Other:           return "other";
     }
@@ -283,9 +298,10 @@ ExtensionTable extension_table_for(std::span<const std::string> extras) {
 }
 
 bool is_reserved_non_module_extension(std::string_view ext) {
-    return contains(kCxxExtensions, ext)  || contains(kCExtensions, ext)
-        || contains(kGasExtensions, ext)  || contains(kNasmExtensions, ext)
-        || contains(kHeaderExtensions, ext);
+    return contains(kCxxExtensions, ext)    || contains(kCExtensions, ext)
+        || contains(kGasExtensions, ext)    || contains(kNasmExtensions, ext)
+        || contains(kHeaderExtensions, ext) || contains(kDeviceExtensions, ext)
+        || contains(kDeviceHeaderExtensions, ext);
 }
 
 std::optional<std::string>
@@ -334,7 +350,9 @@ SourceKind classify(const std::filesystem::path& p, const ExtensionTable& t) {
     if (contains(kCExtensions, ext))      return SourceKind::C;
     if (contains(kGasExtensions, ext))    return SourceKind::GasAsm;
     if (contains(kNasmExtensions, ext))   return SourceKind::NasmAsm;
-    if (contains(kHeaderExtensions, ext)) return SourceKind::Header;
+    if (contains(kDeviceExtensions, ext)) return SourceKind::Device;
+    if (contains(kHeaderExtensions, ext)
+        || contains(kDeviceHeaderExtensions, ext)) return SourceKind::Header;
     return SourceKind::Other;
 }
 
@@ -343,7 +361,8 @@ bool produces_bmi(SourceKind k) { return k == SourceKind::ModuleInterface; }
 bool links_unconditionally(SourceKind k) { return k == SourceKind::ModuleInterface; }
 
 bool is_scan_exempt(SourceKind k) {
-    return k == SourceKind::C || k == SourceKind::GasAsm || k == SourceKind::NasmAsm;
+    return k == SourceKind::C      || k == SourceKind::GasAsm
+        || k == SourceKind::NasmAsm || k == SourceKind::Device;
 }
 
 bool is_cxx_like(SourceKind k) {
@@ -369,6 +388,12 @@ std::vector<std::string> default_source_globs(const ExtensionTable& t) {
     globs.push_back("src/**/*.S");
     globs.push_back("src/**/*.s");
     globs.push_back("src/**/*.asm");
+    // Device extensions are deliberately absent. The argument is the one that
+    // keeps the built-in module-extension table at `.cppm` alone: widening the
+    // default glob makes a published package that vendors a `.cu` it builds
+    // elsewhere start compiling it on the next mcpp upgrade, and that is a
+    // break its author cannot fix because the tarball has already shipped.
+    // Device sources are opted into by naming them in a device target.
     return globs;
 }
 
