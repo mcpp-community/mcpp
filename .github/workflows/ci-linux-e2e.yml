@@ -188,7 +188,8 @@ jobs:
                    tests/e2e/131_freestanding_bsp_supplies_everything.sh \
                    tests/e2e/132_freestanding_test_and_artifacts.sh \
                    tests/e2e/133_freestanding_std_subset.sh \
-                   tests/e2e/332_cortex_m_builds_and_boots.sh; do
+                   tests/e2e/332_cortex_m_builds_and_boots.sh \
+                   tests/e2e/336_armv7a_builds_and_boots.sh; do
             echo "=== $t ==="
             bash "$t" 2>&1 | tee "$(basename "$t").log"
             rc=${PIPESTATUS[0]}
@@ -221,6 +222,15 @@ jobs:
           booted=$(grep -c 'booted on ' 332_cortex_m_builds_and_boots.sh.log || true)
           [ "$booted" = "4" ] || {
             echo "332 booted $booted rows, expected 4"; exit 1; }
+          # ⚠️ 336 IS HERE FOR THE SAME REASON, AND ADDING IT TO THE LOOP ABOVE
+          # WITHOUT ADDING IT HERE WOULD HAVE BEEN THE SAME DEFECT: it declares
+          # `# requires: qemu-arm`, so on a shard it exits 0 having run nothing.
+          grep -q 'PASS: armv7-a rows build, boot' \
+            336_armv7a_builds_and_boots.sh.log || {
+            echo "336 (armv7-a) skipped on the runner that must run it"; exit 1; }
+          a32=$(grep -c 'booted on virt' 336_armv7a_builds_and_boots.sh.log || true)
+          [ "$a32" = "2" ] || {
+            echo "336 booted $a32 rows, expected 2"; exit 1; }
 
   # ──────────────────────────────────────────────────────────────────
   # Hermetic (no host toolchain): the ONLY environment class that
