@@ -2826,6 +2826,23 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
     nargv.push_back(plan.outputDir.string());
     if (opts.verbose)
         nargv.push_back("-v");
+    // MCPP_NINJA_DEBUG: append ninja's own `-d` topics. The one instrument that
+    // works on a process nobody can attach to.
+    //
+    // A ninja that spins with no command running has been observed three times
+    // in fresh sandboxes, and neither gdb nor perf can reach it there
+    // (ptrace_scope=1, perf_event_paranoid=4); making gdb its parent stops the
+    // spin happening at all. `-d explain` prints the dirtiness decision as it
+    // is made, so a ninja re-deciding the same edge names that edge in its own
+    // output — which is readable from the log the runner already captures.
+    //
+    // Unset by default and unset in CI. It changes nothing but ninja's
+    // verbosity, and it is spelled as a topic list rather than a boolean so
+    // that `-d stats` and `-d keeprsp` are reachable without another variable.
+    if (const char* topics = std::getenv("MCPP_NINJA_DEBUG"); topics && *topics) {
+        nargv.push_back("-d");
+        nargv.push_back(topics);
+    }
     if (opts.parallelJobs)
         nargv.push_back(std::format("-j{}", opts.parallelJobs));
 

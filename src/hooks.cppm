@@ -223,7 +223,7 @@ Span::Span(const mcpp::manifest::Hooks& hooks,
             // it forked may not be, and the group is addressable only while
             // the unreaped leader still holds its id.
             proc::stop_background(child_, std::chrono::milliseconds(0));
-            proc::clear_background_guard();
+            proc::clear_background_guard(child_);
             if (stop_.load()) return;
 
             // "Failed to stay up" is BOTH halves: short AND unsuccessful. A
@@ -260,7 +260,7 @@ void Span::close() {
     stop_.store(true);
     if (supervisor_.joinable()) supervisor_.join();
     if (started_) {
-        proc::clear_background_guard();
+        proc::clear_background_guard(child_);
         proc::stop_background(child_, kStopGrace);
     }
 }

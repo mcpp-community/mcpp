@@ -104,8 +104,20 @@ if [[ "$(uname -s)" == Linux ]]; then
   bin=$(ls target/*/*/bin/app | head -1)
   [[ -f "$bin" ]] || fail "no artifact at target/*/*/bin/app"
   printf '\xff\xff' | dd of="$bin" bs=1 seek=18 conv=notrunc status=none
+  # 126, NOT 2, AND THE BAND IS THE POINT.
+  #
+  # `mcpp run` now reports the program's own exit status, so mcpp's answers had
+  # to move out of the range a program owns. A refused spawn lands in the band
+  # `env`, `timeout` and every shell already use: 127 not found, 126 found and
+  # not executable, 125 anything else. This artifact has a wrecked e_machine,
+  # so the kernel answers ENOEXEC and the code is 126.
+  #
+  # mcpp's own refusals BEFORE a spawn is attempted — no binary target, no
+  # runner declared, runner program not on PATH — keep exit 2, which is what
+  # every other mcpp command uses for "cannot do what was asked". The three
+  # assertions above this one cover that half and are deliberately unchanged.
   out=$("$MCPP" run 2>&1); rc=$?
-  [[ $rc -eq 2 ]] || fail "unrunnable artifact: exit $rc, want 2: $out"
+  [[ $rc -eq 126 ]] || fail "unrunnable artifact: exit $rc, want 126: $out"
   grep -q "this host cannot execute" <<<"$out" || fail "unrunnable message missing: $out"
   grep -q "Exec format error" <<<"$out" || fail "the kernel's answer is missing: $out"
   grep -q "\[target.$HOST\]" <<<"$out" || fail "paste-able key missing: $out"
