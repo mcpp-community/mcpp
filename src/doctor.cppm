@@ -34,6 +34,7 @@ import mcpp.runtime.elf;
 import mcpp.pm.index_refresh;   // staleness_note for `mcpp why deps`
 import mcpp.project;
 import mcpp.toolchain.detect;
+import mcpp.toolchain.devicehost;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.linkmodel;
@@ -575,6 +576,81 @@ export int doctor_report() {
         // Whether a deadline is actually enforced here. This used to be "no"
         // on Windows while every knob claimed otherwise.
         ok("process deadlines: enforced (POSIX SIGKILL / Windows job object)");
+    }
+
+    // ── Device toolkit, and whether this host compiler can drive it ────────
+    //
+    // WHY THIS IS A DOCTOR CHECK AND NOT A BUILD ERROR
+    //
+    // nvcc refuses host compilers newer than a bound the toolkit states in its
+    // own crt/host_config.h. The failure is late, the message names a compiler
+    // the user did not choose, and the bound is invisible. Every other build
+    // system forwards -ccbin and lets nvcc discover this; mcpp supplies the
+    // host compiler and can therefore answer before anything is compiled.
+    //
+    // Reported rather than enforced because a project that compiles no device
+    // code is unaffected by an incompatible pair, and refusing its build would
+    // be a false alarm.
+    if (!mcpp::platform::is_windows) {
+        auto header = [&]() -> std::optional<std::filesystem::path> {
+            std::vector<std::filesystem::path> roots;
+            if (const char* p = std::getenv("CUDA_PATH")) roots.emplace_back(p);
+            if (const char* p = std::getenv("CUDA_HOME")) roots.emplace_back(p);
+            roots.emplace_back("/usr/local/cuda");
+            std::error_code ec;
+            for (auto const& r : roots) {
+                auto h = r / "include" / "crt" / "host_config.h";
+                if (std::filesystem::exists(h, ec)) return h;
+            }
+            // Distribution packaging puts the toolkit headers on the default
+            // include path instead of under a versioned root.
+            std::filesystem::path sys = "/usr/include/crt/host_config.h";
+            if (std::filesystem::exists(sys, ec)) return sys;
+            return std::nullopt;
+        }();
+
+        if (header) {
+            mcpp::ui::status("Checking", "device toolkit");
+            std::ifstream in(*header);
+            std::string text((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+            auto bounds = mcpp::toolchain::parse_host_config(text);
+            if (!bounds.known()) {
+                ok(std::format("cuda headers at {} (no host-compiler bound stated)",
+                               header->parent_path().parent_path().string()));
+            } else if (!tc) {
+                ok(std::format("cuda host-compiler bound: gcc<={} clang<={}",
+                               bounds.gccMax, bounds.clangMax));
+            } else {
+                const std::string family(tc->compiler_name());
+                // Leading digits of the version. Extracted here rather than
+                // reached for from mcpp.pack.abi_tag: three lines are cheaper
+                // than a module edge from the diagnostics layer to packaging.
+                const int major = [&] {
+                    int v = 0;
+                    for (char c : tc->version) {
+                        if (!std::isdigit(static_cast<unsigned char>(c))) break;
+                        v = v * 10 + (c - '0');
+                    }
+                    return v;
+                }();
+                if (mcpp::toolchain::host_compiler_accepted(bounds, family, major)) {
+                    ok(std::format("cuda accepts this host compiler ({} {} <= {})",
+                                   family, major,
+                                   family == "gcc" ? bounds.gccMax : bounds.clangMax));
+                } else {
+                    warn(std::format(
+                        "cuda will refuse this host compiler: {} {} exceeds the "
+                        "bound of {} stated in {}.\n"
+                        "         Device code will not compile until a host "
+                        "compiler within the bound is selected; a project that "
+                        "compiles no device code is unaffected.",
+                        family, major,
+                        family == "gcc" ? bounds.gccMax : bounds.clangMax,
+                        header->string()));
+                }
+            }
+        }
     }
 
     std::println("");
