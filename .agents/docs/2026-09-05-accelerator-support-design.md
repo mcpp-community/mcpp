@@ -627,6 +627,44 @@ artifact:
 ⇒ **首选 ggml。** 理由不是它最流行,是它**一个包同时压到 R1/R3/R5 三类**,
 而且它没有 Python 打包层,不会把 wheel 的问题混进来。
 
+### 8.1b 要补进生态的包(2026-09-05 追加)
+
+引擎能力落地之后,生态里必须有**真实流行的**运行时 / 库 / 框架 / SDK,
+否则这套能力对开发者等于不存在。下表按依赖顺序排,每一行注明它验证什么。
+
+#### xim 侧(工具链与 SDK 载荷)
+
+| 包 | 内容 | 验证什么 | 依赖 |
+|---|---|---|---|
+| ⭐ `adaptivecpp` | SYCL,SSCP + **omp 后端** | **形态 B 可在无卡 CI 端到端跑,含 kernel 真执行** | LLVM 载荷 |
+| `cuda-nvcc` | `nvcc`/`ptxas`/`nvlink`/`fatbinary`/`cicc` + CRT 头 | 设备工具链不再依赖 host(§5.0b) | —— |
+| `cuda-cudart` | CUDA 运行时库与头 | 程序能链、能跑 | `libcuda-host-link`(**已有**) |
+| `dpcpp` | intel/llvm 开源版,`configure.py --cuda/--hip` | 形态 B 的 NVIDIA/AMD 后端(无需 Codeplay) | —— |
+| `cudnn` | 深度学习原语 | 真实推理框架可用 | `cuda-cudart` |
+| `nccl`(后续) | 多卡通信 | 多卡场景 | `cuda-cudart` |
+
+⚠️ 体积按组件取,不打整个 toolkit(§9 RK-3)。`cuda-nvcc` + `cuda-cudart` 是百 MB 级。
+
+#### mcpp-index 侧(规则包、能力包、真实库)
+
+| 包 | 提供 | 验证什么 |
+|---|---|---|
+| `rules-cuda` | `mcpp:device-rule=cuda` | P5 规则包;`backend` 经 capability 解析 |
+| `compat.cudart` | `gpu-runtime` | capability 绑定 |
+| `compat.cublas` | `gpu-blas` | ⚠️ 与 `compat.rocblas` **同名符号** ⇒ 它们本身就是决定 4 的验证夹具 |
+| `compat.cccl` | header-only(Thrust/CUB/libcu++) | 最小可用的 GPU 算法库;无二进制分发问题 |
+| `compat.cutlass` | header-only,按 CUDA 版本门控架构白名单 | **逐 glob 架构收窄(R4)的压测对象** |
+| ⭐⭐ `llama.cpp-m` 加 CUDA 后端 | —— | **R1 + R3 + R5 三类;而且它已经在 `mcpplibs/` 里** |
+| `compat.onnxruntime`(后续) | 按 EP 分变体 | R1 的多变体选择,真实体量 |
+| `compat.opencv` + CUDA(后续) | —— | 真实的混合工程 |
+
+⭐⭐ **`llama.cpp-m` 是首选验证对象,理由不是它流行,是它一个包同时压到三类使用者**,
+而且它没有 Python 打包层,不会把 wheel 的问题混进来。它已经存在于生态中,
+所以这一步是「给它加一个后端」,不是「从零收录一个大工程」。
+
+⭐ `compat.cccl` 与 `compat.cutlass` 都是 header-only,**没有二进制分发与体积问题**,
+所以它们是 §11.1 说的「源码分发这条最短路径」上最先能落地的两个真实库。
+
 ### 8.2 ⚠️⚠️ 发布顺序是一个环,必须拆开
 
 memory 记过两条硬的:「消费者先发布,索引 `latest` 才能动」、

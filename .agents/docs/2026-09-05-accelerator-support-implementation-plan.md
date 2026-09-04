@@ -251,10 +251,27 @@ clang 必须 `< 15`),或内置一张按 CUDA 版本的表。
 
 ## 跨仓库
 
-**PR B(mcpp-index)**:`rules-cuda` 规则包;`compat.cublas` 能力包;
-一个最小多后端夹具库。**在 PR A 发布之后**。
+**PR B(mcpp-index)** —— 在 PR A 发布之后。按此顺序:
 
-**PR C(xlings)**:按需的载荷。若本机 CUDA 已够用则本轮可不动。
+| # | 包 | 类型 | 验证 |
+|---|---|---|---|
+| B1 | `rules-cuda` | 规则包 | P5;`backend` 经 capability 解析 |
+| B2 | `compat.cccl` | header-only | 源码分发最短路径上的第一个真实库 |
+| B3 | `compat.cudart` / `compat.cublas` | 能力包 | capability 绑定;**同名符号夹具(决定 4)** |
+| B4 | `compat.cutlass` | header-only | 逐 glob 架构收窄(R4)的压测 |
+| B5 | `llama.cpp-m` 加 CUDA 后端 | 真实框架 | ⭐⭐ R1+R3+R5;**它已在 `mcpplibs/` 里** |
+| B6 | `compat.onnxruntime` / `compat.opencv` | 后续 | 真实体量的多变体选择 |
+
+**PR C(xim-pkgindex)** —— 载荷。按此顺序:
+
+| # | 包 | 验证 |
+|---|---|---|
+| C1 | ⭐ `adaptivecpp` | 形态 B **在无卡机器上 kernel 真执行** |
+| C2 | `cuda-nvcc` | 设备工具链脱离 host(§5.0b 的原则) |
+| C3 | `cuda-cudart` | 依赖已有的 `libcuda-host-link` sentinel |
+| C4 | `dpcpp` / `cudnn` / `nccl` | 后续 |
+
+⚠️ 按组件取,不打整个 toolkit。`cuda-nvcc` + `cuda-cudart` 是百 MB 级不是 GB 级。
 
 **沙箱验证**:`xlings subos <name> --sandbox --cmd "..."`,先配 CN mirror。
 
