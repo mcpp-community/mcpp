@@ -189,7 +189,7 @@ cxxflags = ["-DMYAPP_ROCM"]
 
 ## 两条值得写明的边界
 
-**`--accel` 与 `--no-accel` 是 `build`、`run`、`test` 三者的选项**(run 与 test 自 2026.9.6 起),与 `--target`、`--profile` 同级;`pack` 与其它构建输入一样从 manifest 读 `[build] accel`。它起初只挂在 `build` 上,实测的后果是一个工程的 CPU-only 变体能构建却不能运行:`mcpp build --no-accel` 产出了它,而 `mcpp run` 交回的是设备构建。
+**`--accel` 与 `--no-accel` 是 `build`、`run`、`test` 三者的选项**(run 与 test 自 2026.9.5.2 起),与 `--target`、`--profile` 同级;`pack` 与其它构建输入一样从 manifest 读 `[build] accel`。它起初只挂在 `build` 上,实测的后果是一个工程的 CPU-only 变体能构建却不能运行:`mcpp build --no-accel` 产出了它,而 `mcpp run` 交回的是设备构建。
 <!-- 下面一段保留原有说明 -->
 **历史:`--accel` 曾只是 `build` 的选项**,与 `--static`、`--toolchain` 同级,
 不在 `run`、`test`、`pack` 上重复。那些命令与读取任何其它构建输入一样,

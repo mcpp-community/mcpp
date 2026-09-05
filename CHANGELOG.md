@@ -5,22 +5,98 @@
 
 ## [Unreleased]
 
-### `mcpp self doctor` 报出设备编译器够不到自己的后端
+## [2026.9.5.2] — 2026-09-05
 
-一个 CUDA 工具包可以安装完整、就在 `PATH` 上,而设备代码仍然在第一个阶段失败。
-nvcc 以裸名调用 `cicc`、`cudafe++`、`ptxas`、`fatbinary`,依赖的是它自己从紧邻
-其二进制的 `nvcc.profile` 前置进来的一条 `PATH`。Debian 系打包把那个 profile
-做成指向 `/etc` 的符号链接,于是任何替换了 `/etc` 的容器或沙箱都会移除它,
-nvcc 沿用环境原有的 `PATH` 并报出 `sh: 1: cicc: not found` —— 这条消息既不提
-nvcc 也不提 profile,而工具包一样不缺,所以显而易见的检查全部通过。
+### ⭐⭐ 在编译任何东西之前比较机器的下界
 
-判据取自 nvcc 自己:`--dryrun` 打印它将要运行的各个阶段与它将要使用的 `PATH`,
-而不编译任何东西。mcpp 解析这份计划,逐个解析其中的裸名,报出第一个解析不到的。
-一次没有产生计划的 dryrun(没有 nvcc,或输出不是一份计划)不产生任何结论 ——
-与宿主编译器上界那条检查同一条原则:一个够不到答案的探测不应当发明一个。
+有些机器事实**限定**了能为它构建什么,而忽略它们时,失败到得很晚。本轮的样本:
+设备运行时不得新于它将运行其上的驱动;当它更新时,构建与链接都干净通过,程序在
+第一次分配处失败,消息里既不提工具包也不提驱动。
 
-这是本轮把发布物放进沙箱验证时暴露出来的:示例在宿主上跑通,在 `--sandbox`
-里失败,而唯一的差别就是那条 `PATH`。
+两个数字在编译任何东西之前都是可知的。mcpp 不去问厂商的工具要它们 ——
+`tests/unit/test_runtime_contract` 禁止 `src/` 里出现厂商探针,而且这条规则是对的:
+一个学会跑一家厂商探针的引擎会学会跑四家。所以数字以**声明**抵达:
+
+```toml
+[[runtime.requirements]]
+kind  = "version-floor"
+value = "cuda.driver >= 12.0"
+```
+
+`mcpp.build.version_floor` 只做比较,**这个文件里不出现任何厂商名字**:
+`cuda.driver` 是流经的数据。第二种后端不需要改动它。
+
+### ⭐ 探针通道:`mcpp::fact` / `mcpp::floor`(协议 v7)
+
+构建程序陈述它**测得**的事实与它**需要**的下界,引擎比较并在不满足时给出两侧取值
+(`version-floor-unmet`)。这是让 CUDA 探针得以整体离开 `src/` 的那条通道 ——
+同样的读数现在由规则包产出,而它知道自己在跑哪个工具。
+
+因此 **`mcpp self doctor` 的设备一节与 `mcpp.toolchain.devicehost` 一并删除**。
+它读得对(载荷优先于宿主、`crt/host_config.h` 的宿主编译器上界、`nvcc --dryrun`
+的不可达阶段),但它不属于引擎。新增 `tests/unit/test_core_vendor_probes`
+在剥掉注释的源码上陈述这条性质,并自带分母:枚举到的文件太少即判失败。
+
+### 逐 glob 的加速器约束
+
+`[build] sources` 的条目可以带上它面向的加速器:
+
+```toml
+sources = [
+  "src/*.cppm",
+  { glob = "src/kernels/**/*.cu", accel = "cuda12.9+{sm_89}" },
+]
+```
+
+构建按它收窄;`--no-accel` 整条排除;不覆盖它的 `--accel` 被拒并点名两侧
+(`accel-mismatch`);匹配为空的约束被拒并点名该 glob —— 空匹配是笔误或搬走了的
+目录,而不是空操作。
+
+### `--accel` / `--no-accel` 现在也挂在 `run` 与 `test` 上
+
+此前只有 `build` 有,实测后果是一个工程的 CPU-only 变体**能构建却不能运行**。
+两个动词接受同样的两个开关,给出任一个都绕开各自的快路径 —— 缓存的产物是按上一次
+构建的轴产的。
+
+### 第二个编译器需要的两个答案
+
+`MCPP_TOOLCHAIN_SYSROOT` 与 `MCPP_TOOLCHAIN_BINUTILS_DIR` 陈述 mcpp 传给**它自己**
+那个编译器的 `--sysroot` 与 `-B`。规则包驱动一个 mcpp 并未解析的编译器时,那个
+编译器对环境一无所知:sub-OS 里 C 库不在 `/usr/include`,汇编器不在 `/usr/bin`,
+于是它遇到的第一个 `#include` 就失败。`hipcc`、`-fsycl-host-compiler`、任何会编译
+自己产物的生成器都有同一个缺口。
+
+`gcc::binutils_prefix_dir` 把 `-B` 的守卫收敛到一处,此前有三份副本,其中一份的
+注释写着它是另一份的镜像。
+
+### Linux 上的动态构建程序 helper 改用 `DT_RPATH`
+
+RUNPATH 只对 helper **自己**的 needed 生效,于是一个在运行期打开宿主库的构建程序
+在下一跳失败:实测 `dlopen("<sentinel>/lib/libcuda.so.1")` 报
+`libdl.so.2: cannot open shared object file`,而持有它的目录就在 helper 的 RUNPATH 里。
+mcpp 链接的产物早就因为这个原因带 DT_RPATH。链接策略进 helper 的缓存身份,
+旧 helper 会被重建而不是被重放。
+
+### `--offline` 跳过首次使用的沙箱引导
+
+`--offline` 承诺不碰网络,而 `load_or_init` 在空 home 里克隆索引、经 xlings 装
+ninja 与 patchelf。实测:空 home 下 26 秒 / 126 MB → 0.3 秒。
+
+### `examples/09-cuda-kernel` 走两条路线,并拒绝它不能配的对
+
+主路线是 clang(`-x cuda`):工程自己的编译器编设备单元,没有第二个宿主编译器、
+没有宿主编译器上界、没有 CUDA 的宿主头挡路。nvcc 是备用路线,并按名拒绝两对:
+宿主编译器超出 `crt/host_config.h` 所述上界(实测 gcc 16 + nvcc 12.9 即便加了
+`-allow-unsupported-compiler` 也死在 gcc 自己的 `<type_traits>` 里),以及工具包
+旧于 C 库(12.9 的 `crt/math_functions.h` 为宿主重声明 C23 的
+`cospi`/`sinpi`/`rsqrt` 不带 `noexcept`,而 glibc 2.41+ 带)。
+
+同一个缝下还有一份 CPU 实现,由 `cfg(not(accelerator = "cuda"))` 选中,于是
+`mcpp build --no-accel` 编它、`mcpp build` 编 `.cu`,两侧都不需要手写条件。
+
+实测(RTX 4080,驱动 550.144.03 报 CUDA 12.4,LLVM 22.1.8):`mcpp run` 与
+`mcpp run --no-accel` 都打印 `12 24 36 48`,来自不同的产物目录,后者不含
+`cudaMalloc`。
 
 ## [2026.9.5.1] — 2026-09-05
 

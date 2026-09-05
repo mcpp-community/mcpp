@@ -52,8 +52,8 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:runner=<token>` *(2026.8.19.2+)* | 执行本次构建产物的命令的**一个 argv token**(宿主跑不了它时)。一个 token 一次调用、按顺序;产物路径会被追加(或替换 `{}`)。**到达消费者**。⚠️ 可执行文件要发**绝对路径**,且**只能有一个**依赖提供它 |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | 用这个**链接脚本**链接(`-T`;相对路径按包根解析,发出的是绝对路径,因为链接是在构建目录里跑的)。与 `include-dir` 不同,它**到达消费者** —— 板子的内存布局恰恰是消费者写不出来的那一项 |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | 对用户说一句话并**继续**。唯一一条不改变编译行、链接行与源码集的指令。它**穿过构建缓存** —— 见下 |
-| `mcpp:fact=<name>=<version>` *(2026.9.6+)* | 陈述程序**测得的机器事实**(`cuda.driver=12.4`)。在编译任何东西之前与 floor 比较;见下 |
-| `mcpp:floor=<name> >= <version>` *(2026.9.6+)* | 陈述本包对该量的**下界**。不满足 ⇒ 构建被拒并给出两侧取值(`version-floor-unmet`);没有人陈述事实的下界保持沉默 |
+| `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | 陈述程序**测得的机器事实**(`cuda.driver=12.4`)。在编译任何东西之前与 floor 比较;见下 |
+| `mcpp:floor=<name> >= <version>` *(2026.9.5.2+)* | 陈述本包对该量的**下界**。不满足 ⇒ 构建被拒并给出两侧取值(`version-floor-unmet`);没有人陈述事实的下界保持沉默 |
 | `mcpp:rerun-if-changed=<path>`     | 该文件变化时重跑 `build.mcpp` |
 | `mcpp:rerun-if-env-changed=<VAR>`  | 该环境变量变化时重跑 `build.mcpp` |
 
@@ -139,7 +139,7 @@ mcpp 在每次命中时重放它。
 `build.mcpp` 阶段 —— 它同样不会报告构建了哪个目标、推断了哪些源码。touch 一下源码,提示
 就回来了。
 
-### 探针通道:`fact` / `floor`(2026.9.6+)
+### 探针通道:`fact` / `floor`(2026.9.5.2+)
 
 规则包是知道「怎么问机器它有什么」的那一方 —— 打开哪个库、调用哪个函数;
 引擎则是不该知道的那一方。于是由包来**测量**,由引擎来**比较**:
@@ -205,7 +205,7 @@ const char* sr = mcpp::sysroot_dir();     // 目标的 C 库根目录,没有则�
 
 宿主目标上 `sysroot_dir()` 为空:那里 C 库随编译器载荷或运行时绑定而来,没人需要找它。
 
-### 驱动第二个编译器:`toolchain_sysroot` / `toolchain_binutils_dir`(2026.9.6+)
+### 驱动第二个编译器:`toolchain_sysroot` / `toolchain_binutils_dir`(2026.9.5.2+)
 
 ```cpp
 const char* sr = mcpp::toolchain_sysroot();        // mcpp 传的 `--sysroot`,没有则为 ""
@@ -487,10 +487,10 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存�
 | `MCPP_TARGET_ENV` *(0.0.100+)* | `mcpp::target_env()` | 目标的 env 段(`gnu`/`musl`/`msvc`);三元组无 env 段(macOS)时为空串 |
 | `MCPP_HOST` | `mcpp::host()` | 宿主三元组 |
 | `MCPP_PROFILE` | `mcpp::profile()` | 生效 profile 名(`dev`/`release`/…) |
-| `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.6+)* | `mcpp::toolchain_sysroot()` | mcpp 传给自己那个编译器的 `--sysroot`;不传时为空串。供运行**第二个**编译器的规则包使用 —— 见上文「驱动第二个编译器」 |
-| `MCPP_TOOLCHAIN_BINUTILS_DIR` *(2026.9.6+)* | `mcpp::toolchain_binutils_dir()` | mcpp 用 `-B` 指的目录;不指时为空串(musl 与 MinGW 载荷自带汇编器与链接器) |
-| `MCPP_ACCEL` *(2026.9.6+)* | `mcpp::accel()` | 本次构建的设备轴,已解析 —— `--accel` / `--no-accel` 优先于 `[build] accel` —— 线上形态 `cuda12.9+{sm_89} ptx>=89`;不要加速器时为空串。规则包从它推导自己的开关(`-gencode`、`--offload-arch`),架构集合因此只在 manifest 写一次。同一个值也喂给 `cfg(accelerator = "…")` 这个 layer 键 |
-| `MCPP_DEVICE_SOURCES` *(2026.9.6+)* | `mcpp::device_sources()` | 本包有效 `sources` 匹配到的设备类源文件(`.cu`、`.hip`…),相对包根,一行一个;没有时为空串。引擎一个都不编译 —— 由本程序引入的规则包把每一个变成一条 `mcpp::action`。已经过收窄:构建未覆盖的 `{ glob, accel }` 条目贡献为空,因此 `--no-accel` 得到空列表 |
+| `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.5.2+)* | `mcpp::toolchain_sysroot()` | mcpp 传给自己那个编译器的 `--sysroot`;不传时为空串。供运行**第二个**编译器的规则包使用 —— 见上文「驱动第二个编译器」 |
+| `MCPP_TOOLCHAIN_BINUTILS_DIR` *(2026.9.5.2+)* | `mcpp::toolchain_binutils_dir()` | mcpp 用 `-B` 指的目录;不指时为空串(musl 与 MinGW 载荷自带汇编器与链接器) |
+| `MCPP_ACCEL` *(2026.9.5.2+)* | `mcpp::accel()` | 本次构建的设备轴,已解析 —— `--accel` / `--no-accel` 优先于 `[build] accel` —— 线上形态 `cuda12.9+{sm_89} ptx>=89`;不要加速器时为空串。规则包从它推导自己的开关(`-gencode`、`--offload-arch`),架构集合因此只在 manifest 写一次。同一个值也喂给 `cfg(accelerator = "…")` 这个 layer 键 |
+| `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | 本包有效 `sources` 匹配到的设备类源文件(`.cu`、`.hip`…),相对包根,一行一个;没有时为空串。引擎一个都不编译 —— 由本程序引入的规则包把每一个变成一条 `mcpp::action`。已经过收窄:构建未覆盖的 `{ glob, accel }` 条目贡献为空,因此 `--no-accel` 得到空列表 |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | mcpp 提供的可写输出/暂存目录 |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | 包根(= CWD) |
 | `MCPP_FEATURE_<NAME>` | `mcpp::has_feature("name")` | 每个活跃 feature 置 `1`(`<NAME>` 消毒规则与 `MCPP_FEATURE_` 编译宏一致) |

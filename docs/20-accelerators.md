@@ -232,7 +232,7 @@ combinators.
 ## Two boundaries worth stating
 
 **`--accel` and `--no-accel` are `build`, `run` and `test` options** (run and
-test from 2026.9.6), as `--target` and `--profile` are. `pack` reads
+test from 2026.9.5.2), as `--target` and `--profile` are. `pack` reads
 `[build] accel` from the manifest like every other build input. The flag was a
 `build`-only option at first, and the measured consequence was a project whose
 CPU-only variant could be built and not run: `mcpp build --no-accel` produced

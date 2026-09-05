@@ -102,7 +102,7 @@ inline void run_exclusive()                    { std::printf("mcpp:run-exclusive
 // "resolved". mcpp replays it on every hit.
 inline void warning(const char* message)          { std::printf("mcpp:warning=%s\n", message); }
 
-// ── The probe channel (mcpp 2026.9.6+) ────────────────────────────────────
+// ── The probe channel (mcpp 2026.9.5.2+) ────────────────────────────────────
 //
 // A rule package is the thing that knows how to ask a machine what it has --
 // which library to open, which function to call -- and the engine is the

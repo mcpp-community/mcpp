@@ -55,8 +55,8 @@ is ignored, so diagnostics may be logged freely.
 | `mcpp:runner=<token>` *(2026.8.19.2+)* | one argv token of the command that EXECUTES this build's artifact, when the host cannot. Emitted once per token, in order; the artifact path is appended (or substituted for `{}`). Reaches the **consumer**. ⚠️ Emit the executable as an ABSOLUTE path, and only **one** dependency may supply it |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | link with this **linker script** (`-T`; relative resolves against the package root, and the emitted path is absolute because the link runs in the build directory). Reaches the **consumer**, unlike `include-dir` — a board's memory layout is the one thing a consumer cannot write for itself |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | say something to the user and **keep going**. The one directive that changes no compile line, no link line and no source set. Survives the build cache — see below |
-| `mcpp:fact=<name>=<version>` *(2026.9.6+)* | state something the program **established about the machine** (`cuda.driver=12.4`). Compared against floors before anything is compiled; see below |
-| `mcpp:floor=<name> >= <version>` *(2026.9.6+)* | state what this package **needs** of that quantity. Unmet ⇒ the build is refused with both values (`version-floor-unmet`); a floor nobody stated a fact for is silent |
+| `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | state something the program **established about the machine** (`cuda.driver=12.4`). Compared against floors before anything is compiled; see below |
+| `mcpp:floor=<name> >= <version>` *(2026.9.5.2+)* | state what this package **needs** of that quantity. Unmet ⇒ the build is refused with both values (`version-floor-unmet`); a floor nobody stated a fact for is silent |
 | `mcpp:rerun-if-changed=<path>`     | re-run `build.mcpp` when this file changes |
 | `mcpp:rerun-if-env-changed=<VAR>`  | re-run `build.mcpp` when this env var changes |
 
@@ -152,7 +152,7 @@ there is nothing to do the build never reaches the `build.mcpp` stage — it als
 does not report which target it built or which sources it inferred. Touch a
 source and the advisory returns.
 
-### The probe channel: `fact` / `floor` (2026.9.6+)
+### The probe channel: `fact` / `floor` (2026.9.5.2+)
 
 A rule package is the thing that knows how to ask a machine what it has —
 which library to open, which function to call — and the engine is the thing
@@ -235,7 +235,7 @@ package whose content is implementation-neutral. Asking follows whatever
 the compiler payload or through the runtime binding, and nothing has to look
 for it.
 
-### Driving a second compiler: `toolchain_sysroot` / `toolchain_binutils_dir` (2026.9.6+)
+### Driving a second compiler: `toolchain_sysroot` / `toolchain_binutils_dir` (2026.9.5.2+)
 
 ```cpp
 const char* sr = mcpp::toolchain_sysroot();        // the `--sysroot` mcpp passes, or ""
@@ -561,10 +561,10 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_TARGET_ENV` *(0.0.100+)* | `mcpp::target_env()` | the target's env segment (`gnu`/`musl`/`msvc`); empty string when the triple has none (macOS) |
 | `MCPP_HOST` | `mcpp::host()` | the host triple |
 | `MCPP_PROFILE` | `mcpp::profile()` | effective profile name (`dev`/`release`/…) |
-| `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.6+)* | `mcpp::toolchain_sysroot()` | the `--sysroot` mcpp passes to its own compiler; empty when it passes none. For a rule package that runs a **second** compiler — see "Driving a second compiler" above |
-| `MCPP_TOOLCHAIN_BINUTILS_DIR` *(2026.9.6+)* | `mcpp::toolchain_binutils_dir()` | the directory mcpp names with `-B`; empty when it names none (a musl or MinGW payload brings its own assembler and linker) |
-| `MCPP_ACCEL` *(2026.9.6+)* | `mcpp::accel()` | the device axis of this build, resolved — `--accel` / `--no-accel` over `[build] accel` — in the wire form `cuda12.9+{sm_89} ptx>=89`; empty when the build asks for no accelerator. A rule package derives its own flags (`-gencode`, `--offload-arch`) from it, so the architecture set is written once, in the manifest. The same value feeds the `cfg(accelerator = "…")` layer key |
-| `MCPP_DEVICE_SOURCES` *(2026.9.6+)* | `mcpp::device_sources()` | the device-kind sources (`.cu`, `.hip`, …) the package's effective `sources` match, package-root-relative, one per line; empty when there are none. The engine compiles none of them — the rule package this program imports turns each into an `mcpp::action`. Already narrowed: a `{ glob, accel }` entry the build does not cover contributes nothing, so `--no-accel` yields an empty list |
+| `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.5.2+)* | `mcpp::toolchain_sysroot()` | the `--sysroot` mcpp passes to its own compiler; empty when it passes none. For a rule package that runs a **second** compiler — see "Driving a second compiler" above |
+| `MCPP_TOOLCHAIN_BINUTILS_DIR` *(2026.9.5.2+)* | `mcpp::toolchain_binutils_dir()` | the directory mcpp names with `-B`; empty when it names none (a musl or MinGW payload brings its own assembler and linker) |
+| `MCPP_ACCEL` *(2026.9.5.2+)* | `mcpp::accel()` | the device axis of this build, resolved — `--accel` / `--no-accel` over `[build] accel` — in the wire form `cuda12.9+{sm_89} ptx>=89`; empty when the build asks for no accelerator. A rule package derives its own flags (`-gencode`, `--offload-arch`) from it, so the architecture set is written once, in the manifest. The same value feeds the `cfg(accelerator = "…")` layer key |
+| `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | the device-kind sources (`.cu`, `.hip`, …) the package's effective `sources` match, package-root-relative, one per line; empty when there are none. The engine compiles none of them — the rule package this program imports turns each into an `mcpp::action`. Already narrowed: a `{ glob, accel }` entry the build does not cover contributes nothing, so `--no-accel` yields an empty list |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | a writable scratch/output dir owned by mcpp |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | the package root (= CWD) |
 | `MCPP_FEATURE_<NAME>` | `mcpp::has_feature("name")` | set to `1` per active feature (same `<NAME>` sanitization as the `MCPP_FEATURE_` compile macro) |
