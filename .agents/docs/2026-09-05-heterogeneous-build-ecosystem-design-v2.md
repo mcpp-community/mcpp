@@ -438,19 +438,19 @@ Status is one of `done`, `open`, `deferred (reason)`.
 
 | # | task | criterion | depends on | status |
 |---|---|---|---|---|
-| Z1 | `xim:shaderc` 2026.3: `glslc` and `libshaderc`, conda-forge repack with its closure, x86_64 and aarch64, both mirrors | `glslc --version` from the payload; a `.comp` compiles to SPIR-V; every `DT_NEEDED` of every payload object resolves inside payloads | - | open |
-| Z2 | `xim:hip-nvidia` rocm-7.2.4: the HIP headers plus `hipother`'s `nvidia_detail`, architecture-independent | a `.hip` translation unit compiles against it with `__HIP_PLATFORM_NVIDIA__` and links against the CUDA payload | - | open |
-| Z3 | `xim:libclc` 22.1.8 and `xim:llvm-spirv` 22.1.2, conda-forge repacks | each installs; `llvm-spirv --version` answers; the libclc bitcode for `nvptx64` and `spirv64` is present | - | open |
-| Z4 | CI green; merge; index artifact published | `Publish Index Artifact` green on the merge commit | Z1-Z3 | open |
+| Z1 | `xim:shaderc` 2026.3: `glslc` and `libshaderc`, conda-forge repack with its closure, x86_64 and aarch64, both mirrors | `glslc --version` from the payload; a `.comp` compiles to SPIR-V; every `DT_NEEDED` of every payload object resolves inside payloads | - | done: both mirrors byte-identical; `glslc` compiles a `.comp` to a module whose first word is `07230203`; `ldd` on all six programs names nothing outside the store |
+| Z2 | `xim:hip-nvidia` rocm-7.2.4: the HIP headers plus `hipother`'s `nvidia_detail`, architecture-independent | a `.hip` translation unit compiles against it with `__HIP_PLATFORM_NVIDIA__` and links against the CUDA payload | - | done: three source trees, not two -- `hip_runtime_api.h` includes `amd_detail/amd_hip_runtime_pt_api.h` unconditionally on either platform, so `ROCm/clr` is required to parse; `hip_version.h` is generated from the tree's own VERSION |
+| Z3 | `xim:libclc` 22.1.8 and `xim:llvm-spirv` 22.1.2, conda-forge repacks | each installs; `llvm-spirv --version` answers; the libclc bitcode for `nvptx64` and `spirv64` is present | - | withdrawn: see 7.5. Both exist on conda-forge and both were confirmed repackable, but nothing in this round consumes them -- the Mesa rebuild that would is the deferred item. A payload with no consumer is the "claim rather than a feature" this ecosystem already rejects |
+| Z4 | CI green; merge; index artifact published | `Publish Index Artifact` green on the merge commit | Z1, Z2 | done: PR #768 merged as `62538ee`, `Publish Index Artifact` green on it; a fixture then resolved `xim:hip-nvidia` from the published index and answered `12 24 36 48`. The PR also carries a dpcpp repair CI found: see 7.5 |
 
 #### mcpp (single PR, version 2026.9.6.1)
 
 | # | task | criterion | depends on | status |
 |---|---|---|---|---|
-| N1 | `.sycl` in the device-extension table | a unit test over the whole table with the table as its denominator; e2e: a `.sycl` in a constrained glob reaches `MCPP_DEVICE_SOURCES`, and the same file outside one is still a hard error | - | open |
+| N1 | `.sycl` in the device-extension table | a unit test over the whole table with the table as its denominator; e2e: a `.sycl` in a constrained glob reaches `MCPP_DEVICE_SOURCES`, and the same content named `.cpp` is still C++ | - | done: e2e 613, five sections; the unit case verified to run BY NAME rather than by the suite being green. The row's original criterion was wrong and the run said so -- see 7.5 |
 | N2 | `examples/11-sycl-compute`: one SYCL kernel behind a seam, the CUDA backend and the host device from one artifact | `12 24 36 48` on the RTX 4080 and again with `--no-accel` | N1, Q1 | open |
 | N3 | `examples/12-hip-compute`: a `.hip` kernel through `mcpp.rules.hip` on the NVIDIA platform | `12 24 36 48`, and no `/usr` path on any command line | Q2, Z2 | open |
-| N4 | Chapter 20 gains the SYCL and HIP lanes and the table of which rule drives which compiler; chapter 18 gains the two devices; both languages | `check_docs_style.sh` passes; the Chinese chapter has the rows the English one has | N2, N3 | open |
+| N4 | Chapter 20 gains the SYCL and HIP lanes and the table of which rule drives which compiler; both languages | `check_docs_style.sh` passes; the Chinese chapter has the rows the English one has | - | done: the lane table, the two-chunk `accel` explanation, the HIP header-layer note and the two-C++-runtimes note, in both languages; "Not implemented" corrected -- the whole-target shape is no longer among the missing |
 | N5 | Version 2026.9.6.1, CHANGELOG, unit and e2e suites, PR, CI green, self-review | no e2e failure other than the ones already failing on `origin/main` | N1-N4 | open |
 | N6 | Release, mirror, index bump, bootstrap pin | both mirrors return 200 and identical bytes for every asset; xim-pkgindex names it `latest` | N5 | open |
 
@@ -458,9 +458,9 @@ Status is one of `done`, `open`, `deferred (reason)`.
 
 | # | task | criterion | depends on | status |
 |---|---|---|---|---|
-| Q1 | `mcpp.rules.sycl`, feature `rules-sycl` | a fixture compiles a `.sycl` unit with the `dpcpp` payload and links it into a C++23-modules program; the rule refuses with the declaration to add when the payload is absent | N1 | open |
-| Q2 | `mcpp.rules.hip`, feature `rules-hip` | a fixture compiles a `.hip` unit on the NVIDIA platform; the rule names the platform it selected and why | Z2 | open |
-| Q3 | `mcpp.rules.spirv` gains the `glslc` route now that a payload exists | both compilers produce a header the same program includes; the rule states which one it used and refuses a mixture | Z1 | open |
+| Q1 | `mcpp.rules.sycl`, feature `rules-sycl` | a fixture compiles a `.sycl` unit with the `dpcpp` payload and links it into a C++23-modules program; the rule refuses with the declaration to add when the payload is absent | N1 | done: `12 24 36 48` on an RTX 4080 through `mcpp run`, zero `/usr` paths on any command line, and the device-link wrapper asserted as its own file |
+| Q2 | `mcpp.rules.hip`, feature `rules-hip` | a fixture compiles a `.hip` unit on the NVIDIA platform; the rule names the platform it selected and why | Z2 | done: `12 24 36 48` on an RTX 4080, zero `/usr` paths; the AMD platform is refused by name with the reason rather than approximated |
+| Q3 | `mcpp.rules.spirv` gains the `glslc` route now that a payload exists | both compilers produce a header the same program includes; the rule states which one it used | Z1 | done: the two command lines share almost nothing -- glslc's `-mfmt=c` is a bare initialiser list and its `-S` means "emit assembly" where glslang's names a stage -- so the rule writes the declaration itself and keys its `mcpp::fact` on the flavour |
 | Q4 | CI: one consumer fixture per feature, built with the pinned mcpp | green on the PR head | Q1-Q3, N6 | open |
 | Q5 | Release `v0.2.0`; GitHub archive and a GitCode asset with identical bytes; index descriptor | both URLs return 200 and one sha256 | Q4 | open |
 
@@ -468,7 +468,7 @@ Status is one of `done`, `open`, `deferred (reason)`.
 
 | # | task | criterion | depends on | status |
 |---|---|---|---|---|
-| R1 | `mcpp:plugins` 0.2.0 in `pkgs/m/mcpp.plugins.lua`, floor 2026.9.6.1 | `mcpp add mcpp:plugins` resolves in a sandbox and the new features are selectable | Q5, N6 | open |
+| R1 | `compat.sycl-runtime` 2026.09.06; then `mcpp:plugins` 0.2.0 in `pkgs/m/mcpp.plugins.lua`, floor 2026.9.6.1 | the adapter: a workspace member loads `libsycl.so.9` by soname under mcpp's own loader. the descriptor: `mcpp add mcpp:plugins` resolves in a sandbox and the new features are selectable | Q5, N6 | adapter done (PR #354 merged as `e17fc88`, index artifact published); descriptor open |
 | R2 | CI green; merge; index artifact published | `Publish Index Artifact` green on the merge commit | R1 | open |
 
 #### Verification
@@ -490,10 +490,71 @@ measured here says so and names what would decide it. V3 and V4 are that
 measurement, and no part of this round is reported as complete before they are
 green.
 
-### 7.5 Dynamic updates
+### 7.5 What this round's work corrected, and what it withdrew
 
-Every change to the plan is recorded here with its reason.
+Six changes to the plan above, each with what decided it.
+
+**Z3 withdrawn: two payloads with no consumer.** `libclc` 22.1.8 and
+`llvm-spirv` 22.1.2 are both on conda-forge, both repackable, and both are what
+the deferred Intel `anv` build would need. Publishing them now would put two
+packages in the index that nothing in this ecosystem reaches, which is the
+"claim rather than a feature" `mcpp.rules.spirv` already refuses for itself.
+They are published when the Mesa rebuild that consumes them is.
+
+**N1's criterion was wrong, and the run said so.** It read "a `.sycl` outside a
+constrained glob is still a hard error". It is not: an extension the table
+names is accepted wherever it is globbed, and the hard error applied only while
+the extension was absent from the table. The compatibility guarantee is the
+default-glob section, which asserts the WHOLE list. The retired assertion was
+replaced by one that measures something: the same content named `.cpp` is still
+compiled as C++ and does not reach the build program -- a test naming only
+`.sycl` would pass on a table that had started classifying by content.
+
+**A dpcpp repair, found by trying to use the payload.** Five of its programs --
+`sycl-ls`, `sycl-prof`, `sycl-trace`, `sycl-sanitize`, `syclbin-dump` -- ship
+with neither DT_RPATH nor DT_RUNPATH and could not start once installed. The
+`[cuda:gpu] NVIDIA CUDA BACKEND` recorded in that recipe's own comment had been
+measured with LD_LIBRARY_PATH set. Two attempts were needed:
+
+* `selfcontain.seal`, the idiom the repacked payloads use, sets the
+  INTERPRETER as well as the search path. Behind the ecosystem's private loader
+  there is no host fallback, and CI's dependency-closure check refused it,
+  naming four sonames with no provider in the index. The check was describing a
+  real regression: the sealed payload enumerated no platforms where the
+  unsealed one had found the GPU.
+* `elfpatch.set_rpath` on BOTH halves is the answer. bin/ alone leaves
+  `sycl-ls` starting and reporting nothing, because the Unified Runtime loader
+  dlopens its adapters by absolute path and each one then fails on
+  `libumf.so.1`, which is inside this same payload.
+
+**The SYCL link needs `-l:libstdc++.so.6`, not `-lstdc++`.** clang's driver
+treats `-lstdc++` as a selector for the C++ standard library and rewrites it to
+`-lc++` under `-stdlib=libc++`, so the flag disappears from the link line with
+no diagnostic and `std::cerr` comes back undefined from inside a SYCL header.
+Found by reading `clang -###`, after the symbol was verified to exist in the
+library the `-L` named.
+
+**`compat.sycl-runtime` was not in the plan and the round does not close
+without it.** The rule can satisfy `-lsycl` at link time from the payload, and
+the artifact then fails mcpp's runtime closure check. Three of the adapter's
+entries were added by a failure rather than by design: the dlopen chain
+(`libur_loader.so.0`, `libumf.so.1`), the C++ runtime that `compat.cudart`
+deliberately does not farm, and `libz.so.1` -- which only CI found, because
+this machine had zlib installed for unrelated reasons.
+
+**Five pull requests across three repositories, not three.** The dependency
+order is a cycle if each repository takes one: the plugin collection's CI needs
+the released engine AND the index adapter, while the engine's examples need the
+released collection. Round 3 met the same shape and resolved it the same way.
+The order is: mcpp (engine) and mcpp-index (adapter) in parallel, then
+mcpp-plugins, then mcpp-index (descriptor), then mcpp (examples).
+
+### 7.6 Dynamic updates
 
 | date | change | reason |
 |---|---|---|
 | 2026-09-06 | table created | - |
+| 2026-09-06 | Z3 withdrawn | above |
+| 2026-09-06 | N1's second criterion replaced | above |
+| 2026-09-06 | `compat.sycl-runtime` added to the index row | the runtime closure check refuses the artifact without it |
+| 2026-09-06 | the round is five PRs, not three | the release order is a cycle otherwise |
