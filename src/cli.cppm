@@ -550,6 +550,8 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("search")
             .description("Search packages in configured registries")
             .arg(cl::Arg("keyword").help("Search keyword (substring match)").required())
+            .option(cl::Option("all-versions")
+                .help("List every published version instead of the latest few"))
             .action(wrap_rc(cmd_search)))
         .subcommand(cl::App("publish")
             .description("Publish package to default registry")

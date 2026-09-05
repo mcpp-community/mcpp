@@ -74,6 +74,12 @@ public:
     std::expected<std::vector<SearchHit>, CallError>
         search(std::string_view keyword);
 
+    // #487 — what the package behind a search hit publishes: its descriptor's
+    // per-OS version tables merged semver-descending. Empty when the hit
+    // carries no `ns:name` prefix or has no readable descriptor — display
+    // degrades to the bare line, the search itself never fails on this.
+    std::vector<std::string> versions_for_hit(const SearchHit& hit) const;
+
     struct PackageInstall {
         std::string name;
         std::string version;
@@ -137,27 +143,41 @@ public:
 
     // ─── did-you-mean scan (#278) — DIAGNOSTIC ONLY ────────────────
     //
-    // Enumerate every descriptor under the given index roots and return the
-    // fully-qualified names of those whose canonical SHORT name equals
-    // `shortName`. This is the only index-wide scan in mcpp, and it exists so a
-    // failed bare-name lookup can tell the user the exact line to write instead
-    // of leaving them to guess a namespace.
+    // Enumerate every descriptor under the given index roots and return those
+    // whose canonical SHORT name equals `shortName`, each with its FQN and the
+    // merged per-OS version list it publishes (#487), so a failed lookup can
+    // tell the user the exact line to write AND what versions exist behind it,
+    // instead of leaving them to guess a namespace or re-run xpkg parse.
     //
     // THREE CONSTRAINTS — this must never grow into an `IdentityIndex`:
     //   1. Call it ONLY on an already-failed path. Successful resolution must
     //      not pay for a directory walk.
-    //   2. Its result feeds ERROR TEXT ONLY. It must never be written back into
-    //      a DependencySpec, the lockfile, or the install layer — bare names
-    //      resolving across arbitrary namespaces is precisely the
-    //      reproducibility hazard this design rejects (design §3.2/§4.2).
+    //   2. Its result feeds ERROR TEXT / SEARCH DISPLAY ONLY. It must never be
+    //      written back into a DependencySpec, the lockfile, or the install
+    //      layer — bare names resolving across arbitrary namespaces is
+    //      precisely the reproducibility hazard this design rejects (design
+    //      §3.2/§4.2). The version list is under the same rule: it describes
+    //      what exists, it is not a resolution input.
     //   3. An empty result is not an error. It downgrades the message, never
     //      the exit code.
-    static std::vector<std::string>
-        scan_fqns_with_short_name(const std::vector<std::filesystem::path>& indexRoots,
-                                  std::string_view shortName);
+    struct ShortNameMatch {
+        std::string fqn;                    // "ns.name"
+        std::vector<std::string> versions;  // semver-desc, may be empty
+
+        // " (1.0.0, 0.9.0, ...)" — empty when nothing is published/readable.
+        // The list and its truncation marker come from the one place that
+        // decides them, so this line and `mcpp search` cannot drift apart.
+        std::string versions_label() const {
+            if (versions.empty()) return {};
+            return " (" + mcpp::manifest::join_versions_desc(versions) + ")";
+        }
+    };
+    static std::vector<ShortNameMatch>
+        scan_short_name_matches(const std::vector<std::filesystem::path>& indexRoots,
+                                std::string_view shortName);
 
     // The index roots a plain `mcpp build` would consult (global registry data
-    // dirs). Used to feed `scan_fqns_with_short_name` on the failure path.
+    // dirs). Used to feed `scan_short_name_matches` on the failure path.
     std::vector<std::filesystem::path> builtin_index_roots() const;
 
     // ─── Legacy overloads (COMPAT, remove in 1.0.0) ─────────────
@@ -486,6 +506,21 @@ Fetcher::search(std::string_view keyword) {
         }
     }
     return hits;
+}
+
+std::vector<std::string>
+Fetcher::versions_for_hit(const SearchHit& hit) const {
+    // Hit names arrive as `ns:name` from the xlings listing; a bare name has
+    // no routable identity, so there is nothing to read.
+    auto colon = hit.name.find(':');
+    if (colon == std::string::npos || colon == 0
+        || colon + 1 == hit.name.size())
+        return {};
+    auto ns = std::string_view(hit.name).substr(0, colon);
+    auto shortName = std::string_view(hit.name).substr(colon + 1);
+    auto lua = read_xpkg_lua(ns, shortName);
+    if (!lua) return {};
+    return mcpp::manifest::all_xpkg_versions_desc(*lua);
 }
 
 std::expected<std::vector<Fetcher::PackageInstall>, CallError>
@@ -869,12 +904,12 @@ Fetcher::install_path_from_project_data(const std::filesystem::path& projectDir,
 // resolution path. Deliberately tolerant: unreadable files are skipped, not
 // reported — a diagnostic helper must never turn into a second failure mode.
 
-std::vector<std::string>
-Fetcher::scan_fqns_with_short_name(
+std::vector<Fetcher::ShortNameMatch>
+Fetcher::scan_short_name_matches(
     const std::vector<std::filesystem::path>& indexRoots,
     std::string_view shortName)
 {
-    std::vector<std::string> hits;
+    std::vector<ShortNameMatch> hits;
     if (shortName.empty()) return hits;
 
     std::error_code ec;
@@ -894,13 +929,23 @@ Fetcher::scan_fqns_with_short_name(
                 auto id = mcpp::manifest::canonical_xpkg_identity_from_lua(content);
                 if (id.name != shortName) continue;
                 if (id.ns.empty()) continue;   // bare upstream: already reachable
-                hits.push_back(id.ns + "." + id.name);
+
+                // #487 — the descriptor is already in memory, so the version
+                // union costs one more pass over text we had to read anyway.
+                // Display-only: constraint 2 above applies to it verbatim.
+                hits.push_back({id.ns + "." + id.name,
+                                mcpp::manifest::all_xpkg_versions_desc(content)});
             }
         }
     }
 
-    std::sort(hits.begin(), hits.end());
-    hits.erase(std::unique(hits.begin(), hits.end()), hits.end());
+    std::sort(hits.begin(), hits.end(),
+              [](auto const& a, auto const& b) { return a.fqn < b.fqn; });
+    hits.erase(std::unique(hits.begin(), hits.end(),
+                           [](auto const& a, auto const& b) {
+                               return a.fqn == b.fqn;
+                           }),
+               hits.end());
     return hits;
 }
 

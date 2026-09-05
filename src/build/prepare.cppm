@@ -4095,17 +4095,19 @@ prepare_build(bool print_fingerprint,
 
                 // T12 — did-you-mean. DIAGNOSTIC ONLY: the scan runs solely on
                 // this already-failed path and its result never leaves the
-                // error string (see Fetcher::scan_fqns_with_short_name).
+                // error string (see Fetcher::scan_short_name_matches).
                 std::string hint;
                 if (auto cfg = get_cfg()) {
-                    auto fqns = mcpp::pm::cross_namespace_matches(
+                    auto suggestions = mcpp::pm::cross_namespace_suggestions(
                         index_route(*cfg), candidates.front().shortName);
-                    if (!fqns.empty()) {
+                    if (!suggestions.empty()) {
                         hint += "\n  a package with this name exists under "
                                 "another namespace:";
-                        for (auto& fqn : fqns) hint += "\n    " + fqn;
+                        for (auto& suggestion : suggestions)
+                            hint += "\n    " + suggestion.fqn
+                                  + suggestion.versions_label();
                         if (auto suggested = mcpp::pm::parse_package_selector(
-                                fqns.front()); suggested
+                                suggestions.front().fqn); suggested
                             && suggested->namespace_) {
                             hint += std::format(
                                 "\n  namespace omission means `{}`. write the "

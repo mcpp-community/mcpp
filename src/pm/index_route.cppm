@@ -84,10 +84,12 @@ struct Lookup {
 Lookup lookup_descriptor(const IndexRoute& route,
                          const std::vector<DependencyCoordinate>& candidates);
 
-// Diagnostic only: fully-qualified names carrying `shortName` under some other
-// namespace, for did-you-mean text on an already-failed lookup.
-std::vector<std::string> cross_namespace_matches(const IndexRoute& route,
-                                                 std::string_view shortName);
+// Diagnostic only: descriptors carrying `shortName` under some other
+// namespace, for did-you-mean text on an already-failed lookup. Each record
+// keeps the FQN plus the versions that package publishes (#487) — display
+// only, never a resolution input (see Fetcher::scan_short_name_matches).
+std::vector<mcpp::fetcher::Fetcher::ShortNameMatch> cross_namespace_suggestions(
+    const IndexRoute& route, std::string_view shortName);
 
 // The `[indices]` a project at `root` effectively sees, including the
 // workspace-root inheritance a member gets for free (#224).
@@ -229,8 +231,9 @@ Lookup lookup_descriptor(const IndexRoute& route,
     return out;
 }
 
-std::vector<std::string> cross_namespace_matches(const IndexRoute& route,
-                                                 std::string_view shortName) {
+std::vector<mcpp::fetcher::Fetcher::ShortNameMatch>
+cross_namespace_suggestions(
+    const IndexRoute& route, std::string_view shortName) {
     if (!route.cfg) return {};
     mcpp::fetcher::Fetcher fetcher(*route.cfg);
     auto roots = fetcher.builtin_index_roots();
@@ -242,7 +245,7 @@ std::vector<std::string> cross_namespace_matches(const IndexRoute& route,
             }
         }
     }
-    return mcpp::fetcher::Fetcher::scan_fqns_with_short_name(roots, shortName);
+    return mcpp::fetcher::Fetcher::scan_short_name_matches(roots, shortName);
 }
 
 IndexMap effective_indices(const std::filesystem::path& root) {
