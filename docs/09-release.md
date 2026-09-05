@@ -89,6 +89,36 @@ Two steps are **not** automated:
   the released version is downloadable but not installable via `xlings install`.
 - **bumping `.xlings.json`** — see §4.
 
+The bump PR is machine-authored: branch `bump/mcpp-<version>`, commits by
+`xlings-ci <ci@xlings.dev>`, and a diff that is invariably +22/-3. The three
+deletions are the load-bearing part — the generator *replaces* each platform
+table's `["latest"]` line rather than adding one. A hand-written index PR is not
+an equivalent shortcut, and filing one alongside the bot's carries two distinct
+costs, both incurred on 2026-09-05 by `xim-pkgindex#764`:
+
+- The hand-written diff appended `["latest"] = { ref = "<new>" }` above the
+  existing line instead of replacing it, leaving two `["latest"]` keys in every
+  platform table. A Lua table constructor takes the last assignment, so `latest`
+  resolved back to the previous release. The exact-version entry was present and
+  correct, so every pinned consumer stayed green — mcpp's own CI pins exactly and
+  never saw it. Only `xlings install mcpp` without a version served the stale
+  binary.
+- Landing ahead of the bot's PR left that PR conflicting. The resolution is to
+  take the bot branch's side of `pkgs/m/mcpp.lua`; it differs from the
+  hand-written `main` only by the stale `["latest"]` lines.
+
+A merged bump PR is therefore confirmed by what `latest` resolves to, which the
+presence of the version string elsewhere in the file does not answer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/openxlings/xim-pkgindex/main/pkgs/m/mcpp.lua \
+  | grep -n '\["latest"\]'
+```
+
+Exactly three lines come back, one per platform table, and each names the version
+just released. A fourth line, or one naming the previous release, is the
+duplicate-key defect above.
+
 ## 3. Verifying a release
 
 The mirror script verifies its own uploads, but the checks worth doing by hand
@@ -169,6 +199,22 @@ is not yet installable. Bump it only after the release is published, mirrored,
 `check_version_pins.sh` enforces the weaker "never newer than the version being
 built"; the index condition requires human judgement.
 
+"Merged into xim-pkgindex" is necessary but not sufficient: clients read a CDN
+artifact, not the git tree. On 2026-09-05 the pin commit reached `main` 19
+seconds before the index PR merged, and the CI jobs it triggered resolved the
+index 51 seconds *after* the new pointer asset had been replaced — and still
+received the previous artifact. All nine workflows failed at bootstrap, none of
+them having compiled a line. The observable condition is the pointer itself:
+
+```bash
+curl -fsSL https://github.com/xlings-res/xim-index/releases/download/latest/xim-index-latest.json \
+  | grep -E '"(index_version|source_commit)"'
+```
+
+`index_version` must equal the short SHA of xim-pkgindex `main` before the pin is
+pushed. Nothing enforces this, and in the job log the resulting failure is
+indistinguishable from a genuinely wrong version name.
+
 ## 5. `MCPP_PIN` is derived, and why that matters
 
 `ci-fresh-install.yml` used to carry a second hand-edited copy of the pin. It was
@@ -226,6 +272,8 @@ would again let the index guard and the installed version drift apart.
 [ ] downloaded mcpp-release.json regenerates byte-identically from public assets
 [ ] mirrors serve all four platforms on BOTH hosts, sha256 recomputed
 [ ] merge the xim-pkgindex bump PR
+[ ] index `latest` resolves to the new version in all three platform tables
+[ ] xim-index-latest.json's `index_version` equals xim-pkgindex `main`
 [ ] clean-room XLINGS_HOME: xlings install mcpp@<version> succeeds
 [ ] (optional) bump .xlings.json — only now, never earlier
 ```
