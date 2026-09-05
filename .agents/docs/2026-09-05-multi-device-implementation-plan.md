@@ -11,7 +11,7 @@
 | ① 载荷 | xim-pkgindex | ✅ **#759 已合入 `a4644a7`**,15 项 CI 全绿,25 个包;⚠️ 13.x 后端不可达由 **#760** 修 |
 | ② 引擎 | mcpp | ✅ T2.1–T2.5、T2.7–T2.10 完成并各有判据;T2.6 部分(`accel` 已进 ABI 标签与指纹,`.a` 端到端判据待补) |
 | ③ 发布 | mcpp | ⬜ |
-| ④ 适配面 | mcpp-index | ⬜ |
+| ④ 适配面 | mcpp-index | 🟡 T4.1/T4.4 ✅(**#347 已合入 `8a9ca64`**);T4.2 待 ① 的 pocl/lavapipe;T4.3 待 ③ |
 | ⑤ 框架 | mcpp-index | ⬜ |
 | ⑥ 生态验证 | 沙箱 | ⬜ |
 
@@ -69,10 +69,10 @@
 
 | # | 任务 | 判据 | 依赖 |
 |---|---|---|---|
-| T4.1 | `compat.cuda-runtime` → `compat.cuda-driver` 改名 + `repo` 改正 | 旧名保留一个跳转期 | T3.1 |
+| T4.1 | ✅ `compat.cuda-runtime` → `compat.cuda-driver` 改名 + `repo` 改正 | ✅ 旧条目冻结保留;工作区成员 `tests/examples/cuda-driver` **同时依赖新旧两个名字**,让跳转期这条承诺有判据(此前它只是一句注释) | — |
 | T4.2 | `compat.vulkan-icd` / `compat.opencl-icd`(缺失时回落载荷) | 无卡机器上 dlopen 到软件实现 | T1.4, T1.5 |
 | T4.3 | `rules-cuda` / `rules-hip` / `rules-sycl` / `rules-spirv` 进索引 | 消费者一行依赖即可用 | T3.1, T2.8 |
-| T4.4 | `compat.cublas` / `cudnn` / `nccl` / `onemkl` | 闭包校验通过 | T1.7 |
+| T4.4 | 🟡 `compat.cudart` + `cublas`/`cufft`/`curand`/`cusolver`/`cusparse` ✅ | ✅ e2e 判据=新成员 `tests/examples/cuda-curand`:无卡机器断言库能加载并应答,有卡再断言 [0,1] 与均值。⚠️ `cudnn`/`nccl`/`onemkl` 仍缺 xim 载荷 | T1.7 |
 
 ### ⑤ 框架(mcpp-index,依赖 ④)
 
@@ -142,6 +142,9 @@
 | 2026-09-05 | **`-B` 的守卫收敛为 `gcc::binutils_prefix_dir`,并只对 GCC 作答** | 三处副本(registry / gcc / flags),其中一处注释写着「Mirrors the guard in build/flags.cppm」。clang 的命令行本就不带 `-B`,所以对 clang 作答会描述一个没人传的开关 |
 | 2026-09-05 | ⚠️ **构建程序 helper 在 Linux 上改用 `DT_RPATH`** | RUNPATH 只对 helper **自己**的 needed 生效;它 `dlopen` 的宿主库的依赖(`libdl.so.2`)按私有 loader 的默认搜索,搜不到。这是规则包能读到驱动版本的前提 |
 | 2026-09-05 | ⚠️⚠️ **① 的 13.x 载荷装完不能用** —— xim #760 | nvcc 用 `$(TOP)/nvvm/bin/cicc` 找自己的后端,而 13.x 把 `nvvm/` 与 `crt/` 拆成了独立包=独立载荷根。**载荷完整、`nvcc --version` 正常、组件都装了**,编译时 `exit 127`。修法在 `install()` 里把这两个目录链回来;`os.exists`/`os.ln` 在配方沙箱里都不存在,`os.cp(symlink=true)` 是「保留源里的符号链接」而不是「建一个」 |
+| 2026-09-05 | ⚠️⚠️ **「没有加速器」被写成了显示用的 `(none)`** | `accel_str` 为空集打印 `(none)` 是给 ABI 标签读的;`resolvedAccel` 把这个拼法当值传了出去 ⇒ ①`MCPP_ACCEL=(none)` 到达**每一个从未提过加速器的工程**,与手册承诺的空串矛盾;②指纹里 `if (!accel.empty())` 恒真,给所有工程都追加了 `#accel=(none)`。判据只能靠构建程序**写文件**取得 —— 它的 stdout 只在非零退出时才打印。e2e 605 第四段标题写着「变量与 layer 都清空」却只测了 layer,这就是它逃过套件的原因 |
+| 2026-09-05 | ④ 的 T4.1/T4.4 落地为 mcpp-index #347 并合入 | 六个新包 + 一次改名;两处上游耦合写进配方(`crt/` 在编译器组件里;NVIDIA 的 `.so` 带 `RUNPATH=$ORIGIN` 会关掉继承的 RPATH ⇒ 要一并 farm glibc 三个存根) |
+| 2026-09-05 | ⚠️ **path 索引里包的命名空间由「索引名」决定,而不是描述符里的 `namespace`** | 本地验证时 `[indices] localidx = { path = ... }` 下 `compat.cudart` 解析不到,而诊断说「a package with this name exists under another namespace: compat.cudart」—— 把索引名改成 `compat` 即通。诊断本身值得单独修 |
 | 2026-09-05 | e2e 317 的等待窗从 2s 放宽到 5s | 到达「五次短失败」下界最少要 1.25s(4×250ms 重启延迟 + 5×50ms 轮询),2s 窗只给每次 spawn 留 150ms;main 上 macOS **连续两次**在此失败而本分支同码两次通过 —— 判据由 runner 负载决定。5s 窗留 750ms |
 | 2026-09-05 | e2e 602 声明 `requires: unix-shell`,并以 `MCPP_OFFLINE=1` 运行 | doctor 在 Windows 上整段不产出(载荷只有 linux 构建;Windows 工具包的上界是 `_MSC_VER` 区间,报告尚未读它);隔离 home 下 doctor 会把整套引导 + 工具链装进临时目录:实测 229s / 1.4 GB |
 | 2026-09-05 | ⚠️ 核心改动:`--offline` 下跳过首次沙箱引导 | `load_or_init` 在空 home 里克隆索引、经 `xlings install` 装 ninja/patchelf,全部走网络,违反 `--offline`「绝不碰网络」的承诺。实测 offline 空 home 26s / 126 MB → 0.3s;e2e 604 带对照(已引导的 home 不提示);文档中英各补一句 |
