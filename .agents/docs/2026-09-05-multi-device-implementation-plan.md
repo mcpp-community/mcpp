@@ -133,3 +133,6 @@
 | 2026-09-05 | T2.4 完成 | `exclusive` 是列表不是布尔:一个包可提供多项能力而只有部分独占。schema 警告而非报错,因为绑定期那一处才是执行者 |
 | 2026-09-05 | ⚠️ 本机 shim 被 #582 剪掉一次 | 25 次 `xlings install` 后 `mcpp` 等 7 个裸名 shim 消失,store 完好。重装即恢复 —— 又一次受控复现,补进 issue |
 | 2026-09-05 | `libcublas` 暂不拆 static | 上游一个归档同时含 shared 与 static,拆分需要重打包并 re-host,与「不 re-host」冲突;先按上游形态发,拆分单列 |
+| 2026-09-05 | e2e 317 的等待窗从 2s 放宽到 5s | 到达「五次短失败」下界最少要 1.25s(4×250ms 重启延迟 + 5×50ms 轮询),2s 窗只给每次 spawn 留 150ms;main 上 macOS **连续两次**在此失败而本分支同码两次通过 —— 判据由 runner 负载决定。5s 窗留 750ms |
+| 2026-09-05 | e2e 602 声明 `requires: unix-shell`,并以 `MCPP_OFFLINE=1` 运行 | doctor 在 Windows 上整段不产出(载荷只有 linux 构建;Windows 工具包的上界是 `_MSC_VER` 区间,报告尚未读它);隔离 home 下 doctor 会把整套引导 + 工具链装进临时目录:实测 229s / 1.4 GB |
+| 2026-09-05 | ⚠️ 核心改动:`--offline` 下跳过首次沙箱引导 | `load_or_init` 在空 home 里克隆索引、经 `xlings install` 装 ninja/patchelf,全部走网络,违反 `--offline`「绝不碰网络」的承诺。实测 offline 空 home 26s / 126 MB → 0.3s;e2e 604 带对照(已引导的 home 不提示);文档中英各补一句 |

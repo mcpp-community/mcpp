@@ -625,13 +625,40 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     //    TODO(xlings-upstream): collapse into a single
     //    `xlings sandbox bootstrap --home <X>` once that command exists
     //    upstream (see docs/short-term-vs-long-track plan).
+    //
+    //    NOT UNDER --offline. Each of the three steps below reaches the
+    //    network when the sandbox is fresh: `xlings self init` clones the
+    //    package index, and patchelf and ninja arrive through `xlings
+    //    install`. `--offline` promises never to touch the network, and an
+    //    empty home is exactly where that promise was being broken --
+    //    measured: `MCPP_OFFLINE=1 mcpp self doctor` in a fresh home fetched
+    //    the index and 126 MB of tools before running its first check.
+    //
+    //    A bootstrapped home loses nothing: every step is a no-op once its
+    //    artefact exists, and the completion markers below are still written
+    //    from what is on disk. A fresh home stays un-bootstrapped, and the
+    //    commands that need the tools say so through check_base_init().
+    const bool bootstrapAllowed = !mcpp::platform::env::offline_mode();
     ensure_sandbox_xlings_binary(cfg, quiet);
-    ensure_sandbox_init(cfg, quiet);
+    if (bootstrapAllowed) {
+        ensure_sandbox_init(cfg, quiet);
+    } else if (!quiet) {
+        // Once per process: the doctor loads the configuration more than once,
+        // and the same sentence twice reads as two events.
+        static bool announced = false;
+        auto marker = mcpp::xlings::paths::sandbox_init_marker(make_xlings_env(cfg));
+        if (!announced && !std::filesystem::exists(marker)) {
+            announced = true;
+            print_status("Skipping",
+                "sandbox bootstrap (offline mode; run without --offline to bootstrap)");
+        }
+    }
     {
         auto bsEnv = make_xlings_env(cfg);
 #if !defined(__APPLE__) && !defined(_WIN32)
         // patchelf is ELF-only; macOS uses Mach-O and Windows uses PE.
-        ensure_sandbox_patchelf(cfg, quiet, onBootstrapProgress);
+        if (bootstrapAllowed)
+            ensure_sandbox_patchelf(cfg, quiet, onBootstrapProgress);
         // Only mark complete if the actual binary exists (not just the dir).
         {
             auto pBin = mcpp::xlings::paths::xim_tool(bsEnv, "patchelf",
@@ -640,7 +667,8 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
                 mcpp::fallback::mark_install_complete(pBin.parent_path().parent_path());
         }
 #endif
-        ensure_sandbox_ninja(cfg, quiet, onBootstrapProgress);
+        if (bootstrapAllowed)
+            ensure_sandbox_ninja(cfg, quiet, onBootstrapProgress);
         {
             auto nRoot = mcpp::xlings::paths::xim_tool_root(bsEnv, "ninja");
             auto ninja_name = std::string("ninja") + std::string(mcpp::platform::exe_suffix);

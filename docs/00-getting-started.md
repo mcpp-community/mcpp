@@ -196,4 +196,4 @@ For the differences between the four modes and their artifact layouts, see [02 â
   default/sole template, or run `mcpp new --list-templates ocornut.imgui@1.92.8`).
 - Explaining default decisions: `mcpp why [toolchain|runtime|deps]`; host capability checkup: `mcpp self doctor`;
   machine-readable resolution manifest: the build artifact `target/<triple>/<fp>/resolution.json`.
-- Offline operation: `mcpp --offline` or `MCPP_OFFLINE=1` prevents index refreshes, downloads, and toolchain installation.
+- Offline operation: `mcpp --offline` or `MCPP_OFFLINE=1` prevents index refreshes, downloads, and toolchain installation. In a home that has never been used it also skips the first-use sandbox bootstrap (index clone, ninja, patchelf), announces the skip once, and leaves the home un-bootstrapped; commands that need those tools report it.
