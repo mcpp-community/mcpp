@@ -348,6 +348,17 @@ paths** and nothing else:
 The build output tree and `.git` are never part of the set, so a wide pattern
 cannot make the program re-run forever against its own outputs.
 
+**Every declared input is compared on the fast path too** (2026.9.5.4+). A
+project whose sources are all older than `build.ninja` takes a fast path that
+skips the phase where the program's cache is normally consulted, and until
+2026.9.5.4 that path asked only about glob path sets. A data file a program
+reads is neither under `src/` nor named with a C++ extension, so the mtime
+sweep cannot see it either: editing it left the previous run's output in place
+and the build reported `Finished dev in 0.00s`. The fast path now compares what
+the cache records — a glob's path set, a declared file's content hash, and a
+declared environment variable's value — so `rerun_if_changed` means the same
+thing under both paths.
+
 ### Declaring work instead of doing it: `mcpp::action` (2026.8.5.1+)
 
 Generating a source by writing it *here* is the easy path and the wrong one

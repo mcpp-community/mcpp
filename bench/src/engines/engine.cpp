@@ -63,7 +63,7 @@ Availability probe_program(std::string_view program,
                                    version_argv.size() > 1 ? version_argv[1] : "--version",
                                    r.exit_code)};
     auto banner = first_line(*captured);
-    // ⚠️ A SHIM THAT ANSWERS FOR A PROGRAM IT DOES NOT HAVE. xlings installs
+    // A SHIM THAT ANSWERS FOR A PROGRAM IT DOES NOT HAVE. xlings installs
     // `bazel`, `mcpp` and friends as shims on PATH; ask one for its version
     // when the package is not installed and it prints
     //

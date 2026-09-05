@@ -86,7 +86,7 @@ platform::RunResult BazelEngine::build(const Job& job) const{
         // it yields a PIE executable, which is what gcc/clang produce by default
         // for everyone else in the table.
         //
-        // ⚠️ POSIX ONLY. Windows has no PIC — code there is relocatable by
+        // POSIX ONLY. Windows has no PIC — code there is relocatable by
         // construction — so its toolchain does not enable `supports_pic`, and
         // asking for it is not ignored, it is fatal at ANALYSIS:
         //

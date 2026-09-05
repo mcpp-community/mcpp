@@ -31,10 +31,34 @@ got=$("$STORE" --version 2>&1 | head -1)
 # value was written, so both tools are asked what they hold afterwards.
 "$STORE" self config --mirror "${MCPP_VERIFY_MIRROR:-CN}" >/dev/null 2>&1 || true
 "$XL" config --mirror "${MCPP_VERIFY_MIRROR:-CN}" >/dev/null 2>&1 || true
-xm=$("$XL" config 2>/dev/null | grep -i 'mirror' | head -1 | awk '{print $NF}')
+# THE SETTING, NOT THE TOOL'S OUTPUT. `xlings config` renders a banner through
+# its ui layer, which prints nothing when its stdout is a pipe -- so a command
+# substitution reads an empty string and reports a mirror that is in fact set.
+# The file the tool writes answers the same question and cannot be suppressed.
+xm=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.xlings/.xlings.json'))).get('mirror',''))" 2>/dev/null)
 [ "$xm" = "${MCPP_VERIFY_MIRROR:-CN}" ] && ok "xlings mirror is $xm" || fail "xlings mirror is '$xm', not ${MCPP_VERIFY_MIRROR:-CN}"
-mm=$("$STORE" self config 2>/dev/null | grep -i 'mirror' | head -1 | awk '{print $NF}')
+mm=$("$STORE" self config 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -i 'mirror' | head -1 | awk '{print $NF}')
 [ -n "$mm" ] && ok "mcpp mirror is $mm" || printf 'note: mcpp self config does not print its mirror (%s)\n' "$("$STORE" self config 2>&1 | head -1)"
+
+# THE REGISTRY IS SHARED WITH WHATEVER WROTE IT LAST, AND ITS INDEX SNAPSHOT
+# IS PART OF THAT. A fresh subos inherits the snapshot the registry holds, and
+# the refresh is resolution-driven with a freshness window, so a package merged
+# minutes ago resolves as `download artifact missing` until the snapshot moves.
+# Measured 2026-09-05: section E failed against a snapshot four commits behind.
+"$STORE" index update >/dev/null 2>&1 || true
+snap=$(cat "$HOME/.mcpp/registry/data/mcpplibs/.xlings-index-version" 2>/dev/null || echo "unknown")
+ok "index snapshot $snap"
+
+# Mesa creates its allocations through an anonymous file and falls back to
+# XDG_RUNTIME_DIR when memfd is unavailable. A subos root has no /run, so the
+# inherited value names a directory that does not exist and lavapipe fails with
+# `Failed to create anonymous file for memory allocations` before it reports a
+# device. A writable directory inside the sandbox is the whole fix.
+if [ ! -d "${XDG_RUNTIME_DIR:-/nonexistent}" ]; then
+    XDG_RUNTIME_DIR="$HOME/.cache/xdg-runtime"; mkdir -p "$XDG_RUNTIME_DIR"
+    chmod 700 "$XDG_RUNTIME_DIR"; export XDG_RUNTIME_DIR
+    ok "XDG_RUNTIME_DIR redirected to $XDG_RUNTIME_DIR"
+fi
 
 # -- B. the plugin collection resolves from the index -------------------------
 #
@@ -103,6 +127,13 @@ if [ -n "$SRC" ] && [ -d "$SRC/examples/10-vulkan-compute/app" ]; then
     icd=$(ls "$HOME"/.mcpp/registry/data/xpkgs/xim-x-mesa-lavapipe/*/share/vulkan/icd.d/*.json \
              "$ex10"/.mcpp/.xlings/data/xpkgs/xim-x-mesa-lavapipe/*/share/vulkan/icd.d/*.json \
              "$HOME"/.xlings/data/xpkgs/xim-x-mesa-lavapipe/*/share/vulkan/icd.d/*.json 2>/dev/null | head -1)
+    if [ -z "$icd" ]; then
+        # The example declares the payload (mcpp#569); an older checkout does
+        # not, in which case the payload is installed here so the criterion is
+        # still the driver and not the manifest's history.
+        "$XL" install mesa-lavapipe -y >/dev/null 2>&1 || true
+        icd=$(ls "$HOME"/.xlings/data/xpkgs/xim-x-mesa-lavapipe/*/share/vulkan/icd.d/*.json 2>/dev/null | head -1)
+    fi
     [ -n "$icd" ] && ok "lavapipe manifest at $icd" || fail "no lavapipe ICD manifest in any store"
     out=$(cd "$ex10" && VK_DRIVER_FILES="$icd" "$STORE" run 2>&1)
     printf '%s\n' "$out" | grep -q '12 24 36 48' && ok "example 10 answered 12 24 36 48 on the payload driver" \
@@ -113,11 +144,31 @@ if [ -n "$SRC" ] && [ -d "$SRC/examples/10-vulkan-compute/app" ]; then
         || fail "example 10 --no-accel: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
     hs=$(ls "$HOME"/.mcpp/registry/data/xpkgs/compat-x-vulkan-runtime/*/mcpp_generated/vulkan_runtime/HOST-SURFACE.txt \
             "$ex10"/.mcpp/.xlings/data/xpkgs/compat-x-vulkan-runtime/*/mcpp_generated/vulkan_runtime/HOST-SURFACE.txt 2>/dev/null | head -1)
+    # WHICH ADAPTER WROTE IT. The substitution criteria below are properties of
+    # 2026.09.06, the version that declares its payload set; an older report
+    # carries neither the declarations nor the class they produce, so both
+    # would pass on an empty finding. The version is a path segment.
+    adapter=$(printf '%s' "$hs" | sed -n 's#.*/compat-x-vulkan-runtime/\([^/]*\)/.*#\1#p')
+    [ "$adapter" = "${MCPP_VERIFY_ADAPTER:-2026.09.06}" ] && ok "the farm was written by compat.vulkan-runtime $adapter" \
+        || fail "the farm was written by compat.vulkan-runtime '$adapter', not ${MCPP_VERIFY_ADAPTER:-2026.09.06}"
     if [ -n "$hs" ]; then
         printf -- '--- %s\n' "$hs"; sed -n '/^## farmed/,$p' "$hs" | head -60
+        # WHAT A SANDBOX CAN AND CANNOT ASSERT. A subos shares the host's
+        # /usr, so the farm sees the host's proprietary driver there and a
+        # count of zero host entries is not reachable by construction -- the
+        # earlier form of this check asserted it and failed on a correct farm.
+        # What the sandbox does measure is the substitution invariant: every
+        # soname compat.vulkan-runtime declares a payload for is taken from
+        # that payload, and a declaration that did not take effect says so in
+        # the report.
         hostlines=$(grep -c -- '-- host;' "$hs" || true)
-        if [ -n "${MCPP_VERIFY_HOST:-}" ]; then ok "host surface recorded ($hostlines host entries, see above)"; else
-            [ "$hostlines" -eq 0 ] && ok "no host library is on the runtime path in the sandbox" || fail "$hostlines host entries in a sandbox"; fi
+        payloads=$(grep -c -- '-- payload;' "$hs" || true)
+        undeclared=$(grep -c 'did not take effect' "$hs" || true)
+        printf 'note: %s payload substitutions, %s host entries\n' "$payloads" "$hostlines"
+        [ "$undeclared" -eq 0 ] && ok "every declared payload took effect" \
+            || fail "$undeclared declared payload(s) did not take effect"
+        [ "$payloads" -ge 20 ] && ok "$payloads farmed libraries come from payloads" \
+            || fail "only $payloads payload substitutions; the declared set did not install"
     else fail "no HOST-SURFACE.txt written by compat.vulkan-runtime"; fi
 else
     printf 'skip: MCPP_VERIFY_SRC not set or has no examples/10-vulkan-compute\n'

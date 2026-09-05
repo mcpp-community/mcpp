@@ -116,7 +116,7 @@ TEST(SourceKind, PredicatesAgreeWithTheKind) {
     // Assembly is absent on purpose — it has no import and no scanned include
     // graph, so editing one changes its object (ninja tracks that) and nothing
     // else. A NEW assembly file is a different question, answered by
-    // glob_inputs_stale.
+    // program_inputs_stale.
     EXPECT_TRUE(mcpp::affects_graph_shape(SourceKind::ModuleInterface));
     EXPECT_TRUE(mcpp::affects_graph_shape(SourceKind::Cxx));
     EXPECT_TRUE(mcpp::affects_graph_shape(SourceKind::C));
@@ -305,7 +305,7 @@ TEST(SourceKind, DevicePredicates) {
     EXPECT_FALSE(mcpp::is_cxx_like(SourceKind::Device));
     EXPECT_FALSE(mcpp::links_unconditionally(SourceKind::Device));
     // Absent for the same reason assembly is absent: the content change is
-    // tracked by ninja, and a NEW file is `glob_inputs_stale`'s question.
+    // tracked by ninja, and a NEW file is `program_inputs_stale`'s question.
     EXPECT_FALSE(mcpp::affects_graph_shape(SourceKind::Device));
     EXPECT_EQ(mcpp::to_string(SourceKind::Device), "device");
 }

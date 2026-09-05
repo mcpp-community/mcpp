@@ -45,7 +45,7 @@ BMI schedule enabled via `MCPP_BMI_SCHEDULE`.
 * **`edit-comment` here is the `end-of-file` form**: mcpp's hub has no function
   body, so nothing shifts. See §3.
 
-⚠️ **The `xmake` column is from a separate run** (`…-xmake-refixed.json`). In the
+**The `xmake` column is from a separate run** (`…-xmake-refixed.json`). In the
 five-arm file its `cold` reads **0.60s** — invalid. xmake normalises `--buildir`
 to a path relative to `-P` and resolves it against the process cwd, so `clean()`
 had been removing a directory nothing ever wrote to. Fixed, re-measured, and the
@@ -71,7 +71,7 @@ mcpp.
 
 * `touch-hub` reproduces the engine result on a codebase nobody tuned for it.
 
-⚠️ **The `cold` row was nearly published as a 23% regression.** At n=1 it read
+**The `cold` row was nearly published as a 23% regression.** At n=1 it read
 `29.13s → 35.88s`. At n=3 it is `30.33s → 29.78s`, marginally faster: the single
 pair had caught the new arm near the old arm's max. The old arm's spread is
 **19.1%** — a hair under the 20% that §4a R2 calls noisy.

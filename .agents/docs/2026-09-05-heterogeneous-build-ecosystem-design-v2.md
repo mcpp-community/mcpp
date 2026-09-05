@@ -187,7 +187,7 @@ Dependencies run downward; each task states the criterion that decides it.
 
 | # | task | criterion | depends on |
 |---|---|---|---|
-| C1 | `mcpp.build.spirv` + `examples/10-vulkan-compute` | three devices, one artifact — **done** | — |
+| C1 | `mcpp.build.spirv` + `examples/10-vulkan-compute` (the module is `mcpp.rules.spirv` since round 3; see 6.2) | three devices, one artifact — **done** | — |
 | C2 | `mcpp.build.sycl` driving the `dpcpp` payload | a SYCL kernel runs on the CUDA backend | — |
 | C3 | `mcpp.build.hip` | `HIP_PLATFORM=nvidia` kernel runs | `hip-runtime` payload |
 | C4 | llama.cpp Vulkan lane | tokens on lavapipe with no GPU | C1, and a `glslc` payload or a flag translator |
@@ -332,6 +332,9 @@ Status is one of `done`, `open`, `deferred (reason)`.
 | I3 | `compat.opencl-headers`, `compat.opencl` verified with a probe (`tests/examples/opencl`, a workspace member); `compat.opencl-runtime` 2026.09.05 farms the libraries the host manifests name, their closure and the vendor family, prefers payloads, records the surface; payload entries of `OCL_ICD_FILENAMES` are left to the payload | the probe enumerates the NVIDIA platform on this machine and zero platforms on a runner; the pocl platform once X2 is installed | X2 for the pocl half | done for the host half: `tests/examples/opencl` lists `NVIDIA CUDA / RTX 4080` here and zero platforms on the Linux runner; with `OCL_ICD_FILENAMES=<pocl>/lib/libpocl.so` the same loader lists `Portable Computing Language` and `NVIDIA CUDA` in one process |
 | I4 | CI green; merge; index artifact published | `Publish Index Artifact` green on the merge commit | I1–I3 | done: PR #349 green (10 pass; the `full sweep` job skips by design), merged as 754d775, `Publish Index Artifact` green on it (run 33968256961) |
 
+| I5 | `compat.vulkan-runtime` 2026.09.06: the payload set is declared as `xpm.linux.deps.runtime` rather than discovered in the store; `PAYLOAD_PACKAGES` maps each soname to the package declared for it and reports a declaration that did not take effect; both adapters refuse a payload built for another machine (ELF `e_machine`); the Vulkan adapter gains the aarch64 multiarch directories | a fresh environment substitutes the same set a developer machine does; the report contains no line saying a declaration did not take effect | I4, X5 | done: merged as 0bbf3ad, index artifact published; measured in a fresh subos, 24 payload substitutions against 1, and four host sonames without a payload against thirty |
+| I6 | Both adapters 2026.09.07: a soname carried by more than one installed payload is decided by symbol coverage rather than by which store path sorts last; `compat.vulkan` and `compat.opencl` move their pins | in a fresh subos, `libX11.so.6` comes from `xim:libX11` rather than staying on the host with `xim:mesa-lavapipe`'s bundled copy named as the reason | I5 | PR #351 |
+
 #### xim-pkgindex (PR #762)
 
 | # | task | criterion | depends on | status |
@@ -343,9 +346,37 @@ Status is one of `done`, `open`, `deferred (reason)`.
 | X4 | `xim:mesa` gains the Intel Vulkan driver | on an Intel machine `HOST-SURFACE.txt` has no driver entry | libclc and SPIRV-LLVM-Translator payloads | deferred: anv requires `intel_clc`, which needs a libclc and clang chain this index does not publish yet; the chain is a separate packaging round and is recorded here rather than approximated |
 | X5 | CI green; merge; index artifact published | `Publish Index Artifact` green on the merge commit | X1–X3 | done: PR #762 green on its pull_request-event runs (the push-event `linux-install-test` sees only the last push and fails on libbsd by construction, as the workflow header states), merged as 2d2a2ee; `Publish Index Artifact` green on it (run 33967729241) |
 
+#### mcpp, second round (PR #570, version 2026.9.5.4)
+
+| # | task | criterion | depends on | status |
+|---|---|---|---|---|
+| M7 | The fast path compares every declared build-program input, not only glob path sets | e2e 612: editing a file declared with `rerun_if_changed` changes what the binary prints, and an unchanged input still takes the fast path | — | done: verified failing on 2026.9.5.3 and passing on this branch |
+| M8 | A version conflict on a package with no named C++ module names both versions and both requesters | the message example 10 produced now says which two versions are in the graph | — | done |
+| M9 | The markers removed from `bench/`, `tools/`, `scripts/`, `mcpp.toml` and `README.zh-CN.md`; the Chinese target table gains the row and the words its English counterpart has | a sweep over the emoji ranges returns nothing outside program output | — | done |
+| M10 | Release 2026.9.5.4, mirror, index bump, bootstrap pin | both mirrors return 200 and identical bytes; xim-pkgindex names it as `latest` | M7-M9 | open |
+
+#### mcpp-plugins, second round (PR #2, version 0.1.1)
+
+| # | task | criterion | depends on | status |
+|---|---|---|---|---|
+| P4 | `mcpp.tools.embed`, the first member of the tools half, selected by `tools-embed` | the fixture activating only that feature embeds a data file, and its second run proves an edit reaches the binary | M7 | done, CI pending on the 2026.9.5.4 release |
+| P5 | The markers removed from the rule sources; version 0.1.1; release and mirror; index descriptor; the two examples move their pin | the same two URLs return 200 with one sha256 | P4, M10 | open |
+
 #### Verification
 
 | # | task | criterion | depends on | status |
 |---|---|---|---|---|
-| V1 | Fresh sandbox (`xlings subos <name> --sandbox --cmd`), CN mirror configured for both mcpp and xlings: install mcpp 2026.9.5.3, build examples 09 and 10 against `mcpp:plugins`, run 10 on the lavapipe payload, run the OpenCL probe on pocl | `12 24 36 48` from example 10 with no GPU; the pocl platform enumerated; `HOST-SURFACE.txt` empty in the sandbox | M6, P3, I4, X5 | open |
-| V2 | The same on this host with the GPU: example 10 on the host ICD, example 09 on both routes | `12 24 36 48` in every case; `HOST-SURFACE.txt` lists proprietary userspace only | V1 | open |
+| V1 | Fresh sandbox (`xlings subos <name> --sandbox --cmd`), CN mirror configured for both mcpp and xlings: install mcpp 2026.9.5.3, build examples 09 and 10 against `mcpp:plugins`, run 10 on the lavapipe payload, run the OpenCL probe on pocl | `12 24 36 48` from example 10 with no GPU; the pocl platform enumerated; every declared payload substitution took effect (see 6.4 for why an empty host surface is not the criterion) | M6, P3, I4, X5, I5 | open |
+| V2 | The same on this host with the GPU: example 10 on the host ICD, example 09 on both routes | `12 24 36 48` in every case; the host entries of `HOST-SURFACE.txt` are proprietary userspace, host Mesa drivers, and the recorded symbol-set and soname gaps only | V1 | open |
+
+### 6.4 What the first verification run measured, and the two criteria it retired
+
+The first sandbox run failed six assertions. One was a defect in the ecosystem, two were criteria that could not hold by construction, and three were the machine's disk filling up mid-run. They are separated here because only the first is a change to a package.
+
+**The defect: a substitution that the environment decided.** `compat.vulkan-runtime` 2026.09.05 re-points a farmed soname at an installed payload when the payload's symbol set covers the host copy's, and *installed* was left to chance -- the pass looked in the store and took what an earlier, unrelated install had put there. The same package therefore produced twenty payload substitutions on the developer machine and one in a fresh subos, and the report read `no installed payload provides this soname` for sonames this index publishes. A published package whose behaviour is that much better on the machine that wrote it is the shape recorded in `.agents/docs` as a development overlay verifying a world that does not exist. 2026.09.06 declares the set (row I5). Measured against a project-local index on this host: 24 substitutions against 20, seven host entries against eleven, and a Vulkan probe still enumerating two devices.
+
+**The first retired criterion: an empty host surface in a sandbox.** A subos shares the host's `/usr`, which the run confirmed: 5354 entries in `/usr/lib/x86_64-linux-gnu` inside the sandbox, `libnvidia-*` among them. The farm therefore sees the proprietary driver there exactly as it does on the host, and `HOST-SURFACE.txt empty in the sandbox` was unreachable by construction rather than a statement about the ecosystem. What a sandbox does measure is the substitution invariant: every soname the adapter declares a payload for is taken from that payload, and a declaration that did not take effect says so in the report.
+
+**The second retired criterion: the exit code of a mirror write.** Both tools print their configuration on stderr, so reading it through `2>/dev/null` returned an empty string and reported a mirror that was in fact set to CN.
+
+**Two properties of the sandbox that the run established.** A subos root has no `/run`, so the inherited `XDG_RUNTIME_DIR` names a directory that does not exist; Mesa falls back to it when `memfd` is unavailable and lavapipe fails with `Failed to create anonymous file for memory allocations` before it reports a device. And the registry's index snapshot is shared with whatever wrote it last: the run resolved against a snapshot four commits behind `main`, where `compat.opencl-headers` reported `download artifact missing` because the recipe was not in it. The verification script now redirects the first and refreshes the second before it measures anything.

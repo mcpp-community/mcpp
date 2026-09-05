@@ -4,7 +4,7 @@
 # `find … | head -1` answers a build you did not make — this repository has
 # been bitten by that shape repeatedly. The marker makes "which build" a fact.
 #
-# ⚠️ RUN THE E2E SUITE AGAINST THIS PATH, NOT AGAINST A COPY. mcpp resolves
+# RUN THE E2E SUITE AGAINST THIS PATH, NOT AGAINST A COPY. mcpp resolves
 # MCPP_HOME from the binary's own location, so a binary copied elsewhere is a
 # different binary as far as several tests are concerned —
 # `30_dev_binary_home.sh` fails on a copy and passes in place, which reads as a

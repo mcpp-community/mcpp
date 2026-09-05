@@ -151,13 +151,13 @@ struct Report {
 // Hashed: engines, variants, scenarios, run count, compiler, profile, fixture
 // shape, project, buildfiles, and `--id`.
 //
-// ⚠️ NOT hashed: the mcpp binary, the installed cmake, anything that can change
+// NOT hashed: the mcpp binary, the installed cmake, anything that can change
 // underneath while the command line stays the same. Folding those in would
 // restart from zero on every rebuild — the normal case while developing, and
 // exactly when resume is worth having. They are recorded per entry as observed
 // facts, and adopting a record measured with a different one is REPORTED.
 //
-// ⚠️ WHY AN IDENTITY AT ALL: resuming means treating an old record as this
+// WHY AN IDENTITY AT ALL: resuming means treating an old record as this
 // run's result, so without one a resumable benchmark is a machine for silently
 // splicing runs together. Not hypothetical — a killed run did not die on
 // SIGTERM, finished its cell and wrote its report AFTER the `rm -rf` meant to

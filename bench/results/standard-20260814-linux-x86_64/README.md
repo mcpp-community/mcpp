@@ -12,7 +12,7 @@ The Linux standard data set. **696 measured samples**, 3 per cell, produced by
 | **mcpp under test** | **built from `8b579fa`** — see the note below |
 | started | 2026-08-15 (UTC date stamp `20260814`) |
 
-## ⚠️ The commit is recorded HERE and not in the JSON
+## The commit is recorded HERE and not in the JSON
 
 Every engine labels itself from `--version`, and mcpp's version is a **date**:
 every commit on a branch reports `2026.8.13.1`. So these reports can say which

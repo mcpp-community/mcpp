@@ -147,7 +147,7 @@ void emit_xmake(const std::filesystem::path& root, Variant variant, const Shape&
         // cost none of the others do.
         lua += "    set_policy(\"build.c++.modules.std\", false)\n";
     }
-    // ⚠️ PIE MUST BE EXPLICIT ON BOTH SIDES. The payload gcc defaults to a PIE
+    // PIE MUST BE EXPLICIT ON BOTH SIDES. The payload gcc defaults to a PIE
     // link on the CI runners and to a non-PIE link on some developer boxes, so
     // compiling without `-fPIE` produced objects the linker then refused:
     //     relocation R_X86_64_32 against `.rodata.str1.1' can not be used

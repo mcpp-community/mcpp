@@ -119,11 +119,11 @@ Real projects are the control that stops an engine change from being an artefact
 of one graph shape:
 
 * **`fixture`** — synthetic, parameterised (`--preset`, `--units`, `--fanin`,
-  `--weight`). The only project where `headers` / `modules` / `modules-impl`
+ `--weight`). The only project where `headers` / `modules` / `modules-impl`
   are all generated, so it is where the *variant* axis is a controlled variable.
 * **`mcpp-2026.8.11.3`** (`a749e9f`) — 137 modules / 57k lines, one source
   dependency, build descriptions for every engine under `projects/mcpp/`.
-  Pinned like everything else: the engine under test is the binary, and a
+ Pinned like everything else: the engine under test is the binary, and a
   workload that moves with the branch makes two runs incomparable.
 * **`xlings-2026.8.11.2`** and **`xlings-2026.8.13.1`** — 110 modules / 46k
   lines, **different authors**. This is what separates "a faster build engine"
@@ -245,7 +245,7 @@ job: the cell still runs, and its note says what to distrust.
 | `edit-body` | a real semantic edit inside a function body | the everyday loop — and whether a cascade is owed depends on **where the body lives and whether the edit moves lines**, not on what the body now does. See below. |
 | `touch-leaf` | mtime bump on a unit nobody imports | recompile 1 + link |
 
-#### ⚠️ `edit-body` perturbs a DIFFERENT FILE in each variant, and the two ask
+#### `edit-body` perturbs a DIFFERENT FILE in each variant, and the two ask
 #### opposite questions
 
 | variant | file perturbed | what a correct engine does |
@@ -265,7 +265,7 @@ same edit expressed as a same-line substitution does **not** cascade on GCC.
 Under clang the interface cascades either way, because clang serialises
 definitions into the BMI regardless of where in the file they appear.
 
-⚠️ **The generated fixture does not reproduce this**: its perturbed function is
+**The generated fixture does not reproduce this**: its perturbed function is
 the LAST declaration in `unit_0.cppm`, so nothing shifts and the BMI is unchanged
 (measured: 0.94s, against 80.87s for the same scenario on the mcpp tree). Any
 conclusion about a real project drawn from the fixture's `edit-body` is invalid
@@ -319,7 +319,7 @@ body *does* is invisible to importers. What it does serialise is the source
 position of each declaration — so inserting a line moves every declaration
 after it and the BMI changes for that reason alone.
 
-⚠️ **An earlier version of this section said the deciding factor was whether the
+**An earlier version of this section said the deciding factor was whether the
 body belonged to an exported class.** That was reasoning, and the measurement
 refuted it: editing `Version::str()` — a member of an exported class — in place
 rebuilt its object and left the BMI byte-identical, so no importer was touched.
@@ -328,11 +328,11 @@ The deciding factor is line movement, not class membership.
 Two consequences:
 
 * "editing one function rebuilt forty modules" is not inherent to named modules.
-  It follows from the edit moving lines in an interface unit.
+ It follows from the edit moving lines in an interface unit.
 * the third row is the sturdiest, because it holds for **every** compiler and
   for every edit: a `.cpp` implementation unit produces no BMI, so nothing
   downstream can depend on its contents. Clang, whose BMI carries more than
-  GCC's, cascades on an in-place body edit in a `.cppm` but not on a `.cpp`.
+ GCC's, cascades on an in-place body edit in a `.cppm` but not on a `.cpp`.
 
 **This is what the two xlings pins measure.** Moving the implementations out of
 the interface units takes `edit-body` from 88.33s to **1.77s** on the same
@@ -380,7 +380,7 @@ two *descriptions* as an engine result.
 `os` matches the machine it is on, and runs **every engine that cell lists** at
 **3 samples** each.
 
-⚠️ **`allow_failed` is NOT consulted by the runner.** Those waivers were recorded
+**`allow_failed` is NOT consulted by the runner.** Those waivers were recorded
 against failures on a shared CI runner, and at least two of them describe arms
 that configure and generate perfectly well on a developer machine. Filtering by
 them would carry a runner's limitation into local data and publish a smaller

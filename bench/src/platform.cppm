@@ -66,7 +66,7 @@ struct RunResult {
     // Distinguishes "could not start" from "started and failed" — the whole
     // basis for reporting an engine as unavailable rather than broken.
     //
-    // ⚠️ NOT `exit_code >= 0`. That was the test, and on Windows it is wrong in
+    // NOT `exit_code >= 0`. That was the test, and on Windows it is wrong in
     // the one case that matters: a child that CRASHES exits with a status like
     // 0xC0000135 (a DLL it needs is missing) or 0xC0000005 (access violation),
     // and `GetExitCodeProcess` hands back a DWORD that becomes a NEGATIVE int.
