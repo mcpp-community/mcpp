@@ -81,6 +81,29 @@ workflow 随后会再次下载公开 release、重新生成 manifest，并要求
   可以下载，但无法通过 `xlings install` 安装。
 - **bump `.xlings.json`** —— 见 §4。
 
+bump PR 是机器生成的：分支 `bump/mcpp-<version>`，提交者 `xlings-ci
+<ci@xlings.dev>`，diff 恒为 +22/-3。承重的是那三行删除 —— 生成器对每个平台表是
+**替换** `["latest"]` 那一行，而不是新增一行。手写一个索引 PR 并不是等价的捷径；
+在 bot 的 PR 之外另开一个，代价有两份，2026-09-05 的 `xim-pkgindex#764` 两份都付了：
+
+- 手写的 diff 把 `["latest"] = { ref = "<新版>" }` **追加**在原有那行上面而不是替换
+  它，于是每个平台表里留下两个 `["latest"]` 键。Lua 的表构造器以最后一次赋值为准，
+  `latest` 因此解析回上一个发布。精确版本条目存在且正确，所以每个按精确版本 pin 的
+  消费者都是绿的 —— mcpp 自己的 CI 正是精确 pin，完全看不见这件事。只有不带版本的
+  `xlings install mcpp` 会拿到过期的二进制。
+- 它先于 bot 的 PR 落地，使那个 PR 变成冲突。解法是取 bot 分支那一侧的
+  `pkgs/m/mcpp.lua`；它与手写后的 `main` 只差那几行陈旧的 `["latest"]`。
+
+因此，bump PR 合入的判据是 `latest` **解析成什么**，而不是文件里别处出现了版本字符串：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/openxlings/xim-pkgindex/main/pkgs/m/mcpp.lua \
+  | grep -n '\["latest"\]'
+```
+
+恰好回来三行，每个平台表一行，且都指向刚发布的版本。出现第四行，或某一行指向上一个
+发布，就是上述的重复键缺陷。
+
 ## 3. 验证一次发布
 
 镜像脚本会自校验上传，但真正值得手工做的是那些**不信任边车文件**的检查：
@@ -153,6 +176,19 @@ $(find "$XLINGS_HOME" -name mcpp -type f -path '*/bin/*' | head -1) --version
 `package 'mcpp@<unreleased>' not found` 失败。待其语法问题修复后，
 `check_version_pins.sh` 能卡住较弱的「不得新于正在构建的版本」；索引那个条件需要人工把关。
 
+「已合入 xim-pkgindex」是必要条件而非充分条件：客户端读的是 CDN 上的 artifact，不是
+git 树。2026-09-05 那次，pin 的 commit 比索引 PR 的合入早到 `main` 19 秒，而它触发的
+CI 作业在新指针资产被替换**之后** 51 秒才去解析索引 —— 拿到的仍然是上一份 artifact。
+九条 workflow 全部死在 bootstrap，没有一条编译过一行。可观测的条件是指针本身：
+
+```bash
+curl -fsSL https://github.com/xlings-res/xim-index/releases/download/latest/xim-index-latest.json \
+  | grep -E '"(index_version|source_commit)"'
+```
+
+推 pin 之前，`index_version` 必须等于 xim-pkgindex `main` 的短 SHA。没有任何东西强制
+这一点，而在作业日志里，由此产生的失败与「版本名真的写错了」无法区分。
+
 ## 5. `MCPP_PIN` 改为推导，以及这为什么重要
 
 `ci-fresh-install.yml` 过去带着 pin 的第二份手工副本。它们从来就不是一回事：
@@ -191,6 +227,8 @@ $(find "$XLINGS_HOME" -name mcpp -type f -path '*/bin/*' | head -1) --version
 [ ] 下载的 mcpp-release.json 能从公开资产逐字节重新生成
 [ ] 双端都服务四个平台，sha256 重新算过
 [ ] 合并 xim-pkgindex 的 bump PR
+[ ] 索引的 `latest` 在三个平台表里都解析到新版本
+[ ] xim-index-latest.json 的 `index_version` 等于 xim-pkgindex `main`
 [ ] clean-room XLINGS_HOME：xlings install mcpp@<version> 成功
 [ ] （可选）bump .xlings.json —— 只在此刻，绝不提前
 ```
