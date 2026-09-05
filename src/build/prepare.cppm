@@ -6519,6 +6519,10 @@ prepare_build(bool print_fingerprint,
     // package name -> device-kind sources of its effective source set, filled
     // by the narrowing pass after feature application and read at both
     // build-program run sites (MCPP_DEVICE_SOURCES).
+    // Keyed by the package's ROOT DIRECTORY, not by its name. Two packages in
+    // one graph may share a bare name and differ only by namespace — that is
+    // what namespaces are for — and a name key would hand one package's
+    // device sources to the other's build program with nothing reporting it.
     std::map<std::string, std::vector<std::string>> deviceSourcesByPackage;
     auto checkVersionFloors = [&]() -> std::optional<std::string> {
         std::map<std::string, std::pair<std::string, std::string>> facts;  // name -> (version, who)
@@ -6966,7 +6970,7 @@ prepare_build(bool print_fingerprint,
                     if (mcpp::classify(f, extTable) != mcpp::SourceKind::Device) continue;
                     device.push_back(f.lexically_relative(pkg.root).generic_string());
                 }
-                deviceSourcesByPackage[pkg.manifest.package.name] = std::move(device);
+                deviceSourcesByPackage[pkg.root.string()] = std::move(device);
             }
         }
         activeFeaturesByPackage.resize(packages.size());
@@ -7512,14 +7516,15 @@ prepare_build(bool print_fingerprint,
             };
             mcpp::build::BuildProgramEnv bpEnv;
             bpEnv.targetTriple = resolvedTargetCanonical;
-        // The payload ROOT (not the driver), the target's C library, and the
-        // three answers that keep a board package from hardcoding a toolchain
-        // or a libc. All four in one call — see fill_target_build_env.
-        fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
-        bpEnv.toolsBin = projectSubosBin;
+            // The payload ROOT (not the driver), the target's C library, and
+            // the three answers that keep a board package from hardcoding a
+            // toolchain or a libc. All four in one call — see
+            // fill_target_build_env.
+            fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
+            bpEnv.toolsBin = projectSubosBin;
             bpEnv.profile      = effectiveProfile;
             bpEnv.accel        = resolvedAccel();
-            if (auto dit = deviceSourcesByPackage.find(pkg.manifest.package.name); dit != deviceSourcesByPackage.end())
+            if (auto dit = deviceSourcesByPackage.find(pkg.root.string()); dit != deviceSourcesByPackage.end())
                 bpEnv.deviceSources = dit->second;
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
             bpEnv.artifactsDir = workRoot / "target" / ".build-mcpp" / "deps"
@@ -8434,7 +8439,7 @@ prepare_build(bool print_fingerprint,
         bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;
         bpEnv.accel        = resolvedAccel();
-        if (auto dit = deviceSourcesByPackage.find(m->package.name); dit != deviceSourcesByPackage.end())
+        if (auto dit = deviceSourcesByPackage.find(root->string()); dit != deviceSourcesByPackage.end())
             bpEnv.deviceSources = dit->second;
         // Set explicitly rather than relying on build_dir()'s root-relative
         // default: under BuildOverrides::work_dir the package root is shared
