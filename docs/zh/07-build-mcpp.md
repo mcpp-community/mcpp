@@ -52,6 +52,8 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:runner=<token>` *(2026.8.19.2+)* | 执行本次构建产物的命令的**一个 argv token**(宿主跑不了它时)。一个 token 一次调用、按顺序;产物路径会被追加(或替换 `{}`)。**到达消费者**。⚠️ 可执行文件要发**绝对路径**,且**只能有一个**依赖提供它 |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | 用这个**链接脚本**链接(`-T`;相对路径按包根解析,发出的是绝对路径,因为链接是在构建目录里跑的)。与 `include-dir` 不同,它**到达消费者** —— 板子的内存布局恰恰是消费者写不出来的那一项 |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | 对用户说一句话并**继续**。唯一一条不改变编译行、链接行与源码集的指令。它**穿过构建缓存** —— 见下 |
+| `mcpp:fact=<name>=<version>` *(2026.9.6+)* | 陈述程序**测得的机器事实**(`cuda.driver=12.4`)。在编译任何东西之前与 floor 比较;见下 |
+| `mcpp:floor=<name> >= <version>` *(2026.9.6+)* | 陈述本包对该量的**下界**。不满足 ⇒ 构建被拒并给出两侧取值(`version-floor-unmet`);没有人陈述事实的下界保持沉默 |
 | `mcpp:rerun-if-changed=<path>`     | 该文件变化时重跑 `build.mcpp` |
 | `mcpp:rerun-if-env-changed=<VAR>`  | 该环境变量变化时重跑 `build.mcpp` |
 
@@ -136,6 +138,32 @@ mcpp 在每次命中时重放它。
 ⚠️ **全工程 no-op 构建什么都不打印,包括这一条。** 无事可做时,构建根本到不了
 `build.mcpp` 阶段 —— 它同样不会报告构建了哪个目标、推断了哪些源码。touch 一下源码,提示
 就回来了。
+
+### 探针通道:`fact` / `floor`(2026.9.6+)
+
+规则包是知道「怎么问机器它有什么」的那一方 —— 打开哪个库、调用哪个函数;
+引擎则是不该知道的那一方。于是由包来**测量**,由引擎来**比较**:
+
+```cpp
+mcpp::fact("cuda.driver", "12.4");      // 这台机器有什么
+mcpp::floor("cuda.driver >= 12.0");     // 本包需要它至少多新
+```
+
+在编译任何东西之前,未满足的下界会拒绝构建,并点名该量、两侧版本与陈述事实的
+包;`mcpp why toolchain --format json` 把它归类为 `reason: version-floor-unmet`。没有人陈述事实的下界
+**保持沉默**:不知道不等于不满足,由无知制造的拒绝是更坏的错误。
+
+它防住的失败在构建期本身看不见:针对比驱动更新的设备运行时构建的程序,编译
+干净、链接干净,到第一次使用才失败,而消息两边都不点名。解析了该运行时的规则包
+在第一次编译之前就知道两个数字。
+
+⚠️ **两个字符串对引擎都没有意义。** `cuda.driver` 是流过引擎的数据;引擎读到的
+是一个名字、一个关系、一个版本,第二个后端不需要改引擎。事实的拼法与包在
+`[runtime] provides` 里静态声明的一致,下界与 `[[runtime.requirements]]` 的
+`kind = "version-floor"` 一致:两条通道落进同一张表。
+
+⚠️ **事实随程序的其它输出一起进缓存**,命中时被回放。要声明什么会改变它 ——
+对读出版本的那个库 `rerun_if_changed` —— 否则事实会比它描述的机器活得更久。
 
 ### `runner` —— 产物的执行方式(2026.8.19.2+)
 
@@ -434,6 +462,7 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存�
 | `MCPP_TARGET_ENV` *(0.0.100+)* | `mcpp::target_env()` | 目标的 env 段(`gnu`/`musl`/`msvc`);三元组无 env 段(macOS)时为空串 |
 | `MCPP_HOST` | `mcpp::host()` | 宿主三元组 |
 | `MCPP_PROFILE` | `mcpp::profile()` | 生效 profile 名(`dev`/`release`/…) |
+| `MCPP_ACCEL` *(2026.9.6+)* | `mcpp::accel()` | 本次构建的设备轴,已解析 —— `--accel` / `--no-accel` 优先于 `[build] accel` —— 线上形态 `cuda12.9+{sm_89} ptx>=89`;不要加速器时为空串。规则包从它推导自己的开关(`-gencode`、`--offload-arch`),架构集合因此只在 manifest 写一次。同一个值也喂给 `cfg(accelerator = "…")` 这个 layer 键 |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | mcpp 提供的可写输出/暂存目录 |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | 包根(= CWD) |
 | `MCPP_FEATURE_<NAME>` | `mcpp::has_feature("name")` | 每个活跃 feature 置 `1`(`<NAME>` 消毒规则与 `MCPP_FEATURE_` 编译宏一致) |

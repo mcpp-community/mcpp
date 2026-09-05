@@ -2390,8 +2390,29 @@ prepare_build(bool print_fingerprint,
     // canonicalized. Reading it before that point would silently fall back to
     // the host for any project that sets its target in the manifest rather
     // than on the command line.
-    const auto targetPlatform = mcpp::platform::TargetPlatform::for_os(
-        cfgpred::context_for(overrides.target_triple).os);
+    // ── The device axis, resolved ONCE ────────────────────────────────────
+    //
+    // `--accel` / `--no-accel` over `[build] accel`. `--no-accel` arrives as the
+    // sentinel "(none)", which parse_accel reads as nothing, and printing the
+    // parsed form back normalises the spelling -- so every reader below sees
+    // one string, and a build program sees the same one in MCPP_ACCEL. Read
+    // at call time rather than captured: a `[target.'cfg(...)'.build]` section
+    // may set `accel`, and the merge that applies it runs a few lines down.
+    auto resolvedAccel = [&]() -> std::string {
+        return mcpp::pack::accel_str(mcpp::pack::parse_accel(
+            overrides.accel.empty() ? m->buildConfig.accel : overrides.accel));
+    };
+    // The cfg context, with the accelerator layer filled from the resolved
+    // accel's backend names. `cfg(accelerator = "cuda")` is a membership test
+    // over these (prepare_inputs::Ctx::layer_matches); before this the field
+    // was declared, documented, and never written, so the key matched nothing.
+    auto cfgCtx = [&]() {
+        auto c = cfgpred::context_for(overrides.target_triple);
+        for (auto const& set : mcpp::pack::parse_accel(resolvedAccel()))
+            c.accelerators.push_back(set.backend);
+        return c;
+    };
+    const auto targetPlatform = mcpp::platform::TargetPlatform::for_os(cfgCtx().os);
 
     // ── L1: merge conditional [target.'cfg(...)'] sections ───────────────────
     // Evaluated now (target resolved) against the resolved target — the
@@ -2408,7 +2429,7 @@ prepare_build(bool print_fingerprint,
     // package's half of the one funnel, not a special case: every package is
     // merged exactly once, immediately before it is captured into `packages[]`.
     if (!m->conditionalConfigs.empty()) {
-        merge_conditional_config(*m, cfgpred::context_for(overrides.target_triple));
+        merge_conditional_config(*m, cfgCtx());
     }
     // `[build].defines` must reach the scanner (P1689) and the compile edge,
     // and must participate in the fingerprint. Fold before dependency
@@ -4530,7 +4551,7 @@ prepare_build(bool print_fingerprint,
         // pass through loadVersionDep.
         if (!manifest->conditionalConfigs.empty()) {
             merge_conditional_config(*manifest,
-                                    cfgpred::context_for(overrides.target_triple));
+                                    cfgCtx());
         }
         fold_build_defines_into_flags(manifest->buildConfig);
 
@@ -5937,7 +5958,7 @@ prepare_build(bool print_fingerprint,
             // snapshot this manifest's flags/sources into `packages[]`.
             if (!dep_manifest->conditionalConfigs.empty()) {
                 merge_conditional_config(*dep_manifest,
-                    cfgpred::context_for(overrides.target_triple));
+                    cfgCtx());
             }
             fold_build_defines_into_flags(dep_manifest->buildConfig);
         } else {
@@ -6478,6 +6499,57 @@ prepare_build(bool print_fingerprint,
     // the question it answers is different: capProviders asks "can this
     // requirement be satisfied", this asks "can these two coexist at all".
     std::map<std::string, std::vector<std::string>> capExclusive;
+    // Callable twice: once here, for what the manifests and the
+    // dependencies' build programs declared, and once more after the
+    // root's build program has run -- a rule package it imports states
+    // its facts and floors from there (`mcpp::fact` / `mcpp::floor`),
+    // and a check that ran only before it would never see them.
+    auto checkVersionFloors = [&]() -> std::optional<std::string> {
+        std::map<std::string, std::pair<std::string, std::string>> facts;  // name -> (version, who)
+        for (std::size_t pi = 0; pi < packages.size(); ++pi) {
+            // The root's claims live in *m: its build program mutates
+            // *m, and packages[0] is a snapshot taken before it ran.
+            const auto& mf  = pi == 0 ? *m : packages[pi].manifest;
+            const auto who = mf.package.name;
+            for (auto const& entry : mf.runtimeConfig.provides) {
+                auto fact = mcpp::build::parse_version_fact(entry);
+                if (fact.valid()) facts.emplace(fact.name, std::pair{fact.version, who});
+            }
+        }
+        for (std::size_t pi = 0; pi < packages.size(); ++pi) {
+            // The root's claims live in *m: its build program mutates
+            // *m, and packages[0] is a snapshot taken before it ran.
+            const auto& mf  = pi == 0 ? *m : packages[pi].manifest;
+            const auto who = mf.package.name;
+            for (auto const& req : mf.runtimeConfig.requirements) {
+                if (req.kind != "version-floor") continue;
+                auto floor = mcpp::build::parse_version_floor(req.value);
+                if (!floor.valid()) {
+                    return std::format(
+                        "`{}` declares a version-floor requirement mcpp "
+                        "cannot read: '{}'.\n"
+                        "       The shape is `<name> >= <version>`, e.g. "
+                        "`cuda.driver >= 12.0`.", who, req.value);
+                }
+                auto it = facts.find(floor.name);
+                if (it == facts.end()) continue;      // nobody stated it
+                auto met = mcpp::build::version_at_least(it->second.first,
+                                                        floor.version);
+                if (!met || *met) continue;
+                refusal::record(refusal::Code::VersionFloorUnmet);
+                return std::format(
+                    "`{}` requires {} >= {}, and this machine has {}.\n"
+                    "         stated by: {}\n"
+                    "       This is checked before anything is compiled "
+                    "because the failure it prevents is not:\n"
+                    "       a build against too-new a runtime links "
+                    "cleanly and fails at first use.",
+                    who, floor.name, floor.version, it->second.first,
+                    it->second.second);
+            }
+        }
+        return std::nullopt;
+    };
     {
         auto sanitize = [](std::string f) {
             for (auto& c : f)
@@ -7353,6 +7425,7 @@ prepare_build(bool print_fingerprint,
         fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
         bpEnv.toolsBin = projectSubosBin;
             bpEnv.profile      = effectiveProfile;
+            bpEnv.accel        = resolvedAccel();
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
             bpEnv.artifactsDir = workRoot / "target" / ".build-mcpp" / "deps"
                 / (dirSafe(pkg.manifest.package.name) + "@" + pkg.manifest.package.version);
@@ -7536,45 +7609,7 @@ prepare_build(bool print_fingerprint,
         // Reporting a refusal there would turn "we do not know" into "no", and
         // the whole reason this exists is that a wrong answer is worse than no
         // answer.
-        {
-            std::map<std::string, std::pair<std::string, std::string>> facts;  // name -> (version, who)
-            for (auto const& pkg : packages) {
-                const auto who = pkg.manifest.package.name;
-                for (auto const& entry : pkg.manifest.runtimeConfig.provides) {
-                    auto fact = mcpp::build::parse_version_fact(entry);
-                    if (fact.valid()) facts.emplace(fact.name, std::pair{fact.version, who});
-                }
-            }
-            for (auto const& pkg : packages) {
-                const auto who = pkg.manifest.package.name;
-                for (auto const& req : pkg.manifest.runtimeConfig.requirements) {
-                    if (req.kind != "version-floor") continue;
-                    auto floor = mcpp::build::parse_version_floor(req.value);
-                    if (!floor.valid()) {
-                        return std::unexpected(std::format(
-                            "`{}` declares a version-floor requirement mcpp "
-                            "cannot read: '{}'.\n"
-                            "       The shape is `<name> >= <version>`, e.g. "
-                            "`cuda.driver >= 12.0`.", who, req.value));
-                    }
-                    auto it = facts.find(floor.name);
-                    if (it == facts.end()) continue;      // nobody stated it
-                    auto met = mcpp::build::version_at_least(it->second.first,
-                                                            floor.version);
-                    if (!met || *met) continue;
-                    refusal::record(refusal::Code::VersionFloorUnmet);
-                    return std::unexpected(std::format(
-                        "`{}` requires {} >= {}, and this machine has {}.\n"
-                        "         stated by: {}\n"
-                        "       This is checked before anything is compiled "
-                        "because the failure it prevents is not:\n"
-                        "       a build against too-new a runtime links "
-                        "cleanly and fails at first use.",
-                        who, floor.name, floor.version, it->second.first,
-                        it->second.second));
-                }
-            }
-        }
+        if (auto err = checkVersionFloors(); err) return std::unexpected(*err);
 
         std::set<std::string> boundCaps;
         for (auto& [cap, requirer] : capRequires) {
@@ -8227,7 +8262,7 @@ prepare_build(bool print_fingerprint,
     // `pkg.manifest.buildConfig` produced a build in which every layer
     // predicate matched and no flag reached the compiler.
     if (targetSideResolved) {
-        auto layerCtx = cfgpred::context_for(overrides.target_triple);
+        auto layerCtx = cfgCtx();
         layerCtx.layersKnown     = true;
         layerCtx.compiler        = resolvedTargetSide.compiler.interfaceName;
         layerCtx.compilerRuntime = resolvedTargetSide.compilerRuntime.interfaceName;
@@ -8303,6 +8338,7 @@ prepare_build(bool print_fingerprint,
         fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
         bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;
+        bpEnv.accel        = resolvedAccel();
         // Set explicitly rather than relying on build_dir()'s root-relative
         // default: under BuildOverrides::work_dir the package root is shared
         // and may be read-only, and the default would write the compiled
@@ -8344,6 +8380,9 @@ prepare_build(bool print_fingerprint,
         // outputs APPENDS to bcRoot.sources, and those appends must be inside
         // the tail that gets copied into the packages[0] snapshot the scan reads.
         adoptActionOutputs(*m, *root, ractN);
+        // The root's build program has spoken; a floor it stated is checked
+        // now, with the facts every package (it included) established.
+        if (auto err = checkVersionFloors(); err) return std::unexpected(*err);
         // Root residues — apply() mutated *m, but packages[0].manifest is a
         // value-copy snapshot taken at makePackageRoot, so everything the
         // scan/fingerprint read from the snapshot needs the tail mirrored:
@@ -8870,6 +8909,14 @@ prepare_build(bool print_fingerprint,
         fpi.compileFlags += " #schedule=";
         fpi.compileFlags += sched;
     }
+    // The device axis decides which sources compile and which cfg sections
+    // apply, so two builds that differ only in it are two builds. Appended
+    // only when set, so a project that asks for no accelerator keeps the
+    // build directory it has.
+    if (const auto accel = resolvedAccel(); !accel.empty()) {
+        fpi.compileFlags += " #accel=";
+        fpi.compileFlags += accel;
+    }
     if (m->cppStandard.experimental) {
         // c++fly gate flags are derived (not manifest-declared): fold them in
         // so a cppfly table change across mcpp versions re-fingerprints.
@@ -9096,8 +9143,7 @@ prepare_build(bool print_fingerprint,
         // no accelerator, and every artifact then satisfies it vacuously —
         // which is correct, and is why a descriptor lists its CPU-only variant
         // first: the first accepted artifact wins.
-        currentTag.accel = mcpp::pack::parse_accel(
-            overrides.accel.empty() ? m->buildConfig.accel : overrides.accel);
+        currentTag.accel = mcpp::pack::parse_accel(resolvedAccel());
         for (std::size_t i = 1; i < packages.size(); ++i) {
             auto const& pkg = packages[i];
             if (!mcpp::pack::is_distribution_package(pkg.manifest)) continue;

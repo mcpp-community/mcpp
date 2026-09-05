@@ -77,6 +77,13 @@ struct BuildProgramEnv {
     std::string targetLibc;                 // "picolibc-riscv" | "" (zero-libc tier)
     std::string profile;                    // effective profile name (dev/release/…)
     std::vector<std::string> features;      // active feature closure of the package
+    // The device axis of this build, in the wire form `mcpp.pack.abi_tag`
+    // reads (`cuda12.9+{sm_89} ptx>=89`); empty when the build asks for no
+    // accelerator. Already resolved -- `--accel` / `--no-accel` over
+    // `[build] accel` -- so a rule package derives its own spelling
+    // (`-gencode`, `--offload-arch`) from here and the architecture set is
+    // written once, in the manifest, and never again in a build program.
+    std::string accel;
     // Artifact home (bin/cache/out). Empty → <root>/target/.build-mcpp (the
     // root-project default). Dependencies MUST point this into the CONSUMING
     // project's tree — a registry package root is shared and may be read-only.
@@ -426,6 +433,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     e.emplace_back("MCPP_TARGET_LIBC_PROFILE", env.targetLibcProfile);
     e.emplace_back("MCPP_TARGET_LIBC", env.targetLibc);
     e.emplace_back("MCPP_PROFILE", env.profile);
+    e.emplace_back("MCPP_ACCEL", env.accel);
     e.emplace_back("MCPP_OUT_DIR", outDir.string());
     e.emplace_back("MCPP_MANIFEST_DIR", root.string());
     std::string csv;

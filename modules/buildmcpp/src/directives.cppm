@@ -122,6 +122,19 @@ enum class Slot : std::size_t {
     // A sentence for the USER. Not a build input at all — see Scope::Advisory
     // for why this could not be folded into any existing slot.
     Warnings,
+    // ⭐ A CLAIM ABOUT THE MACHINE, OR ABOUT WHAT THIS PACKAGE NEEDS OF IT.
+    //
+    // `fact` carries `<name>=<version>`: something the program established
+    // about the machine, by whatever means the package owns (a driver's
+    // version, read from the driver's own library). `floor` carries
+    // `<name> >= <version>`: what the package needs of that quantity. The
+    // engine compares the two before anything is compiled and refuses with
+    // both values when the floor is unmet (`version-floor-unmet`); a floor
+    // nobody stated a fact for is silent. Neither string means anything to
+    // this file -- the name is data flowing through -- which is what keeps
+    // vendor knowledge in the package that has it and out of the engine.
+    Facts,
+    Floors,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -162,6 +175,13 @@ enum class Scope {
     // it is still wrong: a re-run key feeds a MACHINE decision, an advisory
     // feeds a person.
     Advisory,
+    // A statement the engine COMPARES at prepare time. It reaches no compile
+    // line, no link line, no source set and no person directly; the verdict
+    // of the comparison does. Persisted, so a cached run replays the claim --
+    // right for a floor, and the reason a program stating a FACT about the
+    // machine must also declare what would change it (`rerun_if_changed` on
+    // the file the fact was read from), or the fact outlives the machine.
+    Claim,
 };
 
 // How the raw wire value is normalized before it is stored. Applied ONCE, at
@@ -197,7 +217,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 19> kTable{{
+inline constexpr std::array<Def, 21> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -283,6 +303,10 @@ inline constexpr std::array<Def, 19> kTable{{
     // the unknown-tag path and discards the whole record.
     {"warning",             "warning",           Slot::Warnings,         Scope::Advisory,       Transform::Verbatim,      false, "", "", 5},
     {"action",              "action",            Slot::Actions,          Scope::GraphNode,      Transform::Verbatim,      false, "",                           "",                                              1},
+    // The probe channel: a rule package measures, the engine compares. See
+    // Slot::Facts for the shape of each value.
+    {"fact",                "fact",              Slot::Facts,            Scope::Claim,          Transform::Verbatim,      false, "",                           "",                                              7},
+    {"floor",               "floor",             Slot::Floors,           Scope::Claim,          Transform::Verbatim,      false, "",                           "",                                              7},
 }};
 
 // ── Collected output of one run ────────────────────────────────────────────
@@ -746,6 +770,19 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
         bc.includeDirs.emplace_back(p);
     for (auto const& p : d.at(Slot::IncludeDirsAfter))
         bc.includeDirsAfter.emplace_back(p);
+
+    // Claims join the runtime declarations the manifest could have carried
+    // itself, so the version-floor check in prepare reads ONE list and never
+    // learns which spelling a claim arrived in.
+    for (auto const& f : d.at(Slot::Facts))
+        m.runtimeConfig.provides.push_back(f);
+    for (auto const& fl : d.at(Slot::Floors)) {
+        mcpp::manifest::RuntimeRequirement req;
+        req.kind  = "version-floor";
+        req.value = fl;
+        req.phase = "build";
+        m.runtimeConfig.requirements.push_back(std::move(req));
+    }
 
     // Build-graph nodes. Decoded here rather than at parse time so the cache
     // stores the payload verbatim and a replay is byte-identical to a run.

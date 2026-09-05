@@ -178,10 +178,16 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     // override (--profile/--features/--strict, like --target/--static) must
     // bypass it: the cached build.ninja was generated without them, so taking
     // the fast path would silently ignore the flags.
+    //
+    // `--accel` / `--no-accel` are on that list. Measured before they were: a
+    // successful `mcpp build` followed by `mcpp build --no-accel` reported
+    // "Finished in 0.00s" and handed back the device build -- the axis that
+    // decides which sources compile and which cfg sections apply, ignored
+    // because the flag arrived after a build that did not carry it.
     if (!print_fp && ov.target_triple.empty() && !ov.force_static
         && ov.profile.empty() && ov.features.empty() && !ov.strict
         && ov.capabilities.empty() && ov.package_filter.empty()
-        && ov.cache_mode.empty()) {
+        && ov.cache_mode.empty() && ov.accel.empty()) {
         auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
         if (root) {
             // A project with active `[hooks]` declines the fast path from

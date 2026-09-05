@@ -55,6 +55,8 @@ is ignored, so diagnostics may be logged freely.
 | `mcpp:runner=<token>` *(2026.8.19.2+)* | one argv token of the command that EXECUTES this build's artifact, when the host cannot. Emitted once per token, in order; the artifact path is appended (or substituted for `{}`). Reaches the **consumer**. ⚠️ Emit the executable as an ABSOLUTE path, and only **one** dependency may supply it |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | link with this **linker script** (`-T`; relative resolves against the package root, and the emitted path is absolute because the link runs in the build directory). Reaches the **consumer**, unlike `include-dir` — a board's memory layout is the one thing a consumer cannot write for itself |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | say something to the user and **keep going**. The one directive that changes no compile line, no link line and no source set. Survives the build cache — see below |
+| `mcpp:fact=<name>=<version>` *(2026.9.6+)* | state something the program **established about the machine** (`cuda.driver=12.4`). Compared against floors before anything is compiled; see below |
+| `mcpp:floor=<name> >= <version>` *(2026.9.6+)* | state what this package **needs** of that quantity. Unmet ⇒ the build is refused with both values (`version-floor-unmet`); a floor nobody stated a fact for is silent |
 | `mcpp:rerun-if-changed=<path>`     | re-run `build.mcpp` when this file changes |
 | `mcpp:rerun-if-env-changed=<VAR>`  | re-run `build.mcpp` when this env var changes |
 
@@ -149,6 +151,40 @@ condition was resolved"*. mcpp replays it on every hit.
 there is nothing to do the build never reaches the `build.mcpp` stage — it also
 does not report which target it built or which sources it inferred. Touch a
 source and the advisory returns.
+
+### The probe channel: `fact` / `floor` (2026.9.6+)
+
+A rule package is the thing that knows how to ask a machine what it has —
+which library to open, which function to call — and the engine is the thing
+that must not. So the package **measures** and the engine **compares**:
+
+```cpp
+mcpp::fact("cuda.driver", "12.4");      // what this machine has
+mcpp::floor("cuda.driver >= 12.0");     // what this package needs of it
+```
+
+Before anything is compiled, an unmet floor refuses the build and names the
+quantity, both versions and who stated the fact; `mcpp why toolchain --format
+json` classifies it as `reason: version-floor-unmet`. A floor for which nobody stated a fact is
+**silent**: not knowing is not failing, and a refusal manufactured from
+ignorance is the worse error.
+
+The failure this prevents is not visible at build time on its own. A program
+built against a device runtime newer than the driver it will meet compiles
+cleanly, links cleanly and fails at first use with a message naming neither
+side. The rule package that resolved the runtime knows both numbers before
+the first compile.
+
+⚠️ **Neither string means anything to the engine.** `cuda.driver` is data
+flowing through; the engine reads a name, a relation and a version, and a
+second backend needs no engine change. The spelling of a fact matches what a
+package could also have declared statically in `[runtime] provides`, and a
+floor matches `[[runtime.requirements]]` with `kind = "version-floor"`: the
+two channels land in one list.
+
+⚠️ **A fact is cached with the program's other output** and replayed on a
+cache hit. Declare what would change it — `rerun_if_changed` on the library
+the version was read from — or the fact outlives the machine it described.
 
 ### `runner` — how the artifact is executed (2026.8.19.2+)
 
@@ -496,6 +532,7 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_TARGET_ENV` *(0.0.100+)* | `mcpp::target_env()` | the target's env segment (`gnu`/`musl`/`msvc`); empty string when the triple has none (macOS) |
 | `MCPP_HOST` | `mcpp::host()` | the host triple |
 | `MCPP_PROFILE` | `mcpp::profile()` | effective profile name (`dev`/`release`/…) |
+| `MCPP_ACCEL` *(2026.9.6+)* | `mcpp::accel()` | the device axis of this build, resolved — `--accel` / `--no-accel` over `[build] accel` — in the wire form `cuda12.9+{sm_89} ptx>=89`; empty when the build asks for no accelerator. A rule package derives its own flags (`-gencode`, `--offload-arch`) from it, so the architecture set is written once, in the manifest. The same value feeds the `cfg(accelerator = "…")` layer key |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | a writable scratch/output dir owned by mcpp |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | the package root (= CWD) |
 | `MCPP_FEATURE_<NAME>` | `mcpp::has_feature("name")` | set to `1` per active feature (same `<NAME>` sanitization as the `MCPP_FEATURE_` compile macro) |

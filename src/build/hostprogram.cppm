@@ -102,6 +102,28 @@ inline void run_exclusive()                    { std::printf("mcpp:run-exclusive
 // "resolved". mcpp replays it on every hit.
 inline void warning(const char* message)          { std::printf("mcpp:warning=%s\n", message); }
 
+// ── The probe channel (mcpp 2026.9.6+) ────────────────────────────────────
+//
+// A rule package is the thing that knows how to ask a machine what it has --
+// which library to open, which function to call -- and the engine is the
+// thing that must not. So the package MEASURES and the engine COMPARES:
+//
+//     mcpp::fact("cuda.driver", "12.4");        // what this machine has
+//     mcpp::floor("cuda.driver >= 12.0");       // what this package needs
+//
+// Before anything is compiled the engine refuses when a floor is unmet and
+// names both values (`mcpp why toolchain --format json` reports the reason
+// `version-floor-unmet`). A floor nobody stated a fact for is silent: not
+// knowing is not failing.
+//
+// ⚠️ A fact is persisted with the program's other output and replayed on a
+// cache hit. State what would change it -- `rerun_if_changed` on the library
+// the version was read from -- or the fact outlives the machine it described.
+inline void fact(const char* name, const char* version) {
+    std::printf("mcpp:fact=%s=%s\n", name, version);
+}
+inline void floor(const char* spec)               { std::printf("mcpp:floor=%s\n", spec); }
+
 // The memory layout for a freestanding link. Reaches the CONSUMER's link line
 // (like link_lib/link_search, unlike include_dir), because the package that
 // knows a board's layout is not the package being built.
@@ -214,6 +236,13 @@ inline const char* target_arch()                  { return env_or("MCPP_TARGET_A
 inline const char* target_env()                   { return env_or("MCPP_TARGET_ENV"); }
 inline const char* host()                         { return env_or("MCPP_HOST"); }
 inline const char* profile()                      { return env_or("MCPP_PROFILE"); }
+// The device axis of this build: `cuda12.9+{sm_89} ptx>=89`, or "" when the
+// build asks for no accelerator. Already resolved (`--accel` / `--no-accel`
+// over `[build] accel`), so a rule package derives its architecture flags
+// from HERE and the set is written once, in the manifest. What the string
+// means beyond "backend, version, architectures, floor" is the package's
+// business: the engine never learns what `sm_89` is.
+inline const char* accel()                        { return env_or("MCPP_ACCEL"); }
 inline const char* out_dir()                      { return env_or("MCPP_OUT_DIR"); }
 
 // Where the TOOLCHAIN mcpp resolved for this build lives — the payload root,
