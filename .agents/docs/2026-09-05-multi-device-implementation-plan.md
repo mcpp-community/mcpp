@@ -10,10 +10,10 @@
 | ⓪ 修已发布的错误示范 | mcpp | ✅ T0.1/T0.2 合入 `1e2137b`;T0.3 在 **#563** |
 | ① 载荷 | xim-pkgindex | ✅ **#759 已合入 `a4644a7`**,15 项 CI 全绿,25 个包;⚠️ 13.x 后端不可达由 **#760** 修 |
 | ② 引擎 | mcpp | ✅ T2.1–T2.10 全部完成并各有判据 |
-| ③ 发布 | mcpp | ⬜ |
-| ④ 适配面 | mcpp-index | 🟡 T4.1/T4.4 ✅(**#347 已合入 `8a9ca64`**);T4.2 待 ① 的 pocl/lavapipe;T4.3 待 ③ |
+| ③ 发布 | mcpp | ✅ **2026.9.5.2 已发布**;两端资产 GET 均 200 且字节数一致;xim bump **#761 已合入 `99554b2`**,`Publish Index Artifact` 绿;bootstrap pin 已前移 |
+| ④ 适配面 | mcpp-index | 🟡 T4.1/T4.3/T4.4 ✅(**#347 `8a9ca64`**、**#348 `a607ff2`**);T4.2 待 ① 的 pocl/lavapipe |
 | ⑤ 框架 | mcpp-index | 🟡 T5.1 走到「载荷版本不匹配」:见下方记录。它作为 gate 已经交付了它该交付的东西 —— 暴露出 C-6 的引擎缺口 |
-| ⑥ 生态验证 | 沙箱 | ⬜ |
+| ⑥ 生态验证 | 沙箱 | ✅ 三份脚本全绿(见下);⚠️设备那一半沙箱做不到 —— `--sandbox` 的 `/dev` 只有 14 项且无 `/dev/nvidia*` |
 
 图例:⬜ 未开始 / 🟡 进行中 / ✅ 完成并有判据 / ⛔ 阻塞
 
@@ -63,7 +63,7 @@
 
 | # | 任务 | 判据 |
 |---|---|---|
-| T3.1 | 版本号 + CHANGELOG + 发布 | GitHub/GitCode 资产 sha256 一致;`ci-fresh-install` 全绿 |
+| T3.1 | ✅ 版本号 + CHANGELOG + 发布 | ✅ 四个平台产物在 GitHub 与 GitCode **两端 GET 均 200 且字节数逐个相同**(不用 `gh release view` 的列表,不用 HEAD);`xlings install mcpp@2026.9.5.2` 后 store 路径自述 `mcpp 2026.9.5.2` |
 
 ### ④ 适配面(mcpp-index,依赖 ③)
 
@@ -71,7 +71,7 @@
 |---|---|---|---|
 | T4.1 | ✅ `compat.cuda-runtime` → `compat.cuda-driver` 改名 + `repo` 改正 | ✅ 旧条目冻结保留;工作区成员 `tests/examples/cuda-driver` **同时依赖新旧两个名字**,让跳转期这条承诺有判据(此前它只是一句注释) | — |
 | T4.2 | `compat.vulkan-icd` / `compat.opencl-icd`(缺失时回落载荷) | 无卡机器上 dlopen 到软件实现 | T1.4, T1.5 |
-| T4.3 | `rules-cuda` / `rules-hip` / `rules-sycl` / `rules-spirv` 进索引 | 消费者一行依赖即可用 | T3.1, T2.8 |
+| T4.3 | 🟡 `rules-cuda` 进索引(**#348**);hip/sycl/spirv 待做 | ✅ 描述符指向发布 tarball 的子路径(与 `grpcgen` 同形,**不新建仓库**);示例去掉 path 依赖、改成一行 `[dependencies.mcpplibs]` 后在 4080 上跑出 `12 24 36 48` | T3.1, T2.8 |
 | T4.4 | 🟡 `compat.cudart` + `cublas`/`cufft`/`curand`/`cusolver`/`cusparse` ✅ | ✅ e2e 判据=新成员 `tests/examples/cuda-curand`:无卡机器断言库能加载并应答,有卡再断言 [0,1] 与均值。⚠️ `cudnn`/`nccl`/`onemkl` 仍缺 xim 载荷 | T1.7 |
 
 ### ⑤ 框架(mcpp-index,依赖 ④)
@@ -92,9 +92,9 @@
 
 | # | 任务 | 判据 |
 |---|---|---|
-| T6.1 | 新建 subos,配 CN mirror,装发布物 | 版本自述正确 |
-| T6.2 | 逐条跑 C0–C20 | 全绿,且每条模拟器 lane 有硬件对照 |
-| T6.3 | 对照:去掉包后判据必须变红 | 每条判据都测到了东西 |
+| T6.1 | ✅ 新建 subos `md-verify`,CN mirror(mcpp 与 xlings 各一份),装发布物 | ✅ **走 store 路径不走 shim** —— `xlings install` 装完仍提示 `mcpp` 解析到旧版;store 路径自述 `mcpp 2026.9.5.2` |
+| T6.2 | ✅ 三份脚本:引擎(13 条断言)、索引适配(1 条)、CUDA 全链(3 条) | ✅ 全绿。⚠️ 设备那一半在沙箱里**构造上做不到**:`--sandbox` 的 `/dev` 只有 14 项、无 `/dev/nvidia*`,`cudaMalloc` 必报「no CUDA-capable device」。判据因此拆两处:沙箱断言「链路成立 + 缺设备时干净地说出来」,设备结果在宿主上断言 |
+| T6.3 | ✅ 对照 | ✅ 同一份脚本对 **2026.9.5.1** 跑:13 条里 12 条变红,且理由逐条具体(新 API 不存在、`host_config` 在旧引擎里出现 2 次)。这是「判据确实测到了东西」的证据 |
 
 ---
 
@@ -149,6 +149,9 @@
 | 2026-09-05 | ⚠️⚠️ T5.1 的 CUDA lane 在本机**四维矩阵无解**,而链路本身全通 | 轴 → 收窄的 glob → 设备源清单 → 规则包 → action → **进静态库归档** → 链接,整条链实测走通,48 个设备目标已产出。挡住的是一个与 mcpp 无关的四维矩阵:①CCCL 2.x(12.9 线)的 `cub::LoadDirectWarpStriped` 少一个重载;②CCCL 3.3(13.3 线)同样不匹配;③补进 CCCL 3.2(13.2 线)后换成 **clang 编不动 libcu++**(`string_view` 的推导指引只允许 `__host__ __device__`、`block_load.cuh` 要 placement new);④走 nvcc 则 12.9 撞 glibc 2.44、13.3 撞驱动 12.4。⇒ 结论是**载荷矩阵**,不是设计 |
 | 2026-09-05 | ⚠️ clang 路线要带 NVIDIA 自己的 libc++ 逃生开关 | 设备单元只要 include `<cuda_runtime.h>`,`crt/host_defines.h:67` 就以 `"libc++ is not supported on x86 system"` 停下 —— 守卫是 `__CUDACC__ && _LIBCPP_VERSION`,而 clang 编 CUDA 时自己就定义 `__CUDACC__`,于是一条**写给 nvcc 宿主 pass** 的拒绝落到了这条路线上。`-D_ALLOW_UNSUPPORTED_LIBCPP` 只在 clang 路线传。⚠️ 示例自己的 kernel 一直没暴露它:**裸 kernel 一个工具包头都不 include**,示例测的是接线不是头文件 |
 | 2026-09-05 | ⚠️ 未提交 `xim:cuda-cccl@13.2.75` | 配方改动做好并解析通过,但它是为一个没走通的用例加的,而索引的 CUDA 线策略是「12.9 + 13.3 两条」;单加一个 13.2 的 cccl 不自洽。撤回 |
+| 2026-09-05 | ③ 发布完成,**gtc 没有需要补的** | 四个产物在 GitCode 端全部由 `publish-ecosystem` 传完(历史上 180s 上限会打死最大的两个)。核验仍按记忆里的规矩做:**GET 而不是 HEAD,`gitcode.com` 而不是 `api.gitcode.com`,不信 `gh release view` 的列表** —— 八次 GET 全 200 且字节数两端相同 |
+| 2026-09-05 | ⚠️ **沙箱里跑不了设备那一半**,判据因此拆两处 | `xlings subos --sandbox` 的 `/dev` 只有 14 项且**没有 `/dev/nvidia*`**,`cudaMalloc` 必报「no CUDA-capable device is detected」。沙箱断言到「规则包来自索引 + 设备单元编译链接通过 + 缺设备时干净报出」为止,设备结果在宿主断言(`12 24 36 48`)。⭐ 第一版脚本把设备结果写进沙箱判据,红了才发现 —— 这正是判据该做的事 |
+| 2026-09-05 | ⚠️ 沙箱 `--cmd` 的引号会把源码改坏 | 用内联 heredoc 传 C++ 源进 `--cmd`,换行被吃掉、`printf` 的格式串断成两行。**记忆里那条(为传输改脚本 ⇒ 假绿)的同族**:修法是把脚本写进 subos 的 home 再执行,不是改脚本 |
 | 2026-09-05 | ⚠️ **layer 不能选择依赖,feature 可以** | `[target.'cfg(accelerator = "cuda")'.dependencies]` 被引擎拒绝并说明理由:layer 由依赖图解析而来,用它选依赖会让依赖决定自己被问的问题。⇒ 一个库的设备后端拆两半:**依赖挂 feature,源文件挂 accel 轴** |
 | 2026-09-05 | ⚠️ 设备编译要显式指名 CCCL 载荷,否则命中 `/usr/include/cub` | 与 T0.3 的 `cuda_runtime.h` 同一形状,第三次出现。且 12.x 的 `include/cub` 在 13.x 变成 `include/cccl/cub` |
 | 2026-09-05 | e2e 317 的等待窗从 2s 放宽到 5s | 到达「五次短失败」下界最少要 1.25s(4×250ms 重启延迟 + 5×50ms 轮询),2s 窗只给每次 spawn 留 150ms;main 上 macOS **连续两次**在此失败而本分支同码两次通过 —— 判据由 runner 负载决定。5s 窗留 750ms |
