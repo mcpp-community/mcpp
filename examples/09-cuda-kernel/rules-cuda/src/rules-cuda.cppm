@@ -51,10 +51,15 @@ enum class route { automatic, clang, nvcc };
 
 struct options {
     route       which   = route::automatic;
-    // Header search paths for the island, relative to the package root. The
-    // island's own interface lives in one of these, and a device compiler is a
-    // separate driver that inherits nothing from the C++ side's include
-    // configuration.
+    // Header search paths for the island. Relative entries resolve against the
+    // package root; an ABSOLUTE entry is passed through unchanged.
+    //
+    // ⭐ THE ABSOLUTE FORM IS FOR A DEPENDENCY'S HEADERS. A device compiler is
+    // a separate driver and inherits nothing from the C++ side's include
+    // configuration, so a package whose device code includes a dependency's
+    // header -- ggml's CUDA backend includes `cublas_v2.h` -- has to name that
+    // dependency's directory here, and it knows it only as the absolute path
+    // `mcpp::dep_dir` answered with.
     std::vector<std::string> includes;
     std::string out_dir = std::string(mcpp::out_dir());
 };
@@ -428,7 +433,26 @@ inline std::vector<edge> plan(std::span<const std::string> sources, options opt 
             return out;
         }
         front = { driver_cc, "-x", "cuda", "-std=c++17", "-O2", "-fPIC",
-                  "--cuda-path=" + tk->nvcc_root, "-Wno-unknown-cuda-version" };
+                  "--cuda-path=" + tk->nvcc_root, "-Wno-unknown-cuda-version",
+                  // ⚠️ NVIDIA'S HEADER REFUSES libc++, AND THE REFUSAL IS
+                  // ABOUT nvcc RATHER THAN ABOUT THIS COMPILER.
+                  //
+                  //   crt/host_defines.h:67: error: "libc++ is not supported
+                  //   on x86 system"
+                  //
+                  // The guard is `#if defined(__CUDACC__) && … &&
+                  // defined(_LIBCPP_VERSION)`, and clang defines `__CUDACC__`
+                  // when it compiles CUDA itself — so a device unit that
+                  // includes <cuda_runtime.h> stops here on any LLVM
+                  // toolchain, which is the toolchain this route exists for.
+                  // Measured on ggml's CUDA backend; the CUDA example's own
+                  // kernel never showed it because a bare kernel includes no
+                  // toolkit header at all.
+                  //
+                  // The escape hatch is upstream's own, and it is passed only
+                  // on this route: nvcc's host pass really does break against
+                  // libc++, and nothing here weakens that.
+                  "-D_ALLOW_UNSUPPORTED_LIBCPP" };
         for (auto const& inc : tk->include_dirs()) front.push_back("-I" + inc);
         for (auto const& a : tg.archs) front.push_back("--cuda-gpu-arch=" + a);
         // clang checks ptxas and fatbinary itself; say so before it does.
@@ -550,7 +574,9 @@ inline std::vector<edge> plan(std::span<const std::string> sources, options opt 
         e.id          = "cuda:" + stem;
         e.description = (r == route::clang ? "clang -x cuda " : "nvcc ") + src;
         e.command     = front;
-        for (auto const& inc : opt.includes) e.command.push_back("-I" + root + "/" + inc);
+        for (auto const& inc : opt.includes)
+            e.command.push_back("-I" + (std::filesystem::path(inc).is_absolute()
+                                        ? inc : root + "/" + inc));
         e.command.insert(e.command.end(), { "-c", root + "/" + src, "-o", obj });
         e.inputs  = { root + "/" + src };
         e.outputs = { obj };
