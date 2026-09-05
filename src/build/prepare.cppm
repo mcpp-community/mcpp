@@ -108,7 +108,7 @@ namespace mcpp::build {
 // should not fail outright, only tell the user what it ignored.
 inline void warn_unknown_xpkg_keys(const mcpp::manifest::Manifest& dm,
                                    std::string_view depLabel) {
-    // ⚠️ A LAYER NAME THIS ENGINE DOES NOT KNOW IS A VERSION GAP, NOT A TYPO,
+    // A LAYER NAME THIS ENGINE DOES NOT KNOW IS A VERSION GAP, NOT A TYPO,
     // WHEN IT ARRIVES FROM A DEPENDENCY.
     //
     // The reserved `mcpp:` prefix is a closed set so a misspelling cannot
@@ -256,7 +256,7 @@ void merge_conditional_config(mcpp::manifest::Manifest& m,
     const bool generatedPackage = mcpp::pack::is_distribution_package(m);
 
     for (auto const& cc : m.conditionalConfigs) {
-        // ⚠️ THE TWO PASSES MUST BE DISJOINT, AND `matches()` ALONE DOES NOT
+        // THE TWO PASSES MUST BE DISJOINT, AND `matches()` ALONE DOES NOT
         // MAKE THEM SO. A layer key answers false here because `layersKnown` is
         // false — but `cfg(any(linux, c-abi = "musl"))` still matches on its
         // triple leg, and the second pass would match it again and `append()`
@@ -271,7 +271,7 @@ void merge_conditional_config(mcpp::manifest::Manifest& m,
         // a broader unconditional one under GNU last-wins — which is what
         // makes an off-OS REMOVAL expressible (`-U` after the base `-D`).
         if (neutralWins) {
-            // ⚠️ Drop the LIBRARY REFERENCES, not the whole ldflags list.
+            // Drop the LIBRARY REFERENCES, not the whole ldflags list.
             //
             // Clearing it outright was a measured regression: a PE/MinGW shared
             // leg's ldflags also carry `-Wl,-Bdynamic`, without which `-static`
@@ -527,7 +527,7 @@ export enum class TcOrigin {
     FirstRun,           // chosen and persisted by this very invocation
 };
 
-// ⚠️ `GlobalDefault` IS DELIBERATELY NOT LISTED, AND THE REASON IS A MEASURED
+// `GlobalDefault` IS DELIBERATELY NOT LISTED, AND THE REASON IS A MEASURED
 // REGRESSION RATHER THAN A JUDGEMENT ABOUT WHOSE OPINION COUNTS.
 //
 // A target row's pin does not name a preferred compiler. It names the payload
@@ -552,7 +552,7 @@ export inline bool tc_origin_is_user_explicit(TcOrigin o) {
     return o == TcOrigin::ManifestToolchain || o == TcOrigin::TargetSection;
 }
 
-// ⚠️⚠️ MAY A BUILD THAT RESOLVED THIS WAY WRITE THE MACHINE'S DEFAULT?
+// MAY A BUILD THAT RESOLVED THIS WAY WRITE THE MACHINE'S DEFAULT?
 //
 // `GraphRequirement` is the one origin that must not: it is a property of a
 // package this project depends on, not of this machine. Two branches persist a
@@ -563,7 +563,7 @@ export inline bool tc_origin_is_user_explicit(TcOrigin o) {
 // Windows box with no toolchain: a bare machine building ONE llvm-requiring
 // project would have handed llvm to every later project that asked for nothing.
 //
-// ⭐ NAMED RATHER THAN SPELLED INLINE AT EACH SITE. There are two today; the
+// NAMED RATHER THAN SPELLED INLINE AT EACH SITE. There are two today; the
 // third would be written by someone who never read this note, and a predicate
 // with a name is something they can find.
 export inline bool tc_origin_may_persist(TcOrigin o) {
@@ -697,7 +697,7 @@ export struct BuildContext {
     // whether a cached build.ninja was generated for the profile being asked
     // for — and so `Finished <profile>` stops being a hardcoded "release".
     std::string                     profile;
-    // ⭐ WHY THIS COMPILER — carried so the QUERY can answer it too.
+    // WHY THIS COMPILER — carried so the QUERY can answer it too.
     //
     // A build says so on its status line. `mcpp why toolchain --format json`
     // exists precisely to answer "what would this resolve to, and why", and a
@@ -866,7 +866,7 @@ export struct BuildOverrides {
     // decides the `when = "run"` tool tier. `mcpp run` and `mcpp test` set it;
     // `mcpp build`, `mcpp pack` and every internal sub-build do not.
     //
-    // ⚠️ A SEPARATE FLAG FROM `includeDevDeps`, THOUGH `mcpp test` SETS BOTH.
+    // A SEPARATE FLAG FROM `includeDevDeps`, THOUGH `mcpp test` SETS BOTH.
     // One says which PACKAGES enter the graph, the other which TOOLS are
     // installed, and `mcpp run` needs the second without the first.
     bool        will_run = false;
@@ -966,7 +966,7 @@ sysroot_override(const mcpp::manifest::Manifest& m,
 // shape this codebase keeps paying for. A board package that got the right
 // answer as a root project and a stale one as a dependency would fail only in
 // the consuming build, which is the harder direction to debug.
-// ⚠️⚠️ A NETWORK STEP OF A BUILD, RETRIED — AND IT HAD NO RETRY AT ALL.
+// A NETWORK STEP OF A BUILD, RETRIED — AND IT HAD NO RETRY AT ALL.
 //
 // A dependency resolved by `git` is fetched on every machine that has not
 // cached it, and a transport that hiccups once failed the whole build:
@@ -978,13 +978,13 @@ sysroot_override(const mcpp::manifest::Manifest& m,
 // looks like. Measured twice on 2026-08-23: once in continuous integration and
 // once locally as `TLS connect error: … unexpected eof while reading`.
 //
-// ⚠️ THREE ATTEMPTS, AND THE LAST FAILURE IS REPORTED UNCHANGED. A wrong URL
+// THREE ATTEMPTS, AND THE LAST FAILURE IS REPORTED UNCHANGED. A wrong URL
 // and a missing branch fail exactly as a transient fault does, so this cannot
 // tell them apart and does not try: a permanent failure costs three seconds and
 // produces the message it always did. Hiding a real error behind a retry is the
 // worse trade, which is why the count is small and the report is untouched.
 //
-// ⚠️ BOTH NETWORK STEPS, not one. The first version retried only the clone —
+// BOTH NETWORK STEPS, not one. The first version retried only the clone —
 // and a probe with a nonexistent repository failed in ONE second, because the
 // step that runs first is `git ls-remote` and it was still bare. A retry on
 // half of a path is a retry that reports success at having been added.
@@ -1033,7 +1033,7 @@ void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
     // The C LIBRARY's sub-directory for this ISA profile, from the freestanding
     // table — the same single read point the compile flags use.
     //
-    // ⚠️ Gated on there being a C library at all, and the gate is the point: the
+    // Gated on there being a C library at all, and the gate is the point: the
     // value is a multilib convention, so on the zero-libc tier there is nothing
     // for it to be a convention OF. Emitting `rv64gc/lp64d` there would hand a
     // kernel a path into a directory that does not exist, and the name of the
@@ -1055,7 +1055,7 @@ void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
 
 // ── Tool tiers: which of a manifest's declared packages this verb needs ─────
 //
-// ⭐⭐ THE AXIS PACKAGE DEPENDENCIES HAVE HAD SINCE THE BEGINNING, AND TOOLS
+// THE AXIS PACKAGE DEPENDENCIES HAVE HAD SINCE THE BEGINNING, AND TOOLS
 // DID NOT.
 //
 // A board-support package names an emulator (needed to run) and a debug probe
@@ -1069,7 +1069,7 @@ void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
 // spelling is the one `[dependencies]` already uses for the same kind of
 // refinement.
 //
-// ⚠️ `Dev` IS THE ONLY TIER THAT DOES NOT PROPAGATE. It means "when the package
+// `Dev` IS THE ONLY TIER THAT DOES NOT PROPAGATE. It means "when the package
 // that declared it is itself being developed", so `isRoot` decides it. Every
 // other tier reaches a consumer, which is the whole point of a board package
 // knowing its own machine.
@@ -1108,7 +1108,7 @@ applicable_xlings_addresses(const mcpp::manifest::Manifest& man,
 // Install a set of `[xlings.workspace]` addresses, and record that the list was
 // done.
 //
-// ⭐ EXTRACTED SO THE DEPENDENCY GRAPH CAN USE THE SAME PATH. This was the
+// EXTRACTED SO THE DEPENDENCY GRAPH CAN USE THE SAME PATH. This was the
 // root project's provisioning, inline and reachable only from there. A
 // board-support package that declares the emulator its machine needs is
 // precisely the thing that should say so once, and a consumer that has to
@@ -1124,7 +1124,7 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                            const std::filesystem::path& legacyStampRoot,
                            std::string_view label) {
     if (declaredDeps.empty()) return {};
-            // ⚠️⚠️ THE STAMP RECORDS A GLOBAL EFFECT, SO IT LIVES WHERE THE
+            // THE STAMP RECORDS A GLOBAL EFFECT, SO IT LIVES WHERE THE
             // EFFECT DOES. It used to sit in `<project>/.mcpp/`, while the
             // installation goes to the registry a few lines below — the
             // scope difference is deliberate and explained there. Two
@@ -1176,7 +1176,7 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
             // and a stale extra file is cheaper than a downgrade that
             // re-provisions on every build.
             //
-            // ⚠️ IT DOES NOT MEAN "PROVISIONED SUCCESSFULLY". The release
+            // IT DOES NOT MEAN "PROVISIONED SUCCESSFULLY". The release
             // that wrote it did not read the result — that is the defect
             // above — so it means only "this list was attempted". Treating
             // it as proof would carry the bug across the very upgrade that
@@ -1196,7 +1196,7 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
             };
             bool needProvision = (have != want);
             if (needProvision) {
-                // ⚠️ THE AUTO-INSTALL GATE, WHICH THIS PATH DID NOT HAVE.
+                // THE AUTO-INSTALL GATE, WHICH THIS PATH DID NOT HAVE.
                 //
                 // `[toolchain]` is the precedent this whole mechanism cites
                 // ("the same 'declare it and mcpp provisions it on first
@@ -1213,7 +1213,7 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                 // that would otherwise regress.
                 if (mcpp::platform::env::offline_mode()
                     || mcpp::platform::env::no_auto_install()) {
-                    // ⚠️ THE ONE PLACE THE LEGACY STAMP IS TRUSTED, and the
+                    // THE ONE PLACE THE LEGACY STAMP IS TRUSTED, and the
                     // reason is that relocating a record must not refuse a
                     // build that worked yesterday. Every project that had
                     // already provisioned carries the old stamp and no new
@@ -1294,7 +1294,7 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                 auto r = mcpp::xlings::call(
                     mcpp::config::make_xlings_env(cfg), "install_packages",
                     args.dump(), &progress);
-                // ⚠️⚠️ `if (!r)` IS NOT THE FAILURE TEST, AND TESTING ONLY
+                // `if (!r)` IS NOT THE FAILURE TEST, AND TESTING ONLY
                 // IT MADE THIS PATH REPORT SUCCESS FOR EVERY FAILURE XLINGS
                 // CAN REPORT.
                 //
@@ -1388,7 +1388,7 @@ prepare_build(bool print_fingerprint,
     // learned by experiment — writing the same value a second time in
     // `[target.<triple>]` and observing that it works.
     std::string pinReplacedDefault;
-    // ⭐ THE PACKAGE WHOSE `requires` CHOSE THE COMPILER, AND WHAT IT ASKED FOR.
+    // THE PACKAGE WHOSE `requires` CHOSE THE COMPILER, AND WHAT IT ASKED FOR.
     //
     // Non-empty only when the graph's requirement actually changed the answer.
     // Reported on the status line for the same reason `pinReplacedDefault` is:
@@ -1406,7 +1406,7 @@ prepare_build(bool print_fingerprint,
     // The target row's toolchain convention, held until the graph is known.
     // Empty when the row names none or the project named its own.
     std::string targetPinCandidate;
-    // ⭐⭐ AND WHETHER THAT PIN IS A CONVENTION OR A CAPABILITY, RECORDED AT
+    // AND WHETHER THAT PIN IS A CONVENTION OR A CAPABILITY, RECORDED AT
     // THE SAME READ.
     //
     // A hosted row's pin answers "which payload supplies this target's C
@@ -1419,7 +1419,7 @@ prepare_build(bool print_fingerprint,
     // Taken here rather than re-derived at the decision point, because the row
     // is read exactly once and both facts come out of that read.
     bool targetPinIsCapability = false;
-    // ⚠️ THE ROW'S PIN, KEPT EVEN WHEN THE PROJECT NAMED ITS OWN COMPILER —
+    // THE ROW'S PIN, KEPT EVEN WHEN THE PROJECT NAMED ITS OWN COMPILER —
     // which is exactly when `targetPinCandidate` above is left empty.
     //
     // The candidate answers "should mcpp apply its convention"; this answers
@@ -1471,7 +1471,7 @@ prepare_build(bool print_fingerprint,
         m = mcpp::manifest::load(*root / "mcpp.toml", {.insideWorkspace = true});
     if (!m) return std::unexpected(m.error().format());
 
-    // ⚠️ AND ONLY FOR THE ROOT. A layer name this engine does not know is a
+    // AND ONLY FOR THE ROOT. A layer name this engine does not know is a
     // typo in the manifest the author is looking at, and a version gap in a
     // dependency's. The reserved `mcpp:` prefix exists so the first is an error
     // rather than a silently disabled behaviour; refusing the second as well
@@ -1651,7 +1651,7 @@ prepare_build(bool print_fingerprint,
 
     // #540: a cfg() predicate mcpp cannot evaluate must say so.
     //
-    // ⚠️ A PREDICATE THAT ANSWERS FALSE AND A PREDICATE THAT WAS NEVER
+    // A PREDICATE THAT ANSWERS FALSE AND A PREDICATE THAT WAS NEVER
     // UNDERSTOOD USED TO READ THE SAME. `cfgpred` returns false for an unknown
     // key and for an unknown bareword, and a `[target.<pred>.build]` section
     // whose predicate is false is dropped without a word — so a typo, and every
@@ -1848,7 +1848,7 @@ prepare_build(bool print_fingerprint,
         if (!runtimeBindingSnapshot.note.empty())
             mcpp::ui::info("Runtime", runtimeBindingSnapshot.note);
     }
-    // ⭐⭐ THE `bin` THIS PROJECT'S BUILD PROGRAMS SEE FIRST — derived ONCE,
+    // THE `bin` THIS PROJECT'S BUILD PROGRAMS SEE FIRST — derived ONCE,
     // here, from the selection that has just been resolved.
     //
     // Empty unless the manifest declared `[xlings].subos`. That is deliberate:
@@ -1857,7 +1857,7 @@ prepare_build(bool print_fingerprint,
     // that has not asked for an environment of its own gets the `PATH` mcpp
     // was started with, byte for byte.
     //
-    // ⚠️ NOT RE-DERIVED AT THE TWO DELIVERY SITES BELOW, AND NOT FROM
+    // NOT RE-DERIVED AT THE TWO DELIVERY SITES BELOW, AND NOT FROM
     // `[xlings] deps`. `mcpp::xlings::runtime` is the sole runtime-selection
     // policy and `RuntimeBinding::subosDir` is its resolved answer; a second
     // derivation is how a build ends up with two subos and no way to say which
@@ -2059,7 +2059,7 @@ prepare_build(bool print_fingerprint,
     // override and the vocabulary-table convention (pin + default linkage).
     if (!overrides.target_triple.empty()) {
         namespace triple = mcpp::toolchain::triple;
-        // ⚠️ THE SPELLING THE PROJECT WROTE, KEPT FOR EVERY DIAGNOSTIC BELOW.
+        // THE SPELLING THE PROJECT WROTE, KEPT FOR EVERY DIAGNOSTIC BELOW.
         // `overrides.target_triple` is canonicalised further down, and until
         // this variable existed the refusals quoted the canonical form:
         // `--target aarch64-linux` produced "target 'aarch64-linux-gnu' is
@@ -2068,7 +2068,7 @@ prepare_build(bool print_fingerprint,
         const std::string requestedSpelling = overrides.target_triple;
         auto parsed = triple::parse(overrides.target_triple);
 
-        // ⚠️⚠️ THE REQUEST IS COMPLETED FROM THE VOCABULARY BEFORE ANYTHING
+        // THE REQUEST IS COMPLETED FROM THE VOCABULARY BEFORE ANYTHING
         // READS IT, AND THE ORDER RELATIVE TO THE `[target.X]` LOOKUP IS PART
         // OF THE CONTRACT.
         //
@@ -2130,7 +2130,7 @@ prepare_build(bool print_fingerprint,
                 requestedSpelling, opts));
         }
         if (!known && !hasExplicitSection) {
-            // ⚠️ "UNKNOWN" IS A CLAIM ABOUT THE VOCABULARY, AND IT WAS FALSE FOR
+            // "UNKNOWN" IS A CLAIM ABOUT THE VOCABULARY, AND IT WAS FALSE FOR
             // A WHOLE arch+os FAMILY.
             //
             // Measured on 2026.8.26.1: `--target riscv64-linux` reported
@@ -2250,7 +2250,7 @@ prepare_build(bool print_fingerprint,
                 servable.empty() ? "(nothing — `mcpp toolchain list`)" : servable,
                 parsed->str());
         }
-        // ⚠️ CAPTURED BEFORE CANONICALISATION, BECAUSE CANONICALISATION IS
+        // CAPTURED BEFORE CANONICALISATION, BECAUSE CANONICALISATION IS
         // EXACTLY WHAT DESTROYS IT.
         //
         // `str()` renders the filled-in identity, so `x86_64-linux` becomes
@@ -2258,7 +2258,7 @@ prepare_build(bool print_fingerprint,
         // an env segment the project never wrote. The request has to be taken
         // from the ONLY triple that still knows the difference: this one.
         if (parsed && parsed->envExplicit) requestedCAbi = parsed->env;
-        // ⚠️ AND THE SPELLING THE PROJECT USED, FOR THE REPORT ONLY.
+        // AND THE SPELLING THE PROJECT USED, FOR THE REPORT ONLY.
         //
         // The canonical form is the identity — the output directory, the cache
         // key, the subject of a `cfg()` — and it must stay filled. The REPORT is
@@ -2318,7 +2318,7 @@ prepare_build(bool print_fingerprint,
         // a project does not use. The narrower reading of this guard was
         // patched with an openkal-specific exception; stating the rule
         // correctly removes the need for one.
-        // ⚠️ RECORDED, NOT APPLIED. The convention answers "which payload
+        // RECORDED, NOT APPLIED. The convention answers "which payload
         // supplies this target's C library", and whether it is needed depends on
         // whether the dependency graph supplies one instead. That is knowable
         // only after resolution, so the decision waits for
@@ -2333,7 +2333,7 @@ prepare_build(bool print_fingerprint,
             targetPinCandidate = std::string(known->pin);
             targetPinIsCapability = parsed && parsed->pin_is_capability();
         }
-        // ⚠️⚠️ A USER'S EXPLICIT TOOLCHAIN OVERRIDES A CONVENTION, NOT A
+        // A USER'S EXPLICIT TOOLCHAIN OVERRIDES A CONVENTION, NOT A
         // CAPABILITY — AND UNTIL THIS LINE IT OVERRODE BOTH.
         //
         // The block above deliberately steps aside for an explicit
@@ -2345,7 +2345,7 @@ prepare_build(bool print_fingerprint,
         // construction". A host g++ does not emit riscv64 whatever anyone
         // declares.
         //
-        // ⚠️ Measured 2026-08-26:
+        // Measured 2026-08-26:
         //
         //     [toolchain] default = "gcc@16.1.0"
         //     $ mcpp build --target riscv64-none-elf
@@ -2359,7 +2359,7 @@ prepare_build(bool print_fingerprint,
             && tc_origin_is_user_explicit(tcOrigin) && tcSpec.has_value()) {
             auto declared = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
             if (declared && declared->family != mcpp::toolchain::Family::Llvm) {
-                // ⚠️ THE REASON TRAVELS WITH THE ROW. Both rows refuse for the
+                // THE REASON TRAVELS WITH THE ROW. Both rows refuse for the
                 // same rule and NOT for the same reason, and one sentence
                 // covering both would be wrong about one of them: a PE+musl
                 // target is not bare metal, and a reader told it is stops
@@ -2411,7 +2411,7 @@ prepare_build(bool print_fingerprint,
     // at call time rather than captured: a `[target.'cfg(...)'.build]` section
     // may set `accel`, and the merge that applies it runs a few lines down.
     //
-    // ⚠️⚠️ "NO ACCELERATOR" IS THE EMPTY STRING HERE, NOT `accel_str`'s "(none)".
+    // "NO ACCELERATOR" IS THE EMPTY STRING HERE, NOT `accel_str`'s "(none)".
     //
     // `accel_str` is a DISPLAY function: it prints `(none)` for an empty set so
     // an ABI tag reads as a sentence. Handing that spelling on as a value made
@@ -2476,7 +2476,7 @@ prepare_build(bool print_fingerprint,
     // Studio. `Origin::Managed` is everything else, including a VERSIONED
     // msvc spec, and that is the point: what the manifest says is what gets
     // used, on every machine, instead of whatever this one happens to have.
-    // ⚠️ RESOLVED HERE, RUN AFTER THE DEPENDENCY GRAPH — AND THE SPLIT IS THE
+    // RESOLVED HERE, RUN AFTER THE DEPENDENCY GRAPH — AND THE SPLIT IS THE
     // WHOLE POINT.
     //
     // A target row's convention does not name a preferred compiler. It names
@@ -2492,11 +2492,11 @@ prepare_build(bool print_fingerprint,
     // one, because clang alone carries no C runtime for `x86_64-windows-gnu`
     // while the payload the row names does.
     //
-    // ⚠️ The body does not MOVE; only its execution does. Everything between
+    // The body does not MOVE; only its execution does. Everything between
     // here and the call site was measured to read `tc` exactly once, and that
     // one read wanted the target triple rather than the compiler.
     std::optional<mcpp::toolchain::Toolchain> tc;
-    // ⚠️ `std::function` AND NOT `auto`, BECAUSE THE FIRST-RUN BRANCH INSIDE
+    // `std::function` AND NOT `auto`, BECAUSE THE FIRST-RUN BRANCH INSIDE
     // CALLS BACK INTO IT. That branch installs a host default and then has to
     // resolve THAT default for the requested target — which is what the top of
     // this same function does. Recursing reuses it; writing it a second time
@@ -2522,7 +2522,7 @@ prepare_build(bool print_fingerprint,
         parsedSpec   = std::move(*s);
         tcOriginAxis = mcpp::toolchain::origin_of(*parsedSpec);
       }
-      // ⚠️ ASSIGNED, NOT DECLARED. `host_tc_for_build_program` reads it and is
+      // ASSIGNED, NOT DECLARED. `host_tc_for_build_program` reads it and is
       // defined outside this lambda, so the declaration lives in the enclosing
       // scope; the value is still decided here, where the spec is parsed.
       tcSpecIsMsvc =
@@ -2559,7 +2559,7 @@ prepare_build(bool print_fingerprint,
         }
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
 
-        // ⚠️⚠️ AND NOT INSTALLED WHEN NO PAYLOAD HERE COULD SERVE THE TARGET.
+        // AND NOT INSTALLED WHEN NO PAYLOAD HERE COULD SERVE THE TARGET.
         //
         // `unservedTargetDiagnosis` is decided a thousand lines above and
         // released a thousand lines below — deliberately, because whether the
@@ -2569,7 +2569,7 @@ prepare_build(bool print_fingerprint,
         // graph supplies the system (and this payload is not wanted) or the
         // build refuses later (and it is not wanted then either).
         //
-        // ⚠️ Measured on ubuntu-24.04-arm, `--target x86_64-linux-musl`:
+        // Measured on ubuntu-24.04-arm, `--target x86_64-linux-musl`:
         //
         //     error: toolchain 'gcc@16.1.0': xlings install of
         //       'xim:x86_64-linux-musl-gcc@16.1.0' failed …
@@ -2578,7 +2578,7 @@ prepare_build(bool print_fingerprint,
         // x86_64-only. The refusal that names this correctly never ran, because
         // the install failed first and failed hard.
         //
-        // ⭐ Skipping leaves BOTH later paths intact; attempting cannot help
+        // Skipping leaves BOTH later paths intact; attempting cannot help
         // either of them.
         const bool targetPayloadUnservable =
             !unservedTargetDiagnosis.empty() && !spec->target.empty();
@@ -2650,13 +2650,13 @@ prepare_build(bool print_fingerprint,
             // Canonical rendering, whatever spelling the manifest/config used:
             // "Resolved gcc@16.1.0 → x86_64-linux-musl → <frontend>".
             //
-            // ⚠️ AND IT SAYS SO WHEN MCPP CHOSE. A toolchain the user wrote down
+            // AND IT SAYS SO WHEN MCPP CHOSE. A toolchain the user wrote down
             // needs no explanation — they can read their own manifest. One this
             // engine selected from a target row is a decision the user did not
             // make, and a status line that reports the outcome without the
             // reason leaves them to discover the rule by experiment.
             std::string chosenBy;
-            // ⭐ A COMPILER THE GRAPH ASKED FOR IS ANNOUNCED WITH THE PACKAGE
+            // A COMPILER THE GRAPH ASKED FOR IS ANNOUNCED WITH THE PACKAGE
             // THAT ASKED. Without the name this reads as mcpp ignoring the
             // user's default; with it, it reads as the dependency it is.
             // The second line appears only when something was displaced —
@@ -2885,7 +2885,7 @@ prepare_build(bool print_fingerprint,
         tcSpec   = defaultSpec;
         tcOrigin = TcOrigin::FirstRun;
 
-        // ⭐⭐ AND IF A TARGET WAS ASKED FOR, RESOLVE FOR IT — THIS BRANCH JUST
+        // AND IF A TARGET WAS ASKED FOR, RESOLVE FOR IT — THIS BRANCH JUST
         // INSTALLED A HOST COMPILER AND WAS ABOUT TO BUILD WITH IT.
         //
         // Everything above answers "this machine has no toolchain, give it
@@ -2902,12 +2902,12 @@ prepare_build(bool print_fingerprint,
         //
         //      Resolved  gcc@16.1.0 → x86_64-windows-gnu → …/mingw-cross-gcc/…
         //
-        // ⭐ REUSES THE PATH THAT ALREADY KNOWS HOW, rather than repeating what
+        // REUSES THE PATH THAT ALREADY KNOWS HOW, rather than repeating what
         // it does. `resolve_target_toolchain` maps a spec plus a target onto a
         // payload and installs it; the default just chosen is the spec. A
         // second implementation here would be a second answer to one question,
         // which is the shape this release exists to remove.
-        // ⚠️ RECORDED HERE, ACTED ON BELOW — the Windows first-run block that
+        // RECORDED HERE, ACTED ON BELOW — the Windows first-run block that
         // follows SETS `overrides.target_triple` itself, and returning from
         // here would skip it. Its own comment says why that matters: it
         // persists BOTH axes, and persisting only the target leaves
@@ -2921,7 +2921,7 @@ prepare_build(bool print_fingerprint,
       // Persisting only the target would leave the toolchain axis implicit
       // (derived from the vocabulary pin) and the two views would disagree.
       //
-      // ⚠️⚠️ NOT WHEN THE DEPENDENCY GRAPH SUPPLIED THE ANSWER. This branch's
+      // NOT WHEN THE DEPENDENCY GRAPH SUPPLIED THE ANSWER. This branch's
       // condition is `tcSpec.has_value()`, and since 2026.8.26.2 a package's
       // `requires = ["mcpp:compiler=…"]` can be what made it true — so a bare
       // Windows box building ONE project with an llvm-requiring dependency
@@ -2948,7 +2948,7 @@ prepare_build(bool print_fingerprint,
         tcOrigin = TcOrigin::FirstRun;
       }
 
-      // ⭐⭐ AND NOW RESOLVE FOR THE TARGET, IF ONE WAS ASKED FOR.
+      // AND NOW RESOLVE FOR THE TARGET, IF ONE WAS ASKED FOR.
       //
       // The first-run branch above answers "this machine has no toolchain, give
       // it one", and the answer is a HOST payload; `--target` was never read
@@ -2964,12 +2964,12 @@ prepare_build(bool print_fingerprint,
       //
       //      Resolved  gcc@16.1.0 → x86_64-windows-gnu → …/mingw-cross-gcc/…
       //
-      // ⭐ REUSES THE PATH THAT ALREADY KNOWS HOW rather than repeating it. The
+      // REUSES THE PATH THAT ALREADY KNOWS HOW rather than repeating it. The
       // default just chosen is the spec; mapping a spec plus a target onto a
       // payload (installing it if absent — `autoInstall` was always true there)
       // is what the top of this function does. Depth is one: the second pass
       // takes the `tcSpec.has_value()` branch the first run just made true.
-      // ⚠️⚠️ ONE-SHOT, AND THE FLAG IS SET BEFORE THE CALL, NOT AFTER.
+      // ONE-SHOT, AND THE FLAG IS SET BEFORE THE CALL, NOT AFTER.
       //
       // This line sits OUTSIDE the first-run branch — it has to, because the
       // Windows block just above sets the target itself — so it is evaluated on
@@ -3026,20 +3026,20 @@ prepare_build(bool print_fingerprint,
       // `tc.targetTriple`, so correcting it here corrects all of them at once —
       // which is the point of there being one field rather than five answers.
       //
-      // ⚠️ THIS USED TO BE SCOPED TO FREESTANDING, WITH THIS REASON:
+      // THIS USED TO BE SCOPED TO FREESTANDING, WITH THIS REASON:
       //
       //     The hosted cross targets already resolve a per-target binary, and
       //     overwriting their probed triple would replace a measured fact with
       //     an assumed one for no gain.
       //
-      // ⭐⭐ That was true while every hosted cross was served by a payload. It
+      // That was true while every hosted cross was served by a payload. It
       // stops being true when the TARGET SIDE comes from the dependency graph:
       // the C library, the C++ runtime and the platform's own implementation are
       // then packages built from source, and the compiler is an ordinary clang —
       // whose `-dumpmachine` answers the host, exactly as the paragraph above
       // describes for freestanding.
       //
-      // ⚠️ Measured 2026-08-23, with an explicit `[target.aarch64-macos]
+      // Measured 2026-08-23, with an explicit `[target.aarch64-macos]
       // toolchain = "llvm@…"`. The manifest's cfg evaluation used the REQUESTED
       // target, so the C library's aarch64 headers were on the command line; the
       // toolchain's own triple was still the host's, so code generation was
@@ -3116,7 +3116,7 @@ prepare_build(bool print_fingerprint,
                   if (auto cfg3 = get_cfg(); cfg3) {
                       auto ref = mcpp::xlings::paths::parse_xpkg_ref(want_sysroot);
                       auto xl  = mcpp::config::make_xlings_env(**cfg3);
-                      // ⭐⭐ INSTALLED, NOT MERELY LOOKED UP — THE SAME CHANNEL
+                      // INSTALLED, NOT MERELY LOOKED UP — THE SAME CHANNEL
                       // THE ROW'S TOOLCHAIN PIN GOES THROUGH.
                       //
                       // The row names two things and only one of them used to
@@ -3125,7 +3125,7 @@ prepare_build(bool print_fingerprint,
                       // `sysroot` was a pure lookup that returned nullopt and
                       // let the whole block below be skipped without a word.
                       //
-                      // ⚠️ Measured 2026-08-26 in a clean environment (an empty
+                      // Measured 2026-08-26 in a clean environment (an empty
                       // home, so mcpp's registry starts fresh):
                       //
                       //     Target riscv64-none-elf
@@ -3138,7 +3138,7 @@ prepare_build(bool print_fingerprint,
                       // bare-metal e2e runs on a machine where the gap has
                       // already been papered over.
                       //
-                      // ⚠️ OFFLINE AND `MCPP_NO_AUTO_INSTALL` ARE THE FETCHER'S
+                      // OFFLINE AND `MCPP_NO_AUTO_INSTALL` ARE THE FETCHER'S
                       // DECISION, not re-derived here. One question, one place
                       // that answers it — asking it twice is the shape this
                       // whole release exists to remove.
@@ -3216,7 +3216,7 @@ prepare_build(bool print_fingerprint,
           // honoured exactly.
           const bool userChoseMsvcItself =
               tc->compiler == mcpp::toolchain::CompilerId::MSVC;
-          // ⚠️ AND NOT A COMPILER THE GRAPH REQUIRED. The repair below rewrites
+          // AND NOT A COMPILER THE GRAPH REQUIRED. The repair below rewrites
           // the machine's default to winlibs GCC, which is right when mcpp's
           // own default cannot work here. A family a package REQUIRED is not
           // mcpp's default to revise: switching to gcc would satisfy nothing —
@@ -3361,7 +3361,7 @@ prepare_build(bool print_fingerprint,
     std::optional<std::pair<std::filesystem::path, mcpp::toolchain::Toolchain>> hostTcCache;
     auto host_tc_for_build_program = [&]() -> std::expected<
             std::pair<std::filesystem::path, mcpp::toolchain::Toolchain>, std::string> {
-        // ⭐⭐ A HOST TOOLCHAIN'S C LIBRARY IS THE PAYLOAD'S, WHATEVER THE
+        // A HOST TOOLCHAIN'S C LIBRARY IS THE PAYLOAD'S, WHATEVER THE
         // PROJECT'S TARGET SIDE IS.
         //
         // `build.mcpp` is compiled AND RUN on the machine doing the build. Its
@@ -3370,14 +3370,14 @@ prepare_build(bool print_fingerprint,
         // The two are different machines and this function's whole job is to
         // keep them apart.
         //
-        // ⚠️ AND THE NATIVE BRANCH BELOW RETURNS THE MAIN `tc`, WHICH CARRIES
+        // AND THE NATIVE BRANCH BELOW RETURNS THE MAIN `tc`, WHICH CARRIES
         // THE OTHER ANSWER. `build_program.cppm`'s own header states the
         // invariant — "`tc` is always a HOST-targeting toolchain" — and for
         // every field but this one the native branch satisfied it, because on a
         // native build the compiler IS the host compiler. `cAbiPrebuilt` is the
         // first field where "same compiler" and "same target side" come apart.
         //
-        // ⚠️ AN INVARIANT, NOT A BUG FIX FOR ANY MEASURED FAILURE. It was
+        // AN INVARIANT, NOT A BUG FIX FOR ANY MEASURED FAILURE. It was
         // written while chasing a `features.h: No such file` on openkal-musl's
         // CI and it is NOT that failure's cause: measured on `origin/main` and
         // on this branch, the gcc std module carries zero `-isystem`/
@@ -3424,7 +3424,7 @@ prepare_build(bool print_fingerprint,
         if (hostTcCache)
             return std::pair{hostTcCache->first, as_host(hostTcCache->second)};
         if (!tcSpec || *tcSpec == "system" || tcSpecIsMsvc) {
-            // ⭐ A READABLE REFUSAL THAT HAD NO CODE, so the target matrix
+            // A READABLE REFUSAL THAT HAD NO CODE, so the target matrix
             // recorded four identical `other` cells for it. The sentence was
             // right; the classification was missing. Measured on windows-2022
             // with `msvc@system` declared and any cross target.
@@ -3532,12 +3532,12 @@ prepare_build(bool print_fingerprint,
     // any package, for the same reason the compiler pin is: it is a property
     // of the target.
     //
-    // ⚠️ It rides the SAME channel as `[xlings] deps` rather than getting an
+    // It rides the SAME channel as `[xlings] deps` rather than getting an
     // install path of its own — one materialization, one place that can be
     // wrong. What it must NOT do is depend on the project having an `[xlings]`
     // section: a bare-metal project written to the template has none, and the
     // whole point is that it never mentions a libc.
-    // ⚠️ FROM THE REQUESTED TRIPLE, NOT FROM THE TOOLCHAIN — AND THE TWO WERE
+    // FROM THE REQUESTED TRIPLE, NOT FROM THE TOOLCHAIN — AND THE TWO WERE
     // THE SAME VALUE ALL ALONG.
     //
     // This read of `tc->targetTriple` was the ONLY thing tying the compiler's
@@ -4737,7 +4737,7 @@ prepare_build(bool print_fingerprint,
     // Which dependency supplied the runner, for the exactly-one-provider
     // error below. A name rather than a bool: the message has to name both.
     std::string runnerProvider;
-    // ⚠️ ONE PROVIDER PER RUNNER NAME. `runner` has had this rule since #544;
+    // ONE PROVIDER PER RUNNER NAME. `runner` has had this rule since #544;
     // a NAMED runner inherits it per name, because a board may legitimately
     // supply `flash` while a different package supplies `monitor`.
     std::map<std::string, std::string> namedRunnerProvider;
@@ -4947,7 +4947,7 @@ prepare_build(bool print_fingerprint,
         pkg.privateBuild.includeDirsAfter = expandIncludeDirsAfter(packageRoot, manifest);
         pkg.privateBuild.cflags = manifest.buildConfig.cflags;
         pkg.privateBuild.cxxflags = manifest.buildConfig.cxxflags;
-        // ⭐⭐ NOT `= privateBuild` ANY MORE — a package may now say which of
+        // NOT `= privateBuild` ANY MORE — a package may now say which of
         // its include directories stop at its own boundary.
         //
         // This line took the whole set for as long as the two were the same
@@ -4957,7 +4957,7 @@ prepare_build(bool print_fingerprint,
         // `weak_alias` for musl's own sources, and publishing it hands those
         // names to every consumer. See BuildInputs::privateIncludeDirs.
         //
-        // ⚠️ THE FILTER IS APPLIED AFTER GLOB EXPANSION, so a private entry may
+        // THE FILTER IS APPLIED AFTER GLOB EXPANSION, so a private entry may
         // itself be a glob and still name exactly the directories it expands
         // to. Comparing the unexpanded spellings would let `musl/src/*` be
         // published because it is not literally equal to `musl/src/include`.
@@ -4968,7 +4968,7 @@ prepare_build(bool print_fingerprint,
                 if (std::ranges::find(privateExpanded, d) == privateExpanded.end())
                     pkg.publicUsage.includeDirs.push_back(d);
 
-            // ⚠️ AN ENTRY THAT WITHHOLDS NOTHING IS REPORTED, because the way
+            // AN ENTRY THAT WITHHOLDS NOTHING IS REPORTED, because the way
             // it fails is the very defect this key exists to prevent: a
             // directory the author believes is private stays published, and
             // nothing about the build looks different until a consumer trips
@@ -5180,7 +5180,7 @@ prepare_build(bool print_fingerprint,
     // Headers reached through `[build].include_dirs` are NOT staged — those
     // keep pointing at the original install dir via absolutized include paths.
     //
-    // ⭐ HEADERS BESIDE A SOURCE ARE A DIFFERENT CASE, AND THEY ARE STAGED.
+    // HEADERS BESIDE A SOURCE ARE A DIFFERENT CASE, AND THEY ARE STAGED.
     //
     // `#include "detail.h"` is resolved relative to the directory of the file
     // holding the directive, so moving the source moves the search. No
@@ -5191,7 +5191,7 @@ prepare_build(bool print_fingerprint,
     //     target/.mangled/openkal-opensbi/__self__/src/time.cpp:44:10:
     //         fatal error: 'sbi.h' file not found
     //
-    // ⚠️ THE DIAGNOSIS THIS PRODUCES POINTS AT THE WRONG THING. The path in it
+    // THE DIAGNOSIS THIS PRODUCES POINTS AT THE WRONG THING. The path in it
     // is a staging directory the author never wrote, for a header sitting
     // exactly where the source expects it, and the build that triggered it
     // asked for nothing unusual — two majors of one dependency is a supported
@@ -6124,7 +6124,7 @@ prepare_build(bool print_fingerprint,
 
     // ─── The toolchain, resolved now that the graph exists ──────────────────
     //
-    // ⚠️ THE TARGET AND THE COMPILER ARE NOT BOUND TOGETHER, AND THE ROW'S
+    // THE TARGET AND THE COMPILER ARE NOT BOUND TOGETHER, AND THE ROW'S
     // CONVENTION IS A FALLBACK RATHER THAN A RULE.
     //
     // `x86_64-linux-musl → gcc@16.1.0` does not say "prefer gcc". It says "the
@@ -6140,7 +6140,7 @@ prepare_build(bool print_fingerprint,
     // the answer's shape, so it reads the manifests rather than resolving them.
     {
         bool graphSuppliesSystem = false;
-        // ⭐⭐ `requires` IS READ HERE TOO, AND UNTIL THIS LOOP IT WAS ONLY EVER
+        // `requires` IS READ HERE TOO, AND UNTIL THIS LOOP IT WAS ONLY EVER
         // CHECKED — A THOUSAND LINES LATER, AGAINST A DECISION THIS BLOCK HAD
         // ALREADY MADE WITHOUT IT.
         //
@@ -6164,7 +6164,7 @@ prepare_build(bool print_fingerprint,
         // the default for EVERY project on the box because ONE project's
         // dependency asked.
         //
-        // ⚠️ AND THIS IS THE PLACE, NOT MERELY *A* PLACE. `resolve_target_toolchain`
+        // AND THIS IS THE PLACE, NOT MERELY *A* PLACE. `resolve_target_toolchain`
         // has exactly two call sites — its own one-shot recursion, and the one
         // at the bottom of this block — so every branch inside it, INCLUDING the
         // first-run install-and-persist path and all three
@@ -6178,7 +6178,7 @@ prepare_build(bool print_fingerprint,
         // this no longer enters.
         std::string reqCompiler, reqCompilerBy;
 
-        // ⭐ A FAMILY NAME BECOMES A CONCRETE SPEC THE SAME WAY IT DOES FOR
+        // A FAMILY NAME BECOMES A CONCRETE SPEC THE SAME WAY IT DOES FOR
         // `mcpp toolchain default <family>`, AND FOR THE SAME REASON.
         //
         // `requires = ["mcpp:compiler=llvm"]` names a family; the build path
@@ -6195,7 +6195,7 @@ prepare_build(bool print_fingerprint,
         //      when the ecosystem moves, with nobody having to remember a
         //      second place.
         //
-        // ⚠️ NOT `pins::kFirstRun*`. Those are per-HOST first-run defaults —
+        // NOT `pins::kFirstRun*`. Those are per-HOST first-run defaults —
         // `llvm@20.1.7` on macOS, `gcc@16.1.0` on Linux x86_64 — so reading them
         // would make the version a package requires depend on which machine
         // built it. A requirement is a property of the package.
@@ -6237,7 +6237,7 @@ prepare_build(bool print_fingerprint,
             // Neither source has one. Saying which family and which two places
             // were consulted is the difference between an actionable message
             // and "something went wrong".
-            // ⚠️ RECORDED, like every other refusal in this function. An
+            // RECORDED, like every other refusal in this function. An
             // unnamed branch reports `other`, and this release exists partly
             // because one of those had a perfectly good name.
             refusal::record(refusal::Code::CompilerRequirementConflict);
@@ -6270,7 +6270,7 @@ prepare_build(bool print_fingerprint,
                     ? pkg.manifest.package.name
                     : std::format("{}@{}", pkg.manifest.package.name,
                                   pkg.manifest.package.version);
-                // ⚠️ TWO DIFFERENT FAMILIES IS AN ERROR RATHER THAN A PICK, the
+                // TWO DIFFERENT FAMILIES IS AN ERROR RATHER THAN A PICK, the
                 // same rule `provides` already follows one screen down. Choosing
                 // by graph-traversal order would make the answer depend on an
                 // order the author neither writes nor can predict — and unlike a
@@ -6295,7 +6295,7 @@ prepare_build(bool print_fingerprint,
                 }
             }
         }
-        // ⚠️ AND A FREESTANDING PIN SURVIVES IT. `graphSuppliesSystem` spans
+        // AND A FREESTANDING PIN SURVIVES IT. `graphSuppliesSystem` spans
         // kernel-abi and c-abi, and it correctly cancels a HOSTED row's
         // convention — that row names the payload the graph is replacing.
         // A bare-metal row names the only compiler that emits the target.
@@ -6322,7 +6322,7 @@ prepare_build(bool print_fingerprint,
             tcOrigin = TcOrigin::TargetPin;
         }
 
-        // ⭐⭐ THE GRAPH'S REQUIREMENT, TAKEN AS AN INSTRUCTION RATHER THAN AS A
+        // THE GRAPH'S REQUIREMENT, TAKEN AS AN INSTRUCTION RATHER THAN AS A
         // TEST TO FAIL LATER.
         //
         // Everything above this line decides the compiler from what mcpp knows
@@ -6332,13 +6332,13 @@ prepare_build(bool print_fingerprint,
         // most specific statement in the build. Below the user's own word, above
         // every default mcpp keeps.
         //
-        // ⚠️ THE RANK IS NOT NEW. `TcOrigin` already sorts these, and
+        // THE RANK IS NOT NEW. `TcOrigin` already sorts these, and
         // `tc_origin_is_user_explicit` already answers "may mcpp revise this".
         // The defect was never that the answer was wrong; it was that nobody
         // asked. `GlobalDefault` is deliberately not user-explicit — see the
         // note on that function — so a remembered default is exactly the kind of
         // value this may replace.
-        // ⚠️ `system` IS LEFT ALONE, AND IT IS THE ONE VALUE HERE THAT IS AN
+        // `system` IS LEFT ALONE, AND IT IS THE ONE VALUE HERE THAT IS AN
         // ESCAPE HATCH RATHER THAN AN ANSWER.
         //
         // It means "the PATH compiler, whatever it is" — a deliberate opt-out
@@ -6358,7 +6358,7 @@ prepare_build(bool print_fingerprint,
                         std::string(mcpp::toolchain::family_name(s->family));
 
             if (haveFamily != reqCompiler) {
-                // ⚠️ THE PROJECT'S OWN WORD IS NOT REVISED, AND THIS IS THE ONLY
+                // THE PROJECT'S OWN WORD IS NOT REVISED, AND THIS IS THE ONLY
                 // CASE THAT STILL REFUSES. `[toolchain]`, `[target.X].toolchain`
                 // and `MCPP_TOOLCHAIN` are statements about THIS build; the
                 // graph disagreeing with one of them is a real contradiction and
@@ -6367,7 +6367,7 @@ prepare_build(bool print_fingerprint,
                 if (tc_origin_is_user_explicit(tcOrigin)) {
                     // fall through to check_requirements
                 }
-                // ⚠️⚠️ A ROW'S PIN THAT SURVIVED TO HERE CANNOT BE OVERRIDDEN BY
+                // A ROW'S PIN THAT SURVIVED TO HERE CANNOT BE OVERRIDDEN BY
                 // A REQUIREMENT, AND THE REASON IS THE SAME ONE THE PIN EXISTS
                 // FOR.
                 //
@@ -6384,7 +6384,7 @@ prepare_build(bool print_fingerprint,
                 // here — where both halves are known — beats a compiler
                 // complaining about a file the reader never named.
                 else if (tcOrigin == TcOrigin::TargetPin) {
-                    // ⚠️⚠️ THE TWO ROWS REFUSE UNDER ONE RULE AND FOR TWO
+                    // THE TWO ROWS REFUSE UNDER ONE RULE AND FOR TWO
                     // REASONS, AND ONE REMEDY DOES NOT SERVE BOTH.
                     //
                     // A CONVENTION pin is cancelled by a graph that supplies the
@@ -6447,7 +6447,7 @@ prepare_build(bool print_fingerprint,
                 }
             }
         }
-        // ⚠️⚠️ OVERRIDING THE CONVENTION IS ALLOWED; OVERRIDING IT AND SUPPLYING
+        // OVERRIDING THE CONVENTION IS ALLOWED; OVERRIDING IT AND SUPPLYING
         // NOTHING IN ITS PLACE IS NOT, AND UNTIL THIS BLOCK IT LOOKED THE SAME.
         //
         // A hosted row's pin names the payload that supplies the target's C
@@ -6458,7 +6458,7 @@ prepare_build(bool print_fingerprint,
         // `llvm@22.1.8` plus `openkal-llvm-runtime`, and `graphSuppliesSystem`
         // is true there.
         //
-        // ⚠️ WITH NEITHER, THE BUILD USED TO RUN ANYWAY AND FAIL SOMEWHERE ELSE.
+        // WITH NEITHER, THE BUILD USED TO RUN ANYWAY AND FAIL SOMEWHERE ELSE.
         // Measured 2026-08-26 on Linux, `[toolchain] default = "llvm@22.1.8"`
         // and no dependencies:
         //
@@ -6474,7 +6474,7 @@ prepare_build(bool print_fingerprint,
         // in the first case, and that belongs to the HOST in the second. There
         // is no llvm payload supplying either target's C library today.
         //
-        // ⭐ THE REFUSAL IS DECIDED HERE BECAUSE ONLY HERE ARE BOTH HALVES
+        // THE REFUSAL IS DECIDED HERE BECAUSE ONLY HERE ARE BOTH HALVES
         // KNOWN. The row is read a thousand lines earlier and the graph does
         // not exist then; `host_can_serve` is family-agnostic and would answer
         // "yes, some payload here produces it" — the same shape as the family
@@ -6616,7 +6616,7 @@ prepare_build(bool print_fingerprint,
             }
             // `[targets.*] required_features` on a DEPENDENCY.
             //
-            // ⚠️ THIS GATE EXISTED ONLY FOR THE ROOT. The root's targets are
+            // THIS GATE EXISTED ONLY FOR THE ROOT. The root's targets are
             // filtered further down against the root's own active features;
             // a dependency's were never filtered at all, so a descriptor that
             // wrote `required_features` on a target got the opposite of what
@@ -6629,7 +6629,7 @@ prepare_build(bool print_fingerprint,
             // feature name is package-scoped, so the root's set is a different
             // vocabulary that happens to share a type.
             //
-            // ⚠️⚠️ LIBRARY TARGETS ONLY, and the exclusion is load-bearing.
+            // LIBRARY TARGETS ONLY, and the exclusion is load-bearing.
             //
             // A target requested as a HOST TOOL is what was ASKED FOR, so its
             // `required_features` become that sub-build's INPUTS instead of a
@@ -6711,7 +6711,7 @@ prepare_build(bool print_fingerprint,
             // doubly-listed gtest_main.cc cannot land twice.
             auto& bc = pkg.manifest.buildConfig;
             if (!bc.featureSources.empty()) {
-                // ⭐ WHETHER A FEATURE *GATES* A SOURCE OR *PROVIDES* IT, AND
+                // WHETHER A FEATURE *GATES* A SOURCE OR *PROVIDES* IT, AND
                 // THE ANSWER IS WRITTEN IN THE MANIFEST ALREADY.
                 //
                 // Two families of package reach this code and they want
@@ -6737,7 +6737,7 @@ prepare_build(bool print_fingerprint,
                 // BEFORE the drop below removes it. A glob in both places is a
                 // gate; a glob in one place is a provider.
                 //
-                // ⚠️ THIS IS THE FOURTH ATTEMPT, AND THE THIRD WAS ABANDONED ON
+                // THIS IS THE FOURTH ATTEMPT, AND THE THIRD WAS ABANDONED ON
                 // A MISTAKEN READING. It was recorded as failing because
                 // "gtest's base entry is a glob that MATCHES the file rather
                 // than the same string". Measured against the descriptor the
@@ -6780,7 +6780,7 @@ prepare_build(bool print_fingerprint,
                     // visible and stops riscv-virt-rt's feature-only sources
                     // from being compiled without their feature.
                     //
-                    // ⚠️ THE `!` EXCLUSION IS THE WHOLE MECHANISM, NOT THE GLOB
+                    // THE `!` EXCLUSION IS THE WHOLE MECHANISM, NOT THE GLOB
                     // REMOVAL. `src/kal/**` is never IN `bc.sources` — the
                     // package declares no `sources` at all and its files are
                     // matched by the inferred `src/**`. Erasing the string
@@ -7047,9 +7047,42 @@ prepare_build(bool print_fingerprint,
                 }
                 return out;
             };
-            auto describe = [&](std::size_t p) {
+            auto identity = [&](std::size_t p) {
+                auto const& pkg = packages[p].manifest.package;
+                return pkg.namespace_.empty()
+                     ? pkg.name : pkg.namespace_ + "." + pkg.name;
+            };
+            // Every host module one package contributes, the lib root first.
+            //
+            // The lib root is what a rule package has always been: one unit,
+            // compiled alone, registered under the name it declares. A package
+            // that offers several rules through features (mcpp 2026.9.5.3+)
+            // lists their sources under `[features.<f>] sources`, and those
+            // globs have been folded into `buildConfig.sources` by now for
+            // exactly the features the consumer activated. Every module
+            // INTERFACE unit among them is therefore a host module of its own,
+            // under its own declared name, and nothing else in the host-module
+            // path assumes one unit per package: `build_host_module` is per
+            // unit and the compile loop accumulates BMIs in list order, so a
+            // feature unit may import the lib root, which precedes it.
+            //
+            // Only sources the manifest LISTS take part. The inferred `src/**`
+            // of a package with no `sources` is not consulted, so a rule
+            // package published before this round exposes exactly what it
+            // exposed then; widening that implicitly would compile units that
+            // were written to be part of an ordinary library, alone.
+            auto units = [&](std::size_t p) {
                 auto const& depPkg = packages[p];
                 auto const& pkg    = depPkg.manifest.package;
+                std::vector<prov::HostModule> out;
+                auto push = [&](std::filesystem::path iface, std::string name) {
+                    prov::HostModule hm;
+                    hm.module    = std::move(name);
+                    hm.package   = identity(p);
+                    hm.nameSpace = pkg.namespace_;
+                    hm.interface = std::move(iface);
+                    out.push_back(std::move(hm));
+                };
                 // PROBING form: a host-module dependency whose interface is
                 // `.ixx` resolves to a `src/<tail>.cppm` that does not exist,
                 // and the consumer's build.mcpp is then handed a path to
@@ -7057,13 +7090,39 @@ prepare_build(bool print_fingerprint,
                 auto rel   = mcpp::manifest::resolve_lib_root_path(
                     depPkg.manifest, depPkg.root);
                 auto iface = depPkg.root / rel;
-                prov::HostModule hm;
-                hm.module    = prov::host_module_name(iface, pkg.name);
-                hm.package   = pkg.namespace_.empty()
-                             ? pkg.name : pkg.namespace_ + "." + pkg.name;
-                hm.nameSpace = pkg.namespace_;
-                hm.interface = std::move(iface);
-                return hm;
+                push(iface, prov::host_module_name(iface, pkg.name));
+                // A missing lib root is reported as such by build_host_module,
+                // and that has to stay the diagnostic. Enumerating the listed
+                // units first would let one of them collide with the missing
+                // root's fallback name and report a collision between a file
+                // and a file that does not exist.
+                std::error_code ec;
+                if (!std::filesystem::exists(iface, ec)) return out;
+
+                std::set<std::filesystem::path> matched, dropped;
+                for (auto const& g : depPkg.manifest.buildConfig.sources) {
+                    if (g.empty()) continue;
+                    if (g[0] == '!') {
+                        for (auto& f : mcpp::modgraph::expand_glob(depPkg.root, g.substr(1)))
+                            dropped.insert(f.lexically_normal());
+                    } else {
+                        for (auto& f : mcpp::modgraph::expand_glob(depPkg.root, g))
+                            matched.insert(f.lexically_normal());
+                    }
+                }
+                const auto root = iface.lexically_normal();
+                for (auto const& f : matched) {          // std::set: sorted
+                    if (dropped.contains(f)) continue;
+                    if (std::filesystem::equivalent(f, root, ec)) continue;
+                    std::ifstream is(f);
+                    if (!is) continue;
+                    std::stringstream buf;
+                    buf << is.rdbuf();
+                    auto name = prov::declared_interface_name(buf.str());
+                    if (name.empty()) continue;
+                    push(f, std::move(name));
+                }
+                return out;
             };
             for (std::size_t c = 0; c < provisionGraph.visible.size(); ++c) {
                 const auto direct = directHostProviders(c);
@@ -7090,10 +7149,10 @@ prepare_build(bool print_fingerprint,
                         for (auto q : path) {
                             if (q == p) started = true;
                             if (!started) continue;
-                            ring += describe(q).package;
+                            ring += identity(q);
                             ring += " -> ";
                         }
-                        ring += describe(p).package;
+                        ring += identity(p);
                         return std::unexpected(std::format(
                             "build rules form an import cycle: {}\n"
                             "       A rule's host modules are compiled before "
@@ -7105,8 +7164,10 @@ prepare_build(bool print_fingerprint,
                         if (auto r = self(self, q); !r) return r;
                     path.pop_back();
                     done.insert(p);
-                    ordered.push_back(describe(p));
-                    ordered.back().importable = isDirect.contains(p);
+                    for (auto& hm : units(p)) {
+                        hm.importable = isDirect.contains(p);
+                        ordered.push_back(std::move(hm));
+                    }
                     return {};
                 };
                 for (auto p : direct)
@@ -7589,20 +7650,20 @@ prepare_build(bool print_fingerprint,
             // Scope::RunGlobal — how the artifact is EXECUTED, forwarded to
             // the root like link flags but with the opposite merge rule.
             //
-            // ⚠️ EXACTLY ONE provider. Link flags from two dependencies
+            // EXACTLY ONE provider. Link flags from two dependencies
             // concatenate and that is correct; two runners cannot — appending
             // produces an argv that is neither one's and fails at exec time
             // with nothing to say which package contributed which token. So
             // the second provider is a hard error that names BOTH, because
             // naming only the loser tells the reader half of what they need.
-            // ⭐⭐ THE DEFAULT RUNNER AND EVERY NAMED ONE, BY ONE RULE.
+            // THE DEFAULT RUNNER AND EVERY NAMED ONE, BY ONE RULE.
             //
             // Link flags from two dependencies concatenate and that is correct;
             // two runners for the same name cannot — appending produces an argv
             // that is neither one's and fails at exec with nothing to say which
             // package contributed which token.
             //
-            // ⚠️ MISSING THIS SITE IS HOW THE FEATURE FAILED FIRST. `apply()`
+            // MISSING THIS SITE IS HOW THE FEATURE FAILED FIRST. `apply()`
             // merges a package's directives into its OWN config; this is where a
             // dependency's RunGlobal entries reach the ROOT. Wiring only the
             // first left `mcpp run --runner flash` reporting "no such runner"
@@ -7644,7 +7705,7 @@ prepare_build(bool print_fingerprint,
                 slot = nr;
                 who  = pkg.manifest.package.name;
             }
-            // ⚠️ A CLAIM THAT ONLY EVER TIGHTENS.
+            // A CLAIM THAT ONLY EVER TIGHTENS.
             if (bcDep.runExclusive && !exclusiveBefore)
                 m->buildConfig.runExclusive = true;
             m->buildConfig.ldflags.insert(m->buildConfig.ldflags.end(),
@@ -7718,7 +7779,7 @@ prepare_build(bool print_fingerprint,
         // through -- which is why a second backend needs no change here and why
         // `test_runtime_contract`'s gate stays satisfied.
         //
-        // ⚠️ A FLOOR WITH NO FACT IS SILENT. A machine that never declared what
+        // A FLOOR WITH NO FACT IS SILENT. A machine that never declared what
         // it has is not a machine that fails the floor; it is one nobody asked.
         // Reporting a refusal there would turn "we do not know" into "no", and
         // the whole reason this exists is that a wrong answer is worse than no
@@ -7774,7 +7835,7 @@ prepare_build(bool print_fingerprint,
     // What the packages supplying the target side's layers publish: the header
     // directories and interface flags the whole build is compiled against.
     //
-    // ⭐ ONE SET, TWO READERS, and that is deliberate: it is merged into every
+    // ONE SET, TWO READERS, and that is deliberate: it is merged into every
     // package's `privateBuild` (so every compile edge sees it) and handed to
     // the `std` module's own command line (which is one more translation unit
     // of the same build). Before this existed, only the second reader was
@@ -7816,14 +7877,14 @@ prepare_build(bool print_fingerprint,
         // for the C++ layer as the spelling that shipped before this one, so an
         // existing package keeps working unchanged.
         //
-        // ⚠️ ONE SUPPLIER PER LAYER, AND TWO IS AN ERROR RATHER THAN A PICK.
+        // ONE SUPPLIER PER LAYER, AND TWO IS AN ERROR RATHER THAN A PICK.
         // A C library, a kernel interface and a C++ runtime are mutually
         // exclusive choices; the same rule already governs `[build] runner` for
         // the same reason. Until this scan collected candidates instead of
         // keeping the first acceptable one, two suppliers resolved by graph
         // traversal order — an order the author neither writes nor can predict —
         // and the loser's `[build]` section still reached the command line.
-        // ⭐ `index` — WHICH PACKAGE this candidate is, not just its name.
+        // `index` — WHICH PACKAGE this candidate is, not just its name.
         //
         // Needed once resolution is done: a layer supplied from the graph
         // publishes an include set the WHOLE build must see (see
@@ -7853,7 +7914,7 @@ prepare_build(bool print_fingerprint,
                 : std::format("{}@{}", pkg.manifest.package.name,
                               pkg.manifest.package.version);
 
-            // ⚠️ EVERY PACKAGE KIND, NOT ONLY THE ONES WITH AN XPKG
+            // EVERY PACKAGE KIND, NOT ONLY THE ONES WITH AN XPKG
             // DESCRIPTOR. `warn_unknown_xpkg_keys` reaches a dependency
             // resolved through the index; a path or git dependency carries a
             // manifest of its own and reached no warning at all, so a layer
@@ -7910,7 +7971,7 @@ prepare_build(bool print_fingerprint,
                 auto same = std::find_if(slot.begin(), slot.end(),
                     [&](const Candidate& c){ return c.p.name == p.name; });
                 if (same != slot.end()) {
-                    // ⚠️ `index` MOVES WITH `p` AND NOT ON ITS OWN. The two
+                    // `index` MOVES WITH `p` AND NOT ON ITS OWN. The two
                     // describe one package, and this branch is reached only
                     // from the same `pkgIndex` today — a package carrying both
                     // spellings — so they cannot differ yet. Tying them keeps
@@ -7965,7 +8026,7 @@ prepare_build(bool print_fingerprint,
                 in.targetOs           = tt->os;
                 in.targetEnv          = tt->env;
                 in.freestandingTarget = tt->is_freestanding();
-                // ⚠️ NOT `tt->envExplicit`. By this line the triple has been
+                // NOT `tt->envExplicit`. By this line the triple has been
                 // canonicalised, and the canonical form of `x86_64-linux` is
                 // `x86_64-linux-gnu` — re-parsing it reports a segment the
                 // project never wrote. The request was captured upstream, where
@@ -8008,14 +8069,14 @@ prepare_build(bool print_fingerprint,
         in.cAbi            = provider_of(tsd::CapLayer::CAbi);
         in.cxxAbi          = provider_of(tsd::CapLayer::CxxAbi);
 
-        // ⚠️⚠️ A ROW THAT LINKS THROUGH lld DIRECTLY, ON A PAYLOAD WITH NO lld.
+        // A ROW THAT LINKS THROUGH lld DIRECTLY, ON A PAYLOAD WITH NO lld.
         //
         // `x86_64-none-elf` is the only row carrying an `lldEmulation`, and its
         // column comment in mcpp.freestanding.target says why the driver is
         // bypassed for it: the driver "would hand the link to a host `g++` that
         // cannot take our linker's path".
         //
-        // ⚠️ MEASURED TWICE ON windows-2022, AND THE SECOND TIME WAS MY OWN
+        // MEASURED TWICE ON windows-2022, AND THE SECOND TIME WAS MY OWN
         // FALLBACK. First, an empty `resolve_lld` left linker vocabulary on a
         // driver line:
         //
@@ -8027,7 +8088,7 @@ prepare_build(bool print_fingerprint,
         //     clang++: error: linker (via gcc) command failed
         //     collect2.exe: error: ld returned 1 exit status
         //
-        // ⭐ There is no third shape. The row needs lld by name; when the
+        // There is no third shape. The row needs lld by name; when the
         // payload has none, the answer is a refusal at the decision, not a
         // different link.
         if (auto fsT = tc.has_value()
@@ -8056,7 +8117,7 @@ prepare_build(bool print_fingerprint,
         resolvedTargetSide = tsd::resolve(in);
         targetSideResolved = true;
 
-        // ⭐⭐ RECORDED ON THE TOOLCHAIN THE MOMENT IT IS KNOWN, because three
+        // RECORDED ON THE TOOLCHAIN THE MOMENT IT IS KNOWN, because three
         // producers of a compile line need it and only one of them can see
         // `resolvedTargetSide`.
         //
@@ -8067,14 +8128,14 @@ prepare_build(bool print_fingerprint,
         // exists to remove, so the answer travels on the value they already
         // share.
         //
-        // ⚠️ HERE AND NOT LATER: `ensure_built` runs at :7368 and every compile
+        // HERE AND NOT LATER: `ensure_built` runs at :7368 and every compile
         // line is assembled after it. A std BMI built against a different C
         // library than its importers is what e2e 181 catches.
         if (tc) tc->cAbiPrebuilt = resolvedTargetSide.cAbi.prebuilt();
 
         // ── The target side's include set is a property of the BUILD ─────────
         //
-        // ⭐⭐ IT WAS ALREADY COMPUTED, AND IT REACHED EXACTLY ONE TRANSLATION
+        // IT WAS ALREADY COMPUTED, AND IT REACHED EXACTLY ONE TRANSLATION
         // UNIT.
         //
         // A package that supplies a target-side layer publishes the headers the
@@ -8100,13 +8161,13 @@ prepare_build(bool print_fingerprint,
         // `include_dirs` entry reaches the root and its own units, and reaches
         // no sibling dependency package.
         //
-        // ⭐ THE FIX IS THE ONE `mcpp.targetside` OPENS WITH: resolve once,
+        // THE FIX IS THE ONE `mcpp.targetside` OPENS WITH: resolve once,
         // after the graph is known, and have every consumer read that one
         // value. A `publicUsage` describes what a library asks of ITS USERS; a
         // target side is beneath everything. Modelling the second as the first
         // is what made it edge-scoped.
         //
-        // ⚠️ ONLY LAYERS THE GRAPH SUPPLIES. `Layer::fromGraph()` is the whole
+        // ONLY LAYERS THE GRAPH SUPPLIES. `Layer::fromGraph()` is the whole
         // condition. A payload-supplied layer already reaches every unit
         // through `mcpp.toolchain.hostflags`, and emitting it twice would put
         // the ordering of one decision in two places.
@@ -8143,7 +8204,7 @@ prepare_build(bool print_fingerprint,
             // target side into the usage requirements of any library this
             // build packages — a promise about a different machine.
             //
-            // ⚠️ APPENDED, so a package's own directories keep coming first.
+            // APPENDED, so a package's own directories keep coming first.
             // The target side only has to precede the DRIVER's own defaults,
             // and those are always searched last.
             if (!targetSideUsage.includeDirs.empty()
@@ -8167,7 +8228,7 @@ prepare_build(bool print_fingerprint,
             refusal::record(refusal::Code::LayerOrdering);
             return std::unexpected(*why);
         }
-        // ⚠️ REQUIREMENTS ARE CHECKED BEFORE ANYTHING IS COMPILED, WHICH IS THE
+        // REQUIREMENTS ARE CHECKED BEFORE ANYTHING IS COMPILED, WHICH IS THE
         // WHOLE POINT OF DECLARING THEM. The combination this rejects — a C++
         // runtime configured for one compiler family being handed to another —
         // otherwise fails inside that runtime's own headers, in a message that
@@ -8182,7 +8243,7 @@ prepare_build(bool print_fingerprint,
             refusal::record(refusal::Code::LayerRequirement);
             return std::unexpected(*why);
         }
-        // ⚠️ A WARNING, NOT A REFUSAL. The graph decides the C library either
+        // A WARNING, NOT A REFUSAL. The graph decides the C library either
         // way, so the segment is ignored rather than violated and the artifact
         // is the same with or without it. Refusing was tried and broke every
         // project spelling the host target `x86_64-linux-gnu` — which is what
@@ -8200,7 +8261,7 @@ prepare_build(bool print_fingerprint,
             return std::unexpected(unservedTargetDiagnosis);
         }
 
-        // ⚠️ THE TARGET AND THE COMPILER ARE NOT BOUND TOGETHER, AND THE
+        // THE TARGET AND THE COMPILER ARE NOT BOUND TOGETHER, AND THE
         // TARGET ROW'S CONVENTION IS A FALLBACK RATHER THAN A RULE.
         //
         // A row pins a toolchain because the payload that toolchain belongs to
@@ -8210,7 +8271,7 @@ prepare_build(bool print_fingerprint,
         // that is knowable, because it is the first line at which the graph
         // exists.
         //
-        // ⚠️ The decision itself is NOT revised here. `tc` has been read and
+        // The decision itself is NOT revised here. `tc` has been read and
         // mutated at 39 sites between its resolution and this point — the
         // effective triple, the cross flag, the target sysroot, the MSVC
         // runtime contract — and re-resolving it here would redo all of them
@@ -8242,7 +8303,7 @@ prepare_build(bool print_fingerprint,
         // no effect and no diagnostic is indistinguishable from one that was
         // never read.
         //
-        // ⚠️ THE C LIBRARY IS THE LAYER THIS DEPENDS ON, NOT "THE SYSTEM".
+        // THE C LIBRARY IS THE LAYER THIS DEPENDS ON, NOT "THE SYSTEM".
         // `system_from_graph()` spans two layers, and the arrangement that
         // separates them is real: a backend running ON a platform takes its
         // kernel interface from the graph while the C library stays the
@@ -8271,11 +8332,11 @@ prepare_build(bool print_fingerprint,
         // in the graph did not tell anyone what would end up on the link line,
         // because three places derived it separately and could disagree.
         //
-        // ⚠️ AND IT PRINTS ONLY WHAT IS NOT ORDINARY. A zero-configuration build
+        // AND IT PRINTS ONLY WHAT IS NOT ORDINARY. A zero-configuration build
         // resolves all five layers from one compiler payload, and five lines
         // reading `(payload)` answer a question nobody asked. `MCPP_VERBOSE`
         // prints them all; a diagnostic always does.
-        // ⚠️⚠️ THE REQUESTED TARGET AND THE RESOLVED ONE MUST NAME THE SAME
+        // THE REQUESTED TARGET AND THE RESOLVED ONE MUST NAME THE SAME
         // OPERATING SYSTEM, AND UNTIL THIS LINE NOTHING CHECKED.
         //
         // Measured 2026-08-25 in CI, on a machine that had installed only a
@@ -8292,7 +8353,7 @@ prepare_build(bool print_fingerprint,
         // openkal-uefi hit the same fallback at the linker
         // (`ld: unrecognized option '--subsystem'`).
         //
-        // ⭐ THE REPORT ALREADY HELD THE EVIDENCE — this asserts on it rather
+        // THE REPORT ALREADY HELD THE EVIDENCE — this asserts on it rather
         // than deriving the question again. A refusal here costs one line; the
         // alternative is a message about a Win32 function, in a file the reader
         // did not write, for a decision made in this one.
@@ -8301,9 +8362,9 @@ prepare_build(bool print_fingerprint,
         // vendor difference between `x86_64-windows-gnu` and
         // `x86_64-w64-windows-gnu` is the normalisation this very line reports,
         // and refusing on it would reject every correct cross build.
-        // ⭐ THE NAME THE REPORT PRINTS, DERIVED ONCE AND USED BY BOTH.
+        // THE NAME THE REPORT PRINTS, DERIVED ONCE AND USED BY BOTH.
         //
-        // ⚠️ The first version of this guard read `resolvedTargetCanonical`
+        // The first version of this guard read `resolvedTargetCanonical`
         // directly while the report below chose among three sources. They
         // agreed on the machine it was written on and disagreed in CI, where
         // the canonical string was empty and the report still named the target
@@ -8357,7 +8418,7 @@ prepare_build(bool print_fingerprint,
     // scan, the `stdModuleFlags` collection, the fingerprint, `compute_flags` —
     // reads `packages[]` and `*m`, both of which are still writable.
     //
-    // ⚠️ EVERY PACKAGE, NOT JUST THE ROOT. The build.mcpp mirror below patches
+    // EVERY PACKAGE, NOT JUST THE ROOT. The build.mcpp mirror below patches
     // `packages[0]`, which is right for build.mcpp because a build program
     // speaks for its own package and the dep loop already handled the others.
     // Here the motivating case IS a dependency — a package supplying one C++
@@ -8367,7 +8428,7 @@ prepare_build(bool print_fingerprint,
     // `*m` as well as the snapshots: `canonical_compile_flags(*m)` feeds the
     // fingerprint, so a contribution reaching the snapshots and not the
     // manifest would compile with flags the fingerprint does not describe.
-    // ⚠️⚠️ MUTATING `pkg.manifest` IS NOT ENOUGH, AND THAT IS THE WHOLE
+    // MUTATING `pkg.manifest` IS NOT ENOUGH, AND THAT IS THE WHOLE
     // DIFFICULTY OF A LATE PRODUCER. `makePackageRoot` snapshots the manifest's
     // build inputs into `privateBuild` / `linkUsage`, and the compile and link
     // edges read THOSE. The build.mcpp tail below solves the identical problem
@@ -8795,7 +8856,7 @@ prepare_build(bool print_fingerprint,
                 pkg.root.string()));
         }
         tc->stdModuleSource   = src;
-        // ⚠️ AND THE COMPAT MODULE, FROM THE SAME PACKAGE OR NOT AT ALL.
+        // AND THE COMPAT MODULE, FROM THE SAME PACKAGE OR NOT AT ALL.
         //
         // `std.compat` is a second module over the SAME library. Leaving it
         // pointing at the toolchain's copy does not fail where it is set — it
@@ -8836,7 +8897,7 @@ prepare_build(bool print_fingerprint,
             if (auto spec = mcpp::freestanding::resolve(*fs))
                 flags += mcpp::freestanding::compile_prefix(*spec, true);
         } else if (!tc->crossTargetFlag.empty()) {
-            // ⚠️ `crossTargetFlag` and not `targetTriple`. The triple is mcpp's
+            // `crossTargetFlag` and not `targetTriple`. The triple is mcpp's
             // vocabulary (`aarch64-macos`); the flag carries the spelling a
             // compiler takes (`arm64-apple-macos14.0`). Measured: emitting the
             // first produced `--target=aarch64-macos`, which clang accepts as a
@@ -8844,7 +8905,7 @@ prepare_build(bool print_fingerprint,
             // aarch64 — the module and its importers would agree with each
             // other and with nothing else.
             flags += " " + tc->crossTargetFlag;
-            // ⚠️ AND THE SECOND CHANNEL. `hostflags.cppm` reaches every ordinary
+            // AND THE SECOND CHANNEL. `hostflags.cppm` reaches every ordinary
             // translation unit; this command is assembled here instead, so a
             // `std.pcm` built with SEH would be imported by units built with
             // DWARF. Same function, not a second copy of the decision.
@@ -8862,7 +8923,7 @@ prepare_build(bool print_fingerprint,
             flags += " " + mcpp::xlings::shq(
                 std::filesystem::exists(candidate) ? candidate.string() : f);
         }
-        // ⚠️ AND THE HEADERS THIS PACKAGE ITSELF IS BUILT AGAINST.
+        // AND THE HEADERS THIS PACKAGE ITSELF IS BUILT AGAINST.
         //
         // The std module source is one of this package's translation units in
         // every way that matters, and it reaches the C library's headers the
@@ -8880,7 +8941,7 @@ prepare_build(bool print_fingerprint,
         // build path carries directories that exist for its .cpp files and that
         // shadow the library's headers when a module is compiled against them.
         //
-        // ⭐⭐ AND IT IS `targetSideUsage`, NOT THIS PACKAGE'S `publicUsage`.
+        // AND IT IS `targetSideUsage`, NOT THIS PACKAGE'S `publicUsage`.
         //
         // The two are the same set whenever one package supplies every layer,
         // which is the arrangement this block was written for — so reading the
@@ -8890,7 +8951,7 @@ prepare_build(bool print_fingerprint,
         // both: libc++'s own headers reach `<bits/alltypes.h>`, which is the C
         // library's.
         //
-        // ⭐ Reading the assembled set also makes this site and every compile
+        // Reading the assembled set also makes this site and every compile
         // edge read ONE value. Deriving it here a second time is the shape
         // #233/#240/#242/#344 each cost a release, and the same set has to
         // reach both or the `std` BMI describes a different world than the
@@ -8919,7 +8980,7 @@ prepare_build(bool print_fingerprint,
         // no subset of it to build without an OS. Saying "provides no std
         // module source" sends the reader to look for a broken payload.
         //
-        // ⚠️ The line below is copy-pasteable, and that is a PROMISE: it has
+        // The line below is copy-pasteable, and that is a PROMISE: it has
         // to resolve today. It briefly did not — an earlier version of this
         // message named `mcpplibs.std.freestanding` before any such package
         // existed, so following the advice failed at the very next command
@@ -8929,7 +8990,7 @@ prepare_build(bool print_fingerprint,
         // is back. If it is ever removed from the index, this must change with
         // it.
         //
-        // ⚠️ And the VERSION is part of the promise, not decoration — which is
+        // And the VERSION is part of the promise, not decoration — which is
         // how the same defect recurred in a second form. The line said "0.1.0"
         // after 0.2.0 superseded it in the index, and 0.1.0 is not published,
         // so pasting it produced
@@ -8941,7 +9002,7 @@ prepare_build(bool print_fingerprint,
         // not fix it either: the request has to name a version the index
         // actually carries. Publishing a new std-freestanding means updating
         // this literal in the same change.
-        // ⚠️ THE QUESTION IS WHETHER A HOSTED STANDARD LIBRARY IS PRESENT, NOT
+        // THE QUESTION IS WHETHER A HOSTED STANDARD LIBRARY IS PRESENT, NOT
         // WHETHER THE TARGET IS FREESTANDING.
         //
         // Those were the same question for as long as no one had built one for
@@ -9150,7 +9211,7 @@ prepare_build(bool print_fingerprint,
     // directories rather than env vars because the reader is mcpp's own
     // lookup, not a child process. See BuildContext::xlingsDepBinDirs.
     //
-    // ⚠️⚠️ AND EVERY PACKAGE IN THE GRAPH, NOT ONLY THE ROOT — WHICH IS THE
+    // AND EVERY PACKAGE IN THE GRAPH, NOT ONLY THE ROOT — WHICH IS THE
     // CASE THIS FEATURE EXISTS FOR.
     //
     // A board-support package is precisely the thing that knows which emulator
@@ -9168,7 +9229,7 @@ prepare_build(bool print_fingerprint,
     // nothing. A payload that is declared but not installed contributes
     // nothing, and the lookup continues to PATH.
     //
-    // ⭐⭐ AND THE SET COLLECTED HERE IS ALSO THE SET PROVISIONED. Looking in a
+    // AND THE SET COLLECTED HERE IS ALSO THE SET PROVISIONED. Looking in a
     // directory that nothing installed is a lookup that can only fail, and the
     // engine had exactly that shape: a dependency's declaration was searched
     // and never acted on. The two definitions are one expression below, so
@@ -9194,7 +9255,7 @@ prepare_build(bool print_fingerprint,
                     fromGraph.push_back(spec);
             }
         }
-        // ⚠️ THE ROOT'S OWN PASS RAN LONG AGO, AND THIS ONE MUST NOT REPEAT IT.
+        // THE ROOT'S OWN PASS RAN LONG AGO, AND THIS ONE MUST NOT REPEAT IT.
         // The stamp is keyed by the LIST, so provisioning root+graph together
         // would key a different list than the early pass wrote and re-run an
         // xlings round trip on every build. Only what the graph added is
@@ -9280,7 +9341,7 @@ prepare_build(bool print_fingerprint,
     // happens here is only the two halves that need this scope: collecting the
     // facts, and MATERIALISING the answer.
     //
-    // ⭐ MATERIALISED AS A TARGET KIND, on purpose. A dependency resolved to
+    // MATERIALISED AS A TARGET KIND, on purpose. A dependency resolved to
     // the shared form becomes an ordinary `SharedLibrary` target, so every
     // emitter mcpp already has applies to it unchanged — the ELF soname and
     // `$ORIGIN`, the PE import library and generated `.def`, the Mach-O
@@ -9294,7 +9355,7 @@ prepare_build(bool print_fingerprint,
         if (auto parsed = lf::parse(m->buildConfig.dependencyLinkage))
             request.whole = *parsed;
         request.wholeIsExplicit = !m->buildConfig.dependencyLinkage.empty();
-        // ⚠️ ONLY THE ROOT MANIFEST'S EDGES. See DependencySpec::linkage — a
+        // ONLY THE ROOT MANIFEST'S EDGES. See DependencySpec::linkage — a
         // package deep in the graph imposing a whole-image layout on its
         // consumer is a supply-chain property, not a convenience.
         for (auto const& [depName, spec] : m->dependencies) {
@@ -9379,7 +9440,7 @@ prepare_build(bool print_fingerprint,
 
             if (answer.linkage != lf::DepLinkage::Shared) continue;
             if (facts.isDistribution) continue;   // nothing here to build
-            // ⚠️ A package that ALREADY declares a shared target has decided
+            // A package that ALREADY declares a shared target has decided
             // for itself, and its remaining library targets are not part of
             // that decision. Flipping them would change what such a package
             // builds under the DEFAULT request, which is the one property this
@@ -9419,6 +9480,10 @@ prepare_build(bool print_fingerprint,
     ctx.plan.graphShape = (includeDevDeps || !extraTargets.empty())
         ? mcpp::build::GraphShape::WithTests
         : mcpp::build::GraphShape::Normal;
+    // The device variant an override chose is stamped for the same reason: the
+    // fast path runs without overrides, so a graph written under one must not
+    // be the graph it replays.
+    ctx.plan.accelOverridden = !overrides.accel.empty();
     // Resolve the module-edge schedule ONCE, here, where both the toolchain and
     // the manifest are in hand. The backend writes the graph in this shape, the
     // graph records the tag, and `mcpp build --verbose` prints the reason — all
@@ -9583,7 +9648,7 @@ prepare_build(bool print_fingerprint,
                 // (`[resources]` makes the opposite call on purpose: an icon
                 // belongs to what ships, not to a test runner.)
                 //
-                // ⭐⭐ A STATIC LIBRARY IS ONE OF THEM, and leaving it out was
+                // A STATIC LIBRARY IS ONE OF THEM, and leaving it out was
                 // the whole of what C-6 needed. A package whose device code is
                 // its point -- ggml's CUDA backend is 305 `.cu` files behind a
                 // `kind = "lib"` target -- emitted its actions, watched every
@@ -10393,7 +10458,7 @@ prepare_build(bool print_fingerprint,
         }
         if (!lock.packages.empty() || !lock.indices.empty()) {
             auto lockPath = workRoot / "mcpp.lock";
-            // ⭐⭐ `--locked` ASSERTS THAT THIS RESOLUTION IS THE RECORDED ONE.
+            // `--locked` ASSERTS THAT THIS RESOLUTION IS THE RECORDED ONE.
             //
             // The file has always been written after the walk and never read
             // back as a constraint; its own header says so ("does not yet pin
@@ -10403,7 +10468,7 @@ prepare_build(bool print_fingerprint,
             // an audit can demand that what resolved today is what was recorded,
             // and find out when it is not.
             //
-            // ⚠️ THE FAILURE NAMES THE DIFFERENCE. "The lock is out of date" is
+            // THE FAILURE NAMES THE DIFFERENCE. "The lock is out of date" is
             // true and useless; which package moved, from which version to
             // which, is what the reader does something about.
             if (mcpp::platform::env::get("MCPP_LOCKED").value_or("") == "1") {
@@ -10714,7 +10779,7 @@ prepare_build(bool print_fingerprint,
     // placed before any of them would refuse a unit that was about to be
     // filled. If a fourth source is ever added, it must land before this line.
     //
-    // ⚠️ WHY THIS IS AN ERROR AND NOT A WARNING. The two library kinds fail
+    // WHY THIS IS AN ERROR AND NOT A WARNING. The two library kinds fail
     // differently and BOTH failures are worse than this message:
     //
     //   shared — `$cc -shared` over an empty response file. Measured on

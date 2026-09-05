@@ -206,9 +206,10 @@ mcpp 刻意不在一次构建里把同一个共享源编译成两份:一个源�
 > 进入列表;约束决定它是否适用于某一次构建。它必须至少匹配一个文件(空匹配会被拒绝:
 > 那会让这个设备无东西可编,而只在链接时才说话)。`--no-accel` 下该 glob 被排除,
 > 一个工程由此产出它的 CPU-only 变体。`--accel` 未覆盖该约束时构建被拒并给出两侧
-> (`accel-mismatch`)。有效集合匹配到的设备类源文件(`.cu`、`.hip`)引擎从不编译;
-> 它们以 `MCPP_DEVICE_SOURCES` 到达构建程序,由工程引入的规则包把每一个变成一条
-> `mcpp::action`。
+> (`accel-mismatch`)。有效集合匹配到的设备类源文件 —— CUDA 与 HIP、GLSL 各 stage、
+> HLSL、OpenCL C 与 Metal,完整清单见 [20 — 异构硬件构建](20-heterogeneous-builds.md) —— 引擎
+> 从不编译;它们以 `MCPP_DEVICE_SOURCES` 到达构建程序,由工程引入的规则包把每一个
+> 变成一条 `mcpp::action`。
 
 ```toml
 [build]
@@ -255,7 +256,7 @@ dependency_linkage = "shared"        # 按 profile 覆盖
   (ELF)/ `@loader_path`(Mach-O)/ 可执行文件自身目录(PE)保证构建目录
   移动后仍能找到它。
 
-⚠️ **这不是 `[target.<triple>].linkage`**(§2.7.1)。那个键回答的是听起来相同、
+**这不是 `[target.<triple>].linkage`**(§2.7.1)。那个键回答的是听起来相同、
 实则关于 **C 库**的问题(musl 的 `-static`、MSVC 的 `/MT`)。两者并不独立,而且
 方向很重要:整链静态的映像没有解释器,根本装不下任何共享对象。因此在 C 库静态
 链接的目标上 —— 这是 **musl 的默认** —— `dependency_linkage = "shared"` 会被
@@ -283,7 +284,7 @@ dependency_linkage = "shared"        # 按 profile 覆盖
 名字,也是 mcpp 构建的那份与第三方携带的同一个库能解析到**同一个文件**的唯一
 途径 —— 而如果声明它就意味着这个包不能再作为静态库被消费,包就无法陈述这件事。
 
-⚠️ 在非 shared 目标上写 `soname` 的描述符,**无法被 2026.8.28.2 之前的 mcpp 读取**
+在非 shared 目标上写 `soname` 的描述符,**无法被 2026.8.28.2 之前的 mcpp 读取**
 —— 失败的是整份 manifest,不只是这个键。因此把它发布进索引要等下限抬上去。
 
 #### 符号提供者检查
@@ -320,7 +321,7 @@ dependency_linkage = "shared"        # 按 profile 覆盖
 
 ```toml
 [build]
-# ⚠️ 两类目录的**相对顺序**是承重的:本包自己构建时,内部覆盖层必须排在公共头之前。
+# 两类目录的**相对顺序**是承重的:本包自己构建时,内部覆盖层必须排在公共头之前。
 # 这正是它被设计成 `include_dirs` 的**子集**而不是第二个列表的原因 ——
 # 两个数组表达不了一个顺序。
 include_dirs         = ["port/include", "musl/src/include", "musl/include"]
@@ -576,7 +577,7 @@ Windows 组件(Win10 起),mcpp 从不分发它;而 `vcruntime140.dll` /
 C++ 编译通道。它覆盖包内每个 TU(含模块接口单元),因此也会进入**编译器自己的**
 P1689 模块扫描。
 
-> ⚠️ **但它不会让被宏保护的 `import` 变得可用。** mcpp 在编译器看到文件之前先跑
+> **但它不会让被宏保护的 `import` 变得可用。** mcpp 在编译器看到文件之前先跑
 > 自己的词法预扫描,而那个扫描器对**任何** `#if` / `#ifdef` 块内的 `import`
 > 一律拒绝,不求值条件:
 >
@@ -711,7 +712,7 @@ accel = "cuda12.8+{sm_80,sm_90f} ptx>=90"
 也就是在一个同时发布了设备构建的包中选中 CPU-only 变体的方式。
 
 该取值会与构建所消费的任何预建产物的 `accel` 字段比较,而请求为空的构建被任何产物满足。
-见 [20 — 加速器](20-accelerators.md)。
+见 [20 — 异构硬件构建](20-heterogeneous-builds.md)。
 
 ### 2.4 `[lib]` — 库根模块约定
 
@@ -809,15 +810,15 @@ qux = ">=1.0, <2.0" # 范围组合
 不存在有序回退或按短名的全索引模糊搜索:
 
 ```toml
-# ✅ 正确 —— 点式选择器
+# 正确 —— 点式选择器
 [dependencies]
 chriskohlhoff.asio = "1.38.1"
 
-# ✅ 正确 —— 命名空间子表(同一组织有多个包时更推荐)
+# 正确 —— 命名空间子表(同一组织有多个包时更推荐)
 [dependencies.chriskohlhoff]
 asio = "1.38.1"
 
-# ❌ 错误 —— 裸名永远到不了 chriskohlhoff 命名空间
+# 错误 —— 裸名永远到不了 chriskohlhoff 命名空间
 [dependencies]
 asio = "1.38.1"
 ```
@@ -1056,7 +1057,7 @@ sysroot = "xim:newlib-riscv@4.4"     # a different C library
 sysroot = ""                          # no C library at all
 ```
 
-⚠️ **键缺席与键为空是两个不同的答案。** 缺席继承目标表的 C 库。存在且为空是
+**键缺席与键为空是两个不同的答案。** 缺席继承目标表的 C 库。存在且为空是
 **零 libc 档**:不解析任何 C 库,不加入头文件与库目录,链接行上只有工程与其依赖
 提供的内容,`#include <stdio.h>` 不再解析。内核与 bootloader 要的正是这一档,而把
 两种情形合并会让这类工程静默地把目标的 C 库拿回去。
@@ -1068,7 +1069,7 @@ sysroot = ""                          # no C library at all
 名字,`mcpp::target_libc_profile()` 返回目标 ISA 档位对应的子目录。零 libc 档上两者均
 为空。
 
-⚠️ **这与「目标侧解析出的 C 库是哪一个」不是同一个问题。** `target_libc()` 命名的是
+**这与「目标侧解析出的 C 库是哪一个」不是同一个问题。** `target_libc()` 命名的是
 mcpp 装上的那个载荷,而这个值是目标侧解析的一项**输入** —— 依赖图里的包可以改为供给
 C 库,那时解析出的 `c-abi` 就不是这里返回的东西。要按已解析的层分支,请用层谓词:
 `[target.'cfg(c-abi = "musl")'.build]`(见[14 —— 目标侧](14-target-side.md))。
@@ -1388,7 +1389,7 @@ error: `toolkitnew` requires cuda.driver >= 13.0, and this machine has 12.4.
 **没有任何厂商词汇抵达引擎。** 它读到的是一个名字、一个关系和一个版本;
 `cuda.driver` 是流过的数据,一个 mcpp 从未听说过的后端比较方式完全相同。
 
-⚠️ **没人回答的下界是沉默的。** 一台从未声明自己有什么的机器,不是「未满足下界」的机器,
+**没人回答的下界是沉默的。** 一台从未声明自己有什么的机器,不是「未满足下界」的机器,
 而是「没人问过」的机器。把「我们不知道」变成「不行」正是这个机制要避免的失败,
 并且有直接判据:`tests/e2e/603_version_floor.sh` 会构建一个下界指向无人提供之物的工程。
 
@@ -1413,7 +1414,7 @@ backend-openblas = { implies = ["use_blas"] }
 compat.openblas = "0.3"
 ```
 
-⚠️ **写 `"^0.3.0"`,而不是 `"0.3.x"` 或 `"0.3"`。** 以索引中确定存在的包作对照,
+**写 `"^0.3.0"`,而不是 `"0.3.x"` 或 `"0.3"`。** 以索引中确定存在的包作对照,
 判据取**构建成功**:
 
 | 写法 | 结果 |
@@ -1423,11 +1424,11 @@ compat.openblas = "0.3"
 | `cmdline = "0.0"` | 解析通过,随后 `install path missing after fetch` |
 | `cmdline = "0.0.x"` | `E_NOT_FOUND`,点名的是包 —— 而该包存在 |
 
-⭐ 这三种结果值得分开,因为两个更弱的判据各自会放行一种不可用的写法:
+这三种结果值得分开,因为两个更弱的判据各自会放行一种不可用的写法:
 「没有 `E_NOT_FOUND`」放行两段前缀,「解析通过」同样放行它。**只有对着真实索引构建
 一次**才能定论。
 
-⚠️ 这一点在此处比在 `[dependencies]` 中更要紧:**实现取不回来的 feature 等于不存在的
+这一点在此处比在 `[dependencies]` 中更要紧:**实现取不回来的 feature 等于不存在的
 feature**,而开发期使用 **path** 依赖的工程根本不查索引 —— 该失败只在发布之后才出现,
 而且是出现在别人身上。
 
@@ -1693,7 +1694,7 @@ accelerators = ["cuda", "rocm"]
 
 与产物的 `accel` 字段刻意不同。声明由人手写、可以是期望值;`accel` 是从产生该二进制的
 那次构建测量出来的,并且是消费者被拒绝时所依据的东西。见
-[20 — 加速器](20-accelerators.md)。
+[20 — 异构硬件构建](20-heterogeneous-builds.md)。
 
 ### 2.13 `[xlings]` — 工程的环境
 
@@ -1910,6 +1911,33 @@ mcpp 拒绝这种情形,并点名两个包与各自的 interface 路径。检查
 
 lib 根必须在 `src/<name>.cppm`(或 `[lib] path` 指向的位置);缺失时报
 *"host module 'x': no interface unit at …"*。
+
+**一个包可以提供多条规则,由 feature 选择**(mcpp 2026.9.5.3+)。包解析后的
+`[build] sources` 里 —— 含 feature 加入的源文件 —— 每一个模块接口单元都以它自己声明的
+名字编成一个 host 模块,lib 根排在最前。feature 单元可以 import lib 根;除此之外每个
+单元单独编译,因此只 import `std` 与 `mcpp`。只有写在清单里的源文件参与:未声明
+`sources` 的包所推断出的 `src/**` 不被读取,所以此前发布的规则包暴露的仍是它当时暴露
+的那一个模块。
+
+```toml
+# 集合包的 manifest
+[build]
+sources = ["src/plugins.cppm"]                   # export module mcpp.plugins;
+
+[features]
+rules-cuda  = { sources = ["rules/cuda.cppm"] }  # export module mcpp.rules.cuda;
+rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spirv;
+```
+
+```toml
+# 消费者
+[dependencies.mcpp]
+plugins = { version = "0.1.0", features = ["rules-spirv"], host-module = true }
+```
+
+模块集合就是 feature 集合:feature 未激活的单元不编译,import 它会以未知模块失败。
+`mcpp:plugins` 是 mcpp 项目维护的集合(仓库 `mcpp-community/mcpp-plugins`);其成员
+命名为 `mcpp.rules.<x>`(规则包)与 `mcpp.tools.<x>`(构建期工具)。
 
 *仅构建期:* `host-module = true` 的依赖**不会**被编进、也不会被链进本工程的 target,
 它所依赖的东西也不会。它只在 `build.mcpp` 期间运行,别处都不出现。(2026.8.5.2 之前

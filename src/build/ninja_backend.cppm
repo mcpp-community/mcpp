@@ -80,7 +80,7 @@ std::optional<std::string> check_rule_commands_name_a_program(
 // Advice appended to a failed build whose linker output names a replaceable
 // function nothing in the graph defines. Empty when there is nothing to add.
 //
-// ⚠️ The case this exists for reads as a toolchain fault and is not one. A
+// The case this exists for reads as a toolchain fault and is not one. A
 // freestanding target has no compiled `libc++`, so `operator new` is simply
 // absent; the moment a project uses `std::vector` the link fails naming a
 // mangled symbol from a header deep inside the standard library, and nothing
@@ -234,7 +234,7 @@ std::string join_flags(const std::vector<std::string>& flags) {
 //    every distributed dylib. `@rpath/<file>` is the only default that travels.
 // A PE link flag, spelled for the TARGET ABI and wrapped for the driver.
 //
-// ⚠️ NOT a dialect-table entry, and Windows CI is why. Clang targeting the MSVC
+// NOT a dialect-table entry, and Windows CI is why. Clang targeting the MSVC
 // ABI speaks the GNU DIALECT while driving lld-link, so a dialect-keyed spelling
 // handed it `-Wl,--out-implib,` and lld-link answered `warning: ignoring unknown
 // argument '--out-implib'` followed by `could not open '…lib': no such file`.
@@ -474,7 +474,7 @@ std::string link_failure_advice(std::string_view output) {
         if (output.find(n) != std::string_view::npos) { missingNew = true; break; }
     if (!missingNew) return {};
 
-    // ⚠️ NOT a version literal. The advice names a package and a feature, and
+    // NOT a version literal. The advice names a package and a feature, and
     // the feature is what pulls the implementation — so this line stays correct
     // across every release of that package. The version-bearing advice in the
     // `import std` message needed an e2e to keep it honest (tests/e2e/135);
@@ -576,7 +576,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // #407: the graph declares which mode produced it, because three modes
     // write this one file and the fast path has to know what it is about to
     // replay. Must stay within the first few lines — see read_shape.
-    append(mcpp::build::header_line(plan.graphShape, plan.scheduleTag) + "\n");
+    append(mcpp::build::header_line(plan.graphShape, plan.scheduleTag,
+                                    plan.accelOverridden) + "\n");
     append("ninja_required_version = 1.11\n\n");
 
     // All compile/link flags are computed once via flags.cppm.
@@ -643,7 +644,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     //
     //   /bin/sh: 1: -shared: not found
     //
-    // ⚠️ THIS IS NOT THE FIX FOR THAT, and must not be mistaken for one. It
+    // THIS IS NOT THE FIX FOR THAT, and must not be mistaken for one. It
     // makes the message name the linker instead of the shell; the defect is
     // that a link unit had no inputs, and `prepare.cppm` refuses that now. On
     // its own this line would only make the shared case quieter — and the
@@ -965,7 +966,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             "  rspfile_content = $cxx $local_includes $cxxflags $unit_cxxflags{}{} {} $in {}$obj_out\n",
             module_output_flag, module_src_flags,
             dial.compileOnly, dial.outputObjPrefix));
-        // ⚠️ THE SUPERVISOR OUTLIVES THIS EDGE, THE RSPFILE DOES NOT.
+        // THE SUPERVISOR OUTLIVES THIS EDGE, THE RSPFILE DOES NOT.
         //
         // ninja DELETES `$out.cmd` as soon as the edge finishes, and the edge
         // finishes when `bmi-compile` returns — which is the moment the BMI is
@@ -1215,7 +1216,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                       "$in $ldflags $unit_ldflags",
                       "SHARED");
         } else if (!flags.ldDriver.empty()) {
-            // ⚠️ THE LINKER, NOT THE DRIVER, AND THE OBJECTS COME LAST.
+            // THE LINKER, NOT THE DRIVER, AND THE OBJECTS COME LAST.
             //
             // A compiler driver accepts objects anywhere on the line and sorts
             // them out; `ld` resolves left to right, so a library named before
@@ -1370,7 +1371,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // TestBinary and SharedLibrary — so a link unit with no `import std`
     // anywhere in it still got the module's global initialiser linked in.
     //
-    // ⚠️ THE TEST HAS TO BE TRANSITIVE. A unit that never writes `import std`
+    // THE TEST HAS TO BE TRANSITIVE. A unit that never writes `import std`
     // itself still needs the initialiser when a module it imports does; asking
     // only about the unit's own source is the same "the edge exists but nobody
     // depends on it" mistake as #405. So: reachability over the module graph.
@@ -1413,7 +1414,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
 
     // mcpp#426: does this link unit contain any C++ at all?
     //
-    // ⚠️ THE UNKNOWN CASE IS THE OPPOSITE OF `unit_needs_std`'s. That one treats
+    // THE UNKNOWN CASE IS THE OPPOSITE OF `unit_needs_std`'s. That one treats
     // an object it cannot find as "does not need std" — a missing `std.o` is
     // recoverable. Here a wrong answer is an undefined-symbol link failure, and
     // objects produced by an `action` (prepare_actions) are NOT in
@@ -1605,7 +1606,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // placeholder `prepare_actions` leaves behind. Five consecutive builds,
     // same result — not a race, never run.
     //
-    // ⭐ PER PACKAGE, not per build. `include_dir` colours only the declaring
+    // PER PACKAGE, not per build. `include_dir` colours only the declaring
     // package's own TUs (docs/07-build-mcpp.md), so a generated header is
     // visible to exactly one package and a build-wide phony would encode a
     // dependency that does not exist. It would also land on the critical path
@@ -1684,7 +1685,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // per-edge — telling a plain `.cpp` it is `c++-module` would make
             // Clang scan an implementation unit as an interface.
             //
-            // ⚠️ The value is written WITHOUT its leading space and the
+            // The value is written WITHOUT its leading space and the
             // separator lives in the rule's command string above. Ninja
             // strips leading/trailing whitespace from a variable VALUE, so
             // `-MF $out.dep$unit_lang` concatenated into
@@ -1798,7 +1799,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                     // The join. THE SOURCE IS AN INPUT, and the BMI is only an
                     // implicit one — the reverse of what this was.
                     //
-                    // ⚠️ WITH THE BMI AS THE ONLY INPUT THIS EDGE GETS CLEANED
+                    // WITH THE BMI AS THE ONLY INPUT THIS EDGE GETS CLEANED
                     // BY THE VERY OPTIMISATION IT IS PART OF. The BMI edge sets
                     // `restat = 1`, and when the new BMI turns out equivalent
                     // `settle_bmi` puts the previous file back so its mtime does
@@ -1999,7 +2000,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // either of them IS a C++ unit — asserted rather than assumed, because
         // the two predicates are computed independently.
         const bool takesStd = cxxUnit && has_std_artifacts && unit_needs_std(lu);
-        // ⚠️ `std.compat.o` had no `unit_needs_std` narrowing at all: mcpp#416
+        // `std.compat.o` had no `unit_needs_std` narrowing at all: mcpp#416
         // fixed `std.o` and left its neighbour unconditional, which put a C++
         // TU's global initialiser into every link unit whose toolchain merely
         // HAD a prebuilt std.compat. Same predicate, same reason.
@@ -2128,7 +2129,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // in every graph that builds a static library.
             if (lu.kind != LinkUnit::StaticLibrary)
                 tail.runtimeFallback = flags.ldRuntimeFallback;
-            // ⚠️ NOT ON A DIRECT LINK. The tag selects between `DT_RPATH`
+            // NOT ON A DIRECT LINK. The tag selects between `DT_RPATH`
             // and `DT_RUNPATH`, entries of a dynamic section; an image with no
             // loader has neither, and `ld.lld` rejects the flag's `-Wl,` form
             // outright.
@@ -2136,7 +2137,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // The link map — per unit, because it is named after the artifact.
             if (!fsObjcopy.empty()
                 && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary)) {
-                // ⚠️ `-Map=` OR `-Wl,-Map=`, DECIDED BY WHO IS BEING SPOKEN TO.
+                // `-Map=` OR `-Wl,-Map=`, DECIDED BY WHO IS BEING SPOKEN TO.
                 // With `ldDriver` set the link is `ld.lld` itself, and `-Wl,`
                 // is a driver's way of saying "pass this on" — handed to the
                 // linker it is an unknown option, on the one target where the
@@ -2203,7 +2204,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     //               action phony as an order-only prerequisite (see
     //               `order_only_for`, far above).
     //
-    // ⚠️ THIS COMMENT USED TO CLAIM THE FIRST ROW FOR ALL FOUR. "A Source
+    // THIS COMMENT USED TO CLAIM THE FIRST ROW FOR ALL FOUR. "A Source
     // action's outputs ARE the compile edge's inputs" is true of a generated
     // `.cpp` and false of a generated `.h`: `adoptActionOutputs` deliberately
     // does not adopt a non-TU into the compile set, so nothing consumed the
@@ -2307,7 +2308,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // that produce their members, purely for readability — ninja resolves the
     // whole manifest before building anything.
     //
-    // ⚠️ A Source action's outputs enter the graph ONLY through this edge.
+    // A Source action's outputs enter the graph ONLY through this edge.
     // They are deliberately not in `default` (above), because being reachable
     // two ways is how the 0.0.104 soname aliases went missing under explicit
     // goals. So if this loop stops emitting, the header-only case of mcpp#534
@@ -2383,7 +2384,7 @@ std::string append_goal_phony(std::string& manifest,
 // Every compile edge of a package that generates its own inputs must wait for
 // them (mcpp#534).
 //
-// ⭐ WHY A SCAN AND NOT CARE. The order-only string is appended at SEVEN call
+// WHY A SCAN AND NOT CARE. The order-only string is appended at SEVEN call
 // sites — the scan edge, three dyndep object edges, two static-mode object
 // edges and the asm edge — and an eighth added later without it reintroduces
 // the defect for that edge kind, silently, in exactly the shape that took a
@@ -2396,7 +2397,7 @@ std::string append_goal_phony(std::string& manifest,
 // `check_inline_command_lengths`, whose comment says it outright: scanning the
 // emitted manifest covers a new edge kind the day it is added.
 //
-// ⚠️ THE DENOMINATOR IS PART OF THE CHECK. "every edge that should carry it
+// THE DENOMINATOR IS PART OF THE CHECK. "every edge that should carry it
 // does" is vacuously true when no edge should, which is precisely today's
 // state — so a package with gating actions and zero matched compile edges is
 // itself the failure, not a pass.
@@ -2467,7 +2468,7 @@ std::optional<std::string> check_action_ordering(const std::string& manifest,
 
 // A rule's command must begin with a program.
 //
-// ⭐ WHY THIS SHAPE, and not "no rule may reference an undefined variable".
+// WHY THIS SHAPE, and not "no rule may reference an undefined variable".
 // ninja expands an undefined variable to the empty string, which is a FEATURE
 // several rules here depend on: `$soname_flag`, `$implib_flag`, `$def_flag`
 // and `$unit_ldflags` are set per-edge and absent on purpose everywhere else,
@@ -2707,7 +2708,7 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
             "compile_commands.json was not updated: {}", cdb.error().message));
     }
 
-    // ⚠️ A SHARED LIBRARY ON A TARGET WHOSE LINK IS DRIVEN BY THE LINKER, SAID
+    // A SHARED LIBRARY ON A TARGET WHOSE LINK IS DRIVEN BY THE LINKER, SAID
     // IN WORDS RATHER THAN AS A MISSING NINJA RULE.
     //
     // The direct-linker path defines `cxx_link`, `c_link` and `cxx_archive` and

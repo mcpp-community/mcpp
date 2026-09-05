@@ -231,7 +231,34 @@ constexpr std::string_view kHeaderExtensions[] = { ".h", ".hpp", ".hh", ".hxx" }
 // Device sources and the headers they include. The headers are classified as
 // `Header` rather than `Device` because their role is the header role: they
 // are not compiled, and editing one can change what the graph should be.
-constexpr std::string_view kDeviceExtensions[]       = { ".cu", ".hip" };
+//
+// THE CRITERION IS THE COMPILER, NOT THE VENDOR. `SourceKind::Device` says a
+// file is compiled by a device compiler mcpp does not drive, and its comment
+// says so in order to avoid "the classification table growing a row per
+// vendor". This list nonetheless held exactly two rows, both NVIDIA's, and the
+// gap that revealed is not hypothetical: a shader listed in a constrained glob
+// was refused with "mcpp has no role for the extension '.comp'" — the file
+// never reached `MCPP_DEVICE_SOURCES`, so the rule package that exists to
+// compile it was told there was nothing to compile, and warned about it.
+//
+// So the list is the set of languages a separate compiler consumes: CUDA and
+// HIP, the GLSL stages and HLSL (glslang, dxc), OpenCL C (clang, and every
+// vendor's own), and Metal Shading Language. Adding to it cannot change a
+// build that works today, for two reasons that hold jointly: device extensions
+// are deliberately absent from `default_source_globs`, so no glob widens; and
+// a file with one of these extensions named in `sources` is TODAY a hard
+// error, so nothing silently switches role.
+//
+// `.glsl` is here and carries no stage. glslang derives the stage from the
+// extension, so a rule package refuses a stage-less name — which is the right
+// place for that message, and the reason this table does not need to know
+// which of these extensions name a stage.
+constexpr std::string_view kDeviceExtensions[] = {
+    ".cu", ".hip",
+    ".comp", ".vert", ".frag", ".geom", ".tesc", ".tese", ".mesh", ".task",
+    ".rgen", ".rint", ".rahit", ".rchit", ".rmiss", ".rcall",
+    ".glsl", ".hlsl", ".cl", ".metal",
+};
 constexpr std::string_view kDeviceHeaderExtensions[] = { ".cuh", ".hiph" };
 
 bool contains(std::span<const std::string_view> set, std::string_view ext) {

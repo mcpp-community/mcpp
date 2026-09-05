@@ -15,8 +15,9 @@ app/
                           into a C++ one
   src/main.cpp            an ordinary consumer, which imports the seam and
                           never sees the header
-  build.mcpp              hands the device sources to the rule package
-rules-cuda/               a build-rule package that knows how to compile them
+  build.mcpp              hands the device sources to `mcpp.rules.cuda`, a
+                          member of `mcpp:plugins` (mcpp-community/mcpp-plugins)
+                          selected by the feature `rules-cuda`
 ```
 
 Three properties are load-bearing.

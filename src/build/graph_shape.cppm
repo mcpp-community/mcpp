@@ -54,8 +54,19 @@ std::string_view to_string(GraphShape shape) {
 // schedule must not be replayed under another. Flipping the switch has to
 // invalidate the graph, and the only way that cannot be forgotten is if the
 // graph says which schedule produced it.
-std::string header_line(GraphShape shape, std::string_view scheduleTag) {
-    return std::format("# mcpp:graph={};schedule={}", to_string(shape), scheduleTag);
+// `accelOverridden` records whether `--accel` / `--no-accel` chose the device
+// variant. That variant is in the fingerprint, so the two builds land in
+// different directories -- which is exactly why the fast path cannot tell
+// them apart: it replays the directory built LAST, before any plan exists to
+// say which directory a plain build would choose. Measured: `mcpp build`,
+// `mcpp build --no-accel`, `mcpp build` -- the third reported "Finished in
+// 0.00s" and `mcpp run` executed the CPU variant. A graph an override chose
+// says so, and the fast paths, which run only without overrides, decline it.
+std::string header_line(GraphShape shape, std::string_view scheduleTag,
+                        bool accelOverridden = false) {
+    return std::format("# mcpp:graph={};schedule={};accel={}",
+                       to_string(shape), scheduleTag,
+                       accelOverridden ? "override" : "default");
 }
 
 // Read the shape back. `nullopt` means "this file does not say" — a build.ninja
@@ -106,7 +117,11 @@ std::string read_schedule(const std::filesystem::path& ninjaPath) {
         auto rest = value.substr(semi + 1);
         constexpr std::string_view schedPrefix = "schedule=";
         if (!rest.starts_with(schedPrefix)) return {};
-        return std::string(rest.substr(schedPrefix.size()));
+        rest = rest.substr(schedPrefix.size());
+        // Cut at the next field: the selection rides the same line.
+        if (const auto next = rest.find(';'); next != std::string_view::npos)
+            rest = rest.substr(0, next);
+        return std::string(rest);
     }
     return {};
 }
@@ -122,8 +137,38 @@ std::string read_schedule(const std::filesystem::path& ninjaPath) {
 // it lands in a different build directory: a graph written under one schedule
 // is structurally unreachable from a build configured with another. The tag on
 // the line is then for humans and for `mcpp explain`, not for invalidation.
+// The device-variant selection this graph was written under: "default" for
+// `[build] accel` as the manifest states it, "override" for a `--accel` or
+// `--no-accel` build. Empty when the file predates the field, which callers
+// treat as a miss for the reason read_shape gives.
+std::string read_accel_selection(const std::filesystem::path& ninjaPath) {
+    std::ifstream input(ninjaPath);
+    if (!input) return {};
+    std::string line;
+    for (int i = 0; i < 8 && std::getline(input, line); ++i) {
+        constexpr std::string_view prefix = "# mcpp:graph=";
+        if (!line.starts_with(prefix)) continue;
+        auto value = std::string_view(line).substr(prefix.size());
+        while (!value.empty() && (value.back() == '\r' || value.back() == ' '))
+            value.remove_suffix(1);
+        constexpr std::string_view key = ";accel=";
+        const auto at = value.find(key);
+        if (at == std::string_view::npos) return {};
+        auto rest = value.substr(at + key.size());
+        if (const auto semi = rest.find(';'); semi != std::string_view::npos)
+            rest = rest.substr(0, semi);
+        return std::string(rest);
+    }
+    return {};
+}
+
+// A graph the fast paths may replay: the package's own targets, and the
+// device variant the manifest names rather than one a flag chose. Both fast
+// paths run only when no override is present, so a graph an override wrote is
+// never the graph a plain build would produce.
 bool is_plain_build_graph(const std::filesystem::path& ninjaPath) {
-    return read_shape(ninjaPath) == GraphShape::Normal;
+    return read_shape(ninjaPath) == GraphShape::Normal
+        && read_accel_selection(ninjaPath) == "default";
 }
 
 } // namespace mcpp::build

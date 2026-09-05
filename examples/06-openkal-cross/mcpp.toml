@@ -14,7 +14,7 @@ description = "One source, four hosted targets, over openkal"
 # openkal matches the target being built.
 openkal-llvm-runtime = "0.1.3"
 
-# ⭐⭐ AND IT SELECTS THE FOURTH — THE COMPILER — WITHOUT THIS FILE SAYING SO.
+# AND IT SELECTS THE FOURTH — THE COMPILER — WITHOUT THIS FILE SAYING SO.
 #
 # There used to be a `[toolchain] default = "llvm@22.1.8"` here, with a comment
 # explaining that it named "a compiler, and nothing else". It is gone, and the
@@ -30,14 +30,14 @@ openkal-llvm-runtime = "0.1.3"
 #              (`requires = ["mcpp:compiler=llvm"]`), not your gcc@16.1.0
 #              — this project only
 #
-# ⚠️ "this project only" is load-bearing. Nothing is written: not
+# "this project only" is load-bearing. Nothing is written: not
 # `~/.mcpp/config.toml`, not this file. A requirement is a property of the
 # package that states it, so it decides this build and no other.
 #
 # A project that wants a different compiler still writes one here, and that
 # statement outranks the graph — see docs/03.
 
-# ⚠️ NO BARE-METAL TARGET SECTION, AND ITS ABSENCE IS DELIBERATE.
+# NO BARE-METAL TARGET SECTION, AND ITS ABSENCE IS DELIBERATE.
 #
 # This program asks about a filesystem and about tasks. An implementation that
 # provides neither is absent as a link-time definition — clause 6.1 of the

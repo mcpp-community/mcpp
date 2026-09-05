@@ -1,6 +1,0 @@
-[package]
-name        = "rules-cuda"
-namespace   = "mcpplibs"
-version     = "0.1.0"
-description = "Compile CUDA device translation units: clang -x cuda by default, nvcc as the alternate route (role = object)"
-license     = "Apache-2.0"

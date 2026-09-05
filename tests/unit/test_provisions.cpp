@@ -230,8 +230,8 @@ std::filesystem::path write_iface(std::string_view stem, std::string_view body) 
 
 TEST(HostModuleIdentity, TheDeclaredNameWinsOverThePackageName) {
     auto p = write_iface("declared-wins",
-                         "export module mcpp.build.protobuf;\nimport std;\n");
-    EXPECT_EQ(prov::host_module_name(p, "protobufgen"), "mcpp.build.protobuf");
+                         "export module mcpp.rules.protobuf;\nimport std;\n");
+    EXPECT_EQ(prov::host_module_name(p, "protobufgen"), "mcpp.rules.protobuf");
 }
 
 TEST(HostModuleIdentity, ADottedNameSurvivesWhole) {
@@ -297,15 +297,15 @@ TEST(HostModuleIdentity, DistinctModuleNamesFromOnePackageNameAreFine) {
 }
 
 TEST(ReservedPrefix, AnOutsidePackageClaimingMcppIsWarnedAbout) {
-    auto w = prov::reserved_prefix_warning("mcpp.build.protobuf", "acme",
+    auto w = prov::reserved_prefix_warning("mcpp.rules.protobuf", "acme",
                                            "acme.protobufgen");
     ASSERT_TRUE(w.has_value());
-    EXPECT_NE(w->find("mcpp.build.protobuf"), std::string::npos);
+    EXPECT_NE(w->find("mcpp.rules.protobuf"), std::string::npos);
     EXPECT_NE(w->find("acme.protobufgen"), std::string::npos);
 }
 
 TEST(ReservedPrefix, TheOfficialNamespaceIsSilent) {
-    EXPECT_FALSE(prov::reserved_prefix_warning("mcpp.build.protobuf", "mcpp",
+    EXPECT_FALSE(prov::reserved_prefix_warning("mcpp.rules.protobuf", "mcpp",
                                                "mcpp.protobuf").has_value());
 }
 
@@ -316,4 +316,38 @@ TEST(ReservedPrefix, AnOrdinaryNameIsSilent) {
     // claim, and a substring test would have flagged this.
     EXPECT_FALSE(prov::reserved_prefix_warning("mcppish", "acme",
                                                "acme.mcppish").has_value());
+}
+
+// A package that offers several rules through features (mcpp 2026.9.5.3+)
+// contributes every module INTERFACE unit among its resolved sources. The
+// detector decides what counts as one, and the cases below are the ones a
+// wrong answer would turn into a compile of something that cannot be compiled
+// alone -- an implementation unit, a partition -- or into a phantom module
+// named by a comment.
+TEST(InterfaceUnit, ThePrimaryInterfaceDeclarationIsRecognised) {
+    EXPECT_EQ(prov::declared_interface_name("export module mcpp.rules.cuda;\n"),
+              "mcpp.rules.cuda");
+    EXPECT_EQ(prov::declared_interface_name(
+                  "module;\n#include <cstdio>\nexport module a.b;\nimport std;\n"),
+              "a.b");
+    EXPECT_EQ(prov::declared_interface_name("\texport   module\tx ;  // trailing\n"),
+              "x");
+}
+
+TEST(InterfaceUnit, WhatIsNotAPrimaryInterfaceIsNotNamed) {
+    EXPECT_EQ(prov::declared_interface_name("module a.b;\n"), "");          // implementation
+    EXPECT_EQ(prov::declared_interface_name("export module a.b:part;\n"), ""); // partition
+    EXPECT_EQ(prov::declared_interface_name("module;\n"), "");              // global fragment
+    EXPECT_EQ(prov::declared_interface_name("export module;\n"), "");
+    EXPECT_EQ(prov::declared_interface_name("// export module a.b;\n"), "");  // documentation
+    EXPECT_EQ(prov::declared_interface_name("exportmodule a.b;\n"), "");
+    EXPECT_EQ(prov::declared_interface_name("int x; // not a module at all\n"), "");
+}
+
+TEST(InterfaceUnit, TheFirstDeclarationWins) {
+    // A file names one module; anything after the first declaration is that
+    // module's body, and a quoted declaration inside it is text.
+    EXPECT_EQ(prov::declared_interface_name(
+                  "export module first;\n/* export module second; */\n"),
+              "first");
 }

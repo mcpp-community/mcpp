@@ -56,9 +56,19 @@ TEST(GraphShape, UnlabelledOrUnknownGraphIsNeverPlain) {
     };
 
     EXPECT_TRUE(is_plain_build_graph(
-        write("normal.ninja", "# banner\n# mcpp:graph=normal\nrule x\n")));
+        write("normal.ninja", "# banner\n# mcpp:graph=normal;schedule=none;accel=default\nrule x\n")));
     EXPECT_FALSE(is_plain_build_graph(
-        write("test.ninja", "# banner\n# mcpp:graph=test\nrule x\n")));
+        write("test.ninja", "# banner\n# mcpp:graph=test;schedule=none;accel=default\nrule x\n")));
+
+    // A plain-shaped graph an `--accel` / `--no-accel` build wrote (2026.9.5.3+):
+    // the variant a flag chose is not the variant a plain build produces.
+    EXPECT_FALSE(is_plain_build_graph(
+        write("override.ninja", "# mcpp:graph=normal;schedule=none;accel=override\n")));
+
+    // A graph from 2026.9.5.2 and earlier: shape and schedule, no selection
+    // field. Not known to be the manifest's variant, so a miss, not a guess.
+    EXPECT_FALSE(is_plain_build_graph(
+        write("no-selection.ninja", "# banner\n# mcpp:graph=normal\nrule x\n")));
 
     // A build.ninja from before the marker existed. It MUST read as a miss:
     // treating it as plain is precisely the replay #407 is about.

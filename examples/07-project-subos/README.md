@@ -72,7 +72,7 @@ subos = "tools"
 which mcpp resolves to `<project>/.mcpp/.xlings/subos/tools/` — its own `bin`,
 its own package versions, isolated from every other project on the machine.
 
-⚠️ **mcpp reads such an environment and never creates one.** A name that does
+**mcpp reads such an environment and never creates one.** A name that does
 not resolve is a hard error, not a fallback:
 
 ```

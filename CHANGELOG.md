@@ -5,9 +5,97 @@
 
 ## [Unreleased]
 
+## [2026.9.5.3] — 2026-09-05
+
+### 官方构建插件集中为一个包:`mcpp:plugins`
+
+规则包不再放在本仓库的 `examples/` 下。它们现在集中维护于
+`mcpp-community/mcpp-plugins`,以一个包 `mcpp:plugins` 发布,消费者用 feature 选择成员,
+在 `build.mcpp` 里以成员自己声明的模块名 import:
+
+```toml
+[dependencies.mcpp]
+plugins = { version = "0.1.0", features = ["rules-spirv"], host-module = true }
+```
+
+命名收敛为两族:规则包 `mcpp.rules.<x>`,构建期工具 `mcpp.tools.<x>`;lib 根
+`mcpp.plugins` 记录集合的版本。此前的 `mcpp.build.<x>` 撤回:那是引擎自己的模块族
+(`mcpp.build.plan`、`mcpp.build.prepare`),插件不该与它同名。规则包规范曾以「模块名就是
+裸包名,不能含点」为由撤回 `mcpp.rules.*`;I1(模块名由源码声明)落地后这个理由不再成立,
+规范的 I8 与第 7 节按此修订。
+
+**引擎为此扩了一处**:一个 `host-module = true` 的包,其解析后 `[build] sources` 里
+—— 含 feature 加入的源文件 —— 的每一个模块接口单元都编成一个 host 模块,以各自声明的名字
+注册,lib 根排在最前,feature 单元可以 import 它。只有清单里列出的源文件参与:未声明
+`sources` 的包所推断出的 `src/**` 不被读取,所以此前发布的规则包暴露的仍是它当时暴露的那
+一个模块。模块集合就是 feature 集合:未激活 feature 的单元不编译,import 它以未知模块失败。
+e2e 610 分别断言这五条(含 `mcpp` 命名空间零告警、其他命名空间**每个单元一条**告警的对照);
+`tests/unit/test_provisions` 覆盖接口单元的判定:实现单元、分区、全局模块片段与注释里引用的
+声明都不算。
+
+示例 09 与 10 像任何工程一样从索引消费 `mcpp:plugins`;`mcpplibs:rules-cuda@0.1.0`
+在索引里保留并标注被取代。
+
+### 设备源的判据是编译器,不是厂商
+
+`SourceKind::Device` 的定义写着它陈述的是构建图里的角色 ——「由一个 mcpp 不驱动的
+设备编译器编译」—— 并且明确说这样定义是为了让分类表**不按厂商长出一行**。而那张
+扩展名表里恰好只有两行,都是 NVIDIA 的。
+
+第二个设备 API 让这件事显形:一个写在带约束 glob 里的 shader 被拒绝为
+
+    'scale.comp' is listed in [build] sources, and mcpp has no role for the
+    extension '.comp'.
+
+同一次运行里,规则包又被告知没有设备源并为此告警 —— 一个错误和一个警告在说同一个
+文件的相反的话。
+
+表因此扩到「由另一个编译器消费的语言」:CUDA 与 HIP,GLSL 的各个 stage 与无 stage 的
+`.glsl`,HLSL,OpenCL C,Metal。共 18 个扩展名,完整清单见 `docs/20-heterogeneous-builds.md`。
+
+这次扩表不能改变任何今天可用的构建,理由有两条且互相独立:设备扩展名**本来就不在**
+默认 source glob 里,所以没有 glob 变宽;而这些扩展名今天在 `sources` 里是**硬错误**,
+所以没有文件静默换了角色。两条都由 `tests/unit/test_source_kind` 断言,其中默认 glob
+那条断言的是**整张列表**而不是曾经在场的两个名字。
+
+### `mcpp.rules.spirv` 与 examples/10-vulkan-compute
+
+新的规则把「GLSL 如何变成 SPIR-V」陈述一次,与 `mcpp.rules.cuda` 同形:引擎拥有图 ——
+加速器轴、把 shader 路由到规则包而非 C++ 编译器的带约束 glob、动作边、指纹 ——
+并且不认识 "vulkan" 或 "glslang" 这两个词;规则包拥有拼法。
+
+它产出的是**头文件而不是目标文件**。SPIR-V 是程序交给 `vkCreateShaderModule` 的数据,
+所以动作以 `role = "source"` 提交 —— 这是引擎**排在编译之前**的那一个角色,正是生成的
+头文件需要的;`artifact` 角色的产物排在链接之前,那已经晚于包含它的那个编译单元。
+
+示例 10 用同一份产物在三处得到同一个结果:宿主 ICD 上的 RTX 4080、只给 `VK_DRIVER_FILES`
+的软件驱动载荷(无 GPU 参与)、以及 `mcpp build --no-accel` 下接缝后的 CPU 实现。
+
+### 修正
+
+- **变体切换不再被快路径回放。** 设备变体在指纹里,两次构建落在不同目录;而快路径在任何
+  计划存在之前运行,回放的是**最后一次**构建的目录。实测:`mcpp build`、
+  `mcpp build --no-accel`、`mcpp build` —— 第三次报 `Finished in 0.00s`,随后的 `mcpp run`
+  执行的是 CPU 变体。build.ninja 的头行现在记录选择来自清单还是来自 `--accel`/`--no-accel`
+  (`accel=default|override`),两条快路径只回放前者;缺该字段的旧图按未命中处理并被重写。
+  e2e 611 与 `tests/unit/test_graph_shape` 断言。
+- `MCPP_DEVICE_SOURCES` 以换行分隔。规则包若按 `;` 切分,对**恰好一个**设备源仍然正确,
+  对两个则拼出一条不存在的路径;e2e 609 第一段以整张扩展名表作分母,当场把它抓了出来。
+- glslang 若未链入 spirv-opt(`-Os not available; optimizer not linked`),规则包降级
+  并告警一次,而不是让构建失败:可选的优化 pass 缺席不是错误,静默地不做优化才是。
+
+### 文档
+
+- 第 20 章由「加速器」更名为「异构硬件构建」(`docs/20-heterogeneous-builds.md`),副题指明
+  GPU 与 AI 加速器目标以及宿主/设备混合编译;`accel` 键不变。
+- 第 5 章与第 7 章(中英)补入 feature 选择的规则集合与 `mcpp.rules.*` / `mcpp.tools.*`
+  命名;第 7 章中文版此前缺少命名一节,本次补齐。
+- 文档、README、CHANGELOG 与代码注释里的装饰符号(告警、星标、勾叉等)全部移除;表格里
+  只以符号承载的取值改写为词(`yes` / `no` / `partial` / `planned`)。
+
 ## [2026.9.5.2] — 2026-09-05
 
-### ⭐⭐ 在编译任何东西之前比较机器的下界
+### 在编译任何东西之前比较机器的下界
 
 有些机器事实**限定**了能为它构建什么,而忽略它们时,失败到得很晚。本轮的样本:
 设备运行时不得新于它将运行其上的驱动;当它更新时,构建与链接都干净通过,程序在
@@ -26,7 +114,7 @@ value = "cuda.driver >= 12.0"
 `mcpp.build.version_floor` 只做比较,**这个文件里不出现任何厂商名字**:
 `cuda.driver` 是流经的数据。第二种后端不需要改动它。
 
-### ⭐ 探针通道:`mcpp::fact` / `mcpp::floor`(协议 v7)
+### 探针通道:`mcpp::fact` / `mcpp::floor`(协议 v7)
 
 构建程序陈述它**测得**的事实与它**需要**的下界,引擎比较并在不满足时给出两侧取值
 (`version-floor-unmet`)。这是让 CUDA 探针得以整体离开 `src/` 的那条通道 ——
@@ -100,7 +188,7 @@ ninja 与 patchelf。实测:空 home 下 26 秒 / 126 MB → 0.3 秒。
 
 ## [2026.9.5.1] — 2026-09-05
 
-### ⭐⭐ 加速器支持:设备编译单元、产物身份的加速器维、以及没人做的宿主编译器配对
+### 加速器支持:设备编译单元、产物身份的加速器维、以及没人做的宿主编译器配对
 
 一个为某个计算能力编译的库,被另一个计算能力的构建消费时,链接干净地完成,
 程序在第一次 kernel 启动时失败,消息里既没有包名也没有任何一侧期望的架构。
@@ -145,7 +233,7 @@ generic target 取得同样的覆盖,所以空的下界不放宽任何东西。
 
 ## [2026.9.4.3] — 2026-09-04
 
-### ⭐⭐ `mcpp run` 报告程序自己的退出码
+### `mcpp run` 报告程序自己的退出码
 
 在此之前所有非零退出码都被折成 `1`,为的是让 `2` 表示「起不来」以区别于「跑了但
 失败」。区别值得保留,代价不值得:`main` 返回 `3` 的程序让 `mcpp run` 退 `1`,
@@ -169,7 +257,7 @@ qemu 报 `3` 的裸机镜像同样到达为 `1`。一条报不出退出码的命
 **兼容性**:mcpp 自身的配置错误仍是 `2`,与其余所有命令一致 —— 变的只有「尝试
 启动后被拒」这一种情况,而那时程序根本没运行。契约写在 `docs/11` §6。
 
-### ⚠️⚠️ 没有构建进程能比启动它的 mcpp 活得更久
+### 没有构建进程能比启动它的 mcpp 活得更久
 
 实测:每一次被 `timeout` 终止的 `mcpp run` 都留下一个空转占满一个核的 ninja,
 其中一个的工作目录已经是 `(deleted)`、比它所属的整个沙箱活得还久。任何用
@@ -191,7 +279,7 @@ SIGINT/SIGTERM/SIGHUP 时对该组发 **SIGKILL**。用 SIGKILL 而不是 SIGTER
 
 ## [2026.9.4.2] — 2026-09-04
 
-### ⭐⭐ Cortex-M 有 C 库了:`libdir` 填上,而它的键是**三元组**
+### Cortex-M 有 C 库了:`libdir` 填上,而它的键是**三元组**
 
 `xim:picolibc-arm@1.8.12` 带七个多库(picolibc + compiler-rt builtins,同一个
 LLVM 一起构建)。工程一行选入:
@@ -201,7 +289,7 @@ LLVM 一起构建)。工程一行选入:
 sysroot = "xim:picolibc-arm@1.8.12"
 ```
 
-⚠️⚠️ **`libdir` 这一列在 ARM 上是三元组,不是 `<march>/<mabi>`,而差别是一次
+**`libdir` 这一列在 ARM 上是三元组,不是 `<march>/<mabi>`,而差别是一次
 无人报告的 ABI 替换。** riscv 的 `mabi` **就是**浮点 ABI(`lp64d` 与 `lp64` 是
 两个值);ARM 的 `mabi` 是过程调用标准,两个变体都是 `aapcs`,浮点 ABI 在三元组的
 `eabi`/`eabihf` 后缀里。于是 `armv7e-m/aapcs` 会给两份互不兼容的库命名同一个目录。
@@ -210,17 +298,17 @@ sysroot = "xim:picolibc-arm@1.8.12"
 `armv7e-m/aapcs/libc.a` 带着 `Tag_ABI_HardFP_use` —— 硬浮点的构建,坐在软浮点
 程序会去找它的位置上。**构建期什么都没报。**
 
-⭐ 填这一列**不**给这些行默认配 C 库:只有解析出 sysroot 之后才会读它,目标表仍然
+填这一列**不**给这些行默认配 C 库:只有解析出 sysroot 之后才会读它,目标表仍然
 不绑定任何一个。零 libc 仍是默认,这只是让选入这件事能成立。
 
 判据是浮点 ABI 而不是「链接通过」:`tests/e2e/338` 构建**软浮点**那一行,断言产物
-里没有硬浮点 ABI 标记,然后启动它并读退出码。⚠️ 并且断言产物**不为空** —— 实测:
+里没有硬浮点 ABI 标记,然后启动它并读退出码。并且断言产物**不为空** —— 实测:
 缺了 crt0 的链接会成功并报 `Size fw  text 0 data 0`,一个格式良好、什么都没有的
 ELF,任何只看 `Finished` 的检查都会放行。
 
 runner 有了名字,工具有了档位,`--locked` 成为断言,`mcpp emit sbom`。
 
-### ⭐⭐ 一条命令,加具名的例外
+### 一条命令,加具名的例外
 
 `mcpp run` 覆盖常见情形的**全部,真实硬件也一样**。在设备上「运行一个程序」意味着
 写进去、复位、接上输出、读回退出状态 —— 这是**一条**命令(`probe-rs run`、
@@ -233,15 +321,15 @@ mcpp run --runner flash      # 具名的例外:只写不跑、看串口、起调
 mcpp run --list-runners      # 这个工程提供了哪些
 ```
 
-⚠️ **引擎不认识任何 runner 名字。** `flash`、`serve`、`deploy`、`submit`、
+**引擎不认识任何 runner 名字。** `flash`、`serve`、`deploy`、`submit`、
 `logcat` 对它一样陌生。**引擎里若有一份固定的名字表,就等于由引擎决定哪些领域可被
 表达** —— 一个 web 包将无法自己加 `serve`。
 
-⭐ **写程序名,不要写路径。** mcpp 先找本包 `[xlings] deps` 声明的载荷 `bin/`,
+**写程序名,不要写路径。** mcpp 先找本包 `[xlings] deps` 声明的载荷 `bin/`,
 再找 `PATH`。用 `xpkg_dir` 拼绝对路径是多余的,而且引入了一个失败模式:声明不是
 安装,查询返回空则没有配置任何 runner 而无话可说。
 
-⚠️ 是否终止由 `mcpp::runner_longlived(name)` **声明**:
+是否终止由 `mcpp::runner_longlived(name)` **声明**:
 `openocd -c "program … exit"` 会终止而 `openocd -c "init"` 不会,拼写到最后一个
 参数为止都一样,没有任何 argv 能表达这个区别。
 
@@ -253,16 +341,16 @@ mcpp run --list-runners      # 这个工程提供了哪些
 锁一直是解析之后写、从不读回。现在它是断言:发生的解析必须等于记录的解析,不等则
 **点名移动了的包与两个版本**。
 
-⚠️⚠️ **它绝不能遇上快路径。** 实测:加闸之前,一份被故意改坏的锁通过了
+**它绝不能遇上快路径。** 实测:加闸之前,一份被故意改坏的锁通过了
 `mcpp build --locked` 并打印 `Finished` —— 旗标被接受、构建正确、**断言从未跑到**。
 
 ### `mcpp emit sbom`
 
-CycloneDX 1.5,覆盖**已记录**的解析。⚠️ 读锁而不是重新解析 —— 一份描述了与所构建
+CycloneDX 1.5,覆盖**已记录**的解析。读锁而不是重新解析 —— 一份描述了与所构建
 者不同的图的文档比没有更糟。归在 `emit` 之下而不是新开一级命令:`emit` 已经是
 「生成描述本工程的文档」。
 
-### ⭐⭐ 工具有了档位,而且依赖声明的工具现在真的会被装
+### 工具有了档位,而且依赖声明的工具现在真的会被装
 
 包依赖从一开始就有 `[dependencies]` / `[build-dependencies]` / `[dev-dependencies]`
 这条轴,工具只有一张表。一个同时点名模拟器与调试探针的板级包,会把两个都装给每一位
@@ -284,13 +372,13 @@ CycloneDX 1.5,覆盖**已记录**的解析。⚠️ 读锁而不是重新解析 
 | `run` | `mcpp run`、`mcpp test` | 是 |
 | `dev` | 只有声明它的那个包作为根时 | **否** |
 
-⭐ **不写 `when` 保持今天的行为,所以没有迁移。**
+**不写 `when` 保持今天的行为,所以没有迁移。**
 
-⚠️⚠️ **同时:`[xlings.workspace]` 的供给扩到全图。** 在此之前只有根工程的声明会被
+**同时:`[xlings.workspace]` 的供给扩到全图。** 在此之前只有根工程的声明会被
 安装,而查找(runner 按裸名找程序)已经跨全图 —— **在没有任何东西安装过的目录里
 查找,是只可能失败的查找**。两者现在由同一个表达式定义。
 
-⚠️ 档位带来的一个危险已被堵上:`mcpp build` 装得比 `mcpp run` 需要的少,而 run 的
+档位带来的一个危险已被堵上:`mcpp build` 装得比 `mcpp run` 需要的少,而 run 的
 快路径正是为跳过那一步存在的。构建缓存记下「这次构建留下了未安装的 run 档工具」,
 `mcpp run` 的快路径据此拒绝该条目 —— 与它拒绝声明了 runner 的条目同理。
 
@@ -298,7 +386,7 @@ CycloneDX 1.5,覆盖**已记录**的解析。⚠️ 读锁而不是重新解析 
 并**点名它本来要装的集合**,于是 `build` 与 `run` 两条命令的差集就是被测的性质,
 一次下载都不需要(`tests/e2e/335`)。
 
-### ⭐ ARMv7-A:第一个带内存管理单元的 32 位目标行
+### ARMv7-A:第一个带内存管理单元的 32 位目标行
 
 `armv7a-none-eabi` 与 `armv7a-none-eabihf` 两行,`verified`。表里其余每个 32 位行都是
 M-profile:MPU 按基址与上限描述区域,没有页表项。A-profile 有真正的 MMU,于是它是第一个
@@ -308,27 +396,27 @@ M-profile:MPU 按基址与上限描述区域,没有页表项。A-profile 有真�
 实测 2026-09-04(`xim:qemu-arm@9.2.4-1`):两行都在 `-M virt -cpu cortex-a15` 上启动、
 经半主机打印并报回退出状态。
 
-⚠️ **软浮点行同样需要 `-mfpu=none`,而这是在这个架构上重新实测的**,不是从 M-profile
+**软浮点行同样需要 `-mfpu=none`,而这是在这个架构上重新实测的**,不是从 M-profile
 推过来的:`armv7a-none-eabi` 在软浮点 ABI 下对一次 float 乘法仍发出 VFP 指令。
 
-⚠️ **半主机的退出调用与 M-profile 拼法不同。** AArch32 的 `SYS_EXIT`(`0x18`)把原因码
+**半主机的退出调用与 M-profile 拼法不同。** AArch32 的 `SYS_EXIT`(`0x18`)把原因码
 **直接**放在 `r1`;Cortex-M 传的 `{reason, code}` 块是 `SYS_EXIT_EXTENDED`(`0x20`)。
 实测:把块传给 `0x18` 打印正确而**退出状态是错的**,只看输出的测试看不出来。
 
-⭐ 那条量化 `-mfpu=none` 的单元测试,谓词曾是 `starts_with("thumb")` —— 一个**拼法**
+那条量化 `-mfpu=none` 的单元测试,谓词曾是 `starts_with("thumb")` —— 一个**拼法**
 而不是它要陈述的性质。新行加进来时规则适用而测试**静默跳过**了它们,每条断言依然通过。
 谓词已改为「32 位 ARM」。
 
-### ⭐ `mcpp run` 接受 `--features` 与 `--profile`
+### `mcpp run` 接受 `--features` 与 `--profile`
 
 `build` 与 `test` 一直有这两条轴,`run` 没有 —— 于是 `run` **只能执行上一次 `build`
 恰好留下的东西**:没有任何一种写法能跑一个 release 产物,或一个开了 feature 的产物。
 
-⚠️ 而这正是整个设备面赖以成立的形状:板级包把「模拟器」与「真板」表达成 feature,
+而这正是整个设备面赖以成立的形状:板级包把「模拟器」与「真板」表达成 feature,
 所以 `mcpp run --features hardware` 才是板子到手那天开发者敲的命令。**方案里唯一一个
 自己跑不起来的场景就是它。**
 
-### ⚠️⚠️ 顺带修掉一个既有缺陷:构建缓存不看 feature
+### 顺带修掉一个既有缺陷:构建缓存不看 feature
 
 缓存条目按 (target, profile, cache mode) 索引,而**输出目录按含 feature 的指纹索引**。
 于是 `mcpp build --features loud` 写下的条目指向 loud 的目录,下一次**不带 feature 的**
@@ -359,7 +447,7 @@ Cortex-M 落地为七个目标行,freestanding 链接开启死代码段消除。
 target = "thumbv7em-none-eabihf"
 ```
 
-⚠️ **浮点 ABI 不决定 FPU 是否被使用。** `eabi`/`eabihf` 由 clang 从 triple 读出,
+**浮点 ABI 不决定 FPU 是否被使用。** `eabi`/`eabihf` 由 clang 从 triple 读出,
 它约束浮点值如何跨越函数边界,不约束函数内部发什么指令 —— 而 `thumbv7em` 架构
 蕴含 FPv4-SP。实测:软浮点 ABI 下 clang 对一次 float 乘法仍发出 `vmul.f32`,在
 没有 FPU 的 Cortex-M4 上于运行期触发异常,而编译与链接都是干净的。每个软浮点行
@@ -370,7 +458,7 @@ freestanding 编译加 `-ffunction-sections -fdata-sections`、链接加 `--gc-s
 依赖的目标文件无条件进入链接(不像归档成员那样按未定义符号拉取),当 C 库改由
 依赖图提供时,没有死代码段消除的镜像会装进整份 C 库,而 Cortex-M 器件只有几十 KB。
 
-⚠️ **链接脚本因此以新的方式承重**:中断向量表不被任何东西引用,`--gc-sections`
+**链接脚本因此以新的方式承重**:中断向量表不被任何东西引用,`--gc-sections`
 会回收它,板级脚本必须写 `KEEP(*(.vectors))`。
 
 同时回填了 `docs/13` 中两条已被 2026.8.28.2 推翻的限制:当图中有包提供
@@ -590,7 +678,7 @@ mcpp 打印的建议行随之改成同一形态。
   在错误的 C 库配置上。五个层名 `compiler` / `compiler-runtime` / `kernel-abi` /
   `c-abi` / `c++-abi` 现在是谓词的键,可与三元组键在 `all`/`any`/`not` 下组合。
 
-  ⚠️ 层谓词**不能**选择依赖 —— 层是从依赖图解析出来的 —— 这种段落会被报出并忽略,
+  层谓词**不能**选择依赖 —— 层是从依赖图解析出来的 —— 这种段落会被报出并忽略,
   而不是被静默丢弃。
 
 - **mcpp 不认识的 cfg 键会被报出来。** 求值器过去对未知键返回假,而那与「这一段本就
@@ -689,12 +777,12 @@ mcpp 打印的建议行随之改成同一形态。
   没有 `[workspace.target.<triple>]`:根里普通的 `[target.<triple>]` 本来就按 triple
   被成员继承,为同一能力再加一种拼法只增加接口面。
 
-  ⚠️ **继承作用到每一个成员,包括「作为兄弟成员的 `path` 依赖被编译」的那个**
+  **继承作用到每一个成员,包括「作为兄弟成员的 `path` 依赖被编译」的那个**
   —— 也就是成员互相依赖这种最普通的形态。而 `path` 依赖里**不是成员**的那些
   (vendored 副本、example)不会获得这些标志:成员资格问的是 workspace 自己的
   `members` 列表,不是「这个路径在不在 workspace 目录下」。
 
-  ⚠️ `[workspace.build] include_dirs` 里的相对路径按 **workspace 根**锚定(#224):
+  `[workspace.build] include_dirs` 里的相对路径按 **workspace 根**锚定(#224):
   它是在根 manifest 里写的,按各成员自己的目录解析会指向不存在的地方。
 
 - **依赖声明了高于当前图的标准时会说出来。** C++ 模块图只有一个标准,依赖自己的
@@ -790,7 +878,7 @@ mcpp 打印的建议行随之改成同一形态。
   而消费者漂了。子系统测试还跑在根构建从不产生的配置里——**只有它自己和它声明的
   依赖**,所以一个悄悄依赖了未声明之物的子系统在根构建里能编过、在这里编不过。
 
-  ⚠️ `mcpp test -p <member>` 对没有测试的成员**退 0**,于是「没有测试」与
+  `mcpp test -p <member>` 对没有测试的成员**退 0**,于是「没有测试」与
   「测试通过」在 CI 输出里完全一样。`check_modules_wiring.sh` 因此把没有测试的成员
   逐个打印出来(不判失败——一个 vendored 解析器包确实没有自己的东西要陈述)。
 
@@ -804,7 +892,7 @@ mcpp 打印的建议行随之改成同一形态。
   不进用法):它在 mcpp 能跑的每个平台上都已经在磁盘上。已经自己写 stamp 的命令
   逐字节不受影响——已存在的文件不会被动。
 
-  ⚠️ **显而易见的判据不区分**:实测 ninja **不会**因为声明的输出没生成而失败,
+  **显而易见的判据不区分**:实测 ninja **不会**因为声明的输出没生成而失败,
   它只是留着文件不存在、之后**每次构建都重跑**那条边。构建保持绿色,唯一的症状是
   活被反复重做。`tests/e2e/312` 因此断言 stamp 存在 + 无变更时不重跑,两条都先看它红。
 
@@ -859,22 +947,22 @@ mcpp 打印的建议行随之改成同一形态。
   出现两种形态,正是本条要抓的缺陷。边上的 `linkage` 只在**根工程**生效:
   依赖图深处的包无权决定最终程序的布局。
 
-  ⚠️ **这不是 `[target.<triple>].linkage`**(那根是 C 库轴),而且两者**不独立**:
+  **这不是 `[target.<triple>].linkage`**(那根是 C 库轴),而且两者**不独立**:
   整链静态的映像没有解释器,装不下任何共享对象。C 库静态链接的目标 ——
   **musl 的默认** —— 会拒绝 `shared` 并说明原因。
 
 - **符号提供者检查。** 链接后核验映像里每个符号恰好有一个提供者。
 
-  ⚠️ ELF 上可执行文件排在最前,被静态并进程序的库会在共享副本之上获胜:
+  ELF 上可执行文件排在最前,被静态并进程序的库会在共享副本之上获胜:
   共享的那份永远不会被调用,那个库里的代码跑在一份它并非针对其链接的构建上。
   链接器与加载器都不报任何一句话。实测 `/usr/bin/git`(自己的 `error` 遮蔽
   glibc 的 `error(3)`)与 `/usr/bin/ls`(gnulib obstack 遮蔽 glibc 的)都是
   这个形状的野生实例。
 
-  ⭐ 判据是**测量**不是声明,因此对 vendor 包里随附的库、`[system_deps]`
+  判据是**测量**不是声明,因此对 vendor 包里随附的库、`[system_deps]`
   引入的宿主库同样有效 —— 引擎不需要认识任何具体的库。
 
-  ⭐⭐ **两段式,而第二段不可省。** mcpp 自己的 `kind = "shared"` 机制会
+  **两段式,而第二段不可省。** mcpp 自己的 `kind = "shared"` 机制会
   **结构性地**产出「exe 导出、`.so` 绑过来」这个形状,而那是单份定义、
   完全良性的。只看第一段会在正确的构建上刷警告,而用户对此无事可做。
   真正的判据是「导出的东西**还有第二个提供者**」。
@@ -884,17 +972,17 @@ mcpp 打印的建议行随之改成同一形态。
 
 ### 修复
 
-- **⚠️ 依赖包的 `[targets.*] required_features` 从来没有生效过。**
+- **依赖包的 `[targets.*] required_features` 从来没有生效过。**
 
   目标门控只有一处,判据是**根**的活跃 feature 集,依赖包的 `targets`
   一个都不过滤。一个描述符写下 `required_features`,得到的是它要求的**反面**:
   该目标对每一个消费者都构建,不管 feature 开没开。
 
-  ⭐ 对 `kind = "shared"` 的目标这不是外观问题:包里只要存在任何一个 shared
+  对 `kind = "shared"` 的目标这不是外观问题:包里只要存在任何一个 shared
   目标,它的**全部**对象就会从每个消费者的链接里被拿走。一个「可选」的目标
   因此悄悄改变了整个包对所有人的链接方式。
 
-- **⚠️ `-fPIC` 不在缓存键里。**
+- **`-fPIC` 不在缓存键里。**
 
   它是全图的(图里任何一个 shared 链接单元存在,所有对象都带 PIC),而键取的是
   包**声明**的 flags,不是 flag 构造器算出来的。在形态由作者定死时可以幸存;
@@ -904,7 +992,7 @@ mcpp 打印的建议行随之改成同一形态。
   `dependency_linkage` 同样进了工程指纹 —— 否则切换开关会复用上一次配置的
   构建目录(实测:两次构建落在同一个 `target/x86_64-linux-gnu/<fp>/`)。
 
-- **⚠️⚠️ `mcpp pack` 不收合成的共享库,包解开就起不来。**
+- **`mcpp pack` 不收合成的共享库,包解开就起不来。**
 
   ```console
   $ ./app
@@ -915,17 +1003,17 @@ mcpp 打印的建议行随之改成同一形态。
   是空的,`$ORIGIN` 解析不到,库于是从不出现在闭包里,也就从不被打包。
   构建、打包、上传全程无话,失败发生在用户机器上。
 
-  ⚠️ **不是本版引入的**:在 2026.8.26.1 上用作者声明的 `kind = "shared"`
+  **不是本版引入的**:在 2026.8.26.1 上用作者声明的 `kind = "shared"`
   依赖同样复现。但 `dependency_linkage` 把它从「12 个自称 shared 的包」
   变成「任何一个包」都可达,所以在这里修。
 
-- **⚠️ 在非 shared 目标上写 `soname` 会让整份 manifest 加载失败。**
+- **在非 shared 目标上写 `soname` 会让整份 manifest 加载失败。**
 
   `soname` 是一个库被**找到**时用的名字,也是 mcpp 构建的那份与第三方携带的
   同一个库能解析到同一个文件的唯一途径。收窄为「非 **library** 目标才拒绝」,
   可执行文件仍然不允许声明。
 
-  ⚠️ 因此把 `soname` 写进索引描述符要等 `latest` 的 mcpp 下限跨过本版本 ——
+  因此把 `soname` 写进索引描述符要等 `latest` 的 mcpp 下限跨过本版本 ——
   旧客户端读到的是加载失败,不是忽略。
 
 ### 文档
@@ -938,12 +1026,12 @@ mcpp 打印的建议行随之改成同一形态。
 一个文件名把整个 Windows 构建打断了,而报错说的是别的事。完整分析见
 [`.agents/docs/2026-08-27-issue516-windows-acp-glob-walk-fix.md`](.agents/docs/2026-08-27-issue516-windows-acp-glob-walk-fix.md)。
 
-⭐ **这是 `#230` 的同一处漏网,不是新缺陷。** `#231` 加固了三个窄化站点,
+**这是 `#230` 的同一处漏网,不是新缺陷。** `#231` 加固了三个窄化站点,
 漏掉了同一个 walk 循环里**早一行**执行的第四处。
 
 ### 修复
 
-- **⭐⭐ 一个当前代码页拼不出的目录名,会让 `mcpp` 在 Windows 上以内部错误退出。**(#516)
+- **一个当前代码页拼不出的目录名,会让 `mcpp` 在 Windows 上以内部错误退出。**(#516)
 
   `src/modgraph/scanner.cppm` 的 `is_excluded_walk_dir()` 用
   `dir.filename().string()` 取目录名。MSVC 的 `path::string()` 走
@@ -1006,12 +1094,12 @@ mcpp 打印的建议行随之改成同一形态。
 目标侧被解析出来了,只发给了一个编译单元。完整分析见
 [`.agents/docs/2026-08-27-openkal-native-path-three-issues.md`](.agents/docs/2026-08-27-openkal-native-path-three-issues.md)。
 
-⭐ **与 `2026.8.25.x`/`2026.8.26.1` 是同一族的下一层。** 那两批修的是「谓词问错了」
+**与 `2026.8.25.x`/`2026.8.26.1` 是同一族的下一层。** 那两批修的是「谓词问错了」
 与「答案没接到决定上」;这一批里,答案**接上了一个消费者,而它有五个**。
 
 ### 修复
 
-- **⭐⭐ 编译侧的谓词,是 `2026.8.26.1` 在链接侧修掉的那条的孪生兄弟。**
+- **编译侧的谓词,是 `2026.8.26.1` 在链接侧修掉的那条的孪生兄弟。**
 
   `hostflags.cppm` 问的是 `!crossTargetFlag.empty()` ——「命令行上有没有
   `--target=`」——而它的注释写的是「目标侧来自图」。同一台机器、同一个编译器、
@@ -1026,14 +1114,14 @@ mcpp 打印的建议行随之改成同一形态。
   ```
 
   ⇒ 头文件来自一个库,目标文件链自另一个库。两侧现在读同一个
-  `plan.targetSide.cAbi.prebuilt()`。⚠️ `--no-default-config` 从这个条件里
+  `plan.targetSide.cAbi.prebuilt()`。`--no-default-config` 从这个条件里
   **拆了出来无条件发** —— 它不是载荷头文件集合的一部分,而 cfg 文件按
   `post_install.cppm` 自己的说法是「per-machine, per-install-path artifact」。
 
-  ⚠️ `e2e 295` 写的就是这条恒等式,而它只比对 `^ldflags`,所以恒等式在**下一行**
+  `e2e 295` 写的就是这条恒等式,而它只比对 `^ldflags`,所以恒等式在**下一行**
   不成立而测试看不见。现在两条都比。
 
-- **⭐⭐ 载荷目录名是 LLVM 词汇,而查找用的是 mcpp 词汇 —— 而且失配是静默的。**
+- **载荷目录名是 LLVM 词汇,而查找用的是 mcpp 词汇 —— 而且失配是静默的。**
 
   `include/<triple>/c++/v1` 与 `lib/<triple>` 由 LLVM 的构建写下,带的是
   `x86_64-unknown-linux-gnu`;`tc.targetTriple` 是 mcpp 的
@@ -1041,7 +1129,7 @@ mcpp 打印的建议行随之改成同一形态。
   `if (exists) push_back`,所以找不到就什么也不发生 —— 而那个目录里只有一个文件,
   `__config_site`,它的缺席产生的报错读起来像载荷坏了。两种拼法现在都试。
 
-- **⭐⭐ 由图供给的目标侧,只到达了一个编译单元(mcpp#514 §A)。**
+- **由图供给的目标侧,只到达了一个编译单元(mcpp#514 §A)。**
 
   提供 `mcpp:` 层的包发布的是**整个目标**编译时所依据的头文件集合,而它今天以
   `publicUsage` 的形态**沿依赖边**传播。于是根与 provider 自己的单元拿得到,而
@@ -1049,23 +1137,23 @@ mcpp 打印的建议行随之改成同一形态。
   它在它旁边。结果是一次构建里两种口味的 BMI,任何同时导入两者的 TU 在第一个
   模板实例化处炸掉(`reference to 'space' is ambiguous`)。
 
-  ⭐ 目标侧解析之后,`fromGraph()` 的层的 `publicUsage` 并入**每一个**包的
+  目标侧解析之后,`fromGraph()` 的层的 `publicUsage` 并入**每一个**包的
   `privateBuild`;`std` 模块的命令行也改读同一个集合,不再自己推一遍。
 
-- **⭐⭐ 缓存键描述了编译器,没有描述它被指向的头文件集合(mcpp#514 §B)。**
+- **缓存键描述了编译器,没有描述它被指向的头文件集合(mcpp#514 §B)。**
 
   A 轴上的每一项都在描述**编译器**,没有一项描述它编译时所依据的**库** ——
   而两者是分开安装的。`driverIdentity` 按设计也覆盖不了它:
   `normalize_driver_output` **故意**抹掉路径,好让一个条目能被两个 home 共享。
   新增 `targetHeaderSet` 轴,取自已经解析好的 `linkmodel`,并**分两档相对化**:
-  `<store>` 与 `<home>`。⚠️ 只做 `<store>` 一档不够 —— 最常见的那台机器走
+  `<store>` 与 `<home>`。只做 `<store>` 一档不够 —— 最常见的那台机器走
   `CLibMode::Sysroot`,它唯一的编译 token 是 `--sysroot=<home>/registry/subos/default`,
   在 HOME 底下而不在 store 底下,于是每个条目都会带上这台机器的 home。分得开什么:
   两个载荷(路径里带版本号)⇒ 两个键;一个 home 下的两个 subos ⇒ 两个键;
   两个 home 下同名的 subos ⇒ 仍是一个键(由整工程指纹的第 11 项区分)。
-  ⚠️ 不 bump `kCacheEpoch` —— 旧条目是 miss 而不是不可用。
+  不 bump `kCacheEpoch` —— 旧条目是 miss 而不是不可用。
 
-- **⭐⭐ 请求的版本和载荷目录的版本是两套词汇,而每个查找都按请求那套拼。**
+- **请求的版本和载荷目录的版本是两套词汇,而每个查找都按请求那套拼。**
 
   RuntimeBinding 带的是**声明的**版本(`glibc@2.44`),而 xlings 把载荷目录按这个
   请求**解析成**的版本命名(`2.44.2`)。索引在同一序列内挪动一次包,所有按声明版本
@@ -1075,12 +1163,12 @@ mcpp 打印的建议行随之改成同一形态。
   glibc 的 include 目录只是没被加上,用户读到的是 libstdc++ 头文件里的
   `features.h: No such file`。⇒ 收敛到一个 `payload_dir_for_version`。
 
-  ⭐ **判据是「精化」,不是「按目录序挑一个」**:`2.44.2` 的版本**分量**以请求的分量
+  **判据是「精化」,不是「按目录序挑一个」**:`2.44.2` 的版本**分量**以请求的分量
   开头。`2.4` 回答不了 `2.44`(逐分量比,不是逐字符)。两个载荷都精化同一个请求时
   返回**空** —— 「这个请求的解析结果」得是唯一一个才配叫答案,而按目录序挑正是这里
   每个调用者都拒绝做的猜测。反方向(拿更旧的载荷回答更新的请求)不接受。
 
-- **⭐ home 发现有第四份拷贝,而且会伸到别的 home 里去。**
+- **home 发现有第四份拷贝,而且会伸到别的 home 里去。**
 
   `active_home_xpkgs()` 自己重推了一遍 home(漏掉自包含安装那一档);
   `find_sibling_package` 找不到时**无条件回落** `~/.xlings/data/xpkgs`。
@@ -1092,7 +1180,7 @@ mcpp 打印的建议行随之改成同一形态。
 - **`[build] private_include_dirs`** —— 指出 `include_dirs` 中在本包边界处停住的
   条目。`publicUsage` 此前整份接过 `privateBuild` 的目录,于是一个内嵌了带内部头
   覆盖层的库(musl 的 `src/include` 定义 `hidden`/`weak`/`weak_alias`)会把那些宏
-  发给每一个消费者。⚠️ 它是 `include_dirs` 的**子集**而不是第二个列表:两类目录的
+  发给每一个消费者。它是 `include_dirs` 的**子集**而不是第二个列表:两类目录的
   相对顺序是承重的,而两个 TOML 数组表达不了一个顺序。
 
 ## [2026.8.26.2] — 2026-08-26
@@ -1100,14 +1188,14 @@ mcpp 打印的建议行随之改成同一形态。
 已经解析出的答案,没有被用来做决定。完整分析见
 [`.agents/docs/2026-08-26-resolved-but-not-consulted.md`](.agents/docs/2026-08-26-resolved-but-not-consulted.md)。
 
-⭐ **这不是 2026.8.25.x 那个「谓词回答了比自己更窄的问题」的家族。** 那一族是判据
+**这不是 2026.8.25.x 那个「谓词回答了比自己更窄的问题」的家族。** 那一族是判据
 问错了;这一族里谓词问对了、答案也算对了,只是那个答案**没有接到决定上**。两条都
 是「多存了一个字段而没有多接一根线」,因此读判据时看不出来 —— 只在用户问「你既然
 已经知道了,为什么还要我说一遍」时暴露。
 
 ### 修复
 
-- **⭐⭐ 依赖声明的编译器被检查,但从未被采纳。**
+- **依赖声明的编译器被检查,但从未被采纳。**
 
   ```
   $ cat mcpp.toml
@@ -1127,7 +1215,7 @@ mcpp 打印的建议行随之改成同一形态。
   the graph exists」的接缝,它扫 `pkg.manifest.provides` 来决定编译器,**却不扫
   `requires_`** —— 后者在一千行之后才被收集,只用来否决这个决定。
 
-  ⭐⭐ **修好之后不写任何东西,而这是位置带来的,不是额外加的开关。**
+  **修好之后不写任何东西,而这是位置带来的,不是额外加的开关。**
   `resolve_target_toolchain` 只有两个调用点,整个函数体(含首次运行的
   安装并持久化分支与全部三处 `write_default_toolchain`)都在图之后。把图的要求
   写进 `tcSpec` 的时机早于首次运行分支被求值,于是:
@@ -1137,16 +1225,16 @@ mcpp 打印的建议行随之改成同一形态。
   | 已有 gcc 默认的机器 | 拒绝,要求改全局默认 | 装/用 llvm,`config.toml` 不动 |
   | 什么都没装的机器 | 装 gcc → 持久化 gcc → 再拒绝 | 首次运行分支根本不进,直接装 llvm |
 
-  ⭐ 状态行点名是哪个包要求的、顶掉了什么;`why toolchain --format json` 新增
+  状态行点名是哪个包要求的、顶掉了什么;`why toolchain --format json` 新增
   `compiler.chosenBy = {origin, requiredBy, replaced}`,让「为什么是 llvm」不必去
   解析那行提示 —— 那正是机器接口存在的理由所要消除的字符串匹配。
 
   拒绝只剩一种局面:工程自己在 `[toolchain]` 或 `[target.X]` 写下了相反的编译器。
-  ⚠️ 那种局面里全局默认与本次构建无关,因此原来那条 `mcpp toolchain default llvm`
+  那种局面里全局默认与本次构建无关,因此原来那条 `mcpp toolchain default llvm`
   的建议**连问题都解决不了**,已改为指向那条陈述本身。两个包要求不同的族则是错误
   而不是一次挑选,并同时点名两个包。
 
-- **⭐⭐ tier 闸问的是补全后的身份,而不是请求。**
+- **tier 闸问的是补全后的身份,而不是请求。**
 
   ```
   $ mcpp build --target aarch64-linux
@@ -1161,10 +1249,10 @@ mcpp 打印的建议行随之改成同一形态。
   从没打过的字符串。
 
   省略了 env 段的请求现在对着词表补全,规则 1(词法默认受支持就用它)排在最前,
-  因此 `x86_64-linux` 一动不动,而这件事能自己退休。⚠️ **`parse()` 未改**:身份
+  因此 `x86_64-linux` 一动不动,而这件事能自己退休。**`parse()` 未改**:身份
   必须保持词法、全量、与宿主无关。
 
-- **⚠️ `unknown target 'riscv64-linux'` 说的是假话。**
+- **`unknown target 'riscv64-linux'` 说的是假话。**
 
   `riscv64-linux-musl` 就在词表里(`planned`)。词法填充产生了一个**完全不存在**
   的行,于是一个已登记的目标族被报成未知。而且这条路径没有 `refusal::record`,
@@ -1172,28 +1260,28 @@ mcpp 打印的建议行随之改成同一形态。
   `riscv64-linux-musl`;真正的拼写错误仍报 unknown,但带上了新的
   `unknown-target` 记号。
 
-- **⚠️ `why toolchain --format json` 的两个字段互相矛盾。**
+- **`why toolchain --format json` 的两个字段互相矛盾。**
 
   `cLibrary` 说 glibc/payload,`layers[].c-abi` 说 musl/graph。产物给出裁决 ——
   静态、无解释器、无 `DT_NEEDED`、11 个 openkal 符号 —— glibc 不在里面。两者各自
   准确,回答的却是不同的问题,而消费方无从判断该信哪个。新增
-  `cLibrary.suppliesTarget`;⭐ 是**增字段**而非改名或给 `mode` 加取值,因为
+  `cLibrary.suppliesTarget`;是**增字段**而非改名或给 `mode` 加取值,因为
   docs/11 §6 承诺字段只增不删、含义永不改变。
 
-- **⚠️⚠️ 而「不写任何东西」需要一个有名字的规则,不只是一个位置。**
+- **而「不写任何东西」需要一个有名字的规则,不只是一个位置。**
 
   `write_default_toolchain` 有三个调用点。首次运行那个的条件是
   `!tcSpec.has_value()`,方案确实让它进不去;另外两个 —— Windows 首次运行改道、
   MSVC 不可用时的修复 —— 条件不是它,**都可达**。一台没装工具链的 Windows 机器
   构建一个要求 llvm 的工程,会把 llvm 写成这台机器的默认值。
 
-  ⭐ 修法是给规则一个名字:`tc_origin_may_persist(TcOrigin)`,两处都调用,一条单
-  测陈述它。⚠️ 这条缺陷是**读出来的**:它需要一台没有工具链的 Windows 机器,而
+  修法是给规则一个名字:`tc_origin_may_persist(TcOrigin)`,两处都调用,一条单
+  测陈述它。这条缺陷是**读出来的**:它需要一台没有工具链的 Windows 机器,而
   `config.toml` 的 sha256 判据跑在已配好的环境里,两条分支一条都到不了。
 
 ### 示例
 
-- **⭐ `examples/06-openkal-cross` 现在是四个目标,而且不再写 `[toolchain]`。**
+- **`examples/06-openkal-cross` 现在是四个目标,而且不再写 `[toolchain]`。**
 
   第四行 `--target aarch64-linux` 正是这次修好的那一条 —— 在此之前它补全成
   `aarch64-linux-gnu`(registered but not supported)并拒绝。同时删掉了那个
@@ -1201,26 +1289,26 @@ mcpp 打印的建议行随之改成同一形态。
   `requires = ["mcpp:compiler=llvm"]`,mcpp 现在读它。实测在一台全局默认为 gcc 的
   机器上,四个目标全部解析出 `llvm@22.1.8`,而 `~/.mcpp/config.toml` 一字未改。
 
-  ⚠️ 顺带修掉一处失效的钉:该示例的依赖下界还写着 `0.1.1`,而那个版本的
+  顺带修掉一处失效的钉:该示例的依赖下界还写着 `0.1.1`,而那个版本的
   compiler-rt builtins 在 aarch64 上编不过。这个示例**不被任何 CI 构建**,所以它
   钉住的版本过期了也没有任何东西会说话。
 
 ### CI
 
-- **⚠️⚠️ 目标矩阵的编译器轴跟着「装了什么」走,于是缓存能决定判据。**
+- **目标矩阵的编译器轴跟着「装了什么」走,于是缓存能决定判据。**
 
   实测:同一个提交,PR 的 `scan (windows-x86_64)` 绿,合入 main 后同一个 job 红 ——
   那次 runner 恢复出来的缓存里多了一个 `gcc@16.1.0`,扫描产出 24 格而期望表为这台
   宿主声明的是 16 格,八格全部报成「表里没有这一格」。
 
-  ⭐ **期望表是一份声明**,编译器轴现在跟着它走(`MATRIX_COMPILERS`,由 workflow
+  **期望表是一份声明**,编译器轴现在跟着它走(`MATRIX_COMPILERS`,由 workflow
   从 expected.tsv 的同一列算出,与「装哪些」那一步同源,所以两者不可能各说各话)。
   装着却不在声明里的版本写到 stderr —— 一次没跑的测量和一次通过的测量,在退出码上
   没有区别。
 
 ### 兼容性
 
-⭐ **没有任何一次原本成功的构建换了行为。** 图声明编译器的情形里,原来的结局是
+**没有任何一次原本成功的构建换了行为。** 图声明编译器的情形里,原来的结局是
 `check_requirements` 拒绝 —— 也就是说那些构建本来就不成功;`--target aarch64-linux`
 与 `riscv64-linux` 原来是拒绝;`x86_64-linux` / `x86_64-windows` / `riscv64-none` /
 `aarch64-macos` 的补全结果一字未变(单测逐行遍历整张词表守住这一条)。机器接口只
@@ -1230,9 +1318,9 @@ mcpp 打印的建议行随之改成同一形态。
 
 - e2e `299`–`303`,全部走 `--format json` 分类而非字符串搜索,并接入
   `target matrix` 的第一层 —— **四台构建机各跑一遍**。
-- ⭐ `301` 的判据是 `~/.mcpp/config.toml` 的 **sha256**,不是「构建成功」:构建成功
+- `301` 的判据是 `~/.mcpp/config.toml` 的 **sha256**,不是「构建成功」:构建成功
   与配置被改写可以同时为真,而那正是这次要消除的行为。
-- ⭐ `299` 的第二半是对照 —— `x86_64-linux` 必须仍是 gnu。只测 aarch64 会让「把
+- `299` 的第二半是对照 —— `x86_64-linux` 必须仍是 gnu。只测 aarch64 会让「把
   linux 的默认整个换成 musl」这种过头实现看起来是对的。
 - 单测 `TripleRequest.*` 七条,含一条遍历整张词表的「每个受支持的行都能从它自己的
   拼写到达」。
@@ -1245,7 +1333,7 @@ mcpp 打印的建议行随之改成同一形态。
 
 ### 修复
 
-- **⭐⭐ 命名宿主自己的目标,曾让构建失败。**
+- **命名宿主自己的目标,曾让构建失败。**
 
   同一台机器、同一个编译器、**同一个目标**,只差写不写 `--target`:
 
@@ -1263,17 +1351,17 @@ mcpp 打印的建议行随之改成同一形态。
   后者;而 `crossTarget` 只是 `--target=<三元组>` 这个字符串,任何命名目标都非空
   ——包括命名宿主目标、且完全不依赖任何包的工程。
 
-  ⚠️ **同一个错误的问题被问了三遍**,分散在三处:`link_toolchain_flags`、
+  **同一个错误的问题被问了三遍**,分散在三处:`link_toolchain_flags`、
   `payload_ld`、`atomic_ld`。而其中一处的注释只预告了**两**条通道:
 
   > the C-runtime group reaches the link line through TWO channels, and a reader
   > who fixed one saw the identical error and could reasonably conclude the fix
   > had not worked.
 
-  ⭐ 三条全部改问 `targetSide.cAbi.prebuilt()` —— 与 `2026.8.25.1`
+  三条全部改问 `targetSide.cAbi.prebuilt()` —— 与 `2026.8.25.1`
   把另外三处决定迁过去的**同一个谓词**。这是该族的第六至第八条。
 
-- **⭐ 目标行声明的 sysroot 从不被安装(#510)。**
+- **目标行声明的 sysroot 从不被安装(#510)。**
 
   一行目标表声明两样东西,只有一样被兑现:`pin` 走
   `resolve_xpkg_path(…, autoInstall=true, …)`,`sysroot` 是纯查询,查不到就静默
@@ -1285,13 +1373,13 @@ mcpp 打印的建议行随之改成同一形态。
   error: 'stdio.h' file not found
   ```
 
-  报告点名了这个目标的 C 库,而构建找不到它的头。⚠️ mcpp 自己的裸机 CI **手工装
+  报告点名了这个目标的 C 库,而构建找不到它的头。mcpp 自己的裸机 CI **手工装
   它**并在注释里说明了原因,于是每一条裸机 e2e 都跑在缺陷已被抹平的机器上。
 
   改为走同一个 `autoInstall` 通道;离线与 `MCPP_NO_AUTO_INSTALL` 由 `Fetcher`
   判定,不在此处再问一遍。
 
-- **⭐ 裸机行的 pin 是能力陈述,不是偏好。**
+- **裸机行的 pin 是能力陈述,不是偏好。**
 
   ```
   [toolchain] default = "gcc@16.1.0"
@@ -1303,11 +1391,11 @@ mcpp 打印的建议行随之改成同一形态。
   目标的 C 库」,作者自带编译器时理应让位;裸机行说的是「哪个编译器能发出这个
   目标」——宿主 g++ 发不出 riscv64,谁声明都不行。现在在决定处拒绝,并指出出路。
 
-  ⚠️ **约定仍然可以被推翻**:hosted 目标上显式声明 gcc 照常生效。
+  **约定仍然可以被推翻**:hosted 目标上显式声明 gcc 照常生效。
 
 ### 目标矩阵在四台构建机上找到的
 
-⭐⭐ **116 格,0 个 `mismatch`。** 四台各自的实测写在
+**116 格,0 个 `mismatch`。** 四台各自的实测写在
 [`tests/matrix/expected.tsv`](tests/matrix/expected.tsv),每一行都来自它自己那台
 机器 —— 从别的宿主推断出来的一行,断言的是推断而不是那台机器。
 
@@ -1330,18 +1418,18 @@ mcpp 打印的建议行随之改成同一形态。
 | unsupported | lld-required-absent | 1 |
 | unsupported | other | 1 |
 
-⚠️ 最后那一格是**诚实的** `other`:`std module precompile failed` 由
+最后那一格是**诚实的** `other`:`std module precompile failed` 由
 `stdmod.cppm` 发出,那里够不到拒绝记号的沉淀点。它是**构建失败经拒绝通道浮出**,
 不是一条规则 —— 把它硬塞进邻近的理由才是错的。
 
 
 
-⭐⭐ **把 `linux-aarch64` 加进构建机轴之后,四台各自交出了一台机器上看不见的缺陷。**
+**把 `linux-aarch64` 加进构建机轴之后,四台各自交出了一台机器上看不见的缺陷。**
 轴取自 `release.yml` 发布的那一组(linux-x86_64 / linux-aarch64 / macos-arm64 /
 windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二进制却从没被扫过的
 宿主,它的目标表是一句没人核过的话。
 
-- **⚠️ `--rtlib=compiler-rt` 在 aarch64 上是 codegen 事实,而它被声明在只覆盖
+- **`--rtlib=compiler-rt` 在 aarch64 上是 codegen 事实,而它被声明在只覆盖
   一侧的键上。**
 
   ```
@@ -1350,12 +1438,12 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   ```
 
   `openkal-llvm-runtime` 把它写在 `std-module-flags` 里 —— 那个键到达 `std.pcm`
-  的命令,不到达任何消费者的 TU。⭐ **与 `-fdwarf-exceptions` 是同一个缺陷,换了
+  的命令,不到达任何消费者的 TU。**与 `-fdwarf-exceptions` 是同一个缺陷,换了
   一个 flag**;那次的解法是提升成图级的 `graph_runtime_compile_flags`,这次同样。
 
-  ⚠️ x86_64 上两侧都列空,所以直到第二个架构被构建才可见。
+  x86_64 上两侧都列空,所以直到第二个架构被构建才可见。
 
-- **⚠️ PE + musl 在任何宿主上都没有载荷,而 `host_can_serve` 在 Windows 上说有。**
+- **PE + musl 在任何宿主上都没有载荷,而 `host_can_serve` 在 Windows 上说有。**
 
   ```
   c-abi    musl(payload)
@@ -1367,25 +1455,25 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   `triple::pin_is_capability()` 与 docs/16 都已写明这一行只能由依赖图供给;
   Linux 上同一格早就答 `host-cannot-serve`。
 
-- **⚠️ 宿主服务不了的目标,仍然去装它的载荷。** 拒绝被决定在早、释放在晚(因为
+- **宿主服务不了的目标,仍然去装它的载荷。** 拒绝被决定在早、释放在晚(因为
   图供不供给系统只有解析后才知道),而安装夹在中间,于是先失败且失败得更硬:
   `xlings install of 'xim:x86_64-linux-musl-gcc@16.1.0' failed`。跳过安装让两条
   后续路径都完好;尝试安装帮不了其中任何一条。
 
-- **⚠️ aarch64 Linux 只支持 `musl-gcc`,其余显式延缓。** 上游 LLVM 从 20.x 起停发
+- **aarch64 Linux 只支持 `musl-gcc`,其余显式延缓。** 上游 LLVM 从 20.x 起停发
   `linux-aarch64`,索引里也没有,所以 `available_toolchain_indexes()` 在非 x86_64
-  Linux 上不再列 `llvm` 与 `mingw-cross-gcc`。⭐ 这是**政策陈述**不是索引数据的
+  Linux 上不再列 `llvm` 与 `mingw-cross-gcc`。这是**政策陈述**不是索引数据的
   抄本,并且 `check_aarch64_llvm_deferral.sh` **在理由不再成立时变红** ——
   没人复查的延缓与缺陷无法区分。计划见
   [`.agents/docs/2026-08-26-aarch64-linux-ecosystem-closure.md`](.agents/docs/2026-08-26-aarch64-linux-ecosystem-closure.md)。
 
 - 交叉 musl 与 mingw 的载荷都按宿主架构发布,`host_can_serve` 对两者也改为按架构
-  回答。⚠️ 「自足」讲的是载荷装了什么,不是它为哪些宿主发布 —— 那行注释是对的,
+  回答。「自足」讲的是载荷装了什么,不是它为哪些宿主发布 —— 那行注释是对的,
   代码把它读错了一层。
 
 ### 机器接口
 
-- **⭐⭐ 两条命令进入 `--format json`,矩阵与四条 e2e 不再匹配任何一句话。**
+- **两条命令进入 `--format json`,矩阵与四条 e2e 不再匹配任何一句话。**
 
   ```
   mcpp toolchain list --format json          → mcpp.toolchain.list
@@ -1398,29 +1486,29 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   `tier-planned` / `host-cannot-serve` / `os-mismatch` / `layer-requirement` /
   `layer-ordering`,由 `mcpp.build.refusal` 在每一处拒绝的 `return` 之前记下。
 
-  ⚠️ **代价是当场量到的**:本次会话里我把 `cannot emit it` 改成
+  **代价是当场量到的**:本次会话里我把 `cannot emit it` 改成
   `cannot be emitted by`,e2e 297 的断言随即变成空转——它仍然「通过」,只是不再
   匹配任何东西。消息**仍然是承诺**(点名目标、规则与出路,e2e 照旧断言这一点);
   换掉的是**分类**:一个答案集有限的问题,不该用子串搜索来问。
 
-  ⚠️ 而**查询不能取代构建**。`llvm × x86_64-windows-gnu` 解析得完全正常,失败
+  而**查询不能取代构建**。`llvm × x86_64-windows-gnu` 解析得完全正常,失败
   在链接期的封闭性检查上——只查不建会把它报成绿。矩阵两样都做:分类取自
   `reason`,结论取自构建的退出码。
 
-  ⚠️ `why toolchain` 声明的 effects 故意偏宽(`network` / `write-global-cache` /
+  `why toolchain` 声明的 effects 故意偏宽(`network` / `write-global-cache` /
   `exec-build-script`):它的答案来自与构建同一次的解析。客户端是在运行**之前**
   读这张表的,漏报一项就是一句不成立的安全承诺。
 
-- **⭐ `refused` 曾与 `none` 同读数。** 一处没有记号的拒绝分支让矩阵写下
+- **`refused` 曾与 `none` 同读数。** 一处没有记号的拒绝分支让矩阵写下
   `unsupported / none`——「拒绝了」和「没有理由」共用一个词,正是本次发布在修的
   那个形状,重现在为发现它而造的机器里。现在无记号的拒绝报 `other`:一句可见的
   承认,而不是并进邻近的理由。
 
-- **⭐⭐ 新增 `ci-target-matrix.yml`,三个宿主 × 两层。** 第一层跑上述恒等式,
+- **新增 `ci-target-matrix.yml`,三个宿主 × 两层。** 第一层跑上述恒等式,
   不需要期望表;第二层用 `tests/matrix/scan.sh` 全表扫描 × 两种体系,与仓库里的
   `tests/matrix/expected.tsv` 比对。
 
-  ⚠️ **「跳过」必须是期望表说的,不是运行时发现的**:一格因为「今天这台机器没装
+  **「跳过」必须是期望表说的,不是运行时发现的**:一格因为「今天这台机器没装
   某载荷」而跳过,与「这个组合本就不支持」是两回事,前者会让矩阵在缺件机器上悄悄
   变绿。比对脚本还先断言**扫描真的跑了**——一格没跑与全部通过,在退出码上没有
   区别。
@@ -1428,11 +1516,11 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 
 ### 测试
 
-- **⭐⭐ e2e 295 是一条恒等式,不是一个阈值。** `mcpp build` 与
+- **e2e 295 是一条恒等式,不是一个阈值。** `mcpp build` 与
   `mcpp build --target <宿主自己的目标>` 描述同一次构建,链接线必须逐 flag 相同。
   它不需要期望表、不取决于机器上装了什么,任何宿主都成立。
 
-  ⭐ **它把「修了一半」直接指出来**:差异 7 项 → 5 项 → 3 项 → 0,每一步指向下一
+  **它把「修了一半」直接指出来**:差异 7 项 → 5 项 → 3 项 → 0,每一步指向下一
   条通道。没有它,修完两条会看到「还是红」,而那句注释会让人以为已经找全。
 
 - e2e 296:报告说 `c-abi (payload)` ⇒ 链接线必须含该载荷;说 `(graph)` ⇒ 不得含
@@ -1448,7 +1536,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 
 ### 修复
 
-- **⭐⭐ 一个包声明「我供给哪一层」,让裸机目标丢掉了唯一能产出它的编译器。**
+- **一个包声明「我供给哪一层」,让裸机目标丢掉了唯一能产出它的编译器。**
 
   实测,三行清单就够:
 
@@ -1473,11 +1561,11 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   与 2026.8.25.1 修的四条同型:**一个跨两层的谓词,决定了一件不取决于这两层的事**。
   这是第五条。
 
-  ⚠️ 发现方式:2026.8.25.1 发布后重钉七个下游 pin PR,openkal-opensbi 红在
+  发现方式:2026.8.25.1 发布后重钉七个下游 pin PR,openkal-opensbi 红在
   `g++: unrecognized`。它在 2026.8.24.6 那轮红在**同一条**,所以既非 25.1 引入,
   也非 25.1 修掉——是同一跨度里的遗留。
 
-- **⭐⭐ 图供给了 C 库,不等于目标平台的 SDK 不再需要。**
+- **图供给了 C 库,不等于目标平台的 SDK 不再需要。**
 
   ```
   kernel-abi   openkal   (openkal-macos@0.3.4, graph)
@@ -1490,12 +1578,12 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   会死在 library not found for -lSystem」);而 80 行之后的图分支把整条 `f.ld`
   换掉,`-isysroot` 随之消失——**注释预言的那个失败,由它下面的代码造成**。
 
-  ⭐ **Linux 上二者恰好重合而 Darwin 上不重合**:Linux 的内核接口是一条指令
+  **Linux 上二者恰好重合而 Darwin 上不重合**:Linux 的内核接口是一条指令
   (`syscall`),所以自足的 musl 真的替换了一切;Darwin 的内核接口**本身就是一个
   库**(libSystem),所以 Mach-O 链接无论 libc 从哪来都要 SDK。新增
   `platformAnchor`:写一次、读一次,两个分支不可能对「什么该活下来」有分歧。
 
-- **⭐⭐ 请求的目标与解析出的目标必须是同一个操作系统。**
+- **请求的目标与解析出的目标必须是同一个操作系统。**
 
   ```
   Target x86_64-windows-gnu → x86_64-unknown-linux-gnu
@@ -1508,11 +1596,11 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   不是做出这个决定的那一处。openkal-uefi 撞在链接器上:
   `ld: unrecognized option '--subsystem'`。
 
-  ⭐ **报告里早就有证据,现在对它下断言**,而不是把问题重新推导一遍。范围刻意
+  **报告里早就有证据,现在对它下断言**,而不是把问题重新推导一遍。范围刻意
   只取 OS:`x86_64-windows-gnu → x86_64-w64-windows-gnu` 的差异正是这一行要报告
   的归一化,拿整个三元组比会拒掉每一次正确的交叉构建。
 
-- **⭐⭐ 「首次运行」那条路把 `--target` 丢了。**
+- **「首次运行」那条路把 `--target` 丢了。**
 
   ```
   First run  no toolchain configured — installing gcc@16.1.0 (glibc, native ABI)
@@ -1525,11 +1613,11 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   `overrides.target_triple` 在这条路上**从未被读取**。而载荷解析那条路上
   `autoInstall=true` **本来就在**,只是没被走到。
 
-  ⭐ 修法不是加条件,而是让首次运行**汇入**那条已经会处理目标的路径。上面那条
+  修法不是加条件,而是让首次运行**汇入**那条已经会处理目标的路径。上面那条
   「同一个操作系统」的不变量因此有了配套:守卫让错配变成一句拒绝,汇入让本来就能
   服务的目标不再走到那句拒绝。
 
-  ⚠️ **这一处的第一版是无限递归,而我的注释写着「深度为一」。** 闸放在了分支之外
+  **这一处的第一版是无限递归,而我的注释写着「深度为一」。** 闸放在了分支之外
   (必须放外面:它上面那段 Windows 代码自己会设置 target),而标志没有任何人复位。
   本机看不见——这一格只在「首次运行 + 交叉目标」出现,而开发机永远不是首次运行。
   抓到它的是两条 CI,症状还不同:生态仓库上 `Resolved` 打四遍后 **exit 139
@@ -1541,7 +1629,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   它用 `host_can_serve`(问的是「有没有预制载荷」)去回答「能不能构建」。实测
   Linux 上 `x86_64-windows-musl` 不在列表里,而同一台机器能产出真正的 PE32+。
 
-  ⚠️ **而不是每一行缺席都是这样**:`x86_64-windows-msvc` 与 `aarch64-macos` 在
+  **而不是每一行缺席都是这样**:`x86_64-windows-msvc` 与 `aarch64-macos` 在
   Linux 上缺席是**对的**,MSVC 与 macOS SDK 是宿主专有的,依赖替代不了。判据不
   需要新字段——**一行若指向本宿主装得上的编译器,那它缺的只是系统,而系统可以
   由图供给**。第三种状态:`via dependency graph`。
@@ -1565,7 +1653,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   293 拒绝跨 OS 的解析 + 四个正确交叉目标零误伤;294 列出图供给的目标 + 宿主
   专有的仍然缺席。
 
-- **⚠️ `285`–`289` 此前一条都没在 CI 跑过。** 它们声明 `# requires: llvm`,而两个
+- **`285`–`289` 此前一条都没在 CI 跑过。** 它们声明 `# requires: llvm`,而两个
   linux e2e shard 的能力行里没有 `llvm`,`run_all.sh` 在 skip 时退 0。新增
   `openkal-cross.yml` 的 `ecosystem-e2e`:装 gcc + llvm + 两个模拟器,直跑六条,
   **逐条断言 PASS 行**,并对 287/288 **额外断言运行阶段那一行**(实测它们会降级
@@ -1580,7 +1668,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 
 ### 修复
 
-- **⭐⭐ 图供给内核接口时,载荷那份 C 库被一起断开了。**
+- **图供给内核接口时,载荷那份 C 库被一起断开了。**
 
   ```
   error: hermetic link check failed
@@ -1610,12 +1698,12 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   分开:**一个在平台之上实现 openkal 的后端,而程序仍用载荷的 C 库**。
   驱动照样索取启动文件,链接器却没有了可查的路径。
 
-  ⚠️ **这个形状正是每个 openkal 后端被测试的方式** —— openkal-linux、
+  **这个形状正是每个 openkal 后端被测试的方式** —— openkal-linux、
   openkal-macos、openkal-windows 三家的一致性套件都对着平台自己的 C 库构建。
   它们的 CI 钉在旧 mcpp 上,所以一直绿;pin 一动就全红,而这是缺陷被发现的
   唯一原因。
 
-  ⚠️ **mcpp 278 条 e2e 里,「kernel-abi 来自图 + C 库来自载荷」这个组合一条
+  **mcpp 278 条 e2e 里,「kernel-abi 来自图 + C 库来自载荷」这个组合一条
   都没有。** 新增 `285_kernel_abi_from_graph_keeps_the_payload_c_library.sh`,
   断言到**产物能跑**,而不只是链接成功。
 
@@ -1629,14 +1717,14 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   区间由 CI 侧三分支并行二分给出:`8.21.3 绿 → 8.24.1 红`,唯一实质提交是
   #486。
 
-  ⭐ **判据是层的来源,不是情形的列举。** `Origin` 有四个值
+  **判据是层的来源,不是情形的列举。** `Origin` 有四个值
   (`Payload` / `Xpkg` / `Graph` / `None`),而链接线要问的是「C 库是不是来自
   解析之前就存在的目录」—— 这正是 `Layer::prebuilt()` 的定义,也是本模块开头
   那段注释划分世界的方式(prebuilt 在解析前可知,composed 在解析后才知)。
   因此**没有新增谓词**:两处改用 `cAbi.prebuilt()`,与既有的两处读法(C++ 层
   能否用载荷运行时、`check_layering`)成为同一个事实的第三次读取。
 
-  ⚠️ 一版写成 `fromGraph() || absent()` 的中间修法被否掉了:它答对三个来源、
+  一版写成 `fromGraph() || absent()` 的中间修法被否掉了:它答对三个来源、
   对 `Xpkg`(来自预构建 sysroot 的 C 库)沉默,而那同样不是载荷的。
 
 - **ninja 后端的测试夹具补上了目标侧。**
@@ -1647,10 +1735,10 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   才分开,而夹具描述的于是变成「没有 C 库的目标」——它拿到 `-nostdlib -static`
   且不带任何运行期搜索路径,而这个文件里 44 条断言全是关于「有载荷 C 库」的。
 
-  ⚠️ **没有任何生产路径会带着全 `None` 的 `TargetSide` 走到 flags**:`resolve`
+  **没有任何生产路径会带着全 `None` 的 `TargetSide` 走到 flags**:`resolve`
   给普通本机构建的是 `cAbi = { Payload, … }`。夹具现在照实写。
 
-- **⭐⭐ 缓存键漏掉了新参数,于是跨着一处不兼容命中了。**
+- **缓存键漏掉了新参数,于是跨着一处不兼容命中了。**
 
   `compile_flags(spec)` 在 #486 长出第二个参数 `targetCxxRuntime`,而缓存键
   仍按一个参数算:
@@ -1663,11 +1751,11 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   「拿到一份为另一套 flag 建的产物」**——实测 `openkal@0.7.0` 出现 6 个槽位
   对应 5 个尺寸各异的 BMI。
 
-  ⚠️ 这类缺陷不会在加参数的那天失败,它在下一次缓存命中时失败,而那时改动
+  这类缺陷不会在加参数的那天失败,它在下一次缓存命中时失败,而那时改动
   已经不在视野里了。三条单元测试因此**直接打在 `build_axes()` 上**,而不是手
   搭一个 `BuildAxes`——后者表达不出「推导过程本身错了」这件事。
 
-- **⭐ 载荷的 C++ 运行时,服务的是载荷的 C 库。**
+- **载荷的 C++ 运行时,服务的是载荷的 C 库。**
 
   ```
   undefined reference to `__cxa_allocate_exception'
@@ -1678,12 +1766,12 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   OR。一个「内核接口来自包、而 C 库与 C++ 运行时都来自载荷」的程序本该由那些归档
   服务,OR 却说不是,`-nostdlib++` 于是砍掉了它要用的那一份。
 
-  ⚠️ **这一处在两个方向上都错过。** 最初是 `targetCxxRuntime`,对 C 程序失败
+  **这一处在两个方向上都错过。** 最初是 `targetCxxRuntime`,对 C 程序失败
   (它没有 C++ 运行时,答「否」被读成「载荷的是对的」);#486 换成 OR,又矫枉过正。
   **C 库才是决定它的那一层** —— 理由 `check_layering` 早已反向陈述:载荷的 C++
   运行时是对着载荷的 C 库配置的,所以当且仅当那份 C 库在用时它才可用。
 
-- **⭐ 第四条同型:`linkage = "dynamic"` 的「无效」诊断在说谎。**
+- **第四条同型:`linkage = "dynamic"` 的「无效」诊断在说谎。**
 
   实测 2026-08-25,在 285 的形状上(kernel-abi 来自图 + C 库来自载荷):
 
@@ -1701,7 +1789,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   prepare.cppm 里另外两处 `system_from_graph()` 保留:它们问的是「图有没有供给
   系统的任一部分」,那确实是两层的问题。
 
-- **⭐ `build.mcpp` 的 `PATH` 前置项目声明的那个环境。**
+- **`build.mcpp` 的 `PATH` 前置项目声明的那个环境。**
 
   ```
   PATH=<被声明环境的 bin>:<mcpp 启动时的 PATH>
@@ -1713,15 +1801,15 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   `[error] qemu-system-riscv64 is not installed in this subos` —— 找到了、报告
   为存在、却跑不了,而可用的那份就在项目自己的环境里,不在 `PATH` 上。
 
-  ⚠️ **只对声明了 `[xlings].subos` 的项目生效,没声明的逐字节不变。** 一个更早
+  **只对声明了 `[xlings].subos` 的项目生效,没声明的逐字节不变。** 一个更早
   的草案无条件前置 mcpp 共享的 `subos/default/bin`,那会让「构建看见什么」取决
   于这台机器上还装过什么 —— 同一台机器上的两个项目彼此一致,而同一个项目在两台
   机器上不一致。是声明本身把它放到前面的。
 
-  ⚠️ **前置而非替换。** 构建程序合理地会调 `git`、`python3`、shell,这些都不在
+  **前置而非替换。** 构建程序合理地会调 `git`、`python3`、shell,这些都不在
   SubOS 里;只有被声明目录的 `PATH` 会把它们全部弄坏。
 
-  ⭐ **没有新的决定点。** `mcpp::xlings::runtime` 早就是「项目用哪个 SubOS」的
+  **没有新的决定点。** `mcpp::xlings::runtime` 早就是「项目用哪个 SubOS」的
   唯一策略,`RuntimeBinding::subosDir` 是它已解析的答案;本次只是把这个答案多交
   付给一个消费者。`projectSubosBin` 在绑定解析后算**一次**,两个交付点各自取用。
   本次发布修的三条缺陷全部来自「一个事实在多处各自推导」。各包的载荷路径由
@@ -1754,7 +1842,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   | 290 | 声明把环境放到 `PATH` 前面,**而且只有声明会** —— 两半都对着**继承的那个值**比对,不是比对一个模式 |
   | 291 | `dynamic` 只在 C 库来自图时被拒 —— 且断言产物的 `DT_NEEDED` 而非只断言文案 |
 
-- **⚠️ 上面这张表里的 285–289,此前一条都没在 CI 跑过。**
+- **上面这张表里的 285–289,此前一条都没在 CI 跑过。**
 
   它们声明 `# requires: llvm`,而两个 linux e2e shard 报的能力行是
 
@@ -1773,7 +1861,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   这六条,再逐条断言它们的 PASS 行真的出现了。与 `ci-linux-e2e.yml` 的
   `baremetal` job 同形,同因。
 
-  ⭐ **这个 job 第一次跑就抓到 287 在说谎。** 它用
+  **这个 job 第一次跑就抓到 287 在说谎。** 它用
   `command -v llvm-objdump || command -v objdump` 找反汇编器,而 CI 上前者不在
   PATH、后者是宿主 GNU binutils —— BFD 只编了 x86_64。让它反汇编 aarch64 会打印
   一个文件头、**零条指令、零报错**:
@@ -1799,7 +1887,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 
 ### 新增
 
-- **⭐ `x86_64-windows-musl`:Windows 上的 musl 有名字了。**
+- **`x86_64-windows-musl`:Windows 上的 musl 有名字了。**
 
   同一个 `--target x86_64-windows-gnu`,两种体系下的 C 库完全不同 ——
   而 mcpp 用同一个名字称呼它们。实测同一份源码:
@@ -1809,11 +1897,11 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   | 体积 | 587,894 | **9,815,552**(16.7×) |
   | 依赖 DLL | `KERNEL32`、**`msvcrt.dll`** | `ntdll`、`KERNEL32`、`SHELL32` |
 
-  ⭐ MinGW 的 C 库不是自足的:`printf`/`malloc` 的实现在目标机自带的
+  MinGW 的 C 库不是自足的:`printf`/`malloc` 的实现在目标机自带的
   `msvcrt.dll` 里。musl 是自足的,整个 C 库静态链入,只经 openkal 调
   Win32 原语。**两者是不同的东西,不该共用一个名字。**
 
-  ⚠️ **这个名字 LLVM 拼不出来。** 实测 llvm 22.1.8:
+  **这个名字 LLVM 拼不出来。** 实测 llvm 22.1.8:
 
   ```
   clang++ --target=x86_64-pc-windows-musl -c t.cpp
@@ -1824,7 +1912,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   `gnu`/`cygnus`/`itanium`/`musl`,前三个能编,只有 `musl` 死;
   预定义宏显示它从未被建模(无 `__MINGW32__`)。
 
-  ⭐ **于是 mcpp 的名字与交给 clang 的三元组必须是两个字符串**,而它们
+  **于是 mcpp 的名字与交给 clang 的三元组必须是两个字符串**,而它们
   本来就是 —— 构建报告里那个箭头两侧就是:
 
   ```
@@ -1832,11 +1920,11 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
          ^ 回答「C 库是谁」      ^ 回答「遵循哪套对象 ABI」
   ```
 
-  ⚠️ 该行 pin 为 `llvm@22.1.8`,不是偏好:全局默认为 gcc 时,空 pin 会让
+  该行 pin 为 `llvm@22.1.8`,不是偏好:全局默认为 gcc 时,空 pin 会让
   它落到 musl-gcc 载荷并报「没有 C++ 前端」—— 一条关于缺前端的消息,
   而真正的问题是只有 clang 能发这个目标。裸机各行同理。
 
-  ⚠️ 档为 `preview`:`verified` 的定义是「构建**并运行**过」,而端到端
+  档为 `preview`:`verified` 的定义是「构建**并运行**过」,而端到端
   可用还差一环 —— `openkal-musl@0.3.3` 精确钉死 `openkal-windows = "0.1.3"`,
   索引里已有的 0.1.4 到不了消费者。生态链条另行推进。
 
@@ -1845,15 +1933,15 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 - **构建期体系下 `x86_64-windows-gnu` 的名实不符,此前静默。**
 
   ```
-  x86_64-linux-gnu     名字说 gnu，事实是 musl  →  ⚠️ 警告
-  x86_64-windows-gnu   名字说 gnu，事实是 musl  →  ❌ 静默
+  x86_64-linux-gnu     名字说 gnu，事实是 musl  →  警告
+  x86_64-windows-gnu   名字说 gnu，事实是 musl  →  静默
   ```
 
   `check_request()` 豁免了非「C 库轴」的平台,理由是「Windows 上 `gnu`
   命名对象 ABI 而非 C 库」—— **只对了一半**:那一段捆着对象 ABI(被兑现)
   与 MinGW 的 C 运行时(被图替换),第二件正是该函数存在的意义。
 
-  判据改为「轴 ∈ {CLibrary, ObjectAbi}」。⚠️ 裸机的 `elf` 继续豁免 ——
+  判据改为「轴 ∈ {CLibrary, ObjectAbi}」。裸机的 `elf` 继续豁免 ——
   它在任何平台上都不命名 C 库,对它说「请求了 `elf` C ABI」是胡话。
   消息在对象 ABI 轴上额外说明 ABI 那一半**未受影响**。
 
@@ -1873,7 +1961,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
       fatal error: 'sbi.h' file not found
   ```
 
-  ⚠️ 这条诊断指向的东西全是错的:路径是作者没写过的暂存目录,头文件就躺在源码
+  这条诊断指向的东西全是错的:路径是作者没写过的暂存目录,头文件就躺在源码
   期待的位置,而触发它的构建没有要求任何不寻常的事情 —— 一张图里有两个主版本是
   受支持的安排,这是它最普通的后果。
 
@@ -1890,7 +1978,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 
 ### 改进
 
-- **⭐ `<arch>-<os>` 现在在每个平台上都是一个完整的目标。**
+- **`<arch>-<os>` 现在在每个平台上都是一个完整的目标。**
 
   ```
   mcpp build --target x86_64-windows    # 此前:error: unknown target
@@ -1901,7 +1989,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   **而它只在 Linux 与 macOS 上成立**。被强制写出第三段的两个平台
   (windows、none),恰恰是构建期体系最常用的两个。
 
-  ⭐ **真正的分界是两种体系,而不是平台。**
+  **真正的分界是两种体系,而不是平台。**
 
   | | 传统预构建体系 | 构建期体系 |
   |---|---|---|
@@ -1913,11 +2001,11 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   它**更准确**,因为那次构建里编译器是 clang、链接器是 lld、C 库是 musl、
   C++ 运行时是 libc++,**没有任何东西是 GNU 的**。
 
-  ⚠️ **填 `gnu` 而不是宿主自己的 env。** `host_triple()` 在 Windows 上答
+  **填 `gnu` 而不是宿主自己的 env。** `host_triple()` 在 Windows 上答
   `msvc`,按它填会让同一条命令在不同宿主上产生不同的输出目录与缓存键 ——
   目标的身份不允许依赖于它在哪里被构建。
 
-  ⭐ **判据是一个指纹,不是「能构建」。** 同一个二进制、干净的 `target/`,
+  **判据是一个指纹,不是「能构建」。** 同一个二进制、干净的 `target/`,
   两种拼法都落进 `target/x86_64-windows-gnu/<同一指纹>/`,第二次构建
   0.10s 全缓存命中。若各自产生一个指纹,短拼法就只是「少打四个字符、
   多编译一遍」。
@@ -1940,7 +2028,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
          c-abi   musl   (openkal-musl@0.3.3, graph)
   ```
 
-  ⭐ 沉默作为**诊断**是对的 —— 在 Windows 上报「名字请求了 `gnu` C ABI」
+  沉默作为**诊断**是对的 —— 在 Windows 上报「名字请求了 `gnu` C ABI」
   会在每一次合法的 MinGW 构建上出现,而且说的是错的。作为**报告**则不够:
   读者在其中找不到一行叫 `gnu`,于是把它映到最像 C 库名字的那一行。
 
@@ -1950,7 +2038,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu selects the Itanium C++ ABI, not a C library)
   ```
 
-  ⭐ **它不对应报告里的任何一行,而这正是要点。** 对这次构建的产物实测:
+  **它不对应报告里的任何一行,而这正是要点。** 对这次构建的产物实测:
 
   | 观测 | 值 |
   |---|---|
@@ -1964,14 +2052,14 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   Itanium ABI 上。因此报告命名那套 **ABI 本身**,它的名字不出现在任何一行里,
   于是不会被误当成某一层。
 
-  ⚠️ 名词取自**值**而非仅取自轴:`gnu` 与 `msvc` 同轴而选中相反的 ABI,
+  名词取自**值**而非仅取自轴:`gnu` 与 `msvc` 同轴而选中相反的 ABI,
   按轴取名会给 MSVC 构建打印「Itanium」—— 那不只是含糊,是假的。
 
   内部把 `envNamesCAbi` 这个布尔换成 `EnvAxis`,因为布尔是对事实的有损编码:
   该段在 Linux 上是 C 库、Windows 上是对象 ABI、无操作系统时是对象格式。
   一个只回答「是否为第一种」的布尔,能压住错误的警告,却给不出正确的名字。
 
-  ⚠️ 该提示**不出现**在 C 库来自载荷时:那种情况下 C 库正是三元组选中的,
+  该提示**不出现**在 C 库来自载荷时:那种情况下 C 库正是三元组选中的,
   `gnu → ucrt` 是可见的因果,加注就成了每次普通 Windows 构建上的噪声。
 
 ### 文档
@@ -1984,7 +2072,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 
 ### 修复
 
-- **⚠️ `mcpp run --target X` 把 X 的构建记进了宿主的槽。**
+- **`mcpp run --target X` 把 X 的构建记进了宿主的槽。**
 
   损害不在这条命令 —— 它构建得完全正确 —— 而在下一条:
 
@@ -2004,10 +2092,10 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   overrides 并正确交叉构建,唯独没把它传给写缓存的那一步。`mcpp build` 的
   两个调用点都传了。
 
-  ⭐ 同一个缺陷有**两条到达路径**:目标写在清单的 `[build] target` 里(已守),
+  同一个缺陷有**两条到达路径**:目标写在清单的 `[build] target` 里(已守),
   以及目标来自 `--target` flag(本次)。修好一条不会暴露另一条。
 
-  ⚠️ 回归测试的判据是**路径而不是退出码**。异架构产物 exec 会失败,所以
+  回归测试的判据是**路径而不是退出码**。异架构产物 exec 会失败,所以
   只看退出码的测试在那里因错误的理由通过,**而在同架构上完全测不到** ——
   后者更危险:用户不会看到崩溃,只会拿到一个 musl 产物冒充宿主产物。
 
@@ -2015,7 +2103,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 
 ### 修复
 
-- **⚠️ 三元组是请求,而解析把「未指定」抹掉了。**
+- **三元组是请求,而解析把「未指定」抹掉了。**
 
   ```
   $ mcpp build --target x86_64-linux          # 我写的是「不指定 C 库」
@@ -2027,23 +2115,23 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   身份必须是全的,请求必须能说「没指定」;`parse` 用自动填充让身份变全,
   代价是请求消失 —— 两态在下游不可区分。
 
-  ⚠️ 修法是窄的:保留填充,另记 `Triple::envExplicit`。而请求**必须在规范化
+  修法是窄的:保留填充,另记 `Triple::envExplicit`。而请求**必须在规范化
   之前捕获** —— `str()` 渲染的是填好的身份,之后再 parse 就分不出来了。
 
   未指定 ⇒ 报告显示工程写的那个拼写;写了且与图矛盾 ⇒ **拒绝**。
 
-- **⚠️ 目标行的约定在图之前就被应用,而它要回答的问题在图之后才有答案。**
+- **目标行的约定在图之前就被应用,而它要回答的问题在图之后才有答案。**
 
   `x86_64-linux-musl → gcc@16.1.0` 说的不是「偏好 gcc」,是「musl-gcc 载荷
   供给这个目标的 C 库」。工程的 C 库若来自依赖图,该载荷根本不被使用。
 
-  ⚠️ 早决定被**双向实测**否掉:无条件应用会替换用户用 `mcpp toolchain default`
+  早决定被**双向实测**否掉:无条件应用会替换用户用 `mcpp toolchain default`
   设下的工具链;不应用会让一个零依赖的交叉构建从可用变为不可用。
 
-  ⭐ 判据换成它本来就该是的那个:**图供给 `kernel-abi` 或 `c-abi` 时,约定不适用。**
+  判据换成它本来就该是的那个:**图供给 `kernel-abi` 或 `c-abi` 时,约定不适用。**
   工具链解析因此移到依赖解析之后。
 
-  ⚠️ 代码不搬,只搬执行时机 —— 原地包成 lambda,在图已知处调用。
+  代码不搬,只搬执行时机 —— 原地包成 lambda,在图已知处调用。
   先前记录的「39 处读写挡着」是**没测就写下的**:实测依赖解析段读 `tc` 仅 1 处,
   而那一处要的是三元组不是编译器。
 
@@ -2051,9 +2139,9 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 
   | 场景 | 结果 |
   |---|---|
-  | openkal 工程 + 全局 llvm 默认 + `--target x86_64-linux-musl` | `Resolved llvm@22.1.8` ✅ |
-  | 无依赖工程 + 同一目标 | `Resolved gcc@16.1.0`(约定生效)✅ |
-  | 无依赖工程 + `x86_64-windows-gnu` | `Resolved gcc@16.1.0` ✅ |
+  | openkal 工程 + 全局 llvm 默认 + `--target x86_64-linux-musl` | `Resolved llvm@22.1.8` |
+  | 无依赖工程 + 同一目标 | `Resolved gcc@16.1.0`(约定生效)|
+  | 无依赖工程 + `x86_64-windows-gnu` | `Resolved gcc@16.1.0` |
 
 ## [2026.8.24.2] — 2026-08-24
 
@@ -2065,7 +2153,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   builtins**、21 个是 libunwind 的。这个包最大的一块此前声明在 `mcpp:c++-abi`
   名下 —— 而 `__udivti3` 及其同类是一个**纯 C 程序**需要的东西,与 C++ 无关。
 
-  ⚠️ 把 builtins 算作 C++ 运行时的一部分,与 `targetside` 模块开头记录的缺陷同形:
+  把 builtins 算作 C++ 运行时的一部分,与 `targetside` 模块开头记录的缺陷同形:
   一个交叉到 macOS 的 C 程序被问「有没有 C++ 运行时」,答「没有」,链接行因而
   保留了载荷自带的 libc++。**一个只有部分程序需要的层仍然是层。**
 
@@ -2073,7 +2161,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   `compiler` 是唯一一个包不能供给的层 —— 族与族之间的差异(flag 拼写、模块模型、
   BMI 格式、驱动 cfg)是引擎必须持有的事实,不是数据能描述的。
 
-  ⚠️ `compiler` 层上报**族名**(`llvm`)而非驱动名(`clang`):使用者书写的每一处
+  `compiler` 层上报**族名**(`llvm`)而非驱动名(`clang`):使用者书写的每一处
   都用族名,报告用驱动名会让 `requires = ["mcpp:compiler=llvm"]` 永远不可满足。
 
 - **`requires = ["mcpp:<层>=<实现>"]` —— 在引擎里不出现实现名的前提下执行分层规则。**
@@ -2084,11 +2172,11 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   `if (stdlib == "libc++" && compiler == gcc)` 会把两个实现名放进引擎;
   写在包里,引擎只需检查一条它能一般性陈述的关系。
 
-  ⚠️ 检查在**编译开始之前**运行,这正是声明它的全部意义。
+  检查在**编译开始之前**运行,这正是声明它的全部意义。
 
 - **规则一:每层恰好一个供给者。**
 
-  ⚠️ 此前两个包供给同一层时,**图遍历顺序里第一个静默胜出** —— 那个顺序既不是
+  此前两个包供给同一层时,**图遍历顺序里第一个静默胜出** —— 那个顺序既不是
   作者写的,也不是他能预测的 —— 而落选者的 `[build]` 段仍然进入命令行。
   判据是失败模态:选错不会让链接失败,会得到一个能跑、偶尔崩的程序。
   `[build] runner` 早已按同一条规则处理。
@@ -2111,13 +2199,13 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 
 - **`Family` 去掉 `OpenkalLlvm`,拼写归一为 `llvm`。**
 
-  ⚠️ 保留枚举项的代价不止一条死分支:可用工具链列表按族枚举,一份载荷挂在两个
+  保留枚举项的代价不止一条死分支:可用工具链列表按族枚举,一份载荷挂在两个
   族名下就出现两次,而安装状态按族记录 ⇒ **第二份被报成未安装,并被推荐给已经
   装了它的人。**
 
 - **词表 pin 替换用户默认时,状态行说出替换与修法;图已知后指出这次替换本可不必。**
 
-  ⚠️ 让全局默认压过词表 pin 的做法被实测否掉:一个无依赖的工程、全局默认
+  让全局默认压过词表 pin 的做法被实测否掉:一个无依赖的工程、全局默认
   `llvm@22.1.8`、`--target x86_64-windows-gnu`,**从能构建变成不能构建**。
   行所 pin 的不是「偏好的编译器」而是「供给该目标 C 库的载荷」。
   结构性修法(把 pin 的决定与目标侧一样后移)未在本版落地:`tc` 在解析后到图之间
@@ -2128,7 +2216,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 - `hosted-standard-library` 继续表示 C++ 层;
 - `openkal-llvm` 拼写继续解析;
 - `[package]` 下三个 std-module 键继续被接受;
-- ⚠️ 实测:**旧引擎(2026.8.24.1)读带 `requires` 的清单构建成功** ——
+- 实测:**旧引擎(2026.8.24.1)读带 `requires` 的清单构建成功** ——
   TOML 侧忽略未知键,xpkg 侧警告而非报错。已发布的包因此可以先行声明。
 
 ## [2026.8.20.2] — 2026-08-20
@@ -2141,7 +2229,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   一份都不要、厂商 SDK 上的工程要换成 newlib、`std-freestanding` 坐到 openkal 的
   C 库上也要换。**一个旋钮解锁三条线。**
 
-  ⚠️ 字段是可选值而不是字符串,因为**缺席与空是两个不同的答案**:缺席继承目标表行,
+  字段是可选值而不是字符串,因为**缺席与空是两个不同的答案**:缺席继承目标表行,
   `sysroot = ""` 是零 libc 档。用普通字符串两者不可区分,而空串正是没有 sysroot 的
   目标行本来的样子 —— 内核工程会静默地把 picolibc 拿回去。
 
@@ -2153,7 +2241,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   `mcpp::target_builtins_lib()` / `mcpp::target_libc_profile()` /
   `mcpp::target_libc()`。
 
-  ⚠️ 这层耦合**在任何 manifest 里都看不见**:`riscv-virt-rt` 既不声明 LLVM 也不
+  这层耦合**在任何 manifest 里都看不见**:`riscv-virt-rt` 既不声明 LLVM 也不
   声明 picolibc,却依然服务不了第二种工具链或第二份 C 库,因为
   `clang_rt.builtins-riscv64` 与 `rv64gc/lp64d` 写进了它的 build.mcpp。**声明出来的
   依赖可评审;写死的名字只在换东西时才失败。**
@@ -2165,13 +2253,13 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 
   裸机工程一用 `std::vector`,链接就死在标准库深处某个头文件里的 mangled 符号上,
   而消息里没有一处说明哪个包提供它。现在追加说明,并给出激活 feature 的写法。
-  ⭐ 该建议**不带版本字面量** —— 它点名的是包与 feature,因此跨该包的每个版本都成立。
+  该建议**不带版本字面量** —— 它点名的是包与 feature,因此跨该包的每个版本都成立。
 
 ### 测试
 
 - **e2e 机器校验 `import std` 诊断里那条可粘贴的依赖行。**
 
-  ⚠️ 同一个缺陷发过两次(先是包不存在,后是版本过期),而两次的修法都是「改字面量
+  同一个缺陷发过两次(先是包不存在,后是版本过期),而两次的修法都是「改字面量
   + 加注释」;第二次发生时,第一次留下的注释就在断掉的那一行正上方。**注释强制不了
   跨仓库不变量。**
 
@@ -2195,7 +2283,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   `DT_RUNPATH`——一串指向**构建机** `~/.mcpp/` 的绝对路径。消费者在另一台机器上
   拿到的是 `libstdc++.so.6: cannot open shared object file`。
 
-  ⚠️ **issue 里建议的 `$ORIGIN` 修不好它,空串也修不好。** 在真实包 + 真实消费者上
+  **issue 里建议的 `$ORIGIN` 修不好它,空串也修不好。** 在真实包 + 真实消费者上
   实测(把构建机 store 变成不可达):
 
   | 发货 `.so` 上的状态 | 消费方 `DT_RPATH` 被继承 | 结果 |
@@ -2249,7 +2337,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   |---|---|---|
   | 可执行文件 | `--strip-all` | 没有人链接它 |
   | 共享库 | `--strip-unneeded` | 保留 `.dynsym`——那**就是**导出表 |
-  | 静态归档 | `--strip-debug --enable-deterministic-archives` | ⚠️ `--strip-all` 会删掉归档的**符号索引**,消费方链接时报 `archive has no index; run ranlib to add one`(实测) |
+  | 静态归档 | `--strip-debug --enable-deterministic-archives` | `--strip-all` 会删掉归档的**符号索引**,消费方链接时报 `archive has no index; run ranlib to add one`(实测) |
 
   被捆绑进 bundle 的第三方 `.so` **不**剥——它们不是 mcpp 构建的。
 
@@ -2260,7 +2348,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   `libmathkit-shared.so` 是常态),扁平布局会让后一条覆盖前一条,而前一个产物的
   `.gnu_debuglink` 会静默指向另一个目标的符号。
 
-  ⚠️ **一条要知道的后果**:裸 `mcpp build` 与裸 `mcpp pack` 现在写进**不同的**
+  **一条要知道的后果**:裸 `mcpp build` 与裸 `mcpp pack` 现在写进**不同的**
   `target/<triple>/<fingerprint>/` 目录(指纹把 profile 算进去了)。手工放到构建
   产物旁边的文件只在两条命令解析到同一个 profile 时才被 `pack` 看见;声明式通道
   (`[runtime] deploy_files`、`runtime_search_dirs`)不受影响。e2e 240 因此在
@@ -2288,7 +2376,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 - **原生 `cl.exe` 可以消费打包库了 —— 而且这条此前就已可用,是文档没跟上。**
 
   机制(方言中立的 `[target.<pred>.runtime]`)在 2026.8.18.2 就落地了,而
-  docs/12 的边界表仍写着 ❌,同一份文档的正文却在描述解决方案。现在两端都验证了:
+  docs/12 的边界表仍写着 ,同一份文档的正文却在描述解决方案。现在两端都验证了:
   渲染侧有可移植单测,端到端的 e2e **消费方钉死 `msvc@system`** —— 这一点是判据:
   若中立形式被忽略而 `ldflags` 生效,clang 消费者**照样能过**,只有 cl 会因为
   一个 `-L` 失败,所以只有它能证明这件事。e2e 还断言生成的图里**没有**该腿的 `-L`。
@@ -2299,7 +2387,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   而每次挂错的表现都相同:**在恰好一个平台上莫名其妙地失败**,报错既不点名那个
   flag,也不点名它背后的决定。
 
-  ⚠️ 其中一条是反直觉的:`-L` vs `/LIBPATH:` **按方言判才是对的** ——
+  其中一条是反直觉的:`-L` vs `/LIBPATH:` **按方言判才是对的** ——
   它交给的是 mcpp 直接调用的那个程序,而不是链接器。面向 MSVC ABI 的 clang
   是同时区分这三根轴的反例:它说 GNU 方言、产 MSVC ABI 对象、出 PE 映像。
 
@@ -2328,7 +2416,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 - docs/05 增加一条可引用的规则:**`sources` 匹配到的每一项都必须产出会被链接的对象**
   —— 让 2026.8.18.2 引入的硬失败有出处,而不是凭空多出一条禁令。
   中文版此前连 `sources = []` 那条注记都没有,一并补齐。
-- docs/12 的边界表改为 ✅(中英);MSVC **数据符号仍需 `dllimport`** 这条限制
+- docs/12 的边界表改为 (中英);MSVC **数据符号仍需 `dllimport`** 这条限制
   由 e2e 258 **做成可复现对照**,不再只是散文 —— 断言钉的是「有/无 `dllimport`
   行为不同」,而不是某条随工具链版本变化的报错文本。
 
@@ -2388,7 +2476,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   根因是「这是不是模块接口」有**两个答题者**:扫描器读到 `export module` 记下
   `provides`(所以边上挂了 `bmi_out`),而分类器说 `Other`,链接集合只读后者。
 
-  ⚠️ 这是**行为变化**:`sources` 里混进 `.md` / `.txt` 的工程会开始报错。
+  这是**行为变化**:`sources` 里混进 `.md` / `.txt` 的工程会开始报错。
 
 ## [2026.8.18.1] — 2026-08-18
 
@@ -2426,7 +2514,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 - **`kind = "shared"` 不再只有 Linux:PE/MinGW 与 Mach-O 都能产、能打包、能跑。**
 
   过去这条路只在 ELF 上验证过,其余一律拒绝。**这是能力的增加,不是修一个洞** ——
-  ⚠️ 早前的提交信息把那道守卫描述成「在原生构建上失效」,那是**错的**:
+  早前的提交信息把那道守卫描述成「在原生构建上失效」,那是**错的**:
   `tc.targetTriple` 由编译器的 `-dumpmachine` 填,原生构建上**非空**
   (实测 `resolution.json` 记的是 `x86_64-linux-gnu`),所以原生 macOS / 原生 Windows
   本来就被它拦住。
@@ -2514,7 +2602,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   用到它才暴露出来。现在扫描器记 `provides = M:part` 并标 `providesInterface
   = false`;`import :part;` 按 TU 自己所属的模块名解析。
 
-  **⚠️ 两处行为变化**:①两个文件声明同一个分区(`module m:p;` × 2)现在会被
+  **两处行为变化**:①两个文件声明同一个分区(`module m:p;` × 2)现在会被
   **拒绝并点名两个文件**,此前是静默接受 —— 那种程序本来就 ill-formed,
   但它是一条新的失败路径;②`sources = []` 从「等于不写」变成「什么都不编」,
   一个真写了 `sources = []` 又依赖默认 glob 的工程会发现产物变空(此前无法表达
@@ -2611,7 +2699,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   **mspdbsrv.exe**,它构建完还活几十秒,而且就住在正要被删的 payload 里。
   等它不现实(等多久都是猜),所以改成**挪走**。
 
-  ⚠️ 第一版挪错了东西:去重命名 payload **目录**。Windows 允许重命名一个
+  第一版挪错了东西:去重命名 payload **目录**。Windows 允许重命名一个
   **打开着的文件**(更新器就是这么替换运行中的 .exe),但**不允许**重命名
   一个**含有**打开文件的目录 —— CI 当场否掉了这个前提。
 
@@ -2727,7 +2815,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   (xim 安装),解析与 `msvc@system` 共用一条(`installation_from_tools_dir`)。
   所以受管 toolset 不是第二条代码路径,也就不会长出自己的 bug。
 
-- **⚠️ 破坏性变更:`msvc@19.44` 不再是 pin-verify。**
+- **破坏性变更:`msvc@19.44` 不再是 pin-verify。**
 
   它过去表示「用系统 MSVC,并校验 banner 前缀」——而且只有
   `mcpp toolchain default` 会校验,**构建路径完全忽略它**。版本轴现在到处都表示
@@ -2791,7 +2879,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 
 ### 性能
 
-- **⚠️ 「接口没变就不级联重编」的机制从设计之日起从未生效过 —— 现已修复。**
+- **「接口没变就不级联重编」的机制从设计之日起从未生效过 —— 现已修复。**
 
   `cxx_module` 规则会保留上一份 BMI、重编、然后在内容相同时把旧文件换回去,让
   ninja 的 `restat` 判定输出未变、从而**不重建导入者**。这套机制 2026-05-12 就设计
@@ -2870,7 +2958,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 
 ### 修复
 
-- **⚠️ 回归:产物加载的库不是它链接的那一份 —— `$ORIGIN` 被 SubOS 库视图遮蔽。**
+- **回归:产物加载的库不是它链接的那一份 —— `$ORIGIN` 被 SubOS 库视图遮蔽。**
 
   `2026.8.11.2`(PR #413)首次把 SubOS 库视图(farm)写进产物的 `DT_RPATH`,但它
   落在 **`$ORIGIN` 之前**。于是 imgui/GLFW 应用链接的是 mcpp 从 `compat.x11` 源码
@@ -2890,7 +2978,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   类型里、由单测钉死。新增一个生产者必须先选一个槽 —— 而"选"正是"在产物自己的
   目录之前还是之后"这个问题被提出来的地方。
 
-- **⚠️ 共享库不再把自己的 C++ 运行时导出给别人(ELF)。**
+- **共享库不再把自己的 C++ 运行时导出给别人(ELF)。**
 
   `SharedLibrary` 此前与可执行文件共用 `Distributable` 角色,于是拿到同一份
   self-contained 契约:`-static-libstdc++`。在 ELF 上这不是"私有一份" —— 只有一个
@@ -2926,7 +3014,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
 
 ### 修复
 
-- **⚠️ 回归:SubOS 没有自我描述时,`mcpp build` / `mcpp test` 直接失败
+- **回归:SubOS 没有自我描述时,`mcpp build` / `mcpp test` 直接失败
   ([xlings#543](https://github.com/openxlings/xlings/issues/543))。**
 
   Windows 上 xlings 不写 `subos_info` 块,而 mcpp 把「缺声明」当成了错误,于是
@@ -3016,7 +3104,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   manifest **错误**而非警告,因为宣称 `.c` 是模块接口会把 C 文件送进 C++ 模块规则,
   最终失败在一个既不提文件也不提这个键的地方。
 
-  ⚠️ `.ccm`/`.cxxm`/`.ixx` **不进内置默认**。进了的话默认 glob 会跟着变宽,
+  `.ccm`/`.cxxm`/`.ixx` **不进内置默认**。进了的话默认 glob 会跟着变宽,
   于是 `src/` 下躺着 vendored MSVC-only `.ixx` 的**已发布包会在一次 mcpp 升级后
   突然开始编译它** —— 而包作者改不了已经发出去的 tarball。
 
@@ -3072,7 +3160,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   同样的指纹目录。
 - `module_extensions` **进**指纹(它改图的形态);`build_program_timeout` **不进**
   (它不改任何一条边 —— 进了会让「抬高超时」重建全世界)。
-- ⚠️ 旧版 mcpp 遇到 `module_extensions` 会警告+忽略,然后把那些文件当普通翻译单元
+- 旧版 mcpp 遇到 `module_extensions` 会警告+忽略,然后把那些文件当普通翻译单元
   编译 —— **错误的构建**而不是干净的失败。发布用了这个键的包必须声明 mcpp 版本下限
   (见 `docs/10-publishing-a-library.md`)。
 
@@ -3573,7 +3661,7 @@ xlings 作为运行时底座:subos 环境到达程序,以及 self-contained 的
   **A. 仓库的 workspace pin 伏击了被测版本。** job 第一步就 checkout,于是仓库的 `.xlings.json`(声明**自举** mcpp,手工维护且**故意滞后**)落在工作目录里。它是目录作用域的,在 checkout 内部**压过全局安装**。于是「装的是 `MCPP_PIN`,跑的是自举版本」——而后者根本没装:
 
   ```
-  ✓ 1 package(s) installed
+  1 package(s) installed
   [error] xlings: version '2026.8.3.2' not found for 'mcpp'
   [error]   available: 2026.8.3.4
   ```
@@ -3899,7 +3987,7 @@ xlings 作为运行时底座:subos 环境到达程序,以及 self-contained 的
 
   `--no-cache` 保留为 `off` 的兼容别名。它的旧 help 文案「Force-clear target/ before building」两处不准:它清的是**构建目录**(`target/<triple>/<fp>/`)而不是整个 `target/`,而且名字与缓存无关。`mcpp run` / `mcpp test` 一并补上这两个 flag(此前它们连 `--no-cache` 都没有)。
 
-  ⚠️ **`--no-cache` 的语义有一处收紧**:此前它只清构建目录、**仍然会回填全局缓存**;现在它等于 `off`,即**不读也不写**。想要「从零重编但仍然刷新缓存」的,用 `mcpp clean` 或 `rm -rf target` 后正常构建。这个收紧是为了让三个模式正交:一个叫 `off` 的模式还偷偷写缓存是说不通的。
+  **`--no-cache` 的语义有一处收紧**:此前它只清构建目录、**仍然会回填全局缓存**;现在它等于 `off`,即**不读也不写**。想要「从零重编但仍然刷新缓存」的,用 `mcpp clean` 或 `rm -rf target` 后正常构建。这个收紧是为了让三个模式正交:一个叫 `off` 的模式还偷偷写缓存是说不通的。
 
 - **`mcpp cache` 补齐到可运维。** `cache dir`(缓存到底在哪 —— 此前 `cache *`/`doctor`/`clean --bmi-cache` 各自解析根目录,而 config 的 reset 路径用 `GlobalConfig::bmiCacheDir`,两者可能不是同一个目录)、`cache gc --max-size <N>{MiB,GiB} / --older-than <N>{s,m,h,d}`(**真 LRU**)、`cache clean --deps|--std|--all|--legacy`、`cache list --json`、`cache verify`(逐条目校验清单与磁盘,残缺条目非零退出)。`cache info` 现在打印该条目的键输入 —— 怀疑命中错了时第一件想看的东西。
 
@@ -4031,7 +4119,7 @@ xlings 作为运行时底座:subos 环境到达程序,以及 self-contained 的
 
 > 包身份口径双侧收敛(#278)。事故:mcpp-index 把 `chriskohlhoff.asio` 的 `name` 从 `"chriskohlhoff.asio"` 改成 `"asio"`(namespace 不变),lint 全绿,三个平台的 workspace job 跑满 20~58 分钟后全挂 `E_NOT_FOUND` —— 描述符能解析、能过 mcpp 的身份闸门,却没有任何消费写法能装上。根因是身份归一化(容忍三种拼写)与安装目标构造(只支持一种)口径断层,契约只写在注释里、无人执行。设计见 `.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`。
 
-### ⚠️ 破坏性变更
+### 破坏性变更
 
 - **裸依赖名不再解析到第三方命名空间的包。** 命名空间缺省时,`[dependencies]` 里的裸名**只**解析三类:`mcpplibs`(默认)、`compat`(包装)、无 `namespace` 声明的上游包。此前裸名会跨命名空间命中(例如裸 `tensorvia-cpu` 能装上 `aimol` 下的包),现在必须写全:`"aimol.tensorvia-cpu" = "…"` 或 `[dependencies.aimol] tensorvia-cpu = "…"`。
   取舍理由:全域按名发现的便捷性换来三条稳定性损失——同名包的裁决依赖索引优先级(而用户 `[indices]` 添加的索引之间**无全序**)、**新增一个索引可能悄悄改变既有依赖解析到的包**(供应链隐患)、同一份 `mcpp.toml` 在不同机器上可能解析到不同包。依赖解析的可复现性优先于书写便捷性。
@@ -4328,7 +4416,7 @@ xlings 作为运行时底座:subos 环境到达程序,以及 self-contained 的
   - **`toolchain list` 两轴重排**:Toolchains 块(family@version)+ Targets 块
     (target × 状态 installed/available/**planned**,planned 行使词汇表用户可见);
     修版本字典序排序 bug(9.4.0 不再排在 15.1.0 前);`gcc X-musl` 行不再被
-    `llvm` 劈开。README 平台表从词汇表重画(target × tier 维度,补 MSVC=✅ 与
+    `llvm` 劈开。README 平台表从词汇表重画(target × tier 维度,补 MSVC=与
     windows-gnu 行——旧表 MSVC 仍标 planned 是错的)。
   - 修 Windows host 上 `mingw` 的门:Linux 上 `toolchain install mingw` 现在
     合法(= 装交叉 payload,同一身份 host 分流);`mcpp run` 位置参数 help 改为
@@ -5024,19 +5112,19 @@ LLVM / Clang 工具链支持与 xlings 镜像配置完善。
 
 ### 新增
 
-- ✅ **LLVM / Clang 工具链支持** —— 新增基于 `clang++`、`clang-scan-deps`、
+- **LLVM / Clang 工具链支持** —— 新增基于 `clang++`、`clang-scan-deps`、
   `llvm-ar`、`lld` 的工具链探测与构建路径，支持 xlings `llvm` 包提供的
   自包含 Linux LLVM 工具链。
-- ✅ **`import std` 支持** —— LLVM libc++ 模块标准库可用时，自动发现
+- **`import std` 支持** —— LLVM libc++ 模块标准库可用时，自动发现
   `std.cppm` / `std.compat.cppm`，并接入标准库 BMI 预构建流程。
-- ✅ **`mcpp self config --mirror`** —— 通过 xlings 抽象层配置 sandbox
+- **`mcpp self config --mirror`** —— 通过 xlings 抽象层配置 sandbox
   镜像，默认初始化为 `CN`，CI 可显式切换为 `GLOBAL`。
 
 ### 改进
 
-- 🔧 **工具链 provider 拆分** —— 将通用模型、探测逻辑、GCC、Clang、LLVM
+- **工具链 provider 拆分** —— 将通用模型、探测逻辑、GCC、Clang、LLVM
   provider 与 registry 分离到独立模块，为后续更多工具链扩展预留入口。
-- 🔧 **xlings 索引兼容迁移** —— 自动将历史 `mcpp-index` 索引名迁移到
+- **xlings 索引兼容迁移** —— 自动将历史 `mcpp-index` 索引名迁移到
   `mcpplibs`，避免旧 sandbox 状态影响新流程。
 
 ## [0.0.4] — 2026-05-10
@@ -5045,7 +5133,7 @@ LLVM / Clang 工具链支持与 xlings 镜像配置完善。
 
 ### 新增
 
-- ✅ **Glob 排除模式** —— `[modules].sources` (以及 Form B 的 `sources`)
+- **Glob 排除模式** —— `[modules].sources` (以及 Form B 的 `sources`)
   现在支持 `!`  前缀的排除模式(类似 `.gitignore`):
   ```toml
   sources = ["src/**/*.cpp", "!src/**/*_test.cpp", "!src/**/*_fuzzer.cpp"]
@@ -5055,14 +5143,14 @@ LLVM / Clang 工具链支持与 xlings 镜像配置完善。
 
 ### 改进
 
-- 🔧 **xlings 布局调整** —— xlings 二进制从 `<MCPP_HOME>/bin/xlings`
+- **xlings 布局调整** —— xlings 二进制从 `<MCPP_HOME>/bin/xlings`
   (与 mcpp 同目录)移至 `<MCPP_HOME>/registry/bin/xlings`
   (= `<XLINGS_HOME>/bin/xlings`)。由于 xlings 的 shim-creation guard
   恰好检查 `<XLINGS_HOME>/bin/xlings` 是否存在,新布局下
   `ensure_sandbox_xlings_binary` 自然变成 no-op,省去了之前的 hardlink
   步骤。
 
-- 🔧 **测试自动继承 sandbox PATH** —— `mcpp test` 在调用测试二进制前,
+- **测试自动继承 sandbox PATH** —— `mcpp test` 在调用测试二进制前,
   自动把 sandbox 的 `subos/default/bin`(含 patchelf、ninja 等
   一次性自举工具)追加到 `$PATH`,使 test 代码 shell-out 到这些工具时
   不再报 "command not found"。
@@ -5074,20 +5162,20 @@ LLVM / Clang 工具链支持与 xlings 镜像配置完善。
 
 ### 新增
 
-- ✅ **依赖图传递性遍历** —— 直接依赖的子依赖(以及更深层)自动跟随入解析图,
+- **依赖图传递性遍历** —— 直接依赖的子依赖(以及更深层)自动跟随入解析图,
   消费者不必再在自己的 `mcpp.toml` 里把 grandchild 也写一遍;子依赖的
   `[build].include_dirs` 也会沿链路传播,让中间层在编译时看得到 grandchild
   的头文件。冲突检测同时区分 path / git / version 三类来源,跨来源不允许
   混用。
 
-- ✅ **SemVer 合并解析(Level 2)** —— 同一个包在传递依赖图里被多个消费者
+- **SemVer 合并解析(Level 2)** —— 同一个包在传递依赖图里被多个消费者
   以不同版本约束声明时,resolver 会把两条原始约束 AND 合并(裸版本号视作
   `=X.Y.Z`),向 index 重新查询,选出同时满足两侧的具体版本。若该版本与
   此前已 pin 的不一致,旧的 manifest 与 `[build].include_dirs` 会被原地
   替换为新版本的内容,孩子依赖也按新 manifest 重新入队。新增 e2e
   `32_semver_merge.sh` 覆盖兼容合并 + 不可调和两条主链路。
 
-- ✅ **多版本 mangling 兜底(Level 1)** —— SemVer 合并失败时(典型如
+- **多版本 mangling 兜底(Level 1)** —— SemVer 合并失败时(典型如
   `=0.0.1` ⨯ `=0.0.2` 这种无重叠的 pin),resolver 不再硬报错,而是把次要
   版本的源码 stage 到 `target/.mangled/<consumer>/...` 下,通过正则改写
   `(export )?module X;` / `(export )?module X:Y;` / `(export )?import X;`
@@ -5101,7 +5189,7 @@ LLVM / Clang 工具链支持与 xlings 镜像配置完善。
 
 ### 改进
 
-- 🔧 **构建后端按需为多包做 obj 路径命名空间** —— `plan.cppm` 检测到
+- **构建后端按需为多包做 obj 路径命名空间** —— `plan.cppm` 检测到
   跨包同名源文件(多版本 mangling 后两个 `parse.cppm` 同时存在的常见情形)
   时,自动把 `obj/<file>.o` 改为 `obj/<sanitized-pkg>/<file>.o`,`.ddi`
   扫描产物随之放在 object 同目录下。无碰撞时仍是原始 `obj/<file>.o`
@@ -5111,7 +5199,7 @@ LLVM / Clang 工具链支持与 xlings 镜像配置完善。
 
 ### 新增
 
-- ✅ **C 语言源文件支持** — `mcpp.toml` 的 `[build]` 段新增 `cflags`、
+- **C 语言源文件支持** — `mcpp.toml` 的 `[build]` 段新增 `cflags`、
   `cxxflags`、`c_standard` 三个字段;ninja 后端探测 `.c` 源文件后自动派
   生兄弟 C 编译器(`g++ → gcc`、`clang++ → clang`、跨编译器前缀如
   `x86_64-linux-musl-gcc` 同样适用),发出独立的 `c_object` 规则。
@@ -5120,7 +5208,7 @@ LLVM / Clang 工具链支持与 xlings 镜像配置完善。
   mbedtls 3.6.1 全部 108 个 `.c` 源文件**(SHA-256 测试向量与 FIPS
   180-4 一致)。
 
-- ✅ **lib-root 约定** — 库项目(`kind = "lib"` / `shared`)的 primary
+- **lib-root 约定** — 库项目(`kind = "lib"` / `shared`)的 primary
   module interface 默认在 `src/<package-tail>.cppm`,且必须
   `export module <full-package-name>;`(无 `:partition` 后缀);可用
   `[lib].path = "src/foo.cppm"` 显式覆盖(cargo `lib.rs` 风格)。
@@ -5128,7 +5216,7 @@ LLVM / Clang 工具链支持与 xlings 镜像配置完善。
   不匹配 [package].name)报 error;约定文件缺失只报 warning,给已有
   项目软迁移时间。纯 binary 项目跳过所有检查。
 
-- ✅ **xpkg 风格依赖命名空间** — `mcpp.toml` 现在原生支持三种依赖书写形式:
+- **xpkg 风格依赖命名空间** — `mcpp.toml` 现在原生支持三种依赖书写形式:
   - 平铺默认命名空间:`gtest = "1.15.2"` ⇒ `(mcpp, gtest)`,无引号
   - TOML 子表命名空间:`[dependencies.mcpplibs] cmdline = "0.0.2"` ⇒
     `(mcpplibs, cmdline)`,无引号
@@ -5140,7 +5228,7 @@ LLVM / Clang 工具链支持与 xlings 镜像配置完善。
 
 ### 改进
 
-- 🛠 **`src/pm/` 包管理子系统(7 步重构,全部完成)** — 包管理相关代码
+- **`src/pm/` 包管理子系统(7 步重构,全部完成)** — 包管理相关代码
   从 `cli.cppm`(3510→2900 行) / `manifest.cppm` / `lockfile.cppm` /
   `fetcher.cppm` / `publish/xpkg_emit.cppm` 中抽出,集中到独立的
   `src/pm/` 目录下,跟 `build/` / `toolchain/` / `pack/` 平级。
@@ -5158,7 +5246,7 @@ LLVM / Clang 工具链支持与 xlings 镜像配置完善。
   回滚;旧模块名(`mcpp.lockfile` / `mcpp.fetcher` / `mcpp.publish.xpkg_emit`)
   保留薄 shim 透传到新模块,所有调用点零改动。规划与依赖图见
   `.agents/docs/2026-05-08-pm-subsystem-architecture.md` §3-§5。
-- 📄 **新增设计文档** `.agents/docs/`:
+- **新增设计文档** `.agents/docs/`:
   - `2026-05-08-package-index-config.md` — 多源包索引仓配置 +
     `mcpp.lock` 索引 commit 锁定 + 两层不可变性
     (L1 publish policy + L2 lock mechanism)
@@ -5167,10 +5255,10 @@ LLVM / Clang 工具链支持与 xlings 镜像配置完善。
 
 ### 修复
 
-- 🐛 path 依赖的 `[package].name` 比对支持 xpkg 标准 `name` + 旧式
+- path 依赖的 `[package].name` 比对支持 xpkg 标准 `name` + 旧式
   `<ns>.<name>` 复合名两种形式,兼容当前 mcpp-index 描述符尚未迁移的
   状态。
-- 🐛 module 扫描器解析 partition import(`import :foo`)时,不再把当前
+- module 扫描器解析 partition import(`import :foo`)时,不再把当前
   TU 自己的 partition 后缀拼进 logical name。
   之前 `export module M:bar;` 里的 `import :foo;` 被解析成 `M:bar:foo`
   (没人 provide,产生 7 条 stale warning);现在正确解析为兄弟分区
@@ -5190,23 +5278,23 @@ mcpp 首个公开发版本。
 
 ### 已具备的能力
 
-- ✅ 基础工程命令：`mcpp new` / `build` / `run` / `clean` / `test`
-- ✅ C++23 模块（`import std` / `import foo.bar`）一等公民支持
-- ✅ 跨项目依赖：[mcpp-index](https://github.com/mcpp-community/mcpp-index)
+- 基础工程命令：`mcpp new` / `build` / `run` / `clean` / `test`
+- C++23 模块（`import std` / `import foo.bar`）一等公民支持
+- 跨项目依赖：[mcpp-index](https://github.com/mcpp-community/mcpp-index)
   远程仓库、git、本地 path 三种来源
-- ✅ SemVer 约束：`"foo" = "^0.0.1"` / `"~1.2.0"` / `">=1, <2"`
-- ✅ P1689 编译器驱动模块扫描 + ninja `dyndep`
-- ✅ 跨项目 BMI 持久缓存
-- ✅ 私有 toolchain 沙盒（`mcpp toolchain install / default / list`），
+- SemVer 约束：`"foo" = "^0.0.1"` / `"~1.2.0"` / `">=1, <2"`
+- P1689 编译器驱动模块扫描 + ninja `dyndep`
+- 跨项目 BMI 持久缓存
+- 私有 toolchain 沙盒（`mcpp toolchain install / default / list`），
   跟系统 PATH 完全隔离；首次使用自动装 musl-gcc 默认工具链
-- ✅ 部分版本号支持（`mcpp toolchain install gcc 15` 自动选最高匹配）
-- ✅ `mcpp pack` 三种自包含发布模式：
+- 部分版本号支持（`mcpp toolchain install gcc 15` 自动选最高匹配）
+- `mcpp pack` 三种自包含发布模式：
   - `static` — musl 全静态，单文件可分发
   - `bundle-project`（默认）— 只 bundle 项目第三方 .so
   - `bundle-all` — 全自包含含 ld-linux + libc，附 `run.sh` wrapper
-- ✅ `mcpp self {doctor,env,version,explain}` 自诊断
-- ✅ 下载 / 安装实时进度（速度、字节数、终端宽度自适应）
-- ✅ 项目相对路径显示（`@mcpp/...`、project-relative）
+- `mcpp self {doctor,env,version,explain}` 自诊断
+- 下载 / 安装实时进度（速度、字节数、终端宽度自适应）
+- 项目相对路径显示（`@mcpp/...`、project-relative）
 
 ### 发布产物（GitHub Release）
 

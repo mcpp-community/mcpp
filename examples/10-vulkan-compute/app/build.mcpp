@@ -1,0 +1,13 @@
+import std;
+import mcpp;
+import mcpp.rules.spirv;
+
+int main() {
+    mcpp::rerun_if_changed_glob("shaders/**/*.comp");
+    mcpp::rerun_if_changed_glob("shaders/**/*.glsl");
+
+    mcpp::rules::spirv::options opt;
+    // So a shader can `#include` another from the same directory.
+    opt.includes = { "shaders" };
+    return mcpp::rules::spirv::compile(opt) ? 0 : 1;
+}
