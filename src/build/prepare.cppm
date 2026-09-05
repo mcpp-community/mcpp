@@ -9582,8 +9582,19 @@ prepare_build(bool print_fingerprint,
                 // under plain `mcpp build`, where that unit does not exist.
                 // (`[resources]` makes the opposite call on purpose: an icon
                 // belongs to what ships, not to a test runner.)
+                //
+                // ⭐⭐ A STATIC LIBRARY IS ONE OF THEM, and leaving it out was
+                // the whole of what C-6 needed. A package whose device code is
+                // its point -- ggml's CUDA backend is 305 `.cu` files behind a
+                // `kind = "lib"` target -- emitted its actions, watched every
+                // one of them be dropped with a warning, and produced an
+                // archive with no device code in it. The archive rule already
+                // consumes `lu.objects`, so the objects an action produced
+                // belong there for exactly the reason a compiled `.cpp`'s do:
+                // the target's content is what it was told to contain.
                 const bool image = lu.kind == mcpp::build::LinkUnit::Binary
                                 || lu.kind == mcpp::build::LinkUnit::SharedLibrary
+                                || lu.kind == mcpp::build::LinkUnit::StaticLibrary
                                 || lu.kind == mcpp::build::LinkUnit::TestBinary;
                 const bool wanted = a.targets.empty()
                     ? image
@@ -9602,11 +9613,12 @@ prepare_build(bool print_fingerprint,
             if (!attached && a.targets.empty()) {
                 mcpp::diag::degraded("action/no-target", std::format(
                     "build.mcpp action '{}' has role = \"object\" but this build "
-                    "produces no executable, shared library or test binary to "
-                    "link its outputs into", a.id.empty() ? "<unnamed>" : a.id),
+                    "produces no target to put its outputs into",
+                    a.id.empty() ? "<unnamed>" : a.id),
                     "the action never runs and its outputs are never produced",
-                    "add a [targets.<name>] that links, or name the targets "
-                    "explicitly with .target(\"…\")");
+                    "add a [targets.<name>] — a bin, a lib, a shared lib or a "
+                    "test all take one — or name the targets explicitly with "
+                    ".target(\"…\")");
             }
         }
         if (!unknownObjectTargets.empty()) {
@@ -9620,7 +9632,7 @@ prepare_build(bool print_fingerprint,
                 "  targets in this build: [{}]\n"
                 "  (a target gated by required_features is absent unless those "
                 "features are active; test binaries exist only under `mcpp "
-                "test`, so name none and the outputs reach every image "
+                "test`, so name none and the outputs reach every target "
                 "including them)",
                 bad, known.empty() ? std::string("none") : known));
         }
