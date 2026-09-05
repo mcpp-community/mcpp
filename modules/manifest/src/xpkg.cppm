@@ -9,6 +9,7 @@ import mcpp.pm.dep_spec;
 import mcpp.pm.dependency_selector;
 import mcpp.platform;
 import mcpp.platform.axis;
+import mcpp.version_req;
 
 export namespace mcpp::manifest {
 
@@ -53,6 +54,29 @@ list_xpkg_version_entries(std::string_view luaContent,
 std::vector<std::string>
 list_xpkg_versions(std::string_view luaContent,
                    const mcpp::platform::PlatformKey& platform);
+
+// Union of per-OS version-key lists, semver-descending, deduplicated — the
+// display shape behind `mcpp add` suggestions and `mcpp search` (#487). See
+// the definition for the ordering rules applied to unparsable keys.
+std::vector<std::string> merge_xpkg_versions_desc(
+    const std::vector<std::vector<std::string>>& perPlatform);
+
+// The same, for a whole descriptor: every OS table `xpkg_platforms` names,
+// merged. The axis lives in one place so a fourth OS does not need a sweep to
+// find the call sites that only knew three.
+std::vector<std::string> all_xpkg_versions_desc(std::string_view luaContent);
+
+// How many versions a display line shows before truncating (#487). The full
+// list is one `mcpp search --all-versions` away; a hint only has to prove the
+// package is alive.
+inline constexpr std::size_t kVersionsShown = 3;
+
+// "1.0.0, 0.9.0, ..." from an already-descending list. `keep` bounds it and the
+// ellipsis marks truncation, so a shortened line cannot be read as "these are
+// all of them" — the one place that decides it, for every caller that shows
+// versions. Empty in, empty out.
+std::string join_versions_desc(const std::vector<std::string>& versions,
+                               std::size_t keep = kVersionsShown);
 // Extract the `namespace` field from an xpkg .lua's `package = { ... }` block.
 // Returns empty string if the field is absent (legacy descriptors).
 std::string extract_xpkg_namespace(std::string_view luaContent);
@@ -1065,6 +1089,66 @@ list_xpkg_versions(std::string_view luaContent,
     for (auto& e : list_xpkg_version_entries(luaContent, platformAxis))
         out.push_back(std::move(e.version));
     return out;
+}
+
+// #487 — the union view over a descriptor's per-OS version tables, for
+// display in `mcpp add` suggestions and `mcpp search`. Sorted
+// semver-descending and deduplicated by exact key.
+//
+// Ordering parses each key with the SemVer grammar; a key that does not parse
+// keeps its original text (#363's lesson: an arbitrary index key cannot be
+// reproduced from its parsed form), sorts AFTER every parsable key, and orders
+// among itself lexicographically. Equal-Version keys written differently
+// (e.g. "1.0" vs "1.0.0") keep their first-seen input order.
+std::vector<std::string> merge_xpkg_versions_desc(
+    const std::vector<std::vector<std::string>>& perPlatform) {
+    // Each key parsed once, beside the key, rather than on every comparison:
+    // the comparator is called O(n log n) times and the parse is the whole cost.
+    std::vector<std::pair<std::string,
+                          std::expected<mcpp::version_req::Version, std::string>>> keyed;
+    for (const auto& list : perPlatform)
+        for (const auto& key : list)
+            if (std::ranges::none_of(keyed,
+                                     [&](const auto& k) { return k.first == key; }))
+                keyed.emplace_back(key, mcpp::version_req::parse_version(key));
+
+    // Parsable keys descend; unparsable ones sort after them, among themselves
+    // by their own text (#363: an arbitrary index key cannot be reconstructed
+    // from a parsed form, so it is never rewritten). `stable_sort` is what
+    // keeps equal-comparing spellings -- `1.0` and `1.0.0` -- in first-seen
+    // order, which is the order the platform tables were read in.
+    std::ranges::stable_sort(keyed, [](const auto& a, const auto& b) {
+        if (a.second && b.second) return *b.second < *a.second;
+        if (a.second) return true;
+        if (b.second) return false;
+        return a.first < b.first;
+    });
+
+    std::vector<std::string> out;
+    out.reserve(keyed.size());
+    for (auto& [key, _] : keyed) out.push_back(std::move(key));
+    return out;
+}
+
+std::string join_versions_desc(const std::vector<std::string>& versions,
+                               std::size_t keep) {
+    std::string joined;
+    const auto shown = std::min(versions.size(), keep);
+    for (std::size_t i = 0; i < shown; ++i) {
+        if (i) joined += ", ";
+        joined += versions[i];
+    }
+    if (shown < versions.size()) joined += ", ...";
+    return joined;
+}
+
+std::vector<std::string> all_xpkg_versions_desc(std::string_view luaContent) {
+    std::vector<std::vector<std::string>> perPlatform;
+    perPlatform.reserve(std::size(mcpp::platform::xpkg_platforms));
+    for (auto os : mcpp::platform::xpkg_platforms)
+        perPlatform.push_back(list_xpkg_versions(
+            luaContent, mcpp::platform::TargetPlatform::for_lint_of(os)));
+    return merge_xpkg_versions_desc(perPlatform);
 }
 
 // Parses the `{ { glob = "...", cflags/cxxflags/asmflags/defines = {...} },

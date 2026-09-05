@@ -25,6 +25,7 @@ import mcpp.build.backend;
 import mcpp.build.ninja;
 import mcpp.build.runtime_validation;
 import mcpp.bmi_cache;
+import mcpp.bmi_cache.maintenance;  // dir_size + human_bytes, for `clean --stale`
 import mcpp.manifest;
 import mcpp.source_kind;
 import mcpp.modgraph.scanner;
@@ -813,7 +814,8 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                 auto newFp = ctx.outputDir.filename().string();
                 if (e.fingerprint != newFp) {
                     mcpp::ui::warning(std::format(
-                        "fingerprint changed ({} → {}), full rebuild",
+                        "fingerprint changed ({} → {}), full rebuild; "
+                        "`mcpp clean --stale` drops the directories no build still uses",
                         e.fingerprint, newFp));
                 }
                 break;
@@ -2571,6 +2573,141 @@ export int clean_project(bool wipe_bmi) {
                      "pre-v1 cache, if any)");
     }
     return 0;
+}
+
+// `mcpp clean --stale` driver (#565).
+//
+// Every build lands in target/<triple>/<fingerprint>/, and a changed
+// fingerprint opens a fresh directory while the old one is never touched
+// again. "Current" is what target/.build_cache records: one entry per
+// (target, profile) built recently, which is the set the fast paths and
+// `mcpp run` still resolve to. Every other directory under a recorded
+// target/<triple>/ is a leftover from a configuration that no longer exists
+// and can go without forcing a rebuild of anything that does.
+//
+// Three deliberate limits, each erring toward deleting a directory that a
+// rebuild can recreate rather than one that cannot:
+//   * Entries are matched by (triple directory, fingerprint), not by the
+//     absolute path the record stores, so a moved checkout is not read as
+//     "everything is stale".
+//   * Only triple directories named by the record are visited. Anything else
+//     under target/ (`dist/` from `mcpp pack`, whatever a later release adds)
+//     is not a fingerprint directory and is left alone — as is a triple whose
+//     entry has been evicted from the record; that one stays until it is
+//     built again. Eviction *within* a live triple is not covered by that,
+//     though: the record is an 8-entry LRU (`kBuildCacheMaxEntries`), so a
+//     project built across more (target, profile) pairs than that loses its
+//     oldest entries while their triple stays current through a sibling. Such
+//     a directory reads as unrecorded, and the age guard below is what decides
+//     it — which is the intended answer, one rebuild of a configuration that
+//     has not been built inside the window.
+//   * The record keys on (target, profile) while the fingerprint also folds in
+//     features; a `--no-cache` build writes no entry at all; and `mcpp test`
+//     builds through run_tests, which never writes one. So an unrecorded
+//     directory is not proof of staleness, and recomputing fingerprints here
+//     is not an option (prepare_build resolves dependencies and may reach the
+//     network; a clean command must not). The guard that costs nothing and
+//     matches how `cache prune` already thinks: an unrecorded directory
+//     written within `--older-than` (default one day) is kept — that is the
+//     build somebody just ran. Older and unrecorded goes; the cost of being
+//     wrong there is one rebuild of a configuration nobody has touched since.
+//
+// With no record at all there is nothing to compare against, and the command
+// refuses rather than guess.
+export int clean_stale(bool dryRun, std::int64_t keepWithinSecs) {
+    namespace fs = std::filesystem;
+    auto root = mcpp::project::find_manifest_root(fs::current_path());
+    if (!root) { std::println(stderr, "error: not in an mcpp package"); return 2; }
+    const fs::path target = *root / "target";
+
+    // Triple directory -> the fingerprints recorded under it. One container
+    // answers both questions the walk asks: whether to descend into a triple at
+    // all, and whether a directory inside it is current.
+    std::map<std::string, std::set<std::string>> current;
+    for (const auto& e : read_build_cache(*root)) {
+        const fs::path out(e.outputDir);
+        const std::string triple = out.parent_path().filename().string();
+        if (triple.empty()) continue;
+        // BOTH NAMES WHEN THEY DISAGREE. try_fast_build refuses an entry whose
+        // `fingerprint` is not its outputDir's basename (its P1 check). Here the
+        // safe reading of the same disagreement is to protect whichever
+        // directory either name points at: only one of them can exist, and the
+        // other costs nothing to name.
+        for (const std::string& fp : {e.fingerprint, out.filename().string()})
+            if (!fp.empty()) current[triple].insert(fp);
+    }
+    if (current.empty()) {
+        std::println(stderr, "error: {} has no build record, so nothing is known to be current; "
+                             "run `mcpp build` once, then retry",
+                     (*root / kBuildCacheFile).string());
+        return 2;
+    }
+
+    std::uintmax_t bytes = 0;
+    std::size_t removed = 0, failed = 0;
+    std::error_code ec;
+    for (fs::directory_iterator tripleIt(target, ec), end; tripleIt != end; tripleIt.increment(ec)) {
+        std::error_code tec;
+        const std::string triple = tripleIt->path().filename().string();
+        const auto recorded = current.find(triple);
+        if (!tripleIt->is_directory(tec) || tec || recorded == current.end()) continue;
+        std::error_code iec;
+        for (fs::directory_iterator fpIt(tripleIt->path(), iec), fend; fpIt != fend; fpIt.increment(iec)) {
+            std::error_code fec;
+            if (!fpIt->is_directory(fec) || fec) continue;
+            const fs::path dir = fpIt->path();
+            const std::string fp = dir.filename().string();
+            if (recorded->second.contains(fp)) continue;
+            const std::string shown = std::format("target/{}/{}", triple, fp);
+            // build.ninja is rewritten by every build; the directory's own
+            // mtime only moves when an entry is added or removed.
+            const auto stamp = dir / "build.ninja";
+            const auto written = fs::last_write_time(fs::exists(stamp, fec) ? stamp : dir, fec);
+            if (!fec) {
+                const auto age = std::chrono::duration_cast<std::chrono::seconds>(
+                    fs::file_time_type::clock::now() - written).count();
+                if (age < keepWithinSecs) {
+                    const std::string ago = age < 3600 ? std::format("{}m", std::max<std::int64_t>(age / 60, 1))
+                                          : age < 86400 ? std::format("{}h", age / 3600)
+                                                        : std::format("{}d", age / 86400);
+                    std::println("kept    {}  (not in the record, but written {} ago; see --older-than)", shown, ago);
+                    continue;
+                }
+            }
+            const auto size = mcpp::bmi_cache::dir_size(dir);
+            if (dryRun) {
+                std::println("would remove {}  ({})", shown, mcpp::bmi_cache::human_bytes(size));
+            } else {
+                std::error_code rec;
+                fs::remove_all(dir, rec);
+                if (rec) {
+                    std::println(stderr, "error: cannot remove {}: {}", shown, rec.message());
+                    ++failed;
+                    continue;
+                }
+                std::println("removed {}  ({})", shown, mcpp::bmi_cache::human_bytes(size));
+            }
+            bytes += size;
+            ++removed;
+        }
+        if (iec) {
+            std::println(stderr, "error: cannot read {}: {}", tripleIt->path().string(), iec.message());
+            ++failed;
+        }
+    }
+    if (ec) {
+        std::println(stderr, "error: cannot read {}: {}", target.string(), ec.message());
+        return 1;
+    }
+
+    if (removed == 0 && failed == 0) {
+        std::println("Nothing stale under {}: every fingerprint directory is recorded as current",
+                     target.string());
+    } else {
+        std::println("{} {} director{} ({})", dryRun ? "Would remove" : "Removed", removed,
+                     removed == 1 ? "y" : "ies", mcpp::bmi_cache::human_bytes(bytes));
+    }
+    return failed ? 1 : 0;
 }
 
 } // namespace mcpp::build

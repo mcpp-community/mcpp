@@ -20,7 +20,7 @@ export int cmd_search(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::println(stderr, "error: `mcpp search` requires a keyword");
         return 2;
     }
-    return mcpp::pm::search_packages(keyword);
+    return mcpp::pm::search_packages(keyword, parsed.is_flag_set("all-versions"));
 }
 
 export int cmd_index_list(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {

@@ -80,6 +80,10 @@ grep -q "tried:" bare.out || { cat bare.out; exit 1; }
 # ── 2. did-you-mean names the real package and both spellings ───────
 grep -q "acme.widget" bare.out || {
     echo "FAIL: expected did-you-mean to name acme.widget"; cat bare.out; exit 1; }
+# #487: the hint must also carry what the suggested package publishes —
+# the fixture's xpm table lists exactly one version per OS.
+grep -q "acme.widget (1.0.0)" bare.out || {
+    echo "FAIL: expected did-you-mean to show acme.widget's version"; cat bare.out; exit 1; }
 grep -q "\[dependencies.acme\]" bare.out || {
     echo "FAIL: expected the sub-table spelling in the hint"; cat bare.out; exit 1; }
 
@@ -157,5 +161,23 @@ fi
 grep -q "no package found for exact selector" explicit-default.out || {
     echo "FAIL: expected the explicit not-found error"
     cat explicit-default.out; exit 1; }
+
+# ── 7. `mcpp add` did-you-mean carries versions too (#487) ──────────
+# The same suggestion text serves the build path (sections 1-2) and the add
+# path. Requesting a gadget under `acme` — a readable index that does not
+# serve it — must fail AND point at compat.gadget with its published version,
+# straight from the fixture's xpm table.
+write_manifest ''
+if MCPP_OFFLINE=1 "$MCPP" add acme.gadget@9.9.9 > add-hint.out 2>&1; then
+    echo "FAIL: adding a package the acme index does not serve must fail"
+    cat add-hint.out; exit 1
+fi
+grep -q "compat.gadget (2.0.0)" add-hint.out || {
+    echo "FAIL: add hint must name compat.gadget with its published version"
+    cat add-hint.out; exit 1; }
+# And the manifest must NOT have been mutated by the failed add.
+if grep -q "gadget" mcpp.toml; then
+    echo "FAIL: a rejected add must not write the dependency"; cat mcpp.toml; exit 1
+fi
 
 echo "PASS 162_bare_name_namespace_scope"

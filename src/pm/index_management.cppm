@@ -21,8 +21,13 @@ import mcpp.xlings;
 
 namespace mcpp::pm {
 
-// `mcpp search <keyword>`.
-export int search_packages(const std::string& keyword) {
+// `mcpp search <keyword> [--all-versions]`.
+//
+// Each hit line appends the versions the package publishes, merged across
+// its descriptor's per-OS tables (#487): the latest three by default, all of
+// them under --all-versions. A hit with no readable descriptor prints exactly
+// as before — enrichment is best-effort display, never a failure.
+export int search_packages(const std::string& keyword, bool allVersions) {
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false, mcpp::fetcher::make_bootstrap_progress_callback());
     if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
 
@@ -51,9 +56,18 @@ export int search_packages(const std::string& keyword) {
         std::println("No packages match `{}`.", keyword);
         return 0;
     }
+    constexpr std::size_t kAllVersions = std::numeric_limits<std::size_t>::max();
     std::println("");
     for (auto& h : *hits) {
-        std::println("  {:<20}  {}", h.name, h.description);
+        auto versions = f.versions_for_hit(h);
+        if (versions.empty()) {
+            std::println("  {:<20}  {}", h.name, h.description);
+        } else {
+            std::println("  {:<20}  {}  ({})", h.name, h.description,
+                         mcpp::manifest::join_versions_desc(
+                             versions, allVersions ? kAllVersions
+                                                   : mcpp::manifest::kVersionsShown));
+        }
     }
     return 0;
 }
