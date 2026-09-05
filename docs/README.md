@@ -23,6 +23,7 @@
 - [18 - Reaching a Device](18-devices.md)
 - [19 - Supported Versions and Compatibility](19-supported-versions.md)
 - [20 - Heterogeneous Builds](20-heterogeneous-builds.md)
+- [21 - Commands by Scenario](21-commands-by-scenario.md)
 
 ## Specifications
 

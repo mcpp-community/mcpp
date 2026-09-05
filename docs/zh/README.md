@@ -23,6 +23,7 @@
 - [18 - 抵达一台设备](18-devices.md)
 - [19 - 受支持的版本与兼容性](19-supported-versions.md)
 - [20 - 异构硬件构建](20-heterogeneous-builds.md)
+- [21 - 按场景选命令](21-commands-by-scenario.md)
 
 ## 规范文档
 
