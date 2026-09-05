@@ -59,7 +59,7 @@ mcpp::run_exclusive();                  // this target's runs cannot overlap
 ```
 
 ⭐ **Name the program, not its path.** mcpp locates it: the `bin/` of a payload
-declared under `[xlings] deps` by **any package in the graph** — the consuming
+declared under `[xlings.workspace]` by **any package in the graph** — the consuming
 project first, then its dependencies — and then `PATH`. A board-support package
 is precisely the thing that knows which emulator or probe reaches its machine,
 so it declares that payload itself and the consumer declares nothing. Writing an

@@ -1151,7 +1151,7 @@ runner = ["qemu-aarch64-static"]
 
 规则对 `mcpp run` 与 `mcpp test` 相同:
 
-- **声明了 runner 就使用它。** 其第一个元素由 mcpp 定位:先在 `[xlings] deps`(§2.13)
+- **声明了 runner 就使用它。** 其第一个元素由 mcpp 定位:先在 `[xlings.workspace]`(§2.13)
   声明的每个载荷的 `bin/` 目录里找,再找 `PATH`。`PATH` 上的裸名会命中 xvm shim,而
   shim 按当前 SubOS 而非按包作答;先查载荷,runner 才能直接写工程声明过的程序名。
 - **声明的 runner 找不到或启动不了是错误**,错误里带程序名、搜索过的目录和 errno。
@@ -1163,13 +1163,13 @@ runner = ["qemu-aarch64-static"]
   这个三元组在本机是原生的 —— 清单没有承载它的轴;为 x86_64 开发者写的 runner 在
   aarch64 机器上仍可用。
 
-通过 `[xlings] deps` 装模拟器是 CI 任务或单一宿主类别工程的形态。索引里的
-`qemu-user-aarch64` 只为 x86_64 Linux 构建,而 `[xlings] deps` 在每台构建本工程的
-宿主上都会 provisioning,所以条目按平台写(§2.13):
+通过 `[xlings.workspace]` 装模拟器是 CI 任务或单一宿主类别工程的形态。索引里的
+`qemu-user-aarch64` 只为 x86_64 Linux 构建,而这张表在每台构建本工程的宿主上都会
+provisioning,所以条目按平台写(§2.13):
 
 ```toml
-[xlings]
-deps = [{ linux = "qemu-user-aarch64" }]
+[xlings.workspace]
+"xim:qemu-user-aarch64" = { linux = "" }   # Linux 上存在即可,版本不限
 
 [target.aarch64-linux-musl]
 runner = ["qemu-aarch64-static"]
@@ -1319,6 +1319,37 @@ ld: obj/mcpplibs_pa/src/impl.o: in function `cap_probe':
 `operator new`),或名字集合固定的 C 接口。对这类能力,图中出现两个 provider 是**待修的
 缺陷**而非可 pin 的歧义:pin 会把一个点名两个候选的报错,换成一个点名 mangled 符号的报错。
 可互换的**库**(各 BLAS 实现导出不同的符号集合,按链接选其一)不受此影响。
+
+#### `exclusive` —— 包声明自己是唯一提供者
+
+上一段描述的是一个引擎**看不见**的缺陷:要看出两个 provider 定义了同一批符号,
+需要它们的目标文件,而绑定 capability 时那些还不存在;而「一律拒绝重复 provider」
+又会打断同一段里那个合法的 BLAS 用例。
+
+所以由包自己声明:
+
+```toml
+[package]
+name      = "compat.cublas"
+provides  = ["gpu-blas"]
+exclusive = ["gpu-blas"]
+```
+
+两个都提供 `gpu-blas` 的包,只要其中至少一个声明了独占,就在绑定 capability 时
+被拒绝 —— 在任何东西被编译之前,并点名该能力与双方:
+
+```
+error: capability 'gpu-blas' is provided by more than one package, and they
+       declare it EXCLUSIVE.
+         providers: [compat.cublas, compat.rocblas]
+         exclusive: [compat.cublas, compat.rocblas]
+```
+
+该拒绝在 `--format json` 里报 `exclusive-capability`(见第 11 章)。
+
+**它是关于这个包自己的符号的声明**,所以一条指向本包并不提供的能力的条目会被报为
+schema 警告:那里没有可独占的东西。而无人声明独占的能力行为完全不变 —— 两个 BLAS
+实现照常共存,既有的「两个或更多、未 pin」报错也仍然只在**有人 require** 该能力时出现。
 
 ### 2.8.2 `[feature-deps.<name>]` —— 由 feature 拉取的依赖
 

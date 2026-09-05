@@ -59,6 +59,11 @@ enum class Code {
     LldRequiredAbsent,     // the row links through lld directly and none is here
     HostToolToolchain,     // build.mcpp under a cross target has no host toolchain
     StdModulePrecompile,   // the std module could not be precompiled
+    // Two packages provide one capability and at least one of them declared it
+    // exclusive. Distinct from CapabilityPin: that one is about SELECTING a
+    // provider for a requirement, this one is about two implementations of one
+    // interface being in the same link at all.
+    ExclusiveCapability,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -79,6 +84,7 @@ constexpr std::string_view name(Code c) {
         case Code::LldRequiredAbsent:    return "lld-required-absent";
         case Code::HostToolToolchain:    return "host-tool-toolchain";
         case Code::StdModulePrecompile:  return "std-module-precompile";
+        case Code::ExclusiveCapability:  return "exclusive-capability";
         case Code::Other:                return "other";
     }
     return "other";

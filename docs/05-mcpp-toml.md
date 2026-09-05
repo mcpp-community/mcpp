@@ -1318,7 +1318,8 @@ runner = ["qemu-aarch64-static"]
 The rules, for `mcpp run` and `mcpp test` alike:
 
 - **A declared runner is used.** Its first element is located by mcpp: first in
-  the `bin/` directory of each payload declared under `[xlings] deps` (§2.13),
+  the `bin/` directory of each payload declared under `[xlings.workspace]`
+  (§2.13),
   then on `PATH`. A bare name on `PATH` resolves to an xvm shim, which answers
   for the current SubOS rather than for the package; the payload lookup is what
   lets a runner name a program the project declared.
@@ -1334,14 +1335,14 @@ The rules, for `mcpp run` and `mcpp test` alike:
   the manifest has no axis to carry; a project whose runner was written for
   x86_64 developers is still readable on an aarch64 machine.
 
-Provisioning the emulator through `[xlings] deps` is the form for a CI job or
-a project built on one host class. `qemu-user-aarch64` in the index is built
-for x86_64 Linux only, and `[xlings] deps` provisions on every host that builds
-the project, so the entry is written per platform (§2.13):
+Provisioning the emulator through `[xlings.workspace]` is the form for a CI job
+or a project built on one host class. `qemu-user-aarch64` in the index is built
+for x86_64 Linux only, and the table provisions on every host that builds the
+project, so the entry is written per platform (§2.13):
 
 ```toml
-[xlings]
-deps = [{ linux = "qemu-user-aarch64" }]
+[xlings.workspace]
+"xim:qemu-user-aarch64" = { linux = "" }   # present on Linux, any version
 
 [target.aarch64-linux-musl]
 runner = ["qemu-aarch64-static"]
@@ -1532,6 +1533,46 @@ set. For those, two providers in the graph is a defect to fix rather than an
 ambiguity to pin: pinning replaces an error that names both candidates with one
 that names a mangled symbol. Interchangeable *libraries* (BLAS implementations,
 which export distinct symbol sets and are selected per link) are unaffected.
+
+#### `exclusive` — a package declaring it is the only provider
+
+The paragraph above describes a defect the engine cannot detect. Seeing that two
+providers define the same symbols requires their object files, which do not
+exist when capabilities are bound; and refusing every duplicate provider as a
+rule would break the BLAS case in the same paragraph, which is legitimate.
+
+So the package says it:
+
+```toml
+[package]
+name      = "compat.cublas"
+provides  = ["gpu-blas"]
+exclusive = ["gpu-blas"]
+```
+
+Two packages that both provide `gpu-blas`, where at least one declares it
+exclusive, are refused when capabilities are bound — before anything is
+compiled, naming the capability and both providers:
+
+```
+error: capability 'gpu-blas' is provided by more than one package, and they
+       declare it EXCLUSIVE.
+         providers: [compat.cublas, compat.rocblas]
+         exclusive: [compat.cublas, compat.rocblas]
+       Two implementations of one interface define the same symbols, so the
+       link would resolve every call to whichever archive it reached first.
+       Keep one of them — a `[capabilities]` pin selects a provider for a
+       REQUIREMENT and cannot make two definitions of one symbol safe.
+```
+
+The refusal reports `exclusive-capability` in `--format json` (chapter 11).
+
+**It is a claim about this package's own symbols**, so an entry that names a
+capability the package does not provide is reported as a schema warning: there
+is nothing to be exclusive about. And a capability nobody declares exclusive
+behaves exactly as before — two BLAS implementations still coexist, and the
+existing "two or more, unpinned" error still applies only when something
+*requires* the capability.
 
 ### 2.8.2 `[feature-deps.<name>]` — dependencies a feature pulls in
 
@@ -2526,8 +2567,8 @@ build_finished = "mcpp-hooks-audioplayer niulai-mm"
 build_failed = "mcpp-hooks-audioplayer niulai-niulai"
 side_effect = false
 
-[xlings]
-deps = ["xim:mcpp-hooks-audioplayer@0.0.1"]
+[xlings.workspace]
+"xim:mcpp-hooks-audioplayer" = "0.0.1"
 ```
 
 A different sound for a successful or failed build. `side_effect = false` is

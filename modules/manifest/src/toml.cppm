@@ -815,6 +815,29 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 m.unknownCapabilities.push_back(entry);
         m.requires_ = *v;
     }
+    // [package] exclusive — capabilities this package claims sole provision of.
+    //
+    // Not validated against the reserved prefix: exclusivity is a property of
+    // the package's own symbols, and the capabilities it applies to are the
+    // feature system's open vocabulary. What IS checked is that each entry is
+    // something this package actually provides — an entry naming a capability
+    // the package does not supply cannot be enforced and is almost certainly a
+    // typo, so it is reported rather than ignored.
+    if (auto v = doc->get_string_array("package.exclusive")) {
+        for (auto const& entry : *v) {
+            bool supplied = std::ranges::find(m.provides, entry) != m.provides.end();
+            for (auto const& [_, provs] : m.featureProvides)
+                if (!supplied)
+                    supplied = std::ranges::find(provs, entry) != provs.end();
+            if (!supplied)
+                m.schemaWarnings.push_back(std::format(
+                    "[package] exclusive names '{}', which this package does not "
+                    "provide. Exclusivity is a claim about this package's own "
+                    "symbols, so it can only apply to a capability listed in "
+                    "`provides` (or in a feature's `provides`).", entry));
+        }
+        m.exclusive = *v;
+    }
     // std-module / std-compat-module / std-module-flags.
     //
     // ⚠️ THEY BELONG UNDER `[build]`, AND `[package]` IS THE OLDER SPELLING.

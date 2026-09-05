@@ -159,3 +159,63 @@ TEST(AbiTagAccel, UnparseableTextMeansNoDeviceCode) {
     EXPECT_TRUE(mcpp::pack::parse_accel("(none)").empty());
     EXPECT_TRUE(mcpp::pack::parse_accel("12.8+{sm_90}").empty());  // no backend
 }
+
+// ── The grammar is open: backends mcpp has never heard of ──────────────────
+//
+// The `accel` dimension exists to carry "which device was this built for", and
+// which devices exist is not mcpp's question. These assert that a spelling from
+// a backend the engine knows nothing about round-trips and compares -- and,
+// just as importantly, that an unknown arch shape falls back to equality rather
+// than to some numeric guess.
+
+TEST(AccelOpenGrammar, VulkanSpirvRoundTrips) {
+    auto a = mcpp::pack::parse_accel("vulkan1.3+{spirv1.6}");
+    ASSERT_EQ(a.size(), 1u);
+    EXPECT_EQ(a[0].backend, "vulkan");
+    EXPECT_EQ(a[0].version, "1.3");
+    ASSERT_EQ(a[0].archs.size(), 1u);
+    EXPECT_EQ(a[0].archs[0], "spirv1.6");
+    EXPECT_EQ(mcpp::pack::accel_str(a), "vulkan1.3+{spirv1.6}");
+}
+
+TEST(AccelOpenGrammar, SyclTargetRoundTrips) {
+    auto a = mcpp::pack::parse_accel("sycl2020+{spir64,nvptx64-sm_89}");
+    ASSERT_EQ(a.size(), 1u);
+    EXPECT_EQ(a[0].backend, "sycl");
+    ASSERT_EQ(a[0].archs.size(), 2u);
+    EXPECT_EQ(a[0].archs[0], "spir64");
+    EXPECT_EQ(a[0].archs[1], "nvptx64-sm_89");
+}
+
+TEST(AccelOpenGrammar, AnUnknownArchShapeComparesByEquality) {
+    // `gfx942` carries no leading number, so there is no ordering to read out
+    // of it. Equality is the only question available and it is the one asked --
+    // rather than reading `942` out of the middle and inventing a level.
+    auto pub  = mcpp::pack::parse_accel("hip6.4+{gfx942}");
+    auto same = mcpp::pack::parse_accel("hip6.4+{gfx942}");
+    auto diff = mcpp::pack::parse_accel("hip6.4+{gfx1100}");
+    EXPECT_TRUE (mcpp::pack::accel_accepts(pub, same));
+    EXPECT_FALSE(mcpp::pack::accel_accepts(pub, diff));
+}
+
+TEST(AccelOpenGrammar, FloorHasABackendNeutralSpelling) {
+    // `ptx>=` is CUDA's word and the one already published. `floor>=` says the
+    // same thing without borrowing it, so a backend whose portable form is
+    // SPIR-V does not have to write `ptx`.
+    auto neutral = mcpp::pack::parse_accel("vulkan1.3+{spirv1.6} floor>=1.4");
+    ASSERT_EQ(neutral.size(), 1u);
+    EXPECT_EQ(neutral[0].ptxFloor, "1.4");
+
+    auto cuda = mcpp::pack::parse_accel("cuda12.9+{sm_80} ptx>=80");
+    ASSERT_EQ(cuda.size(), 1u);
+    EXPECT_EQ(cuda[0].ptxFloor, "80");
+}
+
+TEST(AccelOpenGrammar, TheExistingPtxSpellingStillParses) {
+    // The negative control for the change above: adding a second spelling must
+    // not have moved the first. Descriptors published before it exist.
+    auto a = mcpp::pack::parse_accel("cuda12.8+{sm_80,sm_90f} ptx>=90");
+    ASSERT_EQ(a.size(), 1u);
+    EXPECT_EQ(a[0].ptxFloor, "90");
+    EXPECT_EQ(mcpp::pack::accel_str(a), "cuda12.8+{sm_80,sm_90f} ptx>=90");
+}
