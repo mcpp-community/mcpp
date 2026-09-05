@@ -37,6 +37,8 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
+import mcpp.toolchain.linkmodel;
+import mcpp.toolchain.gcc;
 // For `resolve_version_match` / `list_installed_versions`: a bare compiler
 // family named by the dependency graph resolves to a concrete version through
 // exactly the path `mcpp toolchain default <family>` uses.
@@ -1017,6 +1019,16 @@ void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
         : std::string{};
     e.targetLibc    = tc ? tc->targetSysrootPkg : std::string{};
     if (!tc) return;
+
+    // The two flags mcpp passes to ITS OWN compiler, so a rule package driving
+    // a second compiler passes the same two. Both read from the single
+    // producer that already decides them for the engine's own command lines —
+    // `resolve_link_model` for the sysroot, `gcc::binutils_prefix_dir` for the
+    // `-B` — rather than a fifth re-derivation of either.
+    if (auto lm = mcpp::toolchain::resolve_link_model(*tc);
+        lm.mode == mcpp::toolchain::CLibMode::Sysroot)
+        e.toolchainSysroot = lm.sysroot.string();
+    e.toolchainBinutilsDir = mcpp::toolchain::gcc::binutils_prefix_dir(*tc).string();
 
     // The C LIBRARY's sub-directory for this ISA profile, from the freestanding
     // table — the same single read point the compile flags use.

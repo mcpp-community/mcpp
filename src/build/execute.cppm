@@ -1154,13 +1154,15 @@ export int list_runners(const std::string& package_filter,
                         // for a probe. Reporting them without the axis that
                         // selects them would answer a question nobody asked.
                         const std::string& features = {},
-                        const std::string& profile = {}) {
+                        const std::string& profile = {},
+                        const std::string& accel = {}) {
     mcpp::build::BuildOverrides ov;
     ov.package_filter = package_filter;
     ov.cache_mode     = no_cache ? std::string("off") : cache_mode;
     ov.target_triple  = target_triple;
     ov.features       = features;
     ov.profile        = profile;
+    ov.accel          = accel;
     // Reporting what `mcpp run` would do means resolving what `mcpp run`
     // resolves, tool tiers included — otherwise this command would list a
     // runner whose program it had declined to install.
@@ -1540,7 +1542,10 @@ export int build_run_target(const std::optional<std::string>& targetName,
                             // the board arrives. Without this it was the one
                             // scenario the design's own example could not run.
                             const std::string& features = {},
-                            const std::string& profile = {}) {
+                            const std::string& profile = {},
+                            // The device axis. `--no-accel` arrives as the
+                            // "(none)" sentinel, as it does for `build`.
+                            const std::string& accel = {}) {
     // mcpp#225 (E2): reuse the resolved build cache when it's still fresh,
     // skipping prepare_build's toolchain resolution + modgraph scan
     // entirely — mirrors cmd_build's try_fast_build fast path. The cached
@@ -1561,7 +1566,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
         // whichever feature set and profile the last build used; taking it
         // here would silently ignore the flag, which is the same reason
         // `--cache` and `--profile` bypass it in `cmd_build`.
-        && features.empty() && profile.empty()
+        && features.empty() && profile.empty() && accel.empty()
         // ⚠️⚠️ THE FAST PATH IS `run`'s, AND ONLY `run`'s.
         //
         // It exec's the cached artefact directly — that IS its definition — so
@@ -1588,6 +1593,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
     ov.target_triple  = target_triple;
     ov.features       = features;
     ov.profile        = profile;
+    ov.accel          = accel;
     // This verb executes what it builds, so the `when = "run"` tool tier is
     // part of what has to exist. `mcpp build` does not set it, which is the
     // whole of the difference the tier buys.

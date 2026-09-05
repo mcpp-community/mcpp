@@ -409,6 +409,10 @@ int run(int argc, char** argv) {
             .arg(cl::Arg("bin").help("Binary name (optional)"))
             .option(cl::Option("target").takes_value().value_name("TRIPLE")
                 .help("Cross target triple (same axis as `mcpp build --target`)"))
+            .option(cl::Option("accel").takes_value().value_name("SPEC")
+                .help("Device backends and architectures (same axis as `mcpp build --accel`)"))
+            .option(cl::Option("no-accel")
+                .help("Run the variant built for no accelerator (same as `mcpp build --no-accel`)"))
             // Kept as an alias: it shipped in 2026.8.19.1 as the only spelling
             // `run` accepted, and scripts written against it must keep working.
             .option(cl::Option("target-triple").takes_value().value_name("TRIPLE")
@@ -466,6 +470,10 @@ int run(int argc, char** argv) {
                 .help("Run only tests whose name contains PATTERN (optional)"))
             .option(cl::Option("target").takes_value().value_name("TRIPLE")
                 .help("Cross target triple (same axis as `mcpp build --target`)"))
+            .option(cl::Option("accel").takes_value().value_name("SPEC")
+                .help("Device backends and architectures (same axis as `mcpp build --accel`)"))
+            .option(cl::Option("no-accel")
+                .help("Test the variant built for no accelerator (same as `mcpp build --no-accel`)"))
             .option(cl::Option("message-format").takes_value().value_name("FMT")
                 .help("Output format: human (default) | json (NDJSON, one record per test)"))
             .option(cl::Option("list")

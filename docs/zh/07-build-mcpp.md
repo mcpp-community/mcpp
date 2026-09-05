@@ -205,6 +205,31 @@ const char* sr = mcpp::sysroot_dir();     // 目标的 C 库根目录,没有则�
 
 宿主目标上 `sysroot_dir()` 为空:那里 C 库随编译器载荷或运行时绑定而来,没人需要找它。
 
+### 驱动第二个编译器:`toolchain_sysroot` / `toolchain_binutils_dir`(2026.9.6+)
+
+```cpp
+const char* sr = mcpp::toolchain_sysroot();        // mcpp 传的 `--sysroot`,没有则为 ""
+const char* bu = mcpp::toolchain_binutils_dir();   // mcpp 用 `-B` 指的目录,没有则为 ""
+```
+
+规则包有时必须运行一个 **mcpp 并未解析**的编译器。`nvcc` 拒绝 libc++ 宿主编译器,
+在 GCC 16 的 `<type_traits>` 上失败,因此 CUDA 规则包要从声明的载荷里另选一个宿主
+编译器;`hipcc` 与 `-fsycl-host-compiler` 面对同一个问题。
+
+那个编译器对自己被放进的环境一无所知。在 sub-OS 里 C 库不在 `/usr/include`,汇编器
+不在 `/usr/bin`,于是它遇到的第一个 `#include` 就失败:
+
+```
+crt/host_config.h:218: fatal error: features.h: No such file or directory
+```
+
+这两个答案就是 mcpp 为同一目标传给自己那个编译器的开关。把它们转发过去
+——`--sysroot=<值>` 与 `-B<值>`,经外层工具的宿主选项拼法——第二个编译器就看到
+第一个看到的东西。
+
+⚠️ **不是 `sysroot_dir()`。** 那个回答的是目标**档位**的问题,在宿主目标上为空,
+而宿主目标恰恰是这一对存在的场合。mcpp 不传某个开关时,对应的那个为空串。
+
 ### 找到 `[xlings.workspace]` 的载荷:`xpkg_dir`(2026.8.19+)
 
 `dep_dir` 回答的是 **mcpp** 依赖。xlings 包是另一个命名空间、另一套 store 布局,
@@ -462,6 +487,8 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存�
 | `MCPP_TARGET_ENV` *(0.0.100+)* | `mcpp::target_env()` | 目标的 env 段(`gnu`/`musl`/`msvc`);三元组无 env 段(macOS)时为空串 |
 | `MCPP_HOST` | `mcpp::host()` | 宿主三元组 |
 | `MCPP_PROFILE` | `mcpp::profile()` | 生效 profile 名(`dev`/`release`/…) |
+| `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.6+)* | `mcpp::toolchain_sysroot()` | mcpp 传给自己那个编译器的 `--sysroot`;不传时为空串。供运行**第二个**编译器的规则包使用 —— 见上文「驱动第二个编译器」 |
+| `MCPP_TOOLCHAIN_BINUTILS_DIR` *(2026.9.6+)* | `mcpp::toolchain_binutils_dir()` | mcpp 用 `-B` 指的目录;不指时为空串(musl 与 MinGW 载荷自带汇编器与链接器) |
 | `MCPP_ACCEL` *(2026.9.6+)* | `mcpp::accel()` | 本次构建的设备轴,已解析 —— `--accel` / `--no-accel` 优先于 `[build] accel` —— 线上形态 `cuda12.9+{sm_89} ptx>=89`;不要加速器时为空串。规则包从它推导自己的开关(`-gencode`、`--offload-arch`),架构集合因此只在 manifest 写一次。同一个值也喂给 `cfg(accelerator = "…")` 这个 layer 键 |
 | `MCPP_DEVICE_SOURCES` *(2026.9.6+)* | `mcpp::device_sources()` | 本包有效 `sources` 匹配到的设备类源文件(`.cu`、`.hip`…),相对包根,一行一个;没有时为空串。引擎一个都不编译 —— 由本程序引入的规则包把每一个变成一条 `mcpp::action`。已经过收窄:构建未覆盖的 `{ glob, accel }` 条目贡献为空,因此 `--no-accel` 得到空列表 |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | mcpp 提供的可写输出/暂存目录 |

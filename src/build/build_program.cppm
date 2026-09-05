@@ -43,6 +43,29 @@ struct BuildProgramEnv {
     // hostprogram::toolchain_dir / sysroot_dir for why declaring was wrong.
     std::string toolchainDir;
     std::string targetSysroot;
+    // ⭐⭐ THE TWO ANSWERS A SECOND COMPILER NEEDS AND CANNOT DERIVE.
+    //
+    // `toolchainSysroot` is the `--sysroot` mcpp passes to its own compiler and
+    // `toolchainBinutilsDir` the directory it names with `-B`; either is empty
+    // when mcpp passes none. They are not the same question as
+    // `targetSysroot`, which is a TIER fact (a bare-metal target's own C
+    // library payload, empty on a hosted target) — these two are ENVIRONMENT
+    // facts, and on a hosted subos both are non-empty precisely because the C
+    // library is not at `/usr/include` and the assembler is not at `/usr/bin`.
+    //
+    // ⚠️ Measured 2026-09-05 on the CUDA example. `nvcc` refuses a libc++ host
+    // compiler and fails on GCC 16's `<type_traits>`, so its rule package
+    // resolves a second host compiler from a declared payload. That compiler
+    // is not one mcpp resolved, so nothing tells it where anything is, and the
+    // first `#include` in NVIDIA's own `crt/host_config.h` fails:
+    //
+    //     host_config.h:218: fatal error: features.h: No such file or directory
+    //
+    // Every rule package driving a compiler mcpp did not resolve has the same
+    // gap — `hipcc`, `-fsycl-host-compiler`, a generator that compiles what it
+    // emits — so the answer belongs to the engine and is stated once here.
+    std::string toolchainSysroot;
+    std::string toolchainBinutilsDir;
     // ⭐⭐ WHICH COMPILER RESOLVED — "gcc" | "clang" | "msvc" | "".
     //
     // A package should never have to guess this, and until this field existed
@@ -434,6 +457,8 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     // absent variable would make the answer depend on whatever the parent
     // process happened to export.
     e.emplace_back("MCPP_TOOLCHAIN_DIR", env.toolchainDir);
+    e.emplace_back("MCPP_TOOLCHAIN_SYSROOT", env.toolchainSysroot);
+    e.emplace_back("MCPP_TOOLCHAIN_BINUTILS_DIR", env.toolchainBinutilsDir);
     e.emplace_back("MCPP_COMPILER", env.compilerId);
     e.emplace_back("MCPP_TARGET_SYSROOT", env.targetSysroot);
     e.emplace_back("MCPP_TARGET_BUILTINS_LIB", env.targetBuiltinsLib);
@@ -722,7 +747,7 @@ std::expected<void, std::string> run_build_program(
     compilerIdentity += "\nbuild-program-link=";
     compilerIdentity += muslStaticHelper  ? "musl-static-v1"
                       : mingwStaticHelper ? "mingw-static-v1"
-                                          : "default-v1";
+                                          : "default-v2";   // v2: DT_RPATH on Linux
     std::string programHash  = mcpp::toolchain::hash_file(src);
     std::string compilerHash = mcpp::toolchain::hash_string(compilerIdentity);
 
@@ -1023,6 +1048,23 @@ std::expected<void, std::string> run_build_program(
     // compile/precompile commands, where a link flag has no business (and for
     // Clang would perturb the default PIC/PIE codegen of mcpp.o).
     if (staticHostHelper) compileArgv.push_back(std::string(dial.staticRuntime));
+    // ⚠️ A DYNAMIC HELPER ON LINUX GETS `DT_RPATH`, NOT `DT_RUNPATH`.
+    //
+    // The driver's default is the new tag, and a runpath is consulted only for
+    // the helper's OWN needed libraries. A build program that opens a host
+    // library at run time -- a rule package reading a driver's version through
+    // the driver itself -- then fails one hop later, because that library's
+    // own dependencies (`libdl.so.2`, `libpthread.so.0`) are looked up without
+    // the helper's search path and the payload loader has no default that
+    // reaches them. Measured: `dlopen("<sentinel>/lib/libcuda.so.1")` from a
+    // build.mcpp answered `libdl.so.2: cannot open shared object file` while
+    // the very same directories sat in the helper's RUNPATH. The artifacts
+    // mcpp links carry DT_RPATH for this reason (loader_contract's Rpath tag);
+    // the helper now does too. Driver-only spelling: the helper is always
+    // linked through the compiler driver, never through the linker directly.
+    if (!staticHostHelper && !msvcHost
+        && !mcpp::platform::is_windows && !mcpp::platform::is_macos)
+        compileArgv.push_back("-Wl,--disable-new-dtags");
     if (msvcHost) {
         // /Fe: takes its value attached, not as a separate argv token.
         compileArgv.push_back(std::string(dial.outputExePrefix) + bin.string());

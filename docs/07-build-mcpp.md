@@ -235,6 +235,35 @@ package whose content is implementation-neutral. Asking follows whatever
 the compiler payload or through the runtime binding, and nothing has to look
 for it.
 
+### Driving a second compiler: `toolchain_sysroot` / `toolchain_binutils_dir` (2026.9.6+)
+
+```cpp
+const char* sr = mcpp::toolchain_sysroot();        // the `--sysroot` mcpp passes, or ""
+const char* bu = mcpp::toolchain_binutils_dir();   // the dir mcpp names with `-B`, or ""
+```
+
+A rule package sometimes has to run a compiler mcpp did not resolve. `nvcc`
+rejects a libc++ host compiler and fails inside GCC 16's `<type_traits>`, so a
+CUDA rule package resolves a second host compiler from a declared payload;
+`hipcc` and `-fsycl-host-compiler` pose the same question.
+
+That compiler starts knowing nothing about the environment it was placed in.
+Under a sub-OS the C library is not at `/usr/include` and the assembler is not
+at `/usr/bin`, so the first `#include` it reaches fails:
+
+```
+crt/host_config.h:218: fatal error: features.h: No such file or directory
+```
+
+These two answers are the flags mcpp passes to its own compiler for the same
+target. Forwarding them — `--sysroot=<value>` and `-B<value>`, through whatever
+the outer tool spells host options with — makes the second compiler see what
+the first one sees.
+
+⚠️ **Not `sysroot_dir()`.** That answers a question about the target's *tier*
+and is empty on a hosted target, which is exactly the case this pair exists
+for. Either of these two is empty when mcpp passes no such flag.
+
 ### Finding an `[xlings.workspace]` payload: `xpkg_dir` (2026.8.19+)
 
 `dep_dir` answers for **mcpp** dependencies. An xlings package is a different
@@ -532,6 +561,8 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_TARGET_ENV` *(0.0.100+)* | `mcpp::target_env()` | the target's env segment (`gnu`/`musl`/`msvc`); empty string when the triple has none (macOS) |
 | `MCPP_HOST` | `mcpp::host()` | the host triple |
 | `MCPP_PROFILE` | `mcpp::profile()` | effective profile name (`dev`/`release`/…) |
+| `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.6+)* | `mcpp::toolchain_sysroot()` | the `--sysroot` mcpp passes to its own compiler; empty when it passes none. For a rule package that runs a **second** compiler — see "Driving a second compiler" above |
+| `MCPP_TOOLCHAIN_BINUTILS_DIR` *(2026.9.6+)* | `mcpp::toolchain_binutils_dir()` | the directory mcpp names with `-B`; empty when it names none (a musl or MinGW payload brings its own assembler and linker) |
 | `MCPP_ACCEL` *(2026.9.6+)* | `mcpp::accel()` | the device axis of this build, resolved — `--accel` / `--no-accel` over `[build] accel` — in the wire form `cuda12.9+{sm_89} ptx>=89`; empty when the build asks for no accelerator. A rule package derives its own flags (`-gencode`, `--offload-arch`) from it, so the architecture set is written once, in the manifest. The same value feeds the `cfg(accelerator = "…")` layer key |
 | `MCPP_DEVICE_SOURCES` *(2026.9.6+)* | `mcpp::device_sources()` | the device-kind sources (`.cu`, `.hip`, …) the package's effective `sources` match, package-root-relative, one per line; empty when there are none. The engine compiles none of them — the rule package this program imports turns each into an `mcpp::action`. Already narrowed: a `{ glob, accel }` entry the build does not cover contributes nothing, so `--no-accel` yields an empty list |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | a writable scratch/output dir owned by mcpp |

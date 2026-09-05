@@ -241,13 +241,20 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     if (auto pr = parsed.value("profile"))  profile  = *pr;
     if (parsed.is_flag_set("release"))      profile  = "release";
     if (parsed.is_flag_set("dev"))          profile  = "dev";
+    // The device axis, read exactly as `build` reads it: `--no-accel` is an
+    // explicit choice and not the absence of `--accel`, so it travels as the
+    // same sentinel. Without this a project's CPU-only variant could be built
+    // but not run through the command surface.
+    std::string accel;
+    if (parsed.is_flag_set("no-accel"))      accel = "(none)";
+    else if (auto a = parsed.value("accel")) accel = *a;
     if (parsed.is_flag_set("list-runners"))
         return mcpp::build::list_runners(package_filter, cache_mode, no_cache,
-                                         target_triple, features, profile);
+                                         target_triple, features, profile, accel);
     return mcpp::build::build_run_target(targetName, passthrough, package_filter,
                                          cache_mode, no_cache, target_triple,
                                          no_runner, runner_name, features,
-                                         profile);
+                                         profile, accel);
 }
 
 export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
@@ -267,6 +274,8 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
     else if (parsed.is_flag_set("no-cache")) ov.cache_mode = "off";
 
     if (auto tt = parsed.value("target")) ov.target_triple = *tt;
+    if (parsed.is_flag_set("no-accel"))       ov.accel = "(none)";
+    else if (auto a = parsed.value("accel"))  ov.accel = *a;
 
     mcpp::build::TestOptions to;
     if (parsed.positional_count() > 0) to.filter = parsed.positional(0);

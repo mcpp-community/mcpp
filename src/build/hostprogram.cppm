@@ -264,6 +264,21 @@ inline const char* out_dir()                      { return env_or("MCPP_OUT_DIR"
 // `[toolchain]` actually resolved.
 inline const char* toolchain_dir()                { return env_or("MCPP_TOOLCHAIN_DIR"); }
 
+// The two flags mcpp passes to its own compiler: the `--sysroot` and the
+// directory it names with `-B`. Either is empty when mcpp passes none.
+//
+// ⭐ These are for A SECOND COMPILER — one this rule package runs and mcpp did
+// not resolve. Such a compiler starts with no idea where anything is, and on a
+// subos the C library is not at `/usr/include` and the assembler is not at
+// `/usr/bin`; the first `#include` it reaches then fails on `features.h`.
+// Forwarding these two makes it see what mcpp's own compiler sees.
+//
+// ⚠️ NOT `sysroot_dir()`, four lines down. That one answers a question about
+// the TARGET's tier and is empty on a hosted target, which is exactly the case
+// this pair exists for.
+inline const char* toolchain_sysroot()            { return env_or("MCPP_TOOLCHAIN_SYSROOT"); }
+inline const char* toolchain_binutils_dir()       { return env_or("MCPP_TOOLCHAIN_BINUTILS_DIR"); }
+
 // Which compiler resolved: "gcc", "clang", "msvc", or "" if none did.
 //
 // ⭐ Ask this rather than inferring it from `toolchain_dir()`. The two questions
