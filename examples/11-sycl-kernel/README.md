@@ -75,6 +75,20 @@ would unwind with. Example 09's island can promise not to touch the standard
 library at all; this one cannot — SYCL *is* a C++ library — so the discipline
 moves from "no standard library" to "nothing crosses".
 
+Making that promise true took three things, and only two of them are a `catch`:
+
+* the catch sits **inside** the buffer scope, because a `sycl::buffer`
+  destructor blocks until the work that reads it has finished, and unwinding
+  through three of those is a second throw during unwinding;
+* the queue takes an **asynchronous handler**, because a queue constructed
+  without one gets the default handler, and the default handler calls
+  `std::terminate` — which no `catch` can intercept, since it never travels as
+  an exception through this frame;
+* and one failure remains outside both. A build compiled to SPIR-V, run against
+  a back end that does not consume it, throws from inside the SYCL scheduler.
+  That is why this manifest names the device, and why `mcpp.rules.sycl` warns at
+  build time when an `accel` names `sycl` and no device.
+
 ## Running it
 
 ```
