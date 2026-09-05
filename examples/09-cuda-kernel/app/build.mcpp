@@ -1,6 +1,6 @@
 import std;
 import mcpp;
-import example.rules.cuda;
+import mcpplibs.rules.cuda;
 
 // Everything the rule needs is in the manifest: the architectures in
 // `[build] accel`, the device sources in the constrained glob, the toolkit
@@ -12,10 +12,10 @@ import example.rules.cuda;
 // is how the alternate route is measured without editing the manifest.
 int main() {
     mcpp::rerun_if_env_changed("MCPP_EXAMPLE_CUDA_ROUTE");
-    example::rules::cuda::options opt;
+    mcpplibs::rules::cuda::options opt;
     opt.includes = { "include" };
     if (const char* r = std::getenv("MCPP_EXAMPLE_CUDA_ROUTE"); r && *r)
-        opt.which = std::string_view(r) == "nvcc" ? example::rules::cuda::route::nvcc
-                                                   : example::rules::cuda::route::clang;
-    return example::rules::cuda::compile(opt) ? 0 : 1;
+        opt.which = std::string_view(r) == "nvcc" ? mcpplibs::rules::cuda::route::nvcc
+                                                   : mcpplibs::rules::cuda::route::clang;
+    return mcpplibs::rules::cuda::compile(opt) ? 0 : 1;
 }

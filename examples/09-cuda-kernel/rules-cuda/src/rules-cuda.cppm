@@ -40,12 +40,12 @@ module;
 #include <dlfcn.h>
 #endif
 
-export module example.rules.cuda;
+export module mcpplibs.rules.cuda;
 
 import std;
 import mcpp;
 
-export namespace example::rules::cuda {
+export namespace mcpplibs::rules::cuda {
 
 enum class route { automatic, clang, nvcc };
 
@@ -175,7 +175,7 @@ inline std::optional<toolkit> find_toolkit() {
     t.driver_dir  = xpkg("libcuda-host-link");
     if (t.nvcc_root.empty() || t.cudart_root.empty()) {
         std::println(std::cerr,
-            "example.rules.cuda: the toolkit is not declared.\n"
+            "mcpplibs.rules.cuda: the toolkit is not declared.\n"
             "  Name it under [xlings.workspace] and mcpp provisions it on first use:\n"
             "    \"xim:cuda-nvcc\"   = \"12.9.86\"\n"
             "    \"xim:cuda-cudart\" = \"12.9.79\"\n"
@@ -399,7 +399,7 @@ inline std::vector<edge> plan(std::span<const std::string> sources, options opt 
     std::vector<edge> out;
     const std::string root = mcpp::manifest_dir();
     if (root.empty()) {
-        std::println(std::cerr, "example.rules.cuda: no mcpp build context -- this runs from build.mcpp");
+        std::println(std::cerr, "mcpplibs.rules.cuda: no mcpp build context -- this runs from build.mcpp");
         return out;
     }
     const auto tg = parse_target(mcpp::accel());
@@ -407,7 +407,7 @@ inline std::vector<edge> plan(std::span<const std::string> sources, options opt 
         // C19: a device build that names no device is refused HERE, not at
         // run time as `no kernel image is available for execution`.
         std::println(std::cerr,
-            "example.rules.cuda: [build] accel names no CUDA architecture (accel = \"{}\").\n"
+            "mcpplibs.rules.cuda: [build] accel names no CUDA architecture (accel = \"{}\").\n"
             "  Write e.g.  accel = \"cuda12.9+{{sm_89}} ptx>=89\"  -- the set a build compiles\n"
             "  for is a decision, and the machine's own hardware is a poor default for it.",
             mcpp::accel());
@@ -424,7 +424,7 @@ inline std::vector<edge> plan(std::span<const std::string> sources, options opt 
     if (r == route::clang) {
         driver_cc = tcdir + "/bin/clang++";
         if (!std::filesystem::exists(driver_cc)) {
-            std::println(std::cerr, "example.rules.cuda: the clang route needs the toolchain's clang++ at {}", driver_cc);
+            std::println(std::cerr, "mcpplibs.rules.cuda: the clang route needs the toolchain's clang++ at {}", driver_cc);
             return out;
         }
         front = { driver_cc, "-x", "cuda", "-std=c++17", "-O2", "-fPIC",
@@ -436,7 +436,7 @@ inline std::vector<edge> plan(std::span<const std::string> sources, options opt 
             if (!std::filesystem::exists(tk->nvcc_root + "/bin/" + tool))
                 mcpp::warning(std::format("the toolkit payload has no {}; clang invokes it "
                                           "after generating PTX", tool).c_str());
-        std::println("example.rules.cuda: clang route -- {} (toolkit {})", driver_cc, tk->nvcc_root);
+        std::println("mcpplibs.rules.cuda: clang route -- {} (toolkit {})", driver_cc, tk->nvcc_root);
     } else {
         // nvcc drives the toolchain's own compiler, and refuses one newer than
         // the bound its header states. Read the bound; if exceeded, pass the
@@ -449,7 +449,7 @@ inline std::vector<edge> plan(std::span<const std::string> sources, options opt 
             // a GCC toolchain; with an LLVM toolchain the clang route is the
             // one to take, and it is the default.
             std::println(std::cerr,
-                "example.rules.cuda: the nvcc route needs a GCC host compiler; this project's "
+                "mcpplibs.rules.cuda: the nvcc route needs a GCC host compiler; this project's "
                 "toolchain is LLVM, whose clang uses libc++ and nvcc refuses it. Use the clang "
                 "route (the default for an LLVM toolchain) or set [toolchain] to a gcc payload.");
             return out;
@@ -461,7 +461,7 @@ inline std::vector<edge> plan(std::span<const std::string> sources, options opt 
         if (major_of(tg.version) < 13
             && libc_declares_c23_pi_math(mcpp::toolchain_sysroot())) {
             std::println(std::cerr,
-                "example.rules.cuda: toolkit {} redeclares the C23 functions cospi, sinpi and "
+                "mcpplibs.rules.cuda: toolkit {} redeclares the C23 functions cospi, sinpi and "
                 "rsqrt for the host without `noexcept`, and the C library this build compiles "
                 "against declares them with it; nvcc's front end refuses the pair.\n"
                 "  Name a 13.x toolkit, whose headers leave them to the C library:\n"
@@ -496,7 +496,7 @@ inline std::vector<edge> plan(std::span<const std::string> sources, options opt 
                 driver_cc).c_str());
         } else {
             std::println(std::cerr,
-                "example.rules.cuda: nvcc {} accepts gcc <= {} ({}), and this project's "
+                "mcpplibs.rules.cuda: nvcc {} accepts gcc <= {} ({}), and this project's "
                 "toolchain is gcc {}.\n"
                 "  Declare a gcc payload within the bound and the rule drives that one:\n"
                 "    [xlings.workspace]\n"
@@ -536,7 +536,7 @@ inline std::vector<edge> plan(std::span<const std::string> sources, options opt 
                 "nvcc cannot reach its own back-end: it invokes '{}' by name and that name "
                 "does not resolve on the search path it states. On the 13.x line install "
                 "xim:libnvvm beside xim:cuda-nvcc.", *missing).c_str());
-        std::println("example.rules.cuda: nvcc route -- {} with -ccbin {}", tk->nvcc(), driver_cc);
+        std::println("mcpplibs.rules.cuda: nvcc route -- {} with -ccbin {}", tk->nvcc(), driver_cc);
     }
 
     // The link line gets its directories from here, not from the manifest: the
@@ -590,4 +590,4 @@ inline bool compile(options opt = {}) {
     return submit(edges);
 }
 
-} // namespace example::rules::cuda
+} // namespace mcpplibs::rules::cuda
