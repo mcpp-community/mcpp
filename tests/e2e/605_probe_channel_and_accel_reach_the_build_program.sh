@@ -54,9 +54,12 @@ kind = "bin"
 main = "src/main.cpp"
 EOF
     cat > build.mcpp <<EOF
+import std;
 import mcpp;
 int main() {
-    mcpp::warning(mcpp::accel());          // what the program was told
+    // Delimited on purpose: the value under test is sometimes the EMPTY
+    // string, and an empty warning is indistinguishable from an absent one.
+    mcpp::warning((std::string("accel=[") + mcpp::accel() + "]").c_str());
     mcpp::fact("widget.driver", "1.2");    // what the "machine" has
     mcpp::floor("$1");                     // what this package needs
     return 0;
@@ -92,7 +95,7 @@ echo "PASS: a met floor builds"
 #
 # The advisory carries whatever `mcpp::accel()` returned. Parsed and printed
 # back by the engine, so the spelling is canonical whatever the manifest wrote.
-grep -q "widget9+{w1,w2}" ok.log || {
+grep -q "accel=\[widget9+{w1,w2}\]" ok.log || {
     cat ok.log; echo "FAIL: MCPP_ACCEL did not carry the resolved accel"; exit 1; }
 echo "PASS: MCPP_ACCEL carries the resolved accel"
 
@@ -107,5 +110,15 @@ fi
 grep -q "WIDGET_ON is missing" none.log || {
     cat none.log; echo "FAIL: the build failed for another reason than the layer"; exit 1; }
 echo "PASS: --no-accel leaves the accelerator layer empty"
+
+# ⚠️ AND THE VARIABLE, WHICH THIS SECTION CLAIMED AND DID NOT MEASURE.
+# `accel_str` prints `(none)` for an empty set so an ABI tag reads as a
+# sentence, and handing that spelling on made `MCPP_ACCEL=(none)` reach every
+# build program that asked for no accelerator — including every project that
+# never mentioned one. The manual promised an empty string; a rule package
+# testing "is there an accelerator" got a yes and a backend named `(none)`.
+grep -q "accel=\[\]" none.log || {
+    cat none.log; echo "FAIL: MCPP_ACCEL is not empty under --no-accel"; exit 1; }
+echo "PASS: --no-accel leaves MCPP_ACCEL empty, not the display spelling"
 
 echo "PASS: probe channel and accel reach the build program"

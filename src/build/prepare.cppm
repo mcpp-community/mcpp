@@ -2410,9 +2410,23 @@ prepare_build(bool print_fingerprint,
     // one string, and a build program sees the same one in MCPP_ACCEL. Read
     // at call time rather than captured: a `[target.'cfg(...)'.build]` section
     // may set `accel`, and the merge that applies it runs a few lines down.
+    //
+    // ⚠️⚠️ "NO ACCELERATOR" IS THE EMPTY STRING HERE, NOT `accel_str`'s "(none)".
+    //
+    // `accel_str` is a DISPLAY function: it prints `(none)` for an empty set so
+    // an ABI tag reads as a sentence. Handing that spelling on as a value made
+    // two readers wrong at once. A build program saw `MCPP_ACCEL=(none)` while
+    // the manual promised an empty string, so a rule package asking "is there
+    // an accelerator" got a yes and a backend named `(none)`; and the
+    // fingerprint's own guard, `if (!accel.empty())`, was true for every
+    // project on earth, appending `#accel=(none)` to builds that had asked for
+    // nothing. Measured 2026-09-05 with a build program that wrote the value to
+    // a file, which is the only way to see it -- a program's stdout is shown
+    // only when it fails.
     auto resolvedAccel = [&]() -> std::string {
-        return mcpp::pack::accel_str(mcpp::pack::parse_accel(
-            overrides.accel.empty() ? m->buildConfig.accel : overrides.accel));
+        const auto sets = mcpp::pack::parse_accel(
+            overrides.accel.empty() ? m->buildConfig.accel : overrides.accel);
+        return sets.empty() ? std::string{} : mcpp::pack::accel_str(sets);
     };
     // The cfg context, with the accelerator layer filled from the resolved
     // accel's backend names. `cfg(accelerator = "cuda")` is a membership test
