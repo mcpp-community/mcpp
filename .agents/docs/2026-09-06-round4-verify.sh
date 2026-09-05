@@ -64,7 +64,7 @@ section "B. xim:shaderc and xim:hip-nvidia"
 # glslc: the criterion is a SPIR-V module's magic number, not an exit status --
 # a compiler that wrote an empty file would also exit 0.
 "$XL" install shaderc -y >/dev/null 2>&1 || true
-glslc=$(ls "$HOME"/.xlings/data/xpkgs/xim-x-shaderc/*/bin/glslc "$HOME"/.mcpp/registry/data/xpkgs/xim-x-shaderc/*/bin/glslc 2>/dev/null | head -1)
+glslc=$(ls "$HOME"/.xlings/data/xpkgs/*-x-shaderc/*/bin/glslc "$HOME"/.mcpp/registry/data/xpkgs/*-x-shaderc/*/bin/glslc 2>/dev/null | head -1)
 if [ -n "$glslc" ]; then
     ok "xim:shaderc installed at $glslc"
     printf '#version 450\nlayout(local_size_x=64) in;\nlayout(std430,binding=0) buffer B { uint v[]; };\nvoid main(){ v[gl_GlobalInvocationID.x] *= 2; }\n' > "$work/s.comp"
@@ -76,7 +76,15 @@ if [ -n "$glslc" ]; then
     fi
     # Every DT_NEEDED inside a payload. This is the property that makes the
     # repack a payload rather than a copy of somebody's /usr.
-    outside=$(ldd "$glslc" 2>/dev/null | awk '/=>/ {print $3}' | grep -v '^$' | grep -v "$HOME" | grep -v '^(' | head -3)
+    # THE LOADER IS NOT A DEPENDENCY RESOLVED FROM THE HOST. glibc's `ldd`
+    # prints the program interpreter with `=>` like everything else, so a
+    # filter that only looks for that arrow counts `/lib64/ld-linux-x86-64.so.2`
+    # as a host library and fails a payload that is in fact complete. The
+    # interpreter is chosen by the ELF header, not searched for, and which one
+    # a payload uses is the subject of its own recipe rather than of this
+    # check.
+    outside=$(ldd "$glslc" 2>/dev/null | awk '/=>/ {print $3}' | grep -v '^$' \
+              | grep -v "$HOME" | grep -v '^(' | grep -v 'ld-linux' | head -3)
     [ -z "$outside" ] && ok "every glslc dependency resolves inside a payload" || fail "glslc resolves outside the store: $(echo "$outside" | tr '\n' ' ')"
 else
     fail "xim:shaderc left no bin/glslc in either store"
@@ -85,7 +93,7 @@ fi
 # hip-nvidia: headers only, and the dispatch header is what makes the NVIDIA
 # platform reachable at all.
 "$XL" install hip-nvidia -y >/dev/null 2>&1 || true
-hipinc=$(ls -d "$HOME"/.xlings/data/xpkgs/xim-x-hip-nvidia/*/include "$HOME"/.mcpp/registry/data/xpkgs/xim-x-hip-nvidia/*/include 2>/dev/null | head -1)
+hipinc=$(ls -d "$HOME"/.xlings/data/xpkgs/*-x-hip-nvidia/*/include "$HOME"/.mcpp/registry/data/xpkgs/*-x-hip-nvidia/*/include 2>/dev/null | head -1)
 if [ -n "$hipinc" ]; then
     ok "xim:hip-nvidia installed at $hipinc"
     for h in hip/hip_runtime.h hip/hip_version.h hip/nvidia_detail/nvidia_hip_runtime.h hip/amd_detail/amd_hip_runtime_pt_api.h; do
@@ -106,7 +114,7 @@ fi
 # devices are listed is the machine's answer and is deliberately not asserted.
 section "C. xim:dpcpp"
 "$XL" install dpcpp -y >/dev/null 2>&1 || true
-dp=$(ls -d "$HOME"/.xlings/data/xpkgs/xim-x-dpcpp/*/ "$HOME"/.mcpp/registry/data/xpkgs/xim-x-dpcpp/*/ 2>/dev/null | head -1)
+dp=$(ls -d "$HOME"/.xlings/data/xpkgs/*-x-dpcpp/*/ "$HOME"/.mcpp/registry/data/xpkgs/*-x-dpcpp/*/ 2>/dev/null | head -1)
 if [ -n "$dp" ]; then
     ok "xim:dpcpp installed at $dp"
     for p in sycl-ls sycl-prof sycl-trace sycl-sanitize syclbin-dump; do
@@ -116,11 +124,34 @@ if [ -n "$dp" ]; then
             *"error while loading shared libraries"*) fail "bin/$p cannot start: $err" ;;
             *) ok "  bin/$p starts" ;;
         esac
+        # DT_RPATH, not DT_RUNPATH, and the difference decides the adapters:
+        # RUNPATH is honoured for the program's own DT_NEEDED and not for a
+        # dlopen beneath it, so a RUNPATH here lets every one of these start
+        # and report no devices at all.
+        tag=$(readelf -d "$dp/bin/$p" 2>/dev/null | grep -oE 'RPATH|RUNPATH' | head -1)
+        [ "$tag" = "RPATH" ] && ok "  bin/$p carries DT_RPATH" || fail "bin/$p carries '$tag', not RPATH"
     done
+    # And the LIBRARIES must have none: a RUNPATH on one of them switches off
+    # the inherited RPATH of whatever loaded it, which is what cut a consumer's
+    # artifact off from its own driver farm.
+    adapter=$(ls "$dp"/lib/libur_adapter_*.so.0.* 2>/dev/null | head -1)
+    if [ -n "$adapter" ]; then
+        n=$(readelf -d "$adapter" 2>/dev/null | grep -cE 'RPATH|RUNPATH')
+        [ "$n" -eq 0 ] && ok "  the adapters carry no search path of their own, so they inherit the caller's" \
+            || fail "$(basename "$adapter") carries a search path; it would cut its loader off from the artifact's farm"
+    fi
+    # ONE DEFECT, ONE REPORT, AT ITS CAUSE. A program that could not start
+    # leaves `error while loading shared libraries: libsycl.so.9` on the same
+    # stderr the adapter check reads, so running both turns one failure into
+    # three and the third names the wrong thing.
     lsout=$("$dp/bin/sycl-ls" --verbose 2>&1)
-    for own in libsycl.so libumf.so libur_loader.so; do
-        printf '%s' "$lsout" | grep -q "$own.*cannot open" && fail "an adapter could not find $own, which is in this payload" || ok "  no adapter failed on $own"
-    done
+    if printf '%s' "$lsout" | grep -q 'error while loading shared libraries'; then
+        printf 'note: adapter checks skipped -- sycl-ls itself could not start (reported above)\n'
+    else
+        for own in libsycl.so libumf.so libur_loader.so; do
+            printf '%s' "$lsout" | grep -q "$own.*cannot open" && fail "an adapter could not find $own, which is in this payload" || ok "  no adapter failed on $own"
+        done
+    fi
     if [ -n "${MCPP_VERIFY_HOST:-}" ]; then
         printf '%s' "$lsout" | grep -q 'cuda:gpu' && ok "sycl-ls enumerates a CUDA device on this host" || fail "sycl-ls found no CUDA device on a host that has one"
     else
@@ -197,7 +228,7 @@ fi
 # -- F. the SYCL lane ---------------------------------------------------------
 section "F. examples/11-sycl-kernel"
 if [ -n "$SRC" ] && [ -d "$SRC/examples/11-sycl-kernel/app" ]; then
-    ex="$work/ex11"; cp -r "$SRC/examples/11-sycl-kernel/app" "$ex"
+    ex="$work/ex11"; cp -r "$SRC/examples/11-sycl-kernel/app" "$ex"; ex11_built="$ex"
     out=$(cd "$ex" && "$STORE" build --no-accel 2>&1 && "$STORE" run --no-accel 2>&1)
     printf '%s\n' "$out" | grep -q '12 24 36 48' && ok "example 11 --no-accel answered 12 24 36 48" \
         || fail "example 11 --no-accel: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
@@ -234,14 +265,34 @@ fi
 # runtime loads and enumerates nothing), `libstdc++.so.6` (which compat.cudart
 # deliberately does not farm, and which a SYCL artifact needs because it links
 # libc++) and `libz.so.1` (which a developer machine happened to have).
-section "G. compat.sycl-runtime"
-farm=$(ls -d "$HOME"/.mcpp/registry/data/xpkgs/compat-x-sycl-runtime/*/mcpp_generated/sycl_runtime/lib 2>/dev/null | sort -V | tail -1)
-if [ -z "$farm" ] && [ -n "$SRC" ]; then
-    farm=$(ls -d "$SRC"/examples/11-sycl-kernel/app/.mcpp/.xlings/data/xpkgs/compat-x-sycl-runtime/*/mcpp_generated/sycl_runtime/lib 2>/dev/null | sort -V | tail -1)
+section "G. compat.sycl-runtime 2026.09.07"
+# THE FARM THE EXAMPLE RESOLVED, NOT WHATEVER THE STORE HOLDS.
+#
+# A store that has seen two adapter versions holds two farms, and picking one
+# by sorting is picking by accident: the sandbox run of 2026-09-06 reported
+# `ok` for every soname of a farm the example under test had not used, because
+# a DIFFERENT version happened to be the only one in that store. The example's
+# own `resolution.json` names the directory it was actually built against.
+farm=""
+if [ -n "${ex11_built:-}" ]; then
+    farm=$(python3 - "$ex11_built" <<'PY' 2>/dev/null
+import glob, json, sys
+for f in glob.glob(sys.argv[1] + "/target/*/*/resolution.json"):
+    for m in json.dumps(json.load(open(f))).split('"'):
+        if m.endswith("sycl_runtime/lib"):
+            print(m); raise SystemExit
+PY
+)
+fi
+# Only if the example was not built here: then any installed farm is the best
+# available evidence, and the line says which one it read.
+if [ -z "$farm" ]; then
+    farm=$(ls -d "$HOME"/.mcpp/registry/data/xpkgs/compat-x-sycl-runtime/*/mcpp_generated/sycl_runtime/lib 2>/dev/null | sort -V | tail -1)
+    [ -n "$farm" ] && printf 'note: no example build to read; falling back to the newest farm in the store\n'
 fi
 if [ -n "$farm" ]; then
     ok "farm at $farm"
-    for so in libsycl.so.9 libur_loader.so.0 libumf.so.1 libstdc++.so.6 libz.so.1 libdl.so.2; do
+    for so in libsycl.so.9 libur_loader.so.0 libumf.so.1 libstdc++.so.6 libz.so.1 libdl.so.2 libcuda.so.1; do
         [ -e "$farm/$so" ] && ok "  $so" || fail "the farm is missing $so"
     done
     # No unversioned name: mcpp puts runtime.library_dirs on the LINK line as

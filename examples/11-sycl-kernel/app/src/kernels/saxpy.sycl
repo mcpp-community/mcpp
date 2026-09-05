@@ -1,0 +1,101 @@
+// The island, written in SYCL. Nothing here is visible to the module graph: a
+// device translation unit is never scanned and never produces a BMI.
+//
+// THIS ISLAND USES THE C++ STANDARD LIBRARY, AND ITS SIBLINGS DELIBERATELY DO
+// NOT.
+//
+// tests/cuda-consumer and tests/hip-consumer say in their own comments that
+// their islands touch no standard library, because an island that pulls one in
+// links a second C++ runtime into a program whose own came from mcpp's
+// toolchain. A SYCL island cannot make that promise: SYCL IS a C++ library,
+// `sycl::queue` and `sycl::buffer` are class templates over standard types,
+// and `libsycl.so` is itself compiled against libstdc++.
+//
+// So the second runtime is present here by construction, and what makes that
+// safe is the seam rather than an absence. Nothing below crosses
+// `saxpy_device`'s signature: the parameters are pointers and a count, the
+// return is an int, and no object allocated by one runtime is freed by the
+// other. `mcpp.rules.sycl` links the libstdc++ half explicitly for the same
+// reason -- it is a consequence of the compiler this rule chose, not something
+// the manifest should have to know.
+//
+// WHAT THIS ISLAND CAN AND CANNOT TURN INTO A RETURN CODE.
+//
+// It catches the synchronous half (no usable device, a rejected submit) and
+// installs a handler for the asynchronous half, which SYCL otherwise delivers
+// to a default handler that calls `std::terminate`. What it cannot catch is a
+// missing device image: a build compiled to SPIR-V, run against a back end
+// that does not consume SPIR-V, throws from inside the scheduler
+// (`ProgramManager::getDeviceImage`) in neither of those two paths. That is
+// why the manifest names the device -- and why `mcpp.rules.sycl` warns at
+// build time when it does not.
+#include "saxpy/saxpy.h"
+#include <sycl/sycl.hpp>
+#include <cstdio>
+
+extern "C" int saxpy_device(float a, const float* x, const float* y,
+                            float* out, unsigned n) {
+    // THE QUEUE TAKES AN ASYNC HANDLER, AND WITHOUT ONE THIS FUNCTION CANNOT
+    // KEEP ITS PROMISE.
+    //
+    // SYCL splits errors in two. A synchronous one -- no usable device, a bad
+    // submit -- is thrown where it happens and an ordinary catch sees it. An
+    // ASYNCHRONOUS one, which is most of what a device reports, is delivered
+    // to the queue's exception handler; a queue constructed WITHOUT one gets
+    // the default handler, and the default handler calls `std::terminate`.
+    //
+    // It is not something a catch can intercept, because it does not travel as
+    // an exception through this frame. Measured, on a build whose SPIR-V no
+    // device on this machine could consume, with every `try` below already in
+    // place:
+    //
+    //   terminate called after throwing an instance of 'sycl::_V1::exception'
+    //   terminate called recursively
+    //
+    // A device island that promises the rest of the program a return code has
+    // to install a handler, or the promise is only kept on machines where
+    // nothing goes wrong.
+    int rc = 0;
+    auto on_async = [&rc](sycl::exception_list errors) {
+        for (std::exception_ptr const& e : errors) {
+            try { std::rethrow_exception(e); }
+            catch (const sycl::exception& ex) {
+                std::fprintf(stderr, "sycl (async): %s\n", ex.what());
+            }
+        }
+        rc = -1;
+    };
+
+    try {
+        sycl::queue q{on_async};
+        {
+            sycl::buffer<float, 1> bx(x, sycl::range<1>(n));
+            sycl::buffer<float, 1> by(y, sycl::range<1>(n));
+            sycl::buffer<float, 1> bo(out, sycl::range<1>(n));
+            // The catch is INSIDE the buffer scope on purpose: a buffer
+            // destructor blocks until the work that reads it has finished, and
+            // letting an exception propagate through three of those means
+            // unwinding through destructors that are themselves finishing
+            // failed work. Caught here, the scope ends normally.
+            try {
+                q.submit([&](sycl::handler& h) {
+                    sycl::accessor ax(bx, h, sycl::read_only);
+                    sycl::accessor ay(by, h, sycl::read_only);
+                    sycl::accessor ao(bo, h, sycl::write_only, sycl::no_init);
+                    h.parallel_for(sycl::range<1>(n),
+                                   [=](sycl::id<1> i) { ao[i] = a * ax[i] + ay[i]; });
+                });
+                q.wait_and_throw();
+            } catch (const sycl::exception& e) {
+                std::fprintf(stderr, "sycl: %s\n", e.what());
+                rc = -1;
+            }
+        }
+    } catch (const sycl::exception& e) {
+        // The queue itself: a machine with no device the runtime can use fails
+        // here, before any buffer exists.
+        std::fprintf(stderr, "sycl: no usable device: %s\n", e.what());
+        rc = -1;
+    }
+    return rc;
+}
