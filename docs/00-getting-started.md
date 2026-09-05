@@ -131,6 +131,8 @@ human-readable.
 ```bash
 mcpp build              # incremental build
 mcpp clean              # clean target/
+mcpp clean --stale      # drop only target/<triple>/<fingerprint>/ dirs no build still uses
+                        # (--dry-run lists and deletes nothing; --older-than 3d keeps newer unrecorded ones)
 mcpp test               # compile and run tests/**/*.cpp — one binary per file,
                         # framework-agnostic (bare main, or gtest via [dev-dependencies])
 mcpp test <pattern>     # only tests whose name contains <pattern>

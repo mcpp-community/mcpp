@@ -61,7 +61,7 @@ void print_usage() {
     std::println("  mcpp build [options]                 Build the current package");
     std::println("  mcpp run [target] [-- args...]       Build + run a binary target");
     std::println("  mcpp test [pattern] [-- args...]     Build + run tests/**/*.cpp (--list, --timeout, --build-timeout, --message-format json, --no-runner)");
-    std::println("  mcpp clean [--bmi-cache]             Remove target/ (and optionally the build cache)");
+    std::println("  mcpp clean [--stale] [--bmi-cache]   Remove target/ (or, with --stale, only its non-current fingerprint dirs)");
     std::println("  mcpp add [ns.]pkg@ver                Add an exact dependency to mcpp.toml");
     std::println("  mcpp remove [ns.]pkg                 Remove an exact dependency from mcpp.toml");
     std::println("  mcpp update [pkg]                    Re-resolve deps and rewrite mcpp.lock");
@@ -506,8 +506,12 @@ int run(int argc, char** argv) {
                 return cmd_test(p, std::span<const std::string>(passthrough));
             })))
         .subcommand(cl::App("clean")
-            .description("Remove target/ (and optionally the global build cache)")
+            .description("Remove target/, or with --stale only the fingerprint directories under it that no recorded build still uses")
             .option(cl::Option("bmi-cache").help("Also wipe the global build cache (see `mcpp cache clean`)"))
+            .option(cl::Option("stale").help("Only remove target/<triple>/<fingerprint>/ directories that no recorded build considers current"))
+            .option(cl::Option("dry-run").help("List what would be removed and delete nothing (implies --stale)"))
+            .option(cl::Option("older-than").takes_value().value_name("DURATION")
+                .help("With --stale: keep unrecorded directories written more recently than this, e.g. 12h, 3d (default 1d; 0 keeps none)"))
             .action(wrap_rc(cmd_clean)))
         .subcommand(cl::App("why")
             .description("Explain how the toolchain / runtime / deps / runners were resolved")

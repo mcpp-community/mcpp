@@ -12,6 +12,7 @@ import std;
 import mcpplibs.cmdline;
 import mcpp.build.prepare;
 import mcpp.build.execute;
+import mcpp.bmi_cache.maintenance;   // parse_duration, for `clean --stale --older-than`
 import mcpp.build.directives;      // the device-slot table
 import mcpp.build.configure;
 import mcpp.build.coff_exports;
@@ -463,6 +464,24 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
 }
 
 export int cmd_clean(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    const bool dryRun = parsed.is_flag_set("dry-run");
+    if (parsed.is_flag_set("stale") || dryRun) {
+        if (parsed.is_flag_set("bmi-cache")) {
+            std::println(stderr, "error: --stale/--dry-run cannot be combined with --bmi-cache "
+                                 "(the build cache is shared across projects; use `mcpp cache gc`)");
+            return 2;
+        }
+        std::int64_t keepWithinSecs = 24 * 3600;
+        if (auto v = parsed.value("older-than")) {
+            auto secs = (*v == "0") ? std::optional<std::int64_t>{0} : mcpp::bmi_cache::parse_duration(*v);
+            if (!secs) {
+                std::println(stderr, "error: invalid --older-than '{}' (expected <N>s, <N>m, <N>h, <N>d, or 0)", *v);
+                return 2;
+            }
+            keepWithinSecs = *secs;
+        }
+        return mcpp::build::clean_stale(dryRun, keepWithinSecs);
+    }
     return mcpp::build::clean_project(parsed.is_flag_set("bmi-cache"));
 }
 
