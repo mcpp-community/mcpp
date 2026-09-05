@@ -187,7 +187,7 @@ Dependencies run downward; each task states the criterion that decides it.
 
 | # | task | criterion | depends on |
 |---|---|---|---|
-| C1 | `mcpp.build.spirv` + `examples/10-vulkan-compute` | three devices, one artifact — **done** | — |
+| C1 | `mcpp.build.spirv` + `examples/10-vulkan-compute` (the module is `mcpp.rules.spirv` since round 3; see 6.2) | three devices, one artifact — **done** | — |
 | C2 | `mcpp.build.sycl` driving the `dpcpp` payload | a SYCL kernel runs on the CUDA backend | — |
 | C3 | `mcpp.build.hip` | `HIP_PLATFORM=nvidia` kernel runs | `hip-runtime` payload |
 | C4 | llama.cpp Vulkan lane | tokens on lavapipe with no GPU | C1, and a `glslc` payload or a flag translator |
