@@ -40,6 +40,13 @@ cuda-runtime = "2026.09.05"
 [xlings.workspace]
 "xim:cuda-nvcc"         = "12.9.86"
 "xim:cuda-cudart"       = "12.9.79"
+# cuRAND's headers and CCCL. clang's CUDA wrapper includes
+# curand_mtgp32_kernel.h for every device unit, and that header includes
+# <nv/target> from CCCL, so the clang route needs both even though this kernel
+# calls neither; on a developer machine the host's /usr/include used to supply
+# them silently. 10.3.x and 12.9.27 are the 12.9 line.
+"xim:libcurand"         = "10.3.10.19"
+"xim:cuda-cccl"         = "12.9.27"
 "xim:libcuda-host-link" = { linux = "0.0.1" }
 
 [build]
