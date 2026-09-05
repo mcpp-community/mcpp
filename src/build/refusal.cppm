@@ -64,6 +64,16 @@ enum class Code {
     // provider for a requirement, this one is about two implementations of one
     // interface being in the same link at all.
     ExclusiveCapability,
+    // A package requires more of the machine than the machine was declared to
+    // have. Distinct from a capability that is missing entirely: here the thing
+    // exists and is too old.
+    VersionFloorUnmet,
+    // A source glob is constrained to a device set this build does not cover.
+    // Distinct from VersionFloorUnmet (the machine is too old) and from a
+    // prebuilt artifact's tag mismatch (that refusal is about consuming): here
+    // the project's own sources ask for a device the build was not told to
+    // target.
+    AccelMismatch,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -85,6 +95,8 @@ constexpr std::string_view name(Code c) {
         case Code::HostToolToolchain:    return "host-tool-toolchain";
         case Code::StdModulePrecompile:  return "std-module-precompile";
         case Code::ExclusiveCapability:  return "exclusive-capability";
+        case Code::VersionFloorUnmet:    return "version-floor-unmet";
+        case Code::AccelMismatch:        return "accel-mismatch";
         case Code::Other:                return "other";
     }
     return "other";

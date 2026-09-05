@@ -102,6 +102,28 @@ inline void run_exclusive()                    { std::printf("mcpp:run-exclusive
 // "resolved". mcpp replays it on every hit.
 inline void warning(const char* message)          { std::printf("mcpp:warning=%s\n", message); }
 
+// ── The probe channel (mcpp 2026.9.5.2+) ────────────────────────────────────
+//
+// A rule package is the thing that knows how to ask a machine what it has --
+// which library to open, which function to call -- and the engine is the
+// thing that must not. So the package MEASURES and the engine COMPARES:
+//
+//     mcpp::fact("cuda.driver", "12.4");        // what this machine has
+//     mcpp::floor("cuda.driver >= 12.0");       // what this package needs
+//
+// Before anything is compiled the engine refuses when a floor is unmet and
+// names both values (`mcpp why toolchain --format json` reports the reason
+// `version-floor-unmet`). A floor nobody stated a fact for is silent: not
+// knowing is not failing.
+//
+// ⚠️ A fact is persisted with the program's other output and replayed on a
+// cache hit. State what would change it -- `rerun_if_changed` on the library
+// the version was read from -- or the fact outlives the machine it described.
+inline void fact(const char* name, const char* version) {
+    std::printf("mcpp:fact=%s=%s\n", name, version);
+}
+inline void floor(const char* spec)               { std::printf("mcpp:floor=%s\n", spec); }
+
 // The memory layout for a freestanding link. Reaches the CONSUMER's link line
 // (like link_lib/link_search, unlike include_dir), because the package that
 // knows a board's layout is not the package being built.
@@ -214,6 +236,20 @@ inline const char* target_arch()                  { return env_or("MCPP_TARGET_A
 inline const char* target_env()                   { return env_or("MCPP_TARGET_ENV"); }
 inline const char* host()                         { return env_or("MCPP_HOST"); }
 inline const char* profile()                      { return env_or("MCPP_PROFILE"); }
+// The device axis of this build: `cuda12.9+{sm_89} ptx>=89`, or "" when the
+// build asks for no accelerator. Already resolved (`--accel` / `--no-accel`
+// over `[build] accel`), so a rule package derives its architecture flags
+// from HERE and the set is written once, in the manifest. What the string
+// means beyond "backend, version, architectures, floor" is the package's
+// business: the engine never learns what `sm_89` is.
+inline const char* accel()                        { return env_or("MCPP_ACCEL"); }
+// The device-kind sources (`.cu`, `.hip`, ...) this package's `sources` match
+// under the current accel, package-root-relative, one per line, "" when there
+// are none. The engine compiles none of them; the rule package this program
+// imports turns each into an `mcpp::action`. Already narrowed: a glob written
+// as `{ glob = "...", accel = "..." }` whose constraint the build does not
+// satisfy contributes nothing, so `--no-accel` yields an empty list.
+inline const char* device_sources()               { return env_or("MCPP_DEVICE_SOURCES"); }
 inline const char* out_dir()                      { return env_or("MCPP_OUT_DIR"); }
 
 // Where the TOOLCHAIN mcpp resolved for this build lives — the payload root,
@@ -227,6 +263,21 @@ inline const char* out_dir()                      { return env_or("MCPP_OUT_DIR"
 // merely inelegant, it closed a road. Asking here follows whatever
 // `[toolchain]` actually resolved.
 inline const char* toolchain_dir()                { return env_or("MCPP_TOOLCHAIN_DIR"); }
+
+// The two flags mcpp passes to its own compiler: the `--sysroot` and the
+// directory it names with `-B`. Either is empty when mcpp passes none.
+//
+// ⭐ These are for A SECOND COMPILER — one this rule package runs and mcpp did
+// not resolve. Such a compiler starts with no idea where anything is, and on a
+// subos the C library is not at `/usr/include` and the assembler is not at
+// `/usr/bin`; the first `#include` it reaches then fails on `features.h`.
+// Forwarding these two makes it see what mcpp's own compiler sees.
+//
+// ⚠️ NOT `sysroot_dir()`, four lines down. That one answers a question about
+// the TARGET's tier and is empty on a hosted target, which is exactly the case
+// this pair exists for.
+inline const char* toolchain_sysroot()            { return env_or("MCPP_TOOLCHAIN_SYSROOT"); }
+inline const char* toolchain_binutils_dir()       { return env_or("MCPP_TOOLCHAIN_BINUTILS_DIR"); }
 
 // Which compiler resolved: "gcc", "clang", "msvc", or "" if none did.
 //

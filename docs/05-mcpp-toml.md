@@ -215,6 +215,18 @@ the package/feature boundary, not on an individual target.
 > mcpp 2026.8.18.1 the two were byte-identical, so there was no spelling for
 > "nothing" and any file left under `src/` was swept in.
 
+> **A `sources` entry may carry the accelerator it is for** (2026.9.5.2+):
+> `{ glob = "src/kernels/**/*.cu", accel = "cuda12.9+{sm_89}" }`. The glob
+> joins the list like any other; the constraint decides whether it applies to a
+> given build. It must match at least one file (an empty match is refused: it
+> would leave nothing to compile for that device and say so only at the link).
+> Under `--no-accel` the glob is left out, which is how one project yields its
+> CPU-only variant. Under an `--accel` that does not cover the constraint the
+> build is refused naming both (`accel-mismatch`). Device-kind files (`.cu`,
+> `.hip`) the effective set matches are never compiled by the engine; they
+> reach the build program as `MCPP_DEVICE_SOURCES`, where the rule package the
+> project imports turns each into an `mcpp::action`.
+
 ```toml
 [build]
 sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # Source globs (default: src/**/*.{cppm,cpp,cc,c,S,s,asm})
@@ -1566,6 +1578,46 @@ error: capability 'gpu-blas' is provided by more than one package, and they
 ```
 
 The refusal reports `exclusive-capability` in `--format json` (chapter 11).
+
+#### `version-floor` — needing more of the machine than it has
+
+Some facts about a machine bound what may be built for it, and the failure when
+they are ignored arrives late: a program built against a runtime newer than the
+driver it will meet links cleanly and fails at first use, naming neither side.
+
+A package states what it needs:
+
+```toml
+[[runtime.requirements]]
+kind  = "version-floor"
+value = "cuda.driver >= 12.0"
+```
+
+and a package that established a fact about this machine — at install time,
+which is where probing belongs — states it:
+
+```toml
+[runtime]
+provides = ["cuda.driver=12.4"]
+```
+
+mcpp compares them when capabilities are bound and refuses before anything is
+compiled, reporting `version-floor-unmet`:
+
+```
+error: `toolkitnew` requires cuda.driver >= 13.0, and this machine has 12.4.
+         stated by: driverfact
+```
+
+**No vendor vocabulary reaches the engine.** It reads a name, a relation and a
+version; `cuda.driver` is data passing through, and a backend mcpp has never
+heard of compares the same way.
+
+⚠️ **A floor nobody answered is silent.** A machine that never declared what it
+has is not a machine that fails the floor — it is one nobody asked. Turning
+"we do not know" into "no" is the failure mode this exists to avoid, and it is
+asserted directly: `tests/e2e/603_version_floor.sh` builds a project whose floor
+names something no package provides.
 
 **It is a claim about this package's own symbols**, so an entry that names a
 capability the package does not provide is reported as a schema warning: there

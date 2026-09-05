@@ -485,6 +485,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // find_disallowed_array_of_tables above.
     static constexpr std::string_view kAllowedArraysOfTables[] = {
         "build.flags",
+        // A `sources` list whose every entry is a table (`[{ glob, accel }]`)
+        // has the same Value shape as `[[build.sources]]`; the reader
+        // type-checks every entry, so nothing is silently taken. The
+        // conditional axis is allowlisted for the same reason: its reader
+        // refuses a table entry with a message that says where it belongs,
+        // which this guard's generic sentence would pre-empt.
+        "build.sources",
+        "target.*.build.sources",
         "features.*.flags",   // #253 — the middle segment is the feature name
         "target.*.build.flags",  // #258 — middle segment is the cfg predicate
         "runtime.requirements",
@@ -594,8 +602,48 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // mean "compile nothing", and only the key's existence can say that (see
     // BuildConfig::sourcesDeclared). Set from either spelling, because the
     // legacy one has to be able to express it too.
-    if (auto v = doc->get_string_array("build.sources")) {
-        m.buildConfig.sources = *v;
+    // A mixed list: plain globs, and tables that carry a constraint. Read
+    // element by element rather than through get_string_array, which answers
+    // "not a string array" for a list with one table in it -- and then the
+    // key would count as absent, the default glob would apply, and the
+    // constrained entry would vanish without a word.
+    if (auto* sv = doc->get("build.sources")) {
+        if (!sv->is_array()) {
+            return std::unexpected(error(origin,
+                "[build].sources must be an array of globs and/or inline tables "
+                "({ glob = \"...\", accel = \"...\" })"));
+        }
+        for (auto& ev : sv->as_array()) {
+            if (ev.is_string()) { m.buildConfig.sources.push_back(ev.as_string()); continue; }
+            if (!ev.is_table()) {
+                return std::unexpected(error(origin,
+                    "[build].sources entries must be strings or inline tables "
+                    "with a `glob` key"));
+            }
+            mcpp::manifest::BuildConfig::SourceConstraint sc;
+            for (auto& [k, v] : ev.as_table()) {
+                bool ok = false;
+                if      (k == "glob")  { ok = v.is_string(); if (ok) sc.glob  = v.as_string(); }
+                else if (k == "accel") { ok = v.is_string(); if (ok) sc.accel = v.as_string(); }
+                if (!ok) {
+                    return std::unexpected(error(origin, std::format(
+                        "[build].sources: invalid key '{}' in a table entry "
+                        "(expected glob = \"...\" and optionally accel = \"...\")", k)));
+                }
+            }
+            if (sc.glob.empty()) {
+                return std::unexpected(error(origin,
+                    "[build].sources: a table entry is missing its `glob` key"));
+            }
+            if (sc.glob.starts_with("!")) {
+                return std::unexpected(error(origin, std::format(
+                    "[build].sources: a constrained entry cannot be an exclusion "
+                    "('{}'); write the exclusion as a plain string", sc.glob)));
+            }
+            m.buildConfig.sources.push_back(sc.glob);
+            if (!sc.accel.empty())
+                m.buildConfig.sourceConstraints.push_back(std::move(sc));
+        }
         m.buildConfig.sourcesDeclared = true;
     }
     if (auto v = doc->get_string_array("modules.sources")) {
@@ -2451,6 +2499,17 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 read_list("cflags",   cc.inputs.cflags);
                 read_list("cxxflags", cc.inputs.cxxflags);
                 read_list("ldflags",  cc.inputs.ldflags);
+                // A constrained entry (`{ glob, accel }`) is refused here rather
+                // than skipped: read_list keeps strings only, and a table that
+                // silently vanished would be a device glob nobody ever narrowed.
+                if (auto f = bt.find("sources"); f != bt.end() && f->second.is_array())
+                    for (auto& v : f->second.as_array())
+                        if (!v.is_string()) {
+                            return std::unexpected(error(origin,
+                                "[target.'cfg(...)'.build].sources entries must be "
+                                "plain globs; a constrained entry ({ glob, accel }) "
+                                "belongs in [build].sources"));
+                        }
                 read_list("sources",  cc.inputs.sources);
                 // #296: package-level macros are a build input like any other,
                 // so the cfg axis carries them too — a platform-only macro

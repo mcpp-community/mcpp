@@ -22,6 +22,18 @@ void enrich_toolchain(Toolchain& tc);
 std::optional<std::filesystem::path>
 find_binutils_bin(const std::filesystem::path& compilerBin);
 
+// The external GNU binutils directory this toolchain must be pointed at with
+// `-B`, or empty when it must not be pointed at one — which is every toolchain
+// that is not a glibc GCC.
+//
+// ⭐ ONE STATEMENT OF A GUARD THAT HAD THREE COPIES. musl-cross-make and
+// MinGW-w64 payloads bundle their own as/ld, and for a cross target the host's
+// binutils would mis-assemble — the Linux `as` rejects MinGW's PE/SEH
+// directives `.def` / `.seh_proc`. Only the glibc GCC needs the external
+// package. Each copy of that sentence was a place the next reader had to
+// re-derive it, and one of them said so in a comment.
+std::filesystem::path binutils_prefix_dir(const Toolchain& tc);
+
 std::filesystem::path std_bmi_path(const std::filesystem::path& cacheDir);
 std::filesystem::path staged_std_bmi_path(const std::filesystem::path& outputDir);
 
@@ -148,6 +160,17 @@ find_binutils_bin(const std::filesystem::path& compilerBin) {
     return std::nullopt;
 }
 
+std::filesystem::path binutils_prefix_dir(const Toolchain& tc) {
+    // GCC only, and the restriction is what makes the name true. Clang resolves
+    // its assembler and linker through its own payload and must never be handed
+    // a GNU binutils directory; the engine's clang command lines carry no `-B`
+    // at all, so answering with one would describe a flag nobody passes.
+    if (tc.compiler != CompilerId::GCC) return {};
+    if (is_musl_target(tc) || is_mingw_target(tc)) return {};
+    if (auto bin = find_binutils_bin(tc.binaryPath)) return *bin;
+    return {};
+}
+
 std::filesystem::path std_bmi_path(const std::filesystem::path& cacheDir) {
     return cacheDir / "gcm.cache" / "std.gcm";
 }
@@ -160,17 +183,9 @@ std::string std_module_build_command(const Toolchain& tc,
                                      const std::filesystem::path& cacheDir,
                                      std::string_view sysrootFlag,
                                      std::string_view cppStandardFlag) {
-    // musl-cross-make AND MinGW-w64 cross toolchains bundle their own as/ld
-    // (and for a cross target the host's binutils would mis-assemble — e.g.
-    // the Linux `as` chokes on MinGW's PE/SEH directives `.def`/`.seh_proc`).
-    // Only the glibc gcc needs an external binutils package wired via -B.
-    // Mirrors the guard in build/flags.cppm.
     std::string bFlag;
-    if (!is_musl_target(tc) && !is_mingw_target(tc)) {
-        if (auto binutilsBin = find_binutils_bin(tc.binaryPath)) {
-            bFlag = std::format(" -B{}", mcpp::xlings::shq(binutilsBin->string()));
-        }
-    }
+    if (auto binutilsBin = binutils_prefix_dir(tc); !binutilsBin.empty())
+        bFlag = std::format(" -B{}", mcpp::xlings::shq(binutilsBin.string()));
 
     // Windows (MinGW): cmd.exe needs `/d` to change DRIVE (project on D:,
     // BMI cache on C: is the real CI layout — same-drive runs masked this).

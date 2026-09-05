@@ -550,6 +550,26 @@ struct BuildConfig : BuildInputs {
     // the "main" feature) without it being linked by default — see
     // .agents/docs/2026-06-25-gtest-main-feature-and-add-dev-design.md.
     std::map<std::string, std::vector<std::string>> featureSources;
+    // `[build] sources` entries written as a table:
+    //
+    //     sources = ["src/**/*.cppm", { glob = "src/kernels/**/*.cu", accel = "cuda12.9+{sm_89}" }]
+    //
+    // The glob ALSO appears in `sources`, so every reader that walks the plain
+    // list sees it; this carries the constraint that decides whether it
+    // applies to a given build. Resolved in prepare_build: the glob must match
+    // at least one file (an empty match is a typo, not a no-op); when the
+    // build asks for no accelerator the glob is excluded, which is how
+    // `--no-accel` yields the CPU-only variant of a project; and when it does
+    // ask for one, the constraint must lie within what the build targets, or
+    // the build is refused naming both. Device-kind files the effective source
+    // set matches are handed to the package's build program
+    // (MCPP_DEVICE_SOURCES) rather than compiled by the engine, which has no
+    // rule for them: that is the rule package's business.
+    struct SourceConstraint {
+        std::string glob;
+        std::string accel;    // wire form, the mcpp.pack.abi_tag grammar
+    };
+    std::vector<SourceConstraint> sourceConstraints;
     // feature name → package-owned preprocessor defines (e.g. "-DEIGEN_USE_BLAS").
     // Feature System v2 Stage 1: when the feature is active these are appended to
     // the package's compile flags alongside the automatic -DMCPP_FEATURE_<NAME>

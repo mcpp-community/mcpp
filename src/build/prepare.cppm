@@ -19,6 +19,7 @@ import std;
 import mcpp.targetside;
 import mcpp.diag;
 import mcpp.build.refusal;
+import mcpp.build.version_floor;
 import mcpp.home;
 import mcpp.platform.axis;
 import mcpp.libs.json;
@@ -36,6 +37,8 @@ import mcpp.toolchain.dialect;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
+import mcpp.toolchain.linkmodel;
+import mcpp.toolchain.gcc;
 // For `resolve_version_match` / `list_installed_versions`: a bare compiler
 // family named by the dependency graph resolves to a concrete version through
 // exactly the path `mcpp toolchain default <family>` uses.
@@ -1016,6 +1019,16 @@ void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
         : std::string{};
     e.targetLibc    = tc ? tc->targetSysrootPkg : std::string{};
     if (!tc) return;
+
+    // The two flags mcpp passes to ITS OWN compiler, so a rule package driving
+    // a second compiler passes the same two. Both read from the single
+    // producer that already decides them for the engine's own command lines —
+    // `resolve_link_model` for the sysroot, `gcc::binutils_prefix_dir` for the
+    // `-B` — rather than a fifth re-derivation of either.
+    if (auto lm = mcpp::toolchain::resolve_link_model(*tc);
+        lm.mode == mcpp::toolchain::CLibMode::Sysroot)
+        e.toolchainSysroot = lm.sysroot.string();
+    e.toolchainBinutilsDir = mcpp::toolchain::gcc::binutils_prefix_dir(*tc).string();
 
     // The C LIBRARY's sub-directory for this ISA profile, from the freestanding
     // table — the same single read point the compile flags use.
@@ -2389,8 +2402,43 @@ prepare_build(bool print_fingerprint,
     // canonicalized. Reading it before that point would silently fall back to
     // the host for any project that sets its target in the manifest rather
     // than on the command line.
-    const auto targetPlatform = mcpp::platform::TargetPlatform::for_os(
-        cfgpred::context_for(overrides.target_triple).os);
+    // ── The device axis, resolved ONCE ────────────────────────────────────
+    //
+    // `--accel` / `--no-accel` over `[build] accel`. `--no-accel` arrives as the
+    // sentinel "(none)", which parse_accel reads as nothing, and printing the
+    // parsed form back normalises the spelling -- so every reader below sees
+    // one string, and a build program sees the same one in MCPP_ACCEL. Read
+    // at call time rather than captured: a `[target.'cfg(...)'.build]` section
+    // may set `accel`, and the merge that applies it runs a few lines down.
+    //
+    // ⚠️⚠️ "NO ACCELERATOR" IS THE EMPTY STRING HERE, NOT `accel_str`'s "(none)".
+    //
+    // `accel_str` is a DISPLAY function: it prints `(none)` for an empty set so
+    // an ABI tag reads as a sentence. Handing that spelling on as a value made
+    // two readers wrong at once. A build program saw `MCPP_ACCEL=(none)` while
+    // the manual promised an empty string, so a rule package asking "is there
+    // an accelerator" got a yes and a backend named `(none)`; and the
+    // fingerprint's own guard, `if (!accel.empty())`, was true for every
+    // project on earth, appending `#accel=(none)` to builds that had asked for
+    // nothing. Measured 2026-09-05 with a build program that wrote the value to
+    // a file, which is the only way to see it -- a program's stdout is shown
+    // only when it fails.
+    auto resolvedAccel = [&]() -> std::string {
+        const auto sets = mcpp::pack::parse_accel(
+            overrides.accel.empty() ? m->buildConfig.accel : overrides.accel);
+        return sets.empty() ? std::string{} : mcpp::pack::accel_str(sets);
+    };
+    // The cfg context, with the accelerator layer filled from the resolved
+    // accel's backend names. `cfg(accelerator = "cuda")` is a membership test
+    // over these (prepare_inputs::Ctx::layer_matches); before this the field
+    // was declared, documented, and never written, so the key matched nothing.
+    auto cfgCtx = [&]() {
+        auto c = cfgpred::context_for(overrides.target_triple);
+        for (auto const& set : mcpp::pack::parse_accel(resolvedAccel()))
+            c.accelerators.push_back(set.backend);
+        return c;
+    };
+    const auto targetPlatform = mcpp::platform::TargetPlatform::for_os(cfgCtx().os);
 
     // ── L1: merge conditional [target.'cfg(...)'] sections ───────────────────
     // Evaluated now (target resolved) against the resolved target — the
@@ -2407,7 +2455,7 @@ prepare_build(bool print_fingerprint,
     // package's half of the one funnel, not a special case: every package is
     // merged exactly once, immediately before it is captured into `packages[]`.
     if (!m->conditionalConfigs.empty()) {
-        merge_conditional_config(*m, cfgpred::context_for(overrides.target_triple));
+        merge_conditional_config(*m, cfgCtx());
     }
     // `[build].defines` must reach the scanner (P1689) and the compile edge,
     // and must participate in the fingerprint. Fold before dependency
@@ -4529,7 +4577,7 @@ prepare_build(bool print_fingerprint,
         // pass through loadVersionDep.
         if (!manifest->conditionalConfigs.empty()) {
             merge_conditional_config(*manifest,
-                                    cfgpred::context_for(overrides.target_triple));
+                                    cfgCtx());
         }
         fold_build_defines_into_flags(manifest->buildConfig);
 
@@ -5936,7 +5984,7 @@ prepare_build(bool print_fingerprint,
             // snapshot this manifest's flags/sources into `packages[]`.
             if (!dep_manifest->conditionalConfigs.empty()) {
                 merge_conditional_config(*dep_manifest,
-                    cfgpred::context_for(overrides.target_triple));
+                    cfgCtx());
             }
             fold_build_defines_into_flags(dep_manifest->buildConfig);
         } else {
@@ -6477,6 +6525,65 @@ prepare_build(bool print_fingerprint,
     // the question it answers is different: capProviders asks "can this
     // requirement be satisfied", this asks "can these two coexist at all".
     std::map<std::string, std::vector<std::string>> capExclusive;
+    // Callable twice: once here, for what the manifests and the
+    // dependencies' build programs declared, and once more after the
+    // root's build program has run -- a rule package it imports states
+    // its facts and floors from there (`mcpp::fact` / `mcpp::floor`),
+    // and a check that ran only before it would never see them.
+    // package name -> device-kind sources of its effective source set, filled
+    // by the narrowing pass after feature application and read at both
+    // build-program run sites (MCPP_DEVICE_SOURCES).
+    // Keyed by the package's ROOT DIRECTORY, not by its name. Two packages in
+    // one graph may share a bare name and differ only by namespace — that is
+    // what namespaces are for — and a name key would hand one package's
+    // device sources to the other's build program with nothing reporting it.
+    std::map<std::string, std::vector<std::string>> deviceSourcesByPackage;
+    auto checkVersionFloors = [&]() -> std::optional<std::string> {
+        std::map<std::string, std::pair<std::string, std::string>> facts;  // name -> (version, who)
+        for (std::size_t pi = 0; pi < packages.size(); ++pi) {
+            // The root's claims live in *m: its build program mutates
+            // *m, and packages[0] is a snapshot taken before it ran.
+            const auto& mf  = pi == 0 ? *m : packages[pi].manifest;
+            const auto who = mf.package.name;
+            for (auto const& entry : mf.runtimeConfig.provides) {
+                auto fact = mcpp::build::parse_version_fact(entry);
+                if (fact.valid()) facts.emplace(fact.name, std::pair{fact.version, who});
+            }
+        }
+        for (std::size_t pi = 0; pi < packages.size(); ++pi) {
+            // The root's claims live in *m: its build program mutates
+            // *m, and packages[0] is a snapshot taken before it ran.
+            const auto& mf  = pi == 0 ? *m : packages[pi].manifest;
+            const auto who = mf.package.name;
+            for (auto const& req : mf.runtimeConfig.requirements) {
+                if (req.kind != "version-floor") continue;
+                auto floor = mcpp::build::parse_version_floor(req.value);
+                if (!floor.valid()) {
+                    return std::format(
+                        "`{}` declares a version-floor requirement mcpp "
+                        "cannot read: '{}'.\n"
+                        "       The shape is `<name> >= <version>`, e.g. "
+                        "`cuda.driver >= 12.0`.", who, req.value);
+                }
+                auto it = facts.find(floor.name);
+                if (it == facts.end()) continue;      // nobody stated it
+                auto met = mcpp::build::version_at_least(it->second.first,
+                                                        floor.version);
+                if (!met || *met) continue;
+                refusal::record(refusal::Code::VersionFloorUnmet);
+                return std::format(
+                    "`{}` requires {} >= {}, and this machine has {}.\n"
+                    "         stated by: {}\n"
+                    "       This is checked before anything is compiled "
+                    "because the failure it prevents is not:\n"
+                    "       a build against too-new a runtime links "
+                    "cleanly and fails at first use.",
+                    who, floor.name, floor.version, it->second.first,
+                    it->second.second);
+            }
+        }
+        return std::nullopt;
+    };
     {
         auto sanitize = [](std::string f) {
             for (auto& c : f)
@@ -6802,6 +6909,83 @@ prepare_build(bool print_fingerprint,
                 activeFeaturesByPackage.resize(i + 1);
             activeFeaturesByPackage[i] =
                 feature_closure(packages[i].manifest, req, depDefaultFeatures);
+        }
+
+        // ── Constrained source globs: narrow to what this build targets ────
+        //
+        // A `{ glob = "...", accel = "..." }` entry in `[build] sources` says
+        // what its files are FOR. Three outcomes, all decided here and none in
+        // the scanner, which keeps reading a plain list of globs:
+        //
+        //   - the glob matches nothing: refused, naming the glob. An empty
+        //     match is a typo or a moved directory, not a no-op, and the
+        //     failure it would otherwise become is a kernel that is never
+        //     compiled and a link that resolves nothing.
+        //   - the build asks for no accelerator: the glob is EXCLUDED, with the
+        //     same `!` mechanism feature gates use -- removing the string is not
+        //     enough when a broader glob (the default `src/**`) covers the same
+        //     files. This is how `--no-accel` yields the CPU-only variant.
+        //   - the build asks for one: the constraint must lie within it, or the
+        //     build is refused naming both. A file compiled for sm_89 under a
+        //     build that targets sm_80 is not a variant, it is a mismatch.
+        //
+        // Device-kind files the effective set still matches are collected per
+        // package for the build program (MCPP_DEVICE_SOURCES); the engine has
+        // no compile rule for them and never will.
+        {
+            const auto buildAccel = mcpp::pack::parse_accel(resolvedAccel());
+            for (std::size_t i = 0; i < packages.size(); ++i) {
+                auto& pkg = packages[i];
+                auto& bc  = pkg.manifest.buildConfig;
+                std::set<std::string> excludedGlobs;
+                for (auto const& sc : bc.sourceConstraints) {
+                    const auto hits = mcpp::modgraph::expand_glob(pkg.root, sc.glob);
+                    if (hits.empty()) {
+                        return std::unexpected(std::format(
+                            "`{}`: [build] sources entry '{}' (accel = \"{}\") matches no file.\n"
+                            "       A constrained glob names the files a device build needs; an\n"
+                            "       empty match would leave nothing to compile for that device\n"
+                            "       and say so only at the link, or never.",
+                            pkg.manifest.package.name, sc.glob, sc.accel));
+                    }
+                    if (buildAccel.empty()) { excludedGlobs.insert(sc.glob); continue; }
+                    const auto want = mcpp::pack::parse_accel(sc.accel);
+                    if (!mcpp::pack::accel_accepts(buildAccel, want)) {
+                        refusal::record(refusal::Code::AccelMismatch);
+                        return std::unexpected(std::format(
+                            "`{}`: [build] sources entry '{}' is constrained to accel \"{}\",\n"
+                            "       which this build does not cover.\n"
+                            "         this build targets: {}\n"
+                            "       fix: build with `--accel` covering it, or `--no-accel` to\n"
+                            "       leave every constrained glob out (the CPU-only variant).",
+                            pkg.manifest.package.name, sc.glob,
+                            mcpp::pack::accel_str(want),
+                            mcpp::pack::accel_str(buildAccel)));
+                    }
+                }
+                for (auto const& g : excludedGlobs) {
+                    bc.sources.push_back("!" + g);
+                    pkg.manifest.modules.sources.push_back("!" + g);
+                }
+                // The device-kind files the EFFECTIVE set matches, for the
+                // build program. Exclusions are honoured the way the scanner
+                // honours them: positives first, then `!` entries removed.
+                const auto extTable = mcpp::extension_table_for(bc.moduleExtensions);
+                std::set<std::filesystem::path> matched, dropped;
+                for (auto const& g : pkg.manifest.modules.sources) {
+                    if (g.empty()) continue;
+                    if (g[0] == '!') { for (auto& f : mcpp::modgraph::expand_glob(pkg.root, g.substr(1))) dropped.insert(f); }
+                    else if (!std::filesystem::path(g).is_absolute())
+                        for (auto& f : mcpp::modgraph::expand_glob(pkg.root, g)) matched.insert(f);
+                }
+                std::vector<std::string> device;
+                for (auto const& f : matched) {
+                    if (dropped.contains(f)) continue;
+                    if (mcpp::classify(f, extTable) != mcpp::SourceKind::Device) continue;
+                    device.push_back(f.lexically_relative(pkg.root).generic_string());
+                }
+                deviceSourcesByPackage[pkg.root.string()] = std::move(device);
+            }
         }
         activeFeaturesByPackage.resize(packages.size());
 
@@ -7346,12 +7530,16 @@ prepare_build(bool print_fingerprint,
             };
             mcpp::build::BuildProgramEnv bpEnv;
             bpEnv.targetTriple = resolvedTargetCanonical;
-        // The payload ROOT (not the driver), the target's C library, and the
-        // three answers that keep a board package from hardcoding a toolchain
-        // or a libc. All four in one call — see fill_target_build_env.
-        fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
-        bpEnv.toolsBin = projectSubosBin;
+            // The payload ROOT (not the driver), the target's C library, and
+            // the three answers that keep a board package from hardcoding a
+            // toolchain or a libc. All four in one call — see
+            // fill_target_build_env.
+            fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
+            bpEnv.toolsBin = projectSubosBin;
             bpEnv.profile      = effectiveProfile;
+            bpEnv.accel        = resolvedAccel();
+            if (auto dit = deviceSourcesByPackage.find(pkg.root.string()); dit != deviceSourcesByPackage.end())
+                bpEnv.deviceSources = dit->second;
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
             bpEnv.artifactsDir = workRoot / "target" / ".build-mcpp" / "deps"
                 / (dirSafe(pkg.manifest.package.name) + "@" + pkg.manifest.package.version);
@@ -7523,6 +7711,19 @@ prepare_build(bool print_fingerprint,
                 "       definitions of one symbol safe.",
                 cap, claimers.size() == 1 ? "it" : "they", list, claimed));
         }
+
+        // VERSION FLOORS. A package states what it needs of the machine; a
+        // package that established a fact about the machine states it. Neither
+        // string means anything to this code -- `cuda.driver` is data flowing
+        // through -- which is why a second backend needs no change here and why
+        // `test_runtime_contract`'s gate stays satisfied.
+        //
+        // ⚠️ A FLOOR WITH NO FACT IS SILENT. A machine that never declared what
+        // it has is not a machine that fails the floor; it is one nobody asked.
+        // Reporting a refusal there would turn "we do not know" into "no", and
+        // the whole reason this exists is that a wrong answer is worse than no
+        // answer.
+        if (auto err = checkVersionFloors(); err) return std::unexpected(*err);
 
         std::set<std::string> boundCaps;
         for (auto& [cap, requirer] : capRequires) {
@@ -8175,7 +8376,7 @@ prepare_build(bool print_fingerprint,
     // `pkg.manifest.buildConfig` produced a build in which every layer
     // predicate matched and no flag reached the compiler.
     if (targetSideResolved) {
-        auto layerCtx = cfgpred::context_for(overrides.target_triple);
+        auto layerCtx = cfgCtx();
         layerCtx.layersKnown     = true;
         layerCtx.compiler        = resolvedTargetSide.compiler.interfaceName;
         layerCtx.compilerRuntime = resolvedTargetSide.compilerRuntime.interfaceName;
@@ -8251,6 +8452,9 @@ prepare_build(bool print_fingerprint,
         fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
         bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;
+        bpEnv.accel        = resolvedAccel();
+        if (auto dit = deviceSourcesByPackage.find(root->string()); dit != deviceSourcesByPackage.end())
+            bpEnv.deviceSources = dit->second;
         // Set explicitly rather than relying on build_dir()'s root-relative
         // default: under BuildOverrides::work_dir the package root is shared
         // and may be read-only, and the default would write the compiled
@@ -8292,6 +8496,9 @@ prepare_build(bool print_fingerprint,
         // outputs APPENDS to bcRoot.sources, and those appends must be inside
         // the tail that gets copied into the packages[0] snapshot the scan reads.
         adoptActionOutputs(*m, *root, ractN);
+        // The root's build program has spoken; a floor it stated is checked
+        // now, with the facts every package (it included) established.
+        if (auto err = checkVersionFloors(); err) return std::unexpected(*err);
         // Root residues — apply() mutated *m, but packages[0].manifest is a
         // value-copy snapshot taken at makePackageRoot, so everything the
         // scan/fingerprint read from the snapshot needs the tail mirrored:
@@ -8818,6 +9025,14 @@ prepare_build(bool print_fingerprint,
         fpi.compileFlags += " #schedule=";
         fpi.compileFlags += sched;
     }
+    // The device axis decides which sources compile and which cfg sections
+    // apply, so two builds that differ only in it are two builds. Appended
+    // only when set, so a project that asks for no accelerator keeps the
+    // build directory it has.
+    if (const auto accel = resolvedAccel(); !accel.empty()) {
+        fpi.compileFlags += " #accel=";
+        fpi.compileFlags += accel;
+    }
     if (m->cppStandard.experimental) {
         // c++fly gate flags are derived (not manifest-declared): fold them in
         // so a cppfly table change across mcpp versions re-fingerprints.
@@ -9044,8 +9259,7 @@ prepare_build(bool print_fingerprint,
         // no accelerator, and every artifact then satisfies it vacuously —
         // which is correct, and is why a descriptor lists its CPU-only variant
         // first: the first accepted artifact wins.
-        currentTag.accel = mcpp::pack::parse_accel(
-            overrides.accel.empty() ? m->buildConfig.accel : overrides.accel);
+        currentTag.accel = mcpp::pack::parse_accel(resolvedAccel());
         for (std::size_t i = 1; i < packages.size(); ++i) {
             auto const& pkg = packages[i];
             if (!mcpp::pack::is_distribution_package(pkg.manifest)) continue;
@@ -9368,8 +9582,19 @@ prepare_build(bool print_fingerprint,
                 // under plain `mcpp build`, where that unit does not exist.
                 // (`[resources]` makes the opposite call on purpose: an icon
                 // belongs to what ships, not to a test runner.)
+                //
+                // ⭐⭐ A STATIC LIBRARY IS ONE OF THEM, and leaving it out was
+                // the whole of what C-6 needed. A package whose device code is
+                // its point -- ggml's CUDA backend is 305 `.cu` files behind a
+                // `kind = "lib"` target -- emitted its actions, watched every
+                // one of them be dropped with a warning, and produced an
+                // archive with no device code in it. The archive rule already
+                // consumes `lu.objects`, so the objects an action produced
+                // belong there for exactly the reason a compiled `.cpp`'s do:
+                // the target's content is what it was told to contain.
                 const bool image = lu.kind == mcpp::build::LinkUnit::Binary
                                 || lu.kind == mcpp::build::LinkUnit::SharedLibrary
+                                || lu.kind == mcpp::build::LinkUnit::StaticLibrary
                                 || lu.kind == mcpp::build::LinkUnit::TestBinary;
                 const bool wanted = a.targets.empty()
                     ? image
@@ -9388,11 +9613,12 @@ prepare_build(bool print_fingerprint,
             if (!attached && a.targets.empty()) {
                 mcpp::diag::degraded("action/no-target", std::format(
                     "build.mcpp action '{}' has role = \"object\" but this build "
-                    "produces no executable, shared library or test binary to "
-                    "link its outputs into", a.id.empty() ? "<unnamed>" : a.id),
+                    "produces no target to put its outputs into",
+                    a.id.empty() ? "<unnamed>" : a.id),
                     "the action never runs and its outputs are never produced",
-                    "add a [targets.<name>] that links, or name the targets "
-                    "explicitly with .target(\"…\")");
+                    "add a [targets.<name>] — a bin, a lib, a shared lib or a "
+                    "test all take one — or name the targets explicitly with "
+                    ".target(\"…\")");
             }
         }
         if (!unknownObjectTargets.empty()) {
@@ -9406,7 +9632,7 @@ prepare_build(bool print_fingerprint,
                 "  targets in this build: [{}]\n"
                 "  (a target gated by required_features is absent unless those "
                 "features are active; test binaries exist only under `mcpp "
-                "test`, so name none and the outputs reach every image "
+                "test`, so name none and the outputs reach every target "
                 "including them)",
                 bad, known.empty() ? std::string("none") : known));
         }

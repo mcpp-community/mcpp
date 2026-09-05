@@ -56,7 +56,11 @@ export namespace mcpp::build::program_protocol {
 // cost as v5's: a package calling `mcpp::flash()` fails on an older engine at
 // the build.mcpp COMPILE, because that engine's bundled module has no such
 // function, not through a protocol refusal.
-inline constexpr int kProtocolVersion = 6;
+// v7: adds `fact` and `floor` -- the probe channel. A rule package states a
+// fact about the machine and the floor it needs of it; the engine compares
+// them before compiling. Same cost as v5's: a package calling `mcpp::fact()`
+// fails on an older engine at the build.mcpp COMPILE, not through a refusal.
+inline constexpr int kProtocolVersion = 7;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

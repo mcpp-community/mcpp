@@ -183,4 +183,4 @@ mcpp pack --mode self-contained    # 打包 loader、libc 与依赖
   `mcpp new --list-templates ocornut.imgui@1.92.8`)。
 - 解释默认决策:`mcpp why [toolchain|runtime|deps]`;主机能力体检:`mcpp self doctor`;
   机器可读解析清单:构建产物 `target/<triple>/<fp>/resolution.json`。
-- 离线运行:`mcpp --offline` 或 `MCPP_OFFLINE=1` 可阻止索引刷新、下载和工具链安装。
+- 离线运行:`mcpp --offline` 或 `MCPP_OFFLINE=1` 可阻止索引刷新、下载和工具链安装。在从未使用过的 home 中,它同时跳过首次使用时的沙箱引导(索引克隆、ninja、patchelf),只提示一次,并让该 home 保持未引导状态;需要这些工具的命令会自行报告。

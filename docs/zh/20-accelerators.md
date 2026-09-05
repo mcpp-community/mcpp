@@ -51,50 +51,35 @@ tarball 已经发出去了。设备源文件必须被显式点名。
 这个划分是刻意的。mcpp 拥有构建图、产物身份与架构集合;厂商的 flag 拼法、
 架构语法与宿主编译器要求属于规则包。
 
-## 设备编译器接受哪些宿主编译器
+## 规则包在第一次编译之前报告的事
 
-nvcc 拒绝比它在自己的 `crt/host_config.h` 中声明的上界更新的宿主编译器,
-而 mcpp 的工具链载荷常常比那个上界更新。由于宿主编译器由 mcpp 提供,
-它可以在任何编译发生之前报告这个配对:
+设备工具包有三件事出错得很晚,而没有一件是关于构建图的事实。它们由驱动这些工具的
+**规则包**读取并报告 —— `examples/09-cuda-kernel/rules-cuda` 逐一演示 —— 引擎一件都
+不拥有(`tests/unit/test_core_vendor_probes.cpp` 守住这条线,于是第二个后端不会在
+mcpp 里长出第二份拷贝)。
 
-```
-$ mcpp self doctor
-    Checking device toolkit
-warning: cuda will refuse this host compiler: gcc 13 exceeds the bound of 12
-         stated in /usr/include/crt/host_config.h.
-```
+**设备编译器接受哪些宿主编译器。** nvcc 拒绝比它在自己的 `crt/host_config.h` 中声明
+的上界更新的宿主编译器,而 mcpp 的工具链载荷往往比那个上界更新。在 nvcc 路线上,规则
+从它解析到的工具包读出上界 —— 载荷先于宿主,因为经 xlings 安装的工具包才是构建会用
+的那个,通常也是更新的那个(12.9 载荷写着 `gcc <= 14`,发行版的 CUDA 12.0 写着
+`gcc <= 12`)—— 并通过 `mcpp::warning` 说出它选了哪个编译器、为什么。主路线没有这条
+上界:`clang -x cuda` 自己就是宿主编译器。
 
-上界是从工具包读出的,不是抄在 mcpp 里的表,因此一个 mcpp 从未见过的工具包同样能作答;
-而一个 mcpp 无法解析的头文件产生不出上界,也就不产生任何断言。
+**设备编译器能否够到自己的后端。** 工具包可以装好、完整、在 `PATH` 上,却在第一阶段
+就失败:nvcc 以裸名调用 `cicc`、`cudafe++`、`ptxas`、`fatbinary`,靠的是它从自己二进制
+旁边的 `nvcc.profile` 前置进来的一条 `PATH`,而替换了 `/etc` 的沙箱会拿走 Debian 打包的
+那个 profile。规则向 nvcc 要它的计划(`nvcc --dryrun`)而不是假设一个,逐个解析各阶段,
+点名第一个解析不到的以及提供它的载荷。产不出计划的 dryrun 不产生任何结论。
 
-这是报告而非强制:一个不编译任何设备代码的工程,不受不兼容配对的影响。
+**驱动是否新到足以承载运行时。** 设备运行时不能比它将遇到的驱动更新;更新时,构建编译
+干净、链接干净,到第一次分配才以 *"CUDA driver version is insufficient for CUDA runtime
+version"* 失败。规则经驱动自己的库(经由 sentinel 包够到,绝不经 `/usr/lib`)读出驱动
+版本并陈述为事实;陈述它的运行时需要的下界;引擎在编译任何东西之前比较两者 —— 见
+[07 — build.mcpp](07-build-mcpp.md) 的探针通道。引擎读到的是一个名字、一个关系、一个
+版本;`cuda.driver` 是流过引擎的数据。
 
-## 设备编译器能否够到自己的后端
-
-一个工具包可以安装完整、就在 `PATH` 上,却仍然在第一个阶段失败。
-nvcc 以裸名调用 `cicc`、`cudafe++`、`ptxas` 与 `fatbinary`,依赖的是它自己
-从紧邻其二进制的 `nvcc.profile` 前置进来的一条 `PATH`。在 Debian 系的打包里,
-那个 profile 是指向 `/etc` 的符号链接,于是任何替换了 `/etc` 的容器或沙箱都会移除它。
-nvcc 随即沿用环境里原有的 `PATH`,并报出:
-
-```
-sh: 1: cicc: not found
-```
-
-这条消息既没有提到 nvcc,也没有提到 profile,而工具包本身一样不缺,
-于是所有显而易见的检查都会通过。`mcpp self doctor` 因此去问 nvcc 要它的计划,
-而不是假设一份:
-
-```
-$ mcpp self doctor
-    Checking device toolkit
-warning: nvcc cannot reach its own back-end: it invokes 'cicc' by name, and
-         that name does not resolve on the search path it states.
-```
-
-计划来自 `nvcc --dryrun` —— 它打印各个阶段与 nvcc 将要使用的 `PATH`,
-而不编译任何东西。一次没有产生计划的 dryrun(没有 nvcc,或输出不是一份计划)
-不产生任何结论:一个够不到答案的探测不应当发明一个。
+凡是错答比不答更贵的地方都只报告不强制:工程里没有规则包的机器没有任何厂商相关的话
+要说,于是什么都不说;够不到答案的探针不发明答案。
 
 ## 声明一次构建的目标
 
@@ -204,7 +189,9 @@ cxxflags = ["-DMYAPP_ROCM"]
 
 ## 两条值得写明的边界
 
-**`--accel` 是 `build` 的选项**,与 `--static`、`--toolchain` 同级,
+**`--accel` 与 `--no-accel` 是 `build`、`run`、`test` 三者的选项**(run 与 test 自 2026.9.5.2 起),与 `--target`、`--profile` 同级;`pack` 与其它构建输入一样从 manifest 读 `[build] accel`。它起初只挂在 `build` 上,实测的后果是一个工程的 CPU-only 变体能构建却不能运行:`mcpp build --no-accel` 产出了它,而 `mcpp run` 交回的是设备构建。
+<!-- 下面一段保留原有说明 -->
+**历史:`--accel` 曾只是 `build` 的选项**,与 `--static`、`--toolchain` 同级,
 不在 `run`、`test`、`pack` 上重复。那些命令与读取任何其它构建输入一样,
 从 manifest 读 `[build] accel`;这个 flag 的用途是覆盖单次构建,而那正是 `build` 覆盖的场景。
 

@@ -206,7 +206,9 @@ TEST(BuildDirectives, SerializeDeserializeRoundTrip) {
                    "mcpp:generated=src/gen.cpp\n"
                    "mcpp:source=vendor/pick.cpp\n"
                    "mcpp:include-dir=inc\n"
-                   "mcpp:include-dir-after=after\n");
+                   "mcpp:include-dir-after=after\n"
+                   "mcpp:fact=widget.driver=1.2\n"
+                   "mcpp:floor=widget.driver >= 1.0\n");
 
     std::ostringstream os;
     dirs::serialize(os, d);
@@ -229,6 +231,45 @@ TEST(BuildDirectives, SerializeDeserializeRoundTrip) {
         if (def.tag.empty()) continue;
         EXPECT_EQ(back.at(def.slot), d.at(def.slot)) << def.wire;
     }
+}
+
+// ── The probe channel ──────────────────────────────────────────────────────
+//
+// A rule package measures, the engine compares. What arrives on the wire is
+// folded into the SAME runtime declarations a manifest could have written,
+// so the version-floor check in prepare reads one list and never learns
+// which spelling a claim came in.
+
+TEST(BuildDirectives, FactsAndFloorsAreClaimsThatFoldIntoRuntimeDeclarations) {
+    auto d = parse("mcpp:fact=widget.driver=1.2\n"
+                   "mcpp:floor=widget.driver >= 2.0\n");
+    EXPECT_EQ(d.at(dirs::Slot::Facts),  (std::vector<std::string>{"widget.driver=1.2"}));
+    EXPECT_EQ(d.at(dirs::Slot::Floors), (std::vector<std::string>{"widget.driver >= 2.0"}));
+
+    mcpp::manifest::Manifest m;
+    dirs::apply(m, d);
+    ASSERT_EQ(m.runtimeConfig.provides.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.provides[0], "widget.driver=1.2");
+    ASSERT_EQ(m.runtimeConfig.requirements.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.requirements[0].kind,  "version-floor");
+    EXPECT_EQ(m.runtimeConfig.requirements[0].value, "widget.driver >= 2.0");
+    // A claim about the build, not about the link or the run: the phase says
+    // when it is decided.
+    EXPECT_EQ(m.runtimeConfig.requirements[0].phase, "build");
+}
+
+TEST(BuildDirectives, AClaimReachesNeitherCompileNorLink) {
+    auto d = parse("mcpp:fact=widget.driver=1.2\n"
+                   "mcpp:floor=widget.driver >= 2.0\n");
+    mcpp::manifest::Manifest m;
+    dirs::apply(m, d);
+    EXPECT_TRUE(m.buildConfig.cflags.empty());
+    EXPECT_TRUE(m.buildConfig.cxxflags.empty());
+    EXPECT_TRUE(m.buildConfig.ldflags.empty());
+    EXPECT_TRUE(m.buildConfig.sources.empty());
+    for (auto const& def : dirs::kTable)
+        if (def.slot == dirs::Slot::Facts || def.slot == dirs::Slot::Floors)
+            EXPECT_EQ(def.scope, dirs::Scope::Claim) << def.wire;
 }
 
 TEST(BuildDirectives, RerunSlotsAreNotPersistedAsDirectives) {

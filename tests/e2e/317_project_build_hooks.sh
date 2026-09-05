@@ -182,9 +182,11 @@ esac
 if [[ $HOST_WINDOWS -eq 1 ]]; then
     slow_command="ping -n 6 127.0.0.1 >NUL"
     pause_2s="ping -n 3 127.0.0.1 >NUL"
+    pause_5s="ping -n 6 127.0.0.1 >NUL"
 else
     slow_command="sleep 5"
     pause_2s="sleep 2"
+    pause_5s="sleep 5"
 fi
 write_manifest <<EOF
 [package]
@@ -360,13 +362,22 @@ once=$(wc -l < runs.log | tr -d ' ')
 #
 # `loop` on a typo is a fork bomb otherwise. The bound is five consecutive
 # runs that end unsuccessfully within a second.
+#
+# The build must stay open long enough for the supervisor to reach that bound.
+# Reaching it costs five spawns, four restart delays of 250ms, and up to 50ms
+# of poll granularity after each exit: 1.25s before a single spawn is counted.
+# Under a two-second pause that left 150ms per spawn, and a loaded macOS
+# runner exceeded it (main, 2026-09-05: the build finished, the warning was
+# never printed, and the test reported the bound as missing). Five seconds
+# leaves 750ms per spawn; the property is then decided by the code and not by
+# the runner's load.
 write_manifest <<EOF
 [package]
 name = "hookprobe"
 version = "0.1.0"
 
 [hooks]
-build_start = "$pause_2s"
+build_start = "$pause_5s"
 during_build = { cmd = "mcpp-hook-command-that-does-not-exist", loop = true }
 EOF
 # The build still succeeds — an experimental hook has no vote — but giving up

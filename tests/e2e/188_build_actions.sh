@@ -413,6 +413,13 @@ grep -q '1 passed' o6.log || { cat o6.log; echo "FAIL: the test did not run"; ex
 # supposed to be reachable through a link edge), so "no consumer" means the
 # command never runs. Saying nothing there is the same failure `[resources]`
 # reports as resources/no-image.
+#
+# ⚠️ THE ONLY TARGET IS GATED OFF, and that is what makes this case exist at
+# all. A `kind = "lib"` target used to serve here, because a static library did
+# not take an object action's outputs; it does now (design C-6, e2e 608), so a
+# project with one is no longer a project with no consumer. A target behind an
+# inactive `required_features` is absent from the build entirely, which is the
+# one shape that leaves an object action with nowhere to go.
 mkdir -p "$TMP/objnone/src"
 cd "$TMP/objnone"
 cat > mcpp.toml <<'EOF'
@@ -420,16 +427,29 @@ cat > mcpp.toml <<'EOF'
 name    = "objnone"
 version = "0.1.0"
 
+[features]
+gated = {}
+
 [targets.objnone]
 kind = "lib"
+required_features = ["gated"]
 EOF
 printf 'export module objnone;\nexport int f(){return 1;}\n' > src/objnone.cppm
 cp "$TMP/objtest/blob.cpp" blob.cpp
 cp "$TMP/objtest/mkobj.sh" mkobj.sh
 cp "$TMP/objtest/build.mcpp" build.mcpp
 "$MCPP" build > o7.log 2>&1 || { cat o7.log; echo "FAIL: objnone build failed"; exit 1; }
-grep -q 'no executable, shared library or test binary' o7.log || {
+grep -q 'produces no target to put its outputs into' o7.log || {
     cat o7.log; echo "FAIL: an object with no consumer must be reported"; exit 1; }
+
+# ⭐ THE CONTROL: with the feature on, the target exists and the action is not
+# reported. Without it the assertion above would pass on a build that had
+# stopped emitting the diagnostic for every project.
+"$MCPP" build --features gated > o7b.log 2>&1 || {
+    cat o7b.log; echo "FAIL: objnone build with the feature failed"; exit 1; }
+grep -q 'produces no target to put its outputs into' o7b.log && {
+    cat o7b.log; echo "FAIL: the object was reported as having no consumer while its target existed"
+    exit 1; }
 
 cd "$TMP/edge"
 
