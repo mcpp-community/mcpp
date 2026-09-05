@@ -19,13 +19,16 @@ default = "llvm@22.1.8"
 [dependencies.mcpp]
 plugins = { version = "0.2.0", features = ["rules-sycl"], host-module = true }
 
-# The driver's userspace library. This build reaches the device through the
-# CUDA back end, so it needs the same one hop the CUDA consumer needs: mcpp's
-# private loader does not consult /usr/lib, and the SYCL runtime's CUDA adapter
-# dlopens the driver.
+# The SYCL runtime, on the artifact's runtime search path. mcpp's private
+# loader does not consult /usr/lib, so `libsycl.so.9` -- which the rule
+# satisfied at LINK time from the payload -- would not be found at run time.
+#
+# ONE compat entry, and that is the point of where the boundary was drawn. The
+# SYCL runtime's CUDA back end dlopens the driver, so `compat:sycl-runtime`
+# carries that hop itself from 2026.09.07 on. A project that writes SYCL does
+# not have to know CUDA is underneath it.
 [dependencies.compat]
-cuda-runtime = "2026.09.05"
-sycl-runtime = "2026.09.06"
+sycl-runtime = "2026.09.07"
 
 # Three payloads, each closing one hole the host would otherwise fill.
 #
@@ -41,7 +44,6 @@ sycl-runtime = "2026.09.06"
 "xim:dpcpp"             = "7.1.0"
 "xim:gcc"               = "15.1.0"
 "xim:cuda-nvcc"         = "12.9.86"
-"xim:libcuda-host-link" = { linux = "0.0.1" }
 
 [build]
 # Two chunks: the programming model, and the device. Written `sycl` alone, the

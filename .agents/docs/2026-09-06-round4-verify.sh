@@ -228,7 +228,7 @@ fi
 # -- F. the SYCL lane ---------------------------------------------------------
 section "F. examples/11-sycl-kernel"
 if [ -n "$SRC" ] && [ -d "$SRC/examples/11-sycl-kernel/app" ]; then
-    ex="$work/ex11"; cp -r "$SRC/examples/11-sycl-kernel/app" "$ex"
+    ex="$work/ex11"; cp -r "$SRC/examples/11-sycl-kernel/app" "$ex"; ex11_built="$ex"
     out=$(cd "$ex" && "$STORE" build --no-accel 2>&1 && "$STORE" run --no-accel 2>&1)
     printf '%s\n' "$out" | grep -q '12 24 36 48' && ok "example 11 --no-accel answered 12 24 36 48" \
         || fail "example 11 --no-accel: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
@@ -266,9 +266,29 @@ fi
 # deliberately does not farm, and which a SYCL artifact needs because it links
 # libc++) and `libz.so.1` (which a developer machine happened to have).
 section "G. compat.sycl-runtime 2026.09.07"
-farm=$(ls -d "$HOME"/.mcpp/registry/data/xpkgs/compat-x-sycl-runtime/*/mcpp_generated/sycl_runtime/lib 2>/dev/null | sort -V | tail -1)
-if [ -z "$farm" ] && [ -n "$SRC" ]; then
-    farm=$(ls -d "$SRC"/examples/11-sycl-kernel/app/.mcpp/.xlings/data/xpkgs/compat-x-sycl-runtime/*/mcpp_generated/sycl_runtime/lib 2>/dev/null | sort -V | tail -1)
+# THE FARM THE EXAMPLE RESOLVED, NOT WHATEVER THE STORE HOLDS.
+#
+# A store that has seen two adapter versions holds two farms, and picking one
+# by sorting is picking by accident: the sandbox run of 2026-09-06 reported
+# `ok` for every soname of a farm the example under test had not used, because
+# a DIFFERENT version happened to be the only one in that store. The example's
+# own `resolution.json` names the directory it was actually built against.
+farm=""
+if [ -n "${ex11_built:-}" ]; then
+    farm=$(python3 - "$ex11_built" <<'PY' 2>/dev/null
+import glob, json, sys
+for f in glob.glob(sys.argv[1] + "/target/*/*/resolution.json"):
+    for m in json.dumps(json.load(open(f))).split('"'):
+        if m.endswith("sycl_runtime/lib"):
+            print(m); raise SystemExit
+PY
+)
+fi
+# Only if the example was not built here: then any installed farm is the best
+# available evidence, and the line says which one it read.
+if [ -z "$farm" ]; then
+    farm=$(ls -d "$HOME"/.mcpp/registry/data/xpkgs/compat-x-sycl-runtime/*/mcpp_generated/sycl_runtime/lib 2>/dev/null | sort -V | tail -1)
+    [ -n "$farm" ] && printf 'note: no example build to read; falling back to the newest farm in the store\n'
 fi
 if [ -n "$farm" ]; then
     ok "farm at $farm"
