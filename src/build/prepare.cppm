@@ -19,6 +19,7 @@ import std;
 import mcpp.targetside;
 import mcpp.diag;
 import mcpp.build.refusal;
+import mcpp.build.version_floor;
 import mcpp.home;
 import mcpp.platform.axis;
 import mcpp.libs.json;
@@ -7522,6 +7523,57 @@ prepare_build(bool print_fingerprint,
                 "REQUIREMENT and cannot make two\n"
                 "       definitions of one symbol safe.",
                 cap, claimers.size() == 1 ? "it" : "they", list, claimed));
+        }
+
+        // VERSION FLOORS. A package states what it needs of the machine; a
+        // package that established a fact about the machine states it. Neither
+        // string means anything to this code -- `cuda.driver` is data flowing
+        // through -- which is why a second backend needs no change here and why
+        // `test_runtime_contract`'s gate stays satisfied.
+        //
+        // ⚠️ A FLOOR WITH NO FACT IS SILENT. A machine that never declared what
+        // it has is not a machine that fails the floor; it is one nobody asked.
+        // Reporting a refusal there would turn "we do not know" into "no", and
+        // the whole reason this exists is that a wrong answer is worse than no
+        // answer.
+        {
+            std::map<std::string, std::pair<std::string, std::string>> facts;  // name -> (version, who)
+            for (auto const& pkg : packages) {
+                const auto who = pkg.manifest.package.name;
+                for (auto const& entry : pkg.manifest.runtimeConfig.provides) {
+                    auto fact = mcpp::build::parse_version_fact(entry);
+                    if (fact.valid()) facts.emplace(fact.name, std::pair{fact.version, who});
+                }
+            }
+            for (auto const& pkg : packages) {
+                const auto who = pkg.manifest.package.name;
+                for (auto const& req : pkg.manifest.runtimeConfig.requirements) {
+                    if (req.kind != "version-floor") continue;
+                    auto floor = mcpp::build::parse_version_floor(req.value);
+                    if (!floor.valid()) {
+                        return std::unexpected(std::format(
+                            "`{}` declares a version-floor requirement mcpp "
+                            "cannot read: '{}'.\n"
+                            "       The shape is `<name> >= <version>`, e.g. "
+                            "`cuda.driver >= 12.0`.", who, req.value));
+                    }
+                    auto it = facts.find(floor.name);
+                    if (it == facts.end()) continue;      // nobody stated it
+                    auto met = mcpp::build::version_at_least(it->second.first,
+                                                            floor.version);
+                    if (!met || *met) continue;
+                    refusal::record(refusal::Code::VersionFloorUnmet);
+                    return std::unexpected(std::format(
+                        "`{}` requires {} >= {}, and this machine has {}.\n"
+                        "         stated by: {}\n"
+                        "       This is checked before anything is compiled "
+                        "because the failure it prevents is not:\n"
+                        "       a build against too-new a runtime links "
+                        "cleanly and fails at first use.",
+                        who, floor.name, floor.version, it->second.first,
+                        it->second.second));
+                }
+            }
         }
 
         std::set<std::string> boundCaps;

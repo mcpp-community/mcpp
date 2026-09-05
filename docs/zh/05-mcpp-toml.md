@@ -1347,6 +1347,42 @@ error: capability 'gpu-blas' is provided by more than one package, and they
 
 该拒绝在 `--format json` 里报 `exclusive-capability`(见第 11 章)。
 
+#### `version-floor` —— 对机器的要求高于它所有
+
+有些关于机器的事实约束着能为它构建什么,而忽略它们时的失败来得很晚:
+一个针对比它将遇到的驱动更新的运行时构建出来的程序,**干净地链接**,
+在第一次使用时失败,而消息里两侧都没有。
+
+包声明它需要什么:
+
+```toml
+[[runtime.requirements]]
+kind  = "version-floor"
+value = "cuda.driver >= 12.0"
+```
+
+而某个在**安装期**(探测该发生的地方)确立了机器某项事实的包,声明它:
+
+```toml
+[runtime]
+provides = ["cuda.driver=12.4"]
+```
+
+mcpp 在绑定 capability 时比较二者,并在任何东西被编译之前拒绝,
+报 `version-floor-unmet`:
+
+```
+error: `toolkitnew` requires cuda.driver >= 13.0, and this machine has 12.4.
+         stated by: driverfact
+```
+
+**没有任何厂商词汇抵达引擎。** 它读到的是一个名字、一个关系和一个版本;
+`cuda.driver` 是流过的数据,一个 mcpp 从未听说过的后端比较方式完全相同。
+
+⚠️ **没人回答的下界是沉默的。** 一台从未声明自己有什么的机器,不是「未满足下界」的机器,
+而是「没人问过」的机器。把「我们不知道」变成「不行」正是这个机制要避免的失败,
+并且有直接判据:`tests/e2e/603_version_floor.sh` 会构建一个下界指向无人提供之物的工程。
+
 **它是关于这个包自己的符号的声明**,所以一条指向本包并不提供的能力的条目会被报为
 schema 警告:那里没有可独占的东西。而无人声明独占的能力行为完全不变 —— 两个 BLAS
 实现照常共存,既有的「两个或更多、未 pin」报错也仍然只在**有人 require** 该能力时出现。

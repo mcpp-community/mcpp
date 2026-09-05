@@ -1567,6 +1567,46 @@ error: capability 'gpu-blas' is provided by more than one package, and they
 
 The refusal reports `exclusive-capability` in `--format json` (chapter 11).
 
+#### `version-floor` — needing more of the machine than it has
+
+Some facts about a machine bound what may be built for it, and the failure when
+they are ignored arrives late: a program built against a runtime newer than the
+driver it will meet links cleanly and fails at first use, naming neither side.
+
+A package states what it needs:
+
+```toml
+[[runtime.requirements]]
+kind  = "version-floor"
+value = "cuda.driver >= 12.0"
+```
+
+and a package that established a fact about this machine — at install time,
+which is where probing belongs — states it:
+
+```toml
+[runtime]
+provides = ["cuda.driver=12.4"]
+```
+
+mcpp compares them when capabilities are bound and refuses before anything is
+compiled, reporting `version-floor-unmet`:
+
+```
+error: `toolkitnew` requires cuda.driver >= 13.0, and this machine has 12.4.
+         stated by: driverfact
+```
+
+**No vendor vocabulary reaches the engine.** It reads a name, a relation and a
+version; `cuda.driver` is data passing through, and a backend mcpp has never
+heard of compares the same way.
+
+⚠️ **A floor nobody answered is silent.** A machine that never declared what it
+has is not a machine that fails the floor — it is one nobody asked. Turning
+"we do not know" into "no" is the failure mode this exists to avoid, and it is
+asserted directly: `tests/e2e/603_version_floor.sh` builds a project whose floor
+names something no package provides.
+
 **It is a claim about this package's own symbols**, so an entry that names a
 capability the package does not provide is reported as a schema warning: there
 is nothing to be exclusive about. And a capability nobody declares exclusive
