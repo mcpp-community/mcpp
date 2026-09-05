@@ -35,21 +35,52 @@ fallback without any consumer of `app.saxpy` changing, and the one place a
 `cfg(accelerator = ...)` section has to apply. Remove it and every importer
 becomes backend-specific.
 
+## Where the toolkit comes from
+
+The project names it:
+
+```toml
+[xlings.workspace]
+"xim:cuda-nvcc"   = "12.9.86"
+"xim:cuda-cudart" = "12.9.79"
+```
+
+These are payloads, so the version is the project's choice and not the machine's.
+The rule package resolves them with `mcpp::xpkg_dir` and builds the whole
+invocation from what it finds — the compiler, the include directories and the
+library search paths. **No path in this example is absolute**, and a build here
+touches nothing of the host's CUDA:
+
+```
+$ mcpp build -v | grep -c '/usr/local/cuda\|/usr/bin/nvcc'
+0
+```
+
+Host locations remain in the rule as a last fallback, so a machine that has only
+a distribution toolkit still builds. They are a fallback, not the design.
+
+⚠️ **The payload's headers have to be named.** nvcc adds
+`<its own directory>/../include` by itself, and on the 12.x line that holds
+`crt/` but not `cuda_runtime.h` — which lives in the `cuda-cudart` component. An
+earlier revision of this rule left it out, and nvcc resolved `cuda_runtime.h`
+from `/usr/include` and then read the **host's** `crt/host_config.h` beside it.
+The build failed with the host toolkit's complaint while using the payload's
+compiler.
+
 ## The rule package, and why nvcc's host compiler is its problem
 
 nvcc refuses host compilers newer than a bound it states in its own
 `crt/host_config.h`, and mcpp's toolchain payload is routinely newer than that
-bound. The rule reads the bound, selects a host compiler that satisfies it, and
-says which one it chose:
+bound. The rule reads the bound — from the payload, which states a newer one
+than a distribution toolkit does — selects a host compiler that satisfies it,
+and says which one it chose:
 
 ```
-example.rules.cuda: nvcc /usr/bin/nvcc with -ccbin /usr/bin/clang++-14
+example.rules.cuda: nvcc …/xpkgs/xim-x-cuda-nvcc/12.9.86/bin/nvcc with -ccbin …
 ```
 
-On the machine this example was verified on, the toolkit is CUDA 12.0
-(`__GNUC__ > 12` is refused, clang must be below 15) and mcpp's payload is gcc
-16.1.0, so passing mcpp's own compiler through would fail. `mcpp self doctor`
-reports the same pairing independently.
+`mcpp self doctor` reports the same pairing independently, and reads the same
+payload.
 
 Everything about nvcc's spelling lives in the rule package. The engine owns the
 graph, the artifact's identity and the architecture set; it does not own

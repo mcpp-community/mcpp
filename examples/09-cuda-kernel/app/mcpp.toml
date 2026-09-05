@@ -29,7 +29,19 @@ cuda-runtime = "2026.09.05"
 # mcpp a path it can put on the artifact's runtime search path — mcpp's private
 # loader does not consult /usr/lib, so without this the statically linked CUDA
 # runtime cannot dlopen the driver and reports it as missing.
+# The toolkit this project builds with, named rather than discovered.
+#
+# ⭐ These are PAYLOADS, so the version is the project's choice and not the
+# machine's. The 12.9 line is named on purpose: a runtime must not be newer than
+# the driver it will meet, and 12.x reaches every driver from r525 onward.
+# `mcpp self doctor` reports the pairing.
+#
+# The 12.x `cuda-nvcc` carries its own NVVM back end; on the 13.x line that is a
+# separate `libnvvm` alongside `cuda-crt`, and `cuda-nvcc`'s install hook brings
+# them. Either way the project names the compiler and gets a working one.
 [xlings.workspace]
+"xim:cuda-nvcc"         = "12.9.86"
+"xim:cuda-cudart"       = "12.9.79"
 "xim:libcuda-host-link" = { linux = "0.0.1" }
 
 [build]
@@ -39,10 +51,14 @@ cuda-runtime = "2026.09.05"
 # redistributable half in leaves exactly one host dependency, libcuda.so.1,
 # which is the driver and genuinely cannot be redistributed — that is what the
 # libcuda-host-link sentinel package in xim exists for.
-accel    = "cuda12.0+{sm_89} ptx>=89"
+accel    = "cuda12.9+{sm_89} ptx>=89"
 include_dirs = ["include"]
-ldflags  = ["-L/usr/local/cuda/lib64", "-L/usr/lib/x86_64-linux-gnu",
-            "-lcudart_static", "-lrt", "-lpthread", "-ldl"]
+# ⭐ NO ABSOLUTE PATHS. The CUDA runtime comes from the `cuda-cudart` payload
+# named above, and the rule package puts its library directory on the link line
+# from `mcpp::xpkg_dir` -- so this manifest names libraries, never locations.
+# The one host component left is `libcuda.so.1`, which the driver owns and the
+# `compat.cuda-runtime` dependency reaches.
+ldflags  = ["-lcudart_static", "-lrt", "-lpthread", "-ldl"]
 
 [targets.cuda-saxpy]
 kind = "bin"

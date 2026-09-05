@@ -56,8 +56,29 @@ inline std::string first_existing(std::span<const std::string> candidates) {
     return {};
 }
 
+// The toolkit directory this project declared, or empty.
+//
+// ⭐ PAYLOAD FIRST, AND THE PROJECT NAMES IT. `mcpp::xpkg_dir` answers for a
+// package the manifest declared under `[xlings.workspace]`, which is how a
+// build says which toolkit it wants instead of taking whichever one a machine
+// happens to have. The 13.x line splits the compiler across components, so the
+// pieces are looked up separately and joined here.
+inline std::vector<std::string> payload_roots() {
+    std::vector<std::string> out;
+    for (const char* name : { "cuda-nvcc", "cuda-crt", "cuda-cudart" })
+        if (const char* d = mcpp::xpkg_dir("xim", name); d && *d)
+            out.emplace_back(d);
+    return out;
+}
+
 inline std::string find_nvcc() {
     std::vector<std::string> c;
+    for (auto const& r : payload_roots()) c.push_back(r + "/bin/nvcc");
+    // ⚠️ HOST LOCATIONS ARE LAST AND ARE A FALLBACK, NOT THE DESIGN. A project
+    // that declares the payload gets a toolkit whose version it chose and whose
+    // host-compiler bound is far newer -- 12.9 accepts gcc 14 and 13.3 accepts
+    // gcc 15, where a distribution's CUDA 12.0 stops at 12. These entries exist
+    // so a machine that has only a distribution toolkit still builds.
     for (const char* var : { "CUDA_PATH", "CUDA_HOME" })
         if (const char* v = std::getenv(var)) c.push_back(std::string(v) + "/bin/nvcc");
     c.push_back("/usr/local/cuda/bin/nvcc");
@@ -67,6 +88,9 @@ inline std::string find_nvcc() {
 
 inline std::string find_host_config(std::string_view nvcc) {
     std::vector<std::string> c;
+    // 13.x moved this header into its own component, so the payload that has it
+    // is not necessarily the one that has nvcc.
+    for (auto const& r : payload_roots()) c.push_back(r + "/include/crt/host_config.h");
     if (!nvcc.empty()) {
         std::filesystem::path p{std::string(nvcc)};
         c.push_back((p.parent_path().parent_path() / "include/crt/host_config.h").string());
@@ -152,6 +176,24 @@ inline std::vector<edge> plan(std::span<const std::string> sources, options opt 
     }
     std::println("example.rules.cuda: nvcc {} with -ccbin {}", nvcc, ccbin);
 
+    // ⭐ THE LINK LINE GETS ITS DIRECTORIES FROM HERE, NOT FROM THE MANIFEST.
+    //
+    // A manifest that writes `-L/usr/local/cuda/lib64` has decided where the
+    // toolkit is, which is the machine's business and not the project's. The
+    // rule knows: it just resolved the payload, and it puts that payload's
+    // library directory on the link line. The manifest names libraries only.
+    //
+    // Emitted for every payload root, because the 13.x line splits the runtime
+    // out of the compiler and a build may hold both.
+    for (auto const& r : payload_roots()) {
+        auto lib = r + "/lib";
+        if (std::filesystem::is_directory(lib)) mcpp::link_search(lib.c_str());
+        // Some components ship `lib64` instead; naming both costs nothing and
+        // guessing wrong costs a link error that names a symbol.
+        auto lib64 = r + "/lib64";
+        if (std::filesystem::is_directory(lib64)) mcpp::link_search(lib64.c_str());
+    }
+
     for (auto const& src : sources) {
         const auto stem = std::filesystem::path(src).stem().string();
         const auto obj  = opt.out_dir + "/" + stem + ".cu.o";
@@ -161,6 +203,19 @@ inline std::vector<edge> plan(std::span<const std::string> sources, options opt 
         e.command     = { nvcc, "-c", root + "/" + src, "-o", obj,
                           "-ccbin", ccbin, "-std=c++17", "-O2",
                           "--compiler-options", "-fPIC" };
+        // ⚠️ THE PAYLOAD'S OWN HEADERS MUST BE NAMED, OR nvcc FINDS THE HOST'S.
+        //
+        // nvcc adds `<its own dir>/../include` automatically, and on the 12.x
+        // line that directory holds `crt/` but NOT `cuda_runtime.h` -- that
+        // lives in the `cuda-cudart` component. Without these flags nvcc
+        // resolved `cuda_runtime.h` from /usr/include and then read the HOST's
+        // `crt/host_config.h` beside it, which on this machine states a bound
+        // three major versions older than the payload's. The build failed with
+        // the host toolkit's complaint while using the payload's compiler.
+        for (auto const& r : payload_roots()) {
+            auto inc = r + "/include";
+            if (std::filesystem::is_directory(inc)) e.command.push_back("-I" + inc);
+        }
         for (auto const& inc : opt.includes)
             e.command.push_back("-I" + root + "/" + inc);
         for (auto const& a : opt.archs) {
