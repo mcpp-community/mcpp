@@ -1,0 +1,65 @@
+[package]
+name         = "hip-saxpy"
+namespace    = "example"
+version      = "0.1.0"
+description  = "A HIP kernel behind a seam module, reaching an NVIDIA device, with a CPU fallback"
+accelerators = ["hip"]
+
+[language]
+standard   = "c++23"
+modules    = true
+import_std = true
+
+# The same clang that compiles the C++ half compiles the device unit. HIP on
+# the NVIDIA platform is a header layer over the CUDA runtime, so there is no
+# hipcc, no ROCm, and no second host compiler to satisfy a bound for.
+[toolchain]
+default = "llvm@22.1.8"
+
+[dependencies.mcpp]
+plugins = { version = "0.2.0", features = ["rules-hip"], host-module = true }
+
+# The driver's userspace library. HIP reaches the device through the CUDA
+# runtime here, so this is the same one hop the CUDA consumer needs: mcpp's
+# private loader does not consult /usr/lib, and without a directory on the
+# artifact's runtime search path the statically linked CUDA runtime cannot
+# dlopen the driver.
+[dependencies.compat]
+cuda-runtime = "2026.09.05"
+
+# The payloads. `hip-nvidia` is headers only -- on this platform that is all
+# HIP is -- and the four CUDA entries are the back end it compiles through.
+# cuRAND and CCCL are on the list for the reason the CUDA consumer records:
+# clang's CUDA wrapper includes curand_mtgp32_kernel.h for every device unit
+# and that header includes <nv/target>, so a unit that calls neither still
+# needs both.
+[xlings.workspace]
+"xim:hip-nvidia"        = "7.2.4"
+"xim:cuda-nvcc"         = "12.9.86"
+"xim:cuda-cudart"       = "12.9.79"
+"xim:libcurand"         = "10.3.10.19"
+"xim:cuda-cccl"         = "12.9.27"
+"xim:libcuda-host-link" = { linux = "0.0.1" }
+
+[build]
+# Two chunks: the programming model, and the device. A device is spelled once
+# in this ecosystem however many models reach it, so `sm_89` here is the same
+# `sm_89` the CUDA consumer writes.
+accel = "hip, cuda12.9+{sm_89}"
+sources = [
+  "src/*.cppm",
+  "src/*.cpp",
+  { glob = "src/kernels/**/*.hip", accel = "hip, cuda12.9+{sm_89}" },
+]
+include_dirs = ["include"]
+
+[target.'cfg(accelerator = "hip")'.build]
+ldflags = ["-lcudart_static", "-lrt", "-lpthread", "-ldl"]
+
+# The CPU-only variant: the same seam, a host implementation behind it.
+[target.'cfg(not(accelerator = "hip"))'.build]
+sources = ["src/cpu/*.cpp"]
+
+[targets.hip-saxpy]
+kind = "bin"
+main = "src/main.cpp"

@@ -1,0 +1,9 @@
+import std;
+import mcpp;
+import mcpp.rules.sycl;
+
+int main() {
+    mcpp::rules::sycl::options opt;
+    opt.includes = { "include" };
+    return mcpp::rules::sycl::compile(opt) ? 0 : 1;
+}

@@ -1,0 +1,52 @@
+// The island, written in SYCL. Nothing here is visible to the module graph: a
+// device translation unit is never scanned and never produces a BMI.
+//
+// THIS ISLAND USES THE C++ STANDARD LIBRARY, AND ITS SIBLINGS DELIBERATELY DO
+// NOT.
+//
+// tests/cuda-consumer and tests/hip-consumer say in their own comments that
+// their islands touch no standard library, because an island that pulls one in
+// links a second C++ runtime into a program whose own came from mcpp's
+// toolchain. A SYCL island cannot make that promise: SYCL IS a C++ library,
+// `sycl::queue` and `sycl::buffer` are class templates over standard types,
+// and `libsycl.so` is itself compiled against libstdc++.
+//
+// So the second runtime is present here by construction, and what makes that
+// safe is the seam rather than an absence. Nothing below crosses
+// `saxpy_device`'s signature: the parameters are pointers and a count, the
+// return is an int, and no object allocated by one runtime is freed by the
+// other. `mcpp.rules.sycl` links the libstdc++ half explicitly for the same
+// reason -- it is a consequence of the compiler this rule chose, not something
+// the manifest should have to know.
+#include "saxpy/saxpy.h"
+#include <sycl/sycl.hpp>
+#include <cstdio>
+
+extern "C" int saxpy_device(float a, const float* x, const float* y,
+                            float* out, unsigned n) {
+    try {
+        sycl::queue q;
+        {
+            // The buffers write back to `out` when they leave this scope,
+            // which is why the scope is here and not the function body: the
+            // copy has to happen before the caller reads.
+            sycl::buffer<float, 1> bx(x, sycl::range<1>(n));
+            sycl::buffer<float, 1> by(y, sycl::range<1>(n));
+            sycl::buffer<float, 1> bo(out, sycl::range<1>(n));
+            q.submit([&](sycl::handler& h) {
+                sycl::accessor ax(bx, h, sycl::read_only);
+                sycl::accessor ay(by, h, sycl::read_only);
+                sycl::accessor ao(bo, h, sycl::write_only, sycl::no_init);
+                h.parallel_for(sycl::range<1>(n),
+                               [=](sycl::id<1> i) { ao[i] = a * ax[i] + ay[i]; });
+            });
+            q.wait_and_throw();
+        }
+        return 0;
+    } catch (const sycl::exception& e) {
+        // The exception does not leave this translation unit: it was thrown by
+        // the SYCL runtime's C++ runtime, and the caller's is a different one.
+        std::fprintf(stderr, "sycl: %s\n", e.what());
+        return -1;
+    }
+}

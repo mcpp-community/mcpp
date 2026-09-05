@@ -26,6 +26,8 @@ mcpp build && mcpp run
 | 08 | [`examples/08-build-rules`](../../examples/08-build-rules/) | 两个规则包,以及同时用到它们的工程 | `host-module = true`、`[build-dependencies]`、`role = "check"` 的 `mcpp::action` |
 | 09 | [`examples/09-cuda-kernel`](../../examples/09-cuda-kernel/) | 接缝模块背后的 CUDA kernel,并带 CPU 回退 | `accel`、带约束的 source glob、`role = "object"` 的 `mcpp::action`、`cfg(accelerator = …)` |
 | 10 | [`examples/10-vulkan-compute`](../../examples/10-vulkan-compute/) | 同一个计算写成 Vulkan compute shader,在 GPU 上或在 CPU 上 | 来自 `mcpp:plugins` 的 `mcpp.rules.spirv`、`role = "source"` 的 `mcpp::action`、生成的头文件、作为载荷的软件驱动 |
+| 11 | [`examples/11-sycl-kernel`](../../examples/11-sycl-kernel/) | 同一个计算写成 SYCL kernel,由第二个编译器编译 | 来自 `mcpp:plugins` 的 `mcpp.rules.sycl`、`.sycl` 设备扩展名、为 device link 串起来的 `mcpp::action`、`compat:sycl-runtime` |
+| 12 | [`examples/12-hip-kernel`](../../examples/12-hip-kernel/) | 同一个计算写成 HIP,够到一台 NVIDIA 设备 | 来自 `mcpp:plugins` 的 `mcpp.rules.hip`、HIP 作为 CUDA 运行时之上的一层头文件、两段式的 `accel` |
 
 ## 推荐阅读顺序
 

@@ -29,6 +29,8 @@ examples.
 | 08 | [`examples/08-build-rules`](../examples/08-build-rules/) | Two rule packages and a project that uses both | `host-module = true`, `[build-dependencies]`, `mcpp::action` with `role = "check"` |
 | 09 | [`examples/09-cuda-kernel`](../examples/09-cuda-kernel/) | A CUDA kernel behind a seam module, with a CPU fallback | `accel`, constrained source globs, `mcpp::action` with `role = "object"`, `cfg(accelerator = …)` |
 | 10 | [`examples/10-vulkan-compute`](../examples/10-vulkan-compute/) | The same computation as a Vulkan compute shader, on a GPU or on the CPU | `mcpp.rules.spirv` from `mcpp:plugins`, `mcpp::action` with `role = "source"`, generated headers, a software driver as a payload |
+| 11 | [`examples/11-sycl-kernel`](../examples/11-sycl-kernel/) | The same computation as a SYCL kernel, compiled by a second compiler | `mcpp.rules.sycl` from `mcpp:plugins`, the `.sycl` device extension, a chained `mcpp::action` for the device link, `compat:sycl-runtime` |
+| 12 | [`examples/12-hip-kernel`](../examples/12-hip-kernel/) | The same computation in HIP, reaching an NVIDIA device | `mcpp.rules.hip` from `mcpp:plugins`, HIP as a header layer over the CUDA runtime, a two-chunk `accel` |
 
 ## Suggested Reading Order
 

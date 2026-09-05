@@ -1,0 +1,9 @@
+import std;
+import mcpp;
+import mcpp.rules.hip;
+
+int main() {
+    mcpp::rules::hip::options opt;
+    opt.includes = { "include" };
+    return mcpp::rules::hip::compile(opt) ? 0 : 1;
+}

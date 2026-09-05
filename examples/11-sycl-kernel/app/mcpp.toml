@@ -1,0 +1,69 @@
+[package]
+name         = "sycl-saxpy"
+namespace    = "example"
+version      = "0.1.0"
+description  = "A SYCL kernel behind a seam module, reaching an NVIDIA device, with a CPU fallback"
+accelerators = ["sycl"]
+
+[language]
+standard   = "c++23"
+modules    = true
+import_std = true
+
+# The C++ half is mcpp's own clang. The device half cannot be: SYCL needs a
+# compiler with the SYCL front end, which is what the dpcpp payload is, and
+# that second compiler is the entire reason this rule exists.
+[toolchain]
+default = "llvm@22.1.8"
+
+[dependencies.mcpp]
+plugins = { version = "0.2.0", features = ["rules-sycl"], host-module = true }
+
+# The driver's userspace library. This build reaches the device through the
+# CUDA back end, so it needs the same one hop the CUDA consumer needs: mcpp's
+# private loader does not consult /usr/lib, and the SYCL runtime's CUDA adapter
+# dlopens the driver.
+[dependencies.compat]
+cuda-runtime = "2026.09.05"
+sycl-runtime = "2026.09.06"
+
+# Three payloads, each closing one hole the host would otherwise fill.
+#
+#   dpcpp      the compiler.
+#   gcc        NOT a second toolchain: the C++ standard library the SYCL unit
+#              compiles against. Left alone, dpcpp's clang reads the HOST's
+#              /usr/include/c++ -- measured, and invisible until a machine
+#              without it refuses the build.
+#   cuda-nvcc  the NVIDIA back end's libdevice. Also measured: without
+#              `--cuda-path` clang finds the host's CUDA installation and says
+#              nothing about it.
+[xlings.workspace]
+"xim:dpcpp"             = "7.1.0"
+"xim:gcc"               = "15.1.0"
+"xim:cuda-nvcc"         = "12.9.86"
+"xim:libcuda-host-link" = { linux = "0.0.1" }
+
+[build]
+# Two chunks: the programming model, and the device. Written `sycl` alone, the
+# unit is compiled to SPIR-V and the runtime picks a device at run time; with
+# the second chunk it is compiled ahead of time for that architecture.
+accel = "sycl, cuda12.9+{sm_89}"
+sources = [
+  "src/*.cppm",
+  "src/*.cpp",
+  { glob = "src/kernels/**/*.sycl", accel = "sycl, cuda12.9+{sm_89}" },
+]
+include_dirs = ["include"]
+
+# `-lsycl` and the libstdc++ half are NOT here: they are consequences of the
+# compiler the rule chose, so the rule puts them on the link line itself
+# through `mcpp::link_lib`. A manifest that named them would be stating a fact
+# about a compiler it did not select.
+
+# The CPU-only variant: the same seam, a host implementation behind it.
+[target.'cfg(not(accelerator = "sycl"))'.build]
+sources = ["src/cpu/*.cpp"]
+
+[targets.sycl-saxpy]
+kind = "bin"
+main = "src/main.cpp"
