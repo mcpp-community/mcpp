@@ -173,12 +173,31 @@ printf '%s\n' "$out" | grep -q "does not cover" \
     || fail "an accel that does not cover the glob was not refused"
 printf '%s\n' "$out" | grep -q "does not cover" && ok "an accel outside the constraint is refused naming both"
 
-# ── E. the core holds no vendor probe ───────────────────────────────────────
-section "E. no vendor tool is launched by the engine"
-out=$("$STORE" self doctor 2>&1)
-printf '%s\n' "$out" | grep -qiE "nvcc|cuda toolkit|cicc" \
-    && fail "self doctor still reports a device toolkit section"
-printf '%s\n' "$out" | grep -qiE "nvcc|cuda toolkit|cicc" || ok "self doctor is silent about device toolkits"
+# ── E. the engine carries no vendor tool or header name ────────────────────
+#
+# ⚠️ ASSERTED ON THE BINARY, NOT ON `self doctor`'s SILENCE. An earlier
+# revision asked whether `self doctor` mentions a toolkit, and that passes
+# vacuously: the section it was watching for only ever printed when a CUDA
+# toolkit was installed, and a fresh sandbox has none. Rehearsed against
+# 2026.9.5.1 — which still had the reader — the check reported "ok".
+#
+# The strings are the discriminating ones: `crt/host_config.h` is the header
+# the doctor used to read, and it appears twice in the 2026.9.5.1 binary and
+# not at all once the reader moved into the rule package. The source-level
+# property (no vendor name beside a probe launch anywhere in `src/`) is a unit
+# test, `test_core_vendor_probes`, and belongs to CI rather than here.
+section "E. the engine carries no vendor tool or header name"
+vendor_hits=0
+for word in host_config cicc cudafe fatbinary nvidia-smi; do
+    # ⚠️ NO `|| echo 0`. `grep -c` PRINTS 0 and EXITS 1 when it matches nothing,
+    # so the fallback appended a second line and `[` saw "0\n0" — "integer
+    # expression expected", the assertion skipped, and the section still
+    # reported ok. Measured while writing this.
+    n=$(grep -a -c -- "$word" "$STORE" 2>/dev/null); rc=$?
+    [ "$rc" -gt 1 ] && { fail "could not read $STORE while looking for '$word'"; continue; }
+    [ "${n:-0}" -gt 0 ] && { fail "the engine binary contains '$word' ($n)"; vendor_hits=1; }
+done
+[ "$vendor_hits" -eq 0 ] && ok "no vendor tool or header name is in the engine binary"
 
 # ── verdict ────────────────────────────────────────────────────────────────
 printf '\n'
