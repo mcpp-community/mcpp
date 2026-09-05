@@ -1241,5 +1241,36 @@ GPU 索引包不自己探测宿主(委托 xim sentinel);链宿主 `libcudart` �
 | T1.4 / T1.5(pocl / lavapipe)与 T4.2 | 需要**重打 mesa 载荷**(见 12.1 末行),或新建 pocl 源码构建配方。两者都是多小时的载荷工程 |
 | T1.8/T1.9/T1.10(chipstar / adaptivecpp / hip) | 依赖 T1.2/T1.4 |
 | T4.3 规则包进索引 | 依赖 ③ —— 描述符指向 mcpp 的**源码 tarball**(`grpcgen` 同形),tag 不存在则算不出 sha256。规则包已改名到 `mcpplibs` 命名空间,就是为了让它可被引用而不是被复制 |
-| ⑤ 九个框架 | 依赖 ④ 的规则包条目。`ggml-org.llamacpp` 与 `opencv.opencv` 已在索引里,多后端是改**它们各自的 `-m` 仓库**而不是索引条目 |
+| ⑤ 九个框架 | 依赖 ④ 的规则包条目。`ggml-org.llamacpp` 与 `opencv.opencv` 已在索引里,多后端是改**它们各自的 `-m` 仓库**而不是索引条目。T5.1 已做到「链路全通、卡在载荷矩阵」—— 见 12.5 |
 | T2.6 的端到端判据 | `accel` 已是 `pack::AbiTag` 第四维并进指纹;「`.a` 随包传播」还缺一条跨包的判据 |
+
+### 12.5 T5.1 作为 gate 的实际读数
+
+**它兑现了 gate 的作用**:第一个真实框架就暴露了 C-6 的引擎缺口 —— object 角色的
+action **只**挂到可执行/共享库/测试上,而 llama.cpp 的 CUDA 后端是 305 个 `.cu`
+挂在 `kind = "lib"` 上,于是每个 action 都被丢弃、只留一条警告,**构建成功**并产出
+一个不含设备码的归档。修好并有判据(e2e 608 断言 `ar t` 的成员表 —— 空档案也会
+成功退出)。
+
+**链路本身全通,实测到 48 个设备目标**:`[build] accel` → 带 `accel` 的 glob →
+`MCPP_DEVICE_SOURCES` → 规则包 → `mcpp::action` → 归档 → 链接。
+
+**挡住的是一个四维载荷矩阵,四条边没有一条是 mcpp 的:**
+
+| 组合 | 读数 |
+|---|---|
+| CCCL 2.x(12.9 线)+ clang | `cub::LoadDirectWarpStriped` 少一个四参重载 |
+| CCCL 3.3(13.3 线)+ clang | 同一个调用,候选是三参与五参 |
+| CCCL 3.2(13.2 线)+ clang | 换成 **libcu++ 编不动**:`string_view` 的推导指引只允许 `__host__ __device__`;`block_load.cuh` 要 placement new |
+| 任一 CCCL + nvcc | 12.9 撞 glibc 2.44 的 C23 `cospi`;13.3 撞驱动 12.4 |
+
+⭐ **这不是「没做完」,是「本机构造上无解」**,与 §12.1 里 C9 那条同一性质。
+需要的是一台驱动 ≥ 13.0 的机器(nvcc 13.3 路线),或一个 ggml 与 CCCL 版本匹配的
+上游 checkpoint。
+
+⭐ 顺带三条通用读数,都写进了规则包与文档:
+**layer 不能选择依赖**(依赖挂 feature,源文件挂 accel 轴);
+**设备编译必须指名 CCCL 载荷**否则命中 `/usr/include/cub`(与 §12.1 的
+`cuda_runtime.h` 同一形状,第三次);
+**clang 路线要带 `-D_ALLOW_UNSUPPORTED_LIBCPP`**,因为 NVIDIA 那条 `libc++ is not
+supported` 的守卫看的是 `__CUDACC__`,而 clang 编 CUDA 时自己就定义它。
