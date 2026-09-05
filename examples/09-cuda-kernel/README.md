@@ -102,8 +102,16 @@ The rule package compiles the device unit either way:
 
 - **clang** (`-x cuda --cuda-path=<payload>`) is the default and what
   `[toolchain] default = "llvm@22.1.8"` selects. The compiler that builds the
-  rest of the project builds the device unit too. There is no second host
-  compiler, no host-compiler bound, and no CUDA host header in the way.
+  rest of the project builds the device unit too: no second host compiler and
+  no host-compiler bound.
+
+  It does pass one flag of NVIDIA's own. A device unit that includes
+  `<cuda_runtime.h>` stops at `crt/host_defines.h:67` with `"libc++ is not
+  supported on x86 system"`, because that guard reads `__CUDACC__` — which
+  clang defines when it compiles CUDA — and an LLVM toolchain's clang uses
+  libc++. The refusal is about nvcc's host pass, so the rule passes
+  `-D_ALLOW_UNSUPPORTED_LIBCPP` on this route only. This example's own kernel
+  never showed it: a bare kernel includes no toolkit header at all.
 - **nvcc** (`-ccbin <host g++>`) is taken when the project's toolchain is GCC.
   It drives a second compiler, and that is where its constraints come from.
 
