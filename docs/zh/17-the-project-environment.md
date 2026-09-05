@@ -7,7 +7,9 @@
 ```toml
 [xlings]
 subos = "tools"
-deps  = ["xim:qemu-riscv@9.2.4-1"]
+
+[xlings.workspace]
+"xim:qemu-riscv" = "9.2.4-1"
 ```
 
 可运行的工程:`examples/07-project-subos/`。
@@ -72,7 +74,7 @@ SubOS 里。前置让被声明的环境成为默认答案;其余的仍在它后�
 
 ## 3. 这条声明不决定什么
 
-`[xlings] deps` 声明的是「环境里要有哪些包」,而每个包的载荷目录另有通道交付,
+`[xlings.workspace]` 声明的是「环境里要有哪些包」,而每个包的载荷目录另有通道交付,
 即 `MCPP_XPKG_<NAME>_DIR`。这与 `PATH` 是两个问题,答案也保持分开:需要某个包
 的数据文件(比如 protoc 自带的 well-known `.proto`)的构建程序问目录,需要
 **运行**某个程序的构建程序问 `PATH`。
@@ -108,7 +110,7 @@ create/bootstrap that environment instead of falling back to active/default
   败;私有环境让这个问题不成立。
 
 代价一侧:隔离环境是一个必须被创建并填充的目录,而这笔账由首次构建来付。
-2026.8.29 起 mcpp 会做这件事 —— 声明在 `[xlings] deps` 里的包在首次使用时被供给,
+2026.8.29 起 mcpp 会做这件事 —— 声明在 `[xlings.workspace]` 里的包在首次使用时被供给,
 一个尚不存在的具名 `[xlings] subos` 会被创建而不是被拒绝 —— 但代价是实打实的:
 干净机器上的第一次构建会先下载安装,然后才编译。工具很普通、版本也无所谓的项目,
 不声明、直接继承机器的那份更划算。

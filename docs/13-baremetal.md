@@ -291,9 +291,9 @@ fact, selection is a board fact.**
 | Board-support package | Which startup object and libraries to select, which linker script, which emulator invocation | `-lcrt0-semihost`, `picolibcpp.ld`, `qemu-system-riscv64 -machine virt …` |
 
 The middle row is what keeps a package from having to name a C library.
-Earlier versions of both ecosystem packages declared
-`[xlings] deps = ["xim:picolibc-riscv@1.8.12"]`, which bound a package to one
-libc, one architecture and one compiler implementation. That declaration is no
+Earlier versions of both ecosystem packages named a libc package in the
+environment table directly, which bound a package to one libc, one architecture
+and one compiler implementation. That declaration is no
 longer required, and the target's sysroot column replaced it.
 
 A second board on the same ISA is a change of the three values in the bottom
@@ -641,8 +641,8 @@ it needs under `[xlings.workspace]`, exports one C++ module for consumers, and
 emits its board facts from `build.mcpp`.
 
 **A declaration there provisions the package on the first build** (since
-2026.8.29; the table is `[xlings.workspace]` since 2026.9.3.1, and the older
-`[xlings] deps` still works and says so). It is also what lets `mcpp::xpkg_dir` answer *"where
+2026.8.29; the table is `[xlings.workspace]`). It is also what lets
+`mcpp::xpkg_dir` answer *"where
 did that package land"*. Both halves matter: the same declaration installs the
 emulator and tells the build program where it went.
 

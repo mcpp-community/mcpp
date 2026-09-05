@@ -104,7 +104,7 @@ int main() {
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | reads `MCPP_DEP_<PKG>_BIN_<TOOL>` — the absolute path of a **host tool** built by a dependency (see below) |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` — see below |
-| `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package this manifest declared in `[xlings] deps`; `""` when it was not declared or is not installed (see below) |
+| `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package this manifest declared in `[xlings.workspace]`; `""` when it was not declared or is not installed (see below) |
 | `mcpp::warning(text)` *(2026.8.21.2+)* | `mcpp:warning=` — see below |
 | `mcpp::action{…}.submit()` *(2026.8.5.1+)* | `mcpp:action=` — declares a **build-graph node** instead of doing the work here (see below) |
 
@@ -199,7 +199,7 @@ package whose content is implementation-neutral. Asking follows whatever
 the compiler payload or through the runtime binding, and nothing has to look
 for it.
 
-### Finding an `[xlings] deps` payload: `xpkg_dir` (2026.8.19+)
+### Finding an `[xlings.workspace]` payload: `xpkg_dir` (2026.8.19+)
 
 `dep_dir` answers for **mcpp** dependencies. An xlings package is a different
 namespace with a different store layout, and `xpkg_dir` is the interface for it:

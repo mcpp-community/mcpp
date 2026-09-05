@@ -68,6 +68,11 @@ struct AccelSet {
     // embeds PTX so later hardware can JIT; AMD has no equivalent and obtains
     // the same reach through family targets on the `archs` side instead. An
     // empty floor must therefore widen nothing.
+    // The floor of the artifact's embedded PORTABLE form, below which it no
+    // longer reaches. Named for CUDA's PTX because that is where the idea and
+    // the published spelling come from; the field itself is backend-neutral and
+    // `floor>=` is its neutral spelling on the wire. A backend with no portable
+    // form leaves it empty, which widens nothing -- AMD is that case.
     std::string ptxFloor;
 };
 
@@ -287,8 +292,16 @@ std::vector<AccelSet> parse_accel(std::string_view s) {
                     j = k + 1;
                 }
             }
-            if (auto pf = tail.find("ptx>="); pf != std::string_view::npos)
-                a.ptxFloor = std::string(trim_sv(tail.substr(pf + 5)));
+            // The floor below which an artifact's embedded portable form no
+            // longer reaches. `ptx>=` is CUDA's spelling of it and the one
+            // already published; `floor>=` is the backend-neutral one, so a
+            // backend whose portable form is not PTX -- SPIR-V, say -- does not
+            // have to borrow NVIDIA's word for it. One field, two spellings,
+            // and the value means the same thing to the comparison either way.
+            if (auto pf = tail.find("floor>="); pf != std::string_view::npos)
+                a.ptxFloor = std::string(trim_sv(tail.substr(pf + 7)));
+            else if (auto pf2 = tail.find("ptx>="); pf2 != std::string_view::npos)
+                a.ptxFloor = std::string(trim_sv(tail.substr(pf2 + 5)));
         }
         out.push_back(std::move(a));
     }

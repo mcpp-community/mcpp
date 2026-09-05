@@ -1347,6 +1347,37 @@ struct Manifest {
     // through untouched, exactly as they do in `provides`.
     // ⚠️ The spelling is `requires_` because `requires` is a keyword.
     std::vector<std::string>                        requires_;
+    // [package] exclusive — the capabilities this package claims it is the ONLY
+    // provider of.
+    //
+    // WHY THIS IS DECLARED RATHER THAN INFERRED
+    //
+    // Two packages providing one capability is usually fine and sometimes the
+    // point: `compat.openblas` and an MKL package both provide `blas`, and a
+    // build that links one program against each is legitimate. So the engine
+    // cannot refuse duplicate providers as a rule — the rule would break a case
+    // this project documents.
+    //
+    // What it also cannot do is detect the case that is NOT fine. Two
+    // implementations of one accelerator interface define the same symbols, and
+    // the link then resolves every call to whichever archive the linker reached
+    // first. Seeing that requires the object files, which do not exist when
+    // capabilities are bound.
+    //
+    // So the package says it. An author who knows their library defines
+    // `cublasCreate` writes:
+    //
+    //     provides  = ["gpu-blas"]
+    //     exclusive = ["gpu-blas"]
+    //
+    // and two such packages in one graph are refused at binding time, naming
+    // both — instead of at link time naming a symbol, or at run time naming
+    // nothing at all.
+    //
+    // ⚠️ An entry that is not also in `provides` (or a feature's `provides`) is
+    // a typo and is reported: claiming exclusivity over something you do not
+    // provide cannot be acted on.
+    std::vector<std::string>                        exclusive;
     // [package] std-module / std-module-flags — a package that IS a standard
     // library says where its `std' module source is and what that source needs
     // to compile. The build tool otherwise asks the COMPILER where std.cppm is

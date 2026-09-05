@@ -6473,6 +6473,10 @@ prepare_build(bool print_fingerprint,
     // apply() as each package's features activate; bound after the loops below.
     std::map<std::string, std::vector<std::string>> capProviders;
     std::vector<std::pair<std::string, std::string>> capRequires;
+    // Who claimed sole provision of what. Separate from capProviders because
+    // the question it answers is different: capProviders asks "can this
+    // requirement be satisfied", this asks "can these two coexist at all".
+    std::map<std::string, std::vector<std::string>> capExclusive;
     {
         auto sanitize = [](std::string f) {
             for (auto& c : f)
@@ -6494,6 +6498,7 @@ prepare_build(bool print_fingerprint,
             // active. Requirements are bound after all packages are processed.
             const auto& pcap = pkg.manifest.package.name;
             for (auto& cap : pkg.manifest.provides) capProviders[cap].push_back(pcap);
+            for (auto& cap : pkg.manifest.exclusive) capExclusive[cap].push_back(pcap);
             for (auto& f : active) {
                 if (auto it = pkg.manifest.featureProvides.find(f);
                     it != pkg.manifest.featureProvides.end())
@@ -7482,6 +7487,41 @@ prepare_build(bool print_fingerprint,
                 m->capabilityPins[tok.substr(0, eq)] = tok.substr(eq + 1);
             if (c == std::string::npos) break;
             p = c + 1;
+        }
+
+        // EXCLUSIVE CAPABILITIES, CHECKED BEFORE REQUIREMENTS ARE BOUND.
+        //
+        // Ordering is deliberate. A requirement conflict is reported by naming
+        // the requirement; this one exists whether or not anything requires the
+        // capability, because the defect is that two implementations of one
+        // interface are in the same link. Reporting it first means the message
+        // names the real problem rather than a symptom of it.
+        for (auto const& [cap, claimers] : capExclusive) {
+            auto it = capProviders.find(cap);
+            if (it == capProviders.end()) continue;
+            std::vector<std::string> providers;
+            for (auto const& p : it->second)
+                if (std::find(providers.begin(), providers.end(), p) == providers.end())
+                    providers.push_back(p);
+            if (providers.size() < 2) continue;
+
+            std::string list, claimed;
+            for (auto const& p : providers) list += (list.empty() ? "" : ", ") + p;
+            for (auto const& c : claimers) claimed += (claimed.empty() ? "" : ", ") + c;
+            refusal::record(refusal::Code::ExclusiveCapability);
+            return std::unexpected(std::format(
+                "capability '{}' is provided by more than one package, and {} "
+                "declares it EXCLUSIVE.\n"
+                "         providers: [{}]\n"
+                "         exclusive: [{}]\n"
+                "       Two implementations of one interface define the same "
+                "symbols, so the link would\n"
+                "       resolve every call to whichever archive it reached "
+                "first. Keep one of them —\n"
+                "       a `[capabilities]` pin selects a provider for a "
+                "REQUIREMENT and cannot make two\n"
+                "       definitions of one symbol safe.",
+                cap, claimers.size() == 1 ? "it" : "they", list, claimed));
         }
 
         std::set<std::string> boundCaps;

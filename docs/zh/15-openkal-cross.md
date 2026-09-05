@@ -169,8 +169,8 @@ hosted 交叉目标使用同一个键,配用户态模拟器(2026.9.2.1)。在 x8
 按能安装它的宿主声明:
 
 ```toml
-[xlings]
-deps = [{ linux = "qemu-user-aarch64" }]
+[xlings.workspace]
+"xim:qemu-user-aarch64" = { linux = "" }
 
 [target.aarch64-linux-musl]
 runner = ["qemu-aarch64-static"]

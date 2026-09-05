@@ -29,8 +29,8 @@ cuda-runtime = "2026.09.05"
 # mcpp a path it can put on the artifact's runtime search path — mcpp's private
 # loader does not consult /usr/lib, so without this the statically linked CUDA
 # runtime cannot dlopen the driver and reports it as missing.
-[xlings]
-deps = [{ linux = "libcuda-host-link" }]
+[xlings.workspace]
+"xim:libcuda-host-link" = { linux = "0.0.1" }
 
 [build]
 # The CUDA runtime is linked STATICALLY. mcpp refuses a dynamic link against

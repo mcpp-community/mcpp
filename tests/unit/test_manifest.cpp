@@ -4853,3 +4853,65 @@ hardware = {}
         if (w.find("hardwear") != std::string::npos) sawTypo = true;
     EXPECT_TRUE(sawTypo) << "no warning for [feature-xlings.hardwear]";
 }
+
+// ── [package] exclusive ────────────────────────────────────────────────────
+//
+// The key is a claim about THIS package's own symbols, so it can only apply to
+// a capability the package supplies. The parse therefore accepts the list and
+// reports an entry that is not supplied — the value is still carried, because
+// the binding-time check is the one that acts on it and a warning must not
+// silently change what was declared.
+
+TEST(ManifestExclusive, CarriesTheListAndWarnsAboutNothing) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name      = "compat.cublas"
+version   = "0.1.0"
+provides  = ["gpu-blas", "gpu-fft"]
+exclusive = ["gpu-blas"]
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->exclusive.size(), 1u);
+    EXPECT_EQ(m->exclusive[0], "gpu-blas");
+    std::string all;
+    for (auto const& w : m->schemaWarnings) { all += w; all += '\n'; }
+    EXPECT_TRUE(m->schemaWarnings.empty()) << all;
+}
+
+TEST(ManifestExclusive, ClaimingSomethingNotProvidedIsReported) {
+    // Not an error: the declaration is carried so the binding-time check sees
+    // exactly what was written. What it cannot do is act on a capability this
+    // package does not supply, and a silent no-op is how a typo survives.
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name      = "compat.cublas"
+version   = "0.1.0"
+provides  = ["gpu-blas"]
+exclusive = ["gpu-bals"]
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->exclusive.size(), 1u);
+    std::string all;
+    for (auto const& w : m->schemaWarnings) { all += w; all += '\n'; }
+    EXPECT_NE(all.find("gpu-bals"), std::string::npos)
+        << "the warning must name the entry that cannot be enforced:\n" << all;
+}
+
+TEST(ManifestExclusive, AFeatureProvidedCapabilityCounts) {
+    // `provides` is not the only way a package supplies a capability, and a
+    // check that only looked there would warn about a correct manifest.
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name      = "compat.cublas"
+version   = "0.1.0"
+exclusive = ["gpu-blas"]
+
+[features]
+cuda = { provides = ["gpu-blas"] }
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    std::string all;
+    for (auto const& w : m->schemaWarnings) { all += w; all += '\n'; }
+    EXPECT_EQ(all.find("gpu-blas"), std::string::npos)
+        << "a feature-provided capability is supplied; no warning is due:\n" << all;
+}

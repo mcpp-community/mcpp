@@ -331,6 +331,7 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `os-mismatch` | 请求的与解析出的三元组指向不同的操作系统 |
 | `layer-requirement` | 某个包要求的层,解析没有给出 |
 | `layer-ordering` | 五层叠不起来 |
+| `exclusive-capability` | 一个能力有多个提供者,而其中至少一个声明了独占 |
 | `other` | 一处还没有被命名的拒绝分支 |
 
 ⚠️ **只要问题被回答了就退 0,包括答案是「拒绝」。** 「它能不能构建,不能的话

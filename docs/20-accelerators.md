@@ -173,6 +173,31 @@ Family targets and portable forms are what keep the variant matrix finite.
 Publishing one artifact per chip does not scale; publishing one per generation
 does.
 
+### The grammar is open
+
+`cuda`, `hip`, `vulkan` and `sycl` are not a closed set. A backend name, a
+version, an architecture list and an optional floor are the whole shape, and
+mcpp compares them without a table of who exists:
+
+```
+vulkan1.3+{spirv1.6} floor>=1.4
+sycl2020+{spir64,nvptx64-sm_89}
+hip6.4+{gfx942}
+```
+
+An architecture whose spelling carries no leading number — `gfx942` — is
+compared by equality, because there is no ordering to read out of it. That is
+the answer rather than a guess: reading `942` out of the middle would invent a
+level AMD does not define.
+
+`floor>=` is the backend-neutral spelling of the portable-form floor. `ptx>=`
+is CUDA's word for the same field and remains accepted, so descriptors written
+before this are unaffected; a backend whose portable form is SPIR-V writes
+`floor>=` instead of borrowing NVIDIA's term.
+
+Which spellings mean what for a given backend is the business of that backend's
+rule package. What the engine holds is the shape and the comparison.
+
 When nothing matches, the refusal names the dimension and both sides:
 
 ```

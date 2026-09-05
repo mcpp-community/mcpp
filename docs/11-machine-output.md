@@ -377,6 +377,7 @@ a program classifying the outcome reads `reason`:
 | `os-mismatch` | the requested and resolved triples name different systems |
 | `layer-requirement` | a package requires a layer the resolution did not give it |
 | `layer-ordering` | the five layers do not stack |
+| `exclusive-capability` | two packages provide one capability and at least one declared it exclusive |
 | `other` | a refusal whose branch has not been given a token yet |
 
 ⚠️ **Exit 0 whenever the question was answered, including "refused".** "Would

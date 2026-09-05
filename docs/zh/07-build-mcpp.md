@@ -97,7 +97,7 @@ int main() {
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | 读 `MCPP_DEP_<PKG>_BIN_<TOOL>` —— 依赖构建出的 **host 工具**的绝对路径(见下) |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` —— 见下 |
-| `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | 本 manifest 在 `[xlings] deps` 里声明的包的载荷目录;没声明或没安装时返回 `""`(见下) |
+| `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | 本 manifest 在 `[xlings.workspace]` 里声明的包的载荷目录;没声明或没安装时返回 `""`(见下) |
 | `mcpp::warning(text)` *(2026.8.21.2+)* | `mcpp:warning=` —— 见下 |
 | `mcpp::action{…}.submit()` *(2026.8.5.1+)* | `mcpp:action=` —— **声明一个构建图节点**,而不是在这里把活干了(见下) |
 
@@ -177,7 +177,7 @@ const char* sr = mcpp::sysroot_dir();     // 目标的 C 库根目录,没有则�
 
 宿主目标上 `sysroot_dir()` 为空:那里 C 库随编译器载荷或运行时绑定而来,没人需要找它。
 
-### 找到 `[xlings] deps` 的载荷:`xpkg_dir`(2026.8.19+)
+### 找到 `[xlings.workspace]` 的载荷:`xpkg_dir`(2026.8.19+)
 
 `dep_dir` 回答的是 **mcpp** 依赖。xlings 包是另一个命名空间、另一套 store 布局,
 `xpkg_dir` 是它的接口:

@@ -252,9 +252,8 @@ extern "C" int main() {
 | 目标 | 用哪个编译器与哪份 C 库,两者都从目标的表行解析并按需安装 | `pin = llvm@22.1.8`、`sysroot = xim:picolibc-riscv@1.8.12` |
 | 板级支持包 | 选哪个启动对象与哪些库、哪份链接脚本、哪条模拟器命令行 | `-lcrt0-semihost`、`picolibcpp.ld`、`qemu-system-riscv64 -machine virt …` |
 
-中间那一行正是让包不必指名 C 库的原因。两个生态包早先都声明过
-`[xlings] deps = ["xim:picolibc-riscv@1.8.12"]`,这把包绑死在一份 libc、一种架构
-与一种编译器实现上。该声明已不再需要,目标的 sysroot 列取代了它。
+中间那一行正是让包不必指名 C 库的原因。两个生态包早先都在环境表里直接指名过一份
+libc 包,这把包绑死在一份 libc、一种架构与一种编译器实现上。该声明已不再需要,目标的 sysroot 列取代了它。
 
 同一 ISA 上的第二块板子,是把最后一行里的三个取值换掉。它不需要引擎作任何改动。
 
@@ -567,8 +566,8 @@ error: no runner is configured for 'riscv64-none-elf' — a freestanding artifac
 板级支持包是一个普通的 mcpp 包。它在 `[xlings.workspace]` 下声明所需的模拟器,为消费者
 导出一个 C++ 模块,并从 `build.mcpp` 发出它的板级事实。
 
-**那里的声明会在首次构建时供给该包**(2026.8.29 起;这张表自 2026.9.3.1 起是
-`[xlings.workspace]`,旧的 `[xlings] deps` 仍然生效并会说明这一点)。它同时让
+**那里的声明会在首次构建时供给该包**(2026.8.29 起;这张表是
+`[xlings.workspace]`)。它同时让
 `mcpp::xpkg_dir` 能回答「那个包落在哪」。两半都要紧:同一条声明既装上模拟器,也告诉
 构建程序它装到了哪。
 

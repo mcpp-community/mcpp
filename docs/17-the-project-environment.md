@@ -8,7 +8,9 @@ and in CI, whatever else those two machines happen to have installed.
 ```toml
 [xlings]
 subos = "tools"
-deps  = ["xim:qemu-riscv@9.2.4-1"]
+
+[xlings.workspace]
+"xim:qemu-riscv" = "9.2.4-1"
 ```
 
 Working project: `examples/07-project-subos/`.
@@ -85,7 +87,7 @@ should beat a file.
 
 ## 3. What the declaration does not decide
 
-`[xlings] deps` names packages to be present in the environment, and each one's
+`[xlings.workspace]` names packages to be present in the environment, and each one's
 payload directory is delivered separately as `MCPP_XPKG_<NAME>_DIR`. That is a
 different question from `PATH` and stays a different answer: a build program
 that needs a package's data files (protoc's well-known `.proto` files, say)
@@ -132,7 +134,7 @@ gives the full rule.
 
 Against that: an isolated environment is a directory that has to be created and
 populated, and the first build pays for it. Since 2026.8.29 mcpp does that
-work — a declared `[xlings] deps` is provisioned on first use, and a named
+work — a declared `[xlings.workspace]` entry is provisioned on first use, and a named
 `[xlings] subos` that does not exist yet is created rather than refused — but
 the cost is real: the first build on a clean machine downloads and installs
 before it compiles anything. A project whose tools are ordinary and whose

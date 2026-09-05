@@ -197,8 +197,8 @@ package that provides the emulator is declared for the hosts that can install
 it:
 
 ```toml
-[xlings]
-deps = [{ linux = "qemu-user-aarch64" }]
+[xlings.workspace]
+"xim:qemu-user-aarch64" = { linux = "" }
 
 [target.aarch64-linux-musl]
 runner = ["qemu-aarch64-static"]
