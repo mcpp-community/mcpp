@@ -14,18 +14,26 @@ Ascend C 与 Metal 都是这种形态。设备编译器产出一个目标文件(
 **整目标(whole-target)** 把设备代码放在普通 `.cpp` 里,整个目标由一个能 offload 的
 编译器编译。SYCL、OpenMP offload 与 stdpar 属于这一类,没有可分的岛。
 
-本文描述岛这一形态,即 mcpp 当前实现的部分。
+mcpp 实现的是岛这一形态,而整目标工具链是**经由**它而不是在它旁边被接进来的:一个
+SYCL 编译单元命名为 `.sycl`,由与 `.cu` 相同的收窄 glob 路由给 SYCL 编译器,并经由
+同一条接缝汇入链接。文件名换来的是「一个扩展名只有一个含义」——让某条 glob 去承载
+`.cpp`,同一个名字就会因为哪条 glob 先匹配而指向两个不同的编译器,而接缝之所以可读,
+正是因为名字说明了一个单元位于它的哪一侧。
 
 ## 设备编译单元
 
 由另一个编译器消费的语言写成的源文件是**设备编译单元**。mcpp 据此分类并相应处理:
 它从不被扫描 import,也从不产出 BMI —— 因为没有任何设备编译器接受 C++20 modules。
 
-判据是编译器,不是厂商(下表为 2026.9.5.3+;在此之前只有 `.cu` 与 `.hip`):
+判据是编译器,不是语言(下表为 2026.9.5.3+;在此之前只有 `.cu` 与 `.hip`)。`.sycl`
+正是这一区别变得可见的地方:它的内容就是普通 C++,文件里没有任何东西会告诉读者别的。
+使它成为设备单元的是「它交给一个带设备后端的编译器」—— 一个 mcpp 不驱动、且不接受
+C++20 modules 的编译器。
 
 | 语言 | 扩展名 |
 |---|---|
 | CUDA、HIP | `.cu`、`.hip` |
+| SYCL | `.sycl`(2026.9.6.1+) |
 | GLSL(按 stage) | `.comp`、`.vert`、`.frag`、`.geom`、`.tesc`、`.tese`、`.mesh`、`.task`、`.rgen`、`.rint`、`.rahit`、`.rchit`、`.rmiss`、`.rcall` |
 | GLSL(无 stage) | `.glsl` |
 | HLSL | `.hlsl` |
@@ -221,8 +229,35 @@ cxxflags = ["-DMYAPP_ROCM"]
 今天由发布者显式写这个字段,索引描述符就是这么做的;
 等 `kind = "device"` 把设备编译放进 mcpp 之后,`mcpp pack` 才会发它。
 
+## 各条 lane,以及每条驱动什么
+
+一个规则包拥有一个编译器的拼写。引擎不认识其中任何一个名字:
+`tests/unit/test_core_vendor_probes.cpp` 断言剥掉注释后 `src/` 里不出现任何厂商工具名,
+并自带分母(枚举到的文件数)。
+
+| `mcpp:plugins` 的 feature | 模块 | 它驱动的编译器 | 它需要的载荷 | `[build] accel` |
+|---|---|---|---|---|
+| `rules-cuda` | `mcpp.rules.cuda` | 工程自己的 clang(`-x cuda`),或 GCC 工具链下的 nvcc | `xim:cuda-nvcc`、`xim:cuda-cudart`、`xim:libcurand`、`xim:cuda-cccl` | `cuda12.9+{sm_89} ptx>=89` |
+| `rules-hip` | `mcpp.rules.hip` | NVIDIA 平台上是工程自己的 clang(`-x cuda`) | 上面那些,再加 `xim:hip-nvidia` | `hip, cuda12.9+{sm_89}` |
+| `rules-sycl` | `mcpp.rules.sycl` | `xim:dpcpp` 载荷里的 clang(`-fsycl`) | `xim:dpcpp`、`xim:gcc`,NVIDIA 目标另加 `xim:cuda-nvcc` | `sycl` 或 `sycl, cuda12.9+{sm_89}` |
+| `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` 或 `glslc` | `xim:glslang` 或 `xim:shaderc` | `vulkan1.2` |
+
+HIP 与 SYCL 两行的 `accel` 值是**两段**而不是一段。第一段命名编程模型,第二段命名设备,
+于是一个设备在本生态里只有一种拼法,无论有多少个模型去够它:`sm_89` 无论被哪条规则读到
+都是同一个 `sm_89`。只写 `accel = "sycl"` 而没有第二段,则编译到 SPIR-V,由运行期挑设备。
+
+**NVIDIA 平台上的 HIP 是一层头文件,不是第二个运行时。** 每一个 HIP 入口点都是对应
+CUDA 入口点的内联包装,所以目标文件链接的是 CUDA 运行时,机器上没有 ROCm。
+`xim:hip-nvidia` 因此不含任何二进制。AMD 平台需要一个本生态尚未发布的 ROCm 运行时,
+规则会点名拒绝,而不是产出一个没有东西能链接的目标文件。
+
+**一次 SYCL 构建携带两个 C++ 运行时,而接缝是使这件事安全的东西。** `libsycl.so` 是
+对着 libstdc++ 编译的,而 mcpp 的产物链接 libc++,于是两者都在同一个映像里,mcpp 的
+重复符号检查会报出它们共有的那些 unwinder 符号。任何东西都不得穿过接缝:SYCL 异常在
+设备编译单元里被捕获并转成返回码,因为抛出它的那个运行时不是调用方会用来展开的那个。
+
 ## 尚未实现
 
-整目标形态(SYCL、OpenMP offload、stdpar)、device target 及其隐含的 device link、
-含设备代码的静态库,以及经由 xim 提供的加速器载荷。这些所依据的设计见
-`.agents/docs/2026-09-05-accelerator-support-design.md`。
+岛形态的 device target 及其隐含的 device link、OpenMP offload 与 stdpar、HIP 的 AMD
+平台,以及 Metal。这些所依据的设计,以及每一项仍然开着的理由,见
+`.agents/docs/2026-09-05-heterogeneous-build-ecosystem-design-v2.md`。

@@ -390,3 +390,200 @@ The first sandbox run failed six assertions. One was a defect in the ecosystem, 
 **The second retired criterion: the exit code of a mirror write.** Both tools print their configuration on stderr, so reading it through `2>/dev/null` returned an empty string and reported a mirror that was in fact set to CN.
 
 **Two properties of the sandbox that the run established.** A subos root has no `/run`, so the inherited `XDG_RUNTIME_DIR` names a directory that does not exist; Mesa falls back to it when `memfd` is unavailable and lavapipe fails with `Failed to create anonymous file for memory allocations` before it reports a device. And the registry's index snapshot is shared with whatever wrote it last: the run resolved against a snapshot four commits behind `main`, where `compat.opencl-headers` reported `download artifact missing` because the recipe was not in it. The verification script now redirects the first and refreshes the second before it measures anything.
+
+## 7. Round 4 (2026-09-06): the second device API, and the compiler each one needs
+
+Rounds 1 to 3 closed the host surface and delivered two lanes, CUDA and Vulkan,
+each through a rule package in `mcpp:plugins`. What they did not deliver is the
+evidence that the shape generalises: a single lane proves a rule package can
+drive one vendor's compiler, and the claim this ecosystem makes is that the
+engine knows no vendor at all. Round 4 is the second instance of that claim,
+taken in the direction where it is most likely to break -- a device API that is
+not CUDA (`HIP`), and a compilation model that is not the island (`SYCL`, where
+the device compiler consumes ordinary C++ and emits a fat object).
+
+### 7.1 What round 3 left open, and which of it this round closes
+
+| row | item | round 4 |
+|---|---|---|
+| C2 | `mcpp.rules.sycl` driving the `dpcpp` payload | closed |
+| C3 | `mcpp.rules.hip` | closed, on the NVIDIA platform, which is the platform this machine can decide |
+| C4 | llama.cpp Vulkan lane | its blocker is closed (`glslc` has no payload); the framework itself is a packaging round of its own and stays open |
+| A5 / X4 | Intel `anv` in the Mesa payload | its two missing links are closed (`libclc`, `llvm-spirv`); the Mesa rebuild stays open, and the reason is stated in 7.5 |
+| A3 | aarch64 for the third class | stays open; the blocker X1 recorded is unchanged |
+| T1.2 | `llvm-offload` | withdrawn: the `dpcpp` payload carries `clang-linker-wrapper`, `clang-offload-bundler` and `llvm-offload-binary`, which is the whole of what the row asked for, and round 4 makes that payload reachable through a rule |
+
+### 7.2 The one engine change, and why it is one row
+
+SYCL is compiled by a second compiler from a translation unit that is ordinary
+C++ -- there is no `.cu` to route. The engine's device-extension table is the
+mechanism that routes a source away from mcpp's own compiler, so the table gains
+`.sycl` and nothing else changes. The table's own comment states the two
+conditions under which an addition is inert, and both hold: device extensions
+are absent from `default_source_globs`, so no glob widens, and a file with one of
+these extensions named in `sources` is today a hard error, so nothing silently
+changes role.
+
+The alternative -- letting a constrained glob carry `.cpp` -- was rejected. It
+would make one extension mean two things depending on which glob matched it
+first, and the seam discipline round 2 settled on (device code reaches the
+program only through an `extern "C"` header) is legible exactly because the file
+name says which side of the seam a unit is on.
+
+### 7.3 Schedule
+
+Status is one of `done`, `open`, `deferred (reason)`.
+
+#### xim-pkgindex (single PR)
+
+| # | task | criterion | depends on | status |
+|---|---|---|---|---|
+| Z1 | `xim:shaderc` 2026.3: `glslc` and `libshaderc`, conda-forge repack with its closure, x86_64 and aarch64, both mirrors | `glslc --version` from the payload; a `.comp` compiles to SPIR-V; every `DT_NEEDED` of every payload object resolves inside payloads | - | done: both mirrors byte-identical; `glslc` compiles a `.comp` to a module whose first word is `07230203`; `ldd` on all six programs names nothing outside the store |
+| Z2 | `xim:hip-nvidia` rocm-7.2.4: the HIP headers plus `hipother`'s `nvidia_detail`, architecture-independent | a `.hip` translation unit compiles against it with `__HIP_PLATFORM_NVIDIA__` and links against the CUDA payload | - | done: three source trees, not two -- `hip_runtime_api.h` includes `amd_detail/amd_hip_runtime_pt_api.h` unconditionally on either platform, so `ROCm/clr` is required to parse; `hip_version.h` is generated from the tree's own VERSION |
+| Z3 | `xim:libclc` 22.1.8 and `xim:llvm-spirv` 22.1.2, conda-forge repacks | each installs; `llvm-spirv --version` answers; the libclc bitcode for `nvptx64` and `spirv64` is present | - | withdrawn: see 7.5. Both exist on conda-forge and both were confirmed repackable, but nothing in this round consumes them -- the Mesa rebuild that would is the deferred item. A payload with no consumer is the "claim rather than a feature" this ecosystem already rejects |
+| Z4 | CI green; merge; index artifact published | `Publish Index Artifact` green on the merge commit | Z1, Z2 | done: PR #768 merged as `62538ee`, `Publish Index Artifact` green on it; a fixture then resolved `xim:hip-nvidia` from the published index and answered `12 24 36 48`. The PR also carries a dpcpp repair CI found: see 7.5 |
+
+#### mcpp (single PR, version 2026.9.6.1)
+
+| # | task | criterion | depends on | status |
+|---|---|---|---|---|
+| N1 | `.sycl` in the device-extension table | a unit test over the whole table with the table as its denominator; e2e: a `.sycl` in a constrained glob reaches `MCPP_DEVICE_SOURCES`, and the same content named `.cpp` is still C++ | - | done: e2e 613, five sections; the unit case verified to run BY NAME rather than by the suite being green. The row's original criterion was wrong and the run said so -- see 7.5 |
+| N2 | `examples/11-sycl-compute`: one SYCL kernel behind a seam, the CUDA backend and the host device from one artifact | `12 24 36 48` on the RTX 4080 and again with `--no-accel` | N1, Q1 | open |
+| N3 | `examples/12-hip-compute`: a `.hip` kernel through `mcpp.rules.hip` on the NVIDIA platform | `12 24 36 48`, and no `/usr` path on any command line | Q2, Z2 | open |
+| N4 | Chapter 20 gains the SYCL and HIP lanes and the table of which rule drives which compiler; both languages | `check_docs_style.sh` passes; the Chinese chapter has the rows the English one has | - | done: the lane table, the two-chunk `accel` explanation, the HIP header-layer note and the two-C++-runtimes note, in both languages; "Not implemented" corrected -- the whole-target shape is no longer among the missing |
+| N5 | Version 2026.9.6.1, CHANGELOG, unit and e2e suites, PR, CI green, self-review | no e2e failure other than the ones already failing on `origin/main` | N1-N4 | open |
+| N6 | Release, mirror, index bump, bootstrap pin | both mirrors return 200 and identical bytes for every asset; xim-pkgindex names it `latest` | N5 | open |
+
+#### mcpp-plugins (single PR, version 0.2.0)
+
+| # | task | criterion | depends on | status |
+|---|---|---|---|---|
+| Q1 | `mcpp.rules.sycl`, feature `rules-sycl` | a fixture compiles a `.sycl` unit with the `dpcpp` payload and links it into a C++23-modules program; the rule refuses with the declaration to add when the payload is absent | N1 | done: `12 24 36 48` on an RTX 4080 through `mcpp run`, zero `/usr` paths on any command line, and the device-link wrapper asserted as its own file |
+| Q2 | `mcpp.rules.hip`, feature `rules-hip` | a fixture compiles a `.hip` unit on the NVIDIA platform; the rule names the platform it selected and why | Z2 | done: `12 24 36 48` on an RTX 4080, zero `/usr` paths; the AMD platform is refused by name with the reason rather than approximated |
+| Q3 | `mcpp.rules.spirv` gains the `glslc` route now that a payload exists | both compilers produce a header the same program includes; the rule states which one it used | Z1 | done: the two command lines share almost nothing -- glslc's `-mfmt=c` is a bare initialiser list and its `-S` means "emit assembly" where glslang's names a stage -- so the rule writes the declaration itself and keys its `mcpp::fact` on the flavour |
+| Q4 | CI: one consumer fixture per feature, built with the pinned mcpp | green on the PR head | Q1-Q3, N6 | open |
+| Q5 | Release `v0.2.0`; GitHub archive and a GitCode asset with identical bytes; index descriptor | both URLs return 200 and one sha256 | Q4 | open |
+
+#### mcpp-index (single PR)
+
+| # | task | criterion | depends on | status |
+|---|---|---|---|---|
+| R1 | `compat.sycl-runtime` 2026.09.06; then `mcpp:plugins` 0.2.0 in `pkgs/m/mcpp.plugins.lua`, floor 2026.9.6.1 | the adapter: a workspace member loads `libsycl.so.9` by soname under mcpp's own loader. the descriptor: `mcpp add mcpp:plugins` resolves in a sandbox and the new features are selectable | Q5, N6 | adapter done (PR #354 merged as `e17fc88`, index artifact published); descriptor open |
+| R2 | CI green; merge; index artifact published | `Publish Index Artifact` green on the merge commit | R1 | open |
+
+#### Verification
+
+| # | task | criterion | depends on | status |
+|---|---|---|---|---|
+| V3 | A fresh subos, CN mirror for both tools: install mcpp 2026.9.6.1 from the index, build examples 09 through 12 against `mcpp:plugins` 0.2.0 | every example builds; example 10 answers on lavapipe; the device half of 09, 11 and 12 compiles and says cleanly that the sandbox has no device | Z4, N6, Q5, R2 | open |
+| V4 | The same on this host with the GPU | `12 24 36 48` from 09, 11 and 12 on the RTX 4080 | V3 | open |
+
+### 7.4 The completion rule
+
+This round is not finished when its pull requests merge. It is finished when
+every row above reads `done` against its own criterion and the ecosystem has
+been exercised end to end on a machine that starts with none of it installed:
+the released engine fetched from the index, the rule collection fetched from
+the index, every payload fetched from its mirror, and each example answering.
+A row whose work is written but not measured stays `open`; a row that cannot be
+measured here says so and names what would decide it. V3 and V4 are that
+measurement, and no part of this round is reported as complete before they are
+green.
+
+### 7.5 What this round's work corrected, and what it withdrew
+
+Six changes to the plan above, each with what decided it.
+
+**Z3 withdrawn: two payloads with no consumer.** `libclc` 22.1.8 and
+`llvm-spirv` 22.1.2 are both on conda-forge, both repackable, and both are what
+the deferred Intel `anv` build would need. Publishing them now would put two
+packages in the index that nothing in this ecosystem reaches, which is the
+"claim rather than a feature" `mcpp.rules.spirv` already refuses for itself.
+They are published when the Mesa rebuild that consumes them is.
+
+**N1's criterion was wrong, and the run said so.** It read "a `.sycl` outside a
+constrained glob is still a hard error". It is not: an extension the table
+names is accepted wherever it is globbed, and the hard error applied only while
+the extension was absent from the table. The compatibility guarantee is the
+default-glob section, which asserts the WHOLE list. The retired assertion was
+replaced by one that measures something: the same content named `.cpp` is still
+compiled as C++ and does not reach the build program -- a test naming only
+`.sycl` would pass on a table that had started classifying by content.
+
+**A dpcpp repair that took three attempts, and the third is the shape.** Five
+of its programs --
+`sycl-ls`, `sycl-prof`, `sycl-trace`, `sycl-sanitize`, `syclbin-dump` -- ship
+with neither DT_RPATH nor DT_RUNPATH and could not start once installed. The
+`[cuda:gpu] NVIDIA CUDA BACKEND` recorded in that recipe's own comment had been
+measured with LD_LIBRARY_PATH set. Two attempts were needed:
+
+* `selfcontain.seal`, the idiom the repacked payloads use, sets the
+  INTERPRETER as well as the search path. Behind the ecosystem's private loader
+  there is no host fallback, and CI's dependency-closure check refused it,
+  naming four sonames with no provider in the index. The check was describing a
+  real regression: the sealed payload enumerated no platforms where the
+  unsealed one had found the GPU.
+* `elfpatch.set_rpath` on BOTH halves made `sycl-ls` work and made every
+  CONSUMER worse, which appeared only when an mcpp artifact reached the payload
+  through a runtime adapter: a non-empty DT_RUNPATH on a payload library
+  switches OFF the inherited DT_RPATH of whatever loaded it, so
+  `libur_adapter_cuda.so.0` stopped seeing the artifact's own farm and failed
+  first on `libcuda.so.1` and then on `libnvidia-ml.so.1`. Every consumer would
+  have had to re-farm the payload's entire external closure.
+* `patchelf --force-rpath` on the PROGRAMS and nothing on the libraries is the
+  answer, and it is one tag rather than two paths: DT_RUNPATH is honoured for
+  an object's own DT_NEEDED and not for a dlopen beneath it, DT_RPATH for both
+  at any depth. The programs' RPATH therefore serves their adapters too, while
+  the libraries keep inheriting from whoever loads them. `elfpatch` cannot
+  express this -- `set_rpath` writes RUNPATH and `patch_elf_loader_rpath` also
+  swaps the interpreter -- so the recipe calls patchelf directly with
+  `xim:patchelf` as a build dep, which is what godot.lua and libglvnd.lua do
+  for the same documented reason.
+
+⭐ The regression was not visible from the payload. `sycl-ls` reported the GPU
+in all three attempts from the second onward; what differed was whether a
+CONSUMER of the payload still worked, and only building the example again
+showed it.
+
+**The SYCL link needs `-l:libstdc++.so.6`, not `-lstdc++`.** clang's driver
+treats `-lstdc++` as a selector for the C++ standard library and rewrites it to
+`-lc++` under `-stdlib=libc++`, so the flag disappears from the link line with
+no diagnostic and `std::cerr` comes back undefined from inside a SYCL header.
+Found by reading `clang -###`, after the symbol was verified to exist in the
+library the `-L` named.
+
+**`compat.sycl-runtime` was not in the plan and the round does not close
+without it.** The rule can satisfy `-lsycl` at link time from the payload, and
+the artifact then fails mcpp's runtime closure check. Three of the adapter's
+entries were added by a failure rather than by design: the dlopen chain
+(`libur_loader.so.0`, `libumf.so.1`), the C++ runtime that `compat.cudart`
+deliberately does not farm, and `libz.so.1` -- which only CI found, because
+this machine had zlib installed for unrelated reasons.
+
+Its 2026.09.07 version moves one more thing across the boundary. A SYCL
+artifact using the CUDA back end had to declare `compat:cuda-runtime` beside
+it, because the adapter reaches `libcuda.so.1` through the artifact's own path.
+That is a true statement about the implementation and a poor one to put in a
+user's manifest: which back end the SYCL runtime dlopens is the runtime's
+business. The adapter now declares the sentinel and links the same versioned
+soname `compat.cuda-runtime` links, so a project that writes SYCL declares one
+compat entry and no CUDA at all.
+
+**Five pull requests across three repositories, not three.** The dependency
+order is a cycle if each repository takes one: the plugin collection's CI needs
+the released engine AND the index adapter, while the engine's examples need the
+released collection. Round 3 met the same shape and resolved it the same way.
+The order is: mcpp (engine) and mcpp-index (adapter) in parallel, then
+mcpp-plugins, then mcpp-index (descriptor), then mcpp (examples).
+
+### 7.6 Dynamic updates
+
+| date | change | reason |
+|---|---|---|
+| 2026-09-06 | table created | - |
+| 2026-09-06 | Z3 withdrawn | above |
+| 2026-09-06 | N1's second criterion replaced | above |
+| 2026-09-06 | `compat.sycl-runtime` added to the index row | the runtime closure check refuses the artifact without it |
+| 2026-09-06 | the round is five PRs, not three | the release order is a cycle otherwise |
+| 2026-09-06 | dpcpp corrected a second time (xim #769) | the first correction fixed the payload's own programs and broke every consumer of it; the regression was invisible from the payload |
+| 2026-09-06 | `compat.sycl-runtime` 2026.09.07 (mcpp-index #355) | a SYCL project should not have to declare CUDA; the adapter owns the hop its runtime needs |
