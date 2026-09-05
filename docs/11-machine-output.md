@@ -379,6 +379,7 @@ a program classifying the outcome reads `reason`:
 | `layer-ordering` | the five layers do not stack |
 | `exclusive-capability` | two packages provide one capability and at least one declared it exclusive |
 | `version-floor-unmet` | a package requires more of the machine than the machine was declared to have |
+| `accel-mismatch` | a `[build] sources` entry is constrained to a device set this build does not cover |
 | `other` | a refusal whose branch has not been given a token yet |
 
 ⚠️ **Exit 0 whenever the question was answered, including "refused".** "Would

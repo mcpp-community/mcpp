@@ -6504,6 +6504,10 @@ prepare_build(bool print_fingerprint,
     // root's build program has run -- a rule package it imports states
     // its facts and floors from there (`mcpp::fact` / `mcpp::floor`),
     // and a check that ran only before it would never see them.
+    // package name -> device-kind sources of its effective source set, filled
+    // by the narrowing pass after feature application and read at both
+    // build-program run sites (MCPP_DEVICE_SOURCES).
+    std::map<std::string, std::vector<std::string>> deviceSourcesByPackage;
     auto checkVersionFloors = [&]() -> std::optional<std::string> {
         std::map<std::string, std::pair<std::string, std::string>> facts;  // name -> (version, who)
         for (std::size_t pi = 0; pi < packages.size(); ++pi) {
@@ -6875,6 +6879,83 @@ prepare_build(bool print_fingerprint,
                 activeFeaturesByPackage.resize(i + 1);
             activeFeaturesByPackage[i] =
                 feature_closure(packages[i].manifest, req, depDefaultFeatures);
+        }
+
+        // ── Constrained source globs: narrow to what this build targets ────
+        //
+        // A `{ glob = "...", accel = "..." }` entry in `[build] sources` says
+        // what its files are FOR. Three outcomes, all decided here and none in
+        // the scanner, which keeps reading a plain list of globs:
+        //
+        //   - the glob matches nothing: refused, naming the glob. An empty
+        //     match is a typo or a moved directory, not a no-op, and the
+        //     failure it would otherwise become is a kernel that is never
+        //     compiled and a link that resolves nothing.
+        //   - the build asks for no accelerator: the glob is EXCLUDED, with the
+        //     same `!` mechanism feature gates use -- removing the string is not
+        //     enough when a broader glob (the default `src/**`) covers the same
+        //     files. This is how `--no-accel` yields the CPU-only variant.
+        //   - the build asks for one: the constraint must lie within it, or the
+        //     build is refused naming both. A file compiled for sm_89 under a
+        //     build that targets sm_80 is not a variant, it is a mismatch.
+        //
+        // Device-kind files the effective set still matches are collected per
+        // package for the build program (MCPP_DEVICE_SOURCES); the engine has
+        // no compile rule for them and never will.
+        {
+            const auto buildAccel = mcpp::pack::parse_accel(resolvedAccel());
+            for (std::size_t i = 0; i < packages.size(); ++i) {
+                auto& pkg = packages[i];
+                auto& bc  = pkg.manifest.buildConfig;
+                std::set<std::string> excludedGlobs;
+                for (auto const& sc : bc.sourceConstraints) {
+                    const auto hits = mcpp::modgraph::expand_glob(pkg.root, sc.glob);
+                    if (hits.empty()) {
+                        return std::unexpected(std::format(
+                            "`{}`: [build] sources entry '{}' (accel = \"{}\") matches no file.\n"
+                            "       A constrained glob names the files a device build needs; an\n"
+                            "       empty match would leave nothing to compile for that device\n"
+                            "       and say so only at the link, or never.",
+                            pkg.manifest.package.name, sc.glob, sc.accel));
+                    }
+                    if (buildAccel.empty()) { excludedGlobs.insert(sc.glob); continue; }
+                    const auto want = mcpp::pack::parse_accel(sc.accel);
+                    if (!mcpp::pack::accel_accepts(buildAccel, want)) {
+                        refusal::record(refusal::Code::AccelMismatch);
+                        return std::unexpected(std::format(
+                            "`{}`: [build] sources entry '{}' is constrained to accel \"{}\",\n"
+                            "       which this build does not cover.\n"
+                            "         this build targets: {}\n"
+                            "       fix: build with `--accel` covering it, or `--no-accel` to\n"
+                            "       leave every constrained glob out (the CPU-only variant).",
+                            pkg.manifest.package.name, sc.glob,
+                            mcpp::pack::accel_str(want),
+                            mcpp::pack::accel_str(buildAccel)));
+                    }
+                }
+                for (auto const& g : excludedGlobs) {
+                    bc.sources.push_back("!" + g);
+                    pkg.manifest.modules.sources.push_back("!" + g);
+                }
+                // The device-kind files the EFFECTIVE set matches, for the
+                // build program. Exclusions are honoured the way the scanner
+                // honours them: positives first, then `!` entries removed.
+                const auto extTable = mcpp::extension_table_for(bc.moduleExtensions);
+                std::set<std::filesystem::path> matched, dropped;
+                for (auto const& g : pkg.manifest.modules.sources) {
+                    if (g.empty()) continue;
+                    if (g[0] == '!') { for (auto& f : mcpp::modgraph::expand_glob(pkg.root, g.substr(1))) dropped.insert(f); }
+                    else if (!std::filesystem::path(g).is_absolute())
+                        for (auto& f : mcpp::modgraph::expand_glob(pkg.root, g)) matched.insert(f);
+                }
+                std::vector<std::string> device;
+                for (auto const& f : matched) {
+                    if (dropped.contains(f)) continue;
+                    if (mcpp::classify(f, extTable) != mcpp::SourceKind::Device) continue;
+                    device.push_back(f.lexically_relative(pkg.root).generic_string());
+                }
+                deviceSourcesByPackage[pkg.manifest.package.name] = std::move(device);
+            }
         }
         activeFeaturesByPackage.resize(packages.size());
 
@@ -7426,6 +7507,8 @@ prepare_build(bool print_fingerprint,
         bpEnv.toolsBin = projectSubosBin;
             bpEnv.profile      = effectiveProfile;
             bpEnv.accel        = resolvedAccel();
+            if (auto dit = deviceSourcesByPackage.find(pkg.manifest.package.name); dit != deviceSourcesByPackage.end())
+                bpEnv.deviceSources = dit->second;
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
             bpEnv.artifactsDir = workRoot / "target" / ".build-mcpp" / "deps"
                 / (dirSafe(pkg.manifest.package.name) + "@" + pkg.manifest.package.version);
@@ -8339,6 +8422,8 @@ prepare_build(bool print_fingerprint,
         bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;
         bpEnv.accel        = resolvedAccel();
+        if (auto dit = deviceSourcesByPackage.find(m->package.name); dit != deviceSourcesByPackage.end())
+            bpEnv.deviceSources = dit->second;
         // Set explicitly rather than relying on build_dir()'s root-relative
         // default: under BuildOverrides::work_dir the package root is shared
         // and may be read-only, and the default would write the compiled

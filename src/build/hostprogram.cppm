@@ -243,6 +243,13 @@ inline const char* profile()                      { return env_or("MCPP_PROFILE"
 // means beyond "backend, version, architectures, floor" is the package's
 // business: the engine never learns what `sm_89` is.
 inline const char* accel()                        { return env_or("MCPP_ACCEL"); }
+// The device-kind sources (`.cu`, `.hip`, ...) this package's `sources` match
+// under the current accel, package-root-relative, one per line, "" when there
+// are none. The engine compiles none of them; the rule package this program
+// imports turns each into an `mcpp::action`. Already narrowed: a glob written
+// as `{ glob = "...", accel = "..." }` whose constraint the build does not
+// satisfy contributes nothing, so `--no-accel` yields an empty list.
+inline const char* device_sources()               { return env_or("MCPP_DEVICE_SOURCES"); }
 inline const char* out_dir()                      { return env_or("MCPP_OUT_DIR"); }
 
 // Where the TOOLCHAIN mcpp resolved for this build lives — the payload root,

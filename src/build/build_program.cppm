@@ -84,6 +84,13 @@ struct BuildProgramEnv {
     // (`-gencode`, `--offload-arch`) from here and the architecture set is
     // written once, in the manifest, and never again in a build program.
     std::string accel;
+    // The device-kind sources (`.cu`, `.hip`, ...) this package's effective
+    // source set matches, package-root-relative with `/` separators, one per
+    // line. The engine has no compile rule for them and hands the list to the
+    // build program, where the rule package the package imports turns each
+    // one into an `mcpp::action`. Already narrowed: a glob whose `accel`
+    // constraint the build does not satisfy contributes nothing.
+    std::vector<std::string> deviceSources;
     // Artifact home (bin/cache/out). Empty → <root>/target/.build-mcpp (the
     // root-project default). Dependencies MUST point this into the CONSUMING
     // project's tree — a registry package root is shared and may be read-only.
@@ -434,6 +441,14 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     e.emplace_back("MCPP_TARGET_LIBC", env.targetLibc);
     e.emplace_back("MCPP_PROFILE", env.profile);
     e.emplace_back("MCPP_ACCEL", env.accel);
+    {
+        std::string joined;
+        for (auto const& d : env.deviceSources) {
+            if (!joined.empty()) joined += '\n';
+            joined += d;
+        }
+        e.emplace_back("MCPP_DEVICE_SOURCES", joined);
+    }
     e.emplace_back("MCPP_OUT_DIR", outDir.string());
     e.emplace_back("MCPP_MANIFEST_DIR", root.string());
     std::string csv;

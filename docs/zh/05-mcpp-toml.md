@@ -201,6 +201,15 @@ mcpp 刻意不在一次构建里把同一个共享源编译成两份:一个源�
 > `src/` 下剩下的任何文件都会被扫进来。
 
 
+> **`sources` 的条目可以带上它所面向的加速器**(2026.9.6+):
+> `{ glob = "src/kernels/**/*.cu", accel = "cuda12.9+{sm_89}" }`。glob 与其它条目一样
+> 进入列表;约束决定它是否适用于某一次构建。它必须至少匹配一个文件(空匹配会被拒绝:
+> 那会让这个设备无东西可编,而只在链接时才说话)。`--no-accel` 下该 glob 被排除,
+> 一个工程由此产出它的 CPU-only 变体。`--accel` 未覆盖该约束时构建被拒并给出两侧
+> (`accel-mismatch`)。有效集合匹配到的设备类源文件(`.cu`、`.hip`)引擎从不编译;
+> 它们以 `MCPP_DEVICE_SOURCES` 到达构建程序,由工程引入的规则包把每一个变成一条
+> `mcpp::action`。
+
 ```toml
 [build]
 sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # 源文件 glob(默认: src/**/*.{cppm,cpp,cc,c,S,s,asm})

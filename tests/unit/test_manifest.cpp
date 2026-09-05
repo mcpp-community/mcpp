@@ -4862,6 +4862,93 @@ hardware = {}
 // the binding-time check is the one that acts on it and a warning must not
 // silently change what was declared.
 
+// ── [build] sources: constrained entries ───────────────────────────────────
+//
+// A table entry carries a glob and the accel it is for. The glob joins the
+// plain list (every existing reader keeps working); the constraint is what
+// prepare narrows on.
+
+TEST(ManifestSourceConstraints, ATableEntryJoinsTheListAndCarriesItsConstraint) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name    = "infer"
+version = "0.1.0"
+[build]
+sources = ["src/**/*.cppm", { glob = "src/kernels/**/*.cu", accel = "cuda12.9+{sm_89}" }]
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->buildConfig.sources.size(), 2u);
+    EXPECT_EQ(m->buildConfig.sources[0], "src/**/*.cppm");
+    EXPECT_EQ(m->buildConfig.sources[1], "src/kernels/**/*.cu");
+    EXPECT_TRUE(m->buildConfig.sourcesDeclared);
+    ASSERT_EQ(m->buildConfig.sourceConstraints.size(), 1u);
+    EXPECT_EQ(m->buildConfig.sourceConstraints[0].glob,  "src/kernels/**/*.cu");
+    EXPECT_EQ(m->buildConfig.sourceConstraints[0].accel, "cuda12.9+{sm_89}");
+}
+
+TEST(ManifestSourceConstraints, ATableEntryWithoutAccelIsJustAGlob) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name    = "infer"
+version = "0.1.0"
+[build]
+sources = [{ glob = "src/**/*.cpp" }]
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->buildConfig.sources.size(), 1u);
+    EXPECT_TRUE(m->buildConfig.sourceConstraints.empty());
+}
+
+TEST(ManifestSourceConstraints, AnEntryWithoutGlobIsRefused) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name    = "infer"
+version = "0.1.0"
+[build]
+sources = [{ accel = "cuda12.9+{sm_89}" }]
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().format().find("glob"), std::string::npos) << m.error().format();
+}
+
+TEST(ManifestSourceConstraints, AnUnknownKeyIsRefusedRatherThanSkipped) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name    = "infer"
+version = "0.1.0"
+[build]
+sources = [{ glob = "src/k/*.cu", acel = "cuda12.9+{sm_89}" }]
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().format().find("acel"), std::string::npos) << m.error().format();
+}
+
+TEST(ManifestSourceConstraints, AnExclusionCannotBeConstrained) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name    = "infer"
+version = "0.1.0"
+[build]
+sources = [{ glob = "!src/k/*.cu", accel = "cuda12.9+{sm_89}" }]
+)");
+    ASSERT_FALSE(m.has_value());
+}
+
+TEST(ManifestSourceConstraints, AConstrainedEntryUnderTheConditionalAxisIsRefused) {
+    // read_list keeps strings only; a table that vanished there would be a
+    // device glob nobody ever narrowed, so it is refused with a pointer to
+    // where it belongs.
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name    = "infer"
+version = "0.1.0"
+[target.'cfg(linux)'.build]
+sources = [{ glob = "src/k/*.cu", accel = "cuda12.9+{sm_89}" }]
+)");
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().format().find("[build].sources"), std::string::npos) << m.error().format();
+}
+
 TEST(ManifestExclusive, CarriesTheListAndWarnsAboutNothing) {
     auto m = mcpp::manifest::parse_string(R"(
 [package]

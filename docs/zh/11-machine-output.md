@@ -333,6 +333,7 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `layer-ordering` | 五层叠不起来 |
 | `exclusive-capability` | 一个能力有多个提供者,而其中至少一个声明了独占 |
 | `version-floor-unmet` | 一个包对机器的要求高于机器被声明拥有的 |
+| `accel-mismatch` | 一条 `[build] sources` 条目被约束到本次构建未覆盖的设备集合 |
 | `other` | 一处还没有被命名的拒绝分支 |
 
 ⚠️ **只要问题被回答了就退 0,包括答案是「拒绝」。** 「它能不能构建,不能的话

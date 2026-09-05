@@ -215,6 +215,18 @@ the package/feature boundary, not on an individual target.
 > mcpp 2026.8.18.1 the two were byte-identical, so there was no spelling for
 > "nothing" and any file left under `src/` was swept in.
 
+> **A `sources` entry may carry the accelerator it is for** (2026.9.6+):
+> `{ glob = "src/kernels/**/*.cu", accel = "cuda12.9+{sm_89}" }`. The glob
+> joins the list like any other; the constraint decides whether it applies to a
+> given build. It must match at least one file (an empty match is refused: it
+> would leave nothing to compile for that device and say so only at the link).
+> Under `--no-accel` the glob is left out, which is how one project yields its
+> CPU-only variant. Under an `--accel` that does not cover the constraint the
+> build is refused naming both (`accel-mismatch`). Device-kind files (`.cu`,
+> `.hip`) the effective set matches are never compiled by the engine; they
+> reach the build program as `MCPP_DEVICE_SOURCES`, where the rule package the
+> project imports turns each into an `mcpp::action`.
+
 ```toml
 [build]
 sources      = ["src/**/*.cppm", "src/**/*.cpp"]  # Source globs (default: src/**/*.{cppm,cpp,cc,c,S,s,asm})
