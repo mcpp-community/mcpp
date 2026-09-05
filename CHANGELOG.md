@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+### `mcpp clean --stale`: 只清 target/ 里已无构建使用的指纹目录 (#565)
+
+每次配置指纹变化都会在 `target/<三元组>/` 下新开一个目录, 旧目录从不回收; `mcpp clean` 只有整删一档,
+代价是全量重编, 于是没人跑. `mcpp clean --stale` 以 `target/.build_cache` 里记录的 (三元组, 指纹) 为
+当前, 删掉记录过的三元组目录下其余兄弟目录并报告各自体积; 未被记录但在 `--older-than` (默认 1d) 之内
+写过的目录保留 (`mcpp test` 的构建不写记录). `--dry-run` 只列出. 没有构建记录时拒绝执行而不是猜; 记录之外的目录
+(如 `mcpp pack` 的 `dist/`) 不碰. `fingerprint changed` 的警告末尾现在附带这条
+命令, 让增长可见.
+
 ## [2026.9.5.3] — 2026-09-05
 
 ### 官方构建插件集中为一个包:`mcpp:plugins`
