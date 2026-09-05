@@ -649,7 +649,17 @@ and warns when the two disagree —
     the mcpp project.
 
 Nothing breaks; the name claims an origin the package does not have. A rule
-outside the project picks its own prefix. `examples/09-cuda-kernel` and
+outside the project picks its own prefix.
+
+**A tool is not a rule.** A rule states how a translation unit is compiled by a
+compiler mcpp does not drive: it submits an action and the engine schedules it.
+A tool states something the build program needs that no compiler performs, and
+does it while the program runs. `mcpp.tools.embed` (feature `tools-embed`,
+mcpp 2026.9.5.4+) is the first: it writes a data file into a header the program
+compiles in, as a byte array or a 32-bit word array, and rewrites nothing when
+the content is unchanged, so calling it unconditionally costs no rebuild.
+
+`examples/09-cuda-kernel` and
 `examples/10-vulkan-compute` consume `mcpp.rules.cuda` and `mcpp.rules.spirv`
 from `mcpp:plugins`, the way any project does.
 

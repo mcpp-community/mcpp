@@ -558,6 +558,13 @@ shim,而可用的那份就在项目自己的环境里,根本不在 `PATH` 上。
     the mcpp project.
 
 什么都不会坏;只是这个名字声称了一个该包并不具有的来源。项目之外的规则自选前缀。
+
+**工具不是规则。** 规则说明一个编译单元如何被 mcpp 并不驱动的编译器编译:它提交一条
+action,由引擎调度。工具说明的是构建程序需要、而没有任何编译器执行的事,并在构建程序
+运行时当场做掉。`mcpp.tools.embed`(feature `tools-embed`,mcpp 2026.9.5.4+)是第一个:
+它把数据文件写成程序编译进去的头文件(字节数组或 32 位字数组),内容未变时不重写文件,
+因此无条件调用它不会带来任何重编。
+
 `examples/09-cuda-kernel` 与 `examples/10-vulkan-compute` 像任何工程一样从 `mcpp:plugins`
 消费 `mcpp.rules.cuda` 与 `mcpp.rules.spirv`。
 
