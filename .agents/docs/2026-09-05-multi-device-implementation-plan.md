@@ -9,10 +9,10 @@
 |---|---|---|
 | ⓪ 修已发布的错误示范 | mcpp | ✅ T0.1/T0.2 合入 `1e2137b`;T0.3 在 **#563** |
 | ① 载荷 | xim-pkgindex | ✅ **#759 已合入 `a4644a7`**,15 项 CI 全绿,25 个包;⚠️ 13.x 后端不可达由 **#760** 修 |
-| ② 引擎 | mcpp | ✅ T2.1–T2.5、T2.7–T2.10 完成并各有判据;T2.6 部分(`accel` 已进 ABI 标签与指纹,`.a` 端到端判据待补) |
+| ② 引擎 | mcpp | ✅ T2.1–T2.10 全部完成并各有判据 |
 | ③ 发布 | mcpp | ⬜ |
 | ④ 适配面 | mcpp-index | 🟡 T4.1/T4.4 ✅(**#347 已合入 `8a9ca64`**);T4.2 待 ① 的 pocl/lavapipe;T4.3 待 ③ |
-| ⑤ 框架 | mcpp-index | ⬜ |
+| ⑤ 框架 | mcpp-index | 🟡 T5.1 走到「载荷版本不匹配」:见下方记录。它作为 gate 已经交付了它该交付的东西 —— 暴露出 C-6 的引擎缺口 |
 | ⑥ 生态验证 | 沙箱 | ⬜ |
 
 图例:⬜ 未开始 / 🟡 进行中 / ✅ 完成并有判据 / ⛔ 阻塞
@@ -53,7 +53,7 @@
 | T2.3 | ✅ **C-3 逐 glob 收窄** `sources = [{ glob, accel }]` | ✅ e2e 606 四段:覆盖 ⇒ 编译且设备源到达构建程序;`--no-accel` ⇒ 整条 glob 排除;非子集 ⇒ 拒绝并点名两侧(`accel-mismatch`);空集 ⇒ 拒绝点名 glob。6 条单测 | — |
 | T2.4 | ✅ **C-4 `exclusive` 能力声明** | ✅ e2e 601:独占对被拒并点名双方;**对照** —— 不声明的两个提供者照常共存。3 条单测 + 中英文档 + `exclusive-capability` 进机器接口契约页 | — |
 | T2.5 | ✅ **C-5 载荷可用性机制**:探针通道 `mcpp::fact` / `mcpp::floor`(协议 v7),核心只比较;根工程的构建程序说完后再查一次 | ✅ e2e 605:根 build.mcpp 陈述的下界被比较并拒绝(两侧取值 + `version-floor-unmet`);对照:满足则构建 | — |
-| T2.6 | 🟡 **C-6 含设备代码的归档** | `accel` 已是 `pack::AbiTag` 第四维并进指纹;`.a` 随包传播的端到端判据待补 | T2.1 |
+| T2.6 | ✅ **C-6 含设备代码的归档** | ✅ e2e 608:object 角色 action 的产物进 `.a`(判据是 `ar t` 的成员表与 `nm` 的符号,不是退出码 —— 空档案也会成功)。缺陷由 T5.1 暴露:llama.cpp 的 305 个 `.cu` 全被丢弃并只留一条警告 | T2.1 |
 | T2.7 | ✅ **C-7 `accel` 维语法开放**(#562) | ✅ 5 条单测 `AccelOpenGrammar.*`;`floor>=` 为中性拼法 | — |
 | T2.8 | ✅ **把 CUDA 探针搬进规则包** | ✅ `test_core_vendor_probes`:剥注释后 `src/` 无厂商工具名(自带分母,枚举 < 100 文件即判失败);doctor 的设备节与 `mcpp.toolchain.devicehost` 一并删除;同样的读数由 rules-cuda 产出 | T2.5 |
 | T2.9 | ✅ **`accel` 表达驱动下界** | ✅ 实测:`fact=cuda.driver=12.4` + `floor=cuda.driver >= 13.0` ⇒ 13.3 工具包在编译前被拒;PTX 高于驱动 ⇒ 警告(点名架构集合仍可运行) | T2.5, T2.7 |
@@ -145,6 +145,10 @@
 | 2026-09-05 | ⚠️⚠️ **「没有加速器」被写成了显示用的 `(none)`** | `accel_str` 为空集打印 `(none)` 是给 ABI 标签读的;`resolvedAccel` 把这个拼法当值传了出去 ⇒ ①`MCPP_ACCEL=(none)` 到达**每一个从未提过加速器的工程**,与手册承诺的空串矛盾;②指纹里 `if (!accel.empty())` 恒真,给所有工程都追加了 `#accel=(none)`。判据只能靠构建程序**写文件**取得 —— 它的 stdout 只在非零退出时才打印。e2e 605 第四段标题写着「变量与 layer 都清空」却只测了 layer,这就是它逃过套件的原因 |
 | 2026-09-05 | ④ 的 T4.1/T4.4 落地为 mcpp-index #347 并合入 | 六个新包 + 一次改名;两处上游耦合写进配方(`crt/` 在编译器组件里;NVIDIA 的 `.so` 带 `RUNPATH=$ORIGIN` 会关掉继承的 RPATH ⇒ 要一并 farm glibc 三个存根) |
 | 2026-09-05 | ⚠️ **path 索引里包的命名空间由「索引名」决定,而不是描述符里的 `namespace`** | 本地验证时 `[indices] localidx = { path = ... }` 下 `compat.cudart` 解析不到,而诊断说「a package with this name exists under another namespace: compat.cudart」—— 把索引名改成 `compat` 即通。诊断本身值得单独修 |
+| 2026-09-05 | ⭐⭐ **T5.1 作为 gate 立刻兑现了**:它暴露了 C-6 的引擎缺口 | llama.cpp 的 CUDA 后端是 305 个 `.cu` 挂在 `kind = "lib"` 上。引擎把 object 角色的 action **只**挂到可执行/共享库/测试上,于是每一个 action 都被丢弃、只留一条警告,而构建**成功**并产出一个不含设备码的归档。修法是把静态库加进那个谓词(归档规则本来就消费 `lu.objects`);判据 e2e 608 断言 `ar t` 的成员表 —— 空档案也会成功 |
+| 2026-09-05 | ⚠️ T5.1 的 CUDA lane 卡在**载荷版本**,不是机制 | 依赖/轴/规则包/设备源/归档这条链全部打通并实测到编译阶段;失败在 `cub::LoadDirectWarpStriped` 的签名:llama.cpp b10069 期望 CCCL **3.2**(上游的 `GGML_CUDA_CUB_3DOT2` 选项即此),而索引里只有 12.9 线的 2.x 与 13.3 线的 3.3。⇒ 缺的是一个 `xim:cuda-cccl@3.2` 载荷,属于 ①,不属于 ②/⑤ 的设计 |
+| 2026-09-05 | ⚠️ **layer 不能选择依赖,feature 可以** | `[target.'cfg(accelerator = "cuda")'.dependencies]` 被引擎拒绝并说明理由:layer 由依赖图解析而来,用它选依赖会让依赖决定自己被问的问题。⇒ 一个库的设备后端拆两半:**依赖挂 feature,源文件挂 accel 轴** |
+| 2026-09-05 | ⚠️ 设备编译要显式指名 CCCL 载荷,否则命中 `/usr/include/cub` | 与 T0.3 的 `cuda_runtime.h` 同一形状,第三次出现。且 12.x 的 `include/cub` 在 13.x 变成 `include/cccl/cub` |
 | 2026-09-05 | e2e 317 的等待窗从 2s 放宽到 5s | 到达「五次短失败」下界最少要 1.25s(4×250ms 重启延迟 + 5×50ms 轮询),2s 窗只给每次 spawn 留 150ms;main 上 macOS **连续两次**在此失败而本分支同码两次通过 —— 判据由 runner 负载决定。5s 窗留 750ms |
 | 2026-09-05 | e2e 602 声明 `requires: unix-shell`,并以 `MCPP_OFFLINE=1` 运行 | doctor 在 Windows 上整段不产出(载荷只有 linux 构建;Windows 工具包的上界是 `_MSC_VER` 区间,报告尚未读它);隔离 home 下 doctor 会把整套引导 + 工具链装进临时目录:实测 229s / 1.4 GB |
 | 2026-09-05 | ⚠️ 核心改动:`--offline` 下跳过首次沙箱引导 | `load_or_init` 在空 home 里克隆索引、经 `xlings install` 装 ninja/patchelf,全部走网络,违反 `--offline`「绝不碰网络」的承诺。实测 offline 空 home 26s / 126 MB → 0.3s;e2e 604 带对照(已引导的 home 不提示);文档中英各补一句 |
