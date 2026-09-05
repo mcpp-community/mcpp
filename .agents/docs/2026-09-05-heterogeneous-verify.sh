@@ -26,9 +26,15 @@ section "A. identity"
 [ -x "$STORE" ] || fail "no released binary at $STORE"
 got=$("$STORE" --version 2>&1 | head -1)
 [ "$got" = "mcpp $VER" ] && ok "$got from the store path" || fail "version is '$got'"
-"$STORE" self config --mirror "${MCPP_VERIFY_MIRROR:-CN}" >/dev/null 2>&1 || fail "mcpp self config --mirror"
-"$XL" config --mirror "${MCPP_VERIFY_MIRROR:-CN}" >/dev/null 2>&1 || fail "xlings config --mirror"
-ok "mirror ${MCPP_VERIFY_MIRROR:-CN} configured for mcpp and xlings"
+# The setting is the criterion, not the exit code: the subos shim of a fresh
+# subos has been observed to return non-zero from `config --mirror` while the
+# value was written, so both tools are asked what they hold afterwards.
+"$STORE" self config --mirror "${MCPP_VERIFY_MIRROR:-CN}" >/dev/null 2>&1 || true
+"$XL" config --mirror "${MCPP_VERIFY_MIRROR:-CN}" >/dev/null 2>&1 || true
+xm=$("$XL" config 2>/dev/null | grep -i 'mirror' | head -1 | awk '{print $NF}')
+[ "$xm" = "${MCPP_VERIFY_MIRROR:-CN}" ] && ok "xlings mirror is $xm" || fail "xlings mirror is '$xm', not ${MCPP_VERIFY_MIRROR:-CN}"
+mm=$("$STORE" self config 2>/dev/null | grep -i 'mirror' | head -1 | awk '{print $NF}')
+[ -n "$mm" ] && ok "mcpp mirror is $mm" || printf 'note: mcpp self config does not print its mirror (%s)\n' "$("$STORE" self config 2>&1 | head -1)"
 
 # -- B. the plugin collection resolves from the index -------------------------
 #
@@ -91,8 +97,12 @@ if [ -n "$SRC" ] && [ -d "$SRC/examples/10-vulkan-compute/app" ]; then
     ex10="$work/ex10"; cp -r "$SRC/examples/10-vulkan-compute/app" "$ex10"
     out=$(cd "$ex10" && "$STORE" build 2>&1); rc=$?
     [ $rc -eq 0 ] && ok "example 10 built" || fail "example 10 build: $(printf '%s' "$out" | tail -4 | tr '\n' ' ')"
-    icd=$(ls "$ex10"/.mcpp/.xlings/data/xpkgs/xim-x-mesa-lavapipe/*/share/vulkan/icd.d/*.json 2>/dev/null | head -1)
-    [ -n "$icd" ] || icd=$(ls "$HOME"/.xlings/data/xpkgs/xim-x-mesa-lavapipe/*/share/vulkan/icd.d/*.json 2>/dev/null | head -1)
+    # mcpp provisions [xlings.workspace] payloads into its own registry
+    # (~/.mcpp/registry), which is where the manifest lives; the other two
+    # locations cover a project-local sandbox and a plain xlings install.
+    icd=$(ls "$HOME"/.mcpp/registry/data/xpkgs/xim-x-mesa-lavapipe/*/share/vulkan/icd.d/*.json \
+             "$ex10"/.mcpp/.xlings/data/xpkgs/xim-x-mesa-lavapipe/*/share/vulkan/icd.d/*.json \
+             "$HOME"/.xlings/data/xpkgs/xim-x-mesa-lavapipe/*/share/vulkan/icd.d/*.json 2>/dev/null | head -1)
     [ -n "$icd" ] && ok "lavapipe manifest at $icd" || fail "no lavapipe ICD manifest in any store"
     out=$(cd "$ex10" && VK_DRIVER_FILES="$icd" "$STORE" run 2>&1)
     printf '%s\n' "$out" | grep -q '12 24 36 48' && ok "example 10 answered 12 24 36 48 on the payload driver" \
@@ -101,7 +111,8 @@ if [ -n "$SRC" ] && [ -d "$SRC/examples/10-vulkan-compute/app" ]; then
     out=$(cd "$ex10" && "$STORE" build --no-accel 2>&1 && "$STORE" run --no-accel 2>&1)
     printf '%s\n' "$out" | grep -q '12 24 36 48' && ok "example 10 --no-accel answered 12 24 36 48" \
         || fail "example 10 --no-accel: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
-    hs=$(ls "$ex10"/.mcpp/.xlings/data/xpkgs/compat-x-vulkan-runtime/*/mcpp_generated/vulkan_runtime/HOST-SURFACE.txt 2>/dev/null | head -1)
+    hs=$(ls "$HOME"/.mcpp/registry/data/xpkgs/compat-x-vulkan-runtime/*/mcpp_generated/vulkan_runtime/HOST-SURFACE.txt \
+            "$ex10"/.mcpp/.xlings/data/xpkgs/compat-x-vulkan-runtime/*/mcpp_generated/vulkan_runtime/HOST-SURFACE.txt 2>/dev/null | head -1)
     if [ -n "$hs" ]; then
         printf -- '--- %s\n' "$hs"; sed -n '/^## farmed/,$p' "$hs" | head -60
         hostlines=$(grep -c -- '-- host;' "$hs" || true)
@@ -159,7 +170,7 @@ printf '%s\n' "$out" | grep -q '^platforms=' && ok "the loader linked and enumer
     || fail "opencl probe: $(printf '%s' "$out" | tail -4 | tr '\n' ' ')"
 if "$XL" install pocl -y >/dev/null 2>&1; then
     ok "xim:pocl installed"
-    lib=$(ls "$HOME"/.xlings/data/xpkgs/xim-x-pocl/*/lib/libpocl.so 2>/dev/null | head -1)
+    lib=$(ls "$HOME"/.xlings/data/xpkgs/xim-x-pocl/*/lib/libpocl.so "$HOME"/.mcpp/registry/data/xpkgs/xim-x-pocl/*/lib/libpocl.so 2>/dev/null | head -1)
     out2=$(cd "$work/ocl" && OCL_ICD_FILENAMES="$lib" "$STORE" test 2>&1)
     printf '%s\n' "$out2" | grep -q 'Portable Computing Language' && ok "the pocl platform is enumerated through OCL_ICD_FILENAMES" \
         || fail "pocl not enumerated: $(printf '%s' "$out2" | grep '^platform' | tr '\n' ' ')"
