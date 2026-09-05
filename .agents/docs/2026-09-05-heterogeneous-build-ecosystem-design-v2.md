@@ -628,3 +628,63 @@ The general shape, which is the reusable part: **a promise a comment makes
 about error handling is only tested by the configuration that fails.** Every
 run on this machine took the path where nothing goes wrong, and the comment
 read as true for as long as that held.
+
+### 7.8 Ecosystem review: what a consumer sees after this round
+
+A project that wants a GPU now writes the same four things whichever
+programming model it picks, and the fourth is the only one that names the
+model.
+
+```toml
+[dependencies.mcpp]
+plugins = { version = "0.2.0", features = ["rules-sycl"], host-module = true }
+
+[dependencies.compat]
+sycl-runtime = "2026.09.07"     # the runtime the artifact reaches through the loader
+
+[xlings.workspace]              # payloads: the project picks the versions
+"xim:dpcpp"     = "7.1.0"
+"xim:gcc"       = "15.1.0"
+"xim:cuda-nvcc" = "12.9.86"
+
+[build]
+accel = "sycl, cuda12.9+{sm_89}"
+```
+
+Four properties hold across all four lanes, and each is enforced by something
+rather than asserted here.
+
+**The device is spelled once.** `cuda12.9+{sm_89}` is character for character
+the same in the CUDA, HIP and SYCL manifests. The first chunk names the
+programming model; the second names the device. A rule reads the chunk it owns
+and ignores the rest, so adding a fifth model adds no spelling.
+
+**The engine still knows no vendor.** `test_core_vendor_probes` strips comments
+from `src/` and refuses any vendor tool name, with the file count as its own
+denominator. Three rules and four payloads later, that test is unchanged.
+
+**No device command line reaches the host.** Asserted per lane in the plugin
+collection's CI as a separate step from the build, because all three lanes
+compiled successfully on a developer machine while reading `/usr/include` --
+twice in this round alone, once for the SYCL unit's C++ standard library and
+once for clang's CUDA installation. Measured here: zero `/usr` paths across
+CUDA, HIP and SYCL.
+
+**A payload is reachable, not merely installed.** The round's largest single
+defect was a payload whose five reporting programs could not start; the round's
+second was the correction to it, which fixed the payload and broke every
+consumer. Both are now assertions: the programs start and carry DT_RPATH, and
+the payload's libraries carry no search path at all.
+
+Three things this round could not close, each with what would decide it:
+
+| open | what would decide it |
+|---|---|
+| Intel `anv` in the Mesa payload | a libclc and SPIRV-LLVM-Translator chain, then a Mesa rebuild; both packages exist on conda-forge and were confirmed repackable, and are withheld because nothing yet consumes them |
+| the AMD platform of HIP | a ROCm runtime and device library in `xim-pkgindex`. The rule refuses it by name today rather than emitting an object nothing can link |
+| llama.cpp's Vulkan lane | its blocker is gone -- `glslc` is published -- and the remaining work is in that project's own `-m` repository rather than here |
+
+And one thing measured rather than assumed: `accel = "sycl"` without a device
+compiles to SPIR-V, which the CUDA back end does not consume. The build is
+correct, the failure is the machine's, and the rule now says so before the
+first kernel. See 7.7.
