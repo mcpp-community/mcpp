@@ -31,9 +31,11 @@ got=$("$STORE" --version 2>&1 | head -1)
 # value was written, so both tools are asked what they hold afterwards.
 "$STORE" self config --mirror "${MCPP_VERIFY_MIRROR:-CN}" >/dev/null 2>&1 || true
 "$XL" config --mirror "${MCPP_VERIFY_MIRROR:-CN}" >/dev/null 2>&1 || true
-# Both tools print their configuration banner on stderr, so a `2>/dev/null`
-# here reads an empty string and reports a mirror that is in fact set.
-xm=$("$XL" config 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -i 'mirror' | head -1 | awk '{print $NF}')
+# THE SETTING, NOT THE TOOL'S OUTPUT. `xlings config` renders a banner through
+# its ui layer, which prints nothing when its stdout is a pipe -- so a command
+# substitution reads an empty string and reports a mirror that is in fact set.
+# The file the tool writes answers the same question and cannot be suppressed.
+xm=$(python3 -c "import json,os;print(json.load(open(os.path.expanduser('~/.xlings/.xlings.json'))).get('mirror',''))" 2>/dev/null)
 [ "$xm" = "${MCPP_VERIFY_MIRROR:-CN}" ] && ok "xlings mirror is $xm" || fail "xlings mirror is '$xm', not ${MCPP_VERIFY_MIRROR:-CN}"
 mm=$("$STORE" self config 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -i 'mirror' | head -1 | awk '{print $NF}')
 [ -n "$mm" ] && ok "mcpp mirror is $mm" || printf 'note: mcpp self config does not print its mirror (%s)\n' "$("$STORE" self config 2>&1 | head -1)"
@@ -142,6 +144,13 @@ if [ -n "$SRC" ] && [ -d "$SRC/examples/10-vulkan-compute/app" ]; then
         || fail "example 10 --no-accel: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
     hs=$(ls "$HOME"/.mcpp/registry/data/xpkgs/compat-x-vulkan-runtime/*/mcpp_generated/vulkan_runtime/HOST-SURFACE.txt \
             "$ex10"/.mcpp/.xlings/data/xpkgs/compat-x-vulkan-runtime/*/mcpp_generated/vulkan_runtime/HOST-SURFACE.txt 2>/dev/null | head -1)
+    # WHICH ADAPTER WROTE IT. The substitution criteria below are properties of
+    # 2026.09.06, the version that declares its payload set; an older report
+    # carries neither the declarations nor the class they produce, so both
+    # would pass on an empty finding. The version is a path segment.
+    adapter=$(printf '%s' "$hs" | sed -n 's#.*/compat-x-vulkan-runtime/\([^/]*\)/.*#\1#p')
+    [ "$adapter" = "${MCPP_VERIFY_ADAPTER:-2026.09.06}" ] && ok "the farm was written by compat.vulkan-runtime $adapter" \
+        || fail "the farm was written by compat.vulkan-runtime '$adapter', not ${MCPP_VERIFY_ADAPTER:-2026.09.06}"
     if [ -n "$hs" ]; then
         printf -- '--- %s\n' "$hs"; sed -n '/^## farmed/,$p' "$hs" | head -60
         # WHAT A SANDBOX CAN AND CANNOT ASSERT. A subos shares the host's

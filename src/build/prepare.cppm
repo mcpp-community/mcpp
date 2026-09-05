@@ -5554,7 +5554,27 @@ prepare_build(bool print_fingerprint,
                     // same map in both the secondary and its consumer.
                     auto moduleNames = declared_modules_for(
                         secondaryRoot, secondaryManifest);
-                    if (!moduleNames) return std::unexpected(moduleNames.error());
+                    // The two branches above name both versions and who asked
+                    // for them; this one used to report only that the package
+                    // declares no named C++ module, which is a true statement
+                    // about a package the reader never asked to be staged. A
+                    // C package -- compat.vulkan-runtime is one -- reaches
+                    // here whenever a manifest pins one version of it and
+                    // another dependency asks for a second, and the message
+                    // has to say that before it says anything about modules.
+                    if (!moduleNames) return std::unexpected(std::format(
+                        "dependency '{}{}{}' has irreconcilable versions:\n"
+                        "  '{}' requested by '{}'\n"
+                        "  '{}' requested by '{}'\n"
+                        "Multi-version mangling cannot separate them: {}.\n"
+                        "A package with no named C++ module has nothing to "
+                        "rewrite, so the two requests must agree. Align the "
+                        "pin in your mcpp.toml with the version the other "
+                        "dependency asks for.",
+                        key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                        it->second.version, it->second.requestedBy,
+                        spec.version, item.requestedBy,
+                        moduleNames.error()));
                     std::map<std::string, std::string> rename;
                     for (auto const& module : *moduleNames) {
                         rename.emplace(module,
