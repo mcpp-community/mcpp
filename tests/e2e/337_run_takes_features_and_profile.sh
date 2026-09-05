@@ -2,14 +2,14 @@
 # requires: gcc unix-shell
 # `mcpp run` takes `--features` and `--profile`, the axes `build` and `test` do.
 #
-# ⚠️⚠️ WITHOUT THEM `run` COULD ONLY EXECUTE WHATEVER A PREVIOUS `build` LEFT
+# WITHOUT THEM `run` COULD ONLY EXECUTE WHATEVER A PREVIOUS `build` LEFT
 # BEHIND. There was no spelling of `mcpp run` that ran a release artefact, or
 # one built with a feature on — and a board-support package expresses its two
 # environments (an emulator, a debug probe) AS features, so
 # `mcpp run --features hardware` is precisely the command the device surface was
 # designed around. It did not exist.
 #
-# ⚠️ AND THE FAST PATH HAD TO LEARN ABOUT THEM. It reuses the cached artefact,
+# AND THE FAST PATH HAD TO LEARN ABOUT THEM. It reuses the cached artefact,
 # which was built under the previous feature set and profile; taking it here
 # would accept the flag and ignore it, which is worse than refusing it.
 set -e
@@ -55,7 +55,7 @@ plain="$("$MCPP" run 2>&1)"
 want "$plain" "quiet" "a plain run should not have the feature"
 want "$plain" "dev"   "a plain run should be the dev profile"
 
-# ⚠️ THE SECOND RUN IS THE ONE THAT MATTERS: the first populated the build
+# THE SECOND RUN IS THE ONE THAT MATTERS: the first populated the build
 # cache, so a fast path that ignored --features would now answer "quiet".
 loud="$("$MCPP" run --features loud 2>&1)"
 want "$loud" "LOUD" "--features was accepted and ignored (the fast path took a stale entry)"
@@ -76,7 +76,7 @@ want "$again" "dev"   "a plain run inherited the previous --release"
 
 # ── And the same defect on `mcpp build`, which is where it came from ───────
 #
-# ⚠️⚠️ THIS WAS PRE-EXISTING AND IS THE REASON THE RUN SIDE WAS BROKEN. The
+# THIS WAS PRE-EXISTING AND IS THE REASON THE RUN SIDE WAS BROKEN. The
 # build cache entry is keyed on (target, profile, cache mode) while the OUTPUT
 # DIRECTORY is keyed on a fingerprint that includes the features. So an entry
 # written by `mcpp build --features loud` pointed at the loud directory, and the
@@ -85,7 +85,7 @@ want "$again" "dev"   "a plain run inherited the previous --release"
 #
 # Measured before the fix: three builds of one project printed
 # `quiet`, `LOUD`, `LOUD`.
-# ⚠️⚠️ THE ASSERTION IS ON WHAT THE CACHE ENTRY RECORDS, NOT ON WHICH FILE A
+# THE ASSERTION IS ON WHAT THE CACHE ENTRY RECORDS, NOT ON WHICH FILE A
 # `find` HAPPENS TO RETURN FIRST.
 #
 # The first version of this block ran `find target -name featrun | head -1`.
@@ -109,7 +109,7 @@ rm -rf target
 [ "$(mru_features)" = "loud" ] || {
     echo "FAIL: --features loud recorded '$(mru_features)', expected loud"; exit 1; }
 
-# ⚠️ THE ONE THAT CAUGHT THE PRE-EXISTING DEFECT. Before the entry carried a
+# THE ONE THAT CAUGHT THE PRE-EXISTING DEFECT. Before the entry carried a
 # feature set, this plain build matched the entry `--features loud` had written,
 # reported success in 0.00s and left the loud artefact in place. Measured: three
 # consecutive builds of one project printed `quiet`, `LOUD`, `LOUD`.

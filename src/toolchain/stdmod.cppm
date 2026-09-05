@@ -249,7 +249,7 @@ std::expected<StdModule, StdModError> ensure_built(
     HostFlagOptions hopt;
     hopt.cfgBypass = HostFlagOptions::CfgBypass::Always;
     hopt.clangStdlibSelect = true;
-    // ⚠️ THE STD MODULE IS A TRANSLATION UNIT OF THIS BUILD, so it must see the
+    // THE STD MODULE IS A TRANSLATION UNIT OF THIS BUILD, so it must see the
     // same header set every unit importing it sees. Taken from the toolchain
     // rather than re-derived: prepare records the resolved answer there once,
     // and a std BMI built against a different C library than its importers is

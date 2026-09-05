@@ -38,7 +38,7 @@ cd "$TMP"
 
 # 0) Decide SKIP here, from a positive check, and never again.
 #
-#    ⚠️ This used to be decided AFTER the install by pattern-matching the
+#    This used to be decided AFTER the install by pattern-matching the
 #    failure text, and one of the patterns was `*"index"*`. Nearly every mcpp
 #    command prints "package index" somewhere, so every genuine install
 #    failure took the skip branch: the test could pass or skip, never fail.
@@ -61,7 +61,7 @@ fi
 
 # 1) install it. Any failure from here on is a FAILURE.
 #
-# ⚠️ STREAMED AS WELL AS CAPTURED, BECAUSE THIS STEP IS THE ONE THAT RUNS OUT
+# STREAMED AS WELL AS CAPTURED, BECAUSE THIS STEP IS THE ONE THAT RUNS OUT
 # OF TIME. It fetches ~376 MB (xim:msvc ~85 MB + xim:windows-sdk ~291 MB), and
 # `out=$(...)` alone prints nothing while it does — so a run killed by the
 # per-test deadline leaves 600 seconds of silence and a harness line that can

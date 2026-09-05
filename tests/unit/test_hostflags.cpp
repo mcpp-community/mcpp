@@ -268,7 +268,7 @@ TEST(GraphRuntimeFlags, MachOTakesEmulatedTlsAndHiddenVisibilityButNotDwarf) {
     EXPECT_TRUE(has(f, "-fvisibility-inlines-hidden"));
 }
 
-// ⚠️ ELF takes NONE of them, and that is a decision rather than an omission.
+// ELF takes NONE of them, and that is a decision rather than an omission.
 // There a `thread_local` is a fixed offset from the thread pointer, which the
 // C library establishes itself; adding the flag would work, cost an
 // indirection on every access, and make ELF the only target whose thread
@@ -278,7 +278,7 @@ TEST(GraphRuntimeFlags, ElfTakesNone) {
     EXPECT_TRUE(f.empty());
 }
 
-// ⚠️ And nothing at all when the runtime is NOT the graph's, whatever the
+// And nothing at all when the runtime is NOT the graph's, whatever the
 // target. The predicate is `targetCxxRuntime`; a native or payload-served build
 // of the same triple must be untouched.
 TEST(GraphRuntimeFlags, PayloadServedTargetTakesNoneEvenOnPe) {
@@ -297,7 +297,7 @@ TEST(GraphRuntimeFlags, UnparseableTripleTakesNone) {
         graph_tc("not-a-triple-at-all")).empty());
 }
 
-// ⭐⭐ `--no-default-config` IS NOT PART OF THE PAYLOAD'S HEADER SET, AND WAS
+// `--no-default-config` IS NOT PART OF THE PAYLOAD'S HEADER SET, AND WAS
 // BEING SUPPRESSED WITH IT.
 //
 // The payload's `-isystem` rows describe a C library a graph-supplied target
@@ -311,14 +311,14 @@ TEST(GraphRuntimeFlags, UnparseableTripleTakesNone) {
 // `<triple>-clang++.cfg` a working workaround for mcpp#514 — a workaround that
 // only existed because this token went missing.
 TEST(HostFlags, TheCfgBypassSurvivesAGraphSuppliedTargetSide) {
-    // ⚠️ A FIXTURE, NOT THE MACHINE'S OWN TOOLCHAIN. The first draft used a
+    // A FIXTURE, NOT THE MACHINE'S OWN TOOLCHAIN. The first draft used a
     // synthetic `Toolchain` with no `binaryPath`, so `resolve_clang_driver`
     // reported no cfg and the whole test SKIPPED — a check that asserts
     // nothing while reporting success, which is the one failure mode a test
     // must not have. `resolve_clang_driver` only asks whether a sibling
     // `<driver>.cfg` EXISTS, so two empty files are a complete fixture.
     namespace fs = std::filesystem;
-    // ⚠️ A FIXED NAME AND `remove_all` FIRST, NOT A PROCESS ID. The first
+    // A FIXED NAME AND `remove_all` FIRST, NOT A PROCESS ID. The first
     // draft reached for `::getpid()` and `<unistd.h>`, which do not exist under
     // MSVC — it built on the machine it was written on and failed on Windows
     // CI, which is the only place that half of this project is visible.

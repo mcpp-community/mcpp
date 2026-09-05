@@ -255,7 +255,7 @@ SubOS farm,全都是在真正要运行它的那台机器上算出来的 —— �
 error while loading shared libraries: libstdc++.so.6: cannot open shared object file
 ```
 
-⚠️ **`$ORIGIN` 不是解药。** 在真实的包上、把构建机的 store 变成不可达之后实测:
+**`$ORIGIN` 不是解药。** 在真实的包上、把构建机的 store 变成不可达之后实测:
 
 | 发货 `.so` 上的状态 | 消费方 `DT_RPATH` 被继承? | 结果 |
 |---|---|---|
@@ -287,16 +287,16 @@ Mach-O 上打包器会读出 `LC_RPATH` 并在包会携带它时告警;自动改
 
 | | 状态 |
 |---|---|
-| `kind = "lib"`(静态) | ✅ 所有 target,三平台都测了 |
-| `kind = "shared"` on Linux/ELF | ✅ —— 包里同时带链接名与 SONAME,且不含构建机的 loader 路径 |
-| `kind = "shared"` on PE / MinGW(`*-windows-gnu`) | ✅ —— 包里同时带 `.dll` **和它的导入库** |
-| `kind = "shared"` on Mach-O(`*-macos`) | ✅ —— install name 是 `@rpath/<file>`,`.dylib` 可重定位。`LC_RPATH` 只报告,尚未改写 |
-| `kind = "shared"` on PE / MSVC(`*-windows-msvc`) | ✅ —— mcpp 生成 `.def`;见下 |
-| `kind = "shared"` on `*-musl` | ❌ musl target 是静态链接的 |
-| 一个包同时携带同一 triple 的两套 ABI(gcc **与** clang) | ❌ leg 选择是 `cfg(arch/os/env)`;一个 ABI 发一个包 |
-| 发布预编译 BMI | ❌ 未尝试;BMI 与编译器构建逐位绑定 |
-| 把依赖打包进去 | ❌ 改为声明依赖(见上) |
-| 用**原生 `cl.exe`** 消费这种包 | ✅ —— 经方言中立的链接意图;见下 |
+| `kind = "lib"`(静态) | 所有 target,三平台都测了 |
+| `kind = "shared"` on Linux/ELF | —— 包里同时带链接名与 SONAME,且不含构建机的 loader 路径 |
+| `kind = "shared"` on PE / MinGW(`*-windows-gnu`) | —— 包里同时带 `.dll` **和它的导入库** |
+| `kind = "shared"` on Mach-O(`*-macos`) | —— install name 是 `@rpath/<file>`,`.dylib` 可重定位。`LC_RPATH` 只报告,尚未改写 |
+| `kind = "shared"` on PE / MSVC(`*-windows-msvc`) | —— mcpp 生成 `.def`;见下 |
+| `kind = "shared"` on `*-musl` | musl target 是静态链接的 |
+| 一个包同时携带同一 triple 的两套 ABI(gcc **与** clang) | leg 选择是 `cfg(arch/os/env)`;一个 ABI 发一个包 |
+| 发布预编译 BMI | 未尝试;BMI 与编译器构建逐位绑定 |
+| 把依赖打包进去 | 改为声明依赖(见上) |
+| 用**原生 `cl.exe`** 消费这种包 | —— 经方言中立的链接意图;见下 |
 
 ### MSVC ABI 上的符号导出
 
@@ -408,17 +408,17 @@ e2e 套件按宿主能力给每条测试开门,所以「套件是绿的」和「
 
 | 说法 | linux | macOS | windows |
 |---|---|---|---|
-| 布局、两种接口模式、闭包、两道闸门、workspace 根、指名 target、`sources = []`、裸三元组谓词 | ✅ | ✅ | ✅ |
-| 多 target 包,两个 target 的产物**同一个**产物名(`gnu` + `musl`) | ✅ | *不可能* | — |
-| 多 target 包,两个 target 的产物**两个**产物名(`msvc` + `mingw`) | — | *不可能* | ✅ |
-| 跨 OS 边界的多 target 包(含一个 PE target) | ✅ | — | — |
-| `lib.exe /REMOVE:` 真的删掉了 | — | — | ✅ |
-| PE 共享库:产出、打包、链接、运行 | ✅(wine) | — | — |
-| Mach-O 共享库离开构建树仍可加载 | — | ✅ | — |
-| MSVC 以「导出」为理由拒绝 `kind = "shared"` | — | — | ✅ |
+| 布局、两种接口模式、闭包、两道闸门、workspace 根、指名 target、`sources = []`、裸三元组谓词 | yes | | yes |
+| 多 target 包,两个 target 的产物**同一个**产物名(`gnu` + `musl`) | yes | *不可能* | — |
+| 多 target 包,两个 target 的产物**两个**产物名(`msvc` + `mingw`) | — | *不可能* | yes |
+| 跨 OS 边界的多 target 包(含一个 PE target) | yes | — | — |
+| `lib.exe /REMOVE:` 真的删掉了 | — | — | yes |
+| PE 共享库:产出、打包、链接、运行 | (wine) | — | — |
+| Mach-O 共享库离开构建树仍可加载 | — | yes | — |
+| MSVC 以「导出」为理由拒绝 `kind = "shared"` | — | — | yes |
 | 已发布的 mcpp 消费本版产出的包 | 仅本机 | 仅本机 | 仅本机 |
-| 打包出的 `.so` 不含构建机 loader 路径,**且把缺陷放回去时守卫看得见** | ✅ | — | — |
-| strip 过的静态归档仍可链接、strip 过的共享库仍可加载,`--no-strip` / `[pack] strip` / `--debug-symbols` 两侧都钉 | ✅ | — | — |
+| 打包出的 `.so` 不含构建机 loader 路径,**且把缺陷放回去时守卫看得见** | yes | — | — |
+| strip 过的静态归档仍可链接、strip 过的共享库仍可加载,`--no-strip` / `[pack] strip` / `--debug-symbols` 两侧都钉 | yes | — | — |
 | ELF 编辑器在 ELF32 与大端上的行为 | 单测 | 单测 | 单测 |
 
 *不可能* 不是缺口:macOS 宿主只能服务一个 target(`host_can_serve`,

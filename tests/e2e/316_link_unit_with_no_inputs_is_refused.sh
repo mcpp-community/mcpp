@@ -15,7 +15,7 @@
 # package with no sources has neither, so the variable expanded to nothing and
 # the shell was handed `-shared` as a program name.)
 #
-# ⚠️ THE STATIC CASE IS THE ONE THAT MATTERED. `ar rcs libfoo.a` with no
+# THE STATIC CASE IS THE ONE THAT MATTERED. `ar rcs libfoo.a` with no
 # members exits 0 and writes an 8-byte archive, so before this the build
 # REPORTED SUCCESS and every consumer failed later with undefined symbols. Both
 # kinds are asserted here, and the static one is why the check is at plan time
@@ -50,7 +50,7 @@ EOF
     grep -q "$2" b.log || {
         echo "FAIL($1): the error does not say it is a $2:"; cat b.log; exit 1; }
 
-    # ⭐ THE NEGATIVE HALF. This is the assertion that catches a regression back
+    # THE NEGATIVE HALF. This is the assertion that catches a regression back
     # to the reported symptom: if the refusal is ever removed, the build reaches
     # the linker again and this is what comes out.
     if grep -q -- '-shared: not found' b.log; then

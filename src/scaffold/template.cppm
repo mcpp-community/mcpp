@@ -120,7 +120,7 @@ struct TemplateMeta {
     std::vector<std::string> injectSelfFeatures;
     // [template.inject] self = false
     //
-    // ⚠️ A TEMPLATE THAT MUST NOT DEPEND ON ITS OWN PACKAGE IS NOT HYPOTHETICAL.
+    // A TEMPLATE THAT MUST NOT DEPEND ON ITS OWN PACKAGE IS NOT HYPOTHETICAL.
     //
     // The self-dependency exists so a template cannot drift from the library
     // that ships it, and for almost every template that is right. It is wrong

@@ -2,20 +2,20 @@
 # requires: gcc unix-shell jq
 # The layer the report names is the layer the link line reaches for.
 #
-# ⭐⭐ TWO RELATIONS, NO EXPECTED VALUES. Like e2e 295, this compares two things
+# TWO RELATIONS, NO EXPECTED VALUES. Like e2e 295, this compares two things
 # mcpp itself produced rather than checking them against a table, so it holds on
 # every host and needs nothing installed beyond a working toolchain:
 #
 #   c-abi (payload)  ⇒  the link line must reach into that payload
 #   c-abi (graph)    ⇒  the link line must NOT reach into this host's C library
 #
-# ⚠️ THE FIRST ONE IS THE SHAPE THIS RELEASE KEEPS PAYING FOR. `xim:glibc` is
+# THE FIRST ONE IS THE SHAPE THIS RELEASE KEEPS PAYING FOR. `xim:glibc` is
 # installed, carries Scrt1.o/crti.o/crtn.o, and the report says
 # `c-abi glibc (payload)` — while llvm's link line contained no reference to it
 # at all and the build failed on startup objects resolved from /lib. The report
 # and the link line disagreed, and only the report was read.
 #
-# ⚠️ AND THE SECOND ONE IS ITS MIRROR. A graph-supplied C library that still
+# AND THE SECOND ONE IS ITS MIRROR. A graph-supplied C library that still
 # carried this host's loader produced, measured 2026-08-23:
 #
 #     ld64.lld: error: unknown argument
@@ -41,7 +41,7 @@ build_and_read() {   # extra args… → sets $report and $ldflags
     if [ -n "$f" ]; then
         ldflags="$(grep -m1 '^ldflags' "$f" || true)"
     fi
-    # ⚠️⚠️ AN EXPLICIT `return 0`, BECAUSE THIS FUNCTION IS ALLOWED TO FIND
+    # AN EXPLICIT `return 0`, BECAUSE THIS FUNCTION IS ALLOWED TO FIND
     # NOTHING — AND THE SAME LINE HAS NOW BEEN WRONG TWICE.
     #
     # Written as `[ -n "$f" ] && ldflags=…`, the whole chain returns 1 when
@@ -49,17 +49,17 @@ build_and_read() {   # extra args… → sets $report and $ldflags
     # under `set -e` the CALLER dies — silently, mid-script, for exactly the
     # case the function exists to handle.
     #
-    # ⚠️ Measured on windows-2022: relation one printed both its `ok` lines and
+    # Measured on windows-2022: relation one printed both its `ok` lines and
     # the script then stopped. No relation two, no conclusion, no error. The
     # graph build produced no link line there, which is a legitimate outcome
     # and should have reached the `SKIP` branch twenty lines below.
     #
-    # ⭐ 295's `ldflags_of` had the identical line and was fixed with the
+    # 295's `ldflags_of` had the identical line and was fixed with the
     # identical comment earlier in the same session. Fixing one instance of a
     # shape is not fixing the shape: the sibling was three files away and
     # nobody looked.
     #
-    # ⚠️ AND THE SHAPE IS NARROWER THAN IT LOOKS — measured, not reasoned. A
+    # AND THE SHAPE IS NARROWER THAN IT LOOKS — measured, not reasoned. A
     # FUNCTION ending in `[ … ] && …` kills its caller; the same list ending a
     # `{ …; } > file` group does NOT, because errexit exempts a `&&` list whose
     # failure came from a non-final component. So 290/292/293, which all end
@@ -76,10 +76,10 @@ fail=0; checked=0
 
 # ── Relation zero: the machine interface must round-trip ──────────────────
 #
-# ⭐⭐ A CONSUMER READS `family` AND `version`, JOINS THEM, AND HANDS THE RESULT
+# A CONSUMER READS `family` AND `version`, JOINS THEM, AND HANDS THE RESULT
 # BACK. That has to work, and for one entry it did not.
 #
-# ⚠️ Measured on windows-2022: `toolchain list --format json` reported
+# Measured on windows-2022: `toolchain list --format json` reported
 # `msvc@19.44.35228` — cl.exe's version — and `--toolchain msvc@19.44.35228` is
 # refused by design ("names a COMPILER version, not a toolset"). Every msvc cell
 # in the target matrix came back `build-failed`, with mcpp rejecting its own
@@ -99,7 +99,7 @@ done
 
 # ── Relation one: a payload C library must be on the link line ─────────────
 for tc in gcc llvm; do
-    # ⭐ From the machine interface: `grep -oP` does not exist on macOS, and its
+    # From the machine interface: `grep -oP` does not exist on macOS, and its
     # failure mode here was a skip rather than a red.
     ver="$("$MCPP" toolchain list --format json 2>/dev/null \
            | jq -r --arg t "$tc" '[.data.toolchains[] | select(.family==$t) | .version][0] // empty' | tr -d '\r')"
@@ -115,13 +115,13 @@ for tc in gcc llvm; do
     [ -n "$ldflags" ] || { echo "  SKIP  $tc@$ver produced no link line"; continue; }
     checked=$((checked+1))
 
-    # ⭐⭐ THE QUERY NAMES THE DIRECTORY, AND THE LINK LINE MUST CONTAIN IT.
+    # THE QUERY NAMES THE DIRECTORY, AND THE LINK LINE MUST CONTAIN IT.
     #
     # `cLibrary.path` is what `resolve_link_model` decided — the same function
     # the flag emitter calls — so this asserts that what mcpp SAYS it will pass
     # is what mcpp passes. Nothing is hardcoded and nothing is per-platform.
     #
-    # ⚠️ THE FIRST VERSION HARDCODED `registry/data/xpkgs` AND WAS WRONG ON
+    # THE FIRST VERSION HARDCODED `registry/data/xpkgs` AND WAS WRONG ON
     # macOS. Measured on macos-14:
     #
     #     c-abi     libSystem   (payload)
@@ -133,15 +133,15 @@ for tc in gcc llvm; do
     want="$("$MCPP" why toolchain --toolchain "$tc@$ver" --format json 2>/dev/null \
             | jq -r '.data.cLibrary.path // ""' | tr -d '\r')"
     if [ -z "$want" ]; then
-        # ⭐⭐ NO PATH IS ALSO A CLAIM, AND IT IS CHECKABLE. The query says mcpp
+        # NO PATH IS ALSO A CLAIM, AND IT IS CHECKABLE. The query says mcpp
         # passes no C-library path — the self-contained arrangement, where the
         # driver carries its own (mingw g++, MSVC). The assertion is then the
         # other direction: nothing from OUTSIDE mcpp's store may appear either.
         #
-        # ⚠️ THE FIRST VERSION SKIPPED HERE, and on windows-2022 both toolchains
+        # THE FIRST VERSION SKIPPED HERE, and on windows-2022 both toolchains
         # took that branch — so relation one had no coverage on that host at all
         # and the test did not reach its conclusion.
-        # ⚠️⚠️ THE FLAG AND ITS PATH ARE JOINED FIRST, AND BOTH SPELLINGS EXIST.
+        # THE FLAG AND ITS PATH ARE JOINED FIRST, AND BOTH SPELLINGS EXIST.
         #
         # `-B/usr/lib` is one word and `-B /usr/lib` is two. Splitting on spaces
         # and matching `^-B` flags the bare `-B` of the second form as a leak
@@ -151,7 +151,7 @@ for tc in gcc llvm; do
         #     -B /usr/lib/gcc   → [-B]                      (false positive)
         #     -B /usr/lib/gcc   → []                        (false negative)
         #
-        # ⭐ A false negative is the worse one here — this branch exists to
+        # A false negative is the worse one here — this branch exists to
         # catch a link line reaching outside mcpp's store — so the two forms are
         # made one before anything is decided.
         leak="$(printf '%s\n' "$ldflags" \

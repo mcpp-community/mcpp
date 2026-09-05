@@ -47,7 +47,7 @@ echo 'int main() { return 0; }' > proj/src/main.cpp
 cd proj
 
 # ── (1) MCPP_NO_AUTO_INSTALL: refuse, and name THAT knob ────────────────────
-# ⚠️ The knob that fired, not a fixed one. Telling someone who exported
+# The knob that fired, not a fixed one. Telling someone who exported
 # MCPP_NO_AUTO_INSTALL to drop --offline sends them looking for a variable they
 # never set; the toolchain gate solved this years ago and this path is copying
 # its shape, so the test holds the shape too.
@@ -77,7 +77,7 @@ echo "  ok  MCPP_OFFLINE refuses and names the offline knob"
 # ── (3) A declared package that cannot be provisioned fails the build ───────
 # …and, the half a single run cannot show, is not recorded as done.
 #
-# ⚠️ THE DENOMINATOR IS TWO INVOCATIONS. The stamp is what made the original
+# THE DENOMINATOR IS TWO INVOCATIONS. The stamp is what made the original
 # defect permanent, and a stamp written for a failure is invisible in the run
 # that wrote it — the build that mattered already reported success. Only the
 # SECOND build distinguishes "failed" from "failed and remembered as done".
@@ -111,7 +111,7 @@ echo "  ok  a failed provisioning fails the build, twice — it is not stamped a
 # with auto-install off, leg (1) above would refuse a build that worked
 # yesterday, for packages that are in fact installed.
 #
-# ⚠️ THE LEGACY STAMP IS EVIDENCE ONLY HERE. The release that wrote it did not
+# THE LEGACY STAMP IS EVIDENCE ONLY HERE. The release that wrote it did not
 # read the provisioning result, so it means "attempted", not "succeeded" —
 # trusting it anywhere else would carry that defect across the upgrade that
 # fixes it. This leg pins the one place it is allowed to count.

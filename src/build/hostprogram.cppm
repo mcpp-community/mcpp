@@ -57,18 +57,18 @@ inline void include_dir_after(const char* dir)    { std::printf("mcpp:include-di
 // carries one value per line. The artifact path is appended by mcpp, or
 // substituted for a `{}` token if one is present.
 //
-// ⚠️ Emit the executable as an ABSOLUTE path. A bare name resolves through
+// Emit the executable as an ABSOLUTE path. A bare name resolves through
 // PATH to a shim that dispatches against its OWNER home, which is not
 // necessarily the home this build uses; measured in CI as
 // `xlings: 'qemu-system-riscv64' is not installed` from a job where the same
 // bare name had answered `--version` two steps earlier. `xpkg_dir()` is how a
 // package finds the payload it declared.
 //
-// ⚠️ Exactly one dependency may supply this. Two board-support packages both
+// Exactly one dependency may supply this. Two board-support packages both
 // claiming to know how to run the artifact is a configuration error, and mcpp
 // reports it naming both rather than merging them.
 inline void runner(const char* token)             { std::printf("mcpp:runner=%s\n", token); }
-// ⭐ A NAMED way of reaching the artefact. The engine learns the name from
+// A NAMED way of reaching the artefact. The engine learns the name from
 // here and knows nothing else about it, so `flash`, `serve`, `deploy`,
 // `submit` and `logcat` cost the same: nothing.
 //
@@ -78,7 +78,7 @@ inline void runner(const char* name, const char* token) {
     std::printf("mcpp:runner-named=%s:%s\n", name, token);
 }
 // This named runner has no natural end — a console monitor, a debug server.
-// ⚠️ DECLARED RATHER THAN DERIVED FROM THE NAME: the engine has no list of
+// DECLARED RATHER THAN DERIVED FROM THE NAME: the engine has no list of
 // names to derive it from, which is the point.
 inline void runner_longlived(const char* name) {
     std::printf("mcpp:runner-longlived=%s\n", name);
@@ -87,7 +87,7 @@ inline void run_exclusive()                    { std::printf("mcpp:run-exclusive
 
 // Say something to the user and keep going.
 //
-// ⚠️ THIS IS THE ONLY WAY A BUILD PROGRAM CAN SUCCEED AND STILL BE HEARD.
+// THIS IS THE ONLY WAY A BUILD PROGRAM CAN SUCCEED AND STILL BE HEARD.
 // mcpp prints what it captured from a build program only when that program
 // EXITS NON-ZERO, so a `std::printf` or `std::fprintf(stderr, ...)` note is
 // invisible on precisely the successful builds that needed it.
@@ -97,7 +97,7 @@ inline void run_exclusive()                    { std::printf("mcpp:run-exclusive
 // nothing that depends on it". Do not use it for an error: exit non-zero
 // instead, and the output is printed already.
 //
-// ⚠️ It survives the build cache. A cached run does not re-execute the
+// It survives the build cache. A cached run does not re-execute the
 // program, and an advisory that appeared once and then vanished would read as
 // "resolved". mcpp replays it on every hit.
 inline void warning(const char* message)          { std::printf("mcpp:warning=%s\n", message); }
@@ -116,7 +116,7 @@ inline void warning(const char* message)          { std::printf("mcpp:warning=%s
 // `version-floor-unmet`). A floor nobody stated a fact for is silent: not
 // knowing is not failing.
 //
-// ⚠️ A fact is persisted with the program's other output and replayed on a
+// A fact is persisted with the program's other output and replayed on a
 // cache hit. State what would change it -- `rerun_if_changed` on the library
 // the version was read from -- or the fact outlives the machine it described.
 inline void fact(const char* name, const char* version) {
@@ -255,7 +255,7 @@ inline const char* out_dir()                      { return env_or("MCPP_OUT_DIR"
 // Where the TOOLCHAIN mcpp resolved for this build lives — the payload root,
 // the directory whose `bin/` holds the driver.
 //
-// ⚠️ This exists so a package never has to DECLARE a toolchain. A package that
+// This exists so a package never has to DECLARE a toolchain. A package that
 // needs headers the toolchain ships (libc++'s, for a freestanding standard
 // library subset) previously had to put `xim:llvm` in `[xlings] deps`, which
 // pinned it to one implementation — and the measured fact is that the same
@@ -267,13 +267,13 @@ inline const char* toolchain_dir()                { return env_or("MCPP_TOOLCHAI
 // The two flags mcpp passes to its own compiler: the `--sysroot` and the
 // directory it names with `-B`. Either is empty when mcpp passes none.
 //
-// ⭐ These are for A SECOND COMPILER — one this rule package runs and mcpp did
+// These are for A SECOND COMPILER — one this rule package runs and mcpp did
 // not resolve. Such a compiler starts with no idea where anything is, and on a
 // subos the C library is not at `/usr/include` and the assembler is not at
 // `/usr/bin`; the first `#include` it reaches then fails on `features.h`.
 // Forwarding these two makes it see what mcpp's own compiler sees.
 //
-// ⚠️ NOT `sysroot_dir()`, four lines down. That one answers a question about
+// NOT `sysroot_dir()`, four lines down. That one answers a question about
 // the TARGET's tier and is empty on a hosted target, which is exactly the case
 // this pair exists for.
 inline const char* toolchain_sysroot()            { return env_or("MCPP_TOOLCHAIN_SYSROOT"); }
@@ -281,7 +281,7 @@ inline const char* toolchain_binutils_dir()       { return env_or("MCPP_TOOLCHAI
 
 // Which compiler resolved: "gcc", "clang", "msvc", or "" if none did.
 //
-// ⭐ Ask this rather than inferring it from `toolchain_dir()`. The two questions
+// Ask this rather than inferring it from `toolchain_dir()`. The two questions
 // a package has actually needed it for are which runtime library holds the
 // routines the compiler emits calls to, and which spelling of a binutils tool
 // exists beside the driver — and both have a different right answer per family
@@ -299,7 +299,7 @@ inline const char* sysroot_dir()                  { return env_or("MCPP_TARGET_S
 
 // ── Three answers a board-support package would otherwise hardcode ───────────
 //
-// ⚠️ The coupling these remove does not appear in any manifest. A board package
+// The coupling these remove does not appear in any manifest. A board package
 // can declare no dependency on LLVM and none on picolibc — and still be unable
 // to serve a second toolchain or a second C library, because it wrote their
 // names into its `build.mcpp`. A declared dependency is visible and reviewable;
@@ -658,7 +658,7 @@ build_host_module(const fs::path& bdir, const fs::path& compiler,
 
     // The interface's LANGUAGE, stated rather than inferred from its extension.
     //
-    // ⚠️ Measured on macOS CI: a rule package whose lib root is `rulepkg.ixx`
+    // Measured on macOS CI: a rule package whose lib root is `rulepkg.ixx`
     // made `clang++ --precompile rulepkg.ixx -o rulepkg.pcm` EXIT 0 AND WRITE
     // NOTHING — clang's driver does not recognise `.ixx`, so it treated the file
     // as a linker input, warned that it was unused, and succeeded. The failure

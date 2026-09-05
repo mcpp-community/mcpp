@@ -78,7 +78,7 @@ jobs:
           # Name what this job runs, so the job title and its contents cannot
           # drift apart. Widen the glob when a second test joins.
           E2E_ONLY: '239_*.sh'
-          # ⚠️ THE DEFAULT PER-TEST CAP IS TOO CLOSE TO WHAT THIS TEST COSTS.
+          # THE DEFAULT PER-TEST CAP IS TOO CLOSE TO WHAT THIS TEST COSTS.
           # 239 fetches ~376 MB, and its measured durations on this runner are
           # 244 / 292 / 313 / 335 / 515s against run_all.sh's 600s default — a
           # download-bound test whose spread nearly reaches its own deadline,

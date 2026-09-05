@@ -143,7 +143,7 @@ out="$("$MCPP" run 2>&1 | grep '^ANSWER=' | tail -1)"
 # moves; the refusal is reached only because it is asked BEFORE the cache is
 # consulted.
 #
-# ⚠️ This assertion does not prove that placement on its own. Measured: with
+# This assertion does not prove that placement on its own. Measured: with
 # the check below the fast path it still fired here, because `ctxHash` happens
 # to change as well. The placement is what makes the property hold; this pins
 # the behaviour, not the reason.

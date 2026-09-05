@@ -24,7 +24,7 @@
 # silence, which is the one failure mode the whole closure design exists to
 # prevent.
 #
-# ⚠️ PINNED FROM BOTH SIDES, on purpose. Asserting only that the override case
+# PINNED FROM BOTH SIDES, on purpose. Asserting only that the override case
 # warns cannot distinguish "mcpp models three states" from "mcpp warns about
 # every partition it publishes". So the same fixture is packed twice — once
 # scanned, once overridden — and the two must produce DIFFERENT sentences:

@@ -2,7 +2,7 @@
 # requires: unix-shell
 # A build program that succeeds and still says something.
 #
-# ⚠️ THE SECOND BUILD IS THE TEST, NOT THE FIRST.
+# THE SECOND BUILD IS THE TEST, NOT THE FIRST.
 #
 # mcpp prints what it captured from a build program only when that program
 # EXITS NON-ZERO, which is why `mcpp:warning=` had to exist at all. But the
@@ -17,11 +17,11 @@
 # So the assertions below are ordered: first build, then a SECOND build that
 # must be a cache hit and must still carry the same line.
 #
-# ⚠️ This test was confirmed to FAIL before the fix — the cache-hit emission
+# This test was confirmed to FAIL before the fix — the cache-hit emission
 # was removed and the second-build assertion went red while the first stayed
 # green. A test for a replay path that has never been observed failing cannot
 # distinguish "replay works" from "the cache never hit".
-# ⚠️ `"$MCPP"`, NEVER A BARE `mcpp`. The harness passes the binary under test;
+# `"$MCPP"`, NEVER A BARE `mcpp`. The harness passes the binary under test;
 # a bare name resolves through PATH to whichever engine happens to be installed,
 # and this test would then pass against an engine that does not have the feature.
 set -e
@@ -61,7 +61,7 @@ EOF
 grep -q "no emulator found" first.log \
   || { cat first.log; echo "FAIL: the advisory did not reach the output"; exit 1; }
 
-# ⚠️ Prefixed with the package it came from. A workspace has several build
+# Prefixed with the package it came from. A workspace has several build
 # programs and an unattributed sentence sends the reader to the wrong manifest.
 grep -q "advisory: no emulator found" first.log \
   || { cat first.log; echo "FAIL: the advisory was not attributed to its package"; exit 1; }
@@ -70,9 +70,9 @@ grep -q "advisory: no emulator found" first.log \
 grep -qi "Finished" first.log \
   || { cat first.log; echo "FAIL: the build did not finish"; exit 1; }
 
-# ── 2. ⭐ THE SECOND BUILD. The program does not run; the advisory must ─────
+# ── 2. THE SECOND BUILD. The program does not run; the advisory must ─────
 #
-# ⚠️ `touch` FIRST, AND NOT AS A SUPERSTITION. A build with nothing at all to
+# `touch` FIRST, AND NOT AS A SUPERSTITION. A build with nothing at all to
 # do takes a WHOLE-PROJECT fast path that prints one line and never reaches the
 # build.mcpp stage — so an unmodified second build exercises neither the run
 # path nor the replay path, and asserting against it would test the fast path

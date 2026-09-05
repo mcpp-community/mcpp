@@ -2,7 +2,7 @@
 # requires: llvm unix-shell
 # `[target.<triple>].sysroot` and the three target queries a board package asks.
 #
-# ⚠️ WHY THIS TEST IS TWO-SIDED THROUGHOUT
+# WHY THIS TEST IS TWO-SIDED THROUGHOUT
 #
 # Both features here are of the kind whose presence and absence look identical
 # on a machine that is already configured. A sysroot override that silently did
@@ -93,7 +93,7 @@ manifest ""
     cat with_libc.log; echo "the target row's C library should have been usable"; exit 1; }
 
 # ── 4. `sysroot = ""` really removes it ─────────────────────────────────────
-# ⚠️ THE LOAD-BEARING ASSERTION. Without it, an override that parsed and did
+# THE LOAD-BEARING ASSERTION. Without it, an override that parsed and did
 # nothing would pass every other check in this file.
 manifest '
 [target.riscv64-none-elf]

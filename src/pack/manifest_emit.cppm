@@ -96,7 +96,7 @@ struct PackageDoc {
 
 // The cfg() predicate that selects exactly `triple`.
 //
-// ⚠️ NOT a bare `[target.'<triple>'.build]` key. A bare triple is only matched
+// NOT a bare `[target.'<triple>'.build]` key. A bare triple is only matched
 // when the user passes `--target`; a plain `mcpp build` resolves the host and
 // used to compare it against an empty string, so the section was silently
 // inert. That is fixed (mcpp.build.prepare_inputs), but generating cfg() is
@@ -202,7 +202,7 @@ std::string emit_package_manifest(const PackageDoc& doc) {
         o += std::format("[target.'{}'.build]\n", cfg_predicate_for(leg.triple));
         // `-L<dir>` + `-l<name>`, on every target including PE.
         //
-        // ⚠️ NAMING THE FILE BY PATH INSTEAD DOES NOT WORK, and it is worth
+        // NAMING THE FILE BY PATH INSTEAD DOES NOT WORK, and it is worth
         // writing down because it looks strictly better. A bare path is the one
         // spelling every driver accepts (cl, clang, gcc, link.exe) and it names
         // the exact file rather than asking the linker to search. Measured: it
@@ -222,7 +222,7 @@ std::string emit_package_manifest(const PackageDoc& doc) {
         // these flags (cl rejects `-L`). Recorded in docs/12 rather than papered
         // over — mcpp's own Windows default is clang, which takes them.
         //
-        // ⚠️ `-Wl,-Bdynamic` is REQUIRED for a PE shared leg, and only there.
+        // `-Wl,-Bdynamic` is REQUIRED for a PE shared leg, and only there.
         // mcpp gives PE executables `-static` (the self-contained C++ runtime
         // contract: no libstdc++-6.dll beside the exe), and `-static` puts ld in
         // static-only mode, where it refuses an import library and reports
@@ -254,7 +254,7 @@ std::string emit_package_manifest(const PackageDoc& doc) {
         // newer mcpp seeing this block drops that leg's library references and
         // uses these instead — see merge_conditional_config.
         //
-        // ⚠️ NOT FOR A PE/MinGW SHARED LEG, and this was measured rather than
+        // NOT FOR A PE/MinGW SHARED LEG, and this was measured rather than
         // reasoned. That leg's line is `-L… -Wl,-Bdynamic -lmathkit`, and
         // `-Wl,-Bdynamic` only works IMMEDIATELY BEFORE the `-l` it enables:
         // mcpp gives PE executables `-static`, which leaves ld in static-only

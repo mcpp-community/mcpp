@@ -53,14 +53,14 @@ A build program that spells `qemu-system-riscv64` as a bare name therefore gets
 the copy inside the declared environment. Chapter 7 covers the contract this
 rides on.
 
-⚠️ **Only for projects that declare one.** A project with no `[xlings].subos`
+**Only for projects that declare one.** A project with no `[xlings].subos`
 gets the `PATH` mcpp was started with, byte for byte. Putting a shared
 directory in front of every project would make what a build sees depend on what
 else had been installed on that machine — two projects on one machine would
 agree with each other, and the same project on two machines would not.
 Declaring it is what puts it there.
 
-⚠️ **Prefixed, not replaced.** A build program legitimately calls `git`,
+**Prefixed, not replaced.** A build program legitimately calls `git`,
 `python3` or a shell, and none of those live in a SubOS. Front position makes
 the declared environment the default answer; everything else stays reachable
 behind it.

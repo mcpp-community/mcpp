@@ -5,7 +5,7 @@
 # 263_lib_root_follows_the_extension.sh — the lib-root convention offers one
 # candidate per DECLARED module extension, at every call site.
 #
-# ⚠️ WHY THIS EXISTS AS ITS OWN TEST. The previous round fixed the resolver the
+# WHY THIS EXISTS AS ITS OWN TEST. The previous round fixed the resolver the
 # packer uses and left two other callers on the non-probing form, because the
 # path under test was the only one anybody looked at. Both were reachable and
 # both were wrong for an `.ixx` project:

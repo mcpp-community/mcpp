@@ -30,7 +30,7 @@ trap "rm -rf $TMP" EXIT
 cd "$TMP"
 
 # The resolved c-abi for this build, read from mcpp's own report rather than
-# assumed. ⚠️ The report prints layers whose origin is not the compiler payload
+# assumed. The report prints layers whose origin is not the compiler payload
 # by default, so the zero-config case needs MCPP_VERBOSE to list all five.
 mkdir -p probe/src
 cat > probe/mcpp.toml <<'EOF'
@@ -45,21 +45,21 @@ CABI=$(sed -n 's/.*c-abi  *\([A-Za-z0-9_+-]*\).*/\1/p' probe/report.log | head -
 [ -n "$CABI" ] || { cat probe/report.log; echo "FAIL: could not read the resolved c-abi"; exit 1; }
 echo "  ..  this host resolves c-abi = '$CABI'"
 
-# ⚠️ A NAME NO LAYER CAN TAKE, for the negative leg. Deriving it (rather than
+# A NAME NO LAYER CAN TAKE, for the negative leg. Deriving it (rather than
 # hardcoding "musl") keeps the leg meaningful on a musl host, where a hardcoded
 # counter-example would be the TRUE case and the test would assert nothing.
 NOTCABI="not-${CABI}"
 
 # ── (1) + (2) a matching layer predicate applies; a non-matching one does not ──
 #
-# ⚠️ THE TRIPLE HALF OF THE COMBINED PREDICATE IS any(unix, windows), NOT unix.
+# THE TRIPLE HALF OF THE COMBINED PREDICATE IS any(unix, windows), NOT unix.
 # The point of that leg is that a triple key and a layer key COMBINE, so its
 # triple half has to be true everywhere this test runs. Written as bare unix it
 # was true on Linux and macOS and false on Windows, where all(...) then
 # correctly evaluated false and the fixture's #error fired. CI caught it; the
 # feature was right and the test was not.
 #
-# ⚠️ AND THESE NOTES LIVE OUTSIDE THE HEREDOCS. The fixtures below interpolate
+# AND THESE NOTES LIVE OUTSIDE THE HEREDOCS. The fixtures below interpolate
 # $CABI, so their heredocs are unquoted — which makes backticks in a comment
 # command substitution. The first version of this note sat inside one and the
 # suite printed `syntax error: unexpected end of file` while still passing.
@@ -94,7 +94,7 @@ EOF
     cat layers/b.log; echo "FAIL: layer predicates did not behave"; exit 1; }
 echo "  ok  a matching layer predicate applies, a non-matching one does not"
 
-# ⚠️ EXACTLY ONCE, NOT AT LEAST ONCE. The pass that evaluates layer predicates
+# EXACTLY ONCE, NOT AT LEAST ONCE. The pass that evaluates layer predicates
 # runs AFTER the triple-only merge, and `append()` is additive — so a predicate
 # with a triple leg (`any(unix, c-abi = ...)`) would be matched by both passes
 # and contribute twice. Counting the flag is the only way to see that; a
@@ -121,7 +121,7 @@ echo "  ok  a predicate naming both a triple key and a layer applies exactly onc
 
 # ── (2b) …and it reaches a DEPENDENCY, which is the motivating case ─────────
 #
-# ⚠️ EVERY LEG ABOVE IS SATISFIED BY A PASS THAT ONLY PATCHES packages[0].
+# EVERY LEG ABOVE IS SATISFIED BY A PASS THAT ONLY PATCHES packages[0].
 # docs/14 writes this feature for "a package supplying a layer [that] frequently
 # supports several implementations of the layer beneath it" — a LIBRARY, reached
 # as someone's dependency. The build.mcpp tail that shares this pass's window
@@ -202,7 +202,7 @@ echo "  ok  --strict makes it an error"
 # pass runs, dependency resolution is over, so such a section would otherwise be
 # dropped in exactly the silence this whole test exists to end.
 #
-# ⚠️ AND THE BUILD INPUTS UNDER THE SAME PREDICATE MUST STILL APPLY. A warning
+# AND THE BUILD INPUTS UNDER THE SAME PREDICATE MUST STILL APPLY. A warning
 # that quietly disabled the rest of the section would trade one silent drop for
 # another.
 mkdir -p depcond/src

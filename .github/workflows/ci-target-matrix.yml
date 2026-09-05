@@ -1,8 +1,8 @@
 name: target matrix
 
-# ⭐⭐ 让支持矩阵成为一次测量的输出,而不是一份会悄悄过期的文档。
+# 让支持矩阵成为一次测量的输出,而不是一份会悄悄过期的文档。
 #
-# ⚠️ 这套东西存在的理由,是本仓库反复付出的一类代价:一格因为「今天这台机器恰好
+# 这套东西存在的理由,是本仓库反复付出的一类代价:一格因为「今天这台机器恰好
 # 装了某个载荷」而通过,或因为没装而跳过,而两者在退出码上与「全部正确」没有区别。
 # 三个宿主各扫一遍,把结果与仓库里的期望表比对,差异即失败。
 on:
@@ -20,7 +20,7 @@ env:
 
 jobs:
   invariants:
-    # ⭐ 第一层:四条恒等式,不需要期望表,也不依赖机器上装了什么。
+    # 第一层:四条恒等式,不需要期望表,也不依赖机器上装了什么。
     #    它们是结构约束 —— 任何一格只要跑起来了就该满足。
     name: invariants (${{ matrix.host }})
     runs-on: ${{ matrix.runner }}
@@ -29,13 +29,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ⭐⭐ THE BUILD-HOST AXIS IS THE SET mcpp SHIPS FOR, NOT THE SET THAT
+          # THE BUILD-HOST AXIS IS THE SET mcpp SHIPS FOR, NOT THE SET THAT
           # WAS CONVENIENT. `release.yml` publishes four: linux-x86_64,
           # linux-aarch64, macosx-arm64, windows-x86_64. A host mcpp is
           # distributed for and never scanned is a host whose target table is
           # a claim nobody checked.
           #
-          # ⚠️ `host` IS (os, arch) AND NOT os. Two Linux hosts differ in which
+          # `host` IS (os, arch) AND NOT os. Two Linux hosts differ in which
           # rows they serve — `x86_64-linux-gnu` needs the host-native glibc
           # payload, so it is reachable on one and not the other — and a single
           # `linux` key would have them overwrite each other in expected.tsv.
@@ -57,7 +57,7 @@ jobs:
           "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
           "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
           "$MCPP" build --dev
-          # ⚠️ 两种拼写,且按 mtime 取最新 —— target/ 是缓存恢复的,`head -1`
+          # 两种拼写,且按 mtime 取最新 —— target/ 是缓存恢复的,`head -1`
           # 会挑到上一次推送留下的二进制,版本号一样而代码是旧的。
           BUILT=$(find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) \
                   -newer mcpp.toml | head -1)
@@ -72,7 +72,7 @@ jobs:
           export MCPP="$MCPP_UNDER_TEST"
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
-          # ⚠️ These four read mcpp's MACHINE interface, so jq is not optional
+          # These four read mcpp's MACHINE interface, so jq is not optional
           # here. Without it each one takes its own "nothing to compare" exit —
           # four honest-looking skips, and the next step would then report that
           # the invariants did not run. Failing on the cause beats failing on
@@ -91,7 +91,7 @@ jobs:
           done
           [ "$fail" = 0 ] || exit 1
 
-      # ⚠️ A DEFERRAL NOBODY RECHECKS IS INDISTINGUISHABLE FROM A DEFECT. This
+      # A DEFERRAL NOBODY RECHECKS IS INDISTINGUISHABLE FROM A DEFECT. This
       # step fails when its reason STOPS holding — the day an aarch64 llvm is
       # published — which is the opposite of what a check usually does.
       - name: The aarch64 llvm deferral still has its reason
@@ -101,7 +101,7 @@ jobs:
       - name: Each invariant RAN
         run: |
           set -euo pipefail
-          # ⭐ 这一步存在的全部理由:退出码分不清「通过」与「跳过」。两条 e2e 都
+          # 这一步存在的全部理由:退出码分不清「通过」与「跳过」。两条 e2e 都
           #    有为「这台机器没有可比的东西」准备的早退,而 CI 要的是它们真的比
           #    过了。
           check() {
@@ -112,19 +112,19 @@ jobs:
             }
             echo "  ok  $1"
           }
-          # ⚠️⚠️ A SKIP IS ACCEPTED FOR ONE NAMED REASON, NOT ON ONE NAMED HOST.
+          # A SKIP IS ACCEPTED FOR ONE NAMED REASON, NOT ON ONE NAMED HOST.
           #
           # 297 declares a non-llvm compiler, so it needs one to exist. Every
           # toolchain mcpp installs on macOS is llvm; on windows-2022 it depends
           # on what the restored cache holds — measured, one run had
           # `gcc@16.1.0` and the next had only `llvm@20.1.7`.
           #
-          # ⚠️ THE FIRST VERSION EXEMPTED macOS BY NAME, and the very next
+          # THE FIRST VERSION EXEMPTED macOS BY NAME, and the very next
           # Windows run skipped for the same reason and went red. Naming the
           # host encodes where the fact happened to hold; naming the FACT holds
           # wherever it does. A skip for any other reason is still a failure.
           #
-          # ⭐ AND THE DENOMINATOR IS ASSERTED SEPARATELY: linux always has a gcc
+          # AND THE DENOMINATOR IS ASSERTED SEPARATELY: linux always has a gcc
           # payload (it backs the host row), so that job uses `check` and the
           # test is guaranteed to be exercised somewhere on every run. Without
           # that, a reason accepted everywhere is a test that runs nowhere.
@@ -158,7 +158,7 @@ jobs:
             check 298_overriding_a_convention_requires_replacing_it.sh \
               "OK: a convention may be overridden, but not merely removed" || fail=1
           else
-            # ⚠️ THE MIRROR OF 297's EXEMPTION, AND FOR THE OTHER FAMILY.
+            # THE MIRROR OF 297's EXEMPTION, AND FOR THE OTHER FAMILY.
             #
             # 298 declares llvm, and there is no llvm payload for aarch64 Linux —
             # upstream stopped publishing linux-aarch64 after 19.x and the index
@@ -167,7 +167,7 @@ jobs:
             #     SKIP: llvm is not installed here, and this test is about
             #           declaring it
             #
-            # ⭐ Granting it by REASON rather than by host is what makes it
+            # Granting it by REASON rather than by host is what makes it
             # retire itself: the day
             # `.agents/docs/2026-08-26-aarch64-linux-ecosystem-closure.md`
             # lands an aarch64 llvm, this stops being a skip and starts being
@@ -179,7 +179,7 @@ jobs:
 
           # ── 2026.8.26.2: an answer mcpp already had, now used ─────────────
           #
-          # ⭐ 299/300/303 CARRY NO SKIP AT ALL, so they use `check` on every
+          # 299/300/303 CARRY NO SKIP AT ALL, so they use `check` on every
           # host. They read the vocabulary and the query's own document —
           # neither depends on which payloads this machine happens to hold, and
           # a version of them that skipped anywhere would be a version that
@@ -188,7 +188,7 @@ jobs:
             "OK: a request that named no C library resolves to a row that exists" || fail=1
           check 300_a_registered_family_is_not_reported_unknown.sh \
             "OK: a registered family is not reported unknown" || fail=1
-          # ⚠️ 303's third half stacks a musl c-abi over this host's own target,
+          # 303's third half stacks a musl c-abi over this host's own target,
           # and not every host stacks that — an MSVC-ABI host answers the
           # layering question first, correctly, and there is then no
           # two-answer document to check. Granted by reason; linux-x86_64 below
@@ -202,13 +202,13 @@ jobs:
               "refuses a musl c-abi over its own target" || fail=1
           fi
 
-          # ⚠️ 301/302 NEED TWO COMPILER FAMILIES, AND THAT IS A PROPERTY OF THE
+          # 301/302 NEED TWO COMPILER FAMILIES, AND THAT IS A PROPERTY OF THE
           # MACHINE RATHER THAN OF THE CLAIM. "A requirement that DIFFERS from
           # mcpp's own answer is applied" cannot be stated where only one family
           # exists — macOS installs llvm only, and aarch64 Linux has no llvm
           # payload at all (see 298's note).
           #
-          # ⭐ AND THE DENOMINATOR IS linux-x86_64, WHICH HAS BOTH. Without a
+          # AND THE DENOMINATOR IS linux-x86_64, WHICH HAS BOTH. Without a
           # host required to actually run these, a reason accepted everywhere is
           # a test that runs nowhere.
           if [ "${{ matrix.host }}" = linux-x86_64 ]; then
@@ -228,7 +228,7 @@ jobs:
           [ "$fail" = 0 ] || exit 1
 
   scan:
-    # ⭐ 第二层:全表扫描,与仓库里的期望表比对。
+    # 第二层:全表扫描,与仓库里的期望表比对。
     name: scan (${{ matrix.host }})
     needs: invariants
     runs-on: ${{ matrix.runner }}
@@ -237,13 +237,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # ⭐⭐ THE BUILD-HOST AXIS IS THE SET mcpp SHIPS FOR, NOT THE SET THAT
+          # THE BUILD-HOST AXIS IS THE SET mcpp SHIPS FOR, NOT THE SET THAT
           # WAS CONVENIENT. `release.yml` publishes four: linux-x86_64,
           # linux-aarch64, macosx-arm64, windows-x86_64. A host mcpp is
           # distributed for and never scanned is a host whose target table is
           # a claim nobody checked.
           #
-          # ⚠️ `host` IS (os, arch) AND NOT os. Two Linux hosts differ in which
+          # `host` IS (os, arch) AND NOT os. Two Linux hosts differ in which
           # rows they serve — `x86_64-linux-gnu` needs the host-native glibc
           # payload, so it is reachable on one and not the other — and a single
           # `linux` key would have them overwrite each other in expected.tsv.
@@ -269,13 +269,13 @@ jobs:
           [ -n "$BUILT" ] || { echo "::error::mcpp did not build"; exit 1; }
           echo "MCPP_UNDER_TEST=$(cd "$(dirname "$BUILT")" && pwd)/$(basename "$BUILT")" >> "$GITHUB_ENV"
 
-      # ⚠️⚠️ 格数不能是缓存状态的函数。
+      # 格数不能是缓存状态的函数。
       #
       # 实测:同一台 ubuntu-24.04,一轮装了 gcc+llvm(扫 40 格),下一轮只有 gcc
       # (扫 20 格)。`expected.tsv` 声明的是前者,于是后者会把所有 llvm 行报成
       # 「期望表说有而扫描没跑到」—— 而那句报错是对的,问题在于覆盖面**漂移**了。
       #
-      # ⭐ 矩阵要声明它扫哪些工具链,并把它们装上。装不上就红在这里,而不是
+      # 矩阵要声明它扫哪些工具链,并把它们装上。装不上就红在这里,而不是
       # 变成一屏「没跑到」。
       - name: Install the toolchains this matrix declares
         run: |
@@ -309,7 +309,7 @@ jobs:
           export MCPP="$MCPP_UNDER_TEST"
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
-          # ⚠️⚠️ 编译器轴跟着**声明**走,不跟着「这台机器上装了什么」走。
+          # 编译器轴跟着**声明**走,不跟着「这台机器上装了什么」走。
           #
           # 实测 2026-08-26,同一个提交:PR 上这个 job 绿,合入 main 后红 —— 那
           # 次 windows-2022 恢复出来的缓存里多了一个 `gcc@16.1.0`,扫描产出 24
@@ -322,14 +322,14 @@ jobs:
                               | sort -u | tr '\n' ' ')"
           export MATRIX_COMPILERS
           echo "declared compiler axis: ${MATRIX_COMPILERS:-<none — scanning what is installed>}"
-          # ⚠️ 两种体系各自成表。scan 把 mode 写进第一列,而比对必须按 mode 分开
+          # 两种体系各自成表。scan 把 mode 写进第一列,而比对必须按 mode 分开
           # 做 —— 拿一种体系的测量去比整张表,另一种的每一行都会被报成「没跑到」。
           bash tests/matrix/scan.sh payload > measured-payload.tsv
           bash tests/matrix/scan.sh graph   > measured-graph.tsv
           cat measured-payload.tsv measured-graph.tsv > measured.tsv
           echo "--- measured ---"; cat measured.tsv
 
-      # ⚠️ 上传排在比对之前,而这是刻意的次序。宿主的第一次运行本就没有期望行,
+      # 上传排在比对之前,而这是刻意的次序。宿主的第一次运行本就没有期望行,
       # 比对会红 —— 而回填要用的正是这份产物。`if: always()` 也保留:一步失败不
       # 该把证据一起带走。
       - uses: actions/upload-artifact@v4
@@ -349,10 +349,10 @@ jobs:
           [ "$fail" = 0 ] || exit 1
 
   coverage:
-    # ⭐⭐ THE DENOMINATOR. Every check above is per host, and no per-host check
+    # THE DENOMINATOR. Every check above is per host, and no per-host check
     # can notice a host that never ran.
     #
-    # ⚠️ Each `scan` job compares the rows for ITS OWN host, so deleting a host
+    # Each `scan` job compares the rows for ITS OWN host, so deleting a host
     # from the matrix above silently retires every expectation the table holds
     # for it: nothing measures those rows, nothing compares them, and the
     # workflow is green. This job is the one place that reads the expected table
@@ -388,7 +388,7 @@ jobs:
               fail=1
             }
           done
-          # ⭐ AND THE OTHER DIRECTION. A host that scanned but has no rows in the
+          # AND THE OTHER DIRECTION. A host that scanned but has no rows in the
           # table is a new build host nobody declared expectations for — the
           # per-host compare already reds on it, but saying it here names the
           # cause rather than listing 40 unexplained cells.
@@ -405,7 +405,7 @@ jobs:
       - name: The build hosts mcpp ships for are the ones scanned
         run: |
           set -euo pipefail
-          # ⚠️⚠️ THE TABLE AND THE RELEASE MUST NAME THE SAME SET. A host that
+          # THE TABLE AND THE RELEASE MUST NAME THE SAME SET. A host that
           # gets a published binary and no scan is a host whose target table is
           # a claim nobody checked; a host that is scanned and never shipped is
           # coverage spent on a machine no user has.

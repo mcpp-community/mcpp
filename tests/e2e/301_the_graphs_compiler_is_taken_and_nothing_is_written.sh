@@ -3,12 +3,12 @@
 # A compiler the dependency graph requires is USED, not merely checked — and
 # selecting it writes no configuration.
 #
-# ⭐⭐ `provides` AND `requires` ARE TWO HALVES OF ONE VOCABULARY AND THEY WERE
+# `provides` AND `requires` ARE TWO HALVES OF ONE VOCABULARY AND THEY WERE
 # READ AT OPPOSITE ENDS OF `prepare_build`. The block that decides the toolchain
 # once the graph exists consulted the first; the second was collected a thousand
 # lines later and used only to reject the outcome.
 #
-# ⚠️ MEASURED ON 2026.8.26.1, three-line manifest, llvm already installed:
+# MEASURED ON 2026.8.26.1, three-line manifest, llvm already installed:
 #
 #     $ mcpp build                       # global default gcc@16.1.0
 #       error: `openkal-llvm-runtime@0.1.3` requires the compiler to be `llvm`.
@@ -19,20 +19,20 @@
 # Nothing was missing. The remedy printed was a GLOBAL change — the default for
 # every project on the machine — made because ONE project's dependency asked.
 #
-# ⭐ AND THE SECOND HALF IS THE POINT OF THE FIRST. `resolve_target_toolchain`
+# AND THE SECOND HALF IS THE POINT OF THE FIRST. `resolve_target_toolchain`
 # has two call sites and both are downstream of the graph, so every
 # `write_default_toolchain` lives on a branch this selection no longer enters.
 # "Touch no configuration" is not a rule someone has to remember; it is where
 # the decision sits. The sha256 is what enforces it.
 #
-# ⚠️ THE CRITERION IS A HASH, NOT "THE BUILD SUCCEEDED". A build that succeeds
+# THE CRITERION IS A HASH, NOT "THE BUILD SUCCEEDED". A build that succeeds
 # and rewrites the user's default is exactly the behaviour being removed, and
 # the two are indistinguishable from the exit code.
 set -e
 
 MCPP="${MCPP:-mcpp}"
 
-# ⭐ THE REQUIRED FAMILY IS CHOSEN AGAINST THIS MACHINE, NOT HARDCODED. The
+# THE REQUIRED FAMILY IS CHOSEN AGAINST THIS MACHINE, NOT HARDCODED. The
 # claim is "a requirement that differs from mcpp's own answer is applied", so
 # the test needs a family that (a) is installed here and (b) is not the one
 # already resolving. Hardcoding `llvm` would silently assert nothing on a box
@@ -47,7 +47,7 @@ printf 'extern "C" int main(int, char**, char**) { return 0; }\n' > "$work/app/s
 printf 'export module needs_it;\nexport int needs_it() { return 0; }\n' \
     > "$work/needs/src/needs_it.cppm"
 
-# ⚠️⚠️ THE BASELINE IS MEASURED IN THE PROJECT UNDER TEST, AND MEASURING IT
+# THE BASELINE IS MEASURED IN THE PROJECT UNDER TEST, AND MEASURING IT
 # ANYWHERE ELSE MAKES THIS FILE ASSERT NOTHING.
 #
 # The first draft asked `why toolchain` from whatever directory the runner
@@ -81,7 +81,7 @@ printf '[package]\nname     = "needs-%s"\nversion  = "0.1.0"\nrequires = ["mcpp:
 printf '[package]\nname    = "app"\nversion = "0.1.0"\n\n[dependencies]\nneeds-%s = { path = "../needs" }\n' \
     "$want" > "$work/app/mcpp.toml"
 
-# ⚠️⚠️ A HASHER THAT DOES NOT EXIST MAKES THIS CRITERION PASS BY MEASURING
+# A HASHER THAT DOES NOT EXIST MAKES THIS CRITERION PASS BY MEASURING
 # NOTHING. macOS has no `sha256sum` (it is `shasum -a 256`), and the first draft
 # would then have compared two empty strings — which are equal. The whole point
 # of this half is that a build can succeed AND rewrite the configuration; a
@@ -121,7 +121,7 @@ echo "  ok  the graph required '$want' and mcpp took it (was '$current')"
 # ── And it changed no configuration ──────────────────────────────────────
 after=""
 [ -f "$cfg" ] && after="$(hash_of "$cfg")"
-# ⚠️ AND BOTH SIDES MUST BE NON-EMPTY. `"" = ""` is the shape this half exists
+# AND BOTH SIDES MUST BE NON-EMPTY. `"" = ""` is the shape this half exists
 # to refuse, whatever produced the emptiness.
 if [ -z "$before" ] || [ -z "$after" ]; then
     echo "FAIL: one side of the comparison is empty (before='$before' after='$after'),"
@@ -139,12 +139,12 @@ fi
 
 # ── And the query says who asked ─────────────────────────────────────────
 #
-# ⚠️ A COMPILER THE USER DID NOT NAME, REPORTED WITHOUT ITS REASON, IS A RULE
+# A COMPILER THE USER DID NOT NAME, REPORTED WITHOUT ITS REASON, IS A RULE
 # THAT CAN ONLY BE LEARNED BY EXPERIMENT. The same argument that put a reason on
 # the target row's substitution applies here, and more so: this one overrides a
 # value the user set with `mcpp toolchain default`.
 #
-# ⭐ FROM `compiler.chosenBy`, NOT FROM THE PROSE. A consumer asking "why this
+# FROM `compiler.chosenBy`, NOT FROM THE PROSE. A consumer asking "why this
 # compiler" reading the status line would be doing the substring matching the
 # machine interface exists to remove — and so would this test.
 by="$(printf '%s' "$j" | jq -r '.data.compiler.chosenBy.requiredBy // ""' | tr -d '\r')"
@@ -163,7 +163,7 @@ else
     exit 1
 fi
 
-# ⭐ AND THE HUMAN-FACING LINE STILL CARRIES IT. The token is for programs; the
+# AND THE HUMAN-FACING LINE STILL CARRIES IT. The token is for programs; the
 # person running the build reads the status line, and a decision reported there
 # without its reason is the rule learned by experiment.
 out="$("$MCPP" build 2>&1 || true)"

@@ -16,7 +16,7 @@
 # stack, and a test that fetched an ecosystem over the network to assert a
 # string in a report would be slower and no more conclusive.
 #
-# ⚠️ NO `sed -i` ANYWHERE, AND THAT IS NOT STYLE. BSD sed reads the argument
+# NO `sed -i` ANYWHERE, AND THAT IS NOT STYLE. BSD sed reads the argument
 # after `-i` as a backup suffix, so an in-place edit written for GNU sed fails
 # on macOS. Measured on the macOS leg of this suite, in this very file:
 #
@@ -74,7 +74,7 @@ printf 'int main() { return 0; }\n' > src/main.cpp
 # a single provider of two layers is a legitimate shape and a useful one to
 # assert: it proves the two lookups are independent.
 #
-# ⚠️ `|| true`, AND THAT IS THE TEST'S SUBJECT RATHER THAN A CONCESSION. The
+# `|| true`, AND THAT IS THE TEST'S SUBJECT RATHER THAN A CONCESSION. The
 # resolution is reported during planning, before a single object is compiled, so
 # what this file asserts is complete whether or not the link afterwards
 # succeeds. Requiring a successful link would additionally require a working C
@@ -100,7 +100,7 @@ echo "$out" | grep -q 'graph' || {
     echo "$out" >&2; exit 1
 }
 
-# ⚠️ AND THE POSITIVE CONTROL ON THE SAME OUTPUT. Without this, the assertions
+# AND THE POSITIVE CONTROL ON THE SAME OUTPUT. Without this, the assertions
 # above would also pass on an engine that printed the same three lines for
 # every build regardless of what the graph contained.
 # The label is the capability name — `c++-abi`, matching `mcpp:c++-abi` — so
@@ -136,7 +136,7 @@ echo "$plain" | grep -qE 'kernel-abi .*payload' || {
 # turns one wrong letter into a behaviour that silently does not happen while
 # the build reports success.
 #
-# ⚠️ IN A DEPENDENCY IT IS A WARNING RATHER THAN AN ERROR, AND THE CHANGE WAS
+# IN A DEPENDENCY IT IS A WARNING RATHER THAN AN ERROR, AND THE CHANGE WAS
 # FORCED BY A MEASUREMENT. mcpp cannot distinguish a misspelling from a layer
 # named after this build tool was released, and the two mistakes cost different
 # amounts. Refusing meant a package declaring a NEW layer failed to load under

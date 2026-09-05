@@ -148,7 +148,7 @@ int resolve_jobs(const manifest::Manifest& m,
 // against the live host. Computed by the CALLER so `decide` stays pure, and
 // needed because 0 is not a usable answer for every strategy:
 //
-// ⚠️ UNDER DetachCodegen, `hostJobs == 0` MEANS NO BOUND AT ALL. A detached
+// UNDER DetachCodegen, `hostJobs == 0` MEANS NO BOUND AT ALL. A detached
 // compiler stops holding a ninja slot the moment it publishes its BMI, so
 // ninja's -j is no longer a limit on how many compilers are running — the
 // semaphore is. A cap of 0 disables the semaphore (`acquire_token` returns

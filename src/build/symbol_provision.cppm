@@ -33,7 +33,7 @@
 // mcpp binary (measured: 0 of 217 dynamic symbols). Stage two runs only when
 // stage one is not, and it is the stage that makes the report TRUE.
 //
-// ⚠️ STAGE TWO IS NOT OPTIONAL, and the reason is mcpp's own doing. A
+// STAGE TWO IS NOT OPTIONAL, and the reason is mcpp's own doing. A
 // `kind = "shared"` dependency's link unit receives only ITS OWN objects
 // (mcpp.build.plan), so a static package underneath it lands in the CONSUMER's
 // executable instead, and the shared library binds back to it at run time.
@@ -226,7 +226,7 @@ std::string Report::explain(std::string_view artifact) const {
 
     // WHY it matters, then what to do — IN THE ORDER THAT ACTUALLY WORKS.
     //
-    // ⚠️ `dependency_linkage = "shared"` is deliberately NOT first, and that
+    // `dependency_linkage = "shared"` is deliberately NOT first, and that
     // ordering was corrected against a measurement rather than reasoned. On a
     // real graph (a package staging glib, whose libgio pulls libz.so.1, plus a
     // statically built compat.zlib) switching the form does remove the

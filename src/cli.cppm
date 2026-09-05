@@ -169,7 +169,7 @@ int run(int argc, char** argv) {
         // need a parameter threaded down. Same shape as MCPP_VERBOSE above, and
         // it makes `MCPP_OFFLINE=1` and `--offline` literally the same switch.
         else if (a == "--offline") mcpp::platform::env::set("MCPP_OFFLINE", "1");
-        // ⭐ `--locked` rides the same side channel, and for the stronger form
+        // `--locked` rides the same side channel, and for the stronger form
         // of the same reason: its consumer is the resolution write point deep
         // in mcpp.build.prepare, and it applies to every command that resolves
         // — build, run, test, flash, monitor, debug — so a per-subcommand
@@ -390,7 +390,7 @@ int run(int argc, char** argv) {
             .action(wrap_rc(cmd_build)))
         .subcommand(cl::App("run")
             .description("Build + run a binary target (after `--`, args are passed to it)")
-            // ⚠️ Named `bin`, NOT `target`, and the rename is load-bearing.
+            // Named `bin`, NOT `target`, and the rename is load-bearing.
             //
             // This positional is a BINARY NAME from [[bin]]/src layout. It was
             // called `target` — the same word as the cross-target axis — and
@@ -425,7 +425,7 @@ int run(int argc, char** argv) {
                 .help("Deprecated alias for --cache=off (also clears the build dir)"))
             .option(cl::Option("no-runner")
                 .help("Execute the artifact directly, ignoring any [target.<triple>].runner (a host that runs it natively)"))
-            // ⭐⭐ THE TWO AXES `build` AND `test` HAVE ALWAYS TAKEN.
+            // THE TWO AXES `build` AND `test` HAVE ALWAYS TAKEN.
             //
             // Both decide WHAT IS BUILT, so without them `run` could only
             // execute whatever a previous `build` happened to leave behind —
@@ -443,7 +443,7 @@ int run(int argc, char** argv) {
                 .help("Build profile to run (dev | release | <custom>)"))
             .option(cl::Option("release").help("Shorthand for --profile release"))
             .option(cl::Option("dev").help("Shorthand for --profile dev"))
-            // ⭐⭐ THE WAY TO REACH THE ARTEFACT, BY NAME.
+            // THE WAY TO REACH THE ARTEFACT, BY NAME.
             //
             // `mcpp run` is universal — every domain has one. HOW the artefact
             // is reached is not: an MCU is flashed, a service is deployed, a
@@ -512,7 +512,7 @@ int run(int argc, char** argv) {
         .subcommand(cl::App("why")
             .description("Explain how the toolchain / runtime / deps / runners were resolved")
             .arg(cl::Arg("topic").help("toolchain | runtime | deps | runners (default: all)"))
-            // ⭐ `--target` / `--toolchain` make this a QUERY rather than a
+            // `--target` / `--toolchain` make this a QUERY rather than a
             // report on the current directory's default: "what would a build
             // for THIS pair resolve to" is the question the target matrix asks
             // once per cell, and it builds nothing.
@@ -603,7 +603,7 @@ int run(int argc, char** argv) {
                     .help("Package namespace for the emitted descriptor "
                           "(overrides [package] namespace). Emits both "
                           "`namespace` and the fully-qualified `name`")))
-            // ⭐ `sbom` belongs HERE rather than at the top level: `emit`
+            // `sbom` belongs HERE rather than at the top level: `emit`
             // already means "generate a document describing this project" and
             // already carries `-o`. A separate `mcpp sbom` would be a second
             // spelling of an abstraction that exists.
@@ -970,7 +970,7 @@ int run(int argc, char** argv) {
             {"xpkg parse",     {}},
             {"cache list",     {}},
             {"toolchain list", {Effect::InitMcppHome}},
-            // ⚠️⚠️ `why toolchain` DECLARES MORE THAN IT USUALLY DOES, AND THAT
+            // `why toolchain` DECLARES MORE THAN IT USUALLY DOES, AND THAT
             // IS THE CORRECT DIRECTION.
             //
             // It answers a question without building, which reads like a pure

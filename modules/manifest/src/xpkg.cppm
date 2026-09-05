@@ -109,9 +109,9 @@ bool xpkg_lua_identity_matches(std::string_view luaContent,
 // INV-NAME (SPEC-001 §3.2) — `package.name` is a SINGLE ATOMIC SEGMENT. All
 // hierarchy belongs in `package.namespace`, which is the dotted path.
 //
-//     ✅ namespace = "chriskohlhoff", name = "asio"
-//     ✅ namespace = "mcpplibs.capi", name = "lua"
-//     ❌ namespace = "mcpplibs",      name = "capi.lua"   (short name has a dot)
+//     accepted  namespace = "chriskohlhoff", name = "asio"
+//     accepted  namespace = "mcpplibs.capi", name = "lua"
+//     refused   namespace = "mcpplibs",      name = "capi.lua"   (short name has a dot)
 //
 // Why it matters: identity is the pair (namespace, name), and xlings addresses
 // packages as `<effectiveNamespace>:<package.name>` with the LITERAL name. A
@@ -240,7 +240,7 @@ inline constexpr std::string_view kKnownXpkgKeys[] = {
 inline constexpr std::pair<std::string_view, std::string_view> kXpkgKeyAliases[] = {
     { "dependencies", "deps" },
     { "dependency",   "deps" },
-    // ⚠️ `requires` USED TO REDIRECT HERE and no longer does: it is a key in its
+    // `requires` USED TO REDIRECT HERE and no longer does: it is a key in its
     // own right now, the symmetric half of `provides`. A redirect for a key that
     // exists is unreachable — `closest_known_xpkg_key` is consulted only for
     // UNKNOWN keys — and leaving it would be a claim this file no longer makes.

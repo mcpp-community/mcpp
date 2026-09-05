@@ -21,7 +21,7 @@
 # deploying that .so has to ship a C++ runtime with it, and its runtime closure
 # is larger than the code justifies.
 #
-# ⚠️ BOTH DIRECTIONS. Checking only that libstdc++ disappeared would pass an
+# BOTH DIRECTIONS. Checking only that libstdc++ disappeared would pass an
 # implementation that linked EVERYTHING with the C driver, which turns every
 # C++ target into a pile of undefined `_ZSt…`. So a C++ target must still link,
 # run, and use the C++ rule.
@@ -38,7 +38,7 @@ case "$MCPP" in /*) ;; *) MCPP="$_root/$MCPP" ;; esac
 TMP=$(mktemp -d)
 trap "rm -rf $TMP || true" EXIT
 
-# ⚠️ THREE SEPARATE PROJECTS, not three targets in one. Targets in a single
+# THREE SEPARATE PROJECTS, not three targets in one. Targets in a single
 # package share that package's objects — a `[targets.X] sources` list does not
 # fence them off — so a C++ target next door would put its object into the
 # pure-C library's link and the predicate under test would never see a C-only

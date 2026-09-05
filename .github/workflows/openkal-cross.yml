@@ -1,6 +1,6 @@
 name: openkal cross-build (3 hosts × 3 targets)
 
-# ⭐⭐ WHAT THIS WORKFLOW ASSERTS, AND WHY IT IS A MATRIX RATHER THAN A ROW.
+# WHAT THIS WORKFLOW ASSERTS, AND WHY IT IS A MATRIX RATHER THAN A ROW.
 #
 # `cross-build-test.yml` verifies the crosses served by a PAYLOAD: a toolchain
 # whose driver has exactly one target. There the host and the target are joined
@@ -13,7 +13,7 @@ name: openkal cross-build (3 hosts × 3 targets)
 # claim that follows is that N hosts × N targets collapses to N implementations
 # plus one tool: **the machine doing the building stops being a variable.**
 #
-# ⚠️ THAT IS A CLAIM, AND CLAIMS OF THIS SHAPE HAVE BEEN WRONG IN THIS
+# THAT IS A CLAIM, AND CLAIMS OF THIS SHAPE HAVE BEEN WRONG IN THIS
 # REPOSITORY. Reaching PE from a Linux host needed four separate repairs, and
 # adding the other two hosts found seven more — every one of them a decision
 # that had been keyed on which machine was building rather than on which machine
@@ -36,20 +36,20 @@ name: openkal cross-build (3 hosts × 3 targets)
 # produced by ALL THREE hosts.
 #
 #              build on Linux   build on macOS   build on Windows
-#   run Linux        ✓                ✓                 ✓
-#   run macOS        ✓                ✓                 ✓
-#   run Windows      ✓                ✓                 ✓
+#   run Linux                                       
+#   run macOS                                       
+#   run Windows                                     
 #
-# ⭐ The diagonal is an ordinary native build. The six off-diagonal cells are
+# The diagonal is an ordinary native build. The six off-diagonal cells are
 # the claim, and they are what a single-host workflow cannot reach.
 #
-# ⚠️ THE RUN JOBS INSTALL NOTHING — not mcpp, not a compiler, not a C runtime.
+# THE RUN JOBS INSTALL NOTHING — not mcpp, not a compiler, not a C runtime.
 # A program above openkal carries its C library, its C++ runtime and its
 # unwinder; what remains is the operating system it was built for. If a
 # toolchain step is ever added to one of them because "the program needs it",
 # that is the finding rather than the fix.
 #
-# ⚠️ AND THE ASSERTION IS ON THE OUTPUT, NOT THE EXIT STATUS. The program prints
+# AND THE ASSERTION IS ON THE OUTPUT, NOT THE EXIT STATUS. The program prints
 # four lines, and `unwound: true` is the one a link cannot fake: it says a
 # destructor ran while an exception was being carried out of a frame, which
 # means the unwinder found this image's own frame descriptions.
@@ -63,14 +63,14 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # ⚠️ No mcpp or xlings version here. `bootstrap-mcpp` owns both, and a second
+  # No mcpp or xlings version here. `bootstrap-mcpp` owns both, and a second
   # statement of them is a second thing to keep in step — the pin check
   # (.github/tools/check_version_pins.sh) enforces the ones that exist and would
   # not know about a copy in this file.
   XLINGS_NON_INTERACTIVE: '1'
   # The branch of the openkal packages this change is verified against.
   #
-  # ⚠️ IT WAS `feat/openkal-closure` UNTIL 2026-08-25, LONG AFTER THAT BRANCH
+  # IT WAS `feat/openkal-closure` UNTIL 2026-08-25, LONG AFTER THAT BRANCH
   # MERGED. A fixed name here is a pin nobody is reminded to move: the comment
   # said "when they are on `main` this becomes `main`" and the moment for that
   # passed without anyone reading it again. Every run since was verifying this
@@ -97,7 +97,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ⚠️ THE REPOSITORY'S OWN BOOTSTRAP, NOT A SECOND ONE.
+      # THE REPOSITORY'S OWN BOOTSTRAP, NOT A SECOND ONE.
       #
       # This job first wrote its own: fetch xlings, then
       # `xlings install mcpp@<version>`. It failed on the very first run:
@@ -116,7 +116,7 @@ jobs:
       # was wrong within a day of being written.
       - uses: ./.github/actions/bootstrap-mcpp
 
-      # ⭐ THE mcpp UNDER TEST. Everything after this uses the binary this step
+      # THE mcpp UNDER TEST. Everything after this uses the binary this step
       # produces; the bootstrapped one above is only what compiles it.
       - name: Build the mcpp in this pull request
         run: |
@@ -124,11 +124,11 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
           "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
-          # ⚠️ `--dev` and not `--release`. What is under test is a set of
+          # `--dev` and not `--release`. What is under test is a set of
           # decisions about compile and link flags; an optimisation level
           # changes none of them and a release self-build is most of the budget
           # of a job on a two-core runner.
-          # ⚠️⚠️ REMOVE ANY mcpp ALREADY UNDER `target/` FIRST, so that after the
+          # REMOVE ANY mcpp ALREADY UNDER `target/` FIRST, so that after the
           # build there is exactly ONE and it is the one this step produced.
           #
           # `target/` is a RESTORED CACHE whose key hashes `src/**`. A source
@@ -139,7 +139,7 @@ jobs:
           # whichever directory the walk reaches first, which is not the newest
           # and is not this build's.
           #
-          # ⚠️ MEASURED, LOCALLY AND ON CI. On this developer's own tree the
+          # MEASURED, LOCALLY AND ON CI. On this developer's own tree the
           # command picks `007bc0f2b78f7fa5` while the build just wrote
           # `148448dec6c4a7a7`. On CI it picked a stale binary whose ELF
           # interpreter names a glibc payload the runner no longer has:
@@ -151,7 +151,7 @@ jobs:
           # trigger is simply a source change large enough to leave two
           # directories in the restored tree.
           #
-          # ⭐ mtime CANNOT BE THE CRITERION HERE. A cache restore writes every
+          # mtime CANNOT BE THE CRITERION HERE. A cache restore writes every
           # file at extraction time, so "newest" is meaningless on exactly the
           # tree where this goes wrong — `ls -t | head -1` has picked a stale
           # fingerprint in this repository before. Absence can't be faked:
@@ -160,10 +160,10 @@ jobs:
           # The objects and BMIs stay cached — this costs one link.
           find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) -delete 2>/dev/null || true
           "$MCPP" build --dev
-          # ⚠️ EXACTLY ONE, not "at least one". Two would mean the delete above
+          # EXACTLY ONE, not "at least one". Two would mean the delete above
           # missed a tree and the ambiguity this step exists to remove is back.
           #
-          # ⚠️ NO `mapfile`. This job also runs on macos, whose `/bin/bash` is
+          # NO `mapfile`. This job also runs on macos, whose `/bin/bash` is
           # 3.2 and has no such builtin — a bashism here would fail on one row
           # of the matrix for a reason unrelated to what the row tests.
           find target -type f \( -name 'mcpp' -o -name 'mcpp.exe' \) > /tmp/mcpp-built.txt
@@ -181,7 +181,7 @@ jobs:
       - name: Select the toolchain the openkal packages ask for
         run: |
           set -euo pipefail
-          # ⚠️ Install, then select. `toolchain default` names one and does not
+          # Install, then select. `toolchain default` names one and does not
           # fetch it.
           "$MCPP_UNDER_TEST" self config --mirror GLOBAL 2>/dev/null || true
           "$MCPP_UNDER_TEST" toolchain install llvm 22.1.8
@@ -190,7 +190,7 @@ jobs:
       - name: The program — one source, three targets
         run: |
           set -euo pipefail
-          # ⚠️ THE SEVENTH CALL SITE. `git_clone_retry.sh` was written because a
+          # THE SEVENTH CALL SITE. `git_clone_retry.sh` was written because a
           # runner's DNS hiccup is not a red build, and its own note counts
           # "six call sites, one failure mode" — this workflow was not among
           # them, and the mode duly arrived here. Measured on this job,
@@ -206,7 +206,7 @@ jobs:
             https://github.com/mcpplibs/openkal-llvm-runtime "$RUNNER_TEMP/okl"
           cd "$RUNNER_TEMP/okl/examples/same-source"
           mkdir -p "$RUNNER_TEMP/out"
-          # ⚠️ The three HOSTED targets. Bare metal is verified by
+          # The three HOSTED targets. Bare metal is verified by
           # `openkal-llvm-runtime`'s own CI under qemu; it has no runner here to
           # execute on, and a build-only cell in a workflow whose point is
           # running would be the weaker claim.
@@ -245,7 +245,7 @@ jobs:
       run:
         shell: bash
     steps:
-      # ⚠️ NO checkout AND NO toolchain. This job is the claim: a program built
+      # NO checkout AND NO toolchain. This job is the claim: a program built
       # above openkal needs the operating system it was built for and nothing
       # else. Anything installed here would weaken what a pass means.
       - uses: actions/download-artifact@v4
@@ -261,9 +261,9 @@ jobs:
             if [ ! -f "$bin" ]; then
               echo "::error::$bin is missing"; fail=1; continue
             fi
-            # ⚠️ The executable bit does not survive an artefact upload.
+            # The executable bit does not survive an artefact upload.
             chmod +x "$bin" || true
-            # ⚠️ arm64 macOS refuses an unsigned image, so the signature is
+            # arm64 macOS refuses an unsigned image, so the signature is
             # asserted before the run: a failure here is "the linker did not
             # ad-hoc sign it", which is a different repair from "it crashed".
             if [ "${{ matrix.system }}" = "macos" ]; then
@@ -277,7 +277,7 @@ jobs:
             ok=1
             grep -q 'sorted: 2 4 7' out.log || ok=0
             grep -q 'caught: 42'    out.log || ok=0
-            # ⭐ The line a link cannot fake.
+            # The line a link cannot fake.
             grep -q 'unwound: true' out.log || ok=0
             grep -q 'import std over openkal: ok' out.log || ok=0
             [ "$ok" = 1 ] || { echo "::error::built on $host: wrong output"; fail=1; }
@@ -289,7 +289,7 @@ jobs:
   # The e2e scripts that BUILD the openkal ecosystem, on a runner that
   # has what they ask for.
   #
-  # ⚠️ THEY WERE WRITTEN AND THEY WERE NEVER RUN. `285`–`289` declare
+  # THEY WERE WRITTEN AND THEY WERE NEVER RUN. `285`–`289` declare
   # `# requires: llvm`, and the linux e2e shards report
   #
   #     Detected capabilities: elf unix-shell fresh-sandbox gcc
@@ -324,7 +324,7 @@ jobs:
           "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
           "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
           "$MCPP" build --dev
-          # ⚠️ NEWEST BY MTIME, NOT FIRST BY DIRECTORY ORDER. `target/` holds one
+          # NEWEST BY MTIME, NOT FIRST BY DIRECTORY ORDER. `target/` holds one
           # directory per fingerprint and the runner restores a cache of it, so
           # `find … | head -1` can return a binary an earlier run left behind.
           # Measured: it reported the right VERSION STRING — the stale copy was
@@ -349,7 +349,7 @@ jobs:
           "$MCPP_UNDER_TEST" toolchain install gcc 16.1.0
           "$MCPP_UNDER_TEST" toolchain install llvm 22.1.8
 
-      # ⚠️ THE EMULATORS, OR TWO OF THE SIX MEASURE HALF OF WHAT THEY SAY.
+      # THE EMULATORS, OR TWO OF THE SIX MEASURE HALF OF WHAT THEY SAY.
       #
       # 287 and 288 both end by RUNNING what they built — an aarch64 binary and
       # a riscv64 machine image — and both degrade to a SKIP when no emulator
@@ -361,7 +361,7 @@ jobs:
       # have called that covered. Linking is not booting, as the script itself
       # says.
       #
-      # ⚠️ BOTH homes, for the reason ci-linux-e2e.yml's baremetal job records:
+      # BOTH homes, for the reason ci-linux-e2e.yml's baremetal job records:
       # the shim on PATH dispatches against whichever home owns it, so an
       # emulator installed only in the ambient one answers "not installed" when
       # mcpp asks.
@@ -400,7 +400,7 @@ jobs:
       - name: Each one RAN
         run: |
           set -euo pipefail
-          # ⭐ THE ASSERTION THIS JOB EXISTS FOR. A zero exit code cannot
+          # THE ASSERTION THIS JOB EXISTS FOR. A zero exit code cannot
           # distinguish "passed" from "skipped" — every one of these scripts
           # has an early `exit 0` for a capability or an arrangement it did
           # not find. The PASS line can.
@@ -419,7 +419,7 @@ jobs:
             "OK: the openkal stack builds, links statically and runs" || fail=1
           check 287_the_openkal_stack_crosses_to_aarch64.sh \
             "OK: the openkal stack crosses to aarch64, supplies its atomics helpers and runs" || fail=1
-          # ⭐ AND IT REACHED THE PARTS THAT NEED A TOOL. Both of 287's last two
+          # AND IT REACHED THE PARTS THAT NEED A TOOL. Both of 287's last two
           # assertions degrade to a SKIP, and the OK line prints either way.
           check 287_the_openkal_stack_crosses_to_aarch64.sh \
             "LSE instructions out of" || fail=1
@@ -427,7 +427,7 @@ jobs:
             "it runs under qemu-aarch64" || fail=1
           check 288_the_openkal_stack_on_a_machine_with_no_os.sh \
             "OK: openkal runs on a machine with no operating system and no C library" || fail=1
-          # ⭐ 288's name says "runs"; without this it can print that line
+          # 288's name says "runs"; without this it can print that line
           # having only linked.
           check 288_the_openkal_stack_on_a_machine_with_no_os.sh \
             "it boots" || fail=1

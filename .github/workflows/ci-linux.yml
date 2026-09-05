@@ -79,7 +79,7 @@ jobs:
 
       # Same placement, same reason: pure text, no toolchain.
       #
-      # ⚠️ IT PRINTS AND DOES NOT FAIL, DELIBERATELY. The three rules it carries
+      # IT PRINTS AND DOES NOT FAIL, DELIBERATELY. The three rules it carries
       # each have real false positives — a control step legitimately pins one
       # target, a `grep -q .` legitimately expects output — and the whole value
       # of the thing is that somebody READS it. A hard gate would be routed
@@ -124,7 +124,7 @@ jobs:
       - name: Per-subsystem tests (`mcpp test -p <member>`)
         run: |
           set -euo pipefail
-          # ⚠️ `$MCPP_FRESH` comes from the step above, which takes the NEWEST
+          # `$MCPP_FRESH` comes from the step above, which takes the NEWEST
           # mcpp anywhere under target/. That is correct in this job because
           # nothing between the two steps writes another one — but `mcpp pack`
           # leaves a copy under `target/dist/`, and a pack step inserted above

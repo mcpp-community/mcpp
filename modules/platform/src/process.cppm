@@ -83,7 +83,7 @@ RunResult capture_with_env(
 // (LD_LIBRARY_PATH) cannot poison mcpp itself or any sibling host process.
 // Returns a platform-normalized exit code, or 127 if exec fails.
 //
-// ⚠️ A SPAWN FAILURE IS REPORTED EXACTLY ONCE AND NEVER DROPPED (#544). Every
+// A SPAWN FAILURE IS REPORTED EXACTLY ONCE AND NEVER DROPPED (#544). Every
 // launcher below follows one rule: when the child could not be started it
 // returns 127 and either (a) stores the errno in `*spawn_error` and prints
 // nothing, because a caller that asked for the errno owns the report, or
@@ -244,7 +244,7 @@ std::string windows_wrap_for_cmd_c(std::string_view cmd);
 
 // The command line that runs a USER-AUTHORED shell command through cmd.exe.
 //
-// ⚠️ NOT `windows_command_from_argv({"cmd.exe", "/d", "/s", "/c", command})`.
+// NOT `windows_command_from_argv({"cmd.exe", "/d", "/s", "/c", command})`.
 // That shape is for a program plus its argv, where CreateProcess's parsing is
 // what has to be satisfied. cmd.exe is not parsed that way: its switches must
 // arrive BARE (quoted, they are no longer switches), and the command tail is

@@ -2,7 +2,7 @@
 # requires: llvm unix-shell qemu-riscv
 # openkal where there is no operating system, and no C library either.
 #
-# ⚠️ THE FREESTANDING SHAPE IS THE ONE THE ENGINE MODELS MOST AND TESTS LEAST.
+# THE FREESTANDING SHAPE IS THE ONE THE ENGINE MODELS MOST AND TESTS LEAST.
 # `riscv64-none-elf` appears in ten e2e scripts and in none of them does a real
 # openkal package supply the platform: they build a program with no dependency
 # at all, which exercises the freestanding link path and not the seam this
@@ -10,13 +10,13 @@
 # by openkal-opensbi, which answers to the SBI a machine's firmware provides —
 # while `cAbi` is genuinely absent.
 #
-# ⭐ `cAbi.absent()` IS A DISTINCT ORIGIN, AND THE LINK LINE BRANCHES ON IT.
+# `cAbi.absent()` IS A DISTINCT ORIGIN, AND THE LINK LINE BRANCHES ON IT.
 # A hosted target whose C library comes from a package and one that has no C
 # library at all take different flags (`-nostdlib -static` for the latter), and
 # the predicate that chooses between them was, until 2026-08-25, an OR over two
 # layers. Four origins, four behaviours; this covers the one no other e2e does.
 #
-# ⚠️ AND THE PROGRAM RUNS UNDER QEMU RATHER THAN MERELY LINKING. A freestanding
+# AND THE PROGRAM RUNS UNDER QEMU RATHER THAN MERELY LINKING. A freestanding
 # image that links is not evidence: the entry point, the linker script and the
 # ordering of the startup objects are BSP facts, and the only check that reaches
 # them is the machine printing what the program told it to.
@@ -37,7 +37,7 @@ version = "0.1.0"
 [toolchain]
 default = "llvm@22.1.8"
 
-# ⚠️ `sysroot = ""` IS WHAT MAKES THIS THE NO-C-LIBRARY SHAPE, AND THE TARGET
+# `sysroot = ""` IS WHAT MAKES THIS THE NO-C-LIBRARY SHAPE, AND THE TARGET
 # NAME DOES NOT IMPLY IT.
 #
 # `riscv64-none-elf` names a machine with no operating system; whether the
@@ -66,7 +66,7 @@ import openkal.abort;
 
 // No <cstdio>: there is no C library here. The only way out of this program is
 // the interface the platform package implements.
-// ⚠️ `extern "C"`, AND THE THREE-ARGUMENT SIGNATURE THE ENTRY POINT DECLARES.
+// `extern "C"`, AND THE THREE-ARGUMENT SIGNATURE THE ENTRY POINT DECLARES.
 // `-ffreestanding` removes the compiler's special handling of `main`, so the
 // name is an ordinary symbol and has to match what calls it. The platform
 // package's `standalone` feature runs the initialisers and then calls
@@ -99,9 +99,9 @@ case "$out" in
   *) echo "FAIL: the platform did not come from the graph"
      printf '%s\n' "$out" | grep -E 'abi' | sed 's/^/        /'; exit 1 ;;
 esac
-# ⭐ AND THE `c-abi` LINE NAMES NOTHING.
+# AND THE `c-abi` LINE NAMES NOTHING.
 #
-# ⚠️ THE FIRST VERSION OF THIS ASSERTED THE LINE WAS ABSENT, WHICH IS THE WRONG
+# THE FIRST VERSION OF THIS ASSERTED THE LINE WAS ABSENT, WHICH IS THE WRONG
 # CRITERION AND WOULD HAVE FAILED ON A CORRECT BUILD. The report prints one row
 # per layer and says what each resolved to; a layer that resolved to nothing is
 # reported as nothing:
@@ -132,7 +132,7 @@ case "$desc" in
 esac
 
 # ── It boots on a machine whose firmware provides the SBI ──────────────────
-# ⚠️ THE PAYLOAD'S COPY FIRST, AND `command -v` ONLY AS A FALLBACK.
+# THE PAYLOAD'S COPY FIRST, AND `command -v` ONLY AS A FALLBACK.
 #
 # On a machine with xlings there is a `qemu-system-riscv64` on PATH that is a
 # shim, and asking it to run anything answers:
@@ -160,7 +160,7 @@ else
     wait $pid 2>/dev/null || true
     kill $guard 2>/dev/null || true
 
-    # ⚠️ The emulated console ends its lines with CRLF, so a comparison that
+    # The emulated console ends its lines with CRLF, so a comparison that
     # does not strip them fails on a line that is correct.
     if tr -d '\r' < "$log" | grep -q 'okbare alive'; then
         echo "  ok  it boots and prints through openkal.stream"

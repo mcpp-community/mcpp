@@ -10,7 +10,7 @@ import mcpp.version_req;
 // with. Nothing outside this package is involved.
 
 TEST(Versioning, ThisBinaryDeclaresAFourSegmentDateVersion) {
-    // ⚠️ The same string lives in the root mcpp.toml, and
+    // The same string lives in the root mcpp.toml, and
     // .github/tools/check_version_pins.sh keeps the two equal. This states the
     // SHAPE, which that checker cannot: a version that lost a segment would
     // still match the manifest and still be wrong.

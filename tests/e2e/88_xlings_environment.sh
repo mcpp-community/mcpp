@@ -21,7 +21,7 @@ version = "0.1.0"
 [xlings]
 # Host build-tools the project wants available (xlings "deps").
 #
-# ⚠️ THE VERSION HAS TO EXIST, AND UNTIL 2026.9.1.1 IT DID NOT HAVE TO.
+# THE VERSION HAS TO EXIST, AND UNTIL 2026.9.1.1 IT DID NOT HAVE TO.
 # This read `make@4.4, cmake@3.28`; the index carries make 4.3 and cmake
 # 4.4.2/4.0.2, so neither has ever resolved. That was invisible because #531's
 # provisioning did not read its own result — every failure xlings reported was

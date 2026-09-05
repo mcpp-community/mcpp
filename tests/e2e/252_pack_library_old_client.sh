@@ -92,7 +92,7 @@ EOF
     || { cat "$TMP/app/new.log"; echo "the PR binary could not consume its own package"; exit 1; }
 grep -q 'ok=42' "$TMP/app/new.log" || { cat "$TMP/app/new.log"; echo "wrong answer"; exit 1; }
 
-# ⚠️ The boot entry each CI job bootstraps from is an xvm SHIM, and a shim
+# The boot entry each CI job bootstraps from is an xvm SHIM, and a shim
 # resolves against the home it is asked in — under the e2e suite's environment
 # it answers `xlings: 'mcpp' is not installed` and prints NOTHING for
 # `--version`. The first version of this guard compared that empty string

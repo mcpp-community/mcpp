@@ -134,7 +134,7 @@ std::string platform_block(std::string_view version, const ReleaseInfo::PerPlatf
 // would produce a descriptor whose edges depend on which machine packed it,
 // and nothing downstream could tell.
 //
-// ⚠️ A package still on the superseded `[xlings] deps` emits NO edge, exactly
+// A package still on the superseded `[xlings] deps` emits NO edge, exactly
 // as before. That is not an oversight: `deps` is resolved for the host at
 // load, so the per-platform declaration a descriptor needs is already gone by
 // the time this runs, and writing the host's answer into all three blocks

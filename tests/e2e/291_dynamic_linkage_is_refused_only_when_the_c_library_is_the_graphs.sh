@@ -2,7 +2,7 @@
 # requires: gcc llvm elf unix-shell
 # `linkage = "dynamic"` is reported as ineffective only when it actually is.
 #
-# ⚠️ THE PREDICATE USED TO SPAN TWO LAYERS AND THE REASON SPANS ONE. The
+# THE PREDICATE USED TO SPAN TWO LAYERS AND THE REASON SPANS ONE. The
 # warning's own justification — "those packages are compiled into this build as
 # objects, and there is no shared object to link against" — is a property of
 # the C LIBRARY. A backend that runs ON a platform takes its kernel interface
@@ -15,7 +15,7 @@
 #     $ file …/dynprobe   → dynamically linked
 #     $ readelf -d …      → NEEDED libm.so.6, libgcc_s.so.1, libc.so.6
 #
-# ⭐⭐ BOTH DIRECTIONS, BECAUSE ONLY ONE OF THEM IS THE FIX. Deleting the
+# BOTH DIRECTIONS, BECAUSE ONLY ONE OF THEM IS THE FIX. Deleting the
 # warning outright also stops it lying, and that would lose the diagnostic the
 # directive needs when the C library really does come from the graph — which is
 # why the second half builds that arrangement and requires the warning to
@@ -26,7 +26,7 @@ MCPP="${MCPP:-mcpp}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# ⚠️ AN EXPLICIT `--target` IS LOAD-BEARING. `[target.<triple>]` applies to the
+# AN EXPLICIT `--target` IS LOAD-BEARING. `[target.<triple>]` applies to the
 # target that was REQUESTED; a bare `mcpp build` requests none, the row never
 # applies, `linkage` stays empty, and both halves of this test would pass
 # without exercising anything.
@@ -82,11 +82,11 @@ if warned "$out"; then
 fi
 echo "  ok  no warning when the C library is the payload's"
 
-# ⭐ AND THE ARTIFACT AGREES. The warning's claim is "The artifact is static";
+# AND THE ARTIFACT AGREES. The warning's claim is "The artifact is static";
 # a test that only checked for the absence of the text would pass on a build
 # that silently produced a static binary anyway.
 dyn="$(readelf -d "$bin" 2>&1 || true)"
-# ⚠️ "no dynamic section" AND "readelf said nothing" BOTH COUNT ZERO `NEEDED`.
+# "no dynamic section" AND "readelf said nothing" BOTH COUNT ZERO `NEEDED`.
 # The first is the answer a static binary gives and the second is the answer a
 # tool that could not read the file gives, and only one of them is about this
 # build. `readelf -d` on a static ELF says so in words; on a file it cannot

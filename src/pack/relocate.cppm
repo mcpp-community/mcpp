@@ -58,7 +58,7 @@
 // strings, `.dynsym` names, `.gnu.version_r`). Silently truncating a symbol
 // name is a worse outcome than a dead string.
 //
-// ⚠️ CONSEQUENCE FOR ANY GUARD: "this artifact carries no build-machine path"
+// CONSEQUENCE FOR ANY GUARD: "this artifact carries no build-machine path"
 // must be asked of the DYNAMIC ENTRIES, never of the file's bytes. A
 // byte-pattern check reports a correctly relocated artifact as dirty.
 

@@ -4,7 +4,7 @@
 # RISC-V firmware image from a C++20 MODULE interface unit plus assembly, and
 # `mcpp run --target-triple` boots it in qemu.
 #
-# ⚠️ SOFT `requires:`, and the guard lives elsewhere on purpose.
+# SOFT `requires:`, and the guard lives elsewhere on purpose.
 #
 # `requires-hard:` (missing capability FAILS instead of skipping) exists and is
 # the right tool for "this runner is misconfigured" — but it cannot express
@@ -159,7 +159,7 @@ readelf -h "$img" | grep -q '0x80200000' || {
     readelf -h "$img" | grep -i entry; exit 1; }
 
 # ── run ─────────────────────────────────────────────────────────────────────
-# ⚠️ BOTH spellings, and the pairing is the test.
+# BOTH spellings, and the pairing is the test.
 #
 # `run` also takes a POSITIONAL binary name, and the arg parser falls back
 # from an unset option to a positional of the same name. While that positional

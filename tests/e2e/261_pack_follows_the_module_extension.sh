@@ -10,7 +10,7 @@
 # and consuming the package must both work with nothing further declared on
 # either side. Anything else makes the knob a knob plus two things to remember.
 #
-# ⚠️ TWO DEFECTS SAT BEHIND THIS, and the first was silent in both directions.
+# TWO DEFECTS SAT BEHIND THIS, and the first was silent in both directions.
 #
 # 1. The lib-root convention hard-coded `.cppm`: `src/<tail>.cppm`. For an
 #    `.ixx` project that file does not exist, so the closure started nowhere:

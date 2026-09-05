@@ -865,7 +865,7 @@ jobs:
 
       - name: Mirror binaries to xlings-res/mcpp (gh + gtc)
         if: ${{ env.XLINGS_RES_TOKEN != '' }}
-        # ⚠️⚠️ THIS MUST BE LONGER THAN THE SCRIPT'S OWN LEG DEADLINE, AND FOR
+        # THIS MUST BE LONGER THAN THE SCRIPT'S OWN LEG DEADLINE, AND FOR
         # A LONG TIME IT WAS SHORTER.
         #
         # `mirror_res.sh` gives GitCode `MIRROR_LEG_DEADLINE_GTC=2400s` because
@@ -877,7 +877,7 @@ jobs:
         # with only the small `.sha256` files through. v2026.8.25.1 and
         # v2026.8.25.2 both, measured.
         #
-        # ⚠️ The paragraph this replaces described a design that no longer
+        # The paragraph this replaces described a design that no longer
         # exists: a per-asset `MIRROR_UPLOAD_TIMEOUT` of 180s. The script's own
         # comment records why it went ("the old per-asset cap failed four
         # releases in a row") — but this value, calibrated to it, stayed.

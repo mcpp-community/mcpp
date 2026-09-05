@@ -217,7 +217,7 @@ x86_64-w64-mingw32-g++  →  x86_64-w64-mingw32     (emits nothing else)
 clang++                 →  x86_64-unknown-linux-gnu, and --target= changes it
 ```
 
-⭐ This is why the prebuilt system passes no `--target`: the payload's compiler
+This is why the prebuilt system passes no `--target`: the payload's compiler
 is named after the one target it can emit, and choosing a target means choosing
 a payload. It is also why the build-time system needs only one compiler.
 
@@ -229,7 +229,7 @@ MinGW's own triple is `x86_64-w64-mingw32`:
 |---|---|---|
 | arch | `x86_64` | |
 | vendor | `w64` | the project is `mingw-w64`, distinguishing it from the stalled original `mingw32` |
-| os | **`mingw32`** | ⭐ MinGW puts *itself* in the OS field |
+| os | **`mingw32`** | MinGW puts *itself* in the OS field |
 | env | (absent) | three fields is the whole name |
 
 The convention descends from autoconf's `config.guess`, where the OS field names
@@ -253,7 +253,7 @@ LLVM  x86_64 - unknown - windows - gnu
                 ^vendor   ^os       ^env
 ```
 
-⭐ **`mingw32` is split out of the OS field into `windows` plus `gnu`.** The
+**`mingw32` is split out of the OS field into `windows` plus `gnu`.** The
 value `gnu` exists because LLVM needed a name for the half that was left over.
 Its meaning is "the MinGW/Itanium ABI lineage" and it has never meant "the C
 library is glibc" on Windows — the same word carries different duties under
@@ -276,7 +276,7 @@ Target x86_64-windows-gnu → x86_64-w64-windows-gnu
        ^ mcpp                ^ LLVM
 ```
 
-⚠️ Keeping the third vocabulary separate is what lets mcpp name something LLVM
+Keeping the third vocabulary separate is what lets mcpp name something LLVM
 cannot. Measured on llvm 22.1.8, `windows` with a `musl` environment is accepted
 by the triple parser and crashes the compiler:
 
@@ -308,7 +308,7 @@ A target names a machine. It does not name who compiles for it, and it does not
 name where its C library comes from — those are two further choices, and the
 same target string means a different build under each.
 
-⚠️ **"From the payload" is not one payload.** It is whichever payload the
+**"From the payload" is not one payload.** It is whichever payload the
 chosen compiler brings, and gcc and clang bring them differently: gcc has one
 payload per target, with a triple-prefixed driver, while one `clang++` emits
 every target it was built with. Measured on one host, one source:
@@ -341,7 +341,7 @@ error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
        payload, and 'llvm@22.1.8' has none here.
 ```
 
-⚠️ **Before 2026.8.26.1 this ran the whole build and failed at the link**, with
+**Before 2026.8.26.1 this ran the whole build and failed at the link**, with
 `crtbeginT.o (bare name — the linker cannot resolve it)` — accurate about the
 symptom and silent about the decision. clang is retargetable and brings no C
 library, so it reached for a gcc installation; on a machine that happens to have
@@ -360,7 +360,7 @@ default = "llvm@22.1.8"
 That is [`examples/06-openkal-cross`](../examples/06-openkal-cross), and it is
 why the refusal names openkal in its own text.
 
-⚠️ **A bare-metal row's toolchain is not a convention, and neither is
+**A bare-metal row's toolchain is not a convention, and neither is
 `x86_64-windows-musl`'s** — no gcc payload emits a PE with a musl C library, so
 those rows cannot be overridden at all. See [chapter 03](03-toolchains.md).
 
@@ -375,7 +375,7 @@ graph — measured the same way:
 | `x86_64-windows-gnu` | openkal (openkal-windows, graph) | musl (graph) | libc++ (graph) |
 | `x86_64-windows-musl` | openkal (openkal-windows, graph) | musl (graph) | libc++ (graph) |
 
-⚠️ **Look at `x86_64-windows-gnu` in both tables.** Its C library is `gnu` — the
+**Look at `x86_64-windows-gnu` in both tables.** Its C library is `gnu` — the
 MinGW CRT — when a payload supplies it, and `musl` when the graph does. One
 target string, two different C libraries, and until 2026.8.24.6 mcpp had no way
 to say which: the same `--target x86_64-windows-gnu` produced artefacts that
@@ -393,7 +393,7 @@ from a dependency graph, which is what `toolchain list` reports as
 The two axes above — which compiler, and where the C library comes from — are
 choices a project makes. The third is not: it is the machine the build runs on.
 
-⭐ **The axis is the set mcpp ships for, and it is (os, arch) rather than os.**
+**The axis is the set mcpp ships for, and it is (os, arch) rather than os.**
 `release.yml` publishes four host binaries:
 
 | build host | release asset | CI runner |
@@ -403,7 +403,7 @@ choices a project makes. The third is not: it is the machine the build runs on.
 | `macos-arm64` | `mcpp-<v>-macosx-arm64.tar.gz` | `macos-14` |
 | `windows-x86_64` | `mcpp-<v>-windows-x86_64.zip` | `windows-2022` |
 
-⚠️ **The two Linux hosts are not one host.** `x86_64-linux-gnu` needs the
+**The two Linux hosts are not one host.** `x86_64-linux-gnu` needs the
 host-native `xim:glibc` and `xim:linux-headers` payloads, which exist for the
 host's own architecture only — so that row is reachable from `linux-x86_64` and
 not from `linux-aarch64`, while `aarch64-linux-gnu` is the mirror case and is
@@ -414,31 +414,31 @@ other's rows.
 
 | target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
 |---|---|---|---|---|---|---|
-| `x86_64-linux-gnu` | verified | — | ✅ payload | — | — | — |
+| `x86_64-linux-gnu` | verified | — | payload | — | — | — |
 | `aarch64-linux-gnu` | planned | — | planned | planned | planned | planned |
-| `x86_64-linux-musl` | verified | `gcc@16.1.0` | ✅ payload | ✅ payload | — | ✅ payload |
-| `aarch64-linux-musl` | verified | `gcc@16.1.0` | ✅ payload | ✅ payload | — | — |
+| `x86_64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | payload |
+| `aarch64-linux-musl` | verified | `gcc@16.1.0` | payload | payload | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
-| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | ✅ payload | ✅ payload | — | ✅ payload |
-| `x86_64-windows-musl` | preview | `llvm@22.1.8` | ⚙ graph | ⚙ graph | ⚙ graph | ✅ payload |
-| `x86_64-windows-msvc` | verified | — | — | — | — | ✅ system |
-| `aarch64-macos` | verified | — | — | — | ✅ SDK | — |
+| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | payload | payload | — | payload |
+| `x86_64-windows-musl` | preview | `llvm@22.1.8` | graph | graph | graph | payload |
+| `x86_64-windows-msvc` | verified | — | — | — | — | system |
+| `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
-| `riscv64-none-elf` | verified | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
-| `riscv32-none-elf` | verified | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
-| `aarch64-none-elf` | preview | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
-| `x86_64-none-elf` | preview | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
-| `thumbv6m-none-eabi` | verified | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
-| `thumbv7m-none-eabi` | verified | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
-| `thumbv7em-none-eabi` | preview | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
-| `thumbv7em-none-eabihf` | verified | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
-| `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
-| `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
-| `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | ✅ payload | ✅ payload | ✅ payload | ✅ payload |
+| `riscv64-none-elf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
+| `riscv32-none-elf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
+| `aarch64-none-elf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
+| `x86_64-none-elf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
+| `thumbv6m-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
+| `thumbv7m-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
+| `thumbv7em-none-eabi` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
+| `thumbv7em-none-eabihf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
+| `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
+| `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
+| `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
 
-`✅ payload` a toolchain payload here produces it · `⚙ graph` no payload, but a
-dependency can supply the system · `✅ system` located on the machine, not
-installed by mcpp · `✅ SDK` the platform's own · `—` unreachable from this host
+`payload` a toolchain payload here produces it · `graph` no payload, but a
+dependency can supply the system · `system` located on the machine, not
+installed by mcpp · `SDK` the platform's own · `—` unreachable from this host
 · `planned` registered in the vocabulary, nothing wired yet.
 
 ### The rule behind the columns
@@ -453,7 +453,7 @@ installed by mcpp · `✅ SDK` the platform's own · `—` unreachable from this
 | `aarch64-macos` | macOS | the SDK is the machine's |
 | `*-none-elf` | every host | clang and lld are cross-compilers by construction |
 
-⚠️ **A `—` is about payloads, not about possibility.** `host_can_serve` answers
+**A `—` is about payloads, not about possibility.** `host_can_serve` answers
 "does a payload here produce it", and a dependency graph can supply the system
 instead — which is why `x86_64-windows-musl` reads `via dependency graph` on
 Linux and produces a real PE32+ there.
@@ -466,7 +466,7 @@ four hosts. Each scans every row it lists, twice — the payload alone, then wit
 [`tests/matrix/expected.tsv`](../tests/matrix/expected.tsv), which is keyed on
 `(mode, host, target, compiler)`.
 
-⚠️ What a runner resolves as its own target is not what its name suggests:
+What a runner resolves as its own target is not what its name suggests:
 
 | runner | host target it resolves |
 |---|---|
@@ -478,7 +478,7 @@ four hosts. Each scans every row it lists, twice — the payload alone, then wit
 Three of this chapter's criteria assumed the Linux coincidence and had to be
 corrected on the other hosts.
 
-⚠️ **The cell count per host is not a constant.** It follows from what that
+**The cell count per host is not a constant.** It follows from what that
 machine has installed, and the same runner has been measured with different
 toolchains on consecutive runs. The comparison therefore asserts *the scan
 produced rows* and *every row the expected table names was reached*, rather than

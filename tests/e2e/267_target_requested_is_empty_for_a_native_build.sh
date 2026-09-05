@@ -3,7 +3,7 @@
 # `MCPP_TARGET_REQUESTED` — the value a build program needs and `MCPP_TARGET`
 # cannot give it.
 #
-# ⭐⭐ WHY THE TWO VARIABLES ARE NOT THE SAME QUESTION.
+# WHY THE TWO VARIABLES ARE NOT THE SAME QUESTION.
 #
 # `MCPP_TARGET` answers "which machine is this for", and it is filled in with
 # the host when nobody named a target — which is right for that question and
@@ -17,7 +17,7 @@
 # can name one. A native build on the same machine gets the SDK and needs
 # nothing from the package.
 #
-# ⚠️ Both readings of that question have already been measured wrong in
+# Both readings of that question have already been measured wrong in
 # `openkal-macos`:
 #
 #   from the host  → right for the cross, and `library not found for -lSystem`
@@ -29,7 +29,7 @@
 # ⇒ The assertions below are the contract those two attempts needed: EMPTY for a
 # native build, and the requested triple otherwise.
 #
-# ⚠️ `"$MCPP"`, never a bare `mcpp`: the harness passes the binary under test,
+# `"$MCPP"`, never a bare `mcpp`: the harness passes the binary under test,
 # and a bare name resolves through PATH to whichever engine is installed.
 set -e
 
@@ -45,7 +45,7 @@ version = "0.1.0"
 EOF
 printf 'int main() { return 0; }\n' > src/main.cpp
 
-# ⚠️ The build program reports through a NON-ZERO exit, because mcpp prints what
+# The build program reports through a NON-ZERO exit, because mcpp prints what
 # it captured only from a program that failed. A probe that returned zero would
 # have its output discarded and this test would assert nothing.
 cat > build.mcpp <<'EOF'
@@ -72,7 +72,7 @@ echo "$native" | grep -qE 'requested=\[\]' || {
     echo "$native" | grep 'PROBE ' >&2
     exit 1
 }
-# ⚠️ And the positive control on the same line: `MCPP_TARGET` must be filled in.
+# And the positive control on the same line: `MCPP_TARGET` must be filled in.
 # Without this the assertion above would also pass if mcpp had stopped setting
 # any of them.
 echo "$native" | grep -qE 'target=\[[a-z0-9_]+-[a-z0-9-]+\]' || {
@@ -83,14 +83,14 @@ echo "$native" | grep -qE 'target=\[[a-z0-9_]+-[a-z0-9-]+\]' || {
 
 # ── A build pointed at a target ────────────────────────────────────────────
 #
-# ⚠️ THE HOST'S OWN TRIPLE, NAMED EXPLICITLY — which is the case that
+# THE HOST'S OWN TRIPLE, NAMED EXPLICITLY — which is the case that
 # distinguishes the two variables rather than merely one that differs from the
 # native run. `--target <host>` produces equal values for `MCPP_TARGET` and the
 # host triple, and `MCPP_TARGET_REQUESTED` is non-empty because a target was
 # named. A test that used a foreign triple would pass with a variable that
 # merely echoed `MCPP_TARGET`.
 #
-# ⚠️ And it needs no payload. The first version of this test named
+# And it needs no payload. The first version of this test named
 # `x86_64-linux-musl` on the grounds that every host could resolve it, which was
 # an assumption rather than a measurement:
 #

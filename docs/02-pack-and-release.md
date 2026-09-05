@@ -89,10 +89,10 @@ Declare those as run-phase capability requirements (§2.11 of
 
 | Mode | Program needing a host-provided capability |
 |---|---|
-| `system` | ✅ |
-| `vendored` (default) | ✅ **the right default for these** |
-| `self-contained` | ❌ **refused at pack time** |
-| `static` | ❌ **refused at pack time** |
+| `system` | yes |
+| `vendored` (default) | **the right default for these** |
+| `self-contained` | **refused at pack time** |
+| `static` | **refused at pack time** |
 
 The two refusals are the same fact: **a bundle that carries its own libc cannot
 consume a library the host supplies.** That `.so` arrives with its own

@@ -7,7 +7,7 @@
 # Measured on the development machine, a CUDA 13.3 build against a driver
 # serving 12.4 does exactly that.
 #
-# ⚠️ Nothing here mentions a vendor. The engine reads a name, a relation and a
+# Nothing here mentions a vendor. The engine reads a name, a relation and a
 # version; `cuda.driver` is data passing through. That is asserted directly in
 # the third case with a name no backend uses.
 set -e

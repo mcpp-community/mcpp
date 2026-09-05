@@ -81,7 +81,7 @@ TEST(WindowsDefaults, OriginClassification) {
     EXPECT_FALSE(tc_origin_is_user_explicit(TcOrigin::GraphRequirement));
 }
 
-// ⚠️⚠️ AND IT IS THE ONE ORIGIN THAT MAY NEVER BECOME THE MACHINE'S DEFAULT.
+// AND IT IS THE ONE ORIGIN THAT MAY NEVER BECOME THE MACHINE'S DEFAULT.
 //
 // Two branches persist one: the Windows first-run diversion, whose condition is
 // `tcSpec.has_value()`, and the MSVC repair, whose gate is "mcpp chose this
@@ -89,7 +89,7 @@ TEST(WindowsDefaults, OriginClassification) {
 // — so a bare Windows box building ONE llvm-requiring project would have handed
 // llvm to every later project that asked for nothing.
 //
-// ⭐ THIS IS THE ONLY PLACE THE INVARIANT CAN BE MEASURED WITHOUT A BARE
+// THIS IS THE ONLY PLACE THE INVARIANT CAN BE MEASURED WITHOUT A BARE
 // WINDOWS MACHINE. The e2e that checks `config.toml`'s sha256 runs where a
 // toolchain is already configured, so it never reaches either branch; here the
 // rule itself is the subject.

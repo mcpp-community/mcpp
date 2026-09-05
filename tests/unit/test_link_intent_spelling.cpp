@@ -13,7 +13,7 @@ using mcpp::build::render_link_intent_flags;
 // reader — a consumer driven by native `cl.exe`, which rejects `-L` — and this
 // is where "neutral" is turned back into a command line.
 //
-// ⚠️ THE FLAVOUR IS A QUESTION ABOUT THE DRIVER, NOT ABOUT THE TARGET, and that
+// THE FLAVOUR IS A QUESTION ABOUT THE DRIVER, NOT ABOUT THE TARGET, and that
 // is the opposite of the rule three other flags in this area follow. `-fPIC`,
 // `--out-implib` and `/DEF:` reach the LINKER (through `-Wl,`), so the target
 // ABI decides their spelling. These reach whatever mcpp INVOKES: with the MSVC

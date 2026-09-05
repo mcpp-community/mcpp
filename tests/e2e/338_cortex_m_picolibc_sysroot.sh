@@ -2,12 +2,12 @@
 # requires: llvm unix-shell qemu-arm
 # A Cortex-M project opts into a C library, and gets the RIGHT multilib.
 #
-# ⭐⭐ THE ZERO-LIBC TIER IS THE DEFAULT AND THIS IS THE OPT-IN. Every
+# THE ZERO-LIBC TIER IS THE DEFAULT AND THIS IS THE OPT-IN. Every
 # `thumb*-none-eabi*` row carries an empty C-library column, so a project
 # targeting one begins with no libc unless it says otherwise. One line says
 # otherwise, and `libdir` is what makes that line find anything.
 #
-# ⚠️⚠️ AND THE ASSERTION IS THE FLOAT ABI, NOT THAT IT LINKS.
+# AND THE ASSERTION IS THE FLOAT ABI, NOT THAT IT LINKS.
 #
 # `libdir` names the sub-directory a multilib C library uses. On riscv
 # `<march>/<mabi>` separates every profile because `mabi` there IS the float
@@ -44,10 +44,10 @@ llvm_tool() {
 }
 READELF="$(llvm_tool llvm-readelf)" || { echo "SKIP: llvm-readelf not found"; exit 0; }
 
-# ⚠️ The payload has to be present. Installing it here rather than skipping
+# The payload has to be present. Installing it here rather than skipping
 # would make the test about the install; skipping when it is absent keeps the
 # criterion about the ENGINE, which is what this suite tests.
-# ⚠️ `xim-x-picolibc-arm` AND NOT `*-x-picolibc-arm`. The engine resolves the
+# `xim-x-picolibc-arm` AND NOT `*-x-picolibc-arm`. The engine resolves the
 # name `xim:picolibc-arm`, so a copy installed under any other namespace — a
 # LOCAL index entry, say — satisfies a glob and not the engine. Measured: with
 # the loose pattern this test proceeded against a `local-x-` payload and failed
@@ -83,12 +83,12 @@ main = "src/main.c"
 sysroot = "xim:picolibc-arm@1.8.12"
 TOML
 
-# ⭐ LOCATION IS A TARGET FACT; SELECTION IS A BOARD FACT. The engine resolved
+# LOCATION IS A TARGET FACT; SELECTION IS A BOARD FACT. The engine resolved
 # WHERE the C library is and which multilib profile applies. WHICH startup
 # object, WHICH linker script and WHICH libraries are decisions a board makes,
 # and this fixture stands in for a board package.
 #
-# ⚠️ `target_libc_profile()` IS THE `libdir` COLUMN, AND WITHOUT IT NONE OF THIS
+# `target_libc_profile()` IS THE `libdir` COLUMN, AND WITHOUT IT NONE OF THIS
 # CAN BE WRITTEN. It is empty when the column is, and the board is then reduced
 # to guessing a directory name — which is the thing that goes wrong silently.
 cat > build.mcpp <<'BUILD'
@@ -129,14 +129,14 @@ C
 elf=$(find target -type f -name fw | head -1)
 [ -n "$elf" ] || { echo "FAIL: no artefact"; exit 1; }
 
-# ⚠️⚠️ AN EMPTY IMAGE IS NOT A PASS, AND IT IS WHAT A MISSING BOARD SELECTION
+# AN EMPTY IMAGE IS NOT A PASS, AND IT IS WHAT A MISSING BOARD SELECTION
 # PRODUCES. Measured while writing this: without the crt0 the link SUCCEEDED and
 # mcpp reported `Size fw  text 0  data 0` — a well-formed ELF containing
 # nothing. Every check that only looked for "Finished" would have passed.
 size=$(wc -c < "$elf")
 [ "$size" -gt 4096 ] || { echo "FAIL: the artefact is $size bytes — an empty link"; exit 1; }
 
-# ⭐ THE ASSERTION THAT CATCHES THE WRONG MULTILIB. A hard-float libc linked
+# THE ASSERTION THAT CATCHES THE WRONG MULTILIB. A hard-float libc linked
 # into a soft-float image leaves `Tag_ABI_HardFP_use` in the attributes.
 hard=$("$READELF" -A "$elf" 2>/dev/null | grep -c 'ABI_HardFP_use' || true)
 [ "$hard" = "0" ] || {

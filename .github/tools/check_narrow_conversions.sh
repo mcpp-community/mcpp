@@ -76,7 +76,7 @@ cd "$REPO_DIR" || { echo "FAIL: cannot cd to $REPO_DIR" >&2; exit 1; }
 # So: a pass here does NOT mean "the tree is audited". It means no NEW direct
 # narrowing was written where this class originates.
 #
-# ⚠️ `modules/manifest/src/glob.cppm` is in scope even though the rest of that
+# `modules/manifest/src/glob.cppm` is in scope even though the rest of that
 # package is not. It is the glob walker itself -- the file this guard's
 # background note names -- and it moved out of `src/modgraph/` in the subsystem
 # split. A scope written as directory names shrinks silently when a file moves,

@@ -129,7 +129,7 @@ TEST(SchedulePolicy, ZeroJobsStaysZeroRatherThanBecomingNonsense) {
         << "a zero cap silently means no bound at all: " << d.reason;
 }
 
-// ⚠️ THE DEFAULT CONFIGURATION MUST STILL BE BOUNDED.
+// THE DEFAULT CONFIGURATION MUST STILL BE BOUNDED.
 //
 // `resolve_jobs` returns 0 when the user passed neither `--jobs` nor
 // `[build] jobs` — "say nothing, leave the backend's default". For every other

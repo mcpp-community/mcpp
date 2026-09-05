@@ -2,13 +2,13 @@
 # requires: llvm unix-shell qemu-arm
 # ARMv7-A: the first 32-bit row in the table with a memory management unit.
 #
-# ⚠️ THE ROW IS NOT A SECOND SPELLING OF THE M ROWS, AND THIS TEST IS WHERE THAT
+# THE ROW IS NOT A SECOND SPELLING OF THE M ROWS, AND THIS TEST IS WHERE THAT
 # BECOMES CHECKABLE. Every other 32-bit target here is M-profile — an MPU that
 # describes regions by base and limit, with no page-table entry at all — so it
 # is the one machine class on which an address-space abstraction has never been
 # asked what a 32-bit entry looks like.
 #
-# ⚠️ AND THE SEMIHOSTING EXIT CALL IS SPELLED DIFFERENTLY FROM M-PROFILE.
+# AND THE SEMIHOSTING EXIT CALL IS SPELLED DIFFERENTLY FROM M-PROFILE.
 # `SYS_EXIT` (0x18) on AArch32 takes the reason code in `r1` DIRECTLY; the
 # `{reason, code}` block a Cortex-M board passes is `SYS_EXIT_EXTENDED` (0x20).
 # Measured: passing the block to 0x18 prints correctly and then reports the
@@ -103,7 +103,7 @@ boot_row() {
         echo "FAIL: $triple kept a function nothing calls (--gc-sections not applied)"; exit 1
     fi
     local out rc
-    # ⚠️ NOT `qemu | head`, AND THAT IS THE WHOLE POINT OF THE STATUS CHECK.
+    # NOT `qemu | head`, AND THAT IS THE WHOLE POINT OF THE STATUS CHECK.
     # `$?` after a pipeline is the LAST command's status, so piping into `head`
     # would read head's 0 and the exit assertion below would be vacuous — this
     # repository has shipped that shape before. The output goes to a file and
@@ -118,7 +118,7 @@ boot_row() {
         *"armv7a ok"*) ;;
         *) echo "FAIL: $triple did not boot; got: $out"; exit 1 ;;
     esac
-    # ⭐ THE EXIT STATUS, NOT ONLY THE OUTPUT. A program that prints and then
+    # THE EXIT STATUS, NOT ONLY THE OUTPUT. A program that prints and then
     # gets its exit call wrong is exactly what this row's semihosting note is
     # about, and only the status tells the two apart.
     [ "$rc" = "0" ] || { echo "FAIL: $triple booted but exited $rc"; exit 1; }
@@ -132,7 +132,7 @@ boot_row armv7a-none-eabihf
 
 # ── The float ABI, both sides, on this architecture ────────────────────────
 #
-# ⚠️ MEASURED HERE RATHER THAN CARRIED OVER FROM M-PROFILE. `armv7-a` is a
+# MEASURED HERE RATHER THAN CARRIED OVER FROM M-PROFILE. `armv7-a` is a
 # different architecture from `thumbv7em`; that the soft ABI still reaches the
 # FPU there says nothing about here. It does — measured — and the row carries
 # `-mfpu=none` for it.

@@ -1,7 +1,7 @@
 // mcpp.cli.cmd_sbom — the dependency graph, in the format a procurement
 // process asks for.
 //
-// ⭐⭐ THIS IS AN OUTPUT FORMAT, NOT A NEW MECHANISM, AND THAT IS THE WHOLE
+// THIS IS AN OUTPUT FORMAT, NOT A NEW MECHANISM, AND THAT IS THE WHOLE
 // REASON IT IS CHEAP.
 //
 // Everything a software bill of materials names — which components went into
@@ -11,7 +11,7 @@
 // in a shape a legal or security review can consume. It resolves nothing,
 // builds nothing and asks the network for nothing.
 //
-// ⚠️ AND IT READS THE LOCK RATHER THAN RE-RESOLVING, WHICH IS THE POINT. An
+// AND IT READS THE LOCK RATHER THAN RE-RESOLVING, WHICH IS THE POINT. An
 // SBOM produced by resolving again would describe a graph that may differ from
 // the one that was built — which is the single thing an SBOM must never do.
 // If the lock is stale, `--locked` is the tool that says so; this command
@@ -65,7 +65,7 @@ std::string purl(const mcpp::lockfile::LockedPackage& p) {
     return std::format("pkg:mcpp/{}/{}@{}", ns, p.name, p.version);
 }
 
-// ⚠️ AN UNKNOWN LICENCE IS REPORTED AS UNKNOWN, NEVER OMITTED AND NEVER
+// AN UNKNOWN LICENCE IS REPORTED AS UNKNOWN, NEVER OMITTED AND NEVER
 // GUESSED. A component with no `licenses` key reads as "not examined"; one
 // carrying a wrong identifier reads as examined and is worse than silence. The
 // lock records no licence — it records resolution — so unless the package's own
@@ -106,7 +106,7 @@ int cmd_sbom(const mcpplibs::cmdline::ParsedArgs& parsed) {
             "mcpp.lock exists but could not be read: {}", lock.error().message));
         return 2;
     } else {
-        // ⚠️ NOT AN ERROR, AND NOT SILENCE EITHER. A project with no
+        // NOT AN ERROR, AND NOT SILENCE EITHER. A project with no
         // dependencies has no lock and its bill of materials is one component,
         // which is a true answer. A project that has never been built also has
         // no lock, and that answer would be false. The note distinguishes them

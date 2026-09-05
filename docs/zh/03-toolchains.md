@@ -105,7 +105,7 @@ $ mcpp build
              not your gcc@16.1.0 — this project only
 ```
 
-⭐ **不写任何东西。** 不写 `~/.mcpp/config.toml`,也不写工程的 `mcpp.toml`。
+**不写任何东西。** 不写 `~/.mcpp/config.toml`,也不写工程的 `mcpp.toml`。
 这条要求是**这次构建**的性质,就只作用于这次构建;这台机器的默认值保持原样,对
 其他每一个工程都是。版本取自已经装好的那些 —— 与 `mcpp toolchain default <族>`
 走的是同一条解析 —— 只有该族一个都没装时,才取生态自己的 pin。
@@ -163,7 +163,7 @@ Available toolchains (run `mcpp toolchain install <family> <version>`):
 | `via dependency graph` | 编译器在本机,而目标的系统不在,由包供给 | 依赖一个实现该目标内核接口与 C 库的包 |
 | `planned` | 已登记在词表中,尚未发布 | — |
 
-⚠️ **不在这个块里的 target,在本机根本构建不了**——而这句话现在比以前更窄。
+**不在这个块里的 target,在本机根本构建不了**——而这句话现在比以前更窄。
 mcpp 2026.8.25.2 之前,这个块只列载荷能服务的那些,于是「系统来自依赖图」的
 target 缺席,而同一台机器能为它产出真实的产物。`x86_64-windows-msvc` 与
 `aarch64-macos` 在 Linux 宿主上仍然缺席,这是**对的**:MSVC 与 macOS SDK 是宿主
@@ -499,7 +499,7 @@ $ mcpp build --target riscv64-none-elf         # [toolchain] default = "gcc@…"
 error: target 'riscv64-none-elf' cannot be emitted by 'gcc@16.1.0'.
 ```
 
-⭐ **两处拒绝都发生在做出决定的地方**,而不是留给编译器。2026.8.26.1 之前,前者
+**两处拒绝都发生在做出决定的地方**,而不是留给编译器。2026.8.26.1 之前,前者
 会跑完整个构建然后死在链接上,报 `crtbeginT.o (bare name)`;后者给出
 `g++: error: unrecognized argument in option '-mabi=lp64d'` —— 一条关于选项的
 消息,而决定在一百行之前。

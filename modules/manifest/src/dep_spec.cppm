@@ -42,7 +42,7 @@ struct DependencySpec {
     // #519 — "static" | "shared" | "" (no request). How the consumer wants
     // this dependency to arrive in its images.
     //
-    // ⚠️ HONOURED ONLY ON THE ROOT MANIFEST'S EDGES, and that is a
+    // HONOURED ONLY ON THE ROOT MANIFEST'S EDGES, and that is a
     // supply-chain property rather than a simplification. A form is a
     // whole-image decision: if a dependency four levels down could impose one,
     // any package at any depth could change how the final program is laid out

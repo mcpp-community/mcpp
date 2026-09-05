@@ -23,7 +23,7 @@
 #      and prints the right answer under wine
 #   4. an MSVC-ABI shared target is still refused, and says why
 #
-# ⚠️ WINE IS EVIDENCE, NOT PROOF. Wine maps the filesystem differently (Z:) and
+# WINE IS EVIDENCE, NOT PROOF. Wine maps the filesystem differently (Z:) and
 # has previously passed things a real Windows failed. The Windows-native halves
 # of the same claims live in 242/255/256; what wine gives here is the loader
 # actually resolving the DLL, which no Linux-hosted check can show.
@@ -66,7 +66,7 @@ imp="$(find target -name 'libmathkit.dll.a' | head -1)"
     echo "FAIL: no import library. The .dll alone is a library only mingw's ld"
     echo "      will link, so the package would be unusable everywhere else."
     exit 1; }
-# ⚠️ And no `-fPIC`. PE code is position independent by design, and clang
+# And no `-fPIC`. PE code is position independent by design, and clang
 # targeting the MSVC ABI REJECTS the flag — `unsupported option '-fPIC' for
 # target 'x86_64-pc-windows-msvc'` — killing the build in clang-scan-deps before
 # anything compiles. The condition used to be the DIALECT rather than the target,

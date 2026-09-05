@@ -227,7 +227,7 @@ struct BuildInputs {
     std::vector<std::filesystem::path> includeDirs;    // relative to package root
     // #249: emitted as -idirafter (searched after the toolchain's system dirs)
     std::vector<std::filesystem::path> includeDirsAfter;
-    // ⭐⭐ WHICH OF `includeDirs` A CONSUMER MUST NOT RECEIVE.
+    // WHICH OF `includeDirs` A CONSUMER MUST NOT RECEIVE.
     //
     // `publicUsage` has always taken `privateBuild`'s include directories
     // ENTIRE, so a package is built from exactly the set it publishes. For
@@ -249,7 +249,7 @@ struct BuildInputs {
     // was discovered one at a time: a C++ one on `restrict`, then on linkage;
     // a C one (compiler-rt) on `weak`, which it writes itself.
     //
-    // ⚠️ A SUBSET OF `includeDirs`, NOT A SECOND LIST, AND THE REASON IS ORDER.
+    // A SUBSET OF `includeDirs`, NOT A SECOND LIST, AND THE REASON IS ORDER.
     // The relative order of the two kinds is load-bearing: moving musl's
     // internal directories after the public ones makes musl's OWN build find
     // the public `<features.h>` first and fail with `unknown type name hidden`
@@ -449,7 +449,7 @@ struct Resources {
 // inputs plus the selection axis and resolved policy scalars.
 // One named way of reaching the artefact.
 //
-// ⚠️ `longLived` IS DECLARED, NOT DERIVED FROM THE NAME. Whether the process
+// `longLived` IS DECLARED, NOT DERIVED FROM THE NAME. Whether the process
 // ends is the one thing the engine must act on and no argv can express:
 // `openocd -c "program … exit"` terminates and `openocd -c "init"` does not,
 // spelled alike up to the argument the package chose. Deriving it from a name
@@ -475,13 +475,13 @@ struct BuildConfig : BuildInputs {
     // board-support package emitting `mcpp:runner=` is the intended producer;
     // the manifest key remains the consumer's override.
     //
-    // ⚠️ EXACTLY ONE provider among the dependencies. Two board-support
+    // EXACTLY ONE provider among the dependencies. Two board-support
     // packages both claiming to know how to run the artifact is a
     // configuration error, not something to merge: appending would produce an
     // argv that is neither one's, and it would fail at exec time with no
     // indication of which package contributed which token.
     std::vector<std::string>            runner;
-    // ⭐⭐ NAMED WAYS OF REACHING THE ARTEFACT, AND THE ENGINE KNOWS NONE OF
+    // NAMED WAYS OF REACHING THE ARTEFACT, AND THE ENGINE KNOWS NONE OF
     // THEIR NAMES.
     //
     // `runner` above is how the artefact is EXECUTED. Writing it to a device,
@@ -490,7 +490,7 @@ struct BuildConfig : BuildInputs {
     // a tool performs, with the artefact appended or substituted for `{}`. The
     // only thing distinguishing them is a name.
     //
-    // ⚠️ SO THE NAME IS DATA, NOT VOCABULARY. An earlier version of this gave
+    // SO THE NAME IS DATA, NOT VOCABULARY. An earlier version of this gave
     // `flash`, `monitor` and `debug` their own members, enum values, TOML keys
     // and subcommands — four instances of one idea, where a fifth would have
     // touched nine places. Worse, it put EMBEDDED vocabulary into the engine:
@@ -853,11 +853,11 @@ struct RuntimeConfig {
 // have had since the beginning (`[dependencies]` / `[build-dependencies]` /
 // `[dev-dependencies]`) and tools did not.
 //
-// ⭐ `always` IS WHAT AN ENTRY WITHOUT `when` GETS, AND IT IS TODAY'S
+// `always` IS WHAT AN ENTRY WITHOUT `when` GETS, AND IT IS TODAY'S
 // BEHAVIOUR EXACTLY. Narrowing is an optional action, never a question an
 // author has to answer, so no manifest needs to change.
 //
-// ⚠️ `dev` IS THE ONLY TIER THAT DOES NOT PROPAGATE. It means "when the package
+// `dev` IS THE ONLY TIER THAT DOES NOT PROPAGATE. It means "when the package
 // that declared this is itself being developed", so a dependency's `dev` entry
 // is never installed for a consumer. The other three reach a consumer, because
 // a board-support package that knows which emulator runs its machine is
@@ -894,7 +894,7 @@ struct XlingsConfig {
     // emitter reads it, because `xpm.<platform>.deps` needs all three at once
     // and the host resolution above has already discarded two.
     //
-    // ⚠️ A VECTOR, NOT A NESTED MAP, AND NOT A STYLE CHOICE. Spelling this
+    // A VECTOR, NOT A NESTED MAP, AND NOT A STYLE CHOICE. Spelling this
     // `map<string, map<string, string>>` compiles the module and then produces
     // a TRUNCATED BMI under GCC 16: consumers fail with
     // `failed to read compiled module cluster N: Bad file data` and
@@ -905,7 +905,7 @@ struct XlingsConfig {
     // address → tier, for every address in `deps`. An entry that wrote no
     // `when` is absent here and reads as `Always` through `when_of` below.
     //
-    // ⚠️ BESIDE `deps` RATHER THAN INSIDE IT. `deps` is materialised into
+    // BESIDE `deps` RATHER THAN INSIDE IT. `deps` is materialised into
     // `.xlings.json` verbatim, and that file has no such axis — folding the
     // tier into the address would put a word xlings does not parse into a
     // field xlings reads.
@@ -967,7 +967,7 @@ struct TargetEntry {
     // names the compiler the target resolves, the other names the C library,
     // and both were engine-only until a project had a reason to disagree.
     //
-    // ⚠️ TWO MEMBERS AND NOT AN `std::optional<std::string>`, AND THE REASON IS
+    // TWO MEMBERS AND NOT AN `std::optional<std::string>`, AND THE REASON IS
     // NOT STYLE.
     //
     // ABSENT and EMPTY are different answers — absent inherits the target row,
@@ -991,7 +991,7 @@ struct TargetEntry {
     // Two plain members carry the same information and instantiate nothing.
     std::string                         sysroot;
     bool                                sysrootDeclared = false;
-    // ⚠️ NO per-role field here. There used to be a `cxxRuntimeTests`, and it was
+    // NO per-role field here. There used to be a `cxxRuntimeTests`, and it was
     // parsed nowhere and applied nowhere — a configuration key that looked
     // available and did nothing (#418). The per-target channel carries the
     // SCALAR contract only; `[build].cxx_runtime`'s table form already covers
@@ -1087,7 +1087,7 @@ struct LibConfig {
 //   "bundle-all"      — bundle every dynamic dep including libc / libstdc++
 struct PackConfig {
     std::string                         defaultMode;   // empty → "bundle-project"
-    // ⚠️ THERE IS DELIBERATELY NO `[pack] profile`. Which profile `mcpp pack`
+    // THERE IS DELIBERATELY NO `[pack] profile`. Which profile `mcpp pack`
     // builds with is `--profile` > `[build] default-profile` > "release" —
     // packaging only changes the LAST step (from "dev"), because a fourth
     // precedence level would have to be resolved before `prepare_build` runs
@@ -1194,7 +1194,7 @@ struct WorkspaceConfig {
 // The commands are host-shell strings written by the project author, run by
 // `mcpp build` around the build it performs. See docs/05-mcpp-toml.md §2.16.
 //
-// ⚠️ ONLY THE ROOT PROJECT'S HOOKS ARE EVER RUN. Every manifest mcpp parses
+// ONLY THE ROOT PROJECT'S HOOKS ARE EVER RUN. Every manifest mcpp parses
 // carries this field, including a DEPENDENCY's — and `mcpp build` reaches the
 // invoker (mcpp.hooks) with the root project's manifest alone. A dependency
 // that declares hooks is inert by construction, which is the only reason
@@ -1242,7 +1242,7 @@ struct Hooks {
     int         timeoutSeconds = 10;   // default for one run of a hook command
     bool        enabled        = true; // whole table
 
-    // ⚠️ EXPERIMENTAL: FALSE, AND CURRENTLY THE ONLY VALUE.
+    // EXPERIMENTAL: FALSE, AND CURRENTLY THE ONLY VALUE.
     //
     // The key means "a hook failure fails the build". While `[hooks]` is
     // experimental it does not get to decide that: a hook that fails is
@@ -1299,7 +1299,7 @@ struct Manifest {
     // schema evolution is loud in lint instead of invisible.
     std::vector<std::string>    xpkgUnknownKeys;
 
-    // ⚠️ CAPABILITY NAMES INSIDE THE RESERVED `mcpp:` PREFIX THAT THIS ENGINE
+    // CAPABILITY NAMES INSIDE THE RESERVED `mcpp:` PREFIX THAT THIS ENGINE
     // DOES NOT KNOW, AND WHY THEY ARE RECORDED RATHER THAN REFUSED HERE.
     //
     // The reserved prefix is a closed set so that a misspelled layer name is an
@@ -1363,9 +1363,9 @@ struct Manifest {
     // by naming both, which a hardcoded table could not do for a family it had
     // never heard of.
     //
-    // ⚠️ Names outside the `mcpp:` prefix are the feature system's and pass
+    // Names outside the `mcpp:` prefix are the feature system's and pass
     // through untouched, exactly as they do in `provides`.
-    // ⚠️ The spelling is `requires_` because `requires` is a keyword.
+    // The spelling is `requires_` because `requires` is a keyword.
     std::vector<std::string>                        requires_;
     // [package] exclusive — the capabilities this package claims it is the ONLY
     // provider of.
@@ -1394,7 +1394,7 @@ struct Manifest {
     // both — instead of at link time naming a symbol, or at run time naming
     // nothing at all.
     //
-    // ⚠️ An entry that is not also in `provides` (or a feature's `provides`) is
+    // An entry that is not also in `provides` (or a feature's `provides`) is
     // a typo and is reported: claiming exclusivity over something you do not
     // provide cannot be acted on.
     std::vector<std::string>                        exclusive;
@@ -1574,7 +1574,7 @@ std::optional<std::string> validate_target_soname(const Target& t,
     // the name down while still being consumed as a static library — which is
     // the normal case (mcpp-index: 84 `kind = "lib"` against 12 `"shared"`).
     //
-    // ⚠️ RELAXED RATHER THAN MOVED: the old spelling made the whole manifest
+    // RELAXED RATHER THAN MOVED: the old spelling made the whole manifest
     // FAIL TO LOAD, in both parsers. Any descriptor that starts writing this
     // key is therefore unreadable by every mcpp released before this change,
     // so the ecosystem-side rollout is gated on the index's floor moving —

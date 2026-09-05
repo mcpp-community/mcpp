@@ -19,7 +19,7 @@
 // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE takes the whole tree down at once, which
 // closes every inherited handle and lets the drain finish.
 //
-// ⚠️ WHY THE INTERFACE HAS NO `std` TYPES IN IT
+// WHY THE INTERFACE HAS NO `std` TYPES IN IT
 //
 // This is a hard constraint, not a style preference. Measured on GCC 16.1.0
 // while adding this module: a NEW module that (a) is imported by
@@ -503,7 +503,7 @@ void background_stop(unsigned long long job, unsigned long long process,
                            static_cast<std::uintptr_t>(job))
                      : nullptr;
 
-    // ⚠️ NO POLITE ASK HERE, AND `graceMs` IS DELIBERATELY UNSPENT.
+    // NO POLITE ASK HERE, AND `graceMs` IS DELIBERATELY UNSPENT.
     //
     // The obvious "ask first" is
     //

@@ -35,7 +35,7 @@ inline constexpr std::string_view kInstallMarker = ".mcpp_ok";
 
 // Did the package put anything in its own directory?
 //
-// ⭐⭐ THE MARKER IS ONLY AS GOOD AS THE EVIDENCE IT IS WRITTEN FROM, and for
+// THE MARKER IS ONLY AS GOOD AS THE EVIDENCE IT IS WRITTEN FROM, and for
 // three releases that evidence was `exitCode == 0 && exists(verdir)` — the
 // installer's own report plus a directory the installer creates before it does
 // any work. mcpp#533: a package-identity collision made xlings skip the
@@ -49,7 +49,7 @@ inline constexpr std::string_view kInstallMarker = ".mcpp_ok";
 // `.xpkg-install.json` and `mcpp_generated/` and nothing else — and it needs
 // no knowledge of what the descriptor was supposed to produce.
 //
-// ⚠️ DELIBERATELY WEAK, in both directions. It cannot tell a RIGHT tree from a
+// DELIBERATELY WEAK, in both directions. It cannot tell a RIGHT tree from a
 // wrong one, and it must not: a package that legitimately installs no payload
 // exists (xlings has type-only packages, and #531 provisions `[xlings] deps`
 // for packages mcpp consumes nothing from). So the caller WITHHOLDS THE MARKER

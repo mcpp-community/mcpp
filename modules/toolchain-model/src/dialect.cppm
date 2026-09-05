@@ -107,7 +107,7 @@ struct CommandDialect {
     std::string_view archiveRemoveArg; // "d" needs no {} | "/REMOVE:{}"
     bool             archiveRemoveTakesArchiveFirst = true;
 
-    // ⚠️ THE IMPORT-LIBRARY AND `.def` SPELLINGS ARE NOT HERE, on purpose.
+    // THE IMPORT-LIBRARY AND `.def` SPELLINGS ARE NOT HERE, on purpose.
     //
     // They were, keyed on the dialect, and that is wrong in a way Windows CI
     // demonstrated: clang targeting the MSVC ABI speaks the GNU DIALECT while
@@ -122,7 +122,7 @@ const CommandDialect& dialect_for(const Toolchain& tc);
 
 // The MSVC CRT model for a given linkage, in ONE place.
 //
-// ⚠️ cl bakes `_MSVC_MT` / `_MSVC_MD` into every module it produces, so the std
+// cl bakes `_MSVC_MT` / `_MSVC_MD` into every module it produces, so the std
 // module and the TUs importing it must agree. They were derived in two places:
 // the project's TUs from `flags.cppm` and the std module from cl's own default
 // (`/MT`, because the std build passed no flag at all). A project on the default

@@ -54,7 +54,7 @@ enum class Origin {
     // The artifact's own directory — what the linker writes as `$ORIGIN` on
     // ELF and `@loader_path` on Mach-O.
     //
-    // ⚠️ IT WAS MISSING, AND THAT MADE THIS ORDERING DECORATIVE. The module
+    // IT WAS MISSING, AND THAT MADE THIS ORDERING DECORATIVE. The module
     // claims below to be the one place the search order is decided, but
     // `$ORIGIN` was emitted by `shared_library_link_flags` on a completely
     // separate per-unit channel and never entered the closure — so the ONE

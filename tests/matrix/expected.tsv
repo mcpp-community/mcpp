@@ -1,6 +1,6 @@
 # tests/matrix/expected.tsv — 这个仓库声明的支持矩阵。
 #
-# ⭐⭐ 这是一份声明,不是一份记录。改了行为就必须同时改它,而 CI 比对的是
+# 这是一份声明,不是一份记录。改了行为就必须同时改它,而 CI 比对的是
 #     `tests/matrix/scan.sh` 的一次真实测量与这里的每一行。
 #
 # 列:mode host target compiler compiler-triple c-lib c-abi c++-abi openkal status reason
@@ -13,29 +13,29 @@
 #   unsupported  / host-cannot-serve        本机没有载荷,图也没有供给这个系统
 #   unsupported  / layer-requirement        某个包要求的层,解析没有给出
 #
-# ⚠️⚠️ 这里**没有** `mismatch`,而这是刻意的。写下 `mismatch` 就是把一个缺陷
+# 这里**没有** `mismatch`,而这是刻意的。写下 `mismatch` 就是把一个缺陷
 #      声明成期望,矩阵会在它上面变绿。一格测出 `mismatch`,要么修 mcpp,要么
 #      让 mcpp 在决定处给出一句带 reason 的拒绝 —— 没有第三条路。
 #
-# ⚠️ 只有 `mode host target compiler status reason` 六列参与比对。中间五列是
+# 只有 `mode host target compiler status reason` 六列参与比对。中间五列是
 #    测量的记录,留在这里是为了让一行的变化可读:`c-abi` 从 payload 变成 graph
 #    会在 diff 里自己说话,而只有 status 的表说不出来。
 #
-# ⭐ reason 也是判据。一格从 `capability-pin` 变成 `convention-unreplaced`,
+# reason 也是判据。一格从 `capability-pin` 变成 `convention-unreplaced`,
 #    status 仍是 unsupported —— 那是两条不同的规则,换了一条却不红,这张表就
 #    只在说「它没建出来」,不在说「为什么」。
 #
-# ⚠️⚠️ host 是 (os, arch),不是 os。mcpp 自己发布四份宿主二进制:
+# host 是 (os, arch),不是 os。mcpp 自己发布四份宿主二进制:
 #   linux-x86_64 / linux-aarch64 / macos-arm64 / windows-x86_64
 # 两台 Linux 服务的行不一样 —— `x86_64-linux-gnu` 需要本机架构的 glibc 载荷,
 # 所以在 x86_64 上够得着、在 aarch64 上够不着。只写 `linux` 会让后跑的一台把先跑
 # 的那台在这张表里的行「解释掉」,而覆盖的方向取决于谁后跑,不取决于谁对。
 #
 # 全部四台:2026-08-26 由 `ci-target-matrix.yml` 实测(mcpp 2026.8.26.1)。
-# ⚠️ 每一行都来自它自己那台机器 —— 从别的宿主推断出来的一行,断言的是推断而不是
+# 每一行都来自它自己那台机器 —— 从别的宿主推断出来的一行,断言的是推断而不是
 # 那台机器。
 #
-# ⚠️ 各台格数不同,而这是事实不是遗漏:
+# 各台格数不同,而这是事实不是遗漏:
 #   linux-x86_64   40   gcc + llvm × 12 目标(payload 24 / graph 16)
 #   linux-aarch64  16   只有 musl-gcc —— llvm 在非 x86_64 Linux 上被显式延缓
 #   macos-arm64    20   只有 llvm × 12 目标(payload 12 / graph 8)

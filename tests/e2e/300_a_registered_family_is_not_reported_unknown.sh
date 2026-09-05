@@ -3,7 +3,7 @@
 # "unknown target" is a claim about the vocabulary, and it was false for a whole
 # arch+os family.
 #
-# ⚠️ MEASURED ON 2026.8.26.1:
+# MEASURED ON 2026.8.26.1:
 #
 #     $ mcpp why toolchain --target riscv64-linux --format json
 #       unknown target 'riscv64-linux'
@@ -15,7 +15,7 @@
 # the refusal carried no code at all: `other` is what the machine interface
 # prints for a branch nobody named, and this branch had a perfectly good name.
 #
-# ⭐ TWO ASSERTIONS, BECAUSE THE WORD AND THE CODE FAIL SEPARATELY. A message
+# TWO ASSERTIONS, BECAUSE THE WORD AND THE CODE FAIL SEPARATELY. A message
 # fixed without a code still reports `other`; a code added without fixing the
 # message still tells the reader their target does not exist.
 set -e
@@ -42,7 +42,7 @@ if [ "$reason" != tier-planned ]; then
 fi
 echo "  ok  a registered family refuses as planned, not as unknown"
 
-# ⭐ AND THE MESSAGE NAMES A ROW THAT EXISTS. Telling someone their target is
+# AND THE MESSAGE NAMES A ROW THAT EXISTS. Telling someone their target is
 # planned is only actionable once they can see which spelling is the registered
 # one — the same rule that made `x86_64-linux` have to work before the
 # name/fact warning was worth printing.
@@ -54,7 +54,7 @@ else
     exit 1
 fi
 
-# ⚠️ AND IT DOES NOT QUOTE A TRIPLE THE READER NEVER TYPED. The old message was
+# AND IT DOES NOT QUOTE A TRIPLE THE READER NEVER TYPED. The old message was
 # about `riscv64-linux-gnu`, a string that appears nowhere in the command and
 # nowhere in the vocabulary.
 if printf '%s\n' "$msg" | grep -q 'riscv64-linux-gnu'; then

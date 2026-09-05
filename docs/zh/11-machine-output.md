@@ -94,7 +94,7 @@ $ echo $?
 | 70 | 内部错误(未捕获异常) |
 | 127 | 未知命令 |
 
-⚠️ **`1` 可能与 stdout 上的信封同时出现。** `mcpp xpkg parse` 会把一份违反名字形态的
+**`1` 可能与 stdout 上的信封同时出现。** `mcpp xpkg parse` 会把一份违反名字形态的
 描述符作为 JSON 报出来**并且**退 1:文档就是答案,退出码说明这个答案是一次拒绝。§1
 仍然成立 —— 解析 stdout,不要按退出码分支 —— 但一个把任何非零退出都当作「没有输出」
 的客户端,会丢掉它已经拿到的文档。
@@ -254,7 +254,7 @@ mcpp toolchain list --format json
 `{target, note, toolchain, pin, status, default}`,`status` 取
 `installed` / `available` / `via dependency graph` / `planned`。
 
-⚠️ **`toolchain` 与 `pin` 不是同一个字段写两遍。** `toolchain` 是这一行关联到
+**`toolchain` 与 `pin` 不是同一个字段写两遍。** `toolchain` 是这一行关联到
 什么 —— 已装的行是装了的载荷,词表行是那一行的约定。`pin` 只承载目标表的约定,
 没有约定的行为空。`x86_64-linux-gnu` 装了 gcc 而根本没有约定,所以要挑「约定是
 gcc 的行」必须读 `pin`。
@@ -277,7 +277,7 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `cLibrary` | `{mode, path, origin, suppliesTarget}`;`mode` 取 `sysroot` / `payload-first` / `none`,`origin` 取 `payload` / `subos` / `host` / `none` |
 | `layers[]` | 目标侧五层:`{layer, interface, impl, origin, subset}` |
 
-⭐ **`compiler.chosenBy` 回答「为什么是它」。** `{origin, requiredBy, replaced}`
+**`compiler.chosenBy` 回答「为什么是它」。** `{origin, requiredBy, replaced}`
 —— `origin` 与构建状态行用的是同一句话(`[toolchain] in mcpp.toml`、
 `your default`、`target default`、`required by the dependency graph`、
 `first-run default`)。当某条 `requires = ["mcpp:compiler=…"]` 做了决定时,
@@ -293,7 +293,7 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 没有它,要问「为什么」的消费方只能去解析状态行 —— 而那正是这份文档存在的理由所要
 消除的字符串匹配。
 
-⚠️ **`cLibrary` 与 `layers[].c-abi` 回答的是两个问题,`suppliesTarget` 说明哪一个
+**`cLibrary` 与 `layers[].c-abi` 回答的是两个问题,`suppliesTarget` 说明哪一个
 管用。** `cLibrary` 描述的是**载荷**的链接模型 —— 一份由载荷供给的 C 库会用到的
 搜索路径。`layers[].c-abi` 描述的是**这次构建**。当依赖供给 C 库时两者分叉,而在
 `suppliesTarget` 之前,同一份文档同时报出两者却没有任何字段说明该信哪个:
@@ -308,7 +308,7 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 是**新增一个字段**而不是给 `cLibrary` 改名或给 `mode` 加取值,因为 §7 承诺字段
 只增不删、且一个字段的含义永不改变。
 
-⚠️ **2026.9.1.1 起,载荷供给的 glibc 让 `layers[].interface` 的**取值**变了** ——
+**2026.9.1.1 起,载荷供给的 glibc 让 `layers[].interface` 的**取值**变了** ——
 从 `gnu` 变为 `glibc`,Windows 上从 `gnu` 变为 `ucrt`。字段的**含义**没变(它仍然是
 「哪个实现」),所以 §7 仍然成立;变的是它不再报三元组的 env 段 —— 那是一次请求而
 不是一个实现,也不是任何一个 C 库的名字。现在的取值就是
@@ -316,7 +316,7 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 `cfg(c-abi = …)` 谓词里与它们比较。按字面量 `gnu` 取值的客户端需要更新;
 `musl`、`picolibc`、`libSystem` 不受影响。
 
-⭐ **`reason` 是一个记号,不是一句话。** 拒绝的消息仍然写给人看,仍然点名目标、
+**`reason` 是一个记号,不是一句话。** 拒绝的消息仍然写给人看,仍然点名目标、
 规则与出路;而一个要给结果分类的程序读 `reason`:
 
 | `reason` | |
@@ -336,11 +336,11 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `accel-mismatch` | 一条 `[build] sources` 条目被约束到本次构建未覆盖的设备集合 |
 | `other` | 一处还没有被命名的拒绝分支 |
 
-⚠️ **只要问题被回答了就退 0,包括答案是「拒绝」。** 「它能不能构建,不能的话
+**只要问题被回答了就退 0,包括答案是「拒绝」。** 「它能不能构建,不能的话
 为什么」被「不能,因为这一行的 pin 是能力陈述」完整地回答了。非零退出的含义是
 这次查询本身没跑起来。
 
-⚠️ **它声明的 effects 故意偏宽。** `--protocol-version` 为这条命令列出
+**它声明的 effects 故意偏宽。** `--protocol-version` 为这条命令列出
 `network`、`write-global-cache` 与 `exec-build-script`:答案来自与构建同一次的
 解析,而那可能拉取包、安装载荷、并运行某个依赖的构建程序。客户端是在**运行之前**
 读这张表来决定放不放行的,漏报一项就是一句不成立的安全承诺。
@@ -378,7 +378,7 @@ mcpp test [pattern] [--workspace] --message-format json
 | `not_run_reason` | 它们共同的原因,或 `""` |
 | `elapsed_ms`、`build_ms`、`run_ms` | 墙钟时间,分段 |
 
-⚠️ **`not_run` 既不是 `pass` 也不是 `run_fail`,退出码也这么说(2026.9.2.1)。**
+**`not_run` 既不是 `pass` 也不是 `run_fail`,退出码也这么说(2026.9.2.1)。**
 本机无法加载测试产物(交叉目标未声明 runner 时的 `Exec format error`),或声明的
 `[target.<triple>].runner` 找不到、启动不了时,测试为 `not_run`。这是关于整次调用的
 事实:确立一次,其余测试直接报告为 `not_run` 而不再启动,进程以 **2** 退出。退出码 1

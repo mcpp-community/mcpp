@@ -58,7 +58,7 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
     if (auto v = parsed.value("output")) opts.output = *v;
 
-    // ⚠️ `value()`, not `option_or_empty()`, for `profile` — and NOT for
+    // `value()`, not `option_or_empty()`, for `profile` — and NOT for
     // anything whose name a positional shares. `ParsedArgs::value()` falls back
     // to a same-named positional when the option is unset, which is how
     // `mcpp run q` once became `--target=q`. `pack`'s positional is `target`,

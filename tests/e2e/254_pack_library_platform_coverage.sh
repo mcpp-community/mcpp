@@ -22,7 +22,7 @@
 #
 # So the silence is as much the feature as the warning, and both are asserted.
 #
-# ⚠️ THE PER-HOST PICKS BELOW MIRROR host_can_serve (registry.cppm:542-566).
+# THE PER-HOST PICKS BELOW MIRROR host_can_serve (registry.cppm:542-566).
 # That is deliberate and it is a tripwire: if mcpp ever gains, say, a
 # macOS-hosted Windows toolchain, this test starts failing — which is the
 # correct outcome, because the table it encodes will have changed and the

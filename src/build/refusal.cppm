@@ -1,6 +1,6 @@
 // mcpp.build.refusal — the machine-readable identity of a target refusal.
 //
-// ⭐⭐ WHY A CODE AND NOT THE SENTENCE.
+// WHY A CODE AND NOT THE SENTENCE.
 //
 // mcpp refuses a target for several distinct reasons, and every one of them
 // leaves the same trace: `prepare_build` returns `std::unexpected(<prose>)`.
@@ -10,7 +10,7 @@
 // reworded `cannot emit it` to `cannot be emitted by`, and a test that had
 // been asserting a refusal silently began asserting nothing.
 //
-// ⚠️ THE MESSAGE IS STILL A PROMISE. This does not replace it — a refusal that
+// THE MESSAGE IS STILL A PROMISE. This does not replace it — a refusal that
 // does not name the target, the reason and the way out is a defect whether or
 // not it carries a code, and the e2e tests keep asserting exactly that. What
 // the code replaces is *classification*: "did it refuse, and for which reason"
@@ -25,7 +25,7 @@
 // them reads. `mcpp::diag` settled the same trade-off the same way: a per-run
 // sink, written where the fact is known and read where it is needed.
 //
-// ⚠️ SET IMMEDIATELY BEFORE THE `return`, NEVER EARLIER. A code set at the top
+// SET IMMEDIATELY BEFORE THE `return`, NEVER EARLIER. A code set at the top
 // of a branch that then does not refuse is worse than no code at all: it makes
 // a successful build report a reason.
 
@@ -35,7 +35,7 @@ import std;
 
 export namespace mcpp::build::refusal {
 
-// ⭐ ONE CODE PER DECISION, and the decisions are the ones a reader of the
+// ONE CODE PER DECISION, and the decisions are the ones a reader of the
 // target matrix has to tell apart. Adding a refusal branch means adding a code
 // here — an unnamed branch reports `other`, which is a visible admission
 // rather than a silent merge into a neighbouring reason.
@@ -114,7 +114,7 @@ Code take();
 
 namespace mcpp::build::refusal {
 namespace {
-// ⚠️ `thread_local`: `prepare_build` recurses for nested host sub-builds, and
+// `thread_local`: `prepare_build` recurses for nested host sub-builds, and
 // those run on the calling thread — but a build program's own sub-build must
 // not leave its refusal behind for the outer one. Same thread, so the sink is
 // shared deliberately; the outer refusal is recorded last and wins, which is

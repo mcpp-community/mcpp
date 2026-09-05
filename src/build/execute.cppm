@@ -166,7 +166,7 @@ struct BuildCacheEntry {
     // Did the graph declare a tool on the `when = "run"` tier that this build
     // did NOT provision?
     //
-    // ⚠️ A BUILD INSTALLS LESS THAN A RUN NEEDS, WHICH IS THE POINT OF THE
+    // A BUILD INSTALLS LESS THAN A RUN NEEDS, WHICH IS THE POINT OF THE
     // TIER AND ALSO ITS ONE HAZARD. `mcpp build` requests the build tier; a
     // later `mcpp run` requests more. The fast path exists precisely to skip
     // the pass that would install the difference, so an entry written by a
@@ -177,7 +177,7 @@ struct BuildCacheEntry {
     // every entry such a cache could hold, because no manifest could express
     // the tier.
     bool runTierPending = false;
-    // ⚠️⚠️ THE FEATURE SET THIS ENTRY'S ARTEFACTS WERE BUILT WITH.
+    // THE FEATURE SET THIS ENTRY'S ARTEFACTS WERE BUILT WITH.
     //
     // The entry is keyed on (target, profile, cache mode) and was matched on
     // those three alone, while the OUTPUT DIRECTORY is keyed on a fingerprint
@@ -575,7 +575,7 @@ struct RunnerChoice {
     std::string tripleKey;
 };
 
-// ⭐⭐ ONE READER FOR FOUR SLOTS, PARAMETERISED BY THE SLOT.
+// ONE READER FOR FOUR SLOTS, PARAMETERISED BY THE SLOT.
 //
 // `run`, `flash`, `monitor` and `debug` resolve identically: a dependency
 // supplies a template, the project may override it on the same axis, the
@@ -745,7 +745,7 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         }
     }
 
-    // ⚠️ RECLAIM THE STALE CONCURRENCY TOKENS, HERE AND NOT IN prepare.
+    // RECLAIM THE STALE CONCURRENCY TOKENS, HERE AND NOT IN prepare.
     //
     // detach-codegen bounds real compiler concurrency with a semaphore of
     // directories under `<build dir>/.mcpp-sched`, released by the supervisor
@@ -1141,7 +1141,7 @@ fast_path_identity(const std::filesystem::path& projectRoot,
 
 // Try to fast-path: if build.ninja is newer than all inputs, just run ninja.
 // Returns exit code on fast-path, or nullopt if full rebuild needed.
-// ⭐ WHAT THIS PROJECT CAN DO, AS OPPOSED TO WHAT THE ENGINE SUPPORTS.
+// WHAT THIS PROJECT CAN DO, AS OPPOSED TO WHAT THE ENGINE SUPPORTS.
 //
 // The engine knows no runner names, so it cannot print a static list of them —
 // and that is the useful property, not a limitation. What a reader wants is
@@ -1198,7 +1198,7 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
                                   std::string_view currentTarget = "") {
     if (no_cache) return std::nullopt;
 
-    // ⚠️⚠️ `--locked` MUST NOT MEET THE FAST PATH, OR IT ASSERTS NOTHING.
+    // `--locked` MUST NOT MEET THE FAST PATH, OR IT ASSERTS NOTHING.
     //
     // The check it names lives at the resolution write point, and the fast path
     // exists precisely to skip resolution. Measured before this line existed: a
@@ -1337,7 +1337,7 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     auto want = fast_path_identity(projectRoot);
     if (!want) return std::nullopt;
 
-    // ⚠️ THE precondition of this whole function: it exec's the cached
+    // THE precondition of this whole function: it exec's the cached
     // artifact itself, so it is only ever valid when that artifact is for THIS
     // machine.
     //
@@ -1521,12 +1521,12 @@ export int build_run_target(const std::optional<std::string>& targetName,
                             bool no_cache = false,
                             const std::string& target_triple = {},
                             bool no_runner = false,
-                            // ⭐ The NAME of the way to reach the artefact.
+                            // The NAME of the way to reach the artefact.
                             // Empty is the default runner — `mcpp run`. Any
                             // other value came from `--runner <name>` and the
                             // engine has never seen it before.
                             std::string_view runner_name = {},
-                            // ⭐⭐ THE TWO AXES `build` AND `test` HAVE ALWAYS
+                            // THE TWO AXES `build` AND `test` HAVE ALWAYS
                             // TAKEN, AND `run` DID NOT.
                             //
                             // Both change WHAT IS BUILT, so a `run` that could
@@ -1562,12 +1562,12 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // manifest to print the note against.
     if (package_filter.empty() && cache_mode.empty() && !no_cache
         && target_triple.empty() && !no_runner
-        // ⚠️ AND NEITHER NEW AXIS IS SET. The cached entry was written for
+        // AND NEITHER NEW AXIS IS SET. The cached entry was written for
         // whichever feature set and profile the last build used; taking it
         // here would silently ignore the flag, which is the same reason
         // `--cache` and `--profile` bypass it in `cmd_build`.
         && features.empty() && profile.empty() && accel.empty()
-        // ⚠️⚠️ THE FAST PATH IS `run`'s, AND ONLY `run`'s.
+        // THE FAST PATH IS `run`'s, AND ONLY `run`'s.
         //
         // It exec's the cached artefact directly — that IS its definition — so
         // for `flash`, `monitor` or `debug` it would run the program on the
@@ -1601,7 +1601,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
     auto ctx = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
                              /*extraTargets=*/{}, ov);
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
-    // ⚠️ `target_triple` IS PASSED, AND OMITTING IT WROTE A CROSS BUILD INTO
+    // `target_triple` IS PASSED, AND OMITTING IT WROTE A CROSS BUILD INTO
     // THE HOST'S CACHE SLOT.
     //
     // The last argument becomes the cache entry's `[target=]` key. `cmd_build`
@@ -1667,7 +1667,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
             choice.tripleKey,
             isRunSlot ? std::string("runner")
                       : std::format("runner '{}'", slotName)));
-    // ⚠️ THE THREE NEW SLOTS HAVE NO FALLBACK, AND `run` STILL DOES.
+    // THE THREE NEW SLOTS HAVE NO FALLBACK, AND `run` STILL DOES.
     //
     // An artefact with no runner on a hosted target is executed directly, and
     // that is right: the host can run it. There is no such reading of "no
@@ -1676,7 +1676,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
     // freestanding one. Saying "nothing is configured" beats doing something
     // that was never asked for.
     if (!isRunSlot && choice.tmpl.empty()) {
-        // ⚠️ AND THE MESSAGE LISTS WHAT THIS PROJECT DOES HAVE. A name the
+        // AND THE MESSAGE LISTS WHAT THIS PROJECT DOES HAVE. A name the
         // engine does not know is usually a typo or a missing feature, and
         // "no such runner" alone leaves the reader guessing which.
         std::string have;
@@ -1724,7 +1724,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
         tmpl.front() = found.program->string();
         argv = mcpp::freestanding::expand(tmpl, exe);
         for (auto& a : passthrough) argv.push_back(a);
-        // ⭐ The status word is the NAME the package chose, capitalised. The
+        // The status word is the NAME the package chose, capitalised. The
         // engine has no table of verbs to look one up in, which is the point:
         // `Serve`, `Submit` and `Flash` all read correctly and none is known
         // here.
@@ -2234,7 +2234,7 @@ export int run_tests(std::span<const std::string> passthrough,
         const bool capture = json || list.size() > 1;
         const auto deadline = std::chrono::milliseconds(
             static_cast<long long>(testOpts.timeoutSecs) * 1000);
-        // ⚠️⚠️ A PHYSICAL BOARD IS A MUTEX, AND NOTHING ELSE THIS POOL HAS EVER
+        // A PHYSICAL BOARD IS A MUTEX, AND NOTHING ELSE THIS POOL HAS EVER
         // SCHEDULED WAS ONE.
         //
         // An emulator takes N concurrent instances; a probe attached to one

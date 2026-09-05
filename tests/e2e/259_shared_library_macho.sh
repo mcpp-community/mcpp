@@ -16,7 +16,7 @@
 # `soname`, and to decide Mach-O-ness with `#if defined(__APPLE__)` on the HOST
 # rather than from the target.
 #
-# ⚠️ AND WHY IT ASSERTS THE PATH IS *GONE*. Checking that the consumer runs in
+# AND WHY IT ASSERTS THE PATH IS *GONE*. Checking that the consumer runs in
 # place proves nothing: the absolute install name still resolves while the build
 # directory exists. The package has to be consumed from a location the original
 # build path cannot satisfy — so the library is packed, the producer's whole

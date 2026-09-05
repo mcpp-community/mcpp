@@ -3,10 +3,10 @@
 # 161_xpkg_name_form.sh — SPEC-001 §3.2: `package.name` is a SINGLE ATOMIC
 # SEGMENT; all hierarchy belongs in `package.namespace`.
 #
-#     ✅ namespace = "chriskohlhoff", name = "asio"
-#     ✅ namespace = "mcpplibs.capi", name = "lua"
-#     ✅ namespace = "compat",        name = "compat.zlib"   (legacy FQN, kept working)
-#     ❌ namespace = "mcpplibs",      name = "capi.lua"       (short name has a dot)
+#     accepted  namespace = "chriskohlhoff", name = "asio"
+#     accepted  namespace = "mcpplibs.capi", name = "lua"
+#     accepted  namespace = "compat",        name = "compat.zlib"   (legacy FQN, kept working)
+#     refused   namespace = "mcpplibs",      name = "capi.lua"       (short name has a dot)
 #
 # Why the last one is rejected rather than reinterpreted: identity is the pair
 # (namespace, name). A `name` carrying dots the namespace does not account for

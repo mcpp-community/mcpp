@@ -108,7 +108,7 @@ std::optional<NormalizedSpec> normalize_spec(std::string_view compilerIn,
     out.version = version;
 
     // ── canonical families pass through ─────────────────────────────────────
-    // ⚠️ `openkal-llvm` NORMALISES TO `llvm`, AND USED TO BE A FAMILY OF ITS
+    // `openkal-llvm` NORMALISES TO `llvm`, AND USED TO BE A FAMILY OF ITS
     // OWN. It named the same payload and carried a fact about where the TARGET
     // SIDE comes from — which `mcpp.targetside` now resolves from what packages
     // declare, after the graph exists, where the fact actually lives. The

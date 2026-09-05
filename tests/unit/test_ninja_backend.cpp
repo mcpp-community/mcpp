@@ -51,7 +51,7 @@ BuildPlan minimal_plan() {
     plan.toolchain.binaryPath = "/usr/bin/g++";
     plan.toolchain.targetTriple = "x86_64-linux-gnu";
 
-    // ⚠️ AND THE TARGET SIDE, WHICH THIS FIXTURE USED TO LEAVE DEFAULT.
+    // AND THE TARGET SIDE, WHICH THIS FIXTURE USED TO LEAVE DEFAULT.
     //
     // A default-constructed `TargetSide` has every layer at `Origin::None`,
     // which is not a native build — it is "nothing has been resolved". No
@@ -1623,7 +1623,7 @@ TEST(LinkFailureAdvice, StaysSilentOnUnrelatedFailures) {
 }
 
 TEST(LinkFailureAdvice, CarriesNoVersionLiteral) {
-    // ⚠️ The `import std` advice needed tests/e2e/135 to keep its version
+    // The `import std` advice needed tests/e2e/135 to keep its version
     // honest. This one is built so it cannot go stale the same way: it names a
     // package and a FEATURE, and the feature pulls the implementation. A digit
     // sequence that looks like a version here would be a regression in kind.
@@ -1644,7 +1644,7 @@ TEST(LinkFailureAdvice, CarriesNoVersionLiteral) {
 // name. Twenty-six lines below `cc`, this file already carried the rule that
 // prevents it, written for `c_ldflags` and never applied to its sibling.
 //
-// ⭐ The checker is exported so it can be asserted against manifests
+// The checker is exported so it can be asserted against manifests
 // `emit_ninja_string` is supposed never to produce. A test that could only
 // reach it through a BuildPlan could not show the checker works at all.
 
@@ -1746,7 +1746,7 @@ TEST(ActionOrdering, AGeneratedHeaderGetsAPhonyAndTheCompileEdgeWaitsForIt) {
         << "the compile edge does not wait for the generator\n" << ninja;
 }
 
-// ⚠️ THE DENOMINATOR. "every edge that should carry the ordering does" is
+// THE DENOMINATOR. "every edge that should carry the ordering does" is
 // vacuously true when no edge does — and that vacuum is exactly the state this
 // change fixes, so the count of edges is asserted separately from the count
 // that carries it. A bare equality would have passed against the defect.

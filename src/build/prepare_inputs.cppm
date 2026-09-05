@@ -7,7 +7,7 @@
 // is a bonus and, since the split schedule landed, a smaller one (an interface
 // now blocks importers for ~22% of its compile rather than all of it).
 //
-// ⚠️ WHAT A SPLIT HAS TO BE TO HELP THE CRITICAL PATH. Extracting a piece that
+// WHAT A SPLIT HAS TO BE TO HELP THE CRITICAL PATH. Extracting a piece that
 // `prepare` then imports makes the chain LONGER, not shorter: `... -> this ->
 // prepare -> ...` is still serial, and prepare only sheds the cost this module
 // now pays. It shortens the path only for consumers that can import THIS
@@ -59,7 +59,7 @@ namespace cfgpred {
 // rather than an inference from emptiness because "no layer resolved" and "not
 // resolved yet" are different answers and only one of them may be reported.
 //
-// ⚠️ `compiler` carries the FAMILY (`llvm`), never the driver (`clang`) — #494
+// `compiler` carries the FAMILY (`llvm`), never the driver (`clang`) — #494
 // settled that, on the grounds that every place a user writes the name they
 // write the family, and reporting the driver would make
 // `requires = ["mcpp:compiler=llvm"]` permanently unsatisfiable.
@@ -133,7 +133,7 @@ inline Ctx context_for(std::string_view targetTriple) {
 
 // ── The cfg() vocabulary ────────────────────────────────────────────────────
 //
-// ⚠️ ONE LIST PER CATEGORY, AND EVERY READER READS IT. #540 found four
+// ONE LIST PER CATEGORY, AND EVERY READER READS IT. #540 found four
 // hand-written copies of other vocabularies in this repository, all drifted;
 // the diagnostic added below would have been the fifth if it had transcribed
 // these names instead of sharing them.
@@ -162,7 +162,7 @@ inline bool is_cfg_layer_key(std::string_view k) {
 //   expr := all(list) | any(list) | not(expr) | key="value" | bareword
 //   key  ∈ kCfgTripleKeys ∪ kCfgLayerKeys   bareword ∈ kCfgBarewords
 //
-// ⚠️ THE EVALUATOR IS ALSO THE VALIDATOR. `seenKeys`/`seenWords` let one
+// THE EVALUATOR IS ALSO THE VALIDATOR. `seenKeys`/`seenWords` let one
 // traversal answer three questions — does it match, does it name a layer, does
 // it name anything at all — because a separate validator would be a SECOND
 // parser of the same grammar, and this repository has already paid for one of
@@ -176,7 +176,7 @@ struct Parser {
     bool eat(char ch) { ws(); if (i < s.size() && s[i] == ch) { ++i; return true; } return false; }
     std::string ident() {
         ws(); std::size_t b = i;
-        // ⚠️ `-` and `+` ARE IDENTIFIER CHARACTERS, because the layer names are
+        // `-` and `+` ARE IDENTIFIER CHARACTERS, because the layer names are
         // `c-abi`, `c++-abi`, `compiler-runtime` and `kernel-abi`. Without them
         // `cfg(c-abi = "musl")` scanned as the bareword `c` followed by
         // garbage, so the one thing a diagnostic could report was the letter
@@ -466,7 +466,7 @@ std::string canonical_package_build_metadata(
         s += pkg.manifest.package.version;
         s += " source=";
         s += pkg.manifest.package.sourceProvenance;
-        // ⭐⭐ WHAT THIS PACKAGE IS BUILT WITH, AND NOT ONLY WHAT IT ASKS THE
+        // WHAT THIS PACKAGE IS BUILT WITH, AND NOT ONLY WHAT IT ASKS THE
         // RUNTIME FOR.
         //
         // Only the root's compile inputs used to reach the fingerprint, through
@@ -476,7 +476,7 @@ std::string canonical_package_build_metadata(
         // kept the same output directory, and the fast path replayed a
         // build.ninja generated before the edit.
         //
-        // ⚠️ AND THE WAY THAT SHOWS IS THAT THE EDIT APPEARS TO HAVE HAD NO
+        // AND THE WAY THAT SHOWS IS THAT THE EDIT APPEARS TO HAVE HAD NO
         // EFFECT. Measured 2026-08-23 on a path dependency: a flag added to
         // `[build] cflags` was absent from the generated `unit_cflags` after a
         // rebuild, absent after touching the sources, and present the moment

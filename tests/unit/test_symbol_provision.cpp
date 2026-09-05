@@ -68,7 +68,7 @@ TEST(SymbolProvision, CopyRelocatedDataIsNotAnExport) {
 }
 
 TEST(SymbolProvision, CopyRelocationsMatchByAddressNotByName) {
-    // ⚠️ MEASURED, on every mcpp binary: glibc's `environ` is a WEAK alias of
+    // MEASURED, on every mcpp binary: glibc's `environ` is a WEAK alias of
     // `__environ` at one address, and only `__environ` appears in `.rela.dyn`.
     // A name-keyed filter reports `environ` as a hijacked symbol in every
     // dynamically linked executable ever built.
@@ -106,7 +106,7 @@ TEST(SymbolProvision, AnUnknownMachineDeclinesRatherThanGuessing) {
 // ── stage two ──────────────────────────────────────────────────────────────
 
 TEST(SymbolProvision, AnExportWithNoSecondProviderIsNotAConflict) {
-    // ⚠️ mcpp's OWN arrangement. A `kind = "shared"` dependency's link unit
+    // mcpp's OWN arrangement. A `kind = "shared"` dependency's link unit
     // takes only its own objects, so its static dependency lands in the
     // consumer's executable and the shared library binds back to it. One copy
     // in the process, entirely benign — and stage one alone would warn about

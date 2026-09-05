@@ -49,7 +49,7 @@ status.** `SYS_EXIT` (`0x18`) takes its reason code in `r1` *directly*; the
 32-bit `r1` cannot carry both a reason and a status. Passing the block to `0x18`
 prints everything correctly and then reports the **wrong** exit status.
 
-⚠️ This is an *AArch32* fact and applies to M-profile as much as to A-profile.
+This is an *AArch32* fact and applies to M-profile as much as to A-profile.
 Measured twice: an ARMv7-A image exiting 0 reported 1, and an `openarch`
 Cortex-M example printed `both tasks observed preemption` and exited 1 — every
 assertion on its output passed. A board that only checks what it printed cannot
@@ -70,7 +70,7 @@ The `eabi`/`eabihf` suffix is the float ABI, and clang derives it from the
 triple without help: measured on llvm 22.1.8, `thumbv7em-none-eabi` yields
 `-mfloat-abi soft` and `thumbv7em-none-eabihf` yields `hard`.
 
-⚠️ **The float ABI does not settle whether the FPU is used.** It governs how
+**The float ABI does not settle whether the FPU is used.** It governs how
 floating-point values cross a function boundary, not what the compiler may emit
 inside one, and the `thumbv7em` architecture implies FPv4-SP. Measured: under
 the soft-float ABI clang still emits `vmul.f32` for a float multiply. On a
@@ -97,17 +97,17 @@ is undefined. That costs nothing when the C library is a prebuilt archive and
 the target has megabytes; a Cortex-M part has kilobytes, and without dead-section
 elimination every image would carry the whole of the C library.
 
-⚠️ **A linker script becomes load-bearing in a new way.** An interrupt vector
+**A linker script becomes load-bearing in a new way.** An interrupt vector
 table is referenced by nothing — the hardware reads it by address — so
 `--gc-sections` collects it. A board's script must say `KEEP(*(.vectors))`.
 Measured: with the `KEEP` present, a function nothing calls is dropped, the
 table survives, and the image boots.
 
-⚠️ The last two rows default to no C library, and that is a statement rather
+The last two rows default to no C library, and that is a statement rather
 than an omission: the first consumer of both rows — the `openarch` layer of
 machine mechanism — references no C library symbol, and if no row defaulted to
 this tier there would be nothing demonstrating the tier works.
-⭐ **A build for those rows is declarable, not absent** (mcpp 2026.8.21.3+).
+**A build for those rows is declarable, not absent** (mcpp 2026.8.21.3+).
 `xim:picolibc-aarch64` and `xim:picolibc-x86` are in the index; a project that
 wants one names it the same way it would choose a different one:
 
@@ -126,7 +126,7 @@ that can install the LLVM payload can produce an image for any of the four.
 
 ### The x86_64 row is not four strings
 
-⚠️ **A target row is normally an entry in two tables and nothing else. This one
+**A target row is normally an entry in two tables and nothing else. This one
 needed engine code, and the reason is a property of clang rather than of the
 instruction set.**
 
@@ -493,7 +493,7 @@ which emulator boots it are not C library facts:
 riscv-virt-rt = { version = "0.5.0", features = ["nolibc"] }
 ```
 
-⚠️ `std-freestanding-nolibc` is what that feature resolves to, and adding it
+`std-freestanding-nolibc` is what that feature resolves to, and adding it
 **directly** alongside a C library fails silently rather than loudly. A C library
 ships as an archive, and
 an archive member is pulled only while the symbol is still undefined; a
@@ -651,7 +651,7 @@ mcpp installs it on first use — and it obeys the same two knobs: under
 `--offline` / `MCPP_OFFLINE` or `MCPP_NO_AUTO_INSTALL` mcpp refuses instead,
 naming the packages so they can be installed out of band.
 
-⚠️ **A build program still must not assume the directory exists.** Provisioning
+**A build program still must not assume the directory exists.** Provisioning
 runs for the package that DECLARES the deps; a build program can be reached
 through paths where that has not happened — a dependency of a project that
 declares nothing, an environment where the knobs above refused — so

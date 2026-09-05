@@ -14,7 +14,7 @@ import mcpp.pm.index_spec;
 import mcpp.platform;
 import mcpp.platform.axis;   // the one macos/macosx spelling rule
 
-// ⚠️ ANONYMOUS NAMESPACE, AND THIS COST TWO WINDOWS JOBS TO LEARN.
+// ANONYMOUS NAMESPACE, AND THIS COST TWO WINDOWS JOBS TO LEARN.
 //
 // The first version of this helper sat at namespace scope in the module
 // purview, which makes its declaration part of what this module's interface
@@ -37,7 +37,7 @@ namespace {
 // A dependency's version requirement, checked with the parser that will later
 // be asked to match it.
 //
-// ⚠️ THE PARSER EXISTED AND THIS PATH DID NOT USE IT.
+// THE PARSER EXISTED AND THIS PATH DID NOT USE IT.
 //
 // `version_req::parse_req` is what decides which published version satisfies a
 // requirement. The dependency reader handed its string straight to the
@@ -55,7 +55,7 @@ namespace {
 // message that names the actual problem, at the point where the text was
 // written.
 //
-// ⚠️ A WARNING AND NOT AN ERROR, AND THE FIRST VERSION GOT THIS WRONG.
+// A WARNING AND NOT AN ERROR, AND THE FIRST VERSION GOT THIS WRONG.
 //
 // Rejecting the manifest breaks every consumer of a PUBLISHED package that
 // carries such a string — including one where the offending entry belongs to a
@@ -67,7 +67,7 @@ namespace {
 // not invalidate a running program; equally, a new program must not invalidate
 // published data. A manifest check has no standing to do so over an entry that
 // may never be reached.
-// ⚠️ RETURNS A PLAIN STRING, EMPTY MEANING "NO PROBLEM", AND NOT AN
+// RETURNS A PLAIN STRING, EMPTY MEANING "NO PROBLEM", AND NOT AN
 // `std::optional<std::string>`. The optional was the obvious spelling and cost
 // two rounds of Windows CI: see the note on `TargetEntry::sysroot` for what
 // that specialisation does to importers under clang with the MSVC standard
@@ -121,7 +121,7 @@ struct LoadContext {
 // `XlingsConfig::workspaceByPlatform`, because the descriptor emitter needs
 // every platform at once and cannot re-derive what was already collapsed.
 //
-// ⚠️ `macos` AND `macosx` ARE ONE PLATFORM, AND THE RULE IS NOT WRITTEN HERE.
+// `macos` AND `macosx` ARE ONE PLATFORM, AND THE RULE IS NOT WRITTEN HERE.
 // mcpp's triple vocabulary says `macos`; a descriptor and xlings' project file
 // say `macosx`. `mcpp::platform::xpkg_platform_key_for` is the one place that
 // knows, and `xpkg_platform` is the host in the same vocabulary — an earlier
@@ -243,7 +243,7 @@ inline XlingsEntry parse_address(std::string_view address) {
 // An entry's value, split into the part that names a version and the tier that
 // part belongs to.
 //
-// ⭐ `{ version = "…", when = "…" }` IS THE SAME SHAPE A DEPENDENCY ALREADY
+// `{ version = "…", when = "…" }` IS THE SAME SHAPE A DEPENDENCY ALREADY
 // HAS. mcpp writes `dep = "1.0"` or `dep = { version = "1.0", features = [] }`,
 // and a tool entry now writes `"xim:probe-rs" = "0.24.0"` or
 // `{ version = "0.24.0", when = "run" }`. One table, richer entries — rather
@@ -278,7 +278,7 @@ split_when(const mcpp::libs::toml::Value& v) {
     auto itWhen = t.find("when");
     if (itVer == t.end() && itWhen == t.end())
         return WhenSplit{ &v, ToolWhen::Always };   // a platform table
-    // ⚠️ A SCOPED ENTRY MUST NAME ITS VERSION KEY EVEN TO LEAVE IT EMPTY.
+    // A SCOPED ENTRY MUST NAME ITS VERSION KEY EVEN TO LEAVE IT EMPTY.
     // `{ when = "run" }` alone reads as "present, unconstrained, run tier",
     // which is a meaningful thing to say — but so is a typo of `version`, and
     // the two would be indistinguishable. The key is required, `""` says
@@ -805,7 +805,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     // "unsupported" would deny a documented plan; saying nothing
                     // is what let it look implemented.
                     if (fkey == "deps") {
-                        // ⚠️ THE SPELLING NAMED HERE HAS TO EXIST. The first
+                        // THE SPELLING NAMED HERE HAS TO EXIST. The first
                         // draft of this message offered `optional = true`,
                         // which mcpp has never had — a diagnostic that sends
                         // its reader to a key the parser does not know is the
@@ -888,7 +888,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     }
     // std-module / std-compat-module / std-module-flags.
     //
-    // ⚠️ THEY BELONG UNDER `[build]`, AND `[package]` IS THE OLDER SPELLING.
+    // THEY BELONG UNDER `[build]`, AND `[package]` IS THE OLDER SPELLING.
     // The module source is one of this package's translation units in every way
     // that matters: it is compiled with the package's include directories and
     // its definitions, and it is a `.cppm` file like any other. Keeping it in
@@ -1694,14 +1694,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // `[feature-xlings.<feature>]` — the same table, gated on a feature of the
     // package that declared it.
     //
-    // ⭐ THE SPELLING IS `[feature-deps.<feature>]`'s, DELIBERATELY. A feature
+    // THE SPELLING IS `[feature-deps.<feature>]`'s, DELIBERATELY. A feature
     // that pulls in a package and a feature that pulls in a tool are the same
     // statement about the same feature, and inventing a second syntax for the
     // second would make an author learn a rule that buys nothing. The keys
     // differ because the things named differ: a package name there, an xim
     // address here.
     //
-    // ⚠️ A FEATURE NAME THAT NO `[features]` DECLARES IS REPORTED. A
+    // A FEATURE NAME THAT NO `[features]` DECLARES IS REPORTED. A
     // `[feature-xlings.hardwear]` activates for nobody and installs nothing,
     // and the tool it names is the one whose absence is hardest to diagnose:
     // the build succeeds and the device is simply never reachable.
@@ -1844,7 +1844,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             bool known = false;
             for (auto k : kKnownBuildKeys) if (key == k) { known = true; break; }
             if (!known) {
-                // ⚠️ THE LIST IN THE MESSAGE IS THE SAME LIST. It used to be a
+                // THE LIST IN THE MESSAGE IS THE SAME LIST. It used to be a
                 // THIRD hand-written copy and had already drifted from both
                 // others: it named neither `jobs` nor `bmi_schedule`, while
                 // `kKnownBuildKeys` carried a `schedule` that nothing reads and
@@ -2215,7 +2215,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             *out = it->second.as_bool();
         }
 
-        // ⚠️ THE EXPERIMENTAL GATE, AND THE WHOLE OF IT.
+        // THE EXPERIMENTAL GATE, AND THE WHOLE OF IT.
         //
         // `[hooks]` is experimental, so it may not decide whether a build
         // succeeded. Asking for `side_effect = true` is refused rather than
@@ -2378,7 +2378,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 }
             }
 
-            // ⭐ `[target.<triple>.runners]` — the NAMED ways of reaching this
+            // `[target.<triple>.runners]` — the NAMED ways of reaching this
             // target's artefact, one key per name.
             //
             // The engine knows none of these names. `flash`, `monitor`,
@@ -2422,7 +2422,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // so a key that looks plausible — `cxx_runtime_tests` was the real
             // one — was accepted in silence and had no effect (#418).
             //
-            // ⚠️ NO SUB-TABLES, AND THAT IS THE POINT. The sub-TABLES here are the
+            // NO SUB-TABLES, AND THAT IS THE POINT. The sub-TABLES here are the
             // conditional channel (`[target.<pred>.build]`, `.dependencies`,
             // `.dev-dependencies`, `.build-dependencies`, `.feature-deps`) and
             // TOML presents each as a key of this table. A hand-written list of
@@ -2561,7 +2561,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     for (auto k : kKnownConditionalBuildKeys)
                         if (key == k) { known = true; break; }
                     if (!known) {
-                        // ⚠️ THE LIST IN THE MESSAGE IS THE SAME LIST, for the
+                        // THE LIST IN THE MESSAGE IS THE SAME LIST, for the
                         // reason spelled out at kKnownBuildKeys: a hand-written
                         // second copy of a vocabulary drifts, and the drift
                         // surfaces as a message that names the wrong set. This
@@ -3213,7 +3213,7 @@ upsert_dependency_text(std::string_view source,
 
 // ── the lib root that actually exists ────────────────────────────────────
 //
-// ⚠️ LIVES HERE, NOT IN mcpp.manifest.types, AND THE REASON IS MEASURED.
+// LIVES HERE, NOT IN mcpp.manifest.types, AND THE REASON IS MEASURED.
 // Probing needs the extension table (`mcpp.source_kind`), which this module
 // already imports and `types` does not. Adding that import to `types` — a
 // module nearly everything depends on — made GCC 16.1 ICE while compiling

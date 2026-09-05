@@ -14,7 +14,7 @@
 # platform — a layout keyed by "windows" could hold only one of these, and the
 # one it held would link for exactly half of its consumers.
 #
-# ⚠️ WHY IT DID NOT EXIST BEFORE, AND WHY THAT WAS THE WRONG CALL. This
+# WHY IT DID NOT EXIST BEFORE, AND WHY THAT WAS THE WRONG CALL. This
 # combination was reported as "not possible on Windows". It is: host_can_serve
 # (registry.cppm:542-566) grants a Windows host `*-windows-msvc`,
 # `*-windows-gnu` AND host-arch `*-linux-musl` — three targets, so a fat package
@@ -125,7 +125,7 @@ check() {   # $1 = label, $2 = expected leg dir, $3.. = build args
     ( cd app && "$MCPP" build "$@" > "$TMP/$label.log" 2>&1 ) \
         || { cat "$TMP/$label.log"; echo "$label build failed"; exit 1; }
     local nj; nj="$(find app/target -name build.ninja | head -1)"
-    # ⚠️ Separator-agnostic, and matched from the PACKAGE name rather than from
+    # Separator-agnostic, and matched from the PACKAGE name rather than from
     # `dist/`. A native mcpp.exe writes native separators into build.ninja, so
     # the first version of this — `grep -o "dist/mathkit-0.1.0/lib/…"` — matched
     # nothing at all on Windows and reported "saw more than one leg" over an

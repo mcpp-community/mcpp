@@ -3,7 +3,7 @@
 # A package may supply the kernel interface while the C library stays the
 # payload's, and the link line has to keep reaching the payload.
 #
-# ⚠️ THE PREDICATE THAT DECIDED THIS WAS AN `OR` OVER TWO LAYERS.
+# THE PREDICATE THAT DECIDED THIS WAS AN `OR` OVER TWO LAYERS.
 #
 #     bool system_from_graph() const {
 #         return kernelAbi.fromGraph() || cAbi.fromGraph();
@@ -21,14 +21,14 @@
 #              crti.o (bare name — the linker cannot resolve it)
 #              crtn.o (bare name — the linker cannot resolve it)
 #
-# ⭐ THE SHAPE IS NOT EXOTIC — IT IS HOW EVERY openkal BACKEND IS TESTED.
+# THE SHAPE IS NOT EXOTIC — IT IS HOW EVERY openkal BACKEND IS TESTED.
 # openkal-linux, openkal-macos and openkal-windows each build their conformance
 # suite against the platform's own C library, because a backend implements
 # openkal ON TOP OF that platform. All three went red the moment their CI pin
 # moved onto the release carrying this, and stayed green before it — which is
 # the only reason the defect shipped.
 #
-# ⚠️ AND NOTHING IN THIS SUITE HAD THIS SHAPE. 278 e2e scripts, and the
+# AND NOTHING IN THIS SUITE HAD THIS SHAPE. 278 e2e scripts, and the
 # combination "kernel-abi from the graph, C library from the payload" appeared
 # in none of them. That is what this file is for.
 set -e
@@ -43,7 +43,7 @@ cd "$work/app"
 # program naming it alone gets its kernel interface from the graph and
 # everything else — C library, C++ runtime, startup files — from the payload.
 #
-# ⚠️ AND WITHOUT `features = ["standalone"]`, WHICH IS A DIFFERENT SHAPE.
+# AND WITHOUT `features = ["standalone"]`, WHICH IS A DIFFERENT SHAPE.
 # That feature says this implementation is the whole of the program's
 # environment, so it supplies the entry point; asked for beside a C library
 # that supplies one too, the link ends in
@@ -64,7 +64,7 @@ default = "gcc@16.1.0"
 [dependencies]
 openkal-linux = "0.5.4"
 TOML
-# ⭐ THE PROGRAM USES THE C++ RUNTIME, NOT ONLY THE C LIBRARY.
+# THE PROGRAM USES THE C++ RUNTIME, NOT ONLY THE C LIBRARY.
 #
 # `int main() { return 0; }` links against almost nothing and would pass while
 # a second defect of the same family was live: the contract table decided
@@ -115,7 +115,7 @@ if [ "$rc" != 0 ]; then
     exit 1
 fi
 
-# ⭐ AND THE ARTEFACT, BECAUSE A LINK THAT SUCCEEDS IS NOT THE CLAIM.
+# AND THE ARTEFACT, BECAUSE A LINK THAT SUCCEEDS IS NOT THE CLAIM.
 # The claim is that the payload's C runtime was reached; a program that links
 # without a C library at all would also exit 0 here.
 bin="$(find target -type f -name kabi | head -1)"

@@ -3,7 +3,7 @@
 # Declaring which layer a package supplies must not change which compiler can
 # emit the target.
 #
-# ⚠️ MEASURED 2026-08-25, ON A THREE-LINE MANIFEST. Adding one `provides` line
+# MEASURED 2026-08-25, ON A THREE-LINE MANIFEST. Adding one `provides` line
 # to a project moved a bare-metal RISC-V build onto the host's g++:
 #
 #     provides = ["mcpp:kernel-abi=openkal"]
@@ -19,7 +19,7 @@
 # target at all: `clang`/`lld` are cross-compilers by construction and a host
 # g++ cannot produce riscv64-none-elf whatever the graph contains.
 #
-# ⭐⭐ BOTH DIRECTIONS, BECAUSE ONLY ONE OF THEM IS THE FIX. Never cancelling
+# BOTH DIRECTIONS, BECAUSE ONLY ONE OF THEM IS THE FIX. Never cancelling
 # the pin also stops this failing, and it would restore the substitution the
 # predicate was added to prevent — a hosted project whose C library comes from
 # its graph having its chosen toolchain silently replaced. The second half

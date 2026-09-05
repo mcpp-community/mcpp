@@ -12,7 +12,7 @@
 # marked blocking ran alongside compilation exactly like a non-blocking one,
 # and the flag was a no-op with a paper trail.
 #
-# ⚠️ ASSERTED ON THE ARTIFACT, NOT ON A LOG LINE. "the check failed" appears in
+# ASSERTED ON THE ARTIFACT, NOT ON A LOG LINE. "the check failed" appears in
 # the output either way; what distinguishes blocking from non-blocking is
 # whether the object was PRODUCED. A grep over stderr would pass against the
 # defect.

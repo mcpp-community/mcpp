@@ -81,7 +81,7 @@ enum class EnvAxis { Unknown, CLibrary, ObjectAbi, ObjectFormat };
 // The noun for a segment, as it appears in the report. Empty for `Unknown`,
 // because a report that cannot name the axis says nothing rather than guessing.
 //
-// ⚠️ THE VALUE, NOT ONLY THE AXIS. `gnu` and `msvc` sit on the same axis and
+// THE VALUE, NOT ONLY THE AXIS. `gnu` and `msvc` sit on the same axis and
 // select opposite ABIs, so a noun fixed per axis would print "the Itanium C++
 // ABI" for an MSVC build. Naming the ABI rather than the axis is deliberate:
 // `Itanium` and `MSVC` appear in no row of the report, so neither can be
@@ -139,7 +139,7 @@ struct Layer {
 //   cxx              the C++ library and its   libc++ / libstdc++ / MSVC STL
 //                    ABI runtime
 //
-// ⚠️ `compilerRuntime` IS NOT PART OF `cxx`, AND THE DISTINCTION WAS MEASURED
+// `compilerRuntime` IS NOT PART OF `cxx`, AND THE DISTINCTION WAS MEASURED
 // BEFORE IT WAS NAMED. The builtins (`__udivti3` and its relatives) are what a
 // PURE C PROGRAM needs. Counting them as part of the C++ runtime is the same
 // error as the one recorded at the head of this file: a C program crossed to
@@ -147,7 +147,7 @@ struct Layer {
 // link line kept the payload's own libc++ and handed a Linux shared object to a
 // Mach-O linker. A layer that only some programs need is still a layer.
 //
-// ⚠️ `kernelAbi` HAS NO NAME ON A TRADITIONAL STACK. A C library issues system
+// `kernelAbi` HAS NO NAME ON A TRADITIONAL STACK. A C library issues system
 // calls or calls the platform's own entry points directly, and nothing names the
 // seam. Naming it is what lets one C library sit above four platforms, which is
 // why this field reads `—` for a picolibc bare-metal build and `openkal` for an
@@ -195,7 +195,7 @@ struct TargetSide {
         return kernelAbi.fromGraph() || cAbi.fromGraph();
     }
 
-    // ⚠️ AND THE C LIBRARY IS A SEPARATE QUESTION, WHICH THE ONE ABOVE WAS
+    // AND THE C LIBRARY IS A SEPARATE QUESTION, WHICH THE ONE ABOVE WAS
     // ANSWERING FOR IT AND GETTING WRONG.
     //
     // `system_from_graph` is an OR over two layers, and the link line's
@@ -216,11 +216,11 @@ struct TargetSide {
     //     error: hermetic link check failed
     //              crt1.o (bare name — the linker cannot resolve it)
     //
-    // ⚠️ THIS SHIPPED, in 2026.8.24.1, and reached every backend in the
+    // THIS SHIPPED, in 2026.8.24.1, and reached every backend in the
     // ecosystem — that shape is how a backend is tested. Their CI was pinned
     // to an older mcpp and kept passing.
     //
-    // ⭐ THERE IS NO PREDICATE HERE, BECAUSE `Layer::prebuilt()` ALREADY IS
+    // THERE IS NO PREDICATE HERE, BECAUSE `Layer::prebuilt()` ALREADY IS
     // ONE. The question the link line asks is whether the C library came from
     // a DIRECTORY that existed before resolution (a payload, an xpkg sysroot)
     // or from packages that had to be resolved first — which is the very
@@ -337,7 +337,7 @@ parse_capability(std::string_view entry) {
 // and this engine checks a relation it can state generically: the layer named
 // must resolve to the interface named.
 //
-// ⚠️ It is also how `compiler-runtime` stays honest. libgcc is configured for
+// It is also how `compiler-runtime` stays honest. libgcc is configured for
 // gcc and compiler-rt for clang; a build whose compiler is one and whose
 // runtime is the other resolves `__udivti3` differently from every other link in
 // the same program. mcpp does not know which runtime belongs to which family —
@@ -384,7 +384,7 @@ struct Inputs {
     std::string compilerFamily;        // "llvm" / "gcc" / "msvc"
     std::string compilerVersion;
 
-    // ⚠️ THE C LIBRARY THE TRIPLE ASKED FOR, WHICH IS NOT THE SAME QUESTION AS
+    // THE C LIBRARY THE TRIPLE ASKED FOR, WHICH IS NOT THE SAME QUESTION AS
     // WHICH ONE RESOLVED.
     //
     // `x86_64-linux-musl` states a request; `x86_64-linux` declines to. The
@@ -395,7 +395,7 @@ struct Inputs {
     std::string requestedCAbi;
     // The same target spelled without that segment, for the suggestion.
     std::string requestFreeTarget;
-    // ⚠️ WHAT THE ENV SEGMENT NAMES ON THIS PLATFORM. It is a different axis
+    // WHAT THE ENV SEGMENT NAMES ON THIS PLATFORM. It is a different axis
     // per OS, and a boolean here was a lossy encoding of that.
     //
     // On Linux the segment names the C library — `gnu` is glibc, `musl` is musl
@@ -429,7 +429,7 @@ struct Inputs {
 
 // The name of the C library a compiler payload carries for a target.
 //
-// ⚠️ THE TRIPLE'S ENV FIELD ANSWERS THIS ONLY WHERE THE TRIPLE HAS ONE, AND
+// THE TRIPLE'S ENV FIELD ANSWERS THIS ONLY WHERE THE TRIPLE HAS ONE, AND
 // FALLING BACK TO `glibc` NAMED A LIBRARY THAT DOES NOT EXIST ON THE PLATFORM.
 // Measured on macOS, where the canonical triple carries no env segment:
 //
@@ -439,11 +439,11 @@ struct Inputs {
 // build that had something to say; showing the whole stack made a wrong label
 // into a wrong statement.
 //
-// ⚠️ These names are PAYLOAD facts, which is why they may be written here at
+// These names are PAYLOAD facts, which is why they may be written here at
 // all: mcpp ships those payloads and knows what is inside them. What must never
 // be written here is what a PACKAGE supplies — that is the difference the
 // reserved-capability grammar exists to keep.
-// ⚠️ THE TRIPLE'S ENV SEGMENT IS A TRIPLE SPELLING, NOT A C LIBRARY'S NAME, AND
+// THE TRIPLE'S ENV SEGMENT IS A TRIPLE SPELLING, NOT A C LIBRARY'S NAME, AND
 // THE TWO COINCIDE ONLY SOMETIMES. `musl` is both. `gnu` is neither: on Linux it
 // means glibc, and on Windows it names the MinGW flavour of the toolchain, whose
 // C runtime is the same UCRT the MSVC flavour links.
@@ -503,7 +503,7 @@ inline TargetSide resolve(const Inputs& in) {
 
     // compiler-runtime — the builtins and the unwinder.
     //
-    // ⚠️ ABSENT FROM THE GRAPH DOES NOT MEAN ABSENT. Every compiler payload
+    // ABSENT FROM THE GRAPH DOES NOT MEAN ABSENT. Every compiler payload
     // ships one; a package supplies it only when the payload's own is the wrong
     // one for this target, which is the same shape as every other layer here.
     // The payload's is reported under the compiler's own name because that is
@@ -601,7 +601,7 @@ inline std::optional<std::string> check_layering(const TargetSide& ts) {
 
 // ── Rule two, part two: declared requirements ────────────────────────────────
 //
-// ⚠️ A REQUIREMENT IS CHECKED AGAINST THE RESOLVED LAYER, NOT AGAINST THE
+// A REQUIREMENT IS CHECKED AGAINST THE RESOLVED LAYER, NOT AGAINST THE
 // REQUEST. `requires = ["mcpp:compiler=llvm"]` is satisfied by whatever the
 // compiler layer actually resolved to, which is the only value that will be on
 // the command line.
@@ -611,7 +611,7 @@ inline std::optional<std::string> check_layering(const TargetSide& ts) {
 // reported by naming both — which is what a reader needs and what an engine
 // hardcoding a table of families could not produce for a family it had not
 // heard of.
-// ⚠️ `compilerStatedBy` NAMES WHERE THE COMPILER CAME FROM, AND THE ADVICE IS
+// `compilerStatedBy` NAMES WHERE THE COMPILER CAME FROM, AND THE ADVICE IS
 // WRONG WITHOUT IT.
 //
 // Until 2026.8.26.2 a compiler requirement mcpp could satisfy by itself still
@@ -697,7 +697,7 @@ check_requirements(const TargetSide& ts, std::span<const Requirement> reqs,
 
 // ── The triple is a request; the target side is the fact ────────────────────
 //
-// ⚠️ REPORTED RATHER THAN REFUSED, AND THE SEVERITY WAS DECIDED BY A
+// REPORTED RATHER THAN REFUSED, AND THE SEVERITY WAS DECIDED BY A
 // MEASUREMENT RATHER THAN BY THE PRINCIPLE.
 //
 // The first version refused. It is the semantically clean answer — the name
@@ -713,11 +713,11 @@ check_requirements(const TargetSide& ts, std::span<const Requirement> reqs,
 // it is a build whose name misdescribes it, and saying so is the whole
 // remedy.
 //
-// ⚠️ The remedy has to be actionable, which is why `x86_64-linux` had to work
+// The remedy has to be actionable, which is why `x86_64-linux` had to work
 // first. Telling someone their target name is wrong is only useful once there
 // is a right one to give them.
 inline std::optional<std::string> check_request(const TargetSide& ts) {
-    // ⚠️ TWO AXES REACH HERE, AND EXEMPTING THE SECOND WAS THE DEFECT.
+    // TWO AXES REACH HERE, AND EXEMPTING THE SECOND WAS THE DEFECT.
     //
     // `CLibrary` is the obvious one: on Linux the segment names the C library
     // outright. `ObjectAbi` was exempted on the grounds that `gnu` on Windows
@@ -732,7 +732,7 @@ inline std::optional<std::string> check_request(const TargetSide& ts) {
     //     --target x86_64-linux-gnu     c-abi musl (graph)   warned
     //     --target x86_64-windows-gnu   c-abi musl (graph)   silent   ← the defect
     //
-    // ⚠️ `ObjectFormat` STAYS EXEMPT, and not for symmetry. `elf` never names a
+    // `ObjectFormat` STAYS EXEMPT, and not for symmetry. `elf` never names a
     // C library on any platform, so "the target name asks for the `elf` C ABI"
     // would be nonsense rather than merely noisy. That axis is glossed in the
     // report instead.
@@ -810,7 +810,7 @@ inline std::string format_conflict(const Conflict& c) {
 // intention that goes stale when the packages beneath it change; this states
 // the outcome and cannot.
 //
-// ⚠️ BY DEFAULT IT PRINTS ONLY THE LAYERS THE COMPILER PAYLOAD DID NOT SUPPLY.
+// BY DEFAULT IT PRINTS ONLY THE LAYERS THE COMPILER PAYLOAD DID NOT SUPPLY.
 // A zero-configuration build resolves all five from one payload, and five lines
 // reading `(payload)` carry no information — they are the answer to a question
 // nobody asked. What earns a line is a layer that came from somewhere else.
@@ -830,7 +830,7 @@ inline std::string format_layers(const TargetSide& ts, bool verbose) {
         { "c++-abi",          ts.cxx              },
     };
 
-    // ⚠️ WHETHER THE STACK IS SHOWN AT ALL IS DECIDED BEFORE ANY ROW IS
+    // WHETHER THE STACK IS SHOWN AT ALL IS DECIDED BEFORE ANY ROW IS
     // WRITTEN, AND THE FIRST VERSION DECIDED IT PER ROW.
     //
     // An absent layer is a statement rather than a gap, so it belongs in a
@@ -875,7 +875,7 @@ inline std::string format_report(const TargetSide& ts, std::string_view targetNa
         ? std::format("{}", targetName)
         : std::format("{} → {}", targetName, ts.llvmTriple);
 
-    // ⚠️ WHEN THE SEGMENT IS NOT A C LIBRARY, SAY WHAT IT IS — HERE, WHERE THE
+    // WHEN THE SEGMENT IS NOT A C LIBRARY, SAY WHAT IT IS — HERE, WHERE THE
     // READER IS LOOKING AT IT.
     //
     // `x86_64-windows-gnu` above a line reading `c-abi musl` is not a
@@ -889,7 +889,7 @@ inline std::string format_report(const TargetSide& ts, std::string_view targetNa
     // is linked. The other two are what `gnu` actually selected — the Itanium
     // C++ ABI rather than Microsoft's.
     //
-    // ⭐ AND IT CORRESPONDS TO NO ROW OF THIS REPORT, WHICH IS THE POINT. The
+    // AND IT CORRESPONDS TO NO ROW OF THIS REPORT, WHICH IS THE POINT. The
     // five layers record who SUPPLIES each layer; `gnu` names a convention the
     // OBJECTS FOLLOW, and several layers must agree on it. Pointing the reader
     // at `c++-abi libc++` would be a second wrong answer: libc++ is one
@@ -906,7 +906,7 @@ inline std::string format_report(const TargetSide& ts, std::string_view targetNa
     // present, it does not name a C library here, and the C library came from
     // somewhere the segment did not choose. A payload C library IS selected by
     // the triple, so `gnu → ucrt` follows visibly and needs no gloss.
-    // ⚠️ `ObjectFormat` ONLY. The object-ABI axis used to be glossed here and is
+    // `ObjectFormat` ONLY. The object-ABI axis used to be glossed here and is
     // now WARNED about instead — see `check_request`. Leaving both in place
     // would say the same thing twice, once as an aside and once as a warning,
     // which reads as two different findings.

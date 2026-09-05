@@ -32,7 +32,7 @@ echo "$out" | grep -q 'mcpp toolchain install' || {
 # A project-level [toolchain] = "system" is REFUSED, and refused on its own
 # terms rather than falling through to "no toolchain configured".
 #
-# ⚠️ THIS USED TO ASSERT THE OPPOSITE — that `system` "still works as escape
+# THIS USED TO ASSERT THE OPPOSITE — that `system` "still works as escape
 # hatch" — and the assertion was only ever `grep -q 'no toolchain configured'`
 # being absent. That predicate stays satisfied by ANY other error, so when the
 # escape hatch became a refusal the test went on passing while its stated

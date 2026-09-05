@@ -65,7 +65,7 @@ grep -q "produces no target" build.log && {
 lib=$(find target -name 'libarchived.a' | head -1)
 [ -n "$lib" ] || { echo "FAIL: no static library was produced"; exit 1; }
 
-# ⭐ THE MEMBER LIST IS THE ASSERTION, not the exit status: an `ar` that was
+# THE MEMBER LIST IS THE ASSERTION, not the exit status: an `ar` that was
 # handed nothing still writes a well-formed archive and reports success.
 members=$(ar t "$lib" 2>/dev/null | tr '\n' ' ')
 case "$members" in

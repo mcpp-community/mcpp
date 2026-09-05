@@ -3,7 +3,7 @@
 # A diagnostic that prints a copy-pasteable dependency line must print one that
 # resolves.
 #
-# ⚠️ THIS TEST EXISTS BECAUSE THE SAME DEFECT SHIPPED TWICE.
+# THIS TEST EXISTS BECAUSE THE SAME DEFECT SHIPPED TWICE.
 #
 # The freestanding `import std;` message ends in a `[dependencies]` block the
 # reader is meant to paste. It has been wrong twice, in two different ways:
@@ -21,7 +21,7 @@
 # proof: the comment from the first repair was sitting right above the line
 # that broke.
 #
-# ⚠️ THE TEST MUST NOT SPELL THE VERSION. Asserting `std-freestanding = "0.3.0"`
+# THE TEST MUST NOT SPELL THE VERSION. Asserting `std-freestanding = "0.3.0"`
 # would copy the literal into a second place and check that the two copies
 # agree, which is true even when both are wrong. What is checked instead is the
 # property that matters: whatever the diagnostic prints, RESOLVES.

@@ -12,7 +12,7 @@
 # cannot express "gcc+musl OR msvc+mingw", and a host that has neither should
 # skip rather than half-run.
 #
-# ⚠️ THE PREDICATE IS THE POINT. Each leg is selected by a generated
+# THE PREDICATE IS THE POINT. Each leg is selected by a generated
 # `cfg(all(arch=…, os=…, env=…))` block and NOT by a bare `[target.'<triple>']`
 # key. The bare form only matched when `--target` was passed: a plain
 # `mcpp build` resolved the host and compared it against an empty string, so

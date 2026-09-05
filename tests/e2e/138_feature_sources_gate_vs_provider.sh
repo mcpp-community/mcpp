@@ -3,7 +3,7 @@
 # A feature that GATES a source and a feature that PROVIDES one, under both
 # `mcpp build` and `mcpp test`.
 #
-# ⚠️ THIS DEFECT SURVIVED FOR MONTHS BECAUSE NO TEST COVERED BOTH FAMILIES, AND
+# THIS DEFECT SURVIVED FOR MONTHS BECAUSE NO TEST COVERED BOTH FAMILIES, AND
 # THREE ATTEMPTED FIXES EACH BROKE THE ONE THEY DID NOT COVER.
 #
 # Two shapes of package reach the same code in `prepare_build`, and under
@@ -49,7 +49,7 @@ cat > provider/mcpp.toml <<'EOF'
 name    = "provider"
 version = "0.1.0"
 
-# ⚠️ NO `[build] sources`, WHICH IS THE POINT. The base set is the inferred
+# NO `[build] sources`, WHICH IS THE POINT. The base set is the inferred
 # `src/**`, which matches `src/gated/only_with_feature.cpp` — so removing the
 # feature's glob STRING from a list it was never in gates nothing.
 [features]
@@ -103,7 +103,7 @@ cat > gate/mcpp.toml <<'EOF'
 name    = "gate"
 version = "0.1.0"
 
-# ⚠️ `src/gated_main.cpp` IS IN BOTH LISTS, EXACTLY AS gtest'S DESCRIPTOR HAS IT.
+# `src/gated_main.cpp` IS IN BOTH LISTS, EXACTLY AS gtest'S DESCRIPTOR HAS IT.
 # The package provides the file; the feature is a switch over it.
 [build]
 sources = ["src/lib.cpp", "src/gated_main.cpp"]
@@ -133,7 +133,7 @@ fi
 
 rm -rf target
 "$MCPP" test > test.log 2>&1 || { cat test.log; echo "gate: test failed"; exit 1; }
-# ⚠️ THE ASSERTION IS THAT IT IS STILL THERE. A fix that excluded every
+# THE ASSERTION IS THAT IT IS STILL THERE. A fix that excluded every
 # inactive feature glob under `mcpp test` would remove it — and would then
 # break gtest, whose per-test main detection needs to see the file in order to
 # prune it. Measured once as `ld returned 1 exit status` across mcpp's own

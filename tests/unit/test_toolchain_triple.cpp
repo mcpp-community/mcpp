@@ -92,7 +92,7 @@ TEST(TripleRequest, TheOnlySupportedSiblingIsTaken) {
     auto r = triple::resolve_request(*parse("aarch64-linux"));
     EXPECT_EQ(r.triple.str(), "aarch64-linux-musl");
     EXPECT_TRUE(r.completedFromVocabulary);
-    // ⚠️ mcpp CHOOSING A ROW IS NOT THE PROJECT NAMING A C LIBRARY. `envExplicit`
+    // mcpp CHOOSING A ROW IS NOT THE PROJECT NAMING A C LIBRARY. `envExplicit`
     // feeds the request/fact comparison and the report's display name; setting
     // it here would make mcpp compare its own answer against itself.
     EXPECT_FALSE(r.triple.envExplicit);
@@ -307,7 +307,7 @@ const std::string kNewlib = "xim:newlib-riscv@4.4";
 const std::string kEmpty  = "";
 
 //
-// ⚠️ The absent/empty distinction is the whole point of these three tests. A
+// The absent/empty distinction is the whole point of these three tests. A
 // plain `std::string` would make "the project said nothing" and "the project
 // asked for no C library" the same value, and a kernel project would silently
 // get picolibc back.
@@ -365,7 +365,7 @@ TEST(Triple, LlvmTripleWindowsGnu) {
     EXPECT_EQ(t->llvm_triple(""), "x86_64-w64-windows-gnu");
 }
 
-// ⚠️ `aarch64` becomes `arm64` and the version is appended. A build that
+// `aarch64` becomes `arm64` and the version is appended. A build that
 // emitted mcpp's own spelling produced `--target=aarch64-macos`, which clang
 // accepts as a triple it has never heard of and then treats as bare-metal
 // aarch64 — the module and its importers then agree with each other and with
@@ -394,7 +394,7 @@ TEST(Triple, LlvmTripleFreestandingIsUnchanged) {
 // ── The object format each target has, asked of the triple rather than of the
 //    machine running the build.
 
-// ⚠️ The artefact-format decision used to test the triple for the substrings
+// The artefact-format decision used to test the triple for the substrings
 // `apple` and `darwin`. Those are LLVM's words; mcpp's canonical form is
 // `aarch64-macos`, which contains neither — so the test fell through to a
 // question about the HOST, and produced opposite errors on opposite hosts: an
@@ -427,7 +427,7 @@ TEST(Triple, OsFieldIdentifiesFreestanding) {
 
 // ── The env segment may be declined on every platform ────────────────────────
 //
-// ⚠️ `x86_64-linux` parsed and `x86_64-windows` did not. The rule "a target
+// `x86_64-linux` parsed and `x86_64-windows` did not. The rule "a target
 // triple states a REQUEST, and a request must be able to say nothing" therefore
 // held on two platforms out of four, and the two where it did not were exactly
 // the ones whose segment names something other than a C library — so a user was
@@ -464,7 +464,7 @@ TEST(Triple, WritingTheSegmentOutIsStillARequest) {
     EXPECT_TRUE(m->envExplicit);
 }
 
-// ⚠️ THE FILL IS `gnu` AND NOT THE HOST'S OWN ENV.
+// THE FILL IS `gnu` AND NOT THE HOST'S OWN ENV.
 //
 // `host_triple()` answers `msvc` on a Windows machine. Filling from it would
 // give one command a different identity — a different output directory and
@@ -484,7 +484,7 @@ TEST(Triple, MacosCarriesNoSegmentToDecline) {
     EXPECT_FALSE(t->envExplicit);
 }
 
-// ⚠️ NO TWO ROWS MAY SHARE A CANONICAL NAME, AND THIS WAS NOT A HYPOTHETICAL.
+// NO TWO ROWS MAY SHARE A CANONICAL NAME, AND THIS WAS NOT A HYPOTHETICAL.
 //
 // Adding `x86_64-windows-musl` and later correcting its `pin` column produced
 // TWO rows with that name — the edit inserted a corrected row without removing
@@ -492,7 +492,7 @@ TEST(Triple, MacosCarriesNoSegmentToDecline) {
 // was correct and nothing failed; what the table carried was a second row of
 // dead data whose columns disagreed with the live one.
 //
-// ⭐ Caught by reading the diff, which is the wrong mechanism: a duplicate is a
+// Caught by reading the diff, which is the wrong mechanism: a duplicate is a
 // property of the table and a machine can see it. The cost of the check is four
 // lines.
 TEST(Triple, TheTargetTableHasNoDuplicateNames) {

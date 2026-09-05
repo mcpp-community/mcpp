@@ -16,7 +16,7 @@
 # only a real link can answer is whether link.exe accepts the result and whether
 # a consumer can then resolve a symbol through it. That is this test.
 #
-# ⚠️ THE TWO LIMITS ARE ASSERTED, NOT ASSUMED. Auto-export cannot make a data
+# THE TWO LIMITS ARE ASSERTED, NOT ASSUMED. Auto-export cannot make a data
 # symbol readable without `__declspec(dllimport)` on the consumer's declaration,
 # and CMake documents the same limit for the same mechanism. The test exercises a
 # FUNCTION across the boundary, which is what auto-export does cover, and says so
@@ -166,7 +166,7 @@ anndef="$(find annotated/target -name 'annkit.def' | head -1)"
 # already marks variables `DATA`, so it is reasonable to wonder whether the limit
 # still bites. It does, and here is the difference.
 #
-# ⚠️ The assertion is on the DIFFERENCE between the two spellings, not on any
+# The assertion is on the DIFFERENCE between the two spellings, not on any
 # particular error text — which form the failure takes (a link error, or a
 # pointer read where a value was meant) depends on the toolset version, and
 # pinning one of them would make this test a hostage to that.

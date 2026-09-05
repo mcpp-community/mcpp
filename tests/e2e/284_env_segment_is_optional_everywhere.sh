@@ -2,7 +2,7 @@
 # requires: gcc
 # `arch-os` is a target on every platform, not only on Linux.
 #
-# ⚠️ WHY THIS WAS ASYMMETRIC AND WHY THE ASYMMETRY COST SOMETHING.
+# WHY THIS WAS ASYMMETRIC AND WHY THE ASYMMETRY COST SOMETHING.
 #
 # A target triple states a REQUEST, and a request must be able to say nothing.
 # `x86_64-linux` was accepted on that basis; `x86_64-windows` was rejected with
@@ -14,7 +14,7 @@
 # compiler is clang, the linker lld, the C library musl and the C++ runtime
 # libc++: nothing in the build is GNU.
 #
-# ⭐ THE ASSERTION IS ON THE IDENTITY, NOT ONLY ON THE EXIT STATUS. Accepting the
+# THE ASSERTION IS ON THE IDENTITY, NOT ONLY ON THE EXIT STATUS. Accepting the
 # short spelling is worth nothing if it produces a second output directory or a
 # second fingerprint: the project would then build twice, cache nothing, and the
 # two artefacts could drift. The identity must stay total — `x86_64-windows` IS
@@ -63,7 +63,7 @@ check_pair() {
     fi
     fp_short="$(ls "target/$canonical" | head -1)"
 
-    # ⭐ The load-bearing step: the long spelling must land on the SAME
+    # The load-bearing step: the long spelling must land on the SAME
     # fingerprint, which is what makes the second build a cache hit rather than
     # a second full build.
     "$MCPP" build --target "$canonical" >/dev/null 2>&1 || {
@@ -99,7 +99,7 @@ echo "OK: the env segment is optional on every platform, and declining it change
 
 # ── The Windows C-library axis has a name of its own ─────────────────────────
 #
-# ⚠️ `x86_64-windows-musl` is a target mcpp names and LLVM cannot. Measured on
+# `x86_64-windows-musl` is a target mcpp names and LLVM cannot. Measured on
 # llvm 22.1.8, handing `windows` with a `musl` environment to clang is not a
 # diagnostic but an ICE inside the COFF writer:
 #
@@ -109,7 +109,7 @@ echo "OK: the env segment is optional on every platform, and declining it change
 # different strings — which they already are, either side of the arrow in the
 # build report.
 #
-# ⭐ THE ASSERTION IS THAT IT IS A KNOWN TARGET WITH A CORRECT DIAGNOSIS, NOT
+# THE ASSERTION IS THAT IT IS A KNOWN TARGET WITH A CORRECT DIAGNOSIS, NOT
 # THAT IT BUILDS. This project names no dependency, so nothing supplies the
 # target side and the build cannot succeed — correctly. What is under test is
 # that mcpp recognises the name and says the true thing about it, rather than
@@ -131,7 +131,7 @@ case "$out" in
     exit 1 ;;
 esac
 
-# ⭐ AND THE PIN IS ASSERTED, BECAUSE THE PIN IS WHAT THE ROW IS FOR.
+# AND THE PIN IS ASSERTED, BECAUSE THE PIN IS WHAT THE ROW IS FOR.
 #
 # The row names `llvm` not as a preference but because a global default of gcc
 # would otherwise be carried onto a target no gcc can emit, and the error would
@@ -142,7 +142,7 @@ esac
 #     Resolved llvm@22.1.8 → x86_64-windows-musl → …/xim-x-llvm/22.1.8/bin/clang++
 #              target default for x86_64-windows-musl, replacing your gcc@16.1.0
 #
-# ⚠️ THIS WAS WRITTEN WITH AN `*) : ;;` FALLBACK, WHICH MADE IT UNFAILABLE.
+# THIS WAS WRITTEN WITH AN `*) : ;;` FALLBACK, WHICH MADE IT UNFAILABLE.
 # A branch that accepts anything is not a check, and this file's whole subject
 # is a name that used to be accepted by nothing. The fallback is gone; if the
 # report's phrasing changes, this is meant to go red and be updated.

@@ -11,7 +11,7 @@
 #
 # docs/spec/exit-codes.md is now the contract. This holds it.
 #
-# ⚠️ ASSERTS THE CODE, NOT "STDERR IS NON-EMPTY". A criterion whose "no" is also
+# ASSERTS THE CODE, NOT "STDERR IS NON-EMPTY". A criterion whose "no" is also
 # what a crash produces cannot tell the two apart — and the whole point of the
 # table is that a client can distinguish a rejection from a broken mcpp.
 #

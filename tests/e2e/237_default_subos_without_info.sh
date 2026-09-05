@@ -20,7 +20,7 @@
 # It is the index-floor rule and mcpp#221 again: DATA THAT IS MISSING OR NEWER
 # MUST NOT INVALIDATE THE PROGRAM THAT READS IT.
 #
-# ⚠️ WHY `221_subos_without_info_still_builds.sh` DOES NOT COVER THIS.
+# WHY `221_subos_without_info_still_builds.sh` DOES NOT COVER THIS.
 #
 # 221 creates a PROJECT-LOCAL SubOS (`[xlings] subos = "bare"` →
 # `<project>/.mcpp/.xlings/subos/bare`). The fixup read a HARDCODED
@@ -124,11 +124,11 @@ echo "  absence: no fixup error (exit $rc)"
 # not a broken toolchain: same home, same payloads, same project — one JSON
 # block is the entire difference.
 #
-# ⚠️ NOT `allow_host_libs = true`. That was the first version and it FAILED ON
+# NOT `allow_host_libs = true`. That was the first version and it FAILED ON
 # CI while passing here: falling back to the host needs a host C runtime, and
 # the runners have no `crt1.o` / `libm` to fall back TO. The green half must not
 # depend on a fact about the machine — binding to the payload glibc does not.
-# ⚠️ ASK THE REAL HOME WHICH GLIBC IT USES, do not take the first directory.
+# ASK THE REAL HOME WHICH GLIBC IT USES, do not take the first directory.
 # A machine with two glibc payloads installed has one the toolchain was patched
 # against and one it was not, and `ls | head -1` picks by alphabetical order —
 # which would make this control fail for a reason that has nothing to do with

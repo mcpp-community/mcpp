@@ -374,11 +374,11 @@ payload_root_for_binding(const std::filesystem::path& compilerBin,
     const auto name    = binding.substr(0, at);
     const auto version = std::string(binding.substr(at + 1));
 
-    // ⭐ THE DIRECTORY IS NAMED AFTER WHAT THE REQUEST RESOLVED TO, NOT AFTER
+    // THE DIRECTORY IS NAMED AFTER WHAT THE REQUEST RESOLVED TO, NOT AFTER
     // THE REQUEST. `payload_dir_for_version` is the one answer to that, shared
     // with the toolchain post-install fixup — see its header.
     //
-    // ⚠️ THIS SITE'S FAILURE DOES NOT NAME A VERSION. The fixup at least says
+    // THIS SITE'S FAILURE DOES NOT NAME A VERSION. The fixup at least says
     // which payload it wanted; here the include directory is simply never
     // added, and what the user reads comes from inside libstdc++:
     //

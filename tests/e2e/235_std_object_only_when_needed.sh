@@ -7,7 +7,7 @@
 # and SharedLibrary whenever the toolchain merely HAD a prebuilt std module,
 # regardless of whether anything in that unit imported it.
 #
-# ⚠️ THE TEST THAT MATTERS IS THE TRANSITIVE ONE. A unit that never writes
+# THE TEST THAT MATTERS IS THE TRANSITIVE ONE. A unit that never writes
 # `import std` itself still needs the initialiser when a module it imports does.
 # Checking only "does this unit's own source say import std" is the same
 # "the edge exists but nobody depends on it" mistake as #405, and it fails in

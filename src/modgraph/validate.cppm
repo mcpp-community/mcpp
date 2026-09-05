@@ -155,7 +155,7 @@ ValidateReport validate(const Graph&                    g,
                 } else if (std::ranges::any_of(g.units, [](auto const& u) {
                                return u.provides.has_value();
                            })) {
-                    // ⚠️ THE PREDICATE ABOVE IS `has_lib_target` — "does this
+                    // THE PREDICATE ABOVE IS `has_lib_target` — "does this
                     // produce a library" — and the property this warning is
                     // about is "is this a C++ MODULE library". They came apart
                     // the moment the index grew source-built C packages

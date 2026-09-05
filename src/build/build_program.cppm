@@ -43,7 +43,7 @@ struct BuildProgramEnv {
     // hostprogram::toolchain_dir / sysroot_dir for why declaring was wrong.
     std::string toolchainDir;
     std::string targetSysroot;
-    // ⭐⭐ THE TWO ANSWERS A SECOND COMPILER NEEDS AND CANNOT DERIVE.
+    // THE TWO ANSWERS A SECOND COMPILER NEEDS AND CANNOT DERIVE.
     //
     // `toolchainSysroot` is the `--sysroot` mcpp passes to its own compiler and
     // `toolchainBinutilsDir` the directory it names with `-B`; either is empty
@@ -53,7 +53,7 @@ struct BuildProgramEnv {
     // facts, and on a hosted subos both are non-empty precisely because the C
     // library is not at `/usr/include` and the assembler is not at `/usr/bin`.
     //
-    // ⚠️ Measured 2026-09-05 on the CUDA example. `nvcc` refuses a libc++ host
+    // Measured 2026-09-05 on the CUDA example. `nvcc` refuses a libc++ host
     // compiler and fails on GCC 16's `<type_traits>`, so its rule package
     // resolves a second host compiler from a declared payload. That compiler
     // is not one mcpp resolved, so nothing tells it where anything is, and the
@@ -66,7 +66,7 @@ struct BuildProgramEnv {
     // emits — so the answer belongs to the engine and is stated once here.
     std::string toolchainSysroot;
     std::string toolchainBinutilsDir;
-    // ⭐⭐ WHICH COMPILER RESOLVED — "gcc" | "clang" | "msvc" | "".
+    // WHICH COMPILER RESOLVED — "gcc" | "clang" | "msvc" | "".
     //
     // A package should never have to guess this, and until this field existed
     // the only way to was to look at `toolchainDir` and recognise a directory
@@ -75,7 +75,7 @@ struct BuildProgramEnv {
     // compiler-rt under another, and the tool that turns a `.def` into an
     // import library is `dlltool` under one and `llvm-dlltool` under another.
     //
-    // ⚠️ Measured 2026-08-22, both on the same day and both from the same
+    // Measured 2026-08-22, both on the same day and both from the same
     // missing answer: `openkal-musl` naming `-lgcc` on a link whose compiler was
     // clang (`unable to find library -lgcc`), and `openkal-windows` running
     // `llvm-dlltool` under a GCC toolchain (`sh: 1: llvm-dlltool: not found`).
@@ -83,7 +83,7 @@ struct BuildProgramEnv {
     std::string compilerId;
     // Three more answers a board-support package would otherwise hardcode.
     //
-    // ⚠️ THE COUPLING THESE REMOVE IS INVISIBLE IN A MANIFEST. `riscv-virt-rt`
+    // THE COUPLING THESE REMOVE IS INVISIBLE IN A MANIFEST. `riscv-virt-rt`
     // declares no dependency on LLVM or on picolibc — #459 removed those — and
     // yet it named `clang_rt.builtins-riscv64` (a compiler-rt fact, `libgcc`
     // under GCC) and `rv64gc/lp64d` (picolibc's multilib convention). A
@@ -142,7 +142,7 @@ struct BuildProgramEnv {
     // the same re-run key: a rebuilt tool re-runs the program that uses it,
     // with no `rerun-if-changed` needed from the author.
     std::vector<std::pair<std::string, std::string>> toolPaths;
-    // ⭐⭐ THE `bin` OF THIS PROJECT'S OWN SubOS, AT THE FRONT OF THE CHILD'S
+    // THE `bin` OF THIS PROJECT'S OWN SubOS, AT THE FRONT OF THE CHILD'S
     // `PATH`. Empty for a project that has not declared one, and an empty
     // value means the child's `PATH` is left exactly as mcpp received it.
     //
@@ -157,21 +157,21 @@ struct BuildProgramEnv {
     // sat in its own payload directory, reachable only by a path the program
     // would have had to construct itself.
     //
-    // ⚠️ THE PROJECT'S SubOS, NEVER A GLOBAL ONE. An earlier draft put this
+    // THE PROJECT'S SubOS, NEVER A GLOBAL ONE. An earlier draft put this
     // build system's shared `subos/default/bin` in front, which makes what a
     // build sees depend on what else has been installed on the machine — two
     // projects on one machine would agree with each other, and the same
     // project on two machines would not. A declared `[xlings].subos` is a
     // directory that belongs to the project and travels with it.
     //
-    // ⚠️ WHO DECIDES IS NOT DECIDED HERE. `mcpp::xlings::runtime` is the sole
+    // WHO DECIDES IS NOT DECIDED HERE. `mcpp::xlings::runtime` is the sole
     // project runtime-selection policy and `RuntimeBinding::subosDir` is its
     // resolved answer; this field carries that answer to the child. Deriving
     // it a second time — from the manifest, from `[xlings] deps`, from the
     // config — is how a build ends up with two subos and no way to say which
     // one it used.
     //
-    // ⚠️ PREPENDED, NOT SUBSTITUTED. A build program legitimately calls `git`,
+    // PREPENDED, NOT SUBSTITUTED. A build program legitimately calls `git`,
     // `python3` or a shell, none of which arrive this way.
     std::string toolsBin;
     // #355 step 5: dependency-provided modules to compile FOR THE HOST and make
@@ -221,7 +221,7 @@ inline std::string xpkg_env_var(std::string_view ns, std::string_view name) {
 // Does a compiler's output say the program asked for something the bundled
 // `mcpp` module does not have?
 //
-// ⚠️ This is the ONLY place an engine-too-old situation can be caught for the
+// This is the ONLY place an engine-too-old situation can be caught for the
 // TYPED api, and it exists because the in-language probe does not:
 //
 //     if constexpr (requires { mcpp::runner("x"); })      // ← hard error,
@@ -345,12 +345,12 @@ std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc,
     // undefined __cxa_* / __gxx_personality_v0.
     opt.cfgBypass = mcpp::toolchain::HostFlagOptions::CfgBypass::LinuxOnly;
     opt.clangStdlibSelect = true;
-    // ⭐ `cAbiPrebuilt` is left at its default (true), and that is a statement
+    // `cAbiPrebuilt` is left at its default (true), and that is a statement
     // rather than an omission: `tc` here is always HOST-targeting (see this
     // function's header), so the helper's C library is the payload's whatever
     // the project's target side turns out to be.
     //
-    // ⚠️ It also corrects a latent defect. The predicate this replaced was
+    // It also corrects a latent defect. The predicate this replaced was
     // `!tc.crossTargetFlag.empty()`, and a host toolchain resolved for a cross
     // build could carry one — in which case the helper lost the payload's own
     // headers for a reason that had nothing to do with it.
@@ -412,7 +412,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     std::vector<std::pair<std::string, std::string>> e;
     auto hostT = mcpp::toolchain::triple::host_triple().str();
     e.emplace_back("MCPP_TARGET", env.targetTriple.empty() ? hostT : env.targetTriple);
-    // ⭐⭐ THE SAME VALUE UNFILLED — EMPTY WHEN NOBODY NAMED A TARGET.
+    // THE SAME VALUE UNFILLED — EMPTY WHEN NOBODY NAMED A TARGET.
     //
     // `MCPP_TARGET` above answers "which machine is this for", and filling it
     // in with the host is right for that question. It cannot answer a different
@@ -426,14 +426,14 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     // the only thing that can name one. A native build on the same machine gets
     // the SDK and needs nothing from the package.
     //
-    // ⚠️ Measured 2026-08-23, `openkal-macos` trying to decide this from what
+    // Measured 2026-08-23, `openkal-macos` trying to decide this from what
     // was available. From the host: right for the cross, wrong for
     // `--target aarch64-macos` ON a Mac (`library not found for -lSystem`).
     // From `MCPP_TARGET`: right for the cross, wrong for the native build,
     // because it is never empty (`undefined symbol: wcslen`, `strtoul`, … —
     // the package's three-name stub had shadowed the vendor's complete one).
     //
-    // ⭐ An older mcpp sets neither, and that is the correct answer for it:
+    // An older mcpp sets neither, and that is the correct answer for it:
     // it has no graph-supplied target side, so the system is always on the
     // link and a package should supply nothing.
     e.emplace_back("MCPP_TARGET_REQUESTED", env.targetTriple);
@@ -524,7 +524,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     // rather than a replacement, and why the decision is not made here.
     if (!env.toolsBin.empty()) {
         std::string path = env.toolsBin;
-        // ⚠️ THE INHERITED VALUE IS READ HERE AND NOT ASSUMED. `extraEnv`
+        // THE INHERITED VALUE IS READ HERE AND NOT ASSUMED. `extraEnv`
         // replaces a variable outright in the child, so writing only the
         // project's own directory would silently be the substitution this
         // deliberately is not.
@@ -764,7 +764,7 @@ std::expected<void, std::string> run_build_program(
     // moment a Clang user tries it, since only GCC makes the BMI reachable
     // without the flags.
     //
-    // ⚠️ AHEAD OF THE FAST PATH ON PURPOSE. Withdrawing `reexport = true` from
+    // AHEAD OF THE FAST PATH ON PURPOSE. Withdrawing `reexport = true` from
     // an edge leaves the module SET and every interface hash identical, so
     // nothing in `compilerIdentity` moves. Measured: the replay is prevented
     // today only because `ctxHash` happens to change too — an incidental
@@ -790,7 +790,7 @@ std::expected<void, std::string> run_build_program(
     CacheRecord cache = read_cache(bdir);
     if (cache_fresh(root, bdir, cache, programHash, compilerHash, ctxHash)) {
         dirs::apply(m, cache.directives);
-        // ⚠️ ONE OF TWO SITES, AND THE ONE THAT IS EASY TO FORGET.
+        // ONE OF TWO SITES, AND THE ONE THAT IS EASY TO FORGET.
         //
         // A cache hit does not re-run the program, so an advisory emitted only
         // on the run path below would appear on the first build of a project
@@ -1048,7 +1048,7 @@ std::expected<void, std::string> run_build_program(
     // compile/precompile commands, where a link flag has no business (and for
     // Clang would perturb the default PIC/PIE codegen of mcpp.o).
     if (staticHostHelper) compileArgv.push_back(std::string(dial.staticRuntime));
-    // ⚠️ A DYNAMIC HELPER ON LINUX GETS `DT_RPATH`, NOT `DT_RUNPATH`.
+    // A DYNAMIC HELPER ON LINUX GETS `DT_RPATH`, NOT `DT_RUNPATH`.
     //
     // The driver's default is the new tag, and a runpath is consulted only for
     // the helper's OWN needed libraries. A build program that opens a host

@@ -21,12 +21,12 @@
 #
 #   error while loading shared libraries: libstdc++.so.6: cannot open shared object file
 #
-# ⚠️ AND WHY `$ORIGIN` IS NOT THE FIX. Measured: a DT_RUNPATH of `$ORIGIN`, and
+# AND WHY `$ORIGIN` IS NOT THE FIX. Measured: a DT_RUNPATH of `$ORIGIN`, and
 # a DT_RUNPATH of the empty string, both fail exactly the same way. It is the
 # TAG's presence that disables inheritance, not its contents. The criterion is
 # therefore "there is no tag", never "the tag is relative".
 #
-# ⚠️ AND WHY THIS TEST DELIBERATELY BREAKS THE PACKAGE HALF-WAY THROUGH.
+# AND WHY THIS TEST DELIBERATELY BREAKS THE PACKAGE HALF-WAY THROUGH.
 # Asserting only that the fixed package runs cannot tell "the defect is fixed"
 # from "this machine happens to satisfy the stale path" — which is precisely
 # what made the pre-existing e2e (251) green throughout the bug's life: it

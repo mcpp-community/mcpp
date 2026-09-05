@@ -16,7 +16,7 @@
 # every unexplained red on this branch, always inside 12 seconds, always with no
 # test name in the log.
 #
-# ⚠️ `curl --retry` ALONE DOES NOT COVER IT. `--retry` handles timeouts and a
+# `curl --retry` ALONE DOES NOT COVER IT. `--retry` handles timeouts and a
 # specific list of 5xx responses; an empty reply is a *transport* error and is
 # not on that list. `--retry-all-errors` (curl 7.71+) is the flag that does, and
 # it is the one that was missing. The outer loop below is not redundant with it:

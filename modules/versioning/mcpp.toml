@@ -5,7 +5,7 @@
 # version is read with. They ship together because a release moves both and
 # because separating them would put one constant in a package of its own.
 #
-# ⚠️ `MCPP_VERSION` here is one of two version sites checked against each other
+# `MCPP_VERSION` here is one of two version sites checked against each other
 # by `.github/tools/check_version_pins.sh`; the other is the root `mcpp.toml`.
 # Moving this file means moving that check's path, which is why the check reads
 # it by path rather than by glob.
@@ -16,7 +16,7 @@ version     = "0.1.0"
 description = "This binary's version, and SemVer requirement parsing"
 license     = "Apache-2.0"
 
-# ⚠️ NAMED `versioning`, NOT `version`. `version` is a reserved key inside a
+# NAMED `versioning`, NOT `version`. `version` is a reserved key inside a
 # dependency specification, so `[dependencies.mcpp] version = { path = … }`
 # parses as "the mcpp dependency's version field" and fails with
 # `must specify 'path', 'version', or 'git'` -- an error about the wrong table.

@@ -63,7 +63,7 @@ std::vector<int> parse_version_components(std::string_view s) {
 //   "15.1"   → highest 15.1.Y
 //   "15.1.0" → exact match (or empty if not present)
 // Empty result = no match.
-// ⭐ EXPORTED SO THAT "WHICH VERSION OF THIS FAMILY" HAS ONE ANSWER.
+// EXPORTED SO THAT "WHICH VERSION OF THIS FAMILY" HAS ONE ANSWER.
 // `mcpp toolchain default llvm` resolves a bare family through these two, and
 // `prepare_build` now has to answer the same question when the dependency graph
 // asks for a compiler family by name. A second implementation there would be
@@ -267,7 +267,7 @@ export bool remove_payload_tree(const std::filesystem::path& root,
     // Still held. Move the held FILES out instead of waiting on a process we
     // do not own.
     //
-    // ⚠️ NOT by renaming the payload directory. Windows lets you rename an
+    // NOT by renaming the payload directory. Windows lets you rename an
     // open FILE — that is how an updater replaces a running .exe — but it
     // does NOT let you rename a DIRECTORY that contains one. An earlier
     // version of this function renamed `root` and was wrong about exactly
@@ -432,7 +432,7 @@ bool version_greater(const std::string& a, const std::string& b) {
     return b < a;   // stable tie-break for non-numeric tails
 }
 
-// ⭐⭐ `json` SUPPRESSES EVERY HUMAN LINE AND EMITS THE SAME TWO TABLES AS DATA.
+// `json` SUPPRESSES EVERY HUMAN LINE AND EMITS THE SAME TWO TABLES AS DATA.
 //
 // The two tables here — installed toolchains, and target rows with their status
 // — are what `tests/matrix/scan.sh` and four e2e tests need to know before they
@@ -442,7 +442,7 @@ bool version_greater(const std::string& a, const std::string& b) {
 // and the one that read `$NF` picked up `(default)` — a value that appears on
 // exactly the row most likely to be chosen.
 //
-// ⚠️ ONE SOURCE, TWO RENDERINGS. The rows are built once above and rendered
+// ONE SOURCE, TWO RENDERINGS. The rows are built once above and rendered
 // either way at the bottom; a second enumeration for the machine path is how
 // the two come to disagree about what is installed.
 export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
@@ -543,20 +543,20 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
     // MSVC is never in xpkgs — it's located on the machine. Show it so
     // `toolchain list` reflects everything `toolchain default` accepts.
     //
-    // ⚠️ It joins `toolchains` on the machine path rather than getting a
+    // It joins `toolchains` on the machine path rather than getting a
     // section of its own: to a client, "a compiler I can select" is one list,
     // and where mcpp found it is a property of the entry, not a reason for a
     // second array.
     if (mcpp::platform::is_windows && json) {
         if (auto inst = mcpp::toolchain::msvc::detect_installation())
-            // ⚠️⚠️ `version` MUST BE WHAT `--toolchain` ACCEPTS, AND THIS EMITTED
+            // `version` MUST BE WHAT `--toolchain` ACCEPTS, AND THIS EMITTED
             // WHAT cl.exe REPORTS.
             //
             // A system Visual Studio is selected as `msvc@system`; its COMPILER
             // version is `19.44.35228`, which `parse_toolchain_spec` rejects by
             // design — it "names a COMPILER version, not a toolset".
             //
-            // ⭐ THE MACHINE INTERFACE HAS TO ROUND-TRIP. A consumer reads
+            // THE MACHINE INTERFACE HAS TO ROUND-TRIP. A consumer reads
             // `family` and `version`, joins them, and hands the result back;
             // `tests/matrix/scan.sh` did exactly that and every msvc cell came
             // back `build-failed` with mcpp refusing its own output. Measured on
@@ -596,7 +596,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         std::string target;      // canonical triple
         std::string note;        // "host" / "static" / "PE" / "cross" tags
         std::string toolchain;   // "gcc 16.1.0" or "—"
-        // ⚠️⚠️ `toolchain` MEANS TWO DIFFERENT THINGS DEPENDING ON THE ROW, and
+        // `toolchain` MEANS TWO DIFFERENT THINGS DEPENDING ON THE ROW, and
         // that is fine for a column a person reads and wrong for a field a
         // program reads. On an INSTALLED row it is the payload that is here; on
         // a vocabulary row it is the target table's convention pin. A row can
@@ -607,7 +607,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         // this field and got `x86_64-linux-gnu` on the CI runner, where the pin
         // is empty. It then asserted a refusal that correctly did not happen.
         //
-        // ⭐ So the convention travels in its own field, empty when there is
+        // So the convention travels in its own field, empty when there is
         // none. Same defect family as the release this was written for.
         std::string pin;         // the target table's convention pin, or empty
         std::string status;      // installed | available | planned
@@ -667,7 +667,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         auto t = mcpp::toolchain::triple::parse(info.canonical);
         if (!t) continue;
         bool planned = info.tier == "planned";
-        // ⭐⭐ A ROW NO PAYLOAD SERVES IS NOT THEREFORE UNBUILDABLE.
+        // A ROW NO PAYLOAD SERVES IS NOT THEREFORE UNBUILDABLE.
         //
         // `host_can_serve` answers "can this host serve the target FROM A
         // PAYLOAD". Dropping the row presents that as "can this host build for
@@ -683,7 +683,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         // — because its system came from the dependency graph, which is what
         // the row's own note in the target table says happens.
         //
-        // ⚠️ AND NOT EVERY ABSENT ROW IS THAT. `x86_64-windows-msvc` and
+        // AND NOT EVERY ABSENT ROW IS THAT. `x86_64-windows-msvc` and
         // `aarch64-macos` are absent on a Linux host CORRECTLY: MSVC and the
         // macOS SDK are host-only and no dependency substitutes for them.
         // The discriminator is already in the table and needs no new field —
@@ -975,7 +975,7 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
         // pipeline shared by every toolchain install path, dispatched and
         // made idempotent inside ensure_post_install_fixup.
         //
-        // ⚠️ RESOLVE THE RUNTIME BINDING HERE, do not let the fixup guess.
+        // RESOLVE THE RUNTIME BINDING HERE, do not let the fixup guess.
         // The fixup is a CONSUMER of RuntimeBinding (`prepare.cppm` says so
         // where it does the same thing) and it no longer derives an identity
         // of its own — so a caller that passes nothing gets no fixup at all.

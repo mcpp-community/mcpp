@@ -91,7 +91,7 @@ struct PackageFacts {
     // the only copy in the process"), because that is the only reason anyone
     // has ever written it — a library another library will `dlopen`.
     //
-    // ⚠️ The mirror image is NOT true: `kind = "lib"` is the parser's DEFAULT,
+    // The mirror image is NOT true: `kind = "lib"` is the parser's DEFAULT,
     // written by 84 of 130 packages in mcpp-index as boilerplate. Reading it
     // as "must be static" would freeze the entire ecosystem out of this axis.
     // Absence of a constraint is not a constraint.
@@ -158,7 +158,7 @@ Resolution resolve(const PackageFacts& package, const Admissible& admissible,
 
 // The one derivation of "does this build need position-independent code".
 //
-// ⚠️ It used to be a scan of the finished plan for a shared link unit, in
+// It used to be a scan of the finished plan for a shared link unit, in
 // `flags.cppm`, and it was ABSENT FROM THE CACHE KEY. That was survivable
 // while a package's form was fixed by its author; it stops being survivable
 // the moment a consumer can ask for the shared form, because the same cache

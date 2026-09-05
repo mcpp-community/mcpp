@@ -19,7 +19,7 @@
 #   4. the workflow reads the file instead of repeating it.
 set -e
 
-# ⚠️ EVERY python read below MUST name its encoding, and this is what enforces it.
+# EVERY python read below MUST name its encoding, and this is what enforces it.
 #
 # `open()`, `read_text()` and `subprocess(text=True)` decode with the LOCALE
 # encoding, which is UTF-8 on the Linux and macOS runners and cp1252 on the
@@ -257,7 +257,7 @@ for t in ("cmake", "xmake", "bazel", "gcc", "llvm"):
 if not re.match(r"^\d+(\.\d+)+$", str(m.get("reference_mcpp", ""))):
     fail.append("reference_mcpp must be an exact released version — it is the old-vs-new column")
 
-# ⚠️ WHAT IS DELIBERATELY *NOT* CHECKED HERE: that `reference_mcpp` equals the
+# WHAT IS DELIBERATELY *NOT* CHECKED HERE: that `reference_mcpp` equals the
 # `.xlings.json` workspace pin.
 #
 # That check existed and was wrong. It read "the reference arm IS the binary CI
@@ -399,7 +399,7 @@ PY
 # test. The numbers still print, they are just of something else, which is this
 # suite's entire failure mode in miniature.
 #
-# ⚠️ ONE RUN, ONE FILE. This used to stitch three separate runs together and
+# ONE RUN, ONE FILE. This used to stitch three separate runs together and
 # name each column with the file it came from, because no single run measured
 # every column. The standard set now measures all of them, so the check reads
 # ONE report — and a table that cannot be reproduced from one run is a table
@@ -437,7 +437,7 @@ for doc, header in (("README.md", r"\| scenario \|"),
         print(f"FAIL: {doc}'s benchmark table did not parse — has its shape changed?")
         raise SystemExit(1)
 
-    # ⚠️ BOLD IS NOT PART OF THE GRAMMAR. This once required `**Ns**` in a fixed
+    # BOLD IS NOT PART OF THE GRAMMAR. This once required `**Ns**` in a fixed
     # column, and silently stopped matching when the bolding moved to whichever
     # column is actually faster: two of five rows dropped out and the check went
     # on printing a success line for the three that remained. Emphasis is
@@ -450,7 +450,7 @@ for doc, header in (("README.md", r"\| scenario \|"),
         print(f"FAIL: {doc}: no engine columns in the table header")
         raise SystemExit(1)
 
-    # ⚠️ THE HEADER IS A SHORT NAME, THE DATA HOLDS THE FULL LABEL.
+    # THE HEADER IS A SHORT NAME, THE DATA HOLDS THE FULL LABEL.
     #
     # Three columns reading `mcpp@2026.8.13.1`, `mcpp@2026.8.13.1+schedule=on`
     # and `mcpp@2026.8.11.3` made the table wider than a README renders, so it
@@ -480,7 +480,7 @@ for doc, header in (("README.md", r"\| scenario \|"),
     for line in body:
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         scenario = cells[0].strip("`")
-        # ⚠️ COUNT FROM THE RIGHT, not from a fixed offset. This was `cells[2:]`
+        # COUNT FROM THE RIGHT, not from a fixed offset. This was `cells[2:]`
         # ("after scenario and what-changed"), and dropping the what-changed
         # column to narrow the table shifted every value one place — which this
         # check would have reported as a row whose value count disagrees with the
@@ -662,14 +662,14 @@ python3 - "$ROOT" <<'PY' || exit 1
 import pathlib, re, sys
 root = pathlib.Path(sys.argv[1]) / "bench/src/engines"
 
-# ⚠️ AN EMPTY GLOB PASSES THIS CHECK PERFECTLY. Rename the directory, move the
+# AN EMPTY GLOB PASSES THIS CHECK PERFECTLY. Rename the directory, move the
 # adapters, and every assertion below iterates zero files and prints its success
 # line. That is the failure mode this whole test exists to prevent, so the check
 # must first prove it has something to check. Four is the number of adapters
 # today (mcpp, cmake, xmake, bazel) plus engine; the floor is deliberately low
 # so adding one does not require editing this.
 #
-# ⚠️ AND THE IMPLEMENTATION UNITS ARE WHERE THE CODE IS. The adapters declare in
+# AND THE IMPLEMENTATION UNITS ARE WHERE THE CODE IS. The adapters declare in
 # `.cppm` and define in `.cpp`; globbing only `.cppm` leaves this scanning
 # signatures, where a `compiler == "clang"` cannot appear — so the check would
 # have kept printing its success line while testing nothing at all. It nearly

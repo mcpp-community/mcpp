@@ -2,7 +2,7 @@
 # requires: gcc unix-shell
 # A runner may name its program by bare name when a DEPENDENCY declared it.
 #
-# ⚠️⚠️ THE CASE THIS COVERS IS THE ONE THE FEATURE EXISTS FOR, AND IT WAS THE
+# THE CASE THIS COVERS IS THE ONE THE FEATURE EXISTS FOR, AND IT WAS THE
 # ONE THAT DID NOT WORK.
 #
 # `mcpp.build.runner_lookup` lets a runner name a program without writing a
@@ -68,7 +68,7 @@ cat > src/main.cpp <<'CPP'
 int main() { return 0; }
 CPP
 
-# ⚠️ THE TOOL IS ON PATH HERE ONLY VIA THE STAND-IN PAYLOAD'S bin/, WHICH IS
+# THE TOOL IS ON PATH HERE ONLY VIA THE STAND-IN PAYLOAD'S bin/, WHICH IS
 # WHAT MAKES THE ASSERTION MEAN SOMETHING. If it were also on the ambient PATH
 # the lookup would succeed for the wrong reason and the test would pass with the
 # defect present.
@@ -97,7 +97,7 @@ case "$out" in
 esac
 echo "  ok  a dependency's bare-name runner is resolved, and its absence is named"
 
-# ⭐ AND THE FALLBACK IS REFUSED RATHER THAN TAKEN. Executing the artifact when
+# AND THE FALLBACK IS REFUSED RATHER THAN TAKEN. Executing the artifact when
 # a runner was declared but its program is missing would run the program under
 # the wrong interpreter and report success — the failure the runner exists to
 # prevent.

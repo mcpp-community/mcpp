@@ -414,7 +414,7 @@ grep -q '1 passed' o6.log || { cat o6.log; echo "FAIL: the test did not run"; ex
 # command never runs. Saying nothing there is the same failure `[resources]`
 # reports as resources/no-image.
 #
-# ⚠️ THE ONLY TARGET IS GATED OFF, and that is what makes this case exist at
+# THE ONLY TARGET IS GATED OFF, and that is what makes this case exist at
 # all. A `kind = "lib"` target used to serve here, because a static library did
 # not take an object action's outputs; it does now (design C-6, e2e 608), so a
 # project with one is no longer a project with no consumer. A target behind an
@@ -442,7 +442,7 @@ cp "$TMP/objtest/build.mcpp" build.mcpp
 grep -q 'produces no target to put its outputs into' o7.log || {
     cat o7.log; echo "FAIL: an object with no consumer must be reported"; exit 1; }
 
-# ⭐ THE CONTROL: with the feature on, the target exists and the action is not
+# THE CONTROL: with the feature on, the target exists and the action is not
 # reported. Without it the assertion above would pass on a build that had
 # stopped emitting the diagnostic for every project.
 "$MCPP" build --features gated > o7b.log 2>&1 || {

@@ -135,7 +135,7 @@ soname = "libdep.so.1"
 }
 
 TEST(Manifest, RejectsSonameOnANonLibraryTarget) {
-    // ⚠️ NARROWED from "non-shared" to "non-library" (#519). A soname is the
+    // NARROWED from "non-shared" to "non-library" (#519). A soname is the
     // name a library is FOUND by, and a package needs to be able to state it
     // while still being consumed as a static library — otherwise two copies
     // of one library can never resolve to a single file. An EXECUTABLE still
@@ -593,7 +593,7 @@ defines = ["TEST_USE_MODULES", "VALUE=42"]
 // silence, because the only sentence mcpp offers about the key says the
 // opposite of what happens.
 //
-// ⚠️ THE LIST BELOW IS ANOTHER COPY, AND THAT IS THE POINT. A copy that fails
+// THE LIST BELOW IS ANOTHER COPY, AND THAT IS THE POINT. A copy that fails
 // loudly when it disagrees is the whole difference from the arrangement that
 // let this happen twice. Add a key to the parser, add it here; if you forget,
 // the negative control at the bottom of each test still passes and this one
@@ -1276,7 +1276,7 @@ package = {
 
 // Feature System v2 Stage 2a: optional deps activated by a feature.
 // TOML surface uses a dedicated [feature-deps.<name>] section.
-// ⚠️ The fixture used to say `zlib = "1.3.x"`, which cannot resolve: a trailing
+// The fixture used to say `zlib = "1.3.x"`, which cannot resolve: a trailing
 // `.x` is not a selector this resolver has. It went unnoticed because the same
 // form was in the documented `[feature-deps]` example, and because a fixture
 // only has to PARSE — nothing here ever asked the index for that package. It
@@ -3611,7 +3611,7 @@ dependency_linkage = "shared"
     ASSERT_TRUE(ok);
     EXPECT_EQ(ok->buildConfig.dependencyLinkage, "shared");
 
-    // ⚠️ "dynamic" is the LIBC axis' word. Accepting it here would silently
+    // "dynamic" is the LIBC axis' word. Accepting it here would silently
     // mean "static", because that is what an unparsed value resolves to.
     auto bad = load_inline("deplinkage_bad", R"(
 [package]
@@ -3657,7 +3657,7 @@ zlib = { version = "1.0.0", linkage = "dynamic" }
 }
 
 TEST(Manifest, ALibraryTargetMayDeclareASoname) {
-    // ⚠️ This used to make the WHOLE MANIFEST FAIL TO LOAD, in both parsers.
+    // This used to make the WHOLE MANIFEST FAIL TO LOAD, in both parsers.
     // A soname is the name a library is FOUND by, and it is the only way two
     // copies of one library can resolve to a single file — so a package has
     // to be able to state it while still being consumed as a static library,
@@ -3861,7 +3861,7 @@ schedule = "on"
     EXPECT_TRUE(o->buildConfig.bmiSchedule.empty())
         << "the pre-rename key `schedule` is still being read";
 
-    // ⚠️ AND THE PARSER MUST NOT WARN ABOUT ITS OWN KEY.
+    // AND THE PARSER MUST NOT WARN ABOUT ITS OWN KEY.
     //
     // Checking only the VALUE is what let this ship broken. The rename reached
     // the read (`build.bmi_schedule`) but not the accepted-key list, which kept
@@ -3893,7 +3893,7 @@ schedule = "on"
 // was accepted in silence. A configuration key that does nothing is worse than
 // one that does not exist.
 //
-// ⚠️ AND THE CHECK MUST NOT SEE THE CONDITIONAL CHANNEL. TOML presents
+// AND THE CHECK MUST NOT SEE THE CONDITIONAL CHANNEL. TOML presents
 // `[target.<pred>.dependencies]` as a KEY of `[target.<pred>]`, so a
 // hand-written "known keys" list has to enumerate `build`, `dependencies`,
 // `dev-dependencies`, `build-dependencies`, `feature-deps` too — and that list
@@ -3958,7 +3958,7 @@ runner = ["qemu-system-riscv64", "-machine", "virt", "-kernel"]
     ASSERT_EQ(it->second.runner.size(), 4u);
     EXPECT_EQ(it->second.runner.front(), "qemu-system-riscv64");
     EXPECT_EQ(it->second.runner.back(),  "-kernel");
-    // ⚠️ The unknown-key sweep is about SCALARS ("a scalar that does
+    // The unknown-key sweep is about SCALARS ("a scalar that does
     // nothing"). It skipped tables but not arrays, so this key was reported as
     // "unsupported key 'runner' (ignored)" while in fact being honoured —
     // worse than either statement being true. Seen in CI.
@@ -4014,7 +4014,7 @@ sysroot = "xim:newlib-riscv@4.4"
         << (m->schemaWarnings.empty() ? "" : m->schemaWarnings[0]);
 }
 
-// ⚠️ The distinction this test pins is the reason the field is an optional.
+// The distinction this test pins is the reason the field is an optional.
 // An empty string is a REQUEST (no C library), not an absence.
 TEST(Manifest, TargetSysrootEmptyStringIsRecordedAsPresent) {
     constexpr auto src = R"(
@@ -4080,20 +4080,20 @@ sysroot = ""
 
 // ── Dependency version requirements are checked where they are written ───────
 //
-// ⚠️ The parser that decides which published version satisfies a requirement
+// The parser that decides which published version satisfies a requirement
 // existed all along; the dependency reader did not use it, and handed its
 // string to the installer instead. A requirement the matcher could never
 // satisfy therefore reached the network and came back as
 // `E_NOT_FOUND: package '…@0.1.x' not found` — naming the PACKAGE, which
 // exists. This repository's own documentation recommended that form.
 
-// ⚠️ PARSE-acceptance, which is a weaker property than installability and was
+// PARSE-acceptance, which is a weaker property than installability and was
 // measured to be weaker: `"0.0"` parses here and then fails at fetch with
 // `install path missing`. The check added below is a manifest check and has no
 // business ruling on the installer's path derivation, so this test pins what
 // the PARSER must keep accepting and says nothing about what fetches.
 TEST(Manifest, DependencyVersionParserAcceptsEveryEstablishedForm) {
-    // ⭐ This test exists to prevent the check from NARROWING anything.
+    // This test exists to prevent the check from NARROWING anything.
     for (const char* v : { "0.0.1", "0.0", "^0.0.1", ">=0.0.1, <0.1.0", "*" }) {
         auto src = std::format(R"(
 [package]
@@ -4107,7 +4107,7 @@ cmdline = "{}"
     }
 }
 
-// ⚠️ REPORTED, NOT REJECTED, and the distinction is load-bearing. The first
+// REPORTED, NOT REJECTED, and the distinction is load-bearing. The first
 // version of this check returned an error, and a project pinned to a PUBLISHED
 // package carrying such a string stopped loading entirely — including when the
 // offending entry belonged to a feature nobody activates. Published data must
@@ -4126,7 +4126,7 @@ cmdline = "0.0.x"
     for (auto const& w : m->schemaWarnings)
         if (w.find("not a requirement") != std::string::npos) found = true;
     EXPECT_TRUE(found) << "no warning naming the requirement";
-    // ⭐ And it must say that the PACKAGE is not the problem, because the
+    // And it must say that the PACKAGE is not the problem, because the
     // failure the reader will otherwise see names exactly that.
     for (auto const& w : m->schemaWarnings)
         if (w.find("not a requirement") != std::string::npos)
@@ -4211,7 +4211,7 @@ TEST(ManifestHooks, AbsentSectionIsInertButNotDisabled) {
     EXPECT_FALSE(m->hooks.sideEffect);
 }
 
-// ⚠️ The experimental gate. Refused rather than downgraded: honouring it would
+// The experimental gate. Refused rather than downgraded: honouring it would
 // give an experimental feature a veto over every build, and ignoring it would
 // leave the project believing its build is gated on a notifier when nothing
 // is. Both silent options are worse than the error.
@@ -4395,7 +4395,7 @@ during_build = { cmd = "play bgm.mp3", loop = true }
     EXPECT_TRUE(m->hooks.active());
 }
 
-// ⭐ The two keys that only exist for one interval. Accepted-and-ignored is
+// The two keys that only exist for one interval. Accepted-and-ignored is
 // the failure mode this rejects: the user writes `loop` on `build_start`,
 // nothing repeats, and the feature looks broken rather than misused. Each
 // message names the event that does support the key.
@@ -4746,7 +4746,7 @@ llvm = { macosx = "20", default = "22" }
 
 // ─── Tool tiers: `when` on an entry, and `[feature-xlings.<f>]` ────────────
 //
-// ⭐ THE TWO SPELLINGS OF A TABLE MUST NOT BE CONFUSABLE. `[xlings.workspace]`
+// THE TWO SPELLINGS OF A TABLE MUST NOT BE CONFUSABLE. `[xlings.workspace]`
 // already accepted an object keyed by platform; the tier form is an object
 // keyed by `version` and `when`. Neither key set contains a member of the
 // other, so the presence of `version`/`when` decides — and this test is what
@@ -4845,7 +4845,7 @@ hardware = {}
     // never activates the feature never asks for it.
     EXPECT_EQ(std::ranges::find(m->xlings.deps, "xim:probe-rs@0.24.0"),
               m->xlings.deps.end());
-    // ⚠️ A misspelt feature installs nothing and says nothing, which is the
+    // A misspelt feature installs nothing and says nothing, which is the
     // shape #531 was filed for. Reported as a schema warning rather than an
     // error, so a package may adopt a feature before its consumers upgrade.
     bool sawTypo = false;

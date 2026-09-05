@@ -62,7 +62,7 @@ old_spelling=$(driver_for "openkal-llvm@22.1.8")
     exit 1
 }
 
-# ⚠️ AND THE OLDER SPELLING MUST NOT STILL DECIDE ANYTHING. Both manifests here
+# AND THE OLDER SPELLING MUST NOT STILL DECIDE ANYTHING. Both manifests here
 # have an empty dependency graph, so both must report a target side supplied
 # entirely by the payload. If the family name still carried the fact it used to,
 # the second would report `graph` somewhere and the first would not.

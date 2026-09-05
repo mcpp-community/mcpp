@@ -202,7 +202,7 @@ TEST(InstallEvidence, OneEntryTheInstallWroteIsEnough) {
     fs::remove_all(dir);
 }
 
-// ⭐ THE HALF THAT MAKES THE UPGRADE SEAMLESS. `is_install_complete` is
+// THE HALF THAT MAKES THE UPGRADE SEAMLESS. `is_install_complete` is
 // marker-only by design, so a store poisoned before this check existed carries
 // a `.mcpp_ok` that short-circuits forever. Guarding only the WRITE site would
 // help users who have not hit the bug and do nothing for the ones who filed
