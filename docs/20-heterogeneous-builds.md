@@ -18,7 +18,14 @@ A **whole-target** model puts device code in ordinary `.cpp` files and compiles
 the entire target with a compiler capable of offloading. SYCL, OpenMP offload
 and stdpar work this way. There is no island to separate.
 
-This document describes the island shape, which is what mcpp implements.
+mcpp implements the island shape, and a whole-target toolchain is reached
+through it rather than beside it: a SYCL translation unit is named `.sycl`,
+routed to the SYCL compiler by the same constrained glob that routes a `.cu`,
+and joins the link through the same seam. What the file name buys is that one
+extension means one thing -- letting a glob carry `.cpp` would make the same
+name mean two different compilers depending on which glob matched first, and
+the seam is legible precisely because the name says which side of it a unit is
+on.
 
 ## Device translation units
 
@@ -27,12 +34,17 @@ unit**. mcpp classifies it as such and treats it accordingly: it is never
 scanned for imports and never produces a BMI, because no device compiler
 accepts C++20 modules.
 
-The criterion is the compiler, not the vendor (the table below is
-2026.9.5.3+; before it, `.cu` and `.hip` alone):
+The criterion is the compiler, not the language (the table below is
+2026.9.5.3+; before it, `.cu` and `.hip` alone). `.sycl` is where that
+distinction becomes visible: its content is ordinary C++ and nothing in the
+file would tell a reader otherwise. What makes it a device unit is that it goes
+to a compiler with a device back end -- one mcpp does not drive, and one that
+does not accept C++20 modules.
 
 | language | extensions |
 |---|---|
 | CUDA, HIP | `.cu`, `.hip` |
+| SYCL | `.sycl` (2026.9.6.1+) |
 | GLSL, by stage | `.comp`, `.vert`, `.frag`, `.geom`, `.tesc`, `.tese`, `.mesh`, `.task`, `.rgen`, `.rint`, `.rahit`, `.rchit`, `.rmiss`, `.rcall` |
 | GLSL, stage-less | `.glsl` |
 | HLSL | `.hlsl` |
@@ -269,10 +281,43 @@ in precisely the way the dimension exists to prevent. A publisher writes the
 field explicitly today, which is what index descriptors do; `mcpp pack` will
 emit it once `kind = "device"` puts the device compilation inside mcpp.
 
+## The lanes, and what each one drives
+
+A rule package owns one compiler's spelling. The engine knows none of these
+names: `tests/unit/test_core_vendor_probes.cpp` asserts that no vendor tool
+name appears in `src/` once comments are stripped, with the file count as its
+own denominator.
+
+| feature of `mcpp:plugins` | module | compiler it drives | payloads it needs | `[build] accel` |
+|---|---|---|---|---|
+| `rules-cuda` | `mcpp.rules.cuda` | the project's own clang (`-x cuda`), or nvcc with a GCC toolchain | `xim:cuda-nvcc`, `xim:cuda-cudart`, `xim:libcurand`, `xim:cuda-cccl` | `cuda12.9+{sm_89} ptx>=89` |
+| `rules-hip` | `mcpp.rules.hip` | the project's own clang (`-x cuda`) on the NVIDIA platform | the above plus `xim:hip-nvidia` | `hip, cuda12.9+{sm_89}` |
+| `rules-sycl` | `mcpp.rules.sycl` | the `xim:dpcpp` payload's clang (`-fsycl`) | `xim:dpcpp`, `xim:gcc`, `xim:cuda-nvcc` for an NVIDIA target | `sycl` or `sycl, cuda12.9+{sm_89}` |
+| `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` or `glslc` | `xim:glslang` or `xim:shaderc` | `vulkan1.2` |
+
+Two chunks, not one, in the `accel` value of the HIP and SYCL rows. The first
+names the programming model and the second names the device, so a device is
+spelled once in this ecosystem however many models reach it: `sm_89` is the
+same `sm_89` whichever rule reads it. `accel = "sycl"` with no second chunk
+compiles to SPIR-V and lets the runtime choose a device.
+
+**HIP on the NVIDIA platform is a header layer, not a second runtime.** Every
+HIP entry point is an inline wrapper over the CUDA one, so the object links
+against the CUDA runtime and there is no ROCm on the machine. `xim:hip-nvidia`
+therefore contains no binaries. The AMD platform needs a ROCm runtime this
+ecosystem does not publish yet, and the rule refuses it by name rather than
+producing an object nothing can link.
+
+**A SYCL build carries two C++ runtimes, and the seam is what makes that safe.**
+`libsycl.so` is compiled against libstdc++ while an mcpp artifact links libc++,
+so both are in the image and mcpp's duplicate-symbol check reports the
+unwinder symbols they share. Nothing may cross the seam: a SYCL exception is
+caught in the device translation unit and returned as a code, because the
+runtime that threw it is not the one the caller would unwind with.
+
 ## Not implemented
 
-The whole-target shape (SYCL, OpenMP offload, stdpar), device targets and the
-device linking they imply, static libraries containing device code, and
-accelerator payloads supplied through xim. See
-`.agents/docs/2026-09-05-accelerator-support-design.md` for the design these
-follow from.
+Device targets and the device linking they imply for the island shape, OpenMP
+offload and stdpar, the AMD platform of HIP, and Metal. See
+`.agents/docs/2026-09-05-heterogeneous-build-ecosystem-design-v2.md` for the
+design these follow from and the reason each is open.

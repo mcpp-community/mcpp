@@ -240,6 +240,20 @@ TEST(SourceKind, ClassifiesDeviceTranslationUnits) {
     EXPECT_EQ(mcpp::classify("src/k.hip", t), SourceKind::Device);
 }
 
+TEST(SourceKind, ClassifiesSyclTranslationUnitsByCompilerNotDialect) {
+    // A `.sycl` unit is ordinary C++ and is still a device TU, because the
+    // criterion is which compiler consumes it: a SYCL unit goes to icpx or a
+    // clang with the SYCL front end, neither of which mcpp drives and neither
+    // of which accepts C++20 modules. Naming it `.cpp` and routing it by glob
+    // would make one extension mean two things depending on match order.
+    auto t = mcpp::builtin_extension_table();
+    EXPECT_EQ(mcpp::classify("src/kernels/saxpy.sycl", t), SourceKind::Device);
+    EXPECT_TRUE(mcpp::is_scan_exempt(SourceKind::Device));
+    // And the C++ spelling of the same content stays C++: adding the row must
+    // not reclassify anything that is not literally named `.sycl`.
+    EXPECT_EQ(mcpp::classify("src/kernels/saxpy.cpp", t), SourceKind::Cxx);
+}
+
 TEST(SourceKind, ClassifiesShaderAndKernelLanguages) {
     // The criterion is "a separate compiler consumes it", not "NVIDIA ships
     // it". Before this, the list was `.cu` and `.hip` alone, and a shader in a
@@ -273,7 +287,7 @@ TEST(SourceKind, ShaderExtensionsDoNotWidenTheDefaultGlob) {
 TEST(SourceKind, ShaderExtensionsCannotBeClaimedAsModuleInterfaces) {
     // Reserved for the same reason `.cu` is: routing a shader to the C++
     // module rule fails somewhere that names neither the file nor the key.
-    for (const char* ext : {".comp", ".hlsl", ".cl", ".metal"}) {
+    for (const char* ext : {".comp", ".hlsl", ".cl", ".metal", ".sycl"}) {
         auto err = mcpp::validate_module_extensions(std::vector<std::string>{ext});
         ASSERT_TRUE(err.has_value()) << ext;
         EXPECT_NE(err->find(ext), std::string::npos) << ext;

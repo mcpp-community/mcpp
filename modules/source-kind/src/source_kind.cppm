@@ -242,19 +242,30 @@ constexpr std::string_view kHeaderExtensions[] = { ".h", ".hpp", ".hh", ".hxx" }
 // compile it was told there was nothing to compile, and warned about it.
 //
 // So the list is the set of languages a separate compiler consumes: CUDA and
-// HIP, the GLSL stages and HLSL (glslang, dxc), OpenCL C (clang, and every
-// vendor's own), and Metal Shading Language. Adding to it cannot change a
-// build that works today, for two reasons that hold jointly: device extensions
-// are deliberately absent from `default_source_globs`, so no glob widens; and
-// a file with one of these extensions named in `sources` is TODAY a hard
-// error, so nothing silently switches role.
+// HIP, SYCL, the GLSL stages and HLSL (glslang, dxc), OpenCL C (clang, and
+// every vendor's own), and Metal Shading Language. Adding to it cannot change
+// a build that works today, for two reasons that hold jointly: device
+// extensions are deliberately absent from `default_source_globs`, so no glob
+// widens; and a file with one of these extensions named in `sources` is TODAY
+// a hard error, so nothing silently switches role.
+//
+// `.sycl` is here and its language is ordinary C++. That is not a
+// contradiction: the criterion is the compiler, not the dialect. A SYCL
+// translation unit is consumed by a second compiler with a device back end
+// (icpx, or clang built with the SYCL front end), which mcpp does not drive
+// and which does not accept C++20 modules -- exactly the property this kind
+// states. The alternative, letting a constrained glob carry `.cpp`, was
+// rejected: one extension would then mean two things depending on which glob
+// matched first, and the seam a device build is written around -- device code
+// reaches the program only through an `extern "C"` header -- is legible
+// precisely because the file name says which side of it a unit is on.
 //
 // `.glsl` is here and carries no stage. glslang derives the stage from the
 // extension, so a rule package refuses a stage-less name — which is the right
 // place for that message, and the reason this table does not need to know
 // which of these extensions name a stage.
 constexpr std::string_view kDeviceExtensions[] = {
-    ".cu", ".hip",
+    ".cu", ".hip", ".sycl",
     ".comp", ".vert", ".frag", ".geom", ".tesc", ".tese", ".mesh", ".task",
     ".rgen", ".rint", ".rahit", ".rchit", ".rmiss", ".rcall",
     ".glsl", ".hlsl", ".cl", ".metal",
