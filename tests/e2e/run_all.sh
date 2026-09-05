@@ -20,7 +20,7 @@ fi
 echo "Using mcpp: $MCPP"
 $MCPP --version
 
-# ⚠️ The suite takes ~20 minutes, which is long enough to be tempting to work
+# The suite takes ~20 minutes, which is long enough to be tempting to work
 # through -- and rebuilding mcpp during it swaps the binary UNDER the run.
 # Later tests then measure a different engine from earlier ones, and the report
 # mixes the two without saying so. Measured twice in one session: three tests
@@ -162,7 +162,7 @@ command -v python3 &>/dev/null && CAPS+=(python3)
 # jq: the JSON reader for the tests that consume mcpp's MACHINE interface
 # (`--format json`) rather than the tables it prints for people.
 #
-# ⚠️ DECLARING IT IS PART OF ADDING IT. A `# requires:` token that no branch
+# DECLARING IT IS PART OF ADDING IT. A `# requires:` token that no branch
 # here ever adds makes every test naming it skip for ever, silently — the
 # `65_*` block spent months in that state. Every GitHub-hosted runner ships jq,
 # so in CI this is always true and a skip there is a red (the matrix workflow
@@ -247,7 +247,7 @@ done
 # Returns 0 (true) if the test should be skipped, prints reason.
 # Returns 1 (false) if all requirements are met.
 
-# ⚠️ THERE IS DELIBERATELY NO "requires-hard" FORM.
+# THERE IS DELIBERATELY NO "requires-hard" FORM.
 #
 # The obvious answer to "a test silently skipped on the runner that was
 # supposed to run it" is a token whose absence FAILS. It was implemented here,
@@ -422,7 +422,7 @@ fi
 echo "E2E Summary: $PASS passed, $FAIL failed, $SKIP skipped"
 if [[ "$(_binary_stamp)" != "$MCPP_STAMP_AT_START" ]]; then
     echo
-    echo "⚠️  THE BINARY UNDER TEST CHANGED DURING THIS RUN."
+    echo " THE BINARY UNDER TEST CHANGED DURING THIS RUN."
     echo "    $MCPP"
     echo "    Earlier tests ran a different engine from later ones, so this"
     echo "    summary describes no single build. Re-run without rebuilding."

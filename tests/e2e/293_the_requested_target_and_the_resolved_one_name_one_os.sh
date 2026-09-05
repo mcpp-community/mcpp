@@ -2,7 +2,7 @@
 # requires: gcc unix-shell
 # A build for one operating system is never quietly performed for another.
 #
-# ⚠️ MEASURED 2026-08-25 IN CI. On a machine that had installed only a native
+# MEASURED 2026-08-25 IN CI. On a machine that had installed only a native
 # gcc, the cross payload was absent, resolution fell back to the host compiler,
 # and the report said so on one line while the build carried on:
 #
@@ -15,7 +15,7 @@
 # function — a symbol, not the decision that produced it. openkal-uefi reached
 # the same fallback at the linker: `ld: unrecognized option '--subsystem'`.
 #
-# ⭐⭐ BOTH DIRECTIONS, BECAUSE A REFUSAL THAT FIRES TOO OFTEN IS WORSE THAN THE
+# BOTH DIRECTIONS, BECAUSE A REFUSAL THAT FIRES TOO OFTEN IS WORSE THAN THE
 # DEFECT. `x86_64-windows-gnu → x86_64-w64-windows-gnu` differs in vendor and
 # spelling and is exactly right; refusing on anything but the OS would reject
 # every correct cross build. The second half is a sweep that must not refuse.
@@ -38,7 +38,7 @@ make_project() {   # dir target-section
 # Windows target is the one arrangement that reproduces CI's fallback without
 # uninstalling anything.
 #
-# ⚠️ AND SINCE THE SYSTEM TOOLCHAIN IS REFUSED, THAT REFUSAL IS ALSO AN ANSWER
+# AND SINCE THE SYSTEM TOOLCHAIN IS REFUSED, THAT REFUSAL IS ALSO AN ANSWER
 # TO THIS TEST'S QUESTION. mcpp builds only with toolchains it manages
 # (`msvc@system` excepted), and the refusal fires before target resolution — so
 # a Windows target can no longer reach a Linux host compiler through this door
@@ -49,7 +49,7 @@ make_project "$work/mismatch" '[target.x86_64-windows-gnu]
 toolchain = "system"'
 out="$(cd "$work/mismatch" && "$MCPP" build --target x86_64-windows-gnu 2>&1 || true)"
 
-# ⚠️⚠️ AND A SKIP HERE HAS TO BE EARNED, OR THE TEST CANNOT SEE A REVERT.
+# AND A SKIP HERE HAS TO BE EARNED, OR THE TEST CANNOT SEE A REVERT.
 # The first draft took the skip branch whenever no refusal appeared — which is
 # precisely what the unfixed build does, so reverting the fix turned this test
 # green-by-silence rather than red. The arrangement either reproduced (the
@@ -63,7 +63,7 @@ case "$out" in
     # The stronger refusal: the arrangement cannot be expressed any more, so a
     # Windows target never reaches a Linux compiler through this door.
     #
-    # ⚠️ AND IT MUST NOT `exit 0` HERE. Half two is independent of half one and
+    # AND IT MUST NOT `exit 0` HERE. Half two is independent of half one and
     # asserts that correct cross builds still go through; leaving early skips
     # it, and the ecosystem job that runs this file checks that each test "ran
     # to its conclusion" precisely so an early exit cannot masquerade as a
@@ -79,7 +79,7 @@ case "$out" in
        && printf '%s' "$resolved" | grep -q 'linux'; then
         echo "FAIL: a Windows target resolved to a Linux toolchain and the build went on"
         echo "        $reported"
-        # ⚠️ THE WHOLE OUTPUT, because the one line above says WHAT happened and
+        # THE WHOLE OUTPUT, because the one line above says WHAT happened and
         # not which decision produced it. This failure first appeared only in
         # CI, where the arrangement differs from any machine it was written on,
         # and a one-line report cannot be read backwards into a cause.
@@ -92,7 +92,7 @@ case "$out" in
     exit 0 ;;
 esac
 
-# ⭐ AND THE MESSAGE NAMES BOTH. A refusal that does not say what it resolved
+# AND THE MESSAGE NAMES BOTH. A refusal that does not say what it resolved
 # to leaves the reader with the same question the report used to answer.
 #
 # Only asked of the OS-mismatch refusal. The toolchain refusal is a different
@@ -113,7 +113,7 @@ fi
 
 # ── Half two: every correct cross build still goes through ────────────────
 #
-# ⚠️ A sweep that swept nothing is a SKIP, not a pass.
+# A sweep that swept nothing is a SKIP, not a pass.
 built=0; skipped=0
 for t in x86_64-linux-gnu x86_64-linux-musl aarch64-linux-musl x86_64-windows-gnu; do
     make_project "$work/ok-$t" ""

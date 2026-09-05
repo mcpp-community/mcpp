@@ -2,7 +2,7 @@
 # requires: elf
 # 307_symbol_provision.sh — one library, one provider (issue #519).
 #
-# ⚠️ THE SILENT CASE IS THE IMPORTANT ONE, and it is why this test has two
+# THE SILENT CASE IS THE IMPORTANT ONE, and it is why this test has two
 # halves that differ by a single package.
 #
 # mcpp's own `kind = "shared"` mechanism produces the exact shape the
@@ -156,7 +156,7 @@ EOF
 
 "$MCPP" build > conflict.log 2>&1 || { cat conflict.log; exit 1; }
 
-# ⚠️ `target/<triple>/` ACCUMULATES one directory per fingerprint, and adding a
+# `target/<triple>/` ACCUMULATES one directory per fingerprint, and adding a
 # dependency changed the fingerprint — so half 1's directory is still there
 # with its own `app` and its own clean verdict. Taking "the first" of either
 # would answer about the build that is not under test. Everything below is

@@ -54,7 +54,7 @@ out="$(MCPP_TOOLCHAIN=gcc@16.1.0 "$MCPP" build 2>&1)" || rc=$?
 [[ "$rc" -ne 0 ]] || { echo "a requirement gcc does not meet was accepted:"; echo "$out"; exit 1; }
 grep -q "requires the compiler to be" <<< "$out" || {
     echo "the refusal does not name the requirement:"; echo "$out"; exit 1; }
-# ⚠️ THE NEXT STEP MUST BE ONE THAT WOULD ACTUALLY WORK, AND UNTIL 2026.8.26.2
+# THE NEXT STEP MUST BE ONE THAT WOULD ACTUALLY WORK, AND UNTIL 2026.8.26.2
 # THE FIRST ONE OFFERED WAS `mcpp toolchain default llvm`.
 #
 # That is a GLOBAL change — the default for every project on the machine —
@@ -66,7 +66,7 @@ grep -q "requires the compiler to be" <<< "$out" || {
 # decided.
 grep -q "remove it" <<< "$out" || {
     echo "the refusal names no next step:"; echo "$out"; exit 1; }
-# ⚠️ `if`, NOT `grep … && { … }`. Under `set -e` a trailing `&&` list whose
+# `if`, NOT `grep … && { … }`. Under `set -e` a trailing `&&` list whose
 # left side fails takes the script down — and here grep FAILING is the passing
 # case. This repo has paid for that shape more than once.
 if grep -q "mcpp toolchain default" <<< "$out"; then
@@ -150,7 +150,7 @@ grep -q "not a layer a package can supply" <<< "$out" || {
 
 # ── The layer vocabulary must be extensible by a published package ──────────
 #
-# ⚠️ This one comes from a measurement, and the behaviour it replaces made the
+# This one comes from a measurement, and the behaviour it replaces made the
 # vocabulary permanently un-extendable:
 #
 #     error: dependency 'openkal-llvm-runtime': mcpp.toml: error:

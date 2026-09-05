@@ -272,14 +272,14 @@ report prints. They combine with the triple keys under `all`/`any`/`not`:
 cxxflags = ["-D_GNU_SOURCE"]
 ```
 
-⚠️ **A layer names the library, not the triple's env segment.** They coincide
+**A layer names the library, not the triple's env segment.** They coincide
 for `musl` and diverge for `gnu`: on Linux that segment asks for glibc, and on
 Windows it names the MinGW flavour of the toolchain, whose C runtime is the same
 UCRT the MSVC flavour links. The spelling is `c-abi = "glibc"`, never
 `c-abi = "gnu"`; the request, as opposed to the answer, is `env = "gnu"` — a
 different question (`docs/spec/target-side.md` §3.4).
 
-⚠️ **`env` and `c-abi` are not interchangeable.** `env` is what the triple
+**`env` and `c-abi` are not interchangeable.** `env` is what the triple
 *asked* for; `c-abi` is what the graph and the payload *answered*. An
 `openkal-musl` in the dependency graph supplies musl under an `x86_64-linux-gnu`
 triple, and only `c-abi` sees that.

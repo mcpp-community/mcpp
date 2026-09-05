@@ -40,7 +40,7 @@
 //     baseline  wall=80.51s  ninja -j32   compilers<=32
 //     split     wall=39.23s  ninja -j192  compilers<=32
 //
-// ⚠️ FOUR HAZARDS, EVERY ONE OF WHICH BIT DURING DEVELOPMENT:
+// FOUR HAZARDS, EVERY ONE OF WHICH BIT DURING DEVELOPMENT:
 //
 //  1. THE COMPILER MUST NOT INHERIT ninja's PIPE. ninja finishes an edge when
 //     the pipe reaches EOF, NOT when its direct child exits. An inherited pipe
@@ -178,7 +178,7 @@ void write_rc(const std::filesystem::path& slot, int rc) {
 // filesystem mcpp targets, it needs no daemon and no shared memory. A holder
 // never waits for another token, so this cannot deadlock between holders.
 //
-// ⚠️ WHAT IT CAN DO IS OUTLIVE ITS HOLDER. A token is released by the
+// WHAT IT CAN DO IS OUTLIVE ITS HOLDER. A token is released by the
 // supervisor that took it; a supervisor killed before its cleanup (Ctrl-C, the
 // OOM killer, a reboot) leaves the directory behind, and nothing in this file
 // ever reclaims one. The reclaim is therefore done ONCE PER BUILD, in prepare,
@@ -253,7 +253,7 @@ void copy_first_rule(const std::filesystem::path& from, const std::filesystem::p
 // A BMI's IDENTITY, so publication can be detected without the file ever having
 // to be absent.
 //
-// ⚠️ THE OLD DESIGN CREATED THE HOLE IT WAS TRYING TO AVOID. Phase 1 used to
+// THE OLD DESIGN CREATED THE HOLE IT WAS TRYING TO AVOID. Phase 1 used to
 // `rename(bmi, bmi.bak)` before spawning the compiler — the comment said it was
 // so "its mere presence can never be mistaken for the new one landing". That is
 // a real hazard, but the cure left the module with NO BMI ON DISK from that
@@ -280,7 +280,7 @@ BmiIdentity bmi_identity(const std::filesystem::path& p) {
     BmiIdentity id;
     if (p.empty()) return id;
     std::error_code ec;
-    // ⚠️ ASSIGN NOTHING BEFORE CHECKING `ec`. `file_size` returns
+    // ASSIGN NOTHING BEFORE CHECKING `ec`. `file_size` returns
     // `static_cast<uintmax_t>(-1)` when it fails, so writing it into the struct
     // first makes "this file is missing" compare UNEQUAL to a default-built
     // identity — which is exactly the sentinel used for "there was no previous
@@ -351,7 +351,7 @@ bool spawn_detached(const std::vector<std::string>& argv) {
 
 int run_to_completion(std::string_view command,
                       const std::filesystem::path& logPath) {
-    // ⚠️ `cmd.exe /c` DOES NOT USE CreateProcess ARGUMENT QUOTING.
+    // `cmd.exe /c` DOES NOT USE CreateProcess ARGUMENT QUOTING.
     //
     // This built the line with `join_command({"cmd.exe", "/c", command})`, which
     // treats the whole compiler invocation as ONE argv element: it wraps it in
@@ -480,7 +480,7 @@ int compile_release_at_bmi(const CompileRequest& req) {
         if (before.present) {
             std::filesystem::copy_file(
                 req.bmi, backup, std::filesystem::copy_options::overwrite_existing, ec);
-            // ⚠️ AND CARRY THE MTIME ACROSS. `copy_file` stamps the copy with
+            // AND CARRY THE MTIME ACROSS. `copy_file` stamps the copy with
             // the time of the copy, and `settle_bmi` restores this file when the
             // new BMI turns out equivalent — precisely so the mtime does NOT
             // advance and ninja's restat stops the cascade. Without this line
@@ -534,7 +534,7 @@ int compile_release_at_bmi(const CompileRequest& req) {
                 // it back rather than leaving the unit with no BMI at all.
                 restore_backup(req.bmi);
             } else {
-                // ⚠️ THE COMPILER CAN FINISH BETWEEN THE TWO CHECKS ABOVE.
+                // THE COMPILER CAN FINISH BETWEEN THE TWO CHECKS ABOVE.
                 //
                 // The loop tests `file_exists(bmi)` first and `rc` second, so a
                 // unit whose compile is shorter than one poll interval lands
@@ -584,7 +584,7 @@ int compile_release_at_bmi(const CompileRequest& req) {
 int supervise(const std::filesystem::path& slot,
               const std::filesystem::path& semaphoreToken,
               std::string_view command) {
-    // ⚠️ EVERY EXIT FROM HERE MUST LEAVE AN `.rc`, INCLUDING THE ONES THAT DO
+    // EVERY EXIT FROM HERE MUST LEAVE AN `.rc`, INCLUDING THE ONES THAT DO
     // NOT RUN A COMPILER. Phase 1 and phase 2 both wait on that file; a
     // supervisor that bails without writing one is indistinguishable from one
     // that was never started, and both waiters can only end on a timeout. The

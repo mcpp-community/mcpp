@@ -12,7 +12,7 @@
 # are deliberately excluded), not in the goal phony (objects and link outputs
 # only), and consumed by no edge.
 #
-# ⚠️ THE ASSERTION IS ON CONTENT, NOT EXISTENCE. `prepare_actions` used to
+# THE ASSERTION IS ON CONTENT, NOT EXISTENCE. `prepare_actions` used to
 # write a zero-byte placeholder for every Source output including headers, so
 # the file was on disk whether or not the generator ran — which is exactly why
 # mcpp#534 was filed as an intermittent race when it was a deterministic

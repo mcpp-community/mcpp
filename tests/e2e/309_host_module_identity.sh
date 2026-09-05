@@ -80,7 +80,7 @@ out="$("$MCPP" run 2>&1 | grep '^DIVERGENT=' | tail -1)"
 [[ "$out" == "DIVERGENT=1" ]] || {
     echo "FAIL: the divergently-named rule's directive did not land: $out"; exit 1; }
 
-# ⚠️ THE IMPORT ABOVE DOES NOT DISCRIMINATE ON GCC, AND THAT IS THE WHOLE
+# THE IMPORT ABOVE DOES NOT DISCRIMINATE ON GCC, AND THAT IS THE WHOLE
 # POINT OF THIS FEATURE. Measured: with the pre-I1 code — which registered the
 # PACKAGE name — this build still succeeded under GCC, because GCC's BMIs are
 # implicit under gcm.cache and keyed by the name the SOURCE declares, so

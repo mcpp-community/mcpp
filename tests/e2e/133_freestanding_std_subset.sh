@@ -8,7 +8,7 @@
 # them is one per-target file, `__config_site`, which the llvm payload ships
 # only for its own host triple.
 #
-# ⚠️ MEASURED, and the control group is what makes the number mean anything:
+# MEASURED, and the control group is what makes the number mean anything:
 # with a synthesised `__config_site`, 103 of libc++'s 110 headers compile for
 # riscv64-none-elf. The 7 that fail (generator, hazard_pointer, rcu,
 # spanstream, stacktrace, stdfloat, text_encoding) fail on an x86_64 host with
@@ -50,7 +50,7 @@ cd "$TMP"
 "$MCPP" new board > /dev/null
 cd board
 rm -f src/main.cpp tests/*.cpp 2>/dev/null || true
-# ⚠️ NO libc anywhere in this package. The target's C library is the TARGET's,
+# NO libc anywhere in this package. The target's C library is the TARGET's,
 # resolved by mcpp from the target's own row exactly as the compiler is; the
 # board selects OUT of it (which crt0, which libraries) and names the linker
 # script it wants, and asks where the sysroot is rather than declaring one.
@@ -96,7 +96,7 @@ cd "$TMP"
 "$MCPP" new stdfs > /dev/null
 cd stdfs
 rm -f src/main.cpp tests/*.cpp src/stdfs.cppm 2>/dev/null || true
-# ⚠️ NO [xlings] section. The C++ headers come from whatever toolchain mcpp
+# NO [xlings] section. The C++ headers come from whatever toolchain mcpp
 # resolved, and the target's C headers mcpp already put on the compile line.
 # Declaring either would pin this package to one implementation, one libc and
 # one ISA — which is what an earlier version of it did.
@@ -106,7 +106,7 @@ name    = "stdfs"
 version = "0.1.0"
 EOF
 
-# ⚠️ The config has to be a FILE. `_LIBCPP_HAS_THREADS` and friends are read
+# The config has to be a FILE. `_LIBCPP_HAS_THREADS` and friends are read
 # from `__config_site` by <__config>; defining them with -D does not reach the
 # check at all (measured — the obvious `-D_LIBCPP_HAS_THREADS=0` does nothing).
 cat > build.mcpp <<'EOF'
@@ -167,7 +167,7 @@ export module mcpplibs.std.freestanding;
 #include "std/ranges.inc"
 EOF
 
-# ⚠️ Declared through libc++'s OWN header. The real symbol lives in the ABI
+# Declared through libc++'s OWN header. The real symbol lives in the ABI
 # inline namespace (std::__1::), so a hand-written `namespace std { ... }`
 # definition compiles, links nothing, and leaves the undefined-symbol error
 # looking exactly as it did before.

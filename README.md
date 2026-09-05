@@ -357,7 +357,7 @@ data: [`standard-20260814-linux-x86_64`](bench/results/standard-20260814-linux-x
   An incorrect scheduling change fails silently rather than loudly, so the
   default is not changed on the evidence of a single machine.
 
-📊 **[Methodology, pinned versions, and the full data →
+**[Methodology, pinned versions, and the full data →
 `bench/README.md`](bench/README.md)** · [简体中文](bench/README.zh-CN.md)
 
 ## Platform Support
@@ -374,25 +374,25 @@ the right toolchain payload is resolved and installed automatically.
 
 | Target | Convention toolchain | Status |
 |---|---|:---:|
-| `x86_64-linux-gnu`    | gcc *(Linux default)* or llvm | ✅ |
-| `x86_64-linux-musl`   | gcc 16, fully static | ✅ |
-| `aarch64-linux-musl`  | gcc 16, fully static — cross from x86_64 (qemu-verified) or native | ✅ |
-| `x86_64-windows-gnu`  | gcc 16 MinGW-w64 — native on Windows, cross from Linux (wine-verified) *(Windows default without Visual Studio)* | ✅ |
-| `x86_64-windows-msvc` | `msvc@system` (detected VS/BuildTools) or llvm ¹ *(Windows default with Visual Studio)* | ✅ |
-| `aarch64-macos`       | llvm *(macOS default)* | ✅ |
-| `riscv64-none-elf`    | llvm 22 — bare metal, no OS; needs no per-host cross payload ² | ✅ |
-| `riscv32-none-elf`    | llvm 22 — bare metal, no OS; needs no per-host cross payload ² | ✅ |
-| `thumbv6m-none-eabi`  | llvm 22 — Cortex-M0/M0+/M1, bare metal ² | ✅ |
-| `thumbv7m-none-eabi`  | llvm 22 — Cortex-M3, bare metal ² | ✅ |
-| `thumbv7em-none-eabihf` | llvm 22 — Cortex-M4F/M7F, hard float ² | ✅ |
-| `thumbv8m.main-none-eabi` | llvm 22 — Cortex-M33/M55, soft float ² | ✅ |
-| `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 22 — Cortex-A 32-bit, bare metal ² | ✅ |
-| `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22 — builds and links; no emulator run recorded | 🔄 |
-| `riscv64-linux-musl`  | — | 🔄 |
-| `aarch64-linux-gnu`   | — | 🔄 |
-| `x86_64-macos`        | — | 🔄 |
+| `x86_64-linux-gnu`    | gcc *(Linux default)* or llvm | yes |
+| `x86_64-linux-musl`   | gcc 16, fully static | yes |
+| `aarch64-linux-musl`  | gcc 16, fully static — cross from x86_64 (qemu-verified) or native | yes |
+| `x86_64-windows-gnu`  | gcc 16 MinGW-w64 — native on Windows, cross from Linux (wine-verified) *(Windows default without Visual Studio)* | yes |
+| `x86_64-windows-msvc` | `msvc@system` (detected VS/BuildTools) or llvm ¹ *(Windows default with Visual Studio)* | yes |
+| `aarch64-macos`       | llvm *(macOS default)* | yes |
+| `riscv64-none-elf`    | llvm 22 — bare metal, no OS; needs no per-host cross payload ² | yes |
+| `riscv32-none-elf`    | llvm 22 — bare metal, no OS; needs no per-host cross payload ² | yes |
+| `thumbv6m-none-eabi`  | llvm 22 — Cortex-M0/M0+/M1, bare metal ² | yes |
+| `thumbv7m-none-eabi`  | llvm 22 — Cortex-M3, bare metal ² | yes |
+| `thumbv7em-none-eabihf` | llvm 22 — Cortex-M4F/M7F, hard float ² | yes |
+| `thumbv8m.main-none-eabi` | llvm 22 — Cortex-M33/M55, soft float ² | yes |
+| `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 22 — Cortex-A 32-bit, bare metal ² | yes |
+| `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22 — builds and links; no emulator run recorded | planned |
+| `riscv64-linux-musl`  | — | planned |
+| `aarch64-linux-gnu`   | — | planned |
+| `x86_64-macos`        | — | planned |
 
-✅ verified — CI builds **and executes** the artifact end-to-end (qemu/wine included) ｜ 🔄 planned
+verified — CI builds **and executes** the artifact end-to-end (qemu/wine included) ｜ planned
 
 > Linux release binaries are fully static musl builds for x86_64 and aarch64
 > (`x86_64-linux-musl` and `aarch64-linux-musl`).

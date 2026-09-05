@@ -391,7 +391,7 @@ widget = "1.0.0"
 
 // ── [template.inject] self = false ───────────────────────────────────────────
 //
-// ⚠️ A TEMPLATE THAT MUST NOT DEPEND ON ITS OWN PACKAGE IS NOT HYPOTHETICAL.
+// A TEMPLATE THAT MUST NOT DEPEND ON ITS OWN PACKAGE IS NOT HYPOTHETICAL.
 //
 // The self-dependency keeps a template from drifting from the library that
 // ships it, and for almost every template that is right. It is wrong for one

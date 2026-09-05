@@ -9,7 +9,7 @@
 #   tag    RPATH | RUNPATH | BOTH | NONE
 #   paths  ':'-joined contents of whichever tag is present
 #
-# ⚠️ WHY A PARSER AND NOT `strings`
+# WHY A PARSER AND NOT `strings`
 #
 # Removing DT_RPATH/DT_RUNPATH removes the ENTRY, not the string it pointed at:
 # `.dynstr` is tail-merged by the linker, so a shorter live string can begin

@@ -3,7 +3,7 @@
 # The graph's compiler requirement is applied where mcpp's own answer was
 # revisable — and only there.
 #
-# ⭐⭐ THE RANK IS NOT NEW. `TcOrigin` already sorted these and
+# THE RANK IS NOT NEW. `TcOrigin` already sorted these and
 # `tc_origin_is_user_explicit` already answered "may mcpp revise this"; the
 # defect the previous test covers was that nobody asked. This file is the other
 # side: the one case that must still refuse, and the one that cannot be resolved
@@ -12,7 +12,7 @@
 #   half one   `[toolchain] default = <other>`   the project stated it → refuse
 #   half two   two packages, two families        no compiler satisfies both
 #
-# ⚠️ AND THE ADVICE IS PART OF THE CLAIM. Until 2026.8.26.2 the first remedy
+# AND THE ADVICE IS PART OF THE CLAIM. Until 2026.8.26.2 the first remedy
 # offered was `mcpp toolchain default <family>` — global, and in the only case
 # that still reaches here it does not even work, because a project-level
 # statement is what decided. A remedy that cannot fix the failure it is printed
@@ -54,7 +54,7 @@ if [ -n "$gccspec" ] && [ -n "$llvmspec" ]; then
     fi
     echo "  ok  a compiler the project stated is not revised"
 
-    # ⭐ AND THE REMEDY POINTS AT THE STATEMENT THAT DECIDED.
+    # AND THE REMEDY POINTS AT THE STATEMENT THAT DECIDED.
     ok=1
     printf '%s\n' "$msg" | grep -q '\[toolchain\]'        || ok=0
     printf '%s\n' "$msg" | grep -q 'mcpp.toml'            || ok=0
@@ -66,7 +66,7 @@ if [ -n "$gccspec" ] && [ -n "$llvmspec" ]; then
         exit 1
     fi
 
-    # ⚠️ AND IT DOES NOT SEND THE READER TO A GLOBAL SETTING. Changing
+    # AND IT DOES NOT SEND THE READER TO A GLOBAL SETTING. Changing
     # `mcpp toolchain default` here fixes nothing: the project's own statement
     # is what is being used.
     if printf '%s\n' "$msg" | grep -q 'mcpp toolchain default'; then
@@ -81,7 +81,7 @@ fi
 
 # ── Half two: two packages, two families ─────────────────────────────────
 #
-# ⚠️ ONE SUPPLIER PER LAYER, AND TWO IS AN ERROR RATHER THAN A PICK — the rule
+# ONE SUPPLIER PER LAYER, AND TWO IS AN ERROR RATHER THAN A PICK — the rule
 # `provides` already follows. Resolving by graph-traversal order would make the
 # answer depend on an order the author neither writes nor can predict, and would
 # silently satisfy one package while failing the other inside a header.
@@ -111,7 +111,7 @@ fi
 
 # ── Half three: a capability row's remedy is not a convention row's ──────
 #
-# ⚠️⚠️ THE TWO ROWS REFUSE UNDER ONE RULE AND FOR TWO REASONS, AND ONE REMEDY
+# THE TWO ROWS REFUSE UNDER ONE RULE AND FOR TWO REASONS, AND ONE REMEDY
 # DOES NOT SERVE BOTH.
 #
 # A convention pin is cancelled by a graph that supplies the target's system, so
@@ -120,10 +120,10 @@ fi
 # emits the target. Printed there, that remedy is an instruction the sentence
 # directly above it has already ruled out.
 #
-# ⭐ FOUND BY READING THE MESSAGE, NOT BY A FAILING BUILD. This half exists so
+# FOUND BY READING THE MESSAGE, NOT BY A FAILING BUILD. This half exists so
 # the next rewording cannot put it back.
 #
-# ⚠️ The refusal is decided from the VOCABULARY (the row's pin) before any
+# The refusal is decided from the VOCABULARY (the row's pin) before any
 # payload is resolved, so this half is host-independent and needs nothing
 # installed.
 printf '[package]\nname    = "app"\nversion = "0.1.0"\n\n[dependencies]\nneeds-gcc = { path = "../needs-gcc" }\n' \

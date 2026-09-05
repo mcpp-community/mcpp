@@ -39,7 +39,7 @@ cat > mcpp.toml <<'EOF'
 name = "winpack"
 version = "0.1.0"
 
-# ⚠️ THIS TEST DROPS A FILE INTO THE BUILD TREE AND EXPECTS `pack` TO SEE IT,
+# THIS TEST DROPS A FILE INTO THE BUILD TREE AND EXPECTS `pack` TO SEE IT,
 # so the two commands have to agree on WHICH build tree that is.
 #
 # `mcpp pack` builds with the `release` fallback (a packaged artifact leaves

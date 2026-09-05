@@ -47,7 +47,7 @@ cd app
 
 # ── 1. Declining to name a C library is not naming `gnu` ────────────────────
 #
-# ⚠️ `|| true`, and that is the subject rather than a concession: the stand-in
+# `|| true`, and that is the subject rather than a concession: the stand-in
 # package declares the layer without supplying one, so the LINK afterwards has
 # no C library to find. What this file asserts — the report and the refusal —
 # is complete before a single object is compiled.
@@ -63,7 +63,7 @@ grep -q "Target x86_64-linux-gnu" <<< "$out" && {
 
 # ── 2. Naming one the graph disagrees with is reported, not refused ─────────
 #
-# ⚠️ The severity was decided by a measurement. Refusing is the clean answer —
+# The severity was decided by a measurement. Refusing is the clean answer —
 # only one of the two names can describe the artifact — and it broke every
 # project and CI configuration spelling the host target `x86_64-linux-gnu`,
 # which is what `mcpp toolchain list` prints and therefore what people write.

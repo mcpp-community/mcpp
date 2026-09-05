@@ -59,7 +59,7 @@ cd app
 
 # ── 1. the default is the old behaviour ────────────────────────────────────
 "$MCPP" build > static.log 2>&1 || { cat static.log; exit 1; }
-# ⚠️ The FINGERPRINT directory, `target/<triple>/<fp>/`, not the triple one.
+# The FINGERPRINT directory, `target/<triple>/<fp>/`, not the triple one.
 # `ls target/*/ -d` yields the triple, and comparing a fingerprint against it
 # in step 3 would pass no matter what — a criterion aimed at the wrong object
 # does not report an error, it quietly answers a different question.
@@ -124,7 +124,7 @@ done
 
 # ── 4. the bundle a shared build produces must actually start ──────────────
 #
-# ⚠️ A `.so` that is built and then not shipped is the worst outcome of this
+# A `.so` that is built and then not shipped is the worst outcome of this
 # axis: everything is green locally, the archive uploads, and it fails on the
 # user's machine with `error while loading shared libraries`. The closure is
 # resolved by RUNNING the artifact, and the library is found through `$ORIGIN`

@@ -111,7 +111,7 @@ grep -q "WIDGET_ON is missing" none.log || {
     cat none.log; echo "FAIL: the build failed for another reason than the layer"; exit 1; }
 echo "PASS: --no-accel leaves the accelerator layer empty"
 
-# ⚠️ AND THE VARIABLE, WHICH THIS SECTION CLAIMED AND DID NOT MEASURE.
+# AND THE VARIABLE, WHICH THIS SECTION CLAIMED AND DID NOT MEASURE.
 # `accel_str` prints `(none)` for an empty set so an ABI tag reads as a
 # sentence, and handing that spelling on made `MCPP_ACCEL=(none)` reach every
 # build program that asked for no accelerator — including every project that

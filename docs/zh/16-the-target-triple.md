@@ -37,7 +37,7 @@ C 库。选中 `x86_64-linux-musl` 就是选中 musl-gcc 载荷,选中
 | `none` | **对象格式** | `elf` |
 | `macos` | 无;该平台不带这一段 | — |
 
-⭐ 在 Windows 上这一段经常被读错,因为 `gnu` 这个词暗示了一个并不在场的 C 库。
+在 Windows 上这一段经常被读错,因为 `gnu` 这个词暗示了一个并不在场的 C 库。
 对一份按构建期体系为 `x86_64-windows-gnu` 构建的产物实测:
 
 | 观测 | 值 |
@@ -147,7 +147,7 @@ warning: the target name asks for the `gnu` C ABI and the dependency graph suppl
 Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu selects the Itanium C++ ABI, not a C library)
 ```
 
-⭐ 而它**不对应报告里的任何一行**,这正是要点。五层记录的是每一层
+而它**不对应报告里的任何一行**,这正是要点。五层记录的是每一层
 **由谁供给**;那一段命名的是这些**对象遵循哪套约定**,是若干层必须一致的
 横切事项。把它读成 `c++-abi libc++` 是第二个错误答案,因为 libstdc++
 坐在同一套 ABI 上。
@@ -189,7 +189,7 @@ x86_64-w64-mingw32-g++  →  x86_64-w64-mingw32     (只能发这个)
 clang++                 →  x86_64-unknown-linux-gnu,而 --target= 可改
 ```
 
-⭐ 这就是传统预构建体系**不传 `--target`** 的原因:那份载荷的编译器以它唯一
+这就是传统预构建体系**不传 `--target`** 的原因:那份载荷的编译器以它唯一
 能发的目标命名,选目标等于选载荷。也是构建期体系只需要一个编译器的原因。
 
 ### MinGW 按 GCC 的约定给自己命名
@@ -200,7 +200,7 @@ MinGW 自己的三元组是 `x86_64-w64-mingw32`:
 |---|---|---|
 | arch | `x86_64` | |
 | vendor | `w64` | 项目名 `mingw-w64`,用以区别于已停滞的原 `mingw32` 项目 |
-| os | **`mingw32`** | ⭐ MinGW 把**自己**放在 OS 位 |
+| os | **`mingw32`** | MinGW 把**自己**放在 OS 位 |
 | env | (无) | 三段就是全名 |
 
 这套约定源自 autoconf 的 `config.guess`,那里 OS 段命名的是目标的运行环境 ——
@@ -223,7 +223,7 @@ LLVM  x86_64 - unknown - windows - gnu
                 ^vendor   ^os       ^env
 ```
 
-⭐ **`mingw32` 从 OS 位被拆成 `windows` 加 `gnu`。** `gnu` 这个取值之所以
+**`mingw32` 从 OS 位被拆成 `windows` 加 `gnu`。** `gnu` 这个取值之所以
 存在,正是因为 LLVM 需要给拆剩下的那一半起个名字。它的含义是
 「MinGW/Itanium 这一支 ABI」,在 Windows 上从来不是「C 库是 glibc」——
 同一个词在不同操作系统下承担不同职责,这是 LLVM 词表的既有事实,
@@ -245,7 +245,7 @@ Target x86_64-windows-gnu → x86_64-w64-windows-gnu
        ^ mcpp                ^ LLVM
 ```
 
-⚠️ 把第三套词表独立出来,正是 mcpp 能命名 LLVM 命名不了的东西的原因。
+把第三套词表独立出来,正是 mcpp 能命名 LLVM 命名不了的东西的原因。
 实测 llvm 22.1.8:`windows` 配 `musl` 环境能被三元组解析器接受,
 而编译器会崩:
 
@@ -274,7 +274,7 @@ clang++ --target=x86_64-pc-windows-musl -c t.cpp
 目标命名的是一台机器。它不指定谁来编译,也不指定它的 C 库从哪来 —— 那是另外两个
 选择,而同一个目标字符串在每种选择下都是不同的构建。
 
-⚠️ **「来自载荷」不是某一份固定载荷**,而是所选编译器带来的那一份;gcc 与 clang
+**「来自载荷」不是某一份固定载荷**,而是所选编译器带来的那一份;gcc 与 clang
 带法不同:gcc 一个目标一份载荷、驱动带三元组前缀,而一个 `clang++` 打它构建时支持
 的每个目标。同一台宿主、同一份源码实测:
 
@@ -304,7 +304,7 @@ error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
        payload, and 'llvm@22.1.8' has none here.
 ```
 
-⚠️ **2026.8.26.1 之前这会把整个构建跑完,然后在链接上失败**,报
+**2026.8.26.1 之前这会把整个构建跑完,然后在链接上失败**,报
 `crtbeginT.o (bare name — the linker cannot resolve it)`——对症状准确,对决定沉默。
 clang 是可重定向的,自己不带 C 库,于是去够一份 gcc 安装;在恰好装了系统 mingw 的
 机器上,同样写法用于 `x86_64-windows-gnu` 够到的是
@@ -322,7 +322,7 @@ default = "llvm@22.1.8"
 这就是 [`examples/06-openkal-cross`](../../examples/06-openkal-cross),也是那句
 拒绝里为什么点名 openkal。
 
-⚠️ **裸机行与 `x86_64-windows-musl` 行的工具链不是约定**,根本不可被推翻——
+**裸机行与 `x86_64-windows-musl` 行的工具链不是约定**,根本不可被推翻——
 见[第 03 章](03-toolchains.md)。
 
 ### 而依赖图会整个替换这一轴
@@ -335,7 +335,7 @@ default = "llvm@22.1.8"
 | `x86_64-windows-gnu` | openkal(openkal-windows,图) | musl(图) | libc++(图) |
 | `x86_64-windows-musl` | openkal(openkal-windows,图) | musl(图) | libc++(图) |
 
-⚠️ **看两张表里的 `x86_64-windows-gnu`。** 载荷供给时它的 C 库是 `gnu`,即 MinGW
+**看两张表里的 `x86_64-windows-gnu`。** 载荷供给时它的 C 库是 `gnu`,即 MinGW
 CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 而 mcpp 在 2026.8.24.6
 之前无法说清是哪一个:同一条 `--target x86_64-windows-gnu` 产出的东西体积差 16.7
 倍、依赖的 DLL 完全不同。
@@ -350,7 +350,7 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 上面两条轴 —— 用哪个编译器、C 库从哪来 —— 是工程做的选择。第三条不是:它是构建
 运行在哪台机器上。
 
-⭐ **这条轴是 mcpp 自己发布的那一组,而且是 (os, arch) 不是 os。**
+**这条轴是 mcpp 自己发布的那一组,而且是 (os, arch) 不是 os。**
 `release.yml` 发布四份宿主二进制:
 
 | 构建机 | 发布资产 | CI runner |
@@ -360,7 +360,7 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 | `macos-arm64` | `mcpp-<v>-macosx-arm64.tar.gz` | `macos-14` |
 | `windows-x86_64` | `mcpp-<v>-windows-x86_64.zip` | `windows-2022` |
 
-⚠️ **两台 Linux 不是同一台。** `x86_64-linux-gnu` 需要本机架构的 `xim:glibc` 与
+**两台 Linux 不是同一台。** `x86_64-linux-gnu` 需要本机架构的 `xim:glibc` 与
 `xim:linux-headers` 载荷,而它们只为宿主自己的架构存在 —— 所以那一行从
 `linux-x86_64` 够得着,从 `linux-aarch64` 够不着;`aarch64-linux-gnu` 是镜像的
 情形,两台上都是 `planned`。把它们并成 `linux`,一台会把另一台的行覆盖掉。
@@ -369,23 +369,23 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 
 | target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
 |---|---|---|---|---|---|---|
-| `x86_64-linux-gnu` | verified | — | ✅ 载荷 | — | — | — |
+| `x86_64-linux-gnu` | verified | — | 载荷 | — | — | — |
 | `aarch64-linux-gnu` | planned | — | planned | planned | planned | planned |
-| `x86_64-linux-musl` | verified | `gcc@16.1.0` | ✅ 载荷 | ✅ 载荷 | — | ✅ 载荷 |
-| `aarch64-linux-musl` | verified | `gcc@16.1.0` | ✅ 载荷 | ✅ 载荷 | — | — |
+| `x86_64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | 载荷 |
+| `aarch64-linux-musl` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | — |
 | `riscv64-linux-musl` | planned | — | planned | planned | planned | planned |
-| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | ✅ 载荷 | ✅ 载荷 | — | ✅ 载荷 |
-| `x86_64-windows-musl` | preview | `llvm@22.1.8` | ⚙ 图 | ⚙ 图 | ⚙ 图 | ✅ 载荷 |
-| `x86_64-windows-msvc` | verified | — | — | — | — | ✅ 系统 |
-| `aarch64-macos` | verified | — | — | — | ✅ SDK | — |
+| `x86_64-windows-gnu` | verified | `gcc@16.1.0` | 载荷 | 载荷 | — | 载荷 |
+| `x86_64-windows-musl` | preview | `llvm@22.1.8` | 图 | 图 | 图 | 载荷 |
+| `x86_64-windows-msvc` | verified | — | — | — | — | 系统 |
+| `aarch64-macos` | verified | — | — | — | SDK | — |
 | `x86_64-macos` | planned | — | planned | planned | planned | planned |
-| `riscv64-none-elf` | verified | `llvm@22.1.8` | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 |
-| `riscv32-none-elf` | verified | `llvm@22.1.8` | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 |
-| `aarch64-none-elf` | preview | `llvm@22.1.8` | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 |
-| `x86_64-none-elf` | preview | `llvm@22.1.8` | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 | ✅ 载荷 |
+| `riscv64-none-elf` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `riscv32-none-elf` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `aarch64-none-elf` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `x86_64-none-elf` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 
-`✅ 载荷` 这里有工具链载荷产出它 · `⚙ 图` 没有载荷,但依赖可以供给系统 ·
-`✅ 系统` 在机器上被找到,不是 mcpp 装的 · `✅ SDK` 平台自己的 ·
+`载荷` 这里有工具链载荷产出它 · `图` 没有载荷,但依赖可以供给系统 ·
+`系统` 在机器上被找到,不是 mcpp 装的 · `SDK` 平台自己的 ·
 `—` 从这台宿主够不着 · `planned` 词表里有,还没有任何东西接线。
 
 ### 列背后的规则
@@ -400,7 +400,7 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 | `aarch64-macos` | macOS | SDK 是那台机器的 |
 | `*-none-elf` | 每一台 | clang 与 lld 按构造就是交叉编译器 |
 
-⚠️ **一个 `—` 讲的是载荷,不是可能性。** `host_can_serve` 回答的是「这里有没有
+**一个 `—` 讲的是载荷,不是可能性。** `host_can_serve` 回答的是「这里有没有
 载荷产出它」,而依赖图可以改为供给系统 —— 这就是 `x86_64-windows-musl` 在 Linux
 上显示 `via dependency graph`、并在那里产出真正的 PE32+ 的原因。
 
@@ -412,7 +412,7 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 [`tests/matrix/expected.tsv`](../../tests/matrix/expected.tsv) 比对,键是
 `(mode, host, target, compiler)`。
 
-⚠️ 每台把什么解析成自己的目标,与它的名字给人的印象并不一致:
+每台把什么解析成自己的目标,与它的名字给人的印象并不一致:
 
 | runner | 它解析出的宿主目标 |
 |---|---|
@@ -423,7 +423,7 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 
 本章三条判据都曾假设了 Linux 上的那个巧合,并在其它宿主上被纠正。
 
-⚠️ **每台的格数不是常数。** 它取决于那台机器装了什么,而同一台 runner 在相邻两轮
+**每台的格数不是常数。** 它取决于那台机器装了什么,而同一台 runner 在相邻两轮
 里被测到工具链不同。所以比对断言的是**扫描真的产出了行**、以及**期望表点名的每一
 行都被跑到**,而不是一个总数:一格因为载荷没被恢复而消失,与一格通过了,在退出码
 上没有区别。
@@ -442,7 +442,7 @@ runner  = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
 ```
 
 `sysroot = ""` 选定零 libc 档:编译行上没有 C 库,链接上也没有。
-⚠️ **缺席 `sysroot` 键是另一个答案** —— 它继承该目标行自己的默认值。
+**缺席 `sysroot` 键是另一个答案** —— 它继承该目标行自己的默认值。
 见[第 13 章](13-baremetal.md)。
 
 ## 参考

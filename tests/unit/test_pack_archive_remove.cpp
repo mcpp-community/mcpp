@@ -19,7 +19,7 @@ using mcpp::toolchain::msvc_dialect;
 //   ar        one verb, then the archive, then every member
 //   lib.exe   one flag PER member, and the archive comes LAST
 //
-// ⚠️ WHY THIS IS A UNIT TEST. mcpp's Windows CI archives with clang's `llvm-ar`,
+// WHY THIS IS A UNIT TEST. mcpp's Windows CI archives with clang's `llvm-ar`,
 // which takes the GNU spelling, so no job anywhere executes the MSVC branch. The
 // packer originally assumed `ar` syntax on every platform and nothing could have
 // caught it: the two constants live in dialect.cppm, the order they are assembled

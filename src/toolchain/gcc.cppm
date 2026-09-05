@@ -26,7 +26,7 @@ find_binutils_bin(const std::filesystem::path& compilerBin);
 // `-B`, or empty when it must not be pointed at one — which is every toolchain
 // that is not a glibc GCC.
 //
-// ⭐ ONE STATEMENT OF A GUARD THAT HAD THREE COPIES. musl-cross-make and
+// ONE STATEMENT OF A GUARD THAT HAD THREE COPIES. musl-cross-make and
 // MinGW-w64 payloads bundle their own as/ld, and for a cross target the host's
 // binutils would mis-assemble — the Linux `as` rejects MinGW's PE/SEH
 // directives `.def` / `.seh_proc`. Only the glibc GCC needs the external

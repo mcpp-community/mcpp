@@ -1,9 +1,9 @@
 // mcpp.modgraph.scanner — regex-based scan of .cppm/.cpp for module statements.
 //
 // Hard constraints (per docs/01 §4.2):
-//   ✗ no #if/#ifdef-guarded import
-//   ✗ no header units (import "h" / import <h>)
-//   ✗ files outside [modules].sources glob
+//   not supported: #if/#ifdef-guarded import
+//   not supported: header units (import "h" / import <h>)
+//   not supported: files outside [modules].sources glob
 //
 // Returns a Graph or a list of detailed errors.
 
@@ -591,7 +591,7 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
     // `u.kind`; nothing re-derives it from the extension.
     u.kind         = mcpp::classify(file, extTable);
 
-    // ⚠️ A file `sources` matched but the classifier cannot place.
+    // A file `sources` matched but the classifier cannot place.
     //
     // This used to be accepted, and what it produced was a compile edge whose
     // object NOTHING LINKS. Measured with an `.ixx` that no
@@ -1024,7 +1024,7 @@ void scan_one_into(ScanResult& result,
     // package whose `.ixx` sources are all behind an inactive feature would
     // otherwise fail to build.
     //
-    // ⚠️ And not at all when this package HAS no sources to look at. A
+    // And not at all when this package HAS no sources to look at. A
     // `host-module = true` dependency has its source globs emptied on purpose —
     // that is how a build rule is kept out of the consumer's binary — so every
     // one of its declared extensions then looks dead. The author of an `.ixx`

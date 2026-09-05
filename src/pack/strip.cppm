@@ -16,7 +16,7 @@
 // differently: `[profile].strip` is "how is this built", `[pack].strip` is
 // "what travels". Documented in docs/02 and docs/12.
 //
-// ⚠️ THE DIVISION BY ARTIFACT SHAPE IS LOAD-BEARING, AND IT IS MEASURED
+// THE DIVISION BY ARTIFACT SHAPE IS LOAD-BEARING, AND IT IS MEASURED
 //
 // `strip --strip-all` on a `.a` removes the ARCHIVE SYMBOL INDEX, and the
 // package then fails at the consumer's link with a message that names neither
@@ -58,7 +58,7 @@
 // archiver, and for the same reason: shipping the artifact anyway is the
 // silent-wrong-answer this feature exists to remove.
 //
-// ⚠️ KEYING THIS ON THE COMPILER WOULD BE WRONG IN BOTH DIRECTIONS. clang
+// KEYING THIS ON THE COMPILER WOULD BE WRONG IN BOTH DIRECTIONS. clang
 // targeting `x86_64-windows-msvc` produces `.pdb` debug info and would be
 // asked to strip in-band; Apple's clang ships no `llvm-strip`, so a
 // compiler-keyed rule would REFUSE every `mcpp pack` on macOS for a format that

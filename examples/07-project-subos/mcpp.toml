@@ -3,7 +3,7 @@ name        = "project-subos"
 version     = "0.1.0"
 description = "A build program that finds its tools in an environment the project declared"
 
-# ⭐ THIS SECTION IS WHAT THE DIRECTORY IS FOR.
+# THIS SECTION IS WHAT THE DIRECTORY IS FOR.
 #
 # `subos` names the environment this project builds in. mcpp already used that
 # declaration to decide which C library the project links against, and it now
@@ -11,11 +11,11 @@ description = "A build program that finds its tools in an environment the projec
 # `build.mcpp` with — so a bare command name in a build program resolves inside
 # the environment the project named.
 #
-# ⚠️ A PROJECT THAT DECLARES NO `subos` GETS THE `PATH` mcpp WAS STARTED WITH.
+# A PROJECT THAT DECLARES NO `subos` GETS THE `PATH` mcpp WAS STARTED WITH.
 # There is no shared directory quietly in front of every build; declaring one
 # is what puts it there.
 #
-# ⚠️ `"default"` SO THIS EXAMPLE BUILDS ON A CLEAN CHECKOUT. The isolated form
+# `"default"` SO THIS EXAMPLE BUILDS ON A CLEAN CHECKOUT. The isolated form
 # is a private name — `subos = "tools"`, resolved to
 # `<project>/.mcpp/.xlings/subos/tools/` — and mcpp READS such an environment
 # but never creates one, so a name nobody has bootstrapped is a hard error by

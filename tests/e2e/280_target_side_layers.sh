@@ -25,7 +25,7 @@ out="$("$MCPP" build 2>&1)"
 target_line="$(printf '%s\n' "$out" | grep -E '^\s+Target ' || true)"
 [[ -n "$target_line" ]] || { echo "no Target line at all:"; echo "$out"; exit 1; }
 
-# ⚠️ The labels go through `grep -F`, not a pattern. `c++-abi` in an extended
+# The labels go through `grep -F`, not a pattern. `c++-abi` in an extended
 # regular expression is a repetition operator applied to a repetition operator,
 # which GNU grep tolerates and BSD grep rejects outright — measured on macOS:
 #     grep: repetition-operator operand invalid

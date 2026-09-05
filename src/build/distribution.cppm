@@ -103,13 +103,13 @@ enum class Contract {
 // priority-ordered initializer section, PE has no rpath, ELF has both.
 enum class Format { Elf, MachO, Pe };
 
-// ⭐⭐ WHICH FORMAT A TARGET PRODUCES, ASKED OF THE TARGET.
+// WHICH FORMAT A TARGET PRODUCES, ASKED OF THE TARGET.
 //
 // `hostFallback` is what a triple outside the vocabulary falls back to, and it
 // is a parameter rather than a compile-time constant so that this function can
 // be examined without being the machine it is about.
 //
-// ⚠️ THIS USED TO BE A LAMBDA INSIDE A FIFTEEN-HUNDRED-LINE FUNCTION, AND THAT
+// THIS USED TO BE A LAMBDA INSIDE A FIFTEEN-HUNDRED-LINE FUNCTION, AND THAT
 // IS WHY IT HAD NO TEST. It tested the triple for the substrings `apple` and
 // `darwin`, which are LLVM's words; mcpp's canonical form is `aarch64-macos`
 // and contains neither, so the test fell through to a question about the HOST
@@ -296,7 +296,7 @@ struct MechanismInput {
     // (measured 2026-08-19). A target-side C++ runtime, if one is wanted, is
     // an ordinary package — the same way the libc is.
     bool             freestanding = false;
-    // ⭐⭐ THE HOSTED FORM OF THE LINE ABOVE: a package in the graph supplies
+    // THE HOSTED FORM OF THE LINE ABOVE: a package in the graph supplies
     // the C++ runtime, built for this target, and its objects are already on
     // the link line.
     //
@@ -307,7 +307,7 @@ struct MechanismInput {
     // the host's, which is the same defect the `freestanding` flag above
     // exists for; the difference is only that this target has an OS.
     //
-    // ⚠️ Measured 2026-08-23, cross-building for `aarch64-macos` over openkal
+    // Measured 2026-08-23, cross-building for `aarch64-macos` over openkal
     // right after the format decision was corrected to key on the target — the
     // wrong format had been masking this:
     //
@@ -408,7 +408,7 @@ Mechanism resolve(const MechanismInput& in) {
     // mechanism is not a degradation — the artifact genuinely carries
     // everything it has — so this reports no diagnostic.
     //
-    // ⚠️ Placed before the format switch rather than inside it: the format is
+    // Placed before the format switch rather than inside it: the format is
     // ELF here, and every ELF cell below reaches for the toolchain's HOST
     // archives. One of them silently produced a link line with
     // x86-64 libc++.a on a riscv64 link.

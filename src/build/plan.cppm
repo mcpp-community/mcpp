@@ -189,6 +189,14 @@ struct BuildPlan {
     // a shared object` on a file nobody edited.
     bool                            needsPic = false;
     std::string                     scheduleTag = "none";
+    // Whether `--accel` / `--no-accel` selected this graph's device variant
+    // over `[build] accel`. The variant is in the fingerprint, so the two
+    // builds land in different directories -- and the fast path, which runs
+    // before any plan exists, replays whichever directory was built LAST. A
+    // plain `mcpp build` after `mcpp build --no-accel` therefore reported
+    // "Finished in 0.00s" and handed back the CPU variant. The graph records
+    // the selection so the fast path can decline a graph an override chose.
+    bool                            accelOverridden = false;
     // What to hand ninja. Under detach-codegen a compiler stops holding a slot
     // when it publishes, so this must exceed the real compiler cap or the ready
     // frontier starves — see the hazard note in schedule/detach_codegen.
@@ -263,7 +271,7 @@ struct BuildPlan {
     // LinkIntent), with one exception: SubosFarm entries have no other
     // producer, so `flags.cppm` renders them from here, appended last.
     //
-    // ⚠️ The farm deliberately does NOT enter `runtimeLibraryDirs`. That
+    // The farm deliberately does NOT enter `runtimeLibraryDirs`. That
     // vector becomes LD_LIBRARY_PATH for `mcpp run`, which is inherited by
     // every child process including host binaries — measured to kill
     // `xdg-open`/`notify-send` outright when a private libc is on it. The farm
@@ -790,7 +798,7 @@ std::vector<mcpp::platform::search::Dir> runtime_search_closure(
     // ELF only, matching the guard below: `$ORIGIN` is the ELF spelling, and a
     // format that gets no DT_RPATH gets no entry either.
     //
-    // ⚠️ AND ONLY WHEN SOMETHING ACTUALLY EMITS IT. `$ORIGIN` comes from
+    // AND ONLY WHEN SOMETHING ACTUALLY EMITS IT. `$ORIGIN` comes from
     // `shared_library_link_flags`, i.e. per CONSUMER of a shared library — a
     // project with no shared library never gets one. Recording it
     // unconditionally would swap this issue's asymmetry for its mirror image:

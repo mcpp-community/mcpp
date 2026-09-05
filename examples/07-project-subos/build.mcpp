@@ -2,7 +2,7 @@ import std;
 
 // A build program that answers one question: whose tools does this build see?
 //
-// ⚠️ IT DOES NOT CONSTRUCT A PATH TO ONE. `MCPP_XPKG_QEMU_RISCV` gives the
+// IT DOES NOT CONSTRUCT A PATH TO ONE. `MCPP_XPKG_QEMU_RISCV` gives the
 // payload directory, and a program can join `/bin/qemu-system-riscv64` onto it
 // — that works, and it means every build program in the ecosystem repeats the
 // same joining, each with its own idea of the layout. Asking `PATH` is what a

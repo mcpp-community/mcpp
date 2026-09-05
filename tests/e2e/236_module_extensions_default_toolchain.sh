@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # `[build] module_extensions` on the platform's DEFAULT toolchain (#412).
 #
-# ⚠️ WHY THIS EXISTS SEPARATELY FROM 217. `217_module_extensions.sh` declares
+# WHY THIS EXISTS SEPARATELY FROM 217. `217_module_extensions.sh` declares
 # `# requires: gcc`, and `run_all.sh` deliberately does not grant `gcc` on
 # Windows or macOS:
 #
@@ -73,7 +73,7 @@ echo "== build =="
     exit 1
 }
 
-# ⚠️ A BUILD THAT EXITS 0 IS NOT ENOUGH, and this is the exact trap the
+# A BUILD THAT EXITS 0 IS NOT ENOUGH, and this is the exact trap the
 # extension work was full of: Clang hands an unrecognised `.ixx` to the LINKER,
 # warns, and exits 0 having produced NO BMI. So assert the interface really was
 # compiled as one — a BMI exists for the module.

@@ -2,7 +2,7 @@
 # requires: llvm unix-shell
 # `aarch64-none-elf`: the second bare-metal architecture, on the zero-libc tier.
 #
-# ⚠️ WHY A TARGET ROW NEEDS A TEST AT ALL
+# WHY A TARGET ROW NEEDS A TEST AT ALL
 #
 # A row in the target table is four strings, and three of them can be wrong in
 # ways that still produce a build. A wrong `-mabi` is rejected by the driver,
@@ -29,7 +29,7 @@ cd "$TMP"
 cd a64probe
 rm -f tests/*.cpp 2>/dev/null || true
 
-# ⚠️ NO `[target.*]` SECTION, AND THAT IS THE ASSERTION. The zero-libc tier is
+# NO `[target.*]` SECTION, AND THAT IS THE ASSERTION. The zero-libc tier is
 # this row's own property, not something the project asked for — which is the
 # difference from `riscv64-none-elf`, where declining the C library takes an
 # explicit `sysroot = ""`.
@@ -94,7 +94,7 @@ NM=$(find "$HOME/.mcpp/registry/data/xpkgs/xim-x-llvm" -name llvm-nm 2>/dev/null
     echo "the linker script's load address did not reach the image"; exit 1; }
 
 # ── 3. Nothing is left undefined ────────────────────────────────────────────
-# ⚠️ The load-bearing one. A row whose sysroot column named a payload that does
+# The load-bearing one. A row whose sysroot column named a payload that does
 # not exist would add no paths and produce exactly this symptom later, inside
 # whichever package first included a C header — so the absence of a C library is
 # asserted as an absence of undefined symbols rather than as a missing key.

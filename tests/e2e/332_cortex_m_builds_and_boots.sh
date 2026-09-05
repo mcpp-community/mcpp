@@ -2,7 +2,7 @@
 # requires: llvm unix-shell qemu-arm
 # Cortex-M: the M-profile rows build, boot, and collect what nothing calls.
 #
-# ⚠️ THE ROWS THAT MATTER HERE ARE THE ONES A REASONED TABLE WOULD HAVE GOT
+# THE ROWS THAT MATTER HERE ARE THE ONES A REASONED TABLE WOULD HAVE GOT
 # WRONG. Two properties are asserted that a build alone cannot show:
 #
 #   * `--gc-sections` reaches a bare-metal link. Without it a C library that
@@ -19,7 +19,7 @@
 #     a clean link. The row carries `-mfpu=none` for this, and the assertion is
 #     an instruction count.
 #
-# ⚠️ AND THE IMAGE IS RUN, NOT INSPECTED. A freestanding image that links is not
+# AND THE IMAGE IS RUN, NOT INSPECTED. A freestanding image that links is not
 # evidence: the entry point and the ordering of the vector table are only
 # exercised by a machine that fetches from address zero.
 set -e
@@ -58,7 +58,7 @@ name    = "mcu"
 version = "0.1.0"
 TOML
 
-# ⚠️ `volatile` on the operands. Without it the multiply is constant-folded and
+# `volatile` on the operands. Without it the multiply is constant-folded and
 # the FPU assertion below passes for a reason unrelated to the flag.
 cat > src/main.cpp <<'CPP'
 namespace {
@@ -128,7 +128,7 @@ boot_row() {              # triple machine cpuflag flash_org flash_len ram_org r
     fi
 
     local out rc
-    # ⚠️⚠️ NOT `qemu | head`, AND THE EXIT STATUS IS A SECOND ASSERTION.
+    # NOT `qemu | head`, AND THE EXIT STATUS IS A SECOND ASSERTION.
     #
     # `$?` after a pipeline is the LAST command's status, so piping into `head`
     # would read head's 0 and the check below would be vacuous. It is not a
@@ -159,18 +159,18 @@ boot_row thumbv7m-none-eabi       mps2-an385 "-cpu cortex-m3"  0x00000000 4M   0
 boot_row thumbv7em-none-eabihf    mps2-an386 "-cpu cortex-m4"  0x00000000 4M   0x20000000 4M
 boot_row thumbv8m.main-none-eabi  mps2-an505 ""                0x10000000 4M   0x38000000 512K
 
-# ⚠️ A COUNT, BECAUSE A LOOP THAT RAN ZERO TIMES ALSO REACHES THIS LINE.
+# A COUNT, BECAUSE A LOOP THAT RAN ZERO TIMES ALSO REACHES THIS LINE.
 [ "$ran" = "4" ] || { echo "FAIL: expected 4 rows to boot, got $ran"; exit 1; }
 
 # ── The float ABI, asserted on both sides of the pair ──────────────────────
 #
-# ⚠️ A SEPARATE PROJECT, AND THAT SEPARATION IS ITSELF A MEASUREMENT. Float
+# A SEPARATE PROJECT, AND THAT SEPARATION IS ITSELF A MEASUREMENT. Float
 # arithmetic cannot live in the fixture above: on a soft-float row it lowers
 # onto `__aeabi_fmul`, and this tier has no C library and no builtins to resolve
 # it against, so every boot row would fail to link. The boot fixture is
 # therefore integer-only and the float question is asked here.
 #
-# ⚠️ AND ONE SIDE ALONE PROVES NOTHING. "The soft row emitted no FPU
+# AND ONE SIDE ALONE PROVES NOTHING. "The soft row emitted no FPU
 # instruction" is equally true of a build that emitted no float code, so the
 # hard row is measured from the same source as the control.
 mkdir -p "$work/fp/src"
@@ -196,7 +196,7 @@ hard=$("$OBJDUMP" -d "$(find target -type f -name fp | head -1)" \
     echo "FAIL: thumbv7em-none-eabihf emitted no FPU instruction — the control is vacuous"; exit 1; }
 echo "  ok  thumbv7em-none-eabihf uses the FPU ($hard instructions)"
 
-# ⭐ The soft row's proof is its LINK FAILURE, and that is the strongest form
+# The soft row's proof is its LINK FAILURE, and that is the strongest form
 # available at this tier. `-mfpu=none` makes the compiler lower the multiply
 # onto `__aeabi_fmul` rather than `vmul.f32`; with no C library and no builtins
 # there is nothing for that call to resolve against. A link that fails naming

@@ -231,13 +231,13 @@ include_dirs = ["config/picolibc"]
 cxxflags = ["-D_GNU_SOURCE"]
 ```
 
-⚠️ **层名的是库,不是三元组的 env 段。** 二者在 `musl` 上重合,在 `gnu` 上分叉:
+**层名的是库,不是三元组的 env 段。** 二者在 `musl` 上重合,在 `gnu` 上分叉:
 在 Linux 上该段请求的是 glibc,在 Windows 上它命名的是工具链的 MinGW 形态,
 而后者的 C 运行时与 MSVC 形态链接的是同一个 UCRT。写法是 `c-abi = "glibc"`,
 而非 `c-abi = "gnu"`;与答案相对的那个「请求」是 `env = "gnu"` —— 另一个问题
 (`docs/spec/target-side.md` §3.4)。
 
-⚠️ **`env` 与 `c-abi` 不可互换。** `env` 是三元组**请求**的东西;`c-abi` 是图与载荷
+**`env` 与 `c-abi` 不可互换。** `env` 是三元组**请求**的东西;`c-abi` 是图与载荷
 **回答**的东西。依赖图里的 `openkal-musl` 会在 `x86_64-linux-gnu` 三元组下供给 musl,
 而只有 `c-abi` 看得见这件事。
 

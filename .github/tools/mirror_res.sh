@@ -287,7 +287,7 @@ hosts=()
 [[ "${GTC_ENABLED:-0}" == 1 ]] && hosts+=("gitcode.com/$GTC_DST")
 for host in "${hosts[@]}"; do
   for a in "${ASSETS[@]}"; do
-    # ⚠️ RETRIED, BECAUSE A MIRROR CAN ANSWER 502 FOR AN ASSET IT HOLDS.
+    # RETRIED, BECAUSE A MIRROR CAN ANSWER 502 FOR AN ASSET IT HOLDS.
     # v2026.8.25.1 failed here twice: every one of the 16 assets reported
     # "already mirrored, skipping", and the gate then failed one of them on a
     # single 502 from GitCode's edge. Fetched by hand a minute later it was
@@ -297,7 +297,7 @@ for host in "${hosts[@]}"; do
     # HTTP codes but not the transport-layer failures this path also sees, and
     # this repository has paid for that distinction before (ci-curl-52).
     #
-    # ⚠️ `|| echo ERR` APPENDS, it does not replace — `-f` makes curl exit
+    # `|| echo ERR` APPENDS, it does not replace — `-f` makes curl exit
     # non-zero on 502 while `-w` has already written the code, so the variable
     # read `502ERR` and the log could not be grepped for a status. Substituted
     # only when curl printed nothing at all.

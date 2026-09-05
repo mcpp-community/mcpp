@@ -39,7 +39,7 @@ worth stating precisely.
 | Target table rows | Additive. A row's tier may rise; a row is not removed while a published package targets it |
 | Build fingerprints, cache layout, `target/` contents | **Not an interface.** These change without notice, and nothing should parse them |
 
-⚠️ A `build.mcpp` calling a function its engine's bundled `mcpp` module does not
+A `build.mcpp` calling a function its engine's bundled `mcpp` module does not
 have fails at the **compile** of the build program, not through a protocol
 error. The protocol number governs directives on the wire; the typed API is
 governed by which engine is installed. Both are stated here because the failure
@@ -58,7 +58,7 @@ error: --locked was given and this resolution differs from mcpp.lock:
 A release build, an audit or a CI job should pass `--locked`. It disables the
 build fast path, so the assertion always runs.
 
-⚠️ The lock does not yet constrain resolution — it records and verifies it.
+The lock does not yet constrain resolution — it records and verifies it.
 Pinning a resolution to the lock as an input is a separate change to the
 resolver.
 

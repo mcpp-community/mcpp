@@ -309,6 +309,54 @@ inline std::string host_module_name(const std::filesystem::path& interfacePath,
     return declared.front();
 }
 
+// The name a PRIMARY module interface unit declares, or an empty string.
+//
+// `declared_module_roots` answers a different question -- every module a file
+// names, implementation units included -- and is the right reader for the lib
+// root, which `build_host_module` compiles whatever kind of unit it is. The
+// question here is which OTHER files of a package are interface units at all.
+// A package that exposes several rules through features lists their sources
+// (mcpp 2026.9.5.3+), and an implementation unit or a partition among those
+// cannot be compiled alone under a name of its own. Only `export module
+// <name>;` qualifies: `module <name>;`, `export module <name>:<part>;` and the
+// global module fragment `module;` do not, and a line that is a comment does
+// not either -- a rule's own documentation may quote the declaration.
+inline std::string declared_interface_name(std::string_view source)
+{
+    auto is_name = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9') || c == '_' || c == '.';
+    };
+    auto is_ws = [](char c) { return c == ' ' || c == '\t' || c == '\r'; };
+    std::size_t lineStart = 0;
+    while (lineStart < source.size()) {
+        auto eol = source.find('\n', lineStart);
+        if (eol == std::string_view::npos) eol = source.size();
+        auto line = source.substr(lineStart, eol - lineStart);
+        lineStart = eol + 1;
+
+        std::size_t i = 0;
+        while (i < line.size() && is_ws(line[i])) ++i;
+        if (line.substr(i).starts_with("//")) continue;
+        if (!line.substr(i).starts_with("export")) continue;
+        i += 6;
+        if (i >= line.size() || !is_ws(line[i])) continue;
+        while (i < line.size() && is_ws(line[i])) ++i;
+        if (!line.substr(i).starts_with("module")) continue;
+        i += 6;
+        if (i >= line.size() || !is_ws(line[i])) continue;
+        while (i < line.size() && is_ws(line[i])) ++i;
+        std::size_t start = i;
+        while (i < line.size() && is_name(line[i])) ++i;
+        if (i == start) continue;                 // `export module;` or `:part`
+        std::string name(line.substr(start, i - start));
+        while (i < line.size() && is_ws(line[i])) ++i;
+        if (i >= line.size() || line[i] != ';') continue;   // a partition, or noise
+        return name;
+    }
+    return {};
+}
+
 // One host module as registered for one consumer's build program.
 struct HostModule {
     std::string           module;     // what `import` in build.mcpp addresses

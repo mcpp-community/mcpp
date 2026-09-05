@@ -73,7 +73,7 @@ import mcpplibs.cmdline;   // resolver rewrites this to the mangled secondary
 import std;
 export int libB_v() { return libB_impl_v(); }
 EOF
-# ⭐ A PRIVATE HEADER BESIDE A SOURCE, WHICH IS WHAT STAGING USED TO DROP.
+# A PRIVATE HEADER BESIDE A SOURCE, WHICH IS WHAT STAGING USED TO DROP.
 #
 # libB is the copy the resolver stages under `target/.mangled/`, and a quoted
 # include is resolved relative to the directory of the file holding it — so

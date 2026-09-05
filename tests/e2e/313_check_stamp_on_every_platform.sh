@@ -2,7 +2,7 @@
 # 313_check_stamp_on_every_platform.sh — a `role = "check"` whose command never
 # touches its stamp, on EVERY platform.
 #
-# ⚠️ WHY THIS EXISTS SEPARATELY FROM 188 AND 312.
+# WHY THIS EXISTS SEPARATELY FROM 188 AND 312.
 #
 # The engine writes a check's stamp so that an analyser -- which answers with an
 # exit code and writes nothing -- can be a check without a wrapper script. The
@@ -67,7 +67,7 @@ out="$("$MCPP" run 2>&1 | tail -1)"
 # declared output goes unproduced -- it leaves the file absent and re-runs that
 # edge on every build afterwards, so a build with no stamp mechanism at all
 # stays green and merely redoes work.
-# ⚠️ NOT `mapfile`. macOS ships bash 3.2, which does not have it, and this file
+# NOT `mapfile`. macOS ships bash 3.2, which does not have it, and this file
 # runs there — `47_cdb_prebuilt_module_path_abs.sh` already says so in its own
 # comment, and every other user of `mapfile` in this suite declares
 # `# requires: gcc`, which macOS never satisfies. So the constraint was written

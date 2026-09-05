@@ -15,10 +15,10 @@
 #    anything. That is the worst failure mode in this area — silent, and it
 #    surfaces later as an unrelated BMI error.
 #
-#    ⚠️ The edit below adds a real `import`. Do NOT reduce it to `touch`: an
+#    The edit below adds a real `import`. Do NOT reduce it to `touch`: an
 #    mtime-only change is exactly what a correct implementation is also
 #    allowed to ignore, so a touch-based test can pass with the bug present.
-#    ⚠️ And do NOT delete artifacts to force a rebuild: ninja then fails, the
+#    And do NOT delete artifacts to force a rebuild: ninja then fails, the
 #    failure is read as a stale-graph signature, and the fast path falls back
 #    to a full prepare for the wrong reason — the assertion below would hold
 #    while proving nothing.
@@ -56,7 +56,7 @@ printf 'import std;\nimport gshape.face;\nint main(){ std::println("{}", face())
 
 # Ask mcpp for the fingerprint instead of inferring it from the build tree.
 #
-# ⚠️ The obvious `find target -name build.ninja | head -1` is WRONG here and was
+# The obvious `find target -name build.ninja | head -1` is WRONG here and was
 # flaky in exactly the way this test is meant to catch: after part 2 there are
 # TWO output dirs, and `head -1` picks whichever `find` happened to walk first.
 # It passed standalone and failed inside the suite. Assert on the value, not on

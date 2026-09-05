@@ -2,7 +2,7 @@
 # requires: unix-shell jq
 # A package can say which of its include directories stop at its own boundary.
 #
-# ⭐⭐ `publicUsage` TOOK `privateBuild`'s DIRECTORIES ENTIRE, so a package was
+# `publicUsage` TOOK `privateBuild`'s DIRECTORIES ENTIRE, so a package was
 # built from exactly the set it published. For almost every package those are
 # the same set; for one that vendors a library with an internal header overlay
 # they are not, and the difference reaches every consumer.
@@ -19,7 +19,7 @@
 # Publishing that directory hands those macros to every consumer; which
 # consumer breaks on which name was discovered one at a time.
 #
-# ⭐ THE CRITERION IS THE DIRECTORY, NOT THE SYMPTOM. Asserting that `hidden`
+# THE CRITERION IS THE DIRECTORY, NOT THE SYMPTOM. Asserting that `hidden`
 # no longer collides would go green again the moment the package patched that
 # one macro, while the leak stayed. This asserts that the directory is not on
 # the consumer's command line — and, separately, that a consumer using the name
@@ -39,12 +39,12 @@ name    = "vendored"
 version = "0.1.0"
 
 [build]
-# ⚠️ ORDER IS LOAD-BEARING and is why `private_include_dirs` is a SUBSET of
+# ORDER IS LOAD-BEARING and is why `private_include_dirs` is a SUBSET of
 # this list rather than a second list: the internal overlay must precede the
 # public headers for the package's OWN build, and two TOML arrays cannot
 # express one order.
 #
-# ⭐ `gen/*` IS A GLOB ON BOTH LINES. The filter is applied AFTER expansion, so
+# `gen/*` IS A GLOB ON BOTH LINES. The filter is applied AFTER expansion, so
 # the glob withholds exactly the directories it expands to. Comparing the
 # unexpanded spellings would be the obvious implementation and would publish
 # every one of them, because `gen/*` is not literally equal to `gen/one`.
@@ -86,7 +86,7 @@ fi
 
 [ -s compile_commands.json ] || { echo "FAIL: no compile_commands.json"; exit 1; }
 
-# ⚠️ DENOMINATORS ON BOTH SIDES. With no provider row or no consumer row the
+# DENOMINATORS ON BOTH SIDES. With no provider row or no consumer row the
 # assertions below are vacuously true.
 prov="$(jq -r '[.[] | select(.file | test("/lib/src/"))] | length' compile_commands.json)"
 cons="$(jq -r '[.[] | select(.file | test("/src/main"))] | length' compile_commands.json)"
@@ -114,7 +114,7 @@ fail=0
 [ "$(has_dir '/src/main' '/lib/internal')" = false ] || {
     echo "FAIL: the private directory leaked to the consumer"; fail=1; }
 
-# ⭐ AND THE GLOB WITHHOLDS WHAT IT EXPANDS TO — both directories, by name.
+# AND THE GLOB WITHHOLDS WHAT IT EXPANDS TO — both directories, by name.
 # Checking `gen` alone would pass for an implementation that matched the
 # unexpanded spelling and published `gen/one` and `gen/two` anyway.
 for g in one two; do

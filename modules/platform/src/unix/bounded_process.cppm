@@ -11,7 +11,7 @@
 // `mcpp.platform.process` dispatch once, with `if constexpr`, instead of
 // carrying the platform question through twenty-five separate `#if` blocks.
 //
-// ⚠️ THE INTERFACE NAMES NO `std` TYPE — SAME HARD CONSTRAINT AS THE WINDOWS
+// THE INTERFACE NAMES NO `std` TYPE — SAME HARD CONSTRAINT AS THE WINDOWS
 // SIDE. See mcpp.platform.windows.bounded_process for the measurements: a new
 // module imported by mcpp.platform.process whose EXPORTS mention std types
 // corrupts every BMI downstream of it under GCC 16.1. `std` inside the module
@@ -103,7 +103,7 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
 // caller needs a handle it can poll and stop later. Every member is a builtin,
 // same constraint as DeadlineRun.
 //
-// ⚠️ `group`, NOT a pid. The child is placed in a process group of its own
+// `group`, NOT a pid. The child is placed in a process group of its own
 // (posix_spawnattr_setpgroup) and stopped with killpg, because the thing being
 // started is a user-authored SHELL command: `sh -c 'player & wait'` makes the
 // writer a grandchild, and `kill(pid)` reaches only the shell. A background
@@ -376,7 +376,7 @@ BackgroundChild spawn_background(const char* const* argvEntries,
     return out;
 }
 
-// ⚠️ DOES NOT REAP, and that is the whole point.
+// DOES NOT REAP, and that is the whole point.
 //
 // A zombie still holds its pid, so an unreaped leader is what keeps the GROUP
 // id from being recycled — and `background_stop` signals that group. Reaping

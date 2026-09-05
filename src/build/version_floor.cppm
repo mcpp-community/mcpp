@@ -27,7 +27,7 @@
 //
 //     provides = ["cuda.driver=12.4"]
 //
-// ⚠️ NO VENDOR NAME APPEARS IN THIS FILE, and that is the point rather than a
+// NO VENDOR NAME APPEARS IN THIS FILE, and that is the point rather than a
 // coincidence. `cuda.driver` is data flowing through: this module reads a name,
 // a relation and a version, and knows nothing about what any of them mean. A
 // second backend needs no change here.

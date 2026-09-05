@@ -10,7 +10,7 @@
 # it — a user who never types picolibc, compiler-rt, crt0, `-nostdlib`,
 # `-mcmodel` or a load address, and still gets `printf` with a float.
 #
-# ⚠️ THE SEAM UNDER TEST (measured 2026-08-19, probe Z1)
+# THE SEAM UNDER TEST (measured 2026-08-19, probe Z1)
 #
 #   link-search / link-lib / link-script   Scope::LinkGlobal   → reach the consumer
 #   include-dir / cflag / cfg              Scope::PackagePrivate → do NOT
@@ -93,7 +93,7 @@ int main() {
     std::println("mcpp:link-lib=semihost");
     std::println("mcpp:link-lib=clang_rt.builtins-{}", rt);
     std::println("mcpp:link-script={}/picolibcpp.ld", lib);
-    // ⭐ The runner too: the package that knows the board resolves the
+    // The runner too: the package that knows the board resolves the
     // emulator absolutely and says how to drive it. The consumer's manifest
     // below has no [target.*] section at all — that is N1 of the plan.
     const char* qemu = std::getenv("MCPP_XPKG_XIM_QEMU_RISCV_DIR");
@@ -145,7 +145,7 @@ extern "C" int main() {
 }
 EOF
 
-# ⚠️ This manifest IS the assertion. Nothing here names picolibc, compiler-rt,
+# This manifest IS the assertion. Nothing here names picolibc, compiler-rt,
 # crt0, a linker script, a load address, -nostdlib, -mcmodel — or an emulator.
 # There is no [target.*] section at all: the runner comes from the BSP.
 cat > mcpp.toml <<'EOF'
@@ -171,7 +171,7 @@ grep -q 'MALLOC-OK'      run.log || {
 
 # ── the two include seams, which are NOT the same seam ──────────────────────
 #
-# ⚠️ This used to test both with `#include <stdio.h>` and expect it to FAIL.
+# This used to test both with `#include <stdio.h>` and expect it to FAIL.
 # That criterion was wrong once the target's C library became the target's:
 # `<stdio.h>` now arrives the way it does on a hosted build, from mcpp, for
 # every unit — nobody declares glibc on x86_64 either. Testing the private
@@ -218,7 +218,7 @@ if "$MCPP" build --target riscv64-none-elf > leak.log 2>&1; then
     exit 1
 fi
 
-# ── ⚠️ build, THEN run: the sequence that shipped broken in 2026.8.19.2 ─────
+# ── build, THEN run: the sequence that shipped broken in 2026.8.19.2 ─────
 #
 # `mcpp run` on its own was correct; the SECOND invocation was not. With the
 # target named in the MANIFEST rather than on the command line, `mcpp build`
@@ -228,7 +228,7 @@ fi
 #     Running `target/riscv64-none-elf/.../bin/firmware`     ← no emulator
 #     exit=1
 #
-# ⚠️ A FRESH project, not the one above, and that is load-bearing. The run
+# A FRESH project, not the one above, and that is load-bearing. The run
 # fast path also requires mcpp.toml to be older than build.ninja, and a
 # rebuild does not rewrite build.ninja when its content is unchanged — so in a
 # directory whose manifest has been edited in place the fast path is already

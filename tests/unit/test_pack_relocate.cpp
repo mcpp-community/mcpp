@@ -264,7 +264,7 @@ TEST(PackRelocate, AMissingFileIsAnError) {
 // ── the strip table ─────────────────────────────────────────────────────
 
 TEST(PackStrip, StaticArchiveKeepsItsSymbolIndex) {
-    // ⚠️ THE MEASUREMENT BEHIND THIS TEST. `strip --strip-all` on a `.a`
+    // THE MEASUREMENT BEHIND THIS TEST. `strip --strip-all` on a `.a`
     // removes the archive symbol index, and the consumer's link then fails
     // with `archive has no index; run ranlib to add one` — a message that
     // names neither strip nor the publisher. `--strip-debug` keeps it

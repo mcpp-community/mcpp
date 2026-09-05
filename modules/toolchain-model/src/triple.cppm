@@ -34,7 +34,7 @@ struct Triple {
     std::string os;     // "linux" | "macos" | "windows"
     std::string env;    // "gnu" | "musl" | "msvc" | "" (always empty on macos)
 
-    // ⚠️ WHETHER THE ENV SEGMENT WAS WRITTEN, AS OPPOSED TO SUPPLIED BY THIS
+    // WHETHER THE ENV SEGMENT WAS WRITTEN, AS OPPOSED TO SUPPLIED BY THIS
     // PARSER — AND THE TRIPLE HAS TO CARRY BOTH BECAUSE IT SERVES TWO ROLES.
     //
     // A triple is an IDENTITY — the output directory's name, part of a cache
@@ -70,13 +70,13 @@ struct Triple {
         return s;
     }
 
-    // ⭐⭐ THE SPELLING A COMPILER TAKES, WHICH IS NOT THE SPELLING mcpp USES.
+    // THE SPELLING A COMPILER TAKES, WHICH IS NOT THE SPELLING mcpp USES.
     //
     // `str()` is mcpp's vocabulary: short, unambiguous, and the thing a user
     // types. LLVM's is a four-field form with a vendor, and on Apple platforms
     // the architecture has a different name and the OS carries a version.
     //
-    // ⚠️ THIS EXISTS BECAUSE CROSS-COMPILING USED TO MEAN SOMETHING NARROWER.
+    // THIS EXISTS BECAUSE CROSS-COMPILING USED TO MEAN SOMETHING NARROWER.
     // Every hosted cross mcpp could do was served by a payload whose DRIVER was
     // already specialised — `x86_64-w64-mingw32-g++` needs no `--target`,
     // because it has only one. So nothing ever needed this function, and
@@ -89,7 +89,7 @@ struct Triple {
     // emits every format it was built with from one binary. There is no payload
     // to specialise, so the triple has to be said out loud.
     //
-    // ⚠️ Measured 2026-08-23, before this existed: a build for `aarch64-macos`
+    // Measured 2026-08-23, before this existed: a build for `aarch64-macos`
     // resolved the whole graph, took musl's aarch64 headers, and compiled with
     // NO `--target` at all — so the host's x86_64 code generation met aarch64
     // declarations. What caught it was the port's own assertion, which exists
@@ -131,7 +131,7 @@ struct Triple {
     // re-derives it from `os == "none"` and drifts.
     bool is_freestanding() const { return os == "none"; }
 
-    // ⭐⭐ WHETHER THIS ROW'S TOOLCHAIN PIN IS A CAPABILITY RATHER THAN A
+    // WHETHER THIS ROW'S TOOLCHAIN PIN IS A CAPABILITY RATHER THAN A
     // CONVENTION — the distinction that decides whether an author may override
     // it.
     //
@@ -146,7 +146,7 @@ struct Triple {
     //                  mingw payload emits PE with the MinGW CRT, which is the
     //                  separate `-gnu` row; there is no third gcc.
     //
-    // ⚠️ SPELLED HERE RATHER THAN AT EACH DECISION, because the first version
+    // SPELLED HERE RATHER THAN AT EACH DECISION, because the first version
     // said `is_freestanding()` at two of them and `x86_64-windows-musl` — a row
     // added later — was a convention at both. Measured: declaring gcc for it
     // resolved the host's Linux musl payload and reported a missing C++
@@ -174,7 +174,7 @@ struct Triple {
         return std::nullopt;
     }
 
-    // ⚠️ IDENTITY IS THE THREE SEGMENTS, AND `envExplicit` IS DELIBERATELY NOT
+    // IDENTITY IS THE THREE SEGMENTS, AND `envExplicit` IS DELIBERATELY NOT
     // AMONG THEM — WHICH IS WHY THIS IS NOT `= default`.
     //
     // The flag records where the env segment came from, not what the target is.
@@ -210,7 +210,7 @@ struct TargetInfo {
     // The TARGET's C library, resolved at compile time exactly the way `pin`
     // resolves the compiler. Empty = none applies.
     //
-    // ⚠️ This axis exists because bare metal was the one target class without
+    // This axis exists because bare metal was the one target class without
     // it, and the gap leaked into every package. A hosted target gets its libc
     // automatically — `x86_64-linux-musl` carries musl inside its gcc payload,
     // and glibc arrives through PayloadPaths — so nobody writes `xim:glibc` in
@@ -232,7 +232,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     { "x86_64-linux-musl",     "verified",  "",    "gcc@16.1.0", "",                            true  },
     { "aarch64-linux-musl",    "verified",  "",    "gcc@16.1.0", "",                            true  },
     { "x86_64-windows-gnu",    "verified",  "PE",  "gcc@16.1.0", "",                            true  },
-    // ⚠️ musl ON WINDOWS. IT EXISTS, AND UNTIL THIS ROW mcpp HAD NO NAME FOR IT.
+    // musl ON WINDOWS. IT EXISTS, AND UNTIL THIS ROW mcpp HAD NO NAME FOR IT.
     //
     // LLVM's triple vocabulary offers `gnu` and `msvc` for Windows and both
     // name an ABI, so a reader concludes there is no third possibility and
@@ -246,7 +246,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // `gnu` put the one thing the C library is not into its identity, its
     // output directory, its `cfg(env = …)` and its packed ABI tag.
     //
-    // ⭐ THE FIX IS A NAME, NOT A MECHANISM, AND THE REASON THE MISTAKE HELD SO
+    // THE FIX IS A NAME, NOT A MECHANISM, AND THE REASON THE MISTAKE HELD SO
     // LONG IS WORTH RECORDING. "LLVM cannot spell x86_64-windows-musl" is true
     // and is about the string handed to CLANG. mcpp's canonical form is a
     // different string — the build report prints both, either side of an arrow:
@@ -269,7 +269,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // The last two rows differ in the first column and agree in the second,
     // which is the whole point.
     //
-    // ⚠️ THE PIN IS `llvm`, AND IT IS NOT A PREFERENCE. The column names the
+    // THE PIN IS `llvm`, AND IT IS NOT A PREFERENCE. The column names the
     // payload that supplies this target's C library everywhere else in this
     // table; here nothing supplies it, and what the column has to prevent is
     // the OPPOSITE — a global default of gcc being carried onto a target no gcc
@@ -288,7 +288,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // is known (see the long note at prepare.cppm's `unservedTargetDiagnosis`),
     // so a project whose C library comes from a dependency is not turned away.
     //
-    // ⚠️ TIER IS `preview`, NOT `verified`. `verified` in this table means an
+    // TIER IS `preview`, NOT `verified`. `verified` in this table means an
     // artefact was built AND RUN. Running a PE on a Linux host needs wine, and
     // openkal's CI has that step — so this is measurable, and the tier moves
     // when it has been measured rather than when it seems likely.
@@ -308,7 +308,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // name a libc: the C library is the target's, like the compiler.
     { "riscv64-none-elf",      "verified",  "bare","llvm@22.1.8","xim:picolibc-riscv@1.8.12",  true  },
     { "riscv32-none-elf",      "verified",  "bare","llvm@22.1.8","xim:picolibc-riscv@1.8.12",  true  },
-    // ⚠️ AN EMPTY SYSROOT COLUMN, AND IT IS A STATEMENT RATHER THAN AN OMISSION.
+    // AN EMPTY SYSROOT COLUMN, AND IT IS A STATEMENT RATHER THAN AN OMISSION.
     //
     // The two rows above name a C library because a project targeting them
     // ordinarily wants one. This row does not, because there is no aarch64
@@ -324,13 +324,13 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // resolve. A project that wants a C library on this target says so in its
     // own manifest, which is also how it would choose a different one.
     //
-    // ⚠️ The tier is `preview` and not `verified`: `verified` in this table
+    // The tier is `preview` and not `verified`: `verified` in this table
     // means an image has been built AND RUN for the row, and running one needs
     // an emulator. `xim:qemu-arm` provides `qemu-system-aarch64`; until a probe
     // has actually booted under it, claiming `verified` would be claiming the
     // measurement rather than reporting it.
     { "aarch64-none-elf",      "preview",   "bare","llvm@22.1.8","",                            true  },
-    // ⚠️ THIS ROW EXISTS SO THAT A THIRD MACHINE CAN DISAGREE WITH THE FIRST
+    // THIS ROW EXISTS SO THAT A THIRD MACHINE CAN DISAGREE WITH THE FIRST
     // TWO, WHICH IS THE ONLY THING THAT TELLS AN ABSTRACTION FROM A HABIT.
     //
     // riscv64 and aarch64 are both load/store RISC machines with a weak memory
@@ -341,7 +341,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // an interrupt mechanism that is a table of gates rather than a base
     // register. What survives all three is an abstraction.
     //
-    // ⚠️ The tier is `preview` for the same reason aarch64's is, and the reason
+    // The tier is `preview` for the same reason aarch64's is, and the reason
     // is stricter than it sounds: `verified` here means an image was built AND
     // RUN. `xim:qemu-x86` does not exist yet — the index carries no
     // `qemu-system-x86_64` — so nothing on this row has booted. Claiming
@@ -353,7 +353,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     { "x86_64-none-elf",       "preview",   "bare","llvm@22.1.8","",                            true  },
     // ── Cortex-M ────────────────────────────────────────────────────────────
     //
-    // ⚠️ SEVEN ROWS AND NOT ONE, BECAUSE "Cortex-M" IS NOT AN INSTRUCTION SET.
+    // SEVEN ROWS AND NOT ONE, BECAUSE "Cortex-M" IS NOT AN INSTRUCTION SET.
     //
     // Every other bare-metal family here is one row per architecture. M-profile
     // is not: an object built for `thumbv7em` uses instructions a Cortex-M0
@@ -366,13 +366,13 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // single `arm-none-eabi` row plus an `-mcpu` the project remembers would
     // move a correctness decision out of the table and into every manifest.
     //
-    // ⭐ THE `eabi`/`eabihf` SUFFIX IS THE FLOAT ABI, AND CLANG ALREADY READS
+    // THE `eabi`/`eabihf` SUFFIX IS THE FLOAT ABI, AND CLANG ALREADY READS
     // IT. Measured on llvm 22.1.8 (`-###`, `-cc1` line): `thumbv7em-none-eabi`
     // gives `-mfloat-abi soft` and `-none-eabihf` gives `hard`, with no flag
     // from us. So the ABI needs no entry in the ISA table's `extra` column —
     // only the FPU does, and only on the soft rows. See `kThumbSoftExtra`.
     //
-    // ⚠️ `sysroot` IS EMPTY ON EVERY ROW, AND THAT IS THE POINT RATHER THAN A
+    // `sysroot` IS EMPTY ON EVERY ROW, AND THAT IS THE POINT RATHER THAN A
     // GAP. The three older bare-metal families name an `xim:` payload here; a C
     // library for these targets arrives from the DEPENDENCY GRAPH instead
     // (`mcpp:c-abi=picolibc`, docs/14). A prebuilt payload would have to ship
@@ -381,7 +381,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // package is compiled with the consuming target's own flags, so the ABI
     // agreement holds by construction and there is no multilib at all.
     //
-    // ⚠️ THE TIER COLUMN RECORDS WHAT WAS RUN, NOT WHAT WAS REASONED. Measured
+    // THE TIER COLUMN RECORDS WHAT WAS RUN, NOT WHAT WAS REASONED. Measured
     // 2026-09-04 under `xim:qemu-arm@9.2.4-1`: each `verified` row below built
     // an image that BOOTED on the named machine and printed over semihosting —
     // thumbv6m on `microbit`, thumbv7m on `mps2-an385`, thumbv7em-eabihf on
@@ -396,13 +396,13 @@ inline constexpr TargetInfo kKnownTargets[] = {
     { "thumbv8m.main-none-eabihf","preview","bare","llvm@22.1.8","",                            true  },
     // ── ARMv7-A (Cortex-A, 32-bit) ──────────────────────────────────────────
     //
-    // ⭐ NOT A SECOND SPELLING OF THE M ROWS. A-profile has a memory management
+    // NOT A SECOND SPELLING OF THE M ROWS. A-profile has a memory management
     // unit and a page-table walker; M-profile has an MPU and no page-table
     // entry at all. It is the first 32-bit machine in this table on which an
     // address space can be described, which is precisely the question the
     // openarch layer has never been able to ask of a 32-bit target.
     //
-    // ⚠️ `verified` records what was RUN. Measured 2026-09-04 under
+    // `verified` records what was RUN. Measured 2026-09-04 under
     // `xim:qemu-arm@9.2.4-1`: both rows booted on `-M virt -cpu cortex-a15` and
     // printed over semihosting. The soft row carries `-mfpu=none` for the
     // reason `kThumbSoftExtra` gives, measured again on this architecture
@@ -427,7 +427,7 @@ inline bool is_known_target(const Triple& t) { return find_known_target(t) != nu
 
 // ── Completing a request that declined to name a C library ──────────────────
 //
-// ⚠️⚠️ `parse` FILLS THE ENV SEGMENT LEXICALLY, AND THE TIER GATE USED TO ASK
+// `parse` FILLS THE ENV SEGMENT LEXICALLY, AND THE TIER GATE USED TO ASK
 // ABOUT THE FILLED VALUE RATHER THAN ABOUT THE REQUEST.
 //
 // The fill is an IDENTITY operation and has to stay exactly as it is: total,
@@ -453,7 +453,7 @@ inline bool is_known_target(const Triple& t) { return find_known_target(t) != nu
 // — compile-time data, therefore the same on every host, so target identity
 // still does not depend on where the build ran.
 //
-// ⭐ RULE ONE MAKES THIS RETIRE ITSELF. When `aarch64-linux-gnu` graduates from
+// RULE ONE MAKES THIS RETIRE ITSELF. When `aarch64-linux-gnu` graduates from
 // `planned`, rule one matches first and the completion goes back to the lexical
 // answer with nobody editing this function.
 struct RequestResolution {
@@ -500,7 +500,7 @@ inline RequestResolution resolve_request(const Triple& parsed) {
         r.triple.env = only.size() > prefix.size()
                      ? std::string(only.substr(prefix.size() + 1))
                      : std::string{};
-        // ⚠️ STILL NOT EXPLICIT. `envExplicit` records what the PROJECT asked
+        // STILL NOT EXPLICIT. `envExplicit` records what the PROJECT asked
         // for and feeds the C-library-request check; mcpp choosing a row is not
         // the project naming a C library. Setting it here would make
         // `check_request` compare mcpp's own answer against itself, and would
@@ -537,7 +537,7 @@ inline RequestResolution resolve_request(const Triple& parsed) {
 // "add no target sysroot paths". The tier therefore needs no new branch
 // anywhere downstream — it reuses the answer the engine already knew how to
 // handle.
-// ⚠️ A POINTER AND NOT AN `std::optional<std::string>`. The tri-state is the
+// A POINTER AND NOT AN `std::optional<std::string>`. The tri-state is the
 // same — null means "the project said nothing" — and a pointer parameter
 // instantiates nothing in this module's interface. See the note on
 // `TargetEntry::sysroot` for what the optional cost when it reached one.
@@ -786,13 +786,13 @@ std::optional<Triple> parse(std::string_view s) {
     if (!sawOs) return std::nullopt;
     // macOS carries no env segment at all, so nothing was declined there.
     if (t.os == "macos") { t.env.clear(); t.envExplicit = false; }
-    // ⚠️ THE FILL STAYS, AND THE FACT THAT IT WAS A FILL IS NOW RECORDED.
+    // THE FILL STAYS, AND THE FACT THAT IT WAS A FILL IS NOW RECORDED.
     // `x86_64-linux` is the canonical identity `x86_64-linux-gnu` — every
     // directory name and cache key downstream depends on that — but it is NOT
     // the request `x86_64-linux-gnu`, which names a C library. See
     // `Triple::envExplicit`.
     if (t.os == "linux" && t.env.empty()) t.env = "gnu";
-    // ⚠️ AND THE SAME ON WINDOWS AND ON BARE METAL, WHICH WERE MISSING AND MADE
+    // AND THE SAME ON WINDOWS AND ON BARE METAL, WHICH WERE MISSING AND MADE
     // THE RULE A LIE ON TWO PLATFORMS OUT OF FOUR.
     //
     // `x86_64-linux` parsed and `x86_64-windows` did not — `unknown target` —
@@ -804,7 +804,7 @@ std::optional<Triple> parse(std::string_view s) {
     // openkal. It is LLVM's label for the non-MSVC ABI, inherited from MinGW,
     // and mcpp cannot rename it — but it can stop requiring it to be typed.
     //
-    // ⚠️ `gnu` AND NOT THE HOST'S OWN ENV. `host_triple()` answers `msvc` on a
+    // `gnu` AND NOT THE HOST'S OWN ENV. `host_triple()` answers `msvc` on a
     // Windows machine, and filling from it would give one command a different
     // identity — a different output directory and cache key — on each host. A
     // target's identity may not depend on where it was built. `gnu` is the row

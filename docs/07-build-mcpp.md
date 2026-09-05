@@ -52,7 +52,7 @@ is ignored, so diagnostics may be logged freely.
 | `mcpp:source=<path>` *(0.0.100+)*  | select a **pre-existing** source file into the build (absolute, or relative to the package root). Same downstream effect as `generated=`; use it for files the program *chose* (payload/vendored tree) rather than wrote — e.g. a per-target source selection over a large tarball |
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | add a **private** include directory (`-I`) for this package's own TUs (absolute, or relative to the package root; normalized). Replaces the `cxxflag=-I` + `cflag=-I` double emission |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | like `include-dir`, but searched **after** the system directories (`-idirafter`) — for payload trees that shadow system headers |
-| `mcpp:runner=<token>` *(2026.8.19.2+)* | one argv token of the command that EXECUTES this build's artifact, when the host cannot. Emitted once per token, in order; the artifact path is appended (or substituted for `{}`). Reaches the **consumer**. ⚠️ Emit the executable as an ABSOLUTE path, and only **one** dependency may supply it |
+| `mcpp:runner=<token>` *(2026.8.19.2+)* | one argv token of the command that EXECUTES this build's artifact, when the host cannot. Emitted once per token, in order; the artifact path is appended (or substituted for `{}`). Reaches the **consumer**. Emit the executable as an ABSOLUTE path, and only **one** dependency may supply it |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | link with this **linker script** (`-T`; relative resolves against the package root, and the emitted path is absolute because the link runs in the build directory). Reaches the **consumer**, unlike `include-dir` — a board's memory layout is the one thing a consumer cannot write for itself |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | say something to the user and **keep going**. The one directive that changes no compile line, no link line and no source set. Survives the build cache — see below |
 | `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | state something the program **established about the machine** (`cuda.driver=12.4`). Compared against floors before anything is compiled; see below |
@@ -127,7 +127,7 @@ if (const char* dir = mcpp::xpkg_dir("xim", "qemu-riscv"); dir && *dir) {
 }
 ```
 
-⚠️ **This exists because the alternatives are worse, and both were tried.** A
+**This exists because the alternatives are worse, and both were tried.** A
 note on stderr printed nothing on a successful build. Exiting non-zero would be
 wrong too: `mcpp build` has no need of an emulator, and failing a build that is
 correct trades a missing sentence for a broken command.
@@ -142,12 +142,12 @@ depends on it."* For an error, exit non-zero; that output is printed already.
 workspace several programs may speak and the reader needs to know which manifest
 to open.
 
-⭐ **It survives the build cache.** A build program's result is cached, and a
+**It survives the build cache.** A build program's result is cached, and a
 cache hit does not re-run it — so an advisory that lived only on the run path
 would appear on a project's first build and never again, which reads as *"the
 condition was resolved"*. mcpp replays it on every hit.
 
-⚠️ **A whole-project no-op build prints nothing at all, including this.** When
+**A whole-project no-op build prints nothing at all, including this.** When
 there is nothing to do the build never reaches the `build.mcpp` stage — it also
 does not report which target it built or which sources it inferred. Touch a
 source and the advisory returns.
@@ -175,14 +175,14 @@ cleanly, links cleanly and fails at first use with a message naming neither
 side. The rule package that resolved the runtime knows both numbers before
 the first compile.
 
-⚠️ **Neither string means anything to the engine.** `cuda.driver` is data
+**Neither string means anything to the engine.** `cuda.driver` is data
 flowing through; the engine reads a name, a relation and a version, and a
 second backend needs no engine change. The spelling of a fact matches what a
 package could also have declared statically in `[runtime] provides`, and a
 floor matches `[[runtime.requirements]]` with `kind = "version-floor"`: the
 two channels land in one list.
 
-⚠️ **A fact is cached with the program's other output** and replayed on a
+**A fact is cached with the program's other output** and replayed on a
 cache hit. Declare what would change it — `rerun_if_changed` on the library
 the version was read from — or the fact outlives the machine it described.
 
@@ -204,11 +204,11 @@ anyway, **it wins** — swapping `-bios default` for `-bios none -semihosting`
 while debugging is a legitimate thing to want — and mcpp says which dependency
 it overrode.
 
-⚠️ **Emit the executable as an absolute path.** A bare name resolves through
+**Emit the executable as an absolute path.** A bare name resolves through
 `PATH` to a shim that dispatches against its own owner home, which is not
 necessarily the home this build uses.
 
-⚠️ **Exactly one dependency may supply a runner.** Two board-support packages
+**Exactly one dependency may supply a runner.** Two board-support packages
 both claiming to know how to run the artifact is a configuration error, and
 mcpp reports it naming both rather than merging them into an argv that is
 neither one's.
@@ -225,7 +225,7 @@ freestanding standard-library subset — or a file inside the target's C library
 — a linker script, for a board-support package — asks for the directory rather
 than declaring a dependency on the thing that provides it.
 
-⚠️ The difference is not cosmetic. Declaring `xim:llvm` pins a package to one
+The difference is not cosmetic. Declaring `xim:llvm` pins a package to one
 standard-library implementation; declaring `xim:picolibc-riscv@1.8.12` pins it
 to one C library, one architecture and one version. Neither is a property of a
 package whose content is implementation-neutral. Asking follows whatever
@@ -260,7 +260,7 @@ target. Forwarding them — `--sysroot=<value>` and `-B<value>`, through whateve
 the outer tool spells host options with — makes the second compiler see what
 the first one sees.
 
-⚠️ **Not `sysroot_dir()`.** That answers a question about the target's *tier*
+**Not `sysroot_dir()`.** That answers a question about the target's *tier*
 and is empty on a hosted target, which is exactly the case this pair exists
 for. Either of these two is empty when mcpp passes no such flag.
 
@@ -289,7 +289,7 @@ It is an interface rather than a documented path because the alternative is a
 build program encoding `<home>/data/xpkgs/<ns>-x-<name>/<version>`, which is
 store internals mcpp is free to change — the same reason `dep_dir` exists.
 
-⚠️ A **pinned** reference resolves to exactly that version or to nothing. A
+A **pinned** reference resolves to exactly that version or to nothing. A
 build that asked for `1.8.12` and silently got `1.9.0` is an answer only
 discovered later, in the artifact.
 
@@ -509,7 +509,7 @@ The package cannot handle this itself, and it is worth knowing why — the
 obvious guard does not compile:
 
 ```cpp
-if constexpr (requires { mcpp::runner("qemu"); })   // ✗ hard error when absent
+if constexpr (requires { mcpp::runner("qemu"); })   // hard error when absent
     mcpp::runner("qemu");
 ```
 
@@ -587,7 +587,7 @@ PATH=<the declared environment's bin>:<the PATH mcpp itself was started with>
 so a bare command name in a build program resolves inside the environment the
 project named, on every machine that builds it.
 
-⚠️ **Only for projects that declare one.** A project with no `[xlings].subos`
+**Only for projects that declare one.** A project with no `[xlings].subos`
 gets the `PATH` mcpp was started with, byte for byte. A shared directory in
 front of every project would make what a build sees depend on what else had
 been installed on that machine — two projects on one machine would agree with
@@ -598,7 +598,7 @@ Why it is a prefix and not a replacement: a build program legitimately calls
 makes the declared environment the default answer; the host stays reachable
 behind it.
 
-⚠️ **`command -v` answers about the machine, not about this build.** Before
+**`command -v` answers about the machine, not about this build.** Before
 this, a program asking `PATH` for a declared tool could get an unrelated one —
 measured on `qemu-system-riscv64`, where the answer was a shim that reports
 "is not installed in this subos" when executed, while a working copy sat in the
@@ -621,6 +621,26 @@ what goes inside.
 The guidance below generalises from `mcpplibs.grpcgen`, the first such package,
 with each of its traits judged individually. It is guidance and not a rule
 because none of it admits a criterion the engine could check.
+
+**The module name is declared by the rule's source, and `mcpp.*` is reserved.**
+A host module is registered under the name its interface unit declares, not
+under the package name, so `export module mcpp.rules.spirv;` is what a consumer
+then imports. Official plugins live in one package, `mcpp:plugins` (repository
+`mcpp-community/mcpp-plugins`): rule packages are named `mcpp.rules.<x>`,
+build-time utilities `mcpp.tools.<x>`, and each member is selected by a feature
+of that package (see [`host-module = true`](05-mcpp-toml.md)). `mcpp.build.*`
+is the engine's own module family and is not used for plugins. The engine
+cannot tell who is official, so it keys the check on the package *namespace*
+and warns when the two disagree —
+
+    warning: build rule 'mcpplibs.plugins' declares the module
+    'mcpp.rules.spirv'; the 'mcpp.' prefix is reserved for rules maintained by
+    the mcpp project.
+
+Nothing breaks; the name claims an origin the package does not have. A rule
+outside the project picks its own prefix. `examples/09-cuda-kernel` and
+`examples/10-vulkan-compute` consume `mcpp.rules.cuda` and `mcpp.rules.spirv`
+from `mcpp:plugins`, the way any project does.
 
 **Layers must not have a cliff, and each layer must be the composition of the
 one below it.** `generate_all(opt)` *is* `submit(plan_all(opt))`, and

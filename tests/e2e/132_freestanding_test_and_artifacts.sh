@@ -2,7 +2,7 @@
 # requires: llvm qemu-riscv unix-shell
 # `mcpp test` on bare metal, and the artifact set a flasher needs.
 #
-# ⚠️ TWO PLAN ASSUMPTIONS THIS TEST EXISTS BECAUSE THEY WERE WRONG
+# TWO PLAN ASSUMPTIONS THIS TEST EXISTS BECAUSE THEY WERE WRONG
 #
 # The design called for a `batch` mode (all cases in one image) and a
 # structured stdout protocol, on two premises. Both were measured false:
@@ -72,7 +72,7 @@ int main() {
     std::println("mcpp:link-lib=clang_rt.builtins-{}", rt);
     std::println("mcpp:link-script={}/picolibcpp.ld", lib);
 
-    // ⭐ The runner, from the package that knows the board. The consumer's
+    // The runner, from the package that knows the board. The consumer's
     // manifest below has no [target.*] section at all.
     const char* qemu = std::getenv("MCPP_XPKG_XIM_QEMU_RISCV_DIR");
     if (qemu && *qemu) {
@@ -122,7 +122,7 @@ import board;
 extern "C" int main() { board::print("case three\n"); return 1; }
 EOF
 
-# ⚠️ No [target.*] section: the runner comes from the BSP.
+# No [target.*] section: the runner comes from the BSP.
 cat > mcpp.toml <<'EOF'
 [package]
 name    = "fw"
@@ -144,7 +144,7 @@ if "$MCPP" test --target riscv64-none-elf > test.log 2>&1; then
 fi
 grep -q 'ok_one ... ok'  test.log || { cat test.log; echo "ok_one did not pass"; exit 1; }
 grep -q 'ok_two ... ok'  test.log || { cat test.log; echo "ok_two did not pass"; exit 1; }
-# ⚠️ The failure has to be NAMED. "2 passed; 1 failed" without a name is a
+# The failure has to be NAMED. "2 passed; 1 failed" without a name is a
 # harness that tells you to go looking.
 grep -q 'deliberate_fail ... FAIL' test.log || {
     cat test.log; echo "the failing case was not named"; exit 1; }
@@ -160,7 +160,7 @@ elf="$(find target/riscv64-none-elf -name firmware -type f | head -1)"
 grep -q 'Size .*text .*data .*bss' build.log || {
     cat build.log; echo "no size summary"; exit 1; }
 
-# ⚠️ The one that matters: `.bin` is a real edge on the ELF, not a side effect
+# The one that matters: `.bin` is a real edge on the ELF, not a side effect
 # of the link command happening to run. Change a source and its CONTENT must
 # change — a mtime-only check would pass even if the edge were missing.
 before="$(sha256sum "$elf.bin" | cut -d' ' -f1)"
@@ -171,7 +171,7 @@ after="$(sha256sum "$elf.bin" | cut -d' ' -f1)"
     echo ".bin did not change after a source edit — it is not a real ninja edge"
     exit 1; }
 
-# ⚠️ The `.map` is written by a FLAG on the link command, not by its own edge,
+# The `.map` is written by a FLAG on the link command, not by its own edge,
 # so it is easy to leave undeclared — and then nothing tracks it. Delete it and
 # ninja must put it back; without the implicit-output declaration the ELF is
 # up to date, ninja has nothing to do, and the map stays gone.

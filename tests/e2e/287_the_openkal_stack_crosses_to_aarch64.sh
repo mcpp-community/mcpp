@@ -2,18 +2,18 @@
 # requires: llvm unix-shell
 # The same stack, for a machine this one is not.
 #
-# ⚠️ `aarch64-linux-musl` APPEARED IN NO e2e SCRIPT UNTIL THIS ONE. It is a
+# `aarch64-linux-musl` APPEARED IN NO e2e SCRIPT UNTIL THIS ONE. It is a
 # `verified` row of the target table and the acceptance target named in
 # mcpp-community/mcpp#492, and 278 scripts mentioned it zero times. What
 # verified it was a hand-written probe run once — which says the target worked
 # on the day someone looked, and nothing about tomorrow.
 #
-# ⭐ CROSSING IS WHERE A TARGET SIDE FROM THE GRAPH EARNS ITS KEEP, AND WHERE
+# CROSSING IS WHERE A TARGET SIDE FROM THE GRAPH EARNS ITS KEEP, AND WHERE
 # ITS MISTAKES ARE VISIBLE. A native build that quietly takes the payload's C
 # library still runs; a cross that does produces an artefact for the wrong
 # machine, and `file` says so in one line.
 #
-# ⚠️ AND THE HELPERS ARE ASSERTED, NOT JUST THE ARCHITECTURE. clang turns on
+# AND THE HELPERS ARE ASSERTED, NOT JUST THE ARCHITECTURE. clang turns on
 # `+outline-atomics` for aarch64 whenever the compiler runtime is compiler-rt,
 # and the `__aarch64_*` helpers that feature calls live in compiler-rt rather
 # than anywhere the engine could supply. A build that links without them is not
@@ -97,7 +97,7 @@ if [ -n "$nm" ]; then
     fi
 fi
 
-# ⚠️⚠️ A DISASSEMBLER THAT CANNOT READ THIS FILE ANSWERS "NO LSE", AND THE
+# A DISASSEMBLER THAT CANNOT READ THIS FILE ANSWERS "NO LSE", AND THE
 # FIRST VERSION OF THIS BELIEVED IT.
 #
 # `command -v objdump` on a Linux runner finds GNU binutils, whose BFD is built
@@ -115,7 +115,7 @@ fi
 # where /usr/bin/llvm-objdump happens to exist and is picked first, and failed
 # in CI where it does not — the first time this test had ever run there.
 #
-# ⭐ SO THE TOOL IS TAKEN FROM THE TOOLCHAIN THAT BUILT THE BINARY. mcpp
+# SO THE TOOL IS TAKEN FROM THE TOOLCHAIN THAT BUILT THE BINARY. mcpp
 # installed llvm to compile this; its llvm-objdump reads every target clang
 # emits, by construction.
 objdump=""
@@ -127,7 +127,7 @@ done
 
 if [ -n "$objdump" ]; then
     disasm="$("$objdump" -d "$bin" 2>/dev/null || true)"
-    # ⭐ THE GUARD THAT SEPARATES THE TWO ANSWERS. Zero instruction lines means
+    # THE GUARD THAT SEPARATES THE TWO ANSWERS. Zero instruction lines means
     # the tool could not read the file; it is not evidence about LSE, and
     # reporting it as such is how a green suite hides a broken measurement.
     insns="$(printf '%s\n' "$disasm" | grep -cE '^\s*[0-9a-f]+:' || true)"

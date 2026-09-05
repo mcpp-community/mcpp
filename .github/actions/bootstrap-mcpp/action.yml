@@ -42,7 +42,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.mcpp
-        # ⚠️⚠️ `runner.arch` IS PART OF EVERY KEY, AND WAS NOT.
+        # `runner.arch` IS PART OF EVERY KEY, AND WAS NOT.
         #
         # These caches hold INSTALLED BINARIES — `~/.xlings`, `~/.mcpp`, and
         # `target/`. Keyed on `runner.os` alone, `Linux` names two machines, and
@@ -52,7 +52,7 @@ runs:
         #     Cache hit for: xlings-Linux-v2-xl2026.8.17.2-…
         #     …/bin/xlings: cannot execute binary file: Exec format error
         #
-        # ⭐ AND IT SURVIVED THE FIX ONE LAYER DOWN. Reading `uname -m` to pick
+        # AND IT SURVIVED THE FIX ONE LAYER DOWN. Reading `uname -m` to pick
         # the right tarball is correct and was not enough: the download never
         # happened, because a cache from the other architecture was already
         # there. A key that does not name the machine is a key that lets one
@@ -88,7 +88,7 @@ runs:
         REPO_DIR="$(pwd)"
         # Always install the pinned version — the cache may hold an older
         # xlings whose sysroot/packages are incompatible.
-        # ⚠️⚠️ THE ARCHITECTURE IS READ, NOT ASSUMED. This branched on the OS
+        # THE ARCHITECTURE IS READ, NOT ASSUMED. This branched on the OS
         # alone and named `linux-x86_64` for every non-Darwin host, which is
         # invisible until a Linux runner is not x86_64. Measured on
         # `ubuntu-24.04-arm`, the first time this repo scheduled one:
@@ -117,7 +117,7 @@ runs:
           "https://github.com/d2learn/xlings/releases/download/v${XLINGS_VERSION}/${tarball}" \
           "${WORK}/${tarball}"
         tar -xzf "${WORK}/${tarball}" -C "${WORK}"
-        # ⚠️⚠️ THE TWO LINUX TARBALLS DO NOT HAVE THE SAME SHAPE, and this line
+        # THE TWO LINUX TARBALLS DO NOT HAVE THE SAME SHAPE, and this line
         # named one of them. Measured on the 2026.8.17.2 assets:
         #
         #   linux-x86_64   → subos/default/bin/xlings   (513 entries)
@@ -126,12 +126,12 @@ runs:
         # so fetching the right architecture — the fix immediately above — got
         # as far as `No such file or directory`, exit 127.
         #
-        # ⭐ FOUND RATHER THAN ASSUMED, AND THE SEARCH IS BOUNDED. `-maxdepth 5`
+        # FOUND RATHER THAN ASSUMED, AND THE SEARCH IS BOUNDED. `-maxdepth 5`
         # keeps it from wandering into the payload tree, and an empty result is
         # a hard error: a bootstrap that silently continues without xlings fails
         # forty lines later on something that reads like a different problem.
         #
-        # ⚠️ CHECKED BEFORE CHANGING THE THREE HOSTS THAT ALREADY WORKED. On
+        # CHECKED BEFORE CHANGING THE THREE HOSTS THAT ALREADY WORKED. On
         # x86_64 this now resolves `bin/xlings` where the line before named
         # `subos/default/bin/xlings` — and those are the same file:
         #
@@ -212,7 +212,7 @@ runs:
       uses: actions/cache@v4
       with:
         path: target
-        # ⚠️ `modules/**` belongs here as much as `src/**` does. mcpp's own
+        # `modules/**` belongs here as much as `src/**` does. mcpp's own
         # source lives in both since the subsystem split, and a key that hashed
         # only one of them would restore a target/ built from different sources
         # and report success — the failure mode a cache key exists to prevent,

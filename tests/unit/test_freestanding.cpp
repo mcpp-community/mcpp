@@ -190,7 +190,7 @@ TEST(XpkgPayload, APinnedRefResolvesToThatVersionOrToNothing) {
     std::filesystem::create_directories(base / "xim-x-demo" / "1.0.0");
     std::filesystem::create_directories(base / "xim-x-demo" / "2.0.0");
 
-    // ⚠️ The whole point: asking for 1.0.0 and silently getting 2.0.0 is an
+    // The whole point: asking for 1.0.0 and silently getting 2.0.0 is an
     // answer only discovered later, in the artifact.
     auto pinned = xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@1.0.0"));
     ASSERT_TRUE(pinned.has_value());
@@ -231,7 +231,7 @@ TEST(XpkgEnvVar, BothSpellingsAreDerivedFromOneSanitizer) {
 // ── the target owns its C library ───────────────────────────────────────────
 
 TEST(FreestandingTarget, BareMetalRowsNameTheirSysroot) {
-    // ⚠️ The axis that stops every bare-metal PACKAGE from naming a libc.
+    // The axis that stops every bare-metal PACKAGE from naming a libc.
     // Before it, a board-support package and a standard-library subset each
     // had to carry `[xlings] deps = ["xim:picolibc-riscv@..."]`, which bound
     // both to one libc, one ISA and one version of each — none of which is a
@@ -264,7 +264,7 @@ TEST(FreestandingFlags, ExceptionsAndRttiAreOffForTheWholeGraph) {
     auto spec = resolve("riscv64-none-elf");
     ASSERT_TRUE(spec.has_value());
     auto f = compile_flags(*spec);
-    // ⚠️ These live with the TARGET, not in a project's cxxflags, because a
+    // These live with the TARGET, not in a project's cxxflags, because a
     // BMI records them: a dependency compiled with exceptions cannot be
     // imported by a TU without them, and clang reports that as a .pcm
     // "configuration mismatch" rather than as a flag disagreement.
@@ -286,7 +286,7 @@ TEST(FreestandingFlags, HostedTargetsGetNoneOfThis) {
 
 TEST(BuildProgramCompatHint, RecognisesAllThreeFrontendSpellings) {
     using mcpp::build::mentions_missing_mcpp_api;
-    // ⚠️ Measured, not assumed: `if constexpr (requires { mcpp::runner("x"); })`
+    // Measured, not assumed: `if constexpr (requires { mcpp::runner("x"); })`
     // is a HARD ERROR when the name is absent, so a package cannot probe for a
     // newer API in-language. The compiler's error IS the compat channel, and
     // these are the three ways it arrives.
@@ -351,7 +351,7 @@ TEST(FreestandingArtifacts, ObjcopyOnlyResolvesForABareMetalTarget) {
 
 // ── aarch64-none-elf: the second bare-metal architecture ────────────────────
 //
-// ⚠️ THESE ASSERT THE TWO VALUES THAT WOULD HAVE BEEN WRONG IF THE ROW HAD BEEN
+// THESE ASSERT THE TWO VALUES THAT WOULD HAVE BEEN WRONG IF THE ROW HAD BEEN
 // FILLED IN BY ANALOGY WITH THE RISC-V ROWS ABOVE IT.
 //
 // `-mabi` is the first. RISC-V spells its ABI as a data model (`lp64d`,
@@ -384,14 +384,14 @@ TEST(FreestandingTarget, Aarch64ResolvesNoCLibrary) {
     ASSERT_TRUE(t.has_value());
     EXPECT_TRUE(mcpp::toolchain::triple::effective_sysroot(*t, nullptr).empty());
 
-    // ⚠️ The other side: a project may still ASK for one, and the override is
+    // The other side: a project may still ASK for one, and the override is
     // what carries the request. An empty column means "nothing by default", not
     // "nothing is possible".
     const std::string want = "xim:some-aarch64-libc@1.0";
     EXPECT_EQ(mcpp::toolchain::triple::effective_sysroot(*t, &want), want);
 }
 
-// ⚠️ THIS TEST USED TO ASSERT THE OPPOSITE, AND IT WAS RIGHT UNTIL 2026-08-21.
+// THIS TEST USED TO ASSERT THE OPPOSITE, AND IT WAS RIGHT UNTIL 2026-08-21.
 //
 // The libdir column names the sub-directory of a MULTILIB C library, and the
 // aarch64 and x86_64 rows had none in the index to point into — so an empty
@@ -404,7 +404,7 @@ TEST(FreestandingTarget, Aarch64ResolvesNoCLibrary) {
 // `[target.aarch64-none-elf] sysroot = "xim:picolibc-aarch64@1.8.12"` got
 // `'stdio.h' file not found` while the package sat installed and correct.
 //
-// ⭐ The values below are a CROSS-REPOSITORY fact: they must match the
+// The values below are a CROSS-REPOSITORY fact: they must match the
 // directory layout those two packages ship. `xim-pkgindex`'s
 // `.agents/tools/build-baremetal-sysroot.sh` produces them from the same
 // march/mabi pair this table carries, so the two cannot drift silently — but
@@ -422,7 +422,7 @@ TEST(FreestandingTarget, MultilibDirectoriesMatchTheIndexPayloads) {
     EXPECT_EQ(x->libdir, "x86-64/sysv");
     EXPECT_EQ(x->libdir, std::string(x->march) + "/" + std::string(x->mabi));
 
-    // ⚠️ Filling this column does NOT give those targets a C library by
+    // Filling this column does NOT give those targets a C library by
     // default. It is consulted only once a sysroot has been RESOLVED, and the
     // target table still binds none for these two rows — the zero-libc tier
     // stays the default and the package stays opt-in.
@@ -433,7 +433,7 @@ TEST(FreestandingTarget, MultilibDirectoriesMatchTheIndexPayloads) {
 
 // ── The two tables keyed on the same triple must agree ───────────────────────
 //
-// ⚠️ A BARE-METAL TARGET IS DESCRIBED TWICE, IN TWO FILES, AND NOTHING WAS
+// A BARE-METAL TARGET IS DESCRIBED TWICE, IN TWO FILES, AND NOTHING WAS
 // CHECKING THAT THE TWO DESCRIPTIONS COVER THE SAME ROWS.
 //
 // `kKnownTargets` (toolchain/triple.cppm) says a row exists, which tier it is
@@ -444,7 +444,7 @@ TEST(FreestandingTarget, MultilibDirectoriesMatchTheIndexPayloads) {
 // about a missing row. The reverse — present in the second, absent from the
 // first — is dead data that reads as support.
 //
-// ⭐ The check is possible only because both are compile-time tables with a
+// The check is possible only because both are compile-time tables with a
 // single read point each. It costs fifteen lines and removes an entire class
 // of "added a target, forgot half of it".
 TEST(FreestandingTarget, EveryBareRowInTheTargetTableHasAnIsaProfile) {
@@ -472,7 +472,7 @@ TEST(FreestandingTarget, EveryIsaProfileHasABareRowInTheTargetTable) {
 
 // ── Cortex-M ────────────────────────────────────────────────────────────────
 //
-// ⭐ THESE ARE RULES OVER THE TABLE, WHICH IS THE ONLY PLACE THEY CAN BE
+// THESE ARE RULES OVER THE TABLE, WHICH IS THE ONLY PLACE THEY CAN BE
 // STATED. The e2e boots four M-profile images and measures instruction counts,
 // but it can only speak about the rows it happens to exercise. A rule quantified
 // over every row is what stops the eighth one from being added wrong, and the
@@ -480,7 +480,7 @@ TEST(FreestandingTarget, EveryIsaProfileHasABareRowInTheTargetTable) {
 // the FPU compiles, links, and faults on real silicon.
 
 namespace {
-// ⚠️ EVERY 32-BIT ARM ROW, NOT ONLY THE M-PROFILE ONES. The first version of
+// EVERY 32-BIT ARM ROW, NOT ONLY THE M-PROFILE ONES. The first version of
 // this predicate was `starts_with("thumb")` — a SPELLING rather than the
 // property the rule is about. When `armv7a-none-eabi` was added, the rule
 // applied to it and this test did not, silently: the loop simply skipped the
@@ -516,7 +516,7 @@ TEST(FreestandingTarget, SoftFloatArm32RowsDisableTheFpu) {
                    " instructions that fault on a part with no FPU";
         }
     }
-    // ⚠️ A denominator, because a loop that never ran satisfies every EXPECT
+    // A denominator, because a loop that never ran satisfies every EXPECT
     // above. Both halves must be non-empty for the contrast to mean anything.
     EXPECT_GT(soft, 0);
     EXPECT_GT(hard, 0);
@@ -560,7 +560,7 @@ TEST(FreestandingTarget, EveryRowCompilesWithPerFunctionSections) {
     EXPECT_GT(rows, 0);
 }
 
-// ⚠️⚠️ THE MULTILIB KEY IS NOT `<march>/<mabi>` ON ARM, AND ASSUMING IT WAS
+// THE MULTILIB KEY IS NOT `<march>/<mabi>` ON ARM, AND ASSUMING IT WAS
 // PRODUCES AN ABI SUBSTITUTION THAT NOTHING REPORTS.
 //
 // The column names the sub-directory a multilib C library uses. On riscv,
@@ -599,7 +599,7 @@ TEST(FreestandingTarget, Arm32SoftAndHardVariantsNameDifferentLibdirs) {
             << distinct.size() << " directories: a soft-float program would "
                "link a hard-float library, silently";
     }
-    // ⚠️ A denominator. If no architecture had two rows the loop above would
+    // A denominator. If no architecture had two rows the loop above would
     // assert nothing, and the property would be untested rather than held.
     EXPECT_GT(pairs, 0) << "no architecture carries both float ABIs; the check "
                            "above quantified over nothing";

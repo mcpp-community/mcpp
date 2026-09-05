@@ -95,7 +95,7 @@ TEST(CacheKey, ToolchainIdentityChangesTheKey) {
                                                      EXPECT_NE(ck::key_hex(b, pkg()), base); }
 }
 
-// ⚠️ The axis that exists because an UPGRADE broke a build.
+// The axis that exists because an UPGRADE broke a build.
 //
 // A freestanding triple silently implies -march/-mabi/-ffreestanding/
 // -nostdinc++/-fno-exceptions/-fno-rtti, and WHICH ones is mcpp's decision —
@@ -294,7 +294,7 @@ TEST(CacheKey, GeneratedFilesAreOrderIndependent) {
 
 // ── The key must describe the compilation that will happen ──────────────────
 //
-// ⚠️⚠️ THIS KEY ONCE DERIVED ITS OWN INPUTS INSTEAD OF READING THE BUILD'S.
+// THIS KEY ONCE DERIVED ITS OWN INPUTS INSTEAD OF READING THE BUILD'S.
 //
 // `freestanding::compile_flags` takes `targetCxxRuntime` because the answer
 // changes with it: a freestanding target whose graph supplies a C++ runtime is
@@ -302,7 +302,7 @@ TEST(CacheKey, GeneratedFilesAreOrderIndependent) {
 // with it. `flags.cppm` passes it; `build_axes` did not, and so hashed the
 // flags of the other configuration.
 //
-// ⭐ THE FAILURE IS A HIT ACROSS AN INCOMPATIBILITY, NOT A MISS. Two
+// THE FAILURE IS A HIT ACROSS AN INCOMPATIBILITY, NOT A MISS. Two
 // configurations that must not share a slot produced the same key, so the
 // second build loaded the first's BMIs:
 //
@@ -313,7 +313,7 @@ TEST(CacheKey, GeneratedFilesAreOrderIndependent) {
 // differently-sized copies of that one BMI: slotting per configuration was
 // working, choosing the slot was not.
 //
-// ⚠️ IT WAS DORMANT UNTIL THE PARAMETER EXISTED. Before the flag became
+// IT WAS DORMANT UNTIL THE PARAMETER EXISTED. Before the flag became
 // conditional the two computations agreed for every input, so ignoring one of
 // them was still correct. That is what makes the test worth writing against
 // `build_axes` rather than against a hand-built `BuildAxes`: the fixture above
@@ -354,7 +354,7 @@ TEST(CacheKey, TheTwoFreestandingConfigurationsDoNotShareASlot) {
               ck::key_hex(ck::build_axes(freestanding_tc(true),  m, "-std=c++23", {}, ""), pkg()));
 }
 
-// ⭐ AND A HOSTED TARGET IS UNAFFECTED, so the fix cannot be read as "the key
+// AND A HOSTED TARGET IS UNAFFECTED, so the fix cannot be read as "the key
 // now changes with something it should not". `freestanding::resolve` returns
 // nothing for a hosted triple, and the flags stay empty either way.
 TEST(CacheKey, AHostedTargetHasNoTargetImpliedFlagsEitherWay) {
@@ -368,7 +368,7 @@ TEST(CacheKey, AHostedTargetHasNoTargetImpliedFlagsEitherWay) {
     EXPECT_EQ(a.targetImpliedFlags, b.targetImpliedFlags);
 }
 
-// ⭐⭐ THE HEADER SET THE DRIVER IS POINTED AT IS PART OF THE IDENTITY.
+// THE HEADER SET THE DRIVER IS POINTED AT IS PART OF THE IDENTITY.
 //
 // Everything else on axis A describes the COMPILER. Nothing described the
 // LIBRARY it compiles against — and the two are separately installed: one clang
@@ -410,9 +410,9 @@ TEST(CacheKey, TheHeaderSetIsRecordedInTheEntry) {
               "-isystem<store>/xim-x-glibc/2.44/include");
 }
 
-// ⭐⭐ AND THE PATHS IN IT ARE RELATIVE — INCLUDING THE ONES OUTSIDE `<store>`.
+// AND THE PATHS IN IT ARE RELATIVE — INCLUDING THE ONES OUTSIDE `<store>`.
 //
-// ⚠️ THE TWO TESTS ABOVE SET THE AXIS DIRECTLY, so neither of them runs the
+// THE TWO TESTS ABOVE SET THE AXIS DIRECTLY, so neither of them runs the
 // relativization, and a store-only rule passed both while leaving this
 // developer's own home in every key. The toolchain that showed it is the
 // ordinary one: `CLibMode::Sysroot`, whose single compile token is
@@ -424,7 +424,7 @@ TEST(CacheKey, TheHeaderSetIsRecordedInTheEntry) {
 // each other's entries, which is the property `normalize_driver_output` gives
 // up path information to preserve.
 //
-// ⭐ THE CRITERION IS THE ABSENCE OF THE HOME, not the presence of a tag.
+// THE CRITERION IS THE ABSENCE OF THE HOME, not the presence of a tag.
 // Asserting `starts_with("<home>")` would still pass if the rest of the string
 // carried the absolute path behind it.
 TEST(CacheKey, TheHeaderSetCarriesNoAbsoluteHome) {
@@ -457,7 +457,7 @@ TEST(CacheKey, TheHeaderSetCarriesNoAbsoluteHome) {
     EXPECT_NE(ck::key_hex(a, pkg()), ck::key_hex(b, pkg()));
 }
 
-// ⚠️ Position-independent code was ABSENT from this key (issue #519).
+// Position-independent code was ABSENT from this key (issue #519).
 //
 // `-fPIC` is whole-build — one shared link unit anywhere and every object in
 // the graph carries it — but the key hashes a package's DECLARED flags, not

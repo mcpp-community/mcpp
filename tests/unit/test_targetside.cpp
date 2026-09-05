@@ -440,7 +440,7 @@ TEST(TargetSideRequest, AFilledEnvSegmentStatesNothing) {
     EXPECT_EQ(ts::check_request(ts::resolve(in)), std::nullopt);
 }
 
-// ⚠️ REPORTED, NOT REFUSED. The graph supplies the C library either way, so the
+// REPORTED, NOT REFUSED. The graph supplies the C library either way, so the
 // segment is ignored rather than violated and the artifact is identical with or
 // without it. Refusing was tried and broke every project spelling the host
 // target `x86_64-linux-gnu` — which is what `mcpp toolchain list` prints.
@@ -470,12 +470,12 @@ TEST(TargetSideRequest, APrebuiltCLibraryIsWhatTheRequestSelected) {
     EXPECT_EQ(ts::check_request(ts::resolve(in)), std::nullopt);
 }
 
-// ⚠️ On Windows the same segment names the OBJECT ABI — `gnu` is PE with the
+// On Windows the same segment names the OBJECT ABI — `gnu` is PE with the
 // GNU ABI, `msvc` is PE with Microsoft's — and both are compatible with more
 // than one C library. Reporting such a build as "asking for the `gnu` C ABI"
 // describes an axis the name never addressed, and the correction it suggested
 // named a target that does not exist.
-// ⚠️ AND THE OBJECT-ABI AXIS REPORTS TOO, WHICH IS THE REVERSAL.
+// AND THE OBJECT-ABI AXIS REPORTS TOO, WHICH IS THE REVERSAL.
 //
 // It was exempted on the grounds that `gnu` on Windows names the Itanium C++
 // ABI rather than a C library. True, and incomplete: the segment bundles the
@@ -495,7 +495,7 @@ TEST(TargetSideRequest, TheObjectAbiAxisReportsTheCLibraryHalfToo) {
     auto why = ts::check_request(ts::resolve(in));
     ASSERT_NE(why, std::nullopt);
     EXPECT_NE(why->find("musl"), std::string::npos) << *why;
-    // ⭐ And it says the ABI half was honoured, so the reader does not conclude
+    // And it says the ABI half was honoured, so the reader does not conclude
     // the object ABI changed as well.
     EXPECT_NE(why->find("object ABI"), std::string::npos) << *why;
     EXPECT_NE(why->find("--target x86_64-windows"), std::string::npos) << *why;
@@ -515,13 +515,13 @@ TEST(TargetSideRequest, TheObjectFormatAxisStaysExempt) {
     EXPECT_EQ(ts::check_request(ts::resolve(in)), std::nullopt);
 }
 
-// ⭐ AND WHEN IT DOES NOT NAME ONE, THE REPORT SAYS WHAT IT DOES NAME.
+// AND WHEN IT DOES NOT NAME ONE, THE REPORT SAYS WHAT IT DOES NAME.
 //
 // Staying silent is correct as a DIAGNOSTIC and insufficient as a REPORT. The
 // reader sees `x86_64-windows-gnu` above a line reading `c-abi musl`, finds no
 // row called `gnu`, and maps it to the nearest thing that looks like a C
 // library name. Measured twice, by the same reader, on two different days.
-// ⚠️ THE GLOSS IS NOW THE OBJECT-FORMAT AXIS ALONE. The object-ABI axis warns
+// THE GLOSS IS NOW THE OBJECT-FORMAT AXIS ALONE. The object-ABI axis warns
 // instead (see `TheObjectAbiAxisReportsTheCLibraryHalfToo`), and leaving both
 // in place would state one finding twice — once as an aside, once as a warning.
 TEST(TargetSideReport, TheObjectAbiAxisIsNoLongerGlossed) {
@@ -553,7 +553,7 @@ TEST(TargetSideReport, OnBareMetalTheSegmentNamesTheObjectFormat) {
               std::string::npos) << r;
 }
 
-// ⚠️ AND IT DOES NOT FIRE WHEN THE C LIBRARY CAME FROM A PAYLOAD.
+// AND IT DOES NOT FIRE WHEN THE C LIBRARY CAME FROM A PAYLOAD.
 //
 // A payload C library IS what the triple selected — the triple is how it was
 // selected — so `gnu → ucrt` follows visibly and a gloss would be noise on
@@ -603,7 +603,7 @@ TEST(TargetSideRequirements, ARequirementIsCheckedAgainstWhatResolved) {
     EXPECT_NE(why->find("default = \"llvm\""), std::string::npos)
         << "a diagnostic that names no next step is a diagnostic the reader "
            "must still go and research";
-    // ⚠️ AND THE STEP IT NAMES MUST NOT BE A GLOBAL ONE. Until 2026.8.26.2 the
+    // AND THE STEP IT NAMES MUST NOT BE A GLOBAL ONE. Until 2026.8.26.2 the
     // first remedy offered was `mcpp toolchain default llvm` — the default for
     // every project on the machine, changed because ONE project's dependency
     // asked. mcpp now applies the graph's requirement itself wherever its own
@@ -657,7 +657,7 @@ TEST(TargetSideConflict, TwoSuppliersAreNamedTogetherWithHowEachArrived) {
 
 // ── Which layer decides the payload's C-library flags ───────────────────────
 //
-// ⚠️ THE PREDICATE THIS REPLACES WAS AN `OR` OVER TWO LAYERS, AND SHIPPED.
+// THE PREDICATE THIS REPLACES WAS AN `OR` OVER TWO LAYERS, AND SHIPPED.
 //
 //     bool system_from_graph() const {
 //         return kernelAbi.fromGraph() || cAbi.fromGraph();
@@ -672,7 +672,7 @@ TEST(TargetSideConflict, TwoSuppliersAreNamedTogetherWithHowEachArrived) {
 //     error: hermetic link check failed
 //              crt1.o (bare name — the linker cannot resolve it)
 //
-// ⭐ ONE TEST PER `Origin`, BECAUSE THE QUESTION HAS ONE ANSWER PER VALUE.
+// ONE TEST PER `Origin`, BECAUSE THE QUESTION HAS ONE ANSWER PER VALUE.
 // A predicate written as a list of cases answers the ones its author thought
 // of; four tests against a four-valued enum make the fifth value's absence
 // visible when someone adds it.

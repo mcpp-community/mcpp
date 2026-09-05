@@ -138,7 +138,7 @@ TEST(LinkageForm, AFreestandingTargetHasNothingToLoadASharedLibraryWith) {
 }
 
 TEST(LinkageForm, AFullyStaticLibcVetoesTheSharedForm) {
-    // ⚠️ The two axes named `linkage` are NOT independent. A `-static` image
+    // The two axes named `linkage` are NOT independent. A `-static` image
     // has no interpreter, so it cannot load a shared object — and musl
     // defaults to `linkage = "static"`, which makes this the COMMON path
     // there rather than a corner.

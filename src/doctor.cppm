@@ -784,7 +784,7 @@ int print_stored_runtime_resolution() {
 
 // `mcpp why [topic]` / `mcpp resolve --explain`.
 
-// ⭐⭐ THE SAME RESOLUTION `why toolchain` PRINTS, AS DATA.
+// THE SAME RESOLUTION `why toolchain` PRINTS, AS DATA.
 //
 // A build for one (target, toolchain) pair resolves five layers, a driver, a
 // triple and a sysroot, and then either proceeds or refuses. Every one of those
@@ -793,7 +793,7 @@ int print_stored_runtime_resolution() {
 // was measured on 2026-08-26: rewording one refusal turned an e2e assertion
 // into a no-op, silently, in the same session that wrote it.
 //
-// ⚠️ EXIT 0 WHENEVER THE QUESTION WAS ANSWERED, INCLUDING WHEN THE ANSWER IS
+// EXIT 0 WHENEVER THE QUESTION WAS ANSWERED, INCLUDING WHEN THE ANSWER IS
 // "REFUSED". This is a query: "would this build, and if not why" is answered
 // successfully by "no, because the row's pin is a capability". Overloading the
 // exit code would give a client exactly the ambiguity the envelope exists to
@@ -805,22 +805,22 @@ int print_stored_runtime_resolution() {
 export int why_toolchain_json(std::string_view target, std::string_view tcSpec) {
     mcpp::build::BuildOverrides ov;
     ov.target_triple = std::string(target);
-    // ⚠️ `MCPP_TOOLCHAIN`, not a field on the overrides — that is the channel
+    // `MCPP_TOOLCHAIN`, not a field on the overrides — that is the channel
     // `--toolchain` already uses, and `prepare_build` reads it as a
     // user-explicit declaration. Adding a second way in would give the two
     // spellings different provenance, and provenance is exactly what the
     // convention/capability distinction turns on.
     //
-    // ⚠️ RESTORED AFTERWARDS. This is a library function; leaving a declared
+    // RESTORED AFTERWARDS. This is a library function; leaving a declared
     // toolchain in the environment would make the NEXT thing this process does
     // inherit a compiler nobody asked it for.
-    // ⭐ `ScopedEnv` already exists for exactly this and restores the prior
+    // `ScopedEnv` already exists for exactly this and restores the prior
     // value, including "there was none".
     std::optional<mcpp::platform::env::ScopedEnv> tcGuard;
     if (!tcSpec.empty())
         tcGuard.emplace("MCPP_TOOLCHAIN", std::string(tcSpec));
 
-    // ⚠️⚠️ CLEARED BEFORE THE CALL, NOT ONLY READ AFTER IT.
+    // CLEARED BEFORE THE CALL, NOT ONLY READ AFTER IT.
     //
     // The sink is per-thread and `prepare_build` recurses for tool
     // provisioning. Reading it afterwards without clearing first means a code
@@ -829,7 +829,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
     // than none: it is a specific, plausible, wrong answer.
     (void)mcpp::build::refusal::take();
 
-    // ⚠️⚠️ STDOUT BELONGS TO THE ENVELOPE, AND `prepare_build` NARRATES.
+    // STDOUT BELONGS TO THE ENVELOPE, AND `prepare_build` NARRATES.
     //
     // `Resolving toolchain` / `Resolved …` / `Target … → …` are status lines
     // for a person, and they go to stdout. A client is told to detect the
@@ -857,9 +857,9 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
                                           /*includeDevDeps=*/false, {}, ov);
     std::vector<mcpp::wire::Diagnostic> diags;
     if (!ctx) {
-        // ⚠️ `take()` AFTER the call and only here: a site that recorded a code
+        // `take()` AFTER the call and only here: a site that recorded a code
         // and then did not refuse would otherwise leak it into the next query.
-        // ⚠️⚠️ `None` MEANS "NOTHING RECORDED", AND HERE THAT IS NOT "no reason"
+        // `None` MEANS "NOTHING RECORDED", AND HERE THAT IS NOT "no reason"
         // — the build demonstrably refused. Reporting `none` beside
         // `refused` gives one word two meanings, which is the defect this
         // whole release is about, reintroduced in the machinery built to
@@ -867,7 +867,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
         // a site that had no code, and the matrix recorded
         // `unsupported / none`.
         //
-        // ⭐ `other` is a visible admission: a refusal exists and its branch
+        // `other` is a visible admission: a refusal exists and its branch
         // has not been named yet.
         auto code = mcpp::build::refusal::take();
         if (code == mcpp::build::refusal::Code::None)
@@ -895,7 +895,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
 
     data["status"] = "ok";
     data["reason"] = "none";
-    // ⭐ AND WHY THIS ONE. The build's status line says it; a consumer of the
+    // AND WHY THIS ONE. The build's status line says it; a consumer of the
     // machine interface asking "what would this resolve to, and why" would
     // otherwise have to parse that prose — the substring matching this document
     // exists to remove. `requiredBy` and `replaced` are empty unless something
@@ -916,7 +916,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
         {"llvm",      ts.llvmTriple},
     };
 
-    // ⭐⭐ THE C LIBRARY MODEL, NOT `tc.sysroot`.
+    // THE C LIBRARY MODEL, NOT `tc.sysroot`.
     //
     // `tc.sysroot` is what the driver reports for `-print-sysroot`, and it is
     // frequently empty for a toolchain that nonetheless receives an explicit
@@ -939,7 +939,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
     const auto& srPath =
         lm.mode == mcpp::toolchain::CLibMode::Sysroot ? lm.sysroot
                                                       : lm.crtDir;
-    // ⚠️⚠️ AND WHETHER THIS MODEL IS THE ONE IN THE ARTIFACT, BECAUSE THE
+    // AND WHETHER THIS MODEL IS THE ONE IN THE ARTIFACT, BECAUSE THE
     // DOCUMENT USED TO ANSWER THE SAME QUESTION TWICE AND DIFFERENTLY.
     //
     // Measured on 2026.8.26.1, one `mcpp why toolchain --format json` over an
@@ -957,7 +957,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
     // which one governed, which is the same defect as a name that contradicts a
     // fact printed under it.
     //
-    // ⭐ ONE FIELD ADDED, NONE CHANGED. `mcpp.why.toolchain` promises that
+    // ONE FIELD ADDED, NONE CHANGED. `mcpp.why.toolchain` promises that
     // fields are added and never removed and that a field's meaning never
     // changes (docs/11 §6). Renaming `cLibrary`, or widening `mode` with a
     // `graph` value, would break that promise for a document whose whole point
@@ -1045,7 +1045,7 @@ export int why_report(const std::string& topic) {
         }
     }
     if (all) (void)print_stored_runtime_resolution();
-    // ⭐ WHERE A NAMED RUNNER BECOMES DISCOVERABLE.
+    // WHERE A NAMED RUNNER BECOMES DISCOVERABLE.
     //
     // The engine knows no runner names, which is what keeps `mcpp flash` from
     // being a top-level command that is dead in every project that is not

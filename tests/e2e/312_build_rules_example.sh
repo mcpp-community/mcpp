@@ -65,7 +65,7 @@ out="$("$MCPP" run 2>&1 | tail -1)"
 # and answers with an exit code, which is what clang-tidy does. mcpp creates
 # the stamp when the command succeeds.
 #
-# ⚠️ ASSERT ON THE STAMP AND ON THE RE-RUN, NOT ON THE BUILD SUCCEEDING.
+# ASSERT ON THE STAMP AND ON THE RE-RUN, NOT ON THE BUILD SUCCEEDING.
 # Measured with the wrapper removed: ninja does NOT fail when a declared output
 # goes unproduced. It leaves the file missing and re-runs that edge on every
 # build, forever — so the build stays green, this script's earlier assertions

@@ -2,7 +2,7 @@
 # requires: gcc unix-shell
 # `[xlings.workspace]` entries carry a tier, and a verb installs only its own.
 #
-# ⭐⭐ THE ASSERTION IS ON WHAT mcpp ASKS FOR, NOT ON WHAT GOT INSTALLED.
+# THE ASSERTION IS ON WHAT mcpp ASKS FOR, NOT ON WHAT GOT INSTALLED.
 #
 # Verifying the tier by installing would need a clean machine and a network,
 # and neither is available here. It would also be the wrong object: what the
@@ -10,7 +10,7 @@
 # single download — `MCPP_NO_AUTO_INSTALL=1` refuses to provision and names
 # exactly what it would have provisioned.
 #
-# ⚠️ AND THE CRITERION CARRIES ITS OWN DENOMINATOR. "The run-tier tool is
+# AND THE CRITERION CARRIES ITS OWN DENOMINATOR. "The run-tier tool is
 # absent from `mcpp build`" is satisfied by an mcpp that provisions nothing at
 # all, or by a manifest whose entry never parsed. The pair of commands is the
 # test: the same project, the same package, present under `run` and absent

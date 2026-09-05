@@ -61,7 +61,7 @@ struct CompileFlags {
     std::filesystem::path ccBinary;   // gcc / clang (derived; cl.exe = same)
     std::filesystem::path arBinary;   // ar / llvm-ar / lib.exe (empty → PATH)
     std::filesystem::path ldBinary;   // link.exe (SeparateLinker dialects only)
-    // ⚠️ THE LINK IS DRIVEN BY THIS BINARY INSTEAD OF BY THE COMPILER, AND
+    // THE LINK IS DRIVEN BY THIS BINARY INSTEAD OF BY THE COMPILER, AND
     // WHEN IT IS SET THE WHOLE FLAG VOCABULARY CHANGES WITH IT.
     //
     // Empty everywhere except a freestanding target whose row carries an
@@ -431,7 +431,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // flag outright — `unsupported option '-fPIC' for target
     // 'x86_64-pc-windows-msvc'`.
     //
-    // ⚠️ The condition used to be `!isMsvcDialect`, i.e. the DIALECT. Windows'
+    // The condition used to be `!isMsvcDialect`, i.e. the DIALECT. Windows'
     // default toolchain is clang, which speaks the GNU dialect while targeting
     // the MSVC ABI, so `-fPIC` was emitted and every MSVC-ABI shared build died
     // in clang-scan-deps before compiling anything. It was unreachable while
@@ -512,7 +512,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     std::string compile_toolchain_flags;
     std::string link_toolchain_flags;
     std::string link_toolchain_flags_c;   // same, minus C++ runtime selection
-    // ⭐⭐ THE TRIPLE ON THE LINK LINE TOO, AND FOR A DIFFERENT REASON THAN ON
+    // THE TRIPLE ON THE LINK LINE TOO, AND FOR A DIFFERENT REASON THAN ON
     // THE COMPILE LINE.
     //
     // Compiling without it produces objects for the wrong machine. LINKING
@@ -521,7 +521,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // `ld64.lld` for Mach-O, `lld-link` for PE. With no target it picks the
     // host's.
     //
-    // ⚠️ Measured 2026-08-23, cross-linking for macOS from Linux, after the
+    // Measured 2026-08-23, cross-linking for macOS from Linux, after the
     // objects were already correct Mach-O:
     //
     //     ld.lld: error: obj/main.o: unknown file type
@@ -590,7 +590,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         mcpp::toolchain::HostFlagOptions hopt;
         hopt.cfgBypass = mcpp::toolchain::HostFlagOptions::CfgBypass::Always;
         hopt.macosDeploymentTarget = macosDeploymentTarget;
-        // ⭐ THE SAME EXPRESSION THE LINK SIDE ASKS, twenty lines further down
+        // THE SAME EXPRESSION THE LINK SIDE ASKS, twenty lines further down
         // (`plan.targetSide.cAbi.prebuilt()`). Reading one value at both sites
         // is what makes it impossible for them to disagree — which they did,
         // from #511 until now, because only the link side was corrected.
@@ -598,7 +598,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         compile_toolchain_flags = mcpp::toolchain::render_tokens(
             mcpp::toolchain::host_compile_tokens(plan.toolchain, hopt, ninjaEsc));
     } else {
-        // ⚠️ Skipped entirely, not filtered. What this block emits is the
+        // Skipped entirely, not filtered. What this block emits is the
         // HOST's world reconstructed by hand — libc++'s headers, glibc's
         // headers, the Linux UAPI headers — because the cfg that normally
         // supplies them is bypassed. Every one of those is for the host, and
@@ -617,7 +617,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // Linker flags that cfg normally provides. The payload C-runtime
         // flags (-B/-L/loader) are appended via payload_ld below.
         link_toolchain_flags = crossTarget + " --no-default-config";
-        // ⚠️⚠️ THE CONDITION IS WHETHER THE GRAPH SUPPLIES THE C LIBRARY, AND
+        // THE CONDITION IS WHETHER THE GRAPH SUPPLIES THE C LIBRARY, AND
         // FOR A LONG TIME IT ASKED WHETHER `--target` HAD BEEN TYPED.
         //
         // `crossTarget` is the string `--target=<llvm triple>`. It is non-empty
@@ -634,12 +634,12 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // `xim:glibc` — `-B`, `-L` and the loader — so clang fell back to its
         // defaults and the startup objects resolved out of /lib.
         //
-        // ⭐ `cAbi.prebuilt()` IS THE QUESTION THE COMMENT BELOW ALREADY ASKED,
+        // `cAbi.prebuilt()` IS THE QUESTION THE COMMENT BELOW ALREADY ASKED,
         // and it is the same predicate 2026.8.25.1 moved three other decisions
         // onto. e2e 295 states the invariant as an identity: naming the host's
         // own target changes nothing.
         if (!plan.targetSide.cAbi.prebuilt()) {
-            // ⭐⭐ THE TARGET SIDE COMES FROM THE GRAPH, SO THE HOST'S MODEL
+            // THE TARGET SIDE COMES FROM THE GRAPH, SO THE HOST'S MODEL
             // CONTRIBUTES NOTHING — THE SAME REPLACEMENT `stdModuleFlags`
             // ALREADY MAKES ON THE COMPILE SIDE.
             //
@@ -650,7 +650,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // package that knows a format states its own link line (openkal-musl
             // carries `-nostdlib` plus that format's entry symbol).
             //
-            // ⚠️ Measured 2026-08-23, after the correct linker was finally
+            // Measured 2026-08-23, after the correct linker was finally
             // being chosen:
             //
             //     ld64.lld: error: unknown argument '--as-needed'
@@ -1043,7 +1043,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // A program with no C++ runtime needs the driver stopped from adding
         // one just as much as a program that brought its own.
         //
-        // ⚠️ IT WAS THEN `system_from_graph()`, WHICH OVERSHOT IN THE OTHER
+        // IT WAS THEN `system_from_graph()`, WHICH OVERSHOT IN THE OTHER
         // DIRECTION. That is an OR over two layers, and a program whose kernel
         // interface comes from a package while its C library and C++ runtime
         // are the payload's is served by the payload's archives — yet the OR
@@ -1054,7 +1054,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         //
         // measured on `openkal-linux = "0.5.4"` with a `throw` in main.
         //
-        // ⭐ THE C LIBRARY IS WHAT DECIDES IT, for the same reason it decides
+        // THE C LIBRARY IS WHAT DECIDES IT, for the same reason it decides
         // the link line's search paths: the payload's C++ runtime was
         // configured against the payload's C library, so it is eligible when
         // and only when that C library is the one in use. `check_layering`
@@ -1221,7 +1221,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // but the link line has a hard 128KiB ceiling (MAX_ARG_STRLEN) that real
     // workspaces already spend 43% of.
     std::string payload_ld;
-    // ⚠️ AND NOT WHEN THE TARGET SIDE COMES FROM THE GRAPH — the second half of
+    // AND NOT WHEN THE TARGET SIDE COMES FROM THE GRAPH — the second half of
     // the replacement made where `link_toolchain_flags` is built. `lm` describes
     // THIS MACHINE's C runtime: `-B`/`-L` into the payload and this host's
     // dynamic loader. Measured 2026-08-23, with the correct linker already
@@ -1230,12 +1230,12 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     //     ld64.lld: error: unknown argument
     //       '--dynamic-linker=…/xim-x-glibc/2.44/lib64/ld-linux-x86-64.so.2'
     //
-    // ⚠️ The first replacement alone was not enough, and that is the finding:
+    // The first replacement alone was not enough, and that is the finding:
     // the C-runtime group reaches the link line through TWO channels, and a
     // reader who fixed one saw the identical error and could reasonably
     // conclude the fix had not worked.
     //
-    // ⭐⭐ AND THE CONDITION IS THE SAME ONE, MADE CORRECT THE SAME WAY. This
+    // AND THE CONDITION IS THE SAME ONE, MADE CORRECT THE SAME WAY. This
     // asked `crossTargetFlag.empty()` — "was `--target` typed" — where it meant
     // "does the graph supply the C library". `cAbi.prebuilt()` is that
     // question. The comment above says the group reaches the link line through
@@ -1276,14 +1276,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // Windows MinGW build (host≠target). No rpath/loader/payload model. Static
     // + libstdc++exp (std::print's __open_terminal/__write_to_terminal live in
     // libstdc++exp.a, not plain libstdc++). Self-contained binutils → no -B.
-    // ⚠️ AND ONLY WHILE THE PAYLOAD IS THE TARGET, which is what the paragraph
+    // AND ONLY WHILE THE PAYLOAD IS THE TARGET, which is what the paragraph
     // above assumes without saying so: `x86_64-w64-mingw32-g++` needs no
     // `--target` because it HAS no other. When the target side comes from the
     // dependency graph the compiler is an ordinary retargetable clang, and this
     // branch is one of three shaped by the HOST rather than by the target — see
     // the replacement below, which covers all three at once.
     //
-    // ⚠️ THE SAME PREDICATE AS THE REPLACEMENT, BECAUSE THEY ARE COMPLEMENTARY.
+    // THE SAME PREDICATE AS THE REPLACEMENT, BECAUSE THEY ARE COMPLEMENTARY.
     // "covers all three at once" is only true while the two conditions are each
     // other's negation; if this one said `system` and that one said `C library`,
     // a mingw build whose kernel interface came from the graph and whose C
@@ -1296,7 +1296,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         std::string mingw_stdexp;
         if (caps.stdlib_id == "libstdc++")
             mingw_stdexp = " -lstdc++exp";
-        // ⭐⭐ `crossTarget`, BECAUSE THE PARAGRAPH ABOVE STATES A PRECONDITION
+        // `crossTarget`, BECAUSE THE PARAGRAPH ABOVE STATES A PRECONDITION
         // THE CONDITION DOES NOT CHECK: "`x86_64-w64-mingw32-g++` needs no
         // `--target` because it HAS no other".
         //
@@ -1313,7 +1313,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // — the identical sentence the comment beside `crossTarget` records for
         // a Mach-O cross, reached through this branch instead.
         //
-        // ⭐ Not a new condition but the string that names the machine: a mingw
+        // Not a new condition but the string that names the machine: a mingw
         // g++ has an empty `crossTargetFlag`, so this is the identity for the
         // case the paragraph was written about, and the fix for the other one.
         f.ld = std::format("{}{}{}{}{}", crossTarget, link_intent_ld,
@@ -1325,7 +1325,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         return f;
     }
 
-    // ⭐ THE PART OF THE LINK LINE THAT BELONGS TO THE TARGET, NOT THE PAYLOAD.
+    // THE PART OF THE LINK LINE THAT BELONGS TO THE TARGET, NOT THE PAYLOAD.
     //
     // Empty on every platform whose kernel interface is an instruction rather
     // than a library — Linux's is `syscall`, so a self-contained libc from the
@@ -1386,7 +1386,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         //
         // Native cl.exe (isMsvcDialect, returned above) keeps link.exe: there
         // the response file is ours, and 2026.8.5.3 already fixed it.
-        // ⚠️ `full_static` IS ON THIS LINE, AND IT WAS NOT.
+        // `full_static` IS ON THIS LINE, AND IT WAS NOT.
         //
         // The two branches below both carry it; this one did not, and nothing
         // showed because a Windows host's `-static` for an ELF target was
@@ -1442,7 +1442,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         std::string macos_sdk;
         if (auto sdk = mcpp::platform::macos::sdk_path())
             macos_sdk = " -isysroot " + escape_path(*sdk);
-        // ⭐⭐ AND KEPT, BECAUSE THE GRAPH BRANCH BELOW REPLACES THIS LINE.
+        // AND KEPT, BECAUSE THE GRAPH BRANCH BELOW REPLACES THIS LINE.
         //
         // `-isysroot` and the deployment floor describe the TARGET OS. Every
         // other token here describes the payload — which is exactly what a
@@ -1471,12 +1471,12 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // its own. Inject `-latomic` (under --as-needed) after runtime_dirs
         // so its -L entries are on the search path; self-guards on the lib
         // actually being present (see atomic_link_flag).
-        // ⚠️ THE THIRD CHANNEL. `libatomic` is this HOST's, found by looking in
+        // THE THIRD CHANNEL. `libatomic` is this HOST's, found by looking in
         // the payload's directories, and `--push-state` / `--as-needed` are GNU
         // ld spellings that a Mach-O or PE linker does not have. A target whose
         // runtime comes from the graph gets its own answer to oversized
         // `std::atomic` from that graph.
-        // ⭐ THE THIRD CHANNEL, AND THE LAST ONE. `libatomic` is this HOST's,
+        // THE THIRD CHANNEL, AND THE LAST ONE. `libatomic` is this HOST's,
         // found in the payload's directories, so it belongs to exactly the
         // group `link_toolchain_flags` and `payload_ld` belong to — and it
         // asked the same wrong question they did. Fixing the first two left
@@ -1502,7 +1502,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
 
     // ── The target side comes from the graph, so the HOST's link is wrong ──
     //
-    // ⭐⭐ THE THREE BRANCHES ABOVE ARE SHAPED BY THIS MACHINE, NOT BY THE
+    // THE THREE BRANCHES ABOVE ARE SHAPED BY THIS MACHINE, NOT BY THE
     // TARGET. `if constexpr (is_windows)` / `needs_explicit_libcxx` / else is a
     // question about where mcpp itself was built, and each answer describes a
     // link on that machine: an SDK path, a deployment target, a loader search
@@ -1510,7 +1510,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // is the host or is served by a payload, and wrong when the C library, the
     // C++ runtime and the platform are packages in the dependency graph.
     //
-    // ⚠️ ONLY THE THIRD BRANCH EVER CONSUMED `link_toolchain_flags`, WHICH IS
+    // ONLY THE THIRD BRANCH EVER CONSUMED `link_toolchain_flags`, WHICH IS
     // WHERE `--target=` LIVES. So a cross build over openkal linked correctly
     // from a Linux host and would have handed a Mach-O or an ELF to a linker
     // told nothing about the target from a macOS or a Windows one. The measured
@@ -1524,7 +1524,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // unnecessary but wrong, and appending to it would leave the outcome
     // depending on the driver's flag ordering rather than on a decision.
     //
-    // ⚠️ AND IT REPLACES A SPECIAL CASE RATHER THAN ADDING ONE. The PE branch
+    // AND IT REPLACES A SPECIAL CASE RATHER THAN ADDING ONE. The PE branch
     // above carried its own copy of this for one format; this covers PE, Mach-O
     // and ELF, on every host, with the predicate stated once.
     //
@@ -1540,14 +1540,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // Mach-O link as `-Wl,-rpath,…/lib/x86_64-unknown-linux-gnu`, which ld64
     // accepts and writes into the image), `payload_ld`, `atomic_ld`.
     //
-    // ⚠️ AND THE CONDITION IS THE C LIBRARY, NOT THE SYSTEM. Everything the
+    // AND THE CONDITION IS THE C LIBRARY, NOT THE SYSTEM. Everything the
     // replacement drops is a way of reaching the PAYLOAD's C library, so a
     // build whose C library still comes from the payload must not enter here
     // — however much of the rest of its target side the graph supplies. See
     // the note beside `Layer::prebuilt` in mcpp.targetside, which records what
     // this got wrong and what it cost.
     if (!isFreestandingTarget && !plan.targetSide.cAbi.prebuilt()) {
-        // ⚠️ ASSEMBLED HERE RATHER THAN TAKEN FROM `link_toolchain_flags`,
+        // ASSEMBLED HERE RATHER THAN TAKEN FROM `link_toolchain_flags`,
         // BECAUSE THAT STRING IS ONLY POPULATED WHEN THE PAYLOAD HAS A CONFIG
         // FILE (`isClangWithCfg`). The Linux payload ships one and the Windows
         // payload does not, so on a Windows host the replacement emitted no
@@ -1605,7 +1605,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         if (plan.toolchain.compiler == mcpp::toolchain::CompilerId::Clang)
             graphLd += " -fuse-ld=lld";
 
-        // ⭐⭐ AND THE TARGET'S OWN ANCHOR SURVIVES THE REPLACEMENT.
+        // AND THE TARGET'S OWN ANCHOR SURVIVES THE REPLACEMENT.
         //
         // Everything this branch rebuilds describes the PAYLOAD — its `-B`, its
         // startup objects, its loader — and a graph-supplied C library is
@@ -1704,7 +1704,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // Reproduced on this toolchain 2026-08-19.
             in.lld = mcpp::freestanding::resolve_lld(plan.toolchain.binaryPath);
             in.sysrootLib = plan.toolchain.targetSysrootLib;
-            // ⚠️ `--no-default-config` FIRST, and it is not hygiene.
+            // `--no-default-config` FIRST, and it is not hygiene.
             //
             // The llvm payload ships bin/clang++.cfg with an unconditional
             // `-Wl,--dynamic-linker=…/ld-linux-x86-64.so.2`, a host `-L` and
@@ -1714,7 +1714,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             // RISC-V firmware image with an x86-64 PT_INTERP baked in, which
             // links clean and reports success. Measured, on this very change,
             // before this line existed.
-            // ⚠️ TWO SHAPES, AND WHICH ONE IS A PROPERTY OF THE TARGET'S ROW.
+            // TWO SHAPES, AND WHICH ONE IS A PROPERTY OF THE TARGET'S ROW.
             //
             // With an `lldEmulation` the compiler driver is bypassed entirely,
             // because for that target it would hand the link to a host `g++`
@@ -1738,7 +1738,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
             f.bFlag.clear();
             f.ldRuntimeFallback.clear();
             f.linkage = "static";
-            // ⚠️ WHEN THE LINKER IS DRIVEN DIRECTLY, EVERY REMAINING DRIVER
+            // WHEN THE LINKER IS DRIVEN DIRECTLY, EVERY REMAINING DRIVER
             // FLAG IS AN ERROR RATHER THAN A NO-OP. Measured on the first
             // attempt, where two survived the freestanding replacement and
             // reached `ld.lld`:

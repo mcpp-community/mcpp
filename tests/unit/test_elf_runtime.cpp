@@ -582,7 +582,7 @@ TEST(ElfRuntime, ThisBinaryExportsNothingOfItsOwn) {
 
     auto facts = elf::inspect_elf_runtime(self);
     ASSERT_TRUE(facts.has_value()) << facts.error();
-    // ⚠️ PT_INTERP, not the ELF type: a PIE executable is ET_DYN exactly like
+    // PT_INTERP, not the ELF type: a PIE executable is ET_DYN exactly like
     // a shared library, and whether this binary is PIE is the payload
     // compiler's default rather than mcpp's decision.
     if (facts->interp.empty())

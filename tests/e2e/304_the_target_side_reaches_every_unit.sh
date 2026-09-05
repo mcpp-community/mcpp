@@ -3,7 +3,7 @@
 # A layer the GRAPH supplies is beneath every unit, including a sibling
 # dependency package that has never heard of it.
 #
-# ⭐⭐ THE SET WAS ALREADY COMPUTED AND REACHED ONE TRANSLATION UNIT.
+# THE SET WAS ALREADY COMPUTED AND REACHED ONE TRANSLATION UNIT.
 #
 # A package that supplies a target-side layer publishes the headers the whole
 # target is built against. Those travelled as an ordinary `publicUsage`, which
@@ -21,11 +21,11 @@
 #
 # mcpp#514 §A.
 #
-# ⚠️ NO openkal, NO CROSS, NO NETWORK. A path package declaring one capability
+# NO openkal, NO CROSS, NO NETWORK. A path package declaring one capability
 # and one `include_dirs` entry reproduces it, which is the point: this is not a
 # property of openkal but of how a target side was modelled.
 #
-# ⭐ THE CRITERION IS THE CDB ROW, NOT A GREP OVER THE TREE. `compile_commands.json`
+# THE CRITERION IS THE CDB ROW, NOT A GREP OVER THE TREE. `compile_commands.json`
 # says what each unit is actually compiled with; a grep over `build.ninja` would
 # also match the global rule and pass for the wrong reason.
 set -e
@@ -40,7 +40,7 @@ mkdir -p src abi/src abi/abi-include abi/abi-internal dep/src dep/dep-include
 # The provider: supplies a target-side layer, publishes one directory, and
 # keeps one to itself.
 #
-# ⭐⭐ THE TWO KEYS OF THIS RELEASE MEET IN THIS ONE PACKAGE, AND THAT IS THE
+# THE TWO KEYS OF THIS RELEASE MEET IN THIS ONE PACKAGE, AND THAT IS THE
 # REAL-WORLD SHAPE. `openkal-musl` declares `provides = ["mcpp:c-abi=musl"]`
 # AND carries an internal header overlay. A layer's directories reach EVERY
 # unit, so publishing the overlay by mistake would put musl's `hidden`/`weak`
@@ -101,7 +101,7 @@ EOF
 
 [ -s compile_commands.json ] || { echo "FAIL: no compile_commands.json"; exit 1; }
 
-# ⚠️ A DENOMINATOR. A CDB with no sibling row would make every assertion below
+# A DENOMINATOR. A CDB with no sibling row would make every assertion below
 # vacuously true, which is the false green this criterion has to rule out.
 siblings="$(jq -r '[.[] | select(.file | test("/dep/src/"))] | length' compile_commands.json)"
 if [ "$siblings" -lt 1 ]; then
@@ -140,7 +140,7 @@ if [ -n "$leaked" ]; then
     exit 1
 fi
 
-# ⭐⭐ AND THE LAYER'S *PRIVATE* DIRECTORY REACHES NOBODY BUT ITSELF.
+# AND THE LAYER'S *PRIVATE* DIRECTORY REACHES NOBODY BUT ITSELF.
 #
 # A layer reaches every unit, so publishing an internal overlay by mistake is
 # wider here than anywhere else: it would land on every translation unit of the

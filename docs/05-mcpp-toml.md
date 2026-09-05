@@ -222,10 +222,12 @@ the package/feature boundary, not on an individual target.
 > would leave nothing to compile for that device and say so only at the link).
 > Under `--no-accel` the glob is left out, which is how one project yields its
 > CPU-only variant. Under an `--accel` that does not cover the constraint the
-> build is refused naming both (`accel-mismatch`). Device-kind files (`.cu`,
-> `.hip`) the effective set matches are never compiled by the engine; they
-> reach the build program as `MCPP_DEVICE_SOURCES`, where the rule package the
-> project imports turns each into an `mcpp::action`.
+> build is refused naming both (`accel-mismatch`). Device-kind files the
+> effective set matches — CUDA and HIP, the GLSL stages, HLSL, OpenCL C and
+> Metal, listed in full in [20 — Heterogeneous Builds](20-heterogeneous-builds.md) — are never
+> compiled by the engine; they reach the build program as
+> `MCPP_DEVICE_SOURCES`, where the rule package the project imports turns each
+> into an `mcpp::action`.
 
 ```toml
 [build]
@@ -278,7 +280,7 @@ relinked, whether something else in the process already provides that library.
   / the executable's own directory (PE) finding it again after the build
   directory moves.
 
-⚠️ **This is not `[target.<triple>].linkage`** (§2.7.1). That key answers the
+**This is not `[target.<triple>].linkage`** (§2.7.1). That key answers the
 same-sounding question about the **C library** (a musl `-static` link, MSVC's
 `/MT`). The two are not independent, and the direction matters: a fully static
 image has no interpreter, so it cannot load a shared object at all. On a target
@@ -311,7 +313,7 @@ way mcpp's build of a package and a third party's copy of the same library can
 resolve to **one file** instead of two — which a package cannot state if
 declaring it forces the package to stop being consumable as a static library.
 
-⚠️ A descriptor that writes `soname` on a non-shared target cannot be read by
+A descriptor that writes `soname` on a non-shared target cannot be read by
 mcpp releases before 2026.8.28.2 — the whole manifest fails to load, not just
 the key. Publishing one to an index therefore waits for that floor to move.
 
@@ -360,7 +362,7 @@ reason it has no way to see.
 
 ```toml
 [build]
-# ⚠️ The relative ORDER of the two kinds is load-bearing: the internal overlay
+# The relative ORDER of the two kinds is load-bearing: the internal overlay
 # must precede the public headers for this package's own build. That is why
 # this is a SUBSET of `include_dirs` rather than a second list — two arrays
 # cannot express one order.
@@ -666,7 +668,7 @@ toolchain's libraries first.
 both the C and C++ compile channels. It reaches every TU in the package — module
 interface units included — so it also reaches the compiler's own P1689 module scan.
 
-> ⚠️ **It does not make a macro-guarded `import` acceptable.** mcpp runs its own
+> **It does not make a macro-guarded `import` acceptable.** mcpp runs its own
 > lexical pre-scan before the compiler ever sees the file, and that scanner
 > rejects an `import` inside **any** `#if` / `#ifdef` block without evaluating the
 > condition:
@@ -817,7 +819,7 @@ package that also publishes device builds is selected.
 
 The value is compared against the `accel` field of any prebuilt artifact the
 build consumes, and a build asking for none is satisfied by every artifact. See
-[20 — Accelerators](20-accelerators.md).
+[20 — Heterogeneous Builds](20-heterogeneous-builds.md).
 
 ### 2.4 `[lib]` — Library Root Module Convention
 
@@ -924,15 +926,15 @@ selector normalizes to exactly one identity:
 There is no ordered fallback or fuzzy, index-wide search by short name:
 
 ```toml
-# ✅ Correct — dotted selector
+# Correct — dotted selector
 [dependencies]
 chriskohlhoff.asio = "1.38.1"
 
-# ✅ Correct — namespace sub-table (preferred for several packages from one org)
+# Correct — namespace sub-table (preferred for several packages from one org)
 [dependencies.chriskohlhoff]
 asio = "1.38.1"
 
-# ❌ Wrong — a bare name never reaches the `chriskohlhoff` namespace
+# Wrong — a bare name never reaches the `chriskohlhoff` namespace
 [dependencies]
 asio = "1.38.1"
 ```
@@ -1210,7 +1212,7 @@ sysroot = "xim:newlib-riscv@4.4"     # a different C library
 sysroot = ""                          # no C library at all
 ```
 
-⚠️ **An absent key and an empty one are different answers.** Absent inherits the
+**An absent key and an empty one are different answers.** Absent inherits the
 target table's C library. Present-and-empty is the **zero-libc tier**: no C
 library is resolved, no include or library path is added, and the link carries
 only what the project and its dependencies supply. `#include <stdio.h>` stops
@@ -1227,7 +1229,7 @@ A build program can ask which C library **payload** supplies the sysroot:
 Both are empty on the zero-libc tier. See
 [13 — Bare-Metal and Freestanding Targets](13-baremetal.md).
 
-⚠️ **That is not the same question as "which C library did the target side
+**That is not the same question as "which C library did the target side
 resolve to".** `target_libc()` names the payload mcpp installed, and that value
 is an *input* to target-side resolution — a package in the dependency graph can
 supply the C library instead, in which case the resolved `c-abi` is not what
@@ -1613,7 +1615,7 @@ error: `toolkitnew` requires cuda.driver >= 13.0, and this machine has 12.4.
 version; `cuda.driver` is data passing through, and a backend mcpp has never
 heard of compares the same way.
 
-⚠️ **A floor nobody answered is silent.** A machine that never declared what it
+**A floor nobody answered is silent.** A machine that never declared what it
 has is not a machine that fails the floor — it is one nobody asked. Turning
 "we do not know" into "no" is the failure mode this exists to avoid, and it is
 asserted directly: `tests/e2e/603_version_floor.sh` builds a project whose floor
@@ -1644,7 +1646,7 @@ backend-openblas = { implies = ["use_blas"] }
 compat.openblas = "0.3"
 ```
 
-⚠️ **`"^0.3.0"` and not `"0.3.x"` or `"0.3"`.** Measured against a package the
+**`"^0.3.0"` and not `"0.3.x"` or `"0.3"`.** Measured against a package the
 index certainly carries, with a **build** as the criterion:
 
 | Written | Result |
@@ -1654,12 +1656,12 @@ index certainly carries, with a **build** as the criterion:
 | `cmdline = "0.0"` | resolves, then `install path missing after fetch` |
 | `cmdline = "0.0.x"` | `E_NOT_FOUND`, naming the package — which exists |
 
-⭐ The three outcomes are worth distinguishing, because two weaker criteria each
+The three outcomes are worth distinguishing, because two weaker criteria each
 admit a form that does not work: "no `E_NOT_FOUND`" admits the two-segment
 prefix, and "resolves" admits it as well. Only building against the real index
 settles it.
 
-⚠️ This matters more here than in `[dependencies]`. A feature whose
+This matters more here than in `[dependencies]`. A feature whose
 implementation cannot be fetched is a feature that does not exist, and a project
 using a **path** dependency during development never consults the index — so the
 failure appears only after publication, to somebody else.
@@ -1988,7 +1990,7 @@ statement of intent and a CI-matrix hint, shown by `mcpp why`, never a gate.
 Distinct from an artifact's `accel` field on purpose. A declaration is written
 by hand and may be aspirational; `accel` is measured from the build that
 produced a binary and is what a consumer is refused against. See
-[20 — Accelerators](20-accelerators.md).
+[20 — Heterogeneous Builds](20-heterogeneous-builds.md).
 
 ### 2.13 `[xlings]` — the project's environment
 
@@ -2243,6 +2245,37 @@ internal fork are all legitimate and indistinguishable from here.
 
 The lib root must be at `src/<name>.cppm` (or wherever `[lib] path` points); a
 missing one is reported as *"host module 'x': no interface unit at …"*.
+
+**A package may offer several rules, selected by features** (mcpp 2026.9.5.3+).
+Every module interface unit among the package's resolved `[build] sources` —
+including the sources a feature adds — is compiled as a host module under the
+name it declares, the lib root first. A feature unit may import the lib root;
+units are otherwise compiled alone, so they import `std`, `mcpp` and nothing
+else. Only listed sources take part: the inferred `src/**` of a package that
+declares no `sources` is not consulted, so a rule package published before this
+release exposes exactly what it exposed then.
+
+```toml
+# the collection's manifest
+[build]
+sources = ["src/plugins.cppm"]                   # export module mcpp.plugins;
+
+[features]
+rules-cuda  = { sources = ["rules/cuda.cppm"] }  # export module mcpp.rules.cuda;
+rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spirv;
+```
+
+```toml
+# a consumer
+[dependencies.mcpp]
+plugins = { version = "0.1.0", features = ["rules-spirv"], host-module = true }
+```
+
+The module set is the feature set: a unit whose feature is not active is not
+compiled, and importing it fails as an unknown module. `mcpp:plugins` is the
+collection the mcpp project maintains (repository `mcpp-community/mcpp-plugins`);
+its members are named `mcpp.rules.<x>` for rule packages and `mcpp.tools.<x>`
+for build-time utilities.
 
 *Build-time only:* a `host-module = true` dependency is **not** compiled into
 or linked with the target, and neither is anything it depends on. It exists to

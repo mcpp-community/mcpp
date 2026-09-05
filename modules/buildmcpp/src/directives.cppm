@@ -76,14 +76,14 @@ enum class Slot : std::size_t {
     // is neither a compile input nor a link input, and putting it in LdFlags
     // would put an emulator's argv on the linker command line.
     Runner,
-    // ⭐⭐ A NAMED WAY OF REACHING THE ARTEFACT. ONE SLOT, ANY NUMBER OF NAMES.
+    // A NAMED WAY OF REACHING THE ARTEFACT. ONE SLOT, ANY NUMBER OF NAMES.
     //
     // `Runner` above is the default — how the artefact is EXECUTED. Writing it
     // to a device, watching what it prints, starting a debug server, deploying
     // it, serving it: all the same shape, an argv the PACKAGE supplies, and the
     // only thing that distinguishes them is a name.
     //
-    // ⚠️ THE NAME IS DATA. An earlier version gave `flash`, `monitor` and
+    // THE NAME IS DATA. An earlier version gave `flash`, `monitor` and
     // `debug` their own slots — which put EMBEDDED vocabulary in the engine,
     // so a web package could not add `serve` nor a cluster package `submit`
     // without an engine release. The value here is `<name>:<token>`, one token
@@ -122,7 +122,7 @@ enum class Slot : std::size_t {
     // A sentence for the USER. Not a build input at all — see Scope::Advisory
     // for why this could not be folded into any existing slot.
     Warnings,
-    // ⭐ A CLAIM ABOUT THE MACHINE, OR ABOUT WHAT THIS PACKAGE NEEDS OF IT.
+    // A CLAIM ABOUT THE MACHINE, OR ABOUT WHAT THIS PACKAGE NEEDS OF IT.
     //
     // `fact` carries `<name>=<version>`: something the program established
     // about the machine, by whatever means the package owns (a driver's
@@ -139,7 +139,7 @@ enum class Slot : std::size_t {
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
 
-// ⚠️ THERE IS DELIBERATELY NO LIST OF ACTION NAMES HERE.
+// THERE IS DELIBERATELY NO LIST OF ACTION NAMES HERE.
 //
 // An earlier version carried `kDeviceSlots`, `device_slot_name()` and a
 // `Semantics` function switching on four hardcoded values. Every one of them
@@ -161,7 +161,7 @@ enum class Scope {
     SourceSet,       // joins the compile set
     RerunKey,        // not a build input at all; only feeds the re-run key
     GraphNode,       // declares an edge in the build graph; see manifest::BuildAction
-    // ⚠️ REACHES THE USER RATHER THAN THE BUILD, AND THAT IS WHY IT IS A
+    // REACHES THE USER RATHER THAN THE BUILD, AND THAT IS WHY IT IS A
     // SEVENTH VALUE RATHER THAN A REUSED ONE.
     //
     // Every other scope answers "which part of the build sees this". An
@@ -226,7 +226,7 @@ inline constexpr std::array<Def, 21> kTable{{
     {"cfg",                 "define",            Slot::Defines,          Scope::PackagePrivate, Transform::DefinePrefix,  false, "",                           "",                                              1},
     {"generated",           "generated",         Slot::Generated,        Scope::SourceSet,      Transform::Verbatim,      true,  "declared generated source",  "but it does not exist after the run",           1},
     {"source",              "source",            Slot::Sources,          Scope::SourceSet,      Transform::Verbatim,      true,  "selected source",            "(mcpp:source=) but no such file exists",         1},
-    // ⚠️ LinkGlobal, and that is the whole reason this row exists.
+    // LinkGlobal, and that is the whole reason this row exists.
     //
     // A board-support package is the one thing that knows a board's memory
     // layout, and a linker script is how that layout is expressed. Every other
@@ -243,14 +243,14 @@ inline constexpr std::array<Def, 21> kTable{{
     // Single-valued in practice — two scripts on one line is an lld error, and
     // that error names both, which is a better diagnostic than anything a
     // conflict check here would produce.
-    // ⚠️ `mustExistAfterRun` is FALSE, and not by oversight. That contract
+    // `mustExistAfterRun` is FALSE, and not by oversight. That contract
     // assumes the directive's value IS a path (`generated=`, `source=`), and
     // this one's transformed value is `-T <path>` — so the check would test
     // the wrong string and reject a script that is right there. Special-casing
     // the contract for one row would cost more than it buys: lld's own error
     // is already exact ("cannot find linker script <path>"), which is the
     // condition the contract exists to make legible.
-    // ⚠️ One argv TOKEN per line, in emission order.
+    // One argv TOKEN per line, in emission order.
     //
     // argv is an ordered list and a directive is one line = one value, so the
     // list is built by repetition. The alternative — a JSON array, as `action`
@@ -272,7 +272,7 @@ inline constexpr std::array<Def, 21> kTable{{
     {"rerun-if-changed",    "",                  Slot::RerunFiles,       Scope::RerunKey,       Transform::Verbatim,      false, "",                           "",                                              1},
     {"rerun-if-env-changed","",                  Slot::RerunEnv,         Scope::RerunKey,       Transform::Verbatim,      false, "",                           "",                                              1},
     {"rerun-if-changed-glob","",                 Slot::RerunGlobs,       Scope::RerunKey,       Transform::Verbatim,      false, "",                           "",                                              2},
-    // ⚠️ THE ONE THING A BUILD PROGRAM COULD NOT DO BEFORE: SUCCEED AND STILL
+    // THE ONE THING A BUILD PROGRAM COULD NOT DO BEFORE: SUCCEED AND STILL
     // SAY SOMETHING.
     //
     // mcpp captures a build program and prints what it captured only on a
@@ -287,14 +287,14 @@ inline constexpr std::array<Def, 21> kTable{{
     // `xpkg_dir` returns empty and the program configures no runner. Correct,
     // silent, and indistinguishable to the user from a package that forgot.
     //
-    // ⚠️ `tag` IS NON-EMPTY, AND THAT IS LOAD-BEARING. A build program's
+    // `tag` IS NON-EMPTY, AND THAT IS LOAD-BEARING. A build program's
     // result is cached and a hit does not re-run it, so an advisory that lived
     // only on the run path would appear once and never again — the same
     // failure shape as the note that was deleted, arrived at from the other
     // side. A non-empty tag puts it in the cache record, and `serialize` /
     // `accept_cache_record` are table-driven, so the replay costs nothing.
     //
-    // ⚠️ kCacheEpoch is deliberately NOT bumped for this row. Entries written
+    // kCacheEpoch is deliberately NOT bumped for this row. Entries written
     // before it carry no `d warning` line, and the programs that wrote them
     // could not emit one — so replaying them yields exactly what the program
     // said, and the entry is still correct. Bumping would re-run every build
@@ -365,7 +365,7 @@ std::optional<std::string> protocol_error(const Directives& d);
 // The `mcpp:warning=` lines a program emitted, each already prefixed with the
 // package it came from.
 //
-// ⚠️ THE FORMATTING LIVES HERE AND THE PRINTING DOES NOT, for two reasons that
+// THE FORMATTING LIVES HERE AND THE PRINTING DOES NOT, for two reasons that
 // pull the same way. This module deliberately imports no UI — a directive
 // table that knew how to draw would be a different kind of thing. And there
 // are TWO call sites, a run and a cache hit, which is exactly the shape that
@@ -446,7 +446,7 @@ std::string action_error(const Directives& d);
 // there, and rewriting it would make ninja think the input changed on every
 // prepare.
 //
-// ⚠️ ONLY FOR OUTPUTS THAT ARE TRANSLATION UNITS, which is why this needs the
+// ONLY FOR OUTPUTS THAT ARE TRANSLATION UNITS, which is why this needs the
 // table. A placeholder exists so the SCAN has something to read, and the scan
 // never reads a header — but writing one anyway turned "the generator did not
 // run" into "the header is empty", and mcpp#534 was diagnosed as a race for
@@ -620,7 +620,7 @@ std::optional<std::string> protocol_error(const Directives& d) {
         std::string list;
         for (auto const& k : d.unknownKeys)
             list += (list.empty() ? "" : ", ") + ("mcpp:" + k);
-        // ⚠️ NOT "so it must be a typo".
+        // NOT "so it must be a typo".
         //
         // That is what this said, and adding `link-script` in protocol 3
         // proved it wrong: a package written against a newer mcpp reaches an
@@ -733,7 +733,7 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     bc.ldflags.insert(bc.ldflags.end(), ld.begin(), ld.end());
     // Appended in emission order — the tokens ARE the argv.
     bc.runner.insert(bc.runner.end(), runner.begin(), runner.end());
-    // ⭐ `<name>:<token>`, split on the FIRST colon. A token may contain colons
+    // `<name>:<token>`, split on the FIRST colon. A token may contain colons
     // (a Windows path, a URL); a name may not, which is what makes the first
     // one unambiguous.
     for (auto const& entry : d.at(Slot::NamedRunner)) {
@@ -743,7 +743,7 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     }
     for (auto const& name : d.at(Slot::RunnerLongLived))
         bc.namedRunners[name].longLived = true;
-    // ⚠️ ANY non-empty value sets it, and nothing can unset it. Exclusivity is a
+    // ANY non-empty value sets it, and nothing can unset it. Exclusivity is a
     // claim about the DEVICE: if one package knows the target is a mutex, it is
     // one, and a later package saying nothing must not relax that.
     if (!d.at(Slot::RunExclusive).empty()) bc.runExclusive = true;

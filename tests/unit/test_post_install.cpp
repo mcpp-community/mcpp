@@ -114,7 +114,7 @@ mcpp::toolchain::XimToolchainPackage gcc_pkg() {
 
 }  // namespace fixup_gate
 
-// ⚠️ THE REGRESSION. An empty runtime identity used to be
+// THE REGRESSION. An empty runtime identity used to be
 //     std::unexpected("… default SubOS has no RuntimeBinding identity …")
 // and `prepare.cppm` turned that into `error: toolchain post-install fixup: …`,
 // so `mcpp build` AND `mcpp toolchain install` both died on any Linux machine
@@ -193,7 +193,7 @@ TEST(PostInstallFixup, APackageWithNoFixupReportsNothingToReport) {
         << result->skippedReason;
 }
 
-// ⭐⭐ THE VERSION THAT WAS ASKED FOR AND THE VERSION THAT WAS INSTALLED ARE
+// THE VERSION THAT WAS ASKED FOR AND THE VERSION THAT WAS INSTALLED ARE
 // TWO VOCABULARIES FOR ONE FACT.
 //
 // A RuntimeBinding carries the DECLARED identity; xlings names the payload
@@ -252,7 +252,7 @@ TEST(GlibcPayload, ARequestResolvesToItsOneRefinement) {
     EXPECT_EQ(*got, only);
 }
 
-// ⚠️ PER COMPONENT, NOT PER CHARACTER. `2.4` is not a request that `2.44`
+// PER COMPONENT, NOT PER CHARACTER. `2.4` is not a request that `2.44`
 // answers — a prefix match on the string would say it is, and would then hand
 // a build the wrong C library without saying anything.
 TEST(GlibcPayload, AStringPrefixIsNotARefinement) {
@@ -262,7 +262,7 @@ TEST(GlibcPayload, AStringPrefixIsNotARefinement) {
     EXPECT_FALSE(got.has_value());
 }
 
-// ⭐ AND THE REFUSAL STILL STANDS WHEN THERE IS NO ONE ANSWER. "The resolution
+// AND THE REFUSAL STILL STANDS WHEN THERE IS NO ONE ANSWER. "The resolution
 // of this request" has to be a single payload to be an answer at all; two
 // refinements are not a menu to pick from.
 TEST(GlibcPayload, TwoRefinementsAreRefusedRatherThanChosenBetween) {
@@ -273,7 +273,7 @@ TEST(GlibcPayload, TwoRefinementsAreRefusedRatherThanChosenBetween) {
     EXPECT_FALSE(got.has_value());
 }
 
-// ⭐⭐ THE RESOLVER ITSELF, because it has TWO callers and they failed
+// THE RESOLVER ITSELF, because it has TWO callers and they failed
 // separately. The first version of this fix lived inside the toolchain fixup;
 // `probe`'s compile-side payload discovery spelled the same lookup its own way
 // and kept missing — and ITS failure names no version at all:
@@ -306,7 +306,7 @@ TEST(PayloadDirForVersion, TwoRefinementsAreNotAnAnswer) {
     EXPECT_FALSE(mcpp::xlings::paths::payload_dir_for_version(fx.root, "2.44"));
 }
 
-// ⚠️ PER COMPONENT, NOT PER CHARACTER — a string prefix would hand a build the
+// PER COMPONENT, NOT PER CHARACTER — a string prefix would hand a build the
 // wrong C library and say nothing.
 TEST(PayloadDirForVersion, AStringPrefixIsNotARefinement) {
     GlibcRootFixture fx{"mcpp_pdfv_strprefix"};
@@ -320,7 +320,7 @@ TEST(GlibcPayload, NothingInstalledIsStillRefused) {
     EXPECT_FALSE(got.has_value());
 }
 
-// ⚠️ AN EMPTY REQUEST IS NOT A REQUEST FOR EVERYTHING.
+// AN EMPTY REQUEST IS NOT A REQUEST FOR EVERYTHING.
 //
 // `packageRoot / ""` is `packageRoot`, and that IS a directory — so the
 // exact-match branch would hand the CONTAINER back and every caller would

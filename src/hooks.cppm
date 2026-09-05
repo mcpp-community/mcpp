@@ -1,6 +1,6 @@
 // mcpp.hooks — running the project's `[hooks]` lifecycle commands.
 //
-// ⚠️ EXPERIMENTAL. A hook cannot currently change whether a build succeeded:
+// EXPERIMENTAL. A hook cannot currently change whether a build succeeded:
 // every failure is a warning, and `side_effect = true` is refused by the
 // manifest parser. Only the ROOT project's hooks are ever run — a dependency's
 // `[hooks]` is inert. See docs/05-mcpp-toml.md §2.16.
@@ -131,7 +131,7 @@ event_command(const mcpp::manifest::Hooks& hooks, Event event) {
 // message is identical either way; only its severity and the build's fate
 // differ.
 //
-// ⚠️ WHILE `[hooks]` IS EXPERIMENTAL, `sideEffect` IS ALWAYS FALSE — the
+// WHILE `[hooks]` IS EXPERIMENTAL, `sideEffect` IS ALWAYS FALSE — the
 // manifest parser refuses `side_effect = true` (see
 // modules/manifest/src/toml.cppm). The `true` branch below is therefore
 // unreachable today ON PURPOSE: it is the behaviour the key will select when

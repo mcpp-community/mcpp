@@ -132,7 +132,7 @@ jobs:
 
       - name: Install the emulator (xim:qemu-riscv)
         run: |
-          # ⚠️ BOTH homes. The shim on PATH dispatches against whichever home
+          # BOTH homes. The shim on PATH dispatches against whichever home
           # owns it, and `mcpp run` runs the runner through that shim — so an
           # emulator installed only in the ambient xlings home answers
           # "xlings: 'qemu-system-riscv64' is not installed" when mcpp asks.
@@ -153,7 +153,7 @@ jobs:
           XLINGS_HOME="${MCPP_HOME:-$HOME/.mcpp}/registry" \
             "$XLINGS_BIN" install xim:picolibc-riscv -y
           test -d "${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-picolibc-riscv"
-          # ⚠️ The M-profile emulator, in BOTH homes for the reason above.
+          # The M-profile emulator, in BOTH homes for the reason above.
           # `xim:qemu-arm` carries `qemu-system-arm` as well as
           # `qemu-system-aarch64`; test 332 addresses it by absolute path out of
           # the payload, so what matters is that the payload EXISTS in the home
@@ -211,19 +211,19 @@ jobs:
           grep -q 'PASS: the freestanding std subset' \
             133_freestanding_std_subset.sh.log || {
             echo "133 (std subset) skipped on the runner that must run it"; exit 1; }
-          # ⚠️ 332 declares `# requires: qemu-arm`, which no sharded runner has
+          # 332 declares `# requires: qemu-arm`, which no sharded runner has
           # — so on the shards it exits 0 without running. This job is the only
           # place its PASS line can be demanded.
           grep -q 'PASS: cortex-m rows build, boot' \
             332_cortex_m_builds_and_boots.sh.log || {
             echo "332 (cortex-m) skipped on the runner that must run it"; exit 1; }
-          # ⭐ And a count, because four `grep -q` calls that each matched say
+          # And a count, because four `grep -q` calls that each matched say
           # nothing about how many rows the script actually booted: a fixture
           # that stopped iterating would still print its PASS line.
           booted=$(grep -c 'booted on ' 332_cortex_m_builds_and_boots.sh.log || true)
           [ "$booted" = "4" ] || {
             echo "332 booted $booted rows, expected 4"; exit 1; }
-          # ⚠️ 336 IS HERE FOR THE SAME REASON, AND ADDING IT TO THE LOOP ABOVE
+          # 336 IS HERE FOR THE SAME REASON, AND ADDING IT TO THE LOOP ABOVE
           # WITHOUT ADDING IT HERE WOULD HAVE BEEN THE SAME DEFECT: it declares
           # `# requires: qemu-arm`, so on a shard it exits 0 having run nothing.
           grep -q 'PASS: armv7-a rows build, boot' \
@@ -232,7 +232,7 @@ jobs:
           a32=$(grep -c 'booted on virt' 336_armv7a_builds_and_boots.sh.log || true)
           [ "$a32" = "2" ] || {
             echo "336 booted $a32 rows, expected 2"; exit 1; }
-          # ⚠️ 338 SKIPS UNTIL `xim:picolibc-arm` IS PUBLISHED, and a skip here
+          # 338 SKIPS UNTIL `xim:picolibc-arm` IS PUBLISHED, and a skip here
           # is legitimate rather than a defect — the payload is a separate
           # release. So its PASS line is NOT demanded; what IS demanded is that
           # the script either passed or said why, which is what distinguishes a

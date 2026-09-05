@@ -1,7 +1,8 @@
-# 20 — Accelerators
+# 20 — Heterogeneous Builds
 
-How mcpp builds device code, and how a prebuilt artifact states which devices
-it can run on.
+GPU and AI accelerator targets, and mixed host/device compilation: how mcpp
+builds device code, and how a prebuilt artifact states which devices it can
+run on.
 
 ## Two shapes, one of which mcpp implements today
 
@@ -21,10 +22,31 @@ This document describes the island shape, which is what mcpp implements.
 
 ## Device translation units
 
-A source whose extension is `.cu` or `.hip` is a **device translation unit**.
-mcpp classifies it as such and treats it accordingly: it is never scanned for
-imports and never produces a BMI, because no device compiler accepts C++20
-modules.
+A source in a language a separate compiler consumes is a **device translation
+unit**. mcpp classifies it as such and treats it accordingly: it is never
+scanned for imports and never produces a BMI, because no device compiler
+accepts C++20 modules.
+
+The criterion is the compiler, not the vendor (the table below is
+2026.9.5.3+; before it, `.cu` and `.hip` alone):
+
+| language | extensions |
+|---|---|
+| CUDA, HIP | `.cu`, `.hip` |
+| GLSL, by stage | `.comp`, `.vert`, `.frag`, `.geom`, `.tesc`, `.tese`, `.mesh`, `.task`, `.rgen`, `.rint`, `.rahit`, `.rchit`, `.rmiss`, `.rcall` |
+| GLSL, stage-less | `.glsl` |
+| HLSL | `.hlsl` |
+| OpenCL C | `.cl` |
+| Metal Shading Language | `.metal` |
+
+An extension outside this table listed in `[build] sources` is refused by name,
+which is the behaviour that makes the table a table: mcpp has no rule for the
+file, its object would be linked by nothing, and building it would fail later
+and less clearly.
+
+`.glsl` carries no stage. glslang derives the stage from the extension, so a
+rule package refuses a stage-less name — the message belongs there, and this
+table therefore does not need to know which extensions name a stage.
 
 `.cuh` and `.hiph` are classified as headers. They are not compiled, but
 editing one can change what the graph should be, so they invalidate the fast
@@ -71,7 +93,7 @@ its host-compiler requirements belong to the rule.
 
 Three things go wrong late with a device toolkit, and none of them is a fact
 about the build graph. They are read and reported by the **rule package** that
-drives the tools -- `examples/09-cuda-kernel/rules-cuda` shows each one -- and
+drives the tools -- `mcpp.rules.cuda` in `mcpp:plugins` shows each one -- and
 the engine owns none of them (`tests/unit/test_core_vendor_probes.cpp` holds
 that line, so a second backend never grows a second copy inside mcpp).
 

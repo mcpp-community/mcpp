@@ -2,7 +2,7 @@
 # requires: gcc
 # `mcpp run --target X` must not write X's build into the HOST's cache slot.
 #
-# ⚠️ WHAT MAKES THIS FAIL SILENTLY RATHER THAN LOUDLY.
+# WHAT MAKES THIS FAIL SILENTLY RATHER THAN LOUDLY.
 #
 # The build cache is keyed on the target triple, and `mcpp run`'s fast path
 # matches the entry whose key is EMPTY — empty means "built for this machine",
@@ -23,7 +23,7 @@
 #          Running `target/riscv64-none-elf/…/bin/openkal-same-source`
 #     exit=1
 #
-# ⭐ THE ASSERTION IS ON THE PATH, NOT ON THE EXIT CODE. A foreign-architecture
+# THE ASSERTION IS ON THE PATH, NOT ON THE EXIT CODE. A foreign-architecture
 # artifact fails to exec, so a test checking only the status would pass for the
 # wrong reason there and MISS the defect wherever the foreign binary happens to
 # run — which is what a same-architecture cross build does. What is wrong is
@@ -73,7 +73,7 @@ if ! out="$("$MCPP" run 2>&1)"; then
     exit 1
 fi
 
-# ⭐ The load-bearing line. `Running `…`` names the artifact's path, and the
+# The load-bearing line. `Running `…`` names the artifact's path, and the
 # path names the target it was built for.
 ran="$(printf '%s\n' "$out" | sed -n 's/.*Running `\([^`]*\)`.*/\1/p' | head -1)"
 if [ -z "$ran" ]; then

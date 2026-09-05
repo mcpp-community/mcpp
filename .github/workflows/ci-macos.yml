@@ -262,7 +262,7 @@ jobs:
           echo "--- otool -L ---";  otool -L "$BIN" || true
           echo "--- rpaths ---";    otool -l "$BIN" | grep -A2 LC_RPATH || true
           echo "--- statically embedded libc++? ---"
-          # ⚠️ `nm ... 2>/dev/null | grep -c` USED TO PRINT "0 (good)" WHEN `nm`
+          # `nm ... 2>/dev/null | grep -c` USED TO PRINT "0 (good)" WHEN `nm`
           # ITSELF FAILED. A count of zero and a tool that never ran produce the
           # same number, and the word "good" is then a claim nothing supports.
           # This is diagnostic output rather than a gate, which makes it worse
@@ -319,7 +319,7 @@ jobs:
         run: |
           MCPP=/tmp/mcpp-fresh   # the freshly self-hosted binary built from this PR
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
-          # ⚠️ THIS IS THE STEP THE RETRY WAS MEASURED ON: a macOS runner
+          # THIS IS THE STEP THE RETRY WAS MEASURED ON: a macOS runner
           # answered `Could not resolve host: github.com` after 30s of
           # resolver timeout, failing a PR check before a single line of
           # mcpp had run. See .github/tools/git_clone_retry.sh.

@@ -128,7 +128,7 @@ jobs:
           )
           [[ -z "$REQUESTED_TAG" ]] || args+=(--tag "$REQUESTED_TAG")
 
-          # ⚠️ EXIT 75 IS "THE PUSH LANDED, THE AUR'S INDEX HAS NOT CAUGHT UP",
+          # EXIT 75 IS "THE PUSH LANDED, THE AUR'S INDEX HAS NOT CAUGHT UP",
           # AND FAILING ON IT MAKES THIS REPOSITORY'S CI RED FOR SOMEBODY ELSE'S
           # REFRESH SCHEDULE.
           #
@@ -142,7 +142,7 @@ jobs:
           # `AUR RPC did not converge to <ver>` and the AUR RPC answered with
           # that exact version when asked afterwards.
           #
-          # ⚠️ EVERY OTHER NON-ZERO CODE STILL FAILS. A refused downgrade (3) and
+          # EVERY OTHER NON-ZERO CODE STILL FAILS. A refused downgrade (3) and
           # a permanent error (2) are this repository's problem and stay red.
           set +e
           python3 scripts/aur/reconcile_mcpp_bin.py "${args[@]}"

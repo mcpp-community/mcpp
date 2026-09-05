@@ -122,7 +122,7 @@ done
 # report success -- the exact failure a cache key exists to prevent, arriving
 # silently. Found by sweeping for stale paths after the split, not by a test.
 #
-# ⚠️ THE UNIT IS THE LINE, NOT THE FILE. The first version asked whether the
+# THE UNIT IS THE LINE, NOT THE FILE. The first version asked whether the
 # FILE mentioned `modules/**`, and passed — satisfied by the comment sitting
 # above the key explaining why `modules/**` belongs there. A check that a
 # comment can satisfy is checking the prose.

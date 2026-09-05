@@ -282,7 +282,7 @@ is therefore not consulted, and the program dies with
 error while loading shared libraries: libstdc++.so.6: cannot open shared object file
 ```
 
-⚠️ **`$ORIGIN` is not the fix.** Measured on a real package with the build
+**`$ORIGIN` is not the fix.** Measured on a real package with the build
 machine's store made unreachable:
 
 | state on the shipped `.so` | consumer's `DT_RPATH` inherited? | result |
@@ -320,16 +320,16 @@ index; run ranlib to add one`.
 
 | | status |
 |---|---|
-| `kind = "lib"` (static) | ✅ every target, tested on all three |
-| `kind = "shared"` on Linux/ELF | ✅ — the package carries both the link name and the SONAME, and no build-machine loader path |
-| `kind = "shared"` on PE / MinGW (`*-windows-gnu`) | ✅ — the package carries the `.dll` **and** its import library |
-| `kind = "shared"` on Mach-O (`*-macos`) | ✅ — install name is `@rpath/<file>`, so the `.dylib` relocates. `LC_RPATH` is reported, not yet rewritten |
-| `kind = "shared"` on PE / MSVC (`*-windows-msvc`) | ✅ — mcpp generates the `.def`; see below |
-| `kind = "shared"` on `*-musl` | ❌ a musl target links statically |
-| one package carrying two ABIs for the same triple (gcc **and** clang) | ❌ leg selection is `cfg(arch/os/env)`; publish one package per ABI |
-| shipping prebuilt BMIs | ❌ not attempted; BMIs are compiler-build-exact |
-| bundling dependencies into the package | ❌ declare them instead (above) |
-| consuming a package with **native `cl.exe`** | ✅ — via the neutral link intent; see below |
+| `kind = "lib"` (static) | every target, tested on all three |
+| `kind = "shared"` on Linux/ELF | — the package carries both the link name and the SONAME, and no build-machine loader path |
+| `kind = "shared"` on PE / MinGW (`*-windows-gnu`) | — the package carries the `.dll` **and** its import library |
+| `kind = "shared"` on Mach-O (`*-macos`) | — install name is `@rpath/<file>`, so the `.dylib` relocates. `LC_RPATH` is reported, not yet rewritten |
+| `kind = "shared"` on PE / MSVC (`*-windows-msvc`) | — mcpp generates the `.def`; see below |
+| `kind = "shared"` on `*-musl` | a musl target links statically |
+| one package carrying two ABIs for the same triple (gcc **and** clang) | leg selection is `cfg(arch/os/env)`; publish one package per ABI |
+| shipping prebuilt BMIs | not attempted; BMIs are compiler-build-exact |
+| bundling dependencies into the package | declare them instead (above) |
+| consuming a package with **native `cl.exe`** | — via the neutral link intent; see below |
 
 ### Exports on the MSVC ABI
 
@@ -467,17 +467,17 @@ The e2e suite gates each test on host capabilities, so "the suite is green" and
 
 | claim | linux | macOS | windows |
 |---|---|---|---|
-| layout, both interface modes, closure, the two gates, workspace root, named target, `sources = []`, bare-triple predicate | ✅ | ✅ | ✅ |
-| multi-target package, two legs one artifact name (`gnu` + `musl`) | ✅ | *impossible* | — |
-| multi-target package, two legs **two** artifact names (`msvc` + `mingw`) | — | *impossible* | ✅ |
-| multi-target package crossing an OS boundary (a PE leg) | ✅ | — | — |
-| `lib.exe /REMOVE:` really removing | — | — | ✅ |
-| PE shared library: build, pack, link, run | ✅ (wine) | — | — |
-| Mach-O shared library relocating out of its build tree | — | ✅ | — |
-| MSVC refusing `kind = "shared"` for the export reason | — | — | ✅ |
+| layout, both interface modes, closure, the two gates, workspace root, named target, `sources = []`, bare-triple predicate | yes | | yes |
+| multi-target package, two legs one artifact name (`gnu` + `musl`) | yes | *impossible* | — |
+| multi-target package, two legs **two** artifact names (`msvc` + `mingw`) | — | *impossible* | yes |
+| multi-target package crossing an OS boundary (a PE leg) | yes | — | — |
+| `lib.exe /REMOVE:` really removing | — | — | yes |
+| PE shared library: build, pack, link, run | (wine) | — | — |
+| Mach-O shared library relocating out of its build tree | — | yes | — |
+| MSVC refusing `kind = "shared"` for the export reason | — | — | yes |
 | a released mcpp consuming a package this one produced | local only | local only | local only |
-| a packed `.so` carries no build-machine loader path, **and the guard can see the defect when it is put back** | ✅ | — | — |
-| a stripped static archive still links; a stripped shared library still loads; `--no-strip` / `[pack] strip` / `--debug-symbols` from both sides | ✅ | — | — |
+| a packed `.so` carries no build-machine loader path, **and the guard can see the defect when it is put back** | yes | — | — |
+| a stripped static archive still links; a stripped shared library still loads; `--no-strip` / `[pack] strip` / `--debug-symbols` from both sides | yes | — | — |
 | the ELF editor on ELF32 and big-endian | unit test | unit test | unit test |
 
 *impossible* is not a gap: a macOS host can serve exactly one target

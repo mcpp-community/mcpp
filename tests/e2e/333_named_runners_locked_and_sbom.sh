@@ -4,7 +4,7 @@
 # artefact reaches a device, whether the build is reproducible, and what went
 # into it.
 #
-# ⚠️ NONE OF THESE NEEDS A DEVICE, AND THAT IS DELIBERATE. `flash`, `monitor`
+# NONE OF THESE NEEDS A DEVICE, AND THAT IS DELIBERATE. `flash`, `monitor`
 # and `debug` perform an argv the board supplied; what this script asserts is
 # that mcpp resolves the right slot, reports an override, and refuses clearly
 # when nothing is declared. Standing in a shell script for the tool means the
@@ -42,7 +42,7 @@ out=$("$MCPP" run --runner monitor 2>&1) || { echo "FAIL: run --runner monitor e
 case "$out" in *MONITORED*) ;; *) echo "FAIL: monitor did not perform its own slot"; exit 1 ;; esac
 echo "  ok  run --runner monitor performs its own entry, not flash's"
 
-# ⚠️ THE SLOT THAT IS NOT DECLARED MUST BE REFUSED BY NAME. An engine that fell
+# THE SLOT THAT IS NOT DECLARED MUST BE REFUSED BY NAME. An engine that fell
 # back to executing the artefact would "succeed" at flashing by running the
 # program on the build host, which is the failure the slot exists to prevent.
 if out=$("$MCPP" run --runner debug 2>&1); then
@@ -80,7 +80,7 @@ test -f mcpp.lock || { echo "FAIL: no mcpp.lock after a build with a dependency"
     || { echo "FAIL: --locked rejected a matching lock"; exit 1; }
 echo "  ok  --locked passes when the resolution matches"
 
-# ⚠️⚠️ AND THE FAILING DIRECTION IS THE ONE THAT MATTERS. Measured while writing
+# AND THE FAILING DIRECTION IS THE ONE THAT MATTERS. Measured while writing
 # this: with the fast path still enabled, a corrupted lock passed `--locked` and
 # printed "Finished" — the flag was accepted and the check never ran.
 sed -i.bak 's/version = "0.0.1"/version = "9.9.9"/' mcpp.lock
@@ -112,7 +112,7 @@ root = d["metadata"]["component"]
 assert root["name"] == "q", root
 names = [c["name"] for c in d["components"]]
 assert "cmdline" in names, names
-# ⚠️ A component with no licence must SAY so rather than omit the field: an
+# A component with no licence must SAY so rather than omit the field: an
 # absent key reads as "not examined" and is the shape a reviewer cannot filter.
 for c in d["components"]:
     assert "licenses" in c, c["name"]
@@ -122,7 +122,7 @@ for c in d["components"]:
 print("  ok  sbom is valid CycloneDX, names every component and its licence field")
 PY
 
-# ⭐ AND IT REPORTS WHAT WAS RECORDED, NOT WHAT WOULD RESOLVE NOW. This is the
+# AND IT REPORTS WHAT WAS RECORDED, NOT WHAT WOULD RESOLVE NOW. This is the
 # one property an SBOM must have, so it is asserted rather than assumed.
 sed -i.bak 's/version = "0.0.1"/version = "7.7.7"/' mcpp.lock
 "$MCPP" emit sbom -o sbom2.json >/dev/null 2>&1 || { echo "FAIL: mcpp emit sbom (2)"; exit 1; }
@@ -137,12 +137,12 @@ mv mcpp.lock.bak mcpp.lock
 
 # ── B: one board package, two environments, chosen by the consumer ─────────
 #
-# ⭐⭐ THE EMULATOR/HARDWARE AXIS IS A FEATURE, NOT A FORK. A board reached
+# THE EMULATOR/HARDWARE AXIS IS A FEATURE, NOT A FORK. A board reached
 # through QEMU and the same board reached through a debug probe differ only in
 # the argv of their device slots. Publishing two packages would duplicate the
 # linker script, the startup code and the module surface to vary four strings.
 #
-# ⚠️ AND THE SITE THIS CATCHES IS A REAL ONE. Dependency-supplied RunGlobal
+# AND THE SITE THIS CATCHES IS A REAL ONE. Dependency-supplied RunGlobal
 # entries reach the root through a DIFFERENT code path from a package's own;
 # wiring only the latter left `mcpp flash` reporting "no flash is configured"
 # while `mcpp run` found the runner the same build program emitted beside it.
@@ -193,7 +193,7 @@ echo "  ok  plain run uses the dependency's default runner"
 
 consumer_manifest ', features = ["hardware"]'
 rm -rf target
-# ⭐⭐ THE 80% CASE: THE COMMAND DOES NOT CHANGE. On hardware "run" means
+# THE 80% CASE: THE COMMAND DOES NOT CHANGE. On hardware "run" means
 # flash-and-go, so the feature redefines the DEFAULT runner rather than adding
 # a named one. A design requiring `--runner flash` here would have made the
 # most common action the one needing an extra argument.

@@ -22,7 +22,7 @@
 - [17 - The Project Environment](17-the-project-environment.md)
 - [18 - Reaching a Device](18-devices.md)
 - [19 - Supported Versions and Compatibility](19-supported-versions.md)
-- [20 - Accelerators](20-accelerators.md)
+- [20 - Heterogeneous Builds](20-heterogeneous-builds.md)
 
 ## Specifications
 

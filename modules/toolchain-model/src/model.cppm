@@ -93,7 +93,7 @@ struct Toolchain {
     // They reach the cache key without anything further being done: the key is
     // derived from the build COMMANDS, and these are part of them.
     std::string                         stdModuleFlags;
-    // ⭐⭐ THE PART OF THE ABOVE THAT SAYS WHICH MACHINE, SEPARATED FROM THE
+    // THE PART OF THE ABOVE THAT SAYS WHICH MACHINE, SEPARATED FROM THE
     // PART THAT SAYS WHERE THE HEADERS ARE.
     //
     // `stdModuleFlags` is one string carrying two different facts: the target
@@ -102,7 +102,7 @@ struct Toolchain {
     // the second compiles a BMI, which already contains everything the headers
     // contributed.
     //
-    // ⚠️ Passing the whole string to the second step is not wrong, it is noisy,
+    // Passing the whole string to the second step is not wrong, it is noisy,
     // and the noise is the kind that hides things:
     //
     //     clang++: warning: argument unused during compilation: '-nostdinc++'
@@ -110,7 +110,7 @@ struct Toolchain {
     //       (× 17, once per include directory)
     //
     // Seventeen warnings that are correct and mean nothing, in front of any
-    // warning that would mean something. ⚠️ They were present on every platform
+    // warning that would mean something. They were present on every platform
     // and visible on none: the non-Windows command ends in `2>&1` and mcpp
     // discards a successful command's output, so the Windows leg — which has no
     // redirection — is where they first appeared.
@@ -121,11 +121,11 @@ struct Toolchain {
     // throw, and wrong when something can.
     bool                                targetCxxRuntime = false;
 
-    // ⭐⭐ DOES THE TARGET'S C LIBRARY COME FROM A DIRECTORY THAT EXISTED
+    // DOES THE TARGET'S C LIBRARY COME FROM A DIRECTORY THAT EXISTED
     // BEFORE DEPENDENCY RESOLUTION? — `TargetSide::cAbi.prebuilt()`, recorded
     // here so the three producers of a compile line read one value.
     //
-    // ⚠️ THIS IS NOT `targetCxxRuntime` AND THE DIFFERENCE IS THE ONE
+    // THIS IS NOT `targetCxxRuntime` AND THE DIFFERENCE IS THE ONE
     // 2026.8.25.1 WAS ABOUT. That field says a package supplies a C++ RUNTIME;
     // this one says where the C LIBRARY comes from. A pure C program over
     // openkal has no C++ runtime and its C library still comes from the graph,
@@ -133,7 +133,7 @@ struct Toolchain {
     // interface from the graph while its C library stays the payload's. The
     // two come apart in both directions.
     //
-    // ⚠️ RECORDED, NOT DERIVED. `mcpp.targetside` answers it once, after the
+    // RECORDED, NOT DERIVED. `mcpp.targetside` answers it once, after the
     // dependency graph exists; every consumer reads this. The predicate it
     // replaced on the compile side was `!crossTargetFlag.empty()` — "is there a
     // `--target=` on the command line" — which is true for a project that names
@@ -144,14 +144,14 @@ struct Toolchain {
     // every host-targeting toolchain, means exactly that.
     bool                                cAbiPrebuilt = true;
 
-    // ⭐⭐ THE `--target=` A RETARGETABLE DRIVER HAS TO BE GIVEN, OR EMPTY.
+    // THE `--target=` A RETARGETABLE DRIVER HAS TO BE GIVEN, OR EMPTY.
     //
     // Non-empty only when the user asked for a cross AND the resolved compiler
     // is one binary that emits many targets (clang). For a native build, and
     // for a cross served by a driver that has exactly one target of its own
     // (`x86_64-w64-mingw32-g++`), this stays empty and nothing is added.
     //
-    // ⚠️ IT CANNOT BE DERIVED FROM `targetTriple` BEING NON-EMPTY. A native
+    // IT CANNOT BE DERIVED FROM `targetTriple` BEING NON-EMPTY. A native
     // build has a `targetTriple` too — the probed one — so a consumer that
     // tested for non-empty would add `--target=<host>` to every compile in
     // every project. Measured: it does, and what it produces is not a
@@ -234,7 +234,7 @@ struct Toolchain {
         }
     }
 
-    // ⚠️ THE FAMILY NAME, WHICH IS NOT THE DRIVER'S NAME, AND THEY DIFFER FOR
+    // THE FAMILY NAME, WHICH IS NOT THE DRIVER'S NAME, AND THEY DIFFER FOR
     // EXACTLY ONE FAMILY — THE COMMON ONE.
     //
     // The driver is `clang`; the family is `llvm`. Everything a user or a
@@ -260,7 +260,7 @@ bool is_musl_target(const Toolchain& tc);
 bool is_msvc_target(const Toolchain& tc);
 bool is_mingw_target(const Toolchain& tc);
 
-// ⭐⭐ THE FLAGS A WHOLE GRAPH HAS TO AGREE ON WHEN THE RUNTIME COMES FROM IT.
+// THE FLAGS A WHOLE GRAPH HAS TO AGREE ON WHEN THE RUNTIME COMES FROM IT.
 //
 // An ordinary flag is a package's business. These two are not: they change what
 // a translation unit EMITS for constructs the language guarantees work across a
@@ -291,7 +291,7 @@ bool is_mingw_target(const Toolchain& tc);
 //                        and it is machinery a self-contained image has no use
 //                        for.
 //
-// ⚠️⚠️ AND THE THIRD ONE WAS FOUND BY A PROGRAM THAT LINKED, WAS SIGNED, AND
+// AND THE THIRD ONE WAS FOUND BY A PROGRAM THAT LINKED, WAS SIGNED, AND
 // CRASHED ON THE REAL MACHINE — which is the whole argument for running the
 // artefact rather than inspecting it. On an arm64 Mac:
 //
@@ -314,13 +314,13 @@ bool is_mingw_target(const Toolchain& tc);
 // 0x29b8 → 0x58. Nine stubs and eleven slots, which is the size a program with
 // three imports should have.
 //
-// ⚠️ ELF IS DELIBERATELY ABSENT FROM THE SECOND, and it is not an oversight:
+// ELF IS DELIBERATELY ABSENT FROM THE SECOND, and it is not an oversight:
 // there a `thread_local` is a fixed offset from the thread pointer, which the C
 // library establishes itself. Adding the flag would work and cost an indirection
 // on every access — but it would also make ELF the only target whose thread
 // locals are laid out differently from every OTHER build of the same target.
 //
-// ⚠️ AND THE REASON THIS IS A FUNCTION RATHER THAN TWO `if`s: the compile
+// AND THE REASON THIS IS A FUNCTION RATHER THAN TWO `if`s: the compile
 // command is assembled in two places (`hostflags.cppm` for every ordinary unit,
 // `prepare.cppm` for the `std` module), and a `std.pcm` built with SEH imported
 // by units built with DWARF is a defect that neither file can see. "One fact,
@@ -450,7 +450,7 @@ std::vector<std::string> graph_runtime_compile_flags(const Toolchain& tc) {
     if (!tc.targetCxxRuntime) return out;
     auto t = triple::parse(tc.targetTriple);
     if (!t) return out;
-    // ⚠️⚠️ AND aarch64's RUNTIME LIBRARY CHOICE, WHICH IS A CODEGEN FACT THERE.
+    // AND aarch64's RUNTIME LIBRARY CHOICE, WHICH IS A CODEGEN FACT THERE.
     //
     // On aarch64 `--rtlib=compiler-rt` is not a link-time preference: it moves
     // the target-feature set. Measured by `openkal-llvm-runtime`, whose own
@@ -469,17 +469,17 @@ std::vector<std::string> graph_runtime_compile_flags(const Toolchain& tc) {
     //   error: current translation unit is compiled with the target feature
     //          '-fmv' but the precompiled file 'std.pcm' was not
     //
-    // ⭐ SAME DEFECT AS `-fdwarf-exceptions`, ONE FLAG LATER — see the note in
+    // SAME DEFECT AS `-fdwarf-exceptions`, ONE FLAG LATER — see the note in
     // hostflags.cppm, which describes that one in these words: "its objects
     // agreed with each other and nothing else did". A property of the graph
     // cannot be declared by one package for one command.
     //
-    // ⚠️ x86_64 HAS NO SUCH FEATURE, so both sides listed nothing there and the
+    // x86_64 HAS NO SUCH FEATURE, so both sides listed nothing there and the
     // defect was invisible until a second architecture was built.
     if (t->arch == "aarch64") out.emplace_back("--rtlib=compiler-rt");
     if (t->is_pe()) out.emplace_back("-fdwarf-exceptions");
     if (t->is_pe() || t->os == "macos") out.emplace_back("-femulated-tls");
-    // ⭐⭐ MACH-O ONLY, AND THE REASON IS THAT WEAK-DEF IS A RUN-TIME MECHANISM
+    // MACH-O ONLY, AND THE REASON IS THAT WEAK-DEF IS A RUN-TIME MECHANISM
     // THERE. See the note on this function for the measurement.
     if (t->os == "macos") {
         out.emplace_back("-fvisibility=hidden");

@@ -46,7 +46,7 @@ namespace pinned {
     // actions, which is how CI's sandbox sat on 0.4.30 unnoticed while
     // everything else had moved on. Don't reintroduce a hand-maintained list.
     //
-    // ⚠️ THIS IS A FLOOR, not just the current pick, and it has been raised
+    // THIS IS A FLOOR, not just the current pick, and it has been raised
     // twice for reasons that both still hold.
     //
     // First, at 2026.8.27.5. Below 2026.8.27.2 the bundled xlings takes a
@@ -129,7 +129,7 @@ namespace paths {
 
     // Where that package's payload is, or nullopt if it is not installed.
     //
-    // ⚠️ A PINNED ref resolves to exactly its version and to nothing else. A
+    // A PINNED ref resolves to exactly its version and to nothing else. A
     // build that asked for 1.8.12 and silently got 1.9.0 is the kind of answer
     // that is only discovered later, in the artifact. An unpinned ref takes
     // the highest version present — compared by numeric segments, because a
@@ -207,7 +207,7 @@ namespace paths {
     find_home_tool(std::string_view tool,
                    std::string_view requiredRelPath = {});
 
-    // ⭐⭐ WHICH INSTALLED PAYLOAD DIRECTORY ANSWERS A REQUESTED VERSION.
+    // WHICH INSTALLED PAYLOAD DIRECTORY ANSWERS A REQUESTED VERSION.
     //
     // A request and a resolution are two vocabularies for one fact. A
     // RuntimeBinding carries the DECLARED version (`glibc@2.44`); xlings names
@@ -216,7 +216,7 @@ namespace paths {
     // every lookup that spells the directory by the declared version stops
     // finding it.
     //
-    // ⚠️ STATED ONCE HERE BECAUSE IT HAS TWO CALLERS AND THEY FAILED
+    // STATED ONCE HERE BECAUSE IT HAS TWO CALLERS AND THEY FAILED
     // SEPARATELY. `post_install`'s toolchain fixup and `probe`'s compile-side
     // payload discovery each spelled it themselves; fixing one left the other,
     // and the second failure did not name a version at all — it read
@@ -225,7 +225,7 @@ namespace paths {
     //
     // because the glibc include directory had simply not been added.
     //
-    // ⭐ A REFINEMENT, NOT A DIRECTORY-ORDER PICK. `2.44.2` is what the request
+    // A REFINEMENT, NOT A DIRECTORY-ORDER PICK. `2.44.2` is what the request
     // `2.44` resolved to: its version COMPONENTS begin with the requested ones.
     // `2.4` does not answer `2.44`, because the comparison is per component and
     // not per character. And when two payloads both refine the request, this
@@ -810,7 +810,7 @@ XpkgRef parse_xpkg_ref(std::string_view spec) {
 
 // Where that package's payload is, or nullopt if it is not installed.
 //
-// ⚠️ A PINNED ref resolves to exactly its version and to nothing else. A build
+// A PINNED ref resolves to exactly its version and to nothing else. A build
 // that asked for 1.8.12 and silently got 1.9.0 is the kind of answer that is
 // only discovered later, in the artifact. An unpinned ref takes the highest
 // version present — compared by numeric segments, because a plain string sort
@@ -902,7 +902,7 @@ find_sibling_tool(const std::filesystem::path& compilerBin,
 }
 
 std::optional<std::filesystem::path> active_home_xpkgs() {
-    // ⭐⭐ `mcpp::home::root()`, NOT A FOURTH DERIVATION OF IT.
+    // `mcpp::home::root()`, NOT A FOURTH DERIVATION OF IT.
     //
     // This function used to resolve the home itself — `$MCPP_HOME`, else
     // `$HOME/.mcpp` — which is two of the three answers `mcpp.home` gives. The
@@ -913,7 +913,7 @@ std::optional<std::filesystem::path> active_home_xpkgs() {
     // everything else in the process — and what payload discovery produces is
     // `-isystem` rows on every compile command.
     //
-    // ⚠️ `mcpp.home`'s own header opens with this: "Every path under the mcpp
+    // `mcpp.home`'s own header opens with this: "Every path under the mcpp
     // home must be derived from here. Before #311 this logic existed in three
     // places … the copies drifted." This was the fourth copy, and it drifted
     // the same way.
@@ -1007,7 +1007,7 @@ find_sibling_package(const std::filesystem::path& compilerBin,
     if (auto found = find_package_in_xpkgs(*xpkgs, packageName, requiredRelPath))
         return found;
 
-    // ⚠️⚠️ THE `~/.xlings` FALLBACK IS GONE, AND ITS REMOVAL IS THE POINT.
+    // THE `~/.xlings` FALLBACK IS GONE, AND ITS REMOVAL IS THE POINT.
     //
     // It used to read: "Also check ~/.xlings/data/xpkgs/ (xlings global home)
     // as fallback." That was written when one machine had one home. It means
@@ -1023,7 +1023,7 @@ find_sibling_package(const std::filesystem::path& compilerBin,
     // half of mcpp#514, where a project's dependency units carried `-isystem`
     // rows naming a home the build was not using.
     //
-    // ⭐ THE DIRECTION IS THE SAFE ONE. Not finding a payload is reported —
+    // THE DIRECTION IS THE SAFE ONE. Not finding a payload is reported —
     // `probe.cppm` already has the verbose branch for it, and a glibc build
     // that then fails at `<linux/limits.h>` says so at the first compile.
     // Finding the WRONG one says nothing at all, and this codebase has paid
@@ -1035,7 +1035,7 @@ find_sibling_package(const std::filesystem::path& compilerBin,
 std::optional<std::filesystem::path>
 payload_dir_for_version(const std::filesystem::path& packageRoot,
                         std::string_view version) {
-    // ⚠️ AN EMPTY REQUEST IS NOT A REQUEST FOR EVERYTHING. `packageRoot / ""`
+    // AN EMPTY REQUEST IS NOT A REQUEST FOR EVERYTHING. `packageRoot / ""`
     // is `packageRoot` itself, which IS a directory — so without this the
     // exact-match branch below would hand back the package root and every
     // caller would treat that container as a payload. Both callers today

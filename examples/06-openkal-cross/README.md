@@ -11,7 +11,7 @@ mcpp build --target aarch64-macos         # macOS   aarch64, from any host
 mcpp build --target x86_64-windows        # Windows x86_64,  from any host
 ```
 
-⭐ Every one of them declines the third segment. The `aarch64-linux` line could
+Every one of them declines the third segment. The `aarch64-linux` line could
 not be written before 2026.8.26.2: it completed to `aarch64-linux-gnu`, a row
 registered but not supported, and refused — while `aarch64-linux-musl` built.
 A request that names no C library now resolves to a row that exists.
@@ -32,7 +32,7 @@ C++ runtime, and depends in turn on a C library, which depends on whichever
 implementation of the platform interface matches the target being built. One
 line therefore selects three of the five target-side layers.
 
-⭐⭐ **And the fourth — the compiler — without the manifest naming it.** There
+**And the fourth — the compiler — without the manifest naming it.** There
 used to be a `[toolchain] default = "llvm@22.1.8"` here. It is gone, because
 `openkal-llvm-runtime` declares `requires = ["mcpp:compiler=llvm"]` — a C++
 runtime is configured for one compiler family and records that in the headers it
@@ -45,7 +45,7 @@ ships — and since 2026.8.26.2 mcpp reads that and takes it:
              — this project only
 ```
 
-⚠️ **"this project only" is load-bearing.** Nothing is written — not
+**"this project only" is load-bearing.** Nothing is written — not
 `~/.mcpp/config.toml`, not this manifest. A requirement is a property of the
 package that states it, so it decides this build and no other. A project that
 wants a different compiler still writes one here, and that statement outranks

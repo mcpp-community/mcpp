@@ -16,7 +16,7 @@
 # ship because an older mcpp reads only the first and silently ignores the
 # second, so dropping the first would leave every older client with no link line.
 #
-# ⚠️ WHY BOTH HALVES ARE ASSERTED. The renderer is unit tested
+# WHY BOTH HALVES ARE ASSERTED. The renderer is unit tested
 # (tests/unit/test_link_intent_spelling.cpp) and only a real `cl.exe` can say
 # whether the result links. But a consumer that merely SUCCEEDS proves less than
 # it looks: if the neutral form were ignored and the ldflags applied instead,

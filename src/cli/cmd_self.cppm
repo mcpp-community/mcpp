@@ -85,7 +85,7 @@ export int cmd_doctor(const mcpplibs::cmdline::ParsedArgs& /*parsed*/) {
 }
 
 export int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
-    // ⚠️ `--format` IS ONLY DEFINED FOR THE `toolchain` TOPIC, and saying so
+    // `--format` IS ONLY DEFINED FOR THE `toolchain` TOPIC, and saying so
     // beats emitting an envelope whose `data` silently omits what was asked
     // for. `runtime` and `deps` have their own shapes and no consumer yet;
     // inventing one here would publish a contract nobody has read.

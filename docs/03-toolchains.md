@@ -108,7 +108,7 @@ $ mcpp build
              not your gcc@16.1.0 — this project only
 ```
 
-⭐ **Nothing is written.** Not `~/.mcpp/config.toml`, not the project's
+**Nothing is written.** Not `~/.mcpp/config.toml`, not the project's
 `mcpp.toml`. The requirement is a property of this build, so it applies to this
 build; the machine's default stays whatever it was, for every other project.
 The version comes from what is already installed — the same resolution
@@ -170,7 +170,7 @@ vocabulary, in four statuses:
 | `via dependency graph` | the compiler is here; the target's system is not, and packages can supply it | depend on an implementation of the target's kernel interface and C library |
 | `planned` | registered in the vocabulary, not yet shipped | — |
 
-⚠️ **A target absent from this block cannot be built here at all** — and that
+**A target absent from this block cannot be built here at all** — and that
 is a narrower statement than it used to be. Until mcpp 2026.8.25.2 the block
 listed only what a payload served, so a target whose system comes from a
 dependency graph was missing while the same host produced real artefacts for
@@ -543,7 +543,7 @@ $ mcpp build --target riscv64-none-elf         # [toolchain] default = "gcc@…"
 error: target 'riscv64-none-elf' cannot be emitted by 'gcc@16.1.0'.
 ```
 
-⭐ **Both refusals are decided where the decision is made**, not left to the
+**Both refusals are decided where the decision is made**, not left to the
 compiler. Before 2026.8.26.1 the first ran the whole build and died at the link
 on `crtbeginT.o (bare name)`, and the second produced
 `g++: error: unrecognized argument in option '-mabi=lp64d'` — a message about an

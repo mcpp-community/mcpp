@@ -26,7 +26,7 @@
 > reading anything: `role = "check"` could not be written portably, and that is
 > fixed here (§9, open question 4).
 >
-> ⚠️ A sixth is about this document's own method. The descriptor count was
+> A sixth is about this document's own method. The descriptor count was
 > first taken from `mcpp-community/mcpp-index`, while `mcpp index list` reports
 > `mcpplibs/mcpp-index` as the default — the right question asked of the wrong
 > object. The conclusion survived (one rule package either way) and the number
@@ -223,7 +223,12 @@ behaviour without using a new API, is left uncovered deliberately.
 
 ### I8. `mcpp.*` is reserved for official plugins, and using it produces a warning
 
-Official rule packages are named `mcpp.build.<x>`. In C++ this creates no
+Official rule packages are named `mcpp.rules.<x>` and official build-time
+utilities `mcpp.tools.<x>`; both live in the collection `mcpp:plugins`
+(repository `mcpp-community/mcpp-plugins`), each member selected by a feature
+(2026-09-05 revision; the first revision of this section said `mcpp.build.<x>`,
+which is the engine's own module family -- `mcpp.build.plan`,
+`mcpp.build.prepare` -- and was withdrawn for that reason). In C++ this creates no
 relationship with the bundled `mcpp` module — a dot in a module name carries no
 hierarchy — but to a reader the prefix reads as an endorsement, and that is a
 supply-chain statement.
@@ -537,7 +542,12 @@ hazard.
    10.1 row 4: the `mcpp.rules.*` decision is withdrawn. It was unimplementable
    under the rule that the module name is the bare package name. It is replaced
    by `mcpp.build.*` as a **module name** prefix — the distinction the original
-   decision lacked.
+   decision lacked. *Revised 2026-09-05:* with I1 implemented the objection no
+   longer holds, and `mcpp.build.*` names the engine's own modules; the prefix
+   is `mcpp.rules.*` for rules and `mcpp.tools.*` for utilities, as I8 now
+   states. A package may contribute every module interface unit among its
+   feature-resolved sources (mcpp 2026.9.5.3+), which is what lets one
+   collection carry them all.
 2. `docs/05-mcpp-toml.md:1605` and its Chinese counterpart: the paragraph
    stating that the module name is the package's `name`, and that `grpc-rules`
    is therefore illegal, is rewritten under I1 and I2.
@@ -611,7 +621,7 @@ own.
    needs no shell, no `touch`, and no per-platform spelling. A command that
    already writes its own stamp is unaffected — existing files are left alone.
 
-   ⚠️ **The obvious assertion does not discriminate.** Measured: ninja does NOT
+   **The obvious assertion does not discriminate.** Measured: ninja does NOT
    fail when a declared output goes unproduced. It leaves the file absent and
    re-runs that edge on every subsequent build, so the build stays green and
    the only symptom is work silently redone. `tests/e2e/312` therefore asserts
@@ -1176,7 +1186,7 @@ subsystem that has quietly come to rely on something it does not declare
 compiles in the root build and fails there, which is the reason to run both
 rather than pick one.
 
-⚠️ `mcpp test -p <member>` exits 0 for a member with no tests, so the CI loop is
+`mcpp test -p <member>` exits 0 for a member with no tests, so the CI loop is
 green either way and "has no tests" reads exactly like "tests pass".
 `check_modules_wiring.sh` therefore prints which members have none. It does not
 fail on them: a package of vendored parsers legitimately has nothing of its own

@@ -583,7 +583,7 @@ TEST(Distribution, FreestandingCarriesNoRuntimeToDistribute) {
     EXPECT_FALSE(m.degraded);
 }
 
-// ⚠️ The hosted form of the same fact. A package in the graph has compiled a
+// The hosted form of the same fact. A package in the graph has compiled a
 // C++ runtime FOR THIS TARGET and its objects are already on the link line, so
 // there is no library to name and nothing to look for. Measured before this
 // existed: `ld64.lld: error: library not found for -lc++`.
@@ -615,7 +615,7 @@ TEST(Distribution, GraphSuppliedRuntimeIsFormatIndependent) {
     }
 }
 
-// ⚠️ And it does not depend on the contract the project asked for: a
+// And it does not depend on the contract the project asked for: a
 // host-coupled request cannot be honoured by naming the system's runtime when
 // the graph's is already inside the artefact.
 TEST(Distribution, GraphSuppliedRuntimeIgnoresTheRequestedContract) {
@@ -633,7 +633,7 @@ TEST(Distribution, GraphSuppliedRuntimeIgnoresTheRequestedContract) {
 
 // ── format_for: which format a target produces ──────────────────────────────
 //
-// ⚠️ This was a lambda inside a fifteen-hundred-line function and therefore had
+// This was a lambda inside a fifteen-hundred-line function and therefore had
 // no test, and what it got wrong was found by running three hosts against three
 // targets. The assertions below are the ones that would have found it in a
 // second: the canonical spellings mcpp itself uses contain neither `apple` nor
@@ -663,7 +663,7 @@ TEST(Distribution, FormatFallsBackToSpellingForAnUnparseableTriple) {
               dist::Format::MachO);
 }
 
-// ⚠️ And only then the host. A triple that says nothing at all is the one case
+// And only then the host. A triple that says nothing at all is the one case
 // where the machine doing the building is the best available answer.
 TEST(Distribution, FormatUsesTheFallbackOnlyWhenTheTripleSaysNothing) {
     EXPECT_EQ(dist::format_for("", dist::Format::MachO),   dist::Format::MachO);

@@ -894,7 +894,7 @@ namespace detail {
 // No patchelf step and no wrapper script: "put the DLLs next to the exe" IS
 // the relocation rule on this format, which is why the row for it in the
 // design's layering table reads "no operation".
-// ⚠️ THIS FUNCTION ONCE CRASHED THE COMPILER, and the shape it crashed on is
+// THIS FUNCTION ONCE CRASHED THE COMPILER, and the shape it crashed on is
 // worth not reintroducing.
 //
 // clang 20.1.7 targeting the MSVC ABI — the pinned Windows toolchain —
@@ -1126,7 +1126,7 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     //    point becomes `run.sh` which invokes the bundled ld with
     //    --library-path → fully portable across glibc versions.
     if (plan.opts.mode != Mode::Static) {
-        // ⚠️ THE BUILT BINARY, NOT THE STAGED COPY, and the difference is
+        // THE BUILT BINARY, NOT THE STAGED COPY, and the difference is
         // `$ORIGIN`.
         //
         // The closure is resolved by running the artifact under its own

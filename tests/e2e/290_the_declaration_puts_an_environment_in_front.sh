@@ -2,7 +2,7 @@
 # requires: gcc unix-shell
 # A build program looks up a tool and finds the one the PROJECT declared.
 #
-# ⚠️ IT USED TO FIND WHATEVER THE MACHINE HAD, AND `command -v` CANNOT TELL THE
+# IT USED TO FIND WHATEVER THE MACHINE HAD, AND `command -v` CANNOT TELL THE
 # DIFFERENCE. Measured 2026-08-25 with a build program that printed its own
 # PATH: the project's declared environment appeared nowhere in it, and
 # `command -v qemu-system-riscv64` returned a shim that answers, when run,
@@ -12,14 +12,14 @@
 # — found, reported present, unable to execute, while a working copy sat in an
 # environment the build could not reach.
 #
-# ⭐⭐ THIS FILE ASSERTS BOTH DIRECTIONS, BECAUSE ONLY ONE OF THEM IS THE
+# THIS FILE ASSERTS BOTH DIRECTIONS, BECAUSE ONLY ONE OF THEM IS THE
 # FEATURE. Prepending unconditionally would pass the "declared" half, and that
 # is the design that was withdrawn: a shared directory in front of every
 # project makes what a build sees depend on what else was installed on that
 # machine. The declaration is what puts it there, so a project that declares
 # nothing must come out unchanged.
 #
-# ⚠️⚠️ AND "UNCHANGED" IS COMPARED AGAINST THE INHERITED VALUE, NOT AGAINST A
+# AND "UNCHANGED" IS COMPARED AGAINST THE INHERITED VALUE, NOT AGAINST A
 # PATTERN. The first version of this half rejected a first entry matching
 # `*/subos/*/bin` — and CI's own PATH already begins with one, because the
 # runner activates an xlings environment to get mcpp at all:
@@ -34,7 +34,7 @@ MCPP="${MCPP:-mcpp}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-# ⚠️ A NON-ZERO EXIT, BECAUSE THAT IS WHAT MAKES THE OUTPUT VISIBLE. mcpp
+# A NON-ZERO EXIT, BECAUSE THAT IS WHAT MAKES THE OUTPUT VISIBLE. mcpp
 # prints a build program's stdout only when it fails — a probe that succeeds
 # says nothing, which is a property of the protocol and not of this test.
 probe='import std;
@@ -110,7 +110,7 @@ case "$first" in
      exit 1 ;;
 esac
 
-# ⭐ AND THE INHERITED VALUE IS STILL THERE, WHOLE, BEHIND IT. Prefixing means
+# AND THE INHERITED VALUE IS STILL THERE, WHOLE, BEHIND IT. Prefixing means
 # the rest is untouched; a test that only checked the first entry would pass on
 # a PATH that had thrown everything else away, which would break every build
 # program that calls `git`, `python3` or a shell.

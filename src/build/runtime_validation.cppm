@@ -147,7 +147,7 @@ struct SymbolProvisionFinding {
 
 // Evaluate the symbol-provision invariant on the images this run produced.
 //
-// ⚠️ A SEPARATE ENTRY POINT rather than more of validate_changed_artifacts,
+// A SEPARATE ENTRY POINT rather than more of validate_changed_artifacts,
 // and the reason is a gate rather than tidiness: that function returns early
 // unless the runtime binding's provider is glibc, because everything it checks
 // is glibc closure physics. This check is ELF physics — a dynamically linked
@@ -630,7 +630,7 @@ ValidationReport validate_changed_artifacts(
             }
         }
     }
-    // ⚠️ A BINDING THAT CANNOT BE EVALUATED IS ONE FACT, NOT ONE PER ARTIFACT.
+    // A BINDING THAT CANNOT BE EVALUATED IS ONE FACT, NOT ONE PER ARTIFACT.
     //
     // On a brand-new MCPP_HOME the first build finds `binding.loader` and
     // `binding.libraryDirs` both empty (the second build has them; #417), and
@@ -874,7 +874,7 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
 
     auto searchDirs = runtime_search_dirs(plan);
 
-    // ⚠️ WHAT AN UNCHANGED ARTIFACT KEEPS.
+    // WHAT AN UNCHANGED ARTIFACT KEEPS.
     //
     // Re-parsing every image on every drive is what made the loader-tag check
     // cost 158.7s of a 190s hot run, so an artifact whose stat did not move is
@@ -962,7 +962,7 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
 
         auto facts = mcpp::platform::elf::inspect_elf_runtime(artifact);
         if (!facts) continue;                       // not ELF: no flat namespace
-        // ⚠️ PT_INTERP, not the ELF type. A PIE executable is ET_DYN, exactly
+        // PT_INTERP, not the ELF type. A PIE executable is ET_DYN, exactly
         // like a shared library, and whether mcpp's toolchain emits PIE is the
         // payload compiler's default — mcpp passes neither -pie nor -no-pie.
         // Keying on ET_EXEC would make this check read "nothing to inspect"

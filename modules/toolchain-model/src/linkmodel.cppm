@@ -306,7 +306,7 @@ ClangDriverModel resolve_clang_driver(const Toolchain& tc) {
     auto libcxxInclude = dm.llvmRoot / "include" / "c++" / "v1";
     dm.cxxIncludes.push_back(libcxxInclude);
 
-    // ⭐⭐ THE PAYLOAD'S DIRECTORIES ARE NAMED IN LLVM'S VOCABULARY, AND THIS
+    // THE PAYLOAD'S DIRECTORIES ARE NAMED IN LLVM'S VOCABULARY, AND THIS
     // LOOKUP USED mcpp'S.
     //
     // `include/<triple>/c++/v1` and `lib/<triple>` are written by the LLVM
@@ -316,7 +316,7 @@ ClangDriverModel resolve_clang_driver(const Toolchain& tc) {
     // they come apart the moment a target is named: prepare rewrites
     // `targetTriple` to mcpp's canonical spelling for a retargetable driver.
     //
-    // ⚠️ AND THE MISS IS SILENT. Both lookups are `if (exists) push_back`, so
+    // AND THE MISS IS SILENT. Both lookups are `if (exists) push_back`, so
     // a directory that is not found simply does not appear. What is in the one
     // that goes missing is a single file — `__config_site` — which is why the
     // failure this produces reads `'__config_site' file not found` from inside
@@ -325,10 +325,10 @@ ClangDriverModel resolve_clang_driver(const Toolchain& tc) {
     //
     // Measured 2026-08-27, same machine, same compiler, same target:
     //
-    //     mcpp build                             include/x86_64-unknown-linux-gnu/c++/v1  ✔
+    //     mcpp build                             include/x86_64-unknown-linux-gnu/c++/v1  
     //     mcpp build --target x86_64-linux-gnu   (absent)
     //
-    // ⭐ BOTH SPELLINGS ARE TRIED, and that is not a heuristic: they are two
+    // BOTH SPELLINGS ARE TRIED, and that is not a heuristic: they are two
     // vocabularies for one fact, and which one a given payload used is a
     // property of how it was built rather than of anything mcpp decides. The
     // LLVM spelling is tried first because it is the one an LLVM payload

@@ -40,7 +40,7 @@ Named runners exist for what remains: writing an image without running it,
 observing a console, starting a debug server, erasing a part, deploying without
 starting.
 
-⚠️ **The engine knows no runner names.** `flash`, `serve`, `deploy`, `submit`
+**The engine knows no runner names.** `flash`, `serve`, `deploy`, `submit`
 and `logcat` are equally unknown to it: it knows only that a package may supply
 named runners, and performs the argv it finds. A fixed set of names in the
 engine would decide, in the engine, which domains are expressible.
@@ -58,7 +58,7 @@ mcpp::runner_longlived("monitor");      // no natural end
 mcpp::run_exclusive();                  // this target's runs cannot overlap
 ```
 
-⭐ **Name the program, not its path.** mcpp locates it: the `bin/` of a payload
+**Name the program, not its path.** mcpp locates it: the `bin/` of a payload
 declared under `[xlings.workspace]` by **any package in the graph** — the consuming
 project first, then its dependencies — and then `PATH`. A board-support package
 is precisely the thing that knows which emulator or probe reaches its machine,
@@ -158,7 +158,7 @@ supply stays absent: an emulator has no debug probe, so under the emulator
 feature `mcpp run --runner debug` reports that no such runner exists and lists
 the ones that do.
 
-⭐ This required no engine mechanism. The engine reads runners and knows nothing
+This required no engine mechanism. The engine reads runners and knows nothing
 about emulators or probes; `mcpp::has_feature` already existed. That the
 question is answerable without adding anything is the layering working as
 specified.

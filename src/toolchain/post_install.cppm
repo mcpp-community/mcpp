@@ -410,12 +410,12 @@ select_glibc_payload_lib(const std::filesystem::path& glibcRoot,
             runtimeId));
     }
 
-    // ⭐ ONE RESOLVER, TWO CALLERS. `payload_dir_for_version` also answers
+    // ONE RESOLVER, TWO CALLERS. `payload_dir_for_version` also answers
     // `probe`'s compile-side discovery; see its own header for why a request
     // and a resolution are two vocabularies, and why a unique component-wise
     // refinement is an answer while a directory-order pick is not.
     //
-    // ⚠️ THE FIRST VERSION OF THIS FIX SPELLED IT HERE, and that left the other
+    // THE FIRST VERSION OF THIS FIX SPELLED IT HERE, and that left the other
     // caller: the toolchain then installed and the compile line came out
     // without the glibc include directory, which reads as
     // `features.h: No such file` from inside libstdc++'s own headers.
@@ -579,7 +579,7 @@ ensure_post_install_fixup(const mcpp::config::GlobalConfig& cfg,
     std::filesystem::path glibcLibDir;
     std::string skipped;
     if constexpr (mcpp::platform::is_linux) {
-        // ⚠️ ONE DERIVATION, AND IT IS NOT THIS FUNCTION'S.
+        // ONE DERIVATION, AND IT IS NOT THIS FUNCTION'S.
         //
         // The caller resolves a RuntimeBinding first and hands the identity in;
         // `prepare.cppm` says so where it does it ("The fixup is itself a

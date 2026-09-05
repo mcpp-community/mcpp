@@ -3,7 +3,7 @@
 # `x86_64-none-elf`: the third bare-metal architecture, and the first whose
 # LINK the compiler driver refuses to perform.
 #
-# ⚠️ WHAT THIS ROW ADDED THAT THE OTHER TWO DID NOT NEED
+# WHAT THIS ROW ADDED THAT THE OTHER TWO DID NOT NEED
 #
 # `riscv64-none-elf` and `aarch64-none-elf` are four strings in a table and
 # nothing else: clang has a BareMetal toolchain for both, so it drives their
@@ -32,7 +32,7 @@ cd "$TMP"
 cd x86probe
 rm -f tests/*.cpp 2>/dev/null || true
 
-# ⚠️ NO `[target.*]` SECTION. Like `aarch64-none-elf`, the zero-libc tier is
+# NO `[target.*]` SECTION. Like `aarch64-none-elf`, the zero-libc tier is
 # this row's own property rather than something the project asks for.
 cat > mcpp.toml <<'EOF'
 [package]
@@ -104,7 +104,7 @@ UNDEF=$("$NM" -u "$ELF" | wc -l)
 [ "$UNDEF" -eq 0 ] || {
     "$NM" -u "$ELF"; echo "the image expects $UNDEF symbols nothing provides"; exit 1; }
 
-# ⚠️ An image with no operating system under it must not name an interpreter.
+# An image with no operating system under it must not name an interpreter.
 # The direct-linker path says `--no-dynamic-linker` where the driver path said
 # `-static`; a PT_INTERP here would be that substitution having been dropped,
 # and it is exactly the defect the `--no-default-config` comment in flags.cppm
@@ -143,7 +143,7 @@ grep -q -- "-mno-red-zone" verbose.log || {
 
 # ── 7. A shared library on this target is refused in words ─────────────────
 #
-# ⚠️ THE DIRECT-LINKER PATH DEFINES NO SHARED-LIBRARY RULE, AND WITHOUT A CHECK
+# THE DIRECT-LINKER PATH DEFINES NO SHARED-LIBRARY RULE, AND WITHOUT A CHECK
 # THE FAILURE NAMES AN INTERNAL ONE:
 #
 #     ninja: error: build.ninja:88: unknown build rule 'cxx_shared'

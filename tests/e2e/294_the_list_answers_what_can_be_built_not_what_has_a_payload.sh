@@ -3,7 +3,7 @@
 # `toolchain list` names the targets this host can build for, including the ones
 # whose system has to come from a dependency graph.
 #
-# ⚠️ IT USED TO FILTER ON `host_can_serve`, WHICH ANSWERS A NARROWER QUESTION —
+# IT USED TO FILTER ON `host_can_serve`, WHICH ANSWERS A NARROWER QUESTION —
 # "can a payload here serve this target" — and presented it as "can this be
 # built". Measured 2026-08-25 on Linux: `x86_64-windows-musl` was absent from
 # the list while the same machine produced a real artefact for it,
@@ -15,7 +15,7 @@
 #
 # because its system came from the graph.
 #
-# ⭐⭐ AND THE SECOND HALF IS THE POINT. Listing every vocabulary row would also
+# AND THE SECOND HALF IS THE POINT. Listing every vocabulary row would also
 # make the first half pass, and it would tell a Linux user they can build
 # `x86_64-windows-msvc` — which needs MSVC, or `aarch64-macos`, which needs the
 # macOS SDK. Neither is something a dependency can supply. A list that
@@ -47,7 +47,7 @@ esac
 wm="$(row x86_64-windows-musl)"
 if [ -z "$wm" ]; then
     echo "FAIL: x86_64-windows-musl is absent, and this host can build it"
-    # ⚠️ WHICH BINARY ANSWERED. A list missing a row and a list produced by an
+    # WHICH BINARY ANSWERED. A list missing a row and a list produced by an
     # older mcpp look identical, and the first CI failure of this test could not
     # tell them apart — so the evidence names the program as well as its output.
     echo "        asked: ${MCPP} ($("$MCPP" --version 2>&1 | head -1))"
@@ -67,7 +67,7 @@ esac
 
 # ── Half two: what a graph cannot supply stays out ────────────────────────
 #
-# ⚠️ ASSERTS THE ROW IS ABSENT, so it first establishes that rows are being
+# ASSERTS THE ROW IS ABSENT, so it first establishes that rows are being
 # printed at all — an empty section would pass this trivially.
 n="$(printf '%s\n' "$targets" | grep -cE '^\s+\*?\s*[a-z0-9_]+-' || true)"
 if [ "${n:-0}" -lt 3 ]; then

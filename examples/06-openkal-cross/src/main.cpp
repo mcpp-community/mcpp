@@ -6,7 +6,7 @@
 //     mcpp build --target aarch64-macos         macOS   aarch64, any host
 //     mcpp build --target x86_64-windows        Windows x86_64,  any host
 //
-// ⭐ EVERY ONE OF THEM DECLINES THE THIRD SEGMENT, AND THE FOURTH LINE COULD
+// EVERY ONE OF THEM DECLINES THE THIRD SEGMENT, AND THE FOURTH LINE COULD
 // NOT BE WRITTEN UNTIL 2026.8.26.2. `aarch64-linux` used to complete to
 // `aarch64-linux-gnu` — a row registered but not supported — and refuse, while
 // `aarch64-linux-musl` built. A request that names no C library now resolves to
@@ -26,7 +26,7 @@
 // silently reached the host's own libraries instead of the resolved ones would
 // answer differently.
 //
-// ⚠️ WHAT IS ASKED HERE AND WHAT IS NOT.
+// WHAT IS ASKED HERE AND WHAT IS NOT.
 //
 // A capability word says how an implementation behaves WITHIN an interface it
 // provides. Whether it provides the interface at all is a different question,

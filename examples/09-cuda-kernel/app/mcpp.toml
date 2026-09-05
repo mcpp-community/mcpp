@@ -17,8 +17,10 @@ import_std = true
 [toolchain]
 default = "llvm@22.1.8"
 
-[dependencies]
-rules-cuda = { path = "../rules-cuda", host-module = true }
+# The rule that compiles the island lives in the official plugin collection,
+# selected by its feature; `build.mcpp` imports it as `mcpp.rules.cuda`.
+[dependencies.mcpp]
+plugins = { version = "0.1.0", features = ["rules-cuda"], host-module = true }
 
 # The driver's userspace library, reached through an index package that owns
 # the one hop mcpp needs: a directory on the artifact's runtime search path.
@@ -57,7 +59,7 @@ include_dirs = ["include"]
 # The CUDA runtime is linked STATICALLY, and only when a device build asks for
 # it. Linking the redistributable half in leaves exactly one host dependency,
 # libcuda.so.1, which the driver owns and the sentinel package reaches.
-# ⭐ NO ABSOLUTE PATHS: the rule package puts the payload's library directory on
+# NO ABSOLUTE PATHS: the rule package puts the payload's library directory on
 # the link line from `mcpp::xpkg_dir`, so this manifest names libraries only.
 [target.'cfg(accelerator = "cuda")'.build]
 ldflags = ["-lcudart_static", "-lrt", "-lpthread", "-ldl"]

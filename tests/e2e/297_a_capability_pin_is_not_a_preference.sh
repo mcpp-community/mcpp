@@ -2,7 +2,7 @@
 # requires: gcc unix-shell jq
 # A declared toolchain overrides a convention. It does not override a capability.
 #
-# ⭐⭐ THE TARGET TABLE'S PIN MEANS TWO DIFFERENT THINGS AND ONLY ONE OF THEM IS
+# THE TARGET TABLE'S PIN MEANS TWO DIFFERENT THINGS AND ONLY ONE OF THEM IS
 # A PREFERENCE.
 #
 #   hosted row      `x86_64-linux-musl → gcc@16.1.0`
@@ -15,7 +15,7 @@
 #                   because clang/lld are cross-compilers by construction".
 #                   A host g++ does not emit riscv64 whatever anyone declares.
 #
-# ⚠️ MEASURED 2026-08-26, before this file existed:
+# MEASURED 2026-08-26, before this file existed:
 #
 #     [toolchain] default = "gcc@16.1.0"
 #     $ mcpp build --target riscv64-none-elf
@@ -24,7 +24,7 @@
 #
 # — a message about an option, for a decision made a hundred lines earlier.
 #
-# ⭐⭐ BOTH DIRECTIONS, BECAUSE REFUSING EVERYTHING ALSO STOPS THE BAD MESSAGE.
+# BOTH DIRECTIONS, BECAUSE REFUSING EVERYTHING ALSO STOPS THE BAD MESSAGE.
 # Half two declares gcc for a HOSTED target and requires it to be honoured; a
 # guard that refused there would take away the escape hatch the whole
 # convention/preference distinction exists to protect.
@@ -37,7 +37,7 @@ mkdir -p "$work/src"
 cd "$work"
 printf 'extern "C" int main(int, char**, char**) { return 0; }\n' > src/main.cpp
 
-# ⭐ From mcpp's machine interface rather than from the table it prints for
+# From mcpp's machine interface rather than from the table it prints for
 # people: a column position is not a contract, and two earlier drafts of the
 # neighbouring test disagreed about which column held the version.
 gccver="$("$MCPP" toolchain list --format json 2>/dev/null \
@@ -53,13 +53,13 @@ printf '[package]\nname    = "capprobe"\nversion = "0.1.0"\n\n[toolchain]\ndefau
 rm -rf target
 out="$(cd "$work" && "$MCPP" build --target riscv64-none-elf 2>&1 || true)"
 
-# ⭐⭐ THE CLASSIFICATION COMES FROM THE MACHINE INTERFACE, THE WORDING FROM THE
+# THE CLASSIFICATION COMES FROM THE MACHINE INTERFACE, THE WORDING FROM THE
 # MESSAGE. `data.reason` is a finite token, so "did it refuse, and under which
 # rule" survives any rewording; the assertions below still require the sentence
 # to name the target, the reason and the way out, because that is a promise the
 # code cannot keep on its own.
 #
-# ⚠️ MEASURED COST OF NOT SPLITTING THEM: this file asserted `cannot emit it`,
+# MEASURED COST OF NOT SPLITTING THEM: this file asserted `cannot emit it`,
 # the message was reworded to `cannot be emitted by` in the same session, and
 # the assertion then passed by matching nothing at all.
 reason="$(cd "$work" && "$MCPP" why toolchain --target riscv64-none-elf \
@@ -70,14 +70,14 @@ case "$reason" in
   capability-pin)
     echo "  ok  a bare-metal target refuses a compiler that cannot emit it" ;;
   none)
-    # ⚠️ THE OLD BEHAVIOUR EXACTLY: resolution succeeded, gcc was handed a
+    # THE OLD BEHAVIOUR EXACTLY: resolution succeeded, gcc was handed a
     # riscv64 target, and the complaint arrived a hundred lines later as
     # `unrecognized argument in option '-mabi=lp64d'`.
     echo "FAIL: the declaration was honoured and the build was left to fail later"
     printf '%s\n' "$out" | grep -iE 'error|note' | head -3 | sed 's/^/        /'
     exit 1 ;;
   *)
-    # ⚠️ NEITHER OUTCOME MEANS THIS MACHINE CANNOT RUN THE TEST. A build that
+    # NEITHER OUTCOME MEANS THIS MACHINE CANNOT RUN THE TEST. A build that
     # SUCCEEDED with gcc would be a third answer entirely, and one worth
     # failing on: it would mean a host g++ emitted riscv64.
     if printf '%s\n' "$out" | grep -q 'Finished'; then
@@ -89,7 +89,7 @@ case "$reason" in
     exit 0 ;;
 esac
 
-# ⭐ AND THE MESSAGE POINTS AT THE DECISION. A refusal that does not name the
+# AND THE MESSAGE POINTS AT THE DECISION. A refusal that does not name the
 # target and the way out leaves the reader where the `-mabi` message did.
 ok=1
 printf '%s\n' "$out" | grep -q 'riscv64-none-elf'       || ok=0
@@ -105,7 +105,7 @@ fi
 
 # ── Half two: a hosted target still honours the declaration ───────────────
 #
-# ⚠️⚠️ THE TARGET COMES FROM THE QUERY, NOT FROM A LITERAL. This half used to
+# THE TARGET COMES FROM THE QUERY, NOT FROM A LITERAL. This half used to
 # name `x86_64-linux-gnu`, which is a hosted row on Linux and a CROSS row on
 # Windows — where the host target is `x86_64-windows-msvc` and gcc does not
 # serve it. Measured on windows-2022, the query for that combination produced
@@ -136,7 +136,7 @@ case "$hostedReason" in
     printf '%s\n' "$hosted" | head -4 | sed 's/^/        /'
     exit 1 ;;
   none)
-    # ⭐ AND IT MUST ALSO BUILD. "Not refused" alone would pass on a machine
+    # AND IT MUST ALSO BUILD. "Not refused" alone would pass on a machine
     # where resolution succeeded and the link then failed.
     case "$hosted" in
       *"Finished"*) echo "  ok  a hosted target still honours the declared toolchain" ;;

@@ -114,7 +114,7 @@ cannot produce. The full mapping across all of mcpp is
 | 70 | internal error (uncaught exception) |
 | 127 | unknown command |
 
-⚠️ **`1` can arrive with an envelope on stdout.** `mcpp xpkg parse` reports a
+**`1` can arrive with an envelope on stdout.** `mcpp xpkg parse` reports a
 descriptor that violates the name form as JSON *and* exits 1: the document is
 the answer, and the exit code says the answer is a rejection. §1 still holds —
 parse stdout, do not branch on the code — but a client that treats any non-zero
@@ -291,7 +291,7 @@ installation, which is located on the machine rather than installed by mcpp. A
 target row is `{target, note, toolchain, pin, status, default}`, and `status` is
 one of `installed` / `available` / `via dependency graph` / `planned`.
 
-⚠️ **`toolchain` and `pin` are not the same field twice.** `toolchain` is what
+**`toolchain` and `pin` are not the same field twice.** `toolchain` is what
 the row is associated with — the installed payload on an installed row, the
 convention on a vocabulary row. `pin` is only ever the target table's
 convention, and is empty for a row that has none. `x86_64-linux-gnu` has an
@@ -316,7 +316,7 @@ It resolves and reports; it does not build. `data` is:
 | `cLibrary` | `{mode, path, origin, suppliesTarget}` — `mode` is `sysroot` / `payload-first` / `none`; `origin` is `payload` / `subos` / `host` / `none` |
 | `layers[]` | the five target-side layers: `{layer, interface, impl, origin, subset}` |
 
-⭐ **`compiler.chosenBy` answers "why this one".** `{origin, requiredBy,
+**`compiler.chosenBy` answers "why this one".** `{origin, requiredBy,
 replaced}` — `origin` is the same phrase the build's status line uses
 (`[toolchain] in mcpp.toml`, `your default`, `target default`,
 `required by the dependency graph`, `first-run default`). `requiredBy` names the
@@ -333,7 +333,7 @@ the spec that was displaced; both are empty when nothing was.
 Without it a consumer asking *why* would have to parse the status line — the
 substring matching this document exists to remove.
 
-⚠️ **`cLibrary` and `layers[].c-abi` answer two questions, and `suppliesTarget`
+**`cLibrary` and `layers[].c-abi` answer two questions, and `suppliesTarget`
 says which one governs.** `cLibrary` describes the *payload's* link model — the
 search paths a payload-supplied C library would use. `layers[].c-abi` describes
 the *build*. When a dependency supplies the C library the two diverge, and
@@ -351,7 +351,7 @@ A field was added rather than `cLibrary` renamed or `mode` widened, because §7
 promises that fields are added and never removed and that a field's meaning
 never changes.
 
-⚠️ **`layers[].interface` changed VALUE for a payload-supplied glibc in
+**`layers[].interface` changed VALUE for a payload-supplied glibc in
 2026.9.1.1** — from `gnu` to `glibc`, and on Windows from `gnu` to `ucrt`. The
 field's meaning is unchanged (it still names the implementation), so §7 holds;
 what changed is that it stopped reporting the triple's env segment, which is a
@@ -361,7 +361,7 @@ listed, and a package may compare against them in a `cfg(c-abi = …)` predicate
 A client keying on the literal `gnu` needs updating; `musl`, `picolibc` and
 `libSystem` are unaffected.
 
-⭐ **`reason` is a token, not a sentence.** The refusal's message is still
+**`reason` is a token, not a sentence.** The refusal's message is still
 written for a person and still names the target, the rule and the way out — but
 a program classifying the outcome reads `reason`:
 
@@ -382,11 +382,11 @@ a program classifying the outcome reads `reason`:
 | `accel-mismatch` | a `[build] sources` entry is constrained to a device set this build does not cover |
 | `other` | a refusal whose branch has not been given a token yet |
 
-⚠️ **Exit 0 whenever the question was answered, including "refused".** "Would
+**Exit 0 whenever the question was answered, including "refused".** "Would
 this build, and if not why" is answered successfully by "no, because the row's
 pin is a capability". A non-zero exit means the query itself could not run.
 
-⚠️ **Its effects are broad on purpose.** `--protocol-version` lists `network`,
+**Its effects are broad on purpose.** `--protocol-version` lists `network`,
 `write-global-cache` and `exec-build-script` for this command: the answer comes
 from the same resolution a build performs, which may fetch packages, install a
 payload and run a dependency's build program. A client gates on that table
@@ -428,7 +428,7 @@ Summary record, `{"summary": {...}}`:
 | `not_run_reason` | the reason shared by all of them, or `""` |
 | `elapsed_ms`, `build_ms`, `run_ms` | wall time, split |
 
-⚠️ **`not_run` is neither `pass` nor `run_fail`, and the exit code says so
+**`not_run` is neither `pass` nor `run_fail`, and the exit code says so
 (2026.9.2.1).** A test is `not_run` when this host cannot load its artifact
 (`Exec format error` on a cross target with no runner declared), or when the
 declared `[target.<triple>].runner` could not be found or started. The

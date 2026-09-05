@@ -20,7 +20,7 @@
 #    the version under test — and failing outright, because only the latter was
 #    installed:
 #
-#        ✓ 1 package(s) installed
+#        1 package(s) installed
 #        [error] xlings: version '2026.8.3.2' not found for 'mcpp'
 #        [error]   available: 2026.8.3.4
 #

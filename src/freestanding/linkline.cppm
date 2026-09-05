@@ -18,7 +18,7 @@
 // the only form where "what ends up on the command" equals "what this module
 // decided".
 //
-// ⚠️ THE LINKER IS ADDRESSED BY ABSOLUTE PATH
+// THE LINKER IS ADDRESSED BY ABSOLUTE PATH
 //
 // `-fuse-ld=lld` resolves by NAME, and on a machine with binutils earlier on
 // PATH it finds GNU ld, which then fails with
@@ -94,7 +94,7 @@ inline std::string link_flags(const Spec& s, const LinkInputs& in,
     out += " -Wl,--gc-sections";
     if (!in.lld.empty())
         out += " -fuse-ld=" + esc(in.lld);
-    // ⚠️ BEFORE the libraries the board selects, and it has to be on THIS line
+    // BEFORE the libraries the board selects, and it has to be on THIS line
     // rather than in the generic ld flags: a freestanding link line is
     // REPLACED wholesale (the payload cfg would otherwise inject a host
     // dynamic linker), so anything appended to the ordinary ldflags earlier is
@@ -114,7 +114,7 @@ inline std::string link_flags(const Spec& s, const LinkInputs& in,
 // driver line and a linker line share no vocabulary, and writing them together
 // would mean a conditional at every token.
 //
-// ⚠️ WHAT CLANG WOULD HAVE ADDED, AND WHAT IS DELIBERATELY NOT REPRODUCED.
+// WHAT CLANG WOULD HAVE ADDED, AND WHAT IS DELIBERATELY NOT REPRODUCED.
 // Measured on llvm 22.1.8 for the two rows whose driver does reach lld: it
 // passes `-Bstatic`, `-m <emulation>`, `-X`, and three `-L` paths under
 // `lib/clang-runtimes/<triple>/lib` and `lib/clang/22/lib/<triple>`. The `-L`s

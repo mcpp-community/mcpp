@@ -2,7 +2,7 @@
 # requires: llvm unix-shell
 # One source, one host, every machine the ecosystem serves.
 #
-# ⭐⭐ THIS IS CHEAP BECAUSE OF WHAT THE ECOSYSTEM IS, AND THAT IS THE POINT.
+# THIS IS CHEAP BECAUSE OF WHAT THE ECOSYSTEM IS, AND THAT IS THE POINT.
 #
 # A traditional stack needs a macOS runner to test macOS and a Windows runner
 # to test Windows, because the target side comes from a payload that only
@@ -11,13 +11,13 @@
 # every target, and the shape of that artefact is checkable without leaving it.
 # Coverage that would cost six runners costs one loop.
 #
-# ⚠️ WHAT THIS FILE IS FOR IS BREADTH, NOT DEPTH. 286, 287 and 288 each go deep
+# WHAT THIS FILE IS FOR IS BREADTH, NOT DEPTH. 286, 287 and 288 each go deep
 # on one arrangement — the native stack, the aarch64 cross with its
 # outline-atomics helpers, the machine with no operating system. This asserts
 # the one property they cannot: that a change to the engine did not silently
 # stop serving a target nobody happened to build that day.
 #
-# ⚠️ A TARGET THAT CANNOT BE BUILT HERE IS SKIPPED WITH ITS REASON, NEVER
+# A TARGET THAT CANNOT BE BUILT HERE IS SKIPPED WITH ITS REASON, NEVER
 # PASSED OVER SILENTLY. A sweep whose failure mode is "produced no output"
 # would report success on a run that swept nothing.
 set -e
@@ -48,7 +48,7 @@ while IFS='|' read -r target deps want_fmt want_link; do
     {
         printf '[package]\nname    = "sweep"\nversion = "0.1.0"\n\n'
         printf '[toolchain]\ndefault = "llvm@22.1.8"\n\n'
-        # ⚠️ `sysroot = ""` IS HOW A PROJECT SAYS "NO C LIBRARY", AND IT IS NOT
+        # `sysroot = ""` IS HOW A PROJECT SAYS "NO C LIBRARY", AND IT IS NOT
         # IMPLIED BY THE TARGET. `riscv64-none-elf` names a machine with no
         # operating system; whether the program has a C library is a separate
         # statement, and the ecosystem's own bare-metal example makes it. Left
@@ -65,7 +65,7 @@ while IFS='|' read -r target deps want_fmt want_link; do
         printf "$deps\n"
     } > mcpp.toml
 
-    # ⚠️ TWO SOURCES, BECAUSE TWO OF THESE TARGETS HAVE NO C LIBRARY TO PRINT
+    # TWO SOURCES, BECAUSE TWO OF THESE TARGETS HAVE NO C LIBRARY TO PRINT
     # WITH. The bare-metal row reaches the platform interface directly; every
     # other row is an ordinary hosted program. Writing one source that works
     # everywhere would mean writing to the lowest common denominator, which is
@@ -138,7 +138,7 @@ EOF
 printf '\n  built %d, skipped %d, failed %d\n' "$built" "$skipped" "$failed"
 
 [ "$failed" = 0 ] || exit 1
-# ⭐ AND A SWEEP THAT SWEPT NOTHING IS NOT A PASS. Every row skipping is the
+# AND A SWEEP THAT SWEPT NOTHING IS NOT A PASS. Every row skipping is the
 # signature of a machine that cannot reach the index at all, which is worth
 # reporting as a skip of the whole file rather than as success.
 if [ "$built" = 0 ]; then

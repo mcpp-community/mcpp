@@ -43,7 +43,7 @@
 //      modules (`fs`, `env`, `scaffold_fs`); migrating those is incremental
 //      work, not a precondition for adding new code the right way.
 //
-// ⚠️ A module under a platform directory MUST NOT name a `std` type in its
+// A module under a platform directory MUST NOT name a `std` type in its
 // EXPORTED interface if a widely-imported module will import it: under GCC
 // 16.1 that corrupts every BMI downstream, and the error points at an
 // unrelated module. Both bounded_process modules document the measurements.

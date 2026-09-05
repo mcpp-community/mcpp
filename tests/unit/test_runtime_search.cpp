@@ -44,7 +44,7 @@ TEST(RuntimeSearch, MachineLocalIsEverythingButTheHostDefaults) {
     EXPECT_TRUE(search::is_machine_local(Origin::SubosFarm));
     EXPECT_FALSE(search::is_machine_local(Origin::HostDefault));
 
-    // ⚠️ `$ORIGIN` is NOT machine-local, and getting this backwards would be
+    // `$ORIGIN` is NOT machine-local, and getting this backwards would be
     // worse than the gap it closes: it is resolved by the loader relative to
     // the artifact, so it means the same thing wherever that artifact is
     // copied — `pack` REWRITES everything else into this form. Marking it

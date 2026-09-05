@@ -13,7 +13,7 @@
 #   1. a DECLARED extension works with no further help;
 #   2. an UNDECLARED one is refused where the mistake is, not four steps later.
 #
-# ⚠️ WHY (2) IS THE INTERESTING HALF. Before this, an undeclared `.ixx` matched
+# WHY (2) IS THE INTERESTING HALF. Before this, an undeclared `.ixx` matched
 # by `sources` was accepted and produced a compile edge whose object NOTHING
 # LINKS — measured:
 #

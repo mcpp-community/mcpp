@@ -186,7 +186,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
                                                    std::string_view sysrootFlag,
                                                    std::string_view cppStandardFlag) {
     auto relBmi = std::filesystem::relative(bmiPath, cacheDir).string();
-    // ⚠️ A PACKAGE-PROVIDED std MODULE REPLACES THE TOOLCHAIN'S SYSROOT FLAGS
+    // A PACKAGE-PROVIDED std MODULE REPLACES THE TOOLCHAIN'S SYSROOT FLAGS
     // RATHER THAN BEING APPENDED TO THEM.
     //
     // Those flags describe the standard library the COMPILER ships and the C
@@ -204,7 +204,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     // built without it is built for whatever machine is doing the building.
     if (!tc.stdModuleFlags.empty()) sysrootFlag = {};
     const std::string& extraFlags = tc.stdModuleFlags;
-    // ⚠️ The codegen step compiles a BMI, which already carries what the
+    // The codegen step compiles a BMI, which already carries what the
     // headers contributed; only the machine has to be restated. See
     // Toolchain::stdModuleTargetFlags.
     const std::string& codegenFlags = tc.stdModuleTargetFlags;
@@ -221,7 +221,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     std::string ixxFlags = (ext == ".ixx")
         ? " -x c++-module -Wno-include-angled-in-module-purview"
         : "";
-    // ⚠️ AND THE RESERVED-NAME WARNING UNCONDITIONALLY, WHICH IS WHAT THE OTHER
+    // AND THE RESERVED-NAME WARNING UNCONDITIONALLY, WHICH IS WHAT THE OTHER
     // BRANCH DOES.
     //
     // `export module std;` is a reserved identifier and every standard library
@@ -238,7 +238,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     // A warning that is correct, unavoidable, and printed on every build is
     // noise of the kind that hides the next one.
     ixxFlags += " -Wno-reserved-module-identifier";
-    // ⚠️ `extraFlags` IS ON BOTH COMMANDS HERE, AND IT WAS ON NEITHER.
+    // `extraFlags` IS ON BOTH COMMANDS HERE, AND IT WAS ON NEITHER.
     //
     // This branch was written when a Windows host built for itself against the
     // MSVC STL, and `stdModuleFlags` did not exist — so the omission was not
@@ -246,7 +246,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     // could supply its own `std` module, because that string is where the
     // package's own headers, `-nostdinc` and the target triple live.
     //
-    // ⚠️ Measured 2026-08-23, a Windows host cross-building for
+    // Measured 2026-08-23, a Windows host cross-building for
     // `x86_64-linux-gnu` over openkal — the command it produced carried FIVE
     // tokens:
     //
@@ -339,7 +339,7 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
 {
     auto relBmi = std::filesystem::relative(bmiPath, cacheDir).string();
     auto relStdBmi = std::filesystem::relative(stdBmiPath, cacheDir).string();
-    // ⚠️ THE SAME REPLACEMENT THE `std` BUILDER MAKES, FOR THE SAME REASON.
+    // THE SAME REPLACEMENT THE `std` BUILDER MAKES, FOR THE SAME REASON.
     //
     // `std.compat` is a second module over the SAME library, and it therefore
     // needs the same headers, the same target and the same configuration. This
@@ -347,7 +347,7 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
     // replaced it — so a package-provided pair had one module built against its
     // own libc++ and the other against the toolchain's.
     //
-    // ⚠️ It does not fail where the two are chosen. Measured on a macOS cross:
+    // It does not fail where the two are chosen. Measured on a macOS cross:
     //
     //   error: std module precompile failed (rc=1):
     //     …/openkal-llvm-runtime/llvm-generated/std.compat.cppm:16
@@ -366,7 +366,7 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
     // Note: the path after = must NOT be shell-quoted separately; the
     // entire -fmodule-file flag is a single token to the compiler.
     //
-    // ⚠️⚠️ ABSOLUTE PATHS AND NO `cd`, AND ONE FORM RATHER THAN TWO.
+    // ABSOLUTE PATHS AND NO `cd`, AND ONE FORM RATHER THAN TWO.
     //
     // This used to be `cd <cacheDir> && … pcm.cache/std.pcm …`. `cd X && …`
     // DOES NOT CHANGE THE DRIVE in cmd.exe — the build cache lives under the
@@ -380,7 +380,7 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
     //
     // — and `std.pcm` had been built successfully one command earlier.
     //
-    // ⚠️ The obvious repair was a `#if defined(_WIN32)` branch, which is what
+    // The obvious repair was a `#if defined(_WIN32)` branch, which is what
     // the `std` builder above has. It was written and then withdrawn: a branch
     // that only compiles on one platform is a branch this machine cannot check,
     // and every defect this session found in the host dimension had exactly

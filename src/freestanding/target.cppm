@@ -44,7 +44,7 @@ struct Spec {
     // own multilib convention (`<march>/<mabi>`), carried here so a wrapper
     // package can name its layout without re-deriving the profile.
     std::string_view libdir;
-    // ⚠️ FLAGS THIS ISA REQUIRES THAT THE FOUR COLUMNS ABOVE CANNOT EXPRESS.
+    // FLAGS THIS ISA REQUIRES THAT THE FOUR COLUMNS ABOVE CANNOT EXPRESS.
     //
     // The table had three flag columns because three were enough for RISC-V and
     // aarch64, where everything a freestanding build needs is an ISA profile, a
@@ -54,7 +54,7 @@ struct Spec {
     // Empty for every row that does not, which is every row but one.
     std::span<const std::string_view> extra;
 
-    // ⚠️ NON-EMPTY MEANS "THIS TARGET'S LINK CANNOT GO THROUGH THE COMPILER
+    // NON-EMPTY MEANS "THIS TARGET'S LINK CANNOT GO THROUGH THE COMPILER
     // DRIVER", AND THAT IS A PROPERTY OF CLANG RATHER THAN OF THE ISA.
     //
     // Every freestanding link is driven by clang, which selects a toolchain
@@ -86,7 +86,7 @@ struct Spec {
 // inline braces because a `span` must refer to storage that outlives it, and a
 // temporary array in an aggregate initialiser does not.
 inline constexpr std::string_view kX86_64NoneExtra[] = {
-    // ⚠️ WITHOUT THIS, EVERY TRAP HANDLER ON THIS TARGET CORRUPTS THE FUNCTION
+    // WITHOUT THIS, EVERY TRAP HANDLER ON THIS TARGET CORRUPTS THE FUNCTION
     // IT INTERRUPTED, AND NOTHING REPORTS IT.
     //
     // The System V x86-64 ABI reserves 128 bytes below `rsp` — the red zone —
@@ -108,7 +108,7 @@ inline constexpr std::string_view kX86_64NoneExtra[] = {
     "-mno-red-zone",
 };
 
-// ⚠️ THE SOFT-FLOAT M-PROFILE ROWS, AND WHY THE FLOAT ABI IS NOT ENOUGH.
+// THE SOFT-FLOAT M-PROFILE ROWS, AND WHY THE FLOAT ABI IS NOT ENOUGH.
 //
 // `thumbv7em-none-eabi` and `-eabihf` differ in their float ABI, and clang
 // derives that from the triple with no help from us (measured, `-###`:
@@ -124,14 +124,14 @@ inline constexpr std::string_view kX86_64NoneExtra[] = {
 // under either ABI. A plain Cortex-M4 — the part this row exists to serve,
 // since the -eabihf row serves M4F — has no FPU, and the instruction faults.
 //
-// ⚠️ The failure is a hard fault at run time on real silicon, with a clean
+// The failure is a hard fault at run time on real silicon, with a clean
 // compile and a clean link. It is the shape this table exists to prevent.
 //
 // `-mfpu=none` restores the property the row's name claims. Measured: the
 // instruction count returns to zero, and the `-eabihf` rows must NOT receive
 // this flag — there it would discard the FPU the row exists to use.
 //
-// ⚠️ EVERY SOFT ROW CARRIES IT, INCLUDING THE ONES WHERE NOTHING WAS MEASURED.
+// EVERY SOFT ROW CARRIES IT, INCLUDING THE ONES WHERE NOTHING WAS MEASURED.
 //
 // Only `thumbv7em-none-eabi` was observed emitting an FPU instruction;
 // `thumbv6m`, `thumbv7m` and `thumbv8m.base` describe architectures with no FPU
@@ -148,7 +148,7 @@ inline constexpr std::string_view kThumbSoftExtra[] = {
     "-mfpu=none",
 };
 
-// ⭐⭐ AND THE SAME RULE ON A-PROFILE, WHERE IT WAS MEASURED SEPARATELY RATHER
+// AND THE SAME RULE ON A-PROFILE, WHERE IT WAS MEASURED SEPARATELY RATHER
 // THAN ASSUMED TO CARRY OVER.
 //
 // `armv7a-none-eabi` is a different architecture from `thumbv7em`, so the
@@ -164,7 +164,7 @@ inline constexpr std::string_view kArmSoftExtra[] = {
     "-mfpu=none",
 };
 
-// ⚠️ THE `libdir` COLUMN WAS EMPTY ON THE LAST TWO ROWS UNTIL 2026-08-21, AND
+// THE `libdir` COLUMN WAS EMPTY ON THE LAST TWO ROWS UNTIL 2026-08-21, AND
 // THAT WAS CORRECT UNTIL THE DAY IT WAS NOT.
 //
 // It names the sub-directory of a multilib C library — picolibc's own
@@ -177,13 +177,13 @@ inline constexpr std::string_view kArmSoftExtra[] = {
 // `'stdio.h' file not found` — the package is installed and correct, and the
 // engine cannot find the profile inside it.
 //
-// ⚠️ Filling this does NOT give those targets a C library by default. The
+// Filling this does NOT give those targets a C library by default. The
 // column is consulted only when a sysroot has been resolved, and the target
 // TABLE still binds none for these two rows — the zero-libc tier stays the
 // default and the package stays opt-in. This makes the opt-in work; it does not
 // take the opt-out away.
 //
-// ⚠️ Defaults, not the only possibility. `rv64gc/lp64d` is what qemu `virt`
+// Defaults, not the only possibility. `rv64gc/lp64d` is what qemu `virt`
 // runs and what the first BSP targets; a board that needs `rv32imac/ilp32`
 // selects it through its own manifest, not by editing this table. The table
 // exists so that `--target riscv64-none-elf` alone is enough to produce a
@@ -192,7 +192,7 @@ inline constexpr Spec kTable[] = {
     //  triple                march       mabi     mcmodel    libdir
     { "riscv64-none-elf",   "rv64gc",   "lp64d", "medany", "rv64gc/lp64d"   },
     { "riscv32-none-elf",   "rv32imac", "ilp32", "medany", "rv32imac/ilp32" },
-    // ⚠️ `aapcs` AND NOT `lp64`. The two RISC-V rows above spell their ABI the
+    // `aapcs` AND NOT `lp64`. The two RISC-V rows above spell their ABI the
     // way RISC-V does, and the obvious extrapolation to aarch64 is `lp64` —
     // which is what LP64 aarch64 actually is, and which clang rejects:
     //
@@ -209,13 +209,13 @@ inline constexpr Spec kTable[] = {
     // it. RISC-V needs `medany` for the corresponding reason — its default
     // assumes the low 2GiB, and bare-metal RISC-V runs at 0x80000000.
     //
-    // ⚠️ THE LIBDIR COLUMN IS EMPTY, AND THAT IS THE ROW'S CHARACTER. It names
+    // THE LIBDIR COLUMN IS EMPTY, AND THAT IS THE ROW'S CHARACTER. It names
     // a C library's multilib directory, and this target's row in the target
     // table resolves no C library: `aarch64-none-elf` is the zero-libc tier.
     // The engine reads this column only when a sysroot exists, so an invented
     // value would be a value nothing could ever check.
     { "aarch64-none-elf",   "armv8-a",  "aapcs", "small",  "armv8-a/aapcs"  },
-    // ⚠️ `x86-64` WITH A HYPHEN, WHICH IS THE ONE PLACE THIS TRIPLE'S TWO
+    // `x86-64` WITH A HYPHEN, WHICH IS THE ONE PLACE THIS TRIPLE'S TWO
     // SPELLINGS DIVERGE. The triple segment is `x86_64` with an underscore and
     // the `-march` value is `x86-64` with a hyphen; deriving one from the other
     // is a substitution that looks harmless and produces `unknown target CPU`.
@@ -236,7 +236,7 @@ inline constexpr Spec kTable[] = {
     // manifest; that is a linker-script decision and cannot be a default,
     // because the two are wrong for each other rather than merely suboptimal.
     //
-    // ⚠️ THE LIBDIR IS EMPTY FOR THE SAME REASON aarch64's IS: this row
+    // THE LIBDIR IS EMPTY FOR THE SAME REASON aarch64's IS: this row
     // resolves no C library, so a value here could never be checked.
     { "x86_64-none-elf",    "x86-64",   "sysv",  "small",  "x86-64/sysv", kX86_64NoneExtra,
       "elf_x86_64" },
@@ -251,7 +251,7 @@ inline constexpr Spec kTable[] = {
     // the x86_64 row's problem does not recur here. Verified end to end: a
     // freestanding thumb object links under `ld.lld` and boots under QEMU.
     //
-    // ⚠️⚠️ `libdir` IS THE TRIPLE HERE, NOT `<march>/<mabi>` LIKE EVERY OTHER
+    // `libdir` IS THE TRIPLE HERE, NOT `<march>/<mabi>` LIKE EVERY OTHER
     // ROW, AND THE DIFFERENCE IS AN ABI SUBSTITUTION THAT NOTHING REPORTS.
     //
     // The column names the sub-directory a multilib C library uses, and on
@@ -267,13 +267,13 @@ inline constexpr Spec kTable[] = {
     // hard-float build, sitting exactly where a soft-float program would find
     // it. Nothing failed at build time.
     //
-    // ⚠️ Filling this does NOT give these rows a C library by default: the
+    // Filling this does NOT give these rows a C library by default: the
     // column is read only once a sysroot has been resolved, and the target
     // table still binds none. The zero-libc tier stays the default and
     // `[target.<triple>] sysroot = "xim:picolibc-arm@1.8.12"` is the opt-in.
     // This makes the opt-in work; it does not take the opt-out away.
     //
-    // ⚠️ `-mabi=aapcs`, matching the aarch64 row and for the same reason: on
+    // `-mabi=aapcs`, matching the aarch64 row and for the same reason: on
     // ARM `-mabi` names a procedure call standard, not a data model.
     //  triple                     march         mabi     mcmodel libdir  extra
     { "thumbv6m-none-eabi",      "armv6-m",    "aapcs", "", "thumbv6m-none-eabi", kThumbSoftExtra },
@@ -285,7 +285,7 @@ inline constexpr Spec kTable[] = {
     { "thumbv8m.main-none-eabihf","armv8-m.main","aapcs","", "thumbv8m.main-none-eabihf" },
     // ── ARMv7-A (Cortex-A, 32-bit) ──────────────────────────────────────────
     //
-    // ⭐ THE FIRST 32-BIT MACHINE WITH A MEMORY MANAGEMENT UNIT, AND THAT IS
+    // THE FIRST 32-BIT MACHINE WITH A MEMORY MANAGEMENT UNIT, AND THAT IS
     // WHY IT IS HERE RATHER THAN BEING A SECOND SPELLING OF THE M ROWS.
     //
     // Every other 32-bit row in this table is M-profile: an MPU that describes
@@ -295,17 +295,17 @@ inline constexpr Spec kTable[] = {
     // looks like — short descriptors are 32 bits wide, long (LPAE) ones 64.
     // That question cannot be asked on a machine with no entries.
     //
-    // ⚠️ `mcmodel` and `libdir` are empty for the reasons the M rows give.
+    // `mcmodel` and `libdir` are empty for the reasons the M rows give.
     // `lldEmulation` is empty because clang's BareMetal toolchain covers arm:
     // measured, the driver reaches `ld.lld` and the x86_64 row's problem does
     // not recur.
     //
-    // ⚠️ THE TIER IS `verified` AND THE MEASUREMENT IS NAMED. 2026-09-04 under
+    // THE TIER IS `verified` AND THE MEASUREMENT IS NAMED. 2026-09-04 under
     // `xim:qemu-arm@9.2.4-1`: both rows built an image that BOOTED on
     // `-M virt -cpu cortex-a15`, printed over semihosting and reported its exit
     // status.
     //
-    // ⚠️ AND THE SEMIHOSTING EXIT CALL IS NOT SPELLED THE WAY M-PROFILE SPELLS
+    // AND THE SEMIHOSTING EXIT CALL IS NOT SPELLED THE WAY M-PROFILE SPELLS
     // IT. `SYS_EXIT` (0x18) on AArch32 takes the reason code in `r1` directly;
     // the `{reason, code}` block every Cortex-M board here passes is
     // `SYS_EXIT_EXTENDED` (0x20), which exists because a 32-bit `r1` cannot
@@ -314,7 +314,7 @@ inline constexpr Spec kTable[] = {
     // a board fact rather than a target fact, recorded here because it is where
     // the next person to write such a board will look.
     //
-    // ⚠️ `libdir` IS THE TRIPLE HERE TOO, AND FOR THE SAME REASON AS THE
+    // `libdir` IS THE TRIPLE HERE TOO, AND FOR THE SAME REASON AS THE
     // M ROWS — even though no package carries an A-profile multilib yet.
     //
     // The column is a CONVENTION about where a sysroot puts a profile, not a
@@ -367,7 +367,7 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // `-ffreestanding` so the ordering of this function's output stays a
     // function of the table rather than of the row.
     for (auto flag : s.extra) out.emplace_back(flag);
-    // ⭐⭐ ONE SECTION PER FUNCTION, SO THE LINKER CAN DROP WHAT NOTHING CALLS.
+    // ONE SECTION PER FUNCTION, SO THE LINKER CAN DROP WHAT NOTHING CALLS.
     //
     // These two flags do nothing on their own; they are the half of
     // `--gc-sections` that has to happen at compile time, and the link half is
@@ -375,7 +375,7 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // project because a dependency's translation units must carry them too, and
     // a project cannot reach those.
     //
-    // ⚠️ WHY THIS BECAME NECESSARY RATHER THAN MERELY NICE. A dependency's
+    // WHY THIS BECAME NECESSARY RATHER THAN MERELY NICE. A dependency's
     // object files enter the link unconditionally (docs/13), unlike an archive
     // member, which is pulled only while its symbol is undefined. That costs
     // nothing when the C library is a prebuilt archive and the target has
@@ -384,14 +384,14 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // Cortex-M part has kilobytes: without this, every image carries the whole
     // of the C library whether or not it calls into it.
     //
-    // ⚠️ AND IT MAKES A LINKER SCRIPT LOAD-BEARING IN A NEW WAY: an interrupt
+    // AND IT MAKES A LINKER SCRIPT LOAD-BEARING IN A NEW WAY: an interrupt
     // vector table is referenced by nothing — the hardware reads it by address
     // — so `--gc-sections` collects it. A board's script must say
     // `KEEP(*(.vectors))`. Measured: with the KEEP present, a dead function is
     // dropped and the table survives; the image boots.
     out.emplace_back("-ffunction-sections");
     out.emplace_back("-fdata-sections");
-    // ⭐ AND `-ffreestanding` ITSELF IS ONE OF THE THINGS THE GRAPH DECIDES.
+    // AND `-ffreestanding` ITSELF IS ONE OF THE THINGS THE GRAPH DECIDES.
     //
     // The paragraph above this function names what the flag changes: "no `main`
     // special-casing, no builtin-to-libcall rewrites it cannot back up". Both
@@ -400,7 +400,7 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // `hosted` is the language's own word for not-freestanding, so a provider
     // of that capability is asserting exactly the condition this flag denies.
     //
-    // ⚠️ Measured 2026-08-23, and the way it showed was not a diagnostic about
+    // Measured 2026-08-23, and the way it showed was not a diagnostic about
     // the flag. A bare-metal program whose `main` was an ordinary C++ `int
     // main()` failed to link with `undefined symbol: main`, while `nm` on its
     // own object showed `_Z4mainv` — under `-ffreestanding` a C++ `main` is not
@@ -411,7 +411,7 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // main()`, which is a workaround for a claim the build was making on the
     // program's behalf and that was no longer true.
     if (!targetCxxRuntime) out.emplace_back("-ffreestanding");
-    // ⭐⭐ UNWIND TABLES, WHICH THE COMPILER TURNS OFF FOR THIS KIND OF TARGET
+    // UNWIND TABLES, WHICH THE COMPILER TURNS OFF FOR THIS KIND OF TARGET
     // AND WHICH NOTHING IN THE BUILD OTHERWISE SAYS.
     //
     // On a hosted ELF target clang emits `.eh_frame` for every function by
@@ -422,7 +422,7 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // libunwind's C++ half, the program) and are ABSENT for everything else,
     // which on this stack means the C library and libunwind's own C sources.
     //
-    // ⚠️ AND A PARTIAL SET OF TABLES DOES NOT DEGRADE — IT STOPS THE WALK.
+    // AND A PARTIAL SET OF TABLES DOES NOT DEGRADE — IT STOPS THE WALK.
     // Measured 2026-08-23 on riscv64-none-elf, and the measurement is worth
     // keeping because every intermediate reading pointed elsewhere:
     //
@@ -441,7 +441,7 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // ELF target already gets by default, and the rest of this stack was
     // developed against that behaviour.
     if (targetCxxRuntime) out.emplace_back("-fasynchronous-unwind-tables");
-    // ⚠️ No C++ standard library headers. Not a preference — the toolchain's
+    // No C++ standard library headers. Not a preference — the toolchain's
     // libc++ headers are built for the HOST: `#include <stdio.h>` resolves to
     // libc++'s wrapper, which opens `<__config_site>`, which is generated per
     // installation for the host configuration and is simply absent for this
@@ -456,7 +456,7 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // Kept in both cases: a target-side C++ library reaches a consumer through
     // its own include dirs and modules, never through the compiler's.
     out.emplace_back("-nostdinc++");
-    // ⚠️ Exceptions and RTTI off, and this belongs HERE — with the target — for
+    // Exceptions and RTTI off, and this belongs HERE — with the target — for
     // the same reason `-ffreestanding` does: it is a property every TU in the
     // graph must agree on.
     //
@@ -482,7 +482,7 @@ inline std::vector<std::string> compile_flags(const Spec& s,
     // target-built libc++abi and unwinder has a real case for turning these
     // back on, and that is the point at which this becomes a manifest key.
     //
-    // ⭐ AND THAT POINT HAS ARRIVED. A package that provides the capability
+    // AND THAT POINT HAS ARRIVED. A package that provides the capability
     // `hosted-standard-library' for this target IS the board described above:
     // it carries libc++abi and libunwind compiled for it. With one present,
     // forcing these off is what breaks the build --- the runtime is compiled

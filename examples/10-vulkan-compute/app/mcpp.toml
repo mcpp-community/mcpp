@@ -1,0 +1,62 @@
+[package]
+name         = "vulkan-saxpy"
+namespace    = "example"
+version      = "0.1.0"
+description  = "A Vulkan compute shader behind a seam module, with a CPU fallback"
+accelerators = ["vulkan"]
+
+[language]
+standard   = "c++23"
+modules    = true
+import_std = true
+
+# The rule that compiles the shaders lives in the official plugin collection,
+# selected by its feature; `build.mcpp` imports it as `mcpp.rules.spirv`.
+[dependencies.mcpp]
+plugins = { version = "0.1.0", features = ["rules-spirv"], host-module = true }
+
+# The Khronos loader, built by the index rather than taken from the host, and
+# the adapter that makes the host's own ICDs reachable from a binary running
+# under mcpp's private loader. Neither one is a driver: a driver has to match
+# the kernel module on the machine it runs on, which is why the software one
+# below is a payload and the hardware ones are the host's.
+[dependencies.compat]
+vulkan         = "1.4.357.0"
+vulkan-runtime = "2026.09.05"
+
+# The two payloads this build names rather than discovers: the shader compiler,
+# and a Vulkan driver that is always present because it is the CPU. With
+# which is what every CI runner in this ecosystem is.
+[xlings.workspace]
+"xim:glslang"       = "15.1.0"
+
+[build]
+# What this build compiles device code FOR. `vulkan1.2` is the SPIR-V target
+# environment, and the rule package derives `--target-env` from it: the same
+# route by which `sm_89` reaches nvcc in examples/09. Unlike CUDA there is no
+# architecture set, because SPIR-V is the portable form and which device
+# executes it is decided by the driver at run time.
+accel = "vulkan1.2"
+sources = [
+  "src/*.cppm",
+  "src/*.cpp",
+  # The shaders carry the accel they are for. They are not C++ and the engine
+  # never offers them to the C++ compiler; the constrained glob is what routes
+  # them to the build program instead.
+  { glob = "shaders/*.comp", accel = "vulkan1.2" },
+]
+include_dirs = ["include"]
+
+# The Vulkan island, compiled only when the build names the accelerator.
+[target.'cfg(accelerator = "vulkan")'.build]
+sources = ["src/vulkan/*.cpp"]
+
+# The CPU-only variant: the same seam, a plain loop behind it. This is what
+# `mcpp build --no-accel` produces, and the two files define the same symbol
+# and are never in one link.
+[target.'cfg(not(accelerator = "vulkan"))'.build]
+sources = ["src/cpu/*.cpp"]
+
+[targets.vulkan-saxpy]
+kind = "bin"
+main = "src/main.cpp"

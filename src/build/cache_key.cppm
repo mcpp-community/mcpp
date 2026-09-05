@@ -82,7 +82,7 @@ struct BuildAxes {
     std::string compilerVersion;
     std::string driverIdentity;
     std::string targetTriple;
-    // ⚠️ The flags the TRIPLE implies, not the ones anyone wrote down.
+    // The flags the TRIPLE implies, not the ones anyone wrote down.
     //
     // A freestanding triple silently carries `-march`/`-mabi`/`-mcmodel`/
     // `-ffreestanding`/`-nostdinc++`/`-fno-exceptions`/`-fno-rtti`, and which
@@ -98,14 +98,14 @@ struct BuildAxes {
     // Measured on exactly that upgrade. Empty for hosted targets, so nothing
     // else's key moves.
     std::vector<std::string> targetImpliedFlags;
-    // ⭐⭐ THE HEADER SET THE DRIVER IS POINTED AT — not the driver.
+    // THE HEADER SET THE DRIVER IS POINTED AT — not the driver.
     //
     // Everything else on this axis describes the COMPILER. Nothing described
     // the LIBRARY it compiles against, and the two are separately installed:
     // one clang payload sits above whichever `xim:glibc` and
     // `xim:linux-headers` the home happens to carry.
     //
-    // ⚠️ AND `driverIdentity` CANNOT COVER IT, BY DESIGN.
+    // AND `driverIdentity` CANNOT COVER IT, BY DESIGN.
     // `normalize_driver_output` deliberately strips `/home/`, `/tmp/` and
     // `/var/` paths out of `clang --version`, which is what lets one entry be
     // shared between two homes. Correct — and it means two homes carrying the
@@ -119,7 +119,7 @@ struct BuildAxes {
     // rather than producing a readable diagnostic. BMIs carry no cross-check
     // against each other.
     //
-    // ⭐ THE `std` CACHE ON THE SAME MACHINE HAS ALWAYS HAD THIS. Its identity
+    // THE `std` CACHE ON THE SAME MACHINE HAS ALWAYS HAD THIS. Its identity
     // folds in `std_build_commands`, the whole command line, `-isystem` rows
     // included. Two caches, one machine, two notions of "the same inputs"; the
     // dependency one was the short one.
@@ -141,7 +141,7 @@ struct BuildAxes {
     bool        debug = false;
     bool        lto   = false;
     bool        strip = false;
-    // ⚠️ Position-independent code, and it is here because it was MISSING.
+    // Position-independent code, and it is here because it was MISSING.
     //
     // `-fPIC` is whole-build: one shared link unit anywhere and every object
     // in the graph gets it. That was invisible to this key, which hashes a
@@ -369,7 +369,7 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
         : (tc.binaryPath.empty() ? std::string{}
                                  : mcpp::toolchain::hash_file(tc.binaryPath));
     b.targetTriple    = tc.targetTriple;
-    // ⚠️⚠️ `tc.targetCxxRuntime` IS PASSED, AND OMITTING IT MADE THIS KEY
+    // `tc.targetCxxRuntime` IS PASSED, AND OMITTING IT MADE THIS KEY
     // DESCRIBE A COMPILATION THAT DOES NOT HAPPEN.
     //
     // `compile_flags` takes that argument because the answer changes with it:
@@ -379,7 +379,7 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
     // `plan.toolchain.targetCxxRuntime`); this key did not, so it defaulted to
     // `false` and hashed the flags of the other configuration.
     //
-    // ⭐ THE CONSEQUENCE IS A CACHE HIT ACROSS AN INCOMPATIBILITY, NOT A MISS.
+    // THE CONSEQUENCE IS A CACHE HIT ACROSS AN INCOMPATIBILITY, NOT A MISS.
     // Two configurations that must not share a slot hashed to the same key, so
     // the second build loaded the first's BMIs. Measured 2026-08-25 on a
     // bare-metal program over openkal-opensbi:
@@ -391,7 +391,7 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
     // holding five differently-sized copies of that one BMI. Slotting per
     // configuration was working; choosing the slot was not.
     //
-    // ⚠️ IT WAS DORMANT UNTIL THE ARGUMENT EXISTED. Before #486 the two layers
+    // IT WAS DORMANT UNTIL THE ARGUMENT EXISTED. Before #486 the two layers
     // computed identical flag lists for every input, so a key that ignored one
     // of them was still correct. The defect is that a cache key derived its
     // inputs a second time instead of reading what the build uses — and that
@@ -403,7 +403,7 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
     b.stdlibId        = tc.stdlibId;
     b.stdlibVersion   = tc.stdlibVersion;
 
-    // ⭐ THE HEADER SET, TAKEN FROM THE RESOLVERS THAT PRODUCE THE COMMAND
+    // THE HEADER SET, TAKEN FROM THE RESOLVERS THAT PRODUCE THE COMMAND
     // LINE — not derived a second time.
     //
     // `mcpp.toolchain.linkmodel` is already the single answer to "where does
@@ -411,13 +411,13 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
     // compile line reads it. Asking it here means the key describes the header
     // set that will actually be used, and cannot drift from it.
     //
-    // ⚠️ RELATIVE, IN TWO TIERS — and `<store>` ALONE IS NOT ENOUGH.
+    // RELATIVE, IN TWO TIERS — and `<store>` ALONE IS NOT ENOUGH.
     //
     // The absolute form names this machine's home, and the whole point of
     // `normalize_driver_output` stripping paths is that one entry can serve
     // two homes carrying the same payloads. Leaving these absolute undoes it.
     //
-    // ⚠️ MEASURED, AND `<store>` MISSED THE COMMON CASE. This developer's own
+    // MEASURED, AND `<store>` MISSED THE COMMON CASE. This developer's own
     // toolchain resolves `CLibMode::Sysroot`, whose only compile token is
     //
     //     --sysroot=/home/<user>/.mcpp/registry/subos/default
@@ -427,7 +427,7 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
     // second tier for exactly this, mirroring the `<store>`/`<pkg>` pair
     // `fill_package_config` already uses for the same reason.
     //
-    // ⭐ WHAT THIS AXIS DOES AND DOES NOT SEPARATE, stated so the next reader
+    // WHAT THIS AXIS DOES AND DOES NOT SEPARATE, stated so the next reader
     // does not have to re-derive it:
     //   * payload-supplied headers — `<store>/xim-x-glibc/2.44/include` — carry
     //     the VERSION in the path, so two payloads are two keys. This is the

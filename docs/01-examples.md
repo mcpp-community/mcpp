@@ -27,6 +27,8 @@ examples.
 | 02 | [`examples/02-with-deps`](../examples/02-with-deps/) | Adds the `mcpplibs.cmdline` dependency to parse command-line arguments | `[dependencies]`, SemVer, `mcpp.lock` |
 | 03 | [`examples/03-pack-static`](../examples/03-pack-static/) | Produces a fully static release package via `mcpp pack --mode static` | `[target.<triple>]` and `[pack]` configuration |
 | 08 | [`examples/08-build-rules`](../examples/08-build-rules/) | Two rule packages and a project that uses both | `host-module = true`, `[build-dependencies]`, `mcpp::action` with `role = "check"` |
+| 09 | [`examples/09-cuda-kernel`](../examples/09-cuda-kernel/) | A CUDA kernel behind a seam module, with a CPU fallback | `accel`, constrained source globs, `mcpp::action` with `role = "object"`, `cfg(accelerator = …)` |
+| 10 | [`examples/10-vulkan-compute`](../examples/10-vulkan-compute/) | The same computation as a Vulkan compute shader, on a GPU or on the CPU | `mcpp.rules.spirv` from `mcpp:plugins`, `mcpp::action` with `role = "source"`, generated headers, a software driver as a payload |
 
 ## Suggested Reading Order
 

@@ -2,7 +2,7 @@
 # requires: llvm unix-shell
 # The whole target side from packages: kernel interface, C library, C++ runtime.
 #
-# ⚠️ WHY THIS FILE EXISTS, AND WHAT IT COST NOT TO HAVE IT.
+# WHY THIS FILE EXISTS, AND WHAT IT COST NOT TO HAVE IT.
 #
 # mcpp and openkal are separate projects, and the engine names no
 # implementation — that separation is the point of `mcpp:<layer>` capabilities.
@@ -21,7 +21,7 @@
 # manifest had the shape. See `285_…` for the narrow case; this file covers the
 # arrangement the ecosystem actually ships.
 #
-# ⭐ THE ASSERTIONS ARE ABOUT THE ARTEFACT, NOT ABOUT EXIT CODES. A build that
+# THE ASSERTIONS ARE ABOUT THE ARTEFACT, NOT ABOUT EXIT CODES. A build that
 # resolves the wrong C library still exits 0; what it cannot do is produce a
 # static image with no interpreter and no reference to the host's loader.
 set -e
@@ -105,12 +105,12 @@ case "$desc" in
      echo "        $desc"; exit 1 ;;
 esac
 
-# ⭐ NO INTERPRETER. `statically linked` from `file` is a summary; the program
+# NO INTERPRETER. `statically linked` from `file` is a summary; the program
 # header is the fact. A dynamic image names the host's loader here, and that is
 # a path the target machine has no reason to have.
 if command -v readelf > /dev/null 2>&1; then
     phdrs="$(readelf -l "$bin" 2>/dev/null || true)"
-    # ⚠️ THIS ASSERTS AN ABSENCE, SO IT MUST FIRST ESTABLISH THAT SOMETHING WAS
+    # THIS ASSERTS AN ABSENCE, SO IT MUST FIRST ESTABLISH THAT SOMETHING WAS
     # READ. `readelf -l` on a file it cannot parse prints zero lines and exits
     # quietly; `grep -q INTERP` then finds nothing, which reads exactly like a
     # static image. e2e 287 shipped that mistake with a disassembler and CI

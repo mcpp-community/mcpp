@@ -26,9 +26,9 @@
 
 | 标记 | 含义 |
 |---|---|
-| ✅ **已实现** | 自对应“最低实现版本”起的行为与本规范一致 |
-| ⚠️ **部分实现** | 已有实现,但语义或覆盖面与本规范有差异(差异已注明) |
-| ❌ **未实现** | 本规范要求但尚未支持;当前行为已注明 |
+| **已实现** | 自对应“最低实现版本”起的行为与本规范一致 |
+| **部分实现** | 已有实现,但语义或覆盖面与本规范有差异(差异已注明) |
+| **未实现** | 本规范要求但尚未支持;当前行为已注明 |
 
 > 描述符身份规则自 mcpp 0.0.106 起实现;唯一精确 selector 自 2026.8.10.1
 > 起实现。0.0.105 及更早版本要求的过渡形态(`name` 必须写成
@@ -71,7 +71,7 @@ mcpp 的正确做法是**把描述符里读到的字面值原样使用**,而不�
 
 **层级一律属于 `namespace`。** `(mcpplibs.capi, lua)` 是规范形态。
 
-✅ **已实现**:身份二元组模型贯穿 mcpp 全链路(`XpkgIdentity`、`canonical_xpkg_identity`、`xpkg_lua_identity_matches`)。
+**已实现**:身份二元组模型贯穿 mcpp 全链路(`XpkgIdentity`、`canonical_xpkg_identity`、`xpkg_lua_identity_matches`)。
 
 ---
 
@@ -83,23 +83,23 @@ mcpp 的正确做法是**把描述符里读到的字面值原样使用**,而不�
 - 非空时,**必须**是点分路径,每段由字母、数字、`-`、`_` 组成。
 - **可以**多级(`mcpplibs.capi`),多级用于表达真实的层级归属。
 
-✅ **已实现**。
+**已实现**。
 
 ### 3.2 `package.name`
 
 > **规范:`name` 必须是单一原子段,禁止包含 `.`。任何层级都必须放进 `namespace`。**
 
 ```lua
--- ✅ 规范形态
+-- 规范形态
 package = { namespace = "chriskohlhoff", name = "asio" }
 package = { namespace = "mcpplibs.capi", name = "lua"  }
 package = { namespace = "",              name = "imgui" }
 
--- ❌ 层级留在 name 里
+-- 层级留在 name 里
 package = { namespace = "mcpplibs", name = "capi.lua" }
 ```
 
-✅ **已实现**(0.0.106)。`mcpp xpkg parse` 与安装路径共用同一谓词校验。
+**已实现**(0.0.106)。`mcpp xpkg parse` 与安装路径共用同一谓词校验。
 
 **兼容写法**:0.0.105 及更早版本要求的完全限定拼写仍被接受 ——
 
@@ -117,9 +117,9 @@ package = { namespace = "compat", name = "compat.zlib" }   -- legacy,短名 = "z
 
 这与 xlings 的寻址模型一致:目标写作 `<namespace>:<name>`,冒号前比对包声明的 `package.namespace`,显式写出命名空间即可消歧。
 
-✅ **规范如此**。
+**规范如此**。
 
-✅ **已实现**。xlings **0.4.69** 起索引按 `(effectiveNamespace, name)` 建键([#381](https://github.com/openxlings/xlings/issues/381)),同一索引内两个同短名不同命名空间的包各自可寻址;mcpp 始终传入唯一精确身份。
+**已实现**。xlings **0.4.69** 起索引按 `(effectiveNamespace, name)` 建键([#381](https://github.com/openxlings/xlings/issues/381)),同一索引内两个同短名不同命名空间的包各自可寻址;mcpp 始终传入唯一精确身份。
 
 e2e `163_identity_first_resolution.sh` 端到端锁住:同一 path 索引内 `(alpha, widget)` 与 `(beta, widget)` 各自安装到 `alpha-x-widget` / `beta-x-widget`。
 
@@ -131,7 +131,7 @@ e2e `163_identity_first_resolution.sh` 端到端锁住:同一 path 索引内 `(a
 
 身份来自文件**内容**声明的 `package.{namespace,name}`,与文件叫什么无关。
 
-✅ **已实现**(0.0.106)。两个半边都已兑现:
+**已实现**(0.0.106)。两个半边都已兑现:
 - **命中后的校验**:任何候选都必须通过 `xpkg_lua_identity_matches` 复核声明身份(防止 `compat.zlib` 请求被外来的裸 `zlib.lua` 满足)。
 - **发现**:推荐文件名作为**快路径**先探测;全部落空时回落到按声明身份扫描 `pkgs/**/*.lua`。因此叫任何名字、放在任何字母目录下的描述符都能被找到,而符合推荐命名的索引**不付出任何扫描开销**。
 
@@ -160,7 +160,7 @@ e2e `163_identity_first_resolution.sh` 锁住:身份为 `(acme, widget)` 的描�
 | 3 | `[dependencies.acme]`<br>`widget = "1.0"` | `(acme, widget)` | **命名空间子表**。与 #2 完全等价,多个同 namespace 包时更清晰 |
 | 4 | `[dependencies]`<br>`"acme.widget" = "1.0"` | `(acme, widget)` | **引号点式键**(legacy source shape)。身份仍与 #2/#3 相同 |
 
-✅ **已实现**(`parse_package_selector` / `normalize_package_selector` / `make_direct_dependency_selector`)。
+**已实现**(`parse_package_selector` / `normalize_package_selector` / `make_direct_dependency_selector`)。
 
 **#2 与 #3 只有 TOML 版式差异,没有解析差异。** 新增索引或同短名 sibling 不能改变其身份。
 
@@ -172,7 +172,7 @@ e2e `163_identity_first_resolution.sh` 锁住:身份为 `(acme, widget)` 的描�
 
 例如 gtest 必须写成 `compat.gtest` 或 `[dependencies.compat] gtest = ...`;裸 `gtest` 请求的是不同身份 `(mcpplibs, gtest)`。
 
-✅ **已实现**(2026.8.10.1)。默认 namespace 的依赖身份门禁不再接纳 `compat` 或无 namespace descriptor。
+**已实现**(2026.8.10.1)。默认 namespace 的依赖身份门禁不再接纳 `compat` 或无 namespace descriptor。
 
 **设计理由**:全域按短名搜索会让解析结果取决于「本机装了哪些索引」——
 1. 两个命名空间拥有同名包时,胜负由索引顺序决定,而用户 `[indices]` 添加的索引之间**没有全序**;
@@ -212,7 +212,7 @@ e2e `163_identity_first_resolution.sh` 锁住:身份为 `(acme, widget)` 的描�
 
 唯一身份落空时,mcpp **必须**明确失败并列出该身份;若同短名存在于其他 namespace,**应当**只在诊断中给出可复制的显式 selector,禁止把提示结果回灌解析。
 
-✅ **已实现**(2026.8.10.1):
+**已实现**(2026.8.10.1):
 
 ```
 error: dependency 'asio': no package found
@@ -288,7 +288,7 @@ warning，规范列举命令是 `mcpp new --list-templates pkg`。
 | `ns == "mcpplibs"`(默认命名空间) | 依赖 selector 主路径要求描述符身份必须为 `mcpplibs`;底层 legacy API 的 `allowLegacyBareDefault` 只供非 selector 兼容调用 |
 | 其他具体 ns | **精确相等** |
 
-✅ **已实现**。`compat.gtest` 与 `mcpplibs.gtest` 是两个不同身份。
+**已实现**。`compat.gtest` 与 `mcpplibs.gtest` 是两个不同身份。
 
 ### 5.3 空命名空间的兼容边界(P3)
 
@@ -296,7 +296,7 @@ warning，规范列举命令是 `mcpp new --list-templates pkg`。
 
 若描述符本身未声明 `namespace`(上游裸包如 `opencv`),则**空命名空间就是它的合法身份**,不得强行填充。
 
-✅ **已实现**(0.0.105)。此前空命名空间会流入 lockfile 与安装层。
+**已实现**(0.0.105)。此前空命名空间会流入 lockfile 与安装层。
 
 ---
 
@@ -306,9 +306,9 @@ warning，规范列举命令是 `mcpp new --list-templates pkg`。
 
 | 派生量 | 规范公式 | 状态 |
 |---|---|---|
-| xlings 索引键 | `<字面 name>` | ✅ |
-| xpkg 安装目录 | `{namespace}-x-{字面 name}` | ✅ |
-| 安装 target | `<namespace>:<字面 name>@<版本>` | ✅ |
+| xlings 索引键 | `<字面 name>` | yes |
+| xpkg 安装目录 | `{namespace}-x-{字面 name}` | yes |
+| 安装 target | `<namespace>:<字面 name>@<版本>` | yes |
 
 **注意 target 的冒号前缀是包的命名空间**(xlings 的 *effective namespace*),不是索引名 —— 这正是同一索引内两个同短名包得以各自寻址的原因。无命名空间的上游包用裸字面名寻址,无前缀。
 
@@ -338,8 +338,8 @@ warning，规范列举命令是 `mcpp new --list-templates pkg`。
 
 | | FQN 形态描述符(现网) | 短名形态描述符 |
 |---|---|---|
-| mcpp ≤ 0.0.105 | ✅ | ❌ `E_NOT_FOUND` |
-| 实现 §7.2 之后 | ✅ | ✅ |
+| mcpp ≤ 0.0.105 | yes | `E_NOT_FOUND` |
+| 实现 §7.2 之后 | yes | |
 
 **只有一个破损格。** 因此:
 
@@ -352,7 +352,7 @@ warning，规范列举命令是 `mcpp new --list-templates pkg`。
 ```lua
 package = {
     namespace = "chriskohlhoff",
-    name      = "asio",                 -- ✅ 规范形态
+    name      = "asio",                 -- 规范形态
 }
 ```
 
@@ -387,9 +387,9 @@ asio = "1.38.1"
 ```
 选择器 [dependencies.chriskohlhoff] + asio
   → 显式命名空间表 → 单候选 (chriskohlhoff, asio)
-  → 发现:探测 pkgs/c/chriskohlhoff.asio.lua           ✓
+  → 发现:探测 pkgs/c/chriskohlhoff.asio.lua           
   → 校验:声明 (chriskohlhoff, chriskohlhoff.asio)
-          归一化 → (chriskohlhoff, asio) == 候选        ✓
+          归一化 → (chriskohlhoff, asio) == 候选        
   → 身份 (chriskohlhoff, asio)
   → wire key   chriskohlhoff.asio
   → target     chriskohlhoff:chriskohlhoff.asio@1.38.1
@@ -409,7 +409,7 @@ gtest = "1.15.2"
 
 ```
 选择器 compat.gtest → 唯一身份 (compat, gtest)
-探测 compat.gtest.lua,声明 (compat, compat.gtest) → 归一 (compat, gtest) → ✓
+探测 compat.gtest.lua,声明 (compat, compat.gtest) → 归一 (compat, gtest) → 
 身份 (compat, gtest) → store dir compat-x-compat.gtest
 ```
 

@@ -188,7 +188,7 @@ TEST(SourceKind, SameStemAcrossModuleExtensionsNeverCollides) {
         EXPECT_TRUE(seen.insert(n).second) << "collision: " << f << " -> " << n;
     }
 
-    // ⚠️ KNOWN GAP, deliberately pinned rather than asserted away: `foo.c` and
+    // KNOWN GAP, deliberately pinned rather than asserted away: `foo.c` and
     // `foo.cpp` in one directory have always shared `foo.o`. Fixing it renames
     // every C object, which is exactly the cache-layout change described
     // above and needs a cache-key revision to be safe. Tracked separately —
@@ -238,6 +238,53 @@ TEST(SourceKind, ClassifiesDeviceTranslationUnits) {
     auto t = mcpp::builtin_extension_table();
     EXPECT_EQ(mcpp::classify("src/k.cu",  t), SourceKind::Device);
     EXPECT_EQ(mcpp::classify("src/k.hip", t), SourceKind::Device);
+}
+
+TEST(SourceKind, ClassifiesShaderAndKernelLanguages) {
+    // The criterion is "a separate compiler consumes it", not "NVIDIA ships
+    // it". Before this, the list was `.cu` and `.hip` alone, and a shader in a
+    // constrained glob was refused with "no role for the extension '.comp'" —
+    // so the file never reached MCPP_DEVICE_SOURCES and the rule package that
+    // exists to compile it was told there was nothing to compile.
+    auto t = mcpp::builtin_extension_table();
+    for (const char* p : {"shaders/s.comp", "shaders/s.vert", "shaders/s.frag",
+                          "shaders/s.geom", "shaders/s.tesc", "shaders/s.tese",
+                          "shaders/s.mesh", "shaders/s.task", "shaders/s.rgen",
+                          "shaders/s.rint", "shaders/s.rahit", "shaders/s.rchit",
+                          "shaders/s.rmiss", "shaders/s.rcall", "shaders/s.glsl",
+                          "shaders/s.hlsl", "kernels/k.cl", "kernels/k.metal"})
+        EXPECT_EQ(mcpp::classify(p, t), SourceKind::Device) << p;
+}
+
+TEST(SourceKind, ShaderExtensionsDoNotWidenTheDefaultGlob) {
+    // The whole safety argument for widening the table rests on this: the
+    // default globs are unchanged, so no published package starts compiling a
+    // vendored shader on the next upgrade. Asserted over the WHOLE list rather
+    // than the two names that were there before, so a future addition cannot
+    // pass this file while changing what a default build compiles.
+    const auto globs = mcpp::default_source_globs(mcpp::builtin_extension_table());
+    const std::vector<std::string> expected{
+        "src/**/*.cppm", "src/**/*.cpp", "src/**/*.cc", "src/**/*.c",
+        "src/**/*.S", "src/**/*.s", "src/**/*.asm",
+    };
+    EXPECT_EQ(globs, expected);
+}
+
+TEST(SourceKind, ShaderExtensionsCannotBeClaimedAsModuleInterfaces) {
+    // Reserved for the same reason `.cu` is: routing a shader to the C++
+    // module rule fails somewhere that names neither the file nor the key.
+    for (const char* ext : {".comp", ".hlsl", ".cl", ".metal"}) {
+        auto err = mcpp::validate_module_extensions(std::vector<std::string>{ext});
+        ASSERT_TRUE(err.has_value()) << ext;
+        EXPECT_NE(err->find(ext), std::string::npos) << ext;
+    }
+}
+
+TEST(SourceKind, ShaderObjectsUseTheCollisionProofName) {
+    // `scale.comp` and `scale.vert` are one rename apart in a shader
+    // directory, and both would be `scale.o` under the stem-named form.
+    EXPECT_EQ(mcpp::object_filename_for("shaders/scale.comp", ".o"), "scale.comp.o");
+    EXPECT_EQ(mcpp::object_filename_for("shaders/scale.vert", ".o"), "scale.vert.o");
 }
 
 TEST(SourceKind, DeviceHeadersAffectGraphShape) {

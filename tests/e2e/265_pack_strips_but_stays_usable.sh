@@ -3,7 +3,7 @@
 # 265_pack_strips_but_stays_usable.sh — `mcpp pack` ships stripped artifacts,
 # and stripping must not make them unusable.
 #
-# ⚠️ THE ONE THAT BITES: A STATIC ARCHIVE CANNOT BE `--strip-all`ed.
+# THE ONE THAT BITES: A STATIC ARCHIVE CANNOT BE `--strip-all`ed.
 #
 # `strip` with no shape argument defaults to strip-all, and on a `.a` that
 # removes the ARCHIVE SYMBOL INDEX. The package then fails at the CONSUMER's

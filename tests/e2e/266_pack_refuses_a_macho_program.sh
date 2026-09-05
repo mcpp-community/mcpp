@@ -22,7 +22,7 @@
 # the `pack` capability where `elf` + `patchelf` are both present — i.e. Linux.
 # So no job in this suite has ever run `mcpp pack` on a Mac.
 #
-# ⚠️ BOTH SIDES, ON THE SAME HOST. Asserting only the refusal cannot tell "the
+# BOTH SIDES, ON THE SAME HOST. Asserting only the refusal cannot tell "the
 # gate works" from "pack is broken on this machine". So the same run also packs
 # a LIBRARY target, which takes a different pipeline and must still succeed.
 set -e

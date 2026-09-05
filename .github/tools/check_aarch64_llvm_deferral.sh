@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# ⭐⭐ A DEFERRAL'S PREMISE, RECHECKED.
+# A DEFERRAL'S PREMISE, RECHECKED.
 #
 # `available_toolchain_indexes()` omits llvm on non-x86_64 Linux because no
 # linux-aarch64 llvm exists — not in xlings-res, and not upstream since 19.x.
 # That is a deferral, and a deferral nobody rechecks is indistinguishable from
 # a defect.
 #
-# ⚠️ THIS FAILS WHEN THE REASON STOPS HOLDING, which is the opposite of what a
+# THIS FAILS WHEN THE REASON STOPS HOLDING, which is the opposite of what a
 # check usually does. The day an aarch64 llvm is published, it goes red and
 # names the gate to remove — see
 # `.agents/docs/2026-08-26-aarch64-linux-ecosystem-closure.md` §P1.
 #
-# ⚠️ Network trouble must not be read as "it appeared". An unreadable asset list
+# Network trouble must not be read as "it appeared". An unreadable asset list
 # leaves the premise alone and says so: a check that turns a flaky API into a
 # claim about the world is worse than no check.
 set -uo pipefail

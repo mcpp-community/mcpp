@@ -28,7 +28,7 @@ import mcpp.toolchain.triple;
 
 export namespace mcpp::toolchain {
 
-// ⚠️ A FAMILY IS A COMPILER, AND `openkal-llvm` WAS NOT ONE.
+// A FAMILY IS A COMPILER, AND `openkal-llvm` WAS NOT ONE.
 //
 // It named the same llvm payload as `Llvm` and existed to carry one fact: that
 // a project's headers, C library, C++ runtime and platform implementation come
@@ -413,7 +413,7 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
         return pkg;
     }
     if (spec.family == Family::Llvm) {
-        // ⭐ ONE PAYLOAD. The `openkal-llvm` spelling normalises to this family and
+        // ONE PAYLOAD. The `openkal-llvm` spelling normalises to this family and
         // installs nothing of its own — it is a statement about where the
         // TARGET SIDE comes from, and the compiler is the llvm payload either
         // way. A user who has one has both.
@@ -425,7 +425,7 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     // Family::Gcc — the target decides the payload.
     const auto& t = spec.target;
 
-    // ⚠️⚠️ `&& t.os == "linux"` — AND THE PARAGRAPH BELOW ALREADY SAID SO.
+    // `&& t.os == "linux"` — AND THE PARAGRAPH BELOW ALREADY SAID SO.
     //
     // "Canonical linux-musl triples coincide with the GNU tool spelling" is a
     // statement about linux-musl, and the condition asked only whether the C
@@ -604,7 +604,7 @@ bool host_can_serve(const triple::Triple& target) {
 
     if (target.os == "linux") {
         if constexpr (mcpp::platform::is_linux) {
-            // ⚠️⚠️ "SELF-CONTAINED" IS ABOUT THE PAYLOAD'S CONTENTS, NOT ABOUT
+            // "SELF-CONTAINED" IS ABOUT THE PAYLOAD'S CONTENTS, NOT ABOUT
             // WHICH HOSTS IT IS PUBLISHED FOR — and this line read it as both.
             //
             // A musl payload really does carry its own sysroot, so no host-side
@@ -618,7 +618,7 @@ bool host_can_serve(const triple::Triple& target) {
             // admitted, resolved a package with no aarch64 asset, and failed at
             // install — `mismatch / build-failed` in the target matrix, twice.
             //
-            // ⭐ The native row stays reachable on every arch: `musl-gcc`
+            // The native row stays reachable on every arch: `musl-gcc`
             // publishes both, which is why `aarch64-linux-musl` is `ok` there.
             const bool crossArch = target.arch != mcpp::platform::host_arch;
             if (target.is_musl())
@@ -634,7 +634,7 @@ bool host_can_serve(const triple::Triple& target) {
             && target.is_musl()
             && target.arch == mcpp::platform::host_arch;
     }
-    // ⚠️ THE mingw CROSS IS PUBLISHED FOR ONE HOST ARCH. `mingw-cross-gcc`
+    // THE mingw CROSS IS PUBLISHED FOR ONE HOST ARCH. `mingw-cross-gcc`
     // declares `archs = { "x86_64" }`, so a Linux host that is not x86_64
     // cannot obtain it — measured on ubuntu-24.04-arm, where the row was
     // listed and its refusal carried no reason at all (`unsupported / other`).
@@ -643,7 +643,7 @@ bool host_can_serve(const triple::Triple& target) {
         return mcpp::platform::is_linux
             && mcpp::platform::host_arch == "x86_64";
     }
-    // ⚠️⚠️ PE + musl HAS NO PAYLOAD ON ANY HOST, INCLUDING WINDOWS.
+    // PE + musl HAS NO PAYLOAD ON ANY HOST, INCLUDING WINDOWS.
     //
     // `triple::pin_is_capability()` already says so — no gcc emits a PE with a
     // musl C library, and LLVM cannot spell the triple — and chapter 16 states
@@ -662,7 +662,7 @@ bool host_can_serve(const triple::Triple& target) {
     // Linux the same cell already answered `host-cannot-serve`, which is the
     // right answer everywhere.
     //
-    // ⭐ The graph path is untouched: this refusal is held and released only
+    // The graph path is untouched: this refusal is held and released only
     // when nothing supplies the target's system, and `graph × windows-musl` is
     // `ok` on both hosts.
     if (target.is_pe() && target.is_musl()) return false;
@@ -676,7 +676,7 @@ bool host_can_serve(const triple::Triple& target) {
     // unlike every hosted case above, which needs a C library that only exists
     // for some (host, target) pairs.
     //
-    // ⚠️ Serviceable is not the same as complete: a target with no C library
+    // Serviceable is not the same as complete: a target with no C library
     // still links only `-nostdlib` programs. That gap belongs to the ecosystem
     // (a libc wrapper package), and saying `false` here would hide it behind
     // "this host cannot build it", which is the wrong diagnosis.
@@ -686,7 +686,7 @@ bool host_can_serve(const triple::Triple& target) {
 }
 
 std::vector<AvailableIndex> available_toolchain_indexes() {
-    // ⚠️⚠️ NOT EVERY FAMILY EXISTS FOR EVERY (OS, ARCH), AND THIS LIST USED TO
+    // NOT EVERY FAMILY EXISTS FOR EVERY (OS, ARCH), AND THIS LIST USED TO
     // SAY OTHERWISE.
     //
     // The branches below are per-OS and there were none per-ARCH, so an aarch64
@@ -701,12 +701,12 @@ std::vector<AvailableIndex> available_toolchain_indexes() {
     // promised would work. Same family as the rest of this release: a table
     // that answers a narrower question than the one it is asked.
     //
-    // ⭐ THIS IS A POLICY STATEMENT, NOT A COPY OF THE INDEX. It says which
+    // THIS IS A POLICY STATEMENT, NOT A COPY OF THE INDEX. It says which
     // families mcpp SUPPORTS on this host — the same kind of statement `tier`
     // makes for a target row — and the plan that retires it is
     // `.agents/docs/2026-08-26-aarch64-linux-ecosystem-closure.md` §P1.
     //
-    // ⚠️ AND ITS PREMISE IS ASSERTED IN CI, so it cannot outlive its reason.
+    // AND ITS PREMISE IS ASSERTED IN CI, so it cannot outlive its reason.
     // `ci-target-matrix.yml`'s aarch64 job checks that no linux-aarch64 llvm
     // asset has appeared; the day one does, that step reds and names this
     // gate. A deferral nobody rechecks is indistinguishable from a defect.

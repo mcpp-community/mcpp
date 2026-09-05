@@ -77,7 +77,7 @@ struct HostFlagOptions {
     // rejects a module built for a different deployment target outright.
     std::string macosDeploymentTarget;
 
-    // ⭐⭐ DOES THE TARGET'S C LIBRARY COME FROM A DIRECTORY THAT EXISTED
+    // DOES THE TARGET'S C LIBRARY COME FROM A DIRECTORY THAT EXISTED
     // BEFORE DEPENDENCY RESOLUTION? — `plan.targetSide.cAbi.prebuilt()`, READ
     // rather than derived.
     //
@@ -88,11 +88,11 @@ struct HostFlagOptions {
     // while depending on nothing answers yes to the first and no to the
     // second.
     //
-    // ⚠️ THE LINK SIDE OF THIS DEFECT WAS FIXED IN 2026.8.26.1 (#511) AND THIS
+    // THE LINK SIDE OF THIS DEFECT WAS FIXED IN 2026.8.26.1 (#511) AND THIS
     // SIDE WAS NOT. Measured on 2026.8.26.2, same machine, same compiler, same
     // target, differing only in whether it was spelled out:
     //
-    //     $ mcpp build                                   ldflags: identical ✔
+    //     $ mcpp build                                   ldflags: identical 
     //     $ mcpp build --target x86_64-unknown-linux-gnu  cxxflags: SIX tokens gone
     //
     //         --no-default-config  -nostdinc++
@@ -106,7 +106,7 @@ struct HostFlagOptions {
     // payload — the silent ABI mix; on one without, it fails naming the
     // payload.
     //
-    // ⭐ e2e 295 states the invariant ("naming the host's own target changes
+    // e2e 295 states the invariant ("naming the host's own target changes
     // nothing") and compared only `^ldflags`, so the identity held one line
     // above the line where it did not. It now compares both.
     //
@@ -161,7 +161,7 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     const auto dm = resolve_clang_driver(tc);
     const auto lm = resolve_link_model(tc);
 
-    // ⭐⭐ THE TRIPLE, SAID OUT LOUD, WHEN NOTHING ELSE SAYS IT.
+    // THE TRIPLE, SAID OUT LOUD, WHEN NOTHING ELSE SAYS IT.
     //
     // Every hosted cross this build tool could do was served by a payload whose
     // driver had exactly one target — `x86_64-w64-mingw32-g++` needs no
@@ -173,7 +173,7 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // which emits every format it was built with, and which will emit for THIS
     // machine unless told otherwise.
     //
-    // ⚠️ Measured 2026-08-23. A build for `aarch64-macos` with an explicit
+    // Measured 2026-08-23. A build for `aarch64-macos` with an explicit
     // `[target.aarch64-macos] toolchain = "llvm@…"` resolved the whole graph,
     // took the C library's aarch64 headers, and compiled with no `--target` —
     // host code generation, target declarations. It was caught by an assertion
@@ -188,11 +188,11 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // reads it.
     if (!tc.crossTargetFlag.empty()) out.push_back(tc.crossTargetFlag);
 
-    // ⭐⭐ AND WHAT A `throw` AND A `thread_local` COMPILE INTO, WHICH IS A
+    // AND WHAT A `throw` AND A `thread_local` COMPILE INTO, WHICH IS A
     // PROPERTY OF THE GRAPH AND NOT OF ANY ONE PACKAGE — see
     // `graph_runtime_compile_flags` for what and why.
     //
-    // ⚠️ IT WAS DECLARED PER-PACKAGE, WHICH IS EXACTLY AS FAR AS IT REACHED.
+    // IT WAS DECLARED PER-PACKAGE, WHICH IS EXACTLY AS FAR AS IT REACHED.
     // `openkal-llvm-runtime` set `-fdwarf-exceptions` in its own `[build]`, so
     // its objects agreed with each other and nothing else did. Measured
     // 2026-08-23 — every object compiled, and the link said:
@@ -215,7 +215,7 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // returning early.
     const bool trustCfg = !bypassCfg && dm.hasCfg;
 
-    // ⚠️ AND NOT WHEN THE TARGET SIDE COMES FROM THE GRAPH — the compile-side
+    // AND NOT WHEN THE TARGET SIDE COMES FROM THE GRAPH — the compile-side
     // counterpart of the replacement `flags.cppm` makes on the link line.
     //
     // These tokens are the payload's: `-isystem <payload>/include/c++/v1` and
@@ -223,7 +223,7 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // library are packages, and the payload's copies are built for the machine
     // doing the building.
     //
-    // ⚠️ `-nostdinc++` DOES NOT REMOVE THEM, which is what makes this its own
+    // `-nostdinc++` DOES NOT REMOVE THEM, which is what makes this its own
     // fix rather than a flag. That option suppresses the DRIVER's own C++
     // search; a path put there explicitly with `-isystem` stays. Measured
     // 2026-08-23, cross-compiling openkal-windows — a package that uses no C++
@@ -235,7 +235,7 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // mingw's own header asked for `<ctype.h>`, and the payload's libc++ was
     // still ahead of the sysroot that had just been pointed at the right place.
     //
-    // ⭐ READ, NOT DERIVED — see HostFlagOptions::cAbiPrebuilt for the
+    // READ, NOT DERIVED — see HostFlagOptions::cAbiPrebuilt for the
     // measurement that replaced `!tc.crossTargetFlag.empty()` here. This site
     // and `flags.cppm`'s link side now ask one question of one value, so they
     // cannot disagree.
@@ -245,7 +245,7 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
         for (auto& t : dm.compile_tokens(esc, opt.clangStdlibSelect))
             out.push_back(t);
     } else if (bypassCfg) {
-        // ⭐⭐ THE BYPASS IS NOT PART OF THE PAYLOAD'S HEADER SET, AND IT WAS
+        // THE BYPASS IS NOT PART OF THE PAYLOAD'S HEADER SET, AND IT WAS
         // BEING SUPPRESSED WITH IT.
         //
         // The payload's `-isystem` rows describe a C library this target does
@@ -255,7 +255,7 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
         // command line depend on what happened to be installed when the
         // payload landed.
         //
-        // ⚠️ Measured on 2026.8.26.2: `mcpp build --target <the host's own>`
+        // Measured on 2026.8.26.2: `mcpp build --target <the host's own>`
         // dropped `--no-default-config`, so clang read `bin/clang++.cfg` and
         // the build silently inherited that machine's install. It is also what
         // made a hand-written `<triple>-clang++.cfg` a working workaround for

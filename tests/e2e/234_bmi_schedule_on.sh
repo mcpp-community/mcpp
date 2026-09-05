@@ -13,7 +13,7 @@
 #     it is split. If the strategy silently fell back, the timings would look
 #     like a regression in the feature rather than like the feature being off.
 #
-#  2. ⚠️ STALE CONCURRENCY TOKENS MUST BE RECLAIMED. Real compiler concurrency is
+#  2. STALE CONCURRENCY TOKENS MUST BE RECLAIMED. Real compiler concurrency is
 #     bounded by a semaphore of directories under `<build>/.mcpp-sched`, and a
 #     token is removed by the supervisor holding it. A supervisor that never runs
 #     its cleanup — Ctrl-C on the build, the OOM killer, a reboot — leaves its
@@ -31,7 +31,7 @@ if [ -z "${MCPP:-}" ]; then
   MCPP="$(bash "$_root/.github/tools/newest_artifact.sh" "$_root" mcpp 2>/dev/null || true)"
   [ -n "$MCPP" ] || { echo "SKIP: no mcpp binary built yet — run \`mcpp build\` first"; exit 0; }
 fi
-# ⚠️ ABSOLUTISE WHATEVER WE GOT, not just what we derived. This test `cd`s into a
+# ABSOLUTISE WHATEVER WE GOT, not just what we derived. This test `cd`s into a
 # temp directory, so a RELATIVE MCPP — which is what `ls -t target/*/*/bin/mcpp`
 # hands you, and what a caller naturally exports — stops resolving the moment we
 # leave the repository, with
@@ -46,7 +46,7 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
 
-# ⚠️ PIN PER PLATFORM, not just `default`. A bare `default = "gcc@16.1.0"` sends
+# PIN PER PLATFORM, not just `default`. A bare `default = "gcc@16.1.0"` sends
 # macOS and Windows looking for a gcc payload that does not exist for them, and
 # the whole test dies at step 1 with `'xim:gcc@16.1.0' not in current index` —
 # reported as "the build with bmi_schedule=on failed", which is a completely
@@ -153,7 +153,7 @@ printf '\nexport int core_extra() { return 1; }\n' >> src/core.cppm
 # A generous bound that is still far below the in-process 2h fallback: if the
 # reclaim is gone this hangs, and the timeout is what turns that into a failure
 # a CI log can explain.
-# ⚠️ CAPTURE THE STATUS BEFORE ANY TEST TOUCHES IT. Inside `if ! cmd; then`,
+# CAPTURE THE STATUS BEFORE ANY TEST TOUCHES IT. Inside `if ! cmd; then`,
 # `$?` is the status of `! cmd` — which is 0 exactly when cmd FAILED — so a real
 # failure got reported as "exited 0" and the timeout case could never be
 # distinguished from any other. Same shape as reading `$?` after `cmd | tail`.

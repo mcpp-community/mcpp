@@ -105,7 +105,7 @@ if command -v lib &>/dev/null && members="$(lib /nologo /LIST "$(host_path "$arc
     echo "  (verified against lib /LIST)"
 fi
 
-# ⚠️ NO CONSUMER STEP, and the reason is a measured one rather than a
+# NO CONSUMER STEP, and the reason is a measured one rather than a
 # simplification. The package is built with msvc@system, so its tag is
 # `…-msvc19-…`; the consumer would have to use the same toolchain or the ABI gate
 # refuses it — correctly:

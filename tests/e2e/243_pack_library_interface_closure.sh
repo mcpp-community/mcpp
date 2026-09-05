@@ -2,7 +2,7 @@
 # requires:
 # (no capability: this must hold on every target.)
 #
-# ⚠️ This test is also the regression for a scanner bug it uncovered. An
+# This test is also the regression for a scanner bug it uncovered. An
 # IMPLEMENTATION PARTITION (`module M:part;`, no `export`) had no coverage
 # anywhere in mcpp, and the scanner recorded it as "requires M:part, provides
 # nothing" — so the file required its own name, the graph held no edge from the

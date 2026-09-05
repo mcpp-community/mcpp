@@ -2,14 +2,14 @@
 # requires: unix-shell jq
 # A target request that declines to name a C library resolves to a SUPPORTED row.
 #
-# ⭐⭐ `parse` FILLS THE ENV SEGMENT LEXICALLY, AND THE TIER GATE USED TO ASK
+# `parse` FILLS THE ENV SEGMENT LEXICALLY, AND THE TIER GATE USED TO ASK
 # ABOUT THE FILLED VALUE RATHER THAN ABOUT THE REQUEST.
 #
 # The fill exists so the IDENTITY stays total: `x86_64-linux` IS
 # `x86_64-linux-gnu`, that is the output directory and the cache key, and a unit
 # test pins it. What it is not is an answer to "does mcpp support this".
 #
-# ⚠️ MEASURED ON 2026.8.26.1, same machine, same graph, two spellings:
+# MEASURED ON 2026.8.26.1, same machine, same graph, two spellings:
 #
 #     $ mcpp build --target aarch64-linux
 #       error: target 'aarch64-linux-gnu' is registered but not yet supported
@@ -21,7 +21,7 @@
 # `examples/06-openkal-cross` teaches the short spelling for three platforms;
 # the fourth was the one that could not be written.
 #
-# ⭐⭐ BOTH DIRECTIONS, BECAUSE "SEND EVERY BARE -linux TO musl" ALSO FIXES
+# BOTH DIRECTIONS, BECAUSE "SEND EVERY BARE -linux TO musl" ALSO FIXES
 # aarch64 AND WOULD BREAK EVERY PROJECT ON THE PLANET. Half two is the control:
 # `x86_64-linux` must still be gnu, because gnu is a supported row there.
 set -e
@@ -34,7 +34,7 @@ cd "$work"
 printf '[package]\nname    = "reqprobe"\nversion = "0.1.0"\n' > mcpp.toml
 printf 'extern "C" int main(int, char**, char**) { return 0; }\n' > src/main.cpp
 
-# ⭐ CLASSIFICATION FROM THE MACHINE INTERFACE. `data.reason` is a finite token;
+# CLASSIFICATION FROM THE MACHINE INTERFACE. `data.reason` is a finite token;
 # a substring search over prose stops asserting the moment the prose is reworded
 # — measured in this repo, twice, in one session.
 reason_for() {
@@ -42,7 +42,7 @@ reason_for() {
         | jq -r '.data.reason // "-"' | tr -d '\r'
 }
 
-# ⚠️⚠️ THE CLAIM IS ABOUT COMPLETION, NOT ABOUT SERVABILITY, AND ONLY ONE OF
+# THE CLAIM IS ABOUT COMPLETION, NOT ABOUT SERVABILITY, AND ONLY ONE OF
 # THOSE IS THE SAME ON EVERY BUILD HOST.
 #
 # `aarch64-linux-musl` pins the musl-gcc payload. macOS has no gcc payload at
@@ -54,7 +54,7 @@ reason_for() {
 # visible either way: on success in `data.triple`, and under a refusal in the
 # first line of the message, which names its subject.
 #
-# ⚠️ THE SUBJECT, NOT THE DOCUMENT. Grepping the whole JSON was the first draft
+# THE SUBJECT, NOT THE DOCUMENT. Grepping the whole JSON was the first draft
 # and it is contaminated: `host-cannot-serve` lists every target this host CAN
 # serve, so `x86_64-linux-musl` appears in a message that is about something
 # else entirely. The list is an answer to a different question sitting in the
@@ -91,7 +91,7 @@ case "$r" in
     exit 1 ;;
 esac
 
-# ⚠️ AND THE ROW IS THE IDENTITY, NOT THE SPELLING. The output directory is the
+# AND THE ROW IS THE IDENTITY, NOT THE SPELLING. The output directory is the
 # identity. Asserting only "it did not refuse with tier-planned" would stay
 # green in a world where the completion picked some other row entirely.
 case "$row" in
