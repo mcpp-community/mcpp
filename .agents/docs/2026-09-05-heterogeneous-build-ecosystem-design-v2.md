@@ -333,7 +333,7 @@ Status is one of `done`, `open`, `deferred (reason)`.
 | I4 | CI green; merge; index artifact published | `Publish Index Artifact` green on the merge commit | I1–I3 | done: PR #349 green (10 pass; the `full sweep` job skips by design), merged as 754d775, `Publish Index Artifact` green on it (run 33968256961) |
 
 | I5 | `compat.vulkan-runtime` 2026.09.06: the payload set is declared as `xpm.linux.deps.runtime` rather than discovered in the store; `PAYLOAD_PACKAGES` maps each soname to the package declared for it and reports a declaration that did not take effect; both adapters refuse a payload built for another machine (ELF `e_machine`); the Vulkan adapter gains the aarch64 multiarch directories | a fresh environment substitutes the same set a developer machine does; the report contains no line saying a declaration did not take effect | I4, X5 | done: merged as 0bbf3ad, index artifact published; measured in a fresh subos, 24 payload substitutions against 1, and four host sonames without a payload against thirty |
-| I6 | Both adapters 2026.09.07: a soname carried by more than one installed payload is decided by symbol coverage rather than by which store path sorts last; `compat.vulkan` and `compat.opencl` move their pins | in a fresh subos, `libX11.so.6` comes from `xim:libX11` rather than staying on the host with `xim:mesa-lavapipe`'s bundled copy named as the reason | I5 | PR #351 |
+| I6 | Both adapters 2026.09.07: a soname carried by more than one installed payload is decided by symbol coverage rather than by which store path sorts last; `compat.vulkan` and `compat.opencl` move their pins | in a fresh subos, `libX11.so.6` comes from `xim:libX11` rather than staying on the host with `xim:mesa-lavapipe`'s bundled copy named as the reason | I5 | done: merged as f15d4fe and published; 25 substitutions against 24, and `libdrm_amdgpu` moved to a payload copy that covers the host's where the dedicated package's did not |
 
 #### xim-pkgindex (PR #762)
 
@@ -353,21 +353,31 @@ Status is one of `done`, `open`, `deferred (reason)`.
 | M7 | The fast path compares every declared build-program input, not only glob path sets | e2e 612: editing a file declared with `rerun_if_changed` changes what the binary prints, and an unchanged input still takes the fast path | — | done: verified failing on 2026.9.5.3 and passing on this branch |
 | M8 | A version conflict on a package with no named C++ module names both versions and both requesters | the message example 10 produced now says which two versions are in the graph | — | done |
 | M9 | The markers removed from `bench/`, `tools/`, `scripts/`, `mcpp.toml` and `README.zh-CN.md`; the Chinese target table gains the row and the words its English counterpart has | a sweep over the emoji ranges returns nothing outside program output | — | done |
-| M10 | Release 2026.9.5.4, mirror, index bump, bootstrap pin | both mirrors return 200 and identical bytes; xim-pkgindex names it as `latest` | M7-M9 | open |
+| M10 | Release 2026.9.5.4, mirror, index bump, bootstrap pin | both mirrors return 200 and identical bytes; xim-pkgindex names it as `latest` | M7-M9 | done: release run 33979414813 green on all four platform jobs; the four archives compare byte for byte between GitHub and GitCode; openxlings/xim-pkgindex#764 merged (7fd026e) with `Publish Index Artifact` green; bootstrap pin bumped on main |
 
 #### mcpp-plugins, second round (PR #2, version 0.1.1)
 
 | # | task | criterion | depends on | status |
 |---|---|---|---|---|
 | P4 | `mcpp.tools.embed`, the first member of the tools half, selected by `tools-embed` | the fixture activating only that feature embeds a data file, and its second run proves an edit reaches the binary | M7 | done, CI pending on the 2026.9.5.4 release |
-| P5 | The markers removed from the rule sources; version 0.1.1; release and mirror; index descriptor; the two examples move their pin | the same two URLs return 200 with one sha256 | P4, M10 | open |
+| P5 | The markers removed from the rule sources; version 0.1.1; release and mirror; index descriptor; the two examples move their pin | the same two URLs return 200 with one sha256 | P4, M10 | done: PR #2 merged (f1bec00), tag v0.1.1, GitHub release, GitCode mirror byte-identical at 30,644 bytes; mcpp-index#352 merged (d4b36d7) and published; the examples and both manifest chapters pin 0.1.1 in mcpp#571 |
 
 #### Verification
 
 | # | task | criterion | depends on | status |
 |---|---|---|---|---|
-| V1 | Fresh sandbox (`xlings subos <name> --sandbox --cmd`), CN mirror configured for both mcpp and xlings: install mcpp 2026.9.5.3, build examples 09 and 10 against `mcpp:plugins`, run 10 on the lavapipe payload, run the OpenCL probe on pocl | `12 24 36 48` from example 10 with no GPU; the pocl platform enumerated; every declared payload substitution took effect (see 6.4 for why an empty host surface is not the criterion) | M6, P3, I4, X5, I5 | open |
-| V2 | The same on this host with the GPU: example 10 on the host ICD, example 09 on both routes | `12 24 36 48` in every case; the host entries of `HOST-SURFACE.txt` are proprietary userspace, host Mesa drivers, and the recorded symbol-set and soname gaps only | V1 | open |
+| V1 | Fresh subos created for this run, CN mirror configured for both tools: install mcpp 2026.9.5.4 from the index, build examples 09 and 10 against `mcpp:plugins` 0.1.1, run 10 on the lavapipe payload, run the OpenCL probe on pocl | `12 24 36 48` from example 10 with no GPU; the pocl platform enumerated; every declared payload substitution took effect (see 6.4 for why an empty host surface is not the criterion) | M10, P5, I6, X5 | **done, green.** A machine that had never seen this ecosystem: `mcpp 2026.9.5.4` from the store path, both mirrors CN, index snapshot `d4b36d7`, `mcpp.rules.spirv` from the collection produced a SPIR-V header, example 10 answered `12 24 36 48` on the lavapipe payload and again with `--no-accel`, **25 payload substitutions against 6 host entries with every declared payload in effect**, example 09 answered on the CPU variant and compiled its device variant, and the Khronos loader listed `Portable Computing Language` through `OCL_ICD_FILENAMES` |
+| V2 | The same on this host with the GPU: example 10 on the host ICD, example 09 on both routes | `12 24 36 48` in every case; the host entries of `HOST-SURFACE.txt` are proprietary userspace, host Mesa drivers, and the recorded symbol-set and soname gaps only | V1 | **done, green (0 assertions failed).** Same five identity readings, example 10 on the payload driver and with `--no-accel`, the farm written by 2026.09.07 with 25 substitutions and 6 host entries, example 09 `12 24 36 48` **on the RTX 4080**, and the OpenCL loader listing `NVIDIA CUDA` and then pocl beside it |
+
+### 6.5 What the two runs corrected in the harness itself
+
+Three assertions failed on something other than the ecosystem, and each is the same shape: a criterion pointed at the wrong object.
+
+**The mirror was read from the tool's stdout.** `xlings config` renders its banner through a ui layer that prints nothing when stdout is a pipe, so a command substitution read an empty string and reported a mirror that was in fact CN. The check now reads the file the tool writes.
+
+**The report was chosen by `ls | head -1`.** A store that has seen three adapter versions holds three reports, and the first one alphabetically is the oldest: the host run reported 20 substitutions and 11 host entries from the 2026.09.05 farm while the 2026.09.07 farm beside it had 25 and 6. The pinned version is now asked for by name, with the newest as the fallback for a store that holds one.
+
+**pocl's presence was read from an exit code.** `xlings install` returns non-zero for a package that is already installed, so a payload that had installed correctly a minute earlier was reported as `not installable here`. The criterion is now the library the loader needs.
 
 ### 6.4 What the first verification run measured, and the two criteria it retired
 
