@@ -147,3 +147,55 @@ TEST(DeviceDryRun, TextThatIsNotAPlanYieldsNoStages) {
     EXPECT_TRUE(plan.programs.empty());
     EXPECT_TRUE(plan.searchPath.empty());
 }
+
+// ── The driver a device runtime will meet ──────────────────────────────────
+//
+// Measured 2026-09-05 on a host whose driver reports CUDA 12.4: a binary built
+// with the 13.3 payload compiles and links cleanly and then fails at the first
+// allocation; the same source built with the 12.9 payload prints the right
+// answer. These assert the relation that turns that into a message before
+// anything is compiled.
+
+using mcpp::toolchain::parse_device_version;
+using mcpp::toolchain::driver_accepts_toolkit;
+
+TEST(DeviceDriver, ReadsAVersionOutOfSurroundingText) {
+    // The two real shapes: `nvcc --version` ends with "release 12.9, V12.9.86",
+    // and `nvidia-smi`'s header carries "CUDA Version: 12.4".
+    auto a = parse_device_version("12.9, V12.9.86");
+    EXPECT_EQ(a.major, 12);
+    EXPECT_EQ(a.minor, 9);
+    auto b = parse_device_version(" 12.4     |");
+    EXPECT_EQ(b.major, 12);
+    EXPECT_EQ(b.minor, 4);
+}
+
+TEST(DeviceDriver, MinorVersionCompatibilityHolds) {
+    // Within one major, any minor runs. This is the vendor's rule, and it is
+    // why the 12.9 payload works against a driver that serves 12.4 -- the case
+    // a naive "toolkit must be <= driver" check would have refused.
+    EXPECT_TRUE(driver_accepts_toolkit(parse_device_version("12.9"),
+                                       parse_device_version("12.4")));
+    EXPECT_TRUE(driver_accepts_toolkit(parse_device_version("12.0"),
+                                       parse_device_version("12.4")));
+}
+
+TEST(DeviceDriver, ANewerMajorIsRefused) {
+    EXPECT_FALSE(driver_accepts_toolkit(parse_device_version("13.3"),
+                                        parse_device_version("12.4")));
+}
+
+TEST(DeviceDriver, AnOlderMajorIsAccepted) {
+    EXPECT_TRUE(driver_accepts_toolkit(parse_device_version("11.8"),
+                                       parse_device_version("12.4")));
+}
+
+TEST(DeviceDriver, EitherSideUnknownMakesNoClaim) {
+    // The same rule the host-compiler bound follows: a check that cannot reach
+    // an answer must not manufacture a refusal. A machine with no driver, or a
+    // toolkit whose version could not be read, is not a machine with a defect.
+    EXPECT_TRUE(driver_accepts_toolkit(parse_device_version("13.3"),
+                                       parse_device_version("no gpu here")));
+    EXPECT_TRUE(driver_accepts_toolkit(parse_device_version(""),
+                                       parse_device_version("12.4")));
+}

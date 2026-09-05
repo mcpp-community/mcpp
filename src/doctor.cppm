@@ -655,8 +655,55 @@ export int doctor_report() {
     // code is unaffected by an incompatible pair, and refusing its build would
     // be a false alarm.
     if (!mcpp::platform::is_windows) {
+        // ⭐ PAYLOADS BEFORE THE HOST, AND THE ORDER IS THE POINT.
+        //
+        // A toolkit installed through xlings is the one a build will use, and
+        // it is also the newer one: measured on this machine, the payload's own
+        // `crt/host_config.h` states gcc<=15 where the distribution's CUDA 12.0
+        // states gcc<=12. Reporting the host's bound while the build uses the
+        // payload's would answer a question nobody asked.
+        //
+        // The host entries stay, last, because a machine with a distribution
+        // toolkit and no payload is a real configuration and reporting nothing
+        // there would be worse than reporting its bound.
+        auto payload_roots = [] {
+            std::vector<std::filesystem::path> out;
+            std::error_code ec;
+            // `cuda-crt` carries the header in 13.x; in 12.x `cuda-nvcc`
+            // carries it. Both are scanned, newest version directory first --
+            // string order is right here because upstream pads nothing.
+            // ⚠️ TWO STORES, AND A PAYLOAD MAY BE IN EITHER. mcpp keeps its own
+            // under `<mcpp home>/registry/data/xpkgs`; a package installed with
+            // `xlings install` lands in `<xlings home>/data/xpkgs`. Measured on
+            // this machine: 191 packages in one and 211 in the other, with the
+            // CUDA components only in the second. Scanning one of them reports
+            // the host's toolkit while the build uses the payload's.
+            std::vector<std::filesystem::path> stores{
+                mcpp::home::root() / "registry" / "data" / "xpkgs"};
+            {
+                std::string xhome;
+                if (const char* p = std::getenv("XLINGS_HOME")) xhome = p;
+                else if (const char* h = std::getenv("HOME"))
+                    xhome = std::string(h) + "/.xlings";
+                if (!xhome.empty())
+                    stores.push_back(std::filesystem::path(xhome) / "data" / "xpkgs");
+            }
+            for (auto const& store : stores)
+            for (auto const* pkg : {"xim-x-cuda-crt", "xim-x-cuda-nvcc",
+                                    "local-x-cuda-crt", "local-x-cuda-nvcc"}) {
+                auto dir = store / pkg;
+                if (!std::filesystem::is_directory(dir, ec)) continue;
+                std::vector<std::filesystem::path> versions;
+                for (auto& v : std::filesystem::directory_iterator(dir, ec))
+                    if (v.is_directory(ec)) versions.push_back(v.path());
+                std::ranges::sort(versions, std::ranges::greater{});
+                for (auto& v : versions) out.push_back(v);
+            }
+            return out;
+        }();
+
         auto header = [&]() -> std::optional<std::filesystem::path> {
-            std::vector<std::filesystem::path> roots;
+            std::vector<std::filesystem::path> roots = payload_roots;
             if (const char* p = std::getenv("CUDA_PATH")) roots.emplace_back(p);
             if (const char* p = std::getenv("CUDA_HOME")) roots.emplace_back(p);
             roots.emplace_back("/usr/local/cuda");
@@ -728,6 +775,34 @@ export int doctor_report() {
             //
             // Asked rather than assumed: `--dryrun` prints the plan without
             // running it, so the answer is nvcc's own.
+            // ── The driver this toolkit will meet ──────────────────────
+            //
+            // A device runtime must not be newer than the driver it runs
+            // against, and the failure when it is comes at the FIRST
+            // ALLOCATION, after a clean compile and a clean link. Measured
+            // 2026-09-05 on a driver serving CUDA 12.4: the 13.3 payload builds
+            // cleanly and then reports "CUDA driver version is insufficient for
+            // CUDA runtime version", while the 12.9 payload prints the right
+            // answer.
+            //
+            // ⚠️ THE RELATION IS HERE; THE ACQUISITION IS NOT, AND THAT IS
+            // DELIBERATE. `mcpp::toolchain::driver_accepts_toolkit` states when
+            // one version may meet another and is unit-tested. Asking a machine
+            // which driver it has means running a vendor's tool, and
+            // `tests/unit/test_runtime_contract.cpp` refuses exactly that in
+            // `src/` -- it caught the first revision of this check, which
+            // launched one. The rule is the repository's, it predates this
+            // work, and it is right: a core that learns to run one vendor's
+            // probe learns to run four.
+            //
+            // The numbers reach this report through declarations instead: a
+            // toolkit payload states the driver it needs, and the package that
+            // owns the host driver states what the host has. Both are ordinary
+            // manifest data. Wiring that is the rule-package channel, and until
+            // it exists this section reports the pairing it can already read --
+            // the host compiler bound above -- and says nothing about a driver
+            // rather than guessing at one.
+
             if (auto missing = unreachable_device_stage(); missing) {
                 warn(std::format(
                     "nvcc cannot reach its own back-end: it invokes '{}' by "

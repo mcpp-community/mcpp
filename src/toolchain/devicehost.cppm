@@ -73,6 +73,51 @@ DeviceDryRun parse_dryrun(std::string_view text);
 bool host_compiler_accepted(const HostCompilerBounds& b,
                             std::string_view family, int major);
 
+// ── The driver a device runtime will meet ──────────────────────────────────
+//
+// A device runtime must not be NEWER than the driver it runs against, and the
+// driver is the one component that cannot be redistributed: it is in ABI
+// lockstep with a kernel module. So the toolkit version a build uses is bounded
+// by a fact about the machine, and that fact is knowable before anything is
+// compiled.
+//
+// ⚠️⚠️ MEASURED, 2026-09-05, on a host whose driver reports CUDA 12.4: a
+// binary built with the 13.3 payload COMPILES AND LINKS CLEANLY and then fails
+// at the first allocation with
+//
+//     cudaMalloc: CUDA driver version is insufficient for CUDA runtime version
+//
+// while the same source built with the 12.9 payload prints the right answer.
+// Everything that could have caught it earlier was silent -- which is the whole
+// reason this is checked rather than left to happen.
+//
+// ⭐ The comparison is separated from the acquisition on purpose. Which
+// function asks the driver its version is a vendor's business and belongs to a
+// rule package; whether one version may meet another is a relation, and that
+// is what lives here.
+
+// A dotted version reduced to (major, minor). Absent or unreadable parts are
+// zero, which makes an unreadable version compare as older rather than as a
+// refusal.
+struct DeviceVersion {
+    int major = 0;
+    int minor = 0;
+    bool known() const { return major != 0; }
+};
+
+DeviceVersion parse_device_version(std::string_view text);
+
+// May a runtime built against `toolkit` run on a machine whose driver supports
+// up to `driver`?
+//
+// The rule is minor-version compatibility, which is the vendor's and not
+// invented here: within one major version an application built against any
+// minor runs on a driver supporting that major. Across majors it does not.
+//
+// ⚠️ Either side unknown yields TRUE. A check that cannot reach an answer must
+// not manufacture a refusal -- the same rule the host-compiler bound follows.
+bool driver_accepts_toolkit(DeviceVersion toolkit, DeviceVersion driver);
+
 } // namespace mcpp::toolchain
 
 namespace mcpp::toolchain {
@@ -159,6 +204,35 @@ DeviceDryRun parse_dryrun(std::string_view text) {
             plan.programs.emplace_back(program);
     }
     return plan;
+}
+
+DeviceVersion parse_device_version(std::string_view text) {
+    DeviceVersion v;
+    std::size_t i = 0;
+    while (i < text.size() && !std::isdigit(static_cast<unsigned char>(text[i]))) ++i;
+    int  acc = 0;
+    bool any = false;
+    for (; i < text.size() && std::isdigit(static_cast<unsigned char>(text[i])); ++i) {
+        acc = acc * 10 + (text[i] - '0');
+        any = true;
+    }
+    if (!any) return v;
+    v.major = acc;
+    if (i < text.size() && text[i] == '.') {
+        ++i;
+        acc = 0;
+        for (; i < text.size() && std::isdigit(static_cast<unsigned char>(text[i])); ++i)
+            acc = acc * 10 + (text[i] - '0');
+        v.minor = acc;
+    }
+    return v;
+}
+
+bool driver_accepts_toolkit(DeviceVersion toolkit, DeviceVersion driver) {
+    if (!toolkit.known() || !driver.known()) return true;   // no claim
+    if (toolkit.major != driver.major) return toolkit.major < driver.major;
+    // Same major: minor-version compatibility covers it.
+    return true;
 }
 
 bool host_compiler_accepted(const HostCompilerBounds& b,

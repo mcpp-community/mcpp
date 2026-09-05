@@ -85,6 +85,24 @@ The bound is read from the toolkit rather than tabulated in mcpp, so a toolkit
 mcpp has never seen still answers, and a header mcpp cannot parse yields no
 bound and therefore no claim.
 
+**A payload is read before the host.** A toolkit installed through xlings is the
+one a build will use, and it is usually the newer one: a 12.9 payload states
+`gcc <= 14` and a 13.3 payload `gcc <= 15`, where a distribution's CUDA 12.0
+states `gcc <= 12`. Both package stores are searched — mcpp's own and the one
+`xlings install` writes to — and the host's locations remain, last, because a
+machine with a distribution toolkit and no payload is a real configuration.
+
+**What is not checked here, and why.** A device runtime must not be newer than
+the driver it runs against; when it is, the build compiles and links cleanly and
+fails at the first allocation with *"CUDA driver version is insufficient for
+CUDA runtime version"*. mcpp knows the relation — `driver_accepts_toolkit`
+states when one version may meet another, including that minor-version
+compatibility means a 12.9 runtime is fine on a driver serving 12.4 — but it
+does not ask the machine which driver it has, because asking means running a
+vendor's tool and the engine owns no vendor probes. Those numbers reach the
+report as declarations instead: a toolkit payload states the driver it needs,
+and the package that owns the host driver states what the host has.
+
 This is reported rather than enforced: a project that compiles no device code
 is unaffected by an incompatible pair.
 
