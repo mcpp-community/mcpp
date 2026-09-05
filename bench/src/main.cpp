@@ -509,7 +509,7 @@ int main(int argc, char** argv) {
     const bench::Journal journal(cache_dir / "journal.jsonl");
     auto loaded = journal.load(id.str());
 
-    // ⚠️ A RESUME MUST NOT SILENTLY SPAN TWO BUILDS OF WHAT IS UNDER TEST.
+    // A RESUME MUST NOT SILENTLY SPAN TWO BUILDS OF WHAT IS UNDER TEST.
     //
     // The fingerprint deliberately excludes the binary, so that rebuilding does
     // not throw the cache away — and that is exactly what makes this possible:
@@ -527,7 +527,7 @@ int main(int argc, char** argv) {
         if (std::ifstream in(stamp); in) std::getline(in, previous);
         if (!previous.empty() && !opts->under_test.empty() && previous != opts->under_test)
             std::println(std::cerr,
-                         "bench: ⚠️  this cache holds samples measured with '{}' but this run is "
+                         "bench: this cache holds samples measured with '{}' but this run is "
                          "'{}'. The report will mix them. Use --id to fork a fresh cache, or "
                          "delete {}.",
                          previous, opts->under_test, cache_dir.string());

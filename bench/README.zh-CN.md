@@ -60,7 +60,7 @@ run id : 4e58a816 (resuming, 73 unit(s) recorded)
 run id : a0840b10 (fresh)
 ```
 
-⚠️ **断点续跑正是「把两次跑无声拼在一起」最容易发生的地方**,所以有两条是刻意的:
+**断点续跑正是「把两次跑无声拼在一起」最容易发生的地方**,所以有两条是刻意的:
 
 * 指纹**不含 mcpp 二进制**。含了的话每次重编都从零开始 —— 而那恰恰是续跑最有用
   的时候。每条记录改为携带当时的版本,认领到版本不同的记录时**会报出来**,不是
@@ -96,7 +96,7 @@ BENCH=$(ls -t bench/target/*/*/bin/mbench | head -1)
          --scenarios noop,touch-hub --hub src/platform/platform.cppm --runs 3
 ```
 
-⚠️ **mcpp 必须以路径指定,不得使用裸名 `mcpp`。** 裸名经 PATH 解析到 xlings shim,
+**mcpp 必须以路径指定,不得使用裸名 `mcpp`。** 裸名经 PATH 解析到 xlings shim,
 而 **shim 会按当前工作目录重新解析版本** —— `--project` 模式下该目录即被测的树,
 而每个工作负载各自锁定了不同版本。曾因此有一整轮将七个格子**全部**测成
 `mcpp@2026.8.11.3`(已发布的旧版本,而非被测分支),且**没有任何失败提示这一点**。
@@ -215,7 +215,7 @@ __format/format_functions.h:99:30: error: call to implicitly-deleted default
 这解决了四件已经真实发生过的事：
 
 * **cmake 3.31.6** 是 GitHub runner 镜像自带的版本。它没有 CMake 4.0 的
-  `import std` 实验开关键，所以*每一个 module 格子都 configure 失败*。换成
+ `import std` 实验开关键，所以*每一个 module 格子都 configure 失败*。换成
   4.0.2 之后全过。
 * **`command -v g++`** 在那些镜像上是 gcc 13.3.0。cmake 用它配不出 C++23
   modules，xmake 直接把它编崩（internal compiler error）—— 而 mcpp 一直悄悄用
@@ -259,8 +259,8 @@ __format/format_functions.h:99:30: error: call to implicitly-deleted default
 ## 2. 两种模式
 
 * **fixture 模式** —— 生成一棵合成树，参数化（`--preset` / `--units` /
-  `--fanin` / `--weight`）。唯一能同时给出 `headers` / `modules` /
-  `modules-impl` 三种形态的地方，所以也是 *variant* 轴真正成为受控变量的地方。
+ `--fanin` / `--weight`）。唯一能同时给出 `headers` / `modules` /
+ `modules-impl` 三种形态的地方，所以也是 *variant* 轴真正成为受控变量的地方。
 * **`--project` 模式** —— 原地测量一棵真实的树。**永远不写入被测仓库**：
   编辑类场景会先存下文件字节、无论函数怎么退出都还原（`SourceGuard`），子进程
   日志一律落在 `--work` 目录里。
@@ -338,14 +338,14 @@ job 一个测量都没有，这个状态持续了好几周。
   进了 xlings 保留在接口单元里的内联函数体,BMI 真的变了,级联是**欠的**。格子的
   note 会记录当次是哪种形态(见 §3),不要把它读成优化失效。
 * **`touch-hub` 才是级联抑制的真结果:54.96x。** 内容没变,mcpp 拿编译器刚产出的
-  BMI 和上一份比,跳过 45 个导入者;cmake 与 xmake 按时间戳判断,把它们全部重建
+ BMI 和上一份比,跳过 45 个导入者;cmake 与 xmake 按时间戳判断,把它们全部重建
   —— 两者相差 0.00s,这正是两个时间戳驱动的引擎该有的样子。
-* **⚠️ 这里的 `bmi_schedule=on` 格子取自 §8b 修复之前,因此和 mcpp 那张表一样可疑。**
+* ** 这里的 `bmi_schedule=on` 格子取自 §8b 修复之前,因此和 mcpp 那张表一样可疑。**
   十个格子全报 `ok` —— 状态列看不见「构建提前收工」。在 mcpp 工作负载上受影响的两
   个格子(`touch-hub`、`edit-comment`)在 object 边不再被级联自己的 restat 清掉之后
   翻了一倍;`cold` 与 `edit-body` 没动。上面引用的正是 `cold` 与 `edit-body`,所以
   结论成立,但这张表**尚未重跑**。重跑时的对照文件是
-  `bench/results/xlings-3way-20260814/`。
+ `bench/results/xlings-3way-20260814/`。
 
 <sub>xlings `2026.8.11.2`,gcc 16.1.0 载荷,Linux x86_64 · i9-13900K · n=1 ·
 `--baseline cmake`。原始报告:`bench/results/xlings-3way-20260814/`。
@@ -378,7 +378,7 @@ job 一个测量都没有，这个状态持续了好几周。
   降到 27.59s(3.35x),而 cmake 自己的 cold 也从 119.46s 降到 50.13s(2.38x)。
   把实现搬出接口单元,比换构建工具更值。
 * **`edit-body` 是 0.75x —— 这里 mcpp 比 cmake 慢**(1.79s 对 1.35s)。函数体在
-  `.cpp` 里,只重编一个 object、没有级联,于是这个场景量的是**每次调用的固定
+ `.cpp` 里,只重编一个 object、没有级联,于是这个场景量的是**每次调用的固定
   开销**而不是图推理 —— 和 `noop` 反映的是同一笔成本。在这条轴上 mcpp 没有优势
   可言,数字也就这么写。
 * **`touch-hub` 仍然值:20.08x。** 比 combined 树的 54.96x 小,因为下游本来就
@@ -428,7 +428,7 @@ export module repro.leaf;
 export int leaf_value() { return 1; }   // 改成 42,重建
 ```
 
-    Finished dev in 0.02s     <- 报告成功,8 条边只跑了 3 条
+   Finished dev in 0.02s     <- 报告成功,8 条边只跑了 3 条
     ./repro8b  ->  1          <- 源码写的是 42
 
 没有链接错误,没有任何诊断。分离出去的编译器在 0.2 秒后写出了正确的 object,而
@@ -483,7 +483,7 @@ ninja 早已决定不链接它。在生成的 fixture 上,同一个跳过表现�
   请比增量场景,那里没有任何一条臂会重建依赖。
 * **`+schedule=on` 那条臂是同一个二进制,不是另一个引擎。** 它是被测工程 manifest
   里的一个键,由 harness 经 `MCPP_BMI_SCHEDULE` 打开,标签写作
-  `mcpp@<ver>+schedule=on`,和默认配置放在同一组行里一起读。
+ `mcpp@<ver>+schedule=on`,和默认配置放在同一组行里一起读。
 * **没有任何 fixture 写 `import std;`。** 各引擎在「能否、以及如何」构建 std 模块
   上差异极大(CMake 需要一把随版本变化的实验性 UUID,meson 根本没有说法),这个
   差异会淹没一切测量。fixture 一律经全局模块片段取标准库。**本套件测的是模块

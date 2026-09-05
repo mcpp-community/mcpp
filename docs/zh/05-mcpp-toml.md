@@ -1932,7 +1932,7 @@ rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spir
 ```toml
 # 消费者
 [dependencies.mcpp]
-plugins = { version = "0.1.0", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.1.1", features = ["rules-spirv"], host-module = true }
 ```
 
 模块集合就是 feature 集合:feature 未激活的单元不编译,import 它会以未知模块失败。

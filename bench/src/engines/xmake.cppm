@@ -54,7 +54,7 @@ public:
 
     platform::RunResult build(const Job& job) const override;
 
-    // ⚠️ EVERY COMMAND RUNS FROM `buildfile_dir`, i.e. the `-P` directory, and
+    // EVERY COMMAND RUNS FROM `buildfile_dir`, i.e. the `-P` directory, and
     // that is load-bearing rather than tidiness.
     //
     // xmake normalises `--builddir` (`-o`) to a path RELATIVE TO THE PROJECT

@@ -3,7 +3,7 @@
 // INTERFACE ONLY. Definitions live in journal.cpp, the same split the xlings
 // tree this suite measures uses for every module.
 //
-// ⚠️ THAT SPLIT IS NOT STYLE HERE, IT IS THE FIX. This started as one file with
+// THAT SPLIT IS NOT STYLE HERE, IT IS THE FIX. This started as one file with
 // the class defined inline in the interface, and the whole suite then failed to
 // compile with
 //

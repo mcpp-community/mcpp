@@ -78,13 +78,37 @@ rc=0
 out=$("$MCPP" clean --stale --bmi-cache 2>&1) || rc=$?
 [[ "$rc" -ne 0 ]] || { echo "FAIL: --stale --bmi-cache should be refused: $out"; exit 1; }
 [[ -d "target/$triple/feedfacefeedface" ]] || { echo "FAIL: refused combination still deleted"; exit 1; }
+
+# --older-than alone selects this mode too. Read as an option of the full wipe
+# it would delete every triple and profile under target/, which is the outcome
+# --stale exists to avoid; the criterion is that the current dirs survive.
+out=$("$MCPP" clean --older-than 1d 2>&1)
+[[ ! -d "target/$triple/feedfacefeedface" ]] || { echo "FAIL: --older-than 1d did not remove the stale dir: $out"; exit 1; }
+[[ $(ls "target/$triple" | wc -l) -eq 2 ]] || { echo "FAIL: --older-than alone wiped target/: $(ls target/$triple)"; exit 1; }
+mkdir -p "target/$triple/feedfacefeedface"
+touch -t 200001010000 "target/$triple/feedfacefeedface"
+
+# A negative window is refused rather than read as "keep nothing".
+rc=0; out=$("$MCPP" clean --stale --older-than -1s 2>&1) || rc=$?
+[[ "$rc" -ne 0 ]] || { echo "FAIL: negative --older-than should be refused: $out"; exit 1; }
+[[ -d "target/$triple/feedfacefeedface" ]] || { echo "FAIL: refused negative window still deleted"; exit 1; }
 "$MCPP" clean --stale > /dev/null
 
 # Survivors are intact: both profiles rebuild without relinking anything.
-before=$(stat -c '%n %Y' target/"$triple"/*/bin/stale | sort)
+# BSD stat has no -c, and `stat ... | sort` inside $(...) reports sort's status,
+# so the GNU-only form compared two empty strings and passed on macOS while
+# measuring nothing. Same idiom as 142/183.
+mtimes() {
+    local f
+    for f in "$@"; do
+        printf '%s %s\n' "$f" "$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f")"
+    done | sort
+}
+before=$(mtimes target/"$triple"/*/bin/stale)
+[[ -n "$before" ]] || { echo "FAIL: no artifact mtimes read — stat produced nothing"; exit 1; }
 "$MCPP" build > /dev/null
 "$MCPP" build --release > /dev/null
-after=$(stat -c '%n %Y' target/"$triple"/*/bin/stale | sort)
+after=$(mtimes target/"$triple"/*/bin/stale)
 [[ "$before" == "$after" ]] || { echo "FAIL: a current directory was rebuilt after clean --stale"; echo "$before"; echo "$after"; exit 1; }
 
 echo "OK"

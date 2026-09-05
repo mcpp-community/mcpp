@@ -228,9 +228,38 @@ git commit -am "ci: workspace mcpp bootstrap pin -> $NEW_VERSION (released, mirr
 **顺序不能反**：pin 一旦领先于"索引里真实存在的版本"，每个 CI job 的 bootstrap 都会
 `package 'mcpp@X.Y.Z' not found`。这就是 bump PR 里不许碰这两处的原因。
 
+**索引 PR 不要手写**：`publish-ecosystem` 已经开好了 bot PR —— 分支
+`bump/mcpp-<ver>`，提交者 `xlings-ci <ci@xlings.dev>`，diff 恒为 **+22/-3**。
+承重的是那三行删除：生成器对每个平台表**替换** `["latest"]` 那一行，而不是新增一行。
+收尾时只要合入它。
+
+2026-09-05 手写了一个平行的索引 PR（`xim-pkgindex#764`，分支 `feat/mcpp-<ver>`，
++22/**-0**），两个缺陷一起产生：
+
+- 追加而非替换，于是每个平台表里有两个 `["latest"]` 键。Lua 表构造器以最后一次赋值
+  为准，`latest` 静默解析回上一个发布。精确版本条目仍在且正确，**所以 mcpp 自己的
+  CI（精确 pin）完全看不见**；只有不带版本的 `xlings install mcpp` 会拿到旧二进制。
+- 它先落地，bot 那份正确的 PR 变成冲突。解冲突时取 **bot 分支**那一侧的
+  `pkgs/m/mcpp.lua` —— 它与手写后的 main 只差那几行陈旧的 `["latest"]`。
+
 **索引传播有滞后**：索引 artifact 发布后，`latest` tag 上的指针文件在 GitHub
 资产 CDN 上可能还要几分钟才更新。紧接着跑的 CI 可能仍拿到旧索引并报
 `package 'mcpp@X.Y.Z' not found` —— 这不是 release 坏了，等指针稳定后重跑即可。
+
+两个判据（都不是"文件里有这个版本字符串"）：
+
+```bash
+# 1) 索引 main 上，latest 解析到新版本：恰好三行，每平台一行，都指向新版本
+curl -fsSL https://raw.githubusercontent.com/openxlings/xim-pkgindex/main/pkgs/m/mcpp.lua \
+  | grep -n '\["latest"\]'
+
+# 2) 推 pin 之前，指针已经跟上索引 main 的短 SHA
+curl -fsSL https://github.com/xlings-res/xim-index/releases/download/latest/xim-index-latest.json \
+  | grep -E '"(index_version|source_commit)"'
+```
+
+滞后的量级实测过：2026-09-05 那次，指针资产 17:20:32 就替换完了，CI 17:21:23 才去解析
+（晚 51 秒），拿到的仍是上一份 artifact。所以"索引 PR 合入了"不足以放行 pin，要看指针。
 
 ### 下游分发渠道（都是自动的，只需核验）
 
@@ -256,6 +285,8 @@ gh workflow run bump-formula.yml -R mcpp-community/homebrew-mcpp
 |------|------|------|
 | `mcpp X.Y.Z-1` 但 tag 是 `vX.Y.Z` | `fingerprint.cppm` 版本未更新 | 更新 `MCPP_VERSION`，重新打 tag |
 | bump PR 里**所有** CI job 都红在 bootstrap，报 `package 'mcpp@X.Y.Z' not found` | 把 `.xlings.json` bootstrap pin 一起 bump 了，CI 去装一个还没发布的版本 | 把 `.xlings.json` 回退到上一个已发布版本；不要修改运行时推导的 `MCPP_PIN` |
+| main 上**所有** workflow 都红在 bootstrap，报 `package 'mcpp@X.Y.Z' not found`，而该版本确实已发布并已合入索引 | pin 推得比索引指针稳定早；客户端读 CDN artifact 不读 git 树 | 等 `xim-index-latest.json` 的 `index_version` 等于索引 main 短 SHA 后重跑；不要改 pin |
+| `xlings install mcpp`（不带 `@版本`）装到**上一个**版本，而索引文件里明明有新版本 | 同一平台表里两个 `["latest"]` 键（手写索引 PR 追加而非替换），Lua 后写的赢 | 删掉陈旧的那行，使每个平台表只剩一个 `["latest"]`。**精确 pin 仍可用，所以 mcpp 自己的 CI 不会报这个** |
 | 自查 `--version` 显示旧版本，但源码已改 | `target/<triple>/<指纹>/` 的指纹随版本变，`ls \| head -1` 取到了上一次构建的目录 | 用 `ls -dt … \| head -1` 取最新构建 |
 | Smoke test 输出旧版本 | CI 缓存了旧的 sandbox/target | 删除 GitHub Actions cache 后重跑 |
 | e2e `01_help_and_version.sh` 挂 | 只改了 `mcpp.toml` 没改 `fingerprint.cppm`（它把两者交叉比对） | 同步两处正在构建的版本；注意这个 e2e 只在部分分片里跑，可能表现为"只有某个平台红" |

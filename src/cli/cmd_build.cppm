@@ -464,18 +464,30 @@ export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,
 }
 
 export int cmd_clean(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    // EVERY OPTION OF THIS MODE SELECTS IT. `--older-than` is meaningless to a
+    // full wipe, so reading it as one leaves `mcpp clean --older-than 3d` --
+    // a request for a *scoped* clean -- deleting every triple and profile
+    // under target/, silently, which is the outcome `--stale` exists to avoid.
     const bool dryRun = parsed.is_flag_set("dry-run");
-    if (parsed.is_flag_set("stale") || dryRun) {
+    const auto olderThan = parsed.value("older-than");
+    if (parsed.is_flag_set("stale") || dryRun || olderThan) {
         if (parsed.is_flag_set("bmi-cache")) {
-            std::println(stderr, "error: --stale/--dry-run cannot be combined with --bmi-cache "
-                                 "(the build cache is shared across projects; use `mcpp cache gc`)");
+            std::println(stderr, "error: --stale/--dry-run/--older-than cannot be combined with "
+                                 "--bmi-cache (the build cache is shared across projects; "
+                                 "use `mcpp cache gc`)");
             return 2;
         }
         std::int64_t keepWithinSecs = 24 * 3600;
-        if (auto v = parsed.value("older-than")) {
-            auto secs = (*v == "0") ? std::optional<std::int64_t>{0} : mcpp::bmi_cache::parse_duration(*v);
-            if (!secs) {
-                std::println(stderr, "error: invalid --older-than '{}' (expected <N>s, <N>m, <N>h, <N>d, or 0)", *v);
+        if (olderThan) {
+            // `parse_duration` wants a unit, so bare `0` reaches it as a
+            // one-character string and is rejected; it also returns whatever
+            // `stoll` read, so `-1s` parses to a negative window that keeps
+            // nothing -- a typo for `1s` would silently disable the guard.
+            auto secs = (*olderThan == "0") ? std::optional<std::int64_t>{0}
+                                            : mcpp::bmi_cache::parse_duration(*olderThan);
+            if (!secs || *secs < 0) {
+                std::println(stderr, "error: invalid --older-than '{}' "
+                                     "(expected <N>s, <N>m, <N>h, <N>d, or 0)", *olderThan);
                 return 2;
             }
             keepWithinSecs = *secs;

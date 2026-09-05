@@ -20,7 +20,7 @@
 # script does not repeat it; it selects the cells for THIS os and runs every
 # engine they list.
 #
-# ⚠️ `allow_failed` IS DELIBERATELY IGNORED HERE, and the first version of this
+# `allow_failed` IS DELIBERATELY IGNORED HERE, and the first version of this
 # script got that wrong. Those waivers were recorded against failures on the CI
 # RUNNER — cmake's `__CMAKE::CXX23` on the mcpp tree, cmake's `manifest has no
 # sources` on the xlings tree — and both of those arms configure and generate
@@ -53,7 +53,7 @@
 # resume that is not actually the same run lands in a different cache and starts
 # from zero on its own.
 #
-# ⚠️ SEED BUILDS ARE NOT UNITS AND ARE REDONE. An incremental scenario needs a
+# SEED BUILDS ARE NOT UNITS AND ARE REDONE. An incremental scenario needs a
 # tree that is already up to date, and that state was built by a seed build that
 # no journal can hold. A resumed cell therefore pays its seed again before it
 # can skip anything — resume is cheap, not free.
@@ -107,7 +107,7 @@ BENCH="$(ls -t "$ROOT"/bench/target/*/*/bin/mbench 2>/dev/null | head -1)"
 MCPP_BIN="$(ls -t "$ROOT"/target/*/*/bin/mcpp 2>/dev/null | head -1)"
 [ -n "$MCPP_BIN" ] || say_missing "the mcpp under test — run: mcpp build --release"
 
-# ⚠️ THE ENGINE MUST BE A BINARY, NEVER THE BARE NAME `mcpp`.
+# THE ENGINE MUST BE A BINARY, NEVER THE BARE NAME `mcpp`.
 #
 # A bare `mcpp` resolves through PATH to the xlings shim, and that shim RE-PICKS
 # its version from the working directory — which, for a `--project` run, is the
@@ -179,7 +179,7 @@ for c in m["cells"]:
     engines = [e.strip() for e in c["engines"].split(",") if e.strip()]
     if not engines:
         continue
-    # ⚠️ NOT A TAB. `IFS=$'\t' read` treats tab as IFS WHITESPACE, so consecutive
+    # NOT A TAB. `IFS=$'\t' read` treats tab as IFS WHITESPACE, so consecutive
     # tabs COLLAPSE — a cell with no `leaf` shifted every later field one place
     # left and cmake was handed the BASELINE as its source directory:
     #     CMake Error: The source directory ".../bench/projects/2026.8.11.3"
@@ -200,13 +200,13 @@ PY
 
 STAMP="$(date -u +%Y%m%d)"
 OUT="$ROOT/bench/results/standard-$STAMP-$OS-$ARCH"
-# ⚠️ SCRATCH DOES NOT LIVE IN results/. Putting the work tree under $OUT
+# SCRATCH DOES NOT LIVE IN results/. Putting the work tree under $OUT
 # meant engine scratch — including JSON files whose top level is an ARRAY —
 # landed in the directory the README guard scans for published medians, and
 # it died with `AttributeError: 'list' object has no attribute 'get'`.
 # It would also have been committed along with the data.
 WORK="${TMPDIR:-/tmp}/bench-standard-$STAMP-$$"
-# ⚠️ REFUSE TO MIX RUNS. A previous invocation's reports must not sit beside
+# REFUSE TO MIX RUNS. A previous invocation's reports must not sit beside
 # this one's under the same names.
 #
 # It happened: an earlier run was stopped with SIGTERM, did not die immediately,

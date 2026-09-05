@@ -55,7 +55,7 @@ echo "harness built with: $("$MCPP" --version 2>&1 | head -1) ($MCPP)"
 # stale one. That is a test exercising code that has already been replaced, with
 # no symptom at all. See .github/tools/newest_artifact.sh.
 #
-# ⚠️ THE NAME COMES FROM THE MANIFEST, NOT FROM THIS LINE. The harness binary was
+# THE NAME COMES FROM THE MANIFEST, NOT FROM THIS LINE. The harness binary was
 # renamed `bench` -> `mbench` and this kept asking for `bench`, so the test died
 # with `newest_artifact: no 'bench' under target/*/*/bin/` — a rename caught only
 # by running it, because nothing ties the two together. Reading the name out of
@@ -64,7 +64,7 @@ BENCH_NAME="$(sed -n 's/^ *name *= *"\([^"]*\)".*/\1/p' "$REPO/bench/mcpp.toml" 
 [ -n "$BENCH_NAME" ] || { echo "FAIL: no package name in bench/mcpp.toml"; exit 1; }
 BENCH="$REPO/bench/$(bash "$REPO/.github/tools/newest_artifact.sh" target "$BENCH_NAME")"
 
-# ⚠️ A TEST MUST MEASURE, NOT RESUME.
+# A TEST MUST MEASURE, NOT RESUME.
 #
 # mbench caches every measured sample under `--cache-root` (default `.mbench` in
 # the CURRENT DIRECTORY) and replays it when the configuration matches. Run from
@@ -118,7 +118,7 @@ bench --engines "mcpp=$MCPP" --variants modules --scenarios cold,noop \
   || { echo "harness exited non-zero"; dump_child_logs; exit 1; }
 
 # 3. The report must be a protocol-shaped document, not merely non-empty.
-# ⚠️ THE EXPECTED VERSION COMES FROM THE PROTOCOL, NOT FROM THIS LINE.
+# THE EXPECTED VERSION COMES FROM THE PROTOCOL, NOT FROM THIS LINE.
 #
 # This asserted `"protocol_version": 1` literally. The protocol says to bump on
 # any field addition — which is exactly what adding `under_test` did — and the

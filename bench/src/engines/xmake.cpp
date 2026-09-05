@@ -34,7 +34,7 @@ platform::RunResult XmakeEngine::configure(const Job& job) const {
             "-P", job.buildfile_dir.string(),
             "-m", job.profile == "debug" ? "debug" : "release",
             "-o", job.build_dir.string(),
-            // ⚠️ xmake's compiler cache is ON BY DEFAULT (`--ccache=y`) and it
+            // xmake's compiler cache is ON BY DEFAULT (`--ccache=y`) and it
             // lives OUTSIDE the build directory, so `clean()` cannot reach it.
             // A `cold` build then restores every object from it:
             //     seed build   105.059s
@@ -124,7 +124,7 @@ platform::RunResult XmakeEngine::configure(const Job& job) const {
         //     warning: std and std.compat modules not found!
         //              maybe try to add --sdk=<PATH/TO/LLVM> or install libc++
         //
-        // ⚠️ THAT SUGGESTION IS A DEAD END, and following it cost three rounds.
+        // THAT SUGGESTION IS A DEAD END, and following it cost three rounds.
         // `--sdk` is only read on the `c++` branch, which was never reached. The
         // payload has carried `lib/<triple>/libc++.modules.json` — precisely
         // what that branch looks for — the entire time.

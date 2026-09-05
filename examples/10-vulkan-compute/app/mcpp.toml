@@ -13,7 +13,7 @@ import_std = true
 # The rule that compiles the shaders lives in the official plugin collection,
 # selected by its feature; `build.mcpp` imports it as `mcpp.rules.spirv`.
 [dependencies.mcpp]
-plugins = { version = "0.1.0", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.1.1", features = ["rules-spirv"], host-module = true }
 
 # The Khronos loader, built by the index rather than taken from the host, and
 # the adapter that makes the host's own ICDs reachable from a binary running
@@ -22,13 +22,19 @@ plugins = { version = "0.1.0", features = ["rules-spirv"], host-module = true }
 # below is a payload and the hardware ones are the host's.
 [dependencies.compat]
 vulkan         = "1.4.357.0"
-vulkan-runtime = "2026.09.05"
+vulkan-runtime = "2026.09.07"
 
 # The two payloads this build names rather than discovers: the shader compiler,
 # and a Vulkan driver that is always present because it is the CPU. With
 # which is what every CI runner in this ecosystem is.
 [xlings.workspace]
 "xim:glslang"       = "15.1.0"
+# A Vulkan device that needs no GPU: Mesa's lavapipe as a payload, complete
+# with its own LLVM. On a machine with a vendor ICD the loader lists both and
+# the program picks the discrete GPU; with none -- a CI runner, a sandbox --
+# this is the device the artifact runs on. Selected explicitly with
+# VK_DRIVER_FILES=<payload>/share/vulkan/icd.d/lvp_icd.x86_64.json.
+"xim:mesa-lavapipe" = "26.2.1"
 
 [build]
 # What this build compiles device code FOR. `vulkan1.2` is the SPIR-V target

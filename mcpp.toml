@@ -1,6 +1,6 @@
 [package]
 name        = "mcpp"
-version = "2026.9.5.3"
+version = "2026.9.5.4"
 description = "Modern C++ build & package management tool"
 license     = "Apache-2.0"
 authors     = ["mcpp-community"]
@@ -22,7 +22,7 @@ default-profile = "release"
 # and the full e2e suite, on Linux (detach-codegen, gcc) and on macOS and Windows
 # (two-phase, clang) — three platforms, every PR.
 #
-# ⚠️ THAT SAFETY NET IS NOT DECORATION — it has already caught one defect. The
+# THAT SAFETY NET IS NOT DECORATION — it has already caught one defect. The
 # windows-host cross build to x86_64-linux-musl failed on the BMI edge with
 #
 #     failed: gcm.cache/mcpp.libs.json.gcm

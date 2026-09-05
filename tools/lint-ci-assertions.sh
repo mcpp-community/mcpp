@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # lint-ci-assertions — where an assertion is written, checked mechanically.
 #
-# ⚠️ THIS EXISTS BECAUSE THE SAME MISTAKE WAS MADE THREE TIMES, AND EACH TIME
+# THIS EXISTS BECAUSE THE SAME MISTAKE WAS MADE THREE TIMES, AND EACH TIME
 # THE TEST WAS GREEN.
 #
 #   1. (openarch 0.4.0) A template check sat in a job that installs no
@@ -24,7 +24,7 @@
 # One shape: an assertion must live where the phenomenon it claims can be
 # observed, and a matrix ROW is a separate observation environment from its job.
 #
-# ⚠️⚠️ WHAT THIS CANNOT DO, STATED FIRST SO IT IS NOT DISCOVERED LATER.
+# WHAT THIS CANNOT DO, STATED FIRST SO IT IS NOT DISCOVERED LATER.
 #
 # Case 1 above is NOT detectable here, and the attempt to detect it is what
 # taught the limit. Its defect was an assertion that was ABSENT — the step
@@ -34,7 +34,7 @@
 # same SHAPE going forward (a run assertion placed where nothing can run), which
 # is the most this mechanism can offer.
 #
-# ⚠️ WARNINGS, NOT FAILURES. These rules have real false positives — a control
+# WARNINGS, NOT FAILURES. These rules have real false positives — a control
 # step deliberately pins one target; some greps legitimately expect empty output
 # from a tool that cannot fail. The value here is being READ. A hard gate would
 # be routed around with a suppression within a month.
@@ -84,7 +84,7 @@ for f in "${FILES[@]}"; do
   # "nothing was wrong". Discarding stderr is what makes the two
   # indistinguishable.
   #
-  # ⚠️ NARROWED TO VERDICTS-BY-ABSENCE, and the narrowing came from running it.
+  # NARROWED TO VERDICTS-BY-ABSENCE, and the narrowing came from running it.
   # `cmd 2>/dev/null | grep -q .` looks identical to a machine and is the
   # OPPOSITE thing — it asserts the output is non-empty, which is what this rule
   # asks for. Only `-v` (everything except the expected), `-c` (a count that is
@@ -102,7 +102,7 @@ for f in "${FILES[@]}"; do
   # artifact (`mcpp run --target <...>-none-<...>`) or an emulator binary
   # directly, some step in the SAME job must install one.
   #
-  # ⚠️ Restricted to freestanding targets, and the restriction came from running
+  # Restricted to freestanding targets, and the restriction came from running
   # it: a plain `mcpp run` on a hosted target needs no emulator and fired on six
   # jobs that were entirely correct. A rule with that hit rate is not read.
   awk -v file="$f" '
@@ -151,7 +151,7 @@ if [ -f "$PAIRS" ]; then
       sed -n "/$(printf '%s' "$marker" | sed 's/[]\/$*.^[]/\\&/g')/,\$p" "$a" > "$ta"
       sed -n "/$(printf '%s' "$marker" | sed 's/[]\/$*.^[]/\\&/g')/,\$p" "$b" > "$tb"
       if [ ! -s "$ta" ] || [ ! -s "$tb" ]; then
-        # ⚠️ An absent marker would make both sides empty and the comparison
+        # An absent marker would make both sides empty and the comparison
         # would pass — the emptiness-as-success shape this file exists to name.
         note "$PAIRS" 0 R2 "marker '$marker' not found in '$a' or '$b'; the comparison would have passed on two empty texts"
       elif ! diff -q "$ta" "$tb" > /dev/null 2>&1; then

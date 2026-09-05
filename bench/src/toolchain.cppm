@@ -45,7 +45,7 @@ bool is_clang_request(std::string_view compiler);
 // decision `mcpp_pin` and `payload_cxx` both read, so the toolchain mcpp is told
 // to use and the driver every other engine is handed cannot disagree.
 //
-// ⚠️ THE HOST IS PART OF THE ANSWER. There is no gcc payload for macOS in mcpp's
+// THE HOST IS PART OF THE ANSWER. There is no gcc payload for macOS in mcpp's
 // registry (bench/matrix.json excludes the macos/gcc cell for exactly that
 // reason), and the Windows payload is llvm. A pin that reads `gcc@16.1.0`
 // everywhere fails on those hosts with
@@ -81,7 +81,7 @@ Resolved payload_cxx(std::string_view compiler);
 // build and link — the generated fixture's counterpart of
 // bench/projects/common/cmake/hermetic_payload.cmake.
 //
-// ⚠️ WHY THIS EXISTS AT ALL, given that file exists. The checked-in project
+// WHY THIS EXISTS AT ALL, given that file exists. The checked-in project
 // descriptions `include()` it; the fixture is GENERATED into a scratch
 // directory by a binary that may live anywhere, so it has no path to include.
 // The two are the same decision in two places and must be kept in step — the

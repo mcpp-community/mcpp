@@ -133,7 +133,7 @@ export int run_process(const std::vector<std::string>& argv,
     // the job; KILL_ON_JOB_CLOSE so the tree also dies if the harness itself is
     // killed, which is the case a timeout handler cannot cover.
     //
-    // ⚠️ NOT VERIFIED ON WINDOWS — this repository's author has no Windows
+    // NOT VERIFIED ON WINDOWS — this repository's author has no Windows
     // machine, and CI does not time out, so no job here exercises it. It is
     // written to be non-regressive rather than to be trusted: every step is
     // checked, and any failure falls through to exactly the previous behaviour
@@ -155,7 +155,7 @@ export int run_process(const std::vector<std::string>& argv,
                                      job ? CREATE_SUSPENDED : 0, nullptr,
                                      cwd.empty() ? nullptr : cwd_s.c_str(), &si, &pi);
     if (!ok) {
-        // ⚠️ GetLastError FIRST — CloseHandle overwrites it, and this is the
+        // GetLastError FIRST — CloseHandle overwrites it, and this is the
         // whole reason the message exists. "could not start the process" covers
         // a program not on PATH (2), a cwd that does not exist (267), a bad
         // handle and an ACL; those are four different fixes and the harness

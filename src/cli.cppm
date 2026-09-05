@@ -511,7 +511,7 @@ int run(int argc, char** argv) {
             .option(cl::Option("stale").help("Only remove target/<triple>/<fingerprint>/ directories that no recorded build considers current"))
             .option(cl::Option("dry-run").help("List what would be removed and delete nothing (implies --stale)"))
             .option(cl::Option("older-than").takes_value().value_name("DURATION")
-                .help("With --stale: keep unrecorded directories written more recently than this, e.g. 12h, 3d (default 1d; 0 keeps none)"))
+                .help("Keep unrecorded directories written more recently than this, e.g. 12h, 3d (default 1d; 0 keeps none; implies --stale)"))
             .action(wrap_rc(cmd_clean)))
         .subcommand(cl::App("why")
             .description("Explain how the toolchain / runtime / deps / runners were resolved")

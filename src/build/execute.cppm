@@ -920,7 +920,12 @@ bool sources_newer_than(const std::filesystem::path& projectRoot,
     // sweep therefore cannot see it, and the fast path would report
     // "Finished dev in 0.00s" while the new file is never generated. Same
     // question as the build.mcpp check above, different kind of input.
-    if (mcpp::build::glob_inputs_stale(projectRoot)) return true;
+    //
+    // 2026.9.5.4: the same call now also compares a declared FILE's content and
+    // a declared environment variable's value. The sweep below walks sources,
+    // so a data file a build program reads is invisible to it for the same
+    // reason a new .proto is.
+    if (mcpp::build::program_inputs_stale(projectRoot)) return true;
     // mcpp#365: an author-written `.rc` is a third input of the same kind. It
     // is not under src/ and has no C++ extension, so the sweep below cannot see
     // it — and unlike the icon or a header the script includes, editing it can
@@ -2589,7 +2594,13 @@ export int clean_project(bool wipe_bmi) {
 //     under target/ (`dist/` from `mcpp pack`, whatever a later release adds)
 //     is not a fingerprint directory and is left alone — as is a triple whose
 //     entry has been evicted from the record; that one stays until it is
-//     built again.
+//     built again. Eviction *within* a live triple is not covered by that,
+//     though: the record is an 8-entry LRU (`kBuildCacheMaxEntries`), so a
+//     project built across more (target, profile) pairs than that loses its
+//     oldest entries while their triple stays current through a sibling. Such
+//     a directory reads as unrecorded, and the age guard below is what decides
+//     it — which is the intended answer, one rebuild of a configuration that
+//     has not been built inside the window.
 //   * The record keys on (target, profile) while the fingerprint also folds in
 //     features; a `--no-cache` build writes no entry at all; and `mcpp test`
 //     builds through run_tests, which never writes one. So an unrecorded
@@ -2609,15 +2620,21 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs) {
     if (!root) { std::println(stderr, "error: not in an mcpp package"); return 2; }
     const fs::path target = *root / "target";
 
-    std::set<std::pair<std::string, std::string>> current;   // (triple dir, fingerprint)
-    std::set<std::string> currentTriples;
+    // Triple directory -> the fingerprints recorded under it. One container
+    // answers both questions the walk asks: whether to descend into a triple at
+    // all, and whether a directory inside it is current.
+    std::map<std::string, std::set<std::string>> current;
     for (const auto& e : read_build_cache(*root)) {
         const fs::path out(e.outputDir);
-        const std::string fp = e.fingerprint.empty() ? out.filename().string() : e.fingerprint;
         const std::string triple = out.parent_path().filename().string();
-        if (fp.empty() || triple.empty()) continue;
-        current.emplace(triple, fp);
-        currentTriples.insert(triple);
+        if (triple.empty()) continue;
+        // BOTH NAMES WHEN THEY DISAGREE. try_fast_build refuses an entry whose
+        // `fingerprint` is not its outputDir's basename (its P1 check). Here the
+        // safe reading of the same disagreement is to protect whichever
+        // directory either name points at: only one of them can exist, and the
+        // other costs nothing to name.
+        for (const std::string& fp : {e.fingerprint, out.filename().string()})
+            if (!fp.empty()) current[triple].insert(fp);
     }
     if (current.empty()) {
         std::println(stderr, "error: {} has no build record, so nothing is known to be current; "
@@ -2632,14 +2649,15 @@ export int clean_stale(bool dryRun, std::int64_t keepWithinSecs) {
     for (fs::directory_iterator tripleIt(target, ec), end; tripleIt != end; tripleIt.increment(ec)) {
         std::error_code tec;
         const std::string triple = tripleIt->path().filename().string();
-        if (!tripleIt->is_directory(tec) || tec || !currentTriples.contains(triple)) continue;
+        const auto recorded = current.find(triple);
+        if (!tripleIt->is_directory(tec) || tec || recorded == current.end()) continue;
         std::error_code iec;
         for (fs::directory_iterator fpIt(tripleIt->path(), iec), fend; fpIt != fend; fpIt.increment(iec)) {
             std::error_code fec;
             if (!fpIt->is_directory(fec) || fec) continue;
             const fs::path dir = fpIt->path();
             const std::string fp = dir.filename().string();
-            if (current.contains({triple, fp})) continue;
+            if (recorded->second.contains(fp)) continue;
             const std::string shown = std::format("target/{}/{}", triple, fp);
             // build.ninja is rewritten by every build; the directory's own
             // mtime only moves when an entry is added or removed.
