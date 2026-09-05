@@ -918,7 +918,12 @@ bool sources_newer_than(const std::filesystem::path& projectRoot,
     // sweep therefore cannot see it, and the fast path would report
     // "Finished dev in 0.00s" while the new file is never generated. Same
     // question as the build.mcpp check above, different kind of input.
-    if (mcpp::build::glob_inputs_stale(projectRoot)) return true;
+    //
+    // 2026.9.5.4: the same call now also compares a declared FILE's content and
+    // a declared environment variable's value. The sweep below walks sources,
+    // so a data file a build program reads is invisible to it for the same
+    // reason a new .proto is.
+    if (mcpp::build::program_inputs_stale(projectRoot)) return true;
     // mcpp#365: an author-written `.rc` is a third input of the same kind. It
     // is not under src/ and has no C++ extension, so the sweep below cannot see
     // it — and unlike the icon or a header the script includes, editing it can

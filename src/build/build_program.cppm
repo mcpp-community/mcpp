@@ -255,8 +255,9 @@ std::expected<void, std::string> run_build_program(
     const mcpp::manifest::CppStandardConfig& cppStandard,
     const BuildProgramEnv& env);
 
-// #359: has any recorded glob input's path SET changed since its build.mcpp
-// cache was written?
+// Has any recorded build-program input changed since its build.mcpp cache was
+// written: a glob's path SET (#359), a declared file's CONTENT, or a declared
+// environment variable's value?
 //
 // The project-level fast path skips prepare_build entirely when no source is
 // newer than build.ninja, and prepare is where the build.mcpp cache is
@@ -267,10 +268,19 @@ std::expected<void, std::string> run_build_program(
 // the build.mcpp source itself; a glob is one more kind of build-program input,
 // so it belongs to the same question.
 //
+// A DECLARED FILE IS THE SAME QUESTION AND WAS NOT ASKED (2026.9.5.4). The
+// mtime sweep that guards the fast path walks SOURCES, so a data file a build
+// program reads -- `rerun_if_changed("data/table.csv")` -- is invisible to it,
+// and this function used to skip a cache record that carried no glob at all.
+// The result was that editing such a file left the generated header from the
+// previous build in place: `Finished dev in 0.00s`, and the program compiled
+// the previous bytes. `mcpp.tools.embed` is the case that found it. Contents,
+// not mtime, exactly as the cache records them.
+//
 // Scans the caches under `<projectRoot>/target/.build-mcpp` (the root's own and
-// each dependency's). Each cache records the root its globs were relative to,
-// so a dependency's glob is evaluated against the dependency's tree.
-bool glob_inputs_stale(const std::filesystem::path& projectRoot);
+// each dependency's). Each cache records the root its entries were relative to,
+// so a dependency's input is evaluated against the dependency's tree.
+bool program_inputs_stale(const std::filesystem::path& projectRoot);
 
 } // namespace mcpp::build
 
@@ -1199,7 +1209,7 @@ std::expected<void, std::string> run_build_program(
     return {};
 }
 
-bool glob_inputs_stale(const fs::path& projectRoot) {
+bool program_inputs_stale(const fs::path& projectRoot) {
     std::error_code ec;
     const fs::path base = projectRoot / "target" / ".build-mcpp";
     if (!fs::exists(base, ec)) return false;
@@ -1216,11 +1226,19 @@ bool glob_inputs_stale(const fs::path& projectRoot) {
         if (it.depth() >= 3) { it.disable_recursion_pending(); continue; }
         if (it->path().filename() != "build.mcpp.cache") continue;
         auto rec = read_cache(it->path().parent_path());
-        if (!rec.loaded || rec.globs.empty() || rec.rootPath.empty()) continue;
+        if (!rec.loaded || rec.rootPath.empty()) continue;
         fs::path recRoot{rec.rootPath};
         auto outName = output_dir_name(recRoot, it->path().parent_path());
         for (auto const& [h, pattern] : rec.globs)
             if (dirs::glob_fingerprint(recRoot, pattern, outName) != h) return true;
+        // The same comparison `cache_fresh` makes when prepare_build runs. It
+        // is repeated here rather than shared because the fast path has no
+        // manifest, no toolchain and no context hash -- only the recorded
+        // entries and the tree they were measured against.
+        for (auto const& [h, rel] : rec.inputs)
+            if (mcpp::toolchain::hash_file(abs_against_root(recRoot, rel)) != h) return true;
+        for (auto const& [h, name] : rec.envs)
+            if (mcpp::toolchain::hash_string(env_value(name)) != h) return true;
     }
     return false;
 }
