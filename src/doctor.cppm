@@ -34,7 +34,6 @@ import mcpp.runtime.elf;
 import mcpp.pm.index_refresh;   // staleness_note for `mcpp why deps`
 import mcpp.project;
 import mcpp.toolchain.detect;
-import mcpp.toolchain.devicehost;
 import mcpp.toolchain.msvc;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.linkmodel;
@@ -102,69 +101,6 @@ export int env_report() {
 }
 
 // `mcpp self doctor`.
-// Which back-end stage nvcc names but cannot resolve, if any.
-//
-// Nothing is compiled: `--dryrun` prints the plan and stops. std::nullopt
-// covers three unlike situations on purpose -- there is no nvcc, the dryrun
-// produced no plan, and every stage in the plan resolves -- because only a
-// named unresolvable stage is a finding. A probe that cannot reach an answer
-// must not manufacture one.
-std::optional<std::string> unreachable_device_stage() {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-
-    // A fresh directory per run, on the pattern the p1689 scanner already
-    // uses. A fixed name under the shared temporary directory would be a
-    // path another user can create first, and the `remove_all` that a fixed
-    // name needs in order to be reusable is the part that makes that matter.
-    const auto probe = fs::temp_directory_path(ec)
-                     / std::format("mcpp_nvcc_dryrun_{}", std::random_device{}());
-    if (ec) return std::nullopt;
-    // The return value, not `ec`: create_directory reports an existing
-    // directory by returning false without setting an error, and proceeding
-    // into a directory this process did not create is the case being avoided.
-    if (!fs::create_directory(probe, ec) || ec) return std::nullopt;
-    struct Cleanup {
-        fs::path dir;
-        ~Cleanup() { std::error_code e; fs::remove_all(dir, e); }
-    } const cleanup{probe};
-
-    const auto source = probe / "empty.cu";
-    { std::ofstream out(source); if (!out) return std::nullopt; }
-
-    // A spawn that fails because there is no nvcc yields text with no `#$`
-    // lines, hence an empty plan, hence no finding. No separate check needed.
-    const auto run = mcpp::platform::process::capture_exec(
-        {"nvcc", "--dryrun", "-c", source.string(),
-         "-o", (probe / "empty.o").string()});
-
-    const auto plan = mcpp::toolchain::parse_dryrun(run.output);
-    if (plan.programs.empty()) return std::nullopt;
-
-    std::string search = plan.searchPath;
-    if (search.empty())
-        if (const char* p = std::getenv("PATH"); p) search = p;
-    if (search.empty()) return std::nullopt;
-
-    std::vector<fs::path> dirs;
-    for (std::size_t pos = 0; pos <= search.size(); ) {
-        const auto sep  = search.find(':', pos);
-        const auto stop = sep == std::string::npos ? search.size() : sep;
-        if (stop > pos) dirs.emplace_back(search.substr(pos, stop - pos));
-        pos = stop + 1;
-    }
-
-    for (auto const& program : plan.programs) {
-        bool found = false;
-        for (auto const& dir : dirs) {
-            if (fs::exists(dir / program, ec)) { found = true; break; }
-            ec.clear();
-        }
-        if (!found) return program;
-    }
-    return std::nullopt;
-}
-
 export int doctor_report() {
     int warns = 0, errors = 0;
     auto ok    = [](std::string_view m) { mcpp::ui::status("ok", m); };
@@ -641,183 +577,15 @@ export int doctor_report() {
         ok("process deadlines: enforced (POSIX SIGKILL / Windows job object)");
     }
 
-    // ── Device toolkit, and whether this host compiler can drive it ────────
-    //
-    // WHY THIS IS A DOCTOR CHECK AND NOT A BUILD ERROR
-    //
-    // nvcc refuses host compilers newer than a bound the toolkit states in its
-    // own crt/host_config.h. The failure is late, the message names a compiler
-    // the user did not choose, and the bound is invisible. Every other build
-    // system forwards -ccbin and lets nvcc discover this; mcpp supplies the
-    // host compiler and can therefore answer before anything is compiled.
-    //
-    // Reported rather than enforced because a project that compiles no device
-    // code is unaffected by an incompatible pair, and refusing its build would
-    // be a false alarm.
-    if (!mcpp::platform::is_windows) {
-        // ⭐ PAYLOADS BEFORE THE HOST, AND THE ORDER IS THE POINT.
-        //
-        // A toolkit installed through xlings is the one a build will use, and
-        // it is also the newer one: measured on this machine, the payload's own
-        // `crt/host_config.h` states gcc<=15 where the distribution's CUDA 12.0
-        // states gcc<=12. Reporting the host's bound while the build uses the
-        // payload's would answer a question nobody asked.
-        //
-        // The host entries stay, last, because a machine with a distribution
-        // toolkit and no payload is a real configuration and reporting nothing
-        // there would be worse than reporting its bound.
-        auto payload_roots = [] {
-            std::vector<std::filesystem::path> out;
-            std::error_code ec;
-            // `cuda-crt` carries the header in 13.x; in 12.x `cuda-nvcc`
-            // carries it. Both are scanned, newest version directory first --
-            // string order is right here because upstream pads nothing.
-            // ⚠️ TWO STORES, AND A PAYLOAD MAY BE IN EITHER. mcpp keeps its own
-            // under `<mcpp home>/registry/data/xpkgs`; a package installed with
-            // `xlings install` lands in `<xlings home>/data/xpkgs`. Measured on
-            // this machine: 191 packages in one and 211 in the other, with the
-            // CUDA components only in the second. Scanning one of them reports
-            // the host's toolkit while the build uses the payload's.
-            std::vector<std::filesystem::path> stores{
-                mcpp::home::root() / "registry" / "data" / "xpkgs"};
-            {
-                std::string xhome;
-                if (const char* p = std::getenv("XLINGS_HOME")) xhome = p;
-                else if (const char* h = std::getenv("HOME"))
-                    xhome = std::string(h) + "/.xlings";
-                if (!xhome.empty())
-                    stores.push_back(std::filesystem::path(xhome) / "data" / "xpkgs");
-            }
-            for (auto const& store : stores)
-            for (auto const* pkg : {"xim-x-cuda-crt", "xim-x-cuda-nvcc",
-                                    "local-x-cuda-crt", "local-x-cuda-nvcc"}) {
-                auto dir = store / pkg;
-                if (!std::filesystem::is_directory(dir, ec)) continue;
-                std::vector<std::filesystem::path> versions;
-                for (auto& v : std::filesystem::directory_iterator(dir, ec))
-                    if (v.is_directory(ec)) versions.push_back(v.path());
-                std::ranges::sort(versions, std::ranges::greater{});
-                for (auto& v : versions) out.push_back(v);
-            }
-            return out;
-        }();
-
-        auto header = [&]() -> std::optional<std::filesystem::path> {
-            std::vector<std::filesystem::path> roots = payload_roots;
-            if (const char* p = std::getenv("CUDA_PATH")) roots.emplace_back(p);
-            if (const char* p = std::getenv("CUDA_HOME")) roots.emplace_back(p);
-            roots.emplace_back("/usr/local/cuda");
-            std::error_code ec;
-            for (auto const& r : roots) {
-                auto h = r / "include" / "crt" / "host_config.h";
-                if (std::filesystem::exists(h, ec)) return h;
-            }
-            // Distribution packaging puts the toolkit headers on the default
-            // include path instead of under a versioned root.
-            std::filesystem::path sys = "/usr/include/crt/host_config.h";
-            if (std::filesystem::exists(sys, ec)) return sys;
-            return std::nullopt;
-        }();
-
-        if (header) {
-            mcpp::ui::status("Checking", "device toolkit");
-            std::ifstream in(*header);
-            std::string text((std::istreambuf_iterator<char>(in)),
-                             std::istreambuf_iterator<char>());
-            auto bounds = mcpp::toolchain::parse_host_config(text);
-            if (!bounds.known()) {
-                ok(std::format("cuda headers at {} (no host-compiler bound stated)",
-                               header->parent_path().parent_path().string()));
-            } else if (!tc) {
-                ok(std::format("cuda host-compiler bound: gcc<={} clang<={}",
-                               bounds.gccMax, bounds.clangMax));
-            } else {
-                const std::string family(tc->compiler_name());
-                // Leading digits of the version. Extracted here rather than
-                // reached for from mcpp.pack.abi_tag: three lines are cheaper
-                // than a module edge from the diagnostics layer to packaging.
-                const int major = [&] {
-                    int v = 0;
-                    for (char c : tc->version) {
-                        if (!std::isdigit(static_cast<unsigned char>(c))) break;
-                        v = v * 10 + (c - '0');
-                    }
-                    return v;
-                }();
-                if (mcpp::toolchain::host_compiler_accepted(bounds, family, major)) {
-                    ok(std::format("cuda accepts this host compiler ({} {} <= {})",
-                                   family, major,
-                                   family == "gcc" ? bounds.gccMax : bounds.clangMax));
-                } else {
-                    warn(std::format(
-                        "cuda will refuse this host compiler: {} {} exceeds the "
-                        "bound of {} stated in {}.\n"
-                        "         Device code will not compile until a host "
-                        "compiler within the bound is selected; a project that "
-                        "compiles no device code is unaffected.",
-                        family, major,
-                        family == "gcc" ? bounds.gccMax : bounds.clangMax,
-                        header->string()));
-                }
-            }
-
-            // WHETHER nvcc CAN REACH ITS OWN BACK-END
-            //
-            // A toolkit can be present, complete and on PATH and still fail
-            // at the first stage, because nvcc resolves cicc, ptxas and
-            // fatbinary as bare names on a PATH it prepends from an
-            // `nvcc.profile` beside its binary. A container or sandbox that
-            // replaces /etc removes that profile -- it is a symlink into it
-            // on Debian-family packaging -- and nvcc then states no PATH and
-            // reports `sh: 1: cicc: not found`. The message names neither
-            // nvcc nor the profile, and nothing about the toolkit is missing,
-            // so the user has nowhere to look.
-            //
-            // Asked rather than assumed: `--dryrun` prints the plan without
-            // running it, so the answer is nvcc's own.
-            // ── The driver this toolkit will meet ──────────────────────
-            //
-            // A device runtime must not be newer than the driver it runs
-            // against, and the failure when it is comes at the FIRST
-            // ALLOCATION, after a clean compile and a clean link. Measured
-            // 2026-09-05 on a driver serving CUDA 12.4: the 13.3 payload builds
-            // cleanly and then reports "CUDA driver version is insufficient for
-            // CUDA runtime version", while the 12.9 payload prints the right
-            // answer.
-            //
-            // ⚠️ THE RELATION IS HERE; THE ACQUISITION IS NOT, AND THAT IS
-            // DELIBERATE. `mcpp::toolchain::driver_accepts_toolkit` states when
-            // one version may meet another and is unit-tested. Asking a machine
-            // which driver it has means running a vendor's tool, and
-            // `tests/unit/test_runtime_contract.cpp` refuses exactly that in
-            // `src/` -- it caught the first revision of this check, which
-            // launched one. The rule is the repository's, it predates this
-            // work, and it is right: a core that learns to run one vendor's
-            // probe learns to run four.
-            //
-            // The numbers reach this report through declarations instead: a
-            // toolkit payload states the driver it needs, and the package that
-            // owns the host driver states what the host has. Both are ordinary
-            // manifest data. Wiring that is the rule-package channel, and until
-            // it exists this section reports the pairing it can already read --
-            // the host compiler bound above -- and says nothing about a driver
-            // rather than guessing at one.
-
-            if (auto missing = unreachable_device_stage(); missing) {
-                warn(std::format(
-                    "nvcc cannot reach its own back-end: it invokes '{}' by "
-                    "name, and that name does not resolve on the search path "
-                    "it states.\n"
-                    "         The toolkit is installed; what is missing is the "
-                    "`nvcc.profile` that prepends the toolkit's own bin "
-                    "directory. This is what a container or sandbox that "
-                    "replaces /etc removes. Device code will fail to compile "
-                    "with a message naming only '{}'.",
-                    *missing, *missing));
-            }
-        }
-    }
-
+    // No device-toolkit report here, on purpose. The bound a toolkit states
+    // for its host compiler, whether a device compiler can reach its own
+    // back-end, and whether the driver is new enough for the runtime are all
+    // facts about one vendor's tools, and the rule package that drives those
+    // tools is where they are read: it reports through `mcpp::warning` and
+    // states the driver relation through `mcpp::fact` / `mcpp::floor`, and the
+    // engine compares before the first compile. A machine with no rule
+    // package in its project has nothing vendor-specific to say here, and says
+    // nothing (`tests/unit/test_core_vendor_probes.cpp` holds that line).
     std::println("");
     if (errors)        std::println("Doctor result: {} errors, {} warnings", errors, warns);
     else if (warns)    std::println("Doctor result: {} warnings", warns);

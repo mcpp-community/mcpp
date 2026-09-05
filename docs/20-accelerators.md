@@ -67,73 +67,47 @@ The division is deliberate. mcpp owns the graph, the artifact's identity and
 the set of architectures; a vendor's flag spelling, its architecture syntax and
 its host-compiler requirements belong to the rule.
 
-## The host compiler a device compiler will accept
+## What the rule package reports before the first compile
 
-nvcc refuses host compilers newer than a bound it states in its own
-`crt/host_config.h`, and mcpp's toolchain payload is frequently newer than that
-bound. Because mcpp supplies the host compiler, it can report the pairing
-before anything is compiled:
+Three things go wrong late with a device toolkit, and none of them is a fact
+about the build graph. They are read and reported by the **rule package** that
+drives the tools -- `examples/09-cuda-kernel/rules-cuda` shows each one -- and
+the engine owns none of them (`tests/unit/test_core_vendor_probes.cpp` holds
+that line, so a second backend never grows a second copy inside mcpp).
 
-```
-$ mcpp self doctor
-    Checking device toolkit
-warning: cuda will refuse this host compiler: gcc 13 exceeds the bound of 12
-         stated in /usr/include/crt/host_config.h.
-```
+**The host compiler a device compiler will accept.** nvcc refuses host
+compilers newer than a bound it states in its own `crt/host_config.h`, and
+mcpp's toolchain payload is frequently newer than that bound. On the nvcc
+route the rule reads the bound from the toolkit it resolved -- a payload
+before the host, because a toolkit installed through xlings is the one the
+build uses and is usually the newer one (a 12.9 payload states `gcc <= 14`
+where a distribution's CUDA 12.0 states `gcc <= 12`) -- and says which
+compiler it chose and why, through `mcpp::warning`. The primary route has no
+such bound: `clang -x cuda` is its own host compiler.
 
-The bound is read from the toolkit rather than tabulated in mcpp, so a toolkit
-mcpp has never seen still answers, and a header mcpp cannot parse yields no
-bound and therefore no claim.
+**Whether the device compiler can reach its own back-end.** A toolkit can be
+installed, complete and on `PATH` and still fail at its first stage: nvcc
+runs `cicc`, `cudafe++`, `ptxas` and `fatbinary` as bare names on a `PATH` it
+prepends from an `nvcc.profile` beside its own binary, and a sandbox that
+replaces `/etc` removes a Debian-packaged profile. The rule asks nvcc for its
+plan (`nvcc --dryrun`) rather than assuming one, resolves each stage, and
+names the first one that does not resolve together with the payload that
+provides it. A dryrun that produces no plan yields no finding.
 
-**A payload is read before the host.** A toolkit installed through xlings is the
-one a build will use, and it is usually the newer one: a 12.9 payload states
-`gcc <= 14` and a 13.3 payload `gcc <= 15`, where a distribution's CUDA 12.0
-states `gcc <= 12`. Both package stores are searched — mcpp's own and the one
-`xlings install` writes to — and the host's locations remain, last, because a
-machine with a distribution toolkit and no payload is a real configuration.
+**Whether the driver is new enough for the runtime.** A device runtime must
+not be newer than the driver it runs against; when it is, the build compiles
+and links cleanly and fails at the first allocation with *"CUDA driver
+version is insufficient for CUDA runtime version"*. The rule reads the
+driver's version through the driver's own library (reached through the
+sentinel package, never through `/usr/lib`) and states it as a fact; it states
+the floor its runtime needs; and the engine compares the two before anything
+is compiled -- see the probe channel in [07 — build.mcpp](07-build-mcpp.md).
+The engine reads a name, a relation and a version; `cuda.driver` is data
+flowing through.
 
-**What is not checked here, and why.** A device runtime must not be newer than
-the driver it runs against; when it is, the build compiles and links cleanly and
-fails at the first allocation with *"CUDA driver version is insufficient for
-CUDA runtime version"*. mcpp knows the relation — `driver_accepts_toolkit`
-states when one version may meet another, including that minor-version
-compatibility means a 12.9 runtime is fine on a driver serving 12.4 — but it
-does not ask the machine which driver it has, because asking means running a
-vendor's tool and the engine owns no vendor probes. Those numbers reach the
-report as declarations instead: a toolkit payload states the driver it needs,
-and the package that owns the host driver states what the host has.
-
-This is reported rather than enforced: a project that compiles no device code
-is unaffected by an incompatible pair.
-
-## Whether the device compiler can reach its own back-end
-
-A toolkit can be installed, complete and on `PATH` and still fail at its first
-stage. nvcc runs `cicc`, `cudafe++`, `ptxas` and `fatbinary` as bare names, on
-a `PATH` it prepends itself from an `nvcc.profile` beside its own binary. On
-Debian-family packaging that profile is a symlink into `/etc`, so a container
-or sandbox that replaces `/etc` removes it. nvcc then keeps the ambient `PATH`
-and reports:
-
-```
-sh: 1: cicc: not found
-```
-
-The message names neither nvcc nor the profile, and nothing about the toolkit
-is missing, so the obvious checks all pass. `mcpp self doctor` asks nvcc for
-its plan instead of assuming one:
-
-```
-$ mcpp self doctor
-    Checking device toolkit
-warning: nvcc cannot reach its own back-end: it invokes 'cicc' by name, and
-         that name does not resolve on the search path it states.
-```
-
-The plan comes from `nvcc --dryrun`, which prints the stages and the `PATH`
-nvcc will use without compiling anything. A dryrun that produces no plan --
-there is no nvcc, or the output is not one -- yields no finding, because a
-probe that reaches no answer must not invent one.
+Reported rather than enforced where a wrong answer would cost more than none:
+a machine with no rule package in its project has nothing vendor-specific to
+say and says nothing, and a probe that reaches no answer invents none.
 
 ## Declaring what a build targets
 
@@ -257,10 +231,12 @@ combinators.
 
 ## Two boundaries worth stating
 
-**`--accel` is a `build` option**, alongside `--static` and `--toolchain`, and
-is not repeated on `run`, `test` or `pack`. Those read `[build] accel` from the
-manifest like every other build input; the flag exists for overriding one
-build, which is the case `build` covers.
+**`--accel` and `--no-accel` are `build`, `run` and `test` options** (run and
+test from 2026.9.6), as `--target` and `--profile` are. `pack` reads
+`[build] accel` from the manifest like every other build input. The flag was a
+`build`-only option at first, and the measured consequence was a project whose
+CPU-only variant could be built and not run: `mcpp build --no-accel` produced
+it, and `mcpp run` handed back the device build.
 
 **`mcpp pack` does not emit the `accel` field.** It could write whatever the
 manifest declared, and that is exactly why it does not: the field states what an
