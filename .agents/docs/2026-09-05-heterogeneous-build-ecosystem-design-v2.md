@@ -510,7 +510,8 @@ replaced by one that measures something: the same content named `.cpp` is still
 compiled as C++ and does not reach the build program -- a test naming only
 `.sycl` would pass on a table that had started classifying by content.
 
-**A dpcpp repair, found by trying to use the payload.** Five of its programs --
+**A dpcpp repair that took three attempts, and the third is the shape.** Five
+of its programs --
 `sycl-ls`, `sycl-prof`, `sycl-trace`, `sycl-sanitize`, `syclbin-dump` -- ship
 with neither DT_RPATH nor DT_RUNPATH and could not start once installed. The
 `[cuda:gpu] NVIDIA CUDA BACKEND` recorded in that recipe's own comment had been
@@ -522,10 +523,27 @@ measured with LD_LIBRARY_PATH set. Two attempts were needed:
   naming four sonames with no provider in the index. The check was describing a
   real regression: the sealed payload enumerated no platforms where the
   unsealed one had found the GPU.
-* `elfpatch.set_rpath` on BOTH halves is the answer. bin/ alone leaves
-  `sycl-ls` starting and reporting nothing, because the Unified Runtime loader
-  dlopens its adapters by absolute path and each one then fails on
-  `libumf.so.1`, which is inside this same payload.
+* `elfpatch.set_rpath` on BOTH halves made `sycl-ls` work and made every
+  CONSUMER worse, which appeared only when an mcpp artifact reached the payload
+  through a runtime adapter: a non-empty DT_RUNPATH on a payload library
+  switches OFF the inherited DT_RPATH of whatever loaded it, so
+  `libur_adapter_cuda.so.0` stopped seeing the artifact's own farm and failed
+  first on `libcuda.so.1` and then on `libnvidia-ml.so.1`. Every consumer would
+  have had to re-farm the payload's entire external closure.
+* `patchelf --force-rpath` on the PROGRAMS and nothing on the libraries is the
+  answer, and it is one tag rather than two paths: DT_RUNPATH is honoured for
+  an object's own DT_NEEDED and not for a dlopen beneath it, DT_RPATH for both
+  at any depth. The programs' RPATH therefore serves their adapters too, while
+  the libraries keep inheriting from whoever loads them. `elfpatch` cannot
+  express this -- `set_rpath` writes RUNPATH and `patch_elf_loader_rpath` also
+  swaps the interpreter -- so the recipe calls patchelf directly with
+  `xim:patchelf` as a build dep, which is what godot.lua and libglvnd.lua do
+  for the same documented reason.
+
+⭐ The regression was not visible from the payload. `sycl-ls` reported the GPU
+in all three attempts from the second onward; what differed was whether a
+CONSUMER of the payload still worked, and only building the example again
+showed it.
 
 **The SYCL link needs `-l:libstdc++.so.6`, not `-lstdc++`.** clang's driver
 treats `-lstdc++` as a selector for the C++ standard library and rewrites it to
@@ -541,6 +559,15 @@ entries were added by a failure rather than by design: the dlopen chain
 (`libur_loader.so.0`, `libumf.so.1`), the C++ runtime that `compat.cudart`
 deliberately does not farm, and `libz.so.1` -- which only CI found, because
 this machine had zlib installed for unrelated reasons.
+
+Its 2026.09.07 version moves one more thing across the boundary. A SYCL
+artifact using the CUDA back end had to declare `compat:cuda-runtime` beside
+it, because the adapter reaches `libcuda.so.1` through the artifact's own path.
+That is a true statement about the implementation and a poor one to put in a
+user's manifest: which back end the SYCL runtime dlopens is the runtime's
+business. The adapter now declares the sentinel and links the same versioned
+soname `compat.cuda-runtime` links, so a project that writes SYCL declares one
+compat entry and no CUDA at all.
 
 **Five pull requests across three repositories, not three.** The dependency
 order is a cycle if each repository takes one: the plugin collection's CI needs
@@ -558,3 +585,5 @@ mcpp-plugins, then mcpp-index (descriptor), then mcpp (examples).
 | 2026-09-06 | N1's second criterion replaced | above |
 | 2026-09-06 | `compat.sycl-runtime` added to the index row | the runtime closure check refuses the artifact without it |
 | 2026-09-06 | the round is five PRs, not three | the release order is a cycle otherwise |
+| 2026-09-06 | dpcpp corrected a second time (xim #769) | the first correction fixed the payload's own programs and broke every consumer of it; the regression was invisible from the payload |
+| 2026-09-06 | `compat.sycl-runtime` 2026.09.07 (mcpp-index #355) | a SYCL project should not have to declare CUDA; the adapter owns the hop its runtime needs |
