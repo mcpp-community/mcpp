@@ -587,3 +587,44 @@ mcpp-plugins, then mcpp-index (descriptor), then mcpp (examples).
 | 2026-09-06 | the round is five PRs, not three | the release order is a cycle otherwise |
 | 2026-09-06 | dpcpp corrected a second time (xim #769) | the first correction fixed the payload's own programs and broke every consumer of it; the regression was invisible from the payload |
 | 2026-09-06 | `compat.sycl-runtime` 2026.09.07 (mcpp-index #355) | a SYCL project should not have to declare CUDA; the adapter owns the hop its runtime needs |
+| 2026-09-06 | the SYCL island gains an async handler and an inner catch; the rule warns when `accel` names sycl and no device | exercising the rule's other branch showed the island could not keep the promise its own comment made; see 7.7 |
+
+### 7.7 What exercising the second branch found
+
+`mcpp.rules.sycl` has two branches: `accel = "sycl, cuda12.9+{sm_89}"` compiles
+ahead of time for that architecture, and `accel = "sycl"` compiles to SPIR-V and
+leaves the device to the runtime. The examples take the first. Taking the second
+built correctly and then died on an RTX 4080 with
+
+    terminate called after throwing an instance of 'sycl::_V1::exception'
+    terminate called recursively
+
+and no message of the program's own -- contradicting the fixture's own comment,
+which said the island turns its failures into a return code.
+
+Two hypotheses were wrong before the backtrace settled it, and both were worth
+fixing anyway because each terminates on some machine:
+
+* An exception unwinding through the three `sycl::buffer` destructors. A buffer
+  destructor blocks until the work that reads it has finished, so a catch
+  outside the scope unwinds through three destructors that are themselves
+  finishing failed work. The catch moved inside the scope.
+* The queue's asynchronous handler. SYCL delivers most device errors to it, and
+  a queue constructed without one gets the default handler, which calls
+  `std::terminate`. No catch intercepts that, because it never travels as an
+  exception through the frame. A handler is installed.
+
+The actual cause is neither. `ProgramManager::getDeviceImage` throws inside the
+SYCL scheduler because the CUDA back end does not consume SPIR-V, and that path
+reaches neither the caller's frame nor the queue's handler. Nothing the island
+can write catches it.
+
+So the rule says it at build time instead, as an advisory rather than a
+refusal: the SPIR-V form is correct and portable, and the rule cannot know the
+machine's devices -- which is exactly why the statement belongs before the
+first kernel rather than in a crash with no message.
+
+The general shape, which is the reusable part: **a promise a comment makes
+about error handling is only tested by the configuration that fails.** Every
+run on this machine took the path where nothing goes wrong, and the comment
+read as true for as long as that held.
