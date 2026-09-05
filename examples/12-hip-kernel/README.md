@@ -36,6 +36,12 @@ Three consequences, all visible in this example's manifest:
   one hop example 09 needs — mcpp's private loader does not consult `/usr/lib`,
   so the statically linked CUDA runtime could not otherwise `dlopen` the driver.
 
+One of those payloads, `xim:cuda-profiler-api`, is here because CI found it
+missing. `nvidia_hip_runtime_api.h` includes `<cuda_profiler_api.h>` on its
+second line and CUDA ships that header in a separate component, so a machine
+with a host CUDA installation supplies it from `/usr/include` and the build
+works while depending on something it never declared.
+
 `hipcc` is deliberately not used. It is a driver that reads `HIP_PLATFORM`,
 picks nvcc or amdclang and forwards; every decision it makes is one the rule
 has already made from the declaration, and it would make them again from the

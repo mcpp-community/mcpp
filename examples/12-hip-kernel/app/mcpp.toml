@@ -39,6 +39,11 @@ cuda-runtime = "2026.09.05"
 "xim:cuda-cudart"       = "12.9.79"
 "xim:libcurand"         = "10.3.10.19"
 "xim:cuda-cccl"         = "12.9.27"
+# `nvidia_hip_runtime_api.h` includes <cuda_profiler_api.h> at its second line,
+# and CUDA ships that header in its own component. A machine with a host CUDA
+# installation finds it in /usr/include without saying so, which is how this
+# entry came to be missing from a build that worked.
+"xim:cuda-profiler-api" = "12.9.79"
 "xim:libcuda-host-link" = { linux = "0.0.1" }
 
 [build]
