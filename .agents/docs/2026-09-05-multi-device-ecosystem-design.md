@@ -1238,9 +1238,9 @@ GPU 索引包不自己探测宿主(委托 xim sentinel);链宿主 `libcudart` �
 | 项 | 理由 |
 |---|---|
 | T1.2 `llvm-offload` | `dpcpp@7.1.0` 载荷自带全套 offload 工具,需要 RDC 的工程可用它;独立包仍待做 |
-| T1.4 / T1.5(pocl / lavapipe)与 T4.2 | 需要**重打 mesa 载荷**(见 12.1 末行),或新建 pocl 源码构建配方。两者都是多小时的载荷工程 |
+| ~~T1.4 / T1.5(pocl / lavapipe)~~ | **已做**(2026-09-06,见 12.6)。理由被一条更短的路推翻:两者在 conda-forge 上都有现成的 Linux 二进制,重打载荷因此不是「重新构建 mesa」而是「重打包并核验闭包」 |
 | T1.8/T1.9/T1.10(chipstar / adaptivecpp / hip) | 依赖 T1.2/T1.4 |
-| T4.3 规则包进索引 | 依赖 ③ —— 描述符指向 mcpp 的**源码 tarball**(`grpcgen` 同形),tag 不存在则算不出 sha256。规则包已改名到 `mcpplibs` 命名空间,就是为了让它可被引用而不是被复制 |
+| ~~T4.3 规则包进索引~~ | **已做,但形态换了**(2026-09-05/06,见 12.6)。不再指向 mcpp 源码 tarball 的子路径:规则集中到 `mcpp-community/mcpp-plugins`,以一个包 `mcpp:plugins` 发布,成员由 feature 选择。命名空间也随之从 `mcpplibs` 改为 `mcpp` |
 | ⑤ 九个框架 | 依赖 ④ 的规则包条目。`ggml-org.llamacpp` 与 `opencv.opencv` 已在索引里,多后端是改**它们各自的 `-m` 仓库**而不是索引条目。T5.1 已做到「链路全通、卡在载荷矩阵」—— 见 12.5 |
 | T2.6 的端到端判据 | `accel` 已是 `pack::AbiTag` 第四维并进指纹;「`.a` 随包传播」还缺一条跨包的判据 |
 
@@ -1274,3 +1274,25 @@ action **只**挂到可执行/共享库/测试上,而 llama.cpp 的 CUDA 后端�
 `cuda_runtime.h` 同一形状,第三次);
 **clang 路线要带 `-D_ALLOW_UNSUPPORTED_LIBCPP`**,因为 NVIDIA 那条 `libc++ is not
 supported` 的守卫看的是 `__CUDACC__`,而 clang 编 CUDA 时自己就定义它。
+
+## 12.6 2026-09-06 补记:12.4 里两行被后一轮关掉
+
+本文 12.4 记的是 2026-09-05 当天的读数。次日那一轮(设计见
+`2026-09-05-heterogeneous-build-ecosystem-design-v2.md` §6)关掉了其中两行,都不是
+靠更多工时,而是靠换一条更短的路。
+
+**T1.4 / T1.5 —— pocl 与 lavapipe 都成了载荷。** 当时写的理由是「需要重打 mesa 载荷
+或新建 pocl 源码构建配方,都是多小时的载荷工程」。这个理由把「载荷」等同于「从源码
+构建」;而 conda-forge 对这两者都发布了 Linux 二进制,于是工作变成重打包并核验闭包。
+`xim:mesa-lavapipe@26.2.1`(x86_64 与 aarch64)与 `xim:pocl@7.1` 已发布,
+`xlings install pocl` 之后 Khronos loader 在一个进程里同时列出
+`Portable Computing Language` 与 `NVIDIA CUDA`。
+
+**T4.3 —— 规则包进了索引,但不是当时设想的形态。** 当时的方案是让描述符指向 mcpp
+源码 tarball 的子路径(`grpcgen` 同形),受阻于「tag 不存在则算不出 sha256」。实际
+落地的是另一种:规则不再住在 mcpp 的 `examples/` 下,而集中到
+`mcpp-community/mcpp-plugins`,以一个包 `mcpp:plugins` 发布,成员由 feature 选择,
+命名空间从 `mcpplibs` 改为 `mcpp`。索引里的 `pkgs/m/mcpp.plugins.lua` 指向那个仓库
+自己的 release 资产,sha256 因此是一个已经存在的文件的哈希。
+
+其余各行的理由未变。

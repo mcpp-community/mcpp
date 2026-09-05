@@ -332,7 +332,8 @@ Status is one of `done`, `open`, `deferred (reason)`.
 | I3 | `compat.opencl-headers`, `compat.opencl` verified with a probe (`tests/examples/opencl`, a workspace member); `compat.opencl-runtime` 2026.09.05 farms the libraries the host manifests name, their closure and the vendor family, prefers payloads, records the surface; payload entries of `OCL_ICD_FILENAMES` are left to the payload | the probe enumerates the NVIDIA platform on this machine and zero platforms on a runner; the pocl platform once X2 is installed | X2 for the pocl half | done for the host half: `tests/examples/opencl` lists `NVIDIA CUDA / RTX 4080` here and zero platforms on the Linux runner; with `OCL_ICD_FILENAMES=<pocl>/lib/libpocl.so` the same loader lists `Portable Computing Language` and `NVIDIA CUDA` in one process |
 | I4 | CI green; merge; index artifact published | `Publish Index Artifact` green on the merge commit | I1–I3 | done: PR #349 green (10 pass; the `full sweep` job skips by design), merged as 754d775, `Publish Index Artifact` green on it (run 33968256961) |
 
-| I5 | `compat.vulkan-runtime` 2026.09.06: the payload set is declared as `xpm.linux.deps.runtime` rather than discovered in the store; `PAYLOAD_PACKAGES` maps each soname to the package declared for it and reports a declaration that did not take effect; both adapters refuse a payload built for another machine (ELF `e_machine`); the Vulkan adapter gains the aarch64 multiarch directories | a fresh environment substitutes the same set a developer machine does; the report contains no line saying a declaration did not take effect | I4, X5 | see section 6.4 |
+| I5 | `compat.vulkan-runtime` 2026.09.06: the payload set is declared as `xpm.linux.deps.runtime` rather than discovered in the store; `PAYLOAD_PACKAGES` maps each soname to the package declared for it and reports a declaration that did not take effect; both adapters refuse a payload built for another machine (ELF `e_machine`); the Vulkan adapter gains the aarch64 multiarch directories | a fresh environment substitutes the same set a developer machine does; the report contains no line saying a declaration did not take effect | I4, X5 | done: merged as 0bbf3ad, index artifact published; measured in a fresh subos, 24 payload substitutions against 1, and four host sonames without a payload against thirty |
+| I6 | Both adapters 2026.09.07: a soname carried by more than one installed payload is decided by symbol coverage rather than by which store path sorts last; `compat.vulkan` and `compat.opencl` move their pins | in a fresh subos, `libX11.so.6` comes from `xim:libX11` rather than staying on the host with `xim:mesa-lavapipe`'s bundled copy named as the reason | I5 | PR #351 |
 
 #### xim-pkgindex (PR #762)
 
@@ -344,6 +345,22 @@ Status is one of `done`, `open`, `deferred (reason)`.
 | X3 | `mesa-lavapipe` aarch64 payload | `archs` lists both; the aarch64 tarball is on both mirrors | — | done, pending CI: the aarch64 lavapipe payload (99,534,504 bytes) on both mirrors; four-file closure difference, none `DT_NEEDED` by `libvulkan_lvp.so` |
 | X4 | `xim:mesa` gains the Intel Vulkan driver | on an Intel machine `HOST-SURFACE.txt` has no driver entry | libclc and SPIRV-LLVM-Translator payloads | deferred: anv requires `intel_clc`, which needs a libclc and clang chain this index does not publish yet; the chain is a separate packaging round and is recorded here rather than approximated |
 | X5 | CI green; merge; index artifact published | `Publish Index Artifact` green on the merge commit | X1–X3 | done: PR #762 green on its pull_request-event runs (the push-event `linux-install-test` sees only the last push and fails on libbsd by construction, as the workflow header states), merged as 2d2a2ee; `Publish Index Artifact` green on it (run 33967729241) |
+
+#### mcpp, second round (PR #570, version 2026.9.5.4)
+
+| # | task | criterion | depends on | status |
+|---|---|---|---|---|
+| M7 | The fast path compares every declared build-program input, not only glob path sets | e2e 612: editing a file declared with `rerun_if_changed` changes what the binary prints, and an unchanged input still takes the fast path | — | done: verified failing on 2026.9.5.3 and passing on this branch |
+| M8 | A version conflict on a package with no named C++ module names both versions and both requesters | the message example 10 produced now says which two versions are in the graph | — | done |
+| M9 | The markers removed from `bench/`, `tools/`, `scripts/`, `mcpp.toml` and `README.zh-CN.md`; the Chinese target table gains the row and the words its English counterpart has | a sweep over the emoji ranges returns nothing outside program output | — | done |
+| M10 | Release 2026.9.5.4, mirror, index bump, bootstrap pin | both mirrors return 200 and identical bytes; xim-pkgindex names it as `latest` | M7-M9 | open |
+
+#### mcpp-plugins, second round (PR #2, version 0.1.1)
+
+| # | task | criterion | depends on | status |
+|---|---|---|---|---|
+| P4 | `mcpp.tools.embed`, the first member of the tools half, selected by `tools-embed` | the fixture activating only that feature embeds a data file, and its second run proves an edit reaches the binary | M7 | done, CI pending on the 2026.9.5.4 release |
+| P5 | The markers removed from the rule sources; version 0.1.1; release and mirror; index descriptor; the two examples move their pin | the same two URLs return 200 with one sha256 | P4, M10 | open |
 
 #### Verification
 
