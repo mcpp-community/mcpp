@@ -2268,7 +2268,7 @@ rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spir
 ```toml
 # a consumer
 [dependencies.mcpp]
-plugins = { version = "0.1.0", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.1.1", features = ["rules-spirv"], host-module = true }
 ```
 
 The module set is the feature set: a unit whose feature is not active is not
