@@ -2,5 +2,5 @@
 name        = "rules-cuda"
 namespace   = "example"
 version     = "0.1.0"
-description = "Compile CUDA device translation units with nvcc (role = object)"
+description = "Compile CUDA device translation units: clang -x cuda by default, nvcc as the alternate route (role = object)"
 license     = "Apache-2.0"

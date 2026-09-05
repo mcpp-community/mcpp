@@ -2,19 +2,20 @@ import std;
 import mcpp;
 import example.rules.cuda;
 
+// Everything the rule needs is in the manifest: the architectures in
+// `[build] accel`, the device sources in the constrained glob, the toolkit
+// under `[xlings.workspace]`. This program names the island's include
+// directory and says "go".
+//
+// The route follows the project's toolchain (clang for an LLVM toolchain,
+// nvcc for a GCC one); MCPP_EXAMPLE_CUDA_ROUTE=nvcc|clang overrides it, which
+// is how the alternate route is measured without editing the manifest.
 int main() {
-    mcpp::rerun_if_changed_glob("src/kernels/**/*.cu");
-    mcpp::rerun_if_changed_glob("include/**/*.h");
-
+    mcpp::rerun_if_env_changed("MCPP_EXAMPLE_CUDA_ROUTE");
     example::rules::cuda::options opt;
-    // RTX 4080 is compute capability 8.9. Named rather than detected: what a
-    // build compiles for is a decision, and a machine's own hardware is a poor
-    // default for it — the artifact would run here and nowhere else.
-    opt.archs = { "sm_89" };
-    // Embed the portable form as well, so the same object runs on hardware
-    // newer than this one.
-    opt.ptx      = "89";
     opt.includes = { "include" };
-    const std::vector<std::string> sources{ "src/kernels/saxpy.cu" };
-    return example::rules::cuda::compile(sources, opt) ? 0 : 1;
+    if (const char* r = std::getenv("MCPP_EXAMPLE_CUDA_ROUTE"); r && *r)
+        opt.which = std::string_view(r) == "nvcc" ? example::rules::cuda::route::nvcc
+                                                   : example::rules::cuda::route::clang;
+    return example::rules::cuda::compile(opt) ? 0 : 1;
 }
