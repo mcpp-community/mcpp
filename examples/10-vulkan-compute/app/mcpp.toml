@@ -22,7 +22,7 @@ plugins = { version = "0.1.0", features = ["rules-spirv"], host-module = true }
 # below is a payload and the hardware ones are the host's.
 [dependencies.compat]
 vulkan         = "1.4.357.0"
-vulkan-runtime = "2026.09.06"
+vulkan-runtime = "2026.09.07"
 
 # The two payloads this build names rather than discovers: the shader compiler,
 # and a Vulkan driver that is always present because it is the CPU. With
