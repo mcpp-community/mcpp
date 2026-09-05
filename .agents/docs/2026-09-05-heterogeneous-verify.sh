@@ -142,15 +142,24 @@ if [ -n "$SRC" ] && [ -d "$SRC/examples/10-vulkan-compute/app" ]; then
     out=$(cd "$ex10" && "$STORE" build --no-accel 2>&1 && "$STORE" run --no-accel 2>&1)
     printf '%s\n' "$out" | grep -q '12 24 36 48' && ok "example 10 --no-accel answered 12 24 36 48" \
         || fail "example 10 --no-accel: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
-    hs=$(ls "$HOME"/.mcpp/registry/data/xpkgs/compat-x-vulkan-runtime/*/mcpp_generated/vulkan_runtime/HOST-SURFACE.txt \
-            "$ex10"/.mcpp/.xlings/data/xpkgs/compat-x-vulkan-runtime/*/mcpp_generated/vulkan_runtime/HOST-SURFACE.txt 2>/dev/null | head -1)
+    # THE VERSION THIS EXAMPLE PINS, NOT WHICHEVER SORTS FIRST. A store that has
+    # seen three adapter versions holds three reports, and `ls | head -1` reads
+    # the oldest: the run of 2026-09-06 reported 20 substitutions and 11 host
+    # entries from the 2026.09.05 farm while the 2026.09.07 one beside it had
+    # 25 and 6. The pinned version is asked for by name, and the newest is the
+    # fallback for a store that has only one.
+    want="${MCPP_VERIFY_ADAPTER:-2026.09.07}"
+    hs=$(ls "$HOME"/.mcpp/registry/data/xpkgs/compat-x-vulkan-runtime/"$want"/mcpp_generated/vulkan_runtime/HOST-SURFACE.txt \
+            "$ex10"/.mcpp/.xlings/data/xpkgs/compat-x-vulkan-runtime/"$want"/mcpp_generated/vulkan_runtime/HOST-SURFACE.txt 2>/dev/null | head -1)
+    [ -n "$hs" ] || hs=$(ls "$HOME"/.mcpp/registry/data/xpkgs/compat-x-vulkan-runtime/*/mcpp_generated/vulkan_runtime/HOST-SURFACE.txt \
+            "$ex10"/.mcpp/.xlings/data/xpkgs/compat-x-vulkan-runtime/*/mcpp_generated/vulkan_runtime/HOST-SURFACE.txt 2>/dev/null | sort -V | tail -1)
     # WHICH ADAPTER WROTE IT. The substitution criteria below are properties of
     # 2026.09.06, the version that declares its payload set; an older report
     # carries neither the declarations nor the class they produce, so both
     # would pass on an empty finding. The version is a path segment.
     adapter=$(printf '%s' "$hs" | sed -n 's#.*/compat-x-vulkan-runtime/\([^/]*\)/.*#\1#p')
-    [ "$adapter" = "${MCPP_VERIFY_ADAPTER:-2026.09.06}" ] && ok "the farm was written by compat.vulkan-runtime $adapter" \
-        || fail "the farm was written by compat.vulkan-runtime '$adapter', not ${MCPP_VERIFY_ADAPTER:-2026.09.06}"
+    [ "$adapter" = "$want" ] && ok "the farm was written by compat.vulkan-runtime $adapter" \
+        || fail "the farm was written by compat.vulkan-runtime '$adapter', not $want"
     if [ -n "$hs" ]; then
         printf -- '--- %s\n' "$hs"; sed -n '/^## farmed/,$p' "$hs" | head -60
         # WHAT A SANDBOX CAN AND CANNOT ASSERT. A subos shares the host's
@@ -219,14 +228,20 @@ EOT
 out=$(cd "$work/ocl" && "$STORE" test 2>&1)
 printf '%s\n' "$out" | grep -q '^platforms=' && ok "the loader linked and enumerated: $(printf '%s' "$out" | grep '^platform' | tr '\n' ' ')" \
     || fail "opencl probe: $(printf '%s' "$out" | tail -4 | tr '\n' ' ')"
-if "$XL" install pocl -y >/dev/null 2>&1; then
-    ok "xim:pocl installed"
-    lib=$(ls "$HOME"/.xlings/data/xpkgs/xim-x-pocl/*/lib/libpocl.so "$HOME"/.mcpp/registry/data/xpkgs/xim-x-pocl/*/lib/libpocl.so 2>/dev/null | head -1)
+# THE INSTALLED FILE, NOT THE EXIT CODE. `xlings install` returns non-zero on a
+# package that is already present and on other conditions that leave the payload
+# in place; the run of 2026-09-05 reported "not installable here" for a pocl
+# that had installed correctly a minute earlier. The library the loader needs is
+# the thing being asked about, so it is what the criterion reads.
+"$XL" install pocl -y >/dev/null 2>&1 || true
+lib=$(ls "$HOME"/.xlings/data/xpkgs/xim-x-pocl/*/lib/libpocl.so "$HOME"/.mcpp/registry/data/xpkgs/xim-x-pocl/*/lib/libpocl.so 2>/dev/null | head -1)
+if [ -n "$lib" ]; then
+    ok "xim:pocl installed at $lib"
     out2=$(cd "$work/ocl" && OCL_ICD_FILENAMES="$lib" "$STORE" test 2>&1)
     printf '%s\n' "$out2" | grep -q 'Portable Computing Language' && ok "the pocl platform is enumerated through OCL_ICD_FILENAMES" \
         || fail "pocl not enumerated: $(printf '%s' "$out2" | grep '^platform' | tr '\n' ' ')"
 else
-    printf 'note: xim:pocl not installable here (not published yet, or this arch)\n'
+    fail "xim:pocl left no libpocl.so in either store"
 fi
 
 printf '\n== result: %d assertion(s) failed ==\n' "$fails"
