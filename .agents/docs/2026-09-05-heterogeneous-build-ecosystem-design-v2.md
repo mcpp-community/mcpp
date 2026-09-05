@@ -451,8 +451,8 @@ Status is one of `done`, `open`, `deferred (reason)`.
 | N2 | `examples/11-sycl-compute`: one SYCL kernel behind a seam, the CUDA backend and the host device from one artifact | `12 24 36 48` on the RTX 4080 and again with `--no-accel` | N1, Q1 | open |
 | N3 | `examples/12-hip-compute`: a `.hip` kernel through `mcpp.rules.hip` on the NVIDIA platform | `12 24 36 48`, and no `/usr` path on any command line | Q2, Z2 | open |
 | N4 | Chapter 20 gains the SYCL and HIP lanes and the table of which rule drives which compiler; both languages | `check_docs_style.sh` passes; the Chinese chapter has the rows the English one has | - | done: the lane table, the two-chunk `accel` explanation, the HIP header-layer note and the two-C++-runtimes note, in both languages; "Not implemented" corrected -- the whole-target shape is no longer among the missing |
-| N5 | Version 2026.9.6.1, CHANGELOG, unit and e2e suites, PR, CI green, self-review | no e2e failure other than the ones already failing on `origin/main` | N1-N4 | open |
-| N6 | Release, mirror, index bump, bootstrap pin | both mirrors return 200 and identical bytes for every asset; xim-pkgindex names it `latest` | N5 | open |
+| N5 | Version 2026.9.6.1, CHANGELOG, unit and e2e suites, PR, CI green, self-review | no e2e failure other than the ones already failing on `origin/main` | N1-N4 | done: PR #574, 36/36 checks green, merged as `12d4759`; main green on every workflow at that sha except `ci-fresh-install`, which fails in `apt-get` inside a debian:11 container on five consecutive commits including two that predate this round |
+| N6 | Release, mirror, index bump, bootstrap pin | both mirrors return 200 and identical bytes for every asset; xim-pkgindex names it `latest` | N5 | done: all four artefacts byte-identical GitHub/GitCode by GET; bump PR #770 merged (`6c2f283`) with `Publish Index Artifact` green; `xlings install mcpp@2026.9.6.1` yields `mcpp 2026.9.6.1` at the store path; pin on main |
 
 #### mcpp-plugins (single PR, version 0.2.0)
 
@@ -461,22 +461,22 @@ Status is one of `done`, `open`, `deferred (reason)`.
 | Q1 | `mcpp.rules.sycl`, feature `rules-sycl` | a fixture compiles a `.sycl` unit with the `dpcpp` payload and links it into a C++23-modules program; the rule refuses with the declaration to add when the payload is absent | N1 | done: `12 24 36 48` on an RTX 4080 through `mcpp run`, zero `/usr` paths on any command line, and the device-link wrapper asserted as its own file |
 | Q2 | `mcpp.rules.hip`, feature `rules-hip` | a fixture compiles a `.hip` unit on the NVIDIA platform; the rule names the platform it selected and why | Z2 | done: `12 24 36 48` on an RTX 4080, zero `/usr` paths; the AMD platform is refused by name with the reason rather than approximated |
 | Q3 | `mcpp.rules.spirv` gains the `glslc` route now that a payload exists | both compilers produce a header the same program includes; the rule states which one it used | Z1 | done: the two command lines share almost nothing -- glslc's `-mfmt=c` is a bare initialiser list and its `-S` means "emit assembly" where glslang's names a stage -- so the rule writes the declaration itself and keys its `mcpp::fact` on the flavour |
-| Q4 | CI: one consumer fixture per feature, built with the pinned mcpp | green on the PR head | Q1-Q3, N6 | open |
-| Q5 | Release `v0.2.0`; GitHub archive and a GitCode asset with identical bytes; index descriptor | both URLs return 200 and one sha256 | Q4 | open |
+| Q4 | CI: one consumer fixture per feature, built with the pinned mcpp | green on the PR head | Q1-Q3, N6 | done, and it found three host leaks the previous check could not see -- see 7.9 |
+| Q5 | Release `v0.2.0`; GitHub archive and a GitCode asset with identical bytes; index descriptor | both URLs return 200 and one sha256 | Q4 | done: PR #3 merged (`56d9da2`), tag v0.2.0, both mirrors 47,792 bytes under one sha256 (`b5ee0cf4`) |
 
 #### mcpp-index (single PR)
 
 | # | task | criterion | depends on | status |
 |---|---|---|---|---|
 | R1 | `compat.sycl-runtime` 2026.09.06; then `mcpp:plugins` 0.2.0 in `pkgs/m/mcpp.plugins.lua`, floor 2026.9.6.1 | the adapter: a workspace member loads `libsycl.so.9` by soname under mcpp's own loader. the descriptor: `mcpp add mcpp:plugins` resolves in a sandbox and the new features are selectable | Q5, N6 | adapter done (PR #354 merged as `e17fc88`, index artifact published); descriptor open |
-| R2 | CI green; merge; index artifact published | `Publish Index Artifact` green on the merge commit | R1 | open |
+| R2 | CI green; merge; index artifact published | `Publish Index Artifact` green on the merge commit | R1 | done: PR #356 merged (`e68c9d8`), artifact green. The snapshot needed the whole `data/<index>` directory removed to move -- clearing the version marker and the cache JSON was not enough, and neither mirror was at fault |
 
 #### Verification
 
 | # | task | criterion | depends on | status |
 |---|---|---|---|---|
-| V3 | A fresh subos, CN mirror for both tools: install mcpp 2026.9.6.1 from the index, build examples 09 through 12 against `mcpp:plugins` 0.2.0 | every example builds; example 10 answers on lavapipe; the device half of 09, 11 and 12 compiles and says cleanly that the sandbox has no device | Z4, N6, Q5, R2 | open |
-| V4 | The same on this host with the GPU | `12 24 36 48` from 09, 11 and 12 on the RTX 4080 | V3 | open |
+| V3 | A fresh subos, CN mirror for both tools: install mcpp 2026.9.6.1 from the index, build examples 11 and 12 against `mcpp:plugins` 0.2.0 | every example builds; the device half compiles and the sandbox says cleanly that it has no device | Z4, N6, Q5, R2 | **done, 0 assertions failed.** Both examples built and answered `12 24 36 48` under `--no-accel`; the device-link wrapper was produced; no `/usr` on any command line. It also found two defects of mine -- see 7.9 |
+| V4 | The same on this host with the GPU | `12 24 36 48` from 11 and 12 on the RTX 4080 | V3 | **done, 0 assertions failed.** Both examples on the device, `sycl-ls` enumerating the RTX 4080 from the store, and the adapter farm complete down to `libcuda.so.1` |
 
 ### 7.4 The completion rule
 
@@ -688,3 +688,66 @@ And one thing measured rather than assumed: `accel = "sycl"` without a device
 compiles to SPIR-V, which the CUDA back end does not consume. The build is
 correct, the failure is the machine's, and the rule now says so before the
 first kernel. See 7.7.
+
+### 7.9 What CI and the two verification runs found, and the shape they share
+
+Eight defects in this round, six of them in work written for it, and not one
+was found by reading the code. The list is worth keeping because the *method*
+that found each is the reusable part.
+
+| found by | defect |
+|---|---|
+| using the payload | `xim:dpcpp` shipped five programs that could not start |
+| CI's dependency-closure check | the first repair swapped the interpreter, losing the host fallback |
+| rebuilding the example | the second repair fixed the payload and broke every consumer of it |
+| reading `clang -###` | `-lstdc++` is rewritten to `-lc++` and vanishes |
+| a runner | `libz.so.1` missing from the farm; this machine had it |
+| taking the rule's other branch | the SYCL island's error promise held only where nothing failed |
+| a runner | the HIP device pass read the host's `/usr/include/c++/14` |
+| the sandbox run | example 11 carried a superseded manifest shape, and section G measured a farm the example had never used |
+
+THE SHAPE MOST OF THEM SHARE is that a criterion pointed at the wrong object,
+and the wrong object answered `ok`:
+
+* the host-leak check read the command line, and an implicit include search is
+  never on it -- so it reported clean on the machine that was leaking;
+* the farm check picked a directory out of the store by sorting, and a store
+  that has seen two adapter versions holds two farms;
+* a payload lookup named one namespace, and the payload was installed under the
+  other;
+* a program that could not start had its loader error attributed to an adapter,
+  turning one defect into three reports of which the third named the wrong
+  cause.
+
+Round 3's notes already record this shape twice ("the report was chosen by
+`ls | head -1`", "the mirror was read from the tool's stdout"). It recurred
+four times here, which suggests the lesson is not "watch for this" but
+something mechanical: **when a check reports on an object it selected, it must
+print which object it selected.** Section G now does, and the line
+`note: falling back to the newest farm in the store` is what turned the last of
+these from a false pass into a visible one.
+
+A property the same run exposed in a merged package: `compat.sycl-runtime` has
+one `install()` and never reads `pkginfo.version()`, so a version key selects
+the anchor URL and nothing else. The 2026.09.07 commit said 2026.09.06
+"installs the farm it always did"; it does not, and mcpp-index #357 corrects
+the comment rather than the behaviour, which is intended for an adapter whose
+content is generated.
+
+### 7.10 One failure this round did not cause and did not fix
+
+`ci-fresh-install` is red on mcpp's main and has been for five consecutive
+commits, two of them before this round began. It fails in `apt-get install`
+inside a `debian:11` container, in a step named "Install prerequisites" that
+runs before mcpp is involved:
+
+    E: Failed to fetch .../libperl5.32_5.32.1-4+deb11u5_amd64.deb  404  Not
+    Found [IP: 146.75.38.132]
+
+Measured rather than assumed: that exact URL returns 200 from here, and
+`bullseye-security/InRelease` is still served -- so the package exists and a
+CDN node was answering 404. The step already runs `apt-get update`, so the
+mitigation would be `-o Acquire::Retries=3` rather than a fresh index. It is
+not applied here: Docker Hub is unreachable from this machine, the failure does
+not reproduce from this network, and an unverifiable change to an unrelated
+workflow is worth less than a precise diagnosis of it.
