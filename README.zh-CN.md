@@ -345,7 +345,7 @@ cmake 4.4.2 / xmake 3.1.0 · `-` 表示未测,本表没有 ·
   29.83s;而在 mcpp 本已跳过级联的两行上没有收益。调度错误的表现是静默失效而非
   报错,因此不以单台机器的证据变更默认值。
 
-📊 **[方法、锁定的版本、完整数据 → `bench/README.zh-CN.md`](bench/README.zh-CN.md)** ·
+**[方法、锁定的版本、完整数据 → `bench/README.zh-CN.md`](bench/README.zh-CN.md)** ·
 [English](bench/README.md)
 
 ## 平台支持
@@ -360,17 +360,18 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 
 | Target | 约定工具链 | 状态 |
 |---|---|:---:|
-| `x86_64-linux-gnu`    | gcc(*Linux 默认*)或 llvm | ✅ |
-| `x86_64-linux-musl`   | gcc 16,全静态 | ✅ |
-| `aarch64-linux-musl`  | gcc 16,全静态——x86_64 交叉(qemu 实测)或原生 | ✅ |
-| `x86_64-windows-gnu`  | gcc 16 MinGW-w64——Windows 原生,Linux 交叉(wine 实测)(*无 Visual Studio 时的 Windows 默认*) | ✅ |
-| `x86_64-windows-msvc` | `msvc@system`(探测 VS/BuildTools)或 llvm ¹(*有 Visual Studio 时的 Windows 默认*) | ✅ |
-| `aarch64-macos`       | llvm(*macOS 默认*) | ✅ |
-| `riscv64-linux-musl`  | — | 🔄 |
-| `aarch64-linux-gnu`   | — | 🔄 |
-| `x86_64-macos`        | — | 🔄 |
+| `x86_64-linux-gnu`    | gcc(*Linux 默认*)或 llvm | 是 |
+| `x86_64-linux-musl`   | gcc 16,全静态 | 是 |
+| `aarch64-linux-musl`  | gcc 16,全静态——x86_64 交叉(qemu 实测)或原生 | 是 |
+| `x86_64-windows-gnu`  | gcc 16 MinGW-w64——Windows 原生,Linux 交叉(wine 实测)(*无 Visual Studio 时的 Windows 默认*) | 是 |
+| `x86_64-windows-msvc` | `msvc@system`(探测 VS/BuildTools)或 llvm ¹(*有 Visual Studio 时的 Windows 默认*) | 是 |
+| `aarch64-macos`       | llvm(*macOS 默认*) | 是 |
+| `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22——可构建可链接;未记录模拟器运行 | 计划中 |
+| `riscv64-linux-musl`  | — | 计划中 |
+| `aarch64-linux-gnu`   | — | 计划中 |
+| `x86_64-macos`        | — | 计划中 |
 
-✅ 已验证——CI 端到端构建**并真实执行**产物(含 qemu/wine)｜ 🔄 计划中
+是——CI 端到端构建**并真实执行**产物(含 qemu/wine)｜ 计划中——尚未验证
 
 > Linux release 二进制为 x86_64 与 aarch64 的 musl 全静态构建
 > (`x86_64-linux-musl` 与 `aarch64-linux-musl`)。

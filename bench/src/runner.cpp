@@ -30,7 +30,7 @@ std::optional<std::string_view> insert_into_first_body(
     // that follows a ')'. Anchoring on the brace rather than a name keeps this
     // working for all three variants, whose function text differs.
     //
-    // ⚠️ AFTER THE BRACE, not after the newline that follows it. Those are the
+    // AFTER THE BRACE, not after the newline that follows it. Those are the
     // same position only when the body spans several lines. Given a one-line
     // body — `export int f() { return 1; }` — the newline is past the CLOSING
     // brace, so the statement landed at namespace scope and the build died with
@@ -204,7 +204,7 @@ CellResult Runner::measure(engines::Engine& engine, const Instance& inst, Varian
             const auto crashed = platform::log_mentions(
                 job.log_path, {"PLEASE submit a bug report", "Stack dump"});
 
-            // ⚠️ A TAIL IS THE WRONG SHAPE WHEN THE TOOL IS CHATTY. Every build
+            // A TAIL IS THE WRONG SHAPE WHEN THE TOOL IS CHATTY. Every build
             // engine here prints a progress line per translation unit, so 20
             // lines of tail is 20 lines of `generating.module.deps ...` and the
             // error that actually stopped it — printed once, hundreds of lines
@@ -218,7 +218,7 @@ CellResult Runner::measure(engines::Engine& engine, const Instance& inst, Varian
             // it is the difference between "exited 255" and a cause.
             if (const auto why = platform::log_grep(
                     job.log_path,
-                    // ⚠️ EVERY ENGINE SPELLS IT DIFFERENTLY, and the first
+                    // EVERY ENGINE SPELLS IT DIFFERENTLY, and the first
                     // version of this list only knew the compiler's spelling.
                     // cmake writes `CMake Error in CMakeLists.txt:` — no colon
                     // after "Error", capital E — so the very next failure it

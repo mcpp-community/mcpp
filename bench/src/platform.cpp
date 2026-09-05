@@ -68,7 +68,7 @@ std::string log_grep(const std::filesystem::path& p,
     if (!in) return {};
     std::string out, line;
     std::size_t kept = 0;
-    // ⚠️ THE MESSAGE IS OFTEN ON THE NEXT LINE. cmake writes
+    // THE MESSAGE IS OFTEN ON THE NEXT LINE. cmake writes
     //     CMake Error at xpkg_source_library.cmake:231 (message):
     //       bench: <pkg>'s manifest has no `sources` list
     // and a grep that returns only matching lines keeps the location and throws

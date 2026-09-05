@@ -39,14 +39,14 @@ from collections import OrderedDict
 def load_journal(path):
     """Reduce a `.mbench/<fingerprint>/journal.jsonl` to report cells.
 
-    ⚠️ WHY THIS EXISTS. The journal records one line per measured SAMPLE, but a
+    WHY THIS EXISTS. The journal records one line per measured SAMPLE, but a
     report JSON is only written when a whole CELL finishes — so an interrupted
     run left its samples on disk with no way to look at them. 42 measured points
     of an in-flight cell were invisible to every table in the repository while
     sitting in a file. The design says the journal is the source of truth and the
     report is derived from it; until this function, that was only half true.
 
-    The reduction is deliberately the same one the harness does: group by
+   The reduction is deliberately the same one the harness does: group by
     (project, variant, scenario, engine), median/min/max over the samples
     present. A partial group is reported with the count it actually has, never
     padded — `runs` in the output is how many samples exist, not how many were
@@ -158,7 +158,7 @@ def render(cells, baseline):
 # `233_bench_matrix.sh` can check it against ONE file instead of a hard-coded
 # list of three.
 #
-# ⚠️ The wording is deliberately not translated field-by-field. A benchmark table
+# The wording is deliberately not translated field-by-field. A benchmark table
 # that says different things in two languages is two claims, and only one of them
 # can be checked against the data.
 ALLOW_SUSPECT = [False]
@@ -186,8 +186,8 @@ HEADLINE_WHAT = {
 def engine_order(engines):
     """mcpp arms first, newest version first, each default before its opt-in arm.
 
-    Reading order matters more than it looks: the build under test and its
-    `+schedule=on` arm answer one question ("what does the key buy?") and the
+   Reading order matters more than it looks: the build under test and its
+   `+schedule=on` arm answer one question ("what does the key buy?") and the
     released reference answers a different one ("did this get faster?"). Sorting
     the raw strings interleaved them — reference, opt-in, default — so neither
     pair sat together and every comparison was two columns apart.
@@ -214,14 +214,14 @@ def engine_order(engines):
 # horizontal scrollbar and the reader sees two columns of a five-column
 # comparison. The identity moves to the footnote, where it is read once.
 #
-# ⚠️ THE MAPPING IS EMITTED, NOT REPEATED. A short name in the table and a long
+# THE MAPPING IS EMITTED, NOT REPEATED. A short name in the table and a long
 # one in the data is exactly the drift this tool exists to remove, so the header
 # carries a machine-readable `<!-- columns: ... -->` line and the guard reads the
 # mapping from there instead of keeping a second copy.
 def short_name(engine, newest, lang="en"):
     """The column header.
 
-    ⚠️ NOT `mcpp +schedule`. "schedule" is the name of the MECHANISM, and a
+    NOT `mcpp +schedule`. "schedule" is the name of the MECHANISM, and a
     reader meeting this table for the first time has no idea whether a build
     scheduler makes things faster, slower or merely different. The column is
     there to say "this is the opt-in speed-up"; what it actually turns on is one
@@ -234,7 +234,7 @@ def short_name(engine, newest, lang="en"):
         return "mcpp +优化" if lang == "zh" else "mcpp +opt"
     if base == newest:
         return "mcpp"
-    # ⚠️ NAME THE RELEASE, do not write "old". The version is already in the
+    # NAME THE RELEASE, do not write "old". The version is already in the
     # engine key — it is the version that binary reported about ITSELF — so a
     # header that hides it is throwing away the one fact that makes the column
     # checkable. A guard used to enforce this from outside, by requiring
@@ -248,7 +248,7 @@ def short_name(engine, newest, lang="en"):
 def columns_legend(short, engines, lang):
     """The sentence that has to accompany short column names.
 
-    Shortening a header is only safe if the identity it dropped is still stated
+   Shortening a header is only safe if the identity it dropped is still stated
     somewhere the reader will see. This is that somewhere, generated from the
     same mapping the table uses so the two cannot disagree."""
     parts = []
@@ -281,8 +281,7 @@ def headline(cells, baseline, lang):
     w = HEADLINE_WHAT[lang]
     # The real workload only: a headline table that silently mixed a generated
     # fixture into it would be comparing two different questions.
-    #
-    # ⚠️ THE DISCRIMINATOR IS THE FIXTURE NAME, NOT THE VARIANT. `variant` is
+    # # THE DISCRIMINATOR IS THE FIXTURE NAME, NOT THE VARIANT. `variant` is
     # whatever the cell declared, and the same real project is labelled `modules`
     # in one published run and `native` in another — so filtering on `native`
     # silently dropped every cmake and xmake column and the table rendered with
@@ -300,16 +299,14 @@ def headline(cells, baseline, lang):
     newest = next((e.split("+", 1)[0] for e in engines if e.startswith("mcpp@")), "")
     short = {e: short_name(e, newest, lang) for e in engines}
 
-    # ⚠️ A COLD BUILD THAT IS NOT SLOWER THAN A NO-OP DID NOT BUILD ANYTHING.
-    #
-    # Not a hypothetical: rendering the previously published files produced
-    #     xmake  cold  0.60s · 153.1x
+    # A COLD BUILD THAT IS NOT SLOWER THAN A NO-OP DID NOT BUILD ANYTHING.
+    # # Not a hypothetical: rendering the previously published files produced
+    # xmake  cold  0.60s · 153.1x
     # next to cmake's 92s — xmake was resolving `--buildir` relative to `-P` and
     # configuring into a directory that was already populated, so it exited
     # having compiled nothing. The number was real, the measurement was not, and
     # in a headline table it reads as xmake being 153x faster than cmake.
-    #
-    # This is the whole failure mode of the suite in one cell, so it BLOCKS
+    # # This is the whole failure mode of the suite in one cell, so it BLOCKS
     # rather than warns: a table nobody can publish is better than one that is
     # wrong in the reader's favour.
     suspect = []
@@ -373,7 +370,7 @@ def main(argv):
         elif a == "--headline":
             mode = "headline"
         elif a == "--allow-suspect":
-            ALLOW_SUSPECT[0] = True
+           ALLOW_SUSPECT[0] = True
         elif a == "--lang":
             lang = next(it, "en")
         else:

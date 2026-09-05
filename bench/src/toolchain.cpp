@@ -90,7 +90,7 @@ PayloadFlags payload_flags(std::string_view compiler) {
         return f;
     }
 
-    // ⚠️ macOS GETS NOTHING, AND THAT IS THE CORRECT ANSWER.
+    // macOS GETS NOTHING, AND THAT IS THE CORRECT ANSWER.
     //
     // Pointing `-L`/`-rpath` at the registry's lib directory puts a second
     // libc++ where the platform toolchain can find it, and Apple's own linker
@@ -116,7 +116,7 @@ PayloadFlags payload_flags(std::string_view compiler) {
     if (std::filesystem::is_directory(root / "include" / "c++" / "v1", ec)) {
         f.compile += " --no-default-config -nostdinc++"
                      " -isystem" + (root / "include" / "c++" / "v1").string();
-        // ⚠️ AND THE PER-TRIPLE DIRECTORY, which is where `__config_site` lives.
+        // AND THE PER-TRIPLE DIRECTORY, which is where `__config_site` lives.
         // libc++'s `__config` includes it, so without this every TU dies with
         //
         //     __config:13:10: fatal error: '__config_site' file not found
@@ -128,7 +128,7 @@ PayloadFlags payload_flags(std::string_view compiler) {
             if (std::filesystem::is_directory(cand, ec))
                 f.compile += " -isystem" + cand.string();
         }
-        // ⚠️ AND THE PER-TRIPLE lib DIRECTORY. In this payload libc++ lives in
+        // AND THE PER-TRIPLE lib DIRECTORY. In this payload libc++ lives in
         // `lib/x86_64-unknown-linux-gnu/`, not `lib/`. A clang DRIVER finds it
         // by itself, which is why the cmake arm worked with `-L…/lib` alone —
         // but an engine that links through a different driver does not, and
@@ -137,7 +137,7 @@ PayloadFlags payload_flags(std::string_view compiler) {
         //     ld: cannot find -lc++: No such file or directory
         //
         // Naming both directories makes the flags independent of who links.
-        // ⚠️ -L TELLS THE LINKER; -rpath TELLS THE LOADER. They are different
+        // -L TELLS THE LINKER; -rpath TELLS THE LOADER. They are different
         // questions and this payload needs both answered: libc++ lives inside
         // the registry, nowhere the dynamic loader looks by default. With only
         // -L, every engine on macOS produced a binary that linked cleanly and

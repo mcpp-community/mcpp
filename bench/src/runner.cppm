@@ -56,7 +56,7 @@ struct RunOptions {
     // Hooks rather than a Journal member so the runner keeps knowing nothing
     // about files — the same reason `on_progress` is a callback.
     //
-    // ⚠️ THE SEED BUILD IS NOT A UNIT and is redone on resume. An incremental
+    // THE SEED BUILD IS NOT A UNIT and is redone on resume. An incremental
     // scenario only means anything against an up-to-date tree, and that state
     // is what the seed establishes; it lives on disk, not in the journal. So
     // resuming a partially-measured cell costs one seed build. Stated because

@@ -16,7 +16,7 @@ per cell, and the only one the README tables quote. Everything else is history �
 kept because a claim that cannot be checked against the run that produced it is
 not a measurement, and deleted history cannot be checked at all.
 
-⚠️ **Every directory below the standard one was taken under conditions that no
+**Every directory below the standard one was taken under conditions that no
 longer hold.** Read them as a record of what was measured then, not as data
 about mcpp now:
 

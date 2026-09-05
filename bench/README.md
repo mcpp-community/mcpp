@@ -69,7 +69,7 @@ run id : 4e58a816 (resuming, 73 unit(s) recorded)
 run id : a0840b10 (fresh)
 ```
 
-⚠️ **Resume is where a benchmark quietly splices two runs together**, so two
+**Resume is where a benchmark quietly splices two runs together**, so two
 things are deliberate:
 
 * The fingerprint **excludes the mcpp binary**. Including it would restart from
@@ -114,7 +114,7 @@ BENCH=$(ls -t bench/target/*/*/bin/mbench | head -1)
          --scenarios noop,touch-hub --hub src/platform/platform.cppm --runs 3
 ```
 
-⚠️ **Always pass mcpp as a PATH, never as the bare name `mcpp`.** The bare name
+**Always pass mcpp as a PATH, never as the bare name `mcpp`.** The bare name
 resolves through PATH to the xlings shim, which re-picks its version from the
 working directory — and for `--project` that directory is the measured tree,
 which carries its own pin. A whole run once reported `mcpp@2026.8.11.3` in every
@@ -228,25 +228,25 @@ record and the reader cannot see.
 Four things this bought, each of which had already gone wrong:
 
 * **cmake 3.31.6** is what the GitHub runner images ship. It does not have the
-  CMake 4.0 experimental key for `import std`, so *every module cell failed to
+ CMake 4.0 experimental key for `import std`, so *every module cell failed to
   configure*. With 4.0.2 they pass.
 * **`command -v g++`** on those images is gcc 13.3.0. cmake cannot configure
-  C++23 modules with it and xmake crashes it with an internal compiler error —
+ C++23 modules with it and xmake crashes it with an internal compiler error —
   while mcpp quietly used its own registry's gcc 16.1 regardless. The table read
-  `48 failed / 6 ok` and was still called a comparison of build engines. The
+ `48 failed / 6 ok` and was still called a comparison of build engines. The
   suite now hands **every** engine the driver out of mcpp's own payload
   (`--compiler payload:gcc`), which is its fairness rule finally enforced rather
   than merely written down.
 * **The measured workloads moved.** xlings was `git clone --depth 1` of its
   default branch at run time, so the target changed with every upstream push —
-  `--hub src/xlings.cppm` had been naming a file that no longer existed for
+ `--hub src/xlings.cppm` had been naming a file that no longer existed for
   months, every xlings cell reported `skipped`, and every xlings job reported
   success. mcpp's own sources had the same defect in a form that is harder to
   see: `--project $GITHUB_WORKSPACE` made the checkout the workload, so every
   commit on a branch silently changed the thing being measured. **The engine
   under test is the binary and is supposed to move; the workload is not.**
-  All three are git submodules now, and the guard checks that each `hub` and
-  `body` exists in the pinned tree.
+ All three are git submodules now, and the guard checks that each `hub` and
+ `body` exists in the pinned tree.
 * **Only one mcpp was measured.** A report that says how fast this branch is,
   without saying whether it got faster, is not what a benchmark on a pull
   request is for.
@@ -275,7 +275,7 @@ Four things this bought, each of which had already gone wrong:
 
 ### The headline numbers, and where they come from
 
-> ⚠️ **`bmi_schedule` has a known correctness bug — do not quote these numbers.**
+> **`bmi_schedule` has a known correctness bug — do not quote these numbers.**
 > On the generated fixture's `modules` variant, four scenarios fail with
 > `failed to read compiled module: No such file or directory` in an importer.
 > It reproduces at `-j1`, so it is not a race between compilers: phase 1 parks
@@ -317,18 +317,18 @@ Four things this says, and the fixture can say none of them:
    that column is a *setting*.
 
    **And the schedule column is not a free upgrade.** On `touch-hub` and
-   `edit-comment` it is 0.44s against the default's 0.40s and 0.38s — slightly
-   WORSE, because those are exactly the rows where mcpp already skips the
+  `edit-comment` it is 0.44s against the default's 0.40s and 0.38s — slightly
+  WORSE, because those are exactly the rows where mcpp already skips the
    cascade, so the split graph adds edges and buys nothing. It pays where a
    cascade is genuinely owed (`cold`, `edit-body`) and nowhere else.
 3. **The daily loop is where the engines differ**, by ~190x on this project:
    touching a hub interface costs cmake and xmake a full 83-second rebuild
    because they decide by timestamp, and 0.40s for an engine that compares the
-   BMI it just produced against the previous one.
+  BMI it just produced against the previous one.
 4. **`edit-body` is the control.** mcpp is deliberately *not* fast there
    (0.89x): the perturbation inserts a statement into an interface unit, which
    moves the source position GCC records for every declaration after it, so the
-   BMI changes and the cascade is owed. An engine that were fast on that row
+  BMI changes and the cascade is owed. An engine that were fast on that row
    would have skipped work it owed. A body edit that does NOT move lines, or one
    in a separate `.cpp`, owes no cascade and mcpp skips it — see §7.
 
@@ -397,12 +397,12 @@ split schedule, and leaving it out understated mcpp badly — `edit-body` reads
   and skips 45 importers. cmake and xmake decide by timestamp and rebuild all of
   them — to within 0.00s of each other, which is what two timestamp-driven
   engines should look like.
-* **⚠️ These `bmi_schedule=on` cells were taken BEFORE the §8b fix, and are
+* ** These `bmi_schedule=on` cells were taken BEFORE the §8b fix, and are
   therefore suspect in the same way the mcpp table's were.** All ten reported
-  `ok` — status cannot see a build that stopped early. The two mcpp-workload
+ `ok` — status cannot see a build that stopped early. The two mcpp-workload
   cells that were affected there (`touch-hub`, `edit-comment`) doubled once the
   object edge stopped being cleaned by the cascade's own restat; `cold` and
-  `edit-body` did not move. This table's `cold` and `edit-body` are the two
+ `edit-body` did not move. This table's `cold` and `edit-body` are the two
   quoted above, so the headline holds, but it has not been re-run. When it is,
   the file to compare against is `bench/results/xlings-3way-20260814/`.
 
@@ -440,7 +440,7 @@ report: `bench/results/xlings-3way-20260814/xlings-split-3way.json`.</sub>
   (2.38x). Moving implementations out of interface units buys more than switching
   build tool does.
 * **`edit-body` is 0.75x — mcpp is SLOWER than cmake here**, 1.79s against 1.35s.
-  With the body in a `.cpp`, one object recompiles and nothing cascades, so the
+ With the body in a `.cpp`, one object recompiles and nothing cascades, so the
   scenario measures per-invocation overhead rather than graph reasoning — the
   same fixed cost `noop` shows. On this axis mcpp has no advantage to offer and
   the number says so.
@@ -485,7 +485,7 @@ codebase that has not made that change.
   whole suite, and it is a *code style*, not an engine feature.
 * **`touch-hub` reproduces the engine result on a codebase nobody tuned for it**
   — 50.6x, against 190x on mcpp's own tree. Different magnitude, same mechanism.
-* ⚠️ **The `cold` row was nearly published as a 23% REGRESSION.** At n=1 the
+* **The `cold` row was nearly published as a 23% REGRESSION.** At n=1 the
   split tree read `29.13s → 35.88s`, i.e. the new mcpp slower. Re-measured at
   n=3 it is `30.33s → 29.78s` — marginally *faster*. The single pair had simply
   caught the new arm near the old arm's maximum: the old arm's spread is
@@ -540,7 +540,7 @@ whole argument for the toolchain being an axis: **the answer is not the same
 multiple on both**, so a suite that pinned one compiler would publish one of
 these two numbers as if it were the answer.
 
-> ⚠️ Those numbers were taken with **cmake 4.0.2 / xmake 3.0.7**, before the
+> Those numbers were taken with **cmake 4.0.2 / xmake 3.0.7**, before the
 > pins in the table above. They are quoted here because they are a real,
 > reproducible, in-repo result file; CI now runs the pinned versions and the
 > tables are refreshed from its artifacts. Do not mix rows from the two.
@@ -704,9 +704,9 @@ Two details that are easy to get wrong and change the answer:
 * **`edit-body` and `edit-comment` are separate on purpose.** They were one
   scenario, named `edit-body`, that inserted a comment — so every "N times
   faster on edits" number it produced was really a statement about comments.
-  Splitting them costs one extra column and makes each number mean its name.
+ Splitting them costs one extra column and makes each number mean its name.
 
-  On GCC 16.1 both happen to be cheap for the same underlying reason, and it is
+ On GCC 16.1 both happen to be cheap for the same underlying reason, and it is
   worth stating because it is easy to misread as a bug: **GCC does not encode
   the body of an exported non-template function into the BMI.** Editing such a
   body changes the object file and leaves the BMI byte-identical apart from its
@@ -738,9 +738,9 @@ Two details that are easy to get wrong and change the answer:
   situation developers live in, and dropping caches adds variance unrelated to
   the engine.
 * The harness never lets build output reach its own stdout; child streams go to
-  `<work>/logs/<engine>-<scenario>.log`. A mixed stream cannot be parsed — and
+ `<work>/logs/<engine>-<scenario>.log`. A mixed stream cannot be parsed — and
   the log lives under the WORK root, never inside the measured tree, so a
-  `--project` run cannot drop scratch into someone's repository.
+ `--project` run cannot drop scratch into someone's repository.
 
 ### 4a. Validity rules — when a cell must NOT be compared
 
@@ -818,9 +818,9 @@ These cannot be removed, so they are stated rather than hidden.
   here because it stood as a "declared asymmetry" for a while, and a thing you
   can fix should not stay on this list.
 * **The `+schedule=on` arm is the same binary, not a different engine.** mcpp's
-  BMI schedule is a key in the MEASURED PROJECT's manifest and the workloads are
+ BMI schedule is a key in the MEASURED PROJECT's manifest and the workloads are
   pinned (one belongs to someone else), so the harness reaches it through
-  `MCPP_BMI_SCHEDULE` and labels the arm `mcpp@<ver>+schedule=on`. It is an
+ `MCPP_BMI_SCHEDULE` and labels the arm `mcpp@<ver>+schedule=on`. It is an
   option under test, and it is on the same row set as the default so the two are
   read together rather than across runs.
 * **No fixture says `import std;`.** Engines differ wildly in how — and whether —
@@ -830,14 +830,14 @@ These cannot be removed, so they are stated rather than hidden.
   every engine handles identically. **This suite measures module machinery, not
   std-module support.**
 * **The three arms do not obtain their dependencies the same way, and their
-  `cold` columns are therefore not the same quantity.** xlings links ftxui,
+ `cold` columns are therefore not the same quantity.** xlings links ftxui,
   libarchive, lua and mbedtls, which mcpp's registry ships as SOURCE. The cmake
   and bazel arms compile those sources themselves — from each package's own
-  `.xpkg.lua`, so the file list matches mcpp's exactly — which means their
-  `cold` includes ~470 dependency translation units. The xmake arm declares them
+ `.xpkg.lua`, so the file list matches mcpp's exactly — which means their
+ `cold` includes ~470 dependency translation units. The xmake arm declares them
   through xrepo instead, the way xlings' own `xmake.lua` does, so it links
   libraries xrepo built earlier and its `cold` does not include them.
-  `xmake clean` does not evict the xrepo package cache, so this is stable across
+ `xmake clean` does not evict the xrepo package cache, so this is stable across
   runs rather than a first-run artefact — but it is a real difference in
   workload, not a difference in engine speed. Compare `cold` across engines on
   the FIXTURE, which has no third-party dependencies at all; on xlings, compare
@@ -858,7 +858,7 @@ These cannot be removed, so they are stated rather than hidden.
   | bazel 9.2 + rules_cc 0.2.22 | **yes** | no — `aggregate-ddi failed … Invalid JSON string`, i.e. its ddi aggregator cannot parse GCC's P1689 output |
   | meson 1.10.2 | no — `fatal error: module 'fx.a' not found`; no attribute declares an interface unit | no |
 
-  So a gcc run and a clang run legitimately have **different sets of populated
+ So a gcc run and a clang run legitimately have **different sets of populated
   cells**, and a table must say which compiler it used before its `unavailable`
   rows mean anything.
 * **bazel module builds are forced to one object flavour.** `cc_binary` registers
@@ -866,15 +866,15 @@ These cannot be removed, so they are stated rather than hidden.
   names the output `<target>.CXXModules.json` for both, so analysis aborts before
   any compilation:
 
-  ```
-  Attempted action contains artifacts not in previous action: _objs/fx/unit_0.pic.ddi
-  Previous action contains artifacts not in attempted action:  _objs/fx/unit_0.ddi
-  Outputs: are equal
-  ```
+ ```
+ Attempted action contains artifacts not in previous action: _objs/fx/unit_0.pic.ddi
+ Previous action contains artifacts not in attempted action:  _objs/fx/unit_0.ddi
+ Outputs: are equal
+ ```
 
-  The adapter passes `--force_pic` — to **every** variant, so bazel's own
+ The adapter passes `--force_pic` — to **every** variant, so bazel's own
   headers-vs-modules rows stay comparable, and PIC rather than
-  `--features=-supports_pic` because it yields a PIE executable, which is what
+ `--features=-supports_pic` because it yields a PIE executable, which is what
   the other engines produce by default.
 
 ---
@@ -939,7 +939,7 @@ Five parsing traps it exists to get right — each one changed a conclusion duri
 the original analysis:
 
 1. A multi-output edge (`build a.o | a.gcm : cxx_module`) writes **one
-   `.ninja_log` line per output**, sharing start/end. Summing lines double-counts
+  `.ninja_log` line per output**, sharing start/end. Summing lines double-counts
    compile time (302 s reads as 604 s).
 2. For a modules build the real edges live in the **dyndep files**
    (`obj/*.ddi.dd`), not in `build.ninja`. Ignoring them made mcpp's critical path
@@ -986,7 +986,7 @@ export module repro.leaf;
 export int leaf_value() { return 1; }   // change to 42, rebuild
 ```
 
-    Finished dev in 0.02s     <- reported success, 3 of 8 edges run
+   Finished dev in 0.02s     <- reported success, 3 of 8 edges run
     ./repro8b  ->  1          <- the source says 42
 
 No link error and no diagnostic. The detached compiler wrote the correct object
@@ -1041,7 +1041,7 @@ missing is a check that sees it from inside the harness.</sub>
 | [`common/`](projects/common/) | the per-engine payload logic both projects share — one branch per compiler family |
 | [`xlings/`](projects/xlings/) | an **independent** codebase (110 modules / 46k lines, different authors) — the control that separates "a faster build engine" from "a faster benchmark target" |
 
-⚠️ **An engine change that only helps the project it was developed on is not an
+**An engine change that only helps the project it was developed on is not an
 engine change.** The split module schedule was developed against mcpp (2.30x)
 and reproduces on xlings at **3.38x**; that second number is the one that makes
 it a general result. Conversely, restructuring a target's modules speeds up that
@@ -1087,15 +1087,15 @@ repository, which this harness refuses to do.
 ### The cmake description has two traps worth knowing
 
 * **`FILE_SET CXX_MODULES` requires every file under a base directory.** The
-  `mcpplibs.cmdline` dependency lives in the registry, outside the tree, so it
+ `mcpplibs.cmdline` dependency lives in the registry, outside the tree, so it
   needs its own file set with an explicit `BASE_DIRS`.
 * **`add_compile_options()` does not reach the `std` module.** CMake generates
   that target itself, so directory-scope options miss it: the std module then
   compiles against the compiler's default libc headers while every mcpp unit
   compiles against `--sysroot`, and the build dies on a type that exists in both
   (`conflicting type for imported declaration 'char _IO_FILE::_unused2 [20]'`).
-  The error names neither the flag nor the target that is wrong. Use
-  `CMAKE_CXX_FLAGS`.
+ The error names neither the flag nor the target that is wrong. Use
+ `CMAKE_CXX_FLAGS`.
 
 The xmake description pins the compiler by reading `[toolchain] default` out of `mcpp.toml`, because
 the registry holds several GCCs and "newest directory wins" only *happens* to

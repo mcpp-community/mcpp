@@ -118,26 +118,26 @@ Three things looked like boundaries and were not:
   include directories of the dependency targets rather than as a hand-written
   walk of registry subdirectories.
 * **A generated module.** `mcpplibs.xpkg.lua_stdlib` is not checked in; libxpkg's
-  `build.mcpp` produces it. But all it does is embed eleven `.lua` files as
+ `build.mcpp` produces it. But all it does is embed eleven `.lua` files as
   strings, so [`embed_lua_stdlib.cmake`](embed_lua_stdlib.cmake) reproduces it.
   *"mcpp runs a build program"* is not by itself a boundary.
 * **The source dependencies.** `ftxui`, `libarchive`, `lua` and `mbedtls` arrive
   as **source** and mcpp compiles them, so the link asked for symbols nobody had
   built here. Neither obvious answer works: `add_subdirectory` on the vendored
-  CMakeLists drags in test suites libarchive cannot even configure without, and
+ CMakeLists drags in test suites libarchive cannot even configure without, and
   mbedtls 3.6.1 `FATAL_ERROR`s **unconditionally** on a `framework/` submodule
   the registry tarball does not carry — no option disables it. A glob of the
   unpacked tree compiles the wrong set (`libarchive/*.c` is 132 files where mcpp
   compiles 127; `lua/src/*.c` is 34 where it compiles 32, the two extra being
-  `lua.c` and `luac.c`, each with its own `main()`).
+ `lua.c` and `luac.c`, each with its own `main()`).
 
-  What does work is that **every package in mcpp's registry ships a `.xpkg.lua`
+ What does work is that **every package in mcpp's registry ships a `.xpkg.lua`
   naming exactly the sources, include dirs and cflags mcpp compiles it with**.
   [`xpkg_source_library.cmake`](xpkg_source_library.cmake) reads that, so both
   engines compile the same 127 files with the same defines, and a pattern that
   resolves to nothing is a configure error rather than a quietly smaller build.
 
-⚠️ The copied module list in the generator **already drifted once**: a first
+The copied module list in the generator **already drifted once**: a first
 regex caught ten of eleven entries, and the failure surfaced three files away as
 `error: 'base64_lua' is not a member of ...detail`. The generator now fails on a
 missing `.lua` rather than trusting the list.
@@ -149,7 +149,7 @@ a second engine. And because the cmake description now links, the same tree also
 carries a cross-engine comparison on a project with six dependencies, four of
 them compiled from source by both engines.
 
-⚠️ **One asymmetry is real and is declared rather than smoothed over**: on a cold
+**One asymmetry is real and is declared rather than smoothed over**: on a cold
 build cmake compiles all nine source packages (467 C/C++ translation units)
 while mcpp may serve them from its global dependency cache. See `../../README.md`
 §5.
