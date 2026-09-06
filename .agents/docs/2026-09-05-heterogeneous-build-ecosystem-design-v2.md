@@ -1,5 +1,8 @@
 # Heterogeneous C++ builds and their ecosystem, v2: closing the host surface
 
+> SUPERSEDED as the standing plan by `2026-09-06-ecosystem-plan-v3.md`. This file stays as the record of
+> how its rounds were decided; read v3 before starting new work.
+
 > Supersedes `.agents/docs/2026-09-05-multi-device-ecosystem-design.md` (v1) and
 > keeps its task table. v1 asked how a device build should be shaped; this
 > document asks what remains outside the ecosystem when it is, answers it with a

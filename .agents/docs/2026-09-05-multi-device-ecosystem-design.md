@@ -1,5 +1,8 @@
 # 多设备加速生态:载荷、适配面、验证 lane 与框架验证
 
+> SUPERSEDED as the standing plan by `2026-09-06-ecosystem-plan-v3.md`. This file stays as the record of
+> how its rounds were decided; read v3 before starting new work.
+
 2026-09-05。本文取代 `2026-09-05-accelerator-support-design.md` §8.5 / §12 / §15.8
 三处的结论,并把范围从 CUDA 扩到全部主流设备后端。
 
