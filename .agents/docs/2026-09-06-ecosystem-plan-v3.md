@@ -71,7 +71,7 @@ concern?*
 
 | | size | what decides it |
 |---|---|---|
-| **nine frameworks** (llama.cpp, ncnn, CUTLASS, oneDNN, Kokkos, OpenCV CUDA, FAISS, ONNX Runtime, libtorch) | **the bulk of what remains** | each is work in that project's own `-m` repository, not an index entry. Two of the nine exist in the index at all; none has a device backend built |
+| **the framework tier** (ncnn, CUTLASS, oneDNN, Kokkos, OpenCV CUDA, FAISS, ONNX Runtime, libtorch) | **the bulk of what remains** | each is work in that project's own `-m` repository, not an index entry. llama.cpp is no longer on this row: its Vulkan backend is built and measured (F1, 2026-09-06). Its CUDA backend (F2) is next, and the gate has been satisfied -- F1 finished, and it did what a gate is for, exposing two engine defects in its first hours |
 | Intel `anv` in the Mesa payload | medium | a libclc and SPIRV-LLVM-Translator chain, then a Mesa rebuild |
 | HIP's AMD platform | medium | a ROCm runtime and device library in `xim-pkgindex` |
 | aarch64 for the third-class libraries | medium | `xim:glibc`, `gcc-runtime`, `ncurses`, `libxcb` publish no aarch64 asset |
