@@ -26,7 +26,7 @@ its device code can be separated at all.
 confine every one of them to a translation unit of its own by convention, and
 `.sycl` is that convention made checkable. Only those units go to the SYCL
 compiler; the rest of the target is compiled by the project's own toolchain,
-which is what `examples/11-sycl-kernel` shows -- `app.cppm` and `main.cpp` by
+which is what `examples/09-heterogeneous/sycl` shows -- `app.cppm` and `main.cpp` by
 mcpp's clang, `saxpy.sycl` by the dpcpp payload's.
 
 **OpenMP offload's and stdpar's cannot.** `#pragma omp target` and
@@ -113,7 +113,7 @@ The command that invokes a device compiler is not built into mcpp. It is
 supplied by a **build-rule package**, consumed with `host-module = true`,
 which emits build-graph edges whose outputs join the link. See
 [07 — build.mcpp](07-build-mcpp.md) for the mechanism and
-`examples/09-cuda-kernel` for a working CUDA rule.
+`examples/09-heterogeneous/cuda` for a working CUDA rule.
 
 The division is deliberate. mcpp owns the graph, the artifact's identity and
 the set of architectures; a vendor's flag spelling, its architecture syntax and

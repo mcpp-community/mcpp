@@ -25,7 +25,7 @@ plugins = { version = "0.2.0", features = ["rules-hip"], host-module = true }
 # artifact's runtime search path the statically linked CUDA runtime cannot
 # dlopen the driver.
 [dependencies.compat]
-cuda-runtime = "2026.09.05"
+cuda-driver = "2026.09.05"
 
 # The payloads. `hip-nvidia` is headers only -- on this platform that is all
 # HIP is -- and the four CUDA entries are the back end it compiles through.

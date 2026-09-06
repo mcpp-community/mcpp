@@ -106,7 +106,7 @@ is lost if two run in parallel.
 `opencv.opencv` are already there; the work is in their `-m` repositories. Plan
 the round as PRs to those, not as index edits.
 
-## 6. Proposal: group the four device examples
+## 6. Decided: group the four device examples
 
 `examples/09-cuda-kernel`, `10-vulkan-compute`, `11-sycl-kernel` and
 `12-hip-kernel` are one lesson in four programming models. They share the
@@ -132,17 +132,54 @@ the record state something that was not true at the time. So a rename leaves
 dangling paths in the record by construction, which is normal for a record and
 should not be repaired.
 
-**Recommendation: do it, in a round of its own, and not as part of a feature
-round.** The benefit is a curriculum whose shape matches its content; the risk
-is entirely churn, and mixing churn into a round that also changes behaviour is
-what makes a regression hard to attribute. Deferring it costs one more
-misleading row per model added.
+**Decided: do it, folded into round 5 rather than as a round of its own.** My
+recommendation had been to isolate it, on the grounds that churn mixed with
+behaviour change makes a regression hard to attribute. The decision is to
+combine, and the attribution risk is real, so it is bought down rather than
+ignored:
+
+* the move lands as its **own commit**, first, containing no behaviour change;
+* V4 runs on that commit before anything else in the round is written, so a
+  rename that broke an example is caught while the rename is the only suspect;
+* section 7's alignment work rides in the same commit, because it edits the
+  same manifests and splitting them would create two churn commits instead of
+  one.
 
 **Not recommended: renaming without the shared README.** The grouping is only
 worth its churn if the directory explains what the four have in common; four
 subdirectories under a bare parent is the same four lessons with a longer path.
 
-## 7. The method this round produced, which outlives its features
+## 7. Aligning the documentation with the released ecosystem
+
+A version reference in the documentation is one of two kinds, and treating them
+alike is how a sweep like this damages a document.
+
+**A floor marker states when something landed** -- `*(2026.9.5.2+)*`, `### The
+probe channel: fact / floor (2026.9.5.2+)`. It is a historical fact. Bumping it
+to the current release makes the document lie about its own subject, and most
+of the version strings in `docs/` are this kind.
+
+**A current pin states what a project should declare today** -- an example's
+`mcpp.toml`, an instruction to a reader. This is what tracks the release.
+
+Measured on 2026-09-06, the pins that are stale:
+
+| where | has | should have | why |
+|---|---|---|---|
+| examples 09, 10 | `plugins = { version = "0.1.1" }` | `"0.2.0"` | 11 and 12 already pin 0.2.0; a reader comparing four examples sees two answers to one question |
+| examples 09, 12 | `compat:cuda-runtime = "2026.09.05"` | `cuda-driver = "2026.09.05"` | that entry is frozen and renamed; its own recipe says "To migrate, change the key to `cuda-driver`". An example is the worst place to demonstrate a superseded spelling |
+
+The criterion for this task is not "no old version string appears" -- that
+criterion would delete the floor markers, which is the failure it must avoid.
+It is:
+
+* every `mcpp.toml` under `examples/` resolves against the current index, and
+* every floor marker still names the release the feature actually landed in.
+
+The second half is checked by not touching them: the sweep edits manifests and
+reader instructions, and leaves `(20xx.x.x.x+)` alone.
+
+## 8. The method this round produced, which outlives its features
 
 Eight defects, six in work written for the round, none found by reading code.
 Four shared one shape:

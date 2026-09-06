@@ -659,8 +659,8 @@ mcpp 2026.9.5.4+) is the first: it writes a data file into a header the program
 compiles in, as a byte array or a 32-bit word array, and rewrites nothing when
 the content is unchanged, so calling it unconditionally costs no rebuild.
 
-`examples/09-cuda-kernel` and
-`examples/10-vulkan-compute` consume `mcpp.rules.cuda` and `mcpp.rules.spirv`
+`examples/09-heterogeneous/cuda` and
+`examples/09-heterogeneous/vulkan` consume `mcpp.rules.cuda` and `mcpp.rules.spirv`
 from `mcpp:plugins`, the way any project does.
 
 **Layers must not have a cliff, and each layer must be the composition of the

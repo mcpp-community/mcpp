@@ -20,7 +20,7 @@ mcpp 只实现**一套**机制 —— 岛 —— 这就是设计的全部。一�
 
 **SYCL 的分得开。** 一个 SYCL kernel 是 `submit` 里的一个 lambda,所以一个工程可以
 按约定把它们全部收进各自的编译单元,而 `.sycl` 就是这条约定的可检查形式。只有这些
-单元交给 SYCL 编译器,目标的其余部分由工程自己的工具链编译 —— `examples/11-sycl-kernel`
+单元交给 SYCL 编译器,目标的其余部分由工程自己的工具链编译 —— `examples/09-heterogeneous/sycl`
 实测如此:`app.cppm` 与 `main.cpp` 由 mcpp 的 clang 编,`saxpy.sycl` 由 dpcpp 载荷的编。
 
 **OpenMP offload 与 stdpar 的分不开。** `#pragma omp target` 与
@@ -89,7 +89,7 @@ tarball 已经发出去了。设备源文件必须被显式点名。
 
 调用设备编译器的那条命令不内置在 mcpp 里,而是由**构建规则包**提供 ——
 以 `host-module = true` 消费,emit 输出汇入链接的构建边。机制见
-[07 — build.mcpp](07-build-mcpp.md),可用的 CUDA 规则见 `examples/09-cuda-kernel`。
+[07 — build.mcpp](07-build-mcpp.md),可用的 CUDA 规则见 `examples/09-heterogeneous/cuda`。
 
 这个划分是刻意的。mcpp 拥有构建图、产物身份与架构集合;厂商的 flag 拼法、
 架构语法与宿主编译器要求属于规则包。

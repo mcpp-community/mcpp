@@ -565,7 +565,7 @@ action,由引擎调度。工具说明的是构建程序需要、而没有任何�
 它把数据文件写成程序编译进去的头文件(字节数组或 32 位字数组),内容未变时不重写文件,
 因此无条件调用它不会带来任何重编。
 
-`examples/09-cuda-kernel` 与 `examples/10-vulkan-compute` 像任何工程一样从 `mcpp:plugins`
+`examples/09-heterogeneous/cuda` 与 `examples/09-heterogeneous/vulkan` 像任何工程一样从 `mcpp:plugins`
 消费 `mcpp.rules.cuda` 与 `mcpp.rules.spirv`。
 
 **分层不得有断崖,且上层必须是下层的组合。** `generate_all(opt)` **就是**

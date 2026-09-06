@@ -20,7 +20,7 @@ default = "llvm@22.1.8"
 # The rule that compiles the island lives in the official plugin collection,
 # selected by its feature; `build.mcpp` imports it as `mcpp.rules.cuda`.
 [dependencies.mcpp]
-plugins = { version = "0.1.1", features = ["rules-cuda"], host-module = true }
+plugins = { version = "0.2.0", features = ["rules-cuda"], host-module = true }
 
 # The driver's userspace library, reached through an index package that owns
 # the one hop mcpp needs: a directory on the artifact's runtime search path.
@@ -29,7 +29,7 @@ plugins = { version = "0.1.1", features = ["rules-cuda"], host-module = true }
 # that cannot be an ordinary payload -- the licence forbids redistributing it
 # and it is in ABI lockstep with the kernel module.
 [dependencies.compat]
-cuda-runtime = "2026.09.05"
+cuda-driver = "2026.09.05"
 
 # The toolkit this project builds with, named rather than discovered. These
 # are PAYLOADS, so the version is the project's choice and not the machine's.

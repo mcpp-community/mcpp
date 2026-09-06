@@ -1,6 +1,6 @@
-# 10 — A Vulkan compute shader behind the same seam
+# Vulkan: a compute shader behind the same seam
 
-The example next door compiles CUDA. This one compiles GLSL, dispatches it
+The `cuda/` example next door compiles CUDA. This one compiles GLSL, dispatches it
 through Vulkan, and prints the same four numbers — and the point is what the
 two have in common, not what differs.
 
@@ -23,7 +23,7 @@ app/
                             selected by the feature `rules-spirv`
 ```
 
-## What is shared with `examples/09-cuda-kernel`
+## What is shared with `cuda/`
 
 Everything structural. The device axis is declared once in the manifest, the
 device sources are a constrained glob, the rule package receives them through
@@ -73,7 +73,7 @@ developer's desk.
 ## Running it
 
 ```bash
-cd examples/10-vulkan-compute/app
+cd examples/09-heterogeneous/vulkan/app
 mcpp run                # whatever device the loader finds
 mcpp run --no-accel     # the CPU implementation behind the same seam
 ```
