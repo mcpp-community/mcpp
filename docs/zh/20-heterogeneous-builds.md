@@ -3,7 +3,26 @@
 GPU 与 AI 加速器目标,以及宿主/设备混合编译:mcpp 如何构建设备代码,以及一个预建产物如何
 声明它能在哪些设备上运行。
 
-## 两种形态,以及 mcpp 实现的那一套机制
+## 支持什么
+
+一个构建点名它面向哪些设备后端,而且**可以点多个**:
+
+```toml
+[build]
+accel = "cuda12.9+{sm_89}, vulkan1.2"
+```
+
+`accelerator` 是目标侧的一个**集合**,所以这个构建里 `cfg(accelerator = "cuda")` 与
+`cfg(accelerator = "vulkan")` 同时为真,每个后端的规则包各编各的设备单元,一个产物把
+它们都带上。逗号分隔的是这个集合里的**条目**;空格分隔的是**同一条目内的修饰符**
+(`cuda12.9+{sm_89} ptx>=89` 是一个后端加一组架构再加一条 PTX 下界)。源码集合怎么写
+见下面「一个构建里的多个后端」。
+
+今天有规则包的编程模型是四个 —— CUDA、HIP、SYCL、Vulkan/SPIR-V —— 「各条 lane」那张表
+写明每个驱动哪个编译器、需要哪些载荷。引擎里不持有任何厂商名字,所以第五个是**一个包**
+而不是一次引擎改动。
+
+## 两种形态,以及为什么一套机制够到两者
 
 加速器工具链有两种形态。它们描述的是**一个工具链通常怎么被使用**,不是一个构建系统
 需要几套机制。
@@ -15,8 +34,9 @@ Ascend C 与 Metal 都是这种形态。设备编译器产出一个目标文件(
 **整目标(whole-target)** 把设备代码放在普通 `.cpp` 里,整个目标由一个能 offload 的
 编译器编译。SYCL、OpenMP offload 与 stdpar 通常这样用。
 
-mcpp 只实现**一套**机制 —— 岛 —— 这就是设计的全部。一个整目标工具链是**经由**它、
-而不是在它旁边被接进来的,前提是它的设备代码**分得开**。
+mcpp 只实现**一套**机制 —— 岛。这是关于**设计**的陈述,不是关于支持多少后端的:
+一个整目标工具链是**经由**岛、而不是在它旁边被接进来的,所以支持它的代价是一个规则包,
+而不是第二套机制。SYCL 之所以在已发布的那一组里,正是这个原因。
 
 **SYCL 的分得开。** 一个 SYCL kernel 是 `submit` 里的一个 lambda,所以一个工程可以
 按约定把它们全部收进各自的编译单元,而 `.sycl` 就是这条约定的可检查形式。只有这些
@@ -229,6 +249,71 @@ cxxflags = ["-DMYAPP_ROCM"]
 
 比较是**成员判定**,因此一次同时启用 CUDA 与 ROCm 的构建对两者都答真。
 `any`、`all`、`not` 作为普通布尔组合子在其上组合。
+
+## 一个构建里的多个后端
+
+`accel` 点的是一个集合,所以支持多个设备的工程按后端各写一节,集合自己会合成:
+
+```toml
+[package]
+accelerators = ["cuda", "vulkan"]
+
+[build]
+accel   = "cuda12.9+{sm_89}, vulkan1.2"
+sources = [
+  "src/*.cppm", "src/*.cpp",
+  { glob = "src/kernels/**/*.cu",  accel = "cuda12.9+{sm_89}" },
+  { glob = "shaders/*.comp",       accel = "vulkan1.2" },
+]
+
+[target.'cfg(accelerator = "cuda")'.build]
+sources = ["src/cuda/*.cpp"]
+
+[target.'cfg(accelerator = "vulkan")'.build]
+sources = ["src/vulkan/*.cpp"]
+```
+
+每条收窄的 glob 都被这个集合收窄,所以只写 `--accel vulkan1.2` 时着色器被编译、`.cu`
+被留在外面,不需要任何手写条件。
+
+### 多个后端下的 CPU 回退
+
+四个示例各自写的是 `cfg(not(accelerator = "<它自己那个>"))`。这对**只有一个后端**的
+工程是对的,对有多个后端的工程是**错的**:一次 CUDA 构建同样满足
+`not(accelerator = "vulkan")`,于是 CPU 实现会和 CUDA 实现一起进链接。有接缝时两者定义
+同一批 `extern "C"` 符号,结果是实测过的:
+
+```
+ld: obj/src/cpu/impl.o: multiple definition of `impl';
+    obj/src/cuda/impl.o: first defined here
+```
+
+响,而且发生在链接期而不是运行期 —— 但这是 manifest 本可以避免的失败。否定整个集合:
+
+```toml
+[target.'cfg(not(any(accelerator = "cuda", accelerator = "vulkan")))'.build]
+sources = ["src/cpu/*.cpp"]
+```
+
+`any` / `all` / `not` 作为普通布尔组合子在成员判定之上组合。代价是这份名单成了后端集合
+被写下的**第二个地方**:加第三个后端时忘了改这一行,拿到的就是上面那条链接错误。
+
+### 另一种形态:不在链接期做选择
+
+需要排除,只是因为**接缝**用一个实现替换另一个,所以只能链进去一个。如果目标是「一个
+二进制在它遇到的任何机器上都能跑」,就不该在链接期选:
+
+* 把构建时带上的**每一个**后端都编进去 —— 每个 `cfg(accelerator = ...)` 节各加各的
+  源码,CPU 实现无条件在内;
+* 给每个实现一个不同的名字,让接缝在**运行期**去问哪些设备在场。
+
+这样就没有 `not(any(...))` 要维护,而产物回答的是二进制的使用者真正的问题。ggml 就是
+这个形态:每个后端自己注册,程序运行时由 `ggml_backend_reg_by_name` 选一个。
+`ggml-org:llamacpp` 就是这样构建的,它的 `backend-vulkan` 相对 `backend-cpu` 是**可加的**
+而不是互斥的。
+
+选哪个形态是**程序自己的性质**,不是 mcpp 的:用接缝换实现的程序要链接期选择,而要发到
+没见过的机器上去的程序要运行期选择。
 
 ## 两条值得写明的边界
 

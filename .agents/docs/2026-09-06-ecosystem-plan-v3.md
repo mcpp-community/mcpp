@@ -297,6 +297,56 @@ defect that no example had. If R1-R4 need an engine change, round 5 stops and
 that change ships first, with its own test in mcpp. Frameworks F2-F9 do not
 start until F1's example generates tokens.
 
+## 7c. F2's pre-measurement, which changed the answer
+
+The plan told F2 to re-measure round 3's "blocked on a payload matrix" before
+assuming it still held. Measured 2026-09-06 against `xim-pkgindex` origin/main:
+**it no longer holds.** `cuda-nvcc`, `cuda-cudart`, `libcublas`, `cuda-cccl`
+and `libcurand` are all published, and `<cub/cub.cuh>` is the only external
+device include across all 186 translation units. Only `libnccl` is missing, and
+that is the multi-GPU path, guarded by `find_package(NCCL)`.
+
+**F2's shape is simpler than F1's, not harder.** 186 device translation units
+against F1's 134 shaders is comparable scale, but CUDA has no generator: the
+`.cu` files are ordinary device units, and `mcpp.rules.cuda` in `mcpp:plugins`
+0.2.0 already compiles device sources declared by a constrained glob. F2 should
+need a feature, one constrained glob and the payload declarations -- no new
+rule package.
+
+The hazard round 3 found on its own gate, device objects dropped from static
+libraries, is closed: F1 measured 134 device objects inside `libllama.a` with
+`ar t`. The first thing to measure for F2 is the same archive at 186 units and
+a consumer's link line, since `cudart_static` plus 186 objects is the largest
+link this ecosystem has attempted.
+
+## 7d. Open, with the reason each is open
+
+**`mcpp::toolchain_stdlib()`.** mcpp resolves `stdlibId` and writes it into
+`resolution.json`; the build-program environment does not carry it. A build
+program driving a SECOND compiler may need it, and llama.cpp-m has the case
+today -- `backend-vulkan` cannot compile under libc++ (upstream's own source),
+and the refusal it would like to write is impossible because the only available
+signal is the compiler's NAME, which would also refuse clang with libstdc++.
+Same family as the two defects this round fixed. Deliberately not shipped
+alone: without a consumer in the same release it is a recorded field with no
+reader, which is the shape this ecosystem keeps finding.
+
+**No CI job builds an example.** e2e 616 checks that the curriculum and its
+index agree structurally, and says so: it builds nothing. The Vulkan example
+needs no GPU, so it is the one that could join CI first.
+
+**`206_runtime_binding_physics` is decided by machine state.** It asserts a
+status that depends on the private loader's default prefix NOT existing, and a
+leftover `fromsource-x-glibc@2.39/lib` makes it exist. Green in CI, red on a
+developer machine that has one. The criterion should name the directory it
+depends on rather than assume its absence.
+
+**The four examples' CPU fallback does not generalise.** Each writes
+`cfg(not(accelerator = "<its own>"))`, which is correct for one backend and
+wrong for several. docs/20 now states the multi-backend idiom and the measured
+failure mode; the examples themselves stay single-backend because each teaches
+one model.
+
 ## 8. The method this round produced, which outlives its features
 
 Eight defects, six in work written for the round, none found by reading code.
