@@ -223,6 +223,75 @@ else
     fi
 fi
 
+# -- F. the published form, from the index ----------------------------------
+section "F. a consumer that writes only the feature name"
+# THE ONLY SECTION THAT VERIFIES THE PUBLISHED ARTEFACT. Every section above
+# reads a source checkout, which is the DEVELOPMENT form; a sandbox is the one
+# place that can tell whether what was published resolves and works. A consumer
+# here declares the dependency and the feature and nothing else, which is also
+# the claim the README makes about the diff a user writes.
+#
+# Skipped, loudly, until the version is in the index -- the release order is
+# the reverse of the dependency order, so this section is red between the tag
+# and the index PR by construction.
+LLAMACPP_VERSION="${MCPP_VERIFY_LLAMACPP:-b10069.1}"
+consumer="$work/consumer"
+mkdir -p "$consumer/src"
+cat > "$consumer/mcpp.toml" <<TOML
+[package]
+name = "vulkan-consumer"
+version = "0.1.0"
+standard = "c++23"
+
+[targets.vulkan-consumer]
+kind = "bin"
+main = "src/main.cpp"
+
+[dependencies.ggml-org]
+llamacpp = { version = "$LLAMACPP_VERSION", features = ["backend-vulkan"] }
+TOML
+cat > "$consumer/src/main.cpp" <<'CPP'
+import std;
+import llamacpp;
+int main() {
+    llama_backend_init();
+    ggml_backend_reg_t vk = ggml_backend_reg_by_name("Vulkan");
+    const int devices = vk ? ggml_backend_reg_dev_count(vk) : -1;
+    if (!vk) {
+        std::println("no Vulkan registry: the backend was not compiled in");
+        llama_backend_free();
+        return 1;
+    }
+    std::println("vulkan devices: {}", devices);
+    if (devices > 0) {
+        ggml_backend_dev_t d = ggml_backend_reg_dev_get(vk, 0);
+        std::println("device: {} -- {}",
+                     ggml_backend_dev_name(d), ggml_backend_dev_description(d));
+    }
+    llama_backend_free();
+    // A registry with no device is still evidence the backend was BUILT, which
+    // is what this section is about; the device result is section E's job.
+    return 0;
+}
+CPP
+icd=$(find "$HOME/.mcpp/registry/data/xpkgs/xim-x-mesa-lavapipe" \
+          "$HOME/.xlings/data/xpkgs/xim-x-mesa-lavapipe" \
+          -name 'lvp_icd.*.json' -print -quit 2>/dev/null || true)
+consumer_env=(env "GGML_VK_VISIBLE_DEVICES=0")
+[ -n "$icd" ] && consumer_env+=("VK_DRIVER_FILES=$icd")
+if (cd "$consumer" && "${consumer_env[@]}" "$STORE" run >"$work/consumer.log" 2>&1); then
+    if grep -q 'vulkan devices: [1-9]' "$work/consumer.log"; then
+        ok "$(grep -m1 'device:' "$work/consumer.log")"
+        ok "ggml-org:llamacpp@$LLAMACPP_VERSION resolves from the index and its Vulkan backend runs"
+    else
+        fail "the consumer built but reported no Vulkan device"
+        tail -6 "$work/consumer.log"
+    fi
+else
+    fail "a consumer of ggml-org:llamacpp@$LLAMACPP_VERSION with backend-vulkan did not build"
+    tail -20 "$work/consumer.log"
+fi
+
 printf '\n== summary ==\n'
 if [ "$fails" -eq 0 ]; then
     printf 'PASS: 0 assertions failed\n'
