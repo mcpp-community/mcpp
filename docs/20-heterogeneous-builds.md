@@ -4,10 +4,10 @@ GPU and AI accelerator targets, and mixed host/device compilation: how mcpp
 builds device code, and how a prebuilt artifact states which devices it can
 run on.
 
-## Two shapes, one of which mcpp implements today
+## Two shapes, and the one mechanism mcpp implements
 
-Accelerator toolchains come in two shapes, and they are not variations of one
-model.
+Accelerator toolchains come in two shapes. They describe how a toolchain is
+normally used, not how many mechanisms a build system needs.
 
 An **island** keeps device code in separate translation units compiled by a
 separate compiler. CUDA, HIP, Ascend C and Metal all work this way. The device
@@ -16,16 +16,34 @@ that joins the ordinary link.
 
 A **whole-target** model puts device code in ordinary `.cpp` files and compiles
 the entire target with a compiler capable of offloading. SYCL, OpenMP offload
-and stdpar work this way. There is no island to separate.
+and stdpar are used this way.
 
-mcpp implements the island shape, and a whole-target toolchain is reached
-through it rather than beside it: a SYCL translation unit is named `.sycl`,
-routed to the SYCL compiler by the same constrained glob that routes a `.cu`,
-and joins the link through the same seam. What the file name buys is that one
-extension means one thing -- letting a glob carry `.cpp` would make the same
-name mean two different compilers depending on which glob matched first, and
-the seam is legible precisely because the name says which side of it a unit is
-on.
+mcpp implements ONE mechanism, the island, and that is the whole of the design.
+A whole-target toolchain is reached **through** it rather than beside it, when
+its device code can be separated at all.
+
+**SYCL's can.** A SYCL kernel is a lambda inside a `submit`, so a project can
+confine every one of them to a translation unit of its own by convention, and
+`.sycl` is that convention made checkable. Only those units go to the SYCL
+compiler; the rest of the target is compiled by the project's own toolchain,
+which is what `examples/11-sycl-kernel` shows -- `app.cppm` and `main.cpp` by
+mcpp's clang, `saxpy.sycl` by the dpcpp payload's.
+
+**OpenMP offload's and stdpar's cannot.** `#pragma omp target` and
+`std::execution::par_unseq` appear at arbitrary call sites in ordinary code;
+there is no unit to move, so there is no island to impose. Those two are what
+"the shape mcpp does not implement" now means, and the boundary is a property
+of the model rather than a gap in this document's ambition.
+
+Two consequences worth stating plainly:
+
+* An existing SYCL project whose kernels sit in `.cpp` files does not build
+  unchanged. Its device units move into `.sycl` first, which is a rename and a
+  seam, not a rewrite.
+* One extension means one thing. Letting a constrained glob carry `.cpp` would
+  make the same name select two different compilers depending on which glob
+  matched first, and the seam is legible precisely because the file name says
+  which side of it a unit is on.
 
 ## Device translation units
 
