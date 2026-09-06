@@ -5,6 +5,38 @@
 
 ## [Unreleased]
 
+### 构建程序能发出它算出来的链接标志:`mcpp:link-flag`
+
+`link-lib`、`link-search`、`link-script` 各自命名一类东西,于是一条**算出来的**标志无处
+可去:内容依赖 feature 组合的版本脚本、运行时接管 C 库符号用的 `-Wl,--wrap=malloc`、
+以及 `-Wl,--exclude-libs,ALL`(静态吞入的第三方不得成为本包 ABI 的一部分)。签入仓库
+的标志一直可以走 `[build] ldflags`,生成的不行。
+
+新增 `mcpp:link-flag=` 与 `mcpp::link_flag()`(协议 v8)。原样传递 —— 引擎不解析链接器
+词汇。**它到达消费者**,与 `[build] ldflags` 一致:编译接口有声明式公开对应物因而
+`include-dir` 必须私有,链接标志没有这个分裂,让"算出来"的形态与它自己的声明式孪生
+行为不同才是不一致。后果写明:依赖发出的 `--version-script` 也会落到消费者链接行上,
+而这个隐患不是新的。
+
+判据是 e2e 620,它断言**链接器的行为**而不是命令行文本:程序算出
+`-Wl,--defsym=mcpp_e2e_620=42`,产物打印那个符号的地址。值只可能来自链接器真的收到了
+这条标志。
+
+### `cfg(accelerator = "none")` —— 开放词表不能靠枚举取反
+
+CPU 回退此前只能写成 `not(any(accelerator = "cuda", accelerator = "vulkan"))`。
+`accelerator` 的取值是**开放的**(docs/20:第五个后端是一个包,不是引擎改动),所以这条
+谓词的含义会随生态增长**静默改变** —— 新增一个后端之后,每个已写好的回退谓词都开始把
+"命名了新后端的构建"当成"没有加速器",于是 CPU 实现与设备实现一起编进去。
+
+`accelerator = "none"` 为真当且仅当加速器集合为空。拼法沿用本仓库已有的
+`os = "none"`(裸机),不新造词。不用 `cpu`:那会让这条轴同时承载两个问题,并且
+`cfg(accelerator = "cpu")` 在 `accel = "cuda"` 下的真假无法自洽地定下来。
+
+判据 `test_cfg_accelerator_none.cpp` 直接**模拟第五个后端到来**:枚举写法当场开始说谎,
+`none` 不变。这是这项改动的全部理由,单后端下跑绿零信息量。
+
+
 ### 工具也有两条解析轴:`[target.<selector>.xlings…]`
 
 一条工具条目回答的是两个不同问题中的一个:它是在构建机上执行的(宿主),还是产物编译

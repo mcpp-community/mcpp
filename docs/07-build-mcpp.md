@@ -53,6 +53,7 @@ is ignored, so diagnostics may be logged freely.
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | add a **private** include directory (`-I`) for this package's own TUs (absolute, or relative to the package root; normalized). Replaces the `cxxflag=-I` + `cflag=-I` double emission |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | like `include-dir`, but searched **after** the system directories (`-idirafter`) — for payload trees that shadow system headers |
 | `mcpp:runner=<token>` *(2026.8.19.2+)* | one argv token of the command that EXECUTES this build's artifact, when the host cannot. Emitted once per token, in order; the artifact path is appended (or substituted for `{}`). Reaches the **consumer**. Emit the executable as an ABSOLUTE path, and only **one** dependency may supply it |
+| `mcpp:link-flag=<flag>` *(2026.9.6.5+)* | add a **linker flag** this program computed, verbatim. The outlet `link-lib` / `link-search` / `link-script` leave open: a generated version script (`-Wl,--version-script=`), `-Wl,--wrap=malloc` for a runtime that takes over a C-library symbol, `-Wl,--exclude-libs,ALL` so a statically absorbed third party does not become part of this package's ABI. Appended after `[build] ldflags`, in emission order. **Reaches the consumer**, exactly as `[build] ldflags` does — see below |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | link with this **linker script** (`-T`; relative resolves against the package root, and the emitted path is absolute because the link runs in the build directory). Reaches the **consumer**, unlike `include-dir` — a board's memory layout is the one thing a consumer cannot write for itself |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | say something to the user and **keep going**. The one directive that changes no compile line, no link line and no source set. Survives the build cache — see below |
 | `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | state something the program **established about the machine** (`cuda.driver=12.4`). Compared against floors before anything is compiled; see below |
@@ -64,6 +65,19 @@ The program **requests** build edges (flags, libraries, sources). It cannot add 
 registry dependency — the dependency graph stays declarative in `mcpp.toml`
 (including platform-conditional `[target.windows.dependencies]`). `build.mcpp`
 is for *leaf* decisions: flags, codegen, link requirements.
+
+`link-flag` is deliberately **not** private, and the reason is worth stating
+because the opposite looks safer. A compile interface has a declarative public
+counterpart (`[build] include_dirs`), so a build-time program widening it would
+go behind the manifest's back — hence `include-dir`'s privateness. Link flags
+have no such split: `[build] ldflags` already propagates to consumers, so a
+private computed form would behave differently from its own declarative twin.
+
+The consequence is stated rather than hidden. A dependency emitting
+`-Wl,--version-script=` puts it on the consumer's link line too, which is
+usually not what that dependency meant. That hazard is not new — a dependency
+writing the same flag in `[build] ldflags` has always done this — so this
+directive widens *who can compute the value*, not *what the value can reach*.
 
 `include-dir`/`include-dir-after` are deliberately **private** (Cargo
 discipline): they color only this package's own TUs and are never propagated
@@ -104,6 +118,7 @@ int main() {
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | the matching `rerun-*` directives |
 | `mcpp::rerun_if_changed_glob(pat)` *(2026.8.6.2+)* | `mcpp:rerun-if-changed-glob=` — re-run when the **set** of files matching `pat` changes (see below) |
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | reads `MCPP_DEP_<PKG>_BIN_<TOOL>` — the absolute path of a **host tool** built by a dependency (see below) |
+| `mcpp::link_flag(s)` *(2026.9.6.5+)* | `mcpp:link-flag=` |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` — see below |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package this manifest declared in `[xlings.workspace]`; `""` when it was not declared or is not installed (see below) |

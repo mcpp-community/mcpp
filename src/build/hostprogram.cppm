@@ -128,6 +128,11 @@ inline void floor(const char* spec)               { std::printf("mcpp:floor=%s\n
 // (like link_lib/link_search, unlike include_dir), because the package that
 // knows a board's layout is not the package being built.
 inline void link_script(const char* path)         { std::printf("mcpp:link-script=%s\n", path); }
+// A linker flag this program COMPUTED. The outlet `link_lib` / `link_search` /
+// `link_script` leave open: a generated version script, `--wrap`,
+// `--exclude-libs`. Reaches the consumer's link line, as `[build] ldflags`
+// already does -- see the table row for why a private form is not offered.
+inline void link_flag(const char* flag)           { std::printf("mcpp:link-flag=%s\n", flag); }
 // ── Build-graph nodes (mcpp 2026.8.5.1+) ────────────────────────────────
 // Declare WORK instead of doing it. A build program is a good place to decide
 // what the build looks like and a bad place to perform it: work done here is

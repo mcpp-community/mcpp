@@ -92,9 +92,37 @@ struct Ctx {
     // backends are enabled". Membership everywhere keeps `any`/`all`/`not`
     // pure boolean combinators, and a single-backend build still answers
     // `accelerator = "cuda"` true and `accelerator = "rocm"` false.
+    // `none` IS THE EMPTY SET, AND AN OPEN VOCABULARY CANNOT SAY THAT BY
+    // ENUMERATION.
+    //
+    // A CPU fallback used to be written `not(any(accelerator = "cuda",
+    // accelerator = "vulkan"))`. `accelerator`'s vocabulary is OPEN by design
+    // -- docs/20 states that a fifth backend is a package rather than an
+    // engine change -- so that predicate's meaning changes the day a fifth one
+    // exists: every fallback already written silently starts matching a build
+    // that named the new backend. The failure is that the CPU implementation
+    // and the device implementation compile together, or that neither does.
+    //
+    // The spelling is the one this manifest already uses for the same idea:
+    // `os = "none"` is bare metal (docs/05 section 2.7.2). One word, one
+    // meaning, no new vocabulary.
+    //
+    // NOT `cpu`. That would put a second question on this axis -- the axis
+    // answers "which device compiler, which architecture", and the CPU needs
+    // neither -- and it would leave `cfg(accelerator = "cpu")` undecided under
+    // `accel = "cuda"`: true makes the fallback compile alongside the device
+    // path and destroys the mutual exclusion the seam exists for; false forces
+    // every existing manifest to write `accel = "cuda, cpu"`.
+    //
+    // A build where BOTH a CPU path and a device path are wanted needs none of
+    // this: the CPU sources go in the unconditional `[build] sources` and the
+    // device sources under `cfg(accelerator = "x")`. `not(...)` was only ever
+    // needed for a mutually exclusive seam, which is the case this repairs.
     bool layer_matches(std::string_view k, std::string_view v) const {
-        if (k == "accelerator")
+        if (k == "accelerator") {
+            if (v == "none") return accelerators.empty();
             return std::ranges::find(accelerators, v) != accelerators.end();
+        }
         return layer_value(k) == v;
     }
 };

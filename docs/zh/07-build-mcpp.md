@@ -50,6 +50,7 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | 为本包自身 TU 增加一个**私有** include 目录(`-I`;绝对路径或相对包根,自动规范化)。取代过去 `cxxflag=-I` + `cflag=-I` 的双重裸发 |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | 同 `include-dir`,但排在系统目录**之后**搜索(`-idirafter`)——用于会遮蔽系统头的 payload 源树 |
 | `mcpp:runner=<token>` *(2026.8.19.2+)* | 执行本次构建产物的命令的**一个 argv token**(宿主跑不了它时)。一个 token 一次调用、按顺序;产物路径会被追加(或替换 `{}`)。**到达消费者**。可执行文件要发**绝对路径**,且**只能有一个**依赖提供它 |
+| `mcpp:link-flag=<flag>` *(2026.9.6.5+)* | 加一条本程序**算出来的**链接标志,原样传递。这是 `link-lib` / `link-search` / `link-script` 各自命名一类东西之后留下的出口:生成的版本脚本(`-Wl,--version-script=`)、运行时接管 C 库符号用的 `-Wl,--wrap=malloc`、以及 `-Wl,--exclude-libs,ALL`(静态吞入的第三方不得成为本包 ABI 的一部分)。按发出顺序追加在 `[build] ldflags` 之后。**到达消费者**,与 `[build] ldflags` 一致 —— 理由见下 |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | 用这个**链接脚本**链接(`-T`;相对路径按包根解析,发出的是绝对路径,因为链接是在构建目录里跑的)。与 `include-dir` 不同,它**到达消费者** —— 板子的内存布局恰恰是消费者写不出来的那一项 |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | 对用户说一句话并**继续**。唯一一条不改变编译行、链接行与源码集的指令。它**穿过构建缓存** —— 见下 |
 | `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | 陈述程序**测得的机器事实**(`cuda.driver=12.4`)。在编译任何东西之前与 floor 比较;见下 |
@@ -60,6 +61,15 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 程序**请求**构建边(开关、库、源码),它**不能**新增注册表依赖——请把依赖图保持在
 `mcpp.toml` 里声明式管理(包括平台条件依赖 `[target.windows.dependencies]`)。
 `build.mcpp` 用于*叶子*决策:开关、代码生成、链接需求。
+
+`link-flag` 刻意**不**私有,而这一点值得说明,因为相反的选择看上去更安全。编译接口有
+一个声明式的公开对应物(`[build] include_dirs`),所以构建期程序若能加宽它就是绕过了
+manifest —— 这正是 `include-dir` 私有的理由。链接标志没有这个分裂:`[build] ldflags`
+本来就传播给消费者,因此一个私有的"算出来"形态会与它自己的声明式孪生行为不一致。
+
+后果写明而不藏起来:一个依赖发出 `-Wl,--version-script=`,该标志也会落到消费者的链接
+行上,而那通常不是它的本意。这个隐患不是新的 —— 依赖在 `[build] ldflags` 里写同一条
+标志一直如此 —— 所以这条指令加宽的是**谁能算出这个值**,不是**这个值能到达哪里**。
 
 `include-dir`/`include-dir-after` 刻意保持**私有**(Cargo 纪律):只染色本包自身的
 TU,绝不向消费者传播。需要消费者可见的 include 目录属于公共接口,应写在声明式
@@ -97,6 +107,7 @@ int main() {
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | 对应的 `rerun-*` 指令 |
 | `mcpp::rerun_if_changed_glob(pat)` *(2026.8.6.2+)* | `mcpp:rerun-if-changed-glob=` —— 匹配 `pat` 的文件**集合**发生变化时重跑(见下) |
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | 读 `MCPP_DEP_<PKG>_BIN_<TOOL>` —— 依赖构建出的 **host 工具**的绝对路径(见下) |
+| `mcpp::link_flag(s)` *(2026.9.6.5+)* | `mcpp:link-flag=` |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` —— 见下 |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | 本 manifest 在 `[xlings.workspace]` 里声明的包的载荷目录;没声明或没安装时返回 `""`(见下) |
