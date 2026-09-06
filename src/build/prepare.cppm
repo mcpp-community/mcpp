@@ -3708,6 +3708,29 @@ prepare_build(bool print_fingerprint,
     // ask, and re-deriving it there would be a second copy of the aggregation
     // rule.
     std::vector<std::vector<std::string>> activeFeaturesByPackage;
+
+    // The split is computed HERE and reused by the late pass, so the two
+    // cannot disagree about what "the graph declared" means.
+    auto graph_xlings_split = [&] {
+        std::vector<std::string> rootSpecs = applicable_xlings_addresses(
+            runtimeOwnerManifest, activeFeaturesByPackage.empty()
+                ? std::vector<std::string>{} : activeFeaturesByPackage[0],
+            toolPurpose, /*isRoot=*/true);
+        std::vector<std::string> fromGraph;
+        for (std::size_t i = 0; i < packages.size(); ++i) {
+            const auto& man = packages[i].manifest;
+            const auto feats = i < activeFeaturesByPackage.size()
+                ? activeFeaturesByPackage[i] : std::vector<std::string>{};
+            for (auto const& spec : applicable_xlings_addresses(
+                     man, feats, toolPurpose, /*isRoot=*/i == 0)) {
+                if (std::ranges::find(rootSpecs, spec) != rootSpecs.end())
+                    continue;
+                if (std::ranges::find(fromGraph, spec) == fromGraph.end())
+                    fromGraph.push_back(spec);
+            }
+        }
+        return std::pair{std::move(rootSpecs), std::move(fromGraph)};
+    };
     packages.push_back({*root, *m});
 
     // dep_manifests is kept around purely so the build plan can move it
@@ -7034,6 +7057,43 @@ prepare_build(bool print_fingerprint,
         }
         activeFeaturesByPackage.resize(packages.size());
 
+        // ── The GRAPH's `[xlings.workspace]`, provisioned BEFORE build.mcpp ──
+        //
+        // Same ordering rule as the host-tool block directly below, and for the
+        // same reason: a build program consumes what was provisioned, so
+        // provisioning after it has run is provisioning that did not happen.
+        //
+        // MEASURED, on the published `ggml-org:llamacpp@b10069.2`. That package
+        // declares its shader compiler under the feature that needs it:
+        //
+        //     [feature-xlings.backend-vulkan]
+        //     "xim:shaderc" = "2026.3"
+        //
+        // and its build program asks for it with `xpkg_dir`. As the ROOT it
+        // works, because the root's pass runs early. As a DEPENDENCY it did
+        // not: the graph's pass ran ~1700 lines further down, after every
+        // build.mcpp, so `xpkg_dir` answered "" and the package refused its own
+        // headline feature with the very declaration it had already made. A
+        // clean `MCPP_HOME` pulled twenty-four xim payloads for that graph and
+        // not shaderc.
+        //
+        // IT WAS INVISIBLE ON ANY MACHINE THAT HAD BUILT THE PACKAGE ITSELF.
+        // Once `xim:shaderc` is in the registry for any reason, `xpkg_dir`
+        // finds it and the ordering stops mattering; only an empty registry can
+        // see this. The sandbox run is what caught it.
+        //
+        {
+            auto [_rootSpecs, fromGraph] = graph_xlings_split();
+            if (!fromGraph.empty()) {
+                if (auto cfg = get_cfg()) {
+                    if (auto pv = provision_xlings_addresses(
+                            **cfg, fromGraph, *root,
+                            "[xlings.workspace] entries declared by dependencies");
+                        !pv) return std::unexpected(pv.error());
+                }
+            }
+        }
+
         // ── #355: HOST tool provisioning ────────────────────────────────────
         //
         // Runs AFTER feature activation (a tool target's gate is a feature) and
@@ -9301,31 +9361,21 @@ prepare_build(bool print_fingerprint,
     // and never acted on. The two definitions are one expression below, so
     // they cannot drift — the third of the three hazards §12.6 named.
     {
-        std::vector<std::string> xlingsSpecs = applicable_xlings_addresses(
-            runtimeOwnerManifest, activeFeaturesByPackage.empty()
-                ? std::vector<std::string>{} : activeFeaturesByPackage[0],
-            toolPurpose, /*isRoot=*/true);
-        // Everything the GRAPH declared, on the tiers this verb needs. `isRoot`
-        // is false for every one of them, which is what makes `when = "dev"`
-        // stop at the package that wrote it.
-        std::vector<std::string> fromGraph;
-        for (std::size_t i = 0; i < packages.size(); ++i) {
-            const auto& man = packages[i].manifest;
-            const auto feats = i < activeFeaturesByPackage.size()
-                ? activeFeaturesByPackage[i] : std::vector<std::string>{};
-            for (auto const& spec : applicable_xlings_addresses(
-                     man, feats, toolPurpose, /*isRoot=*/i == 0)) {
-                if (std::ranges::find(xlingsSpecs, spec) != xlingsSpecs.end())
-                    continue;
-                if (std::ranges::find(fromGraph, spec) == fromGraph.end())
-                    fromGraph.push_back(spec);
-            }
-        }
+        // THE SAME SPLIT THE EARLY PASS USED. Written once, above, next to the
+        // provisioning that has to happen before build.mcpp; this site reads it
+        // for the records below. Two copies of "what did the graph declare"
+        // would be two definitions of the same word.
+        auto [xlingsSpecs, fromGraph] = graph_xlings_split();
         // THE ROOT'S OWN PASS RAN LONG AGO, AND THIS ONE MUST NOT REPEAT IT.
         // The stamp is keyed by the LIST, so provisioning root+graph together
         // would key a different list than the early pass wrote and re-run an
         // xlings round trip on every build. Only what the graph added is
         // provisioned here, under its own key.
+        //
+        // Since the graph's pass moved above build.mcpp this call is normally a
+        // stamp hit. It is kept rather than deleted because the stamp is keyed
+        // by content: if the early pass did not run, or ran on a different
+        // list, this is still the site that makes the record true.
         if (!fromGraph.empty()) {
             if (auto cfg = get_cfg()) {
                 if (auto pv = provision_xlings_addresses(
