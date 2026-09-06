@@ -243,7 +243,7 @@ section "F. a consumer that writes only the feature name"
 # Skipped, loudly, until the version is in the index -- the release order is
 # the reverse of the dependency order, so this section is red between the tag
 # and the index PR by construction.
-LLAMACPP_VERSION="${MCPP_VERIFY_LLAMACPP:-b10069.1}"
+LLAMACPP_VERSION="${MCPP_VERIFY_LLAMACPP:-b10069.2}"
 consumer="$work/consumer"
 mkdir -p "$consumer/src"
 cat > "$consumer/mcpp.toml" <<TOML
