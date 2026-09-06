@@ -203,3 +203,30 @@ version = "0.1.0"
     EXPECT_TRUE(has(m->xlings.deps, "xim:glibc@2.40"));
     EXPECT_EQ(m->xlings.workspace.at("glibc"), "xim:2.40");
 }
+
+TEST(TargetXlingsAxis, ABareTripleSelectorIsASelectorToo) {
+    // `[target.<triple>.xlings.workspace]` is the other spelling of a selector,
+    // and it was reached by the same dispatcher rather than by the
+    // `[target.<triple>]` handler that owns `toolchain` and `runner`. Asserted
+    // because "it went to the right handler" is not visible from the manifest
+    // and would fail silently: the entry would simply never appear.
+    auto src = R"(
+[package]
+name    = "axis"
+version = "0.1.0"
+
+[target.x86_64-unknown-linux-gnu.xlings.workspace]
+"xim:tool" = "1.0.0"
+)";
+    auto lin = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(lin.has_value());
+    mcpp::build::merge_conditional_config(
+        *lin, cfgpred::context_for("x86_64-unknown-linux-gnu"));
+    EXPECT_TRUE(has(lin->xlings.deps, "xim:tool@1.0.0"));
+
+    auto other = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(other.has_value());
+    mcpp::build::merge_conditional_config(
+        *other, cfgpred::context_for("aarch64-unknown-linux-gnu"));
+    EXPECT_FALSE(has(other->xlings.deps, "xim:tool@1.0.0"));
+}
