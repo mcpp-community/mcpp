@@ -24,8 +24,20 @@
 set -e
 
 MCPP="${MCPP:-mcpp}"
-MH="${MCPP_HOME:-$HOME/.mcpp}"
-store="$MH/registry/data/xpkgs/xim-x-ninja"
+
+# THE STORE IS ASKED FOR, NOT GUESSED. An earlier form derived it from
+# `${MCPP_HOME:-$HOME/.mcpp}` while the BINARY under test resolves its home
+# from its own location -- a released mcpp carries a `registry/` beside itself.
+# Pointed at a released tarball the test then failed about features while
+# really measuring a path mismatch, and the same guess cost a CI job in
+# another repository on the same day.
+#
+# The version is still needed for the manifest, and it comes from the store the
+# binary actually uses. `mcpp index status` is the cheapest command that names
+# a path under that home.
+MH="$("$MCPP" index status 2>/dev/null | grep -oE '/[^ ]*/registry' | head -1)"
+[ -n "$MH" ] || MH="${MCPP_HOME:-$HOME/.mcpp}/registry"
+store="$MH/data/xpkgs/xim-x-ninja"
 
 if [ ! -d "$store" ]; then
     printf 'SKIP: %s is absent, so there is no installed payload to look up\n' "$store"
