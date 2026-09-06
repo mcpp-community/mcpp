@@ -2,8 +2,18 @@
 # Ecosystem verification for round 5: mcpp 2026.9.6.2, compat:spirv-headers,
 # and ggml-org:llamacpp's backend-vulkan feature.
 #
-#   xlings subos verify-962 --sandbox --cmd \
-#     "MCPP_VERIFY_VERSION=2026.9.6.2 bash <this file>"
+#   # The sandbox has an EMPTY $HOME and a fresh /tmp, so this file is not
+#   # visible from inside it. Pass the script itself in:
+#   B64=$(base64 -w0 <this file>)
+#   xlings subos use verify-962 --sandbox --cmd \
+#     "echo $B64 | base64 -d > /tmp/v.sh && MCPP_VERIFY_VERSION=2026.9.6.2 bash /tmp/v.sh"
+#
+# `xlings subos use <name>` -- the bare `xlings subos <name>` form this header
+# used to give is rejected as an unknown subcommand, and a sandbox that has to
+# be created first (`xlings subos new <name>`) does not exist until it is.
+#
+# mcpp is addressed by its STORE path, which is the one thing the sandbox does
+# share: the xlings data directory. A bare `mcpp` is not on PATH in there.
 #
 # and once on the host (MCPP_VERIFY_HOST=1), where a real device answers.
 #

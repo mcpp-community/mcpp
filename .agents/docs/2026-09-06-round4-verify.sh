@@ -4,7 +4,13 @@
 # 2026-09-05-heterogeneous-build-ecosystem-design-v2.md, section 7.3, rows V3
 # and V4). Run inside a fresh xlings subos:
 #
-#   xlings subos verify-961 --sandbox --cmd "MCPP_VERIFY_VERSION=2026.9.6.1 bash <this file>"
+#   # The sandbox has an EMPTY $HOME and a fresh /tmp, so this file is not
+#   # visible from inside it, and `xlings subos <name>` without `use` is
+#   # rejected as an unknown subcommand. Measured 2026-09-06; the invocation
+#   # this line used to give could not be followed.
+#   B64=$(base64 -w0 <this file>)
+#   xlings subos use verify-961 --sandbox --cmd \
+#     "echo $B64 | base64 -d > /tmp/v.sh && MCPP_VERIFY_VERSION=2026.9.6.1 bash /tmp/v.sh"
 #
 # and once more on the host with a GPU (MCPP_VERIFY_HOST=1), where the device
 # half of each lane is exercised as well.
