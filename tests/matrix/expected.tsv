@@ -12,6 +12,16 @@
 #   unsupported  / convention-unreplaced    约定被推翻了,而没有任何东西接替它
 #   unsupported  / host-cannot-serve        本机没有载荷,图也没有供给这个系统
 #   unsupported  / layer-requirement        某个包要求的层,解析没有给出
+#   unsupported  / host-tool-toolchain      交叉目标下的 build.mcpp 没有可解析的宿主工具链
+#   unsupported  / lld-required-absent      这一行直接经 lld 链接,而本机没有
+#   unsupported  / std-module-precompile    std 模块预编译不过
+#
+# 这张表里**没有 `other`**,而这是一条不变量而不是巧合。`other` 在
+# `src/build/refusal.cppm` 里的定义是「拒绝了而这一处分支还没有名字」,所以一行
+# `other` 就是一处待命名的分支。2026-09-06 之前这里恰好有一行:
+# `x86_64-windows-msvc x llvm@22.1.8`,而 `Code::StdModulePrecompile` 那时已经
+# 存在、有名字、且**没有任何写入者** —— 声明与调用之间的缺口,不是分类学的缺口。
+# 再出现一行 `other`,要做的是给那个分支一个名字,不是把 `other` 写进这张表。
 #
 # 这里**没有** `mismatch`,而这是刻意的。写下 `mismatch` 就是把一个缺陷
 #      声明成期望,矩阵会在它上面变绿。一格测出 `mismatch`,要么修 mcpp,要么
@@ -82,7 +92,7 @@ graph	windows-x86_64	x86_64-macos	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
 graph	windows-x86_64	x86_64-macos	msvc@system	-	-	-	-	-	unsupported	tier-planned
 graph	windows-x86_64	x86_64-windows-gnu	llvm@22.1.8	x86_64-w64-windows-gnu	none	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
 graph	windows-x86_64	x86_64-windows-gnu	msvc@system	-	-	-	-	-	unsupported	host-tool-toolchain
-graph	windows-x86_64	x86_64-windows-msvc	llvm@22.1.8	-	-	-	-	-	unsupported	other
+graph	windows-x86_64	x86_64-windows-msvc	llvm@22.1.8	-	-	-	-	-	unsupported	std-module-precompile
 graph	windows-x86_64	x86_64-windows-msvc	msvc@system	-	-	-	-	-	unsupported	host-tool-toolchain
 graph	windows-x86_64	x86_64-windows-musl	llvm@22.1.8	x86_64-w64-windows-gnu	none	musl(graph)	libc++(graph)	openkal-llvm-runtime@0.1.3	ok	none
 graph	windows-x86_64	x86_64-windows-musl	msvc@system	-	-	-	-	-	unsupported	capability-pin

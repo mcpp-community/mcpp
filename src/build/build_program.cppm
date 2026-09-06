@@ -20,6 +20,7 @@ import mcpp.toolchain.cppfly;        // std_flag (dialect- and c++fly-aware -std
 import mcpp.toolchain.dialect;       // CommandDialect — gnu vs cl.exe spellings
 import mcpp.toolchain.fingerprint;   // hash_file / hash_string (FNV-1a, 16 hex)
 import mcpp.build.directives;        // the directive definition table (own module: see its header)
+import mcpp.build.refusal;           // the machine-readable identity of a refusal
 import mcpp.build.hostprogram;       // bundled `mcpp` module compile (own module: see its header)
 import mcpp.toolchain.hostflags;     // the shared host-compile flag producer
 import mcpp.toolchain.linkmodel;     // shared C-library / clang-cfg-bypass model
@@ -946,6 +947,13 @@ std::expected<void, std::string> run_build_program(
         auto sm = mcpp::toolchain::ensure_built(
             tc, cppStandard.canonical, std_flag, macosDeploymentTarget);
         if (!sm) {
+            // The second branch of the same refusal, and it is named for the
+            // same reason: both `run_build_program` call sites in prepare.cppm
+            // return `std::unexpected` unconditionally, so this error always
+            // reaches the layer that reads the code. An unnamed one here would
+            // reproduce, for the host std module, exactly the gap the target
+            // std module had.
+            refusal::record(refusal::Code::StdModulePrecompile);
             return std::unexpected(std::format(
                 "build.mcpp uses `import std;` but the std module could not be "
                 "built for the host toolchain: {}", sm.error().message));
