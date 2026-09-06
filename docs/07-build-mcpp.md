@@ -264,6 +264,33 @@ the first one sees.
 and is empty on a hosted target, which is exactly the case this pair exists
 for. Either of these two is empty when mcpp passes no such flag.
 
+### Which C++ standard library resolved: `cxx_stdlib` (2026.9.6.3+)
+
+```cpp
+const char* impl = mcpp::cxx_stdlib();   // "libstdc++" | "libc++" | "msvc-stl" | ""
+```
+
+`compiler()` does not answer this. clang links libc++ on one machine and
+libstdc++ on another and reports `clang` in both cases, and the two
+implementations differ in what they accept — a `unique_ptr` to an incomplete
+type destroyed in a header compiles under libstdc++ and does not under libc++.
+A build program that must refuse such a configuration by name cannot ask
+`compiler()`, because that answer would also refuse the configuration that
+works:
+
+```cpp
+if (std::string_view(mcpp::cxx_stdlib()) == "libc++") {
+    std::fprintf(stderr,
+        "this feature does not compile under libc++; select a libstdc++ "
+        "toolchain, or turn the feature off\n");
+    return 1;
+}
+```
+
+`cxx` is in the name because `MCPP_TARGET_LIBC` is the *C* library. The two are
+different questions and, in an ecosystem that names glibc and musl constantly,
+must not share a word.
+
 ### Finding an `[xlings.workspace]` payload: `xpkg_dir` (2026.8.19+)
 
 `dep_dir` answers for **mcpp** dependencies. An xlings package is a different
@@ -581,6 +608,7 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_PROFILE` | `mcpp::profile()` | effective profile name (`dev`/`release`/…) |
 | `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.5.2+)* | `mcpp::toolchain_sysroot()` | the `--sysroot` mcpp passes to its own compiler; empty when it passes none. For a rule package that runs a **second** compiler — see "Driving a second compiler" above |
 | `MCPP_TOOLCHAIN_BINUTILS_DIR` *(2026.9.5.2+)* | `mcpp::toolchain_binutils_dir()` | the directory mcpp names with `-B`; empty when it names none (a musl or MinGW payload brings its own assembler and linker) |
+| `MCPP_CXX_STDLIB` *(2026.9.6.3+)* | `mcpp::cxx_stdlib()` | the C++ standard library the resolved toolchain uses — `libstdc++`, `libc++`, `msvc-stl`; empty when no toolchain resolved. A different question from `MCPP_TARGET_LIBC`, which is the C library |
 | `MCPP_ACCEL` *(2026.9.5.2+)* | `mcpp::accel()` | the device axis of this build, resolved — `--accel` / `--no-accel` over `[build] accel` — in the wire form `cuda12.9+{sm_89} ptx>=89`; empty when the build asks for no accelerator. A rule package derives its own flags (`-gencode`, `--offload-arch`) from it, so the architecture set is written once, in the manifest. The same value feeds the `cfg(accelerator = "…")` layer key |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | the device-kind sources (`.cu`, `.hip`, …) the package's effective `sources` match, package-root-relative, one per line; empty when there are none. The engine compiles none of them — the rule package this program imports turns each into an `mcpp::action`. Already narrowed: a `{ glob, accel }` entry the build does not cover contributes nothing, so `--no-accel` yields an empty list |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | a writable scratch/output dir owned by mcpp |

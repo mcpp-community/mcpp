@@ -20,7 +20,7 @@ default = "llvm@22.1.8"
 # The rule that compiles the island lives in the official plugin collection,
 # selected by its feature; `build.mcpp` imports it as `mcpp.rules.cuda`.
 [dependencies.mcpp]
-plugins = { version = "0.2.0", features = ["rules-cuda"], host-module = true }
+plugins = { version = "0.2.1", features = ["rules-cuda"], host-module = true }
 
 # The driver's userspace library, reached through an index package that owns
 # the one hop mcpp needs: a directory on the artifact's runtime search path.

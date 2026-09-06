@@ -15,6 +15,16 @@ extern "C" {
 // out[i] = a * x[i] + y[i], computed on the device. Returns 0 on success.
 int saxpy_device(float a, const float* x, const float* y, float* out, unsigned n);
 
+// WHICH DEVICE THE LAST SUCCESSFUL `saxpy_device` RAN ON, or "" if none has.
+//
+// A program that computes on a device and does not say where it computed
+// cannot be checked. Both implementations of this seam produce the same four
+// numbers, so the numbers alone do not distinguish a device run from the CPU
+// fallback -- which is exactly the confusion an example about heterogeneous
+// compute must not teach. Reading it before a successful call returns "",
+// because a device run that did not happen has no device to name.
+const char* saxpy_device_name(void);
+
 #ifdef __cplusplus
 }
 #endif

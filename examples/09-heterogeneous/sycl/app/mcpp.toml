@@ -17,7 +17,7 @@ import_std = true
 default = "llvm@22.1.8"
 
 [dependencies.mcpp]
-plugins = { version = "0.2.0", features = ["rules-sycl"], host-module = true }
+plugins = { version = "0.2.1", features = ["rules-sycl"], host-module = true }
 
 # The SYCL runtime, on the artifact's runtime search path. mcpp's private
 # loader does not consult /usr/lib, so `libsycl.so.9` -- which the rule
@@ -40,10 +40,20 @@ sycl-runtime = "2026.09.07"
 #   cuda-nvcc  the NVIDIA back end's libdevice. Also measured: without
 #              `--cuda-path` clang finds the host's CUDA installation and says
 #              nothing about it.
+#   glibc      and linux-headers: the C library. `xim:gcc` above supplies the
+#              C++ standard library; the C library underneath it is a separate
+#              declaration, and without it a `.sycl` unit that includes
+#              `<cstdio>` reaches the host's /usr/include. Both are UNPINNED:
+#              the C library version is the runtime binding's choice, not the
+#              project's, and a pinned entry resolves for exactly that version
+#              or for nothing. rules-sycl 0.2.1 refuses the build and names
+#              these two lines when they are absent.
 [xlings.workspace]
 "xim:dpcpp"             = "7.1.0"
 "xim:gcc"               = "15.1.0"
 "xim:cuda-nvcc"         = "12.9.86"
+"xim:glibc"             = ""
+"xim:linux-headers"     = ""
 
 [build]
 # Two chunks: the programming model, and the device. Written `sycl` alone, the

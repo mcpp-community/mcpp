@@ -243,3 +243,61 @@ jobs:
           "$MCPP" self config --mirror GLOBAL
           "$MCPP" build
           "$MCPP" run
+
+  # THE CURRICULUM WAS NEVER BUILT BY ANY JOB. e2e 616 checks that the examples
+  # and the table that documents them agree, and says so explicitly: it builds
+  # nothing. Every example in this repository could therefore stop compiling and
+  # the only signal would be a user reporting it.
+  #
+  # The list is DERIVED FROM THE TREE, not written here. An example that is in
+  # neither the build list nor the skip table fails this job, so adding one
+  # forces a decision about whether CI can build it rather than silently
+  # leaving it uncovered.
+  examples:
+    name: "examples: the curriculum builds"
+    runs-on: ubuntu-24.04
+    # Generous rather than tight: six cold example builds plus the Vulkan one,
+    # which provisions the shader compiler and a software driver as payloads.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build mcpp from source (self-host)
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build
+          MCPP_FRESH=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          cp "$MCPP_FRESH" /tmp/mcpp-fresh
+          echo "MCPP=/tmp/mcpp-fresh" >> "$GITHUB_ENV"
+
+      - name: Build every example the runner can build
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          bash .github/tools/build_examples.sh
+
+      - name: "Vulkan example: build the device half and run it on lavapipe"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          cd examples/09-heterogeneous/vulkan/app
+          "$MCPP" build
+          # BOTH STORES, because which one holds the payload is decided by how
+          # this mcpp resolved its home -- and a `find` over only one of them
+          # is the defect this repository has already paid for twice (e2e 614,
+          # llama.cpp-m's Vulkan job). Ask for the file, not for a layout.
+          icd=$(find "${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-mesa-lavapipe" \
+                     "$HOME/.xlings/data/xpkgs/xim-x-mesa-lavapipe" \
+                     -name 'lvp_icd.x86_64.json' -print -quit 2>/dev/null || true)
+          [ -n "$icd" ] || { echo "no lavapipe ICD in either store"; exit 1; }
+          echo "using ICD $icd"
+          out=$(VK_DRIVER_FILES="$icd" "$MCPP" run 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          # The device leg is the point: a run that silently fell back to the
+          # CPU variant would print the same numbers, so the assertion is that
+          # the program says which device answered AND that it is the payload's.
+          echo "$out" | grep -q 'llvmpipe' \
+            || { echo "the run did not reach the lavapipe device"; exit 1; }
+          echo "$out" | grep -q '12 24 36 48' \
+            || { echo "the device produced the wrong result"; exit 1; }

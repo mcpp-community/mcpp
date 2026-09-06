@@ -81,6 +81,21 @@ struct BuildProgramEnv {
     // `llvm-dlltool` under a GCC toolchain (`sh: 1: llvm-dlltool: not found`).
     // Each package had made the assumption its author's toolchain made true.
     std::string compilerId;
+    // WHICH C++ STANDARD LIBRARY RESOLVED — "libstdc++" | "libc++" |
+    // "msvc-stl" | "".
+    //
+    // `compilerId` does not answer this. clang links libc++ on one machine and
+    // libstdc++ on another, both reporting "clang", and the two differ in what
+    // they accept: llama.cpp-m's Vulkan backend does not compile under libc++
+    // because upstream destroys a `unique_ptr` to an incomplete type, which
+    // libstdc++ accepts and libc++ rejects. A package that wants to refuse
+    // early, by name, has no other way to ask -- and refusing on the compiler
+    // name would also refuse clang with libstdc++, which works.
+    //
+    // The engine has resolved this value for a long time: it is in the cache
+    // key, the ABI tag, the toolchain fingerprint and `resolution.json`. It was
+    // simply never handed to the layer that had to decide on it.
+    std::string cxxStdlib;
     // Three more answers a board-support package would otherwise hardcode.
     //
     // THE COUPLING THESE REMOVE IS INVISIBLE IN A MANIFEST. `riscv-virt-rt`
@@ -470,6 +485,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     e.emplace_back("MCPP_TOOLCHAIN_SYSROOT", env.toolchainSysroot);
     e.emplace_back("MCPP_TOOLCHAIN_BINUTILS_DIR", env.toolchainBinutilsDir);
     e.emplace_back("MCPP_COMPILER", env.compilerId);
+    e.emplace_back("MCPP_CXX_STDLIB", env.cxxStdlib);
     e.emplace_back("MCPP_TARGET_SYSROOT", env.targetSysroot);
     e.emplace_back("MCPP_TARGET_BUILTINS_LIB", env.targetBuiltinsLib);
     e.emplace_back("MCPP_TARGET_LIBC_PROFILE", env.targetLibcProfile);

@@ -30,6 +30,15 @@ place where the implementation underneath becomes a different model or a CPU
 loop, and the single place a `cfg(accelerator = ...)` section has to apply.
 Without it, every importer would be backend-specific.
 
+The seam carries one more entry point, `saxpy_device_name()`, for a reason
+worth stating: all four islands and all four CPU fallbacks produce the same
+four numbers. Without a name in the output, a run that silently fell back to
+the CPU is indistinguishable from a run on a device -- in a set of examples
+whose whole subject is which device ran the computation. Each backend fills it
+in with the device it used, the CPU file fills it in with `cpu`, and both do so
+only after a successful call: a device run that did not happen has no device to
+report. `main` prints it after the result, never before.
+
 **A constrained glob.** The device axis is written once, in the manifest, and
 the source set follows it:
 

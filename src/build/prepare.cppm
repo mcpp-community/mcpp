@@ -1018,6 +1018,12 @@ void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
         : tc->compiler == mcpp::toolchain::CompilerId::MSVC  ? "msvc"
         : std::string{};
     e.targetLibc    = tc ? tc->targetSysrootPkg : std::string{};
+    // Read from the toolchain the engine resolved, the same field the cache
+    // key, the ABI tag and the toolchain fingerprint read. Not re-derived from
+    // `compilerId`: clang answers "libc++" or "libstdc++" depending on how the
+    // payload was configured, and deriving it here would restate an assumption
+    // the resolver already measured.
+    e.cxxStdlib     = tc ? tc->stdlibId : std::string{};
     if (!tc) return;
 
     // The two flags mcpp passes to ITS OWN compiler, so a rule package driving
@@ -7630,10 +7636,12 @@ prepare_build(bool print_fingerprint,
             };
             mcpp::build::BuildProgramEnv bpEnv;
             bpEnv.targetTriple = resolvedTargetCanonical;
-            // The payload ROOT (not the driver), the target's C library, and
-            // the three answers that keep a board package from hardcoding a
-            // toolchain or a libc. All four in one call — see
-            // fill_target_build_env.
+            // Everything the engine already knows and a build program would
+            // otherwise hardcode: the payload ROOT (not the driver), the
+            // target's C library, which compiler and which C++ standard
+            // library resolved, and the three answers that keep a board
+            // package from naming a toolchain. One call, so a new answer
+            // reaches every build program at once — see fill_target_build_env.
             fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
             bpEnv.toolsBin = projectSubosBin;
             bpEnv.profile      = effectiveProfile;
@@ -8546,9 +8554,11 @@ prepare_build(bool print_fingerprint,
         if (!host) return std::unexpected(host.error());
         mcpp::build::BuildProgramEnv bpEnv;
         bpEnv.targetTriple = resolvedTargetCanonical;
-        // The payload ROOT (not the driver), the target's C library, and the
-        // three answers that keep a board package from hardcoding a toolchain
-        // or a libc. All four in one call — see fill_target_build_env.
+        // Everything the engine already knows and a build program would
+        // otherwise hardcode: the payload ROOT (not the driver), the target's
+        // C library, which compiler and which C++ standard library resolved,
+        // and the three answers that keep a board package from naming a
+        // toolchain. One call — see fill_target_build_env.
         fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
         bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;

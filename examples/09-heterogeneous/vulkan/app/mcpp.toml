@@ -13,7 +13,7 @@ import_std = true
 # The rule that compiles the shaders lives in the official plugin collection,
 # selected by its feature; `build.mcpp` imports it as `mcpp.rules.spirv`.
 [dependencies.mcpp]
-plugins = { version = "0.2.0", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.2.1", features = ["rules-spirv"], host-module = true }
 
 # The Khronos loader, built by the index rather than taken from the host, and
 # the adapter that makes the host's own ICDs reachable from a binary running
