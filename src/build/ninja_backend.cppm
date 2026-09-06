@@ -272,6 +272,55 @@ std::string shared_soname_flag(const LinkUnit& lu, const BuildPlan& plan) {
     return lu.soname.empty() ? "" : "-Wl,-soname," + lu.soname;
 }
 
+// WHICH SYMBOLS A SHARED LIBRARY PUBLISHES, rendered per platform from one
+// neutral list.
+//
+// The default on both platforms is "everything": ELF gives symbols default
+// visibility, and PE gets an auto-generated .def listing every symbol
+// (mcpp.build.coff_exports, CMake's WINDOWS_EXPORT_ALL_SYMBOLS semantics).
+// Declaring `exports` narrows that, which is what a runtime with a stable ABI
+// and a plugin loaded beside its rivals both need -- an ICD that exports its
+// internals collides with the loader and with the other ICDs in the process.
+//
+// THREE RENDERINGS OF ONE STATEMENT, and that is the reason this is a manifest
+// key rather than three flag lists in three `[target.<os>]` blocks. It is the
+// same shape `[runtime]` already established for link intent.
+//
+// The file is written into the build directory rather than read from the
+// package, because the inline form has no file to read and because a version
+// script's syntax is not what the author wrote.
+std::string exports_file_contents(const LinkUnit& lu, std::string_view os) {
+    std::string out;
+    if (os == "macos") {
+        // One symbol per line. Mach-O symbols carry a leading underscore that
+        // the C++ source never writes, so it is added here -- the author names
+        // the symbol, not the object format's spelling of it.
+        for (auto const& p : lu.exportPatterns) out += "_" + p + "\n";
+        return out;
+    }
+    // ELF version script. One anonymous version node: naming versions is a
+    // separate capability (symbol VERSIONING, `foo@@LIB_1.0`) that cannot be
+    // stated neutrally, and a package needing it writes the map itself and
+    // passes it with `[build] ldflags`.
+    out = "{\n  global:\n";
+    for (auto const& p : lu.exportPatterns) out += "    " + p + ";\n";
+    out += "  local:\n    *;\n};\n";
+    return out;
+}
+
+// The flag that names the file. PE is absent on purpose: there the export set
+// is the `.def`, which lu.defFile already declares and the def-generating step
+// already writes, so narrowing it is that step's business rather than a second
+// flag on the link line.
+std::string exports_flag(const LinkUnit& lu, std::string_view os,
+                         const std::filesystem::path& file) {
+    if (lu.kind != LinkUnit::SharedLibrary || lu.exportPatterns.empty()) return "";
+    if (os == "windows") return "";
+    if (os == "macos")
+        return "-Wl,-exported_symbols_list," + file.generic_string();
+    return "-Wl,--version-script=" + file.generic_string();
+}
+
 // Write only when the bytes would actually change.
 //
 // One of these files is a BUILD INPUT: `obj/mcpp_ios_init.c`, the generated
@@ -2081,6 +2130,31 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             implicit.empty() ? std::string{} : " |" + implicit);
         if (auto flag = shared_soname_flag(lu, plan); !flag.empty())
             out_line += "  soname_flag = " + flag + "\n";
+        // The export set, written beside the artifact and named on the link.
+        //
+        // Folded into `soname_flag` rather than given a rule variable of its
+        // own: both are "a property of THIS shared library's link", the rule
+        // already interpolates that variable in the right place, and a second
+        // one would have to be added to every link rule that mentions the
+        // first -- the "same decision in N places" shape this repository keeps
+        // paying for.
+        if (lu.kind == LinkUnit::SharedLibrary && !lu.exportPatterns.empty()) {
+            const auto tr = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+            const std::string os = tr ? tr->os
+                : (mcpp::platform::is_macos   ? "macos"
+                 : mcpp::platform::is_windows ? "windows" : "linux");
+            const auto file = plan.outputDir / "obj"
+                            / (lu.targetName + ".exports.gen");
+            std::error_code mkec;
+            std::filesystem::create_directories(file.parent_path(), mkec);
+            write_file(file, exports_file_contents(lu, os));
+            if (auto ef = exports_flag(lu, os, file); !ef.empty()) {
+                if (out_line.find("  soname_flag = ") == std::string::npos)
+                    out_line += "  soname_flag = " + ef + "\n";
+                else
+                    out_line.insert(out_line.rfind('\n'), " " + ef);
+            }
+        }
         // Where the linker is told to write it. A rule-level `$out.lib` would
         // spell the msvc case `foo.dll.lib`, i.e. a name nothing else in mcpp
         // agrees with — the name belongs to plan.cppm's import_library_for, and

@@ -138,6 +138,42 @@ soname = "libmylib.so.1"  # 可选: Linux/ELF ABI 名称,运行时会生成同�
 MSVC ABI 上从对象生成导出表(该 ABI 没有 `__declspec(dllexport)` 或 `.def` 时
 不导出任何符号)。参见 `tests/e2e/08`、`257`、`259`。
 
+#### `exports` —— 产物发布哪些符号(mcpp 2026.9.6.5+)
+
+```toml
+[targets.mydriver]
+kind    = "shared"
+soname  = "libmydriver.so.1"
+exports = "abi/mydriver.exports"     # 或内联:exports = ["vk_icd*"]
+```
+
+**不写这个键就发布全部,而那正是两个平台今天的默认**——ELF 给符号默认可见性,PE 会
+自动生成列出全部符号的 `.def`。`exports` 把它收窄。
+
+两类工程需要收窄。**有稳定 ABI 的运行时**只发布一份经过评审的集合,不在集合里的东西
+才保持可改。**与同类并存的插件**不能撞名:Vulkan loader 按名字找
+`vk_icdGetInstanceProcAddr`,一个把内部符号也导出的 ICD 会与 loader 以及同进程内另一个
+ICD 相撞。
+
+文件一行一条符号模式,`#` 起注释,`*` 是唯一的通配符。内联数组说的是同一件事,用于
+只有两三个入口、单开一个文件反而是仪式的场合。
+
+一句话,三种渲染:
+
+| 平台 | 渲染为 |
+|---|---|
+| ELF | version script,`-Wl,--version-script=` |
+| Mach-O | `-Wl,-exported_symbols_list`(前导下划线由引擎补) |
+| PE | `.def`,取代自动生成的全导出版本 |
+
+**它不改变编译期可见性,这是有意的。** 三种格式上收窄都是链接期属性,所以一个键只有
+一个效果。`-fvisibility=hidden` 仍可经 `[build] cxxflags` 使用以取得代码生成上的收益,
+而它是一个**单独**的决定,因为它同时改变本库各翻译单元之间如何看见彼此。
+
+**符号版本化不是这个键。** `foo@@LIB_1.0` 与 `foo@LIB_0.9` 并存是 ELF 独有的能力,
+无法中立表达;需要它的包自己写 version script 经 `[build] ldflags` 传入,或者算出来后
+用 `mcpp:link-flag=` 发出(docs/07)。
+
 `soname` 对 `kind = "lib"` 同样有意义 —— 见下文的 `dependency_linkage`,
 库以何种形态出现是**消费者**的决定。
 

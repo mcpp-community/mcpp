@@ -117,6 +117,22 @@ struct Target {
     enum Kind { Library, Binary, SharedLibrary, TestBinary } kind;
     std::string                 main;           // for binary / test
     std::string                 soname;         // ABI name for shared libraries, e.g. libfoo.so.1
+    // WHICH SYMBOLS THIS ARTIFACT PUBLISHES. Empty = every symbol, which is
+    // what both platforms do today (ELF default visibility; PE gets an
+    // auto-generated .def listing everything, mcpp.build.coff_exports).
+    //
+    // ONE NEUTRAL STATEMENT, THREE RENDERINGS -- the shape `[runtime]` already
+    // established, and the reason this is a manifest key rather than three
+    // platform-specific flag lists. ELF gets a version script, Mach-O an
+    // `-exported_symbols_list`, PE a `.def` that REPLACES the all-exports one.
+    //
+    // The entries are symbol patterns, one per line in the named file or one
+    // per element inline. `*` is the only wildcard, because it is the only one
+    // all three renderings share.
+    std::vector<std::string>    exportPatterns;
+    // Where they came from, for diagnostics and for the re-read that a changed
+    // file must trigger. Empty when `exports` was written inline.
+    std::string                 exportsFile;
     // Per-target compile flags. SCOPE: applied ONLY to this target's exclusive
     // entry source (its `main`) — never to shared module/impl objects, which are
     // compiled once and linked into every target (the build's compile-once model;

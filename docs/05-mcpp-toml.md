@@ -145,6 +145,48 @@ the loader opens and the import library the linker consumes, with the export
 list generated from the objects on the MSVC ABI (which exports nothing without
 `__declspec(dllexport)` or a `.def`). See `tests/e2e/08`, `257` and `259`.
 
+#### `exports` — which symbols the artifact publishes (mcpp 2026.9.6.5+)
+
+```toml
+[targets.mydriver]
+kind    = "shared"
+soname  = "libmydriver.so.1"
+exports = "abi/mydriver.exports"     # or inline: exports = ["vk_icd*"]
+```
+
+**Omitting the key publishes everything, which is what both platforms already
+do** — ELF gives symbols default visibility, and PE gets an auto-generated
+`.def` listing every symbol. `exports` narrows that.
+
+Two projects need the narrowing. A **runtime with a stable ABI** publishes a
+reviewed set and nothing else, so that what is not in the set stays free to
+change. A **plugin loaded beside its rivals** must not collide: a Vulkan ICD is
+found by name for `vk_icdGetInstanceProcAddr`, and one that also exports its
+internals collides with the loader and with the other ICDs in the process.
+
+The file lists one symbol pattern per line, `#` starts a comment, and `*` is the
+only wildcard. The inline array says the same thing and is for the two or three
+entry points where a separate file would be ceremony.
+
+One statement, three renderings:
+
+| Platform | Rendered as |
+|---|---|
+| ELF | a version script, `-Wl,--version-script=` |
+| Mach-O | `-Wl,-exported_symbols_list` (the leading underscore is supplied by the engine) |
+| PE | the `.def`, replacing the auto-generated all-exports one |
+
+**It does not change compile-time visibility, and that is deliberate.** The
+narrowing is a link-time property on all three formats, so one key has one
+effect. `-fvisibility=hidden` remains available through `[build] cxxflags` for
+the code-generation benefit it brings, and it is a separate decision because it
+also changes how this library's own translation units see each other.
+
+**Symbol versioning is not this key.** `foo@@LIB_1.0` alongside `foo@LIB_0.9`
+is an ELF-only capability that cannot be stated neutrally; a package that needs
+it writes the version script itself and passes it through `[build] ldflags`, or
+computes it and emits `mcpp:link-flag=` (docs/07).
+
 A `soname` is meaningful on `kind = "lib"` too — see
 [`dependency_linkage`](#dependency_linkage--static-or-shared-is-the-consumers-decision)
 below, where the form a library takes becomes the consumer's decision.
