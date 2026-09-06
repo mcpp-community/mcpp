@@ -1575,6 +1575,18 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // dependency's own symbols undefined. Two other readers already take
         // this branch for the same reason (see checkVersionFloors in
         // prepare.cppm).
+        //
+        // THE RULE, AND THE ENUMERATION BEHIND IT. Every reader of a root
+        // package's dependency EDGES must read `*m`, never `packages[0]`; the
+        // snapshot is for what the scan and the fingerprint need, which is
+        // sources and flags. The four readers in this build were checked, not
+        // sampled: prepare.cppm's linkage request already reads `m->` for the
+        // root and `packages[i]` only for i >= 1, execute.cppm reads
+        // `ctx.manifest` (which IS the merged root), publisher.cppm reads
+        // whatever its caller hands it and wants the UNMERGED edges, because a
+        // published descriptor states feature deps under the feature. This
+        // site was the only one taking the snapshot for a question about
+        // edges.
         auto const& edges = i == 0 ? manifest.dependencies
                                    : packages[i].manifest.dependencies;
         for (auto const& [depName, spec] : edges) {
