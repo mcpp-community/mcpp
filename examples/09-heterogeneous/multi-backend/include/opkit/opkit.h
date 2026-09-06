@@ -32,6 +32,10 @@ int opkit_cuda_saxpy(float, const float*, const float*, float*, unsigned);
 #endif
 #ifdef OPKIT_HAVE_VULKAN
 int opkit_vulkan_saxpy(float, const float*, const float*, float*, unsigned);
+// The device the Vulkan backend last ran on. A Vulkan build may find a
+// discrete GPU, an integrated one or a CPU rasteriser, and which of those
+// answered is not derivable from the numbers -- they are the same numbers.
+const char* opkit_vulkan_device_name(void);
 #endif
 
 #ifdef __cplusplus

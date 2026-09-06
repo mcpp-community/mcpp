@@ -28,13 +28,42 @@ mcpp run --accel "cuda12.9+{sm_89}"               # + the CUDA island
 mcpp run --accel "cuda12.9+{sm_89}, vulkan1.2"    # both, one artifact
 ```
 
-The first line needs nothing installed, which is why CI builds it: the CPU-only
-path is where `cfg(accelerator = "none")` is exercised, and it costs no payload.
+Measured, on a machine with an RTX 4080 and a 12.4 driver:
 
-The program prints the backend **before** the numbers, because every backend
-returns the same four numbers — the numbers alone cannot separate a device run
-from the reference one, and that is exactly the confusion an example about
-heterogeneous compute must not teach.
+| build | prints |
+|---|---|
+| `mcpp run` | `backend: cpu (only backend in this build)` |
+| `--accel "vulkan1.2"` | `backend: vulkan (NVIDIA GeForce RTX 4080)` |
+| `--accel "cuda12.9+{sm_89}"` | `backend: cuda` |
+| both | `backend: cuda` — the chain's first entry answers |
+
+All four print `12 24 36 48`, which is exactly why the backend is printed
+first: every backend returns the same four numbers, so the numbers alone cannot
+separate a device run from the reference one.
+
+**Naming a subset is not a mismatch.** `--accel "vulkan1.2"` leaves the `.cu`
+glob out the way `--no-accel` leaves both out, and the `cfg(accelerator =
+"cuda")` section carrying that backend's host half does not activate either, so
+the two halves stay together. Only an accelerator this build *does* name whose
+architecture it does not cover is refused (mcpp 2026.9.6.5).
+
+**Nothing is installed for a device this build did not name.** The payloads sit
+under `[target.'cfg(accelerator = ...)'.xlings.workspace]`, so `mcpp run`
+fetches neither the CUDA toolkit nor the shader compiler. That gating needs
+mcpp 2026.9.6.5; before it, the only spellings available were "unconditionally"
+and "not at all", and the cheapest build paid for the most expensive one.
+
+## The CUDA leg takes the clang route
+
+`[toolchain] default = "llvm@22.1.8"`, and the reason is measured rather than
+stylistic. On the 12.9 line the nvcc route is refused by nvcc's own front end:
+the toolkit headers redeclare the C23 `cospi`, `sinpi` and `rsqrt` for the host
+without `noexcept` while the C library declares them with it. Driving an older
+`xim:gcc` payload does not help — the declarations come from the C library, not
+from the host compiler, and this was tried. The 13.x line fixes it and raises
+the driver floor to r580, which is a requirement on the machine rather than a
+decision the project gets to make. The clang route never includes that header
+and runs on any driver from r525 onward.
 
 ## Why the dispatcher's predicate matters
 
@@ -57,8 +86,16 @@ saying it after the vocabulary grows.
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.2.1", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.2.2", features = ["rules-cuda", "rules-spirv"], host-module = true }
 ```
+
+Two rules, in one build program, which is what an additive-backend package
+needs and what no other example here has. `mcpp::device_sources()` is the
+package's whole device set, so in a build naming both backends that one list
+holds a `.cu` and a `.comp`: each rule takes the extensions it claims and
+leaves the rest, which is what 0.2.2 fixed. A device source no rule claims is
+not silently dropped either — mcpp refuses a device source that reached no
+action, naming the file.
 
 `[build-dependencies]`, not `[dependencies]`: a rule package's library must
 never reach the target while its rule is still wanted, which is the case

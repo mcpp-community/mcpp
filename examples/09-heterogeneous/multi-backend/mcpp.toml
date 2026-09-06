@@ -26,6 +26,84 @@ import_std = true
 #     mcpp build --accel "vulkan1.2"
 #     mcpp build --accel "cuda12.9+{sm_89}"
 #     mcpp build --accel "cuda12.9+{sm_89}, vulkan1.2"    # both, one artifact
+# clang, because the CUDA rule follows the project's toolchain to pick its
+# route and the clang route is the one this line supports. It costs the
+# CPU-only build an LLVM payload it would not otherwise need, which is the
+# honest price of having the device leg work on the driver a developer already
+# has.
+[toolchain]
+default = "llvm@22.1.8"
+
+# BOTH rules, in one build program. `host-module = true` compiles their module
+# interfaces for the build program to import; `[build-dependencies]` keeps the
+# package out of the target, which is the case docs/05 section 2.6.1 exists for.
+# The rules are declared unconditionally because `build.mcpp` imports them
+# unconditionally -- each returns immediately when its own backend is absent.
+[build-dependencies.mcpp]
+plugins = { version = "0.2.2", features = ["rules-cuda", "rules-spirv"], host-module = true }
+
+# ── the payloads, gated on the device they are for ──────────────────────────
+#
+# `cfg(accelerator = ...)` in an `[xlings]` table is what keeps `mcpp build`
+# free: a CPU-only build of this project installs neither the CUDA toolkit nor
+# the shader compiler, because neither predicate holds. Unconditional pins --
+# the only spelling available before mcpp 2026.9.6.5 -- would have made the
+# cheapest build the most expensive one, and that is the build CI runs.
+#
+# `accelerator` is admitted here and the five resolved layer keys (`c-abi`,
+# `compiler`, ...) are not, because it is an INPUT to the build rather than an
+# answer from the dependency graph: `--accel` is read before the first package
+# is resolved, while a C library is chosen by the resolution a payload would
+# have to precede.
+# The 12.9 line and the CLANG route, which is the combination this repository
+# verifies everywhere: examples/09-heterogeneous/cuda and every mcpp-plugins
+# fixture use it, and it runs on any driver from r525 onward.
+#
+# The nvcc route on the same line does not work: the 12.9 headers redeclare the
+# C23 `cospi`/`sinpi`/`rsqrt` for the host without `noexcept` while the C
+# library declares them with it, and nvcc's front end refuses the pair. Moving
+# to 13.x fixes that and raises the driver floor to r580, which is a machine
+# requirement rather than a project decision. The clang route never includes
+# that header and imposes no such floor.
+[target.'cfg(accelerator = "cuda")'.xlings.workspace]
+"xim:cuda-nvcc"         = "12.9.86"
+"xim:cuda-cudart"       = "12.9.79"
+# clang's CUDA wrapper includes a cuRAND header for every device unit, and that
+# header includes <nv/target> from CCCL. Neither is called by this kernel; on a
+# developer machine the host's /usr/include used to supply them silently.
+"xim:libcurand"         = "10.3.10.19"
+"xim:cuda-cccl"         = "12.9.27"
+
+# The host-link stub is Linux-only, and the OS goes in the PREDICATE rather
+# than in the value: a value carrying platform keys under an already-predicated
+# table would state the condition twice and let the two disagree.
+[target.'cfg(all(accelerator = "cuda", linux))'.xlings.workspace]
+"xim:libcuda-host-link" = "0.0.1"
+
+# The driver's userspace library, reached through an index package rather than
+# the host: mcpp's private loader does not consult /usr/lib, so a statically
+# linked CUDA runtime cannot otherwise dlopen the driver. It is the one CUDA
+# component that cannot be an ordinary payload -- the licence forbids
+# redistributing it and it is in ABI lockstep with the kernel module.
+[target.'cfg(accelerator = "cuda")'.dependencies.compat]
+cuda-driver = "2026.09.05"
+
+[target.'cfg(accelerator = "vulkan")'.xlings.workspace]
+# The shader compiler, and a Vulkan driver that is always present because it is
+# the CPU. The second is what makes the Vulkan leg runnable on a machine with
+# no GPU, which is what every CI runner in this ecosystem is.
+"xim:glslang"       = "15.1.0"
+"xim:mesa-lavapipe" = "26.2.1"
+
+# The Khronos loader, built by the index rather than taken from the host, and
+# the adapter that makes the host's own ICDs reachable from a binary running
+# under mcpp's private loader. Neither is a driver: a driver has to match the
+# kernel module on the machine it runs on, which is why the software one above
+# is a payload and the hardware ones are the host's.
+[target.'cfg(accelerator = "vulkan")'.dependencies.compat]
+vulkan         = "1.4.357.0"
+vulkan-runtime = "2026.09.07"
+
 [build]
 # The device sources carry the accel they are for. A CONSTRAINED glob gates
 # itself -- it is offered to the build program only when this build's `accel`
@@ -52,6 +130,10 @@ include_dirs = ["include"]
 # the host file that implements the entry point the dispatcher will call.
 [target.'cfg(accelerator = "cuda")'.build]
 defines = ["OPKIT_HAVE_CUDA=1"]
+# Linked statically, and only when a device build asks for it. NO ABSOLUTE
+# PATHS: the rule package puts the payload's library directory on the link line
+# from `mcpp::xpkg_dir`, so this names libraries only.
+ldflags = ["-lcudart_static", "-lrt", "-lpthread", "-ldl"]
 
 [target.'cfg(accelerator = "vulkan")'.build]
 sources = ["src/backends/vulkan/*.cpp"]

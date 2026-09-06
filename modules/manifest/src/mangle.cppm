@@ -39,6 +39,19 @@ std::string mangle_name(std::string_view base, std::string_view version);
 // bare partition declarations are ignored.
 std::vector<std::string> declared_module_roots(std::string_view source);
 
+// The module names a source IMPORTS, in order of appearance, deduplicated.
+// `import N;` and `export import N;` yield `N`; `import N:P;` yields `N`;
+// header units (`import <vector>;`, `import "x.h";`) and bare partition
+// imports (`import :P;`) yield nothing, because none of them names a module
+// another package could provide.
+//
+// Same line-based matcher as `declared_module_roots`, and the same limits:
+// the keyword must open a logical line, so a declaration quoted inside a
+// comment whose line starts with `import` is read as one. That is acceptable
+// for its one caller -- a diagnostic that suggests a package, and suggests
+// nothing when the name matches none.
+std::vector<std::string> imported_module_names(std::string_view source);
+
 // Rewrite a single .cppm file's module / import declarations:
 //   * `(export )?module N;`     → `(export )?module rename[N];`
 //   * `(export )?module N:P;`   → `(export )?module rename[N]:P;`
@@ -139,6 +152,34 @@ std::vector<std::string> declared_module_roots(std::string_view source) {
         lineStart = eol + 1;
     }
     return roots;
+}
+
+std::vector<std::string> imported_module_names(std::string_view source) {
+    std::vector<std::string> names;
+    std::size_t lineStart = 0;
+    while (lineStart < source.size()) {
+        auto eol = source.find('\n', lineStart);
+        if (eol == std::string_view::npos) eol = source.size();
+        auto line = source.substr(lineStart, eol - lineStart);
+
+        auto cur = skip_ws(line, 0);
+        if (auto p = consume_keyword(line, cur, "export");
+            p != std::string::npos) {
+            cur = skip_ws(line, p);
+        }
+        if (auto afterImport = consume_keyword(line, cur, "import");
+            afterImport != std::string::npos) {
+            cur = skip_ws(line, afterImport);
+            auto [nameEnd, name] = read_name(line, cur);
+            if (nameEnd != std::string::npos
+                && std::ranges::find(names, name) == names.end()) {
+                names.emplace_back(name);
+            }
+        }
+        if (eol == source.size()) break;
+        lineStart = eol + 1;
+    }
+    return names;
 }
 
 std::string rewrite_module_decls(

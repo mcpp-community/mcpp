@@ -586,6 +586,37 @@ shim,而可用的那份就在项目自己的环境里,根本不在 `PATH` 上。
 下面这些从第一个规则包 `mcpplibs.grpcgen` 归纳而来,每一条特征都单独判过是必然还是偶然。
 它们是指引而非规则,因为其中没有一条能给出引擎可以检查的判据。
 
+**每一个设备源都必须到达某个 action**(2026.9.5.2+ 的契约,自 2026.9.6.5 起强制)。
+设备类源是引擎唯一没有编译规则的源:它经 `MCPP_DEVICE_SOURCES` 交给本包的构建程序,
+要么作为 action 回来,要么根本不会被编译。若有源没有回来,mcpp 拒绝这次构建并点名文件:
+
+    error: `opkit`: device sources that no action compiles:
+             src/backends/cuda/saxpy.cu
+             src/backends/vulkan/saxpy.comp
+
+判据是 action 的**输入**,而不是「构建程序跑过了」:跑了却什么都没认领恰恰是常见情形,
+因为一条规则只取它认识的扩展名、把其余留给别人。这同时也是 action 本就需要满足的条件
+—— 编译某个文件却不把它声明为输入的 action,在那个文件变化时不会重跑 —— 所以满足这条
+判据的规则也就是能正确增量的规则。它取代的读数是链接期的 undefined reference:那条消息
+点的是符号而从不是那个文件;而 `kind = "lib"` 的目标连这条都没有,因为静态库不做解析。
+
+**一条规则只取它认领的扩展名。** `mcpp::device_sources()` 是本包设备源的**全集**,
+同一个构建程序里的每条规则读到的是同一个值。带两个后端的工程会把一个 `.cu` 和一个
+`.comp` 放进这一份清单,于是把全集拿走的规则会把编译器不接受的文件递给它。规则按扩展名
+挑选,并在本次构建没有命名它所服务的后端时安静返回 —— 带多条规则的构建程序会把它们
+全部调用一遍。
+
+**没有任何东西提供的 import 会被点名拒绝。** 一个构建程序可以 import 的是:`std`、
+`std.compat`、内置的 `mcpp`,以及依赖边要来的 host 模块。此外的名字在编译器被调用之前
+就被拒绝,并给出那个本该让它可导入的键:
+
+    error: build.mcpp imports 'mcpp.rules.spirv', and no dependency provides it
+    as a host module.
+           ...
+             [build-dependencies.<namespace>]
+             <name> = { version = "...", host-module = true }
+           declared without `host-module = true`: mcpp.plugins (in [build-dependencies])
+
 **模块名由规则的源码声明,`mcpp.*` 是保留前缀。** host 模块以其接口单元声明的名字注册,
 而不是以包名注册,所以 `export module mcpp.rules.spirv;` 就是消费者 import 的那个名字。
 官方插件集中在一个包里,`mcpp:plugins`(仓库 `mcpp-community/mcpp-plugins`):规则包命名为

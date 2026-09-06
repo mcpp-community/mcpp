@@ -174,16 +174,48 @@ inline Ctx context_for(std::string_view targetTriple) {
 inline constexpr std::string_view kCfgTripleKeys[] = {
     "arch", "env", "family", "os",
 };
+// THE LAYER KEYS SPLIT BY SCHEDULE, not by subject matter.
+//
+// The five in `kCfgLayerKeys` are answered BY dependency resolution: which C
+// library, which compiler, which compiler runtime the graph settled on. A
+// predicate naming one cannot be evaluated before the graph exists, which is
+// why the second merge pass owns them and why a dependency conditioned on one
+// is refused -- it would decide the answer it is asking for.
+//
+// `accelerator` is not like them. It is an INPUT: `--accel`, or `[build]
+// accel`, read near the top of prepare() and known before the first package is
+// resolved. Grouping it with the five made three things wrong at once. A
+// payload could not be gated on the device it is for, so a CPU-only build of a
+// project that also has a CUDA island downloaded the whole vendor toolkit. A
+// dependency under `cfg(accelerator = ...)` was warned about and dropped,
+// though nothing about it is circular. And the section was carried to the late
+// pass for no reason at all.
+//
+// Both sets are the cfg VOCABULARY, so `is_cfg_layer_key` still answers for
+// either; only the schedule question (`uses_layer`) distinguishes them.
+inline constexpr std::string_view kCfgEarlyLayerKeys[] = {
+    "accelerator",
+};
 inline constexpr std::string_view kCfgLayerKeys[] = {
-    "accelerator", "c++-abi", "c-abi", "compiler", "compiler-runtime",
+    "c++-abi", "c-abi", "compiler", "compiler-runtime",
     "kernel-abi",
 };
 inline constexpr std::string_view kCfgBarewords[] = {
     "linux", "macos", "unix", "windows",
 };
 
-inline bool is_cfg_layer_key(std::string_view k) {
+// Answerable before resolution. Its value comes from the build's own accel.
+inline bool is_cfg_early_layer_key(std::string_view k) {
+    return std::ranges::find(kCfgEarlyLayerKeys, k) != std::end(kCfgEarlyLayerKeys);
+}
+// Answerable only after resolution -- what the second merge pass owns.
+inline bool is_cfg_late_layer_key(std::string_view k) {
     return std::ranges::find(kCfgLayerKeys, k) != std::end(kCfgLayerKeys);
+}
+// The vocabulary question: is this a layer key at all. Both sets, because an
+// unknown token must stay unknown and `accelerator` is not one.
+inline bool is_cfg_layer_key(std::string_view k) {
+    return is_cfg_early_layer_key(k) || is_cfg_late_layer_key(k);
 }
 
 // Recursive-descent evaluator over the inside of `cfg(...)`:
@@ -234,11 +266,15 @@ struct Parser {
         if (k == "arch")   return c.arch == v;
         if (k == "family") return c.family == v;
         if (k == "env")    return c.env == v;
-        // A layer key is not answerable until the target side is resolved. In
-        // the first (triple-only) pass this returns false and the section is
-        // skipped — which is correct, because the second pass owns it and would
-        // otherwise append the same inputs twice through `append()`.
-        if (is_cfg_layer_key(k))
+        // `accelerator` is answerable whenever the context carries the build's
+        // accel, which is from the first pass onward -- see kCfgEarlyLayerKeys.
+        if (is_cfg_early_layer_key(k)) return c.layer_matches(k, v);
+        // The other layer keys are not answerable until the target side is
+        // resolved. In the first (triple-only) pass this returns false and the
+        // section is skipped — which is correct, because the second pass owns
+        // it and would otherwise append the same inputs twice through
+        // `append()`.
+        if (is_cfg_late_layer_key(k))
             return c.layersKnown && c.layer_matches(k, v);
         return false;
     }
@@ -330,8 +366,12 @@ inline PredicateScan scan_predicate(const std::string& predicate) {
 // both would contribute its inputs twice.
 inline bool uses_layer(const std::string& predicate) {
     auto scan = scan_predicate(predicate);
+    // The LATE keys only. A predicate naming `accelerator` is answered in the
+    // first pass, so claiming it here would move it to a pass that adds
+    // nothing and takes away the ability to gate a payload or a dependency on
+    // the device it is for.
     return std::ranges::any_of(scan.keys,
-                               [](auto const& k) { return is_cfg_layer_key(k); });
+                               [](auto const& k) { return is_cfg_late_layer_key(k); });
 }
 
 // Tokens outside the vocabulary. A predicate naming one of these used to

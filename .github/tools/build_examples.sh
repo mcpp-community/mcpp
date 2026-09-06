@@ -27,6 +27,15 @@ BUILD=(
     # The CPU-only path of the multi-backend example: no payloads, and it is
     # where `cfg(accelerator = "none")` is exercised. The device paths are
     # opt-in via --accel and are covered by the rule packages' own CI.
+    # Built here for one reason worth the cost: it is the only example whose
+    # CPU-only configuration exercises `cfg(accelerator = "none")` and two rule
+    # packages in one build program, and both of those are engine paths that a
+    # description cannot cover. Its `[toolchain] default = "llvm@22.1.8"` means
+    # this job installs an LLVM payload it otherwise would not -- the CUDA leg
+    # takes the clang route, because the nvcc route on the 12.9 line is refused
+    # by nvcc's own front end and the 13.x line raises the driver floor to r580.
+    # The device payloads are NOT installed: they are gated on the accelerator,
+    # and this builds without one.
     examples/09-heterogeneous/multi-backend
 )
 

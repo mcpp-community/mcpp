@@ -1,0 +1,30 @@
+import std;
+import mcpp;
+import mcpp.rules.cuda;
+import mcpp.rules.spirv;
+
+// TWO RULES IN ONE BUILD PROGRAM, which is what a project with several
+// backends needs and what the four examples beside this one never exercised.
+//
+// Both are called unconditionally. Neither is told which backends this build
+// named -- each parses `[build] accel` itself and returns immediately when its
+// own is absent, so `mcpp build` with no accel runs both and compiles nothing.
+// That is also why the order here carries no meaning.
+//
+// Each rule takes the device sources whose EXTENSION it claims and leaves the
+// rest: `mcpp::device_sources()` is the package's whole device set, and in a
+// build that names both backends it holds a `.cu` and a `.comp`. A device
+// source no rule claims is not silently dropped -- the engine refuses a device
+// source that reached no action.
+int main() {
+    mcpp::rerun_if_changed_glob("src/backends/**/*.cu");
+    mcpp::rerun_if_changed_glob("src/backends/**/*.comp");
+
+    mcpp::rules::cuda::options cu;
+    cu.includes = { "include" };
+    if (!mcpp::rules::cuda::compile(cu)) return 1;
+
+    mcpp::rules::spirv::options sp;
+    sp.includes = { "src/backends/vulkan" };
+    return mcpp::rules::spirv::compile(sp) ? 0 : 1;
+}

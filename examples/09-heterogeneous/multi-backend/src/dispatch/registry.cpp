@@ -8,7 +8,12 @@
 // that does not exist yet. Written as `not(any(accelerator = "cuda",
 // accelerator = "vulkan"))` it would have to be edited every time the ecosystem
 // gains a backend, and the edit that is forgotten is silent.
+#include <cstdio>
+
 static const char* g_backend = "";
+#ifdef OPKIT_HAVE_VULKAN
+static char g_vulkan[288];
+#endif
 
 extern "C" const char* opkit_backend(void) { return g_backend; }
 
@@ -21,7 +26,12 @@ extern "C" int opkit_saxpy(float a, const float* x, const float* y,
     if (opkit_cuda_saxpy(a, x, y, out, n) == 0)   { g_backend = "cuda";   return 0; }
 #endif
 #ifdef OPKIT_HAVE_VULKAN
-    if (opkit_vulkan_saxpy(a, x, y, out, n) == 0) { g_backend = "vulkan"; return 0; }
+    if (opkit_vulkan_saxpy(a, x, y, out, n) == 0) {
+        std::snprintf(g_vulkan, sizeof g_vulkan, "vulkan (%s)",
+                      opkit_vulkan_device_name());
+        g_backend = g_vulkan;
+        return 0;
+    }
 #endif
     if (opkit_cpu_saxpy(a, x, y, out, n) == 0)    { g_backend = "cpu (fallback)"; return 0; }
     return 1;

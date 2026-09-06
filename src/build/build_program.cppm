@@ -15,6 +15,7 @@ export module mcpp.build.build_program;
 import std;
 import mcpp.manifest;
 import mcpp.platform;
+import mcpp.pm.mangle;        // imported_module_names -- what build.mcpp asks for
 import mcpp.platform.process;
 import mcpp.toolchain.cppfly;        // std_flag (dialect- and c++fly-aware -std= spelling)
 import mcpp.toolchain.dialect;       // CommandDialect — gnu vs cl.exe spellings
@@ -810,6 +811,88 @@ std::expected<void, std::string> run_build_program(
             "         <that rule's package> = {{ ..., host-module = true, "
             "reexport = true }}",
             hm.logical, hm.logical));
+    }
+
+    // …and the complementary case: an import NOTHING provides.
+    //
+    // Left to the compiler this is a raw `failed to read compiled module` with
+    // a note that imports must be built before being imported -- true, and it
+    // names neither the package that would provide the module nor the key that
+    // would make it importable. Measured on a project that declared its rule
+    // package correctly except for `host-module`:
+    //
+    //     mcpp.rules.spirv: error: failed to read compiled module: No such
+    //     file or directory
+    //     mcpp.rules.spirv: note: imports must be built before being imported
+    //
+    // The set of names that CAN compile here is closed -- `std`, `std.compat`,
+    // the bundled `mcpp` module, and the importable host modules -- so a name
+    // outside it cannot become valid later and is refused rather than warned
+    // about. Header units (`import <vector>;`, `import "x.h";`) name no module
+    // and `imported_module_names` does not report them.
+    //
+    // ONLY build.mcpp's own imports. A rule interface compiled alongside it may
+    // import a module that is present as a prerequisite and not importable
+    // here, which is the case the check above states.
+    {
+        std::set<std::string> available{"std", "std.compat", "mcpp"};
+        for (auto const& hm : env.hostModules)
+            if (hm.importable) available.insert(hm.logical);
+        for (auto const& want : mcpp::pm::imported_module_names(srcText)) {
+            if (available.contains(want)) continue;
+            // A dependency that could plausibly be meant: one declared without
+            // `host-module = true`. Named as a hint, not as a claim -- the
+            // engine has not resolved this package's lib root here and does not
+            // know which module it would declare.
+            //
+            // Ranked by the one relation available without resolving anything:
+            // a rule package's modules are expected to open with its namespace,
+            // which is what `reserved_prefix_warning` is about. A dependency
+            // whose key shares the imported name's first segment is listed
+            // alone; when none does, all of them are listed rather than none,
+            // because the convention is a convention and a package may declare
+            // a module outside its own prefix.
+            const auto dot  = want.find('.');
+            const auto head = dot == std::string::npos ? want : want.substr(0, dot);
+            std::string near, all;
+            auto scan = [&](const std::map<std::string, mcpp::manifest::DependencySpec>& deps,
+                            std::string_view section) {
+                for (auto const& [k, s] : deps) {
+                    if (s.hostModule) continue;
+                    const auto one = std::format("{} (in [{}])", k, section);
+                    auto& dst = k.starts_with(head + ".") || k == head ? near : all;
+                    if (!dst.empty()) dst += ", ";
+                    dst += one;
+                }
+            };
+            scan(m.buildDependencies, "build-dependencies");
+            scan(m.dependencies, "dependencies");
+            const std::string candidates = near.empty() ? all : near;
+            std::string importable;
+            for (auto const& hm : env.hostModules)
+                if (hm.importable) {
+                    if (!importable.empty()) importable += ", ";
+                    importable += hm.logical;
+                }
+            return std::unexpected(std::format(
+                "build.mcpp imports '{}', and no dependency provides it as a "
+                "host module.\n"
+                "       A package's module is compiled for the build program "
+                "only when the dependency\n"
+                "       edge asks for it, which is a separate question from "
+                "whether the package reaches\n"
+                "       the target:\n"
+                "         [build-dependencies.<namespace>]\n"
+                "         <name> = {{ version = \"...\", host-module = true }}\n"
+                "       importable here: {}\n"
+                "{}",
+                want,
+                importable.empty() ? "(none)" : importable,
+                candidates.empty()
+                    ? "       This package declares no dependency that could provide it."
+                    : std::format("       declared without `host-module = true`: {}",
+                                  candidates)));
+        }
     }
 
     // Fast path: declared inputs + contract unchanged → reapply cached

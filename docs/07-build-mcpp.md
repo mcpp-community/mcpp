@@ -683,6 +683,45 @@ The guidance below generalises from `mcpplibs.grpcgen`, the first such package,
 with each of its traits judged individually. It is guidance and not a rule
 because none of it admits a criterion the engine could check.
 
+**Every device source must reach an action** *(2026.9.5.2+ contract, enforced
+from 2026.9.6.5)*. A device-kind file is the one source the engine has no
+compile rule for: it is handed to the package's build program through
+`MCPP_DEVICE_SOURCES` and comes back as an action, or it is not compiled at
+all. mcpp refuses a build in which one did not, naming the files:
+
+    error: `opkit`: device sources that no action compiles:
+             src/backends/cuda/saxpy.cu
+             src/backends/vulkan/saxpy.comp
+
+The criterion is the action **inputs**, not that a build program ran: a program
+that ran and claimed nothing is the common case, because a rule takes the
+extensions it knows and leaves the rest. It is also the condition an action
+needs anyway — one that compiles a file it does not declare as an input does
+not rerun when that file changes — so a rule that satisfies it is a rule that
+rebuilds correctly. What it replaces is an undefined reference at the link
+naming a symbol and never the file, and for a `kind = "lib"` target not even
+that, because an archive is not resolved.
+
+**A rule takes the extensions it claims.** `mcpp::device_sources()` is the
+package's whole device set, and every rule in one build program reads the same
+value. A project with two backends puts a `.cu` and a `.comp` in that one list,
+so a rule that consumes all of it hands its compiler a file the compiler does
+not accept. A rule selects by extension, and returns without complaint when
+this build names no backend it serves — a build program with several rules
+calls them all.
+
+**An import nothing provides is refused by name.** A build program may import
+`std`, `std.compat`, the bundled `mcpp`, and the host modules its dependency
+edges asked for. Anything else is refused before the compiler is reached, with
+the key that would have made it importable:
+
+    error: build.mcpp imports 'mcpp.rules.spirv', and no dependency provides it
+    as a host module.
+           ...
+             [build-dependencies.<namespace>]
+             <name> = { version = "...", host-module = true }
+           declared without `host-module = true`: mcpp.plugins (in [build-dependencies])
+
 **The module name is declared by the rule's source, and `mcpp.*` is reserved.**
 A host module is registered under the name its interface unit declares, not
 under the package name, so `export module mcpp.rules.spirv;` is what a consumer

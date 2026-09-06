@@ -1049,13 +1049,18 @@ cxxflags = ["-march=x86-64-v2"]
   Linux 构建**根本不会下载** `[target.windows]` 依赖。
 - **谓词的键**:`os`、`arch`、`family`、`env` —— 三元组的坐标 —— 以及自 mcpp
   2026.9.1.1 起的五个目标侧层名 `compiler`、`compiler-runtime`、`kernel-abi`、
-  `c-abi`、`c++-abi`(见[14 —— 目标侧](14-target-side.md))。裸词
+  `c-abi`、`c++-abi`(见[14 —— 目标侧](14-target-side.md))。`accelerator` 同样
+  是这里的键,由本次构建自己的 `accel`(`--accel` 或 `[build] accel` 里的后端名)
+  回答,因此它是对一个集合的成员判定;`accelerator = "none"` 则是一段用来说
+  「本次构建没有命名任何后端」的写法,而不必枚举它不是的那些后端。裸词
   `linux` / `macos` / `windows` / `unix` 是对应 `os` / `family` 判定的糖。
   集合之外的键会被报成一条 schema 警告,且该段不生效 —— 它过去静默地求值为假,
   而那与「这一段本就不该匹配」读数完全相同。
-- **层谓词不能选择依赖。** 层是**从**依赖图解析出来的,因此由它选出的依赖会决定它
-  正在询问的那个答案。`[target.'cfg(c-abi = "musl")'.dependencies]` 会被报出并忽略;
-  同一谓词下的 `build` 输入照常生效。
+- **被解析的层的谓词不能选择依赖。** 层是**从**依赖图解析出来的,因此由它选出的
+  依赖会决定它正在询问的那个答案。`[target.'cfg(c-abi = "musl")'.dependencies]`
+  会被报出并忽略;同一谓词下的 `build` 输入照常生效。`accelerator` 不在此列
+  (mcpp 2026.9.6.5):它是构建的输入而不是图给出的答案,所以
+  `[target.'cfg(accelerator = "cuda")'.dependencies]` 生效。
 - **优先级**:精确三元组表胜过 `cfg`/别名表;多个命中的谓词表,其 flag 按序拼接。
   条件项追加在无条件 `[build]` 项**之后**,因此在 GNU「最后一个 flag 生效」的
   规则下,条件规则会覆盖更宽的无条件规则。这正是让按 OS **移除**成为可表达的原因:
@@ -1812,12 +1817,29 @@ feature 说的是要不要。
 "xim:shaderc" = "2026.3"
 ```
 
-**这里的 selector 禁止命名目标侧层。** `accelerator`、`c-abi`、`c++-abi`、
-`compiler`、`compiler-runtime`、`kernel-abi` 由依赖解析回答,而依赖解析发生在工具安装
-之后、构建程序运行之后。按层条件化的工具会被声明却永远装不上——构建照常成功,工具
+**这里的 selector 禁止命名被解析的层。** `c-abi`、`c++-abi`、`compiler`、
+`compiler-runtime`、`kernel-abi` 由依赖解析回答,而依赖解析发生在工具安装之后、
+构建程序运行之后。按这些层条件化的工具会被声明却永远装不上——构建照常成功,工具
 就是不在——所以这样的 manifest 会被拒绝,并把工具与谓词都点出来。改成按目标条件化,
-或者用 feature 做门:`[feature-xlings.<feature>]` 在任何东西被供给之前就已知,这正是
-它能回答这个场景的原因。
+或者用 feature 做门:`[feature-xlings.<feature>]` 在任何东西被供给之前就已知。
+
+**`accelerator` 是例外,它被接受**(mcpp 2026.9.6.5)。它不由任何东西解析而来:
+它是 `--accel`,或 `[build] accel`,在查找第一个包之前就已读入。以它为谓词的载荷
+与三元组谓词在同一趟合并,并像其它载荷一样被安装。
+
+```toml
+[target.'cfg(accelerator = "cuda")'.xlings.workspace]
+"xim:cuda-nvcc"   = "12.9.86"
+"xim:cuda-cudart" = "12.9.79"
+```
+
+带设备孤岛的工程应当用这种写法。没有它,厂商工具包只能无条件声明或者干脆不声明,
+于是不带加速器的 `mcpp build`——最便宜的那次构建,也是 CI 通常跑的那次——会为一个
+它根本没在编译的设备下载数 GB。
+
+依赖同理:`[target.'cfg(accelerator = "cuda")'.dependencies]` 生效,而以被解析的层
+为条件的依赖不生效,因为后者会决定它正在询问的那个答案。加速器这条路径上没有任何
+循环。
 
 条件只写在 selector 一处。selector 之下的值如果又带平台键,就是同一件事说了两遍,
 会被拒绝,并把两半都指出来:
