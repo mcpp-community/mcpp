@@ -26,7 +26,7 @@ mcpp build && mcpp run
 | 04 | [`examples/04-workspace`](../../examples/04-workspace/) | 多包工作空间:两个库 + 一个应用,共享一个命名空间 | `[workspace]`、path 依赖、`mcpp build --workspace` |
 | 05 | [`examples/05-lib-distribution`](../../examples/05-lib-distribution/) | 一个预建库和它的消费者,只有放在一起才有意义 | 对库做 `mcpp pack`、同一份源码同时给出 C 头文件与 C++ 模块、distribution 包 |
 | 06 | [`examples/06-openkal-cross`](../../examples/06-openkal-cross/) | 同一个程序问每台机器它是什么,从任意宿主构建到四个目标 | `--target`、openkal、不改源码的交叉编译 |
-| 07 | [`examples/07-project-subos`](../../examples/07-project-subos/) | 构建程序在工程声明的环境里找工具,而不是问机器上恰好有什么 | `[xlings] subos`、`[xlings.workspace]`、`mcpp::xpkg_dir` |
+| 07 | [`examples/07-project-subos`](../../examples/07-project-subos/) | 构建程序在工程声明的环境里找工具,而不是问机器上恰好有什么 | `[xlings] subos`、`[xlings.workspace]`、构建程序的 `PATH` 来自工程声明的那个环境 |
 | 08 | [`examples/08-build-rules`](../../examples/08-build-rules/) | 两个规则包,以及同时用到它们的工程 | `host-module = true`、`[build-dependencies]`、`role = "check"` 的 `mcpp::action` |
 | 09 | [`examples/09-heterogeneous`](../../examples/09-heterogeneous/) | 同一个计算在设备上跑,写成四种编程模型,每种都带 CPU 回退 | `accel`、带约束的 source glob、接缝模块、来自 `mcpp:plugins` 的规则包、`cfg(accelerator = …)` |
 | 09a | [`…/cuda`](../../examples/09-heterogeneous/cuda/) | 接缝模块背后的 CUDA kernel | `mcpp.rules.cuda`、`role = "object"` 的 `mcpp::action`、把驱动陈述为 fact 与 floor |
