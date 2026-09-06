@@ -5,6 +5,41 @@
 
 ## [Unreleased]
 
+### `[feature-xlings]` 声明的工具,构建程序找不到
+
+`[feature-xlings.<f>]` 从诞生起就参与供给:在那里写下一个包,`<f>` 生效时它就会被下载
+并安装。但构建程序的环境是由 `[xlings.workspace]` **单独**填充的,于是载荷已经躺在
+store 里,`mcpp::xpkg_dir` 仍然返回 `""`。
+
+这个缺陷的形状是「答案已解析,却没有接到决定上」:供给端读的是「声明 + 生效的 feature」,
+查询端读的只是「声明」。它在 llama.cpp 的 Vulkan 后端上现形 —— 规则程序拿不到
+`xim:shaderc`,而它唯一说得出口的话是「请声明 xim:shaderc」,指向一条作者早已写下的声明。
+一条指错文件的诊断比没有诊断更坏。
+
+修法是让查询端读同一个集合:`fillXpkgDirs` 现在把调用方**已经算好的** feature 闭包
+里的 `[feature-xlings]` 条目并进来。「是否安装」仍然是唯一的过滤器,所以
+`when = "dev"` 的条目对消费者依然回答 `""`。
+
+判据是 e2e 614,它有对照:同一个工程构建两次,`--features gpu` 下拿到载荷路径,不带
+feature 时拿到空串。只断言前者的用例,在一个「凡装过的包都作答」的 mcpp 上同样会通过。
+用的包是 `xim:ninja` —— mcpp 自己 bootstrap 进沙箱的那个,所以判据不需要网络;版本从
+store 里**读出来**而不是写死,否则 mcpp 升 ninja 会把这个 feature 的测试变红。
+
+### 四个设备示例合并为 `examples/09-heterogeneous`
+
+`09-cuda-kernel` / `10-vulkan-compute` / `11-sycl-kernel` / `12-hip-kernel` 是同一课的
+四种编程模型:同一个 kernel、同一道接缝、同一条收窄的 glob、同一个答案,差别只在规则包
+驱动哪个编译器。四个连号在课程表里说的是「四课」,而再加一个模型就会说成五课。它们现在
+是 `examples/09-heterogeneous/{cuda,vulkan,sycl,hip}`,共享的那一课写在目录的 README 里。
+
+同一次改动把落后于生态的钉子对齐了(它们改的是同几份 manifest):`cuda` 与 `vulkan`
+从 `mcpp:plugins 0.1.1` 跟到 `0.2.0`(`sycl` 与 `hip` 早已是 0.2.0),`cuda` 与 `hip`
+从 `compat:cuda-runtime` 改写为 `compat:cuda-driver` —— 那条目已冻结并改名,旧名仍可解析,
+所以这是拼写修正而不是修复。
+
+文档里的版本号**没有**跟着动。`*(2026.9.5.2+)*` 这类标记陈述的是某项能力何时落地,是
+历史事实;把它跟到当前版本会让文档对自己的主题说谎。只有「当前应当写下什么」才跟随发布。
+
 ## [2026.9.6.1] - 2026-09-06
 
 ### `.sycl` 进设备扩展名表:判据是编译器,不是方言

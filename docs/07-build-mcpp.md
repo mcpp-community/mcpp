@@ -293,6 +293,13 @@ A **pinned** reference resolves to exactly that version or to nothing. A
 build that asked for `1.8.12` and silently got `1.9.0` is an answer only
 discovered later, in the artifact.
 
+**`[feature-xlings.<f>]` is answered too, while `<f>` is active**
+*(2026.9.6.2+)*. That table has provisioned its packages since it existed --
+naming one downloads and installs it -- but the build program's environment was
+filled from `[xlings.workspace]` alone, so `xpkg_dir` returned `""` for a
+payload that was on disk. The only sensible thing a program can print then is
+"declare this package", naming a declaration its author had already written.
+
 ### Host tools from a dependency (2026.8.5.1+)
 
 Declare the need in `mcpp.toml`, then call it:

@@ -179,6 +179,80 @@ It is:
 The second half is checked by not touching them: the sweep edits manifests and
 reader instructions, and leaves `(20xx.x.x.x+)` alone.
 
+## 7b. Round 5 broken down: tasks, repositories and the order between them
+
+Round 5 is one lane -- llama.cpp on Vulkan -- carried far enough that the
+answer is a sentence of generated text rather than four numbers. The work is
+not evenly distributed across repositories, and the order between the pieces is
+forced rather than chosen.
+
+### The tasks
+
+| id | repository | task | depends on | criterion |
+|---|---|---|---|---|
+| R0 | mcpp | group the four device examples, align the stale pins | -- | eight builds (four device, four `--no-accel`) answer `12 24 36 48` |
+| R1 | llama.cpp-m | `backend-vulkan` feature: the shader pipeline as build-graph edges | R0 for nothing technical, only for attribution | `ggml-vulkan.cpp` and 134 generated sources compile and link |
+| R2 | llama.cpp-m | the generator as a host tool built from the vendored source | R1 | the tool is built by an action, not by the build program doing work inline |
+| R3 | llama.cpp-m | glslc extension probes, forwarded to both the generator and the backend | R2 | a machine whose glslc lacks `GL_KHR_cooperative_matrix` still builds |
+| R4 | llama.cpp-m | an example that loads a model and generates tokens on the Vulkan device | R1-R3 | deterministic output from a fixed seed, on lavapipe, with no GPU |
+| R5 | mcpp-index | a version of `ggml-org:llamacpp` carrying the feature | R1-R4 | a consumer outside this repository selects `backend-vulkan` and builds |
+| R6 | llama.cpp-m | CI: build the feature on a runner with no GPU | R4 | the workflow is red when the feature is broken, which means it must run |
+| R7 | mcpp | document the framework tier in docs/20 | R4 | the shape a framework takes is stated once, not per project |
+
+### What the angles decide
+
+**Architecture.** The shader pipeline is 136 edges in the build graph, not one
+build program that loops. A build program that generated all 134 sources inline
+would do it serially, once per prepare, and report a failure as "build.mcpp
+exited 1". Declaring the work makes each shader an attributable, parallel,
+incremental edge. This is the same decision `mcpp.rules.sycl` made for two
+actions and `mcpp.rules.spirv` for one; at 136 it stops being a preference.
+
+**Stability.** The generator is compiled from the vendored source rather than
+taken from a payload, because its output must match the `ggml-vulkan.cpp` it
+was vendored beside. A generator from elsewhere would be a second version of a
+contract that upstream keeps in one repository.
+
+**Simplicity.** No new engine primitive. If round 5 needs one, that is a
+finding worth more than the feature, and it goes in the engine with its own
+test rather than into the framework's build program.
+
+**User experience.** A consumer writes `features = ["backend-vulkan"]` and
+nothing else. Every payload, adapter and probe is the package's own business.
+The measure is the diff a consumer writes: one line.
+
+**Compatibility.** `backend-cpu` stays the default and stays untouched. A
+consumer that does not ask for Vulkan must not acquire a Vulkan dependency, and
+the criterion for that is that the CPU build's resolution names no Vulkan
+package at all -- not that it happens to still work.
+
+**Cross-platform.** The feature is Linux-first because that is where the
+verification hardware and the lavapipe payload are. Windows and macOS are
+stated as unbuilt rather than silently attempted: macOS has `backend-metal`
+already, and a Vulkan build there would need MoltenVK, which no package in this
+ecosystem delivers.
+
+**Consistency.** The device sources are `.comp` files reached by a constrained
+glob, the same spelling `examples/09-heterogeneous/vulkan` uses. A framework
+that needed a different spelling for the same thing would say the spelling was
+never general.
+
+**Silent upgrade.** The `backend-vulkan` feature is additive: an existing
+`ggml-org:llamacpp` consumer that does not name it resolves exactly what it
+resolves today. The version moves forward; no existing pin changes meaning.
+
+**Test coverage.** Two criteria, and the second is the one that matters. The
+first is that the feature builds. The second is that the program produces
+correct tokens on a device with no GPU present, because a build that links and
+produces nothing correct is the failure mode this whole tier exists to catch.
+
+### The gate, restated
+
+F1 is a gate for a reason round 3 measured: its first hour exposed an engine
+defect that no example had. If R1-R4 need an engine change, round 5 stops and
+that change ships first, with its own test in mcpp. Frameworks F2-F9 do not
+start until F1's example generates tokens.
+
 ## 8. The method this round produced, which outlives its features
 
 Eight defects, six in work written for the round, none found by reading code.
