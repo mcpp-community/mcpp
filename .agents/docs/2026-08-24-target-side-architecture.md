@@ -8,7 +8,7 @@
 
 `.agents/docs/2026-08-24-graph-target-side-optimization-plan.md` 记录了导出这份
 设计的十余条实测与缺陷考古;本文只陈述**设计本身**,正面表述,不引用任何一个
-具体 PR。它是 `docs/spec/SPEC-002` 的种子。
+具体 PR。它是 `docs/specs/SPEC-002` 的种子。
 
 三个维度分别在 §1 / §2 / §3:**架构**、**语义一致性**、**使用侧**。
 

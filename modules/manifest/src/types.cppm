@@ -1053,6 +1053,25 @@ struct ConditionalConfig {
     // declaration turns an unsupported platform into a hard error raised from
     // inside the LIBRARY's manifest, which its user cannot work around.
     std::map<std::string, std::map<std::string, DependencySpec>> featureDeps;
+    // SPEC-004 §4: `[target.<sel>.xlings…]` — the TARGET axis of the tool plane.
+    //
+    // THE WHOLE TYPE, NOT A HAND-PICKED SUBSET, for the reason `inputs` above
+    // carries `BuildInputs`: a conditional reader that keeps its own list of
+    // the fields falls behind and nobody notices. #258 and #359 are both that
+    // failure, and this is the third section to get the treatment.
+    //
+    // WHY A SECOND AXIS EXISTS AT ALL. Top-level `[xlings]` resolves its
+    // platform-keyed values against the HOST, which is correct for a tool that
+    // has to execute on the build machine (`xim:dpcpp`, `xim:shaderc`).  It is
+    // wrong for an input the device compiler compiles AGAINST (`xim:glibc`,
+    // `xim:linux-headers`): that follows the target. The two coincide on a
+    // non-cross build, which is why the difference was invisible until a rule
+    // package had to name a C library.
+    //
+    // `subos` is deliberately NOT settable here and is rejected at parse: it
+    // names the project's environment, which is one per project rather than
+    // one per target.
+    XlingsConfig                        xlings;
 };
 
 // `[lib]` — library "root" interface convention.

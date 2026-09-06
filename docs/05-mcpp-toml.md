@@ -1000,7 +1000,7 @@ The older fully-qualified spelling (`name = "chriskohlhoff.asio"`) is still
 accepted, so already-published descriptors keep working. `mcpp xpkg parse`
 enforces the descriptor rule; run it in index CI. Descriptor identity
 requires mcpp >= 0.0.106; exact selectors require mcpp >= 2026.8.10.1; both use
-xlings >= 0.4.69. Full normative text is in `docs/spec/package-identity.md`.
+xlings >= 0.4.69. Full normative text is in `docs/specs/package-identity.md`.
 
 `mcpp new --template` deliberately reuses this identity model instead of
 creating another package grammar: `[ns.]name[@version][:tname]`. A bare name
@@ -1008,7 +1008,7 @@ there also means only `mcpplibs`; version and template may be omitted
 independently. Omitted `tname` selects the sole explicit default, or the only
 template when no `default = true` is present. Multiple unmarked templates are
 an error, never a directory-order choice. See the normative template rows in
-`docs/spec/package-identity.md` §4.4.
+`docs/specs/package-identity.md` §4.4.
 
 #### When mcpp refreshes the package index
 
@@ -2045,6 +2045,76 @@ Platform keys are xlings' own — `linux`, `macosx`, `windows` — plus `default
 triples say one, descriptors and xlings' project file say the other) and both
 are accepted wherever a platform is named. A table with no key for this host
 and no `default` declares nothing here.
+
+#### Two resolution axes — host and target (mcpp 2026.9.6.4+)
+
+A tool entry answers one of two different questions, and the table it is written
+in decides which:
+
+| Written | Axis | Resolved against |
+|---|---|---|
+| `[xlings.workspace]`, platform keys in the value | host | the machine running the build |
+| `[target.<selector>.xlings.workspace]` | target | the resolved target (`--target`, else the host) |
+
+Both are correct spellings and neither supersedes the other. A tool that
+executes on the build machine belongs on the host axis; a payload the produced
+code is compiled or linked against belongs on the target axis.
+
+```toml
+[xlings.workspace]
+"xim:dpcpp" = "7.1.0"              # a compiler, and it runs here
+
+[target.'cfg(os = "linux")'.xlings.workspace]
+"xim:glibc"         = ""           # what the device units are compiled against
+"xim:linux-headers" = ""
+```
+
+On a native build the two axes name the same platform, so a project that states
+target facts on the host axis is right by accident and keeps working. It stops
+being right the first time that project is cross-compiled. **For anything the
+produced code is compiled or linked against, the target axis is the recommended
+form.**
+
+`[target.<selector>.feature-xlings.<feature>]` composes the condition with the
+gate, exactly as `[target.<selector>.feature-deps.<feature>]` does: the selector
+says which targets, the feature says whether at all.
+
+```toml
+[target.'cfg(os = "linux")'.feature-xlings.backend-vulkan]
+"xim:shaderc" = "2026.3"
+```
+
+**A selector here must not name a target-side layer.** `accelerator`, `c-abi`,
+`c++-abi`, `compiler`, `compiler-runtime` and `kernel-abi` are answered by
+dependency resolution, which happens after tools are installed and after build
+programs run. A tool conditioned on one would be declared and never installed —
+a build that succeeds with the tool simply absent — so such a manifest is
+refused, naming both the tool and the predicate. Condition it on the target, or
+gate it on a feature: `[feature-xlings.<feature>]` is known before anything is
+provisioned, which is why it is the form that answers this case.
+
+The selector is the only place the condition is written. A value under a
+selector that also carries platform keys states one fact twice, and is refused
+naming both halves:
+
+```
+[target.cfg(os = "linux").xlings.workspace] xim:tool: the value carries platform
+keys (linux, macosx), but [target.cfg(os = "linux")] already says which targets
+this applies to.
+```
+
+`subos` is not conditional on a target: a project has one environment, so
+`[target.<selector>.xlings]` refuses the key rather than dropping it.
+
+**A published descriptor carries no edge for a target-axis entry**, and
+`mcpp publish` says so. A descriptor has one block per platform, and a selector
+is not a platform — `cfg(target_arch = "aarch64")` names no block that file has.
+What a CONSUMER of the package gets installed comes from the top-level
+`[xlings.workspace]`; the target axis stays correct for what the package's own
+build compiles against.
+
+See [SPEC-004](specs/manifest-semantics.md) for the general rule these two axes
+are an instance of.
 
 #### `when` — which verbs need this tool (mcpp 2026.9.4.2+)
 

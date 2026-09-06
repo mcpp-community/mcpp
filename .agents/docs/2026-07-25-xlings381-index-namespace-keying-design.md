@@ -3,7 +3,7 @@
 > Issue: [openxlings/xlings#381](https://github.com/openxlings/xlings/issues/381)
 > 基线:xlings 0.4.68 / libxpkg 当前 HEAD
 > 影响仓:`openxlings/xlings`(catalog 层)、`mcpplibs/libxpkg`(index 层)
-> 关联:mcpp SPEC-001 §3.3(`docs/spec/package-identity.md`)
+> 关联:mcpp SPEC-001 §3.3(`docs/specs/package-identity.md`)
 
 ---
 

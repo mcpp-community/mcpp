@@ -277,7 +277,7 @@ for `musl` and diverge for `gnu`: on Linux that segment asks for glibc, and on
 Windows it names the MinGW flavour of the toolchain, whose C runtime is the same
 UCRT the MSVC flavour links. The spelling is `c-abi = "glibc"`, never
 `c-abi = "gnu"`; the request, as opposed to the answer, is `env = "gnu"` — a
-different question (`docs/spec/target-side.md` §3.4).
+different question (`docs/specs/target-side.md` §3.4).
 
 **`env` and `c-abi` are not interchangeable.** `env` is what the triple
 *asked* for; `c-abi` is what the graph and the payload *answered*. An

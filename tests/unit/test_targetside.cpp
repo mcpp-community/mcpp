@@ -362,7 +362,7 @@ TEST(TargetSideResolve, ThePayloadCLibraryIsNamedForItsPlatform) {
 
 // The rename above must not turn every ordinary `-gnu` build into a reported
 // request mismatch: the request keeps the triple's spelling by definition
-// (docs/spec/target-side.md §3.4) and the answer now names the library.
+// (docs/specs/target-side.md §3.4) and the answer now names the library.
 TEST(TargetSideResolve, TheEnvRequestIsSatisfiedByTheLibraryItNames) {
     EXPECT_TRUE(ts::c_abi_request_satisfied("gnu",   "glibc"));
     EXPECT_TRUE(ts::c_abi_request_satisfied("gnu",   "ucrt"));
