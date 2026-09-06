@@ -34,8 +34,33 @@ mkdir -p src/kernels
 cat > build.mcpp <<'EOF2'
 import std;
 import mcpp;
+
+// A `check` action per device source, and the reason it is here rather than a
+// bare read of the variable: mcpp refuses a device source that reached no
+// action (2026.9.6.5). A build program that only LOOKS at
+// `mcpp::device_sources()` models a project whose device files compile to
+// nothing, which is the defect that refusal exists to catch -- so this fixture
+// declares the edge a real rule package would declare, and asserts on the
+// variable as before.
 int main() {
     std::string flat(mcpp::device_sources());
+    std::size_t n = 0, start = 0;
+    while (start <= flat.size()) {
+        auto nl = flat.find('\n', start);
+        auto one = flat.substr(start, nl == std::string::npos ? flat.size() - start : nl - start);
+        start = nl == std::string::npos ? flat.size() + 1 : nl + 1;
+        if (one.empty()) continue;
+        auto abs   = std::string(mcpp::manifest_dir()) + "/" + one;
+        auto stamp = std::string(mcpp::out_dir()) + "/dev-" + std::to_string(n++) + ".stamp";
+        mcpp::action a;
+        a.id = "seen";
+        a.role = "check";
+        a.description = "account for a device source";
+        a.arg("cp").arg(abs.c_str()).arg(stamp.c_str());
+        a.input(abs.c_str());
+        a.output(stamp.c_str());
+        a.submit();
+    }
     for (auto& c : flat) if (c == '\n') c = ' ';
     mcpp::warning(("device=[" + flat + "]").c_str());
     return 0;
