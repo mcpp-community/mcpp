@@ -88,6 +88,13 @@ jobs:
       - name: Where the CI assertions live
         run: bash tools/lint-ci-assertions.sh
 
+      # Text-only, like the two steps around it, and it belongs here rather
+      # than in the target-matrix workflow: that workflow runs the matrix, and
+      # this asserts a property of the TABLE, which is readable without a
+      # single toolchain.
+      - name: The target matrix names every refusal
+        run: bash .github/tools/check_matrix_reasons.sh
+
       # Same placement and the same reason: pure text, no toolchain, and the
       # drift it catches — a 简体中文 page that has silently fallen behind its
       # English original — is invisible to every other job.

@@ -9179,7 +9179,24 @@ prepare_build(bool print_fingerprint,
             mcpp::platform::macos::deployment_target(
                 m->buildConfig.macosDeploymentTarget),
             mcpp::toolchain::default_cache_root(), stdCrt);
-        if (!sm) return std::unexpected(sm.error().message);
+        if (!sm) {
+            // THE ONE CODE IN THE TAXONOMY THAT NOTHING WROTE.
+            //
+            // `Code::StdModulePrecompile` has existed, with a name and a
+            // comment, since the taxonomy was written; `grep` for it found the
+            // declaration and the `name()` arm and no third site. So every
+            // std-module refusal reported `other`, which is the bucket
+            // refusal.cppm defines as "a refusal that has not been given a code
+            // yet" -- a visible admission, and one nobody had cashed.
+            //
+            // Measured: `tests/matrix/expected.tsv` carried exactly ONE `other`
+            // row out of 176, `x86_64-windows-msvc x llvm@22.1.8` in graph mode,
+            // and `scan.sh` printed it under "无名拒绝" on every Windows run.
+            // The sentence was right and the classification was missing --
+            // the same shape `Code::HostToolToolchain` was added for.
+            refusal::record(refusal::Code::StdModulePrecompile);
+            return std::unexpected(sm.error().message);
+        }
         stdBmiPath = sm->bmiPath;
         stdObjectPath = sm->objectPath;
         stdCompatBmiPath = sm->compatBmiPath;
