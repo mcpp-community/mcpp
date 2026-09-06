@@ -25,6 +25,25 @@ feature 时拿到空串。只断言前者的用例,在一个「凡装过的包�
 用的包是 `xim:ninja` —— mcpp 自己 bootstrap 进沙箱的那个,所以判据不需要网络;版本从
 store 里**读出来**而不是写死,否则 mcpp 升 ninja 会把这个 feature 的测试变红。
 
+### `[feature-deps]` 的共享库没上链接行
+
+同一族的第二个缺陷,现形于同一次构建。`[feature-deps]` 在解析期就并进了 root 的
+dependencies,所以那个依赖**被解析、被下载、被编译** —— 每一行日志都说它在。但 plan
+读 root 的边时读的是 `packages[0]`,而它是在那次并入**之前**拍下的快照,于是依赖的共享库
+既没进链接行也没进 implicit inputs。
+
+它安静是因为形态:库工程的 `mcpp build` 产出静态档案,而档案不解析符号,所以构建成功。
+失败出现在链接可执行文件的人那里 —— 报的是那个依赖自己的入口点未定义。llama.cpp 的
+Vulkan 后端就是这样撞上的:`libllama.a` 建好了,`vulkan_decode` 链接时 `vkGetInstanceProcAddr`
+未定义。
+
+修法沿用本文件里已有的写法:root 的真相在 `*m` 而不在 `packages[0]`(`checkVersionFloors`
+早已为同一个理由这样分支)。
+
+判据 e2e 615 的**形态**就是判据本身。同一个工程写成二进制时,有缺陷的引擎和修好的引擎
+都通过 —— 实测过 —— 所以围绕 `mcpp run` 搭的夹具是一个不可能失败的测试。让缺陷现形的是
+「库 root + 测试二进制去链接」,而这正是本生态里每一个库包的形态。
+
 ### 四个设备示例合并为 `examples/09-heterogeneous`
 
 `09-cuda-kernel` / `10-vulkan-compute` / `11-sycl-kernel` / `12-hip-kernel` 是同一课的

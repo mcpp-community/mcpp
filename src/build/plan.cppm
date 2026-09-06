@@ -1565,7 +1565,19 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
 
     std::map<std::size_t, std::vector<std::size_t>> directPackageDeps;
     for (std::size_t i = 0; i < packages.size(); ++i) {
-        for (auto const& [depName, spec] : packages[i].manifest.dependencies) {
+        // THE ROOT'S EDGES LIVE IN `manifest`, NOT IN `packages[0]`.
+        // `packages[0]` is snapshotted before `[feature-deps]` is folded into
+        // the root's dependency map, so a dependency the root acquired through
+        // an active feature is absent from it. Reading the snapshot here meant
+        // a feature-activated dependency was resolved, fetched and COMPILED --
+        // and then its shared library was neither linked nor named as an input,
+        // so the build succeeded and the consumer failed at link with the
+        // dependency's own symbols undefined. Two other readers already take
+        // this branch for the same reason (see checkVersionFloors in
+        // prepare.cppm).
+        auto const& edges = i == 0 ? manifest.dependencies
+                                   : packages[i].manifest.dependencies;
+        for (auto const& [depName, spec] : edges) {
             for (auto const& candidate : dependency_name_candidates(depName, spec)) {
                 auto it = packageIndexByName.find(candidate);
                 if (it == packageIndexByName.end() || it->second == i) continue;
