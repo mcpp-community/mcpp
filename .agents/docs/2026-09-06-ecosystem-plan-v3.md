@@ -221,6 +221,27 @@ forced rather than chosen.
 | R5 | mcpp-index | a version of `ggml-org:llamacpp` carrying the feature | R1-R4 | a consumer outside this repository selects `backend-vulkan` and builds |
 | R6 | llama.cpp-m | CI: build the feature on a runner with no GPU | R4 | the workflow is red when the feature is broken, which means it must run |
 | R7 | mcpp | document the framework tier in docs/20 | R4 | the shape a framework takes is stated once, not per project |
+| R8 | mcpp-index | `compat:spirv-headers`, which the index did not carry | -- | a consumer that READS SPIR-V resolves it from the ecosystem, not the host |
+| R9 | mcpp | two engine defects R1 exposed | R1 | each has a criterion that says no on the previous binary |
+
+### Status, 2026-09-06
+
+| id | state | evidence |
+|---|---|---|
+| R0 | done | eight builds answer `12 24 36 48`; `examples/09-heterogeneous/{cuda,vulkan,sycl,hip}` |
+| R8 | **merged** | mcpp-index#358, `compat:spirv-headers@1.4.357.0`, CN mirror byte-identical |
+| R9 | done, unreleased | `[feature-xlings]` reaches `xpkg_dir` (e2e 614); a `[feature-deps]` shared library reaches the link line (e2e 615). Both tests exit 1 on the previous binary and 0 on this one |
+| R1-R3 | done | 136 declared edges; one glslc probe feeding both readers; the generator built from the vendored source, statically linked |
+| R4 | done | `llvmpipe (LLVM 22.1.8, 256 bits)`, 7/7 layers offloaded, host token 471 = device token 471; the chat example generates 32 tokens |
+| R6 | written | a `vulkan` job on a GPU-less runner, gated on the lavapipe payload and `GGML_VK_VISIBLE_DEVICES=0` |
+| R7 | done | docs/20 and docs/zh/20, "What a framework looks like on top of this" |
+| R5 | blocked on release order | the index entry can only name an artefact that exists, so it follows llama.cpp-m's tag |
+
+**The release order is the reverse of the dependency order**, as it always is
+here: mcpp 2026.9.6.2 first (llama.cpp-m's CI pins it), then llama.cpp-m
+`b10069.1`, then the index entry that names that tag. The index PR for
+`compat:spirv-headers` went first and separately because llama.cpp-m cannot
+build without it -- splitting it out was forced by the cycle, not chosen.
 
 ### What the angles decide
 
