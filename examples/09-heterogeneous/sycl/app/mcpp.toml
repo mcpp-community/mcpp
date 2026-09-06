@@ -16,7 +16,7 @@ import_std = true
 [toolchain]
 default = "llvm@22.1.8"
 
-[dependencies.mcpp]
+[build-dependencies.mcpp]
 plugins = { version = "0.2.1", features = ["rules-sycl"], host-module = true }
 
 # The SYCL runtime, on the artifact's runtime search path. mcpp's private

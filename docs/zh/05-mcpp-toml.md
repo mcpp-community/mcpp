@@ -2027,9 +2027,16 @@ rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spir
 
 ```toml
 # 消费者
-[dependencies.mcpp]
-plugins = { version = "0.1.1", features = ["rules-spirv"], host-module = true }
+[build-dependencies.mcpp]
+plugins = { version = "0.2.1", features = ["rules-spirv"], host-module = true }
 ```
+
+**用 `[build-dependencies]` 而不是 `[dependencies]`** —— 规则包正是 §2.6.1 描述的那种
+情形:它的库绝不该到达目标,而它的规则仍然被需要。两条轴是分开的:
+`host-module = true` 说的是**要哪一种构建期产物**,而 section 说的是**这个包是否到达
+目标**;规则包在第二条轴上的答案是"否",而 section 就是说这件事的地方。写在
+`[dependencies]` 里同样能工作 —— 这恰恰是为什么这条区分必须被**陈述**,而不能指望由
+一次失败来教会。
 
 模块集合就是 feature 集合:feature 未激活的单元不编译,import 它会以未知模块失败。
 `mcpp:plugins` 是 mcpp 项目维护的集合(仓库 `mcpp-community/mcpp-plugins`);其成员

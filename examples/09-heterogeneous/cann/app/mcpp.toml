@@ -1,0 +1,51 @@
+[package]
+name         = "ascend-saxpy"
+namespace    = "example"
+version      = "0.1.0"
+description  = "An Ascend C kernel behind a seam module, with a CPU fallback"
+accelerators = ["ascend"]
+
+[language]
+standard   = "c++23"
+modules    = true
+import_std = true
+
+# NOT YET BUILDABLE, AND THE TWO MISSING PIECES ARE NAMED IN README.md.
+#
+# This manifest is the shape the Ascend lane takes, written out so that the
+# design it follows from is concrete rather than described. What it needs and
+# does not have: a rule package `mcpp.rules.ascendc`, and an xim package for the
+# CANN toolkit that carries BiSheng and the simulator.
+[build-dependencies.mcpp]
+plugins = { version = "0.2.1", features = ["rules-ascendc"], host-module = true }
+
+# The toolkit carries BOTH the device compiler and the per-SoC simulator, so
+# this is one payload rather than two:
+#
+#   <toolkit>/compiler/ccec_compiler/bin/bisheng     the device compiler
+#   <toolkit>/*/simulator/<SoC>/lib                  the hardware-free device
+[xlings.workspace]
+"xim:cann-toolkit" = "8.5.0"
+
+[build]
+# `dav-2201` is the device architecture, the role `sm_89` plays for CUDA. The
+# rule package derives BiSheng's own flag from it.
+accel = "ascend, dav-2201"
+sources = [
+  "src/*.cppm",
+  "src/*.cpp",
+  # The kernel carries the accel it is for. It is never offered to the C++
+  # compiler; the constrained glob routes it to the build program instead.
+  { glob = "src/kernels/*.asc", accel = "ascend, dav-2201" },
+]
+include_dirs = ["include"]
+
+# The CPU variant of the same seam. `accelerator = "none"` rather than
+# `not(accelerator = "ascend")`: `accelerator` is an open vocabulary, so a
+# fallback written by enumeration changes meaning as the ecosystem grows.
+[target.'cfg(accelerator = "none")'.build]
+sources = ["src/cpu/*.cpp"]
+
+[targets.ascend-saxpy]
+kind = "bin"
+main = "src/main.cpp"

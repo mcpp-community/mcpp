@@ -1,0 +1,76 @@
+[package]
+name         = "opkit-multi-backend"
+namespace    = "example"
+version      = "0.1.0"
+description  = "One operator, several device backends in one artifact, chosen at run time"
+accelerators = ["cuda", "vulkan"]
+
+[language]
+standard   = "c++23"
+modules    = true
+import_std = true
+
+# WHAT THIS EXAMPLE SHOWS THAT THE FOUR BESIDE IT DO NOT.
+#
+# Each of cuda/, hip/, sycl/ and vulkan/ is ONE seam: a device file and a CPU
+# file define the same symbol and are never in one link, so exactly one exists
+# and the choice is made at BUILD time. That is the right shape for a program.
+#
+# A library cannot make that choice. It is compiled once and consumed by people
+# whose machines differ, so its backends are ADDITIVE -- several land in one
+# artifact and the choice moves to RUN time. This is that shape.
+#
+# `accel` is deliberately absent, so a plain `mcpp build` produces the CPU-only
+# variant and needs no payloads at all. The device backends are opt-in:
+#
+#     mcpp build --accel "vulkan1.2"
+#     mcpp build --accel "cuda12.9+{sm_89}"
+#     mcpp build --accel "cuda12.9+{sm_89}, vulkan1.2"    # both, one artifact
+[build]
+# The device sources carry the accel they are for. A CONSTRAINED glob gates
+# itself -- it is offered to the build program only when this build's `accel`
+# accepts it -- so these need no `cfg` block, and the engine never offers a
+# `.cu` or a `.comp` to the C++ compiler.
+sources = [
+  "src/*.cppm",
+  "src/main.cpp",
+  "src/cpu/*.cpp",
+  { glob = "src/backends/cuda/*.cu",     accel = "cuda12.9+{sm_89}" },
+  { glob = "src/backends/vulkan/*.comp", accel = "vulkan1.2" },
+]
+include_dirs = ["include"]
+
+# ── the backends, additive ──────────────────────────────────────────────
+#
+# Each block activates when its backend is named, and several may activate at
+# once -- `accelerator` is a SET, not a choice. `defines` is what tells the
+# dispatcher which backends exist, so the registry's list and the sources
+# actually compiled cannot drift apart.
+# What each block carries is the HOST half of a backend plus the define that
+# admits it to the dispatcher. The device half is gated by its constrained glob
+# above, and the two must agree -- which is why the define lives here, beside
+# the host file that implements the entry point the dispatcher will call.
+[target.'cfg(accelerator = "cuda")'.build]
+defines = ["OPKIT_HAVE_CUDA=1"]
+
+[target.'cfg(accelerator = "vulkan")'.build]
+sources = ["src/backends/vulkan/*.cpp"]
+defines = ["OPKIT_HAVE_VULKAN=1"]
+
+# ── the dispatcher, and why neither predicate enumerates ─────────────────
+#
+# `not(accelerator = "none")` means "this build named at least one backend".
+# Spelled `not(any(accelerator = "cuda", accelerator = "vulkan"))` it would
+# have to be edited every time the ecosystem gains a backend -- and
+# `accelerator` is open by design, so a third one is a package rather than an
+# engine change. The edit that is forgotten is silent: the CPU-only dispatcher
+# and the registry would both compile, or neither would.
+[target.'cfg(not(accelerator = "none"))'.build]
+sources = ["src/dispatch/registry.cpp"]
+
+[target.'cfg(accelerator = "none")'.build]
+sources = ["src/dispatch/cpu_only.cpp"]
+
+[targets.opkit-multi-backend]
+kind = "bin"
+main = "src/main.cpp"

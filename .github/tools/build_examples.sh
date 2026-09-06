@@ -24,6 +24,10 @@ BUILD=(
     examples/03-pack-static
     examples/04-workspace
     examples/08-build-rules/app
+    # The CPU-only path of the multi-backend example: no payloads, and it is
+    # where `cfg(accelerator = "none")` is exercised. The device paths are
+    # opt-in via --accel and are covered by the rule packages' own CI.
+    examples/09-heterogeneous/multi-backend
 )
 
 # `key|reason`.
@@ -38,6 +42,7 @@ SKIP=(
     "examples/09-heterogeneous/hip/app|same, for the HIP payloads"
     "examples/09-heterogeneous/sycl/app|needs the dpcpp payload (over a gigabyte) and a device its runtime accepts"
     "examples/09-heterogeneous/vulkan/app|built AND RUN by the next step of this job, on the lavapipe payload, which needs no GPU"
+    "examples/09-heterogeneous/cann/app|does not build yet, and says so in its README: it needs a rules-ascendc rule package and an xim package for the CANN toolkit, neither of which exists. The manifest is written out so the shape is concrete rather than described"
 )
 
 # Every ROOT manifest in the tree: a directory with an `mcpp.toml` that has no

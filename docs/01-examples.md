@@ -31,11 +31,13 @@ examples.
 | 06 | [`examples/06-openkal-cross`](../examples/06-openkal-cross/) | One program asking each machine what it is, built for four targets from any host | `--target`, openkal, cross-compilation without editing the source |
 | 07 | [`examples/07-project-subos`](../examples/07-project-subos/) | A build program that finds its tools in the environment the project declared | `[xlings] subos`, `[xlings.workspace]`, a build program whose `PATH` is the environment the project named |
 | 08 | [`examples/08-build-rules`](../examples/08-build-rules/) | Two rule packages and a project that uses both | `host-module = true`, `[build-dependencies]`, `mcpp::action` with `role = "check"` |
-| 09 | [`examples/09-heterogeneous`](../examples/09-heterogeneous/) | One computation on a device, in four programming models, with a CPU fallback in each | `accel`, constrained source globs, the seam module, rule packages from `mcpp:plugins`, `cfg(accelerator = …)` |
+| 09 | [`examples/09-heterogeneous`](../examples/09-heterogeneous/) | One computation on a device, in several programming models, with a CPU fallback in each; plus one artifact carrying several backends at once | `accel`, constrained source globs, the seam module, rule packages from `mcpp:plugins`, `cfg(accelerator = …)` |
 | 09a | [`…/cuda`](../examples/09-heterogeneous/cuda/) | A CUDA kernel behind a seam module | `mcpp.rules.cuda`, `mcpp::action` with `role = "object"`, the driver stated as a fact and a floor |
 | 09b | [`…/vulkan`](../examples/09-heterogeneous/vulkan/) | The same computation as a Vulkan compute shader, on a GPU or on the CPU | `mcpp.rules.spirv`, `mcpp::action` with `role = "source"`, generated headers, a software driver as a payload |
 | 09c | [`…/sycl`](../examples/09-heterogeneous/sycl/) | The same computation as a SYCL kernel, compiled by a second compiler | `mcpp.rules.sycl`, the `.sycl` device extension, a chained `mcpp::action` for the device link, `compat:sycl-runtime` |
 | 09d | [`…/hip`](../examples/09-heterogeneous/hip/) | The same computation in HIP, reaching an NVIDIA device | `mcpp.rules.hip`, HIP as a header layer over the CUDA runtime, a two-chunk `accel` |
+| 09e | [`…/multi-backend`](../examples/09-heterogeneous/multi-backend/) | Several backends in ONE artifact, chosen at run time — the library shape, not the program shape | `accel` as a set, `cfg(accelerator = "none")` and its negation, a dispatch chain, a module seam over a C island boundary |
+| 09f | [`…/cann`](../examples/09-heterogeneous/cann/) | An Ascend C kernel behind the same seam. **Does not build yet** — its README names the two missing pieces | the `.asc` device extension, `op_kernel`/`op_host` as an island CANN already has, `accelerator = "none"` for the fallback |
 
 ## Suggested Reading Order
 

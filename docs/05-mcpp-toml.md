@@ -2379,9 +2379,18 @@ rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spir
 
 ```toml
 # a consumer
-[dependencies.mcpp]
-plugins = { version = "0.1.1", features = ["rules-spirv"], host-module = true }
+[build-dependencies.mcpp]
+plugins = { version = "0.2.1", features = ["rules-spirv"], host-module = true }
 ```
+
+**`[build-dependencies]`, not `[dependencies]`** — a rule package is the case
+§2.6.1 describes exactly: its library must never reach the target while its
+rule is still wanted. The two axes are separate, so `host-module = true` says
+*which build-time product* is wanted and the section says *whether the package
+reaches the target*; a rule package answers "no" on the second axis, and the
+section is where that is said. Written in `[dependencies]` it still works, and
+that is precisely why the distinction has to be stated rather than enforced by
+a failure.
 
 The module set is the feature set: a unit whose feature is not active is not
 compiled, and importing it fails as an unknown module. `mcpp:plugins` is the
