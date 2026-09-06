@@ -26,6 +26,10 @@ examples.
 | 01 | [`examples/01-hello`](../examples/01-hello/) | Minimal single-file project with `import std` | The minimal package shape (`mcpp new` also emits `tests/test_smoke.cpp`) |
 | 02 | [`examples/02-with-deps`](../examples/02-with-deps/) | Adds the `mcpplibs.cmdline` dependency to parse command-line arguments | `[dependencies]`, SemVer, `mcpp.lock` |
 | 03 | [`examples/03-pack-static`](../examples/03-pack-static/) | Produces a fully static release package via `mcpp pack --mode static` | `[target.<triple>]` and `[pack]` configuration |
+| 04 | [`examples/04-workspace`](../examples/04-workspace/) | A multi-package workspace: two libraries and an application sharing one namespace | `[workspace]`, path dependencies, `mcpp build --workspace` |
+| 05 | [`examples/05-lib-distribution`](../examples/05-lib-distribution/) | A prebuilt library and its consumer, interesting only together | `mcpp pack` for a library, a C header and a C++ module from one source, a distribution package |
+| 06 | [`examples/06-openkal-cross`](../examples/06-openkal-cross/) | One program asking each machine what it is, built for four targets from any host | `--target`, openkal, cross-compilation without editing the source |
+| 07 | [`examples/07-project-subos`](../examples/07-project-subos/) | A build program that finds its tools in the environment the project declared | `[xlings] subos`, `[xlings.workspace]`, `mcpp::xpkg_dir` |
 | 08 | [`examples/08-build-rules`](../examples/08-build-rules/) | Two rule packages and a project that uses both | `host-module = true`, `[build-dependencies]`, `mcpp::action` with `role = "check"` |
 | 09 | [`examples/09-heterogeneous`](../examples/09-heterogeneous/) | One computation on a device, in four programming models, with a CPU fallback in each | `accel`, constrained source globs, the seam module, rule packages from `mcpp:plugins`, `cfg(accelerator = …)` |
 | 09a | [`…/cuda`](../examples/09-heterogeneous/cuda/) | A CUDA kernel behind a seam module | `mcpp.rules.cuda`, `mcpp::action` with `role = "object"`, the driver stated as a fact and a floor |
