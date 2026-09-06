@@ -30,5 +30,6 @@
 规范性文档 —— 语义、约束与匹配规则,每条规则标注其实现状态。
 面向索引作者、贡献者与下游工具。
 
-- [spec/](../spec/README.md) —— 全部规范的索引
-  - [SPEC-001 —— 包身份、`[dependencies]` 选择器与匹配](../spec/package-identity.md)
+- [specs/](../specs/README.md) —— 全部规范的索引
+  - [SPEC-001 —— 包身份、`[dependencies]` 选择器与匹配](../specs/package-identity.md)
+  - [SPEC-004 —— `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约](../specs/manifest-semantics.md)

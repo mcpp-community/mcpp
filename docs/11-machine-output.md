@@ -104,7 +104,7 @@ Exit codes **of the enveloped commands** — the kinds `--protocol-version`
 advertises. This table is scoped to them on purpose; a code another command
 returns is not in it, and adding one would document something these commands
 cannot produce. The full mapping across all of mcpp is
-[the exit-code contract](spec/exit-codes.md).
+[the exit-code contract](specs/exit-codes.md).
 
 | code | meaning |
 |---|---|

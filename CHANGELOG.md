@@ -5,6 +5,38 @@
 
 ## [Unreleased]
 
+### 工具也有两条解析轴:`[target.<selector>.xlings…]`
+
+一条工具条目回答的是两个不同问题中的一个:它是在构建机上执行的(宿主),还是产物编译
+时对着的(目标)。`[xlings]` 在加载时一律按宿主平台解析,所以第二类事实此前只能写在
+第一类的表里。这在非交叉构建上恰好正确 —— 两条轴指向同一个平台 —— 并在第一次交叉构建时
+不再正确。SYCL 示例里的 `xim:glibc` 与 `xim:linux-headers` 就是这样写的。
+
+`[target.<selector>.xlings.workspace]` 与 `[target.<selector>.feature-xlings.<f>]` 现在
+被接受,并按**目标**解析,形状与既有的 `[target.<selector>.build]`、
+`[target.<selector>.feature-deps.<f>]` 相同:条件写在外层 selector 一处。零新词表,零新
+section,既有写法保持原义。规范落在 SPEC-004(`docs/specs/manifest-semantics.md`),
+字段说明落在 docs/05 §2.13。
+
+三条随之而来的规则,都会报错而不是静默择一:
+
+* selector 之下的值不得再写平台键对象。条件已经在外层,里面再写一层就是同一个事实的两处
+  陈述,而两处可以不一致。
+* selector 不得命名目标侧层(`accelerator`、`c-abi`、`compiler` 等)。理由是时序:层由
+  依赖解析回答,而那一遍跑在工具供给之后、每个包的 build.mcpp 之后 —— 在那里被接受的条目
+  会被声明却永远装不上,构建照常成功而工具就是不在。出路是按目标条件化,或用
+  `[feature-xlings.<f>]` 做门,feature 在任何东西被供给之前就已知。
+* `[target.<selector>.xlings]` 不接受 `subos`:一个工程只有一个环境,而不是每个目标一个。
+
+两条轴同时命名一个包时,去重按**包**而非按地址进行(`xim:glibc` 与 `xim:glibc@2.40` 是
+同一次安装的两个地址),`[target.<selector>]` 一侧作为更具体的陈述胜出,并报告这次覆盖。
+
+判据 `tests/unit/test_target_xlings_axis.cpp` 把同一份 manifest 按两个不同的目标各解析
+一次:目标轴条目随之出现与消失,宿主轴条目两次都在 —— 这是在一台机器上、不需要交叉工具链
+就能区分两条轴的测量。把接线摘掉后六条断言里有五条当场变红,剩下那条正是宿主轴的回归断言。
+e2e 619 覆盖层谓词的拒绝,并且在旧引擎上那份工程是**构建成功**的,这正是它要挡住的形态。
+
+
 ### 构建程序能问到 C++ 标准库:`mcpp::cxx_stdlib()`
 
 引擎早就解析出了这个值 —— 缓存键、ABI 标签、工具链指纹、`resolution.json` 里都有它 ——
@@ -938,8 +970,8 @@ mcpp 打印的建议行随之改成同一形态。
   不该匹配」读数完全相同。词汇表从求值器**导出**而不是被转录 —— 否则这条诊断自己就
   会成为本次发布正在修的那第五份手抄件。
 
-- **[`docs/spec/exit-codes.md`](docs/spec/exit-codes.md)(SPEC-003)。** 2026-08-08
-  的协议设计文档 §R4 把这份契约指派给了 `docs/spec/`,它一直没有写。`docs/11` 那张表
+- **[`docs/specs/exit-codes.md`](docs/specs/exit-codes.md)(SPEC-003)。** 2026-08-08
+  的协议设计文档 §R4 把这份契约指派给了 `docs/specs/`,它一直没有写。`docs/11` 那张表
   落地的是 usage/internal 的一半;命令**跑了并且失败**时返回的 `1` 既不在表里也不在
   别处 —— 而按信封命令划定的那张表**给不出** `4`。
 
@@ -2434,7 +2466,7 @@ windows-x86_64),而不是手头有哪几台 runner —— 一台拿到发布二�
   判据是失败模态:选错不会让链接失败,会得到一个能跑、偶尔崩的程序。
   `[build] runner` 早已按同一条规则处理。
 
-- **`docs/14-target-side.md`(中英)与 `docs/spec/target-side.md`(SPEC-002)。**
+- **`docs/14-target-side.md`(中英)与 `docs/specs/target-side.md`(SPEC-002)。**
 
 ### 变更
 
@@ -4349,11 +4381,11 @@ xlings 作为运行时底座:subos 环境到达程序,以及 self-contained 的
 
 ## [0.0.106] — 2026-07-25
 
-> 落地 **SPEC-001**(`docs/spec/package-identity.md`)—— 包身份的规范形态。0.0.105 为修 #278 引入的「`name` 必须写成完全限定名」是**编码约束而非设计规则**:它的唯一成因是 mcpp 构造安装目标时丢弃了已读到的字面 `name`、改用 `<ns>.<短名>` 重新渲染一遍。本版本改为直接使用字面值,规范形态回归 **`namespace` 承载层级、`name` 是单一原子段**。配套 xlings 0.4.69([#381](https://github.com/openxlings/xlings/issues/381),索引改按 `(namespace, name)` 建键)。
+> 落地 **SPEC-001**(`docs/specs/package-identity.md`)—— 包身份的规范形态。0.0.105 为修 #278 引入的「`name` 必须写成完全限定名」是**编码约束而非设计规则**:它的唯一成因是 mcpp 构造安装目标时丢弃了已读到的字面 `name`、改用 `<ns>.<短名>` 重新渲染一遍。本版本改为直接使用字面值,规范形态回归 **`namespace` 承载层级、`name` 是单一原子段**。配套 xlings 0.4.69([#381](https://github.com/openxlings/xlings/issues/381),索引改按 `(namespace, name)` 建键)。
 
 ### 新增
 
-- **规范文档目录 `docs/spec/`**:存放规范性文档(语义、约束、匹配机制),每条规则标注实现状态,与使用文档 `docs/*.md`、设计文档 `.agents/docs/*.md` 分工明确。首篇 **SPEC-001** 覆盖 `package.namespace`/`package.name` 形态、`[dependencies]` 四种书写文法及其候选阶梯、完整匹配流程、派生量公式与端到端示例。
+- **规范文档目录 `docs/specs/`**:存放规范性文档(语义、约束、匹配机制),每条规则标注实现状态,与使用文档 `docs/*.md`、设计文档 `.agents/docs/*.md` 分工明确。首篇 **SPEC-001** 覆盖 `package.namespace`/`package.name` 形态、`[dependencies]` 四种书写文法及其候选阶梯、完整匹配流程、派生量公式与端到端示例。
 - **描述符文件名自由**:描述符按**声明的身份**被发现,文件叫什么都行。推荐文件名仍作为**快路径**优先探测,全部落空时才回落到按身份扫描 `pkgs/**/*.lua` —— 符合推荐命名的索引**零扫描开销**。这补齐了 identity-first 解析长期只兑现「验证」半边、「发现」半边受固定候选文件名约束的缺口。
 - **同一索引内同短名不同命名空间的包各自可寻址**:`(alpha, widget)` 与 `(beta, widget)` 共存于一个索引,分别安装到 `alpha-x-widget` / `beta-x-widget`。需要 xlings >= 0.4.69。
 

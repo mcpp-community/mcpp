@@ -5,7 +5,7 @@
 mcpp#269(采纳 xlings 0.4.68 per-repo artifact)、
 openxlings/xlings#377(功能实现,PR #379)、#378(compact::git CA 探测)、#380(shim env 去重)
 **上游设计文档**: xlings 仓 `.agents/docs/2026-07-22-issue377-custom-index-artifact-design.md`
-**上游 schema**: xlings 仓 `docs/spec/xlings-json-schema.md`(0.4.68+ `artifact` / `source` 字段)
+**上游 schema**: xlings 仓 `docs/specs/xlings-json-schema.md`(0.4.68+ `artifact` / `source` 字段)
 
 ---
 

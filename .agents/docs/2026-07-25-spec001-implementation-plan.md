@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans。步骤用 `- [ ]` 跟踪。
 
-**Goal:** 实现 `docs/spec/package-identity.md`(SPEC-001)与 `.agents/docs/2026-07-25-name-namespace-canonical-implementation-spec.md` 的全部待实现项 → 单 PR(附版本)→ CI 全绿 → bypass squash 合入 → 0.0.106 release + xlings 全生态验证 → mcpp-index 全仓迁移 + 文档 + PR + CI。
+**Goal:** 实现 `docs/specs/package-identity.md`(SPEC-001)与 `.agents/docs/2026-07-25-name-namespace-canonical-implementation-spec.md` 的全部待实现项 → 单 PR(附版本)→ CI 全绿 → bypass squash 合入 → 0.0.106 release + xlings 全生态验证 → mcpp-index 全仓迁移 + 文档 + PR + CI。
 
 ## 前置事实(已核实)
 

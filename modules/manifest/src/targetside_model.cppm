@@ -458,7 +458,7 @@ struct Inputs {
 // defect class this release exists to remove.
 //
 // The REQUEST keeps the segment's spelling — `requestedCAbi` is the triple's
-// env verbatim by definition (docs/spec/target-side.md §3.4) — so the two are
+// env verbatim by definition (docs/specs/target-side.md §3.4) — so the two are
 // compared through `c_abi_request_satisfied` rather than by equality.
 inline std::string payload_libc_name(std::string_view os, std::string_view env) {
     if (env == "gnu") return os == "windows" ? "ucrt" : "glibc";

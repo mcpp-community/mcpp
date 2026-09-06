@@ -2624,13 +2624,140 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                                               std::vector<std::string>{});
                 }
             }
+            // `[target.<sel>.xlings.workspace]` and
+            // `[target.<sel>.feature-xlings.<f>]` — the TARGET axis of the tool
+            // plane (SPEC-004 §4). Same shape as `build` and `feature-deps`
+            // above, because a condition is written in one place in this file:
+            // outside, on the selector.
+            //
+            // THE VALUE HERE MUST NOT CARRY PLATFORM KEYS. The selector already
+            // said which targets this applies to; a `{ linux = ... }` object
+            // inside it states the same fact a second time, and two statements
+            // of one fact can disagree. `platform_values` is therefore NOT
+            // reused: the object form is refused, in a message that names the
+            // outer selector.
+            auto read_xlings_table =
+                [&](std::string_view where, const auto& tbl,
+                    std::vector<XlingsEntry>& out)
+                -> std::expected<void, ManifestError> {
+                // target -> the spelling it was written under, so a duplicate
+                // can name both rather than pick one. Same check the top-level
+                // table makes: `"xim:cmake" = "3.28"` and `cmake = "xim:3.28"`
+                // are one package written twice, and TOML cannot see that.
+                std::map<std::string, std::string> writtenAs;
+                for (auto& [k, val] : tbl) {
+                    auto scoped = split_when(val);
+                    if (!scoped) return std::unexpected(error(origin,
+                        std::format("{} {}: {}", where, k, scoped.error())));
+                    // `split_when` has already taken `version` and `when`, so a
+                    // value that is STILL a table is a platform table -- the
+                    // condition written a second time. Refused rather than
+                    // resolved: the selector outside already answered which
+                    // targets this applies to, and two answers can disagree.
+                    if (scoped->value->is_table()) {
+                        std::string keys;
+                        for (auto const& [pk, _] : scoped->value->as_table()) {
+                            if (!keys.empty()) keys += ", ";
+                            keys += pk;
+                        }
+                        return std::unexpected(error(origin, std::format(
+                            "{} {}: the value carries platform keys ({}), but "
+                            "[target.{}] already says which targets this "
+                            "applies to. Writing the condition twice lets the "
+                            "two disagree. Use a plain version string here, or "
+                            "move the entry to the top-level [xlings], where "
+                            "platform keys select the HOST.",
+                            where, k, keys, triple)));
+                    }
+                    if (!scoped->value->is_string())
+                        return std::unexpected(error(origin, std::format(
+                            "{} {}: expected a version string", where, k)));
+                    auto entry = make_xlings_entry(k, scoped->value->as_string());
+                    if (!entry) return std::unexpected(error(origin,
+                        std::format("{} {}: {}", where, k, entry.error())));
+                    if (auto prev = writtenAs.find(entry->target);
+                        prev != writtenAs.end())
+                        return std::unexpected(error(origin, std::format(
+                            "{} names '{}' twice, as '{}' and as '{}'; "
+                            "write it once", where, entry->target,
+                            prev->second, k)));
+                    writtenAs.emplace(entry->target, k);
+                    if (scoped->when != ToolWhen::Always)
+                        cc.xlings.depWhen[entry->address()] = scoped->when;
+                    out.push_back(*entry);
+                }
+                return {};
+            };
+            if (auto xit = body.find("xlings");
+                xit != body.end() && xit->second.is_table()) {
+                for (auto& [k, v] : xit->second.as_table()) {
+                    if (k == "workspace") {
+                        if (!v.is_table())
+                            return std::unexpected(error(origin, std::format(
+                                "[target.{}.xlings.workspace] must be a table "
+                                "of package = version", triple)));
+                        std::vector<XlingsEntry> entries;
+                        if (auto r = read_xlings_table(
+                                std::format("[target.{}.xlings.workspace]", triple),
+                                v.as_table(), entries);
+                            !r) return std::unexpected(r.error());
+                        for (auto const& e : entries) {
+                            // `workspace` is keyed by TARGET and `deps` carries
+                            // the address, exactly as the top-level table
+                            // stores them -- the merge folds these into the
+                            // same two containers, so the key discipline has to
+                            // be the same one on both axes.
+                            cc.xlings.workspace[e.target] = e.pin();
+                            cc.xlings.deps.push_back(e.address());
+                        }
+                        continue;
+                    }
+                    // `subos` names the project's environment, of which there
+                    // is one per project rather than one per target. Refused
+                    // rather than ignored: a silently dropped environment is
+                    // the failure #531 was filed for.
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}.xlings] does not accept '{}'. Only "
+                        "`workspace` is conditional on a target; `subos` names "
+                        "the project's environment and belongs in the "
+                        "top-level [xlings].", triple, k)));
+                }
+            }
+            if (auto fit = body.find("feature-xlings");
+                fit != body.end() && fit->second.is_table()) {
+                for (auto& [fname, fval] : fit->second.as_table()) {
+                    if (!fval.is_table()) continue;
+                    std::vector<XlingsEntry> entries;
+                    if (auto r = read_xlings_table(
+                            std::format("[target.{}.feature-xlings.{}]",
+                                        triple, fname),
+                            fval.as_table(), entries);
+                        !r) return std::unexpected(r.error());
+                    auto& dst = cc.xlings.featureDeps[std::string(fname)];
+                    for (auto const& e : entries) {
+                        // `featurePins` is keyed by ADDRESS, unlike `workspace`
+                        // above: a pin only reaches the materialised file when
+                        // its feature is active, so it is carried beside the
+                        // address that would install it.
+                        dst.push_back(e.address());
+                        cc.xlings.featurePins[e.address()] = e.pin();
+                    }
+                    // Same rule as `feature-deps` directly above: the feature
+                    // is registered UNCONDITIONALLY, because whether the
+                    // target matches decides what the feature pulls in, not
+                    // whether the feature exists.
+                    m.featuresMap.try_emplace(std::string(fname),
+                                              std::vector<std::string>{});
+                }
+            }
             if (!cc.inputs.cflags.empty() || !cc.inputs.cxxflags.empty()
                 || !cc.inputs.ldflags.empty() || !cc.inputs.sources.empty()
                 || !cc.inputs.defines.empty()
                 || !cc.inputs.globFlags.empty() || !cc.inputs.includeDirs.empty()
                 || !cc.inputs.includeDirsAfter.empty()
                 || !cc.dependencies.empty() || !cc.devDependencies.empty()
-                || !cc.buildDependencies.empty() || !cc.featureDeps.empty())
+                || !cc.buildDependencies.empty() || !cc.featureDeps.empty()
+                || !cc.xlings.deps.empty() || !cc.xlings.featureDeps.empty())
                 m.conditionalConfigs.push_back(std::move(cc));
         }
     }

@@ -9,7 +9,7 @@
 # no enveloped command can return 4, because `self env --format json` is built
 # specifically to avoid the `load_or_init` path that produces it.
 #
-# docs/spec/exit-codes.md is now the contract. This holds it.
+# docs/specs/exit-codes.md is now the contract. This holds it.
 #
 # ASSERTS THE CODE, NOT "STDERR IS NON-EMPTY". A criterion whose "no" is also
 # what a crash produces cannot tell the two apart — and the whole point of the

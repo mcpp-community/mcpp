@@ -78,7 +78,7 @@ not contradict them.
 | # | Behaviour | Evidence |
 |---|---|---|
 | 1 | The module name registered for a host module is the dependency's bare `package.name`; the namespace is discarded | `prepare.cppm:4780` — `auto const& canon = depPkg.manifest.package.name;` |
-| 2 | `package.name` must be a single atomic segment and may not contain `.` | `docs/spec/package-identity.md:90` |
+| 2 | `package.name` must be a single atomic segment and may not contain `.` | `docs/specs/package-identity.md:90` |
 | 3 | A host module must have an interface unit at its lib root; a missing one is a hard error | `resolve_lib_root_path`, diagnostic `"host module 'x': no interface unit at …"` |
 | 4 | The rule interface is compiled alone, so it may import `std` and the bundled `mcpp` module and nothing else | `hostprogram.cppm:423-425` |
 | 5 | It is compiled with the same flag set as `build.mcpp`, which is what makes BMI agreement structural rather than checked | `hostprogram.cppm:415-420`, and section 10.5 of the 2026-08-05 document |

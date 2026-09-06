@@ -867,13 +867,13 @@ package = {
 
 文件名只是提示 —— 描述符按声明的身份被发现,所以 `pkgs/c/chriskohlhoff.asio.lua` 与 `pkgs/z/anything.lua` 解析结果完全相同。推荐 `<name>.lua` 或 `<namespace>.<name>.lua`(命中 mcpp 的快路径),但不强制。
 
-旧的完全限定拼写(`name = "chriskohlhoff.asio"`)仍被接受,已发布的描述符无需改动。`mcpp xpkg parse` 会校验该规则,请在索引 CI 里跑它。描述符身份需要 mcpp >= 0.0.106,精确 selector 需要 mcpp >= 2026.8.10.1,两者使用 xlings >= 0.4.69;规范全文见 `docs/spec/package-identity.md`。
+旧的完全限定拼写(`name = "chriskohlhoff.asio"`)仍被接受,已发布的描述符无需改动。`mcpp xpkg parse` 会校验该规则,请在索引 CI 里跑它。描述符身份需要 mcpp >= 0.0.106,精确 selector 需要 mcpp >= 2026.8.10.1,两者使用 xlings >= 0.4.69;规范全文见 `docs/specs/package-identity.md`。
 
 `mcpp new --template` 刻意复用同一身份模型，而不是另造包文法:
 `[ns.]name[@version][:tname]`。其中裸名同样只表示 `mcpplibs`，version 与模板名可分别
 省略。省略 `tname` 时选择唯一显式 default；若未写 `default = true` 且只有一个模板，
 该单模板自动成为默认。多个未标默认的模板会报错，绝不按目录顺序选择。规范表见
-`docs/spec/package-identity.md` §4.4。
+`docs/specs/package-identity.md` §4.4。
 #### mcpp 何时刷新包索引
 
 `mcpp build` / `run` / `test` **只在依赖无法用本地索引解析时**刷新包索引,绝不会
@@ -1741,6 +1741,66 @@ mcpp 既供给它——机器上没有就装,有就映射——也把它物化�
 与 `macosx` 是同一个平台的两套词汇(mcpp 的三元组说前者,描述符与 xlings 的项目
 文件说后者),**凡是点名平台的地方两者都接受**。表里既没有本机这一项也没有
 `default`,就表示在这里什么都不声明。
+
+#### 两条解析轴 —— 宿主与目标(mcpp 2026.9.6.4+)
+
+一条工具条目回答的是两个不同问题中的一个,写在哪张表里决定了是哪一个:
+
+| 写法 | 轴 | 按什么解析 |
+|---|---|---|
+| `[xlings.workspace]`,平台键写在值里 | 宿主 | 跑这次构建的机器 |
+| `[target.<selector>.xlings.workspace]` | 目标 | 解析后的目标(`--target`,否则是宿主) |
+
+两种写法都是正确的,谁也不取代谁。在构建机上执行的工具属于宿主轴;产物编译或链接
+时对着的载荷属于目标轴。
+
+```toml
+[xlings.workspace]
+"xim:dpcpp" = "7.1.0"              # 一个编译器,它在本机上跑
+
+[target.'cfg(os = "linux")'.xlings.workspace]
+"xim:glibc"         = ""           # 设备单元编译时对着的东西
+"xim:linux-headers" = ""
+```
+
+非交叉构建时两条轴指向同一个平台,所以把目标事实写在宿主轴上的工程是碰巧正确的,
+而且照常工作。它在第一次被交叉构建时不再正确。**凡是产物编译或链接时对着的东西,
+推荐写在目标轴上。**
+
+`[target.<selector>.feature-xlings.<feature>]` 把条件与门组合起来,与
+`[target.<selector>.feature-deps.<feature>]` 同形:selector 说的是哪些目标,
+feature 说的是要不要。
+
+```toml
+[target.'cfg(os = "linux")'.feature-xlings.backend-vulkan]
+"xim:shaderc" = "2026.3"
+```
+
+**这里的 selector 禁止命名目标侧层。** `accelerator`、`c-abi`、`c++-abi`、
+`compiler`、`compiler-runtime`、`kernel-abi` 由依赖解析回答,而依赖解析发生在工具安装
+之后、构建程序运行之后。按层条件化的工具会被声明却永远装不上——构建照常成功,工具
+就是不在——所以这样的 manifest 会被拒绝,并把工具与谓词都点出来。改成按目标条件化,
+或者用 feature 做门:`[feature-xlings.<feature>]` 在任何东西被供给之前就已知,这正是
+它能回答这个场景的原因。
+
+条件只写在 selector 一处。selector 之下的值如果又带平台键,就是同一件事说了两遍,
+会被拒绝,并把两半都指出来:
+
+```
+[target.cfg(os = "linux").xlings.workspace] xim:tool: the value carries platform
+keys (linux, macosx), but [target.cfg(os = "linux")] already says which targets
+this applies to.
+```
+
+`subos` 不按目标条件化:一个工程只有一个环境,所以 `[target.<selector>.xlings]`
+拒绝这个键,而不是把它丢掉。
+
+**已发布的描述符不为目标轴条目携带边**,`mcpp publish` 会说明这一点。描述符按平台
+分块,而 selector 不是平台 —— `cfg(target_arch = "aarch64")` 不对应那份文件里的任何一块。
+**使用者**装到的东西来自顶层 `[xlings.workspace]`;目标轴对"本包自己的构建对着什么"
+仍然是正确的。
+
+这两条轴所属的一般规则见 [SPEC-004](../specs/manifest-semantics.md)。
 
 #### `when` —— 哪些命令需要这个工具(mcpp 2026.9.4.2+)
 

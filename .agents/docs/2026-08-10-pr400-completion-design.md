@@ -415,7 +415,7 @@ so mcpp carried on with a namespace it had invented"。
 | `src/pm/commands.cppm` | `mcpp add` 命中 legacy rung 时写规范点分形式 + warning |
 | `tests/e2e/162_bare_name_namespace_scope.sh` | 两个分支都锁：裸 `gtest` **命中 compat 且必须出现弃用警告**；裸 `widget`（无处可寻）**必须硬失败** |
 | `mcpp.toml` | 保持 `[dev-dependencies.compat] gtest`（这是规范写法，不回退） |
-| `docs/spec/package-identity.md` + zh | 明确写出窗口的起止版本 |
+| `docs/specs/package-identity.md` + zh | 明确写出窗口的起止版本 |
 
 #### B3. 效果
 

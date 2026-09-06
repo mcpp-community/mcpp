@@ -30,9 +30,17 @@ plugins = { version = "0.2.1", features = ["rules-sycl"], host-module = true }
 [dependencies.compat]
 sycl-runtime = "2026.09.07"
 
-# Three payloads, each closing one hole the host would otherwise fill.
+# Five payloads, each closing one hole the host would otherwise fill, written
+# on the TWO TOOL AXES rather than one (docs/05 section 2.13, SPEC-004 section 4).
 #
-#   dpcpp      the compiler.
+# The compiler runs on THIS machine whatever it is asked to emit, so it is a
+# host-axis entry. The other four are what the produced code is compiled
+# against, so they belong under a target selector; on a native build the two
+# axes name one platform, which is why writing them all in one table was right
+# by accident and stops being right the first time this is cross-compiled.
+[xlings.workspace]
+"xim:dpcpp" = "7.1.0"          # the compiler, and it runs here
+
 #   gcc        NOT a second toolchain: the C++ standard library the SYCL unit
 #              compiles against. Left alone, dpcpp's clang reads the HOST's
 #              /usr/include/c++ -- measured, and invisible until a machine
@@ -40,20 +48,19 @@ sycl-runtime = "2026.09.07"
 #   cuda-nvcc  the NVIDIA back end's libdevice. Also measured: without
 #              `--cuda-path` clang finds the host's CUDA installation and says
 #              nothing about it.
-#   glibc      and linux-headers: the C library. `xim:gcc` above supplies the
-#              C++ standard library; the C library underneath it is a separate
+#   glibc      and linux-headers: the C library. `xim:gcc` supplies the C++
+#              standard library; the C library underneath it is a separate
 #              declaration, and without it a `.sycl` unit that includes
 #              `<cstdio>` reaches the host's /usr/include. Both are UNPINNED:
 #              the C library version is the runtime binding's choice, not the
 #              project's, and a pinned entry resolves for exactly that version
 #              or for nothing. rules-sycl 0.2.1 refuses the build and names
 #              these two lines when they are absent.
-[xlings.workspace]
-"xim:dpcpp"             = "7.1.0"
-"xim:gcc"               = "15.1.0"
-"xim:cuda-nvcc"         = "12.9.86"
-"xim:glibc"             = ""
-"xim:linux-headers"     = ""
+[target.'cfg(os = "linux")'.xlings.workspace]
+"xim:gcc"           = "15.1.0"
+"xim:cuda-nvcc"     = "12.9.86"
+"xim:glibc"         = ""
+"xim:linux-headers" = ""
 
 [build]
 # Two chunks: the programming model, and the device. Written `sycl` alone, the

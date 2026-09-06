@@ -15,7 +15,7 @@
 # absent from the descriptor. It now refuses to guess.
 #
 # This test was the inverse before mcpp 0.0.106 (it asserted that the short form
-# was the violation). See docs/spec/package-identity.md §3.2 and mcpp#278.
+# was the violation). See docs/specs/package-identity.md §3.2 and mcpp#278.
 set -e
 
 TMP=$(mktemp -d)

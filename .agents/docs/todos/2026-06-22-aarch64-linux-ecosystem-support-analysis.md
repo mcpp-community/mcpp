@@ -37,7 +37,7 @@ mcpp 是一个 **self-host**(自己编译自己)的 C++ 构建/包管理工具�
 2. **arch 只在两处真正参与:**
    - `XLINGS_RES` sentinel → 下载 URL 的 arch token 拼接(`xlings/src/core/xim/installer.cppm:146` `build_xlings_res_url_`,按 `detect_arch_()` 自动带);
    - `libxpkg` 的 `elfpatch.lua` 给 ELF 打 INTERP/rpath 时的 loader 选择。
-3. **`XLINGS_RES` 包的 per-arch 已天然工作** —— 引擎已自动把 arch 拼进 URL。所以走 sentinel 的工具链包 **无需改 DSL**,只需上架 aarch64 资产。DSL "不支持同平台 per-arch URL"(`xim-pkgindex/docs/spec/url-template.md:69`)只卡 **写显式上游 URL** 的包(如 fish/jq)。
+3. **`XLINGS_RES` 包的 per-arch 已天然工作** —— 引擎已自动把 arch 拼进 URL。所以走 sentinel 的工具链包 **无需改 DSL**,只需上架 aarch64 资产。DSL "不支持同平台 per-arch URL"(`xim-pkgindex/docs/specs/url-template.md:69`)只卡 **写显式上游 URL** 的包(如 fish/jq)。
 
 ### 1.4 命名决策(贯穿全局,必须统一)
 
@@ -221,7 +221,7 @@ graph LR
 
 **D-0. (可选/长期)DSL 引擎扩展 per-arch URL**
 
-- [ ] `[决策]``[代码]` `xim-pkgindex/docs/spec/url-template.md:69` 列为 TODO。两种形态择一:
+- [ ] `[决策]``[代码]` `xim-pkgindex/docs/specs/url-template.md:69` 列为 TODO。两种形态择一:
   - 形态 A(推荐):让显式 URL 也支持 `{arch}` 占位 + 引擎按 `detect_arch_()` 填(与 XLINGS_RES 同源)。
   - 形态 B:新增平台 key `linux-aarch64`(沿用 `ubuntu={ref="linux"}` 继承哲学),引擎识别。
   - 注:mcpp 工具链链几乎全走 XLINGS_RES,此项主要为将来镜像上游显式 URL 的包铺路,**非主链阻塞**。
@@ -285,7 +285,7 @@ llvm(clang/`import std`)、musl-gcc、DSL 扩展可作为第二阶段。
 | 引擎 arch token:Linux=`aarch64` / macOS=`arm64`(平台感知) | `xlings/src/core/xim/installer.cppm:123-133` `detect_arch_()` |
 | XLINGS_RES 自动拼 arch | `xlings/src/core/xim/installer.cppm:146` `build_xlings_res_url_` |
 | 依赖解析只按 OS 不按 arch | `xlings` resolver/catalog/index 全用 `platform` key |
-| DSL 不支持同平台 per-arch URL | `xim-pkgindex/docs/spec/url-template.md:69-72` |
+| DSL 不支持同平台 per-arch URL | `xim-pkgindex/docs/specs/url-template.md:69-72` |
 | elfpatch loader 只列 x86_64 | `libxpkg/.../elfpatch.lua:287-289,315-317` |
 | mcpp 二进制全静态(musl) | `mcpp/mcpp.toml:24-26` `[target.x86_64-linux-musl] linkage=static` |
 | mcpp 静态链接不挂 glibc payload | `mcpp/src/build/flags.cppm:322-323` |

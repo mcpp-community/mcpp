@@ -41,7 +41,7 @@
 |---|---|---|---|
 | 1 | `--profile` help says release, resolver says dev | **confirmed** | one stale copy of a decision six other sites state correctly, one of them an e2e |
 | 2 | `index update <name>` filters only project indices | **confirmed** | recorded in the source as a follow-up; the promise is in the CLI, the limitation is in a comment |
-| 3 | exit code 4 missing from the machine-output table | **misaimed, and the real gap is wider** | no enveloped command can return 4. The design record assigned this whole contract to `docs/spec/`, which was never written (§4) |
+| 3 | exit code 4 missing from the machine-output table | **misaimed, and the real gap is wider** | no enveloped command can return 4. The design record assigned this whole contract to `docs/specs/`, which was never written (§4) |
 | 4 | `[features]` swallows unknown keys silently | **confirmed** | the only structured manifest section with no schema check |
 | 5 | `std-module` keys read but reported unsupported | **confirmed** | second recorded drift of a hand-maintained list, narrated in a comment eight lines below the defect |
 | 6 | the `cfg(c-abi = ...)` example fails both legs | **confirmed, far larger than filed** | a documented feature of the normative target-side chapter, never wired, 8 doc sites, failing silently |
@@ -198,10 +198,10 @@ unknown value, 70 uncaught exception — which is exactly the table that shipped
 and then says:
 
 > 光接管 parse error 不够,还要把 usage / runtime / internal 的 rc 映射写成契约,
-> 并覆盖异常边界 —— 否则客户端仍然要靠猜。这条现在是 `docs/spec/` 的内容,不是代码。
+> 并覆盖异常边界 —— 否则客户端仍然要靠猜。这条现在是 `docs/specs/` 的内容,不是代码。
 
 So the table is R4's **usage/internal** half, shipped without the **runtime**
-half. `ls docs/spec/` is `package-identity.md`, `README.md`, `target-side.md` —
+half. `ls docs/specs/` is `package-identity.md`, `README.md`, `target-side.md` —
 the assigned contract was never written.
 
 The reporter's instinct about 4 is right about the *contract* and wrong about the
@@ -213,7 +213,7 @@ The reporter's instinct about 4 is right about the *contract* and wrong about th
    `diagnostics` |` to both tables, and one sentence scoping the table to the
    enveloped commands. Without that sentence the next audit reaches the same
    conclusion this one did.
-2. Write the `docs/spec/` exit-code contract R4 assigned: usage (2), runtime (1),
+2. Write the `docs/specs/` exit-code contract R4 assigned: usage (2), runtime (1),
    config (4), unknown command (127), internal (70), with the channel each uses.
    That is where 4 belongs.
 
@@ -286,7 +286,7 @@ key  ∈ {os, arch, family, env}   bareword ∈ {windows, unix, linux, macos}
 ```
 
 `c-abi` is therefore not a missing branch in `match_kv` (`:113-119`): the value
-it would compare against is not in scope, and by `docs/spec/target-side.md` §3.5
+it would compare against is not in scope, and by `docs/specs/target-side.md` §3.5
 it cannot be — the target side resolves only after dependency resolution, while
 `merge_conditional_config` runs at `prepare.cppm:1958` from a triple-only
 context.
@@ -386,7 +386,7 @@ intent with the two-pass structure already anticipated.
 ### 6.4 What must not be done
 
 **Rewriting the examples to `cfg(env = "musl")` is wrong.**
-`docs/spec/target-side.md:137` (rule 3.4, marked implemented) states that the
+`docs/specs/target-side.md:137` (rule 3.4, marked implemented) states that the
 triple's `env` segment must be treated as a **request** for the `c-abi`, never as
 its answer — the answer may come from the graph, e.g. `openkal-musl` supplying
 musl under a `-gnu` triple. Substituting one for the other documents a different
@@ -672,7 +672,7 @@ The #531 path does neither. §12 is what that costs.
 ## 10. Not recommended
 
 - **Adding exit code 4 to `docs/11`'s table as filed** (§4.1). Write the
-  `docs/spec/` contract instead; 4 belongs there.
+  `docs/specs/` contract instead; 4 belongs there.
 - **Rewriting the `cfg(c-abi = …)` examples to `cfg(env = …)`** (§6.4). The spec
   states these are different questions.
 - **Gating #531's provisioning behind an opt-out flag** (§8). A second grade of
@@ -893,7 +893,7 @@ They are kept because each was wrong in a way worth naming.
 **The exit-code finding was scoped too narrowly.** The first draft said "do not
 add 4" and stopped. Reading R4 of the protocol design doc showed the table is
 half of an assigned contract and the other half was never written, so the useful
-answer is "add 1 here, and write the `docs/spec/` contract where 4 belongs" —
+answer is "add 1 here, and write the `docs/specs/` contract where 4 belongs" —
 which makes the reporter half right rather than simply wrong.
 
 **`private_include_dirs` was reported as drift and is more than that.** The first

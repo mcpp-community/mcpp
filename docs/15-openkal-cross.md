@@ -305,5 +305,5 @@ the paths where a project overrides the contract explicitly.
 ## Reference
 
 [docs/14 — The Target Side](14-target-side.md) for the five layers, the four
-origins and the rules. [SPEC-002](spec/target-side.md) for the normative
+origins and the rules. [SPEC-002](specs/target-side.md) for the normative
 statement of the capability grammar.

@@ -247,7 +247,7 @@ members = ['cmake2mcpp_generated/spdlog']
 
 **issue 有一条主张不成立**:包模板渲染器**不会**挂死。但它有另一个真 bug——`template.cppm:142-144` 是三遍独立全文扫描,后一遍会命中前一遍刚插进去的内容;实测 `projectName = "{{self.name}}"` 时 `name = "{{project.name}}"` 渲染成 `name = "imgui"`(静默错值)。
 
-**修法**:在 `mcpp.scaffold` 导出单一校验器 `validate_project_name`,在 `cmd_new.cppm:28` 之后、第 40 行分流之前**唯一一次**调用(这样 builtin 与包模板天然共用同一契约)。正向文法 `[A-Za-z_][A-Za-z0-9_-]*`,错误消息里把文法和被拒字符都打出来。**含 `.` 直接拒**并引用 `docs/spec/package-identity.md §3.2`——实测 `mcpp new foo.bar` 今天 rc=0 且 `mcpp build` 成功,即 mcpp 会给用户生成一个**本地能编、一发布就不合规**的 manifest,这比死循环更可能被真实用户撞到。删掉手抄的错替换器,builtin 改用 `template.cppm` 的那份(并顺手修串扰)。四处 `std::ofstream` 全部检查流状态。
+**修法**:在 `mcpp.scaffold` 导出单一校验器 `validate_project_name`,在 `cmd_new.cppm:28` 之后、第 40 行分流之前**唯一一次**调用(这样 builtin 与包模板天然共用同一契约)。正向文法 `[A-Za-z_][A-Za-z0-9_-]*`,错误消息里把文法和被拒字符都打出来。**含 `.` 直接拒**并引用 `docs/specs/package-identity.md §3.2`——实测 `mcpp new foo.bar` 今天 rc=0 且 `mcpp build` 成功,即 mcpp 会给用户生成一个**本地能编、一发布就不合规**的 manifest,这比死循环更可能被真实用户撞到。删掉手抄的错替换器,builtin 改用 `template.cppm` 的那份(并顺手修串扰)。四处 `std::ofstream` 全部检查流状态。
 
 > 零测试覆盖:`tests/unit` 下无任何 scaffold 测试,`02_new_build_run.sh:11` 只跑 `mcpp new hello`。**这些不是回归,是从来没被测过。**
 
@@ -591,7 +591,7 @@ $ ls compile_commands.json                      # No such file  ← 且此后每
 | #386 | `prepare.cppm:3210` 的默认 glob(4 项)已与 `toml.cppm:1476`(7 项)漂移 ⇒ **走多版本 mangling staging 的包今天就漏掉汇编源** | P2 |
 | #380 | `template.cppm:142-144` 三遍独立全文扫描 ⇒ 占位符串扰,静默错值 | P2 |
 | #380 | `template.cppm:156` 的 `recursive_directory_iterator(…, ec)` 接住 `ec` 从不判读 ⇒ 模板目录读不了时零迭代、返回成功、打印 "Created" | P2 |
-| #380 | `mcpp new foo.bar` rc=0 且能构建,但违反 `docs/spec/package-identity.md §3.2` ⇒ 生成**本地能编、一发布就不合规**的 manifest | P2 |
+| #380 | `mcpp new foo.bar` rc=0 且能构建,但违反 `docs/specs/package-identity.md §3.2` ⇒ 生成**本地能编、一发布就不合规**的 manifest | P2 |
 | #304 | `flags.cppm:884-885` 把 `runtime_dirs` 拼在 `user_ldflags` **之前** ⇒ 用户显式 `-Lvendor` 也被压过 | P2 |
 | #304 | macOS 上 `[runtime] library_dirs` **完全是死的**(`flags.cppm:873-874` 既不发 `-L` 也不发 `-rpath`),而 `execute.cppm:1370-1377` 还在警告「dependencies must be reachable through the binary's rpath」——mcpp 自己从没写过那个 rpath | P2 |
 | #304 | 同一个键在四个后端有四种链接行含义(ELF `-L`+`-rpath` / MSVC `/LIBPATH:` / clang-MSVC-ABI 与 MinGW 什么都不发 / macOS 什么都不发),文档只有一句「进 RUNPATH」 | P3 |

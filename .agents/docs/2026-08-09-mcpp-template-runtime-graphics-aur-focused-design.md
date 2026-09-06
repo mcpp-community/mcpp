@@ -1021,7 +1021,7 @@ mcpp new/build/run
 |---|---|
 | mcpp add dotted/colon selector | <code>tests/e2e/12_add_command.sh:82-106</code>；<code>src/pm/commands.cppm:75-143</code> |
 | shared dotted candidate rules | <code>src/pm/dependency_selector.cppm:78-120</code> |
-| package identity spec | <code>docs/spec/package-identity.md:150-169</code> |
+| package identity spec | <code>docs/specs/package-identity.md:150-169</code> |
 | current TemplateSpec | <code>src/scaffold/template.cppm:22-47</code> |
 | scaffold short-name loss | <code>src/scaffold/create.cppm:30-129</code> |
 | template E2E | <code>tests/e2e/69_package_templates.sh:94-194</code> |

@@ -69,7 +69,7 @@
 - Modify: `docs/zh/05-mcpp-toml.md`
 - Modify: `docs/06-workspace.md`
 - Modify: `docs/zh/06-workspace.md`
-- Modify: `docs/spec/package-identity.md`
+- Modify: `docs/specs/package-identity.md`
 
 **Interfaces:**
 
@@ -336,7 +336,7 @@
 - Modify: `docs/zh/05-mcpp-toml.md`
 - Modify: `docs/08-toolchain-internals.md`
 - Modify: `docs/zh/08-toolchain-internals.md`
-- Modify: `docs/spec/package-identity.md`
+- Modify: `docs/specs/package-identity.md`
 - Modify: `scripts/aur/README.md`
 
 - [x] Re-query latest non-draft/non-prerelease xlings immediately before pinning; pin the exact version and verify every authoritative pin site matches.

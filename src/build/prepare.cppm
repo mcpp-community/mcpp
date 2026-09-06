@@ -239,8 +239,114 @@ materialize_generated_files(const std::filesystem::path& root,
 // The resolved triple travels INSIDE `ctx` (cfgpred::Ctx::triple). It used to
 // be a third parameter here too, which is how a bare-triple predicate came to
 // disagree with a cfg() one about the same native build — see the note on Ctx.
-void merge_conditional_config(mcpp::manifest::Manifest& m,
-                             const cfgpred::Ctx& ctx)
+// `[target.<sel>.xlings…]` — the TARGET axis of the tool plane (SPEC-004 §4).
+//
+// Folded into `m.xlings` exactly as the conditional build inputs fold into
+// `m.buildConfig`, so every downstream reader — the two provisioning passes,
+// `fillXpkgDirs`, the materialised `.xlings.json` — stays on one flat list and
+// none of them has to learn that a second axis exists.
+//
+// THE HOST AXIS IS NOT TOUCHED. Top-level `[xlings]` has already resolved its
+// platform-keyed values against the host by the time this runs; folding here
+// puts the target's entries beside them.
+//
+// DEDUP IS BY PACKAGE, NOT BY ADDRESS. `xim:glibc` and `xim:glibc@2.40` are two
+// addresses for ONE install, and keeping both asks xlings for the same package
+// twice at two versions — which is not a build that fails, it is a build whose
+// environment depends on iteration order. Where both axes name a package, the
+// conditional entry wins, because it is the more specific statement; that is
+// the rule the flag half of this merge follows by appending after the base
+// entries. A disagreement is reported, because it is the one case where the
+// author wrote two things and only one of them can happen.
+export void merge_conditional_xlings(mcpp::manifest::Manifest& m,
+                                     const mcpp::manifest::ConditionalConfig& cc)
+{
+    auto package_of = [](std::string_view address) {
+        return mcpp::manifest::parse_address(address).target;
+    };
+    for (auto const& a : cc.xlings.deps) {
+        const auto pkg = package_of(a);
+        auto it = std::ranges::find_if(m.xlings.deps, [&](const std::string& e) {
+            return package_of(e) == pkg;
+        });
+        if (it == m.xlings.deps.end()) { m.xlings.deps.push_back(a); continue; }
+        if (*it != a)
+            mcpp::diag::warning("xlings/axis-override", std::format(
+                "'{}' is declared on both tool axes, as '{}' and as '{}'. The "
+                "[target.<selector>] entry is the more specific statement and "
+                "is the one used. Declare a tool that runs on the build machine "
+                "in the top-level [xlings.workspace], and what the produced "
+                "code is compiled against under [target.<selector>.xlings."
+                "workspace] — see docs/05 section 2.13.", pkg, *it, a));
+        *it = a;
+    }
+    // Keyed by PACKAGE, so the same override applies without a second search.
+    for (auto const& [pkg, pin] : cc.xlings.workspace)
+        m.xlings.workspace.insert_or_assign(pkg, pin);
+    // Keyed by ADDRESS. `insert_or_assign` rather than `try_emplace` for the
+    // same reason: the address that survived above is the conditional one.
+    for (auto const& [addr, w] : cc.xlings.depWhen)
+        m.xlings.depWhen.insert_or_assign(addr, w);
+    for (auto const& [f, addrs] : cc.xlings.featureDeps) {
+        auto& dst = m.xlings.featureDeps[f];
+        for (auto const& a : addrs) {
+            const auto pkg = package_of(a);
+            auto it = std::ranges::find_if(dst, [&](const std::string& e) {
+                return package_of(e) == pkg;
+            });
+            if (it == dst.end()) dst.push_back(a); else *it = a;
+        }
+    }
+    for (auto const& [addr, pin] : cc.xlings.featurePins)
+        m.xlings.featurePins.insert_or_assign(addr, pin);
+}
+
+// A `[target.<selector>.xlings…]` selector MUST NOT name a target-side layer.
+//
+// Not a style rule, a schedule one. The five layer keys (`accelerator`,
+// `c-abi`, `compiler`, …) are answered by dependency RESOLUTION, so a
+// predicate naming one is held back to the second merge pass further down —
+// which runs after every package's build.mcpp has already run and after the
+// root's tool provisioning. An entry admitted there would be declared and
+// never installed, and the failure it produces is the worst-shaped one there
+// is: the build succeeds and the tool is simply absent.
+//
+// Refused rather than deferred, and refused at the earliest point that can
+// see the predicate. The gate plane answers the case this shape is reached
+// for: `[feature-xlings.<f>]` selects a tool by what the project asked for,
+// and a feature is known before anything is provisioned.
+export std::optional<std::string>
+layer_predicated_xlings_refusal(const mcpp::manifest::Manifest& m)
+{
+    for (auto const& cc : m.conditionalConfigs) {
+        if (cc.xlings.empty()) continue;
+        if (!cfgpred::uses_layer(cc.predicate)) continue;
+        std::string named;
+        for (auto const& a : cc.xlings.deps) {
+            if (!named.empty()) named += ", ";
+            named += a;
+        }
+        for (auto const& [f, addrs] : cc.xlings.featureDeps)
+            for (auto const& a : addrs) {
+                if (!named.empty()) named += ", ";
+                named += std::format("{} (feature '{}')", a, f);
+            }
+        return std::format(
+            "[target.'{}'] declares tools ({}), but its predicate names a "
+            "target-side layer. A layer is answered by dependency resolution, "
+            "which happens after tools are installed and after build programs "
+            "run, so a tool conditioned on one would be declared and never "
+            "installed. Condition it on the target instead "
+            "(`[target.'cfg(os = \"linux\")'.xlings.workspace]`), or gate it "
+            "on a feature (`[feature-xlings.<feature>]`), which is known "
+            "before anything is provisioned. See docs/05 section 2.13.",
+            cc.predicate, named);
+    }
+    return std::nullopt;
+}
+
+export void merge_conditional_config(mcpp::manifest::Manifest& m,
+                                    const cfgpred::Ctx& ctx)
 {
     // A DISTRIBUTION package may carry a leg's link line twice: as `ldflags`
     // (GNU spelling, which is all an older mcpp reads) and as the neutral
@@ -296,6 +402,7 @@ void merge_conditional_config(mcpp::manifest::Manifest& m,
             m.runtimeConfig.linkIntent.linkLibraryDirs.push_back(d);
         for (auto const& l : cc.libraries)
             m.runtimeConfig.linkIntent.libraries.push_back(l);
+        merge_conditional_xlings(m, cc);
         // `modules.sources` is the scanner's own view and is not part of
         // BuildInputs, so conditional sources are mirrored into it here.
         for (auto const& s : cc.inputs.sources)
@@ -351,7 +458,7 @@ void fold_build_defines_into_flags(mcpp::manifest::BuildConfig& bc) {
 // WHY A SECOND PASS AND NOT AN EARLIER CONTEXT. A layer is answerable only
 // after dependency resolution — a package in the graph may supply the C library
 // (openkal-musl under a `-gnu` triple), which is exactly why the triple's `env`
-// segment is a REQUEST and not the answer (docs/spec/target-side.md §3.4). The
+// segment is a REQUEST and not the answer (docs/specs/target-side.md §3.4). The
 // first merge runs before resolution because conditional DEPENDENCIES have to.
 //
 // WHERE IT RUNS. Between `tsd::resolve` and the P1689 scan — the same window in
@@ -380,6 +487,12 @@ bool merge_layer_conditional_config(mcpp::manifest::Manifest& m,
             m.runtimeConfig.linkIntent.linkLibraryDirs.push_back(d);
         for (auto const& l : cc.libraries)
             m.runtimeConfig.linkIntent.libraries.push_back(l);
+        // NO `merge_conditional_xlings` HERE, DELIBERATELY. A cc that reaches
+        // this pass has a layer in its predicate, and one carrying tools was
+        // refused long before — see `layer_predicated_xlings_refusal`. Folding
+        // it here would be folding after the tools were provisioned and after
+        // every build.mcpp ran, which is the silent-absence failure the
+        // refusal exists to prevent.
     }
     // Re-fold only when something was added. The call is safe either way — the
     // function clears `defines` after folding and says so — but skipping it
@@ -3708,6 +3821,29 @@ prepare_build(bool print_fingerprint,
     // ask, and re-deriving it there would be a second copy of the aggregation
     // rule.
     std::vector<std::vector<std::string>> activeFeaturesByPackage;
+
+    // The split is computed HERE and reused by the late pass, so the two
+    // cannot disagree about what "the graph declared" means.
+    auto graph_xlings_split = [&] {
+        std::vector<std::string> rootSpecs = applicable_xlings_addresses(
+            runtimeOwnerManifest, activeFeaturesByPackage.empty()
+                ? std::vector<std::string>{} : activeFeaturesByPackage[0],
+            toolPurpose, /*isRoot=*/true);
+        std::vector<std::string> fromGraph;
+        for (std::size_t i = 0; i < packages.size(); ++i) {
+            const auto& man = packages[i].manifest;
+            const auto feats = i < activeFeaturesByPackage.size()
+                ? activeFeaturesByPackage[i] : std::vector<std::string>{};
+            for (auto const& spec : applicable_xlings_addresses(
+                     man, feats, toolPurpose, /*isRoot=*/i == 0)) {
+                if (std::ranges::find(rootSpecs, spec) != rootSpecs.end())
+                    continue;
+                if (std::ranges::find(fromGraph, spec) == fromGraph.end())
+                    fromGraph.push_back(spec);
+            }
+        }
+        return std::pair{std::move(rootSpecs), std::move(fromGraph)};
+    };
     packages.push_back({*root, *m});
 
     // dep_manifests is kept around purely so the build plan can move it
@@ -7034,6 +7170,53 @@ prepare_build(bool print_fingerprint,
         }
         activeFeaturesByPackage.resize(packages.size());
 
+        // ── The GRAPH's `[xlings.workspace]`, provisioned BEFORE build.mcpp ──
+        //
+        // Same ordering rule as the host-tool block directly below, and for the
+        // same reason: a build program consumes what was provisioned, so
+        // provisioning after it has run is provisioning that did not happen.
+        //
+        // MEASURED, on the published `ggml-org:llamacpp@b10069.2`. That package
+        // declares its shader compiler under the feature that needs it:
+        //
+        //     [feature-xlings.backend-vulkan]
+        //     "xim:shaderc" = "2026.3"
+        //
+        // and its build program asks for it with `xpkg_dir`. As the ROOT it
+        // works, because the root's pass runs early. As a DEPENDENCY it did
+        // not: the graph's pass ran ~1700 lines further down, after every
+        // build.mcpp, so `xpkg_dir` answered "" and the package refused its own
+        // headline feature with the very declaration it had already made. A
+        // clean `MCPP_HOME` pulled twenty-four xim payloads for that graph and
+        // not shaderc.
+        //
+        // IT WAS INVISIBLE ON ANY MACHINE THAT HAD BUILT THE PACKAGE ITSELF.
+        // Once `xim:shaderc` is in the registry for any reason, `xpkg_dir`
+        // finds it and the ordering stops mattering; only an empty registry can
+        // see this. The sandbox run is what caught it.
+        //
+        {
+            // ONE CHECK OVER THE WHOLE GRAPH, at the site whose consequence it
+            // describes. `merge_conditional_config` has three call sites and
+            // returns void; this loop sees the root and every package that
+            // reached the graph, and it runs before the first payload is
+            // fetched, so a refusal costs nothing that has to be undone.
+            if (auto why = layer_predicated_xlings_refusal(runtimeOwnerManifest))
+                return std::unexpected(*why);
+            for (auto const& pkg : packages)
+                if (auto why = layer_predicated_xlings_refusal(pkg.manifest))
+                    return std::unexpected(*why);
+            auto [_rootSpecs, fromGraph] = graph_xlings_split();
+            if (!fromGraph.empty()) {
+                if (auto cfg = get_cfg()) {
+                    if (auto pv = provision_xlings_addresses(
+                            **cfg, fromGraph, *root,
+                            "[xlings.workspace] entries declared by dependencies");
+                        !pv) return std::unexpected(pv.error());
+                }
+            }
+        }
+
         // ── #355: HOST tool provisioning ────────────────────────────────────
         //
         // Runs AFTER feature activation (a tool target's gate is a feature) and
@@ -9301,31 +9484,21 @@ prepare_build(bool print_fingerprint,
     // and never acted on. The two definitions are one expression below, so
     // they cannot drift — the third of the three hazards §12.6 named.
     {
-        std::vector<std::string> xlingsSpecs = applicable_xlings_addresses(
-            runtimeOwnerManifest, activeFeaturesByPackage.empty()
-                ? std::vector<std::string>{} : activeFeaturesByPackage[0],
-            toolPurpose, /*isRoot=*/true);
-        // Everything the GRAPH declared, on the tiers this verb needs. `isRoot`
-        // is false for every one of them, which is what makes `when = "dev"`
-        // stop at the package that wrote it.
-        std::vector<std::string> fromGraph;
-        for (std::size_t i = 0; i < packages.size(); ++i) {
-            const auto& man = packages[i].manifest;
-            const auto feats = i < activeFeaturesByPackage.size()
-                ? activeFeaturesByPackage[i] : std::vector<std::string>{};
-            for (auto const& spec : applicable_xlings_addresses(
-                     man, feats, toolPurpose, /*isRoot=*/i == 0)) {
-                if (std::ranges::find(xlingsSpecs, spec) != xlingsSpecs.end())
-                    continue;
-                if (std::ranges::find(fromGraph, spec) == fromGraph.end())
-                    fromGraph.push_back(spec);
-            }
-        }
+        // THE SAME SPLIT THE EARLY PASS USED. Written once, above, next to the
+        // provisioning that has to happen before build.mcpp; this site reads it
+        // for the records below. Two copies of "what did the graph declare"
+        // would be two definitions of the same word.
+        auto [xlingsSpecs, fromGraph] = graph_xlings_split();
         // THE ROOT'S OWN PASS RAN LONG AGO, AND THIS ONE MUST NOT REPEAT IT.
         // The stamp is keyed by the LIST, so provisioning root+graph together
         // would key a different list than the early pass wrote and re-run an
         // xlings round trip on every build. Only what the graph added is
         // provisioned here, under its own key.
+        //
+        // Since the graph's pass moved above build.mcpp this call is normally a
+        // stamp hit. It is kept rather than deleted because the stamp is keyed
+        // by content: if the early pass did not run, or ran on a different
+        // list, this is still the site that makes the record true.
         if (!fromGraph.empty()) {
             if (auto cfg = get_cfg()) {
                 if (auto pv = provision_xlings_addresses(

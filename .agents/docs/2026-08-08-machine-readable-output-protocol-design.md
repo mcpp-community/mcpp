@@ -108,7 +108,7 @@ stdout 内容来判断 —— 正是要避免的事。
 > 读 stdout,尝试 JSON 解析;解析成功**且**含 `schemaVersion` 与 `kind` 才认为拿到了
 > 协议输出。**不得**以退出码 0、或「命令没报错」作为判据。
 
-这条规则要写进 `docs/spec/`,并且是 envelope 必须**自识别**的理由:客户端没有别的
+这条规则要写进 `docs/specs/`,并且是 envelope 必须**自识别**的理由:客户端没有别的
 可靠信号。`--protocol-version` 仍值得有(新版本上省一次 spawn),但它是优化,不是
 契约地基。
 
@@ -368,7 +368,7 @@ wellwei 指出 `env_report()` 调 `config::load_or_init()`,不是只读。核实
 
 W1 修掉了最坏的一条。但 wellwei 说得对:**光接管 parse error 不够**,还要把
 usage / runtime / internal 的 rc 映射写成契约,并覆盖异常边界 —— 否则客户端仍然要靠
-猜。这条现在是 `docs/spec/` 的内容,不是代码。
+猜。这条现在是 `docs/specs/` 的内容,不是代码。
 
 ## R5. 全局 `schemaVersion` 把不相关的 kind 耦合在一起
 
