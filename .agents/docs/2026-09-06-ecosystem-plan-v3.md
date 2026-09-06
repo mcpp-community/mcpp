@@ -91,7 +91,7 @@ is for, and it is deliberately ordered so the first entry is a gate.
 
 | # | project | lane(s) | criterion | why this order |
 |---|---|---|---|---|
-| F1 | llama.cpp Vulkan | SPIR-V | correct tokens on lavapipe, no GPU | its blocker is gone (`glslc` published) and its shader pipeline is the most mechanical of the nine |
+| F1 | llama.cpp Vulkan | SPIR-V | the device's token equals the host's, on a software device, no GPU | its blocker is gone (`glslc` published) and its shader pipeline is the most mechanical of the nine |
 | F2 | llama.cpp CUDA | CUDA | correct tokens on a device | round 3 reached "chain complete, blocked on a payload matrix"; re-measure against the current CCCL lines before assuming that still holds |
 | F3 | Kokkos | CUDA, SYCL | its own unit tests pass under both backends from one source | the first entry that exercises TWO lanes on one source, which is the portability claim |
 | F4 | oneDNN | SYCL | `benchdnn` on the CUDA backend | the first entry whose upstream build assumes an oneAPI environment rather than a compiler |
@@ -105,6 +105,29 @@ is lost if two run in parallel.
 **These do not land in mcpp-index as entries.** `ggml-org.llamacpp` and
 `opencv.opencv` are already there; the work is in their `-m` repositories. Plan
 the round as PRs to those, not as index edits.
+
+### F1's criterion, as amended by what it measured
+
+Two things the plan assumed turned out to be wrong, and both were found by
+building rather than by reading.
+
+**"Correct tokens" is too weak a criterion.** A token inside the vocabulary is
+produced by a backend that computed nonsense and by a build that never reached
+a device. The criterion is now an EQUALITY -- the device decode and the host
+decode of the same prompt under greedy sampling sample the same token -- with a
+second assertion that the device run actually offloaded, because two host
+decodes agree trivially.
+
+**"On lavapipe" was not reachable as stated.** ggml keeps only Vulkan devices
+whose type is not `eCpu`, so a software implementation is dropped for its type
+alone: measured, lavapipe advertises `storageBuffer16BitAccess` and every
+feature the backend requires, and is still excluded. This is upstream policy,
+not a defect in the packaging, and upstream ships the escape hatch --
+`GGML_VK_VISIBLE_DEVICES=0` names a device by index. The criterion holds with
+that selector, which is what a runner with no GPU has to use anyway.
+
+Measured on 2026-09-06: `llvmpipe (LLVM 22.1.8, 256 bits)`, 7/7 layers
+offloaded, host token 471 and device token 471.
 
 ## 6. Decided: group the four device examples
 
