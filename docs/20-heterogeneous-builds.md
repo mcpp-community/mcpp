@@ -4,7 +4,29 @@ GPU and AI accelerator targets, and mixed host/device compilation: how mcpp
 builds device code, and how a prebuilt artifact states which devices it can
 run on.
 
-## Two shapes, and the one mechanism mcpp implements
+## What is supported
+
+A build names the device backends it targets, and it may name **several**:
+
+```toml
+[build]
+accel = "cuda12.9+{sm_89}, vulkan1.2"
+```
+
+`accelerator` is a target-side **set**, so both `cfg(accelerator = "cuda")` and
+`cfg(accelerator = "vulkan")` are true in that build, each backend's rule
+package compiles its own device units, and one artifact carries all of them.
+The comma separates entries in that set; a space separates modifiers WITHIN one
+entry (`cuda12.9+{sm_89} ptx>=89` is one backend with an architecture set and a
+PTX floor). See "Several backends in one build" below for how the source sets
+are then written.
+
+Four programming models have rule packages today -- CUDA, HIP, SYCL and
+Vulkan/SPIR-V -- and the table under "The lanes" says which compiler and which
+payloads each drives. Nothing in the engine holds a vendor name, so a fifth is
+a package rather than an engine change.
+
+## Two shapes, and why one mechanism reaches both
 
 Accelerator toolchains come in two shapes. They describe how a toolchain is
 normally used, not how many mechanisms a build system needs.
@@ -18,9 +40,11 @@ A **whole-target** model puts device code in ordinary `.cpp` files and compiles
 the entire target with a compiler capable of offloading. SYCL, OpenMP offload
 and stdpar are used this way.
 
-mcpp implements ONE mechanism, the island, and that is the whole of the design.
-A whole-target toolchain is reached **through** it rather than beside it, when
-its device code can be separated at all.
+mcpp implements ONE mechanism, the island. That is a statement about the
+DESIGN, not about how many backends are supported: a whole-target toolchain is
+reached **through** the island rather than beside it, so supporting it costs a
+rule package and no second mechanism. SYCL is in the shipped set for exactly
+this reason.
 
 **SYCL's can.** A SYCL kernel is a lambda inside a `submit`, so a project can
 confine every one of them to a translation unit of its own by convention, and
@@ -280,6 +304,81 @@ cxxflags = ["-DMYAPP_ROCM"]
 The comparison is membership, so a build enabling both CUDA and ROCm answers
 true to each. `any`, `all` and `not` compose over it as ordinary boolean
 combinators.
+
+## Several backends in one build
+
+`accel` names a set, so a project supporting more than one device writes one
+section per backend and the sets compose:
+
+```toml
+[package]
+accelerators = ["cuda", "vulkan"]
+
+[build]
+accel   = "cuda12.9+{sm_89}, vulkan1.2"
+sources = [
+  "src/*.cppm", "src/*.cpp",
+  { glob = "src/kernels/**/*.cu",  accel = "cuda12.9+{sm_89}" },
+  { glob = "shaders/*.comp",       accel = "vulkan1.2" },
+]
+
+[target.'cfg(accelerator = "cuda")'.build]
+sources = ["src/cuda/*.cpp"]
+
+[target.'cfg(accelerator = "vulkan")'.build]
+sources = ["src/vulkan/*.cpp"]
+```
+
+Each constrained glob is narrowed by the set, so `--accel vulkan1.2` alone
+compiles the shaders and leaves the `.cu` out without any hand-written
+condition.
+
+### The CPU fallback, when there is more than one backend
+
+The four examples each write `cfg(not(accelerator = "<its own>"))`, which is
+correct for a project with ONE backend and wrong for a project with several: a
+CUDA build satisfies `not(accelerator = "vulkan")` too, so the CPU
+implementation joins the link beside the CUDA one. With a seam they define the
+same `extern "C"` symbols, and the result is measured:
+
+```
+ld: obj/src/cpu/impl.o: multiple definition of `impl';
+    obj/src/cuda/impl.o: first defined here
+```
+
+Loud, and at the link rather than at run time -- but it is a failure the
+manifest can avoid. Negate the whole set:
+
+```toml
+[target.'cfg(not(any(accelerator = "cuda", accelerator = "vulkan")))'.build]
+sources = ["src/cpu/*.cpp"]
+```
+
+`any`, `all` and `not` compose over the membership test as ordinary boolean
+combinators. The cost is that the list is a second place the backend set is
+written: a third backend added without extending this line produces the link
+error above.
+
+### The other shape: no link-time selection
+
+The exclusion exists only because a **seam** replaces one implementation with
+another, so exactly one may be linked. A project that wants one binary to run
+on whatever the machine has should not select at link time:
+
+* compile **every** backend it was built with -- each `cfg(accelerator = ...)`
+  section adds its own sources, and the CPU implementation is unconditional;
+* give each one a distinct name, and have the seam ask at run time which
+  devices are present.
+
+There is then no `not(any(...))` to maintain, and the artifact answers the
+question the user of the binary actually has. This is the shape ggml uses: each
+backend registers itself, and `ggml_backend_reg_by_name` picks one when the
+program runs. `ggml-org:llamacpp` is built that way, and its `backend-vulkan`
+feature is additive over `backend-cpu` rather than exclusive with it.
+
+Which shape to choose is a property of the program, not of mcpp: a seam that
+swaps an implementation wants link-time selection, and a program that ships to
+machines it has not seen wants run-time selection.
 
 ## Two boundaries worth stating
 
