@@ -230,6 +230,29 @@ crt/host_config.h:218: fatal error: features.h: No such file or directory
 **不是 `sysroot_dir()`。** 那个回答的是目标**档位**的问题,在宿主目标上为空,
 而宿主目标恰恰是这一对存在的场合。mcpp 不传某个开关时,对应的那个为空串。
 
+### 解析出的是哪个 C++ 标准库:`cxx_stdlib`(2026.9.6.3+)
+
+```cpp
+const char* impl = mcpp::cxx_stdlib();   // "libstdc++" | "libc++" | "msvc-stl" | ""
+```
+
+`compiler()` 回答不了这个问题。clang 在一台机器上链 libc++、在另一台上链
+libstdc++,两种情况都答 `clang`,而两个实现接受的东西不同——在头文件里析构一个
+指向不完整类型的 `unique_ptr`,libstdc++ 通过而 libc++ 不通过。需要按名字拒绝
+这种配置的构建程序不能去问 `compiler()`,因为那个答案会连同能工作的配置一起拒掉:
+
+```cpp
+if (std::string_view(mcpp::cxx_stdlib()) == "libc++") {
+    std::fprintf(stderr,
+        "this feature does not compile under libc++; select a libstdc++ "
+        "toolchain, or turn the feature off\n");
+    return 1;
+}
+```
+
+名字里带 `cxx` 是有意的:`MCPP_TARGET_LIBC` 是 **C** 库。两者是不同的问题,而在
+一个不断提到 glibc 与 musl 的生态里,它们不能共用一个词。
+
 ### 找到 `[xlings.workspace]` 的载荷:`xpkg_dir`(2026.8.19+)
 
 `dep_dir` 回答的是 **mcpp** 依赖。xlings 包是另一个命名空间、另一套 store 布局,
@@ -501,6 +524,7 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存�
 | `MCPP_PROFILE` | `mcpp::profile()` | 生效 profile 名(`dev`/`release`/…) |
 | `MCPP_TOOLCHAIN_SYSROOT` *(2026.9.5.2+)* | `mcpp::toolchain_sysroot()` | mcpp 传给自己那个编译器的 `--sysroot`;不传时为空串。供运行**第二个**编译器的规则包使用 —— 见上文「驱动第二个编译器」 |
 | `MCPP_TOOLCHAIN_BINUTILS_DIR` *(2026.9.5.2+)* | `mcpp::toolchain_binutils_dir()` | mcpp 用 `-B` 指的目录;不指时为空串(musl 与 MinGW 载荷自带汇编器与链接器) |
+| `MCPP_CXX_STDLIB` *(2026.9.6.3+)* | `mcpp::cxx_stdlib()` | 解析出的工具链使用的 C++ 标准库 —— `libstdc++`、`libc++`、`msvc-stl`;没有工具链解析时为空串。与 `MCPP_TARGET_LIBC` 不是同一个问题,后者是 C 库 |
 | `MCPP_ACCEL` *(2026.9.5.2+)* | `mcpp::accel()` | 本次构建的设备轴,已解析 —— `--accel` / `--no-accel` 优先于 `[build] accel` —— 线上形态 `cuda12.9+{sm_89} ptx>=89`;不要加速器时为空串。规则包从它推导自己的开关(`-gencode`、`--offload-arch`),架构集合因此只在 manifest 写一次。同一个值也喂给 `cfg(accelerator = "…")` 这个 layer 键 |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | 本包有效 `sources` 匹配到的设备类源文件(`.cu`、`.hip`…),相对包根,一行一个;没有时为空串。引擎一个都不编译 —— 由本程序引入的规则包把每一个变成一条 `mcpp::action`。已经过收窄:构建未覆盖的 `{ glob, accel }` 条目贡献为空,因此 `--no-accel` 得到空列表 |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | mcpp 提供的可写输出/暂存目录 |

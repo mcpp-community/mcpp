@@ -288,6 +288,22 @@ inline const char* toolchain_binutils_dir()       { return env_or("MCPP_TOOLCHAI
 // rather than per version or per payload.
 inline const char* compiler()                     { return env_or("MCPP_COMPILER"); }
 
+// Which C++ standard library resolved: "libstdc++", "libc++", "msvc-stl", or
+// "" if no toolchain did.
+//
+// A SEPARATE QUESTION FROM `compiler()`, and the reason this exists. clang
+// links libc++ on one machine and libstdc++ on another and reports "clang"
+// either way, while the two implementations differ in what they accept: a
+// `unique_ptr` to an incomplete type destroyed in a header compiles under
+// libstdc++ and does not under libc++. A package that must refuse such a
+// configuration by name cannot ask `compiler()`, because that answer would
+// also refuse the configuration that works.
+//
+// "cxx" is in the name deliberately. `MCPP_TARGET_LIBC` is the C library; this
+// is the C++ one, and in an ecosystem that names glibc and musl constantly the
+// two must not share a word.
+inline const char* cxx_stdlib()                   { return env_or("MCPP_CXX_STDLIB"); }
+
 // Where the TARGET's C library lives, for targets that have one of their own
 // (today: bare metal). Same argument one line up: the libc is a property of
 // the target, mcpp resolves it from the target's own row, and a package that

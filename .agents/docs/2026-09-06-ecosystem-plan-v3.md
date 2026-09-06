@@ -235,13 +235,44 @@ forced rather than chosen.
 | R4 | done | `llvmpipe (LLVM 22.1.8, 256 bits)`, 7/7 layers offloaded, host token 471 = device token 471; the chat example generates 32 tokens |
 | R6 | written | a `vulkan` job on a GPU-less runner, gated on the lavapipe payload and `GGML_VK_VISIBLE_DEVICES=0` |
 | R7 | done | docs/20 and docs/zh/20, "What a framework looks like on top of this" |
-| R5 | blocked on release order | the index entry can only name an artefact that exists, so it follows llama.cpp-m's tag |
+| R5 | done, with a second lever | mcpp-index#359 carries `b10069.1`. It also had to raise the index's CI pin: `validate.yml` was on 2026.8.27.2, ten releases behind, and this package's build program calls an accessor from 2026.9.5.2. `min_mcpp` deliberately did NOT move -- see 7e |
 
 **The release order is the reverse of the dependency order**, as it always is
 here: mcpp 2026.9.6.2 first (llama.cpp-m's CI pins it), then llama.cpp-m
 `b10069.1`, then the index entry that names that tag. The index PR for
 `compat:spirv-headers` went first and separately because llama.cpp-m cannot
 build without it -- splitting it out was forced by the cycle, not chosen.
+
+## 7e. The index's CI pin is not its floor
+
+`ggml-org:llamacpp@b10069.1` failed three of mcpp-index's workspace jobs with
+
+    error: 'toolchain_sysroot' is not a member of 'mcpp'
+
+because `validate.yml` pinned mcpp 2026.8.27.2 while that accessor is
+2026.9.5.2+. Two levers exist and they govern different things:
+
+| | governs | moves when |
+|---|---|---|
+| `index.toml [index] min_mcpp` | descriptor GRAMMAR -- the oldest mcpp able to resolve every descriptor | a descriptor uses a new key, in lock-step with the CI pin |
+| `validate.yml MCPP_VERSION` | which mcpp the index builds its members with | the engine moves; a pin that lags validates the index against an engine no user runs |
+
+A build program's API belongs to the second. Raising `min_mcpp` would refuse
+the WHOLE index (E0006) to a client on the floor over one package's
+build-program call it may never reach, which is the failure mode
+`index-floor-must-degrade` names: the index is data, mcpp is the program, and
+publishing data must not invalidate the program. Measured: all 218 descriptors
+parse under both versions, so the grammar did not move; `b10069` stays
+published for a client that cannot use `b10069.1`.
+
+The cost is paid once per raise: the members' caches key on `MCPP_VERSION`, so
+the first run after the pin moves rebuilds everything.
+
+This is not a one-off. `b10069.2` calls `mcpp::cxx_stdlib()` (2026.9.6.3), so
+the same five-step chain runs again: mcpp release, xim-pkgindex bump, package
+change, package release, index bump carrying the new pin. mcpp has no
+per-package engine floor, so a client on an older engine gets
+`'X' is not a member of 'mcpp'` rather than a refusal that names a version.
 
 ### What the angles decide
 
@@ -319,27 +350,52 @@ libraries, is closed: F1 measured 134 device objects inside `libllama.a` with
 a consumer's link line, since `cudart_static` plus 186 objects is the largest
 link this ecosystem has attempted.
 
-## 7d. Open, with the reason each is open
+## 7d. Closed in round 5b, and what remains open
 
-**`mcpp::toolchain_stdlib()`.** mcpp resolves `stdlibId` and writes it into
-`resolution.json`; the build-program environment does not carry it. A build
-program driving a SECOND compiler may need it, and llama.cpp-m has the case
-today -- `backend-vulkan` cannot compile under libc++ (upstream's own source),
-and the refusal it would like to write is impossible because the only available
-signal is the compiler's NAME, which would also refuse clang with libstdc++.
-Same family as the two defects this round fixed. Deliberately not shipped
-alone: without a consumer in the same release it is a recorded field with no
-reader, which is the shape this ecosystem keeps finding.
+Round 5 left four items recorded rather than done, on the stated ground that
+each needed a consumer or a measurement it did not yet have. Three are now
+closed; the reasons they were open turned out to be partly wrong, and saying so
+is the point of writing them down.
 
-**No CI job builds an example.** e2e 616 checks that the curriculum and its
-index agree structurally, and says so: it builds nothing. The Vulkan example
-needs no GPU, so it is the one that could join CI first.
+**`mcpp::cxx_stdlib()` -- done, 2026.9.6.3.** Shipped as `MCPP_CXX_STDLIB` and
+`mcpp::cxx_stdlib()`, with its consumer in the same round: llama.cpp-m's
+`backend-vulkan` refuses a libc++ toolchain by name instead of handing the user
+a page of errors from an upstream header. The name changed from the one
+recorded here -- `cxx` is in it because `MCPP_TARGET_LIBC` is the C library,
+and in an ecosystem that names glibc and musl constantly the two must not share
+a word. Its criterion (e2e 617) compares the answer against `resolution.json`
+and against the compiler family, and was checked by removing the wiring and
+watching it go red.
 
-**`206_runtime_binding_physics` is decided by machine state.** It asserts a
-status that depends on the private loader's default prefix NOT existing, and a
-leftover `fromsource-x-glibc@2.39/lib` makes it exist. Green in CI, red on a
-developer machine that has one. The criterion should name the directory it
-depends on rather than assume its absence.
+**No CI job builds an example -- done.** `.github/tools/build_examples.sh`
+enumerates the example ROOTS from the tree and compares them against a build
+list and a skip table; a root in neither fails the job, and every skip carries
+its reason and where the coverage actually is. Six of fifteen build, including
+`05-lib-distribution` through its own README's two-step order, which also
+checks that the ABI tag the consumer hardcodes is still the tag `mcpp pack`
+produces. The Vulkan example is built AND RUN on the lavapipe payload.
+
+That run needed one more change. All four device examples printed the same four
+numbers as their CPU fallback, so a run that silently fell back was
+indistinguishable from a device run -- in a curriculum whose subject is
+heterogeneous compute. The seam now carries `saxpy_device_name()`, each backend
+fills in its own device, and `main` prints it after the call, never before.
+
+**`206_runtime_binding_physics` -- done, and the recorded reason was wrong.**
+It was not a stale `fromsource-x-glibc` prefix. `xim:ncurses` is an ordinary
+ecosystem package, and a sub-OS that has it links `libtinfo.so.6` into the
+library view that IS on the artifact's RPATH; there the closure genuinely
+closes and `pass` is the correct verdict. The test now reads the artifact's own
+runtime search path and decides which verdict the model owes, so it fails in
+both directions instead of assuming a directory is absent.
+
+A second test had the same shape and was found while fixing the first:
+`168_build_mcpp_musl_host_static` selected its musl payload with `ls | head -1`
+-- lexicographic order, hence the OLDEST installed version. On a machine with
+13.3.0, 15.1.0 and 16.1.0 it chose 13.3.0, which predates the `std` module, and
+the error it produced described the test's own choice. It now takes the newest,
+which is what resolution picks when nothing pins a version. Both were green on
+every CI runner, because a runner installs exactly one of anything.
 
 **The four examples' CPU fallback does not generalise.** Each writes
 `cfg(not(accelerator = "<its own>"))`, which is correct for one backend and

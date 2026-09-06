@@ -17,7 +17,7 @@ import_std = true
 default = "llvm@22.1.8"
 
 [dependencies.mcpp]
-plugins = { version = "0.2.0", features = ["rules-hip"], host-module = true }
+plugins = { version = "0.2.1", features = ["rules-hip"], host-module = true }
 
 # The driver's userspace library. HIP reaches the device through the CUDA
 # runtime here, so this is the same one hop the CUDA consumer needs: mcpp's

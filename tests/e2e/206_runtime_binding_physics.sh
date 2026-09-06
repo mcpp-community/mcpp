@@ -67,15 +67,53 @@ readelf -d "$artifact" | grep -q 'libtinfo\.so' \
 # user declared they are reaching outside the sandbox, so mcpp REPORTS rather
 # than blocks — resolution at run time (LD_LIBRARY_PATH, or installing where the
 # private loader looks) is theirs to arrange.
+# WHICH OF THE TWO VERDICTS IS CORRECT IS DECIDED BY THE MACHINE, SO THE TEST
+# MEASURES IT RATHER THAN ASSUMING IT.
+#
+# The paragraph above says `inconclusive` because the private loader cannot
+# reach a host `libtinfo`. That is true on a machine whose runtime search path
+# does not contain one -- and false on a machine where it does. `xim:ncurses`
+# is an ordinary ecosystem package, and a sub-OS that has it links
+# `libtinfo.so.6` into the library view that IS on the artifact's RPATH. There
+# the closure genuinely closes and `pass` is the right answer; asserting
+# `inconclusive` would report a defect that is not there. (Measured
+# 2026-09-06: green on every CI runner, red on a developer machine with
+# ncurses provisioned. An earlier note in this file blamed a stale glibc
+# payload, which was the wrong object.)
+#
+# So: read the artifact's own runtime search path, decide from it which verdict
+# the model owes, and assert THAT. The test is then total -- it fails if the
+# model says `pass` where nothing can be found, and equally if it says
+# `inconclusive` where the library is sitting on the path.
+soname=libtinfo.so.6
+search=$(readelf -d "$artifact" | sed -n 's/.*R\(UN\)\?PATH.*\[\(.*\)\]/\2/p' | tr ':' '\n')
+reachable=no
+while read -r dir; do
+    [[ -n "$dir" ]] || continue
+    [[ -e "$dir/$soname" ]] && { reachable=yes; found="$dir/$soname"; break; }
+done <<<"$search"
+echo "runtime search path of the artifact:"; sed 's/^/    /' <<<"$search"
+echo "$soname reachable from it: $reachable${found:+ ($found)}"
+
 status=$(jq -r '.artifacts["bin/runtime-physics-safe"].status' "$verdict")
-[[ "$status" == inconclusive ]] \
-    || { cat "$verdict"; fail "host-DSO closure status is '$status', expected inconclusive"; }
-jq -r '.artifacts["bin/runtime-physics-safe"].diagnostics[]' "$verdict" \
-    | grep -q 'libtinfo\.so\.6' \
-    || { cat "$verdict"; fail "the verdict does not name the library it could not resolve"; }
-jq -r '.artifacts["bin/runtime-physics-safe"].diagnostics[]' "$verdict" \
-    | grep -q 'allow_host_libs' \
-    || { cat "$verdict"; fail "the verdict does not say why it stopped short of a proof"; }
+if [[ "$reachable" == yes ]]; then
+    # The declared host library is on the private loader's path after all.
+    [[ "$status" == pass ]] \
+        || { cat "$verdict"; fail "$soname is at $found, so the closure closes; the model says '$status'"; }
+else
+    # `allow_host_libs` is still honoured, and that is the point of the state:
+    # the user declared they are reaching outside the sandbox, so mcpp REPORTS
+    # rather than blocks -- resolution at run time (LD_LIBRARY_PATH, or
+    # installing where the private loader looks) is theirs to arrange.
+    [[ "$status" == inconclusive ]] \
+        || { cat "$verdict"; fail "nothing on the search path provides $soname; the model says '$status'"; }
+    jq -r '.artifacts["bin/runtime-physics-safe"].diagnostics[]' "$verdict" \
+        | grep -q 'libtinfo\.so\.6' \
+        || { cat "$verdict"; fail "the verdict does not name the library it could not resolve"; }
+    jq -r '.artifacts["bin/runtime-physics-safe"].diagnostics[]' "$verdict" \
+        | grep -q 'allow_host_libs' \
+        || { cat "$verdict"; fail "the verdict does not say why it stopped short of a proof"; }
+fi
 
 artifact_before=$(stat -c '%y:%s' "$artifact")
 verdict_before=$(stat -c '%y:%s' "$verdict")
@@ -88,8 +126,8 @@ noop_out=$($MCPP build 2>&1) || { echo "$noop_out"; fail "hot no-op build"; }
 doctor_out=$($MCPP self doctor 2>&1 || true)
 grep -q 'last runtime closure verdict' <<<"$doctor_out" \
     || { echo "$doctor_out"; fail "doctor omitted stored runtime verdict"; }
-grep -q 'runtime-physics-safe.*inconclusive' <<<"$doctor_out" \
-    || { echo "$doctor_out"; fail "doctor did not reuse the stored verdict"; }
+grep -q "runtime-physics-safe.*$status" <<<"$doctor_out" \
+    || { echo "$doctor_out"; fail "doctor did not reuse the stored verdict ('$status')"; }
 
 # Force form-X into a proven Rule-B mismatch: mcpp still supplies the selected
 # private libc RUNPATH, while the final user flag replaces PT_INTERP with the

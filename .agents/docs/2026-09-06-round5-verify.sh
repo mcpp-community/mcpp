@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Ecosystem verification for round 5: mcpp 2026.9.6.2, compat:spirv-headers,
-# and ggml-org:llamacpp's backend-vulkan feature.
+# Ecosystem verification for rounds 5 and 5b: mcpp (2026.9.6.2, then
+# 2026.9.6.3), compat:spirv-headers, ggml-org:llamacpp's backend-vulkan
+# feature, and the build-program API a release carries embedded in its binary.
 #
 #   # The sandbox has an EMPTY $HOME and a fresh /tmp, so this file is not
 #   # visible from inside it. Pass the script itself in:
 #   B64=$(base64 -w0 <this file>)
-#   xlings subos use verify-962 --sandbox --cmd \
-#     "echo $B64 | base64 -d > /tmp/v.sh && MCPP_VERIFY_VERSION=2026.9.6.2 bash /tmp/v.sh"
+#   xlings subos use verify-963 --sandbox --cmd \
+#     "echo $B64 | base64 -d > /tmp/v.sh && MCPP_VERIFY_VERSION=2026.9.6.3 bash /tmp/v.sh"
 #
 # `xlings subos use <name>` -- the bare `xlings subos <name>` form this header
 # used to give is rejected as an unknown subcommand, and a sandbox that has to
@@ -298,6 +299,61 @@ if (cd "$consumer" && "${consumer_env[@]}" "$STORE" run >"$work/consumer.log" 2>
 else
     fail "a consumer of ggml-org:llamacpp@$LLAMACPP_VERSION with backend-vulkan did not build"
     tail -20 "$work/consumer.log"
+fi
+
+# -- G. the build-program API the published binary carries ------------------
+section "G. mcpp::cxx_stdlib() answers, in the published binary"
+# A BUILD-PROGRAM API IS PART OF THE PUBLISHED FORM, and nothing above tests
+# that. The `mcpp` module a build program imports is EMBEDDED IN THE BINARY --
+# so a release whose module source did not travel would compile every project
+# in this repository (they use a checkout) and fail for the first user who
+# wrote `mcpp::cxx_stdlib()`. That is the shape this ecosystem keeps meeting:
+# the development form and the published form are not the same graph.
+#
+# The criterion is the ANSWER, not the compile: an accessor that exists and
+# returns "" would compile here and be useless, so the value is compared
+# against `resolution.json`, which the same binary writes from its own
+# resolution.
+probe="$work/stdlibq"
+mkdir -p "$probe/src"
+printf 'int main() { return 0; }\n' > "$probe/src/main.cpp"
+cat > "$probe/mcpp.toml" <<'TOML'
+[package]
+name    = "stdlibq"
+version = "0.1.0"
+[targets.stdlibq]
+kind = "bin"
+main = "src/main.cpp"
+TOML
+cat > "$probe/build.mcpp" <<'CPP'
+#include <cstdio>
+#include <string>
+import mcpp;
+int main() {
+    // To a file: a build program's stdout reaches the user only when it fails.
+    std::string out = std::string(mcpp::manifest_dir()) + "/answer.txt";
+    std::FILE* f = std::fopen(out.c_str(), "w");
+    if (f == nullptr) return 1;
+    const char* s = mcpp::cxx_stdlib();
+    std::fprintf(f, "%s\n", s == nullptr ? "" : s);
+    std::fclose(f);
+    return 0;
+}
+CPP
+if (cd "$probe" && "$STORE" build >"$work/stdlibq.log" 2>&1); then
+    answered=$(cat "$probe/answer.txt" 2>/dev/null | head -1)
+    engine=$(find "$probe/target" -name resolution.json -print -quit 2>/dev/null \
+             | xargs -r sed -n 's/.*"stdlib"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)
+    if [ -z "$answered" ]; then
+        fail "G: mcpp::cxx_stdlib() answered nothing"
+    elif [ "$answered" != "$engine" ]; then
+        fail "G: the build program read '$answered', the engine resolved '$engine'"
+    else
+        ok "G: mcpp::cxx_stdlib() = '$answered', matching this binary's own resolution.json"
+    fi
+else
+    fail "G: a build program calling mcpp::cxx_stdlib() did not build against the published $VER"
+    tail -12 "$work/stdlibq.log"
 fi
 
 printf '\n== summary ==\n'

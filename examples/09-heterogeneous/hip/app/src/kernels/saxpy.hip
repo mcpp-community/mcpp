@@ -25,7 +25,18 @@ __global__ void saxpy_kernel(float a, const float* x, const float* y,
     if (i < n) out[i] = a * x[i] + y[i];
 }
 
+// THE NAME OF THE DEVICE, RECORDED BY THE RUN.
+//
+// Set only after a successful call, and read through the seam. The CPU
+// fallback produces the same four numbers as this island does, so without a
+// name printed by the program nothing distinguishes a device run from a silent
+// fallback -- which is the one confusion an example about heterogeneous
+// compute must not leave in place.
+char g_ran_on[256] = "";
+
 } // namespace
+
+extern "C" const char* saxpy_device_name(void) { return g_ran_on; }
 
 extern "C" int saxpy_device(float a, const float* x, const float* y,
                             float* out, unsigned n) {
@@ -59,5 +70,12 @@ extern "C" int saxpy_device(float a, const float* x, const float* y,
 
 done:
     hipFree(dx); hipFree(dy); hipFree(dout);
+    if (rc == 0) {
+        int device = 0;
+        hipDeviceProp_t properties{};
+        if (hipGetDevice(&device) == hipSuccess
+            && hipGetDeviceProperties(&properties, device) == hipSuccess)
+            std::snprintf(g_ran_on, sizeof g_ran_on, "%s", properties.name);
+    }
     return rc;
 }

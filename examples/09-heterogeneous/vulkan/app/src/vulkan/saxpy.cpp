@@ -13,6 +13,7 @@
 #include <vulkan/vulkan.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
@@ -64,7 +65,18 @@ bool pick_device(VkInstance inst, VkPhysicalDevice& out, std::uint32_t& family) 
     return false;
 }
 
+// THE NAME OF THE DEVICE, RECORDED BY THE RUN.
+//
+// Set only after a successful call, and read through the seam. The CPU
+// fallback produces the same four numbers as this island does, so without a
+// name printed by the program nothing distinguishes a device run from a silent
+// fallback -- which is the one confusion an example about heterogeneous
+// compute must not leave in place.
+char g_ran_on[256] = "";
+
 } // namespace
+
+extern "C" const char* saxpy_device_name(void) { return g_ran_on; }
 
 extern "C" int saxpy_device(float a, const float* x, const float* y,
                             float* out, unsigned n) {
@@ -271,6 +283,11 @@ done:
     if (shader)    vkDestroyShaderModule(dev, shader, nullptr);
     if (memory)    vkFreeMemory(dev, memory, nullptr);
     if (buffer)    vkDestroyBuffer(dev, buffer, nullptr);
+    if (rc == 0) {
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(phys, &properties);
+        std::snprintf(g_ran_on, sizeof g_ran_on, "%s", properties.deviceName);
+    }
     vkDestroyDevice(dev, nullptr);
     vkDestroyInstance(inst, nullptr);
     return rc;

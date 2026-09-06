@@ -32,6 +32,20 @@
 #include "saxpy/saxpy.h"
 #include <sycl/sycl.hpp>
 #include <cstdio>
+#include <string>
+
+namespace {
+// THE NAME OF THE DEVICE, RECORDED BY THE RUN.
+//
+// Set only after a successful call, and read through the seam. The CPU
+// fallback produces the same four numbers as this island does, so without a
+// name printed by the program nothing distinguishes a device run from a silent
+// fallback -- which is the one confusion an example about heterogeneous
+// compute must not leave in place.
+char g_ran_on[256] = "";
+} // namespace
+
+extern "C" const char* saxpy_device_name(void) { return g_ran_on; }
 
 extern "C" int saxpy_device(float a, const float* x, const float* y,
                             float* out, unsigned n) {
@@ -68,6 +82,7 @@ extern "C" int saxpy_device(float a, const float* x, const float* y,
 
     try {
         sycl::queue q{on_async};
+        const std::string chosen = q.get_device().get_info<sycl::info::device::name>();
         {
             sycl::buffer<float, 1> bx(x, sycl::range<1>(n));
             sycl::buffer<float, 1> by(y, sycl::range<1>(n));
@@ -91,6 +106,7 @@ extern "C" int saxpy_device(float a, const float* x, const float* y,
                 rc = -1;
             }
         }
+        if (rc == 0) std::snprintf(g_ran_on, sizeof g_ran_on, "%s", chosen.c_str());
     } catch (const sycl::exception& e) {
         // The queue itself: a machine with no device the runtime can use fails
         // here, before any buffer exists.

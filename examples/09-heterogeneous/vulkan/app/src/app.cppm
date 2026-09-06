@@ -19,4 +19,8 @@ saxpy(float a, std::span<const float> x, std::span<const float> y) {
     return out;
 }
 
+// The seam answers this too, because the seam is the only place that knows
+// which island was linked.
+std::string_view device_name() { return saxpy_device_name(); }
+
 } // namespace app

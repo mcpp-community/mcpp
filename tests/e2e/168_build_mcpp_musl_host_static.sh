@@ -25,15 +25,29 @@ fi
 # musl capability probe is pinned to x86_64/15.1.0 and would false-skip on the
 # aarch64 host where this regression actually lives. Never auto-install here:
 # that would be a ~200 MB download per CI run (same rule as 28_target_static).
+# THE NEWEST INSTALLED PAYLOAD, NOT THE FIRST ONE LISTED.
+#
+# This used to take `ls | head -1`, which is lexicographic order, which is the
+# OLDEST version on a machine that has several. Measured 2026-09-06: a
+# developer machine with 13.3.0, 15.1.0 and 16.1.0 installed ran the test
+# against 13.3.0, whose GCC predates the `std` module, and the failure it
+# produced -- "toolchain provides no std module source" -- described the
+# payload the test chose rather than anything about the musl host helper. CI
+# installs exactly one version, so the selection was never wrong there.
+#
+# The newest is also what a user gets: `gcc@<latest>-musl` is what resolution
+# picks when nothing pins a version.
 find_musl_version() {
-    local root gxx
+    local root versions
     for root in "${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-musl-gcc" \
                 "$HOME/.xlings/data/xpkgs/xim-x-musl-gcc"; do
         [[ -d "$root" ]] || continue
-        gxx=$(ls "$root"/*/bin/*-linux-musl-g++ 2>/dev/null | head -1 || true)
-        if [[ -n "$gxx" ]]; then
-            # <root>/<version>/bin/<triple>-g++ → <version>
-            basename "$(dirname "$(dirname "$gxx")")"
+        # <root>/<version>/bin/<triple>-g++ → <version>, newest by version sort.
+        versions=$(ls "$root"/*/bin/*-linux-musl-g++ 2>/dev/null \
+                   | while read -r gxx; do basename "$(dirname "$(dirname "$gxx")")"; done \
+                   | sort -V)
+        if [[ -n "$versions" ]]; then
+            tail -1 <<<"$versions"
             return 0
         fi
     done
