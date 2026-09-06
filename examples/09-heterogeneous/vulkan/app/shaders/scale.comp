@@ -1,6 +1,6 @@
 #version 450
 
-// The device side of the same computation `examples/09-cuda-kernel` runs on
+// The device side of the same computation the `cuda` example runs on
 // CUDA: out = a*x + y. One storage buffer holds all three vectors so the host
 // side needs one allocation and one descriptor.
 layout(local_size_x = 64) in;

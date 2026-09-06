@@ -1,4 +1,4 @@
-// The seam, in the shape `examples/09-cuda-kernel` uses, for the same reason:
+// The seam, in the shape the `cuda` example uses, for the same reason:
 // it is the one place a backend can be exchanged. Underneath is a Vulkan
 // compute island on one build and a plain loop on another, and no importer of
 // this module can tell.

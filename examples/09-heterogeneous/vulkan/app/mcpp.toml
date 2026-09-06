@@ -13,7 +13,7 @@ import_std = true
 # The rule that compiles the shaders lives in the official plugin collection,
 # selected by its feature; `build.mcpp` imports it as `mcpp.rules.spirv`.
 [dependencies.mcpp]
-plugins = { version = "0.1.1", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.2.0", features = ["rules-spirv"], host-module = true }
 
 # The Khronos loader, built by the index rather than taken from the host, and
 # the adapter that makes the host's own ICDs reachable from a binary running
@@ -25,8 +25,9 @@ vulkan         = "1.4.357.0"
 vulkan-runtime = "2026.09.07"
 
 # The two payloads this build names rather than discovers: the shader compiler,
-# and a Vulkan driver that is always present because it is the CPU. With
-# which is what every CI runner in this ecosystem is.
+# and a Vulkan driver that is always present because it is the CPU. The second
+# is what makes this example runnable on a machine with no GPU, which is what
+# every CI runner in this ecosystem is.
 [xlings.workspace]
 "xim:glslang"       = "15.1.0"
 # A Vulkan device that needs no GPU: Mesa's lavapipe as a payload, complete

@@ -4746,11 +4746,28 @@ prepare_build(bool print_fingerprint,
 
     auto fillXpkgDirs = [&](mcpp::build::BuildProgramEnv& e,
                             const mcpp::manifest::Manifest& owner) {
-        if (owner.xlings.deps.empty()) return;
+        // `[feature-xlings.<f>]` is provisioned when `<f>` is active, so it has
+        // to be answerable here too. Before this, a tool a feature declared was
+        // downloaded and installed and then `mcpp::xpkg_dir` returned "" for it
+        // — the build program was told to declare a package it had already
+        // declared, which is a diagnostic pointing at the wrong file.
+        //
+        // The set is taken from the SAME env the caller already computed, so
+        // "which features are on" is answered once. Installation stays the
+        // filter below: a declared address whose payload is absent answers "",
+        // which is what a `when = "dev"` entry looks like to a consumer.
+        std::vector<std::string> declared = owner.xlings.deps;
+        for (auto const& f : e.features)
+            if (auto it = owner.xlings.featureDeps.find(f);
+                it != owner.xlings.featureDeps.end())
+                for (auto const& address : it->second)
+                    if (std::ranges::find(declared, address) == declared.end())
+                        declared.push_back(address);
+        if (declared.empty()) return;
         auto cfg = get_cfg();
         if (!cfg) return;
         auto xlEnv = mcpp::config::make_xlings_env(**cfg);
-        for (auto const& spec : owner.xlings.deps) {
+        for (auto const& spec : declared) {
             auto ref = mcpp::xlings::paths::parse_xpkg_ref(spec);
             auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref);
             if (!dir) continue;   // declared but not installed: "" is the answer

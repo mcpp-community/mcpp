@@ -1565,7 +1565,31 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
 
     std::map<std::size_t, std::vector<std::size_t>> directPackageDeps;
     for (std::size_t i = 0; i < packages.size(); ++i) {
-        for (auto const& [depName, spec] : packages[i].manifest.dependencies) {
+        // THE ROOT'S EDGES LIVE IN `manifest`, NOT IN `packages[0]`.
+        // `packages[0]` is snapshotted before `[feature-deps]` is folded into
+        // the root's dependency map, so a dependency the root acquired through
+        // an active feature is absent from it. Reading the snapshot here meant
+        // a feature-activated dependency was resolved, fetched and COMPILED --
+        // and then its shared library was neither linked nor named as an input,
+        // so the build succeeded and the consumer failed at link with the
+        // dependency's own symbols undefined. Two other readers already take
+        // this branch for the same reason (see checkVersionFloors in
+        // prepare.cppm).
+        //
+        // THE RULE, AND THE ENUMERATION BEHIND IT. Every reader of a root
+        // package's dependency EDGES must read `*m`, never `packages[0]`; the
+        // snapshot is for what the scan and the fingerprint need, which is
+        // sources and flags. The four readers in this build were checked, not
+        // sampled: prepare.cppm's linkage request already reads `m->` for the
+        // root and `packages[i]` only for i >= 1, execute.cppm reads
+        // `ctx.manifest` (which IS the merged root), publisher.cppm reads
+        // whatever its caller hands it and wants the UNMERGED edges, because a
+        // published descriptor states feature deps under the feature. This
+        // site was the only one taking the snapshot for a question about
+        // edges.
+        auto const& edges = i == 0 ? manifest.dependencies
+                                   : packages[i].manifest.dependencies;
+        for (auto const& [depName, spec] : edges) {
             for (auto const& candidate : dependency_name_candidates(depName, spec)) {
                 auto it = packageIndexByName.find(candidate);
                 if (it == packageIndexByName.end() || it->second == i) continue;

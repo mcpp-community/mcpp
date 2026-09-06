@@ -255,6 +255,11 @@ store 内部结构 —— 与 `dep_dir` 存在的理由相同。
 **带版本固定**的引用只解析到那个版本,否则什么都不返回。请求 `1.8.12` 却静默拿
 到 `1.9.0`,是那种要到产物里才被发现的答案。
 
+**`[feature-xlings.<f>]` 在 `<f>` 生效时同样被作答**(2026.9.6.2+)。这张表从诞生
+起就参与供给 —— 在那里写下一个包,它就会被下载并安装 —— 但构建程序的环境只由
+`[xlings.workspace]` 填充,于是载荷明明在盘上,`xpkg_dir` 却返回 `""`。这时构建程序
+唯一说得出口的话是「请声明这个包」,而它指的那条声明作者早已写下。
+
 ### 依赖产出的 host 工具(2026.8.5.1+)
 
 在 `mcpp.toml` 里声明需求,然后调用它:
@@ -565,7 +570,7 @@ action,由引擎调度。工具说明的是构建程序需要、而没有任何�
 它把数据文件写成程序编译进去的头文件(字节数组或 32 位字数组),内容未变时不重写文件,
 因此无条件调用它不会带来任何重编。
 
-`examples/09-cuda-kernel` 与 `examples/10-vulkan-compute` 像任何工程一样从 `mcpp:plugins`
+`examples/09-heterogeneous/cuda` 与 `examples/09-heterogeneous/vulkan` 像任何工程一样从 `mcpp:plugins`
 消费 `mcpp.rules.cuda` 与 `mcpp.rules.spirv`。
 
 **分层不得有断崖,且上层必须是下层的组合。** `generate_all(opt)` **就是**

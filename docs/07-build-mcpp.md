@@ -293,6 +293,13 @@ A **pinned** reference resolves to exactly that version or to nothing. A
 build that asked for `1.8.12` and silently got `1.9.0` is an answer only
 discovered later, in the artifact.
 
+**`[feature-xlings.<f>]` is answered too, while `<f>` is active**
+*(2026.9.6.2+)*. That table has provisioned its packages since it existed --
+naming one downloads and installs it -- but the build program's environment was
+filled from `[xlings.workspace]` alone, so `xpkg_dir` returned `""` for a
+payload that was on disk. The only sensible thing a program can print then is
+"declare this package", naming a declaration its author had already written.
+
 ### Host tools from a dependency (2026.8.5.1+)
 
 Declare the need in `mcpp.toml`, then call it:
@@ -659,8 +666,8 @@ mcpp 2026.9.5.4+) is the first: it writes a data file into a header the program
 compiles in, as a byte array or a 32-bit word array, and rewrites nothing when
 the content is unchanged, so calling it unconditionally costs no rebuild.
 
-`examples/09-cuda-kernel` and
-`examples/10-vulkan-compute` consume `mcpp.rules.cuda` and `mcpp.rules.spirv`
+`examples/09-heterogeneous/cuda` and
+`examples/09-heterogeneous/vulkan` consume `mcpp.rules.cuda` and `mcpp.rules.spirv`
 from `mcpp:plugins`, the way any project does.
 
 **Layers must not have a cliff, and each layer must be the composition of the

@@ -4,7 +4,13 @@
 # 2026-09-05-heterogeneous-build-ecosystem-design-v2.md, section 7.3, rows V3
 # and V4). Run inside a fresh xlings subos:
 #
-#   xlings subos verify-961 --sandbox --cmd "MCPP_VERIFY_VERSION=2026.9.6.1 bash <this file>"
+#   # The sandbox has an EMPTY $HOME and a fresh /tmp, so this file is not
+#   # visible from inside it, and `xlings subos <name>` without `use` is
+#   # rejected as an unknown subcommand. Measured 2026-09-06; the invocation
+#   # this line used to give could not be followed.
+#   B64=$(base64 -w0 <this file>)
+#   xlings subos use verify-961 --sandbox --cmd \
+#     "echo $B64 | base64 -d > /tmp/v.sh && MCPP_VERIFY_VERSION=2026.9.6.1 bash /tmp/v.sh"
 #
 # and once more on the host with a GPU (MCPP_VERIFY_HOST=1), where the device
 # half of each lane is exercised as well.
@@ -197,9 +203,11 @@ printf '%s\n' "$out" | grep -qi 'error' && fail "importing the three members fai
     || ok "mcpp.rules.hip, .sycl and .spirv all import from mcpp:plugins $PLUGINS_VERSION"
 
 # -- E. the HIP lane ----------------------------------------------------------
-section "E. examples/12-hip-kernel"
-if [ -n "$SRC" ] && [ -d "$SRC/examples/12-hip-kernel/app" ]; then
-    ex="$work/ex12"; cp -r "$SRC/examples/12-hip-kernel/app" "$ex"
+section "E. examples/09-heterogeneous/hip"
+if [ -n "$SRC" ] && [ ! -d "$SRC/examples/09-heterogeneous/hip/app" ]; then
+    fail "MCPP_VERIFY_SRC names a checkout without examples/09-heterogeneous/hip/app"
+elif [ -n "$SRC" ]; then
+    ex="$work/ex12"; cp -r "$SRC/examples/09-heterogeneous/hip/app" "$ex"
     out=$(cd "$ex" && "$STORE" build --no-accel 2>&1 && "$STORE" run --no-accel 2>&1)
     printf '%s\n' "$out" | grep -q '12 24 36 48' && ok "example 12 --no-accel answered 12 24 36 48" \
         || fail "example 12 --no-accel: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
@@ -222,13 +230,15 @@ if [ -n "$SRC" ] && [ -d "$SRC/examples/12-hip-kernel/app" ]; then
         ok "device result not asserted in a sandbox"
     fi
 else
-    printf 'skip: set MCPP_VERIFY_SRC to a checkout carrying examples/12-hip-kernel\n'
+    printf 'skip: set MCPP_VERIFY_SRC to a checkout carrying examples/09-heterogeneous/hip\n'
 fi
 
 # -- F. the SYCL lane ---------------------------------------------------------
-section "F. examples/11-sycl-kernel"
-if [ -n "$SRC" ] && [ -d "$SRC/examples/11-sycl-kernel/app" ]; then
-    ex="$work/ex11"; cp -r "$SRC/examples/11-sycl-kernel/app" "$ex"; ex11_built="$ex"
+section "F. examples/09-heterogeneous/sycl"
+if [ -n "$SRC" ] && [ ! -d "$SRC/examples/09-heterogeneous/sycl/app" ]; then
+    fail "MCPP_VERIFY_SRC names a checkout without examples/09-heterogeneous/sycl/app"
+elif [ -n "$SRC" ]; then
+    ex="$work/ex11"; cp -r "$SRC/examples/09-heterogeneous/sycl/app" "$ex"; ex11_built="$ex"
     out=$(cd "$ex" && "$STORE" build --no-accel 2>&1 && "$STORE" run --no-accel 2>&1)
     printf '%s\n' "$out" | grep -q '12 24 36 48' && ok "example 11 --no-accel answered 12 24 36 48" \
         || fail "example 11 --no-accel: $(printf '%s' "$out" | tail -3 | tr '\n' ' ')"
@@ -253,7 +263,7 @@ if [ -n "$SRC" ] && [ -d "$SRC/examples/11-sycl-kernel/app" ]; then
         ok "device result not asserted in a sandbox"
     fi
 else
-    printf 'skip: set MCPP_VERIFY_SRC to a checkout carrying examples/11-sycl-kernel\n'
+    printf 'skip: set MCPP_VERIFY_SRC to a checkout carrying examples/09-heterogeneous/sycl\n'
 fi
 
 # -- G. compat.sycl-runtime: the farm, and what it had to contain -------------

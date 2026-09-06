@@ -71,7 +71,7 @@ concern?*
 
 | | size | what decides it |
 |---|---|---|
-| **nine frameworks** (llama.cpp, ncnn, CUTLASS, oneDNN, Kokkos, OpenCV CUDA, FAISS, ONNX Runtime, libtorch) | **the bulk of what remains** | each is work in that project's own `-m` repository, not an index entry. Two of the nine exist in the index at all; none has a device backend built |
+| **the framework tier** (ncnn, CUTLASS, oneDNN, Kokkos, OpenCV CUDA, FAISS, ONNX Runtime, libtorch) | **the bulk of what remains** | each is work in that project's own `-m` repository, not an index entry. llama.cpp is no longer on this row: its Vulkan backend is built and measured (F1, 2026-09-06). Its CUDA backend (F2) is next, and the gate has been satisfied -- F1 finished, and it did what a gate is for, exposing two engine defects in its first hours |
 | Intel `anv` in the Mesa payload | medium | a libclc and SPIRV-LLVM-Translator chain, then a Mesa rebuild |
 | HIP's AMD platform | medium | a ROCm runtime and device library in `xim-pkgindex` |
 | aarch64 for the third-class libraries | medium | `xim:glibc`, `gcc-runtime`, `ncurses`, `libxcb` publish no aarch64 asset |
@@ -91,7 +91,7 @@ is for, and it is deliberately ordered so the first entry is a gate.
 
 | # | project | lane(s) | criterion | why this order |
 |---|---|---|---|---|
-| F1 | llama.cpp Vulkan | SPIR-V | correct tokens on lavapipe, no GPU | its blocker is gone (`glslc` published) and its shader pipeline is the most mechanical of the nine |
+| F1 | llama.cpp Vulkan | SPIR-V | the device's token equals the host's, on a software device, no GPU | its blocker is gone (`glslc` published) and its shader pipeline is the most mechanical of the nine |
 | F2 | llama.cpp CUDA | CUDA | correct tokens on a device | round 3 reached "chain complete, blocked on a payload matrix"; re-measure against the current CCCL lines before assuming that still holds |
 | F3 | Kokkos | CUDA, SYCL | its own unit tests pass under both backends from one source | the first entry that exercises TWO lanes on one source, which is the portability claim |
 | F4 | oneDNN | SYCL | `benchdnn` on the CUDA backend | the first entry whose upstream build assumes an oneAPI environment rather than a compiler |
@@ -106,7 +106,30 @@ is lost if two run in parallel.
 `opencv.opencv` are already there; the work is in their `-m` repositories. Plan
 the round as PRs to those, not as index edits.
 
-## 6. Proposal: group the four device examples
+### F1's criterion, as amended by what it measured
+
+Two things the plan assumed turned out to be wrong, and both were found by
+building rather than by reading.
+
+**"Correct tokens" is too weak a criterion.** A token inside the vocabulary is
+produced by a backend that computed nonsense and by a build that never reached
+a device. The criterion is now an EQUALITY -- the device decode and the host
+decode of the same prompt under greedy sampling sample the same token -- with a
+second assertion that the device run actually offloaded, because two host
+decodes agree trivially.
+
+**"On lavapipe" was not reachable as stated.** ggml keeps only Vulkan devices
+whose type is not `eCpu`, so a software implementation is dropped for its type
+alone: measured, lavapipe advertises `storageBuffer16BitAccess` and every
+feature the backend requires, and is still excluded. This is upstream policy,
+not a defect in the packaging, and upstream ships the escape hatch --
+`GGML_VK_VISIBLE_DEVICES=0` names a device by index. The criterion holds with
+that selector, which is what a runner with no GPU has to use anyway.
+
+Measured on 2026-09-06: `llvmpipe (LLVM 22.1.8, 256 bits)`, 7/7 layers
+offloaded, host token 471 and device token 471.
+
+## 6. Decided: group the four device examples
 
 `examples/09-cuda-kernel`, `10-vulkan-compute`, `11-sycl-kernel` and
 `12-hip-kernel` are one lesson in four programming models. They share the
@@ -132,17 +155,149 @@ the record state something that was not true at the time. So a rename leaves
 dangling paths in the record by construction, which is normal for a record and
 should not be repaired.
 
-**Recommendation: do it, in a round of its own, and not as part of a feature
-round.** The benefit is a curriculum whose shape matches its content; the risk
-is entirely churn, and mixing churn into a round that also changes behaviour is
-what makes a regression hard to attribute. Deferring it costs one more
-misleading row per model added.
+**Decided: do it, folded into round 5 rather than as a round of its own.** My
+recommendation had been to isolate it, on the grounds that churn mixed with
+behaviour change makes a regression hard to attribute. The decision is to
+combine, and the attribution risk is real, so it is bought down rather than
+ignored:
+
+* the move lands as its **own commit**, first, containing no behaviour change;
+* V4 runs on that commit before anything else in the round is written, so a
+  rename that broke an example is caught while the rename is the only suspect;
+* section 7's alignment work rides in the same commit, because it edits the
+  same manifests and splitting them would create two churn commits instead of
+  one.
 
 **Not recommended: renaming without the shared README.** The grouping is only
 worth its churn if the directory explains what the four have in common; four
 subdirectories under a bare parent is the same four lessons with a longer path.
 
-## 7. The method this round produced, which outlives its features
+## 7. Aligning the documentation with the released ecosystem
+
+A version reference in the documentation is one of two kinds, and treating them
+alike is how a sweep like this damages a document.
+
+**A floor marker states when something landed** -- `*(2026.9.5.2+)*`, `### The
+probe channel: fact / floor (2026.9.5.2+)`. It is a historical fact. Bumping it
+to the current release makes the document lie about its own subject, and most
+of the version strings in `docs/` are this kind.
+
+**A current pin states what a project should declare today** -- an example's
+`mcpp.toml`, an instruction to a reader. This is what tracks the release.
+
+Measured on 2026-09-06, the pins that are stale:
+
+| where | has | should have | why |
+|---|---|---|---|
+| examples 09, 10 | `plugins = { version = "0.1.1" }` | `"0.2.0"` | 11 and 12 already pin 0.2.0; a reader comparing four examples sees two answers to one question |
+| examples 09, 12 | `compat:cuda-runtime = "2026.09.05"` | `cuda-driver = "2026.09.05"` | that entry is frozen and renamed; its own recipe says "To migrate, change the key to `cuda-driver`". An example is the worst place to demonstrate a superseded spelling |
+
+The criterion for this task is not "no old version string appears" -- that
+criterion would delete the floor markers, which is the failure it must avoid.
+It is:
+
+* every `mcpp.toml` under `examples/` resolves against the current index, and
+* every floor marker still names the release the feature actually landed in.
+
+The second half is checked by not touching them: the sweep edits manifests and
+reader instructions, and leaves `(20xx.x.x.x+)` alone.
+
+## 7b. Round 5 broken down: tasks, repositories and the order between them
+
+Round 5 is one lane -- llama.cpp on Vulkan -- carried far enough that the
+answer is a sentence of generated text rather than four numbers. The work is
+not evenly distributed across repositories, and the order between the pieces is
+forced rather than chosen.
+
+### The tasks
+
+| id | repository | task | depends on | criterion |
+|---|---|---|---|---|
+| R0 | mcpp | group the four device examples, align the stale pins | -- | eight builds (four device, four `--no-accel`) answer `12 24 36 48` |
+| R1 | llama.cpp-m | `backend-vulkan` feature: the shader pipeline as build-graph edges | R0 for nothing technical, only for attribution | `ggml-vulkan.cpp` and 134 generated sources compile and link |
+| R2 | llama.cpp-m | the generator as a host tool built from the vendored source | R1 | the tool is built by an action, not by the build program doing work inline |
+| R3 | llama.cpp-m | glslc extension probes, forwarded to both the generator and the backend | R2 | a machine whose glslc lacks `GL_KHR_cooperative_matrix` still builds |
+| R4 | llama.cpp-m | an example that loads a model and generates tokens on the Vulkan device | R1-R3 | deterministic output from a fixed seed, on lavapipe, with no GPU |
+| R5 | mcpp-index | a version of `ggml-org:llamacpp` carrying the feature | R1-R4 | a consumer outside this repository selects `backend-vulkan` and builds |
+| R6 | llama.cpp-m | CI: build the feature on a runner with no GPU | R4 | the workflow is red when the feature is broken, which means it must run |
+| R7 | mcpp | document the framework tier in docs/20 | R4 | the shape a framework takes is stated once, not per project |
+| R8 | mcpp-index | `compat:spirv-headers`, which the index did not carry | -- | a consumer that READS SPIR-V resolves it from the ecosystem, not the host |
+| R9 | mcpp | two engine defects R1 exposed | R1 | each has a criterion that says no on the previous binary |
+
+### Status, 2026-09-06
+
+| id | state | evidence |
+|---|---|---|
+| R0 | done | eight builds answer `12 24 36 48`; `examples/09-heterogeneous/{cuda,vulkan,sycl,hip}` |
+| R8 | **merged** | mcpp-index#358, `compat:spirv-headers@1.4.357.0`, CN mirror byte-identical |
+| R9 | done, unreleased | `[feature-xlings]` reaches `xpkg_dir` (e2e 614); a `[feature-deps]` shared library reaches the link line (e2e 615). Both tests exit 1 on the previous binary and 0 on this one |
+| R1-R3 | done | 136 declared edges; one glslc probe feeding both readers; the generator built from the vendored source, statically linked |
+| R4 | done | `llvmpipe (LLVM 22.1.8, 256 bits)`, 7/7 layers offloaded, host token 471 = device token 471; the chat example generates 32 tokens |
+| R6 | written | a `vulkan` job on a GPU-less runner, gated on the lavapipe payload and `GGML_VK_VISIBLE_DEVICES=0` |
+| R7 | done | docs/20 and docs/zh/20, "What a framework looks like on top of this" |
+| R5 | blocked on release order | the index entry can only name an artefact that exists, so it follows llama.cpp-m's tag |
+
+**The release order is the reverse of the dependency order**, as it always is
+here: mcpp 2026.9.6.2 first (llama.cpp-m's CI pins it), then llama.cpp-m
+`b10069.1`, then the index entry that names that tag. The index PR for
+`compat:spirv-headers` went first and separately because llama.cpp-m cannot
+build without it -- splitting it out was forced by the cycle, not chosen.
+
+### What the angles decide
+
+**Architecture.** The shader pipeline is 136 edges in the build graph, not one
+build program that loops. A build program that generated all 134 sources inline
+would do it serially, once per prepare, and report a failure as "build.mcpp
+exited 1". Declaring the work makes each shader an attributable, parallel,
+incremental edge. This is the same decision `mcpp.rules.sycl` made for two
+actions and `mcpp.rules.spirv` for one; at 136 it stops being a preference.
+
+**Stability.** The generator is compiled from the vendored source rather than
+taken from a payload, because its output must match the `ggml-vulkan.cpp` it
+was vendored beside. A generator from elsewhere would be a second version of a
+contract that upstream keeps in one repository.
+
+**Simplicity.** No new engine primitive. If round 5 needs one, that is a
+finding worth more than the feature, and it goes in the engine with its own
+test rather than into the framework's build program.
+
+**User experience.** A consumer writes `features = ["backend-vulkan"]` and
+nothing else. Every payload, adapter and probe is the package's own business.
+The measure is the diff a consumer writes: one line.
+
+**Compatibility.** `backend-cpu` stays the default and stays untouched. A
+consumer that does not ask for Vulkan must not acquire a Vulkan dependency, and
+the criterion for that is that the CPU build's resolution names no Vulkan
+package at all -- not that it happens to still work.
+
+**Cross-platform.** The feature is Linux-first because that is where the
+verification hardware and the lavapipe payload are. Windows and macOS are
+stated as unbuilt rather than silently attempted: macOS has `backend-metal`
+already, and a Vulkan build there would need MoltenVK, which no package in this
+ecosystem delivers.
+
+**Consistency.** The device sources are `.comp` files reached by a constrained
+glob, the same spelling `examples/09-heterogeneous/vulkan` uses. A framework
+that needed a different spelling for the same thing would say the spelling was
+never general.
+
+**Silent upgrade.** The `backend-vulkan` feature is additive: an existing
+`ggml-org:llamacpp` consumer that does not name it resolves exactly what it
+resolves today. The version moves forward; no existing pin changes meaning.
+
+**Test coverage.** Two criteria, and the second is the one that matters. The
+first is that the feature builds. The second is that the program produces
+correct tokens on a device with no GPU present, because a build that links and
+produces nothing correct is the failure mode this whole tier exists to catch.
+
+### The gate, restated
+
+F1 is a gate for a reason round 3 measured: its first hour exposed an engine
+defect that no example had. If R1-R4 need an engine change, round 5 stops and
+that change ships first, with its own test in mcpp. Frameworks F2-F9 do not
+start until F1's example generates tokens.
+
+## 8. The method this round produced, which outlives its features
 
 Eight defects, six in work written for the round, none found by reading code.
 Four shared one shape:

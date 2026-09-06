@@ -1,4 +1,4 @@
-# 12 — A HIP kernel on the NVIDIA platform
+# HIP: a kernel on the NVIDIA platform, behind the same seam
 
 What this example demonstrates, and what it does not.
 
@@ -32,7 +32,7 @@ Three consequences, all visible in this example's manifest:
   half, invoked `-x cuda` with `-D__HIP_PLATFORM_NVIDIA__`;
 * `xim:hip-nvidia` contains no binaries, because on this platform there are
   none to contain;
-* the payloads are CUDA's, and `[dependencies.compat] cuda-runtime` is the same
+* the payloads are CUDA's, and `[dependencies.compat] cuda-driver` is the same
   one hop example 09 needs — mcpp's private loader does not consult `/usr/lib`,
   so the statically linked CUDA runtime could not otherwise `dlopen` the driver.
 

@@ -26,7 +26,7 @@ its device code can be separated at all.
 confine every one of them to a translation unit of its own by convention, and
 `.sycl` is that convention made checkable. Only those units go to the SYCL
 compiler; the rest of the target is compiled by the project's own toolchain,
-which is what `examples/11-sycl-kernel` shows -- `app.cppm` and `main.cpp` by
+which is what `examples/09-heterogeneous/sycl` shows -- `app.cppm` and `main.cpp` by
 mcpp's clang, `saxpy.sycl` by the dpcpp payload's.
 
 **OpenMP offload's and stdpar's cannot.** `#pragma omp target` and
@@ -113,7 +113,7 @@ The command that invokes a device compiler is not built into mcpp. It is
 supplied by a **build-rule package**, consumed with `host-module = true`,
 which emits build-graph edges whose outputs join the link. See
 [07 — build.mcpp](07-build-mcpp.md) for the mechanism and
-`examples/09-cuda-kernel` for a working CUDA rule.
+`examples/09-heterogeneous/cuda` for a working CUDA rule.
 
 The division is deliberate. mcpp owns the graph, the artifact's identity and
 the set of architectures; a vendor's flag spelling, its architecture syntax and
@@ -332,6 +332,48 @@ so both are in the image and mcpp's duplicate-symbol check reports the
 unwinder symbols they share. Nothing may cross the seam: a SYCL exception is
 caught in the device translation unit and returned as a code, because the
 runtime that threw it is not the one the caller would unwind with.
+
+## What a framework looks like on top of this
+
+The four lanes prove a rule package can drive four compilers. A framework is
+the next question -- whether the mechanism carries something a person would
+deploy -- and the answer has a shape of its own, measured on llama.cpp's Vulkan
+backend.
+
+**A framework brings its own generator, and the ecosystem should drive it
+rather than replace it.** llama.cpp produces its shaders with a tool it keeps
+beside the backend that consumes them; the two are one contract in one
+repository. A rule package that reimplemented the generation would be a second
+version of that contract, drifting on its own schedule. `mcpp.rules.spirv`
+exists for a project that writes shaders; a project that already has a shader
+pipeline needs its pipeline DECLARED, not replaced.
+
+**Declaring is the whole difference at that scale.** 134 shader sets generated
+inside a build program are serial, run once per prepare, and report a failure
+as `build.mcpp exited 1`. The same 134 as `mcpp::action` edges are incremental,
+parallel, and each names itself when it fails. The threshold where this stops
+being a preference is low: `mcpp.rules.sycl` already declares two.
+
+**A capability probe belongs in the build program, and only once.** Which
+extensions a shader compiler accepts is a property of how it was built, not of
+its version, so upstream reads the compiler's own refusal. That answer has two
+readers -- the generator, which decides which variants to emit, and the backend
+source, which decides which to look for -- and both are fixed before anything
+compiles. Asking twice would make one truth into two.
+
+**The optional backend is a feature, and everything it needs hangs off that
+feature.** `[feature-deps.<f>]` for packages and `[feature-xlings.<f>]` for
+tools, so a consumer that does not name the backend acquires none of it. The
+criterion for that claim is not that the CPU build still works; it is that the
+CPU build's resolution names no package belonging to the backend.
+
+**A software device is not automatically a substitute for hardware.** ggml
+keeps only Vulkan devices whose type is not `eCpu`, so Mesa's lavapipe is
+excluded for its type alone even though it advertises every feature the backend
+requires. That is the framework's policy, not a packaging defect, and the way
+past it is the framework's own selector rather than a change to the packaging.
+
+`ggml-org:llamacpp` carries this as its `backend-vulkan` feature.
 
 ## Not implemented
 

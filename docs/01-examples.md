@@ -26,11 +26,16 @@ examples.
 | 01 | [`examples/01-hello`](../examples/01-hello/) | Minimal single-file project with `import std` | The minimal package shape (`mcpp new` also emits `tests/test_smoke.cpp`) |
 | 02 | [`examples/02-with-deps`](../examples/02-with-deps/) | Adds the `mcpplibs.cmdline` dependency to parse command-line arguments | `[dependencies]`, SemVer, `mcpp.lock` |
 | 03 | [`examples/03-pack-static`](../examples/03-pack-static/) | Produces a fully static release package via `mcpp pack --mode static` | `[target.<triple>]` and `[pack]` configuration |
+| 04 | [`examples/04-workspace`](../examples/04-workspace/) | A multi-package workspace: two libraries and an application sharing one namespace | `[workspace]`, path dependencies, `mcpp build --workspace` |
+| 05 | [`examples/05-lib-distribution`](../examples/05-lib-distribution/) | A prebuilt library and its consumer, interesting only together | `mcpp pack` for a library, a C header and a C++ module from one source, a distribution package |
+| 06 | [`examples/06-openkal-cross`](../examples/06-openkal-cross/) | One program asking each machine what it is, built for four targets from any host | `--target`, openkal, cross-compilation without editing the source |
+| 07 | [`examples/07-project-subos`](../examples/07-project-subos/) | A build program that finds its tools in the environment the project declared | `[xlings] subos`, `[xlings.workspace]`, a build program whose `PATH` is the environment the project named |
 | 08 | [`examples/08-build-rules`](../examples/08-build-rules/) | Two rule packages and a project that uses both | `host-module = true`, `[build-dependencies]`, `mcpp::action` with `role = "check"` |
-| 09 | [`examples/09-cuda-kernel`](../examples/09-cuda-kernel/) | A CUDA kernel behind a seam module, with a CPU fallback | `accel`, constrained source globs, `mcpp::action` with `role = "object"`, `cfg(accelerator = …)` |
-| 10 | [`examples/10-vulkan-compute`](../examples/10-vulkan-compute/) | The same computation as a Vulkan compute shader, on a GPU or on the CPU | `mcpp.rules.spirv` from `mcpp:plugins`, `mcpp::action` with `role = "source"`, generated headers, a software driver as a payload |
-| 11 | [`examples/11-sycl-kernel`](../examples/11-sycl-kernel/) | The same computation as a SYCL kernel, compiled by a second compiler | `mcpp.rules.sycl` from `mcpp:plugins`, the `.sycl` device extension, a chained `mcpp::action` for the device link, `compat:sycl-runtime` |
-| 12 | [`examples/12-hip-kernel`](../examples/12-hip-kernel/) | The same computation in HIP, reaching an NVIDIA device | `mcpp.rules.hip` from `mcpp:plugins`, HIP as a header layer over the CUDA runtime, a two-chunk `accel` |
+| 09 | [`examples/09-heterogeneous`](../examples/09-heterogeneous/) | One computation on a device, in four programming models, with a CPU fallback in each | `accel`, constrained source globs, the seam module, rule packages from `mcpp:plugins`, `cfg(accelerator = …)` |
+| 09a | [`…/cuda`](../examples/09-heterogeneous/cuda/) | A CUDA kernel behind a seam module | `mcpp.rules.cuda`, `mcpp::action` with `role = "object"`, the driver stated as a fact and a floor |
+| 09b | [`…/vulkan`](../examples/09-heterogeneous/vulkan/) | The same computation as a Vulkan compute shader, on a GPU or on the CPU | `mcpp.rules.spirv`, `mcpp::action` with `role = "source"`, generated headers, a software driver as a payload |
+| 09c | [`…/sycl`](../examples/09-heterogeneous/sycl/) | The same computation as a SYCL kernel, compiled by a second compiler | `mcpp.rules.sycl`, the `.sycl` device extension, a chained `mcpp::action` for the device link, `compat:sycl-runtime` |
+| 09d | [`…/hip`](../examples/09-heterogeneous/hip/) | The same computation in HIP, reaching an NVIDIA device | `mcpp.rules.hip`, HIP as a header layer over the CUDA runtime, a two-chunk `accel` |
 
 ## Suggested Reading Order
 

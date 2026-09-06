@@ -1,4 +1,4 @@
-# 11 — A SYCL kernel behind the same seam
+# SYCL: a kernel behind the same seam, compiled by a second compiler
 
 What this example demonstrates, and what it does not.
 

@@ -1,4 +1,4 @@
-# 09 — A CUDA kernel behind a seam module
+# CUDA: a kernel behind a seam module
 
 What this example demonstrates, and what it does not.
 
@@ -214,7 +214,7 @@ Reaching it takes two packages, one per layer.
 installs a symlink to whatever the machine has, so every GPU consumer reads one
 path instead of reimplementing an `ldconfig` probe.
 
-`compat.cuda-runtime` in mcpp-index owns the mcpp-side question of how a
+`compat.cuda-driver` in mcpp-index owns the mcpp-side question of how a
 **built artifact** reaches it. mcpp's private loader does not consult
 `/usr/lib`, so a bare-soname `dlopen` from inside a built program finds nothing;
 the package declares a directory on the artifact's runtime search path and links
@@ -222,7 +222,7 @@ through the sentinel. It is declared here as an ordinary dependency:
 
 ```toml
 [dependencies.compat]
-cuda-runtime = "2026.09.05"
+cuda-driver = "2026.09.05"
 ```
 
 Without it the program builds and links, then reports
