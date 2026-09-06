@@ -51,6 +51,15 @@ namespace {
 // not parse. Measured 2026-08-20, from a form that this repository's own
 // documentation recommended (`docs/05` §2.8.2 said `compat.openblas = "0.3.x"`).
 //
+// AND THE WARNING MUST NOT PREDICT A FAILURE IT CANNOT SEE. A string that is
+// not a range is used as an EXACT index key, so whether the fetch fails
+// depends on whether the index carries that key -- which this parser cannot
+// know. `0.3.x` fails because no such key exists; `b10069`, the version scheme
+// of a published package in this ecosystem (mcpp#363), succeeds because the
+// key is there verbatim. The first wording asserted failure for both, so every
+// build of that package printed a warning predicting a failure that did not
+// happen, which teaches a reader to ignore the channel.
+//
 // Checking here converts a network round-trip and a misleading answer into a
 // message that names the actual problem, at the point where the text was
 // written.
@@ -1160,11 +1169,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             spec.version = it->second.as_string();
             if (auto why = version_req_problem(spec.version); !why.empty())
                 m.schemaWarnings.push_back(std::format(
-                    "[{}.\"{}\"] version = '{}' is not a requirement this "
-                    "resolver can match ({}). The fetch will fail naming the "
-                    "PACKAGE, which may well exist; it is this requirement that "
-                    "does not parse. Accepted: an exact version (\"1.2.3\") or "
-                    "a comparator (\"^1.2.3\", \">=1.0.0, <2.0.0\").",
+                    "[{}.\"{}\"] version = '{}' is not a version RANGE ({}), "
+                    "so it is used as an exact index key: the index must carry "
+                    "it verbatim, or the fetch fails naming the PACKAGE, which "
+                    "may well exist. A range is a comparator (\"^1.2.3\", "
+                    "\">=1.0.0, <2.0.0\") or an exact version (\"1.2.3\").",
                     section, fqName, spec.version, why));
         }
         if (auto it = sub.find("git");     it != sub.end() && it->second.is_string()) spec.git     = it->second.as_string();
@@ -1297,11 +1306,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             spec.version = value.as_string();
             if (auto why = version_req_problem(spec.version); !why.empty())
                 m.schemaWarnings.push_back(std::format(
-                    "[{}] {} = '{}' is not a requirement this resolver can "
-                    "match ({}). The fetch will fail naming the PACKAGE, which "
-                    "may well exist; it is this requirement that does not "
-                    "parse. Accepted: an exact version (\"1.2.3\") or a "
-                    "comparator (\"^1.2.3\", \">=1.0.0, <2.0.0\").",
+                    "[{}] {} = '{}' is not a version RANGE ({}), so it is used "
+                    "as an exact index key: the index must carry it verbatim, "
+                    "or the fetch fails naming the PACKAGE, which may well "
+                    "exist. A range is a comparator (\"^1.2.3\", "
+                    "\">=1.0.0, <2.0.0\") or an exact version (\"1.2.3\").",
                     section, key, spec.version, why));
         } else if (value.is_table()) {
             auto& sub = value.as_table();

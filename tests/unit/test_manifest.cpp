@@ -4122,15 +4122,20 @@ cmdline = "0.0.x"
 )";
     auto m = mcpp::manifest::parse_string(src);
     ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
+    // THE ASSERTION IS ON THE PROPERTIES THE MESSAGE MUST CARRY, not on its
+    // prose. Keying on a phrase makes a reworded warning either a silent
+    // no-op or a failure about wording; what a reader needs is the offending
+    // STRING (so they can find it), the word PACKAGE (because the failure
+    // they will otherwise see names exactly that, and the package is not the
+    // problem), and an example of an accepted form.
     bool found = false;
-    for (auto const& w : m->schemaWarnings)
-        if (w.find("not a requirement") != std::string::npos) found = true;
-    EXPECT_TRUE(found) << "no warning naming the requirement";
-    // And it must say that the PACKAGE is not the problem, because the
-    // failure the reader will otherwise see names exactly that.
-    for (auto const& w : m->schemaWarnings)
-        if (w.find("not a requirement") != std::string::npos)
-            EXPECT_NE(w.find("PACKAGE"), std::string::npos) << w;
+    for (auto const& w : m->schemaWarnings) {
+        if (w.find("0.0.x") == std::string::npos) continue;
+        found = true;
+        EXPECT_NE(w.find("PACKAGE"), std::string::npos) << w;
+        EXPECT_NE(w.find("^1.2.3"), std::string::npos) << w;
+    }
+    EXPECT_TRUE(found) << "no warning quoting the offending version string";
 }
 
 TEST(Manifest, DependencyVersionReportsTrailingGarbage) {
@@ -4143,7 +4148,13 @@ cmdline = "1.2.3abc"
 )";
     auto m = mcpp::manifest::parse_string(src);
     ASSERT_TRUE(m.has_value());
-    EXPECT_FALSE(m->schemaWarnings.empty());
+    // "some warning was produced" is satisfied by a warning about anything at
+    // all, including a typo elsewhere in the fixture. The warning has to quote
+    // the string it is about, or the reader cannot find it.
+    bool found = false;
+    for (auto const& w : m->schemaWarnings)
+        if (w.find("1.2.3abc") != std::string::npos) found = true;
+    EXPECT_TRUE(found) << "no warning quoting the offending version string";
 }
 
 // A path or git dependency has no version, and requiring one would break every
@@ -4174,8 +4185,8 @@ cmdline = { version = "0.0.x", features = ["a"] }
     ASSERT_TRUE(m.has_value()) << (m ? "" : m.error().format());
     bool found = false;
     for (auto const& w : m->schemaWarnings)
-        if (w.find("not a requirement") != std::string::npos) found = true;
-    EXPECT_TRUE(found);
+        if (w.find("0.0.x") != std::string::npos) found = true;
+    EXPECT_TRUE(found) << "the long form's version was not checked";
 }
 
 // ─── [hooks] — project build lifecycle commands (#496) ───────────────────

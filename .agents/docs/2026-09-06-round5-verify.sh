@@ -42,9 +42,17 @@ XL="${XLINGS_BIN:-$(command -v xlings)}"
 MODEL="${LLAMACPP_TEST_MODEL:-}"
 
 fails=0
+skipped=""
 fail()    { printf 'ASSERT-FAIL: %s\n' "$1"; fails=$((fails + 1)); }
 ok()      { printf 'ok: %s\n' "$1"; }
 section() { printf '\n== %s ==\n' "$1"; }
+# NOT RUN IS NOT PASSED. A sandbox has no source checkout, so three sections
+# below are legitimately unrunnable there -- but a summary that said "0
+# assertions failed" while three sections never executed would be the most
+# misleading line this file could print. Every skip is named, and the summary
+# repeats the list.
+skip()    { printf 'NOT RUN: %s\n' "$1"; skipped="$skipped
+  - $1"; }
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -109,7 +117,7 @@ section "C. a CPU consumer acquires nothing of the Vulkan backend"
 # The criterion is the RESOLUTION, not "the CPU build still works". A manifest
 # that made every consumer download a shader compiler would also still work.
 if [ -z "$SRC" ] || [ ! -f "$SRC/mcpp.toml" ]; then
-    fail "set MCPP_VERIFY_SRC to a llama.cpp-m checkout"
+    skip "C: needs MCPP_VERIFY_SRC (a llama.cpp-m checkout); a sandbox has none"
 else
     cpu="$work/cpu"; cp -r "$SRC" "$cpu"; rm -rf "$cpu/target" "$cpu/mcpp.lock"
     (cd "$cpu" && "$STORE" build >/dev/null 2>&1)
@@ -141,7 +149,7 @@ fi
 # -- D. the Vulkan backend builds, and the shaders are edges -----------------
 section "D. backend-vulkan"
 if [ -z "$SRC" ] || [ ! -f "$SRC/mcpp.toml" ]; then
-    fail "set MCPP_VERIFY_SRC to a llama.cpp-m checkout"
+    skip "D: needs MCPP_VERIFY_SRC (a llama.cpp-m checkout); a sandbox has none"
 else
     vk="$work/vk"; cp -r "$SRC" "$vk"; rm -rf "$vk/target"
     if (cd "$vk" && "$STORE" build --features backend-vulkan >"$work/vk.log" 2>&1); then
@@ -193,9 +201,9 @@ fi
 # -- E. the device answers ---------------------------------------------------
 section "E. the device decode equals the host decode"
 if [ -z "$MODEL" ] || [ ! -f "$MODEL" ]; then
-    fail "set LLAMACPP_TEST_MODEL to a .gguf (tests/support/fetch_model.py writes one)"
+    skip "E: needs LLAMACPP_TEST_MODEL (tests/support/fetch_model.py writes one)"
 elif [ -z "$SRC" ]; then
-    fail "set MCPP_VERIFY_SRC to a llama.cpp-m checkout"
+    skip "E: needs MCPP_VERIFY_SRC (a llama.cpp-m checkout)"
 else
     icd=$(find "$HOME/.mcpp/registry/data/xpkgs/xim-x-mesa-lavapipe" \
               "$HOME/.xlings/data/xpkgs/xim-x-mesa-lavapipe" \
@@ -293,6 +301,9 @@ else
 fi
 
 printf '\n== summary ==\n'
+if [ -n "$skipped" ]; then
+    printf 'NOT RUN, and therefore not verified:%s\n' "$skipped"
+fi
 if [ "$fails" -eq 0 ]; then
     printf 'PASS: 0 assertions failed\n'
 else
