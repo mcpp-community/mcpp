@@ -101,18 +101,29 @@ section "C. a CPU consumer acquires nothing of the Vulkan backend"
 if [ -z "$SRC" ] || [ ! -f "$SRC/mcpp.toml" ]; then
     fail "set MCPP_VERIFY_SRC to a llama.cpp-m checkout"
 else
-    cpu="$work/cpu"; cp -r "$SRC" "$cpu"; rm -rf "$cpu/target"
+    cpu="$work/cpu"; cp -r "$SRC" "$cpu"; rm -rf "$cpu/target" "$cpu/mcpp.lock"
     (cd "$cpu" && "$STORE" build >/dev/null 2>&1)
-    res=$(ls "$cpu"/target/*/*/resolution.json 2>/dev/null | head -1)
-    if [ -z "$res" ]; then
-        fail "no resolution.json under $cpu/target"
+
+    # THE OBJECT IS `mcpp.lock`, NOT `resolution.json`. The first draft of this
+    # check grepped resolution.json for "mesa-lavapipe" and would have failed on
+    # any machine whose SubOS binds it -- resolution.json records the runtime
+    # binding of the environment, not what the project resolved. mcpp.lock
+    # records exactly the latter, and it is state rather than a log line.
+    #
+    # It must be REMOVED first: a lock left by an earlier build of the same tree
+    # still lists that build's packages, and reading it would report the
+    # previous run.
+    lock="$cpu/mcpp.lock"
+    if [ ! -f "$lock" ]; then
+        ok "the CPU build resolved no dependency at all (no $lock written)"
     else
-        ok "reading $res"
-        if grep -qE '"(compat[.:]vulkan|compat[.:]spirv-headers|shaderc|mesa-lavapipe)' "$res"; then
-            fail "the CPU build's resolution names a Vulkan-backend package"
-            grep -oE '"(compat[.:][a-z-]+|xim:[a-z-]+)"' "$res" | sort -u | head -20
+        ok "reading $lock"
+        pkgs=$(grep -oE '^\[package\."[^"]+"\]' "$lock" | sed 's/.*"\(.*\)".*/\1/' | sort)
+        if printf '%s' "$pkgs" | grep -qE 'vulkan|spirv|shaderc|lavapipe'; then
+            fail "the CPU build resolved a Vulkan-backend package"
+            printf '%s\n' "$pkgs"
         else
-            ok "no Vulkan-backend package appears in the CPU resolution"
+            ok "the CPU build resolved no Vulkan-backend package"
         fi
     fi
 fi
