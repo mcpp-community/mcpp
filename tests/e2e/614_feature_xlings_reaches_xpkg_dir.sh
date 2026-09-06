@@ -31,7 +31,24 @@ if [ ! -d "$store" ]; then
     printf 'SKIP: %s is absent, so there is no installed payload to look up\n' "$store"
     exit 0
 fi
-version="$(ls "$store" | head -1)"
+# The newest version that actually carries a payload. `ls | head -1` takes
+# whichever name sorts first, and a store that has seen two ninja versions can
+# hold a directory an uninstall left behind; `xpkg_dir` answers "" for that, and
+# the test would then fail about features while really measuring the store.
+#
+# NON-EMPTY IS THE TEST, NOT `bin/`. Not every payload has a bin directory --
+# this one puts the executable at its root -- so a criterion spelling `bin/`
+# would skip on a perfectly good payload.
+version=""
+for candidate in $(ls "$store" | sort -V -r); do
+    if [ -n "$(ls -A "$store/$candidate" 2>/dev/null)" ]; then
+        version="$candidate"; break
+    fi
+done
+if [ -z "$version" ]; then
+    printf 'SKIP: every version under %s is empty\n' "$store"
+    exit 0
+fi
 payload="$store/$version"
 
 work="$(mktemp -d)"
