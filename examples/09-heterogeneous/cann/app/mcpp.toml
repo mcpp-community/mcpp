@@ -10,33 +10,34 @@ standard   = "c++23"
 modules    = true
 import_std = true
 
-# NOT YET BUILDABLE, AND THE TWO MISSING PIECES ARE NAMED IN README.md.
-#
-# This manifest is the shape the Ascend lane takes, written out so that the
-# design it follows from is concrete rather than described. What it needs and
-# does not have: a rule package `mcpp.rules.ascendc`, and an xim package for the
-# CANN toolkit that carries BiSheng and the simulator.
+# The rule that compiles the kernel, selected by its feature; `build.mcpp`
+# imports it as `mcpp.rules.ascendc`. `[build-dependencies]`, because a rule
+# package's library must never reach the target while its rule is wanted.
 [build-dependencies.mcpp]
-plugins = { version = "0.2.1", features = ["rules-ascendc"], host-module = true }
+plugins = { version = "0.2.3", features = ["rules-ascendc"], host-module = true }
 
-# The toolkit carries BOTH the device compiler and the per-SoC simulator, so
-# this is one payload rather than two:
+# The toolkit carries BOTH halves this lane needs, so it is one payload rather
+# than two:
 #
-#   <toolkit>/compiler/ccec_compiler/bin/bisheng     the device compiler
-#   <toolkit>/*/simulator/<SoC>/lib                  the hardware-free device
-[xlings.workspace]
+#   <toolkit>/cann/<arch>-linux/ccec_compiler/bin/bisheng   the device compiler
+#   <toolkit>/cann/<arch>-linux/simulator/<SoC>/lib         38 SoCs, no hardware
+#
+# Gated on the accelerator: it is 2.9 GB installed, and `mcpp build` with no
+# accelerator has no use for it. That gating needs mcpp 2026.9.6.5; before it
+# the only spellings were "unconditionally" and "not at all".
+[target.'cfg(accelerator = "ascend")'.xlings.workspace]
 "xim:cann-toolkit" = "8.5.0"
 
 [build]
 # `dav-2201` is the device architecture, the role `sm_89` plays for CUDA. The
 # rule package derives BiSheng's own flag from it.
-accel = "ascend, dav-2201"
+accel = "ascend8.5+{dav-c220}"
 sources = [
   "src/*.cppm",
   "src/*.cpp",
   # The kernel carries the accel it is for. It is never offered to the C++
   # compiler; the constrained glob routes it to the build program instead.
-  { glob = "src/kernels/*.asc", accel = "ascend, dav-2201" },
+  { glob = "src/kernels/*.asc", accel = "ascend8.5+{dav-c220}" },
 ]
 include_dirs = ["include"]
 
@@ -45,6 +46,15 @@ include_dirs = ["include"]
 # fallback written by enumeration changes meaning as the ecosystem grows.
 [target.'cfg(accelerator = "none")'.build]
 sources = ["src/cpu/*.cpp"]
+
+# The HOST half of the island: it launches the kernel through ACL, and declines
+# when no NPU is present -- which is every machine that is not an Ascend one,
+# including the one this example was written on. Declining is the contract the
+# seam is built around, so a device build on a hostless machine still links and
+# still runs; it simply reports that it found no device.
+[target.'cfg(accelerator = "ascend")'.build]
+sources = ["src/ascend/*.cpp"]
+ldflags = ["-lascendcl"]
 
 [targets.ascend-saxpy]
 kind = "bin"

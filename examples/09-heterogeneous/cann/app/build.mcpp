@@ -1,0 +1,14 @@
+import std;
+import mcpp;
+import mcpp.rules.ascendc;
+
+// The kernel is compiled by BiSheng, which mcpp does not drive. Everything the
+// rule needs is already in the manifest -- the architecture in `[build] accel`,
+// the kernel in the constrained glob, the toolkit under `[xlings.workspace]` --
+// so this program names the project's own include directory and says go.
+int main() {
+    mcpp::rerun_if_changed_glob("src/kernels/**/*.asc");
+    mcpp::rules::ascendc::options opt;
+    opt.includes = { "include" };
+    return mcpp::rules::ascendc::compile(opt) ? 0 : 1;
+}
