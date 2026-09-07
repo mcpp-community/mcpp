@@ -5,6 +5,52 @@
 
 ## [Unreleased]
 
+## [2026.9.7.1] - 2026-09-07
+
+### 两处只在 Linux 之外成立的缺陷,以及第一条图形管线
+
+**引擎与规则层早就与平台无关,而生态只在 Linux 上完整。** 把规则包在另外两个平台上
+真跑一遍,暴露了两处引擎缺陷 —— 两处的共同形状是:一段代码的正确性依赖于宿主,而 CI
+只在其中一个宿主上执行它。
+
+**构建程序的链接不带工具链自己的运行时目录(macOS)。** `host_link_tokens` 的
+「信任 cfg」出口提前 return,跳过了给 `Toolchain::linkRuntimeDirs` 发 `-L` 与
+`-rpath` 的那一段。信任 cfg 决定的是**链哪些运行时**,它从来没有决定**去哪里找**:
+macOS 上 `-lc++` 于是经 SDK 解析到系统那份,而头文件来自载荷。两者在头文件引用了系统
+库还没导出的符号那一刻分道扬镳 —— macos-14 上编译一个只有 `import std` 的构建程序:
+
+    ld64.lld: error: undefined symbol: std::__1::__is_posix_terminal(__sFILE*)
+
+`std::print` 不是 header-only 的,它的两个重载都要到 libc++ **dylib** 里取支持符号,
+而那两个符号是在 macOS 14 不带的那一版里加进去的。macOS 15 有,所以这个项目用到的每
+一台 macOS runner 都是绿的。构建程序正是绝对 rpath 该在的地方:它从不被分发。
+
+**版本约束里的 `>` 被 cmd.exe 读成重定向(Windows)。** mcpp 把供给请求作为 JSON 参数
+放在 shell 命令行上;`shell::quote` 回答的是子进程的 argv 解析(`\"`),而 cmd 不认这
+个转义,于是走到 `>` 时引号数是偶数,`>` 成了重定向:
+
+    Provisioning [xlings.workspace] entries declared by dependencies (xim:shaderc@>=2026.3)
+    The filename, directory name, or volume label syntax is incorrect.
+
+`>=` 正是每个规则包声明下界用的形态,而在此之前没有任何一条能在 Windows 上生效的声明
+带过 `>`。修法是标准的双重转义,判据是两个解析器的模拟器加一条反向腿。
+
+### `examples/10-graphics/offscreen`:第一条图形管线,判据是像素
+
+此前所有异构示例都是计算。这一个是图形:顶点与片段两个着色器阶段、一条 render pass、
+`vkCmdDraw` 一个三角形、`vkCmdCopyImageToBuffer` 取回像素。**离屏而不是开窗**,因为那
+是可断言的形态。同一道接缝背后是一个自己写的软件光栅器,而两条腿的中心像素**逐字节
+相同** —— 图像是契约,设备名是唯一区分它们的东西。
+
+这个示例挖出一条使用者会撞上的规则:**依赖不能被 layer 条件化**。
+`cfg(accelerator = ...)` 下的 `[build]` 源生效而依赖被忽略,于是包被丢掉、包含它的源
+被留下。
+
+### 文档
+
+`docs/20` 新增「每条 lane 到得了哪些平台」:三件事同时为真才叫一条 lane 在某个平台上
+成立,而第三件(规则自己那段按宿主分岔的代码编译得过)是最容易被默认成立的那一件。
+
 ## [2026.9.6.6] - 2026-09-07
 
 ### 一个包一个版本:规则自带环境,工程只写例外
