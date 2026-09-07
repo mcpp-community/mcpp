@@ -907,3 +907,189 @@ rather than half-fixed.
    (`xlings subos use N --sandbox --cmd ...`) with the CN mirror configured,
    because a sandbox is the only thing that tests what was published rather than
    what is in the working tree.
+
+## 14. What is open after the release, and what each one's fix is
+
+Section 7 listed what was open before the work. This lists what is open after
+it. Two entries were found by measurement while assembling the comparison in
+section 10, and the first of them produces a wrong artifact rather than a
+failure.
+
+### 14.1 Object storage does not rebuild when its payload changes
+
+Measured on `tests/spirv-object-storage` against the released 2026.9.7.1, by
+editing the shader so its compiled output must differ and reading the byte count
+the program prints:
+
+| storage | before the edit | after |
+|---|---|---|
+| `header` (the default) | `bytes=1480` | `bytes=1776` |
+| `object` | `bytes=1480` | **`bytes=1480`** |
+
+The build succeeds and the artifact is the old one. This is not the `#include`
+case in 14.2 -- it is the DIRECT source, which the shader action does declare.
+
+**Mechanism.** `rules/spirv.cppm` hands the generated `.S` to `mcpp::generated`,
+so its compile edge knows the `.S` and nothing else. The `.S` names the payload
+in `.incbin` but its own text does not change when the payload does, so
+`write_if_different` leaves the file alone, its mtime does not move, and no edge
+is dirty. The shader itself recompiles; the object that carries its bytes does
+not.
+
+**A depfile does not close this, and that was measured rather than assumed:**
+
+```
+gcc:    p.o: p.S /usr/include/stdc-predef.h
+clang:  p.o: p.S
+```
+
+Neither assembler names an `.incbin`'d file in its dependency output. The
+channel added in this release is the right one for 14.2 and the wrong one here.
+
+**The fix is to stop handing the `.S` to the engine as an ordinary source.**
+Object storage should emit a `role = "object"` `mcpp::action` that runs the
+assembler itself and declares BOTH inputs -- the `.S` and the payload -- which
+is the shape `mcpp.rules.cuda` already uses for a `.cu`. The dependency then
+exists in the graph rather than in a comment.
+
+`storage::sidecar` copies the payload beside the artifact and has not been
+checked for the same shape. It should be, in the same change.
+
+### 14.2 No rule passes a depfile
+
+`mcpp::action::depfile` shipped in 2026.9.7.1 and `grep depfile rules/` in
+`mcpp:plugins` returns nothing across all six rules; each declares
+`a.input(source)` alone. A shader or kernel that `#include`s another file does
+not rebuild when that file changes, which is the same behaviour xmake has and
+the one thing CMake's `add_custom_command(DEPFILE)` gets right.
+
+Every compiler involved already emits one: `glslangValidator --depfile`,
+`glslc -MD -MF`, `slangc -depfile`, and `-MD -MF` for the clang-family drivers
+behind cuda, hip, sycl and ascendc. The work is one flag and one
+`a.depfile(...)` per rule, plus a fixture whose criterion is that editing an
+included file rebuilds -- the criterion has to be the artifact's content, not
+the build's exit code, because the defect is a green build over stale bytes.
+
+14.1 and 14.2 belong in one release. They are the same class of defect and the
+same fixture shape answers both.
+
+### 14.3 A device on Windows, and who decides it
+
+The cause is settled and it is not a packaging defect. Under `VK_LOADER_DEBUG=all`
+on a GitHub runner:
+
+```
+INFO: Loader is running with elevated permissions.
+      Environment variable VK_DRIVER_FILES will be ignored
+INFO: Loader is running with elevated permissions.
+      Environment variable VK_ICD_FILENAMES will be ignored
+DRIVER: Found no registry files in HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers
+ERROR | DRIVER: Registry lookup failed to get ICD manifest files.
+```
+
+A process running elevated is not permitted to be told where its drivers are,
+because a path a non-administrator can write would then decide what code an
+elevated process loads. The loader falls back to the registry, which on a
+machine with no GPU is empty.
+
+**The registry entry, exactly.** From `loader/loader_windows.c` and
+`vk_loader_platform.h` of the loader `compat:vulkan` builds:
+
+- key `HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers`
+- value NAME: the absolute path of the ICD manifest, `...\lvp_icd.x86_64.json`
+- value DATA: `REG_DWORD` `0` -- the loader accepts an entry only when
+  `value_size == sizeof(value) && value == 0`
+- a driver whose file name is not in the loader's `known_drivers` table skips
+  the DXGI adapter check and is "assumed to be active", which is what lets a
+  software rasteriser be listed at all
+
+**Three ways to get there, and they are not equivalent.**
+
+1. `xim:mesa-lavapipe`'s `config()` writes the entry on Windows. It has the
+   information and the install already runs with the necessary rights on a
+   runner. It is also a MACHINE-WIDE mutation performed by a package install:
+   every Vulkan application on that machine would then see lavapipe. That is a
+   different promise from the one the package makes today, whose own comment
+   says it "places the payload and stops; naming the ICD is the consumer's".
+2. The consumer writes it -- this repository's CI step, or a project's own
+   `build.mcpp`. Scoped to whoever wants it, and it keeps the package's promise
+   intact; the cost is that every consumer repeats it, which is the shape the
+   rule-package work exists to remove.
+3. Run the program unelevated. Correct on a developer machine and awkward on a
+   runner that is elevated by construction.
+
+**Recommendation: 2 for CI now, and 1 only behind an explicit opt-in.** A
+package that registers a driver system-wide as a side effect of being installed
+is a surprise, and the surprise lands on software that has nothing to do with
+mcpp. The decision is `xim:mesa-lavapipe`'s to make, not this repository's.
+
+Whichever is chosen, the CI step withdrawn from `ci-windows.yml` carries the
+four eliminations and the loader's own output beside it, so the next attempt
+starts from here.
+
+### 14.4 A rule feature that is on by default does not imply `host-module`
+
+`host-module` is inferred from the features a consumer REQUESTS. A rule package
+whose rule sits in its own `[features] default` is activated without being
+named, so the rule modules are collected -- that reads the resolved set -- while
+the inference reads the requested one. Measured with a probe package declaring
+`default = ["rules-probe"]`: mcpp synthesises the build program and then refuses
+with
+
+```
+error: build.mcpp imports 'probe.rules.probe', and no dependency provides it
+       as a host module.
+       declared without `host-module = true`: probe.rules
+```
+
+**The fix that was written and withdrawn.** Extending the inference to the
+dependency's own defaults made the outcome worse: the refusal gained
+`importable here: rules`, which says the dependency is wired up while the
+feature's own module still is not.
+
+**The mechanism is not what the first reading said, and that is worth
+recording.** The withdrawal note guessed that a default feature's sources are
+folded into the set `units()` enumerates too late. That is false: the fold
+happens at `prepare.cppm` line ~7138 and `units()` runs at ~7616. So the cause
+is elsewhere and is NOT established. Anyone picking this up should start by
+finding it rather than by trusting the guess.
+
+`mcpp:plugins` declares `default = []`, so nothing published reaches this, and
+the current behaviour is a refusal that names both the module and the key to
+add. It is a correctness-of-diagnosis item, not a correctness-of-artifact one.
+
+### 14.5 A hermetic `vulkan-1.dll` on Windows
+
+Measured feasible and not currently needed. The Khronos loader in
+`compat:vulkan` cross-builds into a working DLL from the source the index
+already carries: 265 exports matching upstream's `vulkan-1.def` name for name
+and all `vk*`-prefixed, `DllMain` present, importing only ADVAPI32, CFGMGR32,
+KERNEL32 and msvcrt. The descriptor's note argues a Windows loader must be a
+DLL, not that it cannot be built.
+
+**One constraint, found while sizing this and true of every descriptor.** A
+platform table's `targets` APPENDS rather than replaces. `mcpp xpkg parse` on
+today's `pkgs/c/compat.vulkan.lua` reports
+
+```
+targets: ["vulkan", "vulkan"]
+```
+
+-- the base `{ ["vulkan"] = { kind = "lib" } }` and the linux
+`{ ["vulkan"] = { kind = "shared", soname = ... } }` are two targets sharing a
+name, silently. So a Windows entry naming a target `vulkan-1` would produce a
+THIRD target rather than a replacement. The change has to either move the base
+`targets` into each platform table, so each platform declares exactly one, or
+keep the name `vulkan` and reach `vulkan-1.dll` through `soname`.
+
+That a duplicate target name is accepted without a word is worth a look on its
+own, independently of this entry.
+
+### 14.6 Not open: the Slang version pin
+
+Recorded because it was on the plan and is resolved by fact rather than by work.
+`xim:slang` publishes `2026.14.1` and nothing newer, `latest` points at it, and
+`mcpp:plugins` declares `>=2026.14.1`. The floor is already at the index's
+ceiling. Raising it means publishing a newer slang payload to `xim-pkgindex`
+first -- four platforms and a GitCode mirror -- which is a packaging task, not a
+pin edit.
