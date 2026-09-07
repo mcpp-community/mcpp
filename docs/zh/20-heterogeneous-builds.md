@@ -75,6 +75,7 @@ C++20 modules 的编译器。
 | CUDA、HIP | `.cu`、`.hip` |
 | SYCL | `.sycl`(2026.9.6.1+) |
 | Ascend C | `.asc`、`.cce`(2026.9.6.5+) |
+| Slang | `.slang`(2026.9.7.1+) |
 | GLSL(按 stage) | `.comp`、`.vert`、`.frag`、`.geom`、`.tesc`、`.tese`、`.mesh`、`.task`、`.rgen`、`.rint`、`.rahit`、`.rchit`、`.rmiss`、`.rcall` |
 | GLSL(无 stage) | `.glsl` |
 | HLSL | `.hlsl` |
@@ -405,6 +406,7 @@ sources = ["src/cpu/*.cpp"]
 | `rules-hip` | `mcpp.rules.hip` | NVIDIA 平台上是工程自己的 clang(`-x cuda`) | 上面那些,再加 `xim:hip-nvidia` | `hip, cuda12.9+{sm_89}` |
 | `rules-sycl` | `mcpp.rules.sycl` | `xim:dpcpp` 载荷里的 clang(`-fsycl`) | `xim:dpcpp`;Linux 上另有 `xim:gcc`、`xim:glibc`、`xim:linux-headers`;NVIDIA 目标另加 `xim:cuda-nvcc` | `sycl` 或 `sycl, cuda12.9+{sm_89}` |
 | `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` 或 `glslc` | Linux 上 `xim:glslang`,macOS 与 Windows 上 `xim:shaderc` | `vulkan1.2` |
+| `rules-slang` | `mcpp.rules.slang` | `slangc` | `xim:slang` | `vulkan1.2` |
 | `rules-ascendc` | `mcpp.rules.ascendc` | CANN 工具包里的 `bisheng`(`-x asc`) | `xim:cann-toolkit` | `ascend8.5+{dav-c220}` |
 
 载荷那一列是每条规则在 `cfg(accelerator = ...)` 之下**为自己**声明的东西,列出来是为了

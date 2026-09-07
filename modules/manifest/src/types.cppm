@@ -392,6 +392,30 @@ struct BuildAction {
     std::vector<std::string>           imports;
     // Check only: make compilation wait for this to pass. Off by default.
     bool                               blocking = false;
+    // A Make-style dependency file the action's COMMAND writes as a side
+    // effect — ninja reads it once the command exits and folds it into its
+    // own dependency log, the same `deps = gcc` mechanism a `cxx_object` edge
+    // uses for a compiler's own `#include` graph (mcpp#235/#257).
+    //
+    // `inputs` cannot express what this covers, because it is FIXED AT
+    // SUBMISSION — build.mcpp declares it before anything has been compiled.
+    // A device-shader compiler discovers its own `#include` graph only by
+    // parsing the shader (glslangValidator `--depfile`, glslc `-MD -MF`,
+    // slangc `-depfile`, nvcc/clang `-MD -MF`), which is not knowable until
+    // the action's command actually runs. Without this field a build stayed
+    // green over a stale artifact: editing an included `.glsl`/`.cuh` changed
+    // nothing the action had declared as an input, so nothing reran.
+    //
+    // Empty (the default) means the rule emits no depfile, and the action's
+    // re-run set is exactly its declared `inputs` — unchanged from before this
+    // field existed.
+    //
+    // MUST NOT also appear in `outputs`. `deps = gcc` makes ninja consume and
+    // DELETE the depfile once it has read it (see the `rule mcpp_action_{i}`
+    // emission in src/build/ninja_backend.cppm); a path that is simultaneously
+    // a declared ninja OUTPUT of the same edge would be a file ninja expects
+    // to still exist after a successful build and has itself just removed.
+    std::string                        depfile;
     std::string                        description;
 };
 

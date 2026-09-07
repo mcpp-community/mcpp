@@ -271,8 +271,20 @@ constexpr std::string_view kHeaderExtensions[] = { ".h", ".hpp", ".hh", ".hxx" }
 // `op_kernel/` from `op_host/`, and CMake registers ASC as a LANGUAGE of its
 // own -- so the island is the shape Ascend already has, not one mcpp imposes.
 // `.cce` is the older spelling of the same thing and is accepted beside it.
+//
+// `.slang` is the Slang shading language, compiled by `slangc`. It is a
+// LANGUAGE rather than a second driver for GLSL -- its own module system,
+// generics, and a target set beyond SPIR-V -- which is why it has an extension
+// of its own here and a rule of its own outside.
+//
+// THIS TABLE IS WHAT DECIDES, NOT THE GLOB'S `accel` KEY. A constrained glob
+// carrying `accel = "vulkan1.2"` does not make a file a device source; this
+// list does, and a file whose extension is absent from it reaches the ordinary
+// source scan and is refused with "mcpp has no role for the extension". A rule
+// package therefore cannot introduce a device language on its own, and adding
+// one here is the engine half of doing so.
 constexpr std::string_view kDeviceExtensions[] = {
-    ".cu", ".hip", ".sycl", ".asc", ".cce",
+    ".cu", ".hip", ".sycl", ".asc", ".cce", ".slang",
     ".comp", ".vert", ".frag", ".geom", ".tesc", ".tese", ".mesh", ".task",
     ".rgen", ".rint", ".rahit", ".rchit", ".rmiss", ".rcall",
     ".glsl", ".hlsl", ".cl", ".metal",

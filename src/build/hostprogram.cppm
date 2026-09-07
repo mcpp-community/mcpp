@@ -147,6 +147,13 @@ struct action {
     const char* role        = "source";   // "source" | "check" | "object" | "artifact"
     const char* description = "";
     bool        blocking    = false;      // check only: gate compilation on it
+    // A Make-style dependency file the COMMAND writes as a side effect (gcc/
+    // clang `-MD -MF`, glslangValidator `--depfile`, glslc `-MD -MF`, slangc
+    // `-depfile`). Empty (the default) means the rule emits none, and the
+    // action's re-run set is exactly its declared `inputs`, as before this
+    // field existed. See BuildAction::depfile (modules/manifest/src/types.cppm)
+    // for why `inputs` alone cannot express what this covers.
+    const char* depfile     = "";
     action& input(const char* p)    { add(inputs_,  sizeof inputs_,  p); return *this; }
     action& output(const char* p)   { add(outputs_, sizeof outputs_, p); return *this; }
     action& arg(const char* a)      { add(command_, sizeof command_, a); return *this; }
@@ -167,6 +174,14 @@ struct action {
         std::printf(",\"role\":");                  esc(role);
         std::printf(",\"description\":");           esc(description);
         std::printf(",\"blocking\":%s", blocking ? "true" : "false");
+        // Optional and omitted rather than sent empty: an action that never
+        // sets this must serialise to the SAME bytes it did before the field
+        // existed, because this payload is the cache key `apply()` stores
+        // verbatim (see the comment there) — an unconditional `"depfile":""`
+        // on every action would perturb the cache for every build.mcpp that
+        // has nothing to do with depfiles. The decoder's default (empty
+        // string) is identical either way, so omission costs nothing on read.
+        if (depfile[0]) { std::printf(",\"depfile\":"); esc(depfile); }
         // A truncated argv would otherwise be INVALID rather than obviously
         // wrong — the engine turns this marker into a diagnostic that names
         // the limit, instead of a generic "malformed action".

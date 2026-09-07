@@ -93,6 +93,7 @@ does not accept C++20 modules.
 | CUDA, HIP | `.cu`, `.hip` |
 | SYCL | `.sycl` (2026.9.6.1+) |
 | Ascend C | `.asc`, `.cce` (2026.9.6.5+) |
+| Slang | `.slang` (2026.9.7.1+) |
 | GLSL, by stage | `.comp`, `.vert`, `.frag`, `.geom`, `.tesc`, `.tese`, `.mesh`, `.task`, `.rgen`, `.rint`, `.rahit`, `.rchit`, `.rmiss`, `.rcall` |
 | GLSL, stage-less | `.glsl` |
 | HLSL | `.hlsl` |
@@ -485,6 +486,7 @@ own denominator.
 | `rules-hip` | `mcpp.rules.hip` | the project's own clang (`-x cuda`) on the NVIDIA platform | the above plus `xim:hip-nvidia` | `hip, cuda12.9+{sm_89}` |
 | `rules-sycl` | `mcpp.rules.sycl` | the `xim:dpcpp` payload's clang (`-fsycl`) | `xim:dpcpp`; on Linux also `xim:gcc`, `xim:glibc`, `xim:linux-headers`; `xim:cuda-nvcc` for an NVIDIA target | `sycl` or `sycl, cuda12.9+{sm_89}` |
 | `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` or `glslc` | `xim:glslang` on Linux, `xim:shaderc` on macOS and Windows | `vulkan1.2` |
+| `rules-slang` | `mcpp.rules.slang` | `slangc` | `xim:slang` | `vulkan1.2` |
 | `rules-ascendc` | `mcpp.rules.ascendc` | `bisheng` (`-x asc`) from the CANN toolkit | `xim:cann-toolkit` | `ascend8.5+{dav-c220}` |
 
 The payload column is what each rule declares for itself under

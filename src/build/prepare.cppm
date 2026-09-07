@@ -8035,6 +8035,10 @@ prepare_build(bool print_fingerprint,
             bpEnv.toolsBin = projectSubosBin;
             bpEnv.profile      = effectiveProfile;
             bpEnv.accel        = resolvedAccel();
+            // The DECLARING package's setting, not the root project's: a rule
+            // generating a declaration for this package must match how this
+            // package is compiled.
+            bpEnv.languageModules = pkg.manifest.language.modules;
             if (auto dit = deviceSourcesByPackage.find(pkg.root.string()); dit != deviceSourcesByPackage.end())
                 bpEnv.deviceSources = dit->second;
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
@@ -8952,6 +8956,7 @@ prepare_build(bool print_fingerprint,
         bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;
         bpEnv.accel        = resolvedAccel();
+        bpEnv.languageModules = m->language.modules;
         if (auto dit = deviceSourcesByPackage.find(root->string()); dit != deviceSourcesByPackage.end())
             bpEnv.deviceSources = dit->second;
         // Set explicitly rather than relying on build_dir()'s root-relative
@@ -10102,6 +10107,12 @@ prepare_build(bool print_fingerprint,
                 for (auto& x : a.inputs)  x = substitute(x);
                 for (auto& x : a.outputs) x = substitute(x);
                 for (auto& x : a.command) x = substitute(x);
+                // Same closed vocabulary as outputs — a depfile commonly
+                // wants to live at `${mcpp.out_dir}/<name>.d`, beside the
+                // output it describes, and `prepare_actions` above
+                // deliberately left a `${mcpp.` depfile untouched for
+                // exactly this phase to resolve.
+                if (!a.depfile.empty()) a.depfile = substitute(a.depfile);
                 a.packageName = owner;
                 ctx.plan.actions.push_back(std::move(a));
             }

@@ -842,6 +842,7 @@ std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payloa
         arr("imports", a.imports);
         arr("targets", a.targets);
         a.blocking    = j.value("blocking", false);
+        a.depfile     = j.value("depfile", std::string{});
         a.description = j.value("description", std::string{});
         if (a.command.empty() || a.outputs.empty()) return std::nullopt;
         if (a.id.empty()) a.id = a.outputs.front();
@@ -909,6 +910,14 @@ void prepare_actions(std::vector<mcpp::manifest::BuildAction>& actions,
         };
         absolutize(a.inputs);
         absolutize(a.outputs);
+        // The depfile is an OUTPUT-SIDE path — the command WRITES it, ninja
+        // reads it back — so it needs the identical anchoring `outputs` gets,
+        // for every role, not just Source: left package-relative it would be
+        // interpreted relative to the ninja build directory instead of the
+        // package root, and the `depfile = ` line the backend emits would
+        // simply never match the file the command actually wrote.
+        if (!a.depfile.empty() && a.depfile.find("${mcpp.") == std::string::npos)
+            a.depfile = abs_against(pkgRoot, a.depfile);
         if (a.role != mcpp::manifest::BuildAction::Role::Source) continue;
         for (auto const& o : a.outputs) {
             if (o.find("${mcpp.") != std::string::npos) continue;

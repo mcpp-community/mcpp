@@ -640,3 +640,42 @@ TEST(BuildDirectives, RunnerLandsInBuildConfigNotInLdflags) {
     for (auto const& f : m.buildConfig.ldflags)
         EXPECT_EQ(f.find("qemu"), std::string::npos) << f;
 }
+
+// ── Build-graph node decoding: `mcpp:action=` ───────────────────────────────
+//
+// `decode_action` is the other half of `mcpp::action::submit()` in
+// src/build/hostprogram.cppm: the typed builder serialises one JSON object
+// per action, and this is where it comes back. `depfile` is decoded the same
+// way `blocking` is — a scalar read with `j.value(...)` and a default that
+// matches "the field was never set" — so an action a build program submitted
+// before this field existed decodes exactly as it always has.
+
+TEST(BuildDirectives, DecodeActionRoundTripsDepfile) {
+    auto d = parse(
+        "mcpp:action={\"id\":\"shader\",\"role\":\"source\","
+        "\"description\":\"\",\"blocking\":false,\"depfile\":\"out/shader.spv.d\","
+        "\"inputs\":[],\"outputs\":[\"out/shader.spv\"],"
+        "\"command\":[\"glslc.sh\"],\"provides\":[],\"imports\":[],\"targets\":[]}\n");
+
+    ASSERT_EQ(d.at(dirs::Slot::Actions).size(), 1u);
+    auto a = dirs::decode_action(d.at(dirs::Slot::Actions).front());
+    ASSERT_TRUE(a.has_value());
+    EXPECT_EQ(a->depfile, "out/shader.spv.d");
+}
+
+// THE CONTROL — and the common case, since `depfile` is optional and
+// `hostprogram.cppm`'s `submit()` omits the key entirely when it was never
+// set (byte-identical payload to before the field existed). A decoder that
+// required the key would reject every action submitted by that path.
+TEST(BuildDirectives, DecodeActionDefaultsDepfileToEmptyWhenAbsent) {
+    auto d = parse(
+        "mcpp:action={\"id\":\"gen\",\"role\":\"source\","
+        "\"description\":\"\",\"blocking\":false,"
+        "\"inputs\":[],\"outputs\":[\"out/gen.cpp\"],"
+        "\"command\":[\"gen.sh\"],\"provides\":[],\"imports\":[],\"targets\":[]}\n");
+
+    ASSERT_EQ(d.at(dirs::Slot::Actions).size(), 1u);
+    auto a = dirs::decode_action(d.at(dirs::Slot::Actions).front());
+    ASSERT_TRUE(a.has_value());
+    EXPECT_EQ(a->depfile, "");
+}

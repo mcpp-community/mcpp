@@ -124,6 +124,16 @@ struct BuildProgramEnv {
     // (`-gencode`, `--offload-arch`) from here and the architecture set is
     // written once, in the manifest, and never again in a build program.
     std::string accel;
+    // Whether this package builds C++ modules (`[language] modules`).
+    //
+    // Reported because a rule package that GENERATES a consumer-facing
+    // declaration has to choose between a module interface and a header, and
+    // the project has already stated which it uses. Deriving it any other way
+    // would be a second spelling of one decision. A rule that reads it can make
+    // the module surface its default without any project declaring anything,
+    // and an engine older than this one leaves the variable absent -- which a
+    // rule reads as "header", the behaviour every consumer had before.
+    bool languageModules = true;
     // The device-kind sources (`.cu`, `.hip`, ...) this package's effective
     // source set matches, package-root-relative with `/` separators, one per
     // line. The engine has no compile rule for them and hands the list to the
@@ -494,6 +504,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     e.emplace_back("MCPP_TARGET_LIBC", env.targetLibc);
     e.emplace_back("MCPP_PROFILE", env.profile);
     e.emplace_back("MCPP_ACCEL", env.accel);
+    e.emplace_back("MCPP_LANGUAGE_MODULES", env.languageModules ? "1" : "0");
     {
         std::string joined;
         for (auto const& d : env.deviceSources) {
