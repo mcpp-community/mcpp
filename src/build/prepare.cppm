@@ -8133,6 +8133,8 @@ prepare_build(bool print_fingerprint,
             // The DECLARING package's setting, not the root project's: a rule
             // generating a declaration for this package must match how this
             // package is compiled.
+            bpEnv.packageName      = pkg.manifest.package.name;
+            bpEnv.packageNamespace = pkg.manifest.package.namespace_;
             bpEnv.languageModules = pkg.manifest.language.modules;
             bpEnv.ruleModules  = pkg.manifest.buildConfig.ruleModules;
             if (auto dit = deviceSourcesByPackage.find(pkg.root.string()); dit != deviceSourcesByPackage.end())
@@ -9059,6 +9061,8 @@ prepare_build(bool print_fingerprint,
         bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;
         bpEnv.accel        = resolvedAccel();
+        bpEnv.packageName      = m->package.name;
+        bpEnv.packageNamespace = m->package.namespace_;
         bpEnv.languageModules = m->language.modules;
         bpEnv.ruleModules  = m->buildConfig.ruleModules;
         if (auto dit = deviceSourcesByPackage.find(root->string()); dit != deviceSourcesByPackage.end())

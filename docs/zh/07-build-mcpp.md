@@ -563,6 +563,8 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存�
 | `MCPP_CXX_STDLIB` *(2026.9.6.3+)* | `mcpp::cxx_stdlib()` | 解析出的工具链使用的 C++ 标准库 —— `libstdc++`、`libc++`、`msvc-stl`;没有工具链解析时为空串。与 `MCPP_TARGET_LIBC` 不是同一个问题,后者是 C 库 |
 | `MCPP_ACCEL` *(2026.9.5.2+)* | `mcpp::accel()` | 本次构建的设备轴,已解析 —— `--accel` / `--no-accel` 优先于 `[build] accel` —— 线上形态 `cuda12.9+{sm_89} ptx>=89`;不要加速器时为空串。规则包从它推导自己的开关(`-gencode`、`--offload-arch`),架构集合因此只在 manifest 写一次。同一个值也喂给 `cfg(accelerator = "…")` 这个 layer 键 |
 | `MCPP_LANGUAGE_MODULES` *(2026.9.7.1+)* | -- | 声明它的那个包设了 `[language] modules` 时为 `1`,否则 `0`。**生成**面向消费者声明的规则读它来在模块接口与头文件之间选择,项目因此只需说一次。旧引擎不设这个变量,规则把缺席读作 `0` —— 也就是这个变量存在之前每个消费者的行为 |
+| `MCPP_PKG_NAME` *(2026.9.7.1+)* | -- | 这个程序所构建的包的 `[package] name`。规则生成的每个名字都由它推导:消费者导入的模块、访问器所在的命名空间、生成头里的符号。在它存在之前,可用的最接近的答案是 `MCPP_MANIFEST_DIR` 的末段,那是目录名 —— 于是一个叫 `vulkan-saxpy` 的包放在名为 `app` 的目录下会生成 `app.shaders`,而工作区里每一个 `<something>/app/` 都声称拥有同一个模块。旧引擎下缺席,规则把缺席读作「沿用你之前用的那个」 |
+| `MCPP_PKG_NAMESPACE` *(2026.9.7.1+)* | -- | `[package] namespace`。包未声明命名空间时为空。需要产出在索引范围内唯一的名字的规则用这一对而不是单用名字,因为包身份是 `(namespace, name)` |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | 本包有效 `sources` 匹配到的设备类源文件(`.cu`、`.hip`…),相对包根,一行一个;没有时为空串。引擎一个都不编译 —— 由本程序引入的规则包把每一个变成一条 `mcpp::action`。已经过收窄:构建未覆盖的 `{ glob, accel }` 条目贡献为空,因此 `--no-accel` 得到空列表 |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | mcpp 提供的可写输出/暂存目录 |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | 包根(= CWD) |

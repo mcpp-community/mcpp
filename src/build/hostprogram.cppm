@@ -375,6 +375,21 @@ inline const char* target_libc_profile()          { return env_or("MCPP_TARGET_L
 inline const char* target_libc()                  { return env_or("MCPP_TARGET_LIBC"); }
 
 inline const char* manifest_dir()                 { return env_or("MCPP_MANIFEST_DIR"); }
+// THE PACKAGE THIS PROGRAM IS BUILDING, BY NAME.
+//
+// A rule package that generates a consumer-facing declaration has to name it,
+// and every name it produces is derived from this one: the module a project
+// imports, the namespace the accessors sit in, the symbols in a generated
+// header. Before these existed the closest thing available was the leaf of
+// `manifest_dir()`, which is a directory name rather than a package name --
+// so a package called `vulkan-saxpy` in a directory called `app` generated
+// `app.shaders`, and every `<something>/app/` in a workspace claimed it.
+//
+// Empty under an engine older than 2026.9.7.1, which a rule reads as "fall
+// back to whatever you did before". That is what keeps an already-published
+// rule package working unchanged.
+inline const char* package_name()                 { return env_or("MCPP_PKG_NAME"); }
+inline const char* package_namespace()            { return env_or("MCPP_PKG_NAMESPACE"); }
 inline bool has_feature(const char* name) {
     char buf[256] = "MCPP_FEATURE_";
     unsigned long o = 13;

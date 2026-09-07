@@ -124,6 +124,12 @@ struct BuildProgramEnv {
     // (`-gencode`, `--offload-arch`) from here and the architecture set is
     // written once, in the manifest, and never again in a build program.
     std::string accel;
+    // The package this program is building, from `[package]`. Reported because
+    // every name a rule generates is derived from it -- the module a consumer
+    // imports, the namespace its accessors sit in -- and a build program had no
+    // way to ask. See hostprogram::package_name for what it replaced.
+    std::string packageName;
+    std::string packageNamespace;
     // Whether this package builds C++ modules (`[language] modules`).
     //
     // Reported because a rule package that GENERATES a consumer-facing
@@ -522,6 +528,8 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     }
     e.emplace_back("MCPP_OUT_DIR", outDir.string());
     e.emplace_back("MCPP_MANIFEST_DIR", root.string());
+    e.emplace_back("MCPP_PKG_NAME", env.packageName);
+    e.emplace_back("MCPP_PKG_NAMESPACE", env.packageNamespace);
     std::string csv;
     for (auto const& f : env.features) {
         if (!csv.empty()) csv += ',';
