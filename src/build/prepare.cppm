@@ -5101,7 +5101,8 @@ prepare_build(bool print_fingerprint,
         // `prepare_actions`, which needs the same table to decide which
         // outputs get a placeholder (a header does not; see mcpp#534).
         const auto pkgExtTable =
-            mcpp::extension_table_for(mm.buildConfig.moduleExtensions);
+            mcpp::extension_table_for(mm.buildConfig.moduleExtensions,
+                                      mm.buildConfig.deviceExtensions);
         mcpp::build::directives::prepare_actions(fresh, pkgRoot, pkgExtTable);
         std::copy(fresh.begin(), fresh.end(),
                   mm.buildConfig.actions.begin()
@@ -5326,6 +5327,20 @@ prepare_build(bool print_fingerprint,
             if (!buildOnly) it->buildOnly = false;
             return;
         }
+        // A REQUESTED FEATURE THAT IS A BUILD RULE IMPLIES `host-module`.
+        //
+        // `host-module = true` says "compile this dependency's interface unit
+        // for the host so my build program can import it", and a feature
+        // declaring `rule_module` has already said that is the only way to use
+        // it. Requiring both was a second spelling of one fact, and the failure
+        // when only the feature was written landed in the consumer's build as
+        // an unresolved import rather than in the line that was incomplete.
+        bool hostModule = spec.hostModule;
+        if (!hostModule && dependencyPackageIndex < packages.size()) {
+            auto const& depManifest = packages[dependencyPackageIndex].manifest;
+            for (auto const& f : spec.features)
+                if (depManifest.featureRuleModule.contains(f)) { hostModule = true; break; }
+        }
         dependencyEdges.push_back(DependencyEdge{
             .consumerPackageIndex = consumerPackageIndex,
             .dependencyPackageIndex = dependencyPackageIndex,
@@ -5333,7 +5348,7 @@ prepare_build(bool print_fingerprint,
             .requestedFeatures = spec.features,
             .defaultFeatures = spec.defaultFeatures,
             .requestedTools = spec.tools,
-            .hostModule = spec.hostModule,
+            .hostModule = hostModule,
             .reexport = spec.reexport,
             .buildOnly = buildOnly,
         });
@@ -5447,7 +5462,8 @@ prepare_build(bool print_fingerprint,
             // had already drifted: all three assembly extensions were missing,
             // so staging a dependency with .S/.s/.asm silently dropped them.
             globs = mcpp::default_source_globs(
-                mcpp::extension_table_for(depManifest.buildConfig.moduleExtensions));
+                mcpp::extension_table_for(depManifest.buildConfig.moduleExtensions,
+                                          depManifest.buildConfig.deviceExtensions));
         }
         // Glob exclusion (same as scan_one_into): `!` prefix removes.
         std::set<std::filesystem::path> sourceFiles;
@@ -7229,6 +7245,83 @@ prepare_build(bool print_fingerprint,
                 feature_closure(packages[i].manifest, req, depDefaultFeatures);
         }
 
+        // ─── Device extensions a rule dependency declared ──────────────────
+        //
+        // A rule package states which device extensions it compiles, on the
+        // feature that provides the rule. Collected here, after features are
+        // activated, because only an ACTIVE feature's declaration applies: a
+        // collection carrying a CUDA rule and a shader rule must not make `.cu`
+        // a device source in a project that asked for the shader rule alone.
+        //
+        // Written into the CONSUMER's `[build]` so every site that already
+        // builds an extension table for a package picks it up without a second
+        // plumbing route.
+        //
+        // THE POSITION IS LOAD-BEARING. It sits after feature activation and
+        // before the extension table that narrows the constrained globs, which
+        // is the first reader. Placed after that table instead, the declared
+        // extensions arrive too late to classify anything: the device source
+        // list comes out empty, the rule is handed nothing, it generates no
+        // module, and the failure surfaces three edges away as `failed to read
+        // compiled module` on the interface the consumer imported. Measured.
+        //
+        // It is what makes a new device language cost no engine change. Adding
+        // `.slang` to the built-in table required an mcpp release and a version
+        // bump in the rule package's CI before its rule could route one file;
+        // a language arriving this way needs neither.
+        for (std::size_t ci = 0; ci < packages.size(); ++ci) {
+            std::vector<std::string> collected;
+            std::vector<std::string> ruleModules;
+            for (auto const& edge : dependencyEdges) {
+                if (edge.consumerPackageIndex != ci) continue;
+                if (edge.dependencyPackageIndex >= packages.size()) continue;
+                auto const& dep = packages[edge.dependencyPackageIndex];
+                const auto& depFeatures =
+                    edge.dependencyPackageIndex < activeFeaturesByPackage.size()
+                        ? activeFeaturesByPackage[edge.dependencyPackageIndex]
+                        : edge.requestedFeatures;
+                for (auto const& f : depFeatures) {
+                    auto it = dep.manifest.featureDeviceExtensions.find(f);
+                    if (it == dep.manifest.featureDeviceExtensions.end()) continue;
+                    for (auto const& e : it->second)
+                        if (std::ranges::find(collected, e) == collected.end())
+                            collected.push_back(e);
+                    // The module a synthesised build program imports for this
+                    // rule. Declared by the feature rather than scanned out of
+                    // its source, because the program has to be WRITTEN before
+                    // anything is compiled and a build that scanned a
+                    // dependency to decide what to write would order the two
+                    // the wrong way round.
+                    if (auto mit = dep.manifest.featureRuleModule.find(f);
+                        mit != dep.manifest.featureRuleModule.end()
+                        && std::ranges::find(ruleModules, mit->second) == ruleModules.end()) {
+                        ruleModules.push_back(mit->second);
+                        // Said out loud, for the same reason the resolved
+                        // toolchain is: the manifest states the intent and the
+                        // build states what that came to. Without this line a
+                        // reader of a terse manifest could not tell which rules
+                        // ran.
+                        mcpp::ui::info("Rules", std::format("{} ({}:{})", mit->second,
+                                                            dep.manifest.package.namespace_,
+                                                            dep.manifest.package.name));
+                    }
+                }
+            }
+            if (!collected.empty()) {
+                if (ci == 0) m->buildConfig.deviceExtensions = collected;
+                packages[ci].manifest.buildConfig.deviceExtensions = std::move(collected);
+            }
+            if (!ruleModules.empty()) {
+                // THE ROOT'S MANIFEST IS TWO OBJECTS. `packages[0]` holds a COPY
+                // made by `makePackageRoot`, and the build-program environment for the
+                // root reads `*m`. Writing only the copy left the synthesis with
+                // an empty list and the shaders uncompiled, with a refusal that
+                // named the missing build program rather than the missing write.
+                if (ci == 0) m->buildConfig.ruleModules = ruleModules;
+                packages[ci].manifest.buildConfig.ruleModules = std::move(ruleModules);
+            }
+        }
+
         // ── Constrained source globs: narrow to what this build targets ────
         //
         // A `{ glob = "...", accel = "..." }` entry in `[build] sources` says
@@ -7347,7 +7440,8 @@ prepare_build(bool print_fingerprint,
                 // The device-kind files the EFFECTIVE set matches, for the
                 // build program. Exclusions are honoured the way the scanner
                 // honours them: positives first, then `!` entries removed.
-                const auto extTable = mcpp::extension_table_for(bc.moduleExtensions);
+                const auto extTable = mcpp::extension_table_for(bc.moduleExtensions,
+                                                                bc.deviceExtensions);
                 std::set<std::filesystem::path> matched, dropped;
                 for (auto const& g : pkg.manifest.modules.sources) {
                     if (g.empty()) continue;
@@ -8012,7 +8106,8 @@ prepare_build(bool print_fingerprint,
         for (std::size_t i = 1; i < packages.size(); ++i) {
             auto& pkg = packages[i];
             std::error_code bpEc;
-            if (!std::filesystem::exists(pkg.root / "build.mcpp", bpEc)) continue;
+            if (!std::filesystem::exists(pkg.root / "build.mcpp", bpEc)
+                && pkg.manifest.buildConfig.ruleModules.empty()) continue;
             auto host = host_tc_for_build_program();
             if (!host) return std::unexpected(host.error());
             // Same edge-graph aggregation as feature activation above, so a
@@ -8035,6 +8130,13 @@ prepare_build(bool print_fingerprint,
             bpEnv.toolsBin = projectSubosBin;
             bpEnv.profile      = effectiveProfile;
             bpEnv.accel        = resolvedAccel();
+            // The DECLARING package's setting, not the root project's: a rule
+            // generating a declaration for this package must match how this
+            // package is compiled.
+            bpEnv.packageName      = pkg.manifest.package.name;
+            bpEnv.packageNamespace = pkg.manifest.package.namespace_;
+            bpEnv.languageModules = pkg.manifest.language.modules;
+            bpEnv.ruleModules  = pkg.manifest.buildConfig.ruleModules;
             if (auto dit = deviceSourcesByPackage.find(pkg.root.string()); dit != deviceSourcesByPackage.end())
                 bpEnv.deviceSources = dit->second;
             bpEnv.features     = feature_closure(pkg.manifest, req, depDefaultFeatures);
@@ -8938,7 +9040,14 @@ prepare_build(bool print_fingerprint,
     // actually read. Now the snapshot (and root feature activation on it)
     // already happened, so mirror the directive TAILS into packages[0]
     // explicitly, the same way the dep loop does for its package.
-    if (std::filesystem::exists(*root / "build.mcpp")) {
+    // A package with no `build.mcpp` still runs one when a rule dependency
+    // described it: `run_build_program` writes that program into the build
+    // directory. This guard therefore asks the same question the function does,
+    // and a guard that asked only about the file left the synthesis unreachable
+    // -- the shaders went uncompiled and the refusal named the missing program
+    // rather than the guard. Measured.
+    if (std::filesystem::exists(*root / "build.mcpp")
+        || !m->buildConfig.ruleModules.empty()) {
         auto host = host_tc_for_build_program();
         if (!host) return std::unexpected(host.error());
         mcpp::build::BuildProgramEnv bpEnv;
@@ -8952,6 +9061,10 @@ prepare_build(bool print_fingerprint,
         bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;
         bpEnv.accel        = resolvedAccel();
+        bpEnv.packageName      = m->package.name;
+        bpEnv.packageNamespace = m->package.namespace_;
+        bpEnv.languageModules = m->language.modules;
+        bpEnv.ruleModules  = m->buildConfig.ruleModules;
         if (auto dit = deviceSourcesByPackage.find(root->string()); dit != deviceSourcesByPackage.end())
             bpEnv.deviceSources = dit->second;
         // Set explicitly rather than relying on build_dir()'s root-relative
@@ -9080,7 +9193,8 @@ prepare_build(bool print_fingerprint,
                 orphans += "         " + rel + "\n";
         if (orphans.empty()) continue;
         std::error_code hasEc;
-        const bool hasProgram = std::filesystem::exists(pkg.root / "build.mcpp", hasEc);
+        const bool hasProgram = std::filesystem::exists(pkg.root / "build.mcpp", hasEc)
+                              || !pkg.manifest.buildConfig.ruleModules.empty();
         refusal::record(refusal::Code::DeviceSourceUnconsumed);
         return std::unexpected(std::format(
             "`{}`: device sources that no action compiles:\n{}"
@@ -10102,6 +10216,12 @@ prepare_build(bool print_fingerprint,
                 for (auto& x : a.inputs)  x = substitute(x);
                 for (auto& x : a.outputs) x = substitute(x);
                 for (auto& x : a.command) x = substitute(x);
+                // Same closed vocabulary as outputs — a depfile commonly
+                // wants to live at `${mcpp.out_dir}/<name>.d`, beside the
+                // output it describes, and `prepare_actions` above
+                // deliberately left a `${mcpp.` depfile untouched for
+                // exactly this phase to resolve.
+                if (!a.depfile.empty()) a.depfile = substitute(a.depfile);
                 a.packageName = owner;
                 ctx.plan.actions.push_back(std::move(a));
             }

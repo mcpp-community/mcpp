@@ -80,6 +80,23 @@ dropped while the source that includes it, selected by the same predicate, was
 kept. Packages are therefore unconditional or conditioned on the platform;
 `[build]` sources are what the accelerator selects.
 
+**A portability driver is hidden until the program asks for it.** macOS has no
+native Vulkan: MoltenVK implements it on top of Metal, and the specification
+calls such an implementation a *portability driver*. The loader does not show
+one to `vkEnumeratePhysicalDevices` unless the instance enables
+`VK_KHR_portability_enumeration` and sets
+`VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR`; a device that advertises
+`VK_KHR_portability_subset` must then have that extension enabled at
+`vkCreateDevice` or the call fails. A program written against a native driver
+alone therefore finds no device on such a machine and reports it as "no GPU
+here", which is the wrong diagnosis.
+
+`src/vulkan/render.cpp` asks the loader and the device what they advertise
+rather than testing for the platform. The property is "the loader in front of
+me is showing portability drivers", and an `#ifdef __APPLE__` would be wrong in
+both directions: a Linux machine running a translation layer has it, and a
+macOS build against a native driver does not need it.
+
 **One shader per stem.** The generated name is the shader's stem and its stage,
 so `ui/text.vert` and `world/text.vert` would both produce `text_vert.h`
 declaring `text_vert_spv`. The rule refuses that and names both files. The

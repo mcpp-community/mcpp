@@ -122,10 +122,29 @@ out="$("$MCPP" run 2>&1 | grep '^VALUE=' | tail -1)"
     cat b2.log; echo "FAIL: action did not re-run when its input changed: $out"; exit 1; }
 
 # ...and an unrelated rebuild must NOT re-run it (that is the whole point).
+#
+# THIS ASSERTION USED TO BE VACUOUS, AND THAT IS WORTH THE COMMENT. It read
+# `grep -q "GENERATE" b3.log && FAIL`, on the assumption that ninja's
+# description line for the edge reaches this log. It does not: `mcpp build`
+# passes `--quiet` to ninja whenever it is not `--verbose`, and surfaces
+# ninja's captured stdout only on failure. A from-scratch build, which
+# unquestionably runs the action, prints no such line either -- so the grep
+# never matched and the check could not fail whether the action reran or not.
+#
+# The generated file's modification time is a direct measurement of the thing
+# being asserted: the action rewrites it whenever it runs.
+before=$(stat -c %Y "$(find target -name gen.cpp -print -quit)" 2>/dev/null \
+       || stat -f %m "$(find target -name gen.cpp -print -quit)")
 touch src/main.cpp
+sleep 1        # coarser than any filesystem's mtime granularity here
 "$MCPP" build > b3.log 2>&1 || { cat b3.log; echo "FAIL: rebuild failed"; exit 1; }
-grep -q "GENERATE" b3.log && {
-    cat b3.log; echo "FAIL: the action re-ran although its inputs were unchanged"; exit 1; }
+after=$(stat -c %Y "$(find target -name gen.cpp -print -quit)" 2>/dev/null \
+      || stat -f %m "$(find target -name gen.cpp -print -quit)")
+[[ -n "$before" && "$before" == "$after" ]] || {
+    cat b3.log
+    echo "FAIL: the action re-ran although its inputs were unchanged"
+    echo "      (gen.cpp mtime $before -> $after)"
+    exit 1; }
 
 # ── 2b. changing the action's COMMAND also takes effect ────────────────────
 # Distinct from 2: there the action's declared INPUT changed and ninja noticed.

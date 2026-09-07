@@ -2355,6 +2355,28 @@ std::string emit_ninja_string(const BuildPlan& plan) {
           : a.role == mcpp::manifest::BuildAction::Role::Object   ? "OBJECT"
                                                                   : "GENERATE",
             a.description.empty() ? a.id : a.description));
+        // The command's OWN emitted dependency file, when it declared one.
+        // `a.inputs` is FIXED AT SUBMISSION, before the command has run; a
+        // device-source compiler (glslangValidator, glslc, slangc, nvcc/clang)
+        // discovers its `#include` graph only by parsing the source, and a
+        // Make-style depfile is how it reports that afterward. Wiring it as
+        // `deps = gcc` is the identical mechanism the nasm rule below uses for
+        // a `.s`'s own textual includes — a file the command merely READ
+        // invalidates this edge exactly as a declared `input` would, without
+        // the build program having to know the include graph in advance.
+        //
+        // `deps = gcc` makes ninja CONSUME AND DELETE the depfile once it has
+        // folded its contents into `.ninja_deps`. That is why `a.depfile` must
+        // NEVER also be named in `a.outputs`: nothing in this backend adds it
+        // there on the caller's behalf, and a build.mcpp that named the same
+        // path both ways would declare a ninja OUTPUT that is expected to
+        // exist after a successful build and that reading the depfile has
+        // just removed — ninja would fault the edge for a file its own deps
+        // processing deleted.
+        if (!a.depfile.empty()) {
+            append(std::format("  depfile = {}\n", escape_ninja_path(a.depfile)));
+            append("  deps = gcc\n");
+        }
         append("\n");
         std::string outs, ins;
         for (auto const& o : a.outputs) outs += " " + escape_ninja_path(o);

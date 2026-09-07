@@ -332,7 +332,11 @@ install/config 形状,而那套形状是按 Linux 写的:
 - **二期(shaderc 三平台)**:xim-pkgindex #778,规则按平台选编译器。已实现。
 - **三期(CUDA/SYCL 上 Windows)**:xim-pkgindex #779(五个包),规则侧的路径推导与
   路线判断。已实现;端到端由 `windows-test` job 装卸五个包并断言注册的程序验证。
-- **四期(软件设备把 CI 上限抬到运行)**:**未实现,记录为发布工作**。Windows 上需要
+- **四期(软件设备把 CI 上限抬到运行)**:**部分实现**。程序侧那一半做完了:一个
+  Vulkan 程序在 macOS 上**看不见任何设备**,除非它显式打开可移植性枚举 —— MoltenVK 是
+  portability driver,而 loader 默认不把这种驱动交给 `vkEnumeratePhysicalDevices`。
+  示例现在按**能力**而不是按 `#ifdef __APPLE__` 问这件事(见 10.4e)。载荷侧仍未做,
+  记录为发布工作。Windows 上需要
   一个 Mesa-on-Windows 的 `vulkan_lvp` 构建;macOS 上 runner 自带 GPU 与 MoltenVK,
   所以那一侧不需要软件设备,需要的是把 `compat.vulkan` 的 macOS 腿接到示例上。
   今天的上限:三平台**构建**,Linux **运行**。
@@ -395,6 +399,31 @@ include 它。**
 
 同一版还给「每条规则都为本宿主编译过」那个夹具补了它自己的分母:它断言的是「每一条」,
 而「每一条」是它 carry 的一张清单。
+
+### 10.4e 四期的程序侧:可移植性驱动默认是看不见的
+
+把软件/可移植设备接到 CI 上之前,先测了上游产物:
+
+| 产物 | 读数 |
+|---|---|
+| `MoltenVK-macos.tar` v1.4.2(Khronos 官方) | 92 个条目;`dynamic/dylib/macOS/libMoltenVK.dylib` 是 x86_64+arm64 的 universal binary(11 MB),ICD 用相对路径 `./libMoltenVK.dylib`,并带 **`"is_portability_driver": true`** |
+| `mesa3d-26.2.0-release-msvc.7z`(pal1000 重分发) | `x64/vulkan_lvp.dll` 56 MB + `x64/lvp_icd.x86_64.json`;**只导入系统 DLL**(KERNEL32/GDI32/USER32/ADVAPI32/ole32/SHELL32/ntdll),没有 MSVCP140 —— 静态 CRT,机器上不需要装任何东西 |
+
+第一行那个 `is_portability_driver` 是本节存在的理由:**loader 默认不把可移植性驱动交给
+`vkEnumeratePhysicalDevices`**。一个照着原生驱动写的程序因此在 macOS 上一个设备都找不到,
+并把它报成「这台机器没有 GPU」—— 诊断是错的,而它看起来完全合理。
+
+规范要求的是成对的两半:实例要**启用** `VK_KHR_portability_enumeration` **并且**置位
+`VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR`;随后凡是声明了
+`VK_KHR_portability_subset` 的设备,必须在 `vkCreateDevice` 时启用它,否则调用失败。
+
+示例按**能力**问这两件事,不按 `#ifdef __APPLE__`。性质是「我面前这个 loader 在展示
+可移植性驱动」,而 `#ifdef` 两个方向都会错:Linux 上跑翻译层的机器也有它,而 macOS 上
+对着原生驱动构建的程序并不需要它。实测:Linux/lavapipe 上读数不变,中心像素仍是
+`(124, 70, 62, 255)`。
+
+载荷侧(把 MoltenVK 与 Windows 的 lavapipe 收进索引)未做,因为那要往发布组织推新的
+二进制资产,而 GitCode 的资产不可替换不可删除 —— 这是一个该由人做的决定,不该顺手做掉。
 
 ### 10.5 一条留下的不一致,以及它什么时候消失
 

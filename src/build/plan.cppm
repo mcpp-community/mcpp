@@ -1017,7 +1017,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // needs it — every scanned unit arrives with its kind already set by the
     // scanner, using its OWN package's table.
     const auto rootExtTable =
-        mcpp::extension_table_for(manifest.buildConfig.moduleExtensions);
+        mcpp::extension_table_for(manifest.buildConfig.moduleExtensions,
+                                  manifest.buildConfig.deviceExtensions);
 
     // Artifact naming and shared-library link shape are properties of the
     // TARGET. Resolved once here from tc.targetTriple (empty = host target, in

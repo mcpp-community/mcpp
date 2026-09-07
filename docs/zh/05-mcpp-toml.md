@@ -1290,6 +1290,53 @@ simd       = { sources = ["src/simd/**"], flags = [
   feature `flags` 是**私有 per-TU 构建旗标**——永不传播给消费者(与 `[build].flags`
   同契约),因此不破坏加性模型:glob 限定作用面、顺序确定、无跨包效应。
 
+
+#### 作为构建规则的 feature(mcpp 2026.9.7.1+)
+
+两个键把一个 feature 变成其它包可以使用的构建规则。它们是消费者只写一条依赖边、
+不写构建程序的原因。
+
+```toml
+[features.rules-spirv]
+sources           = ["rules/spirv.cppm"]
+rule_module       = "mcpp.rules.spirv"
+device_extensions = [".comp", ".vert", ".frag", ".glsl"]
+```
+
+`device_extensions` 陈述这条规则编译哪些**设备源**扩展名。激活了该 feature 的消费者
+会把它们分类为设备源 —— 不扫描 import、不产 BMI、由 mcpp 不驱动的编译器编译。这与
+`[build] module_extensions` 是同一个形状:mcpp 知道设备源*是什么*,不知道 `.cu` 是
+CUDA,所以**一门新设备语言不需要引擎改动**。
+[20 — 异构硬件构建](20-heterogeneous-builds.md) 里那句「第六个后端是一个包而不是一次
+引擎改动」由此才成立;`.slang` 已从 mcpp 的内置表中移除,现在正是经由这条路到达的。
+
+`rule_module` 给出消费者的构建程序为够到这条规则而 import 的模块,以及它调用的
+`compile()` 所在。它是**声明**的而不是从源码扫描出来的,因为那个程序必须在任何东西
+被编译**之前**写出来,而一次为了决定写什么而去扫描依赖源码的构建会把两者的顺序颠倒。
+
+由此得出两件事,而且都不把任何包名放进 mcpp:
+
+- **`host-module = true` 被推出来。** 一个点名了规则模块的 feature 已经说过那是使用
+  它的唯一方式,所以依赖边不必再说一遍。
+- **没有 `build.mcpp` 的包会得到一个。** mcpp 把这些规则描述的程序写进构建目录并编译
+  它。自带程序的包保留自己的:合成只填补缺席、绝不覆盖;而生成出来的那份就是这个工程
+  本来要手写的那份,所以接管它是一次复制加一次编辑。
+
+feature 仍然**按名字**请求:
+
+```toml
+[build-dependencies.mcpp]
+plugins = { version = "0.3.0", features = ["rules-spirv"] }
+```
+
+早先的一版设计从工程源码里出现的扩展名推导这个集合。它被撤销了,因为两个包可能认领
+同一个扩展名 —— 第三方写一条处理 `.cu` 的规则是会发生的事 —— 也因为 manifest 的职责
+是描述这次构建,而派生出来的 feature 集合让文件不再陈述它。
+
+两个键必须成对出现。只写其一是一条没有任何东西能据以行动的声明,会在解析期被拒绝,
+而不是留到消费者的构建里。
+
+
 ### 2.8.1 `provides` / `requires` —— 能力(后端选择)
 
 **capability(能力)** 是一个共享的抽象名字(如 `blas`)。包可以 *provide*(提供)

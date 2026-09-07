@@ -93,6 +93,24 @@ std::string_view to_string(SourceKind k);
 struct ExtensionTable {
     // Always contains the built-ins first, in their historical order.
     std::vector<std::string> moduleInterface;
+    // Device extensions a DEPENDENCY declared it compiles, through
+    // `[features].<f>.device_extensions`. Empty for a package with no rule
+    // dependency, which is every package that has none today.
+    //
+    // WHY THE PACKAGE AND NOT THIS FILE. mcpp knows what a device source IS --
+    // never scanned, never a BMI, compiled by something mcpp does not drive --
+    // and does not know that `.cu` is CUDA. The built-in list below is the set
+    // of languages the project has already shipped support for; this axis is
+    // how a NEW one arrives without an engine release, which is what makes
+    // "a sixth backend is a package rather than an engine change" true rather
+    // than aspirational. Slang measured the difference: adding it cost an
+    // engine change, a release, and a version bump in the rule package's CI
+    // before its rule could route a single file.
+    //
+    // Same shape as `moduleInterface` above, and for the same reason: built-ins
+    // are what needs no declaring, and everything else is declared by whoever
+    // knows it.
+    std::vector<std::string> device;
 };
 
 // Trim, then supply a leading dot if absent. Does NOT change case — see the
@@ -116,6 +134,15 @@ ExtensionTable builtin_extension_table();
 // below — this function never fails, so that a manifest which failed
 // validation still classifies exactly like a default one.
 ExtensionTable extension_table_for(std::span<const std::string> extras);
+
+// The same, plus device extensions a dependency declared through
+// `[features].<f>.device_extensions`. Separate parameters rather than one list
+// because the two axes are validated differently and must not be able to leak
+// into each other: a module extension the project names is checked against the
+// reserved roles, and a device extension a dependency names is added only where
+// no built-in role already claims the spelling.
+ExtensionTable extension_table_for(std::span<const std::string> moduleExtras,
+                                   std::span<const std::string> deviceExtras);
 
 // Extensions that already name a non-module role. Declaring one of these as a
 // module interface has no legitimate use and would route (say) a C file to the
@@ -271,6 +298,25 @@ constexpr std::string_view kHeaderExtensions[] = { ".h", ".hpp", ".hh", ".hxx" }
 // `op_kernel/` from `op_host/`, and CMake registers ASC as a LANGUAGE of its
 // own -- so the island is the shape Ascend already has, not one mcpp imposes.
 // `.cce` is the older spelling of the same thing and is accepted beside it.
+//
+// `.slang` IS NOT HERE, AND ITS ABSENCE IS THE POINT.
+//
+// Slang is a language rather than a second driver for GLSL, so it needs a rule;
+// it reaches this build through `mcpp:plugins`' `rules-slang`, which declares
+// `device_extensions = [".slang"]` in its own manifest. That is the first
+// device language mcpp supports without naming it here.
+//
+// The list below is what mcpp knows WITHOUT being told: the languages whose
+// support shipped before the declaration existed. It is a compatibility set,
+// not a registry -- a new language does not join it, and `.slang` was removed
+// after the mechanism proved able to carry it, which is the only honest test of
+// whether the mechanism works.
+//
+// THIS TABLE AND THE DECLARED ONE ARE WHAT DECIDE, NOT THE GLOB'S `accel` KEY.
+// A constrained glob carrying `accel = "vulkan1.2"` does not make a file a
+// device source; membership here or in a dependency's declaration does, and a
+// file in neither reaches the ordinary source scan and is refused with "mcpp
+// has no role for the extension".
 constexpr std::string_view kDeviceExtensions[] = {
     ".cu", ".hip", ".sycl", ".asc", ".cce",
     ".comp", ".vert", ".frag", ".geom", ".tesc", ".tese", ".mesh", ".task",
@@ -342,6 +388,26 @@ ExtensionTable extension_table_for(std::span<const std::string> extras) {
     return t;
 }
 
+ExtensionTable extension_table_for(std::span<const std::string> moduleExtras,
+                                   std::span<const std::string> deviceExtras) {
+    auto t = extension_table_for(moduleExtras);
+    for (auto const& raw : deviceExtras) {
+        auto ext = normalize_extension(raw);
+        if (ext.empty()) continue;
+        // A declaration cannot move a file out of a role the engine already
+        // owns. `.cpp` is a C++ translation unit whatever a dependency says,
+        // and silently accepting the entry would let one package change what
+        // every source in a consumer means.
+        if (std::ranges::find(t.moduleInterface, ext) != t.moduleInterface.end()) continue;
+        if (contains(kCxxExtensions, ext) || contains(kCExtensions, ext)
+            || contains(kGasExtensions, ext) || contains(kNasmExtensions, ext)
+            || contains(kHeaderExtensions, ext)) continue;
+        if (std::ranges::find(t.device, ext) != t.device.end()) continue;
+        t.device.push_back(std::move(ext));
+    }
+    return t;
+}
+
 bool is_reserved_non_module_extension(std::string_view ext) {
     return contains(kCxxExtensions, ext)    || contains(kCExtensions, ext)
         || contains(kGasExtensions, ext)    || contains(kNasmExtensions, ext)
@@ -396,6 +462,11 @@ SourceKind classify(const std::filesystem::path& p, const ExtensionTable& t) {
     if (contains(kGasExtensions, ext))    return SourceKind::GasAsm;
     if (contains(kNasmExtensions, ext))   return SourceKind::NasmAsm;
     if (contains(kDeviceExtensions, ext)) return SourceKind::Device;
+    // A dependency's `device_extensions`. Checked AFTER the built-in roles so a
+    // rule package cannot reclassify `.cpp`; the built-ins are the engine's own
+    // vocabulary and a declaration must not be able to move a file out of it.
+    for (auto const& d : t.device)
+        if (ext == d) return SourceKind::Device;
     if (contains(kHeaderExtensions, ext)
         || contains(kDeviceHeaderExtensions, ext)) return SourceKind::Header;
     return SourceKind::Other;

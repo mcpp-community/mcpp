@@ -85,6 +85,13 @@ C++20 modules 的编译器。
 的含义:mcpp 对该文件没有任何规则,它的目标文件不会被任何东西链接,构建下去只会
 在更晚、更不清楚的地方失败。
 
+上表是 mcpp **不需要被告知**就知道的那些:在「包可以自己声明」之前就已经支持的语言。
+规则包通过 `[features].<f>.device_extensions`(见
+[05 — mcpp.toml](05-mcpp-toml.md) §2.8)向它增补,而这正是**一门新设备语言到达的方式**
+—— 不动引擎,也不需要发一版引擎。Slang 是第一个:`.slang` 不在上表里,由
+`mcpp:plugins` 的 `rules-slang` 声明。
+
+
 `.glsl` 不携带 stage。glslang 从扩展名推导 stage,因此拒绝一个无 stage 的名字是
 规则包的事 —— 那条消息属于那里,这张表因此不需要知道哪些扩展名指定了 stage。
 
@@ -109,6 +116,55 @@ tarball 已经发出去了。设备源文件必须被显式点名。
 因为设备编译器驱动的是一个 mcpp 没有选择的宿主编译器,两侧因此不共享 C++ ABI。
 岛本身应当避开标准库,因为一个链接了 libstdc++ 的岛,会把第二份 C++ 运行时放进一个
 自身运行时来自 mcpp 工具链的程序里。
+
+
+#### 那个 `extern "C"` 头文件,以及省掉它的代价
+
+语言上不是。接缝可以自己声明入口点、岛自己定义它,一个头文件都不写,照样编得过、链得上、
+跑得起来。
+
+头文件买来的是**那份声明只有一份**。没有它就有两份副本分属两个编译器,而它们可以静默地
+不一致:
+
+```cpp
+// 接缝里
+extern "C" int saxpy_device(float a, const float* x, const float* y,
+                            float* out, unsigned n);
+// 岛里,在有人把计数加宽之后
+extern "C" int saxpy_device(float a, const float* x, const float* y,
+                            float* out, std::size_t n);
+```
+
+C 语言链接不做名字修饰,所以这两个是同一个符号。链接是干净的,而两侧各按自己的 ABI 解释
+参数:没有编译错误,没有链接错误,只有一次读过了参数末尾的运行。同样的错误发生在 C++
+边界上会被名字修饰在链接期挡下。
+
+所以**迫使这条边界必须是 `extern "C"` 的那条性质 —— 两侧不共享 C++ ABI —— 正是让声明
+分裂无法被发现的同一条性质**。一个普通头文件是模块和设备编译器都能读的最小共同物,这就
+是它存在的全部理由。
+
+三条替代都试过,没有一条能去掉它:岛不能包含接缝(`.cppm` 不是 nvcc 解析的东西);从某个
+单一来源生成头文件就是头文件多加一步;而模块的 global module fragment 什么都不导出,即使
+岛的编译器能读 BMI 也够不到。
+
+### 两类 lane,只有一类的接口是生成的
+
+上面那个接缝是手写的,而 shader 那条 lane 的对应物是生成的。这不是不一致 ——
+两条 lane 承载的东西不同。
+
+**设备编译单元是代码。** 它的接口是一个设计决定 —— 有哪些函数、什么类型、失败怎么报
+—— 而没有任何生成器能把这个决定做好。所以 CUDA、HIP、SYCL 与 Ascend C 有一个手写的
+接缝,而那个 `extern "C"` 头文件因为上面那条 ABI 理由而存在。两者对消费者**都已经是
+不可见的**:只有接缝包含那个头文件,下游一律写 `import app.saxpy`。**这些 lane 今天
+就是模块优先的,而且一直如此。**
+
+**shader 或一份被嵌入的文件是数据。** 它的接口是一个地址加一个尺寸,这是机械的,所以
+由规则包生成,消费者同样不写出任何生成物的名字,只写 `import myapp.shaders`。在
+mcpp 2026.9.7.1 之前,那条 lane 是唯一的例外:生成的头文件**就是**接口,而每个消费者
+都得写出它的名字。
+
+所以规则不是「接口要生成」也不是「接口要手写」。规则是:**机械的接口生成,设计出来的
+接口手写,而两种情况下头文件都是没有任何消费者会写出其名字的中间产物。**
 
 ## 编译一个岛
 
@@ -405,6 +461,7 @@ sources = ["src/cpu/*.cpp"]
 | `rules-hip` | `mcpp.rules.hip` | NVIDIA 平台上是工程自己的 clang(`-x cuda`) | 上面那些,再加 `xim:hip-nvidia` | `hip, cuda12.9+{sm_89}` |
 | `rules-sycl` | `mcpp.rules.sycl` | `xim:dpcpp` 载荷里的 clang(`-fsycl`) | `xim:dpcpp`;Linux 上另有 `xim:gcc`、`xim:glibc`、`xim:linux-headers`;NVIDIA 目标另加 `xim:cuda-nvcc` | `sycl` 或 `sycl, cuda12.9+{sm_89}` |
 | `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` 或 `glslc` | Linux 上 `xim:glslang`,macOS 与 Windows 上 `xim:shaderc` | `vulkan1.2` |
+| `rules-slang` | `mcpp.rules.slang` | `slangc` | `xim:slang` | `vulkan1.2` |
 | `rules-ascendc` | `mcpp.rules.ascendc` | CANN 工具包里的 `bisheng`(`-x asc`) | `xim:cann-toolkit` | `ascend8.5+{dav-c220}` |
 
 载荷那一列是每条规则在 `cfg(accelerator = ...)` 之下**为自己**声明的东西,列出来是为了

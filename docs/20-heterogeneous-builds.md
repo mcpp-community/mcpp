@@ -104,6 +104,15 @@ which is the behaviour that makes the table a table: mcpp has no rule for the
 file, its object would be linked by nothing, and building it would fail later
 and less clearly.
 
+The table above is what mcpp knows **without being told**: the languages whose
+support shipped before a package could declare one. A rule package adds to it,
+through `[features].<f>.device_extensions` (see
+[05 — mcpp.toml](05-mcpp-toml.md) §2.8), and that is how a NEW device language
+arrives -- with no engine change and no engine release. Slang is the first:
+`.slang` is not in the list above, and `mcpp:plugins`' `rules-slang` declares
+it.
+
+
 `.glsl` carries no stage. glslang derives the stage from the extension, so a
 rule package refuses a stage-less name — the message belongs there, and this
 table therefore does not need to know which extensions name a stage.
@@ -136,6 +145,63 @@ compiler that mcpp did not choose and the two sides therefore do not share a
 C++ ABI. The island should avoid the standard library, because an island that
 links libstdc++ puts a second copy of the C++ runtime into a program whose own
 copy came from mcpp's toolchain.
+
+
+#### The `extern "C"` header, and what omitting it costs
+
+Not by the language. The seam can declare the entry point itself and the island
+can define it, with no header anywhere, and that builds and links and runs.
+
+What the header buys is that the declaration exists **once**. Without it there
+are two copies in two compilers, and they can disagree silently:
+
+```cpp
+// the seam
+extern "C" int saxpy_device(float a, const float* x, const float* y,
+                            float* out, unsigned n);
+// the island, after someone widened the count
+extern "C" int saxpy_device(float a, const float* x, const float* y,
+                            float* out, std::size_t n);
+```
+
+C language linkage does not mangle, so those are one symbol. The link is clean
+and each side reads the arguments by its own ABI: no compile error, no link
+error, and a run that reads past the end of the arguments. The same mistake
+across a C++ boundary is caught by mangling at link time.
+
+So the property that forces this boundary to be `extern "C"` -- the two sides do
+not share a C++ ABI -- is the same property that makes a split declaration
+undetectable. The header is the smallest artefact both a module and a device
+compiler can read, which is the whole of its reason for existing.
+
+Three alternatives were considered and none removes it: the island cannot
+include the seam (a `.cppm` is not something nvcc parses), generating the header
+from some single source is a header with an extra step, and a module's global
+module fragment exports nothing the island could reach even if its compiler
+could read a BMI.
+
+### Two kinds of lane, and only one of them has a generated interface
+
+The seam above is written by hand, and the shader lane's equivalent is
+generated. That is not an inconsistency; the two lanes carry different things.
+
+**A device translation unit is code.** Its interface is a design decision --
+which functions, which types, what happens on failure -- and no generator can
+make that decision well. So CUDA, HIP, SYCL and Ascend C get a hand-written
+seam, and the `extern "C"` header exists for the ABI reason above. Both are
+already invisible to a consumer: only the seam includes the header, and
+everything downstream writes `import app.saxpy`. **These lanes are module-first
+today and always have been.**
+
+**A shader or an embedded file is data.** Its interface is an address and a
+size, which is mechanical, so a rule package generates it and a consumer writes
+`import myapp.shaders` without naming a generated file either. Before mcpp
+2026.9.7.1 that lane was the one exception: the generated header *was* the
+interface, and every consumer named it.
+
+So the rule is not "generate the interface" or "write it by hand". It is: a
+mechanical interface is generated, a designed one is written, and in both cases
+the header is an intermediate that no consumer names.
 
 ## Compiling an island
 
@@ -485,6 +551,7 @@ own denominator.
 | `rules-hip` | `mcpp.rules.hip` | the project's own clang (`-x cuda`) on the NVIDIA platform | the above plus `xim:hip-nvidia` | `hip, cuda12.9+{sm_89}` |
 | `rules-sycl` | `mcpp.rules.sycl` | the `xim:dpcpp` payload's clang (`-fsycl`) | `xim:dpcpp`; on Linux also `xim:gcc`, `xim:glibc`, `xim:linux-headers`; `xim:cuda-nvcc` for an NVIDIA target | `sycl` or `sycl, cuda12.9+{sm_89}` |
 | `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` or `glslc` | `xim:glslang` on Linux, `xim:shaderc` on macOS and Windows | `vulkan1.2` |
+| `rules-slang` | `mcpp.rules.slang` | `slangc` | `xim:slang` | `vulkan1.2` |
 | `rules-ascendc` | `mcpp.rules.ascendc` | `bisheng` (`-x asc`) from the CANN toolkit | `xim:cann-toolkit` | `ascend8.5+{dav-c220}` |
 
 The payload column is what each rule declares for itself under

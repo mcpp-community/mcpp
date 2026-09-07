@@ -392,6 +392,30 @@ struct BuildAction {
     std::vector<std::string>           imports;
     // Check only: make compilation wait for this to pass. Off by default.
     bool                               blocking = false;
+    // A Make-style dependency file the action's COMMAND writes as a side
+    // effect — ninja reads it once the command exits and folds it into its
+    // own dependency log, the same `deps = gcc` mechanism a `cxx_object` edge
+    // uses for a compiler's own `#include` graph (mcpp#235/#257).
+    //
+    // `inputs` cannot express what this covers, because it is FIXED AT
+    // SUBMISSION — build.mcpp declares it before anything has been compiled.
+    // A device-shader compiler discovers its own `#include` graph only by
+    // parsing the shader (glslangValidator `--depfile`, glslc `-MD -MF`,
+    // slangc `-depfile`, nvcc/clang `-MD -MF`), which is not knowable until
+    // the action's command actually runs. Without this field a build stayed
+    // green over a stale artifact: editing an included `.glsl`/`.cuh` changed
+    // nothing the action had declared as an input, so nothing reran.
+    //
+    // Empty (the default) means the rule emits no depfile, and the action's
+    // re-run set is exactly its declared `inputs` — unchanged from before this
+    // field existed.
+    //
+    // MUST NOT also appear in `outputs`. `deps = gcc` makes ninja consume and
+    // DELETE the depfile once it has read it (see the `rule mcpp_action_{i}`
+    // emission in src/build/ninja_backend.cppm); a path that is simultaneously
+    // a declared ninja OUTPUT of the same edge would be a file ninja expects
+    // to still exist after a successful build and has itself just removed.
+    std::string                        depfile;
     std::string                        description;
 };
 
@@ -615,6 +639,18 @@ struct BuildConfig : BuildInputs {
     // Scoped to the declaring package — a dependency is classified by its own
     // manifest, never by its consumer's.
     std::vector<std::string>            moduleExtensions;
+    // Device extensions this package's build-dependencies declared through
+    // `[features].<f>.device_extensions`, for the features this package
+    // requested. NOT written in a manifest: filled by prepare from the
+    // resolved edges, and carried here so every site that already builds an
+    // extension table for a package gets the device axis without a second
+    // plumbing route. A package with no rule dependency leaves it empty, which
+    // is every package that has none today.
+    std::vector<std::string>            deviceExtensions;
+    // The rule modules a synthesised `build.mcpp` imports, in the order the
+    // features were collected. Filled by prepare beside `deviceExtensions`
+    // above and read only when this package has no build program of its own.
+    std::vector<std::string>            ruleModules;
     // [build] accel — which accelerator backends and device architectures this
     // build targets, in the wire form mcpp.pack.abi_tag reads. Empty means the
     // build asks for none, and then every prebuilt artifact satisfies it
@@ -1454,6 +1490,56 @@ struct Manifest {
     //  see the member there.)
     std::map<std::string, std::vector<std::string>> featureProvides; // feature → caps
     std::map<std::string, std::vector<std::string>> featureRequires; // feature → caps
+
+    // `[features].<f>.device_extensions` — the device source extensions this feature's
+    // rule compiles (mcpp 2026.9.7.1+).
+    //
+    // THE ENGINE EXPOSES THE CAPABILITY; THE PACKAGE SUPPLIES THE FACT. The key
+    // is named after `[build] module_extensions` because it is the same shape:
+    // mcpp knows what it means for a file to be a device source -- never
+    // scanned, never a BMI, compiled by something mcpp does not drive -- and
+    // does not know that `.cu` is CUDA. A rule package states which extensions
+    // it compiles, and a consumer that activates that feature gets them
+    // classified as device sources. A NEW device language therefore costs no
+    // engine change, which is what `docs/20`'s "a sixth backend is a package
+    // rather than an engine change" has claimed and, until this key, was not.
+    //
+    // NOTHING IS DERIVED FROM IT. An earlier revision also used it to ACTIVATE
+    // the matching feature, so a consumer could name the package and nothing
+    // else. That was withdrawn for two reasons, and neither was cost:
+    //
+    //   - Two packages may claim one extension. A third-party rule for `.cu`
+    //     is a thing someone will write, and derivation would then have to
+    //     guess or refuse, where `features = ["rules-cuda"]` has already said
+    //     which one.
+    //   - A manifest's job is to describe the build. A derived feature set is
+    //     absent information that has to be reconstructed by running the
+    //     build, which is worse for a reader and worse for anything reading the
+    //     manifest as context.
+    //
+    // So the feature is requested by name, as every other feature is, and this
+    // key answers only "what does that feature compile".
+    //
+    // WHICH FEATURE COMPILES AN EXTENSION IS NOT STATED SEPARATELY. It is the
+    // feature the line is written on. A second key naming the rule would be the
+    // same fact twice.
+    std::map<std::string, std::vector<std::string>> featureDeviceExtensions;
+
+    // `[features].<f>.rule_module` — the module a consumer's build program
+    // imports to reach this feature's rule, and whose `compile()` it calls.
+    //
+    // DECLARED RATHER THAN DISCOVERED, which is the trade this codebase already
+    // makes for `mcpp::action`'s `provides`/`imports` and for
+    // `[modules] scan_overrides`. The name is in the feature's own interface
+    // unit and could be scanned out of it, but the program that imports it has
+    // to be written BEFORE anything is compiled, and a build that had to scan a
+    // dependency's sources to decide what to write would order the two the
+    // wrong way round.
+    //
+    // Present exactly when `device_extensions` is: together they say "this
+    // feature is a build rule, here is what it compiles and here is how to
+    // reach it". A feature with one and not the other is refused at parse time.
+    std::map<std::string, std::string> featureRuleModule;
     // Feature System v2 Stage 2a — dependencies activated by a feature. A dep
     // declared ONLY here is optional: pulled into the resolution worklist only
     // when its feature is active (root --features or a dep spec's features=[...]).

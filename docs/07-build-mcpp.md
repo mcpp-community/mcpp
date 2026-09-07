@@ -470,6 +470,27 @@ package's compile edges to that package's action outputs.
 > package**, because `include_dir` colours only the declaring package's own
 > translation units.
 
+**An action whose command discovers its own dependencies declares a depfile**
+(mcpp 2026.9.7.1+). `input()` fixes the edge's inputs when `build.mcpp` runs,
+before the command has executed, so a compiler that learns its `#include` graph
+by parsing the source has no channel to report it — and editing a file the
+command merely *read* reruns nothing, leaving `mcpp build` green over a stale
+artifact.
+
+```cpp
+a.depfile = dep.c_str();        // a path the command writes
+a.arg("--depfile").arg(dep.c_str());
+```
+
+mcpp emits `depfile =` and `deps = gcc` for that edge, so ninja reads the file
+and folds what it names into the edge's dependencies. Every device compiler this
+matters for already emits one: `glslangValidator --depfile`, `glslc -MD -MF`,
+`slangc -depfile`, `nvcc`/`clang` `-MD -MF`.
+
+> **Do not also declare the depfile as an `output()`.** `deps = gcc` makes ninja
+> consume and delete it after reading, so an edge that promised it as an output
+> would be permanently dirty.
+
 **A check's command does not have to write its stamp** (mcpp 2026.8.29.1+).
 The verdict is the exit code; the stamp is bookkeeping the graph needs, and
 mcpp creates it when the command succeeds. Before this, every check needed a
@@ -637,6 +658,9 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_TOOLCHAIN_BINUTILS_DIR` *(2026.9.5.2+)* | `mcpp::toolchain_binutils_dir()` | the directory mcpp names with `-B`; empty when it names none (a musl or MinGW payload brings its own assembler and linker) |
 | `MCPP_CXX_STDLIB` *(2026.9.6.3+)* | `mcpp::cxx_stdlib()` | the C++ standard library the resolved toolchain uses — `libstdc++`, `libc++`, `msvc-stl`; empty when no toolchain resolved. A different question from `MCPP_TARGET_LIBC`, which is the C library |
 | `MCPP_ACCEL` *(2026.9.5.2+)* | `mcpp::accel()` | the device axis of this build, resolved — `--accel` / `--no-accel` over `[build] accel` — in the wire form `cuda12.9+{sm_89} ptx>=89`; empty when the build asks for no accelerator. A rule package derives its own flags (`-gencode`, `--offload-arch`) from it, so the architecture set is written once, in the manifest. The same value feeds the `cfg(accelerator = "…")` layer key |
+| `MCPP_LANGUAGE_MODULES` *(2026.9.7.1+)* | -- | `1` when the declaring package sets `[language] modules`, `0` otherwise. A rule that GENERATES a consumer-facing declaration reads it to choose between a module interface and a header, so a project states that once and never again. An older engine leaves it absent, which a rule reads as `0` -- the behaviour every consumer had before the variable existed |
+| `MCPP_PKG_NAME` *(2026.9.7.1+)* | -- | The `[package] name` of the package this program builds. Every name a rule generates is derived from it: the module a consumer imports, the namespace the accessors sit in, the symbols in a generated header. Before it existed the closest available answer was the leaf of `MCPP_MANIFEST_DIR`, which is a directory name -- so a package named `vulkan-saxpy` in a directory named `app` generated `app.shaders`, and every `<something>/app/` in a workspace claimed the same module. Absent under an older engine, which a rule reads as a signal to keep its previous derivation |
+| `MCPP_PKG_NAMESPACE` *(2026.9.7.1+)* | -- | The `[package] namespace`. Empty when the package declares none. A rule that must produce a name unique across an index uses the pair rather than the name alone, because package identity is `(namespace, name)` |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | the device-kind sources (`.cu`, `.hip`, …) the package's effective `sources` match, package-root-relative, one per line; empty when there are none. The engine compiles none of them — the rule package this program imports turns each into an `mcpp::action`. Already narrowed: a `{ glob, accel }` entry the build does not cover contributes nothing, so `--no-accel` yields an empty list |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | a writable scratch/output dir owned by mcpp |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | the package root (= CWD) |

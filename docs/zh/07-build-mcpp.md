@@ -401,6 +401,23 @@ int main() {
 > 任何边消费它 —— 于是它从不执行,而编译器读到的是 mcpp 为已声明产物写下的那个空占位
 > 文件。这条边**按包**划分,因为 `include_dir` 只染色声明它的那个包自己的 TU。
 
+**命令自己发现依赖的 action 要声明 depfile**(mcpp 2026.9.7.1+)。`input()` 在
+`build.mcpp` 运行时就把边的输入定死了,而那时命令还没执行,所以一个靠解析源码才知道自己
+`#include` 图的编译器没有任何通道把结果报回来 —— 改动一个命令只是**读**过的文件不会触发
+任何重建,`mcpp build` 会在一个陈旧产物上保持绿色。
+
+```cpp
+a.depfile = dep.c_str();        // 命令会写出的路径
+a.arg("--depfile").arg(dep.c_str());
+```
+
+mcpp 为那条边写出 `depfile =` 与 `deps = gcc`,ninja 读取该文件并把它列出的文件并入这条边
+的依赖。与此相关的每个设备编译器都已经能输出它:`glslangValidator --depfile`、
+`glslc -MD -MF`、`slangc -depfile`、`nvcc`/`clang` 的 `-MD -MF`。
+
+> **不要同时把 depfile 声明为 `output()`。** `deps = gcc` 会让 ninja 读完即删,所以一条
+> 承诺了该输出的边会永远是脏的。
+
 **check 的命令不必自己写 stamp**(mcpp 2026.8.29.1+)。判定是退出码,stamp 是**构建图**
 需要的记账;命令成功时由 mcpp 创建它。在此之前每个 check 都需要一个包装脚本去 touch
 那个文件 —— 而 command 是 argv、不假设有 shell,所以那个包装器**根本没法可移植地写出来**。
@@ -545,6 +562,9 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存�
 | `MCPP_TOOLCHAIN_BINUTILS_DIR` *(2026.9.5.2+)* | `mcpp::toolchain_binutils_dir()` | mcpp 用 `-B` 指的目录;不指时为空串(musl 与 MinGW 载荷自带汇编器与链接器) |
 | `MCPP_CXX_STDLIB` *(2026.9.6.3+)* | `mcpp::cxx_stdlib()` | 解析出的工具链使用的 C++ 标准库 —— `libstdc++`、`libc++`、`msvc-stl`;没有工具链解析时为空串。与 `MCPP_TARGET_LIBC` 不是同一个问题,后者是 C 库 |
 | `MCPP_ACCEL` *(2026.9.5.2+)* | `mcpp::accel()` | 本次构建的设备轴,已解析 —— `--accel` / `--no-accel` 优先于 `[build] accel` —— 线上形态 `cuda12.9+{sm_89} ptx>=89`;不要加速器时为空串。规则包从它推导自己的开关(`-gencode`、`--offload-arch`),架构集合因此只在 manifest 写一次。同一个值也喂给 `cfg(accelerator = "…")` 这个 layer 键 |
+| `MCPP_LANGUAGE_MODULES` *(2026.9.7.1+)* | -- | 声明它的那个包设了 `[language] modules` 时为 `1`,否则 `0`。**生成**面向消费者声明的规则读它来在模块接口与头文件之间选择,项目因此只需说一次。旧引擎不设这个变量,规则把缺席读作 `0` —— 也就是这个变量存在之前每个消费者的行为 |
+| `MCPP_PKG_NAME` *(2026.9.7.1+)* | -- | 这个程序所构建的包的 `[package] name`。规则生成的每个名字都由它推导:消费者导入的模块、访问器所在的命名空间、生成头里的符号。在它存在之前,可用的最接近的答案是 `MCPP_MANIFEST_DIR` 的末段,那是目录名 —— 于是一个叫 `vulkan-saxpy` 的包放在名为 `app` 的目录下会生成 `app.shaders`,而工作区里每一个 `<something>/app/` 都声称拥有同一个模块。旧引擎下缺席,规则把缺席读作「沿用先前的推导」 |
+| `MCPP_PKG_NAMESPACE` *(2026.9.7.1+)* | -- | `[package] namespace`。包未声明命名空间时为空。需要产出在索引范围内唯一的名字的规则用这一对而不是单用名字,因为包身份是 `(namespace, name)` |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | 本包有效 `sources` 匹配到的设备类源文件(`.cu`、`.hip`…),相对包根,一行一个;没有时为空串。引擎一个都不编译 —— 由本程序引入的规则包把每一个变成一条 `mcpp::action`。已经过收窄:构建未覆盖的 `{ glob, accel }` 条目贡献为空,因此 `--no-accel` 得到空列表 |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | mcpp 提供的可写输出/暂存目录 |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | 包根(= CWD) |

@@ -7,6 +7,66 @@
 
 ## [2026.9.7.1] - 2026-09-07
 
+### 四条通道,都是「规则包知道而引擎收不到」的形状
+
+这一版加的四样东西各自很小,共同点是它们补的都是同一类缺口:一方已经知道某件事,
+而没有任何通道把它送到需要它的另一方。
+
+**`mcpp::action` 增加 `depfile`。** action 的输入在 `build.mcpp` 运行时就定死了,那时
+命令还没执行。一个靠解析源码才知道自己 `#include` 图的编译器,因此没有办法把结果报回
+来:改动一个命令只是**读**过的文件不会触发任何重建,而 `mcpp build` 会在一个陈旧产物上
+保持绿色。声明了 depfile 之后,mcpp 为那条边写出 `depfile =` 与 `deps = gcc`,ninja
+读取并把它列出的文件并入这条边的依赖。相关的每个设备编译器本来就能输出它 ——
+`glslangValidator --depfile`、`glslc -MD -MF`、`slangc -depfile`、`nvcc`/`clang` 的
+`-MD -MF` —— 缺的一直是接收端。
+
+**不要同时把 depfile 声明为 `output()`**:`deps = gcc` 会让 ninja 读完即删,一条承诺了
+该输出的边会永远是脏的。
+
+**规则包自己声明它编译哪些扩展名(`device_extensions`),以及提供规则的模块
+(`rule_module`)。** 受限 glob 的 `accel` 键**不**决定一个文件是不是设备源,
+`kDeviceExtensions` 才决定。所以在此之前,一个规则包无法自己引入一门设备语言:
+`xim:slang` 装得上、规则也编得过,而文件仍然掉进普通源集,报的是「mcpp has no role for
+the extension '.slang'」。
+
+第一版的修法是把 `.slang` 加进引擎那张表。那是**方向反了的依赖**:通用构建系统会因此
+持有一份外部插件的语言清单,而第三方插件想引入一门语言仍要等一次引擎发布。最终的形状
+是两个键写在规则包**自己**的 feature 上:
+
+    [features.rules-slang]
+    sources           = ["rules/slang.cppm"]
+    device_extensions = [".slang"]
+    rule_module       = "mcpp.rules.slang"
+
+引擎因此不持有任何包名、feature 拼写或模块名。两个键必须同时出现:一个声明了扩展名却
+不说谁来编译它的 feature 会被拒绝,而不是让文件在后面某处静默掉队。
+
+判据是直接的:`.slang` 已从 `kDeviceExtensions` **移除**,而 `tests/slang-consumer`
+照常构建与运行。一门新设备语言不再需要引擎发一个版本。
+
+**`[rules]` 声明了规则的项目不必写 `build.mcpp`。** 规则模块被声明之后,那个程序的内容
+就是确定的 —— 导入这些模块、依次调用 `compile()`、有一条失败就返回非零。mcpp 把它写进
+构建目录。项目要接管就把它拷到根目录改,合成随即停止:声明是 `build.mcpp` **之上**的
+一层,不是它旁边的第二套机制。
+
+**`[language] modules` 以 `MCPP_LANGUAGE_MODULES` 报给构建程序。** **生成**面向消费者
+声明的规则要在「模块接口」与「头文件」之间做选择,而项目已经声明过它用哪一种;用别的
+方式推导就是同一个决定的第二种拼法。旧引擎不设这个变量,规则把缺席读作「头文件」——
+也就是这个变量存在之前每个消费者的行为,所以升级不需要任何项目改一个字。
+
+**包身份以 `MCPP_PKG_NAME` / `MCPP_PKG_NAMESPACE` 报给构建程序。** 规则包生成的每一个
+名字都由包名推导 —— 消费者导入的模块、访问器所在的命名空间、生成头里的符号 —— 而构建
+程序的契约里没有任何东西回答「我在构建哪个包」。此前可用的最接近的答案是
+`MCPP_MANIFEST_DIR` 的末段,那是**目录名**。
+
+两者在「包放在一个通用目录下」时不同,而这正是本仓库自己的布局:
+`examples/09-heterogeneous/vulkan/app/` 声明 `name = "vulkan-saxpy"`,
+`mcpp.rules.spirv` 生成的却是 `app.shaders` —— 工作区里每一个 `<something>/app/` 都会
+声称拥有同一个模块,而且这个面向用户的名字会随着目录改名而改变。
+
+配套的 e2e 按构造区分这两种推导:夹具的目录叫 `app`、包叫 `vulkan-saxpy`。名字与目录
+相同的夹具对两种实现都通过 —— 而在此之前每一个夹具都是这样。
+
 ### 两处只在 Linux 之外成立的缺陷,以及第一条图形管线
 
 **引擎与规则层早就与平台无关,而生态只在 Linux 上完整。** 把规则包在另外两个平台上
@@ -58,6 +118,80 @@ libmalloc 里 abort(#202)。CI 报的正是这条路的第一步:链接停在 `_
 这个示例挖出一条使用者会撞上的规则:**依赖不能被 layer 条件化**。
 `cfg(accelerator = ...)` 下的 `[build]` 源生效而依赖被忽略,于是包被丢掉、包含它的源
 被留下。
+
+### 规则包自己声明它编译什么,于是新设备语言不再需要动引擎
+
+`[features].<f>` 上的两个键:`device_extensions` 说这条规则编译哪些设备源扩展名,
+`rule_module` 说消费者的构建程序 import 哪个模块去够到它。引擎里没有任何包名、feature
+拼写或模块名。
+
+**一门新设备语言不再触碰引擎。** 把 `.slang` 加进内置表曾经要一次引擎改动、一次发布,
+以及规则包 CI 里的一次版本抬升,规则才能路由一个文件。这一版把 `.slang` 从那张表里
+**移除**,改由 `rules-slang` 声明;`tests/slang-consumer` 原样构建并运行,这是判断这套
+机制能不能承载一门语言的唯一诚实办法。内置表从此是「mcpp 不需要被告知就知道的那些」——
+一个兼容集合,而不是第六个后端要加入的注册表。
+
+**消费者写一条边,不写构建程序。** `rule_module` 蕴含 `host-module = true`,因为一个
+点名了规则模块的 feature 已经说过那是使用它的唯一方式。而没有 `build.mcpp` 的包会拿到
+那些规则描述的程序:
+
+    [build-dependencies.mcpp]
+    plugins = { version = "0.3.0", features = ["rules-spirv"] }
+
+就是 `tests/spirv-zero-config` 的全部声明。自带程序的包保留自己的:合成只填补缺席。
+
+**feature 仍然按名字请求。** 早先一版从工程源码里出现的扩展名推导这个集合,被撤销了:
+两个包可能认领同一扩展名(第三方写一条处理 `.cu` 的规则是会发生的事),而且 manifest
+的职责是描述这次构建,派生出来的集合让文件不再陈述它。
+
+跑起来才发现的两处顺序缺陷:收集必须落在 feature 激活与「收窄受限 glob 的那张扩展名表」
+之间,放在其后则声明来得太晚、规则拿到空清单;而构建程序调用点的守卫问的是「文件在不在」
+而函数问的是「要不要一个程序」,于是合成不可达。两处现在问同一个问题。
+
+### 可移植性驱动默认是看不见的,于是三个平台都从「构建」抬到「运行」
+
+macOS 上没有原生 Vulkan,MoltenVK 是 Metal 之上的实现,规范把这种实现叫**可移植性驱动**。
+loader 默认不把它交给 `vkEnumeratePhysicalDevices`:实例要同时启用
+`VK_KHR_portability_enumeration` 并置位 `VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR`,
+随后凡是声明 `VK_KHR_portability_subset` 的设备必须在 `vkCreateDevice` 时启用它。一个照着
+原生驱动写的程序因此在那台机器上**一个设备都找不到**,并把它报成「这台机器没有 GPU」——
+诊断是错的,而它看起来完全合理。
+
+按能力问,不按 `#ifdef __APPLE__`:性质是「我面前这个 loader 在展示可移植性驱动」,而
+Linux 上跑翻译层的机器也有它,macOS 上对着原生驱动构建的程序并不需要它。Linux/lavapipe
+上读数不变,中心像素仍是 `(124, 70, 62, 255)`,设备名仍是 `llvmpipe`。
+
+**示例本身补齐了 macOS 的设备声明** —— `cfg(macos)` 下 `xim:moltenvk`。这个缺口在示例
+只构建不运行时是看不见的:不运行的程序从不向 loader 要设备。声明写在示例里而不是 CI
+步骤里,是为了让**任何人**检出它都能跑,而不只是那台多跑了一条命令的 runner。
+
+于是新的 macOS CI 步骤**什么都不装**:它找构建已经供给的 ICD 并设 `VK_DRIVER_FILES`,
+所以一份没能声明驱动的 manifest 会让步骤变红。步骤里放 `xlings install` 会让它两种情况
+都通过。
+
+Linux 与 macOS 断言的东西不同,而这个差别正是重点。lavapipe 是软件光栅化器,像素由构造
+保证相同,所以图像分不出它,设备名才分得出。MoltenVK 是宿主自己的 GPU 经 Metal,名字随
+runner 变,所以那边区分「够到了设备」的是**报出了中心像素**这件事本身 —— 一个被 loader
+拒绝展示的可移植性驱动不会产生它。
+
+**Windows 停在「构建」,而停在这里的理由被测量推翻过一次。** 运行步骤写过、推过、测过:
+`xim:mesa-lavapipe` 装上了,ICD 清单在 store 里找到了,程序打印 `render unavailable` ——
+那是 `src/main.cpp` 在渲染函数什么都没返回时的报告。
+
+第一次读把它归因成缺少 loader。这个归因是错的,日志本身就说明了:Vulkan 那条腿经导入库
+从 `vulkan-1.dll` 取 `vkCreateInstance`,一个找不到该 DLL 的进程会在映像加载期失败、
+一个字都印不出来。它印出来了。loader 在,跑了,枚举不到设备 —— 这是关于 ICD 的陈述。
+另一侧还有一个事实站在一起:mcpp-index 自己的 `vulkan-tests` 成员在 windows 分片上调用
+`vkEnumerateInstanceVersion` 且通过。
+
+顺带排掉了另一个嫌疑:`compat:vulkan` 里的 Khronos loader 能从索引已经携带的源码交叉
+构建出可用的 `vulkan-1.dll` —— 265 个导出,与上游 `vulkan-1.def` 逐名吻合;`DllMain`
+在;只导入 ADVAPI32、CFGMGR32、KERNEL32 与 msvcrt。描述符那段注记论证的是「Windows 上
+的 loader 必须是 DLL」,不是「它构建不出来」。所以这个包随时可以有,只是它不是这个步骤
+在等的东西。
+
+留待测量的是:lavapipe 的 Windows 载荷为什么在 mcpp 启动的进程里枚举不出设备。这一条的
+一般形式值得记下 —— 被复查的是结论,理由不会。
 
 ### 文档
 

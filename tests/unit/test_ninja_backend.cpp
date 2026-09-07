@@ -1829,3 +1829,93 @@ TEST(ActionOrdering, BlockingDecidesWhetherACheckGatesTheCompile) {
     EXPECT_EQ(make(false).find("mcpp-actions-chk_pkg"), std::string::npos)
         << "blocking = false gated the compile anyway";
 }
+
+// ── depfile: ninja must track what the action's COMMAND read, not only what
+// the build program declared as an input ──────────────────────────────────
+//
+// `inputs` is fixed when build.mcpp runs, before the command has executed. A
+// device-source compiler (glslangValidator, glslc, slangc, nvcc/clang)
+// discovers its own `#include` graph only by parsing the source, and reports
+// it afterward as a Make-style depfile. Without `depfile`/`deps = gcc` on the
+// action's own rule, that graph reaches nothing: the compile edge tracks
+// exactly the files build.mcpp named, and editing an `#include`d `.glsl` or
+// `.cuh` reruns nothing.
+
+namespace {
+
+// Isolates ONE rule's own variable block (`rule NAME` up to the next blank
+// line), because `cxx_object`/`cxx_module` unconditionally carry their own
+// `depfile = $out.d` / `deps = gcc` for a plan's ordinary compile rules
+// (mcpp#235/#257) — a search over the WHOLE manifest for either string would
+// pass whether or not the action under test ever asked for a depfile.
+std::string action_rule_block(std::string_view ninja, std::string_view rule_header) {
+    auto start = ninja.find(rule_header);
+    if (start == std::string_view::npos) return {};
+    auto end = ninja.find("\n\n", start);
+    auto count = end == std::string_view::npos ? std::string_view::npos : end - start;
+    return std::string(ninja.substr(start, count));
+}
+
+}  // namespace
+
+TEST(ActionDepfile, ADeclaredDepfileEmitsDepfileAndDepsGcc) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/shader_user.cpp",
+        .kind = mcpp::SourceKind::Cxx,
+        .object = "obj/shader_user.o",
+        .packageName = "shader_pkg",
+    });
+    mcpp::manifest::BuildAction a;
+    a.id = "shader";
+    a.packageName = "shader_pkg";
+    a.role = mcpp::manifest::BuildAction::Role::Source;
+    a.command = {"/bin/true"};
+    a.outputs = {"out/shader.spv"};
+    a.depfile = "out/shader.spv.d";
+    plan.actions.push_back(std::move(a));
+
+    auto ninja = emit_ninja_string(plan);
+    auto block = action_rule_block(ninja, "rule mcpp_action_0\n");
+    ASSERT_FALSE(block.empty()) << "no rule emitted for the action\n" << ninja;
+    EXPECT_NE(block.find("\n  depfile = out/shader.spv.d\n"), std::string::npos)
+        << block;
+    // No trailing "\n" required: `deps = gcc` is the last line this backend
+    // emits for the rule before the blank separator, so the block extracted
+    // above (up to, not including, that separator) ends exactly here.
+    EXPECT_NE(block.find("\n  deps = gcc"), std::string::npos) << block;
+
+    // The depfile must never also be a declared ninja OUTPUT of the same
+    // edge: `deps = gcc` makes ninja consume and delete it once read, and a
+    // file simultaneously promised as an output would be one ninja expects
+    // to still exist afterward.
+    EXPECT_EQ(ninja.find("shader.spv.d :"), std::string::npos)
+        << "the depfile must not appear as a build edge's own output\n" << ninja;
+}
+
+// THE CONTROL. Without it, a backend that emitted `depfile =`/`deps = gcc`
+// unconditionally for every action would also pass the test above — exactly
+// the shape `blocking` took before anything read it (mcpp#534 / e2e 315):
+// typed, transported, parsed, and a no-op with a paper trail.
+TEST(ActionDepfile, NoDepfileEmitsNeitherLine) {
+    auto plan = minimal_plan();
+    plan.compileUnits.push_back({
+        .source = "src/plain_user.cpp",
+        .kind = mcpp::SourceKind::Cxx,
+        .object = "obj/plain_user.o",
+        .packageName = "plain_pkg2",
+    });
+    mcpp::manifest::BuildAction a;
+    a.id = "plain";
+    a.packageName = "plain_pkg2";
+    a.role = mcpp::manifest::BuildAction::Role::Source;
+    a.command = {"/bin/true"};
+    a.outputs = {"out/plain.txt"};
+    plan.actions.push_back(std::move(a));
+
+    auto ninja = emit_ninja_string(plan);
+    auto block = action_rule_block(ninja, "rule mcpp_action_0\n");
+    ASSERT_FALSE(block.empty()) << "no rule emitted for the action\n" << ninja;
+    EXPECT_EQ(block.find("depfile ="), std::string::npos) << block;
+    EXPECT_EQ(block.find("deps = gcc"), std::string::npos) << block;
+}

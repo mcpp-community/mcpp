@@ -758,6 +758,40 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 read_str_array(ft, "provides", provs);
                 if (!reqs.empty())  m.featureRequires[fname] = std::move(reqs);
                 if (!provs.empty()) m.featureProvides[fname] = std::move(provs);
+                // The device extensions this feature's rule compiles. Normalised
+                // the same way `module_extensions` is, so `comp` and `.comp` are
+                // one entry and a consumer cannot be surprised by a missing dot.
+                std::vector<std::string> devExts;
+                read_str_array(ft, "device_extensions", devExts);
+                if (!devExts.empty()) {
+                    for (auto& e : devExts) e = mcpp::normalize_extension(e);
+                    std::erase(devExts, std::string{});
+                    if (!devExts.empty())
+                        m.featureDeviceExtensions[fname] = std::move(devExts);
+                }
+                // The module a consumer's build program imports for this rule.
+                if (auto it = ft.find("rule_module");
+                    it != ft.end() && it->second.is_string())
+                    m.featureRuleModule[fname] = it->second.as_string();
+                // The two halves of "this feature is a build rule" must arrive
+                // together. One without the other is a declaration nothing can
+                // act on, and the failure would otherwise land in a consumer's
+                // build rather than in the package that wrote it.
+                {
+                    const bool hasExts = m.featureDeviceExtensions.contains(fname);
+                    const bool hasMod  = m.featureRuleModule.contains(fname);
+                    if (hasExts != hasMod) {
+                        return std::unexpected(error(origin, std::format(
+                            "[features].{} declares `{}` without `{}`. A build rule states "
+                            "both:\n"
+                            "       `device_extensions` is what it compiles, `rule_module` is "
+                            "how a\n"
+                            "       consumer's build program reaches it.",
+                            fname,
+                            hasExts ? "device_extensions" : "rule_module",
+                            hasExts ? "rule_module" : "device_extensions")));
+                    }
+                }
                 // #253: per-feature per-glob compile flags — same entry grammar
                 // as [build].flags (shared parse_glob_flags_value), gated by
                 // this feature and folded in AFTER base globFlags at activation
