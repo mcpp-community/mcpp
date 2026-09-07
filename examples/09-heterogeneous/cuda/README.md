@@ -70,17 +70,26 @@ is compiled, with `accel-mismatch` on the machine-readable channel.
 
 ## Where the toolkit comes from
 
-The project names it:
+The rule names it. This project writes one edge and no payload list at all:
 
 ```toml
-[xlings.workspace]
-"xim:cuda-nvcc"   = "12.9.86"
-"xim:cuda-cudart" = "12.9.79"
+[build-dependencies.mcpp]
+plugins = { version = "0.2.4", features = ["rules-cuda"], host-module = true }
 ```
 
-These are payloads, so the version is the project's choice and not the
-machine's. The rule package resolves them with `mcpp::xpkg_dir` and builds the
-whole invocation from what it finds — the compiler, the include directories
+`mcpp.rules.cuda` declares nvcc, cudart, cuRAND's headers, CCCL and the driver
+sentinel for itself, under `cfg(accelerator = "cuda")` and the feature that
+selects it — so a build that names no accelerator installs none of them. To use
+a different CUDA line, write the entry in this project and it wins:
+
+```toml
+[target.'cfg(accelerator = "cuda")'.xlings.workspace]
+"xim:cuda-nvcc" = "13.3.33"
+```
+
+One version is installed either way, and mcpp says which. The rule resolves
+what it declared with `mcpp::xpkg_dir` and builds the whole invocation from what
+it finds — the compiler, the include directories
 and the library search paths. No path in this example is absolute, and a build
 here touches nothing of the host's CUDA:
 

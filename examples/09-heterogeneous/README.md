@@ -102,7 +102,7 @@ working build stops working on another machine.
 |---|---|---|
 | engine | the graph, the identity, the axis | mcpp itself |
 | rule package | the spelling of one model | `mcpp.rules.cuda` in `mcpp:plugins` |
-| payload | the binaries, versioned by the project | `xim:cuda-nvcc`, `xim:dpcpp`, `xim:glslang` |
+| payload | the binaries, versioned by the rule and overridable by the project | `xim:cuda-nvcc`, `xim:dpcpp`, `xim:glslang` |
 | adapter | a built artifact's reach to something the host owns | `compat:cuda-driver`, `compat:vulkan-runtime`, `compat:sycl-runtime` |
 
 The adapter layer exists for one reason. An mcpp-built program runs under
@@ -112,9 +112,10 @@ NVIDIA driver, a Vulkan ICD — is reached by an index package that puts a
 directory on the artifact's runtime search path. A project declares it as an
 ordinary dependency and does not otherwise think about it.
 
-Everything else is a payload, so the version is the project's choice rather
-than the machine's, and no example here contains an absolute path or reads the
-host's toolkit.
+Everything else is a payload. Which package and how old it may be belongs to
+the rule; *exactly which version* is the project's to override and nobody's to
+discover from the machine. No example here contains an absolute path or reads
+the host's toolkit, and only `multi-backend/` names a payload version at all.
 
 ## Running them
 

@@ -20,7 +20,7 @@ import_std = true
 default = "llvm@22.1.8"
 
 [build-dependencies.mcpp]
-plugins = { version = "0.2.1", features = ["rules-hip"], host-module = true }
+plugins = { version = "0.2.4", features = ["rules-hip"], host-module = true }
 
 # The driver's userspace library. HIP reaches the device through the CUDA
 # runtime here, so this is the same one hop the CUDA consumer needs: mcpp's
@@ -30,24 +30,16 @@ plugins = { version = "0.2.1", features = ["rules-hip"], host-module = true }
 [dependencies.compat]
 cuda-driver = "2026.09.05"
 
-# The payloads. `hip-nvidia` is headers only -- on this platform that is all
-# HIP is -- and the four CUDA entries are the back end it compiles through.
-# cuRAND and CCCL are on the list for the reason the CUDA consumer records:
-# clang's CUDA wrapper includes curand_mtgp32_kernel.h for every device unit
-# and that header includes <nv/target>, so a unit that calls neither still
-# needs both.
-[xlings.workspace]
-"xim:hip-nvidia"        = "7.2.4"
-"xim:cuda-nvcc"         = "12.9.86"
-"xim:cuda-cudart"       = "12.9.79"
-"xim:libcurand"         = "10.3.10.19"
-"xim:cuda-cccl"         = "12.9.27"
-# `nvidia_hip_runtime_api.h` includes <cuda_profiler_api.h> at its second line,
-# and CUDA ships that header in its own component. A machine with a host CUDA
-# installation finds it in /usr/include without saying so, which is how this
-# entry came to be missing from a build that worked.
-"xim:cuda-profiler-api" = "12.9.79"
-"xim:libcuda-host-link" = { linux = "0.0.1" }
+# NO [xlings.workspace]. `mcpp.rules.hip` declares the payloads it drives:
+# `hip-nvidia` (headers only -- on this platform that is all HIP is) plus the
+# CUDA back end it compiles through, including `cuda-profiler-api`, which
+# `nvidia_hip_runtime_api.h` includes at its second line. A machine with a host
+# CUDA installation finds that header in /usr/include without saying so, which
+# is how the entry came to be missing from a build that worked -- and it is now
+# the rule's business rather than every consumer's.
+#
+# To pin a different version, write the same entry here and it wins. Needs mcpp
+# 2026.9.6.6 and mcpp:plugins 0.2.4.
 
 [build]
 # Two chunks: the programming model, and the device. A device is spelled once

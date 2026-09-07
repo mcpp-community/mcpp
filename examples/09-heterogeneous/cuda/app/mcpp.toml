@@ -20,7 +20,7 @@ default = "llvm@22.1.8"
 # The rule that compiles the island lives in the official plugin collection,
 # selected by its feature; `build.mcpp` imports it as `mcpp.rules.cuda`.
 [build-dependencies.mcpp]
-plugins = { version = "0.2.1", features = ["rules-cuda"], host-module = true }
+plugins = { version = "0.2.4", features = ["rules-cuda"], host-module = true }
 
 # The driver's userspace library, reached through an index package that owns
 # the one hop mcpp needs: a directory on the artifact's runtime search path.
@@ -31,23 +31,17 @@ plugins = { version = "0.2.1", features = ["rules-cuda"], host-module = true }
 [dependencies.compat]
 cuda-driver = "2026.09.05"
 
-# The toolkit this project builds with, named rather than discovered. These
-# are PAYLOADS, so the version is the project's choice and not the machine's.
-# The 12.9 line is named on purpose: a runtime must not be newer than the
-# driver it will meet, and 12.x reaches every driver from r525 onward. The
-# rule package states the driver relation and mcpp compares it before the
-# first compile.
-[xlings.workspace]
-"xim:cuda-nvcc"         = "12.9.86"
-"xim:cuda-cudart"       = "12.9.79"
-# cuRAND's headers and CCCL. clang's CUDA wrapper includes
-# curand_mtgp32_kernel.h for every device unit, and that header includes
-# <nv/target> from CCCL, so the clang route needs both even though this kernel
-# calls neither; on a developer machine the host's /usr/include used to supply
-# them silently. 10.3.x and 12.9.27 are the 12.9 line.
-"xim:libcurand"         = "10.3.10.19"
-"xim:cuda-cccl"         = "12.9.27"
-"xim:libcuda-host-link" = { linux = "0.0.1" }
+# NO [xlings.workspace]. The toolkit is declared by the rule itself, under
+# `cfg(accelerator = ...)` and the feature that selects it, so this project
+# names the rule and nothing else. To pin a different version, write the same
+# entry here and it wins -- see `One package, one version` in
+# docs/05-mcpp-toml.md. Needs mcpp 2026.9.6.6 and mcpp:plugins 0.2.4.
+#
+# What the rule declares for this lane: nvcc, cudart, cuRAND's headers, CCCL and
+# the driver sentinel. The 12.9 line is an EXACT default rather than a floor,
+# because a runtime must not be newer than the driver it will meet -- 12.x
+# reaches every driver from r525 onward and 13.x raises that to r580, which is a
+# property of the machines the artifact will run on.
 
 [build]
 # What this build compiles device code FOR. Written once, here: the rule

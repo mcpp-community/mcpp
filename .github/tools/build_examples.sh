@@ -51,7 +51,7 @@ SKIP=(
     "examples/09-heterogeneous/hip/app|same, for the HIP payloads"
     "examples/09-heterogeneous/sycl/app|needs the dpcpp payload (over a gigabyte) and a device its runtime accepts"
     "examples/09-heterogeneous/vulkan/app|built AND RUN by the next step of this job, on the lavapipe payload, which needs no GPU"
-    "examples/09-heterogeneous/cann/app|its device leg needs the Ascend DRIVER, which a runner does not have: the kernel compiles and the object links, and then `libascend_hal.so` is missing, which is correct on a machine with no NPU. Its CPU leg does build -- and is not built here only because the plugins pin would make this job resolve a fifth rule package for one example. Covered by the measurements in its README"
+    "examples/09-heterogeneous/cann/app|its device leg needs the Ascend DRIVER, which a runner does not have: the kernel compiles and the object links, and then `libascend_hal.so` is missing -- and only that one, since 2026.9.6.6 models DT_RPATH inheritance. Correct on a machine with no NPU. Its CPU leg does build, and is not built here only because it would make this job resolve a fifth rule package for one example. Covered by the measurements in its README"
 )
 
 # Every ROOT manifest in the tree: a directory with an `mcpp.toml` that has no

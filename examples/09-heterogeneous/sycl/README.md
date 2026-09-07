@@ -47,13 +47,17 @@ engine orders them by the graph rather than by declaration order.
 
 Without the second, this program links, starts, and finds no kernel.
 
-## Three payloads, and what each one closes
+## Five payloads, and what each one closes
+
+This project declares none of them. `mcpp.rules.sycl` does, under the feature
+that selects it and the accelerator it serves:
 
 ```toml
-[xlings.workspace]
-"xim:dpcpp"     = "7.1.0"      # the compiler: its clang has the SYCL front end
-"xim:gcc"       = "15.1.0"     # the C++ standard library the unit compiles against
-"xim:cuda-nvcc" = "12.9.86"    # the NVIDIA back end's libdevice
+"xim:dpcpp"         = ">=7.1.0"   # the compiler: its clang has the SYCL front end
+"xim:gcc"           = "15.1.0"    # the C++ standard library the unit compiles against
+"xim:glibc"         = ""          # …and the C library underneath it, unpinned
+"xim:linux-headers" = ""
+"xim:cuda-nvcc"     = "12.9.86"   # the NVIDIA back end's libdevice, only when the accel names cuda
 ```
 
 `xim:gcc` is not a second toolchain. Left alone, the SYCL compiler takes its
