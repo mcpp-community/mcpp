@@ -380,6 +380,10 @@ a program classifying the outcome reads `reason`:
 | `exclusive-capability` | two packages provide one capability and at least one declared it exclusive |
 | `version-floor-unmet` | a package requires more of the machine than the machine was declared to have |
 | `accel-mismatch` | a `[build] sources` entry is constrained to a device set this build does not cover |
+| `accel-backend-undeclared` | a `[build] sources` entry names a backend its own package does not list in `[package] accelerators` |
+| `device-source-unconsumed` | a device-kind source reached no action, so nothing compiles it |
+| `host-module-missing` | `build.mcpp` imports a module no dependency supplies as a host module |
+| `tool-version-conflict` | two declarations name one xlings package at versions that cannot both hold |
 | `other` | a refusal whose branch has not been given a token yet |
 
 **Exit 0 whenever the question was answered, including "refused".** "Would

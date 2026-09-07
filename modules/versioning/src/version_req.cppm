@@ -128,6 +128,21 @@ struct Requirement {
 
 std::expected<Requirement, std::string> parse_req(std::string_view s);
 
+// Does this string ASK for a version, or NAME one?
+//
+// The distinction is not decidable from `parse_req` alone: `parse_req("1.2.3")`
+// succeeds, so "does it parse" cannot separate a constraint from a literal. The
+// separation matters wherever a version position doubles as an address —
+// mcpp's package resolution treats a bare version as the exact wire address and
+// only a constraint as something to solve, and an installed-payload lookup must
+// not answer a pinned request with a different version that happens to be
+// present.
+//
+// Spelled here rather than beside either caller because it is a fact about THIS
+// grammar: the set of leading operators is the one `parse_req` accepts, and a
+// second copy would drift the first time an operator is added.
+bool is_constraint(std::string_view s);
+
 bool matches(const Requirement& r, const Version& v);
 
 // Indices of ALL versions in `available` that match `req` and tie for highest
@@ -318,6 +333,14 @@ bool prerelease_visible(const Requirement& r, const Version& v) {
 }
 
 } // namespace
+
+bool is_constraint(std::string_view s) {
+    if (s.empty()) return true;      // "any version"
+    if (s == "*")  return true;
+    const char c = s.front();
+    if (c == '^' || c == '~' || c == '>' || c == '<' || c == '=') return true;
+    return s.find(',') != std::string_view::npos;   // AND-combined parts
+}
 
 std::expected<Requirement, std::string> parse_req(std::string_view s) {
     s = strip_ws(s);

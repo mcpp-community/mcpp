@@ -92,12 +92,9 @@ try_merge_semver(std::string_view name,
 namespace mcpp::pm {
 
 bool is_version_constraint(std::string_view v) {
-    if (v.empty()) return true;
-    if (v == "*") return true;
-    char c = v.front();
-    if (c == '^' || c == '~' || c == '>' || c == '<' || c == '=') return true;
-    if (v.find(',') != std::string_view::npos) return true;
-    return false;
+    // One definition, in the module that owns the requirement grammar. This
+    // name is kept because it is what the package-manager side reads as.
+    return mcpp::version_req::is_constraint(v);
 }
 
 // ─── Namespace-aware resolve_semver (canonical, 0.0.10+) ─────────────

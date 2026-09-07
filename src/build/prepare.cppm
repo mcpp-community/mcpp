@@ -19,6 +19,7 @@ import std;
 import mcpp.targetside;
 import mcpp.diag;
 import mcpp.build.refusal;
+import mcpp.xlings.address_set;
 import mcpp.build.version_floor;
 import mcpp.home;
 import mcpp.platform.axis;
@@ -261,8 +262,13 @@ materialize_generated_files(const std::filesystem::path& root,
 export void merge_conditional_xlings(mcpp::manifest::Manifest& m,
                                      const mcpp::manifest::ConditionalConfig& cc)
 {
+    // ONE DEFINITION OF IDENTITY, and it is not local to this merge. It used
+    // to be `parse_address(a).target` — the bare name, so `xim:cuda` and a
+    // hypothetical `scode:cuda` collided, and the graph split a few thousand
+    // lines below compared whole address strings instead. See
+    // mcpp.xlings.address_set for what the two definitions cost.
     auto package_of = [](std::string_view address) {
-        return mcpp::manifest::parse_address(address).target;
+        return mcpp::xlings::addrset::package_key(address);
     };
     for (auto const& a : cc.xlings.deps) {
         const auto pkg = package_of(a);
@@ -3783,11 +3789,28 @@ prepare_build(bool print_fingerprint,
             // declared. The graph's own declarations are provisioned after
             // resolution, which is the first moment they are known — see the
             // second pass near `xlingsDepBinDirs`.
-            const auto declaredDeps = applicable_xlings_addresses(
-                runtimeOwnerManifest,
-                feature_closure(runtimeOwnerManifest,
-                                parse_feature_request(overrides.features)),
-                toolPurpose, /*isRoot=*/true);
+            // ONE PACKAGE, ONE VERSION, INSIDE ONE MANIFEST TOO. The
+            // conditional merge already unified the two tool AXES by package;
+            // what it cannot see is `[xlings.workspace]` and
+            // `[feature-xlings.<f>]` naming one package at two versions, which
+            // reaches here as two addresses and used to install both.
+            std::vector<mcpp::xlings::addrset::Claim> rootClaims;
+            for (auto const& spec : applicable_xlings_addresses(
+                     runtimeOwnerManifest,
+                     feature_closure(runtimeOwnerManifest,
+                                     parse_feature_request(overrides.features)),
+                     toolPurpose, /*isRoot=*/true))
+                rootClaims.push_back({spec, "this project", 0});
+            auto rootUnified = mcpp::xlings::addrset::unify(rootClaims);
+            if (!rootUnified) {
+                refusal::record(refusal::Code::ToolVersionConflict);
+                return std::unexpected(rootUnified.error());
+            }
+            for (auto const& note : rootUnified->overrides)
+                mcpp::diag::warning("xlings/version-override", note);
+            std::vector<std::string> declaredDeps;
+            for (auto const& w : rootUnified->winners)
+                declaredDeps.push_back(w.address);
             if (materializeRootRuntime && !declaredDeps.empty()) {
                 if (auto pv = provision_xlings_addresses(
                         **cfg2, declaredDeps, runtimeSelection.ownerRoot,
@@ -3837,26 +3860,66 @@ prepare_build(bool print_fingerprint,
     // rule.
     std::vector<std::vector<std::string>> activeFeaturesByPackage;
 
+    // WHICH VERSION OF EACH TOOL PACKAGE THIS BUILD USES, decided once.
+    //
+    // Keyed by `(namespace, name)` — the identity, with the version treated as
+    // a constraint on it. Filled by the first `graph_xlings_split()` below and
+    // read by `fillXpkgDirs`, because those two answer the same question from
+    // different ends: one decides what is installed, the other tells a build
+    // program where it landed. They used to derive it separately, and the
+    // failure that produced is the quiet one — installed A, answered B.
+    std::map<std::string, std::string> xlingsWinner;
+
     // The split is computed HERE and reused by the late pass, so the two
     // cannot disagree about what "the graph declared" means.
-    auto graph_xlings_split = [&] {
-        std::vector<std::string> rootSpecs = applicable_xlings_addresses(
-            runtimeOwnerManifest, activeFeaturesByPackage.empty()
-                ? std::vector<std::string>{} : activeFeaturesByPackage[0],
-            toolPurpose, /*isRoot=*/true);
-        std::vector<std::string> fromGraph;
+    //
+    // ONE PACKAGE, ONE VERSION. This used to compare whole address strings, so
+    // `xim:cuda-nvcc@13.3.33` from the project and `xim:cuda-nvcc@>=12.9.86`
+    // from a rule package were two packages: both installed, gigabytes each,
+    // and `xpkg_dir` answered one of them. The unification below adjudicates
+    // (the declaration nearer the artifact wins) and validates (the winner must
+    // satisfy every requirement that lost) — see mcpp.xlings.address_set.
+    auto graph_xlings_split = [&]() -> std::expected<
+            std::pair<std::vector<std::string>, std::vector<std::string>>,
+            std::string> {
+        namespace addrset = mcpp::xlings::addrset;
+        auto describe = [&](std::size_t i) {
+            auto const& pkg = packages[i].manifest.package;
+            return pkg.namespace_.empty() ? pkg.name
+                                          : pkg.namespace_ + ":" + pkg.name;
+        };
+        std::vector<addrset::Claim> claims;
+        for (auto const& spec : applicable_xlings_addresses(
+                 runtimeOwnerManifest, activeFeaturesByPackage.empty()
+                     ? std::vector<std::string>{} : activeFeaturesByPackage[0],
+                 toolPurpose, /*isRoot=*/true))
+            claims.push_back({spec, "this project", 0});
+        // THE BUCKET IS DECIDED BY WHERE THE WINNING CLAIM SITS IN THIS LIST,
+        // not by its distance. The root's own pass provisions exactly the
+        // addresses collected above; anything else has to reach the graph pass
+        // or nothing installs it. Those two lists are the same one whenever the
+        // project is its own runtime owner, and differ under a workspace.
+        const std::size_t rootClaims = claims.size();
         for (std::size_t i = 0; i < packages.size(); ++i) {
             const auto& man = packages[i].manifest;
             const auto feats = i < activeFeaturesByPackage.size()
                 ? activeFeaturesByPackage[i] : std::vector<std::string>{};
             for (auto const& spec : applicable_xlings_addresses(
-                     man, feats, toolPurpose, /*isRoot=*/i == 0)) {
-                if (std::ranges::find(rootSpecs, spec) != rootSpecs.end())
-                    continue;
-                if (std::ranges::find(fromGraph, spec) == fromGraph.end())
-                    fromGraph.push_back(spec);
-            }
+                     man, feats, toolPurpose, /*isRoot=*/i == 0))
+                claims.push_back({spec, describe(i), i == 0 ? 0 : 1});
         }
+        auto unified = addrset::unify(claims);
+        if (!unified) return std::unexpected(unified.error());
+        std::vector<std::string> rootSpecs, fromGraph;
+        for (auto const& w : unified->winners) {
+            (w.claim < rootClaims ? rootSpecs : fromGraph).push_back(w.address);
+            xlingsWinner[addrset::package_key(w.address)] = w.address;
+        }
+        // REPORTED, NOT INFERRED. An override that is only visible as "two
+        // versions were declared and one directory exists" is a fact the reader
+        // has to reconstruct from the filesystem.
+        for (auto const& note : unified->overrides)
+            mcpp::diag::warning("xlings/version-override", note);
         return std::pair{std::move(rootSpecs), std::move(fromGraph)};
     };
     packages.push_back({*root, *m});
@@ -4965,7 +5028,20 @@ prepare_build(bool print_fingerprint,
         auto cfg = get_cfg();
         if (!cfg) return;
         auto xlEnv = mcpp::config::make_xlings_env(**cfg);
-        for (auto const& spec : declared) {
+        std::set<std::string> answered;
+        for (auto const& raw : declared) {
+            // THE VERSION THIS BUILD INSTALLED, NOT THE ONE THIS MANIFEST
+            // WROTE. Both statements are about one package, and only one
+            // version of it exists on disk; answering from the local spelling
+            // is how a rule package could declare `>=8.5.0`, have the project's
+            // exact pin installed instead, and then be told nothing is there.
+            // `xlingsWinner` is empty only before the split has run, and every
+            // caller of this lambda runs after it — the fallback keeps that a
+            // fact about ordering rather than a crash.
+            const auto key = mcpp::xlings::addrset::package_key(raw);
+            if (!answered.insert(key).second) continue;
+            auto wit = xlingsWinner.find(key);
+            const std::string spec = wit == xlingsWinner.end() ? raw : wit->second;
             auto ref = mcpp::xlings::paths::parse_xpkg_ref(spec);
             auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref);
             if (!dir) continue;   // declared but not installed: "" is the answer
@@ -7201,6 +7277,7 @@ prepare_build(bool print_fingerprint,
                             std::string declared;
                             for (auto const& a : pkg.manifest.package.accelerators)
                                 declared += (declared.empty() ? "" : ", ") + a;
+                            refusal::record(refusal::Code::AccelBackendUndeclared);
                             return std::unexpected(std::format(
                                 "`{}`: [build] sources entry '{}' names accelerator "
                                 "backend \"{}\", which this package does not declare.\n"
@@ -7320,7 +7397,12 @@ prepare_build(bool print_fingerprint,
             for (auto const& pkg : packages)
                 if (auto why = layer_predicated_xlings_refusal(pkg.manifest))
                     return std::unexpected(*why);
-            auto [_rootSpecs, fromGraph] = graph_xlings_split();
+            auto split = graph_xlings_split();
+            if (!split) {
+                refusal::record(refusal::Code::ToolVersionConflict);
+                return std::unexpected(split.error());
+            }
+            auto const& fromGraph = split->second;
             if (!fromGraph.empty()) {
                 if (auto cfg = get_cfg()) {
                     if (auto pv = provision_xlings_addresses(
@@ -8994,6 +9076,7 @@ prepare_build(bool print_fingerprint,
         if (orphans.empty()) continue;
         std::error_code hasEc;
         const bool hasProgram = std::filesystem::exists(pkg.root / "build.mcpp", hasEc);
+        refusal::record(refusal::Code::DeviceSourceUnconsumed);
         return std::unexpected(std::format(
             "`{}`: device sources that no action compiles:\n{}"
             "       A device-kind source is compiled by this package's build program\n"
@@ -9671,7 +9754,13 @@ prepare_build(bool print_fingerprint,
         // provisioning that has to happen before build.mcpp; this site reads it
         // for the records below. Two copies of "what did the graph declare"
         // would be two definitions of the same word.
-        auto [xlingsSpecs, fromGraph] = graph_xlings_split();
+        auto split = graph_xlings_split();
+        if (!split) {
+            refusal::record(refusal::Code::ToolVersionConflict);
+            return std::unexpected(split.error());
+        }
+        auto& xlingsSpecs = split->first;
+        auto& fromGraph   = split->second;
         // THE ROOT'S OWN PASS RAN LONG AGO, AND THIS ONE MUST NOT REPEAT IT.
         // The stamp is keyed by the LIST, so provisioning root+graph together
         // would key a different list than the early pass wrote and re-run an

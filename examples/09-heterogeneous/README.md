@@ -1,10 +1,10 @@
-# 09 — Heterogeneous builds: one lesson, four programming models
+# 09 — Heterogeneous builds: one lesson, several programming models
 
-Four subdirectories compute the same thing — `2.0 * [1,2,3,4] + [10,20,30,40]`,
+Each subdirectory computes the same thing — `2.0 * [1,2,3,4] + [10,20,30,40]`,
 printed as `12 24 36 48` — on a device, and the same thing on the CPU when
-there is no device. They are not four lessons. They are one structure
-instantiated four times, and reading any two of them shows which parts belong
-to the structure and which to a vendor.
+there is no device. They are not several lessons. They are one structure
+instantiated several times, and reading any two of them shows which parts
+belong to the structure and which to a vendor.
 
 | directory | model | device compiler | what it adds to the structure |
 |---|---|---|---|
@@ -12,8 +12,17 @@ to the structure and which to a vendor.
 | [`vulkan/`](vulkan/) | Vulkan compute | glslang or shaderc, to SPIR-V | a device output that is a header rather than an object, and one artifact that runs on three devices |
 | [`sycl/`](sycl/) | SYCL | the dpcpp payload's clang | a second compiler with its own standard library, and a chained action for the device link |
 | [`hip/`](hip/) | HIP | the project's own clang, NVIDIA platform | a programming model that is a header layer over another model's runtime |
+| [`cann/`](cann/) | Ascend C | the toolkit's BiSheng (`-x asc`) | a device object for hardware nobody in this repository has, and a host half that declines cleanly |
+| [`multi-backend/`](multi-backend/) | CUDA **and** Vulkan | both of the above | the other shape: backends that are additive rather than a seam, chosen at run time |
 
-Start with `cuda/`. The other three assume it.
+Start with `cuda/`. The four beside it assume it, and `multi-backend/` assumes
+two of them.
+
+The first five are one shape — a **seam**: exactly one implementation exists in
+the artifact and the choice was made at build time. `multi-backend/` is the
+other — several implementations in one artifact, chosen when the program runs.
+A program can take either; a library that is compiled once and consumed by
+people whose machines differ can only take the second.
 
 ## The structure
 
@@ -62,11 +71,26 @@ anything is compiled. The two variants land in different artifact directories
 because the device axis is part of the build's identity, so alternating between
 them does not rebuild from scratch.
 
-**A rule package.** Every vendor spelling — `--cuda-gpu-arch`, `-gencode`,
-`--target-env`, `-fsycl-targets`, `-fsycl-link` — lives in `mcpp:plugins`, a
-package the project depends on and selects features from. The engine owns the
-graph, the artifact's identity and the accelerator axis; it holds no vendor
-name. A unit test refuses vendor probes in `src/`.
+**A rule package, which brings its own environment.** Every vendor spelling —
+`--cuda-gpu-arch`, `-gencode`, `--target-env`, `-fsycl-targets`, `-fsycl-link`,
+`--cce-aicore-arch` — lives in `mcpp:plugins`, a package the project depends on
+and selects features from. The engine owns the graph, the artifact's identity
+and the accelerator axis; it holds no vendor name. A unit test refuses vendor
+probes in `src/`.
+
+The rule also declares the **payloads** it needs, under the feature that
+selects it and the accelerator it serves, so a project writes one edge and no
+`[xlings.workspace]` block:
+
+```toml
+[build-dependencies.mcpp]
+plugins = { version = "0.2.4", features = ["rules-cuda"], host-module = true }
+```
+
+`multi-backend/` is the one example here that also pins a version, and it does
+so to demonstrate the override: the rule owns "which package, and no older than
+what", the project owns "and exactly this one". One version is installed either
+way — see *One package, one version* in `docs/05-mcpp-toml.md`.
 
 ## The layers underneath
 

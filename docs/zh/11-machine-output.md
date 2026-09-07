@@ -334,6 +334,10 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `exclusive-capability` | 一个能力有多个提供者,而其中至少一个声明了独占 |
 | `version-floor-unmet` | 一个包对机器的要求高于机器被声明拥有的 |
 | `accel-mismatch` | 一条 `[build] sources` 条目被约束到本次构建未覆盖的设备集合 |
+| `accel-backend-undeclared` | 一条 `[build] sources` 条目命名了本包 `[package] accelerators` 未列出的后端 |
+| `device-source-unconsumed` | 一个设备类源文件没有到达任何 action,因此没有东西编译它 |
+| `host-module-missing` | `build.mcpp` 导入了没有任何依赖以 host module 形式提供的模块 |
+| `tool-version-conflict` | 两处声明把同一个 xlings 包定在不能同时成立的版本上 |
 | `other` | 一处还没有被命名的拒绝分支 |
 
 **只要问题被回答了就退 0,包括答案是「拒绝」。** 「它能不能构建,不能的话

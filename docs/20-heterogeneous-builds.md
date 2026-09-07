@@ -21,10 +21,15 @@ entry (`cuda12.9+{sm_89} ptx>=89` is one backend with an architecture set and a
 PTX floor). See "Several backends in one build" below for how the source sets
 are then written.
 
-Four programming models have rule packages today -- CUDA, HIP, SYCL and
-Vulkan/SPIR-V -- and the table under "The lanes" says which compiler and which
-payloads each drives. Nothing in the engine holds a vendor name, so a fifth is
-a package rather than an engine change.
+`accelerator = "none"` is the empty set -- true exactly when this build named
+no accelerator at all. It is the one value that is not a backend name, and it
+exists because the rest of the vocabulary is **open**: a set that can grow
+cannot be negated by listing it. See "The CPU fallback" below.
+
+Five programming models have rule packages today -- CUDA, HIP, SYCL,
+Vulkan/SPIR-V and Ascend C -- and the table under "The lanes" says which
+compiler and which payloads each drives. Nothing in the engine holds a vendor
+name, so a sixth is a package rather than an engine change.
 
 ## Two shapes, and why one mechanism reaches both
 
@@ -143,6 +148,56 @@ which emits build-graph edges whose outputs join the link. See
 The division is deliberate. mcpp owns the graph, the artifact's identity and
 the set of architectures; a vendor's flag spelling, its architecture syntax and
 its host-compiler requirements belong to the rule.
+
+## The toolkit comes with the rule (2026.9.6.6+)
+
+A project that wants a CUDA island writes one edge:
+
+```toml
+[build-dependencies.mcpp]
+plugins = { version = "0.2.4", features = ["rules-cuda"], host-module = true }
+```
+
+and nothing else. The vendor toolkit, its runtime and whatever else the rule
+needs are declared **by the rule package**, under the feature that selects it
+and the accelerator it serves:
+
+```toml
+# mcpp:plugins, not your project
+[target.'cfg(accelerator = "cuda")'.feature-xlings.rules-cuda]
+"xim:cuda-nvcc"   = ">=12.9.86"
+"xim:cuda-cudart" = ">=12.9.79"
+"xim:libcurand"   = ">=10.3.10.19"
+"xim:cuda-cccl"   = ">=12.9.27"
+```
+
+Two gates, and both must open before a byte is downloaded. The feature says
+*whether this rule is wanted*; the `cfg(accelerator = ...)` selector says
+*which builds actually need the device toolkit*. `mcpp build` with no
+accelerator opens neither, which is what keeps the cheapest build cheap -- and
+that is the build CI runs.
+
+Every lane works this way: `rules-cuda`, `rules-hip`, `rules-sycl`,
+`rules-spirv` and `rules-ascendc` each carry their own. No lane expects the
+project to supply the environment instead, because "sometimes it has to" is a
+rule nothing can state precisely enough to be useful.
+
+**Overriding is one line, in the project.** Which package and how old it may be
+is the rule author's knowledge; *exactly which version* sometimes belongs to the
+project, because a CUDA line is coupled to a driver floor that is a property of
+the machines it will run on:
+
+```toml
+[target.'cfg(accelerator = "cuda")'.xlings.workspace]
+"xim:cuda-nvcc" = "13.3.33"
+```
+
+The nearer declaration wins, one version is installed, and mcpp says which. A
+pin that does not satisfy the rule's floor is refused naming both sides rather
+than installed alongside it. See *One package, one version* in
+[05 — mcpp.toml](05-mcpp-toml.md) for the full rule;
+`examples/09-heterogeneous/multi-backend` is the one example in this repository
+that takes the override path, and every other one writes only the edge.
 
 ## What the rule package reports before the first compile
 
@@ -348,17 +403,35 @@ ld: obj/src/cpu/impl.o: multiple definition of `impl';
 ```
 
 Loud, and at the link rather than at run time -- but it is a failure the
-manifest can avoid. Negate the whole set:
+manifest can avoid. Say "this build named no backend" directly:
 
 ```toml
-[target.'cfg(not(any(accelerator = "cuda", accelerator = "vulkan")))'.build]
+[target.'cfg(accelerator = "none")'.build]
 sources = ["src/cpu/*.cpp"]
 ```
 
-`any`, `all` and `not` compose over the membership test as ordinary boolean
-combinators. The cost is that the list is a second place the backend set is
-written: a third backend added without extending this line produces the link
-error above.
+`none` (mcpp 2026.9.6.5) is the empty set: it holds when this build named no
+accelerator at all, and it goes on holding after the ecosystem grows.
+
+**The enumeration it replaces was correct and did not stay correct.** Before
+`none` the only spelling was to negate the whole set,
+
+```toml
+[target.'cfg(not(any(accelerator = "cuda", accelerator = "vulkan")))'.build]
+```
+
+which made that line a **second place the backend set is written**. `any`,
+`all` and `not` still compose over the membership test as ordinary boolean
+combinators, and there are predicates that need them -- but this is not one.
+`accelerator` is an **open** vocabulary: a third backend is a package rather
+than an engine change, so the day one arrives, an enumeration that nobody
+remembered to extend stops meaning what it says. It does not fail loudly when
+that happens; it silently selects the CPU implementation for a build that has a
+device, or the link error above, depending on which half was forgotten.
+
+`cfg(not(accelerator = "none"))` is the same statement inverted -- "this build
+named at least one backend" -- and is what a dispatcher shared by several
+backends should be conditioned on.
 
 ### The other shape: no link-time selection
 
@@ -371,7 +444,7 @@ on whatever the machine has should not select at link time:
 * give each one a distinct name, and have the seam ask at run time which
   devices are present.
 
-There is then no `not(any(...))` to maintain, and the artifact answers the
+There is then no exclusion to maintain at all, and the artifact answers the
 question the user of the binary actually has. This is the shape ggml uses: each
 backend registers itself, and `ggml_backend_reg_by_name` picks one when the
 program runs. `ggml-org:llamacpp` is built that way, and its `backend-vulkan`
@@ -412,6 +485,7 @@ own denominator.
 | `rules-hip` | `mcpp.rules.hip` | the project's own clang (`-x cuda`) on the NVIDIA platform | the above plus `xim:hip-nvidia` | `hip, cuda12.9+{sm_89}` |
 | `rules-sycl` | `mcpp.rules.sycl` | the `xim:dpcpp` payload's clang (`-fsycl`) | `xim:dpcpp`, `xim:gcc`, `xim:cuda-nvcc` for an NVIDIA target | `sycl` or `sycl, cuda12.9+{sm_89}` |
 | `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` or `glslc` | `xim:glslang` or `xim:shaderc` | `vulkan1.2` |
+| `rules-ascendc` | `mcpp.rules.ascendc` | `bisheng` (`-x asc`) from the CANN toolkit | `xim:cann-toolkit` | `ascend8.5+{dav-c220}` |
 
 Two chunks, not one, in the `accel` value of the HIP and SYCL rows. The first
 names the programming model and the second names the device, so a device is
@@ -435,7 +509,8 @@ runtime that threw it is not the one the caller would unwind with.
 
 ## What a framework looks like on top of this
 
-The four lanes prove a rule package can drive four compilers. A framework is
+The five lanes prove a rule package can drive five compilers, the newest of
+them a vendor outside the NVIDIA and Khronos lineages. A framework is
 the next question -- whether the mechanism carries something a person would
 deploy -- and the answer has a shape of its own, measured on llama.cpp's Vulkan
 backend.
