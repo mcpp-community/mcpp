@@ -178,14 +178,14 @@ accelerator opens neither, which is what keeps the cheapest build cheap -- and
 that is the build CI runs.
 
 Every lane works this way: `rules-cuda`, `rules-hip`, `rules-sycl`,
-`rules-spirv` and `rules-ascendc` each carry their own. There is no lane where
-you are expected to supply the environment yourself, because "sometimes you
-have to" is a rule nothing can state precisely enough to be useful.
+`rules-spirv` and `rules-ascendc` each carry their own. No lane expects the
+project to supply the environment instead, because "sometimes it has to" is a
+rule nothing can state precisely enough to be useful.
 
-**Overriding is one line, in your project.** Which package and how old it may
-be is the rule author's knowledge; *exactly which version* is sometimes yours,
-because a CUDA line is coupled to a driver floor that is a property of your
-machines:
+**Overriding is one line, in the project.** Which package and how old it may be
+is the rule author's knowledge; *exactly which version* sometimes belongs to the
+project, because a CUDA line is coupled to a driver floor that is a property of
+the machines it will run on:
 
 ```toml
 [target.'cfg(accelerator = "cuda")'.xlings.workspace]

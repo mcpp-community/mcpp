@@ -2248,7 +2248,7 @@ visible as *"the device is never reachable"* is the hardest kind to diagnose.
 #### A rule package brings its own environment (2026.9.6.6+)
 
 The table above is what a project writes when it has an opinion. Most projects
-have none, and should write nothing:
+have none, and nothing is what they write:
 
 ```toml
 [build-dependencies.mcpp]
@@ -2287,7 +2287,7 @@ Which one is decided in two steps.
 outranks a package it depends on, so a pin overrides a rule's requirement:
 
 ```toml
-# your project, when you do have an opinion
+# the project, when it does have an opinion
 [target.'cfg(accelerator = "cuda")'.xlings.workspace]
 "xim:cuda-nvcc" = "13.3.33"
 ```
@@ -2296,7 +2296,7 @@ A declaration that names no version abstains: it says the package is wanted and
 nothing about which version, so it cannot outrank a floor merely by being
 nearer. When two declarations disagree and both name a version, mcpp reports
 which was used — an override visible only as *"two versions were declared and
-one directory exists"* is a fact you would have to reconstruct from the
+one directory exists"* is a fact the reader has to reconstruct from the
 filesystem.
 
 **Validation — the winner must satisfy every requirement that lost.** `>=`,
@@ -2318,8 +2318,8 @@ violated.
 **This is a comparison, not a search.** The version is chosen by adjudication
 and then checked, so mcpp never has to ask the index which versions exist and
 carries no constraint solver. The cost is stated rather than hidden: a
-combination a solver could satisfy — your `>=8.0`, a rule's `8.5.0`, and 8.3 as
-the newest in the index — is refused instead, and the refusal says how to
+combination a solver could satisfy — a project's `>=8.0`, a rule's `8.5.0`, and
+8.3 as the newest in the index — is refused instead, and the refusal says how to
 proceed.
 
 Ranges are resolved in both directions. `>=2026.1` installs the highest

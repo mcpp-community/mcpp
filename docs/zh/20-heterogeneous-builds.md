@@ -145,11 +145,11 @@ plugins = { version = "0.2.4", features = ["rules-cuda"], host-module = true }
 两道门都不过——这正是让最便宜的那次构建保持便宜的原因,而那是 CI 跑的那一次。
 
 每条 lane 都是这样:`rules-cuda`、`rules-hip`、`rules-sycl`、`rules-spirv`、
-`rules-ascendc` 各自带着自己的环境。**不存在需要你自己补环境的 lane**,因为「有时候
+`rules-ascendc` 各自带着自己的环境。**不存在需要工程自己补环境的 lane**,因为「有时候
 需要」是一条没有任何地方能说清楚到可用的规则。
 
 **覆盖是工程里的一行。** 哪个包、最低到哪一版,是规则作者的知识;**具体哪一版**有时
-是你的——一条 CUDA 线耦合着驱动下界,而那是你那批机器的属性:
+属于工程——一条 CUDA 线耦合着驱动下界,而那是产物将要运行的那批机器的属性:
 
 ```toml
 [target.'cfg(accelerator = "cuda")'.xlings.workspace]
