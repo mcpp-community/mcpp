@@ -456,6 +456,45 @@ jobs:
           done
           echo "ok: both shader stages compiled and the Vulkan half linked"
 
+      # AND NOW IT RUNS. `xim:mesa-lavapipe` publishes a Windows build, so this
+      # host has a software device and the claim can be the same one Linux
+      # makes: the program reached a device and rendered the image, not merely
+      # that it compiled.
+      #
+      # The device name IS compared here, unlike on macOS. lavapipe is a
+      # software rasteriser that produces the same pixels by construction, so
+      # the image cannot distinguish it from any other implementation and the
+      # name is what does.
+      #
+      # `VK_DRIVER_FILES` rather than an ICD search directory: the package is in
+      # the xlings store rather than in the registry the Windows loader reads,
+      # and naming the file is the one form that does not depend on that.
+      - name: "Graphics: the offscreen example RUNS on lavapipe"
+        shell: bash
+        run: |
+          set -e
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          # NOT installed from here, for the reason the macOS job records: the
+          # example declares `xim:mesa-lavapipe` under `cfg(windows)`, so
+          # finding the ICD without installing anything is what asserts the
+          # declaration works.
+          icd=$(find "${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-mesa-lavapipe" \
+                     "$HOME/.xlings/data/xpkgs/xim-x-mesa-lavapipe" \
+                     -name '*.json' -path '*icd.d*' -print -quit 2>/dev/null || true)
+          [ -n "$icd" ] || { echo "no lavapipe ICD in either store"; exit 1; }
+          echo "ICD: $icd"
+          cd "$GITHUB_WORKSPACE/examples/10-graphics/offscreen"
+          # `$MCPP_SELF`, which is what the build step above used. `/tmp/mcpp-fresh.exe`
+          # is a copy a LATER step makes, so naming it here would look right and
+          # fail with a missing file.
+          out=$(VK_DRIVER_FILES="$icd" "$MCPP_SELF" run 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          echo "$out" | grep -q 'llvmpipe' \
+            || { echo "the run did not reach the lavapipe device"; exit 1; }
+          echo "$out" | grep -qE 'centre pixel: \([0-9]+, [0-9]+, [0-9]+, 255\)' \
+            || { echo "no centre pixel was reported"; exit 1; }
+          echo "ok: lavapipe enumerated and the image was rendered on it"
+
       - name: "Toolchain: LLVM — build mcpp (self-host)"
         shell: bash
         run: |

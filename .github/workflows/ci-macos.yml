@@ -361,6 +361,54 @@ jobs:
           done
           echo "ok: both shader stages compiled and the Vulkan half linked"
 
+      # AND NOW IT RUNS, WHICH IS A DIFFERENT CLAIM FROM THE ONE ABOVE.
+      #
+      # A build asserts that the shader compiler this platform publishes works
+      # and that the Vulkan half links. It cannot assert that the loader hands
+      # this program a device, and on macOS that is the interesting half:
+      # MoltenVK is a PORTABILITY driver, which the loader does not give to
+      # `vkEnumeratePhysicalDevices` unless the instance asked for portability
+      # enumeration. A program written against native drivers therefore finds no
+      # device here and reports it as "this machine has no GPU".
+      #
+      # This step is what turns that into a red build rather than a plausible
+      # message. It depends on the portability enumeration in this PR: without
+      # it the run reaches zero devices even though everything installed
+      # correctly.
+      #
+      # `VK_DRIVER_FILES` rather than an ICD search directory: the package is in
+      # the xlings store, not in `/usr/local/share/vulkan/icd.d`, and naming the
+      # file is the one form that does not depend on where the loader looks.
+      - name: "Graphics: the offscreen example RUNS on MoltenVK"
+        shell: bash
+        run: |
+          set -e
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          # NOT installed from here. The example declares `xim:moltenvk` under
+          # `cfg(macos)`, so the build above already provisioned it, and looking
+          # for the ICD without installing anything is what asserts that the
+          # declaration works. An `xlings install` here would make this step
+          # pass whether the manifest named the driver or not.
+          icd=$(find "${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-moltenvk" \
+                     "$HOME/.xlings/data/xpkgs/xim-x-moltenvk" \
+                     -name 'MoltenVK_icd.json' -print -quit 2>/dev/null || true)
+          [ -n "$icd" ] || { echo "no MoltenVK ICD in either store"; exit 1; }
+          echo "ICD: $icd"
+          cd "$GITHUB_WORKSPACE/examples/10-graphics/offscreen"
+          out=$(VK_DRIVER_FILES="$icd" "/tmp/mcpp-fresh" run 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          # The program asserts the corners and the centre itself and exits
+          # non-zero on either. What CI adds is that the run reached a DEVICE:
+          # a portability driver that the loader declined to show would leave
+          # the program reporting no device, which is the failure this step
+          # exists for. The name is not compared to a fixed string because it is
+          # the host's GPU and differs by runner; that it is non-empty and the
+          # centre pixel is opaque is what distinguishes reaching a device from
+          # not.
+          echo "$out" | grep -qE 'centre pixel: \([0-9]+, [0-9]+, [0-9]+, 255\)' \
+            || { echo "no centre pixel was reported: the run reached no device"; exit 1; }
+          echo "ok: MoltenVK enumerated and the image was rendered on it"
+
       # Integration: the mcpp built from THIS PR's source (the self-host binary,
       # $MCPP = /tmp/mcpp-fresh) builds & runs a real external C++ project —
       # xlings (openxlings/xlings ships its own mcpp.toml).

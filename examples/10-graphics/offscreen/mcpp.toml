@@ -44,6 +44,29 @@ vulkan-runtime = "2026.09.07"
 [target.'cfg(linux)'.xlings.workspace]
 "xim:mesa-lavapipe" = "26.2.1"
 
+# THE OTHER TWO PLATFORMS GET A DEVICE TOO, AND FOR THE SAME REASON.
+#
+# These were absent while the example was built but not run on macOS and
+# Windows, which made the omission invisible: a program that never runs never
+# asks the loader for a device. Declaring the driver here rather than installing
+# it from a CI step is what makes the EXAMPLE complete -- anyone who checks it
+# out gets a machine that can run it, not only the runner that had an extra
+# command.
+#
+# macOS has no native Vulkan. MoltenVK is an implementation on top of Metal, and
+# the specification calls that a portability driver: the loader does not hand it
+# to `vkEnumeratePhysicalDevices` unless the instance asked for portability
+# enumeration, which `src/vulkan/render.cpp` now does. The two halves are one
+# change -- the package without the enumeration finds no device, and the
+# enumeration without the package has nothing to find.
+[target.'cfg(macos)'.xlings.workspace]
+"xim:moltenvk" = "1.4.2"
+
+# Windows takes the same software rasteriser Linux does; upstream publishes a
+# separate build of it, one minor behind the Linux one.
+[target.'cfg(windows)'.xlings.workspace]
+"xim:mesa-lavapipe" = "26.2.0"
+
 [build]
 accel = "vulkan1.2"
 sources = [

@@ -86,6 +86,32 @@ libmalloc 里 abort(#202)。CI 报的正是这条路的第一步:链接停在 `_
 `cfg(accelerator = ...)` 下的 `[build]` 源生效而依赖被忽略,于是包被丢掉、包含它的源
 被留下。
 
+### 可移植性驱动默认是看不见的,于是三个平台都从「构建」抬到「运行」
+
+macOS 上没有原生 Vulkan,MoltenVK 是 Metal 之上的实现,规范把这种实现叫**可移植性驱动**。
+loader 默认不把它交给 `vkEnumeratePhysicalDevices`:实例要同时启用
+`VK_KHR_portability_enumeration` 并置位 `VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR`,
+随后凡是声明 `VK_KHR_portability_subset` 的设备必须在 `vkCreateDevice` 时启用它。一个照着
+原生驱动写的程序因此在那台机器上**一个设备都找不到**,并把它报成「这台机器没有 GPU」——
+诊断是错的,而它看起来完全合理。
+
+按能力问,不按 `#ifdef __APPLE__`:性质是「我面前这个 loader 在展示可移植性驱动」,而
+Linux 上跑翻译层的机器也有它,macOS 上对着原生驱动构建的程序并不需要它。Linux/lavapipe
+上读数不变,中心像素仍是 `(124, 70, 62, 255)`,设备名仍是 `llvmpipe`。
+
+**示例本身补齐了另外两个平台的设备声明** —— `cfg(macos)` 下 `xim:moltenvk`,`cfg(windows)`
+下 `xim:mesa-lavapipe`。这个缺口在示例只构建不运行时是看不见的:不运行的程序从不向
+loader 要设备。声明写在示例里而不是 CI 步骤里,是为了让**任何人**检出它都能跑,而不只是
+那台多跑了一条命令的 runner。
+
+于是两个新 CI 步骤**什么都不装**:它们找构建已经供给的 ICD 并设 `VK_DRIVER_FILES`,所以
+一份没能声明驱动的 manifest 会让步骤变红。步骤里放 `xlings install` 会让它两种情况都通过。
+
+两个平台断言的东西不同,而这个差别正是重点。lavapipe 是软件光栅化器,像素由构造保证相同,
+所以图像分不出它,设备名才分得出。MoltenVK 是宿主自己的 GPU 经 Metal,名字随 runner 变,
+所以那边区分「够到了设备」的是**报出了中心像素**这件事本身 —— 一个被 loader 拒绝展示的
+可移植性驱动不会产生它。
+
 ### 文档
 
 `docs/20` 新增「每条 lane 到得了哪些平台」:三件事同时为真才叫一条 lane 在某个平台上
