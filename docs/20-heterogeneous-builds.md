@@ -146,6 +146,30 @@ C++ ABI. The island should avoid the standard library, because an island that
 links libstdc++ puts a second copy of the C++ runtime into a program whose own
 copy came from mcpp's toolchain.
 
+
+### Two kinds of lane, and only one of them has a generated interface
+
+The seam above is written by hand, and the shader lane's equivalent is
+generated. That is not an inconsistency; the two lanes carry different things.
+
+**A device translation unit is code.** Its interface is a design decision --
+which functions, which types, what happens on failure -- and no generator can
+make that decision well. So CUDA, HIP, SYCL and Ascend C get a hand-written
+seam, and the `extern "C"` header exists for the ABI reason above. Both are
+already invisible to a consumer: only the seam includes the header, and
+everything downstream writes `import app.saxpy`. **These lanes are module-first
+today and always have been.**
+
+**A shader or an embedded file is data.** Its interface is an address and a
+size, which is mechanical, so a rule package generates it and a consumer writes
+`import myapp.shaders` without naming a generated file either. Before mcpp
+2026.9.7.1 that lane was the one exception: the generated header *was* the
+interface, and every consumer named it.
+
+So the rule is not "generate the interface" or "write it by hand". It is: a
+mechanical interface is generated, a designed one is written, and in both cases
+the header is an intermediate that no consumer names.
+
 ## Compiling an island
 
 The command that invokes a device compiler is not built into mcpp. It is
