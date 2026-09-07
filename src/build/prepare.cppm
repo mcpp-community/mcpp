@@ -301,15 +301,23 @@ export void merge_conditional_xlings(mcpp::manifest::Manifest& m,
         m.xlings.featurePins.insert_or_assign(addr, pin);
 }
 
-// A `[target.<selector>.xlings…]` selector MUST NOT name a target-side layer.
+// A `[target.<selector>.xlings…]` selector MUST NOT name a RESOLVED layer.
 //
-// Not a style rule, a schedule one. The five layer keys (`accelerator`,
-// `c-abi`, `compiler`, …) are answered by dependency RESOLUTION, so a
-// predicate naming one is held back to the second merge pass further down —
-// which runs after every package's build.mcpp has already run and after the
-// root's tool provisioning. An entry admitted there would be declared and
-// never installed, and the failure it produces is the worst-shaped one there
-// is: the build succeeds and the tool is simply absent.
+// Not a style rule, a schedule one. The five resolved layer keys (`c-abi`,
+// `compiler`, …) are answered by dependency RESOLUTION, so a predicate naming
+// one is held back to the second merge pass further down — which runs after
+// every package's build.mcpp has already run and after the root's tool
+// provisioning. An entry admitted there would be declared and never installed,
+// and the failure it produces is the worst-shaped one there is: the build
+// succeeds and the tool is simply absent.
+//
+// `accelerator` IS ADMITTED, and used to be refused here with the rest. It is
+// not resolved from anything: it is `--accel`, or `[build] accel`, read before
+// the first package is looked up, so a payload predicated on it is merged in
+// the FIRST pass and installed like any other. Refusing it had a cost paid on
+// every build of every project with a device island — the vendor toolkit is
+// declared unconditionally or not at all, so a CPU-only build downloaded
+// gigabytes for a device it was not compiling for.
 //
 // Refused rather than deferred, and refused at the earliest point that can
 // see the predicate. The gate plane answers the case this shape is reached
@@ -337,9 +345,10 @@ layer_predicated_xlings_refusal(const mcpp::manifest::Manifest& m)
             "which happens after tools are installed and after build programs "
             "run, so a tool conditioned on one would be declared and never "
             "installed. Condition it on the target instead "
-            "(`[target.'cfg(os = \"linux\")'.xlings.workspace]`), or gate it "
-            "on a feature (`[feature-xlings.<feature>]`), which is known "
-            "before anything is provisioned. See docs/05 section 2.13.",
+            "(`[target.'cfg(os = \"linux\")'.xlings.workspace]`), on the "
+            "accelerator (`[target.'cfg(accelerator = \"cuda\")'.xlings"
+            ".workspace]`, which IS answered before provisioning), or on a "
+            "feature (`[feature-xlings.<feature>]`). See docs/05 section 2.13.",
             cc.predicate, named);
     }
     return std::nullopt;
@@ -1797,11 +1806,17 @@ prepare_build(bool print_fingerprint,
                 "not know, so the section never applies (ignored). {}",
                 cc.predicate, names, cfgpred::vocabulary_sentence()));
         }
-        // A layer is resolved AFTER dependency resolution, so a dependency
-        // selected by one would form a cycle with the resolution that produces
-        // the answer — docs/14 states this. The section's build inputs are
-        // honoured by the second pass; its dependencies cannot be, and saying
-        // so is the difference between a documented limit and a silent drop.
+        // A RESOLVED layer is answered AFTER dependency resolution, so a
+        // dependency selected by one would form a cycle with the resolution
+        // that produces the answer — docs/14 states this. The section's build
+        // inputs are honoured by the second pass; its dependencies cannot be,
+        // and saying so is the difference between a documented limit and a
+        // silent drop.
+        //
+        // `accelerator` is not one of these (see kCfgEarlyLayerKeys), so
+        // `[target.'cfg(accelerator = "cuda")'.dependencies]` is honoured and
+        // never reaches this warning: nothing about it is circular, because the
+        // accel is an input to the build rather than an answer from the graph.
         if (cfgpred::uses_layer(cc.predicate)
             && !(cc.dependencies.empty() && cc.devDependencies.empty()
                  && cc.buildDependencies.empty() && cc.featureDeps.empty())) {
@@ -4773,6 +4788,24 @@ prepare_build(bool print_fingerprint,
     std::map<std::size_t,
              std::vector<mcpp::build::BuildProgramEnv::HostModuleRef>>
         hostModulesByConsumer;
+    // The same providers by INDEX, and the reason they are needed twice.
+    //
+    // A rule's code runs inside its CONSUMER's build program, so
+    // `mcpp::xpkg_dir("cuda-nvcc")` is asked there -- while the payload that
+    // answers it was declared by the RULE, under `[feature-xlings.<f>]`, which
+    // is where it belongs: which packages a device compiler needs is the
+    // rule's knowledge and no project should have to rediscover it.
+    //
+    // The graph pass already INSTALLS what a dependency declares. Only the
+    // answer was missing: `fillXpkgDirs` read one manifest, so the address was
+    // fetched, unpacked, and then unreachable from the only code that wanted
+    // it -- a failure that reads as "the toolkit is not installed" while it
+    // sits on disk.
+    //
+    // The set is the host-module providers rather than every dependency: the
+    // code that can call `xpkg_dir` in this build program is the consumer's
+    // own `build.mcpp` plus exactly the rule modules compiled into it.
+    std::map<std::size_t, std::vector<std::size_t>> hostModuleProvidersByConsumer;
     // #359: who can see which build-time provision. Computed once by the
     // provisioning pass below (a fixpoint over `dependencyEdges`, the same
     // shape as computeUsageRequirements) and read by every consumer of the
@@ -4887,7 +4920,8 @@ prepare_build(bool print_fingerprint,
     std::map<std::string, std::string> namedRunnerProvider;
 
     auto fillXpkgDirs = [&](mcpp::build::BuildProgramEnv& e,
-                            const mcpp::manifest::Manifest& owner) {
+                            const mcpp::manifest::Manifest& owner,
+                            std::size_t consumer) {
         // `[feature-xlings.<f>]` is provisioned when `<f>` is active, so it has
         // to be answerable here too. Before this, a tool a feature declared was
         // downloaded and installed and then `mcpp::xpkg_dir` returned "" for it
@@ -4905,6 +4939,28 @@ prepare_build(bool print_fingerprint,
                 for (auto const& address : it->second)
                     if (std::ranges::find(declared, address) == declared.end())
                         declared.push_back(address);
+        // …and what the rule packages compiled INTO this build program
+        // declared. Their own active features, not the consumer's: the
+        // consumer asked for `features = ["rules-cuda"]` on the edge, and that
+        // is what decides which of the rule's `[feature-xlings]` tables apply.
+        if (auto pit = hostModuleProvidersByConsumer.find(consumer);
+            pit != hostModuleProvidersByConsumer.end()) {
+            for (auto q : pit->second) {
+                if (q >= packages.size()) continue;
+                auto const& pm = packages[q].manifest;
+                auto want = [&](const std::string& address) {
+                    if (std::ranges::find(declared, address) == declared.end())
+                        declared.push_back(address);
+                };
+                for (auto const& address : pm.xlings.deps) want(address);
+                const auto& pf = q < activeFeaturesByPackage.size()
+                    ? activeFeaturesByPackage[q] : std::vector<std::string>{};
+                for (auto const& f : pf)
+                    if (auto it = pm.xlings.featureDeps.find(f);
+                        it != pm.xlings.featureDeps.end())
+                        for (auto const& address : it->second) want(address);
+            }
+        }
         if (declared.empty()) return;
         auto cfg = get_cfg();
         if (!cfg) return;
@@ -7129,8 +7185,66 @@ prepare_build(bool print_fingerprint,
                             "       and say so only at the link, or never.",
                             pkg.manifest.package.name, sc.glob, sc.accel));
                     }
+                    // A backend the package never declared. Checked BEFORE
+                    // the build's own accel is consulted, because it is a
+                    // property of the manifest alone and because the exclusion
+                    // below would otherwise turn `accel = "cude12.9"` into a
+                    // glob that is quietly never built. Only when the package
+                    // states its backends -- `[package] accelerators` is
+                    // optional, and a package that omits it has said nothing to
+                    // contradict.
+                    if (!pkg.manifest.package.accelerators.empty()) {
+                        for (auto const& w : mcpp::pack::parse_accel(sc.accel)) {
+                            if (std::ranges::find(pkg.manifest.package.accelerators,
+                                                  w.backend)
+                                != pkg.manifest.package.accelerators.end()) continue;
+                            std::string declared;
+                            for (auto const& a : pkg.manifest.package.accelerators)
+                                declared += (declared.empty() ? "" : ", ") + a;
+                            return std::unexpected(std::format(
+                                "`{}`: [build] sources entry '{}' names accelerator "
+                                "backend \"{}\", which this package does not declare.\n"
+                                "         [package] accelerators = [{}]\n"
+                                "       A constrained glob is left out of builds that do "
+                                "not name its\n"
+                                "       backend, so a backend spelled wrong here is a file "
+                                "that is never\n"
+                                "       compiled and never mentioned.\n"
+                                "       fix: correct the spelling, or add the backend to "
+                                "`[package] accelerators`.",
+                                pkg.manifest.package.name, sc.glob, w.backend, declared));
+                        }
+                    }
                     if (buildAccel.empty()) { excludedGlobs.insert(sc.glob); continue; }
                     const auto want = mcpp::pack::parse_accel(sc.accel);
+
+                    // A GLOB WHOSE BACKEND THIS BUILD NEVER NAMED IS NOT A
+                    // MISMATCH, IT IS ABSENT.
+                    //
+                    // The refusal below is about a real disagreement: a file
+                    // written for sm_89 in a build that targets sm_80 is not a
+                    // variant. Across DIFFERENT backends there is no such
+                    // disagreement. A package with a CUDA island and a Vulkan
+                    // one, built with `--accel vulkan1.2`, is asking for the
+                    // Vulkan half; refusing it made a build that names a SUBSET
+                    // of a package's backends impossible, so a package could
+                    // have several device backends only if every build took all
+                    // of them.
+                    //
+                    // The glob is dropped exactly as `--no-accel` drops it, and
+                    // the `cfg(accelerator = ...)` section carrying that
+                    // backend's host half does not activate either, so the two
+                    // halves stay together.
+                    //
+                    // What keeps a TYPO from becoming a silent exclusion is the
+                    // check below, against `[package] accelerators`: a backend
+                    // the package never declared is refused before this point.
+                    bool backendNamed = false;
+                    for (auto const& w : want)
+                        for (auto const& b : buildAccel)
+                            if (b.backend == w.backend) backendNamed = true;
+                    if (!backendNamed) { excludedGlobs.insert(sc.glob); continue; }
+
                     if (!mcpp::pack::accel_accepts(buildAccel, want)) {
                         refusal::record(refusal::Code::AccelMismatch);
                         return std::unexpected(std::format(
@@ -7401,6 +7515,11 @@ prepare_build(bool print_fingerprint,
                 for (auto p : direct)
                     if (auto r = visit(visit, p); !r)
                         return std::unexpected(r.error());
+
+                // Every provider on this consumer's rule closure, transitive
+                // ones included -- `done` is exactly that set, and a rule
+                // imported by another rule declares payloads just as directly.
+                hostModuleProvidersByConsumer[c].assign(done.begin(), done.end());
 
                 if (auto clash = prov::host_module_collision(ordered))
                     return std::unexpected(*clash);
@@ -7844,7 +7963,7 @@ prepare_build(bool print_fingerprint,
             // …and the xlings packages this package itself declared. Its own
             // manifest, not the root's: a dependency's `[xlings] deps` is what
             // its build.mcpp asks about.
-            fillXpkgDirs(bpEnv, packages[i].manifest);
+            fillXpkgDirs(bpEnv, packages[i].manifest, i);
             // #355: the host tools THIS package requested (resolved above).
             if (auto tit = toolEnvByConsumer.find(i); tit != toolEnvByConsumer.end())
                 bpEnv.toolPaths = tit->second;
@@ -8763,7 +8882,7 @@ prepare_build(bool print_fingerprint,
         bpEnv.features     = feature_closure(*m, parse_feature_request(overrides.features));
         // mcpp#241 (root): consumer index 0, same owner as the dep loop.
         fillDepDirs(bpEnv, 0);
-        fillXpkgDirs(bpEnv, *m);
+        fillXpkgDirs(bpEnv, *m, 0);
         // #355: the host tools the ROOT package requested (consumer index 0).
         if (auto tit = toolEnvByConsumer.find(0u); tit != toolEnvByConsumer.end())
             bpEnv.toolPaths = tit->second;
@@ -8829,6 +8948,70 @@ prepare_build(bool print_fingerprint,
         pkg0.manifest.buildConfig.ldflags.insert(
             pkg0.manifest.buildConfig.ldflags.end(),
             bcRoot.ldflags.begin() + rldN, bcRoot.ldflags.end());
+    }
+
+    // ── Every device source must reach some action ─────────────────────────
+    //
+    // A device-kind file is the one source the engine has no compile rule for.
+    // It is handed to the package's build program (MCPP_DEVICE_SOURCES) and
+    // comes back as an action, or it is not compiled at all. Nothing checked
+    // that it came back. Two ways it does not, both silent until now:
+    //
+    //   - the package has no `build.mcpp`. The engine computed the list and
+    //     dropped it. Both run sites above are guarded on that file existing,
+    //     so there was not even a program to ignore it.
+    //   - a program runs but no imported rule claims the extension. A project
+    //     with a `.cu` and a `.comp` that imports only `mcpp.rules.spirv` is
+    //     this case, and it is the ordinary case for a project with two
+    //     backends: a rule takes the extensions it knows and leaves the rest.
+    //
+    // What they produce today is an undefined reference at the link, naming a
+    // symbol and never the file that would have defined it -- and for a
+    // `kind = "lib"` target not even that, because an archive is not resolved.
+    // A device source that compiles nothing is never what was meant, so it is
+    // refused here, where both halves of the fact are still in hand.
+    //
+    // THE CRITERION IS THE ACTION INPUTS, not "a build program ran": a program
+    // that ran and consumed nothing is exactly the second case. It is also the
+    // condition an action needs anyway -- one that compiles a file it does not
+    // declare as an input does not rerun when that file changes -- so a rule
+    // that satisfies it is a rule that rebuilds correctly.
+    for (std::size_t i = 0; i < packages.size(); ++i) {
+        auto const& pkg = packages[i];
+        auto dit = deviceSourcesByPackage.find(pkg.root.string());
+        if (dit == deviceSourcesByPackage.end() || dit->second.empty()) continue;
+        auto const& mm = (i == 0) ? *m : pkg.manifest;
+        std::set<std::filesystem::path> consumed;
+        for (auto const& a : mm.buildConfig.actions)
+            for (auto const& in : a.inputs) {
+                std::filesystem::path ip(in);
+                consumed.insert((ip.is_absolute() ? ip : pkg.root / ip).lexically_normal());
+            }
+        std::string orphans;
+        for (auto const& rel : dit->second)
+            if (!consumed.contains((pkg.root / rel).lexically_normal()))
+                orphans += "         " + rel + "\n";
+        if (orphans.empty()) continue;
+        std::error_code hasEc;
+        const bool hasProgram = std::filesystem::exists(pkg.root / "build.mcpp", hasEc);
+        return std::unexpected(std::format(
+            "`{}`: device sources that no action compiles:\n{}"
+            "       A device-kind source is compiled by this package's build program\n"
+            "       and by nothing else -- the engine has no rule for these extensions\n"
+            "       and never will.\n"
+            "{}",
+            mm.package.name, orphans,
+            hasProgram
+                ? "       `build.mcpp` ran but declared no action taking them as inputs.\n"
+                  "       fix: import the rule package that claims these extensions and\n"
+                  "       call it, or drop them from `[build] sources`. A rule that\n"
+                  "       compiles a file must also declare it as an action input, or the\n"
+                  "       action will not rerun when the file changes."
+                : "       This package has no `build.mcpp`, so nothing was ever offered\n"
+                  "       them.\n"
+                  "       fix: add a `build.mcpp` importing the rule for these files (e.g.\n"
+                  "       `mcpp.rules.cuda` for `.cu`, `mcpp.rules.spirv` for shaders), or\n"
+                  "       drop them from `[build] sources`."));
     }
 
     // [targets.*] required_features gate: a target is emitted only when ALL its

@@ -3,8 +3,8 @@
 # `[target.<selector>.xlings…]` accepts a target predicate. It must REFUSE one
 # that names a target-side layer.
 #
-# The reason is schedule, not style. The five layer keys (`accelerator`,
-# `c-abi`, `compiler`, ...) are answered by dependency RESOLUTION, so a
+# The reason is schedule, not style. The five RESOLVED layer keys (`c-abi`,
+# `compiler`, ...) are answered by dependency RESOLUTION, so a
 # predicate naming one is held back to the second merge pass -- which runs after
 # tools are provisioned and after every build.mcpp. An entry admitted there is
 # declared and never installed, and the build that results is the worst-shaped

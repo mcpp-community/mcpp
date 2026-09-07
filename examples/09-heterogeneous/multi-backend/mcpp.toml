@@ -1,0 +1,158 @@
+[package]
+name         = "opkit-multi-backend"
+namespace    = "example"
+version      = "0.1.0"
+description  = "One operator, several device backends in one artifact, chosen at run time"
+accelerators = ["cuda", "vulkan"]
+
+[language]
+standard   = "c++23"
+modules    = true
+import_std = true
+
+# WHAT THIS EXAMPLE SHOWS THAT THE FOUR BESIDE IT DO NOT.
+#
+# Each of cuda/, hip/, sycl/ and vulkan/ is ONE seam: a device file and a CPU
+# file define the same symbol and are never in one link, so exactly one exists
+# and the choice is made at BUILD time. That is the right shape for a program.
+#
+# A library cannot make that choice. It is compiled once and consumed by people
+# whose machines differ, so its backends are ADDITIVE -- several land in one
+# artifact and the choice moves to RUN time. This is that shape.
+#
+# `accel` is deliberately absent, so a plain `mcpp build` produces the CPU-only
+# variant and needs no payloads at all. The device backends are opt-in:
+#
+#     mcpp build --accel "vulkan1.2"
+#     mcpp build --accel "cuda12.9+{sm_89}"
+#     mcpp build --accel "cuda12.9+{sm_89}, vulkan1.2"    # both, one artifact
+# clang, because the CUDA rule follows the project's toolchain to pick its
+# route and the clang route is the one this line supports. It costs the
+# CPU-only build an LLVM payload it would not otherwise need, which is the
+# honest price of having the device leg work on the driver a developer already
+# has.
+[toolchain]
+default = "llvm@22.1.8"
+
+# BOTH rules, in one build program. `host-module = true` compiles their module
+# interfaces for the build program to import; `[build-dependencies]` keeps the
+# package out of the target, which is the case docs/05 section 2.6.1 exists for.
+# The rules are declared unconditionally because `build.mcpp` imports them
+# unconditionally -- each returns immediately when its own backend is absent.
+[build-dependencies.mcpp]
+plugins = { version = "0.2.2", features = ["rules-cuda", "rules-spirv"], host-module = true }
+
+# ── the payloads, gated on the device they are for ──────────────────────────
+#
+# `cfg(accelerator = ...)` in an `[xlings]` table is what keeps `mcpp build`
+# free: a CPU-only build of this project installs neither the CUDA toolkit nor
+# the shader compiler, because neither predicate holds. Unconditional pins --
+# the only spelling available before mcpp 2026.9.6.5 -- would have made the
+# cheapest build the most expensive one, and that is the build CI runs.
+#
+# `accelerator` is admitted here and the five resolved layer keys (`c-abi`,
+# `compiler`, ...) are not, because it is an INPUT to the build rather than an
+# answer from the dependency graph: `--accel` is read before the first package
+# is resolved, while a C library is chosen by the resolution a payload would
+# have to precede.
+# The 12.9 line and the CLANG route, which is the combination this repository
+# verifies everywhere: examples/09-heterogeneous/cuda and every mcpp-plugins
+# fixture use it, and it runs on any driver from r525 onward.
+#
+# The nvcc route on the same line does not work: the 12.9 headers redeclare the
+# C23 `cospi`/`sinpi`/`rsqrt` for the host without `noexcept` while the C
+# library declares them with it, and nvcc's front end refuses the pair. Moving
+# to 13.x fixes that and raises the driver floor to r580, which is a machine
+# requirement rather than a project decision. The clang route never includes
+# that header and imposes no such floor.
+[target.'cfg(accelerator = "cuda")'.xlings.workspace]
+"xim:cuda-nvcc"         = "12.9.86"
+"xim:cuda-cudart"       = "12.9.79"
+# clang's CUDA wrapper includes a cuRAND header for every device unit, and that
+# header includes <nv/target> from CCCL. Neither is called by this kernel; on a
+# developer machine the host's /usr/include used to supply them silently.
+"xim:libcurand"         = "10.3.10.19"
+"xim:cuda-cccl"         = "12.9.27"
+
+# The host-link stub is Linux-only, and the OS goes in the PREDICATE rather
+# than in the value: a value carrying platform keys under an already-predicated
+# table would state the condition twice and let the two disagree.
+[target.'cfg(all(accelerator = "cuda", linux))'.xlings.workspace]
+"xim:libcuda-host-link" = "0.0.1"
+
+# The driver's userspace library, reached through an index package rather than
+# the host: mcpp's private loader does not consult /usr/lib, so a statically
+# linked CUDA runtime cannot otherwise dlopen the driver. It is the one CUDA
+# component that cannot be an ordinary payload -- the licence forbids
+# redistributing it and it is in ABI lockstep with the kernel module.
+[target.'cfg(accelerator = "cuda")'.dependencies.compat]
+cuda-driver = "2026.09.05"
+
+[target.'cfg(accelerator = "vulkan")'.xlings.workspace]
+# The shader compiler, and a Vulkan driver that is always present because it is
+# the CPU. The second is what makes the Vulkan leg runnable on a machine with
+# no GPU, which is what every CI runner in this ecosystem is.
+"xim:glslang"       = "15.1.0"
+"xim:mesa-lavapipe" = "26.2.1"
+
+# The Khronos loader, built by the index rather than taken from the host, and
+# the adapter that makes the host's own ICDs reachable from a binary running
+# under mcpp's private loader. Neither is a driver: a driver has to match the
+# kernel module on the machine it runs on, which is why the software one above
+# is a payload and the hardware ones are the host's.
+[target.'cfg(accelerator = "vulkan")'.dependencies.compat]
+vulkan         = "1.4.357.0"
+vulkan-runtime = "2026.09.07"
+
+[build]
+# The device sources carry the accel they are for. A CONSTRAINED glob gates
+# itself -- it is offered to the build program only when this build's `accel`
+# accepts it -- so these need no `cfg` block, and the engine never offers a
+# `.cu` or a `.comp` to the C++ compiler.
+sources = [
+  "src/*.cppm",
+  "src/main.cpp",
+  "src/cpu/*.cpp",
+  { glob = "src/backends/cuda/*.cu",     accel = "cuda12.9+{sm_89}" },
+  { glob = "src/backends/vulkan/*.comp", accel = "vulkan1.2" },
+]
+include_dirs = ["include"]
+
+# ── the backends, additive ──────────────────────────────────────────────
+#
+# Each block activates when its backend is named, and several may activate at
+# once -- `accelerator` is a SET, not a choice. `defines` is what tells the
+# dispatcher which backends exist, so the registry's list and the sources
+# actually compiled cannot drift apart.
+# What each block carries is the HOST half of a backend plus the define that
+# admits it to the dispatcher. The device half is gated by its constrained glob
+# above, and the two must agree -- which is why the define lives here, beside
+# the host file that implements the entry point the dispatcher will call.
+[target.'cfg(accelerator = "cuda")'.build]
+defines = ["OPKIT_HAVE_CUDA=1"]
+# Linked statically, and only when a device build asks for it. NO ABSOLUTE
+# PATHS: the rule package puts the payload's library directory on the link line
+# from `mcpp::xpkg_dir`, so this names libraries only.
+ldflags = ["-lcudart_static", "-lrt", "-lpthread", "-ldl"]
+
+[target.'cfg(accelerator = "vulkan")'.build]
+sources = ["src/backends/vulkan/*.cpp"]
+defines = ["OPKIT_HAVE_VULKAN=1"]
+
+# ── the dispatcher, and why neither predicate enumerates ─────────────────
+#
+# `not(accelerator = "none")` means "this build named at least one backend".
+# Spelled `not(any(accelerator = "cuda", accelerator = "vulkan"))` it would
+# have to be edited every time the ecosystem gains a backend -- and
+# `accelerator` is open by design, so a third one is a package rather than an
+# engine change. The edit that is forgotten is silent: the CPU-only dispatcher
+# and the registry would both compile, or neither would.
+[target.'cfg(not(accelerator = "none"))'.build]
+sources = ["src/dispatch/registry.cpp"]
+
+[target.'cfg(accelerator = "none")'.build]
+sources = ["src/dispatch/cpu_only.cpp"]
+
+[targets.opkit-multi-backend]
+kind = "bin"
+main = "src/main.cpp"

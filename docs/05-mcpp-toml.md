@@ -145,6 +145,48 @@ the loader opens and the import library the linker consumes, with the export
 list generated from the objects on the MSVC ABI (which exports nothing without
 `__declspec(dllexport)` or a `.def`). See `tests/e2e/08`, `257` and `259`.
 
+#### `exports` — which symbols the artifact publishes (mcpp 2026.9.6.5+)
+
+```toml
+[targets.mydriver]
+kind    = "shared"
+soname  = "libmydriver.so.1"
+exports = "abi/mydriver.exports"     # or inline: exports = ["vk_icd*"]
+```
+
+**Omitting the key publishes everything, which is what both platforms already
+do** — ELF gives symbols default visibility, and PE gets an auto-generated
+`.def` listing every symbol. `exports` narrows that.
+
+Two projects need the narrowing. A **runtime with a stable ABI** publishes a
+reviewed set and nothing else, so that what is not in the set stays free to
+change. A **plugin loaded beside its rivals** must not collide: a Vulkan ICD is
+found by name for `vk_icdGetInstanceProcAddr`, and one that also exports its
+internals collides with the loader and with the other ICDs in the process.
+
+The file lists one symbol pattern per line, `#` starts a comment, and `*` is the
+only wildcard. The inline array says the same thing and is for the two or three
+entry points where a separate file would be ceremony.
+
+One statement, three renderings:
+
+| Platform | Rendered as |
+|---|---|
+| ELF | a version script, `-Wl,--version-script=` |
+| Mach-O | `-Wl,-exported_symbols_list` (the leading underscore is supplied by the engine) |
+| PE | the `.def`, replacing the auto-generated all-exports one |
+
+**It does not change compile-time visibility, and that is deliberate.** The
+narrowing is a link-time property on all three formats, so one key has one
+effect. `-fvisibility=hidden` remains available through `[build] cxxflags` for
+the code-generation benefit it brings, and it is a separate decision because it
+also changes how this library's own translation units see each other.
+
+**Symbol versioning is not this key.** `foo@@LIB_1.0` alongside `foo@LIB_0.9`
+is an ELF-only capability that cannot be stated neutrally; a package that needs
+it writes the version script itself and passes it through `[build] ldflags`, or
+computes it and emits `mcpp:link-flag=` (docs/07).
+
 A `soname` is meaningful on `kind = "lib"` too — see
 [`dependency_linkage`](#dependency_linkage--static-or-shared-is-the-consumers-decision)
 below, where the form a library takes becomes the consumer's decision.
@@ -1160,15 +1202,22 @@ for arch/env conditions and combinators.
 - **Predicate keys**: `os`, `arch`, `family`, `env` — the triple's coordinates —
   and, from mcpp 2026.9.1.1, the five target-side layer names `compiler`,
   `compiler-runtime`, `kernel-abi`, `c-abi`, `c++-abi`
-  ([14 — The Target Side](14-target-side.md)). Barewords `linux` / `macos` /
+  ([14 — The Target Side](14-target-side.md)). `accelerator` is a key here too
+  and is answered from this build's own `accel` — the backend names in
+  `--accel` or `[build] accel` — so it is a membership test over a set, and
+  `accelerator = "none"` is how a section says "this build named no backend"
+  without enumerating the ones it is not. Barewords `linux` / `macos` /
   `windows` / `unix` are sugar for the matching `os` / `family` test. A key
   outside this set is reported as a schema warning and the section does not
   apply — it used to answer false in silence, which is indistinguishable from
   a section that correctly did not match.
-- **A layer predicate cannot select dependencies.** A layer is resolved *from*
-  the dependency graph, so a dependency chosen by one would decide the answer
-  it is asking for. `[target.'cfg(c-abi = "musl")'.dependencies]` is reported
-  and ignored; the `build` inputs under the same predicate do apply.
+- **A resolved-layer predicate cannot select dependencies.** A layer is
+  resolved *from* the dependency graph, so a dependency chosen by one would
+  decide the answer it is asking for. `[target.'cfg(c-abi = "musl")'.dependencies]`
+  is reported and ignored; the `build` inputs under the same predicate do apply.
+  `accelerator` is not one of these (mcpp 2026.9.6.5): it is an input to the
+  build rather than an answer from the graph, so
+  `[target.'cfg(accelerator = "cuda")'.dependencies]` applies.
 - **Precedence**: an exact-triple table wins over a `cfg`/alias table; multiple
   matching predicate tables have their flags concatenated. Conditional entries
   are appended **after** the unconditional `[build]` ones, so under GNU
@@ -2084,14 +2133,35 @@ says which targets, the feature says whether at all.
 "xim:shaderc" = "2026.3"
 ```
 
-**A selector here must not name a target-side layer.** `accelerator`, `c-abi`,
-`c++-abi`, `compiler`, `compiler-runtime` and `kernel-abi` are answered by
-dependency resolution, which happens after tools are installed and after build
-programs run. A tool conditioned on one would be declared and never installed —
-a build that succeeds with the tool simply absent — so such a manifest is
-refused, naming both the tool and the predicate. Condition it on the target, or
-gate it on a feature: `[feature-xlings.<feature>]` is known before anything is
-provisioned, which is why it is the form that answers this case.
+**A selector here must not name a RESOLVED layer.** `c-abi`, `c++-abi`,
+`compiler`, `compiler-runtime` and `kernel-abi` are answered by dependency
+resolution, which happens after tools are installed and after build programs
+run. A tool conditioned on one would be declared and never installed — a build
+that succeeds with the tool simply absent — so such a manifest is refused,
+naming both the tool and the predicate. Condition it on the target, or gate it
+on a feature: `[feature-xlings.<feature>]` is known before anything is
+provisioned.
+
+**`accelerator` is the exception, and is admitted** (mcpp 2026.9.6.5). It is
+not resolved from anything: it is `--accel`, or `[build] accel`, read before the
+first package is looked up. A payload predicated on it is merged in the same
+pass as a triple predicate and installed like any other.
+
+```toml
+[target.'cfg(accelerator = "cuda")'.xlings.workspace]
+"xim:cuda-nvcc"   = "12.9.86"
+"xim:cuda-cudart" = "12.9.79"
+```
+
+This is the form a project with a device island should use. Without it the
+vendor toolkit is declared unconditionally or not at all, so `mcpp build` with
+no accelerator — the cheapest build, and the one CI usually runs — downloaded
+gigabytes for a device it was not compiling for.
+
+The same rule governs dependencies: `[target.'cfg(accelerator = "cuda")'.dependencies]`
+is honoured, while a dependency conditioned on a resolved layer is not, because
+that one would decide the answer it is asking for. Nothing about the
+accelerator is circular.
 
 The selector is the only place the condition is written. A value under a
 selector that also carries platform keys states one fact twice, and is refused
@@ -2337,9 +2407,18 @@ rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spir
 
 ```toml
 # a consumer
-[dependencies.mcpp]
-plugins = { version = "0.1.1", features = ["rules-spirv"], host-module = true }
+[build-dependencies.mcpp]
+plugins = { version = "0.2.1", features = ["rules-spirv"], host-module = true }
 ```
+
+**`[build-dependencies]`, not `[dependencies]`** — a rule package is the case
+§2.6.1 describes exactly: its library must never reach the target while its
+rule is still wanted. The two axes are separate, so `host-module = true` says
+*which build-time product* is wanted and the section says *whether the package
+reaches the target*; a rule package answers "no" on the second axis, and the
+section is where that is said. Written in `[dependencies]` it still works, and
+that is precisely why the distinction has to be stated rather than enforced by
+a failure.
 
 The module set is the feature set: a unit whose feature is not active is not
 compiled, and importing it fails as an unknown module. `mcpp:plugins` is the

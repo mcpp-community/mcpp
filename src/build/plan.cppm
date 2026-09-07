@@ -94,6 +94,11 @@ struct LinkUnit {
     // wins, so the emitter puts this after every other linker argument.
     // Deciding it stays here; placing it is the emitter's business.
     std::string                     loaderTagFlag;
+    // The symbol patterns this unit publishes, empty when it publishes all.
+    // Carried as the neutral list rather than a rendered flag: the file to
+    // write and the flag that names it are both platform-shaped, and the
+    // backend is where the target OS is known.
+    std::vector<std::string>        exportPatterns;
     std::filesystem::path           output;            // relative to plan.outputDir
     // The import library a PE shared library also produces — empty on ELF and
     // Mach-O, and empty for every non-shared unit. It is a SECOND output of the
@@ -1675,6 +1680,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         if (msvcTarget && !lu.importLibrary.empty())
             lu.defFile = std::filesystem::path("bin") / (dep.target.name + ".def");
         lu.soname     = dep.target.soname;
+        lu.exportPatterns = dep.target.exportPatterns;
         lu.runtimeAliases = runtime_aliases_for_target(dep.target, naming);
         lu.loaderTagFlag = loader_tag_flag(lu.kind);
         append_package_objects(lu, dep.packageName);
@@ -1707,6 +1713,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             if (msvcTarget && !lu.importLibrary.empty())
                 lu.defFile = std::filesystem::path("bin") / (t.name + ".def");
             lu.soname = t.soname;
+            lu.exportPatterns = t.exportPatterns;
             lu.runtimeAliases = runtime_aliases_for_target(t, naming);
         } else if (t.kind == mcpp::manifest::Target::TestBinary) {
             lu.kind   = LinkUnit::TestBinary;

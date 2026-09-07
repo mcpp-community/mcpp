@@ -70,6 +70,7 @@ C++20 modules 的编译器。
 |---|---|
 | CUDA、HIP | `.cu`、`.hip` |
 | SYCL | `.sycl`(2026.9.6.1+) |
+| Ascend C | `.asc`、`.cce`(2026.9.6.5+) |
 | GLSL(按 stage) | `.comp`、`.vert`、`.frag`、`.geom`、`.tesc`、`.tese`、`.mesh`、`.task`、`.rgen`、`.rint`、`.rahit`、`.rchit`、`.rmiss`、`.rcall` |
 | GLSL(无 stage) | `.glsl` |
 | HLSL | `.hlsl` |

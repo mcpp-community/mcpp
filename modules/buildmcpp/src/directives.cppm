@@ -217,7 +217,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 21> kTable{{
+inline constexpr std::array<Def, 22> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -267,6 +267,35 @@ inline constexpr std::array<Def, 21> kTable{{
     {"runner-longlived",    "runner-longlived",  Slot::RunnerLongLived,  Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              6},
     {"run-exclusive",    "run-exclusive",  Slot::RunExclusive,  Scope::RunGlobal,      Transform::Verbatim,      false, "",                           "",                                              6},
     {"link-script",         "ldflag",            Slot::LdFlags,          Scope::LinkGlobal,     Transform::LinkerScript,  false, "",                           "",                                              3},
+    // THE OUTLET THE LINK FAMILY WAS MISSING (v8).
+    //
+    // `link-lib`, `link-search` and `link-script` each name one KIND of thing.
+    // A flag the program COMPUTED belongs to none of them: a generated version
+    // script (`-Wl,--version-script=`), `-Wl,--wrap=malloc` for a runtime that
+    // takes over a C-library symbol, `-Wl,--exclude-libs,ALL` so a statically
+    // absorbed third party does not become part of this package's ABI.
+    //
+    // Scope::LinkGlobal, AND THAT IS THE CORRECTION OF AN EARLIER DESIGN.
+    // The design doc first ruled it PackagePrivate by analogy with
+    // `include-dir`. The analogy is false. `include-dir` is private because a
+    // compile interface has a declarative public counterpart
+    // (`[build] include_dirs`) and a build-time program must not widen it
+    // behind the manifest's back. Link flags have no such split: the
+    // declarative `[build] ldflags` ALREADY propagates to consumers, and
+    // `linkUsage.ldflags` is a copy of `buildConfig.ldflags`. A private link
+    // flag is not a policy this engine can express today, and making the
+    // computed form behave differently from its declarative twin would be the
+    // inconsistency, not the safeguard.
+    //
+    // The consequence is stated rather than hidden: a dependency emitting
+    // `-Wl,--version-script=` puts it on the consumer's link too. That hazard
+    // is not new -- a dependency writing the same flag in `[build] ldflags`
+    // has always done this -- so this row widens who can compute the value,
+    // not what the value can reach.
+    //
+    // Verbatim: the engine does not parse linker flags. `-Wl,` forms, `-z`
+    // pairs and vendor spellings are the linker's vocabulary, not this table's.
+    {"link-flag",           "ldflag",            Slot::LdFlags,          Scope::LinkGlobal,     Transform::Verbatim,      false, "",                           "",                                              8},
     {"include-dir",         "include-dir",       Slot::IncludeDirs,      Scope::PackagePrivate, Transform::AbsPath,       false, "",                           "",                                              1},
     {"include-dir-after",   "include-dir-after", Slot::IncludeDirsAfter, Scope::PackagePrivate, Transform::AbsPath,       false, "",                           "",                                              1},
     {"rerun-if-changed",    "",                  Slot::RerunFiles,       Scope::RerunKey,       Transform::Verbatim,      false, "",                           "",                                              1},

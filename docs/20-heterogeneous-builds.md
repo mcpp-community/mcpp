@@ -87,6 +87,7 @@ does not accept C++20 modules.
 |---|---|
 | CUDA, HIP | `.cu`, `.hip` |
 | SYCL | `.sycl` (2026.9.6.1+) |
+| Ascend C | `.asc`, `.cce` (2026.9.6.5+) |
 | GLSL, by stage | `.comp`, `.vert`, `.frag`, `.geom`, `.tesc`, `.tese`, `.mesh`, `.task`, `.rgen`, `.rint`, `.rahit`, `.rchit`, `.rmiss`, `.rcall` |
 | GLSL, stage-less | `.glsl` |
 | HLSL | `.hlsl` |

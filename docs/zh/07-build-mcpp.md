@@ -50,6 +50,7 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | 为本包自身 TU 增加一个**私有** include 目录(`-I`;绝对路径或相对包根,自动规范化)。取代过去 `cxxflag=-I` + `cflag=-I` 的双重裸发 |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | 同 `include-dir`,但排在系统目录**之后**搜索(`-idirafter`)——用于会遮蔽系统头的 payload 源树 |
 | `mcpp:runner=<token>` *(2026.8.19.2+)* | 执行本次构建产物的命令的**一个 argv token**(宿主跑不了它时)。一个 token 一次调用、按顺序;产物路径会被追加(或替换 `{}`)。**到达消费者**。可执行文件要发**绝对路径**,且**只能有一个**依赖提供它 |
+| `mcpp:link-flag=<flag>` *(2026.9.6.5+)* | 加一条本程序**算出来的**链接标志,原样传递。这是 `link-lib` / `link-search` / `link-script` 各自命名一类东西之后留下的出口:生成的版本脚本(`-Wl,--version-script=`)、运行时接管 C 库符号用的 `-Wl,--wrap=malloc`、以及 `-Wl,--exclude-libs,ALL`(静态吞入的第三方不得成为本包 ABI 的一部分)。按发出顺序追加在 `[build] ldflags` 之后。**到达消费者**,与 `[build] ldflags` 一致 —— 理由见下 |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | 用这个**链接脚本**链接(`-T`;相对路径按包根解析,发出的是绝对路径,因为链接是在构建目录里跑的)。与 `include-dir` 不同,它**到达消费者** —— 板子的内存布局恰恰是消费者写不出来的那一项 |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | 对用户说一句话并**继续**。唯一一条不改变编译行、链接行与源码集的指令。它**穿过构建缓存** —— 见下 |
 | `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | 陈述程序**测得的机器事实**(`cuda.driver=12.4`)。在编译任何东西之前与 floor 比较;见下 |
@@ -60,6 +61,15 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 程序**请求**构建边(开关、库、源码),它**不能**新增注册表依赖——请把依赖图保持在
 `mcpp.toml` 里声明式管理(包括平台条件依赖 `[target.windows.dependencies]`)。
 `build.mcpp` 用于*叶子*决策:开关、代码生成、链接需求。
+
+`link-flag` 刻意**不**私有,而这一点值得说明,因为相反的选择看上去更安全。编译接口有
+一个声明式的公开对应物(`[build] include_dirs`),所以构建期程序若能加宽它就是绕过了
+manifest —— 这正是 `include-dir` 私有的理由。链接标志没有这个分裂:`[build] ldflags`
+本来就传播给消费者,因此一个私有的"算出来"形态会与它自己的声明式孪生行为不一致。
+
+后果写明而不藏起来:一个依赖发出 `-Wl,--version-script=`,该标志也会落到消费者的链接
+行上,而那通常不是它的本意。这个隐患不是新的 —— 依赖在 `[build] ldflags` 里写同一条
+标志一直如此 —— 所以这条指令加宽的是**谁能算出这个值**,不是**这个值能到达哪里**。
 
 `include-dir`/`include-dir-after` 刻意保持**私有**(Cargo 纪律):只染色本包自身的
 TU,绝不向消费者传播。需要消费者可见的 include 目录属于公共接口,应写在声明式
@@ -97,6 +107,7 @@ int main() {
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | 对应的 `rerun-*` 指令 |
 | `mcpp::rerun_if_changed_glob(pat)` *(2026.8.6.2+)* | `mcpp:rerun-if-changed-glob=` —— 匹配 `pat` 的文件**集合**发生变化时重跑(见下) |
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | 读 `MCPP_DEP_<PKG>_BIN_<TOOL>` —— 依赖构建出的 **host 工具**的绝对路径(见下) |
+| `mcpp::link_flag(s)` *(2026.9.6.5+)* | `mcpp:link-flag=` |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` —— 见下 |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | 本 manifest 在 `[xlings.workspace]` 里声明的包的载荷目录;没声明或没安装时返回 `""`(见下) |
@@ -574,6 +585,37 @@ shim,而可用的那份就在项目自己的环境里,根本不在 `PATH` 上。
 
 下面这些从第一个规则包 `mcpplibs.grpcgen` 归纳而来,每一条特征都单独判过是必然还是偶然。
 它们是指引而非规则,因为其中没有一条能给出引擎可以检查的判据。
+
+**每一个设备源都必须到达某个 action**(2026.9.5.2+ 的契约,自 2026.9.6.5 起强制)。
+设备类源是引擎唯一没有编译规则的源:它经 `MCPP_DEVICE_SOURCES` 交给本包的构建程序,
+要么作为 action 回来,要么根本不会被编译。若有源没有回来,mcpp 拒绝这次构建并点名文件:
+
+    error: `opkit`: device sources that no action compiles:
+             src/backends/cuda/saxpy.cu
+             src/backends/vulkan/saxpy.comp
+
+判据是 action 的**输入**,而不是「构建程序跑过了」:跑了却什么都没认领恰恰是常见情形,
+因为一条规则只取它认识的扩展名、把其余留给别人。这同时也是 action 本就需要满足的条件
+—— 编译某个文件却不把它声明为输入的 action,在那个文件变化时不会重跑 —— 所以满足这条
+判据的规则也就是能正确增量的规则。它取代的读数是链接期的 undefined reference:那条消息
+点的是符号而从不是那个文件;而 `kind = "lib"` 的目标连这条都没有,因为静态库不做解析。
+
+**一条规则只取它认领的扩展名。** `mcpp::device_sources()` 是本包设备源的**全集**,
+同一个构建程序里的每条规则读到的是同一个值。带两个后端的工程会把一个 `.cu` 和一个
+`.comp` 放进这一份清单,于是把全集拿走的规则会把编译器不接受的文件递给它。规则按扩展名
+挑选,并在本次构建没有命名它所服务的后端时安静返回 —— 带多条规则的构建程序会把它们
+全部调用一遍。
+
+**没有任何东西提供的 import 会被点名拒绝。** 一个构建程序可以 import 的是:`std`、
+`std.compat`、内置的 `mcpp`,以及依赖边要来的 host 模块。此外的名字在编译器被调用之前
+就被拒绝,并给出那个本该让它可导入的键:
+
+    error: build.mcpp imports 'mcpp.rules.spirv', and no dependency provides it
+    as a host module.
+           ...
+             [build-dependencies.<namespace>]
+             <name> = { version = "...", host-module = true }
+           declared without `host-module = true`: mcpp.plugins (in [build-dependencies])
 
 **模块名由规则的源码声明,`mcpp.*` 是保留前缀。** host 模块以其接口单元声明的名字注册,
 而不是以包名注册,所以 `export module mcpp.rules.spirv;` 就是消费者 import 的那个名字。

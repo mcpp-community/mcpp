@@ -264,8 +264,15 @@ constexpr std::string_view kHeaderExtensions[] = { ".h", ".hpp", ".hh", ".hxx" }
 // extension, so a rule package refuses a stage-less name — which is the right
 // place for that message, and the reason this table does not need to know
 // which of these extensions name a stage.
+//
+// `.asc` is Ascend C, compiled by `ccec` (BiSheng) from the CANN toolkit. It is
+// here for the reason `.sycl` is: the language is ordinary C++ and the
+// criterion is the compiler. CANN's own operator libraries already split
+// `op_kernel/` from `op_host/`, and CMake registers ASC as a LANGUAGE of its
+// own -- so the island is the shape Ascend already has, not one mcpp imposes.
+// `.cce` is the older spelling of the same thing and is accepted beside it.
 constexpr std::string_view kDeviceExtensions[] = {
-    ".cu", ".hip", ".sycl",
+    ".cu", ".hip", ".sycl", ".asc", ".cce",
     ".comp", ".vert", ".frag", ".geom", ".tesc", ".tese", ".mesh", ".task",
     ".rgen", ".rint", ".rahit", ".rchit", ".rmiss", ".rcall",
     ".glsl", ".hlsl", ".cl", ".metal",

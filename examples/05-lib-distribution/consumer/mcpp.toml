@@ -7,6 +7,25 @@ license     = "Apache-2.0"
 # A packed library is an ordinary package: a path dependency, a git dependency,
 # a downloaded archive and an index entry all reach it the same way. Point this
 # at whatever `mcpp pack mathkit` left under ../producer/target/dist/.
+
+# THE TOOLCHAIN IS PINNED BECAUSE THE CONSUMER NAMES THE TAG.
+#
+# `mcpp pack` writes a directory whose name carries the ABI tag --
+# `mathkit-0.1.0-x86_64-linux-gnu-gcc16-libstdcxx16-c++23` -- and the consumer
+# beside this one names that directory literally, which is what the README
+# tells a reader to do. The tag therefore depends on which toolchain built it,
+# and without this pin the pair only agrees on a machine whose DEFAULT
+# toolchain happens to be gcc 16. Measured: a CI runner whose sandbox had been
+# left with an LLVM default produced
+# `mathkit-0.1.0-x86_64-linux-gnu-clang22-libcxx22-c++23`, and the consumer
+# named a directory that did not exist.
+#
+# An example that hard-codes an ABI tag has to name the toolchain that
+# produces it. That is not a workaround: a packed artifact IS specific to the
+# ABI it was built against, which is the whole subject of this example.
+[toolchain]
+default = "gcc@16.1.0"
+
 [dependencies]
 mathkit = { path = "../producer/target/dist/mathkit-0.1.0-x86_64-linux-gnu-gcc16-libstdcxx16-c++23" }
 

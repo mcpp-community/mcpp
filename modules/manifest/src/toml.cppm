@@ -1042,6 +1042,65 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         if (auto msg = validate_target_soname(t, std::format("targets.{}.", tname))) {
             return std::unexpected(error(origin, *msg));
         }
+        // `exports` -- a file of symbol patterns, or the patterns inline.
+        //
+        // BOTH FORMS, because the two are used at different scales and the ABI
+        // contract of a real library is reviewed as a unit. A file is what a
+        // library with a stable ABI wants (it is the contract, and it belongs
+        // in review beside the headers); the inline array is for the two or
+        // three entry points a plugin publishes, where a separate file would
+        // be ceremony.
+        if (auto eit = tt.find("exports"); eit != tt.end()) {
+            if (eit->second.is_string()) {
+                t.exportsFile = eit->second.as_string();
+                // READ IT HERE, so every later stage sees one representation.
+                // The alternative -- carrying the path and reading it at plan
+                // time -- would need the package root at three call sites (the
+                // root, a path dependency, a store dependency) and is the
+                // "same decision derived in N places" shape this repository
+                // has paid for. `origin` is the manifest's own path, so the
+                // root is its parent, and that is true for all three.
+                auto file = origin.parent_path() / t.exportsFile;
+                std::ifstream in(file);
+                if (!in)
+                    return std::unexpected(error(origin, std::format(
+                        "targets.{}.exports names '{}', which does not exist "
+                        "(looked at '{}')", tname, t.exportsFile,
+                        file.generic_string())));
+                for (std::string line; std::getline(in, line); ) {
+                    if (auto h = line.find('#'); h != std::string::npos)
+                        line.erase(h);
+                    auto b = line.find_first_not_of(" \t\r");
+                    if (b == std::string::npos) continue;
+                    auto e = line.find_last_not_of(" \t\r");
+                    t.exportPatterns.push_back(line.substr(b, e - b + 1));
+                }
+                if (t.exportPatterns.empty())
+                    return std::unexpected(error(origin, std::format(
+                        "targets.{}.exports: '{}' names no symbol. An empty "
+                        "export list is not how a library says 'publish "
+                        "everything' -- omitting the key is.",
+                        tname, t.exportsFile)));
+            } else if (eit->second.is_array()) {
+                for (auto& v : eit->second.as_array()) {
+                    if (!v.is_string())
+                        return std::unexpected(error(origin, std::format(
+                            "targets.{}.exports: every entry must be a symbol "
+                            "pattern (a string)", tname)));
+                    t.exportPatterns.push_back(v.as_string());
+                }
+                if (t.exportPatterns.empty())
+                    return std::unexpected(error(origin, std::format(
+                        "targets.{}.exports is an empty list. A library that "
+                        "publishes nothing is not what an empty list means "
+                        "here -- omit the key to publish everything, which is "
+                        "the default, or name the symbols.", tname)));
+            } else {
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.exports must be a path to a file of symbol "
+                    "patterns, or an inline list of them", tname)));
+            }
+        }
 
         // Per-target flags (entry-scoped) + required-features gate.
         auto read_list = [&](const char* key, std::vector<std::string>& out) {
@@ -1069,7 +1128,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         // must reach SHARED code is intentionally not a target key; point users
         // at the right axis (workspace / features / profile).
         static constexpr std::string_view kKnownTargetKeys[] = {
-            "kind", "main", "soname",
+            "kind", "main", "soname", "exports",
             "cflags", "cxxflags", "defines", "required_features",
         };
         for (auto& [key, _] : tt) {

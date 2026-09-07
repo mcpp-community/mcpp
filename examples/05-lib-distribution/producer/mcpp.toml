@@ -4,6 +4,25 @@ version     = "0.1.0"
 description = "Demo: shipping a prebuilt library with both a header and a module interface"
 license     = "Apache-2.0"
 
+
+# THE TOOLCHAIN IS PINNED BECAUSE THE CONSUMER NAMES THE TAG.
+#
+# `mcpp pack` writes a directory whose name carries the ABI tag --
+# `mathkit-0.1.0-x86_64-linux-gnu-gcc16-libstdcxx16-c++23` -- and the consumer
+# beside this one names that directory literally, which is what the README
+# tells a reader to do. The tag therefore depends on which toolchain built it,
+# and without this pin the pair only agrees on a machine whose DEFAULT
+# toolchain happens to be gcc 16. Measured: a CI runner whose sandbox had been
+# left with an LLVM default produced
+# `mathkit-0.1.0-x86_64-linux-gnu-clang22-libcxx22-c++23`, and the consumer
+# named a directory that did not exist.
+#
+# An example that hard-codes an ABI tag has to name the toolchain that
+# produces it. That is not a workaround: a packed artifact IS specific to the
+# ABI it was built against, which is the whole subject of this example.
+[toolchain]
+default = "gcc@16.1.0"
+
 [build]
 sources      = ["src/*.cppm", "src/*.cpp", "src/*.c"]
 # The public headers. Published whole — see include/mathkit_c.h.

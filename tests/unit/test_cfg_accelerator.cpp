@@ -61,18 +61,47 @@ TEST(CfgAccelerator, ComposesWithTripleKeys) {
     EXPECT_FALSE(m(R"(cfg(all(windows, accelerator = "cuda")))", cuda));
 }
 
-TEST(CfgAccelerator, UnresolvedTargetSideDoesNotMatch) {
-    // The first pass runs before dependency resolution and cannot answer a
-    // layer key. Returning false there is correct: the second pass owns it and
-    // would otherwise contribute the same inputs twice.
+TEST(CfgAccelerator, AnsweredBeforeResolutionUnlikeTheOtherLayers) {
+    // `accelerator` is answerable in the FIRST merge pass, and the difference
+    // from the other five layer keys is the schedule, not the subject. Its
+    // value is an input to the build -- `--accel`, or `[build] accel` -- read
+    // before the first package is resolved, while `c-abi` is an answer the
+    // dependency graph produces.
+    //
+    // The consequence is what this states: a payload, or a dependency, can be
+    // gated on the device it is for. Grouped with the resolved keys it could
+    // not be, and a CPU-only build of a project with a device island
+    // downloaded the whole vendor toolkit.
     auto early = cfgpred::context_for("x86_64-linux-gnu");
     ASSERT_FALSE(early.layersKnown);
-    EXPECT_FALSE(m(R"(cfg(accelerator = "cuda"))", early));
+    early.accelerators = {"cuda"};
+    EXPECT_TRUE (m(R"(cfg(accelerator = "cuda"))", early));
+    EXPECT_FALSE(m(R"(cfg(accelerator = "vulkan"))", early));
+
+    // A resolved layer key in the same position still answers false, and must:
+    // the second pass owns it and would otherwise contribute the same inputs
+    // twice through `append()`.
+    EXPECT_FALSE(m(R"(cfg(c-abi = "glibc"))", early));
+
+    // No accel named: false for any backend, and `none` is how a section says
+    // so without enumerating the backends it is not.
+    auto nothing = cfgpred::context_for("x86_64-linux-gnu");
+    EXPECT_FALSE(m(R"(cfg(accelerator = "cuda"))", nothing));
+    EXPECT_TRUE (m(R"(cfg(accelerator = "none"))", nothing));
 }
 
-TEST(CfgAccelerator, IsALayerKeyNotATripleKey) {
-    EXPECT_TRUE (cfgpred::uses_layer(R"(cfg(accelerator = "cuda"))"));
+TEST(CfgAccelerator, IsInTheVocabularyButNotAResolvedLayer) {
+    // Three separate questions, and only the middle one changed. It is a known
+    // key (so a misspelling is still reported); it is not a triple key; and it
+    // does NOT send its section to the pass that runs after resolution.
+    EXPECT_TRUE (cfgpred::unknown_tokens(R"(cfg(accelerator = "cuda"))").empty());
+    EXPECT_FALSE(cfgpred::uses_layer(R"(cfg(accelerator = "cuda"))"));
     EXPECT_FALSE(cfgpred::uses_layer(R"(cfg(arch = "x86_64"))"));
+    EXPECT_TRUE (cfgpred::uses_layer(R"(cfg(c-abi = "musl"))"));
+    // A predicate mixing the two belongs to the late pass, which can answer
+    // both. Ownership is by membership, not by which leg matched.
+    EXPECT_TRUE (cfgpred::uses_layer(
+        R"(cfg(all(accelerator = "cuda", c-abi = "musl")))"));
 }
 
 TEST(CfgAccelerator, MisspellingIsReportedNotSilentlyFalse) {

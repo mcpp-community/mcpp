@@ -24,6 +24,19 @@ BUILD=(
     examples/03-pack-static
     examples/04-workspace
     examples/08-build-rules/app
+    # The CPU-only path of the multi-backend example: no payloads, and it is
+    # where `cfg(accelerator = "none")` is exercised. The device paths are
+    # opt-in via --accel and are covered by the rule packages' own CI.
+    # Built here for one reason worth the cost: it is the only example whose
+    # CPU-only configuration exercises `cfg(accelerator = "none")` and two rule
+    # packages in one build program, and both of those are engine paths that a
+    # description cannot cover. Its `[toolchain] default = "llvm@22.1.8"` means
+    # this job installs an LLVM payload it otherwise would not -- the CUDA leg
+    # takes the clang route, because the nvcc route on the 12.9 line is refused
+    # by nvcc's own front end and the 13.x line raises the driver floor to r580.
+    # The device payloads are NOT installed: they are gated on the accelerator,
+    # and this builds without one.
+    examples/09-heterogeneous/multi-backend
 )
 
 # `key|reason`.
@@ -38,6 +51,7 @@ SKIP=(
     "examples/09-heterogeneous/hip/app|same, for the HIP payloads"
     "examples/09-heterogeneous/sycl/app|needs the dpcpp payload (over a gigabyte) and a device its runtime accepts"
     "examples/09-heterogeneous/vulkan/app|built AND RUN by the next step of this job, on the lavapipe payload, which needs no GPU"
+    "examples/09-heterogeneous/cann/app|its device leg needs the Ascend DRIVER, which a runner does not have: the kernel compiles and the object links, and then `libascend_hal.so` is missing, which is correct on a machine with no NPU. Its CPU leg does build -- and is not built here only because the plugins pin would make this job resolve a fifth rule package for one example. Covered by the measurements in its README"
 )
 
 # Every ROOT manifest in the tree: a directory with an `mcpp.toml` that has no

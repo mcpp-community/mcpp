@@ -60,7 +60,13 @@ export namespace mcpp::build::program_protocol {
 // fact about the machine and the floor it needs of it; the engine compares
 // them before compiling. Same cost as v5's: a package calling `mcpp::fact()`
 // fails on an older engine at the build.mcpp COMPILE, not through a refusal.
-inline constexpr int kProtocolVersion = 7;
+// v8: adds `link-flag` -- the generic linker-flag outlet. `link-lib`,
+// `link-search` and `link-script` cover a library, a search path and a layout;
+// a flag a program COMPUTED (a generated version script, `--wrap`,
+// `--exclude-libs`) had no way out. Same cost as v5's: a package calling
+// `mcpp::link_flag()` fails on an older engine at the build.mcpp COMPILE,
+// because that engine's bundled module has no such function.
+inline constexpr int kProtocolVersion = 8;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

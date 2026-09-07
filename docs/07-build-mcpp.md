@@ -53,6 +53,7 @@ is ignored, so diagnostics may be logged freely.
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | add a **private** include directory (`-I`) for this package's own TUs (absolute, or relative to the package root; normalized). Replaces the `cxxflag=-I` + `cflag=-I` double emission |
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | like `include-dir`, but searched **after** the system directories (`-idirafter`) — for payload trees that shadow system headers |
 | `mcpp:runner=<token>` *(2026.8.19.2+)* | one argv token of the command that EXECUTES this build's artifact, when the host cannot. Emitted once per token, in order; the artifact path is appended (or substituted for `{}`). Reaches the **consumer**. Emit the executable as an ABSOLUTE path, and only **one** dependency may supply it |
+| `mcpp:link-flag=<flag>` *(2026.9.6.5+)* | add a **linker flag** this program computed, verbatim. The outlet `link-lib` / `link-search` / `link-script` leave open: a generated version script (`-Wl,--version-script=`), `-Wl,--wrap=malloc` for a runtime that takes over a C-library symbol, `-Wl,--exclude-libs,ALL` so a statically absorbed third party does not become part of this package's ABI. Appended after `[build] ldflags`, in emission order. **Reaches the consumer**, exactly as `[build] ldflags` does — see below |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | link with this **linker script** (`-T`; relative resolves against the package root, and the emitted path is absolute because the link runs in the build directory). Reaches the **consumer**, unlike `include-dir` — a board's memory layout is the one thing a consumer cannot write for itself |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | say something to the user and **keep going**. The one directive that changes no compile line, no link line and no source set. Survives the build cache — see below |
 | `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | state something the program **established about the machine** (`cuda.driver=12.4`). Compared against floors before anything is compiled; see below |
@@ -64,6 +65,19 @@ The program **requests** build edges (flags, libraries, sources). It cannot add 
 registry dependency — the dependency graph stays declarative in `mcpp.toml`
 (including platform-conditional `[target.windows.dependencies]`). `build.mcpp`
 is for *leaf* decisions: flags, codegen, link requirements.
+
+`link-flag` is deliberately **not** private, and the reason is worth stating
+because the opposite looks safer. A compile interface has a declarative public
+counterpart (`[build] include_dirs`), so a build-time program widening it would
+go behind the manifest's back — hence `include-dir`'s privateness. Link flags
+have no such split: `[build] ldflags` already propagates to consumers, so a
+private computed form would behave differently from its own declarative twin.
+
+The consequence is stated rather than hidden. A dependency emitting
+`-Wl,--version-script=` puts it on the consumer's link line too, which is
+usually not what that dependency meant. That hazard is not new — a dependency
+writing the same flag in `[build] ldflags` has always done this — so this
+directive widens *who can compute the value*, not *what the value can reach*.
 
 `include-dir`/`include-dir-after` are deliberately **private** (Cargo
 discipline): they color only this package's own TUs and are never propagated
@@ -104,6 +118,7 @@ int main() {
 | `mcpp::rerun_if_changed(p)` / `mcpp::rerun_if_env_changed(v)` | the matching `rerun-*` directives |
 | `mcpp::rerun_if_changed_glob(pat)` *(2026.8.6.2+)* | `mcpp:rerun-if-changed-glob=` — re-run when the **set** of files matching `pat` changes (see below) |
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | reads `MCPP_DEP_<PKG>_BIN_<TOOL>` — the absolute path of a **host tool** built by a dependency (see below) |
+| `mcpp::link_flag(s)` *(2026.9.6.5+)* | `mcpp:link-flag=` |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` — see below |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package this manifest declared in `[xlings.workspace]`; `""` when it was not declared or is not installed (see below) |
@@ -667,6 +682,45 @@ what goes inside.
 The guidance below generalises from `mcpplibs.grpcgen`, the first such package,
 with each of its traits judged individually. It is guidance and not a rule
 because none of it admits a criterion the engine could check.
+
+**Every device source must reach an action** *(2026.9.5.2+ contract, enforced
+from 2026.9.6.5)*. A device-kind file is the one source the engine has no
+compile rule for: it is handed to the package's build program through
+`MCPP_DEVICE_SOURCES` and comes back as an action, or it is not compiled at
+all. mcpp refuses a build in which one did not, naming the files:
+
+    error: `opkit`: device sources that no action compiles:
+             src/backends/cuda/saxpy.cu
+             src/backends/vulkan/saxpy.comp
+
+The criterion is the action **inputs**, not that a build program ran: a program
+that ran and claimed nothing is the common case, because a rule takes the
+extensions it knows and leaves the rest. It is also the condition an action
+needs anyway — one that compiles a file it does not declare as an input does
+not rerun when that file changes — so a rule that satisfies it is a rule that
+rebuilds correctly. What it replaces is an undefined reference at the link
+naming a symbol and never the file, and for a `kind = "lib"` target not even
+that, because an archive is not resolved.
+
+**A rule takes the extensions it claims.** `mcpp::device_sources()` is the
+package's whole device set, and every rule in one build program reads the same
+value. A project with two backends puts a `.cu` and a `.comp` in that one list,
+so a rule that consumes all of it hands its compiler a file the compiler does
+not accept. A rule selects by extension, and returns without complaint when
+this build names no backend it serves — a build program with several rules
+calls them all.
+
+**An import nothing provides is refused by name.** A build program may import
+`std`, `std.compat`, the bundled `mcpp`, and the host modules its dependency
+edges asked for. Anything else is refused before the compiler is reached, with
+the key that would have made it importable:
+
+    error: build.mcpp imports 'mcpp.rules.spirv', and no dependency provides it
+    as a host module.
+           ...
+             [build-dependencies.<namespace>]
+             <name> = { version = "...", host-module = true }
+           declared without `host-module = true`: mcpp.plugins (in [build-dependencies])
 
 **The module name is declared by the rule's source, and `mcpp.*` is reserved.**
 A host module is registered under the name its interface unit declares, not
