@@ -18,9 +18,13 @@ accel = "cuda12.9+{sm_89}, vulkan1.2"
 (`cuda12.9+{sm_89} ptx>=89` 是一个后端加一组架构再加一条 PTX 下界)。源码集合怎么写
 见下面「一个构建里的多个后端」。
 
-今天有规则包的编程模型是四个 —— CUDA、HIP、SYCL、Vulkan/SPIR-V —— 「各条 lane」那张表
-写明每个驱动哪个编译器、需要哪些载荷。引擎里不持有任何厂商名字,所以第五个是**一个包**
-而不是一次引擎改动。
+`accelerator = "none"` 是**空集** —— 恰好在本次构建完全没有命名加速器时为真。它是
+词表里唯一一个不是后端名字的取值,而它之所以存在,是因为词表的其余部分是**开放**的:
+一个会增长的集合不能靠列举来否定。见下面「CPU 回退」。
+
+今天有规则包的编程模型是五个 —— CUDA、HIP、SYCL、Vulkan/SPIR-V、Ascend C ——
+「各条 lane」那张表写明每个驱动哪个编译器、需要哪些载荷。引擎里不持有任何厂商名字,
+所以第六个是**一个包**而不是一次引擎改动。
 
 ## 两种形态,以及为什么一套机制够到两者
 
@@ -114,6 +118,48 @@ tarball 已经发出去了。设备源文件必须被显式点名。
 
 这个划分是刻意的。mcpp 拥有构建图、产物身份与架构集合;厂商的 flag 拼法、
 架构语法与宿主编译器要求属于规则包。
+
+## 工具包跟着规则来(2026.9.6.6+)
+
+一个要 CUDA 岛的工程只写一条边:
+
+```toml
+[build-dependencies.mcpp]
+plugins = { version = "0.2.4", features = ["rules-cuda"], host-module = true }
+```
+
+**别的什么都不写。** 厂商工具包、它的运行时,以及规则需要的其余东西,都由**规则包**
+在选中它的那个 feature、它所服务的加速器之下声明:
+
+```toml
+# 写在 mcpp:plugins 里,不写在你的工程里
+[target.'cfg(accelerator = "cuda")'.feature-xlings.rules-cuda]
+"xim:cuda-nvcc"   = ">=12.9.86"
+"xim:cuda-cudart" = ">=12.9.79"
+"xim:libcurand"   = ">=10.3.10.19"
+"xim:cuda-cccl"   = ">=12.9.27"
+```
+
+**两重门,在下载第一个字节之前都要开。** feature 说「要不要这个规则」,
+`cfg(accelerator = ...)` 说「哪些构建真的需要设备工具包」。不带加速器的 `mcpp build`
+两道门都不过——这正是让最便宜的那次构建保持便宜的原因,而那是 CI 跑的那一次。
+
+每条 lane 都是这样:`rules-cuda`、`rules-hip`、`rules-sycl`、`rules-spirv`、
+`rules-ascendc` 各自带着自己的环境。**不存在需要你自己补环境的 lane**,因为「有时候
+需要」是一条没有任何地方能说清楚到可用的规则。
+
+**覆盖是工程里的一行。** 哪个包、最低到哪一版,是规则作者的知识;**具体哪一版**有时
+是你的——一条 CUDA 线耦合着驱动下界,而那是你那批机器的属性:
+
+```toml
+[target.'cfg(accelerator = "cuda")'.xlings.workspace]
+"xim:cuda-nvcc" = "13.3.33"
+```
+
+更近的声明赢,装一个版本,并且 mcpp 说出用了哪条。不满足规则下界的钉会被拒绝并点出
+两侧,而不是与它并排装下来。完整规则见 [05 — mcpp.toml](05-mcpp-toml.md) 的
+「一个包一个版本」;`examples/09-heterogeneous/multi-backend` 是本仓库里唯一走覆盖
+路径的示例,其余每一个都只写那条边。
 
 ## 规则包在第一次编译之前报告的事
 
@@ -289,15 +335,31 @@ ld: obj/src/cpu/impl.o: multiple definition of `impl';
     obj/src/cuda/impl.o: first defined here
 ```
 
-响,而且发生在链接期而不是运行期 —— 但这是 manifest 本可以避免的失败。否定整个集合:
+响,而且发生在链接期而不是运行期 —— 但这是 manifest 本可以避免的失败。直接说
+「本次构建没有命名任何后端」:
 
 ```toml
-[target.'cfg(not(any(accelerator = "cuda", accelerator = "vulkan")))'.build]
+[target.'cfg(accelerator = "none")'.build]
 sources = ["src/cpu/*.cpp"]
 ```
 
-`any` / `all` / `not` 作为普通布尔组合子在成员判定之上组合。代价是这份名单成了后端集合
-被写下的**第二个地方**:加第三个后端时忘了改这一行,拿到的就是上面那条链接错误。
+`none`(mcpp 2026.9.6.5)是**空集**:它在本次构建完全没有命名加速器时成立,并且在生态
+长出新后端之后**继续**成立。
+
+**它取代的那种枚举写法当时是对的,但不会一直对。** `none` 之前唯一的拼法是否定整个集合,
+
+```toml
+[target.'cfg(not(any(accelerator = "cuda", accelerator = "vulkan")))'.build]
+```
+
+于是这一行成了**后端集合被写下的第二个地方**。`any` / `all` / `not` 仍然作为普通布尔
+组合子在成员判定之上组合,也确实有需要它们的谓词 —— 但这里不是。`accelerator` 是一个
+**开放**词表:第三个后端是一个**包**而不是一次引擎改动,所以它出现的那天,没人记得去
+扩的那份枚举就不再表示它写着的意思。而且它**不会响**:视乎忘掉的是哪一半,得到的要么
+是给有设备的构建静默选上了 CPU 实现,要么是上面那条链接错误。
+
+`cfg(not(accelerator = "none"))` 是同一句话的反面 —— 「本次构建至少命名了一个后端」
+—— 这正是多个后端共用的分发器应当条件化的东西。
 
 ### 另一种形态:不在链接期做选择
 
@@ -308,7 +370,7 @@ sources = ["src/cpu/*.cpp"]
   源码,CPU 实现无条件在内;
 * 给每个实现一个不同的名字,让接缝在**运行期**去问哪些设备在场。
 
-这样就没有 `not(any(...))` 要维护,而产物回答的是二进制的使用者真正的问题。ggml 就是
+这样就完全没有排除关系要维护,而产物回答的是二进制的使用者真正的问题。ggml 就是
 这个形态:每个后端自己注册,程序运行时由 `ggml_backend_reg_by_name` 选一个。
 `ggml-org:llamacpp` 就是这样构建的,它的 `backend-vulkan` 相对 `backend-cpu` 是**可加的**
 而不是互斥的。
@@ -343,6 +405,7 @@ sources = ["src/cpu/*.cpp"]
 | `rules-hip` | `mcpp.rules.hip` | NVIDIA 平台上是工程自己的 clang(`-x cuda`) | 上面那些,再加 `xim:hip-nvidia` | `hip, cuda12.9+{sm_89}` |
 | `rules-sycl` | `mcpp.rules.sycl` | `xim:dpcpp` 载荷里的 clang(`-fsycl`) | `xim:dpcpp`、`xim:gcc`,NVIDIA 目标另加 `xim:cuda-nvcc` | `sycl` 或 `sycl, cuda12.9+{sm_89}` |
 | `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` 或 `glslc` | `xim:glslang` 或 `xim:shaderc` | `vulkan1.2` |
+| `rules-ascendc` | `mcpp.rules.ascendc` | CANN 工具包里的 `bisheng`(`-x asc`) | `xim:cann-toolkit` | `ascend8.5+{dav-c220}` |
 
 HIP 与 SYCL 两行的 `accel` 值是**两段**而不是一段。第一段命名编程模型,第二段命名设备,
 于是一个设备在本生态里只有一种拼法,无论有多少个模型去够它:`sm_89` 无论被哪条规则读到
@@ -360,7 +423,8 @@ CUDA 入口点的内联包装,所以目标文件链接的是 CUDA 运行时,机�
 
 ## 在此之上,一个框架是什么形状
 
-四条 lane 证明了规则包能驱动四个编译器。框架是下一个问题 —— 这套机制能不能扛起一个
+五条 lane 证明了规则包能驱动五个编译器,其中最新的一个来自 NVIDIA 与 Khronos 两个
+谱系之外的厂商。框架是下一个问题 —— 这套机制能不能扛起一个
 真会被部署的东西 —— 而它自己有一个形状,是在 llama.cpp 的 Vulkan 后端上量出来的。
 
 **框架自带生成器,生态应当驱动它而不是替换它。** llama.cpp 的着色器由一个与后端放在

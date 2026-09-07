@@ -874,6 +874,8 @@ std::expected<void, std::string> run_build_program(
                     if (!importable.empty()) importable += ", ";
                     importable += hm.logical;
                 }
+            mcpp::build::refusal::record(
+                mcpp::build::refusal::Code::HostModuleMissing);
             return std::unexpected(std::format(
                 "build.mcpp imports '{}', and no dependency provides it as a "
                 "host module.\n"

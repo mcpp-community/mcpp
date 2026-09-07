@@ -2245,6 +2245,88 @@ A feature name no `[features]` table declares is reported as a schema warning:
 it activates for nobody and installs nothing, and a tool whose absence is only
 visible as *"the device is never reachable"* is the hardest kind to diagnose.
 
+#### A rule package brings its own environment (2026.9.6.6+)
+
+The table above is what a project writes when it has an opinion. Most projects
+have none, and should write nothing:
+
+```toml
+[build-dependencies.mcpp]
+plugins = { version = "0.2.4", features = ["rules-cuda"], host-module = true }
+```
+
+That one edge is the whole declaration. The rule package names the packages its
+rule needs and the version it needs them from, under the feature that selects
+it and the accelerator it is for:
+
+```toml
+# in the rule package, not in your project
+[target.'cfg(accelerator = "cuda")'.feature-xlings.rules-cuda]
+"xim:cuda-nvcc"   = ">=12.9.86"
+"xim:cuda-cudart" = ">=12.9.79"
+```
+
+Two gates, and both must open. The feature says *whether this rule is wanted*;
+the selector says *which builds actually download it*. A CPU-only build of the
+same project opens neither and installs nothing.
+
+Which package, and how old it may be, is the rule author's knowledge. Repeating
+it in every project that uses the rule is a copy that goes stale silently — the
+rule moves and the projects do not.
+
+#### One package, one version (2026.9.6.6+)
+
+A tool address is `[<ns>:]<name>[@<version>]`, and its **identity is the
+`(namespace, name)` pair**. The version is a constraint on that package, never
+part of its name, so `xim:glibc`, `xim:glibc@2.40` and `xim:glibc@>=2.38` all
+name one package. One version of it is installed per build.
+
+Which one is decided in two steps.
+
+**Adjudication — the declaration nearer the artifact wins.** Your project
+outranks a package it depends on, so a pin overrides a rule's requirement:
+
+```toml
+# your project, when you do have an opinion
+[target.'cfg(accelerator = "cuda")'.xlings.workspace]
+"xim:cuda-nvcc" = "13.3.33"
+```
+
+A declaration that names no version abstains: it says the package is wanted and
+nothing about which version, so it cannot outrank a floor merely by being
+nearer. When two declarations disagree and both name a version, mcpp reports
+which was used — an override visible only as *"two versions were declared and
+one directory exists"* is a fact you would have to reconstruct from the
+filesystem.
+
+**Validation — the winner must satisfy every requirement that lost.** `>=`,
+`^`, `~` and comma-combined forms are requirements. A pin that fails one is
+refused, naming both sides:
+
+```
+error: `xim:cuda-nvcc` is pinned to 12.0.0 by this project, and mcpp:plugins
+       requires >=12.9.86.
+       One version of a package is installed, so the two cannot both hold.
+       fix: pin a version satisfying >=12.9.86, or drop the pin and let the
+       requirement decide.
+```
+
+A bare version is a *choice*, not a requirement: two exact pins that differ are
+adjudicated and reported, not refused. Only a stated requirement can be
+violated.
+
+**This is a comparison, not a search.** The version is chosen by adjudication
+and then checked, so mcpp never has to ask the index which versions exist and
+carries no constraint solver. The cost is stated rather than hidden: a
+combination a solver could satisfy — your `>=8.0`, a rule's `8.5.0`, and 8.3 as
+the newest in the index — is refused instead, and the refusal says how to
+proceed.
+
+Ranges are resolved in both directions. `>=2026.1` installs the highest
+published version satisfying it, `>=2099.1` is refused as unsatisfiable, and
+`mcpp::xpkg_dir` answers with the highest **installed** version satisfying the
+range — a rule that declares a floor can find what the floor brought in.
+
 #### Which version a tool the project did not name resolves to
 
 | The project declares | The version comes from |

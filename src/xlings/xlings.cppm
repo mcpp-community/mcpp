@@ -20,6 +20,7 @@ import mcpp.pm.index_snapshot;
 import mcpp.platform;
 import mcpp.log;
 import mcpp.home;
+import mcpp.version_req;
 
 export namespace mcpp::xlings {
 
@@ -82,7 +83,7 @@ namespace pinned {
     // correctly — which is why this is a floor and not a preference, and why
     // an index must still not publish a deliberately colliding
     // `<name>@<version>` (see .agents/docs/2026-08-30-cross-repo-fix-plan §1).
-    inline constexpr std::string_view kXlingsVersion   = "2026.8.30.2";
+    inline constexpr std::string_view kXlingsVersion   = "2026.9.5.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 
@@ -134,6 +135,15 @@ namespace paths {
     // that is only discovered later, in the artifact. An unpinned ref takes
     // the highest version present — compared by numeric segments, because a
     // plain string sort puts "0.4.11" before "0.4.9".
+    //
+    // A CONSTRAINED ref (`>=8.5.0`, `^1.2`) takes the highest INSTALLED version
+    // satisfying it. The version position of an xlings address has accepted
+    // range expressions all along — xlings resolves one when it installs — but
+    // this lookup treated the whole position as a directory name, so a range
+    // installed a payload and then answered that nothing was installed. That
+    // asymmetry is what made `[feature-xlings]` floors unusable: a rule package
+    // could declare `>=8.5.0`, get it installed, and still see `xpkg_dir`
+    // return "".
     std::optional<std::filesystem::path>
     xpkg_payload(const Env& env, const XpkgRef& ref);
 
@@ -826,9 +836,32 @@ xpkg_payload_at(const std::filesystem::path& xpkgsBase, const XpkgRef& ref) {
     const auto root = xpkgsBase / std::format("{}-x-{}", ref.ns, ref.name);
     std::error_code ec;
     if (!ref.version.empty()) {
+        // THE LITERAL DIRECTORY IS TRIED FIRST, AND IT IS TRIED FOR EVERY
+        // SPELLING. An installed version whose name does not parse as a SemVer
+        // — `8.0.RC1` is a real one — is addressable only this way, and a
+        // version that both names a directory and reads as a constraint (`=`
+        // is not part of any directory name, but a future operator might be)
+        // must resolve to the directory it names.
         auto p = root / ref.version;
         if (std::filesystem::is_directory(p, ec)) return p;
-        return std::nullopt;   // pinned and absent: NOT "some other version"
+        // A pinned version that is absent is NOT "some other version".
+        if (!mcpp::version_req::is_constraint(ref.version)) return std::nullopt;
+        auto req = mcpp::version_req::parse_req(ref.version);
+        if (!req) return std::nullopt;
+        if (!std::filesystem::is_directory(root, ec)) return std::nullopt;
+        std::optional<std::filesystem::path> pick;
+        std::optional<mcpp::version_req::Version> pickV;
+        for (auto const& e : std::filesystem::directory_iterator(root, ec)) {
+            if (!e.is_directory(ec)) continue;
+            // A directory whose name does not parse cannot be TESTED against a
+            // requirement, so it is not a candidate for one. It remains
+            // addressable by the exact spelling above.
+            auto v = mcpp::version_req::parse_version(e.path().filename().string());
+            if (!v) continue;
+            if (!mcpp::version_req::matches(*req, *v)) continue;
+            if (!pickV || *pickV < *v) { pick = e.path(); pickV = *v; }
+        }
+        return pick;
     }
     if (!std::filesystem::is_directory(root, ec)) return std::nullopt;
     auto key_of = [](const std::string& s) {

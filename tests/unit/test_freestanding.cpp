@@ -218,6 +218,65 @@ TEST(XpkgPayload, AnUnpinnedRefTakesTheHighestVersionNumerically) {
     std::filesystem::remove_all(base);
 }
 
+// A CONSTRAINT IN THE VERSION POSITION IS A CONSTRAINT, NOT A DIRECTORY NAME.
+//
+// The address grammar has accepted `>=8.5.0` all along and xlings resolves one
+// when it installs, but this lookup compared the whole position against a
+// directory name -- so a range installed a payload and then reported that
+// nothing was installed. That is what made a rule package unable to state a
+// floor: it declared `>=8.5.0`, got it, and `xpkg_dir` answered "".
+TEST(XpkgPayload, AConstrainedRefTakesTheHighestInstalledVersionSatisfyingIt) {
+    namespace xp = mcpp::xlings::paths;
+    auto base = std::filesystem::temp_directory_path()
+              / std::format("mcpp-xpkg-test3-{}", ::getpid());
+    std::filesystem::remove_all(base);
+    for (auto v : { "8.0.0", "8.5.0", "8.7.1" })
+        std::filesystem::create_directories(base / "xim-x-demo" / v);
+
+    auto floor = xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@>=8.5.0"));
+    ASSERT_TRUE(floor.has_value());
+    EXPECT_EQ(floor->filename(), "8.7.1");
+
+    // Bounded on both sides, so the highest is NOT the answer -- a test that
+    // only used a lower bound would pass on an implementation that ignored the
+    // requirement and took the newest.
+    auto ranged = xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@>=8.0.0, <8.7.0"));
+    ASSERT_TRUE(ranged.has_value());
+    EXPECT_EQ(ranged->filename(), "8.5.0");
+
+    // Unsatisfiable is absent, not "the closest one".
+    EXPECT_FALSE(xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@>=9.0.0"))
+                     .has_value());
+
+    // AND AN EXACT PIN STILL MEANS EXACTLY THAT. The constrained path must not
+    // capture a pinned-and-absent request: 8.6.0 is missing and 8.7.1 is right
+    // there, and answering with it is the failure the pin exists to prevent.
+    EXPECT_FALSE(xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@8.6.0"))
+                     .has_value());
+
+    std::filesystem::remove_all(base);
+}
+
+// An installed version whose directory name is not a SemVer is addressable by
+// its exact spelling and by nothing else. `8.0.RC1` is a real CANN version.
+TEST(XpkgPayload, AnUnparseableVersionIsStillAddressableExactly) {
+    namespace xp = mcpp::xlings::paths;
+    auto base = std::filesystem::temp_directory_path()
+              / std::format("mcpp-xpkg-test4-{}", ::getpid());
+    std::filesystem::remove_all(base);
+    std::filesystem::create_directories(base / "xim-x-demo" / "8.0.RC1");
+
+    auto exact = xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@8.0.RC1"));
+    ASSERT_TRUE(exact.has_value());
+    EXPECT_EQ(exact->filename(), "8.0.RC1");
+
+    // It cannot be TESTED against a requirement, so it does not answer one.
+    EXPECT_FALSE(xp::xpkg_payload_at(base, xp::parse_xpkg_ref("xim:demo@>=1.0"))
+                     .has_value());
+
+    std::filesystem::remove_all(base);
+}
+
 TEST(XpkgEnvVar, BothSpellingsAreDerivedFromOneSanitizer) {
     using mcpp::build::xpkg_env_var;
     // The two sides of the channel must agree; drifting apart would make the
