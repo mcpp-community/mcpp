@@ -310,6 +310,38 @@ jobs:
           "$MCPP" build
           "$MCPP" --version
 
+
+      # GRAPHICS ON THIS HOST, BUILD ONLY, AND THAT IS THE WHOLE CLAIM.
+      #
+      # This runner has no Vulkan device, so what is asserted is what this
+      # platform decides: that the shader compiler THIS platform uses -- the
+      # rule declares `xim:shaderc` here and `xim:glslang` on Linux -- produces
+      # both SPIR-V headers, and that the Vulkan half compiles and links
+      # against the loader package. Running it is the Linux job's criterion,
+      # where a software device (`xim:mesa-lavapipe`) is published and the two
+      # legs' pixels are compared.
+      #
+      # The example is otherwise built only on Linux (`build_examples.sh` runs
+      # there), which is exactly the shape this change exists to remove: the
+      # half of a lane written for a host is the half that host never
+      # exercises.
+      - name: "Graphics: the offscreen example builds on this host"
+        shell: bash
+        run: |
+          set -e
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          cd "$GITHUB_WORKSPACE/examples/10-graphics/offscreen"
+          # The toolchain is NAMED rather than inherited: leaving it to whatever
+          # a neighbouring step happened to select makes this step's subject
+          # depend on step order, which is not a property anybody reads.
+          "/tmp/mcpp-fresh" build --toolchain "llvm@${MCPP_LLVM_VER}"
+          for f in triangle_vert triangle_frag; do
+            h="target/.build-mcpp/out/spirv/$f.h"
+            test -f "$h" || { echo "missing $h"; exit 1; }
+            grep -q '0x07230203' "$h" || { echo "$h carries no SPIR-V magic"; exit 1; }
+          done
+          echo "ok: both shader stages compiled and the Vulkan half linked"
+
       # Integration: the mcpp built from THIS PR's source (the self-host binary,
       # $MCPP = /tmp/mcpp-fresh) builds & runs a real external C++ project —
       # xlings (openxlings/xlings ships its own mcpp.toml).
