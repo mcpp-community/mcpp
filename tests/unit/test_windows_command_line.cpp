@@ -160,7 +160,10 @@ CmdParse simulate_cmd_c(std::string_view wrapped) {
     bool inQuotes = false;
     for (std::size_t i = 0; i < line.size(); ++i) {
         char c = line[i];
-        if (c == '^') {                       // escapes the next character
+        // `^` escapes the next character OUTSIDE a quoted region; inside one
+        // it is an ordinary character. Modelling only the first half would let
+        // this simulator accept a shape cmd does not.
+        if (c == '^' && !inQuotes) {
             if (i + 1 < line.size()) out.passedOn.push_back(line[++i]);
             continue;
         }
@@ -236,6 +239,22 @@ TEST(WindowsCommandLine, MetacharacterQuotingSurvivesBothParsers) {
     ASSERT_EQ(argv.size(), 5u) << parsed.passedOn;
     EXPECT_EQ(argv[4], kJsonWithAFloor)
         << "the child received something other than the JSON that was meant";
+}
+
+TEST(WindowsCommandLine, NothingToEscapeMeansByteIdenticalToPlainQuoting) {
+    // The conservative half of the rule, and it is the half that was measured
+    // the hard way: an earlier version escaped every metacharacter INCLUDING
+    // the quotes, which is defensible on paper and broke every package fetch on
+    // Windows -- including the ones whose JSON contains no metacharacter. A
+    // payload with nothing to escape must come out exactly as before.
+    for (std::string_view plain : {
+             R"({"targets":["mcpplibs:tpl-demo@1.0.0"],"yes":true})",
+             R"({"targets":["compat:widget@1.38.1"],"yes":true})",
+             R"(a plain path C:\Program Files\x)" }) {
+        EXPECT_EQ(mcpp::platform::shell::quote_windows_through_cmd(plain),
+                  mcpp::platform::shell::quote_windows(plain))
+            << "a payload with no metacharacter acquired an escape: " << plain;
+    }
 }
 
 TEST(WindowsCommandLine, MetacharacterQuotingIsUnchangedForPlainText) {

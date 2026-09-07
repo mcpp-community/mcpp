@@ -41,11 +41,20 @@ std::string quote_posix(std::string_view s);
 //
 // which arrived as a package-provisioning failure naming a package.
 //
-// The answer is the standard double escape: quote for the child, then prefix
-// every cmd metacharacter -- the quotes included -- with `^`. With no `"` left
-// unescaped cmd never enters a quoted region, so every metacharacter is
-// escaped rather than quoted, which is the only state in which both rules
-// hold. cmd removes the carets and the child sees exactly `quote_windows`.
+// The answer escapes exactly what needs it: quote for the child, then walk the
+// result tracking the quote state CMD sees -- every `"` toggles it, because cmd
+// does not know MSVCRT's `\"` -- and prefix `^` to any metacharacter that falls
+// outside a quoted region. Inside one it is already inert, and `^` there is a
+// literal character rather than an escape.
+//
+// ESCAPING EVERY METACHARACTER INCLUDING THE QUOTES WAS TRIED FIRST AND
+// BROKE EVERY PAYLOAD. It is defensible on paper -- with no bare `"`, cmd never
+// enters a quoted region and each metacharacter is escaped rather than quoted
+// -- and Windows CI answered `exit 1` for every package fetch, including the
+// ones whose JSON contains no metacharacter at all. So the rule here is the
+// conservative one: a payload with nothing to escape comes out byte-identical
+// to `quote_windows`, and only the character that is actually unprotected
+// acquires a caret.
 //
 // `%` IS NOT ESCAPED AND CANNOT BE. Variable expansion happens before caret
 // processing, and the batch-file escape (`%%`) is not available on a command
@@ -101,15 +110,24 @@ std::string quote_posix(std::string_view s) {
 std::string quote_windows_through_cmd(std::string_view s) {
     const std::string inner = quote_windows(s);
     std::string out;
-    out.reserve(inner.size() * 2);
+    out.reserve(inner.size() + 8);
+    // cmd's quote state, which is toggled by EVERY `"` -- it does not know
+    // MSVCRT's `\"`. Inside a quoted region a metacharacter is already inert
+    // and `^` is a literal character, so only the characters that fall OUTSIDE
+    // one are escaped. That keeps the result byte-identical to `quote_windows`
+    // for every payload with nothing to escape, which is nearly all of them.
+    bool inQuotes = false;
     for (char c : inner) {
-        switch (c) {
-            case '"': case '<': case '>': case '&': case '|':
-            case '^': case '(': case ')':
-                out.push_back('^');
-                break;
-            default:
-                break;
+        if (c == '"') { inQuotes = !inQuotes; out.push_back(c); continue; }
+        if (!inQuotes) {
+            switch (c) {
+                case '<': case '>': case '&': case '|':
+                case '^': case '(': case ')':
+                    out.push_back('^');
+                    break;
+                default:
+                    break;
+            }
         }
         out.push_back(c);
     }

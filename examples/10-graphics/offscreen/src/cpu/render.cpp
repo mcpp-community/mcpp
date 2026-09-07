@@ -7,6 +7,17 @@
 // `render_device_name`, never the image.
 #include "render/render.h"
 
+// `<cstddef>` FOR `std::size_t`, AND IT IS NOT PEDANTRY.
+//
+// A standard header is entitled to bring in whichever others it needs, and
+// which ones it brings differs between implementations. This file compiled
+// against libstdc++ and then failed against libc++ on the same machine:
+//
+//   src/cpu/render.cpp:56:52: error: no type named 'size_t' in namespace 'std'
+//
+// A translation unit that names a type has to include the header that declares
+// it, whatever the last implementation happened to hand it for free.
+#include <cstddef>
 #include <cmath>
 
 namespace {
