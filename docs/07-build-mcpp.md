@@ -121,7 +121,7 @@ int main() {
 | `mcpp::link_flag(s)` *(2026.9.6.5+)* | `mcpp:link-flag=` |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` — see below |
-| `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package this manifest declared in `[xlings.workspace]`; `""` when it was not declared or is not installed (see below) |
+| `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package declared in `[xlings.workspace]` — by this manifest, or by a dependency compiled into this build program *(2026.9.6.6+)*; `""` when it was not declared or is not installed (see below) |
 | `mcpp::warning(text)` *(2026.8.21.2+)* | `mcpp:warning=` — see below |
 | `mcpp::action{…}.submit()` *(2026.8.5.1+)* | `mcpp:action=` — declares a **build-graph node** instead of doing the work here (see below) |
 
@@ -334,6 +334,18 @@ store internals mcpp is free to change — the same reason `dep_dir` exists.
 A **pinned** reference resolves to exactly that version or to nothing. A
 build that asked for `1.8.12` and silently got `1.9.0` is an answer only
 discovered later, in the artifact.
+
+A **constrained** one (`>=8.5.0`, `^1.2`) resolves to the highest installed
+version satisfying it *(2026.9.6.6+)*. Before that release the whole version
+position was compared against a directory name, so a range installed a payload
+and then answered that nothing was installed — which is why a rule package
+could not state a floor and every project repeated its rule's package list.
+
+**A package a DEPENDENCY declared is answered too** *(2026.9.6.6+)*, at the
+version this build actually installed rather than the one the local manifest
+wrote. One package means one version: where a project and a rule both name it,
+the declaration nearer the artifact wins and both sides are told the same
+answer. See *One package, one version* in [05 — mcpp.toml](05-mcpp-toml.md).
 
 **`[feature-xlings.<f>]` is answered too, while `<f>` is active**
 *(2026.9.6.2+)*. That table has provisioned its packages since it existed --

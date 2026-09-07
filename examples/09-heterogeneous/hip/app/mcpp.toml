@@ -3,7 +3,10 @@ name         = "hip-saxpy"
 namespace    = "example"
 version      = "0.1.0"
 description  = "A HIP kernel behind a seam module, reaching an NVIDIA device, with a CPU fallback"
-accelerators = ["hip"]
+# BOTH, because the constrained glob below names both. On the NVIDIA platform
+# HIP compiles THROUGH the CUDA back end, so `cuda` is a backend this package's
+# sources are written for even though nothing in them says the word.
+accelerators = ["hip", "cuda"]
 
 [language]
 standard   = "c++23"

@@ -74,6 +74,25 @@ enum class Code {
     // the project's own sources ask for a device the build was not told to
     // target.
     AccelMismatch,
+    // A source glob names an accelerator backend its own package does not list
+    // in `[package] accelerators`. Distinct from AccelMismatch, which is about
+    // THIS build's device set: this one is a property of the manifest alone and
+    // is refused whether or not the build names any accelerator at all.
+    AccelBackendUndeclared,
+    // A device-kind source reached no action. The engine has no compile rule
+    // for those extensions, so a file the package's build program did not claim
+    // is a file nothing compiles -- reported here rather than as the undefined
+    // reference it used to become at the link.
+    DeviceSourceUnconsumed,
+    // `build.mcpp` imports a module no dependency supplies as a host module.
+    // Distinct from an ordinary missing dependency: the package may well be in
+    // the graph and reaching the target, and still not be compiled for the
+    // build program, which is what `host-module = true` asks for.
+    HostModuleMissing,
+    // Two declarations name one xlings package at versions that cannot both
+    // hold. Distinct from VersionFloorUnmet, which is about the machine: this
+    // one is about two manifests disagreeing over a tool.
+    ToolVersionConflict,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -97,6 +116,12 @@ constexpr std::string_view name(Code c) {
         case Code::ExclusiveCapability:  return "exclusive-capability";
         case Code::VersionFloorUnmet:    return "version-floor-unmet";
         case Code::AccelMismatch:        return "accel-mismatch";
+        case Code::AccelBackendUndeclared:
+                                         return "accel-backend-undeclared";
+        case Code::DeviceSourceUnconsumed:
+                                         return "device-source-unconsumed";
+        case Code::HostModuleMissing:    return "host-module-missing";
+        case Code::ToolVersionConflict:  return "tool-version-conflict";
         case Code::Other:                return "other";
     }
     return "other";

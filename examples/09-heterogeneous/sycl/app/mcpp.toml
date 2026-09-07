@@ -3,7 +3,10 @@ name         = "sycl-saxpy"
 namespace    = "example"
 version      = "0.1.0"
 description  = "A SYCL kernel behind a seam module, reaching an NVIDIA device, with a CPU fallback"
-accelerators = ["sycl"]
+# BOTH, for the reason the HIP example records: the glob below names the NVIDIA
+# target the SYCL unit is compiled for, so `cuda` is a backend this package's
+# sources are written for.
+accelerators = ["sycl", "cuda"]
 
 [language]
 standard   = "c++23"

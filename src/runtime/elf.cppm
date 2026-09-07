@@ -395,7 +395,8 @@ std::optional<std::filesystem::path> resolve_needed(
     std::string_view soname,
     const ElfRuntimeFacts& requester,
     const mcpp::platform::runtime::RuntimeBinding& binding,
-    std::span<const std::filesystem::path> additionalSearchDirs) {
+    std::span<const std::filesystem::path> additionalSearchDirs,
+    std::span<const std::string> inheritedRpaths) {
     std::filesystem::path named(soname);
     std::error_code ec;
     if (named.has_parent_path()) {
@@ -409,6 +410,26 @@ std::optional<std::filesystem::path> resolve_needed(
     std::vector<std::filesystem::path> dirs;
     for (auto const& raw : requester.runpaths)
         append_unique_path(dirs, expand_origin(raw, requester.artifact));
+    // DT_RPATH IS INHERITED DOWN THE DEPENDENCY CHAIN; DT_RUNPATH IS NOT.
+    //
+    // The loader searches the DT_RPATH of every object on the chain that
+    // loaded this one, not just this object's own. Modelling only the
+    // requester's list reported a library as unfindable whenever a payload's
+    // shared libraries depend on each other and the RPATH naming their
+    // directory sits on the EXECUTABLE -- which is the ordinary shape for a
+    // vendor toolkit. Measured on examples/09-heterogeneous/cann: mcpp refused
+    // the build naming eight libraries, and the artifact it had just linked
+    // resolved seven of them and failed on the eighth, which belongs to a
+    // driver that machine does not have.
+    //
+    // The suppression is a property of the SEARCHING object: an object that
+    // carries DT_RUNPATH uses no RPATH at all, its own or inherited. `Both` is
+    // that case too, because glibc ignores DT_RPATH whenever DT_RUNPATH is
+    // present.
+    if (requester.searchPathTag != SearchPathTag::Runpath
+        && requester.searchPathTag != SearchPathTag::Both)
+        for (auto const& raw : inheritedRpaths)
+            append_unique_path(dirs, expand_origin(raw, requester.artifact));
     for (auto const& dir : additionalSearchDirs) append_unique_path(dirs, dir);
     for (auto const& dir : binding.libraryDirs) append_unique_path(dirs, dir);
     // NOTE: the SubOS farm is NOT read from the binding here.
@@ -910,8 +931,16 @@ RuntimeResolution resolve_runtime_closure(
     resolution.artifact = std::move(*root);
     resolution.artifactIsElf = true;
 
-    std::deque<ElfRuntimeFacts> queue;
-    queue.push_back(resolution.artifact);
+    // Each queued object carries the DT_RPATHs it inherited from the chain
+    // that loaded it. Kept beside the facts rather than inside them: it is a
+    // property of HOW this object was reached, and the same file reached twice
+    // is one loaded object with the first arrival's chain.
+    struct Pending {
+        ElfRuntimeFacts          facts;
+        std::vector<std::string> inheritedRpaths;
+    };
+    std::deque<Pending> queue;
+    queue.push_back({resolution.artifact, {}});
     std::set<std::filesystem::path> visited;
     visited.insert(detail::comparable_path(artifact));
     // The ELF loader maintains one process-global loaded-object namespace.
@@ -924,8 +953,18 @@ RuntimeResolution resolve_runtime_closure(
     }
     constexpr std::size_t kMaxClosureObjects = 512;
     while (!queue.empty() && resolution.objects.size() < kMaxClosureObjects) {
-        auto requester = std::move(queue.front());
+        auto pending = std::move(queue.front());
         queue.pop_front();
+        const auto& requester = pending.facts;
+        // What this object hands to the objects it loads: its own DT_RPATH
+        // when that is the tag it carries, on top of whatever it inherited.
+        // DT_RUNPATH never propagates, and a `Both` object's DT_RPATH is dead
+        // to the loader, so neither contributes.
+        std::vector<std::string> childRpaths = pending.inheritedRpaths;
+        if (requester.searchPathTag == SearchPathTag::Rpath)
+            for (auto const& raw : requester.runpaths)
+                if (std::ranges::find(childRpaths, raw) == childRpaths.end())
+                    childRpaths.push_back(raw);
         for (auto const& soname : requester.needed) {
             std::optional<std::filesystem::path> path;
             if (auto loaded = loadedBySoname.find(soname);
@@ -933,7 +972,8 @@ RuntimeResolution resolve_runtime_closure(
                 path = loaded->second;
             } else {
                 path = detail::resolve_needed(
-                    soname, requester, binding, additionalSearchDirs);
+                    soname, requester, binding, additionalSearchDirs,
+                    pending.inheritedRpaths);
                 if (!path) {
                     resolution.unresolved.push_back(soname);
                     resolution.unresolvedSonames.push_back(soname);
@@ -968,7 +1008,7 @@ RuntimeResolution resolve_runtime_closure(
                 }
                 loadedBySoname.emplace(parsed->soname, *path);
             }
-            queue.push_back(*parsed);
+            queue.push_back({*parsed, childRpaths});
             resolution.objects.push_back(std::move(*parsed));
         }
     }

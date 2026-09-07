@@ -27,8 +27,17 @@ Measured on an x86_64 machine with **no Ascend hardware and no Ascend driver**:
 | the kernel compiles | `bisheng -x asc --cce-aicore-arch=dav-c220` |
 | the object joins the ordinary link | mixed mode: an x86-64 object carrying the device binary |
 | the host half links | ACL, plus the six-library closure the rule names |
+| the runtime-closure check | names `libascend_hal.so` and nothing else (2026.9.6.6+) |
 | the artifact starts | **no** -- `libascend_hal.so` is missing |
 | `--no-accel` | builds and runs: `12 24 36 48`, `device: cpu` |
+
+The closure row is a measurement that once disagreed with the loader. Before
+2026.9.6.6 mcpp named **eight** libraries, and the artifact it had just linked
+resolved seven of them: the toolkit's shared libraries depend on each other by
+bare SONAME and carry no search path, while the directory holding them is named
+once, in the executable's `DT_RPATH`. The model searched only the requesting
+object's own list, and `DT_RPATH` is inherited down the whole chain. The engine
+now models that, so the refusal names exactly what the loader will fail on.
 
 `libascend_hal.so` belongs to the **driver**, not the toolkit, and is the role
 `libcuda.so.1` plays for CUDA: in ABI lockstep with the kernel module, not
