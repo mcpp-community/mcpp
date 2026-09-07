@@ -456,41 +456,62 @@ jobs:
           done
           echo "ok: both shader stages compiled and the Vulkan half linked"
 
-      # WINDOWS STAYS AT "BUILDS", AND WHAT REMAINS OPEN IS THE DRIVER.
+      # WINDOWS STAYS AT "BUILDS", AND FOUR MEASUREMENTS SAY WHY IT IS NOT
+      # WAITING ON ANY OF THE THINGS IT WAS THOUGHT TO BE.
       #
-      # A run step was written, pushed, and measured (run 34135108981). The
-      # manifest declaration worked -- `Provisioning [xlings.workspace] entries
-      # (xim:mesa-lavapipe@26.2.0)` -- the ICD manifest was found in the store,
-      # and the program printed `render unavailable`, which is `src/main.cpp`
-      # reporting that the render function returned nothing.
+      # 1. Not a missing `vulkan-1.dll`. The program printed `render
+      #    unavailable`, which `src/main.cpp` writes after the render function
+      #    returns nothing. A process that could not resolve `vkCreateInstance`
+      #    from that DLL fails during image load and prints nothing at all.
+      #    mcpp-index's own `vulkan-tests` member calls
+      #    `vkEnumerateInstanceVersion` on the windows shards and passes.
       #
-      # THAT OUTPUT PLACES THE FAILURE AFTER THE LOADER, NOT AT IT. The Vulkan
-      # leg imports `vkCreateInstance` from `vulkan-1.dll` through the import
-      # library, so a process missing that DLL fails during image load and
-      # prints nothing at all. It printed. The loader was there, it ran, and it
-      # enumerated no device -- which is a statement about the ICD.
+      # 2. Not an unparseable ICD manifest, though that WAS a real defect.
+      #    `xim:mesa-lavapipe` wrote its rewritten `library_path` into the
+      #    JSON string unescaped, so `C:\Users\...` carried `\U` and the
+      #    loader's cJSON parser rejected the file -- an ICD it skips with no
+      #    error. Fixed in openxlings/xim-pkgindex#781. With the fix the runner
+      #    reads
+      #      "library_path": "C:/Users/.../lib/vulkan_lvp.dll"
+      #    and the manifest parses. The program still prints `render
+      #    unavailable`.
       #
-      # An earlier revision of this comment named a missing `vulkan-1.dll` as
-      # the cause. That was an inference from the descriptor's note about static
-      # linkage rather than a reading of the failure, and the log refutes it.
-      # Two facts stand against it: this program ran, and mcpp-index's own
-      # `vulkan-tests` member calls `vkEnumerateInstanceVersion` on the windows
-      # shards and passes.
+      # 3. Not a failed `LoadLibrary`. `vulkan_lvp.dll` imports only
+      #    ADVAPI32, GDI32, KERNEL32, ntdll, ole32, SHELL32 and USER32, all of
+      #    which any Windows has; the payload ships nothing else that could be
+      #    missing.
       #
-      # A separate measurement, recorded here because it removes a second thing
-      # from the list of suspects: the Khronos loader in `compat:vulkan` builds
-      # into a working `vulkan-1.dll` from the source the index already carries
-      # (mingw, 265 exports matching upstream's `vulkan-1.def` exactly, DllMain
-      # present, importing only ADVAPI32/CFGMGR32/KERNEL32/msvcrt). The
-      # descriptor's note argues that a Windows loader must be a DLL, not that
-      # it cannot be built -- so a hermetic Windows loader is available whenever
-      # it is wanted. It is not what this step is waiting on.
+      # 4. Not the environment variable's vintage. Both `VK_DRIVER_FILES` and
+      #    `VK_ICD_FILENAMES` were set, which covers loaders on either side of
+      #    1.3.234.
       #
-      # What this step is waiting on is `xim:mesa-lavapipe`'s Windows payload
-      # producing a device under an mcpp-launched process. Until that is
-      # measured, the job builds the Vulkan half and runs the CPU fallback.
-      # macOS is not in the same position: MoltenVK enumerates once the instance
-      # asks for portability, which `src/vulkan/render.cpp` now does.
+      # What the loader itself said under `VK_LOADER_DEBUG=all`:
+      #
+      #   INFO: Loader is running with elevated permissions.
+      #         Environment variable VK_DRIVER_FILES will be ignored
+      #   INFO: Loader is running with elevated permissions.
+      #         Environment variable VK_ICD_FILENAMES will be ignored
+      #   DRIVER: Found no registry files in
+      #           HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers
+      #   ERROR | DRIVER: windows_read_data_files_in_registry: Registry lookup
+      #           failed to get ICD manifest files.  Possibly missing Vulkan driver?
+      #
+      # THAT IS THE WHOLE ANSWER, AND NO PACKAGE CHANGE REACHES IT. A GitHub
+      # Windows runner runs elevated, and the loader discards every driver-path
+      # environment variable when it is -- it will not let a path a
+      # non-administrator could write inject a driver into an elevated process.
+      # It then falls back to the registry, which has no ICD. The mechanism this
+      # example uses on Linux and macOS is simply unavailable here.
+      #
+      # Reaching lavapipe on Windows therefore means registering the ICD under
+      # `HKEY_LOCAL_MACHINE\SOFTWARE\Khronos\Vulkan\Drivers`, or running the
+      # program unelevated. `xim:mesa-lavapipe`'s `config()` says outright that
+      # it places the payload and leaves naming the ICD to the consumer, so the
+      # registry entry is a decision for that package or for this repository,
+      # not a defect in either
+      #
+      # So the platform builds the Vulkan half and runs the CPU fallback, and
+      # the next attempt starts from here rather than from the top.
 
       - name: "Toolchain: LLVM — build mcpp (self-host)"
         shell: bash

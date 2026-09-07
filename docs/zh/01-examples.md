@@ -29,10 +29,10 @@ mcpp build && mcpp run
 | 07 | [`examples/07-project-subos`](../../examples/07-project-subos/) | 构建程序在工程声明的环境里找工具,而不是问机器上恰好有什么 | `[xlings] subos`、`[xlings.workspace]`、构建程序的 `PATH` 来自工程声明的那个环境 |
 | 08 | [`examples/08-build-rules`](../../examples/08-build-rules/) | 两个规则包,以及同时用到它们的工程 | `host-module = true`、`[build-dependencies]`、`role = "check"` 的 `mcpp::action` |
 | 09 | [`examples/09-heterogeneous`](../../examples/09-heterogeneous/) | 同一个计算在设备上跑,写成多种编程模型,每种都带 CPU 回退;外加一个同时携带多个后端的产物 | `accel`、带约束的 source glob、接缝模块、来自 `mcpp:plugins` 的规则包、`cfg(accelerator = …)` |
-| 09a | [`…/cuda`](../../examples/09-heterogeneous/cuda/) | 接缝模块背后的 CUDA kernel | `mcpp.rules.cuda`、`role = "object"` 的 `mcpp::action`、把驱动陈述为 fact 与 floor |
-| 09b | [`…/vulkan`](../../examples/09-heterogeneous/vulkan/) | 同一个计算写成 Vulkan compute shader,在 GPU 上或在 CPU 上 | `mcpp.rules.spirv`、`role = "source"` 的 `mcpp::action`、生成的头文件、作为载荷的软件驱动 |
-| 09c | [`…/sycl`](../../examples/09-heterogeneous/sycl/) | 同一个计算写成 SYCL kernel,由第二个编译器编译 | `mcpp.rules.sycl`、`.sycl` 设备扩展名、为 device link 串起来的 `mcpp::action`、`compat:sycl-runtime` |
-| 09d | [`…/hip`](../../examples/09-heterogeneous/hip/) | 同一个计算写成 HIP,够到一台 NVIDIA 设备 | `mcpp.rules.hip`、HIP 作为 CUDA 运行时之上的一层头文件、两段式的 `accel` |
+| 09a | [`…/cuda`](../../examples/09-heterogeneous/cuda/) | 接缝模块背后的 CUDA kernel,`extern "C"` 边界是**生成**的 | `mcpp.rules.cuda`、`mcpp.tools.island`、`role = "object"` 的 `mcpp::action`、把驱动陈述为 fact 与 floor |
+| 09b | [`…/vulkan`](../../examples/09-heterogeneous/vulkan/) | 同一个计算写成 Vulkan compute shader,SPIR-V 载荷以**模块**到达 | `mcpp.rules.spirv`、模块表面、`role = "source"` 的 `mcpp::action`、作为载荷的软件驱动 |
+| 09c | [`…/sycl`](../../examples/09-heterogeneous/sycl/) | 同一个计算写成 SYCL kernel,由第二个编译器编译 | `mcpp.rules.sycl`、`mcpp.tools.island`、`.sycl` 设备扩展名、为 device link 串起来的 `mcpp::action`、`compat:sycl-runtime` |
+| 09d | [`…/hip`](../../examples/09-heterogeneous/hip/) | 同一个计算写成 HIP,边界是**手写**的 —— 与 09a 的对照 | `mcpp.rules.hip`、HIP 作为 CUDA 运行时之上的一层头文件、两段式的 `accel` |
 | 09e | [`…/multi-backend`](../../examples/09-heterogeneous/multi-backend/) | 多个后端进**同一个产物**,运行期选择 —— 这是库的形态,不是程序的形态 | `accel` 作为集合、`cfg(accelerator = "none")` 及其否定、分发链、C 岛边界之上的模块接缝 |
 | 09f | [`…/cann`](../../examples/09-heterogeneous/cann/) | 同一道接缝背后的 Ascend C kernel。**目前还构建不了** —— README 里点明了缺的两块 | `.asc` 设备扩展名、CANN 本来就有的 `op_kernel`/`op_host` 岛、回退用 `accelerator = "none"` |
 | 10 | [`examples/10-graphics`](../../examples/10-graphics/) | 图形而不是计算:一条渲染管线,它的结果是像素 | `mcpp.rules.spirv` 编译顶点与片段两个阶段、离屏渲染作为可断言的形态 |

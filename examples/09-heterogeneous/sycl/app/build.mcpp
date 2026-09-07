@@ -1,9 +1,61 @@
 import std;
 import mcpp;
+import mcpp.tools.island;
 import mcpp.rules.sycl;
 
+// THE BOUNDARY IS GENERATED, AND BOTH HALVES ARE READ.
+//
+// A seam has two implementations of one `extern "C"` boundary -- the island and
+// the host fallback -- and exactly one of them is in any link. Both are handed
+// to `scan` unconditionally: both exist on disk in either build, and which one
+// is compiled is the manifest's decision, which this program does not repeat.
+//
+// What that buys is a check nothing else performs. C language linkage does not
+// mangle and the two halves never meet at the link, so two that declared one
+// name differently would build cleanly and the artifact would read its
+// arguments by whichever signature it was compiled with. `scan` is the only
+// point at which both texts exist at once, and it refuses there.
+static std::optional<mcpp::tools::island::emitted> generate_boundary() {
+    const std::vector<std::string> halves{
+        std::string(mcpp::manifest_dir()) + "/src/kernels/saxpy.sycl",
+        std::string(mcpp::manifest_dir()) + "/src/cpu/saxpy.cpp",
+    };
+    for (auto const& f : halves) mcpp::rerun_if_changed(f.c_str());
+
+    mcpp::tools::island::options opt;
+    // Named rather than defaulted, so this project's modules share one root:
+    // `app.saxpy` is the seam and `app.kernels` is the boundary under it. The
+    // default derives from the package name, which would give
+    // `sycl_saxpy.kernels` -- what `examples/09-heterogeneous/vulkan` uses for its
+    // shaders.
+    opt.module_name = "app.kernels";
+    opt.out_dir     = std::string(mcpp::out_dir()) + "/island";
+    opt.produced_by = "the sycl example";
+
+    const auto entries = mcpp::tools::island::scan(halves, opt);
+    if (!entries) return std::nullopt;
+    auto out = mcpp::tools::island::emit(*entries, opt);
+    if (!out) return std::nullopt;
+
+    // The host half is ordinary project C++ and includes the generated header
+    // by name, so this directory has to be on the C++ include path too.
+    mcpp::include_dir(out->include_dir.c_str());
+    mcpp::generated(out->interface_file.c_str());
+    return out;
+}
+
 int main() {
+    const auto boundary = generate_boundary();
+    if (!boundary) return 1;
+
     mcpp::rules::sycl::options opt;
-    opt.includes = { "include" };
+    // NO `opt.includes`. The island's only header is the generated boundary,
+    // and it arrives through the forced-include flags below rather than through
+    // a search path -- the project has no `include/` tree left to name.
+    //
+    // NOT `mcpp::cflag`: the SYCL compiler is a driver mcpp did not invoke, and
+    // it inherits nothing from the project-wide flag channels.
+    opt.flags = mcpp::tools::island::force_include_flags(boundary->header_file,
+                                                        mcpp::compiler());
     return mcpp::rules::sycl::compile(opt) ? 0 : 1;
 }

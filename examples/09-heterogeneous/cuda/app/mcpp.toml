@@ -19,8 +19,11 @@ default = "llvm@22.1.8"
 
 # The rule that compiles the island lives in the official plugin collection,
 # selected by its feature; `build.mcpp` imports it as `mcpp.rules.cuda`.
+# `tools-island` is the second member this project uses: it writes the
+# `extern "C"` boundary the island's compiler reads and the module the seam
+# imports, so neither signature is stated twice.
 [build-dependencies.mcpp]
-plugins = { version = "0.2.4", features = ["rules-cuda"], host-module = true }
+plugins = { version = "0.3.0", features = ["rules-cuda", "tools-island"], host-module = true }
 
 # The driver's userspace library, reached through an index package that owns
 # the one hop mcpp needs: a directory on the artifact's runtime search path.
@@ -35,7 +38,7 @@ cuda-driver = "2026.09.05"
 # `cfg(accelerator = ...)` and the feature that selects it, so this project
 # names the rule and nothing else. To pin a different version, write the same
 # entry here and it wins -- see `One package, one version` in
-# docs/05-mcpp-toml.md. Needs mcpp 2026.9.6.6 and mcpp:plugins 0.2.4.
+# docs/05-mcpp-toml.md. Needs mcpp 2026.9.7.1 and mcpp:plugins 0.3.0.
 #
 # What the rule declares for this lane: nvcc, cudart, cuRAND's headers, CCCL and
 # the driver sentinel. The 12.9 line is an EXACT default rather than a floor,
@@ -55,7 +58,8 @@ sources = [
   "src/*.cpp",
   { glob = "src/kernels/**/*.cu", accel = "cuda12.9+{sm_89}" },
 ]
-include_dirs = ["include"]
+# NO `include_dirs`. This project has no header of its own: the one the island
+# reads is generated, and `build.mcpp` puts its directory on the include path.
 
 # The CUDA runtime is linked STATICALLY, and only when a device build asks for
 # it. Linking the redistributable half in leaves exactly one host dependency,

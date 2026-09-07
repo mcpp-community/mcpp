@@ -40,7 +40,7 @@ default = "llvm@22.1.8"
 # The rules are declared unconditionally because `build.mcpp` imports them
 # unconditionally -- each returns immediately when its own backend is absent.
 [build-dependencies.mcpp]
-plugins = { version = "0.2.4", features = ["rules-cuda", "rules-spirv"], host-module = true }
+plugins = { version = "0.3.0", features = ["rules-cuda", "rules-spirv"], host-module = true }
 
 # ── the payloads, gated on the device they are for ──────────────────────────
 #

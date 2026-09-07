@@ -10,7 +10,10 @@ app/
                           no BMI, and compiled by a SECOND compiler
   src/cpu/saxpy.cpp       the same interface implemented for the host, compiled
                           instead when the build asks for no accelerator
-  include/saxpy/saxpy.h   the island's interface: extern "C", no std types
+  (generated)             the `extern "C"` boundary and the module over it,
+                          written by `mcpp.tools.island` from the marked
+                          declarations in the two implementations above --
+                          there is no header in this source tree
   src/app.cppm            the seam: a module that turns the C interface back
                           into a C++ one
   src/main.cpp            an ordinary consumer, which imports the seam and

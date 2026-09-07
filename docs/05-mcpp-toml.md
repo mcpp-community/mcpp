@@ -2308,7 +2308,7 @@ have none, and nothing is what they write:
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.2.4", features = ["rules-cuda"], host-module = true }
+plugins = { version = "0.3.0", features = ["rules-cuda"], host-module = true }
 ```
 
 That one edge is the whole declaration. The rule package names the packages its
@@ -2546,7 +2546,7 @@ rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spir
 ```toml
 # a consumer
 [build-dependencies.mcpp]
-plugins = { version = "0.2.1", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.3.0", features = ["rules-spirv"], host-module = true }
 ```
 
 **`[build-dependencies]`, not `[dependencies]`** — a rule package is the case

@@ -9,11 +9,38 @@ app/
   src/kernels/saxpy.hip   the island: a device translation unit written against
                           the HIP API
   src/cpu/saxpy.cpp       the same interface implemented for the host
-  include/saxpy/saxpy.h   the island's interface: extern "C", no std types
+  include/saxpy/saxpy.h   the island's interface: extern "C", no std types.
+                          WRITTEN BY HAND, and that is why this example
+                          exists beside `cuda/` -- see below
   src/app.cppm            the seam
   src/main.cpp            an ordinary consumer
   build.mcpp              hands the device sources to `mcpp.rules.hip`
 ```
+
+## The boundary is written by hand here, and generated in `cuda/`
+
+The two examples compute the same thing through the same seam, so the one
+difference between them is how the `extern "C"` boundary comes to exist.
+
+Here it is a file in the source tree. Each signature appears twice -- once in
+`include/saxpy/saxpy.h` and once at each definition -- and nothing checks that
+the copies agree. That is the ordinary arrangement, and it is worth seeing
+written out, because it is what every C boundary looks like and because the
+failure it permits is quiet: C language linkage does not mangle and the island
+and the CPU fallback are never in one link, so a signature that drifted produces
+a clean build and an artifact that reads its arguments by whichever version it
+was compiled with.
+
+`cuda/` marks the entry points where they are defined and lets
+`mcpp.tools.island` write the header and the module from them. The signatures
+then exist once, and the generator -- handed both implementations -- refuses a
+disagreement at the one point where both texts are in front of it.
+
+Neither is deprecated. A project whose boundary is stable, or whose island is
+compiled somewhere mcpp cannot reach, writes the header; the generated form is
+the default because the copy it removes is the one that goes wrong silently.
+
+## The kernel
 
 Compare `src/kernels/saxpy.hip` with example 09's `saxpy.cu`: the same kernel,
 the same seam, and every device call spelled `hip*` instead of `cuda*`.

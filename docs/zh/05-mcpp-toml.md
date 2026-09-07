@@ -1964,7 +1964,7 @@ hardware = {}
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.2.4", features = ["rules-cuda"], host-module = true }
+plugins = { version = "0.3.0", features = ["rules-cuda"], host-module = true }
 ```
 
 这一条边就是全部声明。规则包在选中它的那个 feature、它所服务的加速器之下,声明自己
@@ -2166,7 +2166,7 @@ rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spir
 ```toml
 # 消费者
 [build-dependencies.mcpp]
-plugins = { version = "0.2.1", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.3.0", features = ["rules-spirv"], host-module = true }
 ```
 
 **用 `[build-dependencies]` 而不是 `[dependencies]`** —— 规则包正是 §2.6.1 描述的那种

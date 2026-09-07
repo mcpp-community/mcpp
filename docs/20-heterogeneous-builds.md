@@ -185,13 +185,20 @@ could read a BMI.
 The seam above is written by hand, and the shader lane's equivalent is
 generated. That is not an inconsistency; the two lanes carry different things.
 
-**A device translation unit is code.** Its interface is a design decision --
-which functions, which types, what happens on failure -- and no generator can
-make that decision well. So CUDA, HIP, SYCL and Ascend C get a hand-written
-seam, and the `extern "C"` header exists for the ABI reason above. Both are
-already invisible to a consumer: only the seam includes the header, and
-everything downstream writes `import app.saxpy`. **These lanes are module-first
-today and always have been.**
+**A device translation unit is code, and the seam over it is a design
+decision** -- which functions, which types, what happens on failure. No
+generator makes that decision well, so CUDA, HIP, SYCL and Ascend C get a
+hand-written seam, and everything downstream writes `import app.saxpy`.
+
+**The `extern "C"` boundary UNDER that seam is not a design decision.** It is
+each entry point's signature, stated a second time in a header, at the one place
+where a disagreement is invisible: C language linkage does not mangle, and a
+device island and its host fallback are never in one link. `mcpp.tools.island`
+reads the marked declarations out of both implementations and writes that header
+and a module over it, so the signatures exist once and two halves that disagree
+are refused where both texts are in front of the generator.
+`examples/09-heterogeneous/cuda` and `.../sycl` are that shape;
+`.../hip` keeps its header written by hand, so the two can be read side by side.
 
 **A shader or an embedded file is data.** Its interface is an address and a
 size, which is mechanical, so a rule package generates it and a consumer writes
@@ -202,6 +209,31 @@ interface, and every consumer named it.
 So the rule is not "generate the interface" or "write it by hand". It is: a
 mechanical interface is generated, a designed one is written, and in both cases
 the header is an intermediate that no consumer names.
+
+#### The name a payload arrives under
+
+The module and the namespace are one identifier path, derived from names the
+project already wrote.
+
+| Written | Reached as |
+|---|---|
+| `[package] name = "myapp"` | module root `myapp` |
+| `shaders/scale.comp` | `myapp::shaders::scale_comp()` |
+| `shaders/a/scale.comp` | `myapp::shaders::a::scale_comp()` |
+| a `MCPP_EXPORT_C` entry point | `export using ::the_name;` in the boundary module |
+
+The root is the **package's** name with non-identifier characters replaced, not
+its directory's -- the two differ whenever a package sits under a generic folder,
+and mcpp reports the package name to a build program from 2026.9.7.1 for exactly
+this. The stem and the stage make the accessor (`scale.comp` -> `scale_comp`),
+and the directory below the group's base becomes namespace segments, which is
+what makes two shaders sharing a stem two things rather than a collision. A
+project that wants another name passes one; `examples/09-heterogeneous/cuda`
+does, so its boundary is `app.kernels` beside its seam `app.saxpy`.
+
+The accessor answers with the address and the byte count together. `sizeof` is
+not merely awkward at this boundary, it is unanswerable: the words may be in an
+object rather than in an array, and there is then nothing to take the size of.
 
 ## Compiling an island
 
@@ -221,7 +253,7 @@ A project that wants a CUDA island writes one edge:
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.2.4", features = ["rules-cuda"], host-module = true }
+plugins = { version = "0.3.0", features = ["rules-cuda"], host-module = true }
 ```
 
 and nothing else. The vendor toolkit, its runtime and whatever else the rule
