@@ -329,6 +329,23 @@ install/config 形状,而那套形状是按 Linux 写的:
   Metal 的编译器只在 Xcode 内、不可再分发,所以它不是一个打包问题;ROCm 的运行时可
   再分发,但它需要的是一个 `rules-hip` 的 AMD 平台实现,而不是一个包。
 
+### 10.4b 第四处「读出来的写法是错的」:依赖不能被 layer 条件化
+
+图形示例最初把 Vulkan loader、运行时适配器与软件设备三条都门控在
+`cfg(accelerator = "vulkan")` 上,理由是「`--no-accel` 一个字节都不装」。**这条做不
+到,而且它失败的方式是安静的一半**:`accelerator` 是**从依赖图里解出来的**,所以一个
+由它选出的依赖会决定它自己正在问的那个答案 —— mcpp 因此忽略这个谓词并给出警告,而
+**同一个谓词下的 `[build]` 源照常生效**。结果是包被丢掉、包含它的源被留下:
+
+    src/vulkan/render.cpp:20:10: fatal error: vulkan/vulkan.h: No such file or directory
+
+判据是构建本身。谓词现在按平台写(`cfg(linux)` 用于只有 Linux 有的两项),包是无条件
+的,accelerator 只选 `[build]` 源 —— 也就是既有的 `examples/09-heterogeneous/vulkan`
+一直在用的形状。示例 README 把这一条写成了正文,因为它是一条使用者会撞上的规则。
+
+顺带一条读数:两条腿的中心像素**逐字节相同**(`(124, 70, 62, 255)`),所以 CI 的反向
+腿从「CPU 腿跑起来了」加强成「两条腿报出同一个像素、不同的设备名」。
+
 ### 10.5 一条留下的不一致,以及它什么时候消失
 
 `mcpp:plugins` 0.2.5 里 `xim:shaderc` 在 macOS 与 Windows 上是**精确版本**,而

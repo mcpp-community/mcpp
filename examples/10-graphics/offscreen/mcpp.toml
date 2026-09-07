@@ -15,23 +15,33 @@ import_std = true
 [build-dependencies.mcpp]
 plugins = { version = "0.2.5", features = ["rules-spirv"], host-module = true }
 
-# The Khronos loader, and on Linux the adapter that makes the host's own ICDs
-# reachable from a binary running under mcpp's private loader. The adapter is a
-# Linux concern by construction: macOS resolves through dyld and Windows through
-# the PE loader, and neither has a private loader to work around.
-# GATED ON THE ACCELERATOR, so `mcpp build --no-accel` installs nothing at all.
-# The CPU leg includes no Vulkan header and links no loader, and a build that
-# pays for one anyway is the shape `cfg(accelerator = ...)` exists to remove.
-[target.'cfg(accelerator = "vulkan")'.dependencies.compat]
+# The Khronos loader. Unconditional, and the reason is a rule of the engine
+# rather than a preference: A DEPENDENCY CANNOT BE CONDITIONED ON A LAYER.
+# `accelerator` is resolved FROM the dependency graph, so a dependency chosen by
+# it would decide the answer it is asking. mcpp says so and ignores the
+# predicate -- measured here, where an earlier revision of this file gated these
+# three entries on `cfg(accelerator = "vulkan")` and the build failed on
+# `vulkan/vulkan.h: No such file or directory`, because the header's package had
+# been silently dropped while the source that includes it was kept.
+#
+# `[build]` sources under the same predicate DO apply, which is what makes the
+# seam work: the CPU leg below is selected by the accelerator, and only the
+# packages are unconditional.
+[dependencies.compat]
 vulkan = "1.4.357.0"
 
-[target.'cfg(all(accelerator = "vulkan", linux))'.dependencies.compat]
+# The adapter that makes the host's own ICDs reachable from a binary running
+# under mcpp's private loader. An OS predicate, which IS allowed, and a Linux
+# concern by construction: macOS resolves through dyld and Windows through the
+# PE loader, and neither has a private loader to work around.
+[target.'cfg(linux)'.dependencies.compat]
 vulkan-runtime = "2026.09.07"
 
 # A Vulkan device that needs no GPU, so this example runs on a machine that has
 # none. It is a DEVICE and therefore a payload; the drivers a real GPU needs are
-# the host's, and `compat.vulkan` models those as a capability.
-[target.'cfg(all(accelerator = "vulkan", linux))'.xlings.workspace]
+# the host's, and `compat.vulkan` models those as a capability. Published for
+# Linux alone, so the predicate names the platform rather than the accelerator.
+[target.'cfg(linux)'.xlings.workspace]
 "xim:mesa-lavapipe" = "26.2.1"
 
 [build]

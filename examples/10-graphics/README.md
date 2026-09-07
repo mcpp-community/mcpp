@@ -70,8 +70,15 @@ shaders to the build program rather than to the C++ compiler; and the generated
 headers land on the include path, so `src/vulkan/render.cpp` writes
 `#include "triangle_vert.h"`.
 
-`mcpp build --no-accel` installs nothing at all — the Vulkan loader and the
-software device are both gated on the accelerator.
+**A dependency cannot be conditioned on the accelerator, and this project is
+where that shows.** `accelerator` is resolved from the dependency graph, so a
+dependency chosen by it would decide the answer it is asking for. mcpp says so
+and ignores the predicate. An earlier revision of this manifest gated the Vulkan
+loader on `cfg(accelerator = "vulkan")` and the build failed on
+`vulkan/vulkan.h: No such file or directory` — the header's package had been
+dropped while the source that includes it, selected by the same predicate, was
+kept. Packages are therefore unconditional or conditioned on the platform;
+`[build]` sources are what the accelerator selects.
 
 **One shader per stem.** The generated name is the shader's stem and its stage,
 so `ui/text.vert` and `world/text.vert` would both produce `text_vert.h`

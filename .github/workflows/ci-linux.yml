@@ -312,11 +312,23 @@ jobs:
             || { echo "the run did not reach the lavapipe device"; exit 1; }
           echo "$out" | grep -qE 'centre pixel: \([0-9]+, [0-9]+, [0-9]+, 255\)' \
             || { echo "no centre pixel was reported"; exit 1; }
-          # The reverse leg: the same assertions hold with no accelerator, which
-          # is what makes the pixel test a contract rather than a device quirk.
+          # THE REVERSE LEG, AND IT COMPARES THE PIXELS RATHER THAN JUST
+          # RUNNING. The claim this example makes is that the image is a
+          # contract two independent rasterisers satisfy, not a property of one
+          # device -- so the criterion is that the two legs report the SAME
+          # centre pixel while reporting different devices. Measured: both give
+          # (124, 70, 62, 255), byte for byte.
+          gpu_px=$(echo "$out" | grep -m1 '^centre pixel:')
           "$MCPP" build --no-accel
           "$MCPP" run --no-accel | tee cpu.log
           grep -q 'cpu rasteriser' cpu.log || { echo "the CPU leg did not run"; exit 1; }
+          cpu_px=$(grep -m1 '^centre pixel:' cpu.log)
+          [ -n "$gpu_px" ] && [ "$gpu_px" = "$cpu_px" ] || {
+            echo "the two legs disagree about the image:"
+            echo "  device: $gpu_px"
+            echo "  cpu:    $cpu_px"
+            exit 1; }
+          echo "ok: both legs agree on $cpu_px"
 
       - name: "Vulkan example: build the device half and run it on lavapipe"
         run: |
