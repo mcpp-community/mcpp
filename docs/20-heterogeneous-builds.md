@@ -479,13 +479,18 @@ names: `tests/unit/test_core_vendor_probes.cpp` asserts that no vendor tool
 name appears in `src/` once comments are stripped, with the file count as its
 own denominator.
 
-| feature of `mcpp:plugins` | module | compiler it drives | payloads it needs | `[build] accel` |
+| feature of `mcpp:plugins` | module | compiler it drives | payloads it declares | `[build] accel` |
 |---|---|---|---|---|
 | `rules-cuda` | `mcpp.rules.cuda` | the project's own clang (`-x cuda`), or nvcc with a GCC toolchain | `xim:cuda-nvcc`, `xim:cuda-cudart`, `xim:libcurand`, `xim:cuda-cccl` | `cuda12.9+{sm_89} ptx>=89` |
 | `rules-hip` | `mcpp.rules.hip` | the project's own clang (`-x cuda`) on the NVIDIA platform | the above plus `xim:hip-nvidia` | `hip, cuda12.9+{sm_89}` |
 | `rules-sycl` | `mcpp.rules.sycl` | the `xim:dpcpp` payload's clang (`-fsycl`) | `xim:dpcpp`, `xim:gcc`, `xim:cuda-nvcc` for an NVIDIA target | `sycl` or `sycl, cuda12.9+{sm_89}` |
 | `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` or `glslc` | `xim:glslang` or `xim:shaderc` | `vulkan1.2` |
 | `rules-ascendc` | `mcpp.rules.ascendc` | `bisheng` (`-x asc`) from the CANN toolkit | `xim:cann-toolkit` | `ascend8.5+{dav-c220}` |
+
+The payload column is what each rule declares for itself under
+`cfg(accelerator = ...)`, listed so the cost of a lane is legible before it is
+taken. A project writes none of it -- see *The toolkit comes with the rule*
+above.
 
 Two chunks, not one, in the `accel` value of the HIP and SYCL rows. The first
 names the programming model and the second names the device, so a device is

@@ -399,13 +399,16 @@ sources = ["src/cpu/*.cpp"]
 `tests/unit/test_core_vendor_probes.cpp` 断言剥掉注释后 `src/` 里不出现任何厂商工具名,
 并自带分母(枚举到的文件数)。
 
-| `mcpp:plugins` 的 feature | 模块 | 它驱动的编译器 | 它需要的载荷 | `[build] accel` |
+| `mcpp:plugins` 的 feature | 模块 | 它驱动的编译器 | 它声明的载荷 | `[build] accel` |
 |---|---|---|---|---|
 | `rules-cuda` | `mcpp.rules.cuda` | 工程自己的 clang(`-x cuda`),或 GCC 工具链下的 nvcc | `xim:cuda-nvcc`、`xim:cuda-cudart`、`xim:libcurand`、`xim:cuda-cccl` | `cuda12.9+{sm_89} ptx>=89` |
 | `rules-hip` | `mcpp.rules.hip` | NVIDIA 平台上是工程自己的 clang(`-x cuda`) | 上面那些,再加 `xim:hip-nvidia` | `hip, cuda12.9+{sm_89}` |
 | `rules-sycl` | `mcpp.rules.sycl` | `xim:dpcpp` 载荷里的 clang(`-fsycl`) | `xim:dpcpp`、`xim:gcc`,NVIDIA 目标另加 `xim:cuda-nvcc` | `sycl` 或 `sycl, cuda12.9+{sm_89}` |
 | `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` 或 `glslc` | `xim:glslang` 或 `xim:shaderc` | `vulkan1.2` |
 | `rules-ascendc` | `mcpp.rules.ascendc` | CANN 工具包里的 `bisheng`(`-x asc`) | `xim:cann-toolkit` | `ascend8.5+{dav-c220}` |
+
+载荷那一列是每条规则在 `cfg(accelerator = ...)` 之下**为自己**声明的东西,列出来是为了
+让一条 lane 的代价在选它之前就可读。工程一个字都不用写——见上文「工具包跟着规则来」。
 
 HIP 与 SYCL 两行的 `accel` 值是**两段**而不是一段。第一段命名编程模型,第二段命名设备,
 于是一个设备在本生态里只有一种拼法,无论有多少个模型去够它:`sm_89` 无论被哪条规则读到
