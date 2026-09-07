@@ -206,29 +206,24 @@ TEST(HostFlags, CfgBypassLinuxOnlyDiffersFromAlwaysOffLinux) {
     }
 }
 
-// ── Every exit of host_link_tokens names the toolchain's runtime dirs ───────
+// ── Which exit of host_link_tokens names the toolchain's runtime dirs ──────
 //
-// THE DEFECT THIS STATES. `host_link_tokens` has two exits: one that spells
-// clang's configuration out and one that trusts the bundled `<driver>.cfg`.
-// The second returned early, before the block that emits `-L` and `-rpath`
-// for `Toolchain::linkRuntimeDirs`. Trusting the cfg decides WHICH runtimes
-// are linked; it never decided WHERE they are found, and on macOS `-lc++`
-// then resolved through the SDK to the system library while the headers came
-// from the payload. Measured on macos-14, compiling a build program that does
-// nothing but `import std`:
+// THE ASYMMETRY IS A DECISION, AND THIS IS WHERE IT IS STATED. The spelled-out
+// exit emits `-L` and `-rpath` for `Toolchain::linkRuntimeDirs`; the
+// cfg-trusting exit does not, and both halves were measured.
 //
-//   ld64.lld: error: undefined symbol: std::__1::__is_posix_terminal(__sFILE*)
+// Emitting them there makes `-lc++` resolve to the toolchain's own dylib on
+// macOS, which is the ToolchainCoupled contract `dist::mechanism_for` refuses
+// on Mach-O: LLVM's macOS libc++abi and libunwind dylibs upward-link
+// /usr/lib/libc++, so a second libc++ loads into the process. The link does not
+// even get that far -- it stops on `__cxa_end_catch` and the rest of the ABI
+// surface the system libc++ re-exports and the payload's does not.
 //
-// -- a symbol `std::print`'s inline machinery references and that release's
-// libc++ does not export. The payload ships its own copy, one directory the
-// early return had dropped.
-//
-// AND WHY THIS TEST CAN RUN ON LINUX. The branch is chosen by the host: with
-// `LinuxOnly`, a Linux build always takes the spelled-out exit, so the exit
-// that had the defect is unreachable from a Linux runner. `CfgBypass::Never`
-// exists to make it reachable -- the defect lived in a branch that only two
-// of the three CI hosts could execute, and a test that could only run there
-// would inherit the same blind spot.
+// AND WHY THIS TEST CAN RUN ON LINUX. The exit is chosen by the host: with
+// `LinuxOnly`, a Linux build always takes the spelled-out one, so the other is
+// unreachable from a Linux runner. `CfgBypass::Never` exists to make it
+// reachable -- a decision that only two of the three CI hosts can execute
+// would otherwise be stated only in prose.
 namespace {
 
 // A directory that looks enough like a clang payload for `resolve_clang_driver`
@@ -255,7 +250,7 @@ bool names_dir(const std::vector<std::string>& tokens, std::string_view dir) {
 
 } // namespace
 
-TEST(HostFlags, EveryExitNamesTheToolchainRuntimeDirs) {
+TEST(HostFlags, OnlyTheSpelledOutExitNamesTheToolchainRuntimeDirs) {
     FakeClangPayload payload{"runtime-dirs"};
     auto tc = tc_for(CompilerId::Clang);
     tc.binaryPath = payload.root / "bin" / "clang++";
@@ -264,21 +259,23 @@ TEST(HostFlags, EveryExitNamesTheToolchainRuntimeDirs) {
     HostFlagOptions opt;
     opt.runtimeLibDirs = true;
 
-    // The cfg-trusting exit -- the one that returned early.
-    opt.cfgBypass = HostFlagOptions::CfgBypass::Never;
-    auto trusting = mcpp::toolchain::host_link_tokens(tc, opt, mcpp::toolchain::no_escape);
-    EXPECT_TRUE(names_dir(trusting, (payload.root / "lib").string()))
-        << "the cfg-trusting exit dropped the toolchain's own runtime directory, "
-           "so `-lc++` resolves to whatever the system has";
-
-    // The spelled-out exit, which always did.
+    // Spelled out: the payload's own runtime directories are named.
     opt.cfgBypass = HostFlagOptions::CfgBypass::Always;
     auto spelled = mcpp::toolchain::host_link_tokens(tc, opt, mcpp::toolchain::no_escape);
     EXPECT_TRUE(names_dir(spelled, (payload.root / "lib").string()));
 
-    // And the option is still an option: nothing is emitted when it is off.
-    opt.runtimeLibDirs = false;
+    // Trusting the cfg: they are NOT, and the comment above says what naming
+    // them costs.
     opt.cfgBypass = HostFlagOptions::CfgBypass::Never;
+    auto trusting = mcpp::toolchain::host_link_tokens(tc, opt, mcpp::toolchain::no_escape);
+    EXPECT_FALSE(names_dir(trusting, (payload.root / "lib").string()))
+        << "the cfg-trusting exit now points `-lc++` at the toolchain's own "
+           "dylib; on Mach-O that link fails on the C++ ABI symbols the system "
+           "libc++ re-exports";
+
+    // And the option is still an option on the exit that honours it.
+    opt.runtimeLibDirs = false;
+    opt.cfgBypass = HostFlagOptions::CfgBypass::Always;
     auto off = mcpp::toolchain::host_link_tokens(tc, opt, mcpp::toolchain::no_escape);
     EXPECT_FALSE(names_dir(off, (payload.root / "lib").string()));
 }

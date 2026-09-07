@@ -359,37 +359,42 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
         // lld ships with the very toolchain doing the compile, so it cannot
         // be diverted to a libc++ it was not built against.
         if constexpr (mcpp::platform::is_macos) out.push_back("-fuse-ld=lld");
-        // AND THE RUNTIME DIRECTORIES, WHICH THIS PATH USED TO SKIP.
+        // AND DELIBERATELY NOT THE TOOLCHAIN'S RUNTIME DIRECTORIES. THIS WAS
+        // TRIED, AND WHAT IT COSTS IS RECORDED HERE RATHER THAN REDISCOVERED.
         //
-        // Trusting clang's cfg decides WHICH runtimes are linked. It does not
-        // decide WHERE they are found, and on macOS `-lc++` resolves through
-        // the SDK to /usr/lib/libc++.tbd -- the system copy, whose version
-        // floats with the host OS -- while the headers come from the payload.
-        // The two disagree the moment the headers reference a symbol the
-        // system library does not export yet:
+        // The motivation is real. Trusting the cfg decides WHICH runtimes are
+        // linked and never decides WHERE they are found, so on macOS `-lc++`
+        // resolves through the SDK to /usr/lib/libc++.tbd -- the system copy,
+        // whose version floats with the host OS -- while the headers come from
+        // the payload. On macOS 14 those two disagree, measured on a build
+        // program that does nothing but `import std`:
         //
         //   ld64.lld: error: undefined symbol:
         //       std::__1::__is_posix_terminal(__sFILE*)
         //   >>> referenced by std::__1::__print::__is_terminal(__sFILE*)
         //
-        // measured on macos-14 compiling a build program that does nothing but
-        // `import std`. `std::print` is not header-only: its FILE* and ostream
-        // overloads call into the libc++ dylib, and those two support symbols
-        // arrived in a version macOS 14 does not ship. macOS 15's copy has
-        // them, which is why every macOS runner this project uses was green.
+        // `std::print` is not header-only; that support symbol arrived in a
+        // libc++ macOS 14 does not ship, and macOS 15's copy has it, which is
+        // why every macOS runner this project uses was green.
         //
-        // The payload ships its own `lib/libc++.1.0.dylib` -- the toolchain's
-        // own copy, matching its own headers -- and `linkRuntimeDirs` already
-        // names that directory. Emitting `-L` and `-rpath` for it is what the
-        // Linux path has always done here; it was skipped on macOS only
-        // because this branch returned first.
+        // ADDING `-L<payload>/lib` HERE FIXES THAT AND BUYS A WORSE PROBLEM.
+        // It makes `-lc++` resolve to the toolchain's own dylib, which is the
+        // ToolchainCoupled contract that `dist::mechanism_for` REFUSES on
+        // Mach-O for a measured reason: LLVM's macOS libc++abi and libunwind
+        // dylibs upward-link /usr/lib/libc++, so the system libc++ loads
+        // alongside the toolchain's and an object freed across the two aborts
+        // in libmalloc (#202). The first step of that path is what CI reported
+        // when this was tried -- the link stopped on `__cxa_end_catch`,
+        // `std::runtime_error::~runtime_error()` and the rest of the ABI
+        // surface the system libc++ re-exports and the payload's does not.
         //
-        // A BUILD PROGRAM IS THE RIGHT PLACE FOR AN ABSOLUTE RPATH. It is
-        // never distributed: mcpp compiles it, runs it on this machine, and
-        // caches it against this toolchain's identity. The equivalent question
-        // for an ARTIFACT is decided by the distribution contract, and is not
-        // this function's to answer.
-        append_runtime_lib_dirs(tc, opt, esc, out);
+        // So the C++ runtime on this host is the system one, and the
+        // deployment floor is made real by the STATIC libc++ the distribution
+        // contract selects -- a mechanism that belongs to an artifact and not
+        // to a helper mcpp compiles, runs here, and throws away. The
+        // consequence, stated because it is a real limit: on macOS 14 a build
+        // program cannot use `std::print` or `std::println`. `std::format` is
+        // header-only and has none of this.
         return out;
     }
 

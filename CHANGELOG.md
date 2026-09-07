@@ -13,17 +13,30 @@
 真跑一遍,暴露了两处引擎缺陷 —— 两处的共同形状是:一段代码的正确性依赖于宿主,而 CI
 只在其中一个宿主上执行它。
 
-**构建程序的链接不带工具链自己的运行时目录(macOS)。** `host_link_tokens` 的
-「信任 cfg」出口提前 return,跳过了给 `Toolchain::linkRuntimeDirs` 发 `-L` 与
-`-rpath` 的那一段。信任 cfg 决定的是**链哪些运行时**,它从来没有决定**去哪里找**:
-macOS 上 `-lc++` 于是经 SDK 解析到系统那份,而头文件来自载荷。两者在头文件引用了系统
-库还没导出的符号那一刻分道扬镳 —— macos-14 上编译一个只有 `import std` 的构建程序:
+**macOS 14 上构建程序用不了 `std::println`,而显而易见的修法更糟(已记录,未修)。**
+`host_link_tokens` 的「信任 cfg」出口不给 `Toolchain::linkRuntimeDirs` 发 `-L`,于是
+macOS 上 `-lc++` 经 SDK 解析到**系统**那份,而头文件来自载荷。macos-14 上编译一个只有
+`import std` 的构建程序:
 
     ld64.lld: error: undefined symbol: std::__1::__is_posix_terminal(__sFILE*)
 
 `std::print` 不是 header-only 的,它的两个重载都要到 libc++ **dylib** 里取支持符号,
 而那两个符号是在 macOS 14 不带的那一版里加进去的。macOS 15 有,所以这个项目用到的每
-一台 macOS runner 都是绿的。构建程序正是绝对 rpath 该在的地方:它从不被分发。
+一台 macOS runner 都是绿的。
+
+在这一条上加 `-L<载荷>/lib` 试过了,**它买来一个更糟的问题**:那会让 `-lc++` 解析到
+工具链自己的 dylib,也就是 `dist::mechanism_for` 在 Mach-O 上明确拒绝的
+ToolchainCoupled —— LLVM 的 macOS libc++abi 与 libunwind dylib **向上链接**
+`/usr/lib/libc++`,于是系统 libc++ 与工具链的那份同时载入,跨两份释放的对象在
+libmalloc 里 abort(#202)。CI 报的正是这条路的第一步:链接停在 `__cxa_end_catch`
+与其余那些系统 libc++ 会再导出、而载荷那份不会的 ABI 符号上。
+
+所以这个宿主上的 C++ 运行时就是系统那一份,而下限由分发契约选的**静态 libc++** 变成
+真的 —— 那是产物的机制,不属于一个 mcpp 编译、就地跑一次、然后丢掉的辅助程序。
+**限制照实写下来:macOS 14 上构建程序不能用 `std::print` / `std::println`。**
+`std::format` 是 header-only 的,没有这个问题;本轮 mcpp:plugins 的六个模块因此全部
+改用它。判据 `HostFlags.OnlyTheSpelledOutExitNamesTheToolchainRuntimeDirs` 把这条
+不对称写成了一条会跑的断言。
 
 **版本约束里的 `>` 被 cmd.exe 读成重定向(Windows)。** mcpp 把供给请求作为 JSON 参数
 放在 shell 命令行上;`shell::quote` 回答的是子进程的 argv 解析(`\"`),而 cmd 不认这

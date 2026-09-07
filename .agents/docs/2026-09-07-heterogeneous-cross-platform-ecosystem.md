@@ -299,12 +299,23 @@ install/config 形状,而那套形状是按 Linux 写的:
 `tests/all-rules-compile` 是这一轮加的夹具:不点名任何 accelerator(每条规则立刻
 返回,一个字节都不下载),只问六个模块编不编得过。它在第一批运行里抓到:
 
-1. **macOS 14 / 15:`std::println` 不是 header-only。** 它的两个重载都要到 libc++
+1. **macOS 14:`std::println` 不是 header-only。** 它的两个重载都要到 libc++
    **dylib** 里取 `__is_posix_terminal` 与 `__get_ostream_file`,而这两个符号是在
    macOS 14 不带的那一版里加进去的。规则改用 `std::format` 再 stream。
-   **引擎侧还有一半**:`host_link_tokens` 的「信任 cfg」出口提前 return,从不发
-   `-L`/`-rpath` 指向工具链自己的运行时目录,于是 `-lc++` 解析到系统那份而头文件来自
-   载荷。已修,判据 `HostFlags.EveryExitNamesTheToolchainRuntimeDirs`。
+
+   **引擎侧那一半试过了,而显而易见的修法更糟。** 直觉是让
+   `host_link_tokens` 的「信任 cfg」出口也发 `-L<载荷>/lib`,于是 `-lc++` 找到工具链
+   自己那份 —— 而那正是 `dist::mechanism_for` 在 Mach-O 上明确拒绝的
+   ToolchainCoupled:LLVM 的 macOS libc++abi 与 libunwind dylib **向上链接**
+   `/usr/lib/libc++`,系统 libc++ 与工具链的那份同时载入,跨两份释放的对象在 libmalloc
+   里 abort(#202)。CI 报的正是这条路的第一步 —— 链接停在 `__cxa_end_catch` 与其余
+   那些系统 libc++ 会再导出、载荷那份不会的 ABI 符号上。
+
+   **这条是这一轮里唯一一个「我的修复本身被实测推翻」的。** 它被推翻的方式值得记:
+   本地全部单测绿、判据是我自己写的那条正向断言,而**红在一个我没想到会受影响的对象上**
+   —— 图形示例的构建程序,在 macOS 15 上。改回去,把不对称与它的理由写进代码,并把判据
+   改成陈述这条决定(`OnlyTheSpelledOutExitNamesTheToolchainRuntimeDirs`)。
+   **限制照实写下来:macOS 14 上构建程序不能用 `std::print` / `std::println`。**
 2. **Windows:`popen` 拼作 `_popen`。** `rules-spirv` 的宿主模块在那里编译失败。
 3. **Windows:版本约束里的 `>` 被 cmd.exe 读成重定向。** mcpp 把供给请求作为 JSON
    参数放在 shell 命令行上;`shell::quote` 回答的是子进程的 argv 解析(`\"`),而
