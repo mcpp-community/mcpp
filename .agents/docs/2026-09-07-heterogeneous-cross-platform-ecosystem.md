@@ -1,0 +1,263 @@
+# 异构计算与图形的跨平台生态:完整矩阵与补齐方案
+
+> 状态:设计,未实现。每一条「现状」都标注了它是**读**出来的还是**跑**出来的。
+> 伴随文档:`docs/20-heterogeneous-builds.md`(规范)、
+> `2026-09-07-package-identity-and-doc-alignment.md`(规则自带环境)。
+
+## 0. 这份方案要解决的一句话
+
+**引擎与规则层已经与平台无关,而生态只在 Linux 上是完整的。** 这不是一个工程问题:
+四个设备编译器里有三个在 Windows 上、两个在 macOS 上**已经有上游产物**,缺的是把它们
+发出来。
+
+## 1. 现状:分层看,缝在哪一层
+
+### 1.1 引擎与规则层:与平台无关(**读** + **跑**)
+
+`accel` 轴、`cfg(accelerator = ...)`、受约束 glob、产物的 accel 标签、规则包的
+`feature-xlings` 声明 —— 没有一处按宿主分支。e2e 628(工具版本冲突的拒绝)不设能力门,
+三平台都跑。引擎里零个厂商名,由 `test_core_vendor_probes.cpp` 按文件数做分母守着。
+
+**这一层不需要补。**
+
+### 1.2 载荷层:linux-only(**跑** index 查询)
+
+`glslang` `shaderc` `cuda-nvcc` `cuda-cudart` `libcurand` `cuda-cccl`
+`hip-nvidia` `dpcpp` `mesa-lavapipe` `cann-toolkit` —— **全部只有 `linux` 块**。
+
+### 1.3 库层:三平台齐全(**跑**)
+
+`compat.vulkan` `glfw` `sdl2` `imgui` `opengl` `vulkan-memory-allocator`
+`spirv-reflect` —— 都有 `linux macosx windows`。
+
+**所以缝恰好在中间那一层**:一个 Windows 开发者今天能链接 Vulkan、开窗、画三角形,
+只要他自己准备着色器编译器 —— 而那正是构建系统该管的那一件事。
+
+### 1.4 适配器层:linux-only 是结构性的,不是缺口
+
+`compat:vulkan-runtime` / `sycl-runtime` / `cuda-runtime` 修的是**mcpp 私有 loader
+够不到宿主驱动**。那是 ELF/`PT_INTERP` 的问题;macOS 走 dyld、Windows 走 PE loader,
+两边都没有这一层。**它们不该被"补到三平台",它们在那两个平台上不存在。**
+
+驱动本身在三个平台上是同一条规则:**驱动是宿主能力,设备是载荷**。
+`compat.vulkan` 已经把它建模成 `vulkan.icd.driver` 能力(macOS 上是 MoltenVK,
+Windows 上是任何 GPU 驱动装的 `vulkan-1.dll`)。
+
+## 2. 关键发现:多数空格是发布工作(**跑**出来的)
+
+逐个核过上游产物的可得性:
+
+| 后端 / 工具 | linux-x86_64 | linux-aarch64 | windows-x86_64 | macos-arm64 |
+|---|---|---|---|---|
+| CUDA(nvcc, cudart, curand, cccl) | 已发布 | **redist 有**(重打包) | **redist 有**(重打包) | **不可能** |
+| SYCL(`dpcpp`) | 已发布 | 未发布 | **`sycl_windows.tar.gz`**(重打包) | 上游不发 |
+| SPIR-V(`shaderc`/glslc) | 已发布 | 上游有 | **Google 产物桶有**(重打包) | **Google 产物桶有**(重打包) |
+| `glslang` | 已发布(本生态自建) | — | 上游无二进制 | 上游无二进制 |
+| HIP(NVIDIA 平台,仅头文件) | 已发布 | 头文件与平台无关 | 头文件与平台无关 | 不适用 |
+| Ascend(`cann-toolkit`) | 已发布 | `.run` 内含 aarch64 | 无 | 无 |
+| 软件设备(`mesa-lavapipe`) | 已发布(自建 Mesa) | — | 需 Mesa-on-Windows 构建 | 不适用 |
+| Metal | 不适用 | 不适用 | 不适用 | **仅 Xcode 内**,不可再分发 |
+
+核过的三条直链:
+
+- NVIDIA `redistrib_12.9.1.json` 里 `cuda_nvcc` / `cuda_cudart` / `libcurand` /
+  `cuda_cccl` 四个都列着 `linux-x86_64  linux-sbsa  windows-x86_64  linux-aarch64`
+  —— **索引今天用的就是这棵 redist 树**,只取了其中一个平台;
+- `intel/llvm` 的同一个 release 里同时有 `sycl_linux.tar.gz` 与
+  **`sycl_windows.tar.gz`**;
+- Google 的 shaderc 产物桶前缀:`linux/` `macos/` `windows-vs2022-amd64-release/`,
+  macOS 与 Linux 的 `install.tgz` 直链已核 200。
+
+**结论:CUDA 上 Windows、SYCL 上 Windows、着色器编译器上 Windows 与 macOS,都是重新
+打包而不是从源码构建。** 而 macOS 的 CUDA 与 SYCL 是永久的洞(NVIDIA 与 Intel 都不发),
+这是要设计**绕过**的事实,不是要补的缺口。
+
+## 3. 可移植性分层:给使用者的模型
+
+生态可用的前提是使用者能**预期**哪条路能走多远。三层:
+
+| 层 | 后端 | 平台 | 使用者写什么 |
+|---|---|---|---|
+| **T1 可移植** | Vulkan compute、Vulkan graphics、OpenCL | linux / macos / windows | `accel = "vulkan1.2"`,一份 manifest 三平台通 |
+| **T2 双平台** | CUDA、SYCL | linux / windows | 同一份 manifest;macOS 上该后端的 `cfg` 不激活,走 CPU 接缝 |
+| **T3 单平台** | Metal(macOS)、Ascend(linux)、ROCm(linux) | 各一 | 同上 |
+
+**跨这三层不需要新机制** —— `accel` 是集合、`cfg(accelerator = ...)` 是成员判定、
+接缝把实现藏在模块后面,这些已经有了。一个想要「到处能跑」的工程写:
+
+```toml
+[build]
+accel = "vulkan1.2"
+sources = [ "src/*.cppm", "src/*.cpp",
+            { glob = "shaders/*.comp", accel = "vulkan1.2" } ]
+
+[target.'cfg(accelerator = "none")'.build]
+sources = ["src/cpu/*.cpp"]
+```
+
+而一个想要「有 NVIDIA 就用 CUDA」的工程再加一块 `cfg(accelerator = "cuda")`,并在
+macOS 上自然退回 T1 或 CPU。
+
+**T1 是这份方案要保证的那一层。** T2/T3 是能力,T1 是承诺。
+
+## 4. CI 能断言到哪:软件设备决定上限
+
+「生态级可用」的判据不是构建通过,是**有东西在设备上跑过**。而无头 runner 上有没有
+设备,取决于有没有**软件设备**:
+
+| 平台 | 软件设备 | CI 上限 |
+|---|---|---|
+| linux | `xim:mesa-lavapipe`(已有,CI 每次构建都跑到它并断言设备名) | **运行** |
+| windows | 需要 Mesa-on-Windows 的 lavapipe,或 SwiftShader | 今天是**构建** |
+| macos | MoltenVK 之上是否有可用 Metal 设备,**未实测** | 今天是**构建** |
+
+规则写死:**没有软件设备的平台,CI 的上限就是构建,而这一条要写进 README 而不是被
+后来的人发现**。把「构建通过」当成「能用」正是本轮反复付过代价的形状。
+
+第四期(§6)专门抬这条上限,因为它是「生态级可用」与「能编译」的分界。
+
+## 5. 图形管线:第一条要补的,而判据不是窗口
+
+### 5.1 现状(**读** + **跑**)
+
+`rules-spirv` 的 `stage_of` 覆盖十四个阶段(`.comp .vert .frag .geom .tesc .tese
+.mesh .task` 与五个光追阶段),产物形状对每个阶段相同:一个 shader 一个头,符号
+`<stem>_<stage>_spv`。而全树 `.vert`/`.frag`/`.mesh` **零个文件** ——
+**声明覆盖、执行为零**。
+
+### 5.2 主示例必须是离屏渲染
+
+直觉写法是 glfw + swapchain。**那样 CI 断言不了任何东西**:无头 runner 没有 surface,
+而「构建通过」对图形管线几乎零信息量 —— `.frag` 编译成常量色、顶点输入接错,构建同样
+通过。
+
+离屏渲染走的是**完整图形管线**(顶点输入 → 光栅化 → 片元输出 → render pass),不需要
+窗口/surface/swapchain,结果是确定像素,而且跑在**CI 里已经在工作的那个设备上**。
+
+`examples/10-graphics/offscreen`:渲染顶点色三角形到 image,拷回主机内存,断言像素。
+
+判据:
+
+| # | 断言 | 为什么不空转 |
+|---|---|---|
+| G1 | `triangle_vert.h` 与 `triangle_frag.h` 都存在 | 只断言其一,只处理第一个源的规则也通过 |
+| G2 | 两个头的 SPIR-V magic 都是 `07230203` | 空文件也「存在」 |
+| G3 | 程序打印它用的设备名,且是 lavapipe | 悄悄回落 CPU 腿会打印同样的像素 |
+| G4 | **中心像素**在三顶点色的插值范围内,**四角**是清除色 | `.frag` 写成常量、顶点输入接错 → 这条红而 G1–G3 全绿 |
+| G5 | `--no-accel` 走 CPU 腿并退 0 | 反向腿 |
+
+窗口那一层放进 `--features window`,CI 只构建不运行。**能被断言的和不能被断言的分开
+摆** —— 混在一起,CI 只能整个跳过。
+
+### 5.3 已从代码读出、待证实的一处缺陷
+
+着色器输出路径是 `gen / (stem + "_" + stage)`,**不含目录分量**。于是
+`shaders/ui/text.vert` 与 `shaders/world/text.vert` 落在同一个 `text_vert.h`。
+compute 示例每个工程只有一个 `.comp`,碰不到;真实图形工程按用途分目录是常态。
+
+修法与引擎侧 mcpp#239/#240 的对象路径消歧同形,并且两个源映射到同一输出时必须
+**拒绝并点名两者** —— 静默覆盖是唯一不可接受的形态。一期的示例里**故意放两个同名
+不同目录的 shader,先看它坏**。
+
+## 6. 补齐路线与分期
+
+| 期 | 内容 | 依赖 | 它买到什么 |
+|---|---|---|---|
+| 一 | `examples/10-graphics/offscreen`(linux)+ G1–G5 + 同名 stem 修复 | 无 | 图形那一半第一次被执行 |
+| 二 | `shaderc` 发 macOS/Windows;`rules-spirv` 按平台声明默认;图形示例三平台**构建** | 一 | **T1 的着色器编译在三平台成立** |
+| 三 | CUDA 发 `windows-x86_64` 与 `linux-aarch64`;SYCL 发 `windows-x86_64` | 无(与一、二并行) | **T2 从"仅 linux"变成"linux+windows"** |
+| 四 | Windows 软件 Vulkan 设备(Mesa-on-Windows 或 SwiftShader);macOS Metal 设备实测 | 二 | 把 CI 上限从构建抬到**运行** |
+| 五 | ROCm / Metal 的准入判定 | 四 | 按需 |
+
+一期与二期顺序不可交换:**先有一个会失败的判据,再去扩平台。** 反过来做,扩平台那次
+改动没有任何东西能证明它是对的。三期与一、二期无依赖,可并行。
+
+### 6.1 二期的具体形状
+
+`glslang` 没有上游二进制,三平台自建它买不到任何 shaderc 买不到的东西。**因此不为
+macOS/Windows 发 glslang**,而让规则按平台选:
+
+```toml
+[target.'cfg(accelerator = "vulkan")'.feature-xlings.rules-spirv]
+"xim:shaderc" = ">=2026.3"
+
+[target.'cfg(all(accelerator = "vulkan", linux))'.feature-xlings.rules-spirv]
+"xim:glslang" = ">=15.1.0"
+```
+
+规则的选择顺序(`options::compiler` → 环境变量 → glslang → shaderc → PATH)**已经**
+会在没有 glslang 时退到 glslc,并自己写出声明抹平两者输出形状的差异。
+**跨平台一致性由规则的既有选择能力提供,不由载荷的完全对齐提供。**
+
+代价写明:Linux 与非 Linux 默认编译器不同,同一份着色器经由不同前端。这是可观测的
+(规则把用了哪个作为 fact 报出),而**判据落在产物上**(G2 的 magic、G4 的像素)在三个
+平台都要成立。
+
+P4:**Linux 上的读数不变**(仍走 glslang)—— 这是「无感升级」那一条。
+
+### 6.2 三期的具体形状
+
+CUDA 与 SYCL 的 Windows 载荷来自索引**已经在用的那棵树**,所以是同一条流水线多跑
+几个平台:
+
+1. 下载 `windows-x86_64` 组件 / `sycl_windows.tar.gz`,核对能跑、版本对齐;
+2. 按 xim 载荷布局重新打包,上传 `xlings-res/*`,gtc 镜像 GitCode,**两端逐字节比对**;
+3. xim recipe 补 `windows` 块;
+4. `rules-cuda` / `rules-sycl` 的 `feature-xlings` 声明去掉 linux 限定;
+5. 夹具的 CI 从 linux 扩到 windows **构建**。
+
+macOS 产物的架构要先核(本生态 macOS 是 arm64,而 Google 的 `macos` 前缀可能是
+x86_64 或 universal)。**查不清就不要发 —— 发一个跑不起来的载荷比不发更坏。**
+
+### 6.3 五期的准入条件,而不是排期
+
+**ROCm/AMD**:规则已存在并按名字拒绝 AMD 平台。两个条件:(a) ROCm 运行时能否作为载荷
+分发(许可 + 与内核模块的 ABI 耦合决定它是载荷还是宿主能力);(b) **有没有一台能跑的
+机器或一个模拟器**。Ascend 那条之所以可接受,正是因为工具包自带 38 个 SoC 模拟器。
+**没有 (b) 就不开这条 lane** —— 只能编译不能运行的后端,判据上限就是编译。
+
+**Metal**:形状不同。`.metal → .air → metallib` 是**两步且第二步是链接**,正是
+docs/20 列在「未实现」里的 device link;工具只在 Xcode 里、不可再分发,与「不依赖
+Host」相反,需要一次明确的例外裁决。建议**先不做,把它当作 device link 这条通用能力的
+第一个消费者来设计**。今天 `llamacpp` 的 `backend-metal` feature 已经能用(上游自己
+构建 Metal 部分),说明 Metal 在**依赖层**是通的,缺的只是把 `.metal` 变成设备源。
+
+## 7. 跨平台一致性:四条可执行的规则
+
+从上面抽出来,写下来是为了下一条 lane 不用重新推:
+
+1. **一致性由规则的选择能力提供,不由载荷的完全对齐提供。** 判据落在产物上,不落在
+   路线上。
+2. **能被断言的和不能被断言的分开摆。** 离屏进默认目标,窗口进 feature;有软件设备的
+   平台跑,没有的只构建。
+3. **驱动是宿主能力,设备是载荷。** 适配器层是 Linux 私有 loader 的产物,不该被补到
+   三平台 —— 它在那两个平台上不存在。
+4. **平台的空格分三种,处理方式不同**:上游有产物(发布工作)、上游只有源码(自建,
+   要论证值得)、上游不发(结构性,要设计绕过)。**把三者混为一谈是这份方案最想避免的
+   错误** —— macOS 的 CUDA 不是"还没做",是不会有。
+
+## 8. 判据总表
+
+| # | 期 | 断言 |
+|---|---|---|
+| G1–G5 | 一 | 图形示例:两个头存在、magic 正确、跑到 lavapipe、像素在插值范围、`--no-accel` 反向腿 |
+| S1 | 一 | 两个同名不同目录的 shader:**拒绝并点名两者**(今天静默覆盖) |
+| P1 | 二 | 三平台各产出两个 SPIR-V 头,magic 正确 |
+| P2 | 二 | 规则报出的编译器 fact 与平台表一致 |
+| P3 | 二 | 工程侧 `[xlings.workspace]` 为空 |
+| P4 | 二 | **Linux 读数不变** |
+| C1 | 三 | Windows 上 `rules-cuda` 夹具构建通过,工程侧零声明 |
+| C2 | 三 | 两端镜像逐字节比对,一个 sha256 命名两者 |
+| D1 | 四 | Windows/macOS 上**跑到设备**并断言设备名 —— 这一条成立,CI 上限才从构建变成运行 |
+
+## 9. 自我 review:最可能错的三处
+
+| 判断 | 为什么可能错 | 怎么发现 |
+|---|---|---|
+| 「离屏渲染在 lavapipe 上像素确定」 | 光栅化允许实现差异,插值精度未必逐位确定。**而 G4 是这个示例存在的理由** | 一期先跑一次读真实值,再把断言写成**区间**;区间写不出来就退到「中心像素明显不等于清除色」。**不要先写断言再调实现** |
+| 「同名 stem 会覆盖」 | 从代码读出来的,没跑过 | 一期示例里放两个同名不同目录的 shader,先看它坏 |
+| 「Windows 的 CUDA 载荷装上就能用」 | redist 的 Windows 组件是 `.zip` 且布局与 Linux 不同;规则的路径推导按 Linux 布局写的 | 三期先在一台 Windows 上手工解开、跑 `nvcc --version`,再动 recipe |
+
+第一条最该被推翻。第三条最容易被低估:**「上游有产物」不等于「重打包就能用」**,规则
+侧的路径推导是按一个平台的布局写的,而那正是本轮 `xpkg_dir` 缺陷的同一种形状 ——
+一个函数只在它被写的那个环境里被验证过。

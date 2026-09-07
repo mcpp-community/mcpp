@@ -285,6 +285,39 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           bash .github/tools/build_examples.sh
 
+      - name: "Graphics example: render offscreen on lavapipe and assert the pixels"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          cd examples/10-graphics/offscreen
+          "$MCPP" build
+          # THE SHADERS ARE THE FIRST ASSERTION, and both of them: a rule that
+          # compiled only the first source would leave the second header absent
+          # and everything after this would still pass.
+          for f in triangle_vert triangle_frag; do
+            h="target/.build-mcpp/out/spirv/$f.h"
+            test -f "$h" || { echo "missing $h"; exit 1; }
+            grep -q '0x07230203' "$h" || { echo "$h carries no SPIR-V magic"; exit 1; }
+          done
+          icd=$(find "${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-mesa-lavapipe" \
+                     "$HOME/.xlings/data/xpkgs/xim-x-mesa-lavapipe" \
+                     -name 'lvp_icd.x86_64.json' -print -quit 2>/dev/null || true)
+          [ -n "$icd" ] || { echo "no lavapipe ICD in either store"; exit 1; }
+          out=$(VK_DRIVER_FILES="$icd" "$MCPP" run 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          # The program asserts the corners and the centre itself and exits
+          # non-zero on either. What CI adds is that the run reached the DEVICE:
+          # the software rasteriser produces the same pixels by construction, so
+          # the image cannot distinguish them and the device name is what does.
+          echo "$out" | grep -q 'llvmpipe' \
+            || { echo "the run did not reach the lavapipe device"; exit 1; }
+          echo "$out" | grep -qE 'centre pixel: \([0-9]+, [0-9]+, [0-9]+, 255\)' \
+            || { echo "no centre pixel was reported"; exit 1; }
+          # The reverse leg: the same assertions hold with no accelerator, which
+          # is what makes the pixel test a contract rather than a device quirk.
+          "$MCPP" build --no-accel
+          "$MCPP" run --no-accel | tee cpu.log
+          grep -q 'cpu rasteriser' cpu.log || { echo "the CPU leg did not run"; exit 1; }
+
       - name: "Vulkan example: build the device half and run it on lavapipe"
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"

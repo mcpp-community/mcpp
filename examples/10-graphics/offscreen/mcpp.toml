@@ -1,0 +1,59 @@
+[package]
+name         = "offscreen-triangle"
+namespace    = "example"
+version      = "0.1.0"
+description  = "A Vulkan graphics pipeline rendering offscreen, with a software rasteriser behind the same seam"
+accelerators = ["vulkan"]
+
+[language]
+standard   = "c++23"
+modules    = true
+import_std = true
+
+# One edge. `mcpp.rules.spirv` declares the shader compiler it drives, so this
+# project names no payload for it.
+[build-dependencies.mcpp]
+plugins = { version = "0.2.5", features = ["rules-spirv"], host-module = true }
+
+# The Khronos loader, and on Linux the adapter that makes the host's own ICDs
+# reachable from a binary running under mcpp's private loader. The adapter is a
+# Linux concern by construction: macOS resolves through dyld and Windows through
+# the PE loader, and neither has a private loader to work around.
+# GATED ON THE ACCELERATOR, so `mcpp build --no-accel` installs nothing at all.
+# The CPU leg includes no Vulkan header and links no loader, and a build that
+# pays for one anyway is the shape `cfg(accelerator = ...)` exists to remove.
+[target.'cfg(accelerator = "vulkan")'.dependencies.compat]
+vulkan = "1.4.357.0"
+
+[target.'cfg(all(accelerator = "vulkan", linux))'.dependencies.compat]
+vulkan-runtime = "2026.09.07"
+
+# A Vulkan device that needs no GPU, so this example runs on a machine that has
+# none. It is a DEVICE and therefore a payload; the drivers a real GPU needs are
+# the host's, and `compat.vulkan` models those as a capability.
+[target.'cfg(all(accelerator = "vulkan", linux))'.xlings.workspace]
+"xim:mesa-lavapipe" = "26.2.1"
+
+[build]
+accel = "vulkan1.2"
+sources = [
+  "src/*.cppm",
+  "src/*.cpp",
+  # Two globs rather than one over `shaders/*`: the stages are different things
+  # and the manifest is where a reader learns which ones this project has.
+  { glob = "shaders/*.vert", accel = "vulkan1.2" },
+  { glob = "shaders/*.frag", accel = "vulkan1.2" },
+]
+include_dirs = ["include"]
+
+[target.'cfg(accelerator = "vulkan")'.build]
+sources = ["src/vulkan/*.cpp"]
+
+# The same triangle, rasterised in software. The pixel assertions are the
+# contract and both legs satisfy it; `device_name()` is what tells them apart.
+[target.'cfg(not(accelerator = "vulkan"))'.build]
+sources = ["src/cpu/*.cpp"]
+
+[targets.offscreen-triangle]
+kind = "bin"
+main = "src/main.cpp"
