@@ -294,9 +294,23 @@ jobs:
           # compiled only the first source would leave the second header absent
           # and everything after this would still pass.
           for f in triangle_vert triangle_frag; do
-            h="target/.build-mcpp/out/spirv/$f.h"
-            test -f "$h" || { echo "missing $h"; exit 1; }
-            grep -q '0x07230203' "$h" || { echo "$h carries no SPIR-V magic"; exit 1; }
+            d="target/.build-mcpp/out/spirv"
+            test -f "$d/$f.h" || { echo "missing $d/$f.h"; exit 1; }
+            # Either file: which of the two carries the words is a property of
+            # the shader compiler the rule chose, not of the shader. See the
+            # cross-platform jobs, where that choice differs.
+            # ONE FILE AT A TIME, because `grep -qs a b` exits 2 when `b`
+            # does not exist -- even on a match in `a`, and even with `-s`,
+            # which suppresses the message and not the status. Written as one
+            # grep over both names, this criterion fails whenever the route
+            # that produces only a header is taken, which is a failure about
+            # the criterion and not about the shader.
+            found=""
+            for g in "$d/$f.h" "$d/$f.inc"; do
+              [ -f "$g" ] && grep -q '0x07230203' "$g" && found=1
+            done
+            [ -n "$found" ] \
+              || { echo "$f carries no SPIR-V magic in either $f.h or $f.inc"; exit 1; }
           done
           icd=$(find "${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-mesa-lavapipe" \
                      "$HOME/.xlings/data/xpkgs/xim-x-mesa-lavapipe" \
