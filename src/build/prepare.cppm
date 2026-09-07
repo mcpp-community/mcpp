@@ -3918,6 +3918,11 @@ prepare_build(bool print_fingerprint,
         // REPORTED, NOT INFERRED. An override that is only visible as "two
         // versions were declared and one directory exists" is a fact the reader
         // has to reconstruct from the filesystem.
+        //
+        // This lambda runs twice per build (the early pass and the late one),
+        // and the reader sees each note ONCE: `mcpp::diag` deduplicates by the
+        // whole payload, which is a designed property rather than an accident
+        // of where these two calls sit.
         for (auto const& note : unified->overrides)
             mcpp::diag::warning("xlings/version-override", note);
         return std::pair{std::move(rootSpecs), std::move(fromGraph)};

@@ -1,5 +1,11 @@
 #!/usr/bin/env bash
-# requires: gcc
+# requires:
+# NO CAPABILITY GATE, unlike its two neighbours. They need a dependency's
+# build program to run, and `gcc` is how this runner spells "a toolchain that
+# compiles one"; this test's first leg refuses before anything is compiled and
+# its second only builds an ordinary library. The rule it checks is
+# platform-independent, so it should be checked on every platform -- a Windows
+# runner is where a path or a quoting assumption would surface.
 # A PIN THAT DOES NOT SATISFY A STATED FLOOR IS A REFUSAL, NOT A SECOND INSTALL.
 #
 # Once one package means one version, the two declarations have to be
