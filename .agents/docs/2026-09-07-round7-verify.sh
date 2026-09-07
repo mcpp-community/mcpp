@@ -40,7 +40,11 @@ trap 'rm -rf "$work"' EXIT
 
 # The store this run installs into, so "how many versions of X are here" is a
 # question about THIS run and not about the machine.
-XPKGS="$HOME/.mcpp/registry/data/xpkgs"
+# `MCPP_HOME` first: the sandbox does not set it, so `$HOME/.mcpp` is right
+# there -- but a rehearsal on the host does set it, and reading the real home
+# instead answers "one version installed" from a registry this run never
+# touched. Measured: section D passed on the host for exactly that reason.
+XPKGS="${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs"
 count_versions() { ls -1 "$XPKGS/xim-x-$1" 2>/dev/null | wc -l | tr -d ' '; }
 list_versions()  { ls -1 "$XPKGS/xim-x-$1" 2>/dev/null | sort | tr '\n' ' '; }
 
@@ -220,22 +224,78 @@ if [ -d "$work/c/target" ]; then
         tail -10 "$work/d/build.log"
     fi
 
-    # ── E. a pin below the rule's floor is refused, naming both ─────────────
-    section "E. a pin below the rule's stated floor is refused"
-    mk_spirv_project "$work/e" '
-[target.'"'"'cfg(accelerator = "vulkan")'"'"'.xlings.workspace]
-"xim:glslang" = "1.0.0"
-'
-    if ( cd "$work/e" && "$STORE" build >build.log 2>&1 ); then
-        fail "a pin below the rule's floor was accepted"
-    else
-        miss=""
-        for needle in 'xim:glslang' '1.0.0' 'mcpp' 'drop the pin'; do
-            grep -q -- "$needle" "$work/e/build.log" || miss="$miss $needle"
-        done
-        if [ -z "$miss" ]; then ok "refused, naming both sides and the way out"
-        else fail "refused, but the message omits:$miss"; fi
-    fi
+fi
+
+# ── E. a pin below a stated floor is refused, naming both sides ─────────────
+#
+# NOT THROUGH A RULE PACKAGE, and the reason is worth recording: no published
+# rule states a floor that a published version can sit below. `rules-spirv`
+# requires `>=15.1.0` and 15.1.0 is the only glslang in the index; the same
+# holds for dpcpp and for the CANN toolkit. A fixture pinning `1.0.0` to get
+# under the floor is refused one step earlier, by provisioning, with
+# `not found in the synced index` -- the root's own pins are resolved before
+# the graph's constraints are known, so that refusal always wins. Measured:
+# the first draft of this section asserted the conflict message and read back
+# the provisioning one.
+#
+# So the construction is a local dependency and `xim:zoxide`, which publishes
+# three versions. What it verifies here rather than in the e2e suite is the
+# RELEASED binary.
+section "E. a pin below a stated floor is refused"
+mkdir -p "$work/e/dep/src" "$work/e/app/src"
+printf 'int dep_touch() { return 1; }\n' > "$work/e/dep/src/lib.cpp"
+cat > "$work/e/dep/mcpp.toml" <<'EOF'
+[package]
+name    = "toolowner"
+version = "0.1.0"
+[modules]
+sources = ["src/**/*.cpp"]
+[xlings.workspace]
+"xim:zoxide" = ">=0.9.9"
+[targets.toolowner]
+kind = "lib"
+EOF
+printf 'int main(){return 0;}\n' > "$work/e/app/src/main.cpp"
+cat > "$work/e/app/mcpp.toml" <<'EOF'
+[package]
+name    = "consumer"
+version = "0.1.0"
+[dependencies]
+toolowner = { path = "../dep" }
+[xlings.workspace]
+"xim:zoxide" = "0.9.7"
+[targets.consumer]
+kind = "bin"
+main = "src/main.cpp"
+EOF
+if ( cd "$work/e/app" && "$STORE" build >build.log 2>&1 ); then
+    fail "a pin below a dependency's stated floor was accepted"
+else
+    miss=""
+    for needle in 'xim:zoxide' '0.9.7' '>=0.9.9' 'toolowner' 'drop the pin'; do
+        grep -q -- "$needle" "$work/e/app/build.log" || miss="$miss $needle"
+    done
+    if [ -z "$miss" ]; then ok "refused, naming both sides and the way out"
+    else fail "refused, but the message omits:$miss"; fi
+fi
+
+# …and raising it clears the refusal. Without this leg the section also passes
+# on an engine that refuses every project naming a tool its dependency names.
+sed 's/"0.9.7"/"0.9.9"/' "$work/e/app/mcpp.toml" > "$work/e/app/mcpp.toml.new"
+mv "$work/e/app/mcpp.toml.new" "$work/e/app/mcpp.toml"
+rm -rf "$work/e/app/target"
+#
+# NO VERSION COUNT HERE. The refused leg above already installed 0.9.7: the
+# root's own pins are provisioned before the graph's constraints are known, so
+# a build that is about to be refused has already paid for what the project
+# asked for. Counting across both legs therefore reads two, and it is not the
+# defect this section is about -- section D owns "one package, one version",
+# on a store that only one build has touched.
+if ( cd "$work/e/app" && "$STORE" build >build2.log 2>&1 ); then
+    ok "raising the pin to satisfy the floor builds"
+else
+    fail "a pin that satisfies the floor was still refused"
+    tail -10 "$work/e/app/build2.log"
 fi
 
 # ── summary ────────────────────────────────────────────────────────────────
