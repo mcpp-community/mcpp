@@ -68,8 +68,9 @@ behind it.
 ### 2.1 Which version pins apply (2026.9.3+)
 
 Naming an environment also changes where a tool's version comes from. A
-project's own `[xlings.workspace]` entries always win; what differs is what
-they are laid over:
+project's own `[xlings.workspace]` entries always win — over the environment
+here, and over a dependency's declaration by the rule in section 3 — and what
+differs is what they are laid over:
 
 | The project declares | The version of a tool it did not name comes from |
 |---|---|
@@ -93,9 +94,23 @@ different question from `PATH` and stays a different answer: a build program
 that needs a package's data files (protoc's well-known `.proto` files, say)
 asks for the directory, and one that needs to *run* a program asks `PATH`.
 
-A dependency's own `[xlings]` declaration is never consulted or propagated. In
-a workspace build the workspace root owns the selection; a member's declaration
-applies only when that member is built as an independent root.
+**A workspace member's declaration is not the workspace's.** In a workspace
+build the workspace root owns the selection; a member's `[xlings]` applies only
+when that member is built as an independent root.
+
+**A dependency's declaration is a different matter, and it is honoured**
+(2026.9.5.4+ for `[xlings] deps`, 2026.9.6.6 for the version rule below). A
+board-support package knows which emulator reaches its machine, and a rule
+package knows which toolkit its rule drives; a consumer that had to repeat
+either is the duplication such packages exist to remove. What the dependency
+declares is installed, and `MCPP_XPKG_<NAME>_DIR` answers for it in that
+dependency's own build program.
+
+Where a project and a dependency name **one package**, one version of it is
+installed: identity is `(namespace, name)` and the version is a constraint on
+it. The declaration nearer the artifact wins and the override is reported;
+a pin that fails a requirement the other side stated is refused naming both.
+See *One package, one version* in [05 — mcpp.toml](05-mcpp-toml.md).
 
 ## 4. Reading an environment, never creating one
 
