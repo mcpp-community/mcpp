@@ -109,4 +109,32 @@ grep -qE '/(0\.9\.9|0\.10\.[0-9]+)$' "$answered" || {
     exit 1
 }
 
-echo "PASS: a range is installed and answered, and the project declared no tool"
+# ── the other direction ─────────────────────────────────────────────────────
+#
+# AN IMPLEMENTATION THAT PASSED THE RANGE THROUGH AS A LITERAL WOULD ALSO PASS
+# EVERYTHING ABOVE. What separates "the range was solved" from "the string
+# happened to name something" is a range that nothing can satisfy: it has to be
+# refused, and refused for that reason.
+cd "$TMP"
+sed 's/>=0.9.9/>=99.0.0/' dep/mcpp.toml > dep/mcpp.toml.new
+mv dep/mcpp.toml.new dep/mcpp.toml
+rm -rf app/target dep/answered.txt
+cd app
+if "$MCPP" build >unsat.log 2>&1; then
+    echo "FAIL: an unsatisfiable range was accepted"
+    grep -i "$TOOL" unsat.log | head -3
+    exit 1
+fi
+grep -q 'not found in the synced index' unsat.log || {
+    echo "FAIL: refused, but not because the range is unsatisfiable"
+    grep -i error unsat.log | head -3
+    exit 1
+}
+grep -q ">=99.0.0" unsat.log || {
+    echo "FAIL: the refusal does not quote the range that could not be satisfied"
+    grep -i error unsat.log | head -3
+    exit 1
+}
+echo "an unsatisfiable range is refused, naming it"
+
+echo "PASS: a range is installed and answered in one direction, and refused in the other"
