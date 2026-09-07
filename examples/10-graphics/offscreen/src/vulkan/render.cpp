@@ -33,6 +33,43 @@ const char* g_ran_on = "";
 
 constexpr unsigned char kClear[4] = { 16, 16, 16, 255 };
 
+// WHETHER AN EXTENSION IS THERE, ASKED RATHER THAN ASSUMED.
+//
+// The two below decide whether this program can see a PORTABILITY driver -- an
+// implementation of Vulkan on top of something else, which is the only kind
+// macOS has, because Apple's platform interface is Metal and MoltenVK
+// translates. A portability driver is HIDDEN from `vkEnumeratePhysicalDevices`
+// unless the instance opts in, so a program written against a native driver
+// alone finds no device there and reports it as "this machine has no GPU".
+//
+// Written as a capability query rather than `#ifdef __APPLE__`: the property is
+// "the loader in front of me advertises this", and a Linux machine running a
+// portability layer would have it too. The `#ifdef` would also be wrong in the
+// other direction -- a macOS build against a native driver does not need it.
+bool instance_extension_present(const char* name) {
+    std::uint32_t n = 0;
+    if (vkEnumerateInstanceExtensionProperties(nullptr, &n, nullptr) != VK_SUCCESS || n == 0)
+        return false;
+    std::vector<VkExtensionProperties> props(n);
+    if (vkEnumerateInstanceExtensionProperties(nullptr, &n, props.data()) != VK_SUCCESS)
+        return false;
+    for (auto const& p : props)
+        if (std::strcmp(p.extensionName, name) == 0) return true;
+    return false;
+}
+
+bool device_extension_present(VkPhysicalDevice phys, const char* name) {
+    std::uint32_t n = 0;
+    if (vkEnumerateDeviceExtensionProperties(phys, nullptr, &n, nullptr) != VK_SUCCESS || n == 0)
+        return false;
+    std::vector<VkExtensionProperties> props(n);
+    if (vkEnumerateDeviceExtensionProperties(phys, nullptr, &n, props.data()) != VK_SUCCESS)
+        return false;
+    for (auto const& p : props)
+        if (std::strcmp(p.extensionName, name) == 0) return true;
+    return false;
+}
+
 int find_memory_type(VkPhysicalDevice phys, std::uint32_t bits,
                      VkMemoryPropertyFlags want) {
     VkPhysicalDeviceMemoryProperties props{};
@@ -129,6 +166,18 @@ extern "C" int render_offscreen(unsigned w, unsigned h, unsigned char* rgba) {
     app.apiVersion       = VK_API_VERSION_1_2;
     VkInstanceCreateInfo ici{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
     ici.pApplicationInfo = &app;
+
+    // The opt-in, when the loader has it. Both halves are required and the
+    // pair is what the specification asks for: the extension has to be
+    // ENABLED, and the flag has to be set, before a portability driver appears
+    // in `vkEnumeratePhysicalDevices`.
+    std::vector<const char*> instanceExts;
+    if (instance_extension_present(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME)) {
+        instanceExts.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
+        ici.flags |= VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+    }
+    ici.enabledExtensionCount   = static_cast<std::uint32_t>(instanceExts.size());
+    ici.ppEnabledExtensionNames = instanceExts.empty() ? nullptr : instanceExts.data();
     if (vkCreateInstance(&ici, nullptr, &f.instance) != VK_SUCCESS) return 1;
 
     VkPhysicalDevice phys = VK_NULL_HANDLE;
@@ -143,6 +192,16 @@ extern "C" int render_offscreen(unsigned w, unsigned h, unsigned char* rgba) {
     VkDeviceCreateInfo dci{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos    = &qci;
+
+    // AND THE OTHER HALF: a device that advertises `VK_KHR_portability_subset`
+    // must have it enabled, or `vkCreateDevice` fails. The specification makes
+    // this one mandatory rather than optional precisely so that a program
+    // cannot use such a device while believing it is a complete one.
+    std::vector<const char*> deviceExts;
+    if (device_extension_present(phys, "VK_KHR_portability_subset"))
+        deviceExts.push_back("VK_KHR_portability_subset");
+    dci.enabledExtensionCount   = static_cast<std::uint32_t>(deviceExts.size());
+    dci.ppEnabledExtensionNames = deviceExts.empty() ? nullptr : deviceExts.data();
     if (vkCreateDevice(phys, &dci, nullptr, &f.device) != VK_SUCCESS) return 1;
 
     VkQueue queue = VK_NULL_HANDLE;
