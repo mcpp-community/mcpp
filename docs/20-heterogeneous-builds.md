@@ -147,6 +147,39 @@ links libstdc++ puts a second copy of the C++ runtime into a program whose own
 copy came from mcpp's toolchain.
 
 
+#### Is the `extern "C"` header required?
+
+Not by the language. The seam can declare the entry point itself and the island
+can define it, with no header anywhere, and that builds and links and runs.
+
+What the header buys is that the declaration exists **once**. Without it there
+are two copies in two compilers, and they can disagree silently:
+
+```cpp
+// the seam
+extern "C" int saxpy_device(float a, const float* x, const float* y,
+                            float* out, unsigned n);
+// the island, after someone widened the count
+extern "C" int saxpy_device(float a, const float* x, const float* y,
+                            float* out, std::size_t n);
+```
+
+C language linkage does not mangle, so those are one symbol. The link is clean
+and each side reads the arguments by its own ABI: no compile error, no link
+error, and a run that reads past the end of the arguments. The same mistake
+across a C++ boundary is caught by mangling at link time.
+
+So the property that forces this boundary to be `extern "C"` -- the two sides do
+not share a C++ ABI -- is the same property that makes a split declaration
+undetectable. The header is the smallest artefact both a module and a device
+compiler can read, which is the whole of its reason for existing.
+
+Three alternatives were considered and none removes it: the island cannot
+include the seam (a `.cppm` is not something nvcc parses), generating the header
+from some single source is a header with an extra step, and a module's global
+module fragment exports nothing the island could reach even if its compiler
+could read a BMI.
+
 ### Two kinds of lane, and only one of them has a generated interface
 
 The seam above is written by hand, and the shader lane's equivalent is
