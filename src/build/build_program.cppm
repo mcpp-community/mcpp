@@ -804,9 +804,20 @@ std::expected<void, std::string> run_build_program(
             same = (prev == text);
         }
         if (!same) {
+            // REFUSED, not skipped. Returning "nothing to do" here would leave
+            // the device sources uncompiled and the build otherwise successful,
+            // and the first symptom would be an unresolved name in a consumer
+            // that imported the interface this program was to generate.
             std::ofstream out(src, std::ios::binary | std::ios::trunc);
-            if (!out) return {};
+            if (!out)
+                return std::unexpected(std::format(
+                    "cannot write the build program the rules describe: {}",
+                    src.string()));
             out << text;
+            out.close();
+            if (!out)
+                return std::unexpected(std::format(
+                    "failed while writing the build program: {}", src.string()));
         }
     }
 
