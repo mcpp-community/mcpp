@@ -846,6 +846,55 @@ and a newer one moves a project to the module surface with nothing declared.
 | Seamless upgrade | A project that writes nothing new keeps its behaviour | Header storage stays the default under `modules = false`; the default surface follows `[language] modules` |
 | Test coverage | Each surface and each storage has a consumer that runs | P7 |
 
+### 13.3.1 What the self-review found after the surface was working
+
+Four findings, three of them in names the surface generates. Every one was found
+by giving the generator an input nobody had tried, and none of them by reading
+the code -- which is the reason they are recorded together.
+
+**The user-facing name came from the wrong question.** The module a consumer
+imports was derived from the leaf of `MCPP_MANIFEST_DIR` -- a directory name --
+because nothing in the build-program contract answered "what package am I
+building". `examples/09-heterogeneous/vulkan/app/` declares
+`name = "vulkan-saxpy"` and generated `app.shaders`. Worse than the defect is
+that no fixture could see it: all fourteen had a package name equal to their
+directory name, so both derivations produced the same string. Fixed by
+`MCPP_PKG_NAME` in the engine, and by making one fixture's two names differ on
+purpose.
+
+**A generated name may not be a C++ keyword.** Six sites ran the same character
+filter and none checked for reserved words. `shaders/default/` produced
+`namespace default {` in a generated file. Fixed by one `surface::identifier`
+that owns all three transformations, applied at the point where the accessor is
+EMITTED rather than in each producer -- a rule that builds the name from a file
+stem cannot know it has produced a keyword until it reaches the line that writes
+the function's name.
+
+**A seam's two halves are compared nowhere else.** The island and the host
+fallback define one `extern "C"` boundary and are never in one link, and C
+language linkage does not mangle, so two that declare a name differently build
+cleanly and the artifact reads its arguments by whichever it was compiled with.
+`mcpp.tools.island::scan` is handed both files and is therefore the only point
+at which both texts exist at once. It refuses there.
+
+**One fix was written and withdrawn.** `host-module` is inferred from a rule
+feature the consumer REQUESTS. A rule package whose rule sits in its own
+`[features] default` activates without being named, so the rule modules are
+collected -- that reads the resolved set -- while the inference reads the
+requested one. Extending the inference to the dependency's defaults was measured
+against a probe package and made the outcome WORSE: the refusal went from
+
+    error: build.mcpp imports 'probe.rules.probe', and no dependency provides
+           it as a host module.
+           declared without `host-module = true`: probe.rules
+
+to the same refusal plus `importable here: rules`, which says the dependency is
+wired up while the feature's own module still is not. The gap is further down,
+in when a default feature's sources are folded into the set `units()`
+enumerates. `mcpp:plugins` declares `default = []`, so nothing shipped reaches
+it, and the existing refusal already names exactly what to add. Recorded here
+rather than half-fixed.
+
 ### 13.4 Release and verification sequence
 
 1. mcpp pull request: E1 through E5. CI green on the head, then merged, then the

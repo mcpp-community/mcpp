@@ -1,7 +1,21 @@
 import std;
 import mcpp;
+import mcpp.plugins;
 import mcpp.rules.spirv;
 
+// THE SURFACE IS A MODULE, AND THAT IS THE ONE LINE THAT DECIDES IT.
+//
+// `mcpp.rules.spirv` writes an interface the island imports instead of a header
+// the island includes. The words in the artifact are identical; what changes is
+// whether this project has to know the file name the rule chose. It did:
+// `src/vulkan/saxpy.cpp` used to open with `#include "scale_comp.h"`, a name no
+// line in this project produced and no reader could derive without opening the
+// rule.
+//
+// The module name defaults to `<package with '-' as '_'>.shaders`, so this
+// package's shaders arrive as `vulkan_saxpy.shaders` and the accessor for
+// `shaders/scale.comp` is `vulkan_saxpy::shaders::scale_comp()`. Both are
+// derived from names this project already wrote.
 int main() {
     mcpp::rerun_if_changed_glob("shaders/**/*.comp");
     mcpp::rerun_if_changed_glob("shaders/**/*.glsl");
@@ -9,5 +23,6 @@ int main() {
     mcpp::rules::spirv::options opt;
     // So a shader can `#include` another from the same directory.
     opt.includes = { "shaders" };
+    opt.surface  = mcpp::plugins::surface::kind::module_;
     return mcpp::rules::spirv::compile(opt) ? 0 : 1;
 }

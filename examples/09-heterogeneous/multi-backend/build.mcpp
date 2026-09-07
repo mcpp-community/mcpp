@@ -1,5 +1,6 @@
 import std;
 import mcpp;
+import mcpp.plugins;
 import mcpp.rules.cuda;
 import mcpp.rules.spirv;
 
@@ -26,5 +27,13 @@ int main() {
 
     mcpp::rules::spirv::options sp;
     sp.includes = { "src/backends/vulkan" };
+    // THE PAYLOAD IS A MODULE. `src/backends/vulkan/host.cpp` opened with
+    // `#include "saxpy_comp.h"` -- a name no line in this project produced.
+    // It now imports `opkit.shaders`, named here rather than defaulted so this
+    // package's modules share the root its library module already uses; the
+    // default derives from the package name and would give
+    // `opkit_multi_backend.shaders`.
+    sp.surface     = mcpp::plugins::surface::kind::module_;
+    sp.module_name = "opkit.shaders";
     return mcpp::rules::spirv::compile(sp) ? 0 : 1;
 }

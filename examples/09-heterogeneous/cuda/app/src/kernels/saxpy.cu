@@ -7,7 +7,6 @@
 // second copy of the C++ runtime into a program whose own copy came from
 // mcpp's toolchain, which is the failure where one is linked and the other is
 // loaded.
-#include "saxpy/saxpy.h"
 #include <cuda_runtime.h>
 #include <cstdio>
 
@@ -30,10 +29,12 @@ char g_ran_on[256] = "";
 
 } // namespace
 
-extern "C" const char* saxpy_device_name(void) { return g_ran_on; }
+MCPP_EXPORT_C
+const char* saxpy_device_name(void) { return g_ran_on; }
 
-extern "C" int saxpy_device(float a, const float* x, const float* y,
-                            float* out, unsigned n) {
+MCPP_EXPORT_C
+int saxpy_device(float a, const float* x, const float* y,
+                 float* out, unsigned n) {
     float *dx = nullptr, *dy = nullptr, *dout = nullptr;
     const size_t bytes = static_cast<size_t>(n) * sizeof(float);
     int rc = -1;

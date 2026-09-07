@@ -10,7 +10,10 @@ app/
                           no BMI, and compiled only when the build asks for CUDA
   src/cpu/saxpy.cpp       the same interface implemented for the host, compiled
                           instead when it does not
-  include/saxpy/saxpy.h   the island's interface: extern "C", no std types
+  (generated)             the `extern "C"` boundary and the module over it,
+                          written by `mcpp.tools.island` from the marked
+                          declarations in the two implementations above --
+                          there is no header in this source tree
   src/app.cppm            the seam: a module that turns the C interface back
                           into a C++ one
   src/main.cpp            an ordinary consumer, which imports the seam and
@@ -33,6 +36,20 @@ sides do not share a C++ ABI and must not exchange anything that depends on
 one. The island also uses no standard library itself, which keeps it from
 linking a second copy of the C++ runtime into a program whose own copy came
 from mcpp's toolchain.
+
+**That interface is generated, and the signatures exist once.** Each entry
+point is marked with `MCPP_EXPORT_C` where it is defined; `mcpp.tools.island`
+reads the marked declarations out of both implementations and writes the header
+the island's compiler reads and the module the seam imports. A hand-written
+header states each signature a second time, at the one boundary where a
+disagreement is invisible: C language linkage does not mangle and the two halves
+are never in one link, so two that disagreed would build cleanly and the
+artifact would read its arguments by whichever signature it was compiled with.
+The generator is handed both halves and refuses that there.
+
+`examples/09-heterogeneous/hip` keeps the hand-written header for the contrast.
+Everything else about the two examples is the same computation, so the
+difference between them is exactly this.
 
 **The seam exists for backend substitution, not for the module boundary.** It
 is the one place where the island underneath becomes a CPU implementation, or
@@ -74,7 +91,7 @@ The rule names it. This project writes one edge and no payload list at all:
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.2.4", features = ["rules-cuda"], host-module = true }
+plugins = { version = "0.3.0", features = ["rules-cuda", "tools-island"], host-module = true }
 ```
 
 `mcpp.rules.cuda` declares nvcc, cudart, cuRAND's headers, CCCL and the driver

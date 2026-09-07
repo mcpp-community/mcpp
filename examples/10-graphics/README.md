@@ -53,7 +53,7 @@ tells the two apart, which is why it is printed.
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.2.5", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.3.0", features = ["rules-spirv"], host-module = true }
 
 [build]
 accel = "vulkan1.2"
@@ -65,10 +65,17 @@ sources = [
 ```
 
 That is the whole of it. `mcpp.rules.spirv` declares the shader compiler it
-drives, so this project names no payload for it; the constrained globs route the
-shaders to the build program rather than to the C++ compiler; and the generated
-headers land on the include path, so `src/vulkan/render.cpp` writes
-`#include "triangle_vert.h"`.
+drives, so this project names no payload for it, and the constrained globs route
+the shaders to the build program rather than to the C++ compiler.
+
+The compiled stages arrive as a MODULE. `build.mcpp` asks for that surface in
+one line, and `src/vulkan/render.cpp` writes `import offscreen.shaders;` and
+calls `offscreen::shaders::triangle_vert()`. It used to write
+`#include "triangle_vert.h"` and `#include "triangle_frag.h"` -- two names no
+line in this project produced and no reader could derive without opening the
+rule. The accessor answers with the address and the byte count together, which
+is what makes `sizeof` the wrong question rather than an awkward one: under
+object storage there is no array to take the size of.
 
 **A dependency cannot be conditioned on the accelerator, and this project is
 where that shows.** `accelerator` is resolved from the dependency graph, so a

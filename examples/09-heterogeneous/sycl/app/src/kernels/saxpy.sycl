@@ -29,7 +29,6 @@
 // (`ProgramManager::getDeviceImage`) in neither of those two paths. That is
 // why the manifest names the device -- and why `mcpp.rules.sycl` warns at
 // build time when it does not.
-#include "saxpy/saxpy.h"
 #include <sycl/sycl.hpp>
 #include <cstdio>
 #include <string>
@@ -45,10 +44,12 @@ namespace {
 char g_ran_on[256] = "";
 } // namespace
 
-extern "C" const char* saxpy_device_name(void) { return g_ran_on; }
+MCPP_EXPORT_C
+const char* saxpy_device_name(void) { return g_ran_on; }
 
-extern "C" int saxpy_device(float a, const float* x, const float* y,
-                            float* out, unsigned n) {
+MCPP_EXPORT_C
+int saxpy_device(float a, const float* x, const float* y,
+                 float* out, unsigned n) {
     // THE QUEUE TAKES AN ASYNC HANDLER, AND WITHOUT ONE THIS FUNCTION CANNOT
     // KEEP ITS PROMISE.
     //

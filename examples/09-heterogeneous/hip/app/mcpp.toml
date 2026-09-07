@@ -20,7 +20,7 @@ import_std = true
 default = "llvm@22.1.8"
 
 [build-dependencies.mcpp]
-plugins = { version = "0.2.4", features = ["rules-hip"], host-module = true }
+plugins = { version = "0.3.0", features = ["rules-hip"], host-module = true }
 
 # The driver's userspace library. HIP reaches the device through the CUDA
 # runtime here, so this is the same one hop the CUDA consumer needs: mcpp's
@@ -39,7 +39,7 @@ cuda-driver = "2026.09.05"
 # the rule's business rather than every consumer's.
 #
 # To pin a different version, write the same entry here and it wins. Needs mcpp
-# 2026.9.6.6 and mcpp:plugins 0.2.4.
+# 2026.9.7.1 and mcpp:plugins 0.3.0.
 
 [build]
 # Two chunks: the programming model, and the device. A device is spelled once

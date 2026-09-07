@@ -14,7 +14,10 @@ app/
                             SPIR-V compiled into the binary as a C array
   src/cpu/saxpy.cpp         the same interface implemented for the host,
                             compiled instead when the build names no device
-  include/saxpy/saxpy.h     the island's interface: extern "C", no std types
+  include/saxpy/saxpy.h     the island's interface: extern "C", no std types.
+                            Written by hand HERE, because this example is
+                            about the other lane: the SPIR-V payload, which
+                            arrives as a module and names no file at all
   src/app.cppm              the seam: a module that turns the C interface back
                             into a C++ one
   src/main.cpp              an ordinary consumer, which imports the seam

@@ -84,7 +84,7 @@ selects it and the accelerator it serves, so a project writes one edge and no
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.2.4", features = ["rules-cuda"], host-module = true }
+plugins = { version = "0.3.0", features = ["rules-cuda", "tools-island"], host-module = true }
 ```
 
 `multi-backend/` is the one example here that also pins a version, and it does
