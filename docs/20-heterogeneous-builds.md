@@ -147,7 +147,7 @@ links libstdc++ puts a second copy of the C++ runtime into a program whose own
 copy came from mcpp's toolchain.
 
 
-#### Is the `extern "C"` header required?
+#### The `extern "C"` header, and what omitting it costs
 
 Not by the language. The seam can declare the entry point itself and the island
 can define it, with no header anywhere, and that builds and links and runs.
