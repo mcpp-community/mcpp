@@ -483,8 +483,8 @@ own denominator.
 |---|---|---|---|---|
 | `rules-cuda` | `mcpp.rules.cuda` | the project's own clang (`-x cuda`), or nvcc with a GCC toolchain | `xim:cuda-nvcc`, `xim:cuda-cudart`, `xim:libcurand`, `xim:cuda-cccl` | `cuda12.9+{sm_89} ptx>=89` |
 | `rules-hip` | `mcpp.rules.hip` | the project's own clang (`-x cuda`) on the NVIDIA platform | the above plus `xim:hip-nvidia` | `hip, cuda12.9+{sm_89}` |
-| `rules-sycl` | `mcpp.rules.sycl` | the `xim:dpcpp` payload's clang (`-fsycl`) | `xim:dpcpp`, `xim:gcc`, `xim:cuda-nvcc` for an NVIDIA target | `sycl` or `sycl, cuda12.9+{sm_89}` |
-| `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` or `glslc` | `xim:glslang` or `xim:shaderc` | `vulkan1.2` |
+| `rules-sycl` | `mcpp.rules.sycl` | the `xim:dpcpp` payload's clang (`-fsycl`) | `xim:dpcpp`; on Linux also `xim:gcc`, `xim:glibc`, `xim:linux-headers`; `xim:cuda-nvcc` for an NVIDIA target | `sycl` or `sycl, cuda12.9+{sm_89}` |
+| `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` or `glslc` | `xim:glslang` on Linux, `xim:shaderc` on macOS and Windows | `vulkan1.2` |
 | `rules-ascendc` | `mcpp.rules.ascendc` | `bisheng` (`-x asc`) from the CANN toolkit | `xim:cann-toolkit` | `ascend8.5+{dav-c220}` |
 
 The payload column is what each rule declares for itself under
@@ -511,6 +511,61 @@ so both are in the image and mcpp's duplicate-symbol check reports the
 unwinder symbols they share. Nothing may cross the seam: a SYCL exception is
 caught in the device translation unit and returned as a code, because the
 runtime that threw it is not the one the caller would unwind with.
+
+## Which platforms each lane reaches
+
+A lane reaches a platform when three things hold there: the device compiler is
+published for it, the runtime the produced artifact needs can be reached, and
+the rule's own host-dependent code compiles for it. The third is the one that
+is easy to assume. `mcpp:plugins` compiles every rule for every platform in its
+CI matrix (`tests/all-rules-compile`, a fixture that names no accelerator, so
+it downloads nothing and asks only whether the modules compile); that fixture
+turned three latent host differences into compile errors on the runners that
+had them, and none of the three had been visible to a Linux build.
+
+| lane | Linux | macOS | Windows | what decides it |
+|---|---|---|---|---|
+| `rules-spirv` | yes | yes | yes | the shader compiler is published for all three: `xim:glslang` on Linux, `xim:shaderc` on macOS arm64 and Windows x86_64 |
+| `rules-cuda` | yes | no | yes | NVIDIA publishes the redistributable components for Linux and Windows and has published no macOS toolkit since CUDA 10.2 |
+| `rules-sycl` | yes | no | Level Zero and OpenCL only | Intel publishes `sycl_linux` and `sycl_windows` from one tag and nothing for macOS; upstream states that the CUDA and HIP plugins are not built for Windows, and the Windows asset carries only the Level Zero and OpenCL adapters |
+| `rules-hip` | yes | no | no | the NVIDIA-platform header package is published for Linux alone; the AMD platform needs a ROCm runtime this ecosystem does not publish anywhere |
+| `rules-ascendc` | yes | no | no | the CANN toolkit is published for Linux alone |
+
+**A vendor that does not publish for a platform ends the question.** No amount
+of engine work makes a CUDA toolkit exist for macOS. What the ecosystem can do
+is state the boundary at the point where a build asks to cross it, which is
+what each lane does: the SYCL rule refuses an ahead-of-time NVIDIA target on
+Windows and names the upstream release note that decides it, rather than
+compiling something the runtime cannot load.
+
+**Where a lane reaches a platform, it reaches it the same way.** Four
+differences are the whole of what a rule does differently per host, and each is
+a property of the host rather than of the device:
+
+- **The suffix on a program name.** `nvcc` and `nvcc.exe` are the same tool.
+- **Where the libraries are.** `lib` and `lib64` on ELF hosts, `lib/x64` in
+  NVIDIA's Windows layout.
+- **Which host compiler the device compiler drives.** On Windows the CUDA rule
+  takes its clang route whatever the project's compiler is: the nvcc route
+  compiles the host half through a compiler named by `-ccbin`, and on that host
+  the only one it accepts is MSVC's `cl.exe`, whose location is found by asking
+  the machine about its Visual Studio installation. The clang route drives no
+  second compiler and locates the MSVC headers itself.
+- **Which of the host's libraries have to be kept out.** On Linux the SYCL rule
+  names `xim:gcc`, `xim:glibc` and `xim:linux-headers` because dpcpp's clang is
+  not the clang mcpp resolved and is configured with neither library. On
+  Windows there is one C++ runtime, MSVC's, and both compilers use it, so those
+  three declarations do not exist there -- requiring them would refuse a build
+  over three packages that this ecosystem does not publish for that platform
+  and that its compiler does not need.
+
+**The runtime adapters are a Linux construction.** `compat:cuda-runtime`,
+`compat:sycl-runtime` and `compat:vulkan-runtime` exist because an mcpp
+artifact on Linux runs behind a private loader that does not consult
+`/usr/lib`, so a vendor library installed by a driver package has to be brought
+onto the artifact's own search path. macOS (dyld) and Windows (the PE loader)
+have no such layer by construction, and a project targeting them declares no
+adapter.
 
 ## What a framework looks like on top of this
 
@@ -558,6 +613,20 @@ past it is the framework's own selector rather than a change to the packaging.
 ## Not implemented
 
 Device targets and the device linking they imply for the island shape, OpenMP
-offload and stdpar, the AMD platform of HIP, and Metal. See
+offload and stdpar, the AMD platform of HIP, and Metal.
+
+Two further gaps are per-platform rather than per-model, and both are
+publishing work rather than engine work. **HIP on Windows** needs Windows
+sections for the NVIDIA-platform header package and for `cuda-profiler-api`,
+plus a Windows form for the header-declaration step that today writes into a
+Linux SubOS view. **The 13.x CUDA line on Windows** needs a Windows form for
+the back-end reunification: on that line upstream splits `nvvm/` and `crt/` out
+of `cuda_nvcc` into four separately published components, which the index
+reunites with symlinks, and `ln` is not a command on that host. The 12.x line
+keeps its back end inside the component and needs none of it, so that is the
+line Windows carries, declared as a deliberate divergence in each recipe rather
+than left to be read off the file.
+
+See
 `.agents/docs/2026-09-05-heterogeneous-build-ecosystem-design-v2.md` for the
 design these follow from and the reason each is open.

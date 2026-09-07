@@ -38,6 +38,8 @@ examples.
 | 09d | [`…/hip`](../examples/09-heterogeneous/hip/) | The same computation in HIP, reaching an NVIDIA device | `mcpp.rules.hip`, HIP as a header layer over the CUDA runtime, a two-chunk `accel` |
 | 09e | [`…/multi-backend`](../examples/09-heterogeneous/multi-backend/) | Several backends in ONE artifact, chosen at run time — the library shape, not the program shape | `accel` as a set, `cfg(accelerator = "none")` and its negation, a dispatch chain, a module seam over a C island boundary |
 | 09f | [`…/cann`](../examples/09-heterogeneous/cann/) | An Ascend C kernel behind the same seam. **Does not build yet** — its README names the two missing pieces | the `.asc` device extension, `op_kernel`/`op_host` as an island CANN already has, `accelerator = "none"` for the fallback |
+| 10 | [`examples/10-graphics`](../examples/10-graphics/) | Graphics rather than compute: a rendering pipeline whose result is pixels | `mcpp.rules.spirv` for the vertex and fragment stages, offscreen rendering as the assertable form |
+| 10a | [`…/offscreen`](../examples/10-graphics/offscreen/) | A triangle rasterised by Vulkan into a buffer, and the same triangle by a software rasteriser behind the same seam | two shader stages from one glob, a render pass with no window or swapchain, a pixel as the criterion |
 
 ## Suggested Reading Order
 
