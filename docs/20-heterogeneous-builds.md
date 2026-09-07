@@ -531,6 +531,16 @@ had them, and none of the three had been visible to a Linux build.
 | `rules-hip` | yes | no | no | the NVIDIA-platform header package is published for Linux alone; the AMD platform needs a ROCm runtime this ecosystem does not publish anywhere |
 | `rules-ascendc` | yes | no | no | the CANN toolkit is published for Linux alone |
 
+**"Reaches" is not the same claim on every row, and the difference is stated
+rather than left to be inferred.** What has been RUN on all three platforms is
+`rules-spirv`: the shader compiler produces both SPIR-V stages and the artifact
+links, and on Linux it also renders and the pixels are compared against a
+software rasteriser. What has been INSTALLED and COMPILED on Windows is the
+CUDA and SYCL lane: the components install and register their programs, and the
+rules compile for that host, but no CI runner has yet driven `nvcc` or `dpcpp`
+there end to end. A row saying "yes" therefore means the three conditions above
+hold; it does not mean a runner has executed that lane.
+
 **A vendor that does not publish for a platform ends the question.** No amount
 of engine work makes a CUDA toolkit exist for macOS. What the ecosystem can do
 is state the boundary at the point where a build asks to cross it, which is
