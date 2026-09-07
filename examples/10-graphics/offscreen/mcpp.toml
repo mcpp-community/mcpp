@@ -62,10 +62,18 @@ vulkan-runtime = "2026.09.07"
 [target.'cfg(macos)'.xlings.workspace]
 "xim:moltenvk" = "1.4.2"
 
-# Windows takes the same software rasteriser Linux does; upstream publishes a
-# separate build of it, one minor behind the Linux one.
-[target.'cfg(windows)'.xlings.workspace]
-"xim:mesa-lavapipe" = "26.2.0"
+# WINDOWS DECLARES NO DEVICE, AND THAT IS MEASURED RATHER THAN AN OVERSIGHT.
+#
+# `xim:mesa-lavapipe` publishes a Windows payload and it installs correctly, so
+# an entry here would work in the sense that the bytes arrive. The program still
+# reaches no device: `compat:vulkan` ships an import library on Windows and the
+# runtime `vulkan-1.dll` is expected to come from an installed GPU driver, which
+# a machine without one does not have. Declaring the driver would download 56 MB
+# that nothing can load.
+#
+# The gap is a Windows loader package. Until there is one, this platform builds
+# the Vulkan half and runs the CPU fallback, which is what the `cfg(not(...))`
+# section below carries.
 
 [build]
 accel = "vulkan1.2"
