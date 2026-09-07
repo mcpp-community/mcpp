@@ -399,3 +399,19 @@ cann 示例时碰到:引擎拒绝了一个加载器能起来的产物。已修,�
 不抬的(抬它会让停在下限的客户端连整个索引都打不开)。floor 是文档。改成写清楚低版本
 客户端**实际**会撞上什么:2026.9.6.5 上规则报工具包缺席并点出下界,≤2026.9.6.4 上
 `cfg(accelerator = ...)` 的工具表被直接拒绝。
+
+### 11.3 沙箱验证:五节全过,零跳过
+
+`xlings subos use verify-966 --sandbox`,脚本 base64 传进去,mcpp 按 store 路径寻址,
+用的全部是**已发布**的东西(2026.9.6.6 + `mcpp:plugins@0.2.4`,CN mirror):
+
+    == A. identity ==      ok: mcpp 2026.9.6.6
+    == B. 范围 ==          ok: 装上并被回答 / 不可满足被拒绝
+    == C. 一条边 ==        ok: 载荷来自规则(entries declared by dependencies)/ 跑通
+    == D. 覆盖 ==          ok: 只装一个 glslang
+    == E. 击穿下界 ==      ok: 拒绝并点出两侧 / 抬钉后通过
+    0 assertion(s) failed
+
+⭐⭐ **隔离是可证的,而且这次证了**:沙箱 registry 里 **12** 个包(恰好这次验证需要的
+那些,含 `mcpp-x-plugins` 与 `xim-x-glslang`),宿主 **222** 个。判据落在一个从没见过
+这些东西的 registry 上 —— 这是「看内容不要看变量」的正面用法。
