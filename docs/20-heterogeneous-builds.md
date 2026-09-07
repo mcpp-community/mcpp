@@ -93,7 +93,6 @@ does not accept C++20 modules.
 | CUDA, HIP | `.cu`, `.hip` |
 | SYCL | `.sycl` (2026.9.6.1+) |
 | Ascend C | `.asc`, `.cce` (2026.9.6.5+) |
-| Slang | `.slang` (2026.9.7.1+) |
 | GLSL, by stage | `.comp`, `.vert`, `.frag`, `.geom`, `.tesc`, `.tese`, `.mesh`, `.task`, `.rgen`, `.rint`, `.rahit`, `.rchit`, `.rmiss`, `.rcall` |
 | GLSL, stage-less | `.glsl` |
 | HLSL | `.hlsl` |
@@ -104,6 +103,15 @@ An extension outside this table listed in `[build] sources` is refused by name,
 which is the behaviour that makes the table a table: mcpp has no rule for the
 file, its object would be linked by nothing, and building it would fail later
 and less clearly.
+
+The table above is what mcpp knows **without being told**: the languages whose
+support shipped before a package could declare one. A rule package adds to it,
+through `[features].<f>.device_extensions` (see
+[05 — mcpp.toml](05-mcpp-toml.md) §2.8), and that is how a NEW device language
+arrives -- with no engine change and no engine release. Slang is the first:
+`.slang` is not in the list above, and `mcpp:plugins`' `rules-slang` declares
+it.
+
 
 `.glsl` carries no stage. glslang derives the stage from the extension, so a
 rule package refuses a stage-less name — the message belongs there, and this

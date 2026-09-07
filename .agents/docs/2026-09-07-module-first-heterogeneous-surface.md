@@ -675,61 +675,84 @@ the surface.
 Status is as of this document's date. "done" means implemented and verified by a
 test that was seen to fail without the change.
 
-| Id | Repo | Item | Depends on | Status |
-|---|---|---|---|---|
-| E1 | mcpp | `mcpp::action` gains `depfile`; ninja emits `depfile =` and `deps = gcc` for action edges | -- | done |
-| E6 | mcpp | `.slang` joins `kDeviceExtensions` in `modules/source-kind/src/source_kind.cppm` | -- | done |
-| E7 | mcpp | `[language] modules` reported as `MCPP_LANGUAGE_MODULES`, so the surface default follows the project | -- | done |
-| E5 | mcpp | Documentation: `docs/07-build-mcpp.md`, `docs/20-heterogeneous-builds.md` and their `zh` counterparts | E1, E6, E7 | done |
-| P3 | mcpp-plugins | The surface: `mcpp::plugins::surface` in the lib root, a generated `.cppm` or `.h`, a std-free POD interface, module and namespace naming per 5.2 and 5.3 | -- | done |
-| P4 | mcpp-plugins | `rules.spirv` delegates the surface. It keeps writing the data header, because 0.2.6 already unified the two compilers on one shape -- both emit `<base>.inc` and the rule writes `<base>.h` -- so there is no second copy of that decision left to remove | P3 | done |
-| P4b | mcpp-plugins | `tools.embed::group()`: the same surface over payloads that were already on disk | P3 | done |
-| P5 | mcpp-plugins | `rules.slang` | P3, E6 released | code done, waits on the mcpp release |
-| P7 | mcpp-plugins | Tests: a consumer per member and per surface, and the cross-platform compile matrix extended to `rules-slang` | P3..P5 | done |
-| P1 | mcpp-plugins | `storage`: object storage through a generated `.S` using `.incbin`, and sidecar. MSVC falls back to header storage | P3 | staged |
-| P6 | mcpp-plugins | Rules pass `--depfile`, `-MD -MF` and `-depfile` | E1 released | staged |
-| E2 | mcpp | `[rules]` manifest section; the engine synthesises the build program a rule entry describes | -- | staged |
-| E3 | mcpp | L0: the extension-to-rule table is lifted out of the diagnostic in `prepare.cppm` and activates a rule when a device source matches and the accelerator axis agrees | E2 | staged |
-| E4 | mcpp | Diagnostic for an accelerator-produced module imported from an ungated translation unit (5.6) | -- | staged |
-| X1 | openxlings/xim-pkgindex | Raise `xim:slang` from `2026.14.1` toward upstream `v2026.17`. The rule works against the published pin, so nothing waits on it | -- | staged |
-
-**What shipped is the surface plane, not the storage plane, and the ordering is
-deliberate rather than a shortfall.** Section 3.1 measured the header route as
-the faster of the two at realistic shader sizes and put the crossover at roughly
-1 MB of total embedded data, so the storage a project gets today is the one the
-measurement recommends. Object storage is worth having above that threshold and
-carries platform work the surface does not -- a section directive per object
-format, symbol prefixes on Mach-O, and the MSVC fallback of section 11 -- which
-makes it a round of its own rather than a rider on this one.
-
-`P2`, a host-tool incarnation of the embed tool, has left the list. It existed
-because the surface appeared to need the payload's bytes at plan time, and it
-does not: the generated interface holds declarations, the generated
-implementation holds includes, and `.incbin` resolves its path at assembly time.
-All three can be written before any action runs, which is what made the surface
-a wave-1 item.
+| Id | Repo | Item | Status |
+|---|---|---|---|
+| E1 | mcpp | `mcpp::action` gains `depfile`; ninja emits `depfile =` and `deps = gcc` | done |
+| E7 | mcpp | `[language] modules` reported as `MCPP_LANGUAGE_MODULES` | done |
+| E8 | mcpp | `[features].<f>.device_extensions` and `rule_module`: a rule package declares what it compiles and how to reach it | done |
+| E9 | mcpp | `host-module = true` implied by `rule_module` | done |
+| E10 | mcpp | A package with no `build.mcpp` gets the program its rules describe | done |
+| E5 | mcpp | Documentation, `docs/07` and `docs/20` and their `zh` counterparts | done |
+| E11 | mcpp | `tests/e2e/188`'s "did not rerun" assertion, which could not fail | done |
+| E12 | mcpp | The offscreen example runs on macOS as well as Linux | done |
+| P3 | mcpp-plugins | The surface: generated `.cppm` or `.h`, std-free POD interface, module and namespace naming | done |
+| P4 | mcpp-plugins | `rules.spirv` and `tools.embed::group()` delegate the surface | done |
+| P5 | mcpp-plugins | `rules.slang` | done |
+| P1 | mcpp-plugins | `storage`: header, object through `.incbin`, sidecar; MSVC falls back to header | done |
+| P8 | mcpp-plugins | Every rule feature declares `device_extensions` and `rule_module` | done |
+| P7 | mcpp-plugins | Nine fixtures, one per surface, storage and language | done |
+| E6 | mcpp | `.slang` in the engine's built-in table | **withdrawn** -- replaced by E8, and removed from the table to prove it |
+| E2/E3 | mcpp | A `[rules]` manifest section, and activating rules from the files present | **withdrawn**, see 13.1.2 |
+| P6 | mcpp-plugins | Rules pass `--depfile`, `-MD -MF` and `-depfile` | staged, needs E1 released |
+| X1 | openxlings/xim-pkgindex | Raise the `xim:slang` pin toward upstream `v2026.17` | staged |
+| X2 | openxlings/xim-pkgindex | A Windows `vulkan-1.dll` package | staged, see 13.1.3 |
 
 ### 13.1.1 A cost the implementation paid, stated rather than hidden
 
 The generator lives in `mcpp.plugins`, the lib root, which grew from about
-twenty lines to about four hundred. The lib root is compiled for **every**
-consumer of the package, including one that activates only `rules-cuda` and
-will never embed anything, so every consumer's build program now compiles the
-generator too.
+twenty lines to about seven hundred. The lib root is compiled for **every**
+consumer of the package, including one that activates only `rules-cuda` and will
+never embed anything.
 
 It is there because a second unit beside the lib root in `[build] sources` is
 not compiled as a host module ahead of the members. Measured: a member importing
-`mcpp.plugins.surface` failed with `failed to read compiled module`, because only
-the lib root is built first. Three members need the generator -- `rules-spirv`,
-`rules-slang` and `tools-embed` -- and a feature that two of them had to activate
-for the third would be a dependency between members that the feature system does
-not express.
+`mcpp.plugins.surface` failed with `failed to read compiled module`, because
+only the lib root is built first. Three members need the generator, and a
+feature that two of them had to activate for the third would be a dependency
+between members that the feature system does not express.
 
-The cost is one host-module compilation of roughly four hundred lines, paid once
-per consumer per configure, and it buys the property section 4 exists for: one
-generator, so the three members cannot drift. If the engine later compiles every
-lib-root source as a host module in listed order, the generator moves to a file
-of its own and this paragraph is deleted.
+### 13.1.2 Two designs were written and withdrawn, and both for the same reason
+
+**A `[rules]` manifest section.** `[rules] spirv = {}` would have replaced the
+dependency edge and the build program. It was withdrawn because it restates what
+`[build] sources` already says -- the file is there, its extension names the
+rule -- and a section carrying no information the manifest does not already hold
+earns its place only by expressing consent, which the dependency edge expresses
+better and where the version pin belongs.
+
+**Activating a rule from the files present.** With `device_extensions` in place,
+a consumer could have named the package alone and let the extensions decide
+which features turn on. Two objections, and neither was cost:
+
+- Two packages may claim one extension. A third-party CUDA rule is a thing
+  someone will write, and derivation would then guess or refuse where
+  `features = ["rules-cuda"]` has already said which.
+- A manifest's job is to describe the build. A derived feature set is
+  information the file no longer states, which is worse for a reader and worse
+  for anything reading the manifest as context.
+
+What survived from both is the part that carries the architecture: a rule
+package declares what it compiles, so the engine holds no package name, no
+feature spelling and no module name -- and a new device language costs no engine
+change. `.slang` was removed from the built-in table to prove that, and
+`tests/slang-consumer` builds unchanged.
+
+### 13.1.3 What the Windows measurement changed
+
+Raising the graphics example from "builds" to "runs" on Windows was expected to
+be two CI steps. It is not. The manifest declaration worked --
+`Provisioning [xlings.workspace] entries (xim:mesa-lavapipe@26.2.0)` -- the ICD
+was found in the store, and the program still printed `render unavailable`.
+
+`compat:vulkan` ships an import library on Windows and nothing else, and says
+why in its own descriptor: a statically linked loader cannot work there, because
+upstream's `loader_windows.c` creates its locks in `DllMain` and a static
+library never gets one. The runtime `vulkan-1.dll` is expected to come from an
+installed GPU driver, and a runner has none.
+
+So the platform stays at "builds" and the example declares no device there --
+an entry would download 56 MB that nothing can load. The gap is a Windows loader
+package, which is X2.
 
 ### 13.2 Dependency structure across repositories
 

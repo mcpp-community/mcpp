@@ -1506,6 +1506,62 @@ simd       = { sources = ["src/simd/**"], flags = [
   consumers (same contract as `[build].flags`), so they stay inside the additive
   model: scoped by glob, deterministic order, no cross-package effect.
 
+
+#### A feature that is a build rule (mcpp 2026.9.7.1+)
+
+Two keys turn a feature into a build rule other packages can use. They are what
+lets a consumer write one dependency edge and no build program.
+
+```toml
+[features.rules-spirv]
+sources           = ["rules/spirv.cppm"]
+rule_module       = "mcpp.rules.spirv"
+device_extensions = [".comp", ".vert", ".frag", ".glsl"]
+```
+
+`device_extensions` states which **device source** extensions this rule
+compiles. A consumer that activates the feature gets them classified as device
+sources -- never scanned for imports, never a BMI, compiled by something mcpp
+does not drive. This is the same shape as `[build] module_extensions`: mcpp
+knows what a device source *is* and does not know that `.cu` is CUDA, so a NEW
+device language costs no engine change. It is what makes
+[20 — Heterogeneous Builds](20-heterogeneous-builds.md)' claim that "a sixth
+backend is a package rather than an engine change" true rather than
+aspirational; `.slang` was removed from mcpp's built-in table and now arrives
+this way.
+
+`rule_module` names the module a consumer's build program imports to reach the
+rule, and whose `compile()` it calls. Declared rather than scanned out of the
+source, because the program has to be **written** before anything is compiled
+and a build that scanned a dependency to decide what to write would order the
+two the wrong way round.
+
+Two things follow, and neither puts a package name inside mcpp:
+
+- **`host-module = true` is implied.** A feature naming a rule module has
+  already said that is the only way to use it, so the edge does not repeat it.
+- **A package with no `build.mcpp` gets one.** mcpp writes the program those
+  rules describe into the build directory and compiles that. A package with its
+  own program keeps it: the synthesis fills an absence and never overrides, and
+  the generated file is the program a project would have written, so taking it
+  over is a copy and an edit.
+
+The feature is still requested **by name**:
+
+```toml
+[build-dependencies.mcpp]
+plugins = { version = "0.3.0", features = ["rules-spirv"] }
+```
+
+An earlier design derived the set from the extensions a project's sources
+carried. It was withdrawn because two packages may claim one extension -- a
+third-party CUDA rule is a thing someone will write -- and because a manifest's
+job is to describe the build, which a derived feature set no longer does.
+
+Both keys must appear together. One without the other is a declaration nothing
+can act on, and it is refused at parse time rather than in a consumer's build.
+
+
 ### 2.8.1 `provides` / `requires` — Capabilities (backend selection)
 
 A **capability** is a shared abstract name (e.g. `blas`). A package can *provide*

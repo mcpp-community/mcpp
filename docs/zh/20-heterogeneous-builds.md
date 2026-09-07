@@ -75,7 +75,6 @@ C++20 modules 的编译器。
 | CUDA、HIP | `.cu`、`.hip` |
 | SYCL | `.sycl`(2026.9.6.1+) |
 | Ascend C | `.asc`、`.cce`(2026.9.6.5+) |
-| Slang | `.slang`(2026.9.7.1+) |
 | GLSL(按 stage) | `.comp`、`.vert`、`.frag`、`.geom`、`.tesc`、`.tese`、`.mesh`、`.task`、`.rgen`、`.rint`、`.rahit`、`.rchit`、`.rmiss`、`.rcall` |
 | GLSL(无 stage) | `.glsl` |
 | HLSL | `.hlsl` |
@@ -85,6 +84,13 @@ C++20 modules 的编译器。
 表外的扩展名若出现在 `[build] sources` 中会被点名拒绝 —— 这正是「这张表是一张表」
 的含义:mcpp 对该文件没有任何规则,它的目标文件不会被任何东西链接,构建下去只会
 在更晚、更不清楚的地方失败。
+
+上表是 mcpp **不需要被告知**就知道的那些:在「包可以自己声明」之前就已经支持的语言。
+规则包通过 `[features].<f>.device_extensions`(见
+[05 — mcpp.toml](05-mcpp-toml.md) §2.8)向它增补,而这正是**一门新设备语言到达的方式**
+—— 不动引擎,也不需要发一版引擎。Slang 是第一个:`.slang` 不在上表里,由
+`mcpp:plugins` 的 `rules-slang` 声明。
+
 
 `.glsl` 不携带 stage。glslang 从扩展名推导 stage,因此拒绝一个无 stage 的名字是
 规则包的事 —— 那条消息属于那里,这张表因此不需要知道哪些扩展名指定了 stage。
