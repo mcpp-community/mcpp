@@ -259,6 +259,10 @@ namespace paths {
 // Shell-escape (single-quote) a string for the command line.
 std::string shq(std::string_view s);
 
+// `shq` for an argument that may carry a shell metacharacter (JSON, `>=`).
+// See `shell::quote_windows_through_cmd`.
+std::string shq_meta(std::string_view s);
+
 // ─── Shell command builders ─────────────────────────────────────────
 
 // Build the standard xlings command prefix with proper env vars.
@@ -772,6 +776,13 @@ std::string shq(std::string_view s) {
     return mcpp::platform::shell::quote(s);
 }
 
+// The same, for an argument that may carry a shell metacharacter -- which the
+// JSON payloads below do, and which a version constraint spelled `>=` does.
+// See `quote_windows_through_cmd` for what `shq` alone leaves unprotected.
+std::string shq_meta(std::string_view s) {
+    return mcpp::platform::shell::quote_through_shell(s);
+}
+
 // ─── Path helpers ───────────────────────────────────────────────────
 
 namespace paths {
@@ -1157,7 +1168,7 @@ std::string build_interface_command(const Env& env,
                                     std::string_view capability,
                                     std::string_view argsJson) {
     return std::format("{} interface {} --args {} {}",
-        build_command_prefix(env), capability, shq(argsJson),
+        build_command_prefix(env), capability, shq_meta(argsJson),
         mcpp::platform::null_redirect);
 }
 
@@ -1417,7 +1428,7 @@ int install_with_progress(const Env& env, std::string_view target,
         if constexpr (mcpp::platform::is_windows) {
             return std::format("{} interface install_packages --args {} {} <NUL",
                 build_command_prefix(env),
-                shq(argsJson),
+                shq_meta(argsJson),
                 mcpp::platform::null_redirect);
         } else {
             return std::format(
@@ -1425,7 +1436,7 @@ int install_with_progress(const Env& env, std::string_view target,
                 shq(env.home.string()),
                 shq(env.home.string()),
                 shq(env.binary.string()),
-                shq(argsJson),
+                shq_meta(argsJson),
                 mcpp::platform::null_redirect);
         }
     }();

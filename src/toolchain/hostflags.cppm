@@ -49,7 +49,14 @@ struct HostFlagOptions {
     //               needs_explicit_libcxx path owns; duplicating that for a
     //               host compile produced undefined __cxa_* /
     //               __gxx_personality_v0 (build_program.cppm, pre-existing).
-    enum class CfgBypass { Always, LinuxOnly };
+    //   Never     — always trust the cfg. No caller selects it; it completes
+    //               the enum, and it is what makes the cfg-trusting branch of
+    //               `host_link_tokens` reachable from a test on a Linux
+    //               runner. `LinuxOnly` folds into `Always` there, so without
+    //               this value that branch could only be exercised on the two
+    //               hosts it was written for -- which is how it came to be
+    //               missing the runtime-directory tokens in the first place.
+    enum class CfgBypass { Always, LinuxOnly, Never };
     CfgBypass cfgBypass = CfgBypass::Always;
 
     // binutils `-B` so the driver finds as/ld. A GCC/libstdc++ payload
@@ -206,7 +213,8 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
 
     const bool bypassCfg =
         dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always
-                      || mcpp::platform::is_linux);
+                      || (opt.cfgBypass == HostFlagOptions::CfgBypass::LinuxOnly
+                          && mcpp::platform::is_linux));
 
     // Trusting the cfg means contributing no include paths, stdlib selection
     // or runtime choices — it already carries them. It does NOT mean
@@ -297,6 +305,20 @@ std::vector<std::string> bmi_reference_tokens(std::string_view usePrefix,
              std::string(p.substr(sp + 1)) + bmi.string() };
 }
 
+// The toolchain's own runtime directories, on both exits of the function
+// below. `-L` is link-time and wanted everywhere; rpath is an ELF and Mach-O
+// concept. A PE target reaches here too, where the rpath flag is inert and
+// self-containment comes from the static link instead (#299).
+void append_runtime_lib_dirs(const Toolchain& tc, const HostFlagOptions& opt,
+                             const PathEscape& esc, std::vector<std::string>& out) {
+    if (!opt.runtimeLibDirs) return;
+    for (auto& d : tc.linkRuntimeDirs) {
+        out.push_back("-L" + esc(d));
+        if constexpr (mcpp::platform::supports_rpath)
+            out.push_back("-Wl,-rpath," + esc(d));
+    }
+}
+
 std::vector<std::string> host_link_tokens(const Toolchain& tc,
                                           const HostFlagOptions& opt,
                                           const PathEscape& esc) {
@@ -308,7 +330,8 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
 
     const bool bypassCfg =
         dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always
-                      || mcpp::platform::is_linux);
+                      || (opt.cfgBypass == HostFlagOptions::CfgBypass::LinuxOnly
+                          && mcpp::platform::is_linux));
 
     if (bypassCfg) {
         for (auto& t : dm.link_tokens(esc)) out.push_back(t);
@@ -336,6 +359,37 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
         // lld ships with the very toolchain doing the compile, so it cannot
         // be diverted to a libc++ it was not built against.
         if constexpr (mcpp::platform::is_macos) out.push_back("-fuse-ld=lld");
+        // AND THE RUNTIME DIRECTORIES, WHICH THIS PATH USED TO SKIP.
+        //
+        // Trusting clang's cfg decides WHICH runtimes are linked. It does not
+        // decide WHERE they are found, and on macOS `-lc++` resolves through
+        // the SDK to /usr/lib/libc++.tbd -- the system copy, whose version
+        // floats with the host OS -- while the headers come from the payload.
+        // The two disagree the moment the headers reference a symbol the
+        // system library does not export yet:
+        //
+        //   ld64.lld: error: undefined symbol:
+        //       std::__1::__is_posix_terminal(__sFILE*)
+        //   >>> referenced by std::__1::__print::__is_terminal(__sFILE*)
+        //
+        // measured on macos-14 compiling a build program that does nothing but
+        // `import std`. `std::print` is not header-only: its FILE* and ostream
+        // overloads call into the libc++ dylib, and those two support symbols
+        // arrived in a version macOS 14 does not ship. macOS 15's copy has
+        // them, which is why every macOS runner this project uses was green.
+        //
+        // The payload ships its own `lib/libc++.1.0.dylib` -- the toolchain's
+        // own copy, matching its own headers -- and `linkRuntimeDirs` already
+        // names that directory. Emitting `-L` and `-rpath` for it is what the
+        // Linux path has always done here; it was skipped on macOS only
+        // because this branch returned first.
+        //
+        // A BUILD PROGRAM IS THE RIGHT PLACE FOR AN ABSOLUTE RPATH. It is
+        // never distributed: mcpp compiles it, runs it on this machine, and
+        // caches it against this toolchain's identity. The equivalent question
+        // for an ARTIFACT is decided by the distribution contract, and is not
+        // this function's to answer.
+        append_runtime_lib_dirs(tc, opt, esc, out);
         return out;
     }
 
@@ -346,16 +400,7 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
             out.push_back("-B" + esc(ar.parent_path()));
     }
 
-    if (opt.runtimeLibDirs) {
-        // -L is link-time and wanted everywhere; rpath is an ELF-only concept.
-        // A PE target reaches here too, where the flag is inert and
-        // self-containment comes from the static link instead (#299).
-        for (auto& d : tc.linkRuntimeDirs) {
-            out.push_back("-L" + esc(d));
-            if constexpr (mcpp::platform::supports_rpath)
-                out.push_back("-Wl,-rpath," + esc(d));
-        }
-    }
+    append_runtime_lib_dirs(tc, opt, esc, out);
 
     return out;
 }

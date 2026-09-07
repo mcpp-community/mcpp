@@ -775,7 +775,11 @@ std::expected<void, std::string> run_build_program(
     compilerIdentity += "\nbuild-program-link=";
     compilerIdentity += muslStaticHelper  ? "musl-static-v1"
                       : mingwStaticHelper ? "mingw-static-v1"
-                                          : "default-v2";   // v2: DT_RPATH on Linux
+                                          : "default-v3";   // v2: DT_RPATH on Linux
+                                                            // v3: + the same on
+                                                            //     macOS/Windows,
+                                                            //     where the cfg
+                                                            //     path skipped it
     std::string programHash  = mcpp::toolchain::hash_file(src);
     std::string compilerHash = mcpp::toolchain::hash_string(compilerIdentity);
 

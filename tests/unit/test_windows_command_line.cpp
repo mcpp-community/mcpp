@@ -118,3 +118,133 @@ TEST(WindowsCommandLine, PosixQuotingIsUnaffected) {
               "'/home/my dir'");
     EXPECT_EQ(mcpp::platform::shell::quote_posix("it's"), "'it'\\''s'");
 }
+
+
+// ── An argument that must survive cmd.exe AND the child's argv parser ───────
+//
+// THE DEFECT. mcpp hands xlings its provisioning request as a JSON argument on
+// a shell command line. `shell::quote` answers the CHILD's parser -- MSVCRT,
+// whose escape for an embedded quote is `\"` -- and cmd.exe does not know that
+// escape: to cmd every `"` toggles a quote state. A JSON payload therefore
+// arrives at a `>` with an EVEN number of quotes behind it, cmd reads the `>`
+// as a redirection, and the redirection target is the rest of the JSON:
+//
+//   Provisioning [xlings.workspace] entries declared by dependencies
+//       (xim:shaderc@>=2026.3)
+//   The filename, directory name, or volume label syntax is incorrect.
+//
+// Measured on windows-2022. The `>=` shape is what every rule package uses to
+// state a floor, and no declaration reachable on Windows had ever carried one,
+// so the whole shape was unexercised on that host.
+//
+// The two simulators below are the criterion. Neither asserts on the SPELLING
+// of the escape -- they replay what each parser does and compare the argument
+// the child would receive against the one that was meant.
+namespace {
+
+// cmd.exe, from `/d /s /c "<line>"` to what CreateProcess receives.
+// Returns the command line, and reports whether any redirection or piping
+// metacharacter survived unquoted -- which is what actually broke.
+struct CmdParse {
+    std::string passedOn;
+    bool sawActiveMetacharacter = false;
+};
+
+CmdParse simulate_cmd_c(std::string_view wrapped) {
+    // `/s`: strip the first character and the last quote character.
+    std::string line{wrapped};
+    if (!line.empty() && line.front() == '"') line.erase(0, 1);
+    if (auto last = line.rfind('"'); last != std::string::npos) line.erase(last, 1);
+
+    CmdParse out;
+    bool inQuotes = false;
+    for (std::size_t i = 0; i < line.size(); ++i) {
+        char c = line[i];
+        if (c == '^') {                       // escapes the next character
+            if (i + 1 < line.size()) out.passedOn.push_back(line[++i]);
+            continue;
+        }
+        if (c == '"') { inQuotes = !inQuotes; out.passedOn.push_back(c); continue; }
+        if (!inQuotes && (c == '<' || c == '>' || c == '&' || c == '|'))
+            out.sawActiveMetacharacter = true;
+        out.passedOn.push_back(c);
+    }
+    return out;
+}
+
+// The MSVCRT argv rules, over the command line cmd passed on.
+std::vector<std::string> msvcrt_argv(std::string_view line) {
+    std::vector<std::string> argv;
+    std::string cur;
+    bool inQuotes = false, any = false;
+    std::size_t i = 0;
+    auto flush = [&] { if (any) { argv.push_back(cur); cur.clear(); any = false; } };
+    while (i < line.size()) {
+        char c = line[i];
+        if (c == '\\') {
+            std::size_t n = 0;
+            while (i < line.size() && line[i] == '\\') { ++n; ++i; }
+            if (i < line.size() && line[i] == '"') {
+                cur.append(n / 2, '\\');
+                if (n % 2 == 0) inQuotes = !inQuotes;
+                else            cur.push_back('"');
+                any = true;
+                ++i;
+            } else {
+                cur.append(n, '\\');
+                any = any || n > 0;
+            }
+            continue;
+        }
+        if (c == '"') { inQuotes = !inQuotes; any = true; ++i; continue; }
+        if (!inQuotes && (c == ' ' || c == '\t')) { flush(); ++i; continue; }
+        cur.push_back(c);
+        any = true;
+        ++i;
+    }
+    flush();
+    return argv;
+}
+
+constexpr std::string_view kJsonWithAFloor =
+    R"({"targets":["xim:shaderc@>=2026.3"],"yes":true})";
+
+} // namespace
+
+TEST(WindowsCommandLine, PlainQuotingLetsCmdSeeARedirection) {
+    // The state before the fix, stated so the fix below is not asserting
+    // against nothing. This is `shell::quote_windows`, which is correct for
+    // the child and incomplete for cmd.
+    auto line = "xlings.exe interface install_packages --args "
+              + mcpp::platform::shell::quote_windows(kJsonWithAFloor);
+    auto parsed = simulate_cmd_c(proc::windows_wrap_for_cmd_c(line));
+    EXPECT_TRUE(parsed.sawActiveMetacharacter)
+        << "if this ever becomes false the simulator stopped modelling cmd, "
+           "and the test below proves nothing";
+}
+
+TEST(WindowsCommandLine, MetacharacterQuotingSurvivesBothParsers) {
+    auto line = "xlings.exe interface install_packages --args "
+              + mcpp::platform::shell::quote_windows_through_cmd(kJsonWithAFloor);
+    auto parsed = simulate_cmd_c(proc::windows_wrap_for_cmd_c(line));
+
+    EXPECT_FALSE(parsed.sawActiveMetacharacter)
+        << "cmd would still read the `>` in the version floor as a redirection";
+
+    // xlings.exe / interface / install_packages / --args / <json>
+    auto argv = msvcrt_argv(parsed.passedOn);
+    ASSERT_EQ(argv.size(), 5u) << parsed.passedOn;
+    EXPECT_EQ(argv[4], kJsonWithAFloor)
+        << "the child received something other than the JSON that was meant";
+}
+
+TEST(WindowsCommandLine, MetacharacterQuotingIsUnchangedForPlainText) {
+    // A payload with nothing to escape must not acquire carets, so the common
+    // case stays legible in a log.
+    constexpr std::string_view plain = R"({"targets":["xim:shaderc@2026.3"]})";
+    auto quoted = mcpp::platform::shell::quote_windows_through_cmd(plain);
+    auto parsed = simulate_cmd_c(proc::windows_wrap_for_cmd_c("prog.exe --args " + quoted));
+    auto argv = msvcrt_argv(parsed.passedOn);
+    ASSERT_EQ(argv.size(), 3u) << parsed.passedOn;
+    EXPECT_EQ(argv[2], plain);
+}
