@@ -695,7 +695,7 @@ test that was seen to fail without the change.
 | E2/E3 | mcpp | A `[rules]` manifest section, and activating rules from the files present | **withdrawn**, see 13.1.2 |
 | P6 | mcpp-plugins | Rules pass `--depfile`, `-MD -MF` and `-depfile` | staged, needs E1 released |
 | X1 | openxlings/xim-pkgindex | Raise the `xim:slang` pin toward upstream `v2026.17` | staged |
-| X2 | openxlings/xim-pkgindex | A Windows `vulkan-1.dll` package | staged, see 13.1.3 |
+| X2 | mcpplibs/mcpp-index | `compat:vulkan` builds its Windows loader from source instead of expecting a host DLL | measured feasible, see 13.1.3; not what the Windows run step is waiting on |
 
 ### 13.1.1 A cost the implementation paid, stated rather than hidden
 
@@ -737,22 +737,53 @@ feature spelling and no module name -- and a new device language costs no engine
 change. `.slang` was removed from the built-in table to prove that, and
 `tests/slang-consumer` builds unchanged.
 
-### 13.1.3 What the Windows measurement changed
+### 13.1.3 The Windows measurement, and the second reading that overturned it
 
 Raising the graphics example from "builds" to "runs" on Windows was expected to
 be two CI steps. It is not. The manifest declaration worked --
 `Provisioning [xlings.workspace] entries (xim:mesa-lavapipe@26.2.0)` -- the ICD
-was found in the store, and the program still printed `render unavailable`.
+manifest was found in the store, and the program printed `render unavailable`.
 
-`compat:vulkan` ships an import library on Windows and nothing else, and says
-why in its own descriptor: a statically linked loader cannot work there, because
-upstream's `loader_windows.c` creates its locks in `DllMain` and a static
-library never gets one. The runtime `vulkan-1.dll` is expected to come from an
-installed GPU driver, and a runner has none.
+The first reading of that attributed it to a missing loader: `compat:vulkan`
+ships an import library on Windows and nothing else, and says why in its own
+descriptor -- a statically linked loader cannot work there, because upstream's
+`loader_windows.c` creates its locks in `DllMain` and a static library never
+gets one. The runtime `vulkan-1.dll` was said to come from an installed GPU
+driver, which a runner has none of.
 
-So the platform stays at "builds" and the example declares no device there --
-an entry would download 56 MB that nothing can load. The gap is a Windows loader
-package, which is X2.
+**That reading is wrong, and the log says so.** `render unavailable` is printed
+by `src/main.cpp` after the render function returns nothing. The Vulkan leg
+imports `vkCreateInstance` from `vulkan-1.dll` through the import library, so a
+process that could not find that DLL would fail during image load and print
+nothing at all. It printed. The loader was present, it ran, and it enumerated no
+device -- which is a statement about the ICD, not about the loader. A second
+fact stands with it: mcpp-index's own `vulkan-tests` member calls
+`vkEnumerateInstanceVersion` on the windows shards and passes.
+
+Two things follow.
+
+**X2 is not what the CI step is waiting on.** A Windows loader package would
+change nothing about `render unavailable`. What is unestablished is why the
+lavapipe payload's ICD produces no device under a process mcpp launched, and
+that is where the next measurement goes.
+
+**X2 is nonetheless available, and it costs no redistribution decision.** The
+descriptor's note argues that a Windows loader must be a DLL, not that it cannot
+be built. Measured: the Khronos loader in `compat:vulkan` cross-builds into a
+working `vulkan-1.dll` from the source the index already carries -- 265 exports,
+matching upstream's `vulkan-1.def` name for name, all `vk*`-prefixed so
+`exports = ["vk*"]` reproduces the surface exactly; `DllMain` present; importing
+only ADVAPI32, CFGMGR32, KERNEL32 and msvcrt. The earlier conclusion that the
+only viable source was a third-party prebuilt binary came from generalising the
+descriptor's note about STATIC linkage into a claim about building at all. A
+package built this way makes the loader hermetic on Windows the way it already
+is on Linux and macOS, and needs no new artifact hosted anywhere.
+
+The general form of the error is worth keeping: a recorded conclusion is
+re-read, its reasoning is not. Both notes that carried it -- in
+`.github/workflows/ci-windows.yml` and in the example's own manifest -- have
+been corrected in place rather than deleted, so the next reader sees what was
+believed and what refuted it.
 
 ### 13.2 Dependency structure across repositories
 

@@ -456,28 +456,41 @@ jobs:
           done
           echo "ok: both shader stages compiled and the Vulkan half linked"
 
-      # WINDOWS STAYS AT "BUILDS", AND THE REASON IS A MISSING PACKAGE RATHER
-      # THAN A MISSING CI STEP.
+      # WINDOWS STAYS AT "BUILDS", AND WHAT REMAINS OPEN IS THE DRIVER.
       #
-      # A run step was written, pushed, and measured. The manifest declaration
-      # worked -- `Provisioning [xlings.workspace] entries
-      # (xim:mesa-lavapipe@26.2.0)` -- and the ICD was found in the store, and
-      # the program still printed `render unavailable`, which is its own report
-      # that it enumerated no device.
+      # A run step was written, pushed, and measured (run 34135108981). The
+      # manifest declaration worked -- `Provisioning [xlings.workspace] entries
+      # (xim:mesa-lavapipe@26.2.0)` -- the ICD manifest was found in the store,
+      # and the program printed `render unavailable`, which is `src/main.cpp`
+      # reporting that the render function returned nothing.
       #
-      # The missing piece is the LOADER, not the driver. `compat:vulkan` ships
-      # an import library on Windows and nothing else, and says why in its own
-      # descriptor: a statically linked loader cannot work there, because
-      # upstream's `loader_windows.c` creates its locks in `DllMain` and a
-      # static library never gets one. The runtime `vulkan-1.dll` is expected
-      # to come from an installed GPU driver, and a GitHub Windows runner has
-      # none. `xim:mesa-lavapipe`'s Windows payload is an ICD; it imports system
-      # DLLs and carries no loader either.
+      # THAT OUTPUT PLACES THE FAILURE AFTER THE LOADER, NOT AT IT. The Vulkan
+      # leg imports `vkCreateInstance` from `vulkan-1.dll` through the import
+      # library, so a process missing that DLL fails during image load and
+      # prints nothing at all. It printed. The loader was there, it ran, and it
+      # enumerated no device -- which is a statement about the ICD.
       #
-      # So raising this job to "runs" needs a Windows `vulkan-1.dll` package,
-      # which is a packaging decision rather than a step in this file. macOS is
-      # not in the same position: `compat:vulkan` builds the loader from source
-      # everywhere except Windows, so that job does run.
+      # An earlier revision of this comment named a missing `vulkan-1.dll` as
+      # the cause. That was an inference from the descriptor's note about static
+      # linkage rather than a reading of the failure, and the log refutes it.
+      # Two facts stand against it: this program ran, and mcpp-index's own
+      # `vulkan-tests` member calls `vkEnumerateInstanceVersion` on the windows
+      # shards and passes.
+      #
+      # A separate measurement, recorded here because it removes a second thing
+      # from the list of suspects: the Khronos loader in `compat:vulkan` builds
+      # into a working `vulkan-1.dll` from the source the index already carries
+      # (mingw, 265 exports matching upstream's `vulkan-1.def` exactly, DllMain
+      # present, importing only ADVAPI32/CFGMGR32/KERNEL32/msvcrt). The
+      # descriptor's note argues that a Windows loader must be a DLL, not that
+      # it cannot be built -- so a hermetic Windows loader is available whenever
+      # it is wanted. It is not what this step is waiting on.
+      #
+      # What this step is waiting on is `xim:mesa-lavapipe`'s Windows payload
+      # producing a device under an mcpp-launched process. Until that is
+      # measured, the job builds the Vulkan half and runs the CPU fallback.
+      # macOS is not in the same position: MoltenVK enumerates once the instance
+      # asks for portability, which `src/vulkan/render.cpp` now does.
 
       - name: "Toolchain: LLVM — build mcpp (self-host)"
         shell: bash

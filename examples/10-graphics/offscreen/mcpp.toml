@@ -65,15 +65,16 @@ vulkan-runtime = "2026.09.07"
 # WINDOWS DECLARES NO DEVICE, AND THAT IS MEASURED RATHER THAN AN OVERSIGHT.
 #
 # `xim:mesa-lavapipe` publishes a Windows payload and it installs correctly, so
-# an entry here would work in the sense that the bytes arrive. The program still
-# reaches no device: `compat:vulkan` ships an import library on Windows and the
-# runtime `vulkan-1.dll` is expected to come from an installed GPU driver, which
-# a machine without one does not have. Declaring the driver would download 56 MB
-# that nothing can load.
+# an entry here would work in the sense that the bytes arrive. The program was
+# built and run with it declared, and printed `render unavailable` -- the report
+# `src/main.cpp` makes when the render function returns nothing.
 #
-# The gap is a Windows loader package. Until there is one, this platform builds
-# the Vulkan half and runs the CPU fallback, which is what the `cfg(not(...))`
-# section below carries.
+# The failure is after the loader rather than at it. This program imports
+# `vkCreateInstance` from `vulkan-1.dll`, so one that could not find that DLL
+# would fail during image load and print nothing; it printed. What has not been
+# established is why the payload's ICD enumerates no device under a process mcpp
+# launched. Until it is, this platform builds the Vulkan half and runs the CPU
+# fallback, which is what the `cfg(not(...))` section below carries.
 
 [build]
 accel = "vulkan1.2"
