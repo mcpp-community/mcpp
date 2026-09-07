@@ -14,19 +14,22 @@ import_std = true
 # imports it as `mcpp.rules.ascendc`. `[build-dependencies]`, because a rule
 # package's library must never reach the target while its rule is wanted.
 [build-dependencies.mcpp]
-plugins = { version = "0.2.3", features = ["rules-ascendc"], host-module = true }
+plugins = { version = "0.2.4", features = ["rules-ascendc"], host-module = true }
 
-# The toolkit carries BOTH halves this lane needs, so it is one payload rather
-# than two:
+# NO [xlings.workspace]. `mcpp.rules.ascendc` declares `xim:cann-toolkit`
+# itself, gated on this accelerator and on the feature that selects the rule --
+# so a build that names no accelerator installs none of its 2.9 GB, and a
+# project that wants the lane writes the edge above and nothing else.
+#
+# The toolkit carries BOTH halves the rule needs, which is why it is one payload
+# rather than two:
 #
 #   <toolkit>/cann/<arch>-linux/ccec_compiler/bin/bisheng   the device compiler
 #   <toolkit>/cann/<arch>-linux/simulator/<SoC>/lib         38 SoCs, no hardware
 #
-# Gated on the accelerator: it is 2.9 GB installed, and `mcpp build` with no
-# accelerator has no use for it. That gating needs mcpp 2026.9.6.5; before it
-# the only spellings were "unconditionally" and "not at all".
-[target.'cfg(accelerator = "ascend")'.xlings.workspace]
-"xim:cann-toolkit" = "8.5.0"
+# The rule states `>=8.5.0` rather than an exact version: nothing here is
+# coupled to a driver, and that is the release the mixed-mode object and the
+# simulators arrive in. Needs mcpp 2026.9.6.6 and mcpp:plugins 0.2.4.
 
 [build]
 # `dav-2201` is the device architecture, the role `sm_89` plays for CUDA. The

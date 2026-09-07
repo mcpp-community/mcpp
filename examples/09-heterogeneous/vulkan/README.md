@@ -78,8 +78,12 @@ mcpp run                # whatever device the loader finds
 mcpp run --no-accel     # the CPU implementation behind the same seam
 ```
 
-The `[xlings.workspace]` block names the two payloads this build needs — the
-shader compiler and the software driver — so the first build installs them.
+The shader compiler comes with the rule: `mcpp.rules.spirv` declares
+`xim:glslang` under `cfg(accelerator = "vulkan")`, so this project's
+`[xlings.workspace]` names only the software driver. That split is the rule of
+thumb — a rule declares what it needs to **compile**, a project declares what it
+needs to **run**, and a rule that shipped a software renderer would force one
+onto every consumer that has a GPU.
 
 ## What this example does not show
 

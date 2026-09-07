@@ -47,11 +47,18 @@ glob out the way `--no-accel` leaves both out, and the `cfg(accelerator =
 the two halves stay together. Only an accelerator this build *does* name whose
 architecture it does not cover is refused (mcpp 2026.9.6.5).
 
-**Nothing is installed for a device this build did not name.** The payloads sit
-under `[target.'cfg(accelerator = ...)'.xlings.workspace]`, so `mcpp run`
-fetches neither the CUDA toolkit nor the shader compiler. That gating needs
-mcpp 2026.9.6.5; before it, the only spellings available were "unconditionally"
-and "not at all", and the cheapest build paid for the most expensive one.
+**Nothing is installed for a device this build did not name.** The payloads are
+declared by the two rules, under `cfg(accelerator = ...)` and the feature that
+selects each — so `mcpp run` fetches neither the CUDA toolkit nor the shader
+compiler. That gating needs mcpp 2026.9.6.5; before it, the only spellings
+available were "unconditionally" and "not at all", and the cheapest build paid
+for the most expensive one.
+
+**This is also the one example that overrides a rule's default.** One line names
+`xim:cuda-nvcc`, and it is kept to show the escape hatch working: the
+declaration nearer the artifact wins, one version is installed, and a pin that
+failed a floor the rule stated would be refused naming both sides. Every other
+example writes the rule edge and nothing else.
 
 ## The CUDA leg takes the clang route
 

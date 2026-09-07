@@ -40,7 +40,7 @@ default = "llvm@22.1.8"
 # The rules are declared unconditionally because `build.mcpp` imports them
 # unconditionally -- each returns immediately when its own backend is absent.
 [build-dependencies.mcpp]
-plugins = { version = "0.2.2", features = ["rules-cuda", "rules-spirv"], host-module = true }
+plugins = { version = "0.2.4", features = ["rules-cuda", "rules-spirv"], host-module = true }
 
 # ── the payloads, gated on the device they are for ──────────────────────────
 #
@@ -65,20 +65,21 @@ plugins = { version = "0.2.2", features = ["rules-cuda", "rules-spirv"], host-mo
 # to 13.x fixes that and raises the driver floor to r580, which is a machine
 # requirement rather than a project decision. The clang route never includes
 # that header and imposes no such floor.
+# ONE ENTRY, AND IT IS THE ONLY OVERRIDE IN THIS REPOSITORY'S EXAMPLES.
+#
+# `mcpp.rules.cuda` declares the whole toolkit -- nvcc, cudart, cuRAND, CCCL and
+# the driver sentinel -- so the four beside this one are gone and this project
+# would build with no `[xlings.workspace]` at all. The line is kept to show the
+# escape hatch working: the declaration nearer the artifact wins, one version is
+# installed either way, and a pin that failed a floor the rule stated would be
+# refused naming both sides.
+#
+# Which CUDA line matters here is what makes it a plausible override rather than
+# a contrived one: a runtime must not be newer than the driver it will meet, so
+# a project whose machines are older or newer than the rule's default is exactly
+# the project that should say so.
 [target.'cfg(accelerator = "cuda")'.xlings.workspace]
-"xim:cuda-nvcc"         = "12.9.86"
-"xim:cuda-cudart"       = "12.9.79"
-# clang's CUDA wrapper includes a cuRAND header for every device unit, and that
-# header includes <nv/target> from CCCL. Neither is called by this kernel; on a
-# developer machine the host's /usr/include used to supply them silently.
-"xim:libcurand"         = "10.3.10.19"
-"xim:cuda-cccl"         = "12.9.27"
-
-# The host-link stub is Linux-only, and the OS goes in the PREDICATE rather
-# than in the value: a value carrying platform keys under an already-predicated
-# table would state the condition twice and let the two disagree.
-[target.'cfg(all(accelerator = "cuda", linux))'.xlings.workspace]
-"xim:libcuda-host-link" = "0.0.1"
+"xim:cuda-nvcc" = "12.9.86"
 
 # The driver's userspace library, reached through an index package rather than
 # the host: mcpp's private loader does not consult /usr/lib, so a statically
@@ -88,11 +89,12 @@ plugins = { version = "0.2.2", features = ["rules-cuda", "rules-spirv"], host-mo
 [target.'cfg(accelerator = "cuda")'.dependencies.compat]
 cuda-driver = "2026.09.05"
 
+# The shader compiler is NOT here: `mcpp.rules.spirv` declares `xim:glslang` for
+# itself. What stays is a DEVICE -- a Vulkan driver that is always present
+# because it is the CPU, which is what makes the Vulkan leg runnable on a
+# machine with no GPU, and what every CI runner in this ecosystem is. A rule
+# declares what it needs to COMPILE; a project declares what it needs to RUN.
 [target.'cfg(accelerator = "vulkan")'.xlings.workspace]
-# The shader compiler, and a Vulkan driver that is always present because it is
-# the CPU. The second is what makes the Vulkan leg runnable on a machine with
-# no GPU, which is what every CI runner in this ecosystem is.
-"xim:glslang"       = "15.1.0"
 "xim:mesa-lavapipe" = "26.2.1"
 
 # The Khronos loader, built by the index rather than taken from the host, and

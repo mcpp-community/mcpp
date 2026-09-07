@@ -20,7 +20,7 @@ import_std = true
 default = "llvm@22.1.8"
 
 [build-dependencies.mcpp]
-plugins = { version = "0.2.1", features = ["rules-sycl"], host-module = true }
+plugins = { version = "0.2.4", features = ["rules-sycl"], host-module = true }
 
 # The SYCL runtime, on the artifact's runtime search path. mcpp's private
 # loader does not consult /usr/lib, so `libsycl.so.9` -- which the rule
@@ -33,37 +33,22 @@ plugins = { version = "0.2.1", features = ["rules-sycl"], host-module = true }
 [dependencies.compat]
 sycl-runtime = "2026.09.07"
 
-# Five payloads, each closing one hole the host would otherwise fill, written
-# on the TWO TOOL AXES rather than one (docs/05 section 2.13, SPEC-004 section 4).
+# NO [xlings.workspace]. `mcpp.rules.sycl` declares all five payloads this lane
+# needs, each closing one hole the host would otherwise fill: `dpcpp` (the
+# compiler, a host-axis entry -- it runs here whatever it is asked to emit);
+# `gcc`, `glibc` and `linux-headers` (the C++ and C libraries the SYCL unit is
+# compiled against -- dpcpp's clang is configured with neither, so left alone
+# its include search list reaches /usr/include with no ecosystem library on it,
+# which is measurable in `clang -v` and invisible on the command line); and
+# `cuda-nvcc` for the NVIDIA back end's libdevice, declared only when the accel
+# actually names cuda.
 #
-# The compiler runs on THIS machine whatever it is asked to emit, so it is a
-# host-axis entry. The other four are what the produced code is compiled
-# against, so they belong under a target selector; on a native build the two
-# axes name one platform, which is why writing them all in one table was right
-# by accident and stops being right the first time this is cross-compiled.
-[xlings.workspace]
-"xim:dpcpp" = "7.1.0"          # the compiler, and it runs here
-
-#   gcc        NOT a second toolchain: the C++ standard library the SYCL unit
-#              compiles against. Left alone, dpcpp's clang reads the HOST's
-#              /usr/include/c++ -- measured, and invisible until a machine
-#              without it refuses the build.
-#   cuda-nvcc  the NVIDIA back end's libdevice. Also measured: without
-#              `--cuda-path` clang finds the host's CUDA installation and says
-#              nothing about it.
-#   glibc      and linux-headers: the C library. `xim:gcc` supplies the C++
-#              standard library; the C library underneath it is a separate
-#              declaration, and without it a `.sycl` unit that includes
-#              `<cstdio>` reaches the host's /usr/include. Both are UNPINNED:
-#              the C library version is the runtime binding's choice, not the
-#              project's, and a pinned entry resolves for exactly that version
-#              or for nothing. rules-sycl 0.2.1 refuses the build and names
-#              these two lines when they are absent.
-[target.'cfg(os = "linux")'.xlings.workspace]
-"xim:gcc"           = "15.1.0"
-"xim:cuda-nvcc"     = "12.9.86"
-"xim:glibc"         = ""
-"xim:linux-headers" = ""
+# The C library entries are UNPINNED there for a reason worth keeping: its
+# version is the runtime binding's choice, not the project's, and a pinned entry
+# resolves for exactly that version or for nothing.
+#
+# To pin a different version, write the same entry here and it wins. Needs mcpp
+# 2026.9.6.6 and mcpp:plugins 0.2.4.
 
 [build]
 # Two chunks: the programming model, and the device. Written `sycl` alone, the

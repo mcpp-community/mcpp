@@ -13,7 +13,7 @@ import_std = true
 # The rule that compiles the shaders lives in the official plugin collection,
 # selected by its feature; `build.mcpp` imports it as `mcpp.rules.spirv`.
 [build-dependencies.mcpp]
-plugins = { version = "0.2.1", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.2.4", features = ["rules-spirv"], host-module = true }
 
 # The Khronos loader, built by the index rather than taken from the host, and
 # the adapter that makes the host's own ICDs reachable from a binary running
@@ -24,12 +24,12 @@ plugins = { version = "0.2.1", features = ["rules-spirv"], host-module = true }
 vulkan         = "1.4.357.0"
 vulkan-runtime = "2026.09.07"
 
-# The two payloads this build names rather than discovers: the shader compiler,
-# and a Vulkan driver that is always present because it is the CPU. The second
-# is what makes this example runnable on a machine with no GPU, which is what
-# every CI runner in this ecosystem is.
+# ONE payload here, and the shader compiler is not it: `mcpp.rules.spirv`
+# declares `xim:glslang` for itself. What stays is a DEVICE, and the boundary is
+# the point -- a rule declares what it needs to COMPILE, a project declares what
+# it needs to RUN. A rule that shipped a software renderer would force one onto
+# every consumer that has a GPU.
 [xlings.workspace]
-"xim:glslang"       = "15.1.0"
 # A Vulkan device that needs no GPU: Mesa's lavapipe as a payload, complete
 # with its own LLVM. On a machine with a vendor ICD the loader lists both and
 # the program picks the discrete GPU; with none -- a CI runner, a sandbox --
