@@ -853,7 +853,8 @@ void scan_one_into(ScanResult& result,
     // file, and taken from THIS manifest — a dependency is classified by its
     // own `[build] module_extensions`, never by the consumer's.
     const auto extTable =
-        mcpp::extension_table_for(manifest.buildConfig.moduleExtensions);
+        mcpp::extension_table_for(manifest.buildConfig.moduleExtensions,
+                                  manifest.buildConfig.deviceExtensions);
 
     // Glob exclusion: patterns starting with `!` remove files from the
     // include set (like .gitignore).
@@ -1153,7 +1154,8 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
     for (auto const& p : packages) {
         // Same contract as scan_one_into: each package's own table.
         const auto extTable =
-            mcpp::extension_table_for(p.manifest.buildConfig.moduleExtensions);
+            mcpp::extension_table_for(p.manifest.buildConfig.moduleExtensions,
+                                      p.manifest.buildConfig.deviceExtensions);
         std::set<std::filesystem::path> all_files;
         for (auto const& g : p.manifest.modules.sources) {
             for (auto& f : expand_glob(p.root, g)) all_files.insert(f);
