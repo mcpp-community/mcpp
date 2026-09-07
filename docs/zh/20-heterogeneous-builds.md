@@ -403,8 +403,8 @@ sources = ["src/cpu/*.cpp"]
 |---|---|---|---|---|
 | `rules-cuda` | `mcpp.rules.cuda` | 工程自己的 clang(`-x cuda`),或 GCC 工具链下的 nvcc | `xim:cuda-nvcc`、`xim:cuda-cudart`、`xim:libcurand`、`xim:cuda-cccl` | `cuda12.9+{sm_89} ptx>=89` |
 | `rules-hip` | `mcpp.rules.hip` | NVIDIA 平台上是工程自己的 clang(`-x cuda`) | 上面那些,再加 `xim:hip-nvidia` | `hip, cuda12.9+{sm_89}` |
-| `rules-sycl` | `mcpp.rules.sycl` | `xim:dpcpp` 载荷里的 clang(`-fsycl`) | `xim:dpcpp`、`xim:gcc`,NVIDIA 目标另加 `xim:cuda-nvcc` | `sycl` 或 `sycl, cuda12.9+{sm_89}` |
-| `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` 或 `glslc` | `xim:glslang` 或 `xim:shaderc` | `vulkan1.2` |
+| `rules-sycl` | `mcpp.rules.sycl` | `xim:dpcpp` 载荷里的 clang(`-fsycl`) | `xim:dpcpp`;Linux 上另有 `xim:gcc`、`xim:glibc`、`xim:linux-headers`;NVIDIA 目标另加 `xim:cuda-nvcc` | `sycl` 或 `sycl, cuda12.9+{sm_89}` |
+| `rules-spirv` | `mcpp.rules.spirv` | `glslangValidator` 或 `glslc` | Linux 上 `xim:glslang`,macOS 与 Windows 上 `xim:shaderc` | `vulkan1.2` |
 | `rules-ascendc` | `mcpp.rules.ascendc` | CANN 工具包里的 `bisheng`(`-x asc`) | `xim:cann-toolkit` | `ascend8.5+{dav-c220}` |
 
 载荷那一列是每条规则在 `cfg(accelerator = ...)` 之下**为自己**声明的东西,列出来是为了
@@ -423,6 +423,55 @@ CUDA 入口点的内联包装,所以目标文件链接的是 CUDA 运行时,机�
 对着 libstdc++ 编译的,而 mcpp 的产物链接 libc++,于是两者都在同一个映像里,mcpp 的
 重复符号检查会报出它们共有的那些 unwinder 符号。任何东西都不得穿过接缝:SYCL 异常在
 设备编译单元里被捕获并转成返回码,因为抛出它的那个运行时不是调用方会用来展开的那个。
+
+## 每条 lane 到得了哪些平台
+
+一条 lane 在某个平台上成立,要三件事同时为真:设备编译器为它发布了、产物需要的运行时
+在那里够得到、以及这条规则自己那段按宿主分岔的代码在那里编译得过。第三件是最容易被默认
+成立的那一件。`mcpp:plugins` 会为矩阵里的每个平台编译每一条规则
+(`tests/all-rules-compile` —— 一个不点名任何 accelerator 的夹具,因此一个字节都不
+下载,只问六个模块编不编得过);它把三处潜伏的宿主差异变成了对应 runner 上的编译错误,
+而三处没有一处是 Linux 构建看得见的。
+
+| lane | Linux | macOS | Windows | 由什么决定 |
+|---|---|---|---|---|
+| `rules-spirv` | 是 | 是 | 是 | 着色器编译器三个平台都有发布:Linux 上 `xim:glslang`,macOS arm64 与 Windows x86_64 上 `xim:shaderc` |
+| `rules-cuda` | 是 | 否 | 是 | NVIDIA 为 Linux 与 Windows 发布可再分发组件,而自 CUDA 10.2 之后没有为 macOS 发布过工具包 |
+| `rules-sycl` | 是 | 否 | 仅 Level Zero 与 OpenCL | Intel 从同一个 tag 发布 `sycl_linux` 与 `sycl_windows`,macOS 一个都没有;上游写明 Windows 不构建 CUDA 与 HIP 插件,而那份资产也确实只带 Level Zero 与 OpenCL 两个适配器 |
+| `rules-hip` | 是 | 否 | 否 | NVIDIA 平台的头文件包只为 Linux 发布;AMD 平台要一个本生态在任何平台上都还没发布的 ROCm 运行时 |
+| `rules-ascendc` | 是 | 否 | 否 | CANN 工具包只为 Linux 发布 |
+
+**「到得了」在每一行上不是同一个断言,而这个差别写出来而不是留给人推。** 三个平台上
+真的**跑过**的是 `rules-spirv`:着色器编译器产出两个 SPIR-V 阶段、产物链接得上,而
+Linux 上还渲染出来并把像素与一个软件光栅器逐字节比对。Windows 上**装上并编译过**的是
+CUDA 与 SYCL 那条 lane:组件装得上、注册出程序,规则也为那个宿主编译过,但还没有任何
+一台 runner 在那里端到端驱动过 `nvcc` 或 `dpcpp`。所以一行写「是」的意思是上面三个条件
+成立,不是说有 runner 执行过那条 lane。
+
+**厂商没有为某个平台发布,这个问题就到此为止。** 再多的引擎工作也变不出一个 macOS 的
+CUDA 工具包。生态能做的是在一次构建请求跨过那条边界的地方把它说出来,而每条 lane 正是
+这样做的:SYCL 规则在 Windows 上拒绝一个提前编译的 NVIDIA 目标,并点名决定这件事的那
+条上游发布说明,而不是编出一个运行时装不进去的东西。
+
+**一条 lane 到得了的平台,它到达的方式是同一个。** 一条规则按宿主区别对待的全部内容
+就是下面四处,而每一处都是宿主的性质,不是设备的:
+
+- **程序名上的后缀。** `nvcc` 与 `nvcc.exe` 是同一个工具。
+- **库在哪里。** ELF 宿主上是 `lib` 与 `lib64`,NVIDIA 的 Windows 布局里是 `lib/x64`。
+- **设备编译器驱动的是哪个宿主编译器。** Windows 上 CUDA 规则一律走 clang 路线,与
+  项目的编译器无关:nvcc 路线把设备单元的宿主那一半交给 `-ccbin` 命名的编译器,而在那
+  个宿主上它只接受 MSVC 的 `cl.exe`,找到它要问机器的 Visual Studio 安装。clang 路线
+  不驱动第二个编译器,它自己就会定位 MSVC 的头文件。
+- **要把宿主的哪些库挡在外面。** Linux 上 SYCL 规则点名 `xim:gcc`、`xim:glibc` 与
+  `xim:linux-headers`,因为 dpcpp 的 clang 不是 mcpp 解析的那个 clang,两个库都没有
+  被配置过。Windows 上只有一个 C++ 运行时 —— MSVC 的 —— 两个编译器用的是同一个,所以
+  那三条声明在那里根本不存在:要求它们会让构建因为三个本生态不为那个平台发布、而那个
+  平台的编译器也不需要的包而失败。
+
+**运行时适配层是 Linux 的构造。** `compat:cuda-runtime`、`compat:sycl-runtime` 与
+`compat:vulkan-runtime` 存在,是因为 Linux 上 mcpp 的产物跑在一个不查 `/usr/lib` 的
+私有 loader 后面,于是驱动包装的厂商库必须被搬到产物自己的搜索路径上。macOS(dyld)
+与 Windows(PE loader)按构造就没有这一层,面向它们的项目一条适配声明都不写。
 
 ## 在此之上,一个框架是什么形状
 
@@ -459,5 +508,15 @@ Mesa 的 lavapipe 仅因类型就被排除 —— 尽管它声明了后端要求
 ## 尚未实现
 
 岛形态的 device target 及其隐含的 device link、OpenMP offload 与 stdpar、HIP 的 AMD
-平台,以及 Metal。这些所依据的设计,以及每一项仍然开着的理由,见
+平台,以及 Metal。
+
+另有两处缺口是按平台而不是按编程模型分的,而且两处都是打包工作不是引擎工作。
+**HIP 上 Windows** 需要给 NVIDIA 平台的头文件包与 `cuda-profiler-api` 补 Windows 段,
+以及给那一步「把头文件声明进去」补一个 Windows 形态 —— 它今天写进的是一个 Linux 的
+SubOS 视图。**CUDA 的 13.x 线上 Windows** 需要给后端的重新拼合补一个 Windows 形态:
+那条线上,上游把 `nvvm/` 与 `crt/` 从 `cuda_nvcc` 里拆成四个单独发布的组件,索引用符号
+链接把它们拼回去,而 `ln` 不是那个宿主上的命令。12.x 线自带后端,一样都不需要,所以
+Windows 承载的是那条线,并在每个配方里显式声明为有意的分歧,而不是留给人从文件里读。
+
+这些所依据的设计,以及每一项仍然开着的理由,见
 `.agents/docs/2026-09-05-heterogeneous-build-ecosystem-design-v2.md`。

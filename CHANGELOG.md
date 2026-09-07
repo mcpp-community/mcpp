@@ -5,6 +5,65 @@
 
 ## [Unreleased]
 
+## [2026.9.7.1] - 2026-09-07
+
+### 两处只在 Linux 之外成立的缺陷,以及第一条图形管线
+
+**引擎与规则层早就与平台无关,而生态只在 Linux 上完整。** 把规则包在另外两个平台上
+真跑一遍,暴露了两处引擎缺陷 —— 两处的共同形状是:一段代码的正确性依赖于宿主,而 CI
+只在其中一个宿主上执行它。
+
+**macOS 14 上构建程序用不了 `std::println`,而显而易见的修法更糟(已记录,未修)。**
+`host_link_tokens` 的「信任 cfg」出口不给 `Toolchain::linkRuntimeDirs` 发 `-L`,于是
+macOS 上 `-lc++` 经 SDK 解析到**系统**那份,而头文件来自载荷。macos-14 上编译一个只有
+`import std` 的构建程序:
+
+    ld64.lld: error: undefined symbol: std::__1::__is_posix_terminal(__sFILE*)
+
+`std::print` 不是 header-only 的,它的两个重载都要到 libc++ **dylib** 里取支持符号,
+而那两个符号是在 macOS 14 不带的那一版里加进去的。macOS 15 有,所以这个项目用到的每
+一台 macOS runner 都是绿的。
+
+在这一条上加 `-L<载荷>/lib` 试过了,**它买来一个更糟的问题**:那会让 `-lc++` 解析到
+工具链自己的 dylib,也就是 `dist::mechanism_for` 在 Mach-O 上明确拒绝的
+ToolchainCoupled —— LLVM 的 macOS libc++abi 与 libunwind dylib **向上链接**
+`/usr/lib/libc++`,于是系统 libc++ 与工具链的那份同时载入,跨两份释放的对象在
+libmalloc 里 abort(#202)。CI 报的正是这条路的第一步:链接停在 `__cxa_end_catch`
+与其余那些系统 libc++ 会再导出、而载荷那份不会的 ABI 符号上。
+
+所以这个宿主上的 C++ 运行时就是系统那一份,而下限由分发契约选的**静态 libc++** 变成
+真的 —— 那是产物的机制,不属于一个 mcpp 编译、就地跑一次、然后丢掉的辅助程序。
+**限制照实写下来:macOS 14 上构建程序不能用 `std::print` / `std::println`。**
+`std::format` 是 header-only 的,没有这个问题;本轮 mcpp:plugins 的六个模块因此全部
+改用它。判据 `HostFlags.OnlyTheSpelledOutExitNamesTheToolchainRuntimeDirs` 把这条
+不对称写成了一条会跑的断言。
+
+**版本约束里的 `>` 被 cmd.exe 读成重定向(Windows)。** mcpp 把供给请求作为 JSON 参数
+放在 shell 命令行上;`shell::quote` 回答的是子进程的 argv 解析(`\"`),而 cmd 不认这
+个转义,于是走到 `>` 时引号数是偶数,`>` 成了重定向:
+
+    Provisioning [xlings.workspace] entries declared by dependencies (xim:shaderc@>=2026.3)
+    The filename, directory name, or volume label syntax is incorrect.
+
+`>=` 正是每个规则包声明下界用的形态,而在此之前没有任何一条能在 Windows 上生效的声明
+带过 `>`。修法是标准的双重转义,判据是两个解析器的模拟器加一条反向腿。
+
+### `examples/10-graphics/offscreen`:第一条图形管线,判据是像素
+
+此前所有异构示例都是计算。这一个是图形:顶点与片段两个着色器阶段、一条 render pass、
+`vkCmdDraw` 一个三角形、`vkCmdCopyImageToBuffer` 取回像素。**离屏而不是开窗**,因为那
+是可断言的形态。同一道接缝背后是一个自己写的软件光栅器,而两条腿的中心像素**逐字节
+相同** —— 图像是契约,设备名是唯一区分它们的东西。
+
+这个示例挖出一条使用者会撞上的规则:**依赖不能被 layer 条件化**。
+`cfg(accelerator = ...)` 下的 `[build]` 源生效而依赖被忽略,于是包被丢掉、包含它的源
+被留下。
+
+### 文档
+
+`docs/20` 新增「每条 lane 到得了哪些平台」:三件事同时为真才叫一条 lane 在某个平台上
+成立,而第三件(规则自己那段按宿主分岔的代码编译得过)是最容易被默认成立的那一件。
+
 ## [2026.9.6.6] - 2026-09-07
 
 ### 一个包一个版本:规则自带环境,工程只写例外

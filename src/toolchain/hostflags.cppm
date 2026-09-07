@@ -49,7 +49,14 @@ struct HostFlagOptions {
     //               needs_explicit_libcxx path owns; duplicating that for a
     //               host compile produced undefined __cxa_* /
     //               __gxx_personality_v0 (build_program.cppm, pre-existing).
-    enum class CfgBypass { Always, LinuxOnly };
+    //   Never     — always trust the cfg. No caller selects it; it completes
+    //               the enum, and it is what makes the cfg-trusting branch of
+    //               `host_link_tokens` reachable from a test on a Linux
+    //               runner. `LinuxOnly` folds into `Always` there, so without
+    //               this value that branch could only be exercised on the two
+    //               hosts it was written for -- which is how it came to be
+    //               missing the runtime-directory tokens in the first place.
+    enum class CfgBypass { Always, LinuxOnly, Never };
     CfgBypass cfgBypass = CfgBypass::Always;
 
     // binutils `-B` so the driver finds as/ld. A GCC/libstdc++ payload
@@ -206,7 +213,8 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
 
     const bool bypassCfg =
         dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always
-                      || mcpp::platform::is_linux);
+                      || (opt.cfgBypass == HostFlagOptions::CfgBypass::LinuxOnly
+                          && mcpp::platform::is_linux));
 
     // Trusting the cfg means contributing no include paths, stdlib selection
     // or runtime choices — it already carries them. It does NOT mean
@@ -297,6 +305,20 @@ std::vector<std::string> bmi_reference_tokens(std::string_view usePrefix,
              std::string(p.substr(sp + 1)) + bmi.string() };
 }
 
+// The toolchain's own runtime directories, on both exits of the function
+// below. `-L` is link-time and wanted everywhere; rpath is an ELF and Mach-O
+// concept. A PE target reaches here too, where the rpath flag is inert and
+// self-containment comes from the static link instead (#299).
+void append_runtime_lib_dirs(const Toolchain& tc, const HostFlagOptions& opt,
+                             const PathEscape& esc, std::vector<std::string>& out) {
+    if (!opt.runtimeLibDirs) return;
+    for (auto& d : tc.linkRuntimeDirs) {
+        out.push_back("-L" + esc(d));
+        if constexpr (mcpp::platform::supports_rpath)
+            out.push_back("-Wl,-rpath," + esc(d));
+    }
+}
+
 std::vector<std::string> host_link_tokens(const Toolchain& tc,
                                           const HostFlagOptions& opt,
                                           const PathEscape& esc) {
@@ -308,7 +330,8 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
 
     const bool bypassCfg =
         dm.hasCfg && (opt.cfgBypass == HostFlagOptions::CfgBypass::Always
-                      || mcpp::platform::is_linux);
+                      || (opt.cfgBypass == HostFlagOptions::CfgBypass::LinuxOnly
+                          && mcpp::platform::is_linux));
 
     if (bypassCfg) {
         for (auto& t : dm.link_tokens(esc)) out.push_back(t);
@@ -336,6 +359,42 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
         // lld ships with the very toolchain doing the compile, so it cannot
         // be diverted to a libc++ it was not built against.
         if constexpr (mcpp::platform::is_macos) out.push_back("-fuse-ld=lld");
+        // AND DELIBERATELY NOT THE TOOLCHAIN'S RUNTIME DIRECTORIES. THIS WAS
+        // TRIED, AND WHAT IT COSTS IS RECORDED HERE RATHER THAN REDISCOVERED.
+        //
+        // The motivation is real. Trusting the cfg decides WHICH runtimes are
+        // linked and never decides WHERE they are found, so on macOS `-lc++`
+        // resolves through the SDK to /usr/lib/libc++.tbd -- the system copy,
+        // whose version floats with the host OS -- while the headers come from
+        // the payload. On macOS 14 those two disagree, measured on a build
+        // program that does nothing but `import std`:
+        //
+        //   ld64.lld: error: undefined symbol:
+        //       std::__1::__is_posix_terminal(__sFILE*)
+        //   >>> referenced by std::__1::__print::__is_terminal(__sFILE*)
+        //
+        // `std::print` is not header-only; that support symbol arrived in a
+        // libc++ macOS 14 does not ship, and macOS 15's copy has it, which is
+        // why every macOS runner this project uses was green.
+        //
+        // ADDING `-L<payload>/lib` HERE FIXES THAT AND BUYS A WORSE PROBLEM.
+        // It makes `-lc++` resolve to the toolchain's own dylib, which is the
+        // ToolchainCoupled contract that `dist::mechanism_for` REFUSES on
+        // Mach-O for a measured reason: LLVM's macOS libc++abi and libunwind
+        // dylibs upward-link /usr/lib/libc++, so the system libc++ loads
+        // alongside the toolchain's and an object freed across the two aborts
+        // in libmalloc (#202). The first step of that path is what CI reported
+        // when this was tried -- the link stopped on `__cxa_end_catch`,
+        // `std::runtime_error::~runtime_error()` and the rest of the ABI
+        // surface the system libc++ re-exports and the payload's does not.
+        //
+        // So the C++ runtime on this host is the system one, and the
+        // deployment floor is made real by the STATIC libc++ the distribution
+        // contract selects -- a mechanism that belongs to an artifact and not
+        // to a helper mcpp compiles, runs here, and throws away. The
+        // consequence, stated because it is a real limit: on macOS 14 a build
+        // program cannot use `std::print` or `std::println`. `std::format` is
+        // header-only and has none of this.
         return out;
     }
 
@@ -346,16 +405,7 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
             out.push_back("-B" + esc(ar.parent_path()));
     }
 
-    if (opt.runtimeLibDirs) {
-        // -L is link-time and wanted everywhere; rpath is an ELF-only concept.
-        // A PE target reaches here too, where the flag is inert and
-        // self-containment comes from the static link instead (#299).
-        for (auto& d : tc.linkRuntimeDirs) {
-            out.push_back("-L" + esc(d));
-            if constexpr (mcpp::platform::supports_rpath)
-                out.push_back("-Wl,-rpath," + esc(d));
-        }
-    }
+    append_runtime_lib_dirs(tc, opt, esc, out);
 
     return out;
 }

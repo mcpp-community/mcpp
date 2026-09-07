@@ -27,6 +27,46 @@ std::string quote(std::string_view s);
 std::string quote_windows(std::string_view s);
 std::string quote_posix(std::string_view s);
 
+// An argument that must survive TWO parsers: cmd.exe's, and then the child
+// program's own argv parsing.
+//
+// `quote_windows` answers only the second. Its `\"` escape belongs to the
+// MSVCRT argv rules, and cmd.exe does not know it: to cmd every `"` simply
+// toggles a quote state, so a payload carrying an EVEN number of them before a
+// metacharacter leaves that character unquoted. Measured on windows-2022 with
+// a JSON argument -- `{"targets":["xim:shaderc@>=2026.3"],"yes":true}` puts
+// four quotes before the `>`, and cmd read it as a REDIRECTION, answering
+//
+//   The filename, directory name, or volume label syntax is incorrect.
+//
+// which arrived as a package-provisioning failure naming a package.
+//
+// The answer escapes exactly what needs it: quote for the child, then walk the
+// result tracking the quote state CMD sees -- every `"` toggles it, because cmd
+// does not know MSVCRT's `\"` -- and prefix `^` to any metacharacter that falls
+// outside a quoted region. Inside one it is already inert, and `^` there is a
+// literal character rather than an escape.
+//
+// ESCAPING EVERY METACHARACTER INCLUDING THE QUOTES WAS TRIED FIRST AND
+// BROKE EVERY PAYLOAD. It is defensible on paper -- with no bare `"`, cmd never
+// enters a quoted region and each metacharacter is escaped rather than quoted
+// -- and Windows CI answered `exit 1` for every package fetch, including the
+// ones whose JSON contains no metacharacter at all. So the rule here is the
+// conservative one: a payload with nothing to escape comes out byte-identical
+// to `quote_windows`, and only the character that is actually unprotected
+// acquires a caret.
+//
+// `%` IS NOT ESCAPED AND CANNOT BE. Variable expansion happens before caret
+// processing, and the batch-file escape (`%%`) is not available on a command
+// line. Callers passing text that may contain `%` need a different mechanism;
+// the JSON arguments this exists for do not.
+std::string quote_windows_through_cmd(std::string_view s);
+
+// Host-selecting: `quote_windows_through_cmd` on Windows, `quote_posix`
+// elsewhere. Use this wherever an argument reaches a shell and may contain
+// metacharacters -- notably JSON, and any version constraint spelled `>=`.
+std::string quote_through_shell(std::string_view s);
+
 // Silent redirect — stdout + stderr → /dev/null (or NUL on Windows).
 // stdin is NOT touched here; that's the responsibility of
 // mcpp::platform::process::seal_stdin, which is auto-applied by capture /
@@ -67,9 +107,44 @@ std::string quote_posix(std::string_view s) {
     return out;
 }
 
+std::string quote_windows_through_cmd(std::string_view s) {
+    const std::string inner = quote_windows(s);
+    std::string out;
+    out.reserve(inner.size() + 8);
+    // cmd's quote state, which is toggled by EVERY `"` -- it does not know
+    // MSVCRT's `\"`. Inside a quoted region a metacharacter is already inert
+    // and `^` is a literal character, so only the characters that fall OUTSIDE
+    // one are escaped. That keeps the result byte-identical to `quote_windows`
+    // for every payload with nothing to escape, which is nearly all of them.
+    bool inQuotes = false;
+    for (char c : inner) {
+        if (c == '"') { inQuotes = !inQuotes; out.push_back(c); continue; }
+        if (!inQuotes) {
+            switch (c) {
+                case '<': case '>': case '&': case '|':
+                case '^': case '(': case ')':
+                    out.push_back('^');
+                    break;
+                default:
+                    break;
+            }
+        }
+        out.push_back(c);
+    }
+    return out;
+}
+
 std::string quote(std::string_view s) {
 #if defined(_WIN32)
     return quote_windows(s);
+#else
+    return quote_posix(s);
+#endif
+}
+
+std::string quote_through_shell(std::string_view s) {
+#if defined(_WIN32)
+    return quote_windows_through_cmd(s);
 #else
     return quote_posix(s);
 #endif

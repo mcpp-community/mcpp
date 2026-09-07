@@ -310,6 +310,57 @@ jobs:
           "$MCPP" build
           "$MCPP" --version
 
+
+      # GRAPHICS ON THIS HOST, BUILD ONLY, AND THAT IS THE WHOLE CLAIM.
+      #
+      # This runner has no Vulkan device, so what is asserted is what this
+      # platform decides: that the shader compiler THIS platform uses -- the
+      # rule declares `xim:shaderc` here and `xim:glslang` on Linux -- produces
+      # both SPIR-V headers, and that the Vulkan half compiles and links
+      # against the loader package. Running it is the Linux job's criterion,
+      # where a software device (`xim:mesa-lavapipe`) is published and the two
+      # legs' pixels are compared.
+      #
+      # The example is otherwise built only on Linux (`build_examples.sh` runs
+      # there), which is exactly the shape this change exists to remove: the
+      # half of a lane written for a host is the half that host never
+      # exercises.
+      - name: "Graphics: the offscreen example builds on this host"
+        shell: bash
+        run: |
+          set -e
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          cd "$GITHUB_WORKSPACE/examples/10-graphics/offscreen"
+          # The toolchain is NAMED rather than inherited: leaving it to whatever
+          # a neighbouring step happened to select makes this step's subject
+          # depend on step order, which is not a property anybody reads.
+          "/tmp/mcpp-fresh" build --toolchain "llvm@${MCPP_LLVM_VER}"
+          for f in triangle_vert triangle_frag; do
+            d="target/.build-mcpp/out/spirv"
+            test -f "$d/$f.h" || { echo "missing $d/$f.h"; exit 1; }
+            # THE MAGIC IS NOT ALWAYS IN THE HEADER, AND THAT IS THE POINT OF
+            # THIS JOB. The rule chooses the shader compiler this platform
+            # publishes -- glslang on Linux, glslc here -- and the two split
+            # the declaration differently: glslang writes a complete `const
+            # uint32_t ...[] = {...}`, glslc an initialiser list the rule
+            # declares around, so the words land in `<stem>.inc`. An assertion
+            # naming only the header is an assertion about ONE compiler, which
+            # is exactly the shape this step exists to catch.
+            # ONE FILE AT A TIME, because `grep -qs a b` exits 2 when `b`
+            # does not exist -- even on a match in `a`, and even with `-s`,
+            # which suppresses the message and not the status. Written as one
+            # grep over both names, this criterion fails whenever the route
+            # that produces only a header is taken, which is a failure about
+            # the criterion and not about the shader.
+            found=""
+            for g in "$d/$f.h" "$d/$f.inc"; do
+              [ -f "$g" ] && grep -q '0x07230203' "$g" && found=1
+            done
+            [ -n "$found" ] \
+              || { echo "$f carries no SPIR-V magic in either $f.h or $f.inc"; exit 1; }
+          done
+          echo "ok: both shader stages compiled and the Vulkan half linked"
+
       # Integration: the mcpp built from THIS PR's source (the self-host binary,
       # $MCPP = /tmp/mcpp-fresh) builds & runs a real external C++ project —
       # xlings (openxlings/xlings ships its own mcpp.toml).

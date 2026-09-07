@@ -285,6 +285,65 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           bash .github/tools/build_examples.sh
 
+      - name: "Graphics example: render offscreen on lavapipe and assert the pixels"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          cd examples/10-graphics/offscreen
+          "$MCPP" build
+          # THE SHADERS ARE THE FIRST ASSERTION, and both of them: a rule that
+          # compiled only the first source would leave the second header absent
+          # and everything after this would still pass.
+          for f in triangle_vert triangle_frag; do
+            d="target/.build-mcpp/out/spirv"
+            test -f "$d/$f.h" || { echo "missing $d/$f.h"; exit 1; }
+            # Either file: which of the two carries the words is a property of
+            # the shader compiler the rule chose, not of the shader. See the
+            # cross-platform jobs, where that choice differs.
+            # ONE FILE AT A TIME, because `grep -qs a b` exits 2 when `b`
+            # does not exist -- even on a match in `a`, and even with `-s`,
+            # which suppresses the message and not the status. Written as one
+            # grep over both names, this criterion fails whenever the route
+            # that produces only a header is taken, which is a failure about
+            # the criterion and not about the shader.
+            found=""
+            for g in "$d/$f.h" "$d/$f.inc"; do
+              [ -f "$g" ] && grep -q '0x07230203' "$g" && found=1
+            done
+            [ -n "$found" ] \
+              || { echo "$f carries no SPIR-V magic in either $f.h or $f.inc"; exit 1; }
+          done
+          icd=$(find "${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs/xim-x-mesa-lavapipe" \
+                     "$HOME/.xlings/data/xpkgs/xim-x-mesa-lavapipe" \
+                     -name 'lvp_icd.x86_64.json' -print -quit 2>/dev/null || true)
+          [ -n "$icd" ] || { echo "no lavapipe ICD in either store"; exit 1; }
+          out=$(VK_DRIVER_FILES="$icd" "$MCPP" run 2>&1) || { echo "$out"; exit 1; }
+          echo "$out"
+          # The program asserts the corners and the centre itself and exits
+          # non-zero on either. What CI adds is that the run reached the DEVICE:
+          # the software rasteriser produces the same pixels by construction, so
+          # the image cannot distinguish them and the device name is what does.
+          echo "$out" | grep -q 'llvmpipe' \
+            || { echo "the run did not reach the lavapipe device"; exit 1; }
+          echo "$out" | grep -qE 'centre pixel: \([0-9]+, [0-9]+, [0-9]+, 255\)' \
+            || { echo "no centre pixel was reported"; exit 1; }
+          # THE REVERSE LEG, AND IT COMPARES THE PIXELS RATHER THAN JUST
+          # RUNNING. The claim this example makes is that the image is a
+          # contract two independent rasterisers satisfy, not a property of one
+          # device -- so the criterion is that the two legs report the SAME
+          # centre pixel while reporting different devices. Measured: both give
+          # (124, 70, 62, 255), byte for byte.
+          gpu_px=$(echo "$out" | grep -m1 '^centre pixel:')
+          "$MCPP" build --no-accel
+          "$MCPP" run --no-accel | tee cpu.log
+          grep -q 'cpu rasteriser' cpu.log || { echo "the CPU leg did not run"; exit 1; }
+          cpu_px=$(grep -m1 '^centre pixel:' cpu.log)
+          [ -n "$gpu_px" ] && [ "$gpu_px" = "$cpu_px" ] || {
+            echo "the two legs disagree about the image:"
+            echo "  device: $gpu_px"
+            echo "  cpu:    $cpu_px"
+            exit 1; }
+          echo "ok: both legs agree on $cpu_px"
+
       - name: "Vulkan example: build the device half and run it on lavapipe"
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"

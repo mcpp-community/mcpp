@@ -51,6 +51,7 @@ SKIP=(
     "examples/09-heterogeneous/hip/app|same, for the HIP payloads"
     "examples/09-heterogeneous/sycl/app|needs the dpcpp payload (over a gigabyte) and a device its runtime accepts"
     "examples/09-heterogeneous/vulkan/app|built AND RUN by the next step of this job, on the lavapipe payload, which needs no GPU"
+    "examples/10-graphics/offscreen|built AND RUN by its own step of this job, on the same lavapipe payload. It renders a real graphics pipeline offscreen and asserts the pixels, which is why it runs there rather than here"
     "examples/09-heterogeneous/cann/app|its device leg needs the Ascend DRIVER, which a runner does not have: the kernel compiles and the object links, and then `libascend_hal.so` is missing -- and only that one, since 2026.9.6.6 models DT_RPATH inheritance. Correct on a machine with no NPU. Its CPU leg does build, and is not built here only because it would make this job resolve a fifth rule package for one example. Covered by the measurements in its README"
 )
 

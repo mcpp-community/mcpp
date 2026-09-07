@@ -1,0 +1,347 @@
+// The Vulkan graphics island: a full pipeline -- vertex input, rasterisation,
+// fragment output, render pass -- rendering into an image this program then
+// reads back.
+//
+// OFFSCREEN, AND THAT IS THE DESIGN RATHER THAN A LIMITATION.
+//
+// A swapchain needs a surface, and a surface needs a window system. On a
+// headless runner there is none, so an example built around one can only be
+// BUILT in CI -- and "it built" is close to no information about a graphics
+// pipeline: a fragment shader that ignores its input, a pipeline with the wrong
+// vertex stage, an image never rendered into, all compile and link. Rendering
+// into an image and reading the pixels back makes the result assertable, and it
+// exercises the same pipeline a windowed application uses.
+//
+// Nothing here was compiled by the C++ toolchain. `triangle_vert.h` and
+// `triangle_frag.h` are `const uint32_t[]` that `mcpp.rules.spirv` produced
+// from `shaders/triangle.vert` and `shaders/triangle.frag`.
+#include "render/render.h"
+
+#include <vulkan/vulkan.h>
+
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <vector>
+
+#include "triangle_vert.h"
+#include "triangle_frag.h"
+
+namespace {
+
+const char* g_ran_on = "";
+
+constexpr unsigned char kClear[4] = { 16, 16, 16, 255 };
+
+int find_memory_type(VkPhysicalDevice phys, std::uint32_t bits,
+                     VkMemoryPropertyFlags want) {
+    VkPhysicalDeviceMemoryProperties props{};
+    vkGetPhysicalDeviceMemoryProperties(phys, &props);
+    for (std::uint32_t i = 0; i < props.memoryTypeCount; ++i)
+        if ((bits & (1u << i)) && (props.memoryTypes[i].propertyFlags & want) == want)
+            return static_cast<int>(i);
+    return -1;
+}
+
+// The first device with a GRAPHICS queue. Not "the fastest": what this example
+// demonstrates is that it runs wherever a driver exists, and a machine whose
+// only driver is lavapipe is the case it is written for.
+bool pick_device(VkInstance inst, VkPhysicalDevice& out, std::uint32_t& family) {
+    std::uint32_t n = 0;
+    vkEnumeratePhysicalDevices(inst, &n, nullptr);
+    if (n == 0) return false;
+    std::vector<VkPhysicalDevice> devices(n);
+    vkEnumeratePhysicalDevices(inst, &n, devices.data());
+    for (auto d : devices) {
+        std::uint32_t qn = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(d, &qn, nullptr);
+        std::vector<VkQueueFamilyProperties> qs(qn);
+        vkGetPhysicalDeviceQueueFamilyProperties(d, &qn, qs.data());
+        for (std::uint32_t i = 0; i < qn; ++i)
+            if (qs[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                out = d; family = i; return true;
+            }
+    }
+    return false;
+}
+
+VkShaderModule make_module(VkDevice dev, const std::uint32_t* code, std::size_t bytes) {
+    VkShaderModuleCreateInfo ci{ VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO };
+    ci.codeSize = bytes;
+    ci.pCode    = code;
+    VkShaderModule m = VK_NULL_HANDLE;
+    return vkCreateShaderModule(dev, &ci, nullptr, &m) == VK_SUCCESS ? m : VK_NULL_HANDLE;
+}
+
+// Everything this frame owns, released in reverse. A single scope with one exit
+// path: an example that leaked on its error paths would be teaching the wrong
+// thing about a C API behind a C++ seam.
+struct frame {
+    VkInstance       instance   = VK_NULL_HANDLE;
+    VkDevice         device     = VK_NULL_HANDLE;
+    VkImage          image      = VK_NULL_HANDLE;
+    VkDeviceMemory   imageMem   = VK_NULL_HANDLE;
+    VkImageView      view       = VK_NULL_HANDLE;
+    VkRenderPass     pass       = VK_NULL_HANDLE;
+    VkFramebuffer    fb         = VK_NULL_HANDLE;
+    VkShaderModule   vs         = VK_NULL_HANDLE;
+    VkShaderModule   fs         = VK_NULL_HANDLE;
+    VkPipelineLayout layout     = VK_NULL_HANDLE;
+    VkPipeline       pipeline   = VK_NULL_HANDLE;
+    VkBuffer         readback   = VK_NULL_HANDLE;
+    VkDeviceMemory   readbackMem= VK_NULL_HANDLE;
+    VkCommandPool    pool       = VK_NULL_HANDLE;
+    VkFence          fence      = VK_NULL_HANDLE;
+
+    ~frame() {
+        if (device != VK_NULL_HANDLE) {
+            if (fence)       vkDestroyFence(device, fence, nullptr);
+            if (pool)        vkDestroyCommandPool(device, pool, nullptr);
+            if (readback)    vkDestroyBuffer(device, readback, nullptr);
+            if (readbackMem) vkFreeMemory(device, readbackMem, nullptr);
+            if (pipeline)    vkDestroyPipeline(device, pipeline, nullptr);
+            if (layout)      vkDestroyPipelineLayout(device, layout, nullptr);
+            if (fs)          vkDestroyShaderModule(device, fs, nullptr);
+            if (vs)          vkDestroyShaderModule(device, vs, nullptr);
+            if (fb)          vkDestroyFramebuffer(device, fb, nullptr);
+            if (pass)        vkDestroyRenderPass(device, pass, nullptr);
+            if (view)        vkDestroyImageView(device, view, nullptr);
+            if (image)       vkDestroyImage(device, image, nullptr);
+            if (imageMem)    vkFreeMemory(device, imageMem, nullptr);
+            vkDestroyDevice(device, nullptr);
+        }
+        if (instance != VK_NULL_HANDLE) vkDestroyInstance(instance, nullptr);
+    }
+};
+
+} // namespace
+
+extern "C" void render_clear_color(unsigned char* rgba4) {
+    for (int i = 0; i < 4; ++i) rgba4[i] = kClear[i];
+}
+
+extern "C" int render_offscreen(unsigned w, unsigned h, unsigned char* rgba) {
+    if (w == 0 || h == 0 || rgba == nullptr) return 1;
+    frame f;
+
+    VkApplicationInfo app{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
+    app.pApplicationName = "mcpp-offscreen";
+    app.apiVersion       = VK_API_VERSION_1_2;
+    VkInstanceCreateInfo ici{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+    ici.pApplicationInfo = &app;
+    if (vkCreateInstance(&ici, nullptr, &f.instance) != VK_SUCCESS) return 1;
+
+    VkPhysicalDevice phys = VK_NULL_HANDLE;
+    std::uint32_t family = 0;
+    if (!pick_device(f.instance, phys, family)) return 1;
+
+    const float prio = 1.0f;
+    VkDeviceQueueCreateInfo qci{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
+    qci.queueFamilyIndex = family;
+    qci.queueCount       = 1;
+    qci.pQueuePriorities = &prio;
+    VkDeviceCreateInfo dci{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+    dci.queueCreateInfoCount = 1;
+    dci.pQueueCreateInfos    = &qci;
+    if (vkCreateDevice(phys, &dci, nullptr, &f.device) != VK_SUCCESS) return 1;
+
+    VkQueue queue = VK_NULL_HANDLE;
+    vkGetDeviceQueue(f.device, family, 0, &queue);
+
+    // ── the colour attachment, and the buffer it is copied into ──────────────
+    VkImageCreateInfo img{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+    img.imageType     = VK_IMAGE_TYPE_2D;
+    img.format        = VK_FORMAT_R8G8B8A8_UNORM;
+    img.extent        = { w, h, 1 };
+    img.mipLevels     = 1;
+    img.arrayLayers   = 1;
+    img.samples       = VK_SAMPLE_COUNT_1_BIT;
+    img.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    img.usage         = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+    img.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    if (vkCreateImage(f.device, &img, nullptr, &f.image) != VK_SUCCESS) return 1;
+
+    VkMemoryRequirements req{};
+    vkGetImageMemoryRequirements(f.device, f.image, &req);
+    int type = find_memory_type(phys, req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (type < 0) type = find_memory_type(phys, req.memoryTypeBits, 0);
+    if (type < 0) return 1;
+    VkMemoryAllocateInfo mai{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+    mai.allocationSize  = req.size;
+    mai.memoryTypeIndex = static_cast<std::uint32_t>(type);
+    if (vkAllocateMemory(f.device, &mai, nullptr, &f.imageMem) != VK_SUCCESS) return 1;
+    if (vkBindImageMemory(f.device, f.image, f.imageMem, 0) != VK_SUCCESS) return 1;
+
+    VkImageViewCreateInfo vci{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+    vci.image            = f.image;
+    vci.viewType         = VK_IMAGE_VIEW_TYPE_2D;
+    vci.format           = VK_FORMAT_R8G8B8A8_UNORM;
+    vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+    if (vkCreateImageView(f.device, &vci, nullptr, &f.view) != VK_SUCCESS) return 1;
+
+    // ── the render pass: clear, draw, leave it ready to be copied ────────────
+    VkAttachmentDescription att{};
+    att.format         = VK_FORMAT_R8G8B8A8_UNORM;
+    att.samples        = VK_SAMPLE_COUNT_1_BIT;
+    att.loadOp         = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    att.storeOp        = VK_ATTACHMENT_STORE_OP_STORE;
+    att.stencilLoadOp  = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    att.initialLayout  = VK_IMAGE_LAYOUT_UNDEFINED;
+    // The final layout is what removes an explicit barrier before the copy.
+    att.finalLayout    = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+    VkAttachmentReference ref{ 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+    VkSubpassDescription sub{};
+    sub.pipelineBindPoint    = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    sub.colorAttachmentCount = 1;
+    sub.pColorAttachments    = &ref;
+    VkRenderPassCreateInfo rp{ VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
+    rp.attachmentCount = 1;
+    rp.pAttachments    = &att;
+    rp.subpassCount    = 1;
+    rp.pSubpasses      = &sub;
+    if (vkCreateRenderPass(f.device, &rp, nullptr, &f.pass) != VK_SUCCESS) return 1;
+
+    VkFramebufferCreateInfo fbi{ VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
+    fbi.renderPass      = f.pass;
+    fbi.attachmentCount = 1;
+    fbi.pAttachments    = &f.view;
+    fbi.width = w; fbi.height = h; fbi.layers = 1;
+    if (vkCreateFramebuffer(f.device, &fbi, nullptr, &f.fb) != VK_SUCCESS) return 1;
+
+    // ── the pipeline ────────────────────────────────────────────────────────
+    f.vs = make_module(f.device, triangle_vert_spv, sizeof triangle_vert_spv);
+    f.fs = make_module(f.device, triangle_frag_spv, sizeof triangle_frag_spv);
+    if (!f.vs || !f.fs) return 1;
+
+    VkPipelineShaderStageCreateInfo stages[2]{};
+    stages[0].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage  = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = f.vs;
+    stages[0].pName  = "main";
+    stages[1].sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage  = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = f.fs;
+    stages[1].pName  = "main";
+
+    // EMPTY vertex input: the vertex shader indexes its own arrays.
+    VkPipelineVertexInputStateCreateInfo vin{ VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO };
+    VkPipelineInputAssemblyStateCreateInfo ia{ VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO };
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport vp{ 0.0f, 0.0f, static_cast<float>(w), static_cast<float>(h), 0.0f, 1.0f };
+    VkRect2D   sc{ { 0, 0 }, { w, h } };
+    VkPipelineViewportStateCreateInfo vps{ VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO };
+    vps.viewportCount = 1; vps.pViewports = &vp;
+    vps.scissorCount  = 1; vps.pScissors  = &sc;
+
+    VkPipelineRasterizationStateCreateInfo rs{ VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO };
+    rs.polygonMode = VK_POLYGON_MODE_FILL;
+    // NO CULLING, so the winding of the three vertices is not a second fact the
+    // software rasteriser has to agree about.
+    rs.cullMode    = VK_CULL_MODE_NONE;
+    rs.frontFace   = VK_FRONT_FACE_COUNTER_CLOCKWISE;
+    rs.lineWidth   = 1.0f;
+
+    VkPipelineMultisampleStateCreateInfo ms{ VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO };
+    ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+    VkPipelineColorBlendAttachmentState cba{};
+    cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT
+                       | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo cb{ VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO };
+    cb.attachmentCount = 1;
+    cb.pAttachments    = &cba;
+
+    VkPipelineLayoutCreateInfo pli{ VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO };
+    if (vkCreatePipelineLayout(f.device, &pli, nullptr, &f.layout) != VK_SUCCESS) return 1;
+
+    VkGraphicsPipelineCreateInfo gp{ VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO };
+    gp.stageCount          = 2;
+    gp.pStages             = stages;
+    gp.pVertexInputState   = &vin;
+    gp.pInputAssemblyState = &ia;
+    gp.pViewportState      = &vps;
+    gp.pRasterizationState = &rs;
+    gp.pMultisampleState   = &ms;
+    gp.pColorBlendState    = &cb;
+    gp.layout              = f.layout;
+    gp.renderPass          = f.pass;
+    if (vkCreateGraphicsPipelines(f.device, VK_NULL_HANDLE, 1, &gp, nullptr, &f.pipeline)
+        != VK_SUCCESS) return 1;
+
+    // ── readback buffer ─────────────────────────────────────────────────────
+    const VkDeviceSize bytes = static_cast<VkDeviceSize>(w) * h * 4;
+    VkBufferCreateInfo bci{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+    bci.size  = bytes;
+    bci.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    if (vkCreateBuffer(f.device, &bci, nullptr, &f.readback) != VK_SUCCESS) return 1;
+    VkMemoryRequirements breq{};
+    vkGetBufferMemoryRequirements(f.device, f.readback, &breq);
+    const int btype = find_memory_type(phys, breq.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (btype < 0) return 1;
+    VkMemoryAllocateInfo bmai{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+    bmai.allocationSize  = breq.size;
+    bmai.memoryTypeIndex = static_cast<std::uint32_t>(btype);
+    if (vkAllocateMemory(f.device, &bmai, nullptr, &f.readbackMem) != VK_SUCCESS) return 1;
+    if (vkBindBufferMemory(f.device, f.readback, f.readbackMem, 0) != VK_SUCCESS) return 1;
+
+    // ── record and submit ───────────────────────────────────────────────────
+    VkCommandPoolCreateInfo cpi{ VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+    cpi.queueFamilyIndex = family;
+    if (vkCreateCommandPool(f.device, &cpi, nullptr, &f.pool) != VK_SUCCESS) return 1;
+    VkCommandBufferAllocateInfo cbi{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+    cbi.commandPool        = f.pool;
+    cbi.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cbi.commandBufferCount = 1;
+    VkCommandBuffer cmd = VK_NULL_HANDLE;
+    if (vkAllocateCommandBuffers(f.device, &cbi, &cmd) != VK_SUCCESS) return 1;
+
+    VkCommandBufferBeginInfo begin{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS) return 1;
+
+    VkClearValue clear{};
+    for (int i = 0; i < 4; ++i)
+        clear.color.float32[i] = static_cast<float>(kClear[i]) / 255.0f;
+    VkRenderPassBeginInfo rpb{ VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+    rpb.renderPass      = f.pass;
+    rpb.framebuffer     = f.fb;
+    rpb.renderArea      = sc;
+    rpb.clearValueCount = 1;
+    rpb.pClearValues    = &clear;
+    vkCmdBeginRenderPass(cmd, &rpb, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, f.pipeline);
+    vkCmdDraw(cmd, 3, 1, 0, 0);
+    vkCmdEndRenderPass(cmd);
+
+    VkBufferImageCopy region{};
+    region.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+    region.imageExtent      = { w, h, 1 };
+    vkCmdCopyImageToBuffer(cmd, f.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           f.readback, 1, &region);
+    if (vkEndCommandBuffer(cmd) != VK_SUCCESS) return 1;
+
+    VkFenceCreateInfo fci{ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+    if (vkCreateFence(f.device, &fci, nullptr, &f.fence) != VK_SUCCESS) return 1;
+    VkSubmitInfo si{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
+    si.commandBufferCount = 1;
+    si.pCommandBuffers    = &cmd;
+    if (vkQueueSubmit(queue, 1, &si, f.fence) != VK_SUCCESS) return 1;
+    if (vkWaitForFences(f.device, 1, &f.fence, VK_TRUE, ~0ull) != VK_SUCCESS) return 1;
+
+    void* mapped = nullptr;
+    if (vkMapMemory(f.device, f.readbackMem, 0, bytes, 0, &mapped) != VK_SUCCESS) return 1;
+    std::memcpy(rgba, mapped, static_cast<std::size_t>(bytes));
+    vkUnmapMemory(f.device, f.readbackMem);
+
+    VkPhysicalDeviceProperties props{};
+    vkGetPhysicalDeviceProperties(phys, &props);
+    static char name[VK_MAX_PHYSICAL_DEVICE_NAME_SIZE];
+    std::memcpy(name, props.deviceName, sizeof name);
+    g_ran_on = name;
+    return 0;
+}
+
+extern "C" const char* render_device_name(void) { return g_ran_on; }

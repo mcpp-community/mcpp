@@ -35,6 +35,8 @@ mcpp build && mcpp run
 | 09d | [`…/hip`](../../examples/09-heterogeneous/hip/) | 同一个计算写成 HIP,够到一台 NVIDIA 设备 | `mcpp.rules.hip`、HIP 作为 CUDA 运行时之上的一层头文件、两段式的 `accel` |
 | 09e | [`…/multi-backend`](../../examples/09-heterogeneous/multi-backend/) | 多个后端进**同一个产物**,运行期选择 —— 这是库的形态,不是程序的形态 | `accel` 作为集合、`cfg(accelerator = "none")` 及其否定、分发链、C 岛边界之上的模块接缝 |
 | 09f | [`…/cann`](../../examples/09-heterogeneous/cann/) | 同一道接缝背后的 Ascend C kernel。**目前还构建不了** —— README 里点明了缺的两块 | `.asc` 设备扩展名、CANN 本来就有的 `op_kernel`/`op_host` 岛、回退用 `accelerator = "none"` |
+| 10 | [`examples/10-graphics`](../../examples/10-graphics/) | 图形而不是计算:一条渲染管线,它的结果是像素 | `mcpp.rules.spirv` 编译顶点与片段两个阶段、离屏渲染作为可断言的形态 |
+| 10a | [`…/offscreen`](../../examples/10-graphics/offscreen/) | Vulkan 把一个三角形光栅化进缓冲区,同一道接缝背后是同一个三角形的软件光栅器 | 一个 glob 带出两个着色器阶段、无窗口无交换链的 render pass、判据是一个像素 |
 
 ## 推荐阅读顺序
 

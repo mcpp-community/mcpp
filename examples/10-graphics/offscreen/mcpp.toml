@@ -1,0 +1,69 @@
+[package]
+name         = "offscreen-triangle"
+namespace    = "example"
+version      = "0.1.0"
+description  = "A Vulkan graphics pipeline rendering offscreen, with a software rasteriser behind the same seam"
+accelerators = ["vulkan"]
+
+[language]
+standard   = "c++23"
+modules    = true
+import_std = true
+
+# One edge. `mcpp.rules.spirv` declares the shader compiler it drives, so this
+# project names no payload for it.
+[build-dependencies.mcpp]
+plugins = { version = "0.2.5", features = ["rules-spirv"], host-module = true }
+
+# The Khronos loader. Unconditional, and the reason is a rule of the engine
+# rather than a preference: A DEPENDENCY CANNOT BE CONDITIONED ON A LAYER.
+# `accelerator` is resolved FROM the dependency graph, so a dependency chosen by
+# it would decide the answer it is asking. mcpp says so and ignores the
+# predicate -- measured here, where an earlier revision of this file gated these
+# three entries on `cfg(accelerator = "vulkan")` and the build failed on
+# `vulkan/vulkan.h: No such file or directory`, because the header's package had
+# been silently dropped while the source that includes it was kept.
+#
+# `[build]` sources under the same predicate DO apply, which is what makes the
+# seam work: the CPU leg below is selected by the accelerator, and only the
+# packages are unconditional.
+[dependencies.compat]
+vulkan = "1.4.357.0"
+
+# The adapter that makes the host's own ICDs reachable from a binary running
+# under mcpp's private loader. An OS predicate, which IS allowed, and a Linux
+# concern by construction: macOS resolves through dyld and Windows through the
+# PE loader, and neither has a private loader to work around.
+[target.'cfg(linux)'.dependencies.compat]
+vulkan-runtime = "2026.09.07"
+
+# A Vulkan device that needs no GPU, so this example runs on a machine that has
+# none. It is a DEVICE and therefore a payload; the drivers a real GPU needs are
+# the host's, and `compat.vulkan` models those as a capability. Published for
+# Linux alone, so the predicate names the platform rather than the accelerator.
+[target.'cfg(linux)'.xlings.workspace]
+"xim:mesa-lavapipe" = "26.2.1"
+
+[build]
+accel = "vulkan1.2"
+sources = [
+  "src/*.cppm",
+  "src/*.cpp",
+  # Two globs rather than one over `shaders/*`: the stages are different things
+  # and the manifest is where a reader learns which ones this project has.
+  { glob = "shaders/*.vert", accel = "vulkan1.2" },
+  { glob = "shaders/*.frag", accel = "vulkan1.2" },
+]
+include_dirs = ["include"]
+
+[target.'cfg(accelerator = "vulkan")'.build]
+sources = ["src/vulkan/*.cpp"]
+
+# The same triangle, rasterised in software. The pixel assertions are the
+# contract and both legs satisfy it; `device_name()` is what tells them apart.
+[target.'cfg(not(accelerator = "vulkan"))'.build]
+sources = ["src/cpu/*.cpp"]
+
+[targets.offscreen-triangle]
+kind = "bin"
+main = "src/main.cpp"
