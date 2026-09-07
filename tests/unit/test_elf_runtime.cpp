@@ -55,6 +55,13 @@ struct ElfFixtureSpec {
     std::string interp = "/store/glibc/2.44/lib64/ld-linux-x86-64.so.2";
     std::vector<std::string> needed = {"libc.so.6"};
     std::string runpath = "/host/z:/host/a";
+    // Emit the search path as DT_RPATH and nothing else. The default image
+    // carries both tags, which is the common shape and the one glibc reads as
+    // DT_RUNPATH -- so a test about DT_RPATH's reach cannot use it.
+    bool rpathOnly = false;
+    // No search path at all: the object that has to reach its dependencies
+    // through someone else's DT_RPATH.
+    bool noSearchPath = false;
 };
 
 // One deliberately tiny ELF64-LE image. It has no executable code; the test
@@ -108,7 +115,8 @@ std::filesystem::path write_elf_fixture(
     auto versionOwner = needed.empty()
         ? append_string(b, kDynstr, cursor, "libc.so.6")
         : needed.front();
-    auto rpath = append_string(b, kDynstr, cursor, "/legacy/ignored");
+    auto rpath = append_string(b, kDynstr, cursor,
+                               spec.rpathOnly ? spec.runpath : "/legacy/ignored");
     auto runpath = append_string(b, kDynstr, cursor, spec.runpath);
     auto needVersion = append_string(b, kDynstr, cursor, "GLIBC_2.40");
     auto defVersion = append_string(b, kDynstr, cursor, "GLIBC_2.44");
@@ -123,8 +131,10 @@ std::filesystem::path write_elf_fixture(
     dyn(5, kVaddr + kDynstr);            // DT_STRTAB
     dyn(10, dynstrSize);                 // DT_STRSZ
     for (auto offset : needed) dyn(1, offset); // DT_NEEDED
-    dyn(15, rpath);                      // DT_RPATH (ignored when RUNPATH exists)
-    dyn(29, runpath);                    // DT_RUNPATH
+    if (!spec.noSearchPath) {
+        dyn(15, rpath);                  // DT_RPATH (ignored when RUNPATH exists)
+        if (!spec.rpathOnly) dyn(29, runpath);   // DT_RUNPATH
+    }
     dyn(0x6ffffffe, kVaddr + kVerneed);  // DT_VERNEED
     dyn(0x6fffffff, 1);                  // DT_VERNEEDNUM
     dyn(0x6ffffffc, kVaddr + kVerdef);   // DT_VERDEF
@@ -281,6 +291,80 @@ TEST(ElfRuntime, ReusesAnAlreadyLoadedSonameAcrossDependencyRunpaths) {
         << "a later dependency must reuse the process-global libc SONAME";
     EXPECT_EQ(resolution.resolvedLibcs.front(),
               std::filesystem::weakly_canonical(glibc44 / "libc.so.6"));
+}
+
+// DT_RPATH REACHES THE WHOLE CHAIN; DT_RUNPATH REACHES ONE OBJECT.
+//
+// A vendor toolkit's shared libraries depend on each other by bare SONAME and
+// carry no search path of their own; the directory holding them is named once,
+// in the EXECUTABLE's DT_RPATH. The model searched only the requesting
+// object's own list, so every such library read as unfindable.
+//
+// Measured on examples/09-heterogeneous/cann before this: mcpp refused the
+// build naming eight libraries, and the artifact it had just linked resolved
+// seven of them -- failing only on the one that belongs to a driver the
+// machine does not have.
+TEST(ElfRuntime, ADependencyInheritsTheExecutablesRpath) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+    Tmp t;
+    auto payload = t.path / "store";
+    auto glibc = payload / "2.44" / "lib64";
+    auto toolkit = t.path / "toolkit" / "lib64";
+    std::filesystem::create_directories(glibc);
+    std::filesystem::create_directories(toolkit);
+
+    write_elf_fixture(glibc / "libc.so.6", { .needed = {}, .runpath = glibc.string() });
+    // The leaf, reachable only through the executable's DT_RPATH.
+    write_elf_fixture(toolkit / "libdeep.so", { .needed = {}, .noSearchPath = true });
+    // The middle object: names its dependency and says nothing about where it
+    // lives, which is what a vendor library does.
+    write_elf_fixture(toolkit / "libtop.so",
+                      { .needed = {"libdeep.so"}, .noSearchPath = true });
+    auto app = write_elf_fixture(t.path / "app", {
+        .needed = {"libtop.so", "libc.so.6"},
+        .runpath = toolkit.string() + ":" + glibc.string(),
+        .rpathOnly = true,
+    });
+
+    auto resolution = elf::resolve_runtime_closure(app, binding_for(payload));
+    EXPECT_TRUE(resolution.unresolvedSonames.empty())
+        << "unresolved: " << (resolution.unresolvedSonames.empty()
+                              ? std::string{} : resolution.unresolvedSonames.front());
+}
+
+// …and the suppression, which is the half that makes the rule a rule. An
+// object carrying DT_RUNPATH uses no RPATH at all -- its own or inherited --
+// so a test with only the leg above would also pass on an implementation that
+// inherited unconditionally.
+TEST(ElfRuntime, ADependencyWithItsOwnRunpathDoesNotInheritOne) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+    Tmp t;
+    auto payload = t.path / "store";
+    auto glibc = payload / "2.44" / "lib64";
+    auto toolkit = t.path / "toolkit" / "lib64";
+    auto elsewhere = t.path / "elsewhere";
+    std::filesystem::create_directories(glibc);
+    std::filesystem::create_directories(toolkit);
+    std::filesystem::create_directories(elsewhere);
+
+    write_elf_fixture(glibc / "libc.so.6", { .needed = {}, .runpath = glibc.string() });
+    write_elf_fixture(toolkit / "libdeep.so", { .needed = {}, .noSearchPath = true });
+    // Same graph as above, except this middle object carries DT_RUNPATH. It
+    // names a directory that does not hold `libdeep.so`, and glibc will not
+    // fall back to the executable's DT_RPATH for it.
+    write_elf_fixture(toolkit / "libtop.so",
+                      { .needed = {"libdeep.so"}, .runpath = elsewhere.string() });
+    auto app = write_elf_fixture(t.path / "app", {
+        .needed = {"libtop.so", "libc.so.6"},
+        .runpath = toolkit.string() + ":" + glibc.string(),
+        .rpathOnly = true,
+    });
+
+    auto resolution = elf::resolve_runtime_closure(app, binding_for(payload));
+    ASSERT_EQ(resolution.unresolvedSonames.size(), 1u);
+    EXPECT_EQ(resolution.unresolvedSonames.front(), "libdeep.so");
 }
 
 TEST(RuntimePhysics, RuleBRejectsInterpreterAndLibcFromDifferentPayloads) {
