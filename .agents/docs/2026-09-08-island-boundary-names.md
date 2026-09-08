@@ -426,9 +426,9 @@ negation.
 carries the refusal of overlapping roots that §6 states and 0.5.0 omitted. That
 is the shape of defect where a requirement folded into a larger change
 disappears when that change ships: §6 stated it in prose and §11 gave it no
-criterion of its own, so nothing was red when it was absent. It has one now. It also stops a
-single-file root from registering a re-run glob over the directory that file
-happens to sit in.
+criterion of its own, so nothing was red when it was absent. It has one now.
+0.5.1 also stops a single-file root from registering a re-run glob over the
+directory that file happens to sit in.
 
 **0.5.2** carries a defect the cross-platform run found. `mcpp.tools.island`
 compiled on all three hosts and had been exercised on one; the first Windows
@@ -450,7 +450,14 @@ published package was verified in an xlings sandbox against the index rather
 than a working tree: a project written inside the sandbox resolved
 `registry/data/xpkgs/mcpp-x-plugins`, printed `6 12 18 24`, and its generated
 module carried `export namespace sandbox::kernels` and
-`export namespace sandbox::kernels::vec`.
+`export namespace sandbox::kernels::vec`. The published generator also refused
+overlapping roots there, naming both.
+
+One path no CI covers was measured by hand: `examples/09-heterogeneous/cuda`
+with its device leg, on an RTX 4080 (`sm_89`, the architecture the example
+names). It printed `12 24 36 48` and `device: NVIDIA GeForce RTX 4080` -- an
+island compiled by a device compiler, reached through the namespaced boundary,
+with the seam calling `kernels::saxpy_device` from inside `namespace app`.
 
 ## 13. Decided in review
 
