@@ -292,6 +292,42 @@ jobs:
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
           bash .github/tools/build_examples.sh
 
+      # TWO CRITERIA A BUILD CANNOT SHOW, from the examples whose READMEs state
+      # them. Both are the shape this repository has paid for before: a green
+      # build over a result nobody compared.
+      - name: "examples: the feature criterion and the device language"
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          set -e
+
+          # 11-features. NOT "the default build works" -- that passes while the
+          # optional package is resolved and merely unused. The criterion is
+          # that the default build's RESOLUTION does not name it.
+          cd examples/11-features/greeter
+          "$MCPP" build 2>&1 | tee /tmp/f-default.log
+          "$MCPP" build --features metrics 2>&1 | tee /tmp/f-metrics.log
+          grep -qi counters /tmp/f-default.log && {
+            echo "FAIL: the default build resolved 'counters'"; exit 1; }
+          grep -qi counters /tmp/f-metrics.log || {
+            echo "FAIL: --features metrics did not resolve 'counters'"; exit 1; }
+          echo "ok: the optional package is absent without its feature"
+          cd - >/dev/null
+
+          # 12-a-new-device-language. The `.toy` compiles on an engine that does
+          # not know the extension, AND editing the compiler reaches the
+          # artifact -- the half that fails silently when the tool is not a
+          # declared input of the action.
+          cd examples/12-a-new-device-language/app
+          "$MCPP" run | tee /tmp/toy.log
+          grep -q 'toy_answer() = 42' /tmp/toy.log || {
+            echo "FAIL: the .toy did not reach the link"; exit 1; }
+          sed -i 's/print s + 0 }/print s + 100 }/' ../rules-toy/tools/toyc.sh
+          "$MCPP" run | tee /tmp/toy2.log
+          sed -i 's/print s + 100 }/print s + 0 }/' ../rules-toy/tools/toyc.sh
+          grep -q 'toy_answer() = 142' /tmp/toy2.log || {
+            echo "FAIL: editing the compiler did not reach the artifact"; exit 1; }
+          echo "ok: the compiler is a declared input"
+
       - name: "Graphics example: render offscreen on lavapipe and assert the pixels"
         run: |
           export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
