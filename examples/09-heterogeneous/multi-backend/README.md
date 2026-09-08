@@ -93,7 +93,7 @@ saying it after the vocabulary grows.
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.5.0", features = ["rules-cuda", "rules-spirv"], host-module = true }
+plugins = { version = "0.5.1", features = ["rules-cuda", "rules-spirv"], host-module = true }
 ```
 
 Two rules, in one build program, which is what an additive-backend package

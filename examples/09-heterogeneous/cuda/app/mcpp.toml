@@ -23,7 +23,7 @@ default = "llvm@22.1.8"
 # `extern "C"` boundary the island's compiler reads and the module the seam
 # imports, so neither signature is stated twice.
 [build-dependencies.mcpp]
-plugins = { version = "0.5.0", features = ["rules-cuda", "tools-island"], host-module = true }
+plugins = { version = "0.5.1", features = ["rules-cuda", "tools-island"], host-module = true }
 
 # The driver's userspace library, reached through an index package that owns
 # the one hop mcpp needs: a directory on the artifact's runtime search path.

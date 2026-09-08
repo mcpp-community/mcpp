@@ -418,7 +418,23 @@ negation.
 | two files in ONE root, one name | refused, and the message says the two belong in two roots |
 | a CPU implementation keeps its place under `backends/` | the additive fixture's three backends land in three namespaces, none of them moved |
 
-## 12. Decided in review
+## 12. What shipped
+
+`mcpp:plugins` **0.5.0** (2026-09-08) carries §2 through §8 and §6.1. **0.5.1**
+carries the refusal of overlapping roots that §6 states and 0.5.0 omitted --
+the shape of defect §10 of the plan warns about, where a requirement folded
+into a larger change disappears when that change ships. It also stops a
+single-file root from registering a re-run glob over the directory that file
+happens to sit in.
+
+Both are indexed, and `mcpp` pins 0.5.1 across the example tree. The published
+0.5.1 was verified in an xlings sandbox against the index rather than a working
+tree: a project written inside the sandbox resolved
+`registry/data/xpkgs/mcpp-x-plugins/0.5.1`, printed `6 12 18 24`, and its
+generated module carried `export namespace sandbox::kernels` and
+`export namespace sandbox::kernels::vec`.
+
+## 13. Decided in review
 
 1. **No compatibility flag** (§9). The four call sites are ours and are updated
    with the release; a flag that kept the global spelling alive would leave the
