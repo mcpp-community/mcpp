@@ -299,24 +299,27 @@ What this buys, in order of value:
 - The same path serves CUDA cubins and fatbins, textures, fonts, model weights
   and ICD JSON. The tool stops being shader-specific.
 
-> **Superseded, and the difference is load-bearing for 14.1.** The host-tool
-> binary was not built. What shipped is `mcpp::plugins::surface` -- a generator
-> in the collection's lib root that every rule calls FROM `build.mcpp`, writing
-> the interface, the implementation and the `.S` at plan time. The four values
-> listed above were all obtained anyway: both shader flavours produce identical
-> output, storage and surface are orthogonal options, `mcpp.rules.slang` joined
-> at no cost, and nothing in the generator is shader-specific.
+> **Deferred, then built -- and the interval between is 14.1.**
 >
-> What the library form does NOT give is the property this section was reaching
-> for: a tool the GRAPH invokes has its inputs in the graph. A generator that
-> runs at plan time writes a `.S` naming a payload that does not exist yet, and
-> no channel added afterwards can make that file an edge -- which is 14.1.
+> 0.3.0 shipped the library form only: `mcpp::plugins::surface`, a generator in
+> the collection's lib root that every rule calls FROM `build.mcpp`, writing the
+> interface, the implementation and the `.S` at plan time. All four values above
+> were obtained that way -- both shader flavours produce identical output,
+> storage and surface are orthogonal options, `mcpp.rules.slang` joined at no
+> cost, and nothing in the generator is shader-specific -- so the binary looked
+> like a refinement that could wait.
 >
-> `mcpp:plugins` 0.4.0 builds the binary this section asked for, so the
-> paragraph above is now a description rather than a proposal. It is reached
-> through `tools = [...]` on the dependency edge -- built from the package,
-> not published separately, for the version-skew reason docs/05 section 2.14
-> gives -- and only object storage needs it.
+> It was not a refinement. The one property only the binary gives is the one
+> this section names in its title: a tool the GRAPH invokes has its inputs in
+> the graph. A generator that runs at plan time writes a `.S` naming a payload
+> that does not exist yet, and NO channel added afterwards can make that file an
+> edge. That is 14.1, and it was live in the published ecosystem for one
+> release.
+>
+> `mcpp:plugins` 0.4.0 builds it. It is reached through `tools = [...]` on the
+> dependency edge -- built from the package rather than published separately,
+> for the version-skew reason docs/05 section 2.14 gives -- and only object
+> storage needs it, so the default path still runs no program.
 
 ### 4.2 One tool with options, not three
 
