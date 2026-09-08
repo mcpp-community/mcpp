@@ -252,7 +252,7 @@ so existing links and muscle memory survive where they can.
 | E6 | `10-heterogeneous/multi-backend` | keep | several backends in one artifact, chosen at run time |
 | E7 | `11-graphics/offscreen` | keep | a rendering pipeline whose result is pixels |
 | F1 | `12-build-rules` | move from `08` | `host-module = true`, `mcpp::action` with `role = "check"` |
-| **F2** | **`13-a-new-device-language`** | **new** | `device_extensions` + `rule_module`: a third-party rule package teaching mcpp a language the engine has never heard of |
+| **F2** | **`12-a-new-device-language`** | **new** | `device_extensions` + `rule_module`: a third-party rule package teaching mcpp a language the engine has never heard of |
 
 Four new directories; five renumbered; nothing deleted.
 
@@ -285,7 +285,7 @@ program prints the right numbers. The plugins README claims this arrangement was
 measured with GCC 16.1; nothing in either tree runs it, so this example is also
 that claim's fixture.
 
-**F2 `13-a-new-device-language`.** A rule package in the example tree that
+**F2 `12-a-new-device-language`.** A rule package in the example tree that
 declares `device_extensions = [".toy"]` and `rule_module`, and a consumer whose
 `[build] sources` names a `.toy` file. The "compiler" is a shell script that
 transforms text, exactly as `tests/e2e/607` uses `cat` as a device linker: the

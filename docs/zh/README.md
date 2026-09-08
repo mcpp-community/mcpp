@@ -27,7 +27,7 @@
 | 发布它 | [02](02-pack-and-release.md)、[10](10-publishing-a-library.md)、[12](12-binary-distribution.md) | [`03-pack-static`](../../examples/03-pack-static/)、[`05-lib-distribution`](../../examples/05-lib-distribution/) |
 | 为另一台机器构建 | [16](16-the-target-triple.md)、[15](15-openkal-cross.md)、[13](13-baremetal.md) | [`06-openkal-cross`](../../examples/06-openkal-cross/)、`mcpp new … --template riscv-virt-rt` |
 | 使用 GPU 或加速器 | [20](20-heterogeneous-builds.md)、[18](18-devices.md) | [`09-heterogeneous`](../../examples/09-heterogeneous/),从 [`boundary/`](../../examples/09-heterogeneous/boundary/) 开始 |
-| 增加一条规则、一种语言或一个生成器 | [23](23-authoring-a-rule-package.md)、[07](07-build-mcpp.md) | [`08-build-rules`](../../examples/08-build-rules/)、[`13-a-new-device-language`](../../examples/13-a-new-device-language/) |
+| 增加一条规则、一种语言或一个生成器 | [23](23-authoring-a-rule-package.md)、[07](07-build-mcpp.md) | [`08-build-rules`](../../examples/08-build-rules/)、[`12-a-new-device-language`](../../examples/12-a-new-device-language/) |
 | 向索引添加一个包 | [10](10-publishing-a-library.md)、[SPEC-001](../specs/package-identity.md) | [21](21-commands-by-scenario.md) —— 发布相关场景 |
 | 修改 mcpp 本身 | [04](04-build-from-source.md)、[09](09-release.md)、[19](19-supported-versions.md) | — |
 

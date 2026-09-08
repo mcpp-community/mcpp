@@ -30,7 +30,7 @@ anything a reader needs is written here or in a specification instead.
 | publish it | [02](02-pack-and-release.md), [10](10-publishing-a-library.md), [12](12-binary-distribution.md) | [`03-pack-static`](../examples/03-pack-static/), [`05-lib-distribution`](../examples/05-lib-distribution/) |
 | build for another machine | [16](16-the-target-triple.md), [15](15-openkal-cross.md), [13](13-baremetal.md) | [`06-openkal-cross`](../examples/06-openkal-cross/), `mcpp new … --template riscv-virt-rt` |
 | use a GPU or an accelerator | [20](20-heterogeneous-builds.md), [18](18-devices.md) | [`09-heterogeneous`](../examples/09-heterogeneous/), starting at [`boundary/`](../examples/09-heterogeneous/boundary/) |
-| add a rule, a language or a generator | [23](23-authoring-a-rule-package.md), [07](07-build-mcpp.md) | [`08-build-rules`](../examples/08-build-rules/), [`13-a-new-device-language`](../examples/13-a-new-device-language/) |
+| add a rule, a language or a generator | [23](23-authoring-a-rule-package.md), [07](07-build-mcpp.md) | [`08-build-rules`](../examples/08-build-rules/), [`12-a-new-device-language`](../examples/12-a-new-device-language/) |
 | add a package to the index | [10](10-publishing-a-library.md), [SPEC-001](specs/package-identity.md) | [21](21-commands-by-scenario.md) — the publishing scenarios |
 | change mcpp itself | [04](04-build-from-source.md), [09](09-release.md), [19](19-supported-versions.md) | — |
 

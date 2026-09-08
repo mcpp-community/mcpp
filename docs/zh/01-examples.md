@@ -1,8 +1,8 @@
-# 01 — 示例项目
+# 01 —— 示例项目
 
-> 仓库的 [`examples/`](../../examples) 目录下提供了一组循序渐进的最小工程,
-> 覆盖从单文件 `import std` 到全静态发布包的常见场景。每个示例都可以
-> 独立进入并通过 `mcpp build` 完成构建。
+[`examples/`](../../examples) 目录是一套课程。每个工程都可以单独跑起来,而且每个
+工程都教**一件更早的示例没有教过的事**。本章说明那件事是什么,于是你可以按自己
+需要的深度进入,而不必从头读起。
 
 ## 运行方式
 
@@ -12,47 +12,88 @@ cd mcpp/examples/01-hello
 mcpp build && mcpp run
 ```
 
-每个示例附带独立的 README,仅说明该示例相对前一个引入的新概念。
-安装步骤、工具链初始化等通用内容统一放在
-[00 — 快速开始](00-getting-started.md) 中,不再在示例内重复。
+每个示例自带 README,只解释它新增的部分。安装与工具链初始化在
+[00 —— 快速开始](00-getting-started.md),不在示例里重复。
 
-## 示例列表
+## 课程
 
-| # | 路径 | 说明 | 涉及的关键概念 |
-|---|---|---|---|
-| 01 | [`examples/01-hello`](../../examples/01-hello/) | 单文件 + `import std` 的最小工程 | 最小工程形态(`mcpp new` 还会生成 `tests/test_smoke.cpp`) |
-| 02 | [`examples/02-with-deps`](../../examples/02-with-deps/) | 引入依赖 `mcpplibs.cmdline` 解析命令行参数 | `[dependencies]`、SemVer、`mcpp.lock` |
-| 03 | [`examples/03-pack-static`](../../examples/03-pack-static/) | 通过 `mcpp pack --mode static` 生成全静态发布包 | `[target.<triple>]` 与 `[pack]` 配置 |
-| 04 | [`examples/04-workspace`](../../examples/04-workspace/) | 多包工作空间:两个库 + 一个应用,共享一个命名空间 | `[workspace]`、path 依赖、`mcpp build --workspace` |
-| 05 | [`examples/05-lib-distribution`](../../examples/05-lib-distribution/) | 一个预建库和它的消费者,只有放在一起才有意义 | 对库做 `mcpp pack`、同一份源码同时给出 C 头文件与 C++ 模块、distribution 包 |
-| 06 | [`examples/06-openkal-cross`](../../examples/06-openkal-cross/) | 同一个程序问每台机器它是什么,从任意宿主构建到四个目标 | `--target`、openkal、不改源码的交叉编译 |
-| 07 | [`examples/07-project-subos`](../../examples/07-project-subos/) | 构建程序在工程声明的环境里找工具,而不是问机器上恰好有什么 | `[xlings] subos`、`[xlings.workspace]`、构建程序的 `PATH` 来自工程声明的那个环境 |
-| 08 | [`examples/08-build-rules`](../../examples/08-build-rules/) | 两个规则包,以及同时用到它们的工程 | `host-module = true`、`[build-dependencies]`、`role = "check"` 的 `mcpp::action` |
-| 09 | [`examples/09-heterogeneous`](../../examples/09-heterogeneous/) | 同一个计算在设备上跑,写成多种编程模型,每种都带 CPU 回退;外加一个同时携带多个后端的产物 | `accel`、带约束的 source glob、接缝模块、来自 `mcpp:plugins` 的规则包、`cfg(accelerator = …)` |
-| 09a | [`…/cuda`](../../examples/09-heterogeneous/cuda/) | 接缝模块背后的 CUDA kernel,`extern "C"` 边界是**生成**的 | `mcpp.rules.cuda`、`mcpp.tools.island`、`role = "object"` 的 `mcpp::action`、把驱动陈述为 fact 与 floor |
-| 09b | [`…/vulkan`](../../examples/09-heterogeneous/vulkan/) | 同一个计算写成 Vulkan compute shader,SPIR-V 载荷以**模块**到达 | `mcpp.rules.spirv`、模块表面、`role = "source"` 的 `mcpp::action`、作为载荷的软件驱动 |
-| 09c | [`…/sycl`](../../examples/09-heterogeneous/sycl/) | 同一个计算写成 SYCL kernel,由第二个编译器编译 | `mcpp.rules.sycl`、`mcpp.tools.island`、`.sycl` 设备扩展名、为 device link 串起来的 `mcpp::action`、`compat:sycl-runtime` |
-| 09d | [`…/hip`](../../examples/09-heterogeneous/hip/) | 同一个计算写成 HIP,边界是**手写**的 —— 与 09a 的对照 | `mcpp.rules.hip`、HIP 作为 CUDA 运行时之上的一层头文件、两段式的 `accel` |
-| 09e | [`…/multi-backend`](../../examples/09-heterogeneous/multi-backend/) | 多个后端进**同一个产物**,运行期选择 —— 这是库的形态,不是程序的形态 | `accel` 作为集合、`cfg(accelerator = "none")` 及其否定、分发链、C 岛边界之上的模块接缝 |
-| 09f | [`…/cann`](../../examples/09-heterogeneous/cann/) | 同一道接缝背后的 Ascend C kernel。**目前还构建不了** —— README 里点明了缺的两块 | `.asc` 设备扩展名、CANN 本来就有的 `op_kernel`/`op_host` 岛、回退用 `accelerator = "none"` |
-| 10 | [`examples/10-graphics`](../../examples/10-graphics/) | 图形而不是计算:一条渲染管线,它的结果是像素 | `mcpp.rules.spirv` 编译顶点与片段两个阶段、离屏渲染作为可断言的形态 |
-| 10a | [`…/offscreen`](../../examples/10-graphics/offscreen/) | Vulkan 把一个三角形光栅化进缓冲区,同一道接缝背后是同一个三角形的软件光栅器 | 一个 glob 带出两个着色器阶段、无窗口无交换链的 render pass、判据是一个像素 |
+### A —— 工程的形状
 
-## 推荐阅读顺序
+| 示例 | 第一个教什么 |
+|---|---|
+| [`01-hello`](../../examples/01-hello/) | 一个包、`import std`、`mcpp build` 与 `mcpp run` |
+| [`02-with-deps`](../../examples/02-with-deps/) | `[dependencies]`、锁文件、`mcpp add` |
+| [`04-workspace`](../../examples/04-workspace/) | `[workspace]`、path 依赖、`mcpp build --workspace` |
+| [`11-features`](../../examples/11-features/) | **声明** feature 而不是消费它,`[feature-deps]`、`[dev-dependencies]`、`[profile.<name>]`、`mcpp::has_feature` |
 
-建议按编号依次阅读:
+### B —— 发布
 
-1. **`01-hello`** 展示 mcpp 工程的最小骨架(`mcpp.toml` 与 `src/main.cpp`),
-   并演示 `import std` 的基本用法。当前 `mcpp new` 脚手架还会生成
-   `tests/test_smoke.cpp`。
-2. **`02-with-deps`** 在前一示例基础上引入外部依赖,涵盖锁文件机制
-   与模块化包索引的工作方式。
-3. **`03-pack-static`** 演示如何将构建产物打包为可独立分发的单文件
-   二进制;打包细节可参考 [02 — 发布打包](02-pack-and-release.md)。
+| 示例 | 第一个教什么 |
+|---|---|
+| [`03-pack-static`](../../examples/03-pack-static/) | `mcpp pack --mode static`、`[target.<triple>]`、`[pack]` |
+| [`05-lib-distribution`](../../examples/05-lib-distribution/) | 一个库的接口与它的预编译二进制;从同一份源产出 C 头文件与 C++ 模块 |
 
-## 新增示例
+### C —— 环境
 
-示例工程遵循统一的目录结构:`mcpp.toml` + `src/` + `README.md`。
-新增示例时,在 `examples/` 下创建编号目录(如 `04-xxx/`),并在
-README 中简要说明该示例演示的概念,然后提交 PR。提交规范见
-[04 — 从源码构建 & 参与贡献](04-build-from-source.md)。
+| 示例 | 第一个教什么 |
+|---|---|
+| [`07-project-subos`](../../examples/07-project-subos/) | `[xlings]`、`[xlings.workspace]`,以及 `PATH` 来自工程声明环境的构建程序 |
+
+### D —— 目标
+
+| 示例 | 第一个教什么 |
+|---|---|
+| [`06-openkal-cross`](../../examples/06-openkal-cross/) | `--target`,同一份源在任意宿主上为四台机器构建 |
+
+裸机由**模板**而不是本目录里的一个工程来教 —— 见下面的*以模板形式到达的课程*。
+
+### E —— 设备与图形
+
+[`09-heterogeneous`](../../examples/09-heterogeneous/) 按顺序读。它的 README 是
+地图;下表是每个子示例新增的部分。
+
+| 示例 | 第一个教什么 |
+|---|---|
+| [`…/boundary`](../../examples/09-heterogeneous/boundary/) | 单独的岛边界:消费者 import 一个生成的模块,工程里没有接缝也没有头文件。不需要设备 |
+| [`…/cuda`](../../examples/09-heterogeneous/cuda/) | 设备编译器、生成边界之上的接缝、把驱动陈述为 fact 与 floor |
+| [`…/vulkan`](../../examples/09-heterogeneous/vulkan/) | 一个 compute shader,其 SPIR-V 载荷以模块到达 |
+| [`…/sycl`](../../examples/09-heterogeneous/sycl/) | 第二个编译器,自带它自己的标准库 |
+| [`…/hip`](../../examples/09-heterogeneous/hip/) | 手写的边界 —— 与 `boundary/` 和 `cuda/` 的对照 |
+| [`…/cann`](../../examples/09-heterogeneous/cann/) | NVIDIA 与 Khronos 谱系之外的厂商 |
+| [`…/multi-backend`](../../examples/09-heterogeneous/multi-backend/) | 多个后端进同一个产物,运行期选择 |
+| [`10-graphics/offscreen`](../../examples/10-graphics/offscreen/) | 结果是像素的渲染管线,并与软件光栅器逐像素比对 |
+
+### F —— 为生态编写扩展
+
+| 示例 | 第一个教什么 |
+|---|---|
+| [`08-build-rules`](../../examples/08-build-rules/) | 两个规则包与同时使用它们的工程;`host-module = true`、`role = "check"` 的 `mcpp::action` |
+| [`12-a-new-device-language`](../../examples/12-a-new-device-language/) | `device_extensions` 与 `rule_module`:规则包教会 mcpp 一门引擎从未听说过的语言 |
+
+[23 —— 编写规则包](23-authoring-a-rule-package.md) 是这两个示例所演示内容的参考。
+
+## 以模板形式到达的课程
+
+一个包可以提供 `templates/<name>/`,由 `mcpp new --template` 实例化。那是与本目录
+和章节并列的第三个教学面;当被教的东西属于某个包而不属于 mcpp 时,课程就落在那里。
+
+| 模板 | 课程 | 章节 |
+|---|---|---|
+| `riscv-virt-rt` | 一个裸机工程、它的板级支持与它的 runner | [13](13-baremetal.md) |
+| `riscv-virt-rt:nolibc` | 同上,但没有 C 库 | [13](13-baremetal.md) |
+| `ocornut.imgui` | 一个带窗口与渲染栈的图形应用 | [03](03-toolchains.md) |
+
+```bash
+mcpp new blinky --template riscv-virt-rt
+```
+
+## 新增一个示例
+
+一个示例目录是 `mcpp.toml` + `src/` + `README.md`,编号接在最后一个之后。什么时候
+值得新增一个示例:当一个能力**改变工程的形状** —— 它包含的文件、它声明的 manifest、
+或者作者敲的命令。如果一个能力只是既有示例工程里的一行,它属于对应章节里的一个
+代码块;如果它只经由命令到达,它属于
+[21 —— 按场景选命令](21-commands-by-scenario.md)。
+
+README 要写明这个示例第一个教什么,以及判断它是否成立的判据。贡献流程见
+[04 —— 从源码构建 & 参与贡献](04-build-from-source.md)。

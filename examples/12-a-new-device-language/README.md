@@ -1,11 +1,11 @@
-# 13 — A device language the engine has never heard of
+# 12 — A device language the engine has never heard of
 
 A rule package teaches mcpp to compile `.toy`, and a project uses it. No mcpp
 release is involved: `.toy` is not in the engine's built-in device-extension
 table and will never be.
 
 ```
-cd examples/13-a-new-device-language/app
+cd examples/12-a-new-device-language/app
 mcpp run                 # toy_answer() = 42
 ```
 
