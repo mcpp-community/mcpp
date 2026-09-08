@@ -26,7 +26,7 @@
 | 存储 | 作用域 | 增长时机 | 清空方式 |
 |---|---|---|---|
 | `target/<三元组>/<指纹>/` | 单个工程 | 配置指纹变化,开出新目录 | `mcpp clean`、`mcpp clean --stale` |
-| 构建缓存(`mcpp cache dir`) | 整台机器 | 任何工程编译依赖或 `std` 模块 | `mcpp cache gc`、`mcpp cache prune`、`mcpp cache clean` |
+| 构建缓存(`mcpp cache dir`) | 整台机器 | 任何工程编译依赖、`std` 模块,或构建一个 host 工具 | `mcpp cache gc`、`mcpp cache prune`、`mcpp cache clean` |
 
 `mcpp clean` 整个删掉 `target/`,下次构建重编一切。`mcpp clean --stale` 只删已无构建
 记录使用的指纹目录,在用的配置保留:

@@ -12,6 +12,74 @@
 嵌入,[`12-a-new-device-language`](../../examples/12-a-new-device-language/) 新增
 一门语言。
 
+## 扩展模型
+
+mcpp 的构建表面由包扩展,而不是由发布扩展。做扩展的有五个点,而经由它们进来的任何
+名字,引擎都不持有。
+
+| 扩展点 | 效果 | 声明位置 |
+|---|---|---|
+| `mcpp::action` | 构建图里的一条边:一条命令,带声明的输入与输出 | 构建程序,或它 import 的规则模块 |
+| `device_extensions` | 一个扩展名被引擎归类为**设备源**,而不是被拒绝 | 包的某个 feature |
+| `rule_module` | 消费者的构建程序 import 哪个模块来够到这条规则 | 同一个 feature |
+| `tools = [...]` | 一个**从源码为构建机构建**的生成器或编译器,用 `mcpp::dep_bin` 取到 | 一条依赖边 |
+| `[xlings]`、`[feature-xlings]` | 规则要运行的预建工具,按需安装 | 包本身,或它的某个 feature |
+
+生态用它们建出来的东西:
+
+| 扩展面 | 所在包 | 使用的扩展点 |
+|---|---|---|
+| CUDA、HIP、SYCL、Ascend C | `mcpp:plugins`,各一个 feature([42](42-heterogeneous-builds.md)) | 驱动厂商编译器的 action,加上按加速器设闸的载荷 |
+| Slang | `mcpp:plugins` 的 `rules-slang` | `device_extensions = [".slang"]` —— 第一门无需引擎点名即被支持的语言 |
+| GLSL 与 HLSL 到 SPIR-V,以及其上的模块 | `mcpp:plugins` 的 `rules-spirv` | 每个着色器一条 action,加上一个生成的模块 |
+| 设备与 C++ 之间的岛边界 | `mcpp.tools.island` | 一个生成器,加上 `mcpp::generated` |
+| 作为可链接对象的资源文件 | [`08-build-rules`](../../examples/08-build-rules/) | `role = "object"` |
+| 能让构建失败的检查 | [`08-build-rules`](../../examples/08-build-rules/) | `role = "check"` |
+| 引擎从未听说过的语言 | [`12-a-new-device-language`](../../examples/12-a-new-device-language/) | `device_extensions`,加上经 `tools = [...]` 构建出来的编译器 |
+
+### 这个模型能表达的形态
+
+**一门新语言,不论由什么编译它。** 规则声明它认领的扩展名、为每个源提交一条
+action,并把编译器列进这条 action 的输入。这个编译器可以是厂商工具包、一个 LLVM
+前端、一个发出设备二进制的解释器,也可以是规则包自己从源码构建出来的程序。它产出
+的是设备二进制、目标文件还是 C++,由 action 的 `role` 决定,别无其他。引擎始终不
+学习这门语言:它学到的是「某个扩展名是设备源」以及「某条 action 认领它」。
+
+**预处理与代码生成。** `role = "source"` 的 action 产出 C++,由声明它的包随后编译,
+而该包的每一条编译边都等它。输入可以是模板、接口定义、一张表,或另一条 action 的
+输出 —— 串联是常规做法,因为 action 之间由文件定序并计入指纹。
+
+**一个一半是 C++、一半是另一种语言的文件。** 归类发生在任何规则运行之前,所以带着
+引擎自有扩展名的文件按 C++ 编译,永远到不了规则那里。因此一个携带外来代码块的源要
+用规则认领的扩展名,再由规则把它拆开:抽出来的 C++ 走 `role = "source"`,外来的那
+一半走规则自己的编译器,两者之间的缝就是
+[42 —— 异构构建](42-heterogeneous-builds.md) 里的 `extern "C"` 边界。本仓库今天没有
+任何包是这个形态。
+
+### 边界
+
+**声明不能重新归类引擎已经拥有的东西。** 依赖的 `device_extensions` 在内建角色
+**之后**才被查询,所以规则包认领不了 `.cpp`、`.cppm`、`.c` 或 `.S`。这些是引擎自己
+的词汇,一个包不得把文件从中挪走。认领它们不会被诊断,也不产生任何效果:实测把
+`".cpp"` 加进某条规则的 `device_extensions`,消费者的 `main.cpp` 仍按 C++ 编译,
+构建成功。
+
+**模块接口的扩展名是工程的轴,不是规则的轴。** 把接口写成 `.ixx` 的工程声明
+`[build] module_extensions`([04 —— mcpp.toml 工程文件指南](04-mcpp-toml.md))。没有
+任何规则包的键能新增一个,因为模块接口要被扫描 import、要产出 BMI、还要进链接 ——
+这是三项引擎行为,而不是一条要跑的命令。
+
+**两张表都不包含的扩展名会被点名拒绝**,所以写错的 `device_extensions` 会立刻显形,
+而不是把一个源默默丢掉:
+
+```
+error: scanner errors:
+  .../orphan.zzz: 'orphan.zzz' is listed in [build] sources, and mcpp has no role
+  for the extension '.zzz'.
+  Its object would be compiled and then linked by nothing, so this is refused rather
+  than built.
+```
+
 ## 规则包的定义
 
 三部分,没有一部分是 mcpp 特有的:

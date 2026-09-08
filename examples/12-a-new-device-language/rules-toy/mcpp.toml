@@ -8,8 +8,9 @@ license     = "Apache-2.0"
 # THE TWO KEYS THAT MAKE A NEW DEVICE LANGUAGE COST NO ENGINE RELEASE.
 #
 # `device_extensions` says which sources this rule compiles. A consumer that
-# activates the feature gets `.toy` classified as a DEVICE source: never scanned
-# for imports, never producing a BMI, and refused if no action claims it.
+# activates the feature gets `.toy` classified as a DEVICE source: never
+# scanned for imports, never producing a BMI, and refused if no action claims
+# it.
 #
 # `rule_module` says which module the consumer's build program imports to reach
 # the rule. It also implies `host-module = true`, so a consumer writes the
@@ -24,3 +25,16 @@ default = []
 sources           = ["src/rules-toy.cppm"]
 rule_module       = "example.rules.toy"
 device_extensions = [".toy"]
+
+# THE COMPILER IS A PACKAGE, AND IT IS BUILT FOR THE BUILD MACHINE.
+#
+# `tools = ["toyc"]` asks the graph for that target as a host executable even
+# when the project around it is cross-compiling; `reexport = true` hands it to
+# whoever activated this feature. Without `reexport` the tool stays here, which
+# is the supply-chain default: an arbitrary transitive dependency must not be
+# able to put entries in a build program's tool namespace.
+#
+# The request hangs on the FEATURE, so a project that depends on this package
+# without activating the rule builds no compiler.
+[feature-deps.rules-toy]
+toyc = { path = "../toyc", tools = ["toyc"], reexport = true }

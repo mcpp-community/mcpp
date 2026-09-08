@@ -5,8 +5,9 @@ version = "0.1.0"
 [language]
 standard = "c++23"
 
-# ONE EDGE. `rule_module` on the feature implies `host-module = true`, so the
-# consumer names the feature and nothing else.
+# ONE EDGE. `rule_module` on the feature implies `host-module = true`, and the
+# feature's own `[feature-deps]` brings the compiler, so the consumer names the
+# feature and nothing else.
 [dependencies]
 rules-toy = { path = "../rules-toy", features = ["rules-toy"] }
 

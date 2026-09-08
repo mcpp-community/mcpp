@@ -931,6 +931,16 @@ Four properties worth knowing:
 - **Cached globally**, keyed on package version × host toolchain × features ×
   its own dependency closure — built once per machine, not once per project.
 
+**The key holds no source content, and for a `path` dependency that is visible.**
+A published version is immutable, so for a tool that arrives from an index the
+key is exact. A tool being edited next door has the same version from one build
+to the next, and the cached binary stays: measured on
+[`examples/12-a-new-device-language`](../examples/12-a-new-device-language/),
+a change to the tool's emitter left `mcpp run` reporting `Finished dev in 0.00s`
+and printing the previous answer. Bump the tool package's version, or empty the
+build cache with `mcpp cache clean` — the tool store lives inside it, at
+`<mcpp cache dir>/tool/<index>/<name>@<version>/`.
+
 ### `[tools.overrides]` — use an existing binary
 
 ```toml

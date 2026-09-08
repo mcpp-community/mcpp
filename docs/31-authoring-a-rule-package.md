@@ -16,6 +16,84 @@ which belong to `mcpp:plugins`. Examples:
 [`12-a-new-device-language`](../examples/12-a-new-device-language/) adds a
 language.
 
+## The extension model
+
+mcpp's build surface is extended from packages rather than from releases. Five
+points do the extending, and the engine holds no name that comes through any of
+them.
+
+| extension point | effect | declared on |
+|---|---|---|
+| `mcpp::action` | one edge in the build graph: a command with declared inputs and outputs | a build program, or a rule module it imports |
+| `device_extensions` | an extension the engine classifies as a **device source** instead of refusing it | a feature of a package |
+| `rule_module` | the module a consumer's build program imports to reach the rule | the same feature |
+| `tools = [...]` | a generator or compiler **built from source for the build machine**, reached with `mcpp::dep_bin` | a dependency edge |
+| `[xlings]`, `[feature-xlings]` | a prebuilt tool the rule runs, installed on demand | the package, or one of its features |
+
+What the ecosystem has built out of them:
+
+| surface | package | points used |
+|---|---|---|
+| CUDA, HIP, SYCL, Ascend C | `mcpp:plugins`, one feature each ([42](42-heterogeneous-builds.md)) | actions driving a vendor compiler, plus payloads gated on the accelerator |
+| Slang | `mcpp:plugins`' `rules-slang` | `device_extensions = [".slang"]` — the first language mcpp supports without naming it in the engine |
+| GLSL and HLSL to SPIR-V, and the module over the result | `mcpp:plugins`' `rules-spirv` | one action per shader, plus a generated module |
+| the island boundary between a device and C++ | `mcpp.tools.island` | a generator, plus `mcpp::generated` |
+| an asset as a linkable object | [`08-build-rules`](../examples/08-build-rules/) | `role = "object"` |
+| a check that can fail the build | [`08-build-rules`](../examples/08-build-rules/) | `role = "check"` |
+| a language the engine has never heard of | [`12-a-new-device-language`](../examples/12-a-new-device-language/) | `device_extensions`, plus a compiler built through `tools = [...]` |
+
+### The shapes the model expresses
+
+**A new language, whatever compiles it.** A rule claims the extension, submits
+one action per source, and declares the compiler among that action's inputs.
+The compiler may be a vendor toolkit, an LLVM front end, an interpreter that
+emits a device binary, or a program the rule package builds from source. Whether
+it produces a device binary, an object or C++ is the action's `role` and nothing
+else. The engine never learns the language: it learns that an extension is a
+device source and that an action claims it.
+
+**Preprocessing and code generation.** An action with `role = "source"` produces
+C++ that the declaring package then compiles, and every compile edge of that
+package waits for it. The input can be a template, an interface definition, a
+table, or another action's output — chaining is ordinary, because actions are
+ordered and fingerprinted by their files.
+
+**A file that is partly C++ and partly another language.** Classification
+happens before any rule runs, so a file with an extension the engine owns is
+compiled as C++ and never reaches a rule. A source carrying a foreign block
+therefore uses an extension the rule claims, and the rule splits it: the C++ it
+extracts goes through `role = "source"`, the foreign half through its own
+compiler, and the seam between the two is the `extern "C"` boundary of
+[42 — Heterogeneous Builds](42-heterogeneous-builds.md). No package in this
+repository ships that shape today.
+
+### The boundary
+
+**A declaration cannot reclassify what the engine already owns.** A dependency's
+`device_extensions` is consulted *after* the built-in roles, so a rule package
+cannot claim `.cpp`, `.cppm`, `.c` or `.S`. Those are the engine's own
+vocabulary, and a package must not be able to move a file out of it. Claiming
+one is not diagnosed and has no effect: measured by adding `".cpp"` to a rule's
+`device_extensions`, after which the consumer's `main.cpp` was still compiled as
+C++ and the build succeeded.
+
+**Module-interface extensions are the project's axis, not a rule's.** A project
+that spells its interfaces `.ixx` declares `[build] module_extensions`
+([04 — The mcpp.toml Project File](04-mcpp-toml.md)). No rule-package key adds
+one, because a module interface is scanned for imports, produces a BMI and joins
+the link — three engine behaviours rather than a command to run.
+
+**An extension in neither table is refused by name**, which is why a mistyped
+`device_extensions` surfaces at once instead of dropping a source:
+
+```
+error: scanner errors:
+  .../orphan.zzz: 'orphan.zzz' is listed in [build] sources, and mcpp has no role
+  for the extension '.zzz'.
+  Its object would be compiled and then linked by nothing, so this is refused rather
+  than built.
+```
+
 ## The definition of a rule package
 
 Three parts, and none of them is special to mcpp:

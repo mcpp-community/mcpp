@@ -31,7 +31,7 @@ them. Confusing them costs a full rebuild.
 | Store | Scope | Growth trigger | Emptied by |
 |---|---|---|---|
 | `target/<triple>/<fingerprint>/` | one project | a configuration fingerprint changes and opens a new directory | `mcpp clean`, `mcpp clean --stale` |
-| the build cache (`mcpp cache dir`) | the whole machine | any project compiles a dependency or a `std` module | `mcpp cache gc`, `mcpp cache prune`, `mcpp cache clean` |
+| the build cache (`mcpp cache dir`) | the whole machine | any project compiles a dependency or a `std` module, or builds a host tool | `mcpp cache gc`, `mcpp cache prune`, `mcpp cache clean` |
 
 `mcpp clean` removes `target/` entirely, and the next build recompiles
 everything. `mcpp clean --stale` removes only the fingerprint directories that

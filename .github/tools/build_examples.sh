@@ -48,8 +48,14 @@ BUILD=(
     # name the optional package -- which a build alone cannot show.
     examples/11-features/counters
     examples/11-features/greeter
-    # A device language the engine does not know. No payload: its compiler is a
-    # shell script, because the subject is the graph rather than a vendor.
+    # A device language the engine does not know, and the compiler for it.
+    #
+    # `toyc` is built here as an ordinary package as well as by the app as a
+    # host tool, and the two are not the same signal: this one fails at the
+    # compiler, the app's fails somewhere in `tools = [...]` / `reexport` /
+    # `dep_bin`, and a single line telling them apart is worth one build of a
+    # three-file package.
+    examples/12-a-new-device-language/toyc
     examples/12-a-new-device-language/app
 )
 

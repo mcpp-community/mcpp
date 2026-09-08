@@ -76,7 +76,7 @@ mcpp build && mcpp run
 | 示例 | 首次引入的内容 |
 |---|---|
 | [`08-build-rules`](../../examples/08-build-rules/) | 两个规则包与同时使用它们的工程;`host-module = true`、`role = "check"` 的 `mcpp::action` |
-| [`12-a-new-device-language`](../../examples/12-a-new-device-language/) | `device_extensions` 与 `rule_module`:规则包教会 mcpp 一门引擎从未听说过的语言 |
+| [`12-a-new-device-language`](../../examples/12-a-new-device-language/) | `device_extensions` 与 `rule_module`:规则包教会 mcpp 一门引擎从未听说过的语言,而它的编译器是一个经 `tools = [...]` 为构建机构建出来的包 |
 
 [31 —— 编写规则包](31-authoring-a-rule-package.md) 是这两个示例所演示内容的参考。
 
