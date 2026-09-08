@@ -173,7 +173,7 @@ descriptor holds exactly one `["latest"]` per platform table.
 **Files:** `examples/09-heterogeneous/boundary/**`,
 `examples/09-heterogeneous/cuda/app/**`, `examples/09-heterogeneous/sycl/app/**`.
 
-Each pins `plugins = { version = "0.5.0", ... }`, passes `roots` and a
+Each pins `plugins = { version = "0.5.2", ... }`, passes `roots` and a
 `layout_root`, and reaches the boundary through the qualified name. `boundary`
 additionally shows `strip_prefix`, because it is the example whose whole subject
 is the generated interface.
@@ -198,8 +198,11 @@ run locally before the pull request.
 
 ## T10 -- release
 
-Tag `v0.5.0`, GitHub release from the tag, `gtc` upload of the same bytes to
-GitCode, then T6.
+Tag the release, publish it from the tag, `gtc` upload of the same bytes to
+GitCode, then T6. This ran three times: 0.5.0 for the design, 0.5.1 for the
+refusal of overlapping roots that the design states and 0.5.0 omitted, and
+0.5.2 for the separator defect the first cross-platform run of the fixture
+found.
 
 ## T11 -- ecosystem verification
 
