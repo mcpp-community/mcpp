@@ -1,5 +1,15 @@
 # 51 — Supported Versions and Compatibility
 
+**Reader:** anyone with a policy question — a review process, an air-gapped
+build, a pinned release.
+
+**The question this chapter answers:** which releases are supported, what may
+change between them, and what may not.
+
+**Not here:** the exit-code table, which is [SPEC-003](specs/exit-codes.md), and
+the machine-output schema, which is
+[50 — Machine-Readable Output](50-machine-output.md).
+
 This document states which releases are supported, for how long, and what may
 change between them. It exists because a project adopting mcpp is asked these
 questions by its own review process, and an answer that lives only in
@@ -88,3 +98,4 @@ Defects and security reports go to the issue tracker of the repository that
 owns the component — the engine, the package index, or the package itself. A
 report that names the version, the host, the target and the command is
 actionable; one that does not usually results in a request for those four.
+
