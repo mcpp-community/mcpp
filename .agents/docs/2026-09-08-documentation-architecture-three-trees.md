@@ -480,7 +480,7 @@ SPEC-006) are not, and §12.4 says why.
 | stale `docs/NN-*.md` citations | 6 | 0 |
 | manifest keys with no example | 13 | 7 |
 | `build.mcpp` API names used by an example | 10 of 38 | 12 of 38 |
-| structure rules enforced in CI | 0 | 9 |
+| structure rules enforced in CI | 0 | 10 |
 
 The seven manifest keys still uncovered are the ones §3.2 classifies as a code
 block rather than an example — `[hooks]`, `scan_overrides`, `cxx_runtime`,
@@ -514,6 +514,23 @@ check about meaning.
 **Chapter 17's "Related chapters" ended up mid-chapter**, and its own bullet for
 `05` said "every manifest key, including `[xlings]`" — the one claim the move
 made false.
+
+**Four translations were missing content that every check called equal.** The
+style checker compares heading structure, which is what catches a page that has
+fallen a section behind. It cannot see a table row or a fenced block that never
+crossed. Found while comparing the two languages by hand after the split, then
+by the rule written for it:
+
+| where | what was missing |
+|---|---|
+| `docs/zh/22` (from `05`) | the `[features]` section had **no body**: the TOML example that defines the syntax, and all three bullets |
+| `docs/zh/05` §2.11 | the `identity` verdict table and the two paragraphs around it |
+| `docs/zh/08` §7.4 | the shared-library format table, Mach-O's install name, and the refusal of an unservable target |
+| `docs/zh/16` | **seven target rows** — the 简体中文 support matrix listed 14 targets where the English listed 21 |
+
+None was introduced by this batch. The last one is the argument for rule 10 on
+its own: a bilingual pair can agree on every heading and disagree about which
+targets the tool supports.
 
 **Two rules were written in the skill and not applied.** Chapter 22 had no
 "Current limitations" while the skill calls that section mandatory. And "every
