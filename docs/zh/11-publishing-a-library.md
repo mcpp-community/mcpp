@@ -2,6 +2,15 @@
 
 [English](../11-publishing-a-library.md) | **简体中文**
 
+**读者:**希望自己的包能被别人写进 `[dependencies]` 的库作者。
+
+**本章回答的那一个问题:**从打好 tag 到成为一个可解析的包,要走哪些步骤,以及它们
+必须按什么顺序发生。
+
+**不在这里:**什么使两个包成为同一个包 —— [SPEC-001](../specs/package-identity.md);
+以及交付编译产物,那是 [12](12-binary-distribution.md)。在此之前:
+[10 —— 发布打包](10-pack-and-release.md)。
+
 一个库如何变成 `[dependencies]` 可以写出来的东西。这是**库作者**的链路;
 [92 - 发布 mcpp](92-release.md) 讲的是发布 mcpp 自身,
 [10 - 发布打包](10-pack-and-release.md) 讲的是 `mcpp pack` 打包应用。
@@ -143,3 +152,4 @@ mcpp 的构建沙箱是网络隔离的,`file://` 和 `http://127.0.0.1` 形式�
 - [ ] `publish-artifact.yml` 成功
 - [ ] 冷解析(删掉播种拷贝后)能下载并编译
 - [ ] 消费方已升版本
+

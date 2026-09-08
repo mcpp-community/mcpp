@@ -1,5 +1,14 @@
 # 92 — Releasing mcpp
 
+**Reader:** a maintainer cutting a release of mcpp itself.
+
+**The question this chapter answers:** what steps take a commit to a released
+version users can install, and how is each one verified.
+
+**Not here:** publishing a package to the index, which is
+[11 — Publishing a Library](11-publishing-a-library.md), and what may change
+between releases, which is [51](51-supported-versions.md).
+
 How a release of **mcpp itself** reaches users. This is maintainer-facing; for
 packaging an *ordinary* project see [10 — Packaging for Release](10-pack-and-release.md).
 
@@ -277,3 +286,4 @@ would again let the index guard and the installed version drift apart.
 [ ] clean-room XLINGS_HOME: xlings install mcpp@<version> succeeds
 [ ] (optional) bump .xlings.json — only now, never earlier
 ```
+

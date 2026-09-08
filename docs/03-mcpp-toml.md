@@ -1,5 +1,16 @@
 # 03 — The mcpp.toml Manifest
 
+**Reader:** an author writing or reading a manifest.
+
+**The question this chapter answers:** what may an `mcpp.toml` say, field by
+field.
+
+**Not here:** four topics this file's tables belong to but this chapter does not
+own — dependencies are [04](04-dependencies.md), features are
+[05](05-features-and-capabilities.md), conditioning on a target is
+[22](22-target-side.md), and the project's environment is
+[23](23-the-project-environment.md). Each is named where its table would be.
+
 `mcpp.toml` is the project configuration file for the mcpp build tool, analogous to Cargo's `Cargo.toml` or Node's `package.json`. Place it in the project root; `mcpp build` discovers and reads it automatically.
 
 ## 1. Minimal Examples
@@ -1362,3 +1373,4 @@ standard = "c++26"
 ```
 
 New projects should use `[package].standard`. If both locations are present, `[package].standard` is authoritative.
+

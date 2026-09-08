@@ -1,5 +1,14 @@
 # 10 —— 发布打包
 
+**读者:**要把一个程序交付到没有 mcpp 的机器上的人。
+
+**本章回答的那一个问题:**怎样把一次构建变成另一台机器能运行的东西,以及每种打包
+模式各自携带什么。
+
+**不在这里:**交付一个供其它包构建时使用的**库**,那是
+[12 —— 分发预编译库](12-binary-distribution.md)。在此之后:
+[11 —— 发布一个库到 mcpp-index](11-publishing-a-library.md)。
+
 > 默认的动态链接 `mcpp build` 产物会把 loader 与 RUNPATH 指向构建沙盒。它是
 > 开发产物,不是交付物。有三条路把它变成交付物 —— **没有一条使用宿主的 C 库**。
 
@@ -348,3 +357,4 @@ macOS **程序** bundling(Mach-O 依赖闭包,走 `otool -L` / `LC_LOAD_DYLIB`,
 会在该格式上拒绝,而不是产出一个只是看起来像 bundle 的东西。当前 `.zip`
 之外的 Windows DLL 分发,以及 `.deb` / `.rpm` / AppImage 等格式,同样在规划中。本文档随 `mcpp pack` 实现演进,最新选项以
 `mcpp pack --help` 为准。
+

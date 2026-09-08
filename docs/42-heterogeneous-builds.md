@@ -1,5 +1,15 @@
 # 42 — Heterogeneous Builds
 
+**Reader:** someone compiling part of a program for a GPU or an AI accelerator.
+
+**The question this chapter answers:** how does device code get compiled and
+linked into an ordinary program, and how does a prebuilt artifact state which
+devices it can run on.
+
+**Not here:** writing the rule that drives a device compiler, which is
+[31 — Authoring a Rule Package](31-authoring-a-rule-package.md), and reaching
+the device to run on it, which is [41 — Reaching a Device](41-devices.md).
+
 GPU and AI accelerator targets, and mixed host/device compilation: how mcpp
 builds device code, and how a prebuilt artifact states which devices it can
 run on.
@@ -733,3 +743,4 @@ past it is the framework's own selector rather than a change to the packaging.
 
 Per-platform limits for each lane are in the table under *Which platforms each
 lane reaches*.
+

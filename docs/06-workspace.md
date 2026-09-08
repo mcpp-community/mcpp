@@ -1,5 +1,15 @@
 # 06 — Workspaces
 
+**Reader:** an author whose repository holds more than one package.
+
+**The question this chapter answers:** how do several packages become one build,
+and what does a member share with the others.
+
+**Not here:** publishing those packages, which is
+[11 — Publishing a Library](11-publishing-a-library.md). Before:
+[05 — Features and Capabilities](05-features-and-capabilities.md). After:
+[07 — Testing](07-testing.md).
+
 A workspace organizes multiple related mcpp packages (libraries or applications) within a single repository. Member packages share a unified set of dependency versions and toolchain settings while each keeping its own `mcpp.toml` project file.
 
 ## 1. Overview
@@ -363,3 +373,4 @@ Workspaces work in concert with the C++23 module mechanism:
 ## 8. Complete Example
 
 See [`examples/04-workspace/`](../examples/04-workspace/) for a complete, runnable example of a three-member workspace.
+

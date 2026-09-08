@@ -1,5 +1,13 @@
 # 01 —— 快速开始
 
+**读者:**还什么都没装的新用户。
+
+**本章回答的那一个问题:**从一台空机器开始,怎样把一个程序编译并运行起来。
+
+**不在这里:**mcpp 有哪些部件 —— 那是 [00 —— mcpp 的运转方式](00-how-mcpp-works.md),
+本章假定它而不重复它;以及 manifest 可以写的每一个字段,那是
+[03 —— mcpp.toml 工程文件指南](03-mcpp-toml.md)。下一章:[02 —— 示例项目](02-examples.md)。
+
 > 5 分钟完成 install → new → build → run → pack 全流程。
 
 ## 安装
@@ -185,3 +193,4 @@ mcpp pack --mode self-contained    # 打包 loader、libc 与依赖
 - 解释默认决策:`mcpp why [toolchain|runtime|deps]`;主机能力体检:`mcpp self doctor`;
   机器可读解析清单:构建产物 `target/<triple>/<fp>/resolution.json`。
 - 离线运行:`mcpp --offline` 或 `MCPP_OFFLINE=1` 可阻止索引刷新、下载和工具链安装。在从未使用过的 home 中,它同时跳过首次使用时的沙箱引导(索引克隆、ninja、patchelf),只提示一次,并让该 home 保持未引导状态;需要这些工具的命令会自行报告。
+

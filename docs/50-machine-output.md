@@ -1,5 +1,14 @@
 # 50 — Machine-Readable Output
 
+**Reader:** the author of a tool, an editor extension or a CI job that parses
+mcpp's output.
+
+**The question this chapter answers:** what may a program rely on, how is it
+versioned, and how is the protocol detected.
+
+**Not here:** the human-facing output, which carries no compatibility promise,
+and the exit-code contract, which is [SPEC-003](specs/exit-codes.md).
+
 mcpp writes for two audiences. This chapter is the contract for the second one:
 programs. Editor extensions, CI scripts, and anything else that parses mcpp's
 output may rely on what is stated here.
@@ -444,3 +453,4 @@ must also read `not_run`.
 `unrunnable_members` (members all of whose tests were `not_run`), alongside the
 existing `not_run` list, which continues to name members the
 `--workspace-timeout` stopped before they started.
+

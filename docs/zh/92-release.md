@@ -1,5 +1,13 @@
 # 92 —— 发布 mcpp
 
+**读者:**正在切一次 mcpp 自身发布的维护者。
+
+**本章回答的那一个问题:**从一个提交到用户可安装的发布版本要走哪些步骤,以及每一步
+怎样被核验。
+
+**不在这里:**把一个包发布到索引,那是 [11 —— 发布一个库](11-publishing-a-library.md);
+以及版本之间什么可以变,那是 [51](51-supported-versions.md)。
+
 **mcpp 自身**的发布如何到达用户手上。本章面向维护者;打包**自有项目**见
 [10 — 打包发布](10-pack-and-release.md)。
 
@@ -232,3 +240,4 @@ curl -fsSL https://github.com/xlings-res/xim-index/releases/download/latest/xim-
 [ ] clean-room XLINGS_HOME：xlings install mcpp@<version> 成功
 [ ] （可选）bump .xlings.json —— 只在此刻，绝不提前
 ```
+

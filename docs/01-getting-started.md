@@ -1,5 +1,15 @@
 # 01 — Getting Started
 
+**Reader:** a newcomer with nothing installed yet.
+
+**The question this chapter answers:** how do I get a program compiling and
+running, from an empty machine.
+
+**Not here:** what mcpp's parts are — that is
+[00 — How mcpp Works](00-how-mcpp-works.md), which this chapter assumes rather
+than repeats — and every field a manifest may hold, which is
+[03 — The mcpp.toml Manifest](03-mcpp-toml.md). After: [02 — Examples](02-examples.md).
+
 > Go from install → new → build → run → pack in 5 minutes.
 
 ## Installation
@@ -199,3 +209,4 @@ For the differences between the four modes and their artifact layouts, see [10 �
 - Explaining default decisions: `mcpp why [toolchain|runtime|deps]`; host capability checkup: `mcpp self doctor`;
   machine-readable resolution manifest: the build artifact `target/<triple>/<fp>/resolution.json`.
 - Offline operation: `mcpp --offline` or `MCPP_OFFLINE=1` prevents index refreshes, downloads, and toolchain installation. In a home that has never been used it also skips the first-use sandbox bootstrap (index clone, ninja, patchelf), announces the skip once, and leaves the home un-bootstrapped; commands that need those tools report it.
+

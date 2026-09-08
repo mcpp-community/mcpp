@@ -1,5 +1,13 @@
 # 91 —— 工具链机制内幕
 
+**读者:**贡献者,或者正在排查「工具链为什么解析成这样」的用户。
+
+**本章回答的那一个问题:**mcpp 实际上怎样解析、安装并拼装一条工具链,以及每个
+flag 由哪一层决定。
+
+**不在这里:**怎样**选择**一条工具链,那是 [20 —— 工具链管理](20-toolchains.md)。
+本章是它底下的机制,而这里没有任何东西是稳定接口。
+
 > 本文详细描述 mcpp 工具链机制的内部工作原理,以及如何扩充新工具链、新架构乃至
 > 嵌入式目标的支持。与面向用户的 [20 — 工具链管理](20-toolchains.md)(CLI 用法)
 > 互补,本文面向贡献者与维护者。
@@ -531,3 +539,4 @@ flag 的拼法 —— 它是产物记录下的关于它自己的东西:
 | build.mcpp 宿主 flags | `src/build/build_program.cppm` |
 | hermetic 链接校验 | `src/build/hermetic.cppm` |
 | 回归fence | `tests/e2e/86_llvm_hermetic_link.sh`、单测 `test_linkmodel.cpp`、`test_post_install.cpp`;`ci-linux-e2e.yml` 的无宿主工具链 CI job |
+

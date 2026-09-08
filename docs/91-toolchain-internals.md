@@ -1,5 +1,15 @@
 # 91 — Toolchain Internals
 
+**Reader:** a contributor, or a user debugging why a toolchain resolved the way
+it did.
+
+**The question this chapter answers:** how does mcpp actually resolve, install
+and assemble a toolchain, and which layer decides each flag.
+
+**Not here:** how to *choose* a toolchain, which is
+[20 — Toolchain Management](20-toolchains.md). This chapter is the mechanism
+under it, and nothing here is a stable interface.
+
 > How mcpp's toolchain machinery works under the hood, and how to extend it
 > with new toolchains, new architectures, and (eventually) embedded targets.
 > Companion to [20 — Toolchain Management](20-toolchains.md), which covers the
@@ -646,3 +656,4 @@ answer them.
 | build.mcpp host flags | `src/build/build_program.cppm` |
 | hermetic link check | `src/build/hermetic.cppm` |
 | regression fences | `tests/e2e/86_llvm_hermetic_link.sh`, unit `test_linkmodel.cpp`, `test_post_install.cpp`; the no-host-toolchain CI job in `ci-linux-e2e.yml` |
+

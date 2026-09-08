@@ -1,5 +1,14 @@
 # 10 — Packaging an Application for Release
 
+**Reader:** someone shipping a program to a machine that does not have mcpp.
+
+**The question this chapter answers:** how do I turn a build into something
+another machine can run, and what does each packaging mode carry.
+
+**Not here:** shipping a **library** for other packages to build against, which
+is [12 — Distributing a Prebuilt Library](12-binary-distribution.md). After:
+[11 — Publishing a Library to mcpp-index](11-publishing-a-library.md).
+
 > This page is about bundling a **program**. To ship a *library* as interface +
 > prebuilt binaries, see [12 - Distributing a Prebuilt Library](12-binary-distribution.md).
 >
@@ -416,3 +425,4 @@ the current `.zip`, and distribution formats such as `.deb` / `.rpm` / AppImage,
 are also on the roadmap. This document evolves alongside the
 `mcpp pack` implementation; for the latest options, refer to
 `mcpp pack --help`.
+

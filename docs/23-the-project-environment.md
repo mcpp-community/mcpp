@@ -1,5 +1,14 @@
 # 23 — The Project Environment
 
+**Reader:** an author whose build needs tools that are not the compiler.
+
+**The question this chapter answers:** how does a project declare the
+environment its build runs in, and what does that declaration decide.
+
+**Not here:** what a build program does with those tools, which is
+[30 — Build Programs](30-build-mcpp.md), and choosing a compiler, which is
+[20 — Toolchain Management](20-toolchains.md).
+
 A project can declare the environment it builds in. That one declaration
 decides which C library the project links against and which tools its build
 programs find — so a `mcpp.toml` means the same build on a developer's laptop
@@ -514,3 +523,4 @@ used it.
 - [91 - Toolchain Internals](91-toolchain-internals.md) — runtime selection,
   the `RuntimeBinding` snapshot, and the degradation rules.
 - [03 - mcpp.toml](03-mcpp-toml.md) — the rest of the manifest.
+

@@ -14,6 +14,7 @@
 #   8. a new design record declares its subject and status
 #   9. every relative link in docs/ and examples/ resolves
 #  10. a translation carries the same tables and code blocks
+#  11. every chapter states its reader, its question and its exclusions
 #
 # What it deliberately does NOT check: whether a chapter documents what is
 # implemented, whether an assertion's strength matches its evidence, or whether
@@ -200,6 +201,23 @@ for en in sorted(pathlib.Path("docs").glob("*.md")):
         bad += 1
 sys.exit(1 if bad else 0)
 PYPARITY
+
+# ── 11. every chapter states its reader and its question ─────────────────
+#
+# `.agents/skills/mcpp-docs-style` R3: reader, the one question, and the
+# EXCLUSIONS, in the first fifteen lines. The exclusions are the load-bearing
+# half -- they are the gate that stops a chapter re-absorbing a topic another
+# chapter owns. Five of 24 chapters had this before the design; a rule nothing
+# checks is a rule that decays back to five.
+for f in docs/[0-9]*.md docs/zh/[0-9]*.md; do
+  [ -f "$f" ] || continue
+  head -18 "$f" | grep -qE '^\*\*(Reader|读者)' \
+    || bad "$f: no designed opening — the first lines must name the reader"
+  head -18 "$f" | grep -qE '(question this chapter answers|本章回答的那一个问题)' \
+    || bad "$f: the opening names no question"
+  head -22 "$f" | grep -qE '^\*\*(Not here|不在这里)' \
+    || bad "$f: the opening states no exclusions"
+done
 
 if [[ "$fail" -eq 0 ]]; then
   echo "OK: docs structure checks pass"

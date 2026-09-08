@@ -2,6 +2,16 @@
 
 **English** | [简体中文](zh/12-binary-distribution.md)
 
+**Reader:** a publisher who ships compiled artifacts rather than source.
+
+**The question this chapter answers:** how do I ship binaries, and how does a
+consumer's build decide whether one of them fits.
+
+**Not here:** publishing source, which is
+[11 — Publishing a Library](11-publishing-a-library.md), and the accelerator
+field of a compatibility tag, which is
+[42 — Heterogeneous Builds](42-heterogeneous-builds.md).
+
 > Ship a library as **interface + prebuilt binaries** instead of as source.
 > It applies to closed-source distribution, offline environments, and builds whose
 > artifacts a build farm has already produced.
@@ -490,3 +500,4 @@ answers "not installed". So the static half of the old-client check (the generat
 manifest uses no section a previous mcpp cannot read) runs everywhere, and the
 real half — build against the package with the previous release — has been run by
 hand, not by CI.
+

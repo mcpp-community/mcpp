@@ -1,5 +1,13 @@
 # 50 —— 机器可读输出
 
+**读者:**要解析 mcpp 输出的工具、编辑器扩展或 CI 任务的作者。
+
+**本章回答的那一个问题:**一个程序可以依赖什么、它怎样被版本化、以及协议怎样被
+识别。
+
+**不在这里:**面向人的输出 —— 它不带任何兼容性承诺;以及退出码契约,那是
+[SPEC-003](../specs/exit-codes.md)。
+
 mcpp 面向两类读者。本章是对第二类 —— **程序** —— 的契约。编辑器扩展、CI 脚本,以及任何解析 mcpp 输出的程序,
 可依赖的部分在此列出。
 
@@ -390,3 +398,4 @@ mcpp test [pattern] [--workspace] --message-format json
 `workspace_summary` 增加 `tests_not_run`(各成员之和)与 `unrunnable_members`(所有
 测试都 `not_run` 的成员),与既有的 `not_run` 列表并列;后者仍然指
 `--workspace-timeout` 到达时尚未开始的成员。
+

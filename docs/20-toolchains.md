@@ -1,5 +1,15 @@
 # 20 — Toolchain Management
 
+**Reader:** anyone for whom which compiler runs matters — a version floor, a
+second toolchain, a machine that must not use its own.
+
+**The question this chapter answers:** which compiler will build this project,
+how is it installed, and how do I choose another.
+
+**Not here:** how the resolution is implemented, which is
+[91 — Toolchain Internals](91-toolchain-internals.md), and how a target is
+named, which is [21 — The Target Triple](21-the-target-triple.md).
+
 > mcpp maintains an independent toolchain sandbox, fully isolated from the system PATH.
 
 ## Motivation
@@ -892,3 +902,4 @@ yields nasm ≥ 2.16 the build **fails hard** (assembly is never silently
 skipped). Limits: `.asm` targets x86 only (hard error elsewhere — gate the
 files off other targets), `.S` is unavailable on the MSVC toolchain, and
 `.asm` means NASM syntax (MASM sources should be `!`-excluded).
+

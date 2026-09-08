@@ -1,5 +1,14 @@
 # 90 — Building from Source and Contributing
 
+**Reader:** a contributor who will build and change mcpp itself.
+
+**The question this chapter answers:** how is mcpp built from source, how are
+its own tests organised, and what does a contribution have to satisfy.
+
+**Not here:** how a user builds their own project, which is
+[01 — Getting Started](01-getting-started.md), and how a release is cut, which
+is [92 — Releasing mcpp](92-release.md).
+
 > mcpp is self-hosting — mcpp builds mcpp from source using mcpp itself.
 > Any environment that already has a working mcpp binary can build from source.
 
@@ -114,3 +123,4 @@ mcpp is in early iteration and its interfaces may change. Before submitting a PR
 - Chat group QQ: 1067245099
 - [mcpp-index](https://github.com/mcpplibs/mcpp-index) — the default package index
 - [mcpplibs](https://github.com/mcpplibs) — the companion collection of modular C++ libraries
+

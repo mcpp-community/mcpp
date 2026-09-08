@@ -1,5 +1,14 @@
 # 21 — The Target Triple
 
+**Reader:** someone building for a machine that is not this one.
+
+**The question this chapter answers:** how is a target named, which targets are
+supported and at what tier, and which build hosts can serve each.
+
+**Not here:** how a manifest conditions on a target, which is
+[22 — The Target Side](22-target-side.md), and targets with no operating
+system, which are [40 — Bare-Metal](40-baremetal.md).
+
 A target triple is written `<arch>-<os>` or `<arch>-<os>-<env>`. This chapter
 states what each segment means, when the third may be declined, and why the
 answer differs between two systems that mcpp supports at the same time.
@@ -508,3 +517,4 @@ the target row's own default. See [chapter 13](40-baremetal.md).
 [chapter 15](24-openkal-cross.md) for the build-time system in full.
 [chapter 03](20-toolchains.md) for the toolchain axis, which is separate: a
 target does not determine a compiler.
+

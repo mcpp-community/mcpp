@@ -11,6 +11,9 @@ with a command reference finds a list of verbs with nothing to attach them to.
 This chapter is the model. It names no field and no flag; those are the
 reference chapters, which this one makes readable.
 
+**Not here:** every field, flag and command. A model that also tries to be a
+reference is neither, so each noun below names the chapter that owns it.
+
 Next: [01 — Getting Started](01-getting-started.md) puts a program on the screen.
 
 ## The five nouns

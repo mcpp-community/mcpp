@@ -1,14 +1,16 @@
 # 31 —— 编写规则包
 
-规则包教会 mcpp 构建引擎本身没有规则的东西:一种设备语言、一份着色器、一个生成的
-接口、一项检查。它是一个普通的包,它的模块被消费者的构建程序 import。
+**读者:**要把一步构建工作打包给别的工程使用的生态作者 —— 一种设备语言、一个
+着色器编译器、一个生成的接口,或者一项检查。
 
-相关文档:[30 —— build.mcpp](30-build-mcpp.md) 是本章所用指令协议与类型化 API 的
-参考;[05 —— Feature 与能力](05-features-and-capabilities.md) 覆盖 feature 相关键;
-[42 —— 异构硬件构建](42-heterogeneous-builds.md) 列出已发布的规则。两个示例:
-[`08-build-rules`](../../examples/08-build-rules/) 是做检查与嵌入的规则,
-[`12-a-new-device-language`](../../examples/12-a-new-device-language/) 是新增一门
-语言的规则。
+**本章回答的那一个问题:**一个包怎样供给一条规则,以及消费者要写什么才能用上它。
+
+**不在这里:**给单个工程自己的构建加一步,那是
+[30 —— 构建程序](30-build-mcpp.md) —— 同一批原语,规模更小;feature 相关键本身,
+那是 [05](05-features-and-capabilities.md);以及已发布规则各自的拼法,那属于
+`mcpp:plugins`。示例:[`08-build-rules`](../../examples/08-build-rules/) 做检查与
+嵌入,[`12-a-new-device-language`](../../examples/12-a-new-device-language/) 新增
+一门语言。
 
 ## 规则包是什么
 

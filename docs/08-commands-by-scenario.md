@@ -1,5 +1,14 @@
 # 08 — Commands by Scenario
 
+**Reader:** someone who knows the nouns and wants the verb.
+
+**The question this chapter answers:** which command does the thing at hand —
+reclaiming disk, explaining a resolution, validating a descriptor, diagnosing an
+environment.
+
+**Not here:** what each command means in depth. A scenario names the command and
+links to the chapter that owns it. Before: [07 — Testing](07-testing.md).
+
 The command reference is `mcpp --help`, and each subcommand carries its own
 `--help`. This chapter answers a different question: which command applies to a
 situation that has already arisen — a build directory that keeps growing, a
@@ -389,3 +398,4 @@ second and not the first, and `mcpp xpkg parse` still exits 1.
 No descriptor in `mcpp-index` uses that key — 0 of 218. A package that keeps its
 own `mcpp.toml` omits the `mcpp` field entirely, and mcpp looks the manifest up
 under the version directory. Measured on 2026.9.8.1.
+

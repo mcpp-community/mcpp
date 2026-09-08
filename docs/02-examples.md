@@ -1,5 +1,15 @@
 # 02 — Examples
 
+**Reader:** someone choosing where to start, or looking for a project shaped
+like theirs.
+
+**The question this chapter answers:** which example teaches what, and in which
+order they build on each other.
+
+**Not here:** the content of any example — each has its own README, which
+explains only what it adds. Before: [01 — Getting Started](01-getting-started.md).
+After: [03 — The mcpp.toml Manifest](03-mcpp-toml.md).
+
 The [`examples/`](../examples) directory is a curriculum. Each project is
 runnable on its own, and each one teaches **one thing no earlier example
 teaches**. This chapter says what that thing is, so you can enter at the level
@@ -105,3 +115,4 @@ command belongs in [08 — Commands by Scenario](08-commands-by-scenario.md).
 The README states what the example is the first to teach and the criterion by
 which it is judged to work. For contribution mechanics see
 [90 — Building from Source & Contributing](90-build-from-source.md).
+

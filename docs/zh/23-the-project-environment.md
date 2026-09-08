@@ -1,5 +1,12 @@
 # 23 —— 项目环境
 
+**读者:**构建需要「编译器之外的工具」的作者。
+
+**本章回答的那一个问题:**工程怎样声明它的构建所处的环境,以及这条声明决定什么。
+
+**不在这里:**构建程序拿这些工具做什么,那是 [30 —— 构建程序](30-build-mcpp.md);
+以及选择编译器,那是 [20 —— 工具链管理](20-toolchains.md)。
+
 项目可以声明自己在哪个环境里构建。这一条声明决定项目链接哪个 C 库、以及它的
 构建程序找到哪些工具——于是同一份 `mcpp.toml` 在开发机和 CI 上是同一个构建,
 不论这两台机器上还装了别的什么。
@@ -428,3 +435,4 @@ error: `xim:cuda-nvcc` is pinned to 12.0.0 by this project, and mcpp:plugins
 - [91 - 工具链内部](91-toolchain-internals.md) —— 运行时选择、`RuntimeBinding`
   快照与降级规则。
 - [03 - mcpp.toml](03-mcpp-toml.md) —— manifest 的其余部分。
+

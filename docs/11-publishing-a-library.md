@@ -2,6 +2,17 @@
 
 **English** | [简体中文](zh/11-publishing-a-library.md)
 
+**Reader:** a library author whose package should become one others can name in
+their `[dependencies]`.
+
+**The question this chapter answers:** what steps take a tagged release to a
+resolvable package, and in which order they must happen.
+
+**Not here:** what makes two packages the same package —
+[SPEC-001](specs/package-identity.md) — and shipping compiled artifacts, which
+is [12](12-binary-distribution.md). Before:
+[10 — Packaging an Application](10-pack-and-release.md).
+
 How a library becomes something `[dependencies]` can name. This is the
 *library author's* chain; [92 - Releasing mcpp](92-release.md) is about
 releasing mcpp itself, and [10 - Packaging & Release](10-pack-and-release.md)
@@ -158,3 +169,4 @@ re-refreshing the index looking for it.
 - [ ] `publish-artifact.yml` succeeded
 - [ ] cold resolve (seeded copy deleted) downloads and compiles it
 - [ ] consumers bumped
+

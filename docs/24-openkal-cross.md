@@ -1,5 +1,14 @@
 # 24 — Cross-Compilation Over openkal
 
+**Reader:** someone cross-building for another operating system from this one.
+
+**The question this chapter answers:** how does one source tree build for
+several hosted targets without the machine having their toolchains.
+
+**Not here:** targets with no operating system, which are
+[40 — Bare-Metal](40-baremetal.md), and how targets are named, which is
+[21 — The Target Triple](21-the-target-triple.md).
+
 Conventional cross-compilation is served by a payload. A toolchain is built for
 one target, its driver has exactly one answer, and reaching a second target
 means obtaining a second toolchain. The number of payloads a distribution must
@@ -307,3 +316,4 @@ the paths where a project overrides the contract explicitly.
 [docs/14 — The Target Side](22-target-side.md) for the five layers, the four
 origins and the rules. [SPEC-002](specs/target-side.md) for the normative
 statement of the capability grammar.
+

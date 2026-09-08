@@ -1,5 +1,16 @@
 # 05 — Features and Capabilities
 
+**Reader:** an author with something optional — an extra source, an extra
+dependency, or a choice between backends.
+
+**The question this chapter answers:** how does a package offer something
+optional, and how does a consumer ask for it.
+
+**Not here:** which device backends a build targets, which looks like a feature
+and is not — that is [42 — Heterogeneous Builds](42-heterogeneous-builds.md).
+Before: [04 — Dependencies and Resolution](04-dependencies.md). After:
+[06 — Workspaces](06-workspace.md).
+
 Features are how a package offers something optional: a compile macro, an extra
 source, an extra dependency, or a choice between backends. This chapter is the
 reference for declaring them and for consuming them.
@@ -416,3 +427,4 @@ resolved from the dependency graph, so a dependency chosen by it would decide
 the answer it is asking for. mcpp reports the predicate and ignores it. Packages
 are unconditional or conditioned on the platform; `[build] sources` is what the
 accelerator selects.
+

@@ -1,5 +1,15 @@
 # 40 — Bare-Metal and Freestanding Targets
 
+**Reader:** an embedded developer targeting a machine with no operating system.
+
+**The question this chapter answers:** how does a project build for a
+freestanding target, what supplies the target's world, and what of the standard
+library survives.
+
+**Not here:** running and testing the image, which is
+[41 — Reaching a Device](41-devices.md), and hosted cross-compilation, which is
+[24 — Cross-Compilation Over openkal](24-openkal-cross.md).
+
 This document describes how mcpp builds, runs and tests software for targets
 with no operating system underneath, and how a board-support package supplies
 the parts of such a target that the engine deliberately does not know.
@@ -798,3 +808,4 @@ targets, but that expectation is **not** covered by a test.
 | C library substitution | Expressible since 2026.8.20.2 through `[target.<triple>].sysroot`, and **verified only for the empty value** (the zero-libc tier). Pointing it at a different C library is accepted and installed through the same channel, but no second bare-metal C library is published, so that path is untested. |
 | `qemu-riscv` on `win32-arm64` | The upstream package publishes no asset for that host, so installation fails on it. The failure is correct rather than silent, but the host cannot run a bare-metal image. |
 | Ecosystem CI breadth | The two ecosystem packages run their own CI on `ubuntu-24.04` only. mcpp-index's `tests/examples/` workspace members run unconditionally on three platforms with no capability gate, so a package requiring an emulator and a target sysroot cannot be added there. This is a known coverage gap. |
+

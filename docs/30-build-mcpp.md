@@ -2,6 +2,16 @@
 
 **English** | [简体中文](zh/30-build-mcpp.md)
 
+**Reader:** an author whose build needs a step mcpp has no rule for — code
+generation, an embedded asset, a check, a second compiler.
+
+**The question this chapter answers:** how do I add work to the build graph, so
+that it is ordered, fingerprinted and incremental like everything else.
+
+**Not here:** packaging that step so other projects can use it, which is
+[31 — Authoring a Rule Package](31-authoring-a-rule-package.md), and the tools
+the step runs, which are [23 — The Project Environment](23-the-project-environment.md).
+
 Most projects need nothing more than `mcpp.toml`. When build-time logic is required —
 probe the host, generate a source, decide a flag from the environment — put a
 `build.mcpp` in the project root. It is the mcpp analog of Zig's `build.zig` and
@@ -1216,3 +1226,4 @@ unsupported platform into an error its user cannot edit away. Scope it:
 the other conditional dependency tables ([22 — The Target Side](22-target-side.md)). The **feature itself is
 registered on every platform** — only what it pulls in is conditional — so
 requesting it where no predicate matches is not an unknown-feature error.
+

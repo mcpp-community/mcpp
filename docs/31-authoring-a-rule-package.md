@@ -1,17 +1,20 @@
 # 31 — Authoring a Rule Package
 
-A rule package teaches mcpp to build something the engine has no rule for: a
-device language, a shader, a generated interface, a check. It is an ordinary
-package whose module a consumer's build program imports.
+**Reader:** an ecosystem author packaging a build step so that other projects
+can use it — a device language, a shader compiler, a generated interface, a
+check.
 
-Related documents: [30 — build.mcpp](30-build-mcpp.md) is the reference for the
-directive protocol and the typed API this chapter uses; [05 — Features and
-Capabilities](05-features-and-capabilities.md) covers the feature keys;
-[42 — Heterogeneous Builds](42-heterogeneous-builds.md) is where the shipped
-rules are listed. Two examples:
-[`08-build-rules`](../examples/08-build-rules/) for a rule that checks and
-embeds, [`12-a-new-device-language`](../examples/12-a-new-device-language/) for
-one that adds a language.
+**The question this chapter answers:** how does a package supply a rule, and
+what does a consumer have to write to use it.
+
+**Not here:** adding a step to one project's own build, which is
+[30 — Build Programs](30-build-mcpp.md) and is the same primitives at a smaller
+scale; the feature keys themselves, which are
+[05](05-features-and-capabilities.md); and the spellings of the shipped rules,
+which belong to `mcpp:plugins`. Examples:
+[`08-build-rules`](../examples/08-build-rules/) checks and embeds;
+[`12-a-new-device-language`](../examples/12-a-new-device-language/) adds a
+language.
 
 ## What a rule package is
 

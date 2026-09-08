@@ -1,5 +1,15 @@
 # 22 — The Target Side
 
+**Reader:** an author whose one manifest must serve several targets.
+
+**The question this chapter answers:** how does a manifest say "only there", and
+what may be conditioned that way.
+
+**Not here:** the vocabulary of target names, which is
+[21 — The Target Triple](21-the-target-triple.md), and the accelerator axis,
+which resolves after the graph and is
+[42 — Heterogeneous Builds](42-heterogeneous-builds.md).
+
 A build must answer one question before it can emit a command line: where the
 target's compiler runtime, platform interface, C library and C++ runtime come
 from. mcpp resolves that question once, after the dependency graph is known,
@@ -470,3 +480,4 @@ this returns. To branch on the resolved layer, use a layer predicate:
 `[target.'cfg(c-abi = "musl")'.build]` ([22 — The Target
 Side](22-target-side.md)). This paragraph said "which C library was resolved"
 until 2026.9.1.1, which was the wrong one of the two.
+

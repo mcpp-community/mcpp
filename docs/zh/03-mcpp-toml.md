@@ -1,5 +1,14 @@
 # 03 —— mcpp.toml 工程文件指南
 
+**读者:**正在写或正在读一份 manifest 的作者。
+
+**本章回答的那一个问题:**一份 `mcpp.toml` 可以说什么,逐字段地。
+
+**不在这里:**四个主题的表虽然写在这个文件里,但本章不拥有它们 —— 依赖是
+[04](04-dependencies.md),feature 是 [05](05-features-and-capabilities.md),
+以目标为条件是 [22](22-target-side.md),工程的环境是
+[23](23-the-project-environment.md)。每一处都在它的表本该出现的位置点名。
+
 `mcpp.toml` 是 mcpp 构建工具的项目配置文件,类似 Cargo 的 `Cargo.toml` 或 Node 的 `package.json`。放在项目根目录下,`mcpp build` 会自动发现并读取它。
 
 ## 1. 最小化示例
@@ -1190,3 +1199,4 @@ standard = "c++26"
 ```
 
 新项目请使用 `[package].standard`。如果两个位置都出现，`[package].standard` 是权威配置。
+

@@ -1,5 +1,15 @@
 # 41 — Reaching a Device
 
+**Reader:** anyone whose artifact does not run on the machine that built it —
+a board, an emulator, a remote host.
+
+**The question this chapter answers:** how is such an artifact run and tested,
+and what does a package supply so that one command reaches it.
+
+**Not here:** how the target itself is built, which is
+[40 — Bare-Metal](40-baremetal.md), and what mcpp considers a test, which is
+[07 — Testing](07-testing.md).
+
 This document specifies how mcpp executes an artifact that runs somewhere other
 than the machine that built it, how a package supplies additional ways of
 reaching it, and how a project selects between an emulator and physical
@@ -162,3 +172,4 @@ This required no engine mechanism. The engine reads runners and knows nothing
 about emulators or probes; `mcpp::has_feature` already existed. That the
 question is answerable without adding anything is the layering working as
 specified.
+
