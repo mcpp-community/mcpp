@@ -159,3 +159,272 @@ create/bootstrap that environment instead of falling back to active/default
 - [8 - 工具链内部](08-toolchain-internals.md) —— 运行时选择、`RuntimeBinding`
   快照与降级规则。
 - [5 - mcpp.toml](05-mcpp-toml.md) —— 全部清单键,含 `[xlings]`。
+
+## `[xlings]` — 工程的环境
+
+```toml
+[xlings.workspace]                 # 这个工程的环境里有什么
+cmake                    = "3.28"
+"xim:picolibc-riscv"     = "1.8.12"        # 带命名空间的包 —— 必须带引号
+code                     = ""              # 存在即可,版本不限
+llvm                     = { macosx = "20", default = "22" }
+```
+
+```toml
+[xlings]
+subos = "dev"                      # 指名的隔离环境
+```
+
+`[xlings]` 是 mcpp 对 **xlings local project 机制**的书写面:让一个目录拥有自己
+环境的那份项目 `.xlings.json`。子段名与含义都是那份文件的,mcpp 原样物化进
+`<project>/.mcpp/.xlings.json`,没有翻译层。
+
+**`[xlings.workspace]` 是唯一的表。** 一条条目写出工程用哪个包、用哪个版本。
+mcpp 既供给它——机器上没有就装,有就映射——也把它物化成解析用的钉,于是工程写下
+的版本就是它的工具解析到的版本。
+
+### 条目的形式
+
+| 形式 | 含义 |
+|---|---|
+| `cmake = "3.28"` | 该版本 |
+| `llvm = "22"` | 已装的最高 `22.*`;版本前缀会被解析 |
+| `code = ""` | 存在即可,版本不限 |
+| `"xim:picolibc-riscv" = "1.8.12"` | 来自 `xim` 索引的包 |
+| `llvm = { macosx = "20", default = "22" }` | 按宿主平台 |
+
+**带命名空间的包写成 `"<命名空间>:<名字>" = "<版本>"`,引号必需** —— TOML 的裸键
+不能含冒号。这是**推荐形态,也是所有官方包使用的形态**:一条条目先点名一个包,
+再说用它的哪个版本,所以命名空间属于名字。
+
+命名空间写在版本上(`picolibc-riscv = "xim:1.8.12"`)同样接受,因为物化出来的
+`.xlings.json` 里正是那种形态 —— 那里的键是 xvm target,scope 限定的是版本。
+两套词汇,同一条条目。两半都写且不一致是错误;同一个包用两种拼法出现两次也是错误。
+
+平台键是 xlings 自己的 —— `linux`、`macosx`、`windows`,外加 `default`。`macos`
+与 `macosx` 是同一个平台的两套词汇(mcpp 的三元组说前者,描述符与 xlings 的项目
+文件说后者),**凡是点名平台的地方两者都接受**。表里既没有本机这一项也没有
+`default`,就表示在这里什么都不声明。
+
+### 两条解析轴 —— 宿主与目标(mcpp 2026.9.6.4+)
+
+一条工具条目回答的是两个不同问题中的一个,写在哪张表里决定了是哪一个:
+
+| 写法 | 轴 | 按什么解析 |
+|---|---|---|
+| `[xlings.workspace]`,平台键写在值里 | 宿主 | 跑这次构建的机器 |
+| `[target.<selector>.xlings.workspace]` | 目标 | 解析后的目标(`--target`,否则是宿主) |
+
+两种写法都是正确的,谁也不取代谁。在构建机上执行的工具属于宿主轴;产物编译或链接
+时对着的载荷属于目标轴。
+
+```toml
+[xlings.workspace]
+"xim:dpcpp" = "7.1.0"              # 一个编译器,它在本机上跑
+
+[target.'cfg(os = "linux")'.xlings.workspace]
+"xim:glibc"         = ""           # 设备单元编译时对着的东西
+"xim:linux-headers" = ""
+```
+
+非交叉构建时两条轴指向同一个平台,所以把目标事实写在宿主轴上的工程是碰巧正确的,
+而且照常工作。它在第一次被交叉构建时不再正确。**凡是产物编译或链接时对着的东西,
+推荐写在目标轴上。**
+
+`[target.<selector>.feature-xlings.<feature>]` 把条件与门组合起来,与
+`[target.<selector>.feature-deps.<feature>]` 同形:selector 说的是哪些目标,
+feature 说的是要不要。
+
+```toml
+[target.'cfg(os = "linux")'.feature-xlings.backend-vulkan]
+"xim:shaderc" = "2026.3"
+```
+
+**这里的 selector 禁止命名被解析的层。** `c-abi`、`c++-abi`、`compiler`、
+`compiler-runtime`、`kernel-abi` 由依赖解析回答,而依赖解析发生在工具安装之后、
+构建程序运行之后。按这些层条件化的工具会被声明却永远装不上——构建照常成功,工具
+就是不在——所以这样的 manifest 会被拒绝,并把工具与谓词都点出来。改成按目标条件化,
+或者用 feature 做门:`[feature-xlings.<feature>]` 在任何东西被供给之前就已知。
+
+**`accelerator` 是例外,它被接受**(mcpp 2026.9.6.5)。它不由任何东西解析而来:
+它是 `--accel`,或 `[build] accel`,在查找第一个包之前就已读入。以它为谓词的载荷
+与三元组谓词在同一趟合并,并像其它载荷一样被安装。
+
+```toml
+[target.'cfg(accelerator = "cuda")'.xlings.workspace]
+"xim:cuda-nvcc"   = "12.9.86"
+"xim:cuda-cudart" = "12.9.79"
+```
+
+带设备孤岛的工程应当用这种写法。没有它,厂商工具包只能无条件声明或者干脆不声明,
+于是不带加速器的 `mcpp build`——最便宜的那次构建,也是 CI 通常跑的那次——会为一个
+它根本没在编译的设备下载数 GB。
+
+依赖同理:`[target.'cfg(accelerator = "cuda")'.dependencies]` 生效,而以被解析的层
+为条件的依赖不生效,因为后者会决定它正在询问的那个答案。加速器这条路径上没有任何
+循环。
+
+条件只写在 selector 一处。selector 之下的值如果又带平台键,就是同一件事说了两遍,
+会被拒绝,并把两半都指出来:
+
+```
+[target.cfg(os = "linux").xlings.workspace] xim:tool: the value carries platform
+keys (linux, macosx), but [target.cfg(os = "linux")] already says which targets
+this applies to.
+```
+
+`subos` 不按目标条件化:一个工程只有一个环境,所以 `[target.<selector>.xlings]`
+拒绝这个键,而不是把它丢掉。
+
+**已发布的描述符不为目标轴条目携带边**,`mcpp publish` 会说明这一点。描述符按平台
+分块,而 selector 不是平台 —— `cfg(target_arch = "aarch64")` 不对应那份文件里的任何一块。
+**使用者**装到的东西来自顶层 `[xlings.workspace]`;目标轴对"本包自己的构建对着什么"
+仍然是正确的。
+
+这两条轴所属的一般规则见 [SPEC-004](../specs/manifest-semantics.md)。
+
+### `when` —— 哪些命令需要这个工具(mcpp 2026.9.4.2+)
+
+```toml
+[xlings.workspace]
+"xim:qemu-arm"   = "9.2.4-1"                             # 每次构建都装,与从前一样
+"xim:codegen"    = { version = "1.0",    when = "build" }
+"xim:probe-rs"   = { version = "0.24.0", when = "run"   }
+"xim:clang-tidy" = { version = "20",     when = "dev"   }
+```
+
+包依赖从一开始就有这条轴 —— `[dependencies]`、`[build-dependencies]`、
+`[dev-dependencies]`。工具只有一张表,于是一个同时点名模拟器与调试探针的板级支持包
+会把两个都装给每一位消费者,包括只想把库编出来的那一位。
+
+| `when` | 由谁安装 | 是否传播到消费者 |
+|---|---|---|
+| *(不写)* | 每个构建命令 | 是 |
+| `build` | 每个构建命令 | 是 |
+| `run` | `mcpp run`、`mcpp test` | 是 |
+| `dev` | 只有声明它的那个包作为根时 | **否** |
+
+**不写 `when` 就是 2026.9.4.2 之前的行为**,所以没有任何清单需要改。收窄是可选动作,
+不是作者必须回答的新问题。
+
+`dev` 是唯一不传播的一档。它的含义是「声明它的那个包自己在被开发时」,所以依赖的
+`dev` 条目永远不会为消费者安装。其余各档都会到达消费者 —— 这正是板级包知道自己机器
+的意义:它声明一次模拟器,每一位消费者都拿得到。
+
+档位写在**条目**上而不是另开一张表,理由与 `[dependencies]` 同时接受 `dep = "1.0"`
+和 `dep = { version = "1.0", features = [...] }` 是同一条。带档位的条目**必须**写出
+`version`,哪怕留空(`version = ""` 表示「存在即可,版本不限」)—— 否则
+`{ when = "run" }` 与写错的 `version` 键无法区分。
+
+### `[feature-xlings.<feature>]` —— 某个 feature 才需要的工具
+
+```toml
+[features]
+default  = ["emulator"]
+emulator = {}
+hardware = {}
+
+[feature-xlings.hardware]
+"xim:probe-rs" = "0.24.0"
+```
+
+同一张表,按 feature 门控,拼法沿用 `[feature-deps.<feature>]`。**不要 `hardware`
+的消费者永远不会下载探针驱动。** 这里的条目同样接受 `when`。
+
+`[features]` 里没有声明过的 feature 名会作为 schema 警告报出:它对谁都不激活、什么
+都不装,而这种工具的缺席只表现为「设备就是连不上」,是最难诊断的一种。
+
+### 规则包自带它的环境(2026.9.6.6+)
+
+上面那张表是工程**有主张**时写的。多数工程没有主张,写下的也就是空无一物:
+
+```toml
+[build-dependencies.mcpp]
+plugins = { version = "0.3.0", features = ["rules-cuda"], host-module = true }
+```
+
+这一条边就是全部声明。规则包在选中它的那个 feature、它所服务的加速器之下,声明自己
+需要哪些包、最低到哪一版:
+
+```toml
+# 写在规则包里,不写在你的工程里
+[target.'cfg(accelerator = "cuda")'.feature-xlings.rules-cuda]
+"xim:cuda-nvcc"   = ">=12.9.86"
+"xim:cuda-cudart" = ">=12.9.79"
+```
+
+**两重门,都要开。** feature 说「要不要这个规则」,selector 说「哪些构建真的下载」。
+同一个工程的 CPU-only 构建两道门都不过,一个字节都不装。
+
+「需要哪些包、最低到哪一版」是规则作者的知识。在每个用它的工程里重写一遍,是一份会
+悄悄过期的副本——规则动了,而那些工程不会跟着动。
+
+### 一个包一个版本(2026.9.6.6+)
+
+工具地址是 `[<ns>:]<name>[@<版本>]`,它的**身份是 `(namespace, name)` 二元组**。版本是
+这个包上的约束,不是它名字的一部分,所以 `xim:glibc`、`xim:glibc@2.40` 与
+`xim:glibc@>=2.38` 指的是同一个包。**一次构建只装它的一个版本。**
+
+装哪一个,分两步决定。
+
+**裁决——离产物更近的声明赢。** 工程压过它依赖的包,于是一个钉覆盖规则的要求:
+
+```toml
+# 工程侧,当它确实有主张时
+[target.'cfg(accelerator = "cuda")'.xlings.workspace]
+"xim:cuda-nvcc" = "13.3.33"
+```
+
+**不带版本的声明弃权:** 它陈述了「要这个包」而没有陈述「要哪一版」,因此不会仅仅
+因为更近就压过一条下界。两条声明都带版本且不一致时,mcpp 会报出用了哪一条——一个
+只能表现为「声明了两个版本而目录里有一个」的覆盖,是要读者自己去文件系统里重建的
+事实。
+
+**校验——赢家必须满足每一条落败的要求。** `>=`、`^`、`~` 以及逗号组合是**要求**。
+不满足的钉被拒绝,并同时点出两侧:
+
+```
+error: `xim:cuda-nvcc` is pinned to 12.0.0 by this project, and mcpp:plugins
+       requires >=12.9.86.
+       One version of a package is installed, so the two cannot both hold.
+       fix: pin a version satisfying >=12.9.86, or drop the pin and let the
+       requirement decide.
+```
+
+裸版本是**选择**而不是要求:两条互不相同的精确钉走裁决并被报告,不被拒绝。只有被
+陈述出来的要求才谈得上违反。
+
+**这是一次比较,不是一次搜索。** 版本由裁决选定、再被检查,所以 mcpp 从不需要问索引
+「有哪些版本」,也就不带约束求解器。代价被写出来而不是藏起来:一个求解器本可满足的
+组合——工程写 `>=8.0`、规则写 `8.5.0`、而索引里最新是 8.3——会被拒绝,而拒绝消息里
+写着怎么往下走。
+
+范围在两个方向上都被求解。`>=2026.1` 装到满足它的最高已发布版本,`>=2099.1` 作为
+不可满足被拒绝,而 `mcpp::xpkg_dir` 回答满足该范围的最高**已安装**版本——声明了下界
+的规则找得到下界带进来的东西。
+
+### 工程没点名的工具,其版本的来源
+
+| 工程声明了 | 版本来自 |
+|---|---|
+| `[xlings.workspace]`,无 `subos` | 机器的环境,工程自己的条目叠在上面 |
+| `[xlings.workspace]` 与 `subos = "<名>"` | 那个环境自己的 workspace;机器的不适用 |
+| 两者都没有 | 机器的环境 |
+
+中间那行不是遗漏。指名的环境有自己的已安装集合,把机器的版本带进去会指向那里不
+存在的版本。**写 subos 就是要隔离,不写就是要机器的环境加上自己的条目。**
+
+在工程内执行的 `xlings use` 压过这张表,直到 mcpp 重写环境为止——它是最后合并的
+那一层。
+
+### `deps`,已被取代
+
+`deps = ["xim:qemu-riscv@9.2.4-1"]` 是同一句话在 2026.9.3 之前的拼法。它仍然生效,
+并且会被报告一次,同时给出该写的 `[xlings.workspace]` 那一行。**不拒绝**——拒绝会
+落到**依赖**的 manifest 上,而钉了那个包精确版本的工程改不了它。
+
+### `envs`,已移除
+
+`[xlings.envs]` 曾被物化进 `.xlings.json`,而没有任何东西读它:程序的环境由它自己
+的包声明,环境的环境由那个环境声明。现在这个键是错误,并同时点名这两者。索引里没有
+任何包用过它。

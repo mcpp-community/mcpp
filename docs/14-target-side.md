@@ -332,3 +332,141 @@ published package. An unknown key elsewhere in a manifest is ignored.
 That provision governs future engines only. A package declaring a layer name
 still requires its consumers to run an engine no older than the release that
 introduced the name.
+
+## `[target.*]` — Platform-Conditional Dependencies & Flags
+
+Scope dependencies and build flags to a platform with a `[target.<sel>]` table.
+The selector `<sel>` has three forms:
+
+| Selector | Meaning | Example |
+|---|---|---|
+| **bare OS alias** | a single OS / family — the concise, common form | `[target.windows]`, `[target.unix]` |
+| **`cfg(...)` predicate** | a compound condition (arch / env / combinators) | `[target.'cfg(all(linux, not(arch = "aarch64")))']` |
+| **exact triple** | one specific target (also carries `toolchain` / `linkage` / `sysroot` / `runner`; see §2.7.3) | `[target.x86_64-linux-musl]` |
+
+A selector may carry platform-conditional **dependencies** and **build flags**:
+
+```toml
+# Concise bare-alias form — pull OpenBLAS and link it only on Windows.
+[target.windows.dependencies.compat]
+openblas = "0.3.33"
+[target.windows.build]
+ldflags = ["-Llib", "-llibopenblas"]
+
+# cfg(...) for compound predicates (grammar: all/any/not over os/arch/family/env,
+# plus the bare aliases windows/unix/linux/macos).
+[target.'cfg(all(linux, not(arch = "aarch64")))'.build]
+cxxflags = ["-march=x86-64-v2"]
+```
+
+`[target.windows]` is exactly equivalent to `[target.'cfg(windows)']` — the bare
+aliases `windows` / `linux` / `macos` / `unix` are never valid target triples, so
+there is no ambiguity. Use the bare form for a single OS/family; use `cfg(...)`
+for arch/env conditions and combinators.
+
+- **Keys**: `dependencies` / `dev-dependencies` / `build-dependencies` /
+  `feature-deps.<feature>` (mcpp 2026.8.6.2+ — see §2.14; the feature is
+  registered unconditionally, only its dependency set is scoped), and
+  `build` with `cflags` / `cxxflags` / `ldflags` / `sources` (mcpp 0.0.95+ —
+  conditional source globs, e.g. gating `src/x86/**/*.asm` behind
+  `cfg(arch = "x86_64")`; `!`-exclusion globs work here too), plus `flags` and
+  `include_dirs` / `include_dirs_after` (mcpp 0.0.102+), plus
+  `private_include_dirs` and `std-module-flags` (mcpp 2026.9.1.1+).
+- **What `build` accepts is exactly the set of *additive build inputs*** — the
+  things that combine by appending and are consumed after the predicate is
+  evaluated, which is the member list of `BuildInputs`. `linkage`, `target`,
+  and the profile knobs are deliberately not among them: they are *inputs to*
+  target selection (conditioning `target` on a predicate evaluated against
+  `target` is circular), or they need override-rather-than-append semantics.
+  A key outside the set is reported and ignored; the message lists the set it
+  checked against, so it cannot drift from the check.
+- **Evaluated against the resolved target** — the `--target` triple for a cross
+  build, otherwise the host. So a native Linux build never even *downloads* a
+  `[target.windows]` dependency.
+- **Predicate keys**: `os`, `arch`, `family`, `env` — the triple's coordinates —
+  and, from mcpp 2026.9.1.1, the five target-side layer names `compiler`,
+  `compiler-runtime`, `kernel-abi`, `c-abi`, `c++-abi`
+  ([14 — The Target Side](14-target-side.md)). `accelerator` is a key here too
+  and is answered from this build's own `accel` — the backend names in
+  `--accel` or `[build] accel` — so it is a membership test over a set, and
+  `accelerator = "none"` is how a section says "this build named no backend"
+  without enumerating the ones it is not. Barewords `linux` / `macos` /
+  `windows` / `unix` are sugar for the matching `os` / `family` test. A key
+  outside this set is reported as a schema warning and the section does not
+  apply — it used to answer false in silence, which is indistinguishable from
+  a section that correctly did not match.
+- **A resolved-layer predicate cannot select dependencies.** A layer is
+  resolved *from* the dependency graph, so a dependency chosen by one would
+  decide the answer it is asking for. `[target.'cfg(c-abi = "musl")'.dependencies]`
+  is reported and ignored; the `build` inputs under the same predicate do apply.
+  `accelerator` is not one of these (mcpp 2026.9.6.5): it is an input to the
+  build rather than an answer from the graph, so
+  `[target.'cfg(accelerator = "cuda")'.dependencies]` applies.
+- **Precedence**: an exact-triple table wins over a `cfg`/alias table; multiple
+  matching predicate tables have their flags concatenated. Conditional entries
+  are appended **after** the unconditional `[build]` ones, so under GNU
+  "last flag wins" a conditional rule overrides a broader unconditional one.
+  That is what makes a per-OS **removal** expressible:
+
+  ```toml
+  [build]
+  flags = [{ glob = "third_party/zlib/**", defines = ["HAVE_UNISTD_H=1"] }]
+
+  # clang-MSVC has no <unistd.h>: undo the base define, add the windows one.
+  [target.'cfg(windows)'.build]
+  flags = [{ glob = "third_party/zlib/**",
+             defines = ["NO_FSEEKO"], cflags = ["-UHAVE_UNISTD_H"] }]
+  ```
+
+- **A conditional `flags` entry that does not match the current target does not
+  exist at all**, so it cannot produce a "glob matched no source file" warning.
+  One manifest can therefore carry all three OSes' flag tables without any of
+  them generating noise on the other two — the same way an inactive feature's
+  entries simply are not there. A zero-hit glob in the *unconditional* table
+  still warns, because there it is a real defect.
+- **`toolchain` / `linkage` / `sysroot` are exact-triple only** — they describe
+  one specific cross target, so put them under `[target.<triple>]` (above), not
+  under a bare alias or `cfg(...)`.
+
+### `sysroot` — the target's C library
+
+`sysroot` (mcpp 2026.8.20.2+) overrides the C library the target table binds to
+a triple, on the same axis as `toolchain` overriding the compiler pin: one names
+the compiler a target resolves, the other names its C library, and both were
+engine-only until a project had a reason to disagree.
+
+```toml
+[target.riscv64-none-elf]
+sysroot = "xim:newlib-riscv@4.4"     # a different C library
+```
+
+```toml
+[target.riscv64-none-elf]
+sysroot = ""                          # no C library at all
+```
+
+**An absent key and an empty one are different answers.** Absent inherits the
+target table's C library. Present-and-empty is the **zero-libc tier**: no C
+library is resolved, no include or library path is added, and the link carries
+only what the project and its dependencies supply. `#include <stdio.h>` stops
+resolving. A kernel or a bootloader wants exactly that, and collapsing the two
+cases would silently hand such a project the target's C library back.
+
+The value is an xpkg reference or the empty string; a bare name is rejected when
+the manifest is parsed, because accepting it would install nothing and then fail
+much later naming a missing libc.
+
+A build program can ask which C library **payload** supplies the sysroot:
+`mcpp::target_libc()` returns that package's name and
+`mcpp::target_libc_profile()` the sub-directory for the target's ISA profile.
+Both are empty on the zero-libc tier. See
+[13 — Bare-Metal and Freestanding Targets](13-baremetal.md).
+
+**That is not the same question as "which C library did the target side
+resolve to".** `target_libc()` names the payload mcpp installed, and that value
+is an *input* to target-side resolution — a package in the dependency graph can
+supply the C library instead, in which case the resolved `c-abi` is not what
+this returns. To branch on the resolved layer, use a layer predicate:
+`[target.'cfg(c-abi = "musl")'.build]` ([14 — The Target
+Side](14-target-side.md)). This paragraph said "which C library was resolved"
+until 2026.9.1.1, which was the wrong one of the two.

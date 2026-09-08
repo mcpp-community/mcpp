@@ -281,3 +281,116 @@ mcpp 不认识的键 —— 打错的字,或来自更新版本 mcpp 的谓词 �
 
 该规定只约束此后的引擎。一个包若声明某个层名,
 其使用者仍须运行不早于该层名被引入的那个版本。
+
+## `[target.*]` —— 平台条件依赖与 flag
+
+用 `[target.<sel>]` 表把依赖与构建 flag 限定到某个平台。选择器 `<sel>` 有三种形式:
+
+| 选择器 | 含义 | 示例 |
+|---|---|---|
+| **裸 OS 别名** | 单个 OS / 族 —— 简洁且常用的形式 | `[target.windows]`、`[target.unix]` |
+| **`cfg(...)` 谓词** | 复合条件(arch / env / 组合子) | `[target.'cfg(all(linux, not(arch = "aarch64")))']` |
+| **精确三元组** | 某个具体目标(同时承载 `toolchain` / `linkage` / `sysroot` / `runner`,见 §2.7.3) | `[target.x86_64-linux-musl]` |
+
+一个选择器可以承载平台条件的**依赖**与**构建 flag**:
+
+```toml
+# 简洁的裸别名形式 —— 仅在 Windows 上拉取并链接 OpenBLAS。
+[target.windows.dependencies.compat]
+openblas = "0.3.33"
+[target.windows.build]
+ldflags = ["-Llib", "-llibopenblas"]
+
+# cfg(...) 用于复合谓词(文法:all/any/not 作用于 os/arch/family/env,
+# 以及裸别名 windows/unix/linux/macos)。
+[target.'cfg(all(linux, not(arch = "aarch64")))'.build]
+cxxflags = ["-march=x86-64-v2"]
+```
+
+`[target.windows]` 与 `[target.'cfg(windows)']` 完全等价 —— 裸别名
+`windows` / `linux` / `macos` / `unix` 都不是合法的目标三元组,因此不存在歧义。
+单个 OS/族用裸形式,arch/env 条件与组合子用 `cfg(...)`。
+
+- **可用键**:`dependencies` / `dev-dependencies` / `build-dependencies` /
+  `feature-deps.<feature>`(mcpp 2026.8.6.2+ —— 见 §2.14;feature 本身无条件注册,
+  只有它的依赖集合受限定),以及带 `cflags` / `cxxflags` / `ldflags` / `sources`
+  的 `build`(mcpp 0.0.95+ —— 条件源码 glob,例如把 `src/x86/**/*.asm` 收在
+  `cfg(arch = "x86_64")` 之后;`!` 排除 glob 在此同样有效),再加 `flags` 与
+  `include_dirs` / `include_dirs_after`(mcpp 0.0.102+),
+  以及 `private_include_dirs` 与 `std-module-flags`(mcpp 2026.9.1.1+)。
+- **`build` 接受的恰好是*可叠加的构建输入*集合** —— 那些以追加方式合并、
+  并在谓词求值之后被消费的东西,也就是 `BuildInputs` 的成员表。`linkage`、`target`
+  与档案开关刻意不在其中:它们是**目标选择的输入**(用一个针对 `target` 求值的谓词
+  去条件化 `target` 是循环的),或者需要覆盖而非追加的语义。
+  集合之外的键会被报出并忽略;消息里列出的正是它比对用的那份集合,因此不会与检查漂移。
+- **按解析后的目标求值** —— 交叉构建取 `--target` 三元组,否则取宿主。因此原生
+  Linux 构建**根本不会下载** `[target.windows]` 依赖。
+- **谓词的键**:`os`、`arch`、`family`、`env` —— 三元组的坐标 —— 以及自 mcpp
+  2026.9.1.1 起的五个目标侧层名 `compiler`、`compiler-runtime`、`kernel-abi`、
+  `c-abi`、`c++-abi`(见[14 —— 目标侧](14-target-side.md))。`accelerator` 同样
+  是这里的键,由本次构建自己的 `accel`(`--accel` 或 `[build] accel` 里的后端名)
+  回答,因此它是对一个集合的成员判定;`accelerator = "none"` 则是一段用来说
+  「本次构建没有命名任何后端」的写法,而不必枚举它不是的那些后端。裸词
+  `linux` / `macos` / `windows` / `unix` 是对应 `os` / `family` 判定的糖。
+  集合之外的键会被报成一条 schema 警告,且该段不生效 —— 它过去静默地求值为假,
+  而那与「这一段本就不该匹配」读数完全相同。
+- **被解析的层的谓词不能选择依赖。** 层是**从**依赖图解析出来的,因此由它选出的
+  依赖会决定它正在询问的那个答案。`[target.'cfg(c-abi = "musl")'.dependencies]`
+  会被报出并忽略;同一谓词下的 `build` 输入照常生效。`accelerator` 不在此列
+  (mcpp 2026.9.6.5):它是构建的输入而不是图给出的答案,所以
+  `[target.'cfg(accelerator = "cuda")'.dependencies]` 生效。
+- **优先级**:精确三元组表胜过 `cfg`/别名表;多个命中的谓词表,其 flag 按序拼接。
+  条件项追加在无条件 `[build]` 项**之后**,因此在 GNU「最后一个 flag 生效」的
+  规则下,条件规则会覆盖更宽的无条件规则。这正是让按 OS **移除**成为可表达的原因:
+
+  ```toml
+  [build]
+  flags = [{ glob = "third_party/zlib/**", defines = ["HAVE_UNISTD_H=1"] }]
+
+  # clang-MSVC 没有 <unistd.h>:撤销基础 define,加上 windows 的那个。
+  [target.'cfg(windows)'.build]
+  flags = [{ glob = "third_party/zlib/**",
+             defines = ["NO_FSEEKO"], cflags = ["-UHAVE_UNISTD_H"] }]
+  ```
+
+- **未命中当前目标的条件 `flags` 条目根本不存在**,因此它不会产生
+  「glob 未匹配到任何源文件」的警告。于是一份 manifest 可以同时携带三个 OS 的
+  flag 表,而不会在另外两个上制造噪声 —— 与未启用 feature 的条目根本不存在是
+  同一个道理。**无条件**表里的零命中 glob 仍然告警,因为那里它是真实缺陷。
+- **`toolchain` / `linkage` / `sysroot` 仅限精确三元组** —— 它们描述某一个具体的交叉目标,
+  因此写在 `[target.<triple>]` 下(见上),而不是裸别名或 `cfg(...)` 下。
+
+### `sysroot` —— 目标的 C 库
+
+`sysroot`(mcpp 2026.8.20.2+)覆盖目标表为某个三元组绑定的 C 库,与 `toolchain`
+覆盖编译器 pin 同轴:一个指名目标所解析的编译器,另一个指名它的 C 库,两者在工程
+有理由与之分歧之前都只由引擎决定。
+
+```toml
+[target.riscv64-none-elf]
+sysroot = "xim:newlib-riscv@4.4"     # a different C library
+```
+
+```toml
+[target.riscv64-none-elf]
+sysroot = ""                          # no C library at all
+```
+
+**键缺席与键为空是两个不同的答案。** 缺席继承目标表的 C 库。存在且为空是
+**零 libc 档**:不解析任何 C 库,不加入头文件与库目录,链接行上只有工程与其依赖
+提供的内容,`#include <stdio.h>` 不再解析。内核与 bootloader 要的正是这一档,而把
+两种情形合并会让这类工程静默地把目标的 C 库拿回去。
+
+取值是 xpkg 引用或空字符串;裸名在解析清单时即被拒绝,因为接受它会导致什么都不安装,
+然后在很晚的时候以「缺少 libc」失败。
+
+构建程序可以询问供给 sysroot 的是哪个 C 库**载荷**:`mcpp::target_libc()` 返回该包的
+名字,`mcpp::target_libc_profile()` 返回目标 ISA 档位对应的子目录。零 libc 档上两者均
+为空。
+
+**这与「目标侧解析出的 C 库是哪一个」不是同一个问题。** `target_libc()` 命名的是
+mcpp 装上的那个载荷,而这个值是目标侧解析的一项**输入** —— 依赖图里的包可以改为供给
+C 库,那时解析出的 `c-abi` 就不是这里返回的东西。要按已解析的层分支,请用层谓词:
+`[target.'cfg(c-abi = "musl")'.build]`(见[14 —— 目标侧](14-target-side.md))。
+这一段在 2026.9.1.1 之前写的是「解析到的是哪份 C 库」,那是两者里错的那一个。
+参见[13 —— 裸机与 freestanding 目标](13-baremetal.md)。

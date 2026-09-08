@@ -603,3 +603,218 @@ inline MA& operator+=(MA& a, const MB& b);
 `tests/e2e/150_clang_module_operator_template.sh` 是一只跑在内置 LLVM
 工具链上的金丝雀 —— 未来某次 Clang 升级修好(或再次弄坏)这一点时,
 它会显式暴露出来,而不是悄悄改变包能表达的东西。
+
+## C++ 运行时契约(`cxx_runtime`)
+
+`cxx_runtime` 声明的是**产物对运行它的机器做出的承诺**。它是**分发**属性而非
+构建属性 —— 它描述的是运行期依赖集,而兑现它的 flag 逐平台不同。
+
+> **不含 C++ 的目标没有 C++ 运行时契约需要兑现。** mcpp 用 C 驱动链接它,
+> 并且完全不发 C++ 运行时相关的 flag,因此一个纯 C 的共享库不会平白拿到
+> `libstdc++` / `libc++` 依赖。目标里只要有一个 C++ 翻译单元,整个目标就回到
+> C++ 驱动。这一判定由源码推导,没有对应的配置键。
+
+```toml
+[build]
+cxx_runtime = "self-contained"          # 作用于所有目标(默认值)
+
+# 或者按角色分别指定:
+[build.cxx_runtime]
+default = "self-contained"              # 可执行文件
+tests   = "host-coupled"                # 测试二进制从不离开本机
+shared  = "self-contained"              # 共享库(见下 —— 默认值随目标格式而变)
+
+# 或者按目标三元组 —— 与 `linkage` 并列,因为它们是同一根轴:
+[target.x86_64-linux-gnu]
+cxx_runtime = "host-coupled"            # 例如这次构建是为发行版打包
+```
+
+| 取值 | 产物运行时需要 | 典型场景 |
+|---|---|---|
+| `self-contained`(默认) | 自身之外不需要任何 C++ 运行时 | 分发二进制 |
+| `toolchain-coupled` | mcpp 装的那份工具链的 C++ 运行时 | 本地迭代 |
+| `host-coupled` | 驱动默认解析到的那份(通常是系统运行时) | 发行版打包;必须与宿主共用同一份运行时的 `dlopen` 插件 |
+
+**默认即自包含(portable by default)**:macOS 上这会静态链入 LLVM 自带的
+libc++/libc++abi —— 系统 libc++ 会把实际可运行版本固定在构建机的 OS(老系统
+缺新符号,如 `std::print` 的支撑符号),只有静态化才能真正兑现
+`macos_deployment_target` 的 floor。Linux/MinGW 上它是 `-static-libstdc++`
+(GCC)或整条链的 `-static`(MinGW);Linux 上的 clang/libc++ 工具链则显式链入
+libc++.a/libc++abi.a/libunwind.a。更低的 macOS floor(11–13)需自建 libc++
+归档(已验证可行,数据级切换,按需提供)。
+
+**共享库是唯一一个默认值随目标格式变化的角色**,因为危害本身随格式变化。
+`.so`/`.dylib`/`.dll` 不是一个小号可执行文件 —— 它被加载**进**一个已经有
+C++ 运行时的进程。
+
+| 目标格式 | `kind = "shared"` 的默认契约 | 原因 |
+|---|---|---|
+| ELF(Linux 等) | `toolchain-coupled` | ELF 只有一个全局符号命名空间,先加载的定义胜出。静态内嵌了 libstdc++ 的 `.so` 会把它**导出**,链接该库的可执行文件于是把自己的 `std::` 引用绑到那里 —— 它自己的 `self-contained` 契约静默变成空操作,它的 C++ 运行时变成"碰巧加载的那一份该库"。 |
+| Mach-O | `self-contained` | 那里的机制本来就是 `-load_hidden`(hidden 可见性),dyld 不会归一这些符号;而且 macOS 上根本没有 toolchain-coupled 这一档(见下文注)。 |
+| PE(Windows) | `self-contained` | PE 没有全局符号命名空间 —— 导入按 DLL 逐个按名解析,一个 DLL 的私有运行时不可能被别人捡走。 |
+
+在 ELF 上显式写 `shared = "self-contained"` 是支持的,而且就是字面意思:库会内嵌
+运行时。此时 mcpp 会额外发 `-Wl,--exclude-libs`(针对标准库归档),让内嵌的那份
+留在库的动态符号表之外,链接它的任何东西都捡不走。本工程代码产生的模板实例化
+(`std::string` 之类的 weak/COMDAT 符号)仍然会导出 —— 那是 C++ ABI 的预期行为,
+不是这里要防的泄漏。
+
+工程级的 `cxx_runtime = "…"`(或 `static_stdlib = false`)同样作用于共享库:
+有人写下了整个工程的承诺。只有在**没人写**的时候,随格式变化的默认值才生效。
+
+`static_stdlib` 是旧拼写,仍然有效:`true` 等价于 `self-contained`,`false`
+等价于 `host-coupled`。显式写了 `cxx_runtime` 时以后者为准。
+
+**兑现不了的契约会被报出来,绝不静默降级。** 若工具链不带 `libc++.a`,或某个
+契约在该平台上没有对应机制,构建会打印实际退到了哪一档,而不是悄悄交付一个与
+manifest 所述不同的产物。
+
+### 在 MSVC 运行时上
+
+这里的机制就是 CRT 模型,而它是**整个工程级**的开关:cl 会把 `_MSVC_MT` /
+`_MSVC_MD` 烘进工程唯一的那份 `std` 模块,所以与工程不一致的按角色契约无法兑现,
+会被报出来而不是被忽略。
+
+| 取值 | 在 MSVC 上是什么 |
+|---|---|
+| `self-contained` | `/MT`,静态 CRT。`linkage = "static"` 从 libc 那根轴选中的是同一件事。 |
+| `host-coupled`(`/MD` 下的默认) | 由目标机器提供 `vcruntime140.dll` / `msvcp140.dll` —— 即那台机器装了 Visual Studio 或 redistributable。 |
+| `toolchain-coupled` | toolset **自带**的那份 DLL 跟着产物走。 |
+
+`toolchain-coupled` 值得说清楚,因为直觉上的理解是错的。`ucrtbase.dll` **是**
+Windows 组件(Win10 起),mcpp 从不分发它;而 `vcruntime140.dll` /
+`msvcp140.dll` **不是**:每个 MSVC toolset 都在
+`VC\Redist\MSVC\<version>\<arch>\` 下带着它们,和 gcc payload 带着
+`libstdc++.so` 是同一件事。在这个契约下 mcpp 会把它们放到产物旁边 —— 这正是让
+默认的 `/MD` 产物能在"只装了 pinned toolset、根本没有 Visual Studio"的机器上跑
+起来的原因。
+
+调试版 CRT(`debug_nonredist\` 下的 `vcruntime140d.dll` 等)永远不会被放进去:
+它不可再分发。
+
+> **从 2026.8.15 或更早版本升上来?** 这条键在 MSVC ABI 上曾经是**空操作** ——
+> 它会报 `not implemented for the MSVC runtime yet`,写什么都退回 `/MD`。
+> 自 2026.8.16 起它真的生效,于是一份从那个年代带着
+> `cxx_runtime = "self-contained"` 的 manifest **会在升级时换掉 CRT 模型**:
+> 从 `/MD` 变成 `/MT`。它不是同一个模型的更严格版本,而且因为这个值一直是合法的,
+> 切换是**静默**的。若工程是在这条键尚未生效时写下它的,应重新确认所需的取值。
+
+把它和 `/MT` 一起用是**矛盾**而不是缺功能 —— 静态 CRT 根本没有 DLL 可以耦合 ——
+所以会被报出来并落到 `self-contained`。另一半由 `mcpp pack` 兜底:什么都不打包的
+模式(`--mode system`、`--mode static`)兑现不了 `toolchain-coupled`,会直接拒绝。
+
+**边界。** 该契约只管 C++ 运行时。静态 **libc** 是另一根轴(`linkage = "static"`
+/ `--static`,如 musl 目标),部署下限是第三根轴(`macos_deployment_target`)。
+另外,`host-coupled` 只承诺 mcpp 不做任何"把 C++ 运行时打进产物"的动作,它不会
+去掉链接因其它原因已经携带的工具链 rpath —— 所以在 ELF 上这类产物仍可能优先
+找到工具链的库。
+
+> **macOS + `self-contained` 与静态初始化次序。** Mach-O 没有按优先级排序的
+> 初始化段,而 libc++ 的 `<iostream>` 也不像 libstdc++ / MSVC STL 那样自带
+> `ios_base::Init` 守卫 —— 于是从 `libc++.a` 里拉出来的流初始化器本来会排在
+> 程序自己的全局构造函数**之后**:一个在构造函数里碰 `std::cout` 的全局对象会
+> 读到尚未构造的流,进程启动即崩。mcpp 会把一个极小的生成对象排在链接最前面
+> 把流顶上去,调用方代码无需改动。详见 mcpp-community/mcpp#336。
+
+`defines` 接受**裸**宏名(不带 `-D`),把每个条目脱糖为 `-D<x>`,同时作用于 C 和
+C++ 编译通道。它覆盖包内每个 TU(含模块接口单元),因此也会进入**编译器自己的**
+P1689 模块扫描。
+
+> **但它不会让被宏保护的 `import` 变得可用。** mcpp 在编译器看到文件之前先跑
+> 自己的词法预扫描,而那个扫描器对**任何** `#if` / `#ifdef` 块内的 `import`
+> 一律拒绝,不求值条件:
+>
+> ```
+> error: import statement inside conditional preprocessor block (forbidden in M1)
+> ```
+>
+> 所以即使 `FOO` 写在 `defines` 里,`#ifdef FOO` / `import bar;` 仍然会失败。
+> 替代写法是把条件放在全局模块片段的 `#include` 上。见
+> mcpp-community/mcpp#421。
+
+汇编单元同样能拿到。它是普通的构建
+输入,所以 `[target.'cfg(...)'.build]` 也能承载它:
+
+```toml
+[build]
+defines = ["APP_NAME=\"demo\""]
+
+[target.'cfg(windows)'.build]
+defines = ["USE_WIN32", "WINVER=0x0A00"]
+```
+
+选择合适的轴:
+
+| 想让宏作用于… | 用 |
+|---|---|
+| 本包的每个 TU | `[build].defines`(本节) |
+| 仅某个二进制自己的入口源 | `[targets.<name>].defines` |
+| 指定的一批文件 | `[build].flags` 配 `glob` + `defines` |
+| 本包每个 TU **以及**消费者的 TU | `[features.<name>].defines`(接口贡献) |
+
+`[build].defines` 是包私有的:不会传播给消费者。
+
+`[build]` 下不支持的键会作为警告报出(`--strict` 下为错误),而不是被静默忽略。
+
+C++ 标准不要通过 `build.cxxflags = ["-std=..."]` 配置。请使用:
+
+```toml
+[package]
+standard = "c++26"
+```
+
+mcpp 会把同一个标准用于普通 C++ 编译、模块扫描、`compile_commands.json` 和 `import std` 的标准库 BMI 构建。
+
+**glob 排除**(`!` 前缀,mcpp 0.0.4+):
+
+```toml
+[build]
+sources = [
+    "src/**/*.cpp",
+    "!src/**/*_test.cpp",       # 排除测试文件
+    "!src/**/*_fuzzer.cpp",     # 排除 fuzzer
+]
+```
+
+**per-glob 旗标**(mcpp 0.0.95+):`[build] flags` 是**有序**的内联表数组,把额外
+编译旗标只附加到 glob 命中的源文件——SIMD 多档 dispatch TU 与三方代码告警隔离的
+正解:
+
+```toml
+[build]
+flags = [
+  { glob = "third_party/**",         cflags = ["-w"], cxxflags = ["-w"] },
+  { glob = "src/simd/**/*.avx2.cpp", cxxflags = ["-mavx2"], defines = ["HAVE_AVX2"] },
+  { glob = "src/x86/**/*.asm",       asmflags = ["-DPREFIX"] },
+]
+```
+
+每条目键:`glob`(相对包根,必填)+ `cflags` / `cxxflags` / `asmflags` /
+`defines`(没有 `ldflags`——链接没有 per-TU 作用域)。声明顺序即应用顺序:靠后
+条目的旗标排在命令行更后,配合 GNU "后旗标胜",窄 glob 放在宽 glob 之后即可覆盖。
+所有命中条目都生效;这些是私有构建旗标,不会传播给消费者。glob 零命中会打印
+warning(打错的 glob 不允许静默无效)。
+
+**生成文件**(mcpp 0.0.95+):`[generated_files]` 把相对路径映射到文件内容(支持
+TOML 多行字符串)。条目在源 glob 展开之前写入工程树——与 index 描述符合成模块
+包装文件是同一机制——内容进指纹,改内容即重建:
+
+```toml
+[generated_files]
+"src/gen/wrap.cppm" = """
+module;
+#include <vendored.h>
+export module wrap;
+"""
+```
+
+路径必须留在工程根之内(`..` / 绝对路径是解析错误)。
+
+**汇编源**(mcpp 0.0.95+):`.S`/`.s`(GAS——由 C 驱动器预处理,覆盖 ARM 与
+AT&T 语法 x86)和 `.asm`(NASM——Intel 语法 x86)是一等源文件:默认 glob 收录、
+进指纹、增量并行构建、像任何对象一样链接。NASM 的输出格式由目标三元组推导
+(`elf64`/`win64`/`macho64`/...——交叉构建零特判);`nasm` 仅在存在 `.asm` 单元时
+惰性解析:先 `PATH`,再 mcpp 沙箱,再 `xlings install nasm`;找不到 ≥2.16 的
+nasm 则**硬失败**(汇编绝不静默跳过)。限制:`.asm` 仅限 x86 目标(其他目标硬
+报错——用条件 sources 门控)、MSVC 工具链不支持 `.S`、`.asm` 即 NASM 语法
+(MASM 源请用 `!` 排除)。

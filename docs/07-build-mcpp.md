@@ -942,3 +942,277 @@ When nothing changed the output is `build.mcpp up to date (cached)`; otherwise
   > blocked on a prompt is harder to diagnose than one that failed; and a build
   > whose outcome depends on a keystroke is not reproducible. The configurable
   > bound plus an error that names the file to edit answers the same need.
+
+## Host tools from a dependency (mcpp 2026.8.5.1+)
+
+A package can build a binary its consumers need *at build time* — `protoc`, a
+`grpc_cpp_plugin`, `flatc`, `moc`, a transpiler. Ask for it on the dependency:
+
+```toml
+[dependencies]
+protobuf = { version = "35.1",   tools = ["protoc"] }
+grpc     = { version = "1.83.0", tools = ["grpc_cpp_plugin"] }
+```
+
+Each name must be a `kind = "bin"` target of that package. mcpp builds it **for
+the build machine** and hands `build.mcpp` its absolute path as
+`MCPP_DEP_<PKG>_BIN_<TOOL>` — read it with `mcpp::dep_bin("protobuf", "protoc")`
+(see [07 — build.mcpp](07-build-mcpp.md)).
+
+Four properties worth knowing:
+
+- **Always a host binary.** Under `mcpp build --target <triple>` the tool is
+  still built for *this* machine, because a code generator has to run here. It
+  is a separate, host-targeted sub-build — the tool package's own `[toolchain]`
+  and its own dependency resolution apply, and none of it has to agree with
+  the consuming build. That is safe precisely because an executable has no ABI
+  contact with the consuming code.
+- **One version axis.** The tool's version *is* the dependency's version, so
+  a `protoc` that does not match its runtime is not expressible. (This is the
+  problem with packaging the tool separately, and it is the failure mode that
+  bites at run time rather than compile time.)
+- **Default off.** Nothing is built unless someone asks; the cost is the
+  consumer's to pay. A package gates the expensive part with
+  `[features]` + `required_features` (protobuf's `protoc` needs libprotoc's
+  ~157 extra TUs, which the runtime's users must not compile).
+- **Cached globally**, keyed on package version × host toolchain × features ×
+  its own dependency closure — built once per machine, not once per project.
+
+### `[tools.overrides]` — use an existing binary
+
+```toml
+[tools.overrides]
+"compat.protobuf:protoc" = "/usr/bin/protoc"
+```
+
+or, without editing the manifest (CI, distro packaging):
+
+```bash
+MCPP_TOOL_PROTOBUF_PROTOC=/usr/bin/protoc mcpp build
+```
+
+An override **skips the build entirely**. Every comparable system provides this
+escape hatch (vcpkg's `VCPKG_HOST_TRIPLET`, CMake's `LLVM_NATIVE_TOOL_DIR`,
+Qt's `QT_HOST_PATH`), and for the same reason: a tool that cannot be built from
+source on this machine must not be a dead end. It is deliberately **not** part
+of the cache key — an override is an escape hatch, not a reproducible input.
+
+### `host-module = true` — reusable build rules as packages
+
+A rule (say "run protoc over these `.proto` files") should be written once, not
+copy-pasted into every consumer's `build.mcpp`. Ship it as an ordinary mcpp
+library package and import it:
+
+```toml
+[dependencies]
+protobufgen = { version = "0.1.0", host-module = true }
+```
+
+```cpp
+// build.mcpp
+import mcpp;
+import protobufgen;
+int main() { return protobufgen::generate({"schema"}) ? 0 : 1; }
+```
+
+mcpp compiles that package's lib-root module **for the host, in the same
+command as `build.mcpp`** — which is what makes the BMI usable at all, since a
+module interface is only importable by a compile that agrees with it on
+standard, dialect and compiler identity.
+
+Rules are therefore versioned, testable and distributable through the package
+manager already in use, written in **C++** — no second language, which is the
+whole point of `build.mcpp` existing.
+
+**The module name is what the rule's source declares** (mcpp 2026.8.29.1+).
+`export module acme.rules.protobuf;` is imported as `acme.rules.protobuf`,
+whatever the package is called. Module names are authored API and do not mirror
+package identity — the rule ordinary library packages have always followed.
+
+Until 2026.8.29.1 the host-module path registered the bare `package.name`
+instead, which made a divergent name build under GCC and fail under Clang and
+MSVC: GCC's BMIs are implicit under `gcm.cache` and keyed by the declared name,
+while the other two are handed an explicit `<name>=<bmi>` mapping. Package names
+carry no C++ naming constraint as a result, and `grpc-rules` is a legal package
+name again.
+
+**Two rules may not declare one module name.** `import` addresses the module,
+so two such packages are indistinguishable to the compiler, and their BMIs and
+objects share a filename — the second overwrites the first and the surviving
+object reaches the link twice. mcpp refuses this, naming both packages and both
+interface paths. The check covers the rules one `build.mcpp` can see; it is not
+an index-wide uniqueness rule, which `path` dependencies and private registries
+would escape anyway.
+
+**`mcpp.` is reserved for rules maintained by the mcpp project.** A module name
+under that prefix from a package outside the `mcpp` namespace produces a
+warning naming both, and the build proceeds. It is a warning because the engine
+cannot decide who is official: a `path` dependency, a private mirror and an
+internal fork are all legitimate and indistinguishable from here.
+
+The lib root must be at `src/<name>.cppm` (or wherever `[lib] path` points); a
+missing one is reported as *"host module 'x': no interface unit at …"*.
+
+**A package may offer several rules, selected by features** (mcpp 2026.9.5.3+).
+Every module interface unit among the package's resolved `[build] sources` —
+including the sources a feature adds — is compiled as a host module under the
+name it declares, the lib root first. A feature unit may import the lib root;
+units are otherwise compiled alone, so they import `std`, `mcpp` and nothing
+else. Only listed sources take part: the inferred `src/**` of a package that
+declares no `sources` is not consulted, so a rule package published before this
+release exposes exactly what it exposed then.
+
+```toml
+# the collection's manifest
+[build]
+sources = ["src/plugins.cppm"]                   # export module mcpp.plugins;
+
+[features]
+rules-cuda  = { sources = ["rules/cuda.cppm"] }  # export module mcpp.rules.cuda;
+rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spirv;
+```
+
+```toml
+# a consumer
+[build-dependencies.mcpp]
+plugins = { version = "0.3.0", features = ["rules-spirv"], host-module = true }
+```
+
+**`[build-dependencies]`, not `[dependencies]`** — a rule package is the case
+§2.6.1 describes exactly: its library must never reach the target while its
+rule is still wanted. The two axes are separate, so `host-module = true` says
+*which build-time product* is wanted and the section says *whether the package
+reaches the target*; a rule package answers "no" on the second axis, and the
+section is where that is said. Written in `[dependencies]` it still works, and
+that is precisely why the distinction has to be stated rather than enforced by
+a failure.
+
+The module set is the feature set: a unit whose feature is not active is not
+compiled, and importing it fails as an unknown module. `mcpp:plugins` is the
+collection the mcpp project maintains (repository `mcpp-community/mcpp-plugins`);
+its members are named `mcpp.rules.<x>` for rule packages and `mcpp.tools.<x>`
+for build-time utilities.
+
+*Build-time only:* a `host-module = true` dependency is **not** compiled into
+or linked with the target, and neither is anything it depends on. It exists to
+run during `build.mcpp` and nowhere else. (Before 2026.8.5.2 it was also built
+as an ordinary library, which made `import mcpp;` inside a rule fail: the
+bundled module does not exist in that second compile. Until 2026.8.29.1 the
+rule itself was excluded but its own `[dependencies]` were not, so they were
+compiled and linked into the consumer's binary while the rule could not import
+them.)
+
+### A rule that depends on another rule (mcpp 2026.8.29.1+)
+
+A rule declares what it needs in its own `[build-dependencies]`, and may import
+any entry there marked `host-module = true`:
+
+```toml
+# inside the rule package's manifest
+[build-dependencies]
+globbing = { path = "../globbing", host-module = true }
+```
+
+```cpp
+// the rule's own interface
+export module tidyrule;
+import std;
+import mcpp;
+import globbing;
+```
+
+mcpp compiles the inner rule first, in the same command and with the same
+flags, so BMI agreement stays structural rather than checked.
+
+The consumer may **not** import `globbing`: build-time provisions cross one
+further edge only on a `reexport = true` edge, and mcpp enforces that rather
+than leaving it to the compiler, which on GCC would allow the import and then
+fail on someone else's machine.
+
+*Limit:* one interface unit per host module. A library with implementation
+units or several modules cannot yet be a rule's build dependency.
+
+### `reexport = true` — a library standing up a toolchain for its user (2026.8.6.2+)
+
+Everything above is declared by whoever *uses* the tool. That is the wrong
+place when the knowledge belongs to a library: gRPC's code generation needs
+protobuf's `protoc`, and no user of a gRPC package should have to know that.
+
+`reexport = true` hands an edge's build-time provisions — its `tools`, its
+`host-module`, and the dependency's directory — to **this package's own
+consumers**:
+
+```toml
+# inside the grpc package's manifest
+[feature-deps.codegen]
+"compat.protobuf" = { version = "35.1",   tools = ["protoc"],            reexport = true }
+grpc-plugin       = { version = "1.83.0", tools = ["grpc_cpp_plugin"],   reexport = true }
+grpcgen           = { version = "1.83.0", host-module = true,            reexport = true }
+```
+
+Its user then writes one line, and imports the rule:
+
+```toml
+[dependencies]
+grpc = { version = "1.83.0", features = ["codegen"] }
+```
+
+```cpp
+// build.mcpp
+import mcpp;
+import grpcgen;
+int main() { return grpcgen::generate_all() ? 0 : 1; }
+```
+
+- **Off by default, and deliberately not the edge's `visibility`.** `visibility`
+  already defaults to `"public"`, so riding it would let any dependency at any
+  depth put entries into the build program's tool namespace without saying so.
+  Handing something to consumers is a supply-chain statement; it has to be
+  written down.
+- **One hop per declaration.** A re-exported provision reaches the consumers of
+  the package that declared it. For it to travel further, the next package must
+  re-export in turn — each package decides only what *it* hands on.
+- **A feature may add a request to an already-declared dependency.** gRPC
+  depends on protobuf unconditionally and its `codegen` feature adds
+  `tools = ["protoc"], reexport = true` to that same edge. `tools` and
+  `features` union, `host-module` and `reexport` OR together; `version` /
+  `path` / `git` do not merge, so a feature still cannot silently override the
+  unconditional entry's identity.
+- **Visibility, not execution.** `dep_bin()` returns a path; whether anything
+  runs is still the consumer's `build.mcpp`'s decision. Nothing changes about
+  who builds the tool or how the tool store is keyed.
+- **Unqualified names are resolved by a ladder, not by luck.** Once two
+  libraries can re-export, both may offer the tail `protobuf`. The
+  fully-qualified `MCPP_DEP_<NS>_<NAME>_BIN_<TOOL>` is always published; the
+  bare spelling is bound to `mcpplibs.<x>`, else `compat.<x>`, else an
+  unnamespaced `<x>`, else the single remaining candidate — and when it is
+  contested mcpp says so instead of picking silently.
+
+#### Older mcpp reading a manifest that uses this
+
+An unrecognized dependency key is reported as a **degradation** and ignored
+(mcpp 2026.8.6.2+), so a package written for a newer mcpp still loads and the
+parts this reader understands still apply. Before that release it was a hard
+load failure with a misleading message, which is why a published package could
+not adopt a new key at all — the same property the index floor establishes:
+data must not decide whether the program works.
+
+Consequently a package that *relies* on `reexport` for its ergonomics still
+needs a client new enough to implement it; what changed is that everything else
+about that package keeps working on an older one.
+
+#### Scoping a provision per platform
+
+A package may declare a `bin` target on some platforms only. Because the
+*library* now decides what is requested, an unconditional request turns an
+unsupported platform into an error its user cannot edit away. Scope it:
+
+```toml
+[target.'cfg(not(windows))'.feature-deps.codegen]
+"compat.protobuf" = { version = "35.1", tools = ["protoc"], reexport = true }
+```
+
+`[target.<sel>.feature-deps.<feature>]` (2026.8.6.2+) follows the same rules as
+the other conditional dependency tables (§2.7.1). The **feature itself is
+registered on every platform** — only what it pulls in is conditional — so
+requesting it where no predicate matches is not an unknown-feature error.

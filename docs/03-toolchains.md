@@ -650,3 +650,245 @@ Tracked as [mcpp#256](https://github.com/mcpp-community/mcpp/issues/256).
 `tests/e2e/150_clang_module_operator_template.sh` is a canary over the
 bundled LLVM toolchains, so a future Clang bump that fixes — or re-breaks —
 this becomes visible instead of silently changing what packages can express.
+
+## The C++ runtime contract (`cxx_runtime`)
+
+`cxx_runtime` states what the produced artifact promises about the machine that
+runs it. It is a **distribution** property, not a build one — it describes the
+runtime dependency set, and the flags that deliver it differ per platform.
+
+> **A target with no C++ in it has no C++ runtime contract to honour.** mcpp
+> links such a target with the C driver and leaves the C++ runtime flags off the
+> line entirely, so a pure-C shared library does not acquire a dependency on
+> `libstdc++`/`libc++` it has no use for. One C++ translation unit anywhere in
+> the target puts the whole target back on the C++ driver. This is derived from
+> the sources — there is no key for it.
+
+```toml
+[build]
+cxx_runtime = "self-contained"          # applies to every target (the default)
+
+# or, per role:
+[build.cxx_runtime]
+default = "self-contained"              # executables
+tests   = "host-coupled"                # test binaries never leave this machine
+shared  = "self-contained"              # shared libraries (see below — the
+                                        # default differs by target format)
+
+# or, per target triple — beside `linkage`, which is the same axis:
+[target.x86_64-linux-gnu]
+cxx_runtime = "host-coupled"            # e.g. this build is for a distro package
+```
+
+| value | the artifact needs, at run time | typical use |
+|---|---|---|
+| `self-contained` (default) | no C++ runtime outside itself | shipping a binary |
+| `toolchain-coupled` | the C++ runtime of the toolchain mcpp installed | local iteration |
+| `host-coupled` | whatever the driver resolves by default (the system runtime) | distro packaging, `dlopen` plugins that must share a runtime with their host |
+
+**Self-contained by default (portable by default)**: on macOS this statically
+links LLVM's bundled libc++/libc++abi — the system libc++ would otherwise pin the
+runnable version to the build machine's OS (older systems lack newer symbols, e.g.
+the support symbols behind `std::print`), and only static linking can truly deliver
+the `macos_deployment_target` floor. On Linux/MinGW it is `-static-libstdc++` (GCC)
+or the whole-link `-static` (MinGW); on a Linux clang/libc++ toolchain it links
+libc++.a/libc++abi.a/libunwind.a explicitly. A lower macOS floor (11–13) requires a
+self-built libc++ archive (already verified to work, a data-level switch, available
+on request).
+
+**Shared libraries are the one role whose default depends on the target format**,
+because the hazard does. A `.so`/`.dylib`/`.dll` is not a small executable — it is
+loaded *into* a process that already has a C++ runtime.
+
+| target | default for `kind = "shared"` | why |
+|---|---|---|
+| ELF (Linux, …) | `toolchain-coupled` | ELF has one global symbol namespace and the first definition loaded wins. A `.so` that statically embedded libstdc++ **exports** it, and the executable linking that library binds *its* `std::` references there — its own `self-contained` contract silently becomes a no-op, and its C++ runtime is whichever build of that library happens to load. |
+| Mach-O | `self-contained` | the mechanism there is already `-load_hidden`, i.e. hidden visibility, so dyld never unifies those symbols; and toolchain-coupled is not available on macOS at all (see the note below). |
+| PE (Windows) | `self-contained` | PE has no global symbol namespace — imports resolve per-DLL by name, so a DLL's private runtime cannot be picked up by anything else. |
+
+Setting `shared = "self-contained"` on ELF is supported and does exactly what it
+says: the library embeds the runtime. mcpp additionally passes
+`-Wl,--exclude-libs` for the standard-library archives, so the embedded copy stays
+out of the library's dynamic symbol table and cannot be picked up by anything that
+links it. Template instantiations emitted by the consuming code (weak/COMDAT `std::string`
+symbols and the like) are still exported — that is the intended C++ ABI behaviour
+and is not the leak this guards against.
+
+A project-wide `cxx_runtime = "…"` (or `static_stdlib = false`) applies to shared
+libraries too: a human said what the whole project promises. The format-specific
+default applies only when nobody said anything.
+
+`static_stdlib` is the older spelling and still works: `true` means
+`self-contained`, `false` means `host-coupled`. An explicit `cxx_runtime` wins.
+
+**A contract that cannot be honored is reported, never silently downgraded.** If a
+toolchain ships no `libc++.a`, or a contract has no mechanism on that platform,
+the build prints what it fell back to instead of quietly producing a different
+artifact than the manifest asked for.
+
+### On the MSVC runtime
+
+The CRT model is the mechanism here, and it is a **whole-project** switch: cl
+bakes `_MSVC_MT`/`_MSVC_MD` into the one `std` module a project builds, so a
+per-role contract that disagrees with the project's cannot be honoured and is
+reported rather than ignored.
+
+| value | what it is on MSVC |
+|---|---|
+| `self-contained` | `/MT` — the static CRT. `linkage = "static"` selects the same thing from the libc axis. |
+| `host-coupled` (default under `/MD`) | the target provides `vcruntime140.dll` / `msvcp140.dll` — i.e. Visual Studio or the redistributable is installed there. |
+| `toolchain-coupled` | the toolset's **own** copy of those DLLs travels with the artifact. |
+
+`toolchain-coupled` is worth spelling out, because the obvious reading is
+wrong. `ucrtbase.dll` *is* a Windows component (since Windows 10) and mcpp
+never ships it. `vcruntime140.dll` and `msvcp140.dll` are **not**: every MSVC
+toolset carries them under `VC\Redist\MSVC\<version>\<arch>\`, exactly the
+way a gcc payload carries `libstdc++.so`. Under this contract mcpp stages them
+beside the artifact — which is what makes a default `/MD` build runnable on a
+machine that has only the pinned toolset and no Visual Studio at all.
+
+The debug CRT (`vcruntime140d.dll` and friends, under `debug_nonredist\`) is
+never staged: it may not be redistributed.
+
+> **Upgrading from 2026.8.15 or earlier?** This key used to be **inert** on the
+> MSVC ABI — it reported `not implemented for the MSVC runtime yet` and every
+> value fell back to `/MD`. Since 2026.8.16 it is honoured, so a manifest that
+> carries `cxx_runtime = "self-contained"` from that era **changes CRT model on
+> upgrade**, from `/MD` to `/MT`. It is not a stricter version of the same
+> model, and the switch is silent because the value was always valid. A project
+> that set it while the key did nothing should re-confirm the intended value.
+
+Combining it with `/MT` is a contradiction rather than a missing feature — a
+static CRT leaves no DLL to couple to — so it is reported and resolved to
+`self-contained`. `mcpp pack` enforces the other half: a mode that bundles
+nothing (`--mode system`, `--mode static`) cannot deliver `toolchain-coupled`
+and refuses.
+
+**Scope.** The contract governs the C++ runtime only. Static **libc** is a separate
+axis (`linkage = "static"` / `--static`, e.g. a musl target), and the deployment
+floor is a third (`macos_deployment_target`). Also, `host-coupled` means mcpp adds
+nothing to embed a C++ runtime; it does not strip the toolchain rpath the link
+carries for other reasons, so on ELF such an artifact may still find the
+toolchain's libraries first.
+
+> **macOS + `self-contained` and static initialization order.** Mach-O has no
+> priority-ordered initializer section and libc++'s `<iostream>` carries no
+> `ios_base::Init` guard of its own (unlike libstdc++ and the MSVC STL), so a
+> stream initializer pulled out of `libc++.a` would otherwise run *after* the
+> program's own global constructors — a global whose constructor touches
+> `std::cout` would read an unconstructed stream and crash at process start. mcpp
+> links a tiny generated object first to force the streams up; nothing is required
+> of the calling code. See mcpp-community/mcpp#336.
+
+`defines` takes **bare** macro names (no `-D`) and desugars each entry to `-D<x>` on
+both the C and C++ compile channels. It reaches every TU in the package — module
+interface units included — so it also reaches the compiler's own P1689 module scan.
+
+> **It does not make a macro-guarded `import` acceptable.** mcpp runs its own
+> lexical pre-scan before the compiler ever sees the file, and that scanner
+> rejects an `import` inside **any** `#if` / `#ifdef` block without evaluating the
+> condition:
+>
+> ```
+> error: import statement inside conditional preprocessor block (forbidden in M1)
+> ```
+>
+> So a `#ifdef FOO` / `import bar;` pair fails even when `FOO` is in `defines`.
+> Put the conditional around an `#include` in the global module fragment instead.
+> Tracked as mcpp-community/mcpp#421. Assembly units pick it up too. It is a
+build input like any other, so `[target.'cfg(...)'.build]` can carry it:
+
+```toml
+[build]
+defines = ["APP_NAME=\"demo\""]
+
+[target.'cfg(windows)'.build]
+defines = ["USE_WIN32", "WINVER=0x0A00"]
+```
+
+Picking the right axis:
+
+| You want the macro on… | Use |
+|---|---|
+| every TU of this package | `[build].defines` (here) |
+| one binary's own entry source only | `[targets.<name>].defines` |
+| a specific set of files | `[build].flags` with a `glob` + `defines` |
+| every TU **and** every consumer's TUs | `[features.<name>].defines` (an interface contribution) |
+
+`[build].defines` is private to the package: it does not propagate to consumers.
+
+Unsupported keys under `[build]` are reported as a warning (an error under
+`--strict`) rather than silently ignored.
+
+Do not configure the C++ standard via `build.cxxflags = ["-std=..."]`. Instead use:
+
+```toml
+[package]
+standard = "c++26"
+```
+
+mcpp applies the same standard to ordinary C++ compilation, module scanning,
+`compile_commands.json`, and the standard library BMI build for `import std`.
+
+**glob exclusion** (`!` prefix, mcpp 0.0.4+):
+
+```toml
+[build]
+sources = [
+    "src/**/*.cpp",
+    "!src/**/*_test.cpp",       # Exclude test files
+    "!src/**/*_fuzzer.cpp",     # Exclude fuzzers
+]
+```
+
+**Per-glob flags** (mcpp 0.0.95+): `[build] flags` is an ordered array of
+inline tables attaching extra compile flags to exactly the sources a glob
+matches — the tool for SIMD dispatch TUs and vendored-code warning isolation:
+
+```toml
+[build]
+flags = [
+  { glob = "third_party/**",            cflags = ["-w"], cxxflags = ["-w"] },
+  { glob = "src/simd/**/*.avx2.cpp",    cxxflags = ["-mavx2"], defines = ["HAVE_AVX2"] },
+  { glob = "src/x86/**/*.asm",          asmflags = ["-DPREFIX"] },
+]
+```
+
+Keys per entry: `glob` (package-root-relative, required) plus `cflags` /
+`cxxflags` / `asmflags` / `defines` (no `ldflags` — linking has no per-TU
+scope). Declaration order is application order: a later entry's flags land
+later on the command line, so with GNU "last flag wins" a narrower glob
+placed after a broader one overrides it. All matching entries apply. These
+are private build flags — they never propagate to consumers. A glob that
+matches no source file prints a warning (a typo'd glob must not silently do
+nothing).
+
+**Generated files** (mcpp 0.0.95+): `[generated_files]` maps a relative path
+to file contents (TOML multiline strings supported). Entries are written
+into the project tree before source globs expand — the same mechanism index
+descriptors use to synthesize module wrappers — and the content enters the
+fingerprint, so editing it rebuilds:
+
+```toml
+[generated_files]
+"src/gen/wrap.cppm" = """
+module;
+#include <vendored.h>
+export module wrap;
+"""
+```
+
+Paths must stay inside the project root (`..` / absolute paths are parse
+errors).
+
+**Assembly sources** (mcpp 0.0.95+): `.S`/`.s` (GAS — preprocessed by the C
+driver, covers ARM and AT&T-syntax x86) and `.asm` (NASM — Intel-syntax x86)
+are first-class sources: default-globbed, fingerprinted, built incrementally
+in parallel, and linked like any other object. The NASM output format is
+derived from the target triple (`elf64`/`win64`/`macho64`/... — cross builds
+just work), and `nasm` itself is resolved lazily only when `.asm` units exist:
+`PATH` first, then the mcpp sandbox, then `xlings install nasm`; if none
+yields nasm ≥ 2.16 the build **fails hard** (assembly is never silently
+skipped). Limits: `.asm` targets x86 only (hard error elsewhere — gate the
+files off other targets), `.S` is unavailable on the MSVC toolchain, and
+`.asm` means NASM syntax (MASM sources should be `!`-excluded).

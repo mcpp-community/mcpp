@@ -790,3 +790,237 @@ mcpp **不会**每次构建都重跑 `build.mcpp`。它会缓存程序产出的�
   > 多数构建发生在没有人看的地方(CI、流水线、ninja 的子进程),而一个卡在提示上的
   > 构建比一个失败的构建更难诊断;并且构建结果不应该取决于一次击键。
   > 可配置的上限 + 一条点名要改哪个文件的报错,回答的是同一个需求。
+
+## 依赖产出的 host 工具(mcpp 2026.8.5.1+)
+
+一个包能构建出消费者在**构建期**需要的二进制 —— `protoc`、`grpc_cpp_plugin`、
+`flatc`、`moc`、转译器。在依赖上声明:
+
+```toml
+[dependencies]
+protobuf = { version = "35.1",   tools = ["protoc"] }
+grpc     = { version = "1.83.0", tools = ["grpc_cpp_plugin"] }
+```
+
+每个名字必须是该包的一个 `kind = "bin"` target。mcpp 会**为构建机器**构建它,
+并把绝对路径以 `MCPP_DEP_<PKG>_BIN_<TOOL>` 交给 `build.mcpp` —— 用
+`mcpp::dep_bin("protobuf", "protoc")` 读取(见 [07 — build.mcpp](07-build-mcpp.md))。
+
+四条值得知道的性质:
+
+- **永远是 host 二进制。** 即使 `mcpp build --target <triple>`,工具依然为**本机**
+  构建 —— 代码生成器必须在这里跑。它是一次独立的、面向 host 的子构建:工具包
+  自己的 `[toolchain]`、自己的依赖解析生效,不需要与当前构建一致。安全的原因是
+  可执行文件与工程代码**零 ABI 接触**。
+- **单一版本轴。** 工具的版本**就是**依赖的版本,所以「protoc 与其运行时不匹配」
+  这种情况**不可表达**。(把工具单独打包正是会出这个问题,而且它在**运行期**才咬人,
+  不是编译期。)
+- **默认关闭。** 没人要就什么都不构建,成本由消费者付。包用 `[features]` +
+  `required_features` 给昂贵的部分加门(protobuf 的 `protoc` 需要 libprotoc 的
+  ~157 个额外 TU,只用运行时的人绝不该编译它)。
+- **全局缓存**,按 包版本 × host 工具链 × feature × 自身依赖闭包 键控 —— 每台机器
+  构建一次,而不是每个工程一次。
+
+### `[tools.overrides]` —— 使用已有的二进制
+
+```toml
+[tools.overrides]
+"compat.protobuf:protoc" = "/usr/bin/protoc"
+```
+
+或者不改 manifest(CI、发行版打包):
+
+```bash
+MCPP_TOOL_PROTOBUF_PROTOC=/usr/bin/protoc mcpp build
+```
+
+命中 override 会**完全跳过构建**。每个同类系统都提供这条逃生舱(vcpkg 的
+`VCPKG_HOST_TRIPLET`、CMake 的 `LLVM_NATIVE_TOOL_DIR`、Qt 的 `QT_HOST_PATH`),
+理由一样:一个在本机构建不出来的工具**不能是死路**。它**刻意不进** cache key ——
+逃生舱不是可复现输入。
+
+### `host-module = true` —— 可复用的构建规则以包分发
+
+一条规则(比如「对这些 `.proto` 跑 protoc」)应该**写一次**,而不是复制进每个
+消费者的 `build.mcpp`。把它做成普通的 mcpp 库包再 import:
+
+```toml
+[dependencies]
+protobufgen = { version = "0.1.0", host-module = true }
+```
+
+```cpp
+// build.mcpp
+import mcpp;
+import protobufgen;
+int main() { return protobufgen::generate({"schema"}) ? 0 : 1; }
+```
+
+mcpp 会把该包的 lib 根模块**为 host 编译,且与 `build.mcpp` 在同一条命令里** ——
+这正是 BMI 能用的前提:一个模块接口只对「在 standard / dialect / 编译器身份上与
+它一致」的编译可导入。
+
+于是规则**有版本、能测试、能通过既有的包管理器分发**,而且是用 **C++** 写的
+—— 不引入第二门语言,这正是 `build.mcpp` 存在的理由。
+
+**模块名是规则源码自己声明的那个**(mcpp 2026.8.29.1+)。`export module
+acme.rules.protobuf;` 就以 `acme.rules.protobuf` 被 import,与包叫什么无关。
+模块名是作者定义的 API,不镜像包身份 —— 普通库包一直遵循的就是这条规则。
+
+2026.8.29.1 之前 host 模块这条路径注册的是裸 `package.name`,于是声明名与包名
+分叉的规则包在 GCC 上能构建、在 Clang 与 MSVC 上失败:GCC 的 BMI 隐式落在
+`gcm.cache` 且按**声明名**索引,而另外两者拿到的是显式的 `<name>=<bmi>` 映射。
+因此包名不再承担任何 C++ 命名约束,`grpc-rules` 重新是合法包名。
+
+**两个规则不得声明同一个模块名。** `import` 寻址的是模块,所以两个这样的包对编译器
+不可区分,而它们的 BMI 与对象文件同名 —— 后者覆盖前者,存活的那个对象被送进链接两次。
+mcpp 拒绝这种情形,并点名两个包与各自的 interface 路径。检查的范围是一次 `build.mcpp`
+能看见的那些规则,不是索引级的全局唯一性 —— `path` 依赖与私有 registry 本来就绕得开。
+
+**`mcpp.` 前缀保留给由 mcpp 项目维护的规则。** 不在 `mcpp` 命名空间下的包声明该前缀
+的模块名时给出一条同时点名两者的警告,构建继续。之所以是警告:引擎判定不了谁是官方,
+`path` 依赖、私有镜像与内部 fork 都合法,而且从这里看都一样。
+
+lib 根必须在 `src/<name>.cppm`(或 `[lib] path` 指向的位置);缺失时报
+*"host module 'x': no interface unit at …"*。
+
+**一个包可以提供多条规则,由 feature 选择**(mcpp 2026.9.5.3+)。包解析后的
+`[build] sources` 里 —— 含 feature 加入的源文件 —— 每一个模块接口单元都以它自己声明的
+名字编成一个 host 模块,lib 根排在最前。feature 单元可以 import lib 根;除此之外每个
+单元单独编译,因此只 import `std` 与 `mcpp`。只有写在清单里的源文件参与:未声明
+`sources` 的包所推断出的 `src/**` 不被读取,所以此前发布的规则包暴露的仍是它当时暴露
+的那一个模块。
+
+```toml
+# 集合包的 manifest
+[build]
+sources = ["src/plugins.cppm"]                   # export module mcpp.plugins;
+
+[features]
+rules-cuda  = { sources = ["rules/cuda.cppm"] }  # export module mcpp.rules.cuda;
+rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spirv;
+```
+
+```toml
+# 消费者
+[build-dependencies.mcpp]
+plugins = { version = "0.3.0", features = ["rules-spirv"], host-module = true }
+```
+
+**用 `[build-dependencies]` 而不是 `[dependencies]`** —— 规则包正是 §2.6.1 描述的那种
+情形:它的库绝不该到达目标,而它的规则仍然被需要。两条轴是分开的:
+`host-module = true` 说的是**要哪一种构建期产物**,而 section 说的是**这个包是否到达
+目标**;规则包在第二条轴上的答案是"否",而 section 就是说这件事的地方。写在
+`[dependencies]` 里同样能工作 —— 这恰恰是为什么这条区分必须被**陈述**,而不能指望由
+一次失败来教会。
+
+模块集合就是 feature 集合:feature 未激活的单元不编译,import 它会以未知模块失败。
+`mcpp:plugins` 是 mcpp 项目维护的集合(仓库 `mcpp-community/mcpp-plugins`);其成员
+命名为 `mcpp.rules.<x>`(规则包)与 `mcpp.tools.<x>`(构建期工具)。
+
+*仅构建期:* `host-module = true` 的依赖**不会**被编进、也不会被链进本工程的 target,
+它所依赖的东西也不会。它只在 `build.mcpp` 期间运行,别处都不出现。(2026.8.5.2 之前
+它还会被当作普通库再编一遍,这正是规则里 `import mcpp;` 失败的原因:在那第二次编译里
+内置模块并不存在。2026.8.29.1 之前被排除的只有规则本身,它自己的 `[dependencies]`
+仍会被编译并链进消费者的二进制,而规则却 import 不到它们。)
+
+### 依赖另一个规则的规则(mcpp 2026.8.29.1+)
+
+规则在自己的 `[build-dependencies]` 里声明所需之物,并可以 import 其中标了
+`host-module = true` 的条目:
+
+```toml
+# 写在规则包自己的清单里
+[build-dependencies]
+globbing = { path = "../globbing", host-module = true }
+```
+
+```cpp
+// 规则自己的接口
+export module tidyrule;
+import std;
+import mcpp;
+import globbing;
+```
+
+mcpp 先编译内层规则,同一条命令、同一套 flag,因此 BMI 的一致性仍是结构性事实而不是
+需要事后校验的性质。
+
+消费者**不可以** import `globbing`:构建期的 provision 只在 `reexport = true` 的边上
+再跨一跳,而 mcpp 自己执行这条规则,不交给编译器 —— 在 GCC 上那个 import 会成功,
+然后在别人的机器上失败。
+
+*限制:* 每个 host 模块只有一个接口单元。带实现单元或多个模块的库还不能作为规则的
+构建期依赖。
+
+### `reexport = true` —— 由库替用户拉起整条工具链(2026.8.6.2+)
+
+上面这些都由**使用工具的人**声明。当知识本来属于库时,这个位置就错了:gRPC
+的代码生成需要 protobuf 的 `protoc`,而 gRPC 包的任何使用者都不应该知道这件事。
+
+`reexport = true` 把一条边上的构建期提供物 —— 它的 `tools`、它的
+`host-module`、以及该依赖的目录 —— 交给**本包自己的消费者**:
+
+```toml
+# 写在 grpc 包自己的 manifest 里
+[feature-deps.codegen]
+"compat.protobuf" = { version = "35.1",   tools = ["protoc"],          reexport = true }
+grpc-plugin       = { version = "1.83.0", tools = ["grpc_cpp_plugin"], reexport = true }
+grpcgen           = { version = "1.83.0", host-module = true,          reexport = true }
+```
+
+于是使用者只写一行,再 import 那个规则:
+
+```toml
+[dependencies]
+grpc = { version = "1.83.0", features = ["codegen"] }
+```
+
+```cpp
+// build.mcpp
+import mcpp;
+import grpcgen;
+int main() { return grpcgen::generate_all() ? 0 : 1; }
+```
+
+- **默认关闭,并且刻意不复用边上的 `visibility`。** `visibility` 本身默认就是
+  `"public"`,复用该可见性意味着任意深度的依赖都能静默地向构建程序的工具
+  命名空间里塞东西。「把某样东西交给消费者」是一条供应链主张,必须写下来。
+- **一次声明只走一跳。** 被再导出的提供物到达声明它的那个包的消费者;要继续
+  往上走,下一个包必须自己也写 `reexport`。每个包只决定**它**交出什么。
+- **feature 可以往一条已经声明过的依赖上追加请求。** gRPC 无条件依赖 protobuf,
+  而它的 `codegen` feature 往同一条边加 `tools = ["protoc"], reexport = true`。
+  `tools` 与 `features` 取并集,`host-module` 与 `reexport` 取或;`version` /
+  `path` / `git` 不合并 —— feature 仍然无法静默覆盖无条件条目的身份。
+- **传播的是可见性,不是执行。** `dep_bin()` 只返回路径,跑不跑仍由消费者的
+  `build.mcpp` 决定;谁构建了这个工具、tool store 怎么做键,都不改变。
+- **裸名由阶梯决定,而不是靠运气。** 一旦两个库都能再导出,它们可能同时提供
+  尾名 `protobuf`。全限定的 `MCPP_DEP_<NS>_<NAME>_BIN_<TOOL>` 总是发布;裸名
+  依次绑定到 `mcpplibs.<x>`、`compat.<x>`、无命名空间的 `<x>`,最后才是「剩下
+  的唯一候选」——存在争用时 mcpp 会说出来,而不是默默选一个。
+
+#### 旧版 mcpp 读到用了这些键的 manifest
+
+不认识的依赖键会被**记为降级**并忽略(mcpp 2026.8.6.2+),因此一份为更新的
+mcpp 写的包仍然能加载,这个读取器认识的部分照常生效。在那之前它是**整份加载
+失败**且报错误导,这正是「已发布的包永远无法采用新键」的原因——与索引下限确立
+的是同一条性质:**数据不得决定程序是否可用**。
+
+因此,一个**依赖** `reexport` 才有那套人机工程的包,仍然需要足够新的客户端;
+变化在于该包的其余部分在旧客户端上不再一起失效。
+
+#### 按平台裁剪提供物
+
+一个包可能只在部分平台声明 `bin` 目标。既然现在是**库**决定请求什么,无条件的
+请求就会把「不支持的平台」变成用户改不掉的硬错。用条件段裁剪:
+
+```toml
+[target.'cfg(not(windows))'.feature-deps.codegen]
+"compat.protobuf" = { version = "35.1", tools = ["protoc"], reexport = true }
+```
+
+`[target.<sel>.feature-deps.<feature>]`(2026.8.6.2+)与 `[target.<sel>]` 下的
+其余依赖表(`dependencies` / `dev-dependencies` / `build-dependencies`)遵循同
+一套谓词规则,针对**解析后的 target** 求值。**feature 本身在所有平台都注册**
+—— 只有它拉进来的东西是条件性的 —— 因此在没有任何谓词匹配的平台上请求它,不是
+「未知 feature」错误。
