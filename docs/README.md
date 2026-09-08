@@ -42,13 +42,21 @@ one names it.
 
 ## Chapters
 
-The first digit is the part, so a number says where a chapter belongs: `0x` is
-what everyone needs, `1x` publishes, `2x` is toolchains and targets, `3x`
-extends the build graph, `4x` is devices and accelerators, `5x` is what a
-program may parse, `9x` is mcpp itself. Within a part the order is a reading
-order, not an alphabet.
+The first digit is the part, so a number says where a chapter belongs:
 
-### 0x — Everyone
+| | |
+|---|---|
+| `0x` | the fundamentals |
+| `1x` | publishing |
+| `2x` | toolchains and targets |
+| `3x` | extending mcpp and its ecosystem |
+| `4x` | devices and accelerators |
+| `5x` | the contracts a program may parse |
+| `9x` | mcpp itself |
+
+Within a part the order is a reading order, not an alphabet.
+
+### 0x — Fundamentals
 
 - [00 — How mcpp Works](00-how-mcpp-works.md) — the model every other chapter assumes
 - [01 — Getting Started](01-getting-started.md) — install, create, build, run

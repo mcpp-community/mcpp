@@ -157,9 +157,15 @@ docs/specs/    ──▶ docs/              允许
 | What decides what gets packed | What determines the package contents |
 | Consuming one | Consuming a package |
 | What you may rely on, and what changes | Stability guarantees |
+| 0x —— 人人都需要 | 0x —— 基础 |
+| 0x — Everyone | 0x — Fundamentals |
 
 「…的原因」「…的依据」「…的范围」是把 why 型标题转成名词短语的常用形。
 **保留 why 本身,去掉疑问语气。**
+
+这条同样管**部分名与段位名**,不只管章节标题。「人人都需要」描述的是受众、
+是一个句子片段;「基础」是这一段**是什么**。受众写在每章开头的「读者」那一行,
+不写在目录的骨架上。
 
 ## 五、词汇
 

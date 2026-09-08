@@ -202,7 +202,7 @@ Three, each answering a question §1.1 measured as unowned.
 Bands are meaningful: the first digit is the part. Within a part the order is
 the order that part's reader needs, which is R4.
 
-### 5.1 `0x` — Everyone
+### 5.1 `0x` — Fundamentals
 
 The arc: understand the parts, get one program running, know where the examples
 are, write the manifest, add dependencies, make things optional, test.
