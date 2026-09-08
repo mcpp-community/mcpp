@@ -207,7 +207,7 @@ runner = ["qemu-aarch64-static"]
 Without the key, `mcpp run` reports the kernel's refusal (`Exec format error`)
 and the key to write, and `mcpp test` reports every test as not run and exits
 2. A host that executes the artifact natively passes `--no-runner`. The rules
-are in [02 — mcpp.toml](02-mcpp-toml.md), §2.7.3.
+are in [03 — mcpp.toml](03-mcpp-toml.md), §2.7.3.
 
 ### The Source Is The Same, The Program Is Not
 

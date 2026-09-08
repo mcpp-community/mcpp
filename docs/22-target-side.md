@@ -342,7 +342,7 @@ The selector `<sel>` has three forms:
 |---|---|---|
 | **bare OS alias** | a single OS / family — the concise, common form | `[target.windows]`, `[target.unix]` |
 | **`cfg(...)` predicate** | a compound condition (arch / env / combinators) | `[target.'cfg(all(linux, not(arch = "aarch64")))']` |
-| **exact triple** | one specific target (also carries `toolchain` / `linkage` / `sysroot` / `runner`; see [02 §2.7.3](02-mcpp-toml.md)) | `[target.x86_64-linux-musl]` |
+| **exact triple** | one specific target (also carries `toolchain` / `linkage` / `sysroot` / `runner`; see [03 §2.7.3](03-mcpp-toml.md)) | `[target.x86_64-linux-musl]` |
 
 A selector may carry platform-conditional **dependencies** and **build flags**:
 
@@ -365,7 +365,7 @@ there is no ambiguity. Use the bare form for a single OS/family; use `cfg(...)`
 for arch/env conditions and combinators.
 
 - **Keys**: `dependencies` / `dev-dependencies` / `build-dependencies` /
-  `feature-deps.<feature>` (mcpp 2026.8.6.2+ — see [05 — build.mcpp](05-build-mcpp.md); the feature is
+  `feature-deps.<feature>` (mcpp 2026.8.6.2+ — see [30 — build.mcpp](30-build-mcpp.md); the feature is
   registered unconditionally, only its dependency set is scoped), and
   `build` with `cflags` / `cxxflags` / `ldflags` / `sources` (mcpp 0.0.95+ —
   conditional source globs, e.g. gating `src/x86/**/*.asm` behind
@@ -460,7 +460,7 @@ A build program can ask which C library **payload** supplies the sysroot:
 `mcpp::target_libc()` returns that package's name and
 `mcpp::target_libc_profile()` the sub-directory for the target's ISA profile.
 Both are empty on the zero-libc tier. See
-[30 — Bare-Metal and Freestanding Targets](30-baremetal.md).
+[40 — Bare-Metal and Freestanding Targets](40-baremetal.md).
 
 **That is not the same question as "which C library did the target side
 resolve to".** `target_libc()` names the payload mcpp installed, and that value

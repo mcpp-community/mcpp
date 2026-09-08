@@ -1,4 +1,4 @@
-# 32 —— 异构硬件构建
+# 42 —— 异构硬件构建
 
 GPU 与 AI 加速器目标,以及宿主/设备混合编译:mcpp 如何构建设备代码,以及一个预建产物如何
 声明它能在哪些设备上运行。
@@ -87,7 +87,7 @@ C++20 modules 的编译器。
 
 上表是 mcpp **不需要被告知**就知道的那些:在「包可以自己声明」之前就已经支持的语言。
 规则包通过 `[features].<f>.device_extensions`(见
-[02 — mcpp.toml](02-mcpp-toml.md) §2.8)向它增补,而这正是**一门新设备语言到达的方式**
+[03 — mcpp.toml](03-mcpp-toml.md) §2.8)向它增补,而这正是**一门新设备语言到达的方式**
 —— 不动引擎,也不需要发一版引擎。Slang 是第一个:`.slang` 不在上表里,由
 `mcpp:plugins` 的 `rules-slang` 声明。
 
@@ -196,7 +196,7 @@ mcpp 2026.9.7.1 之前,那条 lane 是唯一的例外:生成的头文件**就是
 
 调用设备编译器的那条命令不内置在 mcpp 里,而是由**构建规则包**提供 ——
 以 `host-module = true` 消费,emit 输出汇入链接的构建边。机制见
-[05 — build.mcpp](05-build-mcpp.md),可用的 CUDA 规则见 `examples/09-heterogeneous/cuda`。
+[30 — build.mcpp](30-build-mcpp.md),可用的 CUDA 规则见 `examples/09-heterogeneous/cuda`。
 
 这个划分是刻意的。mcpp 拥有构建图、产物身份与架构集合;厂商的 flag 拼法、
 架构语法与宿主编译器要求属于规则包。
@@ -239,7 +239,7 @@ plugins = { version = "0.3.0", features = ["rules-cuda"], host-module = true }
 ```
 
 更近的声明赢,装一个版本,并且 mcpp 说出用了哪条。不满足规则下界的钉会被拒绝并点出
-两侧,而不是与它并排装下来。完整规则见 [02 — mcpp.toml](02-mcpp-toml.md) 的
+两侧,而不是与它并排装下来。完整规则见 [03 — mcpp.toml](03-mcpp-toml.md) 的
 「一个包一个版本」;`examples/09-heterogeneous/multi-backend` 是本仓库里唯一走覆盖
 路径的示例,其余每一个都只写那条边。
 
@@ -267,7 +267,7 @@ mcpp 里长出第二份拷贝)。
 干净、链接干净,到第一次分配才以 *"CUDA driver version is insufficient for CUDA runtime
 version"* 失败。规则经驱动自己的库(经由 sentinel 包够到,绝不经 `/usr/lib`)读出驱动
 版本并陈述为事实;陈述它的运行时需要的下界;引擎在编译任何东西之前比较两者 —— 见
-[05 — build.mcpp](05-build-mcpp.md) 的探针通道。引擎读到的是一个名字、一个关系、一个
+[30 — build.mcpp](30-build-mcpp.md) 的探针通道。引擎读到的是一个名字、一个关系、一个
 版本;`cuda.driver` 是流过引擎的数据。
 
 凡是错答比不答更贵的地方都只报告不强制:工程里没有规则包的机器没有任何厂商相关的话

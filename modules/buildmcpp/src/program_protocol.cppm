@@ -23,7 +23,7 @@
 // the manifest, the toolchain or the filesystem to be stated would not be a
 // protocol term.
 //
-// See .agents/docs/2026-08-05-build-mcpp-extensibility-architecture.md §4 and
+// See .agents/docs/2026-08-30-build-mcpp-extensibility-architecture.md §4 and
 // .agents/docs/2026-08-11-source-kind-table-and-build-program-timeout.md §4.
 
 export module mcpp.build.program_protocol;

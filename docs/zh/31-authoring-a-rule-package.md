@@ -1,11 +1,11 @@
-# 40 —— 编写规则包
+# 31 —— 编写规则包
 
 规则包教会 mcpp 构建引擎本身没有规则的东西:一种设备语言、一份着色器、一个生成的
 接口、一项检查。它是一个普通的包,它的模块被消费者的构建程序 import。
 
-相关文档:[05 —— build.mcpp](05-build-mcpp.md) 是本章所用指令协议与类型化 API 的
-参考;[04 —— Feature 与能力](04-features-and-capabilities.md) 覆盖 feature 相关键;
-[32 —— 异构硬件构建](32-heterogeneous-builds.md) 列出已发布的规则。两个示例:
+相关文档:[30 —— build.mcpp](30-build-mcpp.md) 是本章所用指令协议与类型化 API 的
+参考;[05 —— Feature 与能力](05-features-and-capabilities.md) 覆盖 feature 相关键;
+[42 —— 异构硬件构建](42-heterogeneous-builds.md) 列出已发布的规则。两个示例:
 [`08-build-rules`](../../examples/08-build-rules/) 是做检查与嵌入的规则,
 [`12-a-new-device-language`](../../examples/12-a-new-device-language/) 是新增一门
 语言的规则。
@@ -152,7 +152,7 @@ device link 在引擎侧的全部内容:N 个 `artifact` action,其输出不进�
 都不开。
 
 裸版本是项目可以覆盖的**选择**;`>=` 是项目不得低于的**要求**。见
-[02 —— mcpp.toml](02-mcpp-toml.md) 的*一个包,一个版本*。
+[03 —— mcpp.toml](03-mcpp-toml.md) 的*一个包,一个版本*。
 
 ## 生成岛的边界
 
@@ -225,4 +225,4 @@ mcpp::floor("cuda.driver", runtime_needs);
 - `mcpp emit xpkg` 把 `manifest = "mcpp.toml"` 写进 `mcpp` 段,而
   `mcpp xpkg parse` 把该键报为未知并以 1 退出。`mcpp-index` 里没有任何描述符使用
   它(218 个里 0 个);自带 `mcpp.toml` 的包整个省略 `mcpp` 字段。见
-  [06 —— 按场景选命令](06-commands-by-scenario.md)的*当前边界*。
+  [08 —— 按场景选命令](08-commands-by-scenario.md)的*当前边界*。

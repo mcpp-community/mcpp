@@ -1,4 +1,4 @@
-# 01 — Examples
+# 02 — Examples
 
 The [`examples/`](../examples) directory is a curriculum. Each project is
 runnable on its own, and each one teaches **one thing no earlier example
@@ -14,7 +14,7 @@ mcpp build && mcpp run
 ```
 
 Every example ships a README that explains only what it adds. Installation and
-toolchain setup live in [00 — Getting Started](00-getting-started.md) and are
+toolchain setup live in [01 — Getting Started](01-getting-started.md) and are
 not repeated.
 
 ## The curriculum
@@ -73,7 +73,7 @@ the map; the table below is what each sub-example adds.
 | [`08-build-rules`](../examples/08-build-rules/) | two rule packages and a project using both; `host-module = true`, `mcpp::action` with `role = "check"` |
 | [`12-a-new-device-language`](../examples/12-a-new-device-language/) | `device_extensions` and `rule_module`: a rule package teaching mcpp a language the engine has never heard of |
 
-[40 — Authoring a Rule Package](40-authoring-a-rule-package.md) is the reference
+[31 — Authoring a Rule Package](31-authoring-a-rule-package.md) is the reference
 these two illustrate.
 
 ## Lessons that arrive as templates
@@ -85,8 +85,8 @@ rather than by mcpp.
 
 | template | lesson | chapter |
 |---|---|---|
-| `riscv-virt-rt` | a bare-metal project, its board support and its runner | [30](30-baremetal.md) |
-| `riscv-virt-rt:nolibc` | the same with no C library | [30](30-baremetal.md) |
+| `riscv-virt-rt` | a bare-metal project, its board support and its runner | [40](40-baremetal.md) |
+| `riscv-virt-rt:nolibc` | the same with no C library | [40](40-baremetal.md) |
 | `ocornut.imgui` | a graphical application with its window and rendering stack | [20](20-toolchains.md) |
 
 ```bash
@@ -100,7 +100,7 @@ last one. A new example is warranted when a capability **changes the shape of a
 project** — the files it contains, the manifest it declares, or the commands its
 author types. A capability that is one line inside a project an example already
 contains belongs in that chapter as a code block; one reached only through a
-command belongs in [06 — Commands by Scenario](06-commands-by-scenario.md).
+command belongs in [08 — Commands by Scenario](08-commands-by-scenario.md).
 
 The README states what the example is the first to teach and the criterion by
 which it is judged to work. For contribution mechanics see

@@ -25,13 +25,13 @@ anything a reader needs is written here or in a specification instead.
 
 | To | Read | Run |
 |---|---|---|
-| write a program | [00](00-getting-started.md), [02](02-mcpp-toml.md) §1 | [`01-hello`](../examples/01-hello/), [`02-with-deps`](../examples/02-with-deps/) |
-| write a library others import | [11](11-publishing-a-library.md), [04](04-features-and-capabilities.md), [02](02-mcpp-toml.md) §2.4 | [`04-workspace`](../examples/04-workspace/), [`11-features`](../examples/11-features/) |
+| write a program | [01](01-getting-started.md), [03](03-mcpp-toml.md) §1 | [`01-hello`](../examples/01-hello/), [`02-with-deps`](../examples/02-with-deps/) |
+| write a library others import | [11](11-publishing-a-library.md), [05](05-features-and-capabilities.md), [03](03-mcpp-toml.md) §2.4 | [`04-workspace`](../examples/04-workspace/), [`11-features`](../examples/11-features/) |
 | publish it | [10](10-pack-and-release.md), [11](11-publishing-a-library.md), [12](12-binary-distribution.md) | [`03-pack-static`](../examples/03-pack-static/), [`05-lib-distribution`](../examples/05-lib-distribution/) |
-| build for another machine | [21](21-the-target-triple.md), [24](24-openkal-cross.md), [30](30-baremetal.md) | [`06-openkal-cross`](../examples/06-openkal-cross/), `mcpp new … --template riscv-virt-rt` |
-| use a GPU or an accelerator | [32](32-heterogeneous-builds.md), [31](31-devices.md) | [`09-heterogeneous`](../examples/09-heterogeneous/), starting at [`boundary/`](../examples/09-heterogeneous/boundary/) |
-| add a rule, a language or a generator | [40](40-authoring-a-rule-package.md), [05](05-build-mcpp.md) | [`08-build-rules`](../examples/08-build-rules/), [`12-a-new-device-language`](../examples/12-a-new-device-language/) |
-| add a package to the index | [11](11-publishing-a-library.md), [SPEC-001](specs/package-identity.md) | [06](06-commands-by-scenario.md) — the publishing scenarios |
+| build for another machine | [21](21-the-target-triple.md), [24](24-openkal-cross.md), [40](40-baremetal.md) | [`06-openkal-cross`](../examples/06-openkal-cross/), `mcpp new … --template riscv-virt-rt` |
+| use a GPU or an accelerator | [42](42-heterogeneous-builds.md), [41](41-devices.md) | [`09-heterogeneous`](../examples/09-heterogeneous/), starting at [`boundary/`](../examples/09-heterogeneous/boundary/) |
+| add a rule, a language or a generator | [31](31-authoring-a-rule-package.md), [30](30-build-mcpp.md) | [`08-build-rules`](../examples/08-build-rules/), [`12-a-new-device-language`](../examples/12-a-new-device-language/) |
+| add a package to the index | [11](11-publishing-a-library.md), [SPEC-001](specs/package-identity.md) | [08](08-commands-by-scenario.md) — the publishing scenarios |
 | change mcpp itself | [90](90-build-from-source.md), [92](92-release.md), [51](51-supported-versions.md) | — |
 
 Lessons also arrive as project templates, which a package ships and `mcpp new
@@ -41,22 +41,25 @@ one names it.
 
 ## Chapters
 
-The number says which part a chapter is in: `0x` uses mcpp, `1x` ships what was
-built, `2x` is toolchains and targets, `3x` is bare metal and devices, `4x`
-extends mcpp, `5x` is the machine-facing contracts, `9x` is mcpp itself. Within
-a part the order is a reading order.
+The first digit is the part, so a number says where a chapter belongs: `0x` is
+what everyone needs, `1x` publishes, `2x` is toolchains and targets, `3x`
+extends the build graph, `4x` is devices and accelerators, `5x` is what a
+program may parse, `9x` is mcpp itself. Within a part the order is a reading
+order, not an alphabet.
 
-### 0x — Using mcpp
+### 0x — Everyone
 
-- [00 — Getting Started](00-getting-started.md)
-- [01 — Examples](01-examples.md)
-- [02 — The mcpp.toml Manifest](02-mcpp-toml.md)
-- [03 — Workspaces](03-workspace.md)
-- [04 — Features and Capabilities](04-features-and-capabilities.md)
-- [05 — Build Programs: `build.mcpp`](05-build-mcpp.md)
-- [06 — Commands by Scenario](06-commands-by-scenario.md)
+- [00 — How mcpp Works](00-how-mcpp-works.md) — the model every other chapter assumes
+- [01 — Getting Started](01-getting-started.md) — install, create, build, run
+- [02 — Examples](02-examples.md) — which example teaches what
+- [03 — The mcpp.toml Manifest](03-mcpp-toml.md) — what a manifest may say
+- [04 — Dependencies and Resolution](04-dependencies.md) — where a dependency comes from, and which version wins
+- [05 — Features and Capabilities](05-features-and-capabilities.md) — making part of a package optional
+- [06 — Workspaces](06-workspace.md) — several packages, one build
+- [07 — Testing](07-testing.md) — including what does not run on this machine
+- [08 — Commands by Scenario](08-commands-by-scenario.md) — the lookup, once the nouns are known
 
-### 1x — Shipping what was built
+### 1x — Publishing
 
 - [10 — Packaging an Application for Release](10-pack-and-release.md)
 - [11 — Publishing a Library to mcpp-index](11-publishing-a-library.md)
@@ -70,22 +73,23 @@ a part the order is a reading order.
 - [23 — The Project Environment](23-the-project-environment.md)
 - [24 — Cross-Compilation Over openkal](24-openkal-cross.md)
 
-### 3x — Bare metal, devices and accelerators
+### 3x — Extending the build graph
 
-- [30 — Bare-Metal and Freestanding Targets](30-baremetal.md)
-- [31 — Reaching a Device](31-devices.md)
-- [32 — Heterogeneous Builds](32-heterogeneous-builds.md)
+- [30 — Build Programs: `build.mcpp`](30-build-mcpp.md) — a project that needs a step mcpp has no rule for
+- [31 — Authoring a Rule Package](31-authoring-a-rule-package.md) — packaging that step for other projects
 
-### 4x — Extending mcpp from outside
+### 4x — Devices and accelerators
 
-- [40 — Authoring a Rule Package](40-authoring-a-rule-package.md)
+- [40 — Bare-Metal and Freestanding Targets](40-baremetal.md)
+- [41 — Reaching a Device](41-devices.md)
+- [42 — Heterogeneous Builds](42-heterogeneous-builds.md)
 
-### 5x — Machine interfaces and compatibility
+### 5x — Contracts for programs
 
 - [50 — Machine-Readable Output](50-machine-output.md)
 - [51 — Supported Versions and Compatibility](51-supported-versions.md)
 
-### 9x — Contributing to mcpp itself
+### 9x — mcpp itself
 
 - [90 — Building from Source and Contributing](90-build-from-source.md)
 - [91 — Toolchain Internals](91-toolchain-internals.md)

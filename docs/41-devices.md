@@ -1,12 +1,12 @@
-# 31 — Reaching a Device
+# 41 — Reaching a Device
 
 This document specifies how mcpp executes an artifact that runs somewhere other
 than the machine that built it, how a package supplies additional ways of
 reaching it, and how a project selects between an emulator and physical
 hardware.
 
-Related documents: [30 — Bare-Metal and Freestanding Targets](30-baremetal.md)
-covers the targets this most often applies to; [05 — build.mcpp](05-build-mcpp.md)
+Related documents: [40 — Bare-Metal and Freestanding Targets](40-baremetal.md)
+covers the targets this most often applies to; [30 — build.mcpp](30-build-mcpp.md)
 is the reference for the directive protocol a package speaks; [50 — Machine
 Output](50-machine-output.md) is the interface a debugger client or IDE uses.
 

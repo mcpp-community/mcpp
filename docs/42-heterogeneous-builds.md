@@ -1,4 +1,4 @@
-# 32 — Heterogeneous Builds
+# 42 — Heterogeneous Builds
 
 GPU and AI accelerator targets, and mixed host/device compilation: how mcpp
 builds device code, and how a prebuilt artifact states which devices it can
@@ -107,7 +107,7 @@ and less clearly.
 The table above is what mcpp knows **without being told**: the languages whose
 support shipped before a package could declare one. A rule package adds to it,
 through `[features].<f>.device_extensions` (see
-[02 — mcpp.toml](02-mcpp-toml.md) §2.8), and that is how a NEW device language
+[03 — mcpp.toml](03-mcpp-toml.md) §2.8), and that is how a NEW device language
 arrives -- with no engine change and no engine release. Slang is the first:
 `.slang` is not in the list above, and `mcpp:plugins`' `rules-slang` declares
 it.
@@ -240,7 +240,7 @@ object rather than in an array, and there is then nothing to take the size of.
 The command that invokes a device compiler is not built into mcpp. It is
 supplied by a **build-rule package**, consumed with `host-module = true`,
 which emits build-graph edges whose outputs join the link. See
-[05 — build.mcpp](05-build-mcpp.md) for the mechanism and
+[30 — build.mcpp](30-build-mcpp.md) for the mechanism and
 `examples/09-heterogeneous/cuda` for a working CUDA rule.
 
 The division is deliberate. mcpp owns the graph, the artifact's identity and
@@ -293,7 +293,7 @@ the machines it will run on:
 The nearer declaration wins, one version is installed, and mcpp says which. A
 pin that does not satisfy the rule's floor is refused naming both sides rather
 than installed alongside it. See *One package, one version* in
-[02 — mcpp.toml](02-mcpp-toml.md) for the full rule;
+[03 — mcpp.toml](03-mcpp-toml.md) for the full rule;
 `examples/09-heterogeneous/multi-backend` is the one example in this repository
 that takes the override path, and every other one writes only the edge.
 
@@ -331,7 +331,7 @@ version is insufficient for CUDA runtime version"*. The rule reads the
 driver's version through the driver's own library (reached through the
 sentinel package, never through `/usr/lib`) and states it as a fact; it states
 the floor its runtime needs; and the engine compares the two before anything
-is compiled -- see the probe channel in [05 — build.mcpp](05-build-mcpp.md).
+is compiled -- see the probe channel in [30 — build.mcpp](30-build-mcpp.md).
 The engine reads a name, a relation and a version; `cuda.driver` is data
 flowing through.
 

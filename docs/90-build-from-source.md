@@ -5,7 +5,7 @@
 
 ## Prerequisites
 
-Follow [00 — Getting Started](00-getting-started.md) to install a working copy of mcpp, then clone the repository:
+Follow [01 — Getting Started](01-getting-started.md) to install a working copy of mcpp, then clone the repository:
 
 ```bash
 git clone https://github.com/mcpp-community/mcpp

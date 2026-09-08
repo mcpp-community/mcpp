@@ -5,7 +5,7 @@
 
 ## 准备
 
-参照 [00 — 快速开始](00-getting-started.md) 安装一份现成的 mcpp,
+参照 [01 — 快速开始](01-getting-started.md) 安装一份现成的 mcpp,
 然后克隆仓库:
 
 ```bash

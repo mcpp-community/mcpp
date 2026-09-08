@@ -530,7 +530,7 @@ The machinery is already arch-parameterized; the work is data:
 ### 7.3 Embedded and bare-metal toolchains
 
 `riscv64-none-elf` and `riscv32-none-elf` are implemented, and the user-facing
-account is [30 — Bare-Metal and Freestanding Targets](30-baremetal.md). This
+account is [40 — Bare-Metal and Freestanding Targets](40-baremetal.md). This
 section records how the resulting shape relates to the hosted model above.
 
 Three of this section's earlier predictions held:

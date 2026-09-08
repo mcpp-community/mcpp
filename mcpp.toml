@@ -13,7 +13,7 @@ repo        = "https://github.com/mcpp-community/mcpp"
 # binary would be -O0. A `--profile`/`--dev`/`--release` flag still overrides.
 default-profile = "release"
 # Split the module edge: importers start when the BMI is published rather than
-# when the compiler exits. See docs/02-mcpp-toml.md.
+# when the compiler exits. See docs/03-mcpp-toml.md.
 #
 # ON HERE, `auto` (= off) EVERYWHERE ELSE. The key stays opt-in until it has been
 # through CI on every platform, and nothing was exercising it, so it could never

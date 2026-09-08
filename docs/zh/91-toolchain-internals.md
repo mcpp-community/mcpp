@@ -432,7 +432,7 @@ loader;`/bin/sh` 有事:它的 `PT_INTERP` 指向**宿主** loader,而且任何�
 ### 7.3 嵌入式与裸机工具链
 
 `riscv64-none-elf` 与 `riscv32-none-elf` 已实现,面向用户的说明见
-[30 — 裸机与 freestanding 目标](30-baremetal.md)。本节记录由此得到的形态与
+[40 — 裸机与 freestanding 目标](40-baremetal.md)。本节记录由此得到的形态与
 上文 hosted 模型之间的关系。
 
 本节早先的三条预测成立:

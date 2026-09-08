@@ -500,7 +500,7 @@ runner  = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
 
 `sysroot = ""` selects the zero-libc tier: no C library on the compile line and
 none on the link. An absent `sysroot` key is a different answer — it inherits
-the target row's own default. See [chapter 13](30-baremetal.md).
+the target row's own default. See [chapter 13](40-baremetal.md).
 
 ## Reference
 

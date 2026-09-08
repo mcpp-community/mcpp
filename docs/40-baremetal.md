@@ -1,12 +1,12 @@
-# 30 — Bare-Metal and Freestanding Targets
+# 40 — Bare-Metal and Freestanding Targets
 
 This document describes how mcpp builds, runs and tests software for targets
 with no operating system underneath, and how a board-support package supplies
 the parts of such a target that the engine deliberately does not know.
 
-Related documents: [02 — mcpp.toml Manifest Guide](02-mcpp-toml.md) §2.7.2 is
-the reference for the `[target.<triple>]` keys used here; [05 — build.mcpp
-Build Program](05-build-mcpp.md) is the reference for the directive protocol a
+Related documents: [03 — mcpp.toml Manifest Guide](03-mcpp-toml.md) §2.7.2 is
+the reference for the `[target.<triple>]` keys used here; [30 — build.mcpp
+Build Program](30-build-mcpp.md) is the reference for the directive protocol a
 board-support package speaks; [91 — Toolchain Internals](91-toolchain-internals.md)
 covers the hosted link model this chapter departs from.
 
@@ -632,7 +632,7 @@ The key is not specific to bare metal. A hosted cross target — an
 `qemu-aarch64-static` in place of the system emulator; on such a target an
 absent runner is not an error until the kernel refuses the artifact. The rules
 for hosted targets, the `--no-runner` escape and the not-run reporting of
-`mcpp test` are in [02 — mcpp.toml](02-mcpp-toml.md), §2.7.3.
+`mcpp test` are in [03 — mcpp.toml](03-mcpp-toml.md), §2.7.3.
 
 ## Writing a board-support package
 
@@ -671,7 +671,7 @@ if (const char* dir = mcpp::xpkg_dir("xim", "qemu-riscv"); dir && *dir) {
 Without that line the build succeeds, configures no runner, and `mcpp run`
 reports a missing runner with advice about writing a `runner` key — true in
 general, and not the cause here. See `mcpp:warning=` in
-[05 — build.mcpp](05-build-mcpp.md).
+[30 — build.mcpp](30-build-mcpp.md).
 
 ### The directives a board-support package emits
 

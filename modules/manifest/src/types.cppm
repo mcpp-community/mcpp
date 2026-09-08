@@ -314,7 +314,7 @@ inline void append(BuildInputs& dst, const BuildInputs& src) {
 // A build-graph node declared by a build program (`mcpp:action=`).
 //
 // The architectural point (see
-// .agents/docs/2026-08-05-build-mcpp-extensibility-architecture.md §3.1):
+// .agents/docs/2026-08-30-build-mcpp-extensibility-architecture.md §3.1):
 // build.mcpp answers "what does this build look like" — CONFIGURATION — and is
 // a bad place to do WORK. Generating sources, linting, signing and packaging
 // are work: they want to be incremental, parallel and attributable, which a
@@ -1263,7 +1263,7 @@ struct WorkspaceConfig {
 // `[hooks]` — project build lifecycle commands (#496).
 //
 // The commands are host-shell strings written by the project author, run by
-// `mcpp build` around the build it performs. See docs/02-mcpp-toml.md §2.16.
+// `mcpp build` around the build it performs. See docs/03-mcpp-toml.md §2.16.
 //
 // ONLY THE ROOT PROJECT'S HOOKS ARE EVER RUN. Every manifest mcpp parses
 // carries this field, including a DEPENDENCY's — and `mcpp build` reaches the

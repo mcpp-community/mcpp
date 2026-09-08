@@ -89,7 +89,7 @@ SubOS 里。前置让被声明的环境成为默认答案;其余的仍在它后�
 
 工程与依赖命名**同一个包**时,只装它的一个版本:身份是 `(namespace, name)`,版本是这个
 包上的约束。离产物更近的声明赢,并且覆盖会被报出来;不满足对方所陈述之要求的钉会被拒绝
-并点出两侧。见 [02 — mcpp.toml](02-mcpp-toml.md) 的「一个包一个版本」。
+并点出两侧。见 [03 — mcpp.toml](03-mcpp-toml.md) 的「一个包一个版本」。
 
 ## 4. 只读取环境,从不创建环境
 
@@ -138,7 +138,7 @@ create/bootstrap that environment instead of falling back to active/default
 见本章。不写档位就是从前的行为。
 
 **runner。** `[xlings.workspace]` 下的程序也是 `[target.<triple>].runner` 查找其第一个元素
-的首选位置,在 `PATH` 之前([02 §2.7.3](02-mcpp-toml.md))。两个键合起来,在 CI 宿主上供给用户态模拟器,
+的首选位置,在 `PATH` 之前([03 §2.7.3](03-mcpp-toml.md))。两个键合起来,在 CI 宿主上供给用户态模拟器,
 并通过它执行交叉构建的产物,而清单不必写出载荷的路径。
 
 ## 6. 什么该写在别处
@@ -423,8 +423,8 @@ error: `xim:cuda-nvcc` is pinned to 12.0.0 by this project, and mcpp:plugins
 
 ## 8. 相关章节
 
-- [05 - build.mcpp](05-build-mcpp.md) —— 构建程序收到的契约,含它运行时的
+- [30 - build.mcpp](30-build-mcpp.md) —— 构建程序收到的契约,含它运行时的
   `PATH`。
 - [91 - 工具链内部](91-toolchain-internals.md) —— 运行时选择、`RuntimeBinding`
   快照与降级规则。
-- [02 - mcpp.toml](02-mcpp-toml.md) —— manifest 的其余部分。
+- [03 - mcpp.toml](03-mcpp-toml.md) —— manifest 的其余部分。

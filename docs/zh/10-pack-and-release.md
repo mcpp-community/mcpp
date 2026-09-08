@@ -55,7 +55,7 @@ mcpp 之所以针对私有 glibc 构建,正是为了让产物的行为不取决�
 
 「自包含」有一个下限。有些库只能来自目标机器:图形驱动的用户态部分与正在运行的
 内核模块版本绑定,而对专有栈而言,再分发是不被允许的。这类依赖应声明为运行期能力
-需求(`docs/zh/02-mcpp-toml.md` §2.11),模式表随之多出一列:
+需求(`docs/zh/03-mcpp-toml.md` §2.11),模式表随之多出一列:
 
 | Mode | 需要宿主提供能力的程序 |
 |---|---|
@@ -270,7 +270,7 @@ Win32 loader 解析 DLL 的第一顺位就是**可执行文件所在目录**,而
 
 `vcruntime140.dll` / `msvcp140.dll` **不是** Windows 自己的:它们属于 MSVC
 toolset,就像 `libstdc++.so` 属于 gcc。它们要不要跟着产物走,由 `cxx_runtime`
-决定(见 `docs/zh/02-mcpp-toml.md`),不由这张表决定 —— 而 `mcpp pack` 会拒绝
+决定(见 `docs/zh/03-mcpp-toml.md`),不由这张表决定 —— 而 `mcpp pack` 会拒绝
 那些无法兑现契约的组合:
 
 ```

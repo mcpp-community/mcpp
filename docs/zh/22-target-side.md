@@ -290,7 +290,7 @@ mcpp 不认识的键 —— 打错的字,或来自更新版本 mcpp 的谓词 �
 |---|---|---|
 | **裸 OS 别名** | 单个 OS / 族 —— 简洁且常用的形式 | `[target.windows]`、`[target.unix]` |
 | **`cfg(...)` 谓词** | 复合条件(arch / env / 组合子) | `[target.'cfg(all(linux, not(arch = "aarch64")))']` |
-| **精确三元组** | 某个具体目标(同时承载 `toolchain` / `linkage` / `sysroot` / `runner`,见 [02 §2.7.3](02-mcpp-toml.md)) | `[target.x86_64-linux-musl]` |
+| **精确三元组** | 某个具体目标(同时承载 `toolchain` / `linkage` / `sysroot` / `runner`,见 [03 §2.7.3](03-mcpp-toml.md)) | `[target.x86_64-linux-musl]` |
 
 一个选择器可以承载平台条件的**依赖**与**构建 flag**:
 
@@ -312,7 +312,7 @@ cxxflags = ["-march=x86-64-v2"]
 单个 OS/族用裸形式,arch/env 条件与组合子用 `cfg(...)`。
 
 - **可用键**:`dependencies` / `dev-dependencies` / `build-dependencies` /
-  `feature-deps.<feature>`(mcpp 2026.8.6.2+ —— 见 [05 —— build.mcpp](05-build-mcpp.md);feature 本身无条件注册,
+  `feature-deps.<feature>`(mcpp 2026.8.6.2+ —— 见 [30 —— build.mcpp](30-build-mcpp.md);feature 本身无条件注册,
   只有它的依赖集合受限定),以及带 `cflags` / `cxxflags` / `ldflags` / `sources`
   的 `build`(mcpp 0.0.95+ —— 条件源码 glob,例如把 `src/x86/**/*.asm` 收在
   `cfg(arch = "x86_64")` 之后;`!` 排除 glob 在此同样有效),再加 `flags` 与
@@ -393,4 +393,4 @@ mcpp 装上的那个载荷,而这个值是目标侧解析的一项**输入** —
 C 库,那时解析出的 `c-abi` 就不是这里返回的东西。要按已解析的层分支,请用层谓词:
 `[target.'cfg(c-abi = "musl")'.build]`(见[22 —— 目标侧](22-target-side.md))。
 这一段在 2026.9.1.1 之前写的是「解析到的是哪份 C 库」,那是两者里错的那一个。
-参见[30 —— 裸机与 freestanding 目标](30-baremetal.md)。
+参见[40 —— 裸机与 freestanding 目标](40-baremetal.md)。

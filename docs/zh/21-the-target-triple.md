@@ -450,7 +450,7 @@ runner  = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
 
 `sysroot = ""` 选定零 libc 档:编译行上没有 C 库,链接上也没有。
 **缺席 `sysroot` 键是另一个答案** —— 它继承该目标行自己的默认值。
-见[第 13 章](30-baremetal.md)。
+见[第 13 章](40-baremetal.md)。
 
 ## 参考
 

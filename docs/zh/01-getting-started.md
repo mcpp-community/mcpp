@@ -1,4 +1,4 @@
-# 00 —— 快速开始
+# 01 —— 快速开始
 
 > 5 分钟完成 install → new → build → run → pack 全流程。
 
@@ -154,7 +154,7 @@ linux 1019s、windows 1289s)。给它一个默认上限会把「慢但正确」�
 `mcpp build` 将自动从
 [mcpp-index](https://github.com/mcpplibs/mcpp-index) 解析 SemVer
 约束、拉取源码并加入编译图。完整示例参见
-[01 — 示例项目](01-examples.md) 中的 `02-with-deps`。
+[02 — 示例项目](02-examples.md) 中的 `02-with-deps`。
 
 ## 生成发布包
 
@@ -171,7 +171,7 @@ mcpp pack --mode self-contained    # 打包 loader、libc 与依赖
 
 ## 后续阅读
 
-- [01 — 示例项目](01-examples.md) — 可直接运行的最小工程集合
+- [02 — 示例项目](02-examples.md) — 可直接运行的最小工程集合
 - [10 — 发布打包](10-pack-and-release.md) — 构建可分发产物
 - [20 — 工具链管理](20-toolchains.md) — 切换编译器与多版本管理
 - 任意命令的完整选项可通过 `mcpp <cmd> --help` 查阅

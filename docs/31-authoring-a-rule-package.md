@@ -1,13 +1,13 @@
-# 40 — Authoring a Rule Package
+# 31 — Authoring a Rule Package
 
 A rule package teaches mcpp to build something the engine has no rule for: a
 device language, a shader, a generated interface, a check. It is an ordinary
 package whose module a consumer's build program imports.
 
-Related documents: [05 — build.mcpp](05-build-mcpp.md) is the reference for the
-directive protocol and the typed API this chapter uses; [04 — Features and
-Capabilities](04-features-and-capabilities.md) covers the feature keys;
-[32 — Heterogeneous Builds](32-heterogeneous-builds.md) is where the shipped
+Related documents: [30 — build.mcpp](30-build-mcpp.md) is the reference for the
+directive protocol and the typed API this chapter uses; [05 — Features and
+Capabilities](05-features-and-capabilities.md) covers the feature keys;
+[42 — Heterogeneous Builds](42-heterogeneous-builds.md) is where the shipped
 rules are listed. Two examples:
 [`08-build-rules`](../examples/08-build-rules/) for a rule that checks and
 embeds, [`12-a-new-device-language`](../examples/12-a-new-device-language/) for
@@ -166,7 +166,7 @@ neither.
 
 A bare version is a **choice** a project may override; `>=` is a
 **requirement** a project may not go below. See *One package, one version* in
-[02 — mcpp.toml](02-mcpp-toml.md).
+[03 — mcpp.toml](03-mcpp-toml.md).
 
 ## Generating an island's boundary
 
@@ -247,4 +247,4 @@ path.
   `mcpp xpkg parse` reports that key as unknown and exits 1. No descriptor in
   `mcpp-index` uses it (0 of 218); a package keeping its own `mcpp.toml` omits
   the `mcpp` field entirely. See *Current limitations* in
-  [06 — Commands by Scenario](06-commands-by-scenario.md).
+  [08 — Commands by Scenario](08-commands-by-scenario.md).

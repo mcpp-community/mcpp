@@ -1,4 +1,4 @@
-# 00 — Getting Started
+# 01 — Getting Started
 
 > Go from install → new → build → run → pack in 5 minutes.
 
@@ -168,7 +168,7 @@ Declare dependencies in `mcpp.toml`:
 `mcpp build` automatically resolves SemVer constraints against the
 [mcpp-index](https://github.com/mcpplibs/mcpp-index), fetches the source,
 and adds it to the build graph. For a complete example, see `02-with-deps` in
-[01 — Examples](01-examples.md).
+[02 — Examples](02-examples.md).
 
 ## Producing a Release Package
 
@@ -185,7 +185,7 @@ For the differences between the four modes and their artifact layouts, see [10 �
 
 ## Further Reading
 
-- [01 — Examples](01-examples.md) — a collection of ready-to-run minimal projects
+- [02 — Examples](02-examples.md) — a collection of ready-to-run minimal projects
 - [10 — Packaging and Release](10-pack-and-release.md) — building distributable artifacts
 - [20 — Toolchain Management](20-toolchains.md) — switching compilers and managing multiple versions
 - The full set of options for any command is available via `mcpp <cmd> --help`

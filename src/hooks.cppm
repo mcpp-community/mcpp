@@ -3,7 +3,7 @@
 // EXPERIMENTAL. A hook cannot currently change whether a build succeeded:
 // every failure is a warning, and `side_effect = true` is refused by the
 // manifest parser. Only the ROOT project's hooks are ever run — a dependency's
-// `[hooks]` is inert. See docs/02-mcpp-toml.md §2.16.
+// `[hooks]` is inert. See docs/03-mcpp-toml.md §2.16.
 //
 // The CONFIGURATION is not parsed here: `[hooks]` is a section of mcpp.toml
 // and mcpp.toml has one parser (mcpp.manifest). What lives here is the part

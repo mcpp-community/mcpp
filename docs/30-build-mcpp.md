@@ -1,6 +1,6 @@
-# 05 — Build Programs: `build.mcpp`
+# 30 — Build Programs: `build.mcpp`
 
-**English** | [简体中文](zh/05-build-mcpp.md)
+**English** | [简体中文](zh/30-build-mcpp.md)
 
 Most projects need nothing more than `mcpp.toml`. When build-time logic is required —
 probe the host, generate a source, decide a flag from the environment — put a
@@ -345,7 +345,7 @@ could not state a floor and every project repeated its rule's package list.
 version this build actually installed rather than the one the local manifest
 wrote. One package means one version: where a project and a rule both name it,
 the declaration nearer the artifact wins and both sides are told the same
-answer. See *One package, one version* in [02 — mcpp.toml](02-mcpp-toml.md).
+answer. See *One package, one version* in [03 — mcpp.toml](03-mcpp-toml.md).
 
 **`[feature-xlings.<f>]` is answered too, while `<f>` is active**
 *(2026.9.6.2+)*. That table has provisioned its packages since it existed --
@@ -524,7 +524,7 @@ link the command would never run and the build would say nothing.
 > should not be used for anything the build produces: ldflags is a flat string
 > in the link command, not a file in the graph, so nothing tracks it and editing
 > it reports `ninja: no work to do`. For Windows resources specifically, use
-> [`[resources]`](02-mcpp-toml.md) —
+> [`[resources]`](03-mcpp-toml.md) —
 > `object` is the escape hatch for everything else.
 
 **You must name the output files.** mcpp fixes the source set, the fingerprint
@@ -712,7 +712,7 @@ and when to want one; `examples/07-project-subos/` is a working project.
 A rule — "run protoc over these `.proto` files", "run clang-tidy over these
 sources" — belongs in a package, not copy-pasted into every consumer's
 `build.mcpp`. The mechanism is
-[`host-module = true`](02-mcpp-toml.md); this section is about the shape of
+[`host-module = true`](03-mcpp-toml.md); this section is about the shape of
 what goes inside.
 
 The guidance below generalises from `mcpplibs.grpcgen`, the first such package,
@@ -764,7 +764,7 @@ under the package name, so `export module mcpp.rules.spirv;` is what a consumer
 then imports. Official plugins live in one package, `mcpp:plugins` (repository
 `mcpp-community/mcpp-plugins`): rule packages are named `mcpp.rules.<x>`,
 build-time utilities `mcpp.tools.<x>`, and each member is selected by a feature
-of that package (see [`host-module = true`](02-mcpp-toml.md)). `mcpp.build.*`
+of that package (see [`host-module = true`](03-mcpp-toml.md)). `mcpp.build.*`
 is the engine's own module family and is not used for plugins. The engine
 cannot tell who is official, so it keys the check on the package *namespace*
 and warns when the two disagree —
@@ -892,7 +892,7 @@ When nothing changed the output is `build.mcpp up to date (cached)`; otherwise
   `mcpp build --target <triple>` the program is compiled with a host-resolved
   toolchain, runs on the host, and sees `MCPP_TARGET` = the cross triple.
   For purely declarative target gating, `[target.'cfg(...)']` tables remain
-  the first choice — see [02 - mcpp.toml Manifest Guide](02-mcpp-toml.md).
+  the first choice — see [03 - mcpp.toml Manifest Guide](03-mcpp-toml.md).
 - **CWD is the project root**, so relative paths (`src/generated.cpp`) land where
   expected.
 - A non-zero exit from `build.mcpp` aborts the build and prints its output.
@@ -957,7 +957,7 @@ grpc     = { version = "1.83.0", tools = ["grpc_cpp_plugin"] }
 Each name must be a `kind = "bin"` target of that package. mcpp builds it **for
 the build machine** and hands `build.mcpp` its absolute path as
 `MCPP_DEP_<PKG>_BIN_<TOOL>` — read it with `mcpp::dep_bin("protobuf", "protoc")`
-(see [05 — build.mcpp](05-build-mcpp.md)).
+(see [30 — build.mcpp](30-build-mcpp.md)).
 
 Four properties worth knowing:
 
@@ -1079,7 +1079,7 @@ plugins = { version = "0.3.0", features = ["rules-spirv"], host-module = true }
 ```
 
 **`[build-dependencies]`, not `[dependencies]`** — a rule package is the case
-[02 §2.6.1](02-mcpp-toml.md) describes exactly: its library must never reach the target while its
+[03 §2.6.1](03-mcpp-toml.md) describes exactly: its library must never reach the target while its
 rule is still wanted. The two axes are separate, so `host-module = true` says
 *which build-time product* is wanted and the section says *whether the package
 reaches the target*; a rule package answers "no" on the second axis, and the

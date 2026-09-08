@@ -110,7 +110,7 @@ Where a project and a dependency name **one package**, one version of it is
 installed: identity is `(namespace, name)` and the version is a constraint on
 it. The declaration nearer the artifact wins and the override is reported;
 a pin that fails a requirement the other side stated is refused naming both.
-See *One package, one version* in [02 — mcpp.toml](02-mcpp-toml.md).
+See *One package, one version* in [03 — mcpp.toml](03-mcpp-toml.md).
 
 ## 4. Reading an environment, never creating one
 
@@ -175,7 +175,7 @@ downloaded: this chapter. Omitting the tier is the historical behaviour.
 
 **The runner.** A program under `[xlings.workspace]` is also where
 `[target.<triple>].runner` looks first for its first element, before `PATH`
-([02 §2.7.3](02-mcpp-toml.md)). The two keys together provision a user-mode emulator on a
+([03 §2.7.3](03-mcpp-toml.md)). The two keys together provision a user-mode emulator on a
 CI host and execute a cross-built artifact through it, without the manifest
 naming the payload's path.
 
@@ -509,8 +509,8 @@ used it.
 
 ## 8. Related chapters
 
-- [05 - build.mcpp](05-build-mcpp.md) — the contract a build program receives,
+- [30 - build.mcpp](30-build-mcpp.md) — the contract a build program receives,
   including the `PATH` it runs with.
 - [91 - Toolchain Internals](91-toolchain-internals.md) — runtime selection,
   the `RuntimeBinding` snapshot, and the degradation rules.
-- [02 - mcpp.toml](02-mcpp-toml.md) — the rest of the manifest.
+- [03 - mcpp.toml](03-mcpp-toml.md) — the rest of the manifest.

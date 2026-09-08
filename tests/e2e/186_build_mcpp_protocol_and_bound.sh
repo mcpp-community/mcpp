@@ -16,7 +16,7 @@
 #   * run bound  — a build program that hangs used to hang the whole build with
 #                  no diagnostic at all.
 #
-# See .agents/docs/2026-08-05-build-mcpp-extensibility-architecture.md §4.
+# See .agents/docs/2026-08-30-build-mcpp-extensibility-architecture.md §4.
 set -e
 
 TMP=$(mktemp -d)

@@ -22,13 +22,13 @@
 
 | 目标 | 阅读 | 运行 |
 |---|---|---|
-| 写一个程序 | [00](00-getting-started.md)、[02](02-mcpp-toml.md) §1 | [`01-hello`](../../examples/01-hello/)、[`02-with-deps`](../../examples/02-with-deps/) |
-| 写一个供他人 import 的库 | [11](11-publishing-a-library.md)、[04](04-features-and-capabilities.md)、[02](02-mcpp-toml.md) §2.4 | [`04-workspace`](../../examples/04-workspace/)、[`11-features`](../../examples/11-features/) |
+| 写一个程序 | [01](01-getting-started.md)、[03](03-mcpp-toml.md) §1 | [`01-hello`](../../examples/01-hello/)、[`02-with-deps`](../../examples/02-with-deps/) |
+| 写一个供他人 import 的库 | [11](11-publishing-a-library.md)、[05](05-features-and-capabilities.md)、[03](03-mcpp-toml.md) §2.4 | [`04-workspace`](../../examples/04-workspace/)、[`11-features`](../../examples/11-features/) |
 | 发布它 | [10](10-pack-and-release.md)、[11](11-publishing-a-library.md)、[12](12-binary-distribution.md) | [`03-pack-static`](../../examples/03-pack-static/)、[`05-lib-distribution`](../../examples/05-lib-distribution/) |
-| 为另一台机器构建 | [21](21-the-target-triple.md)、[24](24-openkal-cross.md)、[30](30-baremetal.md) | [`06-openkal-cross`](../../examples/06-openkal-cross/)、`mcpp new … --template riscv-virt-rt` |
-| 使用 GPU 或加速器 | [32](32-heterogeneous-builds.md)、[31](31-devices.md) | [`09-heterogeneous`](../../examples/09-heterogeneous/),从 [`boundary/`](../../examples/09-heterogeneous/boundary/) 开始 |
-| 增加一条规则、一种语言或一个生成器 | [40](40-authoring-a-rule-package.md)、[05](05-build-mcpp.md) | [`08-build-rules`](../../examples/08-build-rules/)、[`12-a-new-device-language`](../../examples/12-a-new-device-language/) |
-| 向索引添加一个包 | [11](11-publishing-a-library.md)、[SPEC-001](../specs/package-identity.md) | [06](06-commands-by-scenario.md) —— 发布相关场景 |
+| 为另一台机器构建 | [21](21-the-target-triple.md)、[24](24-openkal-cross.md)、[40](40-baremetal.md) | [`06-openkal-cross`](../../examples/06-openkal-cross/)、`mcpp new … --template riscv-virt-rt` |
+| 使用 GPU 或加速器 | [42](42-heterogeneous-builds.md)、[41](41-devices.md) | [`09-heterogeneous`](../../examples/09-heterogeneous/),从 [`boundary/`](../../examples/09-heterogeneous/boundary/) 开始 |
+| 增加一条规则、一种语言或一个生成器 | [31](31-authoring-a-rule-package.md)、[30](30-build-mcpp.md) | [`08-build-rules`](../../examples/08-build-rules/)、[`12-a-new-device-language`](../../examples/12-a-new-device-language/) |
+| 向索引添加一个包 | [11](11-publishing-a-library.md)、[SPEC-001](../specs/package-identity.md) | [08](08-commands-by-scenario.md) —— 发布相关场景 |
 | 修改 mcpp 本身 | [90](90-build-from-source.md)、[92](92-release.md)、[51](51-supported-versions.md) | — |
 
 课程也可以以**项目模板**的形式到达:模板由包提供,`mcpp new --template` 实例化
@@ -37,21 +37,23 @@
 
 ## 章节
 
-编号说明这一章属于哪一部分:`0x` 使用 mcpp,`1x` 发布构建产物,`2x` 工具链与目标,
-`3x` 裸机与设备,`4x` 扩展 mcpp,`5x` 面向机器的契约,`9x` mcpp 自身。同一部分内部
-的排列是阅读顺序。
+首位数字就是部分,所以编号本身说明一章属于哪里:`0x` 是人人都需要的,`1x` 发布,
+`2x` 工具链与目标,`3x` 扩展构建图,`4x` 设备与加速器,`5x` 是程序可以解析的东西,
+`9x` 是 mcpp 自身。同一部分内部的排列是阅读顺序,不是字母序。
 
-### 0x —— 使用 mcpp
+### 0x —— 人人都需要
 
-- [00 —— 快速开始](00-getting-started.md)
-- [01 —— 示例项目](01-examples.md)
-- [02 —— mcpp.toml 工程文件指南](02-mcpp-toml.md)
-- [03 —— 工作空间](03-workspace.md)
-- [04 —— Feature 与能力](04-features-and-capabilities.md)
-- [05 —— 构建程序:`build.mcpp`](05-build-mcpp.md)
-- [06 —— 按场景选命令](06-commands-by-scenario.md)
+- [00 —— mcpp 的运转方式](00-how-mcpp-works.md) —— 其余每章都假定的模型
+- [01 —— 快速开始](01-getting-started.md) —— 安装、创建、构建、运行
+- [02 —— 示例项目](02-examples.md) —— 哪个示例教什么
+- [03 —— mcpp.toml 工程文件指南](03-mcpp-toml.md) —— manifest 可以说什么
+- [04 —— 依赖与解析](04-dependencies.md) —— 依赖从哪里来,以及哪个版本胜出
+- [05 —— Feature 与能力](05-features-and-capabilities.md) —— 让包的一部分成为可选
+- [06 —— 工作空间](06-workspace.md) —— 多个包,一次构建
+- [07 —— 测试](07-testing.md) —— 包括在本机跑不了的那些
+- [08 —— 按场景选命令](08-commands-by-scenario.md) —— 认识名词之后的查阅入口
 
-### 1x —— 发布构建产物
+### 1x —— 发布
 
 - [10 —— 发布打包](10-pack-and-release.md)
 - [11 —— 发布一个库到 mcpp-index](11-publishing-a-library.md)
@@ -65,22 +67,23 @@
 - [23 —— 项目环境](23-the-project-environment.md)
 - [24 —— 基于 openkal 的交叉构建](24-openkal-cross.md)
 
-### 3x —— 裸机、设备与加速器
+### 3x —— 扩展构建图
 
-- [30 —— 裸机与 freestanding 目标](30-baremetal.md)
-- [31 —— 抵达一台设备](31-devices.md)
-- [32 —— 异构硬件构建](32-heterogeneous-builds.md)
+- [30 —— 构建程序:`build.mcpp`](30-build-mcpp.md) —— 工程需要一步 mcpp 没有规则的工作
+- [31 —— 编写规则包](31-authoring-a-rule-package.md) —— 把那一步打包给别的工程用
 
-### 4x —— 从外部扩展 mcpp
+### 4x —— 设备与加速器
 
-- [40 —— 编写规则包](40-authoring-a-rule-package.md)
+- [40 —— 裸机与 freestanding 目标](40-baremetal.md)
+- [41 —— 抵达一台设备](41-devices.md)
+- [42 —— 异构硬件构建](42-heterogeneous-builds.md)
 
-### 5x —— 机器接口与兼容性
+### 5x —— 面向程序的契约
 
 - [50 —— 机器可读输出](50-machine-output.md)
 - [51 —— 受支持的版本与兼容性](51-supported-versions.md)
 
-### 9x —— 为 mcpp 本身做贡献
+### 9x —— mcpp 自身
 
 - [90 —— 从源码构建与参与贡献](90-build-from-source.md)
 - [91 —— 工具链机制内幕](91-toolchain-internals.md)

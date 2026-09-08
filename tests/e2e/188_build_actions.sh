@@ -22,7 +22,7 @@
 #
 # Also: a malformed action is refused rather than silently skipped.
 #
-# See .agents/docs/2026-08-05-build-mcpp-extensibility-architecture.md §3.1.
+# See .agents/docs/2026-08-30-build-mcpp-extensibility-architecture.md §3.1.
 set -e
 
 TMP=$(mktemp -d)

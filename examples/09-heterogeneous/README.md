@@ -105,7 +105,7 @@ plugins = { version = "0.4.0", features = ["rules-cuda", "tools-island"], host-m
 `multi-backend/` is the one example here that also pins a version, and it does
 so to demonstrate the override: the rule owns "which package, and no older than
 what", the project owns "and exactly this one". One version is installed either
-way — see *One package, one version* in `docs/02-mcpp-toml.md`.
+way — see *One package, one version* in `docs/03-mcpp-toml.md`.
 
 ## The layers underneath
 
@@ -152,6 +152,6 @@ The examples show the shape mcpp implements: device code in separate
 translation units, compiled by a separate compiler, linked into an ordinary
 program. Models that compile a whole target with an offloading compiler —
 OpenMP `target`, C++ parallel algorithms with a device backend — have no
-separable island and are not reached this way. `docs/32-heterogeneous-builds.md`
+separable island and are not reached this way. `docs/42-heterogeneous-builds.md`
 states the distinction and why it is a property of the model rather than a gap
 in the tool.

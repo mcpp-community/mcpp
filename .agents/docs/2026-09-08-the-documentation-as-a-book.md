@@ -91,6 +91,24 @@ A fourth rule governs the sequence rather than a chapter:
 **R4 — A part is a reader's arc, and its order is the order that reader needs
 it in.** Not alphabetical, not chronological by when the feature shipped.
 
+Two more govern how a section is written, and both are about not handing the
+reader a decision that the design already made:
+
+**R5 — One recommended path in the body; every other spelling in a
+`<details>`.** mcpp supports more than one way to say many things, and it has a
+style and a semantics of its own, so there is always a default. The body carries
+that one. Legacy spellings, escape hatches and platform-specific forms fold
+away. The criterion: a reader who reads only the body and opens nothing can do
+the thing correctly without choosing. Folding a form away is not deprecation;
+deprecation is said in words.
+
+**R6 — An increment is marked beside itself.** A key, flag or behaviour added
+later carries its version floor on its own line (`2026.9.6.5+`), not at the top
+of the chapter and never as "it used to be X".
+
+All six are recorded in `.agents/skills/mcpp-docs-style` so they outlive this
+batch.
+
 ---
 
 ## 3. The model the book teaches, stated once

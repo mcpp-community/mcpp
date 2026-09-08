@@ -1,4 +1,4 @@
-# 06 — Commands by Scenario
+# 08 — Commands by Scenario
 
 The command reference is `mcpp --help`, and each subcommand carries its own
 `--help`. This chapter answers a different question: which command applies to a
@@ -7,7 +7,7 @@ resolution nobody expected, a descriptor about to be published, an index that
 may be stale. The commands collected here are the ones whose name does not
 announce the situation they belong to.
 
-Related documents: [00 — Getting Started](00-getting-started.md) for the
+Related documents: [01 — Getting Started](01-getting-started.md) for the
 everyday build/test loop, [20 — Toolchain Management](20-toolchains.md),
 [11 — Publishing a Library](11-publishing-a-library.md),
 [50 — Machine-Readable Output](50-machine-output.md).
@@ -334,7 +334,7 @@ outside 1–86400, a key offered to the wrong interval — is a manifest error.
 > **A hook is code, and `mcpp.toml` is part of the repository.** Building a
 > freshly cloned project runs whatever its `[hooks]` say, with the privileges
 > of whoever invoked `mcpp build`. This is the same trust `build.mcpp` already
-> asks for ([05 — build.mcpp](05-build-mcpp.md)); `[hooks]` widens its reach
+> asks for ([30 — build.mcpp](30-build-mcpp.md)); `[hooks]` widens its reach
 > rather than introducing it.
 
 Hook programs can be installed as ordinary xlings dependencies. For example,

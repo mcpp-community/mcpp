@@ -33,7 +33,7 @@
 // Scope a field means the next directive cannot be added without someone
 // answering that question.
 //
-// See .agents/docs/2026-08-05-build-mcpp-extensibility-architecture.md §4 (S5).
+// See .agents/docs/2026-08-30-build-mcpp-extensibility-architecture.md §4 (S5).
 
 export module mcpp.build.directives;
 

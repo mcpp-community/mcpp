@@ -1,10 +1,10 @@
-# 30 —— 裸机与 freestanding 目标
+# 40 —— 裸机与 freestanding 目标
 
 本文说明 mcpp 如何为没有操作系统的目标构建、运行与测试软件,以及板级支持包如何
 提供引擎刻意不去掌握的那部分目标事实。
 
-相关文档:[02 — mcpp.toml 清单指南](02-mcpp-toml.md) §2.7.2 是本文使用的
-`[target.<triple>]` 各键的参考;[05 — build.mcpp 构建程序](05-build-mcpp.md)
+相关文档:[03 — mcpp.toml 清单指南](03-mcpp-toml.md) §2.7.2 是本文使用的
+`[target.<triple>]` 各键的参考;[30 — build.mcpp 构建程序](30-build-mcpp.md)
 是板级支持包所用指令协议的参考;[91 — 工具链内部机制](91-toolchain-internals.md)
 描述了本文所偏离的宿主链接模型。
 
@@ -558,7 +558,7 @@ error: no runner is configured for 'riscv64-none-elf' — a freestanding artifac
 这个键不限于裸机。hosted 交叉目标 —— x86_64 宿主上的 `aarch64-linux-musl` 产物 ——
 使用同一个 `[target.<triple>].runner`,以 `qemu-aarch64-static` 这类用户态模拟器代替
 系统模拟器;在这类目标上,缺少 runner 在内核拒绝产物之前不是错误。hosted 目标的规则、
-`--no-runner` 出口与 `mcpp test` 的未运行报告见 [02 —— mcpp.toml](02-mcpp-toml.md)
+`--no-runner` 出口与 `mcpp test` 的未运行报告见 [03 —— mcpp.toml](03-mcpp-toml.md)
 §2.7.3。
 
 ## 编写板级支持包
@@ -591,7 +591,7 @@ if (const char* dir = mcpp::xpkg_dir("xim", "qemu-riscv"); dir && *dir) {
 ```
 
 没有那一行,构建会成功、不配置 runner,而 `mcpp run` 报告缺少 runner 并建议写一个
-`runner` 键 —— 这句话一般情况下对,在这里不对。见 [05 —— build.mcpp](05-build-mcpp.md)
+`runner` 键 —— 这句话一般情况下对,在这里不对。见 [30 —— build.mcpp](30-build-mcpp.md)
 的 `mcpp:warning=`。
 
 ### 板级支持包发出的指令

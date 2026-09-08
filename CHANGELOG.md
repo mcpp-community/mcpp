@@ -596,7 +596,7 @@ e2e 616 是双向的,而单向的那一半不值得跑:「列出的路径都存�
 通过,「盘上的示例都被列出」在一份把一半链接指错地方的文档上通过。两条合起来才是那条性质。
 
 它当场抓到一个既有缺口:`examples/04-workspace`、`05-lib-distribution`、
-`06-openkal-cross`、`07-project-subos` 都在盘上,而中英两份 `docs/01-examples.md`
+`06-openkal-cross`、`07-project-subos` 都在盘上,而中英两份 `docs/02-examples.md`
 一个都没列。现在列上了。
 
 这是结构判据,它自己也这么说:它不构建任何东西,所以回答不了「这个示例还能不能跑」。
@@ -677,7 +677,7 @@ C++20 modules 的第二个编译器(icpx,或带 SYCL 前端的 clang)。
 配套的规则包在 `mcpp:plugins` 0.2.0:`mcpp.rules.sycl` 驱动 `xim:dpcpp` 载荷,
 `mcpp.rules.hip` 在 NVIDIA 平台上把 HIP 当作 CUDA 运行时之上的一层头文件,
 `mcpp.rules.spirv` 增加 `glslc` 路线(`xim:shaderc` 使它从一句声明变成一条路线)。
-文档见 `docs/32-heterogeneous-builds.md` 的「lanes」一节。
+文档见 `docs/42-heterogeneous-builds.md` 的「lanes」一节。
 
 ### `mcpp clean --stale`:只清 target/ 里已无构建使用的指纹目录 (#565)
 
@@ -779,7 +779,7 @@ e2e 610 分别断言这五条(含 `mcpp` 命名空间零告警、其他命名空
 文件的相反的话。
 
 表因此扩到「由另一个编译器消费的语言」:CUDA 与 HIP,GLSL 的各个 stage 与无 stage 的
-`.glsl`,HLSL,OpenCL C,Metal。共 18 个扩展名,完整清单见 `docs/32-heterogeneous-builds.md`。
+`.glsl`,HLSL,OpenCL C,Metal。共 18 个扩展名,完整清单见 `docs/42-heterogeneous-builds.md`。
 
 这次扩表不能改变任何今天可用的构建,理由有两条且互相独立:设备扩展名**本来就不在**
 默认 source glob 里,所以没有 glob 变宽;而这些扩展名今天在 `sources` 里是**硬错误**,
@@ -814,7 +814,7 @@ e2e 610 分别断言这五条(含 `mcpp` 命名空间零告警、其他命名空
 
 ### 文档
 
-- 第 20 章由「加速器」更名为「异构硬件构建」(`docs/32-heterogeneous-builds.md`),副题指明
+- 第 20 章由「加速器」更名为「异构硬件构建」(`docs/42-heterogeneous-builds.md`),副题指明
   GPU 与 AI 加速器目标以及宿主/设备混合编译;`accel` 键不变。
 - 第 5 章与第 7 章(中英)补入 feature 选择的规则集合与 `mcpp.rules.*` / `mcpp.tools.*`
   命名;第 7 章中文版此前缺少命名一节,本次补齐。
@@ -957,7 +957,7 @@ generic target 取得同样的覆盖,所以空的下界不放宽任何东西。
 
 设计与调研:`.agents/docs/2026-09-05-accelerator-support-design.md`、
 `.agents/docs/2026-09-04-ai-accelerator-toolchain-ecosystem-survey.md`。
-新增手册章节 `docs/32-heterogeneous-builds.md`(中英双份)。
+新增手册章节 `docs/42-heterogeneous-builds.md`(中英双份)。
 
 ## [2026.9.4.3] — 2026-09-04
 
@@ -1159,7 +1159,7 @@ M-profile:MPU 按基址与上限描述区域,没有页表项。A-profile 有真�
 `mcpp why runners` 列出本工程提供的 runner,与其余解析结果并列;
 `mcpp run --list-runners` 是同一份读取,单独报告。
 
-新增 `docs/31-devices.md`、`docs/51-supported-versions.md`(中英双份)。
+新增 `docs/41-devices.md`、`docs/51-supported-versions.md`(中英双份)。
 指令协议版本 6。
 
 ## [2026.9.4.1] — 2026-09-04
@@ -4317,11 +4317,11 @@ xlings 作为运行时底座:subos 环境到达程序,以及 self-contained 的
 
 ### 文档
 
-- `docs/02-mcpp-toml.md` 的示例此前写的是 `import mcpp.rules.protobuf;`,**做不到**:mcpp 用依赖的裸 `package.name` 注册 host 模块,而 SPEC-001 要求 `name` 是单一原子段。随之澄清一条会咬人的约束:规则包的名字必须是**合法 C++ 模块名**(`grpcgen` 可以,`grpc-rules` 不行),否则报的是 `module 'grpc_rules' not found`,不会提示你名字有问题。
+- `docs/03-mcpp-toml.md` 的示例此前写的是 `import mcpp.rules.protobuf;`,**做不到**:mcpp 用依赖的裸 `package.name` 注册 host 模块,而 SPEC-001 要求 `name` 是单一原子段。随之澄清一条会咬人的约束:规则包的名字必须是**合法 C++ 模块名**(`grpcgen` 可以,`grpc-rules` 不行),否则报的是 `module 'grpc_rules' not found`,不会提示你名字有问题。
 
 ## [2026.8.5.1] — 2026-08-05
 
-`build.mcpp` 机制的**架构地基**:把「一条指令是什么」收敛成一张表,并补上三个今天就存在的稳定性缺口。架构分析见 `.agents/docs/2026-08-05-build-mcpp-extensibility-architecture.md`(本次实现其中的步 0 与步 1)。
+`build.mcpp` 机制的**架构地基**:把「一条指令是什么」收敛成一张表,并补上三个今天就存在的稳定性缺口。架构分析见 `.agents/docs/2026-08-30-build-mcpp-extensibility-architecture.md`(本次实现其中的步 0 与步 1)。
 
 ### 改进
 
@@ -4516,7 +4516,7 @@ xlings 作为运行时底座:subos 环境到达程序,以及 self-contained 的
 
 ### 修复
 
-- **`[build] static_stdlib = false` 对测试二进制静默失效(#336)。** #124 在 0.0.52 明确写下这个 opt-out,`docs/02-mcpp-toml.md` 至今也还这么写;但 #202(0.0.86)把测试二进制改成与分发目标相同的静态 `-load_hidden` libc++ 时,新增的那条推导**没有带上 `staticStdlib` 门**。结果是约一年时间里 macOS 上的 `mcpp test` 没有任何办法回到动态 libc++,而文档一直在承诺它可以。
+- **`[build] static_stdlib = false` 对测试二进制静默失效(#336)。** #124 在 0.0.52 明确写下这个 opt-out,`docs/03-mcpp-toml.md` 至今也还这么写;但 #202(0.0.86)把测试二进制改成与分发目标相同的静态 `-load_hidden` libc++ 时,新增的那条推导**没有带上 `staticStdlib` 门**。结果是约一年时间里 macOS 上的 `mcpp test` 没有任何办法回到动态 libc++,而文档一直在承诺它可以。
 
 - **macOS 上全局对象在静态初始化期访问 `std::cout` 必崩(#336)。** Mach-O 没有按优先级排序的初始化段(`init_priority` 只在单个 TU 内有效),归档成员的初始化器按链接顺序排在最后;而 libc++ 的 `<iostream>` 不像 libstdc++ / MSVC STL 那样自带 `ios_base::Init` 守卫,流的构造只存在于库内对象里。两件事叠起来的后果是:默认配置下,任何在构造函数里碰 `std::cout` 的全局对象都会读到 vptr 为零的流,进程启动即 SIGSEGV —— 而且**包侧无法修复**,因为 `std::ios_base::Init` 在 libc++ 的头文件里只有前向声明(`ios:70`),标准为静态初始化次序提供的官方解药在 libc++ 上用户根本写不出来。
 
@@ -4550,7 +4550,7 @@ xlings 作为运行时底座:subos 环境到达程序,以及 self-contained 的
 
 ### 修复
 
-- **`--offline` 不再拒绝本地 git 远端。** `docs/02-mcpp-toml.md` 写明 `--offline` 的语义是「完全不碰网络……已安装的东西照常构建」,`prepare.cppm` 里依赖下载闸的注释也把线画在同一处:「这条线以上全是本地操作,一个依赖齐备的离线构建必须成功」。但 `git = "../sibling-repo"` 这种指向本地目录的远端,`ls-remote`/`clone` 都只是文件系统读取,拒绝它买不到任何隔离性。现在按远端形态判定——`file://`、以及不带 scheme 也不是 `git@host:path` 的存在路径,算本地(Windows 盘符 `C:\repo` 含冒号但不含 `@`,因此仍归本地)。
+- **`--offline` 不再拒绝本地 git 远端。** `docs/03-mcpp-toml.md` 写明 `--offline` 的语义是「完全不碰网络……已安装的东西照常构建」,`prepare.cppm` 里依赖下载闸的注释也把线画在同一处:「这条线以上全是本地操作,一个依赖齐备的离线构建必须成功」。但 `git = "../sibling-repo"` 这种指向本地目录的远端,`ls-remote`/`clone` 都只是文件系统读取,拒绝它买不到任何隔离性。现在按远端形态判定——`file://`、以及不带 scheme 也不是 `git@host:path` 的存在路径,算本地(Windows 盘符 `C:\repo` 含冒号但不含 `@`,因此仍归本地)。
 
 - **克隆被中途杀掉后不再永久提供错误的 commit。** 缓存目录以 commit 命名,但内容是 `git clone` 之后再 `git checkout` 两步做出来的;进程死在两步之间,目录名和 HEAD 就对不上了,而后续构建只检查目录存不存在。现在分支依赖会比对 `git rev-parse HEAD`,不符即删除重克隆(tag/rev 以 ref 名为身份,无可比之物)。
 
@@ -4633,7 +4633,7 @@ xlings 作为运行时底座:subos 环境到达程序,以及 self-contained 的
 
   **最危险的一条判据**(`SuppressedInconclusive`):「本地查不到」单独不能推出「需要刷新」。xim 描述符不写 `namespace`,`(xim, x)` 永远匹配不上身份门 —— 把这种 miss 当真,任何带 xim 依赖的工程会**每次构建都刷**,比被删掉的 TTL 更糟。判据复用 `IndexRoute::authoritative_for`(#307),单测 + e2e 双闸锁住。
 
-  语义变化:`^1.2` 对**本地索引已知的版本**求解。上游新发的 1.3.0 需要 `mcpp index update` 或 `mcpp update` 才可见 —— 这正是那两个命令存在的意义,已写进 `docs/02-mcpp-toml.md`。
+  语义变化:`^1.2` 对**本地索引已知的版本**求解。上游新发的 1.3.0 需要 `mcpp index update` 或 `mcpp update` 才可见 —— 这正是那两个命令存在的意义,已写进 `docs/03-mcpp-toml.md`。
 
 - **`mcpp update` 不再是空操作。** 它此前只删 mcpp.lock 条目、然后叫用户去跑 `mcpp build` —— 而构建路径**从不读 mcpp.lock**(`prepare` 只写不读),所以删了等于没删,行为影响为零。它现在先强制刷新索引(显式意图 ⇒ 不看 TTL、不看去抖),并报告索引 rev 的变化;工程里没有任何走共享 registry 的依赖时跳过(刷了也没用)。
 
@@ -5629,7 +5629,7 @@ xlings 作为运行时底座:subos 环境到达程序,以及 self-contained 的
 
 - `[targets.<name>]` 下的不支持键不再被静默丢弃,而是产生 warning(`--strict` 下为 error),
   并指引到正确的机制(workspace / features / profile)。
-- 文档 `docs/02-mcpp-toml.md`(及 `docs/zh`)新增"构建配置该放哪"的决策指引。
+- 文档 `docs/03-mcpp-toml.md`(及 `docs/zh`)新增"构建配置该放哪"的决策指引。
   设计记录见 `.agents/docs/2026-06-18-per-target-build-config-design.md`。
 
 ## [0.0.54] — 2026-06-10

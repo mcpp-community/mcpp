@@ -1,9 +1,9 @@
-# 31 —— 抵达一台设备
+# 41 —— 抵达一台设备
 
 本文规定 mcpp 如何执行一个运行在构建机器之外的产物、包如何提供抵达它的其他方式,
 以及工程如何在模拟器与真实硬件之间选择。
 
-相关文档:[30 - 裸机与 freestanding 目标](30-baremetal.md) · [05 - build.mcpp](05-build-mcpp.md)
+相关文档:[40 - 裸机与 freestanding 目标](40-baremetal.md) · [30 - build.mcpp](30-build-mcpp.md)
 · [50 - 机器输出](50-machine-output.md)。
 
 ## 一条命令,加具名的例外

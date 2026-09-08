@@ -1,4 +1,4 @@
-# 01 —— 示例项目
+# 02 —— 示例项目
 
 [`examples/`](../../examples) 目录是一套课程。每个工程都可以单独跑起来,而且每个
 工程都教**一件更早的示例没有教过的事**。本章说明那件事是什么,于是你可以按自己
@@ -13,7 +13,7 @@ mcpp build && mcpp run
 ```
 
 每个示例自带 README,只解释它新增的部分。安装与工具链初始化在
-[00 —— 快速开始](00-getting-started.md),不在示例里重复。
+[01 —— 快速开始](01-getting-started.md),不在示例里重复。
 
 ## 课程
 
@@ -70,7 +70,7 @@ mcpp build && mcpp run
 | [`08-build-rules`](../../examples/08-build-rules/) | 两个规则包与同时使用它们的工程;`host-module = true`、`role = "check"` 的 `mcpp::action` |
 | [`12-a-new-device-language`](../../examples/12-a-new-device-language/) | `device_extensions` 与 `rule_module`:规则包教会 mcpp 一门引擎从未听说过的语言 |
 
-[40 —— 编写规则包](40-authoring-a-rule-package.md) 是这两个示例所演示内容的参考。
+[31 —— 编写规则包](31-authoring-a-rule-package.md) 是这两个示例所演示内容的参考。
 
 ## 以模板形式到达的课程
 
@@ -79,8 +79,8 @@ mcpp build && mcpp run
 
 | 模板 | 课程 | 章节 |
 |---|---|---|
-| `riscv-virt-rt` | 一个裸机工程、它的板级支持与它的 runner | [30](30-baremetal.md) |
-| `riscv-virt-rt:nolibc` | 同上,但没有 C 库 | [30](30-baremetal.md) |
+| `riscv-virt-rt` | 一个裸机工程、它的板级支持与它的 runner | [40](40-baremetal.md) |
+| `riscv-virt-rt:nolibc` | 同上,但没有 C 库 | [40](40-baremetal.md) |
 | `ocornut.imgui` | 一个带窗口与渲染栈的图形应用 | [20](20-toolchains.md) |
 
 ```bash
@@ -93,7 +93,7 @@ mcpp new blinky --template riscv-virt-rt
 值得新增一个示例:当一个能力**改变工程的形状** —— 它包含的文件、它声明的 manifest、
 或者作者敲的命令。如果一个能力只是既有示例工程里的一行,它属于对应章节里的一个
 代码块;如果它只经由命令到达,它属于
-[06 —— 按场景选命令](06-commands-by-scenario.md)。
+[08 —— 按场景选命令](08-commands-by-scenario.md)。
 
 README 要写明这个示例第一个教什么,以及判断它是否成立的判据。贡献流程见
 [90 —— 从源码构建 & 参与贡献](90-build-from-source.md)。

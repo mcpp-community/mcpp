@@ -1,4 +1,4 @@
-# 03 — Workspaces
+# 06 — Workspaces
 
 A workspace organizes multiple related mcpp packages (libraries or applications) within a single repository. Member packages share a unified set of dependency versions and toolchain settings while each keeping its own `mcpp.toml` project file.
 
