@@ -28,6 +28,7 @@ people. Read only the scenario that matches; they do not build on each other.
 | [7](#7-compute-on-a-gpu-or-an-accelerator) | compute on a GPU or an accelerator | `examples/09-heterogeneous` |
 | [8](#8-graphics-rendering) | graphics rendering | `examples/10-graphics/offscreen` |
 | [9](#9-a-build-step-the-project-needs) | a build step the project needs, and sharing it | `examples/08-build-rules`, `12-a-new-device-language` |
+| [10](#10-packaging-a-tool-a-driver-or-a-board) | packaging a tool, a driver or a board for others | the descriptors in `xim-pkgindex` and `mcpp-index` |
 
 ## 1. A command-line tool or service
 
@@ -252,6 +253,36 @@ teaches mcpp a language the engine has never heard of.
 step. Without that, editing the generator leaves every edge clean and the
 artifact keeps the bytes the previous generator produced — a green build over a
 stale result.
+
+## 10. Packaging a tool, a driver or a board
+
+**The situation.** Something other projects should be able to declare and get:
+a compiler, a shader compiler, an emulator, a host graphics driver, a board.
+
+**What mcpp contributes.** A consumer declares it by name and gets a working
+program — the payload is installed, its libraries are on the artifact's search
+path, and the tier decides whether a build that never runs pays for it at all.
+
+**The path.**
+
+1. [32 — Authoring a Payload](32-authoring-a-payload.md) — a tool or a prebuilt
+   library mcpp installs.
+2. [33 — Authoring a Runtime Adapter](33-authoring-an-adapter.md) — when the
+   library belongs to the host and cannot be redistributed.
+3. [34 — Authoring a Board-Support Package](34-authoring-a-bsp.md) — a board,
+   its memory map, and the way in.
+4. [31 — Authoring a Rule Package](31-authoring-a-rule-package.md) — if a build
+   step drives the tool.
+
+**Run.** The descriptors themselves: `xim-pkgindex/pkgs/g/glslang.lua` for a
+payload, `mcpp-index/pkgs/c/compat.vulkan-runtime.lua` for an adapter,
+`mcpplibs/cortex-m-rt` for a board.
+
+**What surprises people.** Which answer applies is decided by the licence and
+the ABI, not by preference. A driver whose userspace is in lockstep with a
+kernel module and whose licence forbids redistribution **cannot** be a payload;
+it is a host capability, and the adapter is how an artifact reaches it. An open
+driver is a payload, and a machine using one needs no adapter at all.
 
 ## Current limitations
 

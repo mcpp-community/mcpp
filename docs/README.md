@@ -32,6 +32,7 @@ anything a reader needs is written here or in a specification instead.
 | use a GPU or an accelerator | [42](42-heterogeneous-builds.md), [41](41-devices.md) | [`09-heterogeneous`](../examples/09-heterogeneous/), starting at [`boundary/`](../examples/09-heterogeneous/boundary/) |
 | add a rule, a language or a generator | [31](31-authoring-a-rule-package.md), [30](30-build-mcpp.md) | [`08-build-rules`](../examples/08-build-rules/), [`12-a-new-device-language`](../examples/12-a-new-device-language/) |
 | add a package to the index | [11](11-publishing-a-library.md), [SPEC-001](specs/package-identity.md) | [09](09-commands-by-scenario.md) — the publishing scenarios |
+| package a tool, a driver or a board for others | [32](32-authoring-a-payload.md), [33](33-authoring-an-adapter.md), [34](34-authoring-a-bsp.md) | the descriptors in `xim-pkgindex` and `mcpp-index` |
 | change mcpp itself | [90](90-build-from-source.md), [92](92-release.md), [51](51-supported-versions.md) | — |
 
 Lessons also arrive as project templates, which a package ships and `mcpp new
@@ -74,10 +75,13 @@ order, not an alphabet.
 - [23 — The Project Environment](23-the-project-environment.md)
 - [24 — Cross-Compilation Over openkal](24-openkal-cross.md)
 
-### 3x — Extending the build graph
+### 3x — Extending mcpp and its ecosystem
 
 - [30 — Build Programs: `build.mcpp`](30-build-mcpp.md) — a project that needs a step mcpp has no rule for
 - [31 — Authoring a Rule Package](31-authoring-a-rule-package.md) — packaging that step for other projects
+- [32 — Authoring a Payload](32-authoring-a-payload.md) — a tool or a prebuilt library mcpp installs
+- [33 — Authoring a Runtime Adapter](33-authoring-an-adapter.md) — reaching a library the host supplies
+- [34 — Authoring a Board-Support Package](34-authoring-a-bsp.md) — a board, and the way in
 
 ### 4x — Devices and accelerators
 
@@ -131,6 +135,7 @@ token in front of a reader to the chapter that owns it.
 | a target triple, the support matrix | [21](21-the-target-triple.md) | a runner, a named runner | [41](41-devices.md) |
 | an island, a seam, `accel` | [42](42-heterogeneous-builds.md) | a descriptor, an index | [11](11-publishing-a-library.md) |
 | an ABI tag, a prebuilt artifact | [12](12-binary-distribution.md) | exit codes, JSON output | [50](50-machine-output.md) |
+| an `xim:` payload, `[xlings.workspace]` | [32](32-authoring-a-payload.md), [23](23-the-project-environment.md) | a `compat:` adapter, `runtime.library_dirs` | [33](33-authoring-an-adapter.md) |
 
 ## Specifications
 

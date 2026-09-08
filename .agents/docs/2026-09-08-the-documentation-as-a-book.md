@@ -395,3 +395,57 @@ belongs to `9x` or to SPEC-004. Both were named in §6 and neither is moved yet.
 reference chapter's own section list, so a key added to `04` and not indexed is
 invisible. The check is the same shape as rule 4 (every specification appears in
 every index) and is one loop.
+
+---
+
+## 12. The ecosystem side, which the first design missed
+
+§5 designed the book for three readers — someone using mcpp, someone extending
+one project's build, and someone changing mcpp. It missed a fourth, and the
+measurement that found it is the sharpest in this record:
+
+> `xim:` payloads are named **84 times across 12 chapters**. How to make one is
+> explained **nowhere**. `xim-pkgindex` appears 17 times, all of them in the
+> chapter about releasing mcpp itself.
+
+Every toolchain, every device toolkit, every shader compiler and every emulator
+in this ecosystem is a payload. The documentation taught the whole of consuming
+them and none of producing them, and the omission was hidden by how often they
+are mentioned.
+
+Two more of the same shape: a `compat:` runtime adapter — the layer that makes a
+host library reachable from an artifact on Linux — is named in four chapters and
+authored in none; and a board-support package is described from the consumer's
+side in `40` and `41` with no chapter on writing one.
+
+### 12.1 Three chapters, and the band they complete
+
+`3x` was "extending the build graph" and is now **extending mcpp and its
+ecosystem**: the two scales of one project's own step, then the three kinds of
+package that serve everyone else.
+
+| # | chapter | reader | the one question | excludes |
+|---|---|---|---|---|
+| 32 | Authoring a Payload | someone packaging a tool or a prebuilt library | what is an `xim:` payload made of, and what must its descriptor say | source packages (11), host libraries (33) |
+| 33 | Authoring a Runtime Adapter | someone making a host-supplied library reachable | why an artifact cannot see a library that is installed, and what fixes it | anything redistributable, which is a payload (32) |
+| 34 | Authoring a Board-Support Package | someone bringing up a board | what does a BSP supply, and how does one package serve an emulator and hardware | using a BSP (40), the runner a consumer sees (41) |
+
+Each is written from a real published package rather than from the mechanism:
+`xim-pkgindex/pkgs/g/glslang.lua`, `mcpp-index/pkgs/c/compat.vulkan-runtime.lua`,
+and `mcpplibs/cortex-m-rt`. Every fact in them was read out of those files.
+
+### 12.2 The decision the adapter chapter records, which is not a packaging choice
+
+A proprietary driver's userspace is in ABI lockstep with a kernel module and its
+licence forbids redistribution. Neither is solved by effort, so it is modelled
+as a **host capability** and the adapter is how an artifact reaches it. An open
+driver takes the other answer — it is a payload, and a machine using one needs
+no adapter. **Which answer applies is decided by the licence and the ABI, not by
+preference**, and that is the sentence a reader of scenario 10 leaves with.
+
+### 12.3 What this changes about §5's claim
+
+§5 said 24 chapters for a tool that is three tools is not too many. The count is
+31 now, and the reason is that the tool is four things rather than three: a
+build system, a package manager, a toolchain provisioner, **and an ecosystem
+other people publish into**. The fourth had no chapters at all.

@@ -29,6 +29,7 @@
 | 使用 GPU 或加速器 | [42](42-heterogeneous-builds.md)、[41](41-devices.md) | [`09-heterogeneous`](../../examples/09-heterogeneous/),从 [`boundary/`](../../examples/09-heterogeneous/boundary/) 开始 |
 | 增加一条规则、一种语言或一个生成器 | [31](31-authoring-a-rule-package.md)、[30](30-build-mcpp.md) | [`08-build-rules`](../../examples/08-build-rules/)、[`12-a-new-device-language`](../../examples/12-a-new-device-language/) |
 | 向索引添加一个包 | [11](11-publishing-a-library.md)、[SPEC-001](../specs/package-identity.md) | [09](09-commands-by-scenario.md) —— 发布相关场景 |
+| 为别人打包一个工具、一个驱动或一块板子 | [32](32-authoring-a-payload.md)、[33](33-authoring-an-adapter.md)、[34](34-authoring-a-bsp.md) | `xim-pkgindex` 与 `mcpp-index` 里的描述符 |
 | 修改 mcpp 本身 | [90](90-build-from-source.md)、[92](92-release.md)、[51](51-supported-versions.md) | — |
 
 课程也可以以**项目模板**的形式到达:模板由包提供,`mcpp new --template` 实例化
@@ -68,10 +69,13 @@
 - [23 —— 项目环境](23-the-project-environment.md)
 - [24 —— 基于 openkal 的交叉构建](24-openkal-cross.md)
 
-### 3x —— 扩展构建图
+### 3x —— 扩展 mcpp 与它的生态
 
 - [30 —— 构建程序:`build.mcpp`](30-build-mcpp.md) —— 工程需要一步 mcpp 没有规则的工作
 - [31 —— 编写规则包](31-authoring-a-rule-package.md) —— 把那一步打包给别的工程用
+- [32 —— 编写一个载荷](32-authoring-a-payload.md) —— 由 mcpp 安装的工具或预编译库
+- [33 —— 编写运行时适配包](33-authoring-an-adapter.md) —— 够到宿主提供的库
+- [34 —— 编写板级支持包](34-authoring-a-bsp.md) —— 一块板子,以及抵达它的方式
 
 ### 4x —— 设备与加速器
 
@@ -125,6 +129,7 @@
 | 目标三元组、支持矩阵 | [21](21-the-target-triple.md) | runner、具名 runner | [41](41-devices.md) |
 | 岛、接缝、`accel` | [42](42-heterogeneous-builds.md) | 描述符、索引 | [11](11-publishing-a-library.md) |
 | ABI tag、预建产物 | [12](12-binary-distribution.md) | 退出码、JSON 输出 | [50](50-machine-output.md) |
+| `xim:` 载荷、`[xlings.workspace]` | [32](32-authoring-a-payload.md)、[23](23-the-project-environment.md) | `compat:` 适配包、`runtime.library_dirs` | [33](33-authoring-an-adapter.md) |
 
 ## 规范文档
 
