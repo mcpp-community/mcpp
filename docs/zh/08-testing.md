@@ -1,4 +1,4 @@
-# 07 —— 测试
+# 08 —— 测试
 
 **读者:**任何有代码需要持续可用的人。
 
@@ -9,9 +9,9 @@
 [41 —— 抵达一台设备](41-devices.md);以及机器可读流的 schema,那是
 [50 —— 机器可读输出](50-machine-output.md)。本章只说明哪个旗标产生它,到此为止。
 
-在此之前:[04 —— 依赖与解析](04-dependencies.md) 覆盖 `[dev-dependencies]`,
+在此之前:[05 —— 依赖与解析](05-dependencies.md) 覆盖 `[dev-dependencies]`,
 那是测试如何取到产物取不到的包。在此之后:
-[08 —— 按场景选命令](08-commands-by-scenario.md) 是其余一切的查阅入口。
+[09 —— 按场景选命令](09-commands-by-scenario.md) 是其余一切的查阅入口。
 
 ## mcpp 认为什么是一个测试
 

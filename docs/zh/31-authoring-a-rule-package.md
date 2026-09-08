@@ -7,7 +7,7 @@
 
 **不在这里:**给单个工程自己的构建加一步,那是
 [30 —— 构建程序](30-build-mcpp.md) —— 同一批原语,规模更小;feature 相关键本身,
-那是 [05](05-features-and-capabilities.md);以及已发布规则各自的拼法,那属于
+那是 [06](06-features-and-capabilities.md);以及已发布规则各自的拼法,那属于
 `mcpp:plugins`。示例:[`08-build-rules`](../../examples/08-build-rules/) 做检查与
 嵌入,[`12-a-new-device-language`](../../examples/12-a-new-device-language/) 新增
 一门语言。
@@ -154,7 +154,7 @@ device link 在引擎侧的全部内容:N 个 `artifact` action,其输出不进�
 都不开。
 
 裸版本是项目可以覆盖的**选择**;`>=` 是项目不得低于的**要求**。见
-[03 —— mcpp.toml](03-mcpp-toml.md) 的*一个包,一个版本*。
+[04 —— mcpp.toml](04-mcpp-toml.md) 的*一个包,一个版本*。
 
 ## 生成岛的边界
 
@@ -227,4 +227,4 @@ mcpp::floor("cuda.driver", runtime_needs);
 - `mcpp emit xpkg` 把 `manifest = "mcpp.toml"` 写进 `mcpp` 段,而
   `mcpp xpkg parse` 把该键报为未知并以 1 退出。`mcpp-index` 里没有任何描述符使用
   它(218 个里 0 个);自带 `mcpp.toml` 的包整个省略 `mcpp` 字段。见
-  [08 —— 按场景选命令](08-commands-by-scenario.md)的*当前边界*。
+  [09 —— 按场景选命令](09-commands-by-scenario.md)的*当前边界*。

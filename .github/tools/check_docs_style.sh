@@ -20,7 +20,7 @@ fail=0
 bad() { echo "FAIL: $*"; fail=1; }
 
 # Tutorials address the reader on purpose: the reader is following along.
-TUTORIALS="01-getting-started.md 02-examples.md 90-build-from-source.md"
+TUTORIALS="01-getting-started.md 03-examples.md 90-build-from-source.md"
 
 # Headings outside fenced code blocks. `# …` inside a ```sh block is a shell
 # comment, and counting it made the first version of this script report a

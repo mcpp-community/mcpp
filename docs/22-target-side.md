@@ -352,7 +352,7 @@ The selector `<sel>` has three forms:
 |---|---|---|
 | **bare OS alias** | a single OS / family — the concise, common form | `[target.windows]`, `[target.unix]` |
 | **`cfg(...)` predicate** | a compound condition (arch / env / combinators) | `[target.'cfg(all(linux, not(arch = "aarch64")))']` |
-| **exact triple** | one specific target (also carries `toolchain` / `linkage` / `sysroot` / `runner`; see [03 §2.7.3](03-mcpp-toml.md)) | `[target.x86_64-linux-musl]` |
+| **exact triple** | one specific target (also carries `toolchain` / `linkage` / `sysroot` / `runner`; see [04 §2.7.3](04-mcpp-toml.md)) | `[target.x86_64-linux-musl]` |
 
 A selector may carry platform-conditional **dependencies** and **build flags**:
 

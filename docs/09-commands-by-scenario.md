@@ -1,4 +1,4 @@
-# 08 — Commands by Scenario
+# 09 — Commands by Scenario
 
 **Reader:** someone who knows the nouns and wants the verb.
 
@@ -7,7 +7,7 @@ reclaiming disk, explaining a resolution, validating a descriptor, diagnosing an
 environment.
 
 **Not here:** what each command means in depth. A scenario names the command and
-links to the chapter that owns it. Before: [07 — Testing](07-testing.md).
+links to the chapter that owns it. Before: [08 — Testing](08-testing.md).
 
 The command reference is `mcpp --help`, and each subcommand carries its own
 `--help`. This chapter answers a different question: which command applies to a

@@ -94,7 +94,7 @@ ELF in the bundle for anything under `$MCPP_HOME` and fails on a hit.
 machine: a graphics driver's user-space half is version-locked to the running
 kernel module, and for the proprietary stacks redistribution is not permitted.
 Declare those as run-phase capability requirements (§2.11 of
-`docs/03-mcpp-toml.md`), and the mode table gains a column:
+`docs/04-mcpp-toml.md`), and the mode table gains a column:
 
 | Mode | Program needing a host-provided capability |
 |---|---|
@@ -334,7 +334,7 @@ force_bundle` still overrides this, as it does the ELF skip list.
 
 `vcruntime140.dll` and `msvcp140.dll` are **not** Windows' own: they belong to
 the MSVC toolset, exactly as `libstdc++.so` belongs to gcc. Whether they
-travel is decided by `cxx_runtime` (see `docs/03-mcpp-toml.md`), not by this
+travel is decided by `cxx_runtime` (see `docs/04-mcpp-toml.md`), not by this
 list — and `mcpp pack` refuses a combination that cannot deliver what the
 contract promised:
 

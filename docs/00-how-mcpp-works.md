@@ -31,7 +31,7 @@ its directory, and not its file name — which is why two packages called
 A package is also the unit of everything else: the unit that is published, that
 is cached, that declares features, and that a build program belongs to.
 
-Reference: [03 — The mcpp.toml Manifest](03-mcpp-toml.md).
+Reference: [04 — The mcpp.toml Manifest](04-mcpp-toml.md).
 
 ### graph
 
@@ -123,7 +123,7 @@ noun names the chapter.
 
 | a message about | the noun | where to look |
 |---|---|---|
-| a package name, a version, or "no candidate" | index | [11](11-publishing-a-library.md), [04](04-dependencies.md) |
+| a package name, a version, or "no candidate" | index | [11](11-publishing-a-library.md), [05](05-dependencies.md) |
 | a download, a payload, or a version floor | toolchain | [20](20-toolchains.md), [23](23-the-project-environment.md) |
 | a triple, or "unsupported target" | target | [21](21-the-target-triple.md) |
 | a module that cannot be read or is not provided | graph | [30](30-build-mcpp.md) |

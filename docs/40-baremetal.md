@@ -14,7 +14,7 @@ This document describes how mcpp builds, runs and tests software for targets
 with no operating system underneath, and how a board-support package supplies
 the parts of such a target that the engine deliberately does not know.
 
-Related documents: [03 — mcpp.toml Manifest Guide](03-mcpp-toml.md) §2.7.2 is
+Related documents: [04 — mcpp.toml Manifest Guide](04-mcpp-toml.md) §2.7.2 is
 the reference for the `[target.<triple>]` keys used here; [30 — build.mcpp
 Build Program](30-build-mcpp.md) is the reference for the directive protocol a
 board-support package speaks; [91 — Toolchain Internals](91-toolchain-internals.md)
@@ -515,7 +515,7 @@ picolibc present: a cold build links, and `nm` finds one definition.
 
 ### Running tests on the target
 
-Testing works here exactly as [07 — Testing](07-testing.md) describes it, and
+Testing works here exactly as [08 — Testing](08-testing.md) describes it, and
 this section adds only what is specific to a board: each `tests/*.cpp` becomes
 its own image, and the runner the board-support package supplies executes it.
 
@@ -645,7 +645,7 @@ The key is not specific to bare metal. A hosted cross target — an
 `qemu-aarch64-static` in place of the system emulator; on such a target an
 absent runner is not an error until the kernel refuses the artifact. The rules
 for hosted targets, the `--no-runner` escape and the not-run reporting of
-`mcpp test` are in [03 — mcpp.toml](03-mcpp-toml.md), §2.7.3.
+`mcpp test` are in [04 — mcpp.toml](04-mcpp-toml.md), §2.7.3.
 
 ## Writing a board-support package
 

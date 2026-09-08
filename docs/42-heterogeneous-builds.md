@@ -117,7 +117,7 @@ and less clearly.
 The table above is what mcpp knows **without being told**: the languages whose
 support shipped before a package could declare one. A rule package adds to it,
 through `[features].<f>.device_extensions` (see
-[03 — mcpp.toml](03-mcpp-toml.md) §2.8), and that is how a NEW device language
+[04 — mcpp.toml](04-mcpp-toml.md) §2.8), and that is how a NEW device language
 arrives -- with no engine change and no engine release. Slang is the first:
 `.slang` is not in the list above, and `mcpp:plugins`' `rules-slang` declares
 it.
@@ -303,7 +303,7 @@ the machines it will run on:
 The nearer declaration wins, one version is installed, and mcpp says which. A
 pin that does not satisfy the rule's floor is refused naming both sides rather
 than installed alongside it. See *One package, one version* in
-[03 — mcpp.toml](03-mcpp-toml.md) for the full rule;
+[04 — mcpp.toml](04-mcpp-toml.md) for the full rule;
 `examples/09-heterogeneous/multi-backend` is the one example in this repository
 that takes the override path, and every other one writes only the edge.
 

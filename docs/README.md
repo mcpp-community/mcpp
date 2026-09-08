@@ -25,13 +25,13 @@ anything a reader needs is written here or in a specification instead.
 
 | To | Read | Run |
 |---|---|---|
-| write a program | [01](01-getting-started.md), [03](03-mcpp-toml.md) §1 | [`01-hello`](../examples/01-hello/), [`02-with-deps`](../examples/02-with-deps/) |
-| write a library others import | [11](11-publishing-a-library.md), [05](05-features-and-capabilities.md), [03](03-mcpp-toml.md) §2.4 | [`04-workspace`](../examples/04-workspace/), [`11-features`](../examples/11-features/) |
+| write a program | [01](01-getting-started.md), [04](04-mcpp-toml.md) §1 | [`01-hello`](../examples/01-hello/), [`02-with-deps`](../examples/02-with-deps/) |
+| write a library others import | [11](11-publishing-a-library.md), [06](06-features-and-capabilities.md), [04](04-mcpp-toml.md) §2.4 | [`04-workspace`](../examples/04-workspace/), [`11-features`](../examples/11-features/) |
 | publish it | [10](10-pack-and-release.md), [11](11-publishing-a-library.md), [12](12-binary-distribution.md) | [`03-pack-static`](../examples/03-pack-static/), [`05-lib-distribution`](../examples/05-lib-distribution/) |
 | build for another machine | [21](21-the-target-triple.md), [24](24-openkal-cross.md), [40](40-baremetal.md) | [`06-openkal-cross`](../examples/06-openkal-cross/), `mcpp new … --template riscv-virt-rt` |
 | use a GPU or an accelerator | [42](42-heterogeneous-builds.md), [41](41-devices.md) | [`09-heterogeneous`](../examples/09-heterogeneous/), starting at [`boundary/`](../examples/09-heterogeneous/boundary/) |
 | add a rule, a language or a generator | [31](31-authoring-a-rule-package.md), [30](30-build-mcpp.md) | [`08-build-rules`](../examples/08-build-rules/), [`12-a-new-device-language`](../examples/12-a-new-device-language/) |
-| add a package to the index | [11](11-publishing-a-library.md), [SPEC-001](specs/package-identity.md) | [08](08-commands-by-scenario.md) — the publishing scenarios |
+| add a package to the index | [11](11-publishing-a-library.md), [SPEC-001](specs/package-identity.md) | [09](09-commands-by-scenario.md) — the publishing scenarios |
 | change mcpp itself | [90](90-build-from-source.md), [92](92-release.md), [51](51-supported-versions.md) | — |
 
 Lessons also arrive as project templates, which a package ships and `mcpp new
@@ -51,13 +51,14 @@ order, not an alphabet.
 
 - [00 — How mcpp Works](00-how-mcpp-works.md) — the model every other chapter assumes
 - [01 — Getting Started](01-getting-started.md) — install, create, build, run
-- [02 — Examples](02-examples.md) — which example teaches what
-- [03 — The mcpp.toml Manifest](03-mcpp-toml.md) — what a manifest may say
-- [04 — Dependencies and Resolution](04-dependencies.md) — where a dependency comes from, and which version wins
-- [05 — Features and Capabilities](05-features-and-capabilities.md) — making part of a package optional
-- [06 — Workspaces](06-workspace.md) — several packages, one build
-- [07 — Testing](07-testing.md) — including what does not run on this machine
-- [08 — Commands by Scenario](08-commands-by-scenario.md) — the lookup, once the nouns are known
+- [02 — Scenarios](02-scenarios.md) — what mcpp is used for, and which features each kind of work uses
+- [03 — Examples](03-examples.md) — which example teaches what
+- [04 — The mcpp.toml Manifest](04-mcpp-toml.md) — what a manifest may say
+- [05 — Dependencies and Resolution](05-dependencies.md) — where a dependency comes from, and which version wins
+- [06 — Features and Capabilities](06-features-and-capabilities.md) — making part of a package optional
+- [07 — Workspaces](07-workspace.md) — several packages, one build
+- [08 — Testing](08-testing.md) — including what does not run on this machine
+- [09 — Commands by Scenario](09-commands-by-scenario.md) — the lookup, once the nouns are known
 
 ### 1x — Publishing
 
@@ -94,6 +95,42 @@ order, not an alphabet.
 - [90 — Building from Source and Contributing](90-build-from-source.md)
 - [91 — Toolchain Internals](91-toolchain-internals.md)
 - [92 — Releasing mcpp](92-release.md)
+
+## Look it up
+
+The chapter list above is a **reading order**. This is the other index: from a
+token in front of a reader to the chapter that owns it.
+
+**Manifest tables and keys**
+
+| | chapter | | chapter |
+|---|---|---|---|
+| `[package]`, `[targets.<n>]`, `[build]`, `[lib]` | [04](04-mcpp-toml.md) | `[profile.<n>]`, `[resources]`, `[runtime]` | [04](04-mcpp-toml.md) |
+| `[dependencies]`, `[dev-dependencies]`, `[build-dependencies]` | [05](05-dependencies.md) | `scan_overrides`, `module_extensions` | [04](04-mcpp-toml.md) |
+| `[features]`, `[feature-deps.<f>]`, `provides` / `requires` | [06](06-features-and-capabilities.md) | `[workspace]` | [07](07-workspace.md) |
+| `[toolchain]`, `cxx_runtime` | [20](20-toolchains.md) | `[target.<sel>]`, `cfg(…)` | [22](22-target-side.md) |
+| `[xlings]`, `[xlings.workspace]`, `[feature-xlings.<f>]` | [23](23-the-project-environment.md) | `[pack]` | [10](10-pack-and-release.md) |
+| `[build] accel`, `[package] accelerators`, `device_extensions` | [42](42-heterogeneous-builds.md) | `[hooks]` | [09](09-commands-by-scenario.md) |
+| `runner`, `[target.<t>.runners]` | [41](41-devices.md) | `rule_module` | [31](31-authoring-a-rule-package.md) |
+
+**Commands**
+
+| | chapter | | chapter |
+|---|---|---|---|
+| `build`, `run` | [01](01-getting-started.md) | `test` | [08](08-testing.md) |
+| `new`, `new --template` | [01](01-getting-started.md) | `add`, `update`, `why` | [05](05-dependencies.md) |
+| `pack` | [10](10-pack-and-release.md) | `publish`, `emit xpkg`, `xpkg parse` | [11](11-publishing-a-library.md) |
+| `toolchain` | [20](20-toolchains.md) | `clean`, `cache`, `index`, `self …` | [09](09-commands-by-scenario.md) |
+
+**Concepts**
+
+| | chapter | | chapter |
+|---|---|---|---|
+| the five nouns; what a build does | [00](00-how-mcpp-works.md) | `import std`, module interfaces, BMIs | [00](00-how-mcpp-works.md), [20](20-toolchains.md) |
+| `mcpp::action`, a build program | [30](30-build-mcpp.md) | a rule package, `MCPP_EXPORT_C` | [31](31-authoring-a-rule-package.md) |
+| a target triple, the support matrix | [21](21-the-target-triple.md) | a runner, a named runner | [41](41-devices.md) |
+| an island, a seam, `accel` | [42](42-heterogeneous-builds.md) | a descriptor, an index | [11](11-publishing-a-library.md) |
+| an ABI tag, a prebuilt artifact | [12](12-binary-distribution.md) | exit codes, JSON output | [50](50-machine-output.md) |
 
 ## Specifications
 

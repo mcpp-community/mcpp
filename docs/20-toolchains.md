@@ -222,7 +222,7 @@ It uses the regular GCC module pipeline (`gcm.cache`, `import std` via
 libstdc++'s `bits/std.cc`). The target's default linkage is **static** —
 the produced `.exe` is fully self-contained (no `libstdc++-6.dll` to ship,
 runs directly under wine). To opt out, set it on the target section —
-`linkage` is exact-triple only (§2.7 of [mcpp.toml](03-mcpp-toml.md)), and a
+`linkage` is exact-triple only (§2.7 of [mcpp.toml](04-mcpp-toml.md)), and a
 `[build] linkage` key does not exist and is silently ignored:
 
 ```toml

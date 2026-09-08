@@ -8,7 +8,7 @@ running, from an empty machine.
 **Not here:** what mcpp's parts are — that is
 [00 — How mcpp Works](00-how-mcpp-works.md), which this chapter assumes rather
 than repeats — and every field a manifest may hold, which is
-[03 — The mcpp.toml Manifest](03-mcpp-toml.md). After: [02 — Examples](02-examples.md).
+[04 — The mcpp.toml Manifest](04-mcpp-toml.md). After: [03 — Examples](03-examples.md).
 
 > Go from install → new → build → run → pack in 5 minutes.
 
@@ -178,7 +178,7 @@ Declare dependencies in `mcpp.toml`:
 `mcpp build` automatically resolves SemVer constraints against the
 [mcpp-index](https://github.com/mcpplibs/mcpp-index), fetches the source,
 and adds it to the build graph. For a complete example, see `02-with-deps` in
-[02 — Examples](02-examples.md).
+[03 — Examples](03-examples.md).
 
 ## Producing a Release Package
 
@@ -195,7 +195,7 @@ For the differences between the four modes and their artifact layouts, see [10 �
 
 ## Further Reading
 
-- [02 — Examples](02-examples.md) — a collection of ready-to-run minimal projects
+- [03 — Examples](03-examples.md) — a collection of ready-to-run minimal projects
 - [10 — Packaging and Release](10-pack-and-release.md) — building distributable artifacts
 - [20 — Toolchain Management](20-toolchains.md) — switching compilers and managing multiple versions
 - The full set of options for any command is available via `mcpp <cmd> --help`

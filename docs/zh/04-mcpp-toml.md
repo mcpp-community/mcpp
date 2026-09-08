@@ -1,11 +1,11 @@
-# 03 —— mcpp.toml 工程文件指南
+# 04 —— mcpp.toml 工程文件指南
 
 **读者:**正在写或正在读一份 manifest 的作者。
 
 **本章回答的那一个问题:**一份 `mcpp.toml` 可以说什么,逐字段地。
 
 **不在这里:**四个主题的表虽然写在这个文件里,但本章不拥有它们 —— 依赖是
-[04](04-dependencies.md),feature 是 [05](05-features-and-capabilities.md),
+[05](05-dependencies.md),feature 是 [06](06-features-and-capabilities.md),
 以目标为条件是 [22](22-target-side.md),工程的环境是
 [23](23-the-project-environment.md)。每一处都在它的表本该出现的位置点名。
 
@@ -82,7 +82,7 @@ mcpp 会在编译前失败，并同时报出工具链与工程档位。
 值的两种拼法都接受:`standard = "c++26"` 与 `standard = 26`。
 
 当**依赖声明的档位高于当前图**时,mcpp 会在编译前说出来,而不是让它在那个依赖的源码里
-某处失败。见 [workspace §4.2](06-workspace.md)。
+某处失败。见 [workspace §4.2](07-workspace.md)。
 
 #### 方言标志与 `import std` BMI
 
@@ -213,7 +213,7 @@ required_features = ["gui"]                   # 仅当 feature `gui` 激活时�
 > compile-once 模型)。当标志只需影响某个二进制(或测试)**自己的入口**时,这正是合适的工具 ——
 > 例如某个测试的 `main` 里触发契约违规、需要按测试设置契约求值语义
 > (`-fcontract-evaluation-semantic=observe`),或入口独享的 feature 宏、局部告警抑制。
-> 若标志必须穿透**共享**代码,就不该放在这里 —— 改用 [workspace](06-workspace.md) member 或
+> 若标志必须穿透**共享**代码,就不该放在这里 —— 改用 [workspace](07-workspace.md) member 或
 > `[features]`;若是整次构建的模式,用 `[profile.*]`(`mcpp test --profile <name>` 会让包括被测
 > 代码在内的整个测试镜像都在该 profile 下编译)。
 >
@@ -224,7 +224,7 @@ required_features = ["gui"]                   # 仅当 feature `gui` 激活时�
 | 目标 | 使用 |
 |---|---|
 | 某二进制**自己入口**上的不同宏/标志 | per-target `defines` / `cxxflags`(见上) |
-| 两个产品差异在它们**共享**的代码里 | 拆成 [workspace](06-workspace.md) member,各自 `[build]` 标志,共享一个 `lib` |
+| 两个产品差异在它们**共享**的代码里 | 拆成 [workspace](07-workspace.md) member,各自 `[build]` 标志,共享一个 `lib` |
 | **选择**某共享库的变体(如某后端) | 在该库上用 `[features]`(§2.8)——additive,作用到库自己的编译 |
 | **整次构建的模式**(sanitizer、契约语义、优化档) | `[profile.<name>]`(§2.9)+ `--profile`;`mcpp test --profile <name>` 同样支持 |
 
@@ -558,7 +558,7 @@ path = "src/capi/lua.cppm"    # 覆盖默认的 lib-root 位置
 默认约定:`src/<包名最后一段>.cppm`(如包名 `mcpplibs.cmdline` → `src/cmdline.cppm`）。
 ### 2.5 `[dependencies]`、`[dev-dependencies]`、`[build-dependencies]`
 
-已移入 [04 —— 依赖与解析](04-dependencies.md)。
+已移入 [05 —— 依赖与解析](05-dependencies.md)。
 
 ### 2.7 `[toolchain]` —— 工具链配置
 
@@ -704,7 +704,7 @@ error: test result: NOT RUN. 0 passed; 0 failed; 1 not run (this host cannot exe
 带 `not_run` / `not_run_reason`(见 [50 —— 机器可读输出](50-machine-output.md))。
 ### 2.8 `[features]` —— Feature
 
-已移入 [05 —— Feature 与能力](05-features-and-capabilities.md),
+已移入 [06 —— Feature 与能力](06-features-and-capabilities.md),
 连同 `provides` / `requires` 与 `[feature-deps.<name>]`。
 
 
@@ -1034,7 +1034,7 @@ o.arg("./mkblob.sh").arg("blob.bin").arg("${mcpp.out_dir}/blob.o")
 `ninja: no work to do`。
 ### 2.16 `[hooks]` —— 项目构建生命周期命令
 
-已移入 [08 —— 按场景选命令](08-commands-by-scenario.md)。
+已移入 [09 —— 按场景选命令](09-commands-by-scenario.md)。
 
 
 ## 附录 A. Schema 所有权原则(新字段准入标准)

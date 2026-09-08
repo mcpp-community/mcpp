@@ -22,13 +22,13 @@
 
 | 目标 | 阅读 | 运行 |
 |---|---|---|
-| 写一个程序 | [01](01-getting-started.md)、[03](03-mcpp-toml.md) §1 | [`01-hello`](../../examples/01-hello/)、[`02-with-deps`](../../examples/02-with-deps/) |
-| 写一个供他人 import 的库 | [11](11-publishing-a-library.md)、[05](05-features-and-capabilities.md)、[03](03-mcpp-toml.md) §2.4 | [`04-workspace`](../../examples/04-workspace/)、[`11-features`](../../examples/11-features/) |
+| 写一个程序 | [01](01-getting-started.md)、[04](04-mcpp-toml.md) §1 | [`01-hello`](../../examples/01-hello/)、[`02-with-deps`](../../examples/02-with-deps/) |
+| 写一个供他人 import 的库 | [11](11-publishing-a-library.md)、[06](06-features-and-capabilities.md)、[04](04-mcpp-toml.md) §2.4 | [`04-workspace`](../../examples/04-workspace/)、[`11-features`](../../examples/11-features/) |
 | 发布它 | [10](10-pack-and-release.md)、[11](11-publishing-a-library.md)、[12](12-binary-distribution.md) | [`03-pack-static`](../../examples/03-pack-static/)、[`05-lib-distribution`](../../examples/05-lib-distribution/) |
 | 为另一台机器构建 | [21](21-the-target-triple.md)、[24](24-openkal-cross.md)、[40](40-baremetal.md) | [`06-openkal-cross`](../../examples/06-openkal-cross/)、`mcpp new … --template riscv-virt-rt` |
 | 使用 GPU 或加速器 | [42](42-heterogeneous-builds.md)、[41](41-devices.md) | [`09-heterogeneous`](../../examples/09-heterogeneous/),从 [`boundary/`](../../examples/09-heterogeneous/boundary/) 开始 |
 | 增加一条规则、一种语言或一个生成器 | [31](31-authoring-a-rule-package.md)、[30](30-build-mcpp.md) | [`08-build-rules`](../../examples/08-build-rules/)、[`12-a-new-device-language`](../../examples/12-a-new-device-language/) |
-| 向索引添加一个包 | [11](11-publishing-a-library.md)、[SPEC-001](../specs/package-identity.md) | [08](08-commands-by-scenario.md) —— 发布相关场景 |
+| 向索引添加一个包 | [11](11-publishing-a-library.md)、[SPEC-001](../specs/package-identity.md) | [09](09-commands-by-scenario.md) —— 发布相关场景 |
 | 修改 mcpp 本身 | [90](90-build-from-source.md)、[92](92-release.md)、[51](51-supported-versions.md) | — |
 
 课程也可以以**项目模板**的形式到达:模板由包提供,`mcpp new --template` 实例化
@@ -45,13 +45,14 @@
 
 - [00 —— mcpp 的运转方式](00-how-mcpp-works.md) —— 其余每章都假定的模型
 - [01 —— 快速开始](01-getting-started.md) —— 安装、创建、构建、运行
-- [02 —— 示例项目](02-examples.md) —— 哪个示例教什么
-- [03 —— mcpp.toml 工程文件指南](03-mcpp-toml.md) —— manifest 可以说什么
-- [04 —— 依赖与解析](04-dependencies.md) —— 依赖从哪里来,以及哪个版本胜出
-- [05 —— Feature 与能力](05-features-and-capabilities.md) —— 让包的一部分成为可选
-- [06 —— 工作空间](06-workspace.md) —— 多个包,一次构建
-- [07 —— 测试](07-testing.md) —— 包括在本机跑不了的那些
-- [08 —— 按场景选命令](08-commands-by-scenario.md) —— 认识名词之后的查阅入口
+- [02 —— 场景](02-scenarios.md) —— mcpp 被用来做什么,以及每一类工作会用到它的哪些功能
+- [03 —— 示例项目](03-examples.md) —— 哪个示例教什么
+- [04 —— mcpp.toml 工程文件指南](04-mcpp-toml.md) —— manifest 可以说什么
+- [05 —— 依赖与解析](05-dependencies.md) —— 依赖从哪里来,以及哪个版本胜出
+- [06 —— Feature 与能力](06-features-and-capabilities.md) —— 让包的一部分成为可选
+- [07 —— 工作空间](07-workspace.md) —— 多个包,一次构建
+- [08 —— 测试](08-testing.md) —— 包括在本机跑不了的那些
+- [09 —— 按场景选命令](09-commands-by-scenario.md) —— 认识名词之后的查阅入口
 
 ### 1x —— 发布
 
@@ -88,6 +89,42 @@
 - [90 —— 从源码构建与参与贡献](90-build-from-source.md)
 - [91 —— 工具链机制内幕](91-toolchain-internals.md)
 - [92 —— 发布 mcpp](92-release.md)
+
+## 反查
+
+上面的章节表是**阅读顺序**。这里是另一种索引:从读者眼前的一个记号,查到拥有它的
+那一章。
+
+**manifest 的表与键**
+
+| | 章节 | | 章节 |
+|---|---|---|---|
+| `[package]`、`[targets.<n>]`、`[build]`、`[lib]` | [04](04-mcpp-toml.md) | `[profile.<n>]`、`[resources]`、`[runtime]` | [04](04-mcpp-toml.md) |
+| `[dependencies]`、`[dev-dependencies]`、`[build-dependencies]` | [05](05-dependencies.md) | `scan_overrides`、`module_extensions` | [04](04-mcpp-toml.md) |
+| `[features]`、`[feature-deps.<f>]`、`provides` / `requires` | [06](06-features-and-capabilities.md) | `[workspace]` | [07](07-workspace.md) |
+| `[toolchain]`、`cxx_runtime` | [20](20-toolchains.md) | `[target.<sel>]`、`cfg(…)` | [22](22-target-side.md) |
+| `[xlings]`、`[xlings.workspace]`、`[feature-xlings.<f>]` | [23](23-the-project-environment.md) | `[pack]` | [10](10-pack-and-release.md) |
+| `[build] accel`、`[package] accelerators`、`device_extensions` | [42](42-heterogeneous-builds.md) | `[hooks]` | [09](09-commands-by-scenario.md) |
+| `runner`、`[target.<t>.runners]` | [41](41-devices.md) | `rule_module` | [31](31-authoring-a-rule-package.md) |
+
+**命令**
+
+| | 章节 | | 章节 |
+|---|---|---|---|
+| `build`、`run` | [01](01-getting-started.md) | `test` | [08](08-testing.md) |
+| `new`、`new --template` | [01](01-getting-started.md) | `add`、`update`、`why` | [05](05-dependencies.md) |
+| `pack` | [10](10-pack-and-release.md) | `publish`、`emit xpkg`、`xpkg parse` | [11](11-publishing-a-library.md) |
+| `toolchain` | [20](20-toolchains.md) | `clean`、`cache`、`index`、`self …` | [09](09-commands-by-scenario.md) |
+
+**概念**
+
+| | 章节 | | 章节 |
+|---|---|---|---|
+| 五个名词;一次构建做了什么 | [00](00-how-mcpp-works.md) | `import std`、模块接口、BMI | [00](00-how-mcpp-works.md)、[20](20-toolchains.md) |
+| `mcpp::action`、构建程序 | [30](30-build-mcpp.md) | 规则包、`MCPP_EXPORT_C` | [31](31-authoring-a-rule-package.md) |
+| 目标三元组、支持矩阵 | [21](21-the-target-triple.md) | runner、具名 runner | [41](41-devices.md) |
+| 岛、接缝、`accel` | [42](42-heterogeneous-builds.md) | 描述符、索引 | [11](11-publishing-a-library.md) |
+| ABI tag、预建产物 | [12](12-binary-distribution.md) | 退出码、JSON 输出 | [50](50-machine-output.md) |
 
 ## 规范文档
 

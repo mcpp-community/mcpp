@@ -22,7 +22,7 @@ ROOT="${ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
 fails=0
 fail() { printf 'ASSERT-FAIL: %s\n' "$1"; fails=$((fails + 1)); }
 
-for doc in "$ROOT/docs/02-examples.md" "$ROOT/docs/zh/02-examples.md"; do
+for doc in "$ROOT/docs/03-examples.md" "$ROOT/docs/zh/03-examples.md"; do
     [ -f "$doc" ] || { fail "missing $doc"; continue; }
     printf -- '--- %s ---\n' "${doc#"$ROOT"/}"
 

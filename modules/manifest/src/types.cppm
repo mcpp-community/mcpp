@@ -1263,7 +1263,7 @@ struct WorkspaceConfig {
 // `[hooks]` — project build lifecycle commands (#496).
 //
 // The commands are host-shell strings written by the project author, run by
-// `mcpp build` around the build it performs. See docs/03-mcpp-toml.md §2.16.
+// `mcpp build` around the build it performs. See docs/04-mcpp-toml.md §2.16.
 //
 // ONLY THE ROOT PROJECT'S HOOKS ARE EVER RUN. Every manifest mcpp parses
 // carries this field, including a DEPENDENCY's — and `mcpp build` reaches the

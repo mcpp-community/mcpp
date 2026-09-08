@@ -1,4 +1,4 @@
-# 05 — Features and Capabilities
+# 06 — Features and Capabilities
 
 **Reader:** an author with something optional — an extra source, an extra
 dependency, or a choice between backends.
@@ -8,14 +8,14 @@ optional, and how does a consumer ask for it.
 
 **Not here:** which device backends a build targets, which looks like a feature
 and is not — that is [42 — Heterogeneous Builds](42-heterogeneous-builds.md).
-Before: [04 — Dependencies and Resolution](04-dependencies.md). After:
-[06 — Workspaces](06-workspace.md).
+Before: [05 — Dependencies and Resolution](05-dependencies.md). After:
+[07 — Workspaces](07-workspace.md).
 
 Features are how a package offers something optional: a compile macro, an extra
 source, an extra dependency, or a choice between backends. This chapter is the
 reference for declaring them and for consuming them.
 
-Related documents: [03 — mcpp.toml](03-mcpp-toml.md) is the field reference for
+Related documents: [04 — mcpp.toml](04-mcpp-toml.md) is the field reference for
 the rest of the manifest; [`examples/11-features`](../examples/11-features/) is
 a package that declares all three shapes and a test that uses a
 dev-dependency; [42 — Heterogeneous Builds](42-heterogeneous-builds.md) is the
@@ -82,7 +82,7 @@ simd       = { sources = ["src/simd/**"], flags = [
 - The automatic `-DMCPP_FEATURE_<NAME>` is still defined for every active feature,
   so `defines` are additive to it.
 - `flags` (mcpp 0.0.101+) is the same ordered array-of-inline-tables grammar as
-  `[build].flags` ([03 §2.3](03-mcpp-toml.md): `glob` required, plus `cflags`/`cxxflags`/`asmflags`/
+  `[build].flags` ([04 §2.3](04-mcpp-toml.md): `glob` required, plus `cflags`/`cxxflags`/`asmflags`/
   `defines`; the `[[features.<name>.flags]]` array-of-tables spelling is accepted
   too, like `[[build.flags]]`). When the feature is active the entries
   are appended **after** the base `[build].flags`, features in name order, so a

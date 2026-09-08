@@ -96,7 +96,7 @@ C++20 modules 的编译器。
 
 上表是 mcpp **不需要被告知**就知道的那些:在「包可以自己声明」之前就已经支持的语言。
 规则包通过 `[features].<f>.device_extensions`(见
-[03 — mcpp.toml](03-mcpp-toml.md) §2.8)向它增补,而这正是**一门新设备语言到达的方式**
+[04 — mcpp.toml](04-mcpp-toml.md) §2.8)向它增补,而这正是**一门新设备语言到达的方式**
 —— 不动引擎,也不需要发一版引擎。Slang 是第一个:`.slang` 不在上表里,由
 `mcpp:plugins` 的 `rules-slang` 声明。
 
@@ -248,7 +248,7 @@ plugins = { version = "0.3.0", features = ["rules-cuda"], host-module = true }
 ```
 
 更近的声明赢,装一个版本,并且 mcpp 说出用了哪条。不满足规则下界的钉会被拒绝并点出
-两侧,而不是与它并排装下来。完整规则见 [03 — mcpp.toml](03-mcpp-toml.md) 的
+两侧,而不是与它并排装下来。完整规则见 [04 — mcpp.toml](04-mcpp-toml.md) 的
 「一个包一个版本」;`examples/09-heterogeneous/multi-backend` 是本仓库里唯一走覆盖
 路径的示例,其余每一个都只写那条边。
 

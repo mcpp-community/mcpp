@@ -1,4 +1,4 @@
-# 04 — Dependencies and Resolution
+# 05 — Dependencies and Resolution
 
 **Reader:** an author whose build now contains more than their own code.
 
@@ -10,8 +10,8 @@ does a version constraint mean, and what happens when two of them disagree.
 restates — and how to publish one, which is
 [11 — Publishing a Library](11-publishing-a-library.md).
 
-Before: [03 — The mcpp.toml Manifest](03-mcpp-toml.md) is where these tables
-live among the others. After: [05 — Features and Capabilities](05-features-and-capabilities.md)
+Before: [04 — The mcpp.toml Manifest](04-mcpp-toml.md) is where these tables
+live among the others. After: [06 — Features and Capabilities](06-features-and-capabilities.md)
 is how a dependency becomes optional.
 
 ## `[dependencies]` — Runtime Dependencies

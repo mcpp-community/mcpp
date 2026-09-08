@@ -26,7 +26,7 @@ namespace 的两个 `cmdline` 可以共存。
 包同时是其余一切的单位:被发布的单位、被缓存的单位、声明 feature 的单位,以及
 构建程序所归属的单位。
 
-参考:[03 —— mcpp.toml 工程文件指南](03-mcpp-toml.md)。
+参考:[04 —— mcpp.toml 工程文件指南](04-mcpp-toml.md)。
 
 ### 图(graph)
 
@@ -107,7 +107,7 @@ mcpp 写的东西没有一样是隐藏的,而每个存储回答的是不同的�
 
 | 消息里出现 | 名词 | 去哪里看 |
 |---|---|---|
-| 包名、版本,或「没有候选」 | 索引 | [11](11-publishing-a-library.md)、[04](04-dependencies.md) |
+| 包名、版本,或「没有候选」 | 索引 | [11](11-publishing-a-library.md)、[05](05-dependencies.md) |
 | 下载、载荷,或版本下界 | 工具链 | [20](20-toolchains.md)、[23](23-the-project-environment.md) |
 | 三元组,或「不支持的目标」 | 目标 | [21](21-the-target-triple.md) |
 | 某个模块读不到或没有人提供它 | 图 | [30](30-build-mcpp.md) |

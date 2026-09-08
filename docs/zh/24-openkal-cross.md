@@ -186,7 +186,7 @@ runner = ["qemu-aarch64-static"]
 
 没有这个键时,`mcpp run` 报告内核的拒绝(`Exec format error`)与应当写的键,`mcpp test`
 把每个测试报告为未运行并以 2 退出。能原生执行该产物的宿主传 `--no-runner`。规则见
-[03 —— mcpp.toml](03-mcpp-toml.md) §2.7.3。
+[04 —— mcpp.toml](04-mcpp-toml.md) §2.7.3。
 
 ### 源码是同一份,程序不是
 

@@ -1,4 +1,4 @@
-# 03 — The mcpp.toml Manifest
+# 04 — The mcpp.toml Manifest
 
 **Reader:** an author writing or reading a manifest.
 
@@ -6,8 +6,8 @@
 field.
 
 **Not here:** four topics this file's tables belong to but this chapter does not
-own — dependencies are [04](04-dependencies.md), features are
-[05](05-features-and-capabilities.md), conditioning on a target is
+own — dependencies are [05](05-dependencies.md), features are
+[06](06-features-and-capabilities.md), conditioning on a target is
 [22](22-target-side.md), and the project's environment is
 [23](23-the-project-environment.md). Each is named where its table would be.
 
@@ -87,7 +87,7 @@ Both spellings of the value are accepted: `standard = "c++26"` and `standard = 2
 
 When a **dependency declares a level above the graph's**, mcpp says so before compiling
 rather than letting it fail somewhere inside that dependency's sources. See
-[workspace §4.2](06-workspace.md).
+[workspace §4.2](07-workspace.md).
 
 #### Dialect flags and the `import std` BMI
 
@@ -231,7 +231,7 @@ required_features = ["gui"]                   # only built when feature `gui` is
 > per-test contract evaluation semantic (`-fcontract-evaluation-semantic=observe`) for a test whose
 > `main` exercises the violation, a feature macro the entry alone reads, or a local warning
 > suppression. If a flag must reach **shared** code, it does not belong here — split into a
-> [workspace](06-workspace.md) member or use `[features]`, or for a whole-build mode use a
+> [workspace](07-workspace.md) member or use `[features]`, or for a whole-build mode use a
 > `[profile.*]` (`mcpp test --profile <name>` builds the whole test image, code-under-test
 > included, under that profile).
 >
@@ -242,7 +242,7 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | You want | Use |
 |---|---|
 | Different macros/flags on a binary's **own entry** | per-target `defines` / `cxxflags` (above) |
-| Two products that differ in code they **share** | split into [workspace](06-workspace.md) members, each with its own `[build]` flags over a shared `lib` |
+| Two products that differ in code they **share** | split into [workspace](07-workspace.md) members, each with its own `[build]` flags over a shared `lib` |
 | To **select a variant** of a shared library (e.g. a backend) | `[features]` on that library (§2.8) — additive, reaches the library's own compile |
 | A **whole-build mode** (sanitizers, contract semantics, opt level) | `[profile.<name>]` (§2.9) + `--profile`; also honored by `mcpp test --profile <name>` |
 
@@ -646,7 +646,7 @@ path = "src/capi/lua.cppm"    # Override the default lib-root location
 Default convention: `src/<last segment of package name>.cppm` (e.g. package name `mcpplibs.cmdline` → `src/cmdline.cppm`).
 ### 2.5 `[dependencies]`, `[dev-dependencies]`, `[build-dependencies]`
 
-Moved to [04 — Dependencies and Resolution](04-dependencies.md).
+Moved to [05 — Dependencies and Resolution](05-dependencies.md).
 
 ### 2.7 `[toolchain]` — Toolchain Configuration
 
@@ -811,7 +811,7 @@ ran and passed. `--message-format json` carries `"status":"not_run"` and a
 record (see [50 — Machine-Readable Output](50-machine-output.md)).
 ### 2.8 `[features]` — Features
 
-Moved to [05 — Features and Capabilities](05-features-and-capabilities.md),
+Moved to [06 — Features and Capabilities](06-features-and-capabilities.md),
 with `provides` / `requires` and `[feature-deps.<name>]`.
 
 
@@ -1193,7 +1193,7 @@ command: nothing tracks it, and editing the file produces `ninja: no work to
 do`.
 ### 2.16 `[hooks]` — Project Build Lifecycle Commands
 
-Moved to [08 — Commands by Scenario](08-commands-by-scenario.md).
+Moved to [09 — Commands by Scenario](09-commands-by-scenario.md).
 
 
 ## Appendix A. Schema Ownership Principle (admission criteria for new fields)

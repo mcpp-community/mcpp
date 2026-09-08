@@ -6,7 +6,7 @@
 
 **不在这里:**mcpp 有哪些部件 —— 那是 [00 —— mcpp 的运转方式](00-how-mcpp-works.md),
 本章假定它而不重复它;以及 manifest 可以写的每一个字段,那是
-[03 —— mcpp.toml 工程文件指南](03-mcpp-toml.md)。下一章:[02 —— 示例项目](02-examples.md)。
+[04 —— mcpp.toml 工程文件指南](04-mcpp-toml.md)。下一章:[03 —— 示例项目](03-examples.md)。
 
 > 5 分钟完成 install → new → build → run → pack 全流程。
 
@@ -127,7 +127,7 @@ workspace 中运行。插件稳定依赖进程退出码和生成的 `compile_com
 
 ## 增量编译与测试
 
-[07 —— 测试](07-testing.md) 是拥有这个主题的章节;下面只是本教程需要的那一步。
+[08 —— 测试](08-testing.md) 是拥有这个主题的章节;下面只是本教程需要的那一步。
 
 ```bash
 mcpp build              # 增量构建
@@ -164,7 +164,7 @@ linux 1019s、windows 1289s)。给它一个默认上限会把「慢但正确」�
 `mcpp build` 将自动从
 [mcpp-index](https://github.com/mcpplibs/mcpp-index) 解析 SemVer
 约束、拉取源码并加入编译图。完整示例参见
-[02 — 示例项目](02-examples.md) 中的 `02-with-deps`。
+[03 — 示例项目](03-examples.md) 中的 `02-with-deps`。
 
 ## 生成发布包
 
@@ -181,7 +181,7 @@ mcpp pack --mode self-contained    # 打包 loader、libc 与依赖
 
 ## 后续阅读
 
-- [02 — 示例项目](02-examples.md) — 可直接运行的最小工程集合
+- [03 — 示例项目](03-examples.md) — 可直接运行的最小工程集合
 - [10 — 发布打包](10-pack-and-release.md) — 构建可分发产物
 - [20 — 工具链管理](20-toolchains.md) — 切换编译器与多版本管理
 - 任意命令的完整选项可通过 `mcpp <cmd> --help` 查阅

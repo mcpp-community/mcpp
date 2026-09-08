@@ -1,4 +1,4 @@
-# 02 — Examples
+# 03 — Examples
 
 **Reader:** someone choosing where to start, or looking for a project shaped
 like theirs.
@@ -8,7 +8,7 @@ order they build on each other.
 
 **Not here:** the content of any example — each has its own README, which
 explains only what it adds. Before: [01 — Getting Started](01-getting-started.md).
-After: [03 — The mcpp.toml Manifest](03-mcpp-toml.md).
+After: [04 — The mcpp.toml Manifest](04-mcpp-toml.md).
 
 The [`examples/`](../examples) directory is a curriculum. Each project is
 runnable on its own, and each one teaches **one thing no earlier example
@@ -110,7 +110,7 @@ last one. A new example is warranted when a capability **changes the shape of a
 project** — the files it contains, the manifest it declares, or the commands its
 author types. A capability that is one line inside a project an example already
 contains belongs in that chapter as a code block; one reached only through a
-command belongs in [08 — Commands by Scenario](08-commands-by-scenario.md).
+command belongs in [09 — Commands by Scenario](09-commands-by-scenario.md).
 
 The README states what the example is the first to teach and the criterion by
 which it is judged to work. For contribution mechanics see

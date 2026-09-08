@@ -305,7 +305,7 @@ store 内部结构 —— 与 `dep_dir` 存在的理由相同。
 
 **依赖声明的包同样被作答**(2026.9.6.6+),而且答的是这次构建**真正装上**的版本,不是
 本地 manifest 写下的那个。一个包只有一个版本:工程与规则都命名它时,离产物更近的声明赢,
-而两侧被告知同一个答案。见 [03 — mcpp.toml](03-mcpp-toml.md) 的「一个包一个版本」。
+而两侧被告知同一个答案。见 [04 — mcpp.toml](04-mcpp-toml.md) 的「一个包一个版本」。
 
 **`[feature-xlings.<f>]` 在 `<f>` 生效时同样被作答**(2026.9.6.2+)。这张表从诞生
 起就参与供给 —— 在那里写下一个包,它就会被下载并安装 —— 但构建程序的环境只由
@@ -453,7 +453,7 @@ mcpp 为那条边写出 `depfile =` 与 `deps = gcc`,ninja 读取该文件并把
 
 > 把预编译对象写进 `[build].ldflags` 同样能到达链接器,但**不要**用它承载构建产物:
 > ldflags 是链接命令里的一串字符、不是图里的文件,没有任何东西跟踪它,改了它得到的是
-> `ninja: no work to do`。Windows 资源请用 [`[resources]`](03-mcpp-toml.md);
+> `ninja: no work to do`。Windows 资源请用 [`[resources]`](04-mcpp-toml.md);
 > `object` 是其余一切的出口。
 
 **必须写出输出文件名。** mcpp 在 prepare 期就定死源码集、fingerprint 与模块图,
@@ -619,7 +619,7 @@ shim,而可用的那份就在项目自己的环境里,根本不在 `PATH` 上。
 
 一条规则 ——「对这些 `.proto` 跑 protoc」「对这些源码跑 clang-tidy」—— 属于一个包,
 而不该被复制到每个消费者的 `build.mcpp` 里。机制是
-[`host-module = true`](../03-mcpp-toml.md);本节讲的是它里面应该长什么样。
+[`host-module = true`](../04-mcpp-toml.md);本节讲的是它里面应该长什么样。
 
 下面这些从第一个规则包 `mcpplibs.grpcgen` 归纳而来,每一条特征都单独判过是必然还是偶然。
 它们是指引而非规则,因为其中没有一条能给出引擎可以检查的判据。
@@ -659,7 +659,7 @@ shim,而可用的那份就在项目自己的环境里,根本不在 `PATH` 上。
 而不是以包名注册,所以 `export module mcpp.rules.spirv;` 就是消费者 import 的那个名字。
 官方插件集中在一个包里,`mcpp:plugins`(仓库 `mcpp-community/mcpp-plugins`):规则包命名为
 `mcpp.rules.<x>`,构建期工具命名为 `mcpp.tools.<x>`,每个成员由该包的一个 feature 选择
-(见 [`host-module = true`](../03-mcpp-toml.md))。`mcpp.build.*` 是引擎自己的模块族,
+(见 [`host-module = true`](../04-mcpp-toml.md))。`mcpp.build.*` 是引擎自己的模块族,
 不用于插件。引擎判定不了谁是官方,所以检查以包的**命名空间**为键,两者不一致时告警 ——
 
     warning: build rule 'mcpplibs.plugins' declares the module
@@ -760,7 +760,7 @@ mcpp **不会**每次构建都重跑 `build.mcpp`。它会缓存程序产出的�
 - **在主机上运行——交叉构建下也是**(mcpp 0.0.95+)。`mcpp build --target <triple>`
   下,程序用宿主解析的工具链编译、在宿主运行,并看到 `MCPP_TARGET` = 交叉三元组。
   纯声明式的目标门控仍首选 `[target.'cfg(...)']` 表——参见
-  [03 - mcpp.toml 工程文件指南](03-mcpp-toml.md)。
+  [04 - mcpp.toml 工程文件指南](04-mcpp-toml.md)。
 - **当前工作目录是工程根目录**,因此相对路径(`src/generated.cpp`)会落在预期位置。
 - `build.mcpp` 非零退出会中止构建并打印其输出。
 - **运行有时间上限**(mcpp 2026.8.5.1+):构建程序默认有 **600 秒**,超时后 mcpp
@@ -917,7 +917,7 @@ rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spir
 plugins = { version = "0.3.0", features = ["rules-spirv"], host-module = true }
 ```
 
-**用 `[build-dependencies]` 而不是 `[dependencies]`** —— 规则包正是 [03 §2.6.1](03-mcpp-toml.md) 描述的那种
+**用 `[build-dependencies]` 而不是 `[dependencies]`** —— 规则包正是 [04 §2.6.1](04-mcpp-toml.md) 描述的那种
 情形:它的库绝不该到达目标,而它的规则仍然被需要。两条轴是分开的:
 `host-module = true` 说的是**要哪一种构建期产物**,而 section 说的是**这个包是否到达
 目标**;规则包在第二条轴上的答案是"否",而 section 就是说这件事的地方。写在

@@ -1,4 +1,4 @@
-# 07 — Testing
+# 08 — Testing
 
 **Reader:** anyone with code that has to keep working.
 
@@ -10,9 +10,9 @@ considers a test, and how to test something that does not run on this machine.
 stream, which is [50 — Machine-Readable Output](50-machine-output.md). This
 chapter states which flag produces it and stops there.
 
-Before: [04 — Dependencies and Resolution](04-dependencies.md) covers
+Before: [05 — Dependencies and Resolution](05-dependencies.md) covers
 `[dev-dependencies]`, which is how a test reaches a package the artifact does
-not. After: [08 — Commands by Scenario](08-commands-by-scenario.md) is the
+not. After: [09 — Commands by Scenario](09-commands-by-scenario.md) is the
 lookup for everything else.
 
 ## What mcpp considers a test

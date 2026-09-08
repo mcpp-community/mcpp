@@ -1,4 +1,4 @@
-# 06 — Workspaces
+# 07 — Workspaces
 
 **Reader:** an author whose repository holds more than one package.
 
@@ -7,8 +7,8 @@ and what does a member share with the others.
 
 **Not here:** publishing those packages, which is
 [11 — Publishing a Library](11-publishing-a-library.md). Before:
-[05 — Features and Capabilities](05-features-and-capabilities.md). After:
-[07 — Testing](07-testing.md).
+[06 — Features and Capabilities](06-features-and-capabilities.md). After:
+[08 — Testing](08-testing.md).
 
 A workspace organizes multiple related mcpp packages (libraries or applications) within a single repository. Member packages share a unified set of dependency versions and toolchain settings while each keeping its own `mcpp.toml` project file.
 

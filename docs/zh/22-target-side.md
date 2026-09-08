@@ -299,7 +299,7 @@ mcpp 不认识的键 —— 打错的字,或来自更新版本 mcpp 的谓词 �
 |---|---|---|
 | **裸 OS 别名** | 单个 OS / 族 —— 简洁且常用的形式 | `[target.windows]`、`[target.unix]` |
 | **`cfg(...)` 谓词** | 复合条件(arch / env / 组合子) | `[target.'cfg(all(linux, not(arch = "aarch64")))']` |
-| **精确三元组** | 某个具体目标(同时承载 `toolchain` / `linkage` / `sysroot` / `runner`,见 [03 §2.7.3](03-mcpp-toml.md)) | `[target.x86_64-linux-musl]` |
+| **精确三元组** | 某个具体目标(同时承载 `toolchain` / `linkage` / `sysroot` / `runner`,见 [04 §2.7.3](04-mcpp-toml.md)) | `[target.x86_64-linux-musl]` |
 
 一个选择器可以承载平台条件的**依赖**与**构建 flag**:
 

@@ -10,7 +10,7 @@ what does a consumer have to write to use it.
 **Not here:** adding a step to one project's own build, which is
 [30 — Build Programs](30-build-mcpp.md) and is the same primitives at a smaller
 scale; the feature keys themselves, which are
-[05](05-features-and-capabilities.md); and the spellings of the shipped rules,
+[06](06-features-and-capabilities.md); and the spellings of the shipped rules,
 which belong to `mcpp:plugins`. Examples:
 [`08-build-rules`](../examples/08-build-rules/) checks and embeds;
 [`12-a-new-device-language`](../examples/12-a-new-device-language/) adds a
@@ -169,7 +169,7 @@ neither.
 
 A bare version is a **choice** a project may override; `>=` is a
 **requirement** a project may not go below. See *One package, one version* in
-[03 — mcpp.toml](03-mcpp-toml.md).
+[04 — mcpp.toml](04-mcpp-toml.md).
 
 ## Generating an island's boundary
 
@@ -250,4 +250,4 @@ path.
   `mcpp xpkg parse` reports that key as unknown and exits 1. No descriptor in
   `mcpp-index` uses it (0 of 218); a package keeping its own `mcpp.toml` omits
   the `mcpp` field entirely. See *Current limitations* in
-  [08 — Commands by Scenario](08-commands-by-scenario.md).
+  [09 — Commands by Scenario](09-commands-by-scenario.md).

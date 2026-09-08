@@ -105,7 +105,7 @@ plugins = { version = "0.4.0", features = ["rules-cuda", "tools-island"], host-m
 `multi-backend/` is the one example here that also pins a version, and it does
 so to demonstrate the override: the rule owns "which package, and no older than
 what", the project owns "and exactly this one". One version is installed either
-way — see *One package, one version* in `docs/03-mcpp-toml.md`.
+way — see *One package, one version* in `docs/04-mcpp-toml.md`.
 
 ## The layers underneath
 

@@ -1,4 +1,4 @@
-# 05 —— Feature 与能力
+# 06 —— Feature 与能力
 
 **读者:**手上有可选内容的作者 —— 一份额外的源、一个额外的依赖,或者在多个后端
 之间做选择。
@@ -7,12 +7,12 @@
 
 **不在这里:**一次构建面向哪些设备后端 —— 那看起来像 feature 而不是 feature,
 它是 [42 —— 异构硬件构建](42-heterogeneous-builds.md)。在此之前:
-[04 —— 依赖与解析](04-dependencies.md)。在此之后:[06 —— 工作空间](06-workspace.md)。
+[05 —— 依赖与解析](05-dependencies.md)。在此之后:[07 —— 工作空间](07-workspace.md)。
 
 Feature 是一个包提供可选内容的方式:一个编译宏、一份额外的源文件、一个额外的
 依赖,或者在多个后端之间做选择。本章是声明与消费 feature 的参考。
 
-相关文档:[03 —— mcpp.toml](03-mcpp-toml.md) 是 manifest 其余部分的字段参考;
+相关文档:[04 —— mcpp.toml](04-mcpp-toml.md) 是 manifest 其余部分的字段参考;
 [`examples/11-features`](../../examples/11-features/) 是一个把三种形态都声明了
 一遍、并且用 dev-dependency 写测试的包;[42 —— 异构硬件构建](42-heterogeneous-builds.md)
 是这套机制最大的消费者,因为每条加速器 lane 都是一个 feature。
@@ -69,7 +69,7 @@ simd       = { sources = ["src/simd/**"], flags = [
   空间宏:feature **不**注入自由的包级 `cflags`/`ldflags`,否则会破坏加性的 feature
   并集模型。链接旗标来自 provider 依赖(见下文*`provides` / `requires`*),而非 feature。
 - 每个激活的 feature 仍会得到自动的 `-DMCPP_FEATURE_<NAME>`,`defines` 与之叠加。
-- `flags`(mcpp 0.0.101+)与 `[build].flags`([03 §2.3](03-mcpp-toml.md))共用同一有序 inline-table 数组
+- `flags`(mcpp 0.0.101+)与 `[build].flags`([04 §2.3](04-mcpp-toml.md))共用同一有序 inline-table 数组
   文法(`glob` 必填,加 `cflags`/`cxxflags`/`asmflags`/`defines`;与
   `[[build.flags]]` 一样也接受 `[[features.<name>.flags]]` 拼写)。feature 激活时
   条目追加在 base `[build].flags` **之后**(feature 按名

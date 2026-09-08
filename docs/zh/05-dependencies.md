@@ -1,4 +1,4 @@
-# 04 —— 依赖与解析
+# 05 —— 依赖与解析
 
 **读者:**构建里已经不只有自己代码的作者。
 
@@ -9,8 +9,8 @@
 [SPEC-001](../specs/package-identity.md),本章施用它而不复述它;以及怎么发布一个包,
 那是 [11 —— 发布一个库](11-publishing-a-library.md)。
 
-在此之前:[03 —— mcpp.toml 工程文件指南](03-mcpp-toml.md) 是这些表与其余表同处的
-地方。在此之后:[05 —— Feature 与能力](05-features-and-capabilities.md) 讲一个依赖
+在此之前:[04 —— mcpp.toml 工程文件指南](04-mcpp-toml.md) 是这些表与其余表同处的
+地方。在此之后:[06 —— Feature 与能力](06-features-and-capabilities.md) 讲一个依赖
 怎么变成可选的。
 
 ## `[dependencies]` — 运行时依赖

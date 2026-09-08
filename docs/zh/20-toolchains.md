@@ -209,7 +209,7 @@ mcpp toolchain default gcc@16 --target x86_64-windows-gnu
 `import std`)。该 target 默认 linkage 为 **static**——产出的 `.exe`
 完全自包含(无需随包分发 `libstdc++-6.dll`,可直接在 wine 下运行);
 要退出请写在 target 段上——`linkage` 只认精确 triple(见
-[mcpp.toml](03-mcpp-toml.md) §2.7),`[build] linkage` 这个键并不存在,写了会被静默忽略:
+[mcpp.toml](04-mcpp-toml.md) §2.7),`[build] linkage` 这个键并不存在,写了会被静默忽略:
 
 ```toml
 [target.x86_64-windows-gnu]
@@ -446,7 +446,7 @@ cxx_runtime = "self-contained"   # C++ 运行时那根轴
 CRT。
 
 toolset 自带的那份可再分发 CRT(`vcruntime140.dll` / `msvcp140.dll`)可以跟着
-产物走 —— 见 `docs/zh/03-mcpp-toml.md` 的 `cxx_runtime = "toolchain-coupled"`。
+产物走 —— 见 `docs/zh/04-mcpp-toml.md` 的 `cxx_runtime = "toolchain-coupled"`。
 
 ## 项目级版本锁定
 
