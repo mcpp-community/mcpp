@@ -480,9 +480,14 @@ The design failed two of its own rules to get there:
 1. **The definition**, in the form the reviewer gave: mcpp = build system +
    build plugins + package manager + toolchain management + the environment and
    runtime (xlings), in one program.
-2. **An analogy table** — CMake, xmake rules, Conan, GCC/LLVM/MSVC, Nix/conda —
-   so a reader with existing tools can place each part. With the disclaimer that
-   places rather than equates.
+2. **An analogy table** — CMake/Meson, `build.zig` and xmake rules, Conan/vcpkg,
+   Zig's bundled toolchain and rustup, Nix/conda — so a reader with existing
+   tools can place each part, with the disclaimer that places rather than
+   equates. Named beside it: **Cargo and Zig are the closest single-tool
+   analogues**, and for different halves of the same idea — Cargo for one
+   program being build, packages, lock and tests, Zig for the toolchain shipping
+   with the tool. The part neither has is the environment layer, which is why a
+   project can declare the non-compiler tools its build needs.
 3. **The guarantee, stated once**: clone any mcpp project and `mcpp build`
    works, without installing a compiler, configuring an environment, or hunting
    dependencies. Plus the two boundaries that make it trustworthy.

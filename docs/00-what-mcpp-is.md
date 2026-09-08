@@ -31,10 +31,21 @@ For a reader who already has tools for these jobs, the parts land roughly here:
 | the part | in mcpp | roughly the job of |
 |---|---|---|
 | build system | `mcpp.toml`, the module graph, the ninja backend | CMake, Meson |
-| build plugins | `build.mcpp`, rule packages | xmake rules |
+| build plugins | `build.mcpp`, rule packages | `build.zig`, xmake rules |
 | package manager | `[dependencies]`, `mcpp.lock`, the index | Conan, vcpkg |
-| toolchain management | the compiler as an installed, pinned payload | installing GCC / LLVM / MSVC by hand, or rustup's role in Rust |
+| toolchain management | the compiler as an installed, pinned payload | Zig's bundled toolchain; rustup's role in Rust; installing GCC / LLVM / MSVC by hand |
 | environment and runtime | `[xlings]`, payloads, the runtime search path | Nix, conda |
+
+**The closest single-tool analogues are Cargo and Zig**, and for different
+halves of the same idea. Cargo is one program that is the build, the packages,
+the lock file and the test runner, so a Rust project is cloned and built without
+a preliminary step — that is the guarantee below, in another language. Zig ships
+its toolchain with the tool and cross-compiles by default, so the compiler is
+not something the machine has to already have — that is the toolchain row.
+
+mcpp is that shape for C++, with one part neither of them has: the environment
+layer, which is why a project can also declare the *non-compiler* tools its
+build needs.
 
 **The table places the parts; it does not claim equivalence.** Each of those
 tools does more in its own area than mcpp does, and a project that needs that
