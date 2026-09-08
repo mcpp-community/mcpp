@@ -136,9 +136,9 @@
 | | 章节 | | 章节 |
 |---|---|---|---|
 | mcpp 是什么,以及那条保证 | [00](00-what-mcpp-is.md) | `import std`、模块接口、BMI | [20](20-toolchains.md)、[30](30-build-mcpp.md) |
-| `mcpp::action`、构建程序 | [30](30-build-mcpp.md) | 规则包、`MCPP_EXPORT_C` | [31](31-authoring-a-rule-package.md) |
+| `mcpp::action`、构建程序 | [30](30-build-mcpp.md) | 规则包 | [31](31-authoring-a-rule-package.md) |
 | 目标三元组、支持矩阵 | [21](21-the-target-triple.md) | runner、具名 runner | [41](41-devices.md) |
-| 岛、接缝、`accel` | [42](42-heterogeneous-builds.md) | 描述符、索引 | [11](11-publishing-a-library.md) |
+| 岛、接缝、`accel`、`MCPP_EXPORT_C` | [42](42-heterogeneous-builds.md) | 描述符、索引 | [11](11-publishing-a-library.md) |
 | ABI tag、预建产物 | [12](12-binary-distribution.md) | 退出码、JSON 输出 | [50](50-machine-output.md) |
 | `xim:` 载荷、`[xlings.workspace]` | [32](32-authoring-a-payload.md)、[23](23-the-project-environment.md) | `compat:` 适配包、`runtime.library_dirs` | [33](33-authoring-an-adapter.md) |
 

@@ -224,37 +224,19 @@ device link 在引擎侧的全部内容:N 个 `artifact` action,其输出不进�
 裸版本是项目可以覆盖的**选择**;`>=` 是项目不得低于的**要求**。见
 [23 —— 项目环境](23-the-project-environment.md) 的*一个包一个版本*。
 
-## 生成岛的边界
+## 岛的边界是生成的,而且不由规则生成
 
-设备翻译单元不能 import 模块,所以它与 C++ 侧之间的边界是一个 `extern "C"` 头。
-`mcpp:plugins` 的 `mcpp.tools.island` 从两个实现里读出标了 `MCPP_EXPORT_C` 的
-入口点,写出那个头以及它之上的模块,于是每个签名只存在一份。
+`mcpp.tools.island` 写出设备翻译单元包含的 `extern "C"` 头,以及 C++ 侧 import 的
+模块。它**不是**规则包,`mcpp:plugins` 里也没有任何东西调用它:调用它的是工程自己的
+`build.mcpp`,因为模块名与命名空间的形状是工程的决定而不是规则的。
 
-```cpp
-mcpp::tools::island::options opt;
-opt.module_name = "myapp.kernels";
-opt.out_dir     = std::string(mcpp::out_dir()) + "/island";
+规则欠它的只有一个字段。生成的头经由 `mcpp::tools::island::force_include_flags`
+到达岛,而这些旗标要落在设备编译器自己的命令行上 —— `cuda`、`hip`、`sycl` 与
+`ascendc` 的 `options::flags` —— 因为那个驱动不继承 `mcpp::cxxflag` 的任何东西,
+也因为把一个头强制灌进每个 C++ 翻译单元会让声明出现在模块接口的 `export module`
+之前,那是非良构的。
 
-const auto entries = mcpp::tools::island::scan(halves, opt);
-const auto out     = mcpp::tools::island::emit(*entries, opt);
-mcpp::generated(out->interface_file.c_str());
-```
-
-可用的有四级,每一级覆盖上一级:
-
-| 级 | 手写的部分 | 消费者写 |
-|---|---|---|
-| L0 | 只有被标记的入口点 | `import myapp.kernels` —— 岛自己的 C 形状接口 |
-| L1 | 生成模块之上的一个接缝模块 | `import myapp.saxpy` —— 项目设计的接口 |
-| L2 | 接缝,外加直接传给 `emit` 的入口点列表 | 同上,用于 scan 看不见的入口点 |
-| L3 | 头文件与模块都手写 | 同上,签名写了两遍 |
-
-生成的头经由 `mcpp::tools::island::force_include_flags` 到达岛,而这些旗标交给
-驱动设备编译器的那条**规则**,不走 `mcpp::cxxflag` —— 把一个头强制灌进每个 C++
-翻译单元,会让声明出现在模块接口的 `export module` 之前,那是非良构的。
-
-[`examples/09-heterogeneous/boundary`](../../examples/09-heterogeneous/boundary/)
-是 L0,并写明了每一级的代价。
+生成器本身见 [42 —— 异构硬件构建](42-heterogeneous-builds.md) 的*生成这个边界*。
 
 ## 报告构建应当知道的事
 

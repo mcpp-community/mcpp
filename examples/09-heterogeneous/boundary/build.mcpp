@@ -5,24 +5,28 @@ import mcpp.tools.island;
 // The lowest rung: the generated boundary module IS the interface, and this
 // project contains no seam and no header.
 //
-// Both halves are handed to `scan` unconditionally. They are the only place the
-// entry points' signatures are written, and the generator is the only point at
-// which both texts exist at once -- C language linkage does not mangle, so two
-// halves that declared one name differently would link cleanly and read the
-// arguments by whichever signature each was compiled with.
+// ONE ROOT, AND IT IS A TREE. `scan` reads every marked entry point under it
+// and the directories below it extend the namespace, so `src/kernels/vec` is
+// reached as `boundary::kernels::vec`. A root is also what makes ADDING a file
+// re-run this program: declared inputs are hashed contents, and a new file
+// changes none of them, so the root is registered as a glob as well.
+//
+// A single root is also the layout root, so nothing here has to say which tree
+// decides where entry points live. `../cuda` has two and says so.
 int main() {
-    const std::string root = mcpp::manifest_dir();
-    const std::vector<std::string> halves{
-        root + "/src/kernels/saxpy.c",
-    };
-    for (auto const& f : halves) mcpp::rerun_if_changed(f.c_str());
-
     mcpp::tools::island::options opt;
     opt.module_name = "boundary.kernels";
     opt.out_dir     = std::string(mcpp::out_dir()) + "/island";
     opt.produced_by = "the boundary example";
+    opt.roots       = { std::string(mcpp::manifest_dir()) + "/src/kernels" };
 
-    const auto entries = mcpp::tools::island::scan(halves, opt);
+    // An island's symbol is global to the whole program, so an entry point
+    // carries a prefix whether or not it sits in a namespace, and the namespace
+    // then repeats it. This emits `saxpy` beside `boundary_saxpy`; the authored
+    // name is the symbol and stays canonical.
+    opt.strip_prefix = "boundary_";
+
+    const auto entries = mcpp::tools::island::scan(opt);
     if (!entries) return 1;
     const auto out = mcpp::tools::island::emit(*entries, opt);
     if (!out) return 1;

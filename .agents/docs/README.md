@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-270 records.
+272 records.
 
 ## By subject
 
@@ -30,11 +30,18 @@ Records that declare one. Everything else is listed by date below.
 - [A curriculum for the examples, a reference for the documentation, and a check with a denominator](2026-09-08-examples-curriculum-and-documentation-plan.md) — superseded by [2026-09-08-documentation-architecture-three-trees.md](2026-09-08-documentation-architecture-three-trees.md)
 - [Three documentation trees, three audiences, and the rule for citing between them](2026-09-08-documentation-architecture-three-trees.md) — active
 
+### heterogeneous
+
+- [The island boundary's names: one rule for both lanes, and the check that makes it true](2026-09-08-island-boundary-names.md) — active
+- [Implementation plan: the island boundary's names](2026-09-08-island-boundary-names-implementation-plan.md) — active
+
 ## By date
 
 ### 2026-09
 
 - [The documentation as a book: a chapter-by-chapter design](2026-09-08-the-documentation-as-a-book.md) — active
+- [The island boundary's names: one rule for both lanes, and the check that makes it true](2026-09-08-island-boundary-names.md) — active
+- [Implementation plan: the island boundary's names](2026-09-08-island-boundary-names-implementation-plan.md) — active
 - [A curriculum for the examples, a reference for the documentation, and a check with a denominator](2026-09-08-examples-curriculum-and-documentation-plan.md) — superseded by [2026-09-08-documentation-architecture-three-trees.md](2026-09-08-documentation-architecture-three-trees.md)
 - [Three documentation trees, three audiences, and the rule for citing between them](2026-09-08-documentation-architecture-three-trees.md) — active
 - [第六轮生态复核:工具平面的目标轴](2026-09-07-round6-ecosystem-review.md)

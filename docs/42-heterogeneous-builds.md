@@ -223,14 +223,20 @@ the header is an intermediate that no consumer names.
 #### The name a payload arrives under
 
 The module and the namespace are one identifier path, derived from names the
-project already wrote.
+project already wrote. One rule, both lanes:
+
+> The module name is the root. Each directory below the group's base extends the
+> **namespace**. The leaf identifier is decided by the lane: the data lane
+> derives it from the file name, because a payload has no name of its own; the
+> island lane takes the entry point's name, because the author wrote one.
 
 | Written | Reached as |
 |---|---|
 | `[package] name = "myapp"` | module root `myapp` |
 | `shaders/scale.comp` | `myapp::shaders::scale_comp()` |
 | `shaders/a/scale.comp` | `myapp::shaders::a::scale_comp()` |
-| a `MCPP_EXPORT_C` entry point | `export using ::the_name;` in the boundary module |
+| `myapp_saxpy` in `kernels/saxpy.cu` | `myapp::kernels::myapp_saxpy(...)` |
+| `myapp_blur` in `kernels/image/blur.cu` | `myapp::kernels::image::myapp_blur(...)` |
 
 The root is the **package's** name with non-identifier characters replaced, not
 its directory's -- the two differ whenever a package sits under a generic folder,
@@ -241,9 +247,109 @@ what makes two shaders sharing a stem two things rather than a collision. A
 project that wants another name passes one; `examples/09-heterogeneous/cuda`
 does, so its boundary is `app.kernels` beside its seam `app.saxpy`.
 
+**The file name reaches nothing on the island lane, and the reason is in the
+table.** A payload has no name, so the data lane has to derive one and needs the
+directory to keep two files sharing a stem apart. An entry point already carries
+a name its author wrote, and two entry points sharing one are one symbol
+whatever directory each sits in -- so a file name would name nothing, and moving
+a function between two files in one directory renames nothing a consumer wrote.
+
 The accessor answers with the address and the byte count together. `sizeof` is
 not merely awkward at this boundary, it is unanswerable: the words may be in an
 object rather than in an array, and there is then nothing to take the size of.
+
+### Generating the boundary
+
+The `extern "C"` header and the module over it are mechanical, and
+`mcpp.tools.island` from `mcpp:plugins` writes both. A project calls it from its
+own `build.mcpp`; it is not a device rule and no rule package uses it.
+
+**What a project writes is one marker, where the entry point is defined.**
+
+```c
+// src/kernels/saxpy.cu -- no include: the generated header arrives through the
+// compiler's forced-include flag, which is also what defines the marker as
+// nothing.
+
+MCPP_EXPORT_C
+int app_saxpy(float a, const float* x, const float* y, float* out, unsigned n)
+{ ... }
+```
+
+`MCPP_EXPORT_C` names the mechanism rather than the domain: what is marked is
+exported across a generated boundary, with C linkage. It expands to nothing --
+the generated header defines it -- so it deliberately does not end in `_API`, a
+suffix that conventionally expands to a visibility attribute. It is
+configurable through `options::marker`.
+
+The marker selects. An island has internal functions, and a generator that
+exported whatever a file contained would make the boundary an accident of that
+file's contents.
+
+```cpp
+mcpp::tools::island::options opt;
+opt.module_name  = "app.kernels";
+opt.out_dir      = std::string(mcpp::out_dir()) + "/island";
+opt.roots        = { root + "/src/kernels", root + "/src/cpu" };
+opt.layout_root  = root + "/src/kernels";     // the default is roots.front()
+opt.strip_prefix = "app_";                     // optional, see below
+
+const auto entries = mcpp::tools::island::scan(opt);
+const auto out     = mcpp::tools::island::emit(*entries, opt);
+mcpp::generated(out->interface_file.c_str());
+```
+
+**A root is a tree, and one of them supplies the shape.** Each root holds one
+implementation of the boundary, and several roots mean one entry point
+implemented several times -- which is the ordinary shape of a seam, where
+exactly one implementation is in any link. The layout root's directories are
+what extend the namespace; every other root only has to define the same names,
+so a fallback tree may be one flat file and may be reorganised without renaming
+anything a consumer wrote. It is a naming role and not a rank: every root
+compiles, links, and is equally an implementation.
+
+Roots are directories on disk and must stay independent of the accelerator. A
+root taken from `mcpp::device_sources()` would be narrowed to nothing under
+`--no-accel`, and an entry point's namespace would then come from the fallback
+tree -- so a consumer's qualified name would differ between two builds of one
+project.
+
+**Two refusals, and they answer different questions.** One name declared twice
+in ONE root is a collision: C language linkage does not mangle, so those are one
+symbol, and a namespace that appeared to separate them would promise an
+isolation the linker does not provide. One name in SEVERAL roots is one entry
+point implemented several times, and the declarations must then agree verbatim.
+The second is the check nothing else in the toolchain can perform; the first is
+what makes the namespace honest.
+
+**`strip_prefix` is a spelling, not a second entity.** An island's symbol is
+global to the whole program, so an entry point carries a package prefix whether
+or not it sits in a namespace, and the namespace then repeats it. The option
+emits `inline constexpr auto blur = app_blur;` beside `using ::app_blur;`. The
+authored name stays canonical -- it is the symbol, and it is what `nm`, a link
+error, a profiler and `dlsym` show.
+
+**Four rungs, and each overrides the one above:**
+
+| rung | written by hand | the consumer writes |
+|---|---|---|
+| L0 | nothing but the marked entry points | `import app.kernels` — the island's own C-shaped interface |
+| L1 | a seam module over the generated one | `import app.saxpy` — the interface the project designed |
+| L2 | a seam, plus entries built with `island::declared` | the same, for entry points a scan cannot see |
+| L3 | the header and the module | the same, with the signature written twice |
+
+The generated header reaches the island through
+`mcpp::tools::island::force_include_flags`, whose flags go to the **rule** that
+drives the device compiler rather than through `mcpp::cxxflag` — forcing a
+header into every C++ translation unit puts declarations ahead of a module
+interface's `export module` line, which is ill-formed. A host implementation
+compiled by mcpp itself has no such command line and writes one ordinary
+`#include` of the generated header.
+
+[`examples/09-heterogeneous/boundary`](../examples/09-heterogeneous/boundary/)
+is L0 and states what each rung costs; `.../cuda` and `.../sycl` are L1;
+`.../hip`, `.../vulkan` and `.../cann` keep the header by hand, so the two can
+be read side by side.
 
 ## Compiling an island
 

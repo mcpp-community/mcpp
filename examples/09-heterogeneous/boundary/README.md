@@ -5,7 +5,7 @@ contains no seam, no header, and no hand-written `.cppm`.
 
 ```
 cd examples/09-heterogeneous/boundary
-mcpp run                 # 12 24 36 48
+mcpp run                 # 6 12 18 24
 ```
 
 Read this before [`../cuda`](../cuda/). It isolates the boundary between an
@@ -57,8 +57,9 @@ and nothing about the boundary changes when that happens.
 | L2 | a seam, and the entry list passed to `emit` directly | `import app.saxpy` | the same, for entry points a scan cannot see |
 | L3 — `../hip`, `../vulkan`, `../cann` | the header and the module | `import app.saxpy` | the same, with the signature written twice |
 
-**What L0 does not have.** The interface is C-shaped: `saxpy_device(2.0f, x, y,
-out, 4)` rather than a span. And there is no place for a
+**What L0 does not have.** The interface is C-shaped:
+`boundary::kernels::saxpy(2.0f, x, y, out, 4)` rather than a span. And there is
+no place for a
 `cfg(accelerator = ...)` section to apply, because a seam is the single point at
 which one implementation is exchanged for another. A project with one island and
 one backend can stop here; a project that will swap backends needs L1.
@@ -75,7 +76,9 @@ the module wrapper.
 |---|---|
 | the consumer imports the generated module and names no header | `grep -rn '#include' src/` is empty |
 | the project has no hand-written `.cppm` | the file list above |
-| the result is the family's | `12 24 36 48` |
+| a directory below the root extends the namespace | `boundary::kernels::vec::scale` resolves, and `vec` appears in no source of this project |
+| the short name and the authored one are one entity | `nm` on the artifact shows `boundary_saxpy` once and no `saxpy` |
+| the result is the family's, halved by the second island | `6 12 18 24` |
 
 The first two are why this example exists. `mcpp:plugins` records that a
 consumer importing the generated module links against an implementation

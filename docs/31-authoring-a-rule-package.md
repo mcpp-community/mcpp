@@ -249,40 +249,23 @@ A bare version is a **choice** a project may override; `>=` is a
 **requirement** a project may not go below. See *One package, one version* in
 [23 — The Project Environment](23-the-project-environment.md).
 
-## Generating an island's boundary
+## An island's boundary is generated, and not by a rule
 
-A device translation unit cannot import a module, so the boundary between it and
-the C++ side is an `extern "C"` header. `mcpp.tools.island` from `mcpp:plugins`
-reads the entry points marked `MCPP_EXPORT_C` out of both implementations and
-writes that header and a module over it, so each signature exists once.
+`mcpp.tools.island` writes the `extern "C"` header a device translation unit
+includes and the module the C++ side imports. It is **not** a rule package and
+nothing in `mcpp:plugins` calls it: a project calls it from its own
+`build.mcpp`, because the module name and the shape of the namespace are the
+project's decisions rather than the rule's.
 
-```cpp
-mcpp::tools::island::options opt;
-opt.module_name = "myapp.kernels";
-opt.out_dir     = std::string(mcpp::out_dir()) + "/island";
+What a rule owes it is one field. The generated header reaches the island
+through `mcpp::tools::island::force_include_flags`, and those flags go on the
+device compiler's own command line -- `options::flags` on `cuda`, `hip`, `sycl`
+and `ascendc` -- because that driver inherits nothing from `mcpp::cxxflag`, and
+because forcing a header into every C++ translation unit would put declarations
+ahead of a module interface's `export module` line, which is ill-formed.
 
-const auto entries = mcpp::tools::island::scan(halves, opt);
-const auto out     = mcpp::tools::island::emit(*entries, opt);
-mcpp::generated(out->interface_file.c_str());
-```
-
-Four rungs are available, and each overrides the one above:
-
-| rung | written by hand | the consumer writes |
-|---|---|---|
-| L0 | nothing but the marked entry points | `import myapp.kernels` — the island's own C-shaped interface |
-| L1 | a seam module over the generated one | `import myapp.saxpy` — the interface the project designed |
-| L2 | a seam, plus the entry list passed to `emit` directly | the same, for entry points a scan cannot see |
-| L3 | the header and the module | the same, with the signature written twice |
-
-The generated header reaches the island through
-`mcpp::tools::island::force_include_flags`, whose flags go to the **rule** that
-drives the device compiler rather than through `mcpp::cxxflag` — forcing a
-header into every C++ translation unit puts declarations ahead of a module
-interface's `export module` line, which is ill-formed.
-
-[`examples/09-heterogeneous/boundary`](../examples/09-heterogeneous/boundary/)
-is L0 and states what each rung costs.
+See [42 — Heterogeneous Builds](42-heterogeneous-builds.md) under *Generating
+the boundary* for the generator itself.
 
 ## Reporting what the build should know
 

@@ -53,7 +53,7 @@ tells the two apart, which is why it is printed.
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.4.0", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.5.0", features = ["rules-spirv"], host-module = true }
 
 [build]
 accel = "vulkan1.2"
