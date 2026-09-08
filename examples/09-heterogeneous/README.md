@@ -8,6 +8,7 @@ belong to the structure and which to a vendor.
 
 | directory | model | device compiler | what it adds to the structure |
 |---|---|---|---|
+| [`boundary/`](boundary/) | none — a C island | none | the boundary alone: a generated module the consumer imports, with no seam and no header anywhere in the project |
 | [`cuda/`](cuda/) | CUDA | the project's own clang (`-x cuda`), or nvcc | the driver relation stated as a fact and a floor, and two pairings nvcc cannot have |
 | [`vulkan/`](vulkan/) | Vulkan compute | glslang or shaderc, to SPIR-V | a device output that is a header rather than an object, and one artifact that runs on three devices |
 | [`sycl/`](sycl/) | SYCL | the dpcpp payload's clang | a second compiler with its own standard library, and a chained action for the device link |
@@ -15,14 +16,16 @@ belong to the structure and which to a vendor.
 | [`cann/`](cann/) | Ascend C | the toolkit's BiSheng (`-x asc`) | a device object for hardware nobody in this repository has, and a host half that declines cleanly |
 | [`multi-backend/`](multi-backend/) | CUDA **and** Vulkan | both of the above | the other shape: backends that are additive rather than a seam, chosen at run time |
 
-Start with `cuda/`. The four beside it assume it, and `multi-backend/` assumes
-two of them.
+Start with `boundary/`, which needs no device and isolates the interface
+between an island and the C++ side. Then `cuda/`, which adds the device compiler
+and a seam over that boundary. The four beside `cuda/` assume it, and
+`multi-backend/` assumes two of them.
 
-The first five are one shape — a **seam**: exactly one implementation exists in
-the artifact and the choice was made at build time. `multi-backend/` is the
-other — several implementations in one artifact, chosen when the program runs.
-A program can take either; a library that is compiled once and consumed by
-people whose machines differ can only take the second.
+`boundary/` and the five model directories are one shape — a **seam**: exactly
+one implementation exists in the artifact and the choice was made at build time.
+`multi-backend/` is the other — several implementations in one artifact, chosen
+when the program runs. A program can take either; a library that is compiled
+once and consumed by people whose machines differ can only take the second.
 
 ## The structure
 
@@ -34,14 +37,16 @@ is which compiler consumes the file, not which dialect the file is written in.
 
 **A seam.** The island's interface is `extern "C"` and free of standard-library
 types, because the two sides do not share a C++ ABI. A module — `app.saxpy` in
-all four — turns that C interface back into a C++ one. The seam is the single
+each of the five model directories — turns that C interface back into a C++ one.
+`boundary/` is the one that stops before this step, so the two can be read side
+by side. The seam is the single
 place where the implementation underneath becomes a different model or a CPU
 loop, and the single place a `cfg(accelerator = ...)` section has to apply.
 Without it, every importer would be backend-specific.
 
 The seam carries one more entry point, `saxpy_device_name()`, for a reason
-worth stating: all four islands and all four CPU fallbacks produce the same
-four numbers. Without a name in the output, a run that silently fell back to
+worth stating: every island and every CPU fallback here produces the same four
+numbers. Without a name in the output, a run that silently fell back to
 the CPU is indistinguishable from a run on a device -- in a set of examples
 whose whole subject is which device ran the computation. Each backend fills it
 in with the device it used, the CPU file fills it in with `cpu`, and both do so
@@ -71,6 +76,16 @@ anything is compiled. The two variants land in different artifact directories
 because the device axis is part of the build's identity, so alternating between
 them does not rebuild from scratch.
 
+**A boundary, generated or written.** The `extern "C"` declarations under the
+seam are each entry point's signature stated a second time, at the one place a
+disagreement is invisible: C language linkage does not mangle, and an island and
+its host fallback are never in one link. `mcpp.tools.island` reads the marked
+declarations out of both implementations and writes that header and a module
+over it, so the signatures exist once. `boundary/`, `cuda/` and `sycl/` take
+that route; `hip/`, `vulkan/` and `cann/` keep the header written by hand, so
+the two can be read side by side. [`boundary/`](boundary/) states what each
+rung costs.
+
 **A rule package, which brings its own environment.** Every vendor spelling —
 `--cuda-gpu-arch`, `-gencode`, `--target-env`, `-fsycl-targets`, `-fsycl-link`,
 `--cce-aicore-arch` — lives in `mcpp:plugins`, a package the project depends on
@@ -84,7 +99,7 @@ selects it and the accelerator it serves, so a project writes one edge and no
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.3.0", features = ["rules-cuda", "tools-island"], host-module = true }
+plugins = { version = "0.4.0", features = ["rules-cuda", "tools-island"], host-module = true }
 ```
 
 `multi-backend/` is the one example here that also pins a version, and it does
@@ -94,8 +109,8 @@ way — see *One package, one version* in `docs/05-mcpp-toml.md`.
 
 ## The layers underneath
 
-A device build reaches hardware through four layers, and each of the four
-examples uses all of them. Confusing two of them is the most common way a
+A device build reaches hardware through four layers, and each of the model
+directories uses all of them. Confusing two of them is the most common way a
 working build stops working on another machine.
 
 | layer | owns | example |

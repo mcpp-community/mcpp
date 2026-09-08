@@ -14,7 +14,7 @@ import_std = true
 # imports it as `mcpp.rules.ascendc`. `[build-dependencies]`, because a rule
 # package's library must never reach the target while its rule is wanted.
 [build-dependencies.mcpp]
-plugins = { version = "0.3.0", features = ["rules-ascendc"], host-module = true }
+plugins = { version = "0.4.0", features = ["rules-ascendc"], host-module = true }
 
 # NO [xlings.workspace]. `mcpp.rules.ascendc` declares `xim:cann-toolkit`
 # itself, gated on this accelerator and on the feature that selects the rule --

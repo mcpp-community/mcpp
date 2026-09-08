@@ -1,0 +1,17 @@
+[package]
+name    = "toyapp"
+version = "0.1.0"
+
+[language]
+standard = "c++23"
+
+# ONE EDGE. `rule_module` on the feature implies `host-module = true`, so the
+# consumer names the feature and nothing else.
+[dependencies]
+rules-toy = { path = "../rules-toy", features = ["rules-toy"] }
+
+# `.toy` IS NOT IN THE DEFAULT SOURCE GLOB. Device sources are opted into by
+# naming them -- a package that vendors one it builds elsewhere must not start
+# compiling it on an mcpp upgrade.
+[build]
+sources = ["src/*.cpp", "src/kernels/*.toy"]

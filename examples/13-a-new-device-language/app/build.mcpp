@@ -1,0 +1,11 @@
+import std;
+import mcpp;
+import example.rules.toy;
+
+int main() {
+    // The rule reads the device set from the graph, so this program names no
+    // file. What it must track is the SET of paths: a `.toy` appearing or
+    // disappearing changes what the graph should be.
+    mcpp::rerun_if_changed_glob("src/kernels/**/*.toy");
+    return example::rules::toy::compile() ? 0 : 1;
+}
