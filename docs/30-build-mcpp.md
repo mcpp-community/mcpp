@@ -896,63 +896,6 @@ explicit input/output contract — incremental builds stay correct.
 When nothing changed the output is `build.mcpp up to date (cached)`; otherwise
 `build.mcpp compiling` / `running`.
 
-## Notes & limits
-
-- **Runs on the host — including under cross** (mcpp 0.0.95+). Under
-  `mcpp build --target <triple>` the program is compiled with a host-resolved
-  toolchain, runs on the host, and sees `MCPP_TARGET` = the cross triple.
-  For purely declarative target gating, `[target.'cfg(...)']` tables remain
-  the first choice — see [04 - mcpp.toml Manifest Guide](04-mcpp-toml.md).
-- **CWD is the project root**, so relative paths (`src/generated.cpp`) land where
-  expected.
-- A non-zero exit from `build.mcpp` aborts the build and prints its output.
-- **The run is bounded** (mcpp 2026.8.5.1+): a build program gets **600 s** by
-  default, after which mcpp kills it and fails the build naming the package.
-  Configure it per package:
-
-  ```toml
-  [build]
-  build_program_timeout = 1800   # seconds; 0 = no limit
-  ```
-
-  Precedence, highest first — the same shape `macos_deployment_target` uses:
-
-  ```
-  MCPP_BUILD_PROGRAM_TIMEOUT=<seconds>   this invocation only
-    > [build] build_program_timeout      the manifest of the package that OWNS the build.mcpp
-    > 600                                built-in default
-  ```
-
-  The value comes from the **owning package's** manifest, because its author is
-  the one who knows how long the generator takes. When a dependency's build
-  program times out, the error names the exact `mcpp.toml` to edit — editing
-  a hand-written one would change nothing.
-
-  Omitting the key is not the same as `0`: unset means "use the default bound",
-  `0` means "no bound at all".
-
-  **The bound is enforced on every platform** as of mcpp 2026.8.11.1. It used
-  to be POSIX-only: the Windows launcher fell through to an unbounded path, so
-  this knob — and `mcpp test --timeout`, and `--build-timeout` — silently did
-  nothing there. Windows now runs the child in a Job object and closes it on
-  expiry, which takes the whole process tree rather than just the direct child
-  (a grandchild left holding the capture pipe would otherwise hang the drain
-  after the kill).
-
-  The **compile** is deliberately *not* bounded — the same asymmetry `mcpp test`
-  uses: a long compile is usually legitimate (a first-run `std` module build is
-  minutes) and killing it produces a baffling failure, while a long-running
-  build *program* is usually stuck, and an unbounded one hangs the whole build
-  with no diagnostic at all.
-
-  > **Why not "ask the user instead of aborting"** ([#410](https://github.com/mcpp-community/mcpp/issues/410)):
-  > the program's stdout is already dup2'd into a pipe that carries the `mcpp:`
-  > directive protocol, so there is no interaction channel; most builds run
-  > where nobody is watching (CI, a pipeline, ninja's child), and a build
-  > blocked on a prompt is harder to diagnose than one that failed; and a build
-  > whose outcome depends on a keystroke is not reproducible. The configurable
-  > bound plus an error that names the file to edit answers the same need.
-
 ## Host tools from a dependency (mcpp 2026.8.5.1+)
 
 A package can build a binary its consumers need *at build time* — `protoc`, a
@@ -1227,3 +1170,61 @@ the other conditional dependency tables ([22 — The Target Side](22-target-side
 registered on every platform** — only what it pulls in is conditional — so
 requesting it where no predicate matches is not an unknown-feature error.
 
+
+
+## Current limitations
+
+- **Runs on the host — including under cross** (mcpp 0.0.95+). Under
+  `mcpp build --target <triple>` the program is compiled with a host-resolved
+  toolchain, runs on the host, and sees `MCPP_TARGET` = the cross triple.
+  For purely declarative target gating, `[target.'cfg(...)']` tables remain
+  the first choice — see [04 - mcpp.toml Manifest Guide](04-mcpp-toml.md).
+- **CWD is the project root**, so relative paths (`src/generated.cpp`) land where
+  expected.
+- A non-zero exit from `build.mcpp` aborts the build and prints its output.
+- **The run is bounded** (mcpp 2026.8.5.1+): a build program gets **600 s** by
+  default, after which mcpp kills it and fails the build naming the package.
+  Configure it per package:
+
+  ```toml
+  [build]
+  build_program_timeout = 1800   # seconds; 0 = no limit
+  ```
+
+  Precedence, highest first — the same shape `macos_deployment_target` uses:
+
+  ```
+  MCPP_BUILD_PROGRAM_TIMEOUT=<seconds>   this invocation only
+    > [build] build_program_timeout      the manifest of the package that OWNS the build.mcpp
+    > 600                                built-in default
+  ```
+
+  The value comes from the **owning package's** manifest, because its author is
+  the one who knows how long the generator takes. When a dependency's build
+  program times out, the error names the exact `mcpp.toml` to edit — editing
+  a hand-written one would change nothing.
+
+  Omitting the key is not the same as `0`: unset means "use the default bound",
+  `0` means "no bound at all".
+
+  **The bound is enforced on every platform** as of mcpp 2026.8.11.1. It used
+  to be POSIX-only: the Windows launcher fell through to an unbounded path, so
+  this knob — and `mcpp test --timeout`, and `--build-timeout` — silently did
+  nothing there. Windows now runs the child in a Job object and closes it on
+  expiry, which takes the whole process tree rather than just the direct child
+  (a grandchild left holding the capture pipe would otherwise hang the drain
+  after the kill).
+
+  The **compile** is deliberately *not* bounded — the same asymmetry `mcpp test`
+  uses: a long compile is usually legitimate (a first-run `std` module build is
+  minutes) and killing it produces a baffling failure, while a long-running
+  build *program* is usually stuck, and an unbounded one hangs the whole build
+  with no diagnostic at all.
+
+  > **Why not "ask the user instead of aborting"** ([#410](https://github.com/mcpp-community/mcpp/issues/410)):
+  > the program's stdout is already dup2'd into a pipe that carries the `mcpp:`
+  > directive protocol, so there is no interaction channel; most builds run
+  > where nobody is watching (CI, a pipeline, ninja's child), and a build
+  > blocked on a prompt is harder to diagnose than one that failed; and a build
+  > whose outcome depends on a keystroke is not reproducible. The configurable
+  > bound plus an error that names the file to edit answers the same need.

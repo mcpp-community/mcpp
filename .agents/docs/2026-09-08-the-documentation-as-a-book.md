@@ -348,3 +348,50 @@ and designed nothing, which is the failure this document exists to name.
   grouping was wrong; that is the whole of the structural change.
 - **It does not settle the specifications' language.** That question stands
   where the previous record left it.
+
+---
+
+## 11. What is open after this batch, and the criterion for each
+
+### 11.1 Seventeen reference chapters have no limits section
+
+The style skill calls the section mandatory for a reference chapter. Two
+chapters had the content under another heading and are renamed; the scenario,
+model, tutorial and index chapters are exempt, because their scope is stated by
+the "Not here" line in their opening and they claim no complete surface.
+
+Seventeen remain: `04`, `05`, `07`, `10`, `11`, `20`, `21`, `22`, `23`, `24`,
+`41`, `50`, `51`, `90`, `91`, `92`.
+
+**They are open rather than written, and the reason is the rule itself.** A
+fabricated limits section satisfies the check and measures nothing, which is
+worse than the section being absent — the reader then believes the boundary has
+been stated. Writing one requires a fact its area's owner can state and that a
+reader can reproduce.
+
+*Criterion for closing one:* the section lists facts, each of which can be
+reproduced on the current release, and each of which a reader could otherwise
+only discover by hitting it.
+
+### 11.2 Four chapters present several spellings as equals
+
+`04` (50 code blocks), `20` (35), `30` (37) and `40` (33) carry no `<details>`,
+which means every spelling in them is offered to the reader at the same weight.
+R5 says one recommended path in the body and the rest folded away. `05` is the
+one section converted so far, and it is the shape the other four follow.
+
+*Criterion:* a reader who reads only the body and opens nothing can do the thing
+correctly without choosing.
+
+### 11.3 The manifest reference still holds worked examples and an appendix
+
+`04` §3 is six worked examples, which `examples/` owns, and Appendix A is the
+admission criteria for new manifest fields, which is contributor material and
+belongs to `9x` or to SPEC-004. Both were named in §6 and neither is moved yet.
+
+### 11.4 The lookup index has no check
+
+§10's index is hand-built and correct today. Nothing compares it against the
+reference chapter's own section list, so a key added to `04` and not indexed is
+invisible. The check is the same shape as rule 4 (every specification appears in
+every index) and is one loop.
