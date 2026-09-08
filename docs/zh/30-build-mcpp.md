@@ -789,9 +789,13 @@ grpc     = { version = "1.83.0", tools = ["grpc_cpp_plugin"] }
 所以对来自索引的工具,这个键是精确的。而正在旁边被编辑的工具,两次构建之间版本相同,
 缓存里的二进制就留在原地:在
 [`examples/12-a-new-device-language`](../../examples/12-a-new-device-language/)
-上实测,改动工具的 emitter 之后,`mcpp run` 报告 `Finished dev in 0.00s` 并打印上一次
-的答案。抬工具包的版本,或用 `mcpp cache clean` 清空构建缓存 —— tool store 就住在
-里面,路径是 `<mcpp cache dir>/tool/<index>/<name>@<version>/`。
+上实测,改动工具的 emitter 之后 `mcpp run` 打印的是上一次的答案,而抬高工具包的版本
+之后它被重建、产物随之改变。抬版本,或用 `mcpp cache clean` 清空构建缓存 ——
+tool store 就住在里面,路径是 `<mcpp cache dir>/tool/<index>/<name>@<version>/`。
+
+**缺口在重建,不在跟踪。** 把工具列进 action 输入的规则,确实会在那个文件的字节变化
+时重跑 —— 实测直接覆盖 store 里的二进制,产物随之改变。不发生的是「让这些字节变化」
+的那次重建。
 
 ### `[tools.overrides]` —— 使用已有的二进制
 

@@ -184,28 +184,47 @@ a real compiler rather than a script.
 
 ## The boundary this example measured: a host tool is cached by version
 
-Editing `toyc`'s **source** does not reach the artifact. Measured: a change to
-the emitter left `mcpp run` reporting `Finished dev in 0.00s` and printing the
-previous answer.
+Four changes were made one at a time, each from the same starting state:
 
-The tool store's key is the tool package's identity, version, host triple,
-compiler identity, profile, features and the versions of its transitive
-dependencies — not the content of its sources. For a package that arrives from
-an index that key is exact, because a published version is immutable. For a
-`path` dependency being edited it is not:
+| what changed | the artifact | how it was changed |
+|---|---|---|
+| the `.toy` source | follows: `42` → `63` | `scale(…, 2)` → `scale(…, 3)` |
+| the compiler's **bytes**, at the path the action names | follows: `42` → `168` | overwriting the binary in the tool store |
+| the compiler's **sources**, its version unchanged | does not follow: the previous answer stands | editing the emitter |
+| the compiler's **version** | follows: `42` → `168`, and the tool is rebuilt | `0.1.0` → `0.1.1` |
 
-| situation | effect |
-|---|---|
-| the tool's version changes | the tool is rebuilt, and the action re-runs because its declared input changed |
-| the tool's sources change, its version does not | the cached binary stays, and the build is green over the previous compiler's output |
+Rows two and three are the whole finding, and they separate two things that are
+easy to merge. **The action's input tracking works**: `rules-toy` declares the
+compiler beside the source, and changing that file's bytes re-runs the edge.
+**What does not happen is the rebuild that would change those bytes.** The tool
+store's key is the tool package's identity, version, host triple, compiler
+identity, profile, features and the versions of its transitive dependencies —
+it holds no source content. For a package that arrives from an index the key is
+exact, because a published version is immutable; for a `path` dependency being
+edited it is not.
 
-Two ways out, and they are the same one at different sizes: bump the tool
-package's version, or empty the build cache with `mcpp cache clean` — the tool
-store lives inside it, at `<mcpp cache dir>/tool/<index>/<name>@<version>/`.
+`mcpp run` prints `Finished dev in 0.00s` in row three, and that line is mcpp's
+own summary rather than evidence: row two prints it too, and the artifact
+changed.
 
-The action itself is not the gap. `rules-toy` declares the compiler as an input
-beside the source, so an action whose compiler binary changes does re-run. What
-does not happen is the rebuild that would change those bytes.
+**Row four does not test row two, which is why the difference is worth stating.**
+The tool's path is on the action's command line, so a new version re-runs the
+edge whether or not the compiler is also a declared input. Removing
+`a.input(compiler)` from `rules-toy` and bumping the version left the artifact
+following anyway. The isolating change is different bytes at the *same* path —
+row two — and it takes both of its directions: with the input removed, the
+artifact followed the overwrite and then stopped following the restore. CI runs
+that pair.
+
+Two ways out: bump the tool package's version, or empty the build cache with
+`mcpp cache clean` — the tool store lives inside it, at
+`<mcpp cache dir>/tool/<index>/<name>@<version>/`.
+
+**One more trap sits behind them.** Going back from `0.1.1` to `0.1.0`, whose
+clean tool was still in the store, left the artifact at `168`. The build program
+did not re-run, so the plan still named the `0.1.1` binary, which had not
+changed. `rm -rf target` cleared it. Iterating on a compiler means the version
+goes forward only.
 
 ## Three things the first version got wrong
 

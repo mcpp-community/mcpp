@@ -936,10 +936,15 @@ A published version is immutable, so for a tool that arrives from an index the
 key is exact. A tool being edited next door has the same version from one build
 to the next, and the cached binary stays: measured on
 [`examples/12-a-new-device-language`](../examples/12-a-new-device-language/),
-a change to the tool's emitter left `mcpp run` reporting `Finished dev in 0.00s`
-and printing the previous answer. Bump the tool package's version, or empty the
-build cache with `mcpp cache clean` — the tool store lives inside it, at
-`<mcpp cache dir>/tool/<index>/<name>@<version>/`.
+a change to the tool's emitter left `mcpp run` printing the previous answer,
+while bumping the tool package's version rebuilt it and changed the artifact.
+Bump the version, or empty the build cache with `mcpp cache clean` — the tool
+store lives inside it, at `<mcpp cache dir>/tool/<index>/<name>@<version>/`.
+
+This is a gap in the rebuild, not in the tracking. An action that declares the
+tool among its inputs does re-run when that file's bytes change, measured by
+overwriting the binary in the store: the artifact followed. What does not happen
+is the rebuild that would change those bytes.
 
 ### `[tools.overrides]` — use an existing binary
 

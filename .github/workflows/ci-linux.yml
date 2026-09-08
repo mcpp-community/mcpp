@@ -313,20 +313,95 @@ jobs:
           echo "ok: the optional package is absent without its feature"
           cd - >/dev/null
 
-          # 12-a-new-device-language. The `.toy` compiles on an engine that does
-          # not know the extension, AND editing the compiler reaches the
-          # artifact -- the half that fails silently when the tool is not a
-          # declared input of the action.
+          # 12-a-new-device-language. Three criteria, and a probe run exits
+          # non-zero on purpose -- the program returns 1 when the answer is not
+          # 42 -- so those runs are guarded with `|| true` and judged by their
+          # output rather than their status.
           cd examples/12-a-new-device-language/app
           "$MCPP" run | tee /tmp/toy.log
-          grep -q 'toy_answer() = 42' /tmp/toy.log || {
+          grep -q 'answer()       = 42' /tmp/toy.log || {
             echo "FAIL: the .toy did not reach the link"; exit 1; }
-          sed -i 's/print s + 0 }/print s + 100 }/' ../rules-toy/tools/toyc.sh
-          "$MCPP" run | tee /tmp/toy2.log
-          sed -i 's/print s + 100 }/print s + 0 }/' ../rules-toy/tools/toyc.sh
-          grep -q 'toy_answer() = 142' /tmp/toy2.log || {
-            echo "FAIL: editing the compiler did not reach the artifact"; exit 1; }
-          echo "ok: the compiler is a declared input"
+          # THE LANGUAGE IS EXECUTED, NOT PATTERN-MATCHED: 21 is what the
+          # emitted `while` loop computes, and no constant in the tree holds it.
+          grep -q 'gcd(1071, 462) = 21' /tmp/toy.log || {
+            echo "FAIL: the emitted loop did not run"; exit 1; }
+
+          # Editing the .toy reaches the artifact.
+          sed -i 's/scale(gcd(1071, 462), 2)/scale(gcd(1071, 462), 3)/' src/kernels/answer.toy
+          "$MCPP" run > /tmp/toy2.log 2>&1 || true
+          sed -i 's/scale(gcd(1071, 462), 3)/scale(gcd(1071, 462), 2)/' src/kernels/answer.toy
+          grep -q 'answer()       = 63' /tmp/toy2.log || {
+            cat /tmp/toy2.log; echo "FAIL: editing the .toy did not reach the artifact"; exit 1; }
+
+          # THE COMPILER IS A DECLARED INPUT OF THE ACTION -- the half that
+          # fails silently, and the one criterion here that has to be built to
+          # isolate it. Bumping the tool's version is NOT that criterion: the
+          # tool's path is on the action's command line, so a new path re-runs
+          # the edge whether or not it is also declared as an input. Measured:
+          # with `a.input(compiler)` removed, a version bump still reached the
+          # artifact, and this step passed.
+          #
+          # The isolating change is different BYTES AT THE SAME PATH. Build a
+          # compiler that behaves differently, overwrite the cached binary in
+          # place, and the command line is byte-identical.
+          #
+          # BOTH DIRECTIONS ARE THE CRITERION, not either one. Falsified by
+          # removing `a.input(compiler)`: the artifact followed the first
+          # overwrite anyway and stopped following the restore, so a check that
+          # asserted only the first direction would have passed on a rule that
+          # tracks nothing.
+          #
+          # `n.value * 2` keeps `0` at `0`: a probe that changed every literal
+          # would turn `while (b != 0)` into a loop that divides by zero, and
+          # this step would report a crash rather than an answer.
+          probe_on() { sed -i 's/return std::format("{}", n.value);/return std::format("{}", n.value * 2);/' ../toyc/src/compile.cppm; }
+          probe_off() { sed -i 's/return std::format("{}", n.value \* 2);/return std::format("{}", n.value);/' ../toyc/src/compile.cppm; }
+          install_toyc() {
+            ( cd ../toyc && "$MCPP" build >/dev/null )
+            cp "$(find ../toyc/target -name toyc -type f -perm -u+x | head -1)" "$1"
+          }
+
+          # `mcpp cache dir` prints a legacy-directory note on a second line.
+          store="$("$MCPP" cache dir | head -1)/tool"
+          cached="$(find "$store" -path '*toyc@0.1.0*/bin/toyc' | head -1)"
+          [ -n "$cached" ] || {
+            echo "FAIL: no toyc in the tool store under $store"; exit 1; }
+
+          probe_on; install_toyc "$cached"; probe_off
+          "$MCPP" run > /tmp/toy3.log 2>&1 || true
+          grep -q 'answer()       = 168' /tmp/toy3.log || {
+            cat /tmp/toy3.log
+            echo "FAIL: a changed compiler binary did not reach the artifact."
+            echo "      rules-toy must declare the compiler among the action's inputs."
+            exit 1; }
+          install_toyc "$cached"
+          "$MCPP" run > /tmp/toy4.log 2>&1 || true
+          grep -q 'answer()       = 42' /tmp/toy4.log || {
+            cat /tmp/toy4.log
+            echo "FAIL: restoring the compiler binary did not reach the artifact --"
+            echo "      the action is not tracking the compiler's bytes."
+            echo "      rules-toy must declare the compiler among the action's inputs."
+            exit 1; }
+
+          # THE STORE HOLDS NO SOURCE CONTENT, which the example's README and
+          # docs/30 both state. Editing the compiler's sources at the same
+          # version changes nothing, because nothing rebuilds the tool.
+          probe_on
+          "$MCPP" run > /tmp/toy5.log 2>&1 || true
+          grep -q 'answer()       = 42' /tmp/toy5.log || {
+            cat /tmp/toy5.log
+            echo "FAIL: the tool store now sees source content."
+            echo "      The example's README and docs/30 state that it does not; update them."
+            exit 1; }
+
+          # ... and bumping the version is the way out both of them offer.
+          sed -i 's/^version     = "0.1.0"/version     = "0.1.1"/' ../toyc/mcpp.toml
+          "$MCPP" run > /tmp/toy6.log 2>&1 || true
+          sed -i 's/^version     = "0.1.1"/version     = "0.1.0"/' ../toyc/mcpp.toml
+          probe_off
+          grep -q 'answer()       = 168' /tmp/toy6.log || {
+            cat /tmp/toy6.log; echo "FAIL: bumping the tool version did not rebuild it"; exit 1; }
+          echo "ok: the compiler is a declared input, and the store is keyed on the version"
 
       - name: "Graphics example: render offscreen on lavapipe and assert the pixels"
         run: |
