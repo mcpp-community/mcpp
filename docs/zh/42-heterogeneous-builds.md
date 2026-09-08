@@ -248,7 +248,7 @@ plugins = { version = "0.3.0", features = ["rules-cuda"], host-module = true }
 ```
 
 更近的声明赢,装一个版本,并且 mcpp 说出用了哪条。不满足规则下界的钉会被拒绝并点出
-两侧,而不是与它并排装下来。完整规则见 [04 — mcpp.toml](04-mcpp-toml.md) 的
+两侧,而不是与它并排装下来。完整规则见 [23 — The Project Environment](23-the-project-environment.md) 的
 「一个包一个版本」;`examples/09-heterogeneous/multi-backend` 是本仓库里唯一走覆盖
 路径的示例,其余每一个都只写那条边。
 

@@ -45,7 +45,9 @@ command produces a binary that carries what it needs.
 3. [05 — Dependencies and Resolution](05-dependencies.md) — `[dependencies]`,
    the lock file.
 4. [08 — Testing](08-testing.md) — `tests/**/*.cpp`.
-5. [10 — Packaging an Application](10-pack-and-release.md) — `mcpp pack`.
+5. [20 — Toolchain Management](20-toolchains.md) — when the compiler's version
+   matters, or the project must pin one.
+6. [10 — Packaging an Application](10-pack-and-release.md) — `mcpp pack`.
 
 **Run.** [`examples/01-hello`](../examples/01-hello/), then
 [`02-with-deps`](../examples/02-with-deps/), then

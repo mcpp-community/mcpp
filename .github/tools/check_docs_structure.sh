@@ -15,6 +15,7 @@
 #   9. every relative link in docs/ and examples/ resolves
 #  10. a translation carries the same tables and code blocks
 #  11. every chapter states its reader, its question and its exclusions
+#  12. a citation naming a section lands in the chapter that contains it
 #
 # What it deliberately does NOT check: whether a chapter documents what is
 # implemented, whether an assertion's strength matches its evidence, or whether
@@ -218,6 +219,32 @@ for f in docs/[0-9]*.md docs/zh/[0-9]*.md; do
   head -22 "$f" | grep -qE '^\*\*(Not here|不在这里)' \
     || bad "$f: the opening states no exclusions"
 done
+
+# ── 12. a citation that names a section lands in the chapter that has it ─
+#
+# `See *One package, one version* in [04](04-mcpp-toml.md)` survived a split
+# that moved the section to chapter 23, in five places and two languages. Rule 3
+# could not see it -- the path resolved; it was the wrong chapter. A citation
+# that names a section by TITLE is checkable against that chapter's headings.
+python3 - <<'PYCITE' || fail=1
+import re, pathlib, sys
+EN = re.compile(r"See \*([^*]{3,60})\* in \[\d{2}[^\]]*\]\((\d{2}-[a-z0-9-]+)\.md\)")
+ZH = re.compile(r"见\s*\[\d{2}[^\]]*\]\((\d{2}-[a-z0-9-]+)\.md\)\s*的\*([^*]{2,40})\*")
+bad = 0
+for f in list(pathlib.Path("docs").glob("[0-9]*.md")) + list(pathlib.Path("docs/zh").glob("[0-9]*.md")):
+    text = f.read_text(errors="ignore")
+    for m in EN.finditer(text):
+        title, chap = m.group(1), m.group(2)
+        t = (f.parent / f"{chap}.md")
+        if not t.exists() or title.lower() not in t.read_text(errors="ignore").lower():
+            print(f"FAIL: {f}: cites *{title}* in {chap}, which does not contain it"); bad += 1
+    for m in ZH.finditer(text):
+        chap, title = m.group(1), m.group(2)
+        t = (f.parent / f"{chap}.md")
+        if not t.exists() or title not in t.read_text(errors="ignore"):
+            print(f"FAIL: {f}: cites *{title}* in {chap}, which does not contain it"); bad += 1
+sys.exit(1 if bad else 0)
+PYCITE
 
 if [[ "$fail" -eq 0 ]]; then
   echo "OK: docs structure checks pass"

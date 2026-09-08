@@ -154,7 +154,7 @@ device link 在引擎侧的全部内容:N 个 `artifact` action,其输出不进�
 都不开。
 
 裸版本是项目可以覆盖的**选择**;`>=` 是项目不得低于的**要求**。见
-[04 —— mcpp.toml](04-mcpp-toml.md) 的*一个包,一个版本*。
+[23 —— 项目环境](23-the-project-environment.md) 的*一个包一个版本*。
 
 ## 生成岛的边界
 

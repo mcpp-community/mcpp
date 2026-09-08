@@ -41,7 +41,9 @@
 2. [01 —— 快速开始](01-getting-started.md) —— 把程序跑起来。
 3. [05 —— 依赖与解析](05-dependencies.md) —— `[dependencies]`、锁文件。
 4. [08 —— 测试](08-testing.md) —— `tests/**/*.cpp`。
-5. [10 —— 发布打包](10-pack-and-release.md) —— `mcpp pack`。
+5. [20 —— 工具链管理](20-toolchains.md) —— 当编译器版本要紧,或者工程必须钉住
+   一个的时候。
+6. [10 —— 发布打包](10-pack-and-release.md) —— `mcpp pack`。
 
 **跑。** [`examples/01-hello`](../../examples/01-hello/),然后
 [`02-with-deps`](../../examples/02-with-deps/),再

@@ -303,7 +303,7 @@ the machines it will run on:
 The nearer declaration wins, one version is installed, and mcpp says which. A
 pin that does not satisfy the rule's floor is refused naming both sides rather
 than installed alongside it. See *One package, one version* in
-[04 — mcpp.toml](04-mcpp-toml.md) for the full rule;
+[23 — The Project Environment](23-the-project-environment.md) for the full rule;
 `examples/09-heterogeneous/multi-backend` is the one example in this repository
 that takes the override path, and every other one writes only the edge.
 

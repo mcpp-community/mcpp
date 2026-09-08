@@ -119,7 +119,7 @@ Where a project and a dependency name **one package**, one version of it is
 installed: identity is `(namespace, name)` and the version is a constraint on
 it. The declaration nearer the artifact wins and the override is reported;
 a pin that fails a requirement the other side stated is refused naming both.
-See *One package, one version* in [04 — mcpp.toml](04-mcpp-toml.md).
+See *One package, one version* in [23 — The Project Environment](23-the-project-environment.md).
 
 ## 4. Reading an environment, never creating one
 

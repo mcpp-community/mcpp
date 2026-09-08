@@ -355,7 +355,7 @@ could not state a floor and every project repeated its rule's package list.
 version this build actually installed rather than the one the local manifest
 wrote. One package means one version: where a project and a rule both name it,
 the declaration nearer the artifact wins and both sides are told the same
-answer. See *One package, one version* in [04 — mcpp.toml](04-mcpp-toml.md).
+answer. See *One package, one version* in [23 — The Project Environment](23-the-project-environment.md).
 
 **`[feature-xlings.<f>]` is answered too, while `<f>` is active**
 *(2026.9.6.2+)*. That table has provisioned its packages since it existed --

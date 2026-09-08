@@ -169,7 +169,7 @@ neither.
 
 A bare version is a **choice** a project may override; `>=` is a
 **requirement** a project may not go below. See *One package, one version* in
-[04 — mcpp.toml](04-mcpp-toml.md).
+[23 — The Project Environment](23-the-project-environment.md).
 
 ## Generating an island's boundary
 
