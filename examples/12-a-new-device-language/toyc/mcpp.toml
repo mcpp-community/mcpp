@@ -1,0 +1,19 @@
+[package]
+name        = "toyc"
+namespace   = "example"
+version     = "0.1.0"
+description = "The compiler for the toy device language"
+license     = "Apache-2.0"
+
+[language]
+standard = "c++23"
+
+# The compiler is an ordinary mcpp package. A rule package depends on it with
+# `tools = ["toyc"]`, and mcpp builds this target FOR THE BUILD MACHINE even
+# when the project around it is cross-compiling.
+[build]
+sources = ["src/lexer.cppm", "src/compile.cppm"]
+
+[targets.toyc]
+kind = "bin"
+main = "src/main.cpp"

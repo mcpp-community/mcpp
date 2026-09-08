@@ -86,7 +86,7 @@ std::optional<std::string> try_narrow(const std::filesystem::path& p) {
 // The stored spelling is GENERIC (`/`), because that is what try_narrow
 // produces and there is no second narrowing here to disagree with it. On
 // Windows the reported path therefore reads `C:/pkg/test/www`, not
-// `C:\pkg\test\www`; docs/05-mcpp-toml.md shows it that way too.
+// `C:\pkg\test\www`; docs/04-mcpp-toml.md shows it that way too.
 void note_unnarrowable_path(const std::filesystem::path& p);
 
 // Take and clear this run's records.
@@ -96,7 +96,7 @@ void note_unnarrowable_path(const std::filesystem::path& p);
 // CLI reports. Drained in exactly one place (`cli::run`'s scope guard), which
 // is what keeps "recorded but never shown" from becoming the next silent
 // failure. The rule is written up in .agents/skills/mcpp-contributing/SKILL.md
-// ("路径窄化不变式") and the user-facing behaviour in docs/05-mcpp-toml.md.
+// ("路径窄化不变式") and the user-facing behaviour in docs/04-mcpp-toml.md.
 std::vector<std::string> take_unnarrowable_paths();
 
 // Does `candidate` match `glob`, interpreted relative to `root`?

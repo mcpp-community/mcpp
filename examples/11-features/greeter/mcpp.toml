@@ -1,0 +1,38 @@
+[package]
+name    = "greeter"
+version = "0.1.0"
+
+[language]
+standard = "c++23"
+
+[targets.greet]
+kind = "bin"
+main = "src/main.cpp"
+
+# FEATURES ARE ADDITIVE AND DECLARED HERE. `default` is what a consumer that
+# says nothing gets; every other feature is opted into by name.
+[features]
+default = ["shout"]
+
+# A feature that only turns a compile macro on. Every active feature defines
+# `MCPP_FEATURE_<NAME>`, so a source can branch without the manifest naming a
+# file.
+shout = {}
+
+# A feature that ADDS A SOURCE. The file is compiled only when the feature is
+# active, so a consumer that does not ask for it does not pay for it.
+[features.metrics]
+sources = ["src/metrics.cpp"]
+
+# ...AND PULLS A DEPENDENCY. `[feature-deps.<name>]` is what makes an optional
+# backend optional: a build that does not name `metrics` resolves a graph in
+# which `counters` does not appear at all.
+[feature-deps.metrics]
+counters = { path = "../counters" }
+
+# Used by `mcpp test` and by nothing the artifact contains.
+[dev-dependencies]
+counters = { path = "../counters" }
+
+[profile.release]
+opt_level = 3

@@ -16,9 +16,10 @@ import mcpp.rules.cuda;
 // arguments by whichever signature it was compiled with. `scan` is the only
 // point at which both texts exist at once, and it refuses there.
 //
-// The island reads the generated header through the compiler's forced-include
-// flag, so no source in this project names a generated file and the project has
-// no header in its source tree at all.
+// The ISLAND reads the generated header through the compiler's forced-include
+// flag, so it names no generated file. The host half does include it by name --
+// `src/cpu/saxpy.cpp` says so at its first line and explains why the two sides
+// differ. What this project has none of is a header in its SOURCE TREE.
 // WHERE THE FLAGS GO, AND WHY IT IS NOT `mcpp::cflag`.
 //
 // `force_include_flags` makes a compiler read the generated boundary header

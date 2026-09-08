@@ -11,7 +11,7 @@
 | 相关设计文档 | `.agents/docs/2026-08-08-machine-readable-output-protocol-design.md` §R4、`.agents/docs/2026-08-31-issue540-seven-audit-findings.md` §4 |
 | 相关 issue | #379、#540 |
 
-## 0. 这份规范为什么存在
+## 0. 这份规范存在的原因
 
 机器可读输出协议的设计记录(§R4)在实测四个退出码之后写下:
 
@@ -19,7 +19,7 @@
 > 并覆盖异常边界 —— 否则客户端仍然要靠猜。**这条现在是 `docs/specs/` 的内容,不是
 > 代码。**
 
-被指派的那份契约一直没有写。`docs/11-machine-output.md` 落地了其中的
+被指派的那份契约一直没有写。`docs/50-machine-output.md` 落地了其中的
 usage / internal 一半(`2`、`70`、`127`),runtime 的一半 —— 也就是命令**跑了并且
 失败**时返回的 `1` —— 既不在那张表里,也不在别处。#540 由此把表读成「不完整」,并
 提出补 `4`;而 `4` 恰恰是那几个带信封的命令给不出的码。
@@ -73,7 +73,7 @@ issue;`1` 通常不是。
 ### 3.3 退出码禁止用于协议识别 已实现
 
 客户端**禁止**用退出码判断「这个 mcpp 支不支持某项功能」。理由见
-`docs/11-machine-output.md` §1:在该协议出现之前发布的每个版本上,未知选项本身就是
+`docs/50-machine-output.md` §1:在该协议出现之前发布的每个版本上,未知选项本身就是
 一次错误,而它当年走的是 stdout + 退出码 1。唯一跨版本成立的判据是**解析 stdout**。
 
 ### 3.4 `1` 可以与 stdout 上的信封同时出现 已实现
@@ -100,7 +100,7 @@ issue;`1` 通常不是。
 
 逐个归类:
 
-| 数 | 是退出码? | 出处 |
+| 数 | 属于退出码 | 出处 |
 |---|---|---|
 | `0` `1` `2` `127` | 是 | 全仓;`127` 在 `cli.cppm` |
 | `4` | 是,**11 处,全部同一个原因** | `config::load_or_init` 失败:`index_management.cppm`×6、`doctor.cppm`×2、`pack/pipeline.cppm`、`cli/cmd_toolchain.cppm`、`pm/commands.cppm` 各 1 |

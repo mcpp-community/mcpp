@@ -117,7 +117,7 @@ if [[ "$ACTUAL" != "$EXPECTED" ]]; then
     if [[ "$ACTUAL" == "ok" ]]; then
         echo "  The importer now compiles — the Clang regression appears FIXED."
         echo "  Update the expectation table here and the hazard section in"
-        echo "  docs/03-toolchains.md, and tell mcpp-community/mcpp#256."
+        echo "  docs/20-toolchains.md, and tell mcpp-community/mcpp#256."
     else
         echo "  The importer now crashes on a version previously known good."
         echo "  A toolchain bump has re-broken module operator templates."

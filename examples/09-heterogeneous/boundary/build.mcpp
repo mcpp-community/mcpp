@@ -1,0 +1,41 @@
+import std;
+import mcpp;
+import mcpp.tools.island;
+
+// The lowest rung: the generated boundary module IS the interface, and this
+// project contains no seam and no header.
+//
+// Both halves are handed to `scan` unconditionally. They are the only place the
+// entry points' signatures are written, and the generator is the only point at
+// which both texts exist at once -- C language linkage does not mangle, so two
+// halves that declared one name differently would link cleanly and read the
+// arguments by whichever signature each was compiled with.
+int main() {
+    const std::string root = mcpp::manifest_dir();
+    const std::vector<std::string> halves{
+        root + "/src/kernels/saxpy.c",
+    };
+    for (auto const& f : halves) mcpp::rerun_if_changed(f.c_str());
+
+    mcpp::tools::island::options opt;
+    opt.module_name = "boundary.kernels";
+    opt.out_dir     = std::string(mcpp::out_dir()) + "/island";
+    opt.produced_by = "the boundary example";
+
+    const auto entries = mcpp::tools::island::scan(halves, opt);
+    if (!entries) return 1;
+    const auto out = mcpp::tools::island::emit(*entries, opt);
+    if (!out) return 1;
+
+    // The island reads the generated header through a forced-include flag, so
+    // no source in this project names a generated file.
+    //
+    // `cflag` and not `cxxflag`: the island is C, and forcing a header into
+    // every C++ translation unit would put declarations ahead of the
+    // `export module` line of a module interface, which is ill-formed.
+    for (auto const& f : mcpp::tools::island::force_include_flags(
+             out->header_file, mcpp::compiler()))
+        mcpp::cflag(f.c_str());
+    mcpp::generated(out->interface_file.c_str());
+    return 0;
+}

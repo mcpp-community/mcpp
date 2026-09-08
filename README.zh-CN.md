@@ -9,7 +9,7 @@
 [![Module](https://img.shields.io/badge/module-ok-green.svg)](https://en.cppreference.com/w/cpp/language/modules)
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE)
 
-| [文档](docs/zh/) · [快速开始](docs/zh/00-getting-started.md) · [mcpp.toml 指南](docs/zh/05-mcpp-toml.md) · [示例项目](docs/zh/01-examples.md) · [工具链管理](docs/zh/03-toolchains.md) |
+| [文档](docs/zh/) · [快速开始](docs/zh/01-getting-started.md) · [mcpp.toml 指南](docs/zh/04-mcpp-toml.md) · [示例项目](docs/zh/03-examples.md) · [工具链管理](docs/zh/20-toolchains.md) |
 |:---:|
 | [包索引 mcpp-index](https://mcpplibs.github.io/mcpp-index/) · [模块化库 mcpplibs](https://github.com/mcpplibs) · [社区论坛](https://forum.d2learn.org/category/20) · [Issues](https://github.com/mcpp-community/mcpp/issues) · [Releases](https://github.com/mcpp-community/mcpp/releases) |
 | [![ci-linux](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml) [![ci-macos](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml) [![ci-windows](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml) |
@@ -221,7 +221,7 @@ cmdline = "0.0.2"
 import mcpplibs.cmdline;
 ```
 
-> 更多依赖配置方式（版本约束、命名空间、Git 引用、本地路径等）参见 [mcpp.toml 指南 — 依赖管理](docs/zh/05-mcpp-toml.md)。
+> 更多依赖配置方式（版本约束、命名空间、Git 引用、本地路径等）参见 [mcpp.toml 指南 — 依赖管理](docs/zh/04-mcpp-toml.md)。
 
 ## 功能概览
 
@@ -387,13 +387,13 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 
 ## 文档
 
-- [快速开始](docs/zh/00-getting-started.md) — 5 分钟完成 install → new → build → run
-- [示例项目](docs/zh/01-examples.md)
-- [发布打包](docs/zh/02-pack-and-release.md)
-- [工具链管理](docs/zh/03-toolchains.md)
-- [从源码构建](docs/zh/04-build-from-source.md)
-- [mcpp.toml 指南](docs/zh/05-mcpp-toml.md)
-- [工作空间](docs/zh/06-workspace.md)
+- [快速开始](docs/zh/01-getting-started.md) — 5 分钟完成 install → new → build → run
+- [示例项目](docs/zh/03-examples.md)
+- [发布打包](docs/zh/10-pack-and-release.md)
+- [工具链管理](docs/zh/20-toolchains.md)
+- [从源码构建](docs/zh/90-build-from-source.md)
+- [mcpp.toml 指南](docs/zh/04-mcpp-toml.md)
+- [工作空间](docs/zh/07-workspace.md)
 
 任意命令的完整选项可通过 `mcpp <cmd> --help` 查阅。
 

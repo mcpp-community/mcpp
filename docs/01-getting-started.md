@@ -1,0 +1,228 @@
+# 01 — Getting Started
+
+**Reader:** a newcomer with nothing installed yet.
+
+**The question this chapter answers:** how do I get a program compiling and
+running, from an empty machine.
+
+**Not here:** what mcpp's parts are — that is
+[00 — What mcpp Is](00-what-mcpp-is.md), which this chapter assumes rather
+than repeats — and every field a manifest may hold, which is
+[04 — The mcpp.toml Manifest](04-mcpp-toml.md). After: [03 — Examples](03-examples.md).
+
+> Go from install → new → build → run → pack in 5 minutes.
+
+## Installation
+
+Supported hosts are Linux x86_64 / aarch64, macOS ARM64, and Windows x86_64.
+GCC, xlings and every other build dependency are installed by mcpp; none of them
+has to be there first.
+
+**The recommended way is [xlings](https://xlings.d2learn.org)**, which keeps
+mcpp isolated from the system environment:
+
+```bash
+xlings install mcpp -y
+```
+
+<details>
+<summary>Other ways: the standalone script, and what the first run installs</summary>
+
+On Linux x86_64/aarch64 or macOS ARM64 a one-line installer bundles xlings and
+puts everything under `~/.mcpp/`. It does not support Windows, where the
+PowerShell xlings command in the README is the way in.
+
+```bash
+curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/install.sh | bash
+```
+
+On its first run mcpp installs a default toolchain into `~/.mcpp/`, chosen for
+the host:
+
+| host | default |
+|---|---|
+| Linux x86_64 | `gcc@16.1.0` |
+| other Linux architectures | `gcc@15.1.0-musl` |
+| macOS | `llvm@20.1.7` |
+| Windows with usable MSVC | `llvm@20.1.7` |
+| Windows without it | `gcc@16.1.0` for `x86_64-windows-gnu` |
+
+Full installation instructions, including Windows, are in the
+["Installation" section of the README](../README.md#install).
+
+</details>
+
+Once installation is complete, start a new shell session, then verify:
+
+```bash
+mcpp --version
+# mcpp <installed version>
+```
+
+> [!TIP]
+> If the Unix release installer reports `command not found`, `~/.mcpp/bin` has
+> not yet been added to the current shell's PATH. Restart your terminal, or run
+> `source ~/.bashrc` (use `~/.zshrc` for zsh, or `exec fish` for fish) to apply
+> the change; `~/.mcpp/bin/mcpp` is the direct path for that installer. If you
+> installed through xlings, use the active xlings bin directory instead. On
+> Windows, install through the PowerShell xlings command, restart PowerShell
+> rather than using `source`, and verify the active command with
+> `Get-Command mcpp.exe`.
+
+## Creating a Project
+
+```bash
+mcpp new hello && cd hello
+```
+
+This generates the following directory structure:
+
+```
+hello/
+├── mcpp.toml            ← project manifest
+├── src/
+│   └── main.cpp
+└── tests/
+    └── test_smoke.cpp   ← runs with `mcpp test`
+```
+
+The generated manifest contains only package metadata; mcpp infers a binary target from `src/main.cpp`. By default, that file is a C++23 modular hello world:
+
+```cpp
+import std;
+
+int main() {
+    std::println("Hello from hello!");
+    std::println("Built with import std + std::println on modular C++23.");
+}
+```
+
+### Creating from a package template
+
+`mcpp new --template` uses the same exact package-selector style as `mcpp add`:
+
+```bash
+mcpp new gui-demo --template ocornut.imgui@1.92.8:docking
+mcpp new --list-templates ocornut.imgui@1.92.8
+```
+
+The grammar is `[namespace.]name[@version][:template]`. The namespace, version,
+and template name are independently optional; omitting the namespace means the
+single default namespace `mcpplibs`, not an index-wide short-name search. If the
+template name is omitted, mcpp uses the sole `default = true` declaration, or
+automatically uses the package's only template when none is explicitly marked.
+Multiple templates without one default are an error that points to
+`--list-templates`. There is no separate `--variant` vocabulary.
+
+The package identity, version, and template are fully resolved before the
+destination is committed. A failed download, render, hook, or validation leaves
+no half-created project directory.
+
+## Building and Running
+
+```bash
+mcpp build
+# Compiling hello v0.1.0 (.)
+
+mcpp run
+# Hello from hello!
+# Built with import std + std::println on modular C++23.
+```
+
+The first build downloads the host-aware default toolchain, showing progress and speed along the way. Once downloaded, all mcpp projects share the same sandbox.
+
+### Configure an editor before the first successful build
+
+If the source is not buildable yet, generate the compilation database without
+compiling ordinary translation units or linking final targets:
+
+```bash
+mcpp build --configure-only
+# Configured hello (... compile commands)
+```
+
+The command resolves the same package, workspace member, profile, features,
+capability providers, target and toolchain as a real build. Its
+`compile_commands.json` covers regular sources and `tests/**/*.cpp`, including
+test-only dependencies and matching `[build].flags`, so clangd/ccls can index
+the project while it is still being edited. It is a configuration operation,
+not a read-only operation: `build.mcpp`, missing dependencies or toolchains,
+lock/resolution metadata and build-directory metadata may still be updated.
+Run it only in a trusted workspace. The process exit code and the resulting
+`compile_commands.json` are the stable integration contract; stdout remains
+human-readable.
+
+## Incremental Compilation and Testing
+
+```bash
+mcpp build              # incremental build
+mcpp clean              # clean target/
+mcpp clean --stale      # drop only target/<triple>/<fingerprint>/ dirs no build still uses
+                        # (--dry-run lists and deletes nothing; --older-than 3d keeps newer unrecorded ones)
+mcpp test               # compile and run tests/**/*.cpp — one binary per file,
+                        # framework-agnostic (bare main, or gtest via [dev-dependencies])
+mcpp test <pattern>     # only tests whose name contains <pattern>
+mcpp test --list        # enumerate tests without building
+mcpp test --timeout 30  # kill a test still RUNNING after 30s (default 300; 0 = no limit)
+mcpp test --build-timeout 120   # kill a compile/link still running after 120s (off by default)
+```
+
+The *run* half is bounded by default so an unattended CI job cannot be consumed by
+a single hung test. The two deadlines cover different halves and neither implies
+the other: `--timeout` bounds the test *process*, `--build-timeout` bounds one
+ninja drive (the package build, the bulk test build, and each per-test build are
+timed separately). **A link that never returns is a `--build-timeout` case; no
+`--timeout` value stops it.**
+
+`--build-timeout` is off by default, and the asymmetry is measured rather than
+stylistic: a test binary running over five minutes is unusual, a cold dependency
+build running over fifteen is ordinary (one mcpp-index member builds OpenCV from
+source in 1019s on Linux and 1289s on Windows). A default ceiling would turn
+slow-but-correct builds red. How long a build may take is a property of the
+project, so the project says it. POSIX-only — the deadline runner has no
+kill-by-handle path on Windows, where the value is ignored.
+
+## Adding Dependencies
+
+Declare dependencies in `mcpp.toml`:
+
+```toml
+[dependencies]
+"mcpplibs.cmdline" = "^0.0.1"
+```
+
+`mcpp build` automatically resolves SemVer constraints against the
+[mcpp-index](https://github.com/mcpplibs/mcpp-index), fetches the source,
+and adds it to the build graph. For a complete example, see `02-with-deps` in
+[03 — Examples](03-examples.md).
+
+## Producing a Release Package
+
+`mcpp pack` bundles your build artifacts and runtime dependencies into a self-contained tarball that can be distributed independently:
+
+```bash
+mcpp pack                          # vendored by default: bundle project third-party .so files
+mcpp pack --mode system            # rely on target-system libraries
+mcpp pack --mode static            # fully static musl build
+mcpp pack --mode self-contained    # bundle loader, libc, and dependencies
+```
+
+For the differences between the four modes and their artifact layouts, see [10 — Packaging and Release](10-pack-and-release.md). `bundle-project` and `bundle-all` remain accepted aliases for `vendored` and `self-contained`.
+
+## Further Reading
+
+- [03 — Examples](03-examples.md) — a collection of ready-to-run minimal projects
+- [10 — Packaging and Release](10-pack-and-release.md) — building distributable artifacts
+- [20 — Toolchain Management](20-toolchains.md) — switching compilers and managing multiple versions
+- The full set of options for any command is available via `mcpp <cmd> --help`
+
+
+## More Entry Points
+
+- GUI quickstart: `mcpp new myapp --template ocornut.imgui@1.92.8:docking`
+  (templates are distributed with the package; omit `:docking` for its declared
+  default/sole template, or run `mcpp new --list-templates ocornut.imgui@1.92.8`).
+- Explaining default decisions: `mcpp why [toolchain|runtime|deps]`; host capability checkup: `mcpp self doctor`;
+  machine-readable resolution manifest: the build artifact `target/<triple>/<fp>/resolution.json`.
+- Offline operation: `mcpp --offline` or `MCPP_OFFLINE=1` prevents index refreshes, downloads, and toolchain installation. In a home that has never been used it also skips the first-use sandbox bootstrap (index clone, ninja, patchelf), announces the skip once, and leaves the home un-bootstrapped; commands that need those tools report it.
+

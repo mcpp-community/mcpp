@@ -14,7 +14,7 @@
 // We hand-parse the .ddi (no nlohmann::json dep — same justification
 // as fetcher.cppm).
 //
-// Spec: docs/27-p1689-dyndep.md.
+// Spec: P1689R5, the dependency format ninja consumes.
 
 module;
 

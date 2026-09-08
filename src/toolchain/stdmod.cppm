@@ -3,7 +3,7 @@ module;
 
 // mcpp.toolchain.stdmod — pre-build the `import std` BMI and cache it.
 //
-// GCC 15 flow (from docs/11-gcc15-cookbook.md §2):
+// GCC 15 flow (see docs/91-toolchain-internals.md):
 //   g++ -std=c++23 -fmodules -Og -c <std.cc> -o std.o
 //     ⇒ produces gcm.cache/std.gcm + std.o
 //

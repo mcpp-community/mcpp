@@ -1,0 +1,11 @@
+import std;
+import mcpp;
+
+// A build program sees the feature set that was resolved, so a rule or a
+// generator can act on it without the project repeating the decision in a
+// second place.
+int main() {
+    if (mcpp::has_feature("metrics"))
+        mcpp::warning("the metrics feature is active; `counters` is in the graph");
+    return 0;
+}

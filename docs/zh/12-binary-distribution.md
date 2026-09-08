@@ -1,12 +1,19 @@
-# 12 - 分发预编译库
+# 12 —— 分发预编译库
 
 [English](../12-binary-distribution.md) | **简体中文**
+
+**读者:**交付编译产物而不是源码的发布方。
+
+**本章回答的那一个问题:**怎样交付二进制,以及消费方的构建如何判断其中哪一个合用。
+
+**不在这里:**发布源码,那是 [11 —— 发布一个库](11-publishing-a-library.md);以及
+兼容性 tag 的加速器字段,那是 [42 —— 异构硬件构建](42-heterogeneous-builds.md)。
 
 > 把一个库以**接口 + 预编译二进制**的形式分发,而不是发源码。
 > 适用于闭源分发、离线环境,以及构建产物已在构建农场生成的场景。
 >
-> 相关文档:[02 - 打包应用](02-pack-and-release.md) 说明**程序**的打包;
-> [10 - 发布一个库](10-publishing-a-library.md) 说明源码分发通路。
+> 相关文档:[10 - 打包应用](10-pack-and-release.md) 说明**程序**的打包;
+> [11 - 发布一个库](11-publishing-a-library.md) 说明源码分发通路。
 
 ## 概述
 
@@ -28,7 +35,7 @@ mcpp pack mathkit --target x86_64-linux-gnu \
 
 | `kind` | `mcpp pack <name>` 产出 | `--mode` |
 |---|---|---|
-| `bin` | 应用 bundle(见 [02](02-pack-and-release.md)) | 四档 |
+| `bin` | 应用 bundle(见 [10](10-pack-and-release.md)) | 四档 |
 | `lib` | **静态库包** | — |
 | `shared` | **动态库包** | — |
 
@@ -231,7 +238,7 @@ ldflags = ["-Llib/x86_64-linux-musl", "-lmathkit"]
 这是**降级**而不是变砖,方向是对的。但它意味着**闸门只保护新客户端**,
 面向混合版本用户群发布时,这一条应写进发布说明。
 
-## 包里带什么走,以及刻意不带什么
+## 随包内容与刻意排除的部分
 
 发布出去的包必须能在**不是发布者的**机器上工作。两个步骤保证这件事,
 它们作用在打包器暂存的每一个产物上。
@@ -257,7 +264,7 @@ error while loading shared libraries: libstdc++.so.6: cannot open shared object 
 
 **`$ORIGIN` 不是解药。** 在真实的包上、把构建机的 store 变成不可达之后实测:
 
-| 发货 `.so` 上的状态 | 消费方 `DT_RPATH` 被继承? | 结果 |
+| 发货 `.so` 上的状态 | 消费方 `DT_RPATH` 的继承 | 结果 |
 |---|---|---|
 | 失效的绝对路径 `DT_RUNPATH` | 否 | 失败 |
 | **完全没有这条 tag** | **是** | **能跑** |
@@ -279,7 +286,7 @@ Mach-O 上打包器会读出 `LC_RPATH` 并在包会携带它时告警;自动改
 
 ### 调试信息会被剥掉
 
-参数、分档表与 `--debug-symbols` 见 [docs/02](02-pack-and-release.md)。
+参数、分档表与 `--debug-symbols` 见 [docs/02](10-pack-and-release.md)。
 对**库**包最要紧的一条:静态归档只做 `--strip-debug`,因为 `--strip-all` 会删掉
 归档的符号索引,消费方链接时会报 `archive has no index; run ranlib to add one`。
 
@@ -428,3 +435,4 @@ e2e 套件按宿主能力给每条测试开门,所以「套件是绿的」和「
 xvm 的 **shim**,在 e2e 套件改过的环境里它回答「未安装」。所以老客户端检查的
 **静态那半**(生成的 manifest 不含任何旧 mcpp 读不了的段)到处都跑,而**真实那半** ——
 用上一版发布的 mcpp 去构建这个包 —— 是**手工跑的,不是 CI 跑的**。
+

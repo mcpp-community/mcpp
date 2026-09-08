@@ -37,6 +37,26 @@ BUILD=(
     # The device payloads are NOT installed: they are gated on the accelerator,
     # and this builds without one.
     examples/09-heterogeneous/multi-backend
+    # The island boundary with nothing on top. Its island is an ordinary C file,
+    # so it needs no device and no device payload -- only `mcpp:plugins` with
+    # `tools-island`. It is the one example that runs the arrangement the
+    # plugins README records as measured: a consumer importing the GENERATED
+    # module and linking against an implementation another compiler produced.
+    examples/09-heterogeneous/boundary
+    # Declares features rather than consuming them. The next step asserts the
+    # criterion that matters -- that the default build's RESOLUTION does not
+    # name the optional package -- which a build alone cannot show.
+    examples/11-features/counters
+    examples/11-features/greeter
+    # A device language the engine does not know, and the compiler for it.
+    #
+    # `toyc` is built here as an ordinary package as well as by the app as a
+    # host tool, and the two are not the same signal: this one fails at the
+    # compiler, the app's fails somewhere in `tools = [...]` / `reexport` /
+    # `dep_bin`, and a single line telling them apart is worth one build of a
+    # three-file package.
+    examples/12-a-new-device-language/toyc
+    examples/12-a-new-device-language/app
 )
 
 # `key|reason`.
@@ -47,6 +67,7 @@ SKIP=(
     "examples/07-project-subos|provisions a project-local sub-OS, which e2e 27_self_contained_home covers directly and far more cheaply"
     "examples/08-build-rules/rules-embed|a rule package is not a standalone build: its interface imports the bundled mcpp module, which exists only inside a consumer's build. Verified by building 08-build-rules/app, the same way mcpp-plugins verifies its own members"
     "examples/08-build-rules/rules-tidy|same"
+    "examples/12-a-new-device-language/rules-toy|a rule package is not a standalone build: its module imports the bundled mcpp module, which exists only inside a consumer's build program. Verified by building 12-a-new-device-language/app"
     "examples/09-heterogeneous/cuda/app|needs the CUDA payload set, and a device to run; the rule package is covered by mcpp-plugins' own CI"
     "examples/09-heterogeneous/hip/app|same, for the HIP payloads"
     "examples/09-heterogeneous/sycl/app|needs the dpcpp payload (over a gigabyte) and a device its runtime accepts"

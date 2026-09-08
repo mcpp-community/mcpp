@@ -1,0 +1,6 @@
+[package]
+name    = "counters"
+version = "0.1.0"
+
+[language]
+standard = "c++23"

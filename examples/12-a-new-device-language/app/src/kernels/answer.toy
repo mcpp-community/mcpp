@@ -1,0 +1,27 @@
+# answer.toy -- a kernel source in a language the engine has never heard of.
+#
+# `.toy` has integers, `let`, assignment, `if` / `else`, `while`, calls
+# between kernels, and the arithmetic and comparison operators. Every kernel
+# takes and returns an integer, and the file's kernels are what the C++ side
+# can call.
+
+kernel gcd(a, b) {
+    while (b != 0) {
+        let t = b;
+        b = a % b;
+        a = t;
+    }
+    return a;
+}
+
+kernel scale(v, k) {
+    if (k < 0) {
+        return -v * -k;
+    } else {
+        return v * k;
+    }
+}
+
+kernel answer() {
+    return scale(gcd(1071, 462), 2);
+}

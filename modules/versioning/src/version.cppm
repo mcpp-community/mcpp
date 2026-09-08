@@ -23,7 +23,7 @@
 // SINGLE SOURCE OF TRUTH. `.github/tools/check_version_pins.sh` reads the
 // literal below and cross-checks it against `mcpp.toml`'s `[package].version`;
 // tests/e2e/01_help_and_version.sh checks it against `mcpp --version` at
-// runtime. Both must be updated together — see docs/09-release.md.
+// runtime. Both must be updated together — see docs/92-release.md.
 
 export module mcpp.version;
 

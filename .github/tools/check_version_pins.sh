@@ -136,7 +136,7 @@ fi
 # (b) The version BOOTSTRAPPED FROM (.xlings.json) names a mcpp that is already
 #     published, and is NOT required to equal the version being built. It
 #     deliberately lags, and is bumped in a separate commit AFTER the release
-#     exists in xim-pkgindex (see docs/09-release.md). Requiring equality here is
+#     exists in xim-pkgindex (see docs/92-release.md). Requiring equality here is
 #     what an earlier revision of this script got wrong: it sent CI to install a
 #     version that did not exist yet, and every job died with
 #     `package 'mcpp@<unreleased>' not found`.
