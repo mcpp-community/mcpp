@@ -2,6 +2,35 @@
 
 Date: 2026-09-07. Base: mcpp `81358046`, `mcpp-plugins` `e75e4f5` (0.2.5).
 
+**How to read this document.** It is four documents under one heading, and
+which one a section belongs to decides whether it describes the system as it is
+now:
+
+| Sections | What they are | Current? |
+|---|---|---|
+| 1 to 12 | The design, argued against the base commits above | A SNAPSHOT of 2026-09-07 |
+| 13 | The plan, and what carrying it out found | Historical record |
+| 14 | What is open after the release, and each one's fix | Current |
+
+Sections 1 to 12 were not rewritten as the work landed. Fourteen claims in them
+no longer hold, in three different ways: a syntax that was designed and
+withdrawn (`[rules]`, in 5.2, 5.5, 6 and 8.D), a mechanism that shipped in a
+different shape from the one argued for (4.1's host-tool binary), and items
+listed as open that have since closed (1, 3.5, 7, 12). Rather than delete
+them -- an argument's rejection is part of its record, and so is the shape a
+design took on contact -- each carries an in-place note naming what shipped
+instead and the section that says why.
+
+Section 14 is the only section to read for "what is open"; section 1's own
+"Still open" list is a snapshot and is annotated as one. Where a status is
+stated, it is stated ONCE: "which rules pass a depfile" lives in 14.2 and
+nowhere else, because three copies of it were three places to forget when it
+changed.
+
+mcpp 2026.9.7.1 and `mcpp:plugins` 0.3.0 are the releases sections 13 and 14
+were written against; 14.1 and 14.2 are closed by mcpp 2026.9.8.1 and
+`mcpp:plugins` 0.4.0, and say so in place.
+
 Scope: the consumer-facing surface of every heterogeneous lane -- CUDA, HIP,
 SYCL, Ascend C and SPIR-V -- and the embedding of device payloads into the
 artifact. The thesis is one sentence: **a generated header should be an
@@ -43,16 +72,25 @@ Closed in 0.2.5, and not to be re-proposed:
 - Two shaders whose stems collide are refused naming both files, the symbol and
   the way out, with a CI step asserting each of those five strings.
 
-Still open, and load-bearing for what follows:
+Still open **as of the base commits**, and load-bearing for what follows. Two of
+the three have since shipped; the list is kept because sections 3 to 8 argue
+from it, and each entry says where it stands now. Section 14 is the register of
+what is open today.
 
 - `mcpp::action` has no depfile field. Its fields are `id`, `role`,
   `description`, `blocking`, and the `input`/`output`/`arg`/`provides`/
   `imports`/`target` setters. Inputs are fixed at submission.
+  **Superseded:** `mcpp::action::depfile` shipped in mcpp 2026.9.7.1. Whether
+  any rule passes one is 14.2, which is the only place that says.
 - `glslc` cannot be selected by declaration; `find_compiler` consults
   `xpkg_dir("glslang")` before `xpkg_dir("shaderc")` and the rule declares
   glslang unconditionally, so glslang wins in every build that works.
+  **Still open**, unchanged.
 - Nothing generates a module. `mcpp.tools.embed` and `mcpp.rules.spirv` both
   emit headers that the consumer includes by name.
+  **Superseded:** `mcpp.plugins.surface` shipped in `mcpp:plugins` 0.3.0 and
+  every rule emits a module by default. The header remains as the surface a
+  project with `modules = false` gets, which is 5.4.
 
 ## 2. Two kinds of lane, and only one of them wants a generated surface
 
@@ -185,6 +223,25 @@ slangc            -depfile <file>
 
 `mcpp::action` has no field to receive one.
 
+> **Superseded on both halves.** `mcpp::action::depfile` shipped in mcpp
+> 2026.9.7.1 and every rule passes one from `mcpp:plugins` 0.4.0. The table
+> above was read from each tool's help text; each was later run, and what it
+> writes is what decides whether the flag is worth passing:
+>
+> ```
+> glslangValidator --depfile   ->  out.spv: scale.comp ./common.glsl
+> glslc -MD -MF                ->  out2.spv: scale.comp common.glsl
+> slangc -depfile              ->  out.spv: <entry>.slang <included>.slang
+> nvcc -MMD -MF                ->  n.o : k.cu \ common.cuh
+> clang++ -MMD -MF             ->  c.o: k.cpp common.cuh
+> bisheng -MMD -MF             ->  k2.o: k.asc inc.h
+> ```
+>
+> The last three are the code lanes, which this section did not cover.
+> `-MMD` rather than `-MD` there: `-MD` on BiSheng was measured pulling in fifty
+> host headers under `/usr/include`, which makes an object depend on absolute
+> host paths a shared build directory must not carry.
+
 ## 4. Architecture: three planes
 
 The design is to separate three questions that are presently one.
@@ -242,6 +299,25 @@ What this buys, in order of value:
 - The same path serves CUDA cubins and fatbins, textures, fonts, model weights
   and ICD JSON. The tool stops being shader-specific.
 
+> **Superseded, and the difference is load-bearing for 14.1.** The host-tool
+> binary was not built. What shipped is `mcpp::plugins::surface` -- a generator
+> in the collection's lib root that every rule calls FROM `build.mcpp`, writing
+> the interface, the implementation and the `.S` at plan time. The four values
+> listed above were all obtained anyway: both shader flavours produce identical
+> output, storage and surface are orthogonal options, `mcpp.rules.slang` joined
+> at no cost, and nothing in the generator is shader-specific.
+>
+> What the library form does NOT give is the property this section was reaching
+> for: a tool the GRAPH invokes has its inputs in the graph. A generator that
+> runs at plan time writes a `.S` naming a payload that does not exist yet, and
+> no channel added afterwards can make that file an edge -- which is 14.1.
+>
+> `mcpp:plugins` 0.4.0 builds the binary this section asked for, so the
+> paragraph above is now a description rather than a proposal. It is reached
+> through `tools = [...]` on the dependency edge -- built from the package,
+> not published separately, for the version-skew reason docs/05 section 2.14
+> gives -- and only object storage needs it.
+
 ### 4.2 One tool with options, not three
 
 `bin2c`, `bin2cppm` and `bin2obj` as three names would force a consumer to
@@ -285,6 +361,18 @@ byte-typed symbol does not carry.
 The assembler resolves `.incbin` at assembly time and reports no dependency, so
 the payload must be declared as an action input explicitly. This is the same
 requirement as the depfile item in section 7 and shares its fix.
+
+> **The requirement was right and the last five words were wrong, and the two
+> failures are connected.** Attaching this to the depfile item's fix is why the
+> implementation shipped without it: the depfile field landed in 2026.9.7.1 and
+> `.incbin` was taken along with it, when in fact the depfile does not reach
+> this case at all. 14.1 is the measurement and the correction.
+>
+> The general shape is worth naming, because it is not specific to assemblers:
+> **a requirement folded into another item's fix disappears when that item
+> ships.** The requirement was stated, in this document, before any code was
+> written, and no test caught its absence -- because the test for the depfile
+> item passed.
 
 ## 5. The module surface
 
@@ -339,6 +427,22 @@ default   <package name, sanitised>.shaders        package myapp -> myapp.shader
 explicit  [rules] spirv = { module = "myapp.gfx.shaders" }
 ```
 
+> **Superseded.** The `[rules]` manifest table was designed here and withdrawn
+> before implementation; 13.1.2 gives the argument. `grep '"rules"'
+> modules/manifest/src/toml.cppm` returns nothing, and it is not planned. What
+> shipped is a field on the rule's own options, set in `build.mcpp`:
+>
+> ```cpp
+> mcpp::rules::spirv::options o;
+> o.module_name = "myapp.gfx.shaders";   // empty derives the default
+> mcpp::rules::spirv::compile(o);
+> ```
+>
+> The DEFAULT is as written above and is the part that mattered. Its derivation
+> was implemented from the wrong question -- the package DIRECTORY's name rather
+> than the package's -- and 13.3.1 records the correction; the rule as stated
+> here always held.
+
 **One module per package, not one per payload.** 134 shaders as 134 modules
 would be 134 BMI files, 134 graph nodes and 134 import lines. One module is a
 single BMI of roughly 2 KB holding 134 declarations.
@@ -390,8 +494,15 @@ decided by one option.
 | `true` | module |
 | `false` | C header |
 
-The user makes no new decision, and the default cannot be wrong. `[rules]` can
-override it in either direction.
+The user makes no new decision, and the default cannot be wrong.
+
+> **Superseded in its mechanism, not its rule.** The table above is what
+> shipped: `mcpp::plugins::surface::default_surface()` reads
+> `MCPP_LANGUAGE_MODULES`, which mcpp sets from `[language] modules`, and an
+> engine that does not report it leaves the header surface in place -- so a
+> consumer of an older engine keeps the behaviour it had before the surface
+> existed. The override is `options::surface`, set in `build.mcpp`, not a
+> `[rules]` entry; see the note in 5.2.
 
 ### 5.6 A generated module and the `--no-accel` build
 
@@ -412,6 +523,12 @@ knows the module graph and which translation units are `cfg`-gated, so an import
 of an accelerator-produced module from an ungated TU is a diagnosable condition
 rather than a link error.
 
+> **Not implemented.** Stage C in section 8 said to add this diagnostic "in the
+> same change"; the surface shipped without it and nothing recorded the
+> omission, so it was neither done nor open. It is now 14.7. The seam pattern
+> above is what every converted example uses and it does hold -- what is missing
+> is only the engine telling an author who did not use it what went wrong.
+
 ## 6. Layers, and where the simplicity comes from
 
 `docs/07-build-mcpp.md` already fixes the rule: layers must not have a cliff,
@@ -431,6 +548,16 @@ configuration expressed as construction.
 | **L3** | `plan()`, edit the edges, `submit()` | full control |
 
 L2 and L3 exist. L0 and L1 do not.
+
+> **Superseded.** L1 as spelled here was the `[rules]` table, which was
+> withdrawn (13.1.2) and is not planned. Tuning is L2: the same values are
+> fields on the rule's `options`, set in `build.mcpp`. So the ladder that
+> exists is L0 (absent), L2, L3 -- three rungs, not four, and the gap is at the
+> bottom rather than in the middle.
+>
+> L0 is still absent and still the largest single improvement to first use. It
+> does not depend on L1 and never did: `[build] accel` plus a glob is the whole
+> of it.
 
 **The table L0 needs already exists in the engine.** `src/build/prepare.cppm`
 prints it in the diagnostic for a device source no rule claimed, naming
@@ -458,7 +585,20 @@ it: the extension routes to `rules.spirv`, glslang emits a bare `.spv`, the
 embed tool writes a `.S` and a `.cppm`, the assembler produces the object, the
 module is a 2 KB BMI, and the link collects both.
 
+> **Where this stands.** Everything after "What happens behind it" shipped in
+> 0.3.0 and is what a build does today. The four lines above it did not: a
+> consumer still writes `[build-dependencies.mcpp] plugins = { features = [...],
+> host-module = true }` and a `build.mcpp` that calls `compile()`. What 0.3.0
+> removed from that list is the last item -- no consumer names a generated
+> header, and the examples in `examples/09-heterogeneous` are the evidence.
+>
+> The remaining four are L0, and section 8's staging D is where it was to be
+> done. D did not happen.
+
 ## 7. What remains open, and where each lands
+
+**As of the base commits.** Three of the four have since been resolved and each
+says so below; section 14 is the register of what is open today.
 
 1. **No dependency tracking for included device sources.** `mcpp::action` has no
    depfile field, so `rules/spirv.cppm` declares only the `.comp` and
@@ -467,6 +607,12 @@ module is a 2 KB BMI, and the link collects both.
    depfile (3.5). This is the only open item that produces a wrong artifact
    rather than a failure, and the `.incbin` dependency in 4.3 needs the same
    field.
+
+   **Resolved, and the last sentence was wrong.** `mcpp::action::depfile`
+   shipped in mcpp 2026.9.7.1 and all six rules pass one from `mcpp:plugins`
+   0.4.0, each spelling measured against the tool rather than read from its
+   help text. The `.incbin` dependency does NOT need the same field -- no
+   assembler channel reaches it portably -- which is 14.1.
 
 2. **`glslc` cannot be selected by declaration.** `find_compiler` consults
    `xpkg_dir("glslang")` before `xpkg_dir("shaderc")`, and the rule declares
@@ -479,6 +625,11 @@ module is a 2 KB BMI, and the link collects both.
 3. **The stem refusal becomes narrower once 5.3 lands.** It should stay for a
    genuine within-directory collision and stop firing for two directories.
 
+   **Resolved in `mcpp:plugins` 0.3.0.** `tests/spirv-module-consumer` carries
+   `shaders/a/scale.comp` and `shaders/b/scale.comp` and builds, which is the
+   fixture that says so; the refusal remains for a collision within one
+   directory.
+
 4. **Slang.** `slangc` should become `mcpp.rules.slang` rather than a third
    flavour of `rules.spirv`: glslang and glslc are two drivers for one language
    compiling the same `.comp`, whereas Slang is a different language with a
@@ -489,6 +640,11 @@ module is a 2 KB BMI, and the link collects both.
    invent a scope API for this because xmake offered no package-level dependency
    to reuse; mcpp has one, and should use it rather than copy the workaround.
 
+   **Resolved in `mcpp:plugins` 0.3.0.** `mcpp.rules.slang` exists and declares
+   its own `device_extensions`, so `.slang` was REMOVED from the engine's
+   built-in table and `tests/slang-consumer` still builds -- which is the
+   measurement that a new device language costs no engine release (13.1.2).
+
 ## 8. Staging
 
 Each stage is useful alone and none depends on a later one.
@@ -497,6 +653,11 @@ Each stage is useful alone and none depends on a later one.
 wrong artifact with a green build. Every compiler involved already emits one.
 Fixing it at the action rather than in one rule serves `cuda`, `spirv` and 4.3
 at once. Independent of everything else here.
+
+> **Shipped, and the last clause was false.** `mcpp::action::depfile` is in
+> 2026.9.7.1; 14.2 tracks which rules pass one. It does NOT serve 4.3: the
+> assembler reports nothing a depfile can carry (14.1). What serves 4.3 is
+> moving the generation into the graph, which needed no new channel at all.
 
 **B. `tools.embed` as a host tool, with `storage` and `surface`.** The
 separation in section 4. `rules.spirv` stops passing `--vn` and `-mfmt=c`, emits
@@ -510,6 +671,10 @@ it is the failure a user meets first.
 **D. `[rules]`, then L0.** Section 6. The largest single improvement to first
 use, and the only stage whose main cost is in the engine rather than in the
 plugins.
+
+> **Did not happen, and half of it should not.** `[rules]` was withdrawn
+> (13.1.2). L0 is untouched and still worth doing; it never depended on
+> `[rules]`, so what remains of this stage is "L0" alone.
 
 **E. `mcpp.rules.slang`.** Nearly free after B, because embedding is by then not
 the rule's concern.
@@ -621,10 +786,28 @@ Sidecar storage has no assembler requirement and is available everywhere, but it
 changes what `mcpp pack` must collect, which is why it is the only storage that
 touches the engine.
 
+**A second cross-platform constraint on the same storage, found later.** The
+two GAS-capable assemblers do not agree on whether they REPORT what `.incbin`
+reads. GNU as names the embedded file in its own `--MD` output; clang's
+integrated assembler has no dependency output of any kind. So the obvious way
+to keep an embedded payload current -- ask the assembler -- would work on one
+toolchain and fail silently on the other, which is worse than failing on both:
+the toolchain that reports nothing is the one whose users could never reproduce
+the staleness. This is why the payload is a DECLARED INPUT of the action that
+writes the assembly (14.1) rather than something discovered from the tool, and
+it is a cross-platform argument rather than an aesthetic one.
+
 ## 12. Slang, in full
 
 Section 7 argued that `slangc` belongs in a rule of its own. This section states
 what that rule is.
+
+> **Shipped as described, in `mcpp:plugins` 0.3.0.** Everything below holds of
+> `mcpp.rules.slang` as it exists, with one addition: from 0.4.0 the rule passes
+> `slangc -depfile`, so a `.slang` that includes another rebuilds when it
+> changes (14.2). The version pin discussed at the end of this section is 14.6:
+> resolved by fact rather than by work, because the index's ceiling and the
+> package's floor are the same release.
 
 **Extensions claimed.** `.slang`. Not the GLSL stage extensions: a `.slang` file
 names its entry points internally and `-fshader-stage` has no analogue.
@@ -832,6 +1015,42 @@ reads it. An engine that does not set it leaves the header surface in place,
 which is what every consumer had before, so an older engine keeps its behaviour
 and a newer one moves a project to the module surface with nothing declared.
 
+#### 13.2.1 The same structure, for the batch that closed 14.1 and 14.2
+
+The constraint has not changed and neither has its consequence, so the second
+batch has the same two waves and the same reason. It is recorded here rather
+than left to the pull requests because the shape is now a property of the two
+repositories rather than an accident of one change.
+
+```
+wave 1   mcpp 2026.9.8.1: host modules ordered by their import graph, the
+         two rule-package feature keys no longer reported as unsupported,
+         e2e 633, and this document's alignment with what shipped
+                 |
+                 +--- release mcpp ---+
+                                      |
+wave 2                                +--> mcpp:plugins 0.4.0: the surface made
+                                           pure and split into two halves, the
+                                           `mcpp-embed` tool, generation as an
+                                           action under object storage, a
+                                           depfile on all six rules, CI steps
+                                           whose criterion is the artifact's
+                                           bytes, and MCPP_VERSION raised
+                                      |
+wave 3                                +--> mcpp-index: 0.4.0 in the three
+                                           platform tables, `latest` REPLACED
+                                      |
+wave 4                                +--> sandbox verification against the
+                                           published packages
+```
+
+The engine half is testable on its own -- e2e 633 uses no rule package -- and
+the plugins half is not, because its floor is the release that has not happened
+when the pull request opens. Nothing in wave 2 can be checked by its own CI
+until wave 1 is published, so a green wave-2 CI is the LAST evidence available
+rather than the first, and the local run against a locally built engine is what
+stands in for it.
+
 ### 13.3 Evaluation criteria, by the dimensions this work is judged on
 
 | Dimension | What decides it | Where it is checked |
@@ -911,55 +1130,182 @@ rather than half-fixed.
 ## 14. What is open after the release, and what each one's fix is
 
 Section 7 listed what was open before the work. This lists what is open after
-it. Two entries were found by measurement while assembling the comparison in
+it. 14.1 and 14.2 are CLOSED and kept for their analysis; 14.3 through 14.5,
+14.7 and 14.8 are open; 14.6 was never open. Two entries were found by measurement while assembling the comparison in
 section 10, and the first of them produces a wrong artifact rather than a
 failure.
 
 ### 14.1 Object storage does not rebuild when its payload changes
 
-Measured on `tests/spirv-object-storage` against the released 2026.9.7.1, by
-editing the shader so its compiled output must differ and reading the byte count
-the program prints:
+**CLOSED** by `mcpp:plugins` 0.4.0 and mcpp 2026.9.8.1. The analysis is kept
+because two of its three parts are transferable: the requirement had been
+written down and lost, and the first measurement asked the wrong tool.
+
+Measured on `tests/spirv-object-storage` against the released 2026.9.7.1 and
+`mcpp:plugins` 0.3.0, by editing the shader so its compiled output must differ
+and reading the byte count the program prints:
 
 | storage | before the edit | after |
 |---|---|---|
 | `header` (the default) | `bytes=1480` | `bytes=1776` |
 | `object` | `bytes=1480` | **`bytes=1480`** |
 
-The build succeeds and the artifact is the old one. This is not the `#include`
-case in 14.2 -- it is the DIRECT source, which the shader action does declare.
-
-**Mechanism.** `rules/spirv.cppm` hands the generated `.S` to `mcpp::generated`,
-so its compile edge knows the `.S` and nothing else. The `.S` names the payload
-in `.incbin` but its own text does not change when the payload does, so
-`write_if_different` leaves the file alone, its mtime does not move, and no edge
-is dirty. The shader itself recompiles; the object that carries its bytes does
-not.
-
-**A depfile does not close this, and that was measured rather than assumed:**
+And against the published ecosystem, not only against a fixture: the same edit
+in an `xlings subos --sandbox`, on a project whose only reference to any of this
+is `plugins = { version = "0.3.0", features = ["rules-spirv"] }`, with the engine
+addressed by its store path so no development checkout can carry the result:
 
 ```
-gcc:    p.o: p.S /usr/include/stdc-predef.h
-clang:  p.o: p.S
+store path: .../xim-x-mcpp/2026.9.7.1/bin/mcpp
+before: bytes=1480
+after:  bytes=1480          and `Finished dev in 0.06s` -- nothing rebuilt at all
 ```
 
-Neither assembler names an `.incbin`'d file in its dependency output. The
-channel added in this release is the right one for 14.2 and the wrong one here.
+**The blast radius, stated so the severity is not overread.** `header` is the
+default and `object` is what a project opts into above roughly 1 MB of total
+payload (3.1). Nothing in `examples/` uses it.
 
-**The fix is to stop handing the `.S` to the engine as an ordinary source.**
-Object storage should emit a `role = "object"` `mcpp::action` that runs the
-assembler itself and declares BOTH inputs -- the `.S` and the payload -- which
-is the shape `mcpp.rules.cuda` already uses for a `.cu`. The dependency then
-exists in the graph rather than in a comment.
+#### It was written down before it was written wrong
 
-`storage::sidecar` copies the payload beside the artifact and has not been
-checked for the same shape. It should be, in the same change.
+Section 4.3 stated the requirement -- "the payload must be declared as an action
+input explicitly" -- before any of this was implemented. What it added was five
+more words, "and shares its fix", pointing at the depfile item in section 7. The
+depfile shipped in 2026.9.7.1, the item was marked done, and `.incbin` went with
+it.
+
+> **A requirement folded into another item's fix disappears when that item
+> ships** -- silently, with every test still green, because the test written for
+> the other item passes.
+
+#### The mechanism, and the comment that contains the error
+
+`rules/spirv.cppm` handed the generated `.S` to `mcpp::generated`, so its
+compile edge knew the `.S` and nothing else. The `.S` names the payload in
+`.incbin` but its own text does not change when the payload does, so
+`write_if_different` left the file alone, its mtime did not move, and no edge
+was dirty. The shader recompiled; the object carrying its bytes did not.
+
+The comment at that call site is worth quoting, because the reasoning in it
+reads as correct:
+
+```
+// The `.S` under object storage. It is an ordinary source: mcpp assembles
+// it, and `.incbin` reads the payload the action above produced, which by
+// then exists because a `role = "source"` action is ordered before this
+// package's compiles.
+```
+
+Every clause is true. **Ordering is not incrementality**: the payload does exist
+when the object is assembled, and the object is assembled once.
+
+#### Asking the assembler: measured on the right tool the second time
+
+The first version of this section said a depfile cannot reach this, on this
+output:
+
+```
+gcc -c p.S -MD -MF p.d    ->  p.o: p.S /usr/include/stdc-predef.h
+clang -c p.S -MD -MF p.d  ->  p.o: p.S
+```
+
+That asked the PREPROCESSOR. `-MD` on a compiler driver reports `#include`, and
+`.incbin` is not an include, so the answer described a channel that was never a
+candidate. The assembler has its own, and the two do not agree:
+
+```
+as --MD dep.d -o p.o p.s              ->  p.o: payload.bin p.s
+clang -fno-integrated-as -Wa,--MD,…   ->  out.o: payload.bin p.s
+clang -Wa,-MD / -Wa,--dependency-file ->  rejected
+clang -cc1as -dependency-file         ->  unknown argument
+```
+
+GNU as names the embedded file. Clang's integrated assembler does not and has no
+option that would; the `-fno-integrated-as` line succeeds only by handing the
+work to gas. So the assembler's own dependency output would leave `.incbin`
+tracked under GCC and silently untracked under Clang -- worse than untracked
+under both, because the toolchain that reports nothing is the one whose users
+could never reproduce the staleness.
+
+#### The resolution: no new engine channel, because the cause was the timing
+
+An engine primitive was written for this and then withdrawn. It worked --
+`mcpp::recompile_if_changed(source, dependency)`, protocol 9, a ninja implicit
+input -- and it was unnecessary, which a prototype settled before the design was
+committed to:
+
+```
+one `role = "source"` action, payloads as its declared inputs
+      BYTES=64 -> BYTES=192      with no engine change at all
+```
+
+The defect was never that the engine could not express the edge. It was that the
+generation ran at the wrong TIME. `surface::emit` ran at plan time and wrote a
+file naming a product the graph had not made yet; a file written then cannot be
+an edge to a build-time product, whatever channel is added afterwards. Move the
+generation into the graph and the edge is ordinary:
+
+```
+payload changes -> the action's declared input changed -> ninja reruns it
+                -> no restat, so its outputs count as new
+                -> the assemble edge reruns
+```
+
+Traced file by file: `scale_comp.spv` moves, `payload.S` does NOT (its content
+is unchanged, so `write_if_different` leaves it), and `payload.S.o` moves. With
+the payload inputs removed, `payload.S.o` does not move and the byte count
+stands still -- the control, run both ways.
+
+#### What that cost, and why each part is right on its own terms
+
+Three changes were needed, and none of them is scaffolding for this defect:
+
+1. **`mcpp.plugins.surface` imports only `std`.** It used to read
+   `mcpp::target_os()`, `mcpp::compiler()` and `mcpp::package_name()`; those are
+   now parameters. A generator that takes its inputs rather than reading its
+   environment is the same code in a build program and in a program -- and a
+   program is what an action's command has to be. Measured before: an ordinary
+   build of the package failed with `mcpp: failed to read compiled module`,
+   because the lib root imported the build-program module.
+
+2. **`mcpp-embed` is built from the package**, through `tools = ["mcpp-embed"]`
+   on the same dependency edge that brings the rules in. Not published as a
+   payload: docs/05 section 2.14 gives the reason and it is not convenience --
+   "the tool's version IS the dependency's version, so a `protoc` that does not
+   match its runtime is not expressible. This is the problem with packaging the
+   tool separately, and it is the failure mode that bites at run time rather
+   than compile time." The generator and the declarations it writes are one
+   decision.
+
+3. **A package's host modules are ordered by their import graph** (mcpp
+   2026.9.8.1). They were ordered by PATH, so `rules/spirv.cppm` preceded
+   `src/declare.cppm` and importing it failed. That ordering is also what 13.1.1
+   recorded as the reason its lib root grew from twenty lines to seven hundred
+   -- a monolith adopted because a sort was read as "a second unit is not
+   compiled at all".
+
+Two actions rather than one, and that is a fact about inputs rather than a
+limitation: the interface is a function of the item list, the body of the item
+list AND the payloads. One action would rewrite the interface whenever a payload
+changed and rebuild every BMI importing it. (`mcpp::action::provides` is also
+per-action rather than per-output, so one action with three outputs and one
+`provides` makes the scanner report "already provided by" -- measured.)
+
+Only `object` needs any of it. `header` reaches the artifact through generated
+data headers the payload's own compiler already writes as action outputs, and
+`sidecar` is never compiled -- checked rather than assumed. So the default path
+builds no tool and a consumer that never opts into object storage sees none of
+this.
 
 ### 14.2 No rule passes a depfile
 
-`mcpp::action::depfile` shipped in 2026.9.7.1 and `grep depfile rules/` in
-`mcpp:plugins` returns nothing across all six rules; each declares
-`a.input(source)` alone. A shader or kernel that `#include`s another file does
+**CLOSED** by `mcpp:plugins` 0.4.0: six of six rules pass one, each spelling
+measured against the tool rather than read from its help text, and a CI step
+whose denominator is `ls rules/*.cppm` so a seventh rule is counted the day it
+is added rather than the day someone remembers the step.
+
+`mcpp::action::depfile` shipped in 2026.9.7.1 and, through `mcpp:plugins`
+0.3.0, `grep depfile rules/` returned nothing across all six rules; each
+declared `a.input(source)` alone. A shader or kernel that `#include`s another file does
 not rebuild when that file changes, which is the same behaviour xmake has and
 the one thing CMake's `add_custom_command(DEPFILE)` gets right.
 
@@ -970,8 +1316,14 @@ behind cuda, hip, sycl and ascendc. The work is one flag and one
 included file rebuilds -- the criterion has to be the artifact's content, not
 the build's exit code, because the defect is a green build over stale bytes.
 
-14.1 and 14.2 belong in one release. They are the same class of defect and the
-same fixture shape answers both.
+14.1 and 14.2 belong in one release of `mcpp:plugins`. They are the same class
+of defect -- a green build over stale bytes -- and the same fixture shape
+answers both: edit a file the compile reads, and assert on what got embedded.
+
+They are NOT the same fix, and 4.3's note above is what it cost to believe they
+were. A depfile carries what a command reports about its own input; the other
+carries what nothing reports. Two channels, and the reason for two is measured
+in 14.1 rather than assumed.
 
 ### 14.3 A device on Windows, and who decides it
 
@@ -1093,3 +1445,68 @@ Recorded because it was on the plan and is resolved by fact rather than by work.
 ceiling. Raising it means publishing a newer slang payload to `xim-pkgindex`
 first -- four platforms and a GitCode mirror -- which is a packaging task, not a
 pin edit.
+
+### 14.7 The `--no-accel` diagnostic 5.6 specified was never written
+
+Section 5.6 argued that an `import` of an accelerator-produced module from a
+translation unit that is not `cfg`-gated is a diagnosable condition, and section
+8's stage C said to add it in the same change as the surface. The surface
+shipped; the diagnostic did not, and nothing recorded that -- so between 0.3.0
+and this entry it was neither done nor open, which is the worse of the two
+states because only one of them gets looked at again.
+
+The failure it would report is real and its shape is known: under `--no-accel`
+the constrained glob is left out, the rule generates nothing, and a TU importing
+the generated module fails to compile. The author meets this in CI rather than
+locally, and the compiler's message names a module that does not exist rather
+than the reason it does not.
+
+What is needed is one check at the point where the module graph and the `cfg`
+gates are both in hand: an import of a module that a rule produces only under an
+accelerator, from a unit compiled in every configuration, is refused naming the
+importing file, the module and the seam pattern that resolves it. The engine
+must not know which rule produced what -- so the fact "this module is produced
+only when an accelerator is named" has to come from the action that declares it,
+via `mcpp::action::provides`, and not from a table of rule names.
+
+Every converted example already uses the seam, so nothing in the tree reproduces
+this today. That is a reason to write the fixture first.
+
+**Left open deliberately in the 0.4.0 batch, and what the investigation found.**
+There is no single mcpp-side site to improve. An ordinary translation unit that
+imports a module nothing provides does not reach an mcpp diagnostic at all: the
+failure is the compiler's, `failed to read compiled module`. Adding one means
+detecting "an import with no provider" in the module graph and refusing there --
+a good message in general, and a change whose blast radius is every import
+resolution in every project, including the ones that resolve through headers,
+`std`, and host modules. A hasty version would refuse builds that are correct,
+which is worse than the message being poor.
+
+The other half is that the engine must not learn WHICH rule produces a module
+under WHICH accelerator; that knowledge belongs to the packages, and the whole
+design rests on the engine not holding it. What can carry it is
+`mcpp::action::provides`: an action that declares a module and is submitted only
+under an accelerator is a fact the engine can see without knowing what an
+accelerator is. That is the shape to build, and it is a batch of its own.
+
+### 14.8 L0 does not exist, and the ladder has three rungs rather than four
+
+Recorded so that section 6 is not read as a description. `[rules]` was withdrawn
+and is not planned (13.1.2), so the L1 rung as spelled there will not be built;
+tuning lives at L2, on the rule's `options`. L0 -- `[build] accel` plus a glob,
+no `build.mcpp` and no `[build-dependencies]` -- was never started, and stage D
+in section 8 was where it was to be done.
+
+It remains the largest single improvement to first use, and the mapping it needs
+is already computed: `src/build/prepare.cppm` prints extension-to-rule-package
+in the diagnostic for a device source no rule claimed. Nothing reads it. That is
+the shape this project has recorded before -- a value that is derived correctly
+and then wired to no decision -- and lifting it out of the diagnostic string is
+most of the work.
+
+The cost is an engine one, and it is the reason this is a register entry rather
+than a task: the engine would have to name rule packages it currently does not
+know, which is the one property section 1 credits the design with. L0 has to be
+built so that the mapping is still supplied by the packages -- through the index
+rather than through a table in the engine -- or it buys first-use convenience
+with the property that made a new device language cost no engine release.

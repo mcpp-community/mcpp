@@ -7634,6 +7634,28 @@ prepare_build(bool print_fingerprint,
                     }
                 }
                 const auto root = iface.lexically_normal();
+                // ORDERED BY WHAT THEY IMPORT, NOT BY WHERE THEY SIT.
+                //
+                // The compile loop accumulates BMIs in list order, so each
+                // entry sees only what precedes it. Path order was the previous
+                // rule and it is not a valid one: `rules/spirv.cppm` sorts
+                // before `src/surface.cppm`, so a member importing a unit its
+                // package shares was compiled first and failed with "failed to
+                // read compiled module ... imports must be built before being
+                // imported". Reproduced, and reproduced in both directions --
+                // renaming the shared unit so its path sorted first made the
+                // same package build, which is what says the cause is the sort
+                // and nothing else.
+                //
+                // A package that works today is ordered IDENTICALLY: the sort
+                // below keeps path order wherever no import constrains it, so
+                // it differs only where the old order was already broken.
+                struct Unit {
+                    std::filesystem::path        path;
+                    std::string                  name;
+                    std::vector<std::string>     imports;
+                };
+                std::vector<Unit> pending;
                 for (auto const& f : matched) {          // std::set: sorted
                     if (dropped.contains(f)) continue;
                     if (std::filesystem::equivalent(f, root, ec)) continue;
@@ -7641,10 +7663,53 @@ prepare_build(bool print_fingerprint,
                     if (!is) continue;
                     std::stringstream buf;
                     buf << is.rdbuf();
-                    auto name = prov::declared_interface_name(buf.str());
+                    auto text = buf.str();
+                    auto name = prov::declared_interface_name(text);
                     if (name.empty()) continue;
-                    push(f, std::move(name));
+                    pending.push_back({f, std::move(name), prov::declared_imports(text)});
                 }
+
+                // Only names this package itself declares constrain anything.
+                // `import std;` and the lib root are already ahead of every
+                // entry here, and a name from another package is ordered by the
+                // cross-package DFS below rather than by this sort.
+                std::map<std::string, std::size_t> byName;
+                for (std::size_t i = 0; i < pending.size(); ++i)
+                    byName.emplace(pending[i].name, i);
+
+                std::vector<char> state(pending.size(), 0);   // 0 new, 1 open, 2 done
+                std::vector<std::size_t> order;
+                order.reserve(pending.size());
+                // Iterative post-order DFS over the path-sorted list: the first
+                // unit that can be emitted is emitted, which is what preserves
+                // path order in the unconstrained case.
+                const auto visit = [&](std::size_t start) {
+                    std::vector<std::pair<std::size_t, std::size_t>> stack{{start, 0}};
+                    while (!stack.empty()) {
+                        auto& [u, k] = stack.back();
+                        if (state[u] == 2) { stack.pop_back(); continue; }
+                        state[u] = 1;
+                        if (k < pending[u].imports.size()) {
+                            auto const& want = pending[u].imports[k++];
+                            auto it = byName.find(want);
+                            // A CYCLE IS LEFT TO THE COMPILER, ON PURPOSE. It
+                            // is ill-formed C++ and the compiler says so with
+                            // the two units named; refusing here would report
+                            // the same fact in a worse place, and getting the
+                            // ordering wrong is no longer possible either way.
+                            if (it != byName.end() && state[it->second] == 0)
+                                stack.push_back({it->second, 0});
+                            continue;
+                        }
+                        state[u] = 2;
+                        order.push_back(u);
+                        stack.pop_back();
+                    }
+                };
+                for (std::size_t i = 0; i < pending.size(); ++i)
+                    if (state[i] == 0) visit(i);
+
+                for (auto i : order) push(pending[i].path, std::move(pending[i].name));
                 return out;
             };
             for (std::size_t c = 0; c < provisionGraph.visible.size(); ++c) {
