@@ -459,3 +459,112 @@ from the earlier plan and is where its example work rejoins.
    corrected in place by later measurement, which is how their own value was
    preserved. Making that a named, dated block at the end — rather than an edit
    in the body — would keep both properties.
+
+---
+
+## 12. Implementation record, 2026-09-08
+
+Shipped as PR #590 on `docs/architecture-three-trees`. Stages 1, 2, 3, 5 and 6
+of §8 are done; stage 4 (translating the specifications) and stage 7 (SPEC-005 /
+SPEC-006) are not, and §12.4 says why.
+
+### 12.1 What the measurements say afterwards
+
+| surface | before | after |
+|---|---|---|
+| `docs/05-mcpp-toml.md` | 3,129 lines | 1,626 |
+| largest chapter | 3,129 | 1,218 (`07`) |
+| `.agents/docs/README.md` | one heading | generated, 313 lines over 269 records |
+| user chapters citing a design record | 9 | 0 |
+| specifications listed on the front page | 2 of 4 | 4 of 4 |
+| stale `docs/NN-*.md` citations | 6 | 0 |
+| manifest keys with no example | 13 | 7 |
+| `build.mcpp` API names used by an example | 10 of 38 | 12 of 38 |
+| structure rules enforced in CI | 0 | 9 |
+
+The seven manifest keys still uncovered are the ones §3.2 classifies as a code
+block rather than an example — `[hooks]`, `scan_overrides`, `cxx_runtime`,
+`module_extensions`, `platforms`, `[feature-xlings]` — **plus two the plan
+intended to cover and did not**, for reasons worth stating rather than
+carrying forward as debt:
+
+- `[resources]` compiles on PE targets only, and a declared file must exist on
+  every target. An example for it would add a binary `.ico` to the tree and
+  then assert nothing on the two platforms most of this repository's CI runs
+  on. It belongs to a Windows-facing example, which does not exist yet.
+- `[runtime]` is the provider-neutral runtime contract a prebuilt library
+  declares. §4.2 folded it into the publishing example, which is blocked
+  (§12.4).
+
+### 12.2 What the review pass found
+
+Read as rendered text rather than as a diff, which is the rule the skill states
+for exactly this reason:
+
+**Fourteen cross-references, in both languages, left pointing at section numbers
+that had moved with their sections.** `§2.8.1` cited from inside the chapter
+that now contains it; `§2.13` cited from the chapter that now *is* it; `§2.14`
+cited from the chapter it moved to. Every heading structure stayed valid and the
+bilingual parity check stayed green throughout, because neither of those is a
+check about meaning.
+
+> A mechanical move keeps every structure valid and leaves the prose pointing at
+> the old shape. The checks cannot see it; a reader can.
+
+**Chapter 17's "Related chapters" ended up mid-chapter**, and its own bullet for
+`05` said "every manifest key, including `[xlings]`" — the one claim the move
+made false.
+
+**Two rules were written in the skill and not applied.** Chapter 22 had no
+"Current limitations" while the skill calls that section mandatory. And "every
+document states which rung it is on" was followed by no chapter and is not
+useful to a reader; it became "a `Related documents` line naming the rung above
+and below", which is what the chapters actually do and what carries the
+gradient. A rule nothing follows is worse than no rule, because it makes the
+skill unfalsifiable.
+
+### 12.3 What the work found in the implementation
+
+Three defects met while building `12-a-new-device-language`, each now in its
+README because a rule author will meet all three:
+
+- An action's command runs from the **build directory**, so a rule joins
+  `manifest_dir()` to the package-root-relative paths `device_sources()` gives.
+- A pipeline's exit status is its last command's. The first `toyc` summed with
+  `… | paste -sd+ - | bc`; when an earlier stage produced nothing `bc` still
+  exited 0, `set -e` never fired, and the program compiled, linked, ran and
+  printed `0`.
+- **The compiler is a declared input.** Without it, editing `toyc.sh` left every
+  edge clean and the artifact kept the previous compiler's bytes.
+
+And one in the tooling: `mcpp emit xpkg` produces a descriptor that
+`mcpp xpkg parse` rejects for a package keeping its own `mcpp.toml` — the
+emitted `mcpp` segment carries `manifest = "mcpp.toml"` and no `sources` list,
+and the validator requires one. Isolated by adding the list by hand, which makes
+it validate. Recorded in `docs/21` as a limitation; not fixed in a documentation
+change.
+
+`build_examples.sh` refused all four new example roots for being in neither
+`BUILD` nor `SKIP`. That is the denominator discipline working, and it is the
+same shape §7 gives the coverage check.
+
+### 12.4 What is open, and why each is open rather than late
+
+**The specifications' language** (§6.2, §11.1). English primary with a 简体中文
+mirror is the recommendation and is 1,156 lines of translation. It is an open
+question in this document, and translating before it is answered is the wrong
+order. What did ship is the half that is not a question: the register rules now
+cover `docs/specs/`, which they were exempt from by a glob rather than by a
+decision.
+
+**SPEC-005 and SPEC-006** (§6.1). Each is a promotion of text that exists and
+each is its own review.
+
+**A publishing round-trip example** (§4.3, B3). Blocked on the emit/parse
+mismatch above: the loop it would teach cannot be shown end to end while the
+descriptor `mcpp emit xpkg` writes is one `mcpp xpkg parse` refuses.
+`[resources]` and `[runtime]` were to be folded into that track and are
+therefore still uncovered.
+
+**14.7's `--no-accel` diagnostic and L0 of the rule ladder** are unaffected by
+this batch and remain where the heterogeneous plan records them.
