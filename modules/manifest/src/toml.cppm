@@ -837,6 +837,25 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 static constexpr std::string_view kKnownFeatureKeys[] = {
                     "defines", "flags", "forward", "implies", "provides",
                     "requires", "sources",
+                    // THE TWO RULE-PACKAGE KEYS, WHICH THIS PARSER READS ABOUT
+                    // FORTY LINES ABOVE AND THEN REPORTED AS UNSUPPORTED.
+                    //
+                    // `device_extensions` and `rule_module` are parsed into
+                    // `featureDeviceExtensions` and `featureRuleModule`, and
+                    // read by prepare when a consumer activates the feature --
+                    // they are the whole reason a new device language costs no
+                    // engine release. Leaving them off this list made every
+                    // ordinary load of such a package print "unsupported key
+                    // (ignored)" for a key it had just used, which is worse
+                    // than a wrong message: it tells a package author to delete
+                    // the two lines that make their rule work.
+                    //
+                    // It went unnoticed because the host-module path a rule
+                    // package is normally loaded through does not print schema
+                    // warnings. An ORDINARY build of the same package does --
+                    // and `tools = [...]` made ordinary builds of rule packages
+                    // routine.
+                    "device_extensions", "rule_module",
                 };
                 for (auto& [fkey, fignored] : fval.as_table()) {
                     (void)fignored;
