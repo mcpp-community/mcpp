@@ -287,6 +287,8 @@ exported whatever a file contained would make the boundary an accident of that
 file's contents.
 
 ```cpp
+const std::string root = std::string(mcpp::manifest_dir());
+
 mcpp::tools::island::options opt;
 opt.module_name  = "app.kernels";
 opt.out_dir      = std::string(mcpp::out_dir()) + "/island";
@@ -321,6 +323,12 @@ isolation the linker does not provide. One name in SEVERAL roots is one entry
 point implemented several times, and the declarations must then agree verbatim.
 The second is the check nothing else in the toolchain can perform; the first is
 what makes the namespace honest.
+
+Two configuration errors are refused beside them: roots that overlap, because a
+file reachable from both has two namespace paths and which one it got would
+depend on the order of the list; and roots that hold no marked entry point at
+all, because an empty module fails later and less clearly than a misspelled
+path does here.
 
 **`strip_prefix` is a spelling, not a second entity.** An island's symbol is
 global to the whole program, so an entry point carries a package prefix whether

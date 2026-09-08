@@ -237,6 +237,8 @@ int app_saxpy(float a, const float* x, const float* y, float* out, unsigned n)
 变成那个文件恰好包含了什么的意外结果。
 
 ```cpp
+const std::string root = std::string(mcpp::manifest_dir());
+
 mcpp::tools::island::options opt;
 opt.module_name  = "app.kernels";
 opt.out_dir      = std::string(mcpp::out_dir()) + "/island";
@@ -264,6 +266,10 @@ layout root 的目录才延长命名空间;其余的根只需要定义同样的�
 并不提供的隔离。同一个名字出现在**多个**根里是同一个入口点的多份实现,这时它们的
 声明必须逐字一致。后者是工具链里没有别的东西能做的检查;前者是让命名空间不说谎的
 那一条。
+
+此外还有两种配置错误被拒绝:互相重叠的根 —— 同时可以从两个根到达的文件有两条命名
+空间路径,而它拿到哪一条取决于这个列表的顺序;以及根里一个被标记的入口点都没有 ——
+一个什么都不导出的模块,比一个写错的路径在这里被指出来要晚得多、也难懂得多。
 
 **`strip_prefix` 是一种拼法,不是第二个实体。** 岛的符号对整个程序是全局的,所以
 入口点无论是否落在命名空间里都带着包前缀,而命名空间随后又把它重复一遍。这个选项在

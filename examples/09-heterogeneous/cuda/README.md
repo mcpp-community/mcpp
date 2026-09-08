@@ -98,7 +98,7 @@ The rule names it. This project writes one edge and no payload list at all:
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.5.1", features = ["rules-cuda", "tools-island"], host-module = true }
+plugins = { version = "0.5.2", features = ["rules-cuda", "tools-island"], host-module = true }
 ```
 
 `mcpp.rules.cuda` declares nvcc, cudart, cuRAND's headers, CCCL and the driver

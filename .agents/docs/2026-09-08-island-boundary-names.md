@@ -413,6 +413,8 @@ negation.
 | a flatter fallback tree is accepted | fixture: `cuda/image/blur.cu` with `cpu/ops.cpp`; the namespace is `image` |
 | a backend-only entry point still has a place | fixture: a name only the second root declares; its namespace is that root's path |
 | the disagreement check still fires | the existing `island-interface` negative fixture, unchanged in behaviour |
+| overlapping roots are refused | negative fixture: `src` named beside `src/kernels`; the message names both roots |
+| the derivation runs on every host | the fixture builds and its namespaces are asserted on macOS and Windows, not only Linux |
 | the output is a function of the tree, not of the walk | the same tree scanned twice produces byte-identical files, and a no-op rebuild touches neither |
 | an empty root set is an error | a fixture whose roots hold sources but no marker; the build fails naming the root |
 | two files in ONE root, one name | refused, and the message says the two belong in two roots |
@@ -421,17 +423,33 @@ negation.
 ## 12. What shipped
 
 `mcpp:plugins` **0.5.0** (2026-09-08) carries §2 through §8 and §6.1. **0.5.1**
-carries the refusal of overlapping roots that §6 states and 0.5.0 omitted --
-the shape of defect §10 of the plan warns about, where a requirement folded
-into a larger change disappears when that change ships. It also stops a
+carries the refusal of overlapping roots that §6 states and 0.5.0 omitted. That
+is the shape of defect where a requirement folded into a larger change
+disappears when that change ships: §6 stated it in prose and §11 gave it no
+criterion of its own, so nothing was red when it was absent. It has one now. It also stops a
 single-file root from registering a re-run glob over the directory that file
 happens to sit in.
 
-Both are indexed, and `mcpp` pins 0.5.1 across the example tree. The published
-0.5.1 was verified in an xlings sandbox against the index rather than a working
-tree: a project written inside the sandbox resolved
-`registry/data/xpkgs/mcpp-x-plugins/0.5.1`, printed `6 12 18 24`, and its
-generated module carried `export namespace sandbox::kernels` and
+**0.5.2** carries a defect the cross-platform run found. `mcpp.tools.island`
+compiled on all three hosts and had been exercised on one; the first Windows
+run of the fixture failed to compile with `no member named 'image' in namespace
+'island_interface::kernels'`. `namespace_of` trimmed the base directory off a
+file's directory as a STRING, and a root stated with forward slashes against a
+directory iterator appending with the preferred separator left `\image` rather
+than `image` -- so the root directory became a segment, sanitised to `_`. It
+compares components now.
+
+The shader lane shares that function and had the defect latent: its Windows
+fixture keeps every payload in one directory, so a segment was never derived
+there. The leg that surfaced it is not the lane it lives on, and a step now
+asserts the derivation exists once so the island fixture's cross-platform run
+keeps protecting both.
+
+All three are indexed, and `mcpp` pins 0.5.2 across the example tree. The
+published package was verified in an xlings sandbox against the index rather
+than a working tree: a project written inside the sandbox resolved
+`registry/data/xpkgs/mcpp-x-plugins`, printed `6 12 18 24`, and its generated
+module carried `export namespace sandbox::kernels` and
 `export namespace sandbox::kernels::vec`.
 
 ## 13. Decided in review
