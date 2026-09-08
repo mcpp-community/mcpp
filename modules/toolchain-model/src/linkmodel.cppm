@@ -223,7 +223,7 @@ struct ClangDriverModel {
 // A third, declared-metadata source (a persisted `.xpkg-exports.json`
 // written by the installer) was evaluated and removed: its only consumer
 // would have been this resolver, while the two sources above already cover
-// every real payload — see docs/08-toolchain-internals.md for the record.
+// every real payload — see docs/91-toolchain-internals.md for the record.
 //
 // Returns the loader's absolute path, or empty when none was found (callers
 // then omit --dynamic-linker and the hermeticity check reports the gap).

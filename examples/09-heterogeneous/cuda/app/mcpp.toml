@@ -38,7 +38,7 @@ cuda-driver = "2026.09.05"
 # `cfg(accelerator = ...)` and the feature that selects it, so this project
 # names the rule and nothing else. To pin a different version, write the same
 # entry here and it wins -- see `One package, one version` in
-# docs/05-mcpp-toml.md. Needs mcpp 2026.9.7.1 and mcpp:plugins 0.3.0.
+# docs/02-mcpp-toml.md. Needs mcpp 2026.9.7.1 and mcpp:plugins 0.3.0.
 #
 # What the rule declares for this lane: nvcc, cudart, cuRAND's headers, CCCL and
 # the driver sentinel. The 12.9 line is an EXACT default rather than a floor,

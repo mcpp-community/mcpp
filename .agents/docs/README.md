@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-269 records.
+270 records.
 
 ## By subject
 
@@ -26,6 +26,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### docs
 
+- [The documentation as a book: a chapter-by-chapter design](2026-09-08-the-documentation-as-a-book.md) — active
 - [A curriculum for the examples, a reference for the documentation, and a check with a denominator](2026-09-08-examples-curriculum-and-documentation-plan.md) — superseded by [2026-09-08-documentation-architecture-three-trees.md](2026-09-08-documentation-architecture-three-trees.md)
 - [Three documentation trees, three audiences, and the rule for citing between them](2026-09-08-documentation-architecture-three-trees.md) — active
 
@@ -33,6 +34,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
+- [The documentation as a book: a chapter-by-chapter design](2026-09-08-the-documentation-as-a-book.md) — active
 - [A curriculum for the examples, a reference for the documentation, and a check with a denominator](2026-09-08-examples-curriculum-and-documentation-plan.md) — superseded by [2026-09-08-documentation-architecture-three-trees.md](2026-09-08-documentation-architecture-three-trees.md)
 - [Three documentation trees, three audiences, and the rule for citing between them](2026-09-08-documentation-architecture-three-trees.md) — active
 - [第六轮生态复核:工具平面的目标轴](2026-09-07-round6-ecosystem-review.md)

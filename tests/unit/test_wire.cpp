@@ -160,7 +160,7 @@ TEST(WireFormat, LegacyJsonIsNotTheSameFormatAsJson) {
 
 // ── Golden shapes, one per kind ────────────────────────────────────────────
 //
-// docs/11-machine-output.md promises that within a kindVersion fields are
+// docs/50-machine-output.md promises that within a kindVersion fields are
 // added and never removed or renamed. A promise nobody can break is the thing
 // this whole module was written against — `xlings interface --list` declares
 // 20 capabilities whose outputSchema is, for all 20, only
@@ -179,7 +179,7 @@ void expect_has_keys(const nlohmann::json& obj,
             << what << " lost published key '" << k
             << "'. Removing or renaming one is a breaking change: bump the "
                "kind's version in mcpp.wire and say so in "
-               "docs/11-machine-output.md.";
+               "docs/50-machine-output.md.";
 }
 
 }  // namespace

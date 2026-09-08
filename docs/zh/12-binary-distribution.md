@@ -1,12 +1,12 @@
-# 12 - 分发预编译库
+# 12 —— 分发预编译库
 
 [English](../12-binary-distribution.md) | **简体中文**
 
 > 把一个库以**接口 + 预编译二进制**的形式分发,而不是发源码。
 > 适用于闭源分发、离线环境,以及构建产物已在构建农场生成的场景。
 >
-> 相关文档:[02 - 打包应用](02-pack-and-release.md) 说明**程序**的打包;
-> [10 - 发布一个库](10-publishing-a-library.md) 说明源码分发通路。
+> 相关文档:[10 - 打包应用](10-pack-and-release.md) 说明**程序**的打包;
+> [11 - 发布一个库](11-publishing-a-library.md) 说明源码分发通路。
 
 ## 概述
 
@@ -28,7 +28,7 @@ mcpp pack mathkit --target x86_64-linux-gnu \
 
 | `kind` | `mcpp pack <name>` 产出 | `--mode` |
 |---|---|---|
-| `bin` | 应用 bundle(见 [02](02-pack-and-release.md)) | 四档 |
+| `bin` | 应用 bundle(见 [10](10-pack-and-release.md)) | 四档 |
 | `lib` | **静态库包** | — |
 | `shared` | **动态库包** | — |
 
@@ -279,7 +279,7 @@ Mach-O 上打包器会读出 `LC_RPATH` 并在包会携带它时告警;自动改
 
 ### 调试信息会被剥掉
 
-参数、分档表与 `--debug-symbols` 见 [docs/02](02-pack-and-release.md)。
+参数、分档表与 `--debug-symbols` 见 [docs/02](10-pack-and-release.md)。
 对**库**包最要紧的一条:静态归档只做 `--strip-debug`,因为 `--strip-all` 会删掉
 归档的符号索引,消费方链接时会报 `archive has no index; run ranlib to add one`。
 

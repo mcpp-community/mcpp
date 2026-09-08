@@ -2207,7 +2207,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
 
     // [hooks] — project build lifecycle commands (#496). Parsed HERE rather
     // than by the module that runs them, for the reason Appendix A of
-    // docs/05-mcpp-toml.md states: mcpp.toml has one grammar and one parser.
+    // docs/02-mcpp-toml.md states: mcpp.toml has one grammar and one parser.
     // A second reader of the same file would report ITS syntax errors in its
     // own vocabulary — a typo in [package] arriving as "invalid hook
     // configuration" — and would sit outside the warning/--strict policy every
@@ -2376,7 +2376,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         m.lib.path = *v;
     }
 
-    // [pack] — `mcpp pack` configuration. See docs/02-pack-and-release.md.
+    // [pack] — `mcpp pack` configuration. See docs/10-pack-and-release.md.
     if (auto v = doc->get_string("pack.default_mode")) {
         const auto& s = *v;
         if (s != "static" && s != "bundle-project" && s != "bundle-all") {

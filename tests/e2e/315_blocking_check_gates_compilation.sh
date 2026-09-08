@@ -5,7 +5,7 @@
 #
 # WHAT THIS DEFENDS. `blocking` was typed (`BuildAction::blocking`), emitted
 # over the build-program protocol (`hostprogram.cppm`), parsed
-# (`directives.cppm`), documented in both languages (`docs/07-build-mcpp.md`
+# (`directives.cppm`), documented in both languages (`docs/05-build-mcpp.md`
 # and its Chinese counterpart) and demonstrated in a shipped example
 # (`examples/08-build-rules/rules-tidy`) — and read by nothing. The only
 # order-only edge the ninja backend emitted was the staged-BMI one. So a check

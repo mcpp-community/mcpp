@@ -9,7 +9,7 @@
 [![Module](https://img.shields.io/badge/module-ok-green.svg)](https://en.cppreference.com/w/cpp/language/modules)
 [![License](https://img.shields.io/badge/license-Apache_2.0-blue.svg)](LICENSE)
 
-| [Documentation](docs/) · [Getting Started](docs/00-getting-started.md) · [mcpp.toml Guide](docs/05-mcpp-toml.md) · [Examples](docs/01-examples.md) · [Toolchains](docs/03-toolchains.md) |
+| [Documentation](docs/) · [Getting Started](docs/00-getting-started.md) · [mcpp.toml Guide](docs/02-mcpp-toml.md) · [Examples](docs/01-examples.md) · [Toolchains](docs/20-toolchains.md) |
 |:---:|
 | [Package index mcpp-index](https://mcpplibs.github.io/mcpp-index/) · [Module libraries mcpplibs](https://github.com/mcpplibs) · [Community Forum](https://forum.d2learn.org/category/20) · [Issues](https://github.com/mcpp-community/mcpp/issues) · [Releases](https://github.com/mcpp-community/mcpp/releases) |
 | [![ci-linux](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-linux.yml) [![ci-macos](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-macos.yml) [![ci-windows](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml/badge.svg?branch=main)](https://github.com/mcpp-community/mcpp/actions/workflows/ci-windows.yml) |
@@ -224,7 +224,7 @@ Then `import` it directly in your code:
 import mcpplibs.cmdline;
 ```
 
-> For more dependency options (version constraints, namespaces, Git references, local paths, etc.), see the [mcpp.toml guide — dependency management](docs/05-mcpp-toml.md).
+> For more dependency options (version constraints, namespaces, Git references, local paths, etc.), see the [mcpp.toml guide — dependency management](docs/02-mcpp-toml.md).
 
 ## Feature Overview
 
@@ -413,17 +413,17 @@ verified — CI builds **and executes** the artifact end-to-end (qemu/wine inclu
 > cross-compilers by construction, so any host that can install the LLVM
 > payload produces these targets. The C library, startup code, memory layout
 > and emulator travel with a board-support package rather than with mcpp — see
-> [docs/13 — Bare-Metal and Freestanding Targets](docs/13-baremetal.md).
+> [docs/13 — Bare-Metal and Freestanding Targets](docs/30-baremetal.md).
 
 ## Documentation
 
 - [Getting Started](docs/00-getting-started.md) — install → new → build → run in 5 minutes
 - [Examples](docs/01-examples.md)
-- [Packaging & Release](docs/02-pack-and-release.md)
-- [Toolchain Management](docs/03-toolchains.md)
-- [Building from Source](docs/04-build-from-source.md)
-- [mcpp.toml Guide](docs/05-mcpp-toml.md)
-- [Workspaces](docs/06-workspace.md)
+- [Packaging & Release](docs/10-pack-and-release.md)
+- [Toolchain Management](docs/20-toolchains.md)
+- [Building from Source](docs/90-build-from-source.md)
+- [mcpp.toml Guide](docs/02-mcpp-toml.md)
+- [Workspaces](docs/03-workspace.md)
 
 Full options for any command are available via `mcpp <cmd> --help`.
 

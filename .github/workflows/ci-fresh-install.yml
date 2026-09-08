@@ -55,7 +55,7 @@ concurrency:
 # NOT to be confused with the .xlings.json workspace pin, which this used to be
 # kept equal to. That one is the BOOTSTRAP compiler for the self-host builds and
 # has a different requirement — it must be a released mcpp that can build the
-# CURRENT source tree — so it stays hand-maintained. See docs/09-release.md.
+# CURRENT source tree — so it stays hand-maintained. See docs/92-release.md.
 
 jobs:
   # ──────────────────────────────────────────────────────────────────

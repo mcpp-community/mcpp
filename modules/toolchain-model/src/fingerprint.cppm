@@ -1,6 +1,6 @@
 // mcpp.toolchain.fingerprint — 11-field fingerprint that gates BMI cache safety.
 //
-// Per docs/08-toolchain-internals.md, the fingerprint MUST cover:
+// Per docs/91-toolchain-internals.md, the fingerprint MUST cover:
 //   1.  compiler id           2.  compiler version
 //   3.  compiler driver identity  4.  target triple
 //   5.  stdlib id+version     6.  C++ standard

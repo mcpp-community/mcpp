@@ -181,13 +181,13 @@ mcpp pack --mode static            # fully static musl build
 mcpp pack --mode self-contained    # bundle loader, libc, and dependencies
 ```
 
-For the differences between the four modes and their artifact layouts, see [02 — Packaging and Release](02-pack-and-release.md). `bundle-project` and `bundle-all` remain accepted aliases for `vendored` and `self-contained`.
+For the differences between the four modes and their artifact layouts, see [10 — Packaging and Release](10-pack-and-release.md). `bundle-project` and `bundle-all` remain accepted aliases for `vendored` and `self-contained`.
 
 ## Further Reading
 
 - [01 — Examples](01-examples.md) — a collection of ready-to-run minimal projects
-- [02 — Packaging and Release](02-pack-and-release.md) — building distributable artifacts
-- [03 — Toolchain Management](03-toolchains.md) — switching compilers and managing multiple versions
+- [10 — Packaging and Release](10-pack-and-release.md) — building distributable artifacts
+- [20 — Toolchain Management](20-toolchains.md) — switching compilers and managing multiple versions
 - The full set of options for any command is available via `mcpp <cmd> --help`
 
 

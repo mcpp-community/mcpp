@@ -1,4 +1,4 @@
-# 12 - Distributing a Prebuilt Library
+# 12 — Distributing a Prebuilt Library
 
 **English** | [简体中文](zh/12-binary-distribution.md)
 
@@ -6,8 +6,8 @@
 > It applies to closed-source distribution, offline environments, and builds whose
 > artifacts a build farm has already produced.
 >
-> Related: [02 - Packaging & Release](02-pack-and-release.md) covers bundling an
-> *application*. [10 - Publishing a Library](10-publishing-a-library.md) is the
+> Related: [10 - Packaging & Release](10-pack-and-release.md) covers bundling an
+> *application*. [11 - Publishing a Library](11-publishing-a-library.md) is the
 > source route.
 
 ## Overview
@@ -31,7 +31,7 @@ mcpp pack mathkit --target x86_64-linux-gnu \
 
 | `kind` | `mcpp pack <name>` produces | `--mode` |
 |---|---|---|
-| `bin` | an application bundle (see [02](02-pack-and-release.md)) | the four depths |
+| `bin` | an application bundle (see [10](10-pack-and-release.md)) | the four depths |
 | `lib` | a **static library package** | — |
 | `shared` | a **dynamic library package** | — |
 
@@ -310,7 +310,7 @@ no test in this suite produces a `.dylib` to measure the edit on.
 
 ### Debug information is removed
 
-See [docs/02](02-pack-and-release.md) for the flags, the per-shape table, and
+See [docs/02](10-pack-and-release.md) for the flags, the per-shape table, and
 `--debug-symbols`. The rule that matters for a *library* package: a static
 archive is only ever `--strip-debug`ed, because `--strip-all` removes the
 archive symbol index and the consumer's link then fails with `archive has no

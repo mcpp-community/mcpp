@@ -1656,7 +1656,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // same result — not a race, never run.
     //
     // PER PACKAGE, not per build. `include_dir` colours only the declaring
-    // package's own TUs (docs/07-build-mcpp.md), so a generated header is
+    // package's own TUs (docs/05-build-mcpp.md), so a generated header is
     // visible to exactly one package and a build-wide phony would encode a
     // dependency that does not exist. It would also land on the critical path
     // of a build whose wall clock IS its critical path.

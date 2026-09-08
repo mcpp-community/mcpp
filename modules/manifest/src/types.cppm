@@ -154,7 +154,7 @@ struct Target {
 // Aliases at the top of this file keep `mcpp::manifest::DependencySpec`
 // resolvable for unchanged call sites.
 
-// `[toolchain]` section per docs/03-toolchains.md
+// `[toolchain]` section per docs/20-toolchains.md
 //   linux   = "gcc@15.1.0"
 //   macos   = "llvm@20"
 //   windows = "msvc@system"
@@ -1149,7 +1149,7 @@ struct LibConfig {
     std::filesystem::path               path;          // explicit override; empty = use convention
 };
 
-// `[pack]` — `mcpp pack` configuration. See docs/02-pack-and-release.md.
+// `[pack]` — `mcpp pack` configuration. See docs/10-pack-and-release.md.
 //
 // `default_mode` picks the bundling strategy when the user runs bare
 // `mcpp pack` (no `--mode` flag):
@@ -1263,7 +1263,7 @@ struct WorkspaceConfig {
 // `[hooks]` — project build lifecycle commands (#496).
 //
 // The commands are host-shell strings written by the project author, run by
-// `mcpp build` around the build it performs. See docs/05-mcpp-toml.md §2.16.
+// `mcpp build` around the build it performs. See docs/02-mcpp-toml.md §2.16.
 //
 // ONLY THE ROOT PROJECT'S HOOKS ARE EVER RUN. Every manifest mcpp parses
 // carries this field, including a DEPENDENCY's — and `mcpp build` reaches the
@@ -1577,7 +1577,7 @@ struct Manifest {
     // [target.<triple>] tables — empty if user didn't declare any.
     std::map<std::string, TargetEntry> targetOverrides;
 
-    // [pack] — `mcpp pack` config (see docs/02-pack-and-release.md).
+    // [pack] — `mcpp pack` config (see docs/10-pack-and-release.md).
     PackConfig                         packConfig;
 
     // [lib] — library root interface convention (M5.x+).

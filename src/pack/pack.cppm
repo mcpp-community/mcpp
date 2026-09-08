@@ -15,7 +15,7 @@
 // mcpp.pack.binfmt reads the import table instead, so a Linux box packaging a
 // Windows build is simply what happens when nothing has to be executed.
 //
-// See docs/02-pack-and-release.md for the full design. Three modes:
+// See docs/10-pack-and-release.md for the full design. Three modes:
 //   Static          full musl static, no PT_INTERP / RUNPATH
 //   BundleProject   bundle only the project's third-party .so (default)
 //   BundleAll       bundle every dynamic dep incl. libc / libstdc++ / ld

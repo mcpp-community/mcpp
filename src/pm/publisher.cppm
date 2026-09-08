@@ -1,6 +1,6 @@
 // mcpp.pm.publisher — generate xpkg Lua entry from mcpp.toml + scanner.
 //
-// See docs/10-publishing-a-library.md for the produced layout.
+// See docs/11-publishing-a-library.md for the produced layout.
 
 module;
 

@@ -10,7 +10,7 @@
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md` |
-| **相关使用文档** | [docs/05 —— mcpp.toml 字段参考](../05-mcpp-toml.md) |
+| **相关使用文档** | [docs/05 —— mcpp.toml 字段参考](../02-mcpp-toml.md) |
 
 ## 规范用语
 

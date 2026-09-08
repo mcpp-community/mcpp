@@ -571,7 +571,7 @@ inline Triple host_triple() {
 // ── Version pins (single site; §4.6 of the design doc) ───────────────────────
 // Every default/convention toolchain version literal lives here. Help and
 // error strings format these — never inline a pinned version elsewhere.
-// Changing a pin: update this block, then sync docs/03-toolchains.md and the
+// Changing a pin: update this block, then sync docs/20-toolchains.md and the
 // README platform table (drawn from kKnownTargets above).
 namespace pins {
     // First-run auto-install defaults (prepare.cppm), per host platform/arch.

@@ -150,10 +150,10 @@ There is no platform interface beneath it to depend on; what such a program
 builds on is `mcpplibs/openarch`, the architecture-mechanism layer.
 
 Both routes are described in
-[docs/15 — Cross-Compilation Over openkal](../../docs/15-openkal-cross.md).
+[docs/15 — Cross-Compilation Over openkal](../../docs/24-openkal-cross.md).
 
 ## Reference
 
-[docs/15 — Cross-Compilation Over openkal](../../docs/15-openkal-cross.md) for
-the model, and [docs/14 — The Target Side](../../docs/14-target-side.md) for the
+[docs/15 — Cross-Compilation Over openkal](../../docs/24-openkal-cross.md) for
+the model, and [docs/14 — The Target Side](../../docs/22-target-side.md) for the
 five layers and the rules that govern them.

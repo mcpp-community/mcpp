@@ -25,14 +25,14 @@ anything a reader needs is written here or in a specification instead.
 
 | To | Read | Run |
 |---|---|---|
-| write a program | [00](00-getting-started.md), [05](05-mcpp-toml.md) §1 | [`01-hello`](../examples/01-hello/), [`02-with-deps`](../examples/02-with-deps/) |
-| write a library others import | [10](10-publishing-a-library.md), [22](22-features-and-capabilities.md), [05](05-mcpp-toml.md) §2.4 | [`04-workspace`](../examples/04-workspace/), [`11-features`](../examples/11-features/) |
-| publish it | [02](02-pack-and-release.md), [10](10-publishing-a-library.md), [12](12-binary-distribution.md) | [`03-pack-static`](../examples/03-pack-static/), [`05-lib-distribution`](../examples/05-lib-distribution/) |
-| build for another machine | [16](16-the-target-triple.md), [15](15-openkal-cross.md), [13](13-baremetal.md) | [`06-openkal-cross`](../examples/06-openkal-cross/), `mcpp new … --template riscv-virt-rt` |
-| use a GPU or an accelerator | [20](20-heterogeneous-builds.md), [18](18-devices.md) | [`09-heterogeneous`](../examples/09-heterogeneous/), starting at [`boundary/`](../examples/09-heterogeneous/boundary/) |
-| add a rule, a language or a generator | [23](23-authoring-a-rule-package.md), [07](07-build-mcpp.md) | [`08-build-rules`](../examples/08-build-rules/), [`12-a-new-device-language`](../examples/12-a-new-device-language/) |
-| add a package to the index | [10](10-publishing-a-library.md), [SPEC-001](specs/package-identity.md) | [21](21-commands-by-scenario.md) — the publishing scenarios |
-| change mcpp itself | [04](04-build-from-source.md), [09](09-release.md), [19](19-supported-versions.md) | — |
+| write a program | [00](00-getting-started.md), [02](02-mcpp-toml.md) §1 | [`01-hello`](../examples/01-hello/), [`02-with-deps`](../examples/02-with-deps/) |
+| write a library others import | [11](11-publishing-a-library.md), [04](04-features-and-capabilities.md), [02](02-mcpp-toml.md) §2.4 | [`04-workspace`](../examples/04-workspace/), [`11-features`](../examples/11-features/) |
+| publish it | [10](10-pack-and-release.md), [11](11-publishing-a-library.md), [12](12-binary-distribution.md) | [`03-pack-static`](../examples/03-pack-static/), [`05-lib-distribution`](../examples/05-lib-distribution/) |
+| build for another machine | [21](21-the-target-triple.md), [24](24-openkal-cross.md), [30](30-baremetal.md) | [`06-openkal-cross`](../examples/06-openkal-cross/), `mcpp new … --template riscv-virt-rt` |
+| use a GPU or an accelerator | [32](32-heterogeneous-builds.md), [31](31-devices.md) | [`09-heterogeneous`](../examples/09-heterogeneous/), starting at [`boundary/`](../examples/09-heterogeneous/boundary/) |
+| add a rule, a language or a generator | [40](40-authoring-a-rule-package.md), [05](05-build-mcpp.md) | [`08-build-rules`](../examples/08-build-rules/), [`12-a-new-device-language`](../examples/12-a-new-device-language/) |
+| add a package to the index | [11](11-publishing-a-library.md), [SPEC-001](specs/package-identity.md) | [06](06-commands-by-scenario.md) — the publishing scenarios |
+| change mcpp itself | [90](90-build-from-source.md), [92](92-release.md), [51](51-supported-versions.md) | — |
 
 Lessons also arrive as project templates, which a package ships and `mcpp new
 --template` instantiates. `riscv-virt-rt` (bare metal) and `ocornut.imgui`
@@ -41,50 +41,55 @@ one names it.
 
 ## Chapters
 
-### Part I — Using mcpp
+The number says which part a chapter is in: `0x` uses mcpp, `1x` ships what was
+built, `2x` is toolchains and targets, `3x` is bare metal and devices, `4x`
+extends mcpp, `5x` is the machine-facing contracts, `9x` is mcpp itself. Within
+a part the order is a reading order.
 
-- [00 - Getting Started](00-getting-started.md)
-- [01 - Examples](01-examples.md)
-- [05 - mcpp.toml Manifest Guide](05-mcpp-toml.md)
-- [06 - Workspaces](06-workspace.md)
-- [07 - build.mcpp Build Program](07-build-mcpp.md)
-- [21 - Commands by Scenario](21-commands-by-scenario.md)
-- [22 - Features and Capabilities](22-features-and-capabilities.md)
+### 0x — Using mcpp
 
-### Part II — Shipping what was built
+- [00 — Getting Started](00-getting-started.md)
+- [01 — Examples](01-examples.md)
+- [02 — The mcpp.toml Manifest](02-mcpp-toml.md)
+- [03 — Workspaces](03-workspace.md)
+- [04 — Features and Capabilities](04-features-and-capabilities.md)
+- [05 — Build Programs: `build.mcpp`](05-build-mcpp.md)
+- [06 — Commands by Scenario](06-commands-by-scenario.md)
 
-- [02 - Packaging & Release](02-pack-and-release.md)
-- [10 - Publishing a Library to mcpp-index](10-publishing-a-library.md)
-- [12 - Distributing a Prebuilt Library](12-binary-distribution.md)
+### 1x — Shipping what was built
 
-### Part III — Toolchains and targets
+- [10 — Packaging an Application for Release](10-pack-and-release.md)
+- [11 — Publishing a Library to mcpp-index](11-publishing-a-library.md)
+- [12 — Distributing a Prebuilt Library](12-binary-distribution.md)
 
-- [03 - Toolchain Management](03-toolchains.md)
-- [13 - Bare-Metal and Freestanding Targets](13-baremetal.md)
-- [14 - The Target Side](14-target-side.md)
-- [15 - Cross-Compilation Over openkal](15-openkal-cross.md)
-- [16 - The Target Triple](16-the-target-triple.md)
-- [17 - The Project Environment](17-the-project-environment.md)
+### 2x — Toolchains and targets
 
-### Part IV — Devices and accelerators
+- [20 — Toolchain Management](20-toolchains.md)
+- [21 — The Target Triple](21-the-target-triple.md)
+- [22 — The Target Side](22-target-side.md)
+- [23 — The Project Environment](23-the-project-environment.md)
+- [24 — Cross-Compilation Over openkal](24-openkal-cross.md)
 
-- [18 - Reaching a Device](18-devices.md)
-- [20 - Heterogeneous Builds](20-heterogeneous-builds.md)
+### 3x — Bare metal, devices and accelerators
 
-### Part V — Extending mcpp from outside
+- [30 — Bare-Metal and Freestanding Targets](30-baremetal.md)
+- [31 — Reaching a Device](31-devices.md)
+- [32 — Heterogeneous Builds](32-heterogeneous-builds.md)
 
-- [23 - Authoring a Rule Package](23-authoring-a-rule-package.md)
+### 4x — Extending mcpp from outside
 
-### Part VI — Machine interfaces and compatibility
+- [40 — Authoring a Rule Package](40-authoring-a-rule-package.md)
 
-- [11 - Machine-Readable Output](11-machine-output.md)
-- [19 - Supported Versions and Compatibility](19-supported-versions.md)
+### 5x — Machine interfaces and compatibility
 
-### Part VII — Contributing to mcpp itself
+- [50 — Machine-Readable Output](50-machine-output.md)
+- [51 — Supported Versions and Compatibility](51-supported-versions.md)
 
-- [04 - Building from Source & Contributing](04-build-from-source.md)
-- [08 - Toolchain Internals](08-toolchain-internals.md)
-- [09 - Releasing mcpp](09-release.md)
+### 9x — Contributing to mcpp itself
+
+- [90 — Building from Source and Contributing](90-build-from-source.md)
+- [91 — Toolchain Internals](91-toolchain-internals.md)
+- [92 — Releasing mcpp](92-release.md)
 
 ## Specifications
 

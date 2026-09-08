@@ -1004,7 +1004,7 @@ export struct BuildOverrides {
 
 // Is this git remote reachable without a network round-trip?
 //
-// `--offline` means "never touch the network" (docs/05-mcpp-toml.md), and its
+// `--offline` means "never touch the network" (docs/02-mcpp-toml.md), and its
 // standing promise is that anything already on disk still builds. A remote that
 // names a local directory — or a file:// URL — is served by plain filesystem
 // reads, so refusing it would break that promise without buying any isolation.

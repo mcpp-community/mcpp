@@ -1,4 +1,4 @@
-# 00 — 快速开始
+# 00 —— 快速开始
 
 > 5 分钟完成 install → new → build → run → pack 全流程。
 
@@ -167,13 +167,13 @@ mcpp pack --mode static            # musl 全静态构建
 mcpp pack --mode self-contained    # 打包 loader、libc 与依赖
 ```
 
-四种模式的差异及产物布局参见 [02 — 发布打包](02-pack-and-release.md)。`bundle-project` 与 `bundle-all` 仍分别是 `vendored` 与 `self-contained` 的兼容别名。
+四种模式的差异及产物布局参见 [10 — 发布打包](10-pack-and-release.md)。`bundle-project` 与 `bundle-all` 仍分别是 `vendored` 与 `self-contained` 的兼容别名。
 
 ## 后续阅读
 
 - [01 — 示例项目](01-examples.md) — 可直接运行的最小工程集合
-- [02 — 发布打包](02-pack-and-release.md) — 构建可分发产物
-- [03 — 工具链管理](03-toolchains.md) — 切换编译器与多版本管理
+- [10 — 发布打包](10-pack-and-release.md) — 构建可分发产物
+- [20 — 工具链管理](20-toolchains.md) — 切换编译器与多版本管理
 - 任意命令的完整选项可通过 `mcpp <cmd> --help` 查阅
 
 
