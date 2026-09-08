@@ -13,6 +13,7 @@
 #   7. the generated design-record index is current
 #   8. a new design record declares its subject and status
 #   9. every relative link in docs/ and examples/ resolves
+#  10. a translation carries the same tables and code blocks
 #
 # What it deliberately does NOT check: whether a chapter documents what is
 # implemented, whether an assertion's strength matches its evidence, or whether
@@ -159,6 +160,46 @@ for f in list(pathlib.Path("docs").rglob("*.md")) + list(pathlib.Path("examples"
             bad += 1
 sys.exit(1 if bad else 0)
 PYCHECK
+
+# ── 10. a translation carries the same tables and code blocks ────────────
+#
+# check_docs_style.sh compares HEADING STRUCTURE, which is what catches a page
+# that has fallen a section behind. It does not see a table row or a code block
+# that never made it across, and two of those were sitting in the tree: the
+# 简体中文 `[features]` section had no body at all, and 简体中文 §2.11 was
+# missing the `identity` verdict table. Both predate this check and both are
+# invisible to every other one.
+python3 - <<'PYPARITY' || fail=1
+import pathlib, sys, re
+bad = 0
+for en in sorted(pathlib.Path("docs").glob("*.md")):
+    zh = pathlib.Path("docs/zh") / en.name
+    if not zh.exists():
+        continue
+    def count(f):
+        rows = blocks = 0
+        infence = False
+        for line in f.read_text(errors="ignore").split("\n"):
+            if line.startswith("```"):
+                if not infence:
+                    blocks += 1
+                infence = not infence
+                continue
+            if infence:
+                continue
+            if line.startswith("|"):
+                rows += 1
+        return rows, blocks
+    er, eb = count(en)
+    zr, zb = count(zh)
+    if er != zr:
+        print(f"FAIL: {en.name}: {er} table rows in English, {zr} in 简体中文")
+        bad += 1
+    if eb != zb:
+        print(f"FAIL: {en.name}: {eb} code blocks in English, {zb} in 简体中文")
+        bad += 1
+sys.exit(1 if bad else 0)
+PYPARITY
 
 if [[ "$fail" -eq 0 ]]; then
   echo "OK: docs structure checks pass"

@@ -10,6 +10,22 @@ Feature 是一个包提供可选内容的方式:一个编译宏、一份额外�
 
 ## `[features]` —— Feature(Cargo 风格,可加性)
 
+```toml
+[features]
+default = ["base"]        # 默认激活集合
+base    = []
+docking = ["extra"]       # 激活 docking 即隐含激活 extra(传递闭包)
+extra   = []
+```
+
+- 激活来源:包自己的 `default` 集合 ∪ 显式请求(根包经由
+  `mcpp build --features a,b`;依赖经由长形式依赖 spec 的 `features = [...]`
+  与 `backend = "..."` 糖)。
+- 每个被激活的 feature 在该包编译时得到宏 `-DMCPP_FEATURE_<NAME>`(名字大写,
+  非字母数字变 `_`,例如 `backend-a` → `MCPP_FEATURE_BACKEND_A`)。
+- **严格校验**:目标包声明了 `[features]` 表时,请求一个未声明的 feature 产生
+  警告,在 `--strict` 下是错误。不声明 `[features]` 的包接受任意请求(纯宏用法)。
+
 ### 表形式 —— 让 feature 贡献的不止是隐含 feature
 
 `[features]` 的条目除了写成数组,还可写成**表**,从而让该 feature 在隐含 feature

@@ -1099,6 +1099,21 @@ requirements/providers/artifacts、LinkIntent、平台搜索机制与链接后 v
 `mcpp why runtime` 只是最新存储文件的纯解释器:不重新解析 manifest,也不启动图形/
 硬件 probe。需要重新诊断所选 host provider 时使用 `xlings doctor`。
 
+每个 artifact 还带一个仅由路径算出的 `identity` 判定:
+
+| `identity` | 含义 |
+|---|---|
+| `ok` | 声明的路径(穿过符号链接后)落在声明的那个版本里 |
+| `mismatch` | 它解析到了别处 —— **该 binding 已陈旧**,后来的某次安装把它重新指向了别的地方 |
+| `missing` | 声明了,但那个路径上什么都没有 |
+| `unverified` | 声明时没有可供比对的版本 |
+
+这就是 mcpp 早已施加于私有 libc 的那条规则的推广(`glibc@2.44` 解析到那一份载荷;
+陈旧或缺失是错误,而绝不是「已安装版本里哪个看起来能用就用哪个」)。它不需要知道
+该 artifact 做什么。`unverified` **有意**不等于 `ok`:一个解析到了却没有 artifact
+在其背后的 provider 并未被核验过,因此 `mcpp why runtime` 打印
+`(not declared by the environment — nothing to verify)` 而不是 `(none)`。
+
 能力名使用分层小写 `domain.sub.role`(如 `display.present`)和前缀类
 `abi:<name>`(如 `abi:glibc`,参与工具链 ABI 强制)。
 

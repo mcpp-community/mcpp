@@ -383,6 +383,13 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 | `riscv32-none-elf` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `aarch64-none-elf` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `x86_64-none-elf` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv6m-none-eabi` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv7m-none-eabi` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv7em-none-eabi` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv7em-none-eabihf` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 
 `载荷` 这里有工具链载荷产出它 · `图` 没有载荷,但依赖可以供给系统 ·
 `系统` 在机器上被找到,不是 mcpp 装的 · `SDK` 平台自己的 ·

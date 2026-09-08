@@ -464,6 +464,30 @@ C 世界(`CLibMode::Sysroot`)并有自己的 libc++ 链接处理;Windows 没有 
 mcpp 把运行时 DLL 部署到产物 exe 旁,这正是该平台对 §3–§4 所做一切的原生
 等价物。
 
+**工程自己产出的共享库**(`kind = "shared"`)确实按格式而不同,而这个差别不是
+flag 的拼法 —— 它是产物记录下的关于它自己的东西:
+
+| 格式 | 生产方发出什么 | 消费方链接什么 |
+|---|---|---|
+| ELF | 声明了 soname 时发 `-Wl,-soname,<n>` | `-L` + `-l`、`-Wl,-rpath,$ORIGIN` |
+| Mach-O | **总是**发 `-Wl,-install_name,@rpath/<file>` | `-L` + `-l`、`-Wl,-rpath,@loader_path` |
+| PE / MinGW | `-Wl,--out-implib,<lib>` | **导入库**,且 `-Wl,-Bdynamic` 在前 |
+| PE / MSVC | 拒绝(不做自动导出;见 docs/12) | —— |
+
+其中三行是新增的:在此之前,除 ELF 之外一律被拒绝,原生与交叉都是。要让它们
+可用而不只是被允许,有两处细节必须改。Mach-O 的 install name 默认取该库被**链接**
+时的路径,因此「仅在声明了 `soname` 时才发出」会让其余每个 `.dylib` 都记下一个构建
+目录 —— 在构建它的那台机器上没问题,换任何一台就是 `image not found`。而这个选择
+原先由宿主上的 `#if defined(__APPLE__)` 做出,那只在原生 macOS 构建上碰巧正确,
+对任何交叉链接都是错的;它现在由目标决定,正如 `target_output` 早已如此。
+
+**服务不了的目标会被拒绝**,而不是悄悄按宿主构建:Linux 上的
+`--target x86_64-windows-msvc` 从前会解析到原生 `g++`、写进
+`target/x86_64-linux-gnu/` 并报告成功。词汇表的档位说的是「mcpp 支持这个目标」;
+`host_can_serve`(`registry.cppm`)回答的是另一个问题「这台机器能不能产出它」,
+而 `prepare.cppm` 现在会问它 —— 显式的 `[target.X] toolchain = "…"` 是作者自备
+交叉工具链时的出口。
+
 ### 7.5 一个 flag 由哪根轴决定
 
 2026.8.18 那一轮改了四个 flag,每一个此前都挂在错误的轴上。而这类错误的表现
