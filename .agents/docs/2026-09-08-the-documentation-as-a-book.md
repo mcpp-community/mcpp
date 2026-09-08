@@ -24,23 +24,37 @@ gives it one.
 
 ### 1.1 No topic has an owner
 
-A topic is *owned* by the chapter that carries it as a `##` section. Measured
-2026-09-08 across the 24 chapters:
+A topic is *owned* by the chapter that carries it as a `##` section.
 
-| topic | chapters carrying it as a section |
-|---|---|
-| testing (`mcpp test`) | **7** |
-| dependency resolution and versions | **7** |
-| C++ modules themselves | **7** |
-| diagnosis and troubleshooting | 4 |
-| caching and incrementality | 4 |
-| **what mcpp is — the model** | **0** |
+The first measurement counted headings whose text contained the topic's name,
+and **that criterion was wrong in exactly the way this repository's own style
+skill forbids** — a substring search standing in for a question about meaning.
+It reported testing as a section in seven chapters. Reading those seven:
 
-Seven chapters explain testing because seven mechanisms each needed to mention
-it. None of them is where a reader goes to learn how to test. The reader who
-asks a *task* question — "how do I test", "what happens when two packages want
-different versions", "why did this rebuild" — has no chapter to open, and the
-seven partial answers do not compose.
+| chapter | what its "test" section is actually about | verdict |
+|---|---|---|
+| `90-build-from-source` ×2 | **mcpp's own** test suite, for a contributor | a different subject |
+| `50-machine-output` | the `--message-format json` schema | it owns that |
+| `04-dependencies` | the `[dev-dependencies]` table | it owns that |
+| `01-getting-started` | one step of a tutorial | legitimate; should link |
+| `06-workspace` | the workspace fan-out | legitimate; should link |
+| `11-publishing-a-library` | path overrides, under a heading that says "testing" | a naming defect |
+| `03-mcpp-toml` | a worked example that happens to have tests | worked examples leave `03` |
+| **`40-baremetal`** | **how a test runs, restated** | **the one real duplicate** |
+
+So the corrected reading: **one** duplicated explanation, one misnamed heading,
+and a worked example that a separate decision moves anyway.
+
+**The conclusion survives the correction, and it is the part that mattered.**
+Before `07` existed, no chapter answered "how do I test" — the seven partial
+mentions each assumed a reader who already knew, and none of them was the place
+to learn it. A topic can be unowned without being duplicated, and this one was.
+
+The same caution applies to the other rows of the first measurement, which are
+kept here as what they are — a count of headings, not of explanations:
+dependency resolution 7, C++ modules 7, diagnosis 4, caching 4, and **the model
+0**. The last is the one that needs no re-reading: a section that does not exist
+cannot be miscounted.
 
 ### 1.2 There is no model to hang anything on
 

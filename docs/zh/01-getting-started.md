@@ -127,6 +127,8 @@ workspace 中运行。插件稳定依赖进程退出码和生成的 `compile_com
 
 ## 增量编译与测试
 
+[07 —— 测试](07-testing.md) 是拥有这个主题的章节;下面只是本教程需要的那一步。
+
 ```bash
 mcpp build              # 增量构建
 mcpp clean              # 清理 target/

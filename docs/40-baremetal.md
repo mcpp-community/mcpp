@@ -515,10 +515,13 @@ picolibc present: a cold build links, and `nm` finds one definition.
 
 ### Running tests on the target
 
-`mcpp test` builds one image per `tests/*.cpp`, runs each under the emulator
-the board-support package supplies, and reads the exit code as the verdict.
-Semihosting propagates the firmware's `main` return value to the emulator's
-exit code, so the model is identical to a hosted test run.
+Testing works here exactly as [07 — Testing](07-testing.md) describes it, and
+this section adds only what is specific to a board: each `tests/*.cpp` becomes
+its own image, and the runner the board-support package supplies executes it.
+
+What makes the verdict work is semihosting, which propagates the firmware's
+`main` return value to the emulator's exit code. That is why the model is
+identical to a hosted run rather than merely similar to one.
 
 ```bash
 mcpp test
