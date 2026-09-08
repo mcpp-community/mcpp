@@ -16,14 +16,15 @@ it, and the difference between the two is what each rung buys.
 
 ```
 mcpp.toml                one dependency edge
-build.mcpp               scan the island, emit the boundary
+build.mcpp               scan the root, emit the boundary
 src/kernels/saxpy.c      the island
+src/kernels/vec/scale.c  a second island, one directory deeper
 src/main.cpp             import boundary.kernels;
 ```
 
-`mcpp.tools.island` reads the entry points marked `MCPP_EXPORT_C` and writes two
-files into the build directory: the `extern "C"` header the island reads, and a
-module over it whose whole content is a re-export.
+`mcpp.tools.island` reads the entry points marked `MCPP_EXPORT_C` under the root
+and writes two files into the build directory: the `extern "C"` header the
+island reads, and a module over it whose whole content is a re-export.
 
 ```cpp
 // generated
@@ -31,14 +32,54 @@ module;
 #include "boundary.kernels.h"
 export module boundary.kernels;
 
-export using ::saxpy_device;
-export using ::saxpy_device_name;
+export namespace boundary::kernels {
+using ::boundary_ran_on;
+inline constexpr auto ran_on = boundary_ran_on;
+using ::boundary_saxpy;
+inline constexpr auto saxpy = boundary_saxpy;
+}
+
+export namespace boundary::kernels::vec {
+using ::boundary_scale;
+inline constexpr auto scale = boundary_scale;
+}
 ```
 
 Re-exporting names rather than restating signatures is what lets the generator
 work without a C parser: it needs only the identifier before the `(`. It is also
 why no second copy of a signature exists — at a C-linkage boundary that is the
 copy that can disagree without anything noticing.
+
+## The namespace is the module's own path, and a directory extends it
+
+This is the rule the shader lane already followed and this generator did not
+until `mcpp:plugins` 0.5.0.
+[`docs/42`](../../../docs/42-heterogeneous-builds.md) states it once for both
+lanes:
+
+| written | reached as |
+|---|---|
+| `shaders/post/tonemap.frag` | `myapp::shaders::post::tonemap_frag()` |
+| `boundary_scale` in `src/kernels/vec/scale.c` | `boundary::kernels::vec::boundary_scale` |
+
+The leaf differs and the reason is visible in the table. A payload has no name
+of its own, so the data lane derives one from the file name; an entry point
+already carries one its author wrote, so the file name reaches nothing here. A
+directory is the coarser unit either way, and moving a function between two
+files in one directory renames nothing a consumer wrote.
+
+**`saxpy` beside `boundary_saxpy`.** An island's symbol is global to the whole
+program, so an entry point carries a package prefix whether or not it sits in a
+namespace, and the namespace then repeats it. `options::strip_prefix` emits the
+short spelling; the authored name is the symbol, is exported too, and is what
+`nm`, a link error and a profiler show. The pair is one symbol — the short name
+is a `constexpr` function pointer, not a second function.
+
+**What the namespace does not buy.** C language linkage does not mangle, so two
+entry points with one name are one symbol whatever namespace each appears in.
+The generator therefore refuses two files in one root declaring one name, and
+that refusal is what makes the namespace honest: a name exists in exactly one of
+them.
 
 ## The island is C here, and that is the only simplification
 
@@ -54,7 +95,7 @@ and nothing about the boundary changes when that happens.
 |---|---|---|---|
 | **L0 — this example** | nothing but the marked entry points | `import boundary.kernels` | the island's own interface: pointers and a count |
 | L1 — `../cuda`, `../sycl` | a seam module over the generated one | `import app.saxpy` | the interface the project designed |
-| L2 | a seam, and the entry list passed to `emit` directly | `import app.saxpy` | the same, for entry points a scan cannot see |
+| L2 | a seam, and entries built with `island::declared` | `import app.saxpy` | the same, for entry points a scan cannot see |
 | L3 — `../hip`, `../vulkan`, `../cann` | the header and the module | `import app.saxpy` | the same, with the signature written twice |
 
 **What L0 does not have.** The interface is C-shaped:
