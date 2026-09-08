@@ -332,3 +332,13 @@ std-freestanding-alloc-kal = "0.1.x"
 依赖包的目标文件无条件参与链接(上文*`provides` / `requires`*),随包的默认加上程序自备的那份是**重复定义**
 而非替换 —— 让 C++ 标准库能提供可替换 `operator new` 的那套归档语义,对包依赖并不适用。
 把实现放在开关之后,意味着两者**从不共存**。
+
+## 当前边界
+
+**默认 feature 在 manifest 里关掉,不在命令行上关掉。** 没有 `--no-default-features`。
+`mcpp build --features metrics` 激活的是 `default ∪ {metrics}`;要在不带 `default`
+某个成员的情况下构建,得改 `[features] default`。实测于 2026.9.8.1。
+
+**依赖不能以加速器为条件。** `accelerator` 是从依赖图解析出来的,因此由它选择的
+依赖会决定它自己在问的那个答案。mcpp 会报告该谓词并忽略它。包要么无条件,要么以
+平台为条件;由加速器选择的是 `[build] sources`。

@@ -26,7 +26,7 @@ anything a reader needs is written here or in a specification instead.
 | To | Read | Run |
 |---|---|---|
 | write a program | [00](00-getting-started.md), [05](05-mcpp-toml.md) §1 | [`01-hello`](../examples/01-hello/), [`02-with-deps`](../examples/02-with-deps/) |
-| write a library others import | [10](10-publishing-a-library.md), [05](05-mcpp-toml.md) §2.4 | [`04-workspace`](../examples/04-workspace/), [`11-features`](../examples/11-features/) |
+| write a library others import | [10](10-publishing-a-library.md), [22](22-features-and-capabilities.md), [05](05-mcpp-toml.md) §2.4 | [`04-workspace`](../examples/04-workspace/), [`11-features`](../examples/11-features/) |
 | publish it | [02](02-pack-and-release.md), [10](10-publishing-a-library.md), [12](12-binary-distribution.md) | [`03-pack-static`](../examples/03-pack-static/), [`05-lib-distribution`](../examples/05-lib-distribution/) |
 | build for another machine | [16](16-the-target-triple.md), [15](15-openkal-cross.md), [13](13-baremetal.md) | [`06-openkal-cross`](../examples/06-openkal-cross/), `mcpp new … --template riscv-virt-rt` |
 | use a GPU or an accelerator | [20](20-heterogeneous-builds.md), [18](18-devices.md) | [`09-heterogeneous`](../examples/09-heterogeneous/), starting at [`boundary/`](../examples/09-heterogeneous/boundary/) |

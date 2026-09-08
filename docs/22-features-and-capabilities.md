@@ -403,3 +403,16 @@ one is a duplicate definition rather than a replacement — the archive semantic
 that let a C++ standard library offer a replaceable `operator new` do not apply
 to a package dependency. Keeping the implementation behind a switch means the
 two never coexist.
+
+## Current limitations
+
+**A default feature is turned off in the manifest, not on the command line.**
+There is no `--no-default-features`. `mcpp build --features metrics` activates
+`default ∪ {metrics}`; building without a member of `default` means editing
+`[features] default`. Measured on 2026.9.8.1.
+
+**A dependency cannot be conditioned on the accelerator.** `accelerator` is
+resolved from the dependency graph, so a dependency chosen by it would decide
+the answer it is asking for. mcpp reports the predicate and ignores it. Packages
+are unconditional or conditioned on the platform; `[build] sources` is what the
+accelerator selects.
