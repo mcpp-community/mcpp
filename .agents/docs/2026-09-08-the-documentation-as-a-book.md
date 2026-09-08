@@ -455,3 +455,51 @@ preference**, and that is the sentence a reader of scenario 10 leaves with.
 31 now, and the reason is that the tool is four things rather than three: a
 build system, a package manager, a toolchain provisioner, **and an ecosystem
 other people publish into**. The fourth had no chapters at all.
+
+---
+
+## 13. Chapter 00 was designed wrong, and the review said so
+
+§4.1 specified `00 — How mcpp Works`: five nouns, three seams, where state lives
+on disk. It was written, it was accurate, and it was the wrong chapter.
+
+**The review's verdict was that a general user does not care about the operating
+principle.** What a reader opening the first chapter wants is what mcpp is, what
+it can do, what its advantage is, and one example they can actually run.
+
+The design failed two of its own rules to get there:
+
+- **R2** — a chapter exists for a reader with a task. "Understand the machinery"
+  is not a task a first-time reader has; it is a task a maintainer has, and it
+  already has chapters in `9x`.
+- **R7** — an advantage is shown by the artifact, not by the mechanism. A model
+  chapter explains how the advantage is produced and never demonstrates it.
+
+`00 — What mcpp Is` replaces it:
+
+1. **The definition**, in the form the reviewer gave: mcpp = build system +
+   build plugins + package manager + toolchain management + the environment and
+   runtime (xlings), in one program.
+2. **An analogy table** — CMake, xmake rules, Conan, GCC/LLVM/MSVC, Nix/conda —
+   so a reader with existing tools can place each part. With the disclaimer that
+   places rather than equates.
+3. **The guarantee, stated once**: clone any mcpp project and `mcpp build`
+   works, without installing a compiler, configuring an environment, or hunting
+   dependencies. Plus the two boundaries that make it trustworthy.
+4. **A session that was run**, with its real output: a five-line manifest, no
+   declared compiler or standard, `import std` compiling on a machine whose own
+   `g++` is 13.3.0 and cannot, and `mcpp self env` showing the GCC 16 mcpp
+   installed. 1.25 s of wall clock including the first run.
+5. **What mcpp is for**: modules and the newest language features, and the
+   ecosystems that follow — embedded, heterogeneous and GPU, graphics, kernel
+   work.
+
+The one part of the old chapter a *user* wanted — the table from a message's
+shape to the stage that produced it — moved to `09`, beside the other
+diagnosis scenarios. The rest is deleted rather than relocated.
+
+**What this says about the method.** The seven-cell spec was filled for the old
+chapter and it still produced the wrong chapter, because the cell that decides
+everything — the reader — was answered with "anyone" and then served as if that
+meant "someone who wants the model". A reader cell that names no task is not
+filled in.

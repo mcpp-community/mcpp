@@ -6,7 +6,7 @@
 running, from an empty machine.
 
 **Not here:** what mcpp's parts are — that is
-[00 — How mcpp Works](00-how-mcpp-works.md), which this chapter assumes rather
+[00 — What mcpp Is](00-what-mcpp-is.md), which this chapter assumes rather
 than repeats — and every field a manifest may hold, which is
 [04 — The mcpp.toml Manifest](04-mcpp-toml.md). After: [03 — Examples](03-examples.md).
 

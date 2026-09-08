@@ -365,6 +365,22 @@ written out rather than left to the default: it is the value this manifest
 wants on its own terms — a missing audio device should never fail a build — so
 it will still say so once the key has more than one accepted value.
 
+## Which part a failure is about
+
+A build crosses several stages, and a message names the one that failed. Reading
+that first saves opening the wrong chapter.
+
+| a message about | the stage | where to look |
+|---|---|---|
+| a package name, a version, or "no candidate" | resolution | [05](05-dependencies.md), [11](11-publishing-a-library.md) |
+| a download, a payload, or a version floor | provisioning | [20](20-toolchains.md), [23](23-the-project-environment.md) |
+| a triple, or "unsupported target" | the target | [21](21-the-target-triple.md) |
+| a module that cannot be read or is not provided | the module graph | [30](30-build-mcpp.md) |
+| a compile or link error inside a file of the project | none of them | the compiler's own message |
+
+The last row is the useful one: when the error is about the code, no part of
+mcpp is involved and its documentation will not help.
+
 ## Current limitations
 
 - `mcpp why --format json` is defined for the `toolchain` topic only. The other

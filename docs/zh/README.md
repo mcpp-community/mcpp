@@ -54,7 +54,7 @@
 
 ### 0x —— 基础
 
-- [00 —— mcpp 的运转方式](00-how-mcpp-works.md) —— 其余每章都假定的模型
+- [00 —— mcpp 是什么](00-what-mcpp-is.md) —— 它是什么、它做什么,以及一段真的跑过的会话
 - [01 —— 快速开始](01-getting-started.md) —— 安装、创建、构建、运行
 - [02 —— 场景](02-scenarios.md) —— mcpp 被用来做什么,以及每一类工作会用到它的哪些功能
 - [03 —— 示例项目](03-examples.md) —— 哪个示例教什么
@@ -135,7 +135,7 @@
 
 | | 章节 | | 章节 |
 |---|---|---|---|
-| 五个名词;一次构建做了什么 | [00](00-how-mcpp-works.md) | `import std`、模块接口、BMI | [00](00-how-mcpp-works.md)、[20](20-toolchains.md) |
+| mcpp 是什么,以及那条保证 | [00](00-what-mcpp-is.md) | `import std`、模块接口、BMI | [20](20-toolchains.md)、[30](30-build-mcpp.md) |
 | `mcpp::action`、构建程序 | [30](30-build-mcpp.md) | 规则包、`MCPP_EXPORT_C` | [31](31-authoring-a-rule-package.md) |
 | 目标三元组、支持矩阵 | [21](21-the-target-triple.md) | runner、具名 runner | [41](41-devices.md) |
 | 岛、接缝、`accel` | [42](42-heterogeneous-builds.md) | 描述符、索引 | [11](11-publishing-a-library.md) |

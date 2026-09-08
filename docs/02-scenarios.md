@@ -41,7 +41,7 @@ command produces a binary that carries what it needs.
 
 **The path.**
 
-1. [00 — How mcpp Works](00-how-mcpp-works.md) — the five nouns.
+1. [00 — What mcpp Is](00-what-mcpp-is.md) — the five nouns.
 2. [01 — Getting Started](01-getting-started.md) — a program on the screen.
 3. [05 — Dependencies and Resolution](05-dependencies.md) — `[dependencies]`,
    the lock file.

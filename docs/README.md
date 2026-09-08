@@ -58,7 +58,7 @@ Within a part the order is a reading order, not an alphabet.
 
 ### 0x — Fundamentals
 
-- [00 — How mcpp Works](00-how-mcpp-works.md) — the model every other chapter assumes
+- [00 — What mcpp Is](00-what-mcpp-is.md) — what it is, what it does, and one session that has been run
 - [01 — Getting Started](01-getting-started.md) — install, create, build, run
 - [02 — Scenarios](02-scenarios.md) — what mcpp is used for, and which features each kind of work uses
 - [03 — Examples](03-examples.md) — which example teaches what
@@ -139,7 +139,7 @@ token in front of a reader to the chapter that owns it.
 
 | | chapter | | chapter |
 |---|---|---|---|
-| the five nouns; what a build does | [00](00-how-mcpp-works.md) | `import std`, module interfaces, BMIs | [00](00-how-mcpp-works.md), [20](20-toolchains.md) |
+| what mcpp is, and the guarantee | [00](00-what-mcpp-is.md) | `import std`, module interfaces, BMIs | [20](20-toolchains.md), [30](30-build-mcpp.md) |
 | `mcpp::action`, a build program | [30](30-build-mcpp.md) | a rule package, `MCPP_EXPORT_C` | [31](31-authoring-a-rule-package.md) |
 | a target triple, the support matrix | [21](21-the-target-triple.md) | a runner, a named runner | [41](41-devices.md) |
 | an island, a seam, `accel` | [42](42-heterogeneous-builds.md) | a descriptor, an index | [11](11-publishing-a-library.md) |

@@ -38,7 +38,7 @@
 
 **路径。**
 
-1. [00 —— mcpp 的运转方式](00-how-mcpp-works.md) —— 五个名词。
+1. [00 —— mcpp 是什么](00-what-mcpp-is.md) —— 五个名词。
 2. [01 —— 快速开始](01-getting-started.md) —— 把程序跑起来。
 3. [05 —— 依赖与解析](05-dependencies.md) —— `[dependencies]`、锁文件。
 4. [08 —— 测试](08-testing.md) —— `tests/**/*.cpp`。
