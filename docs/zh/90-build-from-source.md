@@ -43,59 +43,96 @@ mcpp build --target x86_64-linux-musl
 
 ## 源码结构
 
+mcpp 是一个**工作空间**。`modules/` 里是引擎 import 的九个包;`src/` 是引擎本身。
+
 ```
+modules/                  工作空间成员,被 src/ import
+├── manifest/             manifest 与描述符解析
+├── platform/             操作系统抽象
+├── toolchain-model/      三元组、方言、指纹、链接模型
+├── buildmcpp/            build.mcpp 契约:协议、指令表、provisions
+├── source-kind/          源文件角色分类
+├── versioning/           本二进制的版本,以及 SemVer 约束解析
+├── dyndep/               ninja dyndep 产出
+├── libs/                 内嵌的文本格式解析器
+└── log/                  分级日志
+
 src/
 ├── main.cpp              入口
-├── cli.cppm              命令分发与参数解析
-├── cli/                  命令实现
-├── manifest/             manifest 模型、TOML 解析与 xpkg 描述符
-├── lockfile.cppm         mcpp.lock
-├── version_req.cppm      SemVer 约束
-├── fetcher.cppm          fetcher 门面
-├── fetcher/              包/索引下载与安装
-├── config.cppm           ~/.mcpp/config.toml
-├── bmi_cache.cppm        跨项目 BMI 缓存
-├── bmi_cache/            缓存存储与失效
-├── dyndep.cppm           ninja dyndep 生成
-├── ui.cppm               进度条与输出格式
+├── cli.cppm  cli/        命令分发与各条命令
 ├── build/                构建编排与 ninja 后端
-├── fallback/             回退解析路径
 ├── modgraph/             P1689 模块扫描与依赖图
-├── pm/                   依赖解析器与包管理命令
-├── platform/             平台与进程抽象
-├── scaffold/             `mcpp new` 模板与工程创建
-├── toolchain/            工具链探测、指纹与 std 模块
-├── pack/                 mcpp pack 实现
-├── publish/              mcpp publish 与 xpkg 生成
-└── libs/                 第三方依赖(toml 解析等)
+├── pm/                   解析器与包管理命令
+├── toolchain/            探测、指纹、std 模块
+├── pack/  publish/       mcpp pack、mcpp publish 与 xpkg 产出
+├── fetcher/  fallback/   下载、安装、回退解析
+├── bmi_cache/            跨工程 BMI 缓存
+├── runtime/  xlings/     运行时契约与 xlings 桥
+├── freestanding/         裸机目标、链接行与 runner
+└── scaffold/             `mcpp new` 与模板
 
 tests/
-├── unit/                 C++ 单元/集成测试,通常按子系统分组
-└── e2e/                  端到端 shell 脚本(run_all.sh 为 CI 入口)
+├── unit/                 108 个 C++ 测试,由 `mcpp test` 发现
+└── e2e/                  370 个对真实二进制运行的 shell 脚本
 ```
 
 ## 测试组织
 
-测试分为两层:
+两层,回答的是不同的问题。
 
-- **单元/集成测试** 是 `tests/**/*.cpp` 下由 `mcpp test` 发现的 C++ 文件。它们通常
-  按所测子系统或模块命名(例如 `test_pm_lock_io.cpp`、`test_toolchain_triple.cpp`)。
-- **E2E 测试** 位于 `tests/e2e/NN_<feature>.sh`,通过执行真实的 `mcpp`
-  二进制覆盖端到端行为;`run_all.sh` 为 CI 调用入口。
+**单元测试**(`tests/unit/`,108 个)是 `mcpp test` 发现的 C++ 程序。它们检验一个模块
+的契约,不需要二进制、也不需要文件系统状态。
 
-根据变更的契约选择有针对性的单元和/或 E2E 覆盖。E2E 脚本可能需要 CI 使用的
-同一套沙盒、镜像与 capability 配置。
-
-执行单个 e2e 脚本:
+**端到端测试**(`tests/e2e/NN_<name>.sh`,370 个)拿真实的 `mcpp` 二进制跑真实工程。
+`run_all.sh` 是 CI 的入口。`mcpp test` **不**运行它们。
 
 ```bash
-MCPP=<fresh-mcpp-binary> bash tests/e2e/02_new_build_run.sh
+MCPP=<新构建的 mcpp 二进制> bash tests/e2e/02_new_build_run.sh
 ```
 
-`<fresh-mcpp-binary>` 必须替换为前一步刚构建二进制的绝对路径；Windows 上该文件为
-`mcpp.exe`。
+**由能力闸门决定哪些会跑。** e2e 脚本开头几行声明它需要什么,不具备该能力的 runner
+会跳过它:
+
+```bash
+#!/usr/bin/env bash
+# requires: elf gcc
+```
+
+在用的有 `gcc`(80 个脚本)、`elf`、`unix-shell`、`llvm`、`jq` 与 `fresh-sandbox`。
+一个要求「任何 CI job 都不提供的能力」的脚本**在任何地方都不会跑**,它的绿色什么都不
+说明 —— 新增脚本时要核对确有 job 供给它所要的能力。
+
+## 写一条真的在测东西的判据
+
+本仓库最可迁移的一条规则,也是被跳过时会静默失效的那一条:
+
+> **写完判据之后,把修复拿掉,跑一次。** 从未被看见失败过的判据,不能说它测到了什么。
+
+它能抓住三种形态,每一种在这里都至少发生过一次:
+
+| 形态 | 长什么样 |
+|---|---|
+| 判据从没跑到 | 测试被闸在一个没有任何 job 提供的能力上 |
+| 判据不可能失败 | 子串搜索,任何措辞都能满足它 |
+| 判据施加在错误的对象上 | 夹具目录跨次累积,于是搜索回答的是更早那次构建 |
+
+也要说出分母。「表里每一台宿主都被扫过」是一条判据;「扫描没发现问题」不是 —— 因为
+空的枚举同样什么都发现不了。
+
+## 测试之外 CI 还跑的检查
+
+`.github/tools/` 里有十八个脚本。第一个 PR 之前值得知道的有四个:
+
+| 脚本 | 它拒绝什么 |
+|---|---|
+| `check_docs_style.sh` | 疑问句标题、参考章节里的第二人称、标题结构落后于英文的中文页 |
+| `check_docs_structure.sh` | 章节引用设计记录、解析不到的 `docs/NN-*.md` 路径、翻译里少掉的表格 |
+| `check_version_pins.sh` | 版本号只写在一处而别处没跟上 |
+| `check_modules_wiring.sh` | 只接进了「三处必须知道它的地方」中的一部分的工作空间成员 |
 
 ## Issue 与 PR 提交规范
+
+
 
 ### Issue
 

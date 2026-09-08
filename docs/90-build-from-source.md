@@ -43,60 +43,104 @@ mcpp build --target x86_64-linux-musl
 
 ## Source Layout
 
+mcpp is a **workspace**. `modules/` holds nine packages that the engine imports;
+`src/` is the engine itself.
+
 ```
+modules/                  workspace members, imported by src/
+├── manifest/             manifest and descriptor parsing
+├── platform/             operating-system abstraction
+├── toolchain-model/      triples, dialects, fingerprints, the link model
+├── buildmcpp/            the build.mcpp contract: protocol, directives, provisions
+├── source-kind/          source-file role classification
+├── versioning/           this binary's version, and SemVer requirements
+├── dyndep/               ninja dyndep emission
+├── libs/                 vendored text-format parsers
+└── log/                  leveled logging
+
 src/
 ├── main.cpp              entry point
-├── cli.cppm              command dispatch and argument parsing
-├── cli/                  command implementations
-├── manifest/             manifest model, TOML parsing, and xpkg descriptors
-├── lockfile.cppm         mcpp.lock
-├── version_req.cppm      SemVer constraints
-├── fetcher.cppm          fetcher façade
-├── fetcher/              package/index download and installation
-├── config.cppm           ~/.mcpp/config.toml
-├── bmi_cache.cppm        cross-project BMI cache
-├── bmi_cache/            cache storage and invalidation
-├── dyndep.cppm           ninja dyndep generation
-├── ui.cppm               progress bars and output formatting
-├── build/                build orchestration and ninja backend
-├── fallback/             fallback resolution paths
-├── modgraph/             P1689 module scanning and dependency graph
-├── pm/                   dependency resolver and package-management commands
-├── platform/             platform and process abstractions
-├── scaffold/             `mcpp new` templates and project creation
-├── toolchain/            toolchain detection, fingerprinting, and std module
-├── pack/                 mcpp pack implementation
-├── publish/              mcpp publish and xpkg generation
-└── libs/                 third-party dependencies (toml parsing, etc.)
+├── cli.cppm  cli/        command dispatch and the commands
+├── build/                build orchestration and the ninja backend
+├── modgraph/             P1689 module scanning and the dependency graph
+├── pm/                   the resolver and the package-management commands
+├── toolchain/            detection, fingerprinting, the std module
+├── pack/  publish/       mcpp pack, mcpp publish and xpkg generation
+├── fetcher/  fallback/   download, installation, fallback resolution
+├── bmi_cache/            the cross-project BMI cache
+├── runtime/  xlings/     the runtime contract and the xlings bridge
+├── freestanding/         bare-metal targets, link line and runner
+└── scaffold/             `mcpp new` and templates
 
 tests/
-├── unit/                 C++ unit and integration tests, generally grouped by subsystem
-└── e2e/                  end-to-end shell scripts (run_all.sh is the CI entry point)
+├── unit/                 108 C++ tests, discovered by `mcpp test`
+└── e2e/                  370 shell scripts against a real binary
 ```
 
 ## Test Organization
 
-Tests are split into two layers:
+Two layers, and they answer different questions.
 
-- **Unit and integration tests** are C++ files discovered by `mcpp test` under
-  `tests/**/*.cpp`. They are generally named for the subsystem or module they
-  exercise (for example, `test_pm_lock_io.cpp` and `test_toolchain_triple.cpp`).
-- **E2E tests** live in `tests/e2e/NN_<feature>.sh` and exercise a real `mcpp`
-  binary; `run_all.sh` is the CI entry point.
+**Unit tests** (`tests/unit/`, 108 files) are C++ programs `mcpp test`
+discovers. They exercise a module's contract with no binary and no filesystem
+state.
 
-Choose focused unit and/or E2E coverage according to the contract changed. E2E
-scripts may require the same sandbox, mirror, and capability setup used by CI.
-
-Run a single e2e script:
+**End-to-end tests** (`tests/e2e/NN_<name>.sh`, 370 files) run a real `mcpp`
+binary against a real project. `run_all.sh` is the CI entry point. `mcpp test`
+does **not** run them.
 
 ```bash
 MCPP=<fresh-mcpp-binary> bash tests/e2e/02_new_build_run.sh
 ```
 
-Replace `<fresh-mcpp-binary>` with the absolute path to the binary built in the
-previous step; on Windows that path names `mcpp.exe`.
+**A capability gate decides which run.** The first lines of an e2e script
+declare what it needs, and a runner without that capability skips it:
+
+```bash
+#!/usr/bin/env bash
+# requires: elf gcc
+```
+
+`gcc` (80 scripts), `elf`, `unix-shell`, `llvm`, `jq` and `fresh-sandbox` are
+the ones in use. A script that requires a capability no CI job provides **never
+runs anywhere**, and its greenness means nothing — check that some job supplies
+what a new script asks for.
+
+## Writing a check that measures something
+
+The most transferable rule in this repository, and the one that fails silently
+when it is skipped:
+
+> **After writing a check, remove the fix and run it once.** A check that has
+> never been seen to fail is not known to measure anything.
+
+Three shapes it catches, all of which have shipped here at least once:
+
+| shape | what it looks like |
+|---|---|
+| the criterion never runs | a test gated on a capability no job provides |
+| the criterion cannot fail | a substring search satisfied by any wording |
+| the criterion measures the wrong object | a fixture whose directory accumulates across runs, so the search answers about an earlier build |
+
+State the denominator too. "Every host in the table was scanned" is a check;
+"the scan found nothing" is not, because an empty enumeration also finds
+nothing.
+
+## The checks CI runs beside the tests
+
+`.github/tools/` holds eighteen scripts. Four are worth knowing before a first
+PR:
+
+| script | what it refuses |
+|---|---|
+| `check_docs_style.sh` | question headings, second person in a reference chapter, a 简体中文 page whose heading structure has fallen behind |
+| `check_docs_structure.sh` | a chapter citing a design record, a `docs/NN-*.md` path that does not resolve, a translation missing a table |
+| `check_version_pins.sh` | a version written in one place and not the others |
+| `check_modules_wiring.sh` | a workspace member wired into some of the three places that must know about it and not the others |
 
 ## Issue and PR Guidelines
+
+
 
 ### Issues
 
