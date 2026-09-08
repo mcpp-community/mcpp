@@ -1037,89 +1037,18 @@ o.arg("./mkblob.sh").arg("blob.bin").arg("${mcpp.out_dir}/blob.o")
 已移入 [09 —— 按场景选命令](09-commands-by-scenario.md)。
 
 
-## 附录 A. Schema 所有权原则(新字段准入标准)
-
-> **语法封闭,词汇开放**:谁拥有解析语义谁定义键;谁拥有领域知识谁定义值。
-
-- mcpp 只定义**机制**(features 并集/闭包、capability require/provide/override、
-  profile→编译器旗标、platform→triple),键与形状固定;feature 名、能力名、
-  后端名等**领域词汇只出现在值里**,不进 mcpp 代码。
-- **不支持包自定义 toml 键**:键合法性不得依赖"先解析目标包",否则 manifest
-  失去静态可解析性(lockfile/LSP/审计的前提)。包的扩展点 = 固定机制内的开放值域。
-- 包级旋钮统一收敛进 features;糖键(如 `backend=`)进入核心语法须满足:
-  ① 领域中立(跨生态通用模式)② 1:1 脱糖、零新增解析语义。
-
 ## 3. 实战示例
 
-### 3.1 简单 Hello World
+其中四个是**可运行的工程**而不是片段,而工程是更好的答案:它能构建,而且由 CI 检查。
 
-```toml
-[package]
-name    = "hello"
-version = "0.1.0"
-```
+| 形态 | 跑什么 |
+|---|---|
+| 一个 hello world | [`examples/01-hello`](../../examples/01-hello/) |
+| 带测试的模块化库 | [`examples/11-features`](../../examples/11-features/) |
+| 带依赖的应用 | [`examples/02-with-deps`](../../examples/02-with-deps/) |
+| 交叉编译的静态发布 | [`examples/03-pack-static`](../../examples/03-pack-static/) |
 
-```cpp
-// src/main.cpp
-import std;
-int main() { std::println("Hello, mcpp!"); }
-```
-
-```bash
-mcpp build && mcpp run
-```
-
-### 3.2 模块化库 + 测试
-
-```toml
-[package]
-name    = "mymath"
-version = "1.0.0"
-
-[targets.mymath]
-kind = "lib"
-
-[dev-dependencies.compat]
-gtest = "1.15.2"
-```
-
-```cpp
-// src/mymath.cppm
-export module mymath;
-export int add(int a, int b) { return a + b; }
-```
-
-```cpp
-// tests/test_add.cpp
-#include <gtest/gtest.h>
-import mymath;
-TEST(Math, Add) { EXPECT_EQ(add(1, 2), 3); }
-```
-
-```bash
-mcpp build   # 编译库
-mcpp test    # 编译 + 跑测试
-```
-
-### 3.3 依赖其他包的应用
-
-```toml
-[package]
-name    = "myapp"
-version = "0.1.0"
-
-[dependencies]
-ftxui = "6.1.9"
-
-[dependencies.mcpplibs]
-cmdline = "0.0.2"
-llmapi  = "0.2.5"
-```
-
-mcpp 自动:
-1. 从 mcpp-index 下载源码 tarball
-2. 按 `[build].include_dirs` 传播头文件路径
-3. 传递依赖自动入图(llmapi → tinyhttps → mbedtls 全自动)
+还有两种形态暂时没有对应示例,以 manifest 的形式留在这里。
 
 ### 3.4 纯 C 库
 
@@ -1155,25 +1084,6 @@ lua = "5.4.7"     # 纯 C 库,mcpp 自动用 C 编译器编译 .c 文件
 kind = "bin"
 ```
 
-### 3.6 跨编译静态发布
-
-```toml
-[package]
-name    = "mytool"
-version = "1.0.0"
-
-[toolchain]
-default = "gcc@16.1.0"
-
-[target.x86_64-linux-musl]
-toolchain = "gcc@16.1.0"
-linkage   = "static"
-```
-
-```bash
-mcpp build --target x86_64-linux-musl
-# → 产出完全静态链接的二进制,可直接 scp 到任意 Linux x86_64 机器运行
-```
 
 ## 4. 约定与默认值速查
 
@@ -1199,4 +1109,3 @@ standard = "c++26"
 ```
 
 新项目请使用 `[package].standard`。如果两个位置都出现，`[package].standard` 是权威配置。
-

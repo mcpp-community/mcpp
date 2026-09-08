@@ -130,6 +130,19 @@ MCPP=<新构建的 mcpp 二进制> bash tests/e2e/02_new_build_run.sh
 | `check_version_pins.sh` | 版本号只写在一处而别处没跟上 |
 | `check_modules_wiring.sh` | 只接进了「三处必须知道它的地方」中的一部分的工作空间成员 |
 
+
+## 新增一个 manifest 字段:准入标准
+
+> **语法封闭,词汇开放**:谁拥有解析语义谁定义键;谁拥有领域知识谁定义值。
+
+- mcpp 只定义**机制**(features 并集/闭包、capability require/provide/override、
+  profile→编译器旗标、platform→triple),键与形状固定;feature 名、能力名、
+  后端名等**领域词汇只出现在值里**,不进 mcpp 代码。
+- **不支持包自定义 toml 键**:键合法性不得依赖"先解析目标包",否则 manifest
+  失去静态可解析性(lockfile/LSP/审计的前提)。包的扩展点 = 固定机制内的开放值域。
+- 包级旋钮统一收敛进 features;糖键(如 `backend=`)进入核心语法须满足:
+  ① 领域中立(跨生态通用模式)② 1:1 脱糖、零新增解析语义。
+
 ## Issue 与 PR 提交规范
 
 
@@ -160,4 +173,3 @@ mcpp 处于早期迭代阶段,接口可能调整,提交 PR 前请注意:
 - 交流群 QQ: 1067245099
 - [mcpp-index](https://github.com/mcpplibs/mcpp-index) — 默认包索引
 - [mcpplibs](https://github.com/mcpplibs) — 配套的模块化 C++ 库集合
-

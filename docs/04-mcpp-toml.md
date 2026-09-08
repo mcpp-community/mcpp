@@ -1196,104 +1196,19 @@ do`.
 Moved to [09 — Commands by Scenario](09-commands-by-scenario.md).
 
 
-## Appendix A. Schema Ownership Principle (admission criteria for new fields)
-
-> **Closed syntax, open vocabulary**: whoever owns the parsing semantics defines the keys; whoever owns the domain knowledge defines the values.
-
-- mcpp only defines **mechanisms** (feature union/closure, capability
-  require/provide/override, profile→compiler flags, platform→triple); the keys and
-  shapes are fixed. Domain vocabulary such as feature names, capability names, and
-  backend names **appears only in values**, never in mcpp's code.
-- **Package-custom toml keys are not supported**: key legitimacy must not depend on
-  "first parsing the target package," otherwise the manifest loses static
-  parseability (a prerequisite for lockfiles/LSP/auditing). A package's extension
-  point = open value domains within fixed mechanisms.
-- Package-level knobs all converge into features; for sugar keys (such as `backend=`)
-  to enter the core syntax, they must satisfy: ① domain-neutral (a cross-ecosystem
-  general pattern) ② 1:1 desugaring with zero new parsing semantics.
-- **A key that duplicates an answer another section already gives is not admitted.**
-  Two places to state one fact is two places that can disagree, and the failure
-  is silent — whichever reader loses the race is simply wrong. Library packaging
-  ([12](12-binary-distribution.md)) is the worked example: it added **zero**
-  manifest keys, because what to pack is `[targets.<n>].kind`, which interface
-  to publish is `[lib]` plus the module graph, which headers are public is
-  `[build].include_dirs`, and the per-artifact evidence is `[[runtime.artifacts]]`.
-- A field that describes what a *generated* package IS (rather than what a build
-  should DO) belongs on `[[runtime.artifacts]]` — see §2.11. `provenance`
-  beginning with `mcpp-pack` is what marks a directory as one, and mcpp refuses
-  to `build` inside it.
-
 ## 3. Worked Examples
 
-### 3.1 Simple Hello World
+Four of these are runnable projects rather than snippets, and the project is
+the better answer: it builds, and it is checked by CI.
 
-```toml
-[package]
-name    = "hello"
-version = "0.1.0"
-```
+| shape | run |
+|---|---|
+| a hello world | [`examples/01-hello`](../examples/01-hello/) |
+| a module library with tests | [`examples/11-features`](../examples/11-features/) |
+| an application with dependencies | [`examples/02-with-deps`](../examples/02-with-deps/) |
+| a cross-compiled static release | [`examples/03-pack-static`](../examples/03-pack-static/) |
 
-```cpp
-// src/main.cpp
-import std;
-int main() { std::println("Hello, mcpp!"); }
-```
-
-```bash
-mcpp build && mcpp run
-```
-
-### 3.2 Module-based Library + Tests
-
-```toml
-[package]
-name    = "mymath"
-version = "1.0.0"
-
-[targets.mymath]
-kind = "lib"
-
-[dev-dependencies.compat]
-gtest = "1.15.2"
-```
-
-```cpp
-// src/mymath.cppm
-export module mymath;
-export int add(int a, int b) { return a + b; }
-```
-
-```cpp
-// tests/test_add.cpp
-#include <gtest/gtest.h>
-import mymath;
-TEST(Math, Add) { EXPECT_EQ(add(1, 2), 3); }
-```
-
-```bash
-mcpp build   # Compile the library
-mcpp test    # Compile + run tests
-```
-
-### 3.3 An Application Depending on Other Packages
-
-```toml
-[package]
-name    = "myapp"
-version = "0.1.0"
-
-[dependencies]
-ftxui = "6.1.9"
-
-[dependencies.mcpplibs]
-cmdline = "0.0.2"
-llmapi  = "0.2.5"
-```
-
-mcpp automatically:
-1. Downloads source tarballs from mcpp-index
-2. Propagates header search paths per `[build].include_dirs`
-3. Pulls transitive dependencies into the graph (llmapi → tinyhttps → mbedtls, fully automatic)
+Two shapes have no example yet and stay here as manifests.
 
 ### 3.4 Pure C Library
 
@@ -1329,25 +1244,6 @@ lua = "5.4.7"     # Pure C library; mcpp compiles .c files with the C compiler a
 kind = "bin"
 ```
 
-### 3.6 Cross-Compiled Static Release
-
-```toml
-[package]
-name    = "mytool"
-version = "1.0.0"
-
-[toolchain]
-default = "gcc@16.1.0"
-
-[target.x86_64-linux-musl]
-toolchain = "gcc@16.1.0"
-linkage   = "static"
-```
-
-```bash
-mcpp build --target x86_64-linux-musl
-# → Produces a fully statically linked binary that can be scp'd directly to any Linux x86_64 machine and run
-```
 
 ## 4. Conventions and Defaults Cheat Sheet
 
@@ -1373,4 +1269,3 @@ standard = "c++26"
 ```
 
 New projects should use `[package].standard`. If both locations are present, `[package].standard` is authoritative.
-

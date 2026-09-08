@@ -16,6 +16,7 @@
 #  10. a translation carries the same tables and code blocks
 #  11. every chapter states its reader, its question and its exclusions
 #  12. a citation naming a section lands in the chapter that contains it
+#  13. every table the manifest reference documents is in the lookup index
 #
 # What it deliberately does NOT check: whether a chapter documents what is
 # implemented, whether an assertion's strength matches its evidence, or whether
@@ -245,6 +246,30 @@ for f in list(pathlib.Path("docs").glob("[0-9]*.md")) + list(pathlib.Path("docs/
             print(f"FAIL: {f}: cites *{title}* in {chap}, which does not contain it"); bad += 1
 sys.exit(1 if bad else 0)
 PYCITE
+
+# ── 13. every table the manifest reference documents is in the lookup index ─
+#
+# docs/README.md carries a reverse index -- a key in front of a reader to the
+# chapter that owns it -- and it is hand-built. A key added to the reference and
+# not indexed is invisible: the reader concludes it is undocumented. The
+# denominator is the reference chapter's own `###` headings, and the comparison
+# is on the KEY NAME rather than on its spelling, because the two documents
+# legitimately write `[targets.<name>]` and `[targets.<n>]`.
+python3 - <<'PYLOOKUP' || fail=1
+import re, pathlib, sys
+ref = pathlib.Path("docs/04-mcpp-toml.md").read_text(errors="ignore")
+idx = pathlib.Path("docs/README.md").read_text(errors="ignore")
+keys = set()
+for m in re.finditer(r"^### [0-9.b]+ `([^`]+)`", ref, re.M):
+    tok = m.group(1)
+    name = re.sub(r"^\[|\].*$", "", tok)          # [targets.<name>] -> targets.<name>
+    name = name.split(".")[0].split(" ")[-1]      # -> targets ; "[package] platforms" -> platforms
+    keys.add(name)
+missing = sorted(k for k in keys if k not in idx)
+for k in missing:
+    print(f"FAIL: docs/README.md lookup index does not mention `{k}`, which docs/04 documents")
+sys.exit(1 if missing else 0)
+PYLOOKUP
 
 if [[ "$fail" -eq 0 ]]; then
   echo "OK: docs structure checks pass"

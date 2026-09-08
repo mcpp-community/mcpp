@@ -138,6 +138,34 @@ PR:
 | `check_version_pins.sh` | a version written in one place and not the others |
 | `check_modules_wiring.sh` | a workspace member wired into some of the three places that must know about it and not the others |
 
+## Adding a manifest field: the admission criteria
+
+> **Closed syntax, open vocabulary**: whoever owns the parsing semantics defines the keys; whoever owns the domain knowledge defines the values.
+
+- mcpp only defines **mechanisms** (feature union/closure, capability
+  require/provide/override, profile→compiler flags, platform→triple); the keys and
+  shapes are fixed. Domain vocabulary such as feature names, capability names, and
+  backend names **appears only in values**, never in mcpp's code.
+- **Package-custom toml keys are not supported**: key legitimacy must not depend on
+  "first parsing the target package," otherwise the manifest loses static
+  parseability (a prerequisite for lockfiles/LSP/auditing). A package's extension
+  point = open value domains within fixed mechanisms.
+- Package-level knobs all converge into features; for sugar keys (such as `backend=`)
+  to enter the core syntax, they must satisfy: ① domain-neutral (a cross-ecosystem
+  general pattern) ② 1:1 desugaring with zero new parsing semantics.
+- **A key that duplicates an answer another section already gives is not admitted.**
+  Two places to state one fact is two places that can disagree, and the failure
+  is silent — whichever reader loses the race is simply wrong. Library packaging
+  ([12](12-binary-distribution.md)) is the worked example: it added **zero**
+  manifest keys, because what to pack is `[targets.<n>].kind`, which interface
+  to publish is `[lib]` plus the module graph, which headers are public is
+  `[build].include_dirs`, and the per-artifact evidence is `[[runtime.artifacts]]`.
+- A field that describes what a *generated* package IS (rather than what a build
+  should DO) belongs on `[[runtime.artifacts]]` — see §2.11. `provenance`
+  beginning with `mcpp-pack` is what marks a directory as one, and mcpp refuses
+  to `build` inside it.
+
+
 ## Issue and PR Guidelines
 
 
@@ -167,4 +195,3 @@ mcpp is in early iteration and its interfaces may change. Before submitting a PR
 - Chat group QQ: 1067245099
 - [mcpp-index](https://github.com/mcpplibs/mcpp-index) — the default package index
 - [mcpplibs](https://github.com/mcpplibs) — the companion collection of modular C++ libraries
-
