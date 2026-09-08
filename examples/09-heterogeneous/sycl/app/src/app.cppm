@@ -11,6 +11,9 @@ import std;
 // declarations in the two implementations. No global module fragment and
 // no header: this seam imports the boundary the same way any consumer
 // would, and each declaration exists once, beside its definition.
+// The names arrive in `app::kernels`, the boundary module's own path. This
+// file is already inside `namespace app`, so `kernels::` is what is left to
+// write.
 import app.kernels;
 
 export namespace app {
@@ -21,14 +24,14 @@ std::optional<std::vector<float>>
 saxpy(float a, std::span<const float> x, std::span<const float> y) {
     if (x.size() != y.size()) return std::nullopt;
     std::vector<float> out(x.size());
-    if (saxpy_device(a, x.data(), y.data(), out.data(),
-                     static_cast<unsigned>(x.size())) != 0)
+    if (kernels::saxpy_device(a, x.data(), y.data(), out.data(),
+                              static_cast<unsigned>(x.size())) != 0)
         return std::nullopt;
     return out;
 }
 
 // The seam answers this too, because the seam is the only place that knows
 // which island was linked.
-std::string_view device_name() { return saxpy_device_name(); }
+std::string_view device_name() { return kernels::saxpy_device_name(); }
 
 } // namespace app

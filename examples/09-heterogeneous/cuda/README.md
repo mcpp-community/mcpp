@@ -39,13 +39,20 @@ from mcpp's toolchain.
 
 **That interface is generated, and the signatures exist once.** Each entry
 point is marked with `MCPP_EXPORT_C` where it is defined; `mcpp.tools.island`
-reads the marked declarations out of both implementations and writes the header
-the island's compiler reads and the module the seam imports. A hand-written
-header states each signature a second time, at the one boundary where a
-disagreement is invisible: C language linkage does not mangle and the two halves
-are never in one link, so two that disagreed would build cleanly and the
-artifact would read its arguments by whichever signature it was compiled with.
-The generator is handed both halves and refuses that there.
+reads the marked declarations out of both implementation trees and writes the
+header the island's compiler reads and the module the seam imports. A
+hand-written header states each signature a second time, at the one boundary
+where a disagreement is invisible: C language linkage does not mangle and the
+two halves are never in one link, so two that disagreed would build cleanly and
+the artifact would read its arguments by whichever signature it was compiled
+with. The generator sees both texts at once and refuses there.
+
+`build.mcpp` names two roots -- `src/kernels` and `src/cpu` -- and says the
+first supplies the shape. The entry points then arrive as `app::kernels::…`,
+which is the boundary module's own path, and the seam calls them from inside
+`namespace app` as `kernels::saxpy_device`. The CPU root only has to define the
+same names: it may be organised however it likes, and reorganising it renames
+nothing this seam or any consumer wrote.
 
 `examples/09-heterogeneous/hip` keeps the hand-written header for the contrast.
 Everything else about the two examples is the same computation, so the
@@ -91,7 +98,7 @@ The rule names it. This project writes one edge and no payload list at all:
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.4.0", features = ["rules-cuda", "tools-island"], host-module = true }
+plugins = { version = "0.5.2", features = ["rules-cuda", "tools-island"], host-module = true }
 ```
 
 `mcpp.rules.cuda` declares nvcc, cudart, cuRAND's headers, CCCL and the driver

@@ -80,11 +80,16 @@ them does not rebuild from scratch.
 seam are each entry point's signature stated a second time, at the one place a
 disagreement is invisible: C language linkage does not mangle, and an island and
 its host fallback are never in one link. `mcpp.tools.island` reads the marked
-declarations out of both implementations and writes that header and a module
-over it, so the signatures exist once. `boundary/`, `cuda/` and `sycl/` take
-that route; `hip/`, `vulkan/` and `cann/` keep the header written by hand, so
-the two can be read side by side. [`boundary/`](boundary/) states what each
+declarations out of every implementation tree and writes that header and a
+module over it, so the signatures exist once. `boundary/`, `cuda/` and `sycl/`
+take that route; `hip/`, `vulkan/` and `cann/` keep the header written by hand,
+so the two can be read side by side. [`boundary/`](boundary/) states what each
 rung costs.
+
+The generated names arrive in the boundary module's own namespace, extended by
+the directories of the tree that supplies the shape --
+`app::kernels::image::app_blur` — which is the rule the shader lane already
+followed. `docs/42` states it once for both lanes.
 
 **A rule package, which brings its own environment.** Every vendor spelling —
 `--cuda-gpu-arch`, `-gencode`, `--target-env`, `-fsycl-targets`, `-fsycl-link`,
@@ -99,7 +104,7 @@ selects it and the accelerator it serves, so a project writes one edge and no
 
 ```toml
 [build-dependencies.mcpp]
-plugins = { version = "0.4.0", features = ["rules-cuda", "tools-island"], host-module = true }
+plugins = { version = "0.5.2", features = ["rules-cuda", "tools-island"], host-module = true }
 ```
 
 `multi-backend/` is the one example here that also pins a version, and it does

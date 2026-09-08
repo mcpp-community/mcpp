@@ -13,7 +13,7 @@ import_std = true
 # One edge. `mcpp.rules.spirv` declares the shader compiler it drives, so this
 # project names no payload for it.
 [build-dependencies.mcpp]
-plugins = { version = "0.4.0", features = ["rules-spirv"], host-module = true }
+plugins = { version = "0.5.2", features = ["rules-spirv"], host-module = true }
 
 # The Khronos loader. Unconditional, and the reason is a rule of the engine
 # rather than a preference: A DEPENDENCY CANNOT BE CONDITIONED ON A LAYER.

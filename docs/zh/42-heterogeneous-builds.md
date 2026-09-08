@@ -182,14 +182,20 @@ mcpp 2026.9.7.1 之前,那条 lane 是唯一的例外:生成的头文件**就是
 
 #### 载荷到达时的名字
 
-模块名与命名空间是同一条标识符路径,由工程已经写下的名字推导。
+模块名与命名空间是同一条标识符路径,由工程已经写下的名字推导。一条规则,两条 lane
+共用:
+
+> 模块名是根。组基准目录以下的每层目录延长**命名空间**。末端标识符由 lane 决定:
+> 数据 lane 从文件名推导,因为载荷没有自己的名字;岛 lane 取入口点的名字,因为
+> 作者写了一个。
 
 | 写下的 | 到达时的样子 |
 |---|---|
 | `[package] name = "myapp"` | 模块根 `myapp` |
 | `shaders/scale.comp` | `myapp::shaders::scale_comp()` |
 | `shaders/a/scale.comp` | `myapp::shaders::a::scale_comp()` |
-| 一个 `MCPP_EXPORT_C` 入口点 | 边界模块里的 `export using ::the_name;` |
+| `kernels/saxpy.cu` 里的 `myapp_saxpy` | `myapp::kernels::myapp_saxpy(...)` |
+| `kernels/image/blur.cu` 里的 `myapp_blur` | `myapp::kernels::image::myapp_blur(...)` |
 
 根取自**包名**(非标识符字符替换掉),不是目录名 —— 包放在一个通用目录下时两者不同,
 而 mcpp 从 2026.9.7.1 起把包名报给构建程序,正是为了这一条。文件名的 stem 与 stage
@@ -198,8 +204,95 @@ mcpp 2026.9.7.1 之前,那条 lane 是唯一的例外:生成的头文件**就是
 `examples/09-heterogeneous/cuda` 就传了,于是它的边界是 `app.kernels`,与接缝
 `app.saxpy` 同根。
 
+**岛 lane 上文件名什么都不变成,理由就在这张表里。** 载荷没有名字,所以数据 lane
+必须推导一个,并且需要目录把两个同 stem 的文件分开。入口点已经带着作者写下的名字,
+而两个同名入口点无论各自在哪个目录都是同一个符号 —— 于是文件名不命名任何东西,把一个
+函数在同一目录的两个文件之间搬动也不会改掉消费者写下的名字。
+
 访问器同时回答地址与字节数。在这个边界上 `sizeof` 不只是别扭,而是**答不出来**:
 那些字可能放在一个对象里而不是一个数组里,那时根本没有数组可以取 size。
+
+### 生成这个边界
+
+`extern "C"` 头以及它之上的模块都是机械的,`mcpp:plugins` 的 `mcpp.tools.island`
+把两者都写出来。它由工程在自己的 `build.mcpp` 里调用;它不是设备规则,`mcpp:plugins`
+里也没有任何规则用它。
+
+**工程要写的只有一个标记,写在入口点被定义的地方。**
+
+```c
+// src/kernels/saxpy.cu —— 没有 include:生成的头经由编译器的强制包含旗标到达,
+// 而那个头同时把这个标记定义成空。
+
+MCPP_EXPORT_C
+int app_saxpy(float a, const float* x, const float* y, float* out, unsigned n)
+{ ... }
+```
+
+`MCPP_EXPORT_C` 命名的是机制而不是领域:被标记的东西以 C 链接跨越一个生成出来的
+边界被导出。它展开为空 —— 由生成的头定义 —— 所以它刻意不以 `_API` 结尾,那个后缀
+按惯例展开为一个可见性属性。标记名可以由 `options::marker` 配置。
+
+标记做的是选择。岛有自己的内部函数,而一个把文件里所有东西都导出的生成器,会让边界
+变成那个文件恰好包含了什么的意外结果。
+
+```cpp
+const std::string root = std::string(mcpp::manifest_dir());
+
+mcpp::tools::island::options opt;
+opt.module_name  = "app.kernels";
+opt.out_dir      = std::string(mcpp::out_dir()) + "/island";
+opt.roots        = { root + "/src/kernels", root + "/src/cpu" };
+opt.layout_root  = root + "/src/kernels";     // 默认取 roots.front()
+opt.strip_prefix = "app_";                     // 可选,见下
+
+const auto entries = mcpp::tools::island::scan(opt);
+const auto out     = mcpp::tools::island::emit(*entries, opt);
+mcpp::generated(out->interface_file.c_str());
+```
+
+**根是一棵树,其中一个根提供形状。** 每个根持有这个边界的一份实现,多个根意味着
+同一个入口点被实现了多次 —— 这正是接缝的常见形态,任何一次链接里只有一份实现在场。
+layout root 的目录才延长命名空间;其余的根只需要定义同样的名字,所以回退树可以是
+一个平铺文件,也可以被重新组织而不改掉消费者写下的任何名字。这是一个命名上的角色,
+不是等级:每个根都参与编译与链接,都同样是一份实现。
+
+根是磁盘上的目录,并且必须与加速器无关。取自 `mcpp::device_sources()` 的根在
+`--no-accel` 下会被收窄成空,入口点的命名空间就会改从回退树来 —— 同一个工程的两次
+构建会给出不同的限定名。
+
+**两条拒绝,回答的是不同的问题。** 同一个名字在**一个**根里出现两次是冲突:C 语言
+链接不做名字修饰,所以那是同一个符号,而看起来把它们分开的命名空间会承诺一个链接器
+并不提供的隔离。同一个名字出现在**多个**根里是同一个入口点的多份实现,这时它们的
+声明必须逐字一致。后者是工具链里没有别的东西能做的检查;前者是让命名空间不说谎的
+那一条。
+
+此外还有两种配置错误被拒绝:互相重叠的根 —— 同时可以从两个根到达的文件有两条命名
+空间路径,而它拿到哪一条取决于这个列表的顺序;以及根里一个被标记的入口点都没有 ——
+一个什么都不导出的模块,比一个写错的路径在这里被指出来要晚得多、也难懂得多。
+
+**`strip_prefix` 是一种拼法,不是第二个实体。** 岛的符号对整个程序是全局的,所以
+入口点无论是否落在命名空间里都带着包前缀,而命名空间随后又把它重复一遍。这个选项在
+`using ::app_blur;` 旁边写出 `inline constexpr auto blur = app_blur;`。作者写下的
+名字仍然是规范名 —— 它是符号,也是 `nm`、链接错误、profiler 与 `dlsym` 显示的东西。
+
+**四级,每一级覆盖上一级:**
+
+| 级 | 手写的部分 | 消费者写 |
+|---|---|---|
+| L0 | 只有被标记的入口点 | `import app.kernels` —— 岛自己的 C 形状接口 |
+| L1 | 生成模块之上的一个接缝模块 | `import app.saxpy` —— 项目设计的接口 |
+| L2 | 接缝,外加用 `island::declared` 构造的条目 | 同上,用于 scan 看不见的入口点 |
+| L3 | 头文件与模块都手写 | 同上,签名写了两遍 |
+
+生成的头经由 `mcpp::tools::island::force_include_flags` 到达岛,而这些旗标交给驱动
+设备编译器的那条**规则**,不走 `mcpp::cxxflag` —— 把一个头强制灌进每个 C++ 翻译单元,
+会让声明出现在模块接口的 `export module` 之前,那是非良构的。由 mcpp 自己编译的宿主
+实现没有这样一条命令行,它写一行普通的 `#include`。
+
+[`examples/09-heterogeneous/boundary`](../../examples/09-heterogeneous/boundary/)
+是 L0 并写明了每一级的代价;`.../cuda` 与 `.../sycl` 是 L1;`.../hip`、`.../vulkan`
+与 `.../cann` 保留手写的头,于是两者可以对照着读。
 
 ## 编译一个岛
 

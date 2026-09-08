@@ -140,9 +140,9 @@ token in front of a reader to the chapter that owns it.
 | | chapter | | chapter |
 |---|---|---|---|
 | what mcpp is, and the guarantee | [00](00-what-mcpp-is.md) | `import std`, module interfaces, BMIs | [20](20-toolchains.md), [30](30-build-mcpp.md) |
-| `mcpp::action`, a build program | [30](30-build-mcpp.md) | a rule package, `MCPP_EXPORT_C` | [31](31-authoring-a-rule-package.md) |
+| `mcpp::action`, a build program | [30](30-build-mcpp.md) | a rule package | [31](31-authoring-a-rule-package.md) |
 | a target triple, the support matrix | [21](21-the-target-triple.md) | a runner, a named runner | [41](41-devices.md) |
-| an island, a seam, `accel` | [42](42-heterogeneous-builds.md) | a descriptor, an index | [11](11-publishing-a-library.md) |
+| an island, a seam, `accel`, `MCPP_EXPORT_C` | [42](42-heterogeneous-builds.md) | a descriptor, an index | [11](11-publishing-a-library.md) |
 | an ABI tag, a prebuilt artifact | [12](12-binary-distribution.md) | exit codes, JSON output | [50](50-machine-output.md) |
 | an `xim:` payload, `[xlings.workspace]` | [32](32-authoring-a-payload.md), [23](23-the-project-environment.md) | a `compat:` adapter, `runtime.library_dirs` | [33](33-authoring-an-adapter.md) |
 

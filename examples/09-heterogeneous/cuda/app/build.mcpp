@@ -3,12 +3,12 @@ import mcpp;
 import mcpp.tools.island;
 import mcpp.rules.cuda;
 
-// THE BOUNDARY IS GENERATED, AND BOTH HALVES ARE READ.
+// THE BOUNDARY IS GENERATED, AND EVERY ROOT IS READ.
 //
 // A seam has two implementations of one `extern "C"` boundary -- the island and
-// the host fallback -- and exactly one of them is in any link. Both are handed
-// to `scan` unconditionally: both exist on disk in either build, and which one
-// is compiled is the manifest's decision, which this program does not repeat.
+// the host fallback -- and exactly one of them is in any link. Both trees are
+// named unconditionally: both exist on disk in either build, and which one is
+// compiled is the manifest's decision, which this program does not repeat.
 //
 // What that buys is a check nothing else performs. C language linkage does not
 // mangle and the two halves never meet at the link, so two that declared one
@@ -32,22 +32,39 @@ import mcpp.rules.cuda;
 // unit, including `src/app.cppm`, and a module interface unit must begin with
 // `export module`. Declarations ahead of that line are ill-formed.
 static std::optional<mcpp::tools::island::emitted> generate_boundary() {
-    const std::vector<std::string> halves{
-        std::string(mcpp::manifest_dir()) + "/src/kernels/saxpy.cu",
-        std::string(mcpp::manifest_dir()) + "/src/cpu/saxpy.cpp",
-    };
-    for (auto const& f : halves) mcpp::rerun_if_changed(f.c_str());
+    const std::string root = std::string(mcpp::manifest_dir());
 
     mcpp::tools::island::options opt;
     // Named rather than defaulted, so this project's modules share one root:
     // `app.saxpy` is the seam and `app.kernels` is the boundary under it. The
     // default derives from the package name, which would give
-    // `cuda_saxpy.kernels`.
+    // `cuda_saxpy.kernels`. It is also the NAMESPACE the entry points arrive
+    // in: `app::kernels::saxpy_device`.
     opt.module_name = "app.kernels";
     opt.out_dir     = std::string(mcpp::out_dir()) + "/island";
     opt.produced_by = "the cuda example";
 
-    const auto entries = mcpp::tools::island::scan(halves, opt);
+    // TWO ROOTS, AND THE FIRST OF THEM SUPPLIES THE SHAPE.
+    //
+    // Each is a tree holding one implementation of this boundary, and exactly
+    // one of them is in any link. Both are named unconditionally: both exist on
+    // disk in either build, and which one is compiled is the manifest's
+    // decision rather than a condition this program repeats.
+    //
+    // `layout_root` is where entry points LIVE -- the directories under it
+    // extend the namespace -- and the CPU root only has to define the same
+    // names. That is what lets `src/cpu` be one flat file against a device tree
+    // organised however it grows, and why reorganising it renames nothing a
+    // consumer wrote. It is a naming role and not a rank: both roots compile,
+    // link, and are equally an implementation.
+    opt.roots       = { root + "/src/kernels", root + "/src/cpu" };
+    opt.layout_root = root + "/src/kernels";
+
+    // NO `strip_prefix` HERE, and `../boundary` has one. This project has a
+    // seam, so no consumer ever writes a boundary name; the shorter spelling
+    // buys nothing that `app::saxpy` does not already give.
+
+    const auto entries = mcpp::tools::island::scan(opt);
     if (!entries) return std::nullopt;
     auto out = mcpp::tools::island::emit(*entries, opt);
     if (!out) return std::nullopt;
