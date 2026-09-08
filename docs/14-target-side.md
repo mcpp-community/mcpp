@@ -342,7 +342,7 @@ The selector `<sel>` has three forms:
 |---|---|---|
 | **bare OS alias** | a single OS / family — the concise, common form | `[target.windows]`, `[target.unix]` |
 | **`cfg(...)` predicate** | a compound condition (arch / env / combinators) | `[target.'cfg(all(linux, not(arch = "aarch64")))']` |
-| **exact triple** | one specific target (also carries `toolchain` / `linkage` / `sysroot` / `runner`; see §2.7.3) | `[target.x86_64-linux-musl]` |
+| **exact triple** | one specific target (also carries `toolchain` / `linkage` / `sysroot` / `runner`; see [05 §2.7.3](05-mcpp-toml.md)) | `[target.x86_64-linux-musl]` |
 
 A selector may carry platform-conditional **dependencies** and **build flags**:
 
@@ -365,7 +365,7 @@ there is no ambiguity. Use the bare form for a single OS/family; use `cfg(...)`
 for arch/env conditions and combinators.
 
 - **Keys**: `dependencies` / `dev-dependencies` / `build-dependencies` /
-  `feature-deps.<feature>` (mcpp 2026.8.6.2+ — see §2.14; the feature is
+  `feature-deps.<feature>` (mcpp 2026.8.6.2+ — see [07 — build.mcpp](07-build-mcpp.md); the feature is
   registered unconditionally, only its dependency set is scoped), and
   `build` with `cflags` / `cxxflags` / `ldflags` / `sources` (mcpp 0.0.95+ —
   conditional source globs, e.g. gating `src/x86/**/*.asm` behind

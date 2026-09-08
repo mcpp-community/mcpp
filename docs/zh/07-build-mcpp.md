@@ -324,7 +324,7 @@ mcpp 会**为构建机器**构建那个 `kind = "bin"` target(即使在 `--targe
 全局缓存,并把路径交回。这个请求写在 `mcpp.toml` 而不是这里,理由和依赖本身
 一样:向依赖图索取一个额外产物是**图级别**的请求,而图必须保持可静态分析。
 完整契约(含 `[tools.overrides]` 与 `reexport = true` —— 库据此把整条工具链交给
-调用方,因此只需写**一条**依赖而不是四条)见 [05 §2.14](05-mcpp-toml.md)。
+调用方,因此只需写**一条**依赖而不是四条)见本章*依赖产出的 host 工具*。
 
 ### 用通配符声明输入:`rerun_if_changed_glob`(2026.8.6.2+)
 
@@ -907,7 +907,7 @@ rules-spirv = { sources = ["rules/spirv.cppm"] } # export module mcpp.rules.spir
 plugins = { version = "0.3.0", features = ["rules-spirv"], host-module = true }
 ```
 
-**用 `[build-dependencies]` 而不是 `[dependencies]`** —— 规则包正是 §2.6.1 描述的那种
+**用 `[build-dependencies]` 而不是 `[dependencies]`** —— 规则包正是 [05 §2.6.1](05-mcpp-toml.md) 描述的那种
 情形:它的库绝不该到达目标,而它的规则仍然被需要。两条轴是分开的:
 `host-module = true` 说的是**要哪一种构建期产物**,而 section 说的是**这个包是否到达
 目标**;规则包在第二条轴上的答案是"否",而 section 就是说这件事的地方。写在

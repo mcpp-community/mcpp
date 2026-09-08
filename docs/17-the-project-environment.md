@@ -166,16 +166,16 @@ package the host cannot install is an error, not a skipped entry. A tool that
 exists for one host platform only is therefore declared for that platform
 (2026.9.2.1): `deps = [{ linux = "qemu-user-aarch64" }]` declares the emulator
 on Linux and nothing elsewhere. The keys and the resolution rule are in
-chapter 5, §2.13.
+this chapter.
 
 **Which verbs install it.** An entry may name a tier —
 `{ version = "0.24.0", when = "run" }` — and a `[feature-xlings.<feature>]`
 table gates one on a feature. A tool the project will not use is then not
-downloaded: chapter 5, §2.13. Omitting the tier is the historical behaviour.
+downloaded: this chapter. Omitting the tier is the historical behaviour.
 
 **The runner.** A program under `[xlings.workspace]` is also where
 `[target.<triple>].runner` looks first for its first element, before `PATH`
-(chapter 5, §2.7.3). The two keys together provision a user-mode emulator on a
+([05 §2.7.3](05-mcpp-toml.md)). The two keys together provision a user-mode emulator on a
 CI host and execute a cross-built artifact through it, without the manifest
 naming the payload's path.
 
@@ -190,15 +190,7 @@ naming the payload's path.
 | a tool only one verb or one feature needs | `when = "run"`, `[feature-xlings.<f>]` |
 | which environment | `[xlings] subos` |
 
-## 7. Related chapters
-
-- [7 - build.mcpp](07-build-mcpp.md) — the contract a build program receives,
-  including the `PATH` it runs with.
-- [8 - Toolchain Internals](08-toolchain-internals.md) — runtime selection,
-  the `RuntimeBinding` snapshot, and the degradation rules.
-- [5 - mcpp.toml](05-mcpp-toml.md) — every manifest key, including `[xlings]`.
-
-## `[xlings]` — the project's environment
+## 7. `[xlings]` — the manifest keys
 
 ```toml
 [xlings.workspace]                 # what this project's environment contains
@@ -514,3 +506,11 @@ exact version of that package cannot edit.
 program's environment is declared by its own package, and an environment's by
 that environment. The key is now an error naming both. Nothing in the index
 used it.
+
+## 8. Related chapters
+
+- [7 - build.mcpp](07-build-mcpp.md) — the contract a build program receives,
+  including the `PATH` it runs with.
+- [8 - Toolchain Internals](08-toolchain-internals.md) — runtime selection,
+  the `RuntimeBinding` snapshot, and the degradation rules.
+- [5 - mcpp.toml](05-mcpp-toml.md) — the rest of the manifest.

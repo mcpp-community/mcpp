@@ -376,7 +376,7 @@ mcpp builds that `kind = "bin"` target **for the build machine** (even under
 `--target`), caches it globally, and returns the path. The request lives in
 `mcpp.toml` rather than here for the same reason a dependency does: asking the
 graph for an extra artifact is a graph-level request, and the graph stays
-statically analysable. See [05 §2.14](05-mcpp-toml.md) for the full contract,
+statically analysable. See *Host tools from a dependency* in this chapter for the full contract,
 including `[tools.overrides]` and `reexport = true` (which is how a library
 provides the whole toolchain, so a project declares **one** dependency instead of
 four).
@@ -1079,7 +1079,7 @@ plugins = { version = "0.3.0", features = ["rules-spirv"], host-module = true }
 ```
 
 **`[build-dependencies]`, not `[dependencies]`** — a rule package is the case
-§2.6.1 describes exactly: its library must never reach the target while its
+[05 §2.6.1](05-mcpp-toml.md) describes exactly: its library must never reach the target while its
 rule is still wanted. The two axes are separate, so `host-module = true` says
 *which build-time product* is wanted and the section says *whether the package
 reaches the target*; a rule package answers "no" on the second axis, and the
@@ -1213,6 +1213,6 @@ unsupported platform into an error its user cannot edit away. Scope it:
 ```
 
 `[target.<sel>.feature-deps.<feature>]` (2026.8.6.2+) follows the same rules as
-the other conditional dependency tables (§2.7.1). The **feature itself is
+the other conditional dependency tables ([14 — The Target Side](14-target-side.md)). The **feature itself is
 registered on every platform** — only what it pulls in is conditional — so
 requesting it where no predicate matches is not an unknown-feature error.

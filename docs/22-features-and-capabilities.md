@@ -38,7 +38,7 @@ feature carry package-owned preprocessor `defines`, feature-gated source globs
 the feature is active, exactly like an index descriptor's `features.<f>.sources`;
 the highest-frequency shape for vendored libraries: *feature = a source set + a
 define*), feature-gated per-glob compile flags (`flags`, mcpp 0.0.101+), and/or
-capability `requires` / `provides` (see §2.8.1) alongside its implied features:
+capability `requires` / `provides` (see *`provides` / `requires`* below) alongside its implied features:
 
 ```toml
 [features]
@@ -67,11 +67,11 @@ simd       = { sources = ["src/simd/**"], flags = [
   defines`. They are restricted by convention to the package's **own** namespaced
   macros: a feature does **not** inject free-form package-wide `cflags`/`ldflags`,
   which would break the additive feature-union model. Link flags come from a
-  provider dependency (§2.8.1), not from a feature.
+  provider dependency (see *`provides` / `requires`* below), not from a feature.
 - The automatic `-DMCPP_FEATURE_<NAME>` is still defined for every active feature,
   so `defines` are additive to it.
 - `flags` (mcpp 0.0.101+) is the same ordered array-of-inline-tables grammar as
-  `[build].flags` (§2.3: `glob` required, plus `cflags`/`cxxflags`/`asmflags`/
+  `[build].flags` ([05 §2.3](05-mcpp-toml.md): `glob` required, plus `cflags`/`cxxflags`/`asmflags`/
   `defines`; the `[[features.<name>.flags]]` array-of-tables spelling is accepted
   too, like `[[build.flags]]`). When the feature is active the entries
   are appended **after** the base `[build].flags`, features in name order, so a
@@ -348,7 +348,7 @@ implementation cannot be fetched is a feature that does not exist, and a project
 using a **path** dependency during development never consults the index — so the
 failure appears only after publication, to somebody else.
 
-This composes with capabilities (§2.8.1): a single `backend-openblas` feature
+This composes with capabilities (*`provides` / `requires`* above): a single `backend-openblas` feature
 both **pulls** the provider (`compat.openblas`, which `provides = ["blas"]`) and
 **turns on** the consumer switch (`implies = ["use_blas"]`, which
 `requires = ["blas"]`). With one provider in the graph the capability binds
@@ -398,7 +398,7 @@ Two properties make this preferable to shipping the implementation
 unconditionally. A library that ships one takes a decision belonging to the
 program, and it cannot be undone: features are **additive**, so there is no way
 for a consumer to switch a default *off*. And because a dependency package's
-objects link unconditionally (§2.8.1), a shipped default plus a program-supplied
+objects link unconditionally (*`provides` / `requires`* above), a shipped default plus a program-supplied
 one is a duplicate definition rather than a replacement — the archive semantics
 that let a C++ standard library offer a replaceable `operator new` do not apply
 to a package dependency. Keeping the implementation behind a switch means the

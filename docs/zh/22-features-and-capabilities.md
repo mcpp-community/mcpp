@@ -17,7 +17,7 @@ Feature 是一个包提供可选内容的方式:一个编译宏、一份额外�
 0.0.95+——列出的 glob 离开默认构建,仅当 feature 激活时才编译,与 index 描述符的
 `features.<f>.sources` 完全对等;这正是 vendored 大库最高频的形态:*feature =
 一组源文件 + 一个 define*)、feature 门控的 per-glob 编译旗标(`flags`,mcpp
-0.0.101+),以及 capability 的 `requires` / `provides`(见 §2.8.1):
+0.0.101+),以及 capability 的 `requires` / `provides`(见下文*`provides` / `requires`*):
 
 ```toml
 [features]
@@ -42,9 +42,9 @@ simd       = { sources = ["src/simd/**"], flags = [
 - `defines` 为**裸**宏名(不带 `-D`);feature 激活时每个脱糖为 `-D<x>`,加到该包
   自己的编译上——与 `[targets.*] defines` 完全一致。按约定仅限包**自有**的带命名
   空间宏:feature **不**注入自由的包级 `cflags`/`ldflags`,否则会破坏加性的 feature
-  并集模型。链接旗标来自 provider 依赖(§2.8.1),而非 feature。
+  并集模型。链接旗标来自 provider 依赖(见下文*`provides` / `requires`*),而非 feature。
 - 每个激活的 feature 仍会得到自动的 `-DMCPP_FEATURE_<NAME>`,`defines` 与之叠加。
-- `flags`(mcpp 0.0.101+)与 `[build].flags`(§2.3)共用同一有序 inline-table 数组
+- `flags`(mcpp 0.0.101+)与 `[build].flags`([05 §2.3](05-mcpp-toml.md))共用同一有序 inline-table 数组
   文法(`glob` 必填,加 `cflags`/`cxxflags`/`asmflags`/`defines`;与
   `[[build.flags]]` 一样也接受 `[[features.<name>.flags]]` 拼写)。feature 激活时
   条目追加在 base `[build].flags` **之后**(feature 按名
@@ -284,7 +284,7 @@ compat.openblas = "0.3"
 feature**,而开发期使用 **path** 依赖的工程根本不查索引 —— 该失败只在发布之后才出现,
 而且是出现在别人身上。
 
-该机制与能力(§2.8.1)组合:单个 `backend-openblas` feature 既**拉取** provider
+该机制与能力(上文*`provides` / `requires`*)组合:单个 `backend-openblas` feature 既**拉取** provider
 (`compat.openblas`,其 `provides = ["blas"]`),又**开启**消费方开关
 (`implies = ["use_blas"]`,其 `requires = ["blas"]`)。当图中只有一个 provider 时,
 能力自动绑定——消费方只需写 `features = ["backend-openblas"]`。
@@ -329,6 +329,6 @@ std-freestanding-alloc-kal = "0.1.x"
 
 有两条性质使该形状优于无条件随包提供实现。随包提供实现的库替程序做了本属程序的决定,
 而且**撤销不掉**:feature 是**加性**的,消费方没有把某个默认**关掉**的手段。以及,由于
-依赖包的目标文件无条件参与链接(§2.8.1),随包的默认加上程序自备的那份是**重复定义**
+依赖包的目标文件无条件参与链接(上文*`provides` / `requires`*),随包的默认加上程序自备的那份是**重复定义**
 而非替换 —— 让 C++ 标准库能提供可替换 `operator new` 的那套归档语义,对包依赖并不适用。
 把实现放在开关之后,意味着两者**从不共存**。

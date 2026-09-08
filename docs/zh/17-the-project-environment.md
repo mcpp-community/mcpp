@@ -131,14 +131,14 @@ create/bootstrap that environment instead of falling back to active/default
 这份声明在每台构建本工程的宿主上都会供给,宿主装不了的包是错误,不是被跳过的条目。
 只存在于某一个宿主平台的工具因此按平台声明(2026.9.2.1):
 `deps = [{ linux = "qemu-user-aarch64" }]` 在 Linux 上声明这个模拟器,在别处什么都不声明。
-键与解析规则见第 5 章 §2.13。
+键与解析规则见本章。
 
 **哪些命令会安装它。** 一条条目可以带档位 —— `{ version = "0.24.0", when = "run" }` ——
 `[feature-xlings.<feature>]` 则把工具挂在某个 feature 上。用不到的工具因此不会被下载:
-见第 5 章 §2.13。不写档位就是从前的行为。
+见本章。不写档位就是从前的行为。
 
 **runner。** `[xlings.workspace]` 下的程序也是 `[target.<triple>].runner` 查找其第一个元素
-的首选位置,在 `PATH` 之前(第 5 章 §2.7.3)。两个键合起来,在 CI 宿主上供给用户态模拟器,
+的首选位置,在 `PATH` 之前([05 §2.7.3](05-mcpp-toml.md))。两个键合起来,在 CI 宿主上供给用户态模拟器,
 并通过它执行交叉构建的产物,而清单不必写出载荷的路径。
 
 ## 6. 什么该写在别处
@@ -152,15 +152,7 @@ create/bootstrap that environment instead of falling back to active/default
 | 只有某个命令或某个 feature 需要的工具 | `when = "run"`、`[feature-xlings.<f>]` |
 | 用哪个环境 | `[xlings] subos` |
 
-## 7. 相关章节
-
-- [7 - build.mcpp](07-build-mcpp.md) —— 构建程序收到的契约,含它运行时的
-  `PATH`。
-- [8 - 工具链内部](08-toolchain-internals.md) —— 运行时选择、`RuntimeBinding`
-  快照与降级规则。
-- [5 - mcpp.toml](05-mcpp-toml.md) —— 全部清单键,含 `[xlings]`。
-
-## `[xlings]` — 工程的环境
+## 7. `[xlings]` —— manifest 键
 
 ```toml
 [xlings.workspace]                 # 这个工程的环境里有什么
@@ -428,3 +420,11 @@ error: `xim:cuda-nvcc` is pinned to 12.0.0 by this project, and mcpp:plugins
 `[xlings.envs]` 曾被物化进 `.xlings.json`,而没有任何东西读它:程序的环境由它自己
 的包声明,环境的环境由那个环境声明。现在这个键是错误,并同时点名这两者。索引里没有
 任何包用过它。
+
+## 8. 相关章节
+
+- [7 - build.mcpp](07-build-mcpp.md) —— 构建程序收到的契约,含它运行时的
+  `PATH`。
+- [8 - 工具链内部](08-toolchain-internals.md) —— 运行时选择、`RuntimeBinding`
+  快照与降级规则。
+- [5 - mcpp.toml](05-mcpp-toml.md) —— manifest 的其余部分。
