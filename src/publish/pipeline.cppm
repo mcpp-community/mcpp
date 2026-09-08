@@ -180,7 +180,7 @@ export int publish_package(bool dry_run, bool allow_dirty) {
     //   `mcpp publish --auto` to:
     //     - gh release create v<v> <tarball>
     //     - fork mcpp-index, add pkg lua, gh pr create
-    //   See docs/34-release-readiness.md §3.
+    //   See docs/10-publishing-a-library.md.
     std::println("Tip: future versions of mcpp may automate steps 2-3 via the gh CLI.");
     return 0;
 }

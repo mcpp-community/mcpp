@@ -4,9 +4,6 @@ mcpp writes for two audiences. This chapter is the contract for the second one:
 programs. Editor extensions, CI scripts, and anything else that parses mcpp's
 output may rely on what is stated here.
 
-Design and the measurements behind it:
-`.agents/docs/2026-08-08-machine-readable-output-protocol-design.md`.
-
 ## 1. Primary rule
 
 > **Detect the protocol by parsing stdout. Never by exit code, and never by

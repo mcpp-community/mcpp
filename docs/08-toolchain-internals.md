@@ -60,8 +60,7 @@ frontend candidates — this is where host-split distribution names like
 `mingw-cross-gcc` (Linux host) vs `mingw-gcc` (Windows host) live; they are
 current distribution-layer identity, not user-facing spellings. The payload
 is resolved/auto-installed via the xlings backend into the sandbox
-(`$MCPP_HOME/registry/data/xpkgs/xim-x-<name>/<version>/`). See
-`.agents/docs/2026-07-15-toolchain-target-naming-unification-design.md`.
+(`$MCPP_HOME/registry/data/xpkgs/xim-x-<name>/<version>/`).
 
 `detect`/`probe` (`src/toolchain/detect.cppm`, `probe.cppm`) then derive:
 
@@ -647,5 +646,3 @@ answer them.
 | build.mcpp host flags | `src/build/build_program.cppm` |
 | hermetic link check | `src/build/hermetic.cppm` |
 | regression fences | `tests/e2e/86_llvm_hermetic_link.sh`, unit `test_linkmodel.cpp`, `test_post_install.cpp`; the no-host-toolchain CI job in `ci-linux-e2e.yml` |
-
-Design history: `.agents/docs/2026-07-07-hermetic-toolchain-link-model-design.md`.

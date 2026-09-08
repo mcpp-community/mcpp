@@ -2517,8 +2517,6 @@ deps = ["xim:mcpp-hooks-audioplayer@0.0.1"]
   失去静态可解析性(lockfile/LSP/审计的前提)。包的扩展点 = 固定机制内的开放值域。
 - 包级旋钮统一收敛进 features;糖键(如 `backend=`)进入核心语法须满足:
   ① 领域中立(跨生态通用模式)② 1:1 脱糖、零新增解析语义。
-- 字段归属总表与定型决策见
-  `.agents/docs/2026-06-04-manifest-schema-ownership.md`。
 
 ## 3. 实战示例
 

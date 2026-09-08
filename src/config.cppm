@@ -1,6 +1,6 @@
 // mcpp.config — global config + paths + xlings binary acquisition.
 //
-// Layout (per docs/14-data-layout.md):
+// Layout:
 //   $MCPP_HOME/                 default ~/.mcpp/
 //     bin/mcpp                  mcpp binary (self-contained mode)
 //     registry/                 XLINGS_HOME for mcpp's xlings

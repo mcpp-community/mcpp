@@ -957,7 +957,7 @@ generic target 取得同样的覆盖,所以空的下界不放宽任何东西。
 
 设计与调研:`.agents/docs/2026-09-05-accelerator-support-design.md`、
 `.agents/docs/2026-09-04-ai-accelerator-toolchain-ecosystem-survey.md`。
-新增手册章节 `docs/20-accelerators.md`(中英双份)。
+新增手册章节 `docs/20-heterogeneous-builds.md`(中英双份)。
 
 ## [2026.9.4.3] — 2026-09-04
 

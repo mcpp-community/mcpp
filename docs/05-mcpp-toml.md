@@ -2974,8 +2974,6 @@ it will still say so once the key has more than one accepted value.
   should DO) belongs on `[[runtime.artifacts]]` — see §2.11. `provenance`
   beginning with `mcpp-pack` is what marks a directory as one, and mcpp refuses
   to `build` inside it.
-- See `.agents/docs/2026-06-04-manifest-schema-ownership.md` for the full field-ownership
-  table and the finalized decisions.
 
 ## 3. Worked Examples
 

@@ -507,5 +507,3 @@ mcpp 把运行时 DLL 部署到产物 exe 旁,这正是该平台对 §3–§4 �
 | build.mcpp 宿主 flags | `src/build/build_program.cppm` |
 | hermetic 链接校验 | `src/build/hermetic.cppm` |
 | 回归fence | `tests/e2e/86_llvm_hermetic_link.sh`、单测 `test_linkmodel.cpp`、`test_post_install.cpp`;`ci-linux-e2e.yml` 的无宿主工具链 CI job |
-
-设计沿革:`.agents/docs/2026-07-07-hermetic-toolchain-link-model-design.md`。

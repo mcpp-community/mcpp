@@ -154,7 +154,7 @@ struct Target {
 // Aliases at the top of this file keep `mcpp::manifest::DependencySpec`
 // resolvable for unchanged call sites.
 
-// `[toolchain]` section per docs/21-toolchain-and-tools.md
+// `[toolchain]` section per docs/03-toolchains.md
 //   linux   = "gcc@15.1.0"
 //   macos   = "llvm@20"
 //   windows = "msvc@system"
@@ -1149,7 +1149,7 @@ struct LibConfig {
     std::filesystem::path               path;          // explicit override; empty = use convention
 };
 
-// `[pack]` — `mcpp pack` configuration. See docs/35-pack-design.md.
+// `[pack]` — `mcpp pack` configuration. See docs/02-pack-and-release.md.
 //
 // `default_mode` picks the bundling strategy when the user runs bare
 // `mcpp pack` (no `--mode` flag):
@@ -1577,7 +1577,7 @@ struct Manifest {
     // [target.<triple>] tables — empty if user didn't declare any.
     std::map<std::string, TargetEntry> targetOverrides;
 
-    // [pack] — `mcpp pack` config (see docs/35-pack-design.md).
+    // [pack] — `mcpp pack` config (see docs/02-pack-and-release.md).
     PackConfig                         packConfig;
 
     // [lib] — library root interface convention (M5.x+).

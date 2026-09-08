@@ -719,23 +719,17 @@ past it is the framework's own selector rather than a change to the packaging.
 
 `ggml-org:llamacpp` carries this as its `backend-vulkan` feature.
 
-## Not implemented
+## Current limitations
 
-Device targets and the device linking they imply for the island shape, OpenMP
-offload and stdpar, the AMD platform of HIP, and Metal.
+- Device targets, and the device linking (RDC) they imply for the island shape.
+- OpenMP `target` offload, and stdpar.
+- The AMD platform of HIP. `rules-hip` reaches the NVIDIA platform only.
+- Metal (`.metal`) and OpenCL C (`.cl`). Both extensions are classified as
+  device sources and no published rule package claims either, so a build that
+  names one is refused naming the file.
+- The 13.x CUDA line on Windows. Windows carries the 12.x line.
+- `mcpp pack` does not emit the `accel` field. A publisher writes it into the
+  descriptor.
 
-Two further gaps are per-platform rather than per-model, and both are
-publishing work rather than engine work. **HIP on Windows** needs Windows
-sections for the NVIDIA-platform header package and for `cuda-profiler-api`,
-plus a Windows form for the header-declaration step that today writes into a
-Linux SubOS view. **The 13.x CUDA line on Windows** needs a Windows form for
-the back-end reunification: on that line upstream splits `nvvm/` and `crt/` out
-of `cuda_nvcc` into four separately published components, which the index
-reunites with symlinks, and `ln` is not a command on that host. The 12.x line
-keeps its back end inside the component and needs none of it, so that is the
-line Windows carries, declared as a deliberate divergence in each recipe rather
-than left to be read off the file.
-
-See
-`.agents/docs/2026-09-05-heterogeneous-build-ecosystem-design-v2.md` for the
-design these follow from and the reason each is open.
+Per-platform limits for each lane are in the table under *Which platforms each
+lane reaches*.

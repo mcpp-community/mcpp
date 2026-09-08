@@ -588,18 +588,14 @@ Mesa 的 lavapipe 仅因类型就被排除 —— 尽管它声明了后端要求
 
 `ggml-org:llamacpp` 以 `backend-vulkan` feature 承载这一整套。
 
-## 尚未实现
+## 当前边界
 
-岛形态的 device target 及其隐含的 device link、OpenMP offload 与 stdpar、HIP 的 AMD
-平台,以及 Metal。
+- 岛形态的 device target,及其隐含的 device link(RDC)。
+- OpenMP `target` offload,以及 stdpar。
+- HIP 的 AMD 平台。`rules-hip` 只到达 NVIDIA 平台。
+- Metal(`.metal`)与 OpenCL C(`.cl`)。两个扩展名都被归类为设备源,而没有任何
+  已发布的规则包认领它们,因此声明了其中之一的构建会被拒绝,并点名该文件。
+- CUDA 的 13.x 线在 Windows 上。Windows 承载的是 12.x 线。
+- `mcpp pack` 不产出 `accel` 字段。需要它的发布方写进描述符。
 
-另有两处缺口是按平台而不是按编程模型分的,而且两处都是打包工作不是引擎工作。
-**HIP 上 Windows** 需要给 NVIDIA 平台的头文件包与 `cuda-profiler-api` 补 Windows 段,
-以及给那一步「把头文件声明进去」补一个 Windows 形态 —— 它今天写进的是一个 Linux 的
-SubOS 视图。**CUDA 的 13.x 线上 Windows** 需要给后端的重新拼合补一个 Windows 形态:
-那条线上,上游把 `nvvm/` 与 `crt/` 从 `cuda_nvcc` 里拆成四个单独发布的组件,索引用符号
-链接把它们拼回去,而 `ln` 不是那个宿主上的命令。12.x 线自带后端,一样都不需要,所以
-Windows 承载的是那条线,并在每个配方里显式声明为有意的分歧,而不是留给人从文件里读。
-
-这些所依据的设计,以及每一项仍然开着的理由,见
-`.agents/docs/2026-09-05-heterogeneous-build-ecosystem-design-v2.md`。
+每条 lane 的按平台边界见*每条 lane 到达哪些平台*一节的表格。

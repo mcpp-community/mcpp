@@ -2376,7 +2376,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         m.lib.path = *v;
     }
 
-    // [pack] — `mcpp pack` configuration. See docs/35-pack-design.md.
+    // [pack] — `mcpp pack` configuration. See docs/02-pack-and-release.md.
     if (auto v = doc->get_string("pack.default_mode")) {
         const auto& s = *v;
         if (s != "static" && s != "bundle-project" && s != "bundle-all") {
