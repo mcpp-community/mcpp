@@ -1,3 +1,9 @@
+---
+subject: docs
+status: superseded
+superseded_by: 2026-09-08-documentation-architecture-three-trees.md
+---
+
 # A curriculum for the examples, a reference for the documentation, and a check with a denominator
 
 This plans the `examples/` tree and the `docs/` chapters together, because the

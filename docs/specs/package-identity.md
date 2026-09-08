@@ -227,7 +227,7 @@ error: dependency 'asio': no package found
     asio = "1.38.1"
 ```
 
-该 did-you-mean 扫描**仅**在已失败路径触发,结果**只进错误文案**,禁止回灌解析、lockfile 或安装层。
+该 `did-you-mean` 扫描**仅**在已失败路径触发,结果**只进错误文案**,禁止回灌解析、lockfile 或安装层。
 
 迁移 release 对旧的 compact dotted 搜索做两件事:已有 lock 继续固定已记录身份;无 lock 时若旧的 `mcpplibs.<ns>` primary 确实存在,warning 同时显示旧/新完整 selector,但仍不回退。
 
@@ -347,7 +347,7 @@ warning，规范列举命令是 `mcpp new --list-templates pkg`。
 2. 某个索引开始使用短名形态时,其 `index.toml` 的 `min_mcpp` **必须**同步抬到 **0.0.106**。这是硬性的:更低版本的客户端会静默 `E_NOT_FOUND`,无技术手段绕过。
 3. 同一索引内**可以**长期混存两种形态。
 
-### 8.2 索引作者应当怎么写
+### 8.2 索引作者的写法
 
 ```lua
 package = {

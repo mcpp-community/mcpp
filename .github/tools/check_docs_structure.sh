@@ -10,6 +10,8 @@
 #   4. every specification is listed in all three indexes
 #   5. every specification has a metadata table and a change record
 #   6. no emoji under docs/ or in a top-level README
+#   7. the generated design-record index is current
+#   8. a new design record declares its subject and status
 #
 # What it deliberately does NOT check: whether a chapter documents what is
 # implemented, whether an assertion's strength matches its evidence, or whether
@@ -108,6 +110,33 @@ for f in docs/*.md docs/zh/*.md docs/specs/*.md README.md README.zh-CN.md; do
       bad "$f: emoji — state the status as a word: ${hit%%:*}: $(echo "$hit" | cut -d: -f2- | cut -c1-60)"
     done < <(grep -nP "$EMOJI" "$f")
   fi
+done
+
+# ── 7. the design-record index is current ────────────────────────────────
+#
+# 269 records and the index was one heading. It is generated now, so it cannot
+# drift -- and a generated file that is checked in must be compared against the
+# generator or it drifts anyway.
+python3 .github/tools/gen_agents_index.py --check || fail=1
+
+# ── 8. a new design record declares its subject and status ───────────────
+#
+# From the date the convention starts. The 268 records that predate it are not
+# rewritten: a record describes the moment its change was made, and a pass that
+# added a field nobody chose would edit documents whose value is that they are
+# not edited.
+CONVENTION_FROM="2026-09-08"
+for f in .agents/docs/[0-9]*.md; do
+  [ -f "$f" ] || continue
+  d="$(basename "$f" | cut -c1-10)"
+  [[ "$d" < "$CONVENTION_FROM" ]] && continue
+  head -1 "$f" | grep -q '^---$' \
+    || { bad "$f: a record dated $CONVENTION_FROM or later has no front matter"; continue; }
+  fmblock="$(awk 'NR>1 && /^---$/ {exit} NR>1' "$f")"
+  printf '%s' "$fmblock" | grep -qE '^subject: *[a-z]' \
+    || bad "$f: front matter declares no \`subject\`"
+  printf '%s' "$fmblock" | grep -qE '^status: *(active|landed|superseded|abandoned) *$' \
+    || bad "$f: front matter declares no valid \`status\` (active | landed | superseded | abandoned)"
 done
 
 if [[ "$fail" -eq 0 ]]; then

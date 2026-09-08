@@ -32,7 +32,14 @@ headings() {
   ' "$1"
 }
 
-for f in docs/*.md docs/zh/*.md; do
+# THE REGISTER RULES COVER docs/specs/ TOO, AND USED NOT TO.
+#
+# The glob was `docs/*.md docs/zh/*.md`, which does not descend, so the four
+# specifications were exempt from rules 1 and 2 by accident rather than by
+# decision. They are in scope now. The PARITY loop below still is not: the
+# specifications are 简体中文 with no docs/zh/ mirror, and whether that changes
+# is an open question rather than a defect this script should assert.
+for f in docs/*.md docs/zh/*.md docs/specs/*.md; do
   base="$(basename "$f")"
 
   # ── 1. heading register ───────────────────────────────────────────────

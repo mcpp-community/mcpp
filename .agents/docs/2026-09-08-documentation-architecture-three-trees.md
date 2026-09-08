@@ -1,3 +1,8 @@
+---
+subject: docs
+status: active
+---
+
 # Three documentation trees, three audiences, and the rule for citing between them
 
 This restructures mcpp's documentation as a whole: the user documentation
