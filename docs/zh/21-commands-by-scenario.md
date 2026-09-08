@@ -170,18 +170,6 @@ warning: pre-v1 cache at '/home/speak/.mcpp/bmi' occupies 167.5 MiB and is no lo
 `mcpp self config --mirror CN|GLOBAL` 选择下载镜像;mcpp 与 xlings 各自持有这个设置,
 为其中一个选定不会为另一个选定。
 
-## 当前边界
-
-- `mcpp why --format json` 只对 `toolchain` 话题有定义。其余话题报
-  `'<topic>' has no machine-readable shape yet` 并以非零退出。
-- `mcpp search` 按子串匹配;没有字段选择器,也没有把搜索限定到单个命名空间的方式。
-- `mcpp clean --stale` 读 `target/.build_cache`,它保存的近期条目数量有上限。一个工程
-  如果构建过的 (目标, profile) 组合多于这个上限,最旧的条目会被挤掉;条目被挤掉的目录
-  随后按未记录处理 —— 在 `--older-than` 之内保留,超出则删除。
-- `mcpp cache gc --older-than 0` 以 `bad --older-than value '0'
-  (expected <N>{s,m,h,d})` 被拒绝,而 `mcpp clean --stale --older-than 0` 接受。
-  两个选项共用一个 parser,但这一种取值上不一致。
-
 ## `[hooks]` —— 项目构建生命周期命令(实验性)
 
 > **实验性。** Hook 目前**不能**决定一次构建成功与否。所有 Hook 失败都以
@@ -313,3 +301,27 @@ deps = ["xim:mcpp-hooks-audioplayer@0.0.1"]
 根据构建成功或失败播放不同提示音。`side_effect = false` 写出来而不是靠默认值:它是
 这份 manifest 自己就想要的值——缺个音频设备不该让构建失败——所以等这个键有了不止
 一个可接受的值之后,它仍然会这么写。
+
+## 当前边界
+
+- `mcpp why --format json` 只对 `toolchain` 话题有定义。其余话题报
+  `'<topic>' has no machine-readable shape yet` 并以非零退出。
+- `mcpp search` 按子串匹配;没有字段选择器,也没有把搜索限定到单个命名空间的方式。
+- `mcpp clean --stale` 读 `target/.build_cache`,它保存的近期条目数量有上限。一个工程
+  如果构建过的 (目标, profile) 组合多于这个上限,最旧的条目会被挤掉;条目被挤掉的目录
+  随后按未记录处理 —— 在 `--older-than` 之内保留,超出则删除。
+- `mcpp cache gc --older-than 0` 以 `bad --older-than value '0'
+  (expected <N>{s,m,h,d})` 被拒绝,而 `mcpp clean --stale --older-than 0` 接受。
+  两个选项共用一个 parser,但这一种取值上不一致。
+
+对一个自带 `mcpp.toml` 的包,`mcpp emit xpkg` 产出的描述符会被 `mcpp xpkg parse`
+拒绝。产出的 `mcpp` 段带 `manifest = "mcpp.toml"` 而没有 `sources` 列表,而校验器
+要求有一个:
+
+```
+error: d.lua: xpkg-lua://example.mathkit@0.1.0: error: synthesised manifest
+       missing sources (mcpp segment must declare `sources = { ... }`)
+```
+
+给产出的 `mcpp` 段补上 `sources = { "src/*.cppm" }` 即可通过校验。实测于
+2026.9.8.1。

@@ -195,21 +195,6 @@ included. `mcpp self config --mirror CN|GLOBAL` selects the download mirror;
 mcpp and xlings hold this setting separately, so selecting it for one does not
 select it for the other.
 
-## Current limitations
-
-- `mcpp why --format json` is defined for the `toolchain` topic only. The other
-  topics report `'<topic>' has no machine-readable shape yet` and exit non-zero.
-- `mcpp search` matches a substring; there is no field selector, and no way to
-  restrict a search to one namespace.
-- `mcpp clean --stale` reads `target/.build_cache`, which holds a bounded number
-  of recent entries. A project built across more (target, profile) pairs than it
-  holds loses its oldest entries, and a directory whose entry has been evicted
-  is then treated as unrecorded — kept while it is newer than `--older-than`,
-  removed after that.
-- `mcpp cache gc --older-than 0` is rejected with `bad --older-than value '0'
-  (expected <N>{s,m,h,d})`, while `mcpp clean --stale --older-than 0` accepts it.
-  The two options share a parser but not this case.
-
 ## `[hooks]` — Project Build Lifecycle Commands (experimental)
 
 > **Experimental.** A hook cannot currently decide whether a build succeeded.
@@ -370,3 +355,30 @@ A different sound for a successful or failed build. `side_effect = false` is
 written out rather than left to the default: it is the value this manifest
 wants on its own terms — a missing audio device should never fail a build — so
 it will still say so once the key has more than one accepted value.
+
+## Current limitations
+
+- `mcpp why --format json` is defined for the `toolchain` topic only. The other
+  topics report `'<topic>' has no machine-readable shape yet` and exit non-zero.
+- `mcpp search` matches a substring; there is no field selector, and no way to
+  restrict a search to one namespace.
+- `mcpp clean --stale` reads `target/.build_cache`, which holds a bounded number
+  of recent entries. A project built across more (target, profile) pairs than it
+  holds loses its oldest entries, and a directory whose entry has been evicted
+  is then treated as unrecorded — kept while it is newer than `--older-than`,
+  removed after that.
+- `mcpp cache gc --older-than 0` is rejected with `bad --older-than value '0'
+  (expected <N>{s,m,h,d})`, while `mcpp clean --stale --older-than 0` accepts it.
+  The two options share a parser but not this case.
+
+`mcpp emit xpkg` produces a descriptor that `mcpp xpkg parse` rejects for a
+package that keeps its own `mcpp.toml`. The emitted `mcpp` segment carries
+`manifest = "mcpp.toml"` and no `sources` list, and the validator requires one:
+
+```
+error: d.lua: xpkg-lua://example.mathkit@0.1.0: error: synthesised manifest
+       missing sources (mcpp segment must declare `sources = { ... }`)
+```
+
+Adding `sources = { "src/*.cppm" }` to the emitted `mcpp` segment makes it
+validate. Measured on 2026.9.8.1.

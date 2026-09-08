@@ -12,6 +12,7 @@
 #   6. no emoji under docs/ or in a top-level README
 #   7. the generated design-record index is current
 #   8. a new design record declares its subject and status
+#   9. every relative link in docs/ and examples/ resolves
 #
 # What it deliberately does NOT check: whether a chapter documents what is
 # implemented, whether an assertion's strength matches its evidence, or whether
@@ -138,6 +139,26 @@ for f in .agents/docs/[0-9]*.md; do
   printf '%s' "$fmblock" | grep -qE '^status: *(active|landed|superseded|abandoned) *$' \
     || bad "$f: front matter declares no valid \`status\` (active | landed | superseded | abandoned)"
 done
+
+# ── 9. every relative link in docs/ and examples/ resolves ───────────────
+#
+# Rule 3 catches `docs/NN-*.md` named anywhere, including from source comments.
+# This is the other half: a Markdown link in a document that points at a file
+# which is not there. Both halves are needed -- a chapter moved in this batch
+# would satisfy one and break the other.
+python3 - <<'PYCHECK' || fail=1
+import re, pathlib, sys
+bad = 0
+for f in list(pathlib.Path("docs").rglob("*.md")) + list(pathlib.Path("examples").rglob("*.md")):
+    for m in re.finditer(r"\]\(([^)#]+?)(?:#[^)]*)?\)", f.read_text(errors="ignore")):
+        t = m.group(1)
+        if t.startswith(("http", "mailto:")):
+            continue
+        if not (f.parent / t).exists():
+            print(f"FAIL: {f}: link to `{t}` does not resolve")
+            bad += 1
+sys.exit(1 if bad else 0)
+PYCHECK
 
 if [[ "$fail" -eq 0 ]]; then
   echo "OK: docs structure checks pass"
