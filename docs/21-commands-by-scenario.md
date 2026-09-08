@@ -371,14 +371,21 @@ it will still say so once the key has more than one accepted value.
   (expected <N>{s,m,h,d})`, while `mcpp clean --stale --older-than 0` accepts it.
   The two options share a parser but not this case.
 
-`mcpp emit xpkg` produces a descriptor that `mcpp xpkg parse` rejects for a
-package that keeps its own `mcpp.toml`. The emitted `mcpp` segment carries
-`manifest = "mcpp.toml"` and no `sources` list, and the validator requires one:
+`mcpp emit xpkg` writes a key `mcpp xpkg parse` does not know. For a package
+that keeps its own `mcpp.toml`, the emitted `mcpp` segment ends with
+`manifest = "mcpp.toml"`, and the descriptor parser reports it as unknown:
 
 ```
-error: d.lua: xpkg-lua://example.mathkit@0.1.0: error: synthesised manifest
-       missing sources (mcpp segment must declare `sources = { ... }`)
+error: unknown mcpp-segment key 'manifest' — silently ignored at build time
+       by this mcpp version
+error: synthesised manifest missing sources (mcpp segment must declare
+       `sources = { ... }`)
 ```
 
-Adding `sources = { "src/*.cppm" }` to the emitted `mcpp` segment makes it
-validate. Measured on 2026.9.8.1.
+The second error follows from the first: the ignored key means no sources are
+derived from the manifest it names. Adding `sources = { … }` by hand removes the
+second and not the first, and `mcpp xpkg parse` still exits 1.
+
+No descriptor in `mcpp-index` uses that key — 0 of 218. A package that keeps its
+own `mcpp.toml` omits the `mcpp` field entirely, and mcpp looks the manifest up
+under the version directory. Measured on 2026.9.8.1.

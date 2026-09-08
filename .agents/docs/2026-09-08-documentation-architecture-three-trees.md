@@ -554,12 +554,23 @@ README because a rule author will meet all three:
 - **The compiler is a declared input.** Without it, editing `toyc.sh` left every
   edge clean and the artifact kept the previous compiler's bytes.
 
-And one in the tooling: `mcpp emit xpkg` produces a descriptor that
-`mcpp xpkg parse` rejects for a package keeping its own `mcpp.toml` — the
-emitted `mcpp` segment carries `manifest = "mcpp.toml"` and no `sources` list,
-and the validator requires one. Isolated by adding the list by hand, which makes
-it validate. Recorded in `docs/21` as a limitation; not fixed in a documentation
-change.
+And one in the tooling, whose first description in this document was wrong in a
+way worth keeping. `mcpp emit xpkg` writes `manifest = "mcpp.toml"` into the
+`mcpp` segment; `mcpp xpkg parse` reports that key as **unknown** and exits 1,
+and the "missing sources" error follows from it — the ignored key means nothing
+derives sources from the manifest it names.
+
+> The first reading said "adding `sources` by hand makes it validate". It does
+> not. It removes the second error, the summary prints, and the command still
+> exits 1. The conclusion came from reading the OUTPUT rather than the STATUS,
+> which is the failure this repository already has a memory for.
+
+`mcpp-index` uses that key in **0 of 218** descriptors: a package keeping its own
+`mcpp.toml` omits the `mcpp` field entirely and mcpp looks the manifest up under
+the version directory. So the defect is not a missing list — it is that `emit`
+writes a descriptor shape the resolver in the same release does not implement
+and no published descriptor uses. Recorded in `docs/21`; not fixed in a
+documentation change.
 
 `build_examples.sh` refused all four new example roots for being in neither
 `BUILD` nor `SKIP`. That is the denominator discipline working, and it is the

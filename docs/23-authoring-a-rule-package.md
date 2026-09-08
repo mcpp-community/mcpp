@@ -243,7 +243,8 @@ path.
   imply `host-module`. `mcpp:plugins` declares `default = []`; a rule package
   whose rule is on by default is refused with a message naming the module and
   the key to add.
-- `mcpp emit xpkg` produces a descriptor that `mcpp xpkg parse` rejects for a
-  package that keeps its own `mcpp.toml`: the emitted `mcpp` segment carries
-  `manifest = "mcpp.toml"` and no `sources` list, and the validator requires
-  one. Adding `sources = { … }` to the emitted descriptor makes it validate.
+- `mcpp emit xpkg` writes `manifest = "mcpp.toml"` into the `mcpp` segment, and
+  `mcpp xpkg parse` reports that key as unknown and exits 1. No descriptor in
+  `mcpp-index` uses it (0 of 218); a package keeping its own `mcpp.toml` omits
+  the `mcpp` field entirely. See *Current limitations* in
+  [21 — Commands by Scenario](21-commands-by-scenario.md).

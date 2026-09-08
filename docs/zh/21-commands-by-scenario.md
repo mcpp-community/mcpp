@@ -314,14 +314,21 @@ deps = ["xim:mcpp-hooks-audioplayer@0.0.1"]
   (expected <N>{s,m,h,d})` 被拒绝,而 `mcpp clean --stale --older-than 0` 接受。
   两个选项共用一个 parser,但这一种取值上不一致。
 
-对一个自带 `mcpp.toml` 的包,`mcpp emit xpkg` 产出的描述符会被 `mcpp xpkg parse`
-拒绝。产出的 `mcpp` 段带 `manifest = "mcpp.toml"` 而没有 `sources` 列表,而校验器
-要求有一个:
+`mcpp emit xpkg` 写出一个 `mcpp xpkg parse` 不认识的键。对一个自带 `mcpp.toml`
+的包,产出的 `mcpp` 段以 `manifest = "mcpp.toml"` 结尾,而描述符解析器把它报为
+未知键:
 
 ```
-error: d.lua: xpkg-lua://example.mathkit@0.1.0: error: synthesised manifest
-       missing sources (mcpp segment must declare `sources = { ... }`)
+error: unknown mcpp-segment key 'manifest' — silently ignored at build time
+       by this mcpp version
+error: synthesised manifest missing sources (mcpp segment must declare
+       `sources = { ... }`)
 ```
 
-给产出的 `mcpp` 段补上 `sources = { "src/*.cppm" }` 即可通过校验。实测于
+第二个错误由第一个导出:键被忽略,于是没有从它点名的那份 manifest 推导出任何
+源。手工补上 `sources = { … }` 只消掉第二个,消不掉第一个,`mcpp xpkg parse`
+仍然以 1 退出。
+
+`mcpp-index` 里没有任何描述符使用那个键 —— 218 个里 0 个。自带 `mcpp.toml` 的包
+**整个省略 `mcpp` 字段**,由 mcpp 在版本目录下查找那份 manifest。实测于
 2026.9.8.1。

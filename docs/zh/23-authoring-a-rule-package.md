@@ -222,7 +222,7 @@ mcpp::floor("cuda.driver", runtime_needs);
 - 规则包自己 `[features] default` 里的规则 feature 不隐含 `host-module`。
   `mcpp:plugins` 声明 `default = []`;规则默认开启的规则包会被拒绝,消息点名
   该模块与需要补的键。
-- 对一个自带 `mcpp.toml` 的包,`mcpp emit xpkg` 产出的描述符会被
-  `mcpp xpkg parse` 拒绝:产出的 `mcpp` 段带 `manifest = "mcpp.toml"` 而没有
-  `sources` 列表,而校验器要求有一个。给产出的描述符补上 `sources = { … }`
-  之后即可通过校验。
+- `mcpp emit xpkg` 把 `manifest = "mcpp.toml"` 写进 `mcpp` 段,而
+  `mcpp xpkg parse` 把该键报为未知并以 1 退出。`mcpp-index` 里没有任何描述符使用
+  它(218 个里 0 个);自带 `mcpp.toml` 的包整个省略 `mcpp` 字段。见
+  [21 —— 按场景选命令](21-commands-by-scenario.md)的*当前边界*。
