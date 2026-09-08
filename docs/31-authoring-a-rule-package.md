@@ -16,11 +16,11 @@ which belong to `mcpp:plugins`. Examples:
 [`12-a-new-device-language`](../examples/12-a-new-device-language/) adds a
 language.
 
-## What a rule package is
+## The definition of a rule package
 
 Three parts, and none of them is special to mcpp:
 
-| part | what it is |
+| part | content |
 |---|---|
 | a package | an ordinary `mcpp.toml` with a version and a licence |
 | a module | a `.cppm` exporting `options` and a function that submits build edges |
@@ -228,7 +228,7 @@ through it. A probe that reaches no answer states none.
 
 ## Finding the rule's own files
 
-| what | how |
+| object | accessor |
 |---|---|
 | the rule package's own tree | `mcpp::dep_dir("<name>")` — under the name the **consumer** declared in `[dependencies]` |
 | a payload declared under `[xlings.workspace]` | `mcpp::xpkg_dir("<name>")` |

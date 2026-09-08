@@ -199,7 +199,7 @@ capability,其 `outputSchema` 全部只有 `{"exitCode": integer}`,而客户端�
 
 ## 8. 各 kind
 
-### `mcpp.env` —— mcpp 把东西放在哪
+### `mcpp.env` —— mcpp 使用的路径
 
 ```
 mcpp self env --format json
@@ -248,7 +248,7 @@ mcpp cache list --format json
 
 `data` 是 `{root, entries[]}`,与 `--json` 裸打印的一致。
 
-### `mcpp.toolchain.list` —— 装了什么,以及这台宿主服务哪些目标
+### `mcpp.toolchain.list` —— 已安装的工具链,以及这台宿主服务的目标
 
 ```
 mcpp toolchain list --format json
@@ -265,7 +265,7 @@ mcpp toolchain list --format json
 没有约定的行为空。`x86_64-linux-gnu` 装了 gcc 而根本没有约定,所以要挑「约定是
 gcc 的行」必须读 `pin`。
 
-### `mcpp.why.toolchain` —— 一对 (目标, 工具链) 会解析成什么
+### `mcpp.why.toolchain` —— 一对 (目标, 工具链) 的解析结果
 
 ```
 mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json

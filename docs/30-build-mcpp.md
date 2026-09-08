@@ -289,7 +289,7 @@ the first one sees.
 and is empty on a hosted target, which is exactly the case this pair exists
 for. Either of these two is empty when mcpp passes no such flag.
 
-### Which C++ standard library resolved: `cxx_stdlib` (2026.9.6.3+)
+### The resolved C++ standard library: `cxx_stdlib` (2026.9.6.3+)
 
 ```cpp
 const char* impl = mcpp::cxx_stdlib();   // "libstdc++" | "libc++" | "msvc-stl" | ""
@@ -817,7 +817,7 @@ knobs produced the command — and that belongs in each edge's `description`.
 **Failure and advice use different channels.** mcpp prints what it captured
 from a build program only when the program exits non-zero, so a failure writes
 to stderr and returns non-zero. A message that must be seen on a *successful*
-build has to go through [`mcpp::warning`](#warning--succeeding-and-still-being-heard-2026821-2);
+build has to go through [`mcpp::warning`](#warning--succeeding-and-still-being-heard-20268212);
 stderr on success is discarded, which means the wrong channel is silent on
 exactly the builds that needed the message.
 

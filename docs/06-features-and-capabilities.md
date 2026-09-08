@@ -399,7 +399,7 @@ std-freestanding-alloc-kal = "0.1.x"
 
 Three usages, one line each:
 
-| Consumer needs | What the manifest says |
+| Consumer needs | The manifest form |
 |---|---|
 | none of the allocating parts | `std-freestanding = "0.2.0"` — no allocator enters the graph |
 | the default | `features = ["alloc-kal"]` — the implementation arrives with it, and its package name never has to be known |

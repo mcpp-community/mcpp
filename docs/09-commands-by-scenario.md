@@ -28,7 +28,7 @@ Every output below was produced by the version of mcpp this chapter ships with.
 Two stores grow, they grow for different reasons, and one command each empties
 them. Confusing them costs a full rebuild.
 
-| Store | Scope | Grows when | Emptied by |
+| Store | Scope | Growth trigger | Emptied by |
 |---|---|---|---|
 | `target/<triple>/<fingerprint>/` | one project | a configuration fingerprint changes and opens a new directory | `mcpp clean`, `mcpp clean --stale` |
 | the build cache (`mcpp cache dir`) | the whole machine | any project compiles a dependency or a `std` module | `mcpp cache gc`, `mcpp cache prune`, `mcpp cache clean` |
@@ -365,12 +365,12 @@ written out rather than left to the default: it is the value this manifest
 wants on its own terms — a missing audio device should never fail a build — so
 it will still say so once the key has more than one accepted value.
 
-## Which part a failure is about
+## The stage a failure belongs to
 
 A build crosses several stages, and a message names the one that failed. Reading
 that first saves opening the wrong chapter.
 
-| a message about | the stage | where to look |
+| a message about | the stage | the chapter to read |
 |---|---|---|
 | a package name, a version, or "no candidate" | resolution | [05](05-dependencies.md), [11](11-publishing-a-library.md) |
 | a download, a payload, or a version floor | provisioning | [20](20-toolchains.md), [23](23-the-project-environment.md) |

@@ -144,22 +144,77 @@ for f in .agents/docs/[0-9]*.md; do
     || bad "$f: front matter declares no valid \`status\` (active | landed | superseded | abandoned)"
 done
 
-# ── 9. every relative link in docs/ and examples/ resolves ───────────────
+# ── 9. every relative link in docs/ and examples/ resolves, fragment included ─
 #
 # Rule 3 catches `docs/NN-*.md` named anywhere, including from source comments.
 # This is the other half: a Markdown link in a document that points at a file
 # which is not there. Both halves are needed -- a chapter moved in this batch
 # would satisfy one and break the other.
+#
+# THE FRAGMENT IS PART OF THE LINK. The first version of this rule discarded
+# it (`(?:#[^)]*)?`), so a link to a section that had been renamed resolved to
+# the file and was reported correct. Renaming 100 headings for register in one
+# batch is exactly the change that produces those, and two hand-written anchors
+# in chapter 30 were already wrong before the renames began.
 python3 - <<'PYCHECK' || fail=1
-import re, pathlib, sys
+import re, pathlib, sys, unicodedata
+
+def slug(heading):
+    """GitHub's heading slug: lowercase, drop punctuation and symbols, spaces to hyphens.
+
+    Category P* and S* covers what github-slugger removes -- ASCII punctuation,
+    the em dash, the backticks around inline code, and the full-width comma and
+    colon the Chinese chapters use -- while `-` and `_` are kept because an
+    anchor is allowed to contain them.
+    """
+    t = re.sub(r"^#+\s+", "", heading).strip().lower()
+    keep = []
+    for ch in t:
+        if ch in "-_":
+            keep.append(ch)
+        elif ch.isspace():
+            keep.append(" ")
+        elif unicodedata.category(ch)[0] in "PS":
+            continue
+        else:
+            keep.append(ch)
+    return "".join(keep).replace(" ", "-")
+
+def anchors_of(path):
+    """Every anchor the file defines, with GitHub's -1/-2 suffix for repeats."""
+    seen, out, infence = {}, set(), False
+    for line in path.read_text(errors="ignore").splitlines():
+        if line.startswith("```"):
+            infence = not infence
+            continue
+        if infence or not re.match(r"^#{1,6} ", line):
+            continue
+        s = slug(line)
+        n = seen.get(s, 0)
+        seen[s] = n + 1
+        out.add(s if n == 0 else f"{s}-{n}")
+    return out
+
+files = list(pathlib.Path("docs").rglob("*.md")) + list(pathlib.Path("examples").rglob("*.md"))
+cache = {}
 bad = 0
-for f in list(pathlib.Path("docs").rglob("*.md")) + list(pathlib.Path("examples").rglob("*.md")):
-    for m in re.finditer(r"\]\(([^)#]+?)(?:#[^)]*)?\)", f.read_text(errors="ignore")):
-        t = m.group(1)
+for f in files:
+    for m in re.finditer(r"\]\(([^)\s]*?)(?:#([^)\s]+))?\)", f.read_text(errors="ignore")):
+        t, frag = m.group(1), m.group(2)
         if t.startswith(("http", "mailto:")):
             continue
-        if not (f.parent / t).exists():
+        target = (f.parent / t) if t else f
+        if t and not target.exists():
             print(f"FAIL: {f}: link to `{t}` does not resolve")
+            bad += 1
+            continue
+        if not frag or target.suffix != ".md" or not target.is_file():
+            continue
+        key = target.resolve()
+        if key not in cache:
+            cache[key] = anchors_of(target)
+        if frag not in cache[key]:
+            print(f"FAIL: {f}: `#{frag}` is not a heading in {target.as_posix()}")
             bad += 1
 sys.exit(1 if bad else 0)
 PYCHECK

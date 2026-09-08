@@ -10,7 +10,7 @@ records, which are not user documentation.
 
 ## Where a document lives
 
-| tree | reader | what it holds |
+| tree | reader | contents |
 |---|---|---|
 | `docs/**` | someone with a task in hand | how to use what mcpp implements |
 | [`docs/specs/**`](specs/README.md) | someone implementing against a mechanism: index authors, downstream tools, contributors | semantics, constraints and matching rules, each tagged with its implementation status |

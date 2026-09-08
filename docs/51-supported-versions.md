@@ -22,7 +22,7 @@ that day's release. The scheme carries no compatibility promise in its digits:
 `2026.9.4.1` is not "a minor release" of `2026.9.3.2`. What may and may not
 change is stated below rather than encoded in the number.
 
-## What is supported
+## Support scope
 
 | | |
 |---|---|
@@ -34,7 +34,7 @@ A release is superseded rather than withdrawn. Published assets and index
 entries for older versions remain in place, because a project may have pinned
 one and removing it would break a build that was working.
 
-## What may change between releases
+## Changes permitted between releases
 
 The engine's own interfaces are not all equally stable, and the difference is
 worth stating precisely.

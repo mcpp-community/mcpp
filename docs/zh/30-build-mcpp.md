@@ -251,7 +251,7 @@ crt/host_config.h:218: fatal error: features.h: No such file or directory
 **不是 `sysroot_dir()`。** 那个回答的是目标**档位**的问题,在宿主目标上为空,
 而宿主目标恰恰是这一对存在的场合。mcpp 不传某个开关时,对应的那个为空串。
 
-### 解析出的是哪个 C++ 标准库:`cxx_stdlib`(2026.9.6.3+)
+### 解析出的 C++ 标准库:`cxx_stdlib`(2026.9.6.3+)
 
 ```cpp
 const char* impl = mcpp::cxx_stdlib();   // "libstdc++" | "libc++" | "msvc-stl" | ""
@@ -690,7 +690,7 @@ action,由引擎调度。工具说明的是构建程序需要、而没有任何�
 
 **失败与提示走不同的通道。** mcpp 只在构建程序非零退出时打印抓到的输出,所以失败写 stderr
 并返回非零。而必须在**成功**构建上被看见的消息要走
-[`mcpp::warning`](#warning--成功了而且仍然被听见2026821-2);成功时的 stderr 被丢弃,
+[`mcpp::warning`](#warning--成功了而且仍然被听见20268212);成功时的 stderr 被丢弃,
 也就是说选错通道恰好在需要它的那些构建上一言不发。
 
 **一个 `(名字, 版本)` 只对应一份载荷。** mcpp 用这个二元组标识已安装的包,所以一个重新

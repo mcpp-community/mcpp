@@ -40,7 +40,7 @@ library path at all. Nothing is broken; the artifact is simply not looking
 there, which is the property that makes an mcpp build reproducible in the first
 place.
 
-## What an adapter is
+## The definition of an adapter
 
 **A symlink farm plus the metadata that makes it reachable.** Nothing is
 vendored, nothing is redistributed, and the package carries no upstream bytes.
@@ -49,7 +49,7 @@ artifact's runtime search path, and the chain resolves.
 
 A project declares the adapter as an ordinary dependency and does nothing else.
 
-## Why the driver itself is not a package
+## The reason the driver itself is not a package
 
 A proprietary driver's userspace is in **ABI lockstep with a kernel module**,
 and its licence forbids redistribution. Neither is a packaging problem that

@@ -88,7 +88,7 @@ mcpp toolchain default gcc@16 --target x86_64-linux-musl   # "默认就要全静
 `[toolchain] default = "gcc@16.1.0"` + `default_target = "x86_64-linux-musl"`。
 (存量 config 里 `default = "gcc@15.1.0-musl"` 这类合并拼写原样可用。)
 
-### 谁决定一次构建的编译器
+### 一次构建的编译器选定
 
 有五种来源会给它命名。它们是分级的,而这套分级正是让工程能写下的那两条压过
 mcpp 自己保管的一切的原因:
@@ -165,7 +165,7 @@ Available toolchains (run `mcpp toolchain install <family> <version>`):
 
 `*` 标记当前的默认对。Targets 块是 target 词汇表的实时视图,共四种状态:
 
-| 状态 | 含义 | 下一步做什么 |
+| 状态 | 含义 | 后续步骤 |
 |---|---|---|
 | `installed` | 本机已有的载荷就能产出它 | 无 |
 | `available` | 本宿主存在可装的载荷 | `mcpp toolchain install` |
@@ -316,7 +316,7 @@ error: [toolchain] linux = "system" is not supported: mcpp builds only with
 `msvc@system` 是**唯一的例外**,而且是另一种拼法:它点名的是一个**族**,mcpp 负责定位并识别
 其安装 —— 那是唯一一个编译器不能被重新分发的平台。见上一节。
 
-#### 为什么工具链与库得到的答案不同
+#### 工具链与库答案不同的原因
 
 mcpp 对 host 依赖的规则并不是各条轴统一的,这个分叉是刻意的:
 
@@ -407,7 +407,7 @@ STL,以及通过它的 `xim:windows-sdk` 依赖带来 ucrt/um 的头文件与导
 
 **Windows SDK 跟着来源走**,因为两条来源回答的是不同的问题,SDK 也必须如此:
 
-| 来源 | SDK 怎么选 |
+| 来源 | SDK 的选定方式 |
 |---|---|
 | `msvc@<toolset>` | **随该 toolset 一起装进 mcpp store 的** `xim:windows-sdk` payload。环境里的 `WindowsSdkDir` / `WindowsSdkVersion` 会被**忽略**,并且 mcpp 会打印一行 `note:` 说明。 |
 | `msvc@system` | 先 **`WindowsSdkDir`**(+ `WindowsSdkVersion`),再 `C:\Program Files (x86)\Windows Kits\10`。 |
@@ -498,7 +498,7 @@ error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
 
 有两类行回答的是另一个问题,它们的 pin 根本不可被推翻:
 
-| 行 | 为什么 |
+| 行 | 原因 |
 |---|---|
 | 所有 `*-none-elf` | 不存在按宿主分的交叉载荷;clang 与 lld 按构造就是交叉编译器,gcc 不是 |
 | `x86_64-windows-musl` | 没有任何 gcc 载荷发得出 PE + musl —— mingw 载荷发的是 PE + MinGW CRT,那是隔壁 `-gnu` 那一行 |
@@ -684,7 +684,7 @@ manifest 所述不同的产物。
 `_MSVC_MD` 烘进工程唯一的那份 `std` 模块,所以与工程不一致的按角色契约无法兑现,
 会被报出来而不是被忽略。
 
-| 取值 | 在 MSVC 上是什么 |
+| 取值 | 在 MSVC 上的含义 |
 |---|---|
 | `self-contained` | `/MT`,静态 CRT。`linkage = "static"` 从 libc 那根轴选中的是同一件事。 |
 | `host-coupled`(`/MD` 下的默认) | 由目标机器提供 `vcruntime140.dll` / `msvcp140.dll` —— 即那台机器装了 Visual Studio 或 redistributable。 |

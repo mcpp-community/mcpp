@@ -12,11 +12,11 @@
 嵌入,[`12-a-new-device-language`](../../examples/12-a-new-device-language/) 新增
 一门语言。
 
-## 规则包是什么
+## 规则包的定义
 
 三部分,没有一部分是 mcpp 特有的:
 
-| 部分 | 是什么 |
+| 部分 | 内容 |
 |---|---|
 | 一个包 | 普通的 `mcpp.toml`,有版本与许可证 |
 | 一个模块 | 一个 `.cppm`,导出 `options` 与一个提交构建边的函数 |
@@ -209,7 +209,7 @@ mcpp::floor("cuda.driver", runtime_needs);
 
 ## 找到规则自己的文件
 
-| 要找什么 | 怎么找 |
+| 对象 | 获取方式 |
 |---|---|
 | 规则包自己的目录树 | `mcpp::dep_dir("<name>")` —— 按**消费者**在 `[dependencies]` 里写的那个名字 |
 | `[xlings.workspace]` 声明的载荷 | `mcpp::xpkg_dir("<name>")` |

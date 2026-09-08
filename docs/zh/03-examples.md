@@ -27,7 +27,7 @@ mcpp build && mcpp run
 
 ### A —— 工程的形状
 
-| 示例 | 第一个教什么 |
+| 示例 | 首次引入的内容 |
 |---|---|
 | [`01-hello`](../../examples/01-hello/) | 一个包、`import std`、`mcpp build` 与 `mcpp run` |
 | [`02-with-deps`](../../examples/02-with-deps/) | `[dependencies]`、锁文件、`mcpp add` |
@@ -36,20 +36,20 @@ mcpp build && mcpp run
 
 ### B —— 发布
 
-| 示例 | 第一个教什么 |
+| 示例 | 首次引入的内容 |
 |---|---|
 | [`03-pack-static`](../../examples/03-pack-static/) | `mcpp pack --mode static`、`[target.<triple>]`、`[pack]` |
 | [`05-lib-distribution`](../../examples/05-lib-distribution/) | 一个库的接口与它的预编译二进制;从同一份源产出 C 头文件与 C++ 模块 |
 
 ### C —— 环境
 
-| 示例 | 第一个教什么 |
+| 示例 | 首次引入的内容 |
 |---|---|
 | [`07-project-subos`](../../examples/07-project-subos/) | `[xlings]`、`[xlings.workspace]`,以及 `PATH` 来自工程声明环境的构建程序 |
 
 ### D —— 目标
 
-| 示例 | 第一个教什么 |
+| 示例 | 首次引入的内容 |
 |---|---|
 | [`06-openkal-cross`](../../examples/06-openkal-cross/) | `--target`,同一份源在任意宿主上为四台机器构建 |
 
@@ -60,7 +60,7 @@ mcpp build && mcpp run
 [`09-heterogeneous`](../../examples/09-heterogeneous/) 按顺序读。它的 README 是
 地图;下表是每个子示例新增的部分。
 
-| 示例 | 第一个教什么 |
+| 示例 | 首次引入的内容 |
 |---|---|
 | [`…/boundary`](../../examples/09-heterogeneous/boundary/) | 单独的岛边界:消费者 import 一个生成的模块,工程里没有接缝也没有头文件。不需要设备 |
 | [`…/cuda`](../../examples/09-heterogeneous/cuda/) | 设备编译器、生成边界之上的接缝、把驱动陈述为 fact 与 floor |
@@ -73,7 +73,7 @@ mcpp build && mcpp run
 
 ### F —— 为生态编写扩展
 
-| 示例 | 第一个教什么 |
+| 示例 | 首次引入的内容 |
 |---|---|
 | [`08-build-rules`](../../examples/08-build-rules/) | 两个规则包与同时使用它们的工程;`host-module = true`、`role = "check"` 的 `mcpp::action` |
 | [`12-a-new-device-language`](../../examples/12-a-new-device-language/) | `device_extensions` 与 `rule_module`:规则包教会 mcpp 一门引擎从未听说过的语言 |

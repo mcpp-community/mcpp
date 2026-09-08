@@ -233,7 +233,7 @@ sees a version number assumes there is a contract behind it.
 
 ## 8. Kinds
 
-### `mcpp.env` — where mcpp keeps things
+### `mcpp.env` — the locations mcpp uses
 
 ```
 mcpp self env --format json
@@ -285,7 +285,7 @@ mcpp cache list --format json
 
 `data` is `{root, entries[]}`, the same document `--json` prints bare.
 
-### `mcpp.toolchain.list` — what is installed, and which targets this host serves
+### `mcpp.toolchain.list` — the installed toolchains and the targets this host serves
 
 ```
 mcpp toolchain list --format json
@@ -304,7 +304,7 @@ convention, and is empty for a row that has none. `x86_64-linux-gnu` has an
 installed gcc and no convention at all, so selecting "rows whose convention is a
 gcc" must read `pin`.
 
-### `mcpp.why.toolchain` — what a build for one pair would resolve to
+### `mcpp.why.toolchain` — the resolution for one (target, toolchain) pair
 
 ```
 mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json

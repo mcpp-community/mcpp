@@ -55,7 +55,7 @@ and `logcat` are equally unknown to it: it knows only that a package may supply
 named runners, and performs the argv it finds. A fixed set of names in the
 engine would decide, in the engine, which domains are expressible.
 
-## What a package supplies
+## The package’s contribution
 
 ```cpp
 mcpp::runner("qemu-system-arm");        // the default: argv token by token
@@ -78,7 +78,7 @@ failure mode — a declaration is not an install, so the lookup can return empty
 and leave no runner configured with nothing said about why. Naming the program
 lets mcpp report exactly which directories it searched.
 
-## What a project overrides
+## The project’s overrides
 
 ```toml
 [target.thumbv7em-none-eabihf]

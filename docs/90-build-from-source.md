@@ -116,7 +116,7 @@ when it is skipped:
 
 Three shapes it catches, all of which have shipped here at least once:
 
-| shape | what it looks like |
+| shape | form |
 |---|---|
 | the criterion never runs | a test gated on a capability no job provides |
 | the criterion cannot fail | a substring search satisfied by any wording |
@@ -131,7 +131,7 @@ nothing.
 `.github/tools/` holds eighteen scripts. Four are worth knowing before a first
 PR:
 
-| script | what it refuses |
+| script | the condition it refuses |
 |---|---|
 | `check_docs_style.sh` | question headings, second person in a reference chapter, a 简体中文 page whose heading structure has fallen behind |
 | `check_docs_structure.sh` | a chapter citing a design record, a `docs/NN-*.md` path that does not resolve, a translation missing a table |

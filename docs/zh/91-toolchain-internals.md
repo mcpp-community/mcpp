@@ -70,7 +70,7 @@ xlings 后端解析/自动安装到沙箱
 | `payloadPaths` | 由解析出的 runtime binding(§2.1)**精确指名** glibc payload;linux-headers 仍按兄弟 xpkg 发现。没有 binding 就不走 payload-first——这是设计,不是缺陷 |
 | 运行库目录 | 工具链私有 lib 目录,用于产物的 `-L`/`-rpath` |
 
-### 2.1 runtime binding:绑哪个 libc,只决定一次
+### 2.1 runtime binding:绑定的 libc,只决定一次
 
 payload-first 的构建会链接到某个具体的 glibc,而**是哪一个**是根项目本地开发 OS 的事实,
 不该从编译器路径或 shell 状态推断。mcpp 只有两种选择:
@@ -170,7 +170,7 @@ mcpp 在**编译与链接**两条线上都发 `--sysroot=<subos>`,所以 subos �
 
 闭包是一张有序表,每条带来源:
 
-| origin | 例子 | 可变? | 可随产物分发? |
+| origin | 例子 | 可变性 | 可随产物分发 |
 |---|---|---|---|
 | `payload` | `<store>/xim-x-glibc/2.39/lib64` | 否 —— 装一次不再动 | 否 |
 | `package` | 依赖描述符的 `[runtime]` 目录 | 否 | 否 |
@@ -382,7 +382,7 @@ verdict 以 `.mcpp-runtime-verdicts.json` 存在 `build.ninja` 旁,键包含产�
 `<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`。精确 payload 缺失/陈旧就是错误,其他已安装版本
 永远不是回退项。
 
-### 6.2 一条运行时搜索路径可以住在哪里(`runtime_env_contract.cppm`)
+### 6.2 运行时搜索路径的允许位置(`runtime_env_contract.cppm`)
 
 告诉 loader「去哪找」有两条通道,差别不在便利性,而在**波及范围**:
 
@@ -475,7 +475,7 @@ mcpp 把运行时 DLL 部署到产物 exe 旁,这正是该平台对 §3–§4 �
 **工程自己产出的共享库**(`kind = "shared"`)确实按格式而不同,而这个差别不是
 flag 的拼法 —— 它是产物记录下的关于它自己的东西:
 
-| 格式 | 生产方发出什么 | 消费方链接什么 |
+| 格式 | 生产方的产出 | 消费方链接的对象 |
 |---|---|---|
 | ELF | 声明了 soname 时发 `-Wl,-soname,<n>` | `-L` + `-l`、`-Wl,-rpath,$ORIGIN` |
 | Mach-O | **总是**发 `-Wl,-install_name,@rpath/<file>` | `-L` + `-l`、`-Wl,-rpath,@loader_path` |
@@ -496,7 +496,7 @@ flag 的拼法 —— 它是产物记录下的关于它自己的东西:
 而 `prepare.cppm` 现在会问它 —— 显式的 `[target.X] toolchain = "…"` 是作者自备
 交叉工具链时的出口。
 
-### 7.5 一个 flag 由哪根轴决定
+### 7.5 决定一个 flag 的轴
 
 2026.8.18 那一轮改了四个 flag,每一个此前都挂在错误的轴上。而这类错误的表现
 永远相同:**在恰好一个平台上莫名其妙地失败**,报错既不点名那个 flag,
@@ -504,7 +504,7 @@ flag 的拼法 —— 它是产物记录下的关于它自己的东西:
 
 一共三根轴,而在它们之间做选择的问题是:**这个 flag 最终被谁读到。**
 
-| 轴 | 问题 | 例子 | 怎么问 |
+| 轴 | 问题 | 例子 | 提问方式 |
 |---|---|---|---|
 | **目标格式** | 产出的是哪种映像 | `-fPIC`(PE 代码本就位置无关;clang 直接拒绝这个 flag) | `triple::parse(...)->is_pe()`,宿主兜底 |
 | **目标 ABI** | 哪个链接器会消费它 | `--out-implib` vs `/IMPLIB:`、`/DEF:`、SONAME / install-name 的形式 | `is_msvc_target(tc)`、`triple->is_msvc_env()` |

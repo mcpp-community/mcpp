@@ -14,13 +14,13 @@ and packaging the emulator or the probe driver themselves, which is
 
 Before: [33 — Authoring a Runtime Adapter](33-authoring-an-adapter.md).
 
-## What a BSP supplies
+## The contents of a BSP
 
 A freestanding target has no operating system, so everything a hosted program
 gets for free has to come from somewhere. A BSP is that somewhere, and it
 supplies **the whole target world**:
 
-| | what it is |
+| | content |
 |---|---|
 | the memory map | a linker script — the one fact a program can neither derive nor guess |
 | the startup code | what runs before `main`, and the vector table |

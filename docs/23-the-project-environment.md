@@ -24,7 +24,7 @@ subos = "tools"
 
 Working project: `examples/07-project-subos/`.
 
-## 1. What a SubOS is
+## 1. The definition of a SubOS
 
 A SubOS is a directory that holds a userspace: its own `bin`, its own library
 view, its own installed package versions, and a `subos_info` block describing
@@ -43,7 +43,7 @@ Two kinds exist, and the difference is where the directory lives:
 The third row is the isolated one. It belongs to the project, it sits beside
 the manifest, and removing the project removes it.
 
-## 2. What the declaration decides
+## 2. The scope of the declaration
 
 **The C library.** A payload-first build links against one specific glibc, and
 which one is a fact about the project rather than about the machine. Chapter 8
@@ -74,7 +74,7 @@ Declaring it is what puts it there.
 the declared environment the default answer; everything else stays reachable
 behind it.
 
-### 2.1 Which version pins apply (2026.9.3+)
+### 2.1 The version pins that apply (2026.9.3+)
 
 Naming an environment also changes where a tool's version comes from. A
 project's own `[xlings.workspace]` entries always win — over the environment
@@ -95,7 +95,7 @@ An `xlings use` performed inside the project outranks both, until mcpp rewrites
 the environment: it is the layer merged last, and an action a person took
 should beat a file.
 
-## 3. What the declaration does not decide
+## 3. Outside the declaration’s scope
 
 `[xlings.workspace]` names packages to be present in the environment, and each one's
 payload directory is delivered separately as `MCPP_XPKG_<NAME>_DIR`. That is a
@@ -142,7 +142,7 @@ than fails**: the runtime binding reports `inconclusive`, no payload-first
 binding is available, a note is printed, and the build continues. Chapter 8
 gives the full rule.
 
-## 5. When a private environment is worth it
+## 5. The case for a private environment
 
 - **A generator whose version changes what it emits.** `protoc`, `flatc`, a
   shader compiler: the output is an input to everything downstream, so the
@@ -188,9 +188,9 @@ downloaded: this chapter. Omitting the tier is the historical behaviour.
 CI host and execute a cross-built artifact through it, without the manifest
 naming the payload's path.
 
-## 6. What belongs somewhere else
+## 6. Declarations that belong elsewhere
 
-| Need | Where it goes |
+| Need | Declared in |
 |---|---|
 | a library the program links | `[dependencies]` |
 | the compiler | `[toolchain]`, chapter 3 |
@@ -344,7 +344,7 @@ build compiles against.
 See [SPEC-004](specs/manifest-semantics.md) for the general rule these two axes
 are an instance of.
 
-### `when` — which verbs need this tool (mcpp 2026.9.4.2+)
+### `when` — the verbs that need this tool (mcpp 2026.9.4.2+)
 
 ```toml
 [xlings.workspace]

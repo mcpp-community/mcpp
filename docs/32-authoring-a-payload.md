@@ -17,7 +17,7 @@ Before: [31 — Authoring a Rule Package](31-authoring-a-rule-package.md), whose
 rules declare the payloads they drive. After:
 [33 — Authoring a Runtime Adapter](33-authoring-an-adapter.md).
 
-## What a payload is
+## The definition of a payload
 
 Everything mcpp installs and does not compile: a compiler, a shader compiler, a
 device toolkit, an emulator, a probe driver, a prebuilt C library. A project
@@ -117,7 +117,7 @@ which is what makes a stack of payloads resolve without anyone setting
 the SubOS sysroot view. **Declared rather than copied** — xlings removes them
 with the package, and a copy would outlive its owner.
 
-## The tier: when a payload is needed
+## The tier: the commands that need a payload
 
 ```toml
 "xim:qemu-arm" = { version = "9.2.4-1", when = "run" }

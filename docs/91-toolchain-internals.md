@@ -74,7 +74,7 @@ is resolved/auto-installed via the xlings backend into the sandbox
 
 `detect`/`probe` (`src/toolchain/detect.cppm`, `probe.cppm`) then derive:
 
-| Field | How |
+| Field | Derivation |
 |---|---|
 | `targetTriple` | `<compiler> -dumpmachine` |
 | `sysroot` | `-print-sysroot` (validated: must actually carry libc headers), with a remap fallback for xlings-built GCC whose baked build-time path doesn't exist locally |
@@ -84,7 +84,7 @@ is resolved/auto-installed via the xlings backend into the sandbox
 Note the probe deliberately does **not** mine the clang cfg for `--sysroot`
 anymore: the cfg is an output of this machinery, not an input (§5).
 
-### 2.1 The runtime binding — which libc, decided once
+### 2.1 The runtime binding — one libc, decided once
 
 A payload-first build links against a specific glibc, and *which* one is a
 fact about the root project's local development OS, not something to infer
@@ -207,7 +207,7 @@ decision, or a link succeeds and the artifact cannot start.
 
 The closure is one ordered list, each entry tagged with where it came from:
 
-| origin | example | mutable? | ships? |
+| origin | example | mutability | redistributable |
 |---|---|---|---|
 | `payload` | `<store>/xim-x-glibc/2.39/lib64` | no — written once at install | no |
 | `package` | a dependency's `[runtime]` dir | no | no |
@@ -470,7 +470,7 @@ Post-install alignment follows the same identity rule: `glibc@2.44` resolves
 only `<xpkgs>/xim-x-glibc/2.44/{lib64,lib}`. A missing/stale exact payload is an
 error; another installed version is never a fallback.
 
-### 6.2 Where a runtime search path is allowed to live (`runtime_env_contract.cppm`)
+### 6.2 The permitted locations of a runtime search path (`runtime_env_contract.cppm`)
 
 There are two ways to tell a loader where to look, and they differ by blast
 radius, not by convenience:
@@ -582,7 +582,7 @@ everything §3–§4 does for ELF.
 and the difference is not a flag spelling — it is what the artifact records about
 itself:
 
-| format | what the producer emits | what the consumer links |
+| format | the producer's output | the consumer's link input |
 |---|---|---|
 | ELF | `-Wl,-soname,<n>` when declared | `-L` + `-l`, `-Wl,-rpath,$ORIGIN` |
 | Mach-O | `-Wl,-install_name,@rpath/<file>` **always** | `-L` + `-l`, `-Wl,-rpath,@loader_path` |
@@ -607,7 +607,7 @@ question "can this machine produce it", and `prepare.cppm` now asks it — with 
 explicit `[target.X] toolchain = "…"` as the escape hatch for a cross toolchain
 supplied by the author.
 
-### 7.5 Which axis decides a flag
+### 7.5 The axis that decides a flag
 
 Four flags changed in the 2026.8.18 round, and each had been keyed on the wrong
 axis. Every one of those mistakes showed up the same way: an inexplicable
@@ -617,7 +617,7 @@ the decision behind it.
 There are three axes, and the question that picks between them is **who finally
 reads this flag**.
 
-| axis | the question | examples | how it is asked |
+| axis | the question | examples | the form of the query |
 |---|---|---|---|
 | **target format** | what kind of image is produced | `-fPIC` (PE code is position independent by design; clang refuses the flag outright) | `triple::parse(...)->is_pe()`, host fallback |
 | **target ABI** | which linker will consume this | `--out-implib` vs `/IMPLIB:`, `/DEF:`, the SONAME / install-name form | `is_msvc_target(tc)`, `triple->is_msvc_env()` |

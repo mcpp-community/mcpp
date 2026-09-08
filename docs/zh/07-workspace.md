@@ -283,7 +283,7 @@ mcpp run -p server -- --port 8080
 `mcpp test --workspace` 逐成员独立汇报、遇失败继续,只要有任一成员失败即非零退出——
 非常适合作为「一个测试众多库的工作空间」的单条、无 shell 的 CI 步骤。
 
-#### 扇出汇报什么
+#### 扇出的汇报内容
 
 ```
    Workspace testing member 'libs/core' (3/97)

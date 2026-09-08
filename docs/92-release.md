@@ -186,7 +186,7 @@ clean-room that still reports the old `latest` has not failed — it has not cau
 up. `ci-fresh-install`'s `wait-index` job encodes exactly this with a bounded
 15-minute wait.
 
-## 4. The bootstrap pin: what it is, and when to bump it
+## 4. The bootstrap pin: its definition and its update conditions
 
 `.xlings.json`'s `[workspace].mcpp` is the **starting point of self-hosting** —
 the released mcpp that `xlings install mcpp` puts in the workspace so CI can build
@@ -224,7 +224,7 @@ curl -fsSL https://github.com/xlings-res/xim-index/releases/download/latest/xim-
 pushed. Nothing enforces this, and in the job log the resulting failure is
 indistinguishable from a genuinely wrong version name.
 
-## 5. `MCPP_PIN` is derived, and why that matters
+## 5. `MCPP_PIN` is derived, and the consequence
 
 `ci-fresh-install.yml` used to carry a second hand-edited copy of the pin. It was
 never the same thing: `MCPP_PIN` is the version **under test** — always the newest

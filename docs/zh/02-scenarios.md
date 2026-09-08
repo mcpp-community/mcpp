@@ -15,7 +15,7 @@
 
 ## 场景一览
 
-| | 场景 | 跑什么 |
+| | 场景 | 运行 |
 |---|---|---|
 | [1](#1-命令行工具或服务) | 命令行工具或服务 | `examples/01-hello` → `03-pack-static` |
 | [2](#2-供他人-import-的库) | 供他人 import 的库 | `examples/11-features`、`05-lib-distribution` |

@@ -15,7 +15,7 @@ Before: [05 — Dependencies and Resolution](05-dependencies.md) covers
 not. After: [09 — Commands by Scenario](09-commands-by-scenario.md) is the
 lookup for everything else.
 
-## What mcpp considers a test
+## The definition of a test
 
 Every `tests/**/*.cpp` is a test: mcpp compiles each one into its own program
 and runs it. A test passes when its program exits zero.
@@ -48,7 +48,7 @@ mcpp test -- --verbose    # everything after `--` goes to each test binary
 Tests build with the same axes as `mcpp build`, so a test runs against the
 configuration it is meant to check rather than against the default one:
 
-| flag | what it selects |
+| flag | the set it selects |
 |---|---|
 | `--profile <name>` | `dev` (default), `release`, `dist`, or a `[profile.*]` the manifest declares |
 | `--features <list>` | the feature set for the test build |

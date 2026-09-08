@@ -111,7 +111,7 @@ $ mcpp build --target aarch64-linux-musl
 `--target aarch64-linux-gnu` 仍会撞上 `planned` 行的拒绝 —— 那正是用显式
 `[target.<triple>] toolchain` 提前加入某一行的逃生口。
 
-### 该用哪种拼法
+### 采用的拼法
 
 **在构建期体系下,省略它。** 图供给 C 库与各运行时,那一段陈述的是一个
 不会被查询的请求。在这种体系下,`x86_64-windows` 不只是比
@@ -124,7 +124,7 @@ $ mcpp build --target aarch64-linux-musl
 **在 Windows 上,想要微软那套 ABI 时写 `msvc`。** `gnu` 是默认填充,
 而 `msvc` 是不同的对象 ABI 而非不同的 C 库,因此那一段在两种体系下都有意义。
 
-## 构建报告了什么
+## 构建的报告内容
 
 报告以写下的目标为标题,并把它解析为编译器自己的拼写:
 
@@ -160,7 +160,7 @@ Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu selects the Itanium 
 横切事项。把它读成 `c++-abi libc++` 是第二个错误答案,因为 libstdc++
 坐在同一套 ABI 上。
 
-## 三套词表,以及它们为何不同
+## 三套词表,以及它们不同的原因
 
 一个三元组由三方书写,而三方并不共用一套约定;mcpp 在它们之间翻译。
 知道手上这个字符串属于哪一套,第三段带来的困惑就消掉大半。
@@ -204,7 +204,7 @@ clang++                 →  x86_64-unknown-linux-gnu,而 --target= 可改
 
 MinGW 自己的三元组是 `x86_64-w64-mingw32`:
 
-| 段 | 值 | 为什么 |
+| 段 | 值 | 原因 |
 |---|---|---|
 | arch | `x86_64` | |
 | vendor | `w64` | 项目名 `mingw-w64`,用以区别于已停滞的原 `mingw32` 项目 |
@@ -239,7 +239,7 @@ LLVM  x86_64 - unknown - windows - gnu
 
 ### mcpp 保留的那一套
 
-| 词表 | 例 | 谁读 |
+| 词表 | 例 | 读者 |
 |---|---|---|
 | GCC / autoconf | `x86_64-w64-mingw32` | 预构建载荷的编译器,以文件名的形式 |
 | LLVM | `x86_64-w64-windows-gnu` | `clang --target=` |
@@ -373,7 +373,7 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 `linux-x86_64` 够得着,从 `linux-aarch64` 够不着;`aarch64-linux-gnu` 是镜像的
 情形,两台上都是 `planned`。把它们并成 `linux`,一台会把另一台的行覆盖掉。
 
-### 哪台构建机服务哪个目标
+### 构建机与它服务的目标
 
 | target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
 |---|---|---|---|---|---|---|
@@ -405,7 +405,7 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 
 ### 列背后的规则
 
-| 目标类别 | 哪些构建机服务它 | 为什么 |
+| 目标类别 | 服务它的构建机 | 原因 |
 |---|---|---|
 | `*-linux-musl` | Linux(任意架构)、Windows(仅同架构) | musl 载荷是自足的 |
 | `*-linux-gnu` | Linux,且仅同架构 | 还要本机架构的 `xim:glibc` / `xim:linux-headers` |

@@ -74,7 +74,7 @@ preprocessor directive is required in the source. A worked example is
 
 A project names the last of these. The others follow from its dependencies.
 
-## Why The Compiler Must Be LLVM
+## The Reason The Compiler Must Be LLVM
 
 `openkal-llvm-runtime` declares the requirement rather than leaving it to be
 discovered:
@@ -95,7 +95,7 @@ With the requirement declared, the build refuses the combination before it
 compiles anything, and names the command that selects a compiler which satisfies
 it.
 
-## How The Target Is Chosen
+## Target Selection
 
 The target row of mcpp's own vocabulary may carry a toolchain convention. That
 convention names the payload which supplies **that target's C library**, and it
@@ -275,7 +275,7 @@ execution contexts, traps, per-CPU state and address spaces — presented as one
 interface over several instruction sets, with a backend package per instruction
 set. A kernel depends on it and supplies its own platform layer, or none.
 
-### Why x86_64 Bare Metal Required Engine Work
+### The Engine Work x86_64 Bare Metal Required
 
 `riscv64-none-elf` and `aarch64-none-elf` are rows in a table and nothing more:
 Clang has a BareMetal toolchain for both, drives their links itself and reaches

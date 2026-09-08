@@ -129,7 +129,7 @@ from `planned`, the lexical answer wins again with nothing to edit.
 is the escape hatch for opting into a row early with an explicit
 `[target.<triple>] toolchain`.
 
-### Which Spelling To Use
+### The Spelling To Use
 
 **Under the build-time system, decline it.** The graph supplies the C library
 and the runtimes, so the segment states a request that is not consulted. Under
@@ -144,7 +144,7 @@ different artefacts. Writing the segment is how that choice is made.
 default fill, and `msvc` is a different object ABI rather than a different C
 library, so the segment is meaningful there in both systems.
 
-## What The Build Reports
+## The Build Report
 
 The report heads with the target as written and resolves it to the compiler's
 own spelling:
@@ -186,7 +186,7 @@ convention the **objects follow**, which several layers must agree on. Reading
 it as `c++-abi libc++` is a second wrong answer, since libstdc++ sits on the
 same ABI.
 
-## Three Vocabularies, And Why They Differ
+## Three Vocabularies, And The Reason They Differ
 
 A triple is written by three parties that do not share a convention, and mcpp
 translates between them. Knowing which one a string belongs to removes most of
@@ -234,7 +234,7 @@ a payload. It is also why the build-time system needs only one compiler.
 
 MinGW's own triple is `x86_64-w64-mingw32`:
 
-| Field | Value | Why |
+| Field | Value | Reason |
 |---|---|---|
 | arch | `x86_64` | |
 | vendor | `w64` | the project is `mingw-w64`, distinguishing it from the stalled original `mingw32` |
@@ -419,7 +419,7 @@ not from `linux-aarch64`, while `aarch64-linux-gnu` is the mirror case and is
 `planned` on both. Collapsing them to `linux` would let one overwrite the
 other's rows.
 
-### Which build host serves which target
+### Build hosts and the targets they serve
 
 | target | tier | pin | linux-x86_64 | linux-aarch64 | macos-arm64 | windows-x86_64 |
 |---|---|---|---|---|---|---|
@@ -452,7 +452,7 @@ installed by mcpp · `SDK` the platform's own · `—` unreachable from this hos
 
 ### The rule behind the columns
 
-| target class | which build hosts serve it | why |
+| target class | the build hosts that serve it | reason |
 |---|---|---|
 | `*-linux-musl` | Linux (any arch), Windows (same arch only) | the musl payloads are self-contained |
 | `*-linux-gnu` | Linux, same arch only | additionally needs the host-native `xim:glibc` / `xim:linux-headers` |

@@ -30,7 +30,7 @@ private glibc precisely so a binary's behaviour does not depend on which
 distribution happens to be underneath it, and reaching back out to the host's
 libc to distribute would give that away at the last step.
 
-| | Route | Command | Where its C runtime comes from | Choose it when |
+| | Route | Command | Source of its C runtime | Applicability |
 |---|---|---|---|---|
 | **A** | Through the ecosystem | `mcpp emit xpkg` → `xlings install <pkg>` | the target machine's own xlings payloads | the target has xlings |
 | **B** | One static file | `mcpp build --target x86_64-linux-musl` | nowhere — it is linked in | a single file with no runtime dependency |
@@ -152,7 +152,7 @@ when it includes a directory (relative or absolute), the literal path is used.
 
 For the full set of options, see `mcpp pack --help`.
 
-### What a packed artifact is built with, and what travels inside it
+### The build inputs of a packed artifact, and its contents
 
 Two things differ from `mcpp build`, and both exist because a package leaves
 this machine:
@@ -177,7 +177,7 @@ producer's source tree and build directory. What is removed depends on what the
 artifact *is* — this is dh_strip's division, and the archive row is the one that
 matters:
 
-| artifact | strip flags | why not more |
+| artifact | strip flags | the reason for no more |
 |---|---|---|
 | executable | `--strip-all` | nothing links against it |
 | shared library | `--strip-unneeded` | keeps `.dynsym` — that IS the export list |

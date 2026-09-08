@@ -14,7 +14,7 @@ GPU and AI accelerator targets, and mixed host/device compilation: how mcpp
 builds device code, and how a prebuilt artifact states which devices it can
 run on.
 
-## What is supported
+## The support surface
 
 A build names the device backends it targets, and it may name **several**:
 
@@ -41,7 +41,7 @@ Vulkan/SPIR-V and Ascend C -- and the table under "The lanes" says which
 compiler and which payloads each drives. Nothing in the engine holds a vendor
 name, so a sixth is a package rather than an engine change.
 
-## Two shapes, and why one mechanism reaches both
+## Two shapes, and the mechanism common to both
 
 Accelerator toolchains come in two shapes. They describe how a toolchain is
 normally used, not how many mechanisms a build system needs.
@@ -373,7 +373,7 @@ not a gate. It is a different field from an artifact's `accel` on purpose — a
 declaration is written by hand and may be aspirational, while an artifact's
 field is measured from the build that produced it.
 
-## What a prebuilt artifact states
+## The declarations of a prebuilt artifact
 
 An artifact that carries device code records it beside its compatibility tag:
 
@@ -393,7 +393,7 @@ already contains a variable number of dashes.
 An absent `accel` means the artifact carries no device code and constrains
 nothing, which is why a CPU-only library is usable by every build.
 
-### How a consumer is matched
+### Consumer matching
 
 A build's request is satisfied by an artifact when, for each backend the build
 asks for, the artifact declares that backend, agrees on the toolkit's major
@@ -580,7 +580,7 @@ in precisely the way the dimension exists to prevent. A publisher writes the
 field explicitly today, which is what index descriptors do; `mcpp pack` will
 emit it once `kind = "device"` puts the device compilation inside mcpp.
 
-## The lanes, and what each one drives
+## The lanes, and the toolchain each drives
 
 A rule package owns one compiler's spelling. The engine knows none of these
 names: `tests/unit/test_core_vendor_probes.cpp` asserts that no vendor tool
@@ -621,7 +621,7 @@ unwinder symbols they share. Nothing may cross the seam: a SYCL exception is
 caught in the device translation unit and returned as a code, because the
 runtime that threw it is not the one the caller would unwind with.
 
-## Which platforms each lane reaches
+## The platforms each lane reaches
 
 A lane reaches a platform when three things hold there: the device compiler is
 published for it, the runtime the produced artifact needs can be reached, and
@@ -632,7 +632,7 @@ it downloads nothing and asks only whether the modules compile); that fixture
 turned three latent host differences into compile errors on the runners that
 had them, and none of the three had been visible to a Linux build.
 
-| lane | Linux | macOS | Windows | what decides it |
+| lane | Linux | macOS | Windows | deciding factor |
 |---|---|---|---|---|
 | `rules-spirv` | yes | yes | yes | the shader compiler is published for all three: `xim:glslang` on Linux, `xim:shaderc` on macOS arm64 and Windows x86_64 |
 | `rules-cuda` | yes | no | yes | NVIDIA publishes the redistributable components for Linux and Windows and has published no macOS toolkit since CUDA 10.2 |
@@ -686,7 +686,7 @@ onto the artifact's own search path. macOS (dyld) and Windows (the PE loader)
 have no such layer by construction, and a project targeting them declares no
 adapter.
 
-## What a framework looks like on top of this
+## The shape of a framework built on this
 
 The five lanes prove a rule package can drive five compilers, the newest of
 them a vendor outside the NVIDIA and Khronos lineages. A framework is

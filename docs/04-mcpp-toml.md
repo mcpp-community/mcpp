@@ -156,7 +156,7 @@ the loader opens and the import library the linker consumes, with the export
 list generated from the objects on the MSVC ABI (which exports nothing without
 `__declspec(dllexport)` or a `.def`). See `tests/e2e/08`, `257` and `259`.
 
-#### `exports` — which symbols the artifact publishes (mcpp 2026.9.6.5+)
+#### `exports` — the artifact’s published symbol set (mcpp 2026.9.6.5+)
 
 ```toml
 [targets.mydriver]

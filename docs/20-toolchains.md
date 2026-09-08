@@ -91,7 +91,7 @@ The pair persists as `[toolchain] default = "gcc@16.1.0"` +
 configs with combined spellings like `default = "gcc@15.1.0-musl"` keep
 working unchanged.)
 
-### What decides a build's compiler
+### Compiler selection for a build
 
 Five things can name it. They are ranked, and the rank is what makes the two
 statements a project can write outrank everything mcpp keeps on its own:
@@ -173,7 +173,7 @@ Available toolchains (run `mcpp toolchain install <family> <version>`):
 `*` marks the default pair. The Targets block is the live view of the target
 vocabulary, in four statuses:
 
-| Status | Meaning | What to do next |
+| Status | Meaning | Next step |
 |---|---|---|
 | `installed` | a payload here already produces it | nothing |
 | `available` | a payload exists for this host | `mcpp toolchain install` |
@@ -339,7 +339,7 @@ error: [toolchain] linux = "system" is not supported: mcpp builds only with
 *family* whose installation mcpp locates and identifies, on the one platform
 where the compiler cannot be redistributed. See the section above.
 
-#### Why the toolchain and the libraries get different answers
+#### The reason the toolchain and the libraries differ
 
 mcpp's rule about host dependence is not uniform across axes, and the split is
 deliberate:
@@ -443,7 +443,7 @@ environment from the VC tools + Windows SDK (no `vcvarsall` involved), stages
 **The Windows SDK follows the origin**, because the two origins answer
 different questions and so must the SDK:
 
-| origin | how the SDK is chosen |
+| origin | SDK selection |
 |---|---|
 | `msvc@<toolset>` | the `xim:windows-sdk` payload installed **with that toolset**, in mcpp's own store. `WindowsSdkDir` / `WindowsSdkVersion` in the environment are **ignored**, and mcpp prints a `note:` saying so. |
 | `msvc@system` | **`WindowsSdkDir`** (+ `WindowsSdkVersion`) if declared, then `C:\Program Files (x86)\Windows Kits\10`. |
@@ -543,7 +543,7 @@ error: target 'x86_64-linux-musl' takes its C library from the 'gcc@16.1.0'
 
 Two rows answer a different question, and their pin cannot be overridden at all:
 
-| row | why |
+| row | reason |
 |---|---|
 | every `*-none-elf` | no per-host cross payload exists; clang and lld are cross-compilers by construction and gcc is not |
 | `x86_64-windows-musl` | no gcc payload emits a PE with a musl C library — the mingw payload emits PE with the MinGW CRT, which is the separate `-gnu` row |
@@ -710,7 +710,7 @@ on request).
 because the hazard does. A `.so`/`.dylib`/`.dll` is not a small executable — it is
 loaded *into* a process that already has a C++ runtime.
 
-| target | default for `kind = "shared"` | why |
+| target | default for `kind = "shared"` | reason |
 |---|---|---|
 | ELF (Linux, …) | `toolchain-coupled` | ELF has one global symbol namespace and the first definition loaded wins. A `.so` that statically embedded libstdc++ **exports** it, and the executable linking that library binds *its* `std::` references there — its own `self-contained` contract silently becomes a no-op, and its C++ runtime is whichever build of that library happens to load. |
 | Mach-O | `self-contained` | the mechanism there is already `-load_hidden`, i.e. hidden visibility, so dyld never unifies those symbols; and toolchain-coupled is not available on macOS at all (see the note below). |
@@ -743,7 +743,7 @@ bakes `_MSVC_MT`/`_MSVC_MD` into the one `std` module a project builds, so a
 per-role contract that disagrees with the project's cannot be honoured and is
 reported rather than ignored.
 
-| value | what it is on MSVC |
+| value | meaning on MSVC |
 |---|---|
 | `self-contained` | `/MT` — the static CRT. `linkage = "static"` selects the same thing from the libc axis. |
 | `host-coupled` (default under `/MD`) | the target provides `vcruntime140.dll` / `msvcp140.dll` — i.e. Visual Studio or the redistributable is installed there. |

@@ -147,7 +147,7 @@ soname = "libmylib.so.1"  # 可选: Linux/ELF ABI 名称,运行时会生成同�
 MSVC ABI 上从对象生成导出表(该 ABI 没有 `__declspec(dllexport)` 或 `.def` 时
 不导出任何符号)。参见 `tests/e2e/08`、`257`、`259`。
 
-#### `exports` —— 产物发布哪些符号(mcpp 2026.9.6.5+)
+#### `exports` —— 产物发布的符号集合(mcpp 2026.9.6.5+)
 
 ```toml
 [targets.mydriver]
@@ -1041,7 +1041,7 @@ o.arg("./mkblob.sh").arg("blob.bin").arg("${mcpp.out_dir}/blob.o")
 
 其中四个是**可运行的工程**而不是片段,而工程是更好的答案:它能构建,而且由 CI 检查。
 
-| 形态 | 跑什么 |
+| 形态 | 运行 |
 |---|---|
 | 一个 hello world | [`examples/01-hello`](../../examples/01-hello/) |
 | 带测试的模块化库 | [`examples/11-features`](../../examples/11-features/) |

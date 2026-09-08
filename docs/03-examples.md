@@ -31,7 +31,7 @@ not repeated.
 
 ### A — The shape of a project
 
-| example | first to teach |
+| example | first to introduce |
 |---|---|
 | [`01-hello`](../examples/01-hello/) | a package, `import std`, `mcpp build` and `mcpp run` |
 | [`02-with-deps`](../examples/02-with-deps/) | `[dependencies]`, the lock file, `mcpp add` |
@@ -40,20 +40,20 @@ not repeated.
 
 ### B — Publishing
 
-| example | first to teach |
+| example | first to introduce |
 |---|---|
 | [`03-pack-static`](../examples/03-pack-static/) | `mcpp pack --mode static`, `[target.<triple>]`, `[pack]` |
 | [`05-lib-distribution`](../examples/05-lib-distribution/) | a library's interface and its prebuilt binaries; a C header and a C++ module from one source |
 
 ### C — The environment
 
-| example | first to teach |
+| example | first to introduce |
 |---|---|
 | [`07-project-subos`](../examples/07-project-subos/) | `[xlings]`, `[xlings.workspace]`, a build program whose `PATH` is the environment the project declared |
 
 ### D — Targets
 
-| example | first to teach |
+| example | first to introduce |
 |---|---|
 | [`06-openkal-cross`](../examples/06-openkal-cross/) | `--target`, one source built for four machines from any host |
 
@@ -65,7 +65,7 @@ Bare metal is taught by a **template** rather than by a directory here — see
 Read [`09-heterogeneous`](../examples/09-heterogeneous/) in order. Its README is
 the map; the table below is what each sub-example adds.
 
-| example | first to teach |
+| example | first to introduce |
 |---|---|
 | [`…/boundary`](../examples/09-heterogeneous/boundary/) | the island boundary alone: a generated module the consumer imports, with no seam and no header in the project. Needs no device |
 | [`…/cuda`](../examples/09-heterogeneous/cuda/) | a device compiler, a seam over the generated boundary, the driver stated as a fact and a floor |
@@ -78,7 +78,7 @@ the map; the table below is what each sub-example adds.
 
 ### F — Authoring for the ecosystem
 
-| example | first to teach |
+| example | first to introduce |
 |---|---|
 | [`08-build-rules`](../examples/08-build-rules/) | two rule packages and a project using both; `host-module = true`, `mcpp::action` with `role = "check"` |
 | [`12-a-new-device-language`](../examples/12-a-new-device-language/) | `device_extensions` and `rule_module`: a rule package teaching mcpp a language the engine has never heard of |

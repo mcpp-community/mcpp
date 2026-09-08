@@ -166,7 +166,7 @@ $(find "$XLINGS_HOME" -name mcpp -type f -path '*/bin/*' | head -1) --version
 记录在案的上限约 40 分钟）。clean-room 里仍然报旧的 `latest` 不是失败，是**还没追上**。
 `ci-fresh-install` 的 `wait-index` job 正是把这件事编码成了 15 分钟有界等待。
 
-## 4. 自举 pin：它是什么，什么时候该 bump
+## 4. 自举 pin 的定义与更新条件
 
 `.xlings.json` 的 `[workspace].mcpp` 是**自举的起点** —— 那个由
 `xlings install mcpp` 装进 workspace、供 CI 从源码构建 mcpp 的已发布 mcpp。
@@ -197,7 +197,7 @@ curl -fsSL https://github.com/xlings-res/xim-index/releases/download/latest/xim-
 推 pin 之前，`index_version` 必须等于 xim-pkgindex `main` 的短 SHA。没有任何东西强制
 这一点，而在作业日志里，由此产生的失败与「版本名真的写错了」无法区分。
 
-## 5. `MCPP_PIN` 改为推导，以及这为什么重要
+## 5. `MCPP_PIN` 改为推导，以及由此产生的结果
 
 `ci-fresh-install.yml` 过去带着 pin 的第二份手工副本。它们从来就不是一回事：
 `MCPP_PIN` 是**被测版本** —— 永远是最新的已发布版本；而 `.xlings.json` 是

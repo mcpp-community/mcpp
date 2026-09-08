@@ -301,7 +301,7 @@ member. `mcpp test --workspace` reports each member separately and continues pas
 failing member, exiting non-zero if any member failed — ideal as a single,
 shell-free CI step for a workspace that tests many libraries.
 
-#### What the fan-out reports
+#### The fan-out report
 
 ```
    Workspace testing member 'libs/core' (3/97)

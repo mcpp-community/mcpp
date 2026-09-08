@@ -89,7 +89,7 @@ links `lib<target>.so` and the loader then asks for the `SONAME`, and those are
 different filenames. Shipping only the built file links cleanly and then fails
 to start.
 
-### Why neither set may be trimmed
+### The reason neither set may be trimmed
 
 A **source** distribution of the same package puts every one of its
 `include_dirs` on its consumers' include path. If a binary package shipped a
@@ -266,7 +266,7 @@ That is a degradation, not a break, and it is the right direction. But it means
 **the gate protects new clients only**, which belongs in the release notes of any
 package published to a mixed-version audience.
 
-## What travels inside a package, and what deliberately does not
+## The package contents, and the deliberate exclusions
 
 A published package must work on a machine that is not the publisher's. Two
 steps enforce that, and both run on every artifact the packer stages.
@@ -295,7 +295,7 @@ error while loading shared libraries: libstdc++.so.6: cannot open shared object 
 **`$ORIGIN` is not the fix.** Measured on a real package with the build
 machine's store made unreachable:
 
-| state on the shipped `.so` | consumer's `DT_RPATH` inherited? | result |
+| state on the shipped `.so` | inheritance of the consumer's `DT_RPATH` | result |
 |---|---|---|
 | stale absolute `DT_RUNPATH` | no | fails |
 | **no tag at all** | **yes** | **runs** |
