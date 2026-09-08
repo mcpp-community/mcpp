@@ -165,8 +165,18 @@ sha256, and `["latest"] = { ref = "0.5.0" }` in each. The header comment gains
 the paragraph describing what 0.5.0 changes. Existing consumers pin exact
 versions, so moving `latest` breaks none of them.
 
-*Criterion:* `mcpp add mcpp:plugins` in a sandbox resolves 0.5.0, and the
-descriptor holds exactly one `["latest"]` per platform table.
+*Criterion:* the descriptor parses under `mcpp xpkg parse`, holds exactly one
+`["latest"]` per platform table, and the new version resolves in a sandbox
+**through an exact pin**.
+
+The obvious criterion -- resolve it through `latest` -- cannot be written.
+Measured in a sandbox: `version = "latest"` in a manifest is taken as a literal
+wire address and fails with `install path missing after fetch`; omitting
+`version` is refused by the manifest parser; and `mcpp add mcpp:plugins` answers
+`package version required (M2 supports exact-version only)`. So **no mcpp
+consumer path reads the `latest` alias today** -- it is consumed by xlings'
+own resolution. Moving it is correct and costs nothing, and the criterion has
+to be the descriptor's content plus an exact-pin resolution.
 
 ## T7 -- examples
 
