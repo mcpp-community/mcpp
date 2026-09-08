@@ -379,15 +379,36 @@ reader can reproduce.
 reproduced on the current release, and each of which a reader could otherwise
 only discover by hitting it.
 
-### 11.2 Four chapters present several spellings as equals
+### 11.2 R5's debt was over-reported, and the measurement is why
 
-`04` (50 code blocks), `20` (35), `30` (37) and `40` (33) carry no `<details>`,
-which means every spelling in them is offered to the reader at the same weight.
-R5 says one recommended path in the body and the rest folded away. `05` is the
-one section converted so far, and it is the shape the other four follow.
+The first reading said four chapters present several spellings as equals, on the
+evidence that `04`, `20`, `30` and `40` carry many code blocks and no
+`<details>`. **That counted a proxy instead of the property.** A section with
+five code blocks is usually five features documented in sequence — `20`'s are
+glob exclusion, per-glob flags and generated files — or one continuous session,
+which is what chapter `00`'s six blocks are. Folding any of those away would
+break the thing they belong to.
 
-*Criterion:* a reader who reads only the body and opens nothing can do the thing
-correctly without choosing.
+Measured on the property instead — a section that *offers alternatives at equal
+weight*, marked by "alternatively", "either form", "也可以", "等价写法" — the
+whole tree returns **three** hits, and none of the three is a choice presented
+to a reader: two are prose about what is accepted, one is a comment in a command
+line.
+
+So R5's real debt after `05` (the dependency spellings) and `01` (the two
+installs) is close to zero. What remains is to apply the rule as new
+alternatives appear, not to convert a backlog.
+
+*Criterion, restated so it is not measured by proxy again:* a reader who reads
+only the body and opens nothing can do the thing correctly **without choosing
+between two ways of doing it**.
+
+> Third time in this batch that a criterion counted something adjacent to the
+> property: headings containing "test" for chapters that explain testing,
+> substring spellings for a lookup index, code blocks for offered alternatives.
+> The skill already says a criterion must not be a substring search; the variant
+> worth naming is **counting a proxy**, which passes review because the number
+> is real.
 
 ### 11.3 The manifest reference still holds worked examples and an appendix
 
