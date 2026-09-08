@@ -1134,15 +1134,42 @@ rather than half-fixed.
 
 Section 7 listed what was open before the work. This lists what is open after
 it. 14.1 and 14.2 are CLOSED and kept for their analysis; 14.3 through 14.5,
-14.7 and 14.8 are open; 14.6 was never open. Two entries were found by measurement while assembling the comparison in
-section 10, and the first of them produces a wrong artifact rather than a
-failure.
+14.7 and 14.8 are open; 14.6 was never open.
+
+Both of the closed entries were found by measurement while assembling the
+comparison in section 10, and the first of them produced a wrong artifact
+rather than a failure.
 
 ### 14.1 Object storage does not rebuild when its payload changes
 
-**CLOSED** by `mcpp:plugins` 0.4.0 and mcpp 2026.9.8.1. The analysis is kept
-because two of its three parts are transferable: the requirement had been
-written down and lost, and the first measurement asked the wrong tool.
+**CLOSED** by `mcpp:plugins` 0.4.0 and mcpp 2026.9.8.1, and closed on the
+same measurement that opened it -- in a sandbox, against the PUBLISHED packages,
+resolved through the index, with the engine addressed by its store path:
+
+```
+store path: .../xim-x-mcpp/2026.9.8.1/bin/mcpp      (mcpp:plugins 0.4.0)
+before: bytes=1480
+after:  bytes=1776
+PASS: an edited shader reaches the artifact under object storage
+```
+
+against, from the identical script and the identical edit one release earlier:
+
+```
+store path: .../xim-x-mcpp/2026.9.7.1/bin/mcpp      (mcpp:plugins 0.3.0)
+before: bytes=1480
+after:  bytes=1480      and `Finished dev in 0.06s` -- nothing rebuilt at all
+```
+
+The same run also confirms the refusal a project gets when it asks for this
+storage and not for the tool that generates it, which is default-off:
+`PASS: refused, naming the tool and the key that supplies it`. Closing on "the
+pull request merged" would have been the shape of claim this entry exists to
+remove.
+
+The analysis below is kept because two of its three parts are transferable: the
+requirement had been written down and lost, and the first measurement asked the
+wrong tool.
 
 Measured on `tests/spirv-object-storage` against the released 2026.9.7.1 and
 `mcpp:plugins` 0.3.0, by editing the shader so its compiled output must differ
@@ -1305,6 +1332,10 @@ this.
 measured against the tool rather than read from its help text, and a CI step
 whose denominator is `ls rules/*.cppm` so a seventh rule is counted the day it
 is added rather than the day someone remembers the step.
+
+Verified in the same sandbox run, against the published packages: editing a file
+the shader `#include`s, and nothing else, moved the embedded payload
+(`PASS: an included file reaches the artifact (1884 -> 1868)`).
 
 `mcpp::action::depfile` shipped in 2026.9.7.1 and, through `mcpp:plugins`
 0.3.0, `grep depfile rules/` returned nothing across all six rules; each
