@@ -5,6 +5,58 @@
 
 ## [Unreleased]
 
+## [2026.9.8.1] - 2026-09-08
+
+### 一个包的 host module,按它们互相 import 的顺序编译
+
+一个 host-module 包贡献的那些单元,过去按**路径**排序:lib root 在前,其余按
+`std::set<path>` 的字母序。而 `build_program.cppm` 是一边编译一边累积模块旗标的,
+每个单元只看得见排在它前面的那些 BMI。于是 `rules/spirv.cppm` 排在
+`src/surface.cppm` 之前,一个 import 了本包共享单元的成员先被编译,失败于:
+
+```
+failed to read compiled module: No such file or directory
+note: imports must be built before being imported
+```
+
+**两个方向都复现过**:把共享单元改个名让它的路径排在前面,同一个包就构建通过。所以
+成因是那次排序,不是别的。
+
+**它的代价不是一次失败,而是一个基于误读的设计决定。** `mcpp:plugins` 把这个失败读成
+「第二个单元根本不会被编译成 host module」,于是把成员共享的一切都折进 lib root,
+让它从约二十行涨到约七百行。真正的成因是一次排序。
+
+现在按 import 图拓扑排序,并以**路径序做稳定次序**:没有包内 import 时结果与今天逐字
+相同,只有在今天已经坏掉的情形下才不同。环留给编译器报——那是 ill-formed C++,编译器
+会点名那两个单元,在这里拒绝只会把同一个事实报在更差的位置。
+
+判据是 e2e 633 的两条腿:一条**完全逆序**的链(路径序与 import 序恰好相反),以及一个
+包内无 import 的包必须保持原次序。把修复退回路径排序,第一条腿如实变红。
+
+### `device_extensions` 与 `rule_module` 不再被报成 unsupported
+
+这两个键在同一个解析器里往上约四十行就被读进 `featureDeviceExtensions` 与
+`featureRuleModule`,而且 prepare 在消费者激活该 feature 时会读它们——它们正是「新增一门
+设备语言不需要引擎发版」的全部依据。它们只是没被加进 `kKnownFeatureKeys`,于是引擎对
+一个它刚刚用过的键打印「unsupported key (ignored)」。
+
+比消息错更坏:它在**建议包作者删掉让规则生效的那两行**。
+
+没被发现是因为规则包平时走的 host-module 路径不打印 schema 警告;而**普通**构建会打印。
+`tools = [...]` 让规则包的普通构建成为常态,这条噪音于是浮上来。
+
+### 撤回:一条曾经加上的编译依赖通道
+
+本版早先的草案加过 `mcpp::recompile_if_changed`(协议 9),用来声明「编译某个源文件时
+读到、却没有任何 depfile 会报告」的依赖——`.incbin` 就是这种。它工作正常,判据齐备。
+
+**它被撤回,因为原型证明它不必要。** 那条依赖用引擎已有的唯一图原语就能表达:让生成
+`.S` 的那一步成为一条 `mcpp::action`,载荷是它的**声明输入**。载荷一变,action 重跑;
+没有 `restat`,其 output 被视为新的;汇编边随之重跑。实测 `bytes=64 -> 192`,零引擎改动。
+
+协议因此保持在 8。发一条只有一个使用者、而那个使用者本可以不需要它的协议面,是永久成本
+换一次便利。
+
 ## [2026.9.7.1] - 2026-09-07
 
 ### 四条通道,都是「规则包知道而引擎收不到」的形状

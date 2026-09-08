@@ -357,6 +357,68 @@ inline std::string declared_interface_name(std::string_view source)
     return {};
 }
 
+// The module names a unit IMPORTS, for ordering one package's host modules
+// among themselves.
+//
+// WHY THIS EXISTS. The units a host-module package contributes used to be
+// compiled in PATH order, and a package whose members share a unit could
+// therefore be handed to the compiler in an order the compiler cannot accept:
+// `rules/spirv.cppm` sorts before `src/surface.cppm`, so a member importing
+// the shared unit failed with "failed to read compiled module ... imports must
+// be built before being imported". Measured, and measured in both directions:
+// renaming the shared unit so its path sorted first made the same package
+// build. The cost of not having this was a design decision made against the
+// wrong cause -- a collection folded everything its members shared into the lib
+// root, taking it from about twenty lines to about seven hundred, because the
+// ordering was read as "a second unit is not compiled at all".
+//
+// Deliberately line-based and deliberately shallow, matching
+// `declared_interface_name` above: this answers "which units of THIS package
+// must precede this one", and every name that is not another unit of the same
+// package is discarded by the caller. It is not a substitute for the module
+// scanner, which answers a much harder question about the build graph proper.
+//
+// `export import` counts -- it is an import. A partition import (`import :p;`)
+// does not: a partition is not a unit compiled alone under a name of its own,
+// which is the same reason `declared_interface_name` rejects one.
+inline std::vector<std::string> declared_imports(std::string_view source)
+{
+    auto is_name = [](char c) {
+        return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+            || (c >= '0' && c <= '9') || c == '_' || c == '.';
+    };
+    auto is_ws = [](char c) { return c == ' ' || c == '\t' || c == '\r'; };
+    std::vector<std::string> out;
+    std::size_t lineStart = 0;
+    while (lineStart < source.size()) {
+        auto eol = source.find('\n', lineStart);
+        if (eol == std::string_view::npos) eol = source.size();
+        auto line = source.substr(lineStart, eol - lineStart);
+        lineStart = eol + 1;
+
+        std::size_t i = 0;
+        while (i < line.size() && is_ws(line[i])) ++i;
+        if (line.substr(i).starts_with("//")) continue;
+        if (line.substr(i).starts_with("export")) {
+            i += 6;
+            if (i >= line.size() || !is_ws(line[i])) continue;
+            while (i < line.size() && is_ws(line[i])) ++i;
+        }
+        if (!line.substr(i).starts_with("import")) continue;
+        i += 6;
+        if (i >= line.size() || !is_ws(line[i])) continue;
+        while (i < line.size() && is_ws(line[i])) ++i;
+        std::size_t start = i;
+        while (i < line.size() && is_name(line[i])) ++i;
+        if (i == start) continue;                 // `import :part;`, `import <h>;`
+        std::string name(line.substr(start, i - start));
+        while (i < line.size() && is_ws(line[i])) ++i;
+        if (i >= line.size() || line[i] != ';') continue;
+        out.push_back(std::move(name));
+    }
+    return out;
+}
+
 // One host module as registered for one consumer's build program.
 struct HostModule {
     std::string           module;     // what `import` in build.mcpp addresses
