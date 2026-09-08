@@ -101,6 +101,13 @@ jobs:
       - name: Check documentation style and bilingual parity
         run: bash .github/tools/check_docs_style.sh
 
+      # The architecture half: which tree a document lives in, whether every
+      # path it names resolves, and whether each specification is reachable
+      # from all three indexes. Same placement and the same reason -- it needs
+      # no toolchain, and what it catches is invisible to every other job.
+      - name: Check documentation structure
+        run: bash .github/tools/check_docs_structure.sh
+
       - uses: ./.github/actions/bootstrap-mcpp
 
       - name: Configure mirror + Build mcpp from source (self-host)
