@@ -466,3 +466,10 @@ runner  = ["qemu-system-riscv64", "-machine", "virt", "-nographic",
 [第 15 章](24-openkal-cross.md)完整讲构建期体系。
 [第 03 章](20-toolchains.md)讲工具链轴,它是分开的:目标不决定编译器。
 
+## 当前边界
+
+- 处于 `planned` 档位的行,含义是**词汇表里已登记,而还没有任何东西接线**。点名这样
+  的目标会被解析器接受、被构建拒绝。
+- `host_can_serve` 判断的是「这台机器能不能产出这个目标」,与档位是两个不同的问题。
+  mcpp 支持的目标仍可能从这台宿主够不着;出口是显式的
+  `[target.X] toolchain = "…"`。

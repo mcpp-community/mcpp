@@ -518,3 +518,12 @@ the target row's own default. See [chapter 13](40-baremetal.md).
 [chapter 03](20-toolchains.md) for the toolchain axis, which is separate: a
 target does not determine a compiler.
 
+## Current limitations
+
+- A row at the `planned` tier is **registered in the vocabulary and nothing is
+  wired yet**. Naming such a target is accepted by the parser and refused by the
+  build.
+- `host_can_serve` decides whether this machine can produce a target, and it is
+  a different question from the tier. A target mcpp supports may still be
+  unreachable from this host; the escape hatch is an explicit
+  `[target.X] toolchain = "…"`.

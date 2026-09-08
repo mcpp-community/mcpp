@@ -293,3 +293,14 @@ unconditionally, so "only when needed" needs no separate table.
 > The section has been parsed since early versions and, until 2026.8.29.1, read
 > by nothing that made a decision: writing it produced a manifest that loaded,
 > no diagnostic, and no effect.
+
+## Current limitations
+
+- **Two things need the network, and only two:** resolving a branch that has no
+  commit in the lock, and cloning a commit that is not cached yet. A `git =`
+  value naming a local directory or a `file://` URL needs neither and is never
+  refused offline.
+- The index-refresh window **does not apply to a selector that states a
+  namespace**. `mcpplibs.gtest` misses and stays missed until the next refresh.
+- `mcpp.lock` records and verifies a resolution; it does not constrain one. See
+  [51 — Supported Versions and Compatibility](51-supported-versions.md).

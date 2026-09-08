@@ -481,3 +481,13 @@ this returns. To branch on the resolved layer, use a layer predicate:
 Side](22-target-side.md)). This paragraph said "which C library was resolved"
 until 2026.9.1.1, which was the wrong one of the two.
 
+## Current limitations
+
+- **A dependency cannot be conditioned on the accelerator.** The accelerator
+  layer is resolved from the dependency graph, so a dependency chosen by it would
+  decide the answer it is asking for. mcpp reports the predicate and ignores it;
+  packages are unconditional or conditioned on the platform, and `[build]
+  sources` is what the accelerator selects.
+- A layer cannot select a dependency for the same reason, in the general case:
+  any derivation earlier than the graph is an inference about a fact that does
+  not yet exist.

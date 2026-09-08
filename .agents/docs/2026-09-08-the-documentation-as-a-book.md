@@ -360,8 +360,14 @@ chapters had the content under another heading and are renamed; the scenario,
 model, tutorial and index chapters are exempt, because their scope is stated by
 the "Not here" line in their opening and they claim no complete surface.
 
-Seventeen remain: `04`, `05`, `07`, `10`, `11`, `20`, `21`, `22`, `23`, `24`,
-`41`, `50`, `51`, `90`, `91`, `92`.
+Eight of the original seventeen were written from facts the chapter already
+stated somewhere in its body — `05`, `20`, `21`, `22`, `23`, `41`, `50`, `51`.
+That is the method that works: **promote a limit the chapter already states into
+the section that collects them**, rather than inventing one.
+
+Eight remain: `04`, `07`, `10`, `11`, `24`, `90`, `91`, `92`. Scanning their
+text for a limit statement returns nothing usable, which is the honest reading —
+each needs a fact its area's owner can state.
 
 **They are open rather than written, and the reason is the rule itself.** A
 fabricated limits section satisfies the check and measures nothing, which is

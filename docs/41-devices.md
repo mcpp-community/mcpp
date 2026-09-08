@@ -173,3 +173,12 @@ about emulators or probes; `mcpp::has_feature` already existed. That the
 question is answerable without adding anything is the layering working as
 specified.
 
+## Current limitations
+
+- **Exactly one dependency may supply a given runner name.** A second is an
+  error naming both packages; there is no ordering rule that picks a winner.
+- A runner the selected environment does not supply **stays absent**. Under an
+  emulator feature there is no debug probe, so `mcpp run --runner debug` reports
+  that no such runner exists and lists the ones that do.
+- Termination is declared, not inferred. A long-lived runner that does not say
+  so is waited on until the operator ends it.

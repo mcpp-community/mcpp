@@ -454,3 +454,13 @@ must also read `not_run`.
 existing `not_run` list, which continues to name members the
 `--workspace-timeout` stopped before they started.
 
+## Current limitations
+
+- **The exit-code table is scoped to the commands it names.** A code another
+  command returns is not in it, and adding one would document something those
+  commands cannot promise.
+- A diagnostic without a location omits `path` and `range` rather than sending
+  zeros: `line: 0` would point at a position that does not exist.
+- Absence of JSON on stdout means "not supported", whatever the reason — an
+  older engine, an unknown option, or a command that has no machine format. A
+  client cannot distinguish the three from the stream alone.

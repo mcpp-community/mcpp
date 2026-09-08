@@ -524,3 +524,12 @@ used it.
   the `RuntimeBinding` snapshot, and the degradation rules.
 - [04 - mcpp.toml](04-mcpp-toml.md) — the rest of the manifest.
 
+## Current limitations
+
+- **A tool cannot be conditioned on the accelerator.** The accelerator is
+  resolved after the dependency graph, so such a tool would be declared and never
+  installed — a build that succeeds with the tool simply absent. A manifest that
+  writes one is refused.
+- The declaration nearer the artifact wins, and the override is reported. A pin
+  that fails a requirement the other side stated is refused naming both sides
+  rather than installed alongside it.

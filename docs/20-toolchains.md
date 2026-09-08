@@ -903,3 +903,10 @@ skipped). Limits: `.asm` targets x86 only (hard error elsewhere — gate the
 files off other targets), `.S` is unavailable on the MSVC toolchain, and
 `.asm` means NASM syntax (MASM sources should be `!`-excluded).
 
+## Current limitations
+
+- **A macOS host has no Linux-targeting payload at all**, so no Linux target is
+  reachable from there. This is a publishing boundary rather than an engine one.
+- An explicit `[toolchain]` in the manifest, or a `[target.X].toolchain`, is
+  **never overruled**. A project that pins one and then meets a target the pin
+  cannot serve is refused rather than silently given another compiler.

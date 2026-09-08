@@ -99,3 +99,13 @@ owns the component — the engine, the package index, or the package itself. A
 report that names the version, the host, the target and the command is
 actionable; one that does not usually results in a request for those four.
 
+## Current limitations
+
+- **`mcpp.lock` does not yet constrain resolution.** It records what a build
+  resolved and `--locked` verifies that a new resolution matches it; pinning a
+  resolution to the lock as an input is a separate change to the resolver.
+- The SBOM describes the **recorded** resolution rather than a fresh one, so a
+  document written after a manifest edit and before an `mcpp update` describes
+  the older graph.
+- A component whose licence mcpp does not know is emitted as `NOASSERTION`
+  rather than omitted, because an absent field reads as "not examined".
