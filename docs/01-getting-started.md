@@ -14,27 +14,43 @@ than repeats — and every field a manifest may hold, which is
 
 ## Installation
 
-Supported hosts are Linux x86_64 / aarch64, macOS ARM64, and Windows x86_64. You do not need to install GCC, xlings, or any other build dependency beforehand.
-On its first run, mcpp installs a default toolchain into an isolated sandbox (`~/.mcpp/`). The choice is host-aware: Linux x86_64 uses `gcc@16.1.0`; other Linux architectures use `gcc@15.1.0-musl`; macOS uses `llvm@20.1.7`; Windows uses `llvm@20.1.7` when usable MSVC is available and otherwise uses `gcc@16.1.0` for `x86_64-windows-gnu`.
+Supported hosts are Linux x86_64 / aarch64, macOS ARM64, and Windows x86_64.
+GCC, xlings and every other build dependency are installed by mcpp; none of them
+has to be there first.
 
-We recommend installing via [xlings](https://xlings.d2learn.org), which keeps mcpp isolated from your system environment:
+**The recommended way is [xlings](https://xlings.d2learn.org)**, which keeps
+mcpp isolated from the system environment:
 
 ```bash
 xlings install mcpp -y
 ```
 
-Alternatively, on Linux x86_64/aarch64 or macOS ARM64, use the one-line
-installer script (xlings is bundled, and everything is installed under
-`~/.mcpp/`):
+<details>
+<summary>Other ways: the standalone script, and what the first run installs</summary>
+
+On Linux x86_64/aarch64 or macOS ARM64 a one-line installer bundles xlings and
+puts everything under `~/.mcpp/`. It does not support Windows, where the
+PowerShell xlings command in the README is the way in.
 
 ```bash
 curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/install.sh | bash
 ```
 
-The script does not support Windows; install through the PowerShell xlings
-command in the README instead.
+On its first run mcpp installs a default toolchain into `~/.mcpp/`, chosen for
+the host:
 
-For full installation instructions (including xlings install commands, Windows support, and more), see the ["Installation" section of the README](../README.md#install).
+| host | default |
+|---|---|
+| Linux x86_64 | `gcc@16.1.0` |
+| other Linux architectures | `gcc@15.1.0-musl` |
+| macOS | `llvm@20.1.7` |
+| Windows with usable MSVC | `llvm@20.1.7` |
+| Windows without it | `gcc@16.1.0` for `x86_64-windows-gnu` |
+
+Full installation instructions, including Windows, are in the
+["Installation" section of the README](../README.md#install).
+
+</details>
 
 Once installation is complete, start a new shell session, then verify:
 

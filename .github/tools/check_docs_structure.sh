@@ -211,8 +211,12 @@ PYPARITY
 # half -- they are the gate that stops a chapter re-absorbing a topic another
 # chapter owns. Five of 24 chapters had this before the design; a rule nothing
 # checks is a rule that decays back to five.
+# Chapter 00 is exempt: it is the book's front door, and a metadata block is a
+# reference-chapter device. It has no "not here" to declare, because everything
+# else IS elsewhere -- which is what its closing paragraph says instead.
 for f in docs/[0-9]*.md docs/zh/[0-9]*.md; do
   [ -f "$f" ] || continue
+  case "$(basename "$f")" in 00-*) continue ;; esac
   head -18 "$f" | grep -qE '^\*\*(Reader|读者)' \
     || bad "$f: no designed opening — the first lines must name the reader"
   head -18 "$f" | grep -qE '(question this chapter answers|本章回答的那一个问题)' \

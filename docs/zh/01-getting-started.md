@@ -12,27 +12,38 @@
 
 ## 安装
 
-支持的宿主为 Linux x86_64 / aarch64、macOS ARM64 与 Windows x86_64,无需预先安装 GCC、xlings 或其他构建依赖。
-mcpp 在首次运行时会将默认工具链安装至独立沙盒(`~/.mcpp/`)。选择会随宿主变化：Linux x86_64 使用 `gcc@16.1.0`; 其他 Linux 架构使用 `gcc@15.1.0-musl`; macOS 使用 `llvm@20.1.7`; Windows 在存在可用 MSVC 时使用 `llvm@20.1.7`,否则使用面向 `x86_64-windows-gnu` 的 `gcc@16.1.0`。
+支持的宿主为 Linux x86_64 / aarch64、macOS ARM64 与 Windows x86_64。GCC、xlings 以及
+其余构建依赖都由 mcpp 安装,一个都不需要预先具备。
 
-推荐通过 [xlings](https://xlings.d2learn.org) 进行安装,可与系统
-环境保持隔离:
+**推荐方式是 [xlings](https://xlings.d2learn.org)**,它让 mcpp 与系统环境保持隔离:
 
 ```bash
 xlings install mcpp -y
 ```
 
-Linux x86_64/aarch64 或 macOS ARM64 也可使用一键安装脚本(内置 xlings,统一安装至
-`~/.mcpp/`):
+<details>
+<summary>其它方式:独立安装脚本,以及首次运行会装什么</summary>
+
+在 Linux x86_64/aarch64 或 macOS ARM64 上,有一个内置 xlings 的一键脚本,把一切装到
+`~/.mcpp/` 下。它不支持 Windows —— 那里的入口是 README 里的 PowerShell xlings 命令。
 
 ```bash
 curl -fsSL https://github.com/mcpp-community/mcpp/releases/latest/download/install.sh | bash
 ```
 
-该脚本不支持 Windows;请改用 README 中的 PowerShell xlings 安装命令。
+mcpp 首次运行时会把一条默认工具链装进 `~/.mcpp/`,按宿主选择:
 
-完整安装说明(包括 xlings 安装命令、Windows 支持等)参见
-[README 的"安装"小节](../../README.zh-CN.md#安装)。
+| 宿主 | 默认 |
+|---|---|
+| Linux x86_64 | `gcc@16.1.0` |
+| 其它 Linux 架构 | `gcc@15.1.0-musl` |
+| macOS | `llvm@20.1.7` |
+| 有可用 MSVC 的 Windows | `llvm@20.1.7` |
+| 没有 MSVC 的 Windows | 面向 `x86_64-windows-gnu` 的 `gcc@16.1.0` |
+
+完整安装说明(含 Windows)见 [README 的「安装」小节](../../README.zh-CN.md#安装)。
+
+</details>
 
 安装完成后,启动新的 shell 会话,然后验证:
 

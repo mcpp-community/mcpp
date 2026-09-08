@@ -475,7 +475,10 @@ The design failed two of its own rules to get there:
 - **R7** — an advantage is shown by the artifact, not by the mechanism. A model
   chapter explains how the advantage is produced and never demonstrates it.
 
-`00 — What mcpp Is` replaces it:
+`00 — What mcpp Is` replaces it, and its shape came from the review too:
+**background → who pays → what mcpp is → the guarantee → the smallest example
+that shows it.** A first chapter earns the definition by first stating the
+problem, and only then shows it solved.
 
 1. **The definition**, in the form the reviewer gave: mcpp = build system +
    build plugins + package manager + toolchain management + the environment and
@@ -508,3 +511,9 @@ chapter and it still produced the wrong chapter, because the cell that decides
 everything — the reader — was answered with "anyone" and then served as if that
 meant "someone who wants the model". A reader cell that names no task is not
 filled in.
+
+**And the opening block came off.** Every other chapter opens with reader,
+question and exclusions; on the front door that block reads as machinery. `00`
+has no "not here" to declare because everything else *is* elsewhere, which its
+closing paragraph says in a sentence instead. Rule 11 exempts `00` by name, with
+that reason in the script.
