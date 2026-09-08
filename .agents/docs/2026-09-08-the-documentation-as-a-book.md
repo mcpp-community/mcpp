@@ -538,3 +538,97 @@ question and exclusions; on the front door that block reads as machinery. `00`
 has no "not here" to declare because everything else *is* elsewhere, which its
 closing paragraph says in a sentence instead. Rule 11 exempts `00` by name, with
 that reason in the script.
+
+## 14. The register rules were written and then not enforced
+
+The user read chapter 00 and named three things: `背景:模块到了,工具链没跟上`,
+`谁在为这个落差付账`, and the table header `大致相当于谁的活`. All three are
+colloquial, all three violate §四 of the skill, and all three passed
+`check_docs_style.sh`.
+
+Two independent defects in one check, and each is a form recorded elsewhere:
+
+**The predicate tested a marker rather than the property.** It matched `?`, 吗
+and 呢 — the punctuation a question usually carries. The property is the
+interrogative *word*, and neither `谁在为这个落差付账` nor `打什么由谁决定`
+carries the marker. The predicate is now the word set 谁 / 哪 / 什么 / 多少 /
+为何 / 如何 / 怎样 / 怎么.
+
+**The object set was enumerated syntactically.** It read lines beginning with
+`#`. The property a heading has — it names a topic, it is read out of order, it
+is what a reader scans — is held equally by a table's header cells, which were
+therefore never examined. Rule 4 adds them: the row above a `|---|---|`
+separator, cell by cell.
+
+Extending both reported 100 headings and 57 header cells across 20 chapters,
+in both languages. They are now noun phrases. The rename table is in the commit
+rather than here, because it is a list of 157 strings and not a decision.
+
+**One consequence was not obvious.** Renaming 100 headings invalidates any link
+that names a section by its anchor, and rule 9 of `check_docs_structure.sh`
+discarded the fragment (`(?:#[^)]*)?`) — a link to a renamed section resolved to
+the file and passed. It now computes GitHub's slug, including the `-1` / `-2`
+suffix for repeated headings, and verifies the fragment. It immediately reported
+two anchors in chapter 30 that had been wrong since they were written, before
+any rename.
+
+### The rule that generalises
+
+R5 in the skill: **the scope of a background section is decided by the problem,
+not by the tool.** Chapter 00's background was about modules, which is the part
+of the problem mcpp is closest to. The problem a reader actually has is that a
+C++ project needs four things at once — a build description, dependencies, a
+compiler new enough, and an environment the result runs in — and no single tool
+owns all four. CMake is the de facto standard for the first, and a de facto
+standard is a statement about adoption rather than about the experience of use.
+The environment is the layer that fails most often because it is the only one
+nothing checks. Modules are the fourth constraint on that structure, not the
+structure.
+
+## 15. The extension model had no owner, and the example that shows it was a toy
+
+The user asked where the plugin system is documented, and whether it reaches
+preprocessing and languages of one's own. The tree had chapter 30 (build
+programs) and chapter 31 (rule packages), and between them every primitive —
+but no section stating the model: what the extension points are, what the
+ecosystem has built from them, and where the boundary is. R1 says a topic has
+exactly one owner, and this one had none.
+
+Chapter 31 now opens with it: five extension points with their effect and where
+each is declared; seven things the ecosystem has built from them; three shapes
+the model expresses (a new language whatever compiles it, preprocessing and
+code generation, and a file that is partly C++ and partly another language);
+and the boundary, which is measured rather than asserted —
+
+- a dependency's `device_extensions` is consulted *after* the built-in roles,
+  so a rule package cannot claim `.cpp`. Adding `".cpp"` to a rule's list is
+  not diagnosed and has no effect, measured;
+- module-interface extensions are `[build] module_extensions`, a project axis,
+  because a module interface is scanned, produces a BMI and joins the link —
+  three engine behaviours rather than a command;
+- an extension in neither table is refused by name, quoted from the run.
+
+### The example had to become real before it could carry this
+
+`examples/12-a-new-device-language` had a `.toy` that was "one integer per line,
+and the entry point returns their sum", compiled by a shell script. It
+demonstrated the two manifest keys and nothing else, and it was not a shape any
+ecosystem author meets.
+
+`.toy` now has `let`, assignment, `if`/`else`, `while`, calls between kernels,
+and the arithmetic and comparison operators. Its compiler is an ordinary mcpp
+package — lexer, recursive-descent parser, semantic checks, C++ emitter — built
+**for the build machine** through `tools = ["toyc"]` + `reexport = true` and
+reached with `mcpp::dep_bin`. That makes it the tree's first example of a
+dependency producing a host tool, a capability that until now existed only in
+prose.
+
+**And it measured a boundary the documentation did not state.** The tool store's
+key is the tool package's identity, version, host triple, compiler identity,
+profile, features and the versions of its transitive dependencies. It holds no
+source content, so editing a `path` tool's sources without changing its version
+leaves the cached binary in place: `mcpp run` reported `Finished dev in 0.00s`
+and printed the previous answer. Chapter 30 now states it, with the two ways
+out. The action itself is not the gap — the rule declares the compiler binary
+as an input, so a changed binary dirties the edge. What does not happen is the
+rebuild that would change those bytes.
