@@ -5126,6 +5126,14 @@ runtime_search_dirs = ["lib"]
 deploy_files = ["a.txt"]
 [runtime.somecapability]
 provider = "pkg"
+[[runtime.artifacts]]
+role       = "interface"
+path       = "include"
+provenance = "source"
+[[runtime.requirements]]
+kind  = "capability"
+value = "display.present"
+phase = "run"
 [target.linux.runtime]
 libraries = ["dl"]
 link_library_dirs = ["lib"]
@@ -5137,6 +5145,12 @@ link_library_dirs = ["lib"]
     EXPECT_TRUE(m->schemaWarnings.empty()) << all;
     // A `[runtime.<capability>]` sub-table is a provider override, not a typo.
     EXPECT_EQ(m->runtimeConfig.providerOverrides.at("somecapability"), "pkg");
+    // `[[runtime.artifacts]]` and `[[runtime.requirements]]` are arrays, not
+    // tables, so they reach the sweep rather than being skipped with the
+    // provider channel. They are exactly what `mcpp pack` emits into every
+    // packed library, so a false positive here would warn on all of them.
+    EXPECT_EQ(m->runtimeConfig.artifacts.size(), 1u);
+    EXPECT_EQ(m->runtimeConfig.requirements.size(), 1u);
 }
 
 // A manifest authored on Windows commonly begins with a UTF-8 byte-order mark.
