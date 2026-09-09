@@ -574,6 +574,13 @@ already filed as mcpp-index#376, reached this time through
   and not here, from the same pinned payload. R7 now serves the adapter through
   `compat:opencl`, so the practical consequence is gone; what is still
   unexplained is why their machine supplied `libOpenCL.so.1` without it.
+* **The one cold-registry run in which section D found no record (§8.6).** The
+  released 2026.9.10.1 published nothing for a project it answers for on every
+  warm run of the same script in the same sandbox. The code path that can
+  produce that reading is repaired, and the repair is stated by a unit test;
+  the ordering of backend drives on that particular run was not captured and
+  has not been reproduced. A second cold sandbox -- a fresh registry, the
+  dependency built in the same invocation -- is what would close it.
 * **What R6 does to an executable that is itself a plugin host.** Hiding
   `libc++.a` and `libc++abi.a` means a library `dlopen`ed later cannot resolve
   the C++ standard library from the executable. That is the intended direction
@@ -645,6 +652,51 @@ is printed so "clean" cannot read as "did not look".
 Both were invisible before because the same artifact had 68 real findings
 sitting on top of them. A check whose noise is repaired shows what the noise
 was covering, which is the third time this issue has produced that shape.
+
+## 8.6 What the sandbox raised, and what the second run of it settled
+
+The verification script was run against the released 2026.9.10.1 in a sandbox
+and section D failed -- `resolution.json has no runtime.dlopen_surface` -- on a
+build whose sections A to C had just passed. That run was also the run that
+installed `compat:sycl-runtime` into the sandbox registry.
+
+Run again against the same binary in the same sandbox, with the registry now
+warm, section D passes: `dlopen_surface examined 15 of 15 members`. So the
+absence is not a property of the released check on this project; it appeared
+once, on the cold run, and no second observation of it exists. THAT IS RECORDED
+AS AN OPEN OBSERVATION RATHER THAN A DIAGNOSIS, because the difference between
+the two runs -- which drives the backend performed, and in what order -- was
+not captured while the failing run was in front of us.
+
+What the failure did expose, by sending us to read the code, is a path that can
+produce exactly that reading and should not exist regardless. `check_dlopen_surface`
+returned without writing in four cases: not Linux, a non-hermetic binding or
+`allow_host_libs`, a plan producing no program, a plan producing no artifact.
+Omitting a record makes "did not apply" and "was never run" the same reading,
+which is the failure this repository names most often. And it does more than
+omit a sentence, because the two copies of the record have opposite lifetimes:
+the sidecar survives an invocation, while `resolution.json` is regenerated from
+an empty object at the start of one. The backend runs once per drive and a
+single invocation can drive it more than once -- `mcpp test` builds the library
+and then links the test binary -- so a drive that links only a dependency's
+shared library has no program, has nothing to answer, and yet decides what the
+documented place to look finally contains.
+
+THE REPAIR HAS TWO HALVES, and only one of them was obvious. Every early return
+now publishes a record carrying its `reason`, so a non-answer is legible. And a
+non-answer republishes a reading already on file under the same key rather than
+replacing it with a blank: the key covers the contract hash, the SubOS stamp
+and the host-libs policy, not the link units, so a reading taken under it is
+still about this farm and this policy, and a key that moved has already cleared
+the record before this runs. Publishing the reason alone would have converted a
+silent absence into a loud wrong answer.
+
+The invariant is stated in a unit test rather than end to end
+(`DlopenSurfaceRecord.ANonAnswerRepublishesTheAnswerAlreadyOnFile`): reaching it
+requires two drives over one output directory where the SECOND is the one that
+does not apply, and no project shape names that. The verification script gained
+the matching criterion -- a published non-answer counts as a failure -- because
+without it the next such overwrite would read as a pass.
 
 ## 9. What this touches, across the three repositories
 

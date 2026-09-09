@@ -145,6 +145,12 @@ rec = doc.get("runtime", {}).get("dlopen_surface")
 if rec is None:
     print("ASSERT-FAIL: resolution.json has no runtime.dlopen_surface")
     sys.exit(1)
+# A published non-answer carries its reason. Distinguishing it from a real
+# reading is the whole point of publishing one: this assertion is what caught
+# the check erasing its own record on a second pass.
+if rec.get("reason"):
+    print(f"ASSERT-FAIL: the check did not apply: {rec['reason']}")
+    sys.exit(1)
 members, walked = rec.get("members", 0), rec.get("walked", 0)
 if members <= 0:
     print(f"ASSERT-FAIL: dlopen_surface examined {members} members")
