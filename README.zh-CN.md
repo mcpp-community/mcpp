@@ -20,14 +20,12 @@
 
 ## 核心特性
 
-每一条先说能力，再说它被用来做什么。
-
-- **通用构建系统** — C++23 模块原生支持：`import std` 自动处理，文件级增量构建，模块依赖自动分析。`mcpp new && mcpp build`，没有要配置的东西；接口没有变化，就不会级联到导入它的那些单元
-- **构建插件** — `build.mcpp` 与规则包。mcpp 没有现成规则的那一步写一次，就能打成包给别的项目用；CUDA、HIP、SYCL、Vulkan/SPIR-V 与 Ascend C 各是一个规则包
-- **包管理** — SemVer 约束解析、锁文件、跨项目 BMI 缓存、自定义索引。两行清单引入一个社区模块化库并直接 `import`；多个包在 workspace 里共用一份锁文件
-- **工具链管理** — `family@version`，按需安装。本机不必先装编译器，`--target` 让同一次构建换到 Windows、macOS、Cortex-M 或 RISC-V 裸机
-- **环境与运行时** — xlings 提供的用户态环境。工具链与依赖落在隔离沙盒里而不是系统里；runner 把产物送上板子或模拟器
-- **纯模块化自举** — mcpp 完全由 C++23 模块接口单元写成，并用这条流水线构建自己：上面每一条，每天都在 mcpp 自己身上跑一遍
+- **模块化构建系统** — 专注 C++ 模块：`import std` 自动处理，文件级增量构建，模块依赖自动分析，零手动配置
+- **构建插件与异构硬件编程** — `build.mcpp` 与规则包扩展构建；CUDA、HIP、SYCL、Vulkan/SPIR-V 与 Ascend C 各是一个规则包
+- **包管理与模块化库生态** — SemVer 约束、锁文件、跨项目 BMI 缓存、自定义索引；[mcpplibs](https://github.com/mcpplibs) 的库两行引入即可 `import`
+- **工具链管理与通用交叉构建** — `family@version` 按需安装；`--target` 让同一次构建换到 Windows、macOS、Cortex-M 或 RISC-V 裸机，一份源码经 openkal 触及多个有操作系统的目标
+- **环境与运行时** — xlings 提供的用户态环境：工具链与依赖都留在隔离沙盒里，runner 把产物送上板子或模拟器
+- **纯模块化自举** — mcpp 完全由 C++23 模块接口单元写成，并用这条流水线构建自己
 
 ## 为什么选择 mcpp
 
