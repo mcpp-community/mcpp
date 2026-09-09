@@ -136,8 +136,25 @@ section "D. mcpp reports a dlopen surface it cannot satisfy"
 # fails the next time the wording improves. Both denominators are asserted for
 # the reason they exist -- "no findings" and "nothing was examined" must not
 # read the same.
-res=$(find "$work" -name resolution.json 2>/dev/null | head -1)
+#
+# THE OBJECT IS SELECTED BY IDENTITY, NOT BY WHERE `find` ARRIVES FIRST. The
+# probe project's own build tree is `$work/target/<triple>/<fingerprint>`, and
+# a run that also builds a dependency can leave more than one resolution.json
+# under the work tree. "The first one" is a property of directory traversal
+# order, not of the record being tested, so the count is asserted and named.
+res=""
+res_n=0
+for candidate in "$work"/target/*/*/resolution.json; do
+    [ -f "$candidate" ] || continue
+    res_n=$((res_n + 1))
+    res="$candidate"
+done
+if [ "$res_n" -gt 1 ]; then
+    fail "D: $res_n resolution.json files under $work/target; the probe builds one project"
+    res=""
+fi
 if [ -n "$res" ] && command -v python3 >/dev/null 2>&1; then
+    ok "reading ${res#"$work"/}"
     python3 - "$res" <<'PY'
 import json, sys
 doc = json.load(open(sys.argv[1]))
@@ -166,8 +183,8 @@ if bad:
 print("ok: no driver soname is missing from the farm")
 PY
     [ $? -eq 0 ] || fails=$((fails + 1))
-else
-    skip "D: no resolution.json (section C did not build) or no python3"
+elif [ "$res_n" -le 1 ]; then
+    skip "D: no resolution.json under $work/target (section C did not build) or no python3"
 fi
 
 # ---------------------------------------------------------------------------
