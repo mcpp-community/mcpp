@@ -486,9 +486,18 @@ are too broad, and are supposed to pass in both.
 as in the manifest reader, and a descriptor is read by every consumer of the
 index rather than by one project. All 228 descriptors in `mcpplibs/mcpp-index`
 were parsed with both binaries and compared: 228 identical, 0 differing, 0
-errors on either side. That is the denominator the change is safe against, and
-it is stated because "no published package changed behaviour" is otherwise a
-claim with nothing behind it.
+errors on either side.
+
+**That number is weaker than it looks, and the real denominator is zero.**
+`mcpp xpkg parse` prints the package, its versions, its standard and its source
+and target counts; it does not print conditional configs, so it could not have
+shown a difference in the gate even if there were one. The statement worth
+making is the other one: **no descriptor in the index uses `target_cfg` at all**
+(0 of 228), so the xpkg half of this change cannot alter any published package
+today. It is a correctness fix for a channel nothing currently exercises. The
+228-descriptor comparison still says something — the change broke no parse —
+but it is not evidence about the gate, and recording it as though it were is
+the failure this record is otherwise about.
 
 One denominator is worth recording because it is empty where a reader would
 expect it not to be: mcpp's own build emits **zero** `cxx_module` edges, since
