@@ -20,20 +20,23 @@
 
 ## Highlights
 
-- **Native C++23 module support** — `import std` handled automatically, file-level incremental builds, automatic module dependency analysis, zero manual configuration
-- **Pure modular self-hosting** — mcpp itself consists of 43+ C++23 modules and builds itself; the module pipeline is battle-tested
-- **Works out of the box** — one-command install, bundled GCC 16 / LLVM 20 toolchains downloaded into an isolated sandbox, never polluting your system
-- **Integrated dependency management** — SemVer constraint resolution, lockfile, cross-project BMI cache, custom package indices
-- **Multi-package workspaces** — unified lockfile and version management for larger projects
+- **Modular build system** — C++ modules first: `import std` handled automatically, file-level incremental builds, automatic dependency analysis, nothing to configure
+- **Build plugins and heterogeneous hardware** — `build.mcpp` and rule packages extend the build; CUDA, HIP, SYCL, Vulkan/SPIR-V and Ascend C are each a rule package
+- **Package management and a module-library ecosystem** — SemVer constraints, lockfile, cross-project BMI cache, custom indices; a library from [mcpplibs](https://github.com/mcpplibs) is two lines away from `import`
+- **Toolchain management and cross-compilation** — `family@version` installed on demand; `--target` moves the same build to Windows, macOS, Cortex-M or RISC-V bare metal, and one source tree reaches several hosted targets over openkal
+- **Environment and runtime** — the user-space environment xlings provides: toolchains and dependencies stay in an isolated sandbox, and a runner puts the artifact on a board or an emulator
+- **Pure modular self-hosting** — mcpp is written entirely in C++23 module interface units and builds itself
 
 ## Why mcpp
 
-mcpp is built specifically for **C++23 module-first development**. If you want to use `import std`, module interface units (`.cppm`), module partitions, and other modern C++ features in your project, mcpp gives you a smooth, friendly experience on Linux, macOS ARM64, and Windows x86_64:
+mcpp is built specifically for **C++23 module-first development**. If you want to use `import std`, module interface units (`.cppm`), module partitions, and other modern C++ features in your project, mcpp gives you a smooth, friendly experience on Linux, macOS ARM64, and Windows x86_64.
 
-- **Modular by default** — projects created by `mcpp new` use C++23 modules directly; `import std` just works
-- **File-level incremental builds** — three-layer optimization based on P1689 dyndep (front-end dirty check + per-file scanning + BMI restat); only the modules that actually changed get recompiled
-- **Create & build in one go** — `mcpp new hello && cd hello && mcpp build`; toolchains install automatically, no compiler or build-system setup required
-- **A modular ecosystem** — [mcpplibs](https://github.com/mcpplibs) offers a growing set of directly `import`-able C++ module libraries, plus support for custom package indices
+C++ normally spreads these five jobs across five tools, and mcpp is one command
+for all five. The second row names what each column is usually recognised as.
+
+| mcpp | build system | build plugins | package manager | toolchain manager | environment and runtime |
+|---|---|---|---|---|---|
+| **closest to** | CMake + Ninja | CMake modules, xmake rules | vcpkg, Conan | rustup, nvm | conda, Nix |
 
 > [!NOTE]
 > **Early-stage project** — mcpp is under active development; interfaces and behavior may change in future releases.
@@ -256,6 +259,29 @@ import mcpplibs.cmdline;
 </details>
 
 <details>
+<summary><b>Cross-compilation, bare metal and devices</b></summary>
+
+- `mcpp build --target <triple>` — one flag; the toolchain payload for that target is resolved and installed automatically
+- Targets from `x86_64-linux-gnu` to Cortex-M, Cortex-A and RISC-V bare metal; the full table is under [Platform Support](#platform-support)
+- Freestanding targets carry no operating system: the C library, startup code, memory layout and emulator travel with a board-support package rather than with mcpp
+- Runners reach an artifact that cannot run on the build machine — `mcpp run --runner flash`, `--list-runners`, `mcpp why runners`
+- `mcpp new --template riscv-virt-rt` — a board template a package ships, instantiated by name
+- Cross-compilation over openkal: a portable program builds for a target whose kernel interface and C library come from packages
+
+</details>
+
+<details>
+<summary><b>Heterogeneous builds and accelerators</b></summary>
+
+- `[build] accel = "cuda12.9+{sm_89}, vulkan1.2"` — a build names one or more device backends, and `cfg(accelerator = "cuda")` is true in that build
+- Five programming models have rule packages today: CUDA, HIP, SYCL, Vulkan/SPIR-V and Ascend C
+- Device translation units are compiled by their own compiler and join the ordinary link; the host/device boundary is generated rather than written twice
+- A constrained glob selects device sources: `{ glob = "src/kernels/**/*.cu", accel = "cuda12.9+{sm_89}" }`
+- Nothing in the engine holds a vendor name, so a sixth backend is a package rather than an engine change
+
+</details>
+
+<details>
 <summary><b>Package & dependency management</b></summary>
 
 - SemVer constraint resolution: `^`, `~`, ranges, exact versions
@@ -290,6 +316,16 @@ import mcpplibs.cmdline;
 </details>
 
 <details>
+<summary><b>Extending the build</b></summary>
+
+- `build.mcpp` — a build program for a step mcpp has no rule for, speaking a directive protocol that is versioned rather than guessed
+- `mcpp::action` declares work with explicit inputs and outputs, so a generated file takes part in the incremental graph instead of sitting outside it
+- A rule package carries that step to other projects: it declares a rule module, and a consumer selects it as a feature
+- Payloads, runtime adapters and board-support packages are ordinary packages — a tool, a driver or a board is installed by the resolver that installs a library
+
+</details>
+
+<details>
 <summary><b>Developer experience</b></summary>
 
 - `mcpp new` — create a modular project; `--template [ns.]name[@version][:tname]` uses a **package-provided template** with the same exact identity style as `mcpp add`. A sole template is the default even without `default = true`; `--list-templates [ns.]name[@version]` lists ambiguous sets
@@ -297,7 +333,9 @@ import mcpplibs.cmdline;
 - `mcpp test [pattern] [-- args]` — auto-discover and run tests (filter by name; `--list`, `--timeout <s>`, `--message-format json`)
 - `mcpp search` — search package indices
 - `mcpp add / remove / update` — dependency management
-- `mcpp why [toolchain|runtime|deps]` — explain resolved build decisions
+- Profiles and features on the command line: `--release` / `--profile <name>` on `build` and `run`, `--features <list>` on `build`, `run` and `test`
+- `mcpp why [toolchain|runtime|deps|runners]` — explain resolved build decisions; `--format json` for a machine reader
+- `mcpp emit sbom` — a CycloneDX bill of materials for the resolution just recorded
 - `mcpp --offline` / `MCPP_OFFLINE=1` — use only already available local state
 - `mcpp explain E0001` — detailed error-code explanations
 - `mcpp self doctor` — environment self-diagnosis
@@ -306,10 +344,10 @@ import mcpplibs.cmdline;
 
 ## Benchmark
 
-Building **mcpp itself** — 137 module interface units, 57k lines, every one of
-them `import std;` — with four engines handed the **same compiler binary**.
-Each cell is the median of **3 samples** and how many times faster it is than
-cmake. Every column comes from **one run**.
+Building **mcpp itself** — 137 module interface units and 57k lines at the
+pinned workload, every one of them `import std;` — with four engines handed the
+**same compiler binary**. Each cell is the median of **3 samples** and how many
+times faster it is than cmake. Every column comes from **one run**.
 
 <!-- columns: mcpp=mcpp@2026.8.13.1; mcpp +opt=mcpp@2026.8.13.1+schedule=on; mcpp (old)=mcpp@2026.8.11.3; cmake=cmake; xmake=xmake -->
 | scenario | `mcpp` | `mcpp +opt` | `mcpp (old)` | `cmake` | `xmake` |
@@ -324,38 +362,29 @@ cmake. Every column comes from **one run**.
 <br>
 `mcpp` = mcpp@2026.8.13.1, the build under test · `mcpp +opt` = the SAME binary as `mcpp`, with the opt-in key `[build] bmi_schedule = "on"` (off by default) · `mcpp (old)` = mcpp@2026.8.11.3, the previously published release.<br>
 Linux x86_64 · i9-13900K · gcc 16.1.0 · n=3 · pinned workload `a749e9f` ·
-cmake 4.4.2 / xmake 3.1.0 · `-` would mean not measured, and there is none here ·
-min/max sit within 4% of every median above 1s ·
+cmake 4.4.2 / xmake 3.1.0 · min/max sit within 4% of every median above 1s ·
 data: [`standard-20260814-linux-x86_64`](bench/results/standard-20260814-linux-x86_64/).</sub>
 
 * **Cascade suppression accounts for the `touch-hub` and `edit-comment` rows.**
-  cmake and xmake decide by timestamp and rebuild every downstream unit. mcpp
+  cmake and xmake decide by timestamp and rebuild every downstream unit; mcpp
   compares the BMI the compiler has just produced against the previous one and
   skips the cascade when the interface is unchanged. This is default behaviour
-  and requires no configuration. The `mcpp (old)` column measures the previous
-  release at 81.72s, level with cmake, so the effect is new in this revision.
-* **`edit-body` measures the case where the cascade is genuinely owed** — and
-  whether an edit owes one depends on where the body lives:
-
-  | the function body is in… | editing it | this row |
-  |---|---|---|
-  | a `.cppm`, and the edit **moves lines** | GCC records declaration positions, so the BMI changes → cascade owed | **what is measured: 1.1x, and 2.9x with `+opt`** |
-  | a `.cppm`, edited **in place** (same line count) | GCC does not serialise non-template bodies → BMI unchanged → no cascade | ~200x, like `touch-hub` |
-  | a separate `.cpp` implementation unit | that file has no BMI at all → no cascade, on every compiler | ~200x |
-
-  The perturbation here inserts a statement, so it takes the first row: every
-  engine has to rebuild the importers, and one that did not would be skipping
-  work. `+opt` does not skip it either — it does the same work 2.9x faster.
-  Splitting interface from implementation is the sturdiest of the three, because
-  it does not depend on GCC's body handling or on avoiding line shifts.
-  Measured in
+  and requires no configuration. `mcpp (old)` measures the previous release at
+  81.72s, level with cmake, so the effect is new in this revision.
+* **`edit-body` is the control, and mcpp is deliberately not fast on it.** The
+  perturbation inserts a statement into an interface unit, which moves the
+  source positions GCC records, so the BMI changes and every importer is owed a
+  rebuild — an engine that were fast on that row would be skipping work it owes.
+  Whether an edit owes a cascade depends on where the body lives: an in-place
+  edit of the same length, or a body in a separate `.cpp`, owes none and lands
+  near the 200x rows. Measured in
   [`.agents/docs/2026-08-15-module-edit-granularity.md`](.agents/docs/2026-08-15-module-edit-granularity.md).
 * **`bmi_schedule` is opt-in and disabled by default** (`auto` resolves to off).
-  It moves code generation off the critical path, so it helps only where a
-  cascade is required: `cold` 86.69s → 35.73s, `edit-body` 80.87s → 29.83s. On
-  the two rows where mcpp already skips the cascade it yields no improvement.
-  An incorrect scheduling change fails silently rather than loudly, so the
-  default is not changed on the evidence of a single machine.
+  It moves code generation off the critical path, so it pays only where a
+  cascade is owed — `cold` 86.69s → 35.73s, `edit-body` 80.87s → 29.83s, and
+  nothing on the two rows mcpp already skips. An incorrect scheduling change
+  fails silently rather than loudly, so the default is not changed on the
+  evidence of a single machine.
 
 **[Methodology, pinned versions, and the full data →
 `bench/README.md`](bench/README.md)** · [简体中文](bench/README.zh-CN.md)
@@ -370,29 +399,31 @@ the right toolchain payload is resolved and installed automatically.
 
 **Hosts** (where mcpp itself runs): Linux x86_64 / aarch64, macOS arm64, Windows x86_64.
 
-**Targets** (what `--target` accepts; this table mirrors the in-code vocabulary):
+**Targets** (what `--target` accepts; the rows and their tiers are the ones in
+`modules/toolchain-model/src/triple.cppm`, which is also what `mcpp toolchain
+list` reports for this machine):
 
-| Target | Convention toolchain | Status |
+| Target | Convention toolchain | Tier |
 |---|---|:---:|
-| `x86_64-linux-gnu`    | gcc *(Linux default)* or llvm | yes |
-| `x86_64-linux-musl`   | gcc 16, fully static | yes |
-| `aarch64-linux-musl`  | gcc 16, fully static — cross from x86_64 (qemu-verified) or native | yes |
-| `x86_64-windows-gnu`  | gcc 16 MinGW-w64 — native on Windows, cross from Linux (wine-verified) *(Windows default without Visual Studio)* | yes |
-| `x86_64-windows-msvc` | `msvc@system` (detected VS/BuildTools) or llvm ¹ *(Windows default with Visual Studio)* | yes |
-| `aarch64-macos`       | llvm *(macOS default)* | yes |
-| `riscv64-none-elf`    | llvm 22 — bare metal, no OS; needs no per-host cross payload ² | yes |
-| `riscv32-none-elf`    | llvm 22 — bare metal, no OS; needs no per-host cross payload ² | yes |
-| `thumbv6m-none-eabi`  | llvm 22 — Cortex-M0/M0+/M1, bare metal ² | yes |
-| `thumbv7m-none-eabi`  | llvm 22 — Cortex-M3, bare metal ² | yes |
-| `thumbv7em-none-eabihf` | llvm 22 — Cortex-M4F/M7F, hard float ² | yes |
-| `thumbv8m.main-none-eabi` | llvm 22 — Cortex-M33/M55, soft float ² | yes |
-| `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 22 — Cortex-A 32-bit, bare metal ² | yes |
-| `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22 — builds and links; no emulator run recorded | planned |
-| `riscv64-linux-musl`  | — | planned |
-| `aarch64-linux-gnu`   | — | planned |
-| `x86_64-macos`        | — | planned |
+| `x86_64-linux-gnu`    | gcc *(Linux default)* or llvm | verified |
+| `x86_64-linux-musl`   | gcc 16, fully static | verified |
+| `aarch64-linux-musl`  | gcc 16, fully static — cross from x86_64 (qemu) or native | verified |
+| `x86_64-windows-gnu`  | gcc 16 MinGW-w64 — native on Windows, cross from Linux (wine) *(Windows default without Visual Studio)* | verified |
+| `x86_64-windows-msvc` | `msvc@system` (detected VS/BuildTools) or llvm ¹ *(Windows default with Visual Studio)* | verified |
+| `x86_64-windows-musl` | llvm 22 — a PE with a musl C library, which no gcc emits; the system comes from the dependency graph | preview |
+| `aarch64-macos`       | llvm *(macOS default)* | verified |
+| `riscv64-none-elf` · `riscv32-none-elf` | llvm 22 — bare metal, `xim:picolibc-riscv` ² | verified |
+| `thumbv6m-none-eabi` · `thumbv7m-none-eabi` | llvm 22 — Cortex-M0/M0+/M1, Cortex-M3 ² | verified |
+| `thumbv7em-none-eabihf` · `thumbv8m.main-none-eabi` | llvm 22 — Cortex-M4F/M7F hard float, Cortex-M33/M55 soft float ² | verified |
+| `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 22 — Cortex-A 32-bit, the first row with an MMU ² | verified |
+| `aarch64-none-elf` · `x86_64-none-elf` | llvm 22 — bare metal, no C library by default ² | preview |
+| `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22 — Cortex-M4/M7 soft float, M23, M33F/M55F ² | preview |
+| `riscv64-linux-musl` · `aarch64-linux-gnu` · `x86_64-macos` | — | planned |
 
-verified — CI builds **and executes** the artifact end-to-end (qemu/wine included) ｜ planned
+`verified` an image has been built **and run** for the row, qemu and wine
+included · `preview` it builds and links, and no emulator run has been recorded
+· `planned` registered in the vocabulary and nothing wired yet — a build for
+such a target is refused rather than attempted.
 
 > Linux release binaries are fully static musl builds for x86_64 and aarch64
 > (`x86_64-linux-musl` and `aarch64-linux-musl`).
@@ -413,19 +444,27 @@ verified — CI builds **and executes** the artifact end-to-end (qemu/wine inclu
 > cross-compilers by construction, so any host that can install the LLVM
 > payload produces these targets. The C library, startup code, memory layout
 > and emulator travel with a board-support package rather than with mcpp — see
-> [docs/13 — Bare-Metal and Freestanding Targets](docs/40-baremetal.md).
+> [40 — Bare-Metal and Freestanding Targets](docs/40-baremetal.md).
 
 ## Documentation
 
-- [Getting Started](docs/01-getting-started.md) — install → new → build → run in 5 minutes
-- [Examples](docs/03-examples.md)
-- [Packaging & Release](docs/10-pack-and-release.md)
-- [Toolchain Management](docs/20-toolchains.md)
-- [Building from Source](docs/90-build-from-source.md)
-- [mcpp.toml Guide](docs/04-mcpp-toml.md)
-- [Workspaces](docs/07-workspace.md)
+[`docs/`](docs/README.md) is the manual. A chapter's first digit says which part
+it belongs to, and the index carries the reverse lookup — from a manifest key or
+a command in front of a reader, to the chapter that owns it.
 
-Full options for any command are available via `mcpp <cmd> --help`.
+| Part | Start at |
+|---|---|
+| `0x` fundamentals | [01 Getting Started](docs/01-getting-started.md) · [04 The mcpp.toml Manifest](docs/04-mcpp-toml.md) · [09 Commands by Scenario](docs/09-commands-by-scenario.md) |
+| `1x` publishing | [10 Packaging an Application for Release](docs/10-pack-and-release.md) · [11 Publishing a Library to mcpp-index](docs/11-publishing-a-library.md) · [12 Distributing a Prebuilt Library](docs/12-binary-distribution.md) |
+| `2x` toolchains and targets | [20 Toolchain Management](docs/20-toolchains.md) · [21 The Target Triple](docs/21-the-target-triple.md) · [24 Cross-Compilation Over openkal](docs/24-openkal-cross.md) |
+| `3x` extending mcpp | [30 Build Programs: `build.mcpp`](docs/30-build-mcpp.md) · [31 Authoring a Rule Package](docs/31-authoring-a-rule-package.md) · [34 Authoring a Board-Support Package](docs/34-authoring-a-bsp.md) |
+| `4x` devices and accelerators | [40 Bare-Metal and Freestanding Targets](docs/40-baremetal.md) · [41 Reaching a Device](docs/41-devices.md) · [42 Heterogeneous Builds](docs/42-heterogeneous-builds.md) |
+| `5x` contracts for programs | [50 Machine-Readable Output](docs/50-machine-output.md) · [51 Supported Versions and Compatibility](docs/51-supported-versions.md) · [the specifications](docs/specs/README.md) |
+| `9x` mcpp itself | [90 Building from Source and Contributing](docs/90-build-from-source.md) · [92 Releasing mcpp](docs/92-release.md) |
+
+Every directory under [`examples/`](examples/) is a project that builds, and
+[03 — Examples](docs/03-examples.md) says which one teaches what. Full options
+for any command are available via `mcpp <cmd> --help`.
 
 **AI-assisted learning**: send the following prompt to an AI coding assistant to get up to speed with mcpp quickly:
 
@@ -441,8 +480,8 @@ Real projects built with mcpp — `import`-able C++23 modules and the toolchain 
 
 | Project | Description |
 | --- | --- |
-| [mcpp](https://github.com/mcpp-community/mcpp) | mcpp itself — 43+ C++23 modules, fully self-hosted |
-| [xlings](https://github.com/openxlings/xlings) | Toolchain & package-management foundation mcpp builds on |
+| [mcpp](https://github.com/mcpp-community/mcpp) | mcpp itself — written in C++23 modules, fully self-hosted |
+| [xlings](https://github.com/openxlings/xlings) | Toolchain and package-management foundation mcpp builds on |
 | [tinyhttps](https://github.com/mcpplibs/tinyhttps) | Minimal C++23 HTTP/HTTPS client with SSE streaming |
 | [llmapi](https://github.com/mcpplibs/llmapi) | Modern C++ LLM API client (OpenAI-compatible) |
 | [imgui-m](https://github.com/mcpplibs/imgui-m) | Dear ImGui as a C++23 module package |
@@ -481,7 +520,7 @@ then follow the guide to help me submit a contribution to mcpp.
 
 Dependencies and sources of inspiration:
 
-- [xlings](https://github.com/d2learn/xlings) — toolchain / package-management foundation
+- [xlings](https://github.com/openxlings/xlings) — toolchain / package-management foundation
 - [mcpplibs.cmdline](https://github.com/mcpplibs/cmdline) — CLI framework
 - [ninja](https://github.com/ninja-build/ninja) — underlying build engine
 - [xmake](https://github.com/xmake-io/xmake) — cross-platform build tool

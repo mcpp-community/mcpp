@@ -320,7 +320,7 @@ no test in this suite produces a `.dylib` to measure the edit on.
 
 ### Debug information is removed
 
-See [docs/02](10-pack-and-release.md) for the flags, the per-shape table, and
+See [docs/10](10-pack-and-release.md) for the flags, the per-shape table, and
 `--debug-symbols`. The rule that matters for a *library* package: a static
 archive is only ever `--strip-debug`ed, because `--strip-all` removes the
 archive symbol index and the consumer's link then fails with `archive has no

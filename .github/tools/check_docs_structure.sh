@@ -17,6 +17,8 @@
 #  11. every chapter states its reader, its question and its exclusions
 #  12. a citation naming a section lands in the chapter that contains it
 #  13. every table the manifest reference documents is in the lookup index
+#  14. a link labelled with a chapter number points at that chapter, by its title
+#  15. every table row is inside a table
 #
 # What it deliberately does NOT check: whether a chapter documents what is
 # implemented, whether an assertion's strength matches its evidence, or whether
@@ -144,12 +146,16 @@ for f in .agents/docs/[0-9]*.md; do
     || bad "$f: front matter declares no valid \`status\` (active | landed | superseded | abandoned)"
 done
 
-# ── 9. every relative link in docs/ and examples/ resolves, fragment included ─
+# ── 9. every relative link in docs/, examples/ and the READMEs resolves ──────
 #
 # Rule 3 catches `docs/NN-*.md` named anywhere, including from source comments.
 # This is the other half: a Markdown link in a document that points at a file
 # which is not there. Both halves are needed -- a chapter moved in this batch
 # would satisfy one and break the other.
+#
+# THE TWO TOP-LEVEL READMEs ARE IN THE SET. They are the entry point to every
+# tree below them and they carry more relative links than most chapters, and
+# until they were added here nothing checked one of those links at all.
 #
 # THE FRAGMENT IS PART OF THE LINK. The first version of this rule discarded
 # it (`(?:#[^)]*)?`), so a link to a section that had been renamed resolved to
@@ -195,7 +201,9 @@ def anchors_of(path):
         out.add(s if n == 0 else f"{s}-{n}")
     return out
 
-files = list(pathlib.Path("docs").rglob("*.md")) + list(pathlib.Path("examples").rglob("*.md"))
+files = (list(pathlib.Path("docs").rglob("*.md"))
+         + list(pathlib.Path("examples").rglob("*.md"))
+         + [pathlib.Path("README.md"), pathlib.Path("README.zh-CN.md")])
 cache = {}
 bad = 0
 for f in files:
@@ -227,11 +235,19 @@ PYCHECK
 # 简体中文 `[features]` section had no body at all, and 简体中文 §2.11 was
 # missing the `identity` verdict table. Both predate this check and both are
 # invisible to every other one.
+#
+# THE PAIR AT THE ROOT IS CHECKED TOO, AND IT IS WHERE THE COST WAS HIGHEST.
+# `README.zh-CN.md` carried 14 target rows against the English 21: the seven it
+# lacked were every bare-metal row, so a reader of the 简体中文 README saw a
+# tool with no freestanding support at all. Heading count, code-block count and
+# `<details>` count were all equal, which is why every other check was green.
 python3 - <<'PYPARITY' || fail=1
 import pathlib, sys, re
 bad = 0
-for en in sorted(pathlib.Path("docs").glob("*.md")):
-    zh = pathlib.Path("docs/zh") / en.name
+pairs = [(en, pathlib.Path("docs/zh") / en.name)
+         for en in sorted(pathlib.Path("docs").glob("*.md"))]
+pairs.append((pathlib.Path("README.md"), pathlib.Path("README.zh-CN.md")))
+for en, zh in pairs:
     if not zh.exists():
         continue
     def count(f):
@@ -329,6 +345,107 @@ for k in missing:
     print(f"FAIL: docs/README.md lookup index does not mention `{k}`, which docs/04 documents")
 sys.exit(1 if missing else 0)
 PYLOOKUP
+
+# ── 14. a link labelled with a chapter number points at that chapter ─────────
+#
+# Rule 3 checks that a named path exists and rule 9 that a link resolves. Both
+# passed on `[docs/13 -- Bare-Metal and Freestanding Targets](docs/40-baremetal.md)`
+# in README.md: the renumbering rewrote the path and left the label, so the
+# README told its reader to read chapter 13 for eleven of the twenty-one rows
+# in its own target table. A label that names a number is an assertion about
+# where the reader is being sent, and it is checkable against the path.
+python3 - <<'PYLABEL' || fail=1
+import re, pathlib, sys
+LINK = re.compile(r"\[([^\]]+)\]\((?!https?:|mailto:)([^)\s#]+)(?:#[^)\s]+)?\)")
+NUM  = re.compile(r"(?:docs/|^|[^0-9a-zA-Z])(\d{2})(?:\s*(?:--|—|-|\s)|$)")
+files = (list(pathlib.Path("docs").rglob("*.md"))
+         + [pathlib.Path("README.md"), pathlib.Path("README.zh-CN.md")])
+bad = 0
+for f in files:
+    for m in LINK.finditer(f.read_text(errors="ignore")):
+        label, path = m.group(1), m.group(2)
+        base = pathlib.Path(path).name
+        target_no = re.match(r"(\d{2})-", base)
+        label_no = NUM.match(label.strip())
+        if not target_no or not label_no:
+            continue
+        if target_no.group(1) != label_no.group(1):
+            print(f"FAIL: {f}: label `{label}` names chapter "
+                  f"{label_no.group(1)}, the link goes to {base}")
+            bad += 1
+            continue
+        # The number agrees. In the two READMEs the label is also expected to
+        # carry the chapter's own title, because that is where a renumbering or
+        # a rename rots unseen and five 简体中文 labels were translated from the
+        # English titles rather than taken from the chapters.
+        #
+        # NOT IN docs/. Measured across the tree: sixty-odd links there label a
+        # chapter by its SUBJECT on purpose -- `[30 -- build.mcpp]`,
+        # `[04 -- \u00a72.6.1]`, `[10 -- Packaging & Release]` -- and that is a
+        # convention, not a defect. A check that would require editing all of
+        # them is imposing a new rule rather than enforcing an existing one.
+        if f.name not in ("README.md", "README.zh-CN.md"):
+            continue
+        said = label.strip()[label_no.end(1):].strip(" -\u2014\u2013:\uff1a")
+        if not said:
+            continue
+        target = (f.parent / path) if not path.startswith("docs/") else pathlib.Path(path)
+        if not target.is_file():
+            continue
+        head = target.read_text(errors="ignore").split("\n")[0]
+        title = re.sub(r"^#\s*\d{2}\s*(?:\u2014\u2014|\u2014|--|-)?\s*", "", head).strip()
+        # A PREFIX rather than equality: shortening a title by dropping its tail
+        # is honest, and `[30 -- Build Programs]` for `Build Programs:
+        # \u0060build.mcpp\u0060` is the shape that takes. Words the chapter does not
+        # use are what this rejects -- a label translated from the other
+        # language's title rather than taken from the chapter's own.
+        if title and not title.startswith(said):
+            print(f"FAIL: {f}: label says `{said}`, chapter {base} is titled `{title}`")
+            bad += 1
+sys.exit(1 if bad else 0)
+PYLABEL
+
+# ── 15. every table row is inside a table ───────────────────────────────────
+#
+# Rule 10 counts a translation's table rows, and a COUNT cannot see WHERE a row
+# is. One row of the target table was moved to line 1 of README.zh-CN.md, above
+# the document's own title, and rule 10 stayed green at 61 rows against 61: the
+# row was still in the file. What a reader saw was a stray table row before the
+# heading, and only a reader saw it.
+#
+# The check is positional rather than numeric: a maximal run of lines beginning
+# with `|` is a table only if its second line is a delimiter row. A row that has
+# been moved somewhere else lands in a run of its own and has no delimiter.
+python3 - <<'PYROW' || fail=1
+import re, pathlib, sys
+DELIM = re.compile(r"^\|[\s:|-]+\|?\s*$")
+files = (list(pathlib.Path("docs").rglob("*.md"))
+         + [pathlib.Path("README.md"), pathlib.Path("README.zh-CN.md")])
+bad = 0
+for f in files:
+    lines, infence, run = f.read_text(errors="ignore").split("\n"), False, []
+    def close(run):
+        global bad
+        if not run:
+            return
+        if len(run) < 2 or not DELIM.match(run[1][1]):
+            n, text = run[0]
+            print(f"FAIL: {f}:{n}: a table row outside a table: {text[:60]}")
+            bad += 1
+    for n, line in enumerate(lines, 1):
+        if line.startswith("```"):
+            infence = not infence
+            close(run); run = []
+            continue
+        if infence:
+            continue
+        if line.startswith("|"):
+            run.append((n, line))
+        else:
+            close(run); run = []
+    close(run)
+sys.exit(1 if bad else 0)
+PYROW
 
 if [[ "$fail" -eq 0 ]]; then
   echo "OK: docs structure checks pass"

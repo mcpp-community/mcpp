@@ -313,7 +313,7 @@ the paths where a project overrides the contract explicitly.
 
 ## Reference
 
-[docs/14 — The Target Side](22-target-side.md) for the five layers, the four
+[docs/22 — The Target Side](22-target-side.md) for the five layers, the four
 origins and the rules. [SPEC-002](specs/target-side.md) for the normative
 statement of the capability grammar.
 

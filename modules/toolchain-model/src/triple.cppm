@@ -199,10 +199,11 @@ std::optional<Triple> parse(std::string_view s);
 //
 // tier semantics (Rust-style):
 //   verified  — CI builds AND executes the artifact end-to-end (qemu/wine count)
+//   preview   — it builds and links; no execution has been recorded for the row
 //   planned   — registered intent; payload or CI row not wired yet
 struct TargetInfo {
     std::string_view canonical;   // "x86_64-linux-musl"
-    std::string_view tier;        // "verified" | "planned"
+    std::string_view tier;        // "verified" | "preview" | "planned"
     std::string_view note;        // display annotation: "static" / "PE" / ""
     // Convention toolchain pin for `--target <canonical>` with no explicit
     // [target.X] toolchain override. Empty = no convention (host default).

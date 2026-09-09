@@ -20,20 +20,23 @@
 
 ## 核心特性
 
-- **C++23 模块原生支持** — `import std` 自动处理，文件级增量构建，模块依赖自动分析，零手动配置
-- **纯模块化自举** — mcpp 自身由 43+ 个 C++23 模块组成，用自己构建自己，模块系统经实战验证
-- **开箱即用** — 一条命令安装，内置 GCC 16 / LLVM 20 工具链，自动下载到隔离沙盒，不污染系统
-- **集成依赖管理** — SemVer 约束解析、锁文件、跨项目 BMI 缓存、自定义包索引
-- **多包工作空间** — Workspace 统一锁文件与版本管理，适合大型项目
+- **模块化构建系统** — 专注 C++ 模块：`import std` 自动处理，文件级增量构建，模块依赖自动分析，零手动配置
+- **构建插件与异构硬件编程** — `build.mcpp` 与规则包扩展构建；CUDA、HIP、SYCL、Vulkan/SPIR-V 与 Ascend C 各是一个规则包
+- **包管理与模块化库生态** — SemVer 约束、锁文件、跨项目 BMI 缓存、自定义索引；[mcpplibs](https://github.com/mcpplibs) 的库两行引入即可 `import`
+- **工具链管理与通用交叉构建** — `family@version` 按需安装；`--target` 让同一次构建换到 Windows、macOS、Cortex-M 或 RISC-V 裸机，一份源码经 openkal 触及多个有操作系统的目标
+- **环境与运行时** — xlings 提供的用户态环境：工具链与依赖都留在隔离沙盒里，runner 把产物送上板子或模拟器
+- **纯模块化自举** — mcpp 完全由 C++23 模块接口单元写成，并用它自己构建自己
 
 ## 为什么选择 mcpp
 
-mcpp 专门为 **C++23 模块化开发** 打造。如果你想在项目中使用 `import std`、模块接口单元（`.cppm`）、模块分区等现代 C++ 特性，mcpp 在 Linux、macOS ARM64 和 Windows x86_64 上能为你提供便捷且友好的开发体验：
+mcpp 专门为 **C++23 模块化开发** 打造。如果你想在项目中使用 `import std`、模块接口单元（`.cppm`）、模块分区等现代 C++ 特性，mcpp 在 Linux、macOS ARM64 和 Windows x86_64 上能为你提供便捷且友好的开发体验。
 
-- **默认模块化** — `mcpp new` 创建的项目模板直接使用 C++23 模块，`import std` 开箱即用
-- **文件级增量构建** — 基于 P1689 dyndep 的三层优化（前端脏检查 + 逐文件扫描 + BMI restat），只重编真正变化的模块
-- **一键创建 & 构建** — `mcpp new hello && cd hello && mcpp build`，工具链自动安装，无需手动配置编译器和构建系统
-- **模块化生态** — [mcpplibs](https://github.com/mcpplibs) 提供一系列可直接 `import` 的 C++ 模块化库，支持自定义包索引
+C++ 通常把这五件事分给五个工具，而 mcpp 用一条命令承担全部五件。第二行是每一列
+在既有认知里通常对应的东西。
+
+| mcpp | 通用构建系统 | 构建插件 | 包管理 | 工具链管理 | 环境与运行时 |
+|---|---|---|---|---|---|
+| **最接近的** | CMake + Ninja | CMake modules、xmake rules | vcpkg、Conan | rustup、nvm | conda、Nix |
 
 > [!NOTE]
 > **早期版本** — mcpp 仍在积极开发中，接口和行为可能在后续版本调整。
@@ -233,7 +236,7 @@ import mcpplibs.cmdline;
 - 三层增量优化：前端脏检查 + 逐文件 P1689 dyndep + BMI copy-if-different restat
 - 指纹化 BMI 缓存：按编译器/标志/标准库哈希，跨项目共享
 - Ninja 后端：自动生成 build.ninja，并行编译
-- compile_commands.json 自动生成（clangd / ccls 即用）
+- compile_commands.json 自动生成（clangd / ccls 即用）；`mcpp build --configure-only` 可在编译普通源码之前先刷新它
 - C 语言一等支持：`.c` 文件自动检测，混合 C/C++ 项目
 - 用户自定义 cflags / cxxflags / ldflags / c_standard
 
@@ -248,6 +251,29 @@ import mcpplibs.cmdline;
 - 隔离沙盒：所有工具链在 `~/.mcpp/registry/`，不影响系统
 - 按平台指定：`linux = "gcc@16"`, `macos = "llvm@20"`
 - GCC + Clang 编译管线平权（`BmiTraits` 抽象层驱动）
+
+</details>
+
+<details>
+<summary><b>交叉构建、裸机与设备</b></summary>
+
+- `mcpp build --target <triple>` — 一个开关;该目标所需的工具链载荷会自动解析并安装
+- 从 `x86_64-linux-gnu` 到 Cortex-M、Cortex-A 与 RISC-V 裸机,完整的表见[平台支持](#平台支持)
+- freestanding 目标不带操作系统:C 库、启动代码、内存布局与模拟器随板级支持包走,而不随 mcpp 走
+- runner 用来触及构建机器上跑不了的产物 —— `mcpp run --runner flash`、`--list-runners`、`mcpp why runners`
+- `mcpp new --template riscv-virt-rt` — 由包自带的板级模板,按名字实例化
+- 基于 openkal 的交叉编译:一个可移植程序,为内核接口与 C 库都来自包的目标构建
+
+</details>
+
+<details>
+<summary><b>异构硬件构建与加速器</b></summary>
+
+- `[build] accel = "cuda12.9+{sm_89}, vulkan1.2"` — 一次构建可以点名一个或多个设备后端,该构建里 `cfg(accelerator = "cuda")` 为真
+- 目前有规则包的编程模型有五个:CUDA、HIP、SYCL、Vulkan/SPIR-V 与 Ascend C
+- 设备翻译单元由它自己的编译器编译,产物进入普通链接;主机与设备之间的边界是生成的,不是写两遍的
+- 带约束的 glob 用来挑出设备源码:`{ glob = "src/kernels/**/*.cu", accel = "cuda12.9+{sm_89}" }`
+- 引擎里不含任何厂商名,因此第六个后端是一个包,而不是一次引擎改动
 
 </details>
 
@@ -286,6 +312,16 @@ import mcpplibs.cmdline;
 </details>
 
 <details>
+<summary><b>扩展构建</b></summary>
+
+- `build.mcpp` — 为 mcpp 没有现成规则的那一步写的构建程序,说的是一套带版本号的指令协议,而不是靠猜
+- `mcpp::action` 用显式的输入与输出声明一份工作,于是生成物参与增量图,而不是待在图外
+- 规则包把那一步带给别的项目:包声明一个 rule 模块,消费者以 feature 的形式选中它
+- 载荷、运行时适配包与板级支持包都是普通的包 —— 一个工具、一个驱动或一块板子,由安装库的那个解析器安装
+
+</details>
+
+<details>
 <summary><b>开发体验</b></summary>
 
 - `mcpp new` — 创建模块化项目；`--template [ns.]name[@version][:tname]` 与 `mcpp add` 使用同一精确身份风格并选择**包自带模板**。只有一个模板时即使未写 `default = true` 也自动成为默认；歧义时用 `--list-templates [ns.]name[@version]` 列举
@@ -293,7 +329,9 @@ import mcpplibs.cmdline;
 - `mcpp test [pattern] [-- args]` — 自动发现并运行测试(按名字过滤;`--list`、`--timeout <s>`、`--message-format json`)
 - `mcpp search` — 搜索包索引
 - `mcpp add / remove / update` — 依赖管理
-- `mcpp why [toolchain|runtime|deps]` — 解释已解析的构建决策
+- 命令行上的 profile 与 feature:`--release` / `--profile <name>`(`build`、`run`),`--features <list>`(`build`、`run`、`test`)
+- `mcpp why [toolchain|runtime|deps|runners]` — 解释已解析的构建决策;`--format json` 供程序读取
+- `mcpp emit sbom` — 为已记录的那次解析产出一份 CycloneDX 格式的 SBOM
 - `mcpp --offline` / `MCPP_OFFLINE=1` — 仅使用已存在的本地状态
 - `mcpp explain E0001` — 错误码详细解释
 - `mcpp self doctor` — 环境自诊断
@@ -302,8 +340,8 @@ import mcpplibs.cmdline;
 
 ## 性能对比
 
-用**四个构建引擎**编译 **mcpp 自己** —— 137 个模块接口单元、57k 行、每一个都
-`import std;` —— 并且**给它们同一个编译器二进制**。每格是 **3 轮的中位数**,以及
+用**四个构建引擎**编译 **mcpp 自己** —— 锁定的工作负载有 137 个模块接口单元、
+57k 行,每一个都 `import std;` —— 并且**给它们同一个编译器二进制**。每格是 **3 轮的中位数**,以及
 相对 cmake 的倍率。所有列出自**同一次跑**。
 
 <!-- columns: mcpp=mcpp@2026.8.13.1; mcpp +优化=mcpp@2026.8.13.1+schedule=on; mcpp (旧版)=mcpp@2026.8.11.3; cmake=cmake; xmake=xmake -->
@@ -319,31 +357,23 @@ import mcpplibs.cmdline;
 <br>
 `mcpp` = mcpp@2026.8.13.1,被测的这一版 · `mcpp +优化` = **和 `mcpp` 同一个二进制**,开了 opt-in 的 `[build] bmi_schedule = "on"`(默认关闭) · `mcpp (旧版)` = mcpp@2026.8.11.3,上一个已发布版。<br>
 Linux x86_64 · i9-13900K · gcc 16.1.0 · n=3 · 锁定的工作负载 `a749e9f` ·
-cmake 4.4.2 / xmake 3.1.0 · `-` 表示未测,本表没有 ·
-所有大于 1s 的中位数 min/max 都在 ±4% 以内 ·
+cmake 4.4.2 / xmake 3.1.0 · 所有大于 1s 的中位数 min/max 都在 ±4% 以内 ·
 数据:[`standard-20260814-linux-x86_64`](bench/results/standard-20260814-linux-x86_64/)。</sub>
 
 * **`touch-hub` 与 `edit-comment` 两行由级联抑制决定。**
   cmake 与 xmake 按时间戳判断,重编全部下游单元;mcpp 将编译器刚产出的 BMI 与上
   一份比较,接口未变则不触发级联。这是默认行为,无需任何配置。`mcpp (旧版)` 一列
   测得上一个发布版为 81.72s,与 cmake 同量级,因此该效果在本版本中才生效。
-* **`edit-body` 量的是级联确实欠着的那种改动** —— 一次改动欠不欠级联,取决于函数体
-  写在哪里:
-
-  | 函数体所在 | 改动它 | 对应本行 |
-  |---|---|---|
-  | `.cppm`,且改动**移动了行号** | GCC 在 BMI 里记录声明位置,BMI 随之改变 → 欠级联 | **本行所测:1.1x,`+优化` 2.9x** |
-  | `.cppm`,**原地等长**修改 | GCC 不序列化非模板函数体 → BMI 不变 → 不级联 | 约 200x,与 `touch-hub` 同档 |
-  | 独立的 `.cpp` 实现单元 | 该文件根本不产生 BMI → 不级联,且跨编译器成立 | 约 200x |
-
-  这里的扰动插入一条语句,因此落在第一行:所有引擎都必须重建导入者,更快只能意味着
-  漏做。`+优化` 也不漏做,只是把同一份工作加快 2.9 倍。三者中**接口与实现分离最稳**,
-  因为它既不依赖 GCC 对函数体的处理方式,也不依赖你避免行号移动。实测见
+* **`edit-body` 是对照行,mcpp 在这一行有意不快。** 扰动往接口单元里插入一条语句,
+  GCC 记录的声明位置随之移动,BMI 因而改变,每一个导入者都欠一次重建 —— 在这一行
+  跑得快的引擎,漏掉的是它欠下的工作。一次改动欠不欠级联取决于函数体写在哪里:
+  原地等长的修改,或者写在独立 `.cpp` 里的函数体,都不欠级联,落在约 200x 的那一档。
+  实测见
   [`.agents/docs/2026-08-15-module-edit-granularity.md`](.agents/docs/2026-08-15-module-edit-granularity.md)。
 * **`bmi_schedule` 为 opt-in,默认关闭**(`auto` 解析为 off)。它将代码生成移出关键
-  路径,因此仅在级联必需时有效:`cold` 86.69s → 35.73s、`edit-body` 80.87s →
-  29.83s;而在 mcpp 本已跳过级联的两行上没有收益。调度错误的表现是静默失效而非
-  报错,因此不以单台机器的证据变更默认值。
+  路径,因此只在级联确实欠着时才有收益 —— `cold` 86.69s → 35.73s、`edit-body`
+  80.87s → 29.83s,而在 mcpp 本已跳过级联的两行上没有收益。调度错误的表现是静默
+  失效而非报错,因此不以单台机器的证据变更默认值。
 
 **[方法、锁定的版本、完整数据 → `bench/README.zh-CN.md`](bench/README.zh-CN.md)** ·
 [English](bench/README.md)
@@ -356,22 +386,30 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 
 **宿主**(mcpp 本身运行在哪):Linux x86_64 / aarch64、macOS arm64、Windows x86_64。
 
-**目标**(`--target` 接受什么;本表与代码内词汇表同源):
+**目标**(`--target` 接受什么;表里的行与它们的档位取自
+`modules/toolchain-model/src/triple.cppm`,也就是 `mcpp toolchain list` 为本机
+报告的那一份):
 
-| Target | 约定工具链 | 状态 |
+| Target | 约定工具链 | 档位 |
 |---|---|:---:|
-| `x86_64-linux-gnu`    | gcc(*Linux 默认*)或 llvm | 是 |
-| `x86_64-linux-musl`   | gcc 16,全静态 | 是 |
-| `aarch64-linux-musl`  | gcc 16,全静态——x86_64 交叉(qemu 实测)或原生 | 是 |
-| `x86_64-windows-gnu`  | gcc 16 MinGW-w64——Windows 原生,Linux 交叉(wine 实测)(*无 Visual Studio 时的 Windows 默认*) | 是 |
-| `x86_64-windows-msvc` | `msvc@system`(探测 VS/BuildTools)或 llvm ¹(*有 Visual Studio 时的 Windows 默认*) | 是 |
-| `aarch64-macos`       | llvm(*macOS 默认*) | 是 |
-| `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22——可构建可链接;未记录模拟器运行 | 计划中 |
-| `riscv64-linux-musl`  | — | 计划中 |
-| `aarch64-linux-gnu`   | — | 计划中 |
-| `x86_64-macos`        | — | 计划中 |
+| `x86_64-linux-gnu`    | gcc(*Linux 默认*)或 llvm | verified |
+| `x86_64-linux-musl`   | gcc 16,全静态 | verified |
+| `aarch64-linux-musl`  | gcc 16,全静态——x86_64 交叉(qemu)或原生 | verified |
+| `x86_64-windows-gnu`  | gcc 16 MinGW-w64——Windows 原生,Linux 交叉(wine)(*无 Visual Studio 时的 Windows 默认*) | verified |
+| `x86_64-windows-msvc` | `msvc@system`(探测 VS/BuildTools)或 llvm ¹(*有 Visual Studio 时的 Windows 默认*) | verified |
+| `x86_64-windows-musl` | llvm 22——带 musl C 库的 PE,没有 gcc 能产出它;系统由依赖图供给 | preview |
+| `aarch64-macos`       | llvm(*macOS 默认*) | verified |
+| `riscv64-none-elf` · `riscv32-none-elf` | llvm 22——裸机,`xim:picolibc-riscv` ² | verified |
+| `thumbv6m-none-eabi` · `thumbv7m-none-eabi` | llvm 22——Cortex-M0/M0+/M1、Cortex-M3 ² | verified |
+| `thumbv7em-none-eabihf` · `thumbv8m.main-none-eabi` | llvm 22——Cortex-M4F/M7F 硬浮点、Cortex-M33/M55 软浮点 ² | verified |
+| `armv7a-none-eabi` · `armv7a-none-eabihf` | llvm 22——Cortex-A 32 位,第一条带 MMU 的行 ² | verified |
+| `aarch64-none-elf` · `x86_64-none-elf` | llvm 22——裸机,默认不带 C 库 ² | preview |
+| `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22——Cortex-M4/M7 软浮点、M23、M33F/M55F ² | preview |
+| `riscv64-linux-musl` · `aarch64-linux-gnu` · `x86_64-macos` | — | planned |
 
-是——CI 端到端构建**并真实执行**产物(含 qemu/wine)｜ 计划中——尚未验证
+`verified` 该行的镜像已被构建**并运行**过,qemu 与 wine 都算 · `preview` 可构建
+可链接,未记录过模拟器运行 · `planned` 已登记在词表中,尚未接线 —— 面向这类目标
+的构建会被拒绝,而不是被尝试。
 
 > Linux release 二进制为 x86_64 与 aarch64 的 musl 全静态构建
 > (`x86_64-linux-musl` 与 `aarch64-linux-musl`)。
@@ -384,18 +422,30 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 > 完全自包含、不需要 Visual Studio、`import std` 可用。无需安装或配置,裸 Windows 上
 > `mcpp new && mcpp build` 直接可用。而 `mcpp.toml` 里显式写的 `[toolchain]` 永远按你
 > 写的执行——mcpp 只修正自己选的默认值,不改你的。
+>
+> ² 裸机的那些行不带操作系统:clang 与 lld 天生就是交叉编译器,因此任何能安装
+> LLVM 载荷的宿主都能产出这些目标。C 库、启动代码、内存布局与模拟器随板级支持包
+> 走,而不随 mcpp 走 —— 见
+> [40 — 裸机与 freestanding 目标](docs/zh/40-baremetal.md)。
 
 ## 文档
 
-- [快速开始](docs/zh/01-getting-started.md) — 5 分钟完成 install → new → build → run
-- [示例项目](docs/zh/03-examples.md)
-- [发布打包](docs/zh/10-pack-and-release.md)
-- [工具链管理](docs/zh/20-toolchains.md)
-- [从源码构建](docs/zh/90-build-from-source.md)
-- [mcpp.toml 指南](docs/zh/04-mcpp-toml.md)
-- [工作空间](docs/zh/07-workspace.md)
+[`docs/zh/`](docs/zh/README.md) 是手册。章节号的第一位说明它属于哪一部分;索引
+另有一份反向查表 —— 从读者眼前的一个 manifest 键或一条命令,查到拥有它的那一章。
 
-任意命令的完整选项可通过 `mcpp <cmd> --help` 查阅。
+| 部分 | 从这里开始 |
+|---|---|
+| `0x` 基础 | [01 快速开始](docs/zh/01-getting-started.md) · [04 mcpp.toml 工程文件指南](docs/zh/04-mcpp-toml.md) · [09 按场景选命令](docs/zh/09-commands-by-scenario.md) |
+| `1x` 发布 | [10 发布打包](docs/zh/10-pack-and-release.md) · [11 发布一个库到 mcpp-index](docs/zh/11-publishing-a-library.md) · [12 分发预编译库](docs/zh/12-binary-distribution.md) |
+| `2x` 工具链与目标 | [20 工具链管理](docs/zh/20-toolchains.md) · [21 目标三元组](docs/zh/21-the-target-triple.md) · [24 基于 openkal 的交叉构建](docs/zh/24-openkal-cross.md) |
+| `3x` 扩展 mcpp | [30 构建程序:`build.mcpp`](docs/zh/30-build-mcpp.md) · [31 编写规则包](docs/zh/31-authoring-a-rule-package.md) · [34 编写板级支持包](docs/zh/34-authoring-a-bsp.md) |
+| `4x` 设备与加速器 | [40 裸机与 freestanding 目标](docs/zh/40-baremetal.md) · [41 抵达一台设备](docs/zh/41-devices.md) · [42 异构硬件构建](docs/zh/42-heterogeneous-builds.md) |
+| `5x` 给程序的契约 | [50 机器可读输出](docs/zh/50-machine-output.md) · [51 受支持的版本与兼容性](docs/zh/51-supported-versions.md) · [规范](docs/specs/README.md) |
+| `9x` mcpp 自身 | [90 从源码构建与参与贡献](docs/zh/90-build-from-source.md) · [92 发布 mcpp](docs/zh/92-release.md) |
+
+[`examples/`](examples/) 下的每一个目录都是一个能构建的工程,
+[03 — 示例项目](docs/zh/03-examples.md) 说明哪一个教什么。任意命令的完整选项
+可通过 `mcpp <cmd> --help` 查阅。
 
 **AI 辅助学习**：你可以将以下提示词发给 AI 编码助手，让它帮你快速了解 mcpp：
 
@@ -411,7 +461,7 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 
 | 项目 | 说明 |
 | --- | --- |
-| [mcpp](https://github.com/mcpp-community/mcpp) | mcpp 自身 —— 43+ 个 C++23 模块,完全自举 |
+| [mcpp](https://github.com/mcpp-community/mcpp) | mcpp 自身 —— 由 C++23 模块写成,完全自举 |
 | [xlings](https://github.com/openxlings/xlings) | mcpp 依赖的工具链与包管理底座 |
 | [tinyhttps](https://github.com/mcpplibs/tinyhttps) | 极简 C++23 HTTP/HTTPS 客户端,支持 SSE 流式 |
 | [llmapi](https://github.com/mcpplibs/llmapi) | 现代 C++ LLM API 客户端(OpenAI 兼容) |
@@ -451,7 +501,7 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 
 项目依赖和灵感来源：
 
-- [xlings](https://github.com/d2learn/xlings) — 工具链 / 包管理底座
+- [xlings](https://github.com/openxlings/xlings) — 工具链 / 包管理底座
 - [mcpplibs.cmdline](https://github.com/mcpplibs/cmdline) — CLI 框架
 - [ninja](https://github.com/ninja-build/ninja) — 底层构建引擎
 - [xmake](https://github.com/xmake-io/xmake) — 跨平台构建工具
