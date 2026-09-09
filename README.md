@@ -20,18 +20,14 @@
 
 ## Highlights
 
-The left column is what mcpp is; the right is what that is used for.
+Each line names a capability first, then what it is used for.
 
-| Capability | What it is used for |
-|---|---|
-| **Build system** — native C++23 modules, `import std` handled automatically, file-level incremental builds, automatic dependency analysis | `mcpp new && mcpp build`, with nothing to configure; an interface that did not change does not cascade into the units importing it |
-| **Build plugins** — `build.mcpp` and rule packages | a step mcpp has no rule for is written once and packaged for other projects; CUDA, HIP, SYCL, Vulkan/SPIR-V and Ascend C are each a rule package |
-| **Package manager** — SemVer constraints, a lockfile, a cross-project BMI cache, custom indices | two lines of manifest bring in a community module library to `import`; several packages share one lockfile in a workspace |
-| **Toolchain manager** — `family@version`, installed on demand | no compiler has to be installed first; `--target` moves the same build to Windows, macOS, Cortex-M or RISC-V bare metal |
-| **Environment and runtime** — the user-space environment xlings provides | toolchains and dependencies land in an isolated sandbox rather than in the system; a runner puts the artifact on a board or an emulator |
-
-mcpp is written entirely in C++23 module interface units and builds itself with
-this pipeline, so every row above runs on mcpp itself every day.
+- **Build system** — native C++23 modules: `import std` handled automatically, file-level incremental builds, automatic module dependency analysis. `mcpp new && mcpp build` with nothing to configure; an interface that did not change does not cascade into the units importing it
+- **Build plugins** — `build.mcpp` and rule packages. A step mcpp has no rule for is written once and packaged for other projects; CUDA, HIP, SYCL, Vulkan/SPIR-V and Ascend C are each a rule package
+- **Package manager** — SemVer constraint resolution, a lockfile, a cross-project BMI cache, custom indices. Two lines of manifest bring in a community module library to `import`; several packages share one lockfile in a workspace
+- **Toolchain manager** — `family@version`, installed on demand. No compiler has to be installed first, and `--target` moves the same build to Windows, macOS, Cortex-M or RISC-V bare metal
+- **Environment and runtime** — the user-space environment xlings provides. Toolchains and dependencies land in an isolated sandbox rather than in the system; a runner puts the artifact on a board or an emulator
+- **Pure modular self-hosting** — mcpp is written entirely in C++23 module interface units and builds itself with this pipeline: every line above runs on mcpp itself every day
 
 ## Why mcpp
 
