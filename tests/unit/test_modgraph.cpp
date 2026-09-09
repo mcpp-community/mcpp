@@ -1102,6 +1102,30 @@ TEST(Scanner, AModuleIdentityThatIsNotANameIsRefused) {
         << u.error().message;
 }
 
+// The message quotes WHAT WAS READ, not what was recorded.
+//
+// The tokeniser stops at the first character it does not accept, so a
+// declaration it cannot read at all yields an EMPTY name, and `'' is not a
+// module name` names nothing the author can find. A non-ASCII name is the
+// measured case: `is_module_name_char` tests bytes with std::isalnum, false for
+// every byte of a UTF-8 sequence. GCC 16.1 refuses the same declaration with
+// `unrecognized 'MODULE-EXPORT ...'`, so this is a clearer sentence for a
+// refusal that already existed, not a new restriction.
+TEST(Scanner, AnUnreadableModuleNameIsQuotedAsWritten) {
+    auto dir = make_tempdir("mcpp-nonascii");
+    write(dir / "src" / "u.cppm", "export module \u6a21\u5757;\n");
+
+    auto u = scan_file(dir / "src" / "u.cppm", "pkg",
+                       mcpp::builtin_extension_table());
+    ASSERT_FALSE(u.has_value());
+    EXPECT_NE(u.error().message.find("is not a module name"), std::string::npos)
+        << u.error().message;
+    EXPECT_EQ(u.error().message.find("'' is not"), std::string::npos)
+        << "the message quoted an empty name: " << u.error().message;
+    EXPECT_NE(u.error().message.find("\u6a21\u5757"), std::string::npos)
+        << u.error().message;
+}
+
 // The guard above must not refuse what the language allows. A partition, a
 // dotted name and a dotted partition are all names.
 TEST(Scanner, WellFormedNamesSurviveTheIdentityGuard) {

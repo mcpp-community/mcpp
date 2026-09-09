@@ -827,11 +827,24 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
             // no source could have declared: a recorded non-name propagates
             // into the build graph as a BMI path and is reported by nothing.
             if (!is_well_formed_module_name(name)) {
+                // QUOTE WHAT WAS READ, NOT WHAT WAS RECORDED. The tokeniser
+                // stops at the first character it does not accept, so a
+                // declaration it cannot read at all yields an EMPTY name — and
+                // `'' is not a module name` names nothing the author can find.
+                // The measured case is a non-ASCII name: `is_module_name_char`
+                // tests bytes with std::isalnum, which is false for every byte
+                // of a UTF-8 sequence, so `export module <non-ascii>;` produced
+                // the empty string. (GCC 16.1 refuses that declaration too,
+                // with `unrecognized 'MODULE-EXPORT ...'`, so this is a clearer
+                // sentence for the same refusal rather than a new restriction.)
+                const auto decl = trim(r.substr(0, r.find(';')));
                 return std::unexpected(ScanError{file, lineno,
                     std::format("'{}' is not a module name. A module "
                                 "declaration is `module <name>;`, "
                                 "`module <name>:<partition>;` or "
-                                "`module : private;`.", name)});
+                                "`module : private;`, and a name is a "
+                                "dot-separated sequence of ASCII identifiers.",
+                                name.empty() ? std::string(decl) : name)});
             }
             if (is_export) {
                 if (u.provides) {
