@@ -383,6 +383,25 @@ struct BmiTraits {
     // Positional on GNU, so the emitter must place it before `-c $in`.
     std::string_view moduleInterfaceLangFlag; // " -x c++" | " -x c++-module" | " /interface /TP"
 
+    // How this compiler is told that a translation unit came from a
+    // module-interface EXTENSION and is nevertheless NOT an interface.
+    //
+    // A module-extension file need not provide a module: an implementation
+    // unit (`module M;`) is a legal inhabitant of a `.cppm`, and it provides
+    // nothing importable. The extension cannot answer that question — only the
+    // content can — so the emitter chooses between this flag and
+    // `moduleInterfaceLangFlag` from what the SCAN found, and states one of
+    // them on every module-extension edge.
+    //
+    // SAYING NOTHING IS NOT AN OPTION, AND THAT IS THE MEASUREMENT THIS FIELD
+    // EXISTS FOR. Clang's driver maps `.cppm` to `c++-module` on its own, so
+    // an implementation unit compiled with no `-x` at all fails with
+    // `missing 'export' specifier in module declaration while building module
+    // interface` — while GCC, whose interface flag is already the plain
+    // language, builds the same file. The identical project therefore built on
+    // one compiler and not the other, and the split was one flag wide.
+    std::string_view moduleImplLangFlag;      // " -x c++" | " /TP"
+
     // Non-empty ⇔ the driver can emit the BMI *and stop*, producing the SAME
     // BMI an ordinary compile of that TU would have produced. Both halves
     // matter, and the second one is the trap.
@@ -533,6 +552,10 @@ BmiTraits bmi_traits(const Toolchain& tc) {
             // explicitly, because mcpp's interfaces are `.cppm` and cl does
             // not know that suffix. The other two families now match it.
             .moduleInterfaceLangFlag = " /interface /TP",
+            // `/interface` is the half that says "this is an interface"; `/TP`
+            // is the half that says "this is C++". A non-interface unit keeps
+            // the second and drops the first.
+            .moduleImplLangFlag = " /TP",
         };
     }
     if (is_clang(tc)) {
@@ -549,6 +572,7 @@ BmiTraits bmi_traits(const Toolchain& tc) {
             .moduleOutputPrefix = " -fmodule-output=",
             .bmiSearchPrefix = " -fprebuilt-module-path=",
             .moduleInterfaceLangFlag = " -x c++-module",
+            .moduleImplLangFlag = " -x c++",
             .bmiOnlyFlags = " --precompile -Xclang -emit-reduced-module-interface",
         };
     }
@@ -570,6 +594,9 @@ BmiTraits bmi_traits(const Toolchain& tc) {
         // it only needs to be told the LANGUAGE. `-x c++-module` is not a
         // value GCC accepts.
         .moduleInterfaceLangFlag = " -x c++",
+        // The same flag, and for GCC that is not a coincidence: since GCC reads
+        // interface-ness from the content, both answers are "this is C++".
+        .moduleImplLangFlag = " -x c++",
     };
 }
 

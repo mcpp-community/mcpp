@@ -3639,10 +3639,10 @@ dependency_linkage = "static"
 )");
     ASSERT_TRUE(m);
     ASSERT_TRUE(m->profiles.contains("dev"));
-    EXPECT_FALSE(m->profiles.at("dev").dependencyLinkage.has_value());
+    EXPECT_FALSE(m->profiles.at("dev").dependencyLinkageDeclared);
     ASSERT_TRUE(m->profiles.contains("fast"));
-    ASSERT_TRUE(m->profiles.at("fast").dependencyLinkage.has_value());
-    EXPECT_EQ(*m->profiles.at("fast").dependencyLinkage, "static");
+    ASSERT_TRUE(m->profiles.at("fast").dependencyLinkageDeclared);
+    EXPECT_EQ(m->profiles.at("fast").dependencyLinkage, "static");
 }
 
 TEST(Manifest, ADependencyEdgeLinkageIsAClosedVocabularyToo) {
@@ -5012,4 +5012,157 @@ cuda = { provides = ["gpu-blas"] }
     for (auto const& w : m->schemaWarnings) { all += w; all += '\n'; }
     EXPECT_EQ(all.find("gpu-blas"), std::string::npos)
         << "a feature-provided capability is supplied; no warning is due:\n" << all;
+}
+
+// A predicate that carries ONLY a `[target.<pred>.runtime]` table is recorded.
+//
+// It was not. The gate deciding whether to keep a ConditionalConfig was a
+// hand-written disjunction over the fields the writer knew about, and
+// `libraries` / `link_library_dirs` were added to the struct without being
+// added to it — so the block was parsed, populated and dropped. Adding any
+// unrelated key under the same predicate made it work, which is the control
+// below: the two manifests differ in one dimension that has nothing to do with
+// libraries, and before the fix that dimension decided the outcome.
+TEST(Manifest, AConditionalRuntimeTableAloneIsRecorded) {
+    constexpr auto only_runtime = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.linux.runtime]
+libraries = ["dl"]
+link_library_dirs = ["lib"]
+)";
+    auto m = mcpp::manifest::parse_string(only_runtime);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->conditionalConfigs.size(), 1u)
+        << "a runtime-only predicate was parsed and then discarded";
+    ASSERT_EQ(m->conditionalConfigs[0].libraries.size(), 1u);
+    EXPECT_EQ(m->conditionalConfigs[0].libraries[0], "dl");
+    EXPECT_EQ(m->conditionalConfigs[0].linkLibraryDirs.size(), 1u);
+}
+
+TEST(Manifest, AConditionalRuntimeTableWithAnUnrelatedSiblingIsAlsoRecorded) {
+    // The control for the test above. This shape ALWAYS worked, which is why
+    // the defect survived: every fixture that exercised the neutral link intent
+    // was a generated distribution package, and those carry `ldflags` too.
+    constexpr auto with_sibling = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.linux.runtime]
+libraries = ["dl"]
+[target.linux.build]
+defines = ["UNRELATED_TO_LIBRARIES"]
+)";
+    auto m = mcpp::manifest::parse_string(with_sibling);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->conditionalConfigs.size(), 1u);
+    ASSERT_EQ(m->conditionalConfigs[0].libraries.size(), 1u);
+    EXPECT_EQ(m->conditionalConfigs[0].libraries[0], "dl");
+}
+
+// An unsupported key in `[runtime]` is REPORTED, not dropped — the rule
+// `[build]`, `[target.<triple>]` and `[target.<pred>.build]` have each followed
+// since #418/#249/#544, and which these two tables did not.
+TEST(Manifest, AnUnknownRuntimeKeyIsReported) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[runtime]
+libraries = ["m"]
+dlopen_lib = ["one"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->schemaWarnings.size(), 1u);
+    EXPECT_NE(m->schemaWarnings[0].find("dlopen_lib"), std::string::npos)
+        << m->schemaWarnings[0];
+    // The message names the list the check uses, so a reader can find the key
+    // they meant without leaving the message.
+    EXPECT_NE(m->schemaWarnings[0].find("dlopen_libs"), std::string::npos)
+        << m->schemaWarnings[0];
+    // The correctly spelled sibling still took effect.
+    ASSERT_EQ(m->runtimeConfig.linkIntent.libraries.size(), 1u);
+}
+
+TEST(Manifest, AnUnknownConditionalRuntimeKeyIsReported) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.linux.runtime]
+libraries = ["dl"]
+frameworks = ["Cocoa"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->schemaWarnings.size(), 1u);
+    // `frameworks` is a real `[runtime]` key and not a per-target one, so the
+    // plausible-looking case is the one held here.
+    EXPECT_NE(m->schemaWarnings[0].find("frameworks"), std::string::npos)
+        << m->schemaWarnings[0];
+    EXPECT_NE(m->schemaWarnings[0].find("[target.linux.runtime]"), std::string::npos)
+        << m->schemaWarnings[0];
+}
+
+// The negative control for both sweeps. Without it they pass against a parser
+// that reports every key, which reads identically in a green suite.
+TEST(Manifest, CorrectlySpelledRuntimeKeysAreSilent) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[runtime]
+libraries = ["m"]
+library_dirs = ["lib"]
+dlopen_libs = ["one"]
+capabilities = ["cap"]
+provides = ["thing"]
+frameworks = ["Cocoa"]
+link_library_dirs = ["lib"]
+transitive_needed_dirs = ["lib"]
+runtime_search_dirs = ["lib"]
+deploy_files = ["a.txt"]
+[runtime.somecapability]
+provider = "pkg"
+[[runtime.artifacts]]
+role       = "interface"
+path       = "include"
+provenance = "source"
+[[runtime.requirements]]
+kind  = "capability"
+value = "display.present"
+phase = "run"
+[target.linux.runtime]
+libraries = ["dl"]
+link_library_dirs = ["lib"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    std::string all;
+    for (auto const& w : m->schemaWarnings) { all += w; all += '\n'; }
+    EXPECT_TRUE(m->schemaWarnings.empty()) << all;
+    // A `[runtime.<capability>]` sub-table is a provider override, not a typo.
+    EXPECT_EQ(m->runtimeConfig.providerOverrides.at("somecapability"), "pkg");
+    // `[[runtime.artifacts]]` and `[[runtime.requirements]]` are arrays, not
+    // tables, so they reach the sweep rather than being skipped with the
+    // provider channel. They are exactly what `mcpp pack` emits into every
+    // packed library, so a false positive here would warn on all of them.
+    EXPECT_EQ(m->runtimeConfig.artifacts.size(), 1u);
+    EXPECT_EQ(m->runtimeConfig.requirements.size(), 1u);
+}
+
+// A manifest authored on Windows commonly begins with a UTF-8 byte-order mark.
+// It used to reach the lexer as a bare key and produce `1:1: expected key`, a
+// true statement about the token that says nothing about the file.
+TEST(Manifest, AByteOrderMarkOnTheManifestIsNotAnError) {
+    const std::string src =
+        "\xEF\xBB\xBF"
+        "[package]\n"
+        "name = \"x\"\n"
+        "version = \"0.1.0\"\n";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->package.name, "x");
 }

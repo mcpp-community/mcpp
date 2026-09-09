@@ -705,8 +705,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         if (v.is_string()) out.push_back(v.as_string());
             };
             if (auto it = tt.find("dependency_linkage");
-                it != tt.end() && it->second.is_string())
+                it != tt.end() && it->second.is_string()) {
                 pr.dependencyLinkage = it->second.as_string();
+                pr.dependencyLinkageDeclared = true;
+            }
             read_list("cflags",   pr.cflags);
             read_list("cxxflags", pr.cxxflags);
             read_list("ldflags",  pr.ldflags);
@@ -2137,9 +2139,38 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         }
     }
     // [runtime.<capability>] provider = "<pkg>" — explicit provider override.
+    //
+    // The same pass reports an unsupported FLAT key. `[build]`,
+    // `[target.<triple>]` and `[target.<pred>.build]` have each reported one
+    // since #418/#249/#544, under a rule this file states plainly: an
+    // unsupported key is REPORTED, not dropped, because a key that looks
+    // plausible and does nothing is the worst thing a configuration file can
+    // contain. `[runtime]` was read the same way and swept by nobody.
+    //
+    // SUB-TABLES ARE SKIPPED, for the reason the `[target.<triple>]` sweep
+    // gives: they are a channel, not a typo. Here every `[runtime.<capability>]`
+    // names a capability whose spelling this file cannot know.
+    static constexpr std::string_view kKnownRuntimeKeys[] = {
+        "artifacts", "capabilities", "deploy_files", "dlopen_libs", "frameworks",
+        "libraries", "library_dirs", "link_library_dirs", "provides",
+        "requirements", "runtime_search_dirs", "transitive_needed_dirs",
+    };
     if (auto* rt = doc->get_table("runtime"); rt && !rt->empty()) {
         for (auto& [rk, rv] : *rt) {
-            if (!rv.is_table()) continue;  // flat keys handled above
+            if (!rv.is_table()) {
+                if (std::ranges::find(kKnownRuntimeKeys, rk) == std::ranges::end(kKnownRuntimeKeys)) {
+                    std::string supported;
+                    for (auto k : kKnownRuntimeKeys) {
+                        if (!supported.empty()) supported += ", ";
+                        supported += k;
+                    }
+                    m.schemaWarnings.push_back(std::format(
+                        "[runtime] has unsupported key '{}' (ignored). Supported "
+                        "keys: {}. A [runtime.<capability>] table declares a "
+                        "provider override and is not a key.", rk, supported));
+                }
+                continue;  // flat keys handled above
+            }
             auto& tt = rv.as_table();
             if (auto it = tt.find("provider"); it != tt.end() && it->second.is_string())
                 m.runtimeConfig.providerOverrides[rk] = it->second.as_string();
@@ -2603,6 +2634,33 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 if (auto f = rt.find("libraries"); f != rt.end() && f->second.is_array())
                     for (auto& v : f->second.as_array())
                         if (v.is_string()) cc.libraries.push_back(v.as_string());
+                // Two keys, and therefore a third key is a typo. The sweep over
+                // `[target.<pred>]` above cannot reach here: it skips tables,
+                // because tables are its conditional channel — so this table's
+                // own keys were swept by nothing.
+                //
+                // ONE LIST, USED BY THE CHECK AND PRINTED BY THE MESSAGE. The
+                // `[build]` sweep a few hundred lines above carries the note
+                // explaining why: its message was once a third hand-written copy
+                // and had drifted from both others, so the only spelling that
+                // turned the feature on was the one reported as unsupported.
+                static constexpr std::string_view kKnownCondRuntimeKeys[] = {
+                    "libraries", "link_library_dirs",
+                };
+                for (auto& [rk, _] : rt) {
+                    if (std::ranges::find(kKnownCondRuntimeKeys, rk)
+                        != std::ranges::end(kKnownCondRuntimeKeys)) continue;
+                    std::string supported;
+                    for (auto k : kKnownCondRuntimeKeys) {
+                        if (!supported.empty()) supported += ", ";
+                        supported += k;
+                    }
+                    m.schemaWarnings.push_back(std::format(
+                        "[target.{}.runtime] has unsupported key '{}' (ignored). "
+                        "Supported keys: {}. This table is the dialect-neutral "
+                        "link intent; other [runtime] keys are not per-target.",
+                        triple, rk, supported));
+                }
             }
             if (auto bit = body.find("build"); bit != body.end() && bit->second.is_table()) {
                 auto& bt = bit->second.as_table();
@@ -2862,14 +2920,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                                               std::vector<std::string>{});
                 }
             }
-            if (!cc.inputs.cflags.empty() || !cc.inputs.cxxflags.empty()
-                || !cc.inputs.ldflags.empty() || !cc.inputs.sources.empty()
-                || !cc.inputs.defines.empty()
-                || !cc.inputs.globFlags.empty() || !cc.inputs.includeDirs.empty()
-                || !cc.inputs.includeDirsAfter.empty()
-                || !cc.dependencies.empty() || !cc.devDependencies.empty()
-                || !cc.buildDependencies.empty() || !cc.featureDeps.empty()
-                || !cc.xlings.deps.empty() || !cc.xlings.featureDeps.empty())
+            // `is_empty(ConditionalConfig)` and not a disjunction written here:
+            // this list omitted `libraries` and `linkLibraryDirs`, so a
+            // predicate carrying only a `[target.<pred>.runtime]` table was
+            // parsed and then dropped. See the note on that member.
+            if (!mcpp::manifest::is_empty(cc))
                 m.conditionalConfigs.push_back(std::move(cc));
         }
     }

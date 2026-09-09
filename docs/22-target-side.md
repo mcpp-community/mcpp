@@ -381,7 +381,26 @@ for arch/env conditions and combinators.
   conditional source globs, e.g. gating `src/x86/**/*.asm` behind
   `cfg(arch = "x86_64")`; `!`-exclusion globs work here too), plus `flags` and
   `include_dirs` / `include_dirs_after` (mcpp 0.0.102+), plus
-  `private_include_dirs` and `std-module-flags` (mcpp 2026.9.1.1+).
+  `private_include_dirs` and `std-module-flags` (mcpp 2026.9.1.1+), and
+  `runtime` with `libraries` / `link_library_dirs` (mcpp 2026.8.29.1+).
+- **`runtime` is the dialect-neutral half of a link line.** `build.ldflags` is
+  spelled the GNU way, and a native `cl.exe` rejects `-L`. These two keys say
+  the same thing without committing to a spelling: mcpp renders them as
+  `-L<dir>` + `-l<name>` or `/LIBPATH:<dir>` + `<name>.lib` according to the
+  target. They are the same two keys `[runtime]` (§2.11 of
+  [04 — mcpp.toml](04-mcpp-toml.md)) already has at the top level; this makes
+  them per-target and invents no vocabulary. Any other `[runtime]` key is
+  reported here and ignored, because the rest are not per-target.
+
+  ```toml
+  # Linked only on Windows, and spelled correctly for whichever compiler builds it.
+  [target.windows.runtime]
+  libraries = ["user32", "gdi32"]
+  ```
+
+  A predicate whose only content is this table is applied like any other. Until
+  mcpp 2026.9.9.1 it was not: the block was parsed and then discarded unless
+  something else appeared under the same predicate.
 - **What `build` accepts is exactly the set of *additive build inputs*** — the
   things that combine by appending and are consumed after the predicate is
   evaluated, which is the member list of `BuildInputs`. `linkage`, `target`,

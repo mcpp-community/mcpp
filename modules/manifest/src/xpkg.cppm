@@ -1527,12 +1527,10 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                     cur.skip_ws_and_comments();
                 }
                 cur.consume('}');
-                if (!cc.inputs.cflags.empty() || !cc.inputs.cxxflags.empty()
-                    || !cc.inputs.ldflags.empty() || !cc.inputs.sources.empty()
-                    || !cc.inputs.defines.empty()
-                    || !cc.inputs.globFlags.empty()
-                    || !cc.inputs.includeDirs.empty()
-                    || !cc.inputs.includeDirsAfter.empty())
+                // The same question the mcpp.toml reader asks, asked the same
+                // way. This list omitted `privateIncludeDirs`, which this loop
+                // fills.
+                if (!mcpp::manifest::is_empty(cc))
                     m.conditionalConfigs.push_back(std::move(cc));
                 cur.skip_ws_and_comments();
             }

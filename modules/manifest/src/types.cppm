@@ -311,6 +311,27 @@ inline void append(BuildInputs& dst, const BuildInputs& src) {
                               src.stdModuleFlags.end());
 }
 
+// Does this carry anything? The sibling of `append` above: that function is the
+// one place a contribution is combined, and this is the one place it is weighed.
+// Both enumerate every field, and they sit together so that a field added to
+// BuildInputs is a field the reader meets twice.
+//
+// A FREE FUNCTION, NOT A MEMBER, AND THAT IS NOT STYLE. Adding an inline member
+// to a struct exported from this module changes what importers materialise from
+// its BMI, and `Profile`'s `std::optional<std::string>` member is already known
+// to break under clang with the MSVC standard library — see the note on that
+// member for the measurement. The first version of this was a member, and it
+// failed exactly there: `test_modgraph.cpp` stopped compiling with
+// `no matching constructor for _SMF_control<_Optional_construct_base<...>>`,
+// reported against a struct the change never touched. `append` has been a free
+// function since it was written; this one matches it.
+inline bool is_empty(const BuildInputs& b) {
+    return b.sources.empty() && b.cflags.empty() && b.cxxflags.empty()
+        && b.ldflags.empty() && b.defines.empty() && b.globFlags.empty()
+        && b.includeDirs.empty() && b.includeDirsAfter.empty()
+        && b.privateIncludeDirs.empty() && b.stdModuleFlags.empty();
+}
+
 // A build-graph node declared by a build program (`mcpp:action=`).
 //
 // The architectural point (see
@@ -1124,7 +1145,37 @@ struct ConditionalConfig {
     // names the project's environment, which is one per project rather than
     // one per target.
     XlingsConfig                        xlings;
+
+    // Does this block say anything at all?
+    //
+    // DEFINED HERE, BESIDE THE FIELDS, AND THAT IS THE POINT. Two parsers —
+    // mcpp.toml and the xpkg descriptor — decide whether to record a block by
+    // asking this question, and both used to answer it with a hand-written
+    // disjunction over the fields they happened to know. `libraries` and
+    // `linkLibraryDirs` were added to this struct without being added to either
+    // list, so a predicate carrying ONLY a `[target.<pred>.runtime]` table was
+    // parsed, populated and then dropped. Adding one unrelated `defines` entry
+    // under the same predicate made it work, which is what a reader would have
+    // to discover to explain the behaviour.
+    //
+    // That is the third time this struct has been read by a list that fell
+    // behind it: see the `BuildInputs` note above for #258 and the
+    // `featureDeps` note for #359, both of which end with the same sentence.
+    // #258 was repaired structurally, by carrying a whole type so the set could
+    // not drift; #359 was repaired by adding the missing member to the list.
+    // This is #258's medicine: a field added below and forgotten here is a
+    // question asked at the point where the field is written, instead of in two
+    // files that do not mention each other.
 };
+
+// The same question for a whole conditional block, and a free function for the
+// same reason `is_empty(BuildInputs)` is one.
+inline bool is_empty(const ConditionalConfig& c) {
+    return is_empty(c.inputs) && c.linkLibraryDirs.empty() && c.libraries.empty()
+        && c.dependencies.empty() && c.devDependencies.empty()
+        && c.buildDependencies.empty() && c.featureDeps.empty()
+        && c.xlings.empty();
+}
 
 // `[lib]` — library "root" interface convention.
 //
@@ -1350,12 +1401,29 @@ struct Profile {
     bool        strip    = false;
     // `dependency_linkage`, per profile (#519).
     //
-    // OPTIONAL, and that is load-bearing rather than stylistic: resolving a
-    // profile REPLACES the whole struct with the declared one, so a plain
-    // value would make `[profile.dev] opt = 0` silently reset a
-    // `[build] dependency_linkage = "shared"` back to the field default.
-    // Absent means "whatever [build] said".
-    std::optional<std::string> dependencyLinkage;
+    // DECLARED-OR-NOT IS LOAD-BEARING, and that is why there are two members
+    // rather than one: resolving a profile REPLACES the whole struct with the
+    // declared one, so a plain value alone would make `[profile.dev] opt = 0`
+    // silently reset a `[build] dependency_linkage = "shared"` back to the
+    // field default. Not declared means "whatever [build] said".
+    //
+    // TWO MEMBERS AND NOT AN `std::optional<std::string>`, for exactly the
+    // reason `TargetEntry::sysroot` gives above, and this was the last member
+    // in the module still shaped the way that note forbids. An
+    // `std::optional<std::string>` DATA MEMBER of an exported struct forces
+    // this module's interface to materialise that specialisation's
+    // special-member machinery, and under clang with the MSVC standard library
+    // it does not compile:
+    //
+    //     optional:262: error: no matching constructor for initialization of
+    //     '_SMF_control<_Optional_construct_base<basic_string<char,...>>, ...>'
+    //
+    // reached through `Manifest` -> `std::map<std::string, Profile>` ->
+    // `Profile`. The error names whichever translation unit happens to copy a
+    // Manifest -- `tests/unit/test_modgraph.cpp` is one -- and says nothing
+    // about the member that caused it.
+    std::string dependencyLinkage;
+    bool        dependencyLinkageDeclared = false;
     // Passthrough escape hatch (fixed keys, open values — I6 completeness):
     std::vector<std::string> cflags;
     std::vector<std::string> cxxflags;
