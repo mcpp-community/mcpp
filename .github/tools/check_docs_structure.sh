@@ -17,7 +17,7 @@
 #  11. every chapter states its reader, its question and its exclusions
 #  12. a citation naming a section lands in the chapter that contains it
 #  13. every table the manifest reference documents is in the lookup index
-#  14. a link labelled with a chapter number points at that chapter
+#  14. a link labelled with a chapter number points at that chapter, by its title
 #  15. every table row is inside a table
 #
 # What it deliberately does NOT check: whether a chapter documents what is
@@ -372,6 +372,35 @@ for f in files:
         if target_no.group(1) != label_no.group(1):
             print(f"FAIL: {f}: label `{label}` names chapter "
                   f"{label_no.group(1)}, the link goes to {base}")
+            bad += 1
+            continue
+        # The number agrees. In the two READMEs the label is also expected to
+        # carry the chapter's own title, because that is where a renumbering or
+        # a rename rots unseen and five 简体中文 labels were translated from the
+        # English titles rather than taken from the chapters.
+        #
+        # NOT IN docs/. Measured across the tree: sixty-odd links there label a
+        # chapter by its SUBJECT on purpose -- `[30 -- build.mcpp]`,
+        # `[04 -- \u00a72.6.1]`, `[10 -- Packaging & Release]` -- and that is a
+        # convention, not a defect. A check that would require editing all of
+        # them is imposing a new rule rather than enforcing an existing one.
+        if f.name not in ("README.md", "README.zh-CN.md"):
+            continue
+        said = label.strip()[label_no.end(1):].strip(" -\u2014\u2013:\uff1a")
+        if not said:
+            continue
+        target = (f.parent / path) if not path.startswith("docs/") else pathlib.Path(path)
+        if not target.is_file():
+            continue
+        head = target.read_text(errors="ignore").split("\n")[0]
+        title = re.sub(r"^#\s*\d{2}\s*(?:\u2014\u2014|\u2014|--|-)?\s*", "", head).strip()
+        # A PREFIX rather than equality: shortening a title by dropping its tail
+        # is honest, and `[30 -- Build Programs]` for `Build Programs:
+        # \u0060build.mcpp\u0060` is the shape that takes. Words the chapter does not
+        # use are what this rejects -- a label translated from the other
+        # language's title rather than taken from the chapter's own.
+        if title and not title.startswith(said):
+            print(f"FAIL: {f}: label says `{said}`, chapter {base} is titled `{title}`")
             bad += 1
 sys.exit(1 if bad else 0)
 PYLABEL

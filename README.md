@@ -25,7 +25,7 @@
 - **Package management and a module-library ecosystem** — SemVer constraints, lockfile, cross-project BMI cache, custom indices; a library from [mcpplibs](https://github.com/mcpplibs) is two lines away from `import`
 - **Toolchain management and cross-compilation** — `family@version` installed on demand; `--target` moves the same build to Windows, macOS, Cortex-M or RISC-V bare metal, and one source tree reaches several hosted targets over openkal
 - **Environment and runtime** — the user-space environment xlings provides: toolchains and dependencies stay in an isolated sandbox, and a runner puts the artifact on a board or an emulator
-- **Pure modular self-hosting** — mcpp is written entirely in C++23 module interface units and builds itself with this pipeline
+- **Pure modular self-hosting** — mcpp is written entirely in C++23 module interface units and builds itself
 
 ## Why mcpp
 
@@ -455,12 +455,12 @@ a command in front of a reader, to the chapter that owns it.
 | Part | Start at |
 |---|---|
 | `0x` fundamentals | [01 Getting Started](docs/01-getting-started.md) · [04 The mcpp.toml Manifest](docs/04-mcpp-toml.md) · [09 Commands by Scenario](docs/09-commands-by-scenario.md) |
-| `1x` publishing | [10 Packaging for Release](docs/10-pack-and-release.md) · [11 Publishing a Library](docs/11-publishing-a-library.md) · [12 Distributing a Prebuilt Library](docs/12-binary-distribution.md) |
+| `1x` publishing | [10 Packaging an Application for Release](docs/10-pack-and-release.md) · [11 Publishing a Library to mcpp-index](docs/11-publishing-a-library.md) · [12 Distributing a Prebuilt Library](docs/12-binary-distribution.md) |
 | `2x` toolchains and targets | [20 Toolchain Management](docs/20-toolchains.md) · [21 The Target Triple](docs/21-the-target-triple.md) · [24 Cross-Compilation Over openkal](docs/24-openkal-cross.md) |
-| `3x` extending mcpp | [30 Build Programs](docs/30-build-mcpp.md) · [31 Authoring a Rule Package](docs/31-authoring-a-rule-package.md) · [34 Authoring a Board-Support Package](docs/34-authoring-a-bsp.md) |
+| `3x` extending mcpp | [30 Build Programs: `build.mcpp`](docs/30-build-mcpp.md) · [31 Authoring a Rule Package](docs/31-authoring-a-rule-package.md) · [34 Authoring a Board-Support Package](docs/34-authoring-a-bsp.md) |
 | `4x` devices and accelerators | [40 Bare-Metal and Freestanding Targets](docs/40-baremetal.md) · [41 Reaching a Device](docs/41-devices.md) · [42 Heterogeneous Builds](docs/42-heterogeneous-builds.md) |
-| `5x` contracts for programs | [50 Machine-Readable Output](docs/50-machine-output.md) · [51 Supported Versions](docs/51-supported-versions.md) · [the specifications](docs/specs/README.md) |
-| `9x` mcpp itself | [90 Building from Source](docs/90-build-from-source.md) · [92 Releasing mcpp](docs/92-release.md) |
+| `5x` contracts for programs | [50 Machine-Readable Output](docs/50-machine-output.md) · [51 Supported Versions and Compatibility](docs/51-supported-versions.md) · [the specifications](docs/specs/README.md) |
+| `9x` mcpp itself | [90 Building from Source and Contributing](docs/90-build-from-source.md) · [92 Releasing mcpp](docs/92-release.md) |
 
 Every directory under [`examples/`](examples/) is a project that builds, and
 [03 — Examples](docs/03-examples.md) says which one teaches what. Full options

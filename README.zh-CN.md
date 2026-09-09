@@ -25,7 +25,7 @@
 - **包管理与模块化库生态** — SemVer 约束、锁文件、跨项目 BMI 缓存、自定义索引；[mcpplibs](https://github.com/mcpplibs) 的库两行引入即可 `import`
 - **工具链管理与通用交叉构建** — `family@version` 按需安装；`--target` 让同一次构建换到 Windows、macOS、Cortex-M 或 RISC-V 裸机，一份源码经 openkal 触及多个有操作系统的目标
 - **环境与运行时** — xlings 提供的用户态环境：工具链与依赖都留在隔离沙盒里，runner 把产物送上板子或模拟器
-- **纯模块化自举** — mcpp 完全由 C++23 模块接口单元写成，并用这条流水线构建自己
+- **纯模块化自举** — mcpp 完全由 C++23 模块接口单元写成，并用它自己构建自己
 
 ## 为什么选择 mcpp
 
@@ -255,7 +255,7 @@ import mcpplibs.cmdline;
 </details>
 
 <details>
-<summary><b>交叉编译、裸机与设备</b></summary>
+<summary><b>交叉构建、裸机与设备</b></summary>
 
 - `mcpp build --target <triple>` — 一个开关;该目标所需的工具链载荷会自动解析并安装
 - 从 `x86_64-linux-gnu` 到 Cortex-M、Cortex-A 与 RISC-V 裸机,完整的表见[平台支持](#平台支持)
@@ -267,7 +267,7 @@ import mcpplibs.cmdline;
 </details>
 
 <details>
-<summary><b>异构构建与加速器</b></summary>
+<summary><b>异构硬件构建与加速器</b></summary>
 
 - `[build] accel = "cuda12.9+{sm_89}, vulkan1.2"` — 一次构建可以点名一个或多个设备后端,该构建里 `cfg(accelerator = "cuda")` 为真
 - 目前有规则包的编程模型有五个:CUDA、HIP、SYCL、Vulkan/SPIR-V 与 Ascend C
@@ -317,7 +317,7 @@ import mcpplibs.cmdline;
 - `build.mcpp` — 为 mcpp 没有现成规则的那一步写的构建程序,说的是一套带版本号的指令协议,而不是靠猜
 - `mcpp::action` 用显式的输入与输出声明一份工作,于是生成物参与增量图,而不是待在图外
 - 规则包把那一步带给别的项目:包声明一个 rule 模块,消费者以 feature 的形式选中它
-- payload、运行时适配器与板级支持包都是普通的包 —— 一个工具、一个驱动或一块板子,由安装库的那个解析器安装
+- 载荷、运行时适配包与板级支持包都是普通的包 —— 一个工具、一个驱动或一块板子,由安装库的那个解析器安装
 
 </details>
 
@@ -331,7 +331,7 @@ import mcpplibs.cmdline;
 - `mcpp add / remove / update` — 依赖管理
 - 命令行上的 profile 与 feature:`--release` / `--profile <name>`(`build`、`run`),`--features <list>`(`build`、`run`、`test`)
 - `mcpp why [toolchain|runtime|deps|runners]` — 解释已解析的构建决策;`--format json` 供程序读取
-- `mcpp emit sbom` — 为刚刚记录下来的这次解析产出一份 CycloneDX 物料清单
+- `mcpp emit sbom` — 为已记录的那次解析产出一份 CycloneDX 格式的 SBOM
 - `mcpp --offline` / `MCPP_OFFLINE=1` — 仅使用已存在的本地状态
 - `mcpp explain E0001` — 错误码详细解释
 - `mcpp self doctor` — 环境自诊断
@@ -435,13 +435,13 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 
 | 部分 | 从这里开始 |
 |---|---|
-| `0x` 基础 | [01 快速开始](docs/zh/01-getting-started.md) · [04 mcpp.toml 清单](docs/zh/04-mcpp-toml.md) · [09 按场景查命令](docs/zh/09-commands-by-scenario.md) |
-| `1x` 发布 | [10 发布打包](docs/zh/10-pack-and-release.md) · [11 发布一个库](docs/zh/11-publishing-a-library.md) · [12 分发预编译库](docs/zh/12-binary-distribution.md) |
-| `2x` 工具链与目标 | [20 工具链管理](docs/zh/20-toolchains.md) · [21 目标三元组](docs/zh/21-the-target-triple.md) · [24 基于 openkal 的交叉编译](docs/zh/24-openkal-cross.md) |
-| `3x` 扩展 mcpp | [30 构建程序](docs/zh/30-build-mcpp.md) · [31 编写规则包](docs/zh/31-authoring-a-rule-package.md) · [34 编写板级支持包](docs/zh/34-authoring-a-bsp.md) |
-| `4x` 设备与加速器 | [40 裸机与 freestanding 目标](docs/zh/40-baremetal.md) · [41 触及设备](docs/zh/41-devices.md) · [42 异构构建](docs/zh/42-heterogeneous-builds.md) |
-| `5x` 给程序的契约 | [50 机器可读输出](docs/zh/50-machine-output.md) · [51 支持的版本](docs/zh/51-supported-versions.md) · [规范](docs/specs/README.md) |
-| `9x` mcpp 自身 | [90 从源码构建](docs/zh/90-build-from-source.md) · [92 发布 mcpp](docs/zh/92-release.md) |
+| `0x` 基础 | [01 快速开始](docs/zh/01-getting-started.md) · [04 mcpp.toml 工程文件指南](docs/zh/04-mcpp-toml.md) · [09 按场景选命令](docs/zh/09-commands-by-scenario.md) |
+| `1x` 发布 | [10 发布打包](docs/zh/10-pack-and-release.md) · [11 发布一个库到 mcpp-index](docs/zh/11-publishing-a-library.md) · [12 分发预编译库](docs/zh/12-binary-distribution.md) |
+| `2x` 工具链与目标 | [20 工具链管理](docs/zh/20-toolchains.md) · [21 目标三元组](docs/zh/21-the-target-triple.md) · [24 基于 openkal 的交叉构建](docs/zh/24-openkal-cross.md) |
+| `3x` 扩展 mcpp | [30 构建程序:`build.mcpp`](docs/zh/30-build-mcpp.md) · [31 编写规则包](docs/zh/31-authoring-a-rule-package.md) · [34 编写板级支持包](docs/zh/34-authoring-a-bsp.md) |
+| `4x` 设备与加速器 | [40 裸机与 freestanding 目标](docs/zh/40-baremetal.md) · [41 抵达一台设备](docs/zh/41-devices.md) · [42 异构硬件构建](docs/zh/42-heterogeneous-builds.md) |
+| `5x` 给程序的契约 | [50 机器可读输出](docs/zh/50-machine-output.md) · [51 受支持的版本与兼容性](docs/zh/51-supported-versions.md) · [规范](docs/specs/README.md) |
+| `9x` mcpp 自身 | [90 从源码构建与参与贡献](docs/zh/90-build-from-source.md) · [92 发布 mcpp](docs/zh/92-release.md) |
 
 [`examples/`](examples/) 下的每一个目录都是一个能构建的工程,
 [03 — 示例项目](docs/zh/03-examples.md) 说明哪一个教什么。任意命令的完整选项
