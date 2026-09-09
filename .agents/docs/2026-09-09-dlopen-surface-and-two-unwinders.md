@@ -1,6 +1,6 @@
 ---
 subject: heterogeneous
-status: active
+status: landed
 ---
 
 # A dlopen surface no closure walks, and a process with two unwinders
