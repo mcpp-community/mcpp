@@ -1151,15 +1151,59 @@ latest_stored_verdict(const std::filesystem::path& targetRoot) {
 mcpp::platform::elf::DlopenSurfaceReport
 check_dlopen_surface(const mcpp::build::BuildPlan& plan) {
     mcpp::platform::elf::DlopenSurfaceReport report;
+
+    // The record below is ELF-shaped, so a host that links no ELF publishes
+    // nothing rather than an empty answer about a format it never produces.
     if constexpr (!mcpp::platform::is_linux) return report;
+
+    // ON LINUX, A NON-ANSWER IS PUBLISHED, NOT OMITTED -- AND NEVER OVER AN
+    // ANSWER.
+    //
+    // Returning without writing made "the check did not apply" and "the check
+    // was never run" the same reading, which is the confusion this repository
+    // has recorded most often. It is worse than a missing sentence here,
+    // because the two copies of the record have opposite lifetimes:
+    // `prepare_build` regenerates `resolution.json` from an empty object at
+    // the start of an invocation while the sidecar survives it, so a pass that
+    // returns without publishing leaves the DOCUMENTED place to look empty for
+    // an answer that was measured.
+    //
+    // The backend runs once per pass and one invocation can drive it more than
+    // once -- `mcpp test` builds the library and then links the test binary --
+    // so a pass that links only a dependency's shared library has no program
+    // and nothing to say. Such a pass republishes what is on file rather than
+    // replacing it: the key covers the contract, the subos stamp and the
+    // host-libs policy, not the link units, so a reading taken under the same
+    // key is still about this farm and this policy. A key that moved has
+    // already cleared the record before this runs.
+    auto publish_reason = [&](std::string_view why) {
+        const auto key = post_link_key(plan);
+        auto doc = read_cache(plan.outputDir);
+        if (doc.is_object() && doc.value("post_link_key", "") == key) {
+            auto it = doc.find(std::string(kDlopenSurfaceRecord));
+            if (it != doc.end() && it->is_object() && !it->contains("reason")) {
+                persist_post_link(plan, kDlopenSurfaceRecord, key, *it);
+                return;
+            }
+        }
+        persist_post_link(plan, kDlopenSurfaceRecord, key,
+                          nlohmann::json{{"members", 0}, {"walked", 0},
+                                         {"findings", nlohmann::json::array()},
+                                         {"reason", std::string(why)}});
+    };
 
     // THE SAME APPLICABILITY THE ARTIFACT VERDICT HAS, and for the same
     // reason. Under a non-hermetic binding the host loader also consults
     // `ld.so.cache`, which mcpp deliberately does not parse, so "not on the
     // path mcpp computed" is not evidence of anything. `allow_host_libs` is
     // the user's statement that resolution is theirs to arrange.
-    if (!plan.runtimeBinding.hermetic() || host_libs_allowed(plan))
+    if (!plan.runtimeBinding.hermetic() || host_libs_allowed(plan)) {
+        publish_reason(host_libs_allowed(plan)
+            ? "allow_host_libs: resolution at run time is the project's to arrange"
+            : "the runtime binding is not hermetic; the host loader also "
+              "consults ld.so.cache, which mcpp does not parse");
         return report;
+    }
 
     auto searchDirs = runtime_search_dirs(plan);
 
@@ -1193,9 +1237,16 @@ check_dlopen_surface(const mcpp::build::BuildPlan& plan) {
             return unit.kind == mcpp::build::LinkUnit::Binary
                 || unit.kind == mcpp::build::LinkUnit::TestBinary;
         });
-    if (!producesAProgram) return report;
+    if (!producesAProgram) {
+        publish_reason("this build produces no program; the surface is reached "
+                       "from a process and belongs to whatever runs");
+        return report;
+    }
     const auto artifacts = snapshot_link_artifacts(plan);
-    if (artifacts.empty()) return report;
+    if (artifacts.empty()) {
+        publish_reason("this build produced no linked artifact");
+        return report;
+    }
 
     for (auto const& [artifact, stamp] : artifacts) {
         auto dir = artifact.parent_path();

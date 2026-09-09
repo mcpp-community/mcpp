@@ -120,6 +120,24 @@ The full result, including both denominators, is published as
 failed to build enumerates nothing, and "no findings" would otherwise be
 indistinguishable from "nothing was examined".
 
+A build the check does not apply to publishes the same record with a `reason`
+and no reading:
+
+```json
+{ "members": 0, "walked": 0, "findings": [],
+  "reason": "this build produces no program; the surface is reached from a process and belongs to whatever runs" }
+```
+
+The four reasons are: the runtime binding is not hermetic, `allow_host_libs` is
+set, the build produces no program, and the build produced no linked artifact.
+A target that is not Linux publishes no record at all, because the record is
+ELF-shaped and an empty answer about a format the build never produces would be
+its own confusion.
+
+A test that reads this record should treat a `reason` as "not measured" rather
+than as a clean result -- "did not apply" and "was never run" are the pair this
+record exists to keep apart.
+
 ## Current limitations
 
 - **Linux only, by construction.** macOS's dyld and the Windows PE loader have

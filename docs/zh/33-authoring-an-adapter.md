@@ -101,6 +101,20 @@ on this artifact's search path:
 即使没有任何发现,`members` 与 `walked` 也会被发布。一个构建失败的农场枚举出零个成员,
 否则「没有发现」与「什么都没检查」就读起来一模一样。
 
+这条检查不适用的构建,发布同一条记录,但只带 `reason`、不带读数:
+
+```json
+{ "members": 0, "walked": 0, "findings": [],
+  "reason": "this build produces no program; the surface is reached from a process and belongs to whatever runs" }
+```
+
+四种理由是:运行时绑定非 hermetic;设置了 `allow_host_libs`;本次构建不产出程序;本次构建
+没有链接产物。目标不是 Linux 时不发布任何记录 —— 这条记录是 ELF 形状的,对一个本次构建
+根本不产出的格式给出「空答案」本身就是另一种混淆。
+
+读这条记录的测试应当把 `reason` 当作「没有测到」而不是「测了,结果干净」—— 「没适用」与
+「没检查过」正是这条记录存在的意义所在。
+
 ## 当前边界
 
 - **按构造只适用于 Linux。** macOS 的 dyld 与 Windows 的 PE 加载器没有对应的这一层,

@@ -7,6 +7,10 @@ import mcpp.pack.host_requirements;
 import mcpp.manifest;
 import mcpp.runtime.elf;
 import mcpp.build.runtime_validation;
+import mcpp.build.plan;
+import mcpp.runtime.binding;
+import mcpp.platform;
+import mcpp.libs.json;
 
 namespace {
 
@@ -263,6 +267,89 @@ TEST(ArtifactIdentity, VersionMatchIsAPathComponent) {
     a.path = root / "0.1.11" / "lib.so";
     a.provenance = "xim:vendor@0.1.1";
     EXPECT_EQ(artifact_identity_verdict(a), ArtifactVerdict::Mismatch);
+}
+
+// ─── a pass with nothing to say does not erase what a pass measured ─────────
+//
+// The backend runs once per pass and one invocation can drive it more than
+// once: `mcpp test` builds the library and then links the test binary, and a
+// pass that links only a dependency's shared library has no program, so the
+// dlopen surface is not its question to answer.
+//
+// That pass still decides what the documented place to look contains. The two
+// copies of the record have opposite lifetimes -- the sidecar survives an
+// invocation, `resolution.json` is regenerated from an empty object at the
+// start of one -- so a pass that publishes nothing leaves `resolution.json`
+// empty for an answer that was measured, and a pass that publishes its
+// non-answer overwrites that answer with a blank.
+//
+// Stated here because no end-to-end shape reaches it: it needs two drives over
+// one output directory where the SECOND one is the one that does not apply.
+TEST(DlopenSurfaceRecord, ANonAnswerRepublishesTheAnswerAlreadyOnFile) {
+    namespace fs = std::filesystem;
+    if constexpr (!mcpp::platform::is_linux) {
+        SUCCEED() << "the record is ELF-shaped and this host links no ELF";
+        return;
+    }
+
+    auto root = fs::temp_directory_path() / "mcpp_dlopen_surface_record";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root);
+    struct Cleanup { fs::path d;
+        ~Cleanup() { std::error_code e; fs::remove_all(d, e); } } cleanup{root};
+
+    // A plan with no link units: it produces no program, which is exactly the
+    // pass whose answer is "not mine to give".
+    mcpp::build::BuildPlan plan;
+    plan.outputDir = root;
+    plan.runtimeBinding.loader = "/nonexistent/xlings-use-rpath-not-default-search";
+
+    const auto sidecar = root / ".mcpp-runtime-verdicts.json";
+    auto regenerate_resolution = [&] {
+        std::ofstream out(root / "resolution.json");
+        out << nlohmann::json{{"runtime", nlohmann::json::object()}}.dump(2) << '\n';
+    };
+    auto read_json = [](const fs::path& p) {
+        std::ifstream in(p);
+        return nlohmann::json::parse(in, nullptr, false);
+    };
+
+    // Drive one: nothing on file, so the non-answer is published WITH its
+    // reason. "did not apply" and "was never run" must not read the same.
+    regenerate_resolution();
+    mcpp::build::runtime_validation::check_dlopen_surface(plan);
+    auto stored = read_json(sidecar);
+    ASSERT_TRUE(stored.is_object()) << "the sidecar was not written";
+    ASSERT_TRUE(stored.contains("dlopen_surface"));
+    EXPECT_FALSE(stored["dlopen_surface"].value("reason", "").empty())
+        << "a published non-answer carries the reason it did not apply";
+    EXPECT_FALSE(read_json(root / "resolution.json")["runtime"]["dlopen_surface"]
+                     .value("reason", "").empty())
+        << "the documented place to look carries it too";
+
+    // A pass that DID apply now records a reading, under the key already on
+    // file. The key covers the contract, the SubOS stamp and the host-libs
+    // policy, none of which this test changes.
+    stored["dlopen_surface"] = nlohmann::json{
+        {"members", 7}, {"walked", 7}, {"findings", nlohmann::json::array()}};
+    { std::ofstream out(sidecar); out << stored.dump(2) << '\n'; }
+
+    // Drive two, with `resolution.json` regenerated as an invocation would:
+    // the same plan that does not apply must neither overwrite the reading nor
+    // leave the published copy empty.
+    regenerate_resolution();
+    mcpp::build::runtime_validation::check_dlopen_surface(plan);
+
+    auto after = read_json(sidecar)["dlopen_surface"];
+    EXPECT_EQ(after.value("members", 0), 7)
+        << "a non-answer replaced a reading taken under the same key";
+    EXPECT_FALSE(after.contains("reason"));
+
+    auto republished = read_json(root / "resolution.json")["runtime"]["dlopen_surface"];
+    EXPECT_EQ(republished.value("members", 0), 7)
+        << "the reading survived in the sidecar but not where it is documented";
+    EXPECT_EQ(republished.value("walked", 0), 7);
 }
 
 } // namespace
