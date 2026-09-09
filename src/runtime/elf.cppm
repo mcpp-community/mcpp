@@ -137,6 +137,13 @@ struct DynamicSymbol {
     // dynamic symbol table therefore has exactly one cause — the linker
     // exported it so that some shared object's reference would bind to it.
     bool          isFunc = false;
+    // STB_WEAK. A vague-linkage definition -- a template instantiation, an
+    // inline function, a vtable -- which the C++ ABI emits into every
+    // translation unit that needs it and expects the loader to unify across
+    // the process. That is the intended behaviour, not a leak, so a caller
+    // asking "is this image providing something twice" has to be able to tell
+    // it from a strong definition that displaces a library's own.
+    bool          isWeak = false;
     std::uint64_t value = 0;   // st_value; the key a copy relocation matches
 };
 
@@ -274,6 +281,7 @@ constexpr std::uint64_t kDtGnuHash = 0x6ffffef5;
 constexpr std::uint64_t kSymEntrySize  = 24;
 constexpr std::uint64_t kRelaEntrySize = 24;
 
+constexpr unsigned char kStbWeak     = 2;
 constexpr unsigned char kSttObject   = 1;
 constexpr unsigned char kSttFunc     = 2;
 constexpr unsigned char kSttGnuIfunc = 10;
@@ -731,6 +739,7 @@ inspect_dynamic_symbols(const std::filesystem::path& object) {
         out.defined.push_back(DynamicSymbol{
             .name   = std::move(*name),
             .isFunc = (type == detail::kSttFunc || type == detail::kSttGnuIfunc),
+            .isWeak = (bind == detail::kStbWeak),
             .value  = *value,
         });
     }

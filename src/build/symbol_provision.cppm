@@ -55,6 +55,11 @@ export namespace mcpp::build::symbol_provision {
 struct Export {
     std::string name;
     bool        isFunc = false;
+    // A vague-linkage definition (STB_WEAK): a template instantiation, an
+    // inline function, a vtable. Every translation unit that needs one emits
+    // it and the loader unifies them; that is the C++ ABI working, not an
+    // image displacing a library's own copy.
+    bool        isWeak = false;
 };
 
 // One object that could also supply a symbol, as the report will name it.
@@ -67,6 +72,7 @@ struct Provider {
 struct Conflict {
     std::string              name;
     bool                     isFunc = false;
+    bool                     isWeak = false;
     std::vector<std::string> alsoProvidedBy;
 };
 
@@ -92,6 +98,14 @@ struct Report {
     std::size_t           exported = 0;
     std::size_t           total = 0;
     std::vector<Conflict> conflicts;
+    // Shared vague-linkage definitions, counted and not listed.
+    //
+    // They are NOT a finding: the C++ ABI emits a template instantiation into
+    // every image that needs it and expects the loader to keep one. Counting
+    // them is still worth doing -- a reader who runs `nm -D` sees them and has
+    // to be told which ones this check decided about, or "clean" reads as
+    // "did not look".
+    std::size_t           sharedWeak = 0;
     // Why, for the two non-answers. Empty for Clean and Conflict.
     std::string           reason;
 
@@ -169,7 +183,8 @@ exported_definitions(const mcpp::platform::elf::DynamicSymbols& symbols) {
         // share an address with relocated data from being excused.
         if (!symbol.isFunc && symbols.copyRelocations.contains(symbol.value))
             continue;
-        out.push_back(Export{ .name = symbol.name, .isFunc = symbol.isFunc });
+        out.push_back(Export{ .name = symbol.name, .isFunc = symbol.isFunc,
+                              .isWeak = symbol.isWeak });
     }
     std::ranges::sort(out, {}, &Export::name);
     return out;
@@ -179,7 +194,8 @@ std::vector<Conflict> conflicting_exports(std::span<const Export> exports,
                                           std::span<const Provider> closure) {
     std::vector<Conflict> out;
     for (auto const& exported : exports) {
-        Conflict conflict{ .name = exported.name, .isFunc = exported.isFunc };
+        Conflict conflict{ .name = exported.name, .isFunc = exported.isFunc,
+                           .isWeak = exported.isWeak };
         for (auto const& provider : closure) {
             if (std::ranges::find(provider.defines, exported.name)
                 != provider.defines.end())
@@ -223,6 +239,13 @@ std::string Report::explain(std::string_view artifact) const {
 
     body += "  Also provided by:\n";
     for (auto const& label : providers) body += std::format("    {}\n", label);
+    if (sharedWeak > 0)
+        body += std::format(
+            "  ({} vague-linkage definition{} -- template instantiations, inline\n"
+            "  functions, vtables -- {} also shared and are NOT part of this\n"
+            "  finding: the C++ ABI emits one per image and the loader keeps one.)\n",
+            sharedWeak, sharedWeak == 1 ? "" : "s",
+            sharedWeak == 1 ? "is" : "are");
 
     // WHY it matters, then what to do — IN THE ORDER THAT ACTUALLY WORKS.
     //

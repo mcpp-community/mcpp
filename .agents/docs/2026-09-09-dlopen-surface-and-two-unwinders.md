@@ -616,6 +616,36 @@ predates it, the example's README announces it, and the example runs correctly
 across it every time nothing throws. #596 is simply the first time something
 threw.
 
+## 8.5 What serving the OpenCL adapter uncovered
+
+R7's reversal put a shared library into every SYCL project's plan for the first
+time, and two latent defects became active the moment it did. Both are repaired
+here; neither is caused by #596, and neither would have been found by reading.
+
+**A build program's objects reached a dependency's image.** `role = "object"`
+with no named target attaches to "every linked image", and that was reading as
+"every link unit in this plan" -- which includes the shared library a
+dependency contributes. Measured: `compat:opencl`'s ICD loader, a C library,
+came out of the link with `saxpy_device` and thirty-seven `sycl::`
+instantiations in it, 193 dynamic symbols where its own API is 154, and the
+process held two copies of the island. `LinkUnit::dependencyOwned` now says
+which images are this package's, and the rule reads "every image THIS PACKAGE
+produces".
+
+**The symbol-provision check could not tell a weak definition from a strong
+one.** `DynamicSymbol` recorded the type and not the binding, so vague-linkage
+definitions -- template instantiations, inline functions, vtables, which the
+C++ ABI emits into every image and expects the loader to unify -- were counted
+as a second provider. `hide_static_cxx_runtime`'s own comment had already
+written the rule ("must not ... unifying those across the process is the
+intended C++ ABI behaviour"); nothing enforced it one layer up. The binding is
+recorded now, weak definitions are counted rather than reported, and the count
+is printed so "clean" cannot read as "did not look".
+
+Both were invisible before because the same artifact had 68 real findings
+sitting on top of them. A check whose noise is repaired shows what the noise
+was covering, which is the third time this issue has produced that shape.
+
 ## 9. What this touches, across the three repositories
 
 The review that asks the other question: not "is each repair right" but "what

@@ -1036,7 +1036,21 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
                 .defines = names,
             });
         }
-        report.conflicts = sp::conflicting_exports(*exported, providers);
+        // WEAK DEFINITIONS ARE COUNTED, NOT REPORTED.
+        //
+        // A template instantiation or an inline function is emitted into every
+        // image that needs it and the loader keeps one; that is the C++ ABI
+        // working. Reporting it names a correct build. Measured on the SYCL
+        // example once the real findings were repaired: thirty-nine shared
+        // symbols remained and thirty-seven were `sycl::queue` and
+        // `sycl::buffer` instantiations from the same headers libsycl was
+        // built from -- and the other two were the island's own `extern "C"`
+        // entry points, which libsycl does not define at all.
+        auto all = sp::conflicting_exports(*exported, providers);
+        for (auto const& conflict : all)
+            if (conflict.isWeak) ++report.sharedWeak;
+        std::erase_if(all, [](auto const& c) { return c.isWeak; });
+        report.conflicts = std::move(all);
         report.status = report.conflicts.empty() ? sp::Status::Clean
                                                  : sp::Status::Conflict;
         findings.push_back({artifact, std::move(report)});

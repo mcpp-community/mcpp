@@ -80,6 +80,19 @@ struct CompileUnit {
 struct LinkUnit {
     std::string                     targetName;
     enum Kind { Binary, StaticLibrary, SharedLibrary, TestBinary } kind = Binary;
+    // Does this image belong to a DEPENDENCY rather than to the package being
+    // built? A `kind = "shared"` dependency contributes a link unit to the
+    // consumer's plan, and that unit is not one of the consumer's targets.
+    //
+    // It decides where a `role = "object"` action's outputs go. "Every linked
+    // image" is the right default for a build program's objects -- a test
+    // binary and a static library both need them -- but it was reading as
+    // "every link unit in the plan", so a device island was linked into a
+    // dependency's shared library as well. Measured: `compat:opencl`'s ICD
+    // loader, a C library, came out carrying `saxpy_device` and thirty-seven
+    // `sycl::` instantiations, and the process then had two copies of the
+    // island. Latent until a SYCL project first had a shared dependency.
+    bool                            dependencyOwned = false;
     // Normally relative to plan.outputDir. A `role = "object"` action's outputs
     // land here ABSOLUTE, on purpose: ninja identifies a file by the string an
     // edge declares, and the action edge declares whatever prepare_actions
@@ -1676,6 +1689,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         LinkUnit lu;
         lu.targetName = dep.target.name;
         lu.kind       = LinkUnit::SharedLibrary;
+        lu.dependencyOwned = true;
         lu.output     = dep.output;
         lu.importLibrary = import_library_for(dep.target, naming);
         if (msvcTarget && !lu.importLibrary.empty())
