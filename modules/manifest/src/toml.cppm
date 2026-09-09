@@ -2636,13 +2636,28 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 // `[target.<pred>]` above cannot reach here: it skips tables,
                 // because tables are its conditional channel — so this table's
                 // own keys were swept by nothing.
+                //
+                // ONE LIST, USED BY THE CHECK AND PRINTED BY THE MESSAGE. The
+                // `[build]` sweep a few hundred lines above carries the note
+                // explaining why: its message was once a third hand-written copy
+                // and had drifted from both others, so the only spelling that
+                // turned the feature on was the one reported as unsupported.
+                static constexpr std::string_view kKnownCondRuntimeKeys[] = {
+                    "libraries", "link_library_dirs",
+                };
                 for (auto& [rk, _] : rt) {
-                    if (rk == "link_library_dirs" || rk == "libraries") continue;
+                    if (std::ranges::find(kKnownCondRuntimeKeys, rk)
+                        != std::ranges::end(kKnownCondRuntimeKeys)) continue;
+                    std::string supported;
+                    for (auto k : kKnownCondRuntimeKeys) {
+                        if (!supported.empty()) supported += ", ";
+                        supported += k;
+                    }
                     m.schemaWarnings.push_back(std::format(
                         "[target.{}.runtime] has unsupported key '{}' (ignored). "
-                        "Supported keys: libraries, link_library_dirs. This table "
-                        "is the dialect-neutral link intent; other [runtime] keys "
-                        "are not per-target.", triple, rk));
+                        "Supported keys: {}. This table is the dialect-neutral "
+                        "link intent; other [runtime] keys are not per-target.",
+                        triple, rk, supported));
                 }
             }
             if (auto bit = body.find("build"); bit != body.end() && bit->second.is_table()) {
