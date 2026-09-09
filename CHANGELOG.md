@@ -62,8 +62,12 @@ GCC 的接口拼法本就是纯语言,因此同一个工程在 GCC 上能构建�
 结构体时没有同时加入它。于是该块被解析、被填充,然后丢弃;在同一谓词下随便再写一条
 无关的 `defines` 就能让它生效。
 
-闸门改为 `ConditionalConfig::empty()`,定义在字段旁边,并由 mcpp.toml 与 xpkg 两个读者
-共用;它进一步组合 `BuildInputs::empty()` 与既有的 `XlingsConfig::empty()`。同一形状的
+闸门改为 `is_empty(ConditionalConfig)`,与既有的 `append` 并列为自由函数,并由 mcpp.toml
+与 xpkg 两个读者共用;它进一步组合 `is_empty(BuildInputs)` 与既有的 `XlingsConfig::empty()`。
+自由函数而非成员是被实测逼出来的:给这个模块导出的结构体加内联成员会改变导入方从它的 BMI
+里实例化的东西,而 `Profile` 的 `std::optional<std::string>` 成员在 clang + MSVC 标准库下
+本就会崩——初版写成成员,Windows CI 上 `test_modgraph.cpp` 因此编译失败,报错指向一个本次
+改动从未碰过的结构体。同一形状的
 第四处随之关闭:xpkg 的闸门漏掉了它自己会填的 `privateIncludeDirs`。索引里 228 份
 descriptor 用新旧两个二进制解析,结果逐字节相同。
 

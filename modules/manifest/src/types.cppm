@@ -285,17 +285,6 @@ struct BuildInputs {
     // glibc and wrong for picolibc — and while this lived beside the package's
     // identity there was no spelling for that difference.
     std::vector<std::string>           stdModuleFlags;
-
-    // Does this carry anything? The sibling of `append` below: that function
-    // is the one place a contribution is combined, and this is the one place
-    // it is weighed. Both enumerate every field, and both are here so a field
-    // added above is a field the compiler puts in front of a reader twice.
-    bool empty() const {
-        return sources.empty() && cflags.empty() && cxxflags.empty()
-            && ldflags.empty() && defines.empty() && globFlags.empty()
-            && includeDirs.empty() && includeDirsAfter.empty()
-            && privateIncludeDirs.empty() && stdModuleFlags.empty();
-    }
 };
 
 // The single additive merge. Every conditional axis folds through this, so
@@ -320,6 +309,27 @@ inline void append(BuildInputs& dst, const BuildInputs& src) {
     dst.stdModuleFlags.insert(dst.stdModuleFlags.end(),
                               src.stdModuleFlags.begin(),
                               src.stdModuleFlags.end());
+}
+
+// Does this carry anything? The sibling of `append` above: that function is the
+// one place a contribution is combined, and this is the one place it is weighed.
+// Both enumerate every field, and they sit together so that a field added to
+// BuildInputs is a field the reader meets twice.
+//
+// A FREE FUNCTION, NOT A MEMBER, AND THAT IS NOT STYLE. Adding an inline member
+// to a struct exported from this module changes what importers materialise from
+// its BMI, and `Profile`'s `std::optional<std::string>` member is already known
+// to break under clang with the MSVC standard library — see the note on that
+// member for the measurement. The first version of this was a member, and it
+// failed exactly there: `test_modgraph.cpp` stopped compiling with
+// `no matching constructor for _SMF_control<_Optional_construct_base<...>>`,
+// reported against a struct the change never touched. `append` has been a free
+// function since it was written; this one matches it.
+inline bool is_empty(const BuildInputs& b) {
+    return b.sources.empty() && b.cflags.empty() && b.cxxflags.empty()
+        && b.ldflags.empty() && b.defines.empty() && b.globFlags.empty()
+        && b.includeDirs.empty() && b.includeDirsAfter.empty()
+        && b.privateIncludeDirs.empty() && b.stdModuleFlags.empty();
 }
 
 // A build-graph node declared by a build program (`mcpp:action=`).
@@ -1156,13 +1166,16 @@ struct ConditionalConfig {
     // This is #258's medicine: a field added below and forgotten here is a
     // question asked at the point where the field is written, instead of in two
     // files that do not mention each other.
-    bool empty() const {
-        return inputs.empty() && linkLibraryDirs.empty() && libraries.empty()
-            && dependencies.empty() && devDependencies.empty()
-            && buildDependencies.empty() && featureDeps.empty()
-            && xlings.empty();
-    }
 };
+
+// The same question for a whole conditional block, and a free function for the
+// same reason `is_empty(BuildInputs)` is one.
+inline bool is_empty(const ConditionalConfig& c) {
+    return is_empty(c.inputs) && c.linkLibraryDirs.empty() && c.libraries.empty()
+        && c.dependencies.empty() && c.devDependencies.empty()
+        && c.buildDependencies.empty() && c.featureDeps.empty()
+        && c.xlings.empty();
+}
 
 // `[lib]` — library "root" interface convention.
 //

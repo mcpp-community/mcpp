@@ -2918,11 +2918,11 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                                               std::vector<std::string>{});
                 }
             }
-            // `ConditionalConfig::empty()` and not a disjunction written here:
+            // `is_empty(ConditionalConfig)` and not a disjunction written here:
             // this list omitted `libraries` and `linkLibraryDirs`, so a
             // predicate carrying only a `[target.<pred>.runtime]` table was
             // parsed and then dropped. See the note on that member.
-            if (!cc.empty())
+            if (!mcpp::manifest::is_empty(cc))
                 m.conditionalConfigs.push_back(std::move(cc));
         }
     }

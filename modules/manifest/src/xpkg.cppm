@@ -1530,7 +1530,7 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 // The same question the mcpp.toml reader asks, asked the same
                 // way. This list omitted `privateIncludeDirs`, which this loop
                 // fills.
-                if (!cc.empty())
+                if (!mcpp::manifest::is_empty(cc))
                     m.conditionalConfigs.push_back(std::move(cc));
                 cur.skip_ws_and_comments();
             }

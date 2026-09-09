@@ -430,7 +430,7 @@ Landed in mcpp 2026.9.9.1, one change per mechanism.
 | A.2 BOM | the same rule for every TOML document mcpp reads | `libs/toml.cppm` |
 | B | `module_lang` and `module_output` become PER-EDGE, bound from `providesModule` | `ninja_backend.cppm` |
 | B | `moduleImplLangFlag` — the spelling for a module-extension file that is not an interface | `toolchain-model/model.cppm` |
-| C | `BuildInputs::empty()` and `ConditionalConfig::empty()`, replacing two hand-written gates | `manifest/types.cppm`, `toml.cppm`, `xpkg.cppm` |
+| C | `is_empty(BuildInputs)` and `is_empty(ConditionalConfig)`, replacing two hand-written gates | `manifest/types.cppm`, `toml.cppm`, `xpkg.cppm` |
 | D | unknown-key sweeps for `[runtime]` and `[target.<pred>.runtime]` | `manifest/toml.cppm` |
 
 Reading B's row against §3: the recommendation there was A, and the emitter now
@@ -451,11 +451,24 @@ READ. This is not a new restriction: GCC 16.1 refuses the same declaration with
 `unrecognized 'MODULE-EXPORT ...'`, so the two versions of mcpp differ in which
 sentence the author gets, not in whether the file builds.
 
-`ConditionalConfig::empty()` composes rather than enumerating: it calls
-`BuildInputs::empty()` and `XlingsConfig::empty()`, the latter of which already
+`is_empty(ConditionalConfig)` composes rather than enumerating: it calls
+`is_empty(BuildInputs)` and `XlingsConfig::empty()`, the latter of which already
 existed. That is #258's medicine applied one level further out, and it closed a
 fourth instance found while writing it — `xpkg.cppm`'s gate omitted
 `privateIncludeDirs`, which its own loop fills.
+
+**They are free functions, and that was forced by a measurement rather than
+chosen.** The first version made them members, which is the obvious shape and
+the wrong one: adding an inline member to a struct this module exports changes
+what importers materialise from its BMI, and `Profile` carries a
+`std::optional<std::string>` that is already known to break under clang with the
+MSVC standard library — the note on that member records the earlier occasion.
+Windows CI failed on `test_modgraph.cpp` with
+`no matching constructor for _SMF_control<_Optional_construct_base<...>>`,
+reported against a struct this change never touched, reached through
+`Manifest` -> `std::map<std::string, Profile>` -> `Profile`. `append`, the
+sibling operation, has been a free function since it was written; these now
+match it, and the structs' member sets are exactly what they were.
 
 ### Measurements after
 
@@ -482,7 +495,7 @@ fail on the reverted tree and all four new e2e tests fail against the released
 `CorrectlySpelledRuntimeKeysAreSilent` — which exist to fail if the new refusals
 are too broad, and are supposed to pass in both.
 
-`ConditionalConfig::empty()` replaced a gate in the descriptor reader as well
+`is_empty(ConditionalConfig)` replaced a gate in the descriptor reader as well
 as in the manifest reader, and a descriptor is read by every consumer of the
 index rather than by one project. All 228 descriptors in `mcpplibs/mcpp-index`
 were parsed with both binaries and compared: 228 identical, 0 differing, 0
@@ -498,6 +511,17 @@ today. It is a correctness fix for a channel nothing currently exercises. The
 228-descriptor comparison still says something — the change broke no parse —
 but it is not evidence about the gate, and recording it as though it were is
 the failure this record is otherwise about.
+
+WHERE THE NEW e2e TESTS RUN, STATED RATHER THAN ASSUMED. All four declare
+`# requires: gcc`, and `run_all.sh` grants that capability only in its `Linux`
+branch — so they run on the Linux shards and are skipped on macOS and Windows.
+That is the right boundary for what they assert (three of the four defects are
+invisible on gcc, so their criteria are assertions on the emitted graph rather
+than on a build outcome, and the graph is the same everywhere), but it means the
+end-to-end leg exists on one platform only. The cross-dialect coverage is in the
+unit tests, which construct Clang, GCC and MSVC plans explicitly and run in
+every platform's unit job — including the MSVC spelling, whose empty-value
+symptom (`/ifcOutput` consuming the next token) no Linux runner could reach.
 
 One denominator is worth recording because it is empty where a reader would
 expect it not to be: mcpp's own build emits **zero** `cxx_module` edges, since
