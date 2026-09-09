@@ -99,6 +99,14 @@ jobs:
 
       - name: Install qemu-user-static
         run: |
+          # The runner image carries third-party apt lists (Google Chrome
+          # among them) that this job does not use, and a transient
+          # `Hash Sum mismatch` on one of them fails the whole update -- which
+          # killed two cross-build jobs in setup, before a single byte was
+          # compiled. Dropping the lists this job has no use for is what makes
+          # the step's failure mean something about this job.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+                     /etc/apt/sources.list.d/microsoft-prod.list || true
           sudo apt-get update -qq
           sudo apt-get install -y qemu-user-static
           ${{ matrix.qemu_bin }} --version | head -1
@@ -251,6 +259,14 @@ jobs:
             sudo dpkg -i ~/wine-debs/*.deb 2>/dev/null \
               || { sudo apt-get update -qq; sudo apt-get install -f -y; }
           else
+            # The runner image carries third-party apt lists (Google Chrome
+            # among them) that this job does not use, and a transient
+            # `Hash Sum mismatch` on one of them fails the whole update -- which
+            # killed two cross-build jobs in setup, before a single byte was
+            # compiled. Dropping the lists this job has no use for is what makes
+            # the step's failure mean something about this job.
+            sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+                       /etc/apt/sources.list.d/microsoft-prod.list || true
             sudo apt-get update -qq
             sudo apt-get install -y --download-only wine64 wine \
               || sudo apt-get install -y --download-only wine
