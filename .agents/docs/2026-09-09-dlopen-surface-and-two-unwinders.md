@@ -662,6 +662,9 @@ else moves when they land".
 | | a non-hermetic binding, or `allow_host_libs` | silent, for the reason the artifact verdict is |
 | R6 (one unwinder) | a libc++ link line naming libstdc++ | `--unwindlib=libgcc` and hidden archives |
 | | every other link | byte-for-byte unchanged, asserted in `test_distribution.cpp` |
+| R7 (`compat:opencl` declared) | every SYCL project | the OpenCL back end loads; one shared library and one symlink farm added to the graph |
+| | the two defects in §8.5 | latent before, active from the moment a shared library entered a SYCL plan |
+| `compat.opencl` on Windows | a Windows OpenCL consumer | a loader to link, where there was none; no adapter, because the system loader needs no help |
 
 The one regression this could cause is in §7's last item: an executable that
 deliberately re-exports the C++ standard library to a plugin it `dlopen`s. It

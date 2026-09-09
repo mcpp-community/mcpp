@@ -281,8 +281,13 @@ jobs:
           # killed two cross-build jobs in setup, before a single byte was
           # compiled. Dropping the lists this job has no use for is what makes
           # the step's failure mean something about this job.
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
-                     /etc/apt/sources.list.d/microsoft-prod.list || true
+          #
+          # BY CONTENT, NOT BY FILENAME. The first attempt removed
+          # `google-chrome.list` and the update failed on the same URL: on
+          # ubuntu-24.04 the runner writes deb822 `.sources` files, so the
+          # name was a guess and the guess was wrong.
+          sudo grep -rlE 'dl[.]google[.]com|packages[.]microsoft[.]com' \
+               /etc/apt/sources.list.d/ 2>/dev/null | xargs -r sudo rm -f
           sudo apt-get update -qq
           sudo apt-get install -y curl git build-essential qemu-user-static
           qemu-aarch64-static --version | head -1
