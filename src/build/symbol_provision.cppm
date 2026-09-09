@@ -55,6 +55,11 @@ export namespace mcpp::build::symbol_provision {
 struct Export {
     std::string name;
     bool        isFunc = false;
+    // A vague-linkage definition (STB_WEAK): a template instantiation, an
+    // inline function, a vtable. Every translation unit that needs one emits
+    // it and the loader unifies them; that is the C++ ABI working, not an
+    // image displacing a library's own copy.
+    bool        isWeak = false;
 };
 
 // One object that could also supply a symbol, as the report will name it.
@@ -67,6 +72,7 @@ struct Provider {
 struct Conflict {
     std::string              name;
     bool                     isFunc = false;
+    bool                     isWeak = false;
     std::vector<std::string> alsoProvidedBy;
 };
 
@@ -92,6 +98,14 @@ struct Report {
     std::size_t           exported = 0;
     std::size_t           total = 0;
     std::vector<Conflict> conflicts;
+    // Shared vague-linkage definitions, counted and not listed.
+    //
+    // They are NOT a finding: the C++ ABI emits a template instantiation into
+    // every image that needs it and expects the loader to keep one. Counting
+    // them is still worth doing -- a reader who runs `nm -D` sees them and has
+    // to be told which ones this check decided about, or "clean" reads as
+    // "did not look".
+    std::size_t           sharedWeak = 0;
     // Why, for the two non-answers. Empty for Clean and Conflict.
     std::string           reason;
 
@@ -169,7 +183,8 @@ exported_definitions(const mcpp::platform::elf::DynamicSymbols& symbols) {
         // share an address with relocated data from being excused.
         if (!symbol.isFunc && symbols.copyRelocations.contains(symbol.value))
             continue;
-        out.push_back(Export{ .name = symbol.name, .isFunc = symbol.isFunc });
+        out.push_back(Export{ .name = symbol.name, .isFunc = symbol.isFunc,
+                              .isWeak = symbol.isWeak });
     }
     std::ranges::sort(out, {}, &Export::name);
     return out;
@@ -179,7 +194,8 @@ std::vector<Conflict> conflicting_exports(std::span<const Export> exports,
                                           std::span<const Provider> closure) {
     std::vector<Conflict> out;
     for (auto const& exported : exports) {
-        Conflict conflict{ .name = exported.name, .isFunc = exported.isFunc };
+        Conflict conflict{ .name = exported.name, .isFunc = exported.isFunc,
+                           .isWeak = exported.isWeak };
         for (auto const& provider : closure) {
             if (std::ranges::find(provider.defines, exported.name)
                 != provider.defines.end())
@@ -223,6 +239,13 @@ std::string Report::explain(std::string_view artifact) const {
 
     body += "  Also provided by:\n";
     for (auto const& label : providers) body += std::format("    {}\n", label);
+    if (sharedWeak > 0)
+        body += std::format(
+            "  ({} vague-linkage definition{} -- template instantiations, inline\n"
+            "  functions, vtables -- {} also shared and are NOT part of this\n"
+            "  finding: the C++ ABI emits one per image and the loader keeps one.)\n",
+            sharedWeak, sharedWeak == 1 ? "" : "s",
+            sharedWeak == 1 ? "is" : "are");
 
     // WHY it matters, then what to do — IN THE ORDER THAT ACTUALLY WORKS.
     //
@@ -242,7 +265,42 @@ std::string Report::explain(std::string_view artifact) const {
         "  The executable is searched first, so the copy inside it wins for\n"
         "  every symbol both provide — the library's own copy is never called,\n"
         "  and code inside that library now runs against a build it was not\n"
-        "  linked against.\n"
+        "  linked against.\n";
+
+    // THE UNWINDER FAMILY IS NOT ONE MORE DUPLICATE SYMBOL.
+    //
+    // For every other name the sentence above is the whole consequence: one
+    // implementation is called instead of another, and the two are usually
+    // interchangeable. For `_Unwind_*` the consequence is that a throw is
+    // processed by TWO unwinders and no `catch` runs.
+    //
+    // A static archive contributes only the members something references, so
+    // the interposition is PARTIAL by construction. Measured on a SYCL
+    // artifact (mcpp#596): 10 of libgcc_s's 18 entry points came from the
+    // executable's libunwind and 8 stayed in libgcc_s, including the context
+    // accessors — so libstdc++'s personality routine read an LLVM libunwind
+    // `_Unwind_Context` through libgcc's `_Unwind_GetIPInfo`, recovered a
+    // meaningless IP, found no landing pad, and `__cxa_call_terminate` ran
+    // past a handler three frames up. The program aborted with exit 134 and
+    // printed nothing, because `__verbose_terminate_handler` rethrows to name
+    // the exception's type and that rethrow terminated as well.
+    //
+    // Said separately rather than folded into the list below, because none of
+    // the three ways out addresses it: the fix is one unwinder in the process,
+    // which is a link-line question rather than a packaging one.
+    if (std::ranges::any_of(conflicts, [](auto const& c) {
+            return c.name.starts_with("_Unwind_"); })) {
+        body +=
+            "  These include the unwinder's entry points (`_Unwind_*`), and\n"
+            "  for those the consequence is stronger: an exception is then\n"
+            "  raised by one unwinder and inspected by the other, no `catch`\n"
+            "  matches, and the program calls std::terminate past a handler\n"
+            "  that should have run. A static archive contributes only the\n"
+            "  members something references, so the split is partial and the\n"
+            "  program is correct until something throws.\n";
+    }
+
+    body +=
         "  Ways out, in the order they apply:\n"
         "    1. stop one side from providing it — usually the package that\n"
         "       ships a copy of a library the graph already builds;\n"

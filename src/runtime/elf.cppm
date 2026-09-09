@@ -137,6 +137,13 @@ struct DynamicSymbol {
     // dynamic symbol table therefore has exactly one cause — the linker
     // exported it so that some shared object's reference would bind to it.
     bool          isFunc = false;
+    // STB_WEAK. A vague-linkage definition -- a template instantiation, an
+    // inline function, a vtable -- which the C++ ABI emits into every
+    // translation unit that needs it and expects the loader to unify across
+    // the process. That is the intended behaviour, not a leak, so a caller
+    // asking "is this image providing something twice" has to be able to tell
+    // it from a strong definition that displaces a library's own.
+    bool          isWeak = false;
     std::uint64_t value = 0;   // st_value; the key a copy relocation matches
 };
 
@@ -193,6 +200,55 @@ RuntimeVerdict validate_runtime_artifact(
     const RuntimeResolution& resolution,
     bool hostLibsAllowed = false);
 
+// THE SURFACE NOTHING ELSE WALKS.
+//
+// `resolve_runtime_closure` above is seeded with the artifact and follows
+// DT_NEEDED. A library a package published through `runtime.library_dirs`
+// exists precisely because something will `dlopen` it, so no link-time edge
+// names it and it is outside that closure BY CONSTRUCTION, not by oversight.
+//
+// Measured (mcpp#596): a farm of twenty-five libraries, two of which could not
+// load at all -- one needing `libnvidia-ml.so.1`, one needing
+// `libOpenCL.so.1`, neither on the search path -- while the build reported no
+// diagnostic, because nothing had asked. The program then aborted at run time
+// with no message.
+//
+// mcpp is the only component that can answer this: it computed the whole
+// search path, and under a hermetic binding nothing else will be consulted.
+// The check is provider-agnostic -- it knows nothing of SYCL, CUDA or Unified
+// Runtime, and must not, for the reason `test_runtime_contract` states.
+struct DlopenSurfaceFinding {
+    std::filesystem::path member;   // the library that cannot be satisfied
+    std::string           soname;   // what it needs
+    // Present as an entry but pointing nowhere. The host-driver sentinels
+    // create deliberately dangling links so that installing a driver later
+    // self-heals every consumer, so this is the MACHINE's answer and never an
+    // error. `Missing` is the packaging gap.
+    bool                  dangling = false;
+};
+
+struct DlopenSurfaceReport {
+    // THE DENOMINATORS. "No findings" and "nothing was examined" are the two
+    // readings that must not be spelled the same: a directory that failed to
+    // build enumerates nothing, and every per-member test then passes.
+    std::size_t members = 0;   // versioned sonames found in the directories
+    std::size_t walked  = 0;   // whose own DT_NEEDED was read
+    std::vector<DlopenSurfaceFinding> findings;
+};
+
+//
+// `alsoProvided` names SONAMEs this build produces itself. An artifact carries
+// its SONAME in the object rather than in its filename -- mcpp links
+// `bin/libopencl.so` whose SONAME is `libOpenCL.so.1`, and the alias under the
+// SONAME is created by a later step -- so a filename search reports the
+// library as missing while it is being produced. Measured: `mcpp test` calls
+// this twice and only the second call saw the alias.
+DlopenSurfaceReport inspect_dlopen_surface(
+    std::span<const std::filesystem::path> surfaceDirs,
+    const mcpp::platform::runtime::RuntimeBinding& binding,
+    std::span<const std::filesystem::path> searchDirs,
+    std::span<const std::string> alsoProvided = {});
+
 } // namespace mcpp::platform::elf
 
 namespace mcpp::platform::elf {
@@ -225,6 +281,7 @@ constexpr std::uint64_t kDtGnuHash = 0x6ffffef5;
 constexpr std::uint64_t kSymEntrySize  = 24;
 constexpr std::uint64_t kRelaEntrySize = 24;
 
+constexpr unsigned char kStbWeak     = 2;
 constexpr unsigned char kSttObject   = 1;
 constexpr unsigned char kSttFunc     = 2;
 constexpr unsigned char kSttGnuIfunc = 10;
@@ -682,6 +739,7 @@ inspect_dynamic_symbols(const std::filesystem::path& object) {
         out.defined.push_back(DynamicSymbol{
             .name   = std::move(*name),
             .isFunc = (type == detail::kSttFunc || type == detail::kSttGnuIfunc),
+            .isWeak = (bind == detail::kStbWeak),
             .value  = *value,
         });
     }
@@ -1256,6 +1314,90 @@ RuntimeVerdict validate_runtime_artifact(
         }
     }
     return verdict;
+}
+
+DlopenSurfaceReport inspect_dlopen_surface(
+    std::span<const std::filesystem::path> surfaceDirs,
+    const mcpp::platform::runtime::RuntimeBinding& binding,
+    std::span<const std::filesystem::path> searchDirs,
+    std::span<const std::string> alsoProvided) {
+    DlopenSurfaceReport report;
+
+    // A versioned SONAME is what a farm links and what dlopen asks for; an
+    // unversioned `libfoo.so` in such a directory is a LINK-time name and is
+    // not part of this surface. `-gdb.py` sidecars sit beside the payload's
+    // libraries and match a looser test.
+    auto versioned = [](const std::string& name) {
+        auto so = name.find(".so.");
+        if (so == std::string::npos || name.size() < so + 5) return false;
+        if (name.ends_with(".py")) return false;
+        return name[so + 4] >= '0' && name[so + 4] <= '9';
+    };
+
+    // Every entry in every surface directory, indexed by SONAME, so that a
+    // member needing another member is answered from the surface itself.
+    std::map<std::string, std::filesystem::path> entries;
+    std::error_code ec;
+    for (auto const& dir : surfaceDirs) {
+        if (dir.empty() || !std::filesystem::is_directory(dir, ec)) continue;
+        for (auto const& item : std::filesystem::directory_iterator(dir, ec)) {
+            auto name = item.path().filename().string();
+            if (!versioned(name)) continue;
+            entries.emplace(name, item.path());
+        }
+    }
+
+    // ONE LIBRARY, NOT ITS TWO NAMES. A farm carries `libfoo.so.N` and
+    // `libfoo.so.N.M.P` as two links to one file, so walking the entries
+    // reports every finding twice and calls thirteen libraries twenty-five.
+    // Keyed by the file both resolve to; the SHORTEST name is kept, which is
+    // the one a dlopen asks for.
+    std::map<std::filesystem::path, std::pair<std::string, std::filesystem::path>>
+        libraries;
+    for (auto const& [name, path] : entries) {
+        auto real = std::filesystem::weakly_canonical(path, ec);
+        if (ec) { real = path; ec.clear(); }
+        auto it = libraries.find(real);
+        if (it == libraries.end()) libraries.emplace(real, std::pair{name, path});
+        else if (name.size() < it->second.first.size())
+            it->second = {name, path};
+    }
+    report.members = libraries.size();
+
+    for (auto const& [name, path] : std::views::values(libraries)) {
+        // A dangling entry is the sentinel's self-heal shape: the package did
+        // its part and the target is the machine's answer. Nothing to read.
+        if (!std::filesystem::exists(path, ec)) continue;
+        auto facts = inspect_elf_runtime(path);
+        if (!facts) continue;   // not an ELF this reader understands; a
+                                // statement about the CHECK, not the surface
+        ++report.walked;
+        for (auto const& soname : facts->needed) {
+            // Resolved the way the loader will resolve it, from this member's
+            // own tags plus the search path the artifact actually carries.
+            if (detail::resolve_needed(soname, *facts, binding, searchDirs, {}))
+                continue;
+            // A SONAME this build produces under another filename.
+            if (std::ranges::find(alsoProvided, soname) != alsoProvided.end())
+                continue;
+            // DANGLING IS A PROPERTY OF THE FILE, NOT OF THE NAME. An entry
+            // that exists and still did not resolve is a third thing -- an
+            // unreadable file, a directory the search does not reach -- and
+            // calling it "the machine has no driver" would silence it.
+            auto entry = entries.find(soname);
+            const bool dangling = entry != entries.end()
+                               && !std::filesystem::exists(entry->second, ec);
+            report.findings.push_back({
+                .member   = path,
+                .soname   = soname,
+                .dangling = dangling,
+            });
+        }
+    }
+    std::ranges::sort(report.findings, [](auto const& a, auto const& b) {
+        return std::tie(a.member, a.soname) < std::tie(b.member, b.soname);
+    });
+    return report;
 }
 
 } // namespace mcpp::platform::elf

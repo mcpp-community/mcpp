@@ -694,3 +694,99 @@ TEST(ElfRuntime, ThisBinaryExportsNothingOfItsOwn) {
                return s;
            }();
 }
+
+// THE SURFACE A DEPENDENCY PUBLISHES FOR dlopen, WHICH NO ARTIFACT WALK REACHES.
+//
+// `resolve_runtime_closure` is seeded with the artifact and follows DT_NEEDED.
+// A library in a package's `runtime.library_dirs` is there because something
+// will dlopen it, so nothing names it and it is outside that closure by
+// construction. mcpp#596 is one such library needing a soname no directory on
+// the search path carried, on a build that reported no diagnostic at all.
+//
+// Three states, and the difference between the second and the third is the
+// whole reason this is not "dlopen everything and fail on error": a surface
+// legitimately holds host-driver links that dangle on a machine with no
+// driver, and a check that failed there would turn a correct CPU-only
+// configuration into a failed build.
+TEST(DlopenSurface, SeparatesAPackagingGapFromAMachineWithoutTheDriver) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+    Tmp t;
+    auto payload = t.path / "store";
+    auto glibc = payload / "2.44" / "lib64";
+    auto farm  = t.path / "farm";
+    std::filesystem::create_directories(glibc);
+    std::filesystem::create_directories(farm);
+
+    write_elf_fixture(glibc / "libc.so.6", {.needed = {}, .runpath = glibc.string()});
+
+    // Resolved: needs only what the surface itself carries.
+    write_elf_fixture(farm / "libgood.so.1",
+                      {.needed = {"libc.so.6"}, .runpath = glibc.string()});
+    // The packaging gap: a soname no directory on the path carries.
+    write_elf_fixture(farm / "libgap.so.1",
+                      {.needed = {"libabsent.so.7"}, .runpath = glibc.string()});
+    // The machine's answer: the surface HAS an entry, and it points nowhere.
+    write_elf_fixture(farm / "libneedsdriver.so.1",
+                      {.needed = {"libdriver.so.1"}, .runpath = glibc.string()});
+    std::filesystem::create_symlink("/nonexistent/driver/libdriver.so.1",
+                                    farm / "libdriver.so.1");
+
+    std::vector<std::filesystem::path> dirs{farm};
+    std::vector<std::filesystem::path> search{farm, glibc};
+    auto report = elf::inspect_dlopen_surface(dirs, binding_for(payload), search);
+
+    // BOTH DENOMINATORS. A surface that failed to build enumerates nothing and
+    // every per-member assertion below then passes.
+    EXPECT_EQ(report.members, 4u);
+    EXPECT_EQ(report.walked, 3u) << "the dangling entry is not read, and the "
+                                    "other three are";
+
+    ASSERT_EQ(report.findings.size(), 2u);
+    // Asserted as FIELDS, not as a substring of a message whose wording is
+    // free to improve.
+    const elf::DlopenSurfaceFinding* gap = nullptr;
+    const elf::DlopenSurfaceFinding* machine = nullptr;
+    for (auto const& f : report.findings) {
+        if (f.soname == "libabsent.so.7") gap = &f;
+        if (f.soname == "libdriver.so.1") machine = &f;
+    }
+    ASSERT_NE(gap, nullptr);
+    ASSERT_NE(machine, nullptr);
+    EXPECT_FALSE(gap->dangling) << "nothing on the surface answers this name";
+    EXPECT_EQ(gap->member.filename(), "libgap.so.1");
+    EXPECT_TRUE(machine->dangling)
+        << "the surface carries the entry; the target is the machine's answer";
+}
+
+// ONE LIBRARY, NOT ITS TWO NAMES.
+//
+// A farm links `libfoo.so.N` and `libfoo.so.N.M.P` to one file. Walking the
+// entries reports every finding twice and calls thirteen libraries twenty-six,
+// which is what the first published record did.
+TEST(DlopenSurface, CountsALibraryOnceWhenTwoNamesLinkToIt) {
+    if constexpr (!mcpp::platform::is_linux)
+        GTEST_SKIP() << "ELF/glibc runtime physics only apply on Linux";
+    Tmp t;
+    auto payload = t.path / "store";
+    auto glibc = payload / "2.44" / "lib64";
+    auto farm  = t.path / "farm";
+    std::filesystem::create_directories(glibc);
+    std::filesystem::create_directories(farm);
+    write_elf_fixture(glibc / "libc.so.6", {.needed = {}, .runpath = glibc.string()});
+
+    auto real = t.path / "libtwo.so.1.2.3";
+    write_elf_fixture(real, {.needed = {"libabsent.so.7"}, .runpath = glibc.string()});
+    std::filesystem::create_symlink(real, farm / "libtwo.so.1.2.3");
+    std::filesystem::create_symlink(real, farm / "libtwo.so.1");
+
+    std::vector<std::filesystem::path> dirs{farm};
+    std::vector<std::filesystem::path> search{farm, glibc};
+    auto report = elf::inspect_dlopen_surface(dirs, binding_for(payload), search);
+
+    EXPECT_EQ(report.members, 1u);
+    EXPECT_EQ(report.walked, 1u);
+    ASSERT_EQ(report.findings.size(), 1u);
+    // The SHORTEST name is kept: it is the one a dlopen asks for.
+    EXPECT_EQ(report.findings.front().member.filename(), "libtwo.so.1");
+}

@@ -10358,10 +10358,21 @@ prepare_build(bool print_fingerprint,
                 // consumes `lu.objects`, so the objects an action produced
                 // belong there for exactly the reason a compiled `.cpp`'s do:
                 // the target's content is what it was told to contain.
-                const bool image = lu.kind == mcpp::build::LinkUnit::Binary
+                //
+                // AND NOT A DEPENDENCY'S IMAGE. "Every linked image" means
+                // every image THIS PACKAGE produces; a `kind = "shared"`
+                // dependency contributes a link unit to this plan and is not
+                // one of them. Without the qualifier the SYCL example's device
+                // island was linked into `compat:opencl`'s ICD loader as well
+                // -- a C library carrying `saxpy_device` -- and the process
+                // held two copies of it. An action that means to reach a
+                // dependency's target cannot: it is not this package's to
+                // fill, and naming it explicitly already fails as unknown.
+                const bool image = !lu.dependencyOwned
+                               && (lu.kind == mcpp::build::LinkUnit::Binary
                                 || lu.kind == mcpp::build::LinkUnit::SharedLibrary
                                 || lu.kind == mcpp::build::LinkUnit::StaticLibrary
-                                || lu.kind == mcpp::build::LinkUnit::TestBinary;
+                                || lu.kind == mcpp::build::LinkUnit::TestBinary);
                 const bool wanted = a.targets.empty()
                     ? image
                     : std::find(a.targets.begin(), a.targets.end(),

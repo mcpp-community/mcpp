@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-273 records.
+274 records.
 
 ## By subject
 
@@ -32,6 +32,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### heterogeneous
 
+- [A dlopen surface no closure walks, and a process with two unwinders](2026-09-09-dlopen-surface-and-two-unwinders.md) — active
 - [The island boundary's names: one rule for both lanes, and the check that makes it true](2026-09-08-island-boundary-names.md) — active
 - [Implementation plan: the island boundary's names](2026-09-08-island-boundary-names-implementation-plan.md) — active
 
@@ -44,6 +45,7 @@ Records that declare one. Everything else is listed by date below.
 ### 2026-09
 
 - [Two answers and two silences: the scanner's second grammar, and the manifest keys nothing reads](2026-09-09-two-answers-and-two-silences.md) — active
+- [A dlopen surface no closure walks, and a process with two unwinders](2026-09-09-dlopen-surface-and-two-unwinders.md) — active
 - [The documentation as a book: a chapter-by-chapter design](2026-09-08-the-documentation-as-a-book.md) — active
 - [The island boundary's names: one rule for both lanes, and the check that makes it true](2026-09-08-island-boundary-names.md) — active
 - [Implementation plan: the island boundary's names](2026-09-08-island-boundary-names-implementation-plan.md) — active

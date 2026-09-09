@@ -676,6 +676,29 @@ Which shape to choose is a property of the program, not of mcpp: a seam that
 swaps an implementation wants link-time selection, and a program that ships to
 machines it has not seen wants run-time selection.
 
+## One unwinder, when the link carries a second C++ runtime
+
+A lane whose device compiler is configured against libstdc++ puts libstdc++ on
+the link line while the artifact links libc++ statically. Both are then in the
+image, and mcpp's duplicate-symbol check reports what they share.
+
+For most of those symbols the consequence is that one implementation is called
+instead of an interchangeable other. For the unwinder it is not. A static
+archive contributes only the members something references, so the interposition
+is partial by construction: measured on the SYCL lane, ten of libgcc's eighteen
+`_Unwind_*` entry points came from the artifact and eight stayed in libgcc_s,
+including the accessors a personality routine uses. libstdc++'s personality
+then read an LLVM libunwind context through libgcc's accessors, found no
+landing pad, and called `std::terminate` past a handler three frames up. The
+program was correct until something threw.
+
+So when the link line names libstdc++ and the toolchain's own library is
+libc++, mcpp links the unwinder from libgcc (`--unwindlib=libgcc`) instead of
+the payload's `libunwind.a`, and hides the static archives' symbols with
+`--exclude-libs`. libgcc_s is already in the process — libstdc++ needs it — so
+this names a library rather than adding one, and the C++ runtime stays
+embedded. A build with no second runtime on its line is unchanged.
+
 ## Two boundaries worth stating
 
 **`--accel` and `--no-accel` are `build`, `run` and `test` options** (run and

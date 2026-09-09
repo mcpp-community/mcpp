@@ -137,8 +137,14 @@ TEST(SymbolProvision, TheReportNamesEveryProviderAndCapsTheSymbolList) {
     report.status = sp::Status::Conflict;
     report.total = 217;
     for (int i = 0; i < 20; ++i)
+        // DESIGNATED, not positional. A field added to `Conflict` between
+        // `isFunc` and `alsoProvidedBy` bound the provider list to a bool
+        // here -- a string literal converts to one, so it compiled, and the
+        // provider list silently became empty.
         report.conflicts.push_back(sp::Conflict{
-            std::format("sym{}", i), true, {"/pkg/lib/libz.so.1"}});
+            .name = std::format("sym{}", i),
+            .isFunc = true,
+            .alsoProvidedBy = {"/pkg/lib/libz.so.1"}});
     report.exported = report.conflicts.size();
 
     auto text = report.explain("consumer");
@@ -198,4 +204,49 @@ TEST(SymbolProvision, OrdinaryLinkFlagsDoNotVoidThePredicate) {
     EXPECT_FALSE(sp::export_dynamic_requested(std::vector<std::string>{
         "-O2", "-Wl,-rpath,$ORIGIN", "-lz", "-Wl,--as-needed",
         "-Wl,--enable-new-dtags", "-static-libstdc++", "-shared"}));
+}
+
+// ── vague linkage is not a second provider ─────────────────────────────────
+//
+// A template instantiation, an inline function or a vtable is emitted into
+// every image that needs it and the loader keeps one. That is the C++ ABI
+// working, and reporting it names a correct build.
+//
+// Measured on the SYCL example once the real findings were repaired: of the
+// thirty-nine symbols the image still shared with `libsycl.so.9`,
+// thirty-seven were `sycl::queue` and `sycl::buffer` instantiations from the
+// same headers libsycl was built from -- and the remaining two were the
+// island's own `extern "C"` entry points, which libsycl does not define. A
+// check that could not tell binding from name reported all of them.
+
+TEST(SymbolProvision, AWeakDefinitionIsCarriedThroughAsWeak) {
+    auto s = image();
+    auto weak = func("_ZN4sycl3_V15queueD2Ev");
+    weak.isWeak = true;
+    s.defined.push_back(weak);
+    s.defined.push_back(func("saxpy_device"));
+    auto exports = sp::exported_definitions(s);
+    ASSERT_TRUE(exports.has_value());
+    ASSERT_EQ(exports->size(), 2u);
+    // Sorted by name: the mangled one first.
+    EXPECT_TRUE((*exports)[0].isWeak);
+    EXPECT_FALSE((*exports)[1].isWeak);
+}
+
+TEST(SymbolProvision, AConflictRemembersWhetherItsDefinitionIsWeak) {
+    std::vector<sp::Export> exports{
+        { .name = "_ZN4sycl3_V15queueD2Ev", .isFunc = true, .isWeak = true },
+        { .name = "inflate",                .isFunc = true, .isWeak = false },
+    };
+    std::vector<sp::Provider> closure{
+        { .label = "libsycl.so.9",
+          .defines = {"_ZN4sycl3_V15queueD2Ev", "inflate"} },
+    };
+    auto conflicts = sp::conflicting_exports(exports, closure);
+    ASSERT_EQ(conflicts.size(), 2u);
+    // Both are shared; only the binding separates them, and the caller is what
+    // decides which one is a finding. Asserted here rather than in the caller
+    // so the DATA carries the distinction even if a future caller forgets it.
+    EXPECT_TRUE(conflicts[0].isWeak);
+    EXPECT_FALSE(conflicts[1].isWeak);
 }

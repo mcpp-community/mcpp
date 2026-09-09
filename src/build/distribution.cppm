@@ -269,6 +269,17 @@ struct MechanismInput {
     // `linkage = "static"` — the libc axis. On PE it shares the one `-static`
     // spelling with the C++ runtime axis, so the table has to see it.
     bool             fullStaticLibc = false;
+    // Does this link line also name a C++ runtime that is NOT the toolchain's?
+    //
+    // Today that means a libc++ toolchain whose line carries libstdc++,
+    // which is what the SYCL and HIP rule packages produce: the device half is
+    // compiled by a second compiler configured against libstdc++, so the
+    // artifact links libc++ statically AND loads libstdc++.so at run time.
+    //
+    // It changes two things below, and both are corrections of an assumption
+    // that held only while no such line existed. See `hide_static_cxx_runtime`
+    // for the symbol half and the libc++ ELF branch for the unwinder half.
+    bool             foreignCxxRuntime = false;
     // Already-escaped archive paths for the explicit-archive mechanisms.
     // Empty string = that archive is not available on this toolchain.
     std::string      libcxxArchive;
@@ -362,13 +373,26 @@ inline bool is_libcxx(std::string_view id)    { return id == "libc++"; }
 // Keep a statically linked standard library OUT of a shared object's dynamic
 // symbol table.
 //
-// Only a SHARED LIBRARY needs this, and only when it actually embedded the
+// A SHARED LIBRARY always needs this, and only when it actually embedded the
 // runtime — which after `default_contract` happens on ELF exclusively through
-// an explicit `cxx_runtime = { shared = "self-contained" }`. An executable's
-// static libstdc++ is already local (ld exports only what a loaded object
-// references, and mcpp passes no `-rdynamic`); a .so exports every global it
-// defines, which is how a pure-C compat package came to publish 777 GLOBAL
-// libstdc++ definitions and become the executable's de-facto C++ runtime.
+// an explicit `cxx_runtime = { shared = "self-contained" }`. A .so exports
+// every global it defines, which is how a pure-C compat package came to
+// publish 777 GLOBAL libstdc++ definitions and become the executable's
+// de-facto C++ runtime.
+//
+// AN EXECUTABLE NEEDS IT WHEN A FOREIGN C++ RUNTIME IS ON THE LINE, and the
+// sentence that used to be here — "an executable's static libstdc++ is already
+// local (ld exports only what a loaded object references, and mcpp passes no
+// `-rdynamic`)" — was a correct premise with a wrong conclusion. The clause in
+// the parentheses is the whole mechanism: when a loaded object DOES reference
+// them, the linker puts them in `.dynsym`. Measured on a SYCL artifact
+// (mcpp#596), which links libc++ statically and loads libstdc++.so: 89
+// exported symbols, 68 of them also defined by libstdc++ or libgcc_s. The
+// executable is searched first, so libstdc++'s own code called libc++abi's
+// `std::exception::what`, libc++'s `std::runtime_error` constructors ran on
+// objects libstdc++ would later destroy, and ten of libgcc_s's eighteen
+// unwinder entry points were answered by the executable's libunwind while
+// eight were not.
 //
 // It does NOT hide the weak/COMDAT template instantiations the library's own
 // code emits, and must not: unifying those across the process is the intended
@@ -379,9 +403,9 @@ inline bool is_libcxx(std::string_view id)    { return id == "libc++"; }
 // Archive BASENAMES — that is what `--exclude-libs` matches, and GNU ld and
 // lld agree on it. Listed by name rather than `ALL` so a user's own static
 // library linked into their .so keeps its exports.
-std::string hide_static_cxx_runtime(Role role,
+std::string hide_static_cxx_runtime(Role role, bool foreignCxxRuntime,
                                     std::initializer_list<std::string_view> archives) {
-    if (role != Role::SharedLibrary) return {};
+    if (role != Role::SharedLibrary && !foreignCxxRuntime) return {};
     std::string out;
     for (auto archive : archives) {
         out += " -Wl,--exclude-libs,";
@@ -591,7 +615,7 @@ Mechanism resolve(const MechanismInput& in) {
             if (m.effective == Contract::SelfContained) {
                 m.unitFlags = " -static-libstdc++";
                 m.unitFlags += detail::hide_static_cxx_runtime(
-                    in.role, {"libstdc++.a"});
+                    in.role, in.foreignCxxRuntime, {"libstdc++.a"});
             }
             // ToolchainCoupled and HostCoupled are the same emission on ELF
             // (no flag); they differ in the rpath the link already carries,
@@ -621,11 +645,34 @@ Mechanism resolve(const MechanismInput& in) {
             m.unitFlags = " -nostdlib++ " + in.libcxxArchive
                         + " " + in.libcxxAbiArchive;
             m.unitFlags += detail::hide_static_cxx_runtime(
-                in.role, {"libc++.a", "libc++abi.a"});
-            if (!in.libunwindArchive.empty()) {
+                in.role, in.foreignCxxRuntime, {"libc++.a", "libc++abi.a"});
+            if (in.foreignCxxRuntime) {
+                // ONE UNWINDER PER PROCESS.
+                //
+                // libgcc_s is in this process either way: libstdc++.so needs
+                // it, so naming it here adds no loaded object -- measured, the
+                // NEEDED set gains the name and nothing else. What it removes
+                // is the second unwinder. Linking libunwind.a instead pulls in
+                // only the archive members something references, so ten of
+                // libgcc's eighteen entry points came from the executable and
+                // eight stayed in libgcc_s; libstdc++'s personality routine
+                // then read an LLVM libunwind context through libgcc's
+                // accessors, found no landing pad, and terminated past a
+                // handler that should have run (mcpp#596).
+                //
+                // `--unwindlib=libgcc` LAST WINS over the payload cfg file's
+                // `--unwindlib=libunwind`, which is why this is an addition
+                // rather than an edit of that file: the cfg is the default for
+                // every link, and only this line has the second runtime on it.
+                //
+                // NOT a degradation of the contract. The C++ runtime is still
+                // embedded; the unwinder was never the artifact's own here,
+                // because the process already had libstdc++'s.
+                m.unitFlags += " --unwindlib=libgcc";
+            } else if (!in.libunwindArchive.empty()) {
                 m.unitFlags += " " + in.libunwindArchive;
                 m.unitFlags += detail::hide_static_cxx_runtime(
-                    in.role, {"libunwind.a"});
+                    in.role, in.foreignCxxRuntime, {"libunwind.a"});
             } else {
                 m.degraded   = true;   // effective stays SelfContained: the C++
                                        // runtime IS embedded; the unwinder is not

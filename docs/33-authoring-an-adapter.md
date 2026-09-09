@@ -82,6 +82,44 @@ is then empty and the program reports what it actually found. An adapter that
 errors on a missing host library turns a supported configuration into a build
 failure.
 
+## The check mcpp runs on this surface
+
+The libraries an adapter publishes are reached by `dlopen`, so no link edge
+names them and the runtime closure check — which walks `DT_NEEDED` from the
+artifact — cannot arrive at them. mcpp walks them separately, after the link,
+and reports what it finds as a warning:
+
+```
+warning: 1 of 13 libraries a dependency published for dlopen cannot be loaded
+on this artifact's search path:
+    libur_adapter_cuda.so.0 needs libnvidia-ml.so.1
+```
+
+Three states are separated, and only one of them is reported:
+
+| The library needs a SONAME that is | Meaning | Reported |
+|---|---|---|
+| on the artifact's search path | nothing to say | no |
+| present in the farm as a dangling link | the machine has no such driver | no |
+| absent everywhere | the adapter did not carry it | yes |
+
+The middle row is why this is a warning and not an error: a dangling link is
+the documented shape of a host driver that is not installed, and a check that
+failed there would turn a supported configuration into a build failure.
+
+The full result, including both denominators, is published as
+`runtime.dlopen_surface` in `resolution.json`:
+
+```json
+{ "members": 13, "walked": 13,
+  "findings": [ { "library": "libur_adapter_cuda.so.0", "dir": "...",
+                  "soname": "libnvidia-ml.so.1", "kind": "missing" } ] }
+```
+
+`members` and `walked` are published even when nothing is reported. A farm that
+failed to build enumerates nothing, and "no findings" would otherwise be
+indistinguishable from "nothing was examined".
+
 ## Current limitations
 
 - **Linux only, by construction.** macOS's dyld and the Windows PE loader have

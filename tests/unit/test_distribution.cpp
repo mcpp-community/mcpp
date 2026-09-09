@@ -670,3 +670,72 @@ TEST(Distribution, FormatUsesTheFallbackOnlyWhenTheTripleSaysNothing) {
     EXPECT_EQ(dist::format_for("", dist::Format::Pe),      dist::Format::Pe);
     EXPECT_EQ(dist::format_for("nonsense", dist::Format::Elf), dist::Format::Elf);
 }
+
+// ---------------------------------------------------------------------------
+// A SECOND C++ RUNTIME ON THE LINE (mcpp#596).
+//
+// A lane whose device compiler is configured against libstdc++ puts libstdc++
+// on the link line while the artifact links libc++ statically. Two things then
+// have to change, and neither is a preference:
+//
+//   * one unwinder. Linking libunwind.a pulls in only the archive members
+//     something referenced, so the interposition is partial by construction --
+//     measured, ten of libgcc's eighteen entry points came from the artifact
+//     and eight stayed in libgcc_s, including the accessors libstdc++'s
+//     personality routine calls. It read an LLVM libunwind context through
+//     libgcc's accessors and terminated past a matching handler.
+//   * the static archives' symbols hidden. The linker exports what a loaded
+//     object references, and a loaded libstdc++ references them: measured, 89
+//     exported symbols of which 68 were also defined by libstdc++ or libgcc_s.
+//
+// The byte-level assertions are the point, as they are for every other cell in
+// this table: a build with no second runtime on its line must be unchanged.
+
+TEST(Distribution, LinuxLibcxxWithAForeignRuntimeTakesOneUnwinder) {
+    dist::MechanismInput in;
+    in.format            = dist::Format::Elf;
+    in.stdlibId          = "libc++";
+    in.requested         = dist::Contract::SelfContained;
+    in.libcxxArchive     = "/tc/libc++.a";
+    in.libcxxAbiArchive  = "/tc/libc++abi.a";
+    in.libunwindArchive  = "/tc/libunwind.a";
+
+    // Unchanged when nothing else is on the line. Byte-for-byte the string the
+    // cell above asserts.
+    auto alone = dist::resolve(in);
+    EXPECT_EQ(alone.unitFlags,
+              " -nostdlib++ /tc/libc++.a /tc/libc++abi.a /tc/libunwind.a");
+
+    in.foreignCxxRuntime = true;
+    auto shared = dist::resolve(in);
+    // The contract is NOT degraded: the C++ runtime is still embedded, and
+    // libgcc_s is in the process either way because libstdc++ needs it.
+    EXPECT_EQ(shared.effective, dist::Contract::SelfContained);
+    EXPECT_FALSE(shared.degraded);
+    EXPECT_TRUE(shared.diagnostic.empty());
+    EXPECT_EQ(shared.unitFlags,
+              " -nostdlib++ /tc/libc++.a /tc/libc++abi.a"
+              " -Wl,--exclude-libs,libc++.a -Wl,--exclude-libs,libc++abi.a"
+              " --unwindlib=libgcc");
+    // The payload's unwinder archive is NOT on the line: linking it is what
+    // creates the second unwinder.
+    EXPECT_EQ(shared.unitFlags.find("libunwind.a"), std::string::npos);
+}
+
+// A shared library already hid these archives, and that path is untouched: the
+// widened guard adds executables, it does not change what a .so emits.
+TEST(Distribution, ASharedLibraryStillHidesTheArchivesWithoutASecondRuntime) {
+    dist::MechanismInput in;
+    in.format            = dist::Format::Elf;
+    in.stdlibId          = "libc++";
+    in.role              = dist::Role::SharedLibrary;
+    in.requested         = dist::Contract::SelfContained;
+    in.libcxxArchive     = "/tc/libc++.a";
+    in.libcxxAbiArchive  = "/tc/libc++abi.a";
+    in.libunwindArchive  = "/tc/libunwind.a";
+    auto m = dist::resolve(in);
+    EXPECT_EQ(m.unitFlags,
+              " -nostdlib++ /tc/libc++.a /tc/libc++abi.a"
+              " -Wl,--exclude-libs,libc++.a -Wl,--exclude-libs,libc++abi.a"
+              " /tc/libunwind.a -Wl,--exclude-libs,libunwind.a");
+}
