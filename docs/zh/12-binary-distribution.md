@@ -286,7 +286,7 @@ Mach-O 上打包器会读出 `LC_RPATH` 并在包会携带它时告警;自动改
 
 ### 调试信息会被剥掉
 
-参数、分档表与 `--debug-symbols` 见 [docs/02](10-pack-and-release.md)。
+参数、分档表与 `--debug-symbols` 见 [docs/10](10-pack-and-release.md)。
 对**库**包最要紧的一条:静态归档只做 `--strip-debug`,因为 `--strip-all` 会删掉
 归档的符号索引,消费方链接时会报 `archive has no index; run ranlib to add one`。
 

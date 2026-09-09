@@ -17,6 +17,7 @@
 #  11. every chapter states its reader, its question and its exclusions
 #  12. a citation naming a section lands in the chapter that contains it
 #  13. every table the manifest reference documents is in the lookup index
+#  14. a link labelled with a chapter number points at that chapter
 #
 # What it deliberately does NOT check: whether a chapter documents what is
 # implemented, whether an assertion's strength matches its evidence, or whether
@@ -144,12 +145,16 @@ for f in .agents/docs/[0-9]*.md; do
     || bad "$f: front matter declares no valid \`status\` (active | landed | superseded | abandoned)"
 done
 
-# ── 9. every relative link in docs/ and examples/ resolves, fragment included ─
+# ── 9. every relative link in docs/, examples/ and the READMEs resolves ──────
 #
 # Rule 3 catches `docs/NN-*.md` named anywhere, including from source comments.
 # This is the other half: a Markdown link in a document that points at a file
 # which is not there. Both halves are needed -- a chapter moved in this batch
 # would satisfy one and break the other.
+#
+# THE TWO TOP-LEVEL READMEs ARE IN THE SET. They are the entry point to every
+# tree below them and they carry more relative links than most chapters, and
+# until they were added here nothing checked one of those links at all.
 #
 # THE FRAGMENT IS PART OF THE LINK. The first version of this rule discarded
 # it (`(?:#[^)]*)?`), so a link to a section that had been renamed resolved to
@@ -195,7 +200,9 @@ def anchors_of(path):
         out.add(s if n == 0 else f"{s}-{n}")
     return out
 
-files = list(pathlib.Path("docs").rglob("*.md")) + list(pathlib.Path("examples").rglob("*.md"))
+files = (list(pathlib.Path("docs").rglob("*.md"))
+         + list(pathlib.Path("examples").rglob("*.md"))
+         + [pathlib.Path("README.md"), pathlib.Path("README.zh-CN.md")])
 cache = {}
 bad = 0
 for f in files:
@@ -227,11 +234,19 @@ PYCHECK
 # 简体中文 `[features]` section had no body at all, and 简体中文 §2.11 was
 # missing the `identity` verdict table. Both predate this check and both are
 # invisible to every other one.
+#
+# THE PAIR AT THE ROOT IS CHECKED TOO, AND IT IS WHERE THE COST WAS HIGHEST.
+# `README.zh-CN.md` carried 14 target rows against the English 21: the seven it
+# lacked were every bare-metal row, so a reader of the 简体中文 README saw a
+# tool with no freestanding support at all. Heading count, code-block count and
+# `<details>` count were all equal, which is why every other check was green.
 python3 - <<'PYPARITY' || fail=1
 import pathlib, sys, re
 bad = 0
-for en in sorted(pathlib.Path("docs").glob("*.md")):
-    zh = pathlib.Path("docs/zh") / en.name
+pairs = [(en, pathlib.Path("docs/zh") / en.name)
+         for en in sorted(pathlib.Path("docs").glob("*.md"))]
+pairs.append((pathlib.Path("README.md"), pathlib.Path("README.zh-CN.md")))
+for en, zh in pairs:
     if not zh.exists():
         continue
     def count(f):
@@ -329,6 +344,36 @@ for k in missing:
     print(f"FAIL: docs/README.md lookup index does not mention `{k}`, which docs/04 documents")
 sys.exit(1 if missing else 0)
 PYLOOKUP
+
+# ── 14. a link labelled with a chapter number points at that chapter ─────────
+#
+# Rule 3 checks that a named path exists and rule 9 that a link resolves. Both
+# passed on `[docs/13 -- Bare-Metal and Freestanding Targets](docs/40-baremetal.md)`
+# in README.md: the renumbering rewrote the path and left the label, so the
+# README told its reader to read chapter 13 for eleven of the twenty-one rows
+# in its own target table. A label that names a number is an assertion about
+# where the reader is being sent, and it is checkable against the path.
+python3 - <<'PYLABEL' || fail=1
+import re, pathlib, sys
+LINK = re.compile(r"\[([^\]]+)\]\((?!https?:|mailto:)([^)\s#]+)(?:#[^)\s]+)?\)")
+NUM  = re.compile(r"(?:docs/|^|[^0-9a-zA-Z])(\d{2})(?:\s*(?:--|—|-|\s)|$)")
+files = (list(pathlib.Path("docs").rglob("*.md"))
+         + [pathlib.Path("README.md"), pathlib.Path("README.zh-CN.md")])
+bad = 0
+for f in files:
+    for m in LINK.finditer(f.read_text(errors="ignore")):
+        label, path = m.group(1), m.group(2)
+        base = pathlib.Path(path).name
+        target_no = re.match(r"(\d{2})-", base)
+        label_no = NUM.match(label.strip())
+        if not target_no or not label_no:
+            continue
+        if target_no.group(1) != label_no.group(1):
+            print(f"FAIL: {f}: label `{label}` names chapter "
+                  f"{label_no.group(1)}, the link goes to {base}")
+            bad += 1
+sys.exit(1 if bad else 0)
+PYLABEL
 
 if [[ "$fail" -eq 0 ]]; then
   echo "OK: docs structure checks pass"

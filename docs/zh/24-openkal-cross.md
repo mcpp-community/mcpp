@@ -265,6 +265,6 @@ g++: error: unrecognized command-line option '-fuse-ld=…/ld.lld'
 
 ## 参考
 
-[docs/14 — 目标侧](22-target-side.md) 给出五个层、四种来源与规则。
+[docs/22 — 目标侧](22-target-side.md) 给出五个层、四种来源与规则。
 [SPEC-002](../specs/target-side.md) 给出能力语法的规范性陈述。
 
