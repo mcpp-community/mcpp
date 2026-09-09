@@ -18,6 +18,7 @@
 #  12. a citation naming a section lands in the chapter that contains it
 #  13. every table the manifest reference documents is in the lookup index
 #  14. a link labelled with a chapter number points at that chapter
+#  15. every table row is inside a table
 #
 # What it deliberately does NOT check: whether a chapter documents what is
 # implemented, whether an assertion's strength matches its evidence, or whether
@@ -374,6 +375,48 @@ for f in files:
             bad += 1
 sys.exit(1 if bad else 0)
 PYLABEL
+
+# ── 15. every table row is inside a table ───────────────────────────────────
+#
+# Rule 10 counts a translation's table rows, and a COUNT cannot see WHERE a row
+# is. One row of the target table was moved to line 1 of README.zh-CN.md, above
+# the document's own title, and rule 10 stayed green at 61 rows against 61: the
+# row was still in the file. What a reader saw was a stray table row before the
+# heading, and only a reader saw it.
+#
+# The check is positional rather than numeric: a maximal run of lines beginning
+# with `|` is a table only if its second line is a delimiter row. A row that has
+# been moved somewhere else lands in a run of its own and has no delimiter.
+python3 - <<'PYROW' || fail=1
+import re, pathlib, sys
+DELIM = re.compile(r"^\|[\s:|-]+\|?\s*$")
+files = (list(pathlib.Path("docs").rglob("*.md"))
+         + [pathlib.Path("README.md"), pathlib.Path("README.zh-CN.md")])
+bad = 0
+for f in files:
+    lines, infence, run = f.read_text(errors="ignore").split("\n"), False, []
+    def close(run):
+        global bad
+        if not run:
+            return
+        if len(run) < 2 or not DELIM.match(run[1][1]):
+            n, text = run[0]
+            print(f"FAIL: {f}:{n}: a table row outside a table: {text[:60]}")
+            bad += 1
+    for n, line in enumerate(lines, 1):
+        if line.startswith("```"):
+            infence = not infence
+            close(run); run = []
+            continue
+        if infence:
+            continue
+        if line.startswith("|"):
+            run.append((n, line))
+        else:
+            close(run); run = []
+    close(run)
+sys.exit(1 if bad else 0)
+PYROW
 
 if [[ "$fail" -eq 0 ]]; then
   echo "OK: docs structure checks pass"

@@ -1,4 +1,3 @@
-| `aarch64-macos`       | llvm(*macOS 默认*) | verified |
 # mcpp
 
 > 一个 现代C++ 模块化构建工具 — 纯 C++23 模块编写，已实现自举
@@ -19,13 +18,22 @@
   <img src="https://github.com/user-attachments/assets/6c85896e-9a37-4f62-acfb-d37a4eae2363" alt="mcpp demo" width="720">
 </p>
 
+C++ 通常把这五件事分给五个工具。mcpp 用一条命令承担全部五件 —— 第二行是每一列
+在既有认知里通常对应的东西。
+
+| | 通用构建系统 | 构建插件 | 包管理 | 工具链管理 | 环境与运行时 |
+|---|---|---|---|---|---|
+| **mcpp** | 模块优先的 C++ 构建，ninja 后端 | `build.mcpp` 与规则包 | SemVer、锁文件、包索引 | `family@version`，按需安装 | xlings —— 隔离沙盒里的用户态环境 |
+| **最接近的** | CMake + Ninja | CMake modules、xmake rules | vcpkg、Conan | rustup、nvm | conda、Nix |
+
 ## 核心特性
 
 - **C++23 模块原生支持** — `import std` 自动处理，文件级增量构建，模块依赖自动分析，零手动配置
 - **纯模块化自举** — mcpp 完全由 C++23 模块接口单元写成，并用它自己发布的这条流水线构建自己
-- **开箱即用** — 一条命令安装，内置 GCC 16 / LLVM 20 工具链，自动下载到隔离沙盒，不污染系统
-- **集成依赖管理** — SemVer 约束解析、锁文件、跨项目 BMI 缓存、自定义包索引
-- **多包工作空间** — Workspace 统一锁文件与版本管理，适合大型项目
+- **开箱即用** — 一条命令安装；构建所需的 GCC 或 LLVM 工具链自动下载到隔离沙盒，不污染系统
+- **依赖与工作空间** — SemVer 约束解析、锁文件、跨项目 BMI 缓存、自定义包索引，以及共用一份锁文件的多包 workspace
+- **换目标只换一个开关** — `--target` 从 Linux、Windows、macOS 一路到 Cortex-M 与 RISC-V 裸机；工具链载荷自动解析安装，产物由 runner 送上板子
+- **加速器，以及扩展的方式** — CUDA、HIP、SYCL、Vulkan/SPIR-V 与 Ascend C 各有规则包；没有现成规则的那一步用 `build.mcpp` 写，并可打成规则包给别人用
 
 ## 为什么选择 mcpp
 
@@ -396,6 +404,7 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 | `x86_64-windows-gnu`  | gcc 16 MinGW-w64——Windows 原生,Linux 交叉(wine)(*无 Visual Studio 时的 Windows 默认*) | verified |
 | `x86_64-windows-msvc` | `msvc@system`(探测 VS/BuildTools)或 llvm ¹(*有 Visual Studio 时的 Windows 默认*) | verified |
 | `x86_64-windows-musl` | llvm 22——带 musl C 库的 PE,没有 gcc 能产出它;系统由依赖图供给 | preview |
+| `aarch64-macos`       | llvm(*macOS 默认*) | verified |
 | `riscv64-none-elf` · `riscv32-none-elf` | llvm 22——裸机,`xim:picolibc-riscv` ² | verified |
 | `thumbv6m-none-eabi` · `thumbv7m-none-eabi` | llvm 22——Cortex-M0/M0+/M1、Cortex-M3 ² | verified |
 | `thumbv7em-none-eabihf` · `thumbv8m.main-none-eabi` | llvm 22——Cortex-M4F/M7F 硬浮点、Cortex-M33/M55 软浮点 ² | verified |

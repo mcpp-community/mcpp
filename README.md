@@ -18,13 +18,22 @@
   <img src="https://github.com/user-attachments/assets/6c85896e-9a37-4f62-acfb-d37a4eae2363" alt="mcpp demo" width="720">
 </p>
 
+C++ normally spreads these five jobs across five tools. mcpp is one command for
+all five — the second row names what each column is usually recognised as.
+
+| | build system | build plugins | package manager | toolchain manager | environment and runtime |
+|---|---|---|---|---|---|
+| **mcpp** | module-first C++ on a ninja backend | `build.mcpp` and rule packages | SemVer, a lockfile, package indices | `family@version`, installed on demand | xlings — a user-space environment in an isolated sandbox |
+| **closest to** | CMake + Ninja | CMake modules, xmake rules | vcpkg, Conan | rustup, nvm | conda, Nix |
+
 ## Highlights
 
 - **Native C++23 module support** — `import std` handled automatically, file-level incremental builds, automatic module dependency analysis, zero manual configuration
 - **Pure modular self-hosting** — mcpp is written entirely in C++23 module interface units and builds itself with the pipeline it ships
-- **Works out of the box** — one-command install, bundled GCC 16 / LLVM 20 toolchains downloaded into an isolated sandbox, never polluting your system
-- **Integrated dependency management** — SemVer constraint resolution, lockfile, cross-project BMI cache, custom package indices
-- **Multi-package workspaces** — unified lockfile and version management for larger projects
+- **Works out of the box** — one-command install; the GCC or LLVM toolchain a build needs is downloaded into an isolated sandbox, never polluting your system
+- **Dependencies and workspaces** — SemVer constraint resolution, lockfile, cross-project BMI cache, custom package indices, and multi-package workspaces sharing one lockfile
+- **One flag changes the target** — `--target` reaches from Linux, Windows and macOS to Cortex-M and RISC-V bare metal; the toolchain payload is resolved and installed for you, and a runner puts the artifact on the board
+- **Accelerators, and a way to extend** — CUDA, HIP, SYCL, Vulkan/SPIR-V and Ascend C each have a rule package; a step with no rule is written in `build.mcpp`, and packaged as a rule for other projects
 
 ## Why mcpp
 
