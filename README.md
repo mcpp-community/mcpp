@@ -18,31 +18,31 @@
   <img src="https://github.com/user-attachments/assets/6c85896e-9a37-4f62-acfb-d37a4eae2363" alt="mcpp demo" width="720">
 </p>
 
-C++ normally spreads these five jobs across five tools. mcpp is one command for
-all five — the second row names what each column is usually recognised as.
-
-| | build system | build plugins | package manager | toolchain manager | environment and runtime |
-|---|---|---|---|---|---|
-| **mcpp** | module-first C++ on a ninja backend | `build.mcpp` and rule packages | SemVer, a lockfile, package indices | `family@version`, installed on demand | xlings — a user-space environment in an isolated sandbox |
-| **closest to** | CMake + Ninja | CMake modules, xmake rules | vcpkg, Conan | rustup, nvm | conda, Nix |
-
 ## Highlights
 
-- **Native C++23 module support** — `import std` handled automatically, file-level incremental builds, automatic module dependency analysis, zero manual configuration
-- **Pure modular self-hosting** — mcpp is written entirely in C++23 module interface units and builds itself with the pipeline it ships
-- **Works out of the box** — one-command install; the GCC or LLVM toolchain a build needs is downloaded into an isolated sandbox, never polluting your system
-- **Dependencies and workspaces** — SemVer constraint resolution, lockfile, cross-project BMI cache, custom package indices, and multi-package workspaces sharing one lockfile
-- **One flag changes the target** — `--target` reaches from Linux, Windows and macOS to Cortex-M and RISC-V bare metal; the toolchain payload is resolved and installed for you, and a runner puts the artifact on the board
-- **Accelerators, and a way to extend** — CUDA, HIP, SYCL, Vulkan/SPIR-V and Ascend C each have a rule package; a step with no rule is written in `build.mcpp`, and packaged as a rule for other projects
+The left column is what mcpp is; the right is what that is used for.
+
+| Capability | What it is used for |
+|---|---|
+| **Build system** — native C++23 modules, `import std` handled automatically, file-level incremental builds, automatic dependency analysis | `mcpp new && mcpp build`, with nothing to configure; an interface that did not change does not cascade into the units importing it |
+| **Build plugins** — `build.mcpp` and rule packages | a step mcpp has no rule for is written once and packaged for other projects; CUDA, HIP, SYCL, Vulkan/SPIR-V and Ascend C are each a rule package |
+| **Package manager** — SemVer constraints, a lockfile, a cross-project BMI cache, custom indices | two lines of manifest bring in a community module library to `import`; several packages share one lockfile in a workspace |
+| **Toolchain manager** — `family@version`, installed on demand | no compiler has to be installed first; `--target` moves the same build to Windows, macOS, Cortex-M or RISC-V bare metal |
+| **Environment and runtime** — the user-space environment xlings provides | toolchains and dependencies land in an isolated sandbox rather than in the system; a runner puts the artifact on a board or an emulator |
+
+mcpp is written entirely in C++23 module interface units and builds itself with
+this pipeline, so every row above runs on mcpp itself every day.
 
 ## Why mcpp
 
-mcpp is built specifically for **C++23 module-first development**. If you want to use `import std`, module interface units (`.cppm`), module partitions, and other modern C++ features in your project, mcpp gives you a smooth, friendly experience on Linux, macOS ARM64, and Windows x86_64:
+mcpp is built specifically for **C++23 module-first development**. If you want to use `import std`, module interface units (`.cppm`), module partitions, and other modern C++ features in your project, mcpp gives you a smooth, friendly experience on Linux, macOS ARM64, and Windows x86_64.
 
-- **Modular by default** — projects created by `mcpp new` use C++23 modules directly; `import std` just works
-- **File-level incremental builds** — three-layer optimization based on P1689 dyndep (front-end dirty check + per-file scanning + BMI restat); only the modules that actually changed get recompiled
-- **Create & build in one go** — `mcpp new hello && cd hello && mcpp build`; toolchains install automatically, no compiler or build-system setup required
-- **A modular ecosystem** — [mcpplibs](https://github.com/mcpplibs) offers a growing set of directly `import`-able C++ module libraries, plus support for custom package indices
+C++ normally spreads these five jobs across five tools, and mcpp is one command
+for all five. The second row names what each column is usually recognised as.
+
+| mcpp | build system | build plugins | package manager | toolchain manager | environment and runtime |
+|---|---|---|---|---|---|
+| **closest to** | CMake + Ninja | CMake modules, xmake rules | vcpkg, Conan | rustup, nvm | conda, Nix |
 
 > [!NOTE]
 > **Early-stage project** — mcpp is under active development; interfaces and behavior may change in future releases.

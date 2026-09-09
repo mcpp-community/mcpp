@@ -18,31 +18,31 @@
   <img src="https://github.com/user-attachments/assets/6c85896e-9a37-4f62-acfb-d37a4eae2363" alt="mcpp demo" width="720">
 </p>
 
-C++ 通常把这五件事分给五个工具。mcpp 用一条命令承担全部五件 —— 第二行是每一列
-在既有认知里通常对应的东西。
-
-| | 通用构建系统 | 构建插件 | 包管理 | 工具链管理 | 环境与运行时 |
-|---|---|---|---|---|---|
-| **mcpp** | 模块优先的 C++ 构建，ninja 后端 | `build.mcpp` 与规则包 | SemVer、锁文件、包索引 | `family@version`，按需安装 | xlings —— 隔离沙盒里的用户态环境 |
-| **最接近的** | CMake + Ninja | CMake modules、xmake rules | vcpkg、Conan | rustup、nvm | conda、Nix |
-
 ## 核心特性
 
-- **C++23 模块原生支持** — `import std` 自动处理，文件级增量构建，模块依赖自动分析，零手动配置
-- **纯模块化自举** — mcpp 完全由 C++23 模块接口单元写成，并用它自己发布的这条流水线构建自己
-- **开箱即用** — 一条命令安装；构建所需的 GCC 或 LLVM 工具链自动下载到隔离沙盒，不污染系统
-- **依赖与工作空间** — SemVer 约束解析、锁文件、跨项目 BMI 缓存、自定义包索引，以及共用一份锁文件的多包 workspace
-- **换目标只换一个开关** — `--target` 从 Linux、Windows、macOS 一路到 Cortex-M 与 RISC-V 裸机；工具链载荷自动解析安装，产物由 runner 送上板子
-- **加速器，以及扩展的方式** — CUDA、HIP、SYCL、Vulkan/SPIR-V 与 Ascend C 各有规则包；没有现成规则的那一步用 `build.mcpp` 写，并可打成规则包给别人用
+左列是 mcpp 是什么，右列是它被用来做什么。
+
+| 能力 | 用它做的事 |
+|---|---|
+| **通用构建系统** —— C++23 模块原生支持，`import std` 自动处理，文件级增量构建，模块依赖自动分析 | `mcpp new && mcpp build`，没有要配置的东西；接口没有变化，就不会级联到导入它的那些单元 |
+| **构建插件** —— `build.mcpp` 与规则包 | mcpp 没有现成规则的那一步写一次，就能打成包给别的项目用；CUDA、HIP、SYCL、Vulkan/SPIR-V 与 Ascend C 各是一个规则包 |
+| **包管理** —— SemVer 约束、锁文件、跨项目 BMI 缓存、自定义索引 | 两行清单引入一个社区模块化库并直接 `import`；多个包在 workspace 里共用一份锁文件 |
+| **工具链管理** —— `family@version`，按需安装 | 本机不必先装编译器；`--target` 让同一次构建换到 Windows、macOS、Cortex-M 或 RISC-V 裸机 |
+| **环境与运行时** —— xlings 提供的用户态环境 | 工具链与依赖落在隔离沙盒里而不是系统里；runner 把产物送上板子或模拟器 |
+
+mcpp 完全由 C++23 模块接口单元写成，并用这条流水线构建自己 —— 上面每一行，每天都在
+mcpp 自己身上跑一遍。
 
 ## 为什么选择 mcpp
 
-mcpp 专门为 **C++23 模块化开发** 打造。如果你想在项目中使用 `import std`、模块接口单元（`.cppm`）、模块分区等现代 C++ 特性，mcpp 在 Linux、macOS ARM64 和 Windows x86_64 上能为你提供便捷且友好的开发体验：
+mcpp 专门为 **C++23 模块化开发** 打造。如果你想在项目中使用 `import std`、模块接口单元（`.cppm`）、模块分区等现代 C++ 特性，mcpp 在 Linux、macOS ARM64 和 Windows x86_64 上能为你提供便捷且友好的开发体验。
 
-- **默认模块化** — `mcpp new` 创建的项目模板直接使用 C++23 模块，`import std` 开箱即用
-- **文件级增量构建** — 基于 P1689 dyndep 的三层优化（前端脏检查 + 逐文件扫描 + BMI restat），只重编真正变化的模块
-- **一键创建 & 构建** — `mcpp new hello && cd hello && mcpp build`，工具链自动安装，无需手动配置编译器和构建系统
-- **模块化生态** — [mcpplibs](https://github.com/mcpplibs) 提供一系列可直接 `import` 的 C++ 模块化库，支持自定义包索引
+C++ 通常把这五件事分给五个工具，而 mcpp 用一条命令承担全部五件。第二行是每一列
+在既有认知里通常对应的东西。
+
+| mcpp | 通用构建系统 | 构建插件 | 包管理 | 工具链管理 | 环境与运行时 |
+|---|---|---|---|---|---|
+| **最接近的** | CMake + Ninja | CMake modules、xmake rules | vcpkg、Conan | rustup、nvm | conda、Nix |
 
 > [!NOTE]
 > **早期版本** — mcpp 仍在积极开发中，接口和行为可能在后续版本调整。
