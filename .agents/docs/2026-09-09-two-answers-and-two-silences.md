@@ -441,6 +441,16 @@ needs that rule's depfile and BMI-preservation machinery. It cannot answer "is
 this an interface". Splitting the question that way is what makes the empty-flag
 state unreachable rather than merely unlikely.
 
+One refinement came out of implementing A.1 rather than out of designing it.
+The identity refusal first quoted the name it had RECORDED, which is empty
+whenever the tokeniser could not read the declaration at all — so a non-ASCII
+module name produced `'' is not a module name`, a sentence naming nothing the
+author can search for. `is_module_name_char` tests bytes with `std::isalnum`,
+and every byte of a UTF-8 sequence is false. The message now quotes what was
+READ. This is not a new restriction: GCC 16.1 refuses the same declaration with
+`unrecognized 'MODULE-EXPORT ...'`, so the two versions of mcpp differ in which
+sentence the author gets, not in whether the file builds.
+
 `ConditionalConfig::empty()` composes rather than enumerating: it calls
 `BuildInputs::empty()` and `XlingsConfig::empty()`, the latter of which already
 existed. That is #258's medicine applied one level further out, and it closed a
