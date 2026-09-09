@@ -3639,10 +3639,10 @@ dependency_linkage = "static"
 )");
     ASSERT_TRUE(m);
     ASSERT_TRUE(m->profiles.contains("dev"));
-    EXPECT_FALSE(m->profiles.at("dev").dependencyLinkage.has_value());
+    EXPECT_FALSE(m->profiles.at("dev").dependencyLinkageDeclared);
     ASSERT_TRUE(m->profiles.contains("fast"));
-    ASSERT_TRUE(m->profiles.at("fast").dependencyLinkage.has_value());
-    EXPECT_EQ(*m->profiles.at("fast").dependencyLinkage, "static");
+    ASSERT_TRUE(m->profiles.at("fast").dependencyLinkageDeclared);
+    EXPECT_EQ(m->profiles.at("fast").dependencyLinkage, "static");
 }
 
 TEST(Manifest, ADependencyEdgeLinkageIsAClosedVocabularyToo) {

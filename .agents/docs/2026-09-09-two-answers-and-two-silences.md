@@ -457,8 +457,33 @@ existed. That is #258's medicine applied one level further out, and it closed a
 fourth instance found while writing it — `xpkg.cppm`'s gate omitted
 `privateIncludeDirs`, which its own loop fills.
 
-**They are free functions, and that was forced by a measurement rather than
-chosen.** The first version made them members, which is the obvious shape and
+**A latent defect in this module had to be removed before any of it could
+land, and it is worth recording because the diagnosis went wrong twice.**
+Windows CI failed to compile `tests/unit/test_modgraph.cpp` with
+
+    optional:262: error: no matching constructor for initialization of
+    '_SMF_control<_Optional_construct_base<basic_string<char,...>>, ...>'
+
+reached through `Manifest` -> `std::map<std::string, Profile>` ->
+`Profile::dependencyLinkage`, an `std::optional<std::string>` DATA MEMBER of an
+exported struct. `TargetEntry::sysroot`'s comment, a few hundred lines above in
+the same file, already forbids that shape and gives the remedy — two plain
+members — after the same error on an earlier occasion. `Profile` was the last
+member in the module still shaped that way.
+
+The first attempt blamed the new emptiness predicate for being an inline member
+of an exported struct, and made it a free function. CI failed identically, which
+refuted that. The second attempt blamed the runner image, and was refuted by
+re-running main's own Windows job unchanged on today's image: it passed. So the
+trigger is somewhere in this change and the cause is the member, and those are
+different questions. **Which edit tips it is not established here** — the honest
+statement is that any perturbation of this module's interface can, and that
+removing the type which cannot be copied removes the class rather than the
+instance. `test_modgraph.cpp` copies a `Manifest` by value on main too
+(`scan_packages({PackageRoot{dir, m}})`), so the landmine was always armed.
+
+**The emptiness predicates are free functions, which was the first repair and is
+kept on its own merits.** The first version made them members, which is the obvious shape and
 the wrong one: adding an inline member to a struct this module exports changes
 what importers materialise from its BMI, and `Profile` carries a
 `std::optional<std::string>` that is already known to break under clang with the

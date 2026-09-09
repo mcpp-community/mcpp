@@ -1401,12 +1401,29 @@ struct Profile {
     bool        strip    = false;
     // `dependency_linkage`, per profile (#519).
     //
-    // OPTIONAL, and that is load-bearing rather than stylistic: resolving a
-    // profile REPLACES the whole struct with the declared one, so a plain
-    // value would make `[profile.dev] opt = 0` silently reset a
-    // `[build] dependency_linkage = "shared"` back to the field default.
-    // Absent means "whatever [build] said".
-    std::optional<std::string> dependencyLinkage;
+    // DECLARED-OR-NOT IS LOAD-BEARING, and that is why there are two members
+    // rather than one: resolving a profile REPLACES the whole struct with the
+    // declared one, so a plain value alone would make `[profile.dev] opt = 0`
+    // silently reset a `[build] dependency_linkage = "shared"` back to the
+    // field default. Not declared means "whatever [build] said".
+    //
+    // TWO MEMBERS AND NOT AN `std::optional<std::string>`, for exactly the
+    // reason `TargetEntry::sysroot` gives above, and this was the last member
+    // in the module still shaped the way that note forbids. An
+    // `std::optional<std::string>` DATA MEMBER of an exported struct forces
+    // this module's interface to materialise that specialisation's
+    // special-member machinery, and under clang with the MSVC standard library
+    // it does not compile:
+    //
+    //     optional:262: error: no matching constructor for initialization of
+    //     '_SMF_control<_Optional_construct_base<basic_string<char,...>>, ...>'
+    //
+    // reached through `Manifest` -> `std::map<std::string, Profile>` ->
+    // `Profile`. The error names whichever translation unit happens to copy a
+    // Manifest -- `tests/unit/test_modgraph.cpp` is one -- and says nothing
+    // about the member that caused it.
+    std::string dependencyLinkage;
+    bool        dependencyLinkageDeclared = false;
     // Passthrough escape hatch (fixed keys, open values — I6 completeness):
     std::vector<std::string> cflags;
     std::vector<std::string> cxxflags;

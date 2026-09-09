@@ -71,6 +71,22 @@ GCC 的接口拼法本就是纯语言,因此同一个工程在 GCC 上能构建�
 第四处随之关闭:xpkg 的闸门漏掉了它自己会填的 `privateIncludeDirs`。索引里 228 份
 descriptor 用新旧两个二进制解析,结果逐字节相同。
 
+### `Profile.dependency_linkage` 不再是 `std::optional<std::string>` 成员
+
+导出结构体的 `std::optional<std::string>` **数据成员**会迫使本模块的接口实例化该特化的
+特殊成员机制,在 clang + MSVC 标准库下无法编译:
+
+```
+optional:262: error: no matching constructor for initialization of
+'_SMF_control<_Optional_construct_base<basic_string<char,...>>, ...>'
+```
+
+路径是 `Manifest` -> `std::map<std::string, Profile>` -> `Profile`。同一文件里
+`TargetEntry::sysroot` 的注释早已禁止这个形状并给出修法(两个普通成员),`Profile` 是
+模块里最后一个仍是该形状的成员。现按同一修法改为
+`dependencyLinkage` + `dependencyLinkageDeclared`,语义不变:未声明仍表示「沿用
+`[build]` 的值」。
+
 ### `[runtime]` 与 `[target.<谓词>.runtime]` 的未知键会被报出
 
 不受支持的键被报出而不是丢弃,是 `[build]`、`[target.<triple>]` 与

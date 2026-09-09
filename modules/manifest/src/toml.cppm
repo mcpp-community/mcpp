@@ -705,8 +705,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         if (v.is_string()) out.push_back(v.as_string());
             };
             if (auto it = tt.find("dependency_linkage");
-                it != tt.end() && it->second.is_string())
+                it != tt.end() && it->second.is_string()) {
                 pr.dependencyLinkage = it->second.as_string();
+                pr.dependencyLinkageDeclared = true;
+            }
             read_list("cflags",   pr.cflags);
             read_list("cxxflags", pr.cxxflags);
             read_list("ldflags",  pr.ldflags);

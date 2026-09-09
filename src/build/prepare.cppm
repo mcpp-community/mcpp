@@ -2071,8 +2071,8 @@ prepare_build(bool print_fingerprint,
         // profile that does not mention it leaves `[build]` standing; a plain
         // value would reset it, because the block above REPLACES `pr` wholesale
         // with the declared profile.
-        if (pr.dependencyLinkage)
-            m->buildConfig.dependencyLinkage = *pr.dependencyLinkage;
+        if (pr.dependencyLinkageDeclared)
+            m->buildConfig.dependencyLinkage = pr.dependencyLinkage;
         m->buildConfig.optLevel = pr.optLevel;
         m->buildConfig.debug    = pr.debug;
         m->buildConfig.lto      = pr.lto;
