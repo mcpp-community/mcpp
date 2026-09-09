@@ -67,6 +67,40 @@ rpath : …/xim-x-glibc/2.39/lib64:…/xim-x-gcc/…/lib64:$ORIGIN
 每一台 CI runner 都是这样的机器。此时农场为空,程序报告它实际找到了什么。一个在宿主库
 缺失时报错的适配包,会把一种受支持的配置变成构建失败。
 
+## mcpp 对这个面的检查与报告
+
+适配包发布的库是被 `dlopen` 找到的,没有任何链接边指向它们,因此运行期闭包检查
+—— 它从产物出发沿 `DT_NEEDED` 走 —— 按构造到不了这些库。mcpp 在链接之后单独走一遍
+这个面,并把结果作为警告报出:
+
+```
+warning: 1 of 13 libraries a dependency published for dlopen cannot be loaded
+on this artifact's search path:
+    libur_adapter_cuda.so.0 needs libnvidia-ml.so.1
+```
+
+三种读数被区分开,只有一种被报告:
+
+| 该库需要的 SONAME | 含义 | 是否报告 |
+|---|---|---|
+| 在产物的搜索路径上 | 无话可说 | 否 |
+| 在农场里存在,但链接悬空 | 这台机器没有这个驱动 | 否 |
+| 到处都不存在 | 适配包没有携带它 | 是 |
+
+中间那一行正是这条检查是警告而不是错误的原因:悬空链接是「宿主驱动尚未安装」的
+既定形状,一条在那里失败的检查会把受支持的配置变成构建失败。
+
+完整结果(含两个分母)发布在 `resolution.json` 的 `runtime.dlopen_surface`:
+
+```json
+{ "members": 13, "walked": 13,
+  "findings": [ { "library": "libur_adapter_cuda.so.0", "dir": "...",
+                  "soname": "libnvidia-ml.so.1", "kind": "missing" } ] }
+```
+
+即使没有任何发现,`members` 与 `walked` 也会被发布。一个构建失败的农场枚举出零个成员,
+否则「没有发现」与「什么都没检查」就读起来一模一样。
+
 ## 当前边界
 
 - **按构造只适用于 Linux。** macOS 的 dyld 与 Windows 的 PE 加载器没有对应的这一层,

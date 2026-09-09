@@ -1028,6 +1028,23 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         mi.mingw          = isMingwTc;
         mi.macosFloor     = !macosDeploymentTarget.empty();
         mi.format         = format;
+        // A SECOND C++ RUNTIME ON THIS LINE.
+        //
+        // Read off the link flags rather than inferred, because the only way
+        // one gets there is that something wrote it: a rule package whose
+        // second compiler is configured against libstdc++ emits
+        // `-l:libstdc++.so.6` through `mcpp::link_lib`, which lands in
+        // `bc.ldflags`. `mcpp.rules.sycl` and `mcpp.rules.hip` are the two
+        // that do today.
+        //
+        // The substring is `stdc++`, which covers `-lstdc++`,
+        // `-l:libstdc++.so.6` and a spelled-out path. It cannot match this
+        // toolchain's own runtime: the predicate requires libc++, and a
+        // libstdc++ toolchain never reaches the branch that reads this.
+        mi.foreignCxxRuntime =
+            caps.stdlib_id == "libc++"
+            && std::ranges::any_of(bc.ldflags, [](std::string_view flag) {
+                   return flag.find("stdc++") != std::string_view::npos; });
         // Bare metal short-circuits the whole table: the archives found below
         // are the HOST's, and linking them into a riscv64 image fails with
         // "incompatible with elf64lriscv". See MechanismInput::freestanding.

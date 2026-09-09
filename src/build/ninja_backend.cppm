@@ -3073,6 +3073,46 @@ std::expected<BuildResult, BuildError> NinjaBackend::build(const BuildPlan& plan
                     explanation));
             }
         }
+        // THE SURFACE THE ARTIFACT WALK CANNOT REACH.
+        //
+        // Everything above follows DT_NEEDED from an artifact. A library a
+        // dependency published through `runtime.library_dirs` is there because
+        // something will `dlopen` it, so no link-time edge names it and the
+        // walk cannot arrive. Reported after the artifacts and never as a
+        // failure: see `check_dlopen_surface` for why advisory is the right
+        // severity.
+        {
+            auto surface =
+                mcpp::build::runtime_validation::check_dlopen_surface(plan);
+            std::vector<std::string> gaps;
+            for (auto const& finding : surface.findings) {
+                if (finding.dangling) continue;   // the machine's answer
+                gaps.push_back(std::format("{} needs {}",
+                                           finding.member.filename().string(),
+                                           finding.soname));
+            }
+            if (!gaps.empty()) {
+                std::string detail;
+                for (auto const& gap : gaps) detail += "\n    " + gap;
+                mcpp::ui::warning(std::format(
+                    "{} of {} librar{} a dependency published for dlopen cannot "
+                    "be loaded on this artifact's search path:{}\n"
+                    // The plural agrees with the DENOMINATOR, which is what the
+                    // sentence is about; agreeing with the numerator produced
+                    // "1 of 16 library".
+                    "  These are reached by dlopen, so no link edge names them "
+                    "and the closure check above cannot see them. The program "
+                    "links and runs until something asks for one, and then the "
+                    "back end behind it is simply absent.\n"
+                    "  Fix: the package that published the directory has to "
+                    "carry the missing library too, or declare that it does "
+                    "not serve it.\n"
+                    "  Record: `runtime.dlopen_surface` in resolution.json "
+                    "({} of {} examined).",
+                    gaps.size(), surface.members, surface.members == 1 ? "y" : "ies",
+                    detail, surface.walked, surface.members));
+            }
+        }
         if (!runtimeFailure.empty()) {
             return std::unexpected(BuildError{
                 "runtime closure validation failed (proven Linux ELF defect)",

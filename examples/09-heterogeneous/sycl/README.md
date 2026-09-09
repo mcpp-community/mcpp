@@ -73,8 +73,18 @@ without them and names the line to add.
 ## Two C++ runtimes, and why the seam is not optional here
 
 `libsycl.so` is compiled against libstdc++ while an mcpp artifact links libc++,
-so both are in the image. mcpp's duplicate-symbol check reports the unwinder
-symbols they share, and the warning is correct.
+so both are in the image.
+
+The unwinder is the one part of that seam a `catch` cannot police, because
+nothing in this source reaches it: an exception is raised through whichever
+`_Unwind_*` the process resolved, and a static archive contributes only the
+members something referenced. On this lane ten of libgcc's eighteen entry
+points came from the artifact and eight from libgcc_s, so libstdc++'s
+personality routine read an LLVM libunwind context through libgcc's accessors
+and every handler below was skipped. mcpp gives such a link one unwinder
+(`--unwindlib=libgcc`, since the process already has libstdc++'s) and hides the
+static archives' symbols, so the duplicate-symbol warning no longer fires here
+and the `catch` blocks below do what they say.
 
 Nothing may cross the seam. The island catches its own `sycl::exception` and
 returns a code, because the runtime that threw it is not the one the caller
@@ -91,10 +101,17 @@ Making that promise true took three things, and only two of them are a `catch`:
   without one gets the default handler, and the default handler calls
   `std::terminate` — which no `catch` can intercept, since it never travels as
   an exception through this frame;
-* and one failure remains outside both. A build compiled to SPIR-V, run against
-  a back end that does not consume it, throws from inside the SYCL scheduler.
-  That is why this manifest names the device, and why `mcpp.rules.sycl` warns at
-  build time when an `accel` names `sycl` and no device.
+* and the third is not a `catch` at all: **one unwinder in the process**. A
+  build whose image does not match the device throws from inside the SYCL
+  scheduler, and the sentence that used to stand here said that failure was
+  outside both catches. It was outside them because no catch worked. Measured
+  on one machine, same source, same device: with two unwinders, exit 134 and no
+  output; with one, `sycl: The program was built for 1 devices` followed by
+  `device unavailable`, exit 1.
+
+The manifest still names the device, and `mcpp.rules.sycl` still warns when an
+`accel` names `sycl` and no device: an image compiled for the device is the
+point of an ahead-of-time build.
 
 ## Running it
 

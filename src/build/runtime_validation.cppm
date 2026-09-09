@@ -158,6 +158,21 @@ std::vector<SymbolProvisionFinding>
 check_symbol_provision(const mcpp::build::BuildPlan& plan,
                        const ArtifactSnapshot& before);
 
+// Walk the libraries this build's dependencies published for `dlopen`.
+//
+// A SEPARATE ENTRY POINT for the reason the one above is: its object is not an
+// artifact. `validate_changed_artifacts` answers a question per image and
+// memoises on that image's stat; this one answers a question about
+// DIRECTORIES, which no artifact's stat describes, and it holds for a build
+// that linked nothing new.
+//
+// ADVISORY, never blocking. A farm legitimately holds host-driver links that
+// dangle on a machine with no driver, and turning a correct CPU-only
+// configuration into a failed build would be a worse defect than the one this
+// reports.
+mcpp::platform::elf::DlopenSurfaceReport
+check_dlopen_surface(const mcpp::build::BuildPlan& plan);
+
 } // namespace mcpp::build::runtime_validation
 
 namespace mcpp::build::runtime_validation {
@@ -300,6 +315,7 @@ std::string cache_key(const mcpp::build::BuildPlan& plan,
 // verdicts. One authoritative writer, one published view.
 constexpr std::string_view kLoaderTagsRecord      = "loader_tags";
 constexpr std::string_view kSymbolProvisionRecord = "symbol_provision";
+constexpr std::string_view kDlopenSurfaceRecord   = "dlopen_surface";
 
 // WHAT INVALIDATES A STORED VERDICT BESIDES THE ARTIFACT ITSELF.
 //
@@ -403,6 +419,7 @@ void persist_post_link(const mcpp::build::BuildPlan& plan,
     if (keyMoved) {
         doc.erase(std::string(kLoaderTagsRecord));
         doc.erase(std::string(kSymbolProvisionRecord));
+        doc.erase(std::string(kDlopenSurfaceRecord));
     }
     if (keyMoved || doc.value(std::string(name), nlohmann::json::array()) != entries) {
         doc["post_link_key"] = std::string(key);
@@ -1115,6 +1132,110 @@ latest_stored_verdict(const std::filesystem::path& targetRoot) {
     }
     if (summary.artifact.empty()) return std::nullopt;
     return summary;
+}
+
+mcpp::platform::elf::DlopenSurfaceReport
+check_dlopen_surface(const mcpp::build::BuildPlan& plan) {
+    mcpp::platform::elf::DlopenSurfaceReport report;
+    if constexpr (!mcpp::platform::is_linux) return report;
+
+    // THE SAME APPLICABILITY THE ARTIFACT VERDICT HAS, and for the same
+    // reason. Under a non-hermetic binding the host loader also consults
+    // `ld.so.cache`, which mcpp deliberately does not parse, so "not on the
+    // path mcpp computed" is not evidence of anything. `allow_host_libs` is
+    // the user's statement that resolution is theirs to arrange.
+    if (!plan.runtimeBinding.hermetic() || host_libs_allowed(plan))
+        return report;
+
+    auto searchDirs = runtime_search_dirs(plan);
+
+    // THE ARTIFACT'S OWN DIRECTORY IS PART OF THE PATH AND IS NOT IN THAT LIST.
+    //
+    // Every artifact mcpp links carries `$ORIGIN` first in its DT_RPATH, and a
+    // dependency built as a shared library is deployed BESIDE it. So a farm
+    // member needing that library resolves at run time and would be reported
+    // as a packaging gap here.
+    //
+    // Measured: `compat:sycl-runtime` declares `compat:opencl`, whose
+    // `libOpenCL.so.1` lands in the consumer's `bin/` next to the executable —
+    // exactly what `libur_adapter_opencl.so.0` needs — and this check named it
+    // missing until the directory was added. `runtime_search_dirs` cannot
+    // carry it: `$ORIGIN` is a property of each artifact, not of the plan.
+    // A PLAN THAT PRODUCES NO PROGRAM HAS NO dlopen SURFACE.
+    //
+    // The surface is reached from a PROCESS, and only an executable starts
+    // one. A plan that produces archives, or a dependency's shared library on
+    // the way to something else, has no search path of its own to judge
+    // against -- the question belongs to whatever eventually runs, which has
+    // its own plan and its own answer.
+    //
+    // Measured, and both halves of that sentence were needed. The adapter
+    // package is `kind = "lib"`, so it produces an archive. And `mcpp test`
+    // drives the backend twice: the first pass links the dependency's shared
+    // library and nothing else, and reported `libur_adapter_opencl.so.0 needs
+    // libOpenCL.so.1` -- the very library it was in the middle of producing.
+    const bool producesAProgram = std::ranges::any_of(
+        plan.linkUnits, [](auto const& unit) {
+            return unit.kind == mcpp::build::LinkUnit::Binary
+                || unit.kind == mcpp::build::LinkUnit::TestBinary;
+        });
+    if (!producesAProgram) return report;
+    const auto artifacts = snapshot_link_artifacts(plan);
+    if (artifacts.empty()) return report;
+
+    for (auto const& [artifact, stamp] : artifacts) {
+        auto dir = artifact.parent_path();
+        if (dir.empty() || std::ranges::find(searchDirs, dir) != searchDirs.end())
+            continue;
+        searchDirs.push_back(dir);
+    }
+
+    // The SONAMEs this build produces, read from the objects rather than from
+    // their filenames. See `inspect_dlopen_surface` for why a filename search
+    // is not enough while the build is still running.
+    std::vector<std::string> produced;
+    for (auto const& [artifact, stamp] : artifacts) {
+        auto facts = mcpp::platform::elf::inspect_elf_runtime(artifact);
+        if (facts && !facts->soname.empty()) produced.push_back(facts->soname);
+    }
+
+    report = mcpp::platform::elf::inspect_dlopen_surface(
+        plan.depRuntimeLibraryDirs, plan.runtimeBinding, searchDirs, produced);
+
+    // THE RECORD, AND BOTH DENOMINATORS IN IT.
+    //
+    // A warning scrolls past; `resolution.json` is the documented place to
+    // look (docs/05) and is what a test can assert a FIELD of rather than a
+    // substring of a message. `members` and `walked` are published even when
+    // there is nothing to report, because "no findings" and "nothing was
+    // examined" are the two readings this repository has most often confused:
+    // a surface that failed to build enumerates zero members and every
+    // per-member test then passes.
+    nlohmann::json entries = nlohmann::json::array();
+    for (auto const& finding : report.findings) {
+        entries.push_back({
+            // The name the loader asks for, and the directory that published
+            // it. `lexically_relative` rather than `std::filesystem::relative`:
+            // the latter canonicalises, and every member of such a directory
+            // is a symlink into a payload -- so the published record named the
+            // payload's file and lost which farm entry could not be satisfied.
+            {"library", finding.member.filename().string()},
+            {"dir", finding.member.parent_path()
+                        .lexically_relative(plan.outputDir)
+                        .lexically_normal().generic_string()},
+            {"soname", finding.soname},
+            // `dangling` is the machine's answer (no driver installed);
+            // anything else is a packaging gap in the publishing package.
+            {"kind", finding.dangling ? "dangling" : "missing"},
+        });
+    }
+    nlohmann::json record = {
+        {"members", report.members},
+        {"walked", report.walked},
+        {"findings", std::move(entries)},
+    };
+    persist_post_link(plan, kDlopenSurfaceRecord, post_link_key(plan), record);
+    return report;
 }
 
 } // namespace mcpp::build::runtime_validation

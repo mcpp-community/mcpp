@@ -562,6 +562,25 @@ sources = ["src/cpu/*.cpp"]
 选哪个形态是**程序自己的性质**,不是 mcpp 的:用接缝换实现的程序要链接期选择,而要发到
 没见过的机器上去的程序要运行期选择。
 
+## 链接行上出现第二个 C++ 运行时时,进程只保留一个 unwinder
+
+一条 lane 的设备编译器若是按 libstdc++ 配置的,链接行上就会出现 libstdc++,
+而产物本身静态链接 libc++。两者同时在镜像里,mcpp 的重复符号检查会报出它们共有的符号。
+
+对其中大多数符号,后果只是「调用了另一份可互换的实现」。对 unwinder 不是。
+静态归档只会贡献被引用到的成员,所以这种抢占**按构造是部分的**:在 SYCL lane 上实测,
+libgcc 的 18 个 `_Unwind_*` 入口点里有 10 个来自产物、8 个仍在 libgcc_s,
+其中包括 personality 例程要用的那几个访问器。于是 libstdc++ 的 personality
+拿 libgcc 的访问器去读一个 LLVM libunwind 的 context,找不到 landing pad,
+越过三帧之上一个本应命中的 handler 直接 `std::terminate`。
+在有东西抛出之前,这个程序一直是正确的。
+
+因此,当链接行上出现 libstdc++ 而工具链自带的标准库是 libc++ 时,
+mcpp 改从 libgcc 取 unwinder(`--unwindlib=libgcc`),不再链载荷的 `libunwind.a`,
+并用 `--exclude-libs` 把静态归档的符号挡在动态符号表之外。libgcc_s 本来就在进程里
+—— libstdc++ 需要它 —— 所以这一步只是点名一个已有的库而不是新增一个,
+C++ 运行时仍然是内嵌的。链接行上没有第二个运行时的构建一字节不变。
+
 ## 两条值得写明的边界
 
 **`--accel` 与 `--no-accel` 是 `build`、`run`、`test` 三者的选项**(run 与 test 自 2026.9.5.2 起),与 `--target`、`--profile` 同级;`pack` 与其它构建输入一样从 manifest 读 `[build] accel`。它起初只挂在 `build` 上,实测的后果是一个工程的 CPU-only 变体能构建却不能运行:`mcpp build --no-accel` 产出了它,而 `mcpp run` 交回的是设备构建。

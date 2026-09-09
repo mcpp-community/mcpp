@@ -23,12 +23,27 @@
 //
 // It catches the synchronous half (no usable device, a rejected submit) and
 // installs a handler for the asynchronous half, which SYCL otherwise delivers
-// to a default handler that calls `std::terminate`. What it cannot catch is a
-// missing device image: a build compiled to SPIR-V, run against a back end
-// that does not consume SPIR-V, throws from inside the scheduler
-// (`ProgramManager::getDeviceImage`) in neither of those two paths. That is
-// why the manifest names the device -- and why `mcpp.rules.sycl` warns at
-// build time when it does not.
+// to a default handler that calls `std::terminate`.
+//
+// A MISSING DEVICE IMAGE IS CAUGHT TOO, AND THE SENTENCE THAT USED TO SAY
+// OTHERWISE WAS DESCRIBING A BROKEN UNWINDER. It read: what this cannot catch
+// is a missing device image, because it throws from inside the scheduler in
+// neither of those two paths. That was measured on a build whose two C++
+// runtimes had split the unwinder between them, so NO handler in this file ran
+// -- including the one three frames above the throw. With one unwinder in the
+// process (mcpp 2026.9.10.1), the same build compiled for the wrong
+// architecture prints
+//
+//   sycl: The program was built for 1 devices
+//   device unavailable
+//
+// and exits 1. Measured both ways on one machine: exit 134 and silence before,
+// exit 1 and the text above after.
+//
+// The manifest still names the device, and `mcpp.rules.sycl` still warns when
+// it does not, for the reason that has not changed: an image compiled for the
+// device is the point of an ahead-of-time build. What changed is that failing
+// to have one is now something this island can report.
 #include <sycl/sycl.hpp>
 #include <cstdio>
 #include <string>

@@ -30,8 +30,14 @@ plugins = { version = "0.5.2", features = ["rules-sycl", "tools-island"], host-m
 # SYCL runtime's CUDA back end dlopens the driver, so `compat:sycl-runtime`
 # carries that hop itself from 2026.09.07 on. A project that writes SYCL does
 # not have to know CUDA is underneath it.
+#
+# 2026.09.10 is the version at which it carries the WHOLE hop. Until then it
+# linked one driver library by name, and the adapter needs two: the second was
+# missing, the CUDA back end did not load, and the program aborted with no
+# message (#596). The farm now mirrors what the driver sentinel publishes
+# rather than naming a file.
 [dependencies.compat]
-sycl-runtime = "2026.09.07"
+sycl-runtime = "2026.09.10"
 
 # NO [xlings.workspace]. `mcpp.rules.sycl` declares all five payloads this lane
 # needs, each closing one hole the host would otherwise fill: `dpcpp` (the
