@@ -174,13 +174,36 @@ if members <= 0:
     sys.exit(1)
 print(f"ok: dlopen_surface examined {walked} of {members} members")
 missing = [f for f in rec.get("findings", []) if f.get("kind") == "missing"]
+
+# BOTH REPAIRS ARE ASSERTED, AND THE SET IS NAMED.
+#
+# `libnvidia-ml.so.1` is the defect the issue reported: a farm that mirrored a
+# driver family and stopped one library short. `libOpenCL.so.1` is the one the
+# repair uncovered one API over -- the SYCL payload ships an OpenCL adapter
+# whose DT_NEEDED nothing satisfied, so that back end did not load.
+#
+# The second name is here because a run WITHOUT it passed while the OpenCL back
+# end was unreachable: a sandbox holding an index copy from before
+# mcpplibs/mcpp-index#378 resolved a `compat:sycl-runtime` that declared no
+# `compat:opencl`, and the only thing that said so was a line this script
+# printed as a note.
+SERVED = ("libnvidia-ml.so.1", "libOpenCL.so.1")
 for f in missing:
-    print(f"note: {f['library']} needs {f['soname']} (declared unserved: libOpenCL.so.1)")
-bad = [f for f in missing if f.get("soname") == "libnvidia-ml.so.1"]
+    print(f"note: {f['library']} needs {f['soname']}")
+bad = [f for f in missing if f.get("soname") in SERVED]
 if bad:
-    print("ASSERT-FAIL: NVML is still missing from the farm -- mcpp#596")
+    for f in bad:
+        print(f"ASSERT-FAIL: {f['soname']} is not served -- {f['library']} cannot load it")
     sys.exit(1)
-print("ok: no driver soname is missing from the farm")
+print(f"ok: all {len(SERVED)} sonames this ecosystem undertakes to serve are served")
+
+# The rest are recorded, not asserted. They belong to `compat:vulkan-runtime`
+# and `compat:opencl-runtime`, whose farms mirror a driver family and stop
+# short of libraries those members need; filed as mcpplibs/mcpp-index#376 with
+# its own criterion. A check whose first catch is a neighbouring package should
+# report it rather than absorb it.
+if missing:
+    print(f"note: {len(missing)} further gap(s) belong to mcpplibs/mcpp-index#376")
 PY
     [ $? -eq 0 ] || fails=$((fails + 1))
 elif [ "$res_n" -le 1 ]; then

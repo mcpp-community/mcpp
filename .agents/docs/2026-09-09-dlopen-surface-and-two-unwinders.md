@@ -699,6 +699,47 @@ does not apply, and no project shape names that. The verification script gained
 the matching criterion -- a published non-answer counts as a failure -- because
 without it the next such overwrite would read as a pass.
 
+## 8.7 The repair that had no criterion, and the sandbox that hid it
+
+Section D asserted one soname: `libnvidia-ml.so.1`, the defect the issue
+reported. R7 -- serving `libOpenCL.so.1` to the OpenCL adapter the SYCL payload
+ships -- was asserted by nothing. It was reported as a `note`, and a note does
+not fail.
+
+That mattered on the first run against the released 2026.9.10.2. Section D
+passed while printing
+
+    note: libur_adapter_opencl.so.0 needs libOpenCL.so.1
+
+which is R7 not working, stated in the output of a run reported as a pass.
+
+WHY IT WAS NOT WORKING THERE, AND WHY THE HOST SAID OTHERWISE. The sandbox held
+an mcpp-index copy from before mcpplibs/mcpp-index#378: its
+`compat.sycl-runtime` recipe read `deps = {}` where the current one reads
+`deps = { ["compat.opencl"] = "2026.05.29" }`. So the resolved package declared
+no OpenCL dependency, nothing put `libOpenCL.so.1` on the artifact's search
+path, and the adapter could not load. On the host the same probe reported no
+such finding -- but for an unrelated reason worth writing down: the host's own
+`compat:opencl-runtime` farm mirrors a machine that has an ICD loader
+installed. The host could not have distinguished R7 working from R7 being
+unnecessary on that machine.
+
+Counting the string `compat.opencl` in the two recipes did not separate them
+either: the prose above the declaration mentions it three times in both. The
+line that decides is `deps`, and reading it is what settled the question.
+
+After `mcpp index update` inside the sandbox, the same probe resolves
+`compat:opencl`, the surface grows from 15 members to 37, and the OpenCL
+finding is gone. A recipe change at an unchanged version key does reach a
+machine that refreshes its index; it does not reach one that does not.
+
+Section D now asserts a NAMED SET -- `libnvidia-ml.so.1` and `libOpenCL.so.1`,
+the two sonames this ecosystem undertakes to serve -- and prints its size.
+Refuted against the record the earlier run published: that record now fails
+with `libOpenCL.so.1 is not served`. The remaining eleven findings belong to
+`compat:vulkan-runtime` and `compat:opencl-runtime` and are attributed to
+mcpplibs/mcpp-index#376 in the output rather than absorbed into it.
+
 ## 9. What this touches, across the three repositories
 
 The review that asks the other question: not "is each repair right" but "what
