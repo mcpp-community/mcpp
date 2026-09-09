@@ -5,6 +5,75 @@
 
 ## [Unreleased]
 
+## [2026.9.9.1] - 2026-09-09
+
+本次修复的四条缺陷,来源是同一类问题:一个问题被回答了两次,而读答案的地方各读各的;
+或者一个键被解析了,却没有接到任何决定上。设计记录见
+`.agents/docs/2026-09-09-two-answers-and-two-silences.md`。
+
+### `module : private;` 不再被读成实现分区
+
+私有模块片段([module.private.frag])是第三种产生式,不是「名字以冒号开头的分区」:
+
+```cpp
+module M;          // 实现单元:    需要 M
+module M:part;     // 实现分区:    提供 M:part
+module : private;  // 私有模块片段:两者都不声明
+```
+
+扫描器的名字分词器为了让 `M:part` 成为一个 token 而接受 `:`,分区判据又是「名字里
+含冒号」,于是这条合法的声明被拒绝在扫描期,消息是 `file already provides module 'M';
+cannot also provide ':'` —— 一句关于用户源码的假话。这是 #433 引入的回归,首发于
+v2026.8.18.1;在 clang 上,同一份源码在 2026.8.17.1 能构建并运行,在 2026.9.8.1 被拒绝。
+
+编译器是否实现该特性由编译器回答:GCC 16.1 报 `sorry, unimplemented: private module
+fragment`,mcpp 不在其上追加任何说法。
+
+同时,扫描器不再记录任何源码不可能声明出来的模块身份。此前 BOM 与私有片段同时出现时,
+构建图里会长出 `pcm.cache/-.pcm` —— 一个名字是标点的模块的 BMI,而没有任何东西报告它。
+
+### 源码与 mcpp.toml 都按 UTF-8 读取,BOM 被消耗
+
+MSVC 默认写出带 BOM 的 UTF-8。`trim` 用的 `std::isspace` 对那三个字节为假,于是标记
+留在首个 token 上,模块声明不再被看见。失败因此不出现在出错的那个文件上,而出现在
+消费者那里:`module 'foo' not found`。UTF-16/32 标记改为具名拒绝而不是被误读。
+
+同一规则适用于 mcpp.toml:带 BOM 的清单此前报 `1:1: error: expected key`,一句关于
+token 为真、关于文件无用的话。
+
+### 模块扩展名的文件不必提供模块
+
+实现单元(`module M;`)是 `.cppm` 的合法居民。`module_extensions` 说的是扫描哪些文件,
+不是每个文件是什么 —— 后者只有内容能回答。规则由扩展名选出,而 BMI 绑定来自扫描结果,
+两者在这类文件上不一致:
+
+- clang:`-fmodule-output=` 空值被接受、退出 0、不写任何 BMI,失败转移到无关的消费者;
+- clang:`-x c++-module` 把实现单元当接口编译,报 `missing 'export' specifier`;
+- MSVC:`/ifcOutput ` 后无路径,会吃掉下一个 token。
+
+GCC 的接口拼法本就是纯语言,因此同一个工程在 GCC 上能构建、在 clang 上不能 —— 这道
+可移植性裂口只有一个 flag 宽。现在这两个 flag 按边绑定,取自扫描结果,空值状态因此
+在构造上不可达。
+
+### 只写 `[target.<谓词>.runtime]` 的谓词块不再被丢弃
+
+`[target.<pred>.runtime]` 是链接行中与方言无关的那一半,自 2026.8.29.1 起可用。但决定
+是否记录该条件块的闸门是一份手写的字段析取式,`libraries` 与 `link_library_dirs` 加入
+结构体时没有同时加入它。于是该块被解析、被填充,然后丢弃;在同一谓词下随便再写一条
+无关的 `defines` 就能让它生效。
+
+闸门改为 `ConditionalConfig::empty()`,定义在字段旁边,并由 mcpp.toml 与 xpkg 两个读者
+共用;它进一步组合 `BuildInputs::empty()` 与既有的 `XlingsConfig::empty()`。同一形状的
+第四处随之关闭:xpkg 的闸门漏掉了它自己会填的 `privateIncludeDirs`。索引里 228 份
+descriptor 用新旧两个二进制解析,结果逐字节相同。
+
+### `[runtime]` 与 `[target.<谓词>.runtime]` 的未知键会被报出
+
+不受支持的键被报出而不是丢弃,是 `[build]`、`[target.<triple>]` 与
+`[target.<pred>.build]` 自 #418 / #249 / #544 起各自遵守的规则;这两张表按同样的方式
+被读取,却没有任何东西清扫它们。消息里列出它比对用的那份键表。
+`[runtime.<capability>]` 子表是 provider 覆盖而不是键,不在清扫范围内。
+
 ## [2026.9.8.1] - 2026-09-08
 
 ### 一个包的 host module,按它们互相 import 的顺序编译

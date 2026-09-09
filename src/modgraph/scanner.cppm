@@ -137,6 +137,92 @@ std::string_view trim(std::string_view s) {
     return s.substr(i, j - i);
 }
 
+// A byte-order mark is not part of the source text, and every compiler that
+// reads these files skips one. This scanner did not.
+//
+// MSVC writes UTF-8 with a BOM by default, so a `.cppm` whose first line is
+// `export module foo;` commonly arrives as `EF BB BF e x p o r t …`. `trim`
+// uses std::isspace, which is false for all three bytes, so the mark stayed
+// attached to the first token, `starts_with("export")` failed, and the module
+// declaration was not seen. What the author got was not a message about the
+// file: the unit provided nothing, so a consumer failed later with
+// `module 'foo' not found` — measured on clang 22.1.8, which compiles the same
+// BOM'd file without comment.
+//
+// This is the shape of defect this scanner is most exposed to. It is a SECOND
+// parser of a language whose first parser is the compiler, and where the two
+// disagree the compiler is right by construction. The mark is therefore
+// consumed once, here, where bytes become lines — not at call sites.
+//
+// A UTF-16/32 mark is refused rather than skipped. Those files are not UTF-8
+// at all, so every subsequent line would be misread; a named refusal costs one
+// branch and is the difference between a message and a mystery.
+std::optional<std::string> consume_byte_order_mark(std::istream& is) {
+    // Four bytes, because UTF-32's mark is four and its first two are UTF-16's.
+    // Read in text mode like the rest of the scan: no mark contains 0x0D, so no
+    // newline translation can occur inside one, and seeking back to an absolute
+    // offset of 0 or 3 lands where it reads.
+    std::array<unsigned char, 4> b{};
+    int got = 0;
+    for (; got < 4; ++got) {
+        const int c = is.get();
+        if (c == std::char_traits<char>::eof()) break;
+        b[static_cast<std::size_t>(got)] = static_cast<unsigned char>(c);
+    }
+    const auto rewind_to = [&](int offset) {
+        is.clear();
+        is.seekg(offset);
+    };
+    if (got >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF) {
+        rewind_to(3);   // the mark is consumed; the text starts here
+        return std::nullopt;
+    }
+    if (got >= 4 && ((b[0] == 0xFF && b[1] == 0xFE && b[2] == 0x00 && b[3] == 0x00) ||
+                     (b[0] == 0x00 && b[1] == 0x00 && b[2] == 0xFE && b[3] == 0xFF)))
+        return "file begins with a UTF-32 byte-order mark; mcpp reads source as "
+               "UTF-8. Re-save the file as UTF-8 (with or without a BOM).";
+    if (got >= 2 && ((b[0] == 0xFF && b[1] == 0xFE) || (b[0] == 0xFE && b[1] == 0xFF)))
+        return "file begins with a UTF-16 byte-order mark; mcpp reads source as "
+               "UTF-8. Re-save the file as UTF-8 (with or without a BOM).";
+    rewind_to(0);
+    return std::nullopt;
+}
+
+// Is `name` something that can legally be a module's identity?
+//
+// A module-name is a dot-separated sequence of identifiers, optionally followed
+// by `:` and one more such sequence. This is not a general validator — the
+// compiler owns that — it exists to stop the scanner RECORDING an identity that
+// no source could have declared.
+//
+// The need is not hypothetical. `is_module_name_char` admits `:` so that
+// `M:part` scans as one token, which means a mis-parse of the `module` line can
+// produce a "name" that is punctuation. Measured before this check existed: a
+// file with a UTF-8 BOM and a private module fragment recorded a module called
+// `:`, and the generated graph grew an edge for `pcm.cache/-.pcm` — a BMI for a
+// module whose name is a colon. Nothing reported it, because every step after
+// the mis-parse was working correctly on the answer it was given.
+bool is_well_formed_module_name(std::string_view name) {
+    const auto is_identifier = [](std::string_view s) {
+        if (s.empty()) return false;
+        if (!(std::isalpha(static_cast<unsigned char>(s[0])) || s[0] == '_'))
+            return false;
+        return std::ranges::all_of(s, [](char c) {
+            return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+        });
+    };
+    const auto is_dotted = [&](std::string_view s) {
+        return !s.empty()
+            && std::ranges::all_of(std::views::split(s, '.'), [&](auto part) {
+                   return is_identifier(std::string_view(part));
+               });
+    };
+    const auto colon = name.find(':');
+    if (colon == std::string_view::npos) return is_dotted(name);
+    if (name.find(':', colon + 1) != std::string_view::npos) return false;
+    return is_dotted(name.substr(0, colon)) && is_dotted(name.substr(colon + 1));
+}
+
 // Strip a trailing line comment ("//...").
 std::string_view strip_line_comment(std::string_view s) {
     auto p = s.find("//");
@@ -648,6 +734,9 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
         return u;
     }
 
+    if (auto bom = consume_byte_order_mark(is))
+        return std::unexpected(ScanError{file, 1, *bom});
+
     int          if_depth        = 0;     // #if/#ifdef nesting
     std::size_t  lineno          = 0;
     bool         in_raw          = false; // inside a multi-line raw string
@@ -693,11 +782,56 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
             if (r.empty() || r == ";") {
                 continue;  // global module fragment marker (`module;`)
             }
+            // `module : private;` — the private module fragment
+            // ([module.private.frag]), and a THIRD production, not a spelling
+            // of the two below.
+            //
+            //   module M;          implementation unit      -> requires M
+            //   module M:part;     implementation partition -> provides M:part
+            //   module : private;  private module fragment  -> neither
+            //
+            // It was read as the second, because `is_module_name_char` admits
+            // `:` (so that `M:part` scans as one token) and the partition test
+            // is `name.find(':') != npos`. The colon in this production comes
+            // FIRST and belongs to no name, so the test collapsed a distinct
+            // production into the partition case and reported
+            // `file already provides module 'M'; cannot also provide ':'` — a
+            // sentence that is false about the source it names.
+            //
+            // A regression, and a measured one: `df7a443d` (#433, first
+            // released in v2026.8.18.1) added the partition test, and before it
+            // the `!u.provides` guard on the arm below happened to let this
+            // line fall through. On clang, which implements the feature, the
+            // same file built and ran under 2026.8.17.1 and was refused at scan
+            // time by 2026.9.8.1.
+            //
+            // A module-declaration requires a module-name, so `module :` has
+            // exactly one legal continuation; anything else is malformed and is
+            // left to the compiler, which owns that judgement. GCC 16.1 reports
+            // `sorry, unimplemented: private module fragment` and mcpp adds
+            // nothing to that — a second answer to a question the compiler has
+            // already answered is what this scanner exists to avoid.
+            if (r.starts_with(":")) {
+                const auto rest = trim(r.substr(1));
+                if (rest.starts_with("private") &&
+                    (rest.size() == 7 || !is_module_name_char(rest[7])))
+                    continue;
+            }
             std::string name;
             std::size_t i = 0;
             while (i < r.size() && is_module_name_char(r[i])) {
                 name.push_back(r[i]);
                 ++i;
+            }
+            // Both arms below record an IDENTITY. Neither may record one that
+            // no source could have declared: a recorded non-name propagates
+            // into the build graph as a BMI path and is reported by nothing.
+            if (!is_well_formed_module_name(name)) {
+                return std::unexpected(ScanError{file, lineno,
+                    std::format("'{}' is not a module name. A module "
+                                "declaration is `module <name>;`, "
+                                "`module <name>:<partition>;` or "
+                                "`module : private;`.", name)});
             }
             if (is_export) {
                 if (u.provides) {

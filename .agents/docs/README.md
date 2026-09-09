@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-272 records.
+273 records.
 
 ## By subject
 
@@ -35,10 +35,15 @@ Records that declare one. Everything else is listed by date below.
 - [The island boundary's names: one rule for both lanes, and the check that makes it true](2026-09-08-island-boundary-names.md) — active
 - [Implementation plan: the island boundary's names](2026-09-08-island-boundary-names-implementation-plan.md) — active
 
+### modules
+
+- [Two answers and two silences: the scanner's second grammar, and the manifest keys nothing reads](2026-09-09-two-answers-and-two-silences.md) — active
+
 ## By date
 
 ### 2026-09
 
+- [Two answers and two silences: the scanner's second grammar, and the manifest keys nothing reads](2026-09-09-two-answers-and-two-silences.md) — active
 - [The documentation as a book: a chapter-by-chapter design](2026-09-08-the-documentation-as-a-book.md) — active
 - [The island boundary's names: one rule for both lanes, and the check that makes it true](2026-09-08-island-boundary-names.md) — active
 - [Implementation plan: the island boundary's names](2026-09-08-island-boundary-names-implementation-plan.md) — active

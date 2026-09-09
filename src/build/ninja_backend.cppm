@@ -801,15 +801,42 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // dyndep file, this prevents cascading rebuilds when only the module
     // implementation changed (not the interface).
     //
-    // $bmi_out is set per build edge to the BMI path (gcm.cache/<module>.gcm).
-    // If $bmi_out is empty (no module provided), we just compile normally.
+    // $bmi_out is set per build edge to the BMI path (gcm.cache/<module>.gcm),
+    // and ONLY on an edge whose unit actually provides a module.
     // Runtime library paths for private toolchain executables are scoped onto
     // the ninja subprocess instead of being emitted into each visible rule.
+    //
+    // `$module_output` AND `$module_lang` ARE PER-EDGE, AND THAT IS THE FIX
+    // FOR A DEFECT THIS COMMENT USED TO DESCRIBE INSTEAD OF PREVENT.
+    //
+    // Both flags used to be rule-level constants built from the toolchain, so
+    // every edge taking this rule got them whether or not it had a BMI. The
+    // rule is chosen from the file's EXTENSION (`pick_rule`) and `$bmi_out` is
+    // bound from what the SCAN found, so the two disagree whenever a
+    // module-extension file provides no module — a `.cppm` holding an
+    // implementation unit, or one whose declaration the scanner missed.
+    //
+    // What that produced, measured on clang 22.1.8:
+    //   -fmodule-output=      empty value, accepted, exit 0, NO BMI WRITTEN;
+    //                         the failure then surfaced at an unrelated
+    //                         consumer as `module 'x' not found`.
+    //   -x c++-module         an implementation unit compiled as an interface:
+    //                         `missing 'export' specifier in module
+    //                         declaration`. GCC's spelling is the plain
+    //                         language, so the identical project built there
+    //                         and not here.
+    // The old comment on this spot read "If $bmi_out is empty (no module
+    // provided), we just compile normally", which is what the two `[ -n ]`
+    // guards below do for the BACKUP and the RESTORE. The flag between them
+    // had no guard, and the sentence described a protection that was not
+    // there.
+    //
+    // Binding both from the scan result puts the empty-flag state out of
+    // reach by construction rather than by a shell test, and a shell test
+    // could not have covered the Windows branch, which has no shell.
 
     // Command spellings come from the toolchain's CommandDialect (gnu vs
     // msvc); the rule *structure* is shared across compilers.
-    std::string module_output_flag = traits.needsExplicitModuleOutput
-        ? std::string(traits.moduleOutputPrefix) + "$bmi_out" : "";
     // msvc: /showIncludes feeds ninja's deps=msvc header tracking; the
     // stable-English prefix is guaranteed by VSLANG=1033 in envOverrides.
     const bool msvcDeps = dial.ninjaDepsMode == std::string_view("msvc");
@@ -960,13 +987,20 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // getting it wrong is SILENT (Clang hands an unrecognized suffix to the
     // linker, warns, and exits 0 having produced no BMI at all).
     const std::string module_src_flags{traits.moduleInterfaceLangFlag};
+    // Rule-level, and correct here: every rule that reads this — cxx_module_bmi,
+    // cxx_precompile, cxx_module_object — is reached only through a branch that
+    // has already tested `cu.providesModule`, so the BMI path is never the empty
+    // string on those edges. `cxx_module` is the one rule with no such guard,
+    // and it takes `$module_output` per edge instead.
+    const std::string module_output_flag = traits.needsExplicitModuleOutput
+        ? std::string(traits.moduleOutputPrefix) + "$bmi_out" : "";
     append("rule cxx_module\n");
     if constexpr (mcpp::platform::is_windows) {
         // Windows: skip BMI restat optimization (requires POSIX shell).
         const std::string payload = " $local_includes";
-        append(std::format("  command = $cxx{} $cxxflags $unit_cxxflags{}{} {}\n",
-                           rsp_ref(payload), module_output_flag,
-                           module_src_flags, compile_tail));
+        append(std::format("  command = $cxx{} $cxxflags $unit_cxxflags"
+                           " $module_output $module_lang {}\n",
+                           rsp_ref(payload), compile_tail));
         append_rspfile(payload);
         append_cxx_deps();
     } else {
@@ -977,7 +1011,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                // `-x c++` / `-x c++-module` is POSITIONAL on GNU drivers: it
                // must precede `-c $in` (which compile_tail carries) or it
                // applies to nothing.
-               "$cxx $local_includes $cxxflags $unit_cxxflags{}{} {}{}{} && "
+               "$cxx $local_includes $cxxflags $unit_cxxflags"
+               " $module_output $module_lang {}{}{} && "
                // `$mcpp bmi-equal`, not `cmp -s`: GCC stamps a wall clock into
                // the BMI content, so a byte compare NEVER reports "unchanged"
                // and this whole fast path was dead. Measured: touching a module
@@ -988,8 +1023,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                  "mv \"$bmi_out.bak\" \"$bmi_out\"; "
                "else "
                  "rm -f \"$bmi_out.bak\"; "
-               "fi\n", module_output_flag, module_src_flags, mmd_flag,
-               compile_tail, mmd_filter));
+               "fi\n", mmd_flag, compile_tail, mmd_filter));
         append_cxx_deps();
     }
     append("  description = MOD $out\n");
@@ -1538,6 +1572,27 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // `.S` vs `.s` is the one extension test that survives, and deliberately:
     // it selects between two compile modes of ONE role (preprocessed or not),
     // which is not a role distinction.
+    // The two flags a `cxx_module` edge takes from WHAT THE SCAN FOUND rather
+    // than from the file's extension.
+    //
+    // `pick_rule` below answers "which rule shape", and an extension can answer
+    // that: every module-extension file needs the module rule's depfile
+    // handling and BMI-preservation machinery. It cannot answer "is this an
+    // interface", because an implementation unit (`module M;`) is a legal
+    // inhabitant of a `.cppm` and provides nothing. That second question is
+    // answered here, once, from `cu.providesModule` — the same field `bmi_out`
+    // is bound from, so the flag and the binding can no longer disagree.
+    auto module_edge_vars = [&](const mcpp::build::CompileUnit& cu) -> std::string {
+        if (!cu.providesModule)
+            return std::format("  module_lang ={}\n", traits.moduleImplLangFlag);
+        std::string v = std::format("  module_lang ={}\n",
+                                    traits.moduleInterfaceLangFlag);
+        if (traits.needsExplicitModuleOutput)
+            v += std::format("  module_output ={}{}\n", traits.moduleOutputPrefix,
+                             bmi_path(*cu.providesModule));
+        return v;
+    };
+
     auto pick_rule = [](const mcpp::build::CompileUnit& cu) -> std::string {
         switch (cu.kind) {
             case mcpp::SourceKind::ModuleInterface: return "cxx_module";
@@ -1934,6 +1989,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                         out_line += "\n  bmi_out = " + bmi_path(*cu.providesModule);
                     }
                     out_line += "\n";
+                    if (rule == "cxx_module") out_line += module_edge_vars(cu);
                 } else {
                     out_line += order_only_for(cu) + "\n";
                 }
@@ -2008,6 +2064,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             if (cu.providesModule) {
                 out_line += "  bmi_out = " + bmi_path(*cu.providesModule) + "\n";
             }
+            if (rule == "cxx_module") out_line += module_edge_vars(cu);
             append(std::move(out_line));
         }
         append("\n");

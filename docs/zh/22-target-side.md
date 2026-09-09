@@ -326,7 +326,23 @@ cxxflags = ["-march=x86-64-v2"]
   的 `build`(mcpp 0.0.95+ —— 条件源码 glob,例如把 `src/x86/**/*.asm` 收在
   `cfg(arch = "x86_64")` 之后;`!` 排除 glob 在此同样有效),再加 `flags` 与
   `include_dirs` / `include_dirs_after`(mcpp 0.0.102+),
-  以及 `private_include_dirs` 与 `std-module-flags`(mcpp 2026.9.1.1+)。
+  以及 `private_include_dirs` 与 `std-module-flags`(mcpp 2026.9.1.1+),
+  还有带 `libraries` / `link_library_dirs` 的 `runtime`(mcpp 2026.8.29.1+)。
+- **`runtime` 是链接行中与方言无关的那一半。** `build.ldflags` 按 GNU 拼法书写,
+  而原生 `cl.exe` 不接受 `-L`。这两个键表达同一件事而不承诺拼法:mcpp 按目标
+  渲染成 `-L<dir>` + `-l<name>` 或 `/LIBPATH:<dir>` + `<name>.lib`。它们就是
+  顶层 `[runtime]`(见 [04 —— mcpp.toml](04-mcpp-toml.md) §2.11)已有的同两个键,
+  此处只是让它们按目标生效,并未引入新词汇。`[runtime]` 的其余键在这里会被报出
+  并忽略,因为它们不是按目标区分的。
+
+  ```toml
+  # 只在 Windows 上链接,并按实际编译器的拼法书写。
+  [target.windows.runtime]
+  libraries = ["user32", "gdi32"]
+  ```
+
+  一个谓词下只写这一张表时,它与其他情形一样生效。在 mcpp 2026.9.9.1 之前并非
+  如此:除非同一谓词下还写了别的东西,该块会被解析后丢弃。
 - **`build` 接受的恰好是*可叠加的构建输入*集合** —— 那些以追加方式合并、
   并在谓词求值之后被消费的东西,也就是 `BuildInputs` 的成员表。`linkage`、`target`
   与档案开关刻意不在其中:它们是**目标选择的输入**(用一个针对 `target` 求值的谓词

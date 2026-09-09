@@ -285,6 +285,17 @@ struct BuildInputs {
     // glibc and wrong for picolibc — and while this lived beside the package's
     // identity there was no spelling for that difference.
     std::vector<std::string>           stdModuleFlags;
+
+    // Does this carry anything? The sibling of `append` below: that function
+    // is the one place a contribution is combined, and this is the one place
+    // it is weighed. Both enumerate every field, and both are here so a field
+    // added above is a field the compiler puts in front of a reader twice.
+    bool empty() const {
+        return sources.empty() && cflags.empty() && cxxflags.empty()
+            && ldflags.empty() && defines.empty() && globFlags.empty()
+            && includeDirs.empty() && includeDirsAfter.empty()
+            && privateIncludeDirs.empty() && stdModuleFlags.empty();
+    }
 };
 
 // The single additive merge. Every conditional axis folds through this, so
@@ -1124,6 +1135,33 @@ struct ConditionalConfig {
     // names the project's environment, which is one per project rather than
     // one per target.
     XlingsConfig                        xlings;
+
+    // Does this block say anything at all?
+    //
+    // DEFINED HERE, BESIDE THE FIELDS, AND THAT IS THE POINT. Two parsers —
+    // mcpp.toml and the xpkg descriptor — decide whether to record a block by
+    // asking this question, and both used to answer it with a hand-written
+    // disjunction over the fields they happened to know. `libraries` and
+    // `linkLibraryDirs` were added to this struct without being added to either
+    // list, so a predicate carrying ONLY a `[target.<pred>.runtime]` table was
+    // parsed, populated and then dropped. Adding one unrelated `defines` entry
+    // under the same predicate made it work, which is what a reader would have
+    // to discover to explain the behaviour.
+    //
+    // That is the third time this struct has been read by a list that fell
+    // behind it: see the `BuildInputs` note above for #258 and the
+    // `featureDeps` note for #359, both of which end with the same sentence.
+    // #258 was repaired structurally, by carrying a whole type so the set could
+    // not drift; #359 was repaired by adding the missing member to the list.
+    // This is #258's medicine: a field added below and forgotten here is a
+    // question asked at the point where the field is written, instead of in two
+    // files that do not mention each other.
+    bool empty() const {
+        return inputs.empty() && linkLibraryDirs.empty() && libraries.empty()
+            && dependencies.empty() && devDependencies.empty()
+            && buildDependencies.empty() && featureDeps.empty()
+            && xlings.empty();
+    }
 };
 
 // `[lib]` — library "root" interface convention.

@@ -1919,3 +1919,134 @@ TEST(ActionDepfile, NoDepfileEmitsNeitherLine) {
     EXPECT_EQ(block.find("depfile ="), std::string::npos) << block;
     EXPECT_EQ(block.find("deps = gcc"), std::string::npos) << block;
 }
+
+// A module-extension file need not provide a module: an implementation unit
+// (`module M;`) is a legal inhabitant of a `.cppm` and provides nothing
+// importable. The rule is chosen from the EXTENSION and the BMI binding comes
+// from the SCAN, so the two disagree exactly there — and both flags that depend
+// on the answer used to be rule-level constants applied to every edge alike.
+//
+// Measured on clang 22.1.8 before this changed:
+//   -fmodule-output=   with no value: accepted, exit 0, no BMI written, and the
+//                      failure surfaced at an unrelated consumer.
+//   -x c++-module      on an implementation unit: `missing 'export' specifier
+//                      in module declaration`. GCC's interface spelling is the
+//                      plain language, so the identical project built on GCC
+//                      and not on Clang.
+TEST(NinjaBackend, ModuleEdgeFlagsComeFromTheScanNotTheExtension) {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::Clang;
+    plan.toolchain.binaryPath = "/usr/bin/clang++";
+    plan.compileUnits.push_back({
+        .source = "src/iface.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
+        .object = "obj/iface.o",
+        .packageName = "objc_rule_test",
+    });
+    plan.compileUnits.back().providesModule = "iface";
+    plan.compileUnits.push_back({
+        .source = "src/impl.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
+        .object = "obj/impl.o",
+        .packageName = "objc_rule_test",
+    });   // provides nothing: an implementation unit in a module extension
+
+    auto ninja = emit_ninja_string(plan);
+
+    // THE RULE STATES NEITHER FLAG. Holding this is what stops the fix from
+    // being undone by someone restoring a rule-level constant that "works"
+    // for every edge that happens to provide a module.
+    auto rule_start = ninja.find("rule cxx_module\n");
+    ASSERT_NE(rule_start, std::string::npos) << ninja;
+    auto rule = ninja.substr(rule_start, ninja.find("\n\n", rule_start) - rule_start);
+    EXPECT_NE(rule.find("$module_output $module_lang"), std::string::npos) << rule;
+    EXPECT_EQ(rule.find("-fmodule-output=$bmi_out"), std::string::npos)
+        << "the BMI flag is per-edge; a rule-level one reaches edges with no BMI";
+    EXPECT_EQ(rule.find("-x c++-module"), std::string::npos)
+        << "the interface spelling is per-edge, not a property of the rule";
+
+    // EVERY cxx_module EDGE BINDS module_lang, AND THE DENOMINATOR IS ASSERTED.
+    // A count-based check whose denominator is zero reads exactly like a pass.
+    std::size_t edges = 0, with_lang = 0;
+    for (std::size_t pos = 0; (pos = ninja.find(" : cxx_module ", pos)) != std::string::npos; ) {
+        ++edges;
+        auto end = ninja.find("\nbuild ", pos);
+        if (end == std::string::npos) end = ninja.size();
+        if (ninja.substr(pos, end - pos).find("\n  module_lang =") != std::string::npos)
+            ++with_lang;
+        pos = end;
+    }
+    ASSERT_EQ(edges, 2u) << ninja;
+    EXPECT_EQ(with_lang, edges) << ninja;
+
+    // The interface: told it is an interface, and given somewhere to put the BMI.
+    EXPECT_NE(ninja.find("  module_lang = -x c++-module\n"), std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("  module_output = -fmodule-output=pcm.cache/iface.pcm\n"),
+              std::string::npos) << ninja;
+    // The implementation unit: told it is C++, and given no BMI path at all.
+    EXPECT_NE(ninja.find("  module_lang = -x c++\n"), std::string::npos) << ninja;
+    EXPECT_EQ(count_occurrences(ninja, "  module_output ="), 1u)
+        << "only the unit that provides a module names a BMI";
+    // The empty-value spelling must not appear anywhere in the graph.
+    EXPECT_EQ(ninja.find("-fmodule-output= "), std::string::npos) << ninja;
+    EXPECT_EQ(ninja.find("-fmodule-output=\n"), std::string::npos) << ninja;
+}
+
+// GCC needs no explicit module output at all, so the same two units must emit
+// `module_lang` twice and `module_output` never. Without this the test above
+// would leave "the GCC branch still emits a flag it does not want" unmeasured.
+TEST(NinjaBackend, GccModuleEdgesCarryTheLanguageAndNoBmiFlag) {
+    auto plan = minimal_plan();   // GCC
+    plan.compileUnits.push_back({
+        .source = "src/iface.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
+        .object = "obj/iface.o",
+        .packageName = "objc_rule_test",
+    });
+    plan.compileUnits.back().providesModule = "iface";
+    plan.compileUnits.push_back({
+        .source = "src/impl.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
+        .object = "obj/impl.o",
+        .packageName = "objc_rule_test",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+    EXPECT_EQ(count_occurrences(ninja, "  module_lang = -x c++\n"), 2u) << ninja;
+    EXPECT_EQ(count_occurrences(ninja, "  module_output ="), 0u) << ninja;
+}
+
+// The third dialect, and the one where the empty value was worst. `/ifcOutput`
+// takes its path as a SEPARATE token, so `/ifcOutput ` followed by nothing
+// consumed whatever came next on the command line -- the observed failure was
+// `could not open output file '/interface'`, naming a flag as a filename.
+TEST(NinjaBackend, MsvcModuleEdgesSplitTheInterfaceFlagFromTheLanguageFlag) {
+    auto plan = minimal_plan();
+    plan.toolchain.compiler = mcpp::toolchain::CompilerId::MSVC;
+    plan.toolchain.binaryPath = "cl.exe";
+    plan.compileUnits.push_back({
+        .source = "src/iface.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
+        .object = "obj/iface.o",
+        .packageName = "objc_rule_test",
+    });
+    plan.compileUnits.back().providesModule = "iface";
+    plan.compileUnits.push_back({
+        .source = "src/impl.cppm",
+        .kind = mcpp::SourceKind::ModuleInterface,
+        .object = "obj/impl.o",
+        .packageName = "objc_rule_test",
+    });
+
+    auto ninja = emit_ninja_string(plan);
+
+    // `/interface /TP` says both "this is an interface" and "this is C++"; a
+    // unit that is not an interface keeps only the second half.
+    EXPECT_NE(ninja.find("  module_lang = /interface /TP\n"), std::string::npos) << ninja;
+    EXPECT_NE(ninja.find("  module_lang = /TP\n"), std::string::npos) << ninja;
+    EXPECT_EQ(count_occurrences(ninja, "  module_lang = /interface /TP\n"), 1u) << ninja;
+    // Exactly one edge names an .ifc, and it is the one that provides.
+    EXPECT_EQ(count_occurrences(ninja, "  module_output = /ifcOutput "), 1u) << ninja;
+    // The trailing-space spelling with nothing after it must not exist.
+    EXPECT_EQ(ninja.find("/ifcOutput \n"), std::string::npos) << ninja;
+}

@@ -744,6 +744,37 @@ mcpp = {
 要把 plan 与 ddi 的比对审计扩展到**每一个**模块单元(而不只是 override),
 在生成构建时设置 `MCPP_VERIFY_MODGRAPH=1`。
 
+### 2.8.4 默认扫描器读到的东西
+
+扫描器对每个文件只回答两个问题 —— 这个单元提供什么、需要什么 —— 并且没有别的
+东西决定它们。
+
+**三种模块声明,它们是不同的产生式。**
+
+```cpp
+module M;          // 实现单元:    需要 M,不提供任何东西
+module M:part;     // 实现分区:    提供 M:part
+module : private;  // 私有模块片段:两者都不声明
+```
+
+第三种不是一个名字以冒号开头的分区。它在两个方向上都不产生边,其后的内容仍属于
+同一个单元。编译器是否实现它由编译器回答:GCC 16.1 报
+`sorry, unimplemented: private module fragment`,mcpp 不在其上追加任何说法。
+
+**模块扩展名的文件不必提供模块。** 实现单元是 `.cppm` 的合法居民,而
+`module_extensions` 说的是**扫描**哪些文件,不是每个文件**是**什么。编译方式跟随
+扫描结果:提供模块的单元按接口编译并获得写 BMI 的位置;不提供的按普通翻译单元
+编译。因此两个编译器对同一个文件收到相同的指令 —— 在 mcpp 2026.9.9.1 之前并非
+如此:Clang 从扩展名推断出 `c++-module` 并拒绝该文件,而 GCC 能构建它。
+
+**源码按 UTF-8 读取。** UTF-8 字节序标记会被消耗,不属于正文 —— 这正是每个编译器
+对它的处理,也是 MSVC 默认写出的东西。UTF-16 或 UTF-32 标记会被具名拒绝,而不是
+被误读。同一规则适用于 `mcpp.toml`。
+
+**任何源码都不可能声明出来的名字会被拒绝。** 模块身份是以点分隔的标识符序列,
+其后可选地跟一个 `:` 和另一个这样的序列。此外的形式在扫描阶段失败,而不是进入
+构建图 —— 在那里它会变成一条没有任何东西会报告的 BMI 路径。
+
 ### 2.9 `[profile.<name>]` — 构建档案
 
 ```toml
@@ -842,6 +873,11 @@ deploy_files             = ["bin/widget.dll"]
 [runtime."display.present"]
 provider = "acme.widget-runtime@2.0.0"
 ```
+
+本表中不受支持的键会被**报出并忽略**,消息里列出它比对用的那份键表。
+`[runtime.<capability>]` 子表是 provider 覆盖而不是键,因此不在清扫范围内。
+同一规则适用于 `[target.<predicate>.runtime]`,其词汇表只有 `libraries` 与
+`link_library_dirs`(见[22 —— 目标侧](22-target-side.md))。
 
 `requirements` 记录非空 `kind`/`value`、`link` 或 `run` 阶段,以及是否强制
 (`required` 默认 `true`)。`artifacts` 必须含 `role`、`path`、`provenance`;

@@ -1017,3 +1017,106 @@ TEST(Scanner, GlobWalkSurvivesNamesTheCodePageCannotSpell) {
     std::filesystem::remove_all(dir);
 #endif
 }
+
+// `module : private;` is a THIRD production, not a spelling of the two the
+// scanner already knew ([module.private.frag]). It declares nothing: the unit
+// still provides what its `export module` line said, and requires nothing new.
+//
+// It was read as an implementation partition, because `is_module_name_char`
+// admits `:` and the partition test is `name.find(':') != npos`. Both spellings
+// are checked because the scanner tokenises them differently — `module :
+// private;` yields the "name" `:` and `module :private;` yields `:private` —
+// and one of the two passing proves nothing about the other.
+TEST(Scanner, PrivateModuleFragmentDeclaresNothing) {
+    for (std::string_view spelling : {"module : private;", "module :private;"}) {
+        auto dir = make_tempdir("mcpp-privfrag");
+        write(dir / "src" / "pf.cppm",
+              std::format("export module pf;\n"
+                          "export int pf();\n"
+                          "{}\n"
+                          "int pf() {{ return 1; }}\n", spelling));
+
+        auto u = scan_file(dir / "src" / "pf.cppm", "pkg",
+                           mcpp::builtin_extension_table());
+        ASSERT_TRUE(u.has_value()) << spelling << ": " << u.error().format();
+        ASSERT_TRUE(u->provides.has_value()) << spelling;
+        EXPECT_EQ(u->provides->logicalName, "pf") << spelling;
+        EXPECT_TRUE(u->providesInterface) << spelling;
+        // The fragment contributes no edge in either direction.
+        EXPECT_TRUE(u->requires_.empty()) << spelling;
+    }
+}
+
+// A UTF-8 byte-order mark is not part of the source text. MSVC writes one by
+// default, so this is ordinary input; every compiler skips it, and this scanner
+// did not — the mark stayed attached to the first token, the declaration was
+// not seen, and the unit silently provided nothing.
+TEST(Scanner, ByteOrderMarkDoesNotHideTheModuleDeclaration) {
+    auto dir = make_tempdir("mcpp-bom");
+    write(dir / "src" / "bom.cppm",
+          "\xEF\xBB\xBF"
+          "export module bom;\n"
+          "import std;\n"
+          "export int bom();\n");
+
+    auto u = scan_file(dir / "src" / "bom.cppm", "pkg",
+                       mcpp::builtin_extension_table());
+    ASSERT_TRUE(u.has_value()) << u.error().format();
+    ASSERT_TRUE(u->provides.has_value())
+        << "the BOM hid the module declaration";
+    EXPECT_EQ(u->provides->logicalName, "bom");
+    ASSERT_EQ(u->requires_.size(), 1u);
+    EXPECT_EQ(u->requires_[0].logicalName, "std");
+}
+
+// UTF-16/32 is refused by name rather than misread. Every line after the mark
+// would be garbage, so a named refusal is the difference between a message and
+// a mystery.
+TEST(Scanner, Utf16ByteOrderMarkIsRefusedByName) {
+    auto dir = make_tempdir("mcpp-bom16");
+    write(dir / "src" / "u16.cppm", std::string_view("\xFF\xFE" "e\0x\0p\0", 8));
+
+    auto u = scan_file(dir / "src" / "u16.cppm", "pkg",
+                       mcpp::builtin_extension_table());
+    ASSERT_FALSE(u.has_value());
+    EXPECT_NE(u.error().message.find("UTF-16"), std::string::npos)
+        << u.error().message;
+}
+
+// The scanner must never RECORD an identity no source could have declared.
+//
+// `is_module_name_char` admits `:` so `M:part` scans as one token, so a
+// mis-parse of the `module` line can produce a "name" that is punctuation.
+// Measured before this guard existed: a file combining a BOM with a private
+// module fragment recorded a module called `:`, and the build graph grew an
+// edge for a BMI named after a colon. Nothing reported it — every step after
+// the mis-parse worked correctly on the answer it was given.
+TEST(Scanner, AModuleIdentityThatIsNotANameIsRefused) {
+    auto dir = make_tempdir("mcpp-badname");
+    write(dir / "src" / "bad.cppm", "module :not_private;\n");
+
+    auto u = scan_file(dir / "src" / "bad.cppm", "pkg",
+                       mcpp::builtin_extension_table());
+    ASSERT_FALSE(u.has_value());
+    EXPECT_NE(u.error().message.find("is not a module name"), std::string::npos)
+        << u.error().message;
+}
+
+// The guard above must not refuse what the language allows. A partition, a
+// dotted name and a dotted partition are all names.
+TEST(Scanner, WellFormedNamesSurviveTheIdentityGuard) {
+    struct Case { std::string_view decl; std::string_view provides; };
+    for (auto [decl, provides] : {
+             Case{"export module a.b.c;",        "a.b.c"},
+             Case{"export module a.b:part;",     "a.b:part"},
+             Case{"export module m:p.q;",        "m:p.q"},
+             Case{"export module _u9;",          "_u9"}}) {
+        auto dir = make_tempdir("mcpp-goodname");
+        write(dir / "src" / "g.cppm", std::format("{}\n", decl));
+        auto u = scan_file(dir / "src" / "g.cppm", "pkg",
+                           mcpp::builtin_extension_table());
+        ASSERT_TRUE(u.has_value()) << decl << ": " << u.error().format();
+        ASSERT_TRUE(u->provides.has_value()) << decl;
+        EXPECT_EQ(u->provides->logicalName, provides) << decl;
+    }
+}

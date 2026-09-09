@@ -854,6 +854,43 @@ mcpp = {
 To extend the plan-vs-ddi audit to *every* module unit (not just overrides),
 set `MCPP_VERIFY_MODGRAPH=1` when generating the build.
 
+### 2.8.4 What The Default Scanner Reads
+
+The scanner answers two questions per file — what does this unit provide, and
+what does it require — and nothing else decides them.
+
+**Three module declarations, and they are distinct productions.**
+
+```cpp
+module M;          // implementation unit:      requires M, provides nothing
+module M:part;     // implementation partition: provides M:part
+module : private;  // private module fragment:  declares neither
+```
+
+The third is not a partition whose name begins with a colon. It contributes no
+edge in either direction, and what follows it is still part of the same unit.
+Whether the compiler implements it is the compiler's answer: GCC 16.1 reports
+`sorry, unimplemented: private module fragment`, and mcpp adds nothing to that.
+
+**A module-extension file need not provide a module.** An implementation unit
+is a legal inhabitant of a `.cppm`, and `module_extensions` says which files to
+*scan*, not what each one *is*. The compile mode follows the scan: a unit that
+provides a module is compiled as an interface and given somewhere to write its
+BMI; one that does not is compiled as an ordinary translation unit. Both
+compilers therefore receive the same instruction for the same file, which they
+did not before mcpp 2026.9.9.1 — Clang infers `c++-module` from the extension
+and rejected the file, while GCC built it.
+
+**Source is read as UTF-8.** A UTF-8 byte-order mark is consumed and is not part
+of the text, which is what every compiler does with one and what MSVC writes by
+default. A UTF-16 or UTF-32 mark is refused by name rather than misread. The
+same rule applies to `mcpp.toml`.
+
+**A name that no source could have declared is refused.** A module identity is a
+dot-separated sequence of identifiers, optionally followed by `:` and one more
+such sequence. Anything else fails the scan rather than entering the build graph,
+where it would become a BMI path that nothing reports.
+
 ### 2.9 `[profile.<name>]` — Build Profiles
 
 ```toml
@@ -964,6 +1001,12 @@ deploy_files             = ["bin/widget.dll"]
 [runtime."display.present"]
 provider = "acme.widget-runtime@2.0.0"
 ```
+
+An unsupported key in this table is **reported and ignored**, and the message
+lists the keys it checked against. A `[runtime.<capability>]` sub-table is a
+provider override rather than a key, so it is not swept. The same rule applies
+to `[target.<predicate>.runtime]`, whose vocabulary is `libraries` and
+`link_library_dirs` only ([22 — The Target Side](22-target-side.md)).
 
 `requirements` records a non-empty `kind`/`value`, a `link` or `run` phase,
 and whether the requirement is mandatory (`required` defaults to `true`).

@@ -496,6 +496,20 @@ const Table* Document::get_table(std::string_view path) const {
 
 std::expected<Document, ParseError> parse(std::string_view src) {
     using namespace detail;
+    // A UTF-8 byte-order mark is not part of the document.
+    //
+    // MSVC writes one by default, so an mcpp.toml authored on Windows commonly
+    // begins `EF BB BF [ p a c k a g e ]`. The lexer saw those bytes as the
+    // start of a bare key and reported `1:1: error: expected key`, which is a
+    // true statement about the token and tells the author nothing about the
+    // file. The same mark is skipped by the source scanner for the same reason
+    // and with the same sentence: the mark is an encoding annotation, not text,
+    // and every other reader of these files skips it.
+    //
+    // Consumed here rather than in the manifest reader so that the rule holds
+    // for every document this parser is given — mcpp.toml, mcpp.lock, and the
+    // configuration files — instead of for the one that happened to report it.
+    if (src.starts_with("\xEF\xBB\xBF")) src.remove_prefix(3);
     Lexer L { src };
     Table root;
     std::set<std::string, std::less<>> explicitTables;
