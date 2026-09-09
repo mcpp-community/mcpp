@@ -670,9 +670,10 @@ not captured while the failing run was in front of us.
 
 What the failure did expose, by sending us to read the code, is a path that can
 produce exactly that reading and should not exist regardless. `check_dlopen_surface`
-returned without writing in four cases: not Linux, a non-hermetic binding or
-`allow_host_libs`, a plan producing no program, a plan producing no artifact.
-Omitting a record makes "did not apply" and "was never run" the same reading,
+returned without writing in four cases: a non-hermetic binding, `allow_host_libs`,
+a plan producing no program, a plan producing no artifact. (A target that is not
+Linux still publishes nothing, and should: the record is ELF-shaped.) Omitting a
+record makes "did not apply" and "was never run" the same reading,
 which is the failure this repository names most often. And it does more than
 omit a sentence, because the two copies of the record have opposite lifetimes:
 the sidecar survives an invocation, while `resolution.json` is regenerated from
