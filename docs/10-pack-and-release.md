@@ -140,12 +140,54 @@ mcpp pack --mode self-contained        # alias: --mode bundle-all
 mcpp pack --target x86_64-linux-musl   # equivalent to --mode static
 mcpp pack --target aarch64-linux-musl  # ARM64 equivalent
 mcpp pack --format dir                 # output as a directory, no tarball
+mcpp pack --format appimage             # a format a package in the graph provides
 mcpp pack -o myapp.tar.gz              # filename only: lands at target/dist/myapp.tar.gz
 mcpp pack -o /abs/path/myapp.tar.gz    # includes a directory: output to the literal path
 mcpp pack --profile dev                # build with a different profile (default: release)
 mcpp pack --no-strip                   # ship the artifacts as built
 mcpp pack --debug-symbols dbg/         # write the separated *.debug files under dbg/
 ```
+
+### `--format` owns one axis, and the engine owns two of its values
+
+`tar` and `dir` answer the same question `msi` and `appimage` answer — what
+shape does the output take — so they are values of one flag rather than the
+beginning of a second one. The split between what the engine holds and what a
+package holds is:
+
+> **`mcpp pack` owns the mechanism and the one universal format. Every other
+> format lives in a package, and `mcpp pack` dispatches to it.**
+
+The universal format is what it already produces: an archive that extracts and
+runs. It is universal in the only sense that matters here — it needs no
+knowledge of anyone else's release. Everything past it does. dpkg's control
+fields, AppImage's runtime, WiX's schema, Apple's notarisation, Android's
+signing scheme: each one bound into the engine would couple an mcpp release to
+a release mcpp does not control. The same argument the project already made for
+languages, where Slang is supported without being named in the engine.
+
+So the value set is open (mcpp 2026.9.11.1+). `--format <name>` finds the
+package in the resolved graph that declares `<name>` and hands it the staged
+tree; an unknown value names what *is* available rather than a fixed list:
+
+```
+error: unknown --format 'bogus'.
+  available in this build: tar, dir, appimage
+  A format past `tar` and `dir` comes from a package in the resolved graph, which declares
+  it with `mcpp::provides_pack_format("<name>")` in its build program. Add the package
+  that provides 'bogus' to [build-dependencies] and activate its feature.
+```
+
+The refusal arrives before anything is compiled. Writing such a package is
+[Producing a distributable](30-build-mcpp.md#producing-a-distributable-pack_format--stage_dir-20269111);
+the engine's three additions are a staged tree an `artifact` action can consume,
+the rest of `[package]` in the build program, and this dispatch. Each is
+format-neutral, which is the test for whether something belongs in the engine
+at all.
+
+A dispatched format applies to a **program** target. A library package ships an
+interface plus prebuilt binaries per triple and has no single staged tree, so
+`mcpp pack <lib> --format <name>` is refused rather than ignored.
 
 When `-o` is given a bare filename, the output is placed under `target/dist/`;
 when it includes a directory (relative or absolute), the literal path is used.
@@ -421,8 +463,13 @@ macOS **program** bundling (the Mach-O dependency closure, via `otool -L` /
 `LC_LOAD_DYLIB`, and `install_name_tool` for relocation) is still on the
 roadmap; until it lands `mcpp pack <program>` refuses on that format rather than
 producing something that only looks like a bundle. Windows DLL bundling beyond
-the current `.zip`, and distribution formats such as `.deb` / `.rpm` / AppImage,
-are also on the roadmap. This document evolves alongside the
-`mcpp pack` implementation; for the latest options, refer to
-`mcpp pack --help`.
+the current `.zip` is also on the roadmap.
+
+Distribution formats such as `.deb`, `.rpm`, AppImage and `.msi` are **not** on
+this list, and that is a decision rather than an omission: they live in
+packages and reach the user through `--format <name>`, for the reason the
+section above gives. Nothing further needs to join `[pack]`'s built-in modes.
+
+This document evolves alongside the `mcpp pack` implementation; for the latest
+options, refer to `mcpp pack --help`.
 

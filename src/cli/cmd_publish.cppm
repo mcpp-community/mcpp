@@ -47,13 +47,25 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
         opts.mode = *m;
         modeFromUser = true;
     }
+    // THE VALUE IS NOT VALIDATED HERE, AND THAT IS THE CHANGE.
+    //
+    // `tar` and `dir` are the archive shapes the engine owns. Everything else
+    // is a name a package provides, and which names those are is a property of
+    // the RESOLVED GRAPH -- so a refusal written here could only compare
+    // against a constant, which is exactly the coupling this whole mechanism
+    // exists to remove. The refusal moves to `build_and_pack`, after build
+    // programs have declared what they provide and before anything is
+    // compiled, where it can name what IS available instead of a fixed list.
     if (auto v = parsed.value("format")) {
         if (*v == "tar")      opts.format = mcpp::pack::Format::Tar;
         else if (*v == "dir") opts.format = mcpp::pack::Format::Dir;
-        else {
-            mcpp::ui::error(std::format(
-                "invalid --format '{}'; expected tar | dir", *v));
+        else if (v->empty()) {
+            mcpp::ui::error("--format needs a value: tar | dir | a format the "
+                            "resolved graph provides");
             return 2;
+        } else {
+            opts.format     = mcpp::pack::Format::Dispatched;
+            opts.formatName = *v;
         }
     }
     if (auto v = parsed.value("output")) opts.output = *v;
@@ -85,6 +97,23 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
     auto route = mcpp::pack::route_pack_target(parsed.positional(0));
     if (!route) { mcpp::ui::error(route.error()); return 2; }
     if (route->library) {
+        // A DISPATCHED FORMAT IS AN APPLICATION-BUNDLE OUTPUT, and a library
+        // package has no bundle: `mcpp pack <lib>` produces an interface plus
+        // prebuilt binaries for one or more triples, and there is no single
+        // staged tree for a member to turn into an installer. Refused rather
+        // than ignored, because ignoring it would report `Packed` and hand back
+        // a library package while the user asked for an installer.
+        if (opts.format == mcpp::pack::Format::Dispatched) {
+            mcpp::ui::error(std::format(
+                "--format {} is a distributable produced from a program's staged "
+                "bundle, and '{}' is a library target.\n"
+                "  A library package ships an interface plus prebuilt binaries "
+                "per triple; there is no\n"
+                "  single staged tree to hand a distribution format.\n"
+                "  use: --format tar | dir, or name a program target",
+                opts.formatName, route->targetName));
+            return 2;
+        }
         if (modeFromUser) {
             mcpp::ui::warning(std::format(
                 "--mode is an application-bundle depth and does not apply to the "

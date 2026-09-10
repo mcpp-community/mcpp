@@ -66,7 +66,12 @@ export namespace mcpp::build::program_protocol {
 // `--exclude-libs`) had no way out. Same cost as v5's: a package calling
 // `mcpp::link_flag()` fails on an older engine at the build.mcpp COMPILE,
 // because that engine's bundled module has no such function.
-inline constexpr int kProtocolVersion = 8;
+// v9: adds `pack-format` -- the outlet by which a package says which
+// distribution format it provides, so `mcpp pack --format <name>` can dispatch
+// to it. Same cost as v5's: a package calling `mcpp::provides_pack_format()`
+// fails on an older engine at the build.mcpp COMPILE, because that engine's
+// bundled module has no such function.
+inline constexpr int kProtocolVersion = 9;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

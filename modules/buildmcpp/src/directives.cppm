@@ -135,6 +135,21 @@ enum class Slot : std::size_t {
     // vendor knowledge in the package that has it and out of the engine.
     Facts,
     Floors,
+    // A DISTRIBUTION FORMAT THIS PACKAGE PROVIDES (`mcpp:pack-format=`).
+    //
+    // `mcpp pack --format <name>` resolves `<name>` through the graph the same
+    // way `--target` reaches a triple: the engine holds the DISPATCH and no
+    // format. The value is a bare name and means nothing to this file, which is
+    // what keeps dpkg's control fields, WiX's schema and Apple's notarisation
+    // out of an engine whose release would otherwise be coupled to theirs.
+    //
+    // COLLECTED FROM A BUILD THAT ASKED FOR NOTHING, which is why it is a slot
+    // and not a side effect of the request. `mcpp pack --format bogus` names
+    // what is available and `--help` says "plus any format the resolved graph
+    // provides"; both read this set on a pass where `MCPP_PACK_FORMAT` is
+    // empty. See `mcpp::provides_pack_format` for the author-facing half of the
+    // same rule -- declare unconditionally, submit conditionally.
+    PackFormats,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -217,7 +232,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 22> kTable{{
+inline constexpr std::array<Def, 23> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -336,6 +351,20 @@ inline constexpr std::array<Def, 22> kTable{{
     // Slot::Facts for the shape of each value.
     {"fact",                "fact",              Slot::Facts,            Scope::Claim,          Transform::Verbatim,      false, "",                           "",                                              7},
     {"floor",               "floor",             Slot::Floors,           Scope::Claim,          Transform::Verbatim,      false, "",                           "",                                              7},
+    // `tag` IS NON-EMPTY FOR THE REASON `warning`'S IS, AND IT MATTERS MORE
+    // HERE. A build program's result is cached and a hit does not re-run it, so
+    // a declaration that lived only on the run path would be present on the
+    // first build of a project and absent on every later one -- and the pass
+    // that reads it is `mcpp pack`, which is never the first build. The set
+    // would then be empty exactly when a user asks for a format, and the
+    // refusal would name nothing.
+    //
+    // kCacheEpoch is NOT bumped. An entry written before this row carries no
+    // `d pack-format` line, and the program that wrote it could not emit one,
+    // so replaying it yields what that program said. An older engine reading a
+    // newer entry already discards the whole record through the unknown-tag
+    // path.
+    {"pack-format",         "pack-format",       Slot::PackFormats,      Scope::Claim,          Transform::Verbatim,      false, "",                           "",                                              9},
 }};
 
 // ── Collected output of one run ────────────────────────────────────────────
@@ -812,6 +841,13 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
         req.phase = "build";
         m.runtimeConfig.requirements.push_back(std::move(req));
     }
+
+    // A NAME, CARRIED AND NOT INTERPRETED. The engine compares it against
+    // `--format` and hands the request to whoever claimed it; nothing here
+    // parses it, because a distribution format has less claim to a name in the
+    // engine than a language does, and Slang is already supported without one.
+    for (auto const& f : d.at(Slot::PackFormats))
+        bc.packFormats.push_back(f);
 
     // Build-graph nodes. Decoded here rather than at parse time so the cache
     // stores the payload verbatim and a replay is byte-identical to a run.

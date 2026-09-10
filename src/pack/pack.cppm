@@ -50,11 +50,33 @@ export namespace mcpp::pack {
 
 enum class Mode { None, Static, BundleProject, BundleAll };
 
-enum class Format { Tar, Dir };
+// WHAT SHAPE THE OUTPUT TAKES, and the third value is the one that is not a
+// shape the engine knows.
+//
+// `tar` and `dir` answer the same question `msi` and `appimage` answer, so they
+// belong on one axis -- which is why this is a wider set of values for one flag
+// rather than a second flag. `Dispatched` carries a name the engine has never
+// heard: `mcpp pack --format appimage` finds the provider among the resolved
+// dependencies and hands it the staged tree, exactly as `--target` reaches a
+// triple the engine did not have to know individually.
+//
+// The engine keeps `Tar` and `Dir` because an archive that extracts and runs is
+// universal in the only sense that matters here: it needs no knowledge of
+// anyone else's release. dpkg's control fields, AppImage's runtime, WiX's
+// schema and Apple's notarisation each couple an mcpp release to a release mcpp
+// does not control.
+enum class Format { Tar, Dir, Dispatched };
 
 struct Options {
     Mode                            mode         = Mode::BundleProject;
     Format                          format       = Format::Tar;
+    // The `--format` value when `format == Dispatched`. Empty otherwise.
+    //
+    // Not validated by the CLI, and deliberately: the set of valid values is a
+    // property of the RESOLVED GRAPH, so the refusal has to wait until build
+    // programs have declared what they provide. It arrives before anything is
+    // compiled, which is the earliest point at which it can be exact.
+    std::string                     formatName;
     std::filesystem::path           output;        // empty = derive from manifest
     std::string                     targetTriple;  // empty = host
     // Where a dependency NAME may be resolved to a file.

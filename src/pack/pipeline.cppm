@@ -18,6 +18,7 @@ import mcpp.build.plan;
 import mcpp.config;
 import mcpp.fetcher.progress;
 import mcpp.pack;
+import mcpp.pack.stage_tree;
 import mcpp.pack.strip;
 import mcpp.toolchain.model;
 import mcpp.toolchain.registry;
@@ -83,14 +84,65 @@ export int build_and_pack(Options opts, bool modeFromUser,
         && opts.targetTriple.empty()
         && ctx->tc.targetTriple.find("-musl") == std::string::npos) {
         // Need to re-prepare the build with the musl target.
-        mcpp::build::BuildOverrides ov2;
-        ov2.target_triple    = "x86_64-linux-musl";
-        ov2.profile          = opts.profile;
-        ov2.profile_fallback = "release";
-        auto ctx2 = mcpp::build::prepare_build(false, false, {}, ov2);
+        //
+        // `ov` IS MUTATED RATHER THAN SHADOWED. It has to stay the record of
+        // what produced `ctx`, because the dispatch pass below re-enters
+        // prepare with the same overrides plus two fields -- and a second
+        // overrides object left behind here would make that pass differ from
+        // this build in a way nothing states.
+        ov.target_triple = "x86_64-linux-musl";
+        auto ctx2 = mcpp::build::prepare_build(false, false, {}, ov);
         if (!ctx2) { mcpp::ui::error(ctx2.error()); return 2; }
         ctx = std::move(ctx2);
     }
+
+    // ─── Is the requested format one anything provides? ──────────────
+    //
+    // BEFORE THE BUILD, because a refusal that arrives after a full compile is
+    // a worse refusal, and because this is the earliest point at which it can
+    // be exact: build programs have now run and declared what they provide.
+    //
+    // The set is read from a pass that asked for NOTHING. That is what the
+    // "declare unconditionally, submit conditionally" rule buys -- a member
+    // that declared only when asked would leave this list empty exactly when a
+    // user names a format, and the refusal would name nothing.
+    if (opts.format == mcpp::pack::Format::Dispatched) {
+        auto const& provided = ctx->plan.providedPackFormats;
+        if (std::ranges::find(provided, opts.formatName) == provided.end()) {
+            std::string avail;
+            for (auto b : mcpp::pack::kBuiltinPackFormats)
+                avail += (avail.empty() ? "" : ", ") + std::string(b);
+            for (auto const& f : provided) {
+                if (mcpp::pack::is_builtin_pack_format(f)) continue;
+                avail += ", " + f;
+            }
+            mcpp::ui::error(std::format(
+                "unknown --format '{}'.\n"
+                "  available in this build: {}\n"
+                "  A format past `tar` and `dir` comes from a package in the "
+                "resolved graph, which declares\n"
+                "  it with `mcpp::provides_pack_format(\"<name>\")` in its build "
+                "program. Add the package\n"
+                "  that provides '{}' to [build-dependencies] and activate its "
+                "feature.",
+                opts.formatName, avail, opts.formatName));
+            return 2;
+        }
+    }
+
+    // A package claiming a built-in name is silently unreachable, since the
+    // parser resolves `tar` and `dir` before consulting the graph at all.
+    //
+    // OUTSIDE THE DISPATCH BRANCH ABOVE, because the mistake is in the PACKAGE
+    // and does not depend on what this invocation asked for. Reported on every
+    // pack, so the author hears it on the plain `mcpp pack` they are most
+    // likely to run.
+    for (auto const& f : ctx->plan.providedPackFormats)
+        if (mcpp::pack::is_builtin_pack_format(f))
+            mcpp::ui::warning(std::format(
+                "a package in this graph declares `mcpp:pack-format={}`, which "
+                "is one of the archive shapes `mcpp pack` owns; `--format {}` "
+                "will always select the built-in and never that package", f, f));
 
     auto be = mcpp::build::make_ninja_backend();
     mcpp::build::BuildOptions bo;
@@ -219,7 +271,108 @@ export int build_and_pack(Options opts, bool modeFromUser,
         return 1;
     }
 
+    // The staged tree is now on disk and final -- past the closure, the
+    // `$ORIGIN` rewriting, the strip and the debug split. Describe it, so an
+    // action that consumes it has something whose CONTENT changes when the
+    // staged set does. Best-effort: see write_stage_manifest.
+    mcpp::pack::write_stage_manifest(plan->stagingRoot);
+
     auto pathCtx = mcpp::fetcher::make_path_ctx(&*cfg, ctx->projectRoot);
+
+    // ─── The dispatch pass ───────────────────────────────────────────
+    //
+    // A `role = "artifact"` action is a ninja edge, and the staged tree is
+    // produced here, in C++, AFTER ninja has finished. So an artifact action
+    // cannot depend on the staged tree in the pass that built it, and a
+    // single-pass `--format <name>` is not expressible. Two passes are, and
+    // every value this one needs was answered by the first:
+    //
+    //   `ov`                  the overrides that produced the build above
+    //   `plan->stagingRoot`   from make_plan, which resolved the triple
+    //   `opts.formatName`     the request, already checked against the graph
+    //
+    // NOTHING IS RE-DERIVED, and that is the whole discipline of this block.
+    // `stagingRoot` is a function of the package name, the version, the
+    // resolved triple and the mode; the resolved triple is not known until a
+    // prepare has run, so computing it a second time before prepare -- from the
+    // host triple, say -- is the shape where two derivations of one value agree
+    // on every machine the author has and disagree on one they do not.
+    if (opts.format == mcpp::pack::Format::Dispatched) {
+        ov.pack_format    = opts.formatName;
+        ov.pack_stage_dir = plan->stagingRoot;
+        auto distCtx = mcpp::build::prepare_build(false, false, {}, ov);
+        if (!distCtx) { mcpp::ui::error(distCtx.error()); return 2; }
+
+        // WHICH ACTIONS ARE THE DISTRIBUTABLE. Only those that named
+        // `${mcpp.stage_dir}`: a codesign stamp or a size budget is also an
+        // artifact action, and reporting one as the package would be a wrong
+        // answer that looks like a right one.
+        std::vector<std::string> distOutputs;
+        for (auto const& a : distCtx->plan.actions) {
+            if (!a.consumesStageDir) continue;
+            for (auto const& o : a.outputs) distOutputs.push_back(o);
+        }
+        // DECLARED AND THEN SUBMITTED NOTHING. The half of the contract a
+        // member is most likely to get wrong is the gate, and a member whose
+        // gate never opens leaves a pass that succeeds and produces no
+        // package. Refused by name rather than reported as success.
+        if (distOutputs.empty()) {
+            mcpp::ui::error(std::format(
+                "no action claimed --format '{}'.\n"
+                "  A package declared it provides this format, and no build "
+                "program submitted an\n"
+                "  artifact action referencing ${{mcpp.stage_dir}} when it was "
+                "asked for.\n"
+                "  The provider must gate on the request and not on anything "
+                "else:\n"
+                "      mcpp::provides_pack_format(\"{}\");                     "
+                "// always\n"
+                "      if (std::string_view(mcpp::pack_format()) == \"{}\") ..."
+                "   // then submit",
+                opts.formatName, opts.formatName, opts.formatName));
+            return 1;
+        }
+
+        mcpp::ui::info("Distributing", std::format("{} v{} (--format {})",
+            plan->packageName, plan->packageVersion, opts.formatName));
+
+        // NO EXPLICIT GOALS. Everything but the dist edges is already up to
+        // date from the build above, so a full drive costs a graph scan and
+        // nothing else -- and an explicit goal set is how the 0.0.104 soname
+        // aliases went missing, because an edge reachable only through
+        // `default` is skipped under one.
+        mcpp::build::BuildOptions dbo;
+        auto dr = be->build(distCtx->plan, dbo);
+        if (!dr) {
+            if (!dr.error().diagnosticOutput.empty()) {
+                std::fputs(dr.error().diagnosticOutput.c_str(), stderr);
+                if (dr.error().diagnosticOutput.back() != '\n') std::fputs("\n", stderr);
+            }
+            mcpp::ui::error(dr.error().message);
+            return 1;
+        }
+
+        // THE CRITERION IS THE FILE, NOT THE EXIT CODE. A cached build program
+        // replaying the first pass's answer, or a tool that writes nothing and
+        // exits 0, both leave ninja reporting success -- and section 2's
+        // measured failure was a packaging step that succeeded while carrying
+        // nothing.
+        std::error_code ec;
+        for (auto const& o : distOutputs) {
+            auto abs = std::filesystem::path(o).is_absolute()
+                     ? std::filesystem::path(o) : distCtx->plan.outputDir / o;
+            if (!std::filesystem::is_regular_file(abs, ec)
+                && !std::filesystem::is_directory(abs, ec)) {
+                mcpp::ui::error(std::format(
+                    "--format {} reported success and produced nothing at {}",
+                    opts.formatName, abs.string()));
+                return 1;
+            }
+            mcpp::ui::status("Packed", mcpp::ui::shorten_path(abs, pathCtx));
+        }
+        return 0;
+    }
+
     auto outPath = (opts.format == mcpp::pack::Format::Tar)
         ? plan->archivePath : plan->stagingRoot;
     mcpp::ui::status("Packed", mcpp::ui::shorten_path(outPath, pathCtx));

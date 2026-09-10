@@ -385,6 +385,16 @@ struct BuildAction {
     // two are matched against each other.
     std::string                        packageName;
     Role                               role = Role::Source;
+    // Set by the engine, never by the build program: this action's command or
+    // inputs named `${mcpp.stage_dir}`.
+    //
+    // It is what makes the distributable ATTRIBUTABLE. `mcpp pack --format
+    // <name>` reports the file the pass produced, and the alternative -- taking
+    // every artifact action's output -- would name a codesign stamp or a size
+    // budget alongside it. It is also the flag the dispatch checks to refuse a
+    // member that declared a format and then submitted nothing for it, which
+    // would otherwise be a pack that succeeds and produces no package.
+    bool                               consumesStageDir = false;
     std::vector<std::string>           inputs;    // absolute or package-relative
     std::vector<std::string>           outputs;   // ditto; declared, see INV-D
     // Object only: which link units receive the outputs. Empty = every LINKED
@@ -693,6 +703,17 @@ struct BuildConfig : BuildInputs {
     // (`mcpp:action=`). Empty for every package that does not use one, so an
     // ordinary build is untouched.
     std::vector<BuildAction>            actions;
+    // Distribution formats this package's build program declared it provides
+    // (`mcpp:pack-format=`). Empty for every package that ships no such member,
+    // so an ordinary build is untouched.
+    //
+    // THE ENGINE HOLDS THE DISPATCH AND NOT THE FORMAT. `mcpp pack --format
+    // <name>` looks the name up in the union of these lists, exactly as
+    // `--target` reaches a triple the engine did not have to know
+    // individually. `.deb`'s control fields, WiX's schema and Apple's
+    // notarisation each couple a release to a release mcpp does not control,
+    // and a name here is the whole of what the engine learns.
+    std::vector<std::string>            packFormats;
     bool                                staticStdlib = true;
     // #336 — the C++ runtime DISTRIBUTION contract: what the artifact promises
     // about the machine that runs it ("self-contained" | "toolchain-coupled" |

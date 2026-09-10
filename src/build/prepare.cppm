@@ -61,6 +61,7 @@ import mcpp.build.runtime_validation;  // declared artifact -> identity verdict
 import mcpp.build.cache_key;
 import mcpp.pack.abi_tag;      // the tag a prebuilt dependency is checked against
 import mcpp.pack.prebuilt;     // …and the check itself
+import mcpp.pack.stage_tree;   // where `${mcpp.stage_dir}` points, and its manifest
 import mcpp.build.build_program;
 import mcpp.build.directives;   // directive table: mark / fold_private_tail
 import mcpp.build.tool_store;   // #355 host tools: store layout + key + overrides
@@ -998,6 +999,24 @@ export struct BuildOverrides {
     // One says which PACKAGES enter the graph, the other which TOOLS are
     // installed, and `mcpp run` needs the second without the first.
     bool        will_run = false;
+    // ── The packaging pass, when this prepare is one (mcpp 2026.9.11.1+) ────
+    //
+    // `mcpp pack --format <name>` prepares TWICE, and these two fields are the
+    // whole difference between the passes. The first sets neither: build
+    // programs run, declare the formats they provide, and submit no dist
+    // action because none was asked for. The second sets both, after the link
+    // and after staging, so the claiming member submits an action whose input
+    // is a directory that by then exists.
+    //
+    // NEITHER VALUE IS DERIVED HERE, AND THAT IS THE POINT. `pack_stage_dir` is
+    // a function of the package name, the version, the resolved triple and the
+    // mode, and the resolved triple is not known until a prepare has run.
+    // Computing it a second time before prepare -- from the host triple, say --
+    // is the shape where two derivations of one value agree on every machine
+    // the author has. Both are read out of what the first pass and `make_plan`
+    // already answered.
+    std::string           pack_format;
+    std::filesystem::path pack_stage_dir;
 };
 
 // ── git dependency helpers ──────────────────────────────────────────────────
@@ -1132,6 +1151,34 @@ mcpp::platform::process::RunResult run_with_network_retry(
             std::this_thread::sleep_for(std::chrono::seconds(attempt));
     }
     return r;
+}
+
+// `[package]`, for the build program of the package that declares it.
+//
+// ONE CALL RATHER THAN A FIELD PER SITE. Two places build a
+// `BuildProgramEnv` -- the dependency loop and the root -- and the values a
+// build program is told about its own package are the same question in both.
+// Setting them field by field at each site is how the two answers drift: the
+// root gained `packageName` and the dependency loop gained it separately, and
+// a value added to only one of them is a rule package that works for a root
+// project and not for a dependency, with nothing failing to say so.
+void fill_package_build_env(mcpp::build::BuildProgramEnv& e,
+                            const mcpp::manifest::Manifest& m)
+{
+    e.packageName        = m.package.name;
+    e.packageNamespace   = m.package.namespace_;
+    e.packageVersion     = m.package.version;
+    e.packageDescription = m.package.description;
+    e.packageLicense     = m.package.license;
+    e.packageRepo        = m.package.repo;
+    // ';' rather than ',': an author entry is conventionally `Name <mail@host>`
+    // and a name may carry a comma, so a comma-joined list cannot be split back
+    // into the entries it was made from.
+    e.packageAuthors.clear();
+    for (auto const& a : m.package.authors) {
+        if (!e.packageAuthors.empty()) e.packageAuthors += ';';
+        e.packageAuthors += a;
+    }
 }
 
 void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
@@ -8198,8 +8245,9 @@ prepare_build(bool print_fingerprint,
             // The DECLARING package's setting, not the root project's: a rule
             // generating a declaration for this package must match how this
             // package is compiled.
-            bpEnv.packageName      = pkg.manifest.package.name;
-            bpEnv.packageNamespace = pkg.manifest.package.namespace_;
+            fill_package_build_env(bpEnv, pkg.manifest);
+            bpEnv.packFormat   = overrides.pack_format;
+            bpEnv.packStageDir = overrides.pack_stage_dir;
             bpEnv.languageModules = pkg.manifest.language.modules;
             bpEnv.ruleModules  = pkg.manifest.buildConfig.ruleModules;
             if (auto dit = deviceSourcesByPackage.find(pkg.root.string()); dit != deviceSourcesByPackage.end())
@@ -9126,8 +9174,9 @@ prepare_build(bool print_fingerprint,
         bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;
         bpEnv.accel        = resolvedAccel();
-        bpEnv.packageName      = m->package.name;
-        bpEnv.packageNamespace = m->package.namespace_;
+        fill_package_build_env(bpEnv, *m);
+        bpEnv.packFormat   = overrides.pack_format;
+        bpEnv.packStageDir = overrides.pack_stage_dir;
         bpEnv.languageModules = m->language.modules;
         bpEnv.ruleModules  = m->buildConfig.ruleModules;
         if (auto dit = deviceSourcesByPackage.find(root->string()); dit != deviceSourcesByPackage.end())
@@ -10242,7 +10291,29 @@ prepare_build(bool print_fingerprint,
         // become an edge with a blank path, and ninja reports that far away
         // from the typo that caused it.
         std::set<std::string> unresolvedTargets;
-        auto substitute = [&](std::string s) {
+        // `${mcpp.stage_dir}` used where there is no staged tree, and used by an
+        // action whose role runs before the link. Both are refusals rather than
+        // empty expansions: an empty path is a token the command still accepts,
+        // and the tool then reads the build directory root -- which exists, so
+        // the mistake produces a plausible artifact instead of a diagnostic.
+        // Section 2 of the design record measured that shape: a valid, empty,
+        // 52 KB installer with nothing said about it.
+        std::set<std::string> stageDirNoPass, stageDirWrongRole;
+        // WHETHER *THIS* ACTION REFERENCED THE STAGED TREE, and deliberately a
+        // flag rather than a set keyed on the action's id: an id is unique
+        // within the package that declared it and nothing more, so two packages
+        // may each submit a `dist` action called `package`. A set would then
+        // hand one package's implicit dependency to the other's edge -- the
+        // shape where a predicate is right and the object is wrong, which does
+        // not fail, it answers about something else.
+        //
+        // The diagnostic sets below stay keyed by id because a diagnostic
+        // NAMES ids and a collision there costs a duplicate line, not a wrong
+        // edge.
+        bool thisActionUsesStageDir = false;
+        const bool stagePass = !overrides.pack_stage_dir.empty();
+        auto substitute = [&](std::string s, const char* actionId,
+                              mcpp::manifest::BuildAction::Role role) {
             auto rep = [&](std::string_view what, const std::string& with) {
                 for (std::size_t p; (p = s.find(what)) != std::string::npos; )
                     s.replace(p, what.size(), with);
@@ -10250,6 +10321,21 @@ prepare_build(bool print_fingerprint,
             rep("${mcpp.out_dir}",    ctx.plan.outputDir.string());
             rep("${mcpp.bin_dir}",    (ctx.plan.outputDir / "bin").string());
             rep("${mcpp.compile_db}", ctx.plan.compileDbPath.string());
+            // ABSOLUTE, unlike `${mcpp.target_file:}` and for the same reason
+            // stated the other way round: the staged tree lives outside the
+            // build directory and no ninja edge produces it, so there is no
+            // edge-declared spelling to agree with. `${mcpp.out_dir}` above is
+            // absolute on the same grounds.
+            if (s.find("${mcpp.stage_dir}") != std::string::npos) {
+                if (!stagePass) {
+                    stageDirNoPass.insert(actionId);
+                } else if (role != mcpp::manifest::BuildAction::Role::Artifact) {
+                    stageDirWrongRole.insert(actionId);
+                } else {
+                    thisActionUsesStageDir = true;
+                }
+                rep("${mcpp.stage_dir}", overrides.pack_stage_dir.string());
+            }
             constexpr std::string_view kTf = "${mcpp.target_file:";
             for (std::size_t p; (p = s.find(kTf)) != std::string::npos; ) {
                 auto close = s.find('}', p);
@@ -10278,22 +10364,74 @@ prepare_build(bool print_fingerprint,
             // mcpp#534's ordering edge is scoped to this name.
             auto owner = mcpp::build::qualified_package_name(mm);
             for (auto a : mm.buildConfig.actions) {
-                for (auto& x : a.inputs)  x = substitute(x);
-                for (auto& x : a.outputs) x = substitute(x);
-                for (auto& x : a.command) x = substitute(x);
+                thisActionUsesStageDir = false;
+                const auto sub = [&](std::string v) {
+                    return substitute(std::move(v), a.id.c_str(), a.role);
+                };
+                for (auto& x : a.inputs)  x = sub(x);
+                for (auto& x : a.outputs) x = sub(x);
+                for (auto& x : a.command) x = sub(x);
                 // Same closed vocabulary as outputs — a depfile commonly
                 // wants to live at `${mcpp.out_dir}/<name>.d`, beside the
                 // output it describes, and `prepare_actions` above
                 // deliberately left a `${mcpp.` depfile untouched for
                 // exactly this phase to resolve.
-                if (!a.depfile.empty()) a.depfile = substitute(a.depfile);
+                if (!a.depfile.empty()) a.depfile = sub(a.depfile);
+                // THE DEPENDENCY IS IMPLIED BY THE USE, so a member author
+                // cannot forget it. Without this the edge is dirty only when a
+                // link output changes, and a staged set that grew a dependency's
+                // shared library while the program's own bytes did not would
+                // leave the previous distributable in place, reported as
+                // up to date.
+                if (thisActionUsesStageDir) {
+                    a.consumesStageDir = true;
+                    a.inputs.push_back(
+                        mcpp::pack::stage_manifest_path(overrides.pack_stage_dir).string());
+                }
                 a.packageName = owner;
                 ctx.plan.actions.push_back(std::move(a));
             }
+            // Every package's declaration, on every pass. Sorted and de-duplicated
+            // below so the refusal's list reads the same whatever order resolution
+            // walked the graph in.
+            for (auto const& f : mm.buildConfig.packFormats)
+                ctx.plan.providedPackFormats.push_back(f);
         };
         collect(*m);
         for (std::size_t i = 1; i < packages.size(); ++i)
             collect(packages[i].manifest);
+        std::ranges::sort(ctx.plan.providedPackFormats);
+        ctx.plan.providedPackFormats.erase(
+            std::ranges::unique(ctx.plan.providedPackFormats).begin(),
+            ctx.plan.providedPackFormats.end());
+        ctx.plan.packFormat = overrides.pack_format;
+        if (!stageDirNoPass.empty()) {
+            std::string ids;
+            for (auto const& n : stageDirNoPass) ids += (ids.empty() ? "" : ", ") + n;
+            return std::unexpected(std::format(
+                "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and this "
+                "build is not packaging.\n"
+                "  The staged tree is produced by `mcpp pack` after the link, so "
+                "it does not exist during\n"
+                "  a plain build and there is nothing for the placeholder to name.\n"
+                "  Gate the submission on the format you provide:\n"
+                "      mcpp::provides_pack_format(\"<name>\");            // always\n"
+                "      if (std::string_view(mcpp::pack_format()) == \"<name>\")  "
+                "// then submit\n"
+                "  and reach the tree with `mcpp pack --format <name>`.", ids));
+        }
+        if (!stageDirWrongRole.empty()) {
+            std::string ids;
+            for (auto const& n : stageDirWrongRole) ids += (ids.empty() ? "" : ", ") + n;
+            return std::unexpected(std::format(
+                "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}} with a role "
+                "other than \"artifact\".\n"
+                "  Only an artifact action runs after the link, and the staged tree "
+                "is a link output's\n"
+                "  successor: a source, object or check action is scheduled before "
+                "there is anything to stage.\n"
+                "  use: role = \"artifact\"", ids));
+        }
         if (!unresolvedTargets.empty()) {
             std::string bad, known;
             for (auto const& n : unresolvedTargets) bad += (bad.empty() ? "" : ", ") + n;

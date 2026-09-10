@@ -463,6 +463,12 @@ attach:
 | `object` | join the **link** set | the link edge consumes them | a resource compiler, `objcopy` embedding a blob, a generated `.def`, a pre-built `.o` |
 | `artifact` | a new file | its *inputs* are link outputs, so it runs after the link | codesign, packaging, size budgets |
 
+`artifact` is also the only role that may name `${mcpp.stage_dir}` — see
+[Producing a distributable](#producing-a-distributable-pack_format--stage_dir-20269111)
+below. The other three run before or alongside the link, so there is nothing
+staged for them to read, and mcpp refuses the placeholder rather than expanding
+it to a path that happens to exist.
+
 No phase machinery is involved. `object` and `artifact` are sequenced by
 ninja's own file dependencies — which is also why an `artifact` action cannot
 double-apply itself the way a naive "post-build hook" would. `source` and a
@@ -553,6 +559,81 @@ scan agrees with what the generator will emit — the same assertion-plus-
 verification trade `[modules].scan_overrides` makes, and the compiler's own
 P1689 output checks it at build time.
 
+### Producing a distributable: `pack_format` / `stage_dir` (2026.9.11.1+)
+
+An `.msi`, a `.deb`, an AppImage and a signed `.app` are none of the four roles'
+usual work and all of them are `artifact`: each consumes **link outputs** and
+produces something a user installs. What the engine adds for them is a
+mechanism and no format at all.
+
+`mcpp pack --format <name>` resolves `<name>` through the resolved graph, the
+same way `--target` reaches a triple the engine did not have to know
+individually. `tar` and `dir` remain the archive shapes `mcpp pack` owns;
+everything past them comes from a package.
+
+A provider has two halves, and they must not be merged:
+
+```cpp
+import mcpp;
+#include <string>
+#include <string_view>
+
+int main() {
+    // Half one, unconditional.
+    mcpp::provides_pack_format("appimage");
+
+    // Half two, conditional.
+    if (std::string_view(mcpp::pack_format()) != "appimage") return 0;
+
+    const std::string out = std::string(mcpp::out_dir()) + "/app.AppImage";
+    mcpp::action a;
+    a.id   = "appimage";
+    a.role = "artifact";
+    a.arg(tool).arg("${mcpp.stage_dir}").arg(out.c_str())
+     .input("${mcpp.target_file:app}")
+     .output(out.c_str())
+     .submit();
+    return 0;
+}
+```
+
+**Declare unconditionally, submit conditionally.** The declaration is what lets
+the engine answer a question the requesting build cannot: `--format bogus`
+names what *is* available, and `--help` says "any format the resolved graph
+provides". Both read the set collected from a pass that asked for nothing. A
+member that declared only when asked still works for its author — they always
+pass their own format — and makes the set unknowable for everyone else. mcpp
+refuses a format nothing submitted for, rather than reporting a pack that
+produced no package.
+
+**`mcpp pack --format <name>` prepares twice.** An `artifact` action is a ninja
+edge and the staged tree is produced by mcpp *after* the link, so the tree
+cannot be an input of the pass that built it. The first pass collects the
+declarations and refuses an unknown format before anything is compiled; the
+build and the staging then happen; the second pass sets `pack_format` and
+`pack_stage_dir` and builds the edge the provider submits. Nothing in the
+second pass is re-derived — the triple and the staged path are what the first
+pass and the staging already answered.
+
+**The staged tree is a bundle, not a root filesystem.** It is what
+`--mode vendored` means: `bin/`, `lib/`, relocatable, rooted anywhere, after the
+strip policy, the debug-symbol split and `include`/`exclude`. An AppImage, a
+`.app` and an `.msi` want it as it stands. A format that wants an FHS tree
+(`.deb`, `.rpm`) owns the re-layout, because which directory a file belongs in
+is that format's knowledge and not the engine's.
+
+`mcpp pack --format dir` writes the same tree to a path and stops, which is how
+a person inspects what a member will be handed.
+
+**An action that names `${mcpp.stage_dir}` gains a dependency on the tree's
+manifest.** mcpp writes `<staged tree>.stage-manifest` — a sibling, never a
+member, so it does not travel inside anyone's installer — listing each staged
+file's size and relative path. The dependency is added by the engine because
+the use implies it: without it the edge is dirty only when a link output
+changes, and a closure that grew a dependency's shared library while the
+program's own bytes did not would leave the previous distributable in place,
+reported as up to date.
+
 Commands are an **argv, not a shell string** (no shell is assumed — Windows has
 none to rely on), and the only interpolations are a closed set:
 
@@ -562,6 +643,7 @@ none to rely on), and the only interpolations are a closed set:
 | `${mcpp.bin_dir}` | where produced binaries land |
 | `${mcpp.compile_db}` | path to `compile_commands.json` (what clang-tidy's `-p` wants) |
 | `${mcpp.target_file:<name>}` | the built file of target `<name>` |
+| `${mcpp.stage_dir}` *(2026.9.11.1+)* | the tree `mcpp pack` staged, absolute. `artifact` role only, and only under `mcpp pack --format <name>` |
 
 The raw stdout protocol above remains the low-level substrate; `import mcpp;`
 is the typed layer over it.
@@ -671,6 +753,13 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_LANGUAGE_MODULES` *(2026.9.7.1+)* | -- | `1` when the declaring package sets `[language] modules`, `0` otherwise. A rule that GENERATES a consumer-facing declaration reads it to choose between a module interface and a header, so a project states that once and never again. An older engine leaves it absent, which a rule reads as `0` -- the behaviour every consumer had before the variable existed |
 | `MCPP_PKG_NAME` *(2026.9.7.1+)* | -- | The `[package] name` of the package this program builds. Every name a rule generates is derived from it: the module a consumer imports, the namespace the accessors sit in, the symbols in a generated header. Before it existed the closest available answer was the leaf of `MCPP_MANIFEST_DIR`, which is a directory name -- so a package named `vulkan-saxpy` in a directory named `app` generated `app.shaders`, and every `<something>/app/` in a workspace claimed the same module. Absent under an older engine, which a rule reads as a signal to keep its previous derivation |
 | `MCPP_PKG_NAMESPACE` *(2026.9.7.1+)* | -- | The `[package] namespace`. Empty when the package declares none. A rule that must produce a name unique across an index uses the pair rather than the name alone, because package identity is `(namespace, name)` |
+| `MCPP_PKG_VERSION` *(2026.9.11.1+)* | `mcpp::package_version()` | The `[package] version`. Every installer format states a version; without this the project had to restate it in the member's own options, where the copy drifts from `[package]` with nothing able to detect it |
+| `MCPP_PKG_DESCRIPTION` *(2026.9.11.1+)* | `mcpp::package_description()` | The `[package] description`. Empty when the package declares none |
+| `MCPP_PKG_LICENSE` *(2026.9.11.1+)* | `mcpp::package_license()` | The `[package] license` |
+| `MCPP_PKG_AUTHORS` *(2026.9.11.1+)* | `mcpp::package_authors()` | The `[package] authors`, joined with `;`. Not `,`: an author entry is conventionally `Name <mail@host>` and a name may carry a comma, so a comma-joined list cannot be split back into the entries it was made from |
+| `MCPP_PKG_REPO` *(2026.9.11.1+)* | `mcpp::package_repo()` | The `[package] repo` |
+| `MCPP_PACK_FORMAT` *(2026.9.11.1+)* | `mcpp::pack_format()` | The `--format` value of the `mcpp pack` pass this program is part of; empty for every ordinary build. The empty value is the one that carries the meaning — a member gates its submission on this, so `mcpp build` has the graph it always had |
+| `MCPP_PACK_STAGE_DIR` *(2026.9.11.1+)* | `mcpp::pack_stage_dir()` | Where `mcpp pack` has already staged the closure, absolute; empty when this build is not packaging. Read it to decide the shape of the work; write `${mcpp.stage_dir}` into the action, so the path in the graph and the path the program read cannot disagree |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | the device-kind sources (`.cu`, `.hip`, …) the package's effective `sources` match, package-root-relative, one per line; empty when there are none. The engine compiles none of them — the rule package this program imports turns each into an `mcpp::action`. Already narrowed: a `{ glob, accel }` entry the build does not cover contributes nothing, so `--no-accel` yields an empty list |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | a writable scratch/output dir owned by mcpp |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | the package root (= CWD) |
@@ -786,13 +875,29 @@ and warns when the two disagree —
 Nothing breaks; the name claims an origin the package does not have. A rule
 outside the project picks its own prefix.
 
-**A tool is not a rule.** A rule states how a translation unit is compiled by a
-compiler mcpp does not drive: it submits an action and the engine schedules it.
-A tool states something the build program needs that no compiler performs, and
-does it while the program runs. `mcpp.tools.embed` (feature `tools-embed`,
+**A tool is not a rule, and a distributable is neither.** Three kinds of work,
+and the member's prefix says which of the three questions it answers:
+
+| Prefix | Question | Compiles a TU | Runs in the build program |
+|---|---|---|---|
+| `rules-*` | how is this translation unit compiled | yes | no |
+| `tools-*` | what does the build program need to do itself | no | yes |
+| `dist-*` *(2026.9.11.1+)* | what comes out of the link, and in what form a user installs it | no | no |
+
+A rule states how a translation unit is compiled by a compiler mcpp does not
+drive: it submits an action and the engine schedules it. A tool states
+something the build program needs that no compiler performs, and does it while
+the program runs. `mcpp.tools.embed` (feature `tools-embed`,
 mcpp 2026.9.5.4+) is the first: it writes a data file into a header the program
 compiles in, as a byte array or a 32-bit word array, and rewrites nothing when
 the content is unchanged, so calling it unconditionally costs no rebuild.
+
+A `dist-*` member fits neither definition. It does not compile a translation
+unit and it does not run while the build program runs: it consumes link outputs
+and produces something a user installs, through an `artifact` action and
+`mcpp pack --format <name>`. The prefix matters because the taxonomy is
+load-bearing — a consumer reading `rules-wix` would expect a compiler and a
+translation unit, and there is neither.
 
 `examples/09-heterogeneous/cuda` and
 `examples/09-heterogeneous/vulkan` consume `mcpp.rules.cuda` and `mcpp.rules.spirv`

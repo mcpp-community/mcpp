@@ -399,6 +399,11 @@ int main() {
 | `object` | 进**链接**集 | 链接边消费它们 | 资源编译器、`objcopy` 嵌 blob、生成的 `.def`、预编译 `.o` |
 | `artifact` | 一个新文件 | 它的**输入**是链接产物,所以在链接之后跑 | 签名、打包、size budget |
 
+`artifact` 也是唯一允许写 `${mcpp.stage_dir}` 的 role —— 见下文
+[产出可分发物](#产出可分发物pack_format-与-stage_dir20269111)。另外三个跑在链接之前
+或与链接并行,没有任何已暂存的东西可读,所以 mcpp 会拒绝这个占位符,而不是把它展开成
+一个恰好存在的路径。
+
 全程不涉及任何 phase 机制。`object` 与 `artifact` 由 ninja 自己的文件依赖定序 ——
 这也是为什么 `artifact` 不会像朴素的「post 构建钩子」那样把自己重复施加一遍。
 `source` 与 blocking 的 `check` 则由一条 order-only 边定序:从声明它的那个包的
@@ -470,6 +475,72 @@ mcpp 会播下一个带着该声明的占位文件,使 prepare 期的扫描与�
 内容一致 —— 与 `[modules].scan_overrides` 同一条「声明 + 验证」的取舍,build 期由
 编译器自己的 P1689 输出复核。
 
+### 产出可分发物:`pack_format` 与 `stage_dir`(2026.9.11.1+)
+
+一个 `.msi`、一个 `.deb`、一个 AppImage、一个签过名的 `.app`,都不是那四个 role 的
+惯常活计,而它们全都是 `artifact`:每一个都消费**链接产物**,产出用户去安装的东西。
+引擎为它们加的是一套机制,而不是任何一种格式。
+
+`mcpp pack --format <name>` 把 `<name>` 交给解析后的图去解决,方式与 `--target`
+够到一个引擎不必逐个认识的三元组相同。`tar` 与 `dir` 仍然是 `mcpp pack` 自己拥有的
+归档形状;此外的一切都来自某个包。
+
+一个提供方有两半,而这两半不许被并成一半:
+
+```cpp
+import mcpp;
+#include <string>
+#include <string_view>
+
+int main() {
+    // 第一半,无条件。
+    mcpp::provides_pack_format("appimage");
+
+    // 第二半,有条件。
+    if (std::string_view(mcpp::pack_format()) != "appimage") return 0;
+
+    const std::string out = std::string(mcpp::out_dir()) + "/app.AppImage";
+    mcpp::action a;
+    a.id   = "appimage";
+    a.role = "artifact";
+    a.arg(tool).arg("${mcpp.stage_dir}").arg(out.c_str())
+     .input("${mcpp.target_file:app}")
+     .output(out.c_str())
+     .submit();
+    return 0;
+}
+```
+
+**无条件声明,有条件提交。** 声明是让引擎能回答一个发起请求的那次构建自己回答不了的
+问题:`--format bogus` 要点名**当下确实可用**的那些格式,`--help` 要说「解析后的图
+提供的任何格式」。两者读的都是一次「什么格式都没要」的 pass 收集到的集合。一个只在被
+问到时才声明的成员,对它的作者仍然照常工作 —— 作者永远传的是自己那个格式 —— 而对其他
+所有人,这个集合变成不可知的。对一个谁都没为之提交的格式,mcpp 会拒绝,而不是报告一次
+「什么包都没产出」的成功打包。
+
+**`mcpp pack --format <name>` 会 prepare 两次。** 一条 `artifact` action 是一条
+ninja 边,而那棵暂存树是 mcpp 在链接**之后**产出的,所以这棵树不可能成为构建出它自己
+那一次 pass 的输入。第一次 pass 收集声明,并在任何东西被编译之前拒绝未知的格式;随后
+才是构建与暂存;第二次 pass 设上 `pack_format` 与 `pack_stage_dir`,并构建提供方提交
+的那条边。第二次 pass 里没有任何值是重新推导出来的 —— 三元组与暂存路径都是第一次
+pass 和那次暂存已经回答过的。
+
+**暂存树是一个 bundle,不是一个根文件系统。** 它就是 `--mode vendored` 的含义:
+`bin/`、`lib/`,可重定位、根在哪儿都行,并且已经过了 strip 策略、调试信息拆分与
+`include`/`exclude`。一个 AppImage、一个 `.app`、一个 `.msi` 要的就是它现在这个样子。
+而要一棵 FHS 树的格式(`.deb`、`.rpm`)自己负责重排布局,因为一个文件该落在哪个目录是
+那个格式的知识,不是引擎的。
+
+`mcpp pack --format dir` 把同一棵树写到一个路径上就停下,这是人去查看一个成员将会拿到
+什么的方式。
+
+**写了 `${mcpp.stage_dir}` 的 action 会自动获得一条对这棵树的 manifest 的依赖。**
+mcpp 会写出 `<暂存树>.stage-manifest` —— 一个兄弟文件,永不是成员,所以它不会跑进任何
+人的安装包里 —— 逐条列出每个已暂存文件的大小与相对路径。这条依赖由引擎添加,因为「用
+了」本身就意味着「依赖」:没有它,这条边只在链接产物变化时才变脏,而一个闭包多出了某个
+依赖的共享库、同时程序自己的字节并没有变的情况,会把上一次的可分发物原地留下,并报告为
+已是最新。
+
 命令是 **argv 而不是 shell 字符串**(不假设存在 shell —— Windows 没有能依赖的那个),
 插值只有封闭的一组:
 
@@ -479,6 +550,7 @@ mcpp 会播下一个带着该声明的占位文件,使 prepare 期的扫描与�
 | `${mcpp.bin_dir}` | 产出的二进制所在目录 |
 | `${mcpp.compile_db}` | `compile_commands.json` 的路径(clang-tidy 的 `-p` 要的就是它) |
 | `${mcpp.target_file:<name>}` | target `<name>` 构建出的文件 |
+| `${mcpp.stage_dir}` *(2026.9.11.1+)* | `mcpp pack` 暂存出的那棵树,绝对路径。仅 `artifact` role 可用,且仅在 `mcpp pack --format <name>` 下可用 |
 
 上面的裸 stdout 协议仍是底层基底;`import mcpp;` 是其上的类型化层。
 
@@ -575,6 +647,13 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存�
 | `MCPP_LANGUAGE_MODULES` *(2026.9.7.1+)* | -- | 声明它的那个包设了 `[language] modules` 时为 `1`,否则 `0`。**生成**面向消费者声明的规则读它来在模块接口与头文件之间选择,项目因此只需说一次。旧引擎不设这个变量,规则把缺席读作 `0` —— 也就是这个变量存在之前每个消费者的行为 |
 | `MCPP_PKG_NAME` *(2026.9.7.1+)* | -- | 这个程序所构建的包的 `[package] name`。规则生成的每个名字都由它推导:消费者导入的模块、访问器所在的命名空间、生成头里的符号。在它存在之前,可用的最接近的答案是 `MCPP_MANIFEST_DIR` 的末段,那是目录名 —— 于是一个叫 `vulkan-saxpy` 的包放在名为 `app` 的目录下会生成 `app.shaders`,而工作区里每一个 `<something>/app/` 都声称拥有同一个模块。旧引擎下缺席,规则把缺席读作「沿用先前的推导」 |
 | `MCPP_PKG_NAMESPACE` *(2026.9.7.1+)* | -- | `[package] namespace`。包未声明命名空间时为空。需要产出在索引范围内唯一的名字的规则用这一对而不是单用名字,因为包身份是 `(namespace, name)` |
+| `MCPP_PKG_VERSION` *(2026.9.11.1+)* | `mcpp::package_version()` | `[package] version`。每一种安装包格式都要写版本号;在这个变量之前,项目只能把版本号在成员自己的 options 里再写一遍,而那份副本会与 `[package]` 漂移,且没有任何东西能发现 |
+| `MCPP_PKG_DESCRIPTION` *(2026.9.11.1+)* | `mcpp::package_description()` | `[package] description`。包未声明时为空 |
+| `MCPP_PKG_LICENSE` *(2026.9.11.1+)* | `mcpp::package_license()` | `[package] license` |
+| `MCPP_PKG_AUTHORS` *(2026.9.11.1+)* | `mcpp::package_authors()` | `[package] authors`,以 `;` 连接。不用 `,`:一条 author 的惯例写法是 `Name <mail@host>`,名字里可能带逗号,以逗号连接的列表无法再切回原来的条目 |
+| `MCPP_PKG_REPO` *(2026.9.11.1+)* | `mcpp::package_repo()` | `[package] repo` |
+| `MCPP_PACK_FORMAT` *(2026.9.11.1+)* | `mcpp::pack_format()` | 本程序所处的这次 `mcpp pack` 的 `--format` 取值;任何普通构建下都为空。承载含义的正是这个空值 —— 成员据此为自己的提交加闸,于是 `mcpp build` 拿到的还是它一直以来的那张图 |
+| `MCPP_PACK_STAGE_DIR` *(2026.9.11.1+)* | `mcpp::pack_stage_dir()` | `mcpp pack` 已经把闭包暂存到的位置,绝对路径;本次构建不在打包时为空。读它来判断这次要干的活是什么形状,而把 `${mcpp.stage_dir}` 写进 action —— 这样图里的路径与程序读到的路径不可能不一致 |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | 本包有效 `sources` 匹配到的设备类源文件(`.cu`、`.hip`…),相对包根,一行一个;没有时为空串。引擎一个都不编译 —— 由本程序引入的规则包把每一个变成一条 `mcpp::action`。已经过收窄:构建未覆盖的 `{ glob, accel }` 条目贡献为空,因此 `--no-accel` 得到空列表 |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | mcpp 提供的可写输出/暂存目录 |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | 包根(= CWD) |
@@ -668,7 +747,16 @@ shim,而可用的那份就在项目自己的环境里,根本不在 `PATH` 上。
 
 什么都不会坏;只是这个名字声称了一个该包并不具有的来源。项目之外的规则自选前缀。
 
-**工具不是规则。** 规则说明一个编译单元如何被 mcpp 并不驱动的编译器编译:它提交一条
+**工具不是规则,而可分发物两者都不是。** 三类活计,成员的前缀说明它回答三个问题中的
+哪一个:
+
+| 前缀 | 回答的问题 | 编译编译单元 | 在构建程序里执行 |
+|---|---|---|---|
+| `rules-*` | 这个编译单元如何被编译 | 是 | 否 |
+| `tools-*` | 构建程序自己需要做什么 | 否 | 是 |
+| `dist-*` *(2026.9.11.1+)* | 链接之后出来的是什么,以及用户以什么形态安装它 | 否 | 否 |
+
+规则说明一个编译单元如何被 mcpp 并不驱动的编译器编译:它提交一条
 action,由引擎调度。工具说明的是构建程序需要、而没有任何编译器执行的事,并在构建程序
 运行时当场做掉。`mcpp.tools.embed`(feature `tools-embed`,mcpp 2026.9.5.4+)是第一个:
 它把数据文件写成程序编译进去的头文件(字节数组或 32 位字数组),内容未变时不重写文件,

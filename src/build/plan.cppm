@@ -270,6 +270,20 @@ struct BuildPlan {
     // absolute and engine variables already substituted by the time they get
     // here, so the backend only has to spell edges.
     std::vector<mcpp::manifest::BuildAction> actions;
+    // The distribution formats the RESOLVED GRAPH provides, sorted and unique
+    // (`mcpp:pack-format=`). This is what `mcpp pack --format <name>` resolves
+    // against and what an unknown value's refusal names.
+    //
+    // Collected on EVERY prepare, including the pass that asked for no format
+    // at all -- which is the pass that has to answer "what is available". See
+    // `mcpp::provides_pack_format` for the author-facing rule that makes this
+    // possible: declare unconditionally, submit conditionally.
+    std::vector<std::string> providedPackFormats;
+    // Non-empty when this prepare is the second pass of `mcpp pack --format
+    // <name>`: the staged closure `${mcpp.stage_dir}` expanded to. Recorded on
+    // the plan so the graph header line can say which format wrote this graph,
+    // and the fast paths can decline to replay it for a plain build.
+    std::string packFormat;
     std::vector<std::filesystem::path> runtimeLibraryDirs;
     // ONLY the dependency packages' [runtime] library_dirs (not toolchain/
     // payload dirs). These are the dirs that must be baked into the produced

@@ -60,9 +60,18 @@ TEST(GraphShape, UnlabelledOrUnknownGraphIsNeverPlain) {
     };
 
     EXPECT_TRUE(is_plain_build_graph(
-        write("normal.ninja", "# banner\n# mcpp:graph=normal;schedule=none;accel=default\nrule x\n")));
+        write("normal.ninja", "# banner\n# mcpp:graph=normal;schedule=none;accel=default;dist=none\nrule x\n")));
     EXPECT_FALSE(is_plain_build_graph(
-        write("test.ninja", "# banner\n# mcpp:graph=test;schedule=none;accel=default\nrule x\n")));
+        write("test.ninja", "# banner\n# mcpp:graph=test;schedule=none;accel=default;dist=none\nrule x\n")));
+
+    // A plain-shaped graph that `mcpp pack --format <name>` wrote (2026.9.11.1+):
+    // it carries an artifact edge consuming a staged tree, which a plain build
+    // must not have. These lines are spelled by hand here rather than through
+    // `header_line`, which is the point of this copy -- a reader of build.ninja
+    // sees the text, and a field added to the producer without being added to
+    // the reader would still pass a test that only compared the two.
+    EXPECT_FALSE(is_plain_build_graph(
+        write("dist.ninja", "# mcpp:graph=normal;schedule=none;accel=default;dist=appimage\n")));
 
     // A plain-shaped graph an `--accel` / `--no-accel` build wrote (2026.9.5.3+):
     // the variant a flag chose is not the variant a plain build produces.
@@ -73,6 +82,14 @@ TEST(GraphShape, UnlabelledOrUnknownGraphIsNeverPlain) {
     // field. Not known to be the manifest's variant, so a miss, not a guess.
     EXPECT_FALSE(is_plain_build_graph(
         write("no-selection.ninja", "# banner\n# mcpp:graph=normal\nrule x\n")));
+
+    // A graph from 2026.9.10.2: shape, schedule and selection, no distribution
+    // field. Same rule one field later. This assertion is what caught the
+    // second copy of these lines when the field was added -- the line above it
+    // was the CURRENT spelling in one file and became the LEGACY spelling in
+    // both, and only a test that spells it out could say so.
+    EXPECT_FALSE(is_plain_build_graph(
+        write("no-dist.ninja", "# banner\n# mcpp:graph=normal;schedule=none;accel=default\nrule x\n")));
 
     // A build.ninja from before the marker existed. It MUST read as a miss:
     // treating it as plain is precisely the replay #407 is about.
