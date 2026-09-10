@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-275 records.
+276 records.
 
 ## By subject
 
@@ -44,10 +44,15 @@ Records that declare one. Everything else is listed by date below.
 
 - [The category the plugin taxonomy does not name, and what a platform actually decomposes into](2026-09-11-distribution-plugins-and-platform-decomposition.md) — active
 
+### triage
+
+- [Six open issues: what each one actually is, and what would answer it](2026-09-11-six-open-issues-analysis.md) — active
+
 ## By date
 
 ### 2026-09
 
+- [Six open issues: what each one actually is, and what would answer it](2026-09-11-six-open-issues-analysis.md) — active
 - [The category the plugin taxonomy does not name, and what a platform actually decomposes into](2026-09-11-distribution-plugins-and-platform-decomposition.md) — active
 - [Two answers and two silences: the scanner's second grammar, and the manifest keys nothing reads](2026-09-09-two-answers-and-two-silences.md) — active
 - [A dlopen surface no closure walks, and a process with two unwinders](2026-09-09-dlopen-surface-and-two-unwinders.md) — landed
