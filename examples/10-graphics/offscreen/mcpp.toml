@@ -30,12 +30,21 @@ plugins = { version = "0.5.2", features = ["rules-spirv"], host-module = true }
 [dependencies.compat]
 vulkan = "1.4.357.2"
 
-# The adapter that makes the host's own ICDs reachable from a binary running
-# under mcpp's private loader. An OS predicate, which IS allowed, and a Linux
-# concern by construction: macOS resolves through dyld and Windows through the
-# PE loader, and neither has a private loader to work around.
-[target.'cfg(linux)'.dependencies.compat]
-vulkan-runtime = "2026.09.11"
+# THE ADAPTER IS NOT NAMED HERE, AND THAT IS THE POINT.
+#
+# `compat.vulkan` declares `compat.vulkan-runtime` itself on Linux -- the
+# adapter that makes the host's own ICDs reachable from a binary running under
+# mcpp's private loader, which macOS and Windows do not need because dyld and
+# the PE loader have no private-loader problem to work around.
+#
+# Naming it here as well pinned one version in two places, in two repositories,
+# with nothing enforcing that they agree. They drifted three times in one day:
+# the loader package moved its pin, this file moved its own, and an installed
+# copy of `compat.vulkan` still recorded the previous one -- each time the build
+# stopped with `irreconcilable versions`, and each time the fix was to edit the
+# other place. A dependency that another dependency already declares is a
+# second copy of a decision; the version it needs is the one that package says
+# it needs.
 
 # A Vulkan device that needs no GPU, so this example runs on a machine that has
 # none. It is a DEVICE and therefore a payload; the drivers a real GPU needs are
