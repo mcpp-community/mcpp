@@ -1001,3 +1001,149 @@ on the one above it being released rather than merely merged.
 
 The engine tasks are the only ones on the critical path. P1 and X1 do not wait
 on anything.
+
+## 11. The plan read from nine angles
+
+Section 9 reviewed the proposal on its own terms. This section reads the
+*implemented* result from the angles a reviewer would apply independently of it,
+because each angle catches a different class of mistake and several of them
+caught one.
+
+### 11.1 Architecture
+
+The load-bearing claim is that **the engine holds the dispatch and no format**.
+It survives one test the proposal did not anticipate: a format that consumes
+nothing. `dist-wix` packages one named program and never reads the staged tree,
+which is what §6's own guidance recommends — and the first implementation of the
+dispatch refused exactly that member, because it identified the distributable by
+"which action named `${mcpp.stage_dir}`". The criterion was a property of the
+*mechanism* rather than of the *request*. It is now "which artifact actions the
+request introduced", which needs nothing of the member.
+
+The same mistake occurred one layer down and was found by a real macOS runner:
+staging ran before the dispatch and its failure was fatal, so every dispatched
+format was unreachable on a target whose built-in bundling is refused. Staging
+is a service to the provider, not a precondition.
+
+Both are the same error in different clothes: **the engine deciding something on
+the provider's behalf.** That is the failure this architecture is most exposed
+to, because the whole point of it is that the provider decides.
+
+### 11.2 Stability
+
+Three axes now ride `build.ninja`'s header line — shape, schedule, device
+variant — and `dist=` is the fourth. Each was added after the same defect: a
+graph written for one purpose replayed for another, in a directory the two
+share. The format deliberately does not enter the fingerprint, because it would
+cost a full recompile to package an already-built tree; the header line is the
+cheaper half of that pair and is the half the fast paths ask.
+
+The measurement that matters is the one that says the criterion is worth
+having: on 2026-09-11 a plain build after a pack pass regenerates the graph
+*even with the field ignored*, so an end-to-end assertion would pass whether or
+not the field works. The unit test is where the invariant is held.
+
+### 11.3 Elegance
+
+Two additions were withdrawn as duplicates of something that ships.
+`--stage-only` is `--format dir`. And `rule_module` on a `dist-*` feature was
+refused by the engine, correctly: that key means "the module that reaches a
+rule" and implies `device_extensions`, which a member compiling nothing cannot
+have. The `dist-*` members take the `tools-*` shape instead, and the consumer
+writes one line more than a rule needs — which says something true.
+
+### 11.4 User experience
+
+`--format` gained values rather than a second flag, because `tar`, `dir`, `msi`
+and `appimage` answer one question. An unknown value names what *is* available
+rather than a fixed list, and the refusal arrives before anything is compiled.
+
+The failure mode this category is most exposed to is a step that succeeds while
+carrying nothing — §2's measured 52 KB installer. Every member therefore
+asserts a floor on the success path through `mcpp::warning`, because stderr on
+a successful build is discarded. The first such floor was a size bound and was
+wrong on its first real fixture: a stripped hello-world stages at 14999 bytes,
+under a 16 KB bound, so a correct AppImage was reported as empty. A size is a
+proxy for a question that can be asked directly.
+
+### 11.5 Compatibility
+
+The engine's rule is unchanged: no per-package floor exists, and the index-level
+`min_mcpp` does not move for a package, because raising it makes the whole index
+unreadable to clients stopped below it. What an older client gets is legible at
+the point of use, and for these members it is the best case of that rule —
+`mcpp::provides_pack_format` does not exist in an older engine's bundled module,
+so a consumer fails at the `build.mcpp` **compile**, naming the missing
+function, rather than at a link or in an artifact.
+
+### 11.6 Cross-platform
+
+Three members, three platforms, and the honest asymmetry is that only one of
+them could be measured where it was written. `plan_for()` returning
+`applies == false` on the wrong OS says the gate works and says nothing about
+whether the tool accepts what the member renders. That gap was closed by adding
+CI steps that actually run `wix build` and assemble a real `.app` — and the
+first thing they did was fail, twice, for unrelated reasons: WiX 7 refuses to
+run without an out-of-band licence acceptance (`WIX7015`), and the Mach-O
+staging refusal above. Both are findings the plan-level assertions could not
+have produced.
+
+### 11.7 Consistency
+
+`rules-*`, `tools-*` and `dist-*` is one taxonomy with one rule: the prefix
+says which of three questions a member answers. The engine's own three-value
+`ObjectFormat` is the same discipline applied to a fact rather than to a
+package — the binary format was re-derived at roughly 35 sites, which is
+affordable at two values and becomes an addition at every site at three, where
+a missed site silently answers ELF.
+
+Two sites answered the object format by searching for `"apple"` in a string
+that never contains it, so an explicit `--target aarch64-macos` — a *verified*
+row — linked and recorded as ELF while a native build on the same machine said
+`macho`. One function, two paths, only the exercised one right.
+
+### 11.8 Seamless upgrade
+
+Every new field is absent-tolerant in the direction that matters. An older
+graph's missing `dist=` reads as a miss and never as `none`. A build program on
+an older engine gets empty strings from the new accessors, which a member reads
+as "fall back to what you did before". The `pack-format` directive carries a
+non-empty cache tag, so a declaration survives a cache hit — the pass that
+reads it is `mcpp pack`, which is never a project's first build, and an
+unpersisted declaration would be absent exactly when a user names a format.
+
+`kCacheEpoch` is deliberately not bumped: an entry written before the row
+carries no such line and the program that wrote it could not emit one, so
+replaying it yields what that program said.
+
+### 11.9 Test coverage
+
+The count is not the measure; what each test excludes is. Two are worth naming.
+
+`638` holds nine properties, each paired with the wrong answer it excludes, and
+two of them were verified load-bearing by removing the guard and watching the
+test fail — including the one that distinguishes "the request introduced this
+action" from "any artifact action".
+
+And one CI assertion was itself the defect: it grepped for `struct
+embedded_file`, the *default* `row_type`, while the fixture sets
+`row_type = "shader_entry"` precisely because that option exists. The code was
+correct and the assertion was wrong, which is what a check tied to a spelling
+the fixture chooses will eventually always be. It now reads the struct's name
+out of the file and asserts the table's element type *is* that struct, for
+every generated header rather than whichever `find` listed first.
+
+### 11.10 The dependency order, and why it is not the demand order
+
+    mcpp engine  ──────────────►  released, because plugins CI pins a release
+        │
+        ├─► xim payloads  ─────►  independent of the engine; merged first
+        │
+        └─► mcpp-plugins  ─────►  needs the release, so it cannot precede it
+                │
+                └─► mcpp-index  ►  needs the plugins tag's sha256
+
+Four repositories, one pull request each. The engine is the only thing on the
+critical path, and every measurement that changed the plan came from the layer
+*above* it — which is the argument for doing the payloads early even though the
+rows land last.
