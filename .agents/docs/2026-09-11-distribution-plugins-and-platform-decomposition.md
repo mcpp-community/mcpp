@@ -386,16 +386,103 @@ int main() {
 app: ELF 64-bit LSB pie executable, ARM aarch64, interpreter /system/bin/…
 ```
 
-The binary was not executed — no device or emulator here — so this is "compiles
-and links", not "runs".
+### Android execution: measured, and the answer is conditional
+
+The binary above was not executed when this was first written. It has been
+since, and the result is split in a way that decides the row's tier rather than
+merely informing it. Measured 2026-09-11 with NDK r30 and `qemu-aarch64` 8.2.2:
+
+| | static | dynamic (the row's default) |
+|---|---|---|
+| `x86_64-linux-android` | **runs**, direct execution, no wrapper | does not run off-device |
+| `aarch64-linux-android` | **runs** under plain `qemu-aarch64`, no flags | does not run off-device |
+
+Both confirmed with the `import std` program, printing `1-2-3`.
+
+**Dynamic fails for two independent, compounding reasons**, and neither is a
+missing flag:
+
+1. **The loader is device-only.** Every dynamic artifact carries
+   `interpreter /system/bin/linker64`. `-L` and `QEMU_LD_PREFIX` affect library
+   SEARCH, not the interpreter path, so qemu opens the literal absolute path and
+   reports `Could not open '/system/bin/linker64'`. An exhaustive search of the
+   2.3 GB installed NDK finds **zero** files named `linker` or `linker64`: the
+   Android dynamic linker ships only inside a system image.
+2. **Even with a loader, bionic's libc is inert.** `libc.so`'s `.text` is 9176
+   bytes for 1147 exported functions — about eight bytes each — and every
+   function inspected disassembles to exactly `bti c; ret`. That is the
+   documented NDK stub shape: it exists so the linker can resolve names, and
+   the real bodies come from the device. For contrast `libc++_shared.so` is
+   real code, 724 KB, because it is the one runtime the NDK is responsible for.
+
+**So the honest claim is "runnable only when statically linked", and the tier
+follows from the DEFAULT configuration rather than from the best case.** The
+rows carry `defaultStatic = false`, and that is correct about the platform: a
+real Android application links dynamically against the device's bionic, and
+setting the flag true to make a CI check pass would misdescribe the platform to
+flatter the measurement. Android is therefore `preview`, with execution
+recorded for a configuration that is not the default — which is more than
+`preview` usually means and less than `verified` requires.
+
+`x86_64-linux-android` needs no runner at all for the static case; mcpp's
+"no runner declared, attempt direct execution" default is already right.
+`aarch64-linux-android` needs `runner = ["qemu-aarch64"]` and nothing else.
+
+What dynamic execution would take is an emulator harness rather than an
+addition: a system image per (ABI, API level) at multiple gigabytes each,
+`adb`/`emulator`/`avdmanager` on top of the NDK, KVM or nested virtualisation
+that an ordinary runner does not have, and boot times in tens of seconds
+against qemu-user's near-instant start. That is its own package and its own CI
+lane.
+
+### The state as of 2026-09-11, all three vendors measured at current versions
+
+The sections above are the 2026-09 measurement of the versions then current
+(NDK r27, Emscripten 4.0.19). Every one of them was re-taken while building the
+payloads, and the picture changed:
+
+| | NDK **r30** | Emscripten **6.0.9** | iPhoneOS **26.5** |
+|---|---|---|---|
+| `_LIBCPP_VERSION` | 210000 | 220108 | 210106 |
+| a public `llvmorg-*` tag? | **no** — AOSP `r574158c` | yes, 22.1.8 | yes, 21.1.6 |
+| ships the module surface | **yes**, 133 files | **yes**, 134 files | **no**, 0 files |
+| needs a define to build it | `-D__BIONIC_CTYPE_INLINE=` | none | none |
+| execution reachable here | see below | **yes** — node | no |
+
+**Two of the three vendors now ship the surface themselves**, and the third's
+is derivable because its version is public. So the generation machinery this
+section describes at length is needed for one target rather than three, and
+what the recipes actually owe is narrower than the section implied: **pin the
+`_LIBCPP_VERSION` you measured and refuse a change.** For Android that is all
+it can be — an AOSP mirror revision has no upstream tag to compare against.
+
+The other corrections worth carrying:
+
+- **Emscripten's version was wrong in this document, in the direction the
+  document warned about.** It recorded `_LIBCPP_VERSION 200100` and clang
+  22.0.0git; 6.0.9 reports `220108` and clang 24.0.0git. The lesson it drew --
+  that the surface must match the LIBRARY and not the compiler -- is right, and
+  the numbers it drew it from are two releases stale.
+- **`emsdk` cannot be a payload at all.** `emscripten-core/emsdk` publishes
+  **zero** GitHub releases, and its `emsdk.py` fetches the real toolchain over
+  the network at install time. The recipe therefore names what `emsdk.py`
+  itself downloads: an `emscripten-releases-builds` bundle on Google Cloud
+  Storage, addressed by a 40-hex commit hash and thus immutable. The `latest`
+  alias moves several times a week and is resolved once, in the recipe, rather
+  than at install time.
+- **`em++` needs a Python interpreter before it opens any config file**, being
+  a `/bin/sh` wrapper that execs Python. And `NODE_JS` is mandatory for
+  *linking*, not only for running the result: measured, a broken `NODE_JS`
+  survives `-c` and fails the link on `tools/compiler.mjs`.
 
 ### Emscripten: measured, works, no define
 
-Named modules work as shipped. The module surface is absent as it is on
-Android, and the version to match is **not** the one the compiler reports:
-`em++` is clang 22.0.0git while its libc++ is `_LIBCPP_VERSION 200100`, LLVM
-20.1. llvm 22.1.8's surface therefore fails on `'flat_set' file not found`;
-llvm 20.1.7's builds with **no additional flags at all** (31 MB BMI).
+Named modules work as shipped. The module surface was absent in 4.0.19 as it
+was on Android, and the version to match is **not** the one the compiler
+reports: `em++` was clang 22.0.0git while its libc++ was `_LIBCPP_VERSION
+200100`, LLVM 20.1. llvm 22.1.8's surface therefore failed on `'flat_set' file
+not found`; llvm 20.1.7's built with **no additional flags at all** (31 MB
+BMI). Both halves of that have since moved -- see the table above.
 
 End to end, and this one did run:
 
