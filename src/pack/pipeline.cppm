@@ -286,17 +286,50 @@ export int build_and_pack(Options opts, bool modeFromUser,
         mcpp::pack::mode_cli_name(plan->opts.mode),
         plan->strip ? ", stripped" : ""));
 
-    auto r = mcpp::pack::run(*plan, *cfg);
-    if (!r) {
-        mcpp::ui::error(r.error().message);
-        return 1;
+    // STAGING IS A SERVICE TO THE PROVIDER, NOT A PRECONDITION FOR DISPATCH.
+    //
+    // For `--format tar` and `--format dir` the staged tree IS the product, so
+    // a staging failure is the command failing. For a DISPATCHED format it is
+    // an input the provider may or may not want, and treating it as a
+    // precondition made every dispatched format unreachable on any target
+    // whose built-in bundling is refused.
+    //
+    // Measured on macos-15 with mcpp 2026.9.11.1: `mcpp pack --format app`
+    // never reached the dispatch, because `pack::run` refuses a Mach-O PROGRAM
+    // outright -- the built-in closure walk is `LD_TRACE_LOADED_OBJECTS`, which
+    // is glibc's, and dyld ignores it and runs the program instead. That
+    // refusal is correct about the built-in archive and says nothing about
+    // whether a `.app` bundler can work, since a bundler that names one
+    // program needs no closure walk at all. The engine was answering a
+    // question the provider had not been asked.
+    //
+    // So the failure is REPORTED AND CARRIED rather than swallowed: the reason
+    // is printed as a warning, `pack_stage_dir` stays empty, and
+    // `${mcpp.stage_dir}` then refuses at expansion naming that reason. A
+    // provider that reads the tree gets a precise diagnostic; one that does not
+    // proceeds. Nothing is silently degraded -- what changes is who decides.
+    std::string stageFailure;
+    if (auto r = mcpp::pack::run(*plan, *cfg); !r) {
+        if (opts.format != mcpp::pack::Format::Dispatched) {
+            mcpp::ui::error(r.error().message);
+            return 1;
+        }
+        stageFailure = r.error().message;
+        mcpp::ui::warning(std::format(
+            "no staged tree for --format {}: {}\n"
+            "  A format that consumes ${{mcpp.stage_dir}} cannot be produced "
+            "here; one that names a\n"
+            "  built file with ${{mcpp.target_file:<name>}} is unaffected.",
+            opts.formatName, stageFailure));
     }
 
     // The staged tree is now on disk and final -- past the closure, the
     // `$ORIGIN` rewriting, the strip and the debug split. Describe it, so an
     // action that consumes it has something whose CONTENT changes when the
-    // staged set does. Best-effort: see write_stage_manifest.
-    mcpp::pack::write_stage_manifest(plan->stagingRoot);
+    // staged set does. Best-effort: see write_stage_manifest. Skipped when
+    // staging did not happen, so no manifest describes a tree that is not
+    // there.
+    if (stageFailure.empty()) mcpp::pack::write_stage_manifest(plan->stagingRoot);
 
     auto pathCtx = mcpp::fetcher::make_path_ctx(&*cfg, ctx->projectRoot);
 
@@ -328,7 +361,12 @@ export int build_and_pack(Options opts, bool modeFromUser,
                 preexistingArtifacts.emplace(a.packageName, a.id);
 
         ov.pack_format    = opts.formatName;
-        ov.pack_stage_dir = plan->stagingRoot;
+        // Empty when staging was refused, which is what makes
+        // `${mcpp.stage_dir}` refuse with the reason attached rather than
+        // expand to a directory that does not exist.
+        ov.pack_stage_dir = stageFailure.empty() ? plan->stagingRoot
+                                                 : std::filesystem::path{};
+        ov.pack_stage_reason = stageFailure;
         auto distCtx = mcpp::build::prepare_build(false, false, {}, ov);
         if (!distCtx) { mcpp::ui::error(distCtx.error()); return 2; }
 

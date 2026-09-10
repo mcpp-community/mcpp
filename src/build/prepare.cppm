@@ -1017,6 +1017,16 @@ export struct BuildOverrides {
     // already answered.
     std::string           pack_format;
     std::filesystem::path pack_stage_dir;
+    // WHY THERE IS NO STAGED TREE, when there is none and a format was still
+    // requested. Empty otherwise.
+    //
+    // A dispatched format does not require the built-in bundling to have
+    // succeeded -- see the note in `mcpp.pack.pipeline`. When it did not, the
+    // reason travels here so `${mcpp.stage_dir}`'s refusal can name it instead
+    // of saying only that the placeholder is unavailable. A member author
+    // reading "this build is not packaging" for a build that plainly is would
+    // be sent looking in the wrong place.
+    std::string           pack_stage_reason;
 };
 
 // ── git dependency helpers ──────────────────────────────────────────────────
@@ -10299,6 +10309,9 @@ prepare_build(bool print_fingerprint,
         // Section 2 of the design record measured that shape: a valid, empty,
         // 52 KB installer with nothing said about it.
         std::set<std::string> stageDirNoPass, stageDirWrongRole;
+        // Carried from the overrides so the refusal below can say WHY there is
+        // no tree, which is a different sentence from "you are not packaging".
+        std::string stageDirWhy;
         // WHETHER *THIS* ACTION REFERENCED THE STAGED TREE, and deliberately a
         // flag rather than a set keyed on the action's id: an id is unique
         // within the package that declared it and nothing more, so two packages
@@ -10329,6 +10342,7 @@ prepare_build(bool print_fingerprint,
             if (s.find("${mcpp.stage_dir}") != std::string::npos) {
                 if (!stagePass) {
                     stageDirNoPass.insert(actionId);
+                    stageDirWhy = overrides.pack_stage_reason;
                 } else if (role != mcpp::manifest::BuildAction::Role::Artifact) {
                     stageDirWrongRole.insert(actionId);
                 } else {
@@ -10408,6 +10422,18 @@ prepare_build(bool print_fingerprint,
         if (!stageDirNoPass.empty()) {
             std::string ids;
             for (auto const& n : stageDirNoPass) ids += (ids.empty() ? "" : ", ") + n;
+            if (!stageDirWhy.empty()) {
+                return std::unexpected(std::format(
+                    "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and no "
+                    "tree could be staged for this target.\n"
+                    "  {}\n"
+                    "  The format was requested and the provider was reached; what is "
+                    "missing is the staged\n"
+                    "  closure itself. A member that names a built file with "
+                    "${{mcpp.target_file:<name>}} instead\n"
+                    "  of reading the tree is unaffected on this target.",
+                    ids, stageDirWhy));
+            }
             return std::unexpected(std::format(
                 "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and this "
                 "build is not packaging.\n"

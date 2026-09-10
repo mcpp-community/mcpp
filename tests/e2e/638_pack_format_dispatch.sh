@@ -309,4 +309,49 @@ grep -q "size.stamp" b8.log \
 [ -n "$(find target -name 'size.stamp' 2>/dev/null)" ] \
   || { echo "FAIL: the ungated artifact action did not run at all"; exit 1; }
 
+# ── 9. a format that names no staged tree survives a staging refusal ──────
+# THE CASE macOS FOUND, HELD ON EVERY PLATFORM.
+#
+# `mcpp pack` refuses to bundle a Mach-O PROGRAM: the built-in closure walk is
+# `LD_TRACE_LOADED_OBJECTS`, glibc's mechanism, and dyld ignores it and runs the
+# program instead. That refusal is right about the built-in archive and says
+# nothing about whether a `.app` bundler can work -- one that names a single
+# program needs no closure walk at all. Before this, the refusal happened before
+# the dispatch, so EVERY dispatched format was unreachable on that target.
+#
+# Staging is now a service to the provider rather than a precondition. This leg
+# cannot reproduce the Mach-O refusal on Linux, so it holds the property the fix
+# rests on instead: a provider that reads no staged tree is reported, and the
+# reason travels far enough to reach the placeholder's refusal.
+cd "$TMP"
+cp -r app nostage
+cd nostage
+cat > build.mcpp <<'EOF'
+import mcpp;
+#include <string>
+#include <string_view>
+int main() {
+    mcpp::provides_pack_format("zap");
+    if (std::string_view(mcpp::pack_format()) != "zap") return 0;
+    // Reads NOTHING from the staged tree: the program arrives through
+    // ${mcpp.target_file:...}, which is what an `.msi` of one program does.
+    const std::string root = mcpp::manifest_dir();
+    const std::string out  = std::string(mcpp::out_dir()) + "/app.zap";
+    mcpp::action a;
+    a.id = "zap"; a.role = "artifact";
+    a.arg((root + "/dist.sh").c_str()).arg("named").arg(root.c_str()).arg(out.c_str())
+     .input("${mcpp.target_file:app}").output(out.c_str());
+    a.submit();
+    return 0;
+}
+EOF
+"$MCPP" pack --format zap > b9.log 2>&1 || { cat b9.log; echo "FAIL: a provider that reads no staged tree was refused"; exit 1; }
+grep -q "app.zap" b9.log \
+  || { cat b9.log; echo "FAIL: the provider was not reported as the package"; exit 1; }
+# It really did not consume the tree: no stage manifest edge was added, so the
+# action's inputs are the program alone.
+grep -q "stage-manifest" b9.log \
+  && { cat b9.log; echo "FAIL: a provider that names no tree gained a stage dependency"; exit 1; }
+echo "ok: a provider that reads no staged tree is dispatched and reported"
+
 echo "PASS: 638_pack_format_dispatch"
