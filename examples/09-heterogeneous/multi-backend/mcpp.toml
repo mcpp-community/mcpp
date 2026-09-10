@@ -104,7 +104,7 @@ cuda-driver = "2026.09.05"
 # is a payload and the hardware ones are the host's.
 [target.'cfg(accelerator = "vulkan")'.dependencies.compat]
 vulkan         = "1.4.357.0"
-vulkan-runtime = "2026.09.07"
+vulkan-runtime = "2026.09.10"
 
 [build]
 # The device sources carry the accel they are for. A CONSTRAINED glob gates

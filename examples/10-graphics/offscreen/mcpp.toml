@@ -35,7 +35,7 @@ vulkan = "1.4.357.0"
 # concern by construction: macOS resolves through dyld and Windows through the
 # PE loader, and neither has a private loader to work around.
 [target.'cfg(linux)'.dependencies.compat]
-vulkan-runtime = "2026.09.07"
+vulkan-runtime = "2026.09.10"
 
 # A Vulkan device that needs no GPU, so this example runs on a machine that has
 # none. It is a DEVICE and therefore a payload; the drivers a real GPU needs are

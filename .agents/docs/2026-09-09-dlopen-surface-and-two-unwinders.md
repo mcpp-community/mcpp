@@ -603,11 +603,28 @@ already filed as mcpp-index#376, reached this time through
   | `libnvidia-pkcs11.so.550.144.03` | `libcrypto.so.1.1` | same |
 
   All four are real and all four are the same shape as mcpp#596 -- a farm that
-  mirrors a driver family and stops one library short. They are NOT repaired
-  here: a check whose first catch is its author's own package should report it,
-  not quietly absorb it, and the repair belongs to `compat:vulkan-runtime` with
-  its own criterion, filed as mcpplibs/mcpp-index#376. On a runner with no NVIDIA driver the farm is nearly empty
-  and the check is silent, so this does not appear in CI.
+  mirrors a driver family and stops one library short. They were filed rather
+  than absorbed, as mcpplibs/mcpp-index#376, and repaired there in
+  mcpplibs/mcpp-index#380. On a runner with no NVIDIA driver the farm is nearly
+  empty and the check is silent, so this never appeared in CI.
+
+  WHAT THE REPAIR FOUND THAT THE FILING DID NOT. The defect is in three farms,
+  not one, and the issue names the wrong one: the four findings above were
+  published by `compat:opencl-runtime`, while `compat:vulkan-runtime` had five
+  and `compat:glx-runtime` -- which had no closure pass at all -- had thirty.
+  The cause is one rule: membership is decided by a filename pattern while
+  completeness was decided against the ICD manifests, so the half of each farm
+  the pattern exists for is the half nothing verified. The reason recorded
+  against seeding the closure from the farm turned out to have measured the
+  set BEFORE `never_farm_patterns` removed the driver's settings GUI; measured
+  after, it adds five libraries and no GUI stack.
+
+  The repair also holds the host surface down rather than widening it. Every
+  soname a member needs now has a written answer -- an ecosystem package
+  declared in `deps`, a `*-host-link` sentinel for what cannot be
+  redistributed (openxlings/xim-pkgindex#801 adds one for the codec
+  user-space), a named entry in `UNSERVED` with its reason, or a warning at
+  install time. No branch harvests a new file from `/usr/lib`.
 
 ## 8. Order
 
