@@ -2180,7 +2180,7 @@ export int run_tests(std::span<const std::string> passthrough,
         // decision rather than an inheritance. A test runner at ten concurrent
         // processes has the same memory shape as a compile at ten, so someone
         // who set a machine-wide number almost certainly meant it for both;
-        // `docs/03-configuration.md` says so, because one key with two
+        // `docs/04-mcpp-toml.md` says so, because one key with two
         // behaviours has to be stated. The fallback below is unchanged:
         // absent, this path uses the whole machine rather than the backend's
         // default, since there is no backend to defer to.

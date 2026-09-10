@@ -321,7 +321,7 @@ default. Someone who sets a machine-wide number almost certainly means it there
 too -- a test runner at 10 concurrent processes has the same memory shape as a
 compile at 10 -- so it should apply, and be documented as applying. What must
 not happen is for it to apply silently: this is a second behaviour under one
-key, and `docs/03-configuration.md` has to say so.
+key, and `docs/04-mcpp-toml.md` has to say so.
 
 **`default_backend` should be removed.** `BackendKind` has `Ninja` and `Native`
 (`src/build/backend.cppm:10`) and `src/build/` contains one backend
