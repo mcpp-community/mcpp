@@ -208,7 +208,8 @@ TEST(BuildDirectives, SerializeDeserializeRoundTrip) {
                    "mcpp:include-dir=inc\n"
                    "mcpp:include-dir-after=after\n"
                    "mcpp:fact=widget.driver=1.2\n"
-                   "mcpp:floor=widget.driver >= 1.0\n");
+                   "mcpp:floor=widget.driver >= 1.0\n"
+                   "mcpp:pack-format=appimage\n");
 
     std::ostringstream os;
     dirs::serialize(os, d);
@@ -256,6 +257,44 @@ TEST(BuildDirectives, FactsAndFloorsAreClaimsThatFoldIntoRuntimeDeclarations) {
     // A claim about the build, not about the link or the run: the phase says
     // when it is decided.
     EXPECT_EQ(m.runtimeConfig.requirements[0].phase, "build");
+}
+
+TEST(BuildDirectives, APackFormatIsANameCarriedAndNotInterpreted) {
+    auto d = parse("mcpp:pack-format=appimage\n"
+                   "mcpp:pack-format=msi\n");
+    EXPECT_EQ(d.at(dirs::Slot::PackFormats),
+              (std::vector<std::string>{"appimage", "msi"}));
+
+    mcpp::manifest::Manifest m;
+    dirs::apply(m, d);
+    EXPECT_EQ(m.buildConfig.packFormats,
+              (std::vector<std::string>{"appimage", "msi"}));
+    // The engine holds the DISPATCH and no format, so a name reaches neither
+    // the compile line nor the link line. A row that leaked into either would
+    // put dpkg's or WiX's vocabulary on a command line.
+    EXPECT_TRUE(m.buildConfig.cflags.empty());
+    EXPECT_TRUE(m.buildConfig.cxxflags.empty());
+    EXPECT_TRUE(m.buildConfig.ldflags.empty());
+    EXPECT_TRUE(m.buildConfig.sources.empty());
+    EXPECT_TRUE(m.buildConfig.actions.empty());
+}
+
+TEST(BuildDirectives, APackFormatDeclarationIsPersisted) {
+    // THE HALF THAT WOULD OTHERWISE BE MISSED. A build program's result is
+    // cached and a hit does not re-run it, and the pass that READS this set is
+    // `mcpp pack`, which is never a project's first build. A declaration that
+    // was not persisted would therefore be present exactly once and absent
+    // every time it mattered, and `--format <name>` would refuse naming
+    // nothing.
+    //
+    // `SerializeDeserializeRoundTrip` above asserts the round trip for every
+    // tagged row, so this only has to hold the field that puts the row in that
+    // set -- which is the field a new row is most likely to be added without.
+    const auto* def = dirs::find_by_wire("pack-format");
+    ASSERT_NE(def, nullptr);
+    EXPECT_FALSE(def->tag.empty()) << "a tag-less row is not replayed on a cache hit";
+    EXPECT_EQ(def->slot, dirs::Slot::PackFormats);
+    EXPECT_EQ(def->scope, dirs::Scope::Claim);
 }
 
 TEST(BuildDirectives, AClaimReachesNeitherCompileNorLink) {

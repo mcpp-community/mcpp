@@ -106,12 +106,49 @@ mcpp pack --mode self-contained     # 别名:--mode bundle-all
 mcpp pack --target x86_64-linux-musl   # 等价 --mode static
 mcpp pack --target aarch64-linux-musl  # ARM64 等价写法
 mcpp pack --format dir                 # 输出为目录,不打包 tarball
+mcpp pack --format appimage             # 由图里某个包提供的格式
 mcpp pack -o myapp.tar.gz              # 仅文件名:落到 target/dist/myapp.tar.gz
 mcpp pack -o /abs/path/myapp.tar.gz    # 含目录:按字面路径输出
 mcpp pack --profile dev                # 换一个 profile 构建(默认 release)
 mcpp pack --no-strip                   # 按构建原样发货,不剥符号
 mcpp pack --debug-symbols dbg/         # 把分离出的 *.debug 写到 dbg/
 ```
+
+### `--format` 是一个轴,引擎只拥有其中两个取值
+
+`tar` 与 `dir` 回答的问题,和 `msi` 与 `appimage` 回答的问题是同一个 —— 输出取什么
+形状 —— 所以它们是一个 flag 的取值,而不是第二个 flag 的开端。引擎持有什么、包持有
+什么,分界是:
+
+> **`mcpp pack` 拥有机制,以及那一种通用格式。其余每一种格式都住在包里,由
+> `mcpp pack` 分派过去。**
+
+那种通用格式就是它已经在产出的东西:一个解开就能跑的归档。它「通用」只在这里唯一
+要紧的那个意义上 —— 它不需要知道任何别人的发布。此外的一切都需要。dpkg 的 control
+字段、AppImage 的 runtime、WiX 的 schema、Apple 的公证、Android 的签名方案:其中任何
+一个被绑进引擎,都会把一次 mcpp 的发布耦合到一次 mcpp 并不控制的发布上。这与本项目
+早已为语言做过的论证是同一个 —— Slang 被支持,而引擎里没有它的名字。
+
+所以取值集合是开放的(mcpp 2026.9.11.1+)。`--format <name>` 在解析后的图里找到声明
+了 `<name>` 的那个包,并把暂存树交给它;一个未知的取值会点名**当下确实可用**的那些,
+而不是一份固定清单:
+
+```
+error: unknown --format 'bogus'.
+  available in this build: tar, dir, appimage
+  A format past `tar` and `dir` comes from a package in the resolved graph, which declares
+  it with `mcpp::provides_pack_format("<name>")` in its build program. Add the package
+  that provides 'bogus' to [build-dependencies] and activate its feature.
+```
+
+这次拒绝发生在任何东西被编译之前。怎么写这样一个包,见
+[产出可分发物](30-build-mcpp.md#产出可分发物pack_format-与-stage_dir20269111);
+引擎加的三样东西是:一棵 `artifact` action 可以消费的暂存树、`[package]` 的其余字段
+进入构建程序、以及这次分派本身。每一样都与格式无关 —— 而「与格式无关」正是判断某样
+东西该不该进引擎的判据。
+
+被分派的格式作用于一个**程序** target。库包发的是一份接口加上每个三元组的预构建产物,
+没有单独一棵暂存树,所以 `mcpp pack <库> --format <name>` 会被拒绝,而不是被忽略。
 
 `-o` 接受裸文件名时自动归到 `target/dist/`;含目录(相对或绝对)
 时按字面路径输出。
@@ -355,6 +392,11 @@ force_bundle = ["libfoo.so"]        # 即使命中 PEP 600 名单也强制打包
 macOS **程序** bundling(Mach-O 依赖闭包,走 `otool -L` / `LC_LOAD_DYLIB`,
 重定位走 `install_name_tool`)仍在规划中;在它落地之前,`mcpp pack <程序>`
 会在该格式上拒绝,而不是产出一个只是看起来像 bundle 的东西。当前 `.zip`
-之外的 Windows DLL 分发,以及 `.deb` / `.rpm` / AppImage 等格式,同样在规划中。本文档随 `mcpp pack` 实现演进,最新选项以
-`mcpp pack --help` 为准。
+之外的 Windows DLL 分发,同样在规划中。
+
+`.deb`、`.rpm`、AppImage、`.msi` 这些分发格式**不在**这份清单上,而这是一个决定而不是
+一处遗漏:它们住在包里,经 `--format <name>` 到达用户,理由见上一节。`[pack]` 的内建
+模式不需要再添任何新成员。
+
+本文档随 `mcpp pack` 实现演进,最新选项以 `mcpp pack --help` 为准。
 

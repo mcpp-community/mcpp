@@ -515,3 +515,200 @@ TEST(Triple, EveryTableRowIsItsOwnCanonicalForm) {
             << info.canonical << " does not round-trip";
     }
 }
+
+// ── The object-format axis, and the three platforms it exists for ───────────
+//
+// The binary format used to be re-derived from `os` at every site that needed
+// it, which is affordable only while the answer has two values. These hold the
+// single derivation, because a site that misses a third value does not fail --
+// it silently answers ELF, which is what every `else` branch in the tree
+// assumes.
+
+TEST(Triple, TheObjectFormatIsOneAnswerAndNotADerivation) {
+    EXPECT_EQ(parse("x86_64-linux-gnu")->object_format(),      ObjectFormat::Elf);
+    EXPECT_EQ(parse("x86_64-linux-musl")->object_format(),     ObjectFormat::Elf);
+    EXPECT_EQ(parse("aarch64-linux-android")->object_format(), ObjectFormat::Elf);
+    EXPECT_EQ(parse("riscv64-none-elf")->object_format(),      ObjectFormat::Elf);
+    EXPECT_EQ(parse("x86_64-windows-gnu")->object_format(),    ObjectFormat::Pe);
+    EXPECT_EQ(parse("x86_64-windows-msvc")->object_format(),   ObjectFormat::Pe);
+    EXPECT_EQ(parse("aarch64-macos")->object_format(),         ObjectFormat::MachO);
+    EXPECT_EQ(parse("aarch64-ios")->object_format(),           ObjectFormat::MachO);
+    EXPECT_EQ(parse("wasm32-emscripten")->object_format(),     ObjectFormat::Wasm);
+}
+
+TEST(Triple, TheFormatQuestionIsNotTheOperatingSystemQuestion) {
+    // The two axes were conflated before `ObjectFormat` existed, and merging
+    // them is the mistake it replaces: a bare-metal image is ELF with no OS,
+    // and a wasm module has an OS-like layer and is not ELF.
+    auto bare = parse("riscv64-none-elf");
+    EXPECT_TRUE(bare->is_freestanding());
+    EXPECT_EQ(bare->object_format(), ObjectFormat::Elf);
+
+    auto web = parse("wasm32-emscripten");
+    EXPECT_FALSE(web->is_freestanding());
+    EXPECT_TRUE(web->is_wasm());
+}
+
+TEST(Triple, IsPeAndIsMachOReadTheSingleAnswer) {
+    EXPECT_TRUE (parse("x86_64-windows-gnu")->is_pe());
+    EXPECT_FALSE(parse("x86_64-windows-gnu")->is_mach_o());
+    EXPECT_TRUE (parse("aarch64-ios")->is_mach_o());
+    EXPECT_FALSE(parse("aarch64-ios")->is_pe());
+    // The row that used to answer this by `os == "windows"` and would have
+    // answered ELF for wasm.
+    EXPECT_FALSE(parse("wasm32-emscripten")->is_pe());
+    EXPECT_FALSE(parse("wasm32-emscripten")->is_mach_o());
+}
+
+TEST(Triple, AndroidIsAnEnvOnALinuxOs) {
+    auto t = parse("aarch64-linux-android");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->arch, "aarch64");
+    // THE PLACEMENT IS THE MODELLING DECISION. The kernel is Linux, so ELF,
+    // the `unix` family and `nasm -f elf64` are all already right; an
+    // `os = "android"` would have made every one of them wrong by default.
+    EXPECT_EQ(t->os,  "linux");
+    EXPECT_EQ(t->env, "android");
+    EXPECT_TRUE(t->is_android());
+    EXPECT_EQ(t->family(), "unix");
+    EXPECT_EQ(t->str(), "aarch64-linux-android");
+    EXPECT_EQ(t->llvm_triple(), "aarch64-unknown-linux-android");
+
+    // `androideabi` is the 32-bit ARM spelling of the same env: the EABI half
+    // is the calling convention, which the arch segment already carries.
+    auto eabi = parse("armv7a-linux-androideabi");
+    ASSERT_TRUE(eabi.has_value());
+    EXPECT_EQ(eabi->env, "android");
+
+    // The env fill must not reach an Android request. `x86_64-linux` is still
+    // `gnu`; `x86_64-linux-android` is not.
+    EXPECT_EQ(parse("x86_64-linux")->env, "gnu");
+    EXPECT_EQ(parse("x86_64-linux-android")->env, "android");
+}
+
+TEST(Triple, IosIsAppleWithoutBeingMacos) {
+    auto t = parse("aarch64-ios");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->os, "ios");
+    EXPECT_TRUE(t->env.empty());
+    EXPECT_EQ(t->family(), "unix");
+    EXPECT_EQ(t->str(), "aarch64-ios");
+    // Apple's own spelling of the architecture, as the macOS branch already
+    // produces. No deployment target is baked in: that flag belongs to the
+    // layer that owns the SDK, and a default here would be a second answer.
+    EXPECT_EQ(t->llvm_triple(), "arm64-apple-ios");
+
+    // A SITE THAT MEANS "APPLE" AND ASKS "macOS" GETS iOS WRONG IN THE
+    // DIRECTION THAT STILL LINKS, which is why the predicate exists.
+    EXPECT_TRUE(parse("aarch64-macos")->is_apple());
+    EXPECT_TRUE(parse("aarch64-ios")->is_apple());
+    EXPECT_FALSE(parse("aarch64-linux-musl")->is_apple());
+
+    // An effective triple carries the deployment target on this segment.
+    auto eff = parse("arm64-apple-ios17.0");
+    ASSERT_TRUE(eff.has_value());
+    EXPECT_EQ(eff->os, "ios");
+}
+
+TEST(Triple, EmscriptenIsAnOsSegmentAndNotAnEnv) {
+    auto t = parse("wasm32-emscripten");
+    ASSERT_TRUE(t.has_value());
+    EXPECT_EQ(t->arch, "wasm32");
+    // It names the platform layer a module is compiled against -- the POSIX
+    // emulation, the filesystem shim, the main loop -- which is the kind of
+    // thing `linux` names and not the kind of thing `musl` names.
+    EXPECT_EQ(t->os, "emscripten");
+    EXPECT_TRUE(t->env.empty());
+    EXPECT_EQ(t->str(), "wasm32-emscripten");
+    EXPECT_EQ(t->llvm_triple(), "wasm32-unknown-emscripten");
+    // `unix` on the test the predicate actually applies -- what API surface a
+    // source may assume -- rather than on a claim about wasm.
+    EXPECT_EQ(t->family(), "unix");
+    // NASM is x86-family by construction and must decline rather than choose.
+    EXPECT_FALSE(t->nasm_format().has_value());
+}
+
+TEST(Triple, TheThreePlatformsAreRegisteredAndPlanned) {
+    // A row here is what every layer above waits on: the `.apk` step, the
+    // `.app` step, the `.html`+`.wasm` step, the runner and the signing all
+    // attach to a triple, and a package cannot add one.
+    //
+    // `planned` is a REFUSAL and not a gap -- the tier gate answers
+    // `tier-planned` naming the row, rather than `unknown target`, which would
+    // be false, or a build that resolves and produces nothing, which is worse.
+    for (auto name : {"aarch64-linux-android", "x86_64-linux-android",
+                      "aarch64-ios", "wasm32-emscripten"}) {
+        auto t = parse(name);
+        ASSERT_TRUE(t.has_value()) << name;
+        EXPECT_EQ(t->str(), name);
+        auto* info = find_known_target(*t);
+        ASSERT_NE(info, nullptr) << name;
+        EXPECT_EQ(info->tier, "planned") << name;
+        // No pin and no sysroot: what each row still needs is a PAYLOAD, and
+        // naming a compiler that cannot serve the target would be a claim the
+        // row cannot keep.
+        EXPECT_TRUE(info->pin.empty()) << name;
+        EXPECT_TRUE(info->sysroot.empty()) << name;
+    }
+}
+
+TEST(Triple, TheCanonicalSpellingIsNotSEARCHABLEForAVENDORNAME) {
+    // WHY A SUBSTRING TEST ON THE CANONICAL TRIPLE IS WRONG, stated as a fact
+    // about the vocabulary rather than as a comment somewhere else.
+    //
+    // Two sites derived the object format by looking for "apple" / "darwin" /
+    // "windows" / "mingw" in `plan.toolchain.targetTriple`. That string is
+    // mcpp's CANONICAL spelling, and `aarch64-macos` contains none of those
+    // words -- so an explicit `--target aarch64-macos`, a `verified` row, was
+    // recorded and linked as ELF. A NATIVE macOS build was right by a
+    // different branch (an empty triple), which is why the two paths through
+    // one function disagreed and only the exercised one was correct.
+    //
+    // The words appear in the LLVM spelling, which is a different string and
+    // the reason the mistake is easy to make:
+    //
+    //     aarch64-macos  ->  arm64-apple-macos14.0
+    //     ^ the identity     ^ what clang is given
+    for (auto name : {"aarch64-macos", "x86_64-macos", "aarch64-ios"}) {
+        auto t = parse(name);
+        ASSERT_TRUE(t.has_value()) << name;
+        const std::string canonical = t->str();
+        EXPECT_EQ(canonical.find("apple"),  std::string::npos) << canonical;
+        EXPECT_EQ(canonical.find("darwin"), std::string::npos) << canonical;
+        // And the format is right anyway, because it is asked of the fields.
+        EXPECT_EQ(t->object_format(), ObjectFormat::MachO) << canonical;
+        // The LLVM spelling is where the vendor name lives.
+        EXPECT_NE(t->llvm_triple().find("apple"), std::string::npos)
+            << t->llvm_triple();
+    }
+    // The one family the substring test got right, and only by luck: the
+    // canonical spelling happens to carry the OS name.
+    EXPECT_NE(std::string(parse("x86_64-windows-gnu")->str()).find("windows"),
+              std::string::npos);
+}
+
+TEST(Triple, EveryKnownRowHasAnObjectFormatAndNoneFallsThrough) {
+    // THE DENOMINATOR IS THE TABLE. A row added without an answer here would
+    // otherwise be covered by a test whose name says every row is -- and the
+    // answer it would get is ELF, because ELF is what every `else` branch in
+    // the tree assumes.
+    std::size_t elf = 0, macho = 0, pe = 0, wasm = 0;
+    for (auto const& row : known_targets()) {
+        auto t = parse(row.canonical);
+        ASSERT_TRUE(t.has_value()) << row.canonical;
+        EXPECT_EQ(t->str(), row.canonical) << "a row that is not its own canonical form";
+        switch (t->object_format()) {
+            case ObjectFormat::Elf:   ++elf;   break;
+            case ObjectFormat::MachO: ++macho; break;
+            case ObjectFormat::Pe:    ++pe;    break;
+            case ObjectFormat::Wasm:  ++wasm;  break;
+        }
+    }
+    // Each format has at least one row, which is what makes the axis worth
+    // having: a fourth value with no row would be an enum nothing produces.
+    EXPECT_GT(elf, 0u);
+    EXPECT_GT(macho, 0u);
+    EXPECT_GT(pe, 0u);
+    EXPECT_EQ(wasm, 1u) << "wasm32-emscripten is the only wasm row today";
+    EXPECT_EQ(elf + macho + pe + wasm, known_targets().size());
+}

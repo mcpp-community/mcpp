@@ -645,6 +645,13 @@ TEST(Distribution, FormatIsTakenFromTheTargetAndNotTheFallback) {
     for (auto fb : {dist::Format::Elf, dist::Format::MachO, dist::Format::Pe}) {
         EXPECT_EQ(dist::format_for("aarch64-macos", fb),      dist::Format::MachO);
         EXPECT_EQ(dist::format_for("x86_64-macos", fb),       dist::Format::MachO);
+        // iOS shares macOS's Mach-O format. Before `format_for` asked
+        // `is_mach_o()` instead of `os == "macos"`, this triple matched none
+        // of the branches inside the parsed-triple block and fell through to
+        // `fb` itself -- so the assertion below would have failed for two of
+        // the three fallbacks in this loop, the exact "decided by the
+        // machine doing the building" defect this test exists to catch.
+        EXPECT_EQ(dist::format_for("aarch64-ios", fb),        dist::Format::MachO);
         EXPECT_EQ(dist::format_for("x86_64-windows-gnu", fb), dist::Format::Pe);
         EXPECT_EQ(dist::format_for("x86_64-linux-gnu", fb),   dist::Format::Elf);
         EXPECT_EQ(dist::format_for("aarch64-linux-musl", fb), dist::Format::Elf);

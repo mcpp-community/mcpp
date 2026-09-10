@@ -301,6 +301,61 @@ that declares the edge under another key can supply it, and refuses with a
 message naming what it looked for rather than running a command with an empty
 path.
 
+## Authoring a distribution member (mcpp 2026.9.11.1+)
+
+A `dist-*` member is neither a rule nor a tool. It does not compile a
+translation unit and it does not do its work while the build program runs: it
+consumes **link outputs** and produces something a user installs — an `.msi`, a
+`.deb`, an AppImage, a signed `.app`. The mechanism is an `artifact` action and
+`mcpp pack --format <name>`, documented in
+[30 — Producing a distributable](30-build-mcpp.md#producing-a-distributable-pack_format--stage_dir-20269111).
+
+Everything in this chapter applies unchanged. Six things bind harder here, and
+each is a mistake this category makes and a rule does not.
+
+**Declare unconditionally, submit conditionally.** `provides_pack_format` is
+what the engine reads to answer "which formats does this graph provide", on a
+build that asked for none. A member that declares only when asked works for its
+author, who always passes their own format, and makes the set unknowable for
+everyone else.
+
+**Expose a plan and a submit.** A distributable is the last thing before a
+user's hands, so it is the most likely part of a build to need a
+project-specific edit: a different compression level, one extra file, a second
+signature. `generate_all(opt)` being exactly `submit(plan_all(opt))` is what
+keeps such an edit from becoming a reimplementation of the member.
+
+**Name the input; do not harvest a directory.** A path that resolves to nothing
+is silent, and a named input that is missing is an error. Measured: a WiX action
+that bound a directory and harvested it produced a **valid, empty, 52 KB
+installer with no diagnostic** when the path resolved to nothing on Windows.
+`${mcpp.target_file:<name>}` is the mechanism — a build program is told neither
+the triple nor the fingerprint, and an unknown target name is refused rather
+than expanded to an empty path.
+
+**Assert a floor on the member's own output, on the success path.** Where a
+member can tell that its result is empty or implausible, it must say so through
+`mcpp::warning`, because stderr on a successful build is discarded. This is the
+same failure the paragraph above measured, caught one layer later.
+
+**Declare the tool where it will be looked up.** `xpkg_dir` answers from
+`MCPP_XPKG_*_DIR`, which mcpp sets for the package *being built*. A
+dependency's declaration provisions the payload without making it visible to a
+consumer's build program, so a member that runs a payload tool declares it
+itself — and says so when the lookup returns empty, rather than pointing at a
+manifest the reader does not own.
+
+**A build must not reach the network, and a wrapped tool may.** Measured on
+`appimagetool` 1.9.1: it downloads its type-2 runtime stub from a GitHub
+release on every invocation unless `--runtime-file` names a local copy. A member
+that wraps such a tool has to supply the file from its declared payload.
+Install time is when a download is legitimate; build time is not, and a build
+that fetches is neither reproducible nor usable offline.
+
+**One `(name, version)` names one payload.** A member that wraps a signing or
+packaging tool inherits that tool's compatibility surface, so versioning in
+lock-step with the wrapped tool is legitimate and says something true.
+
 ## Current limitations
 
 - A rule feature that is in the package's own `[features] default` does not

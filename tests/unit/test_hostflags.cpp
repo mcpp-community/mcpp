@@ -342,6 +342,18 @@ TEST(GraphRuntimeFlags, MachOTakesEmulatedTlsAndHiddenVisibilityButNotDwarf) {
     EXPECT_TRUE(has(f, "-fvisibility-inlines-hidden"));
 }
 
+// iOS shares macOS's object format (Mach-O, ld64), so it must share this
+// exact set of flags. Before `is_mach_o()` replaced `os == "macos"` here, an
+// iOS triple matched neither the PE nor the macOS branch and this function
+// silently returned no flags at all for it.
+TEST(GraphRuntimeFlags, IosTakesTheSameFlagsAsMacOS) {
+    auto f = mcpp::toolchain::graph_runtime_compile_flags(graph_tc("aarch64-ios"));
+    EXPECT_FALSE(has(f, "-fdwarf-exceptions"));
+    EXPECT_TRUE(has(f, "-femulated-tls"));
+    EXPECT_TRUE(has(f, "-fvisibility=hidden"));
+    EXPECT_TRUE(has(f, "-fvisibility-inlines-hidden"));
+}
+
 // ELF takes NONE of them, and that is a decision rather than an omission.
 // There a `thread_local` is a fixed offset from the thread pointer, which the
 // C library establishes itself; adding the flag would work, cost an

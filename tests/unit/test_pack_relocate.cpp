@@ -325,6 +325,8 @@ TEST(PackStrip, WhetherStrippingAppliesIsAskedOfTheTargetNotTheCompiler) {
     EXPECT_FALSE(mcpp::pack::debug_info_is_in_band("x86_64-windows-msvc"));
     EXPECT_FALSE(mcpp::pack::debug_info_is_in_band("aarch64-macos"));
     EXPECT_FALSE(mcpp::pack::debug_info_is_in_band("x86_64-macos"));
+    // iOS carries the same Mach-O debug map + out-of-band .dSYM as macOS.
+    EXPECT_FALSE(mcpp::pack::debug_info_is_in_band("aarch64-ios"));
     // Segment-wise, not substring: mcpp has been bitten by a triple predicate
     // that answered on a substring before.
     EXPECT_TRUE(mcpp::pack::debug_info_is_in_band("macos64-linux-gnu"));

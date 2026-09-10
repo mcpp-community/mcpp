@@ -581,8 +581,14 @@ int run(int argc, char** argv) {
                 .help("system | vendored (default) | self-contained | static"))
             .option(cl::Option("target").takes_value().multiple()
                 .help("Triple, e.g. x86_64-linux-musl (repeatable: one leg per triple)"))
+            // "plus any format the resolved graph provides", because the
+            // values are no longer a fixed list. A package declares one with
+            // `mcpp::provides_pack_format` and `--format <name>` dispatches to
+            // it; an unknown value names what IS available rather than a
+            // constant, so the help text does not have to enumerate them.
             .option(cl::Option("format").takes_value()
-                .help("tar (default; .zip for a Windows target) | dir"))
+                .help("tar (default; .zip for a Windows target) | dir | any "
+                      "format the resolved graph provides (e.g. appimage, msi)"))
             .option(cl::Option("output").short_name('o').takes_value()
                 .help("Override output path"))
             // Packaging builds RELEASE by default — the artifact leaves this

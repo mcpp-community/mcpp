@@ -50,11 +50,33 @@ export namespace mcpp::pack {
 
 enum class Mode { None, Static, BundleProject, BundleAll };
 
-enum class Format { Tar, Dir };
+// WHAT SHAPE THE OUTPUT TAKES, and the third value is the one that is not a
+// shape the engine knows.
+//
+// `tar` and `dir` answer the same question `msi` and `appimage` answer, so they
+// belong on one axis -- which is why this is a wider set of values for one flag
+// rather than a second flag. `Dispatched` carries a name the engine has never
+// heard: `mcpp pack --format appimage` finds the provider among the resolved
+// dependencies and hands it the staged tree, exactly as `--target` reaches a
+// triple the engine did not have to know individually.
+//
+// The engine keeps `Tar` and `Dir` because an archive that extracts and runs is
+// universal in the only sense that matters here: it needs no knowledge of
+// anyone else's release. dpkg's control fields, AppImage's runtime, WiX's
+// schema and Apple's notarisation each couple an mcpp release to a release mcpp
+// does not control.
+enum class Format { Tar, Dir, Dispatched };
 
 struct Options {
     Mode                            mode         = Mode::BundleProject;
     Format                          format       = Format::Tar;
+    // The `--format` value when `format == Dispatched`. Empty otherwise.
+    //
+    // Not validated by the CLI, and deliberately: the set of valid values is a
+    // property of the RESOLVED GRAPH, so the refusal has to wait until build
+    // programs have declared what they provide. It arrives before anything is
+    // compiled, which is the earliest point at which it can be exact.
+    std::string                     formatName;
     std::filesystem::path           output;        // empty = derive from manifest
     std::string                     targetTriple;  // empty = host
     // Where a dependency NAME may be resolved to a file.
@@ -1149,6 +1171,29 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
         // it and nothing has modified either one at this point (patchelf runs
         // further down). What changes is only which directory `$ORIGIN`
         // expands to while the loader is looking.
+        //
+        // A NON-ELF ARTIFACT REACHING THIS POINT ASSUMED ELF BY EXCLUSION.
+        // PE and Mach-O are refused by name above `run()`'s `#else`; nothing
+        // between there and here asks what is LEFT actually is ELF, because
+        // ELF used to be the only format left once those two were excluded.
+        // wasm32-emscripten is the first target where that assumption is
+        // false: `binfmt::identify` reports `Format::Unknown` for a `.wasm`
+        // module (it carries none of the three magics), and `ldd_parse`
+        // below runs the file through the same LD_TRACE_LOADED_OBJECTS
+        // mechanism the Mach-O branch above refuses by name rather than
+        // risk — on a host where `.wasm` is registered in `binfmt_misc`,
+        // that does not fail, it RUNS the module.
+        if (auto fmt = mcpp::pack::binfmt::identify(plan.builtBinary).format;
+            fmt != mcpp::pack::binfmt::Format::Elf) {
+            return std::unexpected(Error{std::format(
+                "cannot package the {} artifact '{}' yet.\n"
+                "       Its dependency closure is resolved by running the "
+                "artifact under its own\n"
+                "       dynamic linker, and this file is neither ELF, PE nor "
+                "Mach-O -- there is no\n"
+                "       such linker to ask.",
+                mcpp::pack::binfmt::format_name(fmt), plan.binaryName)});
+        }
         auto deps = ldd_parse(plan.builtBinary);
         if (!deps) return std::unexpected(Error{std::format(
             "ldd failed on {}: {}", plan.builtBinary.string(), deps.error())});

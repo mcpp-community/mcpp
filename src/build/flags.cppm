@@ -691,6 +691,40 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     const auto linkIntentFlavor = [&] {
         if (isMingwTc) return LinkIntentFlavor::PeGnu;
         if (isMsvcDialect) return LinkIntentFlavor::PeMsvc;
+        // THE OBJECT FORMAT IS ASKED OF THE PARSED TRIPLE, AND THE SUBSTRING
+        // TEST BELOW IS NOW ONLY THE ESCAPE HATCH.
+        //
+        // `plan.toolchain.targetTriple` is mcpp's CANONICAL spelling, and
+        // `aarch64-macos` contains neither "apple" nor "darwin" -- so an
+        // explicit `--target aarch64-macos`, a verified row, fell through to
+        // `Elf`. Only a NATIVE macOS build was right, and by a different
+        // branch: an empty triple reaching the `needs_explicit_libcxx` rescue
+        // below. That is why nothing caught it -- the two paths through this
+        // function disagreed and only one of them was exercised.
+        //
+        // The substring test is kept for a triple `parse` REJECTS, which is
+        // the `[target.<triple>]` escape hatch: an author may name a spelling
+        // outside the canonical vocabulary, and it is then an LLVM-shaped
+        // string where "apple" and "windows" do appear.
+        if (auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple)) {
+            switch (t->object_format()) {
+                case mcpp::toolchain::triple::ObjectFormat::MachO:
+                    return LinkIntentFlavor::MachO;
+                case mcpp::toolchain::triple::ObjectFormat::Pe:
+                    return LinkIntentFlavor::PeGnu;
+                case mcpp::toolchain::triple::ObjectFormat::Wasm:
+                    // No `LinkIntentFlavor::Wasm` exists, and inventing one
+                    // here would be a link-contract decision rather than a
+                    // format question -- what `link_lib` and a search path
+                    // even mean for an Emscripten link is the open half of
+                    // #597. `Elf` is the wrong answer and is the one this
+                    // returns; it is named here so the gap is visible rather
+                    // than reached by falling off the end of a switch.
+                    return LinkIntentFlavor::Elf;
+                case mcpp::toolchain::triple::ObjectFormat::Elf:
+                    return LinkIntentFlavor::Elf;
+            }
+        }
         auto triple = plan.toolchain.targetTriple;
         std::ranges::transform(triple, triple.begin(),
             [](unsigned char c) { return std::tolower(c); });

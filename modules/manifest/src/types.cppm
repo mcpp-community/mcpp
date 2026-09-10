@@ -385,6 +385,23 @@ struct BuildAction {
     // two are matched against each other.
     std::string                        packageName;
     Role                               role = Role::Source;
+    // Set by the engine, never by the build program: this action's command or
+    // inputs named `${mcpp.stage_dir}`.
+    //
+    // ITS ONE JOB IS THE IMPLICIT DEPENDENCY. An action that names the staged
+    // tree gains an edge to that tree's manifest, so it is dirty when the
+    // staged SET changes and not only when a link output does. The dependency
+    // is implied by the use, so a member author cannot forget it.
+    //
+    // IT IS NOT HOW `mcpp pack --format <name>` DECIDES WHICH ACTION IS THE
+    // DISTRIBUTABLE, and briefly was. Not every format consumes the closure: an
+    // `.msi` built from ONE NAMED PROGRAM takes `${mcpp.target_file:<name>}`
+    // and never looks at the tree -- which is the shape the guidance
+    // recommends, after a bind path that resolved to nothing produced a valid,
+    // empty, 52 KB installer. So the member that followed the guidance was the
+    // member that check refused. The dispatch asks instead which artifact
+    // actions the REQUEST INTRODUCED; see mcpp.pack.pipeline.
+    bool                               consumesStageDir = false;
     std::vector<std::string>           inputs;    // absolute or package-relative
     std::vector<std::string>           outputs;   // ditto; declared, see INV-D
     // Object only: which link units receive the outputs. Empty = every LINKED
@@ -693,6 +710,17 @@ struct BuildConfig : BuildInputs {
     // (`mcpp:action=`). Empty for every package that does not use one, so an
     // ordinary build is untouched.
     std::vector<BuildAction>            actions;
+    // Distribution formats this package's build program declared it provides
+    // (`mcpp:pack-format=`). Empty for every package that ships no such member,
+    // so an ordinary build is untouched.
+    //
+    // THE ENGINE HOLDS THE DISPATCH AND NOT THE FORMAT. `mcpp pack --format
+    // <name>` looks the name up in the union of these lists, exactly as
+    // `--target` reaches a triple the engine did not have to know
+    // individually. `.deb`'s control fields, WiX's schema and Apple's
+    // notarisation each couple a release to a release mcpp does not control,
+    // and a name here is the whole of what the engine learns.
+    std::vector<std::string>            packFormats;
     bool                                staticStdlib = true;
     // #336 — the C++ runtime DISTRIBUTION contract: what the artifact promises
     // about the machine that runs it ("self-contained" | "toolchain-coupled" |

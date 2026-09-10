@@ -124,6 +124,33 @@ inline void fact(const char* name, const char* version) {
 }
 inline void floor(const char* spec)               { std::printf("mcpp:floor=%s\n", spec); }
 
+// ── The distributable channel (mcpp 2026.9.11.1+) ───────────────────────────
+//
+// `mcpp pack --format <name>` dispatches to whichever package provides
+// `<name>`, exactly as `--target` reaches a triple the engine did not have to
+// know individually. This is how a package says which name it answers for:
+//
+//     mcpp::provides_pack_format("appimage");
+//
+// DECLARE UNCONDITIONALLY, SUBMIT CONDITIONALLY. The declaration must not be
+// gated on `pack_format()`, and the reason is that the engine has to be able to
+// answer a question the requesting build cannot: `mcpp pack --format bogus`
+// names what IS available, and `--help` says "plus any format the resolved
+// graph provides". Both read the set collected from this outlet, on a build
+// that asked for nothing. A member that declared only when asked would still
+// work for its author -- they always pass their own format -- and would make
+// the set unknowable for everyone else.
+//
+// The work itself is the other half:
+//
+//     if (std::string_view(mcpp::pack_format()) == "appimage") { ... submit ... }
+//
+// Two names are reserved for the engine's own archive shapes and are refused
+// here: `tar` and `dir`.
+inline void provides_pack_format(const char* name) {
+    std::printf("mcpp:pack-format=%s\n", name);
+}
+
 // The memory layout for a freestanding link. Reaches the CONSUMER's link line
 // (like link_lib/link_search, unlike include_dir), because the package that
 // knows a board's layout is not the package being built.
@@ -390,6 +417,53 @@ inline const char* manifest_dir()                 { return env_or("MCPP_MANIFEST
 // rule package working unchanged.
 inline const char* package_name()                 { return env_or("MCPP_PKG_NAME"); }
 inline const char* package_namespace()            { return env_or("MCPP_PKG_NAMESPACE"); }
+
+// THE REST OF `[package]`, BECAUSE A DISTRIBUTABLE CARRIES IT.
+//
+// `package_name()` above exists so a generated declaration can be named. These
+// exist for the other member of the collection: every installer format states a
+// version, and most state a description, a licence and a maintainer. A member
+// without them has to ask the PROJECT to restate values mcpp has already
+// parsed, in the member's own options, where the copy drifts from `[package]`
+// and nothing can detect that it has.
+//
+// `package_authors()` is a ';'-separated list -- not ',', because an author is
+// conventionally `Name <mail@host>` and a name may carry a comma.
+//
+// Empty under an engine older than 2026.9.11.1. A member that needs one must
+// say so itself when it is empty, naming the value it wanted: only the member
+// knows whether the absence is fatal.
+inline const char* package_version()              { return env_or("MCPP_PKG_VERSION"); }
+inline const char* package_description()          { return env_or("MCPP_PKG_DESCRIPTION"); }
+inline const char* package_license()              { return env_or("MCPP_PKG_LICENSE"); }
+inline const char* package_authors()              { return env_or("MCPP_PKG_AUTHORS"); }
+inline const char* package_repo()                 { return env_or("MCPP_PKG_REPO"); }
+
+// WHICH DISTRIBUTABLE THIS PASS WAS ASKED FOR, or "" for every ordinary build.
+//
+// The empty value is the one that carries the meaning: a member gates its
+// submission on this, so `mcpp build` has the graph it always had and a dist
+// edge exists only in the pass that wants one. See `provides_pack_format` for
+// the half that must NOT be gated.
+inline const char* pack_format()                  { return env_or("MCPP_PACK_FORMAT"); }
+
+// WHERE `mcpp pack` HAS ALREADY STAGED THE CLOSURE, absolute; "" when this
+// build is not packing.
+//
+// The tree is what `mcpp pack` computes and then, until this existed, threw
+// away: the dependency closure after the strip policy, the debug-symbol split
+// and `include`/`exclude`. It is a BUNDLE tree -- `bin/`, `lib/`, relocatable,
+// rooted anywhere -- which is what an AppImage, a `.app` and an `.msi` want as
+// it stands. A format that wants a root filesystem instead (`.deb`, `.rpm`)
+// owns the re-layout, because which directory a file belongs in is that
+// format's knowledge and not the engine's.
+//
+// READ IT HERE TO DECIDE, WRITE `${mcpp.stage_dir}` INTO THE ACTION. The
+// directory exists while this program runs, so a member enumerates it to learn
+// which of `bin/`, `lib/`, `share/` the tree actually has; the action's command
+// then names it through the placeholder, so the path in the graph and the path
+// this program read cannot disagree.
+inline const char* pack_stage_dir()               { return env_or("MCPP_PACK_STAGE_DIR"); }
 inline bool has_feature(const char* name) {
     char buf[256] = "MCPP_FEATURE_";
     unsigned long o = 13;

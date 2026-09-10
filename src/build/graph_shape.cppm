@@ -62,11 +62,22 @@ std::string_view to_string(GraphShape shape) {
 // `mcpp build --no-accel`, `mcpp build` -- the third reported "Finished in
 // 0.00s" and `mcpp run` executed the CPU variant. A graph an override chose
 // says so, and the fast paths, which run only without overrides, decline it.
+// `packFormat` records the DISTRIBUTION FORMAT this graph was generated for,
+// and empty means "none" -- an ordinary build. It rides this line for exactly
+// the reason the other two fields do, and it is the third instance of one
+// failure: `mcpp pack --format appimage` makes a build program submit an
+// artifact action a plain build must not have, and the two graphs land in the
+// same directory because the format is deliberately NOT in the fingerprint
+// (putting it there would cost a full recompile to package an already-built
+// tree). So `pack --format X` then `build` would replay a graph carrying a dist
+// edge, which is the `A then B then A` shape both other fields exist to stop.
 std::string header_line(GraphShape shape, std::string_view scheduleTag,
-                        bool accelOverridden = false) {
-    return std::format("# mcpp:graph={};schedule={};accel={}",
+                        bool accelOverridden = false,
+                        std::string_view packFormat = {}) {
+    return std::format("# mcpp:graph={};schedule={};accel={};dist={}",
                        to_string(shape), scheduleTag,
-                       accelOverridden ? "override" : "default");
+                       accelOverridden ? "override" : "default",
+                       packFormat.empty() ? std::string_view("none") : packFormat);
 }
 
 // Read the shape back. `nullopt` means "this file does not say" — a build.ninja
@@ -162,13 +173,39 @@ std::string read_accel_selection(const std::filesystem::path& ninjaPath) {
     return {};
 }
 
-// A graph the fast paths may replay: the package's own targets, and the
-// device variant the manifest names rather than one a flag chose. Both fast
-// paths run only when no override is present, so a graph an override wrote is
-// never the graph a plain build would produce.
+// The distribution format this graph was generated for, or "none". Empty when
+// the file predates the field, which callers treat as a miss for the reason
+// read_shape gives.
+std::string read_pack_format(const std::filesystem::path& ninjaPath) {
+    std::ifstream input(ninjaPath);
+    if (!input) return {};
+    std::string line;
+    for (int i = 0; i < 8 && std::getline(input, line); ++i) {
+        constexpr std::string_view prefix = "# mcpp:graph=";
+        if (!line.starts_with(prefix)) continue;
+        auto value = std::string_view(line).substr(prefix.size());
+        while (!value.empty() && (value.back() == '\r' || value.back() == ' '))
+            value.remove_suffix(1);
+        constexpr std::string_view key = ";dist=";
+        const auto at = value.find(key);
+        if (at == std::string_view::npos) return {};
+        auto rest = value.substr(at + key.size());
+        if (const auto semi = rest.find(';'); semi != std::string_view::npos)
+            rest = rest.substr(0, semi);
+        return std::string(rest);
+    }
+    return {};
+}
+
+// A graph the fast paths may replay: the package's own targets, the device
+// variant the manifest names rather than one a flag chose, and no distribution
+// edge. All three fast-path callers run only for a plain build, so a graph any
+// of the three axes was pointed at is never the graph a plain build would
+// produce.
 bool is_plain_build_graph(const std::filesystem::path& ninjaPath) {
     return read_shape(ninjaPath) == GraphShape::Normal
-        && read_accel_selection(ninjaPath) == "default";
+        && read_accel_selection(ninjaPath) == "default"
+        && read_pack_format(ninjaPath) == "none";
 }
 
 } // namespace mcpp::build

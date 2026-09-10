@@ -260,15 +260,18 @@ std::string pe_link_flag(const BuildPlan& plan, bool sep,
 std::string shared_soname_flag(const LinkUnit& lu, const BuildPlan& plan) {
     if (lu.kind != LinkUnit::SharedLibrary) return "";
     const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-    const std::string os = t ? t->os
-        : (mcpp::platform::is_macos   ? "macos"
-         : mcpp::platform::is_windows ? "windows" : "linux");
+    // WHICH FLAG SPELLING, ASKED OF THE OBJECT FORMAT DIRECTLY rather than of
+    // an `os` string: the prior `os == "macos"` fell through to the ELF
+    // branch (`-Wl,-soname`, a GNU ld/BFD flag ld64 does not accept) for
+    // iOS, whose `os` is `ios`.
+    const bool pe    = t ? t->is_pe()     : bool(mcpp::platform::is_windows);
+    const bool macho = t ? t->is_mach_o() : bool(mcpp::platform::is_macos);
     // PE records no such name: a DLL is found by the filename in the importing
     // module's import table, and there is nothing to override.
-    if (os == "windows") return "";
+    if (pe) return "";
     const std::string name = lu.soname.empty()
         ? lu.output.filename().string() : lu.soname;
-    if (os == "macos") return "-Wl,-install_name,@rpath/" + name;
+    if (macho) return "-Wl,-install_name,@rpath/" + name;
     return lu.soname.empty() ? "" : "-Wl,-soname," + lu.soname;
 }
 
@@ -291,7 +294,11 @@ std::string shared_soname_flag(const LinkUnit& lu, const BuildPlan& plan) {
 // script's syntax is not what the author wrote.
 std::string exports_file_contents(const LinkUnit& lu, std::string_view os) {
     std::string out;
-    if (os == "macos") {
+    // Which SYMBOL-TABLE SYNTAX, which is a property of the object format:
+    // iOS links with the same ld64 and the same leading-underscore Mach-O
+    // symbol table as macOS, so it takes this branch too rather than the
+    // GNU version-script one below, which ld64 does not parse.
+    if (os == "macos" || os == "ios") {
         // One symbol per line. Mach-O symbols carry a leading underscore that
         // the C++ source never writes, so it is added here -- the author names
         // the symbol, not the object format's spelling of it.
@@ -316,7 +323,10 @@ std::string exports_flag(const LinkUnit& lu, std::string_view os,
                          const std::filesystem::path& file) {
     if (lu.kind != LinkUnit::SharedLibrary || lu.exportPatterns.empty()) return "";
     if (os == "windows") return "";
-    if (os == "macos")
+    // iOS alongside macOS, matching `exports_file_contents`: same linker,
+    // same flag. Leaving it out sent an iOS shared-library link a GNU
+    // `--version-script` for a Mach-O symbol list, which ld64 rejects.
+    if (os == "macos" || os == "ios")
         return "-Wl,-exported_symbols_list," + file.generic_string();
     return "-Wl,--version-script=" + file.generic_string();
 }
@@ -626,7 +636,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     // write this one file and the fast path has to know what it is about to
     // replay. Must stay within the first few lines — see read_shape.
     append(mcpp::build::header_line(plan.graphShape, plan.scheduleTag,
-                                    plan.accelOverridden) + "\n");
+                                    plan.accelOverridden,
+                                    plan.packFormat) + "\n");
     append("ninja_required_version = 1.11\n\n");
 
     // All compile/link flags are computed once via flags.cppm.

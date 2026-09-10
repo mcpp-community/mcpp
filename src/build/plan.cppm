@@ -270,6 +270,20 @@ struct BuildPlan {
     // absolute and engine variables already substituted by the time they get
     // here, so the backend only has to spell edges.
     std::vector<mcpp::manifest::BuildAction> actions;
+    // The distribution formats the RESOLVED GRAPH provides, sorted and unique
+    // (`mcpp:pack-format=`). This is what `mcpp pack --format <name>` resolves
+    // against and what an unknown value's refusal names.
+    //
+    // Collected on EVERY prepare, including the pass that asked for no format
+    // at all -- which is the pass that has to answer "what is available". See
+    // `mcpp::provides_pack_format` for the author-facing rule that makes this
+    // possible: declare unconditionally, submit conditionally.
+    std::vector<std::string> providedPackFormats;
+    // Non-empty when this prepare is the second pass of `mcpp pack --format
+    // <name>`: the staged closure `${mcpp.stage_dir}` expanded to. Recorded on
+    // the plan so the graph header line can say which format wrote this graph,
+    // and the fast paths can decline to replay it for a plain build.
+    std::string packFormat;
     std::vector<std::filesystem::path> runtimeLibraryDirs;
     // ONLY the dependency packages' [runtime] library_dirs (not toolchain/
     // payload dirs). These are the dirs that must be baked into the produced
@@ -541,8 +555,12 @@ std::vector<std::string> shared_library_link_flags(
     const mcpp::toolchain::triple::Triple& target) {
     std::vector<std::string> flags;
     const bool pe    = n.sharedNeedsImportLib;
+    // WHICH RPATH SYNTAX, ASKED OF THE OBJECT FORMAT. `target.os == "macos"`
+    // used to answer this and missed iOS, which links with the same ld64 and
+    // wants the same `@loader_path` -- `os == "ios"` would otherwise take the
+    // ELF branch below and hand `$ORIGIN` to a linker that has no such token.
     const bool macho = target.empty() ? bool(mcpp::platform::is_macos)
-                                      : target.os == "macos";
+                                      : target.is_mach_o();
     if (pe) {
         flags.push_back(import_library_for(t, n).generic_string());
     } else {
@@ -796,9 +814,16 @@ std::vector<mcpp::platform::search::Dir> runtime_search_closure(
         auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
         return t ? *t : mcpp::toolchain::triple::Triple{};
     }();
+    // `!= "macos" && != "windows"` READ AS "ELF" BY EXCLUSION, WHICH IS THE
+    // ONE ANSWER THAT MUST NEVER BE REACHED BY EXCLUDING EVERYTHING ELSE:
+    // iOS and wasm32-emscripten both satisfy that double negative (their `os`
+    // is `ios` / `emscripten`, neither string), so this line called an iOS
+    // Mach-O and a wasm module ELF and would have handed both a DT_RPATH
+    // mechanism neither format has. Asked of `object_format()` directly, the
+    // single derivation, instead.
     const bool elfTarget = triple.empty()
         ? bool(mcpp::platform::is_linux)
-        : (triple.os != "macos" && triple.os != "windows");
+        : (triple.object_format() == mcpp::toolchain::triple::ObjectFormat::Elf);
 
     // THE ARTIFACT'S OWN DIRECTORY — `$ORIGIN` (#415).
     //
@@ -1045,10 +1070,13 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
 
     // The loader-tag contract exists only where DT_RPATH/DT_RUNPATH do.
     // Mach-O and PE have neither, so they get no flag rather than a branch in
-    // every consumer.
+    // every consumer. Asked of `object_format()`: the exclusion form this
+    // used to be (`!= "macos" && != "windows"`) answers "ELF" for any `os` it
+    // does not name, which is wrong the same way for iOS and for
+    // wasm32-emscripten — see the sibling derivation earlier in this file.
     const bool elfTarget = targetTriple.empty()
         ? bool(mcpp::platform::is_linux)
-        : (targetTriple.os != "macos" && targetTriple.os != "windows");
+        : (targetTriple.object_format() == mcpp::toolchain::triple::ObjectFormat::Elf);
     auto loader_tag_flag = [&](LinkUnit::Kind kind) -> std::string {
         if (!elfTarget) return {};
         using mcpp::build::loader::Form;

@@ -3,10 +3,21 @@ import std;
 import mcpp.build.graph_shape;
 
 // The header line build.ninja carries is what the fast paths read before any
-// plan exists. Three facts ride it -- the graph's shape, the module-edge
-// schedule, and (2026.9.5.3+) whether a `--accel` / `--no-accel` override
-// chose the device variant -- and the fast paths decline a graph that says
-// anything other than "plain build, manifest's own variant".
+// plan exists. Four facts ride it -- the graph's shape, the module-edge
+// schedule, (2026.9.5.3+) whether a `--accel` / `--no-accel` override chose
+// the device variant, and (2026.9.11.1+) which distribution format the graph
+// was generated for -- and the fast paths decline a graph that says anything
+// other than "plain build, manifest's own variant, no distribution edge".
+//
+// THE FOURTH FIELD IS VERIFIED HERE AND NOT ONLY END TO END, deliberately.
+// `mcpp pack --format <name>` prepares twice and the second pass writes its
+// graph into the SAME fingerprint directory a plain build uses, because the
+// format is not in the fingerprint. Measured on 2026-09-11: a plain build
+// after that pass regenerates the graph even with this field ignored, so some
+// earlier freshness condition already declines -- which means an end-to-end
+// assertion would pass whether or not the field works, and would keep passing
+// if the field were deleted. A read-side invariant only has to hold once
+// (see the module header); this is where it is held.
 
 namespace {
 
@@ -26,11 +37,16 @@ std::filesystem::path write_graph(const std::string& first) {
 
 } // namespace
 
-TEST(GraphShape, TheHeaderNamesShapeScheduleAndSelection) {
+TEST(GraphShape, TheHeaderNamesShapeScheduleSelectionAndFormat) {
     EXPECT_EQ(mcpp::build::header_line(mcpp::build::GraphShape::Normal, "none", false),
-              "# mcpp:graph=normal;schedule=none;accel=default");
+              "# mcpp:graph=normal;schedule=none;accel=default;dist=none");
     EXPECT_EQ(mcpp::build::header_line(mcpp::build::GraphShape::WithTests, "two-phase", true),
-              "# mcpp:graph=test;schedule=two-phase;accel=override");
+              "# mcpp:graph=test;schedule=two-phase;accel=override;dist=none");
+    // An empty format reads as "none" rather than as an empty field: the value
+    // has to be a word, because `read_pack_format` returning "" already means
+    // "this file predates the field", and the two must not collide.
+    EXPECT_EQ(mcpp::build::header_line(mcpp::build::GraphShape::Normal, "none", false, "appimage"),
+              "# mcpp:graph=normal;schedule=none;accel=default;dist=appimage");
 }
 
 TEST(GraphShape, OnlyAPlainGraphWithTheManifestsVariantIsReplayed) {
@@ -40,6 +56,19 @@ TEST(GraphShape, OnlyAPlainGraphWithTheManifestsVariantIsReplayed) {
     EXPECT_FALSE(is_plain_build_graph(write_graph(header_line(GraphShape::Normal, "none", true))));
     // The test-shaped graph was already refused.
     EXPECT_FALSE(is_plain_build_graph(write_graph(header_line(GraphShape::WithTests, "none", false))));
+    // A DISTRIBUTION EDGE IS NOT PART OF A PLAIN BUILD. `mcpp pack --format
+    // appimage` makes a build program submit an artifact action consuming the
+    // staged tree; replaying that graph for a plain build would produce a
+    // distributable as a side effect of `mcpp build`, from a staged tree that
+    // is no longer guaranteed to describe this build.
+    EXPECT_FALSE(is_plain_build_graph(
+        write_graph(header_line(GraphShape::Normal, "none", false, "appimage"))));
+    EXPECT_EQ(read_pack_format(
+                  write_graph(header_line(GraphShape::Normal, "none", false, "appimage"))),
+              "appimage");
+    EXPECT_EQ(read_pack_format(
+                  write_graph(header_line(GraphShape::Normal, "none", false))),
+              "none");
 }
 
 TEST(GraphShape, AGraphThatPredatesTheFieldIsAMiss) {
@@ -50,5 +79,15 @@ TEST(GraphShape, AGraphThatPredatesTheFieldIsAMiss) {
     auto p = write_graph("# mcpp:graph=normal;schedule=none");
     EXPECT_EQ(read_shape(p), GraphShape::Normal);
     EXPECT_EQ(read_accel_selection(p), "");
+    EXPECT_EQ(read_pack_format(p), "");
     EXPECT_FALSE(is_plain_build_graph(p));
+
+    // Written by a 2026.9.10.2 mcpp: shape, schedule and selection, no
+    // distribution field. Same rule one field later -- absent is a miss, and
+    // must not be read as "none", or the very first build after an upgrade
+    // would replay a graph this binary cannot describe.
+    auto q = write_graph("# mcpp:graph=normal;schedule=none;accel=default");
+    EXPECT_EQ(read_accel_selection(q), "default");
+    EXPECT_EQ(read_pack_format(q), "");
+    EXPECT_FALSE(is_plain_build_graph(q));
 }

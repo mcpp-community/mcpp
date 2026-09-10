@@ -32,18 +32,24 @@ C 库。选中 `x86_64-linux-musl` 就是选中 musl-gcc 载荷,选中
 
 | 段 | 内容 | 例 |
 |---|---|---|
-| `arch` | 指令集 | `x86_64`、`aarch64`、`riscv64` |
-| `os` | 操作系统,或 `none` | `linux`、`windows`、`macos`、`none` |
-| `env` | 见下 —— 它在每个平台上是不同的轴 | `gnu`、`musl`、`msvc`、`elf` |
+| `arch` | 指令集 | `x86_64`、`aarch64`、`riscv64`、`wasm32` |
+| `os` | 操作系统,或 `none` | `linux`、`windows`、`macos`、`ios`、`emscripten`、`none` |
+| `env` | 见下 —— 它在每个平台上是不同的轴 | `gnu`、`musl`、`msvc`、`android`、`elf` |
 
 第三段值得留意,因为它在各处命名的并不是同一类东西:
 
 | 平台 | `env` 命名 | 取值 |
 |---|---|---|
-| `linux` | **C 库** | `gnu`(glibc)、`musl` |
+| `linux` | **C 库** | `gnu`(glibc)、`musl`、`android`(bionic) |
 | `windows` | **对象 ABI** | `gnu`(Itanium C++ ABI)、`msvc`(微软的) |
 | `none` | **对象格式** | `elf` |
-| `macos` | 无;该平台不带这一段 | — |
+| `macos`、`ios`、`emscripten` | 无;该平台不带这一段 | — |
+
+`android` 是一个 **C 库**,所以它落在 `musl` 落的那个位置上,OS 段仍是 `linux`。
+这个位置就是这处建模决定的全部:内核**就是** Linux,所以 ELF、`unix` family、
+`nasm -f elf64` 全都已经是对的;而一个 `os = "android"` 会让这三样默认全错,并
+且要求在每一处站点给出一个新答案。它与 `gnu` 的差别是 bionic、加载器路径和 SDK
+—— 而这恰好就是 `env` 这一段存在的意义。
 
 在 Windows 上这一段经常被读错,因为 `gnu` 这个词暗示了一个并不在场的 C 库。
 对一份按构建期体系为 `x86_64-windows-gnu` 构建的产物实测:
@@ -58,6 +64,27 @@ C 库。选中 `x86_64-linux-musl` 就是选中 musl-gcc 载荷,选中
 compiler-rt,C 库是 musl,C++ 运行时是 libc++,平台是 openkal。`gnu` 是
 LLVM 词表里「非 MSVC 的那套 ABI」的标签,继承自 MinGW,而 clang 需要这个
 拼写来选中正确的内部工具链。mcpp 改不了它。
+
+### 对象格式是一个轴,不是一处推导
+
+一个三元组的二进制格式过去根本不是任何东西:它在每一处需要它的地方从 `os` 重新
+推导一遍。`is_pe()` 问 `os == "windows"`,产物命名再问一遍,打包器问第三遍。答案
+只有两个取值时,这是负担得起的。
+
+`wasm32` 是 mcpp 词表里第一个格式不属于那两个的目标,而第三个取值会把那些推导变成
+**在每一处这样的站点上的一次添加** —— 而漏掉的那一处不会报错。它会静默地答 ELF,
+因为 ELF 正是这棵树里每一个 `else` 分支所假设的东西。于是格式现在是一个答案:
+
+| 目标 | 格式 |
+|---|---|
+| `x86_64-linux-gnu`、`aarch64-linux-android`、`riscv64-none-elf` | ELF |
+| `aarch64-macos`、`aarch64-ios` | Mach-O |
+| `x86_64-windows-gnu`、`x86_64-windows-msvc` | PE |
+| `wasm32-emscripten` | wasm |
+
+它与「有没有一个操作系统可供链接」**不是**同一个问题。一个裸机 RISC-V 映像是 ELF
+且没有 OS;一个 wasm 模块有一层类 OS 的东西(Emscripten 的 POSIX 模拟)而不是
+ELF。把这两个轴并成一个,正是这处改动要消除的那个错误。
 
 ## 省略第三段
 
@@ -398,6 +425,10 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 | `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `aarch64-linux-android` | planned | — | planned | planned | planned | planned |
+| `x86_64-linux-android` | planned | — | planned | planned | planned | planned |
+| `aarch64-ios` | planned | — | planned | planned | planned | planned |
+| `wasm32-emscripten` | planned | — | planned | planned | planned | planned |
 
 `载荷` 这里有工具链载荷产出它 · `图` 没有载荷,但依赖可以供给系统 ·
 `系统` 在机器上被找到,不是 mcpp 装的 · `SDK` 平台自己的 ·

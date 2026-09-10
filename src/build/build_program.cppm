@@ -130,6 +130,47 @@ struct BuildProgramEnv {
     // way to ask. See hostprogram::package_name for what it replaced.
     std::string packageName;
     std::string packageNamespace;
+    // THE REST OF `[package]`, FOR THE MEMBER OF THE COLLECTION THAT NEEDS IT.
+    //
+    // A rule generates a declaration and needs the package's NAME. A member
+    // that produces a DISTRIBUTABLE needs more: every installer format carries
+    // a version, and most carry a description, a licence and a maintainer.
+    // Without these a project has to restate them in the member's options,
+    // where they can drift from `[package]` with nothing able to detect it --
+    // the second copy of a value whose first copy mcpp has already parsed.
+    //
+    // `packageAuthors` is joined with ';' rather than ',' because an author
+    // entry is conventionally `Name <mail@host>` and a name may carry a comma.
+    // Empty under an engine that predates these, which a member reads as "fall
+    // back to whatever you did before".
+    std::string packageVersion;
+    std::string packageDescription;
+    std::string packageLicense;
+    std::string packageAuthors;
+    std::string packageRepo;
+    // ── The packaging pass this build is part of (mcpp 2026.9.11.1+) ────────
+    //
+    // Empty for every ordinary build, and that is the value that carries the
+    // meaning: a member which produces a distributable SUBMITS NOTHING unless
+    // the format it provides was asked for. `mcpp build` therefore has the
+    // graph it always had, and the dist edge exists only in the pass that
+    // wants it.
+    //
+    // The value is the `--format` argument verbatim -- `tar`, `dir`, or a name
+    // a package provides. It rides the same env vector as everything else here,
+    // so `contract_hash` folds it into the build program's re-run key: the
+    // second pass re-runs exactly the programs whose answer this changes.
+    std::string packFormat;
+    // Where `mcpp pack` has ALREADY STAGED the closure, absolute. Non-empty
+    // only in the second pass, and only then because a staged tree is produced
+    // by mcpp after the link -- so a graph generated before the link cannot
+    // name a directory that does not exist yet.
+    //
+    // This is the value `${mcpp.stage_dir}` expands to. A member reads it to
+    // decide the shape of the work (which of `bin/`, `lib/`, `share/` the tree
+    // actually has) and writes the placeholder into the action, so the two
+    // never disagree.
+    std::filesystem::path packStageDir;
     // Whether this package builds C++ modules (`[language] modules`).
     //
     // Reported because a rule package that GENERATES a consumer-facing
@@ -530,6 +571,13 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     e.emplace_back("MCPP_MANIFEST_DIR", root.string());
     e.emplace_back("MCPP_PKG_NAME", env.packageName);
     e.emplace_back("MCPP_PKG_NAMESPACE", env.packageNamespace);
+    e.emplace_back("MCPP_PKG_VERSION", env.packageVersion);
+    e.emplace_back("MCPP_PKG_DESCRIPTION", env.packageDescription);
+    e.emplace_back("MCPP_PKG_LICENSE", env.packageLicense);
+    e.emplace_back("MCPP_PKG_AUTHORS", env.packageAuthors);
+    e.emplace_back("MCPP_PKG_REPO", env.packageRepo);
+    e.emplace_back("MCPP_PACK_FORMAT", env.packFormat);
+    e.emplace_back("MCPP_PACK_STAGE_DIR", env.packStageDir.string());
     std::string csv;
     for (auto const& f : env.features) {
         if (!csv.empty()) csv += ',';
