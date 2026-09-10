@@ -356,8 +356,13 @@ if uninit:
            f"— submodule(s) not checked out")
     if os.environ.get("CI"):
         print("FAIL: bench/matrix.json")
-        print(f"  {msg}; this job asks for `submodules: recursive`, so the "
-              f"check that catches a stale hub did not run")
+        print(f"  {msg} -- so the check that catches a stale `hub` did not run.")
+        print("  A job that runs the whole e2e suite needs the pinned trees: add")
+        print("    - uses: actions/checkout@v4")
+        print("      with:")
+        print("        submodules: recursive")
+        print("  to this job's checkout. Under 10 MB across the three pins, and")
+        print("  nothing here builds them.")
         raise SystemExit(1)
     print(f"  NOTE: {msg} (`git submodule update --init`)")
 PY

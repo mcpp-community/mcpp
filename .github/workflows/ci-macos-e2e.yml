@@ -28,7 +28,14 @@ jobs:
     # NOTE: no MCPP_VERBOSE — the e2e suite asserts mcpp's default quiet
     # output (tests 48/53).
     steps:
+      # `submodules: recursive` so tests/e2e/233_bench_matrix.sh can check that
+      # each `hub`/`body` in bench/matrix.json exists in the tree it names --
+      # the check reads "submodule not initialised" without them and reports
+      # nothing, which is how a stale hub path survived (#599). Under 10 MB of
+      # source across the three pins, and nothing here builds them.
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: ./.github/actions/setup-macos-llvm
 
       - name: Build mcpp from source (self-host)
