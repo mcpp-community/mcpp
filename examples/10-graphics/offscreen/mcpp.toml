@@ -28,7 +28,7 @@ plugins = { version = "0.5.2", features = ["rules-spirv"], host-module = true }
 # seam work: the CPU leg below is selected by the accelerator, and only the
 # packages are unconditional.
 [dependencies.compat]
-vulkan = "1.4.357.0"
+vulkan = "1.4.357.1"
 
 # The adapter that makes the host's own ICDs reachable from a binary running
 # under mcpp's private loader. An OS predicate, which IS allowed, and a Linux
