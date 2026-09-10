@@ -17,6 +17,7 @@ import mcpp.build.ninja;
 import mcpp.build.plan;
 import mcpp.config;
 import mcpp.fetcher.progress;
+import mcpp.manifest;
 import mcpp.pack;
 import mcpp.pack.stage_tree;
 import mcpp.pack.strip;
@@ -318,18 +319,44 @@ export int build_and_pack(Options opts, bool modeFromUser,
     // host triple, say -- is the shape where two derivations of one value agree
     // on every machine the author has and disagree on one they do not.
     if (opts.format == mcpp::pack::Format::Dispatched) {
+        // WHICH ARTIFACT ACTIONS THIS BUILD ALREADY HAD, before a format was
+        // requested. The dispatch below reports what the REQUEST introduced,
+        // and this is the other half of that subtraction.
+        std::set<std::pair<std::string, std::string>> preexistingArtifacts;
+        for (auto const& a : ctx->plan.actions)
+            if (a.role == mcpp::manifest::BuildAction::Role::Artifact)
+                preexistingArtifacts.emplace(a.packageName, a.id);
+
         ov.pack_format    = opts.formatName;
         ov.pack_stage_dir = plan->stagingRoot;
         auto distCtx = mcpp::build::prepare_build(false, false, {}, ov);
         if (!distCtx) { mcpp::ui::error(distCtx.error()); return 2; }
 
-        // WHICH ACTIONS ARE THE DISTRIBUTABLE. Only those that named
-        // `${mcpp.stage_dir}`: a codesign stamp or a size budget is also an
-        // artifact action, and reporting one as the package would be a wrong
-        // answer that looks like a right one.
+        // WHICH ACTIONS ARE THE DISTRIBUTABLE: the artifact actions the REQUEST
+        // INTRODUCED. An action present in both passes existed before anyone
+        // asked for a format -- a codesign stamp, a size budget -- and
+        // reporting one as the package would be a wrong answer that looks like
+        // a right one.
+        //
+        // THE FIRST VERSION ASKED A NARROWER QUESTION AND GOT IT WRONG. It
+        // collected only actions naming `${mcpp.stage_dir}`, on the assumption
+        // that a distributable consumes the staged closure. Not every format
+        // does: an `.msi` built from ONE named program takes
+        // `${mcpp.target_file:<name>}` and never looks at the tree, which is
+        // the shape section 6 of the design record recommends -- "name the
+        // input, do not harvest a directory", after a bind path that resolved
+        // to nothing produced a valid, empty, 52 KB installer. So the member
+        // that followed the guidance was the member the check refused, and the
+        // workaround was to name the placeholder as an unused input purely to
+        // satisfy it. Presence-in-this-pass is the property actually wanted,
+        // and it needs nothing of the member.
+        //
+        // Identity is (package, id): an id is unique within the package that
+        // declared it and nothing more.
         std::vector<std::string> distOutputs;
         for (auto const& a : distCtx->plan.actions) {
-            if (!a.consumesStageDir) continue;
+            if (a.role != mcpp::manifest::BuildAction::Role::Artifact) continue;
+            if (preexistingArtifacts.contains({a.packageName, a.id})) continue;
             for (auto const& o : a.outputs) distOutputs.push_back(o);
         }
         // DECLARED AND THEN SUBMITTED NOTHING. The half of the contract a
@@ -340,9 +367,8 @@ export int build_and_pack(Options opts, bool modeFromUser,
             mcpp::ui::error(std::format(
                 "no action claimed --format '{}'.\n"
                 "  A package declared it provides this format, and no build "
-                "program submitted an\n"
-                "  artifact action referencing ${{mcpp.stage_dir}} when it was "
-                "asked for.\n"
+                "program submitted a new\n"
+                "  `role = \"artifact\"` action when it was asked for.\n"
                 "  The provider must gate on the request and not on anything "
                 "else:\n"
                 "      mcpp::provides_pack_format(\"{}\");                     "

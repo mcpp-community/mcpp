@@ -256,4 +256,57 @@ set -e
 grep -q "no action claimed --format 'zap'" b7.log \
   || { cat b7.log; echo "FAIL: the refusal does not name the unclaimed format"; exit 1; }
 
+# ── 8. an artifact action that predates the request is not the package ─────
+# THE CRITERION IS "WHAT THE REQUEST INTRODUCED", and this is what distinguishes
+# it from "any artifact action". A codesign stamp or a size budget is also an
+# artifact action and is present whether or not a format was asked for; naming
+# one as the distributable would be a wrong answer that looks like a right one.
+#
+# It is also what an earlier revision got wrong from the other side: the check
+# collected only actions naming ${mcpp.stage_dir}, which refused a member that
+# packages ONE NAMED PROGRAM and never reads the tree -- the shape the design
+# record recommends, after a bind path that resolved to nothing produced a
+# valid, empty, 52 KB installer. So this fixture submits both shapes: an
+# ungated stamp that must be ignored, and a gated action that names no staged
+# tree at all and must still be reported.
+cd "$TMP"
+cp -r app twoshapes
+cd twoshapes
+cat > build.mcpp <<'EOF'
+import mcpp;
+#include <string>
+#include <string_view>
+int main() {
+    mcpp::provides_pack_format("zap");
+    const std::string root = mcpp::manifest_dir();
+
+    // Ungated: present in both passes, so it is not the distributable.
+    const std::string stamp = std::string(mcpp::out_dir()) + "/size.stamp";
+    mcpp::action s;
+    s.id = "size-budget"; s.role = "artifact";
+    s.arg((root + "/dist.sh").c_str()).arg("stamp").arg(root.c_str()).arg(stamp.c_str())
+     .input("${mcpp.target_file:app}").output(stamp.c_str());
+    s.submit();
+
+    if (std::string_view(mcpp::pack_format()) != "zap") return 0;
+    // Gated, and it names NO staged tree: the program arrives through
+    // ${mcpp.target_file:...} exactly as an MSI's one File row does.
+    const std::string out = std::string(mcpp::out_dir()) + "/app.zap";
+    mcpp::action a;
+    a.id = "zap"; a.role = "artifact";
+    a.arg((root + "/dist.sh").c_str()).arg("named").arg(root.c_str()).arg(out.c_str())
+     .input("${mcpp.target_file:app}").output(out.c_str());
+    a.submit();
+    return 0;
+}
+EOF
+"$MCPP" pack --format zap > b8.log 2>&1 || { cat b8.log; echo "FAIL: a member that reads no staged tree was refused"; exit 1; }
+grep -q "app.zap" b8.log \
+  || { cat b8.log; echo "FAIL: the gated action was not reported as the package"; exit 1; }
+grep -q "size.stamp" b8.log \
+  && { cat b8.log; echo "FAIL: an action predating the request was reported as the package"; exit 1; }
+# Both files exist -- the stamp was built, it was simply not the answer.
+[ -n "$(find target -name 'size.stamp' 2>/dev/null)" ] \
+  || { echo "FAIL: the ungated artifact action did not run at all"; exit 1; }
+
 echo "PASS: 638_pack_format_dispatch"

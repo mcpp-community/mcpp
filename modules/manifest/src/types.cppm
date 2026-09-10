@@ -388,12 +388,19 @@ struct BuildAction {
     // Set by the engine, never by the build program: this action's command or
     // inputs named `${mcpp.stage_dir}`.
     //
-    // It is what makes the distributable ATTRIBUTABLE. `mcpp pack --format
-    // <name>` reports the file the pass produced, and the alternative -- taking
-    // every artifact action's output -- would name a codesign stamp or a size
-    // budget alongside it. It is also the flag the dispatch checks to refuse a
-    // member that declared a format and then submitted nothing for it, which
-    // would otherwise be a pack that succeeds and produces no package.
+    // ITS ONE JOB IS THE IMPLICIT DEPENDENCY. An action that names the staged
+    // tree gains an edge to that tree's manifest, so it is dirty when the
+    // staged SET changes and not only when a link output does. The dependency
+    // is implied by the use, so a member author cannot forget it.
+    //
+    // IT IS NOT HOW `mcpp pack --format <name>` DECIDES WHICH ACTION IS THE
+    // DISTRIBUTABLE, and briefly was. Not every format consumes the closure: an
+    // `.msi` built from ONE NAMED PROGRAM takes `${mcpp.target_file:<name>}`
+    // and never looks at the tree -- which is the shape the guidance
+    // recommends, after a bind path that resolved to nothing produced a valid,
+    // empty, 52 KB installer. So the member that followed the guidance was the
+    // member that check refused. The dispatch asks instead which artifact
+    // actions the REQUEST INTRODUCED; see mcpp.pack.pipeline.
     bool                               consumesStageDir = false;
     std::vector<std::string>           inputs;    // absolute or package-relative
     std::vector<std::string>           outputs;   // ditto; declared, see INV-D

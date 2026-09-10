@@ -625,6 +625,14 @@ is that format's knowledge and not the engine's.
 `mcpp pack --format dir` writes the same tree to a path and stops, which is how
 a person inspects what a member will be handed.
 
+**`mcpp pack` reports the artifact actions the request introduced.** An action
+present whether or not a format was asked for — a codesign stamp, a size budget
+— is not the distributable, and naming one would be a wrong answer that looks
+like a right one. Nothing about the criterion is a property of the member: a
+format that packages one named program and never reads the staged tree is
+recognised exactly as one that consumes the whole closure. A format nothing
+submitted for is refused by name.
+
 **An action that names `${mcpp.stage_dir}` gains a dependency on the tree's
 manifest.** mcpp writes `<staged tree>.stage-manifest` — a sibling, never a
 member, so it does not travel inside anyone's installer — listing each staged
