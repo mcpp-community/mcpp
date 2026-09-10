@@ -651,3 +651,64 @@ TEST(Triple, TheThreePlatformsAreRegisteredAndPlanned) {
         EXPECT_TRUE(info->sysroot.empty()) << name;
     }
 }
+
+TEST(Triple, TheCanonicalSpellingIsNotSEARCHABLEForAVENDORNAME) {
+    // WHY A SUBSTRING TEST ON THE CANONICAL TRIPLE IS WRONG, stated as a fact
+    // about the vocabulary rather than as a comment somewhere else.
+    //
+    // Two sites derived the object format by looking for "apple" / "darwin" /
+    // "windows" / "mingw" in `plan.toolchain.targetTriple`. That string is
+    // mcpp's CANONICAL spelling, and `aarch64-macos` contains none of those
+    // words -- so an explicit `--target aarch64-macos`, a `verified` row, was
+    // recorded and linked as ELF. A NATIVE macOS build was right by a
+    // different branch (an empty triple), which is why the two paths through
+    // one function disagreed and only the exercised one was correct.
+    //
+    // The words appear in the LLVM spelling, which is a different string and
+    // the reason the mistake is easy to make:
+    //
+    //     aarch64-macos  ->  arm64-apple-macos14.0
+    //     ^ the identity     ^ what clang is given
+    for (auto name : {"aarch64-macos", "x86_64-macos", "aarch64-ios"}) {
+        auto t = parse(name);
+        ASSERT_TRUE(t.has_value()) << name;
+        const std::string canonical = t->str();
+        EXPECT_EQ(canonical.find("apple"),  std::string::npos) << canonical;
+        EXPECT_EQ(canonical.find("darwin"), std::string::npos) << canonical;
+        // And the format is right anyway, because it is asked of the fields.
+        EXPECT_EQ(t->object_format(), ObjectFormat::MachO) << canonical;
+        // The LLVM spelling is where the vendor name lives.
+        EXPECT_NE(t->llvm_triple().find("apple"), std::string::npos)
+            << t->llvm_triple();
+    }
+    // The one family the substring test got right, and only by luck: the
+    // canonical spelling happens to carry the OS name.
+    EXPECT_NE(std::string(parse("x86_64-windows-gnu")->str()).find("windows"),
+              std::string::npos);
+}
+
+TEST(Triple, EveryKnownRowHasAnObjectFormatAndNoneFallsThrough) {
+    // THE DENOMINATOR IS THE TABLE. A row added without an answer here would
+    // otherwise be covered by a test whose name says every row is -- and the
+    // answer it would get is ELF, because ELF is what every `else` branch in
+    // the tree assumes.
+    std::size_t elf = 0, macho = 0, pe = 0, wasm = 0;
+    for (auto const& row : known_targets()) {
+        auto t = parse(row.canonical);
+        ASSERT_TRUE(t.has_value()) << row.canonical;
+        EXPECT_EQ(t->str(), row.canonical) << "a row that is not its own canonical form";
+        switch (t->object_format()) {
+            case ObjectFormat::Elf:   ++elf;   break;
+            case ObjectFormat::MachO: ++macho; break;
+            case ObjectFormat::Pe:    ++pe;    break;
+            case ObjectFormat::Wasm:  ++wasm;  break;
+        }
+    }
+    // Each format has at least one row, which is what makes the axis worth
+    // having: a fourth value with no row would be an enum nothing produces.
+    EXPECT_GT(elf, 0u);
+    EXPECT_GT(macho, 0u);
+    EXPECT_GT(pe, 0u);
+    EXPECT_EQ(wasm, 1u) << "wasm32-emscripten is the only wasm row today";
+    EXPECT_EQ(elf + macho + pe + wasm, known_targets().size());
+}

@@ -129,9 +129,22 @@ enum class Format { Elf, MachO, Pe };
 Format format_for(std::string_view targetTriple, Format hostFallback) {
     if (auto parsed = mcpp::toolchain::triple::parse(targetTriple)) {
         if (parsed->is_pe())         return Format::Pe;
-        if (parsed->os == "macos")   return Format::MachO;
+        // `is_mach_o()`, not `os == "macos"`: the latter answered the
+        // opposite-hosts defect above for macOS and would still get iOS
+        // wrong the same way, since iOS's `os` is `ios`.
+        if (parsed->is_mach_o())     return Format::MachO;
         if (parsed->os == "linux"
             || parsed->os == "none") return Format::Elf;
+        // THIS `Format` HAS NO FOURTH MEMBER YET. A wasm32-emscripten
+        // triple parses here and falls out of every branch above (`is_pe()`
+        // and `is_mach_o()` are both false, and its `os` is `emscripten`,
+        // neither `linux` nor `none`) to the substring fallback below, which
+        // also does not name it, and then to `hostFallback` -- so today this
+        // function still answers the machine's own format for wasm rather
+        // than the target's, the same defect class its own header measured
+        // for macOS. Adding `Format::Wasm` is deferred to whoever gives this
+        // module a Mach-O-shaped mechanism for it (see `resolve`'s `switch`),
+        // not attempted here.
     }
     if (targetTriple.find("windows") != std::string_view::npos
         || targetTriple.find("mingw") != std::string_view::npos)

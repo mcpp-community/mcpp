@@ -11522,14 +11522,29 @@ prepare_build(bool print_fingerprint,
                 ctx.plan.runtimeBinding), nullptr, false);
         if (binding.is_discarded()) binding = nlohmann::json::object();
 
-        auto triple = ctx.tc.targetTriple;
-        std::ranges::transform(triple, triple.begin(),
-            [](unsigned char c) { return std::tolower(c); });
-        const bool pe = triple.find("windows") != std::string::npos
-                     || triple.find("mingw") != std::string::npos;
-        const bool macho = triple.find("darwin") != std::string::npos
-                        || triple.find("apple") != std::string::npos;
-        std::string format = pe ? "pe" : macho ? "macho" : "elf";
+        // ASKED OF THE PARSED TRIPLE, with the substring test kept only for a
+        // spelling `parse` rejects. This field is the SECOND copy of a
+        // derivation `mcpp.build.dist::format_for` already owns, and it had
+        // the same defect: mcpp's canonical `aarch64-macos` contains neither
+        // "apple" nor "darwin", so an explicit `--target aarch64-macos`
+        // recorded `"elf"` while the native build on the same machine recorded
+        // `"macho"` -- one report contradicting the other about one machine.
+        std::string format = "elf";
+        if (auto t = mcpp::toolchain::triple::parse(ctx.tc.targetTriple)) {
+            format = std::string(mcpp::toolchain::triple::to_string(t->object_format()));
+            std::ranges::transform(format, format.begin(),
+                [](unsigned char c) { return std::tolower(c); });
+            if (format == "mach-o") format = "macho";
+        } else {
+            auto triple = ctx.tc.targetTriple;
+            std::ranges::transform(triple, triple.begin(),
+                [](unsigned char c) { return std::tolower(c); });
+            const bool pe = triple.find("windows") != std::string::npos
+                         || triple.find("mingw") != std::string::npos;
+            const bool macho = triple.find("darwin") != std::string::npos
+                            || triple.find("apple") != std::string::npos;
+            format = pe ? "pe" : macho ? "macho" : "elf";
+        }
         // The ORDERED run-time search closure with provenance. Order is
         // semantics here, not presentation: it is what the loader will walk,
         // and the mutable SubOS farm sitting last is the invariant that keeps
@@ -11548,7 +11563,7 @@ prepare_build(bool print_fingerprint,
         }
         nlohmann::json search = {
             {"format", format},
-            {"link_library", pe ? "libpath" : "library_path"},
+            {"link_library", format == "pe" ? "libpath" : "library_path"},
             {"transitive_needed", format == "elf" ? "rpath_link" : "none"},
             {"runtime", format == "pe" ? "deploy"
                          : format == "macho" ? "loader_rpath" : "runpath"},

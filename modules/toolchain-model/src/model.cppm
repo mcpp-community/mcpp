@@ -497,10 +497,15 @@ std::vector<std::string> graph_runtime_compile_flags(const Toolchain& tc) {
     // defect was invisible until a second architecture was built.
     if (t->arch == "aarch64") out.emplace_back("--rtlib=compiler-rt");
     if (t->is_pe()) out.emplace_back("-fdwarf-exceptions");
-    if (t->is_pe() || t->os == "macos") out.emplace_back("-femulated-tls");
+    // OBJECT FORMAT, NOT OS: `is_mach_o()` covers iOS along with macOS, which
+    // `os == "macos"` used to miss. Both need the emulated-TLS model for the
+    // same reason PE does -- `_tlv_bootstrap` is loader-bootstrapped there
+    // exactly as `_tls_index` is on PE.
+    if (t->is_pe() || t->is_mach_o()) out.emplace_back("-femulated-tls");
     // MACH-O ONLY, AND THE REASON IS THAT WEAK-DEF IS A RUN-TIME MECHANISM
-    // THERE. See the note on this function for the measurement.
-    if (t->os == "macos") {
+    // THERE. See the note on this function for the measurement. `is_mach_o()`
+    // rather than `os == "macos"`: the mechanism is ld64's, which iOS shares.
+    if (t->is_mach_o()) {
         out.emplace_back("-fvisibility=hidden");
         out.emplace_back("-fvisibility-inlines-hidden");
     }
@@ -524,8 +529,11 @@ bool target_supports_full_static(std::string_view targetTriple, bool hostCapabil
     // false is what keeps the two mechanisms from both emitting the flag.
     if (t->is_pe()) return false;
 
-    // macOS cannot fully static-link: libSystem must stay dynamic.
-    if (t->os == "macos") return false;
+    // Mach-O cannot fully static-link: libSystem (macOS) / the Apple
+    // equivalent (iOS) must stay dynamic. `is_mach_o()`, paired with `is_pe()`
+    // above, so this reads as "for each object format" rather than leaving
+    // iOS to fall through to the `linux` line below by accident.
+    if (t->is_mach_o()) return false;
 
     // Linux ELF — glibc or musl, native or cross. This is the line that was
     // previously gated on the HOST being Linux.

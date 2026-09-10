@@ -1171,6 +1171,29 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
         // it and nothing has modified either one at this point (patchelf runs
         // further down). What changes is only which directory `$ORIGIN`
         // expands to while the loader is looking.
+        //
+        // A NON-ELF ARTIFACT REACHING THIS POINT ASSUMED ELF BY EXCLUSION.
+        // PE and Mach-O are refused by name above `run()`'s `#else`; nothing
+        // between there and here asks what is LEFT actually is ELF, because
+        // ELF used to be the only format left once those two were excluded.
+        // wasm32-emscripten is the first target where that assumption is
+        // false: `binfmt::identify` reports `Format::Unknown` for a `.wasm`
+        // module (it carries none of the three magics), and `ldd_parse`
+        // below runs the file through the same LD_TRACE_LOADED_OBJECTS
+        // mechanism the Mach-O branch above refuses by name rather than
+        // risk — on a host where `.wasm` is registered in `binfmt_misc`,
+        // that does not fail, it RUNS the module.
+        if (auto fmt = mcpp::pack::binfmt::identify(plan.builtBinary).format;
+            fmt != mcpp::pack::binfmt::Format::Elf) {
+            return std::unexpected(Error{std::format(
+                "cannot package the {} artifact '{}' yet.\n"
+                "       Its dependency closure is resolved by running the "
+                "artifact under its own\n"
+                "       dynamic linker, and this file is neither ELF, PE nor "
+                "Mach-O -- there is no\n"
+                "       such linker to ask.",
+                mcpp::pack::binfmt::format_name(fmt), plan.binaryName)});
+        }
         auto deps = ldd_parse(plan.builtBinary);
         if (!deps) return std::unexpected(Error{std::format(
             "ldd failed on {}: {}", plan.builtBinary.string(), deps.error())});

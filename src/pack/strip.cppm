@@ -166,7 +166,12 @@ bool debug_info_is_in_band(std::string_view canonicalTriple) {
         seg.push_back(canonicalTriple.substr(i, j - i));
         i = j + 1;
     }
-    if (seg.size() >= 2 && seg[1] == "macos") return false;   // debug map + .dSYM
+    // Mach-O, not "macOS": iOS carries the same debug map + out-of-band
+    // .dSYM as macOS (same ld64, same object format). This module takes a
+    // string rather than a `Triple` on purpose (see the note on
+    // `debug_info_is_in_band` above), so the grouping `is_mach_o()` states is
+    // spelled out here instead of asked of it.
+    if (seg.size() >= 2 && (seg[1] == "macos" || seg[1] == "ios")) return false;
     if (seg.size() >= 3 && seg[2] == "msvc")  return false;   // separate .pdb
     return true;
 }
