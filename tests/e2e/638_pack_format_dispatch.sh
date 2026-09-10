@@ -130,6 +130,20 @@ grep -q "available in this build: tar, dir, zap" b2.log \
 # Nothing was compiled to find that out.
 grep -q "Compiling app" b2.log \
   && { cat b2.log; echo "FAIL: the refusal arrived after a compile"; exit 1; }
+# AND NOTHING REACHED STDOUT. This is the path a client hits when it probes an
+# mcpp for a capability, so the machine-output contract
+# (202_machine_output_contract.sh) requires an empty stdout, a non-empty stderr
+# and exit 2. It is asserted here as well because the tension is local to this
+# feature: the valid set is a property of the resolved graph, so the refusal
+# cannot be decided until prepare has run -- and prepare narrates what it
+# resolves. Deciding it later is what broke the contract once.
+set +e
+so=$("$MCPP" pack --format bogus 2>/dev/null); rc=$?
+se=$("$MCPP" pack --format bogus 2>&1 >/dev/null)
+set -e
+[ -z "$so" ] || { echo "FAIL: the refusal wrote to stdout: $(echo "$so" | head -1)"; exit 1; }
+[ -n "$se" ] || { echo "FAIL: the refusal said nothing on stderr"; exit 1; }
+[ "$rc" = 2 ] || { echo "FAIL: the refusal exited $rc, expected 2"; exit 1; }
 
 # ── 3. the dispatched format produces a file, and it saw the staged tree ───
 "$MCPP" pack --format zap > b3.log 2>&1 || { cat b3.log; echo "FAIL: pack --format zap failed"; exit 1; }

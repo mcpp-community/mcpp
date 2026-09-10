@@ -57,8 +57,24 @@ export int build_and_pack(Options opts, bool modeFromUser,
     ov.profile          = opts.profile;
     ov.profile_fallback = "release";
 
+    // QUIET FOR A DISPATCHED FORMAT, AND ONLY UNTIL THE VALUE IS VALIDATED.
+    //
+    // `mcpp pack --format bogus` must write NOTHING to stdout and exit 2 --
+    // the machine-output contract, asserted by
+    // tests/e2e/202_machine_output_contract.sh, because this is the path a
+    // client hits when it probes an mcpp for a capability. The set of valid
+    // values is a property of the resolved graph, so the refusal cannot be
+    // decided until prepare has run, and prepare narrates what it resolves.
+    //
+    // Nothing is lost when the value IS valid: the dispatch pass prepares a
+    // second time and prints the same lines, so a successful
+    // `pack --format <name>` narrates once rather than twice.
+    const bool quietUntilValidated =
+        opts.format == mcpp::pack::Format::Dispatched && !mcpp::ui::is_quiet();
+    if (quietUntilValidated) mcpp::ui::set_quiet(true);
     auto ctx = mcpp::build::prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
                              /*extraTargets=*/{}, ov);
+    if (quietUntilValidated) mcpp::ui::set_quiet(false);
     if (!ctx) {
         mcpp::ui::error(ctx.error());
         return 2;
@@ -91,7 +107,11 @@ export int build_and_pack(Options opts, bool modeFromUser,
         // overrides object left behind here would make that pass differ from
         // this build in a way nothing states.
         ov.target_triple = "x86_64-linux-musl";
+        // Quiet on the same grounds as the first prepare: this one also runs
+        // before `--format` has been validated.
+        if (quietUntilValidated) mcpp::ui::set_quiet(true);
         auto ctx2 = mcpp::build::prepare_build(false, false, {}, ov);
+        if (quietUntilValidated) mcpp::ui::set_quiet(false);
         if (!ctx2) { mcpp::ui::error(ctx2.error()); return 2; }
         ctx = std::move(ctx2);
     }
