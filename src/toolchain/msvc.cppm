@@ -46,15 +46,46 @@ std::optional<std::filesystem::path> find_std_module_source();
 // Find cl.exe (for future MSVC toolchain support).
 std::optional<std::filesystem::path> find_cl();
 
-// Lowest -std= level MSVC STL builds the `std` module at, for a toolchain
-// whose `version` is a cl banner version ("19.44.35211").
+// Lowest -std= level MSVC STL builds the `std` module at.
 //
 // microsoft/STL#3945 ("Supporting `import std;` in C++20") was fixed by
 // STL#3977 (merged 2023-08-31) — the C++20 block was a policy choice with no
-// technical reason behind it. That first ships in VS 2022 17.8, i.e. cl 19.38;
-// older STLs still refuse and would fail inside std.ixx, so they answer 23 and
-// get an actionable diagnostic from the caller instead. This is also what keeps
-// the level gate reachable: every other provider answers 20.
+// technical reason behind it. That first ships in VS 2022 17.8, i.e. cl 19.38
+// and toolset 14.38; older STLs still refuse and would fail inside std.ixx, so
+// they answer 23 and get an actionable diagnostic from the caller instead. This
+// is also what keeps the level gate reachable: every other provider answers 20.
+//
+// ASKED OF THE STL, NOT OF THE COMPILER, and that distinction is the whole
+// reason this takes a path.
+//
+// The question is a property of the standard library being compiled, and two
+// different compilers reach the same `std.ixx`: cl.exe under
+// `windows = "msvc@system"`, and clang targeting `*-windows-msvc` when no
+// libc++ std module is present. The clang path used to hardcode 23 with a
+// comment saying why it could not ask -- "tc.version is clang's here, so it
+// cannot answer the cl-banner question" -- which is correct about the field
+// and is an argument for changing the input rather than for assuming the
+// worst. Calling the banner form from there would compare a CLANG version
+// number against an MSVC threshold: clang 20.x would pass it by accident and
+// clang 19.x would fail it wrongly, both by asking the wrong object.
+//
+// The toolset version is in the path of the module source that was already
+// selected --
+//
+//     <VS>/VC/Tools/MSVC/14.44.35207/modules/std.ixx
+//
+// -- and toolset `14.<N>` pairs with cl banner `19.<N>`, so the existing
+// `>= 38` predicate transfers unchanged. Taking it from the SELECTED file
+// rather than from a fresh search matters on a machine with two installations:
+// the answer must describe the STL that will actually be compiled.
+//
+// A path with no parseable `14.<minor>` component answers 23, which keeps the
+// safety the hardcode was after without charging every modern installation for
+// it.
+int std_module_min_level_for_stl(const std::filesystem::path& stdModuleSource);
+
+// The cl-banner form, kept for a toolchain whose `version` is a cl banner
+// version ("19.44.35211") and no module source has been located yet.
 int std_module_min_level(const Toolchain& tc);
 
 // ─── Installation records (both origins) ─────────────────────────────────
@@ -931,6 +962,31 @@ std::string cl_stage_command(const Toolchain& tc,
 
 } // namespace
 
+int std_module_min_level_for_stl(const std::filesystem::path& stdModuleSource) {
+    // <VS>/VC/Tools/MSVC/<toolset>/modules/std.ixx -> up two from the file.
+    if (stdModuleSource.empty()) return 23;
+    auto toolset = stdModuleSource.parent_path().parent_path().filename().string();
+    int major = 0, minor = 0;
+    std::size_t i = 0;
+    auto read = [&](int& out) {
+        bool any = false;
+        while (i < toolset.size() && toolset[i] >= '0' && toolset[i] <= '9') {
+            out = out * 10 + (toolset[i] - '0');
+            ++i;
+            any = true;
+        }
+        return any;
+    };
+    if (!read(major)) return 23;
+    if (i < toolset.size() && toolset[i] == '.') ++i;
+    if (!read(minor)) return 23;
+    // 14 is the toolset major for every MSVC since VS 2015 and the only value
+    // this mapping is defined for. Anything else is a layout this code does
+    // not recognise, and a guess there would be the defect it replaces.
+    if (major != 14) return 23;
+    return minor >= 38 ? 20 : 23;
+}
+
 int std_module_min_level(const Toolchain& tc) {
     // Two-segment compare: cppfly::compiler_major only reads the leading
     // integer, which is 19 for every MSVC ever shipped. Keep that function's
@@ -1038,7 +1094,12 @@ std::expected<void, DetectError> enrich_toolchain_from_cl(Toolchain& tc) {
         tc.hasImportStd    = true;
     }
     if (tc.hasImportStd) {
-        tc.importStdMinLevel = std_module_min_level(tc);
+        // The STL, not the banner. For a real cl installation the two agree by
+        // construction -- `std.ixx` was found under the same toolset directory
+        // cl came from -- and a unit test asserts that. They separate only when
+        // `find_msvc_tools_dir()` and the selected module source disagree, and
+        // there the file that will be compiled is the correct answer.
+        tc.importStdMinLevel = std_module_min_level_for_stl(tc.stdModuleSource);
     }
     if (auto compat = toolsDir / "modules" / "std.compat.ixx";
         std::filesystem::exists(compat, ec)) {

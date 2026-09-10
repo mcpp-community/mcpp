@@ -767,6 +767,17 @@ export std::string_view cache_mode_name(CacheMode m) {
 }
 
 export struct BuildContext {
+    // THE PER-MACHINE JOB DEFAULT, carried so it is read once.
+    //
+    // `[build] default_jobs` in `$MCPP_HOME/config.toml` is the machine's
+    // answer to "how many at once". `prepare_build` resolves it into the build
+    // schedule itself; this field exists for the SECOND reader --
+    // `mcpp test`'s runner concurrency (execute.cppm) -- which calls
+    // `resolve_jobs` again after this function has returned. Recorded rather
+    // than re-read, because a second `load_or_init` there would be a second
+    // parser of one file, and because the two readers must not be able to
+    // disagree about the machine.
+    int                             globalDefaultJobs = 0;
     // --strict: degradations reported through mcpp::diag become errors.
     // Carried on the context because the build's degradations are discovered
     // during backend emission, i.e. after prepare_build has returned — the
@@ -10238,6 +10249,27 @@ prepare_build(bool print_fingerprint,
     // fast path runs without overrides, so a graph written under one must not
     // be the graph it replays.
     ctx.plan.accelOverridden = !overrides.accel.empty();
+
+    // THE MACHINE'S JOB DEFAULT, resolved unconditionally and never fatally.
+    //
+    // `get_cfg` is lazy, so by this point the config may or may not have been
+    // loaded -- a project with no dependencies can reach here without touching
+    // it. Asking for it here rather than reading whatever `cfg_opt` happens to
+    // hold is the point: otherwise the same project would honour
+    // `[build] default_jobs` or ignore it depending on whether it has
+    // dependencies, which is an answer that depends on an unrelated axis.
+    //
+    // A failure is discarded. This value is a concurrency hint, and a build
+    // must not fail because the machine's preferred job count could not be
+    // read; every other consumer of the config already reports its own
+    // failures with a diagnostic that fits what it needed the config FOR.
+    // `requireBootstrap=false` because nothing here needs the bootstrap
+    // toolchain.
+    int globalDefaultJobs = 0;
+    if (auto c = get_cfg(/*requireBootstrap=*/false))
+        globalDefaultJobs = static_cast<int>((*c)->defaultJobs);
+    ctx.globalDefaultJobs = globalDefaultJobs;
+
     // Resolve the module-edge schedule ONCE, here, where both the toolchain and
     // the manifest are in hand. The backend writes the graph in this shape, the
     // graph records the tag, and `mcpp build --verbose` prints the reason — all
@@ -10256,7 +10288,7 @@ prepare_build(bool print_fingerprint,
             mcpp::build::schedule::resolve_jobs(*m, [](std::string_view bad) {
                 mcpp::ui::warning(std::format(
                     "ignoring invalid job count '{}' (expected a positive number or 'auto')", bad));
-            }),
+            }, globalDefaultJobs),
             // What this machine would pick if asked. Impure, so it is resolved
             // here and handed to the pure `decide`. Only DetachCodegen uses it,
             // and only when the user gave no job count — without it that

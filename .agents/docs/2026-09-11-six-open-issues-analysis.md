@@ -410,3 +410,124 @@ leaving it in place:
 5. **#597** -- graduating a row that already exists, in the batch that added it.
 
 The first four are one release. #597 belongs to the platform batch.
+
+## 8. Self-review, and the one plan a measurement changed
+
+Written after §1-§7 and before any implementation. Four of the six plans
+survive unchanged. One is wrong, one has an unstated cost, and the review
+found the defect the plan for #606 would have half-fixed.
+
+### 8.1 #606: the defect is bidirectional, and the other direction is worse
+
+§1 proposed "a `bool in_block` carried across iterations, with the stripping
+done before `strip_line_comment`", and gave as a criterion that
+`/* */ import x;` on one line "still records the import". Both are wrong.
+
+Measured on 2026.9.10.2, by whether mcpp emits its own
+`imported but not provided` warning (which only the scanner can produce, so it
+separates "the scanner saw it" from "the compiler saw it"):
+
+| source | scanner | correct |
+|---|---|---|
+| `import x;` | sees it | sees it |
+| `const char* s = "a /* b";` then `import x;` | sees it | sees it |
+| `/* */ import x;` | **misses it** | sees it |
+| `// R"(` then `import x;` | **misses it** | sees it |
+| `/*`, `R"(`, `*/` then `import x;` | **misses it** | sees it |
+| `/*`, `export module y;`, `*/` | records a phantom producer | ignores it |
+| `/*`, `module (exe)`, `*/` | refuses the build | ignores it |
+
+So `/* */ import x;` is not a behaviour to preserve -- it is a fourth wrong
+answer. And two of the wrong answers run in the **opposite** direction to the
+reported one: a `//`-commented or block-commented raw-string opener puts
+`strip_raw_strings` into raw mode, which blanks every following line until a
+`)"` that never comes, and real declarations after it are invisible to the
+scanner while remaining visible to the compiler.
+
+A missed `import` is worse in kind than a refused build. It is a **missing
+dependency edge**: the compile is not ordered after the BMI it needs, so the
+failure is a build-order race that appears under parallelism as
+`failed to read compiled module` and disappears on a retry. #606's reported
+form is at least deterministic.
+
+The two directions have one cause. The scanner has three lexical states --
+code, block comment, raw string -- which are mutually exclusive and decided by
+whichever opener comes first. It implements one and a half: raw strings fully,
+line comments as an unconditional `find("//")`, block comments not at all, and
+the three passes run in a fixed order that cannot express "whichever came
+first". Fixing block comments alone, in either order relative to the existing
+passes, produces one of the two wrong directions:
+
+* strip comments first, and `R"( /* )"` opens a comment inside a string;
+* strip raw strings first, and `// R"(` opens a string inside a comment --
+  which is the defect measured above.
+
+### 8.2 The revised plan for #606
+
+One pass over the line with the three states, replacing `strip_raw_strings` and
+`strip_line_comment` at the call site. It blanks non-code and preserves
+offsets, so the reported column stays correct. State carried across lines is
+what it already is (`in_raw`, `raw_close`) plus `in_block`.
+
+Not a lexer: character and string literals need no tokenising, because the only
+question asked of the result is whether the trimmed line *starts with* a
+keyword, and an ordinary `"..."` cannot begin a line with one. The one thing
+the pass must respect about them is `"a /* b"` -- a `/*` inside an ordinary
+string must not open a comment -- which is one state, not a literal parser.
+
+Criteria, one per row of the table above, with the last two being the pair that
+separates a fix from a mute:
+
+* the phantom-producer case generates a graph with no `gcm.cache/y.gcm` output;
+* the four-line file from the report builds;
+* `/* */ import x;` records the import -- a *new* property, and the one that a
+  cheap "skip any line starting with `/*`" would fail;
+* `"a /* b"` then `import x;` still records the import -- currently correct by
+  luck, and the property that stops the fix from treating every `/*` as an
+  opener.
+
+### 8.3 #603: one function, and the two answers must be measured to agree
+
+§3 left open whether the MSVC path keeps the cl banner. It must not: two
+readers of one question is what this codebase treats as the defect, and the
+`std.ixx` path is the better input on both paths, because it describes the STL
+that will actually be compiled rather than the one a fresh search finds first.
+The unit test therefore asserts that for a well-formed VC layout the path
+answer equals what the banner answer would have been -- otherwise the change
+is a silent behaviour change on the one path that was verified.
+
+### 8.4 #599: the cost of running the check is not stated
+
+§4 proposes `submodules: true` on the checkout of whichever shard runs `233`.
+The bench workloads are pinned full source trees of mcpp and xlings, so this is
+not free, and the plan does not say what it costs. Measure before choosing;
+if it is large, the cheaper shape is a job that checks out **only**
+`bench/projects` and runs `233` alone, since the check needs trees and no
+toolchain at all.
+
+### 8.5 #604 and #564 stand, with one narrowing each
+
+#604: append verbatim, and de-duplicate nothing. The alternatives considered --
+de-duplicate by logical module name, or by contiguous subsequence -- are both
+correct and both add a rule to keep an argv tidy. The rule being removed was
+wrong; replacing it with a better rule for the same cosmetic purpose is the
+kind of trade this codebase records as a mistake. The comment says the repeat
+is harmless; the fix should rely on that sentence rather than work around it.
+
+#564: the e2e must assert the *precedence*, not the plumbing. A fixture that
+only sets `default_jobs` and reads `-j3` would pass if the global value were
+wired in above `MCPP_JOBS` instead of below it. Two invocations of one
+fixture, with and without `MCPP_JOBS`, is the smallest thing that distinguishes
+them.
+
+### 8.6 #597 stands, and route A now makes a second row measurable
+
+Unchanged. Noted here because the platform record's Android rows were resolved
+by the same kind of measurement in the same session: `qemu-aarch64 -L <root
+extracted from the system image>` executes the **default, dynamic**
+configuration for `aarch64-linux-android`, with `libc++_shared.so` supplied
+from the NDK's own directory outside the `-L` prefix. The emulator route is
+refuted for every build the vendor manifest currently serves, measured across
+all four Linux host entries rather than the pinned one. So both remaining
+platform rows are executable on an x86_64 Linux runner with no device and no
+virtualization, which is what a CI lane needs.

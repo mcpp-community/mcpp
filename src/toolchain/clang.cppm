@@ -157,10 +157,13 @@ void enrich_toolchain(Toolchain& tc, const std::string& envPrefix) {
         if (auto p = mcpp::toolchain::msvc::find_std_module_source()) {
             tc.stdModuleSource = *p;
             tc.hasImportStd    = true;
-            // This is MSVC STL's std.ixx — the STL's own C++20 policy applies,
-            // not libc++'s. tc.version is clang's here, so it cannot answer the
-            // cl-banner question; stay strict (the STL is the binding side).
-            tc.importStdMinLevel = 23;
+            // This is MSVC STL's std.ixx, so the STL's own C++20 policy
+            // applies rather than libc++'s. `tc.version` is clang's and cannot
+            // answer it -- which is a reason to change the input, not to assume
+            // the worst. The toolset version is in the path of the file just
+            // selected, and that is the STL that will be compiled.
+            tc.importStdMinLevel =
+                mcpp::toolchain::msvc::std_module_min_level_for_stl(*p);
         }
     }
 #endif

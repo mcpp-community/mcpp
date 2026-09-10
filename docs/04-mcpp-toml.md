@@ -474,10 +474,31 @@ bmi_schedule = "off"     # auto (default, = off) | on | off
 machine doing the build**, never frozen into the manifest: it takes the physical
 core count on a heterogeneous CPU (a 13900K is 8 P-cores + 16 E-cores, so its 32
 threads are not 32 equal workers) and clamps that by free memory, because a
-single module interface compile peaks at 0.5–1.0 GB. Precedence is
-`--jobs` / `MCPP_JOBS` > this key > the backend's own default. A malformed value
+single module interface compile peaks at 0.5–1.0 GB. A malformed value
 is **reported, never silently treated as the default** — a typo that quietly
 restores the default is a build slower than requested, with no indication why.
+
+Precedence, and each level describes a different thing:
+
+| level | scope |
+|---|---|
+| `--jobs` / `MCPP_JOBS` | this invocation |
+| `[build] jobs` (this key) | this project |
+| `[build] default_jobs` in `~/.mcpp/config.toml` | **this machine** |
+| absent, or `0` | say nothing, and leave the backend's own default |
+
+The per-machine key is the only one of the three that can hold a machine fact.
+`--jobs` must be repeated on every invocation; this key is per-package and
+`[workspace.build]` does not inherit it, so a seven-member workspace would carry
+the number seven times and commit one developer's memory limit to the
+repository. `default_jobs = 0` is what mcpp writes into a fresh config and means
+absent.
+
+`default_jobs` **also bounds `mcpp test`'s concurrency**, where the fallback
+when it is absent is the whole machine rather than a backend default. A test
+runner at ten concurrent processes has the same memory shape as a compile at
+ten, so a machine-wide number applies to both. This is stated because one key
+with two behaviours has to be.
 
 `bmi_schedule` decides when importers are unblocked.
 

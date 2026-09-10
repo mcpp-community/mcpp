@@ -223,55 +223,116 @@ bool is_well_formed_module_name(std::string_view name) {
     return is_dotted(name.substr(0, colon)) && is_dotted(name.substr(colon + 1));
 }
 
-// Strip a trailing line comment ("//...").
-std::string_view strip_line_comment(std::string_view s) {
-    auto p = s.find("//");
-    if (p == std::string_view::npos) return s;
-    return s.substr(0, p);
-}
-
-// Remove C++ raw-string-literal bodies from a line, tracking multi-line raw
-// strings across calls via (in_raw, raw_close). Returns the code-only portion
-// with raw-string contents blanked out.
+// Blank out everything on a line that is not code: block-comment bodies, line
+// comment tails, and raw-string bodies. Removed characters become spaces, so a
+// column reported against the result still points at the source.
 //
-// Without this, a template that embeds source text — e.g. the `mcpp new
-// --template gui` skeleton stored as R"GUI( ... import imgui.core; ... )GUI"
-// in scaffold/create.cppm — has its inner `import` lines misdetected as real
-// module imports, producing spurious "imported but not provided" warnings.
-// Ordinary "..." strings are intentionally left as-is: the import/module
-// matcher only fires on lines whose trimmed text *starts with* the keyword,
-// which a string body can only do when it spans lines (i.e. a raw string).
-std::string strip_raw_strings(std::string_view line, bool& in_raw,
-                              std::string& raw_close) {
-    std::string out;
+// ONE PASS OVER THREE STATES, and that is the whole point of the function.
+// Code, block comment and raw string are mutually exclusive and decided by
+// whichever opener comes first, which no fixed order of separate passes can
+// express. The scanner had two passes -- raw strings, then an unconditional
+// `find("//")` -- and no block-comment state at all, which produced a wrong
+// answer in BOTH directions (measured on 2026.9.10.2):
+//
+//   /*                     the trimmed line IS `module (exe)`, so the matcher
+//     module (exe)         fired inside a comment. With a well-formed name
+//   */                     (`export module y;`) it was worse than an error:
+//                          the graph recorded a plain .cpp as the producer of
+//                          `y.gcm`, promised a BMI the compiler never writes,
+//                          and a real importer of `y` was then told `imports
+//                          must be built before being imported`.
+//
+//   // R"(                 the raw-string pass ran first and did not know the
+//   import x;              opener was commented out, so it entered raw mode
+//                          and blanked every following line until a `)"` that
+//                          never comes. `import x;` was invisible to the
+//                          scanner and visible to the compiler -- a MISSING
+//                          DEPENDENCY EDGE, which is a build-order race rather
+//                          than a deterministic refusal, and therefore worse.
+//
+//   /* */ import x;        the matcher only fires on a line whose trimmed text
+//                          starts with the keyword, and this one starts with
+//                          `/*`. Also missed.
+//
+// The comment that admitted all of this is worth quoting, because the argument
+// was sound and its enumeration was short by one: "Ordinary "..." strings are
+// intentionally left as-is: the import/module matcher only fires on lines whose
+// trimmed text *starts with* the keyword, which a string body can only do when
+// it spans lines (i.e. a raw string)." A block comment can do it too.
+//
+// NOT A LEXER. Ordinary string and character literals are skipped over rather
+// than tokenised -- their contents are left in place, because the only question
+// asked of the result is whether the trimmed line starts with a keyword and a
+// `"..."` body cannot begin a line with one. Skipping them is nonetheless
+// required, so that `const char* s = "a /* b";` does not open a comment that
+// swallows the rest of the file. Nesting is not stripped because `/*` does not
+// nest in C++.
+std::string strip_noncode(std::string_view line, bool& in_block, bool& in_raw,
+                          std::string& raw_close) {
+    std::string out(line);
+    const std::size_t n = out.size();
+    auto blank = [&](std::size_t from, std::size_t to) {
+        for (std::size_t k = from; k < to && k < n; ++k) out[k] = ' ';
+    };
+
     std::size_t i = 0;
-    while (i < line.size()) {
+    while (i < n) {
         if (in_raw) {
             auto p = line.find(raw_close, i);
-            if (p == std::string_view::npos) return out;  // rest of line is raw body
+            if (p == std::string_view::npos) { blank(i, n); return out; }
+            blank(i, p + raw_close.size());
             i = p + raw_close.size();
             in_raw = false;
             raw_close.clear();
             continue;
         }
+        if (in_block) {
+            auto p = line.find("*/", i);
+            if (p == std::string_view::npos) { blank(i, n); return out; }
+            blank(i, p + 2);
+            i = p + 2;
+            in_block = false;
+            continue;
+        }
+        if (line[i] == '/' && i + 1 < n && line[i + 1] == '/') {
+            blank(i, n);
+            return out;
+        }
+        if (line[i] == '/' && i + 1 < n && line[i + 1] == '*') {
+            in_block = true;
+            blank(i, i + 2);
+            i += 2;
+            continue;
+        }
         // Raw-string opener: R"delim( ... )delim"  (delim is up to 16 chars,
         // no '(' / whitespace per the standard). Optional u8/u/U/L prefixes
         // precede the R; we only need to spot the R" boundary.
-        if (line[i] == 'R' && i + 1 < line.size() && line[i + 1] == '"') {
+        if (line[i] == 'R' && i + 1 < n && line[i + 1] == '"') {
             std::size_t d = i + 2;
             std::string delim;
-            while (d < line.size() && line[d] != '(' && (d - (i + 2)) < 16) {
+            while (d < n && line[d] != '(' && (d - (i + 2)) < 16) {
                 delim.push_back(line[d]);
                 ++d;
             }
-            if (d < line.size() && line[d] == '(') {
+            if (d < n && line[d] == '(') {
                 raw_close = ")" + delim + "\"";
                 in_raw = true;
+                blank(i, d + 1);
                 i = d + 1;
                 continue;
             }
         }
-        out.push_back(line[i]);
+        if (line[i] == '"' || line[i] == '\'') {
+            const char q = line[i];
+            std::size_t k = i + 1;
+            while (k < n) {
+                if (line[k] == '\\') { k += 2; continue; }
+                if (line[k] == q)    { ++k; break; }
+                ++k;
+            }
+            i = k;   // contents kept; only the scan position moves past them
+            continue;
+        }
         ++i;
     }
     return out;
@@ -741,14 +802,15 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
     std::size_t  lineno          = 0;
     bool         in_raw          = false; // inside a multi-line raw string
     std::string  raw_close;               // active )delim" terminator
+    bool         in_block        = false; // inside a /* ... */ block comment
     std::string  line;
     while (std::getline(is, line)) {
         ++lineno;
-        // Blank out raw-string-literal bodies first so embedded source text
-        // (e.g. scaffold templates) isn't misparsed as imports.
-        std::string code = strip_raw_strings(line, in_raw, raw_close);
-        std::string_view sv = strip_line_comment(code);
-        sv = trim(sv);
+        // Comment bodies, comment tails and raw-string bodies are not code.
+        // One pass, because the three states are decided by whichever opener
+        // comes first -- see strip_noncode.
+        std::string code = strip_noncode(line, in_block, in_raw, raw_close);
+        std::string_view sv = trim(code);
         if (sv.empty()) continue;
 
         // Track preprocessor depth (we only need to know if we're inside #if).

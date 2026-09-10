@@ -150,6 +150,31 @@ std::vector<std::string> host_link_tokens(const Toolchain& tc,
 std::vector<std::string> bmi_reference_tokens(std::string_view usePrefix,
                                               const std::filesystem::path& bmi);
 
+// The first `<name>=<path>` token in `argv` that no switch introduces, if any.
+//
+// A DEFECT THAT IS ONLY VISIBLE IN THE ASSEMBLED ARGV. `bmi_reference_tokens`
+// returns MSVC's reference as a PAIR -- `/reference`, then `<name>=<path>` --
+// because cl.exe takes the two as separate arguments. The pair's halves are
+// individually well-formed, so every check that reads one token at a time
+// passes while the pair is broken. Measured: a per-token de-duplicator dropped
+// the second `/reference` (already present from the bundled `mcpp` module) and
+// left its partner standing alone, which cl read as a source file name:
+//
+//   c1xx: fatal error C1083: Cannot open source file:
+//     'huxerui.rules.sources=...\huxerui.rules.sources.ifc'
+//
+// A message that names the module and the BMI and does not name the flag, so
+// it reads as a missing file rather than as a missing switch.
+//
+// The rule: a token that carries `=` and does not itself begin with `-` or `/`
+// is an argument TO something, and the token before it must be a switch. This
+// is defence in depth and not the fix -- the fix is that nothing filters the
+// pair any more -- but the failure it converts is expensive to diagnose from
+// cl's own words, and the check costs one pass over an argv that is already
+// being built.
+std::optional<std::string> orphaned_reference(
+    const std::vector<std::string>& argv);
+
 } // namespace mcpp::toolchain
 
 namespace mcpp::toolchain {
@@ -291,6 +316,26 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
         for (auto& t : lm.compile_tokens(esc)) out.push_back(t);
 
     return out;
+}
+
+std::optional<std::string> orphaned_reference(
+    const std::vector<std::string>& argv) {
+    auto is_switch = [](std::string_view t) {
+        return !t.empty() && (t.front() == '-' || t.front() == '/');
+    };
+    for (std::size_t i = 0; i < argv.size(); ++i) {
+        std::string_view t = argv[i];
+        if (is_switch(t) || t.find('=') == std::string_view::npos) continue;
+        // A path can contain `=`, and an input file is a legitimate bare
+        // token. What distinguishes a reference is that its `=` precedes any
+        // directory separator: `<name>=<path>` names a module first.
+        auto eq   = t.find('=');
+        auto sep  = t.find_first_of("/\\");
+        if (sep != std::string_view::npos && sep < eq) continue;
+        if (i == 0 || !is_switch(argv[i - 1]))
+            return std::string(t);
+    }
+    return std::nullopt;
 }
 
 std::vector<std::string> bmi_reference_tokens(std::string_view usePrefix,
