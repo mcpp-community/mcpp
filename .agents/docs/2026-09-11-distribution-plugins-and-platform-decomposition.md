@@ -710,24 +710,59 @@ requests **no** format and asserts the set is still non-empty.
 | A dist member's tool is absent | The tool is a host lookup, and an empty path becomes an argv token | Refuse in the build program, naming the tool and where it was looked for |
 | The produced distributable is valid and empty | Section 2's measured 52 KB installer | Each member asserts a floor on its own output, on the **success** path, through `mcpp::warning` |
 
-### 9.7 What sections 4 to 7 promise that this pass does not deliver
+### 9.7 The engine's half of section 3, and what is left after it
 
-Stated here rather than discovered later. Each is blocked on something no
-amount of engine work supplies:
+Section 3's boundary is exact: a package can add a language, a tool, an action,
+a payload and a generated module, and it **cannot add a triple**. Every layer
+below the first — the `.apk` step, the `.app` step, the `.html`+`.wasm` step,
+the runner, the signing, the non-C++ glue — therefore waits on a row in
+`kKnownTargets` and on nothing else in the engine. So the rows are engine work
+and belong in the same release as §2.2:
 
-- **`xim:android-ndk`, `xim:emsdk`** (§7 step 5) and the **Android row**
-  (step 6). Both recipes are measured working in a scratch directory (§3.1);
-  turning either into a payload means fetching and republishing a
-  multi-gigabyte vendor toolchain with a derived 133-file module surface. That
-  is its own release, not a side effect of this one.
-- **The iOS row** (step 7) and `dist-apple`'s iOS half. Not measurable on a
-  Linux host, and §3.1 states the two possibilities rather than choosing.
-- **Web** (step 8). [#597](https://github.com/mcpp-community/mcpp/issues/597)
-  is a target-model change.
-- **`dist-android`, `dist-web`**. Each waits on its row.
+| Row | Tier | What it still needs |
+|---|---|---|
+| `aarch64-linux-android`, `x86_64-linux-android` | `planned` | `xim:android-ndk` |
+| `aarch64-ios` | `planned` | the iPhoneOS SDK, and a licence reading first (§9.8) |
+| `wasm32-emscripten` | `planned` | `xim:emsdk` |
 
-The engine additions in §2.2 are what make each of those a single verifiable
-change when it comes. None of them is a prerequisite for the others.
+**`planned` is a refusal, not a gap.** The tier gate answers `tier-planned`
+naming the row, so `mcpp build --target aarch64-linux-android` says the
+vocabulary has this target and nothing is wired yet — rather than `unknown
+target`, which was false, or a build that resolves and produces nothing, which
+§3.1 argues would be worse than the row's absence. Each cell is declared in
+`tests/matrix/expected.tsv`, so the day a row is wired the matrix goes red and
+says so.
+
+**Web needed one thing the other two did not, and it was not a table row.** The
+binary format was never a field: it was re-derived from `os` at each site that
+needed it, which is affordable while the answer has two values. `wasm32` is the
+first target whose format is neither, and a third value turns those derivations
+into an addition at every such site — where a missed site does not fail, it
+silently answers ELF. `ObjectFormat` is that addition made once. This is the
+substance of [#597](https://github.com/mcpp-community/mcpp/issues/597)'s
+"changes the target model rather than extending a table", and with §3.1 having
+answered the standard-library half, #597 is now one problem rather than two.
+
+**Android's placement is the modelling decision.** `env = "android"` on a
+`linux` OS, not `os = "android"`: the kernel is Linux, so ELF, the `unix`
+family and `nasm -f elf64` are already right, and an OS value would have made
+every one of them wrong by default and required a new answer at each site. What
+differs from `gnu` is bionic, the loader path and the SDK, which is what an
+`env` value is for.
+
+What remains outside this pass, each blocked on something no engine work
+supplies:
+
+- **`xim:android-ndk`, `xim:emsdk`** (§7 step 5). Both recipes are measured
+  working in a scratch directory (§3.1); turning either into a payload means
+  fetching and republishing a multi-gigabyte vendor toolchain with a derived
+  133-file module surface. That is its own release, not a side effect of this
+  one — and the rows landing first is exactly §7's ordering argument, which
+  said doing the payloads first would make each row small. The rows turned out
+  to be the cheap half either way.
+- **The iPhoneOS SDK.** Not measurable on a Linux host, and §9.8 gives the
+  decision procedure rather than the measurement.
+- **`dist-android`, `dist-web`**. Each waits on its payload, not on its row.
 
 ### 9.8 The iOS SDK: a three-tier policy rather than an open question
 

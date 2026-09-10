@@ -406,6 +406,9 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 | `aarch64-none-elf` · `x86_64-none-elf` | llvm 22——裸机,默认不带 C 库 ² | preview |
 | `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22——Cortex-M4/M7 软浮点、M23、M33F/M55F ² | preview |
 | `riscv64-linux-musl` · `aarch64-linux-gnu` · `x86_64-macos` | — | planned |
+| `aarch64-linux-android` · `x86_64-linux-android` | 待 `xim:android-ndk`;`import std` 在 NDK 自带的 clang 上已实测可用 | planned |
+| `aarch64-ios` | 待 iPhoneOS SDK,而它先是一个许可问题再是一个打包问题 | planned |
+| `wasm32-emscripten` | 待 `xim:emsdk`;`import std` 在 `em++` 上已实测可用,目标模型见 [#597](https://github.com/mcpp-community/mcpp/issues/597) | planned |
 
 `verified` 该行的镜像已被构建**并运行**过,qemu 与 wine 都算 · `preview` 可构建
 可链接,未记录过模拟器运行 · `planned` 已登记在词表中,尚未接线 —— 面向这类目标

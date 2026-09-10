@@ -623,7 +623,18 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
             if (!info->note.empty()) tags.emplace_back(info->note);
             if (info->defaultStatic) tags.push_back("static");
         }
-        if (t != hostT && (t.os != hostT.os || t.arch != hostT.arch))
+        // A TARGET THIS HOST CANNOT EXECUTE. Arch and OS are the usual answer,
+        // and deliberately not env: an `x86_64-linux-musl` artifact is static
+        // and runs here, so calling it cross would be false.
+        //
+        // The env axis matters for exactly one row today. An Android artifact
+        // needs bionic's loader at `/system/bin/linker64`, which no ordinary
+        // Linux host has -- so `x86_64-linux-android` agrees with this host on
+        // both segments the test looked at and cannot run on it. Spelled as a
+        // property rather than by adding `env != env`, which would have taken
+        // musl with it.
+        if (t != hostT && (t.os != hostT.os || t.arch != hostT.arch
+                           || t.is_android()))
             tags.push_back("cross");
         std::string out;
         for (auto& tag : tags) { if (!out.empty()) out += ", "; out += tag; }

@@ -46,10 +46,14 @@
 # 那台机器。
 #
 # 各台格数不同,而这是事实不是遗漏:
-#   linux-x86_64   40   gcc + llvm × 12 目标(payload 24 / graph 16)
-#   linux-aarch64  16   只有 musl-gcc —— llvm 在非 x86_64 Linux 上被显式延缓
-#   macos-arm64    20   只有 llvm × 12 目标(payload 12 / graph 8)
-#   windows-x86_64 40   llvm + msvc@system
+#   linux-x86_64   74   gcc + llvm(payload 50 / graph 24)
+#   linux-aarch64  33   只有 musl-gcc —— llvm 在非 x86_64 Linux 上被显式延缓
+#   macos-arm64    37   只有 llvm(payload 25 / graph 12)
+#   windows-x86_64 74   llvm + msvc@system
+#
+# 这几个数字是**声明**,和表里的行一样参与比对(compare.sh 先比总数再比每一格),
+# 所以加了目标行就必须同时改它们。2026-09-11 加入方案 §3 的四个平台行时,四台
+# 宿主各 +12 格:两种体系 × 该宿主声明的编译器 × 4 个目标。
 graph	linux-aarch64	aarch64-linux-gnu	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
 graph	linux-aarch64	aarch64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	layer-requirement
 graph	linux-aarch64	riscv64-linux-musl	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
@@ -220,3 +224,65 @@ payload	windows-x86_64	x86_64-windows-msvc	llvm@22.1.8	x86_64-pc-windows-msvc	no
 payload	windows-x86_64	x86_64-windows-msvc	msvc@system	x86_64-pc-windows-msvc	none	msvc(payload)	(payload)	-	ok	none
 payload	windows-x86_64	x86_64-windows-musl	llvm@22.1.8	-	-	-	-	-	unsupported	host-cannot-serve
 payload	windows-x86_64	x86_64-windows-musl	msvc@system	-	-	-	-	-	unsupported	capability-pin
+
+# ── 方案 §3 的三个平台:词表里有,还没有任何东西接线 ──────────────────────
+#
+# 四行全部 `planned`,于是全部十二格(两种体系 × 四台宿主的编译器轴)都是
+# `unsupported / tier-planned`。这些格子不是占位:它们断言的是**拒绝的形状**——
+# 一个 planned 目标必须报「词表里有这一行,还没有接线」,而不是 `unknown target`
+# (那是假的),也不是一次解析通过却什么都没建出来的构建(那更糟)。
+#
+# 每一行接上线的时候,这里对应的那一格会从 tier-planned 变成别的东西,而这张表
+# 会因此变红 —— 那正是它该做的事。缺的东西每一处都是**载荷**,不是引擎:
+#   aarch64-linux-android / x86_64-linux-android   xim:android-ndk
+#   aarch64-ios                                    iPhoneOS SDK(先要一次许可判断)
+#   wasm32-emscripten                              xim:emsdk,以及 #597 的目标模型
+#
+graph	linux-aarch64	aarch64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	aarch64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	aarch64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	macos-arm64	aarch64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	windows-x86_64	aarch64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	windows-x86_64	aarch64-linux-android	msvc@system	-	-	-	-	-	unsupported	tier-planned
+payload	linux-aarch64	aarch64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	aarch64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	aarch64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	macos-arm64	aarch64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	windows-x86_64	aarch64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	windows-x86_64	aarch64-linux-android	msvc@system	-	-	-	-	-	unsupported	tier-planned
+graph	linux-aarch64	x86_64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	x86_64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	x86_64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	macos-arm64	x86_64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	windows-x86_64	x86_64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	windows-x86_64	x86_64-linux-android	msvc@system	-	-	-	-	-	unsupported	tier-planned
+payload	linux-aarch64	x86_64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	x86_64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	x86_64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	macos-arm64	x86_64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	windows-x86_64	x86_64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	windows-x86_64	x86_64-linux-android	msvc@system	-	-	-	-	-	unsupported	tier-planned
+graph	linux-aarch64	aarch64-ios	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	aarch64-ios	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	aarch64-ios	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	macos-arm64	aarch64-ios	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	windows-x86_64	aarch64-ios	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	windows-x86_64	aarch64-ios	msvc@system	-	-	-	-	-	unsupported	tier-planned
+payload	linux-aarch64	aarch64-ios	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	aarch64-ios	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	aarch64-ios	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	macos-arm64	aarch64-ios	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	windows-x86_64	aarch64-ios	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	windows-x86_64	aarch64-ios	msvc@system	-	-	-	-	-	unsupported	tier-planned
+graph	linux-aarch64	wasm32-emscripten	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	wasm32-emscripten	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+graph	linux-x86_64	wasm32-emscripten	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	macos-arm64	wasm32-emscripten	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	windows-x86_64	wasm32-emscripten	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+graph	windows-x86_64	wasm32-emscripten	msvc@system	-	-	-	-	-	unsupported	tier-planned
+payload	linux-aarch64	wasm32-emscripten	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	wasm32-emscripten	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
+payload	linux-x86_64	wasm32-emscripten	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	macos-arm64	wasm32-emscripten	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	windows-x86_64	wasm32-emscripten	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
+payload	windows-x86_64	wasm32-emscripten	msvc@system	-	-	-	-	-	unsupported	tier-planned

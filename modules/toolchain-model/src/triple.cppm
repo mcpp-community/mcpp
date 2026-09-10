@@ -29,6 +29,37 @@ import mcpp.platform;
 
 export namespace mcpp::toolchain::triple {
 
+// WHAT A TARGET PRODUCES, AS ONE ANSWER RATHER THAN A DERIVATION AT EACH SITE.
+//
+// The binary format used not to be anything: it was re-derived from `os`
+// wherever it was needed -- `is_pe()` asked `os == "windows"`, artifact naming
+// asked again, the packer asked a third time -- and that is affordable only
+// while the answer has two values. A THIRD produces an addition at every such
+// site, and a site that was missed does not fail: it silently answers "ELF",
+// because ELF is what every `else` branch in the tree assumes.
+//
+// That is why this exists before wasm needs it rather than after. `wasm32` is
+// the first target in mcpp's vocabulary whose object format is neither of the
+// two the tree was written around, and #597 is a target-model change for
+// exactly this reason -- not because a table row is hard.
+//
+// IT IS NOT THE SAME QUESTION AS `is_freestanding()`, and merging them would be
+// the mistake this replaces. "Which container do objects come in" and "is there
+// an operating system to link against" are different axes: a bare-metal
+// RISC-V image is ELF with no OS, and a wasm module has an OS-like layer
+// (Emscripten's POSIX emulation) and is not ELF.
+enum class ObjectFormat { Elf, MachO, Pe, Wasm };
+
+std::string_view to_string(ObjectFormat f) {
+    switch (f) {
+        case ObjectFormat::Elf:   return "ELF";
+        case ObjectFormat::MachO: return "Mach-O";
+        case ObjectFormat::Pe:    return "PE";
+        case ObjectFormat::Wasm:  return "wasm";
+    }
+    return "ELF";
+}
+
 struct Triple {
     std::string arch;   // "x86_64" | "aarch64" | "riscv64" | ... (GNU spelling)
     std::string os;     // "linux" | "macos" | "windows"
@@ -116,7 +147,29 @@ struct Triple {
             if (is_msvc_env()) return arch + "-pc-windows-msvc";
             return arch + "-w64-windows-gnu";
         }
+        // APPLE'S OTHER OS. Same `arm64` spelling and the same vendor segment;
+        // what differs is the SDK and the deployment-target flag.
+        //
+        // NO VERSION IS BAKED IN, unlike the macOS branch above, and that is a
+        // decision rather than an omission. `-miphoneos-version-min` belongs to
+        // the layer that also owns the SDK path and the `.app` bundle -- a
+        // distribution plugin -- and a default written here would be a second
+        // place that answers it. clang picks its own when nothing says.
+        if (os == "ios") {
+            const std::string a = (arch == "aarch64") ? "arm64" : arch;
+            return a + "-apple-ios";
+        }
+        // ANDROID IS LINUX, AND THE ENV SEGMENT IS WHERE IT SAYS SO. clang also
+        // accepts an API level fused onto the OS segment
+        // (`aarch64-linux-android24`), which selects which bionic symbols are
+        // visible; it is omitted here for the reason the iOS version is --
+        // the minimum platform version is the project's statement, and clang
+        // has a default.
         if (os == "linux") return arch + "-unknown-linux-" + (env.empty() ? "gnu" : env);
+        // Emscripten's own effective triple. The vendor segment is `unknown`
+        // and the OS segment is the platform layer rather than a kernel, which
+        // is why `object_format()` reads the ARCH for this row.
+        if (os == "emscripten") return arch + "-unknown-emscripten";
         if (os == "none")  return str();   // freestanding: already LLVM's form
         return str();
     }
@@ -124,7 +177,39 @@ struct Triple {
     bool is_musl() const        { return env == "musl"; }
     bool is_msvc_env() const    { return env == "msvc"; }
     bool is_windows_gnu() const { return os == "windows" && env == "gnu"; }
-    bool is_pe() const          { return os == "windows"; }
+
+    // THE SINGLE DERIVATION. Every question about the container objects come in
+    // is answered here and nowhere else -- see `ObjectFormat` for why a third
+    // value makes that a requirement rather than a preference.
+    //
+    // The arch test precedes the ELF fallback because a wasm target's OS
+    // segment names a platform layer (`emscripten`), not a format, and the
+    // fallback would otherwise claim ELF for it -- the silent wrong answer this
+    // whole axis exists to remove.
+    ObjectFormat object_format() const {
+        if (os == "windows")                  return ObjectFormat::Pe;
+        if (os == "macos" || os == "ios")     return ObjectFormat::MachO;
+        if (arch.starts_with("wasm"))         return ObjectFormat::Wasm;
+        return ObjectFormat::Elf;
+    }
+
+    // Kept as its own name because it is what 30-odd sites already ask, and now
+    // reads the single answer rather than re-deriving one.
+    bool is_pe() const          { return object_format() == ObjectFormat::Pe; }
+    bool is_mach_o() const      { return object_format() == ObjectFormat::MachO; }
+    bool is_wasm() const        { return object_format() == ObjectFormat::Wasm; }
+
+    // APPLE, AS ONE QUESTION. `os == "macos"` was the whole of it while macOS
+    // was the only Apple row; iOS shares the object format, the linker, the
+    // `arm64` spelling and `codesign`, and differs in the SDK and the
+    // deployment-target flag. A site that means "Apple" and asks "macOS" gets
+    // iOS wrong in the direction that still links.
+    bool is_apple() const       { return os == "macos" || os == "ios"; }
+    // Android is Linux with a different C library and a different loader path.
+    // `os` stays `linux` for that reason -- it is the kernel, and every
+    // Linux-shaped decision in the tree is right about it -- and the env
+    // segment carries what differs.
+    bool is_android() const     { return env == "android"; }
 
     // Bare metal: there is no OS to link against. THE predicate every
     // freestanding decision keys off, spelled once here so no consumer
@@ -154,9 +239,18 @@ struct Triple {
     bool pin_is_capability() const { return is_freestanding() || (is_pe() && is_musl()); }
 
     // cfg() `family` dimension: unix | windows.
+    //
+    // iOS and Android are unix for the reason macOS and Linux are: the
+    // predicate answers about the API surface a source can assume, and both are
+    // POSIX. Emscripten is unix on the same test rather than on a claim about
+    // wasm -- it supplies a POSIX emulation, and a source guarded by
+    // `cfg(unix)` compiles against it. A target with no OS still answers
+    // nothing, unchanged: `cfg(unix)` on bare metal would be false in a way no
+    // source could act on.
     std::string family() const {
         if (os == "windows") return "windows";
-        if (os == "linux" || os == "macos") return "unix";
+        if (os == "linux" || os == "macos" || os == "ios"
+            || os == "emscripten")           return "unix";
         return {};
     }
 
@@ -413,6 +507,86 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // library for these targets arrives from the dependency graph.
     { "armv7a-none-eabi",      "verified",  "bare","llvm@22.1.8","",                            true  },
     { "armv7a-none-eabihf",    "verified",  "bare","llvm@22.1.8","",                            true  },
+
+    // ── The three platforms a package cannot add ────────────────────────────
+    //
+    // A package can add a language, a tool, an action, a payload and a
+    // generated module. IT CANNOT ADD A TRIPLE: identity is these three
+    // strings and this table is compiled into the binary, so every layer above
+    // -- the `.apk` step, the `.app` step, the `.html`+`.wasm` step, the
+    // runner, the signing -- waits on a row here and on nothing else in the
+    // engine. Registering the rows is what turns each of those into a plugin
+    // that can be written rather than a plugin that has nowhere to attach.
+    //
+    // ALL FOUR ARE `planned`, WHICH IS A REFUSAL AND NOT A GAP. The tier gate
+    // refuses a planned row with `tier-planned` naming the row, so
+    // `mcpp build --target aarch64-linux-android` says the vocabulary has this
+    // target and nothing is wired yet -- rather than `unknown target`, which
+    // was false, or a build that resolves and produces nothing, which would be
+    // worse than either. What each row still needs is recorded in
+    // .agents/docs/2026-09-11-distribution-plugins-and-platform-decomposition.md
+    // section 3, and it is a payload in every case, never engine work.
+    //
+    // THE PREREQUISITE NOBODY LISTS IS ANSWERED FOR TWO OF THE THREE. mcpp is
+    // module-first, so a row whose toolchain cannot compile a module interface
+    // unit would be worse than its absence. Measured 2026-09-11: `import std`
+    // works on both the NDK's clang 18 and Emscripten's, and neither needs a
+    // fork or a compiler upgrade -- what both need is the generated module
+    // surface their vendor chose not to install (133 files, 620 KB, taken from
+    // the libc++ revision matching `_LIBCPP_VERSION`, which for Emscripten is
+    // NOT the version its clang reports). Apple's half is not measurable on a
+    // Linux host and is the one genuinely open question of the three.
+
+    // ANDROID IS THE SMALLEST OF THE THREE, and the ranking is the opposite of
+    // the demand ranking. `aarch64` is already an arch, ELF is already the
+    // object format, and Linux is already the OS: what was missing is an `env`
+    // value and a sysroot that points at an NDK. No `pin`, because no cross
+    // payload exists yet -- `xim:android-ndk` is the row's whole remaining
+    // cost, and until it lands `[target.<triple>].sysroot` is the escape hatch
+    // for a machine that has an NDK already.
+    { "aarch64-linux-android", "planned",   "",    "",           "",                            false },
+    // The emulator's row. Not a convenience: x86_64 is what an Android
+    // emulator image runs, so a row for the device without one for the
+    // emulator describes a target nothing in CI can execute.
+    { "x86_64-linux-android",  "planned",   "",    "",           "",                            false },
+
+    // iOS IS NEXT. `aarch64-macos` is `verified`, so Mach-O, `arm64`, the
+    // linker and the Apple half of the toolchain model all exist; what is
+    // missing is an `os` value and the iPhoneOS SDK.
+    //
+    // THE SDK IS A LICENCE QUESTION AND NOT A PACKAGING ONE, which is why this
+    // row carries no `sysroot`. The NDK is Apache-2.0 and Emscripten is MIT,
+    // both redistributable; the iPhoneOS SDK is neither. The recipe should
+    // reach for the lowest of three tiers its licence allows -- redistribute,
+    // fetch from upstream without a mirror, or locate what the machine already
+    // has -- and say which tier it took, because a consumer reading "locator"
+    // needs to know that is a licence conclusion rather than an unfinished
+    // recipe. `msvc@system` is the shape of the third tier and mcpp already
+    // has it.
+    //
+    // The simulator is deliberately not a row. It has its own SDK and produces
+    // its own object, so folding it in would make two targets share an
+    // identity -- the mistake `x86_64-windows-musl` was added to undo.
+    { "aarch64-ios",           "planned",   "",    "",           "",                            false },
+
+    // WEB IS THE OUTLIER, AND IT IS THE ONLY ONE OF THE THREE THAT CHANGES THE
+    // MODEL RATHER THAN EXTENDING A TABLE. A new arch (`wasm32`), a new os
+    // (`emscripten`), and -- the sharp part -- a new OBJECT FORMAT, which
+    // before `ObjectFormat` existed was not a field at all but a derivation
+    // repeated at every site that needed it. That is why this is
+    // https://github.com/mcpp-community/mcpp/issues/597 and not a table row.
+    //
+    // IT IS NOW ONLY THAT. The standard-library half is answered: measured
+    // 2026-09-11, `em++` compiles and links `import std` with NO additional
+    // flags once the module surface from llvm 20.1.7 is present -- the release
+    // matching Emscripten's `_LIBCPP_VERSION` of 200100, not the 22.0.0git its
+    // clang reports -- and `node app.js` printed the expected output. So #597
+    // is one problem rather than two.
+    //
+    // `defaultStatic` is true because wasm has no dynamic loader in the sense
+    // the other rows mean: an Emscripten link produces one module plus its
+    // JavaScript, and there is no shared object for a search path to find.
+    { "wasm32-emscripten",     "planned",   "wasm","",           "",                            true  },
 };
 
 inline std::span<const TargetInfo> known_targets() { return kKnownTargets; }
@@ -762,6 +936,19 @@ std::optional<Triple> parse(std::string_view s) {
         // "mingw32" is the GNU os segment for ALL MinGW targets (64-bit
         // included — historical residue); it means windows + gnu env.
         if (starts_with(k, "mingw"))            { t.os = "windows"; sawOs = true; t.env = "gnu"; t.envExplicit = true; continue; }
+        // APPLE'S SECOND OS. `starts_with` for the same reason the macOS
+        // branch above uses it: an effective triple carries the deployment
+        // target on this segment (`arm64-apple-ios17.0`). The simulator is a
+        // different row and is deliberately not spelled here -- it has a
+        // different SDK and a different object, so folding it into this one
+        // would make two targets share an identity.
+        if (starts_with(k, "iphoneos") || starts_with(k, "ios"))
+                                                { t.os = "ios";     sawOs = true; t.env.clear(); continue; }
+        // EMSCRIPTEN IS AN OS SEGMENT, NOT AN ENV. It names the platform layer
+        // a wasm module is compiled against -- its POSIX emulation, its
+        // filesystem shim, its `main` loop -- which is the same kind of thing
+        // `linux` names and not the same kind of thing `musl` names.
+        if (starts_with(k, "emscripten"))       { t.os = "emscripten"; sawOs = true; t.env.clear(); continue; }
 
         // Bare-metal object-format / ABI segments. Only meaningful with
         // os=none: `riscv64-none-elf`, `arm-none-eabi`, `arm-none-eabihf`.
@@ -773,20 +960,38 @@ std::optional<Triple> parse(std::string_view s) {
         }
 
         if (t.os != "macos") {
+            // ANDROID IS AN ENV SEGMENT ON A LINUX OS, and that placement is
+            // the whole of the modelling decision. The kernel IS Linux, so
+            // every Linux-shaped answer in the tree -- ELF, the `unix` family,
+            // `nasm -f elf64` -- is already right; what differs is the C
+            // library (bionic), the loader path and the SDK. An `os = "android"`
+            // would have made all three of those wrong by default and required
+            // a new answer at each site.
+            //
+            // `androideabi` is the 32-bit ARM spelling and resolves to the same
+            // env: the EABI half is the ARM calling convention, which `armv7a`
+            // already carries in the arch segment.
+            if (k == "android" || starts_with(k, "androideabi")) {
+                t.env = "android"; t.envExplicit = true; continue;
+            }
             if (k == "musl" || starts_with(k, "musleabi")) { t.env = "musl"; t.envExplicit = true; continue; }
             if (k == "gnu"  || starts_with(k, "gnueabi"))  { t.env = "gnu";  t.envExplicit = true; continue; }
             // starts_with: clang effective triples can carry a version suffix
             // on the env segment ("…-windows-msvc19.44.35211").
             if (starts_with(k, "msvc"))                    { t.env = "msvc"; t.envExplicit = true; continue; }
         }
-        // Unrecognized segment (androideabi, wasi, …): not in mcpp's target
-        // language — treat as unparseable rather than guessing.
+        // Unrecognized segment (wasi, …): not in mcpp's target language —
+        // treat as unparseable rather than guessing.
         return std::nullopt;
     }
 
     if (!sawOs) return std::nullopt;
-    // macOS carries no env segment at all, so nothing was declined there.
-    if (t.os == "macos") { t.env.clear(); t.envExplicit = false; }
+    // macOS carries no env segment at all, so nothing was declined there. iOS
+    // and Emscripten are the same shape: the platform layer is the whole of the
+    // identity past the arch, and there is no C-library axis to decline.
+    if (t.os == "macos" || t.os == "ios" || t.os == "emscripten") {
+        t.env.clear(); t.envExplicit = false;
+    }
     // THE FILL STAYS, AND THE FACT THAT IT WAS A FILL IS NOW RECORDED.
     // `x86_64-linux` is the canonical identity `x86_64-linux-gnu` — every
     // directory name and cache key downstream depends on that — but it is NOT

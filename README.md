@@ -419,6 +419,9 @@ list` reports for this machine):
 | `aarch64-none-elf` · `x86_64-none-elf` | llvm 22 — bare metal, no C library by default ² | preview |
 | `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22 — Cortex-M4/M7 soft float, M23, M33F/M55F ² | preview |
 | `riscv64-linux-musl` · `aarch64-linux-gnu` · `x86_64-macos` | — | planned |
+| `aarch64-linux-android` · `x86_64-linux-android` | needs `xim:android-ndk`; `import std` measured working on the NDK's clang | planned |
+| `aarch64-ios` | needs the iPhoneOS SDK, which is a licence question before it is a packaging one | planned |
+| `wasm32-emscripten` | needs `xim:emsdk`; `import std` measured working on `em++`, and the target model is [#597](https://github.com/mcpp-community/mcpp/issues/597) | planned |
 
 `verified` an image has been built **and run** for the row, qemu and wine
 included · `preview` it builds and links, and no emulator run has been recorded

@@ -38,19 +38,26 @@ and the build reports what it resolved.
 
 | Segment | Content | Example |
 |---|---|---|
-| `arch` | instruction set | `x86_64`, `aarch64`, `riscv64` |
-| `os` | operating system, or `none` | `linux`, `windows`, `macos`, `none` |
-| `env` | see below — it is a different axis per platform | `gnu`, `musl`, `msvc`, `elf` |
+| `arch` | instruction set | `x86_64`, `aarch64`, `riscv64`, `wasm32` |
+| `os` | operating system, or `none` | `linux`, `windows`, `macos`, `ios`, `emscripten`, `none` |
+| `env` | see below — it is a different axis per platform | `gnu`, `musl`, `msvc`, `android`, `elf` |
 
 The third segment is the one that repays attention, because it does not name
 the same kind of thing everywhere:
 
 | Platform | `env` names | Values |
 |---|---|---|
-| `linux` | the **C library** | `gnu` (glibc), `musl` |
+| `linux` | the **C library** | `gnu` (glibc), `musl`, `android` (bionic) |
 | `windows` | the **object ABI** | `gnu` (Itanium C++ ABI), `msvc` (Microsoft's) |
 | `none` | the **object format** | `elf` |
-| `macos` | nothing; the platform carries no segment | — |
+| `macos`, `ios`, `emscripten` | nothing; the platform carries no segment | — |
+
+`android` is a **C library** and therefore sits where `musl` sits, on a `linux`
+OS. That placement is the whole of the modelling decision: the kernel *is*
+Linux, so ELF, the `unix` family and `nasm -f elf64` are already right, and an
+`os = "android"` would have made every one of them wrong by default and needed
+a new answer at each site. What differs from `gnu` is bionic, the loader path
+and the SDK — which is exactly what an `env` value is for.
 
 On Windows the segment is frequently misread, because the word `gnu` suggests a
 C library that is not there. Measured on an artefact built for
@@ -67,6 +74,30 @@ runtime compiler-rt, the C library musl, the C++ runtime libc++, the platform
 openkal. `gnu` is LLVM's label for the non-MSVC ABI, inherited from MinGW, and
 clang requires that spelling to select the right internal toolchain. mcpp
 cannot rename it.
+
+### The object format is an axis, not a derivation
+
+A triple's binary format used to be nothing at all: it was re-derived from `os`
+wherever it was needed. `is_pe()` asked `os == "windows"`, artifact naming asked
+again, the packer asked a third time. That is affordable while the answer has
+two values.
+
+`wasm32` is the first target in mcpp's vocabulary whose format is neither, and a
+third value turns those derivations into an addition **at every such site** — and
+a site that is missed does not fail. It silently answers ELF, because ELF is
+what every `else` branch in the tree assumes. So the format is now one answer:
+
+| target | format |
+|---|---|
+| `x86_64-linux-gnu`, `aarch64-linux-android`, `riscv64-none-elf` | ELF |
+| `aarch64-macos`, `aarch64-ios` | Mach-O |
+| `x86_64-windows-gnu`, `x86_64-windows-msvc` | PE |
+| `wasm32-emscripten` | wasm |
+
+It is **not** the same question as "is there an operating system to link
+against". A bare-metal RISC-V image is ELF with no OS; a wasm module has an
+OS-like layer (Emscripten's POSIX emulation) and is not ELF. Merging the two
+axes is the mistake this replaces.
 
 ## Declining The Third Segment
 
@@ -444,6 +475,10 @@ other's rows.
 | `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
 | `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
 | `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
+| `aarch64-linux-android` | planned | — | planned | planned | planned | planned |
+| `x86_64-linux-android` | planned | — | planned | planned | planned | planned |
+| `aarch64-ios` | planned | — | planned | planned | planned | planned |
+| `wasm32-emscripten` | planned | — | planned | planned | planned | planned |
 
 `payload` a toolchain payload here produces it · `graph` no payload, but a
 dependency can supply the system · `system` located on the machine, not
