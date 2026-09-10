@@ -22,7 +22,7 @@ plugins = { version = "0.5.2", features = ["rules-spirv"], host-module = true }
 # below is a payload and the hardware ones are the host's.
 [dependencies.compat]
 vulkan         = "1.4.357.0"
-vulkan-runtime = "2026.09.10"
+vulkan-runtime = "2026.09.11"
 
 # ONE payload here, and the shader compiler is not it: `mcpp.rules.spirv`
 # declares `xim:glslang` for itself. What stays is a DEVICE, and the boundary is

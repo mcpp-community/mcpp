@@ -37,7 +37,7 @@ plugins = { version = "0.5.2", features = ["rules-sycl", "tools-island"], host-m
 # message (#596). The farm now mirrors what the driver sentinel publishes
 # rather than naming a file.
 [dependencies.compat]
-sycl-runtime = "2026.09.10"
+sycl-runtime = "2026.09.11"
 
 # NO [xlings.workspace]. `mcpp.rules.sycl` declares all five payloads this lane
 # needs, each closing one hole the host would otherwise fill: `dpcpp` (the

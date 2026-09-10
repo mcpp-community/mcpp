@@ -28,14 +28,14 @@ plugins = { version = "0.5.2", features = ["rules-spirv"], host-module = true }
 # seam work: the CPU leg below is selected by the accelerator, and only the
 # packages are unconditional.
 [dependencies.compat]
-vulkan = "1.4.357.1"
+vulkan = "1.4.357.2"
 
 # The adapter that makes the host's own ICDs reachable from a binary running
 # under mcpp's private loader. An OS predicate, which IS allowed, and a Linux
 # concern by construction: macOS resolves through dyld and Windows through the
 # PE loader, and neither has a private loader to work around.
 [target.'cfg(linux)'.dependencies.compat]
-vulkan-runtime = "2026.09.10"
+vulkan-runtime = "2026.09.11"
 
 # A Vulkan device that needs no GPU, so this example runs on a machine that has
 # none. It is a DEVICE and therefore a payload; the drivers a real GPU needs are
