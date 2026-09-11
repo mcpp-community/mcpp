@@ -203,11 +203,11 @@ jobs:
           [target.aarch64-ios-sim]
           runner = ["simctl-run"]
 
-          # Declared at the top level here and not in examples/13, because a
-          # tool declaration is not conditional on a target and this package
-          # exists for macOS alone. This fixture is macOS-only, so it can say
-          # it; a portable manifest cannot.
-          [xlings.workspace]
+          # Declared on the row that runs it, as examples/13 does. A target
+          # section's `xlings.workspace` is installed only when that target is
+          # built, so the step below that runs the simulator artefact through
+          # `simctl-run` is also the measurement that this declaration works.
+          [target.aarch64-ios-sim.xlings.workspace]
           "xim:apple-simulator-tools" = ""
           TOML
           cat > /tmp/iostest/src/main.cpp << 'CPP'

@@ -47,24 +47,19 @@ runner = ["simctl-run"]
 [target.x86_64-ios-sim]
 runner = ["simctl-run"]
 
-# THE RUNNER'S PROGRAM IS NOT DECLARED HERE, AND THAT IS A LIMITATION RATHER
-# THAN A CHOICE.
+# THE RUNNER'S PROGRAM IS DECLARED BESIDE THE ROWS THAT USE IT.
 #
-# `simctl-run` comes from `xim:apple-simulator-tools`, and the natural place to
-# say so is beside the row that uses it. That does not exist: `deps` is not
-# conditional on a target, and declaring it at the top level breaks every other
-# row on every other host. Both measured:
+# `simctl-run` comes from `xim:apple-simulator-tools`, a package that exists for
+# macOS alone. Declared under a target's `xlings.workspace`, it is installed
+# only when that target is built, so the Linux, Android and Web rows of this
+# example never ask for it.
 #
-#   error: [target.aarch64-ios-sim.xlings] does not accept 'deps'. Only
-#          `workspace` is conditional on a target
-#   error: package 'xim:apple-simulator-tools' has no build for linux
-#          (available on: macosx)
-#
-# The second is the sharper one: this example exists to build for several
-# platforms from one source, and an unconditional tool declaration makes the
-# Linux build depend on a package that only exists for macOS.
-#
-# So the program is installed by whoever runs the simulator rows --
-# `xlings install apple-simulator-tools` -- and mcpp's runner lookup finds it
-# on PATH. See the README. A per-target tool axis would remove the step, and it
-# is recorded rather than worked around.
+# An earlier version of this file said the declaration was impossible, citing
+# `[target.aarch64-ios-sim.xlings] does not accept 'deps'`. The refusal was
+# real and the conclusion was not: `deps` is the unconditional spelling, and
+# `workspace` is the one a target section accepts.
+[target.aarch64-ios-sim.xlings.workspace]
+"xim:apple-simulator-tools" = ""
+
+[target.x86_64-ios-sim.xlings.workspace]
+"xim:apple-simulator-tools" = ""

@@ -193,6 +193,19 @@ requires = ["mcpp:compiler=llvm"]
 该检查在编译开始之前运行。它所拒绝的组合,否则将在该运行时自身的头文件深处失败,
 其消息命名一个读者从未打开过的文件,以及一个 mcpp 从未作出的决定。
 
+同一条声明也是「安装钩子从源码编译静态库」这类包的做法。这样的库针对某一个 C++ 标准库编译,无法链接进
+使用另一个标准库的程序;而它安装到的存储目录按包名与版本区分,并不区分这一选择。因此这类包声明它所针对
+的实现:
+
+```toml
+requires = ["mcpp:c++-abi=libstdc++"]
+```
+
+工具链解析出另一个 `c++-abi` 的工程随后会被拒绝,拒绝信息同时指出两个实现,而不是在链接时失败。这项检查
+在工具链解析之后进行,而工具链在依赖图安装之后才解析,因此检查时安装钩子已经运行过;钩子收到本次构建的
+目标,但收不到工具链的取值([32 —— 编写载荷](32-authoring-a-payload.md))。钩子不得把另一种变体构建进
+同一个存储目录,否则第一个消费者就会替之后所有消费者决定变体。
+
 ### 标准库模块源
 
 作为标准库的包陈述它的 `std` 模块源在何处,以及该源需要什么。
@@ -419,6 +432,48 @@ C 库,那时解析出的 `c-abi` 就不是这里返回的东西。要按已解�
 `[target.'cfg(c-abi = "musl")'.build]`(见[22 —— 目标侧](22-target-side.md))。
 这一段在 2026.9.1.1 之前写的是「解析到的是哪份 C 库」,那是两者里错的那一个。
 参见[40 —— 裸机与 freestanding 目标](40-baremetal.md)。
+
+### `abi` —— 整个产物共享的开关(mcpp 2026.9.12.2+)
+
+```toml
+[target.'cfg(os = "emscripten")'.abi]
+threads = true
+```
+
+目标的某些性质不是单个翻译单元可以自行选择的 flag。线程支持即是一例:在 WebAssembly 上,每个目标文件、
+预编译的标准库模块与链接必须在共享内存与原子操作上保持一致,只要有一个翻译单元未启用它们,链接就会失败,
+或模块拒绝加载。这类性质写作 `[target.<selector>.abi]` 的有类型成员,而不是 `cxxflags` 中的 flag,
+引擎因此能把它施加到每个必须一致的单元上,并把它与包的需求相比较。
+
+| 成员 | 类型 | 渲染为 | 到达 |
+|---|---|---|---|
+| `threads` | 布尔 | 在既非 PE 也非 freestanding 的目标上为 `-pthread`;在 PE 与 freestanding 目标上不产生任何 flag | 标准库模块的预构建、依赖扫描、所有包的每个 C 与 C++ 翻译单元,以及链接 |
+
+该成员经由方言 flag 进入依赖缓存键,因此未启用线程时构建的依赖不会被启用线程的构建复用。未知成员,以及
+不是布尔值的 `threads`,都会被拒绝。
+
+**只有根 manifest 做决定。** 这个开关属于产物,而根包是唯一构建产物的包。依赖写下的
+`[target.<selector>.abi]` 会被报告(`abi/dependency-table`),且不改变任何东西。依赖改为声明自己的需求:
+
+```toml
+[package]
+requires_abi = { threads = true }          # 整个包需要线程
+
+[features]
+mt = { requires_abi = { threads = true } } # 只有这个 feature 需要线程
+```
+
+根包未满足的需求在任何编译开始之前被拒绝,拒绝信息指出包名以及提出需求的对象:
+
+```
+error: `wasmrt` requires the artefact's ABI to have threads (feature `mt`), and this build does not state it.
+       Add to the root manifest, for the targets that need it:
+
+           [target.'cfg(os = "<os>")'.abi]
+           threads = true
+```
+
+若没有这项拒绝,不匹配会表现为预编译模块的配置错误,而该错误既不指出包,也不指出开关。
 
 ## 当前边界
 

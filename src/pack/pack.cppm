@@ -91,6 +91,12 @@ struct Options {
     // toolset's `VC\Redist\MSVC\<v>\<arch>\Microsoft.VC*.CRT\` for cl.
     // Searched ONLY under the toolchain-coupled contract — see make_plan.
     std::vector<std::filesystem::path> toolchainRuntimeDirs;
+    // What the build placed relative to the executable, from
+    // `runtime.deploy_files` and `runtime.deploy` (#615), as paths relative to
+    // the executable's directory. Each is staged at the same relative path
+    // beside the packed executable, in every mode: these are files a program
+    // opens, not libraries a closure decides about.
+    std::vector<std::filesystem::path> runtimeFiles;
     // Does the RESOLVED C++ runtime contract require the toolchain's own
     // runtime to travel WITH the artifact — i.e. `cxx_runtime =
     // "toolchain-coupled"`?
@@ -815,6 +821,31 @@ void copy_if_exists(const std::filesystem::path& src,
         std::filesystem::copy_options::overwrite_existing, ec);
 }
 
+// The runtime files the build placed relative to the executable (#615), copied
+// to the same relative path beside the staged executable. The build produced
+// every one of them, so a missing file is an error naming it rather than a
+// bundle that silently lacks it.
+std::expected<void, Error>
+stage_runtime_files(const Plan& plan, const std::filesystem::path& stagedExeDir)
+{
+    const auto builtDir = plan.builtBinary.parent_path();
+    for (auto const& rel : plan.opts.runtimeFiles) {
+        const auto src = builtDir / rel;
+        const auto dst = stagedExeDir / rel;
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(src, ec))
+            return std::unexpected(Error{std::format(
+                "runtime file '{}' is not beside the built executable (looked at '{}')",
+                rel.generic_string(), src.string())});
+        std::filesystem::create_directories(dst.parent_path(), ec);
+        std::filesystem::copy_file(src, dst,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) return std::unexpected(Error{std::format(
+            "failed to copy {} -> {}: {}", src.string(), dst.string(), ec.message())});
+    }
+    return {};
+}
+
 // ─── PE: the closure, read rather than executed ─────────────────────────
 //
 // BFS over the import tables, resolving each name against `searchDirs`. A
@@ -951,6 +982,7 @@ run_pe(const Plan& plan)
         std::filesystem::copy_options::overwrite_existing, ec);
     if (ec) return std::unexpected(Error{std::format(
         "copy binary failed: {}", ec.message())});
+    if (auto r = stage_runtime_files(plan, stagedExe.parent_path()); !r) return r;
 
     copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);
     copy_if_exists(plan.projectRoot / "LICENSE",   plan.stagingRoot);
@@ -1116,6 +1148,8 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
       | std::filesystem::perms::group_exec
       | std::filesystem::perms::others_exec,
         std::filesystem::perm_options::add, ec);
+    // 2b. Runtime files beside it, at the paths the build used (#615).
+    if (auto r = stage_runtime_files(plan, bundledBinary.parent_path()); !r) return r;
 
     // 3. README / LICENSE if present at project root.
     copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);

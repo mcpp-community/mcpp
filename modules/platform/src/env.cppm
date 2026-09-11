@@ -23,6 +23,11 @@ std::optional<std::string> get(std::string_view key);
 // Set an environment variable in the current process.
 void set(const std::string& key, const std::string& value);
 
+// Remove an environment variable from the current process. On Windows this is
+// `_putenv_s(key, "")`, which the CRT defines as removal, so absent and empty
+// are one state there, and `get` answers nullopt for both on every platform.
+void unset(const std::string& key);
+
 // ── Network policy: offline mode ──────────────────────────────────────────
 //
 // One process-wide knob answering "may mcpp reach the network at all?", read
@@ -122,6 +127,14 @@ void set(const std::string& key, const std::string& value) {
 #endif
 }
 
+void unset(const std::string& key) {
+#if defined(_WIN32)
+    _putenv_s(key.c_str(), "");
+#else
+    unsetenv(key.c_str());
+#endif
+}
+
 ScopedEnv::ScopedEnv(std::string key, std::optional<std::string> value)
     : key_(std::move(key)) {
     if (auto* existing = std::getenv(key_.c_str())) {
@@ -132,11 +145,7 @@ ScopedEnv::ScopedEnv(std::string key, std::optional<std::string> value)
     if (value) {
         set(key_, *value);
     } else {
-#if defined(_WIN32)
-        _putenv_s(key_.c_str(), "");
-#else
-        unsetenv(key_.c_str());
-#endif
+        unset(key_);
     }
 }
 
@@ -144,11 +153,7 @@ ScopedEnv::~ScopedEnv() {
     if (had_previous_ && previous_) {
         set(key_, *previous_);
     } else {
-#if defined(_WIN32)
-        _putenv_s(key_.c_str(), "");
-#else
-        unsetenv(key_.c_str());
-#endif
+        unset(key_);
     }
 }
 

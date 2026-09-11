@@ -800,6 +800,32 @@ inline MA& operator+=(MA& a, const MB& b);
 工具链上的金丝雀 —— 未来某次 Clang 升级修好(或再次弄坏)这一点时,
 它会显式暴露出来,而不是悄悄改变包能表达的东西。
 
+## 已知工具链风险:宽的可平凡比较类型上的 `std::find`(clang + MSVC STL 14.51)
+
+编译器是 clang、标准库是 MSVC STL 14.51(Visual Studio 18)时,对宽度超过八字节的
+可平凡复制类型调用 `std::find` 的翻译单元,会在标准库内部编译失败:
+
+```text
+xutility:320:23: error: static assertion failed: unexpected size
+xutility:6542:49: note: in instantiation of function template specialization
+  'std::_Find_vectorized<const T, T>' requested here
+```
+
+这正是 mcpp 在 Windows 上默认工具链的形态(clang 面向 `x86_64-pc-windows-msvc`),
+所以即使 mcpp 和程序本身都没有错误,失败也会经由 `mcpp build` 出现。MSVC STL 通过一个
+只在 clang 下生效、且没有尺寸上限的 trait 把该类型放进向量化路径,而它分派到的函数只
+实现了 1、2、4、8 字节的元素;MSVC 自己的前端不走这条路径。同一份源码在
+`windows-2022` 所带的 MSVC STL 14.3x 上可以编译。
+
+缺陷在上游,见 [microsoft/STL#6294](https://github.com/microsoft/STL/issues/6294)。
+下游实测过两种绕过方式:
+
+- 为元素类型写一个用户定义的 `operator==`,而不是默认的。该类型因此不再可平凡相等比较,
+  STL 走标量路径。
+- 在 MSVC STL 早于 14.51 的镜像上构建,例如 `windows-2022`。
+
+见 [mcpp#609](https://github.com/mcpp-community/mcpp/issues/609)。
+
 ## C++ 运行时契约(`cxx_runtime`)
 
 `cxx_runtime` 声明的是**产物对运行它的机器做出的承诺**。它是**分发**属性而非

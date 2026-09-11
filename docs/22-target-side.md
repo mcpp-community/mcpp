@@ -227,6 +227,24 @@ The check runs before compilation begins. The combination it rejects otherwise
 fails inside the runtime's own headers, in a message naming a file the reader
 has never opened and no decision mcpp made.
 
+The same statement is the recipe for a package whose install hook compiles a
+static library from source. The library is compiled against one C++ standard
+library and cannot be linked into a program that uses another, and the store
+directory it is installed into is keyed by package and version, not by that
+choice. Such a package declares the implementation it was built for:
+
+```toml
+requires = ["mcpp:c++-abi=libstdc++"]
+```
+
+A project whose toolchain resolves another `c++-abi` is then refused, naming
+both implementations, instead of failing at the link. The check runs once the
+toolchain is resolved, which is after the dependency graph is installed, so the
+install hook has already run; the hook receives the build's target but no
+toolchain values ([32 — Authoring a Payload](32-authoring-a-payload.md)). It
+must not build a different variant into the same store directory, because the
+first consumer would then decide the variant for every later one.
+
 ### Standard Library Module Sources
 
 A package that is a standard library states where its `std` module source is
@@ -499,6 +517,56 @@ this returns. To branch on the resolved layer, use a layer predicate:
 `[target.'cfg(c-abi = "musl")'.build]` ([22 — The Target
 Side](22-target-side.md)). This paragraph said "which C library was resolved"
 until 2026.9.1.1, which was the wrong one of the two.
+
+### `abi` — a switch the whole artefact shares (mcpp 2026.9.12.2+)
+
+```toml
+[target.'cfg(os = "emscripten")'.abi]
+threads = true
+```
+
+Some properties of a target are not a flag a translation unit may choose. Thread
+support is one: on WebAssembly every object, the precompiled standard library
+module and the link must agree on shared memory and atomics, and one translation
+unit built without them makes the link fail or the module refuse to load. Such a
+property is written as a typed member of `[target.<selector>.abi]` rather than as
+a flag in `cxxflags`, so the engine applies it to every unit that has to agree
+and compares it with what a package needs.
+
+| Member | Type | Renders as | Reaches |
+|---|---|---|---|
+| `threads` | boolean | `-pthread` on a target that is neither PE nor freestanding; nothing on PE and on freestanding targets | the standard library module prebuild, the dependency scan, every C and C++ translation unit of every package, and the link |
+
+The member enters the dependency cache key through the dialect flags, so a
+dependency built without threads is never reused by a build with them. An
+unknown member, and a `threads` that is not a boolean, are refused.
+
+**Only the root manifest decides.** The switch belongs to the artefact, and the
+root is the only package that builds one. A dependency that writes
+`[target.<selector>.abi]` is reported (`abi/dependency-table`) and changes
+nothing. A dependency states what it needs instead:
+
+```toml
+[package]
+requires_abi = { threads = true }          # the package needs threads
+
+[features]
+mt = { requires_abi = { threads = true } } # only this feature needs them
+```
+
+A requirement the root does not satisfy is refused before anything compiles,
+naming the package and what required the switch:
+
+```
+error: `wasmrt` requires the artefact's ABI to have threads (feature `mt`), and this build does not state it.
+       Add to the root manifest, for the targets that need it:
+
+           [target.'cfg(os = "<os>")'.abi]
+           threads = true
+```
+
+Without the refusal the mismatch surfaces as a precompiled-module configuration
+error that names neither the package nor the switch.
 
 ## Current limitations
 

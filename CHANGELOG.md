@@ -5,7 +5,9 @@
 
 ## [Unreleased]
 
-## [2026.9.12.1] - 2026-09-12
+## [2026.9.12.2] - 2026-09-12
+
+2026.9.12.1 未单独发布,其条目并入本版本。
 
 ### Web 产物的运行不再依赖宿主的 `node`
 
@@ -33,6 +35,77 @@ Emscripten 链接产出的是首行为 `#!/usr/bin/env node` 的 JavaScript 启�
 - `xim:emsdk` 的配方写出 `runner`(openxlings/xim-pkgindex#823)。早于这个键的 mcpp
   忽略它,所以配方可以先发;在此之前安装的 emsdk 载荷没有描述文件,行为与之前相同,重新
   安装后获得。
+
+### Windows GUI 可执行文件:`windows_subsystem` 与 `windows_entry`(#618)
+
+- `[targets.<name>]` 增加 `windows_subsystem = "console" | "windows"` 与
+  `windows_entry = "main" | "wmain" | "WinMain" | "wWinMain"`。它们是字段而不是链接标志,因为正确的
+  标志取决于 ABI:MSVC ABI 渲染为 `/SUBSYSTEM:` 与 CRT 启动符号 `/ENTRY:<entry>CRTStartup`(经 GNU
+  风格驱动时带 `-Wl,`),只要任一键偏离默认值两条都写出;GNU ABI 渲染为 `-mwindows` 与 `-municode`。
+  在 ELF、Mach-O 与 WebAssembly 上不产生任何标志,产物逐字节不变。
+- 只到达声明它们的可执行目标的链接;同包的其他可执行文件、测试二进制与消费者保持控制台子系统。库目标
+  声明任一键被拒绝,拒绝信息指出目标与键名;取值不在集合内被拒绝并列出可接受的取值。
+- 构建程序协议升至 10:`mcpp::windows_subsystem(target, value)` 与 `mcpp::windows_entry(target, value)`
+  为本包的可执行目标设置同一字段。指向未声明的目标、非可执行目标,或与 mcpp.toml 矛盾的取值,在应用任何
+  指令之前被拒绝;缓存命中的路径施加同一检查。
+- `[targets.<name>]` 不支持键的警告所列出的键表改为由解析器接受的键表生成;此前手写的副本漏掉了 `exports`。
+
+### 快路径比较工具链请求
+
+- 快路径此前比较目标三元组、profile、缓存模式与 feature,但不比较 `--toolchain`(即 `MCPP_TOOLCHAIN`)
+  与本机默认工具链(config.toml 的 `[toolchain] default`)。实测:以 gcc 构建后执行
+  `mcpp build --toolchain llvm@22.1.8`,输出 `Finished dev in 0.00s` 并保留 gcc 产物,解析阶段的检查
+  全部被跳过。
+- 构建缓存记录增加 `toolchain=` 行,`mcpp build` 与 `mcpp run` 的快路径都比较它。早于该行的记录被拒绝
+  一次,随后的构建重新写入。`--offline`、`--locked` 与 `--jobs` 不改变解析的选择,不参与比较。
+
+### `runtime.deploy`:把运行期文件放进相对可执行文件的目录(#615)
+
+- `[runtime] deploy = [{ from = "...", to = "..." }]` 与描述文件的 `runtime.deploy`:`from` 相对声明它的
+  包,`to` 相对可执行文件所在目录,`"."` 表示该目录本身。`deploy_files` 把每一项放在可执行文件旁,无法
+  满足从固定子目录读取的加载器,例如 macOS 上的 Vulkan loader 读取 `<可执行文件目录>/vulkan/icd.d`。
+- mcpp.toml 与描述文件使用同一条路径规则:以 `/` 分隔,不得为绝对路径、不得指定盘符、不得含空分量、`.`
+  或 `..` 分量;违反的项按序号被拒绝。同一目标位置的两个来源被拒绝,同名文件放进不同目录不构成冲突。
+  测试二进制看到同样的布局。
+- `mcpp pack` 把 `deploy_files` 与 `deploy` 的文件放到打包后可执行文件旁的同一相对位置;此前打包过程不读取
+  这两个列表中的任何一个。
+- 它是独立的键,而不是 `deploy_files` 的表形式:早于它的描述文件读取器在 `deploy_files` 中遇到 `{` 时
+  不会终止,而对不认识的 `runtime` 键会跳过。
+
+### 产物的 ABI 开关:`[target.<selector>.abi] threads` 与 `requires_abi`
+
+- 线程支持是整个产物共享的性质:标准库模块预构建、依赖扫描、每个包的每个翻译单元与链接必须一致。根
+  manifest 以 `[target.<selector>.abi] threads = true` 声明;在既非 PE 也非 freestanding 的目标上渲染为
+  `-pthread`,并经方言 flag 进入依赖缓存键。未知成员与非布尔的 `threads` 被拒绝。
+- 依赖以 `[package] requires_abi = { threads = true }` 或
+  `[features] <name> = { requires_abi = { threads = true } }` 声明需求;根包未满足时在编译之前被拒绝,
+  拒绝信息指出包与 feature,并给出满足它的表。依赖自己写的 `[target.<selector>.abi]` 被报告
+  (`abi/dependency-table`)且不生效。
+
+### 安装钩子的环境与 `c++-abi` 的做法(#613)
+
+- 依赖包的安装钩子收到 `MCPP_TARGET`、`MCPP_TARGET_OS`、`MCPP_TARGET_ARCH` 与 `MCPP_TARGET_ENV`,名称
+  与规则同构建程序一致,由同一个函数计算。`MCPP_COMPILER` 与 `MCPP_CXX_STDLIB` 同样总是写出,但在依赖
+  安装时为空:工具链在依赖图之后才解析,此时没有可陈述的编译器与标准库。每个变量都显式写出,钩子不会读到
+  从父进程继承的值;钩子不得把某种变体构建进名称未体现该变体的存储目录。
+- 从源码构建静态库的包以 `requires = ["mcpp:c++-abi=<stdlib>"]` 声明它所针对的标准库;工具链解析出另一
+  实现的工程被拒绝,拒绝信息指出两个实现。docs/06、docs/22 与 docs/32 记录这一做法。
+
+### xlings 调用的环境与错误输出(#614)
+
+- 一次 xlings 调用的环境由一个函数决定,全局模式是不存在的 `XLINGS_PROJECT_DIR`。POSIX 把它渲染进
+  命令前缀;Windows 在调用期间以作用域守卫施加,调用结束后恢复原值,项目目录不再留在 mcpp 之后启动的
+  进程的环境中。`install_packages` 的回退路径此前在 POSIX 上无视项目目录、一律按全局模式拼写,现与直接
+  路径一致。
+- 安装失败时,xlings 自己的错误级别输出(含 `error`、`E_` 或以 `[xim]` 开头的行,最多最后 20 行)以
+  `xlings:` 前缀附在 mcpp 的诊断之后;此前 stderr 被丢弃。
+
+### 其他
+
+- `[target.<selector>.xlings]` 下写包名时,拒绝信息指出正确的位置 `[target.<selector>.xlings.workspace]`;
+  示例 13 与 iOS 模拟器 CI 夹具改用该写法声明 `xim:apple-simulator-tools`,示例 README 不再要求手动安装。
+- docs/20 记录 clang 与 MSVC STL 14.51 组合下 `std::find` 作用于宽平凡可比较类型时的已知工具链缺陷
+  (microsoft/STL#6294,#609)。
 
 ## [2026.9.11.4] - 2026-09-11
 

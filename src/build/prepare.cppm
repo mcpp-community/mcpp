@@ -421,6 +421,13 @@ export void merge_conditional_config(mcpp::manifest::Manifest& m,
         for (auto const& l : cc.libraries)
             m.runtimeConfig.linkIntent.libraries.push_back(l);
         merge_conditional_xlings(m, cc);
+        // `[target.<sel>.abi]`: recorded for every package; rendered only for
+        // the root, where prepare_build reads it. Last matching section wins,
+        // the rule every other conditional scalar follows.
+        if (cc.abiThreadsDeclared) {
+            m.buildConfig.abiThreads = cc.abiThreads;
+            m.buildConfig.abiThreadsDeclared = true;
+        }
         // `modules.sources` is the scanner's own view and is not part of
         // BuildInputs, so conditional sources are mirrored into it here.
         for (auto const& s : cc.inputs.sources)
@@ -2846,6 +2853,31 @@ prepare_build(bool print_fingerprint,
     if (!m->conditionalConfigs.empty()) {
         merge_conditional_config(*m, cfgCtx());
     }
+    // `[target.<selector>.abi] threads` -- the ROOT's statement, rendered once,
+    // into channels that already reach the whole artefact: the graph-global
+    // dialect flag set (every C++ translation unit, the std module's own
+    // commands, the scan, every dependency's cache key), the C flags of every
+    // package (the root here, each dependency where it is loaded), and the link.
+    //
+    // For hosted targets that are not PE. On PE the MSVC runtime is always
+    // multithreaded and mingw-w64's threading model belongs to its payload; a
+    // freestanding target has no thread library to select.
+    const bool abiThreadsRendered = [&] {
+        if (!m->buildConfig.abiThreads) return false;
+        const auto abiTriple = mcpp::toolchain::triple::parse(
+            overrides.target_triple.empty()
+                ? mcpp::toolchain::triple::host_triple().str()
+                : overrides.target_triple);
+        return abiTriple && !abiTriple->is_pe() && !abiTriple->is_freestanding();
+    }();
+    auto add_once = [](std::vector<std::string>& v, std::string_view flag) {
+        if (std::ranges::find(v, flag) == v.end()) v.emplace_back(flag);
+    };
+    if (abiThreadsRendered) {
+        add_once(m->buildConfig.dialectCxxflags, "-pthread");
+        add_once(m->buildConfig.cflags, "-pthread");
+        add_once(m->buildConfig.ldflags, "-pthread");
+    }
     // `[build].defines` must reach the scanner (P1689) and the compile edge,
     // and must participate in the fingerprint. Fold before dependency
     // resolution / fingerprinting.
@@ -5021,6 +5053,13 @@ prepare_build(bool print_fingerprint,
             // #238: retain whatever error/warn text the child DID emit so we
             // can fold it into a diagnostic if install_packages exits non-zero.
             std::string capturedChildError;
+            // xlings' own error lines, after its structured summary (#614).
+            auto append_xlings_stderr = [](std::string& into,
+                                           const mcpp::xlings::CallResult& r) {
+                if (r.exitCode == 0) return;
+                for (auto const& line : r.stderrTail)
+                    into += (into.empty() ? "" : "\n  ") + std::string("xlings: ") + line;
+            };
             auto install_one = [&](std::string target) -> std::expected<mcpp::xlings::CallResult, mcpp::pm::CallError> {
                 if (useProjectEnv) {
                     // Project/custom-index deps install into the project-local
@@ -5041,12 +5080,14 @@ prepare_build(bool print_fingerprint,
                         projEnv, "install_packages", argsJson, &progress);
                     capturedChildError = progress.captured_error();
                     if (!r) return std::unexpected(mcpp::pm::CallError{r.error()});
+                    append_xlings_stderr(capturedChildError, *r);
                     return *r;
                 }
                 std::vector<std::string> targets{ std::move(target) };
                 mcpp::fetcher::InstallProgressHandler progress;
                 auto r = fetcher.install(targets, &progress);
                 capturedChildError = progress.captured_error();
+                if (r) append_xlings_stderr(capturedChildError, *r);
                 return r;
             };
             // Target = `<namespace>:<literal name>@<version>` (SPEC-001 §6).
@@ -5066,6 +5107,35 @@ prepare_build(bool print_fingerprint,
             // had asked for `mcpplibs:gtest` — the error itself only named the
             // dependency, which is the one thing nobody doubts.
             std::vector<std::string> attempted{ target };
+            // #613: THE INSTALL HOOK'S ENVIRONMENT, under the names and the rule
+            // a build program gets: always emitted, empty when not applicable,
+            // so a hook never reads a value inherited from a parent process.
+            // Computed by `install_hook_env`, the function the build-program
+            // environment takes the same six values from.
+            //
+            // THE TOOLCHAIN VALUES ARE EMPTY HERE ON THE ORDINARY PATH. `tc` is
+            // resolved after the dependency graph (see its declaration: a
+            // package in the graph may supply a target-side layer), so when a
+            // dependency installs there is no resolved compiler or standard
+            // library to state, and a guessed one would be worse than none.
+            // Measured with tests/e2e/648. The target names are decided, and a
+            // package states the standard library it was built for with
+            // `requires = ["mcpp:c++-abi=..."]`, checked once `tc` exists. A
+            // hook must not build a variant into a store directory that does
+            // not name the variant, because the store is keyed by package and
+            // version. Scoped: restored when this dependency's install returns,
+            // compat retries below included.
+            mcpp::build::BuildProgramEnv hookEnv;
+            fill_target_build_env(hookEnv, tc ? &*tc : nullptr);
+            hookEnv.targetTriple = overrides.target_triple;
+            // Six names, fixed by install_hook_env; one guard each.
+            const auto hookVars = mcpp::build::install_hook_env(hookEnv);
+            mcpp::platform::env::ScopedEnv hookVar0(hookVars.at(0).first, hookVars.at(0).second);
+            mcpp::platform::env::ScopedEnv hookVar1(hookVars.at(1).first, hookVars.at(1).second);
+            mcpp::platform::env::ScopedEnv hookVar2(hookVars.at(2).first, hookVars.at(2).second);
+            mcpp::platform::env::ScopedEnv hookVar3(hookVars.at(3).first, hookVars.at(3).second);
+            mcpp::platform::env::ScopedEnv hookVar4(hookVars.at(4).first, hookVars.at(4).second);
+            mcpp::platform::env::ScopedEnv hookVar5(hookVars.at(5).first, hookVars.at(5).second);
             auto r = install_one(target);
             if (r && r->exitCode != 0 &&
                 (ns.empty() || ns == mcpp::pm::kDefaultNamespace)) {
@@ -5231,6 +5301,9 @@ prepare_build(bool print_fingerprint,
                                     cfgCtx());
         }
         fold_build_defines_into_flags(manifest->buildConfig);
+        // The root's `abi.threads` reaches a dependency's C translation units
+        // here; its C++ units already receive it through the dialect flag set.
+        if (abiThreadsRendered) add_once(manifest->buildConfig.cflags, "-pthread");
 
         return std::pair{effRoot, std::move(*manifest)};
     };
@@ -6745,6 +6818,9 @@ prepare_build(bool print_fingerprint,
                     cfgCtx());
             }
             fold_build_defines_into_flags(dep_manifest->buildConfig);
+            // The root's `abi.threads` reaches this dependency's C translation
+            // units here, as it does for a version dependency.
+            if (abiThreadsRendered) add_once(dep_manifest->buildConfig.cflags, "-pthread");
         } else {
             auto loaded = loadVersionDep(name, key.ns, key.shortName, spec.version);
             if (!loaded) return std::unexpected(loaded.error());
@@ -7279,6 +7355,8 @@ prepare_build(bool print_fingerprint,
     // apply() as each package's features activate; bound after the loops below.
     std::map<std::string, std::vector<std::string>> capProviders;
     std::vector<std::pair<std::string, std::string>> capRequires;
+    // `requires_abi`: (what, requirer). See Manifest::requiresAbiThreads.
+    std::vector<std::pair<std::string, std::string>> abiRequires;
     // Who claimed sole provision of what. Separate from capProviders because
     // the question it answers is different: capProviders asks "can this
     // requirement be satisfied", this asks "can these two coexist at all".
@@ -7371,7 +7449,21 @@ prepare_build(bool print_fingerprint,
                 if (auto it = pkg.manifest.featureRequires.find(f);
                     it != pkg.manifest.featureRequires.end())
                     for (auto& cap : it->second) capRequires.emplace_back(cap, pcap);
+                if (auto it = pkg.manifest.featureRequiresAbiThreads.find(f);
+                    it != pkg.manifest.featureRequiresAbiThreads.end() && it->second)
+                    abiRequires.emplace_back(std::format("feature `{}`", f), pcap);
             }
+            if (pkg.manifest.requiresAbiThreads)
+                abiRequires.emplace_back("the package", pcap);
+            // A DEPENDENCY'S OWN `[target.<selector>.abi]` DOES NOT CHANGE THE
+            // BUILD. The switch belongs to the artefact, which the root decides;
+            // a table written in a dependency is reported rather than silently
+            // ignored, and points at the key a dependency does have.
+            if (pcap != m->package.name && pkg.manifest.buildConfig.abiThreadsDeclared)
+                mcpp::diag::warning("abi/dependency-table", std::format(
+                    "`{}` declares [target.<selector>.abi], which only the root "
+                    "manifest decides; a dependency states what it needs with "
+                    "`requires_abi = {{ threads = true }}`", pcap));
             // `[targets.*] required_features` on a DEPENDENCY.
             //
             // THIS GATE EXISTED ONLY FOR THE ROOT. The root's targets are
@@ -8813,6 +8905,22 @@ prepare_build(bool print_fingerprint,
         // the whole reason this exists is that a wrong answer is worse than no
         // answer.
         if (auto err = checkVersionFloors(); err) return std::unexpected(*err);
+
+        // `requires_abi`: a package needs the artefact's ABI switch on. The
+        // root's `[target.<selector>.abi]` is the only table that sets it, so a
+        // mismatch is refused naming both halves, before anything compiles --
+        // otherwise it surfaces as a precompiled-module configuration mismatch
+        // that names neither.
+        if (!m->buildConfig.abiThreads && !abiRequires.empty()) {
+            auto const& [what, requirer] = abiRequires.front();
+            return std::unexpected(std::format(
+                "`{}` requires the artefact's ABI to have threads ({}), and this "
+                "build does not state it.\n"
+                "       Add to the root manifest, for the targets that need it:\n"
+                "\n"
+                "           [target.'cfg(os = \"<os>\")'.abi]\n"
+                "           threads = true", requirer, what));
+        }
 
         std::set<std::string> boundCaps;
         for (auto& [cap, requirer] : capRequires) {
@@ -12067,6 +12175,13 @@ prepare_build(bool print_fingerprint,
                     path_array(ctx.plan.linkIntent.runtimeSearchDirs)},
                 {"frameworks", ctx.plan.linkIntent.frameworks},
                 {"deploy_files", path_array(ctx.plan.linkIntent.deployFiles)},
+                {"deploy", [&] {
+                    auto a = nlohmann::json::array();
+                    for (auto const& d : ctx.plan.linkIntent.deploy)
+                        a.push_back({{"from", d.from.generic_string()},
+                                     {"to", d.to}});
+                    return a;
+                }()},
             }},
             {"search", search},
             {"validation", {

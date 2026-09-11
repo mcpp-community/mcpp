@@ -2050,3 +2050,130 @@ TEST(NinjaBackend, MsvcModuleEdgesSplitTheInterfaceFlagFromTheLanguageFlag) {
     // The trailing-space spelling with nothing after it must not exist.
     EXPECT_EQ(ninja.find("/ifcOutput \n"), std::string::npos) << ninja;
 }
+
+// ── #618: `windows_subsystem` / `windows_entry` ─────────────────────────────
+//
+// Every row of the rendering tables in the design record (§1.2, §1.3), stated
+// against the function the emitter calls, and once through the emitted graph.
+
+namespace {
+
+BuildPlan plan_for_triple(std::string_view triple) {
+    auto plan = minimal_plan();
+    plan.toolchain.targetTriple = std::string(triple);
+    return plan;
+}
+
+using Flags = std::vector<std::string>;
+
+}  // namespace
+
+TEST(NinjaBackend, WindowsKeysRenderNothingOffPe) {
+    for (auto triple : {"x86_64-linux-gnu", "x86_64-linux-musl", "aarch64-macos"}) {
+        auto plan = plan_for_triple(triple);
+        for (bool sep : {false, true})
+            EXPECT_EQ(windows_executable_link_flags(plan, sep, "windows", "wWinMain"), Flags{})
+                << triple;
+    }
+}
+
+TEST(NinjaBackend, WindowsDefaultsRenderNothingOnEitherAbi) {
+    for (auto triple : {"x86_64-windows-msvc", "x86_64-windows-gnu"}) {
+        auto plan = plan_for_triple(triple);
+        for (auto [subsystem, entry] : {std::pair{"", ""}, std::pair{"console", ""},
+                                        std::pair{"", "main"}, std::pair{"console", "main"}})
+            EXPECT_EQ(windows_executable_link_flags(plan, false, subsystem, entry), Flags{})
+                << triple << " " << subsystem << " " << entry;
+    }
+}
+
+TEST(NinjaBackend, WindowsMsvcAbiStatesBothSubsystemAndCrtEntry) {
+    auto plan = plan_for_triple("x86_64-windows-msvc");
+    const std::tuple<std::string_view, std::string_view, Flags> rows[] = {
+        {"windows", "",         {"/SUBSYSTEM:WINDOWS", "/ENTRY:mainCRTStartup"}},
+        {"windows", "main",     {"/SUBSYSTEM:WINDOWS", "/ENTRY:mainCRTStartup"}},
+        {"windows", "WinMain",  {"/SUBSYSTEM:WINDOWS", "/ENTRY:WinMainCRTStartup"}},
+        {"windows", "wWinMain", {"/SUBSYSTEM:WINDOWS", "/ENTRY:wWinMainCRTStartup"}},
+        {"windows", "wmain",    {"/SUBSYSTEM:WINDOWS", "/ENTRY:wmainCRTStartup"}},
+        {"console", "wmain",    {"/SUBSYSTEM:CONSOLE", "/ENTRY:wmainCRTStartup"}},
+        {"",        "WinMain",  {"/SUBSYSTEM:CONSOLE", "/ENTRY:WinMainCRTStartup"}},
+    };
+    for (auto const& [subsystem, entry, expected] : rows) {
+        // link.exe invoked directly takes the flag bare...
+        EXPECT_EQ(windows_executable_link_flags(plan, true, subsystem, entry), expected)
+            << subsystem << " " << entry;
+        // ...and a GNU-style driver (clang targeting the MSVC ABI) passes it on.
+        Flags wrapped;
+        for (auto const& f : expected) wrapped.push_back("-Wl," + f);
+        EXPECT_EQ(windows_executable_link_flags(plan, false, subsystem, entry), wrapped)
+            << subsystem << " " << entry;
+    }
+}
+
+TEST(NinjaBackend, WindowsGnuAbiUsesTheDriverFlags) {
+    auto plan = plan_for_triple("x86_64-windows-gnu");
+    const std::tuple<std::string_view, std::string_view, Flags> rows[] = {
+        {"windows", "",         {"-mwindows"}},
+        {"windows", "main",     {"-mwindows"}},
+        {"windows", "WinMain",  {"-mwindows"}},
+        {"windows", "wWinMain", {"-mwindows", "-municode"}},
+        {"console", "wmain",    {"-municode"}},
+        {"",        "WinMain",  {}},
+    };
+    for (auto const& [subsystem, entry, expected] : rows)
+        EXPECT_EQ(windows_executable_link_flags(plan, false, subsystem, entry), expected)
+            << subsystem << " " << entry;
+}
+
+// Through the emitted graph: the flags reach the declaring executable's link
+// edge and no other edge, including a test binary of the same package.
+TEST(NinjaBackend, WindowsSubsystemReachesOnlyTheDeclaringExecutable) {
+    auto plan = plan_for_triple("x86_64-windows-gnu");
+    plan.compileUnits.push_back({
+        .source = "src/gui.cpp",
+        .kind = mcpp::SourceKind::Cxx,
+        .object = "obj/gui.o",
+        .packageName = "objc_rule_test",
+    });
+    plan.compileUnits.push_back({
+        .source = "src/cli.cpp",
+        .kind = mcpp::SourceKind::Cxx,
+        .object = "obj/cli.o",
+        .packageName = "objc_rule_test",
+    });
+    LinkUnit gui{
+        .targetName = "gui",
+        .kind = mcpp::build::LinkUnit::Binary,
+        .objects = {"obj/gui.o"},
+        .output = "bin/gui.exe",
+        .entryMain = "src/gui.cpp",
+    };
+    gui.windowsSubsystem = "windows";
+    plan.linkUnits.push_back(gui);
+    plan.linkUnits.push_back({
+        .targetName = "cli",
+        .kind = mcpp::build::LinkUnit::Binary,
+        .objects = {"obj/cli.o"},
+        .output = "bin/cli.exe",
+        .entryMain = "src/cli.cpp",
+    });
+    LinkUnit test{
+        .targetName = "unit",
+        .kind = mcpp::build::LinkUnit::TestBinary,
+        .objects = {"obj/cli.o"},
+        .output = "bin/unit.exe",
+    };
+    // A test binary never carries the fields (the manifest refuses them), and
+    // even when a plan sets them the emitter does not render them.
+    test.windowsSubsystem = "windows";
+    plan.linkUnits.push_back(test);
+
+    auto ninja = emit_ninja_string(plan);
+    EXPECT_EQ(count_occurrences(ninja, "-mwindows"), 1u) << ninja;
+    const auto guiEdge = ninja.find("build bin/gui.exe");
+    ASSERT_NE(guiEdge, std::string::npos) << ninja;
+    const auto nextEdge = ninja.find("\nbuild ", guiEdge + 1);
+    const auto flag = ninja.find("-mwindows");
+    EXPECT_GT(flag, guiEdge) << ninja;
+    EXPECT_LT(flag, nextEdge) << ninja;
+}

@@ -61,6 +61,8 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:include-dir-after=<dir>` *(0.0.100+)* | 同 `include-dir`,但排在系统目录**之后**搜索(`-idirafter`)——用于会遮蔽系统头的 payload 源树 |
 | `mcpp:runner=<token>` *(2026.8.19.2+)* | 执行本次构建产物的命令的**一个 argv token**(宿主跑不了它时)。一个 token 一次调用、按顺序;产物路径会被追加(或替换 `{}`)。**到达消费者**。可执行文件要发**绝对路径**,且**只能有一个**依赖提供它 |
 | `mcpp:link-flag=<flag>` *(2026.9.6.5+)* | 加一条本程序**算出来的**链接标志,原样传递。这是 `link-lib` / `link-search` / `link-script` 各自命名一类东西之后留下的出口:生成的版本脚本(`-Wl,--version-script=`)、运行时接管 C 库符号用的 `-Wl,--wrap=malloc`、以及 `-Wl,--exclude-libs,ALL`(静态吞入的第三方不得成为本包 ABI 的一部分)。按发出顺序追加在 `[build] ldflags` 之后。**到达消费者**,与 `[build] ldflags` 一致 —— 理由见下 |
+| `mcpp:windows-subsystem=<target>:<value>` *(2026.9.12.2+)* | 设置**本包**可执行目标 `<target>` 的 PE 子系统(`console` 或 `windows`),与 `[targets.<target>] windows_subsystem`(docs/04)是同一字段。只到达该目标的链接,不到达其他目标或消费者,在非 PE 目标上不产生任何标志。本包未以 `kind = "bin"` 声明该目标、取值不在集合内、取值与 mcpp.toml 的声明矛盾,这三种情形都在应用任何指令之前被拒绝 |
+| `mcpp:windows-entry=<target>:<value>` *(2026.9.12.2+)* | 设置可执行目标 `<target>` 的入口函数(`main`、`wmain`、`WinMain` 或 `wWinMain`),与 `windows_entry` 是同一字段;作用域与拒绝条件同 `windows-subsystem` |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | 用这个**链接脚本**链接(`-T`;相对路径按包根解析,发出的是绝对路径,因为链接是在构建目录里跑的)。与 `include-dir` 不同,它**到达消费者** —— 板子的内存布局恰恰是消费者写不出来的那一项 |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | 对用户说一句话并**继续**。唯一一条不改变编译行、链接行与源码集的指令。它**穿过构建缓存** —— 见下 |
 | `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | 陈述程序**测得的机器事实**(`cuda.driver=12.4`)。在编译任何东西之前与 floor 比较;见下 |
@@ -118,6 +120,7 @@ int main() {
 | `mcpp::rerun_if_changed_glob(pat)` *(2026.8.6.2+)* | `mcpp:rerun-if-changed-glob=` —— 匹配 `pat` 的文件**集合**发生变化时重跑(见下) |
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | 读 `MCPP_DEP_<PKG>_BIN_<TOOL>` —— 依赖构建出的 **host 工具**的绝对路径(见下) |
 | `mcpp::link_flag(s)` *(2026.9.6.5+)* | `mcpp:link-flag=` |
+| `mcpp::windows_subsystem(target, value)` / `mcpp::windows_entry(target, value)` *(2026.9.12.2+)* | `mcpp:windows-subsystem=` / `mcpp:windows-entry=` |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` —— 见下 |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | `[xlings.workspace]` 里声明的包的载荷目录 —— 本 manifest 声明的,或编进本构建程序的某个依赖声明的(2026.9.6.6+);没声明或没安装时返回 `""`(见下) |

@@ -447,3 +447,56 @@ TEST(RuntimeIdentity, UcrtIsAFloorDeclarationNotAPrivatePayload) {
     EXPECT_FALSE(b.loader.has_value());
     EXPECT_TRUE(b.libraryDirs.empty());
 }
+
+// #615: `runtime.deploy` in a descriptor -- the same `{ from, to }` entries as
+// mcpp.toml, and the same path rule.
+TEST(RuntimeContract, XpkgReadsRuntimeDeployEntries) {
+    constexpr auto lua = R"(
+package = {
+  spec = "1",
+  namespace = "acme",
+  name = "icd",
+  xpm = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+  mcpp = {
+    sources = { "src/icd.cpp" },
+    runtime = {
+      deploy = {
+        { from = "share/vulkan/icd.d/lvp_icd.json", to = "vulkan/icd.d" },
+        { to = ".", from = "share/readme.txt" },
+      },
+      deploy_files = { "bin/backend.dll" },
+    },
+  },
+}
+)";
+    auto parsed = mf::synthesize_from_xpkg_lua(
+        lua, "icd", "1.0.0", mcpp::platform::HostPlatform::current());
+    ASSERT_TRUE(parsed) << parsed.error().format();
+    auto const& d = parsed->runtimeConfig.linkIntent.deploy;
+    ASSERT_EQ(d.size(), 2u);
+    EXPECT_EQ(d[0].from, std::filesystem::path("share/vulkan/icd.d/lvp_icd.json"));
+    EXPECT_EQ(d[0].to, "vulkan/icd.d");
+    EXPECT_EQ(d[1].from, std::filesystem::path("share/readme.txt"));
+    EXPECT_EQ(d[1].to, ".");
+    // The key after it is still read, so the entry loop consumed exactly its table.
+    EXPECT_EQ(parsed->runtimeConfig.linkIntent.deployFiles,
+              std::vector<std::filesystem::path>{"bin/backend.dll"});
+}
+
+TEST(RuntimeContract, XpkgRuntimeDeployRefusesAnEscapingDestination) {
+    constexpr auto lua = R"(
+package = {
+  spec = "1", namespace = "acme", name = "icd",
+  xpm = { linux = { ["1.0.0"] = { url = "u", sha256 = "h" } } },
+  mcpp = {
+    sources = { "src/icd.cpp" },
+    runtime = { deploy = { { from = "a.json", to = "../x" } } },
+  },
+}
+)";
+    auto parsed = mf::synthesize_from_xpkg_lua(
+        lua, "icd", "1.0.0", mcpp::platform::HostPlatform::current());
+    ASSERT_FALSE(parsed);
+    EXPECT_NE(parsed.error().message.find("runtime.deploy[1]: `to` has a `.` or `..` component"),
+              std::string::npos) << parsed.error().message;
+}

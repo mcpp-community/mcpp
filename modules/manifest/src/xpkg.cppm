@@ -1702,6 +1702,32 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                             cur.skip_ws_and_comments();
                         }
                         cur.consume('}');
+                    } else if (sub == "requires_abi" && cur.peek() == '{') {
+                        // `requires_abi = { threads = true }` -- see
+                        // Manifest::featureRequiresAbiThreads. An older mcpp
+                        // records this key as unknown and skips it.
+                        auto abiBody = cur.read_table_body();
+                        LuaCursor ab{abiBody};
+                        ab.skip_ws_and_comments();
+                        while (!ab.eof()) {
+                            auto ak = ab.read_key();
+                            if (ak.empty()) {
+                                ab.skip_ws_and_comments();
+                                if (!ab.eof()) ++ab.pos;
+                                continue;
+                            }
+                            if (!ab.consume('=')) break;
+                            ab.skip_ws_and_comments();
+                            auto av = ab.read_bareword();
+                            if (ak != "threads" || (av != "true" && av != "false"))
+                                return std::unexpected(ManifestError{
+                                    std::format("features.{}.requires_abi.{}: the "
+                                                "members are `threads`, a boolean",
+                                                fname, ak),
+                                    m.sourcePath, 0, 0});
+                            m.featureRequiresAbiThreads[fname] = (av == "true");
+                            ab.skip_ws_and_comments();
+                        }
                     } else {
                         // Unknown subfield — skip its value, but RECORD it so
                         // the adoption-site diagnostic (warn_unknown_xpkg_keys,
@@ -2089,6 +2115,68 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                                 ? &m.runtimeConfig.linkIntent.runtimeSearchDirs
                                 : &m.runtimeConfig.linkIntent.deployFiles;
                     for (auto& path : paths) destination->emplace_back(std::move(path));
+                } else if (sub == "deploy") {
+                    // `{ { from = "...", to = "..." }, ... }` (#615). A key of its
+                    // own rather than a table form of `deploy_files`: an older
+                    // mcpp reading `deploy_files` meets `{`, `read_string` returns
+                    // without advancing, and that loop never ends; the same mcpp
+                    // skips a `runtime` sub-key it does not know. See
+                    // manifest::DeployEntry.
+                    if (!rc.consume('{')) {
+                        return std::unexpected(ManifestError{
+                            "expected '{' after `runtime.deploy =`",
+                            m.sourcePath, 0, 0});
+                    }
+                    rc.skip_ws_and_comments();
+                    std::size_t index = 0;
+                    while (!rc.eof() && rc.peek() != '}') {
+                        ++index;
+                        if (rc.peek() != '{') {
+                            return std::unexpected(ManifestError{
+                                std::format("runtime.deploy[{}] must be a table with "
+                                            "`from` and `to`", index),
+                                m.sourcePath, 0, 0});
+                        }
+                        auto entryBody = rc.read_table_body();
+                        LuaCursor entry{entryBody};
+                        std::string from, to;
+                        entry.skip_ws_and_comments();
+                        while (!entry.eof()) {
+                            auto field = entry.read_key();
+                            if (field.empty()) {
+                                entry.skip_ws_and_comments();
+                                if (!entry.eof()) ++entry.pos;
+                                continue;
+                            }
+                            if (!entry.consume('=')) {
+                                return std::unexpected(ManifestError{
+                                    std::format("runtime.deploy[{}].{} is malformed",
+                                                index, field),
+                                    m.sourcePath, 0, 0});
+                            }
+                            if (field == "from") from = entry.read_string();
+                            else if (field == "to") to = entry.read_string();
+                            else {
+                                return std::unexpected(ManifestError{
+                                    std::format("runtime.deploy[{}] has unsupported key "
+                                                "'{}'; the keys are `from` and `to`",
+                                                index, field),
+                                    m.sourcePath, 0, 0});
+                            }
+                            entry.skip_ws_and_comments();
+                        }
+                        if (auto p = deploy_path_problem("from", from, false); !p.empty())
+                            return std::unexpected(ManifestError{
+                                std::format("runtime.deploy[{}]: {}", index, p),
+                                m.sourcePath, 0, 0});
+                        if (auto p = deploy_path_problem("to", to, true); !p.empty())
+                            return std::unexpected(ManifestError{
+                                std::format("runtime.deploy[{}]: {}", index, p),
+                                m.sourcePath, 0, 0});
+                        m.runtimeConfig.linkIntent.deploy.push_back({from, to});
+                        rc.skip_ws_and_comments();
+                    }
+                    rc.consume('}');
                 } else if (sub == "frameworks") {
                     if (auto r = read_string_list(
                             m.runtimeConfig.linkIntent.frameworks); !r)
@@ -2166,6 +2254,35 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
             // appended to the segment before this loop (see above), so every
             // spelling here is a known key: skip the table itself.
             if (cur.peek() == '{') cur.skip_table();
+        }
+        else if (key == "requires_abi") {
+            // `requires_abi = { threads = true }` -- see
+            // Manifest::requiresAbiThreads. An older mcpp skips an unknown
+            // top-level key and records it.
+            if (cur.peek() != '{')
+                return std::unexpected(ManifestError{
+                    "expected '{' after `requires_abi =`", m.sourcePath, 0, 0});
+            auto abiBody = cur.read_table_body();
+            LuaCursor ab{abiBody};
+            ab.skip_ws_and_comments();
+            while (!ab.eof()) {
+                auto ak = ab.read_key();
+                if (ak.empty()) {
+                    ab.skip_ws_and_comments();
+                    if (!ab.eof()) ++ab.pos;
+                    continue;
+                }
+                if (!ab.consume('=')) break;
+                ab.skip_ws_and_comments();
+                auto av = ab.read_bareword();
+                if (ak != "threads" || (av != "true" && av != "false"))
+                    return std::unexpected(ManifestError{
+                        std::format("requires_abi.{}: the members are `threads`, "
+                                    "a boolean", ak),
+                        m.sourcePath, 0, 0});
+                m.requiresAbiThreads = (av == "true");
+                ab.skip_ws_and_comments();
+            }
         }
         else if (key == "schema") {
             // Descriptor schema tag (e.g. "0.1") — accepted, currently

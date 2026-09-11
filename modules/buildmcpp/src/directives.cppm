@@ -150,6 +150,11 @@ enum class Slot : std::size_t {
     // empty. See `mcpp::provides_pack_format` for the author-facing half of the
     // same rule -- declare unconditionally, submit conditionally.
     PackFormats,
+    // A NAMED EXECUTABLE'S PE SUBSYSTEM AND ENTRY (#618), as `<target>:<value>`.
+    // Two slots rather than one parsed pair, because each is a field of
+    // `manifest::Target` with its own set of accepted values.
+    WindowsSubsystem,
+    WindowsEntry,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -197,6 +202,14 @@ enum class Scope {
     // machine must also declare what would change it (`rerun_if_changed` on
     // the file the fact was read from), or the fact outlives the machine.
     Claim,
+    // REACHES THE LINK OF ONE TARGET OF THIS PACKAGE, NAMED IN THE VALUE.
+    //
+    // Not `LinkGlobal`, which reaches every consumer's link, and not
+    // `PackagePrivate`, which reaches this package's translation units and no
+    // link at all. A subsystem is a property of one executable: applied to a
+    // consumer, a test binary or a second executable of the same package, it is
+    // the defect #618 reports against `[build] ldflags`.
+    TargetLink,
 };
 
 // How the raw wire value is normalized before it is stored. Applied ONCE, at
@@ -232,7 +245,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 23> kTable{{
+inline constexpr std::array<Def, 25> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -365,6 +378,12 @@ inline constexpr std::array<Def, 23> kTable{{
     // newer entry already discards the whole record through the unknown-tag
     // path.
     {"pack-format",         "pack-format",       Slot::PackFormats,      Scope::Claim,          Transform::Verbatim,      false, "",                           "",                                              9},
+    // v10 (#618). The value names a target, and `target_directive_error`
+    // refuses a name this package does not declare as an executable before
+    // anything is applied. Persisted like every row but the re-run keys, so a
+    // cached run applies what the program said.
+    {"windows-subsystem",   "windows-subsystem", Slot::WindowsSubsystem, Scope::TargetLink,     Transform::Verbatim,      false, "",                           "",                                              10},
+    {"windows-entry",       "windows-entry",     Slot::WindowsEntry,     Scope::TargetLink,     Transform::Verbatim,      false, "",                           "",                                              10},
 }};
 
 // ── Collected output of one run ────────────────────────────────────────────
@@ -484,6 +503,14 @@ std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payloa
 // caller can refuse BEFORE applying anything — a half-applied action set is
 // worse than none.
 std::string action_error(const Directives& d);
+
+// Non-empty when a `windows-subsystem` or `windows-entry` directive names
+// something `apply` cannot honour: a value that is not `<target>:<value>`, a
+// value outside the accepted set, a target this package does not declare, a
+// target that is not an executable, or a value that contradicts mcpp.toml or an
+// earlier directive of the same program. Checked before `apply` on both the run
+// path and the cache-hit path, so the two apply one rule.
+std::string target_directive_error(const mcpp::manifest::Manifest& m, const Directives& d);
 
 // Resolve an action's paths against `pkgRoot` and make its Source outputs
 // exist, so the ordinary source scan can see them.
@@ -849,6 +876,26 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     for (auto const& f : d.at(Slot::PackFormats))
         bc.packFormats.push_back(f);
 
+    // A named executable's subsystem and entry. `target_directive_error` has
+    // refused every value that names no executable, so the conditions below
+    // only keep this function total.
+    for (auto const& entry : d.at(Slot::WindowsSubsystem)) {
+        const auto sep = entry.rfind(':');
+        if (sep == std::string::npos) continue;
+        const auto name = entry.substr(0, sep);
+        for (auto& t : m.targets)
+            if (t.name == name && t.kind == mcpp::manifest::Target::Binary)
+                t.windowsSubsystem = entry.substr(sep + 1);
+    }
+    for (auto const& entry : d.at(Slot::WindowsEntry)) {
+        const auto sep = entry.rfind(':');
+        if (sep == std::string::npos) continue;
+        const auto name = entry.substr(0, sep);
+        for (auto& t : m.targets)
+            if (t.name == name && t.kind == mcpp::manifest::Target::Binary)
+                t.windowsEntry = entry.substr(sep + 1);
+    }
+
     // Build-graph nodes. Decoded here rather than at parse time so the cache
     // stores the payload verbatim and a replay is byte-identical to a run.
     for (auto const& payload : d.at(Slot::Actions)) {
@@ -886,6 +933,71 @@ std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payloa
     } catch (...) {
         return std::nullopt;
     }
+}
+
+// One of the two named-target directives; `subsystem` selects the field.
+static std::string named_target_error(const mcpp::manifest::Manifest& m,
+                                      const std::vector<std::string>& entries,
+                                      std::string_view wire, std::string_view key,
+                                      bool subsystem) {
+    std::map<std::string, std::string> stated;   // target name -> value
+    for (auto const& entry : entries) {
+        const auto sep = entry.rfind(':');
+        if (sep == std::string::npos || sep == 0 || sep + 1 == entry.size())
+            return std::format(
+                "build.mcpp emitted `mcpp:{}={}`, which is not `<target>:<value>`.",
+                wire, entry);
+        const std::string name  = entry.substr(0, sep);
+        const std::string value = entry.substr(sep + 1);
+        if (auto list = mcpp::manifest::windows_choice_problem(subsystem, value);
+            !list.empty())
+            return std::format(
+                "build.mcpp emitted `mcpp:{}={}`, and \"{}\" is not one of {}.",
+                wire, entry, value, list);
+        const mcpp::manifest::Target* target = nullptr;
+        for (auto const& t : m.targets)
+            if (t.name == name) { target = &t; break; }
+        if (target == nullptr) {
+            std::string names;
+            for (auto const& t : m.targets)
+                names += (names.empty() ? "" : ", ") + t.name;
+            return std::format(
+                "build.mcpp emitted `mcpp:{}={}`, and package `{}` declares no "
+                "target named `{}` (its targets: {}).",
+                wire, entry, m.package.name, name,
+                names.empty() ? std::string("none") : names);
+        }
+        if (target->kind != mcpp::manifest::Target::Binary)
+            return std::format(
+                "build.mcpp emitted `mcpp:{}={}`, and `{}` applies to an executable "
+                "(`kind = \"bin\"`); target `{}` is not one.",
+                wire, entry, key, name);
+        const std::string& declared =
+            subsystem ? target->windowsSubsystem : target->windowsEntry;
+        if (!declared.empty() && declared != value)
+            return std::format(
+                "build.mcpp emitted `mcpp:{}={}`, and mcpp.toml declares "
+                "`[targets.{}] {} = \"{}\"`. One of the two has to change.",
+                wire, entry, name, key, declared);
+        auto found = stated.find(name);
+        if (found == stated.end())
+            stated.emplace(name, value);
+        else if (found->second != value)
+            return std::format(
+                "build.mcpp emitted `mcpp:{}` twice for target `{}`, as \"{}\" and "
+                "as \"{}\".",
+                wire, name, found->second, value);
+    }
+    return {};
+}
+
+std::string target_directive_error(const mcpp::manifest::Manifest& m, const Directives& d) {
+    if (auto e = named_target_error(m, d.at(Slot::WindowsSubsystem),
+                                    "windows-subsystem", "windows_subsystem", true);
+        !e.empty())
+        return e;
+    return named_target_error(m, d.at(Slot::WindowsEntry),
+                              "windows-entry", "windows_entry", false);
 }
 
 std::string action_error(const Directives& d) {

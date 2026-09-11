@@ -5,7 +5,7 @@ status: landed
 
 # A verified Web run that asked the host for node
 
-**Status:** implemented in mcpp 2026.9.12.1 and openxlings/xim-pkgindex#823.
+**Status:** implemented in mcpp 2026.9.12.2 (2026.9.12.1 was not published) and openxlings/xim-pkgindex#823.
 
 ## What was measured
 

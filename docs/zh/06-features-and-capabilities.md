@@ -166,6 +166,20 @@ provides = ["mcpp:compiler-runtime=compiler-rt", "mcpp:c++-abi=libc++"]
 requires = ["mcpp:compiler=llvm"]
 ```
 
+对产物 ABI 开关的需求用 `requires_abi` 陈述,写在包上或某个 feature 上,而不是写成层:
+
+```toml
+[package]
+requires_abi = { threads = true }
+
+[features]
+mt = { requires_abi = { threads = true } }
+```
+
+只有根 manifest 设置该开关(`[target.<selector>.abi]`,见 [22 —— 目标侧](22-target-side.md));
+根包未满足的需求在编译之前被拒绝,拒绝信息指出包与 feature。安装钩子针对某一个 C++ 标准库编译静态库的
+包,则把该实现陈述为层需求,即 `requires = ["mcpp:c++-abi=libstdc++"]`,原因见同一章。
+
 作为标准库的包在 `[build]` 下陈述它的 `std` 模块源,
 其所需的 flag 在那里与任何其它构建输入一样可条件化。
 
