@@ -605,6 +605,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         mcpp::toolchain::HostFlagOptions hopt;
         hopt.cfgBypass = mcpp::toolchain::HostFlagOptions::CfgBypass::Always;
         hopt.macosDeploymentTarget = macosDeploymentTarget;
+        // READ, NOT RE-DERIVED. `prepare` located this once, where the target
+        // and the machine's Xcode are both known, and refused there if it was
+        // absent -- so a second `sdk_path()` call here could only disagree.
+        hopt.appleSdkRoot          = plan.toolchain.appleSdkRoot;
         // THE SAME EXPRESSION THE LINK SIDE ASKS, twenty lines further down
         // (`plan.targetSide.cAbi.prebuilt()`). Reading one value at both sites
         // is what makes it impossible for them to disagree — which they did,
@@ -1102,6 +1106,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                                 bc.linkage, bc.cxxRuntime);
         mi.mingw          = isMingwTc;
         mi.macosFloor     = !macosDeploymentTarget.empty();
+        // READ from the one value prepare resolved. The SDK being located for
+        // this target IS the statement "this is an Apple cross"; deriving it
+        // again from the triple here would be a second answer to a question
+        // already settled where the machine's Xcode was consulted.
+        mi.appleCrossTarget = !plan.toolchain.appleSdkRoot.empty();
         mi.format         = format;
         // A SECOND C++ RUNTIME ON THIS LINE.
         //
@@ -1519,8 +1528,29 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // via xlings-res (data-only change — swap the archive source).
         // Tracked in xlings
         // .agents/docs/2026-06-05-macos-min-version-support.md §5.
+        // APPLE HAS TWO PLATFORMS HERE NOW, AND THE HOST IS ONLY THE FIRST.
+        //
+        // This branch is selected by the HOST (`needs_explicit_libcxx`), which
+        // was the same question while macOS was the only Apple target: a macOS
+        // host built for macOS. The iOS rows are built on the same host for
+        // another platform, and two tokens below are platform-specific --
+        // which SDK, and which deployment-target flag. `appleSdkRoot` being
+        // non-empty is what says the target is the cross one; prepare resolves
+        // it and refuses there when the SDK cannot be located.
+        const bool appleCross = !plan.toolchain.appleSdkRoot.empty();
+
         std::string version_min;
-        if (!macosDeploymentTarget.empty()) {
+        // THE iOS DEPLOYMENT TARGET IS NOT A FLAG HERE, AND THAT IS ONE
+        // MECHANISM RATHER THAN TWO. It travels in the effective triple --
+        // `arm64-apple-ios18.0`, `arm64-apple-ios18.0-simulator`, Apple's own
+        // spellings -- which fully determines the platform and the minimum,
+        // and `crossTarget` already carries that triple onto both the compile
+        // and the link line. macOS keeps its flag because its effective triple
+        // is also versioned and the flag was documented as insurance against
+        // env propagation; adding the iOS equivalent would be a second place
+        // that answers a question the triple already answered, and clang
+        // refuses the macOS flag against an iOS triple outright.
+        if (!appleCross && !macosDeploymentTarget.empty()) {
             version_min = " -mmacosx-version-min=" + macosDeploymentTarget;
         }
         // Pass the macOS SDK to the LINKER explicitly. The link otherwise relies
@@ -1531,9 +1561,25 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // installed bundled clang — ld64.lld dies with "library not found for
         // -lSystem". -isysroot makes it deterministic regardless of the host's
         // developer-tools state. (compile side already gets --sysroot above.)
+        //
+        // FOR THE CROSS ROWS IT IS THE LOCATED iOS SDK, and the same
+        // determinism argument applies with more force: the payload's cfg
+        // names the macOS SDK, so without this the link resolves `-lSystem`
+        // and `-lc++` from the wrong platform's stubs. Measured 2026-09-11 on
+        // macos-15 with the correct `-isysroot` on the command line and the
+        // cfg NOT suppressed:
+        //
+        //   ld64.lld: error: .../MacOSX.sdk/usr/lib/libc++.tbd(...) is
+        //     incompatible with arm64 (iOS Simulator18.0.0)
+        //
+        // which is why the cross path also carries `--no-default-config`.
         std::string macos_sdk;
-        if (auto sdk = mcpp::platform::macos::sdk_path())
+        if (appleCross) {
+            macos_sdk = " -isysroot "
+                      + escape_path(plan.toolchain.appleSdkRoot);
+        } else if (auto sdk = mcpp::platform::macos::sdk_path()) {
             macos_sdk = " -isysroot " + escape_path(*sdk);
+        }
         // AND KEPT, BECAUSE THE GRAPH BRANCH BELOW REPLACES THIS LINE.
         //
         // `-isysroot` and the deployment floor describe the TARGET OS. Every
@@ -1550,10 +1596,35 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // the platform interface IS a library. Linux needs no equivalent: its
         // kernel interface is an instruction, so a self-contained libc from the
         // graph really does replace everything.
+        // AND AN APPLE CROSS LINK HAS TO SAY WHICH PLATFORM, WHICH THIS
+        // BRANCH NEVER DID.
+        //
+        // `--target=` lives in `link_toolchain_flags`, and the note two
+        // hundred lines below records that ONLY THE THIRD BRANCH EVER
+        // CONSUMED IT -- correct while this branch meant "a macOS host
+        // building for macOS", where the driver's default target is the
+        // answer. An iOS row is the first target this branch serves that the
+        // driver would get wrong, and the artefact of a link told nothing is
+        // a macOS binary that compiled as iOS.
+        //
+        // `--no-default-config` for the same reason it is emitted on the
+        // compile side: that cfg names the located macOS SDK, and a link that
+        // reads it resolves `-lSystem` and `-lc++` from the wrong platform's
+        // stubs -- measured, see `macos_sdk` above.
+        //
+        // NOT folded into `platformAnchor`: that string is re-used by the
+        // graph-supplied-target replacement below, which assembles its own
+        // `--target=` and `--no-default-config`, and appending them twice
+        // would make the outcome depend on the driver's flag ordering.
+        std::string apple_cross_ld;
+        if (appleCross) {
+            apple_cross_ld = crossTarget;
+            if (isClangWithCfg) apple_cross_ld += " --no-default-config";
+        }
         platformAnchor = macos_sdk + version_min;
-        f.ld = std::format("{}{}{} -fuse-ld=lld{}{}{}{}", full_static,
-                           b_flag, macos_sdk, version_min, link_intent_ld,
-                           user_ldflags, link_extra);
+        f.ld = std::format("{}{}{}{} -fuse-ld=lld{}{}{}{}", full_static,
+                           b_flag, apple_cross_ld, macos_sdk, version_min,
+                           link_intent_ld, user_ldflags, link_extra);
         // macOS decides the C++ runtime in the contract table (MachO), which
         // rides unit_ldflags — this line has nothing C++-only on it.
         f.ldC = f.ld;

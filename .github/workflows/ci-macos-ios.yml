@@ -39,7 +39,14 @@ jobs:
       # the device row is still verifiable here and the two simulator rows
       # become a local-only claim -- which changes the tier they can reach and
       # nothing else. This step is the difference between those two worlds.
+      # EVERY MEASUREMENT STEP CONTINUES, because the first version of this job
+      # did not and the four steps after the failing one were SKIPPED -- so one
+      # unmet assumption cost the whole measurement. A probe's value is the
+      # complete set of answers; a probe that stops at the first `no` is a
+      # build, not a measurement. (GitHub runs `run:` under `bash -e`, which is
+      # what turned a failing clang into a terminated step.)
       - name: "Host surface: the two located SDKs and the simulator runtime"
+        continue-on-error: true
         run: |
           set -x
           xcode-select -p
@@ -59,7 +66,30 @@ jobs:
       # `simctl-run` program is a boot-and-spawn wrapper; if it does not, it
       # has to synthesise a bundle, sign it and install it. Measuring this is
       # cheaper than designing for the harder case.
+      # THE PAYLOAD'S CLANG READS A CONFIG FILE, AND THAT CONFIG NAMES A
+      # DIFFERENT SDK. First run, with `-isysroot <iPhoneSimulator18.5.sdk>`
+      # on the command line:
+      #
+      #   ld64.lld: error: /Library/Developer/CommandLineTools/SDKs/
+      #     MacOSX.sdk/usr/lib/libc++.tbd(/usr/lib/libc++.1.dylib) is
+      #     incompatible with arm64 (iOS Simulator18.0.0)
+      #
+      # mcpp's own post-install writes the located macOS SDK into the
+      # payload's `clang++.cfg` so that a native macOS build is deterministic,
+      # and that cfg is read before the command line for search purposes. So
+      # an Apple CROSS target has to suppress it -- which mcpp's cross path
+      # already does (`--no-default-config` in hostflags.cppm), and which this
+      # hand-written probe did not. Printed here because the explanation
+      # belongs next to the measurement.
+      - name: "The payload's default config, which is why --no-default-config"
+        continue-on-error: true
+        run: |
+          set -x
+          ls -la "$LLVM_ROOT/bin/"*.cfg || true
+          for f in "$LLVM_ROOT/bin/"*.cfg; do echo "=== $f"; cat "$f"; done || true
+
       - name: "Device: is one bootable, and does spawn take a bare executable"
+        continue-on-error: true
         run: |
           set -uo pipefail
           UDID=$(xcrun simctl list devices available \
@@ -71,15 +101,18 @@ jobs:
             exit 0
           fi
           xcrun simctl boot "$UDID" || true
-          xcrun simctl bootstatus "$UDID" -b || true
+          xcrun simctl bootstatus "$UDID" -b 2>&1 | tail -3 || true
           cat > /tmp/hello.cpp << 'CPP'
           #include <cstdio>
           int main() { std::puts("1-2-3"); return 0; }
           CPP
           SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
-          "$LLVM_ROOT/bin/clang++" -std=c++23 \
-            -target arm64-apple-ios18.0-simulator \
-            -isysroot "$SDK" -o /tmp/hello /tmp/hello.cpp
+          if ! "$LLVM_ROOT/bin/clang++" -std=c++23 --no-default-config \
+                 -target arm64-apple-ios18.0-simulator \
+                 -isysroot "$SDK" -o /tmp/hello /tmp/hello.cpp; then
+            echo "SIM-COMPILE-FAILED"
+            exit 0
+          fi
           file /tmp/hello
           otool -l /tmp/hello | grep -A5 LC_BUILD_VERSION || true
           echo "--- simctl spawn on a bare Mach-O ---"
@@ -95,6 +128,7 @@ jobs:
       # that says MACOS there is the failure this leg exists to catch, and it
       # is invisible to a build that merely succeeds.
       - name: "Device: the artefact names the iOS platform"
+        continue-on-error: true
         run: |
           set -euo pipefail
           cat > /tmp/dev.cpp << 'CPP'
@@ -102,7 +136,8 @@ jobs:
           int main() { std::puts("1-2-3"); return 0; }
           CPP
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
-          "$LLVM_ROOT/bin/clang++" -std=c++23 -target arm64-apple-ios18.0 \
+          "$LLVM_ROOT/bin/clang++" -std=c++23 --no-default-config \
+            -target arm64-apple-ios18.0 \
             -isysroot "$SDK" -o /tmp/dev /tmp/dev.cpp
           file /tmp/dev
           otool -l /tmp/dev | grep -A5 LC_BUILD_VERSION
@@ -115,6 +150,7 @@ jobs:
       # works" is the fact the flag builder needs and neither answer can be
       # reasoned out from a Linux desk.
       - name: "C++ runtime: SDK libc++ versus the payload static archive"
+        continue-on-error: true
         run: |
           set -x
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
@@ -124,7 +160,8 @@ jobs:
           int main() { std::string s = "1-2-3"; std::puts(s.c_str()); return 0; }
           CPP
           echo "--- (a) SDK libc++, dynamic ---"
-          if "$LLVM_ROOT/bin/clang++" -std=c++23 -target arm64-apple-ios18.0 \
+          if "$LLVM_ROOT/bin/clang++" -std=c++23 --no-default-config \
+               -target arm64-apple-ios18.0 \
                -isysroot "$SDK" -o /tmp/cxx-sdk /tmp/cxx.cpp; then
             otool -L /tmp/cxx-sdk
             echo "SDK-LIBCXX-OK"
@@ -132,7 +169,8 @@ jobs:
             echo "SDK-LIBCXX-FAILED"
           fi
           echo "--- (b) payload static libc++ ---"
-          if "$LLVM_ROOT/bin/clang++" -std=c++23 -target arm64-apple-ios18.0 \
+          if "$LLVM_ROOT/bin/clang++" -std=c++23 --no-default-config \
+               -target arm64-apple-ios18.0 \
                -isysroot "$SDK" -nostdlib++ \
                "$LLVM_ROOT/lib/libc++.a" "$LLVM_ROOT/lib/libc++abi.a" \
                -o /tmp/cxx-static /tmp/cxx.cpp; then
@@ -148,13 +186,15 @@ jobs:
       # uses, with a second SDK. If this cannot be made to work the iOS rows
       # are a non-module tier and the documentation has to say so.
       - name: "import std: precompile against the located SDK"
+        continue-on-error: true
         run: |
           set -x
           SDK=$(xcrun --sdk iphoneos --show-sdk-path)
           STD_CPPM=$(find "$LLVM_ROOT" -name 'std.cppm' | head -1)
           echo "std.cppm=$STD_CPPM"
           MODDIR=$(dirname "$STD_CPPM")
-          if "$LLVM_ROOT/bin/clang++" -std=c++23 -target arm64-apple-ios18.0 \
+          if "$LLVM_ROOT/bin/clang++" -std=c++23 --no-default-config \
+               -target arm64-apple-ios18.0 \
                -isysroot "$SDK" -Wno-reserved-module-identifier \
                -Xclang -emit-reduced-module-interface \
                --precompile -o /tmp/std.pcm "$STD_CPPM" -I"$MODDIR"; then
@@ -166,7 +206,8 @@ jobs:
           import std;
           int main() { std::println("1-2-3"); return 0; }
           CPP
-          if "$LLVM_ROOT/bin/clang++" -std=c++23 -target arm64-apple-ios18.0 \
+          if "$LLVM_ROOT/bin/clang++" -std=c++23 --no-default-config \
+               -target arm64-apple-ios18.0 \
                -isysroot "$SDK" -fmodule-file=std=/tmp/std.pcm \
                -o /tmp/mod /tmp/mod.cpp /tmp/std.pcm; then
             echo "MODULE-LINK-OK"
@@ -175,3 +216,124 @@ jobs:
           fi
           file /tmp/mod || true
           set +x
+
+  ios-engine:
+    name: iOS - mcpp builds and the simulator runs it
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-macos-llvm
+
+      - name: Build mcpp from source (self-host)
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build
+          echo "MCPP_DEV=$(ls -td "$PWD"/target/*/*/bin/mcpp | head -1)" >> "$GITHUB_ENV"
+
+      # THE THREE ROWS ARE `planned`, AND THAT IS THE STATE THIS JOB EXISTS TO
+      # CHANGE. A planned row is refused with its own escape hatch named:
+      #
+      #   error: target 'aarch64-ios' is registered but not yet supported
+      #          (planned) -- An explicit [target.aarch64-ios] toolchain
+      #          override can opt in early.
+      #
+      # so the fixture writes that override. Once this job is green the tiers
+      # move and the override becomes unnecessary; keeping it until then is
+      # what makes the measurement possible before the claim is made.
+      - name: "Fixture: a project that imports std and prints 1-2-3"
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/iostest/src
+          cat > /tmp/iostest/mcpp.toml << 'TOML'
+          [package]
+          name = "iostest"
+          version = "0.1.0"
+
+          [build]
+          ios_deployment_target = "18.0"
+
+          [target.aarch64-ios]
+          toolchain = "llvm@22.1.8"
+
+          [target.aarch64-ios-sim]
+          toolchain = "llvm@22.1.8"
+
+          [target.x86_64-ios-sim]
+          toolchain = "llvm@22.1.8"
+          TOML
+          cat > /tmp/iostest/src/main.cpp << 'CPP'
+          import std;
+          int main() {
+            std::vector<int> v{3, 1, 2};
+            std::ranges::sort(v);
+            std::print("{}-{}-{}\n", v[0], v[1], v[2]);
+          }
+          CPP
+          cat /tmp/iostest/mcpp.toml
+
+      # D1/D2: THE DEVICE ROW'S ARTEFACT. Nothing runs it -- that needs a
+      # signature the developer owns -- so the claim is about the artefact:
+      # arm64 Mach-O naming the iOS platform and the project's deployment
+      # target in LC_BUILD_VERSION. A build that merely succeeds cannot tell
+      # those apart from a macOS binary.
+      - name: "D1: mcpp build --target aarch64-ios"
+        continue-on-error: true
+        run: |
+          set -x
+          cd /tmp/iostest
+          "$MCPP_DEV" build --target aarch64-ios
+          set +x
+          ART=$(find /tmp/iostest/target/aarch64-ios -name iostest -type f | head -1)
+          echo "artefact=$ART"
+          file "$ART"
+          otool -l "$ART" | grep -A5 LC_BUILD_VERSION
+
+      # D4's PREMISE: whether `simctl spawn` takes a bare Mach-O. If it does,
+      # the `simctl-run` program in xim:apple-simulator-tools is a
+      # boot-and-spawn wrapper; if it does not, it has to synthesise a bundle,
+      # sign it and install it. This is the measurement that decides which.
+      - name: "D4: mcpp build --target aarch64-ios-sim, then simctl spawn"
+        continue-on-error: true
+        run: |
+          set -x
+          cd /tmp/iostest
+          "$MCPP_DEV" build --target aarch64-ios-sim
+          set +x
+          ART=$(find /tmp/iostest/target/aarch64-ios-sim -name iostest -type f | head -1)
+          echo "artefact=$ART"
+          file "$ART"
+          otool -l "$ART" | grep -A5 LC_BUILD_VERSION
+          UDID=$(xcrun simctl list devices available \
+                 | grep -A50 -- '-- iOS' \
+                 | grep -m1 -oE '[0-9A-F]{8}-[0-9A-F-]{27}' || true)
+          echo "udid=[$UDID]"
+          if [ -z "$UDID" ]; then echo "NO-IOS-SIMULATOR-DEVICE"; exit 0; fi
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b 2>&1 | tail -3 || true
+          if xcrun simctl spawn "$UDID" "$ART"; then
+            echo "SPAWN-OK"
+          else
+            echo "SPAWN-FAILED exit=$?"
+          fi
+
+      # THE HOST SURFACE IS BOUNDED, AND ITS ABSENCE NAMES THE SDK. The
+      # recorded rule is that a host dependency must be minimal, named, and
+      # never a fallthrough -- so the refusal is a claim like any other, and
+      # `SDKROOT` pointing at a macOS SDK is the cheapest way to make the iOS
+      # SDK unlocatable without breaking the rest of the machine.
+      #
+      # AND NO OTHER ROW CHANGES: the same environment builds for the host.
+      - name: "D: the refusal names the SDK, and no other row is affected"
+        continue-on-error: true
+        run: |
+          set -x
+          cd /tmp/iostest
+          DEVDIR=/nonexistent-developer-dir
+          env DEVELOPER_DIR="$DEVDIR" SDKROOT="" \
+            "$MCPP_DEV" build --target aarch64-ios 2>&1 | tail -12
+          set +x
+          echo "--- and the host row still builds in the same environment ---"
+          env DEVELOPER_DIR="$DEVDIR" "$MCPP_DEV" build 2>&1 | tail -4 || true

@@ -181,6 +181,30 @@ struct Toolchain {
     // zero-libc tier and on hosted targets.
     std::string                         targetSysrootPkg;
     std::filesystem::path               targetSysrootLib;
+    // THE APPLE SDK THIS TARGET WAS LOCATED AGAINST, and it is a different
+    // axis from the three paths above.
+    //
+    // `targetSysroot*` name a PACKAGE's directories -- a C library this
+    // ecosystem ships and can therefore version. An Apple SDK is located, not
+    // installed: the iPhoneOS and iPhoneSimulator headers and stub libraries
+    // ship inside Xcode and are not redistributable, so there is nothing for
+    // a package to name and the row carries no `sysroot` entry. What it
+    // carries instead is this, resolved once where the target is known.
+    //
+    // Empty for every non-Apple target AND for a native macOS build, which
+    // needs none: that build reads the payload's own `clang++.cfg`, and
+    // `post_install.cppm` wrote the located macOS SDK into it. An Apple CROSS
+    // target suppresses that cfg (`--no-default-config`) precisely because it
+    // names the wrong platform -- measured 2026-09-11 on macos-15, where an
+    // iOS-simulator link with the right `-isysroot` on the command line still
+    // picked the cfg's SDK:
+    //
+    //   ld64.lld: error: .../MacOSX.sdk/usr/lib/libc++.tbd(...) is
+    //     incompatible with arm64 (iOS Simulator18.0.0)
+    //
+    // so the SDK has to travel explicitly, on the compile side as well as the
+    // link side.
+    std::filesystem::path               appleSdkRoot;
     std::vector<std::filesystem::path>   compilerRuntimeDirs; // LD_LIBRARY_PATH for private tools
     std::vector<std::filesystem::path>   linkRuntimeDirs;     // -L/-rpath dirs for produced binaries
     // Environment the toolchain's tools need when invoked (set on the ninja

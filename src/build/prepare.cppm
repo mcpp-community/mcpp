@@ -79,6 +79,7 @@ import mcpp.runtime.binding;
 import mcpp.platform.runtime_search;
 import mcpp.toolchain.post_install;
 import mcpp.platform;
+import mcpp.platform.macos;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.pm.resolver;
@@ -3508,6 +3509,66 @@ prepare_build(bool print_fingerprint,
                       }();
                       for (auto const& def : stdDefines)
                           tc->stdModuleTargetFlags += " -D" + def;
+                  }
+
+                  // ── iOS: THE COMPILER IS OURS, THE SDK IS THE MACHINE'S ──
+                  //
+                  // The three iOS rows pin `llvm@22.1.8` -- any sufficiently
+                  // new clang emits arm64 Mach-O for an iOS deployment target
+                  // -- and take their headers and stub libraries from the
+                  // machine's Xcode, which is where the whole item shrinks to
+                  // a located sysroot. `aarch64-macos` is verified on exactly
+                  // this split and is the precedent.
+                  //
+                  // LOCATED HERE, ONCE. Three later sites need the answer (the
+                  // compile flags, the link line, and the std module's own
+                  // command), and a function that probes the machine is the
+                  // wrong thing to call three times: `xcrun` shells out, and
+                  // three answers can differ if the developer directory
+                  // changes mid-build.
+                  //
+                  // AND ITS ABSENCE IS A REFUSAL THAT NAMES THE SDK. The
+                  // recorded host-surface rule is that a host dependency must
+                  // be minimal, named, and never a fallthrough; the iOS SDK
+                  // and `simctl` are the two this platform adds, both in the
+                  // "proprietary runtime that exists only on its own OS"
+                  // category. A build that continued without the SDK would
+                  // fail in the driver's header search, naming a file rather
+                  // than the thing that is missing.
+                  if (want->is_ios()) {
+                      const auto which =
+                          want->is_ios_simulator()
+                              ? mcpp::platform::macos::sdk_iphonesim
+                              : mcpp::platform::macos::sdk_iphoneos;
+                      auto sdk = mcpp::platform::macos::sdk_path(which);
+                      if (!sdk) {
+                          return std::unexpected(std::format(
+                              "target {} needs the {} SDK, which this machine "
+                              "does not provide.\n"
+                              "       It is not redistributable, so mcpp "
+                              "LOCATES it rather than installing it: "
+                              "`xcrun --sdk {} --show-sdk-path` must answer, "
+                              "which needs Xcode (not the Command Line Tools "
+                              "alone -- those ship the macOS SDK only).\n"
+                              "       Check `xcode-select -p`, and note that "
+                              "the compiler itself is not the problem: it is "
+                              "`xim:llvm`, and every other Apple row builds "
+                              "with it on this machine.",
+                              want->str(), which, which));
+                      }
+                      tc->appleSdkRoot = *sdk;
+                      // AND THE std MODULE'S OWN COMMAND, WHICH IS A SEPARATE
+                      // CHANNEL. Same reason the Android rows set it: the
+                      // module is precompiled by `clang.cppm`'s own assembly
+                      // rather than by the compile flags, so a decision made
+                      // only in the flag builder reaches every translation
+                      // unit and not the module they all import. Without the
+                      // SDK here the precompile resolves libc++'s
+                      // `#include <__config>` against the macOS SDK and the
+                      // module is built for the wrong platform.
+                      tc->stdModuleTargetFlags =
+                          " " + tc->crossTargetFlag
+                          + " -isysroot " + sdk->string();
                   }
               }
           }

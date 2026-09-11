@@ -712,6 +712,27 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // linker and the Apple half of the toolchain model all exist; what is
     // missing is an `os` value and the iPhoneOS SDK.
     //
+    // THE COMPILER IS OURS AND ONLY THE SDK IS APPLE'S, which is the sentence
+    // that shrank this row from a packaging problem to a located directory.
+    //
+    // `llvm@22.1.8` -- any sufficiently new clang emits arm64 Mach-O for an
+    // iOS deployment target, and the C++ runtime comes from the SDK the way it
+    // does on every Apple platform. `aarch64-macos` is verified on exactly
+    // this split and is the precedent: `xim:llvm` compiles and the SDK is
+    // located. Xcode's own clang would also work and is the wrong default --
+    // it would make the compiler a host dependency where the ecosystem
+    // already has one, and these would be the only Apple rows not using
+    // `xim:llvm`.
+    //
+    // A CONVENTION PIN, NOT A CAPABILITY ONE, which is why
+    // `pin_is_capability()` does not name these rows. It means "this is what
+    // `--target aarch64-ios` resolves when the project says nothing", and a
+    // project may still write `[target.aarch64-ios] toolchain = "..."`. The
+    // capability set is the rows NO other payload can serve, and the
+    // distinction matters for consistency with `aarch64-macos`: the same
+    // constraint (Darwin needs clang) holds there and that row is not a
+    // capability row either.
+    //
     // THE SDK IS A LICENCE QUESTION AND NOT A PACKAGING ONE, which is why this
     // row carries no `sysroot`. The NDK is Apache-2.0 and Emscripten is MIT,
     // both redistributable; the iPhoneOS SDK is neither. The recipe should
@@ -725,7 +746,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // The simulator is deliberately not a row. It has its own SDK and produces
     // its own object, so folding it in would make two targets share an
     // identity -- the mistake `x86_64-windows-musl` was added to undo.
-    { "aarch64-ios",           "planned",   "",    "",           "",                            false },
+    { "aarch64-ios",           "planned",   "",    "llvm@22.1.8","",                            false },
     // THE SIMULATOR'S TWO ROWS. Not a convenience and not a runner: a
     // simulator build has its own SDK (`iPhoneSimulator.sdk`), produces its own
     // object, and takes `-mios-simulator-version-min` rather than
@@ -743,8 +764,8 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // redistributable than the iPhoneOS one. What these rows buy today is that
     // `mcpp build --target aarch64-ios-sim` answers `tier-planned` naming the
     // row, instead of `unknown target`, which was false.
-    { "aarch64-ios-sim",       "planned",   "",    "",           "",                            false },
-    { "x86_64-ios-sim",        "planned",   "",    "",           "",                            false },
+    { "aarch64-ios-sim",       "planned",   "",    "llvm@22.1.8","",                            false },
+    { "x86_64-ios-sim",        "planned",   "",    "llvm@22.1.8","",                            false },
 
     // WEB IS THE OUTLIER, AND IT IS THE ONLY ONE OF THE THREE THAT CHANGES THE
     // MODEL RATHER THAN EXTENDING A TABLE. A new arch (`wasm32`), a new os

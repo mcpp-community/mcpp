@@ -736,11 +736,21 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
         EXPECT_TRUE(info->sysroot.empty()) << name;
     }
 
-    // THE THREE APPLE ROWS STAY `planned`, AND THE BLOCKER IS NOT A PAYLOAD.
+    // THE THREE APPLE ROWS, AND WHAT THE SDK'S LICENCE DOES AND DOES NOT
+    // BOUND.
+    //
     // The NDK is Apache-2.0 and Emscripten is MIT; the iPhoneOS and
-    // iPhoneSimulator SDKs ship inside Xcode and are neither. No amount of
-    // engine work moves these, which is why they carry no pin: there is
-    // nothing for a pin to name.
+    // iPhoneSimulator SDKs ship inside Xcode and are neither. That bounds the
+    // SYSROOT -- which is why these rows carry no `sysroot` entry, since that
+    // column names a package and a located directory is not one -- and it
+    // does NOT bound the compiler: `xim:llvm` emits arm64 Mach-O for an iOS
+    // deployment target, so the rows pin it exactly as `x86_64-windows-musl`
+    // does.
+    //
+    // A CONVENTION PIN. It answers "what does `--target aarch64-ios` resolve
+    // when the project says nothing", and remains overridable -- asserted
+    // below in ExactlyTheseRowsHaveACapabilityPin, whose expected set does
+    // NOT contain these three.
     for (auto [name, tier] : {std::pair{"aarch64-ios",     "planned"},
                               std::pair{"aarch64-ios-sim", "planned"},
                               std::pair{"x86_64-ios-sim",  "planned"}}) {
@@ -750,7 +760,9 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
         auto* info = find_known_target(*t);
         ASSERT_NE(info, nullptr) << name;
         EXPECT_EQ(info->tier, tier) << name;
+        EXPECT_EQ(info->pin, "llvm@22.1.8") << name;
         EXPECT_TRUE(info->sysroot.empty()) << name;
+        EXPECT_FALSE(t->pin_is_capability()) << name;
     }
 }
 
