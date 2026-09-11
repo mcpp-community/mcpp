@@ -1116,6 +1116,22 @@ unpersisted declaration would be absent exactly when a user names a format.
 carries no such line and the program that wrote it could not emit one, so
 replaying it yields what that program said.
 
+Measured across two real binaries rather than only in a unit test, because an
+absent-tolerance claim is about what a *previous version* wrote:
+
+| step | binary | the graph's header line | result |
+|---|---|---|---|
+| 1 | released 2026.9.10.2 | `graph=normal;schedule=none;accel=default` | builds |
+| 2 | 2026.9.11.2 | `;dist=none` appended | fingerprint change, full rebuild, no error |
+| 3 | 2026.9.11.2 | unchanged | `Finished dev in 0.00s` -- the fast path replays |
+| 4 | 2026.9.10.2 again | its own older directory | `0.00s` -- the downgrade does not choke |
+
+Step 4 also says what the absent-tolerance is worth. The version is part of the
+fingerprint, so two binaries never share a graph directory and an older mcpp
+never actually reads a `dist=` field. That makes the field's read side defence
+in depth rather than a live path -- which is the same conclusion §11.2 reaches
+from the other direction, and is why the invariant is held in a unit test.
+
 ### 11.9 Test coverage
 
 The count is not the measure; what each test excludes is. Two are worth naming.

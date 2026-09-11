@@ -576,12 +576,21 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // repeated at every site that needed it. That is why this is
     // https://github.com/mcpp-community/mcpp/issues/597 and not a table row.
     //
-    // IT IS NOW ONLY THAT. The standard-library half is answered: measured
-    // 2026-09-11, `em++` compiles and links `import std` with NO additional
-    // flags once the module surface from llvm 20.1.7 is present -- the release
-    // matching Emscripten's `_LIBCPP_VERSION` of 200100, not the 22.0.0git its
-    // clang reports -- and `node app.js` printed the expected output. So #597
-    // is one problem rather than two.
+    // IT IS NOW ONLY THAT, AND THE STANDARD-LIBRARY HALF IS SIMPLER THAN THIS
+    // COMMENT FIRST SAID. Measured 2026-09-11 against Emscripten 6.0.9:
+    // `em++` compiles and links `import std` with NO additional flags and no
+    // generated surface at all, because the toolchain SHIPS one -- 134 files
+    // -- and `node app.js` printed the expected output.
+    //
+    // The version numbers here were two releases stale, in exactly the
+    // direction the design record warns about: they said llvm 20.1.7 and
+    // `_LIBCPP_VERSION 200100` against clang 22.0.0git. Emscripten 6.0.9
+    // reports `220108` (llvm 22.1.8) and clang 24.0.0git. The rule those
+    // numbers were supporting is unaffected and is the reason to keep them
+    // accurate: the surface must match the LIBRARY, never the compiler, and a
+    // recipe's job is to pin the `_LIBCPP_VERSION` it measured and refuse a
+    // change. A stale number in a comment becomes a stale number in a
+    // diagnostic, and then in somebody's install command.
     //
     // `defaultStatic` is true because wasm has no dynamic loader in the sense
     // the other rows mean: an Emscripten link produces one module plus its
