@@ -309,6 +309,9 @@ package -- no new mechanism, again.
 | R6 | the tier each row can reach | `verified` for wasm (reached); `preview` for both Android rows and for iOS | Rust rates all three Tier 2. `verified` for Android is reachable and needs a CI lane, not a design |
 | R7 | signing a Mach-O or a `.app` | package `rcodesign` as `xim:rcodesign` and have `dist-apple` prefer it | MPL-2.0 with prebuilt static binaries for linux-musl (both arches), macOS universal and Windows. It removes the last host dependency from the iOS BUILD path, leaving only a device, the Simulator runtime and a notarization credential -- none of which is a program |
 | R8 | the four-field spelling | `parse()` should accept `wasm32-unknown-emscripten` and `aarch64-apple-ios` and canonicalise them | the industry writes four fields; refusing the spelling every other toolchain prints is a UX cost with no design benefit, and `parse()` already normalises several aliases |
+| R9 | `mcpp pack --format ipa` | a `dist-ipa` member: zip `Payload/<Name>.app/`, after `dist-apple` and `rcodesign` | it needs NO new tool. Every other link is already in the ecosystem or one member away, so iOS PACKAGING closes entirely -- what does not close is the credential and the runtime |
+| R10 | `--format dmg` and `--format pkg` | recorded as gaps with a known shape, not attempted | each needs a *creator* as well as a signer (`libdmg-hfsplus`; `xar`), both open source and neither measured here |
+| R11 | the macOS rows' runner | Darling recorded as an unmeasured candidate | GPL-3.0, active, and it REIMPLEMENTS Darwin's libraries rather than redistributing them, so unlike the iOS image it carries no licence blocker. A row does not move on a plausible mechanism, so this is a candidate and not a plan |
 
 ## 7. User-facing experience, which is the test of all of the above
 
@@ -475,19 +478,102 @@ So signing -- which `dist/apple.cppm` currently reaches through the host's
 Sources: [apple-codesign on crates.io](https://crates.io/crates/apple-codesign)
 and its [documentation](https://gregoryszorc.com/docs/apple-codesign/stable/).
 
-### 10.3 Genuinely host-bound, and there are exactly three
+### 10.3 Signing belongs in the ecosystem AND in the plugin system, in that order
+
+`rcodesign` is a program, so it is a `xim:` package; what it is invoked BY is a
+`dist-*` member; and what the user types is `mcpp pack --format <name>`. All
+three layers already exist, which is why this needs no new mechanism -- only
+the package and the members.
+
+    xim:rcodesign            the program            (MPL-2.0, prebuilt static)
+    dist-apple  --format app   the bundle           exists, uses the host's codesign today
+    dist-ipa    --format ipa   the shippable file   does not exist
+    dist-dmg    --format dmg   a disk image         does not exist
+    dist-pkg    --format pkg   an installer         does not exist
+
+Release 0.29.0 signs **bundles**, not only flat Mach-O binaries -- its
+changelog discusses `--shallow` bundle mode and child-bundle signing "compatible
+with the behavior of Apple's `codesign`" -- which is exactly what a `.app`
+inside an `.ipa` needs.
+
+**`--format ipa` is the one that needs no new tool at all.** An `.ipa` is a zip
+containing `Payload/<Name>.app/`, so the chain is: clang plus the iPhoneOS SDK
+produce the Mach-O (both `xim:`), `dist-apple` assembles the bundle, `rcodesign`
+signs it, and a zip step produces the file. Every link is already in the
+ecosystem or is one member away.
+
+`--format dmg` and `--format pkg` each need a *creator* as well as a signer,
+and neither creator is packaged: a `.dmg` is an HFS+/APFS image (Apple's
+`hdiutil`, or `libdmg-hfsplus` off macOS) and a `.pkg` is an XAR archive
+(Apple's `pkgbuild`, or `xar`). Both alternatives are open source and neither
+has been measured here, so they are named as gaps with a known shape rather
+than claimed.
+
+### 10.4 The iOS runtime: the blocker is a licensed IMAGE, not a missing emulator
+
+This is the question worth getting exactly right, because the obvious answer is
+wrong in an instructive way.
+
+QEMU can emulate ARM iOS hardware, and community projects exist that boot iOS
+on it. What none of them can supply is the **iOS kernel and root filesystem**:
+distributing iOS images is against Apple's terms, so an image must be one the
+user already legally owns. The emulator is not the scarce thing.
+
+That is the same shape as the Android question, with the opposite answer, and
+the comparison is the point:
+
+| | the emulator | the OS image | can the loop close? |
+|---|---|---|---|
+| Android | Apache-2.0, and `emulator/LICENSE` says so | AOSP `default` builds, OSS notices throughout | **yes** -- both are packaged, and `qemu-aarch64 -L` needs no emulator at all |
+| iOS | QEMU, GPL, packageable | **not redistributable** | **no** -- and no amount of tooling changes it |
+
+So `aarch64-ios` cannot reach `verified` for a reason that is not about mcpp,
+xlings, or effort. It is the one row in the table whose execution is blocked by
+a licence rather than by work, and saying so precisely is better than leaving
+it as "needs a device".
+
+Sources: [iOS emulators, Emulation General Wiki](https://emulation.gametechwiki.com/index.php/IOS_emulators)
+and [Emulating iOS on Linux](https://linuxvox.com/blog/emulate-ios-on-linux/).
+
+**On macOS, the Simulator is the host's and that is fine.** It ships with Xcode,
+it is a (b)-category proprietary runtime, and `xcrun simctl spawn` is an argv
+prefix -- so §5's model covers it with no new mechanism, on a macOS host, once
+R1 gives the simulator a row.
+
+### 10.5 Darling is a candidate for the macOS rows, and is recorded as unmeasured
+
+[Darling](https://github.com/darlinghq/darling) is a macOS compatibility layer
+for Linux -- GPL-3.0, actively developed (last push 2026-09-06). It reimplements
+Darwin's system libraries rather than redistributing them, so it carries **no
+Apple licence blocker**, which makes it categorically different from the iOS
+image problem above.
+
+It runs macOS binaries, not iOS ones, so it is irrelevant to `aarch64-ios` and
+potentially relevant to `x86_64-macos` and `aarch64-macos` -- the first of which
+is `planned` in this table with no host able to serve it off an Apple machine.
+
+Recorded as a candidate and explicitly **not** as a plan: nothing in this
+ecosystem has run it, its coverage is partial by construction, and a row does
+not move on a plausible mechanism. What it would be, if it worked, is an
+ordinary `runner` argv prefix supplied by a `xim:` package -- the same shape as
+`qemu-user-aarch64`.
+
+### 10.6 Genuinely host-bound, and there are exactly three
 
 1. **`/dev/kvm`** -- a kernel facility. No package ships a kernel feature, and
    group membership is a machine's configuration. This is why it is the only
    `log.warn` left in `android-emulator.lua`.
-2. **A real device, or Apple's Simulator runtime.** The simulator is a
-   proprietary runtime that exists only on macOS and is not redistributable;
-   a device is hardware. Both are *environments* rather than tools.
+2. **A real device, Apple's Simulator runtime, or a licensed OS image.** The
+   simulator is a proprietary runtime that exists only on macOS; a device is
+   hardware; and an iOS kernel plus root filesystem cannot be redistributed at
+   all. Note which of the three is the actual blocker for emulation: QEMU is
+   packageable and the IMAGE is not, which is precisely why the same mechanism
+   closes for Android -- where the image is AOSP -- and cannot for iOS.
 3. **Notarization.** Apple's servers plus a developer credential. A credential
    is never a package, and `rcodesign` can drive the submission but cannot
    supply the account.
 
-### 10.4 The rule that falls out
+### 10.7 The rule that falls out
 
     A host dependency is legitimate only when the thing needed is
       (a) a kernel facility,
