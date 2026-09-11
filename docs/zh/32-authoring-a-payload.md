@@ -64,6 +64,25 @@ end
 `install()` 把解开的目录树放到 mcpp 会去找的位置;`config()` 登记这个载荷提供什么。
 本章其余内容,都是这两个函数在多做一些事。
 
+### 安装钩子收到的环境(mcpp 2026.9.12.2+)
+
+mcpp 安装工程所依赖的包时,该包的 `install()` 在环境中收到已解析的工具链与目标,变量名与取值同构建程序
+收到的一致([build.mcpp](30-build-mcpp.md)):
+
+| 变量 | 取值 |
+|---|---|
+| `MCPP_COMPILER` | `gcc`、`clang` 或 `msvc` |
+| `MCPP_CXX_STDLIB` | `libstdc++`、`libc++` 或 `msvc-stl` |
+| `MCPP_TARGET` | 本次构建所请求的目标三元组;原生构建时为宿主三元组 |
+| `MCPP_TARGET_OS`、`MCPP_TARGET_ARCH`、`MCPP_TARGET_ENV` | 该三元组的各段 |
+
+不适用的取值为空。在 Windows 上空变量即不存在的变量,`os.getenv` 对它返回 `nil`。工具链载荷的钩子不会
+收到这些变量,因为它安装时尚未解析出任何工具链。
+
+钩子可以用这些值来拒绝或给出诊断,但不得把某种变体构建进名称未体现该变体的存储目录:存储目录按包名与版本
+区分,否则第一个消费者就会替之后所有消费者决定变体。针对某一个 C++ 标准库编译的包应改为声明这一点,即
+`requires = ["mcpp:c++-abi=libstdc++"]`([22 —— 目标侧](22-target-side.md))。
+
 ## 描述符必须做对的四件事
 
 **一个版本,两个 URL。** 每个版本都带 `GLOBAL` 与 `CN` 两个 URL 和一个 `sha256`。

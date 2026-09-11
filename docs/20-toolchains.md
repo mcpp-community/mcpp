@@ -873,6 +873,37 @@ Tracked as [mcpp#256](https://github.com/mcpp-community/mcpp/issues/256).
 bundled LLVM toolchains, so a future Clang bump that fixes — or re-breaks —
 this becomes visible instead of silently changing what packages can express.
 
+## Known Toolchain Hazard: `std::find` Over a Wide Trivially Comparable Type (clang + MSVC STL 14.51)
+
+A translation unit that calls `std::find` over a trivially copyable type wider
+than eight bytes fails to compile inside the standard library when the compiler
+is clang and the standard library is the MSVC STL at 14.51 (Visual Studio 18):
+
+```text
+xutility:320:23: error: static assertion failed: unexpected size
+xutility:6542:49: note: in instantiation of function template specialization
+  'std::_Find_vectorized<const T, T>' requested here
+```
+
+This is the shape of mcpp's default Windows toolchain, clang targeting
+`x86_64-pc-windows-msvc`, so the failure surfaces through `mcpp build` although
+nothing in mcpp or in the program is wrong. The MSVC STL admits the type to its
+vectorized path through a clang-only trait that has no upper size bound, and
+the function it dispatches to implements 1-, 2-, 4- and 8-byte elements only.
+MSVC's own front end never takes that path. The same source compiles against the
+MSVC STL 14.3x that `windows-2022` ships.
+
+The defect is upstream, tracked as
+[microsoft/STL#6294](https://github.com/microsoft/STL/issues/6294). Two
+workarounds were measured downstream:
+
+- Give the element type a user-written `operator==` instead of a defaulted one.
+  The type is then not trivially equality-comparable, and the STL keeps its
+  scalar path.
+- Build on an image whose MSVC STL predates 14.51, such as `windows-2022`.
+
+Tracked as [mcpp#609](https://github.com/mcpp-community/mcpp/issues/609).
+
 ## The C++ runtime contract (`cxx_runtime`)
 
 `cxx_runtime` states what the produced artifact promises about the machine that

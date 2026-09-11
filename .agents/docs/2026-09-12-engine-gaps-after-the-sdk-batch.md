@@ -1,16 +1,15 @@
 ---
 subject: triage
-status: active
+status: landed
 ---
 
 # The engine gaps left open after the SDK batch
 
-**Status:** reviewed 2026-09-12. The four questions in the first draft were
-answered, and the answers are recorded in §9. Three statements in the first
-draft were then measured and corrected: two recorded gaps already have an
-existing mechanism (§2, §5.2), and a new defect was found (§7). The
-implementation is one mcpp PR carrying the next date version. 2026.9.12.1 (#617)
-is merged and unreleased, so its change ships with that PR.
+**Status:** landed in mcpp 2026.9.12.2. The four questions in the first draft
+were answered in review (§9), and three statements were measured and corrected
+before implementation (§2, §5.2, §7). The corrections made during
+implementation are recorded in §11. The ecosystem changes E1 and E2 follow the
+release (§10).
 
 ## 0. Scope, and the ledger it starts from
 
@@ -108,15 +107,15 @@ console program may define `wmain`.
 
 | target | `windows_subsystem = "windows"` renders | decided by |
 |---|---|---|
-| PE, MSVC style: cl, clang-cl, clang targeting `*-windows-msvc` | `/SUBSYSTEM:WINDOWS` plus the entry's `/ENTRY:` symbol, spelled with `-Wl,` under a GNU-style driver | `plan.rcStyle == "msvc"` |
-| PE, GNU style: MinGW gcc, clang targeting `*-windows-gnu` | `-mwindows`, plus `-municode` for a wide entry | `plan.rcStyle == "gnu"` |
+| PE, MSVC style: cl, clang-cl, clang targeting `*-windows-msvc` | `/SUBSYSTEM:WINDOWS` plus the entry's `/ENTRY:` symbol, spelled with `-Wl,` under a GNU-style driver | `pe_msvc_abi` (§11.1) |
+| PE, GNU style: MinGW gcc, clang targeting `*-windows-gnu` | `-mwindows`, plus `-municode` for a wide entry | `pe_msvc_abi` (§11.1) |
 | ELF, Mach-O, Wasm | nothing; no diagnostic; byte-identical artefact | `ObjectFormat` |
 
 `"console"` with `"main"` renders nothing on every target, because both are the
-linker's defaults. A non-default entry with the console subsystem renders only
-the entry. The dialect is read from `rcStyle`, the field the plan already uses to
-choose between rc/llvm-rc and windres (`plan.cppm:262`), so resources and the
-subsystem cannot disagree about the linker they address.
+linker's defaults. On the MSVC ABI any other combination renders both flags
+(§11.2). The ABI is answered by `pe_msvc_abi`, the predicate the import library
+flag already uses, and the emitter spells the flag for the linker it invokes
+(§11.1).
 
 ### 1.4 Scope
 
@@ -443,7 +442,7 @@ Each angle states what the design does, and what would be wrong with the
 alternative.
 
 - **Architecture.** Every change lands on a mechanism that already exists:
-  `LinkUnit::linkFlags` and `rcStyle` (§1), the layer requirement check (§2), the
+  `LinkUnit` and the PE link-flag predicate (§1), the layer requirement check (§2), the
   `runtime` table's skipping of unknown sub-keys (§4), the xlings workspace
   selector (§5.1), the graph-global dialect channel and the dependency cache key
   (§5.2), and the fast path's recorded inputs (§7). No new channel carries raw
@@ -462,7 +461,7 @@ alternative.
   placed where older parsers skip rather than hang: `runtime.deploy` (§4.2),
   `requires_abi` as an unknown feature key (§5.2). `console`/`main` render
   nothing, so no existing Windows command line changes.
-- **Cross-platform.** Rendering is decided by `ObjectFormat` and `rcStyle`; a key
+- **Cross-platform.** Rendering is decided by the object format and the PE link-flag predicate; a key
   that means nothing for a format is inert and byte-identical there. The Windows
   criteria run on Windows CI, not on Wine.
 - **Consistency.** One vocabulary per concept: `mcpp:c++-abi` is the standard
@@ -520,3 +519,66 @@ M1 to M4, M6, M7 and M8 are independent and are implemented in parallel. The
 three ecosystem changes follow the release, because each adopts a key only the
 new engine reads, and E2's descriptor must be checked against the index's
 minimum engine version before it is published.
+
+## 11. Corrections made during implementation
+
+Each item states what the sections above said, what was measured or read in the
+code, and what was built instead.
+
+1. **§1.3, the discriminator.** The ABI is not read from `plan.rcStyle`.
+   `LinkUnit` carries the declared words, and the emitter renders them, because
+   only the emitter knows whether the link is a separate linker invocation, which
+   decides between `/SUBSYSTEM:` and `-Wl,/SUBSYSTEM:`. The ABI is answered by
+   `pe_msvc_abi`, extracted from `pe_link_flag`, so the import library and the
+   subsystem cannot address two different linkers.
+2. **§1.3, the MSVC row.** Both `/SUBSYSTEM:` and `/ENTRY:<entry>CRTStartup` are
+   written whenever either key differs from its default. Without `/SUBSYSTEM:`,
+   link.exe infers the subsystem from the entry function the objects define, so
+   `WinMain` with the console subsystem would link as a GUI program; without
+   `/ENTRY:`, the GUI subsystem selects `WinMainCRTStartup`, which a portable
+   `int main()` does not satisfy.
+3. **§2.3 item 1, the order.** The layer requirement check runs in target-side
+   resolution, after the dependency graph is installed, and it is not moved ahead
+   of provisioning. A package's manifest may live inside its payload, so the
+   complete set of requirements is known only after installation. The hook
+   environment is what lets an install hook refuse before it compiles.
+4. **§2.3 item 2, the values.** `MCPP_TARGET` in a hook follows the build-program
+   rule: the requested triple, or the host triple for a native build. The six
+   values are computed by `install_hook_env`, from which the build-program
+   environment also takes them, in their existing order, so no build program's
+   re-run key changes.
+5. **§3.1, absent and empty on Windows.** The CRT defines `_putenv_s(key, "")` as
+   removal, so the Windows branch already produced an absent
+   `XLINGS_PROJECT_DIR`, and the two platforms did not disagree about global
+   mode. What was wrong on Windows was the lifetime: the value stayed in mcpp's
+   environment after the invocation. The asymmetry that did exist was on POSIX,
+   where the `install_packages` fallback spelled global mode by hand whatever the
+   project directory was.
+6. **§3.2, the scope of the guard.** Only `XLINGS_PROJECT_DIR` is scoped.
+   `XLINGS_HOME` and the PATH prefix are left process-wide on Windows, as before;
+   scoping them has not been measured on Windows and is not part of this change.
+   The hook variables of §2.3 are applied by the dependency installer's own
+   scope rather than by the xlings environment function.
+7. **§4.3, the TOML form.** mcpp's TOML layer refuses an array of tables in any
+   section not on an allowlist, and `runtime.deploy` had to join it. The unit
+   test written for the key reported this before an end-to-end test or a user
+   could.
+8. **§5.2, rendering.** Rendering is decided by the object format rather than by
+   the driver: `-pthread` on every target that is neither PE nor freestanding,
+   nothing on PE and nothing on a freestanding target. The switch reaches the
+   root's `dialect_cxxflags`, `cflags` and `ldflags` and every dependency's
+   `cflags`. The MinGW driver would accept `-pthread`; it is not rendered there,
+   and threads on that ABI are outside this change's criteria.
+9. **§7, the named set.** A recorded build is replayed only for the same target
+   triple, profile, cache mode, requested features and toolchain request. The
+   toolchain request is the command-line override (`--toolchain`,
+   `MCPP_TOOLCHAIN`) together with the machine default (`[toolchain] default`).
+   `--offline`, `--locked` and `--jobs` change how a resolution is fetched,
+   checked or executed, not what it chooses, and are not compared. An entry
+   written before the `toolchain=` line declines once.
+10. **§7, the criterion.** A CI runner has one toolchain family installed, so the
+    A-B-A test requests the platform's own toolchain through `--toolchain` and
+    asserts that resolution runs, which the fast path skips. The machine-default
+    leg switches to a second installed version of the same family and asserts
+    the version string in the artefact; it reports itself as not measured where
+    no second version is installed.

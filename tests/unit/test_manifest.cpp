@@ -2413,6 +2413,100 @@ cxxfalgs = ["-DTYPO"]
     EXPECT_NE(m->schemaWarnings[0].find("unsupported key"), std::string::npos);
 }
 
+// #618: `windows_subsystem` / `windows_entry` on an executable target.
+TEST(Manifest, ParsesWindowsSubsystemAndEntryOnABinaryTarget) {
+    constexpr auto src = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.app]
+kind              = "bin"
+main              = "src/main.cpp"
+windows_subsystem = "windows"
+windows_entry     = "wWinMain"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->targets.size(), 1u);
+    EXPECT_EQ(m->targets[0].windowsSubsystem, "windows");
+    EXPECT_EQ(m->targets[0].windowsEntry, "wWinMain");
+    EXPECT_TRUE(m->schemaWarnings.empty());
+}
+
+TEST(Manifest, RefusesWindowsKeysOnALibraryNamingTheTargetAndTheKey) {
+    const std::pair<std::string_view, std::string_view> keys[] = {
+        {"windows_subsystem", "windows"}, {"windows_entry", "wmain"}};
+    for (std::string_view kind : {"lib", "shared"}) {
+        for (auto [key, value] : keys) {
+            const auto src = std::format(R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.core]
+kind = "{}"
+{} = "{}"
+)", kind, key, value);
+            auto m = mcpp::manifest::parse_string(src);
+            ASSERT_FALSE(m.has_value()) << kind << " " << key;
+            EXPECT_NE(m.error().message.find(std::format("targets.core.{}", key)),
+                      std::string::npos) << m.error().message;
+            EXPECT_NE(m.error().message.find("executable"), std::string::npos)
+                << m.error().message;
+        }
+    }
+}
+
+TEST(Manifest, RefusesAnUnknownWindowsValueNamingTheAcceptedOnes) {
+    constexpr auto subsystem = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.app]
+kind              = "bin"
+main              = "src/main.cpp"
+windows_subsystem = "gui"
+)";
+    auto m = mcpp::manifest::parse_string(subsystem);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("\"gui\" is not one of \"console\", \"windows\""),
+              std::string::npos) << m.error().message;
+
+    constexpr auto entry = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.app]
+kind          = "bin"
+main          = "src/main.cpp"
+windows_entry = "mainCRTStartup"
+)";
+    auto e = mcpp::manifest::parse_string(entry);
+    ASSERT_FALSE(e.has_value());
+    EXPECT_NE(e.error().message.find(
+                  "is not one of \"main\", \"wmain\", \"WinMain\", \"wWinMain\""),
+              std::string::npos) << e.error().message;
+}
+
+// The key list in the warning is generated from the list the parser accepts,
+// so a key the parser reads cannot be missing from the message.
+TEST(Manifest, UnsupportedTargetKeyWarningListsEveryAcceptedKey) {
+    constexpr auto src = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.app]
+kind  = "bin"
+main  = "src/main.cpp"
+bogus = "x"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->schemaWarnings.size(), 1u);
+    for (auto key : {"exports", "windows_subsystem", "windows_entry", "required_features"})
+        EXPECT_NE(m->schemaWarnings[0].find(key), std::string::npos)
+            << key << " missing from: " << m->schemaWarnings[0];
+}
+
 TEST(Manifest, RejectsStdFlagInTargetCxxflags) {
     constexpr auto src = R"(
 [package]
@@ -5165,4 +5259,125 @@ TEST(Manifest, AByteOrderMarkOnTheManifestIsNotAnError) {
     auto m = mcpp::manifest::parse_string(src);
     ASSERT_TRUE(m.has_value()) << m.error().format();
     EXPECT_EQ(m->package.name, "x");
+}
+
+// ── #615: `runtime.deploy` ──────────────────────────────────────────────────
+
+TEST(Manifest, RuntimeDeployParsesFromAndTo) {
+    constexpr auto src = R"(
+[package]
+name    = "icd"
+version = "0.1.0"
+[runtime]
+deploy = [
+    { from = "share/vulkan/icd.d/lvp_icd.json", to = "vulkan/icd.d" },
+    { from = "share/readme.txt", to = "." },
+]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    auto const& d = m->runtimeConfig.linkIntent.deploy;
+    ASSERT_EQ(d.size(), 2u);
+    EXPECT_EQ(d[0].from, std::filesystem::path("share/vulkan/icd.d/lvp_icd.json"));
+    EXPECT_EQ(d[0].to, "vulkan/icd.d");
+    EXPECT_EQ(d[1].from, std::filesystem::path("share/readme.txt"));
+    EXPECT_EQ(d[1].to, ".");
+    // A key of its own: `deploy_files` is untouched.
+    EXPECT_TRUE(m->runtimeConfig.linkIntent.deployFiles.empty());
+    EXPECT_TRUE(m->schemaWarnings.empty());
+}
+
+TEST(Manifest, RuntimeDeployRefusesEachMalformedEntryNamingIt) {
+    const std::pair<std::string_view, std::string_view> cases[] = {
+        {R"({ from = "a.json", to = "../outside" })", "`to` has a `.` or `..` component"},
+        {R"({ from = "/etc/a.json", to = "x" })", "`from` is absolute"},
+        {R"({ from = "C:/a.json", to = "x" })", "`from` names a drive or a scheme"},
+        {R"({ from = "a\\b.json", to = "x" })", "`from` contains a backslash"},
+        {R"({ from = "a.json", to = "" })", "`to` is empty"},
+        {R"({ from = ".", to = "x" })", "`from` has a `.` or `..` component"},
+        {R"({ from = "a//b.json", to = "x" })", "`from` has an empty path component"},
+        {R"({ from = "a.json", dest = "x" })", "has unsupported key 'dest'"},
+        {R"({ from = "a.json", to = 3 })", "`from` and `to` must be strings"},
+        {R"("a.json")", "must be a table with `from` and `to`"},
+    };
+    for (auto [entry, expected] : cases) {
+        const auto src = std::format(R"(
+[package]
+name    = "icd"
+version = "0.1.0"
+[runtime]
+deploy = [ {} ]
+)", entry);
+        auto m = mcpp::manifest::parse_string(src);
+        ASSERT_FALSE(m.has_value()) << entry;
+        EXPECT_NE(m.error().message.find(expected), std::string::npos)
+            << entry << " -> " << m.error().message;
+        EXPECT_NE(m.error().message.find("runtime.deploy[1]"), std::string::npos)
+            << m.error().message;
+    }
+}
+
+// ── `requires_abi` (design 2026-09-12, section 5.2) ────────────────────────
+
+TEST(Manifest, RequiresAbiThreadsParsesOnThePackageAndOnAFeature) {
+    constexpr auto src = R"(
+[package]
+name         = "wasmrt"
+version      = "0.1.0"
+requires_abi = { threads = true }
+[features]
+mt = { requires_abi = { threads = true } }
+st = { requires_abi = { threads = false } }
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_TRUE(m->requiresAbiThreads);
+    ASSERT_TRUE(m->featureRequiresAbiThreads.contains("mt"));
+    EXPECT_TRUE(m->featureRequiresAbiThreads.at("mt"));
+    ASSERT_TRUE(m->featureRequiresAbiThreads.contains("st"));
+    EXPECT_FALSE(m->featureRequiresAbiThreads.at("st"));
+    EXPECT_TRUE(m->schemaWarnings.empty());
+}
+
+TEST(Manifest, AbiTablesRefuseAnythingButABooleanThreads) {
+    const std::pair<std::string_view, std::string_view> cases[] = {
+        {"[package]\nname = \"a\"\nversion = \"0.1.0\"\nrequires_abi = true\n",
+         "[package] requires_abi must be a table such as `{ threads = true }`"},
+        {"[package]\nname = \"a\"\nversion = \"0.1.0\"\nrequires_abi = { threads = 1 }\n",
+         "[package] requires_abi.threads: the members are `threads`, a boolean"},
+        {"[package]\nname = \"a\"\nversion = \"0.1.0\"\n[features]\nmt = { requires_abi = { thread = true } }\n",
+         "features.mt.requires_abi.thread: the members are `threads`, a boolean"},
+        {"[package]\nname = \"a\"\nversion = \"0.1.0\"\n[target.'cfg(os = \"linux\")'.abi]\nthread = true\n",
+         "has no member 'thread'; the members are: threads"},
+        {"[package]\nname = \"a\"\nversion = \"0.1.0\"\n[target.'cfg(os = \"linux\")'.abi]\nthreads = \"yes\"\n",
+         ".threads must be true or false"},
+    };
+    for (auto [src, expected] : cases) {
+        auto m = mcpp::manifest::parse_string(src);
+        ASSERT_FALSE(m.has_value()) << src;
+        EXPECT_NE(m.error().message.find(expected), std::string::npos)
+            << src << " -> " << m.error().message;
+    }
+}
+
+// ── The per-target tool declaration (design 2026-09-12, section 5.1) ───────
+//
+// A package written directly under `[target.<selector>.xlings]` is refused, and
+// the refusal names the table that does accept it, which is the statement the
+// SDK batch's record was missing when it concluded the declaration did not exist.
+TEST(Manifest, TargetXlingsRefusalNamesTheWorkspaceTable) {
+    constexpr auto src = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[target.aarch64-ios-sim.xlings]
+"xim:apple-simulator-tools" = ""
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find(
+                  "[target.aarch64-ios-sim.xlings] does not accept 'xim:apple-simulator-tools'"),
+              std::string::npos) << m.error().message;
+    EXPECT_NE(m.error().message.find("[target.aarch64-ios-sim.xlings.workspace]"),
+              std::string::npos) << m.error().message;
 }

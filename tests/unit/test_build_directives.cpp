@@ -209,7 +209,9 @@ TEST(BuildDirectives, SerializeDeserializeRoundTrip) {
                    "mcpp:include-dir-after=after\n"
                    "mcpp:fact=widget.driver=1.2\n"
                    "mcpp:floor=widget.driver >= 1.0\n"
-                   "mcpp:pack-format=appimage\n");
+                   "mcpp:pack-format=appimage\n"
+                   "mcpp:windows-subsystem=gui:windows\n"
+                   "mcpp:windows-entry=gui:wWinMain\n");
 
     std::ostringstream os;
     dirs::serialize(os, d);
@@ -717,4 +719,86 @@ TEST(BuildDirectives, DecodeActionDefaultsDepfileToEmptyWhenAbsent) {
     auto a = dirs::decode_action(d.at(dirs::Slot::Actions).front());
     ASSERT_TRUE(a.has_value());
     EXPECT_EQ(a->depfile, "");
+}
+
+// ── #618: a named executable's subsystem and entry ──────────────────────────
+//
+// `windows-subsystem` and `windows-entry` name a target of the package being
+// built. What is asserted: the value reaches that target's fields and nothing
+// else, and every value `apply` could not honour is refused before it runs.
+
+namespace {
+
+mcpp::manifest::Manifest manifest_with_gui_and_core() {
+    mcpp::manifest::Manifest m;
+    m.package.name = "app";
+    mcpp::manifest::Target gui;
+    gui.name = "gui";
+    gui.kind = mcpp::manifest::Target::Binary;
+    mcpp::manifest::Target core;
+    core.name = "core";
+    core.kind = mcpp::manifest::Target::Library;
+    m.targets = {gui, core};
+    return m;
+}
+
+}  // namespace
+
+TEST(BuildDirectives, WindowsSubsystemReachesTheNamedExecutableOnly) {
+    auto d = parse("mcpp:protocol=10\n"
+                   "mcpp:windows-subsystem=gui:windows\n"
+                   "mcpp:windows-entry=gui:wWinMain\n");
+    ASSERT_FALSE(dirs::protocol_error(d).has_value());
+    auto m = manifest_with_gui_and_core();
+    ASSERT_EQ(dirs::target_directive_error(m, d), "");
+    dirs::apply(m, d);
+    EXPECT_EQ(m.targets[0].windowsSubsystem, "windows");
+    EXPECT_EQ(m.targets[0].windowsEntry, "wWinMain");
+    EXPECT_TRUE(m.targets[1].windowsSubsystem.empty());
+    EXPECT_TRUE(m.targets[1].windowsEntry.empty());
+    // Nothing reaches a flag channel another target or a consumer reads.
+    EXPECT_TRUE(m.buildConfig.ldflags.empty());
+    EXPECT_TRUE(m.buildConfig.cxxflags.empty());
+}
+
+TEST(BuildDirectives, WindowsSubsystemRowsHaveTheTargetLinkScope) {
+    for (auto wire : {"windows-subsystem", "windows-entry"}) {
+        auto def = dirs::find_by_wire(wire);
+        ASSERT_NE(def, nullptr) << wire;
+        EXPECT_EQ(def->scope, dirs::Scope::TargetLink) << wire;
+        EXPECT_EQ(def->sinceProtocol, 10) << wire;
+        EXPECT_FALSE(def->tag.empty()) << wire;
+    }
+}
+
+TEST(BuildDirectives, WindowsSubsystemRefusesWhatApplyCannotHonour) {
+    const std::pair<std::string_view, std::string_view> cases[] = {
+        {"mcpp:windows-subsystem=windows\n", "which is not `<target>:<value>`"},
+        {"mcpp:windows-subsystem=gui:\n", "which is not `<target>:<value>`"},
+        {"mcpp:windows-subsystem=gui:gui\n", "\"gui\" is not one of \"console\", \"windows\""},
+        {"mcpp:windows-entry=gui:main2\n",
+         "\"main2\" is not one of \"main\", \"wmain\", \"WinMain\", \"wWinMain\""},
+        {"mcpp:windows-subsystem=nosuch:windows\n",
+         "declares no target named `nosuch` (its targets: gui, core)"},
+        {"mcpp:windows-entry=core:wmain\n", "target `core` is not one"},
+        {"mcpp:windows-subsystem=gui:windows\nmcpp:windows-subsystem=gui:console\n",
+         "twice for target `gui`, as \"windows\" and as \"console\""},
+    };
+    for (auto [text, expected] : cases) {
+        auto d = parse(std::format("mcpp:protocol=10\n{}", text));
+        auto err = dirs::target_directive_error(manifest_with_gui_and_core(), d);
+        EXPECT_NE(err.find(expected), std::string::npos) << text << " -> " << err;
+    }
+}
+
+TEST(BuildDirectives, WindowsSubsystemThatContradictsTheManifestIsRefused) {
+    auto m = manifest_with_gui_and_core();
+    m.targets[0].windowsSubsystem = "console";
+    auto d = parse("mcpp:protocol=10\nmcpp:windows-subsystem=gui:windows\n");
+    auto err = dirs::target_directive_error(m, d);
+    EXPECT_NE(err.find("[targets.gui] windows_subsystem = \"console\""), std::string::npos)
+        << err;
+    // Restating the manifest's own value is not a contradiction.
+    m.targets[0].windowsSubsystem = "windows";
+    EXPECT_EQ(dirs::target_directive_error(m, d), "");
 }

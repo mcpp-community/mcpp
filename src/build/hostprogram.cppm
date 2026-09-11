@@ -160,6 +160,17 @@ inline void link_script(const char* path)         { std::printf("mcpp:link-scrip
 // `--exclude-libs`. Reaches the consumer's link line, as `[build] ldflags`
 // already does -- see the table row for why a private form is not offered.
 inline void link_flag(const char* flag)           { std::printf("mcpp:link-flag=%s\n", flag); }
+// The PE subsystem ("console" | "windows") and the entry function ("main" |
+// "wmain" | "WinMain" | "wWinMain") of an executable target of THIS package,
+// named by `target` (#618). The same fields as `[targets.<name>]
+// windows_subsystem` / `windows_entry`: they reach that target's link and no
+// other, and are inert on every target that is not PE.
+inline void windows_subsystem(const char* target, const char* value) {
+    std::printf("mcpp:windows-subsystem=%s:%s\n", target, value);
+}
+inline void windows_entry(const char* target, const char* value) {
+    std::printf("mcpp:windows-entry=%s:%s\n", target, value);
+}
 // ── Build-graph nodes (mcpp 2026.8.5.1+) ────────────────────────────────
 // Declare WORK instead of doing it. A build program is a good place to decide
 // what the build looks like and a bad place to perform it: work done here is

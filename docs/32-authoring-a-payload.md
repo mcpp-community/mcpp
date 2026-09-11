@@ -69,6 +69,31 @@ end
 registers what the payload offers. Everything else in this chapter is one of
 those two doing more.
 
+### The environment an install hook receives (mcpp 2026.9.12.2+)
+
+When mcpp installs a package a project depends on, the package's `install()`
+runs with the resolved toolchain and target in its environment, under the names
+and with the values a build program receives ([build.mcpp](30-build-mcpp.md)):
+
+| Variable | Value |
+|---|---|
+| `MCPP_COMPILER` | `gcc`, `clang` or `msvc` |
+| `MCPP_CXX_STDLIB` | `libstdc++`, `libc++` or `msvc-stl` |
+| `MCPP_TARGET` | the target triple the build was asked for, or the host triple for a native build |
+| `MCPP_TARGET_OS`, `MCPP_TARGET_ARCH`, `MCPP_TARGET_ENV` | the segments of that triple |
+
+A value is empty when it does not apply. On Windows an empty variable is an
+absent one, and `os.getenv` answers `nil` for it. The hook of a toolchain payload
+receives none of these variables, because no toolchain has been resolved while it
+installs.
+
+A hook may use the values to refuse or to diagnose. It must not build a variant
+into a store directory whose name does not state the variant: the store is keyed
+by package and version, so the first consumer would decide the variant for every
+later one. A package compiled against one C++ standard library declares that
+instead, with `requires = ["mcpp:c++-abi=libstdc++"]`
+([22 — The Target Side](22-target-side.md)).
+
 ## The four things a descriptor must get right
 
 **One version, two URLs.** Every version carries a `GLOBAL` and a `CN` URL and

@@ -328,6 +328,15 @@ bool mentions_missing_mcpp_api(std::string_view compilerOutput);
 // the program always compiles AND runs on the host) and apply its directives to
 // `m.buildConfig`. `tc` supplies the sysroot / runtime flags a fresh sandbox
 // needs to compile + link a freestanding host program. No-op when absent.
+// THE PART OF A BUILD PROGRAM'S ENVIRONMENT AN INSTALL HOOK ALSO RECEIVES
+// (#613): `MCPP_COMPILER`, `MCPP_CXX_STDLIB`, `MCPP_TARGET` and its three
+// segments, in that order. One function computes them for both, so a hook and a
+// build program cannot be told different things about one build. Every value is
+// present, and empty when it does not apply; `MCPP_TARGET` is the host triple
+// when `env.targetTriple` is empty.
+std::vector<std::pair<std::string, std::string>>
+install_hook_env(const BuildProgramEnv& env);
+
 std::expected<void, std::string> run_build_program(
     mcpp::manifest::Manifest& m,
     const std::filesystem::path& root,
@@ -502,7 +511,16 @@ std::vector<std::pair<std::string, std::string>>
 contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv& env) {
     std::vector<std::pair<std::string, std::string>> e;
     auto hostT = mcpp::toolchain::triple::host_triple().str();
-    e.emplace_back("MCPP_TARGET", env.targetTriple.empty() ? hostT : env.targetTriple);
+    // The toolchain and target names an install hook also receives, from the
+    // one function that computes them for both (#613). Emitted in the order
+    // they always had, so the re-run key of an existing program is unchanged.
+    const auto shared = install_hook_env(env);
+    auto shared_value = [&](std::string_view key) {
+        for (auto const& [k, v] : shared)
+            if (k == key) return v;
+        return std::string{};
+    };
+    e.emplace_back("MCPP_TARGET", shared_value("MCPP_TARGET"));
     // THE SAME VALUE UNFILLED — EMPTY WHEN NOBODY NAMED A TARGET.
     //
     // `MCPP_TARGET` above answers "which machine is this for", and filling it
@@ -529,19 +547,14 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     // link and a package should supply nothing.
     e.emplace_back("MCPP_TARGET_REQUESTED", env.targetTriple);
     // Convenience splits of the resolved target (Cargo CARGO_CFG_TARGET_*
-    // parity): parsed ONCE here through the canonical triple parser so every
+    // parity): parsed ONCE, in install_hook_env, through the canonical triple parser so every
     // build.mcpp stops hand-splitting MCPP_TARGET. MCPP_TARGET_ENV is "" when
     // the triple has no env segment (macOS); all three are "" for an
     // escape-hatch triple outside the canonical vocabulary. They ride the
     // same env vector, so contract_hash folds them into the re-run key.
-    {
-        mcpp::toolchain::triple::Triple t{};
-        if (env.targetTriple.empty()) t = mcpp::toolchain::triple::host_triple();
-        else if (auto p = mcpp::toolchain::triple::parse(env.targetTriple)) t = *p;
-        e.emplace_back("MCPP_TARGET_OS", t.os);
-        e.emplace_back("MCPP_TARGET_ARCH", t.arch);
-        e.emplace_back("MCPP_TARGET_ENV", t.env);
-    }
+    e.emplace_back("MCPP_TARGET_OS", shared_value("MCPP_TARGET_OS"));
+    e.emplace_back("MCPP_TARGET_ARCH", shared_value("MCPP_TARGET_ARCH"));
+    e.emplace_back("MCPP_TARGET_ENV", shared_value("MCPP_TARGET_ENV"));
     e.emplace_back("MCPP_HOST", hostT);
     // Always emitted, empty when they do not apply: a build program reads
     // these through `env_or`, which cannot tell "absent" from "empty", and an
@@ -550,8 +563,8 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     e.emplace_back("MCPP_TOOLCHAIN_DIR", env.toolchainDir);
     e.emplace_back("MCPP_TOOLCHAIN_SYSROOT", env.toolchainSysroot);
     e.emplace_back("MCPP_TOOLCHAIN_BINUTILS_DIR", env.toolchainBinutilsDir);
-    e.emplace_back("MCPP_COMPILER", env.compilerId);
-    e.emplace_back("MCPP_CXX_STDLIB", env.cxxStdlib);
+    e.emplace_back("MCPP_COMPILER", shared_value("MCPP_COMPILER"));
+    e.emplace_back("MCPP_CXX_STDLIB", shared_value("MCPP_CXX_STDLIB"));
     e.emplace_back("MCPP_TARGET_SYSROOT", env.targetSysroot);
     e.emplace_back("MCPP_TARGET_BUILTINS_LIB", env.targetBuiltinsLib);
     e.emplace_back("MCPP_TARGET_LIBC_PROFILE", env.targetLibcProfile);
@@ -827,6 +840,27 @@ std::string synthesised_rule_program(const std::vector<std::string>& modules) {
 
 } // namespace
 
+std::vector<std::pair<std::string, std::string>>
+install_hook_env(const BuildProgramEnv& env) {
+    mcpp::toolchain::triple::Triple t{};
+    std::string target;
+    if (env.targetTriple.empty()) {
+        t = mcpp::toolchain::triple::host_triple();
+        target = t.str();
+    } else {
+        target = env.targetTriple;
+        if (auto p = mcpp::toolchain::triple::parse(env.targetTriple)) t = *p;
+    }
+    return {
+        {"MCPP_COMPILER", env.compilerId},
+        {"MCPP_CXX_STDLIB", env.cxxStdlib},
+        {"MCPP_TARGET", target},
+        {"MCPP_TARGET_OS", t.os},
+        {"MCPP_TARGET_ARCH", t.arch},
+        {"MCPP_TARGET_ENV", t.env},
+    };
+}
+
 std::expected<void, std::string> run_build_program(
     mcpp::manifest::Manifest& m,
     const fs::path& root,
@@ -1045,6 +1079,8 @@ std::expected<void, std::string> run_build_program(
     // directives, no run.
     CacheRecord cache = read_cache(bdir);
     if (cache_fresh(root, bdir, cache, programHash, compilerHash, ctxHash)) {
+        if (auto terr = dirs::target_directive_error(m, cache.directives); !terr.empty())
+            return std::unexpected(terr);
         dirs::apply(m, cache.directives);
         // ONE OF TWO SITES, AND THE ONE THAT IS EASY TO FORGET.
         //
@@ -1462,6 +1498,11 @@ std::expected<void, std::string> run_build_program(
     // exist surfaces as a missing generated source three edges away.
     if (auto aerr = dirs::action_error(d); !aerr.empty()) {
         return std::unexpected(aerr);
+    }
+    // A directive that names a target is checked against the manifest before
+    // anything is applied, for the same reason.
+    if (auto terr = dirs::target_directive_error(m, d); !terr.empty()) {
+        return std::unexpected(terr);
     }
     if (d.protocol == 0) {
         for (auto const& k : d.unknownKeys)

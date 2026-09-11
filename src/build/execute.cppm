@@ -18,6 +18,8 @@ import mcpp.build.plan;
 import mcpp.toolchain.triple;
 import mcpp.freestanding.runner;
 import mcpp.build.runner_lookup;    // #544: where the runner's program is
+import mcpp.home;                   // config.toml, for the machine's default toolchain
+import mcpp.libs.toml;
 import mcpp.toolchain.registry;     // a payload's own runner (PayloadDescriptor::runner)
 import mcpp.build.directives;      // the device-slot table: run / flash / monitor / debug
 import mcpp.freestanding.linkline;
@@ -92,6 +94,36 @@ constexpr std::string_view kBuildCacheFile = "target/.build_cache";
 constexpr int kBuildCacheMaxEntries = 8;
 
 // P3: one entry per (target, fingerprint) pair.
+// THE INPUTS THAT CHOOSE A TOOLCHAIN AND ARE NOT IN THE MANIFEST.
+//
+// The fast path replays a recorded build when the request matches the entry
+// that recorded it. `--toolchain` (arriving as MCPP_TOOLCHAIN) and the
+// machine's default (`mcpp toolchain default`, stored in config.toml) both
+// choose the compiler, and neither was compared. Measured 2026-09-12: after
+// `mcpp build` with gcc, `mcpp build --toolchain llvm@22.1.8` printed
+// `Finished dev in 0.00s` and left the gcc artefact in place, skipping every
+// resolution-time check with it. The manifest's own `[toolchain]` needs no
+// entry here: the freshness check already declines when mcpp.toml is newer
+// than the recorded build.
+//
+// THE NAMED SET. A recorded build is replayed only for the same target triple,
+// profile, cache mode, requested features and toolchain request. The other
+// global options change how a resolution is fetched (`--offline`), checked
+// (`--locked`) or executed (`--jobs`), not what it chooses, and are not
+// compared.
+std::string toolchain_request_identity() {
+    std::string cli;
+    if (const char* e = std::getenv("MCPP_TOOLCHAIN"); e) cli = e;
+    std::string machineDefault;
+    std::error_code ec;
+    const auto configFile = mcpp::home::root() / "config.toml";
+    if (std::filesystem::exists(configFile, ec)) {
+        if (auto doc = mcpp::libs::toml::parse_file(configFile))
+            machineDefault = doc->get_string("toolchain.default").value_or("");
+    }
+    return std::format("cli={};default={}", cli, machineDefault);
+}
+
 struct BuildCacheEntry {
     std::string targetTriple;    // "" for default target
     std::string outputDir;
@@ -195,6 +227,12 @@ struct BuildCacheEntry {
     // features" — correct for every entry such a cache could hold whose
     // request also has none, and a miss otherwise, which is the safe direction.
     std::string features;
+    // The toolchain request this entry was built for; see
+    // toolchain_request_identity. Recorded is kept apart from the value
+    // because a cache written before the field existed must decline once,
+    // not match a request whose inputs it never saw.
+    std::string toolchainRequest;
+    bool        toolchainRecorded = false;
 };
 
 std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& projectRoot) {
@@ -315,6 +353,13 @@ std::vector<BuildCacheEntry> read_build_cache(const std::filesystem::path& proje
             e.features = line.substr(9);
             haveNextLine = static_cast<bool>(std::getline(f, line));
         }
+        // Optional `toolchain=<request>`. Absent means the entry predates the
+        // field, and every fast path declines it once; see the field.
+        if (haveNextLine && line.starts_with("toolchain=")) {
+            e.toolchainRequest  = line.substr(10);
+            e.toolchainRecorded = true;
+            haveNextLine = static_cast<bool>(std::getline(f, line));
+        }
         entries.push_back(std::move(e));
         if (!haveNextLine || line.empty()) break;
     }
@@ -361,7 +406,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
                        std::vector<std::string> depSourceRoots = {},
                        bool runnerDeclared = false,
                        bool runTierPending = false,
-                       const std::string& features = {}) {
+                       const std::string& features = {},
+                       const std::string& toolchainRequest = {}) {
     auto path = projectRoot / kBuildCacheFile;
     auto entries = read_build_cache(projectRoot);
 
@@ -385,6 +431,8 @@ void write_build_cache(const std::filesystem::path& projectRoot,
     newEntry.runnerDeclared = runnerDeclared;
     newEntry.runTierPending = runTierPending;
     newEntry.features = features;
+    newEntry.toolchainRequest  = toolchainRequest;
+    newEntry.toolchainRecorded = true;
     entries.insert(entries.begin(), std::move(newEntry));
 
     // Trim to LRU capacity.
@@ -428,6 +476,7 @@ void write_build_cache_entries(const std::filesystem::path& path,
         f << "runner=" << (e.runnerDeclared ? 1 : 0) << '\n';
         f << "runtier=" << (e.runTierPending ? 1 : 0) << '\n';
         f << "features=" << e.features << '\n';
+        f << "toolchain=" << e.toolchainRequest << '\n';
     }
 }
 
@@ -870,7 +919,10 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
                           // the entry is matched on it, because the output
                           // directory is keyed on a fingerprint that includes
                           // it and the entry was not.
-                          normalize_features(ctx.activeFeatureRequest));
+                          normalize_features(ctx.activeFeatureRequest),
+                          // The toolchain request, so a later `--toolchain` or
+                          // a changed machine default declines the fast path.
+                          toolchain_request_identity());
     }
 
     // The one place the --strict policy is settled. Degradations reported by
@@ -1144,6 +1196,8 @@ struct FastPathIdentity {
     // What `--features` asked for, normalised so that spelling and order
     // cannot make two identical requests compare unequal.
     std::string features;
+    // See toolchain_request_identity.
+    std::string toolchainRequest;
 };
 
 std::optional<FastPathIdentity>
@@ -1162,6 +1216,7 @@ fast_path_identity(const std::filesystem::path& projectRoot,
         m->buildConfig.target,
         m->hooks.active(),
         normalize_features(featuresRequested),
+        toolchain_request_identity(),
     };
 }
 
@@ -1257,7 +1312,8 @@ export std::optional<int> try_fast_build(const std::filesystem::path& projectRoo
     const BuildCacheEntry* match = nullptr;
     for (auto& e : entries) {
         if (e.targetTriple == currentTarget && e.profile == want->profile
-            && e.cacheMode == want->cacheMode && e.features == want->features) {
+            && e.cacheMode == want->cacheMode && e.features == want->features
+            && e.toolchainRecorded && e.toolchainRequest == want->toolchainRequest) {
             match = &e;
             break;
         }
@@ -1389,7 +1445,8 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     const BuildCacheEntry* match = nullptr;
     for (auto& e : entries) {
         if (e.targetTriple.empty() && e.profile == want->profile
-            && e.cacheMode == want->cacheMode && e.features == want->features) {
+            && e.cacheMode == want->cacheMode && e.features == want->features
+            && e.toolchainRecorded && e.toolchainRequest == want->toolchainRequest) {
             match = &e;
             break;
         }

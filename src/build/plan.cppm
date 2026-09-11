@@ -129,6 +129,12 @@ struct LinkUnit {
     std::string                     soname;            // ABI name for shared libraries
     std::vector<std::filesystem::path> runtimeAliases; // relative aliases, e.g. bin/libfoo.so.1
     std::optional<std::filesystem::path> entryMain;   // src path of main.cpp for bin
+    // `windows_subsystem` / `windows_entry` of the target this unit links
+    // (#618), carried as the declared words. Rendering them needs the linker
+    // the emitter addresses, which the plan does not know, so the backend does
+    // it; see `windows_executable_link_flags`. Empty on every non-Binary unit.
+    std::string                     windowsSubsystem;
+    std::string                     windowsEntry;
 };
 
 // One Windows resource script compiled into one linkable resource artifact
@@ -744,6 +750,18 @@ ResolvedRuntimeContract resolve_runtime_contract(
                      out.linkIntent.runtimeSearchDirs);
         append_paths(runtime.linkIntent.deployFiles,
                      out.linkIntent.deployFiles);
+        // `runtime.deploy` (#615): the source resolves against the package that
+        // declared it; the destination stays relative, because it is relative
+        // to an executable this package has not seen.
+        for (auto const& entry : runtime.linkIntent.deploy) {
+            mcpp::manifest::DeployEntry resolved{
+                absolute_from(package.root, entry.from), entry.to};
+            const bool seen = std::ranges::any_of(out.linkIntent.deploy,
+                [&](auto const& e) {
+                    return e.from == resolved.from && e.to == resolved.to;
+                });
+            if (!seen) out.linkIntent.deploy.push_back(std::move(resolved));
+        }
         // Legacy library_dirs means run-time discovery only.  It deliberately
         // does not enter linkLibraryDirs; callers that need -L must opt into
         // the structured field.
@@ -1179,10 +1197,18 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
     }
 
-    auto add_deploy = [&](const std::filesystem::path& source)
+    // `toDir` is a `runtime.deploy` destination, relative to the executable's
+    // directory; empty and "." both mean that directory itself, which is where
+    // every `deploy_files` entry goes. The collision check keys on the full
+    // relative destination, so two files of one name in two directories do not
+    // collide, and two sources for one destination still do.
+    auto add_deploy = [&](const std::filesystem::path& source,
+                          std::string_view toDir = {})
         -> std::optional<std::string> {
         const auto normalized = source.lexically_normal();
-        const auto dest = std::filesystem::path("bin") / source.filename();
+        auto destDir = std::filesystem::path("bin");
+        if (!toDir.empty() && toDir != ".") destDir /= std::filesystem::path(toDir);
+        const auto dest = destDir / source.filename();
         auto existing = std::ranges::find_if(plan.runtimeDeployFiles,
             [&](auto const& value) { return value.dest == dest; });
         if (existing != plan.runtimeDeployFiles.end()) {
@@ -1200,6 +1226,10 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // library_dirs keeps its one-train DLL discovery behavior below.
     for (auto const& source : plan.linkIntent.deployFiles) {
         if (auto collision = add_deploy(source))
+            return std::unexpected(std::move(*collision));
+    }
+    for (auto const& entry : plan.linkIntent.deploy) {
+        if (auto collision = add_deploy(entry.from, entry.to))
             return std::unexpected(std::move(*collision));
     }
     for (auto const& dir : plan.linkIntent.runtimeSearchDirs) {
@@ -1766,6 +1796,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             lu.kind   = LinkUnit::Binary;
             lu.output = target_output(t, naming);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
+            lu.windowsSubsystem = t.windowsSubsystem;
+            lu.windowsEntry     = t.windowsEntry;
         }
         lu.loaderTagFlag = loader_tag_flag(lu.kind);
 

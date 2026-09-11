@@ -506,6 +506,9 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         "target.*.build.flags",  // #258 — middle segment is the cfg predicate
         "runtime.requirements",
         "runtime.artifacts",
+        // #615: `deploy = [{ from = "...", to = "..." }]`. The reader refuses
+        // every entry that is not a table of exactly those two strings.
+        "runtime.deploy",
         // #544: `deps = [{ linux = "..." }]` — every entry a per-platform
         // table — is the same Value shape as `[[xlings.deps]]`, and the guard
         // cannot tell the inline form from the doubled-bracket typo. The
@@ -518,7 +521,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             "[[{}]] (array-of-tables) is not allowed for section '{}'; "
             "array-of-tables syntax is only supported for [[build.flags]], "
             "[[features.<name>.flags]], [[runtime.requirements]], "
-            "[[runtime.artifacts]], and [xlings] deps entries",
+            "[[runtime.artifacts]], [[runtime.deploy]], and [xlings] deps entries",
             *badPath, *badPath)));
     }
 
@@ -759,6 +762,21 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 read_str_array(ft, "requires", reqs);
                 read_str_array(ft, "provides", provs);
                 if (!reqs.empty())  m.featureRequires[fname] = std::move(reqs);
+                // `requires_abi = { threads = true }`: this feature needs the
+                // artefact's ABI switch on. See Manifest::featureRequiresAbiThreads.
+                if (auto rait = ft.find("requires_abi"); rait != ft.end()) {
+                    if (!rait->second.is_table())
+                        return std::unexpected(error(origin, std::format(
+                            "features.{}.requires_abi must be a table such as "
+                            "`{{ threads = true }}`", fname)));
+                    for (auto& [ak, av] : rait->second.as_table()) {
+                        if (ak != "threads" || !av.is_bool())
+                            return std::unexpected(error(origin, std::format(
+                                "features.{}.requires_abi.{}: the members are "
+                                "`threads`, a boolean", fname, ak)));
+                        m.featureRequiresAbiThreads[fname] = av.as_bool();
+                    }
+                }
                 if (!provs.empty()) m.featureProvides[fname] = std::move(provs);
                 // The device extensions this feature's rule compiles. Normalised
                 // the same way `module_extensions` is, so `comp` and `.comp` are
@@ -838,7 +856,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (fval.is_table()) {
                 static constexpr std::string_view kKnownFeatureKeys[] = {
                     "defines", "flags", "forward", "implies", "provides",
-                    "requires", "sources",
+                    "requires", "requires_abi", "sources",
                     // THE TWO RULE-PACKAGE KEYS, WHICH THIS PARSER READS ABOUT
                     // FORTY LINES ABOVE AND THEN REPORTED AS UNSUPPORTED.
                     //
@@ -926,6 +944,18 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (auto cap = mcpp::targetside::parse_capability(entry); !cap)
                 m.unknownCapabilities.push_back(entry);
         m.requires_ = *v;
+    }
+    // [package] requires_abi -- see Manifest::requiresAbiThreads.
+    if (auto* ra = doc->get("package.requires_abi")) {
+        if (!ra->is_table())
+            return std::unexpected(error(origin,
+                "[package] requires_abi must be a table such as `{ threads = true }`"));
+        for (auto& [ak, av] : ra->as_table()) {
+            if (ak != "threads" || !av.is_bool())
+                return std::unexpected(error(origin, std::format(
+                    "[package] requires_abi.{}: the members are `threads`, a boolean", ak)));
+            m.requiresAbiThreads = av.as_bool();
+        }
     }
     // [package] exclusive — capabilities this package claims sole provision of.
     //
@@ -1167,6 +1197,42 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         read_list("cxxflags",          t.cxxflags);
         read_list("defines",           t.defines);
         read_list("required_features", t.requiredFeatures);
+        // `windows_subsystem` / `windows_entry` (#618). A closed set each, so a
+        // misspelling is refused by name rather than rendered as nothing.
+        auto read_choice = [&](const char* key, std::string& out,
+                               std::span<const std::string_view> allowed)
+            -> std::expected<void, ManifestError> {
+            auto it = tt.find(key);
+            if (it == tt.end()) return {};
+            if (!it->second.is_string())
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.{} must be a string", tname, key)));
+            const std::string v = it->second.as_string();
+            if (std::ranges::find(allowed, std::string_view(v)) == allowed.end()) {
+                std::string list;
+                for (auto a : allowed)
+                    list += (list.empty() ? "" : ", ") + std::format("\"{}\"", a);
+                return std::unexpected(error(origin, std::format(
+                    "targets.{}.{} = \"{}\" is not one of {}", tname, key, v, list)));
+            }
+            out = v;
+            return {};
+        };
+        if (auto r = read_choice("windows_subsystem", t.windowsSubsystem,
+                                 kWindowsSubsystems); !r)
+            return std::unexpected(r.error());
+        if (auto r = read_choice("windows_entry", t.windowsEntry,
+                                 kWindowsEntries); !r)
+            return std::unexpected(r.error());
+        // An executable's property. A library has no subsystem, and a GUI
+        // subsystem on anything a test runner executes is the defect #618
+        // describes, so both are refused naming the key.
+        if ((!t.windowsSubsystem.empty() || !t.windowsEntry.empty())
+            && t.kind != Target::Binary)
+            return std::unexpected(error(origin, std::format(
+                "targets.{}.{} applies to an executable (`kind = \"bin\"`), and this "
+                "target is not one", tname,
+                t.windowsSubsystem.empty() ? "windows_entry" : "windows_subsystem")));
         // Guard: -std=... belongs to [package].standard, not per-target flags
         // (same rule as [build].cxxflags). Reject early with a clear message.
         for (auto const& flag : t.cxxflags) {
@@ -1185,6 +1251,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         static constexpr std::string_view kKnownTargetKeys[] = {
             "kind", "main", "soname", "exports",
             "cflags", "cxxflags", "defines", "required_features",
+            "windows_entry", "windows_subsystem",
         };
         for (auto& [key, _] : tt) {
             bool known = false;
@@ -1192,10 +1259,17 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             if (!known) {
                 m.schemaWarnings.push_back(std::format(
                     "[targets.{}] has unsupported key '{}' (ignored). Per-target keys: "
-                    "kind, main, soname, cflags, cxxflags, defines, required_features. "
-                    "For config that must affect shared code, split into a workspace "
+                    "{}. For config that must affect shared code, split into a workspace "
                     "member or use [features]; for a whole-build mode use [profile.*].",
-                    tname, key));
+                    tname, key, [] {
+                        // THE LIST IN THE MESSAGE IS THE LIST ABOVE; the
+                        // hand-written copy it replaces had fallen behind by
+                        // `exports`.
+                        std::string s;
+                        for (auto k : kKnownTargetKeys)
+                            s += (s.empty() ? "" : ", ") + std::string(k);
+                        return s;
+                    }()));
             }
         }
         m.targets.push_back(std::move(t));
@@ -2038,6 +2112,38 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         out = it->second.as_string();
         return true;
     };
+    // `runtime.deploy` (#615): `{ from, to }` tables. A key of its own rather
+    // than a table form of `deploy_files`; see manifest::DeployEntry and the
+    // matching branch of the descriptor reader.
+    if (auto* deploy = doc->get("runtime.deploy")) {
+        if (!deploy->is_array())
+            return std::unexpected(error(origin,
+                "runtime.deploy must be an array of `{ from = \"...\", to = \"...\" }` tables"));
+        std::size_t index = 0;
+        for (auto const& value : deploy->as_array()) {
+            ++index;
+            if (!value.is_table())
+                return std::unexpected(error(origin, std::format(
+                    "runtime.deploy[{}] must be a table with `from` and `to`", index)));
+            auto const& table = value.as_table();
+            for (auto const& [key, _] : table)
+                if (key != "from" && key != "to")
+                    return std::unexpected(error(origin, std::format(
+                        "runtime.deploy[{}] has unsupported key '{}'; the keys are "
+                        "`from` and `to`", index, key)));
+            std::string from, to;
+            if (!table_string(table, "from", from) || !table_string(table, "to", to))
+                return std::unexpected(error(origin, std::format(
+                    "runtime.deploy[{}]: `from` and `to` must be strings", index)));
+            if (auto p = deploy_path_problem("from", from, false); !p.empty())
+                return std::unexpected(error(origin,
+                    std::format("runtime.deploy[{}]: {}", index, p)));
+            if (auto p = deploy_path_problem("to", to, true); !p.empty())
+                return std::unexpected(error(origin,
+                    std::format("runtime.deploy[{}]: {}", index, p)));
+            m.runtimeConfig.linkIntent.deploy.push_back({from, to});
+        }
+    }
     if (auto* requirements = doc->get("runtime.requirements")) {
         if (!requirements->is_array()) {
             return std::unexpected(error(origin,
@@ -2154,7 +2260,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // gives: they are a channel, not a typo. Here every `[runtime.<capability>]`
     // names a capability whose spelling this file cannot know.
     static constexpr std::string_view kKnownRuntimeKeys[] = {
-        "artifacts", "capabilities", "deploy_files", "dlopen_libs", "frameworks",
+        "artifacts", "capabilities", "deploy", "deploy_files", "dlopen_libs", "frameworks",
         "libraries", "library_dirs", "link_library_dirs", "provides",
         "requirements", "runtime_search_dirs", "transitive_needed_dirs",
     };
@@ -2646,6 +2752,27 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // `[target.<pred>.runtime]` — the dialect-neutral link intent. Two
             // keys only, and the same two `[runtime]` already has at the top
             // level: this makes them per-target, it does not invent a vocabulary.
+            // `[target.<pred>.abi]` -- graph-wide ABI switches as typed members
+            // rather than flags (design 2026-09-12, section 5.2). One member
+            // today, and an unknown member is refused, so the table cannot
+            // become a second flag list.
+            if (auto ait = body.find("abi"); ait != body.end()) {
+                if (!ait->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].abi must be a table, e.g. `[target.{}.abi]` "
+                        "with `threads = true`", triple, triple)));
+                for (auto& [ak, av] : ait->second.as_table()) {
+                    if (ak != "threads")
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}.abi] has no member '{}'; the members are: "
+                            "threads", triple, ak)));
+                    if (!av.is_bool())
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}.abi].threads must be true or false", triple)));
+                    cc.abiThreads = av.as_bool();
+                    cc.abiThreadsDeclared = true;
+                }
+            }
             if (auto rit = body.find("runtime"); rit != body.end() && rit->second.is_table()) {
                 auto& rt = rit->second.as_table();
                 if (auto f = rt.find("link_library_dirs"); f != rt.end() && f->second.is_array())
@@ -2906,11 +3033,22 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                     // is one per project rather than one per target. Refused
                     // rather than ignored: a silently dropped environment is
                     // the failure #531 was filed for.
+                    //
+                    // AND THE REFUSAL NAMES THE TABLE THAT DOES ACCEPT A TOOL.
+                    // Its first version said only "Only `workspace` is
+                    // conditional on a target", and a reader who had written
+                    // `deps` read that as "a tool cannot be declared per
+                    // target" -- the 2026-09-11 record did, and recorded a gap
+                    // that did not exist. `workspace` IS the per-target tool
+                    // declaration: its entries join the same install list
+                    // `deps` feeds, and only when this target is built.
                     return std::unexpected(error(origin, std::format(
-                        "[target.{}.xlings] does not accept '{}'. Only "
-                        "`workspace` is conditional on a target; `subos` names "
-                        "the project's environment and belongs in the "
-                        "top-level [xlings].", triple, k)));
+                        "[target.{}.xlings] does not accept '{}'. A tool this "
+                        "target needs is declared under "
+                        "[target.{}.xlings.workspace] as `\"<package>\" = "
+                        "\"<version>\"`, and is installed only when this target "
+                        "is built. `subos` names the project's environment and "
+                        "belongs in the top-level [xlings].", triple, k, triple)));
                 }
             }
             if (auto fit = body.find("feature-xlings");

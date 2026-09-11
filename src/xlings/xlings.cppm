@@ -270,6 +270,32 @@ std::string shq_meta(std::string_view s);
 //     XLINGS_HOME='<home>' '<binary>'
 std::string build_command_prefix(const Env& env);
 
+// THE ENVIRONMENT OF ONE XLINGS INVOCATION (#614), decided once. Each entry is
+// a variable and its value, or nullopt for a variable that must be absent.
+// Global mode is an absent XLINGS_PROJECT_DIR, because xlings resolves its
+// subos scope from that variable. POSIX renders the decision into the command
+// prefix (`env -u` and `K=V`); Windows applies it to the process through
+// ScopedInvocationEnv.
+std::vector<std::pair<std::string, std::optional<std::string>>>
+invocation_env(const Env& env);
+
+// Applies the scope half of `invocation_env` to this process for the guard's
+// lifetime on Windows, and restores the prior value when the guard ends. On
+// POSIX the command prefix carries it and the guard does nothing. Every
+// function that runs a command built by `build_command_prefix` holds one while
+// the command runs, so a project directory set for one invocation does not
+// reach the processes mcpp starts afterwards. XLINGS_HOME and the PATH prefix
+// keep their process-wide lifetime.
+class ScopedInvocationEnv {
+public:
+    explicit ScopedInvocationEnv(const Env& env);
+    ScopedInvocationEnv(const ScopedInvocationEnv&) = delete;
+    ScopedInvocationEnv& operator=(const ScopedInvocationEnv&) = delete;
+
+private:
+    std::optional<mcpp::platform::env::ScopedEnv> scope_;
+};
+
 // Build full xlings interface command.
 // <prefix> interface <capability> --args '<argsJson>' 2>/dev/null
 std::string build_interface_command(const Env& env,
@@ -326,7 +352,19 @@ struct CallResult {
     std::vector<DataEvent>       dataEvents;
     std::optional<ErrorEvent>    error;
     std::string                  resultJson;
+    // xlings' own error-level lines from its stderr, the last few, kept only
+    // when the call failed (#614). The NDJSON error event carries a summary
+    // ("config hook failed"); the line that says WHICH binding was rejected and
+    // why is a log line on stderr, which this call used to discard.
+    std::vector<std::string>     stderrTail;
 };
+
+// The error-level lines of an xlings invocation's stderr, the last `limit` of
+// them (#614). A line is kept when it contains "error" in any case, contains
+// `E_`, or starts with `[xim]`; a trailing carriage return is dropped. Exported
+// so the selection is stated as a unit test rather than through a failing
+// install.
+std::vector<std::string> stderr_error_tail(std::string_view text, std::size_t limit = 20);
 
 struct EventHandler {
     virtual ~EventHandler() = default;
@@ -1134,32 +1172,39 @@ std::filesystem::path sandbox_init_marker(const Env& env) {
 
 // ─── Shell command builders ─────────────────────────────────────────
 
+std::vector<std::pair<std::string, std::optional<std::string>>>
+invocation_env(const Env& env) {
+    return {
+        {"XLINGS_HOME", env.home.string()},
+        {"XLINGS_PROJECT_DIR", env.projectDir.empty()
+                                   ? std::nullopt
+                                   : std::optional<std::string>(env.projectDir.string())},
+    };
+}
+
+ScopedInvocationEnv::ScopedInvocationEnv(const Env& env) {
+    if constexpr (mcpp::platform::is_windows) {
+        for (auto& [key, value] : invocation_env(env))
+            if (key == "XLINGS_PROJECT_DIR") scope_.emplace(key, value);
+    }
+}
+
 std::string build_command_prefix(const Env& env) {
     auto xvmBin = paths::sandbox_bin(env).string();
     if constexpr (mcpp::platform::is_windows) {
+        // The scope variable is applied by the caller's ScopedInvocationEnv.
         mcpp::platform::env::set("XLINGS_HOME", env.home.string());
-        mcpp::platform::env::set("XLINGS_PROJECT_DIR",
-                  env.projectDir.empty() ? "" : env.projectDir.string());
         mcpp::platform::windows::prepend_path(xvmBin);
         return env.binary.string();
     } else {
-        if (env.projectDir.empty()) {
-            // Global mode: unset XLINGS_PROJECT_DIR (existing behavior).
-            return std::format(
-                "cd {} && env -u XLINGS_PROJECT_DIR PATH={}:\"$PATH\" XLINGS_HOME={} {}",
-                shq(env.home.string()),
-                shq(xvmBin),
-                shq(env.home.string()),
-                shq(env.binary.string()));
+        // `env` takes its `-u` operands before its assignments.
+        std::string unset, assign;
+        for (auto& [key, value] : invocation_env(env)) {
+            if (value) assign += std::format(" {}={}", key, shq(*value));
+            else       unset  += std::format(" -u {}", key);
         }
-        // Project-level mode: set XLINGS_PROJECT_DIR so xlings uses
-        // additive project repos alongside global repos.
-        return std::format(
-            "cd {} && env PATH={}:\"$PATH\" XLINGS_HOME={} XLINGS_PROJECT_DIR={} {}",
-            shq(env.home.string()),
-            shq(xvmBin),
-            shq(env.home.string()),
-            shq(env.projectDir.string()),
+        return std::format("cd {} && env{} PATH={}:\"$PATH\"{} {}",
+            shq(env.home.string()), unset, shq(xvmBin), assign,
             shq(env.binary.string()));
     }
 }
@@ -1306,7 +1351,19 @@ std::expected<CallResult, std::string>
 call(const Env& env, std::string_view capability,
      std::string_view argsJson, EventHandler* handler)
 {
-    auto cmd = build_interface_command(env, capability, argsJson);
+    ScopedInvocationEnv scope(env);   // #614
+    // STDERR GOES TO A FILE, NOT TO THE NULL DEVICE AND NOT INTO STDOUT (#614).
+    // Stdout is parsed line by line as NDJSON, so merging stderr into it could
+    // split an event; discarding it lost the one line that names a rejection.
+    // The file is read only when the call fails, and removed either way.
+    const auto stderrFile = std::filesystem::temp_directory_path()
+        / std::format("mcpp-xlings-{}.stderr",
+                      std::chrono::steady_clock::now().time_since_epoch().count());
+    auto cmd = std::format("{} interface {} --args {} 2>{}",
+        build_command_prefix(env), capability, shq_meta(argsJson),
+        mcpp::platform::is_windows
+            ? std::format("\"{}\"", stderrFile.string())
+            : shq(stderrFile.string()));
 
     // #238: under MCPP_VERBOSE=1 surface the exact xlings invocation so a
     // failing install_packages can be reproduced/inspected by hand. The
@@ -1343,7 +1400,40 @@ call(const Env& env, std::string_view capability,
             }, *ev);
         });
     if (rc != 0 && result.exitCode == 0) result.exitCode = rc;
+    if (result.exitCode != 0) {
+        // Error-level lines only, the last 20: enough to name a rejection, and
+        // bounded so a verbose child cannot bury the diagnostic it is attached
+        // to.
+        std::ifstream in(stderrFile);
+        std::stringstream text;
+        text << in.rdbuf();
+        result.stderrTail = stderr_error_tail(text.str());
+    }
+    std::error_code rmEc;
+    std::filesystem::remove(stderrFile, rmEc);
     return result;
+}
+
+std::vector<std::string> stderr_error_tail(std::string_view text, std::size_t limit) {
+    std::deque<std::string> tail;
+    std::size_t pos = 0;
+    while (pos < text.size()) {
+        const auto nl = text.find('\n', pos);
+        std::string line(text.substr(pos, nl == std::string_view::npos
+                                              ? std::string_view::npos : nl - pos));
+        pos = nl == std::string_view::npos ? text.size() : nl + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        std::string lower = line;
+        std::ranges::transform(lower, lower.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        if (lower.find("error") == std::string::npos
+            && line.find("E_") == std::string::npos
+            && !line.starts_with("[xim]"))
+            continue;
+        tail.push_back(std::move(line));
+        if (tail.size() > limit) tail.pop_front();
+    }
+    return {tail.begin(), tail.end()};
 }
 
 // ─── install_with_progress ──────────────────────────────────────────
@@ -1352,6 +1442,7 @@ int install_with_progress(const Env& env, std::string_view target,
                           const BootstrapProgressCallback& cb,
                           bool quiet)
 {
+    ScopedInvocationEnv scope(env);   // #614
     auto argsJson = std::format(
         R"({{"targets":["{}"],"yes":true}})", target);
 
@@ -1424,22 +1515,11 @@ int install_with_progress(const Env& env, std::string_view target,
     // Seal stdin (same rationale as the direct path above) so the install can't
     // block on a terminal read. The protocol is NDJSON-over-stdout + "yes":true,
     // so nothing here needs the terminal.
-    auto cmd = [&]() -> std::string {
-        if constexpr (mcpp::platform::is_windows) {
-            return std::format("{} interface install_packages --args {} {} <NUL",
-                build_command_prefix(env),
-                shq_meta(argsJson),
-                mcpp::platform::null_redirect);
-        } else {
-            return std::format(
-                "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} interface install_packages --args {} {} </dev/null",
-                shq(env.home.string()),
-                shq(env.home.string()),
-                shq(env.binary.string()),
-                shq_meta(argsJson),
-                mcpp::platform::null_redirect);
-        }
-    }();
+    // The same decision as the direct path above: the fallback used to spell
+    // global mode by hand on POSIX whatever `env.projectDir` said (#614).
+    auto cmd = std::format("{} interface install_packages --args {} {} {}",
+        build_command_prefix(env), shq_meta(argsJson), mcpp::platform::null_redirect,
+        mcpp::platform::is_windows ? "<NUL" : "</dev/null");
 
     int resultExitCode = -1;
 
@@ -1497,6 +1577,7 @@ int install_with_progress(const Env& env, std::string_view target,
 }
 
 int install_direct(const Env& env, std::string_view target, bool quiet) {
+    ScopedInvocationEnv scope(env);   // #614
     auto cmd = build_command_prefix(env)
         + std::format(" install {} -y", shq(target));
     if (quiet) {
@@ -1561,11 +1642,13 @@ void seed_xlings_json(const Env& env,
 }
 
 int config_show(const Env& env) {
+    ScopedInvocationEnv scope(env);   // #614
     auto cmd = std::format("{} config", build_command_prefix(env));
     return mcpp::platform::process::run_silent(cmd);
 }
 
 int config_set_mirror(const Env& env, std::string_view mirror, bool quiet) {
+    ScopedInvocationEnv scope(env);   // #614
     if (mirror.empty()) return 0;
     auto cmd = std::format(
         "{} config --mirror {} {}",
@@ -1586,20 +1669,13 @@ void ensure_init(const Env& env, bool quiet) {
     if (!quiet)
         print_status("Initialize", "mcpp sandbox layout (one-time)");
     mcpp::log::ScopedTimer _t_init("init", "sandbox layout (xlings self init)");
-    std::string cmd;
-    if constexpr (mcpp::platform::is_windows) {
-        mcpp::platform::env::set("XLINGS_HOME", env.home.string());
-        mcpp::platform::env::set("XLINGS_PROJECT_DIR", "");
-        cmd = env.binary.string() + " self init "
-            + std::string(mcpp::platform::shell::silent_redirect);
-    } else {
-        cmd = std::format(
-            "cd {} && env -u XLINGS_PROJECT_DIR XLINGS_HOME={} {} self init {}",
-            shq(env.home.string()),
-            shq(env.home.string()),
-            shq(env.binary.string()),
-            mcpp::platform::shell::silent_redirect);
-    }
+    // `self init` initialises the global sandbox, so it runs in global mode
+    // whatever the caller's project directory is.
+    Env globalEnv = env;
+    globalEnv.projectDir.clear();
+    ScopedInvocationEnv scope(globalEnv);   // #614
+    std::string cmd = build_command_prefix(globalEnv) + " self init "
+        + std::string(mcpp::platform::shell::silent_redirect);
     int rc = mcpp::platform::process::run_silent(cmd);
     if (rc != 0 && !quiet) {
         std::println(stderr,
@@ -1794,6 +1870,7 @@ int update_index(const Env& env, bool quiet) {
 
 namespace {
 int update_index_unguarded(const Env& env, bool quiet) {
+    ScopedInvocationEnv scope(env);   // #614
     // Offline is absolute: no caller gets to reach the network by going around
     // the decision layer. Reported as success so a build that can still resolve
     // everything locally proceeds — the caller that genuinely needed the data

@@ -25,7 +25,7 @@ node bin/platform-targets   ->  1-2-3
 
 运行用的 `node` 取自 `xim:emsdk` 声明的依赖 `xim:node`,而不是 PATH 上的某一个。载荷在
 `.mcpp-toolchain.json` 里用 `runner` 写出它,项目与依赖图都没有声明 runner 时 mcpp 使用
-它。这需要 mcpp 2026.9.12.1,以及在配方更新之后安装的 emsdk 载荷;更早安装的载荷没有
+它。这需要 mcpp 2026.9.12.2,以及在配方更新之后安装的 emsdk 载荷;更早安装的载荷没有
 描述文件,仍按产物首行的 `#!/usr/bin/env node` 取 PATH 上的 `node`。
 
 `mcpp run` 会用 `node` 跑它，所以不需要额外的一步。工程侧**一个新词汇都不需要**：
@@ -142,15 +142,17 @@ runner = ["simctl-run"]
 `arm64-apple-ios18.0-simulator`，这是 Apple 自己的拼法。不发
 `-miphoneos-version-min`：三元组已经说过了，而一个标志会成为第二个说它的地方。
 
-`simctl-run` 来自 `xim:apple-simulator-tools`，需要先装：
+`simctl-run` 来自 `xim:apple-simulator-tools`，声明在使用它的那一行旁边：
 
-```bash
-xlings install apple-simulator-tools
+```toml
+[target.aarch64-ios-sim.xlings.workspace]
+"xim:apple-simulator-tools" = ""
 ```
 
-这一步没有写进清单，而这是一处**限制**而不是一个选择：`deps` 不按目标条件化，
-而把它写在顶层会让这个例子的 Linux 构建依赖一个只为 macOS 存在的包 —— 两条都实测
-过，`mcpp.toml` 里记着那两条消息。
+目标段下的 `xlings.workspace` 只在构建该目标时安装，所以这个例子的 Linux、Android
+与 Web 行都不会去要一个只为 macOS 存在的包。此前这里写的是"需要先手动安装"，依据是
+`[target.aarch64-ios-sim.xlings] does not accept 'deps'` 这条拒绝；拒绝是真的，结论
+不是：`deps` 是不带条件的写法，目标段接受的是 `workspace`。
 
 runner 是一个 argv 前缀，而一次**会话**不是：挑一台设备、启动、等待、spawn、把程序
 自己的退出状态返回 —— 清单里的一行没有开始也没有结束，这就是那部分知识住在一个包里

@@ -521,3 +521,117 @@ TEST(XlingsIndexRevision, StatusCarriesTheRevision) {
 
     std::filesystem::remove_all(home);
 }
+
+// ─── stderr_error_tail (#614) ─────────────────────────────────────────
+//
+// xlings' own error lines follow mcpp's diagnostic when an install fails. The
+// selection keeps the lines that name a rejection and bounds them, so a verbose
+// child cannot bury the diagnostic they are attached to.
+
+TEST(XlingsStderrTail, KeepsOnlyErrorLevelLines) {
+    auto tail = mcpp::xlings::stderr_error_tail(
+        "[xim] resolving acme.widget\r\n"
+        "downloading 42%\n"
+        "Error: checksum mismatch\n"
+        "hint: E_NETWORK, retry later\n"
+        "done\n");
+    EXPECT_EQ(tail, (std::vector<std::string>{
+        "[xim] resolving acme.widget",
+        "Error: checksum mismatch",
+        "hint: E_NETWORK, retry later"}));
+}
+
+TEST(XlingsStderrTail, KeepsTheLastLinesUpToTheLimit) {
+    std::string text;
+    for (int i = 0; i < 30; ++i) text += std::format("error {}\n", i);
+    auto tail = mcpp::xlings::stderr_error_tail(text);
+    ASSERT_EQ(tail.size(), 20u);
+    EXPECT_EQ(tail.front(), "error 10");
+    EXPECT_EQ(tail.back(), "error 29");
+    EXPECT_EQ(mcpp::xlings::stderr_error_tail(text, 2),
+              (std::vector<std::string>{"error 28", "error 29"}));
+    EXPECT_TRUE(mcpp::xlings::stderr_error_tail("").empty());
+    EXPECT_EQ(mcpp::xlings::stderr_error_tail("error without a newline"),
+              (std::vector<std::string>{"error without a newline"}));
+}
+
+// ─── invocation_env / ScopedInvocationEnv (#614) ──────────────────────
+//
+// One decision for the environment of an xlings invocation, rendered per
+// platform. Global mode is an absent XLINGS_PROJECT_DIR on both platforms, and
+// the process environment is the same after the invocation as before it.
+
+namespace {
+
+mcpp::xlings::Env xlings_env(std::string_view projectDir) {
+    mcpp::xlings::Env env;
+    env.home = std::filesystem::temp_directory_path() / "mcpp-xlings-home";
+    env.binary = env.home / "bin" / "xlings";
+    env.projectDir = std::filesystem::path(projectDir);
+    return env;
+}
+
+// The decided value of `key`: outer nullopt when the decision omits the key.
+std::optional<std::optional<std::string>> decided(const mcpp::xlings::Env& env,
+                                                  std::string_view key) {
+    for (auto const& [k, v] : mcpp::xlings::invocation_env(env))
+        if (k == key) return v;
+    return std::nullopt;
+}
+
+}  // namespace
+
+TEST(XlingsInvocationEnv, GlobalModeIsAnAbsentProjectDirectory) {
+    auto global = xlings_env("");
+    auto scope = decided(global, "XLINGS_PROJECT_DIR");
+    ASSERT_TRUE(scope.has_value());
+    EXPECT_FALSE(scope->has_value());
+    EXPECT_EQ(decided(global, "XLINGS_HOME"),
+              std::optional<std::optional<std::string>>(global.home.string()));
+
+    auto project = xlings_env("proj-dir");
+    EXPECT_EQ(decided(project, "XLINGS_PROJECT_DIR"),
+              std::optional<std::optional<std::string>>(project.projectDir.string()));
+}
+
+TEST(XlingsInvocationEnv, TheProcessEnvironmentIsUnchangedAfterwards) {
+    namespace env = mcpp::platform::env;
+    // Held so that what the Windows prefix sets process-wide is restored too.
+    env::ScopedEnv keepPath("PATH", env::get("PATH"));
+    env::ScopedEnv keepHome("XLINGS_HOME", env::get("XLINGS_HOME"));
+    env::ScopedEnv prior("XLINGS_PROJECT_DIR", std::string("prior-project"));
+
+    {
+        auto global = xlings_env("");
+        mcpp::xlings::ScopedInvocationEnv scope(global);
+        (void)mcpp::xlings::build_command_prefix(global);
+#if defined(_WIN32)
+        EXPECT_FALSE(env::get("XLINGS_PROJECT_DIR").has_value());
+#endif
+    }
+    EXPECT_EQ(env::get("XLINGS_PROJECT_DIR"), std::optional<std::string>("prior-project"));
+
+    {
+        auto project = xlings_env("proj-dir");
+        mcpp::xlings::ScopedInvocationEnv scope(project);
+        (void)mcpp::xlings::build_command_prefix(project);
+#if defined(_WIN32)
+        EXPECT_EQ(env::get("XLINGS_PROJECT_DIR"),
+                  std::optional<std::string>(project.projectDir.string()));
+#endif
+    }
+    EXPECT_EQ(env::get("XLINGS_PROJECT_DIR"), std::optional<std::string>("prior-project"));
+}
+
+#if !defined(_WIN32)
+TEST(XlingsInvocationEnv, ThePosixPrefixRendersTheDecision) {
+    auto global = mcpp::xlings::build_command_prefix(xlings_env(""));
+    EXPECT_NE(global.find("env -u XLINGS_PROJECT_DIR PATH="), std::string::npos) << global;
+    EXPECT_EQ(global.find("XLINGS_PROJECT_DIR="), std::string::npos) << global;
+
+    auto project = mcpp::xlings::build_command_prefix(xlings_env("/work/proj"));
+    EXPECT_EQ(project.find("-u XLINGS_PROJECT_DIR"), std::string::npos) << project;
+    EXPECT_NE(project.find("XLINGS_PROJECT_DIR="), std::string::npos) << project;
+    EXPECT_NE(project.find("/work/proj"), std::string::npos) << project;
+}
+#endif

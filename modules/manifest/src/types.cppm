@@ -112,6 +112,13 @@ struct Modules {
     std::map<std::string, ScanOverride> scanOverrides;
 };
 
+// The accepted values of `windows_subsystem` and `windows_entry` (#618). One
+// list each, read by the manifest parser and by the build-program directive
+// that sets the same fields, so the two cannot accept different sets.
+inline constexpr std::array<std::string_view, 2> kWindowsSubsystems{"console", "windows"};
+inline constexpr std::array<std::string_view, 4> kWindowsEntries{
+    "main", "wmain", "WinMain", "wWinMain"};
+
 struct Target {
     std::string                 name;
     enum Kind { Library, Binary, SharedLibrary, TestBinary } kind;
@@ -148,6 +155,13 @@ struct Target {
     // active in the current build (otherwise it is silently skipped). Gate
     // only — it does not activate features (use --features / [features].default).
     std::vector<std::string>    requiredFeatures;
+    // `windows_subsystem` and `windows_entry` (#618): a PE executable's
+    // subsystem ("console" | "windows") and the entry FUNCTION it defines
+    // ("main" | "wmain" | "WinMain" | "wWinMain"). Empty = the linker's default.
+    // Rendered per ABI onto this target's own link unit and nowhere else, and
+    // inert on every object format that is not PE.
+    std::string                 windowsSubsystem;
+    std::string                 windowsEntry;
 };
 
 // `DependencySpec` and `kDefaultNamespace` have moved to mcpp.pm.dep_spec.
@@ -768,6 +782,15 @@ struct BuildConfig : BuildInputs {
     // auto-promotion of known flags found in [build] cxxflags
     // (see dialect_flags()).
     std::vector<std::string>           dialectCxxflags;
+    // `[target.<selector>.abi] threads` -- whether the artefact is built with
+    // POSIX threads. A GRAPH-WIDE ABI SWITCH, so only the ROOT's value is
+    // rendered: into the dialect flag set above (every C++ translation unit,
+    // the std module's own commands, the scan, every dependency's cache key),
+    // into every package's C flags, and into the link. A dependency states what
+    // it needs with `requires_abi` instead. Declared is kept apart from the
+    // value because `threads = false` is also a statement.
+    bool                               abiThreads = false;
+    bool                               abiThreadsDeclared = false;
     std::string                         cStandard;
     // Escape hatch for the hermetic link check: a sandbox toolchain whose
     // CRT/loader resolve OUTSIDE the sandbox is a hard error by default
@@ -921,6 +944,43 @@ struct RuntimeArtifact {
     std::string           hostFingerprint;
 };
 
+// `runtime.deploy` (#615): a file placed in a DIRECTORY RELATIVE TO THE
+// EXECUTABLE, which `deploy_files` cannot express, because it flattens every
+// entry into `bin/<filename>`. The Vulkan loader on macOS reads its driver
+// manifest from `<executable dir>/vulkan/icd.d`, and a flattened copy is never
+// found there.
+struct DeployEntry {
+    std::filesystem::path from;   // relative to the package root
+    std::string           to;     // relative to the executable's directory; "." is that directory
+};
+
+// One rule for a path a deploy entry names, checked on the string so that the
+// answer is the same on every host; see the payload descriptor's `frontend`
+// check for the measurement behind that choice. `dotAllowed` admits exactly
+// ".", which `to` uses to mean "beside the executable". Returns the problem, or
+// an empty string when there is none.
+inline std::string deploy_path_problem(std::string_view field, std::string_view v,
+                                       bool dotAllowed) {
+    if (v.empty()) return std::format("`{}` is empty", field);
+    if (dotAllowed && v == ".") return {};
+    if (v.find('\\') != std::string_view::npos)
+        return std::format("`{}` contains a backslash; the separator is `/` on every host",
+                           field);
+    if (v.front() == '/')
+        return std::format("`{}` is absolute; it is a relative path", field);
+    if (v.find(':') != std::string_view::npos)
+        return std::format("`{}` names a drive or a scheme; it is a relative path", field);
+    for (std::size_t i = 0, n = 0; i <= v.size(); ++i) {
+        if (i != v.size() && v[i] != '/') { ++n; continue; }
+        const auto part = v.substr(i - n, n);
+        n = 0;
+        if (part.empty()) return std::format("`{}` has an empty path component", field);
+        if (part == "." || part == "..")
+            return std::format("`{}` has a `.` or `..` component", field);
+    }
+    return {};
+}
+
 // Platform-neutral link intent.  Platform spelling belongs to flags.cppm;
 // notably runtimeSearchDirs are not link-library search paths.
 struct LinkIntent {
@@ -930,6 +990,7 @@ struct LinkIntent {
     std::vector<std::filesystem::path> runtimeSearchDirs;
     std::vector<std::string>           frameworks;
     std::vector<std::filesystem::path> deployFiles;
+    std::vector<DeployEntry>           deploy;        // `runtime.deploy` (#615)
 };
 
 // `[runtime]` — requirements needed when linking/launching built binaries.
@@ -1197,6 +1258,10 @@ struct ConditionalConfig {
     // add to them.
     std::vector<std::filesystem::path>  linkLibraryDirs;
     std::vector<std::string>            libraries;
+    // `[target.<sel>.abi]` -- graph-wide ABI switches as typed members. See
+    // BuildConfig::abiThreads for what the value does and where it applies.
+    bool                                abiThreads = false;
+    bool                                abiThreadsDeclared = false;
     // Conditional dependencies (Phase 1b): merged into the corresponding
     // manifest maps in prepare_build when the predicate matches the resolved
     // target — before dependency resolution, so they resolve like any dep.
@@ -1263,7 +1328,7 @@ inline bool is_empty(const ConditionalConfig& c) {
     return is_empty(c.inputs) && c.linkLibraryDirs.empty() && c.libraries.empty()
         && c.dependencies.empty() && c.devDependencies.empty()
         && c.buildDependencies.empty() && c.featureDeps.empty()
-        && c.xlings.empty();
+        && c.xlings.empty() && !c.abiThreadsDeclared;
 }
 
 // `[lib]` — library "root" interface convention.
@@ -1595,6 +1660,12 @@ struct Manifest {
     // through untouched, exactly as they do in `provides`.
     // The spelling is `requires_` because `requires` is a keyword.
     std::vector<std::string>                        requires_;
+    // `requires_abi = { threads = true }` at package level, and per feature.
+    // A statement that the ARTEFACT's ABI has a switch on, compared at
+    // resolution with the root's `[target.<selector>.abi]`. Only `threads`
+    // exists; a feature's entry counts only when that feature is active.
+    bool                                            requiresAbiThreads = false;
+    std::map<std::string, bool>                     featureRequiresAbiThreads;
     // [package] exclusive — the capabilities this package claims it is the ONLY
     // provider of.
     //

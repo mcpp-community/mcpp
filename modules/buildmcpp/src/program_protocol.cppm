@@ -71,7 +71,12 @@ export namespace mcpp::build::program_protocol {
 // to it. Same cost as v5's: a package calling `mcpp::provides_pack_format()`
 // fails on an older engine at the build.mcpp COMPILE, because that engine's
 // bundled module has no such function.
-inline constexpr int kProtocolVersion = 9;
+// v10: adds `windows-subsystem` and `windows-entry` -- a named executable's PE
+// subsystem and entry function (#618), the build-program form of the
+// `[targets.<name>]` keys of the same names. Same cost as v5's: a package
+// calling `mcpp::windows_subsystem()` fails on an older engine at the
+// build.mcpp COMPILE, because that engine's bundled module has no such function.
+inline constexpr int kProtocolVersion = 10;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

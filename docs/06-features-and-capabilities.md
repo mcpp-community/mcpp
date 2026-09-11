@@ -192,6 +192,24 @@ provides = ["mcpp:compiler-runtime=compiler-rt", "mcpp:c++-abi=libc++"]
 requires = ["mcpp:compiler=llvm"]
 ```
 
+A requirement on the artefact's ABI switch is stated with `requires_abi`, on the
+package or on one feature, rather than as a layer:
+
+```toml
+[package]
+requires_abi = { threads = true }
+
+[features]
+mt = { requires_abi = { threads = true } }
+```
+
+Only the root manifest sets the switch (`[target.<selector>.abi]`, [22 — The
+Target Side](22-target-side.md)); a requirement it does not satisfy is refused
+before compilation, naming the package and the feature. A package whose install
+hook compiles a static library against one C++ standard library states that
+implementation as a layer requirement, `requires = ["mcpp:c++-abi=libstdc++"]`,
+for the reason given in the same chapter.
+
 A package that is a standard library states its `std` module source under
 `[build]`, where the flags it needs become conditional like any other build
 input.

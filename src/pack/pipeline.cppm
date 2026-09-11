@@ -248,6 +248,10 @@ export int build_and_pack(Options opts, bool modeFromUser,
         opts.depSearchDirs = ctx->plan.runtimeLibraryDirs;
         for (auto const& d : ctx->plan.linkIntent.runtimeSearchDirs)
             opts.depSearchDirs.push_back(d);
+        // What the build placed relative to the executable (#615). The plan's
+        // destinations are `bin/<to>/<file>`, and the executable is in `bin/`.
+        for (auto const& d : ctx->plan.runtimeDeployFiles)
+            opts.runtimeFiles.push_back(d.dest.lexically_relative("bin"));
     }
 
     // ─── Build the plan + run ────────────────────────────────────────

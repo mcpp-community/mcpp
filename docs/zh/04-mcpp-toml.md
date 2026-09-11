@@ -186,6 +186,46 @@ ICD 相撞。
 `soname` 对 `kind = "lib"` 同样有意义 —— 见下文的 `dependency_linkage`,
 库以何种形态出现是**消费者**的决定。
 
+#### `windows_subsystem` 与 `windows_entry` —— Windows GUI 可执行文件(mcpp 2026.9.12.2+)
+
+```toml
+[targets.myapp]
+kind              = "bin"
+main              = "src/main.cpp"
+windows_subsystem = "windows"   # "console"(默认)| "windows"
+windows_entry     = "main"      # "main"(默认)| "wmain" | "WinMain" | "wWinMain"
+```
+
+PE 可执行文件记录一个子系统。`"console"` 为程序附加控制台,`"windows"` 产生启动时不带控制台的
+GUI 程序。`windows_entry` 指程序定义的函数,而不是调用该函数的启动符号;它与子系统相互独立:控制台
+程序可以定义 `wmain`,GUI 程序也可以保留可移植的 `int main()`。
+
+这两个键是字段而不是链接标志,原因是正确的标志取决于 ABI,而一条标志无法说明自己面向哪个 ABI:
+
+| `windows_subsystem` / `windows_entry` | MSVC ABI(cl、clang-cl、面向 `*-windows-msvc` 的 clang) | GNU ABI(MinGW gcc、面向 `*-windows-gnu` 的 clang) |
+|---|---|---|
+| `"console"` / `"main"` | 无 | 无 |
+| `"windows"` / `"main"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-mwindows` |
+| `"windows"` / `"WinMain"` | `/SUBSYSTEM:WINDOWS /ENTRY:WinMainCRTStartup` | `-mwindows` |
+| `"windows"` / `"wWinMain"` | `/SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup` | `-mwindows -municode` |
+| `"console"` / `"wmain"` | `/SUBSYSTEM:CONSOLE /ENTRY:wmainCRTStartup` | `-municode` |
+
+在 MSVC ABI 上,只要任一键偏离默认值,两条标志就都写出。原因是链接器在缺少其中一条时由另一条推断:
+单独的 GUI 子系统会选择 `WinMainCRTStartup`,而可移植的 `int main()` 无法满足它;`/ENTRY:main`
+则会跳过 CRT 初始化,静态构造也随之被跳过。GNU 风格的驱动收到的 MSVC ABI 标志形如
+`-Wl,/SUBSYSTEM:...`。
+
+这两个键只到达声明它们的目标的链接。同一包的其他可执行文件、`mcpp test` 的测试二进制以及该包的消费者
+都保持控制台子系统;这也是这些标志不应写进 `[build] ldflags` 的原因:该通道到达图中的每一次链接。
+在 ELF、Mach-O 与 WebAssembly 上,这两个键不产生任何标志,产物与未声明它们时逐字节相同,因此跨平台的
+manifest 不需要 `cfg` 块。库目标声明任一键会被拒绝,拒绝信息指出目标与键名。
+
+构建程序通过 `mcpp::windows_subsystem("<target>", "windows")` 与
+`mcpp::windows_entry("<target>", "wmain")` 为本包的可执行文件设置同样的字段
+([build.mcpp](30-build-mcpp.md))。
+
+应用程序包、应用程序清单与 DPI 感知不属于这两个键,它们归属于打包格式与 `[resources]`。
+
 #### 按目标的键(per-target keys)
 
 ```toml
@@ -207,6 +247,8 @@ required_features = ["gui"]                   # 仅当 feature `gui` 激活时�
 | `defines` | 预处理宏(`name` 或 `name=value`),脱糖为 `-D<x>`,作用于该目标入口的 C 与 C++ 编译。 |
 | `cxxflags` / `cflags` | 该目标的额外编译标志。**不要**放 `-std=...`——用 `[package].standard`。 |
 | `required_features` | 仅当列出的 feature **全部**激活时才生成该目标,否则静默跳过。只是门禁——不激活 feature(用 `--features` / `[features].default`)。 |
+| `windows_subsystem` *(2026.9.12.2+)* | 可执行文件的 PE 子系统:`"console"`(默认)或 `"windows"`(启动时不带控制台的 GUI 程序)。只到达该目标的链接,在非 PE 目标上不产生任何标志。见上一节。 |
+| `windows_entry` *(2026.9.12.2+)* | 程序定义的入口函数:`"main"`(默认)、`"wmain"`、`"WinMain"` 或 `"wWinMain"`。见上一节。 |
 
 > **作用域(重要):** 目标上的 `defines` / `cxxflags` / `cflags` **只作用于该目标独占的入口源**
 > (它的 `main`)——**绝不**作用于共享的模块/实现对象(那些只编译一次、被每个目标链接,即 mcpp 的
@@ -920,6 +962,7 @@ transitive_needed_dirs   = ["runtime/closure"]
 runtime_search_dirs      = ["runtime"]
 frameworks               = ["WindowKit"]
 deploy_files             = ["bin/widget.dll"]
+deploy                   = [ { from = "share/vulkan/icd.d/widget_icd.json", to = "vulkan/icd.d" } ]
 
 # 多 provider 时使用精确 canonical identity。
 [runtime."display.present"]
@@ -956,6 +999,16 @@ LinkIntent 把不同发现阶段分开:
 | `runtime_search_dirs` | 只进 RUNPATH/rpath,绝不进 `-L` | 只进 rpath | 无 flag |
 | `frameworks` | 无 flag | `-framework` | 无 flag |
 | `deploy_files` | copy edge | copy edge | 复制到产物旁,绝不成为 linker flag |
+| `deploy` *(2026.9.12.2+)* | copy edge,复制到 `bin/<to>/` | copy edge,复制到 `bin/<to>/` | copy edge,复制到 `bin/<to>/`;绝不成为 linker flag |
+
+`deploy` 把文件放进相对可执行文件的目录;`deploy_files` 表达不了这一点,因为它把每一项都放在可执行
+文件旁。读取固定子目录的加载器需要它:macOS 上的 Vulkan loader 从 `<可执行文件目录>/vulkan/icd.d`
+读取驱动清单。每一项是恰好含两个字符串的表:`from` 相对声明它的包的根目录,`to` 相对可执行文件所在
+目录,`"."` 表示该目录本身。两者在所有宿主上都以 `/` 分隔,不得是绝对路径、不得指定盘符,也不得含
+空分量、`.` 或 `..` 分量;违反的项被拒绝,拒绝信息指出该项的序号。同一目标位置的两个来源被拒绝并指出
+目标位置,同名文件放进两个不同目录则不构成冲突。`deploy` 是独立的键而不是 `deploy_files` 的表形式:
+早于它的描述文件读取器在 `deploy_files` 中遇到 `{` 时不会终止,而对不认识的 `runtime` 键会跳过。`mcpp pack`
+把两个键的文件放到打包后可执行文件旁的同一相对位置。
 
 一个兼容发布周期内仍读取旧字段:`library_dirs` 只映射到运行期搜索;
 `dlopen_libs` 映射为必需的 run-phase soname requirement;`capabilities` 映射为必需的

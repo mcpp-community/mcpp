@@ -65,6 +65,14 @@ std::string emit_ninja_string(const BuildPlan& plan);
 std::string filter_ninja_output(std::string_view output,
                                 std::span<const std::string> commandPrefixes);
 
+// The link flags one executable's `windows_subsystem` / `windows_entry` render
+// to (#618). Empty on every object format other than PE, and for the pair of
+// defaults. `sep` is `LinkStyle::SeparateLinker`, as for `pe_link_flag`.
+// Exported so each row of the rendering table is stated as a unit test.
+std::vector<std::string> windows_executable_link_flags(const BuildPlan& plan, bool sep,
+                                                       std::string_view subsystem,
+                                                       std::string_view entry);
+
 // Emitter self-check: every ninja rule's command must begin with a program.
 //
 // Exported so the invariant can be stated against hand-written manifests as
@@ -232,6 +240,15 @@ std::string join_flags(const std::vector<std::string>& flags) {
 //    default install name is the path it was LINKED at, so a package built in
 //    /tmp/build-xyz records /tmp/build-xyz and cannot be relocated — which is
 //    every distributed dylib. `@rpath/<file>` is the only default that travels.
+// Whether a PE link speaks the MSVC ABI. Asked of the target triple, and of the
+// compiler's own answer only when there is no triple; `pe_link_flag` below says
+// why the compiler binary is the wrong question. One definition, so the import
+// library and the subsystem cannot address two different linkers.
+bool pe_msvc_abi(const BuildPlan& plan) {
+    const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+    return t ? t->is_msvc_env() : mcpp::toolchain::is_msvc_target(plan.toolchain);
+}
+
 // A PE link flag, spelled for the TARGET ABI and wrapped for the driver.
 //
 // NOT a dialect-table entry, and Windows CI is why. Clang targeting the MSVC
@@ -249,10 +266,7 @@ std::string pe_link_flag(const BuildPlan& plan, bool sep,
                          std::string_view msvcForm, std::string_view gnuForm,
                          std::string_view path)
 {
-    const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
-    const bool msvcAbi = t ? t->is_msvc_env()
-                           : mcpp::toolchain::is_msvc_target(plan.toolchain);
-    if (!msvcAbi) return std::string(gnuForm) + std::string(path);
+    if (!pe_msvc_abi(plan)) return std::string(gnuForm) + std::string(path);
     auto flag = std::string(msvcForm) + std::string(path);
     return sep ? flag : "-Wl," + flag;
 }
@@ -518,6 +532,43 @@ std::string action_phony_name(std::string_view pkg) {
 }
 
 }  // namespace
+
+// WHAT `windows_subsystem` AND `windows_entry` RENDER TO (#618).
+//
+// On the MSVC ABI both flags are written whenever either key differs from its
+// default. link.exe and lld-link infer each from the other when one is absent:
+// with no `/SUBSYSTEM:` the subsystem follows the entry function the objects
+// define (WinMain selects WINDOWS), and with no `/ENTRY:` the CRT startup
+// follows the subsystem (WINDOWS selects WinMainCRTStartup, which a portable
+// `int main()` does not satisfy). Stating both removes both inferences. The
+// entry is the CRT startup symbol and never the program's function, because
+// `/ENTRY:main` links and skips CRT initialisation, static constructors
+// included.
+//
+// On the GNU ABI the driver owns both decisions: `-mwindows` selects the GUI
+// subsystem, and `-municode` selects mingw-w64's wide startup, which calls
+// `wmain`, or `wWinMain` through the runtime library. A narrow `WinMain` needs
+// neither, because the runtime library supplies a `main` that calls it.
+std::vector<std::string> windows_executable_link_flags(const BuildPlan& plan, bool sep,
+                                                       std::string_view subsystem,
+                                                       std::string_view entry) {
+    const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+    const bool pe = t ? t->is_pe() : bool(mcpp::platform::is_windows);
+    if (!pe) return {};
+    const bool gui = subsystem == "windows";
+    const std::string_view fn = entry.empty() ? std::string_view("main") : entry;
+    if (!gui && fn == "main") return {};
+    std::vector<std::string> out;
+    if (pe_msvc_abi(plan)) {
+        auto spell = [sep](std::string flag) { return sep ? flag : "-Wl," + flag; };
+        out.push_back(spell(gui ? "/SUBSYSTEM:WINDOWS" : "/SUBSYSTEM:CONSOLE"));
+        out.push_back(spell(std::format("/ENTRY:{}CRTStartup", fn)));
+        return out;
+    }
+    if (gui) out.push_back("-mwindows");
+    if (fn == "wmain" || fn == "wWinMain") out.push_back("-municode");
+    return out;
+}
 
 std::string link_failure_advice(std::string_view output) {
     // Both linkers, both spellings. lld says "undefined symbol: X"; GNU ld says
@@ -2259,6 +2310,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // of libX11 than it was linked against.
             mcpp::build::link_line::UnitTail tail;
             tail.dependencies = join_flags(lu.linkFlags);
+            // #618: this executable's own subsystem and entry. Rendered here
+            // rather than carried in `linkFlags`, because the spelling depends
+            // on `sepLinker`, which only this emitter knows.
+            if (lu.kind == LinkUnit::Binary)
+                tail.dependencies += join_flags(windows_executable_link_flags(
+                    plan, sepLinker, lu.windowsSubsystem, lu.windowsEntry));
             // mcpp#426: a link unit with no C++ in it takes only the part of
             // the contract that is not a statement about the C++ runtime.
             // Swapping the driver is not sufficient by itself — this slot names

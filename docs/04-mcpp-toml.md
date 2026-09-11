@@ -202,6 +202,55 @@ A `soname` is meaningful on `kind = "lib"` too — see
 [`dependency_linkage`](#dependency_linkage--static-or-shared-is-the-consumers-decision)
 below, where the form a library takes becomes the consumer's decision.
 
+#### `windows_subsystem` and `windows_entry` — a Windows GUI executable (mcpp 2026.9.12.2+)
+
+```toml
+[targets.myapp]
+kind              = "bin"
+main              = "src/main.cpp"
+windows_subsystem = "windows"   # "console" (default) | "windows"
+windows_entry     = "main"      # "main" (default) | "wmain" | "WinMain" | "wWinMain"
+```
+
+A PE executable records a subsystem. `"console"` attaches a console, and
+`"windows"` produces a GUI program that starts without one. `windows_entry`
+names the function the program defines, not the startup symbol that calls it,
+and it is independent of the subsystem: a console program may define `wmain`,
+and a GUI program may keep a portable `int main()`.
+
+The keys are fields rather than link flags because the correct flags depend on
+the ABI, and a flag cannot state which ABI it addresses:
+
+| `windows_subsystem` / `windows_entry` | MSVC ABI (cl, clang-cl, clang targeting `*-windows-msvc`) | GNU ABI (MinGW gcc, clang targeting `*-windows-gnu`) |
+|---|---|---|
+| `"console"` / `"main"` | nothing | nothing |
+| `"windows"` / `"main"` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup` | `-mwindows` |
+| `"windows"` / `"WinMain"` | `/SUBSYSTEM:WINDOWS /ENTRY:WinMainCRTStartup` | `-mwindows` |
+| `"windows"` / `"wWinMain"` | `/SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup` | `-mwindows -municode` |
+| `"console"` / `"wmain"` | `/SUBSYSTEM:CONSOLE /ENTRY:wmainCRTStartup` | `-municode` |
+
+On the MSVC ABI both flags are written whenever either key differs from its
+default, because the linker infers each from the other when one is absent: the
+GUI subsystem alone selects `WinMainCRTStartup`, which a portable `int main()`
+does not satisfy, and `/ENTRY:main` skips CRT initialisation, static
+constructors included. A GNU-style driver receives the MSVC-ABI flags as
+`-Wl,/SUBSYSTEM:...`.
+
+The keys reach the link of the declaring target only. A second executable, the
+`mcpp test` binaries and the consumers of the package keep the console
+subsystem, which is why `[build] ldflags` is not the place for these flags: that
+channel reaches every link in the graph. On ELF, Mach-O and WebAssembly the keys
+render nothing and the artefact is byte-identical to one built without them, so
+a cross-platform manifest needs no `cfg` block. A library target that declares
+either key is refused, and the refusal names the target and the key.
+
+A build program sets the same fields for an executable of its own package with
+`mcpp::windows_subsystem("<target>", "windows")` and
+`mcpp::windows_entry("<target>", "wmain")` ([build.mcpp](30-build-mcpp.md)).
+
+Application bundles, application manifests and DPI awareness are not part of
+these keys; they belong to packaging formats and to `[resources]`.
+
 #### Per-target keys
 
 ```toml
@@ -223,6 +272,8 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `defines` | Preprocessor macros (`name` or `name=value`); desugar to `-D<x>` on both the C and C++ entry compile. |
 | `cxxflags` / `cflags` | Extra compile flags for this target. Do **not** put `-std=...` here — use `[package].standard`. |
 | `required_features` | The target is emitted only when **every** listed feature is active in the build; otherwise it is silently skipped. A gate only — it does not activate features (use `--features` / `[features].default`). **One exception, and it is not a second rule:** when this target is requested as a host tool (`tools = [...]`, §2.14), the target is what was *asked for*, so its `required_features` become the sub-build's *inputs*. Same field, one meaning — the resolution just runs in the opposite direction. |
+| `windows_subsystem` *(2026.9.12.2+)* | The PE subsystem of an executable: `"console"` (the default) or `"windows"`, a GUI program that starts without a console. Reaches this target's link and no other, and renders nothing on a target that is not PE. See the section above. |
+| `windows_entry` *(2026.9.12.2+)* | The entry function the program defines: `"main"` (the default), `"wmain"`, `"WinMain"` or `"wWinMain"`. See the section above. |
 
 > **Scope (important):** `defines` / `cxxflags` / `cflags` on a target apply **only to that
 > target's exclusive entry source** (its `main`) — never to shared module/impl objects, which
@@ -1055,6 +1106,7 @@ transitive_needed_dirs   = ["runtime/closure"]
 runtime_search_dirs      = ["runtime"]
 frameworks               = ["WindowKit"]
 deploy_files             = ["bin/widget.dll"]
+deploy                   = [ { from = "share/vulkan/icd.d/widget_icd.json", to = "vulkan/icd.d" } ]
 
 # Use an exact canonical identity when multiple providers exist.
 [runtime."display.present"]
@@ -1109,6 +1161,23 @@ Link intent keeps discovery stages separate:
 | `runtime_search_dirs` | RUNPATH/rpath only, never `-L` | rpath only | no flag |
 | `frameworks` | no flag | `-framework` | no flag |
 | `deploy_files` | copy edge | copy edge | copy beside the output; never a linker flag |
+| `deploy` *(2026.9.12.2+)* | copy edge into `bin/<to>/` | copy edge into `bin/<to>/` | copy edge into `bin/<to>/`; never a linker flag |
+
+`deploy` places a file in a directory relative to the executable, which
+`deploy_files` cannot express because it places every entry beside the
+executable. A loader that reads a fixed subdirectory needs it: the Vulkan loader
+on macOS reads driver manifests from `<executable dir>/vulkan/icd.d`. Each entry
+is a table of exactly two strings. `from` is relative to the declaring package's
+root, and `to` is relative to the executable's directory, where `"."` means that
+directory itself. Both are separated by `/` on every host, and neither may be
+absolute, name a drive, or contain an empty, `.` or `..` component; an entry
+that does is refused, and the refusal names its index. Two sources for one
+destination are refused naming the destination, while one file name in two
+directories is not a collision. `deploy` is a key of its own rather than a table
+form of `deploy_files`, because a descriptor reader that predates it meets `{`
+inside `deploy_files` and does not terminate, whereas it skips a `runtime` key it
+does not know. `mcpp pack` stages the files of both keys at the same relative
+path beside the packed executable.
 
 For one compatibility train, `library_dirs` maps only to runtime search,
 `dlopen_libs` maps to required run-phase soname requirements, and
