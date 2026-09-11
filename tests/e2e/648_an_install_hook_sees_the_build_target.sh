@@ -1,16 +1,19 @@
 #!/usr/bin/env bash
-# requires: gcc
-# 648_an_install_hook_sees_the_resolved_toolchain.sh -- #613: a dependency's
-# install hook receives the resolved toolchain and target under the names a
-# build program receives.
+# requires: elf
+# 648_an_install_hook_sees_the_build_target.sh -- #613: a dependency's install
+# hook receives the build's target under the names a build program uses, and the
+# two toolchain names present and empty.
+#
+# The toolchain is resolved after the dependency graph, so no compiler or
+# standard library exists when a dependency installs, and the values are emitted
+# empty rather than guessed. The run exports both toolchain names first: a hook
+# that reads a non-empty value read one inherited from its parent, which the
+# always-emitted rule exists to prevent.
 #
 # The package below has no download. Its `install()` writes the module mcpp
-# compiles next, with the values it read from its own environment compiled in,
-# and the consumer prints them. What is compared is therefore what the hook saw,
-# carried in the artefact, rather than a log line.
-#
-# `# requires: gcc` because the expected standard library is gcc's. The
-# composition itself is unit-tested on every platform (test_install_hook_env).
+# compiles next, with the values it read compiled in, and the consumer prints
+# them. What is compared is therefore what the hook saw, carried in the artefact.
+# The composition itself is unit-tested on every platform (test_install_hook_env).
 set -e
 
 TMP=$(mktemp -d)
@@ -57,7 +60,9 @@ export module hookprobe;
 export const char* hook_compiler()  { return "%s"; }
 export const char* hook_stdlib()    { return "%s"; }
 export const char* hook_target_os() { return "%s"; }
-]], value("MCPP_COMPILER"), value("MCPP_CXX_STDLIB"), value("MCPP_TARGET_OS")))
+export const char* hook_target()    { return "%s"; }
+]], value("MCPP_COMPILER"), value("MCPP_CXX_STDLIB"), value("MCPP_TARGET_OS"),
+    value("MCPP_TARGET")))
     return true
 end
 LUA
@@ -66,8 +71,8 @@ cat > src/main.cpp <<'CPP'
 #include <cstdio>
 import hookprobe;
 int main() {
-    std::printf("compiler=%s stdlib=%s os=%s\n",
-                hook_compiler(), hook_stdlib(), hook_target_os());
+    std::printf("compiler=%s stdlib=%s os=%s target=%s\n",
+                hook_compiler(), hook_stdlib(), hook_target_os(), hook_target());
     return 0;
 }
 CPP
@@ -84,7 +89,8 @@ hookprobe = "1.0.0"
 acme = { path = "local-index" }
 TOML
 
-"$MCPP" run > run.log 2>&1 || fail "the build or the run failed" run.log
-grep -q 'compiler=gcc stdlib=libstdc++ os=linux' run.log \
-    || fail "the install hook did not see the resolved toolchain" run.log
+MCPP_COMPILER=inherited MCPP_CXX_STDLIB=inherited "$MCPP" run > run.log 2>&1 \
+    || fail "the build or the run failed" run.log
+grep -Eq '^compiler= stdlib= os=linux target=[a-z0-9_]+-linux' run.log \
+    || fail "the install hook did not see the build's target with empty toolchain names" run.log
 echo "install hook environment OK"

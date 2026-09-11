@@ -32,7 +32,7 @@ mkdir -p "$TMP/mtdep/src"
 cd "$TMP/mtdep"
 printf 'export module mtdep;\nexport int mt_value() { return 5; }\n' > src/mtdep.cppm
 write_dep() {   # $1 = extra [package] lines, $2 = trailing tables
-    cat > mcpp.toml <<TOML
+    cat > "$TMP/mtdep/mcpp.toml" <<TOML
 [package]
 name    = "mtdep"
 version = "0.1.0"
@@ -55,7 +55,7 @@ import mtdep;
 int main() { return mt_value() == 5 ? 0 : 1; }
 CPP
 write_app() {   # $1 = the dependency's inline table, $2 = trailing tables
-    cat > mcpp.toml <<TOML
+    cat > "$TMP/app/mcpp.toml" <<TOML
 [package]
 name    = "app"
 version = "0.1.0"

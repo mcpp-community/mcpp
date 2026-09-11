@@ -112,12 +112,24 @@ struct Modules {
     std::map<std::string, ScanOverride> scanOverrides;
 };
 
-// The accepted values of `windows_subsystem` and `windows_entry` (#618). One
-// list each, read by the manifest parser and by the build-program directive
-// that sets the same fields, so the two cannot accept different sets.
-inline constexpr std::array<std::string_view, 2> kWindowsSubsystems{"console", "windows"};
-inline constexpr std::array<std::string_view, 4> kWindowsEntries{
-    "main", "wmain", "WinMain", "wWinMain"};
+// The accepted values of `windows_subsystem` (`subsystem = true`) and
+// `windows_entry` (#618), stated once and read by the manifest parser and by the
+// build-program directive that sets the same fields, so the two cannot accept
+// different sets. Returns an empty string when `value` is accepted, and
+// otherwise the accepted values, quoted and comma-separated, for the refusal.
+inline std::string windows_choice_problem(bool subsystem, std::string_view value) {
+    static constexpr std::string_view kSubsystems[] = {"console", "windows"};
+    static constexpr std::string_view kEntries[] = {"main", "wmain", "WinMain", "wWinMain"};
+    std::string list;
+    bool accepted = false;
+    auto consider = [&](std::string_view choice) {
+        if (choice == value) accepted = true;
+        list += (list.empty() ? "" : ", ") + std::format("\"{}\"", choice);
+    };
+    if (subsystem) { for (auto choice : kSubsystems) consider(choice); }
+    else           { for (auto choice : kEntries)    consider(choice); }
+    return accepted ? std::string{} : list;
+}
 
 struct Target {
     std::string                 name;

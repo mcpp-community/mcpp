@@ -546,7 +546,19 @@ code, and what was built instead.
    rule: the requested triple, or the host triple for a native build. The six
    values are computed by `install_hook_env`, from which the build-program
    environment also takes them, in their existing order, so no build program's
-   re-run key changes.
+   re-run key changes. The toolchain values are empty while a dependency
+   installs, which §2.3 assumed otherwise: `tc` is resolved after the dependency
+   graph, because a package in the graph may supply a target-side layer, so no
+   compiler or standard library has been decided when a dependency's hook runs.
+   Measured with tests/e2e/648, whose hook compiled in an empty `compiler=` and
+   `stdlib=` beside the host's `os=linux`. Resolving the toolchain before
+   installation is the reorder the engine deliberately does not make, and a
+   guessed value would let a hook build the wrong variant, so the variables are
+   emitted empty, which also keeps a value inherited from a parent process out
+   of the hook. Neither §2.4 criterion holds as written: the refusal follows the
+   hook (item 3), and a hook cannot print a resolved `stdlibId`. What holds is
+   that the `c++-abi` refusal names both implementations before compilation, and
+   that the hook sees the build's target and never an inherited toolchain value.
 5. **§3.1, absent and empty on Windows.** The CRT defines `_putenv_s(key, "")` as
    removal, so the Windows branch already produced an absent
    `XLINGS_PROJECT_DIR`, and the two platforms did not disagree about global

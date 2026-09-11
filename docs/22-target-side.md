@@ -238,12 +238,12 @@ requires = ["mcpp:c++-abi=libstdc++"]
 ```
 
 A project whose toolchain resolves another `c++-abi` is then refused, naming
-both implementations, instead of failing at the link. The check follows the
-installation of the graph, so the install hook also receives the resolved values
-as `MCPP_CXX_STDLIB` and `MCPP_COMPILER` ([32 — Authoring a
-Payload](32-authoring-a-payload.md)) and can refuse before it compiles anything.
-It must not build a different variant into the same store directory, because
-the first consumer would then decide the variant for every later one.
+both implementations, instead of failing at the link. The check runs once the
+toolchain is resolved, which is after the dependency graph is installed, so the
+install hook has already run; the hook receives the build's target but no
+toolchain values ([32 — Authoring a Payload](32-authoring-a-payload.md)). It
+must not build a different variant into the same store directory, because the
+first consumer would then decide the variant for every later one.
 
 ### Standard Library Module Sources
 

@@ -271,13 +271,16 @@ std::string shq_meta(std::string_view s);
 std::string build_command_prefix(const Env& env);
 
 // THE ENVIRONMENT OF ONE XLINGS INVOCATION (#614), decided once. Each entry is
-// a variable and its value, or nullopt for a variable that must be absent.
-// Global mode is an absent XLINGS_PROJECT_DIR, because xlings resolves its
-// subos scope from that variable. POSIX renders the decision into the command
-// prefix (`env -u` and `K=V`); Windows applies it to the process through
-// ScopedInvocationEnv.
-std::vector<std::pair<std::string, std::optional<std::string>>>
-invocation_env(const Env& env);
+// a variable, its value, and whether it is present at all. Global mode is an
+// absent XLINGS_PROJECT_DIR, because xlings resolves its subos scope from that
+// variable. POSIX renders the decision into the command prefix (`env -u` and
+// `K=V`); Windows applies it to the process through ScopedInvocationEnv.
+struct InvocationVar {
+    std::string name;
+    std::string value;
+    bool        present = true;
+};
+std::vector<InvocationVar> invocation_env(const Env& env);
 
 // Applies the scope half of `invocation_env` to this process for the guard's
 // lifetime on Windows, and restores the prior value when the guard ends. On
@@ -289,11 +292,14 @@ invocation_env(const Env& env);
 class ScopedInvocationEnv {
 public:
     explicit ScopedInvocationEnv(const Env& env);
+    ~ScopedInvocationEnv();
     ScopedInvocationEnv(const ScopedInvocationEnv&) = delete;
     ScopedInvocationEnv& operator=(const ScopedInvocationEnv&) = delete;
 
 private:
-    std::optional<mcpp::platform::env::ScopedEnv> scope_;
+    bool        active_      = false;
+    bool        hadPrevious_ = false;
+    std::string previous_;
 };
 
 // Build full xlings interface command.
@@ -1172,21 +1178,32 @@ std::filesystem::path sandbox_init_marker(const Env& env) {
 
 // ─── Shell command builders ─────────────────────────────────────────
 
-std::vector<std::pair<std::string, std::optional<std::string>>>
-invocation_env(const Env& env) {
+std::vector<InvocationVar> invocation_env(const Env& env) {
     return {
-        {"XLINGS_HOME", env.home.string()},
-        {"XLINGS_PROJECT_DIR", env.projectDir.empty()
-                                   ? std::nullopt
-                                   : std::optional<std::string>(env.projectDir.string())},
+        {"XLINGS_HOME", env.home.string(), true},
+        {"XLINGS_PROJECT_DIR", env.projectDir.string(), !env.projectDir.empty()},
     };
 }
 
 ScopedInvocationEnv::ScopedInvocationEnv(const Env& env) {
     if constexpr (mcpp::platform::is_windows) {
-        for (auto& [key, value] : invocation_env(env))
-            if (key == "XLINGS_PROJECT_DIR") scope_.emplace(key, value);
+        for (auto const& var : invocation_env(env)) {
+            if (var.name != "XLINGS_PROJECT_DIR") continue;
+            if (auto prior = mcpp::platform::env::get(var.name)) {
+                hadPrevious_ = true;
+                previous_ = *prior;
+            }
+            active_ = true;
+            if (var.present) mcpp::platform::env::set(var.name, var.value);
+            else             mcpp::platform::env::unset(var.name);
+        }
     }
+}
+
+ScopedInvocationEnv::~ScopedInvocationEnv() {
+    if (!active_) return;
+    if (hadPrevious_) mcpp::platform::env::set("XLINGS_PROJECT_DIR", previous_);
+    else              mcpp::platform::env::unset("XLINGS_PROJECT_DIR");
 }
 
 std::string build_command_prefix(const Env& env) {
@@ -1199,9 +1216,9 @@ std::string build_command_prefix(const Env& env) {
     } else {
         // `env` takes its `-u` operands before its assignments.
         std::string unset, assign;
-        for (auto& [key, value] : invocation_env(env)) {
-            if (value) assign += std::format(" {}={}", key, shq(*value));
-            else       unset  += std::format(" -u {}", key);
+        for (auto const& var : invocation_env(env)) {
+            if (var.present) assign += std::format(" {}={}", var.name, shq(var.value));
+            else             unset  += std::format(" -u {}", var.name);
         }
         return std::format("cd {} && env{} PATH={}:\"$PATH\"{} {}",
             shq(env.home.string()), unset, shq(xvmBin), assign,

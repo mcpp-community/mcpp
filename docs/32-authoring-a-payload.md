@@ -72,27 +72,30 @@ those two doing more.
 ### The environment an install hook receives (mcpp 2026.9.12.2+)
 
 When mcpp installs a package a project depends on, the package's `install()`
-runs with the resolved toolchain and target in its environment, under the names
-and with the values a build program receives ([build.mcpp](30-build-mcpp.md)):
+runs with the build's target in its environment, under the names and by the rule
+a build program uses ([build.mcpp](30-build-mcpp.md)): every variable is present,
+and empty when it has no value, so a hook never reads a value inherited from the
+process that started mcpp.
 
-| Variable | Value |
+| Variable | Value while a dependency installs |
 |---|---|
-| `MCPP_COMPILER` | `gcc`, `clang` or `msvc` |
-| `MCPP_CXX_STDLIB` | `libstdc++`, `libc++` or `msvc-stl` |
 | `MCPP_TARGET` | the target triple the build was asked for, or the host triple for a native build |
 | `MCPP_TARGET_OS`, `MCPP_TARGET_ARCH`, `MCPP_TARGET_ENV` | the segments of that triple |
+| `MCPP_COMPILER`, `MCPP_CXX_STDLIB` | empty |
 
-A value is empty when it does not apply. On Windows an empty variable is an
-absent one, and `os.getenv` answers `nil` for it. The hook of a toolchain payload
-receives none of these variables, because no toolchain has been resolved while it
-installs.
+The toolchain values are empty because the toolchain is resolved after the
+dependency graph: a package in the graph may supply a target-side layer, so no
+compiler or standard library has been decided when a dependency installs, and a
+hook that guessed one could build the wrong variant. On Windows an empty variable
+is an absent one, and `os.getenv` answers `nil` for it. The hook of a toolchain
+payload receives none of these variables.
 
-A hook may use the values to refuse or to diagnose. It must not build a variant
+A hook may use the target to refuse or to diagnose. It must not build a variant
 into a store directory whose name does not state the variant: the store is keyed
 by package and version, so the first consumer would decide the variant for every
-later one. A package compiled against one C++ standard library declares that
-instead, with `requires = ["mcpp:c++-abi=libstdc++"]`
-([22 — The Target Side](22-target-side.md)).
+later one. A package compiled against one C++ standard library states that with
+`requires = ["mcpp:c++-abi=libstdc++"]`, which is checked once the toolchain is
+resolved ([22 — The Target Side](22-target-side.md)).
 
 ## The four things a descriptor must get right
 

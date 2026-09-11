@@ -5107,21 +5107,35 @@ prepare_build(bool print_fingerprint,
             // had asked for `mcpplibs:gtest` — the error itself only named the
             // dependency, which is the one thing nobody doubts.
             std::vector<std::string> attempted{ target };
-            // #613: THE RESOLVED TOOLCHAIN, IN THE INSTALL HOOK'S ENVIRONMENT,
-            // under the names and the rule a build program already gets:
-            // always emitted, empty when not applicable. Computed by
-            // `install_hook_env`, the function the build-program environment
-            // takes the same six values from, so the two cannot disagree. A hook may use these values to refuse or to diagnose;
-            // it must not build a variant into a store directory that does not
-            // name the variant, because the store is keyed by package and
+            // #613: THE INSTALL HOOK'S ENVIRONMENT, under the names and the rule
+            // a build program gets: always emitted, empty when not applicable,
+            // so a hook never reads a value inherited from a parent process.
+            // Computed by `install_hook_env`, the function the build-program
+            // environment takes the same six values from.
+            //
+            // THE TOOLCHAIN VALUES ARE EMPTY HERE ON THE ORDINARY PATH. `tc` is
+            // resolved after the dependency graph (see its declaration: a
+            // package in the graph may supply a target-side layer), so when a
+            // dependency installs there is no resolved compiler or standard
+            // library to state, and a guessed one would be worse than none.
+            // Measured with tests/e2e/648. The target names are decided, and a
+            // package states the standard library it was built for with
+            // `requires = ["mcpp:c++-abi=..."]`, checked once `tc` exists. A
+            // hook must not build a variant into a store directory that does
+            // not name the variant, because the store is keyed by package and
             // version. Scoped: restored when this dependency's install returns,
             // compat retries below included.
             mcpp::build::BuildProgramEnv hookEnv;
             fill_target_build_env(hookEnv, tc ? &*tc : nullptr);
             hookEnv.targetTriple = overrides.target_triple;
-            std::deque<mcpp::platform::env::ScopedEnv> hookScope;
-            for (auto const& [key, value] : mcpp::build::install_hook_env(hookEnv))
-                hookScope.emplace_back(key, value);
+            // Six names, fixed by install_hook_env; one guard each.
+            const auto hookVars = mcpp::build::install_hook_env(hookEnv);
+            mcpp::platform::env::ScopedEnv hookVar0(hookVars.at(0).first, hookVars.at(0).second);
+            mcpp::platform::env::ScopedEnv hookVar1(hookVars.at(1).first, hookVars.at(1).second);
+            mcpp::platform::env::ScopedEnv hookVar2(hookVars.at(2).first, hookVars.at(2).second);
+            mcpp::platform::env::ScopedEnv hookVar3(hookVars.at(3).first, hookVars.at(3).second);
+            mcpp::platform::env::ScopedEnv hookVar4(hookVars.at(4).first, hookVars.at(4).second);
+            mcpp::platform::env::ScopedEnv hookVar5(hookVars.at(5).first, hookVars.at(5).second);
             auto r = install_one(target);
             if (r && r->exitCode != 0 &&
                 (ns.empty() || ns == mcpp::pm::kDefaultNamespace)) {

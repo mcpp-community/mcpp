@@ -22,6 +22,7 @@
 # installed.
 set -e
 
+HERE="$(cd "$(dirname "$0")" && pwd)"
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 
@@ -65,16 +66,18 @@ echo "build A-B-A OK ($own)"
 "$MCPP" run > r1.log 2>&1 || fail "mcpp run failed" r1.log
 "$MCPP" run > r2.log 2>&1 || fail "the second mcpp run failed" r2.log
 [ "$(resolutions r2.log)" = 0 ] || fail "control: an unchanged second run resolved the toolchain" r2.log
-"$MCPP" run --toolchain "$own" > r3.log 2>&1 || fail "mcpp run --toolchain $own failed" r3.log
+# `mcpp run` takes the request through the environment, the channel
+# `--toolchain` itself uses.
+MCPP_TOOLCHAIN="$own" "$MCPP" run > r3.log 2>&1 || fail "MCPP_TOOLCHAIN=$own mcpp run failed" r3.log
 [ "$(resolutions r3.log)" != 0 ] \
-    || fail "mcpp run --toolchain $own was answered by the fast path of a run that did not request it" r3.log
+    || fail "MCPP_TOOLCHAIN=$own mcpp run was answered by the fast path of a run that did not request it" r3.log
 echo "run A-B-A OK"
 
 # ── The machine default ────────────────────────────────────────────────────
 family=${own%@*}
 own_version=${own#*@}
 export MCPP_HOME="$TMP/home"
-source "$(dirname "$0")/_inherit_toolchain.sh"
+source "$HERE/_inherit_toolchain.sh"
 other=""
 for dir in "$MCPP_HOME/registry/data/xpkgs/xim-x-$family"/*; do
     [ -d "$dir" ] || continue

@@ -571,12 +571,12 @@ mcpp::xlings::Env xlings_env(std::string_view projectDir) {
     return env;
 }
 
-// The decided value of `key`: outer nullopt when the decision omits the key.
-std::optional<std::optional<std::string>> decided(const mcpp::xlings::Env& env,
-                                                  std::string_view key) {
-    for (auto const& [k, v] : mcpp::xlings::invocation_env(env))
-        if (k == key) return v;
-    return std::nullopt;
+// The decided entry for `key`; a default entry named "" when the decision omits
+// the key.
+mcpp::xlings::InvocationVar decided(const mcpp::xlings::Env& env, std::string_view key) {
+    for (auto const& var : mcpp::xlings::invocation_env(env))
+        if (var.name == key) return var;
+    return {};
 }
 
 }  // namespace
@@ -584,14 +584,17 @@ std::optional<std::optional<std::string>> decided(const mcpp::xlings::Env& env,
 TEST(XlingsInvocationEnv, GlobalModeIsAnAbsentProjectDirectory) {
     auto global = xlings_env("");
     auto scope = decided(global, "XLINGS_PROJECT_DIR");
-    ASSERT_TRUE(scope.has_value());
-    EXPECT_FALSE(scope->has_value());
-    EXPECT_EQ(decided(global, "XLINGS_HOME"),
-              std::optional<std::optional<std::string>>(global.home.string()));
+    ASSERT_EQ(scope.name, "XLINGS_PROJECT_DIR");
+    EXPECT_FALSE(scope.present);
+    auto home = decided(global, "XLINGS_HOME");
+    ASSERT_EQ(home.name, "XLINGS_HOME");
+    EXPECT_TRUE(home.present);
+    EXPECT_EQ(home.value, global.home.string());
 
     auto project = xlings_env("proj-dir");
-    EXPECT_EQ(decided(project, "XLINGS_PROJECT_DIR"),
-              std::optional<std::optional<std::string>>(project.projectDir.string()));
+    auto projectScope = decided(project, "XLINGS_PROJECT_DIR");
+    EXPECT_TRUE(projectScope.present);
+    EXPECT_EQ(projectScope.value, project.projectDir.string());
 }
 
 TEST(XlingsInvocationEnv, TheProcessEnvironmentIsUnchangedAfterwards) {

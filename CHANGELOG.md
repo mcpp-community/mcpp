@@ -82,11 +82,12 @@ Emscripten 链接产出的是首行为 `#!/usr/bin/env node` 的 JavaScript 启�
   拒绝信息指出包与 feature,并给出满足它的表。依赖自己写的 `[target.<selector>.abi]` 被报告
   (`abi/dependency-table`)且不生效。
 
-### 安装钩子收到已解析的工具链(#613)
+### 安装钩子的环境与 `c++-abi` 的做法(#613)
 
-- 依赖包的安装钩子收到 `MCPP_COMPILER`、`MCPP_CXX_STDLIB`、`MCPP_TARGET`、`MCPP_TARGET_OS`、
-  `MCPP_TARGET_ARCH` 与 `MCPP_TARGET_ENV`,名称与取值同构建程序一致,由同一个函数计算。钩子可以据此拒绝
-  或诊断,但不得把某种变体构建进名称未体现该变体的存储目录。
+- 依赖包的安装钩子收到 `MCPP_TARGET`、`MCPP_TARGET_OS`、`MCPP_TARGET_ARCH` 与 `MCPP_TARGET_ENV`,名称
+  与规则同构建程序一致,由同一个函数计算。`MCPP_COMPILER` 与 `MCPP_CXX_STDLIB` 同样总是写出,但在依赖
+  安装时为空:工具链在依赖图之后才解析,此时没有可陈述的编译器与标准库。每个变量都显式写出,钩子不会读到
+  从父进程继承的值;钩子不得把某种变体构建进名称未体现该变体的存储目录。
 - 从源码构建静态库的包以 `requires = ["mcpp:c++-abi=<stdlib>"]` 声明它所针对的标准库;工具链解析出另一
   实现的工程被拒绝,拒绝信息指出两个实现。docs/06、docs/22 与 docs/32 记录这一做法。
 

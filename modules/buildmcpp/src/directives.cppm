@@ -879,17 +879,21 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     // A named executable's subsystem and entry. `target_directive_error` has
     // refused every value that names no executable, so the conditions below
     // only keep this function total.
-    for (auto [slot, member] : {
-             std::pair{Slot::WindowsSubsystem, &mcpp::manifest::Target::windowsSubsystem},
-             std::pair{Slot::WindowsEntry,     &mcpp::manifest::Target::windowsEntry}}) {
-        for (auto const& entry : d.at(slot)) {
-            auto sep = entry.rfind(':');
-            if (sep == std::string::npos) continue;
-            const auto name = entry.substr(0, sep);
-            for (auto& t : m.targets)
-                if (t.name == name && t.kind == mcpp::manifest::Target::Binary)
-                    t.*member = entry.substr(sep + 1);
-        }
+    for (auto const& entry : d.at(Slot::WindowsSubsystem)) {
+        const auto sep = entry.rfind(':');
+        if (sep == std::string::npos) continue;
+        const auto name = entry.substr(0, sep);
+        for (auto& t : m.targets)
+            if (t.name == name && t.kind == mcpp::manifest::Target::Binary)
+                t.windowsSubsystem = entry.substr(sep + 1);
+    }
+    for (auto const& entry : d.at(Slot::WindowsEntry)) {
+        const auto sep = entry.rfind(':');
+        if (sep == std::string::npos) continue;
+        const auto name = entry.substr(0, sep);
+        for (auto& t : m.targets)
+            if (t.name == name && t.kind == mcpp::manifest::Target::Binary)
+                t.windowsEntry = entry.substr(sep + 1);
     }
 
     // Build-graph nodes. Decoded here rather than at parse time so the cache
@@ -931,70 +935,69 @@ std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payloa
     }
 }
 
-std::string target_directive_error(const mcpp::manifest::Manifest& m, const Directives& d) {
-    struct Field {
-        Slot                              slot;
-        std::string_view                  wire;
-        std::string_view                  key;
-        std::span<const std::string_view> accepted;
-        std::string mcpp::manifest::Target::* member;
-    };
-    const Field fields[] = {
-        {Slot::WindowsSubsystem, "windows-subsystem", "windows_subsystem",
-         mcpp::manifest::kWindowsSubsystems, &mcpp::manifest::Target::windowsSubsystem},
-        {Slot::WindowsEntry, "windows-entry", "windows_entry",
-         mcpp::manifest::kWindowsEntries, &mcpp::manifest::Target::windowsEntry},
-    };
-    for (auto const& f : fields) {
-        std::map<std::string, std::string> stated;   // target name -> value
-        for (auto const& entry : d.at(f.slot)) {
-            auto sep = entry.rfind(':');
-            if (sep == std::string::npos || sep == 0 || sep + 1 == entry.size())
-                return std::format(
-                    "build.mcpp emitted `mcpp:{}={}`, which is not `<target>:<value>`.",
-                    f.wire, entry);
-            const std::string name  = entry.substr(0, sep);
-            const std::string value = entry.substr(sep + 1);
-            if (std::ranges::find(f.accepted, std::string_view(value)) == f.accepted.end()) {
-                std::string list;
-                for (auto a : f.accepted)
-                    list += (list.empty() ? "" : ", ") + std::format("\"{}\"", a);
-                return std::format(
-                    "build.mcpp emitted `mcpp:{}={}`, and \"{}\" is not one of {}.",
-                    f.wire, entry, value, list);
-            }
-            const mcpp::manifest::Target* target = nullptr;
+// One of the two named-target directives; `subsystem` selects the field.
+static std::string named_target_error(const mcpp::manifest::Manifest& m,
+                                      const std::vector<std::string>& entries,
+                                      std::string_view wire, std::string_view key,
+                                      bool subsystem) {
+    std::map<std::string, std::string> stated;   // target name -> value
+    for (auto const& entry : entries) {
+        const auto sep = entry.rfind(':');
+        if (sep == std::string::npos || sep == 0 || sep + 1 == entry.size())
+            return std::format(
+                "build.mcpp emitted `mcpp:{}={}`, which is not `<target>:<value>`.",
+                wire, entry);
+        const std::string name  = entry.substr(0, sep);
+        const std::string value = entry.substr(sep + 1);
+        if (auto list = mcpp::manifest::windows_choice_problem(subsystem, value);
+            !list.empty())
+            return std::format(
+                "build.mcpp emitted `mcpp:{}={}`, and \"{}\" is not one of {}.",
+                wire, entry, value, list);
+        const mcpp::manifest::Target* target = nullptr;
+        for (auto const& t : m.targets)
+            if (t.name == name) { target = &t; break; }
+        if (target == nullptr) {
+            std::string names;
             for (auto const& t : m.targets)
-                if (t.name == name) { target = &t; break; }
-            if (!target) {
-                std::string names;
-                for (auto const& t : m.targets)
-                    names += (names.empty() ? "" : ", ") + t.name;
-                return std::format(
-                    "build.mcpp emitted `mcpp:{}={}`, and package `{}` declares no "
-                    "target named `{}` (its targets: {}).",
-                    f.wire, entry, m.package.name, name, names.empty() ? "none" : names);
-            }
-            if (target->kind != mcpp::manifest::Target::Binary)
-                return std::format(
-                    "build.mcpp emitted `mcpp:{}={}`, and `{}` applies to an executable "
-                    "(`kind = \"bin\"`); target `{}` is not one.",
-                    f.wire, entry, f.key, name);
-            if (const std::string& declared = target->*f.member;
-                !declared.empty() && declared != value)
-                return std::format(
-                    "build.mcpp emitted `mcpp:{}={}`, and mcpp.toml declares "
-                    "`[targets.{}] {} = \"{}\"`. One of the two has to change.",
-                    f.wire, entry, name, f.key, declared);
-            if (auto [it, fresh] = stated.try_emplace(name, value);
-                !fresh && it->second != value)
-                return std::format(
-                    "build.mcpp emitted `mcpp:{}` twice for target `{}`, as \"{}\" and "
-                    "as \"{}\".",
-                    f.wire, name, it->second, value);
+                names += (names.empty() ? "" : ", ") + t.name;
+            return std::format(
+                "build.mcpp emitted `mcpp:{}={}`, and package `{}` declares no "
+                "target named `{}` (its targets: {}).",
+                wire, entry, m.package.name, name,
+                names.empty() ? std::string("none") : names);
         }
+        if (target->kind != mcpp::manifest::Target::Binary)
+            return std::format(
+                "build.mcpp emitted `mcpp:{}={}`, and `{}` applies to an executable "
+                "(`kind = \"bin\"`); target `{}` is not one.",
+                wire, entry, key, name);
+        const std::string& declared =
+            subsystem ? target->windowsSubsystem : target->windowsEntry;
+        if (!declared.empty() && declared != value)
+            return std::format(
+                "build.mcpp emitted `mcpp:{}={}`, and mcpp.toml declares "
+                "`[targets.{}] {} = \"{}\"`. One of the two has to change.",
+                wire, entry, name, key, declared);
+        auto found = stated.find(name);
+        if (found == stated.end())
+            stated.emplace(name, value);
+        else if (found->second != value)
+            return std::format(
+                "build.mcpp emitted `mcpp:{}` twice for target `{}`, as \"{}\" and "
+                "as \"{}\".",
+                wire, name, found->second, value);
     }
     return {};
+}
+
+std::string target_directive_error(const mcpp::manifest::Manifest& m, const Directives& d) {
+    if (auto e = named_target_error(m, d.at(Slot::WindowsSubsystem),
+                                    "windows-subsystem", "windows_subsystem", true);
+        !e.empty())
+        return e;
+    return named_target_error(m, d.at(Slot::WindowsEntry),
+                              "windows-entry", "windows_entry", false);
 }
 
 std::string action_error(const Directives& d) {

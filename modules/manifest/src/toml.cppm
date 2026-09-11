@@ -1199,8 +1199,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         read_list("required_features", t.requiredFeatures);
         // `windows_subsystem` / `windows_entry` (#618). A closed set each, so a
         // misspelling is refused by name rather than rendered as nothing.
-        auto read_choice = [&](const char* key, std::string& out,
-                               std::span<const std::string_view> allowed)
+        auto read_choice = [&](const char* key, std::string& out, bool subsystem)
             -> std::expected<void, ManifestError> {
             auto it = tt.find(key);
             if (it == tt.end()) return {};
@@ -1208,21 +1207,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 return std::unexpected(error(origin, std::format(
                     "targets.{}.{} must be a string", tname, key)));
             const std::string v = it->second.as_string();
-            if (std::ranges::find(allowed, std::string_view(v)) == allowed.end()) {
-                std::string list;
-                for (auto a : allowed)
-                    list += (list.empty() ? "" : ", ") + std::format("\"{}\"", a);
+            if (auto list = windows_choice_problem(subsystem, v); !list.empty())
                 return std::unexpected(error(origin, std::format(
                     "targets.{}.{} = \"{}\" is not one of {}", tname, key, v, list)));
-            }
             out = v;
             return {};
         };
-        if (auto r = read_choice("windows_subsystem", t.windowsSubsystem,
-                                 kWindowsSubsystems); !r)
+        if (auto r = read_choice("windows_subsystem", t.windowsSubsystem, true); !r)
             return std::unexpected(r.error());
-        if (auto r = read_choice("windows_entry", t.windowsEntry,
-                                 kWindowsEntries); !r)
+        if (auto r = read_choice("windows_entry", t.windowsEntry, false); !r)
             return std::unexpected(r.error());
         // An executable's property. A library has no subsystem, and a GUI
         // subsystem on anything a test runner executes is the defect #618
