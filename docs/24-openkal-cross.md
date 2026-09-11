@@ -225,32 +225,83 @@ openkal: 1-2-3          exit 0
 is the weaker claim of the two and is worth stating separately: the first says
 the implementation builds, the second says a program over it runs.
 
-### iOS would share the macOS implementation, and that cannot be claimed yet
+### iOS shares the macOS implementation, and the SDK is located rather than packaged
 
-The same argument applies on Apple's side — iOS and macOS share the Darwin
-kernel, and `openkal-macos` is arch-dispatched the same way — but the argument
-is not evidence. The iPhoneOS and iPhoneSimulator SDKs ship inside Xcode and
-are not redistributable, so the `aarch64-ios` and `*-ios-sim` rows are
-`planned`: there is nothing to build against and therefore nothing to run.
-Declaring support on a structural argument alone is the shape this ecosystem has
-paid for before — a package present in an index is not a package that builds a
-real project — so these rows claim nothing until an SDK is reachable.
+The same argument applies on Apple's side: iOS and macOS share the Darwin
+kernel, the same call numbers and the same calling convention, and
+`openkal-macos` is arch-dispatched the same way. What differs between them is
+the SDK and the deployment-target flag, and both belong to the build tool
+rather than to the implementation — so iOS is one `cfg` line in a manifest and
+no new package.
 
-### Web needs a new implementation, and a different one
+**What was blocked was the SDK, and what unblocked it was asking a smaller
+question.** The iPhoneOS and iPhoneSimulator SDKs ship inside Xcode and are not
+redistributable, which bounds *packaging* them. It does not bound *locating*
+them: `aarch64-macos` has been `verified` on exactly that split since long
+before these rows existed — `xim:llvm` compiles and the machine's macOS SDK is
+found through `xcrun`. The iOS rows take the same split with a second SDK, so
+they pin `llvm@22.1.8` and carry no `sysroot` entry, because that column names a
+package and a located directory is not one.
+
+The consequence for this document is that the rows are no longer a structural
+argument. `openkal-macos` compiles for them, and what a reader needs to know is
+that the SDK is a named host dependency — one of exactly two this platform adds,
+the other being `simctl` — and that its absence is a refusal naming the SDK
+rather than a build that quietly produces a macOS artefact.
+
+### Web needed a new implementation, and `openkal-emscripten` is it
 
 Emscripten is the one of the three that changes the model rather than extending
 it. There is no kernel and there are no system calls to issue: Emscripten
 supplies its own C library over a JavaScript host. An openkal implementation for
 it therefore cannot be written the way `openkal-linux` is — beneath a C library
-— and would have to sit **above** one. The specification permits exactly that
-("an implementation may be built upon a C library, beneath one, or without
-one"), so this is new software rather than a sharing decision, and it is the one
-of the three that is neither done nor blocked.
+— and has to sit **above** one. The specification permits exactly that ("an
+implementation may be built upon a C library, beneath one, or without one"), so
+this was new software rather than a sharing decision.
 
-Until it exists, `wasm32-emscripten` is served the ordinary way: by a payload.
-`xim:emsdk` ships the compiler, the sysroot and a libc++ module surface, so a
-program that uses `import std` builds and runs for the Web today without openkal
-being involved at all — which is what the row's `verified` tier records.
+`openkal-emscripten` is the first implementation in this ecosystem written in
+that direction. That makes the code thin and not easy: a forward and an error
+translation is most of each function, and what it has to get right is the
+places where the C library's vocabulary and openkal's do **not** correspond —
+the granularity that is an alignment and not a page, a monotonic clock whose
+resolution a browser deliberately coarsens, a terminal that exists under node
+and not in a page.
+
+**A partial surface is a conforming one, and the specification says how.**
+Clause 6.2 gives three times, each the earliest at which the information
+exists, and the implementation's three groups get three different treatments:
+
+| group | treatment | the reason |
+|---|---|---|
+| `stream`, `fs`, `time`, `env`, `memory`, `random`, `abort`, `terminal` | provided, forwarding to Emscripten's libc | MEMFS and the JavaScript host serve all of these |
+| `net`, `datagram`, `timeout` | provided, with the capability word reporting what is exercisable | the calls are real and the transport is a WebSocket proxy, so `kal_net_props` claims neither IPv6 nor half-close |
+| `process`, `exec`, `space` | NOT PROVIDED | there is no fork, no exec and no second address space |
+
+The third row is the decision worth stating plainly: **an absent symbol is the
+report.** Measured:
+
+```
+wasm-ld: error: obj/main.o: undefined symbol: kal_process_spawn
+```
+
+which is clause 6.2's second time. Providing `kal_process_spawn` so that it
+returned an error would be the shape the specification forbids — present and
+always failing, which the caller cannot tell from a condition — and it would
+move a fact known at link time to run time.
+
+`openkal.task` is carried by a feature for a reason specific to this platform:
+threads need `-pthread`, which selects a different C library build, a different
+memory model and a different loader contract. Without the feature the
+translation unit is empty and the eight symbols do not exist, which is the same
+treatment the three absent interfaces get. With it they do, and
+`kal_interfaces()` follows the link rather than a name the package invented.
+
+None of this replaces the payload route. `wasm32-emscripten` is still served
+the ordinary way — `xim:emsdk` ships the compiler, the sysroot and a libc++
+module surface, so a program that uses `import std` builds and runs for the Web
+with openkal not involved at all, which is what the row's `verified` tier
+records. openkal is what a program uses when it wants one source above several
+platform interfaces.
 
 ### The table
 
@@ -259,9 +310,9 @@ being involved at all — which is what the row's `verified` tier records.
 | Linux (glibc, musl) | `openkal-linux` | the reference implementation |
 | Android (both ABIs) | `openkal-linux`, unchanged | builds; a program over it ran on an emulator |
 | macOS | `openkal-macos` | on the macOS system-call surface |
-| iOS, iOS simulator | `openkal-macos` would serve it | blocked: the SDK is not redistributable |
+| iOS, iOS simulator | `openkal-macos`, unchanged | Darwin is Darwin; the SDK is located, not packaged |
 | Windows | `openkal-windows` | on Win32 and the object manager |
-| Web (Emscripten) | none | needs an implementation written ABOVE a C library |
+| Web (Emscripten) | `openkal-emscripten` | written ABOVE a C library; twelve of fifteen interfaces |
 
 ## Bare Metal
 

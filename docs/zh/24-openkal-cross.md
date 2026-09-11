@@ -196,27 +196,67 @@ openkal: 1-2-3          exit 0
 `openkal-linux` 自己也能为两个 Android 目标原样编译,这是两条里较弱的那一条,值得
 分开陈述:前者说的是**实现**构建得起来,后者说的是**它上面的程序**跑得起来。
 
-### iOS 会共用 macOS 的实现,而这一条现在还不能声称
+### iOS 共用 macOS 的实现,而 SDK 是被定位的而不是被打包的
 
-同样的论证在 Apple 这一侧成立 —— iOS 与 macOS 共用 Darwin 内核,而 `openkal-macos`
-是按同样方式按架构分支的 —— 但**论证不是证据**。iPhoneOS 与 iPhoneSimulator 的 SDK
-在 Xcode 里且不可再分发,所以 `aarch64-ios` 与 `*-ios-sim` 三行是 `planned`:没有
-东西可以拿来构建,因此也没有东西可以拿来运行。仅凭一个结构性论证就声明支持,是这个
-生态已经付过代价的那种形状 —— 一个在索引里的包不等于一个能构建真实工程的包 ——
-所以在 SDK 可达之前,这三行什么都不声称。
+同样的论证在 Apple 这一侧成立:iOS 与 macOS 共用 Darwin 内核、同一套调用号、同一
+套调用约定,而 `openkal-macos` 是按同样方式按架构分支的。两者之间不同的是 SDK 与
+部署目标标志,而这两样都属于构建工具而不属于实现 —— 所以 iOS 是清单里的一行 `cfg`,
+不是一个新包。
 
-### Web 需要一份新的实现,而且是另一种形状
+**被阻塞的是 SDK,而解开它的是把问题问得更小。** iPhoneOS 与 iPhoneSimulator 的
+SDK 在 Xcode 里且不可再分发,这界定的是**打包**它们。它没有界定**定位**它们:
+`aarch64-macos` 早在这三行存在之前就以完全相同的切分方式是 `verified` —— `xim:llvm`
+负责编译,机器自己的 macOS SDK 通过 `xcrun` 被找到。iOS 三行取的是同一种切分加上
+第二个 SDK,所以它们钉 `llvm@22.1.8` 且不带 `sysroot` 条目:那一列命名的是一个包,
+而一个被定位的目录不是包。
+
+对这份文档的后果是,这三行不再是一个结构性论证。`openkal-macos` 能为它们编译,而
+读者需要知道的是:SDK 是一个具名的宿主依赖 —— 这个平台恰好新增两个,另一个是
+`simctl` —— 并且它的缺失是一次点名 SDK 的拒绝,而不是一次悄悄产出 macOS 产物的
+构建。
+
+### Web 需要过一份新的实现,而 `openkal-emscripten` 就是它
 
 Emscripten 是三者里**改变模型**而不是扩展表格的那一个。那里没有内核,也没有系统
 调用可发:Emscripten 在一个 JavaScript 宿主之上供给它自己的 C 库。所以给它写的
 openkal 实现不可能按 `openkal-linux` 的方式写 —— 落在一个 C 库底下 —— 而必须落在
 一个 C 库**之上**。规范恰好允许这一点(「一个实现可以建立在一个 C 库之上、之下,
-或者不依赖 C 库」),所以这是**新软件**而不是一个共用决定,而它是三者里既没做完也
-没被阻塞的那一个。
+或者不依赖 C 库」),所以这是**新软件**而不是一个共用决定。
 
-在它出现之前,`wasm32-emscripten` 走的是普通那条路:一个载荷。`xim:emsdk` 自带
-编译器、sysroot 和一份 libc++ 的模块面,所以一个用 `import std` 的程序今天就能为
-Web 构建并运行,而 openkal 完全不参与 —— 这正是那一行的 `verified` 层级所记录的。
+`openkal-emscripten` 是这个生态里第一份按那个方向写的实现。那个方向让代码变薄而
+不是变容易:每个函数大体是一次转发加一次错误翻译,而它必须做对的地方,恰好是 C 库
+的词汇与 openkal 的词汇**不对应**的那些地方 —— 一个是对齐而不是页的粒度、一个分辨
+率被浏览器有意变粗的单调时钟、一个在 node 下存在而在页面里不存在的终端。
+
+**一个不完整的面也可以是一个符合规范的面,而规范写明了怎么做。** 6.2 条给出三个
+时刻,每一个都是相应信息最早存在的时刻,而这份实现的三组各取一种处理:
+
+| 组 | 处理 | 理由 |
+|---|---|---|
+| `stream`、`fs`、`time`、`env`、`memory`、`random`、`abort`、`terminal` | 提供,转发到 Emscripten 的 libc | MEMFS 与 JavaScript 宿主服务了其中每一项 |
+| `net`、`datagram`、`timeout` | 提供,由能力字报告哪些可被实际运用 | 调用是真的,而承载它们的是一个 WebSocket 代理,所以 `kal_net_props` 既不声称 IPv6 也不声称半关闭 |
+| `process`、`exec`、`space` | 不提供 | 那里没有 fork、没有 exec,也没有第二个地址空间 |
+
+第三行是值得直说的那个决定:**一个缺席的符号就是那份报告。** 实测:
+
+```
+wasm-ld: error: obj/main.o: undefined symbol: kal_process_spawn
+```
+
+这正是 6.2 条的第二个时刻。提供一个返回错误的 `kal_process_spawn` 会是规范禁止的
+那种形状 —— 存在而永远失败,而调用方无法把它与一个条件区分开 —— 并且会把一个在
+链接期已知的事实挪到运行期。
+
+`openkal.task` 由一个 feature 承载,理由是这个平台特有的:线程需要 `-pthread`,
+而那个开关选定的是另一份 C 库构建、另一个内存模型和另一套加载器契约。不带这个
+feature 时,那个翻译单元是空的,八个符号不存在 —— 与上面三个缺席接口同一种处理。
+带上它时它们存在,而 `kal_interfaces()` 跟随链接本身,而不是跟随一个由包自己发明
+的名字。
+
+以上都不取代载荷那条路。`wasm32-emscripten` 仍然走普通那条路 —— `xim:emsdk` 自带
+编译器、sysroot 和一份 libc++ 的模块面,所以一个用 `import std` 的程序就能为 Web
+构建并运行,而 openkal 完全不参与,这正是那一行的 `verified` 层级所记录的。openkal
+是一个程序想让一份源码落在若干平台接口之上时才会用到的东西。
 
 ### 表
 
@@ -225,9 +265,9 @@ Web 构建并运行,而 openkal 完全不参与 —— 这正是那一行的 `ve
 | Linux(glibc、musl) | `openkal-linux` | 参考实现 |
 | Android(两个 ABI) | `openkal-linux`,原样 | 构建通过;它上面的程序在模拟器上跑过 |
 | macOS | `openkal-macos` | 在 macOS 的系统调用面上 |
-| iOS、iOS 模拟器 | `openkal-macos` 会服务它 | 阻塞:SDK 不可再分发 |
+| iOS、iOS 模拟器 | `openkal-macos`,原样 | Darwin 就是 Darwin;SDK 被定位而不是被打包 |
 | Windows | `openkal-windows` | 在 Win32 与对象管理器上 |
-| Web(Emscripten) | 无 | 需要一份写在 C 库**之上**的实现 |
+| Web(Emscripten) | `openkal-emscripten` | 写在 C 库**之上**;十五个接口里的十二个 |
 
 ## 裸机
 

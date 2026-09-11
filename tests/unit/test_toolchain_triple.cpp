@@ -766,6 +766,62 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
     }
 }
 
+// ─── The iOS deployment target is said in exactly one place ────────────────
+//
+// `-miphoneos-version-min` and `-mios-simulator-version-min` are deliberately
+// NOT emitted. The effective triple carries the version -- Apple's own
+// spelling -- and it reaches both the compile and the link line through
+// `crossTargetFlag`, so a flag would be a second place answering a question
+// the triple already answers. macOS keeps its flag because its own triple is
+// also versioned and the flag was documented as insurance against environment
+// propagation; adding the iOS equivalent would make two mechanisms out of one.
+//
+// THIS IS THAT DECISION'S OWN CRITERION, and it needs one: a requirement
+// folded into another fix disappears when that fix ships, and nothing else in
+// this tree would notice the version silently leaving the triple. It cannot be
+// an end-to-end criterion either -- the SDK gate refuses before the toolchain
+// is resolved, so a host without Xcode never prints the effective triple.
+TEST(Triple, TheIosDeploymentTargetIsCarriedByTheEffectiveTripleAlone) {
+    struct Case { std::string_view canonical, unversioned, versioned; };
+    const Case cases[] = {
+        { "aarch64-ios",     "arm64-apple-ios",
+                             "arm64-apple-ios18.0" },
+        { "aarch64-ios-sim", "arm64-apple-ios-simulator",
+                             "arm64-apple-ios18.0-simulator" },
+        { "x86_64-ios-sim",  "x86_64-apple-ios-simulator",
+                             "x86_64-apple-ios18.0-simulator" },
+    };
+    for (auto const& c : cases) {
+        auto t = parse(c.canonical);
+        ASSERT_TRUE(t.has_value()) << c.canonical;
+        EXPECT_EQ(t->llvm_triple("18.0"), c.versioned) << c.canonical;
+        // AND AN UNSTATED VERSION LEAVES THE SEGMENT ALONE rather than
+        // inventing one. macOS bakes in a floor because its static libc++
+        // archives have one; iOS takes libc++ from the located SDK, so an
+        // unstated version means the SDK's own default -- which clang supplies
+        // for an Apple target and bionic famously does not.
+        EXPECT_EQ(t->llvm_triple(), c.unversioned) << c.canonical;
+
+        // THE `-simulator` SUFFIX COMES AFTER THE VERSION, which is Apple's
+        // order and not the other one. `arm64-apple-ios-simulator18.0` is not
+        // a triple clang accepts, and the two spellings differ only in where
+        // four characters sit.
+        EXPECT_TRUE(t->is_ios()) << c.canonical;
+        EXPECT_EQ(t->is_ios_simulator(),
+                  c.canonical.find("-sim") != std::string_view::npos)
+            << c.canonical;
+    }
+
+    // AND THE DEVICE TRIPLE IS NOT A PREFIX-MATCH AWAY FROM THE SIMULATOR'S.
+    // Anything that compared them by prefix would treat a simulator build as a
+    // device build, which produces an artefact for the wrong platform that no
+    // later step refuses.
+    auto dev = parse("aarch64-ios");
+    auto sim = parse("aarch64-ios-sim");
+    ASSERT_TRUE(dev.has_value() && sim.has_value());
+    EXPECT_NE(dev->llvm_triple("18.0"), sim->llvm_triple("18.0"));
+}
+
 // A CAPABILITY PIN CANNOT BE OVERRIDDEN; A CONVENTION PIN CAN.
 //
 // Asserted exhaustively over the table rather than on examples, because the

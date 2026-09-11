@@ -595,7 +595,104 @@ an argv prefix and the session belongs to a package rather than to the engine:
 ```toml
 [target.x86_64-linux-android]
 runner = ["adb-run"]             # a program from xim:android-platform-tools
+
+[target.aarch64-ios-sim]
+runner = ["simctl-run"]          # a program from xim:apple-simulator-tools
 ```
+
+A runner is an argv prefix and a *session* is not. Running a program on an iOS
+simulator means choosing a device, booting it if it is not booted, waiting for
+the boot, spawning, and returning the program's own exit status; a manifest
+line has no beginning and no end, which is why that work lives in a package.
+
+## The Apple SDKs Are Located, Not Installed
+
+The three iOS rows -- `aarch64-ios`, `aarch64-ios-sim` and `x86_64-ios-sim` --
+are the other shape a platform can take, and they are worth reading beside the
+two SDK toolchains above because they answer the same question differently.
+
+**The compiler is ours; only the SDK is Apple's.** Any sufficiently new clang
+emits arm64 Mach-O for an iOS deployment target, so these rows pin
+`llvm@22.1.8` -- the ordinary payload, the same one `aarch64-macos` uses. What
+cannot be packaged is the iPhoneOS and iPhoneSimulator SDK: it ships inside
+Xcode and is not redistributable. So mcpp **locates** it, through
+`xcrun --sdk <name> --show-sdk-path`, exactly as it has always located the
+macOS SDK.
+
+That is why these rows carry no `sysroot` entry. That column names a package,
+and a located directory is not one.
+
+```bash
+mcpp build --target aarch64-ios        # resolves llvm@22.1.8 + the iPhoneOS SDK
+mcpp build --target aarch64-ios-sim    # resolves llvm@22.1.8 + the Simulator SDK
+```
+
+### The host surface this adds, named and bounded
+
+Two items, both macOS-only, both in the category a proprietary runtime that
+exists only on its own operating system occupies:
+
+| the item | reached through | the permission |
+|---|---|---|
+| the iPhoneOS / iPhoneSimulator SDK | `xcrun` | not redistributable; there is nothing to package |
+| the simulator runtime | `simctl`, via `xim:apple-simulator-tools` | the same |
+
+Everything else is ecosystem: the compiler, the C++ runtime, the linker and the
+packaging. Neither item is reached by a fallthrough -- each is asked for
+deliberately, and its absence is a refusal that names it:
+
+```
+error: target aarch64-ios needs the iphoneos SDK, which this machine does not provide.
+       It is not redistributable, so mcpp LOCATES it rather than installing it:
+       `xcrun --sdk iphoneos --show-sdk-path` must answer, which needs Xcode on
+       macOS (not the Command Line Tools alone -- those ship the macOS SDK only).
+       Check `xcode-select -p`, and note that the compiler is not what is
+       missing: these rows pin `xim:llvm`, which every other Apple row also uses.
+```
+
+The refusal arrives **before** any payload is resolved. An Apple SDK is not
+something a dependency can supply, so there is nothing a later step could learn
+that would change the answer -- and a machine without Xcode should not download
+a compiler before being told the compiler is not what is missing.
+
+### The deployment target
+
+`[build] ios_deployment_target` sits beside `macos_deployment_target`, and the
+two are separate keys for one reason: `"14.0"` is a macOS version and means
+nothing to an iOS SDK. Only one of them can apply to any given target, so they
+share a single slot in the build fingerprint.
+
+```toml
+[build]
+ios_deployment_target = "18.0"
+```
+
+It is carried by the **effective triple** and nowhere else:
+
+```
+Target aarch64-ios     → arm64-apple-ios18.0
+Target aarch64-ios-sim → arm64-apple-ios18.0-simulator
+```
+
+which are Apple's own spellings. No `-miphoneos-version-min` flag is emitted:
+the triple fully determines the platform and the minimum, and a flag would be a
+second place answering a question the triple already answers. Leaving the key
+unset is legal and means the SDK's own default, which clang supplies for an
+Apple target -- unlike Android, where bionic refuses an unversioned triple
+outright.
+
+### The simulator's shape, and its boundary
+
+The simulator is two rows and not a flag on the device row. A simulator build
+has its own SDK, produces an object naming its own platform
+(`LC_BUILD_VERSION` reports `IOSSIMULATOR` rather than `IOS`), and takes a
+different deployment-target segment. Both architectures exist because the
+simulator runs the **host's** architecture: an Apple-silicon machine needs
+`aarch64-ios-sim` and an Intel one needs `x86_64-ios-sim`.
+
+The device row keeps `runner` unset. An artifact cannot be run off an iOS
+device without a signature the developer owns, which is not something a build
+tool can supply.
 
 ## Project-Level Version Pinning
 

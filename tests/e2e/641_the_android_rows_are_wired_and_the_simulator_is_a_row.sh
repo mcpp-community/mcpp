@@ -131,5 +131,97 @@ else
     echo "  ok: min_api_level = 24 is accepted by the manifest"
 fi
 
+# 7. THE iOS ROWS NAME THEIR PAYLOAD, AND IT IS A CONVENTION PIN. The compiler
+#    is ours and only the SDK is Apple's: `xim:llvm` emits arm64 Mach-O for an
+#    iOS deployment target, so the rows pin it exactly as the wasm row pins
+#    emsdk. A capability pin would be wrong here -- `aarch64-macos` has the
+#    same constraint (Darwin needs clang) and is not a capability row -- so the
+#    pin is overridable, which case 8 relies on.
+list=$( "$MCPP" toolchain list --format json 2>/dev/null )
+for target in aarch64-ios aarch64-ios-sim x86_64-ios-sim; do
+    if tr ',' '\n' <<<"$list" | grep -A6 "\"target\": *\"$target\"" \
+       | grep -q "llvm"; then
+        echo "  ok: $target names the llvm payload"
+    else
+        echo "FAIL: $target does not name llvm in toolchain list"
+        tr ',' '\n' <<<"$list" | grep -A6 "\"target\": *\"$target\"" | sed 's/^/    /'
+        fail=1
+    fi
+done
+
+# 8. AND THE SDK IS LOCATED, SO ITS ABSENCE IS A REFUSAL THAT NAMES IT.
+#
+#    THIS CLAIM IS HOST-SHAPED AND BOTH ARMS ARE REAL. The iPhoneOS and
+#    iPhoneSimulator SDKs ship inside Xcode and exist on no other system, so on
+#    a non-Apple host the refusal must arrive and on macOS it must not. A
+#    single-armed check would be a skip on one of them.
+#
+#    IT WAS FIRST WRITTEN AS A macOS CI STEP THAT POINTED `DEVELOPER_DIR` AT A
+#    NONEXISTENT DIRECTORY, and that measured nothing: the build SUCCEEDED,
+#    because `xcrun` ignores an invalid developer directory and falls back to
+#    the recorded one. The predicate was right and the object was wrong.
+#
+#    No payload is needed: the SDK is located before the toolchain is resolved,
+#    which is itself a property worth asserting -- a machine without Xcode used
+#    to download a 700 MB compiler before being told the compiler was not what
+#    was missing. Hence MCPP_NO_AUTO_INSTALL=1 and the explicit override, which
+#    opens the tier gate so that this gate is the one that answers.
+for target in aarch64-ios aarch64-ios-sim; do
+    d="$t/sdk-$target"
+    pkg "$d" "" "[target.$target]" 'toolchain = "llvm@22.1.8"'
+    out=$( cd "$d" && MCPP_NO_AUTO_INSTALL=1 "$MCPP" build --target "$target" 2>&1 ) || true
+    case "$(uname -s)" in
+      Darwin)
+        if grep -q "needs the .* SDK" <<<"$out"; then
+            echo "FAIL: $target refused for a missing SDK on a machine that has one"
+            fail=1
+        else
+            echo "  ok: $target is not refused for its SDK on macOS"
+        fi
+        ;;
+      *)
+        if grep -q "needs the .* SDK, which this machine does not provide" <<<"$out"; then
+            # AND THE MESSAGE CARRIES WHAT A READER ACTS ON: which SDK, the
+            # command that must answer, and that the compiler is not the thing
+            # missing. A refusal that names none of those sends the reader to
+            # the documentation.
+            miss=""
+            grep -q "xcrun --sdk" <<<"$out" || miss="$miss the-xcrun-command"
+            grep -q "Command Line Tools" <<<"$out" || miss="$miss the-CLT-note"
+            grep -q "xim:llvm" <<<"$out" || miss="$miss the-compiler-note"
+            if [ -n "$miss" ]; then
+                echo "FAIL: $target's refusal omits:$miss"
+                fail=1
+            else
+                echo "  ok: $target is refused naming the SDK and what to do"
+            fi
+            # AND IT ARRIVES BEFORE THE PAYLOAD IS RESOLVED.
+            if grep -q "Resolved llvm@" <<<"$out"; then
+                echo "FAIL: $target resolved a payload before refusing for the SDK"
+                fail=1
+            fi
+        else
+            echo "FAIL: $target was not refused for its SDK on a non-Apple host"
+            grep -m3 -E "^error|^ *Resolved" <<<"$out" | sed 's/^/    /'
+            fail=1
+        fi
+        ;;
+    esac
+done
+
+# THE EFFECTIVE TRIPLE IS NOT ASSERTED HERE, AND THE REASON IS CASE 8.
+#
+# `arm64-apple-ios18.0` and `arm64-apple-ios18.0-simulator` are the one place
+# the iOS deployment target is said -- `-miphoneos-version-min` is deliberately
+# not emitted, because a flag would be a second place answering the same
+# question. That decision needs a criterion of its own or it disappears when
+# the thing it was folded into ships.
+#
+# It cannot be that criterion HERE: the SDK gate above refuses before the
+# toolchain is resolved, so the `Target X -> Y` line is never printed on a host
+# without Xcode. The claim therefore lives in
+# tests/unit/test_toolchain_triple.cpp, where `llvm_triple` is asked directly
+# and every host can ask it.
+
 if [ "$fail" -ne 0 ]; then echo "FAIL: 641"; exit 1; fi
 echo "PASS: 641"

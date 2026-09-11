@@ -980,11 +980,29 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
             return 0;
         }
 
-        auto bin = mcpp::toolchain::toolchain_frontend(payload->binDir, pkg);
-        if (!std::filesystem::exists(bin)) {
+        // `payload_frontend` AND NOT `toolchain_frontend(payload->binDir, ...)`.
+        //
+        // This was one of the five sites the `frontendSubdir` note in
+        // mcpp.toolchain.registry records: a caller that composes
+        // `<root>/bin` itself cannot see where the package says its compiler
+        // is. Four were repaired and this one was not, so
+        // `mcpp toolchain install emsdk 6.0.9` fetched the archive correctly
+        // and then looked for `clang++` in `bin/` -- while `em++` is in
+        // `emscripten/`.
+        //
+        // It also picks up the payload's own descriptor, which is the whole
+        // point of having one: the install path and the build path now ask the
+        // same function where the compiler is, so they cannot disagree.
+        auto binR = mcpp::toolchain::payload_frontend(payload->root, pkg);
+        if (!binR) {
+            mcpp::ui::error(binR.error());
+            return 1;
+        }
+        auto bin = *binR;
+        if (bin.empty() || !std::filesystem::exists(bin)) {
             mcpp::ui::error(std::format(
                 "installed package has no known C++ frontend in '{}'",
-                payload->binDir.string()));
+                mcpp::toolchain::payload_frontend_dir(payload->root, pkg).string()));
             return 1;
         }
 

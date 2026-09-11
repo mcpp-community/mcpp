@@ -96,21 +96,78 @@ mcpp build --target aarch64-linux-android    # [target.…] toolchain = "llvm@22
 
 ## iOS
 
-`aarch64-ios`、`aarch64-ios-sim`、`x86_64-ios-sim` 三行在词汇里，都是 `planned`：
+三行：`aarch64-ios`（真机）、`aarch64-ios-sim` 与 `x86_64-ios-sim`（模拟器）。
 
 ```bash
-mcpp build --target aarch64-ios-sim
-# error: target 'aarch64-ios-sim' is registered but not yet supported (planned)
-#        — no toolchain is published for it yet.
+mcpp build --target aarch64-ios        # 真机产物
+mcpp run   --target aarch64-ios-sim    # 模拟器，经由 runner
 ```
 
-阻塞项是**许可**而不是载荷：NDK 是 Apache-2.0、Emscripten 是 MIT，而 iPhoneOS 与
-iPhoneSimulator 的 SDK 在 Xcode 里，两者都不可再分发。这三行今天买到的是一句
-点名那一行的 `tier-planned`，而不是一句假的 `unknown target`。
+**编译器是生态的，只有 SDK 是 Apple 的。** 这三行钉 `llvm@22.1.8` —— 和
+`aarch64-macos` 用的是同一个普通载荷。任何足够新的 clang 都能为一个 iOS 部署目标
+产出 arm64 Mach-O；不可打包的是 iPhoneOS 与 iPhoneSimulator 的 SDK，它在 Xcode 里
+且不可再分发。所以 mcpp **定位**它，经由 `xcrun --sdk <名字> --show-sdk-path`，与
+它一直以来定位 macOS SDK 的方式完全相同。
+
+实测（macos-15，Xcode 16.4，iPhoneOS/iPhoneSimulator 18.5，
+`ios_deployment_target = "18.0"`）：
+
+```
+aarch64-ios      ->  Mach-O 64-bit executable arm64
+                     LC_BUILD_VERSION  platform 2 (IOS)          minos 18.0
+aarch64-ios-sim  ->  Mach-O 64-bit executable arm64
+                     LC_BUILD_VERSION  platform 7 (IOSSIMULATOR) minos 18.0
+mcpp run --target aarch64-ios-sim  ->  1-2-3
+```
+
+`platform 2` 与 `platform 7` 是这里唯一值得盯住的读数：一次构建成功分不开这两者，
+而一个在设备行上报告 `IOSSIMULATOR` 的产物是一个没有任何后续步骤会拒绝的错误产物。
+
+### 部署目标与 runner
+
+```toml
+[build]
+ios_deployment_target = "18.0"
+
+[target.aarch64-ios-sim]
+runner = ["simctl-run"]
+```
+
+部署目标由**有效三元组**承载，别处都不承载 —— `arm64-apple-ios18.0` 与
+`arm64-apple-ios18.0-simulator`，这是 Apple 自己的拼法。不发
+`-miphoneos-version-min`：三元组已经说过了，而一个标志会成为第二个说它的地方。
+
+`simctl-run` 来自 `xim:apple-simulator-tools`，需要先装：
+
+```bash
+xlings install apple-simulator-tools
+```
+
+这一步没有写进清单，而这是一处**限制**而不是一个选择：`deps` 不按目标条件化，
+而把它写在顶层会让这个例子的 Linux 构建依赖一个只为 macOS 存在的包 —— 两条都实测
+过，`mcpp.toml` 里记着那两条消息。
+
+runner 是一个 argv 前缀，而一次**会话**不是：挑一台设备、启动、等待、spawn、把程序
+自己的退出状态返回 —— 清单里的一行没有开始也没有结束，这就是那部分知识住在一个包里
+而不是住在引擎里的原因。
+
+设备行的 `runner` 保持未设：没有开发者自己拥有的签名，一个产物无法在一台 iOS 设备
+上被运行。
+
+### 这台机器上没有 SDK 时
+
+缺失是一次**点名那个 SDK 的拒绝**，而且它发生在任何载荷被解析之前 —— 一台没有
+Xcode 的机器不应该先下载一个编译器，然后才被告知缺的不是编译器：
+
+```
+error: target aarch64-ios needs the iphoneos SDK, which this machine does not provide.
+       ... `xcrun --sdk iphoneos --show-sdk-path` must answer, which needs Xcode on
+       macOS (not the Command Line Tools alone -- those ship the macOS SDK only).
+```
 
 模拟器是**一个目标**而不是一个 runner：它有自己的 SDK、产出自己的对象，取
-`-mios-simulator-version-min` 而真机取 `-miphoneos-version-min`。所以它有自己的
-行，而不是折进设备那一行。
+`-mios-simulator-version-min` 那一段而真机取 `-miphoneos-version-min` 那一段。
+两个架构都在，因为模拟器跑的是**宿主**的架构。
 
 ## 支持矩阵
 
@@ -120,5 +177,7 @@ iPhoneSimulator 的 SDK 在 Xcode 里，两者都不可再分发。这三行今�
 |---|---|---|---|
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | 是，`node` |
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | 是，平台模拟器 |
-| `aarch64-linux-android` | preview | `android-ndk@30.0.16248370` | 否 —— 从 x86_64 宿主没有执行路径 |
-| `aarch64-ios` / `*-ios-sim` | planned | — | 否 |
+| `aarch64-linux-android` | verified | `android-ndk@30.0.16248370` | 是，`qemu-aarch64-static` + 从镜像取出的 bionic |
+| `aarch64-ios` | planned | `llvm@22.1.8` | 否 —— 真机需要开发者自己的签名 |
+| `aarch64-ios-sim` | planned | `llvm@22.1.8` | 是，`simctl-run`（macos-15） |
+| `x86_64-ios-sim` | planned | `llvm@22.1.8` | 否 —— 模拟器跑宿主架构，而那台宿主是 arm64 |

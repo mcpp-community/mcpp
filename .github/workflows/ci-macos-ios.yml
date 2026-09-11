@@ -263,6 +263,31 @@ jobs:
 
           [target.x86_64-ios-sim]
           toolchain = "llvm@22.1.8"
+
+          # D4: THE RUNNER IS AN ARGV PREFIX AND THE SESSION BELONGS TO A
+          # PACKAGE. `simctl-run` comes from `xim:apple-simulator-tools`; it
+          # chooses a device, boots it if it is not booted, waits, spawns, and
+          # returns the program's own exit status. The engine learns nothing
+          # about simulators, which is the boundary it keeps for every other
+          # emulated target.
+          #
+          # The device row keeps `runner` unset: an artefact cannot be run off
+          # an iOS device without a signature the developer owns.
+          #
+          # THE TOOL IS DECLARED AT THE TOP LEVEL HERE AND NOT IN
+          # examples/13, and the difference is which hosts the manifest has to
+          # work on. `deps` is not conditional on a target -- measured:
+          # "[target.aarch64-ios-sim.xlings] does not accept 'deps'" -- and
+          # `xim:apple-simulator-tools` exists for macosx alone, so an
+          # unconditional declaration breaks a Linux build. This fixture is
+          # macOS-only, so it can say it.
+          [xlings]
+          deps = ["xim:apple-simulator-tools"]
+          TOML
+          cat >> /tmp/iostest/mcpp.toml << 'TOML'
+
+          [target.aarch64-ios-sim]
+          runner = ["simctl-run"]
           TOML
           cat > /tmp/iostest/src/main.cpp << 'CPP'
           import std;
@@ -319,21 +344,72 @@ jobs:
             echo "SPAWN-FAILED exit=$?"
           fi
 
+      # D4: `mcpp run` THROUGH THE RUNNER, WHICH IS THE SUPPORTED PATH.
+      #
+      # The step above spawned the artefact by hand, which proves the platform
+      # can run it and not that mcpp can. This repository has a standing note
+      # that publishing and verifying an asset is not the same as being able to
+      # use it through a supported path, and the difference here is a `runner`
+      # a manifest declares and a program a package provides.
+      - name: "D4: mcpp run --target aarch64-ios-sim prints 1-2-3"
+        continue-on-error: true
+        run: |
+          set -x
+          cd /tmp/iostest
+          out=$("$MCPP_DEV" run --target aarch64-ios-sim 2>&1) || true
+          set +x
+          printf '%s\n' "$out" | tail -20
+          if printf '%s\n' "$out" | grep -q '1-2-3'; then
+            echo "RUN-THROUGH-RUNNER-OK"
+          else
+            echo "RUN-THROUGH-RUNNER-FAILED"
+          fi
+
+      # x86_64-ios-sim IS THE THIRD ROW AND THIS RUNNER CANNOT RUN IT.
+      #
+      # The simulator runs the HOST's architecture, so an Apple-silicon machine
+      # has no x86_64 iOS runtime to spawn into. What can be measured here is
+      # the ARTEFACT, which is the claim the row's tier will rest on; a machine
+      # with an Intel host is what would move it further.
+      - name: "x86_64-ios-sim: the artefact, on a host that cannot run it"
+        continue-on-error: true
+        run: |
+          set -x
+          cd /tmp/iostest
+          "$MCPP_DEV" build --target x86_64-ios-sim
+          set +x
+          ART=$(find /tmp/iostest/target/x86_64-ios-sim -name iostest -type f | head -1)
+          file "$ART"
+          otool -l "$ART" | grep -A5 LC_BUILD_VERSION
+
       # THE HOST SURFACE IS BOUNDED, AND ITS ABSENCE NAMES THE SDK. The
       # recorded rule is that a host dependency must be minimal, named, and
       # never a fallthrough -- so the refusal is a claim like any other, and
       # `SDKROOT` pointing at a macOS SDK is the cheapest way to make the iOS
       # SDK unlocatable without breaking the rest of the machine.
       #
-      # AND NO OTHER ROW CHANGES: the same environment builds for the host.
-      - name: "D: the refusal names the SDK, and no other row is affected"
+      # AND NOT BY POINTING `DEVELOPER_DIR` AT NOTHING, WHICH MEASURED NOTHING.
+      #
+      # The first version of this step set `DEVELOPER_DIR=/nonexistent` and
+      # expected the refusal. The build SUCCEEDED: `xcrun` ignores an invalid
+      # developer directory and falls back to the recorded one, so the
+      # environment change did not make the SDK unlocatable. The predicate was
+      # right and the object was wrong -- the claim was never tested.
+      #
+      # The claim now lives where the SDK is genuinely absent, which is every
+      # non-Apple host: `tests/e2e/641` asserts it on Linux and Windows, with
+      # an explicit toolchain override so the tier gate does not answer first
+      # and `MCPP_NO_AUTO_INSTALL=1` so no payload is needed. What is left for
+      # this runner is the other half of the same claim -- that a machine which
+      # DOES have the SDK is not refused -- and that is what the steps above
+      # measure by building.
+      - name: "D: the SDK is located here, which is the other half of the claim"
         continue-on-error: true
         run: |
           set -x
-          cd /tmp/iostest
-          DEVDIR=/nonexistent-developer-dir
-          env DEVELOPER_DIR="$DEVDIR" SDKROOT="" \
-            "$MCPP_DEV" build --target aarch64-ios 2>&1 | tail -12
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphonesimulator --show-sdk-path
           set +x
-          echo "--- and the host row still builds in the same environment ---"
-          env DEVELOPER_DIR="$DEVDIR" "$MCPP_DEV" build 2>&1 | tail -4 || true
+          echo "both SDKs located; the refusal for a machine without them is"
+          echo "asserted by tests/e2e/641 on every non-Apple host"
+          cd /tmp/iostest && "$MCPP_DEV" build --target aarch64-ios 2>&1 | tail -3

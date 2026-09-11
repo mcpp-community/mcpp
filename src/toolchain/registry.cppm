@@ -673,7 +673,25 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
         // no fourth value is invented; what changes is which package answers.
         const auto& lt = spec.target;
 
-        if (lt.os == "emscripten") {
+        // AND THE PAYLOAD THE SPEC NAMED DECIDES BEFORE THE TARGET DOES.
+        //
+        // `emsdk@6.0.9` names a payload. The target is the OTHER way to reach
+        // the same answer -- `--target wasm32-emscripten` with nothing
+        // declared -- and reading only the target meant a spec that named the
+        // payload and no target resolved the generic llvm shape:
+        //
+        //   $ mcpp toolchain install emsdk 6.0.9
+        //     error: installed package has no known C++ frontend in
+        //            '.../xim-x-emsdk/6.0.9/bin'
+        //
+        // The archive was fetched correctly and then looked for `clang++` in
+        // `bin/`, because `frontendSubdir` had been decided by a target that
+        // was not given. `payloadName` is the field `parse_toolchain_spec`
+        // fills from the spelling, and it is the more direct statement of the
+        // two: a spec that names a payload has answered this question.
+        const std::string_view named = spec.payloadName;
+
+        if (named == "emsdk" || lt.os == "emscripten") {
             // `em++` is a `#!/bin/sh` wrapper beside the Python it execs, in
             // `emscripten/` rather than `bin/` -- `bin/` holds the raw clang,
             // which would compile for wasm and then link like an ordinary
@@ -685,7 +703,7 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
             return pkg;
         }
 
-        if (lt.is_android()) {
+        if (named == "android-ndk" || lt.is_android()) {
             // One NDK payload serves every Android arch and API level: the
             // arch arrives as `--target=<arch>-linux-android<api>` on the
             // command line, not as a different package. The host tuple in the

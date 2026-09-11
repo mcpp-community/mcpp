@@ -542,7 +542,92 @@ Emscripten 的产物就是一个 `node` 能跑的程序。对于产物在别处�
 ```toml
 [target.x86_64-linux-android]
 runner = ["adb-run"]             # 来自 xim:android-platform-tools 的一个程序
+
+[target.aarch64-ios-sim]
+runner = ["simctl-run"]          # 来自 xim:apple-simulator-tools 的一个程序
 ```
+
+runner 是一个 argv 前缀,而一次**会话**不是。在一台 iOS 模拟器上运行一个程序意味着:
+挑一台设备、若未启动则启动它、等待启动完成、spawn、并把程序自己的退出状态返回回来。
+清单里的一行没有开始也没有结束,这就是那部分工作住在一个包里的原因。
+
+## Apple 的 SDK 是被定位的,不是被安装的
+
+三条 iOS 行 —— `aarch64-ios`、`aarch64-ios-sim` 与 `x86_64-ios-sim` —— 是一个平台
+可以取的另一种形状,值得与上面两个 SDK 工具链放在一起读,因为它们回答的是同一个
+问题,只是答法不同。
+
+**编译器是我们的;只有 SDK 是 Apple 的。** 任何足够新的 clang 都能为一个 iOS 部署
+目标产出 arm64 Mach-O,所以这三行钉的是 `llvm@22.1.8` —— 那个普通载荷,和
+`aarch64-macos` 用的是同一个。无法打包的是 iPhoneOS 与 iPhoneSimulator 的 SDK:
+它在 Xcode 里且不可再分发。所以 mcpp **定位**它,通过
+`xcrun --sdk <名字> --show-sdk-path`,与它一直以来定位 macOS SDK 的方式完全相同。
+
+这也是这三行不带 `sysroot` 条目的原因。那一列命名的是一个包,而一个被定位的目录
+不是包。
+
+```bash
+mcpp build --target aarch64-ios        # 解析 llvm@22.1.8 + iPhoneOS SDK
+mcpp build --target aarch64-ios-sim    # 解析 llvm@22.1.8 + 模拟器 SDK
+```
+
+### 这条路新增的宿主面,具名且有界
+
+两项,都只在 macOS 上,都落在「一个只存在于它自己那个操作系统上的专有运行时」这一类:
+
+| 项 | 经由 | 被允许的依据 |
+|---|---|---|
+| iPhoneOS / iPhoneSimulator SDK | `xcrun` | 不可再分发;没有东西可打包 |
+| 模拟器运行时 | `simctl`,经由 `xim:apple-simulator-tools` | 同上 |
+
+其余一切都来自生态:编译器、C++ 运行时、链接器与打包。两项都不是回落到的 ——
+每一项都是被有意请求的,而它的缺失是一次点名它的拒绝:
+
+```
+error: target aarch64-ios needs the iphoneos SDK, which this machine does not provide.
+       It is not redistributable, so mcpp LOCATES it rather than installing it:
+       `xcrun --sdk iphoneos --show-sdk-path` must answer, which needs Xcode on
+       macOS (not the Command Line Tools alone -- those ship the macOS SDK only).
+       Check `xcode-select -p`, and note that the compiler is not what is
+       missing: these rows pin `xim:llvm`, which every other Apple row also uses.
+```
+
+这次拒绝发生在**任何载荷被解析之前**。一个 Apple SDK 不是依赖能供给的东西,所以
+没有任何后续步骤能学到会改变这个答案的信息 —— 而一台没有 Xcode 的机器不应该先下载
+一个编译器,然后才被告知缺的不是编译器。
+
+### 部署目标
+
+`[build] ios_deployment_target` 与 `macos_deployment_target` 并列,而两者是两个键
+只有一个理由:`"14.0"` 是一个 macOS 版本号,对一个 iOS SDK 毫无意义。任何一个目标
+上两者只有一个能成立,所以它们共用构建指纹里的同一个槽。
+
+```toml
+[build]
+ios_deployment_target = "18.0"
+```
+
+它由**有效三元组**承载,别处都不承载:
+
+```
+Target aarch64-ios     → arm64-apple-ios18.0
+Target aarch64-ios-sim → arm64-apple-ios18.0-simulator
+```
+
+这是 Apple 自己的拼法。不发 `-miphoneos-version-min` 标志:三元组已经完全决定了
+平台与最低版本,而一个标志会成为第二个回答三元组已经回答过的问题的地方。不写这个键
+是合法的,含义是 SDK 自己的默认值 —— 对一个 Apple 目标,clang 会供给它 ——
+这与 Android 不同,那里 bionic 会直接拒绝一个不带版本的三元组。
+
+### 模拟器的形状与它的边界
+
+模拟器是两行,而不是设备行上的一个标志。一次模拟器构建有它自己的 SDK,产出的对象
+命名它自己的平台(`LC_BUILD_VERSION` 报告 `IOSSIMULATOR` 而不是 `IOS`),并取一个
+不同的部署目标段。两个架构都存在,因为模拟器跑的是**宿主**的架构:一台 Apple 芯片
+的机器需要 `aarch64-ios-sim`,一台 Intel 的需要 `x86_64-ios-sim`。
+
+设备行的 `runner` 保持未设。没有开发者自己拥有的签名,一个产物无法在一台 iOS 设备
+上被运行,而那不是一个构建工具能供给的东西。
 
 ## 项目级版本锁定
 
