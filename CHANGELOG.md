@@ -5,6 +5,88 @@
 
 ## [Unreleased]
 
+## [2026.9.11.4] - 2026-09-11
+
+### iOS 三行:生态编译器与定位到的 SDK
+
+`aarch64-ios`、`aarch64-ios-sim`、`x86_64-ios-sim` 从 `planned` 进入可构建状态,
+钉 `llvm@22.1.8`。编译器来自生态,只有 SDK 来自本机 Xcode:iPhoneOS 与
+iPhoneSimulator SDK 不可再分发,所以 mcpp **定位**它们而不安装
+(`xcrun --sdk <sdk> --show-sdk-path`)。2026-09-11 在 macos-15 runner 上实测:
+
+```
+aarch64-ios      Mach-O 64-bit executable arm64    platform 2 (IOS)           minos 18.0   preview
+aarch64-ios-sim  Mach-O 64-bit executable arm64    platform 7 (IOSSIMULATOR)  minos 18.0   verified
+x86_64-ios-sim   Mach-O 64-bit executable x86_64   platform 7 (IOSSIMULATOR)  minos 18.0   preview
+```
+
+`mcpp run --target aarch64-ios-sim` 经 `runner = ["simctl-run"]` 打印 `1-2-3`。
+`simctl-run` 来自新包 `xim:apple-simulator-tools`,负责选设备、启动、等待与
+`simctl spawn`;引擎不认识模拟器。设备行不设 runner,因为在设备上运行需要开发者
+自己的签名。`x86_64-ios-sim` 停在 `preview`:模拟器运行宿主的架构,而测量用的
+runner 是 Apple silicon。
+
+- 新键 `[build] ios_deployment_target`,由有效三元组携带
+  (`arm64-apple-ios18.0-simulator`),不另发 `-m*-version-min`。
+- SDK 缺席在解析任何载荷**之前**拒绝,拒绝码 `apple-sdk-absent`。没有包能提供
+  不可再分发的 SDK,所以这条拒绝不等待依赖图。
+- Apple 交叉路径在编译行、链接行与 std 模块自己的命令上携带 `--target`、
+  `-isysroot` 与 `--no-default-config`。载荷的 `clang++.cfg` 写的是 macOS SDK,
+  不抑制它,链接会从错误平台的桩库解析 `libc++`。
+- C++ 运行时取自 SDK(`-lc++`)。载荷的 `libc++.a` 为 macOS 构建,ld64 拒绝把它
+  链进 iOS 链接。
+
+### `aarch64-linux-android` 从 `preview` 到 `verified`
+
+执行路径本来就是对的,坏的只是抽取工具:`xim:e2fsprogs` 的 `debugfs` 在任何打开
+文件系统的命令上 SIGFPE,而 `xim:7zip` 直接读取 ext4。`qemu-aarch64-static -L <root>`
+配系统镜像自带的 bionic 运行 mcpp 构建的产物,打印 `1-2-3`,exit 0。
+
+### 载荷描述自身:`.mcpp-toolchain.json`
+
+安装配方在载荷根目录写一份描述(schema 1),引擎读取三个键:`frontend`、
+`platform_floor`、`std_module_defines`。这三件 NDK 专属的事实原先由引擎重新推导,
+于是第二个同类 SDK 意味着修改引擎而不是发布一个包。
+
+- 缺席即兼容:没有描述的载荷,行为与之前完全相同。
+- 存在但格式错误则拒绝,并点名该文件。
+- `frontend` 按字符串校验(相对路径、`/` 分隔、无 `.` 或 `..` 分量、无盘符)。
+  `std::filesystem::path("/usr/bin/g++").is_absolute()` 在 Windows 上为 false,
+  按路径类型判断会让一个包在 Windows 上选中宿主编译器。
+- 它不是通用 flag 通道:`std_module_defines` 的每一项必须是 define 名。
+
+`xim:android-ndk` 已写出这份描述。
+
+### 修复
+
+- 撤回 `ndk` 别名。它能被解析,随后又被能力钉拒绝;唯一拼写是索引使用的
+  `android-ndk`。
+- `mcpp toolchain install emsdk` 与 `mcpp toolchain install android-ndk` 此前从未
+  成功:安装路径自行拼接 `<root>/bin`,且 `to_xim_package` 读取目标而不是 spec 点名
+  的载荷。
+- `em++` 旁边的 C 编译器被推导成 `em`。推导改为表驱动:`g++` 对应 `gcc`,`em++`
+  对应 `emcc`,其余去掉 `++`。
+- `host_can_serve` 判断的是 `os == "macos"`,于是 iOS 行在 macOS 上从
+  `toolchain list` 消失,在 Linux 上又因错误的理由出现。
+- runner 程序的查找在 `bin/` 之后加入载荷根目录,`xim:7zip` 即是这种布局。
+- iOS 的 std 模块命令对 SDK 路径加引号。Xcode 安装在含空格的路径下时,原先只有
+  模块预编译会失败。
+
+### CI
+
+- `ci-macos-ios` 的 `ios-engine` 是门禁:三个产物的架构、`LC_BUILD_VERSION` 的
+  platform 与 minos 按整值比较,空读数判为失败;`mcpp run --target aarch64-ios-sim`
+  必须退出 0 且输出中有 `1-2-3` 这一行。前提探针只在手动触发时运行。
+- `check_target_tiers.py` 把层级表与五份文档对照,单元测试里的层级断言也在其中。
+- 目标矩阵增加 `apple-sdk-absent`,iOS 行只在 `macos-arm64` 上有期望值。
+
+### 生态
+
+- `mcpplibs/openkal-emscripten` 0.1.0:第一个写在 C 库之上的 openkal 实现。一致性
+  套件 86 项成立、0 项不成立、13 项未观测;缺席的接口组在链接期以符号名失败。
+- `openxlings/xim-pkgindex`:`android-system-image` 改用 `xim:7zip`,`android-ndk`
+  写出描述文件,新增 `apple-simulator-tools`。
+
 ## [2026.9.11.3] - 2026-09-11
 
 ### `wasm32-emscripten` 从 `planned` 到 `verified`
