@@ -531,3 +531,119 @@ refuted for every build the vendor manifest currently serves, measured across
 all four Linux host entries rather than the pinned one. So both remaining
 platform rows are executable on an x86_64 Linux runner with no device and no
 virtualization, which is what a CI lane needs.
+
+## 9. Ecosystem sign-off
+
+Written after the work landed, across four repositories, against what shipped
+rather than against the plan. The question this section answers is not "is each
+change correct" -- section 8 and the tests answer that -- but "does the
+ecosystem hold together with these changes in it".
+
+### 9.1 The one thing that went wrong twice, in two repositories
+
+A check that asks a **proxy** question refuses correct output, and it did so
+twice in one day in two repositories:
+
+* `mcpp-plugins` CI refused a correct MSI. WiX 6 ran with no warnings and
+  produced 32768 bytes for a 114688-byte program; the floor was
+  `size > exesize / 2`, and its own comment admitted the ratio was invented.
+  32768 is what a stripped hello-world looks like after a cabinet has had it.
+* The same repository had already done this with a 16 KB AppImage bound
+  refusing a correct 14999-byte bundle.
+
+Both are now direct questions. The AppImage is **run** and its output asserted;
+the MSI is **installed** (`msiexec /a`) and the extracted program compared byte
+for byte. The pattern to carry forward: when a check reasons "X should be
+roughly as large as Y", the artifact can almost always be opened instead.
+
+### 9.2 The one thing that went wrong twice in the same change
+
+`#599` was fixed by reasoning about which shard runs `233`, and the answer was
+"whichever one the round-robin puts it in" -- so both Linux shards got the
+submodules. `233` runs in every job that invokes the whole suite, of which
+there are **three**. The macOS lane caught it, which is the same shape as the
+defect being fixed: a rule reasoned about against one object and applied to
+all of them.
+
+The correction was to **enumerate**: the three unfiltered
+`bash tests/e2e/run_all.sh` jobs are named, and the two jobs that invoke the
+suite with a filter or name tests directly are named as not needing it. An
+enumeration can be re-checked; a piece of reasoning about sharding cannot.
+
+### 9.3 What the ecosystem rule turned out to cost, and what it did not
+
+The rule is the user's: every tool and every library comes from the ecosystem,
+and anything missing is added until the loop closes. Applied to the Android
+and Web payloads it cost **one new payload** and otherwise only declarations:
+
+| escape | closed by | new package |
+|---|---|---|
+| host `debugfs` | `xim:e2fsprogs` | no -- already in the index |
+| host `libX11` chain (6 libraries) | declared `deps` | no -- all six already there |
+| host `python3` for `em++` | `xim:python@>=3.12` | no, but **aarch64 payload added** |
+| `/dev/kvm` | nothing | it is a kernel device |
+
+The interesting entry is the third. `xim:python` was x86_64-only, and that was
+the *stated reason* `xim:emsdk` could not declare an interpreter -- an argument
+that was true when written and was an argument for adding the missing payload
+rather than for depending on the host. Adding it closed the loop for both
+arches. The general form: a dependency declined because the ecosystem cannot
+serve it is a request for a package, not a licence to use the host.
+
+`/dev/kvm` is the boundary the rule has, and stating where a rule stops is part
+of stating the rule. A test now asserts it is the **only** remaining warning in
+that recipe, so a second one cannot appear quietly.
+
+### 9.4 Where the ecosystem rule is overruled, and by what
+
+By the licence, and this is the second time the same framework decided a
+packaging question. `xim:iphoneos-sdk` carries no CN mirror because a `CN`
+entry would mean xlings-res holds a copy of Apple's SDK. The four Android
+packages reach the same conclusion from the same field -- all four declare
+`licenses = {"Android Software Development Kit License Agreement"}` -- and keep
+one upstream URL each. `xim:emsdk` (MIT / NCSA) and `xim:python` (PSF) are
+mirrored because their licences permit it.
+
+So the rule composes as: **the ecosystem supplies what it may, and the licence
+says what it may.** A recipe that declines a mirror should say which of the two
+reasons applies, because a reader who cannot tell "not permitted" from "not
+done yet" will eventually do the wrong one.
+
+The cost of getting this order wrong is asymmetric and worth recording: a
+mirror that should not exist cannot be withdrawn. Three objects were uploaded
+to GitCode before the licence was checked, GitCode assets cannot be deleted,
+and the only available remedy is that no recipe references them. The check is
+cheap and comes first.
+
+### 9.5 The cross-repository order, re-derived from what happened
+
+    mcpp engine  ──►  2026.9.11.2   the only thing on the critical path
+        │
+        ├──►  xim payloads          independent; merged first
+        │
+        └──►  mcpp-plugins          pins a RELEASE, so it cannot precede one
+                  │
+                  └──►  mcpp-index  needs the plugins tag's sha256
+
+This was already written in the distribution record's section 11.10, and the
+release cycle confirmed it in the sharpest possible way: `mcpp-plugins` #16 has
+Linux and Windows green and macOS red on `error: cannot package the Mach-O
+program`, which is precisely the defect 2026.9.11.2 fixes. The dependency is
+not a convention -- the red lane *is* the dependency.
+
+### 9.6 What is still open, stated rather than implied
+
+* **The four target rows.** `wasm32-emscripten`, `aarch64-ios`,
+  `aarch64-linux-android` and `x86_64-linux-android` remain `planned`. Both
+  execution routes are now measured -- `em++` compiles and links `import std`
+  and `node` runs the result; `qemu-aarch64 -L <extracted system image root>`
+  executes the default dynamic Android configuration -- and both payloads are
+  published. What remains is engine work of the same size as the distribution
+  batch: toolchain resolution for two drivers whose target is fixed by their
+  payload, an implicit `.wasm` output on the link edge, `runner` defaults per
+  row, 48 matrix cells, and a CI lane per row. That is the next PR, not a
+  loose end in this one.
+* **`xim:wix`** is a legitimate gap with a known shape: MS-RL, a NuGet flat
+  container, needing `xim:dotnet`. Version 6 and not 7, because 7 refuses to
+  run without an out-of-band licence acceptance -- a package pinning it would
+  install a tool that cannot work.
