@@ -312,6 +312,8 @@ package -- no new mechanism, again.
 | R9 | `mcpp pack --format ipa` | a `dist-ipa` member: zip `Payload/<Name>.app/`, after `dist-apple` and `rcodesign` | it needs NO new tool. Every other link is already in the ecosystem or one member away, so iOS PACKAGING closes entirely -- what does not close is the credential and the runtime |
 | R10 | `--format dmg` and `--format pkg` | recorded as gaps with a known shape, not attempted | each needs a *creator* as well as a signer (`libdmg-hfsplus`; `xar`), both open source and neither measured here |
 | R11 | the macOS rows' runner | Darling recorded as an unmeasured candidate | GPL-3.0, active, and it REIMPLEMENTS Darwin's libraries rather than redistributing them, so unlike the iOS image it carries no licence blocker. A row does not move on a plausible mechanism, so this is a candidate and not a plan |
+| R12 | real-device run for both platforms | `xim:android-platform-tools` (have) and a new `xim:pymobiledevice3`, each named by a `runner` program | neither needs Apple or Google software. It supersedes the simulator route rather than complementing it: a device brings its own OS, so the only thing crossing the boundary is a signature the developer already owns |
+| R13 | the iOS image | a LOCATOR package, never a re-host, gated on R4 | an image in a public index is redistribution of Apple's OS whatever it is labelled. The locator is the tier `iphoneos-sdk.lua` already documents, and with R12 in place no image is on the critical path at all |
 
 ## 7. User-facing experience, which is the test of all of the above
 
@@ -540,7 +542,95 @@ it is a (b)-category proprietary runtime, and `xcrun simctl spawn` is an argv
 prefix -- so §5's model covers it with no new mechanism, on a macOS host, once
 R1 gives the simulator a row.
 
-### 10.5 Darling is a candidate for the macOS rows, and is recorded as unmeasured
+### 10.5 Real devices close for BOTH platforms, and that is a better answer than an emulator
+
+Asked directly, and it turns out to be the strongest result in this section:
+**running on real hardware needs no Apple or Google software on either
+platform.**
+
+| platform | what installs and launches | licence | state |
+|---|---|---|---|
+| Android | `adb push` + `adb shell` | Apache-2.0 | **already packaged** -- `xim:android-platform-tools`, installs on all three hosts |
+| iOS | [`pymobiledevice3`](https://github.com/doronz88/pymobiledevice3) | GPL-3.0 | pure Python 3, no compiled extensions, Linux / Windows / macOS; 2736 stars, last push 2026-09-10 |
+| iOS | [`libimobiledevice`](https://github.com/libimobiledevice/libimobiledevice) | LGPL-2.1 | the C library it was modelled on; 8177 stars, last push 2026-06-10 |
+
+`pymobiledevice3` describes itself as requiring no Xcode, working with the
+system `usbmuxd`, and covering app management plus iOS 17+ developer tooling
+over a tunnel. `libimobiledevice` states it needs no jailbreak. Neither
+requires a Mac.
+
+So the iOS row's execution story is not "needs a device on a Mac". It is:
+
+    build        xim:llvm + xim:iphoneos-sdk                    closed
+    bundle       dist-apple  (--format app)                     closed
+    sign         xim:rcodesign                                   closeable, R7
+    package      dist-ipa    (--format ipa)                      closeable, R9
+    deploy+run   xim:pymobiledevice3                             closeable, R12
+    ------------------------------------------------------------------------
+    entitlement  a provisioning profile and a signing identity   NOT closeable
+
+**Only the last line does not close, and it is a credential rather than a
+tool.** Installing on a non-jailbroken device requires an Apple Developer
+provisioning profile; `pymobiledevice3` can install a signed `.ipa` and cannot
+conjure the entitlement. That is category (c), and no package manager closes a
+credential -- which is the same boundary a developer already lives with when
+using Xcode.
+
+That is a materially better position than the simulator route, and it is worth
+stating why: the simulator is blocked by a **licensed image** that cannot be
+redistributed, while a real device supplies its own OS and the only thing
+crossing the boundary is a signature the developer already owns.
+
+### 10.6 Where a device session lives: the runner program absorbs deployment
+
+§5 concluded that a device session is a runner PROGRAM in a `xim:` package,
+named by an argv-prefix `runner`. Deployment does not need a fourth verb, and
+the reason is that `adb push && adb shell` is one operation from mcpp's side:
+
+    mcpp run --target aarch64-linux-android
+      -> runner = ["mcpp-android-device-run"]     a xim package's program
+         which pushes, executes, collects the exit code and stdout, tears down
+
+    mcpp run --target aarch64-ios
+      -> runner = ["mcpp-ios-device-run"]         a xim package's program
+         which installs the signed .ipa, launches it, streams the log, collects
+
+So both mechanisms are used, each for what it is:
+
+    plugin   produces the artefact        dist-ipa, dist-apple  (build time)
+    package  deploys and runs it          the runner program    (run time)
+    engine   names the runner             the `runner` key      (already exists)
+
+And the ordering is a real dependency rather than a convention: the iOS device
+runner has nothing to install until `dist-ipa` has produced a signed file, so
+R9 precedes R12.
+
+### 10.7 The iOS image: a locator, not a re-host
+
+Adding an iOS kernel and root filesystem to a public index would be
+redistributing Apple's operating system, and a "temporary, test-only, disabled
+later" label does not change that -- anyone resolving the index would install
+it. This differs from the Android decision earlier in this document in a way
+worth stating precisely: there, Apache-2.0 licence files were verified INSIDE
+the archives and clause 3.5 genuinely applies; here there is no
+open-source component to invoke.
+
+What serves the same purpose legitimately is the third tier
+`pkgs/i/iphoneos-sdk.lua` already documents, and R4's `@system`
+generalisation is the engine half of it:
+
+    a LOCATOR package records where an image the user already owns lives.
+    Nothing is re-hosted; the index carries a path and a probe, not bytes.
+
+That is the `msvc@system` shape, and it is why R4 matters beyond iOS: the
+engine currently has no spelling for "this row's system is host-located",
+so the locator tier is unreachable even though the recipe describes it.
+
+And it is worth noting what the locator would be FOR. With R12 in place, a
+simulator or an emulated image is not on the critical path at all -- a real
+device is the supported route, and it needs no image from anyone.
+
+### 10.8 Darling is a candidate for the macOS rows, and is recorded as unmeasured
 
 [Darling](https://github.com/darlinghq/darling) is a macOS compatibility layer
 for Linux -- GPL-3.0, actively developed (last push 2026-09-06). It reimplements
@@ -558,7 +648,7 @@ not move on a plausible mechanism. What it would be, if it worked, is an
 ordinary `runner` argv prefix supplied by a `xim:` package -- the same shape as
 `qemu-user-aarch64`.
 
-### 10.6 Genuinely host-bound, and there are exactly three
+### 10.9 Genuinely host-bound, and there are exactly three
 
 1. **`/dev/kvm`** -- a kernel facility. No package ships a kernel feature, and
    group membership is a machine's configuration. This is why it is the only
@@ -573,7 +663,7 @@ ordinary `runner` argv prefix supplied by a `xim:` package -- the same shape as
    is never a package, and `rcodesign` can drive the submission but cannot
    supply the account.
 
-### 10.7 The rule that falls out
+### 10.10 The rule that falls out
 
     A host dependency is legitimate only when the thing needed is
       (a) a kernel facility,
