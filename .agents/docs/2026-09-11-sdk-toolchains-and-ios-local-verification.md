@@ -484,24 +484,187 @@ two `cfg` lines in `E4b`'s example.
 Each claim below fails when its subject is removed, which is the only reason to
 write it down.
 
-| claim | criterion |
-|---|---|
-| A: the device row runs | qemu-user run in CI on a Linux runner, asserting `1-2-3` and exit 0; the extraction is the packaged 7zip, not a host tool |
-| B: one spelling | `toolchain = "ndk@…"` is refused AT PARSE with "unknown toolchain", not by the capability gate |
-| C: the engine stops knowing | delete `ndk_host_tag()`'s call site and the build still resolves, because the descriptor answered; and a malformed descriptor is refused naming the file |
-| C: no flag day | a payload with no descriptor resolves exactly as today -- asserted against the released android-ndk |
-| D: iOS builds | macOS runner, `xim:llvm` plus the located SDK, artefact is Mach-O arm64 with the iOS platform in `LC_BUILD_VERSION` |
-| D: the simulator runs | macOS runner, `mcpp run --target aarch64-ios-sim` prints `1-2-3` |
-| D: the host surface is bounded | on a macOS runner with `xcode-select` pointing nowhere, both iOS rows fail with a message naming the SDK -- and no other row changes |
-| E1: Android shares the implementation | merged and green against the RELEASED engine: both ABIs build, objects name no C library symbol, and a program over openkal alone ran on an emulator |
-| E2: iOS reuses it | `openkal-macos` compiles for the three iOS rows on a macOS runner, and its objects name no C library symbol -- the same check the Android leg applies, against a third libc |
-| E3: the Web implementation conforms | the conformance suite passes for the groups it provides; and a program using `kal_process_spawn` fails at LINK naming the symbol, which is the criterion that the absent groups are absent rather than present-and-failing |
-| E4: the examples build | `examples/portable` builds for the host and for all five platforms it names -- it currently builds for NONE, which is why this is a criterion and not an assumption |
+| claim | criterion | measured |
+|---|---|---|
+| A: the device row runs | qemu-user run in CI on a Linux runner, asserting `1-2-3` and exit 0; the extraction is the packaged 7zip, not a host tool | yes -- and the packaged tool is `xim:7zip`, not `xim:e2fsprogs`, whose `debugfs` SIGFPEs on every filesystem-opening command |
+| B: one spelling | `toolchain = "ndk@…"` is refused AT PARSE with "unknown toolchain", not by the capability gate | yes, with an A/B: re-adding the alias turns the assertion red |
+| C: the engine stops knowing | delete `ndk_host_tag()`'s call site and the build still resolves, because the descriptor answered; and a malformed descriptor is refused naming the file | yes -- a descriptor naming `oddly/named/clang++` resolved there, a path no engine derivation produces; a non-string `platform_floor` was refused naming the file and the key |
+| C: no flag day | a payload with no descriptor resolves exactly as today -- asserted against the released android-ndk | yes, against the installed r30 payload: with the file removed the resolution line and the effective triple are byte-identical |
+| C: the floor and the defines travel | not in the original list, and each needs its own reading or it is carried by the frontend's | yes -- `platform_floor = "26"` gave `…-android26` while `meta/platforms.json` says 21; an added define appeared in the std module's command AND in its cache identity |
+| D: iOS builds | macOS runner, `xim:llvm` plus the located SDK, artefact is Mach-O arm64 with the iOS platform in `LC_BUILD_VERSION` | yes -- `platform 2` (IOS) for the device and `platform 7` (IOSSIMULATOR) for both simulator rows, `minos 18.0`, `sdk 18.5` |
+| D: the simulator runs | macOS runner, `mcpp run --target aarch64-ios-sim` prints `1-2-3` | yes, through the `runner` and `xim:apple-simulator-tools`; and separately under a bare `simctl spawn`, which is what proved a bundle is not needed |
+| D: the host surface is bounded | on a macOS runner with `xcode-select` pointing nowhere, both iOS rows fail with a message naming the SDK -- and no other row changes | THE CRITERION WAS WRONG AND WAS REPLACED. `DEVELOPER_DIR=/nonexistent` did not make the SDK unlocatable -- `xcrun` ignores an invalid developer directory and falls back -- so the iOS build SUCCEEDED and the step asserted nothing. The claim now lives where the SDK is genuinely absent: e2e 641 on every non-Apple host, with the refusal required to name the SDK, the `xcrun` command, the Command-Line-Tools note and the compiler, and to arrive before any payload is resolved |
+| E1: Android shares the implementation | merged and green against the RELEASED engine: both ABIs build, objects name no C library symbol, and a program over openkal alone ran on an emulator | yes (openkal-linux 0.12.0) |
+| E2: iOS reuses it | `openkal-macos` compiles for the three iOS rows on a macOS runner, and its objects name no C library symbol -- the same check the Android leg applies, against a third libc | the `cfg` line is in `examples/portable`; the compile leg belongs to openkal-macos's own CI and is not in this batch |
+| E3: the Web implementation conforms | the conformance suite passes for the groups it provides; and a program using `kal_process_spawn` fails at LINK naming the symbol, which is the criterion that the absent groups are absent rather than present-and-failing | yes -- 86 held, 0 did not hold, 13 not observed; and `wasm-ld: error: obj/main.o: undefined symbol: kal_process_spawn` |
+| E4: the examples build | `examples/portable` builds for the host and for all five platforms it names -- it currently builds for NONE, which is why this is a criterion and not an assumption | host, both Android ABIs: yes. The Web leg resolves once `openkal-emscripten` is in the index, which is the ring this ecosystem cannot untangle: the example is always second |
 
-**One premise needs measuring before D is scheduled**: that GitHub's macOS
-runners ship both an iOS SDK and a bootable simulator. If they ship the SDK but
-no simulator, D1/D2 are still verifiable in CI and D4 is a local-only claim,
-which changes the tier the sim rows can reach and nothing else in this design.
+**The premise held.** A macos-15 runner ships Xcode 16.4 with both located SDKs
+at 18.5 and five bootable iOS simulator runtimes (18.5, 18.6, 26.0, 26.1,
+26.2). So D1, D2 and D4 are all CI claims and none of them is local-only.
+
+**Two things the measurement changed about this design.**
+
+`simctl-run` is a boot-and-spawn wrapper and not a bundle builder. This record
+said a bare Mach-O "cannot be launched by `simctl`, so the program wraps it in
+a minimal bundle" -- true of `simctl launch`, which needs an installed `.app`,
+and false of `simctl spawn`, which takes an executable. Measured against an
+artefact with no bundle, no signature and no `Info.plist`: `1-2-3`, exit 0.
+
+`openkal.task` on Emscripten is behind a feature and cannot yet be exercised
+end to end. `-pthread` selects a different C library build, memory model and
+loader contract, so it is a property of the WHOLE LINK -- and mcpp has no
+channel for a flag that applies to a whole dependency graph, so the
+specification package's own modules compile without it and the module cache
+refuses the mix. The interface is therefore absent at link rather than present
+and failing, which is what clause 6.1 asks for, and the gap is recorded in
+openkal-emscripten's README as the engine change it is.
+
+## What the implementation found, and what each finding is about
+
+The plan's self-review is above and was written before any of this was built.
+This section is the review of the implementation, and its unit is a measured
+defect rather than an angle: each row is something that was wrong, the reading
+that made it visible, and the class it belongs to. Nineteen, of which nine are
+in mcpp itself.
+
+### A decision written in several places, all but one repaired
+
+| finding | reading |
+|---|---|
+| `mcpp toolchain install emsdk` and `… android-ndk` had never worked | `error: installed package has no known C++ frontend in '.../xim-x-emsdk/6.0.9/bin'` |
+
+`payload_frontend`'s own comment records that five callers composed
+`<root>/bin` themselves and so could not see where the package says its
+compiler is. Four were repaired when that function was written; the install
+path was not, so both SDK payloads fetched correctly and then looked for
+`clang++` in a directory neither keeps it in. The install and the build now ask
+one function, which is what makes them unable to disagree.
+
+### One question with two inputs, of which one was read
+
+| finding | reading |
+|---|---|
+| the same install failure, second cause | `emsdk@6.0.9` resolved the generic llvm shape |
+
+`to_xim_package` decided the payload from the TARGET. That is right for the
+spelling a build uses and there is no target at all in an install, so a spec
+that NAMED the payload was answered by a field nobody had filled. `payloadName`
+now decides first and the target remains the answer for a spec that names no
+payload -- which is the escape-hatch spelling the capability gate has to be
+able to refuse, so both inputs are still read and neither is guessed.
+
+### A special case that was a table
+
+| finding | reading |
+|---|---|
+| `em++`'s C compiler became `em` | `/bin/sh: 1: .../emscripten/em: not found` |
+
+Dropping `++` is clang's rule and was being applied as the rule; `g` was
+already a special case for exactly this reason. The property is "this driver
+names its C compiler with a different word", and a table can be read as the
+list of drivers for which that is true. Found by the conformance suite's one C
+translation unit -- the only C in this ecosystem's openkal work.
+
+### A value that acquires the receiving layer's semantics
+
+| finding | reading |
+|---|---|
+| a descriptor naming `/usr/bin/g++` passed the guard on Windows | `path("/usr/bin/g++").is_absolute()` is FALSE there |
+
+Windows calls that path root-relative: it has a root directory and no root
+name. `payloadRoot / "/usr/bin/g++"` then resolves to `C:/usr/bin/g++` -- a
+host compiler chosen by a package, on the one host where the guard did not
+look. The field is one shape on every host, so it is validated as a STRING and
+positively. Asking a path type whether it is absolute is asking a question
+whose meaning the host supplies.
+
+### A branch selected by the host, serving a target it gets wrong
+
+Three findings, one class, and the class is the sharpest thing in this batch.
+`flags.cppm` and `hostflags.cppm` both branch on `needs_explicit_libcxx` --
+which asks where mcpp was built. That was the same question as "which platform
+is this for" while macOS was the only Apple target mcpp could serve.
+
+| finding | what it would have produced |
+|---|---|
+| the macOS link branch carried no `--target` at all | a macOS binary from objects compiled as iOS |
+| the Mach-O distribution cell chose the self-contained contract | a link of the payload's macOS `libc++.a` into an iOS artefact, which ld64 refuses |
+| `hostflags` emitted `-mmacosx-version-min` whenever the host was macOS | `error: invalid argument '-mmacosx-version-min=14.0' not allowed with 'arm64-apple-ios18.0'` |
+
+The note two hundred lines below the first one already said "ONLY THE THIRD
+BRANCH EVER CONSUMED `link_toolchain_flags`, WHICH IS WHERE `--target=`
+LIVES" -- correct, and read as a statement about openkal rather than as a
+statement about every target that branch would ever serve.
+
+### A per-machine artefact read before the command line
+
+| finding | reading |
+|---|---|
+| an iOS-simulator link with the right `-isysroot` used the macOS SDK | `ld64.lld: error: .../MacOSX.sdk/usr/lib/libc++.tbd(...) is incompatible with arm64 (iOS Simulator18.0.0)` |
+
+`post_install` writes the located macOS SDK into the payload's `clang++.cfg` so
+that a native build is deterministic, and that file is read for search purposes
+before the command line. An Apple cross therefore has to suppress it, which
+mcpp's cross path already did and a hand-written probe did not. The probe was
+wrong and the engine was right, and finding out which took one CI run.
+
+### A criterion whose object was wrong
+
+| finding | reading |
+|---|---|
+| the host-surface claim measured nothing | with `DEVELOPER_DIR=/nonexistent`, the iOS build SUCCEEDED |
+
+`xcrun` ignores an invalid developer directory and falls back to the recorded
+one, so the environment change did not make the SDK unlocatable. The predicate
+was right and the object was wrong -- the class this repository records most
+often. The claim now lives where the SDK is genuinely absent, which is every
+non-Apple host, and it asserts four things about the message plus that the
+refusal arrives before any payload is resolved.
+
+### A fifth copy of a table that a checker covered four of
+
+| finding | reading |
+|---|---|
+| `test_toolchain_triple.cpp` asserted `preview` after the row and four documents said `verified` | the suite went red; `check_target_tiers.py` said "OK: 29 target tiers agree across 4 documents" |
+
+A literal in a test is in neither the engine's table nor the documents, so a
+checker over documents cannot see it. The test's tier claims are now one-line
+pairs -- a shape the checker can read -- and it reads the test file as a fifth
+document. Removing the fix makes the checker fail, which is the only reason to
+add one.
+
+### And the platform refused two mechanisms outright
+
+`openkal-emscripten` is where the specification met a platform that says no
+rather than differently.
+
+| finding | reading |
+|---|---|
+| `.init_array` with `(argc, argv, envp)` | `wasm-ld: error: constructor functions cannot take arguments` |
+| `EM_ASM` using `stringToUTF8` into a `_malloc` buffer | `Aborted(malloc() called but not included in the build)` |
+| `handle.h` copied from openkal-linux | `handle.h:22: warning: shift count >= width of type` |
+| `kal_node_info::self_size` ignored | `DID NOT HOLD an enquiry writes no more of the structure than the caller stated` |
+
+The first is not a calling-convention difference to be careful about -- wasm's
+start section takes no arguments, so the mechanism does not exist. The second
+is the rule that a library cannot require an export list from every program
+that uses it. The third is a constant that was a property of the machine the
+file was written on, travelling as if it were a property of the scheme. The
+fourth is a field the caller sets and the implementation must honour, and the
+suite passes a deliberately short structure to find out.
+
+## Gaps this batch recorded and did not close
+
+Each is an engine or package change with a measurement behind it, and each was
+left rather than worked around.
+
+| gap | measurement | why it was left |
+|---|---|---|
+| no per-target tool axis | `error: [target.aarch64-ios-sim.xlings] does not accept 'deps'` | a runner's program belongs beside the row that names it; declaring it at the top level makes `examples/13`'s Linux build depend on a macOS-only package, so the example asks the reader to install it |
+| no whole-graph flag channel | `error: POSIX thread support was disabled in precompiled file '.../openkal.types.pcm' but is currently enabled` | `-pthread` is an ABI switch for every unit in the link including a dependency's; `openkal.task` is gated behind a feature so the absence is a link error rather than a present-and-failing operation |
+| `xim:e2fsprogs`'s `debugfs` | SIGFPE on every filesystem-opening command, while dumpe2fs/e2fsck/tune2fs from the same build work | recorded in that recipe; nothing else in the index depends on it, and `android-system-image` now reads ext4 with `xim:7zip` |
+| a device runner for `aarch64-ios` | none -- it needs a signature the developer owns | R12's subject, and a package cannot supply a signature |
 
 ## Deliberately not done
 
