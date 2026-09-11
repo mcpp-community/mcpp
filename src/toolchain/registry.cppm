@@ -216,10 +216,24 @@ payload_frontend(const std::filesystem::path& payloadRoot,
 //       "std_module_defines": ["__BIONIC_CTYPE_INLINE="]
 //     }
 //
-// It is NOT a general flag channel. Three keys, each answering a question this
+// It is NOT a general flag channel. Four keys, each answering a question this
 // engine already asks; a payload that could inject arbitrary flags would be a
 // package changing a build it does not own, and `[build]` in a manifest is the
 // project's to write.
+//
+// THE FOURTH, `runner`, ARRIVED WITH THE FIRST PAYLOAD WHOSE ARTEFACTS NEED AN
+// INTERPRETER. An Emscripten link produces a JavaScript launcher whose first
+// line is `#!/usr/bin/env node`, so an artefact run with nothing declared asked
+// the machine's PATH for a program the ecosystem had already installed:
+// `xim:emsdk` declares `xim:node` and writes that payload's `bin/node` into its
+// own `.emscripten`. Measured 2026-09-12 in a sandbox with no `node` on PATH:
+//
+//     mcpp run --target wasm32-emscripten
+//       Finished dev [unoptimized + debuginfo] in 0.84s
+//       /usr/bin/env: 'node': No such file or directory
+//
+// The build was correct and the run depended on the host. The payload knows
+// which program runs what its compiler produces, so it says so.
 struct PayloadDescriptor {
     int                      schema = 0;
     // Relative to the payload root, already host-resolved by the recipe. The
@@ -233,6 +247,24 @@ struct PayloadDescriptor {
     // channel from the compile flags, and they enter the build fingerprint
     // because they change what the module compiles to.
     std::vector<std::string> stdModuleDefines;
+    // The program that runs what this toolchain produces, used when neither
+    // the project nor the dependency graph declares a runner. ONE PROGRAM AND
+    // NO ARGUMENTS -- the artefact path is appended -- so it cannot carry
+    // flags.
+    //
+    // Either relative to the payload root, under the rules `frontend` obeys,
+    // or absolute. The absolute form exists because the program is usually a
+    // DEPENDENCY's: emsdk's runner is `xim:node`'s `bin/node`, the path its
+    // recipe already writes into `.emscripten`. An absolute runner is honoured
+    // only inside the package store that holds this payload, which is decided
+    // where it is used (`payload_default_runner`), because where a store lives
+    // is a property of the machine and not of this file.
+    std::string              runner;
+    // The directory the descriptor was read from. Not a key: filled by the
+    // reader, so that a relative `runner` resolves against the payload it was
+    // written for, including when the descriptor was found by walking up from
+    // a compiler.
+    std::filesystem::path    root;
 };
 
 // The descriptor's file name, so a message and a test name the same string.
@@ -266,6 +298,18 @@ read_payload_descriptor(const std::filesystem::path& payloadRoot);
 // reach a descriptor belonging to a directory that is not its payload.
 std::expected<std::optional<PayloadDescriptor>, std::string>
 payload_descriptor_for_compiler(const std::filesystem::path& compilerPath);
+
+// The runner a toolchain payload supplies for its own artefacts, as an argv
+// prefix ready for `runner_lookup::locate`: empty when the payload ships no
+// descriptor, names no runner, names one outside its store, or describes
+// itself malformedly.
+//
+// MALFORMED IS READ AS ABSENCE HERE ONLY, for the reason
+// `min_platform_version` gives: a payload-provided compiler reached the build
+// through `payload_frontend`, which refuses a malformed descriptor by name
+// before anything is run.
+std::vector<std::string>
+payload_default_runner(const std::filesystem::path& compilerPath);
 
 // The DIRECTORY `payload_frontend` searched, for a message that has to name it.
 //
@@ -838,6 +882,51 @@ std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
     return {};
 }
 
+namespace {
+// ONE RULE FOR A PATH A DESCRIPTOR NAMES, shared by every key that names one,
+// so that the second key cannot be the one that forgot a case. Checked on the
+// string, for the reason `frontend`'s comment below gives.
+//
+// `rootedOk` admits the absolute spellings `/...` and `X:/...`, which only
+// `runner` accepts. Every other rule applies to what follows the root.
+std::optional<std::string> descriptor_path_problem(std::string_view key,
+                                                   std::string_view v,
+                                                   bool rootedOk) {
+    if (v.find('\\') != std::string_view::npos)
+        return std::format("\"{}\" contains a backslash; the separator "
+                           "is `/` on every host", key);
+    std::string_view rest = v;
+    if (rootedOk) {
+        if (v.front() == '/')
+            rest = v.substr(1);
+        else if (v.size() > 2 && v[1] == ':' && v[2] == '/')
+            rest = v.substr(3);
+    } else if (v.front() == '/') {
+        return std::format("\"{}\" is absolute; it is relative to the "
+                           "payload root", key);
+    }
+    const bool rooted = rest.data() != v.data();
+    if (rest.find(':') != std::string_view::npos)
+        return rooted
+            ? std::format("\"{}\" names a drive or a scheme after its root", key)
+            : std::format("\"{}\" names a drive or a scheme; it is a "
+                          "path relative to the payload root", key);
+    for (std::size_t i = 0, n = 0; i <= rest.size(); ++i) {
+        if (i != rest.size() && rest[i] != '/') { ++n; continue; }
+        const auto part = rest.substr(i - n, n);
+        n = 0;
+        if (part.empty())
+            return std::format("\"{}\" has an empty path component", key);
+        if (part == "." || part == "..")
+            return rooted
+                ? std::format("\"{}\" has a `.` or `..` component; an "
+                              "absolute path is written in its normal form", key)
+                : std::format("\"{}\" leaves the payload root", key);
+    }
+    return std::nullopt;
+}
+} // namespace
+
 std::expected<std::optional<PayloadDescriptor>, std::string>
 read_payload_descriptor(const std::filesystem::path& payloadRoot) {
     std::error_code ec;
@@ -901,24 +990,9 @@ read_payload_descriptor(const std::filesystem::path& payloadRoot) {
         // `/`-separated, plain components. Asserting that positively is
         // host-independent by construction; asking a path type whether it is
         // absolute is asking a question whose meaning the host supplies.
-        if (d.frontend.find('\\') != std::string::npos)
-            return refuse("\"frontend\" contains a backslash; the separator "
-                          "is `/` on every host");
-        if (d.frontend.front() == '/')
-            return refuse("\"frontend\" is absolute; it is relative to the "
-                          "payload root");
-        if (d.frontend.find(':') != std::string::npos)
-            return refuse("\"frontend\" names a drive or a scheme; it is a "
-                          "path relative to the payload root");
-        for (std::size_t i = 0, n = 0; i <= d.frontend.size(); ++i) {
-            if (i != d.frontend.size() && d.frontend[i] != '/') { ++n; continue; }
-            const auto part = d.frontend.substr(i - n, n);
-            n = 0;
-            if (part.empty())
-                return refuse("\"frontend\" has an empty path component");
-            if (part == "." || part == "..")
-                return refuse("\"frontend\" leaves the payload root");
-        }
+        if (auto problem = descriptor_path_problem("frontend", d.frontend,
+                                                   /*rootedOk=*/false))
+            return refuse(*problem);
     }
 
     if (j.contains("platform_floor")) {
@@ -964,6 +1038,17 @@ read_payload_descriptor(const std::filesystem::path& payloadRoot) {
             d.stdModuleDefines.push_back(std::move(def));
         }
     }
+    if (j.contains("runner")) {
+        if (!j["runner"].is_string())
+            return refuse("\"runner\" is not a string; it names one program, "
+                          "and the artefact path is appended to it");
+        d.runner = j["runner"].get<std::string>();
+        if (d.runner.empty()) return refuse("\"runner\" is empty");
+        if (auto problem = descriptor_path_problem("runner", d.runner,
+                                                   /*rootedOk=*/true))
+            return refuse(*problem);
+    }
+    d.root = payloadRoot;
     return d;
 }
 
@@ -982,6 +1067,36 @@ payload_descriptor_for_compiler(const std::filesystem::path& compilerPath) {
             return read_payload_descriptor(dir);
     }
     return std::nullopt;
+}
+
+std::vector<std::string>
+payload_default_runner(const std::filesystem::path& compilerPath) {
+    auto desc = payload_descriptor_for_compiler(compilerPath);
+    if (!desc || !*desc || (*desc)->runner.empty()) return {};
+    const auto& d = **desc;
+    const std::string_view r = d.runner;
+    const bool absolute = r.front() == '/'
+                       || (r.size() > 2 && r[1] == ':' && r[2] == '/');
+    if (!absolute) return { (d.root / d.runner).string() };
+
+    // AN ABSOLUTE RUNNER IS HONOURED ONLY INSIDE THE STORE THAT HOLDS THIS
+    // PAYLOAD. The layout is `<store>/<package>/<version>`, so the store is
+    // the root's grandparent, and a dependency's program lives beside it.
+    //
+    // Compared on canonical paths, because a store reached through a symbolic
+    // link is still that store; and IGNORED rather than refused when it is
+    // outside, because where a store lives is a property of this machine and
+    // not a defect in the file. What the rule removes is the one case that
+    // matters: a payload choosing a host interpreter.
+    std::error_code rootEc, runnerEc;
+    const auto store = std::filesystem::weakly_canonical(d.root, rootEc)
+                           .parent_path().parent_path();
+    const auto program = std::filesystem::weakly_canonical(
+        std::filesystem::path(d.runner), runnerEc);
+    if (rootEc || runnerEc || store.empty()) return {};
+    const auto rel = program.lexically_relative(store);
+    if (rel.empty() || rel == "." || *rel.begin() == "..") return {};
+    return { program.string() };
 }
 
 std::filesystem::path payload_frontend_dir(const std::filesystem::path& payloadRoot,

@@ -23,6 +23,11 @@ bin/platform-targets.wasm  447183 bytes   the module
 node bin/platform-targets   ->  1-2-3
 ```
 
+运行用的 `node` 取自 `xim:emsdk` 声明的依赖 `xim:node`,而不是 PATH 上的某一个。载荷在
+`.mcpp-toolchain.json` 里用 `runner` 写出它,项目与依赖图都没有声明 runner 时 mcpp 使用
+它。这需要 mcpp 2026.9.12.1,以及在配方更新之后安装的 emsdk 载荷;更早安装的载荷没有
+描述文件,仍按产物首行的 `#!/usr/bin/env node` 取 PATH 上的 `node`。
+
 `mcpp run` 会用 `node` 跑它，所以不需要额外的一步。工程侧**一个新词汇都不需要**：
 `wasm32-emscripten` 这一行自己命名了它的载荷（`emsdk@6.0.9`），载荷自带 sysroot，
 而 Emscripten 自己就发布一份 libc++ 的模块面。
@@ -175,7 +180,7 @@ error: target aarch64-ios needs the iphoneos SDK, which this machine does not pr
 
 | target | tier | pin | 运行过？ |
 |---|---|---|---|
-| `wasm32-emscripten` | verified | `emsdk@6.0.9` | 是，`node` |
+| `wasm32-emscripten` | verified | `emsdk@6.0.9` | 是，载荷声明的 `node` |
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | 是，平台模拟器 |
 | `aarch64-linux-android` | verified | `android-ndk@30.0.16248370` | 是，`qemu-aarch64-static` + 从镜像取出的 bionic |
 | `aarch64-ios` | preview | `llvm@22.1.8` | 否 —— 真机需要开发者自己的签名 |

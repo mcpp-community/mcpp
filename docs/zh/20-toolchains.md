@@ -535,9 +535,15 @@ macos_deployment_target = "14.0" # Apple
 
 ### 产物的运行方式
 
-模拟器和真机都不属于工具链这根轴。`mcpp run` 直接执行一个 wasm 模块,因为
-Emscripten 的产物就是一个 `node` 能跑的程序。对于产物在别处运行的目标,`runner`
-键是一个 argv 前缀,而那个会话属于一个**包**而不属于引擎:
+模拟器和真机都不属于工具链这根轴。wasm 模块需要的是解释器而不是模拟器,由载荷说出它:
+`xim:emsdk` 在自身旁边写出 `.mcpp-toolchain.json`,其中的 `runner` 键就是它所依赖的
+`xim:node` 载荷里的 `node`。项目与依赖都没有声明 runner 时,`mcpp run` 与 `mcpp test`
+使用这个程序,因此不涉及 PATH 上的 `node`。载荷的 runner 是一个程序,产物路径追加在后;
+它或是载荷内的相对路径,或是持有该载荷的包存储之内的绝对路径,存储之外的路径一律忽略。
+在配方写出这个键之前安装的载荷没有描述文件,其产物仍按自身的 `#!/usr/bin/env node`
+一行运行,与之前相同。
+
+对于产物在别处运行的目标,`runner` 键是一个 argv 前缀,而那个会话属于一个**包**而不属于引擎:
 
 ```toml
 [target.x86_64-linux-android]

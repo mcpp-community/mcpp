@@ -18,6 +18,7 @@ import mcpp.build.plan;
 import mcpp.toolchain.triple;
 import mcpp.freestanding.runner;
 import mcpp.build.runner_lookup;    // #544: where the runner's program is
+import mcpp.toolchain.registry;     // a payload's own runner (PayloadDescriptor::runner)
 import mcpp.build.directives;      // the device-slot table: run / flash / monitor / debug
 import mcpp.freestanding.linkline;
 import mcpp.build.graph_shape;    // #407: which mode wrote this build.ninja
@@ -565,6 +566,7 @@ struct RunnerChoice {
     bool fromManifest = false;          // the consumer overrode a dependency's
     bool ignored = false;               // --no-runner dropped a declared template
     bool longLived = false;             // declared by the package; no natural end
+    bool fromPayload = false;           // the toolchain payload's runner, nothing declared
     // The spelling that names this target in the manifest: the canonical form,
     // which is also the output directory's name and the key every
     // `[target.<triple>]` reader resolves. Every diagnostic below prints this
@@ -632,6 +634,22 @@ RunnerChoice choose_device_action(const BuildContext& ctx,
                 std::string(which));
             c.tmpl = entry->namedRunners.at(std::string(which));
         }
+    }
+    // AND THE TOOLCHAIN'S OWN ANSWER, WHEN THE PROJECT AND ITS GRAPH GAVE NONE.
+    //
+    // The third source and the last. A project's `[target.<triple>] runner`
+    // and a package's `mcpp::runner(...)` both outrank it, because they are
+    // statements about THIS program; the payload's is a statement about
+    // everything its compiler produces. Measured 2026-09-12 in a sandbox with
+    // no `node` on PATH: an Emscripten artefact built correctly and then
+    // stopped at `#!/usr/bin/env node`, while the node the payload had
+    // declared sat in its store. See `PayloadDescriptor::runner`.
+    //
+    // The run slot only. `flash`, `monitor` and `debug` name actions a board
+    // package owns, and a compiler has no opinion about them.
+    if (isDefault && c.tmpl.empty()) {
+        c.tmpl = mcpp::toolchain::payload_default_runner(ctx.tc.binaryPath);
+        c.fromPayload = !c.tmpl.empty();
     }
     // `--no-runner` is the operator on THIS host stating a host fact the
     // manifest cannot carry: the triple is native here. On a freestanding
