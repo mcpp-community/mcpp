@@ -587,10 +587,19 @@ the NDK itself declares in `meta/platforms.json`.
 
 ### Running what they produce
 
-Neither the emulator nor a device is part of the toolchain axis. `mcpp run`
-executes a wasm module directly, because Emscripten's output is a program
-`node` can run. For a target whose artifact runs elsewhere, the `runner` key is
-an argv prefix and the session belongs to a package rather than to the engine:
+Neither the emulator nor a device is part of the toolchain axis. A wasm module
+needs an interpreter rather than an emulator, and the payload names it:
+`xim:emsdk` writes `.mcpp-toolchain.json` beside itself, and its `runner` key is
+the `node` of the `xim:node` payload it depends on. `mcpp run` and `mcpp test`
+use that program when neither the project nor a dependency declares a runner,
+so no `node` on PATH is involved. A payload's runner is one program with the
+artefact path appended; it is either relative to the payload or absolute inside
+the package store that holds the payload, and a path outside that store is
+ignored. A payload installed before its recipe wrote the key has no descriptor,
+and its artefact runs through its own `#!/usr/bin/env node` line as before.
+
+For a target whose artifact runs elsewhere, the `runner` key is an argv prefix
+and the session belongs to a package rather than to the engine:
 
 ```toml
 [target.x86_64-linux-android]

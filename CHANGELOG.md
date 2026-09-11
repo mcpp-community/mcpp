@@ -5,6 +5,35 @@
 
 ## [Unreleased]
 
+## [2026.9.12.1] - 2026-09-12
+
+### Web 产物的运行不再依赖宿主的 `node`
+
+2026.9.11.4 发布后在 xlings 沙箱里核验发布物:`mcpp build --target wasm32-emscripten`
+成功,而 `mcpp run` 停在
+
+```
+/usr/bin/env: 'node': No such file or directory
+```
+
+Emscripten 链接产出的是首行为 `#!/usr/bin/env node` 的 JavaScript 启动器。项目什么都不
+声明时 mcpp 直接执行它,于是解释器取自机器的 PATH。而生态早已装好了它:`xim:emsdk` 声明
+依赖 `xim:node`,并把那份载荷的 `bin/node` 写进自己的 `.emscripten`。开发机的 PATH 上恰好
+有 `node`,所以此前那次 `verified` 测量看不出这条宿主依赖;沙箱没有,于是看出来了。
+
+- 载荷描述文件 `.mcpp-toolchain.json` 增加第四个键 `runner`:运行这个工具链产物的程序,
+  一个程序、不带参数,产物路径追加在后,因此不构成 flag 通道。它可以是载荷内的相对路径
+  (与 `frontend` 同一套规则),也可以是绝对路径;绝对路径只在持有该载荷的包存储
+  (`<store>/<package>/<version>`)之内才被采用,按规范化路径比较,存储之外的一律忽略
+  —— 载荷不能选择宿主解释器。
+- 优先级:项目的 `[target.<triple>] runner` 与依赖图提供的 runner 在前,载荷的 runner
+  在后;`--no-runner` 仍然直接执行产物。只作用于 run 槽位,即 `mcpp run` 与 `mcpp test`。
+- 结构错误的 `runner`(非字符串、为空、含反斜杠、含 `.` 或 `..` 分量)按描述文件的既有
+  规则拒绝,并点名该文件。
+- `xim:emsdk` 的配方写出 `runner`(openxlings/xim-pkgindex#823)。早于这个键的 mcpp
+  忽略它,所以配方可以先发;在此之前安装的 emsdk 载荷没有描述文件,行为与之前相同,重新
+  安装后获得。
+
 ## [2026.9.11.4] - 2026-09-11
 
 ### iOS 三行:生态编译器与定位到的 SDK

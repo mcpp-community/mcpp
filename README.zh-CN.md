@@ -406,7 +406,7 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 | `aarch64-none-elf` · `x86_64-none-elf` | llvm 22——裸机,默认不带 C 库 ² | preview |
 | `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22——Cortex-M4/M7 软浮点、M23、M33F/M55F ² | preview |
 | `riscv64-linux-musl` · `aarch64-linux-gnu` · `x86_64-macos` | — | planned |
-| `wasm32-emscripten` | `emsdk@6.0.9` —— Emscripten 自带 sysroot 和它自己的 libc++ 模块面;`mcpp run` 用 `node` 把模块跑起来 | verified |
+| `wasm32-emscripten` | `emsdk@6.0.9` —— Emscripten 自带 sysroot 和它自己的 libc++ 模块面;`mcpp run` 用载荷声明的 `node`(`xim:node`)把模块跑起来,不取 PATH 上的 | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370` —— bionic 来自 NDK,一个载荷服务两个 ABI;在 API 24 的 x86_64 模拟器镜像上跑过 | verified |
 | `aarch64-linux-android` | 同一个载荷、同样的构建;在 qemu-user 上、配系统镜像自带的 bionic 跑过 —— 这是平台模拟器从 x86_64 宿主做不到的 | verified |
 | `aarch64-ios-sim` | llvm 22 加上机器自己的 iPhoneSimulator SDK,mcpp 定位而不安装它;经 `simctl-run` 在模拟器上跑过 ³ | verified |

@@ -419,7 +419,7 @@ list` reports for this machine):
 | `aarch64-none-elf` · `x86_64-none-elf` | llvm 22 — bare metal, no C library by default ² | preview |
 | `thumbv7em-none-eabi` · `thumbv8m.base-none-eabi` · `thumbv8m.main-none-eabihf` | llvm 22 — Cortex-M4/M7 soft float, M23, M33F/M55F ² | preview |
 | `riscv64-linux-musl` · `aarch64-linux-gnu` · `x86_64-macos` | — | planned |
-| `wasm32-emscripten` | `emsdk@6.0.9` — Emscripten ships its own sysroot and its own libc++ module surface; `mcpp run` executes the module with `node` | verified |
+| `wasm32-emscripten` | `emsdk@6.0.9` — Emscripten ships its own sysroot and its own libc++ module surface; `mcpp run` executes the module with the `node` the payload declares (`xim:node`), not one found on PATH | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370` — bionic from the NDK, one payload for both ABIs; ran on an API 24 x86_64 emulator image | verified |
 | `aarch64-linux-android` | the same payload and the same build; ran under qemu-user over the system image's own bionic, which the platform emulator cannot do from an x86_64 host | verified |
 | `aarch64-ios-sim` | llvm 22 plus the machine's iPhoneSimulator SDK, which mcpp locates rather than installs; ran on a simulator through `simctl-run` ³ | verified |

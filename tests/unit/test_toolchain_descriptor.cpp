@@ -262,3 +262,126 @@ TEST(PayloadDescriptor, FoundFromTheCompilerAndTheWalkIsBounded) {
         << "an unbounded walk adopts a descriptor from a directory that is "
            "not this payload";
 }
+
+// ─── The fourth key: the program that runs what the payload produces ────────
+//
+// An Emscripten artefact is a JavaScript launcher that begins
+// `#!/usr/bin/env node`. With no runner of the payload's own, an artefact run
+// with nothing declared asked the machine's PATH for node, and a sandbox with
+// none on PATH stopped there while the build was correct.
+namespace {
+// `<store>/<package>/<version>`, which is the layout the store rule reads.
+struct FakeStore {
+    std::filesystem::path store;
+    explicit FakeStore(std::string_view name) {
+        store = std::filesystem::temp_directory_path()
+              / std::format("mcpp-store-{}-{}", name,
+                            std::chrono::steady_clock::now()
+                                .time_since_epoch().count());
+        std::filesystem::create_directories(store);
+    }
+    ~FakeStore() { std::error_code ec; std::filesystem::remove_all(store, ec); }
+    FakeStore(const FakeStore&) = delete;
+    FakeStore& operator=(const FakeStore&) = delete;
+
+    std::filesystem::path payload(std::string_view pkg, std::string_view ver) const {
+        auto p = store / pkg / ver;
+        std::filesystem::create_directories(p);
+        return p;
+    }
+    static std::filesystem::path file(const std::filesystem::path& p) {
+        std::filesystem::create_directories(p.parent_path());
+        std::ofstream(p) << "#!/bin/sh\n";
+        return p;
+    }
+    static void describe(const std::filesystem::path& root, std::string_view json) {
+        std::ofstream(root / ".mcpp-toolchain.json") << json;
+    }
+};
+} // namespace
+
+TEST(PayloadDescriptor, TheRunnerIsCarriedThroughWithTheRootItWasReadFrom) {
+    FakePayload fp{"runner"};
+    fp.write_descriptor(R"({"schema": 1, "runner": "bin/node"})");
+    auto d = read_payload_descriptor(fp.root);
+    ASSERT_TRUE(d.has_value()) << d.error();
+    ASSERT_TRUE(d->has_value());
+    EXPECT_EQ((*d)->runner, "bin/node");
+    EXPECT_EQ((*d)->root, fp.root);
+
+    // Optional like the other three: a payload whose artefacts run natively
+    // has no runner to name.
+    fp.write_descriptor(R"({"schema": 1})");
+    auto bare = read_payload_descriptor(fp.root);
+    ASSERT_TRUE(bare.has_value()) << bare.error();
+    ASSERT_TRUE(bare->has_value());
+    EXPECT_TRUE((*bare)->runner.empty());
+}
+
+// THE SHAPE emsdk HAS: the compiler two levels below the root, and the runner
+// a DEPENDENCY's program named by its absolute path in the same store.
+TEST(PayloadDescriptor, ARunnerInTheSameStoreIsTheDefaultForItsCompiler) {
+    FakeStore fs{"same"};
+    auto emsdk = fs.payload("xim-x-emsdk", "6.0.9");
+    auto compiler = FakeStore::file(emsdk / "emscripten" / "em++");
+    auto node = FakeStore::file(fs.payload("xim-x-node", "26.7.0") / "bin" / "node");
+    FakeStore::describe(emsdk, std::format(
+        R"({{"schema": 1, "frontend": "emscripten/em++", "runner": "{}"}})",
+        node.generic_string()));
+
+    auto argv = payload_default_runner(compiler);
+    ASSERT_EQ(argv.size(), 1u);
+    EXPECT_EQ(std::filesystem::path(argv[0]), std::filesystem::weakly_canonical(node));
+
+    // The relative form resolves against the root the descriptor came from.
+    FakeStore::describe(emsdk, R"({"schema": 1, "runner": "bin/node"})");
+    auto rel = payload_default_runner(compiler);
+    ASSERT_EQ(rel.size(), 1u);
+    EXPECT_EQ(std::filesystem::path(rel[0]), emsdk / "bin/node");
+}
+
+// WHAT THE STORE RULE REMOVES: a payload choosing a host interpreter. Ignored
+// rather than refused, so a machine whose store is elsewhere does not lose its
+// build over a run-time default.
+TEST(PayloadDescriptor, ARunnerOutsideTheStoreIsNotHonoured) {
+    FakeStore fs{"outside"};
+    auto emsdk = fs.payload("xim-x-emsdk", "6.0.9");
+    auto compiler = FakeStore::file(emsdk / "emscripten" / "em++");
+    FakeStore::describe(emsdk, R"({"schema": 1, "runner": "/usr/bin/node"})");
+
+    auto d = read_payload_descriptor(emsdk);
+    ASSERT_TRUE(d.has_value()) << "an absolute runner is well formed: " << d.error();
+    EXPECT_TRUE(payload_default_runner(compiler).empty())
+        << "a runner outside the payload's store was honoured";
+}
+
+TEST(PayloadDescriptor, NoDescriptorOrNoRunnerMeansNoDefault) {
+    FakeStore fs{"none"};
+    auto llvm = fs.payload("xim-x-llvm", "22.1.8");
+    auto compiler = FakeStore::file(llvm / "bin" / "clang++");
+    EXPECT_TRUE(payload_default_runner(compiler).empty());
+    FakeStore::describe(llvm, R"({"schema": 1, "platform_floor": "21"})");
+    EXPECT_TRUE(payload_default_runner(compiler).empty());
+    // And a malformed descriptor is absence here; the build refused it first.
+    FakeStore::describe(llvm, R"({"schema": 1, "runner": 7})");
+    EXPECT_TRUE(payload_default_runner(compiler).empty());
+}
+
+TEST(PayloadDescriptor, AMalformedRunnerIsRefusedByNameAndByKey) {
+    FakePayload fp{"badrunner"};
+    for (std::string_view json : {
+             std::string_view(R"({"schema": 1, "runner": 7})"),
+             std::string_view(R"({"schema": 1, "runner": ["node", "--flag"]})"),
+             std::string_view(R"({"schema": 1, "runner": ""})"),
+             std::string_view(R"({"schema": 1, "runner": "../node"})"),
+             std::string_view(R"({"schema": 1, "runner": "/store/../node"})"),
+             std::string_view(R"({"schema": 1, "runner": "bin\\node"})"),
+             std::string_view(R"({"schema": 1, "runner": "bin//node"})"),
+         }) {
+        fp.write_descriptor(json);
+        auto d = read_payload_descriptor(fp.root);
+        ASSERT_FALSE(d.has_value()) << "accepted: " << json;
+        EXPECT_NE(d.error().find("\"runner\""), std::string::npos) << d.error();
+        EXPECT_NE(d.error().find(".mcpp-toolchain.json"), std::string::npos) << d.error();
+    }
+}

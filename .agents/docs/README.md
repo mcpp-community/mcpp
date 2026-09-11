@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-278 records.
+279 records.
 
 ## By subject
 
@@ -46,6 +46,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### targets
 
+- [A verified Web run that asked the host for node](2026-09-12-a-verified-web-run-that-asked-the-host-for-node.md) — landed
 - [SDK toolchains, the payload/engine seam, and openkal across iOS, Android and Web](2026-09-11-sdk-toolchains-and-ios-local-verification.md) — landed
 - [Where a platform's knowledge belongs: iOS, Android and Web across the engine, the index and the plugins](2026-09-11-platform-targets-design-review.md) — active
 
@@ -57,6 +58,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
+- [A verified Web run that asked the host for node](2026-09-12-a-verified-web-run-that-asked-the-host-for-node.md) — landed
 - [Six open issues: what each one actually is, and what would answer it](2026-09-11-six-open-issues-analysis.md) — active
 - [SDK toolchains, the payload/engine seam, and openkal across iOS, Android and Web](2026-09-11-sdk-toolchains-and-ios-local-verification.md) — landed
 - [Where a platform's knowledge belongs: iOS, Android and Web across the engine, the index and the plugins](2026-09-11-platform-targets-design-review.md) — active

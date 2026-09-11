@@ -348,6 +348,64 @@ jobs:
                tests/matrix/expected.tsv ${{ matrix.host }} graph || fail=1
           [ "$fail" = 0 ] || exit 1
 
+      # A WEB ARTEFACT RUNS THROUGH THE INTERPRETER ITS PAYLOAD NAMES, NOT
+      # THROUGH PATH. That is what `wasm32-emscripten`'s `verified` tier
+      # claims, and no step measured it until a sandbox with no `node` on PATH
+      # showed that the run depended on the host:
+      #
+      #   /usr/bin/env: 'node': No such file or directory
+      #
+      # A FRESH MCPP_HOME, BECAUSE THE CACHE IS NOT THE PUBLISHED FORM.
+      # `~/.mcpp` is restored by key prefix, so the emsdk payload in it may
+      # predate the recipe that writes `.mcpp-toolchain.json`, and that older
+      # payload would be the object measured. A fresh home installs what the
+      # index publishes today.
+      #
+      # AND A DECOY `node` FIRST ON PATH, rather than `node` removed from PATH.
+      # Removing it would also remove whatever else those directories hold,
+      # and an image that ships a real `node` would pass for the wrong reason.
+      # A decoy that exits 97 with a marker separates the two outcomes on any
+      # image: the payload's runner never reaches it.
+      - name: "wasm32-emscripten runs through its payload's runner, not PATH"
+        if: ${{ !cancelled() && matrix.host == 'linux-x86_64' }}
+        run: |
+          set -uo pipefail
+          home=$(mktemp -d); work=$(mktemp -d); decoy=$(mktemp -d)
+          printf '#!/bin/sh\necho "DECOY-NODE-WAS-RUN" >&2\nexit 97\n' > "$decoy/node"
+          chmod +x "$decoy/node"
+          export MCPP_HOME="$home" MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP_UNDER_TEST" self config --mirror GLOBAL >/dev/null 2>&1 || true
+          mkdir -p "$work/src"
+          printf '[package]\nname = "w"\nversion = "0.1.0"\n' > "$work/mcpp.toml"
+          cat > "$work/src/main.cpp" <<'CPP'
+          import std;
+          int main() {
+            std::vector<int> v{3, 1, 2};
+            std::ranges::sort(v);
+            std::print("{}-{}-{}\n", v[0], v[1], v[2]);
+          }
+          CPP
+          out=$(cd "$work" && PATH="$decoy:$PATH" "$MCPP_UNDER_TEST" run --target wasm32-emscripten 2>&1) && rc=0 || rc=$?
+          printf '%s\n' "$out" | tail -12
+          desc="$home/registry/data/xpkgs/xim-x-emsdk/6.0.9/.mcpp-toolchain.json"
+          if [ ! -f "$desc" ]; then
+            echo "::error::the freshly installed emsdk payload has no .mcpp-toolchain.json; the published recipe does not name its runner"
+            exit 1
+          fi
+          if grep -q 'DECOY-NODE-WAS-RUN' <<<"$out"; then
+            echo "::error::the artefact ran through the node on PATH, not through the payload's runner"
+            exit 1
+          fi
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::mcpp run --target wasm32-emscripten exited $rc"
+            exit 1
+          fi
+          if ! grep -qx '1-2-3' <<<"$out"; then
+            echo "::error::the program's output line 1-2-3 is absent"
+            exit 1
+          fi
+          echo "ok: wasm32-emscripten ran through the payload's runner; the decoy node was never run"
+
   coverage:
     # THE DENOMINATOR. Every check above is per host, and no per-host check
     # can notice a host that never ran.
