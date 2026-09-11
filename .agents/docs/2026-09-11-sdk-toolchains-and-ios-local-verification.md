@@ -657,6 +657,31 @@ discriminator the comment appeals to is real and is not the pin -- it is
 whether a PACKAGE can supply the target's system, and no package supplies an
 Apple SDK.
 
+### The same criterion wrong in three places within one hour
+
+`host_can_serve` now answers for the host, which is correct and which changed
+what `toolchain list` reports. Three criteria asserted the old answer, and each
+was written by me:
+
+| where | the claim it made | how it surfaced |
+|---|---|---|
+| e2e 641 case 7 | the three iOS rows appear in the listing with their pin | `FAIL: aarch64-ios does not name llvm in toolchain list`, on CI |
+| the sandbox verification's section 2 | the same | a local dry run of the script, before the run that mattered |
+| `tests/matrix/expected.tsv` | 30 rows for hosts that cannot serve them | `scan (linux-aarch64)` reaching three fewer cells than declared |
+
+The first is the one worth recording, because I had already written the fix
+down and not applied it: while diagnosing the matrix failure I noted that "case
+7's claim must become host-conditional -- on macOS the rows are listed; on
+other hosts they are correctly absent". Then I fixed cases 3 and 8, added the
+unit test, ran the unit suite, and pushed. **I changed the listing and did not
+re-run the end-to-end test that asserts the listing.** The unit suite passing
+is not evidence about a behaviour no unit test observes.
+
+All three now name the host and carry both arms, and the Linux arm carries two
+companions so that an absence cannot be read as a gap: `aarch64-macos` is
+absent for the same reason, and `x86_64-macos` is present because a `planned`
+row stays discoverable everywhere.
+
 ### A skip I wrote from an assumption, refuted by a row in the same table
 
 The macOS scan also reported `graph × iOS` as `mismatch / build-failed`, and I

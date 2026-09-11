@@ -156,23 +156,54 @@ else
     echo "  ok: min_api_level = 24 is accepted by the manifest"
 fi
 
-# 7. THE iOS ROWS NAME THEIR PAYLOAD, AND IT IS A CONVENTION PIN. The compiler
-#    is ours and only the SDK is Apple's: `xim:llvm` emits arm64 Mach-O for an
-#    iOS deployment target, so the rows pin it exactly as the wasm row pins
-#    emsdk. A capability pin would be wrong here -- `aarch64-macos` has the
-#    same constraint (Darwin needs clang) and is not a capability row -- so the
-#    pin is overridable, which case 8 relies on.
+# 7. THE LISTING ANSWERS FOR THIS HOST, AND AN APPLE ROW IS SERVED ONLY WHERE
+#    ITS SDK IS.
+#
+#    THIS CASE ASSERTED THE OPPOSITE FIRST AND WAS RIGHT FOR ONE RELEASE. It
+#    required the three iOS rows to appear with their pin, which held while
+#    they were `planned` -- `toolchain list` keeps a planned row on every host
+#    so it is discoverable. Once the tiers moved, the listing correctly
+#    dropped them on a non-Apple host and this case failed. The pin itself is
+#    a property of the TABLE and is asserted where every host can ask it, in
+#    tests/unit/test_toolchain_triple.cpp.
+#
+#    BOTH ARMS ARE REAL, and the Linux arm carries two companions that keep an
+#    absence from being indistinguishable from a gap: `aarch64-macos` is
+#    absent for the same reason, so the rule is "this host cannot serve it"
+#    rather than "the rows are missing"; and `x86_64-macos` IS listed, being
+#    `planned` and therefore discoverable, so the absence is about serving and
+#    not about Apple.
 list=$( "$MCPP" toolchain list --format json 2>/dev/null )
-for target in aarch64-ios aarch64-ios-sim x86_64-ios-sim; do
-    if tr ',' '\n' <<<"$list" | grep -A6 "\"target\": *\"$target\"" \
-       | grep -q "llvm"; then
-        echo "  ok: $target names the llvm payload"
+listed() { tr ',' '\n' <<<"$list" | grep -q "\"target\": *\"$1\""; }
+case "$(uname -s)" in
+  Darwin)
+    for target in aarch64-ios aarch64-ios-sim x86_64-ios-sim; do
+        if listed "$target" && tr ',' '\n' <<<"$list" \
+             | grep -A6 "\"target\": *\"$target\"" | grep -q "llvm"; then
+            echo "  ok: $target is listed here and names the llvm payload"
+        else
+            echo "FAIL: $target is not listed with its pin on a host that serves it"
+            fail=1
+        fi
+    done
+    ;;
+  *)
+    for target in aarch64-ios aarch64-ios-sim x86_64-ios-sim aarch64-macos; do
+        if listed "$target"; then
+            echo "FAIL: $target is listed on a host that cannot serve it"
+            fail=1
+        else
+            echo "  ok: $target is absent here, as an Apple row must be"
+        fi
+    done
+    if listed x86_64-macos; then
+        echo "  ok: x86_64-macos is listed, being planned and discoverable"
     else
-        echo "FAIL: $target does not name llvm in toolchain list"
-        tr ',' '\n' <<<"$list" | grep -A6 "\"target\": *\"$target\"" | sed 's/^/    /'
+        echo "FAIL: x86_64-macos is absent; the absences above are then unexplained"
         fail=1
     fi
-done
+    ;;
+esac
 
 # 8. AND THE SDK IS LOCATED, SO ITS ABSENCE IS A REFUSAL THAT NAMES IT.
 #
