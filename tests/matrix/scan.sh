@@ -166,6 +166,32 @@ for tc in $(compilers); do
         continue
     fi
 
+    # iOS 行同理,而**理由是被实测出来的一条缺陷,不是一句论域声明**。
+    #
+    # 实测 2026-09-11(macos-arm64,这套依赖钉的 openkal-musl 0.3.5):
+    #
+    #   openkal-musl-0.3.5/port/src/okm_syscall.c:444:60: error: incompatible
+    #   pointer types passing 'uint64_t *' (aka 'unsigned long *') to
+    #   parameter of type 'kal_u64 *' (aka 'unsigned long long *')
+    #
+    # 同一个宽度,两个类型身份:musl 自己的 `<stdint.h>` 在 LP64 上把 `uint64_t`
+    # 拼作 `unsigned long`,而 `kal_u64` 是 `__UINT64_TYPE__` —— clang 为
+    # **Darwin** 目标把它定义成 `unsigned long long`。在 Linux/Windows 的 musl
+    # 目标上两者同串,所以 openkal-musl 的 CI 从来没有见过这条;它**从未为任何
+    # Apple 目标构建过**。当前的 0.13.1 仍是同一种写法。
+    #
+    # ⚠️ macOS 行**没有**被略过,而这正是这条注释必须说清的地方:
+    # `graph × aarch64-macos` 实测是 `ok / none`。所以这不是「Apple 行不能由图
+    # 供给」——那句话会被 macOS 当场否掉——而是「这套依赖钉的那个版本服务不了
+    # iOS 行」。判据是那条诊断,不是这一族目标。
+    #
+    # 写 `mismatch` 不是选项:这张表明文不收它,因为写下它就是把一个缺陷声明成
+    # 期望。缺陷记在 .agents/docs 的 gap 表里,属于 openkal-musl。
+    if [ "$MODE" = graph ] && printf '%s' "$t" | grep -qE -- '-ios(-sim)?$'; then
+        echo "scan: 略过 graph × $t —— openkal-musl 0.3.5 编不过 Apple cross(uint64_t/kal_u64 类型身份不同),见 scan.sh 注释" >&2
+        continue
+    fi
+
     { printf '[package]\nname = "mxscan"\nversion = "0.1.0"\n'
       [ "$MODE" = graph ] && printf '\n[dependencies]\nopenkal-musl = "0.3.5"\nopenkal-llvm-runtime = "0.1.3"\n'
     } > mcpp.toml

@@ -465,6 +465,30 @@ TEST(SdkPayloads, ServedOnEveryHostTheSdkIsPublishedFor) {
         ASSERT_TRUE(mac.has_value());
         EXPECT_FALSE(mcpp::toolchain::host_can_serve(*mac));
     }
+
+    // AND APPLE IS ONE ANSWER FOR BOTH OF ITS PLATFORMS, which this function
+    // did not say until there were two.
+    //
+    // It asked `os == "macos"`, the same question as "is this Apple" while
+    // macOS was the only Apple target mcpp had. An iOS target then fell
+    // through to the final `return false` -- on EVERY host, including the one
+    // that serves it. The consequence was not a refused build (the SDK gate in
+    // prepare answers first) but a `toolchain list` that dropped the three iOS
+    // rows on macOS while `graphCouldServe` listed them on linux-x86_64, and a
+    // target-matrix scan that reached three fewer cells than the table
+    // declares.
+    //
+    // ASSERTED IN BOTH DIRECTIONS, because one of them is what the earlier
+    // paragraph in this test calls an exclusion that must not become a
+    // tautology: every Apple row is servable exactly where the SDK is.
+    for (auto name : {"aarch64-macos", "aarch64-ios", "aarch64-ios-sim",
+                      "x86_64-ios-sim"}) {
+        auto t = mcpp::toolchain::triple::parse(name);
+        ASSERT_TRUE(t.has_value()) << name;
+        EXPECT_TRUE(t->is_apple()) << name;
+        EXPECT_EQ(mcpp::toolchain::host_can_serve(*t),
+                  bool(mcpp::platform::is_macos)) << name;
+    }
 }
 
 // ─── The payload is SAID, not only resolved (R3) ───────────────────────────

@@ -706,8 +706,23 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         // The discriminator is already in the table and needs no new field —
         // a row that names a compiler THIS host can install is one whose only
         // missing piece is the system, and a graph can supply a system.
+        // AND A LOCATED SDK IS NOT A SYSTEM A GRAPH CAN SUPPLY.
+        //
+        // The paragraph above names `aarch64-macos` as correctly absent on a
+        // Linux host, and it was absent by ACCIDENT rather than by rule: its
+        // pin is empty, so `!info.pin.empty()` excluded it. The iOS rows have
+        // a pin -- `llvm@22.1.8`, the ordinary payload -- so they entered this
+        // branch, found llvm in the index, and were listed on a host that
+        // cannot produce them.
+        //
+        // The discriminator the paragraph appeals to is real but is not the
+        // pin: it is whether a PACKAGE can supply the target's system. An
+        // Apple SDK is not redistributable, so none can, which makes every
+        // Apple row like `aarch64-macos` and unlike `x86_64-windows-musl`.
+        // Stating it removes the reliance on an empty field.
         bool graphCouldServe = false;
-        if (!planned && !installable_here(*t) && !info.pin.empty()) {
+        if (!planned && !installable_here(*t) && !info.pin.empty()
+            && !t->is_apple()) {
             auto at = info.pin.find('@');
             auto fam = info.pin.substr(0, at == std::string_view::npos
                                               ? info.pin.size() : at);

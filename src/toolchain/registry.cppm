@@ -1202,7 +1202,24 @@ bool host_can_serve(const triple::Triple& target) {
     // `ok` on both hosts.
     if (target.is_pe() && target.is_musl()) return false;
     if (target.os == "windows") return bool(mcpp::platform::is_windows);
-    if (target.os == "macos")   return bool(mcpp::platform::is_macos);
+    // APPLE, AND ONE ARM FOR BOTH OF ITS PLATFORMS.
+    //
+    // This read `os == "macos"`, which was the same question while macOS was
+    // the only Apple target mcpp had. An iOS target then fell through to the
+    // `return false` at the end of this function -- on EVERY host, including
+    // the one that serves it.
+    //
+    // The consequence was not a refused build: the SDK gate in prepare answers
+    // before this one. It was `toolchain list`, which drops a row this says no
+    // host can serve -- so the three iOS rows were absent from the list on
+    // macOS, and present on linux-x86_64 for the wrong reason (see
+    // `graphCouldServe` in mcpp.toolchain.lifecycle). Measured as a
+    // target-matrix scan that reached three fewer cells on linux-aarch64 than
+    // the expected table declares.
+    //
+    // `is_apple()` is the predicate the table already carries, and until now
+    // it had no reader at all.
+    if (target.is_apple())      return bool(mcpp::platform::is_macos);
 
     // Bare metal: every host can serve it, and that is a property of the
     // toolchain rather than a claim about payload coverage. clang and lld are

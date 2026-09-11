@@ -632,6 +632,46 @@ often. The claim now lives where the SDK is genuinely absent, which is every
 non-Apple host, and it asserts four things about the message plus that the
 refusal arrives before any payload is resolved.
 
+### A predicate that was the same question until a second platform arrived
+
+| finding | reading |
+|---|---|
+| the three iOS rows were absent from `toolchain list` on macOS, and present on linux-x86_64 | a target-matrix scan that reached three fewer cells than the table declares |
+
+Two defects, one on each side of the same question, and the tier move is what
+exposed them -- while the rows were `planned` the listing kept them
+unconditionally, so neither could be seen.
+
+`host_can_serve` asked `os == "macos"`, which was the same question as "is this
+an Apple target" while macOS was the only one. An iOS target fell through to
+the function's final `return false`, on every host including the one that
+serves it. It now asks `is_apple()` -- a predicate the table had carried with
+NO READER AT ALL until this line.
+
+And `toolchain list`'s `graphCouldServe` claimed them. Its own comment names
+`aarch64-macos` as correctly absent on a Linux host, and that row was absent by
+ACCIDENT rather than by rule: its pin is empty, so `!info.pin.empty()`
+excluded it. The iOS rows have a pin now, so they entered the branch, found
+llvm in the index, and were listed on a host that cannot produce them. The
+discriminator the comment appeals to is real and is not the pin -- it is
+whether a PACKAGE can supply the target's system, and no package supplies an
+Apple SDK.
+
+### A skip I wrote from an assumption, refuted by a row in the same table
+
+The macOS scan also reported `graph × iOS` as `mismatch / build-failed`, and I
+first wrote it off as out of the fixture's domain -- "an Apple row's system
+comes from a located SDK and cannot be replaced by a graph-supplied musl". A
+row in the same table says otherwise: `graph macos-arm64 aarch64-macos` is
+measured `ok / none`, with `musl(graph)` in its own c-abi column. The predicate
+I had written would have skipped that working cell too.
+
+The real reason is one line of a dependency and is in the gap table above: the
+fixture's pinned `openkal-musl 0.3.5` does not compile for a Darwin target at
+all. So the skip is scoped to the rows the diagnostic covers, and its comment
+says why macOS is NOT skipped -- because the alternative was a rule that the
+table next to it disproves.
+
 ### A fifth copy of a table that a checker covered four of
 
 | finding | reading |
@@ -675,6 +715,7 @@ left rather than worked around.
 | no whole-graph flag channel | `error: POSIX thread support was disabled in precompiled file '.../openkal.types.pcm' but is currently enabled` | `-pthread` is an ABI switch for every unit in the link including a dependency's; `openkal.task` is gated behind a feature so the absence is a link error rather than a present-and-failing operation |
 | `xim:e2fsprogs`'s `debugfs` | SIGFPE on every filesystem-opening command, while dumpe2fs/e2fsck/tune2fs from the same build work | recorded in that recipe; nothing else in the index depends on it, and `android-system-image` now reads ext4 with `xim:7zip` |
 | a device runner for `aarch64-ios` | none -- it needs a signature the developer owns | R12's subject, and a package cannot supply a signature |
+| `openkal-musl` has never been built for an Apple target | `okm_syscall.c:444: error: incompatible pointer types passing 'uint64_t *' (aka 'unsigned long *') to parameter of type 'kal_u64 *' (aka 'unsigned long long *')` | one width, two type identities: musl's own `<stdint.h>` spells `uint64_t` as `unsigned long` on LP64, and `kal_u64` is `__UINT64_TYPE__`, which clang defines as `unsigned long long` for a DARWIN target. On every Linux and Windows musl target the two coincide, so that package's CI has never seen it. The current 0.13.1 has the same shape. It belongs to openkal-musl, and the iOS rows do not depend on it: their system is the located SDK, which is the `payload` mode the tier rests on |
 
 ## Deliberately not done
 
