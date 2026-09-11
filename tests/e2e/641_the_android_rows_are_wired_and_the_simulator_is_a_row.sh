@@ -60,23 +60,48 @@ for target in aarch64-linux-android x86_64-linux-android; do
     fi
 done
 
-# 3. THE SIMULATOR IS A ROW, so its spelling resolves. Before it existed,
-#    `--target aarch64-ios-sim` answered `unknown target`, which was false: the
-#    vocabulary has the device row and the simulator is a different target, not
-#    an unspellable one.
+# 3. THE SIMULATOR IS A ROW, so its spelling resolves -- and the reason it is
+#    refused on this host moved when the tier did.
+#
+#    Before the rows existed, `--target aarch64-ios-sim` answered `unknown
+#    target`, which was false. Then it answered `tier-planned`, which was true
+#    while nothing had built one. It now answers the SDK gate, because the rows
+#    are `verified` and `preview` and the thing this machine lacks is the SDK.
+#
+#    ALL THREE ANSWERS ARE ASSERTED AGAINST, not just the first: `unknown
+#    target` is a lie about the vocabulary, and `tier-planned` after the tier
+#    moved would mean the table and the gate disagree.
 for target in aarch64-ios-sim x86_64-ios-sim; do
     d="$t/sim-$target"; pkg "$d"
     out=$( cd "$d" && MCPP_NO_AUTO_INSTALL=1 "$MCPP" build --target "$target" 2>&1 ) || true
-    if grep -q "unknown target" <<<"$out"; then
-        echo "FAIL: $target reported as unknown; it is a registered row"
-        fail=1
-    elif grep -q "not yet supported (planned)" <<<"$out"; then
-        echo "  ok: $target says planned, naming the row"
-    else
-        echo "FAIL: $target refused for neither reason"
-        grep -m2 -E "^error" <<<"$out" | sed 's/^/    /'
-        fail=1
-    fi
+    case "$(uname -s)" in
+      Darwin)
+        # On a machine that has the SDK the row is simply built, and nothing
+        # here asserts the artefact -- ci-macos-ios.yml does that.
+        if grep -qE "unknown target|not yet supported \(planned\)" <<<"$out"; then
+            echo "FAIL: $target refused on a machine that can build it"
+            grep -m2 -E "^error" <<<"$out" | sed 's/^/    /'
+            fail=1
+        else
+            echo "  ok: $target is not refused on macOS"
+        fi
+        ;;
+      *)
+        if grep -q "unknown target" <<<"$out"; then
+            echo "FAIL: $target reported as unknown; it is a registered row"
+            fail=1
+        elif grep -q "not yet supported (planned)" <<<"$out"; then
+            echo "FAIL: $target still says planned; the table says otherwise"
+            fail=1
+        elif grep -q "needs the iphonesimulator SDK" <<<"$out"; then
+            echo "  ok: $target is refused for the SDK, naming the simulator one"
+        else
+            echo "FAIL: $target refused for none of the three known reasons"
+            grep -m2 -E "^error" <<<"$out" | sed 's/^/    /'
+            fail=1
+        fi
+        ;;
+    esac
 done
 
 # 4. AN EFFECTIVE TRIPLE mcpp PRINTS ITSELF MUST PARSE BACK.
@@ -164,8 +189,14 @@ done
 #    No payload is needed: the SDK is located before the toolchain is resolved,
 #    which is itself a property worth asserting -- a machine without Xcode used
 #    to download a 700 MB compiler before being told the compiler was not what
-#    was missing. Hence MCPP_NO_AUTO_INSTALL=1 and the explicit override, which
-#    opens the tier gate so that this gate is the one that answers.
+#    was missing. Hence MCPP_NO_AUTO_INSTALL=1.
+#
+#    THE OVERRIDE IS KEPT AND NO LONGER LOAD-BEARING. It opened the tier gate
+#    while the rows were `planned`; they are not any more, so this case would
+#    reach the SDK gate without it. It stays because the claim it makes is
+#    stronger with it: declaring a toolchain says which compiler and says
+#    nothing about where the headers are, so the SDK gate must refuse even a
+#    project that has named its own.
 for target in aarch64-ios aarch64-ios-sim; do
     d="$t/sdk-$target"
     pkg "$d" "" "[target.$target]" 'toolchain = "llvm@22.1.8"'

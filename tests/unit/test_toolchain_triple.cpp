@@ -751,9 +751,9 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
     // when the project says nothing", and remains overridable -- asserted
     // below in ExactlyTheseRowsHaveACapabilityPin, whose expected set does
     // NOT contain these three.
-    for (auto [name, tier] : {std::pair{"aarch64-ios",     "planned"},
-                              std::pair{"aarch64-ios-sim", "planned"},
-                              std::pair{"x86_64-ios-sim",  "planned"}}) {
+    for (auto [name, tier] : {std::pair{"aarch64-ios",     "preview"},
+                              std::pair{"aarch64-ios-sim", "verified"},
+                              std::pair{"x86_64-ios-sim",  "preview"}}) {
         auto t = parse(name);
         ASSERT_TRUE(t.has_value()) << name;
         EXPECT_EQ(t->str(), name);

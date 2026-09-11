@@ -746,7 +746,24 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // The simulator is deliberately not a row. It has its own SDK and produces
     // its own object, so folding it in would make two targets share an
     // identity -- the mistake `x86_64-windows-musl` was added to undo.
-    { "aarch64-ios",           "planned",   "",    "llvm@22.1.8","",                            false },
+    //
+    // `preview`: BUILT, AND NOT RUN, AND NOTHING HERE CAN RUN IT. Measured
+    // 2026-09-11 on macos-15 (Xcode 16.4, iPhoneOS 18.5,
+    // `ios_deployment_target = "18.0"`):
+    //
+    //   Mach-O 64-bit executable arm64
+    //   LC_BUILD_VERSION  platform 2 (IOS)  minos 18.0  sdk 18.5
+    //
+    // `platform 2` against the simulator rows' `platform 7` is the reading
+    // worth having: a successful build cannot tell them apart, and an artefact
+    // reporting IOSSIMULATOR from this row is one no later step refuses.
+    //
+    // The row keeps `runner` unset and will stay `preview`. An artefact cannot
+    // be run off an iOS device without a signature the developer owns, which
+    // is not something a build tool or a package can supply -- so this is a
+    // tier bounded by a fact about the platform rather than by work not yet
+    // done.
+    { "aarch64-ios",           "preview",   "",    "llvm@22.1.8","",                            false },
     // THE SIMULATOR'S TWO ROWS. Not a convenience and not a runner: a
     // simulator build has its own SDK (`iPhoneSimulator.sdk`), produces its own
     // object, and takes `-mios-simulator-version-min` rather than
@@ -759,13 +776,26 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // an Intel one needs `x86_64`. A single row would describe a simulator half
     // the machines cannot run.
     //
-    // `planned`, and the blocker is the same licence question as the device
-    // row -- the simulator SDK ships inside Xcode and is no more
-    // redistributable than the iPhoneOS one. What these rows buy today is that
-    // `mcpp build --target aarch64-ios-sim` answers `tier-planned` naming the
-    // row, instead of `unknown target`, which was false.
-    { "aarch64-ios-sim",       "planned",   "",    "llvm@22.1.8","",                            false },
-    { "x86_64-ios-sim",        "planned",   "",    "llvm@22.1.8","",                            false },
+    // ONE `verified` AND ONE `preview`, AND THE DIFFERENCE IS THE HOST'S
+    // ARCHITECTURE RATHER THAN ANYTHING ABOUT THE ROWS.
+    //
+    // `aarch64-ios-sim` was built AND RUN. Measured 2026-09-11 on macos-15
+    // (Xcode 16.4, iPhoneSimulator 18.5, `ios_deployment_target = "18.0"`):
+    //
+    //   artefact  Mach-O 64-bit executable arm64
+    //             LC_BUILD_VERSION  platform 7 (IOSSIMULATOR)  minos 18.0
+    //   run       xcrun simctl spawn <udid> <artefact>  ->  1-2-3
+    //
+    // with no bundle, no signature and no Info.plist -- the measurement that
+    // made `simctl-run` a boot-and-spawn wrapper rather than a bundle builder.
+    //
+    // `x86_64-ios-sim` builds and its artefact is correct -- Mach-O x86_64,
+    // the same `platform 7`, the same floor -- and nothing ran it, because a
+    // SIMULATOR RUNS THE HOST'S ARCHITECTURE and the runner is Apple silicon.
+    // That is a property of the machine the measurement was taken on, so the
+    // row stays `preview` until an Intel host takes it.
+    { "aarch64-ios-sim",       "verified",  "",    "llvm@22.1.8","",                            false },
+    { "x86_64-ios-sim",        "preview",   "",    "llvm@22.1.8","",                            false },
 
     // WEB IS THE OUTLIER, AND IT IS THE ONLY ONE OF THE THREE THAT CHANGES THE
     // MODEL RATHER THAN EXTENDING A TABLE. A new arch (`wasm32`), a new os

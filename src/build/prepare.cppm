@@ -2493,6 +2493,11 @@ prepare_build(bool print_fingerprint,
                 : mcpp::platform::macos::sdk_iphoneos;
             appleSdkLocated = mcpp::platform::macos::sdk_path(which);
             if (!appleSdkLocated) {
+                // A CODE, BECAUSE THE MATRIX COMPARES REASONS AND NOT ONLY
+                // OUTCOMES. A refusal with no code is recorded as `other`,
+                // which `check_matrix_reasons.sh` refuses on the ground that
+                // it freezes an unnamed branch into the expected table.
+                refusal::record(refusal::Code::AppleSdkAbsent);
                 return std::unexpected(std::format(
                     "target {} needs the {} SDK, which this machine does not "
                     "provide.\n"

@@ -487,9 +487,9 @@ other's rows.
 | `armv7a-none-eabihf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
 | `aarch64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
-| `aarch64-ios` | planned | — | planned | planned | planned | planned |
-| `aarch64-ios-sim` | planned | — | planned | planned | planned | planned |
-| `x86_64-ios-sim` | planned | — | planned | planned | planned | planned |
+| `aarch64-ios` | preview | `llvm@22.1.8` | — | — | SDK | — |
+| `aarch64-ios-sim` | verified | `llvm@22.1.8` | — | — | SDK | — |
+| `x86_64-ios-sim` | preview | `llvm@22.1.8` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | payload | payload | payload | payload |
 
 `payload` a toolchain payload here produces it · `graph` no payload, but a

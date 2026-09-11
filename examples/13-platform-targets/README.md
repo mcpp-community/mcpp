@@ -178,6 +178,6 @@ error: target aarch64-ios needs the iphoneos SDK, which this machine does not pr
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | 是，`node` |
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | 是，平台模拟器 |
 | `aarch64-linux-android` | verified | `android-ndk@30.0.16248370` | 是，`qemu-aarch64-static` + 从镜像取出的 bionic |
-| `aarch64-ios` | planned | `llvm@22.1.8` | 否 —— 真机需要开发者自己的签名 |
-| `aarch64-ios-sim` | planned | `llvm@22.1.8` | 是，`simctl-run`（macos-15） |
-| `x86_64-ios-sim` | planned | `llvm@22.1.8` | 否 —— 模拟器跑宿主架构，而那台宿主是 arm64 |
+| `aarch64-ios` | preview | `llvm@22.1.8` | 否 —— 真机需要开发者自己的签名 |
+| `aarch64-ios-sim` | verified | `llvm@22.1.8` | 是，`simctl-run`（macos-15） |
+| `x86_64-ios-sim` | preview | `llvm@22.1.8` | 否 —— 模拟器跑宿主架构，而那台宿主是 arm64 |

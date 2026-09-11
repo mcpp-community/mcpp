@@ -409,7 +409,9 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 | `wasm32-emscripten` | `emsdk@6.0.9` —— Emscripten 自带 sysroot 和它自己的 libc++ 模块面;`mcpp run` 用 `node` 把模块跑起来 | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370` —— bionic 来自 NDK,一个载荷服务两个 ABI;在 API 24 的 x86_64 模拟器镜像上跑过 | verified |
 | `aarch64-linux-android` | 同一个载荷、同样的构建;在 qemu-user 上、配系统镜像自带的 bionic 跑过 —— 这是平台模拟器从 x86_64 宿主做不到的 | verified |
-| `aarch64-ios` · `aarch64-ios-sim` · `x86_64-ios-sim` | iPhoneOS 与 iPhoneSimulator 的 SDK 在 Xcode 里且不可再分发,所以阻塞项是许可而不是载荷 | planned |
+| `aarch64-ios-sim` | llvm 22 加上机器自己的 iPhoneSimulator SDK,mcpp 定位而不安装它;经 `simctl-run` 在模拟器上跑过 ³ | verified |
+| `aarch64-ios` | 真机取同一种切分;产物命名 iOS 平台,而把它跑在一台设备上需要开发者自己拥有的签名 ³ | preview |
+| `x86_64-ios-sim` | 同一次构建;没有东西跑过它,因为模拟器跑宿主的架构,而被测的那台是 Apple 芯片 ³ | preview |
 
 `verified` 该行的镜像已被构建**并运行**过,qemu 与 wine 都算 · `preview` 可构建
 可链接,未记录过模拟器运行 · `planned` 已登记在词表中,尚未接线 —— 面向这类目标
@@ -431,6 +433,12 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 > LLVM 载荷的宿主都能产出这些目标。C 库、启动代码、内存布局与模拟器随板级支持包
 > 走,而不随 mcpp 走 —— 见
 > [40 — 裸机与 freestanding 目标](docs/zh/40-baremetal.md)。
+>
+> ³ 三条 iOS 行需要一台 macOS 宿主,而编译器仍然是生态的:`xim:llvm` 能为一个 iOS
+> 部署目标产出 arm64 Mach-O。机器供给的是 SDK —— 它在 Xcode 里且不可再分发,所以
+> mcpp 通过 `xcrun` 定位它,与它一直以来定位 macOS SDK 的方式完全相同 —— 并在找不到
+> 时点名那个 SDK 拒绝。模拟器那次会话属于 `xim:apple-simulator-tools`。见
+> [20 —— 工具链管理](docs/zh/20-toolchains.md)。
 
 ## 文档
 

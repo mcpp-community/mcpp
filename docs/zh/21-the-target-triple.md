@@ -437,9 +437,9 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 | `armv7a-none-eabihf` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `aarch64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
-| `aarch64-ios` | planned | — | planned | planned | planned | planned |
-| `aarch64-ios-sim` | planned | — | planned | planned | planned | planned |
-| `x86_64-ios-sim` | planned | — | planned | planned | planned | planned |
+| `aarch64-ios` | preview | `llvm@22.1.8` | — | — | SDK | — |
+| `aarch64-ios-sim` | verified | `llvm@22.1.8` | — | — | SDK | — |
+| `x86_64-ios-sim` | preview | `llvm@22.1.8` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | payload | payload | payload | payload |
 
 `载荷` 这里有工具链载荷产出它 · `图` 没有载荷,但依赖可以供给系统 ·
