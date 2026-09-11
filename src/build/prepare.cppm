@@ -2587,16 +2587,51 @@ prepare_build(bool print_fingerprint,
         if (known && parsed && parsed->pin_is_capability()
             && tc_origin_is_user_explicit(tcOrigin) && tcSpec.has_value()) {
             auto declared = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
-            if (declared && declared->family != mcpp::toolchain::Family::Llvm) {
-                // THE REASON TRAVELS WITH THE ROW. Both rows refuse for the
+            // WHICH DECLARATIONS THE ROW ACCEPTS IS THE ROW'S PIN, NOT A FIXED
+            // FAMILY.
+            //
+            // This asked `family != Llvm`, which was right while every
+            // capability-pinned row pinned llvm. `wasm32-emscripten` pins
+            // `emsdk@6.0.9`, and emsdk NORMALISES to the llvm family -- `em++`
+            // is clang -- so a declared `llvm@22.1.8` passed this gate, was
+            // never refused, and resolved the generic llvm payload for a target
+            // it cannot emit. The condition is now the pin's own family, which
+            // is the question the row was always answering.
+            const auto pinFamily = [&]() -> std::optional<mcpp::toolchain::Family> {
+                if (known->pin.empty()) return mcpp::toolchain::Family::Llvm;
+                if (auto ps = mcpp::toolchain::parse_toolchain_spec(
+                        std::string(known->pin)))
+                    return ps->family;
+                return std::nullopt;
+            }();
+            const bool declaredMatchesPin =
+                declared && pinFamily && declared->family == *pinFamily
+                // An emsdk row is llvm-family, so the family alone cannot
+                // separate `emsdk@6.0.9` from `llvm@22.1.8`. The pin's own
+                // spelling is what does.
+                && (known->pin.empty()
+                    || tcSpec->find(known->pin.substr(0, known->pin.find('@')))
+                       != std::string::npos);
+            if (declared && !declaredMatchesPin) {
+                // THE REASON TRAVELS WITH THE ROW. The rows refuse for the
                 // same rule and NOT for the same reason, and one sentence
-                // covering both would be wrong about one of them: a PE+musl
-                // target is not bare metal, and a reader told it is stops
-                // reading.
+                // covering all of them would be wrong about the others: a
+                // PE+musl target is not bare metal, a wasm target is neither,
+                // and a reader told the wrong one stops reading.
+                //
+                // Measured before the third arm existed: `--target
+                // wasm32-emscripten` with a declared gcc was refused correctly
+                // and explained with "No gcc payload emits a PE with a musl C
+                // library", which is a true sentence about a different row.
                 std::string_view why = parsed->is_freestanding()
                     ? "A freestanding target has no per-host cross payload: "
                       "clang and lld are\n"
                       "       cross-compilers by construction and gcc is not."
+                    : parsed->is_wasm()
+                    ? "Nothing but Emscripten emits WebAssembly: `em++` is a "
+                      "clang whose target,\n"
+                      "       sysroot and JavaScript glue all come from its own "
+                      "payload."
                     : "No gcc payload emits a PE with a musl C library — the "
                       "mingw payload emits\n"
                       "       PE with the MinGW CRT, which is the separate "
@@ -2605,12 +2640,13 @@ prepare_build(bool print_fingerprint,
                 return std::unexpected(std::format(
                     "target '{}' cannot be emitted by '{}'.\n"
                     "       {}\n"
-                    "       The row names llvm as a capability rather than as a "
-                    "preference, so this\n"
-                    "       one line is not a convention you can override.\n"
+                    "       The row names `{}` as a capability rather than as a "
+                    "preference, so\n"
+                    "       this one line is not a convention you can override.\n"
                     "       remove the `[toolchain]` line for this target, or set "
                     "it to `{}`.",
                     parsed->str(), *tcSpec, why,
+                    known->pin.empty() ? std::string_view("llvm") : known->pin,
                     known->pin.empty() ? std::string_view("llvm") : known->pin));
             }
         }

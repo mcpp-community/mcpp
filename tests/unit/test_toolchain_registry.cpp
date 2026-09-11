@@ -373,3 +373,39 @@ TEST(SdkPayloads, ServedOnTheHostsTheSdkIsPublishedFor) {
     ASSERT_TRUE(droid.has_value());
     EXPECT_EQ(mcpp::toolchain::host_can_serve(*droid), mcpp::platform::is_linux);
 }
+
+// ─── The payload is SAID, not only resolved (R3) ───────────────────────────
+//
+// `emsdk@6.0.9` normalises to the llvm family because `em++` IS clang, and a
+// fourth family value would be a false claim about the compiler. The
+// consequence was `Resolved llvm@6.0.9` -- indistinguishable from the real
+// `xim:llvm`, and not what the user typed. The family and the payload are two
+// questions, and `to_xim_package` already answered the second; this is the
+// field that lets it be printed.
+TEST(SdkPayloads, TheDisplayNamesThePayloadAndNotOnlyTheFamily) {
+    auto em = mcpp::toolchain::parse_toolchain_spec("emsdk@6.0.9");
+    ASSERT_TRUE(em.has_value());
+    EXPECT_EQ(em->family, mcpp::toolchain::Family::Llvm)
+        << "em++ is clang; a fourth family would be a false claim";
+    EXPECT_EQ(em->payloadName, "emsdk");
+    EXPECT_NE(em->display().find("emsdk@6.0.9"), std::string::npos)
+        << em->display();
+    EXPECT_EQ(em->display().find("llvm@"), std::string::npos) << em->display();
+
+    auto ndk = mcpp::toolchain::parse_toolchain_spec("android-ndk@30.0.16248370");
+    ASSERT_TRUE(ndk.has_value());
+    EXPECT_EQ(ndk->family, mcpp::toolchain::Family::Llvm);
+    EXPECT_EQ(ndk->payloadName, "android-ndk");
+    EXPECT_NE(ndk->display().find("android-ndk@"), std::string::npos)
+        << ndk->display();
+
+    // AND NOTHING ELSE MOVES. Empty `payloadName` means the family's own
+    // payload, which is every row but these two -- so no existing output
+    // changes, which is what makes this additive.
+    for (auto spelled : {"llvm@22.1.8", "gcc@16.1.0", "msvc@14.44.35207"}) {
+        auto sp = mcpp::toolchain::parse_toolchain_spec(spelled);
+        ASSERT_TRUE(sp.has_value()) << spelled;
+        EXPECT_TRUE(sp->payloadName.empty()) << spelled;
+        EXPECT_NE(sp->display().find(spelled), std::string::npos) << sp->display();
+    }
+}

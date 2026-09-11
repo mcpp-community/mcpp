@@ -74,8 +74,31 @@ struct ToolchainSpec {
     bool is_host_target() const { return target.empty(); }
 
     // "gcc@16.1.0" — the toolchain axis alone (config persistence, matching).
+    // WHICH PAYLOAD ANSWERED, NOT ONLY WHICH FAMILY.
+    //
+    // `emsdk@6.0.9` normalises to the llvm family, because `em++` IS clang and
+    // a fourth family value would be a false claim about the compiler. The
+    // consequence was a display line reading `Resolved llvm@6.0.9`, which is
+    // indistinguishable from the real `xim:llvm` and is not what the user
+    // typed. `mcpp toolchain list` has the same problem, and the matrix scan
+    // takes one toolchain per family, so two llvm-family payloads on one host
+    // could not both be enumerated.
+    //
+    // The family and the payload are two questions:
+    //
+    //     family   what flag vocabulary does this compiler speak?   llvm
+    //     payload  which archive provides it?                       emsdk
+    //
+    // `to_xim_package` already answers the second from the target; this is the
+    // field that lets it be SAID. Empty means the family's own payload, which
+    // is every row but these two, so nothing else's output moves.
+    std::string payloadName;
+
     std::string spec_str() const {
-        return std::format("{}@{}", family_name(family), version);
+        return std::format("{}@{}",
+                           payloadName.empty() ? family_name(family)
+                                               : std::string_view(payloadName),
+                           version);
     }
 
     // "gcc@16.1.0" or "gcc@16.1.0 → x86_64-windows-gnu" — user-facing.
@@ -349,8 +372,9 @@ parse_toolchain_spec(std::string compilerArg,
     if      (norm->family == "llvm") spec.family = Family::Llvm;
     else if (norm->family == "msvc") spec.family = Family::Msvc;
     else                             spec.family = Family::Gcc;
-    spec.version = std::move(norm->version);
-    spec.target  = std::move(norm->target);
+    spec.version     = std::move(norm->version);
+    spec.target      = std::move(norm->target);
+    spec.payloadName = std::move(norm->payload);
 
     // `@system` IS NOT A GENERAL SPELLING, and refusing it here is the point.
     //

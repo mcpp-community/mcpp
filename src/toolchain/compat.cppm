@@ -38,6 +38,11 @@ struct NormalizedSpec {
     std::string    family;    // "gcc" | "llvm" | "msvc" | "openkal-llvm"
     std::string    version;   // numeric (possibly partial), or "system"; never "-musl"-suffixed
     triple::Triple target;    // empty = host
+    // WHICH PAYLOAD, when the family alone does not say. `emsdk` and
+    // `android-ndk` both normalise to the llvm family -- their compilers ARE
+    // clang -- so without this the two are indistinguishable from `xim:llvm`
+    // in every line mcpp prints. Empty for every other spelling.
+    std::string    payload;
     // Set when a legacy spelling was rewritten; `hint` is the one-line note.
     bool           changed = false;
     std::string    hint;
@@ -137,6 +142,7 @@ std::optional<NormalizedSpec> normalize_spec(std::string_view compilerIn,
     // current ones.
     if (compiler == "emsdk" || compiler == "emscripten") {
         out.family = "llvm";
+        out.payload = "emsdk";
         if (auto t = triple::parse("wasm32-emscripten")) out.target = *t;
         if (muslVersionSuffix) return std::nullopt;
         return out;
@@ -147,6 +153,7 @@ std::optional<NormalizedSpec> normalize_spec(std::string_view compilerIn,
     // who typed it for x86_64.
     if (compiler == "android-ndk" || compiler == "ndk") {
         out.family = "llvm";
+        out.payload = "android-ndk";
         if (muslVersionSuffix) return std::nullopt;
         return out;
     }
