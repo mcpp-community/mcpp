@@ -2,7 +2,9 @@
 //
 // Provides:
 //   has_xcode_clt()       — detect Xcode Command Line Tools
-//   sdk_path()            — discover macOS SDK via xcrun
+//   sdk_path(sdk)         — discover an Apple SDK via xcrun ("macosx" default)
+//   sdk_layout(sdk)       — the directory names that SDK uses inside Xcode
+//   sdk_name_of_root(p)   — which SDK a path IS, for the SDKROOT override
 //   runtime_lib_dirs()    — macOS-specific library search paths
 //   supports_full_static  — macOS cannot fully static-link (libSystem)
 
@@ -28,9 +30,49 @@ constexpr bool supports_full_static = false;
 // Returns true if `xcode-select -p` succeeds.
 bool has_xcode_clt();
 
-// Discover the macOS SDK path via `xcrun --show-sdk-path`.
-// Returns the SDK path if found, or nullopt.
-std::optional<std::filesystem::path> sdk_path();
+// THREE SDKS, ONE MACHINE. Apple ships the macOS, iPhoneOS and
+// iPhoneSimulator SDKs from one developer directory, and mcpp locates
+// rather than installs all three: they are not redistributable, which
+// is why the iOS rows carry a located `sysroot` instead of a package.
+// `sdk` is the name `xcrun --sdk` takes.
+inline constexpr std::string_view sdk_macos     = "macosx";
+inline constexpr std::string_view sdk_iphoneos  = "iphoneos";
+inline constexpr std::string_view sdk_iphonesim = "iphonesimulator";
+
+// Where an SDK lives inside a developer directory: the `.platform`
+// directory that holds it, and its own `.sdk` directory name. Pure, and
+// nullopt for a name no Apple SDK answers to.
+struct SdkLayout {
+    std::string_view platformDir;   // e.g. "iPhoneOS.platform"
+    std::string_view sdkDir;        // e.g. "iPhoneOS.sdk"
+    bool             inCommandLineTools;  // the CLT-only install ships it
+};
+std::optional<SdkLayout> sdk_layout(std::string_view sdk);
+
+// Which SDK a path IS, derived from its own directory name:
+// `MacOSX15.4.sdk` -> "macosx", `iPhoneSimulator18.4.sdk` ->
+// "iphonesimulator". Empty when the path does not name an SDK.
+//
+// THIS EXISTS BECAUSE `SDKROOT` NAMES ONE SDK AND THERE ARE THREE
+// QUESTIONS. Honouring it for every request would answer an iOS query
+// with a macOS SDK whenever a shell had it set -- a wrong sysroot, which
+// fails later as missing headers rather than as a bad override.
+std::string sdk_name_of_root(const std::filesystem::path& p);
+
+// Whether an `SDKROOT` override answers a request for `sdk`.
+//
+// A path that names an SDK answers for that SDK and no other. A path that
+// names NO SDK -- a hand-rolled sysroot, which is a spelling clang accepts --
+// answers the DEFAULT question only: it is an answer to "the SDK", not to
+// "the iPhoneOS SDK". That asymmetry is what keeps today's callers unchanged
+// while making a specific request require positive identification.
+bool sdkroot_answers(const std::filesystem::path& candidate,
+                     std::string_view sdk);
+
+// Discover an Apple SDK path via `xcrun --show-sdk-path`.
+// Returns the SDK path if found, or nullopt. The default argument is
+// today's behaviour for today's callers.
+std::optional<std::filesystem::path> sdk_path(std::string_view sdk = sdk_macos);
 
 // Built-in default deployment floor (rustc-style: every target has a
 // baseline). 14.0 = the floor of the official LLVM static libc++
@@ -107,18 +149,69 @@ bool has_xcode_clt() {
 #endif
 }
 
-std::optional<std::filesystem::path> sdk_path() {
+std::optional<SdkLayout> sdk_layout(std::string_view sdk) {
+    // ONE TABLE, THREE READERS. Every step of `sdk_path` below that names a
+    // directory reads it from here, so a fourth SDK is a row and not four
+    // edits. `inCommandLineTools` is false for the iOS SDKs because a
+    // CLT-only install genuinely does not ship them -- which is a reason the
+    // iOS rows can be refused, not a path to probe.
+    static constexpr SdkLayout kLayouts[] = {
+        { "MacOSX.platform",          "MacOSX.sdk",          true  },
+        { "iPhoneOS.platform",        "iPhoneOS.sdk",        false },
+        { "iPhoneSimulator.platform", "iPhoneSimulator.sdk", false },
+    };
+    if (sdk == sdk_macos)     return kLayouts[0];
+    if (sdk == sdk_iphoneos)  return kLayouts[1];
+    if (sdk == sdk_iphonesim) return kLayouts[2];
+    return std::nullopt;
+}
+
+std::string sdk_name_of_root(const std::filesystem::path& p) {
+    // The installed name carries a version -- `MacOSX15.4.sdk` -- and the
+    // requested name does not. Lowercase, drop the suffix, drop the digits.
+    //
+    // THE SUFFIX IS REQUIRED, because this is positive identification and
+    // `.sdk` is the marker Apple's own naming gives it. A directory merely
+    // called `MacOSX` names no SDK; `sdkroot_answers` then routes it to the
+    // default question, which is what it was before this took a parameter.
+    std::string name = p.filename().string();
+    for (auto& c : name) c = static_cast<char>(std::tolower(c));
+    if (!name.ends_with(".sdk")) return {};
+    name.resize(name.size() - 4);
+    while (!name.empty() && (std::isdigit(static_cast<unsigned char>(name.back()))
+                             || name.back() == '.'))
+        name.pop_back();
+    for (auto known : {sdk_macos, sdk_iphoneos, sdk_iphonesim})
+        if (name == known) return std::string(known);
+    return {};
+}
+
+bool sdkroot_answers(const std::filesystem::path& candidate,
+                     std::string_view sdk) {
+    if (!sdk_layout(sdk)) return false;
+    auto named = sdk_name_of_root(candidate);
+    if (!named.empty()) return named == sdk;
+    return sdk == sdk_macos;
+}
+
+std::optional<std::filesystem::path> sdk_path(std::string_view sdk) {
+    auto layout = sdk_layout(sdk);
+    if (!layout) return std::nullopt;
 #if defined(__APPLE__)
-    // 1. Explicit override wins (matches clang's own SDKROOT handling).
+    // 1. Explicit override wins (matches clang's own SDKROOT handling) -- but
+    //    only for a request it answers. See `sdkroot_answers`.
     if (const char* env = std::getenv("SDKROOT"); env && *env) {
         std::filesystem::path p(env);
-        if (std::filesystem::exists(p)) return p;
+        if (std::filesystem::exists(p) && sdkroot_answers(p, sdk)) return p;
     }
-    // 2. xcrun — the canonical query. Try the generic form, then the
-    //    macosx-specific one (works even when the active developer dir's
-    //    default SDK isn't macOS, e.g. an iOS-defaulted setup).
-    for (const char* cmd : {"xcrun --show-sdk-path 2>/dev/null",
-                            "xcrun --sdk macosx --show-sdk-path 2>/dev/null"}) {
+    // 2. xcrun — the canonical query. The named form is the only one that can
+    //    answer for a specific SDK; the generic form returns the ACTIVE
+    //    default, so it is tried only for the default request, where it is
+    //    today's first probe and stays first.
+    std::vector<std::string> cmds;
+    if (sdk == sdk_macos) cmds.emplace_back("xcrun --show-sdk-path 2>/dev/null");
+    cmds.push_back(std::format("xcrun --sdk {} --show-sdk-path 2>/dev/null", sdk));
+    for (auto const& cmd : cmds) {
         auto result = run_capture_trimmed(cmd);
         if (!result.empty() && std::filesystem::exists(result))
             return std::filesystem::path(result);
@@ -129,18 +222,22 @@ std::optional<std::filesystem::path> sdk_path() {
     if (!devdir.empty()) {
         std::filesystem::path base(devdir);
         for (auto cand : {
-                base / "Platforms" / "MacOSX.platform" / "Developer" / "SDKs" / "MacOSX.sdk",
-                base / "SDKs" / "MacOSX.sdk" }) {
+                base / "Platforms" / layout->platformDir / "Developer" / "SDKs"
+                     / layout->sdkDir,
+                base / "SDKs" / layout->sdkDir }) {
             if (std::filesystem::exists(cand)) return cand;
         }
     }
     // 4. Well-known fixed locations (Command-Line-Tools-only / standard Xcode).
-    for (const char* p : {
-            "/Library/Developer/CommandLineTools/SDKs/MacOSX.sdk",
-            "/Applications/Xcode.app/Contents/Developer/Platforms/"
-            "MacOSX.platform/Developer/SDKs/MacOSX.sdk" }) {
-        if (std::filesystem::exists(p)) return std::filesystem::path(p);
-    }
+    std::vector<std::filesystem::path> fixed;
+    if (layout->inCommandLineTools)
+        fixed.emplace_back(std::filesystem::path(
+            "/Library/Developer/CommandLineTools/SDKs") / layout->sdkDir);
+    fixed.emplace_back(std::filesystem::path(
+        "/Applications/Xcode.app/Contents/Developer/Platforms")
+        / layout->platformDir / "Developer" / "SDKs" / layout->sdkDir);
+    for (auto const& cand : fixed)
+        if (std::filesystem::exists(cand)) return cand;
 #endif
     return std::nullopt;
 }

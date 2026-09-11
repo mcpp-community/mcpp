@@ -188,8 +188,84 @@ std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
 // perfectly well and then did not appear in the list. Empty = no frontend
 // here, which is the caller's cue to skip; a wrong LAYOUT and a missing
 // PAYLOAD had been reporting the same way.
-std::filesystem::path payload_frontend(const std::filesystem::path& payloadRoot,
-                                       const XimToolchainPackage& pkg);
+// A MALFORMED DESCRIPTOR IS AN ERROR AND A MISSING FRONTEND IS NOT, which is
+// why this returns `expected` over a path that may still be empty. Empty =
+// nothing found where we looked, the caller's long-standing cue to skip or to
+// refuse in its own words. `unexpected` = the payload described itself and the
+// description does not parse, which no caller can express as "not found".
+std::expected<std::filesystem::path, std::string>
+payload_frontend(const std::filesystem::path& payloadRoot,
+                 const XimToolchainPackage& pkg);
+
+// ─── A payload describes itself ──────────────────────────────────────────────
+//
+// Three payload-specific facts used to live in this engine: the NDK's internal
+// `toolchains/llvm/prebuilt/<host>/bin` layout, its API floor in
+// `meta/platforms.json`, and the `-D__BIONIC_CTYPE_INLINE=` its libc++ module
+// surface needs. Each is a fact the INSTALLING RECIPE already computes for its
+// own probes, and re-deriving all three here is why adding a second such SDK
+// meant editing the engine instead of publishing a package.
+//
+// So the recipe writes one file beside the payload and the engine reads it:
+//
+//     <payload root>/.mcpp-toolchain.json
+//     {
+//       "schema": 1,
+//       "frontend": "toolchains/llvm/prebuilt/linux-x86_64/bin/clang++",
+//       "platform_floor": "21",
+//       "std_module_defines": ["__BIONIC_CTYPE_INLINE="]
+//     }
+//
+// It is NOT a general flag channel. Three keys, each answering a question this
+// engine already asks; a payload that could inject arbitrary flags would be a
+// package changing a build it does not own, and `[build]` in a manifest is the
+// project's to write.
+struct PayloadDescriptor {
+    int                      schema = 0;
+    // Relative to the payload root, already host-resolved by the recipe. The
+    // engine stops computing a host tag; `frontendSubdir` stays as the answer
+    // for a payload that ships no descriptor.
+    std::string              frontend;
+    // The string `llvm_triple(param)` already takes -- the payload's answer
+    // rather than a constant compiled in here.
+    std::string              platformFloor;
+    // These reach the std module's own command assembly, which is a separate
+    // channel from the compile flags, and they enter the build fingerprint
+    // because they change what the module compiles to.
+    std::vector<std::string> stdModuleDefines;
+};
+
+// The descriptor's file name, so a message and a test name the same string.
+inline constexpr std::string_view payload_descriptor_filename =
+    ".mcpp-toolchain.json";
+
+// Read `<payloadRoot>/.mcpp-toolchain.json`.
+//
+// THREE OUTCOMES, AND THE MIDDLE ONE IS THE REASON THIS RETURNS `expected`.
+//
+//   nullopt         no descriptor -- today's behaviour exactly, so a released
+//                   payload keeps working and there is no flag day.
+//   a descriptor    the payload answered.
+//   unexpected      PRESENT AND MALFORMED. Refused, naming the file. Silently
+//                   falling back would make a typo read as "an older payload"
+//                   and the engine would use a hardcoded path for a layout
+//                   that has moved -- which is the failure mode this
+//                   repository records most often: the lookup is repaired and
+//                   the message is not.
+std::expected<std::optional<PayloadDescriptor>, std::string>
+read_payload_descriptor(const std::filesystem::path& payloadRoot);
+
+// The descriptor for the payload a COMPILER belongs to.
+//
+// Two of the three answers are needed where only the compiler path is in
+// hand, and the payload root is some number of directories above it -- five
+// for the NDK, two for emsdk and for llvm. Found by walking up, not by
+// counting components, because the count is exactly the kind of fact that
+// changes silently when a layout does (`ndk_min_api_level` walks for the same
+// reason). The walk is BOUNDED so that a compiler outside any payload cannot
+// reach a descriptor belonging to a directory that is not its payload.
+std::expected<std::optional<PayloadDescriptor>, std::string>
+payload_descriptor_for_compiler(const std::filesystem::path& compilerPath);
 
 // The DIRECTORY `payload_frontend` searched, for a message that has to name it.
 //
@@ -694,6 +770,125 @@ std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
     return {};
 }
 
+std::expected<std::optional<PayloadDescriptor>, std::string>
+read_payload_descriptor(const std::filesystem::path& payloadRoot) {
+    std::error_code ec;
+    auto file = payloadRoot / payload_descriptor_filename;
+    if (!std::filesystem::exists(file, ec)) return std::nullopt;
+
+    // EVERY REFUSAL NAMES THE FILE. A message that says only "invalid
+    // descriptor" sends the reader to the documentation; one that names the
+    // path is one edit away from a fix, and the recipe that wrote it is the
+    // thing that has to change.
+    auto refuse = [&](std::string_view what) {
+        return std::unexpected(std::format("{}: {}", file.string(), what));
+    };
+
+    std::ifstream in(file);
+    if (!in) return refuse("cannot be read");
+    auto j = nlohmann::json::parse(in, nullptr, false);
+    if (j.is_discarded()) return refuse("is not valid JSON");
+    if (!j.is_object())   return refuse("is not a JSON object");
+
+    PayloadDescriptor d;
+    if (!j.contains("schema") || !j["schema"].is_number_integer())
+        return refuse("has no integer \"schema\"");
+    d.schema = j["schema"].get<int>();
+    // A SCHEMA THIS ENGINE DOES NOT IMPLEMENT IS REFUSED, NOT IGNORED. The
+    // descriptor exists because the built-in guess is wrong for this payload;
+    // a newer schema means the payload is describing something this engine
+    // cannot read, and falling back to the guess is the one outcome the
+    // descriptor was added to prevent. The obligation is therefore on the
+    // recipe: a schema bump comes with a floor on the mcpp version that reads
+    // it, the same way an index descriptor's syntax does.
+    if (d.schema != 1)
+        return refuse(std::format(
+            "declares schema {}, which this mcpp does not implement "
+            "(expected 1); upgrade mcpp to build with this payload",
+            d.schema));
+
+    if (j.contains("frontend")) {
+        if (!j["frontend"].is_string())
+            return refuse("\"frontend\" is not a string");
+        d.frontend = j["frontend"].get<std::string>();
+        if (d.frontend.empty()) return refuse("\"frontend\" is empty");
+        // IT CANNOT LEAVE THE PAYLOAD. A descriptor naming `/usr/bin/g++` or
+        // `../../..` would make a package choose a host compiler, which is
+        // the one thing a payload must not be able to do: mcpp's hermeticity
+        // is a property of the payload boundary, not of the recipe's good
+        // manners.
+        std::filesystem::path rel(d.frontend);
+        if (rel.is_absolute())
+            return refuse("\"frontend\" is absolute; it is relative to the "
+                          "payload root");
+        for (auto const& part : rel)
+            if (part == "..")
+                return refuse("\"frontend\" leaves the payload root");
+    }
+
+    if (j.contains("platform_floor")) {
+        // ONE SPELLING. `llvm_triple` takes the string, the manifest's
+        // `min_api_level` is a string, and a number here would be a second
+        // spelling for the same value -- which this engine has recorded as
+        // the shape that makes two mechanisms out of one question. The
+        // recipe's own tests assert this file's content, so the refusal is
+        // caught where the file is written rather than where it is read.
+        if (!j["platform_floor"].is_string())
+            return refuse("\"platform_floor\" is not a string (write \"21\", "
+                          "not 21)");
+        d.platformFloor = j["platform_floor"].get<std::string>();
+        if (d.platformFloor.empty())
+            return refuse("\"platform_floor\" is empty");
+        if (d.platformFloor.find_first_not_of("0123456789.") != std::string::npos)
+            return refuse("\"platform_floor\" is not a version");
+    }
+
+    if (j.contains("std_module_defines")) {
+        if (!j["std_module_defines"].is_array())
+            return refuse("\"std_module_defines\" is not an array");
+        for (auto const& e : j["std_module_defines"]) {
+            if (!e.is_string())
+                return refuse("\"std_module_defines\" holds a non-string");
+            auto def = e.get<std::string>();
+            // THIS IS THE KEY THAT COULD BECOME A FLAG CHANNEL, so it is the
+            // key with a shape. A define starts with an identifier character;
+            // anything that could begin an option is refused, and whitespace
+            // is refused because a value needing quotes crosses two parsers
+            // and this engine has paid for that twice.
+            if (def.empty())
+                return refuse("\"std_module_defines\" holds an empty entry");
+            const char c0 = def.front();
+            if (!(std::isalpha(static_cast<unsigned char>(c0)) || c0 == '_'))
+                return refuse(std::format(
+                    "\"std_module_defines\" entry '{}' is not a define name; "
+                    "this is not a flag channel", def));
+            if (def.find_first_of(" \t\n\r\"'") != std::string::npos)
+                return refuse(std::format(
+                    "\"std_module_defines\" entry '{}' contains whitespace "
+                    "or a quote", def));
+            d.stdModuleDefines.push_back(std::move(def));
+        }
+    }
+    return d;
+}
+
+std::expected<std::optional<PayloadDescriptor>, std::string>
+payload_descriptor_for_compiler(const std::filesystem::path& compilerPath) {
+    // Eight levels covers every payload layout this engine resolves --
+    // `toolchains/llvm/prebuilt/<host>/bin/clang++` is the deepest at five --
+    // with room for one that is deeper, and stops well short of a machine's
+    // root.
+    constexpr int kMaxLevels = 8;
+    std::error_code ec;
+    auto dir = compilerPath.parent_path();
+    for (int i = 0; i < kMaxLevels && !dir.empty() && dir != dir.parent_path();
+         ++i, dir = dir.parent_path()) {
+        if (std::filesystem::exists(dir / payload_descriptor_filename, ec))
+            return read_payload_descriptor(dir);
+    }
+    return std::nullopt;
+}
+
 std::filesystem::path payload_frontend_dir(const std::filesystem::path& payloadRoot,
                                            const XimToolchainPackage& pkg) {
     if (pkg.family == Family::Msvc) {
@@ -704,11 +899,32 @@ std::filesystem::path payload_frontend_dir(const std::filesystem::path& payloadR
             return inst->clPath.parent_path();
         return payloadRoot / "VC" / "Tools" / "MSVC" / pkg.ximVersion;
     }
+    // The payload's own answer when it has one -- otherwise this message
+    // would name the directory the guess would have searched while the
+    // lookup searched another.
+    //
+    // A malformed descriptor is not refused here: this function exists to
+    // NAME A DIRECTORY IN A MESSAGE, and `payload_frontend` has already
+    // refused by the time any caller composes one.
+    if (auto d = read_payload_descriptor(payloadRoot); d && *d && !(*d)->frontend.empty())
+        return (payloadRoot / (*d)->frontend).parent_path();
     return payloadRoot / pkg.frontendSubdir;
 }
 
-std::filesystem::path payload_frontend(const std::filesystem::path& payloadRoot,
-                                       const XimToolchainPackage& pkg) {
+std::expected<std::filesystem::path, std::string>
+payload_frontend(const std::filesystem::path& payloadRoot,
+                 const XimToolchainPackage& pkg) {
+    // THE PAYLOAD IS ASKED FIRST, AND ITS ANSWER IS NOT SECOND-GUESSED. If a
+    // descriptor names a frontend that is not there, the result is empty --
+    // "nothing found where we looked" -- and the message names the directory
+    // the descriptor pointed at, because that is where the search happened.
+    auto desc = read_payload_descriptor(payloadRoot);
+    if (!desc) return std::unexpected(desc.error());
+    if (*desc && !(*desc)->frontend.empty()) {
+        auto named = payloadRoot / (*desc)->frontend;
+        if (std::filesystem::exists(named)) return named;
+        return std::filesystem::path{};
+    }
     if (pkg.family == Family::Msvc) {
         // Same resolution the install and build paths use, so the three
         // cannot disagree about where an msvc payload keeps its compiler.
@@ -716,7 +932,7 @@ std::filesystem::path payload_frontend(const std::filesystem::path& payloadRoot,
         if (auto inst = mcpp::toolchain::msvc::installation_at(payloadRoot,
                                                               pkg.ximVersion))
             return inst->clPath;
-        return {};
+        return std::filesystem::path{};
     }
     return toolchain_frontend(payloadRoot / pkg.frontendSubdir, pkg);
 }

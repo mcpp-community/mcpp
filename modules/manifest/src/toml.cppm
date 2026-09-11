@@ -1936,6 +1936,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             "and a SubOS's by that SubOS."));
     if (auto v = doc->get_string("build.macos_deployment_target"))
         m.buildConfig.macosDeploymentTarget = *v;
+    if (auto v = doc->get_string("build.ios_deployment_target"))
+        m.buildConfig.iosDeploymentTarget = *v;
 
     // Surface unsupported [build] keys instead of silently dropping them.
     // #296 is #131's footgun one section over: `[build] defines` on an mcpp
@@ -1953,6 +1955,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         "dependency_linkage",
         "dialect_cxxflags", "flags", "include_dirs", "include_dirs_after",
         "private_include_dirs",
+        "ios_deployment_target",
         "jobs", "ldflags", "macos_deployment_target", "module_extensions", "profile",
         "sources", "static_stdlib", "target",
         // #540: read a few hundred lines above and, until now, absent here —
@@ -3028,6 +3031,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 b.dependencyLinkage = *v;
             if (auto v = doc->get_string("workspace.build.macos_deployment_target"))
                 b.macosDeploymentTarget = *v;
+            if (auto v = doc->get_string("workspace.build.ios_deployment_target"))
+                b.iosDeploymentTarget = *v;
             static constexpr std::string_view kKnown[] = {
                 "cflags", "cxxflags", "ldflags", "defines", "dialect_cxxflags",
                 "include_dirs", "include_dirs_after", "private_include_dirs",

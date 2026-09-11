@@ -40,6 +40,22 @@ docs = [
     ROOT / "docs/zh/21-the-target-triple.md",
 ]
 
+# THE FIFTH COPY WAS IN A TEST, AND A CHECK OVER DOCUMENTS CANNOT SEE IT.
+#
+# `aarch64-linux-android` became `verified`; the row moved, all four documents
+# moved, this script reported "OK: 29 target tiers agree across 4 documents"
+# -- and `test_toolchain_triple.cpp` went on asserting `preview`, because a
+# literal in a test is in neither set. It was caught by running the suite,
+# which is luck rather than a check.
+#
+# So the test file is a fifth document here. Its tier claims are written as
+# `std::pair{"<target>", "<tier>"}` for exactly this reason: one line carrying
+# both halves is a shape this script can read, and the alternative -- a target
+# named on one line and its tier asserted three lines below -- is not.
+tests = [
+    ROOT / "tests/unit/test_toolchain_triple.cpp",
+]
+
 fail = False
 for doc in docs:
     if not doc.exists():
@@ -75,6 +91,37 @@ for doc in docs:
         fail = True
     print(f"  {doc.relative_to(ROOT)}: {len(seen)} of {len(rows)} rows")
 
+# The test file, by the one-line rule described above. Unlike a document it is
+# not required to name every row: a test states the claims it has evidence for,
+# and a row with no assertion is not a row asserted wrongly. What IS required
+# is that every claim it does make agrees.
+for t in tests:
+    if not t.exists():
+        print(f"ERROR: {t.relative_to(ROOT)} is missing")
+        fail = True
+        continue
+    claimed = {}
+    for line in t.read_text().splitlines():
+        lits = re.findall(r'"([A-Za-z0-9_.+-]+)"', line)
+        tier = next((l for l in lits if l in TIERS), None)
+        if tier is None:
+            continue
+        for name in lits:
+            if name in rows:
+                claimed[name] = tier
+    if not claimed:
+        print(f"ERROR: {t.relative_to(ROOT)} is listed here but claims no "
+              f"tier; either its assertions changed shape or this list is stale")
+        fail = True
+        continue
+    for name, tier in sorted(claimed.items()):
+        if rows[name] != tier:
+            print(f"ERROR: {t.relative_to(ROOT)}: {name} asserted as "
+                  f"'{tier}', the table says '{rows[name]}'")
+            fail = True
+    print(f"  {t.relative_to(ROOT)}: {len(claimed)} row(s) claimed")
+
 if fail:
     sys.exit(1)
-print(f"OK: {len(rows)} target tiers agree across {len(docs)} documents")
+print(f"OK: {len(rows)} target tiers agree across {len(docs)} documents "
+      f"and {len(tests)} test file(s)")

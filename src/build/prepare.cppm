@@ -1589,11 +1589,39 @@ std::string min_platform_version(const mcpp::manifest::Manifest& m,
         // default -- the payload's own answer, which moves when the payload
         // does. macOS is the same shape and already works this way: its
         // default comes from the platform module, not from the manifest.
+        // THE PAYLOAD'S OWN ANSWER FIRST, AND THE ENGINE'S DERIVATION AS
+        // THE FALLBACK. `platform_floor` in `.mcpp-toolchain.json` is the
+        // same number by a channel that does not require this engine to know
+        // that an NDK keeps it in `meta/platforms.json`, nor that file's
+        // schema. A payload shipping no descriptor still resolves, which is
+        // what makes the descriptor additive.
+        //
+        // A MALFORMED descriptor is read as absence HERE ONLY, because this
+        // function has no error channel and does not need one: a
+        // payload-provided compiler reaches this point through
+        // `payload_frontend`, which refuses a malformed descriptor by name
+        // before any of these decisions are made.
+        if (auto desc =
+                mcpp::toolchain::payload_descriptor_for_compiler(compilerPath);
+            desc && *desc && !(*desc)->platformFloor.empty())
+            return (*desc)->platformFloor;
         if (auto level = mcpp::toolchain::ndk_min_api_level(compilerPath);
             level > 0)
             return std::to_string(level);
         return {};   // the caller refuses; see android_api_level_refusal
     }
+    // APPLE'S TWO PLATFORMS ANSWER FROM TWO KEYS, ONE SLOT.
+    //
+    // "14.0" is a macOS version and means nothing to an iOS SDK, so the
+    // project states them separately -- and only one of them can apply to any
+    // one target, which is why they still share this function's single return
+    // and the single fingerprint slot behind it.
+    //
+    // Empty is a legal answer here and not a refusal, unlike Android's. The
+    // asymmetry is a measured property of the platforms rather than a policy:
+    // Darwin's driver supplies the SDK's own deployment target when the
+    // triple carries none, and bionic rejects the unversioned triple outright.
+    if (t.is_ios()) return m.buildConfig.iosDeploymentTarget;
     return mcpp::platform::macos::deployment_target(
         m.buildConfig.macosDeploymentTarget);
 }
@@ -2937,7 +2965,12 @@ prepare_build(bool print_fingerprint,
                 "{} → msvc {} ({})", spec->display(),
                 inst->display_version(), inst->clPath.string()));
         } else {
-            explicit_compiler = mcpp::toolchain::payload_frontend(payload->root, pkg);
+            auto frontendR = mcpp::toolchain::payload_frontend(payload->root, pkg);
+            // A payload that describes itself and describes itself wrongly is
+            // refused by name -- not reported as a missing frontend, which is
+            // a different repair.
+            if (!frontendR) return std::unexpected(frontendR.error());
+            explicit_compiler = *frontendR;
             if (!std::filesystem::exists(explicit_compiler)) {
                 return std::unexpected(std::format(
                     "toolchain payload '{}' has no known C++ frontend in {}",
@@ -3164,7 +3197,10 @@ prepare_build(bool print_fingerprint,
                 "         mcpp toolchain install {}",
                 defaultSpec, payload.error().message, defaultSpec));
         }
-        explicit_compiler = mcpp::toolchain::payload_frontend(payload->root, defaultPkg);
+        auto defaultFrontendR =
+            mcpp::toolchain::payload_frontend(payload->root, defaultPkg);
+        if (!defaultFrontendR) return std::unexpected(defaultFrontendR.error());
+        explicit_compiler = *defaultFrontendR;
         if (!std::filesystem::exists(explicit_compiler)) {
             return std::unexpected(std::format(
                 "default toolchain payload {} has no known C++ frontend in {}",
@@ -3451,7 +3487,27 @@ prepare_build(bool print_fingerprint,
                       // directly is entitled to bionic's inline definitions.
                       // `xim:android-ndk`'s own install-time self-test reaches
                       // the identical conclusion from the other direction.
-                      tc->stdModuleTargetFlags += " -D__BIONIC_CTYPE_INLINE=";
+                      //
+                      // AND THE PAYLOAD MAY SAY SO ITSELF. The recipe applies
+                      // this same define in that self-test, so it is a fact
+                      // the payload already holds; `std_module_defines` in
+                      // `.mcpp-toolchain.json` is the channel for it, and the
+                      // define below is what a payload that ships no
+                      // descriptor still gets. The two are not added
+                      // together: a descriptor that names defines is the
+                      // payload's complete answer for this channel, and
+                      // appending to it would mean a payload could not
+                      // withdraw a define this engine once needed.
+                      auto stdDefines = [&]() -> std::vector<std::string> {
+                          auto desc =
+                              mcpp::toolchain::payload_descriptor_for_compiler(
+                                  tc->binaryPath);
+                          if (desc && *desc && !(*desc)->stdModuleDefines.empty())
+                              return (*desc)->stdModuleDefines;
+                          return { "__BIONIC_CTYPE_INLINE=" };
+                      }();
+                      for (auto const& def : stdDefines)
+                          tc->stdModuleTargetFlags += " -D" + def;
                   }
               }
           }
@@ -3654,8 +3710,10 @@ prepare_build(bool print_fingerprint,
                   pins::kFirstRunWinGnu, payloadR.error().message,
                   pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget));
           }
-          explicit_compiler =
+          auto gnuFrontendR =
               mcpp::toolchain::payload_frontend(payloadR->root, gnuPkg);
+          if (!gnuFrontendR) return std::unexpected(gnuFrontendR.error());
+          explicit_compiler = *gnuFrontendR;
           if (!std::filesystem::exists(explicit_compiler)) {
               return std::unexpected(std::format(
                   "MinGW-w64 payload {} has no known C++ frontend in {}",
@@ -3834,7 +3892,9 @@ prepare_build(bool print_fingerprint,
                 "host toolchain for build.mcpp ('{}'): {}", *tcSpec,
                 payload.error().message));
         }
-        auto frontend = mcpp::toolchain::payload_frontend(payload->root, pkg);
+        auto frontendR = mcpp::toolchain::payload_frontend(payload->root, pkg);
+        if (!frontendR) return std::unexpected(frontendR.error());
+        auto frontend = *frontendR;
         if (!std::filesystem::exists(frontend)) {
             return std::unexpected(std::format(
                 "host toolchain payload '{}' has no known C++ frontend in {}",

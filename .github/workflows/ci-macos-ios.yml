@@ -1,0 +1,177 @@
+name: ci-macos-ios
+
+# The iOS rows, measured on the only machine that can answer for them.
+#
+# iOS needs an ecosystem compiler and a LOCATED SDK: `xim:llvm` emits arm64
+# Mach-O for an iOS deployment target, and only the machine's Xcode can supply
+# the iPhoneOS / iPhoneSimulator headers and stub libraries, which are not
+# redistributable. The simulator runtime is the same category. So every claim
+# about these three rows is a claim about a macOS runner, and this job is where
+# they are made.
+#
+# Kept out of ci-macos.yml deliberately: that job asserts mcpp's default quiet
+# output shape and tacking a differently-shaped leg onto it has broken that
+# assertion before.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-macos-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios-host-surface:
+    name: iOS - what this runner actually provides
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-macos-llvm
+
+      # THE PREMISE, STATED AND THEN MEASURED. The design record schedules the
+      # iOS rows on one assumption: that a GitHub macOS runner ships both an
+      # iOS SDK and a bootable simulator. If it ships the SDK but no simulator,
+      # the device row is still verifiable here and the two simulator rows
+      # become a local-only claim -- which changes the tier they can reach and
+      # nothing else. This step is the difference between those two worlds.
+      - name: "Host surface: the two located SDKs and the simulator runtime"
+        run: |
+          set -x
+          xcode-select -p
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphonesimulator --show-sdk-path
+          xcrun --sdk iphonesimulator --show-sdk-version
+          set +x
+          echo "--- runtimes ---"
+          xcrun simctl list runtimes
+          echo "--- devices available ---"
+          xcrun simctl list devices available
+
+      # WHETHER A BARE MACH-O CAN BE RUN AT ALL, which decides how much the
+      # runner program has to do. `simctl launch` needs an installed .app
+      # bundle; `simctl spawn` takes an executable. If spawn works, the
+      # `simctl-run` program is a boot-and-spawn wrapper; if it does not, it
+      # has to synthesise a bundle, sign it and install it. Measuring this is
+      # cheaper than designing for the harder case.
+      - name: "Device: is one bootable, and does spawn take a bare executable"
+        run: |
+          set -uo pipefail
+          UDID=$(xcrun simctl list devices available \
+                 | grep -A50 -- '-- iOS' \
+                 | grep -m1 -oE '[0-9A-F]{8}-[0-9A-F-]{27}' || true)
+          echo "udid=[$UDID]"
+          if [ -z "$UDID" ]; then
+            echo "NO-IOS-SIMULATOR-DEVICE"
+            exit 0
+          fi
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b || true
+          cat > /tmp/hello.cpp << 'CPP'
+          #include <cstdio>
+          int main() { std::puts("1-2-3"); return 0; }
+          CPP
+          SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          "$LLVM_ROOT/bin/clang++" -std=c++23 \
+            -target arm64-apple-ios18.0-simulator \
+            -isysroot "$SDK" -o /tmp/hello /tmp/hello.cpp
+          file /tmp/hello
+          otool -l /tmp/hello | grep -A5 LC_BUILD_VERSION || true
+          echo "--- simctl spawn on a bare Mach-O ---"
+          if xcrun simctl spawn "$UDID" /tmp/hello; then
+            echo "SPAWN-OK"
+          else
+            echo "SPAWN-FAILED exit=$?"
+          fi
+
+      # THE DEVICE ROW'S ARTEFACT. Nothing runs it here -- that needs a
+      # signature the developer owns -- so the claim is about the ARTEFACT:
+      # arm64 Mach-O naming the iOS platform in LC_BUILD_VERSION. An artefact
+      # that says MACOS there is the failure this leg exists to catch, and it
+      # is invisible to a build that merely succeeds.
+      - name: "Device: the artefact names the iOS platform"
+        run: |
+          set -euo pipefail
+          cat > /tmp/dev.cpp << 'CPP'
+          #include <cstdio>
+          int main() { std::puts("1-2-3"); return 0; }
+          CPP
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          "$LLVM_ROOT/bin/clang++" -std=c++23 -target arm64-apple-ios18.0 \
+            -isysroot "$SDK" -o /tmp/dev /tmp/dev.cpp
+          file /tmp/dev
+          otool -l /tmp/dev | grep -A5 LC_BUILD_VERSION
+
+      # THE C++ RUNTIME QUESTION, WHICH IS THE ONE THAT CAN SINK THIS. macOS
+      # links the PAYLOAD's static libc++ so that mcpp's deployment floor is
+      # real. That archive is built for macOS, and ld64 refuses an object built
+      # for one platform in a link for another -- so iOS may have to take
+      # libc++ from the SDK instead. Both are tried here, because "which one
+      # works" is the fact the flag builder needs and neither answer can be
+      # reasoned out from a Linux desk.
+      - name: "C++ runtime: SDK libc++ versus the payload static archive"
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          cat > /tmp/cxx.cpp << 'CPP'
+          #include <string>
+          #include <cstdio>
+          int main() { std::string s = "1-2-3"; std::puts(s.c_str()); return 0; }
+          CPP
+          echo "--- (a) SDK libc++, dynamic ---"
+          if "$LLVM_ROOT/bin/clang++" -std=c++23 -target arm64-apple-ios18.0 \
+               -isysroot "$SDK" -o /tmp/cxx-sdk /tmp/cxx.cpp; then
+            otool -L /tmp/cxx-sdk
+            echo "SDK-LIBCXX-OK"
+          else
+            echo "SDK-LIBCXX-FAILED"
+          fi
+          echo "--- (b) payload static libc++ ---"
+          if "$LLVM_ROOT/bin/clang++" -std=c++23 -target arm64-apple-ios18.0 \
+               -isysroot "$SDK" -nostdlib++ \
+               "$LLVM_ROOT/lib/libc++.a" "$LLVM_ROOT/lib/libc++abi.a" \
+               -o /tmp/cxx-static /tmp/cxx.cpp; then
+            echo "PAYLOAD-STATIC-OK"
+          else
+            echo "PAYLOAD-STATIC-FAILED"
+          fi
+          set +x
+
+      # `import std` FOR iOS, which is mcpp's default and therefore the real
+      # bar. The module is precompiled from the PAYLOAD's libc++ headers
+      # against the LOCATED SDK's C library -- the same split macOS already
+      # uses, with a second SDK. If this cannot be made to work the iOS rows
+      # are a non-module tier and the documentation has to say so.
+      - name: "import std: precompile against the located SDK"
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          STD_CPPM=$(find "$LLVM_ROOT" -name 'std.cppm' | head -1)
+          echo "std.cppm=$STD_CPPM"
+          MODDIR=$(dirname "$STD_CPPM")
+          if "$LLVM_ROOT/bin/clang++" -std=c++23 -target arm64-apple-ios18.0 \
+               -isysroot "$SDK" -Wno-reserved-module-identifier \
+               -Xclang -emit-reduced-module-interface \
+               --precompile -o /tmp/std.pcm "$STD_CPPM" -I"$MODDIR"; then
+            echo "PRECOMPILE-OK"
+          else
+            echo "PRECOMPILE-FAILED"
+          fi
+          cat > /tmp/mod.cpp << 'CPP'
+          import std;
+          int main() { std::println("1-2-3"); return 0; }
+          CPP
+          if "$LLVM_ROOT/bin/clang++" -std=c++23 -target arm64-apple-ios18.0 \
+               -isysroot "$SDK" -fmodule-file=std=/tmp/std.pcm \
+               -o /tmp/mod /tmp/mod.cpp /tmp/std.pcm; then
+            echo "MODULE-LINK-OK"
+          else
+            echo "MODULE-LINK-FAILED"
+          fi
+          file /tmp/mod || true
+          set +x

@@ -281,6 +281,8 @@ export void inherit_workspace_build(mcpp::manifest::Manifest& member,
         if (b.dependencyLinkage.empty())    b.dependencyLinkage    = w.dependencyLinkage;
         if (b.macosDeploymentTarget.empty())
             b.macosDeploymentTarget = w.macosDeploymentTarget;
+        if (b.iosDeploymentTarget.empty())
+            b.iosDeploymentTarget = w.iosDeploymentTarget;
     }
 }
 

@@ -421,7 +421,7 @@ list` reports for this machine):
 | `riscv64-linux-musl` · `aarch64-linux-gnu` · `x86_64-macos` | — | planned |
 | `wasm32-emscripten` | `emsdk@6.0.9` — Emscripten ships its own sysroot and its own libc++ module surface; `mcpp run` executes the module with `node` | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370` — bionic from the NDK, one payload for both ABIs; ran on an API 24 x86_64 emulator image | verified |
-| `aarch64-linux-android` | the same payload and the same build; no execution path from an x86_64 host, because Google's emulator refuses a foreign guest | preview |
+| `aarch64-linux-android` | the same payload and the same build; ran under qemu-user over the system image's own bionic, which the platform emulator cannot do from an x86_64 host | verified |
 | `aarch64-ios` · `aarch64-ios-sim` · `x86_64-ios-sim` | the iPhoneOS and iPhoneSimulator SDKs ship inside Xcode and are not redistributable, so the blocker is a licence rather than a payload | planned |
 
 `verified` an image has been built **and run** for the row, qemu and wine

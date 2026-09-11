@@ -491,8 +491,15 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
                 // four levels deeper, and asking for `root/bin` skipped every
                 // installed toolset silently.
                 auto bin = mcpp::toolchain::payload_frontend(vEntry.path(), pkg);
-                if (bin.empty()) continue;
-                payloads.push_back({ *id, s.version, bin });
+                // A MALFORMED DESCRIPTOR IS REPORTED, NOT SKIPPED. This
+                // enumeration's `continue` means "nothing usable here", and a
+                // payload whose own description does not parse would then be
+                // simply absent from `toolchain list` -- the reading the
+                // descriptor was added to prevent, in the one command a user
+                // runs to find out what is installed.
+                if (!bin) { mcpp::ui::warning(bin.error()); continue; }
+                if (bin->empty()) continue;
+                payloads.push_back({ *id, s.version, *bin });
             }
         }
     }
@@ -1102,7 +1109,12 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
         //
         // Same rule as everywhere else in this round: installed means usable,
         // not present.
-        if (mcpp::toolchain::payload_frontend(installDir, pkg).empty()) {
+        auto installedFrontend = mcpp::toolchain::payload_frontend(installDir, pkg);
+        if (!installedFrontend) {
+            mcpp::ui::error(installedFrontend.error());
+            return 1;
+        }
+        if (installedFrontend->empty()) {
             // Before "not installed", check whether this is the retired
             // `msvc@<cl-version>` spelling — otherwise the advice is to
             // install a toolset that does not exist and never will.

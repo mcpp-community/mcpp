@@ -308,8 +308,10 @@ TEST(MsvcManaged, PayloadFrontendFindsClWhereMsvcActuallyKeepsIt) {
     // `frontendSubdir` at all.
     EXPECT_EQ(pkg.family, Family::Msvc);
     auto found = payload_frontend(t.root, pkg);
-    ASSERT_FALSE(found.empty()) << "payload_frontend found no cl.exe under " << t.root;
-    EXPECT_EQ(found.filename(), "cl.exe");
+    ASSERT_TRUE(found.has_value()) << found.error();
+    ASSERT_FALSE(found->empty())
+        << "payload_frontend found no cl.exe under " << t.root;
+    EXPECT_EQ(found->filename(), "cl.exe");
 
     // The `bin/`-shaped question is the one that used to be asked, and it
     // still answers nothing here — which is exactly why it was the wrong
@@ -320,7 +322,7 @@ TEST(MsvcManaged, PayloadFrontendFindsClWhereMsvcActuallyKeepsIt) {
     // returning a path that does not exist.
     EXPECT_TRUE(payload_frontend(t.root,
                     to_xim_package(*parse_toolchain_spec("msvc@14.52.36629")))
-                 .empty());
+                 .value().empty());
 
     // AND THE DIRECTORY THE SEARCH USED IS AVAILABLE FOR THE MESSAGE. MSVC is
     // the case that proves it is a lookup rather than a constant: the path

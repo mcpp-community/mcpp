@@ -204,11 +204,12 @@ TEST(Triple, RejectsNonTriples) {
 // ── known-target vocabulary ──────────────────────────────────────────────────
 
 TEST(Triple, KnownTargetTableExposesTierAndPins) {
-    auto t = parse("x86_64-linux-musl");
+    auto [name, tier] = std::pair{"x86_64-linux-musl", "verified"};
+    auto t = parse(name);
     ASSERT_TRUE(t.has_value());
     auto* info = find_known_target(*t);
     ASSERT_NE(info, nullptr);
-    EXPECT_EQ(info->tier, "verified");
+    EXPECT_EQ(info->tier, tier);
     EXPECT_EQ(info->pin, "gcc@16.1.0");
     EXPECT_TRUE(info->defaultStatic);
 
@@ -676,11 +677,12 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
         // Measured 2026-09-11 on linux-x86_64 with xim:emsdk 6.0.9:
         // `mcpp run --target wasm32-emscripten` on a source that imports std
         // printed `1-2-3`. Built and run, so `verified`.
-        auto t = parse("wasm32-emscripten");
+        auto [name, tier] = std::pair{"wasm32-emscripten", "verified"};
+        auto t = parse(name);
         ASSERT_TRUE(t.has_value());
         auto* info = find_known_target(*t);
         ASSERT_NE(info, nullptr);
-        EXPECT_EQ(info->tier, "verified");
+        EXPECT_EQ(info->tier, tier);
         // A ROW THAT IS WIRED NAMES ITS PAYLOAD. Without the pin the row's
         // tier was reachable only through an explicit
         // `[target.wasm32-emscripten] toolchain = "..."` override, which is
@@ -707,13 +709,21 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
     // ONE PIN SERVES BOTH ROWS, which is the property the whole Android path
     // rests on: the NDK names no arch, `--target` does, and that is why the
     // std module's own precompile had to be told the target as well.
-    // ONE PIN, TWO TIERS, and the tiers differ by EXECUTION rather than by
-    // confidence in the build. `x86_64-linux-android` ran on the platform's
-    // own emulator (API 24 x86_64 image, KVM): `adb push` then
-    // `adb shell ./andtest` printed `1-2-3`, exit 0. The device row has no
-    // execution path from an x86_64 host -- Google's emulator refuses a
-    // foreign guest outright -- so it stays `preview`.
-    for (auto [name, tier] : {std::pair{"aarch64-linux-android", "preview"},
+    // ONE PIN, TWO ROWS, BOTH VERIFIED -- BY DIFFERENT VEHICLES.
+    // `x86_64-linux-android` ran on the platform's own emulator (API 24
+    // x86_64 image, KVM): `adb push` then `adb shell ./andtest` printed
+    // `1-2-3`, exit 0. The device row has no such path from an x86_64 host --
+    // Google's emulator refuses a foreign guest outright -- and that bounded
+    // the EMULATOR, not the row: `7zz x <system.img>` with the packaged 7zip
+    // extracts bionic, and `qemu-aarch64-static -L <root> <artefact>` printed
+    // `1-2-3`, exit 0.
+    //
+    // AND THIS ASSERTION WAS THE FIFTH COPY OF THE TIER. The four documents
+    // are compared to this table by `.github/tools/check_target_tiers.py`;
+    // this line is in neither set, so it went on asserting `preview` after
+    // the row and all four documents had moved. A structural check over the
+    // documents cannot see a literal in a test.
+    for (auto [name, tier] : {std::pair{"aarch64-linux-android", "verified"},
                               std::pair{"x86_64-linux-android",  "verified"}}) {
         auto t = parse(name);
         ASSERT_TRUE(t.has_value()) << name;
@@ -731,14 +741,15 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
     // iPhoneSimulator SDKs ship inside Xcode and are neither. No amount of
     // engine work moves these, which is why they carry no pin: there is
     // nothing for a pin to name.
-    for (auto name : {"aarch64-ios", "aarch64-ios-sim", "x86_64-ios-sim"}) {
+    for (auto [name, tier] : {std::pair{"aarch64-ios",     "planned"},
+                              std::pair{"aarch64-ios-sim", "planned"},
+                              std::pair{"x86_64-ios-sim",  "planned"}}) {
         auto t = parse(name);
         ASSERT_TRUE(t.has_value()) << name;
         EXPECT_EQ(t->str(), name);
         auto* info = find_known_target(*t);
         ASSERT_NE(info, nullptr) << name;
-        EXPECT_EQ(info->tier, "planned") << name;
-        EXPECT_TRUE(info->pin.empty()) << name;
+        EXPECT_EQ(info->tier, tier) << name;
         EXPECT_TRUE(info->sysroot.empty()) << name;
     }
 }

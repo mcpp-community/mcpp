@@ -408,7 +408,7 @@ mcpp 的身份模型是两条正交轴:**工具链** = `family@version`(family �
 | `riscv64-linux-musl` · `aarch64-linux-gnu` · `x86_64-macos` | — | planned |
 | `wasm32-emscripten` | `emsdk@6.0.9` —— Emscripten 自带 sysroot 和它自己的 libc++ 模块面;`mcpp run` 用 `node` 把模块跑起来 | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370` —— bionic 来自 NDK,一个载荷服务两个 ABI;在 API 24 的 x86_64 模拟器镜像上跑过 | verified |
-| `aarch64-linux-android` | 同一个载荷、同样的构建;从 x86_64 宿主没有执行路径,因为 Google 的模拟器直接拒绝异构 guest | preview |
+| `aarch64-linux-android` | 同一个载荷、同样的构建;在 qemu-user 上、配系统镜像自带的 bionic 跑过 —— 这是平台模拟器从 x86_64 宿主做不到的 | verified |
 | `aarch64-ios` · `aarch64-ios-sim` · `x86_64-ios-sim` | iPhoneOS 与 iPhoneSimulator 的 SDK 在 Xcode 里且不可再分发,所以阻塞项是许可而不是载荷 | planned |
 
 `verified` 该行的镜像已被构建**并运行**过,qemu 与 wine 都算 · `preview` 可构建

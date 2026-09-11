@@ -485,7 +485,7 @@ other's rows.
 | `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
 | `armv7a-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
 | `armv7a-none-eabihf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
-| `aarch64-linux-android` | preview | `android-ndk@30.0.16248370` | payload | payload | payload | — |
+| `aarch64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `aarch64-ios` | planned | — | planned | planned | planned | planned |
 | `aarch64-ios-sim` | planned | — | planned | planned | planned | planned |
@@ -526,12 +526,12 @@ constant stating it here is what the wasm row's own history shows going stale.
 A Windows user therefore sees the row, the pin resolves, and xim refuses with
 `no payload for this platform` before anything is fetched, naming the package.
 
-**The two Android rows differ in tier because one of them was run.** An
-x86_64 Android artefact executes on the platform's own emulator, and a
-`verified` row means exactly that was done. The device row builds identically
-and has no execution path from an x86_64 host: the emulator refuses a foreign
-guest (`QEMU2 emulator does not support arm64 CPU architecture`), so it needs
-an arm64 host or the qemu-user route.
+**Both Android rows are `verified`, by different vehicles.** An x86_64
+artefact executes on the platform's own emulator. The device row's artefact runs
+under qemu-user over the system image's own bionic, which is the route that
+works from an x86_64 host -- the platform emulator refuses a foreign guest
+(`QEMU2 emulator does not support arm64 CPU architecture`). A tier states that
+an artefact was built and RUN; it does not state which emulator ran it.
 
 ### And CI measures every one of them
 

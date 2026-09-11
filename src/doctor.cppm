@@ -439,9 +439,15 @@ export int doctor_report() {
                     // installed msvc toolset. That is the defect #436 fixed
                     // in `toolchain list`; doctor kept its own copy, so the
                     // two commands disagreed about the same machine.
-                    auto bin = mcpp::toolchain::payload_frontend(
+                    auto binR = mcpp::toolchain::payload_frontend(
                         vEntry.path(), mcpp::toolchain::to_xim_package(s));
-                    if (bin.empty()) continue;
+                    // DOCTOR IS THE COMMAND FOR EXACTLY THIS. A payload whose
+                    // own description does not parse is a finding, and
+                    // skipping it would make the one command that reports on
+                    // an installation silent about the thing that breaks it.
+                    if (!binR) { warn(binR.error()); continue; }
+                    if (binR->empty()) continue;
+                    const auto& bin = *binR;
                     sawAny = true;
 
                     auto label = s.display();

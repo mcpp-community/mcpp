@@ -783,6 +783,28 @@ struct BuildConfig : BuildInputs {
     // explicit per-invocation override) wins over this manifest default;
     // empty + no env = toolchain/SDK default. No effect off macOS.
     std::string                         macosDeploymentTarget;
+    // iOS minimum supported OS version, e.g. "18.0". THE SECOND APPLE
+    // PLATFORM, AND THEREFORE A SECOND KEY.
+    //
+    // It is not a second mechanism: both reach `llvm_triple` through the one
+    // `minPlatformVersion` parameter and one fingerprint slot, because a
+    // target is macOS or iOS and never both. What it is not is the same
+    // NUMBER -- "14.0" is a macOS version and means nothing to an iOS SDK --
+    // so one key serving both would put two platforms' version spaces into
+    // one string, which is the mistake `x86_64-windows-musl` was added to
+    // undo one axis over.
+    //
+    // Applies to all three iOS rows. Apple's own model is one deployment
+    // target per PLATFORM, and the simulator is the same platform as the
+    // device; what differs between them is the flag's name
+    // (`-mios-simulator-version-min` versus `-miphoneos-version-min`), which
+    // is the flag builder's business and not the project's.
+    //
+    // Empty is legal and means the SDK's own default, which clang supplies
+    // for an Apple target. That is a measured property of these targets and
+    // not an assumption carried over from Android: bionic REFUSES an
+    // unversioned triple, and Darwin does not.
+    std::string                         iosDeploymentTarget;
     // Resolved build-profile knobs (from [profile.<name>] + built-in defaults).
     std::string                         optLevel = "2";  // -O level
     bool                                debug    = false; // -g
@@ -1113,8 +1135,23 @@ struct TargetEntry {
     //   effective    aarch64-unknown-linux-android24   what clang is given
     //   fingerprint  carries the level            so 21 and 24 are two directories
     //
-    // Zero means unset, which is legal and means the NDK's own default -- what
-    // `clang -target aarch64-linux-android` normalises to.
+    // ZERO MEANS UNSET, AND UNSET IS NOT THE SAME AS "THE NDK'S DEFAULT".
+    //
+    // This comment used to end "which is legal and means the NDK's own
+    // default -- what `clang -target aarch64-linux-android` normalises to",
+    // which is the THIRD copy of a claim that was measured false:
+    //
+    //     sys/cdefs.h:365:2: error: Unversioned target triples are not
+    //       supported!
+    //
+    // bionic refuses an unversioned triple, so there is no such normalisation
+    // and the level is mandatory. Unset therefore means "the project did not
+    // say", and the answer comes from the PAYLOAD -- `platform_floor` in its
+    // `.mcpp-toolchain.json`, or `meta/platforms.json` for a payload that
+    // ships no descriptor. The other two copies of the false sentence were in
+    // `min_platform_version` and in `llvm_triple`; this one was written on a
+    // different day and outlived both corrections, which is why the
+    // correction is recorded here rather than merely applied.
     int                                 minApiLevel = 0;
     // NO per-role field here. There used to be a `cxxRuntimeTests`, and it was
     // parsed nowhere and applied nowhere — a configuration key that looked

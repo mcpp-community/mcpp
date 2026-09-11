@@ -492,3 +492,56 @@ TEST(SdkPayloads, TheDisplayNamesThePayloadAndNotOnlyTheFamily) {
         EXPECT_NE(sp->display().find(spelled), std::string::npos) << sp->display();
     }
 }
+
+// ─── One payload, one spelling (B1) ────────────────────────────────────────
+//
+// `ndk` was accepted as an alias for `android-ndk`, and the capability gate
+// refused it -- because that gate compares the DECLARED SPELLING against the
+// row's pin (`android-ndk@30.0.16248370`), and `ndk@30.0.16248370` does not
+// contain `android-ndk`. So the alias parsed and was then rejected at the
+// point of use, which a reader sees as a defect rather than as a naming
+// choice: the name was good enough for the parser and not for the build.
+//
+// Withdrawn rather than completed. Normalising payload names inside the gate
+// would make two spellings work and would put the comparison in a second
+// mechanism; one name keeps the gate correct by construction. The name kept is
+// the one the index uses, so a single string names this payload ecosystem-wide.
+//
+// The criterion is WHERE the refusal happens, not that one happens.
+TEST(SdkPayloads, TheWithdrawnAliasIsRefusedAtParseAndNotByTheCapabilityGate) {
+    auto aliased = mcpp::toolchain::parse_toolchain_spec("ndk@30.0.16248370");
+    ASSERT_FALSE(aliased.has_value())
+        << "an alias that parses is an alias the capability gate must refuse "
+           "later, by comparing spellings";
+    EXPECT_NE(aliased.error().find("unknown toolchain"), std::string::npos)
+        << aliased.error();
+    EXPECT_NE(aliased.error().find("'ndk'"), std::string::npos)
+        << "the refusal quotes what was typed: " << aliased.error();
+    // AND IT SAYS WHICH SPELLING TO USE. A refusal that names the accepted
+    // payload is one edit away from a build; one that does not sends the
+    // reader to the documentation.
+    EXPECT_NE(aliased.error().find("android-ndk"), std::string::npos)
+        << aliased.error();
+
+    // The kept spelling is unaffected, and it is the one the row pins.
+    auto kept = mcpp::toolchain::parse_toolchain_spec("android-ndk@30.0.16248370");
+    ASSERT_TRUE(kept.has_value()) << kept.error();
+    EXPECT_EQ(kept->payloadName, "android-ndk");
+
+    // THE MECHANISM THAT NO LONGER HAS TO BE TAUGHT. Both Android rows pin the
+    // kept spelling, and the gate's test is `pin's name is a substring of what
+    // was declared` -- true for the kept spelling, false for the alias. With
+    // the alias gone, the gate never sees the case it would have to special.
+    for (auto triple : {"aarch64-linux-android", "x86_64-linux-android"}) {
+        auto parsed = mcpp::toolchain::triple::parse(triple);
+        ASSERT_TRUE(parsed.has_value()) << triple;
+        auto info = mcpp::toolchain::triple::find_known_target(*parsed);
+        ASSERT_NE(info, nullptr) << triple;
+        const std::string pin(info->pin);
+        const std::string pinName = pin.substr(0, pin.find('@'));
+        EXPECT_EQ(pinName, "android-ndk") << triple << " pins " << pin;
+        EXPECT_EQ(std::string("ndk@30.0.16248370").find(pinName),
+                  std::string::npos)
+            << "the alias could only pass the gate by a second mechanism";
+    }
+}
