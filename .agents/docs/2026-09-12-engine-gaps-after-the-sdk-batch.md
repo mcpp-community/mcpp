@@ -594,3 +594,12 @@ code, and what was built instead.
     leg switches to a second installed version of the same family and asserts
     the version string in the artefact; it reports itself as not measured where
     no second version is installed.
+11. **Outside this change: the fast path is taken only for ELF artefacts.**
+    tests/e2e/645's control, two unchanged plain builds, found the second one
+    resolving the toolchain on macOS and on Windows CI. `try_fast_build`
+    requires `validated_artifact_snapshot`, which requires a `Pass`
+    runtime-validation verdict for every artefact, and only an ELF artefact
+    records one; a Mach-O or PE build therefore always takes the full path. The
+    decline predates this change (#400). 645 distinguishes the two causes by the
+    `toolchain=` lines the two builds record: identical lines report the host as
+    not measured, and differing lines fail.

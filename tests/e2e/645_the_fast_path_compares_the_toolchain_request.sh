@@ -42,9 +42,23 @@ TOML
 "$MCPP" build > a1.log 2>&1 || fail "the first build failed" a1.log
 own=$(sed -n 's/.*Resolved \([^ ]*\) .*/\1/p' a1.log | head -1)
 [ -n "$own" ] || fail "could not learn this platform's toolchain" a1.log
+first_request=$(grep '^toolchain=' target/.build_cache 2>/dev/null | head -1)
 "$MCPP" build > a2.log 2>&1 || fail "the second build failed" a2.log
-[ "$(resolutions a2.log)" = 0 ] \
-    || fail "control: an unchanged second build resolved the toolchain, so the fast path was not taken and nothing below can fail" a2.log
+if [ "$(resolutions a2.log)" != 0 ]; then
+    # THE CONTROL FAILED, AND WHAT DECIDES THE VERDICT IS WHY. Two plain builds
+    # make the same request, so identical `toolchain=` lines in the entries they
+    # recorded mean the fast path declined for a reason this test does not
+    # measure. Measured on macOS and Windows CI: the fast path requires an ELF
+    # runtime-validation verdict for every artefact (execute.cppm,
+    # try_fast_build), which a Mach-O or PE artefact never records.
+    second_request=$(grep '^toolchain=' target/.build_cache 2>/dev/null | head -1)
+    if [ -n "$first_request" ] && [ "$first_request" = "$second_request" ]; then
+        echo "NOT MEASURED: an unchanged second build did not take the fast path on this host, and both builds recorded the same request ($first_request)"
+        echo "--- the recorded entry ---"; cat target/.build_cache
+        exit 0
+    fi
+    fail "control: an unchanged second build resolved the toolchain, and the recorded requests differ ('$first_request', then '$second_request')" a2.log
+fi
 
 # ── B ───────────────────────────────────────────────────────────────────────
 "$MCPP" build --toolchain "$own" > b1.log 2>&1 || fail "--toolchain $own failed" b1.log
