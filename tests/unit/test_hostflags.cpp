@@ -507,3 +507,113 @@ TEST(HostFlags, TheCfgBypassSurvivesAGraphSuppliedTargetSide) {
     EXPECT_TRUE(has(a, "-nostdinc++"));
     EXPECT_FALSE(has(b, "-nostdinc++"));
 }
+
+// "A TOOLCHAIN THAT SHIPS ITS OWN SYSROOT IS TOLD NOTHING" WAS ONE TOKEN TOO
+// STRONG, AND THIS FUNCTION ALREADY SAID SO FURTHER DOWN.
+//
+// The early return for `has_own_sysroot()` withholds the target's system
+// reconstructed onto the command line -- libc++'s headers, glibc's, the Linux
+// UAPI headers, the cfg bypass, the C-runtime prefix -- because an Emscripten
+// or Android SDK already has all of it. That is right. It stood in FRONT of
+// the paragraph beginning "THE TRIPLE, SAID OUT LOUD", which states the
+// opposite rule for the same underlying reason: an ordinary clang emits for the
+// machine it is running on unless told otherwise. The stronger claim won by
+// position.
+//
+// Both are right about their own object. The SYSTEM is the payload's; WHICH
+// TARGET is still mcpp's to say, because one NDK serves both Android ABIs and
+// nothing else on the command line distinguishes them. The defect was reported
+// by neither compile but by the module loader:
+//
+//   error: AST file 'std.pcm' was compiled for the target
+//     'aarch64-unknown-linux-android21' but the current translation unit is
+//     being compiled for target 'x86_64-unknown-linux-gnu'
+//
+// followed by eight cascading "use of undeclared identifier 'std'" lines,
+// which is what a reader sees first.
+TEST(HostFlags, AnOwnSysrootTargetIsToldWhichTargetAndNothingElse) {
+    HostFlagOptions opt;
+
+    for (auto name : {"aarch64-linux-android", "x86_64-linux-android",
+                      "wasm32-emscripten"}) {
+        auto tc = tc_for(CompilerId::Clang);
+        tc.targetTriple = name;
+        tc.crossTargetFlag = "--target=SENTINEL-TRIPLE";
+
+        auto tokens = mcpp::toolchain::host_compile_tokens(
+            tc, opt, mcpp::toolchain::no_escape);
+
+        // EXACTLY the target flag. Asserted as the whole vector rather than as
+        // "contains", because the property is that nothing ELSE is emitted:
+        // this host's glibc headers reaching a wasm compile is the measured
+        // failure this gate exists for.
+        ASSERT_EQ(tokens.size(), 1u) << name << ": " << [&] {
+            std::string all;
+            for (auto const& t : tokens) { all += t; all += ' '; }
+            return all;
+        }();
+        EXPECT_EQ(tokens[0], "--target=SENTINEL-TRIPLE") << name;
+    }
+
+    // AND THE GATE IS STILL A GATE, DISCRIMINATED BY THE cfg BYPASS.
+    //
+    // A first version of this control asserted that a HOSTED target receives
+    // more than one token, and it failed -- with a bare `Toolchain` carrying no
+    // payload paths, the hosted path has nothing to reconstruct either, so both
+    // sides produced exactly the triple and the control could not tell them
+    // apart. The control was wrong, not the code.
+    //
+    // `--no-default-config` is the discriminator, and it is a property the
+    // gate's own comment states: the bypass exists to stop clang reading a
+    // per-install `clang++.cfg`, while `em++` is a wrapper whose entire job is
+    // to supply configuration, so suppressing it would be suppressing the
+    // toolchain. It is therefore emitted past the gate and never before it,
+    // which is exactly what a control needs.
+    // A first version of this control asserted only that a HOSTED target
+    // receives more than one token, and it failed -- with a bare `Toolchain`
+    // carrying no payload the hosted path has nothing to reconstruct either,
+    // so both sides produced exactly the triple and the control could not tell
+    // them apart. A second version reached for `--no-default-config` without a
+    // payload that HAS a cfg, which is the same mistake once removed. The
+    // fixture is what makes the discriminator real.
+    //
+    // `--no-default-config` is the right discriminator because it is a
+    // property the gate's own comment states: the bypass exists to stop clang
+    // reading a per-install `clang++.cfg`, while `em++` is a wrapper whose
+    // entire job is to supply configuration, so suppressing it would be
+    // suppressing the toolchain. Emitted past the gate, never before it.
+    FakeClangPayload payload{"own-sysroot-gate"};
+    HostFlagOptions bypass;
+    bypass.cfgBypass = HostFlagOptions::CfgBypass::Always;
+
+    auto host = tc_for(CompilerId::Clang);
+    host.binaryPath = payload.root / "bin" / "clang++";
+    host.crossTargetFlag = "--target=x86_64-unknown-linux-gnu";
+    auto hostTokens = mcpp::toolchain::host_compile_tokens(
+        host, bypass, mcpp::toolchain::no_escape);
+    EXPECT_NE(std::ranges::find(hostTokens, "--no-default-config"),
+              hostTokens.end())
+        << "a hosted clang with a cfg beside it must reach the bypass";
+
+    for (auto name : {"aarch64-linux-android", "wasm32-emscripten"}) {
+        auto sdk = tc_for(CompilerId::Clang);
+        sdk.binaryPath = payload.root / "bin" / "clang++";  // same payload
+        sdk.targetTriple = name;
+        sdk.crossTargetFlag = "--target=SENTINEL-TRIPLE";
+        auto sdkTokens = mcpp::toolchain::host_compile_tokens(
+            sdk, bypass, mcpp::toolchain::no_escape);
+        EXPECT_EQ(std::ranges::find(sdkTokens, "--no-default-config"),
+                  sdkTokens.end())
+            << name << ": the cfg bypass must be withheld from an SDK whose "
+                       "driver's job is to supply configuration";
+        EXPECT_EQ(sdkTokens.size(), 1u) << name;
+    }
+
+    // A row with no cross flag emits nothing at all rather than an empty
+    // token: an empty argv element is an argument the driver must interpret.
+    auto bare = tc_for(CompilerId::Clang);
+    bare.targetTriple = "wasm32-emscripten";
+    ASSERT_TRUE(bare.crossTargetFlag.empty());
+    EXPECT_TRUE(mcpp::toolchain::host_compile_tokens(
+                    bare, opt, mcpp::toolchain::no_escape).empty());
+}
