@@ -313,7 +313,7 @@ package -- no new mechanism, again.
 | R10 | `--format dmg` and `--format pkg` | recorded as gaps with a known shape, not attempted | each needs a *creator* as well as a signer (`libdmg-hfsplus`; `xar`), both open source and neither measured here |
 | R11 | the macOS rows' runner | Darling recorded as an unmeasured candidate | GPL-3.0, active, and it REIMPLEMENTS Darwin's libraries rather than redistributing them, so unlike the iOS image it carries no licence blocker. A row does not move on a plausible mechanism, so this is a candidate and not a plan |
 | R12 | real-device run for both platforms | `xim:android-platform-tools` (have) and a new `xim:pymobiledevice3`, each named by a `runner` program | neither needs Apple or Google software. It supersedes the simulator route rather than complementing it: a device brings its own OS, so the only thing crossing the boundary is a signature the developer already owns |
-| R13 | the iOS image | a LOCATOR package, never a re-host, gated on R4 | an image in a public index is redistribution of Apple's OS whatever it is labelled. The locator is the tier `iphoneos-sdk.lua` already documents, and with R12 in place no image is on the critical path at all |
+| R13 | the iOS image | **the RUNNER PROGRAM owns the path, resolved at run time.** The plugin declares a runner by NAME; the index ships the emulator and no image; the user configures the program | three homes were considered. A locator has nothing to probe. `build.mcpp` is per-package and committed, while a path is per-MACHINE -- the same analysis #564's `default_jobs` needed -- and a path read through `env_or` is not in the program's re-run key, so changing it would appear not to change anything while the cache record persists the old one. Declaring a NAME is cache-safe; baking a PATH is not. Run-time resolution has no record to go stale |
 
 ## 7. User-facing experience, which is the test of all of the above
 
@@ -605,30 +605,103 @@ And the ordering is a real dependency rather than a convention: the iOS device
 runner has nothing to install until `dist-ipa` has produced a signed file, so
 R9 precedes R12.
 
-### 10.7 The iOS image: a locator, not a re-host
+### 10.7 The iOS image: the ecosystem supplies the PROGRAM, the user supplies the BYTES
 
-Adding an iOS kernel and root filesystem to a public index would be
-redistributing Apple's operating system, and a "temporary, test-only, disabled
-later" label does not change that -- anyone resolving the index would install
-it. This differs from the Android decision earlier in this document in a way
-worth stating precisely: there, Apache-2.0 licence files were verified INSIDE
-the archives and clause 3.5 genuinely applies; here there is no
-open-source component to invoke.
+The principle is not in question: an image in a public index is redistribution
+of Apple's operating system whatever it is labelled, and a "temporary, disabled
+later" flag does not change it -- anyone resolving the index installs it. This
+differs from the Android decision earlier in this document in a way worth
+stating precisely: there, Apache-2.0 licence files were verified INSIDE the
+archives and clause 3.5 genuinely applies; here there is no open-source
+component to invoke.
 
-What serves the same purpose legitimately is the third tier
-`pkgs/i/iphoneos-sdk.lua` already documents, and R4's `@system`
-generalisation is the engine half of it:
+What took analysis is WHERE the path lives. Three candidates were considered
+and two are wrong for reasons worth recording, because each looked right first.
 
-    a LOCATOR package records where an image the user already owns lives.
-    Nothing is re-hosted; the index carries a path and a probe, not bytes.
+#### Rejected: a locator package
 
-That is the `msvc@system` shape, and it is why R4 matters beyond iOS: the
-engine currently has no spelling for "this row's system is host-located",
-so the locator tier is unreachable even though the recipe describes it.
+A locator works when the thing has a CONVENTIONAL location to probe --
+`vswhere` for Visual Studio, `/Applications/Xcode.app` for Xcode. An image a
+user legally owns is wherever they put it, so a locator has nothing to probe
+and would be a package whose entire content is a question. Its version axis
+would be meaningless too: a locator for `iphoneos-image@18.0` cannot verify
+that what it found is 18.0.
 
-And it is worth noting what the locator would be FOR. With R12 in place, a
-simulator or an emulated image is not on the critical path at all -- a real
-device is the supported route, and it needs no image from anyone.
+#### Rejected: the path in `build.mcpp`, and the reason is this repository's own
+
+A build program is per-package, committed to a repository, and its declarations
+are persisted in the build cache record. An image path is none of those things:
+
+    it is per-MACHINE          two developers keep it in different places
+    it is not committable      an absolute path in someone's home directory
+    it must not be a build input   identical sources must not produce different
+                                   build directories because a path differs
+
+That is precisely the analysis `[build] default_jobs` needed (#564): the
+precedence is invocation > project > **machine**, and an image path sits on the
+machine level exactly as a job count does. Putting a machine fact in a
+per-package file is the shape that key was fixed for.
+
+And there is a sharper failure. If a build program reads
+`MCPP_IOS_IMAGE_ROOT` through `env_or`, that variable is **not** part of
+mcpp's contract environment, so it is not in the program's re-run key. Change
+the path and the program does not re-run; the stale runner replays from the
+cache record, which persists it (tag `"runner"`). The result is a path that was
+changed and appears not to have been -- the defect class this repository has
+recorded most often, and here it would be introduced deliberately.
+
+#### The design: the runner PROGRAM owns the path, and nothing above it knows
+
+    engine    names a runner. Does not know what an image is.
+    index     ships the emulator (QEMU is packageable) and NO image.
+    plugin    declares WHICH runner, and produces the artefact to run.
+    runner    a program in a xim package. Owns the path, at RUN time.
+    user      keeps the bytes, and tells the runner program where they are.
+
+The path enters mcpp at no point: not the index, not the build program, not the
+cache record, not the fingerprint. What is published is a program that takes a
+path, and the one thing crossing the boundary is the user's own configuration
+of that program.
+
+This is the boundary cargo states for itself, quoted earlier in §5.2: managing
+devices and simulators is out of scope, and "that responsibility falls to the
+runner program itself." A runner program that owns its own configuration is the
+same sentence applied one level further.
+
+It also dissolves the staleness problem rather than mitigating it. A run-time
+resolution cannot be stale, because there is no record to go stale -- the
+program reads its configuration each time it is invoked, which is what a
+machine fact wants.
+
+#### What each layer actually writes
+
+The plugin side declares the runner by name, so it is available and not
+imposed:
+
+    // a dist/run member, or the project's own build.mcpp
+    mcpp::runner("device", "mcpp-ios-device-run");   // needs no image at all
+    mcpp::runner("qemu",   "mcpp-ios-qemu-run");     // reads its own config
+
+reached as `mcpp run --runner device` or `--runner qemu`. Two properties of the
+existing machinery make this work unmodified: the `runner` directive's cache
+tag is non-empty so a declaration survives a cache hit, and its
+`Scope::RunGlobal` is correct because a runner is a property of the invocation
+rather than of one package in the graph. **Declaring a NAME is cache-safe;
+baking a PATH is not** -- which is the whole distinction this section arrived
+at.
+
+#### This is a pattern, and naming it is worth more than the iOS instance
+
+The same contract serves every "you have it, we cannot ship it" case: a vendor
+BSP under NDA, a licensed board-support blob, proprietary firmware, a paid SDK.
+In each, the ecosystem packages the TOOL that consumes the bytes and never the
+bytes, and the tool owns its own configuration.
+
+Stating it as a pattern matters because the alternative -- deciding case by
+case -- is how a "temporary" entry becomes permanent. And it composes with R12
+in the direction that counts: **with a real device supported, no image is on
+the critical path at all.** The image route serves a developer who has one and
+prefers it; the row does not depend on it.
 
 ### 10.8 Darling is a candidate for the macOS rows, and is recorded as unmeasured
 
