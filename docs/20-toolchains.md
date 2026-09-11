@@ -776,7 +776,10 @@ and refuses.
 
 **Scope.** The contract governs the C++ runtime only. Static **libc** is a separate
 axis (`linkage = "static"` / `--static`, e.g. a musl target), and the deployment
-floor is a third (`macos_deployment_target`). Also, `host-coupled` means mcpp adds
+floor is a third — `macos_deployment_target` in `[package]` for Apple targets,
+`min_api_level` under `[target.<triple>]` for Android. Both feed one parameter
+of `llvm_triple()` and one slot in the build fingerprint, because a target is
+either Apple or Android and the two answer the same question. Also, `host-coupled` means mcpp adds
 nothing to embed a C++ runtime; it does not strip the toolchain rpath the link
 carries for other reasons, so on ELF such an artifact may still find the
 toolchain's libraries first.

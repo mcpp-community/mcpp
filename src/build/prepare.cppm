@@ -1569,12 +1569,30 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
 // each of its call sites -- there are two, and a decision made twice is the
 // shape this codebase records most often.
 std::string min_platform_version(const mcpp::manifest::Manifest& m,
-                                 const mcpp::toolchain::triple::Triple& t) {
+                                 const mcpp::toolchain::triple::Triple& t,
+                                 const std::filesystem::path& compilerPath) {
     if (t.is_android()) {
         if (auto it = m.targetOverrides.find(t.str()); it != m.targetOverrides.end())
             if (it->second.minApiLevel > 0)
                 return std::to_string(it->second.minApiLevel);
-        return {};   // the NDK's own default, which clang supplies
+        // AND THERE IS NO SUCH THING AS LEAVING IT OUT. This returned an empty
+        // string with the comment "the NDK's own default, which clang
+        // supplies", which was never verified and is false. Measured:
+        //
+        //     --target=aarch64-unknown-linux-android   (no level)
+        //     sys/cdefs.h:365:2: error: Unversioned target triples are not
+        //       supported!
+        //
+        // bionic refuses it, so the level is mandatory and a project that
+        // never heard of API levels still needs one. The NDK declares the
+        // floor it supports in `meta/platforms.json` and that is the honest
+        // default -- the payload's own answer, which moves when the payload
+        // does. macOS is the same shape and already works this way: its
+        // default comes from the platform module, not from the manifest.
+        if (auto level = mcpp::toolchain::ndk_min_api_level(compilerPath);
+            level > 0)
+            return std::to_string(level);
+        return {};   // the caller refuses; see android_api_level_refusal
     }
     return mcpp::platform::macos::deployment_target(
         m.buildConfig.macosDeploymentTarget);
@@ -2623,6 +2641,20 @@ prepare_build(bool print_fingerprint,
                 // wasm32-emscripten` with a declared gcc was refused correctly
                 // and explained with "No gcc payload emits a PE with a musl C
                 // library", which is a true sentence about a different row.
+                //
+                // IT HAPPENED AGAIN, AND ADDING AN ARM IS ONLY HALF THE FIX.
+                // Android became a capability row and this chain still had
+                // three arms, so a declared `llvm@22.1.8` against
+                // `aarch64-linux-android` was refused correctly and explained
+                // with the PE+musl sentence -- the identical wrong answer the
+                // paragraph above records for wasm, reached the same way: by a
+                // fourth case falling into a final `else` that was written as
+                // the third case's answer.
+                //
+                // So the last arm now NAMES ITS OWN ROW and the fallthrough is
+                // generic. A capability added later gets a sentence that is
+                // merely unspecific instead of one that is false, and the
+                // refusal still names the pin either way.
                 std::string_view why = parsed->is_freestanding()
                     ? "A freestanding target has no per-host cross payload: "
                       "clang and lld are\n"
@@ -2632,10 +2664,19 @@ prepare_build(bool print_fingerprint,
                       "clang whose target,\n"
                       "       sysroot and JavaScript glue all come from its own "
                       "payload."
-                    : "No gcc payload emits a PE with a musl C library — the "
+                    : parsed->is_android()
+                    ? "An Android target needs bionic, not just an aarch64 or "
+                      "x86_64 back end:\n"
+                      "       its headers, its per-API-level stubs and its "
+                      "loader path are inside the\n"
+                      "       NDK, and no package adds them to another compiler."
+                    : (parsed->is_pe() && parsed->is_musl())
+                    ? "No gcc payload emits a PE with a musl C library — the "
                       "mingw payload emits\n"
                       "       PE with the MinGW CRT, which is the separate "
-                      "`-gnu` row.";
+                      "`-gnu` row."
+                    : "This row's toolchain is the only one that can emit the "
+                      "target at all.";
                 refusal::record(refusal::Code::CapabilityPin);
                 return std::unexpected(std::format(
                     "target '{}' cannot be emitted by '{}'.\n"
@@ -3326,6 +3367,34 @@ prepare_build(bool print_fingerprint,
           {
               tc->targetTriple = want->str();
 
+              // AND THE GATE THAT ALREADY EXISTS FOR THIS, APPLIED WHERE THE
+              // ANSWER IS KNOWN.
+              //
+              // `discover_link_runtime_dirs` refuses to report these
+              // directories for a target that carries its own sysroot, and the
+              // refusal never fired: that function runs during DETECTION,
+              // before this line, when `targetTriple` is still the HOST's. The
+              // gate read a host triple and answered correctly about it.
+              //
+              // The artefact is what showed it. An Android link line carried
+              //
+              //     -L <ndk>/toolchains/llvm/prebuilt/linux-x86_64/lib/
+              //        x86_64-unknown-linux-gnu
+              //
+              // whose last component is this machine's triple, produced by
+              // `root / "lib" / targetTriple` -- so the string names the
+              // question that was asked. Those are the compiler's own host
+              // runtime directories; an Android artefact must resolve libc++,
+              // the crt objects and the loader from the NDK's sysroot, and the
+              // hermetic check reported exactly that failure with six host
+              // objects.
+              //
+              // Cleared rather than re-derived. Re-running the discovery with
+              // the final triple would also change what every OTHER clang cross
+              // target gets, and those are measured as they stand; the claim
+              // being made here is only the one the gate already states.
+              if (want->has_own_sysroot()) tc->linkRuntimeDirs.clear();
+
               // And the flag that says it to the driver — for a HOSTED target
               // only. Freestanding already emits its own `--target`, together
               // with the ISA flags that must accompany it
@@ -3335,7 +3404,55 @@ prepare_build(bool print_fingerprint,
                   && tc->compiler == mcpp::toolchain::CompilerId::Clang) {
                   tc->crossTargetFlag =
                       "--target=" + want->llvm_triple(
-                          min_platform_version(*m, *want));
+                          min_platform_version(*m, *want, tc->binaryPath));
+
+                  // AND THE SAME FLAG ON THE std MODULE'S OWN COMMANDS, FOR A
+                  // PAYLOAD THAT SERVES MORE THAN ONE TARGET.
+                  //
+                  // The std module is built by its own command assembly
+                  // (clang.cppm), not by the compile flags, so a decision made
+                  // only here reaches every translation unit and not that. For
+                  // most toolchains the omission cannot be seen: a payload
+                  // whose compiler IS its target finds its own headers, and a
+                  // package-provided module carries the target inside
+                  // `stdModuleFlags`.
+                  //
+                  // ONE NDK SERVES BOTH ANDROID ARCHES, which is the property
+                  // that makes this necessary and is stated in the row's own
+                  // pin: `android-ndk@<v>` names no arch, so `--target` is the
+                  // only thing that says which. Without it the precompile
+                  // resolved libc++'s `#include <__config>` against the
+                  // building machine and stopped there.
+                  //
+                  // NOT `has_own_sysroot()`, though both rows that answer true
+                  // to it are SDKs with their own sysroot. Emscripten's `em++`
+                  // serves exactly one target and needs no flag -- the verified
+                  // wasm loop is measured without it -- so widening the gate to
+                  // the predicate would add a flag to a command that does not
+                  // want one. The property here is "one payload, several
+                  // targets", and Android is the only row that has it; a future
+                  // row brings its own measurement.
+                  if (want->is_android()) {
+                      tc->stdModuleTargetFlags = " " + tc->crossTargetFlag;
+                      // BIONIC'S ctype HEADER AND A MODULE'S EXPORT RULES.
+                      //
+                      // bionic declares `isalnum` and its neighbours
+                      // `static inline`, and libc++'s module surface exports
+                      // them with `using std::isalnum`. A using-declaration
+                      // cannot export a name with internal linkage, so the
+                      // precompile fails on 14 names at once. Defining the
+                      // macro empty makes those declarations extern, which is
+                      // what every other C library this engine compiles
+                      // against already does.
+                      //
+                      // Scoped to the std module and not to every unit: the
+                      // rule being satisfied is about exporting from a module,
+                      // and a translation unit that includes <ctype.h>
+                      // directly is entitled to bionic's inline definitions.
+                      // `xim:android-ndk`'s own install-time self-test reaches
+                      // the identical conclusion from the other direction.
+                      tc->stdModuleTargetFlags += " -D__BIONIC_CTYPE_INLINE=";
+                  }
               }
           }
           if (auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
@@ -8753,7 +8870,7 @@ prepare_build(bool print_fingerprint,
         if (tc) {
             if (auto tt = mcpp::toolchain::triple::parse(tc->targetTriple)) {
                 in.llvmTriple         = tt->llvm_triple(
-                    min_platform_version(*m, *tt));
+                    min_platform_version(*m, *tt, tc->binaryPath));
                 in.targetOs           = tt->os;
                 in.targetEnv          = tt->env;
                 in.freestandingTarget = tt->is_freestanding();
@@ -11062,7 +11179,8 @@ prepare_build(bool print_fingerprint,
             // directories.
             [&] {
                 auto tt = mcpp::toolchain::triple::parse(tc->targetTriple);
-                return tt ? min_platform_version(*m, *tt) : std::string{};
+                return tt ? min_platform_version(*m, *tt, tc->binaryPath)
+                          : std::string{};
             }(),
             // The GLOBAL registry root — the same one `fill_package_config`
             // relativizes against below, so both halves of the key describe

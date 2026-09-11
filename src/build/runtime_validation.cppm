@@ -26,6 +26,7 @@ import mcpp.runtime.elf;
 import mcpp.runtime.binding;
 import mcpp.ui;
 import mcpp.platform.runtime_search;
+import mcpp.toolchain.triple;
 
 export namespace mcpp::build::runtime_validation {
 
@@ -610,6 +611,34 @@ ValidationReport validate_changed_artifacts(
     if (plan.runtimeBinding.platform != "linux"
         || mcpp::platform::runtime::runtime_provider(
                plan.runtimeBinding.runtimeId) != "glibc")
+        return report;
+
+    // AND THE ARTIFACT HAS TO BE ONE THAT COULD LOAD ON THIS MACHINE.
+    //
+    // Every rule below compares an artifact against `plan.runtimeBinding` --
+    // the loader, the libc and the search order of a process on THIS host.
+    // That premise is what makes the rules true, and it is false for a target
+    // whose system comes from inside an SDK: an Android executable's
+    // `PT_INTERP` is `/system/bin/linker64` by ABI and is read by the device.
+    //
+    // Measured on a correct artifact --
+    //
+    //     ELF 64-bit LSB pie executable, ARM aarch64, interpreter
+    //     /system/bin/linker64
+    //
+    // -- rule B called it a proven defect, because the host binding selects
+    // this machine's `ld-linux-x86-64.so.2` and "one process cannot mix
+    // runtime payloads" is a true sentence about a process that will never
+    // exist. It then offered a SubOS as the fix, which cannot help. The
+    // preceding two checks in this build had the same shape and each was
+    // corrected where its own premise lives; this is the third and last.
+    //
+    // The linux/glibc guard above does not cover it: an Android triple has
+    // `os == "linux"` on purpose -- it IS the kernel -- so every Linux-shaped
+    // decision in the tree is right about it except the ones that mean "this
+    // machine".
+    if (auto tt = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        tt && tt->has_own_sysroot())
         return report;
 
     auto doc = read_cache(plan.outputDir);

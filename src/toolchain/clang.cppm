@@ -252,6 +252,35 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     // headers contributed; only the machine has to be restated. See
     // Toolchain::stdModuleTargetFlags.
     const std::string& codegenFlags = tc.stdModuleTargetFlags;
+    // AND THE PRECOMPILE NEEDS THE MACHINE TOO, FROM WHICHEVER SOURCE HAS IT.
+    //
+    // `stdModuleTargetFlags` reached only the CODEGEN command, on the reading
+    // that the first step needs headers and the second needs the machine. The
+    // first step needs both: a `--precompile` that does not say which target
+    // resolves the standard library's own `#include <__config>` against the
+    // BUILDING machine.
+    //
+    // It was invisible while exactly two kinds of toolchain existed. A payload
+    // whose compiler IS its target needs no flag, and a PACKAGE-provided module
+    // carries the target inside `stdModuleFlags` -- which is why the comment
+    // above insists that whoever sets that string states the target as well. A
+    // payload whose compiler serves several targets is a third kind, and it has
+    // neither: the NDK's one clang++ compiles for both Android arches and is
+    // told which by `--target` alone. Measured on `aarch64-linux-android`:
+    //
+    //     clang++ -std=c++23 -Wno-reserved-module-identifier \
+    //             --precompile .../share/libc++/v1/std.cppm -o pcm.cache/std.pcm
+    //     std.cppm:16:10: fatal error: '__config' file not found
+    //
+    // Five tokens, and the same error text this file already records from a
+    // Windows host in 2026-08 -- same cause, reached by a different route.
+    //
+    // The two sources are never both needed: `stdModuleFlags` is a SUPERSET of
+    // `stdModuleTargetFlags` when it is set at all (the producer builds the
+    // machine part first and appends the include part), so taking it in
+    // preference keeps `--target` off the command line twice.
+    const std::string& precompileFlags =
+        extraFlags.empty() ? codegenFlags : extraFlags;
 #if defined(_WIN32)
     // Windows: use absolute paths, raw binary path as first token
     // (cmd.exe strips leading quotes), shq for args with spaces.
@@ -308,7 +337,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
             cppStandardFlag,
             ixxFlags,
             sysrootFlag,
-            extraFlags,
+            precompileFlags,
             mcpp::xlings::shq(tc.stdModuleSource.string()),
             mcpp::xlings::shq(absBmi)),
         std::format(
@@ -331,7 +360,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
             mcpp::xlings::shq(tc.binaryPath.string()),
             cppStandardFlag,
             sysrootFlag,
-            extraFlags,
+            precompileFlags,
             mcpp::xlings::shq(tc.stdModuleSource.string()),
             mcpp::xlings::shq(relBmi)),
         std::format(
@@ -418,6 +447,9 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
     // Same split as the `std` builder above: the second command compiles a BMI
     // and needs the machine restated, not the include paths.
     const std::string& codegenFlags = tc.stdModuleTargetFlags;
+    // Same third kind of toolchain as the `std` builder above, same reason.
+    const std::string& precompileFlags =
+        extraFlags.empty() ? codegenFlags : extraFlags;
     // std.compat depends on std, so we need -fmodule-file=std=<std.pcm>
     // Note: the path after = must NOT be shell-quoted separately; the
     // entire -fmodule-file flag is a single token to the compiler.
@@ -453,7 +485,7 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
                     mcpp::xlings::shq(tc.binaryPath.string()),
                     cppStandardFlag,
                     sysrootFlag,
-                    extraFlags,
+                    precompileFlags,
                     absStdBmi,
                     mcpp::xlings::shq(tc.stdCompatSource.string()),
                     mcpp::xlings::shq(absBmi)),

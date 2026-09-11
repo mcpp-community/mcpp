@@ -55,9 +55,21 @@ check wasm32-emscripten   gcc@16.1.0 "Nothing but Emscripten emits WebAssembly" 
 check riscv64-none-elf    gcc@16.1.0 "no per-host cross payload"                "bare metal names the cross payload"
 check x86_64-windows-musl gcc@16.1.0 "PE with a musl C library"                 "PE+musl names the C library"
 
+# 3b. AND IT HAPPENED A SECOND TIME, with Android. The row gained a pin, became
+#     a capability row, and the reason chain still had three arms -- so the
+#     refusal explained it with the PE+musl sentence, the identical wrong answer
+#     case 1 was written for.
+check aarch64-linux-android gcc@16.1.0 "An Android target needs bionic" "android names bionic"
+check x86_64-linux-android  gcc@16.1.0 "An Android target needs bionic" "android names bionic (x86_64)"
+
 # 4. THE GATE. `llvm@22.1.8` is the llvm family, and so is emsdk -- so a family
 #    test cannot separate them and this declaration used to pass unrefused.
 check wasm32-emscripten   llvm@22.1.8 "Nothing but Emscripten emits WebAssembly" "a declared llvm is refused too"
+# The NDK normalises to the llvm family for the same reason, so the same hole
+# would have existed for Android. A declared `llvm@22.1.8` names a real
+# compiler that emits aarch64 ELF perfectly well -- what it cannot supply is
+# bionic, which is why this row is a capability at all.
+check aarch64-linux-android llvm@22.1.8 "An Android target needs bionic" "a declared llvm is refused for android too"
 
 # 5. And the sentence names the row's OWN pin rather than a fixed word: the
 #    closing line used to read "The row names llvm as a capability" on every
@@ -72,6 +84,48 @@ else
     echo "FAIL: the closing line does not name emsdk@6.0.9"
     grep -A5 "cannot be emitted by" <<<"$out" | sed 's/^/    /'
     fail=1
+fi
+
+# 6. EXHAUSTIVE, BECAUSE ADDING AN ARM IS WHAT KEEPS FAILING.
+#
+# Cases 1-5 each name a row a reader thought of. The defect both times was a
+# row NOBODY thought of falling into a final `else` written as another row's
+# answer, and no per-row test can catch that. So: take every pinned row from
+# the engine's own vocabulary, declare a toolchain that is not its pin, and
+# assert the PE+musl sentence appears for exactly one of them.
+#
+# The denominator comes from `toolchain list`, so a row added tomorrow is in it
+# without this file being edited.
+echo "== 640/6: the PE+musl sentence belongs to exactly one row =="
+pinned=$( "$MCPP" toolchain list --format json 2>/dev/null \
+          | tr ',' '\n' | grep -o '"target": *"[^"]*"' | sed 's/.*: *"//;s/"//' )
+[ -n "$pinned" ] || { echo "FAIL: toolchain list named no targets"; exit 1; }
+peMusl=0; examined=0
+for target in $pinned; do
+    d="$t/x-$target"; mkdir -p "$d/src"
+    printf '[package]\nname = "c"\nversion = "0.1.0"\n\n[toolchain]\nlinux = "gcc@16.1.0"\n' > "$d/mcpp.toml"
+    printf 'int main(){return 0;}\n' > "$d/src/main.cpp"
+    out=$( cd "$d" && MCPP_NO_AUTO_INSTALL=1 "$MCPP" build --target "$target" 2>&1 ) || true
+    grep -q "cannot be emitted by" <<<"$out" || continue   # not a capability row
+    examined=$((examined + 1))
+    if grep -qF "PE with a musl C library" <<<"$out"; then
+        peMusl=$((peMusl + 1))
+        if [ "$target" != "x86_64-windows-musl" ]; then
+            echo "FAIL: $target is explained with the PE+musl sentence"
+            fail=1
+        fi
+    fi
+done
+echo "  examined $examined capability-pinned rows of $(wc -w <<<"$pinned") targets"
+if [ "$examined" -lt 4 ]; then
+    echo "FAIL: only $examined capability rows were reached — the enumeration is too small to be evidence"
+    fail=1
+fi
+if [ "$peMusl" -ne 1 ]; then
+    echo "FAIL: the PE+musl sentence was printed for $peMusl rows, expected exactly 1"
+    fail=1
+else
+    echo "  ok: exactly one row is explained by the PE+musl sentence"
 fi
 
 if [ "$fail" -ne 0 ]; then echo "FAIL: 640"; exit 1; fi

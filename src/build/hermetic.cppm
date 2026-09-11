@@ -28,6 +28,7 @@ import mcpp.log;
 import mcpp.platform;
 import mcpp.toolchain.fingerprint;
 import mcpp.toolchain.model;
+import mcpp.toolchain.triple;
 
 export namespace mcpp::build {
 
@@ -186,7 +187,31 @@ std::expected<void, std::string> verify_hermetic_link(
         auto base = std::filesystem::path(std::string(t)).filename().string();
         if (is_crt_object(base)) check(t);
     }
-    if (!effectiveLoader.empty()) check(effectiveLoader);
+    // THE LOADER OF A TARGET THAT BRINGS ITS OWN SYSROOT IS A PATH ON THE
+    // TARGET, NOT ON THIS MACHINE.
+    //
+    // Every other path this function inspects is resolved by the linker here
+    // and must therefore sit inside a payload. The dynamic linker is the one
+    // that is not: it is recorded in the artefact and read by the DEVICE at
+    // load time. Android's is `/system/bin/linker64` by ABI -- it cannot be
+    // inside a payload, and an artefact naming a payload path there would be
+    // the defect rather than the proof.
+    //
+    // Measured: with the crt objects and libc++ correctly resolving inside the
+    // NDK, this was the single remaining "leak" and the build stopped on it.
+    // The message was accurate about what it saw and wrong about what it meant,
+    // which is the harder kind: it named a real path outside the sandbox and
+    // invited the reader to reinstall a glibc payload that has nothing to do
+    // with it.
+    if (auto tt = mcpp::toolchain::triple::parse(tc.targetTriple);
+        tt && tt->has_own_sysroot()) {
+        mcpp::log::verbose("hermetic", std::format(
+            "target {} carries its own sysroot; its loader ({}) is a path on "
+            "the target and is not checked against the sandbox",
+            tc.targetTriple, effectiveLoader));
+    } else if (!effectiveLoader.empty()) {
+        check(effectiveLoader);
+    }
 
     if (!leaks.empty()) {
         std::string list;

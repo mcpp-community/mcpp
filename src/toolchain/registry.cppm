@@ -17,6 +17,7 @@
 export module mcpp.toolchain.registry;
 
 import std;
+import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.xlings;
 import mcpp.toolchain.clang;
@@ -281,6 +282,11 @@ bool needs_linux_sysroot_payloads(const triple::Triple& target);
 // that the availability side declared impossible).
 bool host_can_serve(const triple::Triple& target);
 
+// The NDK's own declared minimum API level, read from the installed payload's
+// `meta/platforms.json`. 0 when it cannot be read. Definition and the reason
+// the number is not a constant are below.
+int ndk_min_api_level(const std::filesystem::path& compilerPath);
+
 // xim index names to query for the Available section, with the family each
 // one contributes versions to. Host-conditional: a host only lists payloads
 // it can install.
@@ -455,6 +461,53 @@ std::string ndk_host_tag() {
     if constexpr (mcpp::platform::is_windows) return "windows-x86_64";
     else if constexpr (mcpp::platform::is_macos) return "darwin-x86_64";
     else return "linux-x86_64";
+}
+
+// THE NDK'S OWN MINIMUM API LEVEL, READ FROM THE PAYLOAD.
+//
+// Android's API level is NOT OPTIONAL and mcpp cannot leave it out. bionic's
+// own <sys/cdefs.h> stops the build:
+//
+//     sys/cdefs.h:365:2: error: Unversioned target triples are not supported!
+//
+// So a project that declares no `min_api_level` still needs a level, and the
+// question is where the number comes from. Not from a constant compiled in
+// here: this repository has recorded more than once that a version written
+// into a comment becomes a version written into a diagnostic and then into
+// somebody's install command, and the NDK's floor moves with the NDK. The
+// payload answers for itself -- `meta/platforms.json` is upstream's own
+// declaration of the range it supports, `{"min": 21, "max": 37}` for r30 --
+// and reading it means a newer NDK changes the default by being installed
+// rather than by being edited into this file.
+//
+// Returns 0 when the file is absent or unreadable, which the caller turns into
+// a refusal naming `min_api_level`. A guessed level would be worse than the
+// refusal: it selects which bionic symbols exist, so guessing produces an
+// artefact that links here and fails to load on a device.
+int ndk_min_api_level(const std::filesystem::path& compilerPath) {
+    // `<ndk>/toolchains/llvm/prebuilt/<host>/bin/clang++` -- walk up rather
+    // than counting components, because the count is exactly the kind of fact
+    // that changes silently when a layout does.
+    std::error_code ec;
+    for (auto dir = compilerPath.parent_path();
+         !dir.empty() && dir != dir.parent_path();
+         dir = dir.parent_path()) {
+        auto meta = dir / "meta" / "platforms.json";
+        if (!std::filesystem::exists(meta, ec)) continue;
+        std::ifstream in(meta);
+        if (!in) return 0;
+        try {
+            auto j = nlohmann::json::parse(in, nullptr, false);
+            if (j.is_discarded() || !j.contains("min")) return 0;
+            auto min = j["min"];
+            if (!min.is_number_integer()) return 0;
+            auto level = min.get<int>();
+            return level > 0 ? level : 0;
+        } catch (...) {
+            return 0;
+        }
+    }
+    return 0;
 }
 
 XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
@@ -742,19 +795,36 @@ bool host_can_serve(const triple::Triple& target) {
     // a Windows form, so control reached a `return false` written for triples
     // nobody publishes a payload for.
     //
-    // BUT "WHEREVER" WAS TOO BROAD, AND THE TARGET MATRIX IS WHAT CAUGHT IT.
-    // The first version of this returned true unconditionally, which is the
-    // same mistake as the branches it sits above: a predicate correct about
-    // the objects its author had in mind. `xim:emsdk` and `xim:android-ndk`
-    // both declare ONLY an `xpm.linux` table today, so on macOS or Windows
-    // there is no payload to install and the honest answer is the same
-    // `host-cannot-serve` every other unpublished combination gets.
+    // "WHEREVER" WAS TOO BROAD ONCE, AND THE TARGET MATRIX IS WHAT CAUGHT IT.
+    // The first version returned true unconditionally, which is the same
+    // mistake as the branches it sits above: a predicate correct about the
+    // objects its author had in mind. It was then narrowed to
+    // `mcpp::platform::is_linux`, because `xim:emsdk` and `xim:android-ndk`
+    // both declared ONLY an `xpm.linux` table -- so on macOS or Windows there
+    // was no payload to install and the honest answer was the same
+    // `host-cannot-serve` every other unpublished combination gets. That
+    // comment named its own expiry: "when a darwin or windows NDK lands in the
+    // index -- upstream publishes both -- this is the one line that changes."
     //
-    // Keyed on the HOST and not on the arch, because these payloads are
-    // published per host OS and carry every guest arch. When a darwin or
-    // windows NDK lands in the index -- upstream publishes both -- this is the
-    // one line that changes.
-    if (target.has_own_sysroot()) return mcpp::platform::is_linux;
+    // IT HAS LANDED, SO THIS IS THAT LINE. Both packages now declare
+    // `xpm.linux`, `xpm.macosx` and `xpm.windows`, and the index's own
+    // per-host install jobs are the measurement rather than the declaration:
+    // on macOS and Windows each payload downloads, extracts, passes its
+    // recipe's compiler probe and registers its shims. Two host assumptions
+    // inside those recipes were found by exactly those jobs and fixed there,
+    // which is where a host-shaped packaging defect belongs -- not here.
+    //
+    // Keyed on the target and no longer on the host, because these payloads
+    // are published per host OS and carry every guest arch: one `xim:emsdk`
+    // compiles for wasm32 regardless of the machine's arch, and one NDK serves
+    // both Android arches. The remaining per-host question is whether the
+    // payload EXISTS, and that is the index's answer to give, not a constant
+    // compiled into the engine. A row whose pin the index cannot satisfy on
+    // this host fails at install with the package's own diagnostic, which
+    // names the payload -- strictly better than this function silently
+    // deleting the row from `toolchain list`, which reported a target mcpp
+    // knows as one it has never heard of.
+    if (target.has_own_sysroot()) return true;
 
     if (target.os == "linux") {
         if constexpr (mcpp::platform::is_linux) {

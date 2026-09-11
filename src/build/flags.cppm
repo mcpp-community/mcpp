@@ -531,6 +531,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     const std::string crossTarget = plan.toolchain.crossTargetFlag.empty()
         ? std::string{}
         : " " + plan.toolchain.crossTargetFlag;
+    // Does the TARGET bring its own sysroot -- an Emscripten or Android SDK,
+    // where the C library, the C++ runtime and the loader are all inside the
+    // payload? Read once here; the link branch below is its only consumer.
+    const bool ownSysrootTarget = [&] {
+        auto tt = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        return tt && tt->has_own_sysroot();
+    }();
     const bool isClangWithCfg = dm.hasCfg;
 
     // THE TARGET SIDE COMES FROM THE DEPENDENCY GRAPH, READ RATHER THAN
@@ -687,6 +694,32 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // headers + C runtime (-B for crt discovery, -L for -lc/-lm).
         link_toolchain_flags = crossTarget + lm.link_flags(ninjaEsc);
         link_toolchain_flags_c = link_toolchain_flags;   // nothing C++-only here
+        f.sysroot = link_toolchain_flags;
+    } else if (!crossTarget.empty() && ownSysrootTarget) {
+        // AN SDK THAT BRINGS ITS OWN SYSROOT STILL HAS TO BE TOLD WHICH TARGET.
+        //
+        // Both branches above are skipped for such a target, and that is
+        // correct for everything they carry: the link model contributes
+        // nothing, because the C library, the C++ runtime, the crt objects and
+        // the loader all live inside the SDK and the driver finds them itself.
+        // What it cannot do is guess WHICH of them to find -- one NDK serves
+        // both Android arches -- so falling through with an empty string linked
+        // the target's objects with the host's startup files:
+        //
+        //     hermetic link check failed
+        //       /lib/x86_64-linux-gnu/Scrt1.o          (outside the sandbox)
+        //       /usr/lib/gcc/x86_64-linux-gnu/13/crtbeginS.o
+        //       /lib64/ld-linux-x86-64.so.2
+        //
+        // Six host objects on an aarch64 link, every one of them resolved by a
+        // driver that believed it was building for this machine. The compile
+        // side already said the target; only the link side did not.
+        //
+        // `crossTarget` ALONE, and that is the whole content of this branch.
+        // Adding the C-runtime flags the branch above adds would reintroduce
+        // the host's model, which is the thing the SDK replaces.
+        link_toolchain_flags = crossTarget;
+        link_toolchain_flags_c = crossTarget;
         f.sysroot = link_toolchain_flags;
     }
 

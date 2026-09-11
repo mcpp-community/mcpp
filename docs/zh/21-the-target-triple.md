@@ -43,7 +43,15 @@ C 库。选中 `x86_64-linux-musl` 就是选中 musl-gcc 载荷,选中
 | `linux` | **C 库** | `gnu`(glibc)、`musl`、`android`(bionic) |
 | `windows` | **对象 ABI** | `gnu`(Itanium C++ ABI)、`msvc`(微软的) |
 | `none` | **对象格式** | `elf` |
-| `macos`、`ios`、`emscripten` | 无;该平台不带这一段 | — |
+| `ios` | **真机还是模拟器** | `sim`(模拟器)、缺省(真机) |
+| `macos`、`emscripten` | 无;该平台不带这一段 | — |
+
+`sim` 是 Apple 这一侧唯一带段的行,而它命名的既不是 C 库也不是 ABI:模拟器构建
+有自己的 SDK(`iPhoneSimulator.sdk`)、产出自己的对象,并且取
+`-mios-simulator-version-min` 而真机取 `-miphoneos-version-min`。两个目标,所以
+两个身份。Apple 自己把它拼成 OS 段尾部的 `-simulator`,Rust 拼成
+`aarch64-apple-ios-sim`;两种拼法在这里都能解析,并且都规范化为
+`aarch64-ios-sim`。
 
 `android` 是一个 **C 库**,所以它落在 `musl` 落的那个位置上,OS 段仍是 `linux`。
 这个位置就是这处建模决定的全部:内核**就是** Linux,所以 ELF、`unix` family、
@@ -425,10 +433,12 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 | `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `aarch64-linux-android` | planned | — | planned | planned | planned | planned |
-| `x86_64-linux-android` | planned | — | planned | planned | planned | planned |
+| `aarch64-linux-android` | preview | `android-ndk@30.0.16248370` | payload | payload | payload | payload |
+| `x86_64-linux-android` | preview | `android-ndk@30.0.16248370` | payload | payload | payload | payload |
 | `aarch64-ios` | planned | — | planned | planned | planned | planned |
-| `wasm32-emscripten` | planned | — | planned | planned | planned | planned |
+| `aarch64-ios-sim` | planned | — | planned | planned | planned | planned |
+| `x86_64-ios-sim` | planned | — | planned | planned | planned | planned |
+| `wasm32-emscripten` | verified | `emsdk@6.0.9` | payload | payload | payload | payload |
 
 `载荷` 这里有工具链载荷产出它 · `图` 没有载荷,但依赖可以供给系统 ·
 `系统` 在机器上被找到,不是 mcpp 装的 · `SDK` 平台自己的 ·
@@ -445,6 +455,7 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 | `x86_64-windows-musl` | 载荷只在 Windows;走图则任意宿主 | 没有 gcc 发得出 PE+musl,而 LLVM 拼不出这个三元组 |
 | `aarch64-macos` | macOS | SDK 是那台机器的 |
 | `*-none-elf` | 每一台 | clang 与 lld 按构造就是交叉编译器 |
+| `wasm32-emscripten`、`*-linux-android` | 每个宿主 | SDK 自带 sysroot,且上游按宿主发布;一份归档服务每个 guest 架构 |
 
 **一个 `—` 讲的是载荷,不是可能性。** `host_can_serve` 回答的是「这里有没有
 载荷产出它」,而依赖图可以改为供给系统 —— 这就是 `x86_64-windows-musl` 在 Linux

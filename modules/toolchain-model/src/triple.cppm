@@ -175,6 +175,15 @@ struct Triple {
         // place that answers it. clang picks its own when nothing says.
         if (os == "ios") {
             const std::string a = (arch == "aarch64") ? "arm64" : arch;
+            // AND THE SIMULATOR IS A DIFFERENT EFFECTIVE TRIPLE, WHICH IS WHY
+            // IT IS A DIFFERENT ROW. Apple spells it with a trailing
+            // `-simulator` on the OS segment; mcpp carries it as `env = "sim"`
+            // in three fields, which is Rust's `aarch64-apple-ios-sim` modulo
+            // the vendor elision this whole table already does. The SDK, the
+            // object and the `-mios-simulator-version-min` flag all differ from
+            // the device's, so folding the two into one identity would be the
+            // mistake `x86_64-windows-musl` was added to undo.
+            if (env == "sim") return a + "-apple-ios-simulator";
             return a + "-apple-ios";
         }
         // ANDROID IS LINUX, AND THE ENV SEGMENT IS WHERE IT SAYS SO -- with the
@@ -187,9 +196,19 @@ struct Triple {
         // fingerprint; and it is the project's statement rather than the
         // toolchain's, because one NDK serves a range of levels.
         //
-        // Absent, clang's own default applies -- `aarch64-unknown-linux-android`
-        // is what it normalises with no level, so omitting the key is a legal
-        // answer and not a gap.
+        // ABSENT, THERE IS NO ANSWER, AND THIS COMMENT USED TO SAY OTHERWISE.
+        // It read "clang's own default applies [...] so omitting the key is a
+        // legal answer and not a gap", which was never verified. Measured:
+        //
+        //     --target=aarch64-unknown-linux-android   (no level)
+        //     sys/cdefs.h:365:2: error: Unversioned target triples are not
+        //       supported!
+        //
+        // bionic refuses an unversioned triple outright, so the level is
+        // mandatory. The project still does not have to state it: mcpp reads
+        // the NDK's own declared floor from `meta/platforms.json` and uses that
+        // (see `min_platform_version` and `ndk_min_api_level`), which is the
+        // payload answering for itself rather than a constant compiled in.
         if (os == "linux") {
             std::string e = env.empty() ? std::string("gnu") : env;
             if (env == "android" && !minPlatformVersion.empty())
@@ -305,8 +324,26 @@ struct Triple {
     // nothing but Emscripten emits WebAssembly. A declared `gcc@16.1.0`
     // against such a row is a request that cannot be honoured, and saying so
     // is better than resolving gcc and failing inside it.
+    //
+    // ANDROID BELONGS HERE FOR A REASON THE OTHER THREE DO NOT SHOW, and it
+    // was left out when the row got its pin. The other three are refused
+    // because the toolchain CANNOT emit the format; a stock clang emits
+    // aarch64 ELF perfectly well, so nothing about the output rules it out.
+    // What it cannot supply is the SYSTEM: bionic's headers, its per-API-level
+    // stubs and its loader path live inside the NDK, and there is no package
+    // that adds them to another compiler.
+    //
+    // Measured on the path a declared `llvm@22.1.8` takes without this:
+    // clang resolves, and the build stops inside it with
+    // `'__config' file not found`, then -- once told the target --
+    // `Unversioned target triples are not supported!` from bionic's own
+    // <sys/cdefs.h>. Two diagnostics, neither naming the toolchain that cannot
+    // serve the row. `-D__BIONIC_CTYPE_INLINE=` and an API level fused onto
+    // the triple are the NDK's own requirements, not flags a user can be
+    // expected to supply to a different compiler.
     bool pin_is_capability() const {
-        return is_freestanding() || (is_pe() && is_musl()) || is_wasm();
+        return is_freestanding() || (is_pe() && is_musl()) || is_wasm()
+            || is_android();
     }
 
     // cfg() `family` dimension: unix | windows.
@@ -615,11 +652,11 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // payload exists yet -- `xim:android-ndk` is the row's whole remaining
     // cost, and until it lands `[target.<triple>].sysroot` is the escape hatch
     // for a machine that has an NDK already.
-    { "aarch64-linux-android", "planned",   "",    "",           "",                            false },
+    { "aarch64-linux-android", "preview",   "",    "android-ndk@30.0.16248370", "",   false },
     // The emulator's row. Not a convenience: x86_64 is what an Android
     // emulator image runs, so a row for the device without one for the
     // emulator describes a target nothing in CI can execute.
-    { "x86_64-linux-android",  "planned",   "",    "",           "",                            false },
+    { "x86_64-linux-android",  "preview",   "",    "android-ndk@30.0.16248370", "",   false },
 
     // iOS IS NEXT. `aarch64-macos` is `verified`, so Mach-O, `arm64`, the
     // linker and the Apple half of the toolchain model all exist; what is
@@ -639,6 +676,25 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // its own object, so folding it in would make two targets share an
     // identity -- the mistake `x86_64-windows-musl` was added to undo.
     { "aarch64-ios",           "planned",   "",    "",           "",                            false },
+    // THE SIMULATOR'S TWO ROWS. Not a convenience and not a runner: a
+    // simulator build has its own SDK (`iPhoneSimulator.sdk`), produces its own
+    // object, and takes `-mios-simulator-version-min` rather than
+    // `-miphoneos-version-min`. Two targets sharing one identity is what the
+    // device row's own comment objected to, and the objection was to the
+    // absence of these rows rather than to their presence.
+    //
+    // BOTH ARCHES, for the reason the Android pair has both: the simulator runs
+    // the HOST's architecture, so an Apple-silicon machine needs `aarch64` and
+    // an Intel one needs `x86_64`. A single row would describe a simulator half
+    // the machines cannot run.
+    //
+    // `planned`, and the blocker is the same licence question as the device
+    // row -- the simulator SDK ships inside Xcode and is no more
+    // redistributable than the iPhoneOS one. What these rows buy today is that
+    // `mcpp build --target aarch64-ios-sim` answers `tier-planned` naming the
+    // row, instead of `unknown target`, which was false.
+    { "aarch64-ios-sim",       "planned",   "",    "",           "",                            false },
+    { "x86_64-ios-sim",        "planned",   "",    "",           "",                            false },
 
     // WEB IS THE OUTLIER, AND IT IS THE ONLY ONE OF THE THREE THAT CHANGES THE
     // MODEL RATHER THAN EXTENDING A TABLE. A new arch (`wasm32`), a new os
@@ -760,6 +816,34 @@ inline RequestResolution resolve_request(const Triple& parsed) {
                         && k.canonical.starts_with(prefix)
                         && k.canonical[prefix.size()] == '-';
         if (!exact && !sub) continue;
+        // A BARE `arch-os` ASKS FOR A C LIBRARY TO BE FILLED IN, AND ANDROID
+        // IS NOT ONE OF THE ANSWERS.
+        //
+        // The candidates here are meant to be alternatives for the SAME
+        // platform -- `gnu` or `musl` for a Linux -- so that `aarch64-linux`
+        // can complete to the one this repository supports. `android` sits on
+        // the same `arch-os` prefix because its kernel IS Linux, which is the
+        // modelling decision that makes every Linux-shaped answer in the tree
+        // right about it; it is not an alternative C library for the same
+        // platform. It has a different loader path, a different SDK and an API
+        // level.
+        //
+        // It became visible the moment the Android rows stopped being
+        // `planned`: `aarch64-linux` then had TWO supported siblings and
+        // resolved as ambiguous, where before it completed to
+        // `aarch64-linux-musl`. Either outcome of an ambiguity would be wrong
+        // here -- refusing a request that has an obvious answer, or answering
+        // it with bionic.
+        //
+        // Excluded from `siblings` too, not just from `supported`. That list is
+        // what the diagnostic prints, and offering `aarch64-linux-android` to
+        // someone who typed `aarch64-linux` would be a suggestion to build for
+        // a different platform.
+        //
+        // A written `aarch64-linux-android` never reaches this loop: an
+        // explicit env returns above, which is the rule that an author's own
+        // spelling is a request and not a gap.
+        if (auto kt = parse(k.canonical); kt && kt->is_android()) continue;
         r.siblings.push_back(k.canonical);
         if (k.tier != "planned") r.supported.push_back(k.canonical);
     }
@@ -1069,7 +1153,21 @@ std::optional<Triple> parse(std::string_view s) {
             // `androideabi` is the 32-bit ARM spelling and resolves to the same
             // env: the EABI half is the ARM calling convention, which `armv7a`
             // already carries in the arch segment.
-            if (k == "android" || starts_with(k, "androideabi")) {
+            //
+            // AND THE API LEVEL RIDES THIS SEGMENT, SO THE MATCH HAS TO BE A
+            // PREFIX. This read `k == "android"`, which cannot parse
+            // `aarch64-unknown-linux-android21` -- a string mcpp PRINTS
+            // itself, one line above the build it describes:
+            //
+            //     Target aarch64-linux-android -> aarch64-unknown-linux-android21
+            //
+            // A reader who pastes that back was told mcpp had never heard of
+            // it. The msvc branch below already carries the identical note for
+            // the identical reason ("…-windows-msvc19.44.35211"); Android has
+            // the same shape and was missed. One prefix covers all four
+            // spellings: `android`, `android21`, `androideabi`,
+            // `androideabi21`.
+            if (starts_with(k, "android")) {
                 t.env = "android"; t.envExplicit = true; continue;
             }
             if (k == "musl" || starts_with(k, "musleabi")) { t.env = "musl"; t.envExplicit = true; continue; }
@@ -1077,6 +1175,12 @@ std::optional<Triple> parse(std::string_view s) {
             // starts_with: clang effective triples can carry a version suffix
             // on the env segment ("…-windows-msvc19.44.35211").
             if (starts_with(k, "msvc"))                    { t.env = "msvc"; t.envExplicit = true; continue; }
+        }
+        // THE SIMULATOR SEGMENT, WHICH IS THE ONE PLACE AN APPLE ROW HAS AN
+        // env. Both spellings arrive: `sim` is mcpp's and Rust's, `simulator`
+        // is Apple's own and appears in any effective triple clang prints.
+        if (t.os == "ios" && (k == "sim" || k == "simulator")) {
+            t.env = "sim"; t.envExplicit = true; continue;
         }
         // Unrecognized segment (wasi, …): not in mcpp's target language —
         // treat as unparseable rather than guessing.
@@ -1087,7 +1191,8 @@ std::optional<Triple> parse(std::string_view s) {
     // macOS carries no env segment at all, so nothing was declined there. iOS
     // and Emscripten are the same shape: the platform layer is the whole of the
     // identity past the arch, and there is no C-library axis to decline.
-    if (t.os == "macos" || t.os == "ios" || t.os == "emscripten") {
+    if (t.os == "macos" || t.os == "emscripten"
+        || (t.os == "ios" && t.env != "sim")) {
         t.env.clear(); t.envExplicit = false;
     }
     // THE FILL STAYS, AND THE FACT THAT IT WAS A FILL IS NOW RECORDED.

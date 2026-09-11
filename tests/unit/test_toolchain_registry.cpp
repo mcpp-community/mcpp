@@ -235,6 +235,68 @@ TEST(ToolchainRegistry, NativeGccPayloadFollowsWhatTheArchActuallyPublishes) {
 // ONE platform — Visual Studio is very often already installed and cannot
 // always be redistributed.
 
+// THE NDK'S OWN FLOOR, READ FROM THE PAYLOAD RATHER THAN COMPILED IN.
+//
+// Android's API level is not optional -- bionic's <sys/cdefs.h> stops the build
+// with "Unversioned target triples are not supported!" -- so a project that
+// declares no `min_api_level` still needs one. The number comes from
+// `meta/platforms.json`, which is upstream's own declaration of the range it
+// supports, so a newer NDK changes the default by being installed.
+//
+// A CONSTANT HERE WOULD BE THE DEFECT THIS AVOIDS: this repository has
+// recorded more than once that a version written into a comment becomes a
+// version in a diagnostic and then in somebody's install command.
+TEST(ToolchainRegistry, TheNdkApiLevelFloorIsReadFromThePayloadsOwnMetadata) {
+    namespace fs = std::filesystem;
+    auto root = fs::temp_directory_path()
+              / ("mcpp-ndk-meta-" + std::to_string(::getpid()));
+    fs::remove_all(root);
+    // The real layout: the compiler sits four directories below the NDK root,
+    // and `meta/` is a sibling of `toolchains/`.
+    auto bin = root / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64" / "bin";
+    fs::create_directories(bin);
+    fs::create_directories(root / "meta");
+    auto clangxx = bin / "clang++";
+    { std::ofstream o(clangxx); o << "#!/bin/sh\n"; }
+
+    // r30's actual values.
+    {
+        std::ofstream o(root / "meta" / "platforms.json");
+        o << R"({"min": 21, "max": 37, "aliases": {"N": 24}})";
+    }
+    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 21);
+
+    // A DIFFERENT PAYLOAD ANSWERS DIFFERENTLY, which is the whole point of
+    // reading it: the same code must not return 21 for an NDK that says 24.
+    {
+        std::ofstream o(root / "meta" / "platforms.json");
+        o << R"({"min": 24, "max": 40})";
+    }
+    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 24);
+
+    // 0 WHEN IT CANNOT BE READ, and the caller turns that into a refusal
+    // naming `min_api_level`. A guessed level would be worse than the refusal:
+    // it selects which bionic symbols exist, so guessing produces an artefact
+    // that links here and fails to load on a device.
+    fs::remove(root / "meta" / "platforms.json");
+    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 0);
+
+    // Malformed rather than absent -- same answer, and no exception escapes.
+    { std::ofstream o(root / "meta" / "platforms.json"); o << "{not json"; }
+    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 0);
+
+    // Present but not a number: still 0, never a silent 1 from a cast.
+    { std::ofstream o(root / "meta" / "platforms.json"); o << R"({"min": "21"})"; }
+    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 0);
+
+    // A path that is not inside an NDK at all walks to the filesystem root and
+    // stops; it must not loop.
+    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(
+                  fs::temp_directory_path() / "definitely-not-an-ndk" / "clang++"), 0);
+
+    fs::remove_all(root);
+}
+
 TEST(ToolchainOrigin, MsvcIsTheOnlyFamilyWithASystemSpelling) {
     auto msvcSystem = parse_toolchain_spec("msvc@system");
     ASSERT_TRUE(msvcSystem.has_value()) << msvcSystem.error();
@@ -365,13 +427,34 @@ TEST(SdkPayloads, TheSearchedDirectoryIsAvailableForTheDiagnostic) {
 // said "wherever" -- the same over-broad shape as the branches it sits above.
 // The target matrix caught it: declaring the row servable on macOS and Windows
 // would have claimed a payload that does not exist there.
-TEST(SdkPayloads, ServedOnTheHostsTheSdkIsPublishedFor) {
-    auto wasm = mcpp::toolchain::triple::parse("wasm32-emscripten");
-    ASSERT_TRUE(wasm.has_value());
-    EXPECT_EQ(mcpp::toolchain::host_can_serve(*wasm), mcpp::platform::is_linux);
-    auto droid = mcpp::toolchain::triple::parse("aarch64-linux-android");
-    ASSERT_TRUE(droid.has_value());
-    EXPECT_EQ(mcpp::toolchain::host_can_serve(*droid), mcpp::platform::is_linux);
+TEST(SdkPayloads, ServedOnEveryHostTheSdkIsPublishedFor) {
+    // THIS ASSERTION USED TO BE TRUE BY ARITHMETIC ON ONE HOST.
+    //
+    // It read `EXPECT_EQ(host_can_serve(*wasm), mcpp::platform::is_linux)`,
+    // which was the right claim while `xim:emsdk` and `xim:android-ndk`
+    // declared only `xpm.linux`. Both now publish for all three hosts, and the
+    // engine's constant was the stale half -- but the assertion kept passing
+    // on Linux, because there `is_linux` IS `true`. A criterion whose expected
+    // value is the host it runs on cannot report a change on the other two.
+    //
+    // Stated unconditionally now: these rows are servable everywhere, and this
+    // test fails on macOS or Windows if the constant comes back.
+    for (auto name : {"wasm32-emscripten", "aarch64-linux-android",
+                      "x86_64-linux-android"}) {
+        auto t = mcpp::toolchain::triple::parse(name);
+        ASSERT_TRUE(t.has_value()) << name;
+        EXPECT_TRUE(mcpp::toolchain::host_can_serve(*t)) << name;
+    }
+
+    // AND THE PREDICATE IS STILL ABLE TO SAY NO, which is what keeps the
+    // paragraph above from being a tautology. macOS's SDK and MSVC are
+    // host-only and no package substitutes for either, so a Linux host cannot
+    // serve them -- the exclusion this function exists to make.
+    if constexpr (mcpp::platform::is_linux) {
+        auto mac = mcpp::toolchain::triple::parse("aarch64-macos");
+        ASSERT_TRUE(mac.has_value());
+        EXPECT_FALSE(mcpp::toolchain::host_can_serve(*mac));
+    }
 }
 
 // ─── The payload is SAID, not only resolved (R3) ───────────────────────────

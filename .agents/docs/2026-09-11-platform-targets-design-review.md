@@ -984,15 +984,31 @@ plan.
 | E5 | matrix expectations for 12 wasm cells | **done** |
 | E6 | unit tests for E1-E4 | **done** |
 | E7 | the EOL debian leg swapped for debian-12 | **done** |
-| E8 | R8: `parse()` accepts `wasm32-unknown-emscripten`, `aarch64-apple-ios` | todo |
-| E9 | R1: `aarch64-ios-sim` and `x86_64-ios-sim` rows | todo |
-| E10 | R3: a payload display identity, so emsdk is not shown as `llvm` | todo |
-| E11 | the `.wasm` sibling as an implicit link output | todo |
-| E12 | R6: Android and iOS rows to `preview` where the evidence supports it | todo |
-| E13 | docs: `20-toolchains`, `21-the-target-triple`, `22-target-side` + zh | todo |
-| E14 | CHANGELOG | todo |
+| E8 | R8: `parse()` accepts `wasm32-unknown-emscripten`, `aarch64-apple-ios` | **done** -- vendor segments (`unknown`/`pc`/`w64`/`apple`) skipped, `ios`/`iphoneos` and `emscripten` accepted as OS segments |
+| E9 | R1: `aarch64-ios-sim` and `x86_64-ios-sim` rows | **done**, `planned` -- the simulator is a target, so it gets its own identity rather than being folded into `aarch64-ios` |
+| E10 | R3: a payload display identity, so emsdk is not shown as `llvm` | **done**, `ToolchainSpec::payloadName` |
+| E11 | the `.wasm` sibling as an implicit link output | **not attempted** -- recorded in §11 of the decomposition doc; the artifact is produced and found, only the graph does not name it |
+| E12 | R6: Android rows to `preview`; iOS stays `planned` | **done** -- `android-ndk@30.0.16248370` pin, measured below. iOS stays `planned` because its blocker is a licence, not a payload |
+| E13 | docs: `04-mcpp-toml` §2.7.3, `20-toolchains`, `21-the-target-triple` + zh | **done** |
+| E14 | CHANGELOG | **done** |
+| E15 | R2: `min_api_level` under `[target.<triple>]`, via `llvm_triple(param)` and the fingerprint, per §12.1 | **done** |
+| E16 | `host_can_serve` stops hardcoding Linux for `has_own_sysroot()` rows | **done** -- see below; this is the line the predicate's own comment named as its expiry |
 
-| E15 | R2: `min_api_level` under `[target.<triple>]`, via `llvm_triple(param)` and the fingerprint, per §12.1 | todo |
+**E16 was not in the original plan, and the target matrix is what produced
+it.** The predicate returned `mcpp::platform::is_linux` for a row whose SDK
+ships its own sysroot, because `xim:emsdk` and `xim:android-ndk` declared only
+`xpm.linux` when it was written. X2 made that false, and the two halves of one
+goal then disagreed: the index published the payload on three hosts while the
+engine deleted the row from `toolchain list` on two of them. The symptom was
+not a wrong answer but an ABSENT one -- `mcpp build --target wasm32-emscripten`
+on macOS reported a target this table knows as one it had never heard of, which
+is the same defect the `planned` tier exists to avoid.
+
+Neither half is where it was found. `scan (macos-arm64)` and
+`scan (windows-x86_64)` failed on a cell count -- 24 measured against 25
+declared -- and the one missing cell named the row. A per-host job comparing
+against a checked-in table is the only thing in this repository that can see a
+row disappear, because every other check asks about a row it already has.
 
 R4 is not in that list because it is **withdrawn** (§12.1a), not deferred: its
 motivating case dissolved once `xim:iphoneos-sdk` covered iOS, and relaxing a
@@ -1005,6 +1021,7 @@ refusal without a case is how `gcc@system` gets in.
 | X1 | Android CN mirrors under clause 3.5 | **done**, #812 |
 | X2 | emsdk, NDK and emulator on all three hosts | **done**, hashes verified |
 | X3 | `xim:python` aarch64 and a GLOBAL url | **done** |
+| X3a | the two host assumptions X2 introduced, found by the per-host install jobs | **done** -- the NDK's release-directory pattern named `-linux` only; emsdk's Windows entry points are `.exe`, not the `.bat` the first version guessed |
 | X4 | R7: `xim:rcodesign` | todo |
 | X5 | R12: `xim:pymobiledevice3` | todo |
 | X6 | R5: the two runner programs | todo, and they are new software rather than packaging |
@@ -1017,8 +1034,9 @@ refusal without a case is how `gcc@system` gets in.
 | P2 | R9: `dist-ipa` | todo |
 | P3 | R7's plugin half: prefer `xim:rcodesign` over the host's codesign | todo |
 
-**mcpp-index**: publish `mcpp:plugins@0.6.0`. One task, blocked on the tag's
-sha256.
+**mcpp-index**: publish `mcpp:plugins@0.6.0`. **done** -- tag published, the
+GitCode asset verified by download-back and byte-identical to the GitHub source
+archive, so one sha256 names both hosts; PR open.
 
 **Recorded and not attempted**: R10 (`dmg`/`pkg` creators), R11 (Darling),
 R13's implementation (the pattern is documented; the runner programs are X6).
