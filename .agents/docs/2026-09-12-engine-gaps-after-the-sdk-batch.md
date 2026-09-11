@@ -5,16 +5,19 @@ status: active
 
 # The engine gaps left open after the SDK batch
 
-**Status:** design, for review before implementation. Nothing described here is
-implemented. The implementation is one mcpp PR carrying the next date version.
-2026.9.12.1 (#617) is merged and deliberately unreleased, so its change ships
-with that PR.
+**Status:** reviewed 2026-09-12. The four questions in the first draft were
+answered, and the answers are recorded in §9. Three statements in the first
+draft were then measured and corrected: two recorded gaps already have an
+existing mechanism (§2, §5.2), and a new defect was found (§7). The
+implementation is one mcpp PR carrying the next date version. 2026.9.12.1 (#617)
+is merged and unreleased, so its change ships with that PR.
 
 ## 0. Scope, and the ledger it starts from
 
-The scope is issues #564 to #618 in mcpp-community/mcpp, plus the gaps the
-2026-09-11 record left open. Each issue was checked against the code on `main`
-at `c688fcab`, not against the PR that claims to fix it.
+The scope is issues #564 to #618 in mcpp-community/mcpp, the gaps the
+2026-09-11 record left open, and one defect found while measuring them. Each
+issue was checked against the code on `main` at `c688fcab`, not against the PR
+that claims to fix it.
 
 | item | before | finding on `main` | action |
 |---|---|---|---|
@@ -24,14 +27,15 @@ at `c688fcab`, not against the PR that claims to fix it.
 | #603 clang on Windows, level 23 | open | the clang path calls `std_module_min_level_for_stl` | closed, citing #607 |
 | #604 MSVC `/reference` pair | open | flags are appended verbatim; `orphaned_reference` refuses early | closed, citing #607 |
 | #606 scanner inside comments | open | one three-state pass; `tests/e2e/639` | closed, citing #607 |
-| #609 MSVC STL 14.51 `_Find_vectorized` | open | upstream microsoft/STL#6294; nothing in mcpp is wrong | left open; §6 |
+| #609 MSVC STL 14.51 `_Find_vectorized` | open | upstream microsoft/STL#6294; nothing in mcpp is wrong | §6, then closed |
 | #611 personal notes | open | a to-do list spanning three repositories | left open; its one engine item is #613 |
-| #613 install hooks and the standard library | open | unfixed | §2 |
+| #613 install hooks and the standard library | open | the refusal already exists; the hook environment does not | §2 |
 | #614 `XLINGS_PROJECT_DIR` asymmetry | open | unfixed | §3 |
 | #615 runtime files that are not DLLs | open | unfixed | §4 |
 | #618 Windows GUI subsystem | open | unfixed | §1 |
-| G1 no per-target tool declaration | recorded 2026-09-11 | **misdiagnosed**: the axis exists | §5.1 |
-| G2 no whole-graph channel for `-pthread` | recorded 2026-09-11 | confirmed | §5.2 |
+| G1 no per-target tool declaration | recorded 2026-09-11 | **misdiagnosed**: the declaration exists | §5.1 |
+| G2 no whole-graph channel for `-pthread` | recorded 2026-09-11 | **misdiagnosed in part**: the channel exists; scoping and a requirement do not | §5.2 |
+| T1 `--toolchain` replayed by the fast path | found 2026-09-12 | a defect | §7 |
 | openkal-musl never built for Darwin | recorded 2026-09-11 | package-side | not engine; belongs to openkal-musl |
 | no device runner for `aarch64-ios` | recorded 2026-09-11 | needs a developer signature | not engine; out of scope |
 
@@ -47,133 +51,104 @@ No. Four independent reasons, any one of which would be enough.
    program built for `x86_64-windows-gnu` links with GNU ld or lld in MinGW
    mode, which take `--subsystem windows`; GCC's own spelling is `-mwindows`.
    The engine has already recorded a GNU linker rejecting a subsystem option
-   (`ld: unrecognized option '--subsystem'`, `prepare.cppm:9412`). So one
-   intent needs one `cfg` block per ABI, and a project that forgets one gets a
-   console on that ABI with no diagnostic.
+   (`ld: unrecognized option '--subsystem'`, `prepare.cppm:9412`). One intent
+   therefore needs one `cfg` block per ABI, and a project that forgets one gets
+   a console on that ABI with no diagnostic.
 2. **The pair is a pair on one CRT only.** On the MSVC CRT,
    `/SUBSYSTEM:WINDOWS` changes the default entry to `WinMainCRTStartup`, so a
    portable `int main()` fails with `LNK2019: unresolved external symbol
    WinMain` unless `/ENTRY:mainCRTStartup` accompanies it; `/ENTRY:main` links
    and skips CRT initialisation. mingw-w64's startup code is different, and
-   copying the MSVC entry override there is not correct by construction.
-   Whether `-mwindows` alone reaches `main` on mingw-w64 is a criterion to
-   measure (§1.6), not an assumption this design rests on. Either way the
-   correct flags are a function of the subsystem and the CRT, which is what a
-   project should not have to compute.
+   copying the MSVC entry override there is not correct by construction. The
+   correct flags are a function of the subsystem and the CRT, which a project
+   should not have to compute.
 3. **The scope is wrong, and no flag-carrying key has the right scope.**
    `[build] ldflags` and `[target.<selector>.build] ldflags` land in the global
    `$ldflags` of `build.ninja`, so every `mcpp test` binary becomes a GUI
    program whose output no terminal shows, and they propagate to consumers
    (docs/30: "`[build] ldflags` already propagates to consumers").
    `mcpp:link-flag` reaches consumers by design. `[targets.<name>]` has no
-   link-side key. The subsystem is a property of one executable, and nothing
-   that carries raw flags today is scoped to one executable.
+   link-side key.
 4. **The engine cannot read a flag's meaning.** With a field, mcpp knows the
    artefact is a GUI program: `mcpp run` can state that the program has no
-   console instead of appearing to print nothing, `mcpp test` can refuse the key
-   on a test target, and a packager can treat the artefact as an application. A
-   string in `ldflags` is opaque to all three.
+   console, `mcpp test` can refuse the key on a test target, and a packager can
+   treat the artefact as an application.
 
-A per-target `ldflags` key would fix reason 3 and none of the others. It may be
-worth adding later as an escape hatch for options that are genuinely
-linker-specific; it does not replace the field.
+A per-target `ldflags` key would fix reason 3 and none of the others. It is not
+part of this change.
 
-### 1.2 The field, and its name
+### 1.2 The fields
 
 ```toml
 [targets.myapp]
 kind              = "bin"
 main              = "src/main.cpp"
-windows_subsystem = "gui"      # "console" (default) | "gui"
+windows_subsystem = "windows"   # "console" (default) | "windows"
+windows_entry     = "main"      # "main" (default) | "wmain" | "WinMain" | "wWinMain"
 ```
 
-The candidates were judged by one test: the name should say what it does,
-including where it does nothing.
+**Naming, as decided in review.** `windows_subsystem` names the one platform it
+affects, so a reader on another platform can tell it is inert there. The value is
+`"windows"`, the PE subsystem's own name and the value Rust's
+`#![windows_subsystem]` and Meson's `win_subsystem` use, so a developer arriving
+from either reads it without translation. One spelling, with no alias.
 
-| spelling | reads as | cost |
+**The entry point.** `windows_entry` names the function the program defines, not
+the CRT symbol that calls it. It is independent of the subsystem, because a
+console program may define `wmain`.
+
+| `windows_entry` | MSVC CRT startup | mingw-w64 |
 |---|---|---|
-| `subsystem = "windows"` (#618's proposal) | "the subsystem is windows" | in a cross-platform manifest it reads as "target Windows", and `subsystem` names no platform, so a reader cannot tell it is inert on Linux |
-| `windows_subsystem = "windows"` (Rust's attribute; Meson's `win_subsystem`) | "the Windows subsystem is windows" | the platform is named; the value repeats a PE header constant, clear to someone who knows the header and opaque otherwise |
-| `windows_subsystem = "gui"` | "the Windows subsystem is GUI" | the key names the one platform it affects, and the value names the observable behaviour: whether the program gets a console |
-
-Recommended: `windows_subsystem = "console" | "gui"`. One spelling, with no
-alias for `"windows"`, for the reason the `ndk` toolchain alias was withdrawn in
-2026.9.11.4: a second spelling that parses is a second thing to keep correct.
-
-**The entry point, as a separate and deferrable key.** The default keeps a
-portable `int main()`. A program that writes another entry names the function it
-wrote, not the CRT symbol that calls it:
-
-```toml
-windows_entry = "wWinMain"     # "main" (default) | "wmain" | "WinMain" | "wWinMain"
-```
-
-The engine maps the function to the startup symbol per CRT
-(`mainCRTStartup`, `wmainCRTStartup`, `WinMainCRTStartup`, `wWinMainCRTStartup`
-on the MSVC CRT; the wide forms on mingw-w64 need `-municode`). It is
-independent of `windows_subsystem`, because a console program may use `wmain`.
-Nothing in #618 needs it, so it may be deferred.
+| `main` | `mainCRTStartup` | default |
+| `wmain` | `wmainCRTStartup` | `-municode` |
+| `WinMain` | `WinMainCRTStartup` | default |
+| `wWinMain` | `wWinMainCRTStartup` | `-municode` |
 
 ### 1.3 Rendering
 
-| target | `"gui"` renders | decided by |
+| target | `windows_subsystem = "windows"` renders | decided by |
 |---|---|---|
-| PE, MSVC style: cl, clang-cl, clang targeting `*-windows-msvc` | `/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup`, spelled with `-Wl,` under a GNU-style driver | `plan.rcStyle == "msvc"` |
-| PE, GNU style: MinGW gcc, clang targeting `*-windows-gnu` | `-mwindows`, which both drivers accept for MinGW targets (measured in §1.6) | `plan.rcStyle == "gnu"` |
+| PE, MSVC style: cl, clang-cl, clang targeting `*-windows-msvc` | `/SUBSYSTEM:WINDOWS` plus the entry's `/ENTRY:` symbol, spelled with `-Wl,` under a GNU-style driver | `plan.rcStyle == "msvc"` |
+| PE, GNU style: MinGW gcc, clang targeting `*-windows-gnu` | `-mwindows`, plus `-municode` for a wide entry | `plan.rcStyle == "gnu"` |
 | ELF, Mach-O, Wasm | nothing; no diagnostic; byte-identical artefact | `ObjectFormat` |
 
-`"console"` renders nothing on every target. It is the linker's default, and
-writing it explicitly would change only the command line of every existing
-Windows build.
-
-The dialect is read from `rcStyle`, the field the plan already uses to choose
-between rc/llvm-rc and windres (`plan.cppm:262`), rather than derived a second
-time. Resources and the subsystem are the two halves of the "Windows
-application" story the 2026-08-07 record set side by side (§A6), and they must
-agree about which linker they are addressing.
+`"console"` with `"main"` renders nothing on every target, because both are the
+linker's defaults. A non-default entry with the console subsystem renders only
+the entry. The dialect is read from `rcStyle`, the field the plan already uses to
+choose between rc/llvm-rc and windres (`plan.cppm:262`), so resources and the
+subsystem cannot disagree about the linker they address.
 
 ### 1.4 Scope
 
 - Appended to `LinkUnit::linkFlags` of that target's `Binary` unit only
-  (`plan.cppm:103`, rendered per edge as `$unit_ldflags`). No new plumbing.
-- Refused, naming the target and the key, on `lib` and shared-library targets
-  and on test targets. A GUI subsystem on a test binary is the defect #618
-  describes.
-- It never reaches consumers or another target of the package, because nothing
-  it writes is in `[build]`.
-- It changes the link command of one unit, which ninja already treats as a
-  reason to relink; no other unit's output depends on it.
-- `kKnownTargetKeys` gains the key. The warning that lists per-target keys is
-  corrected in the same change: it already omits `exports`, a second copy of the
-  list that has drifted from the first.
+  (`plan.cppm:103`, rendered per edge as `$unit_ldflags`).
+- Refused, naming the target and the key, on library targets and on test
+  targets.
+- It never reaches consumers or another target of the package.
+- `kKnownTargetKeys` gains both keys. The warning that lists per-target keys is
+  generated from the same list, because the hand-written copy already omits
+  `exports`.
+- A build program selects the subsystem for a target it names, through a
+  directive, so a framework's rule package can mark the application it knows
+  about. The directive names a target of the package being built and therefore
+  cannot leak into consumers.
 
-### 1.5 The build-program form
+### 1.5 Criteria
 
-`mcpp::target_windows_subsystem("myapp", "gui")` is a directive that names a
-target of the package being built. It lets a framework's rule package select the
-subsystem for the application it knows about (HuxerUI's installer rule already
-receives the bin target), and it cannot leak, because it names a target in this
-package. This is phase two, after the manifest key exists.
+1. `windows_subsystem = "windows"` with `int main()` links on
+   `x86_64-windows-msvc` and on `x86_64-windows-gnu`. The PE optional header's
+   Subsystem field reads 2 (`IMAGE_SUBSYSTEM_WINDOWS_GUI`), read from the bytes.
+2. In the same package, the `mcpp test` binaries and a second `bin` target read
+   3 (`IMAGE_SUBSYSTEM_WINDOWS_CUI`).
+3. A static constructor in the GUI target runs before `main` on both ABIs.
+4. The same manifest on Linux produces no diagnostic and an artefact
+   byte-identical to one built without the keys.
+5. The keys are refused on a library target and on a test target, each refusal
+   naming the target and the key; an unknown value is refused naming the
+   accepted values.
+6. Rendering is unit-tested for every row of the tables in §1.2 and §1.3.
 
-### 1.6 Criteria
-
-1. `windows_subsystem = "gui"` with `int main()` links on `x86_64-windows-msvc`
-   (clang) and on `x86_64-windows-gnu` (gcc and clang). The PE optional
-   header's Subsystem field reads 2, `IMAGE_SUBSYSTEM_WINDOWS_GUI`, read from
-   the bytes.
-2. In the same package, `mcpp test` binaries and a second `bin` target read 3,
-   `IMAGE_SUBSYSTEM_WINDOWS_CUI`. A consumer of a library in the graph is
-   byte-identical to a build without the key.
-3. A static constructor in the GUI target runs before `main` on both ABIs. This
-   is the CRT-initialisation criterion.
-4. The same manifest on Linux and macOS produces no diagnostic and a
-   byte-identical artefact.
-5. On mingw-w64, whether `-mwindows` alone reaches `main` is measured under
-   criterion 1. If it does not, the GNU row gains the entry it needs.
-6. The key is refused on a `lib` target and on a test target, each refusal
-   naming the target and the key.
-
-### 1.7 What this does not do
+### 1.6 What this does not do
 
 It does not produce an application bundle, embed an application manifest, or
 choose DPI awareness. Those belong to packaging formats and to `[resources]`.
@@ -184,55 +159,55 @@ choose DPI awareness. Those belong to packaging formats and to `[resources]`.
 
 Build programs receive the resolved toolchain as environment variables:
 `MCPP_COMPILER`, `MCPP_CXX_STDLIB`, `MCPP_TARGET`, the `MCPP_TARGET_*` splits and
-the `MCPP_TOOLCHAIN_*` paths (`build_program.cppm`, around line 540). Install
-hooks receive none of them. `install_packages` runs as
+the `MCPP_TOOLCHAIN_*` paths (`build_program.cppm`, around line 540). The value
+of `MCPP_CXX_STDLIB` is the toolchain's `stdlibId`: `libstdc++` for gcc,
+`libc++` for clang, `msvc-stl` for clang targeting MSVC. Install hooks receive
+none of these. `install_packages` runs as
 `cd <home> && env -u XLINGS_PROJECT_DIR XLINGS_HOME=<home> xlings interface
-install_packages …` (`xlings.cppm:1435`). The probe in mcpplibs/mcpp-index#392
-logged `MCPP_CXX_STDLIB=nil` from inside a hook.
+install_packages …` (`xlings.cppm:1435`).
 
-The ordering does not block a fix. In `prepare_build`, the provisioning calls
-(around lines 4239 and 5022) come after toolchain resolution (lines 2929 to
-3835), so the values exist when a hook runs.
+### 2.2 The refusal already exists
 
-### 2.2 The trap in the obvious fix
+The first draft proposed a new `abi = { cxx_stdlib = … }` declaration. It is not
+needed. The layer grammar already states the requirement, and the engine already
+refuses it at resolution. Measured 2026-09-12 with a path dependency declaring
+`requires = ["mcpp:c++-abi=libstdc++"]` and a project on `llvm@22.1.8`:
 
-Exporting `MCPP_CXX_STDLIB` and letting a hook *adapt* would be wrong. The
-payload store is keyed by package and version (`xim-x-<pkg>/<version>`), not by
-ABI. The first consumer to install a source-built static package would decide
-its standard library for every later consumer on the machine. A libc++ project
-would then receive a libstdc++ archive built earlier for another project, and the
-link error would return, dependent on install order.
+```
+error: `stdreq@0.1.0` requires the c++-abi to be `libstdc++`.
+         c++-abi           libc++         (payload)
+         required          libstdc++      (required by stdreq@0.1.0)
+```
 
-### 2.3 Recommendation, in two parts
+With the default gcc toolchain the same project resolves
+`c++-abi libstdc++ (payload)` and builds.
 
-1. **Expose the values, for refusal and diagnosis.** The install command carries
-   the subset build programs already get, under the same names and the same rule
-   ("always emitted, empty when not applicable"): `MCPP_COMPILER`,
-   `MCPP_CXX_STDLIB`, `MCPP_TARGET`, `MCPP_TARGET_OS`, `MCPP_TARGET_ARCH`,
-   `MCPP_TARGET_ENV`. They are empty while a toolchain payload itself installs,
-   because no compiler exists yet. A hook may refuse with a message naming the
-   standard library; it must not build a variant into a store directory that
-   does not name the variant.
-2. **Declare the requirement, and refuse at resolution.** A package's
-   mcpp-facing exports gain `abi = { cxx_stdlib = "libstdc++" }`. mcpp compares
-   it with the resolved toolchain before installing, and refuses naming the
-   package, its requirement and the toolchain. The failure becomes a diagnostic
-   at resolve time instead of `undefined symbol: std::__cxx11::…` at link. This
-   is #613's option 3, and it needs no hook at all.
+### 2.3 What remains
 
-A store keyed by variant (`xim-x-<pkg>/<version>+libc++`) would let one machine
-hold both flavours. It is an xlings store change rather than an engine change,
-and is recorded as the direction rather than designed here.
+1. **Order.** The requirement must be refused before an index package's install
+   hook runs, not after a source build has already spent several minutes. This
+   is measured first; if the check follows provisioning, it moves ahead of it.
+2. **The hook's environment.** The install command carries the subset build
+   programs already receive, under the same names and the same rule ("always
+   emitted, empty when not applicable"): `MCPP_COMPILER`, `MCPP_CXX_STDLIB`,
+   `MCPP_TARGET`, `MCPP_TARGET_OS`, `MCPP_TARGET_ARCH`, `MCPP_TARGET_ENV`. They
+   are empty while a toolchain payload itself installs.
+3. **The rule for a hook.** A hook may use these values to refuse or to
+   diagnose. It must not build a variant into a store directory that does not
+   name the variant, because the store is keyed by package and version, and the
+   first consumer would otherwise decide the flavour for every later one. A
+   store keyed by variant is an xlings change and is out of scope.
+4. **Documentation.** docs/22 and docs/06 state the recipe for a source-built
+   static package: declare `requires = ["mcpp:c++-abi=<stdlib>"]`.
 
 ### 2.4 Criteria
 
-- A hook that prints `MCPP_CXX_STDLIB` prints `libc++` on a clang/libc++
-  toolchain and `libstdc++` on gcc, and prints an empty value while the
-  toolchain payload itself installs.
-- A package declaring `abi.cxx_stdlib = "libstdc++"` is refused on the libc++
-  leg before any download, and the refusal names both sides.
-- The same package installs and links on the gcc leg as it does today, and the
-  install command's other arguments are unchanged.
+- A requirement mismatch on an index package with an install hook is refused
+  before the hook runs; the refusal names the layer, both implementations and
+  the package.
+- A hook that prints `MCPP_CXX_STDLIB` prints the resolved `stdlibId`, and an
+  empty value while a toolchain payload installs. The environment composition is
+  unit-tested on both platforms.
 
 ## 3. #614 — two meanings of "global mode", and an error that stops at the boundary
 
@@ -247,87 +222,84 @@ environment, so the value outlives the invocation that needed it.
 
 ### 3.2 Fix
 
-- Use the scoped guard `modules/platform/src/env.cppm` already provides
-  ("Temporarily set or unset an env var, restoring the prior value on scope
-  exit"). Global mode is then *unset* on every host, and the prior value is
-  restored when the command returns.
-- One function decides the environment of an xlings invocation (home, project
-  directory or its absence, PATH prefix), and each platform renders that
-  decision. The three copies of the decision, at lines 1141, 1435 and 1592,
-  become its callers.
+- One function decides the environment of an xlings invocation: home, project
+  directory or its absence, PATH prefix, and the hook variables of §2.3. Each
+  platform renders that decision. The three copies of the decision become its
+  callers.
+- On Windows the decision is applied through the scoped guard
+  `modules/platform/src/env.cppm` already provides, so global mode is unset and
+  the prior value is restored when the command returns.
 
 ### 3.3 The diagnostic half
 
 mcpp prints `xlings reported: <childError>` from the NDJSON error event
-(`package_fetcher.cppm:396`). xlings' own `[xim]` error lines, which carried the
-exact rejection in the vulkan-loader case, never reach the user. When
-`install_packages` exits non-zero, mcpp appends xlings' error-level stderr lines
-to the diagnostic, bounded to the last 20, each prefixed so it reads as xlings'
-words. No new flag is added; the existing `MCPP_VERBOSE=1` advice stays for
-everything else.
+(`package_fetcher.cppm:396`). xlings' own `[xim]` error lines never reach the
+user. When `install_packages` exits non-zero, mcpp appends xlings' error-level
+lines to the diagnostic, bounded to the last 20, each prefixed so it reads as
+xlings' words.
 
 ### 3.4 Criteria
 
 - A unit test of the environment function: global mode produces "unset" on both
-  platforms, project mode produces the path, and the parent process's
-  environment is unchanged afterwards.
-- A failing hook's `[xim]` error line appears in mcpp's error output. The fixture
-  is a local package whose config hook raises.
-- Windows CI runs the fixture, because Windows is where the asymmetry lived.
+  platforms, project mode produces the path, and the process environment is
+  unchanged afterwards.
+- A failing install's `[xim]` error line appears in mcpp's error output.
 
 ## 4. #615 — deploying runtime files that are not DLLs, into subdirectories
 
 ### 4.1 What exists
 
-`runtime.deploy_files` is already an explicit, platform-neutral list. It is
-readable from `[runtime]` in a manifest (`toml.cppm:2030`) and from a package's
-exports (`xpkg.cppm:2080`). Each entry becomes `DeployFile{source, dest}` with
+`runtime.deploy_files` is an explicit, platform-neutral list of strings, readable
+from `[runtime]` in a manifest (`toml.cppm:2030`) and from a package's exports
+(`xpkg.cppm:2080`). Each entry becomes `DeployFile{source, dest}` with
 `dest = bin/<filename>` (`plan.cppm:1182-1197`). Two readers consume it: the
 collision check (`flags.cppm:1267`) and the copy edges
-(`ninja_backend.cppm:653`). Separately, `runtime_search_dirs` discovers `*.dll`
-files and nothing else.
+(`ninja_backend.cppm:653`).
 
-So #615 does not need a new mechanism. What is missing is a destination that can
-contain a directory.
+### 4.2 Why a new key, not a new form of the old one
 
-### 4.2 Contract
+An older mcpp reading `deploy_files` with a table entry does not report an error.
+Its reader calls `read_string()`, which returns an empty string without
+advancing when the next token is `{`, and the loop around it never terminates.
+A published descriptor that extended `deploy_files` would hang every older
+client that resolved it. The `runtime` table, by contrast, skips sub-keys it
+does not know. The table form therefore takes a new sub-key, `deploy`.
 
-An entry is either the existing string, meaning `bin/<filename>`, or a table:
+### 4.3 Contract
 
 ```lua
 runtime = {
-    deploy_files = {
-        "bin/vulkan-1.dll",                                                -- unchanged
+    deploy_files = { "bin/vulkan-1.dll" },                      -- unchanged
+    deploy = {
         { from = "lib/libMoltenVK.dylib",                 to = "." },
         { from = "share/vulkan/icd.d/MoltenVK_icd.json",  to = "vulkan/icd.d" },
     },
 },
 ```
 
-- `to` is a directory relative to the executable's directory. It obeys the
-  string rules the payload descriptor applies to `frontend`: `/`-separated, not
-  absolute, no drive, no `.` or `..` component. Anything else is refused by name.
+- `from` is relative to the package root; `to` is a directory relative to the
+  executable's directory. Both obey the string rules the payload descriptor
+  applies to `frontend`: `/`-separated, not absolute, no drive, no `.` or `..`
+  component, except that `to = "."` names the executable's directory itself.
+  Anything else is refused by name.
 - `dest` becomes `bin/<to>/<filename>`. Both readers key on the full relative
-  destination, so two files with the same name in different directories no
-  longer collide, while two sources for one destination still do.
-- Explicit entries are honoured on every object format. DLL discovery through
-  `runtime_search_dirs` stays DLL-only: that is a PE loader rule, and extending
-  it to `*.dylib` would copy libraries a Mach-O executable already reaches
-  through its RPATH.
-- The manifest's `[runtime] deploy_files` accepts the same table.
-- `mcpp pack` carries the files at the same relative paths
-  (`prepare.cppm:12069`). Packing a Mach-O program stays refused for its
-  existing, unrelated reason.
+  destination, so two files with the same name in different directories do not
+  collide, while two sources for one destination still do.
+- Honoured on every object format. DLL discovery through `runtime_search_dirs`
+  stays DLL-only, a PE loader rule.
+- The manifest's `[runtime] deploy` accepts the same table.
+- `mcpp pack` carries the files at the same relative paths.
 
-### 4.3 Criteria
+### 4.4 Criteria
 
-- #615's measured layout: a package deploys `libMoltenVK.dylib` to `.` and the
-  ICD manifest to `vulkan/icd.d`. On macos-15, `vkCreateInstance` returns 0 and
-  enumerates one device, both under `mcpp run` and from a copy of `bin/` in
-  another directory (#615's case B3).
-- A plan built from string entries only is byte-identical to today's.
-- `to = "../x"`, `to = "/x"` and a backslash are each refused, naming the package
-  and the entry.
+- A dependency deploying a file to `.` and another to a nested directory: after
+  `mcpp build`, both exist at `bin/` and `bin/<to>/`; after `mcpp test`, the test
+  binaries see the same layout.
+- A plan built from `deploy_files` strings only is byte-identical to today's.
+- `to = "../x"`, `to = "/x"`, a backslash, and a missing `from` are each
+  refused, naming the package and the entry.
+- An older mcpp resolves a descriptor carrying `runtime.deploy` without error,
+  which is the reason for the new key.
 
 ## 5. The two gaps recorded by the SDK batch
 
@@ -341,79 +313,91 @@ is accepted, and its entries are folded into the same install list `deps` feeds
 (`toml.cppm`, around line 2890). It is covered by
 `tests/unit/test_target_xlings_axis.cpp` and `tests/e2e/625`.
 
-Measured 2026-09-12 on linux-x86_64 with mcpp 2026.9.12.1:
+Measured 2026-09-12 on linux-x86_64 with mcpp 2026.9.12.1: with
+`"xim:apple-simulator-tools" = ""` under `[target.aarch64-ios-sim.xlings.workspace]`,
+a host `mcpp build` exits 0 and never mentions the macOS-only package, and
+`mcpp build --target aarch64-ios-sim` is refused at the SDK gate.
 
-```toml
-[target.aarch64-ios-sim]
-runner = ["simctl-run"]
+What is missing is three statements that point to it:
 
-[target.aarch64-ios-sim.xlings.workspace]
-"xim:apple-simulator-tools" = ""
-```
-
-`mcpp build` for the host exits 0 and never mentions the macOS-only package.
-`mcpp build --target aarch64-ios-sim` is refused at the SDK gate, as it should be.
-
-What is missing is therefore not an axis but three statements that point to it:
-
-1. The refusal gains a second sentence: a tool for this target is declared under
-   `[target.<selector>.xlings.workspace]`. The error that sent the last batch the
-   wrong way should have sent it the right way.
+1. The refusal gains a second sentence naming
+   `[target.<selector>.xlings.workspace]`.
 2. `examples/13-platform-targets` declares `simctl-run`'s package beside the row
    that uses it, and its README drops the manual `xlings install` step. The iOS
    CI fixture does the same.
-3. The 2026-09-11 record is not edited. This record states the correction.
+3. This record states the correction; the 2026-09-11 record is not edited.
 
-### 5.2 G2: a switch that must reach every translation unit in the link
+### 5.2 G2 was misdiagnosed in part: the channel exists; scoping and a requirement do not
 
-**What fails.** `openkal.task` on Emscripten needs `-pthread`, which selects a
-different C library build, memory model and loader contract. Measured
-2026-09-11 with the feature on and `-pthread` on the consumer:
+**What was recorded.** openkal-emscripten's README states that mcpp has no
+channel for a flag that applies to a whole dependency graph, citing:
 
 ```
 error: POSIX thread support was disabled in precompiled file
        '.../pcm.cache/openkal.types.pcm' but is currently enabled
 ```
 
-The specification package's module was compiled without the switch, and nothing
-a consumer writes can reach that compile. The root's `[build]` flags do not reach
-dependency translation units, by design (`cache_key.cppm`, line 17); a feature
-contributes sources, defines and per-glob flags to its own package; and
-`[build] ldflags` reaches the link only.
+**What was measured, 2026-09-12.** The channel is `[build] dialect_cxxflags`,
+which docs/04 describes as applied "to the std BMI prebuild, the module scan and
+every translation unit in the graph, including dependencies", and which enters
+each dependency's cache key (`cache_key.cppm`, `dialect_flags`). A program that
+references `kal_task_start`, with the `threads` feature on:
 
-**Why not a general channel.** A key for "flags for the whole graph" would let
-one package change how every other package compiles, which is the property every
-per-package scope in the engine exists to prevent. It would also put arbitrary
-strings into every dependency's cache key. This flag is not arbitrary: it is an
-ABI switch with a closed set of values.
+| root manifest | result |
+|---|---|
+| `dialect_cxxflags = ["-pthread"]`, `ldflags = ["-pthread"]` | links; 16 `-pthread` in `build.ninja`, including the global `cxxflags` line; the generated JavaScript mentions `SharedArrayBuffer` and `PThread` |
+| `cxxflags = ["-pthread"]`, `ldflags = ["-pthread"]` | the recorded error, verbatim, on `openkal.task.pcm` |
 
-**Proposal: a typed per-target key.**
+The recorded failure put the flag in the per-package channel.
+
+**What remains.**
+
+1. **Scoping.** `dialect_cxxflags` is not a conditional key:
+   `[target.<selector>.build]` accepts only build inputs, so a portable manifest
+   cannot limit `-pthread` to the Web target.
+2. **Portability.** `-pthread` is a GNU-driver spelling. A manifest that builds
+   the same program with cl has no correct value to write.
+3. **A requirement.** openkal-emscripten's `threads` feature cannot state that it
+   needs the switch, so a consumer who forgets it gets a precompiled-module
+   mismatch instead of a sentence.
+
+**Decision: a typed `abi` table, first member `threads`.** Reason 2 is the same
+reason §1 prefers a field to `ldflags`, and reason 3 is only possible with a
+typed value. The table is built now so that a later graph-wide ABI switch has a
+place that is not another free-form flag list.
 
 ```toml
-[target.wasm32-emscripten]
+[target.'cfg(os = "emscripten")'.abi]
 threads = true
 ```
 
-- It lives in `TargetEntry`, beside `linkage` and `cxx_runtime`, the keys that
-  already decide something for the whole artefact.
-- The engine renders it into every compile unit of every package, into the std
-  module's own precompile and codegen commands, and into the link. That is the
-  distribution `target_implied_flags` already has (`cache_key.cppm:85`, "the
-  flags the TRIPLE implies"), so it enters each dependency's cache key through
-  the group that already carries target-shaped flags.
-- Its meaning is per object format. On Wasm it renders `-pthread`. On ELF it is
-  already the default and renders nothing. On PE and Mach-O it renders nothing.
-  A value that means nothing for a format is accepted without a diagnostic, as
-  `windows_subsystem` is on Linux.
-- A package can require it. A feature may declare
-  `requires_target = { threads = true }`, so `openkal-emscripten`'s `threads`
-  feature is refused at resolution with a message naming the key, instead of
-  failing inside a precompiled module.
+- A sub-table of `[target.<selector>]`, so it takes a triple or a `cfg`
+  predicate and is evaluated against the resolved target, like `.build`.
+- Rendered through the existing graph-global dialect channel: `-pthread` joins
+  `plan.dialectFlags`, and therefore the std module prebuild, the scan, every
+  translation unit and every dependency's cache key, and `-pthread` joins the
+  link. That is for GNU-style drivers (gcc, clang, em++). MSVC-style drivers
+  render nothing, since the MSVC runtime is always multithreaded.
+- Only `threads` is accepted. An unknown member is refused naming the accepted
+  set, so the table cannot become a flag list.
+- A feature or a package states the requirement with
+  `requires_abi = { threads = true }`. When the resolved target's `abi` does not
+  satisfy it, resolution refuses, naming the package, the feature, the member and
+  the manifest line that would satisfy it. An older mcpp reports the unknown key
+  and skips it, so the key can be published.
+- `dialect_cxxflags` stays the raw channel for flags that have no typed member.
+  It does not become conditional in this change: the typed member covers the
+  measured case, and a conditional raw flag would bring back reason 2.
 
-**Criteria.** With `threads = true`, the `threads` feature of openkal-emscripten
-links, and a program calling `kal_task_start` runs under node. Without the key,
-the feature is refused at resolution, naming it. A dependency's cache key differs
-between the two builds. A host build is byte-identical.
+**Criteria.**
+
+- With `threads = true` under the Web target's `abi` table, the `threads` feature
+  of openkal-emscripten links, and a program that starts a task runs under node.
+- Without it, a feature declaring `requires_abi = { threads = true }` is refused
+  at resolution, naming the key.
+- A dependency's cache key differs between the two builds, and a host build of
+  the same manifest is byte-identical to one without the table.
+- An unknown member, and a non-boolean `threads`, are refused by name.
 
 ## 6. #609 — a known toolchain hazard, stated where readers look
 
@@ -423,33 +407,116 @@ Chinese copy gain a second "Known Toolchain Hazard" section beside the existing
 one. It states the error text, the affected STL release (14.51), the upstream
 issue, and the two workarounds measured downstream: an explicit `operator==` on
 the element type, or an older runner image. There is no engine change and no
-detection heuristic; matching compile output by substring is a shape this
-repository has recorded as unreliable. #609 is then closed as documented
-upstream tracking.
+detection heuristic. #609 is closed as documented upstream tracking.
 
-## 7. Delivery
+## 7. T1 — the fast path replays a build the command line asked to replace
 
-One mcpp PR with the next date version, which also publishes #617's change.
-Commits follow risk, lowest first: §5.1 (text and an example), §6 (docs), §3,
-§4, §1, §2, §5.2.
+**Measured 2026-09-12.** In a project with no dependencies:
 
-| repository | change | depends on |
+| step | command | result |
 |---|---|---|
-| mcpp | §1 to §6 | nothing |
-| mcpp-index | `compat.mysql-connector-cpp` declares `abi.cxx_stdlib`; its llvm-leg exclusion comes out | the engine release |
-| openkal-emscripten | the `threads` feature requires `threads = true` | the engine release |
-| xim-pkgindex | a package adopting §4's table form, such as a MoltenVK payload | the engine release |
+| 1 | `mcpp build` | `Resolved gcc@16.1.0`, builds into `target/x86_64-linux-gnu/9dde3d1f4b99cc99` |
+| 2 | `mcpp build --toolchain llvm@22.1.8` | `Finished dev in 0.00s`; nothing resolved; the same directory; the gcc artefact is left in place |
+| 3 | the same command in a fresh copy | `Resolved llvm@22.1.8`, builds into `1e0091d91feafd6c`, and the artefact's `.comment` names clang 22.1.8 |
 
-After the release, the sandbox verification runs its 27 checks, expected to all
-hold, plus one new check each for §4 and §5.2. §1 is verified on the Windows CI
-runner, because the sandbox is Linux.
+Step 2 is a build that reports success with the wrong compiler. It also skips
+every resolution-time check, including the §2.2 refusal. That is how this defect
+was found: the §2.2 measurement first read "exit 0" under llvm, because the llvm
+build never happened.
 
-## 8. Questions for review
+**Fix.** The fast path is taken only when the inputs that choose the toolchain
+are the ones the recorded build used. The command-line override is such an
+input, beside the manifest's `[toolchain]` and the global default, so a
+different override declines the fast path and resolution runs. Every other
+command-line input that changes resolution is checked in the same pass, and the
+rule is stated once, as a named set.
 
-1. §1.2: `windows_subsystem = "console" | "gui"`, or the value `"windows"` that
-   Rust and Meson use?
-2. §1.2: ship `windows_entry` in the same PR, or defer it?
-3. §2.3: is a resolve-time refusal (`abi.cxx_stdlib`) enough for the ecosystem
-   today, with a variant-keyed store left to xlings?
-4. §5.2: `threads` as a single typed key, or a typed `[target.<selector>.abi]`
-   table that can grow other members?
+**Criteria.** An end-to-end test of A-B-A: build with the default, build with
+`--toolchain llvm@22.1.8`, build with the default again. After each step the
+artefact's own `.comment` section names the expected compiler, and step 2
+resolves rather than replays. The test is run once with the fix removed, and
+must fail there.
+
+## 8. Self-review
+
+Each angle states what the design does, and what would be wrong with the
+alternative.
+
+- **Architecture.** Every change lands on a mechanism that already exists:
+  `LinkUnit::linkFlags` and `rcStyle` (§1), the layer requirement check (§2), the
+  `runtime` table's skipping of unknown sub-keys (§4), the xlings workspace
+  selector (§5.1), the graph-global dialect channel and the dependency cache key
+  (§5.2), and the fast path's recorded inputs (§7). No new channel carries raw
+  flags.
+- **Stability.** T1 removes a silent wrong-compiler build. Every new key refuses
+  malformed input by name rather than ignoring it.
+- **Simplicity.** Two gaps recorded as missing engine features are closed with
+  statements and examples (§5.1) or with an existing requirement grammar (§2.2).
+  New keys exist only where a raw flag cannot express the intent: the subsystem
+  and entry (§1), and the thread ABI (§5.2).
+- **User experience.** A failure that surfaced as a link error, a
+  precompiled-module mismatch or a silently wrong artefact becomes a sentence
+  naming the key that fixes it. Names follow the convention of the ecosystems
+  users arrive from (§1.2).
+- **Compatibility.** No existing key changes meaning. New descriptor keys are
+  placed where older parsers skip rather than hang: `runtime.deploy` (§4.2),
+  `requires_abi` as an unknown feature key (§5.2). `console`/`main` render
+  nothing, so no existing Windows command line changes.
+- **Cross-platform.** Rendering is decided by `ObjectFormat` and `rcStyle`; a key
+  that means nothing for a format is inert and byte-identical there. The Windows
+  criteria run on Windows CI, not on Wine.
+- **Consistency.** One vocabulary per concept: `mcpp:c++-abi` is the standard
+  library requirement, `windows_*` keys are Windows-only, `abi` holds graph-wide
+  ABI switches, and every path rule is the descriptor's `frontend` rule.
+- **Seamless upgrade.** A manifest that builds today builds identically after the
+  change. The one behavioural change a user can observe is T1: a
+  `--toolchain` build that used to replay now builds with the toolchain it
+  names.
+- **Test coverage.** Each section lists criteria, including the inert case on
+  other platforms and a refusal for each malformed shape. Each new unit test is
+  run once with its fix removed. The sandbox verification gains checks for §4,
+  §5.1, §5.2 and §7 on published artefacts.
+
+**Rejected in review.** A per-target `ldflags` key (§1.1); a new
+`abi.cxx_stdlib` declaration, superseded by the existing layer requirement
+(§2.2); extending `deploy_files` with tables, which would hang older clients
+(§4.2); a general whole-graph flag list (§5.2); making `dialect_cxxflags`
+conditional (§5.2).
+
+## 9. Decisions recorded from review
+
+1. The subsystem value is `"windows"`, as in Rust and Meson.
+2. `windows_entry` ships in the same change.
+3. For #613, a resolve-time refusal is sufficient; a variant-keyed store is left
+   to xlings. The refusal turned out to exist already (§2.2).
+4. The graph-wide switch is an `abi` table rather than a single key, built now.
+
+## 10. Task list and dependencies
+
+```
+repo                id   task                                                     depends on
+------------------  ---  -------------------------------------------------------  ------------
+mcpp                M1   §5.1 refusal text, examples/13, iOS CI fixture            -
+mcpp                M2   §6 docs/20 + zh hazard section                            -
+mcpp                M3   §7 fast-path inputs; A-B-A e2e                            -
+mcpp                M4   §3 xlings environment function; error surfacing           -
+mcpp                M5   §2.3 check order; hook environment; docs                  M4
+mcpp                M6   §4 runtime.deploy: parsers, plan, readers, pack, tests    -
+mcpp                M7   §1 windows_subsystem/windows_entry: parse, render,        -
+                         scope, directive, unit tests, Windows e2e, docs/04
+mcpp                M8   §5.2 abi table: parse, render, cache key, requires_abi,   -
+                         unit tests, wasm e2e, docs/20, docs/06
+mcpp                M9   CHANGELOG (the unreleased 2026.9.12.1 entry folds into    M1-M8
+                         the new version), version, record status, index
+mcpp                M10  CI green, self-review, release, mirrors, index bump,      M9
+                         sandbox verification, bootstrap pin
+openkal-emscripten  E1   README correction (§5.2); `threads` feature declares      M10
+                         requires_abi; CI engine pin; a task program runs
+mcpp-index          E2   compat.mysql-connector-cpp declares                        M10 (and the
+                         `requires = ["mcpp:c++-abi=libstdc++"]`                    index floor)
+```
+
+M1 to M4, M6, M7 and M8 are independent and are implemented in parallel. The
+three ecosystem changes follow the release, because each adopts a key only the
+new engine reads, and E2's descriptor must be checked against the index's
+minimum engine version before it is published.
