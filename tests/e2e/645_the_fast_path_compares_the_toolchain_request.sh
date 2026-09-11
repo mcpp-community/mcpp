@@ -78,10 +78,12 @@ family=${own%@*}
 own_version=${own#*@}
 export MCPP_HOME="$TMP/home"
 source "$HERE/_inherit_toolchain.sh"
+# The newest other version first: an old one may predate the module support
+# the build needs (gcc 13 rejects -fmodules), which would test the compiler
+# rather than the fast path.
 other=""
-for dir in "$MCPP_HOME/registry/data/xpkgs/xim-x-$family"/*; do
-    [ -d "$dir" ] || continue
-    v=$(basename "$dir")
+for v in $(ls "$MCPP_HOME/registry/data/xpkgs/xim-x-$family" 2>/dev/null | sort -V -r); do
+    dir="$MCPP_HOME/registry/data/xpkgs/xim-x-$family/$v"
     [ "$v" != "$own_version" ] && [ -x "$dir/bin/g++" -o -x "$dir/bin/clang++" -o -x "$dir/bin/clang++.exe" ] \
         && { other="$family@$v"; break; }
 done
