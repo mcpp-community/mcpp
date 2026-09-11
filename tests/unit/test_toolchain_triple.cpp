@@ -628,28 +628,97 @@ TEST(Triple, EmscriptenIsAnOsSegmentAndNotAnEnv) {
     EXPECT_FALSE(t->nasm_format().has_value());
 }
 
-TEST(Triple, TheThreePlatformsAreRegisteredAndPlanned) {
-    // A row here is what every layer above waits on: the `.apk` step, the
-    // `.app` step, the `.html`+`.wasm` step, the runner and the signing all
-    // attach to a triple, and a package cannot add one.
-    //
-    // `planned` is a REFUSAL and not a gap -- the tier gate answers
-    // `tier-planned` naming the row, rather than `unknown target`, which would
-    // be false, or a build that resolves and produces nothing, which is worse.
+TEST(Triple, TheWasmRowIsWiredAndTheOtherThreeAreStillPlanned) {
+    // WHAT A TIER ASSERTS. `verified` in this table means an artefact was
+    // built AND RUN, and `wasm32-emscripten` now is: measured 2026-09-11 on
+    // linux-x86_64 with xim:emsdk 6.0.9, `mcpp run --target wasm32-emscripten`
+    // on a source that imports std printed `1-2-3`.
+    {
+        auto t = parse("wasm32-emscripten");
+        ASSERT_TRUE(t.has_value());
+        auto* info = find_known_target(*t);
+        ASSERT_NE(info, nullptr);
+        EXPECT_EQ(info->tier, "verified");
+        // A ROW THAT IS WIRED NAMES ITS PAYLOAD. Without the pin the row's
+        // tier was reachable only through an explicit
+        // `[target.wasm32-emscripten] toolchain = "..."` override, which is
+        // the escape hatch and not the support claim.
+        EXPECT_EQ(info->pin, "emsdk@6.0.9");
+        // No `sysroot` column, and that is a statement: the SDK ships one, so
+        // there is no separate C library for the row to name.
+        EXPECT_TRUE(info->sysroot.empty());
+    }
+
+    // The other three stay `planned`, with no pin and no sysroot, because what
+    // each still needs is execution evidence rather than vocabulary. A tier
+    // that moved on expectation would be the one thing this column cannot be.
     for (auto name : {"aarch64-linux-android", "x86_64-linux-android",
-                      "aarch64-ios", "wasm32-emscripten"}) {
+                      "aarch64-ios"}) {
         auto t = parse(name);
         ASSERT_TRUE(t.has_value()) << name;
         EXPECT_EQ(t->str(), name);
         auto* info = find_known_target(*t);
         ASSERT_NE(info, nullptr) << name;
         EXPECT_EQ(info->tier, "planned") << name;
-        // No pin and no sysroot: what each row still needs is a PAYLOAD, and
-        // naming a compiler that cannot serve the target would be a claim the
-        // row cannot keep.
         EXPECT_TRUE(info->pin.empty()) << name;
         EXPECT_TRUE(info->sysroot.empty()) << name;
     }
+}
+
+// DOES THIS TARGET'S TOOLCHAIN ARRIVE WITH ITS OWN COMPLETE SYSTEM?
+//
+// The predicate exists because mcpp reconstructs a target's system by hand --
+// libc++'s headers, glibc's, the Linux UAPI headers, the C-runtime prefix, the
+// loader -- and for a target whose SDK ships a sysroot every one of those is an
+// answer competing with one the driver already has. Three independent sites
+// read it, and each was found by the previous one's failure:
+//
+//   host_compile_tokens        this host's stdint.h reached a wasm compile
+//   resolve_link_model         --dynamic-linker=...ld-linux-x86-64.so.2 reached wasm-ld
+//   discover_link_runtime_dirs the COMPILER's libatomic reached the ARTIFACT's link line
+//
+// Asserted as an exhaustive statement over the table rather than on examples,
+// so a new row cannot join the set by accident or be left out of it.
+TEST(Triple, OnlyTheSdkTargetsShipTheirOwnSysroot) {
+    std::set<std::string> shipsOwn;
+    for (auto& row : known_targets()) {
+        auto t = parse(row.canonical);
+        ASSERT_TRUE(t.has_value()) << row.canonical;
+        if (t->has_own_sysroot()) shipsOwn.insert(std::string(row.canonical));
+    }
+    EXPECT_EQ(shipsOwn, (std::set<std::string>{
+        "aarch64-linux-android", "x86_64-linux-android", "wasm32-emscripten"}));
+
+    // `aarch64-ios` is NOT in the set, and that is the interesting exclusion.
+    // The iPhoneOS SDK does ship a sysroot -- but mcpp reaches it with
+    // `-isysroot`, which this predicate is not about: the question here is
+    // whether the DRIVER resolves the system without being told, and an
+    // ordinary clang pointed at an SDK does not.
+    auto ios = parse("aarch64-ios");
+    ASSERT_TRUE(ios.has_value());
+    EXPECT_FALSE(ios->has_own_sysroot());
+}
+
+// A CAPABILITY PIN CANNOT BE OVERRIDDEN, BECAUSE NOTHING ELSE CAN EMIT THE
+// TARGET. A convention pin is a preference; this is a fact about the world.
+TEST(Triple, WasmJoinsTheCapabilityPinsBecauseNothingElseEmitsIt) {
+    auto wasm = parse("wasm32-emscripten");
+    ASSERT_TRUE(wasm.has_value());
+    EXPECT_TRUE(wasm->pin_is_capability())
+        << "a declared gcc@16.1.0 would otherwise override emsdk@6.0.9 and "
+           "fail inside a compiler that cannot emit WebAssembly";
+
+    // The two that were there before, unchanged.
+    EXPECT_TRUE(parse("riscv64-none-elf")->pin_is_capability());
+    EXPECT_TRUE(parse("x86_64-windows-musl")->pin_is_capability());
+    // And an ordinary hosted row is still a convention: a project may name
+    // whichever compiler it likes for its own Linux.
+    EXPECT_FALSE(parse("x86_64-linux-musl")->pin_is_capability());
+    // ANDROID IS NOT ONE EITHER, deliberately. The NDK's clang is the only
+    // thing that serves it today, but the row carries no pin yet, so calling
+    // the absent pin a capability statement would assert something the table
+    // does not say. It moves when the row does.
+    EXPECT_FALSE(parse("aarch64-linux-android")->pin_is_capability());
 }
 
 TEST(Triple, TheCanonicalSpellingIsNotSEARCHABLEForAVENDORNAME) {

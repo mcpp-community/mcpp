@@ -14,6 +14,7 @@ export module mcpp.toolchain.probe;
 
 import std;
 import mcpp.toolchain.model;
+import mcpp.toolchain.triple;
 import mcpp.xlings;
 import mcpp.platform;
 import mcpp.log;
@@ -212,6 +213,31 @@ std::vector<std::filesystem::path>
 discover_link_runtime_dirs(const std::filesystem::path& compilerBin,
                            std::string_view targetTriple) {
     std::vector<std::filesystem::path> dirs;
+
+    // THE COMPILER'S OWN RUNTIME IS NOT THE ARTIFACT'S, AND FOR EVERY ROW
+    // BEFORE THESE TWO THE DISTINCTION DID NOT MATTER.
+    //
+    // What this returns goes on the ARTIFACT's link line as `-L` and `-rpath`
+    // (flags.cppm's runtime_dirs). For a payload that targets its own host
+    // that is right: the libstdc++ beside the compiler is the libstdc++ the
+    // artifact links. An SDK that cross-compiles breaks the coincidence --
+    // `<emsdk>/lib` holds the host x86-64 libraries its own clang needs to
+    // RUN, and its sibling `xim:gcc-runtime` is a runtime dependency of the
+    // toolchain, not of a wasm module.
+    //
+    // Measured on `--target wasm32-emscripten`, after the sysroot and link
+    // model were already gated:
+    //
+    //   wasm-ld: error: unknown file type:
+    //     <xim-x-gcc-runtime>/lib64/libatomic.so
+    //
+    // and `atomic_link_flag` had found that libatomic precisely because this
+    // function had put its directory on the link dirs. The compiler's own
+    // needs are `compilerRuntimeDirs`, which this does not touch and which
+    // still gets them.
+    if (auto tt = triple::parse(targetTriple); tt && tt->has_own_sysroot())
+        return dirs;
+
     auto root = compilerBin.parent_path().parent_path();
     if (!targetTriple.empty())
         append_existing_unique(dirs, root / "lib" / std::string(targetTriple));

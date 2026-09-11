@@ -199,6 +199,36 @@ struct Triple {
     bool is_mach_o() const      { return object_format() == ObjectFormat::MachO; }
     bool is_wasm() const        { return object_format() == ObjectFormat::Wasm; }
 
+    // DOES THIS TARGET'S TOOLCHAIN ARRIVE WITH ITS OWN COMPLETE SYSTEM?
+    //
+    // mcpp assembles a target's system for most rows: a glibc-targeting build
+    // gets `xim:glibc` and `xim:linux-headers` reconstructed onto the command
+    // line by hand, because the payload's clang alone does not have them. For
+    // `emscripten` and `android` that reconstruction is not merely unnecessary,
+    // it is WRONG -- both SDKs ship a complete sysroot and resolve it
+    // themselves (`em++` bakes `--sysroot=<payload>/.../cache/sysroot` into
+    // every invocation; the NDK's clang derives its bionic sysroot from its own
+    // install prefix).
+    //
+    // Measured before this predicate existed: `mcpp build --target
+    // wasm32-emscripten` failed inside the std module precompile, at
+    //
+    //   .../sysroot/include/c++/v1/cstdint:149:
+    //   .../xim-x-glibc/2.44/include/stdint.h:26
+    //
+    // -- the HOST's glibc headers pulled into a wasm compile. The site that
+    // did it asked `is_freestanding()`, which is a correct question about the
+    // rows it was written for and says nothing about this one: a wasm target
+    // is not freestanding, it simply is not this host.
+    //
+    // A PROPERTY OF THE TOOLCHAIN, KEYED ON THE TARGET, and the two coincide
+    // because the target decides the payload (see registry.cppm's
+    // to_xim_package). If a row ever gains a second toolchain that does NOT
+    // ship a sysroot, this has to move onto the toolchain.
+    bool has_own_sysroot() const {
+        return os == "emscripten" || os == "android" || env == "android";
+    }
+
     // APPLE, AS ONE QUESTION. `os == "macos"` was the whole of it while macOS
     // was the only Apple row; iOS shares the object format, the linker, the
     // `arm64` spelling and `codesign`, and differs in the SDK and the
@@ -236,7 +266,18 @@ struct Triple {
     // added later — was a convention at both. Measured: declaring gcc for it
     // resolved the host's Linux musl payload and reported a missing C++
     // frontend.
-    bool pin_is_capability() const { return is_freestanding() || (is_pe() && is_musl()); }
+    // IS THIS ROW'S PIN A CAPABILITY STATEMENT RATHER THAN A CONVENTION?
+    //
+    // A convention pin is mcpp's preference and a declared toolchain overrides
+    // it. A capability pin cannot be overridden, because no other toolchain
+    // can emit the target at all: only clang/lld cross-compile bare metal, no
+    // gcc emits a PE with a musl C library, and -- added with the wasm row --
+    // nothing but Emscripten emits WebAssembly. A declared `gcc@16.1.0`
+    // against such a row is a request that cannot be honoured, and saying so
+    // is better than resolving gcc and failing inside it.
+    bool pin_is_capability() const {
+        return is_freestanding() || (is_pe() && is_musl()) || is_wasm();
+    }
 
     // cfg() `family` dimension: unix | windows.
     //
@@ -595,7 +636,25 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // `defaultStatic` is true because wasm has no dynamic loader in the sense
     // the other rows mean: an Emscripten link produces one module plus its
     // JavaScript, and there is no shared object for a search path to find.
-    { "wasm32-emscripten",     "planned",   "wasm","",           "",                            true  },
+    //
+    // `verified` ASSERTS THE WHOLE LOOP, and here is what it was measured
+    // against (2026-09-11, Linux x86_64, xim:emsdk 6.0.9):
+    //
+    //   mcpp build --target wasm32-emscripten   on a source that imports std
+    //     -> bin/<name>        65389 bytes   the JavaScript
+    //        bin/<name>.wasm  447183 bytes   the module
+    //   node bin/<name>                       -> 1-2-3
+    //
+    // Reaching it took five engine gates, and each one was found by the
+    // previous one's failure rather than by reading: the payload had to be
+    // chosen by the TARGET (registry.cppm), the frontend found outside `bin/`
+    // (frontendSubdir), the host's header set withheld (has_own_sysroot, in
+    // the shared producer and not at one of its three callers), the C-runtime
+    // group withheld from the LINK MODEL rather than from its two channels,
+    // and -- the same finding a second time -- the COMPILER's own runtime
+    // directories kept off the ARTIFACT's link line. For every row that
+    // predates this one those two are the same directory.
+    { "wasm32-emscripten",     "verified",  "wasm","emsdk@6.0.9","",                            true  },
 };
 
 inline std::span<const TargetInfo> known_targets() { return kKnownTargets; }

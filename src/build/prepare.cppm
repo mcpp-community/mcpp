@@ -2839,11 +2839,12 @@ prepare_build(bool print_fingerprint,
                 "{} → msvc {} ({})", spec->display(),
                 inst->display_version(), inst->clPath.string()));
         } else {
-            explicit_compiler = mcpp::toolchain::toolchain_frontend(payload->binDir, pkg);
+            explicit_compiler = mcpp::toolchain::payload_frontend(payload->root, pkg);
             if (!std::filesystem::exists(explicit_compiler)) {
                 return std::unexpected(std::format(
                     "toolchain payload '{}' has no known C++ frontend in {}",
-                    pkg.target(), payload->binDir.string()));
+                    pkg.target(),
+                    mcpp::toolchain::payload_frontend_dir(payload->root, pkg).string()));
             }
             // Same post-install fixup as `mcpp toolchain install` — this
             // manifest [toolchain] path previously ran none, so a freshly
@@ -3065,11 +3066,12 @@ prepare_build(bool print_fingerprint,
                 "         mcpp toolchain install {}",
                 defaultSpec, payload.error().message, defaultSpec));
         }
-        explicit_compiler = mcpp::toolchain::toolchain_frontend(payload->binDir, defaultPkg);
+        explicit_compiler = mcpp::toolchain::payload_frontend(payload->root, defaultPkg);
         if (!std::filesystem::exists(explicit_compiler)) {
             return std::unexpected(std::format(
                 "default toolchain payload {} has no known C++ frontend in {}",
-                defaultPkg.target(), payload->binDir.string()));
+                defaultPkg.target(),
+                mcpp::toolchain::payload_frontend_dir(payload->root, defaultPkg).string()));
         }
 
         // The freshly-installed toolchain needs the SAME post-install fixup
@@ -3480,11 +3482,12 @@ prepare_build(bool print_fingerprint,
                   pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget));
           }
           explicit_compiler =
-              mcpp::toolchain::toolchain_frontend(payloadR->binDir, gnuPkg);
+              mcpp::toolchain::payload_frontend(payloadR->root, gnuPkg);
           if (!std::filesystem::exists(explicit_compiler)) {
               return std::unexpected(std::format(
                   "MinGW-w64 payload {} has no known C++ frontend in {}",
-                  gnuPkg.target(), payloadR->binDir.string()));
+                  gnuPkg.target(),
+                  mcpp::toolchain::payload_frontend_dir(payloadR->root, gnuPkg).string()));
           }
           if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
                   **cfgR, payloadR->root, gnuPkg,
@@ -3658,11 +3661,12 @@ prepare_build(bool print_fingerprint,
                 "host toolchain for build.mcpp ('{}'): {}", *tcSpec,
                 payload.error().message));
         }
-        auto frontend = mcpp::toolchain::toolchain_frontend(payload->binDir, pkg);
+        auto frontend = mcpp::toolchain::payload_frontend(payload->root, pkg);
         if (!std::filesystem::exists(frontend)) {
             return std::unexpected(std::format(
                 "host toolchain payload '{}' has no known C++ frontend in {}",
-                pkg.target(), payload->binDir.string()));
+                pkg.target(),
+                    mcpp::toolchain::payload_frontend_dir(payload->root, pkg).string()));
         }
         if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
                 **cfgH, payload->root, pkg,
@@ -6610,7 +6614,7 @@ prepare_build(bool print_fingerprint,
                 return std::unexpected(std::format(
                     "`{}` requires the compiler to be `{}`, and mcpp has no "
                     "compiler family by that name.\n"
-                    "       known families: gcc, llvm, msvc.",
+                    "       known families: gcc, llvm, msvc, emsdk, android-ndk.",
                     reqCompilerBy, family));
             }
 

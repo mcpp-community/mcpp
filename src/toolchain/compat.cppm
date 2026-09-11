@@ -126,6 +126,31 @@ std::optional<NormalizedSpec> normalize_spec(std::string_view compilerIn,
         return out;
     }
 
+    // ── canonical families whose payload carries its own target ─────────────
+    //
+    // NOT ALIASES AND NOT LEGACY. `em++` and the NDK's `clang++` are clang, so
+    // the FAMILY is llvm and there is no fourth value to invent; what these
+    // spellings add is which payload answers, and for emsdk also which target
+    // -- the payload compiles for exactly one, so a spec that names it has
+    // already named the target. `with_hint` is deliberately not used: a hint
+    // says "this spelling is old, here is the current one", and these are the
+    // current ones.
+    if (compiler == "emsdk" || compiler == "emscripten") {
+        out.family = "llvm";
+        if (auto t = triple::parse("wasm32-emscripten")) out.target = *t;
+        if (muslVersionSuffix) return std::nullopt;
+        return out;
+    }
+    // The NDK serves BOTH Android arches from one payload, so it must NOT set
+    // a target: the arch arrives from `--target` or `[target.<triple>]`, and
+    // pinning one here would make `android-ndk@<v>` mean aarch64 to a reader
+    // who typed it for x86_64.
+    if (compiler == "android-ndk" || compiler == "ndk") {
+        out.family = "llvm";
+        if (muslVersionSuffix) return std::nullopt;
+        return out;
+    }
+
     // ── legacy spellings ─────────────────────────────────────────────────────
     if (compiler == "clang") {                      // alias family → llvm
         out.family = "llvm";

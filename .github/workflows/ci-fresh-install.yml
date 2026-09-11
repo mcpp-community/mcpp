@@ -276,8 +276,27 @@ jobs:
           - distro: ubuntu-2004
             image: ubuntu:20.04
             setup: apt-get update && DEBIAN_FRONTEND=noninteractive apt-get -y install curl bash tar gzip xz-utils git ca-certificates binutils findutils file
-          - distro: debian-11
-            image: debian:11
+          # debian-12 AND NOT debian-11, AND THE REASON IS NOT THE FAILURE.
+          #
+          # The debian-11 leg started failing on 2026-09-11 with
+          #
+          #   E: Release file for .../bullseye-security/InRelease is expired
+          #      (invalid since 3d 5h 32min 52s)
+          #
+          # and `apt-get update` exits 100. Bullseye is end-of-life and its
+          # security suite's metadata has expired, which is a property of the
+          # distribution and not of this workflow -- `-o
+          # Acquire::Check-Valid-Until=false` would silence it and keep a leg
+          # that tests against metadata nobody maintains.
+          #
+          # What was measured while replacing it: debian 11 and ubuntu 20.04
+          # both carry glibc 2.31, so the "older glibc" coverage this leg was
+          # here for was ALREADY DUPLICATED by the ubuntu-2004 leg above, and
+          # dropping bullseye loses nothing. Bookworm's 2.36 sits between that
+          # 2.31 and debian-testing's rolling version, so this leg now covers a
+          # point the matrix did not have.
+          - distro: debian-12
+            image: debian:12
             setup: apt-get update && apt-get -y install curl bash tar gzip xz-utils git ca-certificates binutils findutils file
     env:
       # The one derived value (see the header comment): every install job names

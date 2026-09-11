@@ -184,6 +184,35 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
                                              const PathEscape& esc) {
     std::vector<std::string> out;
 
+    // A TOOLCHAIN THAT SHIPS ITS OWN SYSROOT IS TOLD NOTHING.
+    //
+    // What this function emits is a target's system reconstructed onto the
+    // command line: libc++'s headers, glibc's, the Linux UAPI headers, the
+    // cfg bypass, the C-runtime prefix. Every one of those is an answer mcpp
+    // supplies because the payload's clang does not have one. An Emscripten or
+    // Android SDK does: `em++` bakes `--sysroot=<payload>/.../cache/sysroot`
+    // into every invocation and the NDK's clang derives its bionic sysroot
+    // from its own install prefix.
+    //
+    // Measured before this gate, on the std module precompile for
+    // `wasm32-emscripten`:
+    //
+    //   em++ ... -isystem'<xim-x-glibc>/include' -isystem'<linux-headers>/include'
+    //     --precompile <emsdk sysroot>/share/libc++/v1/std.cppm
+    //   <xim-x-glibc>/include/gnu/stubs.h:7: fatal error:
+    //     'gnu/stubs-32.h' file not found
+    //
+    // This host's glibc headers, handed to a wasm compile. The error names a
+    // missing 32-bit stub, so it reads as a broken glibc payload rather than
+    // as a C library that has no business being there.
+    //
+    // The cfg bypass is withheld too, and deliberately: it exists to stop
+    // clang reading a per-install `clang++.cfg`, while `em++` is a wrapper
+    // whose entire job is to supply configuration. Suppressing it would be
+    // suppressing the toolchain.
+    if (auto tt = triple::parse(tc.targetTriple); tt && tt->has_own_sysroot())
+        return out;
+
     // MSVC carries none of this on the command line: cl.exe and link.exe find
     // headers and import libraries through INCLUDE / LIB, which detection
     // synthesizes into tc.envOverrides. Emitting the GNU shapes below would

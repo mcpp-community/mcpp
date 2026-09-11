@@ -440,7 +440,7 @@ export int doctor_report() {
                     // in `toolchain list`; doctor kept its own copy, so the
                     // two commands disagreed about the same machine.
                     auto bin = mcpp::toolchain::payload_frontend(
-                        vEntry.path(), mcpp::toolchain::to_xim_package(s), s.family);
+                        vEntry.path(), mcpp::toolchain::to_xim_package(s));
                     if (bin.empty()) continue;
                     sawAny = true;
 

@@ -237,3 +237,31 @@ TEST(LinkModel, NothingUsableYieldsNoneAndEmptyFlags) {
 // 设计:.agents/docs/2026-08-08-payload-version-and-contract-drift-design.md §3.2
 
 }  // namespace
+
+// ─── An SDK target gets CLibMode::None, and the gate is in the MODEL ───────
+//
+// The C-runtime group reaches the link line through TWO channels -- flags.cppm's
+// `link_toolchain_flags` and its `payload_ld` -- both rendering
+// `lm.link_flags()`. The comment at the second one records that a reader who
+// fixed only the first "saw the identical error and could reasonably conclude
+// the fix had not worked". So the gate belongs here, where both read it.
+//
+// Measured on `--target wasm32-emscripten` with the compile side already
+// correct: `wasm-ld: error: unknown argument:
+// --dynamic-linker=<glibc>/lib64/ld-linux-x86-64.so.2` -- this host's loader
+// handed to a WebAssembly linker.
+TEST(LinkModel, AnSdkTargetDescribesNoCLibrary) {
+    for (auto target : {"wasm32-emscripten", "aarch64-linux-android",
+                        "x86_64-linux-android"}) {
+        auto tc = mcpp::toolchain::Toolchain{};
+        tc.compiler     = mcpp::toolchain::CompilerId::Clang;
+        tc.targetTriple = target;
+        auto lm = mcpp::toolchain::resolve_link_model(tc);
+        EXPECT_EQ(lm.mode, mcpp::toolchain::CLibMode::None) << target;
+        EXPECT_TRUE(lm.libDirs.empty()) << target;
+        EXPECT_TRUE(lm.crtDir.empty()) << target;
+        // And the rendered flags are empty, which is what both channels emit.
+        EXPECT_TRUE(lm.link_flags([](const std::filesystem::path& p) {
+            return p.string(); }).empty()) << target;
+    }
+}

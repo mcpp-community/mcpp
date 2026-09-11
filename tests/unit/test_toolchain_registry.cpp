@@ -295,3 +295,81 @@ TEST(ToolchainSysrootDeps, OneDerivationForTheGlibcSysrootPayloads) {
             EXPECT_FALSE(needs_linux_sysroot_payloads(t));
     }
 }
+
+// ─── An SDK payload is chosen by the TARGET, and knows its own layout ──────
+//
+// `to_xim_package` returned the generic llvm payload for every `Family::Llvm`
+// spec, which is right for the targets llvm itself serves and wrong for the two
+// that arrive with their own clang. `em++` and the NDK's `clang++` ARE clang --
+// same family, same flag vocabulary -- so no fourth `Family` value exists;
+// what changes is which package answers and where its driver lives.
+TEST(SdkPayloads, TheTargetChoosesThePackageAndThePackageKnowsItsLayout) {
+    auto pkg_for = [](std::string_view target) {
+        auto spec = mcpp::toolchain::parse_toolchain_spec("emsdk@6.0.9");
+        // The spec's own target is replaced, because the NDK case must be
+        // reachable from the same family with a different triple.
+        auto s = *spec;
+        if (auto t = mcpp::toolchain::triple::parse(target)) s.target = *t;
+        return mcpp::toolchain::to_xim_package(s);
+    };
+
+    {   // Emscripten: `em++` is a wrapper in `emscripten/`, NOT the raw clang
+        // in `bin/`. Naming the wrapper is the whole point -- `bin/clang`
+        // compiles for wasm and then links like an ordinary clang, producing a
+        // module with none of Emscripten's JavaScript glue.
+        auto pkg = pkg_for("wasm32-emscripten");
+        EXPECT_EQ(pkg.ximName, "emsdk");
+        EXPECT_EQ(pkg.frontendSubdir, "emscripten");
+        ASSERT_FALSE(pkg.frontendCandidates.empty());
+        EXPECT_EQ(pkg.frontendCandidates.front(), "em++");
+    }
+    {   // Android: ONE payload for both arches -- the arch arrives as
+        // `--target=<arch>-linux-android<api>`, not as a different package --
+        // and the host tuple in the path is the HOST's, not the target's.
+        for (auto target : {"aarch64-linux-android", "x86_64-linux-android"}) {
+            auto pkg = pkg_for(target);
+            EXPECT_EQ(pkg.ximName, "android-ndk") << target;
+            EXPECT_NE(pkg.frontendSubdir.find("toolchains/llvm/prebuilt/"),
+                      std::string::npos) << target;
+            // The HOST, so an aarch64 Linux machine cross-compiling still
+            // reads `linux-x86_64`. Asserted as "not the target's arch" rather
+            // than against a literal, so this test says the same thing on
+            // every runner.
+            EXPECT_EQ(pkg.frontendSubdir.find("aarch64-linux-android"),
+                      std::string::npos) << target;
+        }
+    }
+    {   // And every other target still gets the generic llvm payload in bin/.
+        auto pkg = pkg_for("x86_64-linux-gnu");
+        EXPECT_NE(pkg.ximName, "emsdk");
+        EXPECT_NE(pkg.ximName, "android-ndk");
+        EXPECT_EQ(pkg.frontendSubdir, "bin");
+    }
+}
+
+// THE MESSAGE MUST NAME THE DIRECTORY THAT WAS SEARCHED.
+//
+// Five refusals printed `payload->binDir`, the directory they had composed
+// themselves. Once the package decides where its frontend lives, `bin` is a
+// directory nothing looked in -- and this codebase's most frequent defect is a
+// fixed lookup with an unfixed message.
+TEST(SdkPayloads, TheSearchedDirectoryIsAvailableForTheDiagnostic) {
+    auto spec = mcpp::toolchain::parse_toolchain_spec("emsdk@6.0.9");
+    ASSERT_TRUE(spec.has_value());
+    auto pkg = mcpp::toolchain::to_xim_package(*spec);
+    auto dir = mcpp::toolchain::payload_frontend_dir("/p/xim-x-emsdk/6.0.9", pkg);
+    EXPECT_EQ(dir, std::filesystem::path("/p/xim-x-emsdk/6.0.9/emscripten"));
+}
+
+// AN SDK IS SERVED WHERE THE SDK IS PUBLISHED, and the first version of this
+// said "wherever" -- the same over-broad shape as the branches it sits above.
+// The target matrix caught it: declaring the row servable on macOS and Windows
+// would have claimed a payload that does not exist there.
+TEST(SdkPayloads, ServedOnTheHostsTheSdkIsPublishedFor) {
+    auto wasm = mcpp::toolchain::triple::parse("wasm32-emscripten");
+    ASSERT_TRUE(wasm.has_value());
+    EXPECT_EQ(mcpp::toolchain::host_can_serve(*wasm), mcpp::platform::is_linux);
+    auto droid = mcpp::toolchain::triple::parse("aarch64-linux-android");
+    ASSERT_TRUE(droid.has_value());
+    EXPECT_EQ(mcpp::toolchain::host_can_serve(*droid), mcpp::platform::is_linux);
+}

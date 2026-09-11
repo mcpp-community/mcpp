@@ -127,6 +127,47 @@ std::optional<std::filesystem::path> find_libcxx_std_module_source(
         }
     }
 
+    // SECOND PROBE: ASK WHICH libc++ WILL BE LINKED, THEN LOOK BESIDE IT.
+    //
+    // `-print-library-module-manifest-path` is the primary answer and the one
+    // llvm's own payload gives. `em++` does not forward it -- it answers
+    // `em++: error: no input files` -- so a toolchain that ships the surface
+    // was reported as shipping none, and `import std` was refused on a target
+    // where it demonstrably works.
+    //
+    // `--print-file-name=libc++.a` IS forwarded, and what it names is exactly
+    // the library the link will use, so the surface beside it is the surface
+    // that matches. Measured 2026-09-11:
+    //
+    //   xim:llvm 22.1.8  <root>/bin/../lib/x86_64-unknown-linux-gnu/libc++.a
+    //                    surface at <root>/bin/../share/libc++/v1/   (3 up)
+    //   xim:emsdk 6.0.9  <root>/emscripten/cache/sysroot/lib/wasm32-emscripten/libc++.a
+    //                    surface at <root>/.../sysroot/share/libc++/v1/ (2 up)
+    //
+    // THE TWO DEPTHS ARE WHY THIS WALKS RATHER THAN INDEXES. A fixed `up 3`
+    // would have been written against llvm, passed, and then been a guessed
+    // layout for the next payload -- which is the mistake the line this
+    // replaces made with `bin/../share`.
+    if (auto lib_r = mcpp::toolchain::run_capture(std::format(
+            "{}{} --print-file-name=libc++.a {}",
+            envPrefix, mcpp::xlings::shq(cxx_binary.string()),
+            mcpp::platform::null_redirect))) {
+        std::filesystem::path lib(mcpp::toolchain::trim_line(*lib_r));
+        // A driver that cannot place the library echoes the bare name back.
+        if (lib.has_parent_path()) {
+            std::error_code ec;
+            auto dir = std::filesystem::weakly_canonical(lib.parent_path(), ec);
+            if (ec) dir = lib.parent_path();
+            for (int up = 0; up < 4 && !dir.empty(); ++up) {
+                auto cand = dir / "share" / "libc++" / "v1" / "std.cppm";
+                if (std::filesystem::exists(cand)) return cand;
+                if (!dir.has_relative_path()) break;
+                dir = dir.parent_path();
+            }
+        }
+    }
+
+    // THIRD: the layout guess, kept for a driver that answers neither probe.
     auto root = cxx_binary.parent_path().parent_path();
     auto fallback = root / "share" / "libc++" / "v1" / "std.cppm";
     if (std::filesystem::exists(fallback)) return fallback;
@@ -318,10 +359,22 @@ std::optional<std::filesystem::path> find_libcxx_std_compat_source(
     const std::filesystem::path& cxx_binary,
     const std::string& envPrefix)
 {
-    // Same search strategy as find_libcxx_std_module_source but for std.compat
-    auto root = cxx_binary.parent_path().parent_path();
-    auto p = root / "share" / "libc++" / "v1" / "std.compat.cppm";
-    if (std::filesystem::exists(p)) return p;
+    // DERIVED FROM THE SIBLING, NOT SEARCHED FOR SEPARATELY.
+    //
+    // The comment here used to say "same search strategy as
+    // find_libcxx_std_module_source", and it was not: that function has three
+    // probes and this one had the last of them, so on any payload the layout
+    // guess does not reach -- emsdk, for one -- `std` was found and
+    // `std.compat` was not, from one directory.
+    //
+    // `std.compat.cppm` sits beside `std.cppm` in every libc++ layout, because
+    // the same install rule places both. Deriving it makes the two answers
+    // structurally consistent rather than two searches that can disagree,
+    // which is what the comment claimed all along.
+    if (auto std_src = find_libcxx_std_module_source(cxx_binary, envPrefix)) {
+        auto p = std_src->parent_path() / "std.compat.cppm";
+        if (std::filesystem::exists(p)) return p;
+    }
     return std::nullopt;
 }
 

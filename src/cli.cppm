@@ -665,7 +665,7 @@ int run(int argc, char** argv) {
                 // With --target the family may be omitted entirely (taken from
                 // the target's convention pin):
                 //   mcpp toolchain install --target x86_64-windows-gnu
-                .arg(cl::Arg("compiler").help("gcc | llvm | msvc (or gcc@16.1.0; legacy aliases accepted)"))
+                .arg(cl::Arg("compiler").help("gcc | llvm | msvc | emsdk | android-ndk (or gcc@16.1.0; legacy aliases accepted)"))
                 .arg(cl::Arg("version").help("e.g. 16.1.0, 15, 15.1"))
                 .option(cl::Option("target").takes_value().help(
                     "Install the toolchain payload for <triple> (e.g. x86_64-windows-gnu)")))

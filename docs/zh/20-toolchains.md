@@ -44,7 +44,7 @@ C++23 模块对编译器版本较为敏感,不同版本的 GCC / Clang 在模块
 
 一切命名由两条正交轴构成:
 
-- **toolchain** = `family@version`,family ∈ `gcc | llvm | msvc` ——*用谁编*
+- **toolchain** = `family@version`,family ∈ `gcc | llvm | msvc | emsdk | android-ndk` ——*用谁编*
 - **target** = 三段 triple `arch-os[-env]`(如 `x86_64-linux-musl`、
   `x86_64-windows-gnu`、`aarch64-macos`)——*产出给谁*
 

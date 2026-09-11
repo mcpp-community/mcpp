@@ -372,6 +372,28 @@ ToolchainLinkModel resolve_link_model(const Toolchain& tc) {
     // cross-compile resolves by what it builds FOR.
     if (is_msvc_target(tc) || is_mingw_target(tc)) return lm;
 
+    // AND A TARGET WHOSE TOOLCHAIN SHIPS ITS OWN SYSROOT, for the same reason
+    // one sentence further up: nothing here describes its C library.
+    //
+    // THIS IS THE MODEL AND NOT A CHANNEL, and that distinction is the whole
+    // reason the gate belongs here. The C-runtime group reaches the link line
+    // through TWO of them -- `link_toolchain_flags` and `payload_ld`, both
+    // rendering `lm.link_flags()` -- and the comment at the second one records
+    // that a reader who fixed only the first "saw the identical error and could
+    // reasonably conclude the fix had not worked". Measured here too, on
+    // `--target wasm32-emscripten` with the compile side already correct:
+    //
+    //   wasm-ld: error: unknown argument:
+    //     --dynamic-linker=<xim-x-glibc>/lib64/ld-linux-x86-64.so.2
+    //   wasm-ld: error: unknown file type:
+    //     <xim-x-gcc-runtime>/lib64/libatomic.so
+    //
+    // This host's loader and this host's libatomic, handed to a WebAssembly
+    // linker. `CLibMode::None` is what both channels then render, because they
+    // render the model.
+    if (auto tt = triple::parse(tc.targetTriple); tt && tt->has_own_sysroot())
+        return lm;
+
     // The compiler's OWN runtime lives beside it, not in the C library:
     // libgcc_s.so.1 for GCC. A produced binary links it whether or not the
     // build ever mentions it, so its directory has to be on the artifact's

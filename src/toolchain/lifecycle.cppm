@@ -490,8 +490,7 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
                 // From the payload ROOT, not `root/bin`: msvc keeps cl.exe
                 // four levels deeper, and asking for `root/bin` skipped every
                 // installed toolset silently.
-                auto bin = mcpp::toolchain::payload_frontend(vEntry.path(), pkg,
-                                                             id->family);
+                auto bin = mcpp::toolchain::payload_frontend(vEntry.path(), pkg);
                 if (bin.empty()) continue;
                 payloads.push_back({ *id, s.version, bin });
             }
@@ -1103,7 +1102,7 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
         //
         // Same rule as everywhere else in this round: installed means usable,
         // not present.
-        if (mcpp::toolchain::payload_frontend(installDir, pkg, spec->family).empty()) {
+        if (mcpp::toolchain::payload_frontend(installDir, pkg).empty()) {
             // Before "not installed", check whether this is the retired
             // `msvc@<cl-version>` spelling — otherwise the advice is to
             // install a toolset that does not exist and never will.

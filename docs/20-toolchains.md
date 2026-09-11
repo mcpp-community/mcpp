@@ -45,7 +45,7 @@ Subsequent builds do not trigger this process again.
 
 Two orthogonal axes name everything:
 
-- **toolchain** = `family@version`, family ∈ `gcc | llvm | msvc` — *who compiles*
+- **toolchain** = `family@version`, family ∈ `gcc | llvm | msvc | emsdk | android-ndk` — *who compiles*
 - **target** = a triple `arch-os[-env]` (e.g. `x86_64-linux-musl`,
   `x86_64-windows-gnu`, `aarch64-macos`) — *what it produces for*
 

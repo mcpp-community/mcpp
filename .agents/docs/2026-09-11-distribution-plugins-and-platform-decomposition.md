@@ -462,7 +462,39 @@ The other corrections worth carrying:
   document warned about.** It recorded `_LIBCPP_VERSION 200100` and clang
   22.0.0git; 6.0.9 reports `220108` and clang 24.0.0git. The lesson it drew --
   that the surface must match the LIBRARY and not the compiler -- is right, and
-  the numbers it drew it from are two releases stale.
+  the numbers it drew it from are two releases stale. Re-measured from an
+  installed payload on 2026-09-11 by preprocessing `_LIBCPP_VERSION` out of
+  `<__config>` with the payload's own `em++`, so the number is the library's
+  and not a release note's.
+
+- **The file count was 133, not 134**, and the two are the same surface size
+  the NDK ships: 2 `.cppm` plus 131 `.inc` partitions under
+  `<payload>/emscripten/cache/sysroot/share/libc++/v1/`. Counted rather than
+  recalled, because this document uses these counts as the evidence that a
+  vendor ships the surface.
+
+- **"No additional flags" needed one qualification, and the qualification is
+  the good news.** `em++` ships the surface's SOURCE, not a BMI, so
+  `import std;` on its own fails with `module 'std' not found`. What is not
+  needed is the *generation* machinery this section describes at length --
+  there is nothing to generate. Building the BMI is the engine's ordinary job
+  for every toolchain it supports, and measured with exactly the two steps it
+  already performs:
+
+      em++ -std=c++23 --precompile <sysroot>/share/libc++/v1/std.cppm -o std.pcm
+      em++ -std=c++23 -fmodule-file=std=std.pcm -o hello.js hello.cpp std.pcm
+      node hello.js                                             ->  1-2-3
+
+  `std.pcm` is 34 MB and the link produced `hello.js` (65370 bytes) plus
+  `hello.wasm` (447175 bytes). `-Wno-reserved-module-identifier` is NOT
+  required -- the precompile succeeds without it, with two warnings, and mcpp
+  passes it only to silence them (`src/toolchain/clang.cppm:243`).
+
+  So `wasm32-emscripten` needs no new standard-library mechanism at all:
+  `stdModuleSource` points at that `std.cppm` and the existing path takes it
+  from there. **And the two-file output is confirmed** -- which is the one
+  genuinely new engine item, answered by the implicit-output channel the link
+  edge already has for import libraries and PDBs.
 - **`emsdk` cannot be a payload at all.** `emscripten-core/emsdk` publishes
   **zero** GitHub releases, and its `emsdk.py` fetches the real toolchain over
   the network at install time. The recipe therefore names what `emsdk.py`

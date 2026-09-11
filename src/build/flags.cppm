@@ -586,6 +586,14 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         return ft && ft->is_freestanding();
     }();
 
+    // A TARGET WHOSE TOOLCHAIN SHIPS ITS OWN SYSROOT IS HANDLED IN THE SHARED
+    // PRODUCER, not here. `host_compile_tokens` is read by this site, by the
+    // std module's command assembly (stdmod.cppm) and by the build.mcpp host
+    // compile, and the first attempt at this fix put the answer at THIS site
+    // only -- so `mcpp build --target wasm32-emscripten` stopped injecting the
+    // host's headers into ordinary compiles and went on injecting them into the
+    // std module precompile, which is where it had been failing. One decision,
+    // one site, three readers.
     if (!isFreestandingTarget) {
         mcpp::toolchain::HostFlagOptions hopt;
         hopt.cfgBypass = mcpp::toolchain::HostFlagOptions::CfgBypass::Always;
