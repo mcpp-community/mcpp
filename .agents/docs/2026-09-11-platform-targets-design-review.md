@@ -307,6 +307,8 @@ package -- no new mechanism, again.
 | R4 | `@system` for a non-MSVC family | generalise it, with the row deciding whether it is permitted | the refusal argues from MSVC's uniqueness, and iOS is the second instance of exactly that situation. `xim:iphoneos-sdk` already names "locate what the machine has" as its third tier, and the engine has no spelling for it |
 | R5 | device and simulator sessions | a `xim:` package shipping a runner program, named by `runner` | cargo states this boundary explicitly; no engine change, no new member family, and it puts platform knowledge in the ecosystem |
 | R6 | the tier each row can reach | `verified` for wasm (reached); `preview` for both Android rows and for iOS | Rust rates all three Tier 2. `verified` for Android is reachable and needs a CI lane, not a design |
+| R7 | signing a Mach-O or a `.app` | package `rcodesign` as `xim:rcodesign` and have `dist-apple` prefer it | MPL-2.0 with prebuilt static binaries for linux-musl (both arches), macOS universal and Windows. It removes the last host dependency from the iOS BUILD path, leaving only a device, the Simulator runtime and a notarization credential -- none of which is a program |
+| R8 | the four-field spelling | `parse()` should accept `wasm32-unknown-emscripten` and `aarch64-apple-ios` and canonicalise them | the industry writes four fields; refusing the spelling every other toolchain prints is a UX cost with no design benefit, and `parse()` already normalises several aliases |
 
 ## 7. User-facing experience, which is the test of all of the above
 
@@ -334,7 +336,180 @@ and zero new vocabulary for the project.** A project that builds for Linux
 builds for the web by changing one flag. That is the argument for the design,
 and it is now measured rather than asserted.
 
-## 8. The rule, stated so the next platform does not need this document
+## 8. Is `wasm32-emscripten` a standard name, and a common one?
+
+Two different questions, and the answers differ.
+
+### 8.1 The industry name is the four-field one, and mcpp's is a normalisation
+
+Measured, not recalled -- `em++ -v` on this machine passes to its own clang:
+
+    -target wasm32-unknown-emscripten
+
+and `rustc`'s platform table lists the same spelling at Tier 2 with host
+tools. That is the industry name.
+
+mcpp writes `wasm32-emscripten`, and `llvm_triple()` restores the vendor
+(`triple.cppm:172` emits `arch + "-unknown-emscripten"`). So the short form is
+**mcpp's canonical spelling, not a spelling anyone else uses** -- and it is the
+same elision mcpp already performs everywhere: `aarch64-macos` becomes
+`aarch64-apple-darwin`, `x86_64-windows-gnu` becomes `x86_64-w64-windows-gnu`.
+
+That is defensible and should be stated as what it is. mcpp's `Triple` has
+three fields and no vendor, deliberately, and `unknown` is a placeholder that
+carries no information for any target in the table. A user who types the
+four-field form should still be understood, which is a `parse()` question
+rather than a naming one.
+
+### 8.2 The wasm family is nine targets, and the three-field model holds
+
+`rustc`'s table lists nine:
+
+    wasm32-unknown-emscripten     Tier 2 with host tools
+    wasm32-unknown-unknown        Tier 2 with host tools
+    wasm32-wasip1                 Tier 2 with host tools
+    wasm32-wasip1-threads         Tier 2 with host tools
+    wasm32-wasip2                 Tier 2 with host tools
+    wasm32v1-none                 Tier 2 without host tools
+    wasm64-unknown-unknown        Tier 3
+    wasm32-wali-linux-musl        Tier 3
+    wasm32-wasip3                 Tier 3
+
+Mapped onto `Triple{arch, os, env}`:
+
+| Rust | mcpp | field use |
+|---|---|---|
+| `wasm32-unknown-emscripten` | `wasm32-emscripten` | os = emscripten |
+| `wasm32-unknown-unknown` | `wasm32-none` | os = none, i.e. `is_freestanding()` |
+| `wasm32-wasip1` | `wasm32-wasi` + env | os = wasi |
+| `wasm32-wasip1-threads` | env = `p1-threads` | **env absorbs Rust's fourth component** |
+| `wasm64-unknown-unknown` | `wasm64-none` | arch = wasm64 |
+
+The last row of that table is the important one, and it settles §4.1 from an
+unexpected direction. Rust appends a fourth component for a *variant*:
+`-threads` here, `-sim` for the iOS simulator. mcpp has exactly one slot for
+it, `env`, and the wasm family shows that slot is adequate and already used
+that way by every other row (`gnu`, `musl`, `eabihf`). So **`env = "sim"` is
+not a workaround; it is the field doing its job**, and R1 is a use of the model
+rather than a stretch of it.
+
+## 9. Is the toolchain bound to the SDK? Three platforms, two answers
+
+This is the question that most changes how a row is written, and the three
+platforms do not agree.
+
+| platform | compiler | its system | one archive? | mcpp's columns |
+|---|---|---|---|---|
+| Emscripten | `em++` (clang) | `<payload>/emscripten/cache/sysroot` | **yes** | `pin = emsdk@6.0.9`, `sysroot` empty |
+| Android | NDK's `clang++` | bionic, in `toolchains/llvm/prebuilt/<host>/sysroot` | **yes** | `pin = android-ndk@V`, `sysroot` empty |
+| iOS | **any sufficiently new clang** | the iPhoneOS SDK, reached with `-isysroot` | **no** | `pin = llvm@V`, `sysroot = xim:iphoneos-sdk@V` |
+
+So `has_own_sysroot()` is not an arbitrary set of two: it is exactly the
+platforms whose compiler and system arrive as one payload, and that is why the
+predicate reads the way it does.
+
+**And iOS is structurally the same shape as bare metal.** `riscv64-none-elf`
+pins `llvm@22.1.8` and names `xim:picolibc-riscv@1.8.12` in the `sysroot`
+column -- a generic clang plus a separately-versioned system. iOS is that
+shape with a different sysroot package. The `sysroot` column already exists
+for precisely this, which means the iOS row needs **no new table machinery**,
+only the two columns filled.
+
+The consequence for the other two is the opposite: a `sysroot` entry for
+Emscripten or Android would be wrong, because the driver resolves its own and a
+second answer competes with it -- which is the defect the wasm row hit three
+times.
+
+### 9.1 "The Android SDK" names two unrelated things, and the packages split on that
+
+Worth stating because the naming misleads:
+
+* the **NDK** is the compiler and bionic -- one archive, bound, used at BUILD
+  time. `xim:android-ndk`.
+* the **SDK** proper is `platform-tools` (adb, fastboot), the emulator, system
+  images and build-tools -- used at RUN and PACKAGE time, and unbound both from
+  each other and from the compiler. `xim:android-platform-tools`,
+  `xim:android-emulator`, `xim:android-system-image`.
+
+Four packages rather than one is therefore not a decomposition choice; it is
+what upstream actually ships, and each is independently versioned by Google.
+
+## 10. What can close inside the ecosystem, and what cannot
+
+The preference is stated: close the loop inside xlings, and reach the host only
+where nothing else is possible. Enumerated per platform rather than argued.
+
+### 10.1 Closed today, measured
+
+| need | package | evidence |
+|---|---|---|
+| `em++`, the wasm sysroot and its module surface | `xim:emsdk` | `mcpp run --target wasm32-emscripten` printed `1-2-3` |
+| the interpreter `em++` execs | `xim:python` | needed an aarch64 payload added; declared as a dep |
+| the JS engine the artefact needs | `xim:node` | the artefact's own `#!/usr/bin/env node` resolves the xvm shim |
+| the Android compiler and bionic | `xim:android-ndk` | `import std` built for both Android arches |
+| an aarch64 loader and a real bionic | `xim:android-system-image` | `debugfs` extraction, then `qemu-aarch64 -L` ran the DYNAMIC artefact |
+| the user-mode translator | `xim:qemu-user-aarch64` | same measurement |
+| the ext4 reader that extraction needs | `xim:e2fsprogs` | declared; was a host probe |
+| `adb` / `fastboot` | `xim:android-platform-tools` | installs on all three hosts |
+| the emulator and its X11 chain | `xim:android-emulator` + six existing libs | declared; was a host probe |
+
+### 10.2 Closeable, and one of them is a finding
+
+| need | how | status |
+|---|---|---|
+| a clang that targets iOS | `xim:llvm` plus `-isysroot` | the payload exists; the row is unfilled |
+| the iPhoneOS SDK | `xim:iphoneos-sdk`, at whichever of three licence tiers applies | exists |
+| **signing a Mach-O, a `.app`, a `.dmg` or a `.pkg`** | **`rcodesign`** (crate `apple-codesign`, MPL-2.0) | **not yet packaged, and it should be** |
+| finding the SDK path | nothing -- `xcrun` is a path-finder and `-isysroot <path>` needs none | no dependency |
+
+The third row changes the iOS picture. `apple-codesign` states its goal as
+being "a stand-in replacement for Apple's `codesign` ... without a dependency
+on an Apple hardware device or operating system", covering Mach-O binaries,
+`.app` bundles, `.pkg` installers and `.dmg` images. Release 0.29.0 ships
+**prebuilt static binaries for `x86_64-unknown-linux-musl`,
+`aarch64-unknown-linux-musl`, macOS universal and Windows**, under MPL-2.0.
+
+So signing -- which `dist/apple.cppm` currently reaches through the host's
+`codesign` -- **is not a host dependency at all**. It is an unpackaged one.
+
+Sources: [apple-codesign on crates.io](https://crates.io/crates/apple-codesign)
+and its [documentation](https://gregoryszorc.com/docs/apple-codesign/stable/).
+
+### 10.3 Genuinely host-bound, and there are exactly three
+
+1. **`/dev/kvm`** -- a kernel facility. No package ships a kernel feature, and
+   group membership is a machine's configuration. This is why it is the only
+   `log.warn` left in `android-emulator.lua`.
+2. **A real device, or Apple's Simulator runtime.** The simulator is a
+   proprietary runtime that exists only on macOS and is not redistributable;
+   a device is hardware. Both are *environments* rather than tools.
+3. **Notarization.** Apple's servers plus a developer credential. A credential
+   is never a package, and `rcodesign` can drive the submission but cannot
+   supply the account.
+
+### 10.4 The rule that falls out
+
+    A host dependency is legitimate only when the thing needed is
+      (a) a kernel facility,
+      (b) a proprietary RUNTIME that exists only on its own OS, or
+      (c) a credential.
+    Anything that is a PROGRAM can be packaged, and the survey found that
+    even Apple's signing tool has a redistributable replacement.
+
+That test is worth having because it is falsifiable, and it immediately
+reclassifies two things this ecosystem had treated as host dependencies:
+`debugfs` and the libX11 chain were (a)-shaped in the recipes' prose and were
+in fact just programs. `codesign` is the third instance of the same mistake,
+and this document is the first place it is named.
+
+It also narrows R4. `msvc@system` is a (b): Visual Studio is a proprietary
+toolchain that exists only where it is installed. Generalising `@system`
+should therefore mean "a row may declare that its system is host-located
+because it is (b)", not "any family may be located on the host" -- the
+existing refusal is right about the general case and wrong only about
+believing MSVC is the sole instance.
+
+## 11. The rule, stated so the next platform does not need this document
 
 Three questions, and the answer to each is the same for every platform:
 
