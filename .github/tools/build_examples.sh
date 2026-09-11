@@ -57,6 +57,19 @@ BUILD=(
     # three-file package.
     examples/12-a-new-device-language/toyc
     examples/12-a-new-device-language/app
+    # One source, three platforms. BUILT here rather than skipped, because its
+    # HOST build needs no payload at all -- the `[target.*-linux-android]`
+    # sections are inert unless that target is selected, which is itself worth
+    # one build: a manifest that names a target the runner has no payload for
+    # must still parse and build for the host.
+    #
+    # The cross legs are not built here. `wasm32-emscripten` and the two
+    # Android rows would pull `xim:emsdk` and `xim:android-ndk` -- about 1.5 GB
+    # between them -- and the signal already exists elsewhere:
+    # ci-target-matrix scans every row on four hosts, tests/e2e/641 asserts the
+    # vocabulary, and the example's README records the measured artifacts and
+    # the emulator run for the binary it describes.
+    examples/13-platform-targets
 )
 
 # `key|reason`.

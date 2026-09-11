@@ -77,6 +77,7 @@ mcpp build && mcpp run
 |---|---|
 | [`08-build-rules`](../../examples/08-build-rules/) | 两个规则包与同时使用它们的工程;`host-module = true`、`role = "check"` 的 `mcpp::action` |
 | [`12-a-new-device-language`](../../examples/12-a-new-device-language/) | `device_extensions` 与 `rule_module`:规则包教会 mcpp 一门引擎从未听说过的语言,而它的编译器是一个经 `tools = [...]` 为构建机构建出来的包 |
+| [`13-platform-targets`](../../examples/13-platform-targets/) | 一份源码、零个 `cfg`,只改 `--target` 就为 Linux、WebAssembly 和两个 Android ABI 构建;`min_api_level` 作为工程自己的决定,以及一条不能被覆盖的能力钉 |
 
 [31 —— 编写规则包](31-authoring-a-rule-package.md) 是这两个示例所演示内容的参考。
 

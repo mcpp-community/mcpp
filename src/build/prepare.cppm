@@ -9126,8 +9126,39 @@ prepare_build(bool print_fingerprint,
         // out of order. Deferring the CHOICE the way the target side itself was
         // deferred is the structural fix and is its own change; until then the
         // user is told what happened and how to state the preference once.
+        //
+        // AND NOT FOR A ROW WHOSE PIN IS A CAPABILITY, WHERE BOTH HALVES OF
+        // THIS SENTENCE ARE FALSE.
+        //
+        // The warning says the default "would have served" the target and then
+        // tells the reader to declare it. On a capability row neither holds:
+        // nothing but the pinned payload can emit the target at all, and the
+        // declaration it suggests is REFUSED by the capability gate a few
+        // hundred lines above -- so following the advice replaces a warning
+        // with an error.
+        //
+        // Measured on `openkal-linux` built for `x86_64-linux-android`, whose
+        // target side does come from the graph:
+        //
+        //   warning: ... so gcc@16.1.0 would have served x86_64-linux-android.
+        //            State the preference: [target.x86_64-linux-android]
+        //                                  toolchain = "gcc@16.1.0"
+        //   $ (declaring exactly that)
+        //   error: target 'x86_64-linux-android' cannot be emitted by
+        //          'gcc@16.1.0'.
+        //
+        // The first claim is false on its own terms too: this gcc payload
+        // cannot emit an Android object whatever the graph supplies. `graph`
+        // answers "who supplies the SYSTEM", and a capability pin answers "who
+        // can emit the FORMAT AND THE SYSTEM" -- two questions, and only the
+        // second one decides whether a substitution was avoidable.
+        const bool pinIsCapability = [&] {
+            auto tt = mcpp::toolchain::triple::parse(resolvedTargetCanonical);
+            return tt && tt->pin_is_capability();
+        }();
         if (!pinReplacedDefault.empty()
-            && resolvedTargetSide.system_from_graph()) {
+            && resolvedTargetSide.system_from_graph()
+            && !pinIsCapability) {
             mcpp::diag::warning("toolchain", std::format(
                 "this project's target side comes from its dependency graph, so "
                 "{} would have served {}.\n"

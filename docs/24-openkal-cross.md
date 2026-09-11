@@ -178,6 +178,91 @@ the object ABI on Windows, the object format where there is no operating system
 — and one value records which, rather than a boolean recording only whether the
 first case holds.
 
+## Android, Web And iOS Under This Model
+
+The three platforms mcpp added target rows for in 2026.9.11.3 are not one
+question. What decides each is where its implementation would have to sit
+relative to a C library, and the answers are different.
+
+### Android shares the Linux implementation, unchanged
+
+`openkal-linux` is written on the Linux kernel's own system-call interface and
+borrows nothing from any C library — that is what lets it be placed beneath one.
+Android's kernel **is** Linux, the system-call ABI for a given architecture is
+the same, and `src/sys.h` dispatches on `__x86_64__` / `__aarch64__`, which is
+the architecture rather than the operating system. Nothing in it is glibc's or
+bionic's.
+
+So a portable program needs no new line. `cfg(os = "linux")` is **true for an
+Android triple**, because Android is an `env` value on a `linux` OS — the
+modelling decision [21 — The Target Triple](21-the-target-triple.md) records —
+and the implementation is selected by the line a Linux consumer already writes:
+
+```toml
+[target.'cfg(os = "linux")'.dependencies]
+openkal-linux = "0.12.0"
+```
+
+Measured 2026-09-11, a program written against openkal and nothing else — no C
+library, no `import std`:
+
+```
+mcpp build --target x86_64-linux-android
+       kernel-abi   openkal   (openkal-linux@0.12.0, graph)
+    ->  ELF 64-bit LSB pie, x86-64, interpreter /system/bin/linker64
+
+mcpp build --target aarch64-linux-android
+    ->  ELF 64-bit LSB pie, ARM aarch64, same interpreter
+```
+
+and the x86_64 artifact, pushed to an API 24 emulator image and executed:
+
+```
+openkal: 1-2-3          exit 0
+```
+
+`openkal-linux` itself also compiles for both Android targets unchanged, which
+is the weaker claim of the two and is worth stating separately: the first says
+the implementation builds, the second says a program over it runs.
+
+### iOS would share the macOS implementation, and that cannot be claimed yet
+
+The same argument applies on Apple's side — iOS and macOS share the Darwin
+kernel, and `openkal-macos` is arch-dispatched the same way — but the argument
+is not evidence. The iPhoneOS and iPhoneSimulator SDKs ship inside Xcode and
+are not redistributable, so the `aarch64-ios` and `*-ios-sim` rows are
+`planned`: there is nothing to build against and therefore nothing to run.
+Declaring support on a structural argument alone is the shape this ecosystem has
+paid for before — a package present in an index is not a package that builds a
+real project — so these rows claim nothing until an SDK is reachable.
+
+### Web needs a new implementation, and a different one
+
+Emscripten is the one of the three that changes the model rather than extending
+it. There is no kernel and there are no system calls to issue: Emscripten
+supplies its own C library over a JavaScript host. An openkal implementation for
+it therefore cannot be written the way `openkal-linux` is — beneath a C library
+— and would have to sit **above** one. The specification permits exactly that
+("an implementation may be built upon a C library, beneath one, or without
+one"), so this is new software rather than a sharing decision, and it is the one
+of the three that is neither done nor blocked.
+
+Until it exists, `wasm32-emscripten` is served the ordinary way: by a payload.
+`xim:emsdk` ships the compiler, the sysroot and a libc++ module surface, so a
+program that uses `import std` builds and runs for the Web today without openkal
+being involved at all — which is what the row's `verified` tier records.
+
+### The table
+
+| platform | implementation | status |
+|---|---|---|
+| Linux (glibc, musl) | `openkal-linux` | the reference implementation |
+| Android (both ABIs) | `openkal-linux`, unchanged | builds; a program over it ran on an emulator |
+| macOS | `openkal-macos` | on the macOS system-call surface |
+| iOS, iOS simulator | `openkal-macos` would serve it | blocked: the SDK is not redistributable |
+| Windows | `openkal-windows` | on Win32 and the object manager |
+| Web (Emscripten) | none | needs an implementation written ABOVE a C library |
+
 ## Bare Metal
 
 A target with no operating system is the same model with the platform layer
