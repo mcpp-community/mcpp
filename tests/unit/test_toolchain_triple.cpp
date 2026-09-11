@@ -707,13 +707,20 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
     // ONE PIN SERVES BOTH ROWS, which is the property the whole Android path
     // rests on: the NDK names no arch, `--target` does, and that is why the
     // std module's own precompile had to be told the target as well.
-    for (auto name : {"aarch64-linux-android", "x86_64-linux-android"}) {
+    // ONE PIN, TWO TIERS, and the tiers differ by EXECUTION rather than by
+    // confidence in the build. `x86_64-linux-android` ran on the platform's
+    // own emulator (API 24 x86_64 image, KVM): `adb push` then
+    // `adb shell ./andtest` printed `1-2-3`, exit 0. The device row has no
+    // execution path from an x86_64 host -- Google's emulator refuses a
+    // foreign guest outright -- so it stays `preview`.
+    for (auto [name, tier] : {std::pair{"aarch64-linux-android", "preview"},
+                              std::pair{"x86_64-linux-android",  "verified"}}) {
         auto t = parse(name);
         ASSERT_TRUE(t.has_value()) << name;
         EXPECT_EQ(t->str(), name);
         auto* info = find_known_target(*t);
         ASSERT_NE(info, nullptr) << name;
-        EXPECT_EQ(info->tier, "preview") << name;
+        EXPECT_EQ(info->tier, tier) << name;
         EXPECT_EQ(info->pin, "android-ndk@30.0.16248370") << name;
         // Same statement the wasm row makes: the SDK ships the sysroot.
         EXPECT_TRUE(info->sysroot.empty()) << name;

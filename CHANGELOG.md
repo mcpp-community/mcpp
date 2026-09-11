@@ -49,8 +49,28 @@ x86_64-linux-android   ->  ELF 64-bit LSB pie, x86-64, 同一个 interpreter
 性质所系:NDK 不命名架构,`--target` 才命名 —— 于是每一处「谁说出目标」的缺口都
 会在这里现形,而在 wasm 上都不会,因为 `em++` 只有一个目标。
 
-`preview` 而不是 `verified`:两者都**构建**过,都没有被**执行**过 —— 跑起来需要一台
-设备或一个模拟器,而那正是这两个层级的差别。
+**一个钉,两个层级**,而层级的差别是**执行**,不是对构建的信心。
+
+`x86_64-linux-android` 是 `verified`:产物在平台自己的模拟器上跑起来了。
+2026-09-11,linux-x86_64,API 24 的 x86_64 系统镜像 + KVM:
+
+```
+adb push <mcpp 构建出的产物> /data/local/tmp/
+adb shell ./andtest          ->  1-2-3      exit 0
+```
+
+`aarch64-linux-android` 是 `preview`:构建方式完全相同,而从一台 x86_64 宿主没有
+执行路径。记下来是为了下一次尝试不重复:Google 的模拟器直接拒绝异构 guest ——
+`QEMU2 emulator does not support arm64 CPU architecture` —— 所以 arm64 镜像需要一台
+arm64 宿主。文档给出的退路是 qemu-user 配系统镜像自带的 bionic,而准备它要用
+`debugfs` 从一个 ext4 分区镜像里取四个文件,而 `debugfs` 恰好是
+`xim:e2fsprogs@1.47.3` 里唯一一个构建坏了的程序(任何打开文件系统的命令都 SIGFPE,
+而同一份构建里的 dumpe2fs/e2fsck/tune2fs 都正常)。那是一个生态缺陷,在索引侧有
+自己的记录,不是引擎的缺口 —— 它被修好时这一行就变成 `verified`,而这里什么都不用动。
+
+还有一条链接器告警值得记下来,因为用户会看到它而它**不是**缺陷:
+`unsupported flags DT_FLAGS_1=0x8000001`。API 24 的 bionic 加载器不认识 lld 设置的
+`DF_1_PIE` 位,于是告警一句,然后照常把程序加载起来。
 
 五处引擎缺口,每一处都是前一处的失败找出来的,而每一处都**只在多目标载荷上现形**:
 

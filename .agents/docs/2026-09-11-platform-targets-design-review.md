@@ -994,6 +994,28 @@ plan.
 | E15 | R2: `min_api_level` under `[target.<triple>]`, via `llvm_triple(param)` and the fingerprint, per §12.1 | **done** |
 | E16 | `host_can_serve` stops hardcoding Linux for `has_own_sysroot()` rows | **done** -- see below; this is the line the predicate's own comment named as its expiry |
 
+**E16 leaves one thing unanswered, and it is recorded rather than hidden.**
+With the host constant gone, `mcpp toolchain list` reports
+`aarch64-linux-android` as `available` on every host -- including Windows,
+where `xim:android-ndk` deliberately has no table. Google publishes a Windows
+NDK and it downloads; what it does not contain is the libc++ module surface
+(measured: 9108 entries, no `std.cppm`, no `std/*.inc`, against darwin's 10024
+and 110), so for a module-first build tool that payload cannot serve and an
+entry that can never serve is worse than none.
+
+The engine is not the place to encode that. Which hosts an index serves is the
+index's answer, it changes without an engine release, and a constant stating it
+here is exactly what E16 removed -- it would go stale again the first time a
+future NDK ships the surface. So a Windows user sees the row, the pin resolves,
+and xim refuses with `no payload for this platform` before anything is fetched,
+naming the package. That is legible at the point of use, which is the standard
+this repository already applies to a per-package engine floor.
+
+What would change the answer is a cheap way to ask the index for a payload's
+platform coverage during a listing. There is none today that does not cost a
+network round trip per row, and a fourth status word would describe the gap
+rather than close it.
+
 **E16 was not in the original plan, and the target matrix is what produced
 it.** The predicate returned `mcpp::platform::is_linux` for a row whose SDK
 ships its own sysroot, because `xim:emsdk` and `xim:android-ndk` declared only

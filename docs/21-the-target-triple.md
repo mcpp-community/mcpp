@@ -483,8 +483,8 @@ other's rows.
 | `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
 | `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
 | `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
-| `aarch64-linux-android` | preview | `android-ndk@30.0.16248370` | payload | payload | payload | payload |
-| `x86_64-linux-android` | preview | `android-ndk@30.0.16248370` | payload | payload | payload | payload |
+| `aarch64-linux-android` | preview | `android-ndk@30.0.16248370` | payload | payload | payload | — |
+| `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `aarch64-ios` | planned | — | planned | planned | planned | planned |
 | `aarch64-ios-sim` | planned | — | planned | planned | planned | planned |
 | `x86_64-ios-sim` | planned | — | planned | planned | planned | planned |
@@ -512,6 +512,24 @@ installed by mcpp · `SDK` the platform's own · `—` unreachable from this hos
 "does a payload here produce it", and a dependency graph can supply the system
 instead — which is why `x86_64-windows-musl` reads `via dependency graph` on
 Linux and produces a real PE32+ there.
+
+**And for the two Android rows the `—` on Windows is the INDEX's answer, so
+`mcpp toolchain list` still shows them there.** Google publishes a Windows NDK
+and it downloads; what it does not contain is the libc++ module surface
+(measured: no `std.cppm` and no `std/*.inc`, against 110 on the other two
+hosts), so `xim:android-ndk` declares no Windows table — an entry that can
+never serve a module-first build is worse than none. The engine does not encode
+that: which hosts an index serves changes without an engine release, and a
+constant stating it here is what the wasm row's own history shows going stale.
+A Windows user therefore sees the row, the pin resolves, and xim refuses with
+`no payload for this platform` before anything is fetched, naming the package.
+
+**The two Android rows differ in tier because one of them was run.** An
+x86_64 Android artefact executes on the platform's own emulator, and a
+`verified` row means exactly that was done. The device row builds identically
+and has no execution path from an x86_64 host: the emulator refuses a foreign
+guest (`QEMU2 emulator does not support arm64 CPU architecture`), so it needs
+an arm64 host or the qemu-user route.
 
 ### And CI measures every one of them
 

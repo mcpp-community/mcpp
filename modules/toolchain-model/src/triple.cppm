@@ -653,10 +653,38 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // cost, and until it lands `[target.<triple>].sysroot` is the escape hatch
     // for a machine that has an NDK already.
     { "aarch64-linux-android", "preview",   "",    "android-ndk@30.0.16248370", "",   false },
-    // The emulator's row. Not a convenience: x86_64 is what an Android
-    // emulator image runs, so a row for the device without one for the
-    // emulator describes a target nothing in CI can execute.
-    { "x86_64-linux-android",  "preview",   "",    "android-ndk@30.0.16248370", "",   false },
+    // The emulator's row, and the one of the pair that could be EXECUTED.
+    //
+    // Not a convenience: x86_64 is what an Android emulator image runs, so a
+    // row for the device without one for the emulator describes a target
+    // nothing can execute. That argument is now measured rather than asserted.
+    // 2026-09-11, linux-x86_64, an API 24 x86_64 system image under the
+    // platform's own emulator with KVM:
+    //
+    //   adb push <the mcpp-built artifact> /data/local/tmp/
+    //   adb shell ./andtest            ->  1-2-3      exit 0
+    //
+    // from `import std;` and no project vocabulary beyond `--target`. So this
+    // row is `verified` while `aarch64-linux-android` is `preview`, and the
+    // difference is execution rather than confidence in the build.
+    //
+    // WHY THE DEVICE ROW COULD NOT FOLLOW, recorded so the next attempt does
+    // not repeat it. Google's emulator refuses a foreign guest outright --
+    // "QEMU2 emulator does not support arm64 CPU architecture" -- so the arm64
+    // image needs an arm64 host. The documented fallback is qemu-user with the
+    // system image's own bionic, and preparing it needs four files extracted
+    // from an ext4 partition image by `debugfs`, which is the one program in
+    // `xim:e2fsprogs@1.47.3` that is a broken build (SIGFPE on every
+    // filesystem-opening command, while dumpe2fs/e2fsck/tune2fs from the same
+    // payload work). That is an ecosystem defect with its own record in the
+    // index, not an engine gap, and it moves this row to `verified` when it is
+    // fixed -- nothing here changes.
+    //
+    // One linker warning is worth recording because a user will see it and it
+    // is not a defect: `unsupported flags DT_FLAGS_1=0x8000001`. API 24's
+    // bionic linker does not recognise the `DF_1_PIE` bit that lld sets, warns,
+    // and loads the program anyway.
+    { "x86_64-linux-android",  "verified",  "",    "android-ndk@30.0.16248370", "",   false },
 
     // iOS IS NEXT. `aarch64-macos` is `verified`, so Mach-O, `arm64`, the
     // linker and the Apple half of the toolchain model all exist; what is

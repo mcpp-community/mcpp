@@ -433,8 +433,8 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 | `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `aarch64-linux-android` | preview | `android-ndk@30.0.16248370` | payload | payload | payload | payload |
-| `x86_64-linux-android` | preview | `android-ndk@30.0.16248370` | payload | payload | payload | payload |
+| `aarch64-linux-android` | preview | `android-ndk@30.0.16248370` | payload | payload | payload | — |
+| `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `aarch64-ios` | planned | — | planned | planned | planned | planned |
 | `aarch64-ios-sim` | planned | — | planned | planned | planned | planned |
 | `x86_64-ios-sim` | planned | — | planned | planned | planned | planned |
@@ -460,6 +460,21 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 **一个 `—` 讲的是载荷,不是可能性。** `host_can_serve` 回答的是「这里有没有
 载荷产出它」,而依赖图可以改为供给系统 —— 这就是 `x86_64-windows-musl` 在 Linux
 上显示 `via dependency graph`、并在那里产出真正的 PE32+ 的原因。
+
+**而两个 Android 行在 Windows 上的 `—` 是**索引**的答案,所以
+`mcpp toolchain list` 在那里仍然会显示它们。** Google 确实发布 Windows NDK,它也
+下载得到;它不包含的是 libc++ 的**模块面**(实测:没有 `std.cppm`、没有
+`std/*.inc`,而另两个宿主各有 110 个),所以 `xim:android-ndk` 不声明 windows 表 ——
+一条永远不能服务「模块优先」构建的条目比没有更坏。引擎不把这件事编进来:一个索引
+服务哪些宿主会在没有引擎发布的情况下变化,而把它写成这里的一个常量,正是 wasm 那
+一行自己的历史所展示的会变陈旧的东西。因此 Windows 用户会看到这一行、钉能解析,
+而 xim 在任何东西被下载之前以 `no payload for this platform` 拒绝,并点名那个包。
+
+**两个 Android 行层级不同,是因为其中一个被运行过。** 一个 x86_64 的 Android 产物
+在平台自己的模拟器上执行得起来,而 `verified` 这个层级断言的正是「做过这件事」。
+真机那一行构建方式完全相同,而从一台 x86_64 宿主没有执行路径:模拟器直接拒绝异构
+guest(`QEMU2 emulator does not support arm64 CPU architecture`),所以它需要一台
+arm64 宿主,或者 qemu-user 那条路。
 
 ### 而 CI 把每一台都测了
 
