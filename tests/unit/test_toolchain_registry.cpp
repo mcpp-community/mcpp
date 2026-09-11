@@ -493,6 +493,61 @@ TEST(SdkPayloads, TheDisplayNamesThePayloadAndNotOnlyTheFamily) {
     }
 }
 
+// ─── The C compiler beside a C++ one ───────────────────────────────────────
+//
+// Every frontend this engine can resolve, and the C driver beside it. The
+// DENOMINATOR IS `to_xim_package`'s own candidate lists: each spelling below
+// appears in one of its branches, so a payload whose frontend is added there
+// without a row here is a payload whose C units compile with a program that
+// does not exist.
+//
+// That is not hypothetical. Measured 2026-09-11 on the conformance suite's one
+// C translation unit for `wasm32-emscripten`:
+//
+//   /bin/sh: 1: .../xim-x-emsdk/6.0.9/emscripten/em: not found
+//
+// `em++` had become `em`, because "drop the `++`" was the rule and it is only
+// clang's rule. `g` was already a special case for exactly this reason, which
+// is what makes a table the right shape: the property is "this driver names
+// its C compiler with a different word".
+TEST(SdkPayloads, EveryFrontendNamesTheCCompilerBesideIt) {
+    struct Case { std::string_view cxx, c; };
+    const Case cases[] = {
+        // clang and its triple-prefixed forms: dropping `++` is correct.
+        { "clang++",                     "clang"                     },
+        { "aarch64-linux-gnu-clang++",   "aarch64-linux-gnu-clang"   },
+        // GCC: a different word, native and prefixed.
+        { "g++",                         "gcc"                       },
+        { "x86_64-w64-mingw32-g++",      "x86_64-w64-mingw32-gcc"     },
+        { "aarch64-linux-musl-g++",      "aarch64-linux-musl-gcc"     },
+        // Emscripten: a different word, and the row this test was written for.
+        { "em++",                        "emcc"                      },
+        // A name that is already a C driver stays itself.
+        { "clang",                       "clang"                     },
+        { "emcc",                        "emcc"                      },
+    };
+    for (auto const& c : cases) {
+        const std::filesystem::path cxx =
+            std::filesystem::path("/p/bin") / std::string(c.cxx);
+        EXPECT_EQ(mcpp::toolchain::derive_c_compiler_path(cxx).filename().string(),
+                  std::string(c.c)) << c.cxx;
+    }
+
+    // AND THE EXECUTABLE SUFFIX SURVIVES, which is the part a stem-based
+    // rewrite loses: on Windows the payload ships `g++.exe`, and a C compile
+    // spawning `gcc` with no suffix finds nothing.
+    EXPECT_EQ(mcpp::toolchain::derive_c_compiler_path("/p/bin/g++.exe")
+                  .filename().string(), "gcc.exe");
+    EXPECT_EQ(mcpp::toolchain::derive_c_compiler_path("/p/bin/clang++.exe")
+                  .filename().string(), "clang.exe");
+
+    // `clang++` MUST NOT MATCH THE `g++` ROW. It ends in `g++`'s last two
+    // characters plus nothing, and a suffix test without the separator would
+    // turn it into `clanccc` or worse -- a name that is nothing.
+    EXPECT_EQ(mcpp::toolchain::derive_c_compiler_path("/p/bin/clang++")
+                  .filename().string(), "clang");
+}
+
 // ─── One payload, one spelling (B1) ────────────────────────────────────────
 //
 // `ndk` was accepted as an alias for `android-ndk`, and the capability gate

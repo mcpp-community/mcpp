@@ -46,6 +46,16 @@ XimToolchainPackage bin_shaped_pkg() {
     return to_xim_package(*spec);
 }
 
+// THE GUESS LOOKS FOR A HOST-SPECIFIC NAME, so a fixture that writes one name
+// tests one host. Measured on a Windows runner: the fixture created
+// `bin/clang++` and the guess searched `bin/clang++.exe`, so
+// "no descriptor resolves exactly as before" failed on the host where the
+// executable suffix exists -- a test that was about the descriptor failing for
+// a reason that had nothing to do with it.
+std::string host_frontend_name() {
+    return std::string("clang++") + std::string(mcpp::platform::exe_suffix);
+}
+
 } // namespace
 
 // ─── Absence is compatibility (C) ───────────────────────────────────────────
@@ -56,7 +66,7 @@ XimToolchainPackage bin_shaped_pkg() {
 // existed, which is what the assertion below measures.
 TEST(PayloadDescriptor, NoDescriptorResolvesExactlyAsBefore) {
     FakePayload fp{"none"};
-    auto clang = fp.add_compiler("bin/clang++");
+    auto clang = fp.add_compiler("bin/" + host_frontend_name());
     auto pkg = bin_shaped_pkg();
 
     auto d = read_payload_descriptor(fp.root);
@@ -78,12 +88,15 @@ TEST(PayloadDescriptor, NoDescriptorResolvesExactlyAsBefore) {
 // from the descriptor.
 TEST(PayloadDescriptor, TheDescriptorAnswersWhereTheGuessCannot) {
     FakePayload fp{"frontend"};
+    // NOT the host-specific name, deliberately: the descriptor says exactly
+    // where the compiler is, so the payload is free to spell it any way it
+    // likes and this fixture spells it a way the guess would never try.
     auto deep = fp.add_compiler(
-        "toolchains/llvm/prebuilt/some-host-tag/bin/clang++");
+        "toolchains/llvm/prebuilt/some-host-tag/bin/frontend-by-descriptor");
     std::filesystem::create_directories(fp.root / "bin");   // present, empty
     fp.write_descriptor(R"({
         "schema": 1,
-        "frontend": "toolchains/llvm/prebuilt/some-host-tag/bin/clang++"
+        "frontend": "toolchains/llvm/prebuilt/some-host-tag/bin/frontend-by-descriptor"
     })");
     auto pkg = bin_shaped_pkg();
 
@@ -106,7 +119,7 @@ TEST(PayloadDescriptor, TheDescriptorAnswersWhereTheGuessCannot) {
 // the recipe.
 TEST(PayloadDescriptor, ANamedFrontendThatIsAbsentIsEmptyNotAnError) {
     FakePayload fp{"absent"};
-    fp.add_compiler("bin/clang++");   // the guess WOULD find this
+    fp.add_compiler("bin/" + host_frontend_name());   // the guess WOULD find this
     fp.write_descriptor(R"({"schema": 1, "frontend": "opt/bin/clang++"})");
 
     auto found = payload_frontend(fp.root, bin_shaped_pkg());
@@ -131,10 +144,22 @@ TEST(PayloadDescriptor, EveryMalformedShapeIsRefusedByName) {
         { "a schema we lack",     R"({"schema": 2})",                  "schema 2" },
         { "frontend not string",  R"({"schema":1,"frontend":42})",     "frontend" },
         { "frontend empty",       R"({"schema":1,"frontend":""})",     "frontend" },
+        // ABSOLUTE BY EITHER CONVENTION, because a host's path type answers
+        // only for its own. `path("/usr/bin/g++").is_absolute()` is FALSE on
+        // Windows, so this case passed there and `payloadRoot / frontend`
+        // resolved to `C:/usr/bin/g++` -- a host compiler chosen by a package.
         { "frontend absolute",    R"({"schema":1,"frontend":"/usr/bin/g++"})",
                                                                        "absolute" },
+        { "frontend drive",       R"({"schema":1,"frontend":"C:/Windows/gcc.exe"})",
+                                                                       "drive" },
+        { "frontend backslash",   R"({"schema":1,"frontend":"bin\\clang++.exe"})",
+                                                                       "backslash" },
         { "frontend escapes",     R"({"schema":1,"frontend":"../../usr/bin/g++"})",
                                                                        "leaves" },
+        { "frontend dot",         R"({"schema":1,"frontend":"./bin/clang++"})",
+                                                                       "leaves" },
+        { "frontend empty part",  R"({"schema":1,"frontend":"bin//clang++"})",
+                                                                       "empty path component" },
         { "floor not a string",   R"({"schema":1,"platform_floor":21})", "platform_floor" },
         { "floor empty",          R"({"schema":1,"platform_floor":""})", "platform_floor" },
         { "floor not a version",  R"({"schema":1,"platform_floor":"r30"})",
@@ -150,7 +175,7 @@ TEST(PayloadDescriptor, EveryMalformedShapeIsRefusedByName) {
     };
     for (auto const& c : cases) {
         FakePayload fp{"bad"};
-        fp.add_compiler("bin/clang++");
+        fp.add_compiler("bin/" + host_frontend_name());
         fp.write_descriptor(c.json);
 
         auto d = read_payload_descriptor(fp.root);

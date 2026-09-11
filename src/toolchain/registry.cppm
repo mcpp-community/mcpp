@@ -374,6 +374,12 @@ std::vector<AvailableIndex> available_toolchain_indexes();
 
 std::filesystem::path derive_c_compiler(const Toolchain& tc);
 
+// The same derivation as a pure function of the path, so that the mapping can
+// be stated once and asserted without a toolchain. Exported because it is the
+// whole of what can be wrong in it: every frontend this engine resolves has a
+// C driver beside it, and the rule for naming it differs by driver.
+std::filesystem::path derive_c_compiler_path(const std::filesystem::path& cxxPath);
+
 // A binutils-family tool for THIS toolchain's TARGET, named in the GNU
 // spelling ("ar", "strip", "objcopy").
 //
@@ -408,27 +414,71 @@ bool ends_with(std::string_view s, std::string_view suf) {
         && s.compare(s.size() - suf.size(), suf.size(), suf) == 0;
 }
 
-std::filesystem::path derive_c_compiler_path(const std::filesystem::path& cxxPath) {
-    auto stem = cxxPath.stem().string();
-    auto parent = cxxPath.parent_path();
-    auto ext = cxxPath.extension();
-
-    std::string cc_stem;
-    if (stem.ends_with("++")) {
-        cc_stem = stem.substr(0, stem.size() - 2);
-        if (cc_stem == "g" || cc_stem.ends_with("-g"))
-            cc_stem += "cc";
-    } else {
-        cc_stem = stem;
-    }
-    return parent / (cc_stem + ext.string());
-}
 
 triple::Triple host_musl_triple() {
     return { std::string(mcpp::platform::host_arch), "linux", "musl" };
 }
 
 } // namespace
+
+// THE C COMPILER BESIDE A C++ ONE, AND DROPPING `++` IS NOT THE RULE.
+//
+// It is the rule for clang and it is not for the others, which is why `g` was
+// already a special case here: `g++`'s C compiler is `gcc` and not `g`. A
+// second driver with the same shape arrived and the special case did not
+// cover it.
+//
+// Measured 2026-09-11, compiling the conformance suite's one C translation
+// unit for `wasm32-emscripten`:
+//
+//   /bin/sh: 1: .../xim-x-emsdk/6.0.9/emscripten/em: not found
+//
+// `em++` became `em`, which is not a program. The C compiler is `emcc`.
+//
+// A TABLE RATHER THAN A THIRD `if`, because the property being encoded is "this
+// driver names its C compiler with a different word", and a table can be read
+// as the list of drivers for which that is true. The fallthrough -- drop the
+// `++` -- stays correct for clang, for `<triple>-clang++`, and for every
+// frontend candidate this engine resolves that is not in the table.
+std::filesystem::path derive_c_compiler_path(const std::filesystem::path& cxxPath) {
+    auto stem = cxxPath.stem().string();
+    auto parent = cxxPath.parent_path();
+    auto ext = cxxPath.extension();
+
+    // Each row is a C++ driver stem and the C driver beside it. Prefixed forms
+    // (`x86_64-w64-mingw32-g++`) match on the suffix, which is what keeps one
+    // row per driver rather than one per target triple.
+    struct Row { std::string_view cxx, c; };
+    static constexpr Row kNamed[] = {
+        { "g++",  "gcc"  },   // GCC, native and triple-prefixed
+        { "em++", "emcc" },   // Emscripten
+    };
+
+    std::string cc_stem;
+    bool named = false;
+    for (auto const& row : kNamed) {
+        if (stem == row.cxx) {
+            cc_stem = std::string(row.c);
+            named = true;
+            break;
+        }
+        // `<prefix>-g++` -> `<prefix>-gcc`. The separator is required, so
+        // `clang++` does not match the `g++` row by ending in it.
+        const std::string suffix = "-" + std::string(row.cxx);
+        if (stem.size() > suffix.size() && ends_with(stem, suffix)) {
+            cc_stem = stem.substr(0, stem.size() - row.cxx.size())
+                    + std::string(row.c);
+            named = true;
+            break;
+        }
+    }
+    if (!named) {
+        cc_stem = stem.ends_with("++")
+            ? stem.substr(0, stem.size() - 2)
+            : stem;
+    }
+    return parent / (cc_stem + ext.string());
+}
 
 std::expected<ToolchainSpec, std::string>
 parse_toolchain_spec(std::string compilerArg,
@@ -817,13 +867,40 @@ read_payload_descriptor(const std::filesystem::path& payloadRoot) {
         // the one thing a payload must not be able to do: mcpp's hermeticity
         // is a property of the payload boundary, not of the recipe's good
         // manners.
-        std::filesystem::path rel(d.frontend);
-        if (rel.is_absolute())
+        //
+        // VALIDATED AS A STRING AND NOT THROUGH `std::filesystem::path`,
+        // BECAUSE THAT TYPE'S ANSWERS DIFFER BY HOST AND THE DESCRIPTOR DOES
+        // NOT.
+        //
+        // Measured 2026-09-11 on a Windows runner: `path("/usr/bin/g++")
+        // .is_absolute()` is FALSE there -- the path has a root directory and
+        // no root NAME, which Windows calls root-relative -- so the check
+        // passed, and `payloadRoot / "/usr/bin/g++"` then resolves to
+        // `C:/usr/bin/g++`. A host compiler, chosen by a package, on the one
+        // host where the guard did not look.
+        //
+        // The descriptor's `frontend` is one shape on every host: relative,
+        // `/`-separated, plain components. Asserting that positively is
+        // host-independent by construction; asking a path type whether it is
+        // absolute is asking a question whose meaning the host supplies.
+        if (d.frontend.find('\\') != std::string::npos)
+            return refuse("\"frontend\" contains a backslash; the separator "
+                          "is `/` on every host");
+        if (d.frontend.front() == '/')
             return refuse("\"frontend\" is absolute; it is relative to the "
                           "payload root");
-        for (auto const& part : rel)
-            if (part == "..")
+        if (d.frontend.find(':') != std::string::npos)
+            return refuse("\"frontend\" names a drive or a scheme; it is a "
+                          "path relative to the payload root");
+        for (std::size_t i = 0, n = 0; i <= d.frontend.size(); ++i) {
+            if (i != d.frontend.size() && d.frontend[i] != '/') { ++n; continue; }
+            const auto part = d.frontend.substr(i - n, n);
+            n = 0;
+            if (part.empty())
+                return refuse("\"frontend\" has an empty path component");
+            if (part == "." || part == "..")
                 return refuse("\"frontend\" leaves the payload root");
+        }
     }
 
     if (j.contains("platform_floor")) {

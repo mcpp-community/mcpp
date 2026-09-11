@@ -1652,6 +1652,14 @@ prepare_build(bool print_fingerprint,
     // the graph can supply the target's system, and the graph is not known
     // here. Held until it is, and released only if nothing supplies it.
     std::string unservedTargetDiagnosis;
+
+    // THE LOCATED APPLE SDK, RESOLVED ONCE AND READ ONCE.
+    //
+    // `xcrun` is a process. Calling it at the refusal below and again where
+    // the answer is stored would be two calls whose answers can differ -- the
+    // developer directory can be switched between them -- and this repository
+    // has a standing rule that a value crossing two sites is resolved at one.
+    std::optional<std::filesystem::path> appleSdkLocated;
     // Non-empty when a target row's convention replaced a toolchain the user
     // had set with `mcpp toolchain default`. Reported on the status line,
     // because a substitution nobody is told about is a rule that can only be
@@ -2459,6 +2467,45 @@ prepare_build(bool print_fingerprint,
                 "no toolchain is published for it yet.\n"
                 "       An explicit [target.{}] toolchain override can opt in early.",
                 subject, parsed->str()));
+        }
+        // AN APPLE SDK IS LOCATED, SO ITS ABSENCE IS KNOWN NOW.
+        //
+        // REFUSED HERE AND NOT WITH THE TOOLCHAIN, which is a decision about
+        // WHEN rather than about the message. The iOS rows need the machine's
+        // iPhoneOS or iPhoneSimulator SDK, and that is knowable before any
+        // payload is resolved -- so a machine without Xcode used to download
+        // a 700 MB compiler and then be told the thing it was missing was not
+        // the compiler.
+        //
+        // AND UNLIKE `host_can_serve` BELOW, THIS IS NOT DEFERRED. That
+        // refusal waits for the dependency graph because a package can supply
+        // a target's C library and platform interface. An Apple SDK is not
+        // redistributable, so no package supplies it: there is nothing a later
+        // line could learn that would change this answer.
+        //
+        // The escape hatch that opens the tier gate does NOT open this one.
+        // Declaring a toolchain says which compiler; it says nothing about
+        // where the headers and stub libraries are, and every compiler needs
+        // them.
+        if (parsed && parsed->is_ios()) {
+            const auto which = parsed->is_ios_simulator()
+                ? mcpp::platform::macos::sdk_iphonesim
+                : mcpp::platform::macos::sdk_iphoneos;
+            appleSdkLocated = mcpp::platform::macos::sdk_path(which);
+            if (!appleSdkLocated) {
+                return std::unexpected(std::format(
+                    "target {} needs the {} SDK, which this machine does not "
+                    "provide.\n"
+                    "       It is not redistributable, so mcpp LOCATES it "
+                    "rather than installing it: `xcrun --sdk {} "
+                    "--show-sdk-path` must answer, which needs Xcode on macOS "
+                    "(not the Command Line Tools alone -- those ship the "
+                    "macOS SDK only).\n"
+                    "       Check `xcode-select -p`, and note that the "
+                    "compiler is not what is missing: these rows pin "
+                    "`xim:llvm`, which every other Apple row also uses.",
+                    parsed->str(), which, which));
+            }
         }
         // Known, supported — and IMPOSSIBLE ON THIS HOST.
         //
@@ -3536,27 +3583,25 @@ prepare_build(bool print_fingerprint,
                   // fail in the driver's header search, naming a file rather
                   // than the thing that is missing.
                   if (want->is_ios()) {
-                      const auto which =
-                          want->is_ios_simulator()
-                              ? mcpp::platform::macos::sdk_iphonesim
-                              : mcpp::platform::macos::sdk_iphoneos;
-                      auto sdk = mcpp::platform::macos::sdk_path(which);
-                      if (!sdk) {
+                      // READ, NOT RE-DERIVED. The refusal above located it
+                      // before any payload was resolved, and that is the one
+                      // `xcrun` call this build makes.
+                      //
+                      // An empty answer here cannot happen through the
+                      // `--target` path, and a line that prints when it does
+                      // is cheaper than a branch that pretends it cannot: the
+                      // row could be reached one day by a route that skipped
+                      // the gate, and an iOS build with no `-isysroot` is a
+                      // macOS artefact with an iOS triple on it.
+                      if (!appleSdkLocated) {
                           return std::unexpected(std::format(
-                              "target {} needs the {} SDK, which this machine "
-                              "does not provide.\n"
-                              "       It is not redistributable, so mcpp "
-                              "LOCATES it rather than installing it: "
-                              "`xcrun --sdk {} --show-sdk-path` must answer, "
-                              "which needs Xcode (not the Command Line Tools "
-                              "alone -- those ship the macOS SDK only).\n"
-                              "       Check `xcode-select -p`, and note that "
-                              "the compiler itself is not the problem: it is "
-                              "`xim:llvm`, and every other Apple row builds "
-                              "with it on this machine.",
-                              want->str(), which, which));
+                              "internal: target {} reached toolchain "
+                              "resolution without its SDK being located; the "
+                              "gate that locates it did not run for this "
+                              "request", want->str()));
                       }
-                      tc->appleSdkRoot = *sdk;
+                      tc->appleSdkRoot = *appleSdkLocated;
+                      auto sdk = appleSdkLocated;
                       // AND THE std MODULE'S OWN COMMAND, WHICH IS A SEPARATE
                       // CHANNEL. Same reason the Android rows set it: the
                       // module is precompiled by `clang.cppm`'s own assembly
