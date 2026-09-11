@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-279 records.
+280 records.
 
 ## By subject
 
@@ -52,12 +52,14 @@ Records that declare one. Everything else is listed by date below.
 
 ### triage
 
+- [The engine gaps left open after the SDK batch](2026-09-12-engine-gaps-after-the-sdk-batch.md) — active
 - [Six open issues: what each one actually is, and what would answer it](2026-09-11-six-open-issues-analysis.md) — active
 
 ## By date
 
 ### 2026-09
 
+- [The engine gaps left open after the SDK batch](2026-09-12-engine-gaps-after-the-sdk-batch.md) — active
 - [A verified Web run that asked the host for node](2026-09-12-a-verified-web-run-that-asked-the-host-for-node.md) — landed
 - [Six open issues: what each one actually is, and what would answer it](2026-09-11-six-open-issues-analysis.md) — active
 - [SDK toolchains, the payload/engine seam, and openkal across iOS, Android and Web](2026-09-11-sdk-toolchains-and-ios-local-verification.md) — landed
