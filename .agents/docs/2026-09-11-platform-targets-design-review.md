@@ -302,9 +302,9 @@ package -- no new mechanism, again.
 | # | question | recommendation | why |
 |---|---|---|---|
 | R1 | the simulator's spelling | `env = "sim"`, giving `aarch64-ios-sim` and `x86_64-ios-sim` as their own rows | matches Rust's pair modulo a vendor elision mcpp already does; satisfies the row comment's own objection, which was to NOT having a separate row |
-| R2 | Android's API level | a `[target.<triple>] api = <n>` manifest key, and **it must enter the build fingerprint** | every system surveyed keeps it out of the triple (Rust: outside; CMake: `ANDROID_PLATFORM`; Gradle: `minSdk`), because it is a per-PROJECT minimum. The fingerprint is non-negotiable: it selects which bionic symbols exist, so two levels are two ABIs |
+| R2 | Android's API level | **`min_api_level` under `[target.<triple>]`, reusing the `macos_deployment_target` design** -- see 12.1 | mcpp maintains its own vocabulary and MAPS to a compiler target, so where LLVM carries the level says nothing about where mcpp stores it. macOS already does this exactly: a manifest key, a clean canonical triple, the level appended by `llvm_triple(param)` -- which already takes a version -- and the value in the fingerprint. One NDK serves a range of levels, so it is a project decision and not a toolchain property. No new rows |
 | R3 | the payload identity shown for `emsdk` | a display identity on the resolved toolchain, not a fourth `Family` | `em++` is clang and a fourth family would be a false claim about the compiler; what is missing is only that nothing prints which archive answered |
-| R4 | `@system` for a non-MSVC family | generalise it, with the row deciding whether it is permitted | the refusal argues from MSVC's uniqueness, and iOS is the second instance of exactly that situation. `xim:iphoneos-sdk` already names "locate what the machine has" as its third tier, and the engine has no spelling for it |
+| R4 | `@system` for a non-MSVC family | **withdrawn** -- see 12.1a | the second instance dissolved: `xim:iphoneos-sdk` serves iOS as a package, so no host locator is required. Generalising would admit `gcc@system`, which the existing refusal names by name and which costs hermeticity. A refusal should not be relaxed without a case |
 | R5 | device and simulator sessions | a `xim:` package shipping a runner program, named by `runner` | cargo states this boundary explicitly; no engine change, no new member family, and it puts platform knowledge in the ecosystem |
 | R6 | the tier each row can reach | `verified` for wasm (reached); `preview` for both Android rows and for iOS | Rust rates all three Tier 2. `verified` for Android is reachable and needs a CI lane, not a design |
 | R7 | signing a Mach-O or a `.app` | package `rcodesign` as `xim:rcodesign` and have `dist-apple` prefer it | MPL-2.0 with prebuilt static binaries for linux-musl (both arches), macOS universal and Windows. It removes the last host dependency from the iOS BUILD path, leaving only a device, the Simulator runtime and a notarization credential -- none of which is a program |
@@ -794,3 +794,243 @@ the second.
 The two Android rows are the nearest, and the thing blocking them is not
 payload work — both payloads are published and both execution routes are
 measured. It is one identity decision.
+
+## 12. Self-review of this proposal, before implementing any of it
+
+### 12.1 R2, three times, and the design mcpp already has
+
+This recommendation was written one way, reversed on a measurement, and then
+reversed back when the measurement turned out to answer a different question.
+The sequence is recorded because the mistake in the middle is instructive.
+
+**First answer: a manifest key.** Because the API level is a per-project
+minimum -- what Gradle calls `minSdk` -- and because every system surveyed
+keeps it out of the triple.
+
+**The reversal, and why it was wrong.** A real clang was asked:
+
+    clang -target aarch64-linux-android21 -print-effective-triple
+      -> aarch64-unknown-linux-android21
+
+LLVM puts the level in the **env** field, so `env = "android<N>"` looked like
+LLVM's own model rather than an invention, with `llvm_triple()` staying pure.
+
+That measurement is correct and it settles nothing here, because **mcpp
+maintains its own target vocabulary and MAPS it to a compiler target.** Where
+LLVM carries the level is a fact about the EFFECTIVE triple. Where mcpp carries
+it is a question about the CANONICAL one, and the two are deliberately
+different -- as `prepare.cppm` says in as many words: "The triple is mcpp's
+vocabulary (`aarch64-macos`); the flag carries the spelling a compiler takes
+(`arm64-apple-macos14.0`)."
+
+The general lesson: **a measurement of another tool's model does not settle a
+question about ours.** It told me where LLVM writes the level, and I read it as
+telling me where mcpp should store it.
+
+**The design mcpp already has, and which R2 should reuse.** macOS solved this
+exact problem and the machinery is complete on all three counts:
+
+| | macOS, today | Android, proposed |
+|---|---|---|
+| manifest key | `macos_deployment_target = "14.0"` in `[package]` | `api = 24` in `[target.<triple>]` |
+| canonical triple | `aarch64-macos` -- clean | `aarch64-linux-android` -- clean |
+| effective target | `arm64-apple-macos14.0`, composed by `llvm_triple(param)` | `aarch64-unknown-linux-android24`, same call |
+| fingerprint | `put(s, "macos", b.macosDeploymentTarget)` | the same, one line |
+
+`llvm_triple()` **already takes a version parameter** -- it is called as
+`want->llvm_triple(macos::deployment_target(...))` -- so the objection that a
+manifest key would give it a second input was already false when I raised it.
+The function is not pure of versions today; it is pure of the *manifest*, which
+is the property that matters, and the caller supplies the value.
+
+**And one NDK serves a range of levels**, so the level is not a property of the
+toolchain either: naming `android-ndk@30.0.16248370` does not pin API 24. It is
+a project decision, which is what a manifest key is for.
+
+So R2 is: **`api` under `[target.<triple>]`, appended to the effective triple
+by the existing parameter, and entered into the fingerprint the way
+`macos_deployment_target` already is.** No new rows, no new mechanism, and the
+table does not multiply as levels are added.
+
+#### The field name, chosen against Android's own vocabulary
+
+`api = 24` was the first spelling and it is too vague: it says nothing about
+WHICH property of the API is meant, and mcpp has no other `api` key to anchor
+the reading. The naming convention to follow is `macos_deployment_target`'s --
+**named in the platform's own words** -- so the question is what Android calls
+this.
+
+Read from the NDK's own documentation rather than recalled:
+
+| source | spelling | what the docs say |
+|---|---|---|
+| NDK CMake toolchain | `ANDROID_PLATFORM` | "specifies the **minimum API level** supported by the application or library" |
+| the same, alias | `ANDROID_NATIVE_API_LEVEL` | "Alias for `ANDROID_PLATFORM`" |
+| Android.mk | `TARGET_PLATFORM` | "The Android **API level** number the build system is targeting" |
+| Gradle | `minSdk` | the NDK docs state `ANDROID_PLATFORM` "corresponds to the application's `minSdkVersion`" |
+
+So Android's concept name is **"API level"** -- the term its documentation uses
+most -- and the specific quantity here is the **minimum**.
+
+Judged against that:
+
+| candidate | verdict |
+|---|---|
+| `api` | rejected. Says nothing about which property, and anchors to nothing |
+| `ndk_api_version` | rejected on two counts. "version" is not Android's word, which is "level"; and `ndk_` names the TOOLCHAIN, while one NDK serves a RANGE of levels -- so naming it after the NDK reintroduces exactly the confusion 12.1 resolved |
+| `platform` | rejected. It is the NDK's own variable name, and `platform` is badly overloaded in mcpp -- a module, and the `xpm` platform tables |
+| `min_sdk_version` | rejected. Gradle's `minSdk` is an application-manifest concept for the Java side; for native code the NDK's word is API level, and mcpp is not building an app |
+| **`min_api_level`** | **chosen.** "API level" is Android's own term; "min" states the semantics the NDK docs state themselves; no platform prefix, because `[target.aarch64-linux-android]` already supplies it |
+
+The kinship with `macos_deployment_target` is worth stating: both answer "the
+oldest OS release this artifact must run on", and both are named in their
+platform's vocabulary rather than in a shared abstraction. A single
+`min_os_version` for both would be more uniform and would cost the existing
+key a rename and both platforms their own words -- which is the trade this
+codebase has consistently declined.
+
+#### The usage model
+
+    # mcpp.toml
+    [package]
+    name    = "app"
+    version = "0.1.0"
+
+    # The minimum Android API level this project supports -- the same decision
+    # Gradle spells `minSdk`. One NDK serves a range, so this is the project's
+    # to make and not the toolchain's.
+    [target.aarch64-linux-android]
+    min_api_level = 24
+
+and what each layer then sees:
+
+    mcpp build --target aarch64-linux-android
+
+    canonical triple   aarch64-linux-android         identity: output directory,
+                                                     cfg(env = "android"), ABI tag
+    effective target   aarch64-unknown-linux-android24   what clang is given
+    fingerprint        includes 24                    so 21 and 24 are two build
+                                                      directories, never one
+
+    # unset is legal and means the NDK's own default, which is what
+    # `clang -target aarch64-linux-android` normalises to.
+
+The parallel with the macOS key is exact, down to `[package]` versus
+`[target.<triple>]` being the only difference -- and that difference is right:
+a deployment target applies to every Apple artifact a project produces, while
+an API level applies to one target row.
+
+### 12.1a R4 is withdrawn, because its second instance dissolved
+
+R4 proposed generalising `@system` beyond MSVC, on the grounds that the iOS SDK
+is a second instance of "a proprietary thing that only exists where it is
+installed".
+
+After the rest of this document, that is no longer true. `xim:iphoneos-sdk`
+exists and the licence permits at least the fetch-upstream tier, so iOS is
+served by a PACKAGE and needs no host locator. The locator tier its header
+documents is a fallback that nothing currently requires.
+
+And the risk is concrete rather than theoretical: generalising the spelling
+admits `gcc@system`, which the existing refusal names and refuses by name, and
+which would let a build use the host's compiler and silently lose hermeticity
+-- the property the whole payload model exists for.
+
+So the honest conclusion is not "defer until the narrow form is designed". It
+is that **the motivating case evaporated, and a refusal should not be relaxed
+without one.** If a real instance appears, the narrow form -- a per-row
+permission defaulting to denied -- is the shape to design then.
+
+### 12.2 Two recommendations should be split by what they cost to be wrong about
+
+R1 (`env = "sim"`) and R8 (accept four-field spellings) are both cheap and
+reversible: a new row is additive, and widening a parser is additive. They can
+go in without further argument.
+
+R4 (generalise `@system`) is neither. It removes a refusal whose comment argues
+at length for why it exists, and a wrong generalisation admits
+`gcc@system` -- the exact spelling that comment refuses by name. The safe form
+is narrow: a per-row permission, defaulting to denied, so the refusal's
+reasoning stays true for every row that has not opted in.
+
+### 12.3 What this proposal does not measure, stated plainly
+
+* `rcodesign` has not been run. Its capabilities are quoted from its own
+  changelog and documentation. Signing a real `.app` and having macOS accept
+  it is the criterion, and no macOS machine has been involved.
+* `pymobiledevice3` has not been run, and there is no iOS device here.
+* Darling has not been run.
+* The macOS and Windows legs of every payload completed today are declared
+  from verified hashes and have not been executed.
+
+Every one of those is a claim about somebody else's software, and this session's
+record is that **every wrong guess in it was about what a vendor had done, and
+every one was cheap to check and was not checked.** The four above are the
+places that pattern would recur.
+
+### 12.4 The task list, so nothing is left half-done
+
+Grouped by repository, because the one-PR-per-repo rule makes the grouping the
+plan.
+
+**mcpp (one PR, 2026.9.11.3)** -- the general capability, all of it:
+
+| # | task | state |
+|---|---|---|
+| E1 | `wasm32-emscripten` resolves, builds and runs | **done**, measured `1-2-3` |
+| E2 | the seven gates the wasm row needed | **done** |
+| E3 | `Format::Wasm` and its mechanism | **done** |
+| E4 | wasm is a capability pin | **done** |
+| E5 | matrix expectations for 12 wasm cells | **done** |
+| E6 | unit tests for E1-E4 | **done** |
+| E7 | the EOL debian leg swapped for debian-12 | **done** |
+| E8 | R8: `parse()` accepts `wasm32-unknown-emscripten`, `aarch64-apple-ios` | todo |
+| E9 | R1: `aarch64-ios-sim` and `x86_64-ios-sim` rows | todo |
+| E10 | R3: a payload display identity, so emsdk is not shown as `llvm` | todo |
+| E11 | the `.wasm` sibling as an implicit link output | todo |
+| E12 | R6: Android and iOS rows to `preview` where the evidence supports it | todo |
+| E13 | docs: `20-toolchains`, `21-the-target-triple`, `22-target-side` + zh | todo |
+| E14 | CHANGELOG | todo |
+
+| E15 | R2: `min_api_level` under `[target.<triple>]`, via `llvm_triple(param)` and the fingerprint, per §12.1 | todo |
+
+R4 is not in that list because it is **withdrawn** (§12.1a), not deferred: its
+motivating case dissolved once `xim:iphoneos-sdk` covered iOS, and relaxing a
+refusal without a case is how `gcc@system` gets in.
+
+**xim-pkgindex** -- one PR, already open as #812 plus the platform completion:
+
+| # | task | state |
+|---|---|---|
+| X1 | Android CN mirrors under clause 3.5 | **done**, #812 |
+| X2 | emsdk, NDK and emulator on all three hosts | **done**, hashes verified |
+| X3 | `xim:python` aarch64 and a GLOBAL url | **done** |
+| X4 | R7: `xim:rcodesign` | todo |
+| X5 | R12: `xim:pymobiledevice3` | todo |
+| X6 | R5: the two runner programs | todo, and they are new software rather than packaging |
+
+**mcpp-plugins** -- one PR after the engine release:
+
+| # | task | state |
+|---|---|---|
+| P1 | `dist-*` family, three members | **done**, 0.6.0 tagged |
+| P2 | R9: `dist-ipa` | todo |
+| P3 | R7's plugin half: prefer `xim:rcodesign` over the host's codesign | todo |
+
+**mcpp-index**: publish `mcpp:plugins@0.6.0`. One task, blocked on the tag's
+sha256.
+
+**Recorded and not attempted**: R10 (`dmg`/`pkg` creators), R11 (Darling),
+R13's implementation (the pattern is documented; the runner programs are X6).
+
+### 12.5 The dependency order, and the one place it is not obvious
+
+    mcpp engine ──► release ──► mcpp-plugins ──► mcpp-index
+         │                           │
+         └──► xim payloads ──────────┘
+              (independent, merge first)
+
+The non-obvious edge is **X6 before P2 is wrong**. A device runner has nothing
+to install until `dist-ipa` exists, so P2 precedes X6 -- the reverse of the
+usual "payloads first" rule, and the reason is that here the payload consumes
+the plugin's output rather than feeding it.

@@ -130,7 +130,25 @@ struct Triple {
     //     LDBL_DIG  ('33 == 18')
     //
     // 33 is aarch64's binary128; 18 is x87. Two machines in one command line.
-    std::string llvm_triple(std::string_view macosVersion = {}) const {
+    // THE EFFECTIVE TRIPLE, WHICH IS NOT THE CANONICAL ONE.
+    //
+    // `str()` is mcpp's vocabulary and is the identity: the output directory,
+    // `cfg()`, the packed ABI tag and the fingerprint all derive from it. This
+    // is the spelling a COMPILER takes, and the two are deliberately different
+    // -- `aarch64-macos` against `arm64-apple-macos14.0`.
+    //
+    // `minPlatformVersion` IS THE PROJECT'S STATEMENT, passed in rather than
+    // stored, because it is a manifest value and this function must stay pure
+    // of the manifest. Two platforms fuse it into the triple and each names it
+    // in its own words:
+    //
+    //   macOS    the deployment target        `[build] macos_deployment_target`
+    //   Android  the minimum API level        `[target.<t>] min_api_level`
+    //
+    // Keeping it one parameter rather than two is the point: both answer "the
+    // oldest OS release this artefact must run on", and a second parameter
+    // would let a caller supply one platform's answer for the other's.
+    std::string llvm_triple(std::string_view minPlatformVersion = {}) const {
         if (empty()) return {};
         if (os == "macos") {
             // Apple spells the 64-bit ARM architecture `arm64`, and the OS
@@ -139,8 +157,8 @@ struct Triple {
             // decision belonging to the project rather than to the compiler.
             const std::string a = (arch == "aarch64") ? "arm64" : arch;
             std::string t = a + "-apple-macos";
-            t += macosVersion.empty() ? std::string("14.0")
-                                      : std::string(macosVersion);
+            t += minPlatformVersion.empty() ? std::string("14.0")
+                                            : std::string(minPlatformVersion);
             return t;
         }
         if (os == "windows") {
@@ -159,13 +177,25 @@ struct Triple {
             const std::string a = (arch == "aarch64") ? "arm64" : arch;
             return a + "-apple-ios";
         }
-        // ANDROID IS LINUX, AND THE ENV SEGMENT IS WHERE IT SAYS SO. clang also
-        // accepts an API level fused onto the OS segment
-        // (`aarch64-linux-android24`), which selects which bionic symbols are
-        // visible; it is omitted here for the reason the iOS version is --
-        // the minimum platform version is the project's statement, and clang
-        // has a default.
-        if (os == "linux") return arch + "-unknown-linux-" + (env.empty() ? "gnu" : env);
+        // ANDROID IS LINUX, AND THE ENV SEGMENT IS WHERE IT SAYS SO -- with the
+        // API level fused onto it when the project stated one.
+        //
+        // Measured: `clang -target aarch64-linux-android21 -print-effective-triple`
+        // answers `aarch64-unknown-linux-android21`, so the level belongs on
+        // the ENV segment of the effective triple and nowhere else. It selects
+        // which bionic symbols are visible, which is why it is in the
+        // fingerprint; and it is the project's statement rather than the
+        // toolchain's, because one NDK serves a range of levels.
+        //
+        // Absent, clang's own default applies -- `aarch64-unknown-linux-android`
+        // is what it normalises with no level, so omitting the key is a legal
+        // answer and not a gap.
+        if (os == "linux") {
+            std::string e = env.empty() ? std::string("gnu") : env;
+            if (env == "android" && !minPlatformVersion.empty())
+                e += std::string(minPlatformVersion);
+            return arch + "-unknown-linux-" + e;
+        }
         // Emscripten's own effective triple. The vendor segment is `unknown`
         // and the OS segment is the platform layer rather than a kernel, which
         // is why `object_format()` reads the ARCH for this row.

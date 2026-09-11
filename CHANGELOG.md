@@ -5,6 +5,100 @@
 
 ## [Unreleased]
 
+## [2026.9.11.3] - 2026-09-11
+
+### `wasm32-emscripten` 从 `planned` 到 `verified`
+
+`mcpp run --target wasm32-emscripten` 在一个 `import std` 的源码上打印 `1-2-3`,
+而工程侧**一个新词汇都不需要** —— 改一个 flag,一个为 Linux 构建的工程就能为 Web
+构建。这是「加一个平台等于一次引擎改动」这个代价的第一次实测:七处引擎改动。
+
+七处里每一处都是**前一处的失败**找出来的,而每一处都是一个**对它作者心里那些行
+正确**的谓词:
+
+  1. `to_xim_package` 里由**目标**决定载荷 —— 否则 `xim:llvm` 会回答一个 wasm 目标
+  2. `XimToolchainPackage::frontendSubdir` —— 否则去 `bin/` 里找 `em++`
+  3. `Triple::has_own_sysroot()`,放在**共享生产者** `host_compile_tokens` 里 ——
+     第一次尝试只改了 `flags.cppm` 一个调用点,于是普通编译不再注入宿主头文件,
+     而 std 模块预编译照旧注入,正是它原本失败的地方。一个决定、一个站点、三个读者。
+  4. 同一个谓词放进 `resolve_link_model` —— **模型**而不是它的两条通道;那里的注释
+     早就记着「只修第一条的人会看到一模一样的报错」
+  5. 同一个发现的第二次:`discover_link_runtime_dirs` 把**编译器自己的**运行期目录
+     放上了**产物的**链接行。这条之前的每一行里,两者是同一个目录。
+  6. `host_can_serve`:第一版无条件返回 true,与它上方那些分支是同一种过宽 ——
+     **目标矩阵抓到的**:`xim:emsdk` 只发布 linux
+  7. `Format::Wasm` 及其机制 —— 而这一处**模块自己预言并推迟过**:「Adding
+     `Format::Wasm` is deferred to whoever gives this module a mechanism for it」。
+     它缺席期间,每一次 wasm 构建都会警告一个这个目标上不可能存在的 `libc++.so`。
+
+wasm 同时加入**能力钉**(capability pin):没有别的东西能发出 WebAssembly,所以
+声明一个 `gcc@16.1.0` 是一个无法被满足的请求,说出来比解析出 gcc 再在它内部失败要好。
+
+### 一个按目标付费的机器级扫描,17948ms → 4ms
+
+`mcpp test` 在这台机器上从约 3 分钟变成投影 33 分钟,而根因不是回归而是**一直
+存在的形状**被一次大载荷安装放大了:
+
+```
+mcpp build   loader-tags 阶段    170ms     一个 21 MB 二进制
+mcpp test    loader-tags 阶段  17948ms     108 个二进制、2.4 GB
+```
+
+而且在测到的每一个目标上都**平的** 17.9 秒 —— 所以代价是**整个产物集合**而不是
+正在构建的那一个。`mcpp test` 每个目标驱动一次后端,于是 110 个目标付了 110 次。
+
+`check_dlopen_surface` 会对**每一个已链接产物**做完整 `inspect_elf_runtime` 去收集
+SONAME,而这发生在它发现「surface 是空的」**之前**。它每次写下的记录都说
+`members=0, walked=0`。而那些产物全是**可执行文件**,按构造不可能有 `DT_SONAME`。
+
+两处都修了,而值得命名的是形状:**昂贵的工作跑在了那个使它变得不必要的便宜判据
+之前。** 记录照旧发布 —— 一个会消失的字段比一个说明自己为何为空的字段更坏。
+
+### `min_api_level`,复用 `macos_deployment_target` 已有的那套机制
+
+Android 的 API level 在**交给编译器的** triple 里(实测:
+`clang -target aarch64-linux-android21 -print-effective-triple` 答
+`aarch64-unknown-linux-android21`),而它**不该进规范 triple**:mcpp 维护自己的目标
+词汇并映射到编译器目标,而 macOS 早就是这个形状。
+
+```
+[target.aarch64-linux-android]
+min_api_level = 24
+```
+
+规范 triple 保持 `aarch64-linux-android`(它命名输出目录、`cfg(env=)`、ABI tag);
+级别由 `llvm_triple()` **已有的那个参数**拼进 effective triple;而它进**指纹** ——
+级别决定哪些 bionic 符号可见,所以两个级别是两个 ABI,绝不可共用一个构建目录。
+
+字段名取自 Android 自己的词汇:NDK 的 CMake toolchain 把 `ANDROID_PLATFORM` 记载为
+「the minimum API level supported by the application or library」。`ndk_api_version`
+被否掉有两条理由:「version」不是 Android 的用词(是 **level**),而 `ndk_` 命名的是
+**工具链**,可一个 NDK 服务一个级别**区间** —— 用 NDK 命名会把这个区分重新弄混。
+
+指纹里那个槽因此从 `macosDeploymentTarget` 改名为 `minPlatformVersion`:一个目标
+要么是 Apple 要么是 Android,所以一个槽装不下两者,而两者回答的是同一个问题。改名
+不额外增加任何重建 —— mcpp 版本本来就在这个键里。
+
+### 四段式拼法被接受
+
+`em++ -v` 传给它自己 clang 的是 `-target wasm32-unknown-emscripten`,rustc 的表里
+也是这个拼法。拒绝每个别的工具链都会打印的那个形式是纯 UX 代价。`parse()` 现在接受
+它并规范化,而 `str()` 两边都返回三段式 —— 这才是让输出目录、`cfg()` 和 ABI tag
+保持单值的东西。
+
+### 那条 EOL 的 distro 腿换掉了
+
+`debian-11` 从 2026-09-11 起以 `E: Release file ... is expired` 失败 —— bullseye
+已经 EOL,而它 security suite 的元数据过期了。这是发行版的属性而不是本工作流的,
+而 `-o Acquire::Check-Valid-Until=false` 只会让它安静下来并留着一条「对着没人维护的
+元数据测试」的腿。
+
+换掉时顺手测了一件事:debian 11 与 ubuntu 20.04 **都是 glibc 2.31**,所以这条腿
+原本要覆盖的「更老的 glibc」**早就被上面那条 ubuntu-2004 腿覆盖了**。bookworm 的
+2.36 落在那个 2.31 与 debian-testing 的滚动版本之间,所以这条腿现在盖住了矩阵原本
+没有的一个点。
+
+
 ## [2026.9.11.2] - 2026-09-11
 
 ### 扫描器读到了注释里面,而且是双向的

@@ -302,7 +302,12 @@ TEST(MsvcManaged, PayloadFrontendFindsClWhereMsvcActuallyKeepsIt) {
     ASSERT_TRUE(spec.has_value());
     auto pkg = to_xim_package(*spec);
 
-    auto found = payload_frontend(t.root, pkg, Family::Msvc);
+    // The family comes from the PACKAGE now, not from a second argument every
+    // caller had to source from a differently-named local -- five of them
+    // composed `payload->binDir` themselves instead and so could not see
+    // `frontendSubdir` at all.
+    EXPECT_EQ(pkg.family, Family::Msvc);
+    auto found = payload_frontend(t.root, pkg);
     ASSERT_FALSE(found.empty()) << "payload_frontend found no cl.exe under " << t.root;
     EXPECT_EQ(found.filename(), "cl.exe");
 
@@ -314,8 +319,16 @@ TEST(MsvcManaged, PayloadFrontendFindsClWhereMsvcActuallyKeepsIt) {
     // A root with no toolset at that version stays empty rather than
     // returning a path that does not exist.
     EXPECT_TRUE(payload_frontend(t.root,
-                    to_xim_package(*parse_toolchain_spec("msvc@14.52.36629")),
-                    Family::Msvc).empty());
+                    to_xim_package(*parse_toolchain_spec("msvc@14.52.36629")))
+                 .empty());
+
+    // AND THE DIRECTORY THE SEARCH USED IS AVAILABLE FOR THE MESSAGE. MSVC is
+    // the case that proves it is a lookup rather than a constant: the path
+    // carries the toolset version, so a refusal naming `bin` would name a
+    // directory nothing looked in.
+    auto dir = payload_frontend_dir(t.root, pkg);
+    EXPECT_FALSE(dir.empty());
+    EXPECT_NE(dir.string().find("14.44.35207"), std::string::npos) << dir;
 }
 
 // ─── Windows SDK discovery ───────────────────────────────────────────────

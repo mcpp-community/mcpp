@@ -1248,6 +1248,33 @@ check_dlopen_surface(const mcpp::build::BuildPlan& plan) {
         return report;
     }
 
+    // AND NO SURFACE MEANS NOTHING TO READ. THE CHEAP TEST COMES FIRST.
+    //
+    // `inspect_dlopen_surface` walks `plan.depRuntimeLibraryDirs`. With that
+    // list empty there are no members, so every reading below is taken to
+    // answer a question with no subject -- and the readings are not cheap: the
+    // SONAME scan that follows parses EVERY linked artifact in full.
+    //
+    // Measured on this repository, 2026-09-11, before this guard existed:
+    //
+    //   mcpp build   loader-tags stage    170ms     one 21 MB binary
+    //   mcpp test    loader-tags stage  17948ms     108 binaries, 2.4 GB
+    //
+    // and flat at ~17.9s across every target measured, because the cost is the
+    // whole artifact set rather than the one being built. `mcpp test` drives
+    // the backend once per target, so a 110-target suite paid it 110 times --
+    // turning a 3-minute run into 33. The record it produced every time said
+    // `members=0, walked=0`.
+    //
+    // This is the shape worth naming: the expensive work ran BEFORE the cheap
+    // test that makes it unnecessary. The record is still published, because a
+    // field that disappears is worse than a field that says why it is empty.
+    if (plan.depRuntimeLibraryDirs.empty()) {
+        publish_reason("no dependency published a runtime library directory; "
+                       "there is no dlopen surface to judge");
+        return report;
+    }
+
     for (auto const& [artifact, stamp] : artifacts) {
         auto dir = artifact.parent_path();
         if (dir.empty() || std::ranges::find(searchDirs, dir) != searchDirs.end())
@@ -1258,8 +1285,25 @@ check_dlopen_surface(const mcpp::build::BuildPlan& plan) {
     // The SONAMEs this build produces, read from the objects rather than from
     // their filenames. See `inspect_dlopen_surface` for why a filename search
     // is not enough while the build is still running.
+    // ONLY A SHARED LIBRARY CAN HAVE ONE, so only a shared library is read.
+    //
+    // This parsed every artifact, including executables, which have no
+    // `DT_SONAME` by construction -- an ELF that is not a shared object cannot
+    // carry one. On a test suite that is the entire cost of the loop spent to
+    // append nothing: 108 executables, 2.4 GB, one empty vector.
+    //
+    // The kind comes from `plan.linkUnits` rather than from the file, because
+    // that is the answer the plan already computed and reading it back out of
+    // the ELF is the same parse this avoids.
+    std::vector<std::filesystem::path> sharedOutputs;
+    for (auto const& unit : plan.linkUnits) {
+        if (unit.kind != mcpp::build::LinkUnit::SharedLibrary) continue;
+        sharedOutputs.push_back(plan.outputDir / unit.output);
+    }
     std::vector<std::string> produced;
     for (auto const& [artifact, stamp] : artifacts) {
+        if (std::ranges::find(sharedOutputs, artifact) == sharedOutputs.end())
+            continue;
         auto facts = mcpp::platform::elf::inspect_elf_runtime(artifact);
         if (facts && !facts->soname.empty()) produced.push_back(facts->soname);
     }

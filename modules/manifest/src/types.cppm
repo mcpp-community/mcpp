@@ -1092,6 +1092,30 @@ struct TargetEntry {
     // Two plain members carry the same information and instantiate nothing.
     std::string                         sysroot;
     bool                                sysrootDeclared = false;
+    // THE OLDEST OS RELEASE THIS ARTIFACT MUST RUN ON, for a target whose
+    // compiler takes it as part of the triple.
+    //
+    // `min_api_level = 24` under `[target.aarch64-linux-android]`. Android's
+    // own term is "API level" -- the NDK's CMake toolchain documents
+    // `ANDROID_PLATFORM` as "the minimum API level supported by the
+    // application or library" -- and the quantity here is that minimum.
+    //
+    // A PROJECT DECISION AND NOT A TOOLCHAIN PROPERTY, which is why it is a
+    // manifest key. One NDK serves a RANGE of levels: naming
+    // `android-ndk@30.0.16248370` does not pin API 24, so the level cannot be
+    // read off the toolchain.
+    //
+    // AND NOT PART OF THE CANONICAL TRIPLE, which is the other half. mcpp
+    // keeps its own target vocabulary and maps it to a compiler target, and
+    // this is the same shape `macos_deployment_target` already has:
+    //
+    //   canonical    aarch64-linux-android        identity: output dir, cfg(), ABI tag
+    //   effective    aarch64-unknown-linux-android24   what clang is given
+    //   fingerprint  carries the level            so 21 and 24 are two directories
+    //
+    // Zero means unset, which is legal and means the NDK's own default -- what
+    // `clang -target aarch64-linux-android` normalises to.
+    int                                 minApiLevel = 0;
     // NO per-role field here. There used to be a `cxxRuntimeTests`, and it was
     // parsed nowhere and applied nowhere — a configuration key that looked
     // available and did nothing (#418). The per-target channel carries the

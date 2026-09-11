@@ -594,6 +594,40 @@ linkage   = "static"
 已移入 [22 —— 目标侧](22-target-side.md)。
 
 
+### 2.7.3 `min_api_level` —— 产物必须能跑在多老的 OS 上
+
+```toml
+[target.aarch64-linux-android]
+min_api_level = 24
+```
+
+Android 自己的用词是 **API level**,而这里要的是它的**最小值** —— NDK 的 CMake
+toolchain 把 `ANDROID_PLATFORM` 记载为「the minimum API level supported by the
+application or library」,并说明它对应 Gradle 的 `minSdk`。
+
+**这是工程的决定,不是工具链的属性。** 一个 NDK 服务一个级别区间,所以写
+`android-ndk@<version>` 并不钉住某一个级别。
+
+**它到达编译器,不进入身份。** 规范 triple 仍然是 `aarch64-linux-android` ——
+输出目录、`cfg(env = "android")` 和打包的 ABI tag 都由它命名;级别只拼进交给
+编译器的那个 triple:
+
+| | |
+|---|---|
+| 规范 triple | `aarch64-linux-android` |
+| clang 实际收到 | `aarch64-unknown-linux-android24` |
+| 构建指纹 | 含级别 |
+
+指纹不是可选项:级别决定哪些 bionic 符号可见,所以两个级别就是两个 ABI,绝不可
+共用一个构建目录。
+
+不设也合法,含义是 NDK 自己的默认级别 —— 那正是
+`clang -target aarch64-linux-android` 规范化出的形式。
+
+这与 `macos_deployment_target`(见上文)是同一套机制,而两者都用各自平台的词汇
+命名,而不是一个共享抽象。它们回答同一个问题:产物必须能跑在多老的 OS 发布版上。
+
+
 ### 2.7.2 裸机(`os = none`)—— freestanding target
 
 `riscv64-none-elf` 与 `riscv32-none-elf` 是底下没有操作系统的 target。它们不需要

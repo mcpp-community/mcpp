@@ -1559,6 +1559,27 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
     return {};
 }
 
+// THE PROJECT'S MINIMUM PLATFORM VERSION FOR THIS TARGET, in one place.
+//
+// Two platforms fuse it into the effective triple and each names it in its own
+// words: macOS's deployment target lives in `[build]` because it applies to
+// every Apple artefact a project produces, and Android's API level lives in
+// `[target.<triple>]` because it applies to one row. `llvm_triple` takes one
+// parameter for both, so the choice between them is made here rather than at
+// each of its call sites -- there are two, and a decision made twice is the
+// shape this codebase records most often.
+std::string min_platform_version(const mcpp::manifest::Manifest& m,
+                                 const mcpp::toolchain::triple::Triple& t) {
+    if (t.is_android()) {
+        if (auto it = m.targetOverrides.find(t.str()); it != m.targetOverrides.end())
+            if (it->second.minApiLevel > 0)
+                return std::to_string(it->second.minApiLevel);
+        return {};   // the NDK's own default, which clang supplies
+    }
+    return mcpp::platform::macos::deployment_target(
+        m.buildConfig.macosDeploymentTarget);
+}
+
 std::string with_index_cause(std::string msg) {
     if (auto hint = mcpp::pm::unusable_index_hint(); !hint.empty())
         msg += "\n" + hint;
@@ -3278,8 +3299,7 @@ prepare_build(bool print_fingerprint,
                   && tc->compiler == mcpp::toolchain::CompilerId::Clang) {
                   tc->crossTargetFlag =
                       "--target=" + want->llvm_triple(
-                          mcpp::platform::macos::deployment_target(
-                              m->buildConfig.macosDeploymentTarget));
+                          min_platform_version(*m, *want));
               }
           }
           if (auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
@@ -8697,8 +8717,7 @@ prepare_build(bool print_fingerprint,
         if (tc) {
             if (auto tt = mcpp::toolchain::triple::parse(tc->targetTriple)) {
                 in.llvmTriple         = tt->llvm_triple(
-                    mcpp::platform::macos::deployment_target(
-                        m->buildConfig.macosDeploymentTarget));
+                    min_platform_version(*m, *tt));
                 in.targetOs           = tt->os;
                 in.targetEnv          = tt->env;
                 in.freestandingTarget = tt->is_freestanding();
@@ -11001,8 +11020,14 @@ prepare_build(bool print_fingerprint,
             mcpp::toolchain::cppfly::effective_dialect_flags(
                 *tc, m->cppStandard.experimental,
                 mcpp::manifest::dialect_flags(m->buildConfig)),
-            mcpp::platform::macos::deployment_target(
-                m->buildConfig.macosDeploymentTarget),
+            // ONE SLOT, BOTH PLATFORMS. See `min_platform_version`: a target
+            // is either Apple or Android, and the level selects which bionic
+            // symbols are visible, so two levels must be two build
+            // directories.
+            [&] {
+                auto tt = mcpp::toolchain::triple::parse(tc->targetTriple);
+                return tt ? min_platform_version(*m, *tt) : std::string{};
+            }(),
             // The GLOBAL registry root — the same one `fill_package_config`
             // relativizes against below, so both halves of the key describe
             // payload paths the same way.

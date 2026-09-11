@@ -132,8 +132,21 @@ TEST(CacheKey, LanguageAndDialectChangeTheKey) {
     { auto b = axes(); b.dialectFlags    = {"-freflection"};
                                                      EXPECT_NE(ck::key_hex(b, pkg()), base); }
     { auto b = axes(); b.cStandard       = "c17";    EXPECT_NE(ck::key_hex(b, pkg()), base); }
-    { auto b = axes(); b.macosDeploymentTarget = "14.0";
+    // ONE SLOT, BOTH PLATFORMS. It was `macosDeploymentTarget`; Android's
+    // minimum API level is the same quantity and is in this key for the same
+    // reason -- it selects which bionic symbols are visible, so two levels are
+    // two ABIs. A target is either Apple or Android, so one slot cannot be
+    // asked to hold both at once.
+    { auto b = axes(); b.minPlatformVersion = "14.0";
                                                      EXPECT_NE(ck::key_hex(b, pkg()), base); }
+    { auto b = axes(); b.minPlatformVersion = "24";
+                                                     EXPECT_NE(ck::key_hex(b, pkg()), base); }
+    // AND TWO LEVELS ARE TWO KEYS, which is the property the Android row
+    // depends on: without it `min_api_level = 21` and `= 24` would share a
+    // build directory and the second build would serve the first's objects.
+    { auto b21 = axes(); b21.minPlatformVersion = "21";
+      auto b24 = axes(); b24.minPlatformVersion = "24";
+      EXPECT_NE(ck::key_hex(b21, pkg()), ck::key_hex(b24, pkg())); }
 }
 
 // ── D axis: package identity ─────────────────────────────────────────────────

@@ -685,6 +685,44 @@ linkage   = "static"
 Moved to [22 — The Target Side](22-target-side.md).
 
 
+### 2.7.3 `min_api_level` — the oldest OS release the artifact must run on
+
+```toml
+[target.aarch64-linux-android]
+min_api_level = 24
+```
+
+Android's own term is **API level**, and this is the minimum — the quantity the
+NDK's CMake toolchain documents `ANDROID_PLATFORM` as carrying ("the minimum
+API level supported by the application or library"), and which corresponds to
+Gradle's `minSdk`.
+
+**It is a project decision and not a property of the toolchain.** One NDK
+serves a range of levels, so naming `android-ndk@<version>` does not pin one.
+
+**It reaches the compiler and not the identity.** The canonical triple stays
+`aarch64-linux-android`, which is what names the output directory, `cfg(env =
+"android")` and the packed ABI tag; the level is fused onto the triple the
+compiler is given:
+
+| | |
+|---|---|
+| canonical triple | `aarch64-linux-android` |
+| what clang receives | `aarch64-unknown-linux-android24` |
+| build fingerprint | carries the level |
+
+The fingerprint is not optional: the level selects which bionic symbols are
+visible, so two levels are two ABIs and must never share a build directory.
+
+Unset is legal and means the NDK's own default, which is what
+`clang -target aarch64-linux-android` normalises to.
+
+This is the same mechanism `macos_deployment_target` (§ above) uses, and the
+two are named in their own platforms' words rather than in a shared
+abstraction. Both answer one question: the oldest OS release the artifact has
+to run on.
+
+
 ### 2.7.2 Bare metal (`os = none`) — freestanding targets
 
 `riscv64-none-elf` and `riscv32-none-elf` are targets with no operating system

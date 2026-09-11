@@ -701,6 +701,77 @@ TEST(Triple, OnlyTheSdkTargetsShipTheirOwnSysroot) {
 
 // A CAPABILITY PIN CANNOT BE OVERRIDDEN, BECAUSE NOTHING ELSE CAN EMIT THE
 // TARGET. A convention pin is a preference; this is a fact about the world.
+// THE EFFECTIVE TRIPLE CARRIES THE PROJECT'S MINIMUM PLATFORM VERSION, AND THE
+// CANONICAL ONE NEVER DOES.
+//
+// Two platforms fuse it and each names it in its own words: macOS's deployment
+// target, Android's minimum API level. Measured on a real clang --
+// `-target aarch64-linux-android21 -print-effective-triple` answers
+// `aarch64-unknown-linux-android21` -- so the level belongs on the ENV segment
+// of the effective triple.
+//
+// Asserted as the PAIR, because the whole design is that the two differ: if
+// `str()` ever carried the version, the output directory and `cfg()` would
+// multiply per level and the table would need a row for each.
+TEST(Triple, TheMinimumPlatformVersionReachesTheEffectiveTripleAndNotTheCanonicalOne) {
+    auto droid = parse("aarch64-linux-android");
+    ASSERT_TRUE(droid.has_value());
+    EXPECT_EQ(droid->str(), "aarch64-linux-android");
+    EXPECT_EQ(droid->llvm_triple("24"), "aarch64-unknown-linux-android24");
+    EXPECT_EQ(droid->llvm_triple("21"), "aarch64-unknown-linux-android21");
+    // Unset is legal and means the NDK's own default -- what clang normalises
+    // when no level is given.
+    EXPECT_EQ(droid->llvm_triple(""),   "aarch64-unknown-linux-android");
+    // And the canonical form is unmoved by any of it.
+    EXPECT_EQ(droid->str(), "aarch64-linux-android");
+
+    // macOS, the platform this parameter already served, is unchanged.
+    auto mac = parse("aarch64-macos");
+    ASSERT_TRUE(mac.has_value());
+    EXPECT_EQ(mac->llvm_triple("15.2"), "arm64-apple-macos15.2");
+    EXPECT_EQ(mac->str(), "aarch64-macos");
+
+    // AND NO OTHER ROW TAKES IT. One parameter serves both platforms, so the
+    // risk is a caller handing one platform's answer to another's row -- an
+    // ordinary Linux target must ignore it rather than fuse it.
+    auto lin = parse("x86_64-linux-gnu");
+    ASSERT_TRUE(lin.has_value());
+    EXPECT_EQ(lin->llvm_triple("24"), "x86_64-unknown-linux-gnu");
+    auto musl = parse("aarch64-linux-musl");
+    ASSERT_TRUE(musl.has_value());
+    EXPECT_EQ(musl->llvm_triple("24"), "aarch64-unknown-linux-musl");
+}
+
+// THE FOUR-FIELD SPELLING IS WHAT EVERY OTHER TOOLCHAIN PRINTS, so refusing it
+// is a cost with no design benefit. `em++ -v` passes
+// `-target wasm32-unknown-emscripten`, rustc's table lists that spelling, and a
+// user copying either into a manifest should be understood.
+//
+// mcpp's canonical form elides the vendor -- `unknown`, `pc` and `w64` carry no
+// information for any row in the table -- so this is a normalisation and not a
+// second vocabulary: `str()` returns the three-field form either way, which is
+// what keeps the output directory, `cfg()` and the ABI tag single-valued.
+TEST(Triple, TheFourFieldSpellingParsesToTheSameCanonicalTriple) {
+    struct Case { const char* spelled; const char* canonical; };
+    for (auto [spelled, canonical] : {
+             Case{"wasm32-unknown-emscripten", "wasm32-emscripten"},
+             Case{"aarch64-apple-ios",         "aarch64-ios"},
+             Case{"aarch64-unknown-linux-android", "aarch64-linux-android"},
+             Case{"x86_64-unknown-linux-gnu",  "x86_64-linux-gnu"},
+             Case{"x86_64-pc-windows-msvc",    "x86_64-windows-msvc"},
+             Case{"aarch64-unknown-linux-musl","aarch64-linux-musl"},
+         }) {
+        auto t = parse(spelled);
+        ASSERT_TRUE(t.has_value()) << spelled;
+        EXPECT_EQ(t->str(), canonical) << spelled;
+        // And the three-field form still parses to itself, so accepting the
+        // longer spelling did not make the canonical one a second dialect.
+        auto c = parse(canonical);
+        ASSERT_TRUE(c.has_value()) << canonical;
+        EXPECT_EQ(c->str(), canonical) << canonical;
+    }
+}
+
 TEST(Triple, WasmJoinsTheCapabilityPinsBecauseNothingElseEmitsIt) {
     auto wasm = parse("wasm32-emscripten");
     ASSERT_TRUE(wasm.has_value());
