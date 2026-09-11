@@ -433,6 +433,8 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 | `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `armv7a-none-eabi` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
+| `armv7a-none-eabihf` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `aarch64-linux-android` | preview | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `aarch64-ios` | planned | — | planned | planned | planned | planned |

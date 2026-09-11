@@ -483,6 +483,8 @@ other's rows.
 | `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
 | `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
 | `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
+| `armv7a-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
+| `armv7a-none-eabihf` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
 | `aarch64-linux-android` | preview | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `aarch64-ios` | planned | — | planned | planned | planned | planned |

@@ -108,6 +108,18 @@ jobs:
       - name: Check documentation structure
         run: bash .github/tools/check_docs_structure.sh
 
+      # Every documented tier agrees with kKnownTargets.
+      #
+      # Four documents restate a row's tier and nothing compared them to
+      # the table. When wasm32-emscripten became `verified` and the
+      # Android rows gained tiers, docs/21 was updated and both READMEs
+      # were not -- so the front page said three targets were `planned`
+      # while the engine had built and run two of them. On its first run
+      # this check also found two Cortex-A rows missing from docs/21
+      # entirely, which predates that work.
+      - name: Documented target tiers agree with the table
+        run: python3 .github/tools/check_target_tiers.py
+
       - uses: ./.github/actions/bootstrap-mcpp
 
       - name: Configure mirror + Build mcpp from source (self-host)
