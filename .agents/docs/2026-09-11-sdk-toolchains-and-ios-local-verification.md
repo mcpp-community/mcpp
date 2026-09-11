@@ -497,13 +497,23 @@ write it down.
 | E1: Android shares the implementation | merged and green against the RELEASED engine: both ABIs build, objects name no C library symbol, and a program over openkal alone ran on an emulator | yes (openkal-linux 0.12.0) |
 | E2: iOS reuses it | `openkal-macos` compiles for the three iOS rows on a macOS runner, and its objects name no C library symbol -- the same check the Android leg applies, against a third libc | the `cfg` line is in `examples/portable`; the compile leg belongs to openkal-macos's own CI and is not in this batch |
 | E3: the Web implementation conforms | the conformance suite passes for the groups it provides; and a program using `kal_process_spawn` fails at LINK naming the symbol, which is the criterion that the absent groups are absent rather than present-and-failing | yes -- 86 held, 0 did not hold, 13 not observed; and `wasm-ld: error: obj/main.o: undefined symbol: kal_process_spawn` |
-| E4: the examples build | `examples/portable` builds for the host and for all five platforms it names -- it currently builds for NONE, which is why this is a criterion and not an assumption | host, both Android ABIs: yes. The Web leg resolves once `openkal-emscripten` is in the index, which is the ring this ecosystem cannot untangle: the example is always second |
+| E4: the examples build | `examples/portable` builds for the host and for all five platforms it names -- it currently builds for NONE, which is why this is a criterion and not an assumption | THE CRITERION WAS NOT SATISFIABLE AS WRITTEN, and the measurement is what said so. Host and both Android ABIs: yes. The Web leg RESOLVES and then fails at link naming seven symbols -- `kal_process_{spawn,wait,close}` and `kal_task_{start,join,wait,wake}` -- because this program uses `openkal.process` and `openkal.task` and this platform has neither. That is the mechanism working, not a gap: the line stays and the example now demonstrates the BOUNDARY, with the linker's own output as the evidence |
 
 **The premise held.** A macos-15 runner ships Xcode 16.4 with both located SDKs
 at 18.5 and five bootable iOS simulator runtimes (18.5, 18.6, 26.0, 26.1,
 26.2). So D1, D2 and D4 are all CI claims and none of them is local-only.
 
-**Two things the measurement changed about this design.**
+**Three things the measurement changed about this design.**
+
+The Web leg of `examples/portable` cannot be a build. This record asked for
+the example to build "for all five platforms it names", and the fifth is a
+platform with twelve of the fifteen interfaces while the program uses two of
+the three absent ones. Nothing about that is fixable without either
+`#ifdef`-ing the one file in this ecosystem that exists to contain none, or
+having `openkal-emscripten` provide operations it cannot perform -- the shape
+clause 6.2 forbids. So the criterion was wrong and the example is better for
+it: a program about portability that also shows where portability stops, with
+seven undefined symbols as the reading.
 
 `simctl-run` is a boot-and-spawn wrapper and not a bundle builder. This record
 said a bare Mach-O "cannot be launched by `simctl`, so the program wraps it in
