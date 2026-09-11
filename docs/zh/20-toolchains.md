@@ -448,6 +448,102 @@ CRT。
 toolset 自带的那份可再分发 CRT(`vcruntime140.dll` / `msvcp140.dll`)可以跟着
 产物走 —— 见 `docs/zh/04-mcpp-toml.md` 的 `cxx_runtime = "toolchain-coupled"`。
 
+## SDK 工具链(`emsdk`、`android-ndk`)
+
+五种工具链拼法里有两种命名的是一个 **SDK** 而不是一个裸编译器:`emsdk` 与
+`android-ndk`。它们的编译器**就是** clang —— 所以它们不是一个独立的编译器 family,
+mcpp 也不假装它们是 —— 而那份归档自带 sysroot、自带 C 库,并且这两者都自带一份
+生成好的 `std` 模块面。本节讲的就是这个差别。
+
+### 默认值:该行自己的钉
+
+一个目标行命名了它自己的载荷,而那个钉就是默认值。这两者都不需要在 `mcpp.toml`
+里写一行:
+
+```bash
+mcpp build --target wasm32-emscripten     # 解析到 emsdk@6.0.9
+mcpp build --target aarch64-linux-android # 解析到 android-ndk@30.0.16248370
+```
+
+载荷在某个目标第一次需要它时**按需安装**,和一个 gcc 或 llvm 载荷完全一样。
+`mcpp toolchain list` 会在行旁边显示那个钉,而构建会报出是哪份归档回答的:
+
+```
+Resolved emsdk@6.0.9 → wasm32-emscripten → …/xim-x-emsdk/6.0.9/emscripten/em++
+Resolved android-ndk@30.0.16248370 → aarch64-linux-android → …/prebuilt/linux-x86_64/bin/clang++
+```
+
+### 也可以显式声明
+
+普通的按目标键照常可用,而点名该行自己的载荷总是被接受:
+
+```toml
+[target.aarch64-linux-android]
+toolchain = "android-ndk@30.0.16248370"
+
+[target.wasm32-emscripten]
+toolchain = "emsdk@6.0.9"
+```
+
+用它把版本跨机器钉住,或者选用比该行约定更新的载荷。**版本是自由的** —— 索引里
+发布过的都能解析 —— 所以一个工程就是用它走在默认值之前或留在它之后。
+
+### 不可覆盖的部分及其依据
+
+对这两行,那个钉是一个**能力**而不是一个约定:它不是 mcpp 在几个都能服务该目标的
+载荷之间的偏好,而是唯一能服务它的东西。所以载荷的**名字**是固定的,版本是开放的:
+
+```toml
+[target.aarch64-linux-android]
+toolchain = "llvm@22.1.8"        # 被拒绝
+```
+
+```
+error: target 'aarch64-linux-android' cannot be emitted by 'llvm@22.1.8'.
+       An Android target needs bionic, not just an aarch64 or x86_64 back end:
+       its headers, its per-API-level stubs and its loader path are inside the
+       NDK, and no package adds them to another compiler.
+```
+
+这次拒绝与代码生成无关。一个普通 clang 发 aarch64 ELF 完全没问题;它拿不出来的是
+**体系**。在声明处就说出来,比解析出 llvm 再在构建深处失败要好 —— 而后者正是这道闸
+存在之前发生的事:先是 `'__config' file not found`,然后是 bionic 自己头文件里的
+`Unversioned target triples are not supported!`,两句都没点名那个服务不了这一行的
+工具链。
+
+`wasm32-emscripten` 按同一条规则、用它自己的句子拒绝:除了 Emscripten 没有东西发
+WebAssembly。
+
+### 属于工程的那一半
+
+工具链是 SDK 的;**部署下限**是工程的,而它按平台各有自己的键 —— 见
+[04 — mcpp.toml](04-mcpp-toml.md) §2.7.3:
+
+```toml
+[target.aarch64-linux-android]
+min_api_level = 24               # Android
+```
+
+```toml
+[package]
+macos_deployment_target = "14.0" # Apple
+```
+
+一个 NDK 服务一个 API level 的**区间**,所以级别是工程的决定,而点名
+`android-ndk@<version>` 并不钉住其中任何一个。不写的话,mcpp 读 NDK 自己在
+`meta/platforms.json` 里声明的下限。
+
+### 产物的运行方式
+
+模拟器和真机都不属于工具链这根轴。`mcpp run` 直接执行一个 wasm 模块,因为
+Emscripten 的产物就是一个 `node` 能跑的程序。对于产物在别处运行的目标,`runner`
+键是一个 argv 前缀,而那个会话属于一个**包**而不属于引擎:
+
+```toml
+[target.x86_64-linux-android]
+runner = ["adb-run"]             # 来自 xim:android-platform-tools 的一个程序
+```
+
 ## 项目级版本锁定
 
 若项目需固定特定版本而不依赖全局默认,可在项目的 `mcpp.toml` 中声明:

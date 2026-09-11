@@ -491,6 +491,112 @@ is built per project and cl bakes `_MSVC_MT`/`_MSVC_MD` into it, so a
 per-role override (`cxx_runtime = { tests = … }`) is refused with a message
 saying so rather than producing a module mismatch inside the ucrt headers.
 
+## SDK Toolchains (`emsdk`, `android-ndk`)
+
+Two of the five toolchain spellings name an **SDK** rather than a bare
+compiler: `emsdk` and `android-ndk`. Their compiler *is* clang -- so they are
+not a separate compiler family, and mcpp does not pretend they are -- but the
+archive brings its own sysroot, its own C library and, for both of these, its
+own generated `std` module surface. That difference is what the rest of this
+section is about.
+
+### Nothing has to be declared
+
+A target row names its own payload, and that pin is the default. Neither of
+these needs a line in `mcpp.toml`:
+
+```bash
+mcpp build --target wasm32-emscripten     # resolves emsdk@6.0.9
+mcpp build --target aarch64-linux-android # resolves android-ndk@30.0.16248370
+```
+
+The payload is **installed on demand** the first time a target needs it, the
+same way a gcc or llvm payload is. `mcpp toolchain list` shows the pin beside
+the row, and the build reports which archive answered:
+
+```
+Resolved emsdk@6.0.9 → wasm32-emscripten → …/xim-x-emsdk/6.0.9/emscripten/em++
+Resolved android-ndk@30.0.16248370 → aarch64-linux-android → …/prebuilt/linux-x86_64/bin/clang++
+```
+
+### Declaring one anyway
+
+The ordinary per-target key works, and naming the row's own payload is always
+accepted:
+
+```toml
+[target.aarch64-linux-android]
+toolchain = "android-ndk@30.0.16248370"
+
+[target.wasm32-emscripten]
+toolchain = "emsdk@6.0.9"
+```
+
+Use it to pin a version across machines, or to opt into a payload newer than
+the row's convention. The **version** is free -- anything the index publishes
+resolves -- so this is how a project moves ahead of, or stays behind, the
+default.
+
+### What cannot be overridden, and why
+
+For these rows the pin is a **capability** rather than a convention: it is not
+mcpp's preference among several payloads that could serve the target, it is the
+only thing that can. So the payload NAME is fixed while the version is open:
+
+```toml
+[target.aarch64-linux-android]
+toolchain = "llvm@22.1.8"        # refused
+```
+
+```
+error: target 'aarch64-linux-android' cannot be emitted by 'llvm@22.1.8'.
+       An Android target needs bionic, not just an aarch64 or x86_64 back end:
+       its headers, its per-API-level stubs and its loader path are inside the
+       NDK, and no package adds them to another compiler.
+```
+
+The refusal is not about code generation. A stock clang emits aarch64 ELF
+perfectly well; what it cannot supply is the SYSTEM. Saying so at the
+declaration is better than resolving llvm and failing deep inside the build,
+which is what happened before this gate existed -- first `'__config' file not
+found`, then `Unversioned target triples are not supported!` from bionic's own
+header, neither of them naming the toolchain that could not serve the row.
+
+`wasm32-emscripten` refuses on the same rule with its own sentence: nothing but
+Emscripten emits WebAssembly.
+
+### What belongs to the project instead
+
+The toolchain is the SDK's; the **deployment floor** is the project's, and it
+has its own key per platform -- see
+[04 — mcpp.toml](04-mcpp-toml.md) §2.7.3:
+
+```toml
+[target.aarch64-linux-android]
+min_api_level = 24               # Android
+```
+
+```toml
+[package]
+macos_deployment_target = "14.0" # Apple
+```
+
+One NDK serves a range of API levels, so the level is a project decision and
+naming `android-ndk@<version>` does not pin one. Left out, mcpp reads the floor
+the NDK itself declares in `meta/platforms.json`.
+
+### Running what they produce
+
+Neither the emulator nor a device is part of the toolchain axis. `mcpp run`
+executes a wasm module directly, because Emscripten's output is a program
+`node` can run. For a target whose artifact runs elsewhere, the `runner` key is
+an argv prefix and the session belongs to a package rather than to the engine:
+
+```toml
+[target.x86_64-linux-android]
+runner = ["adb-run"]             # a program from xim:android-platform-tools
+```
+
 ## Project-Level Version Pinning
 
 If a project needs to pin a specific version rather than rely on the global default, declare it in the project's `mcpp.toml`:
