@@ -314,6 +314,20 @@ struct MechanismInput {
     // mechanism exists to make that floor real, so without one there is
     // nothing to make real.
     bool             macosFloor = false;
+    // AN APPLE CROSS TARGET -- the iOS rows, device and simulator.
+    //
+    // Same format as macOS and a different platform, which matters here
+    // because the payload's `libc++.a` is a MACH-O ARCHIVE BUILT FOR macOS.
+    // ld64 refuses an object built for one platform in a link for another, so
+    // the self-contained cell -- the one macOS uses to make its deployment
+    // floor real -- cannot apply, and `haveCxxArchives` says nothing about
+    // it: the archives exist, they are simply the wrong platform's.
+    //
+    // This is a distinct input and not a derivation from `macosFloor`,
+    // because `macosFloor` answers "did a macOS deployment target resolve"
+    // and an iOS build resolves one too (its default is a macOS version,
+    // which is exactly why it must not be consulted here).
+    bool             appleCrossTarget = false;
     // Bare metal — there is no C++ runtime to distribute WITH.
     //
     // Every cell of the table below answers "how does this artifact carry its
@@ -478,6 +492,36 @@ Mechanism resolve(const MechanismInput& in) {
                 m.diagnostic = std::format(
                     "cxx_runtime = \"{}\" is not available for stdlib '{}' on "
                     "Mach-O; using host-coupled", to_string(in.requested), in.stdlibId);
+            }
+            return m;
+        }
+        // iOS TAKES ITS C++ RUNTIME FROM THE SDK, AND HAS NO OTHER OPTION.
+        //
+        // Every iOS release ships libc++ in the OS, and the SDK's
+        // `libc++.tbd` is the stub that links against it -- so `-lc++` is
+        // both the correct and the only answer for these rows. The two
+        // alternatives are closed by construction rather than by policy: the
+        // payload's static archives are built for macOS and ld64 refuses
+        // them in an iOS link, and the payload's libc++.dylib is not present
+        // on a device at all.
+        //
+        // The contract vocabulary calls this `HostCoupled`, which reads
+        // oddly for a cross target; what it means in every cell is "the C++
+        // runtime comes from the system the ARTEFACT RUNS ON", and for these
+        // rows that system is iOS. The deployment floor is still real, and
+        // it is carried by the effective triple (`arm64-apple-ios18.0`)
+        // rather than by a static archive.
+        if (in.appleCrossTarget) {
+            m.effective = Contract::HostCoupled;
+            m.unitFlags = " -lc++";
+            if (in.requested != Contract::HostCoupled && in.explicitRequest) {
+                m.degraded   = true;
+                m.diagnostic = std::format(
+                    "cxx_runtime = \"{}\" is not available for an iOS target: "
+                    "the toolchain's libc++ archives are built for macOS and "
+                    "ld64 refuses them in an iOS link. Using the SDK's libc++, "
+                    "which every iOS release ships; the deployment floor is "
+                    "carried by the target triple", to_string(in.requested));
             }
             return m;
         }

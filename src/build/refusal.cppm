@@ -93,6 +93,13 @@ enum class Code {
     // hold. Distinct from VersionFloorUnmet, which is about the machine: this
     // one is about two manifests disagreeing over a tool.
     ToolVersionConflict,
+    // An Apple SDK this target needs is not on this machine. Distinct from
+    // HostCannotServe, which says no PAYLOAD here produces the target and
+    // waits for the graph in case a package supplies the system: an Apple SDK
+    // is not redistributable, so no package can supply it and nothing a later
+    // step learns changes the answer. Distinct from TierPlanned, which says
+    // the row is not wired at all -- these rows are.
+    AppleSdkAbsent,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -104,6 +111,7 @@ constexpr std::string_view name(Code c) {
         case Code::CompilerRequirementConflict:
                                          return "compiler-requirement-conflict";
         case Code::TierPlanned:          return "tier-planned";
+        case Code::AppleSdkAbsent:       return "apple-sdk-absent";
         case Code::HostCannotServe:      return "host-cannot-serve";
         case Code::CapabilityPin:        return "capability-pin";
         case Code::ConventionUnreplaced: return "convention-unreplaced";

@@ -151,7 +151,19 @@ std::optional<NormalizedSpec> normalize_spec(std::string_view compilerIn,
     // a target: the arch arrives from `--target` or `[target.<triple>]`, and
     // pinning one here would make `android-ndk@<v>` mean aarch64 to a reader
     // who typed it for x86_64.
-    if (compiler == "android-ndk" || compiler == "ndk") {
+    //
+    // ONE SPELLING. `ndk` was accepted here as an alias and the capability gate
+    // refuses it, because that gate compares the declared spelling against the
+    // ROW'S PIN -- `android-ndk@30.0.16248370` -- and `ndk@30.0.16248370` does
+    // not contain it. So the alias parsed and was then rejected at the point of
+    // use, which reads as a defect rather than as a naming choice.
+    //
+    // Withdrawn rather than completed. Teaching the gate to compare normalised
+    // payload names would make two spellings work and put the comparison in a
+    // second mechanism; one name makes the gate correct by construction. The
+    // name kept is the one the index uses, so there is a single string for this
+    // payload across the ecosystem.
+    if (compiler == "android-ndk") {
         out.family = "llvm";
         out.payload = "android-ndk";
         if (muslVersionSuffix) return std::nullopt;

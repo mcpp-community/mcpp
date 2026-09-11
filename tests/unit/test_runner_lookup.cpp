@@ -113,6 +113,31 @@ TEST(RunnerLookup, UnrunnableMessageNamesKernelAnswerTripleAndKey) {
     EXPECT_NE(msg.find("--no-runner"), std::string::npos) << msg;
 }
 
+// A PAYLOAD CONTRIBUTES TWO DIRECTORIES, AND THE ORDER IS PART OF THE RULE.
+// The flat case is the one measured missing on a macOS runner: a program at
+// the payload root with no `bin/`, reached through exactly the directories
+// prepare collects for each installed payload.
+TEST(RunnerLookup, AFlatPayloadIsFoundAtItsRoot) {
+    auto root = fresh_root("mcpp-runner-lookup-flat");
+    auto flat = make_exe(root / "payload", "simctl-run");
+    auto l = locate("simctl-run", payload_search_dirs(root / "payload"), "");
+    ASSERT_TRUE(l.program.has_value());
+    EXPECT_EQ(*l.program, flat);
+    ASSERT_EQ(l.searched.size(), 2u);
+    EXPECT_EQ(l.searched[0], root / "payload" / "bin");
+    EXPECT_EQ(l.searched[1], root / "payload");
+}
+
+// And a recipe that follows the convention is unaffected by the second entry.
+TEST(RunnerLookup, APayloadsBinIsTriedBeforeItsRoot) {
+    auto root = fresh_root("mcpp-runner-lookup-binfirst");
+    auto inBin = make_exe(root / "payload" / "bin", "tool");
+    make_exe(root / "payload", "tool");
+    auto l = locate("tool", payload_search_dirs(root / "payload"), "");
+    ASSERT_TRUE(l.program.has_value());
+    EXPECT_EQ(*l.program, inBin);
+}
+
 TEST(RunnerLookup, SpawnFailedMessageIsVerbatim) {
     auto msg = spawn_failed_message("/x/bin/qemu", EACCES);
     EXPECT_NE(msg.find("'/x/bin/qemu' could not be started"), std::string::npos) << msg;

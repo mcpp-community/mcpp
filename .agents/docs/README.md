@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-277 records.
+278 records.
 
 ## By subject
 
@@ -46,6 +46,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### targets
 
+- [SDK toolchains, the payload/engine seam, and openkal across iOS, Android and Web](2026-09-11-sdk-toolchains-and-ios-local-verification.md) — landed
 - [Where a platform's knowledge belongs: iOS, Android and Web across the engine, the index and the plugins](2026-09-11-platform-targets-design-review.md) — active
 
 ### triage
@@ -57,6 +58,7 @@ Records that declare one. Everything else is listed by date below.
 ### 2026-09
 
 - [Six open issues: what each one actually is, and what would answer it](2026-09-11-six-open-issues-analysis.md) — active
+- [SDK toolchains, the payload/engine seam, and openkal across iOS, Android and Web](2026-09-11-sdk-toolchains-and-ios-local-verification.md) — landed
 - [Where a platform's knowledge belongs: iOS, Android and Web across the engine, the index and the plugins](2026-09-11-platform-targets-design-review.md) — active
 - [The category the plugin taxonomy does not name, and what a platform actually decomposes into](2026-09-11-distribution-plugins-and-platform-decomposition.md) — active
 - [Two answers and two silences: the scanner's second grammar, and the manifest keys nothing reads](2026-09-09-two-answers-and-two-silences.md) — active

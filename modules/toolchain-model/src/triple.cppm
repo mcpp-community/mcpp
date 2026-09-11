@@ -169,10 +169,17 @@ struct Triple {
         // what differs is the SDK and the deployment-target flag.
         //
         // NO VERSION IS BAKED IN, unlike the macOS branch above, and that is a
-        // decision rather than an omission. `-miphoneos-version-min` belongs to
-        // the layer that also owns the SDK path and the `.app` bundle -- a
-        // distribution plugin -- and a default written here would be a second
-        // place that answers it. clang picks its own when nothing says.
+        // decision rather than an omission. macOS carries a built-in floor
+        // because its static libc++ archives have one; iOS takes libc++ from
+        // the located SDK, which has no such constraint, so an unstated
+        // version means the SDK's own default -- which clang supplies for an
+        // Apple target. Android is the platform where that is false, and it
+        // is false there because bionic refuses an unversioned triple.
+        //
+        // THE PROJECT'S STATEMENT IS CARRIED WHEN THERE IS ONE, on the same
+        // parameter the other two platforms use: `arm64-apple-ios18.0` and
+        // `arm64-apple-ios18.0-simulator` are Apple's own spellings, with the
+        // version on the OS segment and the `-simulator` suffix after it.
         if (os == "ios") {
             const std::string a = (arch == "aarch64") ? "arm64" : arch;
             // AND THE SIMULATOR IS A DIFFERENT EFFECTIVE TRIPLE, WHICH IS WHY
@@ -183,8 +190,9 @@ struct Triple {
             // object and the `-mios-simulator-version-min` flag all differ from
             // the device's, so folding the two into one identity would be the
             // mistake `x86_64-windows-musl` was added to undo.
-            if (env == "sim") return a + "-apple-ios-simulator";
-            return a + "-apple-ios";
+            const std::string v = std::string(minPlatformVersion);
+            if (env == "sim") return a + "-apple-ios" + v + "-simulator";
+            return a + "-apple-ios" + v;
         }
         // ANDROID IS LINUX, AND THE ENV SEGMENT IS WHERE IT SAYS SO -- with the
         // API level fused onto it when the project stated one.
@@ -284,6 +292,13 @@ struct Triple {
     // deployment-target flag. A site that means "Apple" and asks "macOS" gets
     // iOS wrong in the direction that still links.
     bool is_apple() const       { return os == "macos" || os == "ios"; }
+    // APPLE'S OTHER OS, AND THE SIMULATOR IS THE SAME OS. Three rows answer
+    // true: the device and both simulator arches. What separates the
+    // simulator is `env == "sim"`, which changes the SDK, the effective
+    // triple's OS segment and the name of the deployment-target flag -- not
+    // the platform.
+    bool is_ios() const         { return os == "ios"; }
+    bool is_ios_simulator() const { return os == "ios" && env == "sim"; }
     // Android is Linux with a different C library and a different loader path.
     // `os` stays `linux` for that reason -- it is the kernel, and every
     // Linux-shaped decision in the tree is right about it -- and the env
@@ -652,7 +667,7 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // payload exists yet -- `xim:android-ndk` is the row's whole remaining
     // cost, and until it lands `[target.<triple>].sysroot` is the escape hatch
     // for a machine that has an NDK already.
-    { "aarch64-linux-android", "preview",   "",    "android-ndk@30.0.16248370", "",   false },
+    { "aarch64-linux-android", "verified",  "",    "android-ndk@30.0.16248370", "",   false },
     // The emulator's row, and the one of the pair that could be EXECUTED.
     //
     // Not a convenience: x86_64 is what an Android emulator image runs, so a
@@ -668,17 +683,24 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // row is `verified` while `aarch64-linux-android` is `preview`, and the
     // difference is execution rather than confidence in the build.
     //
-    // WHY THE DEVICE ROW COULD NOT FOLLOW, recorded so the next attempt does
-    // not repeat it. Google's emulator refuses a foreign guest outright --
-    // "QEMU2 emulator does not support arm64 CPU architecture" -- so the arm64
-    // image needs an arm64 host. The documented fallback is qemu-user with the
-    // system image's own bionic, and preparing it needs four files extracted
-    // from an ext4 partition image by `debugfs`, which is the one program in
-    // `xim:e2fsprogs@1.47.3` that is a broken build (SIGFPE on every
+    // AND THE DEVICE ROW FOLLOWED, BY A DIFFERENT VEHICLE. Google's emulator
+    // refuses a foreign guest outright -- "QEMU2 emulator does not support
+    // arm64 CPU architecture" -- so the arm64 image needs an arm64 host. The
+    // route that works from an x86_64 one is qemu-user over the system image's
+    // own bionic, and what blocked it was never the route: preparing it needs
+    // four files out of an ext4 partition image, `debugfs` was the tool, and
+    // `xim:e2fsprogs@1.47.3`'s debugfs is a broken build (SIGFPE on every
     // filesystem-opening command, while dumpe2fs/e2fsck/tune2fs from the same
-    // payload work). That is an ecosystem defect with its own record in the
-    // index, not an engine gap, and it moves this row to `verified` when it is
-    // fixed -- nothing here changes.
+    // payload work). `xim:7zip` reads ext4 directly. Measured 2026-09-11:
+    //
+    //   7zz x <system.img> bin/linker64 lib64/lib{c,dl,m,c++}.so
+    //   qemu-aarch64-static -L <root>  <the mcpp-built artifact>
+    //     ->  1-2-3      exit 0
+    //
+    // So both rows are `verified` and the vehicles differ: the platform's own
+    // emulator for x86_64, qemu-user plus the image's bionic for aarch64. A
+    // tier states that an artefact was built and RUN, not which emulator ran
+    // it.
     //
     // One linker warning is worth recording because a user will see it and it
     // is not a defect: `unsupported flags DT_FLAGS_1=0x8000001`. API 24's
@@ -689,6 +711,27 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // iOS IS NEXT. `aarch64-macos` is `verified`, so Mach-O, `arm64`, the
     // linker and the Apple half of the toolchain model all exist; what is
     // missing is an `os` value and the iPhoneOS SDK.
+    //
+    // THE COMPILER IS OURS AND ONLY THE SDK IS APPLE'S, which is the sentence
+    // that shrank this row from a packaging problem to a located directory.
+    //
+    // `llvm@22.1.8` -- any sufficiently new clang emits arm64 Mach-O for an
+    // iOS deployment target, and the C++ runtime comes from the SDK the way it
+    // does on every Apple platform. `aarch64-macos` is verified on exactly
+    // this split and is the precedent: `xim:llvm` compiles and the SDK is
+    // located. Xcode's own clang would also work and is the wrong default --
+    // it would make the compiler a host dependency where the ecosystem
+    // already has one, and these would be the only Apple rows not using
+    // `xim:llvm`.
+    //
+    // A CONVENTION PIN, NOT A CAPABILITY ONE, which is why
+    // `pin_is_capability()` does not name these rows. It means "this is what
+    // `--target aarch64-ios` resolves when the project says nothing", and a
+    // project may still write `[target.aarch64-ios] toolchain = "..."`. The
+    // capability set is the rows NO other payload can serve, and the
+    // distinction matters for consistency with `aarch64-macos`: the same
+    // constraint (Darwin needs clang) holds there and that row is not a
+    // capability row either.
     //
     // THE SDK IS A LICENCE QUESTION AND NOT A PACKAGING ONE, which is why this
     // row carries no `sysroot`. The NDK is Apache-2.0 and Emscripten is MIT,
@@ -703,7 +746,24 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // The simulator is deliberately not a row. It has its own SDK and produces
     // its own object, so folding it in would make two targets share an
     // identity -- the mistake `x86_64-windows-musl` was added to undo.
-    { "aarch64-ios",           "planned",   "",    "",           "",                            false },
+    //
+    // `preview`: BUILT, AND NOT RUN, AND NOTHING HERE CAN RUN IT. Measured
+    // 2026-09-11 on macos-15 (Xcode 16.4, iPhoneOS 18.5,
+    // `ios_deployment_target = "18.0"`):
+    //
+    //   Mach-O 64-bit executable arm64
+    //   LC_BUILD_VERSION  platform 2 (IOS)  minos 18.0  sdk 18.5
+    //
+    // `platform 2` against the simulator rows' `platform 7` is the reading
+    // worth having: a successful build cannot tell them apart, and an artefact
+    // reporting IOSSIMULATOR from this row is one no later step refuses.
+    //
+    // The row keeps `runner` unset and will stay `preview`. An artefact cannot
+    // be run off an iOS device without a signature the developer owns, which
+    // is not something a build tool or a package can supply -- so this is a
+    // tier bounded by a fact about the platform rather than by work not yet
+    // done.
+    { "aarch64-ios",           "preview",   "",    "llvm@22.1.8","",                            false },
     // THE SIMULATOR'S TWO ROWS. Not a convenience and not a runner: a
     // simulator build has its own SDK (`iPhoneSimulator.sdk`), produces its own
     // object, and takes `-mios-simulator-version-min` rather than
@@ -716,13 +776,26 @@ inline constexpr TargetInfo kKnownTargets[] = {
     // an Intel one needs `x86_64`. A single row would describe a simulator half
     // the machines cannot run.
     //
-    // `planned`, and the blocker is the same licence question as the device
-    // row -- the simulator SDK ships inside Xcode and is no more
-    // redistributable than the iPhoneOS one. What these rows buy today is that
-    // `mcpp build --target aarch64-ios-sim` answers `tier-planned` naming the
-    // row, instead of `unknown target`, which was false.
-    { "aarch64-ios-sim",       "planned",   "",    "",           "",                            false },
-    { "x86_64-ios-sim",        "planned",   "",    "",           "",                            false },
+    // ONE `verified` AND ONE `preview`, AND THE DIFFERENCE IS THE HOST'S
+    // ARCHITECTURE RATHER THAN ANYTHING ABOUT THE ROWS.
+    //
+    // `aarch64-ios-sim` was built AND RUN. Measured 2026-09-11 on macos-15
+    // (Xcode 16.4, iPhoneSimulator 18.5, `ios_deployment_target = "18.0"`):
+    //
+    //   artefact  Mach-O 64-bit executable arm64
+    //             LC_BUILD_VERSION  platform 7 (IOSSIMULATOR)  minos 18.0
+    //   run       xcrun simctl spawn <udid> <artefact>  ->  1-2-3
+    //
+    // with no bundle, no signature and no Info.plist -- the measurement that
+    // made `simctl-run` a boot-and-spawn wrapper rather than a bundle builder.
+    //
+    // `x86_64-ios-sim` builds and its artefact is correct -- Mach-O x86_64,
+    // the same `platform 7`, the same floor -- and nothing ran it, because a
+    // SIMULATOR RUNS THE HOST'S ARCHITECTURE and the runner is Apple silicon.
+    // That is a property of the machine the measurement was taken on, so the
+    // row stays `preview` until an Intel host takes it.
+    { "aarch64-ios-sim",       "verified",  "",    "llvm@22.1.8","",                            false },
+    { "x86_64-ios-sim",        "preview",   "",    "llvm@22.1.8","",                            false },
 
     // WEB IS THE OUTLIER, AND IT IS THE ONLY ONE OF THE THREE THAT CHANGES THE
     // MODEL RATHER THAN EXTENDING A TABLE. A new arch (`wasm32`), a new os

@@ -421,8 +421,10 @@ list` reports for this machine):
 | `riscv64-linux-musl` · `aarch64-linux-gnu` · `x86_64-macos` | — | planned |
 | `wasm32-emscripten` | `emsdk@6.0.9` — Emscripten ships its own sysroot and its own libc++ module surface; `mcpp run` executes the module with `node` | verified |
 | `x86_64-linux-android` | `android-ndk@30.0.16248370` — bionic from the NDK, one payload for both ABIs; ran on an API 24 x86_64 emulator image | verified |
-| `aarch64-linux-android` | the same payload and the same build; no execution path from an x86_64 host, because Google's emulator refuses a foreign guest | preview |
-| `aarch64-ios` · `aarch64-ios-sim` · `x86_64-ios-sim` | the iPhoneOS and iPhoneSimulator SDKs ship inside Xcode and are not redistributable, so the blocker is a licence rather than a payload | planned |
+| `aarch64-linux-android` | the same payload and the same build; ran under qemu-user over the system image's own bionic, which the platform emulator cannot do from an x86_64 host | verified |
+| `aarch64-ios-sim` | llvm 22 plus the machine's iPhoneSimulator SDK, which mcpp locates rather than installs; ran on a simulator through `simctl-run` ³ | verified |
+| `aarch64-ios` | the same split for the device; the artefact names the iOS platform, and running it off a device needs a signature the developer owns ³ | preview |
+| `x86_64-ios-sim` | the same build; nothing ran it, because a simulator runs the host's architecture and the machine measured was Apple silicon ³ | preview |
 
 `verified` an image has been built **and run** for the row, qemu and wine
 included · `preview` it builds and links, and no emulator run has been recorded
@@ -449,6 +451,14 @@ such a target is refused rather than attempted.
 > payload produces these targets. The C library, startup code, memory layout
 > and emulator travel with a board-support package rather than with mcpp — see
 > [40 — Bare-Metal and Freestanding Targets](docs/40-baremetal.md).
+>
+> ³ The three iOS rows need a macOS host, and the compiler is still the
+> ecosystem's: `xim:llvm` emits arm64 Mach-O for an iOS deployment target. What
+> the machine supplies is the SDK, which ships inside Xcode and is not
+> redistributable, so mcpp locates it through `xcrun` exactly as it has always
+> located the macOS SDK — and refuses, naming the SDK, when it cannot. The
+> simulator session belongs to `xim:apple-simulator-tools`. See
+> [20 — Toolchain Management](docs/20-toolchains.md).
 
 ## Documentation
 

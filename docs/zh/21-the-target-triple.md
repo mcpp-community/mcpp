@@ -435,11 +435,11 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 | `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `armv7a-none-eabi` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
 | `armv7a-none-eabihf` | verified | `llvm@22.1.8` | 载荷 | 载荷 | 载荷 | 载荷 |
-| `aarch64-linux-android` | preview | `android-ndk@30.0.16248370` | payload | payload | payload | — |
+| `aarch64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
-| `aarch64-ios` | planned | — | planned | planned | planned | planned |
-| `aarch64-ios-sim` | planned | — | planned | planned | planned | planned |
-| `x86_64-ios-sim` | planned | — | planned | planned | planned | planned |
+| `aarch64-ios` | preview | `llvm@22.1.8` | — | — | SDK | — |
+| `aarch64-ios-sim` | verified | `llvm@22.1.8` | — | — | SDK | — |
+| `x86_64-ios-sim` | preview | `llvm@22.1.8` | — | — | SDK | — |
 | `wasm32-emscripten` | verified | `emsdk@6.0.9` | payload | payload | payload | payload |
 
 `载荷` 这里有工具链载荷产出它 · `图` 没有载荷,但依赖可以供给系统 ·
@@ -472,11 +472,11 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 一行自己的历史所展示的会变陈旧的东西。因此 Windows 用户会看到这一行、钉能解析,
 而 xim 在任何东西被下载之前以 `no payload for this platform` 拒绝,并点名那个包。
 
-**两个 Android 行层级不同,是因为其中一个被运行过。** 一个 x86_64 的 Android 产物
-在平台自己的模拟器上执行得起来,而 `verified` 这个层级断言的正是「做过这件事」。
-真机那一行构建方式完全相同,而从一台 x86_64 宿主没有执行路径:模拟器直接拒绝异构
-guest(`QEMU2 emulator does not support arm64 CPU architecture`),所以它需要一台
-arm64 宿主,或者 qemu-user 那条路。
+**两个 Android 行都是 `verified`,而载具不同。** x86_64 的产物在平台自己的模拟器上
+执行。真机那一行的产物在 qemu-user 上、配系统镜像自带的 bionic 跑起来 —— 这是从一台
+x86_64 宿主行得通的路线,而平台模拟器会直接拒绝异构 guest
+(`QEMU2 emulator does not support arm64 CPU architecture`)。一个层级断言的是产物
+被构建**并运行**过,它不断言是哪个模拟器运行的。
 
 ### 而 CI 把每一台都测了
 

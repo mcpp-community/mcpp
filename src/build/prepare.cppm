@@ -79,6 +79,8 @@ import mcpp.runtime.binding;
 import mcpp.platform.runtime_search;
 import mcpp.toolchain.post_install;
 import mcpp.platform;
+import mcpp.platform.macos;
+import mcpp.build.runner_lookup;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.pm.resolver;
@@ -806,8 +808,9 @@ export struct BuildContext {
     // derivation would drift from the first exactly when a resolution rule
     // changes. Written into `.build_cache`; see BuildCacheEntry::depSourceRoots.
     std::vector<std::filesystem::path> depSourceRoots;
-    // `<payload>/bin` of every installed `[xlings] deps` payload of the
-    // runtime-owner manifest, in declaration order (#544). Read by
+    // `<payload>/bin` and then `<payload>` of every installed `[xlings] deps`
+    // payload of the runtime-owner manifest, in declaration order (#544); the
+    // pair comes from runner_lookup::payload_search_dirs. Read by
     // choose_runner's lookup (mcpp.build.runner_lookup) so a runner may name
     // a program the project declared without writing the payload's
     // home-and-version path into the manifest. Computed by the same
@@ -1589,11 +1592,39 @@ std::string min_platform_version(const mcpp::manifest::Manifest& m,
         // default -- the payload's own answer, which moves when the payload
         // does. macOS is the same shape and already works this way: its
         // default comes from the platform module, not from the manifest.
+        // THE PAYLOAD'S OWN ANSWER FIRST, AND THE ENGINE'S DERIVATION AS
+        // THE FALLBACK. `platform_floor` in `.mcpp-toolchain.json` is the
+        // same number by a channel that does not require this engine to know
+        // that an NDK keeps it in `meta/platforms.json`, nor that file's
+        // schema. A payload shipping no descriptor still resolves, which is
+        // what makes the descriptor additive.
+        //
+        // A MALFORMED descriptor is read as absence HERE ONLY, because this
+        // function has no error channel and does not need one: a
+        // payload-provided compiler reaches this point through
+        // `payload_frontend`, which refuses a malformed descriptor by name
+        // before any of these decisions are made.
+        if (auto desc =
+                mcpp::toolchain::payload_descriptor_for_compiler(compilerPath);
+            desc && *desc && !(*desc)->platformFloor.empty())
+            return (*desc)->platformFloor;
         if (auto level = mcpp::toolchain::ndk_min_api_level(compilerPath);
             level > 0)
             return std::to_string(level);
         return {};   // the caller refuses; see android_api_level_refusal
     }
+    // APPLE'S TWO PLATFORMS ANSWER FROM TWO KEYS, ONE SLOT.
+    //
+    // "14.0" is a macOS version and means nothing to an iOS SDK, so the
+    // project states them separately -- and only one of them can apply to any
+    // one target, which is why they still share this function's single return
+    // and the single fingerprint slot behind it.
+    //
+    // Empty is a legal answer here and not a refusal, unlike Android's. The
+    // asymmetry is a measured property of the platforms rather than a policy:
+    // Darwin's driver supplies the SDK's own deployment target when the
+    // triple carries none, and bionic rejects the unversioned triple outright.
+    if (t.is_ios()) return m.buildConfig.iosDeploymentTarget;
     return mcpp::platform::macos::deployment_target(
         m.buildConfig.macosDeploymentTarget);
 }
@@ -1623,6 +1654,14 @@ prepare_build(bool print_fingerprint,
     // the graph can supply the target's system, and the graph is not known
     // here. Held until it is, and released only if nothing supplies it.
     std::string unservedTargetDiagnosis;
+
+    // THE LOCATED APPLE SDK, RESOLVED ONCE AND READ ONCE.
+    //
+    // `xcrun` is a process. Calling it at the refusal below and again where
+    // the answer is stored would be two calls whose answers can differ -- the
+    // developer directory can be switched between them -- and this repository
+    // has a standing rule that a value crossing two sites is resolved at one.
+    std::optional<std::filesystem::path> appleSdkLocated;
     // Non-empty when a target row's convention replaced a toolchain the user
     // had set with `mcpp toolchain default`. Reported on the status line,
     // because a substitution nobody is told about is a rule that can only be
@@ -2431,6 +2470,50 @@ prepare_build(bool print_fingerprint,
                 "       An explicit [target.{}] toolchain override can opt in early.",
                 subject, parsed->str()));
         }
+        // AN APPLE SDK IS LOCATED, SO ITS ABSENCE IS KNOWN NOW.
+        //
+        // REFUSED HERE AND NOT WITH THE TOOLCHAIN, which is a decision about
+        // WHEN rather than about the message. The iOS rows need the machine's
+        // iPhoneOS or iPhoneSimulator SDK, and that is knowable before any
+        // payload is resolved -- so a machine without Xcode used to download
+        // a 700 MB compiler and then be told the thing it was missing was not
+        // the compiler.
+        //
+        // AND UNLIKE `host_can_serve` BELOW, THIS IS NOT DEFERRED. That
+        // refusal waits for the dependency graph because a package can supply
+        // a target's C library and platform interface. An Apple SDK is not
+        // redistributable, so no package supplies it: there is nothing a later
+        // line could learn that would change this answer.
+        //
+        // The escape hatch that opens the tier gate does NOT open this one.
+        // Declaring a toolchain says which compiler; it says nothing about
+        // where the headers and stub libraries are, and every compiler needs
+        // them.
+        if (parsed && parsed->is_ios()) {
+            const auto which = parsed->is_ios_simulator()
+                ? mcpp::platform::macos::sdk_iphonesim
+                : mcpp::platform::macos::sdk_iphoneos;
+            appleSdkLocated = mcpp::platform::macos::sdk_path(which);
+            if (!appleSdkLocated) {
+                // A CODE, BECAUSE THE MATRIX COMPARES REASONS AND NOT ONLY
+                // OUTCOMES. A refusal with no code is recorded as `other`,
+                // which `check_matrix_reasons.sh` refuses on the ground that
+                // it freezes an unnamed branch into the expected table.
+                refusal::record(refusal::Code::AppleSdkAbsent);
+                return std::unexpected(std::format(
+                    "target {} needs the {} SDK, which this machine does not "
+                    "provide.\n"
+                    "       It is not redistributable, so mcpp LOCATES it "
+                    "rather than installing it: `xcrun --sdk {} "
+                    "--show-sdk-path` must answer, which needs Xcode on macOS "
+                    "(not the Command Line Tools alone -- those ship the "
+                    "macOS SDK only).\n"
+                    "       Check `xcode-select -p`, and note that the "
+                    "compiler is not what is missing: these rows pin "
+                    "`xim:llvm`, which every other Apple row also uses.",
+                    parsed->str(), which, which));
+            }
+        }
         // Known, supported — and IMPOSSIBLE ON THIS HOST.
         //
         // Without this the target falls through to the host toolchain and the
@@ -2937,7 +3020,12 @@ prepare_build(bool print_fingerprint,
                 "{} → msvc {} ({})", spec->display(),
                 inst->display_version(), inst->clPath.string()));
         } else {
-            explicit_compiler = mcpp::toolchain::payload_frontend(payload->root, pkg);
+            auto frontendR = mcpp::toolchain::payload_frontend(payload->root, pkg);
+            // A payload that describes itself and describes itself wrongly is
+            // refused by name -- not reported as a missing frontend, which is
+            // a different repair.
+            if (!frontendR) return std::unexpected(frontendR.error());
+            explicit_compiler = *frontendR;
             if (!std::filesystem::exists(explicit_compiler)) {
                 return std::unexpected(std::format(
                     "toolchain payload '{}' has no known C++ frontend in {}",
@@ -3164,7 +3252,10 @@ prepare_build(bool print_fingerprint,
                 "         mcpp toolchain install {}",
                 defaultSpec, payload.error().message, defaultSpec));
         }
-        explicit_compiler = mcpp::toolchain::payload_frontend(payload->root, defaultPkg);
+        auto defaultFrontendR =
+            mcpp::toolchain::payload_frontend(payload->root, defaultPkg);
+        if (!defaultFrontendR) return std::unexpected(defaultFrontendR.error());
+        explicit_compiler = *defaultFrontendR;
         if (!std::filesystem::exists(explicit_compiler)) {
             return std::unexpected(std::format(
                 "default toolchain payload {} has no known C++ frontend in {}",
@@ -3451,7 +3542,91 @@ prepare_build(bool print_fingerprint,
                       // directly is entitled to bionic's inline definitions.
                       // `xim:android-ndk`'s own install-time self-test reaches
                       // the identical conclusion from the other direction.
-                      tc->stdModuleTargetFlags += " -D__BIONIC_CTYPE_INLINE=";
+                      //
+                      // AND THE PAYLOAD MAY SAY SO ITSELF. The recipe applies
+                      // this same define in that self-test, so it is a fact
+                      // the payload already holds; `std_module_defines` in
+                      // `.mcpp-toolchain.json` is the channel for it, and the
+                      // define below is what a payload that ships no
+                      // descriptor still gets. The two are not added
+                      // together: a descriptor that names defines is the
+                      // payload's complete answer for this channel, and
+                      // appending to it would mean a payload could not
+                      // withdraw a define this engine once needed.
+                      auto stdDefines = [&]() -> std::vector<std::string> {
+                          auto desc =
+                              mcpp::toolchain::payload_descriptor_for_compiler(
+                                  tc->binaryPath);
+                          if (desc && *desc && !(*desc)->stdModuleDefines.empty())
+                              return (*desc)->stdModuleDefines;
+                          return { "__BIONIC_CTYPE_INLINE=" };
+                      }();
+                      for (auto const& def : stdDefines)
+                          tc->stdModuleTargetFlags += " -D" + def;
+                  }
+
+                  // ── iOS: THE COMPILER IS OURS, THE SDK IS THE MACHINE'S ──
+                  //
+                  // The three iOS rows pin `llvm@22.1.8` -- any sufficiently
+                  // new clang emits arm64 Mach-O for an iOS deployment target
+                  // -- and take their headers and stub libraries from the
+                  // machine's Xcode, which is where the whole item shrinks to
+                  // a located sysroot. `aarch64-macos` is verified on exactly
+                  // this split and is the precedent.
+                  //
+                  // LOCATED HERE, ONCE. Three later sites need the answer (the
+                  // compile flags, the link line, and the std module's own
+                  // command), and a function that probes the machine is the
+                  // wrong thing to call three times: `xcrun` shells out, and
+                  // three answers can differ if the developer directory
+                  // changes mid-build.
+                  //
+                  // AND ITS ABSENCE IS A REFUSAL THAT NAMES THE SDK. The
+                  // recorded host-surface rule is that a host dependency must
+                  // be minimal, named, and never a fallthrough; the iOS SDK
+                  // and `simctl` are the two this platform adds, both in the
+                  // "proprietary runtime that exists only on its own OS"
+                  // category. A build that continued without the SDK would
+                  // fail in the driver's header search, naming a file rather
+                  // than the thing that is missing.
+                  if (want->is_ios()) {
+                      // READ, NOT RE-DERIVED. The refusal above located it
+                      // before any payload was resolved, and that is the one
+                      // `xcrun` call this build makes.
+                      //
+                      // An empty answer here cannot happen through the
+                      // `--target` path, and a line that prints when it does
+                      // is cheaper than a branch that pretends it cannot: the
+                      // row could be reached one day by a route that skipped
+                      // the gate, and an iOS build with no `-isysroot` is a
+                      // macOS artefact with an iOS triple on it.
+                      if (!appleSdkLocated) {
+                          return std::unexpected(std::format(
+                              "internal: target {} reached toolchain "
+                              "resolution without its SDK being located; the "
+                              "gate that locates it did not run for this "
+                              "request", want->str()));
+                      }
+                      tc->appleSdkRoot = *appleSdkLocated;
+                      auto sdk = appleSdkLocated;
+                      // AND THE std MODULE'S OWN COMMAND, WHICH IS A SEPARATE
+                      // CHANNEL. Same reason the Android rows set it: the
+                      // module is precompiled by `clang.cppm`'s own assembly
+                      // rather than by the compile flags, so a decision made
+                      // only in the flag builder reaches every translation
+                      // unit and not the module they all import. Without the
+                      // SDK here the precompile resolves libc++'s
+                      // `#include <__config>` against the macOS SDK and the
+                      // module is built for the wrong platform.
+                      //
+                      // QUOTED, as every path this string carries is (see the
+                      // package-provided producer, which uses `shq` for each
+                      // `-isystem`). The string is spliced into a shell
+                      // command, and an Xcode installed as `Xcode 16.app` is
+                      // a path with a space in it.
+                      tc->stdModuleTargetFlags =
+                          " " + tc->crossTargetFlag
+                          + " -isysroot " + mcpp::xlings::shq(sdk->string());
                   }
               }
           }
@@ -3654,8 +3829,10 @@ prepare_build(bool print_fingerprint,
                   pins::kFirstRunWinGnu, payloadR.error().message,
                   pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget));
           }
-          explicit_compiler =
+          auto gnuFrontendR =
               mcpp::toolchain::payload_frontend(payloadR->root, gnuPkg);
+          if (!gnuFrontendR) return std::unexpected(gnuFrontendR.error());
+          explicit_compiler = *gnuFrontendR;
           if (!std::filesystem::exists(explicit_compiler)) {
               return std::unexpected(std::format(
                   "MinGW-w64 payload {} has no known C++ frontend in {}",
@@ -3834,7 +4011,9 @@ prepare_build(bool print_fingerprint,
                 "host toolchain for build.mcpp ('{}'): {}", *tcSpec,
                 payload.error().message));
         }
-        auto frontend = mcpp::toolchain::payload_frontend(payload->root, pkg);
+        auto frontendR = mcpp::toolchain::payload_frontend(payload->root, pkg);
+        if (!frontendR) return std::unexpected(frontendR.error());
+        auto frontend = *frontendR;
         if (!std::filesystem::exists(frontend)) {
             return std::unexpected(std::format(
                 "host toolchain payload '{}' has no known C++ frontend in {}",
@@ -10260,8 +10439,14 @@ prepare_build(bool print_fingerprint,
                 auto xlEnv = mcpp::config::make_xlings_env(**cfg);
                 for (auto const& spec : xlingsSpecs) {
                     auto ref = mcpp::xlings::paths::parse_xpkg_ref(spec);
-                    if (auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref))
-                        ctx.xlingsDepBinDirs.push_back(*dir / "bin");
+                    if (auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref)) {
+                        // `bin/`, then the payload root. The measurement that
+                        // added the second entry is recorded with the rule, in
+                        // runner_lookup::payload_search_dirs.
+                        for (auto& d :
+                             mcpp::build::runner_lookup::payload_search_dirs(*dir))
+                            ctx.xlingsDepBinDirs.push_back(std::move(d));
+                    }
                 }
             }
         }

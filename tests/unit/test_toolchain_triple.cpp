@@ -204,11 +204,12 @@ TEST(Triple, RejectsNonTriples) {
 // ── known-target vocabulary ──────────────────────────────────────────────────
 
 TEST(Triple, KnownTargetTableExposesTierAndPins) {
-    auto t = parse("x86_64-linux-musl");
+    auto [name, tier] = std::pair{"x86_64-linux-musl", "verified"};
+    auto t = parse(name);
     ASSERT_TRUE(t.has_value());
     auto* info = find_known_target(*t);
     ASSERT_NE(info, nullptr);
-    EXPECT_EQ(info->tier, "verified");
+    EXPECT_EQ(info->tier, tier);
     EXPECT_EQ(info->pin, "gcc@16.1.0");
     EXPECT_TRUE(info->defaultStatic);
 
@@ -676,11 +677,12 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
         // Measured 2026-09-11 on linux-x86_64 with xim:emsdk 6.0.9:
         // `mcpp run --target wasm32-emscripten` on a source that imports std
         // printed `1-2-3`. Built and run, so `verified`.
-        auto t = parse("wasm32-emscripten");
+        auto [name, tier] = std::pair{"wasm32-emscripten", "verified"};
+        auto t = parse(name);
         ASSERT_TRUE(t.has_value());
         auto* info = find_known_target(*t);
         ASSERT_NE(info, nullptr);
-        EXPECT_EQ(info->tier, "verified");
+        EXPECT_EQ(info->tier, tier);
         // A ROW THAT IS WIRED NAMES ITS PAYLOAD. Without the pin the row's
         // tier was reachable only through an explicit
         // `[target.wasm32-emscripten] toolchain = "..."` override, which is
@@ -707,13 +709,21 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
     // ONE PIN SERVES BOTH ROWS, which is the property the whole Android path
     // rests on: the NDK names no arch, `--target` does, and that is why the
     // std module's own precompile had to be told the target as well.
-    // ONE PIN, TWO TIERS, and the tiers differ by EXECUTION rather than by
-    // confidence in the build. `x86_64-linux-android` ran on the platform's
-    // own emulator (API 24 x86_64 image, KVM): `adb push` then
-    // `adb shell ./andtest` printed `1-2-3`, exit 0. The device row has no
-    // execution path from an x86_64 host -- Google's emulator refuses a
-    // foreign guest outright -- so it stays `preview`.
-    for (auto [name, tier] : {std::pair{"aarch64-linux-android", "preview"},
+    // ONE PIN, TWO ROWS, BOTH VERIFIED -- BY DIFFERENT VEHICLES.
+    // `x86_64-linux-android` ran on the platform's own emulator (API 24
+    // x86_64 image, KVM): `adb push` then `adb shell ./andtest` printed
+    // `1-2-3`, exit 0. The device row has no such path from an x86_64 host --
+    // Google's emulator refuses a foreign guest outright -- and that bounded
+    // the EMULATOR, not the row: `7zz x <system.img>` with the packaged 7zip
+    // extracts bionic, and `qemu-aarch64-static -L <root> <artefact>` printed
+    // `1-2-3`, exit 0.
+    //
+    // AND THIS ASSERTION WAS THE FIFTH COPY OF THE TIER. The four documents
+    // are compared to this table by `.github/tools/check_target_tiers.py`;
+    // this line is in neither set, so it went on asserting `preview` after
+    // the row and all four documents had moved. A structural check over the
+    // documents cannot see a literal in a test.
+    for (auto [name, tier] : {std::pair{"aarch64-linux-android", "verified"},
                               std::pair{"x86_64-linux-android",  "verified"}}) {
         auto t = parse(name);
         ASSERT_TRUE(t.has_value()) << name;
@@ -726,21 +736,90 @@ TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
         EXPECT_TRUE(info->sysroot.empty()) << name;
     }
 
-    // THE THREE APPLE ROWS STAY `planned`, AND THE BLOCKER IS NOT A PAYLOAD.
+    // THE THREE APPLE ROWS, AND WHAT THE SDK'S LICENCE DOES AND DOES NOT
+    // BOUND.
+    //
     // The NDK is Apache-2.0 and Emscripten is MIT; the iPhoneOS and
-    // iPhoneSimulator SDKs ship inside Xcode and are neither. No amount of
-    // engine work moves these, which is why they carry no pin: there is
-    // nothing for a pin to name.
-    for (auto name : {"aarch64-ios", "aarch64-ios-sim", "x86_64-ios-sim"}) {
+    // iPhoneSimulator SDKs ship inside Xcode and are neither. That bounds the
+    // SYSROOT -- which is why these rows carry no `sysroot` entry, since that
+    // column names a package and a located directory is not one -- and it
+    // does NOT bound the compiler: `xim:llvm` emits arm64 Mach-O for an iOS
+    // deployment target, so the rows pin it exactly as `x86_64-windows-musl`
+    // does.
+    //
+    // A CONVENTION PIN. It answers "what does `--target aarch64-ios` resolve
+    // when the project says nothing", and remains overridable -- asserted
+    // below in ExactlyTheseRowsHaveACapabilityPin, whose expected set does
+    // NOT contain these three.
+    for (auto [name, tier] : {std::pair{"aarch64-ios",     "preview"},
+                              std::pair{"aarch64-ios-sim", "verified"},
+                              std::pair{"x86_64-ios-sim",  "preview"}}) {
         auto t = parse(name);
         ASSERT_TRUE(t.has_value()) << name;
         EXPECT_EQ(t->str(), name);
         auto* info = find_known_target(*t);
         ASSERT_NE(info, nullptr) << name;
-        EXPECT_EQ(info->tier, "planned") << name;
-        EXPECT_TRUE(info->pin.empty()) << name;
+        EXPECT_EQ(info->tier, tier) << name;
+        EXPECT_EQ(info->pin, "llvm@22.1.8") << name;
         EXPECT_TRUE(info->sysroot.empty()) << name;
+        EXPECT_FALSE(t->pin_is_capability()) << name;
     }
+}
+
+// ─── The iOS deployment target is said in exactly one place ────────────────
+//
+// `-miphoneos-version-min` and `-mios-simulator-version-min` are deliberately
+// NOT emitted. The effective triple carries the version -- Apple's own
+// spelling -- and it reaches both the compile and the link line through
+// `crossTargetFlag`, so a flag would be a second place answering a question
+// the triple already answers. macOS keeps its flag because its own triple is
+// also versioned and the flag was documented as insurance against environment
+// propagation; adding the iOS equivalent would make two mechanisms out of one.
+//
+// THIS IS THAT DECISION'S OWN CRITERION, and it needs one: a requirement
+// folded into another fix disappears when that fix ships, and nothing else in
+// this tree would notice the version silently leaving the triple. It cannot be
+// an end-to-end criterion either -- the SDK gate refuses before the toolchain
+// is resolved, so a host without Xcode never prints the effective triple.
+TEST(Triple, TheIosDeploymentTargetIsCarriedByTheEffectiveTripleAlone) {
+    struct Case { std::string_view canonical, unversioned, versioned; };
+    const Case cases[] = {
+        { "aarch64-ios",     "arm64-apple-ios",
+                             "arm64-apple-ios18.0" },
+        { "aarch64-ios-sim", "arm64-apple-ios-simulator",
+                             "arm64-apple-ios18.0-simulator" },
+        { "x86_64-ios-sim",  "x86_64-apple-ios-simulator",
+                             "x86_64-apple-ios18.0-simulator" },
+    };
+    for (auto const& c : cases) {
+        auto t = parse(c.canonical);
+        ASSERT_TRUE(t.has_value()) << c.canonical;
+        EXPECT_EQ(t->llvm_triple("18.0"), c.versioned) << c.canonical;
+        // AND AN UNSTATED VERSION LEAVES THE SEGMENT ALONE rather than
+        // inventing one. macOS bakes in a floor because its static libc++
+        // archives have one; iOS takes libc++ from the located SDK, so an
+        // unstated version means the SDK's own default -- which clang supplies
+        // for an Apple target and bionic famously does not.
+        EXPECT_EQ(t->llvm_triple(), c.unversioned) << c.canonical;
+
+        // THE `-simulator` SUFFIX COMES AFTER THE VERSION, which is Apple's
+        // order and not the other one. `arm64-apple-ios-simulator18.0` is not
+        // a triple clang accepts, and the two spellings differ only in where
+        // four characters sit.
+        EXPECT_TRUE(t->is_ios()) << c.canonical;
+        EXPECT_EQ(t->is_ios_simulator(),
+                  c.canonical.find("-sim") != std::string_view::npos)
+            << c.canonical;
+    }
+
+    // AND THE DEVICE TRIPLE IS NOT A PREFIX-MATCH AWAY FROM THE SIMULATOR'S.
+    // Anything that compared them by prefix would treat a simulator build as a
+    // device build, which produces an artefact for the wrong platform that no
+    // later step refuses.
+    auto dev = parse("aarch64-ios");
+    auto sim = parse("aarch64-ios-sim");
+    ASSERT_TRUE(dev.has_value() && sim.has_value());
+    EXPECT_NE(dev->llvm_triple("18.0"), sim->llvm_triple("18.0"));
 }
 
 // A CAPABILITY PIN CANNOT BE OVERRIDDEN; A CONVENTION PIN CAN.

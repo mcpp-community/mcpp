@@ -19,3 +19,52 @@ min_api_level = 24
 
 [target.x86_64-linux-android]
 min_api_level = 24
+
+# APPLE'S SECOND PLATFORM, AND ITS OWN VERSION SPACE. `"18.0"` is an iOS
+# version; `macos_deployment_target` takes a macOS one, and `"14.0"` means
+# nothing to an iOS SDK. A target is one platform or the other, so the two keys
+# share a single slot in the build fingerprint.
+#
+# It is carried by the EFFECTIVE TRIPLE and nowhere else --
+# `arm64-apple-ios18.0` and `arm64-apple-ios18.0-simulator`, Apple's own
+# spellings. No `-miphoneos-version-min` flag is emitted: the triple fully
+# determines the platform and the minimum, and a flag would be a second place
+# answering a question the triple already answers.
+[build]
+ios_deployment_target = "18.0"
+
+# THE SIMULATOR'S SESSION BELONGS TO A PACKAGE. `runner` is an argv prefix, so
+# `mcpp run --target aarch64-ios-sim` executes `simctl-run <artifact>`; the
+# program chooses a device, boots it if it is not booted, waits for the boot,
+# spawns, and returns the program's own exit status. A manifest line has no
+# beginning and no end, which is why that work is not written here.
+#
+# The DEVICE row keeps `runner` unset. An artifact cannot be run off an iOS
+# device without a signature the developer owns.
+[target.aarch64-ios-sim]
+runner = ["simctl-run"]
+
+[target.x86_64-ios-sim]
+runner = ["simctl-run"]
+
+# THE RUNNER'S PROGRAM IS NOT DECLARED HERE, AND THAT IS A LIMITATION RATHER
+# THAN A CHOICE.
+#
+# `simctl-run` comes from `xim:apple-simulator-tools`, and the natural place to
+# say so is beside the row that uses it. That does not exist: `deps` is not
+# conditional on a target, and declaring it at the top level breaks every other
+# row on every other host. Both measured:
+#
+#   error: [target.aarch64-ios-sim.xlings] does not accept 'deps'. Only
+#          `workspace` is conditional on a target
+#   error: package 'xim:apple-simulator-tools' has no build for linux
+#          (available on: macosx)
+#
+# The second is the sharper one: this example exists to build for several
+# platforms from one source, and an unconditional tool declaration makes the
+# Linux build depend on a package that only exists for macOS.
+#
+# So the program is installed by whoever runs the simulator rows --
+# `xlings install apple-simulator-tools` -- and mcpp's runner lookup finds it
+# on PATH. See the README. A per-target tool axis would remove the step, and it
+# is recorded rather than worked around.

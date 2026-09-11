@@ -82,7 +82,22 @@ struct HostFlagOptions {
     // Resolved value from platform::macos::deployment_target(); empty = omit.
     // Must agree across the std BMI and everything that imports it — clang
     // rejects a module built for a different deployment target outright.
+    //
+    // A macOS VERSION, so it is emitted only for a macOS target. An iOS
+    // target carries its own version space (`ios_deployment_target`) and
+    // clang REFUSES the two together -- `-mmacosx-version-min` with an
+    // `arm64-apple-ios…` triple is an error, not a no-op -- which is why
+    // `appleSdkRoot` below is the discriminator rather than a second version
+    // field: exactly one of the two Apple platforms is ever in play.
     std::string macosDeploymentTarget;
+
+    // THE LOCATED APPLE SDK, for a target whose SDK is not the host's.
+    //
+    // Read from `Toolchain::appleSdkRoot`, which prepare resolves once. It is
+    // non-empty only for the iOS rows, and its presence is what says "this is
+    // an Apple cross": the deployment-target flag above then belongs to the
+    // other platform and is withheld.
+    std::filesystem::path appleSdkRoot;
 
     // DOES THE TARGET'S C LIBRARY COME FROM A DIRECTORY THAT EXISTED
     // BEFORE DEPENDENCY RESOLUTION? — `plan.targetSide.cAbi.prebuilt()`, READ
@@ -359,8 +374,33 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // object step, and the build.mcpp compile. Skipping it on the trust-cfg
     // path is exactly the mismatch e2e 181 catches: the std BMI is built for
     // 14.0 while the TU importing it is not.
-    if (mcpp::platform::is_macos && !opt.macosDeploymentTarget.empty())
+    //
+    // AND ONLY FOR A macOS TARGET. This asked whether the HOST is macOS, which
+    // was the same question while macOS was the only Apple target mcpp could
+    // build for. The iOS rows are built ON a macOS host and FOR another
+    // platform, and clang refuses the combination outright:
+    //
+    //   error: invalid argument '-mmacosx-version-min=14.0' not allowed with
+    //          'arm64-apple-ios18.0'
+    //
+    // so the flag would not merely be useless there, it would stop the build.
+    // The iOS deployment target travels in the effective triple instead --
+    // `arm64-apple-ios18.0` -- which is one place rather than two for the same
+    // value.
+    if (mcpp::platform::is_macos && !opt.macosDeploymentTarget.empty()
+        && opt.appleSdkRoot.empty())
         out.push_back("-mmacosx-version-min=" + opt.macosDeploymentTarget);
+
+    // THE APPLE CROSS TARGET'S OWN SDK, on the compile side.
+    //
+    // A native macOS build needs nothing here: it reads the payload's
+    // `clang++.cfg`, which `post_install.cppm` filled with the located macOS
+    // SDK. An Apple cross suppresses that cfg because it names the wrong
+    // platform, so this is the only thing that tells the driver where the
+    // iPhoneOS headers are. `-isysroot` is JoinedOrSeparate in clang, so the
+    // joined form is one token like every other path here.
+    if (!opt.appleSdkRoot.empty())
+        out.push_back("-isysroot" + esc(opt.appleSdkRoot));
 
     if (!trustCfg && !graphSuppliesTarget
         && (bypassCfg || lm.mode != CLibMode::None))

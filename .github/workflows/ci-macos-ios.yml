@@ -1,0 +1,309 @@
+name: ci-macos-ios
+
+# The iOS rows, measured on the only machine that can answer for them.
+#
+# iOS needs an ecosystem compiler and a LOCATED SDK: `xim:llvm` emits arm64
+# Mach-O for an iOS deployment target, and only the machine's Xcode can supply
+# the iPhoneOS / iPhoneSimulator headers and stub libraries, which are not
+# redistributable. The simulator runtime is the same category. So every claim
+# about these three rows is a claim about a macOS runner, and this job is where
+# they are made.
+#
+# Kept out of ci-macos.yml deliberately: that job asserts mcpp's default quiet
+# output shape and tacking a differently-shaped leg onto it has broken that
+# assertion before.
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-macos-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # THE PREMISES, AS A PROBE THAT RUNS ON REQUEST.
+  #
+  # This job measured what the iOS rows were scheduled on: that a GitHub macOS
+  # runner ships both SDKs and a bootable simulator, that `simctl spawn` takes a
+  # bare Mach-O, that the payload's `clang++.cfg` names the macOS SDK, and
+  # which C++ runtime an iOS link can use. Every answer is now encoded -- in
+  # `simctl-run`, in `--no-default-config` on the Apple cross path, and in the
+  # MachO contract cell -- and asserted by `ios-engine` below.
+  #
+  # Every step continues on error, because a probe's value is the complete set
+  # of answers. That is also why it does not run on every change: a job that
+  # cannot fail shown as a green check beside the gate reads as a second gate.
+  # It stays available for the day a runner image changes one of the premises.
+  ios-host-surface:
+    name: iOS - what this runner actually provides
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-macos-llvm
+
+      - name: "Host surface: the two located SDKs and the simulator runtime"
+        continue-on-error: true
+        run: |
+          set -x
+          xcode-select -p
+          xcrun --sdk iphoneos --show-sdk-path
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphonesimulator --show-sdk-path
+          xcrun --sdk iphonesimulator --show-sdk-version
+          set +x
+          echo "--- runtimes ---"
+          xcrun simctl list runtimes
+          echo "--- devices available ---"
+          xcrun simctl list devices available
+
+      # THE PAYLOAD'S CLANG READS A CONFIG FILE, AND THAT CONFIG NAMES A
+      # DIFFERENT SDK. Measured with `-isysroot <iPhoneSimulator18.5.sdk>` on
+      # the command line and the cfg not suppressed:
+      #
+      #   ld64.lld: error: /Library/Developer/CommandLineTools/SDKs/
+      #     MacOSX.sdk/usr/lib/libc++.tbd(/usr/lib/libc++.1.dylib) is
+      #     incompatible with arm64 (iOS Simulator18.0.0)
+      #
+      # which is why mcpp's Apple cross path carries `--no-default-config`.
+      - name: "The payload's default config, which is why --no-default-config"
+        continue-on-error: true
+        run: |
+          set -x
+          ls -la "$LLVM_ROOT/bin/"*.cfg || true
+          for f in "$LLVM_ROOT/bin/"*.cfg; do echo "=== $f"; cat "$f"; done || true
+
+      # WHETHER A BARE MACH-O CAN BE RUN AT ALL, which decided how much the
+      # runner program has to do: `simctl launch` needs an installed .app,
+      # `simctl spawn` takes an executable.
+      - name: "Device: is one bootable, and does spawn take a bare executable"
+        continue-on-error: true
+        run: |
+          set -uo pipefail
+          UDID=$(xcrun simctl list devices available \
+                 | grep -A50 -- '-- iOS' \
+                 | grep -m1 -oE '[0-9A-F]{8}-[0-9A-F-]{27}' || true)
+          echo "udid=[$UDID]"
+          if [ -z "$UDID" ]; then
+            echo "NO-IOS-SIMULATOR-DEVICE"
+            exit 0
+          fi
+          xcrun simctl boot "$UDID" || true
+          xcrun simctl bootstatus "$UDID" -b 2>&1 | tail -3 || true
+          cat > /tmp/hello.cpp << 'CPP'
+          #include <cstdio>
+          int main() { std::puts("1-2-3"); return 0; }
+          CPP
+          SDK=$(xcrun --sdk iphonesimulator --show-sdk-path)
+          if ! "$LLVM_ROOT/bin/clang++" -std=c++23 --no-default-config \
+                 -target arm64-apple-ios18.0-simulator \
+                 -isysroot "$SDK" -o /tmp/hello /tmp/hello.cpp; then
+            echo "SIM-COMPILE-FAILED"
+            exit 0
+          fi
+          file /tmp/hello
+          otool -l /tmp/hello | grep -A5 LC_BUILD_VERSION || true
+          echo "--- simctl spawn on a bare Mach-O ---"
+          if xcrun simctl spawn "$UDID" /tmp/hello; then
+            echo "SPAWN-OK"
+          else
+            echo "SPAWN-FAILED exit=$?"
+          fi
+
+      # THE C++ RUNTIME QUESTION. macOS links the PAYLOAD's static libc++ so
+      # that mcpp's deployment floor is real; that archive is built for macOS,
+      # and ld64 refuses an object built for one platform in a link for
+      # another. Both routes are tried because "which one works" is the fact
+      # the contract table needed.
+      - name: "C++ runtime: SDK libc++ versus the payload static archive"
+        continue-on-error: true
+        run: |
+          set -x
+          SDK=$(xcrun --sdk iphoneos --show-sdk-path)
+          cat > /tmp/cxx.cpp << 'CPP'
+          #include <string>
+          #include <cstdio>
+          int main() { std::string s = "1-2-3"; std::puts(s.c_str()); return 0; }
+          CPP
+          echo "--- (a) SDK libc++, dynamic ---"
+          if "$LLVM_ROOT/bin/clang++" -std=c++23 --no-default-config \
+               -target arm64-apple-ios18.0 \
+               -isysroot "$SDK" -o /tmp/cxx-sdk /tmp/cxx.cpp; then
+            otool -L /tmp/cxx-sdk
+            echo "SDK-LIBCXX-OK"
+          else
+            echo "SDK-LIBCXX-FAILED"
+          fi
+          echo "--- (b) payload static libc++ ---"
+          if "$LLVM_ROOT/bin/clang++" -std=c++23 --no-default-config \
+               -target arm64-apple-ios18.0 \
+               -isysroot "$SDK" -nostdlib++ \
+               "$LLVM_ROOT/lib/libc++.a" "$LLVM_ROOT/lib/libc++abi.a" \
+               -o /tmp/cxx-static /tmp/cxx.cpp; then
+            echo "PAYLOAD-STATIC-OK"
+          else
+            echo "PAYLOAD-STATIC-FAILED"
+          fi
+          set +x
+
+  # THE GATE. Every step here fails the job when its claim does not hold.
+  #
+  # The first version of this job was a probe too -- every step continued on
+  # error -- and it stayed that way after the rows it measured moved to
+  # `verified` and `preview`. That left a verified tier with no check that
+  # could turn red: a regression in the Apple cross path would have printed
+  # `RUN-THROUGH-RUNNER-FAILED` inside a green job.
+  ios-engine:
+    name: iOS - mcpp builds and the simulator runs it
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: ./.github/actions/setup-macos-llvm
+
+      - name: Build mcpp from source (self-host)
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build
+          echo "MCPP_DEV=$(ls -td "$PWD"/target/*/*/bin/mcpp | head -1)" >> "$GITHUB_ENV"
+
+      # NO TOOLCHAIN IS DECLARED, AND THAT IS WHAT MAKES THIS THE USER'S PATH.
+      #
+      # While the rows were `planned` the fixture had to write
+      # `[target.<row>] toolchain = "llvm@22.1.8"` to get past the tier gate,
+      # which meant it measured an override and never the row's own pin. The
+      # rows are now `verified` and `preview` and resolve `llvm@22.1.8` by
+      # themselves, so the fixture says nothing and the default is what is
+      # measured.
+      - name: "Fixture: a project that imports std and prints 1-2-3"
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/iostest/src
+          cat > /tmp/iostest/mcpp.toml << 'TOML'
+          [package]
+          name = "iostest"
+          version = "0.1.0"
+
+          [build]
+          ios_deployment_target = "18.0"
+
+          # THE RUNNER IS AN ARGV PREFIX AND THE SESSION BELONGS TO A
+          # PACKAGE. `simctl-run` comes from `xim:apple-simulator-tools`; it
+          # chooses a device, boots it if it is not booted, waits, spawns, and
+          # returns the program's own exit status. The device row keeps
+          # `runner` unset: an artefact cannot be run off an iOS device without
+          # a signature the developer owns.
+          [target.aarch64-ios-sim]
+          runner = ["simctl-run"]
+
+          # Declared at the top level here and not in examples/13, because a
+          # tool declaration is not conditional on a target and this package
+          # exists for macOS alone. This fixture is macOS-only, so it can say
+          # it; a portable manifest cannot.
+          [xlings.workspace]
+          "xim:apple-simulator-tools" = ""
+          TOML
+          cat > /tmp/iostest/src/main.cpp << 'CPP'
+          import std;
+          int main() {
+            std::vector<int> v{3, 1, 2};
+            std::ranges::sort(v);
+            std::print("{}-{}-{}\n", v[0], v[1], v[2]);
+          }
+          CPP
+          cat /tmp/iostest/mcpp.toml
+
+          # ONE ASSERTION FOR THE THREE ARTEFACTS. A build that succeeds cannot
+          # tell an iOS binary from a macOS one; LC_BUILD_VERSION can. Each
+          # value is read from the load command and compared whole, so an empty
+          # reading is a failure and not a pass.
+          cat > /tmp/assert-artefact.sh << 'SH'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          target=$1 arch=$2 platform=$3 minos=$4
+          arts=(/tmp/iostest/target/"$target"/*/bin/iostest)
+          art=${arts[0]}
+          if [ ! -f "$art" ]; then
+            echo "FAIL: $target produced no artefact under /tmp/iostest/target/$target"
+            exit 1
+          fi
+          desc=$(file "$art")
+          lc=$(otool -l "$art")
+          echo "$desc"
+          grep -A5 LC_BUILD_VERSION <<<"$lc" || true
+          got_platform=$(awk '/cmd LC_BUILD_VERSION/{f=1} f && $1=="platform"{print $2; exit}' <<<"$lc")
+          got_minos=$(awk '/cmd LC_BUILD_VERSION/{f=1} f && $1=="minos"{print $2; exit}' <<<"$lc")
+          fail=0
+          if ! grep -qE "Mach-O 64-bit executable ${arch}\$" <<<"$desc"; then
+            echo "FAIL: $target is not a Mach-O $arch executable"; fail=1
+          fi
+          if [ "$got_platform" != "$platform" ]; then
+            echo "FAIL: $target LC_BUILD_VERSION platform is '$got_platform', expected $platform"; fail=1
+          fi
+          if [ "$got_minos" != "$minos" ]; then
+            echo "FAIL: $target minos is '$got_minos', expected $minos from ios_deployment_target"; fail=1
+          fi
+          [ "$fail" = 0 ] && echo "ok: $target is Mach-O $arch, platform $platform, minos $minos"
+          exit "$fail"
+          SH
+          chmod +x /tmp/assert-artefact.sh
+
+      # THE DEVICE ROW. Nothing runs it -- that needs a signature the developer
+      # owns -- so the claim is the artefact: `platform 2` is IOS. The refusal
+      # for a machine WITHOUT the SDK is asserted by tests/e2e/641 on every
+      # non-Apple host, which is the only place the SDK is genuinely absent:
+      # pointing `DEVELOPER_DIR` at nothing here measured nothing, because
+      # `xcrun` falls back to the recorded developer directory.
+      - name: "aarch64-ios: the artefact names the iOS platform"
+        run: |
+          set -euo pipefail
+          cd /tmp/iostest
+          "$MCPP_DEV" build --target aarch64-ios
+          /tmp/assert-artefact.sh aarch64-ios arm64 2 18.0
+
+      # `platform 7` is IOSSIMULATOR. The number is what separates this row from
+      # the device row; the architecture does not.
+      - name: "aarch64-ios-sim: the artefact names the simulator platform"
+        run: |
+          set -euo pipefail
+          cd /tmp/iostest
+          "$MCPP_DEV" build --target aarch64-ios-sim
+          /tmp/assert-artefact.sh aarch64-ios-sim arm64 7 18.0
+
+      # THE SUPPORTED PATH, which is what the `verified` tier claims: a runner
+      # the manifest declares and a program a package provides. The program's
+      # own line is compared whole. An iOS-simulator Mach-O does not execute on
+      # the macOS host directly, so the line appearing at all means the
+      # simulator ran it.
+      - name: "aarch64-ios-sim: mcpp run prints 1-2-3 through the runner"
+        run: |
+          set -uo pipefail
+          cd /tmp/iostest
+          out=$("$MCPP_DEV" run --target aarch64-ios-sim 2>&1) && rc=0 || rc=$?
+          printf '%s\n' "$out" | tail -20
+          if [ "$rc" -ne 0 ]; then
+            echo "FAIL: mcpp run --target aarch64-ios-sim exited $rc"
+            exit 1
+          fi
+          if ! grep -qx '1-2-3' <<<"$out"; then
+            echo "FAIL: the program's output line '1-2-3' is absent"
+            exit 1
+          fi
+          echo "ok: mcpp run --target aarch64-ios-sim printed 1-2-3 and exited 0"
+
+      # THE THIRD ROW, ON A HOST THAT CANNOT RUN IT. A simulator runs the host's
+      # architecture and this runner is Apple silicon, so the claim is the
+      # artefact alone -- which is exactly the `preview` tier the row carries.
+      - name: "x86_64-ios-sim: the artefact, on a host that cannot run it"
+        run: |
+          set -euo pipefail
+          cd /tmp/iostest
+          "$MCPP_DEV" build --target x86_64-ios-sim
+          /tmp/assert-artefact.sh x86_64-ios-sim x86_64 7 18.0

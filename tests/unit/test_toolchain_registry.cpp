@@ -367,9 +367,19 @@ TEST(ToolchainSysrootDeps, OneDerivationForTheGlibcSysrootPayloads) {
 // what changes is which package answers and where its driver lives.
 TEST(SdkPayloads, TheTargetChoosesThePackageAndThePackageKnowsItsLayout) {
     auto pkg_for = [](std::string_view target) {
-        auto spec = mcpp::toolchain::parse_toolchain_spec("emsdk@6.0.9");
-        // The spec's own target is replaced, because the NDK case must be
-        // reachable from the same family with a different triple.
+        // A SPELLING THAT NAMES NO PAYLOAD, WHICH IS WHAT THIS TEST IS ABOUT.
+        //
+        // This fixture built every case from `emsdk@6.0.9` and replaced only
+        // the target, which worked while the target was the ONLY thing read --
+        // and then `payloadName` began to decide first (correctly: a spec that
+        // names a payload has answered this question), and the Android cases
+        // resolved the emsdk payload from a spelling that says emsdk.
+        //
+        // The fixture had picked its object by convenience. `llvm@22.1.8`
+        // names the family and no payload, which is the shape a build has when
+        // it passes `--target` and declares nothing -- the shape whose
+        // resolution this test exists to state.
+        auto spec = mcpp::toolchain::parse_toolchain_spec("llvm@22.1.8");
         auto s = *spec;
         if (auto t = mcpp::toolchain::triple::parse(target)) s.target = *t;
         return mcpp::toolchain::to_xim_package(s);
@@ -455,6 +465,30 @@ TEST(SdkPayloads, ServedOnEveryHostTheSdkIsPublishedFor) {
         ASSERT_TRUE(mac.has_value());
         EXPECT_FALSE(mcpp::toolchain::host_can_serve(*mac));
     }
+
+    // AND APPLE IS ONE ANSWER FOR BOTH OF ITS PLATFORMS, which this function
+    // did not say until there were two.
+    //
+    // It asked `os == "macos"`, the same question as "is this Apple" while
+    // macOS was the only Apple target mcpp had. An iOS target then fell
+    // through to the final `return false` -- on EVERY host, including the one
+    // that serves it. The consequence was not a refused build (the SDK gate in
+    // prepare answers first) but a `toolchain list` that dropped the three iOS
+    // rows on macOS while `graphCouldServe` listed them on linux-x86_64, and a
+    // target-matrix scan that reached three fewer cells than the table
+    // declares.
+    //
+    // ASSERTED IN BOTH DIRECTIONS, because one of them is what the earlier
+    // paragraph in this test calls an exclusion that must not become a
+    // tautology: every Apple row is servable exactly where the SDK is.
+    for (auto name : {"aarch64-macos", "aarch64-ios", "aarch64-ios-sim",
+                      "x86_64-ios-sim"}) {
+        auto t = mcpp::toolchain::triple::parse(name);
+        ASSERT_TRUE(t.has_value()) << name;
+        EXPECT_TRUE(t->is_apple()) << name;
+        EXPECT_EQ(mcpp::toolchain::host_can_serve(*t),
+                  bool(mcpp::platform::is_macos)) << name;
+    }
 }
 
 // ─── The payload is SAID, not only resolved (R3) ───────────────────────────
@@ -490,5 +524,176 @@ TEST(SdkPayloads, TheDisplayNamesThePayloadAndNotOnlyTheFamily) {
         ASSERT_TRUE(sp.has_value()) << spelled;
         EXPECT_TRUE(sp->payloadName.empty()) << spelled;
         EXPECT_NE(sp->display().find(spelled), std::string::npos) << sp->display();
+    }
+}
+
+// ─── A spec that names a payload has answered which payload ───────────────
+//
+// `to_xim_package` decided the payload from the TARGET, which is right for the
+// spelling a build uses -- `--target wasm32-emscripten` with nothing declared
+// -- and wrong for the spelling an install uses, where there is no target at
+// all. Measured:
+//
+//   $ mcpp toolchain install emsdk 6.0.9
+//     error: installed package has no known C++ frontend in
+//            '.../xim-x-emsdk/6.0.9/bin'
+//
+// The archive was fetched correctly and then searched for `clang++` in `bin/`,
+// because `frontendSubdir` had been decided by a target nobody gave. Both SDK
+// payloads had it; neither `mcpp toolchain install emsdk` nor
+// `mcpp toolchain install android-ndk` had ever worked.
+//
+// THE DENOMINATOR IS BOTH PAYLOADS AND BOTH SPELLINGS, because the defect is
+// in the AXIS and not in one row: a payload named with a target, and the same
+// payload named without one, must answer identically.
+TEST(SdkPayloads, ThePayloadTheSpecNamedDecidesWithoutATarget) {
+    struct Case {
+        std::string_view spelling, ximName, subdir, frontend, target;
+    };
+    const Case cases[] = {
+        { "emsdk@6.0.9", "emsdk", "emscripten", "em++", "" },
+        { "emsdk@6.0.9", "emsdk", "emscripten", "em++", "wasm32-emscripten" },
+        { "android-ndk@30.0.16248370", "android-ndk",
+          "toolchains/llvm/prebuilt", "clang++", "" },
+        { "android-ndk@30.0.16248370", "android-ndk",
+          "toolchains/llvm/prebuilt", "clang++", "aarch64-linux-android" },
+    };
+    for (auto const& c : cases) {
+        auto spec = mcpp::toolchain::parse_toolchain_spec(std::string(c.spelling));
+        ASSERT_TRUE(spec.has_value()) << c.spelling;
+        if (!c.target.empty())
+            if (auto t = mcpp::toolchain::triple::parse(c.target)) spec->target = *t;
+        auto pkg = mcpp::toolchain::to_xim_package(*spec);
+        const std::string where = std::string(c.spelling) + " target='"
+                                + std::string(c.target) + "'";
+        EXPECT_EQ(pkg.ximName, c.ximName) << where;
+        EXPECT_NE(pkg.frontendSubdir.find(c.subdir), std::string::npos)
+            << where << " subdir=" << pkg.frontendSubdir;
+        // The candidate list names the payload's own driver rather than the
+        // family's, which is the half that sent the install looking for
+        // `clang++` in the emsdk payload.
+        bool named = false;
+        for (auto const& cand : pkg.frontendCandidates)
+            if (cand.find(c.frontend) != std::string::npos) named = true;
+        EXPECT_TRUE(named) << where << " candidates do not name " << c.frontend;
+    }
+
+    // AND A SPEC THAT NAMES NO PAYLOAD STILL READS THE TARGET. This is the
+    // other half of the axis: `llvm@22.1.8` with an Android target is the
+    // escape-hatch spelling, and it must resolve the generic llvm payload
+    // rather than the NDK -- the capability gate is what refuses it, and a
+    // gate cannot refuse what was silently rewritten.
+    auto plain = mcpp::toolchain::parse_toolchain_spec("llvm@22.1.8");
+    ASSERT_TRUE(plain.has_value());
+    EXPECT_TRUE(plain->payloadName.empty());
+    if (auto t = mcpp::toolchain::triple::parse("aarch64-macos")) plain->target = *t;
+    EXPECT_EQ(mcpp::toolchain::to_xim_package(*plain).ximName, "llvm");
+}
+
+// ─── The C compiler beside a C++ one ───────────────────────────────────────
+//
+// Every frontend this engine can resolve, and the C driver beside it. The
+// DENOMINATOR IS `to_xim_package`'s own candidate lists: each spelling below
+// appears in one of its branches, so a payload whose frontend is added there
+// without a row here is a payload whose C units compile with a program that
+// does not exist.
+//
+// That is not hypothetical. Measured 2026-09-11 on the conformance suite's one
+// C translation unit for `wasm32-emscripten`:
+//
+//   /bin/sh: 1: .../xim-x-emsdk/6.0.9/emscripten/em: not found
+//
+// `em++` had become `em`, because "drop the `++`" was the rule and it is only
+// clang's rule. `g` was already a special case for exactly this reason, which
+// is what makes a table the right shape: the property is "this driver names
+// its C compiler with a different word".
+TEST(SdkPayloads, EveryFrontendNamesTheCCompilerBesideIt) {
+    struct Case { std::string_view cxx, c; };
+    const Case cases[] = {
+        // clang and its triple-prefixed forms: dropping `++` is correct.
+        { "clang++",                     "clang"                     },
+        { "aarch64-linux-gnu-clang++",   "aarch64-linux-gnu-clang"   },
+        // GCC: a different word, native and prefixed.
+        { "g++",                         "gcc"                       },
+        { "x86_64-w64-mingw32-g++",      "x86_64-w64-mingw32-gcc"     },
+        { "aarch64-linux-musl-g++",      "aarch64-linux-musl-gcc"     },
+        // Emscripten: a different word, and the row this test was written for.
+        { "em++",                        "emcc"                      },
+        // A name that is already a C driver stays itself.
+        { "clang",                       "clang"                     },
+        { "emcc",                        "emcc"                      },
+    };
+    for (auto const& c : cases) {
+        const std::filesystem::path cxx =
+            std::filesystem::path("/p/bin") / std::string(c.cxx);
+        EXPECT_EQ(mcpp::toolchain::derive_c_compiler_path(cxx).filename().string(),
+                  std::string(c.c)) << c.cxx;
+    }
+
+    // AND THE EXECUTABLE SUFFIX SURVIVES, which is the part a stem-based
+    // rewrite loses: on Windows the payload ships `g++.exe`, and a C compile
+    // spawning `gcc` with no suffix finds nothing.
+    EXPECT_EQ(mcpp::toolchain::derive_c_compiler_path("/p/bin/g++.exe")
+                  .filename().string(), "gcc.exe");
+    EXPECT_EQ(mcpp::toolchain::derive_c_compiler_path("/p/bin/clang++.exe")
+                  .filename().string(), "clang.exe");
+
+    // `clang++` MUST NOT MATCH THE `g++` ROW. It ends in `g++`'s last two
+    // characters plus nothing, and a suffix test without the separator would
+    // turn it into `clanccc` or worse -- a name that is nothing.
+    EXPECT_EQ(mcpp::toolchain::derive_c_compiler_path("/p/bin/clang++")
+                  .filename().string(), "clang");
+}
+
+// ─── One payload, one spelling (B1) ────────────────────────────────────────
+//
+// `ndk` was accepted as an alias for `android-ndk`, and the capability gate
+// refused it -- because that gate compares the DECLARED SPELLING against the
+// row's pin (`android-ndk@30.0.16248370`), and `ndk@30.0.16248370` does not
+// contain `android-ndk`. So the alias parsed and was then rejected at the
+// point of use, which a reader sees as a defect rather than as a naming
+// choice: the name was good enough for the parser and not for the build.
+//
+// Withdrawn rather than completed. Normalising payload names inside the gate
+// would make two spellings work and would put the comparison in a second
+// mechanism; one name keeps the gate correct by construction. The name kept is
+// the one the index uses, so a single string names this payload ecosystem-wide.
+//
+// The criterion is WHERE the refusal happens, not that one happens.
+TEST(SdkPayloads, TheWithdrawnAliasIsRefusedAtParseAndNotByTheCapabilityGate) {
+    auto aliased = mcpp::toolchain::parse_toolchain_spec("ndk@30.0.16248370");
+    ASSERT_FALSE(aliased.has_value())
+        << "an alias that parses is an alias the capability gate must refuse "
+           "later, by comparing spellings";
+    EXPECT_NE(aliased.error().find("unknown toolchain"), std::string::npos)
+        << aliased.error();
+    EXPECT_NE(aliased.error().find("'ndk'"), std::string::npos)
+        << "the refusal quotes what was typed: " << aliased.error();
+    // AND IT SAYS WHICH SPELLING TO USE. A refusal that names the accepted
+    // payload is one edit away from a build; one that does not sends the
+    // reader to the documentation.
+    EXPECT_NE(aliased.error().find("android-ndk"), std::string::npos)
+        << aliased.error();
+
+    // The kept spelling is unaffected, and it is the one the row pins.
+    auto kept = mcpp::toolchain::parse_toolchain_spec("android-ndk@30.0.16248370");
+    ASSERT_TRUE(kept.has_value()) << kept.error();
+    EXPECT_EQ(kept->payloadName, "android-ndk");
+
+    // THE MECHANISM THAT NO LONGER HAS TO BE TAUGHT. Both Android rows pin the
+    // kept spelling, and the gate's test is `pin's name is a substring of what
+    // was declared` -- true for the kept spelling, false for the alias. With
+    // the alias gone, the gate never sees the case it would have to special.
+    for (auto triple : {"aarch64-linux-android", "x86_64-linux-android"}) {
+        auto parsed = mcpp::toolchain::triple::parse(triple);
+        ASSERT_TRUE(parsed.has_value()) << triple;
+        auto info = mcpp::toolchain::triple::find_known_target(*parsed);
+        ASSERT_NE(info, nullptr) << triple;
+        const std::string pin(info->pin);
+        const std::string pinName = pin.substr(0, pin.find('@'));
+        EXPECT_EQ(pinName, "android-ndk") << triple << " pins " << pin;
+        EXPECT_EQ(std::string("ndk@30.0.16248370").find(pinName),
+                  std::string::npos)
+            << "the alias could only pass the gate by a second mechanism";
     }
 }

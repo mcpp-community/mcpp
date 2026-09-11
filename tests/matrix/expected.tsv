@@ -8,6 +8,7 @@
 # status × reason —— 两者都参与比对:
 #   ok           / none                     解析通过,且真的建出来了
 #   unsupported  / tier-planned             词表里有这一行,还没有任何东西接线
+#   unsupported  / apple-sdk-absent         这台机器没有这个目标要的 Apple SDK
 #   unsupported  / capability-pin           这一行的工具链是能力陈述,不可被推翻
 #   unsupported  / convention-unreplaced    约定被推翻了,而没有任何东西接替它
 #   unsupported  / host-cannot-serve        本机没有载荷,图也没有供给这个系统
@@ -235,7 +236,7 @@ payload	windows-x86_64	x86_64-windows-musl	msvc@system	-	-	-	-	-	unsupported	cap
 # 每一行接上线的时候,这里对应的那一格会从 tier-planned 变成别的东西,而这张表
 # 会因此变红 —— 那正是它该做的事。缺的东西每一处都是**载荷**,不是引擎:
 #   aarch64-linux-android / x86_64-linux-android   xim:android-ndk
-#   aarch64-ios                                    iPhoneOS SDK(先要一次许可判断)
+#   aarch64-ios                                    iPhoneOS SDK(已定位,不打包)
 #   wasm32-emscripten                              xim:emsdk,以及 #597 的目标模型
 #
 graph	linux-aarch64	aarch64-linux-android	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
@@ -262,42 +263,9 @@ payload	linux-x86_64	x86_64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	capa
 payload	macos-arm64	x86_64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	x86_64-linux-android	llvm@22.1.8	-	-	-	-	-	unsupported	capability-pin
 payload	windows-x86_64	x86_64-linux-android	msvc@system	-	-	-	-	-	unsupported	capability-pin
-graph	linux-aarch64	aarch64-ios	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-graph	linux-aarch64	aarch64-ios-sim	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-graph	linux-aarch64	x86_64-ios-sim	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-graph	linux-x86_64	aarch64-ios	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-graph	linux-x86_64	aarch64-ios-sim	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-graph	linux-x86_64	x86_64-ios-sim	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-graph	linux-x86_64	aarch64-ios	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-graph	linux-x86_64	aarch64-ios-sim	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-graph	linux-x86_64	x86_64-ios-sim	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-graph	macos-arm64	aarch64-ios	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-graph	macos-arm64	aarch64-ios-sim	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-graph	macos-arm64	x86_64-ios-sim	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-graph	windows-x86_64	aarch64-ios	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-graph	windows-x86_64	aarch64-ios-sim	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-graph	windows-x86_64	x86_64-ios-sim	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-graph	windows-x86_64	aarch64-ios	msvc@system	-	-	-	-	-	unsupported	tier-planned
-graph	windows-x86_64	aarch64-ios-sim	msvc@system	-	-	-	-	-	unsupported	tier-planned
-graph	windows-x86_64	x86_64-ios-sim	msvc@system	-	-	-	-	-	unsupported	tier-planned
-payload	linux-aarch64	aarch64-ios	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-payload	linux-aarch64	aarch64-ios-sim	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-payload	linux-aarch64	x86_64-ios-sim	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-payload	linux-x86_64	aarch64-ios	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-payload	linux-x86_64	aarch64-ios-sim	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-payload	linux-x86_64	x86_64-ios-sim	gcc@16.1.0	-	-	-	-	-	unsupported	tier-planned
-payload	linux-x86_64	aarch64-ios	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-payload	linux-x86_64	aarch64-ios-sim	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-payload	linux-x86_64	x86_64-ios-sim	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-payload	macos-arm64	aarch64-ios	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-payload	macos-arm64	aarch64-ios-sim	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-payload	macos-arm64	x86_64-ios-sim	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-payload	windows-x86_64	aarch64-ios	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-payload	windows-x86_64	aarch64-ios-sim	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-payload	windows-x86_64	x86_64-ios-sim	llvm@22.1.8	-	-	-	-	-	unsupported	tier-planned
-payload	windows-x86_64	aarch64-ios	msvc@system	-	-	-	-	-	unsupported	tier-planned
-payload	windows-x86_64	aarch64-ios-sim	msvc@system	-	-	-	-	-	unsupported	tier-planned
-payload	windows-x86_64	x86_64-ios-sim	msvc@system	-	-	-	-	-	unsupported	tier-planned
+payload	macos-arm64	aarch64-ios	llvm@22.1.8	-	-	-	-	-	ok	none
+payload	macos-arm64	aarch64-ios-sim	llvm@22.1.8	-	-	-	-	-	ok	none
+payload	macos-arm64	x86_64-ios-sim	llvm@22.1.8	-	-	-	-	-	ok	none
 graph	linux-aarch64	wasm32-emscripten	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 graph	linux-x86_64	wasm32-emscripten	gcc@16.1.0	-	-	-	-	-	unsupported	capability-pin
 graph	linux-x86_64	wasm32-emscripten	llvm@22.1.8	-	-	-	-	-	unsupported	capability-pin

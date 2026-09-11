@@ -491,8 +491,15 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
                 // four levels deeper, and asking for `root/bin` skipped every
                 // installed toolset silently.
                 auto bin = mcpp::toolchain::payload_frontend(vEntry.path(), pkg);
-                if (bin.empty()) continue;
-                payloads.push_back({ *id, s.version, bin });
+                // A MALFORMED DESCRIPTOR IS REPORTED, NOT SKIPPED. This
+                // enumeration's `continue` means "nothing usable here", and a
+                // payload whose own description does not parse would then be
+                // simply absent from `toolchain list` -- the reading the
+                // descriptor was added to prevent, in the one command a user
+                // runs to find out what is installed.
+                if (!bin) { mcpp::ui::warning(bin.error()); continue; }
+                if (bin->empty()) continue;
+                payloads.push_back({ *id, s.version, *bin });
             }
         }
     }
@@ -699,8 +706,23 @@ export int toolchain_list(const mcpp::config::GlobalConfig& cfg,
         // The discriminator is already in the table and needs no new field —
         // a row that names a compiler THIS host can install is one whose only
         // missing piece is the system, and a graph can supply a system.
+        // AND A LOCATED SDK IS NOT A SYSTEM A GRAPH CAN SUPPLY.
+        //
+        // The paragraph above names `aarch64-macos` as correctly absent on a
+        // Linux host, and it was absent by ACCIDENT rather than by rule: its
+        // pin is empty, so `!info.pin.empty()` excluded it. The iOS rows have
+        // a pin -- `llvm@22.1.8`, the ordinary payload -- so they entered this
+        // branch, found llvm in the index, and were listed on a host that
+        // cannot produce them.
+        //
+        // The discriminator the paragraph appeals to is real but is not the
+        // pin: it is whether a PACKAGE can supply the target's system. An
+        // Apple SDK is not redistributable, so none can, which makes every
+        // Apple row like `aarch64-macos` and unlike `x86_64-windows-musl`.
+        // Stating it removes the reliance on an empty field.
         bool graphCouldServe = false;
-        if (!planned && !installable_here(*t) && !info.pin.empty()) {
+        if (!planned && !installable_here(*t) && !info.pin.empty()
+            && !t->is_apple()) {
             auto at = info.pin.find('@');
             auto fam = info.pin.substr(0, at == std::string_view::npos
                                               ? info.pin.size() : at);
@@ -973,11 +995,29 @@ export int toolchain_install(const mcpp::config::GlobalConfig& cfg,
             return 0;
         }
 
-        auto bin = mcpp::toolchain::toolchain_frontend(payload->binDir, pkg);
-        if (!std::filesystem::exists(bin)) {
+        // `payload_frontend` AND NOT `toolchain_frontend(payload->binDir, ...)`.
+        //
+        // This was one of the five sites the `frontendSubdir` note in
+        // mcpp.toolchain.registry records: a caller that composes
+        // `<root>/bin` itself cannot see where the package says its compiler
+        // is. Four were repaired and this one was not, so
+        // `mcpp toolchain install emsdk 6.0.9` fetched the archive correctly
+        // and then looked for `clang++` in `bin/` -- while `em++` is in
+        // `emscripten/`.
+        //
+        // It also picks up the payload's own descriptor, which is the whole
+        // point of having one: the install path and the build path now ask the
+        // same function where the compiler is, so they cannot disagree.
+        auto binR = mcpp::toolchain::payload_frontend(payload->root, pkg);
+        if (!binR) {
+            mcpp::ui::error(binR.error());
+            return 1;
+        }
+        auto bin = *binR;
+        if (bin.empty() || !std::filesystem::exists(bin)) {
             mcpp::ui::error(std::format(
                 "installed package has no known C++ frontend in '{}'",
-                payload->binDir.string()));
+                mcpp::toolchain::payload_frontend_dir(payload->root, pkg).string()));
             return 1;
         }
 
@@ -1102,7 +1142,12 @@ export int toolchain_set_default(const mcpp::config::GlobalConfig& cfg,
         //
         // Same rule as everywhere else in this round: installed means usable,
         // not present.
-        if (mcpp::toolchain::payload_frontend(installDir, pkg).empty()) {
+        auto installedFrontend = mcpp::toolchain::payload_frontend(installDir, pkg);
+        if (!installedFrontend) {
+            mcpp::ui::error(installedFrontend.error());
+            return 1;
+        }
+        if (installedFrontend->empty()) {
             // Before "not installed", check whether this is the retired
             // `msvc@<cl-version>` spelling — otherwise the advice is to
             // install a toolset that does not exist and never will.
