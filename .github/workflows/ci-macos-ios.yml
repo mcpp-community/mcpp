@@ -276,13 +276,17 @@ jobs:
           #
           # THE TOOL IS DECLARED AT THE TOP LEVEL HERE AND NOT IN
           # examples/13, and the difference is which hosts the manifest has to
-          # work on. `deps` is not conditional on a target -- measured:
-          # "[target.aarch64-ios-sim.xlings] does not accept 'deps'" -- and
-          # `xim:apple-simulator-tools` exists for macosx alone, so an
+          # work on. A tool declaration is not conditional on a target --
+          # measured: "[target.aarch64-ios-sim.xlings] does not accept 'deps'"
+          # -- and `xim:apple-simulator-tools` exists for macosx alone, so an
           # unconditional declaration breaks a Linux build. This fixture is
           # macOS-only, so it can say it.
-          [xlings]
-          deps = ["xim:apple-simulator-tools"]
+          #
+          # `[xlings.workspace]` and not `[xlings] deps`, which mcpp reports as
+          # superseded: "deps is superseded by [xlings.workspace] and will stop
+          # being read. It is honoured for now."
+          [xlings.workspace]
+          "xim:apple-simulator-tools" = ""
           TOML
           cat >> /tmp/iostest/mcpp.toml << 'TOML'
 

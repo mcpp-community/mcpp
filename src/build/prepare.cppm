@@ -10426,8 +10426,29 @@ prepare_build(bool print_fingerprint,
                 auto xlEnv = mcpp::config::make_xlings_env(**cfg);
                 for (auto const& spec : xlingsSpecs) {
                     auto ref = mcpp::xlings::paths::parse_xpkg_ref(spec);
-                    if (auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref))
+                    if (auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref)) {
                         ctx.xlingsDepBinDirs.push_back(*dir / "bin");
+                        // AND THE PAYLOAD ROOT, BECAUSE A FLAT LAYOUT IS A
+                        // LAYOUT THIS INDEX ALREADY SHIPS.
+                        //
+                        // `bin/` is the convention and stays first. It is not
+                        // universal: `xim:7zip` puts `7zz` straight into its
+                        // install directory, and so did the first version of
+                        // `xim:apple-simulator-tools` -- which is how this was
+                        // measured, on a macOS runner with the package
+                        // correctly installed:
+                        //
+                        //   error: runner 'simctl-run' for 'aarch64-ios-sim'
+                        //          was not found on any search path.
+                        //   Searched: .../xim-x-apple-simulator-tools/0.1.0/bin
+                        //
+                        // The directory searched was right and the program was
+                        // one level up. Two directories per package is cheaper
+                        // than a rule every recipe has to know, and a recipe
+                        // that does use `bin/` is unaffected because that entry
+                        // is still tried first.
+                        ctx.xlingsDepBinDirs.push_back(*dir);
+                    }
                 }
             }
         }
