@@ -127,6 +127,47 @@ std::optional<std::filesystem::path> find_libcxx_std_module_source(
         }
     }
 
+    // SECOND PROBE: ASK WHICH libc++ WILL BE LINKED, THEN LOOK BESIDE IT.
+    //
+    // `-print-library-module-manifest-path` is the primary answer and the one
+    // llvm's own payload gives. `em++` does not forward it -- it answers
+    // `em++: error: no input files` -- so a toolchain that ships the surface
+    // was reported as shipping none, and `import std` was refused on a target
+    // where it demonstrably works.
+    //
+    // `--print-file-name=libc++.a` IS forwarded, and what it names is exactly
+    // the library the link will use, so the surface beside it is the surface
+    // that matches. Measured 2026-09-11:
+    //
+    //   xim:llvm 22.1.8  <root>/bin/../lib/x86_64-unknown-linux-gnu/libc++.a
+    //                    surface at <root>/bin/../share/libc++/v1/   (3 up)
+    //   xim:emsdk 6.0.9  <root>/emscripten/cache/sysroot/lib/wasm32-emscripten/libc++.a
+    //                    surface at <root>/.../sysroot/share/libc++/v1/ (2 up)
+    //
+    // THE TWO DEPTHS ARE WHY THIS WALKS RATHER THAN INDEXES. A fixed `up 3`
+    // would have been written against llvm, passed, and then been a guessed
+    // layout for the next payload -- which is the mistake the line this
+    // replaces made with `bin/../share`.
+    if (auto lib_r = mcpp::toolchain::run_capture(std::format(
+            "{}{} --print-file-name=libc++.a {}",
+            envPrefix, mcpp::xlings::shq(cxx_binary.string()),
+            mcpp::platform::null_redirect))) {
+        std::filesystem::path lib(mcpp::toolchain::trim_line(*lib_r));
+        // A driver that cannot place the library echoes the bare name back.
+        if (lib.has_parent_path()) {
+            std::error_code ec;
+            auto dir = std::filesystem::weakly_canonical(lib.parent_path(), ec);
+            if (ec) dir = lib.parent_path();
+            for (int up = 0; up < 4 && !dir.empty(); ++up) {
+                auto cand = dir / "share" / "libc++" / "v1" / "std.cppm";
+                if (std::filesystem::exists(cand)) return cand;
+                if (!dir.has_relative_path()) break;
+                dir = dir.parent_path();
+            }
+        }
+    }
+
+    // THIRD: the layout guess, kept for a driver that answers neither probe.
     auto root = cxx_binary.parent_path().parent_path();
     auto fallback = root / "share" / "libc++" / "v1" / "std.cppm";
     if (std::filesystem::exists(fallback)) return fallback;
@@ -211,6 +252,35 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
     // headers contributed; only the machine has to be restated. See
     // Toolchain::stdModuleTargetFlags.
     const std::string& codegenFlags = tc.stdModuleTargetFlags;
+    // AND THE PRECOMPILE NEEDS THE MACHINE TOO, FROM WHICHEVER SOURCE HAS IT.
+    //
+    // `stdModuleTargetFlags` reached only the CODEGEN command, on the reading
+    // that the first step needs headers and the second needs the machine. The
+    // first step needs both: a `--precompile` that does not say which target
+    // resolves the standard library's own `#include <__config>` against the
+    // BUILDING machine.
+    //
+    // It was invisible while exactly two kinds of toolchain existed. A payload
+    // whose compiler IS its target needs no flag, and a PACKAGE-provided module
+    // carries the target inside `stdModuleFlags` -- which is why the comment
+    // above insists that whoever sets that string states the target as well. A
+    // payload whose compiler serves several targets is a third kind, and it has
+    // neither: the NDK's one clang++ compiles for both Android arches and is
+    // told which by `--target` alone. Measured on `aarch64-linux-android`:
+    //
+    //     clang++ -std=c++23 -Wno-reserved-module-identifier \
+    //             --precompile .../share/libc++/v1/std.cppm -o pcm.cache/std.pcm
+    //     std.cppm:16:10: fatal error: '__config' file not found
+    //
+    // Five tokens, and the same error text this file already records from a
+    // Windows host in 2026-08 -- same cause, reached by a different route.
+    //
+    // The two sources are never both needed: `stdModuleFlags` is a SUPERSET of
+    // `stdModuleTargetFlags` when it is set at all (the producer builds the
+    // machine part first and appends the include part), so taking it in
+    // preference keeps `--target` off the command line twice.
+    const std::string& precompileFlags =
+        extraFlags.empty() ? codegenFlags : extraFlags;
 #if defined(_WIN32)
     // Windows: use absolute paths, raw binary path as first token
     // (cmd.exe strips leading quotes), shq for args with spaces.
@@ -267,7 +337,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
             cppStandardFlag,
             ixxFlags,
             sysrootFlag,
-            extraFlags,
+            precompileFlags,
             mcpp::xlings::shq(tc.stdModuleSource.string()),
             mcpp::xlings::shq(absBmi)),
         std::format(
@@ -290,7 +360,7 @@ std::vector<std::string> std_module_build_commands(const Toolchain& tc,
             mcpp::xlings::shq(tc.binaryPath.string()),
             cppStandardFlag,
             sysrootFlag,
-            extraFlags,
+            precompileFlags,
             mcpp::xlings::shq(tc.stdModuleSource.string()),
             mcpp::xlings::shq(relBmi)),
         std::format(
@@ -318,10 +388,22 @@ std::optional<std::filesystem::path> find_libcxx_std_compat_source(
     const std::filesystem::path& cxx_binary,
     const std::string& envPrefix)
 {
-    // Same search strategy as find_libcxx_std_module_source but for std.compat
-    auto root = cxx_binary.parent_path().parent_path();
-    auto p = root / "share" / "libc++" / "v1" / "std.compat.cppm";
-    if (std::filesystem::exists(p)) return p;
+    // DERIVED FROM THE SIBLING, NOT SEARCHED FOR SEPARATELY.
+    //
+    // The comment here used to say "same search strategy as
+    // find_libcxx_std_module_source", and it was not: that function has three
+    // probes and this one had the last of them, so on any payload the layout
+    // guess does not reach -- emsdk, for one -- `std` was found and
+    // `std.compat` was not, from one directory.
+    //
+    // `std.compat.cppm` sits beside `std.cppm` in every libc++ layout, because
+    // the same install rule places both. Deriving it makes the two answers
+    // structurally consistent rather than two searches that can disagree,
+    // which is what the comment claimed all along.
+    if (auto std_src = find_libcxx_std_module_source(cxx_binary, envPrefix)) {
+        auto p = std_src->parent_path() / "std.compat.cppm";
+        if (std::filesystem::exists(p)) return p;
+    }
     return std::nullopt;
 }
 
@@ -365,6 +447,9 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
     // Same split as the `std` builder above: the second command compiles a BMI
     // and needs the machine restated, not the include paths.
     const std::string& codegenFlags = tc.stdModuleTargetFlags;
+    // Same third kind of toolchain as the `std` builder above, same reason.
+    const std::string& precompileFlags =
+        extraFlags.empty() ? codegenFlags : extraFlags;
     // std.compat depends on std, so we need -fmodule-file=std=<std.pcm>
     // Note: the path after = must NOT be shell-quoted separately; the
     // entire -fmodule-file flag is a single token to the compiler.
@@ -400,7 +485,7 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
                     mcpp::xlings::shq(tc.binaryPath.string()),
                     cppStandardFlag,
                     sysrootFlag,
-                    extraFlags,
+                    precompileFlags,
                     absStdBmi,
                     mcpp::xlings::shq(tc.stdCompatSource.string()),
                     mcpp::xlings::shq(absBmi)),

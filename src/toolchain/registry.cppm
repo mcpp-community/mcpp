@@ -2,7 +2,8 @@
 // payload mapping.
 //
 // Identity (design §4.1–§4.3): a toolchain is `family@version` (family ∈
-// gcc | llvm | msvc), a target is a canonical Triple (triple.cppm). The two
+// gcc | llvm | msvc | emsdk | android-ndk), a target is a canonical Triple
+// (triple.cppm). The two
 // axes are orthogonal: "cross", "musl" and "mingw" are NOT names — the
 // variant lives in the target's env segment, and cross is the host≠target
 // relation. Which xim PACKAGE serves a (family, version, target, host)
@@ -16,6 +17,7 @@
 export module mcpp.toolchain.registry;
 
 import std;
+import mcpp.libs.json;
 import mcpp.platform;
 import mcpp.xlings;
 import mcpp.toolchain.clang;
@@ -73,8 +75,31 @@ struct ToolchainSpec {
     bool is_host_target() const { return target.empty(); }
 
     // "gcc@16.1.0" — the toolchain axis alone (config persistence, matching).
+    // WHICH PAYLOAD ANSWERED, NOT ONLY WHICH FAMILY.
+    //
+    // `emsdk@6.0.9` normalises to the llvm family, because `em++` IS clang and
+    // a fourth family value would be a false claim about the compiler. The
+    // consequence was a display line reading `Resolved llvm@6.0.9`, which is
+    // indistinguishable from the real `xim:llvm` and is not what the user
+    // typed. `mcpp toolchain list` has the same problem, and the matrix scan
+    // takes one toolchain per family, so two llvm-family payloads on one host
+    // could not both be enumerated.
+    //
+    // The family and the payload are two questions:
+    //
+    //     family   what flag vocabulary does this compiler speak?   llvm
+    //     payload  which archive provides it?                       emsdk
+    //
+    // `to_xim_package` already answers the second from the target; this is the
+    // field that lets it be SAID. Empty means the family's own payload, which
+    // is every row but these two, so nothing else's output moves.
+    std::string payloadName;
+
     std::string spec_str() const {
-        return std::format("{}@{}", family_name(family), version);
+        return std::format("{}@{}",
+                           payloadName.empty() ? family_name(family)
+                                               : std::string_view(payloadName),
+                           version);
     }
 
     // "gcc@16.1.0" or "gcc@16.1.0 → x86_64-windows-gnu" — user-facing.
@@ -96,6 +121,27 @@ struct XimToolchainPackage {
     }
 
     std::string display_spec() const { return displaySpec; }
+    // WHERE THE FRONTEND LIVES, RELATIVE TO THE PAYLOAD ROOT.
+    //
+    // `bin` for every payload that grew up here, and that was hardcoded at the
+    // one place which composed a root with a bin directory -- with MSVC as a
+    // named exception four levels deeper. A third and fourth shape make the
+    // exception list the wrong structure: emsdk keeps `em++` in
+    // `emscripten/`, and the NDK keeps `clang++` in
+    // `toolchains/llvm/prebuilt/<host>/bin/`. Neither is unusual; what was
+    // unusual was asking the FAMILY where a PAYLOAD keeps its compiler.
+    //
+    // MSVC stays a branch rather than a subdirectory because its path carries
+    // the toolset version and the host/target arch pair, which is a lookup and
+    // not a constant.
+    std::string                     frontendSubdir = "bin";
+    // THE FAMILY, CARRIED RATHER THAN PASSED ALONGSIDE. `payload_frontend`
+    // took it as a second argument, which every caller had to source from a
+    // differently-named local; five of them composed `payload->binDir`
+    // themselves instead and so could not see `frontendSubdir` at all. The
+    // package is built from a spec that has a family, so carrying it is free
+    // and removes an argument that could disagree with `pkg`.
+    Family                          family = Family::Gcc;
 };
 
 std::expected<ToolchainSpec, std::string>
@@ -143,8 +189,17 @@ std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
 // here, which is the caller's cue to skip; a wrong LAYOUT and a missing
 // PAYLOAD had been reporting the same way.
 std::filesystem::path payload_frontend(const std::filesystem::path& payloadRoot,
-                                       const XimToolchainPackage& pkg,
-                                       Family family);
+                                       const XimToolchainPackage& pkg);
+
+// The DIRECTORY `payload_frontend` searched, for a message that has to name it.
+//
+// The five "has no known C++ frontend in <dir>" refusals printed
+// `payload->binDir`, which was the directory they had composed themselves. Once
+// the package decides where its frontend lives, a message naming `bin` would
+// be naming a directory nothing looked in -- and that is the failure this
+// codebase records most often: the lookup is fixed and the message is not.
+std::filesystem::path payload_frontend_dir(const std::filesystem::path& payloadRoot,
+                                           const XimToolchainPackage& pkg);
 
 // Reverse mapping: an installed `xim-x-<name>` payload directory back to its
 // (family, target) identity. nullopt for non-toolchain xpkgs (ninja, glibc,
@@ -226,6 +281,11 @@ bool needs_linux_sysroot_payloads(const triple::Triple& target);
 // once (the payload side would happily resolve a windows-hosted musl package
 // that the availability side declared impossible).
 bool host_can_serve(const triple::Triple& target);
+
+// The NDK's own declared minimum API level, read from the installed payload's
+// `meta/platforms.json`. 0 when it cannot be read. Definition and the reason
+// the number is not a constant are below.
+int ndk_min_api_level(const std::filesystem::path& compilerPath);
 
 // xim index names to query for the Available section, with the family each
 // one contributes versions to. Host-conditional: a host only lists payloads
@@ -309,16 +369,18 @@ parse_toolchain_spec(std::string compilerArg,
     auto norm = compat::normalize_spec(compilerArg, versionArg);
     if (!norm) {
         return std::unexpected(std::format(
-            "unknown toolchain '{}' (expected gcc | llvm | msvc, or a "
-            "supported alias like mingw / musl-gcc)", compilerArg));
+            "unknown toolchain '{}' (expected gcc | llvm | msvc | emsdk | "
+            "android-ndk, or a supported alias like mingw / musl-gcc)",
+            compilerArg));
     }
 
     ToolchainSpec spec;
     if      (norm->family == "llvm") spec.family = Family::Llvm;
     else if (norm->family == "msvc") spec.family = Family::Msvc;
     else                             spec.family = Family::Gcc;
-    spec.version = std::move(norm->version);
-    spec.target  = std::move(norm->target);
+    spec.version     = std::move(norm->version);
+    spec.target      = std::move(norm->target);
+    spec.payloadName = std::move(norm->payload);
 
     // `@system` IS NOT A GENERAL SPELLING, and refusing it here is the point.
     //
@@ -390,10 +452,69 @@ bool gcc_native_payload_is_musl(std::string_view hostArch, bool isLinux,
         || (target.os == "linux" && target.arch == hostArch);
 }
 
+// The NDK's own name for the HOST it runs on, which is the directory component
+// under `toolchains/llvm/prebuilt/`. Upstream ships `linux-x86_64`,
+// `darwin-x86_64` (a universal binary, so Apple silicon reads it too) and
+// `windows-x86_64`. Not the target -- a Linux x86_64 machine building for
+// aarch64 still reads `linux-x86_64`.
+std::string ndk_host_tag() {
+    if constexpr (mcpp::platform::is_windows) return "windows-x86_64";
+    else if constexpr (mcpp::platform::is_macos) return "darwin-x86_64";
+    else return "linux-x86_64";
+}
+
+// THE NDK'S OWN MINIMUM API LEVEL, READ FROM THE PAYLOAD.
+//
+// Android's API level is NOT OPTIONAL and mcpp cannot leave it out. bionic's
+// own <sys/cdefs.h> stops the build:
+//
+//     sys/cdefs.h:365:2: error: Unversioned target triples are not supported!
+//
+// So a project that declares no `min_api_level` still needs a level, and the
+// question is where the number comes from. Not from a constant compiled in
+// here: this repository has recorded more than once that a version written
+// into a comment becomes a version written into a diagnostic and then into
+// somebody's install command, and the NDK's floor moves with the NDK. The
+// payload answers for itself -- `meta/platforms.json` is upstream's own
+// declaration of the range it supports, `{"min": 21, "max": 37}` for r30 --
+// and reading it means a newer NDK changes the default by being installed
+// rather than by being edited into this file.
+//
+// Returns 0 when the file is absent or unreadable, which the caller turns into
+// a refusal naming `min_api_level`. A guessed level would be worse than the
+// refusal: it selects which bionic symbols exist, so guessing produces an
+// artefact that links here and fails to load on a device.
+int ndk_min_api_level(const std::filesystem::path& compilerPath) {
+    // `<ndk>/toolchains/llvm/prebuilt/<host>/bin/clang++` -- walk up rather
+    // than counting components, because the count is exactly the kind of fact
+    // that changes silently when a layout does.
+    std::error_code ec;
+    for (auto dir = compilerPath.parent_path();
+         !dir.empty() && dir != dir.parent_path();
+         dir = dir.parent_path()) {
+        auto meta = dir / "meta" / "platforms.json";
+        if (!std::filesystem::exists(meta, ec)) continue;
+        std::ifstream in(meta);
+        if (!in) return 0;
+        try {
+            auto j = nlohmann::json::parse(in, nullptr, false);
+            if (j.is_discarded() || !j.contains("min")) return 0;
+            auto min = j["min"];
+            if (!min.is_number_integer()) return 0;
+            auto level = min.get<int>();
+            return level > 0 ? level : 0;
+        } catch (...) {
+            return 0;
+        }
+    }
+    return 0;
+}
+
 XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
     XimToolchainPackage pkg;
     pkg.displaySpec = spec.display();
     pkg.ximVersion  = spec.version;
+    pkg.family      = spec.family;
 
     if (spec.family == Family::Msvc) {
         // `xim:msvc@<toolset>`. Only reached for a VERSIONED spec —
@@ -413,10 +534,53 @@ XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {
         return pkg;
     }
     if (spec.family == Family::Llvm) {
-        // ONE PAYLOAD. The `openkal-llvm` spelling normalises to this family and
-        // installs nothing of its own — it is a statement about where the
-        // TARGET SIDE comes from, and the compiler is the llvm payload either
-        // way. A user who has one has both.
+        // THE TARGET DECIDES THE PAYLOAD HERE TOO, and it did not used to.
+        //
+        // This returned the generic llvm payload unconditionally, which is
+        // right for every target llvm itself serves and wrong for the two that
+        // arrive with their own clang. `em++` and the NDK's `clang++` ARE
+        // clang -- same family, same flag vocabulary, same `import std` path
+        // -- and each is a clang whose target is fixed by its payload, which
+        // is the shape `src/toolchain/hostflags.cppm` already describes:
+        // "every hosted cross this build tool could do was served by a payload
+        // whose driver had exactly one target". So the family stays `Llvm` and
+        // no fourth value is invented; what changes is which package answers.
+        const auto& lt = spec.target;
+
+        if (lt.os == "emscripten") {
+            // `em++` is a `#!/bin/sh` wrapper beside the Python it execs, in
+            // `emscripten/` rather than `bin/` -- `bin/` holds the raw clang,
+            // which would compile for wasm and then link like an ordinary
+            // clang, producing a `.wasm` with no JavaScript and none of
+            // Emscripten's own glue. Naming the wrapper is the whole point.
+            pkg.ximName = "emsdk";
+            pkg.frontendSubdir = "emscripten";
+            pkg.frontendCandidates = { "em++", "emcc" };
+            return pkg;
+        }
+
+        if (lt.is_android()) {
+            // One NDK payload serves every Android arch and API level: the
+            // arch arrives as `--target=<arch>-linux-android<api>` on the
+            // command line, not as a different package. The host tuple in the
+            // path is the HOST's, not the target's -- a Linux x86_64 machine
+            // cross-compiling for aarch64 still reads
+            // `prebuilt/linux-x86_64/`.
+            pkg.ximName = "android-ndk";
+            pkg.frontendSubdir = std::format("toolchains/llvm/prebuilt/{}/bin",
+                                             ndk_host_tag());
+            if constexpr (mcpp::platform::is_windows) {
+                pkg.frontendCandidates = { "clang++.exe", "clang++" };
+            } else {
+                pkg.frontendCandidates = { "clang++", "clang" };
+            }
+            return pkg;
+        }
+
+        // ONE PAYLOAD for everything else. The `openkal-llvm` spelling
+        // normalises to this family and installs nothing of its own — it is a
+        // statement about where the TARGET SIDE comes from, and the compiler is
+        // the llvm payload either way. A user who has one has both.
         pkg.ximName = mcpp::toolchain::llvm::package_name();
         pkg.frontendCandidates = mcpp::toolchain::llvm::frontend_candidates();
         return pkg;
@@ -530,10 +694,22 @@ std::filesystem::path toolchain_frontend(const std::filesystem::path& binDir,
     return {};
 }
 
+std::filesystem::path payload_frontend_dir(const std::filesystem::path& payloadRoot,
+                                           const XimToolchainPackage& pkg) {
+    if (pkg.family == Family::Msvc) {
+        // The lookup's own answer, so the message names the toolset directory
+        // rather than a path this code would have guessed.
+        if (auto inst = mcpp::toolchain::msvc::installation_at(payloadRoot,
+                                                              pkg.ximVersion))
+            return inst->clPath.parent_path();
+        return payloadRoot / "VC" / "Tools" / "MSVC" / pkg.ximVersion;
+    }
+    return payloadRoot / pkg.frontendSubdir;
+}
+
 std::filesystem::path payload_frontend(const std::filesystem::path& payloadRoot,
-                                       const XimToolchainPackage& pkg,
-                                       Family family) {
-    if (family == Family::Msvc) {
+                                       const XimToolchainPackage& pkg) {
+    if (pkg.family == Family::Msvc) {
         // Same resolution the install and build paths use, so the three
         // cannot disagree about where an msvc payload keeps its compiler.
         // below, which is the llvm payload's shape.)
@@ -542,7 +718,7 @@ std::filesystem::path payload_frontend(const std::filesystem::path& payloadRoot,
             return inst->clPath;
         return {};
     }
-    return toolchain_frontend(payloadRoot / "bin", pkg);
+    return toolchain_frontend(payloadRoot / pkg.frontendSubdir, pkg);
 }
 
 std::optional<PayloadIdentity> identify_xim_payload(std::string_view ximDirName) {
@@ -601,6 +777,54 @@ bool needs_linux_sysroot_payloads(const triple::Triple& target) {
 
 bool host_can_serve(const triple::Triple& target) {
     if (target.empty()) return true;              // host target
+
+    // AN SDK THAT SHIPS ITS OWN SYSROOT IS SERVED WHERE THE SDK IS PUBLISHED,
+    // AND THE ARCH IN THE TRIPLE IS THE GUEST'S.
+    //
+    // Every branch below reasons about a cross payload per host arch, because
+    // that is how a compiler targeting another Linux or another Windows is
+    // published here. An Emscripten or Android SDK is published per HOST and
+    // serves every guest arch from one archive: one `xim:emsdk` compiles for
+    // wasm32 regardless of the machine's arch, and one NDK serves both Android
+    // arches from a single `--target=<arch>-linux-android`.
+    //
+    // Without this the wasm row's own pin was not enough. Measured: with
+    // `emsdk@6.0.9` in the table, `mcpp build --target wasm32-emscripten`
+    // still answered "No toolchain payload here produces it" and listed
+    // seventeen servable targets -- because `target.os` is neither "linux" nor
+    // a Windows form, so control reached a `return false` written for triples
+    // nobody publishes a payload for.
+    //
+    // "WHEREVER" WAS TOO BROAD ONCE, AND THE TARGET MATRIX IS WHAT CAUGHT IT.
+    // The first version returned true unconditionally, which is the same
+    // mistake as the branches it sits above: a predicate correct about the
+    // objects its author had in mind. It was then narrowed to
+    // `mcpp::platform::is_linux`, because `xim:emsdk` and `xim:android-ndk`
+    // both declared ONLY an `xpm.linux` table -- so on macOS or Windows there
+    // was no payload to install and the honest answer was the same
+    // `host-cannot-serve` every other unpublished combination gets. That
+    // comment named its own expiry: "when a darwin or windows NDK lands in the
+    // index -- upstream publishes both -- this is the one line that changes."
+    //
+    // IT HAS LANDED, SO THIS IS THAT LINE. Both packages now declare
+    // `xpm.linux`, `xpm.macosx` and `xpm.windows`, and the index's own
+    // per-host install jobs are the measurement rather than the declaration:
+    // on macOS and Windows each payload downloads, extracts, passes its
+    // recipe's compiler probe and registers its shims. Two host assumptions
+    // inside those recipes were found by exactly those jobs and fixed there,
+    // which is where a host-shaped packaging defect belongs -- not here.
+    //
+    // Keyed on the target and no longer on the host, because these payloads
+    // are published per host OS and carry every guest arch: one `xim:emsdk`
+    // compiles for wasm32 regardless of the machine's arch, and one NDK serves
+    // both Android arches. The remaining per-host question is whether the
+    // payload EXISTS, and that is the index's answer to give, not a constant
+    // compiled into the engine. A row whose pin the index cannot satisfy on
+    // this host fails at install with the package's own diagnostic, which
+    // names the payload -- strictly better than this function silently
+    // deleting the row from `toolchain list`, which reported a target mcpp
+    // knows as one it has never heard of.
+    if (target.has_own_sysroot()) return true;
 
     if (target.os == "linux") {
         if constexpr (mcpp::platform::is_linux) {

@@ -26,6 +26,7 @@ import mcpp.runtime.elf;
 import mcpp.runtime.binding;
 import mcpp.ui;
 import mcpp.platform.runtime_search;
+import mcpp.toolchain.triple;
 
 export namespace mcpp::build::runtime_validation {
 
@@ -610,6 +611,34 @@ ValidationReport validate_changed_artifacts(
     if (plan.runtimeBinding.platform != "linux"
         || mcpp::platform::runtime::runtime_provider(
                plan.runtimeBinding.runtimeId) != "glibc")
+        return report;
+
+    // AND THE ARTIFACT HAS TO BE ONE THAT COULD LOAD ON THIS MACHINE.
+    //
+    // Every rule below compares an artifact against `plan.runtimeBinding` --
+    // the loader, the libc and the search order of a process on THIS host.
+    // That premise is what makes the rules true, and it is false for a target
+    // whose system comes from inside an SDK: an Android executable's
+    // `PT_INTERP` is `/system/bin/linker64` by ABI and is read by the device.
+    //
+    // Measured on a correct artifact --
+    //
+    //     ELF 64-bit LSB pie executable, ARM aarch64, interpreter
+    //     /system/bin/linker64
+    //
+    // -- rule B called it a proven defect, because the host binding selects
+    // this machine's `ld-linux-x86-64.so.2` and "one process cannot mix
+    // runtime payloads" is a true sentence about a process that will never
+    // exist. It then offered a SubOS as the fix, which cannot help. The
+    // preceding two checks in this build had the same shape and each was
+    // corrected where its own premise lives; this is the third and last.
+    //
+    // The linux/glibc guard above does not cover it: an Android triple has
+    // `os == "linux"` on purpose -- it IS the kernel -- so every Linux-shaped
+    // decision in the tree is right about it except the ones that mean "this
+    // machine".
+    if (auto tt = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+        tt && tt->has_own_sysroot())
         return report;
 
     auto doc = read_cache(plan.outputDir);
@@ -1248,6 +1277,33 @@ check_dlopen_surface(const mcpp::build::BuildPlan& plan) {
         return report;
     }
 
+    // AND NO SURFACE MEANS NOTHING TO READ. THE CHEAP TEST COMES FIRST.
+    //
+    // `inspect_dlopen_surface` walks `plan.depRuntimeLibraryDirs`. With that
+    // list empty there are no members, so every reading below is taken to
+    // answer a question with no subject -- and the readings are not cheap: the
+    // SONAME scan that follows parses EVERY linked artifact in full.
+    //
+    // Measured on this repository, 2026-09-11, before this guard existed:
+    //
+    //   mcpp build   loader-tags stage    170ms     one 21 MB binary
+    //   mcpp test    loader-tags stage  17948ms     108 binaries, 2.4 GB
+    //
+    // and flat at ~17.9s across every target measured, because the cost is the
+    // whole artifact set rather than the one being built. `mcpp test` drives
+    // the backend once per target, so a 110-target suite paid it 110 times --
+    // turning a 3-minute run into 33. The record it produced every time said
+    // `members=0, walked=0`.
+    //
+    // This is the shape worth naming: the expensive work ran BEFORE the cheap
+    // test that makes it unnecessary. The record is still published, because a
+    // field that disappears is worse than a field that says why it is empty.
+    if (plan.depRuntimeLibraryDirs.empty()) {
+        publish_reason("no dependency published a runtime library directory; "
+                       "there is no dlopen surface to judge");
+        return report;
+    }
+
     for (auto const& [artifact, stamp] : artifacts) {
         auto dir = artifact.parent_path();
         if (dir.empty() || std::ranges::find(searchDirs, dir) != searchDirs.end())
@@ -1258,8 +1314,25 @@ check_dlopen_surface(const mcpp::build::BuildPlan& plan) {
     // The SONAMEs this build produces, read from the objects rather than from
     // their filenames. See `inspect_dlopen_surface` for why a filename search
     // is not enough while the build is still running.
+    // ONLY A SHARED LIBRARY CAN HAVE ONE, so only a shared library is read.
+    //
+    // This parsed every artifact, including executables, which have no
+    // `DT_SONAME` by construction -- an ELF that is not a shared object cannot
+    // carry one. On a test suite that is the entire cost of the loop spent to
+    // append nothing: 108 executables, 2.4 GB, one empty vector.
+    //
+    // The kind comes from `plan.linkUnits` rather than from the file, because
+    // that is the answer the plan already computed and reading it back out of
+    // the ELF is the same parse this avoids.
+    std::vector<std::filesystem::path> sharedOutputs;
+    for (auto const& unit : plan.linkUnits) {
+        if (unit.kind != mcpp::build::LinkUnit::SharedLibrary) continue;
+        sharedOutputs.push_back(plan.outputDir / unit.output);
+    }
     std::vector<std::string> produced;
     for (auto const& [artifact, stamp] : artifacts) {
+        if (std::ranges::find(sharedOutputs, artifact) == sharedOutputs.end())
+            continue;
         auto facts = mcpp::platform::elf::inspect_elf_runtime(artifact);
         if (facts && !facts->soname.empty()) produced.push_back(facts->soname);
     }

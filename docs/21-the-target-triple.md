@@ -50,7 +50,15 @@ the same kind of thing everywhere:
 | `linux` | the **C library** | `gnu` (glibc), `musl`, `android` (bionic) |
 | `windows` | the **object ABI** | `gnu` (Itanium C++ ABI), `msvc` (Microsoft's) |
 | `none` | the **object format** | `elf` |
-| `macos`, `ios`, `emscripten` | nothing; the platform carries no segment | — |
+| `ios` | the **device or the simulator** | `sim` (simulator), absent (device) |
+| `macos`, `emscripten` | nothing; the platform carries no segment | — |
+
+`sim` is the one Apple row with a segment, and it names neither a C library nor
+an ABI: a simulator build has its own SDK (`iPhoneSimulator.sdk`), produces its
+own object, and takes `-mios-simulator-version-min` where the device takes
+`-miphoneos-version-min`. Two targets, so two identities. Apple spells it with
+a trailing `-simulator` on the OS segment and Rust with `aarch64-apple-ios-sim`;
+both spellings parse here, and both canonicalise to `aarch64-ios-sim`.
 
 `android` is a **C library** and therefore sits where `musl` sits, on a `linux`
 OS. That placement is the whole of the modelling decision: the kernel *is*
@@ -475,10 +483,12 @@ other's rows.
 | `thumbv8m.base-none-eabi` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
 | `thumbv8m.main-none-eabi` | verified | `llvm@22.1.8` | payload | payload | payload | payload |
 | `thumbv8m.main-none-eabihf` | preview | `llvm@22.1.8` | payload | payload | payload | payload |
-| `aarch64-linux-android` | planned | — | planned | planned | planned | planned |
-| `x86_64-linux-android` | planned | — | planned | planned | planned | planned |
+| `aarch64-linux-android` | preview | `android-ndk@30.0.16248370` | payload | payload | payload | — |
+| `x86_64-linux-android` | verified | `android-ndk@30.0.16248370` | payload | payload | payload | — |
 | `aarch64-ios` | planned | — | planned | planned | planned | planned |
-| `wasm32-emscripten` | planned | — | planned | planned | planned | planned |
+| `aarch64-ios-sim` | planned | — | planned | planned | planned | planned |
+| `x86_64-ios-sim` | planned | — | planned | planned | planned | planned |
+| `wasm32-emscripten` | verified | `emsdk@6.0.9` | payload | payload | payload | payload |
 
 `payload` a toolchain payload here produces it · `graph` no payload, but a
 dependency can supply the system · `system` located on the machine, not
@@ -496,11 +506,30 @@ installed by mcpp · `SDK` the platform's own · `—` unreachable from this hos
 | `x86_64-windows-musl` | Windows by payload; anywhere by graph | no gcc emits PE+musl, and LLVM cannot spell the triple |
 | `aarch64-macos` | macOS | the SDK is the machine's |
 | `*-none-elf` | every host | clang and lld are cross-compilers by construction |
+| `wasm32-emscripten`, `*-linux-android` | every host | the SDK ships its own sysroot and upstream publishes it per host; one archive serves every guest arch |
 
 **A `—` is about payloads, not about possibility.** `host_can_serve` answers
 "does a payload here produce it", and a dependency graph can supply the system
 instead — which is why `x86_64-windows-musl` reads `via dependency graph` on
 Linux and produces a real PE32+ there.
+
+**And for the two Android rows the `—` on Windows is the INDEX's answer, so
+`mcpp toolchain list` still shows them there.** Google publishes a Windows NDK
+and it downloads; what it does not contain is the libc++ module surface
+(measured: no `std.cppm` and no `std/*.inc`, against 110 on the other two
+hosts), so `xim:android-ndk` declares no Windows table — an entry that can
+never serve a module-first build is worse than none. The engine does not encode
+that: which hosts an index serves changes without an engine release, and a
+constant stating it here is what the wasm row's own history shows going stale.
+A Windows user therefore sees the row, the pin resolves, and xim refuses with
+`no payload for this platform` before anything is fetched, naming the package.
+
+**The two Android rows differ in tier because one of them was run.** An
+x86_64 Android artefact executes on the platform's own emulator, and a
+`verified` row means exactly that was done. The device row builds identically
+and has no execution path from an x86_64 host: the emulator refuses a foreign
+guest (`QEMU2 emulator does not support arm64 CPU architecture`), so it needs
+an arm64 host or the qemu-user route.
 
 ### And CI measures every one of them
 

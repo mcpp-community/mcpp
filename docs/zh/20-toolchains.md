@@ -44,7 +44,7 @@ C++23 模块对编译器版本较为敏感,不同版本的 GCC / Clang 在模块
 
 一切命名由两条正交轴构成:
 
-- **toolchain** = `family@version`,family ∈ `gcc | llvm | msvc` ——*用谁编*
+- **toolchain** = `family@version`,family ∈ `gcc | llvm | msvc | emsdk | android-ndk` ——*用谁编*
 - **target** = 三段 triple `arch-os[-env]`(如 `x86_64-linux-musl`、
   `x86_64-windows-gnu`、`aarch64-macos`)——*产出给谁*
 
@@ -713,7 +713,10 @@ Windows 组件(Win10 起),mcpp 从不分发它;而 `vcruntime140.dll` /
 模式(`--mode system`、`--mode static`)兑现不了 `toolchain-coupled`,会直接拒绝。
 
 **边界。** 该契约只管 C++ 运行时。静态 **libc** 是另一根轴(`linkage = "static"`
-/ `--static`,如 musl 目标),部署下限是第三根轴(`macos_deployment_target`)。
+/ `--static`,如 musl 目标),部署下限是第三根轴 —— Apple 目标用 `[package]` 里的
+`macos_deployment_target`,Android 用 `[target.<triple>]` 下的 `min_api_level`。
+两者喂给 `llvm_triple()` 的同一个参数、占构建指纹里的同一个槽:一个目标要么是
+Apple 要么是 Android,而两者回答的是同一个问题。
 另外,`host-coupled` 只承诺 mcpp 不做任何"把 C++ 运行时打进产物"的动作,它不会
 去掉链接因其它原因已经携带的工具链 rpath —— 所以在 ELF 上这类产物仍可能优先
 找到工具链的库。

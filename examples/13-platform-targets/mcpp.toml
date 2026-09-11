@@ -1,0 +1,21 @@
+[package]
+name    = "platform-targets"
+version = "0.1.0"
+
+# ANDROID'S API LEVEL IS A PROJECT DECISION, NOT A TOOLCHAIN PROPERTY, which
+# is why it lives here and not in the triple. One NDK serves a range of levels,
+# and the level selects which bionic symbols exist -- so it is an ABI axis and
+# it enters the build fingerprint: two levels are two build directories.
+#
+# It is OPTIONAL. Left out, mcpp reads the floor the NDK itself declares in
+# `meta/platforms.json` (21 for r30). It is stated here because a project that
+# ships to a minimum should say so rather than inherit whatever the payload's
+# floor happens to be.
+#
+# `macos_deployment_target` in `[package]` is the same axis for Apple targets;
+# a target is one or the other, so they share one slot in the fingerprint.
+[target.aarch64-linux-android]
+min_api_level = 24
+
+[target.x86_64-linux-android]
+min_api_level = 24

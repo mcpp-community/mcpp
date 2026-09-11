@@ -2501,6 +2501,23 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 e.sysrootDeclared = true;
             }
 
+            // `min_api_level` — the oldest OS release the artifact must run
+            // on, for a target whose compiler takes it inside the triple.
+            // Refused rather than coerced when it is not a positive integer:
+            // a level is a number, and a string that looks like one would be
+            // a second spelling of the same key.
+            if (auto it = body.find("min_api_level"); it != body.end()) {
+                auto n = it->second.is_int()
+                           ? std::optional<std::int64_t>(it->second.as_int())
+                           : std::nullopt;
+                if (!n || *n <= 0) {
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}].min_api_level must be a positive integer, "
+                        "e.g. min_api_level = 24", triple)));
+                }
+                e.minApiLevel = static_cast<int>(*n);
+            }
+
             // `runner` — the argv template `mcpp run` uses for a target whose
             // artifact cannot execute here. An ARRAY, so it is neither a
             // scalar (the unknown-key sweep below skips it by type) nor part

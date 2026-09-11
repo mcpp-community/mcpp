@@ -154,6 +154,81 @@ Target x86_64-windows-gnu → x86_64-w64-windows-gnu   (gnu selects the Itanium 
 没有操作系统时是对象格式 —— 因此记录的是**它是哪一个**,
 而不是一个只记录「是否为第一种」的布尔。
 
+## 这个模型下的 Android、Web 与 iOS
+
+mcpp 在 2026.9.11.3 里加出目标行的这三个平台不是同一个问题。决定每一个的是它的
+实现相对一个 C 库该落在哪一侧,而三个答案各不相同。
+
+### Android 共用 Linux 的实现,一行都不用改
+
+`openkal-linux` 写在 Linux 内核自己的系统调用接口上,不向任何 C 库借用任何东西 ——
+这正是它能被放到一个 C 库**底下**的原因。Android 的内核**就是** Linux,给定架构上
+的系统调用 ABI 完全相同,而 `src/sys.h` 按 `__x86_64__` / `__aarch64__` 分支,也就是
+按**架构**而不是按操作系统。它里面没有任何属于 glibc 或 bionic 的东西。
+
+所以一个可移植程序不需要新增任何一行。`cfg(os = "linux")` 对一个 Android triple
+**为真**,因为 Android 是 `linux` OS 上的一个 `env` 值 ——
+[21 — 目标三元组](21-the-target-triple.md) 记着这处建模决定 —— 于是实现由一个
+Linux 消费者本来就会写的那一行选出:
+
+```toml
+[target.'cfg(os = "linux")'.dependencies]
+openkal-linux = "0.12.0"
+```
+
+实测 2026-09-11,一个只针对 openkal 写的程序 —— 没有 C 库,也没有 `import std`:
+
+```
+mcpp build --target x86_64-linux-android
+       kernel-abi   openkal   (openkal-linux@0.12.0, graph)
+    ->  ELF 64-bit LSB pie, x86-64, interpreter /system/bin/linker64
+
+mcpp build --target aarch64-linux-android
+    ->  ELF 64-bit LSB pie, ARM aarch64, 同一个 interpreter
+```
+
+而那个 x86_64 产物被推到一台 API 24 的模拟器镜像上执行:
+
+```
+openkal: 1-2-3          exit 0
+```
+
+`openkal-linux` 自己也能为两个 Android 目标原样编译,这是两条里较弱的那一条,值得
+分开陈述:前者说的是**实现**构建得起来,后者说的是**它上面的程序**跑得起来。
+
+### iOS 会共用 macOS 的实现,而这一条现在还不能声称
+
+同样的论证在 Apple 这一侧成立 —— iOS 与 macOS 共用 Darwin 内核,而 `openkal-macos`
+是按同样方式按架构分支的 —— 但**论证不是证据**。iPhoneOS 与 iPhoneSimulator 的 SDK
+在 Xcode 里且不可再分发,所以 `aarch64-ios` 与 `*-ios-sim` 三行是 `planned`:没有
+东西可以拿来构建,因此也没有东西可以拿来运行。仅凭一个结构性论证就声明支持,是这个
+生态已经付过代价的那种形状 —— 一个在索引里的包不等于一个能构建真实工程的包 ——
+所以在 SDK 可达之前,这三行什么都不声称。
+
+### Web 需要一份新的实现,而且是另一种形状
+
+Emscripten 是三者里**改变模型**而不是扩展表格的那一个。那里没有内核,也没有系统
+调用可发:Emscripten 在一个 JavaScript 宿主之上供给它自己的 C 库。所以给它写的
+openkal 实现不可能按 `openkal-linux` 的方式写 —— 落在一个 C 库底下 —— 而必须落在
+一个 C 库**之上**。规范恰好允许这一点(「一个实现可以建立在一个 C 库之上、之下,
+或者不依赖 C 库」),所以这是**新软件**而不是一个共用决定,而它是三者里既没做完也
+没被阻塞的那一个。
+
+在它出现之前,`wasm32-emscripten` 走的是普通那条路:一个载荷。`xim:emsdk` 自带
+编译器、sysroot 和一份 libc++ 的模块面,所以一个用 `import std` 的程序今天就能为
+Web 构建并运行,而 openkal 完全不参与 —— 这正是那一行的 `verified` 层级所记录的。
+
+### 表
+
+| 平台 | 实现 | 状态 |
+|---|---|---|
+| Linux(glibc、musl) | `openkal-linux` | 参考实现 |
+| Android(两个 ABI) | `openkal-linux`,原样 | 构建通过;它上面的程序在模拟器上跑过 |
+| macOS | `openkal-macos` | 在 macOS 的系统调用面上 |
+| iOS、iOS 模拟器 | `openkal-macos` 会服务它 | 阻塞:SDK 不可再分发 |
+| Windows | `openkal-windows` | 在 Win32 与对象管理器上 |
+| Web(Emscripten) | 无 | 需要一份写在 C 库**之上**的实现 |
+
 ## 裸机
 
 一个没有操作系统的目标,是同一个模型,只是平台层由固件而非内核供给。

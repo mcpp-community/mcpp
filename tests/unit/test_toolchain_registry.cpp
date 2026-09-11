@@ -235,6 +235,68 @@ TEST(ToolchainRegistry, NativeGccPayloadFollowsWhatTheArchActuallyPublishes) {
 // ONE platform — Visual Studio is very often already installed and cannot
 // always be redistributed.
 
+// THE NDK'S OWN FLOOR, READ FROM THE PAYLOAD RATHER THAN COMPILED IN.
+//
+// Android's API level is not optional -- bionic's <sys/cdefs.h> stops the build
+// with "Unversioned target triples are not supported!" -- so a project that
+// declares no `min_api_level` still needs one. The number comes from
+// `meta/platforms.json`, which is upstream's own declaration of the range it
+// supports, so a newer NDK changes the default by being installed.
+//
+// A CONSTANT HERE WOULD BE THE DEFECT THIS AVOIDS: this repository has
+// recorded more than once that a version written into a comment becomes a
+// version in a diagnostic and then in somebody's install command.
+TEST(ToolchainRegistry, TheNdkApiLevelFloorIsReadFromThePayloadsOwnMetadata) {
+    namespace fs = std::filesystem;
+    auto root = fs::temp_directory_path()
+              / ("mcpp-ndk-meta-" + std::to_string(::getpid()));
+    fs::remove_all(root);
+    // The real layout: the compiler sits four directories below the NDK root,
+    // and `meta/` is a sibling of `toolchains/`.
+    auto bin = root / "toolchains" / "llvm" / "prebuilt" / "linux-x86_64" / "bin";
+    fs::create_directories(bin);
+    fs::create_directories(root / "meta");
+    auto clangxx = bin / "clang++";
+    { std::ofstream o(clangxx); o << "#!/bin/sh\n"; }
+
+    // r30's actual values.
+    {
+        std::ofstream o(root / "meta" / "platforms.json");
+        o << R"({"min": 21, "max": 37, "aliases": {"N": 24}})";
+    }
+    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 21);
+
+    // A DIFFERENT PAYLOAD ANSWERS DIFFERENTLY, which is the whole point of
+    // reading it: the same code must not return 21 for an NDK that says 24.
+    {
+        std::ofstream o(root / "meta" / "platforms.json");
+        o << R"({"min": 24, "max": 40})";
+    }
+    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 24);
+
+    // 0 WHEN IT CANNOT BE READ, and the caller turns that into a refusal
+    // naming `min_api_level`. A guessed level would be worse than the refusal:
+    // it selects which bionic symbols exist, so guessing produces an artefact
+    // that links here and fails to load on a device.
+    fs::remove(root / "meta" / "platforms.json");
+    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 0);
+
+    // Malformed rather than absent -- same answer, and no exception escapes.
+    { std::ofstream o(root / "meta" / "platforms.json"); o << "{not json"; }
+    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 0);
+
+    // Present but not a number: still 0, never a silent 1 from a cast.
+    { std::ofstream o(root / "meta" / "platforms.json"); o << R"({"min": "21"})"; }
+    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(clangxx), 0);
+
+    // A path that is not inside an NDK at all walks to the filesystem root and
+    // stops; it must not loop.
+    EXPECT_EQ(mcpp::toolchain::ndk_min_api_level(
+                  fs::temp_directory_path() / "definitely-not-an-ndk" / "clang++"), 0);
+
+    fs::remove_all(root);
+}
+
 TEST(ToolchainOrigin, MsvcIsTheOnlyFamilyWithASystemSpelling) {
     auto msvcSystem = parse_toolchain_spec("msvc@system");
     ASSERT_TRUE(msvcSystem.has_value()) << msvcSystem.error();
@@ -293,5 +355,140 @@ TEST(ToolchainSysrootDeps, OneDerivationForTheGlibcSysrootPayloads) {
         // No Linux sysroot exists to want.
         for (auto const& t : {host, musl, mingw})
             EXPECT_FALSE(needs_linux_sysroot_payloads(t));
+    }
+}
+
+// ─── An SDK payload is chosen by the TARGET, and knows its own layout ──────
+//
+// `to_xim_package` returned the generic llvm payload for every `Family::Llvm`
+// spec, which is right for the targets llvm itself serves and wrong for the two
+// that arrive with their own clang. `em++` and the NDK's `clang++` ARE clang --
+// same family, same flag vocabulary -- so no fourth `Family` value exists;
+// what changes is which package answers and where its driver lives.
+TEST(SdkPayloads, TheTargetChoosesThePackageAndThePackageKnowsItsLayout) {
+    auto pkg_for = [](std::string_view target) {
+        auto spec = mcpp::toolchain::parse_toolchain_spec("emsdk@6.0.9");
+        // The spec's own target is replaced, because the NDK case must be
+        // reachable from the same family with a different triple.
+        auto s = *spec;
+        if (auto t = mcpp::toolchain::triple::parse(target)) s.target = *t;
+        return mcpp::toolchain::to_xim_package(s);
+    };
+
+    {   // Emscripten: `em++` is a wrapper in `emscripten/`, NOT the raw clang
+        // in `bin/`. Naming the wrapper is the whole point -- `bin/clang`
+        // compiles for wasm and then links like an ordinary clang, producing a
+        // module with none of Emscripten's JavaScript glue.
+        auto pkg = pkg_for("wasm32-emscripten");
+        EXPECT_EQ(pkg.ximName, "emsdk");
+        EXPECT_EQ(pkg.frontendSubdir, "emscripten");
+        ASSERT_FALSE(pkg.frontendCandidates.empty());
+        EXPECT_EQ(pkg.frontendCandidates.front(), "em++");
+    }
+    {   // Android: ONE payload for both arches -- the arch arrives as
+        // `--target=<arch>-linux-android<api>`, not as a different package --
+        // and the host tuple in the path is the HOST's, not the target's.
+        for (auto target : {"aarch64-linux-android", "x86_64-linux-android"}) {
+            auto pkg = pkg_for(target);
+            EXPECT_EQ(pkg.ximName, "android-ndk") << target;
+            EXPECT_NE(pkg.frontendSubdir.find("toolchains/llvm/prebuilt/"),
+                      std::string::npos) << target;
+            // The HOST, so an aarch64 Linux machine cross-compiling still
+            // reads `linux-x86_64`. Asserted as "not the target's arch" rather
+            // than against a literal, so this test says the same thing on
+            // every runner.
+            EXPECT_EQ(pkg.frontendSubdir.find("aarch64-linux-android"),
+                      std::string::npos) << target;
+        }
+    }
+    {   // And every other target still gets the generic llvm payload in bin/.
+        auto pkg = pkg_for("x86_64-linux-gnu");
+        EXPECT_NE(pkg.ximName, "emsdk");
+        EXPECT_NE(pkg.ximName, "android-ndk");
+        EXPECT_EQ(pkg.frontendSubdir, "bin");
+    }
+}
+
+// THE MESSAGE MUST NAME THE DIRECTORY THAT WAS SEARCHED.
+//
+// Five refusals printed `payload->binDir`, the directory they had composed
+// themselves. Once the package decides where its frontend lives, `bin` is a
+// directory nothing looked in -- and this codebase's most frequent defect is a
+// fixed lookup with an unfixed message.
+TEST(SdkPayloads, TheSearchedDirectoryIsAvailableForTheDiagnostic) {
+    auto spec = mcpp::toolchain::parse_toolchain_spec("emsdk@6.0.9");
+    ASSERT_TRUE(spec.has_value());
+    auto pkg = mcpp::toolchain::to_xim_package(*spec);
+    auto dir = mcpp::toolchain::payload_frontend_dir("/p/xim-x-emsdk/6.0.9", pkg);
+    EXPECT_EQ(dir, std::filesystem::path("/p/xim-x-emsdk/6.0.9/emscripten"));
+}
+
+// AN SDK IS SERVED WHERE THE SDK IS PUBLISHED, and the first version of this
+// said "wherever" -- the same over-broad shape as the branches it sits above.
+// The target matrix caught it: declaring the row servable on macOS and Windows
+// would have claimed a payload that does not exist there.
+TEST(SdkPayloads, ServedOnEveryHostTheSdkIsPublishedFor) {
+    // THIS ASSERTION USED TO BE TRUE BY ARITHMETIC ON ONE HOST.
+    //
+    // It read `EXPECT_EQ(host_can_serve(*wasm), mcpp::platform::is_linux)`,
+    // which was the right claim while `xim:emsdk` and `xim:android-ndk`
+    // declared only `xpm.linux`. Both now publish for all three hosts, and the
+    // engine's constant was the stale half -- but the assertion kept passing
+    // on Linux, because there `is_linux` IS `true`. A criterion whose expected
+    // value is the host it runs on cannot report a change on the other two.
+    //
+    // Stated unconditionally now: these rows are servable everywhere, and this
+    // test fails on macOS or Windows if the constant comes back.
+    for (auto name : {"wasm32-emscripten", "aarch64-linux-android",
+                      "x86_64-linux-android"}) {
+        auto t = mcpp::toolchain::triple::parse(name);
+        ASSERT_TRUE(t.has_value()) << name;
+        EXPECT_TRUE(mcpp::toolchain::host_can_serve(*t)) << name;
+    }
+
+    // AND THE PREDICATE IS STILL ABLE TO SAY NO, which is what keeps the
+    // paragraph above from being a tautology. macOS's SDK and MSVC are
+    // host-only and no package substitutes for either, so a Linux host cannot
+    // serve them -- the exclusion this function exists to make.
+    if constexpr (mcpp::platform::is_linux) {
+        auto mac = mcpp::toolchain::triple::parse("aarch64-macos");
+        ASSERT_TRUE(mac.has_value());
+        EXPECT_FALSE(mcpp::toolchain::host_can_serve(*mac));
+    }
+}
+
+// ─── The payload is SAID, not only resolved (R3) ───────────────────────────
+//
+// `emsdk@6.0.9` normalises to the llvm family because `em++` IS clang, and a
+// fourth family value would be a false claim about the compiler. The
+// consequence was `Resolved llvm@6.0.9` -- indistinguishable from the real
+// `xim:llvm`, and not what the user typed. The family and the payload are two
+// questions, and `to_xim_package` already answered the second; this is the
+// field that lets it be printed.
+TEST(SdkPayloads, TheDisplayNamesThePayloadAndNotOnlyTheFamily) {
+    auto em = mcpp::toolchain::parse_toolchain_spec("emsdk@6.0.9");
+    ASSERT_TRUE(em.has_value());
+    EXPECT_EQ(em->family, mcpp::toolchain::Family::Llvm)
+        << "em++ is clang; a fourth family would be a false claim";
+    EXPECT_EQ(em->payloadName, "emsdk");
+    EXPECT_NE(em->display().find("emsdk@6.0.9"), std::string::npos)
+        << em->display();
+    EXPECT_EQ(em->display().find("llvm@"), std::string::npos) << em->display();
+
+    auto ndk = mcpp::toolchain::parse_toolchain_spec("android-ndk@30.0.16248370");
+    ASSERT_TRUE(ndk.has_value());
+    EXPECT_EQ(ndk->family, mcpp::toolchain::Family::Llvm);
+    EXPECT_EQ(ndk->payloadName, "android-ndk");
+    EXPECT_NE(ndk->display().find("android-ndk@"), std::string::npos)
+        << ndk->display();
+
+    // AND NOTHING ELSE MOVES. Empty `payloadName` means the family's own
+    // payload, which is every row but these two -- so no existing output
+    // changes, which is what makes this additive.
+    for (auto spelled : {"llvm@22.1.8", "gcc@16.1.0", "msvc@14.44.35207"}) {
+        auto sp = mcpp::toolchain::parse_toolchain_spec(spelled);
+        ASSERT_TRUE(sp.has_value()) << spelled;
+        EXPECT_TRUE(sp->payloadName.empty()) << spelled;
+        EXPECT_NE(sp->display().find(spelled), std::string::npos) << sp->display();
     }
 }

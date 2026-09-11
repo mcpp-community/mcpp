@@ -746,3 +746,44 @@ TEST(Distribution, ASharedLibraryStillHidesTheArchivesWithoutASecondRuntime) {
               " -Wl,--exclude-libs,libc++.a -Wl,--exclude-libs,libc++abi.a"
               " /tc/libunwind.a -Wl,--exclude-libs,libunwind.a");
 }
+
+// ─── Format::Wasm, the member the module predicted and deferred ────────────
+//
+// `format_for`'s own comment said a wasm triple "falls out of every branch"
+// and reaches `hostFallback`, answering the MACHINE's format -- "the same
+// defect class its own header measured for macOS" -- and deferred the fourth
+// member "to whoever gives this module a mechanism for it".
+TEST(Distribution, FormatAnswersWasmForAWasmTargetAndNotTheHosts) {
+    using mcpp::build::dist::Format;
+    using mcpp::build::dist::format_for;
+    // Every host fallback, so this cannot pass by agreeing with the machine.
+    for (auto fallback : {Format::Elf, Format::MachO, Format::Pe})
+        EXPECT_EQ(format_for("wasm32-emscripten", fallback), Format::Wasm);
+    // The three it already answered stay unchanged.
+    EXPECT_EQ(format_for("x86_64-linux-gnu", Format::Pe),  Format::Elf);
+    EXPECT_EQ(format_for("aarch64-macos",    Format::Elf), Format::MachO);
+    EXPECT_EQ(format_for("x86_64-windows-gnu", Format::Elf), Format::Pe);
+}
+
+// THERE IS NOTHING TO BE COUPLED TO, so the contract is satisfied with
+// nothing added and there is no degradation to report.
+//
+// While the member was missing, every wasm build printed a warning about a
+// `libc++.so` that cannot exist for the target, on an artefact that has no
+// run-time dependency of any kind. A diagnostic is for a BROKEN PROMISE; that
+// one was a promise about a mechanism the format does not have.
+TEST(Distribution, WasmIsSelfContainedByConstructionAndSaysNothing) {
+    mcpp::build::dist::MechanismInput in;
+    in.format    = mcpp::build::dist::Format::Wasm;
+    in.stdlibId  = "libc++";
+    in.requested = mcpp::build::dist::Contract::SelfContained;
+    in.role      = mcpp::build::dist::Role::Distributable;
+    auto m = mcpp::build::dist::resolve(in);
+    EXPECT_EQ(m.effective, mcpp::build::dist::Contract::SelfContained);
+    EXPECT_FALSE(m.degraded);
+    EXPECT_TRUE(m.diagnostic.empty()) << m.diagnostic;
+    // And no flags: libc++ reaches a wasm link through `em++`'s own link line,
+    // so naming archives from a sysroot this module did not resolve would be a
+    // second answer to a question the driver has already answered.
+    EXPECT_TRUE(m.unitFlags.empty()) << m.unitFlags;
+}

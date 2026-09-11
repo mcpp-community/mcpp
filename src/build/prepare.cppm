@@ -1559,6 +1559,45 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
     return {};
 }
 
+// THE PROJECT'S MINIMUM PLATFORM VERSION FOR THIS TARGET, in one place.
+//
+// Two platforms fuse it into the effective triple and each names it in its own
+// words: macOS's deployment target lives in `[build]` because it applies to
+// every Apple artefact a project produces, and Android's API level lives in
+// `[target.<triple>]` because it applies to one row. `llvm_triple` takes one
+// parameter for both, so the choice between them is made here rather than at
+// each of its call sites -- there are two, and a decision made twice is the
+// shape this codebase records most often.
+std::string min_platform_version(const mcpp::manifest::Manifest& m,
+                                 const mcpp::toolchain::triple::Triple& t,
+                                 const std::filesystem::path& compilerPath) {
+    if (t.is_android()) {
+        if (auto it = m.targetOverrides.find(t.str()); it != m.targetOverrides.end())
+            if (it->second.minApiLevel > 0)
+                return std::to_string(it->second.minApiLevel);
+        // AND THERE IS NO SUCH THING AS LEAVING IT OUT. This returned an empty
+        // string with the comment "the NDK's own default, which clang
+        // supplies", which was never verified and is false. Measured:
+        //
+        //     --target=aarch64-unknown-linux-android   (no level)
+        //     sys/cdefs.h:365:2: error: Unversioned target triples are not
+        //       supported!
+        //
+        // bionic refuses it, so the level is mandatory and a project that
+        // never heard of API levels still needs one. The NDK declares the
+        // floor it supports in `meta/platforms.json` and that is the honest
+        // default -- the payload's own answer, which moves when the payload
+        // does. macOS is the same shape and already works this way: its
+        // default comes from the platform module, not from the manifest.
+        if (auto level = mcpp::toolchain::ndk_min_api_level(compilerPath);
+            level > 0)
+            return std::to_string(level);
+        return {};   // the caller refuses; see android_api_level_refusal
+    }
+    return mcpp::platform::macos::deployment_target(
+        m.buildConfig.macosDeploymentTarget);
+}
+
 std::string with_index_cause(std::string msg) {
     if (auto hint = mcpp::pm::unusable_index_hint(); !hint.empty())
         msg += "\n" + hint;
@@ -2566,30 +2605,89 @@ prepare_build(bool print_fingerprint,
         if (known && parsed && parsed->pin_is_capability()
             && tc_origin_is_user_explicit(tcOrigin) && tcSpec.has_value()) {
             auto declared = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
-            if (declared && declared->family != mcpp::toolchain::Family::Llvm) {
-                // THE REASON TRAVELS WITH THE ROW. Both rows refuse for the
+            // WHICH DECLARATIONS THE ROW ACCEPTS IS THE ROW'S PIN, NOT A FIXED
+            // FAMILY.
+            //
+            // This asked `family != Llvm`, which was right while every
+            // capability-pinned row pinned llvm. `wasm32-emscripten` pins
+            // `emsdk@6.0.9`, and emsdk NORMALISES to the llvm family -- `em++`
+            // is clang -- so a declared `llvm@22.1.8` passed this gate, was
+            // never refused, and resolved the generic llvm payload for a target
+            // it cannot emit. The condition is now the pin's own family, which
+            // is the question the row was always answering.
+            const auto pinFamily = [&]() -> std::optional<mcpp::toolchain::Family> {
+                if (known->pin.empty()) return mcpp::toolchain::Family::Llvm;
+                if (auto ps = mcpp::toolchain::parse_toolchain_spec(
+                        std::string(known->pin)))
+                    return ps->family;
+                return std::nullopt;
+            }();
+            const bool declaredMatchesPin =
+                declared && pinFamily && declared->family == *pinFamily
+                // An emsdk row is llvm-family, so the family alone cannot
+                // separate `emsdk@6.0.9` from `llvm@22.1.8`. The pin's own
+                // spelling is what does.
+                && (known->pin.empty()
+                    || tcSpec->find(known->pin.substr(0, known->pin.find('@')))
+                       != std::string::npos);
+            if (declared && !declaredMatchesPin) {
+                // THE REASON TRAVELS WITH THE ROW. The rows refuse for the
                 // same rule and NOT for the same reason, and one sentence
-                // covering both would be wrong about one of them: a PE+musl
-                // target is not bare metal, and a reader told it is stops
-                // reading.
+                // covering all of them would be wrong about the others: a
+                // PE+musl target is not bare metal, a wasm target is neither,
+                // and a reader told the wrong one stops reading.
+                //
+                // Measured before the third arm existed: `--target
+                // wasm32-emscripten` with a declared gcc was refused correctly
+                // and explained with "No gcc payload emits a PE with a musl C
+                // library", which is a true sentence about a different row.
+                //
+                // IT HAPPENED AGAIN, AND ADDING AN ARM IS ONLY HALF THE FIX.
+                // Android became a capability row and this chain still had
+                // three arms, so a declared `llvm@22.1.8` against
+                // `aarch64-linux-android` was refused correctly and explained
+                // with the PE+musl sentence -- the identical wrong answer the
+                // paragraph above records for wasm, reached the same way: by a
+                // fourth case falling into a final `else` that was written as
+                // the third case's answer.
+                //
+                // So the last arm now NAMES ITS OWN ROW and the fallthrough is
+                // generic. A capability added later gets a sentence that is
+                // merely unspecific instead of one that is false, and the
+                // refusal still names the pin either way.
                 std::string_view why = parsed->is_freestanding()
                     ? "A freestanding target has no per-host cross payload: "
                       "clang and lld are\n"
                       "       cross-compilers by construction and gcc is not."
-                    : "No gcc payload emits a PE with a musl C library — the "
+                    : parsed->is_wasm()
+                    ? "Nothing but Emscripten emits WebAssembly: `em++` is a "
+                      "clang whose target,\n"
+                      "       sysroot and JavaScript glue all come from its own "
+                      "payload."
+                    : parsed->is_android()
+                    ? "An Android target needs bionic, not just an aarch64 or "
+                      "x86_64 back end:\n"
+                      "       its headers, its per-API-level stubs and its "
+                      "loader path are inside the\n"
+                      "       NDK, and no package adds them to another compiler."
+                    : (parsed->is_pe() && parsed->is_musl())
+                    ? "No gcc payload emits a PE with a musl C library — the "
                       "mingw payload emits\n"
                       "       PE with the MinGW CRT, which is the separate "
-                      "`-gnu` row.";
+                      "`-gnu` row."
+                    : "This row's toolchain is the only one that can emit the "
+                      "target at all.";
                 refusal::record(refusal::Code::CapabilityPin);
                 return std::unexpected(std::format(
                     "target '{}' cannot be emitted by '{}'.\n"
                     "       {}\n"
-                    "       The row names llvm as a capability rather than as a "
-                    "preference, so this\n"
-                    "       one line is not a convention you can override.\n"
+                    "       The row names `{}` as a capability rather than as a "
+                    "preference, so\n"
+                    "       this one line is not a convention you can override.\n"
                     "       remove the `[toolchain]` line for this target, or set "
                     "it to `{}`.",
                     parsed->str(), *tcSpec, why,
+                    known->pin.empty() ? std::string_view("llvm") : known->pin,
                     known->pin.empty() ? std::string_view("llvm") : known->pin));
             }
         }
@@ -2839,11 +2937,12 @@ prepare_build(bool print_fingerprint,
                 "{} → msvc {} ({})", spec->display(),
                 inst->display_version(), inst->clPath.string()));
         } else {
-            explicit_compiler = mcpp::toolchain::toolchain_frontend(payload->binDir, pkg);
+            explicit_compiler = mcpp::toolchain::payload_frontend(payload->root, pkg);
             if (!std::filesystem::exists(explicit_compiler)) {
                 return std::unexpected(std::format(
                     "toolchain payload '{}' has no known C++ frontend in {}",
-                    pkg.target(), payload->binDir.string()));
+                    pkg.target(),
+                    mcpp::toolchain::payload_frontend_dir(payload->root, pkg).string()));
             }
             // Same post-install fixup as `mcpp toolchain install` — this
             // manifest [toolchain] path previously ran none, so a freshly
@@ -3065,11 +3164,12 @@ prepare_build(bool print_fingerprint,
                 "         mcpp toolchain install {}",
                 defaultSpec, payload.error().message, defaultSpec));
         }
-        explicit_compiler = mcpp::toolchain::toolchain_frontend(payload->binDir, defaultPkg);
+        explicit_compiler = mcpp::toolchain::payload_frontend(payload->root, defaultPkg);
         if (!std::filesystem::exists(explicit_compiler)) {
             return std::unexpected(std::format(
                 "default toolchain payload {} has no known C++ frontend in {}",
-                defaultPkg.target(), payload->binDir.string()));
+                defaultPkg.target(),
+                mcpp::toolchain::payload_frontend_dir(payload->root, defaultPkg).string()));
         }
 
         // The freshly-installed toolchain needs the SAME post-install fixup
@@ -3267,6 +3367,34 @@ prepare_build(bool print_fingerprint,
           {
               tc->targetTriple = want->str();
 
+              // AND THE GATE THAT ALREADY EXISTS FOR THIS, APPLIED WHERE THE
+              // ANSWER IS KNOWN.
+              //
+              // `discover_link_runtime_dirs` refuses to report these
+              // directories for a target that carries its own sysroot, and the
+              // refusal never fired: that function runs during DETECTION,
+              // before this line, when `targetTriple` is still the HOST's. The
+              // gate read a host triple and answered correctly about it.
+              //
+              // The artefact is what showed it. An Android link line carried
+              //
+              //     -L <ndk>/toolchains/llvm/prebuilt/linux-x86_64/lib/
+              //        x86_64-unknown-linux-gnu
+              //
+              // whose last component is this machine's triple, produced by
+              // `root / "lib" / targetTriple` -- so the string names the
+              // question that was asked. Those are the compiler's own host
+              // runtime directories; an Android artefact must resolve libc++,
+              // the crt objects and the loader from the NDK's sysroot, and the
+              // hermetic check reported exactly that failure with six host
+              // objects.
+              //
+              // Cleared rather than re-derived. Re-running the discovery with
+              // the final triple would also change what every OTHER clang cross
+              // target gets, and those are measured as they stand; the claim
+              // being made here is only the one the gate already states.
+              if (want->has_own_sysroot()) tc->linkRuntimeDirs.clear();
+
               // And the flag that says it to the driver — for a HOSTED target
               // only. Freestanding already emits its own `--target`, together
               // with the ISA flags that must accompany it
@@ -3276,8 +3404,55 @@ prepare_build(bool print_fingerprint,
                   && tc->compiler == mcpp::toolchain::CompilerId::Clang) {
                   tc->crossTargetFlag =
                       "--target=" + want->llvm_triple(
-                          mcpp::platform::macos::deployment_target(
-                              m->buildConfig.macosDeploymentTarget));
+                          min_platform_version(*m, *want, tc->binaryPath));
+
+                  // AND THE SAME FLAG ON THE std MODULE'S OWN COMMANDS, FOR A
+                  // PAYLOAD THAT SERVES MORE THAN ONE TARGET.
+                  //
+                  // The std module is built by its own command assembly
+                  // (clang.cppm), not by the compile flags, so a decision made
+                  // only here reaches every translation unit and not that. For
+                  // most toolchains the omission cannot be seen: a payload
+                  // whose compiler IS its target finds its own headers, and a
+                  // package-provided module carries the target inside
+                  // `stdModuleFlags`.
+                  //
+                  // ONE NDK SERVES BOTH ANDROID ARCHES, which is the property
+                  // that makes this necessary and is stated in the row's own
+                  // pin: `android-ndk@<v>` names no arch, so `--target` is the
+                  // only thing that says which. Without it the precompile
+                  // resolved libc++'s `#include <__config>` against the
+                  // building machine and stopped there.
+                  //
+                  // NOT `has_own_sysroot()`, though both rows that answer true
+                  // to it are SDKs with their own sysroot. Emscripten's `em++`
+                  // serves exactly one target and needs no flag -- the verified
+                  // wasm loop is measured without it -- so widening the gate to
+                  // the predicate would add a flag to a command that does not
+                  // want one. The property here is "one payload, several
+                  // targets", and Android is the only row that has it; a future
+                  // row brings its own measurement.
+                  if (want->is_android()) {
+                      tc->stdModuleTargetFlags = " " + tc->crossTargetFlag;
+                      // BIONIC'S ctype HEADER AND A MODULE'S EXPORT RULES.
+                      //
+                      // bionic declares `isalnum` and its neighbours
+                      // `static inline`, and libc++'s module surface exports
+                      // them with `using std::isalnum`. A using-declaration
+                      // cannot export a name with internal linkage, so the
+                      // precompile fails on 14 names at once. Defining the
+                      // macro empty makes those declarations extern, which is
+                      // what every other C library this engine compiles
+                      // against already does.
+                      //
+                      // Scoped to the std module and not to every unit: the
+                      // rule being satisfied is about exporting from a module,
+                      // and a translation unit that includes <ctype.h>
+                      // directly is entitled to bionic's inline definitions.
+                      // `xim:android-ndk`'s own install-time self-test reaches
+                      // the identical conclusion from the other direction.
+                      tc->stdModuleTargetFlags += " -D__BIONIC_CTYPE_INLINE=";
+                  }
               }
           }
           if (auto want = mcpp::toolchain::triple::parse(overrides.target_triple);
@@ -3480,11 +3655,12 @@ prepare_build(bool print_fingerprint,
                   pins::kSuggestGccMingw, pins::kFirstRunWinGnuTarget));
           }
           explicit_compiler =
-              mcpp::toolchain::toolchain_frontend(payloadR->binDir, gnuPkg);
+              mcpp::toolchain::payload_frontend(payloadR->root, gnuPkg);
           if (!std::filesystem::exists(explicit_compiler)) {
               return std::unexpected(std::format(
                   "MinGW-w64 payload {} has no known C++ frontend in {}",
-                  gnuPkg.target(), payloadR->binDir.string()));
+                  gnuPkg.target(),
+                  mcpp::toolchain::payload_frontend_dir(payloadR->root, gnuPkg).string()));
           }
           if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
                   **cfgR, payloadR->root, gnuPkg,
@@ -3658,11 +3834,12 @@ prepare_build(bool print_fingerprint,
                 "host toolchain for build.mcpp ('{}'): {}", *tcSpec,
                 payload.error().message));
         }
-        auto frontend = mcpp::toolchain::toolchain_frontend(payload->binDir, pkg);
+        auto frontend = mcpp::toolchain::payload_frontend(payload->root, pkg);
         if (!std::filesystem::exists(frontend)) {
             return std::unexpected(std::format(
                 "host toolchain payload '{}' has no known C++ frontend in {}",
-                pkg.target(), payload->binDir.string()));
+                pkg.target(),
+                    mcpp::toolchain::payload_frontend_dir(payload->root, pkg).string()));
         }
         if (auto fixed = mcpp::toolchain::ensure_post_install_fixup(
                 **cfgH, payload->root, pkg,
@@ -6610,7 +6787,7 @@ prepare_build(bool print_fingerprint,
                 return std::unexpected(std::format(
                     "`{}` requires the compiler to be `{}`, and mcpp has no "
                     "compiler family by that name.\n"
-                    "       known families: gcc, llvm, msvc.",
+                    "       known families: gcc, llvm, msvc, emsdk, android-ndk.",
                     reqCompilerBy, family));
             }
 
@@ -8693,8 +8870,7 @@ prepare_build(bool print_fingerprint,
         if (tc) {
             if (auto tt = mcpp::toolchain::triple::parse(tc->targetTriple)) {
                 in.llvmTriple         = tt->llvm_triple(
-                    mcpp::platform::macos::deployment_target(
-                        m->buildConfig.macosDeploymentTarget));
+                    min_platform_version(*m, *tt, tc->binaryPath));
                 in.targetOs           = tt->os;
                 in.targetEnv          = tt->env;
                 in.freestandingTarget = tt->is_freestanding();
@@ -8950,8 +9126,39 @@ prepare_build(bool print_fingerprint,
         // out of order. Deferring the CHOICE the way the target side itself was
         // deferred is the structural fix and is its own change; until then the
         // user is told what happened and how to state the preference once.
+        //
+        // AND NOT FOR A ROW WHOSE PIN IS A CAPABILITY, WHERE BOTH HALVES OF
+        // THIS SENTENCE ARE FALSE.
+        //
+        // The warning says the default "would have served" the target and then
+        // tells the reader to declare it. On a capability row neither holds:
+        // nothing but the pinned payload can emit the target at all, and the
+        // declaration it suggests is REFUSED by the capability gate a few
+        // hundred lines above -- so following the advice replaces a warning
+        // with an error.
+        //
+        // Measured on `openkal-linux` built for `x86_64-linux-android`, whose
+        // target side does come from the graph:
+        //
+        //   warning: ... so gcc@16.1.0 would have served x86_64-linux-android.
+        //            State the preference: [target.x86_64-linux-android]
+        //                                  toolchain = "gcc@16.1.0"
+        //   $ (declaring exactly that)
+        //   error: target 'x86_64-linux-android' cannot be emitted by
+        //          'gcc@16.1.0'.
+        //
+        // The first claim is false on its own terms too: this gcc payload
+        // cannot emit an Android object whatever the graph supplies. `graph`
+        // answers "who supplies the SYSTEM", and a capability pin answers "who
+        // can emit the FORMAT AND THE SYSTEM" -- two questions, and only the
+        // second one decides whether a substitution was avoidable.
+        const bool pinIsCapability = [&] {
+            auto tt = mcpp::toolchain::triple::parse(resolvedTargetCanonical);
+            return tt && tt->pin_is_capability();
+        }();
         if (!pinReplacedDefault.empty()
-            && resolvedTargetSide.system_from_graph()) {
+            && resolvedTargetSide.system_from_graph()
+            && !pinIsCapability) {
             mcpp::diag::warning("toolchain", std::format(
                 "this project's target side comes from its dependency graph, so "
                 "{} would have served {}.\n"
@@ -10997,8 +11204,15 @@ prepare_build(bool print_fingerprint,
             mcpp::toolchain::cppfly::effective_dialect_flags(
                 *tc, m->cppStandard.experimental,
                 mcpp::manifest::dialect_flags(m->buildConfig)),
-            mcpp::platform::macos::deployment_target(
-                m->buildConfig.macosDeploymentTarget),
+            // ONE SLOT, BOTH PLATFORMS. See `min_platform_version`: a target
+            // is either Apple or Android, and the level selects which bionic
+            // symbols are visible, so two levels must be two build
+            // directories.
+            [&] {
+                auto tt = mcpp::toolchain::triple::parse(tc->targetTriple);
+                return tt ? min_platform_version(*m, *tt, tc->binaryPath)
+                          : std::string{};
+            }(),
             // The GLOBAL registry root — the same one `fill_package_config`
             // relativizes against below, so both halves of the key describe
             // payload paths the same way.

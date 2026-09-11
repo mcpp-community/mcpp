@@ -101,7 +101,7 @@ enum class Contract {
 
 // The binary format decides which mechanisms even exist — Mach-O has no
 // priority-ordered initializer section, PE has no rpath, ELF has both.
-enum class Format { Elf, MachO, Pe };
+enum class Format { Elf, MachO, Pe, Wasm };
 
 // WHICH FORMAT A TARGET PRODUCES, ASKED OF THE TARGET.
 //
@@ -129,22 +129,29 @@ enum class Format { Elf, MachO, Pe };
 Format format_for(std::string_view targetTriple, Format hostFallback) {
     if (auto parsed = mcpp::toolchain::triple::parse(targetTriple)) {
         if (parsed->is_pe())         return Format::Pe;
+        if (parsed->is_wasm())       return Format::Wasm;
         // `is_mach_o()`, not `os == "macos"`: the latter answered the
         // opposite-hosts defect above for macOS and would still get iOS
         // wrong the same way, since iOS's `os` is `ios`.
         if (parsed->is_mach_o())     return Format::MachO;
         if (parsed->os == "linux"
             || parsed->os == "none") return Format::Elf;
-        // THIS `Format` HAS NO FOURTH MEMBER YET. A wasm32-emscripten
-        // triple parses here and falls out of every branch above (`is_pe()`
-        // and `is_mach_o()` are both false, and its `os` is `emscripten`,
-        // neither `linux` nor `none`) to the substring fallback below, which
-        // also does not name it, and then to `hostFallback` -- so today this
-        // function still answers the machine's own format for wasm rather
-        // than the target's, the same defect class its own header measured
-        // for macOS. Adding `Format::Wasm` is deferred to whoever gives this
-        // module a Mach-O-shaped mechanism for it (see `resolve`'s `switch`),
-        // not attempted here.
+        // THE FOURTH MEMBER, and this comment used to say it was deferred
+        // "to whoever gives this module a mechanism for it". A wasm target
+        // parses here and fell out of every branch -- `is_pe()` and
+        // `is_mach_o()` are both false, and its `os` is `emscripten`, neither
+        // `linux` nor `none` -- reaching `hostFallback` and answering the
+        // MACHINE's format, which is the defect class this header measured
+        // for macOS.
+        //
+        // What it cost while it stood: every wasm build printed
+        //
+        //   warning: cxx_runtime: distributable target: this toolchain ships
+        //   no libc++.a/libc++abi.a; using toolchain-coupled (the artifact
+        //   keeps a run-time dependency on the toolchain's libc++.so)
+        //
+        // -- a promise about a `libc++.so` that cannot exist for this target,
+        // on an artifact that has no run-time dependency of any kind.
     }
     if (targetTriple.find("windows") != std::string_view::npos
         || targetTriple.find("mingw") != std::string_view::npos)
@@ -618,6 +625,26 @@ Mechanism resolve(const MechanismInput& in) {
                 m.unitFlagsC += " -static-libgcc";
             }
         }
+        return m;
+    }
+
+    // -------------------------------------------------------------- WASM
+    //
+    // THERE IS NOTHING TO BE COUPLED TO. An Emscripten link produces one
+    // module plus its JavaScript: no `DT_NEEDED`, no rpath, no loader, no
+    // shared object a search path could find. So the artifact is
+    // self-contained by construction rather than by flags, and the contract
+    // is satisfied with nothing added -- which is also why there is no
+    // degradation to report. A diagnostic here would be a broken promise
+    // about a mechanism the format does not have.
+    //
+    // `-nostdlib++` and the archive pair are deliberately NOT emitted. libc++
+    // reaches a wasm link through `em++`'s own link line (`-lc++-debug-noexcept
+    // -lc++abi-debug-noexcept`, measured), and naming archives from a sysroot
+    // this module did not resolve would be the second answer to a question the
+    // driver has already answered.
+    case Format::Wasm: {
+        m.effective = Contract::SelfContained;
         return m;
     }
 

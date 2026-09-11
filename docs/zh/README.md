@@ -121,6 +121,7 @@
 | `[build] accel`、`[package] accelerators`、`device_extensions` | [42](42-heterogeneous-builds.md) | `[hooks]` | [09](09-commands-by-scenario.md) |
 | `[package] platforms`、`[build] cache` | [04](04-mcpp-toml.md) | `[targets.<name>]`、`[profile.<name>]` | [04](04-mcpp-toml.md) |
 | `runner`、`[target.<t>.runners]` | [41](41-devices.md) | `rule_module` | [31](31-authoring-a-rule-package.md) |
+| `min_api_level` | [04](04-mcpp-toml.md) | `macos_deployment_target` | [04](04-mcpp-toml.md) |
 
 **命令**
 

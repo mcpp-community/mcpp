@@ -82,6 +82,7 @@ the map; the table below is what each sub-example adds.
 |---|---|
 | [`08-build-rules`](../examples/08-build-rules/) | two rule packages and a project using both; `host-module = true`, `mcpp::action` with `role = "check"` |
 | [`12-a-new-device-language`](../examples/12-a-new-device-language/) | `device_extensions` and `rule_module`: a rule package teaching mcpp a language the engine has never heard of, whose compiler is a package built through `tools = [...]` for the build machine |
+| [`13-platform-targets`](../examples/13-platform-targets/) | one source and no `cfg`, built for Linux, WebAssembly and both Android ABIs by changing only `--target`; `min_api_level` as the project's own decision, and a capability pin that cannot be overridden |
 
 [31 — Authoring a Rule Package](31-authoring-a-rule-package.md) is the reference
 these two illustrate.

@@ -98,6 +98,40 @@ TEST(TripleRequest, TheOnlySupportedSiblingIsTaken) {
     EXPECT_FALSE(r.triple.envExplicit);
 }
 
+TEST(TripleRequest, ABareLinuxTripleIsNeverCompletedToAndroid) {
+    // `aarch64-linux` asks for a C LIBRARY to be filled in. `android` shares
+    // the `arch-os` prefix because its kernel is Linux -- the modelling
+    // decision that makes every Linux-shaped answer in the tree right about it
+    // -- and it is not an alternative C library for the same platform.
+    //
+    // This became reachable when the Android rows stopped being `planned`:
+    // `aarch64-linux` then had two supported siblings and resolved as
+    // ambiguous, where it had completed to `aarch64-linux-musl` before. Both
+    // outcomes of that ambiguity are wrong -- refusing a request with an
+    // obvious answer, or answering it with bionic.
+    auto r = triple::resolve_request(*parse("aarch64-linux"));
+    EXPECT_EQ(r.triple.str(), "aarch64-linux-musl");
+    EXPECT_TRUE(r.completedFromVocabulary);
+    EXPECT_FALSE(r.ambiguous);
+    // Not offered as a suggestion either: `siblings` is what the diagnostic
+    // prints, and naming it there would suggest building for another platform.
+    for (auto& s : r.siblings)
+        EXPECT_EQ(s.find("android"), std::string::npos) << s;
+
+    // x86_64 has the same shape and a different supported set, so it exercises
+    // the exclusion independently rather than re-testing one row.
+    auto x = triple::resolve_request(*parse("x86_64-linux"));
+    for (auto& s : x.siblings)
+        EXPECT_EQ(s.find("android"), std::string::npos) << s;
+
+    // AND THE WRITTEN SPELLING IS STILL HONOURED. The exclusion is about
+    // filling a gap, not about refusing a request -- an explicit env returns
+    // before the candidate loop runs.
+    auto explicitAndroid = triple::resolve_request(*parse("aarch64-linux-android"));
+    EXPECT_EQ(explicitAndroid.triple.str(), "aarch64-linux-android");
+    EXPECT_FALSE(explicitAndroid.completedFromVocabulary);
+}
+
 TEST(TripleRequest, AWrittenSegmentIsARequestAndIsNotRevised) {
     // The escape hatch: writing the segment opts into the `planned` row, and the
     // tier gate then refuses something the user actually typed.
@@ -628,28 +662,336 @@ TEST(Triple, EmscriptenIsAnOsSegmentAndNotAnEnv) {
     EXPECT_FALSE(t->nasm_format().has_value());
 }
 
-TEST(Triple, TheThreePlatformsAreRegisteredAndPlanned) {
-    // A row here is what every layer above waits on: the `.apk` step, the
-    // `.app` step, the `.html`+`.wasm` step, the runner and the signing all
-    // attach to a triple, and a package cannot add one.
+TEST(Triple, EachRowsTierMatchesTheEvidenceThatExistsForIt) {
+    // WHAT A TIER ASSERTS, AND THE THREE ANSWERS ARE DIFFERENT CLAIMS.
     //
-    // `planned` is a REFUSAL and not a gap -- the tier gate answers
-    // `tier-planned` naming the row, rather than `unknown target`, which would
-    // be false, or a build that resolves and produces nothing, which is worse.
-    for (auto name : {"aarch64-linux-android", "x86_64-linux-android",
-                      "aarch64-ios", "wasm32-emscripten"}) {
+    //   verified   an artefact was built AND RUN
+    //   preview    an artefact was built; nothing has executed it
+    //   planned    the vocabulary exists and nothing is wired
+    //
+    // A tier that moved on expectation would be the one thing this column
+    // cannot be, so each row below names the measurement behind it.
+
+    {
+        // Measured 2026-09-11 on linux-x86_64 with xim:emsdk 6.0.9:
+        // `mcpp run --target wasm32-emscripten` on a source that imports std
+        // printed `1-2-3`. Built and run, so `verified`.
+        auto t = parse("wasm32-emscripten");
+        ASSERT_TRUE(t.has_value());
+        auto* info = find_known_target(*t);
+        ASSERT_NE(info, nullptr);
+        EXPECT_EQ(info->tier, "verified");
+        // A ROW THAT IS WIRED NAMES ITS PAYLOAD. Without the pin the row's
+        // tier was reachable only through an explicit
+        // `[target.wasm32-emscripten] toolchain = "..."` override, which is
+        // the escape hatch and not the support claim.
+        EXPECT_EQ(info->pin, "emsdk@6.0.9");
+        // No `sysroot` column, and that is a statement: the SDK ships one, so
+        // there is no separate C library for the row to name.
+        EXPECT_TRUE(info->sysroot.empty());
+    }
+
+    // BOTH ANDROID ROWS ARE NOW WIRED, AND `preview` IS THE HONEST TIER.
+    //
+    // Measured 2026-09-11 on linux-x86_64 with xim:android-ndk
+    // 30.0.16248370, from a source that imports std and no project
+    // vocabulary beyond `--target`:
+    //
+    //   aarch64-linux-android -> ELF 64-bit LSB pie, ARM aarch64,
+    //                            interpreter /system/bin/linker64
+    //   x86_64-linux-android  -> ELF 64-bit LSB pie, x86-64, same interpreter
+    //
+    // Neither has been EXECUTED, which is exactly the difference between this
+    // tier and the wasm row's: running one needs a device or an emulator.
+    //
+    // ONE PIN SERVES BOTH ROWS, which is the property the whole Android path
+    // rests on: the NDK names no arch, `--target` does, and that is why the
+    // std module's own precompile had to be told the target as well.
+    // ONE PIN, TWO TIERS, and the tiers differ by EXECUTION rather than by
+    // confidence in the build. `x86_64-linux-android` ran on the platform's
+    // own emulator (API 24 x86_64 image, KVM): `adb push` then
+    // `adb shell ./andtest` printed `1-2-3`, exit 0. The device row has no
+    // execution path from an x86_64 host -- Google's emulator refuses a
+    // foreign guest outright -- so it stays `preview`.
+    for (auto [name, tier] : {std::pair{"aarch64-linux-android", "preview"},
+                              std::pair{"x86_64-linux-android",  "verified"}}) {
+        auto t = parse(name);
+        ASSERT_TRUE(t.has_value()) << name;
+        EXPECT_EQ(t->str(), name);
+        auto* info = find_known_target(*t);
+        ASSERT_NE(info, nullptr) << name;
+        EXPECT_EQ(info->tier, tier) << name;
+        EXPECT_EQ(info->pin, "android-ndk@30.0.16248370") << name;
+        // Same statement the wasm row makes: the SDK ships the sysroot.
+        EXPECT_TRUE(info->sysroot.empty()) << name;
+    }
+
+    // THE THREE APPLE ROWS STAY `planned`, AND THE BLOCKER IS NOT A PAYLOAD.
+    // The NDK is Apache-2.0 and Emscripten is MIT; the iPhoneOS and
+    // iPhoneSimulator SDKs ship inside Xcode and are neither. No amount of
+    // engine work moves these, which is why they carry no pin: there is
+    // nothing for a pin to name.
+    for (auto name : {"aarch64-ios", "aarch64-ios-sim", "x86_64-ios-sim"}) {
         auto t = parse(name);
         ASSERT_TRUE(t.has_value()) << name;
         EXPECT_EQ(t->str(), name);
         auto* info = find_known_target(*t);
         ASSERT_NE(info, nullptr) << name;
         EXPECT_EQ(info->tier, "planned") << name;
-        // No pin and no sysroot: what each row still needs is a PAYLOAD, and
-        // naming a compiler that cannot serve the target would be a claim the
-        // row cannot keep.
         EXPECT_TRUE(info->pin.empty()) << name;
         EXPECT_TRUE(info->sysroot.empty()) << name;
     }
+}
+
+// A CAPABILITY PIN CANNOT BE OVERRIDDEN; A CONVENTION PIN CAN.
+//
+// Asserted exhaustively over the table rather than on examples, because the
+// failure this guards against is a row JOINING the set without its refusal
+// sentence being written. That has now happened twice -- wasm, then Android --
+// and each time the refusal explained a different row: "No gcc payload emits a
+// PE with a musl C library", printed for a wasm target and then for an Android
+// one, because a fourth case fell into an `else` written as the third's answer.
+TEST(Triple, ExactlyTheseRowsHaveACapabilityPin) {
+    std::set<std::string> capability;
+    for (auto& row : known_targets()) {
+        auto t = parse(row.canonical);
+        ASSERT_TRUE(t.has_value()) << row.canonical;
+        if (t->pin_is_capability()) capability.insert(std::string(row.canonical));
+    }
+    // Every freestanding row, the PE+musl row, wasm, and both Android rows.
+    std::set<std::string> expected{
+        "aarch64-none-elf", "armv7a-none-eabi", "armv7a-none-eabihf",
+        "riscv32-none-elf", "riscv64-none-elf", "thumbv6m-none-eabi",
+        "thumbv7em-none-eabi", "thumbv7em-none-eabihf", "thumbv7m-none-eabi",
+        "thumbv8m.base-none-eabi", "thumbv8m.main-none-eabi",
+        "thumbv8m.main-none-eabihf", "x86_64-none-elf",
+        "x86_64-windows-musl",
+        "wasm32-emscripten",
+        "aarch64-linux-android", "x86_64-linux-android",
+    };
+    EXPECT_EQ(capability, expected);
+
+    // ANDROID IS THE ONE THAT DOES NOT FIT THE OTHERS' REASON, and that is why
+    // it was left out. The other entries are refused because the toolchain
+    // cannot emit the FORMAT; a stock clang emits aarch64 ELF perfectly well.
+    // What it cannot supply is bionic -- headers, per-API-level stubs, loader
+    // path -- and no package adds those to another compiler.
+    auto android = parse("aarch64-linux-android");
+    ASSERT_TRUE(android.has_value());
+    EXPECT_TRUE(android->pin_is_capability());
+    EXPECT_FALSE(android->is_freestanding());
+    EXPECT_FALSE(android->is_wasm());
+    EXPECT_FALSE(android->is_pe() && android->is_musl());
+
+    // And a hosted row's pin stays a convention: an author who supplies the
+    // system may name any compiler.
+    auto musl = parse("x86_64-linux-musl");
+    ASSERT_TRUE(musl.has_value());
+    EXPECT_FALSE(musl->pin_is_capability());
+}
+
+// THE SIMULATOR IS A TARGET, NOT A RUNNER, AND IT NEEDS A SPELLING.
+TEST(Triple, TheSimulatorRowsCarryEnvSimAndTheirOwnEffectiveTriple) {
+    // mcpp's three-field form. Rust spells this `aarch64-apple-ios-sim`; the
+    // difference is the vendor segment this table elides everywhere.
+    auto sim = parse("aarch64-ios-sim");
+    ASSERT_TRUE(sim.has_value());
+    EXPECT_EQ(sim->arch, "aarch64");
+    EXPECT_EQ(sim->os,   "ios");
+    EXPECT_EQ(sim->env,  "sim");
+    EXPECT_EQ(sim->str(), "aarch64-ios-sim");
+    EXPECT_TRUE(sim->is_apple());
+    EXPECT_EQ(sim->object_format(), ObjectFormat::MachO);
+    EXPECT_EQ(sim->family(), "unix");
+
+    // APPLE'S OWN SPELLING PARSES TO THE SAME ROW. An effective triple clang
+    // prints carries `-simulator`, and a reader who pastes one must not be
+    // told mcpp has never heard of it.
+    auto apple = parse("arm64-apple-ios-simulator");
+    ASSERT_TRUE(apple.has_value());
+    EXPECT_EQ(apple->str(), "aarch64-ios-sim");
+
+    // TWO ROWS THAT MUST NOT SHARE AN IDENTITY. The device and the simulator
+    // have different SDKs and different objects; one identity would put two
+    // targets in one build directory.
+    auto device = parse("aarch64-ios");
+    ASSERT_TRUE(device.has_value());
+    EXPECT_NE(device->str(), sim->str());
+    EXPECT_TRUE(device->env.empty());
+
+    // The effective triple differs too, and that is what the SDK selection
+    // downstream keys off.
+    EXPECT_EQ(sim->llvm_triple({}),    "arm64-apple-ios-simulator");
+    EXPECT_EQ(device->llvm_triple({}), "arm64-apple-ios");
+
+    // Both host arches, because the simulator runs the HOST's architecture: a
+    // single row would describe a simulator half the machines cannot run.
+    auto x86sim = parse("x86_64-ios-sim");
+    ASSERT_TRUE(x86sim.has_value());
+    EXPECT_EQ(x86sim->str(), "x86_64-ios-sim");
+    EXPECT_EQ(x86sim->llvm_triple({}), "x86_64-apple-ios-simulator");
+}
+
+// THE API LEVEL IS FUSED ONTO THE ENV SEGMENT, AND IT IS NOT OPTIONAL.
+TEST(Triple, AndroidFusesTheApiLevelAndBionicRequiresOne) {
+    auto t = parse("aarch64-linux-android");
+    ASSERT_TRUE(t.has_value());
+    // Canonical identity carries no level: one row serves every level, which
+    // is why the level is a project decision in `[target.<triple>]` and not a
+    // multiplication of the table.
+    EXPECT_EQ(t->str(), "aarch64-linux-android");
+    // The effective triple is where it lands. Measured:
+    // `clang -target aarch64-linux-android21 -print-effective-triple`
+    // answers `aarch64-unknown-linux-android21`.
+    EXPECT_EQ(t->llvm_triple("21"), "aarch64-unknown-linux-android21");
+    EXPECT_EQ(t->llvm_triple("24"), "aarch64-unknown-linux-android24");
+    // WITH NO LEVEL THE FORM IS STILL PRODUCED, and that is deliberate: this
+    // function composes, it does not decide. The refusal lives where the level
+    // is chosen, because bionic's own <sys/cdefs.h> stops the build --
+    // "Unversioned target triples are not supported!" -- and the default comes
+    // from the NDK's `meta/platforms.json` rather than from here.
+    EXPECT_EQ(t->llvm_triple({}), "aarch64-unknown-linux-android");
+    // An effective triple with a level parses back to the canonical row.
+    auto back = parse("aarch64-unknown-linux-android21");
+    ASSERT_TRUE(back.has_value());
+    EXPECT_EQ(back->str(), "aarch64-linux-android");
+}
+
+// DOES THIS TARGET'S TOOLCHAIN ARRIVE WITH ITS OWN COMPLETE SYSTEM?
+//
+// The predicate exists because mcpp reconstructs a target's system by hand --
+// libc++'s headers, glibc's, the Linux UAPI headers, the C-runtime prefix, the
+// loader -- and for a target whose SDK ships a sysroot every one of those is an
+// answer competing with one the driver already has. Three independent sites
+// read it, and each was found by the previous one's failure:
+//
+//   host_compile_tokens        this host's stdint.h reached a wasm compile
+//   resolve_link_model         --dynamic-linker=...ld-linux-x86-64.so.2 reached wasm-ld
+//   discover_link_runtime_dirs the COMPILER's libatomic reached the ARTIFACT's link line
+//
+// Asserted as an exhaustive statement over the table rather than on examples,
+// so a new row cannot join the set by accident or be left out of it.
+TEST(Triple, OnlyTheSdkTargetsShipTheirOwnSysroot) {
+    std::set<std::string> shipsOwn;
+    for (auto& row : known_targets()) {
+        auto t = parse(row.canonical);
+        ASSERT_TRUE(t.has_value()) << row.canonical;
+        if (t->has_own_sysroot()) shipsOwn.insert(std::string(row.canonical));
+    }
+    EXPECT_EQ(shipsOwn, (std::set<std::string>{
+        "aarch64-linux-android", "x86_64-linux-android", "wasm32-emscripten"}));
+
+    // `aarch64-ios` is NOT in the set, and that is the interesting exclusion.
+    // The iPhoneOS SDK does ship a sysroot -- but mcpp reaches it with
+    // `-isysroot`, which this predicate is not about: the question here is
+    // whether the DRIVER resolves the system without being told, and an
+    // ordinary clang pointed at an SDK does not.
+    auto ios = parse("aarch64-ios");
+    ASSERT_TRUE(ios.has_value());
+    EXPECT_FALSE(ios->has_own_sysroot());
+}
+
+// A CAPABILITY PIN CANNOT BE OVERRIDDEN, BECAUSE NOTHING ELSE CAN EMIT THE
+// TARGET. A convention pin is a preference; this is a fact about the world.
+// THE EFFECTIVE TRIPLE CARRIES THE PROJECT'S MINIMUM PLATFORM VERSION, AND THE
+// CANONICAL ONE NEVER DOES.
+//
+// Two platforms fuse it and each names it in its own words: macOS's deployment
+// target, Android's minimum API level. Measured on a real clang --
+// `-target aarch64-linux-android21 -print-effective-triple` answers
+// `aarch64-unknown-linux-android21` -- so the level belongs on the ENV segment
+// of the effective triple.
+//
+// Asserted as the PAIR, because the whole design is that the two differ: if
+// `str()` ever carried the version, the output directory and `cfg()` would
+// multiply per level and the table would need a row for each.
+TEST(Triple, TheMinimumPlatformVersionReachesTheEffectiveTripleAndNotTheCanonicalOne) {
+    auto droid = parse("aarch64-linux-android");
+    ASSERT_TRUE(droid.has_value());
+    EXPECT_EQ(droid->str(), "aarch64-linux-android");
+    EXPECT_EQ(droid->llvm_triple("24"), "aarch64-unknown-linux-android24");
+    EXPECT_EQ(droid->llvm_triple("21"), "aarch64-unknown-linux-android21");
+    // Unset is legal and means the NDK's own default -- what clang normalises
+    // when no level is given.
+    EXPECT_EQ(droid->llvm_triple(""),   "aarch64-unknown-linux-android");
+    // And the canonical form is unmoved by any of it.
+    EXPECT_EQ(droid->str(), "aarch64-linux-android");
+
+    // macOS, the platform this parameter already served, is unchanged.
+    auto mac = parse("aarch64-macos");
+    ASSERT_TRUE(mac.has_value());
+    EXPECT_EQ(mac->llvm_triple("15.2"), "arm64-apple-macos15.2");
+    EXPECT_EQ(mac->str(), "aarch64-macos");
+
+    // AND NO OTHER ROW TAKES IT. One parameter serves both platforms, so the
+    // risk is a caller handing one platform's answer to another's row -- an
+    // ordinary Linux target must ignore it rather than fuse it.
+    auto lin = parse("x86_64-linux-gnu");
+    ASSERT_TRUE(lin.has_value());
+    EXPECT_EQ(lin->llvm_triple("24"), "x86_64-unknown-linux-gnu");
+    auto musl = parse("aarch64-linux-musl");
+    ASSERT_TRUE(musl.has_value());
+    EXPECT_EQ(musl->llvm_triple("24"), "aarch64-unknown-linux-musl");
+}
+
+// THE FOUR-FIELD SPELLING IS WHAT EVERY OTHER TOOLCHAIN PRINTS, so refusing it
+// is a cost with no design benefit. `em++ -v` passes
+// `-target wasm32-unknown-emscripten`, rustc's table lists that spelling, and a
+// user copying either into a manifest should be understood.
+//
+// mcpp's canonical form elides the vendor -- `unknown`, `pc` and `w64` carry no
+// information for any row in the table -- so this is a normalisation and not a
+// second vocabulary: `str()` returns the three-field form either way, which is
+// what keeps the output directory, `cfg()` and the ABI tag single-valued.
+TEST(Triple, TheFourFieldSpellingParsesToTheSameCanonicalTriple) {
+    struct Case { const char* spelled; const char* canonical; };
+    for (auto [spelled, canonical] : {
+             Case{"wasm32-unknown-emscripten", "wasm32-emscripten"},
+             Case{"aarch64-apple-ios",         "aarch64-ios"},
+             Case{"aarch64-unknown-linux-android", "aarch64-linux-android"},
+             Case{"x86_64-unknown-linux-gnu",  "x86_64-linux-gnu"},
+             Case{"x86_64-pc-windows-msvc",    "x86_64-windows-msvc"},
+             Case{"aarch64-unknown-linux-musl","aarch64-linux-musl"},
+         }) {
+        auto t = parse(spelled);
+        ASSERT_TRUE(t.has_value()) << spelled;
+        EXPECT_EQ(t->str(), canonical) << spelled;
+        // And the three-field form still parses to itself, so accepting the
+        // longer spelling did not make the canonical one a second dialect.
+        auto c = parse(canonical);
+        ASSERT_TRUE(c.has_value()) << canonical;
+        EXPECT_EQ(c->str(), canonical) << canonical;
+    }
+}
+
+TEST(Triple, WasmJoinsTheCapabilityPinsBecauseNothingElseEmitsIt) {
+    auto wasm = parse("wasm32-emscripten");
+    ASSERT_TRUE(wasm.has_value());
+    EXPECT_TRUE(wasm->pin_is_capability())
+        << "a declared gcc@16.1.0 would otherwise override emsdk@6.0.9 and "
+           "fail inside a compiler that cannot emit WebAssembly";
+
+    // The two that were there before, unchanged.
+    EXPECT_TRUE(parse("riscv64-none-elf")->pin_is_capability());
+    EXPECT_TRUE(parse("x86_64-windows-musl")->pin_is_capability());
+    // And an ordinary hosted row is still a convention: a project may name
+    // whichever compiler it likes for its own Linux.
+    EXPECT_FALSE(parse("x86_64-linux-musl")->pin_is_capability());
+    // ANDROID IS ONE NOW, AND THIS ASSERTION PREDICTED ITS OWN EXPIRY. It
+    // read EXPECT_FALSE, with the note "the row carries no pin yet [...] it
+    // moves when the row does" -- the row moved, so it did.
+    //
+    // The reason is not the other three's. They are refused because the
+    // toolchain cannot emit the FORMAT; a stock clang emits aarch64 ELF
+    // perfectly well. What it cannot supply is bionic, which lives inside the
+    // NDK and is not packaged onto another compiler.
+    EXPECT_TRUE(parse("aarch64-linux-android")->pin_is_capability());
+    EXPECT_TRUE(parse("x86_64-linux-android")->pin_is_capability());
+    // The iOS rows are NOT capability pins, and the distinction is worth an
+    // assertion: they carry no pin at all, so there is nothing to override and
+    // nothing to refuse. Their tier is what stops a build, not their pin.
+    EXPECT_FALSE(parse("aarch64-ios")->pin_is_capability());
+    EXPECT_FALSE(parse("aarch64-ios-sim")->pin_is_capability());
 }
 
 TEST(Triple, TheCanonicalSpellingIsNotSEARCHABLEForAVENDORNAME) {

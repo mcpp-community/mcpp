@@ -5,6 +5,329 @@
 
 ## [Unreleased]
 
+## [2026.9.11.3] - 2026-09-11
+
+### `wasm32-emscripten` 从 `planned` 到 `verified`
+
+`mcpp run --target wasm32-emscripten` 在一个 `import std` 的源码上打印 `1-2-3`,
+而工程侧**一个新词汇都不需要** —— 改一个 flag,一个为 Linux 构建的工程就能为 Web
+构建。这是「加一个平台等于一次引擎改动」这个代价的第一次实测:七处引擎改动。
+
+七处里每一处都是**前一处的失败**找出来的,而每一处都是一个**对它作者心里那些行
+正确**的谓词:
+
+  1. `to_xim_package` 里由**目标**决定载荷 —— 否则 `xim:llvm` 会回答一个 wasm 目标
+  2. `XimToolchainPackage::frontendSubdir` —— 否则去 `bin/` 里找 `em++`
+  3. `Triple::has_own_sysroot()`,放在**共享生产者** `host_compile_tokens` 里 ——
+     第一次尝试只改了 `flags.cppm` 一个调用点,于是普通编译不再注入宿主头文件,
+     而 std 模块预编译照旧注入,正是它原本失败的地方。一个决定、一个站点、三个读者。
+  4. 同一个谓词放进 `resolve_link_model` —— **模型**而不是它的两条通道;那里的注释
+     早就记着「只修第一条的人会看到一模一样的报错」
+  5. 同一个发现的第二次:`discover_link_runtime_dirs` 把**编译器自己的**运行期目录
+     放上了**产物的**链接行。这条之前的每一行里,两者是同一个目录。
+  6. `host_can_serve`:第一版无条件返回 true,与它上方那些分支是同一种过宽 ——
+     **目标矩阵抓到的**:`xim:emsdk` 只发布 linux
+  7. `Format::Wasm` 及其机制 —— 而这一处**模块自己预言并推迟过**:「Adding
+     `Format::Wasm` is deferred to whoever gives this module a mechanism for it」。
+     它缺席期间,每一次 wasm 构建都会警告一个这个目标上不可能存在的 `libc++.so`。
+
+wasm 同时加入**能力钉**(capability pin):没有别的东西能发出 WebAssembly,所以
+声明一个 `gcc@16.1.0` 是一个无法被满足的请求,说出来比解析出 gcc 再在它内部失败要好。
+
+### 两个 Android 行从 `planned` 到 `preview`
+
+`mcpp build --target aarch64-linux-android` 产出真实的 Android 产物,工程侧除
+`--target` 之外**一个新词汇都不需要**:
+
+```
+aarch64-linux-android  ->  ELF 64-bit LSB pie, ARM aarch64,
+                           interpreter /system/bin/linker64
+x86_64-linux-android   ->  ELF 64-bit LSB pie, x86-64, 同一个 interpreter
+```
+
+两行**共用一个钉** `android-ndk@30.0.16248370`。这不是省事,而是这条路径的全部
+性质所系:NDK 不命名架构,`--target` 才命名 —— 于是每一处「谁说出目标」的缺口都
+会在这里现形,而在 wasm 上都不会,因为 `em++` 只有一个目标。
+
+**一个钉,两个层级**,而层级的差别是**执行**,不是对构建的信心。
+
+`x86_64-linux-android` 是 `verified`:产物在平台自己的模拟器上跑起来了。
+2026-09-11,linux-x86_64,API 24 的 x86_64 系统镜像 + KVM:
+
+```
+adb push <mcpp 构建出的产物> /data/local/tmp/
+adb shell ./andtest          ->  1-2-3      exit 0
+```
+
+`aarch64-linux-android` 是 `preview`:构建方式完全相同,而从一台 x86_64 宿主没有
+执行路径。记下来是为了下一次尝试不重复:Google 的模拟器直接拒绝异构 guest ——
+`QEMU2 emulator does not support arm64 CPU architecture` —— 所以 arm64 镜像需要一台
+arm64 宿主。文档给出的退路是 qemu-user 配系统镜像自带的 bionic,而准备它要用
+`debugfs` 从一个 ext4 分区镜像里取四个文件,而 `debugfs` 恰好是
+`xim:e2fsprogs@1.47.3` 里唯一一个构建坏了的程序(任何打开文件系统的命令都 SIGFPE,
+而同一份构建里的 dumpe2fs/e2fsck/tune2fs 都正常)。那是一个生态缺陷,在索引侧有
+自己的记录,不是引擎的缺口 —— 它被修好时这一行就变成 `verified`,而这里什么都不用动。
+
+还有一条链接器告警值得记下来,因为用户会看到它而它**不是**缺陷:
+`unsupported flags DT_FLAGS_1=0x8000001`。API 24 的 bionic 加载器不认识 lld 设置的
+`DF_1_PIE` 位,于是告警一句,然后照常把程序加载起来。
+
+五处引擎缺口,每一处都是前一处的失败找出来的,而每一处都**只在多目标载荷上现形**:
+
+  1. **std 模块的预编译从来拿不到 `--target`。** `stdModuleTargetFlags` 只到达
+     codegen 那一条命令,依据是「第一步要头文件、第二步要机器」。第一步两者都要:
+     一个不说目标的 `--precompile` 会把标准库自己的 `#include <__config>` 解析到
+     **正在构建的那台机器**上。而这个文件里早就记着同一句报错 —— 2026-08 一台
+     Windows 宿主上的 `'__config' file not found` —— 同一个成因,另一条路径到达。
+     现在预编译从两个来源里**有机器的那一个**取:`stdModuleFlags` 非空时它是
+     `stdModuleTargetFlags` 的超集,所以取它就不会让 `--target` 上两次命令行。
+  2. **`-D__BIONIC_CTYPE_INLINE=`。** bionic 把 `isalnum` 一族声明为 `static
+     inline`,而 libc++ 的模块面用 `using std::isalnum` 导出它们 —— using 声明不能
+     导出内部链接的名字,于是预编译一次性在 14 个名字上失败。范围限定在 std 模块
+     上:被满足的规则是「从模块里导出」,而一个直接 `#include <ctype.h>` 的翻译
+     单元有权拿到 bionic 的 inline 定义。`xim:android-ndk` 自己的安装期自检从另一个
+     方向得到同一个结论。
+  3. **「自带 sysroot 就什么都不告诉它」比实际强了一个 token。** 那个提前返回
+     站在 `host_compile_tokens` 里「THE TRIPLE, SAID OUT LOUD」那一段**之前**,而
+     那一段讲的是相反的规则、理由相同:一个普通 clang 不被告知就为它自己所在的
+     机器发码。两句话各自对它自己的对象是对的 —— **体系**是载荷的、不可重建;
+     **是哪个目标**仍是 mcpp 要说的。报出这件事的是模块加载器而不是任何一次编译:
+     「AST file 'std.pcm' was compiled for the target
+     'aarch64-unknown-linux-android21' but the current translation unit is being
+     compiled for target 'x86_64-unknown-linux-gnu'」,后面跟着八条级联的
+     「use of undeclared identifier 'std'」,而读者先看到的是后者。
+  4. **链接行同样没有目标。** 两条链接分支都被跳过,而它们携带的东西被跳过是对的:
+     C 库、C++ 运行期、crt 对象和加载器全在 SDK 里,驱动自己会找。它**不能**猜的
+     是找哪一个。落空的结果是目标的对象与宿主的启动文件链在一起:六个宿主对象,
+     每一个都由一个以为自己在为本机构建的驱动解析出来。新增的第三条分支只放
+     `crossTarget`,别的什么都不放。
+  5. **`discover_link_runtime_dirs` 的闸在错误的时刻求值。** 那个闸本身是对的 ——
+     它拒绝为自带 sysroot 的目标报告这些目录 —— 而它跑在**探测期**,比目标被赋值
+     更早,那时 `targetTriple` 还是宿主的。产物是揭发它的东西:一条 Android 链接行
+     上带着 `-L <ndk>/.../prebuilt/linux-x86_64/lib/x86_64-unknown-linux-gnu`,
+     最后一段是本机的 triple,由 `root / "lib" / targetTriple` 产生 —— 那个字符串
+     写着被问出来的那个问题。
+
+还有两处**产物检查**把一个正确的产物判成了缺陷,而两处的形状相同:一条对**面向
+宿主**的产物为真的规则,施加在一个交叉产物上。
+
+  - **hermetic 链接检查**把 `/system/bin/linker64` 算成「sandbox 之外」。它是这个
+    函数检查的所有路径里唯一**不在本机解析**的那一个:它被记进产物,由**设备**在
+    加载时读取,而 Android 的这条路径由 ABI 规定,不可能在任何载荷里面。消息对
+    它看到的东西是准确的、对它的含义是错的 —— 这是更难的那一种,它点名了一条确实
+    在 sandbox 之外的真实路径,并邀请读者去重装一个与此无关的 glibc 载荷。
+  - **runtime 闭包校验的 rule B**拿产物的 `PT_INTERP` 与**宿主的** `RuntimeBinding
+    glibc@2.44` 相比,报「one process cannot mix runtime payloads」—— 一句关于一个
+    永不会存在的进程的真话,接着建议一个帮不上忙的 SubOS。上方那个 linux/glibc
+    闸拦不住它:Android 的 triple 的 `os` **就是** `linux`,这是刻意的。
+
+Android 同时加入**能力钉**,而它的理由与另外三个都不同。那三个被拒绝是因为工具链
+发不出那个**格式**;一个普通 clang 发 aarch64 ELF 完全没问题。它拿不出来的是
+**体系** —— bionic 的头文件、按 API level 的存根、加载器路径都在 NDK 里,没有任何
+包能把它们加到另一个编译器上。
+
+### `host_can_serve` 不再把「Linux」编译进引擎
+
+这一行此前对自带 sysroot 的目标返回 `mcpp::platform::is_linux`,而它自己的注释就
+写着这个判断的失效条件:「When a darwin or windows NDK lands in the index —
+upstream publishes both — this is the one line that changes.」它落地了,所以这就是
+那一行。
+
+同一个 goal 的两半随即互相矛盾:索引把载荷发布到三个宿主,而引擎在其中两个上
+**把这一行从 `toolchain list` 里删掉**。症状不是一个错答案而是一个**缺席的**答案 ——
+macOS 上 `mcpp build --target wasm32-emscripten` 报了一个这张表认识的目标「未知」,
+正是 `planned` 这个层级存在的目的所要避免的事。
+
+两半都不是它被发现的地方。`scan (macos-arm64)` 与 `scan (windows-x86_64)` 在**格数**
+上失败 —— 测到 24 格、表里声明 25 格 —— 而那唯一缺的一格点名了这一行。一个按宿主
+跑、拿一张入库的表作判据的 job,是这个仓库里唯一能看见**一行消失**的东西,因为其他
+每一处检查问的都是它已经拿到的那一行。
+
+那条闸的单测同样是**在一台宿主上由算术为真**:它写的是
+`EXPECT_EQ(host_can_serve(*wasm), mcpp::platform::is_linux)`,而在 Linux 上
+`is_linux` **就是** `true`。一个期望值等于它所运行的宿主的判据,报不出另两个宿主上
+的变化。现在它无条件断言,并且补上了「这个谓词仍然说得出『不』」那一半。
+
+### 模拟器是一行,不是一个 runner
+
+一次 iOS 模拟器构建是**另一个目标**:它自己的 SDK(`iPhoneSimulator.sdk`)、自己的
+对象,取 `-mios-simulator-version-min` 而真机取 `-miphoneos-version-min`。此前它
+无法被拼写,而设备那一行的注释把反对意见写反了 —— 反对的是**没有**一个单独的行,
+而不是有。
+
+`env = "sim"` 给出 `aarch64-ios-sim` 与 `x86_64-ios-sim`,也就是 Rust 的
+`aarch64-apple-ios-sim` 减去这张表本来就省略的 vendor 段。Apple 自己的
+`-simulator` 拼法也解析到同一行 —— clang 打印的 effective triple 带的是那一种,而
+一个把它粘回来的读者不该被告知 mcpp 从没听说过它。
+
+两个架构都有,理由与 Android 那一对相同:模拟器跑**宿主的**架构,所以一行会描述
+一半机器跑不了的模拟器。
+
+两行都是 `planned`,而阻塞项与设备行是同一个**许可**问题,不是一个载荷问题:NDK 是
+Apache-2.0、Emscripten 是 MIT,而 iPhoneOS 与 iPhoneSimulator 的 SDK 在 Xcode 里,
+两者都不可再分发。它们今天买到的是:`mcpp build --target aarch64-ios-sim` 答
+`tier-planned` 并点名那一行,而不是答 `unknown target` —— 后者是假的。
+
+### API level 的默认值取自载荷,而「不写」不是一个合法答案
+
+`min_platform_version` 此前在项目没有声明 `min_api_level` 时返回空串,注释写的是
+「the NDK's own default, which clang supplies」。那句话从未被验证,而且是错的:
+
+```
+--target=aarch64-unknown-linux-android   (无级别)
+sys/cdefs.h:365:2: error: Unversioned target triples are not supported!
+```
+
+bionic 直接拒绝一个不带版本的 triple,所以级别是**强制**的,一个从没听说过 API
+level 的工程也需要一个。于是问题变成这个数字从哪里来。不是一个编译进来的常量:
+这个仓库已经记过不止一次,一个写进注释的版本号会变成一个写进诊断的版本号,再变成
+某人 install 命令里的版本号,而 NDK 的下限随 NDK 移动。载荷自己回答 ——
+`meta/platforms.json` 是上游自己声明的支持区间,r30 是 `{"min": 21, "max": 37}` ——
+于是一个更新的 NDK 靠**被安装**改变这个默认值,而不是靠被编辑进这个文件。
+
+读不到时返回 0,由调用方转成一个点名 `min_api_level` 的拒绝。一个**猜**出来的级别
+比这个拒绝更坏:它决定哪些 bionic 符号存在,所以猜会产出一个在这里链接得上、在
+设备上加载不起来的产物。
+
+同一句错误假设在 `llvm_triple()` 的注释里还有**第二份**,也一并改掉了。
+
+### 一个裸 `aarch64-linux` 永不被补全成 Android
+
+Android 那两行与 `aarch64-linux-musl` 落在同一个 `arch-os` 前缀上,因为它的内核
+**就是** Linux —— 那正是树里每一处 Linux 形状的答案对它都成立的原因。这不使 bionic
+成为一个没有命名 C 库的请求的候选:它有不同的加载器路径、不同的 SDK 和一个 API
+level。
+
+这件事在两行离开 `planned` 的那一刻变得可达:`aarch64-linux` 于是有了**两个**受支持
+的兄弟行并解析为 ambiguous,而在此之前它补全成 `aarch64-linux-musl`。这个二义性的
+两种结果都是错的 —— 拒绝一个有显然答案的请求,或者用 bionic 回答它。
+
+也从 `siblings` 里排除,不只是从 `supported` 里:那个列表是诊断打印的东西,把
+`aarch64-linux-android` 提供给一个输入了 `aarch64-linux` 的人,是在建议他为另一个
+平台构建。一个**写出来的** `aarch64-linux-android` 永远到不了这个循环 —— 显式的 env
+在上面就返回了,这条规则是「作者自己的拼写是一个请求而不是一个缺口」。
+
+### effective triple 里的 API level 现在能被解析回来
+
+`Target aarch64-linux-android -> aarch64-unknown-linux-android21` 是 mcpp **自己
+打印**的一行,而把它粘回去得到的是 `unknown target`:env 段的匹配写的是
+`k == "android"`,而 API level 骑在那一段上。下面 msvc 那条分支为同一个理由早就带着
+同一条注释(`…-windows-msvc19.44.35211`);Android 是同一个形状,被漏掉了。一个前缀
+匹配覆盖全部四种拼法:`android`、`android21`、`androideabi`、`androideabi21`。
+
+### 一个按目标付费的机器级扫描,17948ms → 4ms
+
+`mcpp test` 在这台机器上从约 3 分钟变成投影 33 分钟,而根因不是回归而是**一直
+存在的形状**被一次大载荷安装放大了:
+
+```
+mcpp build   loader-tags 阶段    170ms     一个 21 MB 二进制
+mcpp test    loader-tags 阶段  17948ms     108 个二进制、2.4 GB
+```
+
+而且在测到的每一个目标上都**平的** 17.9 秒 —— 所以代价是**整个产物集合**而不是
+正在构建的那一个。`mcpp test` 每个目标驱动一次后端,于是 110 个目标付了 110 次。
+
+`check_dlopen_surface` 会对**每一个已链接产物**做完整 `inspect_elf_runtime` 去收集
+SONAME,而这发生在它发现「surface 是空的」**之前**。它每次写下的记录都说
+`members=0, walked=0`。而那些产物全是**可执行文件**,按构造不可能有 `DT_SONAME`。
+
+两处都修了,而值得命名的是形状:**昂贵的工作跑在了那个使它变得不必要的便宜判据
+之前。** 记录照旧发布 —— 一个会消失的字段比一个说明自己为何为空的字段更坏。
+
+### `min_api_level`,复用 `macos_deployment_target` 已有的那套机制
+
+Android 的 API level 在**交给编译器的** triple 里(实测:
+`clang -target aarch64-linux-android21 -print-effective-triple` 答
+`aarch64-unknown-linux-android21`),而它**不该进规范 triple**:mcpp 维护自己的目标
+词汇并映射到编译器目标,而 macOS 早就是这个形状。
+
+```
+[target.aarch64-linux-android]
+min_api_level = 24
+```
+
+规范 triple 保持 `aarch64-linux-android`(它命名输出目录、`cfg(env=)`、ABI tag);
+级别由 `llvm_triple()` **已有的那个参数**拼进 effective triple;而它进**指纹** ——
+级别决定哪些 bionic 符号可见,所以两个级别是两个 ABI,绝不可共用一个构建目录。
+
+字段名取自 Android 自己的词汇:NDK 的 CMake toolchain 把 `ANDROID_PLATFORM` 记载为
+「the minimum API level supported by the application or library」。`ndk_api_version`
+被否掉有两条理由:「version」不是 Android 的用词(是 **level**),而 `ndk_` 命名的是
+**工具链**,可一个 NDK 服务一个级别**区间** —— 用 NDK 命名会把这个区分重新弄混。
+
+指纹里那个槽因此从 `macosDeploymentTarget` 改名为 `minPlatformVersion`:一个目标
+要么是 Apple 要么是 Android,所以一个槽装不下两者,而两者回答的是同一个问题。改名
+不额外增加任何重建 —— mcpp 版本本来就在这个键里。
+
+### 能力钉的理由必须属于它自己那一行
+
+`prepare.cppm` 的注释早就把规则写明了:「一句话覆盖两者,就会对其中一个是错的 ——
+PE+musl 目标不是裸机,而一个被告知它是裸机的读者会停止阅读。」而我加了第三行却
+没有加第三条理由,于是那句话对新来的那一行成了错的。
+
+实测:`--target wasm32-emscripten` 声明 gcc 时**拒绝是对的**,而解释是「No gcc
+payload emits a PE with a musl C library」—— 一句关于另一行的、本身为真的话。
+
+**而那个闸问错了问题。** 它测 `family != Llvm`,这在「每个能力钉行都钉 llvm」时是
+对的。`wasm32-emscripten` 钉 `emsdk@6.0.9`,而 emsdk **归一到 llvm 族**(因为
+`em++` 就是 clang)—— 所以声明 `llvm@22.1.8` **通过了这个闸、从未被拒绝**,并为一个
+它发不出来的目标解析了通用 llvm 载荷。判据现在是**那一行自己的钉**,也就是这一行
+一直在回答的那个问题。
+
+**然后同一件事发生了第二次。** Android 这一行拿到钉、成为能力钉行,而理由链仍是
+三条臂,于是它被解释成了 PE+musl 那一句 —— 与上一段记的一模一样的错答案,经由
+一模一样的路径:第四个情形落进了一个按第三个情形写的 `else`。
+
+所以修法不是再加一条臂。最后那条臂现在**点名它自己那一行**(`is_pe() && is_musl()`),
+而兜底句是通用的:「This row's toolchain is the only one that can emit the target at
+all.」以后新增的能力行拿到的是一句**不够具体**的话,而不是一句**假**话。
+
+`tests/e2e/640` 现在钉住九条:四行各自的句子(裸机、PE+musl、wasm、Android)、
+「声明 llvm 也必须被拒绝」这个缺口在 wasm 与 Android 两处、收尾那句要点名本行的钉,
+以及**第六条是穷举的** —— 前面每一条都是有人想到了那一行才写下的,而两次缺陷都是
+**没人想到的那一行**掉进了兜底,任何按行写的测试都抓不到。第六条从引擎自己的词汇
+里取出每一个带钉的行,声明一个不是它的钉的工具链,并断言 PE+musl 那句话恰好出现
+在一行上。实测:34 个目标里 17 个是能力钉行,PE+musl 出现 1 次。分母取自
+`toolchain list`,所以明天新增的一行不需要编辑这个文件就已经在里面。
+
+### 解析行里说出**是哪个载荷**回答的
+
+`emsdk@6.0.9` 归一到 llvm 族 —— `em++` 就是 clang,而第四个 family 值会是对编译器
+的假陈述。代价是那行输出读作 `Resolved llvm@6.0.9`:与真正的 `xim:llvm` 无法区分,
+而且不是用户输入的东西。`mcpp toolchain list` 有同样的问题,而矩阵扫描**每族只取
+一个**工具链,所以一台宿主上两个 llvm 族的载荷无法都被枚举。
+
+族与载荷是两个问题:
+
+```
+族      这个编译器说哪一套 flag 词汇?     llvm
+载荷    哪个归档提供它?                   emsdk
+```
+
+`to_xim_package` 早就从目标回答了第二个;新增的字段只是让它**能被说出来**。空值
+表示「该族自己的载荷」,也就是除这两行之外的每一行 —— 所以没有任何既有输出改变。
+
+### 四段式拼法被接受
+
+`em++ -v` 传给它自己 clang 的是 `-target wasm32-unknown-emscripten`,rustc 的表里
+也是这个拼法。拒绝每个别的工具链都会打印的那个形式是纯 UX 代价。`parse()` 现在接受
+它并规范化,而 `str()` 两边都返回三段式 —— 这才是让输出目录、`cfg()` 和 ABI tag
+保持单值的东西。
+
+### 那条 EOL 的 distro 腿换掉了
+
+`debian-11` 从 2026-09-11 起以 `E: Release file ... is expired` 失败 —— bullseye
+已经 EOL,而它 security suite 的元数据过期了。这是发行版的属性而不是本工作流的,
+而 `-o Acquire::Check-Valid-Until=false` 只会让它安静下来并留着一条「对着没人维护的
+元数据测试」的腿。
+
+换掉时顺手测了一件事:debian 11 与 ubuntu 20.04 **都是 glibc 2.31**,所以这条腿
+原本要覆盖的「更老的 glibc」**早就被上面那条 ubuntu-2004 腿覆盖了**。bookworm 的
+2.36 落在那个 2.31 与 debian-testing 的滚动版本之间,所以这条腿现在盖住了矩阵原本
+没有的一个点。
+
+
 ## [2026.9.11.2] - 2026-09-11
 
 ### 扫描器读到了注释里面,而且是双向的

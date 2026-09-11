@@ -135,7 +135,18 @@ struct BuildAxes {
     std::string cppStandardFlag;
     std::vector<std::string> dialectFlags;
     std::string cStandard;
-    std::string macosDeploymentTarget;
+    // THE OLDEST OS RELEASE THIS ARTEFACT MUST RUN ON, one slot for both
+    // platforms that have such a thing.
+    //
+    // It was `macosDeploymentTarget`. Android's minimum API level is the same
+    // quantity -- and it is in this key for the same reason: it selects which
+    // bionic symbols are visible, so two levels are two ABIs and must never
+    // share a build directory. A target is either Apple or Android, so one
+    // slot cannot be asked to hold both at once.
+    //
+    // Renaming the hashed label costs no extra rebuild: the mcpp version is
+    // already part of this key, so every release invalidates it anyway.
+    std::string minPlatformVersion;
     // C
     std::string optLevel;
     bool        debug = false;
@@ -208,7 +219,7 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
                      const mcpp::manifest::Manifest&   rootManifest,
                      std::string_view                  cppStandardFlag,
                      const std::vector<std::string>&   dialectFlags,
-                     std::string_view                  macosDeploymentTarget,
+                     std::string_view                  minPlatformVersion,
                      const std::filesystem::path&      storeRoot = {},
                      bool                              needsPic = false);
 
@@ -273,7 +284,7 @@ nlohmann::json to_json(const BuildAxes& b, const PackageAxes& p) {
         {"cpp_standard_flag", b.cppStandardFlag},
         {"dialect_flags", b.dialectFlags},
         {"c_standard", b.cStandard},
-        {"macos_deployment_target", b.macosDeploymentTarget},
+        {"min_platform_version", b.minPlatformVersion},
     };
     j["profile"] = {
         {"opt_level", b.optLevel},
@@ -321,7 +332,7 @@ std::string key_hex(const BuildAxes& b, const PackageAxes& p) {
     put(s, "stdflag",  b.cppStandardFlag);
     put_list(s, "dialect", b.dialectFlags);
     put(s, "cstd",     b.cStandard);
-    put(s, "macos",    b.macosDeploymentTarget);
+    put(s, "minplat",  b.minPlatformVersion);
     // C
     put(s, "opt",      b.optLevel);
     put(s, "debug",    b.debug ? "1" : "0");
@@ -353,7 +364,7 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
                      const mcpp::manifest::Manifest&   rootManifest,
                      std::string_view                  cppStandardFlag,
                      const std::vector<std::string>&   dialectFlags,
-                     std::string_view                  macosDeploymentTarget,
+                     std::string_view                  minPlatformVersion,
                      const std::filesystem::path&      storeRoot,
                      bool                              needsPic)
 {
@@ -468,7 +479,7 @@ BuildAxes build_axes(const mcpp::toolchain::Toolchain& tc,
     b.cppStandardFlag = std::string(cppStandardFlag);
     b.dialectFlags    = dialectFlags;
     b.cStandard       = rootManifest.buildConfig.cStandard;
-    b.macosDeploymentTarget = std::string(macosDeploymentTarget);
+    b.minPlatformVersion = std::string(minPlatformVersion);
 
     b.optLevel        = rootManifest.buildConfig.optLevel;
     b.debug           = rootManifest.buildConfig.debug;
