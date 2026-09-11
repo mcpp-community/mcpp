@@ -1,12 +1,15 @@
 ---
 subject: targets
-status: active
+status: landed
 ---
 
 # SDK toolchains, the payload/engine seam, and openkal across iOS, Android and Web
 
-**Status:** design. Items A and E1 are measured and merged; the rest is for
-review before implementation.
+**Status:** implemented, in mcpp #612 (2026.9.11.4), xim-pkgindex #813 and
+#820, openkal #29 and #30, mcpp-index #393, and the new repository
+`mcpplibs/openkal-emscripten`. The design sections are kept as they were
+reviewed; where the implementation departed from them, the sections from "What
+the implementation found" onward record why.
 
 **Scope.** Five items, in dependency order. The first is measured and only needs
 writing down; the second removes something rather than adding; the third is the
@@ -491,8 +494,8 @@ write it down.
 | C: the engine stops knowing | delete `ndk_host_tag()`'s call site and the build still resolves, because the descriptor answered; and a malformed descriptor is refused naming the file | yes -- a descriptor naming `oddly/named/clang++` resolved there, a path no engine derivation produces; a non-string `platform_floor` was refused naming the file and the key |
 | C: no flag day | a payload with no descriptor resolves exactly as today -- asserted against the released android-ndk | yes, against the installed r30 payload: with the file removed the resolution line and the effective triple are byte-identical |
 | C: the floor and the defines travel | not in the original list, and each needs its own reading or it is carried by the frontend's | yes -- `platform_floor = "26"` gave `…-android26` while `meta/platforms.json` says 21; an added define appeared in the std module's command AND in its cache identity |
-| D: iOS builds | macOS runner, `xim:llvm` plus the located SDK, artefact is Mach-O arm64 with the iOS platform in `LC_BUILD_VERSION` | yes -- `platform 2` (IOS) for the device and `platform 7` (IOSSIMULATOR) for both simulator rows, `minos 18.0`, `sdk 18.5` |
-| D: the simulator runs | macOS runner, `mcpp run --target aarch64-ios-sim` prints `1-2-3` | yes, through the `runner` and `xim:apple-simulator-tools`; and separately under a bare `simctl spawn`, which is what proved a bundle is not needed |
+| D: iOS builds | macOS runner, `xim:llvm` plus the located SDK, artefact is Mach-O arm64 with the iOS platform in `LC_BUILD_VERSION` | yes -- `platform 2` (IOS) for the device and `platform 7` (IOSSIMULATOR) for both simulator rows, `minos 18.0`, `sdk 18.5`. Asserted by `ios-engine`, which fails when any of the three readings differs, an empty reading included |
+| D: the simulator runs | macOS runner, `mcpp run --target aarch64-ios-sim` prints `1-2-3` | yes, through the `runner` and `xim:apple-simulator-tools`; and separately under a bare `simctl spawn`, which is what proved a bundle is not needed. Asserted by `ios-engine`, which fails when the exit status is not 0 or the line is absent |
 | D: the host surface is bounded | on a macOS runner with `xcode-select` pointing nowhere, both iOS rows fail with a message naming the SDK -- and no other row changes | THE CRITERION WAS WRONG AND WAS REPLACED. `DEVELOPER_DIR=/nonexistent` did not make the SDK unlocatable -- `xcrun` ignores an invalid developer directory and falls back -- so the iOS build SUCCEEDED and the step asserted nothing. The claim now lives where the SDK is genuinely absent: e2e 641 on every non-Apple host, with the refusal required to name the SDK, the `xcrun` command, the Command-Line-Tools note and the compiler, and to arrive before any payload is resolved |
 | E1: Android shares the implementation | merged and green against the RELEASED engine: both ABIs build, objects name no C library symbol, and a program over openkal alone ran on an emulator | yes (openkal-linux 0.12.0) |
 | E2: iOS reuses it | `openkal-macos` compiles for the three iOS rows on a macOS runner, and its objects name no C library symbol -- the same check the Android leg applies, against a third libc | the `cfg` line is in `examples/portable`; the compile leg belongs to openkal-macos's own CI and is not in this batch |
@@ -728,6 +731,43 @@ that uses it. The third is a constant that was a property of the machine the
 file was written on, travelling as if it were a property of the scheme. The
 fourth is a field the caller sets and the implementation must honour, and the
 suite passes a deliberately short structure to find out.
+
+### A verified tier whose only check could not fail
+
+The macOS job that measured the iOS rows was written as a probe. Every step
+continued on error, because its first version stopped at the first unmet
+premise and skipped the four measurements after it, and for a probe that was
+correct. It stayed that way after those measurements moved `aarch64-ios-sim` to
+`verified`, and a probe is not a gate: a regression in the Apple cross path
+would have printed `RUN-THROUGH-RUNNER-FAILED` inside a job reported green, and
+the tier would have gone on claiming a run that no longer happened.
+
+The final review found it by reading the workflow rather than its result, which
+is the only way it could have been found. Every reading of that job was green.
+
+The job is now split along that distinction. `ios-host-surface` keeps the
+premise measurements, continues on error, and runs only on request, because a
+check that cannot fail, shown beside a gate, reads as a second gate.
+`ios-engine` fails on four claims. Each of the three artefacts must be a Mach-O
+of the row's architecture whose `LC_BUILD_VERSION` names the row's platform
+(`2` for the device, `7` for both simulator rows) and the project's `minos`,
+compared as whole values so that an empty reading fails. And
+`mcpp run --target aarch64-ios-sim` must exit 0 with `1-2-3` as a whole line of
+its output.
+
+The same review removed the fixture's three `toolchain = "llvm@22.1.8"`
+overrides. They were needed while the rows were `planned`, and they meant the
+job measured an override and never the rows' own pin, which is the path a
+project that declares nothing takes.
+
+Two smaller findings from the same pass have the shapes already recorded
+above. The located SDK path reaches three command lines and was quoted on two:
+the std module's own command spliced it into a shell string unquoted, while
+every other path in that string goes through `shq`, so an Xcode installed as
+`Xcode 16.app` would have broken only the module precompile. And the payload
+root joined `bin/` in the runner's search with a measurement behind it and no
+test. The rule is now `runner_lookup::payload_search_dirs`, and a unit test
+fails when it is reverted to `bin/` alone, which was checked by reverting it.
 
 ## Gaps this batch recorded and did not close
 

@@ -80,6 +80,7 @@ import mcpp.platform.runtime_search;
 import mcpp.toolchain.post_install;
 import mcpp.platform;
 import mcpp.platform.macos;
+import mcpp.build.runner_lookup;
 import mcpp.fetcher;
 import mcpp.fetcher.progress;
 import mcpp.pm.resolver;
@@ -807,8 +808,9 @@ export struct BuildContext {
     // derivation would drift from the first exactly when a resolution rule
     // changes. Written into `.build_cache`; see BuildCacheEntry::depSourceRoots.
     std::vector<std::filesystem::path> depSourceRoots;
-    // `<payload>/bin` of every installed `[xlings] deps` payload of the
-    // runtime-owner manifest, in declaration order (#544). Read by
+    // `<payload>/bin` and then `<payload>` of every installed `[xlings] deps`
+    // payload of the runtime-owner manifest, in declaration order (#544); the
+    // pair comes from runner_lookup::payload_search_dirs. Read by
     // choose_runner's lookup (mcpp.build.runner_lookup) so a runner may name
     // a program the project declared without writing the payload's
     // home-and-version path into the manifest. Computed by the same
@@ -3616,9 +3618,15 @@ prepare_build(bool print_fingerprint,
                       // SDK here the precompile resolves libc++'s
                       // `#include <__config>` against the macOS SDK and the
                       // module is built for the wrong platform.
+                      //
+                      // QUOTED, as every path this string carries is (see the
+                      // package-provided producer, which uses `shq` for each
+                      // `-isystem`). The string is spliced into a shell
+                      // command, and an Xcode installed as `Xcode 16.app` is
+                      // a path with a space in it.
                       tc->stdModuleTargetFlags =
                           " " + tc->crossTargetFlag
-                          + " -isysroot " + sdk->string();
+                          + " -isysroot " + mcpp::xlings::shq(sdk->string());
                   }
               }
           }
@@ -10432,27 +10440,12 @@ prepare_build(bool print_fingerprint,
                 for (auto const& spec : xlingsSpecs) {
                     auto ref = mcpp::xlings::paths::parse_xpkg_ref(spec);
                     if (auto dir = mcpp::xlings::paths::xpkg_payload(xlEnv, ref)) {
-                        ctx.xlingsDepBinDirs.push_back(*dir / "bin");
-                        // AND THE PAYLOAD ROOT, BECAUSE A FLAT LAYOUT IS A
-                        // LAYOUT THIS INDEX ALREADY SHIPS.
-                        //
-                        // `bin/` is the convention and stays first. It is not
-                        // universal: `xim:7zip` puts `7zz` straight into its
-                        // install directory, and so did the first version of
-                        // `xim:apple-simulator-tools` -- which is how this was
-                        // measured, on a macOS runner with the package
-                        // correctly installed:
-                        //
-                        //   error: runner 'simctl-run' for 'aarch64-ios-sim'
-                        //          was not found on any search path.
-                        //   Searched: .../xim-x-apple-simulator-tools/0.1.0/bin
-                        //
-                        // The directory searched was right and the program was
-                        // one level up. Two directories per package is cheaper
-                        // than a rule every recipe has to know, and a recipe
-                        // that does use `bin/` is unaffected because that entry
-                        // is still tried first.
-                        ctx.xlingsDepBinDirs.push_back(*dir);
+                        // `bin/`, then the payload root. The measurement that
+                        // added the second entry is recorded with the rule, in
+                        // runner_lookup::payload_search_dirs.
+                        for (auto& d :
+                             mcpp::build::runner_lookup::payload_search_dirs(*dir))
+                            ctx.xlingsDepBinDirs.push_back(std::move(d));
                     }
                 }
             }

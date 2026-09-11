@@ -1713,7 +1713,7 @@ export int build_run_target(const std::optional<std::string>& targetName,
     }
     if (!choice.tmpl.empty()) {
         // The program is located by mcpp, not by posix_spawnp: a declared
-        // payload's bin/ first, then PATH — see runner_lookup for the shim
+        // payload's bin/ and then its root, then PATH — see runner_lookup for the shim
         // measurement that makes the order matter. Not found anywhere is
         // decided here, before any spawn, and is an error rather than a
         // fallback to bare execution (#544, D1): running the artifact under a

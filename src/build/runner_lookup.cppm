@@ -46,6 +46,28 @@ inline bool executable_file(const std::filesystem::path& p) {
 }
 } // namespace detail
 
+// The directories one installed payload contributes to `locate`, in order:
+// `<root>/bin`, then `<root>` itself.
+//
+// `bin/` is the convention and stays first. It is not universal: `xim:7zip`
+// installs `7zz` straight into its payload directory, and so did the first
+// version of `xim:apple-simulator-tools` -- which is how the second entry was
+// measured, on a macOS runner with that package correctly installed:
+//
+//   error: runner 'simctl-run' for 'aarch64-ios-sim' was not found on any
+//          search path.
+//   Searched: .../xim-x-apple-simulator-tools/0.1.0/bin
+//
+// The directory searched was right and the program was one level up. Two
+// directories per payload is cheaper than a layout rule every recipe has to
+// know, and a recipe that uses `bin/` is unaffected because that entry is
+// still tried first. A function rather than two `push_back`s at the call site
+// so that the order is a stated rule a unit test can hold.
+inline std::vector<std::filesystem::path>
+payload_search_dirs(const std::filesystem::path& payloadRoot) {
+    return { payloadRoot / "bin", payloadRoot };
+}
+
 // `argv0` absolute, or containing a directory separator: taken as-is when it
 // is an executable file. Otherwise `<each depBinDir>/argv0`, then each `PATH`
 // entry (`pathEnv` split on the platform's list separator); the first
