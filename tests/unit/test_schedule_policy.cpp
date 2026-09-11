@@ -170,6 +170,52 @@ TEST(SchedulePolicy, AnAbsurdJobCountDoesNotOverflowIntoANegativeOne) {
     EXPECT_GT(d.ninjaJobs, 1) << "hazard 2: ninja must still outnumber the compilers";
 }
 
+// ─── resolve_jobs precedence (#564) ────────────────────────────────────────
+//
+// A KEY THE GENERATED FILE PROMISED AND NOTHING READ. mcpp writes
+// `[build] default_jobs = 0` into `$MCPP_HOME/config.toml` itself; the loader
+// parsed it into `GlobalConfig::defaultJobs`, and those were the only two
+// mentions of the field in the repository. Setting it to 4 changed nothing:
+// `ninja` ran with its own default, which is 10 on an 8-core machine, while a
+// single module compile peaks at 0.5-1.0 GB.
+//
+// THE TEST ASSERTS THE ORDER, NOT THE WIRING. A fixture that sets only the
+// global value and reads it back would pass just as well if the parameter had
+// been placed ABOVE `MCPP_JOBS` instead of below it -- which would be the
+// opposite of correct, because the global value is a property of the machine
+// and the environment variable is this invocation. Each of the three levels is
+// therefore checked against the level that must beat it.
+TEST(SchedulePolicy, ResolveJobsPutsTheMachineBelowTheProjectAndTheInvocation) {
+    mcpp::manifest::Manifest bare;                      // no [build] jobs
+    auto with_jobs = [](std::string v) {
+        mcpp::manifest::Manifest m;
+        m.buildConfig.jobs = std::move(v);
+        return m;
+    };
+    using mcpp::build::schedule::resolve_jobs;
+
+    {   // The machine's value is used when nothing else says anything, and 0
+        // still means "say nothing" for everyone who has not written the key.
+        ScopedVar clear("MCPP_JOBS", nullptr);
+        EXPECT_EQ(resolve_jobs(bare, {}, 4), 4);
+        EXPECT_EQ(resolve_jobs(bare, {}, 0), 0);
+        // A non-positive value reads as absent rather than as a bound: that is
+        // what the generated template's `0` means, and a negative -j would be
+        // handed straight to the backend.
+        EXPECT_EQ(resolve_jobs(bare, {}, -1), 0);
+
+        // The project beats the machine. A project that states a number has a
+        // reason the machine cannot know.
+        EXPECT_EQ(resolve_jobs(with_jobs("6"), {}, 4), 6);
+    }
+    {   // The invocation beats both. Without this leg the parameter could be
+        // wired in above MCPP_JOBS and every other assertion here would pass.
+        ScopedVar jobs("MCPP_JOBS", "2");
+        EXPECT_EQ(resolve_jobs(bare, {}, 4), 2);
+        EXPECT_EQ(resolve_jobs(with_jobs("6"), {}, 4), 2);
+    }
+}
+
 // ─── requested_switch: a typo is a diagnostic, never a silent "auto" ───────
 //
 // This is the rule resolve_jobs already followed and this switch did not.

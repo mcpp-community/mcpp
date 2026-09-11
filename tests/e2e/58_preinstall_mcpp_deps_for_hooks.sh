@@ -176,7 +176,6 @@ search_ttl_seconds = 3600
 
 [build]
 default_jobs = 0
-default_backend = "ninja"
 
 [toolchain]
 default = "gcc@16.1.0"

@@ -767,6 +767,17 @@ export std::string_view cache_mode_name(CacheMode m) {
 }
 
 export struct BuildContext {
+    // THE PER-MACHINE JOB DEFAULT, carried so it is read once.
+    //
+    // `[build] default_jobs` in `$MCPP_HOME/config.toml` is the machine's
+    // answer to "how many at once". `prepare_build` resolves it into the build
+    // schedule itself; this field exists for the SECOND reader --
+    // `mcpp test`'s runner concurrency (execute.cppm) -- which calls
+    // `resolve_jobs` again after this function has returned. Recorded rather
+    // than re-read, because a second `load_or_init` there would be a second
+    // parser of one file, and because the two readers must not be able to
+    // disagree about the machine.
+    int                             globalDefaultJobs = 0;
     // --strict: degradations reported through mcpp::diag become errors.
     // Carried on the context because the build's degradations are discovered
     // during backend emission, i.e. after prepare_build has returned — the
@@ -1017,6 +1028,16 @@ export struct BuildOverrides {
     // already answered.
     std::string           pack_format;
     std::filesystem::path pack_stage_dir;
+    // WHY THERE IS NO STAGED TREE, when there is none and a format was still
+    // requested. Empty otherwise.
+    //
+    // A dispatched format does not require the built-in bundling to have
+    // succeeded -- see the note in `mcpp.pack.pipeline`. When it did not, the
+    // reason travels here so `${mcpp.stage_dir}`'s refusal can name it instead
+    // of saying only that the placeholder is unavailable. A member author
+    // reading "this build is not packaging" for a build that plainly is would
+    // be sent looking in the wrong place.
+    std::string           pack_stage_reason;
 };
 
 // ── git dependency helpers ──────────────────────────────────────────────────
@@ -10228,6 +10249,27 @@ prepare_build(bool print_fingerprint,
     // fast path runs without overrides, so a graph written under one must not
     // be the graph it replays.
     ctx.plan.accelOverridden = !overrides.accel.empty();
+
+    // THE MACHINE'S JOB DEFAULT, resolved unconditionally and never fatally.
+    //
+    // `get_cfg` is lazy, so by this point the config may or may not have been
+    // loaded -- a project with no dependencies can reach here without touching
+    // it. Asking for it here rather than reading whatever `cfg_opt` happens to
+    // hold is the point: otherwise the same project would honour
+    // `[build] default_jobs` or ignore it depending on whether it has
+    // dependencies, which is an answer that depends on an unrelated axis.
+    //
+    // A failure is discarded. This value is a concurrency hint, and a build
+    // must not fail because the machine's preferred job count could not be
+    // read; every other consumer of the config already reports its own
+    // failures with a diagnostic that fits what it needed the config FOR.
+    // `requireBootstrap=false` because nothing here needs the bootstrap
+    // toolchain.
+    int globalDefaultJobs = 0;
+    if (auto c = get_cfg(/*requireBootstrap=*/false))
+        globalDefaultJobs = static_cast<int>((*c)->defaultJobs);
+    ctx.globalDefaultJobs = globalDefaultJobs;
+
     // Resolve the module-edge schedule ONCE, here, where both the toolchain and
     // the manifest are in hand. The backend writes the graph in this shape, the
     // graph records the tag, and `mcpp build --verbose` prints the reason — all
@@ -10246,7 +10288,7 @@ prepare_build(bool print_fingerprint,
             mcpp::build::schedule::resolve_jobs(*m, [](std::string_view bad) {
                 mcpp::ui::warning(std::format(
                     "ignoring invalid job count '{}' (expected a positive number or 'auto')", bad));
-            }),
+            }, globalDefaultJobs),
             // What this machine would pick if asked. Impure, so it is resolved
             // here and handed to the pure `decide`. Only DetachCodegen uses it,
             // and only when the user gave no job count — without it that
@@ -10299,6 +10341,9 @@ prepare_build(bool print_fingerprint,
         // Section 2 of the design record measured that shape: a valid, empty,
         // 52 KB installer with nothing said about it.
         std::set<std::string> stageDirNoPass, stageDirWrongRole;
+        // Carried from the overrides so the refusal below can say WHY there is
+        // no tree, which is a different sentence from "you are not packaging".
+        std::string stageDirWhy;
         // WHETHER *THIS* ACTION REFERENCED THE STAGED TREE, and deliberately a
         // flag rather than a set keyed on the action's id: an id is unique
         // within the package that declared it and nothing more, so two packages
@@ -10329,6 +10374,7 @@ prepare_build(bool print_fingerprint,
             if (s.find("${mcpp.stage_dir}") != std::string::npos) {
                 if (!stagePass) {
                     stageDirNoPass.insert(actionId);
+                    stageDirWhy = overrides.pack_stage_reason;
                 } else if (role != mcpp::manifest::BuildAction::Role::Artifact) {
                     stageDirWrongRole.insert(actionId);
                 } else {
@@ -10408,6 +10454,18 @@ prepare_build(bool print_fingerprint,
         if (!stageDirNoPass.empty()) {
             std::string ids;
             for (auto const& n : stageDirNoPass) ids += (ids.empty() ? "" : ", ") + n;
+            if (!stageDirWhy.empty()) {
+                return std::unexpected(std::format(
+                    "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and no "
+                    "tree could be staged for this target.\n"
+                    "  {}\n"
+                    "  The format was requested and the provider was reached; what is "
+                    "missing is the staged\n"
+                    "  closure itself. A member that names a built file with "
+                    "${{mcpp.target_file:<name>}} instead\n"
+                    "  of reading the tree is unaffected on this target.",
+                    ids, stageDirWhy));
+            }
             return std::unexpected(std::format(
                 "build.mcpp action(s) [{}] reference ${{mcpp.stage_dir}}, and this "
                 "build is not packaging.\n"

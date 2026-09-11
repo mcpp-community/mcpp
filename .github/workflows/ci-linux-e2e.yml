@@ -42,7 +42,22 @@ jobs:
       # set only in the fresh-install workflows (cold bootstrap, no such asserts).
       # A specific test that needs verbose passes `--verbose` itself.
     steps:
+      # `submodules: recursive` so tests/e2e/233_bench_matrix.sh can check that
+      # each `hub`/`body` in bench/matrix.json exists in the tree it names.
+      # Without the trees that check reads "submodule not initialised" and
+      # reports nothing, which is how a hub path written for the CURRENT
+      # layout stayed in matrix.json while the workload it named is a
+      # HISTORICAL mcpp -- three cells reporting `skipped` on every bench run
+      # and the job still green (#599).
+      #
+      # It is not free and it is not expensive: the three pinned workloads are
+      # 725 + 701 + 806 tracked files, under 10 MB of source in total, and
+      # nothing here builds them. Both shards carry it because run_all.sh
+      # slices the file list round-robin, so which shard holds 233 moves when
+      # a test is added.
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       # Same cache lineage as ci-linux.yml so this job lands on a warm
       # toolchain/sandbox instead of re-installing it.

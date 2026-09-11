@@ -107,7 +107,6 @@ runs:
 
         [build]
         default_jobs    = 0
-        default_backend = "ninja"
         EOF
 
         cat "$HOME/.mcpp/config.toml"

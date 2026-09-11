@@ -181,6 +181,62 @@ TEST(HostFlags, LanguageForceTokensNeverContainASpace) {
     }
 }
 
+// ── orphaned_reference (#604) ───────────────────────────────────────────────
+//
+// THE PAIR IS THE UNIT, and every per-token check passes while it is broken.
+// MSVC's reference is two argv elements; a per-token de-duplicator dropped the
+// second `/reference` -- already in the list from the bundled `mcpp` module --
+// and left `<name>=<path>` standing alone. cl.exe read it as a source file:
+//
+//   c1xx: fatal error C1083: Cannot open source file:
+//     'huxerui.rules.sources=...\huxerui.rules.sources.ifc'
+//
+// The de-duplicator is gone. This is the invariant that says so, and the
+// diagnostic that would name the cause if it ever returns.
+TEST(HostFlags, AnOrphanedModuleReferenceIsDetected) {
+    using mcpp::toolchain::orphaned_reference;
+
+    // The defect, verbatim: two references appended, one switch surviving.
+    EXPECT_EQ(orphaned_reference({"cl.exe", "/std:c++20", "/reference",
+                                  "mcpp=C:/b/mcpp.ifc",
+                                  "rules.sources=C:/b/rules.sources.ifc",
+                                  "/c", "build.mcpp"}),
+              std::optional<std::string>{"rules.sources=C:/b/rules.sources.ifc"});
+
+    // The same argv with both switches present is well formed.
+    EXPECT_FALSE(orphaned_reference({"cl.exe", "/std:c++20", "/reference",
+                                     "mcpp=C:/b/mcpp.ifc", "/reference",
+                                     "rules.sources=C:/b/rules.sources.ifc",
+                                     "/c", "build.mcpp"}).has_value());
+
+    // First position is an orphan too -- there is nothing in front of it.
+    EXPECT_TRUE(orphaned_reference({"mcpp=C:/b/mcpp.ifc"}).has_value());
+}
+
+// The rule must not fire on the two bare tokens that legitimately appear.
+TEST(HostFlags, OrphanRuleAcceptsInputPathsAndOneWordReferences) {
+    using mcpp::toolchain::orphaned_reference;
+
+    // Clang's form is ONE token and carries its own switch, so it can never be
+    // orphaned -- which is exactly why the defect was MSVC-only.
+    EXPECT_FALSE(orphaned_reference(
+        {"clang++", "-fmodule-file=mcpp=/b/mcpp.pcm",
+         "-fmodule-file=rules.sources=/b/rules.sources.pcm",
+         "-c", "build.mcpp"}).has_value());
+
+    // GCC names nothing at all.
+    EXPECT_FALSE(orphaned_reference(
+        {"g++", "-fmodules", "-fmodules", "-c", "build.mcpp"}).has_value());
+
+    // A source or object path that happens to contain `=` is an input, not a
+    // reference: its `=` comes AFTER a directory separator. Without this the
+    // rule would refuse a legal build in a directory a user is allowed to name.
+    EXPECT_FALSE(orphaned_reference(
+        {"g++", "/home/me/a=b/build.mcpp"}).has_value());
+    EXPECT_FALSE(orphaned_reference(
+        {"cl.exe", "C:/b/x=y/build.mcpp"}).has_value());
+}
+
 TEST(HostFlags, BmiReferenceIsEmptyForAToolchainThatNamesNothing) {
     // GCC finds BMIs implicitly under <cwd>/gcm.cache — its prefix is empty
     // and must not produce a stray token.

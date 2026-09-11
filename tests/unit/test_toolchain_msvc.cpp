@@ -574,6 +574,59 @@ TEST(MsvcStdModule, MinLevelFollowsStlUnblockVersion) {
     EXPECT_EQ(msvc::std_module_min_level(tc_of("unknown")), 23);
 }
 
+// #603 — THE QUESTION IS ASKED OF THE STL, NOT OF WHATEVER COMPILER REACHES IT.
+//
+// Two compilers reach the same `std.ixx`: cl.exe under `msvc@system`, and clang
+// targeting `*-windows-msvc` with no libc++ std module present. The clang path
+// used to hardcode 23, with a comment that named the reason correctly --
+// `tc.version` is clang's there -- and drew the wrong conclusion from it.
+//
+// Calling the banner form from that path would be worse than the hardcode,
+// because it would compare a CLANG version number against an MSVC threshold and
+// be right by accident: clang 20.x passes `>= 19.38` and clang 19.x fails it.
+// The toolset version is in the path of the module source that was selected.
+TEST(MsvcStdModule, MinLevelForStlReadsTheToolsetOutOfTheModuleSourcePath) {
+    auto lvl = [](std::string p) {
+        return msvc::std_module_min_level_for_stl(std::filesystem::path(p));
+    };
+    // VS 2022 17.8 (toolset 14.38) is where microsoft/STL#3977 first ships.
+    EXPECT_EQ(lvl("C:/VS/VC/Tools/MSVC/14.38.33130/modules/std.ixx"), 20);
+    EXPECT_EQ(lvl("C:/VS/VC/Tools/MSVC/14.44.35207/modules/std.ixx"), 20);
+    // Older toolsets keep the C++23 floor and get an actionable diagnostic.
+    EXPECT_EQ(lvl("C:/VS/VC/Tools/MSVC/14.37.32822/modules/std.ixx"), 23);
+    EXPECT_EQ(lvl("C:/VS/VC/Tools/MSVC/14.29.30133/modules/std.ixx"), 23);
+    // A layout this mapping is not defined for answers 23 rather than guessing.
+    // The safety the hardcode was after is kept for exactly these cases.
+    EXPECT_EQ(lvl(""), 23);
+    EXPECT_EQ(lvl("C:/VS/VC/Tools/MSVC/modules/std.ixx"), 23);
+    EXPECT_EQ(lvl("/opt/llvm/share/libc++/v1/std.cppm"), 23);
+    EXPECT_EQ(lvl("C:/VS/VC/Tools/MSVC/15.0.0/modules/std.ixx"), 23);
+}
+
+// The two forms must agree for a well-formed installation, because that is the
+// one path the banner form was verified on. If they could disagree there, this
+// change would be a silent behaviour change on the toolchain that worked.
+TEST(MsvcStdModule, TheStlAndBannerFormsAgreeForAWellFormedInstallation) {
+    auto tc_of = [](std::string ver) {
+        Toolchain tc;
+        tc.compiler = CompilerId::MSVC;
+        tc.version = std::move(ver);
+        return tc;
+    };
+    // cl banner `19.<N>` pairs with toolset `14.<N>` -- that pairing is the
+    // whole reason the `>= 38` predicate transfers unchanged.
+    for (auto [banner, toolset] : { std::pair{"19.38.33130", "14.38.33130"},
+                                    std::pair{"19.44.35211", "14.44.35207"},
+                                    std::pair{"19.37.32825", "14.37.32822"},
+                                    std::pair{"19.29.30153", "14.29.30133"} }) {
+        EXPECT_EQ(msvc::std_module_min_level(tc_of(banner)),
+                  msvc::std_module_min_level_for_stl(std::filesystem::path(
+                      std::string("C:/VS/VC/Tools/MSVC/") + toolset
+                      + "/modules/std.ixx")))
+            << "banner " << banner << " vs toolset " << toolset;
+    }
+}
+
 // #422 — the std module must be built with the SAME CRT model as the TUs that
 // import it.
 //

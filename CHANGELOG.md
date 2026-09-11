@@ -5,6 +5,141 @@
 
 ## [Unreleased]
 
+## [2026.9.11.2] - 2026-09-11
+
+### 扫描器读到了注释里面,而且是双向的
+
+**报告的那半。** `/*` 单独占一行、下一行是 `module (`,那一行被当成模块声明匹配,
+四行普通 C++ 被拒绝(#606)。报告把它二分到「2026.9.7.1 之后的回归」。实测:
+`git log -S` 在 `src/modgraph/scanner.cppm` 上返回**零个**曾添加块注释状态的提交 ——
+它从来没有过。2026.9.9.1(#594)加的畸形名拒绝是**对的**,二分定位到的是缺陷**变响**
+的时间。
+
+**没被报告、而更坏的那半。** 名字合法时那条拒绝不会触发,结果是:块注释里的
+`export module y;` 让一个普通 `.cpp` 被记录成 `gcm.cache/y.gcm` 的**生产者**,承诺一个
+编译器永不写出的 BMI。真正 `import y;` 的文件于是被告知 `imports must be built
+before being imported` —— 一个并不存在的顺序问题,而真正的提供者从未被查找。
+
+**以及反方向。** `// R"(` 让 raw string 那一遍进入它出不来的状态,把之后每一行都
+抹空到一个永不出现的 `)"`;`import x;` 对扫描器不可见而对编译器可见。**那是一条
+缺失的依赖边** —— 并行下的构建顺序竞争,重试就好,比报告的那条更坏。`/* */ import
+x;` 同样被漏掉,是报告没有提到的第四个错答案。
+
+根因是一段被当成已完成的论证,写在源码注释里:「普通 `"..."` 字符串故意原样保留:
+匹配器只在 trim 后**以关键字开头**的行上触发,而字符串体只有跨行(即 raw string)
+才做得到这件事。」前提成立,枚举少了一个 —— **块注释也能**。
+
+修法是**一遍走三个状态**:代码、块注释、raw string 互斥,由先出现的那个开启符决定,
+这是任何固定顺序的分遍都表达不了的。判据八条(`tests/e2e/639`),其中两条是
+「原本就对、不能弄坏」的:`/* */ import x;` 必须**看见**那个 import(否决「跳过任何
+以 `/*` 开头的行」这种哑修法),`"a /* b"` 必须**不**开启注释。拿已发布的
+2026.9.10.2 对照:八条里六条变红。
+
+### 一个两 token 的开关丢掉了它的开关
+
+`windows = "msvc@system"` 下,一个带 `host-module` 构建依赖的包在编译构建程序时失败:
+
+```
+c1xx: fatal error C1083: Cannot open source file:
+  'huxerui.rules.sources=...\huxerui.rules.sources.ifc'
+```
+
+`cl.exe` 把模块引用读成了**源文件名**。成因是 host-module 的 flag 收集**按 token**
+去重,而它是为唯一一个「单 token 且幂等」的家族写的 —— GCC 的 `-fmodules`:
+
+| 家族 | useFlags | token |
+|---|---|---|
+| GCC | `-fmodules` | 1,幂等 |
+| Clang | `-fmodule-file=<name>=<path>` | 1,唯一 |
+| MSVC | `/reference`, `<name>=<path>` | **2,第一个合法重复** |
+
+内层 host module 追加时,`/reference` 已由内置 `mcpp` 模块放进列表 → 被跳过,只追加
+了对的后半。Clang 按构造免疫(一个词,永不等于已有元素),所以缺陷专属于那唯一一个
+在 Windows 上能在 c++20 达到 `import std;` 的工具链选择(#604)。
+
+**逐字追加,不再去重。** 被替换的那句注释说明了这个过滤器的全部价值:「repeating it
+is harmless but noisy」—— 它买的是 argv 整洁,付的是坏命令行。按逻辑模块名去重、
+或按连续子序列去重,两者都正确,而两者都是为同一个装饰性目的**新增一条规则**。规则
+被删掉了。
+
+另加 `mcpp::toolchain::orphaned_reference`:一个 `<name>=<path>` 前面没有开关时,
+在命令跑之前拒绝并说明,而不是从 cl 的 C1083 里去反推。这是纵深防御而不是修复本身。
+
+### `import std;` 的档位问的是 STL,不是碰巧到达它的那个编译器
+
+clang 在 Windows 上回落到 MSVC STL 的 `std.ixx` 时把 `importStdMinLevel` 硬编码成
+23,于是一个 c++20 工程在 Windows 上被拒绝,而同样的源码在 Linux 的 GCC 16.1、
+Linux 的 llvm 22.1.8 和 macOS 上都能构建(#603)。
+
+那段注释把理由说对了 ——「`tc.version` 是 clang 的,所以它回答不了 cl banner 的问
+题」—— 却从中得出了错的结论。**照原样调用已有探针会更坏**:那会拿一个 clang 的版本号
+去和 MSVC 的 19.38 门槛比,clang 20.x 侥幸通过、clang 19.x 错误地答 23,两个答案都
+来自问错对象。
+
+真正有约束力的版本在**刚刚选中的那个模块源文件的路径里** ——
+`<VS>/VC/Tools/MSVC/14.44.35207/modules/std.ixx` —— 而 toolset `14.<N>` 与 cl banner
+`19.<N>` 配对,所以现有的 `>= 38` 谓词原样迁移。新增
+`std_module_min_level_for_stl(path)`,**两条路径都调它**;单测断言对一个规整的安装,
+两种形态给出相同答案 —— 否则这次改动就是对唯一被验证过的那条路径的静默行为变更。
+
+### `[build] default_jobs` 有了读者,`default_backend` 被删掉
+
+两个键都被解析、都没有任何消费者(#564)。它们要的是**相反**的答案。
+
+`default_jobs` 接上:它是三级优先级里唯一能承载**机器事实**的一级
+(`MCPP_JOBS` > `[build] jobs` > `default_jobs` > 0)。`--jobs` 每次调用都要重说,
+`[build] jobs` 是按包的而 `[workspace.build]` 正确地拒绝它,所以别无他处。它以
+**参数**而不是 config import 的形式到达 `resolve_jobs`,因为那个函数刻意只依赖
+manifest 和宿主。它**同时**约束 `mcpp test` 的并发,这一点被明写进文档 —— 一个键
+两种行为必须明说。单测断言的是**顺序**而不是接线:只设全局值再读回来的夹具,在参数
+被接到 `MCPP_JOBS` **之上**时同样会通过。
+
+`default_backend` 删掉:`BackendKind` 有两个值而 `src/build/` 只有一个后端实现,
+这个键承诺了一个不存在的选择,而默认值 `"ninja"` 让它看起来是实现了的。四个 e2e
+夹具和一个 CI action 各自持有一份生成文件的副本,都同步了。
+
+### bench 的 hub 检查从写下起在 CI 里跑过零次
+
+`matrix.json` 给 mcpp 工作负载写的 hub 是 `modules/platform/src/platform.cppm`,而那个
+工作负载是一个**历史** mcpp,该文件在其中位于 `src/platform/platform.cppm`(#599)。
+三个 cell 的每一个扰动场景都会报 `skipped` 而 job 照常绿。
+
+报告发现两个缺陷,实际有三个,而第三个吞掉了前两个:**`.github/workflows/` 里没有
+bench workflow**,也没有任何 job 检出 submodule。所以 233 自己那句理由 ——「bench
+workflow 会检出 submodule 并跑这个测试」—— 是假的。
+
+三处都修:hub 路径按 pin 重读(并在 `matrix.json` 里记下「hub/body 属于 pin 而不属于
+本仓库」),`uninit` 分支在 `CI=true` 下**失败**而在本地打印提示(两类读者的答案相反),
+以及 `ci-linux-e2e.yml` 的两个 shard 都带上 `submodules: recursive` —— 三个 pin 合计
+2232 个 tracked 文件、不到 10 MB 源码,而且这里什么都不构建。
+
+### 暂存对被分派的格式是**服务**,不是前置条件
+
+`mcpp pack --format <name>` 在分派之前无条件先暂存一次,而暂存失败就让整条命令失
+败。对 `--format tar` / `--format dir` 这是对的 —— 暂存树**就是**产物。对一个**被
+分派**的格式,它是提供方可能要、也可能不要的一项输入,而把它当成前置条件,会让
+「内建打包被拒绝」的任何目标上,**所有**被分派的格式都变得不可达。
+
+实测(macos-15,mcpp 2026.9.11.1):`mcpp pack --format app` 根本到不了分派 ——
+`pack::run` 会直接拒绝一个 Mach-O **程序**,因为内建的闭包走的是
+`LD_TRACE_LOADED_OBJECTS`,那是 glibc 的机制,dyld 不认它、而是**直接把程序跑起来**。
+那条拒绝对内建归档是正确的,却对「一个 `.app` 打包器能不能工作」什么都没说 ——
+一个只点名一个程序的打包器根本不需要走闭包。**引擎在回答一个提供方没有被问到的
+问题。**
+
+所以失败现在是**带着原因继续**而不是被吞掉:原因作为 warning 印出来,
+`pack_stage_dir` 保持为空,`${mcpp.stage_dir}` 于是在展开处带着那条原因拒绝。读树的
+提供方拿到精确诊断,不读树的照常走完。没有任何东西被静默降级 —— 变的是**由谁来做
+这个决定**。
+
+`BuildOverrides::pack_stage_reason` 是那条原因的通道。没有它,一个明明在打包的构建
+会读到「this build is not packaging」,而那句话会把成员作者引向错误的方向。
+
+⚠️ 这条修复是由 CI 在 macOS 上第一次真的跑 `dist-apple` 才暴露出来的。在那之前它
+只有 plan 级断言撑着,而 plan 级断言说的是「闸对了」,对「工具接不接受成员渲染出来
+的东西」一个字都没说。
+
+
 ## [2026.9.11.1] - 2026-09-11
 
 ### `mcpp pack --format <name>` 分派到包,而引擎里不再需要住进任何一种分发格式

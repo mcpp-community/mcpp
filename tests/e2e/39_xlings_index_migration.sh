@@ -30,7 +30,6 @@ search_ttl_seconds = 3600
 
 [build]
 default_jobs    = 0
-default_backend = "ninja"
 TOML
 
 mkdir -p "$MCPP_HOME/registry"

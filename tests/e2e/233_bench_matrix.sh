@@ -338,12 +338,33 @@ if fail:
 print(f"matrix: {len(m['cells'])} cells, {len(m.get('excluded', []))} documented exclusions, "
       f"baseline={base}, tool pins {m['tools']['cmake']}/{m['tools']['xmake']}/{m['tools']['bazel']}")
 if uninit:
-    # Loud, and named. A silent skip here would mean the check that catches a
-    # stale `hub` never actually runs anywhere, which is how it got missed in
-    # the first place. The bench workflow checks submodules out and runs this
-    # test, so the assertion does execute on every change to the suite.
-    print(f"  NOTE: hub/body existence NOT checked for {', '.join(sorted(uninit))} "
-          f"— submodule(s) not checked out here (`git submodule update --init`)")
+    # A NOTE CANNOT TURN A JOB RED, and this branch printed one.
+    #
+    # The sentence that used to stand here -- "The bench workflow checks
+    # submodules out and runs this test, so the assertion does execute on every
+    # change to the suite" -- was false: `.github/workflows/` has no bench
+    # workflow, and no job checked the submodules out. So the hub/body check
+    # ran in ZERO CI jobs from the day it was written, and the stale path it
+    # exists to catch was found by hand on a developer machine (#599).
+    #
+    # The two audiences are different and the answers are opposite. A developer
+    # without submodules must not be blocked by a check about a benchmark they
+    # are not running. A RUNNER without them is a mis-configured job -- the
+    # e2e workflow asks for `submodules: recursive` -- and reporting that as a
+    # note would restore exactly the silence above.
+    msg = (f"hub/body existence NOT checked for {', '.join(sorted(uninit))} "
+           f"— submodule(s) not checked out")
+    if os.environ.get("CI"):
+        print("FAIL: bench/matrix.json")
+        print(f"  {msg} -- so the check that catches a stale `hub` did not run.")
+        print("  A job that runs the whole e2e suite needs the pinned trees: add")
+        print("    - uses: actions/checkout@v4")
+        print("      with:")
+        print("        submodules: recursive")
+        print("  to this job's checkout. Under 10 MB across the three pins, and")
+        print("  nothing here builds them.")
+        raise SystemExit(1)
+    print(f"  NOTE: {msg} (`git submodule update --init`)")
 PY
 
 # ── 2: the axis values are ones the harness accepts ────────────────────────

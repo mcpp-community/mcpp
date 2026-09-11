@@ -94,7 +94,6 @@ struct GlobalConfig {
 
     // From config.toml [build]
     std::int64_t                    defaultJobs = 0;
-    std::string                     defaultBackend = "ninja";
 
     // From config.toml [toolchain] (M5.5)
     //   default = "<compiler>@<version>"   e.g. "gcc@15.1.0"
@@ -355,7 +354,6 @@ search_ttl_seconds = 3600
 
 [build]
 default_jobs    = 0
-default_backend = "ninja"
 )";
     write_file(path, tmpl);
     return std::filesystem::exists(path);
@@ -515,7 +513,6 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     cfg.indexAutoRefresh = doc->get_bool("index.auto_refresh").value_or(true);
     cfg.searchTtlSeconds = doc->get_int("cache.search_ttl_seconds").value_or(3600);
     cfg.defaultJobs    = doc->get_int("build.default_jobs").value_or(0);
-    cfg.defaultBackend = doc->get_string("build.default_backend").value_or("ninja");
     cfg.defaultToolchain = doc->get_string("toolchain.default").value_or("");
     cfg.defaultTarget    = doc->get_string("toolchain.default_target").value_or("");
 

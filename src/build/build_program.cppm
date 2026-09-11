@@ -1257,13 +1257,37 @@ std::expected<void, std::string> run_build_program(
         auto hm = build_host_module(bdir, hostCompiler, base, std_flag, tc,
                                     compileEnv, ref.logical, ref.interface, use);
         if (!hm) return std::unexpected(hm.error());
-        for (auto& f : hm->useFlags) {
-            // GCC's marker is just `-fmodules`, already present when the
-            // bundled module was built; repeating it is harmless but noisy.
-            if (std::find(moduleFlags.begin(), moduleFlags.end(), f)
-                == moduleFlags.end())
-                moduleFlags.push_back(f);
-        }
+        // APPENDED VERBATIM, and nothing is de-duplicated.
+        //
+        // This filtered per TOKEN, and it was written for the one family whose
+        // marker is a single idempotent word: GCC's `-fmodules`, already
+        // present because the bundled `mcpp` module put it there. The other
+        // two families do not have that shape.
+        //
+        //   GCC     `-fmodules`                       1 token, idempotent
+        //   Clang   `-fmodule-file=<name>=<path>`     1 token, unique
+        //   MSVC    `/reference`, `<name>=<path>`     2 tokens, FIRST REPEATS
+        //
+        // So on `windows = "msvc@system"` the pair arrived, `/reference` was
+        // found already in the list, and only the pair's second half was
+        // appended. cl.exe received `<name>=<path>.ifc` with no switch in
+        // front of it and read it as a source file name:
+        //
+        //   c1xx: fatal error C1083: Cannot open source file:
+        //     'huxerui.rules.sources=...\huxerui.rules.sources.ifc'
+        //
+        // Clang was immune by construction -- one word, never equal to an
+        // existing element -- which is why the defect was specific to the one
+        // toolchain selection that reaches `import std;` at c++20 on Windows.
+        //
+        // The comment this replaces stated the whole value of the filter:
+        // "repeating it is harmless but noisy". It bought a tidier argv and
+        // paid with a broken command line. De-duplicating by logical module
+        // name, or by contiguous subsequence, would both be correct -- and
+        // would both be a new rule kept for the same cosmetic reason. The rule
+        // is gone instead.
+        for (auto& f : hm->useFlags)
+            moduleFlags.push_back(f);
         hostModuleObjects.push_back(std::move(hm->object));
     }
 
@@ -1333,6 +1357,24 @@ std::expected<void, std::string> run_build_program(
         compileArgv.push_back(std::string(dial.outputExePrefix) + bin.string());
     } else {
         compileArgv.push_back("-o"); compileArgv.push_back(bin.string());
+    }
+    // A `<name>=<path>` with no switch in front of it, checked before the
+    // command runs rather than diagnosed from cl.exe's answer to it. cl reports
+    // such a token as `C1083: Cannot open source file`, which names the module
+    // and the BMI and never names the missing flag -- so it reads as a broken
+    // build tree rather than as a broken command line. See
+    // mcpp::toolchain::orphaned_reference; this is the reader that makes the
+    // rule enforced rather than merely stated.
+    if (auto orphan = mcpp::toolchain::orphaned_reference(compileArgv)) {
+        return std::unexpected(std::format(
+            "build.mcpp: the module reference '{}' reached the compiler with no "
+            "switch in front of it.\n"
+            "       This is an mcpp defect, not a problem with the project: the "
+            "reference is\n"
+            "       assembled as a pair (`/reference <name>=<path>` on MSVC) and "
+            "only one half\n"
+            "       arrived. Please report it with the toolchain name and this "
+            "line.", *orphan));
     }
     mcpp::ui::info("build.mcpp", "compiling");
     // GCC resolves imported BMIs via gcm.cache/ relative to the compile cwd, so

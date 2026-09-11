@@ -2176,7 +2176,16 @@ export int run_tests(std::span<const std::string> passthrough,
     // until the test ended — including when it hangs, which is exactly when a
     // reader needs it.
     const int runJobs = [&] {
-        int j = mcpp::build::schedule::resolve_jobs(ctx->manifest);
+        // The machine's `[build] default_jobs` applies HERE TOO, and that is a
+        // decision rather than an inheritance. A test runner at ten concurrent
+        // processes has the same memory shape as a compile at ten, so someone
+        // who set a machine-wide number almost certainly meant it for both;
+        // `docs/04-mcpp-toml.md` says so, because one key with two
+        // behaviours has to be stated. The fallback below is unchanged:
+        // absent, this path uses the whole machine rather than the backend's
+        // default, since there is no backend to defer to.
+        int j = mcpp::build::schedule::resolve_jobs(ctx->manifest, {},
+                                                    ctx->globalDefaultJobs);
         if (j <= 0) j = static_cast<int>(std::thread::hardware_concurrency());
         return j > 0 ? j : 1;
     }();

@@ -124,9 +124,26 @@ std::string requested_switch(const manifest::Manifest& m,
 
 // How many compilers this machine should run at once.
 //
-// Precedence: MCPP_JOBS (where `--jobs` lands) > `[build] jobs` > 0, meaning
-// "say nothing" and leave the backend's own default. The default is unchanged
-// on purpose: altering everyone's concurrency is a behaviour change.
+// Precedence: MCPP_JOBS (where `--jobs` lands) > `[build] jobs` >
+// `globalDefault` (the per-machine config's `[build] default_jobs`) > 0,
+// meaning "say nothing" and leave the backend's own default. The default is
+// unchanged on purpose: altering everyone's concurrency is a behaviour change,
+// and `globalDefault` is 0 for everyone who has not written the key.
+//
+// THE GLOBAL VALUE ARRIVES AS A PARAMETER, not as a config import. This
+// function depends on the manifest and on the host, and nothing else; reaching
+// into `$MCPP_HOME/config.toml` from here would give the schedule a second
+// source of truth to keep consistent. The caller reads the config it has
+// already loaded.
+//
+// It sits BELOW the manifest and ABOVE the backend because of what each of the
+// three describes. `MCPP_JOBS` is this invocation. `[build] jobs` is this
+// project, and a project that states a number has a reason the machine cannot
+// know. `default_jobs` is the machine, and it is the only one of the three that
+// can hold a machine fact: `--jobs` must be repeated on every invocation, and
+// `[build] jobs` is per-package while `[workspace.build]` rightly refuses it,
+// so a seven-member workspace would otherwise carry the number seven times and
+// commit a property of one developer's laptop to the repository.
 //
 // `auto` is resolved HERE, against the machine doing the build, never frozen
 // into a manifest. Measured on this repository: the cold self-build takes 81.0s
@@ -138,7 +155,8 @@ std::string requested_switch(const manifest::Manifest& m,
 // `onInvalid` is called with the offending text instead of warning directly, so
 // this stays free of any UI dependency and remains testable.
 int resolve_jobs(const manifest::Manifest& m,
-                 const std::function<void(std::string_view)>& onInvalid = {});
+                 const std::function<void(std::string_view)>& onInvalid = {},
+                 int globalDefault = 0);
 
 // `requested` is the user's switch: "auto" (default), "on", "off". `hostJobs` is
 // the already-resolved parallelism (`--jobs` or `[build] jobs`), or 0 meaning
@@ -240,7 +258,8 @@ Decision decide(const toolchain::Toolchain& tc, std::string_view requested, int 
 }
 
 int resolve_jobs(const manifest::Manifest& m,
-                 const std::function<void(std::string_view)>& onInvalid) {
+                 const std::function<void(std::string_view)>& onInvalid,
+                 int globalDefault) {
     auto from_text = [&](std::string_view v) -> std::optional<int> {
         if (v.empty()) return std::nullopt;
         if (v == "auto") {
@@ -261,6 +280,12 @@ int resolve_jobs(const manifest::Manifest& m,
     if (const char* e = std::getenv("MCPP_JOBS"))
         if (auto n = from_text(e)) return *n;
     if (auto n = from_text(m.buildConfig.jobs)) return *n;
+    // Not through `from_text`: this value has already been parsed as an
+    // integer by the config loader, so "auto" and a malformed spelling are not
+    // reachable here and a second diagnostic for them would describe a state
+    // that cannot occur. A non-positive value reads as absent, which is what
+    // the generated template's `0` means.
+    if (globalDefault > 0) return globalDefault;
     return 0;
 }
 
