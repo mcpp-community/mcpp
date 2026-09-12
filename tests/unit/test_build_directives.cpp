@@ -721,6 +721,27 @@ TEST(BuildDirectives, DecodeActionDefaultsDepfileToEmptyWhenAbsent) {
     EXPECT_EQ(a->depfile, "");
 }
 
+// The overflow marker. Until 2026.9.13.1 `mcpp::action` held its lists in
+// fixed arrays and set the marker when a declaration did not fit; the lists
+// now grow, and the marker means the build program could not allocate. The
+// refusal stays -- an incomplete declaration must never be used -- and the
+// message has to say what is now true: nothing about a buffer size, nothing
+// recommending a response file for a list that no longer needs one.
+TEST(BuildDirectives, OverflowMarkerIsRefusedAsAllocationFailure) {
+    auto d = parse(
+        "mcpp:action={\"id\":\"wide\",\"role\":\"source\","
+        "\"description\":\"\",\"blocking\":false,\"overflow\":true,"
+        "\"inputs\":[],\"outputs\":[\"out/a.txt\"],"
+        "\"command\":[\"gen\"],\"provides\":[],\"imports\":[],\"targets\":[]}\n");
+    auto err = dirs::action_error(d);
+    ASSERT_FALSE(err.empty());
+    EXPECT_NE(err.find("could not be stored"), std::string::npos);
+    EXPECT_NE(err.find("out of memory"), std::string::npos);
+    EXPECT_EQ(err.find("fixed buffer"), std::string::npos);
+    EXPECT_EQ(err.find("response file"), std::string::npos);
+    EXPECT_EQ(err.find("did not fit"), std::string::npos);
+}
+
 // ── #618: a named executable's subsystem and entry ──────────────────────────
 //
 // `windows-subsystem` and `windows-entry` name a target of the package being

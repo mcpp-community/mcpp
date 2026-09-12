@@ -1088,20 +1088,21 @@ std::string deploy_directive_error(const mcpp::manifest::Manifest& m, const Dire
 
 std::string action_error(const Directives& d) {
     for (auto const& payload : d.at(Slot::Actions)) {
-        // The typed API sets this when an argv did not fit its fixed buffer.
-        // Diagnosed separately because "malformed action" would send the
-        // author looking for a typo in something that was actually correct
-        // and merely too long.
+        // The typed API sets this when the build program could not allocate
+        // memory for one of the action's lists. Diagnosed separately because
+        // "malformed action" would send the author looking for a typo in a
+        // declaration that was correct and merely cut short. The lists have
+        // no declared size limit (they had one, 8192 bytes of serialised
+        // JSON, until 2026.9.13.1); the OS bounds the COMMAND's argv at run
+        // time, and that is a limit of the tool's own command line, which a
+        // response file or a directory argument shortens.
         if (payload.find("\"overflow\":true") != std::string::npos) {
             return std::format(
-                "build.mcpp declared an action whose arguments did not fit.\n"
-                "       The typed `mcpp::action` builder uses fixed buffers "
-                "(the bundled module has to stay\n"
-                "       buildable before a std module exists, so it cannot use "
-                "std::string).\n"
-                "       Shorten the command — e.g. pass a response file, or a "
-                "directory instead of\n"
-                "       enumerating its files.\n"
+                "build.mcpp declared an action whose lists could not be stored.\n"
+                "       The build program ran out of memory while collecting the "
+                "action's inputs,\n"
+                "       outputs or command, so the declaration is incomplete "
+                "and cannot be used.\n"
                 "       payload: {}", payload);
         }
         if (decode_action(payload)) continue;
