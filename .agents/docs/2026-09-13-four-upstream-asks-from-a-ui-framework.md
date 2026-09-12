@@ -5,7 +5,7 @@ status: landed
 
 # Four upstream asks from a UI framework: what each one is under mcpp's design, and the combined plan
 
-**Status:** the mcpp half landed in 2026.9.13.1 (PR #629, released and indexed 2026-09-13); the index half landed (openxlings/xim-pkgindex#832); the mcpp-plugins half is in review as 0.9.0 (mcpp-plugins#20). §8.1 to §8.3 record what implementation changed.
+**Status:** landed on 2026-09-13 in every repository. mcpp 2026.9.13.1 (PR #629, released, mirrored on both ends byte-identically, indexed by openxlings/xim-pkgindex#833); the Cubism recipes (openxlings/xim-pkgindex#832); mcpp-plugins 0.9.0 (mcpp-plugins#20, tag `v0.9.0`, GitCode mirror byte-identical, indexed by mcpplibs/mcpp-index#405). §8.1 to §8.4 record what implementation changed and what the sandbox measured.
 The first ask was analysed in an earlier draft of this record (the action
 buffer, §2); this revision reads all four against the rules the 2026-09-11
 and 2026-09-12 records state, and replaces that draft. The review accepted
@@ -578,6 +578,43 @@ Four additions came from the review and are folded in above:
   host too, as it does elsewhere, or declare the payload that carries them)
   and is filed there (mcpplibs/openkal-windows#19) rather than worked around
   in this workflow.
+
+### 8.4 What the sandbox measured (2026-09-13)
+
+`xlings subos use eco-2026-9-13-1 --sandbox`, both mirrors set to CN, the
+engine addressed by its store path and pinned, every package from the
+published indexes and nothing from a working tree. Thirteen assertions, none
+failed, none skipped:
+
+- `xim:mcpp@2026.9.13.1` installs from the index and reports its version at
+  the store path; the mcpp-side mirror reads back as CN.
+- An action with 600 inputs and 600 outputs: `build.ninja`'s edge carries
+  all 600 outputs and the program runs.
+- `${mcpp.self} stage` copies the linked program byte for byte into a
+  directory the action never created; the token does not reach
+  `build.ninja` literally.
+- `mcpp:plugins@0.9.0`, `dist-web`: `web/` carries `index.html`, the `.js`
+  launcher and the `.wasm`; the copy edges name the engine's `stage`; a
+  second pack rewrites nothing.
+- `mcpp:plugins@0.9.0`, `dist-apk`: a project template's permission,
+  receiver and application id reach the manifest; a signed `.apk` is
+  produced.
+- `cubism-sdk-native` and `cubism-sdk-web` install from the anonymous
+  upstream URL; `Core/LICENSE.md` is present in both.
+
+The first run of the same script, before 0.9.0 was indexed, failed the two
+plugin sections with `E_NOT_FOUND: package 'mcpp:plugins@0.9.0'` and passed
+the other eight, which is the negative direction for the index step.
+
+What the release chain measured on the way: the four platform archives are
+byte-identical on the upstream release, the GitHub mirror and the GitCode
+mirror (GET, then `sha256`), and the four hashes in the index bump PR equal
+those; the plugins source archive on GitCode is `cmp`-equal to GitHub's tag
+archive. Main's CI on the bootstrap-pin commit first failed in every job
+that bootstraps, with `package 'mcpp@2026.9.13.1' not found in the synced
+index (xim@artifact:dafbe58)`: the runners read the previous index
+artifact although both pointer files already named `9246b34`, and reruns
+after the propagation window passed.
 
 One observation stands as recorded and not acted on: `options::resources`
 as a single directory declared as an input (§3.4). It affects HuxerUI
