@@ -470,6 +470,16 @@ mcpp 为那条边写出 `depfile =` 与 `deps = gcc`,ninja 读取该文件并把
 所以名字未知的产物无法构建。内容可以晚到,名字不行。畸形 action 是**硬错误**,
 绝不静默跳过。
 
+**列表没有声明上的长度上限**(2026.9.13.1+)。`inputs`、`outputs` 与 `command`
+随声明增长;一棵两百个文件的生成树就是两百次 `output` 调用。2026.9.13.1 之前,
+内置模块把每个列表放在定长数组里(`inputs` 与 `outputs` 各 8192 字节的序列化
+JSON),放不下的声明会被拒绝,于是一个消费者的 checkout 深度决定了四十个文件的
+列表能否被接受。仍然有上限的是**运行期的命令**,由操作系统对进程参数的限制决定
+(Linux 上每个参数 128 KiB,Windows 的 `CreateProcess` 是 32767 个字符);那是
+工具自己命令行的上限,一个要接收几百个文件的工具用它自己的 response file 或目录
+参数来接收。引擎自己针对它的守卫量的是命令而不是边:action 的输入与输出是图上的
+边,从不进入 argv。
+
 生成**模块接口**时,把它的接口也声明出来:
 
 ```cpp
@@ -606,6 +616,7 @@ mcpp 会写出 `<暂存树>.stage-manifest` —— 一个兄弟文件,永不是�
 | `${mcpp.compile_db}` | `compile_commands.json` 的路径(clang-tidy 的 `-p` 要的就是它) |
 | `${mcpp.target_file:<name>}` | target `<name>` 构建出的文件 |
 | `${mcpp.stage_dir}` *(2026.9.11.1+)* | `mcpp pack` 暂存出的那棵树,绝对路径。仅 `artifact` role 可用,且仅在 `mcpp pack --format <name>` 下可用 |
+| `${mcpp.self}` *(2026.9.13.1+)* | 引擎自己的可执行文件,绝对路径。action 的命令是没有 shell 的 argv,构建程序因此没有可移植的拷贝手段;引擎在构建运行的每台机器上都在,`${mcpp.self} stage --verify content --output <dst> <src>` 拷贝一个文件、创建目标的父目录、只在字节不同时写入。这个参数形状自 2026.9.13.1 起是契约;写下它的构建程序即以该版本为下限 |
 
 上面的裸 stdout 协议仍是底层基底;`import mcpp;` 是其上的类型化层。
 

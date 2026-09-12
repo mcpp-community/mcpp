@@ -553,6 +553,20 @@ and the module graph during prepare, so an output whose *name* is unknown
 cannot be built. Content may arrive later; names may not. A malformed action is
 a hard error, never a silent skip.
 
+**The lists have no declared size limit** (2026.9.13.1+). `inputs`, `outputs`
+and `command` grow with what is declared; a generated tree of two hundred files
+is two hundred `output` calls. Until 2026.9.13.1 the bundled module held each
+list in a fixed array (8192 bytes of serialised JSON for `inputs` and
+`outputs`) and refused a declaration that did not fit, so a consumer's
+checkout depth decided whether a list of forty files was accepted. What
+remains bounded is the **command at run time**, by the operating system's
+limit on a process's arguments (128 KiB per argument on Linux, 32767
+characters for a Windows `CreateProcess`); that is a limit on the tool's own
+command line, and a tool that takes hundreds of files takes them through a
+response file or a directory argument of its own. The engine's own guard
+against it measures the command, not the edge: an action's inputs and
+outputs are graph edges, never argv.
+
 For a generated **module interface**, declare its interface too:
 
 ```cpp
@@ -705,6 +719,7 @@ none to rely on), and the only interpolations are a closed set:
 | `${mcpp.compile_db}` | path to `compile_commands.json` (what clang-tidy's `-p` wants) |
 | `${mcpp.target_file:<name>}` | the built file of target `<name>` |
 | `${mcpp.stage_dir}` *(2026.9.11.1+)* | the tree `mcpp pack` staged, absolute. `artifact` role only, and only under `mcpp pack --format <name>` |
+| `${mcpp.self}` *(2026.9.13.1+)* | the engine's own executable, absolute. An action's command is an argv with no shell, so a build program has no portable way to copy a file; the engine is present wherever a build runs, and `${mcpp.self} stage --verify content --output <dst> <src>` copies one file, creates the destination's parent, and writes only when the bytes differ. That argument shape is a contract from 2026.9.13.1 on; a build program that names it declares that release as its floor |
 
 The raw stdout protocol above remains the low-level substrate; `import mcpp;`
 is the typed layer over it.

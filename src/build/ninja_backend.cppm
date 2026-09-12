@@ -2838,6 +2838,15 @@ std::optional<std::string> check_rule_commands_name_a_program(
 
 std::optional<std::string> check_inline_command_lengths(const std::string& manifest) {
     std::set<std::string> rspRules;
+    // A rule whose command names neither `$in` nor `$out` puts a FIXED string
+    // on the command line, however many files its edges list: the declared
+    // action rules (`mcpp_action_<k>`) are built this way, their argv baked
+    // into the rule and their inputs and outputs present only so that ninja
+    // can order and re-run them. For those the edge line is not a proxy for
+    // the command -- an action with two hundred outputs was refused on
+    // Windows with the whole list counted as argv (e2e 659, 2026-09-13) --
+    // so the command text itself is what gets measured.
+    std::map<std::string, std::string> literalCommand;
     std::string current;
     for (auto line : manifest | std::views::split('\n')) {
         std::string_view l{line.begin(), line.end()};
@@ -2846,6 +2855,11 @@ std::optional<std::string> check_inline_command_lengths(const std::string& manif
         } else if (!current.empty() && l.find("rspfile") != std::string_view::npos
                    && l.find("rspfile_content") == std::string_view::npos) {
             rspRules.insert(current);
+        } else if (!current.empty() && l.starts_with("  command = ")) {
+            auto cmd = l.substr(std::string_view("  command = ").size());
+            if (cmd.find("$in") == std::string_view::npos
+                && cmd.find("$out") == std::string_view::npos)
+                literalCommand[current] = std::string(cmd);
         } else if (l.empty()) {
             current.clear();
         }
@@ -2867,13 +2881,26 @@ std::optional<std::string> check_inline_command_lengths(const std::string& manif
         if (rule == "phony") continue;
 
         // `sh -c` on POSIX; on windows nothing needs a shell since #261.
+        std::string_view measured = l;
+        if (auto lit = literalCommand.find(rule); lit != literalCommand.end())
+            measured = lit->second;
         auto over = mcpp::build::cmdlimits::check_inline(
-            l, mcpp::platform::is_windows, /*needsShell=*/!mcpp::platform::is_windows);
+            measured, mcpp::platform::is_windows, /*needsShell=*/!mcpp::platform::is_windows);
         if (!over) continue;
 
+        // The edge is named by its FIRST output and the count of the rest:
+        // an edge with hundreds of outputs would otherwise print every one
+        // of them into a diagnostic whose point is to name the edge.
         auto out = l.substr(6, colon - 6);
+        std::size_t nOut = 0;
+        for (auto tok : out | std::views::split(' '))
+            if (!std::string_view{tok.begin(), tok.end()}.empty()) ++nOut;
+        std::string_view first = out.substr(0, out.find(' '));
+        std::string named = nOut > 1
+            ? std::format("{} (and {} more outputs)", first, nOut - 1)
+            : std::string(first);
         return mcpp::build::cmdlimits::explain(
-            std::format("build edge '{}' (rule {})", out, rule), *over);
+            std::format("build edge '{}' (rule {})", named, rule), *over);
     }
     return std::nullopt;
 }

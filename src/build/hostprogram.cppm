@@ -204,21 +204,21 @@ struct action {
     // field existed. See BuildAction::depfile (modules/manifest/src/types.cppm)
     // for why `inputs` alone cannot express what this covers.
     const char* depfile     = "";
-    action& input(const char* p)    { add(inputs_,  sizeof inputs_,  p); return *this; }
-    action& output(const char* p)   { add(outputs_, sizeof outputs_, p); return *this; }
-    action& arg(const char* a)      { add(command_, sizeof command_, a); return *this; }
+    action& input(const char* p)    { add(inputs_,  p); return *this; }
+    action& output(const char* p)   { add(outputs_, p); return *this; }
+    action& arg(const char* a)      { add(command_, a); return *this; }
     // Declare what a generated MODULE INTERFACE provides/imports. Same
     // "declare instead of discover" trade [modules].scan_overrides makes, and
     // what lets a generated .cppm exist as a graph node at all.
-    action& provides(const char* n) { add(provides_, sizeof provides_, n); return *this; }
-    action& imports(const char* n)  { add(imports_,  sizeof imports_,  n); return *this; }
+    action& provides(const char* n) { add(provides_, n); return *this; }
+    action& imports(const char* n)  { add(imports_,  n); return *this; }
     // Object only: which link unit receives the outputs. Omit for "every image
     // this package produces" — which INCLUDES test binaries, and is what you
     // want: their names come from tests/*.cpp, so spelling one here breaks
     // plain `mcpp build`, where that link unit does not exist. An Artifact reads
     // its target out of ${mcpp.target_file:NAME}; an Object runs before the link
     // and has no such handle, so it has to say the name.
-    action& target(const char* n)   { add(targets_,  sizeof targets_,  n); return *this; }
+    action& target(const char* n)   { add(targets_,  n); return *this; }
     void submit() const {
         std::printf("mcpp:action={\"id\":");        esc(id);
         std::printf(",\"role\":");                  esc(role);
@@ -232,25 +232,69 @@ struct action {
         // has nothing to do with depfiles. The decoder's default (empty
         // string) is identical either way, so omission costs nothing on read.
         if (depfile[0]) { std::printf(",\"depfile\":"); esc(depfile); }
-        // A truncated argv would otherwise be INVALID rather than obviously
-        // wrong — the engine turns this marker into a diagnostic that names
-        // the limit, instead of a generic "malformed action".
+        // Set only when the process could not allocate memory for a list.
+        // A declaration cut short would otherwise be INVALID rather than
+        // obviously wrong -- the engine turns this marker into a diagnostic
+        // that names the cause, instead of a generic "malformed action".
         if (overflow_) std::printf(",\"overflow\":true");
-        std::printf(",\"inputs\":[%s]",   inputs_);
-        std::printf(",\"outputs\":[%s]",  outputs_);
-        std::printf(",\"command\":[%s]",  command_);
-        std::printf(",\"provides\":[%s]", provides_);
-        std::printf(",\"imports\":[%s]",  imports_);
-        std::printf(",\"targets\":[%s]",  targets_);
+        std::printf(",\"inputs\":[%s]",   inputs_.c_str());
+        std::printf(",\"outputs\":[%s]",  outputs_.c_str());
+        std::printf(",\"command\":[%s]",  command_.c_str());
+        std::printf(",\"provides\":[%s]", provides_.c_str());
+        std::printf(",\"imports\":[%s]",  imports_.c_str());
+        std::printf(",\"targets\":[%s]",  targets_.c_str());
         std::printf("}\n");
     }
 private:
-    // Fixed buffers because this module must stay buildable BEFORE a std BMI
-    // exists (it is what a build.mcpp imports, and it may be compiled first) —
-    // so no std::string. Sizes chosen for real generator invocations: a protoc
-    // command line with many -I paths runs long.
-    char inputs_[8192]{}, outputs_[8192]{}, command_[16384]{},
-         provides_[2048]{}, imports_[2048]{}, targets_[1024]{};
+    // One list field, held already serialised (`"a","b"`) so submit() prints
+    // it as it is. Owning and std-free, and both words are constraints this
+    // module carries: it may be compiled before a std BMI exists, so it must
+    // not `import std;`, and its exported interface must name no std type, so
+    // `std::string` may not appear in a signature. Neither forbids the heap:
+    // storage is `realloc` from the `<cstdlib>` already in the global module
+    // fragment, and no exported signature mentions this type.
+    //
+    // An earlier revision held six fixed arrays (8192 bytes for `inputs` and
+    // `outputs`, chosen for a protoc command line) and a declaration that did
+    // not fit was refused. The bound was in bytes of serialised JSON, so a
+    // consumer's checkout depth decided whether a resource list of 44 files
+    // fit (HuxerUI#130 measured the margin at 45 bytes), and `outputs` is the
+    // one list an author cannot shorten: an output the program does not name
+    // cannot be built, and there is no depfile for outputs. See
+    // .agents/docs/2026-09-13-four-upstream-asks-from-a-ui-framework.md.
+    struct list {
+        char* p = nullptr;
+        unsigned long len = 0, cap = 0;
+        list() = default;
+        list(const list& o) { take(o); }
+        list& operator=(const list& o) { if (this != &o) { len = 0; take(o); } return *this; }
+        ~list() { std::free(p); }
+        const char* c_str() const { return p ? p : ""; }
+        // Grows by doubling. False only when the allocator refuses.
+        bool reserve(unsigned long need) {
+            if (need <= cap) return true;
+            unsigned long c = cap ? cap : 256;
+            while (c < need) c *= 2;
+            void* q = std::realloc(p, c);
+            if (!q) return false;
+            p = static_cast<char*>(q);
+            cap = c;
+            return true;
+        }
+        bool put(char c) {
+            if (!reserve(len + 2)) return false;
+            p[len++] = c;
+            p[len] = 0;
+            return true;
+        }
+        void take(const list& o) {
+            if (!o.len) { if (p) p[0] = 0; return; }
+            if (!reserve(o.len + 1)) return;
+            for (unsigned long i = 0; i <= o.len; ++i) p[i] = o.p[i];
+            len = o.len;
+        }
+    };
+    list inputs_, outputs_, command_, provides_, imports_, targets_;
     mutable bool overflow_ = false;
     static void esc(const char* s) {
         std::putchar('"');
@@ -265,22 +309,30 @@ private:
         }
         std::putchar('"');
     }
-    // Capacity is a PARAMETER. The previous revision hardcoded 4096 while the
-    // smallest buffer here was 1024 — a bound living somewhere other than next
-    // to the array it bounds is exactly the shape that overflows.
-    bool add(char* buf, unsigned long cap, const char* s) {
-        unsigned long o = 0; while (buf[o]) ++o;
-        if (o + 4 >= cap) { overflow_ = true; return false; }
-        if (o) buf[o++] = ',';
-        buf[o++] = '"';
-        for (const char* p = s; *p; ++p) {
-            if (o + 3 >= cap) { buf[o] = 0; overflow_ = true; return false; }
-            if (*p == '"' || *p == '\\') buf[o++] = '\\';
-            buf[o++] = *p;
+    // Appends one JSON string literal, with the escaping `esc` applies, so a
+    // list entry and a scalar field are encoded by one rule. A payload that
+    // decoded under the fixed-array revision is encoded to the same bytes
+    // here: that revision escaped `"` and `\\` and passed control characters
+    // through, and a control character passed through was not JSON, so no
+    // payload the engine accepted contained one.
+    bool add(list& l, const char* s) {
+        bool ok = true;
+        if (l.len) ok = ok && l.put(',');
+        ok = ok && l.put('"');
+        for (const char* p = s; ok && *p; ++p) {
+            unsigned char c = (unsigned char)*p;
+            if (c == '"' || c == '\\') { ok = l.put('\\') && l.put((char)c); continue; }
+            if (c < 0x20) {
+                static const char hex[] = "0123456789abcdef";
+                ok = l.put('\\') && l.put('u') && l.put('0') && l.put('0')
+                  && l.put(hex[c >> 4]) && l.put(hex[c & 0xf]);
+                continue;
+            }
+            ok = l.put((char)c);
         }
-        buf[o++] = '"';
-        buf[o] = 0;
-        return true;
+        ok = ok && l.put('"');
+        if (!ok) overflow_ = true;
+        return ok;
     }
 };
 inline void rerun_if_changed(const char* path)    { std::printf("mcpp:rerun-if-changed=%s\n", path); }

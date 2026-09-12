@@ -854,12 +854,17 @@ int run(int argc, char** argv) {
             .option(cl::Option("expect-none")
                 .help("(verification) planner assumed no provides/imports"))
             .action(wrap_rc(cmd_dyndep)))
+        // Named by generated build.ninja edges and, since 2026.9.13.1, by a
+        // build program's own actions through `${mcpp.self}` (docs/30), so
+        // the argument shape below is a contract: `stage --verify content
+        // --output <dst> <src>` copies one file, creates the destination's
+        // parent, and writes only when the bytes differ.
         .subcommand(cl::App("stage")
-            .description("(internal: invoked by ninja) Stage a cached artifact into the build dir")
+            .description("Copy one file into place: create the destination's parent, write only when the content differs (invoked by build.ninja and by ${mcpp.self} actions)")
             .option(cl::Option("output").short_name('o').takes_value().value_name("PATH")
-                .help("Destination path inside the build directory"))
+                .help("Destination path; its parent directory is created"))
             .option(cl::Option("verify").takes_value().value_name("MODE")
-                .help("Already-staged check: size (default) | content"))
+                .help("How an existing destination is judged up to date: content (default) | size"))
             .action(wrap_rc(cmd_stage)))
         .subcommand(cl::App("coff-def")
             .description("(internal: invoked by ninja) Write a .def of every exportable symbol in the given COFF objects")
