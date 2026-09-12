@@ -74,9 +74,12 @@ cat > "$d/build.mcpp" <<'CPP'
 import mcpp;
 #include <string>
 int main() {
+    // An action runs with the build directory as its cwd, so the source is
+    // named by its absolute path; the manifest directory is the anchor.
+    const std::string in  = std::string(mcpp::manifest_dir()) + "/gen/in.txt";
     const std::string out = std::string(mcpp::out_dir()) + "/res.bin";
     mcpp::action a; a.id = "gen:res"; a.role = "source";
-    a.arg("/bin/cp").arg("gen/in.txt").arg(out.c_str()).input("gen/in.txt").output(out.c_str()).submit();
+    a.arg("/bin/cp").arg(in.c_str()).arg(out.c_str()).input(in.c_str()).output(out.c_str()).submit();
     mcpp::deploy(out.c_str(), "dep.resources");
     return 0;
 }
