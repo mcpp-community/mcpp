@@ -108,6 +108,24 @@ case "$OS" in
               &>/dev/null; then
             CAPS+=(android-ndk)
         fi
+        # android-device: an arm64 Android device attached over USB and
+        # answering `adb`, taken from the platform-tools payload (the same
+        # store the NDK probe reads). An emulator is not a device here: the
+        # rows this capability serves are the aarch64 ones, and an emulator
+        # line is named `emulator-<port>`. The serial is exported so a test
+        # can address that device when more than one is attached.
+        for adb in "$HOME"/.xlings/data/xpkgs/xim-x-android-platform-tools/*/adb \
+                   "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-android-platform-tools/*/adb; do
+            [[ -x "$adb" ]] || continue
+            serial=$("$adb" devices 2>/dev/null | awk '$2=="device" && $1 !~ /^emulator-/ {print $1; exit}')
+            [[ -n "$serial" ]] || continue
+            abi=$(ANDROID_SERIAL="$serial" "$adb" shell getprop ro.product.cpu.abi 2>/dev/null | tr -d '\r')
+            if [[ "$abi" == "arm64-v8a" ]]; then
+                CAPS+=(android-device)
+                export E2E_ANDROID_SERIAL="$serial"
+                break
+            fi
+        done
         # pack capability: ELF + patchelf both required
         if [[ " ${CAPS[*]} " == *" patchelf "* ]]; then
             CAPS+=(pack)
@@ -232,7 +250,7 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 # absent on Linux and must stay legal to declare. It is checked against the
 # CAPS+=() calls above by tests/e2e/README or by reading them -- keep it in
 # sync when adding a capability.
-KNOWN_CAPS=(android-ndk elf fresh-sandbox gcc import-std-libcxx jq llvm macos
+KNOWN_CAPS=(android-device android-ndk elf fresh-sandbox gcc import-std-libcxx jq llvm macos
             mingw mingw-cross msvc musl nasm no-msvc pack patchelf python3
             qemu-arm qemu-riscv scan-deps symlink unix-shell windows wine
             xlings-msvc)
