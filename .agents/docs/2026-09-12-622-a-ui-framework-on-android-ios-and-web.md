@@ -5,10 +5,12 @@ status: active
 
 # A UI framework on Android, iOS and Web: where each item of #622 lands, and the three it does not list
 
-**Status:** proposal, for review. Nothing here is implemented. Every "measured"
-statement was checked against `main` at `85df514a` (mcpp 2026.9.12.2),
+**Status:** implemented in mcpp (engine items A1 to A7, A10, A11; the version
+is assigned at release); ecosystem changes follow. Every "measured" statement
+below was checked against `main` at `85df514a` (mcpp 2026.9.12.2),
 `mcpp-plugins` at `9064107` (0.6.0) and `openxlings/xim-pkgindex` at `571f845`,
-not against the issue's own citations.
+not against the issue's own citations, and reflects the state at that commit
+rather than the engine that landed afterward.
 
 ## 0. Scope, and the ledger it starts from
 
@@ -473,6 +475,18 @@ mt = { threads = true }
 - An older engine warns `[target.cfg(linux)] has unsupported key 'requires_abi'
   (ignored)` and loses the requirement, which is the behaviour it had before
   2026.9.12.2.
+
+  **Correction (2026-09-12, T4).** This does not hold. `mcpp 2026.9.12.2`
+  reads `[target.'cfg(linux)'] requires_abi = { threads = true }` with no
+  diagnostic at all — measured by running it against that exact binary. The
+  key is a direct, inline-table-valued key of the selector table, not a
+  sub-section, and the schema sweep that would warn on an unsupported
+  `[target.<sel>]` key skips every table-valued key on the assumption that a
+  table is the conditional channel; an inline table is the same TOML value
+  shape and falls through the same sweep unreported. So an older engine
+  **silently ignores** the requirement rather than warning about it — a
+  package that relies on the refusal to protect an unconditional switch must
+  state its own engine floor.
 
 **Criteria.** A library with the Linux table and a root with
 `cfg(not(os = "emscripten"))` threads builds for both Linux and Web; remove the

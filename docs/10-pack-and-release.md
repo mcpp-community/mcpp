@@ -185,14 +185,40 @@ the rest of `[package]` in the build program, and this dispatch. Each is
 format-neutral, which is the test for whether something belongs in the engine
 at all.
 
-A dispatched format applies to a **program** target. A library package ships an
-interface plus prebuilt binaries per triple and has no single staged tree, so
+A dispatched format applies to a **program** target — `kind = "app"` included,
+on every row, whatever file that row links it to (see
+[04 §2.2](04-mcpp-toml.md)). A library package ships an interface plus
+prebuilt binaries per triple and has no single staged tree, so
 `mcpp pack <lib> --format <name>` is refused rather than ignored.
 
 When `-o` is given a bare filename, the output is placed under `target/dist/`;
 when it includes a directory (relative or absolute), the literal path is used.
 
 For the full set of options, see `mcpp pack --help`.
+
+### `mcpp run --format <name>` (mcpp 2026.9.12.3+)
+
+```bash
+mcpp run --target x86_64-linux-android --format apk
+mcpp run --target aarch64-ios-sim      --format app
+```
+
+`--format` is the same flag `mcpp pack` takes, and reused here for the case a
+plain `mcpp run` cannot reach: an Android application is a `.apk` and an
+installed iOS application a `.app`, and neither is the link output `mcpp run`
+executes by default. `mcpp run --format <name>` packs the target for `<name>`
+— the same two passes and staged tree as `mcpp pack --format <name>` — and
+then runs the artifact the pack reported, through the runner resolved for a
+program: the project's `[target.<triple>] runner`, then a dependency's
+`mcpp::runner(...)`, then the payload descriptor's.
+
+An unknown `<name>` is refused naming the format set the resolved graph
+provides, the same set `mcpp pack --format bogus` reports. `--format` together
+with `--no-runner` is refused — an `.apk` or an installed `.app` cannot be
+executed directly. Running a `kind = "app"` target on a row where its form is
+a library, with no `--format`, is refused naming the flag and that same
+format set. `mcpp test` is unaffected: a test binary is a program on every
+row.
 
 ### The build inputs of a packed artifact, and its contents
 
@@ -346,6 +372,26 @@ If the application cannot be changed — a third-party GUI framework doing its
 own resolution, say — use `--mode vendored` instead. It repoints `PT_INTERP`
 at the host loader, at the cost of requiring the host's glibc to be at least
 as new as the one the artifact was built against.
+
+### WebAssembly (`wasm32-emscripten`): the stem family
+
+```
+target/dist/myapp-0.1.0-wasm32-emscripten.tar.gz
+└── myapp-0.1.0-wasm32-emscripten/
+    ├── bin/myapp.js              ← the launcher; the file a runner executes
+    ├── bin/myapp.wasm            ← implicit output of the link, staged with it
+    ├── bin/myapp.data            ← present only when the link carries --preload-file
+    ├── README.md
+    └── LICENSE
+```
+
+The packer stages the launcher plus every other `myapp.<anything>` the same
+link wrote beside it — the stem family. `myapp.wasm` is required: the link
+edge declares it as an implicit output, so its absence names a build
+directory that does not match the graph, and `mcpp pack` refuses rather than
+staging a launcher with no module. `myapp.data` and any further sibling emcc
+writes with the same stem (`myapp.worker.js`, `myapp.wasm.map`) are optional
+and travel exactly when the link produced them.
 
 ### Windows (PE): a `.zip`, with the DLLs beside the `.exe`
 

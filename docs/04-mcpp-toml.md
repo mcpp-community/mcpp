@@ -156,6 +156,50 @@ the loader opens and the import library the linker consumes, with the export
 list generated from the objects on the MSVC ABI (which exports nothing without
 `__declspec(dllexport)` or a `.def`). See `tests/e2e/08`, `257` and `259`.
 
+#### `kind = "app"` — the thing a user launches (mcpp 2026.9.12.3+)
+
+```toml
+[targets.myapp]
+kind = "app"
+main = "src/main.cpp"
+```
+
+`app` names the same fact on every row — the program a user launches — and
+each row supplies its own file for it:
+
+| Row | Form of `app` | File |
+|---|---|---|
+| ELF, PE, Mach-O rows, `wasm32-emscripten` | identical to `bin` | `myapp`, `myapp.exe`, `myapp.js` |
+| `*-linux-android` | identical to `shared` | `libmyapp.so` |
+
+On `*-linux-android` the platform loads an application as a shared library
+into a Java process (`System.loadLibrary("myapp")`, `android:name` in the
+manifest); there is no executable form of an application on that row. On
+every other row `app` links exactly as `bin` does, and the produced file is
+byte-identical to a `bin` target's.
+
+`main` keeps its meaning on every row: it names the translation unit that
+defines the entry point. Where `app` is an executable, that entry is `main`
+itself. On `*-linux-android` the file is compiled as a translation unit of
+the shared library instead, and the platform's own entry
+(`ANativeActivity_onCreate`, or the JNI exports it declares) is the
+platform's contract, not a name mcpp assigns. `exports` (above) applies to an
+`app` target exactly as it does to a `shared` one, and `windows_subsystem` /
+`windows_entry` (below) accept `app` exactly as they accept `bin`.
+
+`mcpp run` of an `app` target, on a row where its form is a shared library,
+refuses without `--format`, naming the flag and the formats the resolved
+graph provides. `mcpp pack --format apk` stages the library where the
+closure already places a shared object. See `mcpp run --format` in
+[10 — Pack and Release](10-pack-and-release.md).
+
+An engine older than 2026.9.12.3 does not know the value and refuses it,
+naming the three kinds it does know:
+
+```
+targets.myapp.kind must be 'bin', 'lib' or 'shared'; got 'app'
+```
+
 #### `exports` — the artifact’s published symbol set (mcpp 2026.9.6.5+)
 
 ```toml
@@ -1116,8 +1160,23 @@ provider = "acme.widget-runtime@2.0.0"
 An unsupported key in this table is **reported and ignored**, and the message
 lists the keys it checked against. A `[runtime.<capability>]` sub-table is a
 provider override rather than a key, so it is not swept. The same rule applies
-to `[target.<predicate>.runtime]`, whose vocabulary is `libraries` and
-`link_library_dirs` only ([22 — The Target Side](22-target-side.md)).
+to `[target.<predicate>.runtime]`, whose vocabulary is `libraries`,
+`link_library_dirs` and `frameworks` (mcpp 2026.9.12.3+)
+([22 — The Target Side](22-target-side.md)). `frameworks` on that table is
+appended after the top-level list and renders `-framework <name>` on Mach-O
+rows only, nothing on the others — the key a manifest reaches for when a
+framework exists on iOS and not on macOS, or the reverse:
+
+```toml
+[runtime]
+frameworks = ["Foundation", "CoreGraphics"]
+
+[target.macos.runtime]
+frameworks = ["AppKit"]
+
+[target.'cfg(os = "ios")'.runtime]
+frameworks = ["UIKit"]
+```
 
 `requirements` records a non-empty `kind`/`value`, a `link` or `run` phase,
 and whether the requirement is mandatory (`required` defaults to `true`).
@@ -1215,13 +1274,22 @@ participates in toolchain ABI enforcement).
 
 ```toml
 [package]
-platforms = ["linux", "macos", "windows"]
+platforms = ["linux", "macos", "windows", "ios", "android", "emscripten"]
 ```
 
 Declares the platforms the package supports (a CI matrix hint, shown via `mcpp why`).
 The vocabulary is fixed by mcpp (which owns the target/triple system):
-`linux | macos | windows`; unknown values produce a warning, and an error under
-`--strict`.
+`linux | macos | windows | ios | android | emscripten` (mcpp 2026.9.12.3+;
+`ios`, `android` and `emscripten` are new members of a vocabulary that was
+`linux | macos | windows` before); unknown values produce a warning, and an
+error under `--strict`.
+
+A platform name is a target triple's `os`, except that an `env` naming a
+platform of its own wins. Android rows have `os = "linux"` and
+`env = "android"`, so `linux` in this list does not cover them — a package
+that serves Android states `android` as well. The Web row keeps its `os`
+word, `emscripten`, the same word the `cfg(...)` selector grammar uses; there
+is no `web` spelling.
 
 `mcpp pack` on a library target checks the claim against the legs it actually
 produced, because that is the first moment there is evidence to check it against:
