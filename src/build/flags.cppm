@@ -128,7 +128,7 @@ struct CompileFlags {
     }
 };
 
-enum class LinkIntentFlavor { Elf, MachO, PeGnu, PeMsvc };
+enum class LinkIntentFlavor { Elf, MachO, PeGnu, PeMsvc, Wasm };
 
 // Spell a provider-neutral LinkIntent for one output format.  Kept pure so
 // every platform contract can be asserted on every CI host.  deployFiles are
@@ -758,14 +758,16 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                 case mcpp::toolchain::triple::ObjectFormat::Pe:
                     return LinkIntentFlavor::PeGnu;
                 case mcpp::toolchain::triple::ObjectFormat::Wasm:
-                    // No `LinkIntentFlavor::Wasm` exists, and inventing one
-                    // here would be a link-contract decision rather than a
-                    // format question -- what `link_lib` and a search path
-                    // even mean for an Emscripten link is the open half of
-                    // #597. `Elf` is the wrong answer and is the one this
-                    // returns; it is named here so the gap is visible rather
-                    // than reached by falling off the end of a switch.
-                    return LinkIntentFlavor::Elf;
+                    // #622 A5 closes the open half of #597: what `link_lib`
+                    // and a search path mean for an Emscripten link is ELF's
+                    // own spelling. `-L` for a search directory and `-l<name>`
+                    // for a library are both flags emcc's driver accepts
+                    // unchanged (`-lidbfs.js` is one of its own JS system
+                    // libraries), and `frameworks` and `link_library_dirs`
+                    // carry no Emscripten-specific rendering either. So the
+                    // flavor exists to give the switch below an honest arm —
+                    // not because the rendering differs from `Elf`'s.
+                    return LinkIntentFlavor::Wasm;
                 case mcpp::toolchain::triple::ObjectFormat::Elf:
                     return LinkIntentFlavor::Elf;
             }

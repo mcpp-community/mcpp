@@ -139,3 +139,45 @@ TEST(PackStageTree, AMissingTreeIsRefusedRatherThanDescribedAsEmpty) {
     EXPECT_FALSE(std::filesystem::exists(
         mcpp::pack::stage_manifest_path(t.path / "never-staged")));
 }
+
+// ── #622 A5: the wasm32-emscripten stem family ───────────────────────────
+// "The launcher is the executable; the family is what the link also wrote" —
+// asked of the directory, never of a fixed extension list.
+
+TEST(PackStageTree, TheRequiredWasmModuleIsFound) {
+    Tmp t;
+    write_file(t.path / "app.js", "launcher");
+    write_file(t.path / "app.wasm", "\0asm");
+    auto fam = mcpp::pack::emscripten_stem_family(t.path, "app.js");
+    EXPECT_TRUE(fam.hasWasm);
+    EXPECT_EQ(fam.siblings, (std::vector<std::string>{"app.wasm"}));
+}
+
+// The negative direction: a launcher with no `.wasm` beside it (a build
+// directory that does not match the graph) must report the absence, not a
+// family that happens to be empty of the required member.
+TEST(PackStageTree, AMissingWasmModuleIsReported) {
+    Tmp t;
+    write_file(t.path / "app.js", "launcher");
+    auto fam = mcpp::pack::emscripten_stem_family(t.path, "app.js");
+    EXPECT_FALSE(fam.hasWasm);
+    EXPECT_TRUE(fam.siblings.empty());
+}
+
+// Optional siblings travel when the link wrote them, and only files that
+// actually share the stem are picked up — a neighbouring, unrelated launcher
+// in the same directory (a second target) must not bleed into this one's
+// family.
+TEST(PackStageTree, OptionalSiblingsTravelAndUnrelatedFilesDoNot) {
+    Tmp t;
+    write_file(t.path / "app.js", "launcher");
+    write_file(t.path / "app.wasm", "\0asm");
+    write_file(t.path / "app.data", "preloaded");
+    write_file(t.path / "app.worker.js", "worker");
+    write_file(t.path / "other.js", "a different target's launcher");
+    write_file(t.path / "other.wasm", "\0asm");
+    auto fam = mcpp::pack::emscripten_stem_family(t.path, "app.js");
+    EXPECT_TRUE(fam.hasWasm);
+    EXPECT_EQ(fam.siblings, (std::vector<std::string>{
+        "app.data", "app.wasm", "app.worker.js"}));
+}

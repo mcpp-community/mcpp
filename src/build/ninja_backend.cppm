@@ -2148,6 +2148,20 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     }
     if (!plan.resourceUnits.empty()) append("\n");
 
+    // #622 A5: on `wasm32-emscripten` the link command is a single emcc
+    // invocation that writes the named output (`<name>.js`, this plan's
+    // artifact naming — see triple.cppm) AND `<name>.wasm` beside it in one
+    // run. The `.wasm` is not a second edge (nothing would sequence it against
+    // the first) and not a naming convention applied after the fact — it is
+    // declared as an implicit output of the SAME edge, so `ninja -t clean`,
+    // the incremental check and `mcpp pack`'s graph walk all see it.
+    const auto planTargetTriple =
+        mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+    const bool wasmTarget =
+        planTargetTriple
+        && planTargetTriple->object_format()
+               == mcpp::toolchain::triple::ObjectFormat::Wasm;
+
     // Link units
     for (auto& lu : plan.linkUnits) {
         std::string ins;
@@ -2213,6 +2227,16 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         std::string implicitOut;
         if (!lu.importLibrary.empty())
             implicitOut = " | " + escape_ninja_path(lu.importLibrary);
+        // The `.wasm` module emcc writes beside the JavaScript launcher for
+        // every executable link on this row (see the comment above the loop).
+        // Not the test binary's rule alone and not the `bin` rule alone: both
+        // ARE the executable form on this row, so both get the sibling.
+        if (wasmTarget
+            && (lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary)) {
+            auto wasmSibling = lu.output; wasmSibling.replace_extension(".wasm");
+            implicitOut += (implicitOut.empty() ? " | " : " ")
+                         + escape_ninja_path(wasmSibling);
+        }
         // The link map, DECLARED rather than merely written. It is produced by
         // a flag on the link command, so it cannot be its own edge — a second
         // edge claiming to produce it would run the link twice. Declaring it

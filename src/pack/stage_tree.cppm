@@ -122,4 +122,39 @@ bool is_builtin_pack_format(std::string_view name) {
     return std::ranges::find(kBuiltinPackFormats, name) != kBuiltinPackFormats.end();
 }
 
+// #622 A5 — the wasm32-emscripten stem family, read from the directory the
+// link wrote into rather than assumed from a fixed extension list.
+//
+// THE RULE: the launcher (`<name>.js`) is the executable; the family is every
+// other `<name>.<anything>` the SAME link also wrote. `.wasm` is required —
+// the link edge declares it as an implicit output (see ninja_backend.cppm),
+// so a missing one names a build directory that does not match the graph,
+// not a program that legitimately produced none. A `.data`
+// (`--preload-file`), a `.worker.js` (`-pthread`) or a `.wasm.map` are
+// optional and travel exactly when the link wrote them — this asks the link,
+// never a list this module would have to keep in step with emcc's.
+struct EmscriptenStemFamily {
+    std::vector<std::string> siblings;    // sorted; excludes the launcher itself
+    bool                     hasWasm = false;
+};
+
+EmscriptenStemFamily emscripten_stem_family(const std::filesystem::path& builtDir,
+                                            std::string_view launcherName) {
+    EmscriptenStemFamily out;
+    const auto stem = std::filesystem::path(launcherName).stem().string();
+    const auto prefix = stem + ".";
+    std::error_code ec;
+    for (auto const& entry : std::filesystem::directory_iterator(builtDir, ec)) {
+        if (ec) break;
+        auto name = entry.path().filename().string();
+        if (name == launcherName || !name.starts_with(prefix)) continue;
+        std::error_code fec;
+        if (!entry.is_regular_file(fec)) continue;
+        if (name == stem + ".wasm") out.hasWasm = true;
+        out.siblings.push_back(std::move(name));
+    }
+    std::ranges::sort(out.siblings);
+    return out;
+}
+
 } // namespace mcpp::pack

@@ -104,6 +104,54 @@ TEST(ArtifactNaming, UnknownOsFallsBackToHost) {
     EXPECT_EQ(n.staticLibExt, ".HOST");
 }
 
+// A bare-metal `none` OS is not the emscripten row and must keep falling back
+// to the host answer — the emscripten branch below must not widen the
+// fallback it sits next to.
+TEST(ArtifactNaming, NoneOsFallsBackToHost) {
+    tr::Triple none; none.arch = "aarch64"; none.os = "none";
+    auto n = tr::artifact_naming(none, kBogusHost);
+    EXPECT_EQ(n.exeSuffix, ".HOST");
+    EXPECT_EQ(n.staticLibExt, ".HOST");
+}
+
+// ── wasm32-emscripten: the executable is the file a runner executes, and on
+// this row that file is the JavaScript launcher, not a bare ELF-shaped name.
+// See .agents/docs/2026-09-12-622-a-ui-framework-on-android-ios-and-web.md §2.5.
+
+// A Linux host must not leak its own (empty-suffix) naming onto the row.
+TEST(ArtifactNaming, EmscriptenOnLinuxHostNamesJs) {
+    const tr::ArtifactNaming linuxHost{
+        .exeSuffix = "", .libPrefix = "lib", .staticLibExt = ".a",
+        .sharedLibExt = ".so", .sharedNeedsImportLib = false,
+    };
+    auto n = tr::artifact_naming(T("wasm32-emscripten"), linuxHost);
+    EXPECT_EQ(n.exeSuffix, ".js");
+    EXPECT_EQ(n.libPrefix, "lib");
+    EXPECT_EQ(n.staticLibExt, ".a");
+}
+
+// A Windows host must not leak `.exe` onto the row either — the row names one
+// file on every host.
+TEST(ArtifactNaming, EmscriptenOnWindowsHostNamesJs) {
+    const tr::ArtifactNaming windowsHost{
+        .exeSuffix = ".exe", .libPrefix = "", .staticLibExt = ".lib",
+        .sharedLibExt = ".dll", .sharedNeedsImportLib = true,
+    };
+    auto n = tr::artifact_naming(T("wasm32-emscripten"), windowsHost);
+    EXPECT_EQ(n.exeSuffix, ".js");
+    EXPECT_EQ(n.libPrefix, "lib");
+    EXPECT_EQ(n.staticLibExt, ".a");
+}
+
+// A side module needs `-sSIDE_MODULE`, which mcpp does not render — the row
+// marks shared libraries unsupported rather than naming a file emcc's default
+// link would not actually produce as a working shared object.
+TEST(ArtifactNaming, EmscriptenSharedIsUnsupported) {
+    auto n = tr::artifact_naming(T("wasm32-emscripten"), kBogusHost);
+    EXPECT_TRUE(n.sharedNeedsImportLib);
+    EXPECT_EQ(n.sharedLibExt, "");
+}
+
 // ── Host builds must be bit-for-bit unchanged ───────────────────────────────
 // Passing the real host constants for the host target has to reproduce exactly
 // what the old code produced on this machine.

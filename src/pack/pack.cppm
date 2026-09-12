@@ -40,11 +40,13 @@ import mcpp.config;
 import mcpp.pack.binfmt;
 import mcpp.pack.host_requirements;
 import mcpp.pack.relocate;
+import mcpp.pack.stage_tree;
 import mcpp.pack.strip;
 import mcpp.pack.zip;
 import mcpp.platform;
 import mcpp.xlings;
 import mcpp.manifest;
+import mcpp.toolchain.triple;
 
 export namespace mcpp::pack {
 
@@ -167,6 +169,13 @@ struct Plan {
     // Is the artifact a PE? Read from the FILE, not inferred from the triple —
     // the file is the thing being packaged, and a triple is a request.
     bool                                 targetIsPe = false;
+    // Is the artifact a wasm32-emscripten launcher? Read from the TRIPLE, not
+    // the file: the packed file is `bin/<name>.js`, plain JavaScript text
+    // carrying none of ELF/PE/Mach-O's magic, so `binfmt::identify` cannot
+    // answer this the way it answers `targetIsPe`. The triple is what named
+    // the file `.js` in the first place (see `artifact_naming`), so it is the
+    // one fact this format IS recorded under.
+    bool                                 targetIsWasm = false;
     // The search set the PE closure resolves names against, after the
     // contract has had its say (see make_plan).
     std::vector<std::filesystem::path>   searchDirs;
@@ -378,6 +387,11 @@ make_plan(const mcpp::manifest::Manifest& manifest,
     p.targetIsPe =
         mcpp::pack::binfmt::identify(builtBinary).format
             == mcpp::pack::binfmt::Format::Pe;
+    // The triple, not the file — see the field comment on `targetIsWasm`.
+    if (auto t = mcpp::toolchain::triple::parse(p.triple)) {
+        p.targetIsWasm =
+            t->object_format() == mcpp::toolchain::triple::ObjectFormat::Wasm;
+    }
 
     // THE CONTRACT REACHES PACKAGING. Until now it stopped at the compile and
     // link flags, so the step that decides which files travel could not see
@@ -1055,6 +1069,64 @@ run_pe(const Plan& plan)
     return {};
 }
 
+// The wasm32-emscripten half of `run`. No dependency closure: the ordinary
+// Emscripten link produces one static image with everything embedded (a
+// `shared` target on this row is refused at plan time, before packaging ever
+// sees it — see prepare.cppm), so there is nothing here to trace under a
+// dynamic linker the way the PE and ELF halves do.
+//
+// THE STEM FAMILY RULE. The launcher (`<name>.js`) is the executable; the
+// family is every other `<name>.<anything>` the link wrote beside it. `.wasm`
+// is required — the link edge declares it as an implicit output
+// (ninja_backend.cppm), so its absence names a build directory that does not
+// match the graph rather than a program that legitimately has none. A
+// `.data` (from `--preload-file`), a `.worker.js` or a `.wasm.map` are
+// optional and travel exactly when the link wrote them: this packer stages
+// whatever it finds, and asks the link, never a fixed extension list.
+std::expected<void, Error>
+run_wasm(const Plan& plan)
+{
+    std::error_code ec;
+    std::filesystem::remove_all(plan.stagingRoot, ec);
+    std::filesystem::create_directories(plan.stagingRoot / "bin", ec);
+    if (ec) return std::unexpected(Error{std::format(
+        "cannot create staging '{}': {}", plan.stagingRoot.string(), ec.message())});
+
+    auto stagedJs = plan.stagingRoot / "bin" / plan.binaryName;
+    std::filesystem::copy_file(plan.builtBinary, stagedJs,
+        std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) return std::unexpected(Error{std::format(
+        "copy launcher failed: {}", ec.message())});
+
+    const auto builtDir = plan.builtBinary.parent_path();
+    auto family = mcpp::pack::emscripten_stem_family(builtDir, plan.binaryName);
+    if (!family.hasWasm) {
+        const auto stem = plan.builtBinary.stem().string();
+        return std::unexpected(Error{std::format(
+            "'{}.wasm' is missing beside the built launcher '{}' -- the "
+            "wasm32-emscripten link declares it as an implicit output, so its "
+            "absence means the build directory does not match the graph",
+            stem, plan.builtBinary.string())});
+    }
+    for (auto const& name : family.siblings) {
+        std::error_code fec;
+        std::filesystem::copy_file(builtDir / name,
+            plan.stagingRoot / "bin" / name,
+            std::filesystem::copy_options::overwrite_existing, fec);
+        if (fec) return std::unexpected(Error{std::format(
+            "failed to copy {} -> {}: {}", (builtDir / name).string(),
+            (plan.stagingRoot / "bin" / name).string(), fec.message())});
+    }
+
+    if (auto r = stage_runtime_files(plan, stagedJs.parent_path()); !r) return r;
+
+    copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);
+    copy_if_exists(plan.projectRoot / "LICENSE",   plan.stagingRoot);
+
+    if (plan.opts.format != Format::Tar) return {};
+    return make_tarball(plan.stagingRoot, plan.archivePath);
+}
+
 } // namespace detail
 
 std::expected<void, Error>
@@ -1065,6 +1137,13 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     // defined(_WIN32)` refusal used to occupy — and it was never really about
     // the host: `LD_TRACE_LOADED_OBJECTS` cannot trace a PE from Linux either.
     if (plan.targetIsPe) return detail::run_pe(plan);
+
+    // wasm32-emscripten, before the Mach-O refusal and the ELF closure below:
+    // this artifact is neither. `binfmt::identify` reports `Unknown` for the
+    // `.js` launcher (plain text, none of the three magics), which is exactly
+    // the branch the ELF path's own comment warns cannot be assumed away by
+    // exclusion any more.
+    if (plan.targetIsWasm) return detail::run_wasm(plan);
 
     // A Mach-O artifact is REFUSED, on every host including macOS.
     //

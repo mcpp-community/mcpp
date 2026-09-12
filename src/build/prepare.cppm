@@ -2521,6 +2521,32 @@ prepare_build(bool print_fingerprint,
                     parsed->str(), which, which));
             }
         }
+        // A `shared` TARGET NAMES A LINK CONTRACT THIS ENGINE DOES NOT RENDER.
+        //
+        // `-sSIDE_MODULE` is a different Emscripten link mode from the
+        // ordinary one (one static image, `artifact_naming`'s `.js`+`.wasm`
+        // pair) and mcpp emits no flag for it. Falling through to the
+        // ordinary link would still WRITE a `.so`-shaped file — the fallback
+        // naming's `sharedLibExt` is empty, so the linker would be asked for
+        // an empty-named output — so this is caught here, by NAME, rather
+        // than reached as an obscure link failure.
+        //
+        // REFUSED HERE AND NOT AT PLAN TIME, same reasoning as the Apple SDK
+        // check above: `parsed` and the manifest's own target list are both
+        // already known, resolving neither an emsdk payload nor any other
+        // toolchain, so an offline build (no emsdk installed) gets this
+        // sentence instead of downloading the SDK first.
+        if (parsed && parsed->object_format()
+                          == triple::ObjectFormat::Wasm) {
+            for (auto const& t : m->targets) {
+                if (t.kind != mcpp::manifest::Target::SharedLibrary) continue;
+                return std::unexpected(std::format(
+                    "[targets.{}] kind = \"shared\" is not supported on "
+                    "wasm32-emscripten: a side module needs -sSIDE_MODULE, "
+                    "which mcpp does not render",
+                    t.name));
+            }
+        }
         // Known, supported — and IMPOSSIBLE ON THIS HOST.
         //
         // Without this the target falls through to the host toolchain and the

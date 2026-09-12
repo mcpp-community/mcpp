@@ -1124,6 +1124,35 @@ inline ArtifactNaming artifact_naming(const Triple& t, const ArtifactNaming& hos
             .sharedNeedsImportLib = false,
         };
     }
+    if (t.os == "emscripten") {
+        // `artifact_naming`'s one sentence, unchanged: the executable is the
+        // file a runner executes, in the row's own convention. On this row
+        // that file is the JavaScript launcher — what the emsdk payload's
+        // `node` runs and what a browser loads — so the row's convention for
+        // "the executable" is `.js`, not the ELF/host-borrowed bare name this
+        // used to fall back to (a different file on Linux vs. Windows hosts).
+        //
+        // Read, not recalled: Emscripten's own CMake toolchain fixes
+        // `CMAKE_EXECUTABLE_SUFFIX ".js"` (`Platform/Emscripten.cmake`) and
+        // Rust's `wasm32-unknown-emscripten` target spec sets
+        // `exe_suffix: ".js"` — both because emcc's `-o` extension selects
+        // what it emits, and anything but `.js`/`.html`/`.wasm` falls back to
+        // the `.js` case. A future `wasm32-wasi` row would answer `.wasm` by
+        // the same sentence, the way Rust's other wasm targets do, because
+        // there the module IS the executable a runner executes.
+        //
+        // `sharedLibExt` is empty and `sharedNeedsImportLib` is set as the
+        // "shared libraries are not supported for this target" marker (see
+        // the field comment above): a wasm side module needs `-sSIDE_MODULE`,
+        // a link contract this engine does not render, so the fallback answer
+        // (a `.so`-shaped file that does not work as one) is refused instead
+        // of produced — see the plan-time refusal in prepare.cppm.
+        return ArtifactNaming{
+            .exeSuffix = ".js", .libPrefix = "lib",
+            .staticLibExt = ".a", .sharedLibExt = "",
+            .sharedNeedsImportLib = true,
+        };
+    }
     // Outside the triple language: fall back to the host answer rather than
     // guessing. A wrong guess here silently misnames every artifact.
     return hostNaming;
