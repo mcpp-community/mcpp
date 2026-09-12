@@ -596,7 +596,14 @@ so no `node` on PATH is involved. A payload's runner is one program with the
 artefact path appended; it is either relative to the payload or absolute inside
 the package store that holds the payload, and a path outside that store is
 ignored. A payload installed before its recipe wrote the key has no descriptor,
-and its artefact runs through its own `#!/usr/bin/env node` line as before.
+and its artefact runs through its own `#!/usr/bin/env node` line as before. To
+give such a payload a descriptor, refresh the index first and then reinstall:
+`mcpp index update`, then `mcpp toolchain remove <spec>` and
+`mcpp toolchain install <spec>`. A reinstall alone installs from the same recipe
+again, because the index is refreshed when a resolution misses and not because a
+recipe changed; measured in the sandbox verification of 2026.9.12.2. Until then
+the failure is the interpreter's own (`/usr/bin/env: 'node': No such file or
+directory`), which mcpp does not yet explain (#621).
 
 For a target whose artifact runs elsewhere, the `runner` key is an argv prefix
 and the session belongs to a package rather than to the engine:

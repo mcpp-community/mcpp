@@ -541,7 +541,11 @@ macos_deployment_target = "14.0" # Apple
 使用这个程序,因此不涉及 PATH 上的 `node`。载荷的 runner 是一个程序,产物路径追加在后;
 它或是载荷内的相对路径,或是持有该载荷的包存储之内的绝对路径,存储之外的路径一律忽略。
 在配方写出这个键之前安装的载荷没有描述文件,其产物仍按自身的 `#!/usr/bin/env node`
-一行运行,与之前相同。
+一行运行,与之前相同。要让这样的载荷获得描述文件,先刷新索引再重装:`mcpp index update`,
+然后 `mcpp toolchain remove <spec>` 与 `mcpp toolchain install <spec>`。仅重装会再次按同一份
+配方安装,因为索引只在解析未命中时刷新,而不因配方变化而刷新;这一点在 2026.9.12.2 的沙箱
+验证中实测。在此之前,失败信息来自解释器自身(`/usr/bin/env: 'node': No such file or
+directory`),mcpp 尚未对它作出解释(#621)。
 
 对于产物在别处运行的目标,`runner` 键是一个 argv 前缀,而那个会话属于一个**包**而不属于引擎:
 

@@ -603,3 +603,25 @@ code, and what was built instead.
     decline predates this change (#400). 645 distinguishes the two causes by the
     `toolchain=` lines the two builds record: identical lines report the host as
     not measured, and differing lines fail.
+
+12. **The sandbox verification of the release, and two findings outside it.**
+    Sections 1 to 15 held for the published 2026.9.12.2 installed from the
+    index, except the Web section, and openkal-emscripten 0.1.1's own check
+    held (the feature refused without the root table, and a task starting,
+    running and joining under node).
+    - **A home inside a subos cannot install a toolchain.** With the published
+      tarball extracted into the verification subos directory, the first
+      `mcpp build` failed at `gcc installed but registered none of the programs
+      it declares`, from xlings' post-install ledger check. 2026.9.11.4 failed
+      identically from the same placement, so the placement causes it. From the
+      xlings store, which is how a release is installed, the same section held.
+    - **A recipe change needs an index refresh, not a reinstall.** The Web
+      section failed with `/usr/bin/env: 'node'` because the sandbox home's
+      emsdk payload predates openxlings/xim-pkgindex#823. Removing and
+      reinstalling reproduced it: the index copy still held the old recipe, and
+      mcpp refreshes on a resolution miss rather than on a recipe change. After
+      `mcpp index update`, the snapshot's recipe writes the descriptor, the
+      reinstalled payload names its runner, and the program prints its output.
+      docs/20, its Chinese copy, the CHANGELOG and the #617 record now state the
+      three steps; mcpp#621 tracks the diagnostic that would make the failure
+      self-explaining.

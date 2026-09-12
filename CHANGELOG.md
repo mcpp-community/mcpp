@@ -33,8 +33,10 @@ Emscripten 链接产出的是首行为 `#!/usr/bin/env node` 的 JavaScript 启�
 - 结构错误的 `runner`(非字符串、为空、含反斜杠、含 `.` 或 `..` 分量)按描述文件的既有
   规则拒绝,并点名该文件。
 - `xim:emsdk` 的配方写出 `runner`(openxlings/xim-pkgindex#823)。早于这个键的 mcpp
-  忽略它,所以配方可以先发;在此之前安装的 emsdk 载荷没有描述文件,行为与之前相同,重新
-  安装后获得。
+  忽略它,所以配方可以先发;在此之前安装的 emsdk 载荷没有描述文件,行为与之前相同。要让它获得
+  描述文件,需先 `mcpp index update` 再 `mcpp toolchain remove emsdk@<版本>` 与
+  `mcpp toolchain install emsdk <版本>`:仅重装会再次按同一份配方安装,因为索引只在解析未命中
+  时刷新。2026.9.12.2 的沙箱验证实测了这三步;mcpp 目前不会对这种失败作出解释(#621)。
 
 ### Windows GUI 可执行文件:`windows_subsystem` 与 `windows_entry`(#618)
 

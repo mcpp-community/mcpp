@@ -97,7 +97,11 @@ states it. `.mcpp-toolchain.json` gains a fourth key.
 Both directions hold without coordination. An mcpp that predates the key ignores
 it, so the recipe ships first. A payload installed before the recipe wrote the
 descriptor has none, and its artefact runs through its own shebang exactly as
-before; reinstalling the payload adds the descriptor.
+before. Reinstalling the payload is not sufficient by itself: mcpp refreshes its
+index copy when a resolution misses, not because a recipe changed, so a remove
+and install reach the same recipe again. Measured during the sandbox
+verification of 2026.9.12.2 -- `mcpp index update` first, then remove and
+install, and the payload then carries the descriptor.
 
 ## Criteria
 
@@ -119,5 +123,6 @@ not found" and said nothing about runners. The reading above used a
 ## What remains
 
 An emsdk payload already installed on a machine keeps running through PATH until
-it is reinstalled. The published-artefact check is the sandbox verification
+the index is refreshed and the payload reinstalled, and mcpp does not say so
+when it happens (#621). The published-artefact check is the sandbox verification
 script's Web section, run again after this release.
