@@ -249,13 +249,18 @@ export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,
     std::string accel;
     if (parsed.is_flag_set("no-accel"))      accel = "(none)";
     else if (auto a = parsed.value("accel")) accel = *a;
+    // #622 A10: the value space and the refusal text both come from `mcpp
+    // pack --format`; `run` only adds the pairing with `--no-runner`, checked
+    // in build_run_target where the runner is actually chosen.
+    std::string format;
+    if (auto f = parsed.value("format")) format = *f;
     if (parsed.is_flag_set("list-runners"))
         return mcpp::build::list_runners(package_filter, cache_mode, no_cache,
                                          target_triple, features, profile, accel);
     return mcpp::build::build_run_target(targetName, passthrough, package_filter,
                                          cache_mode, no_cache, target_triple,
                                          no_runner, runner_name, features,
-                                         profile, accel);
+                                         profile, accel, format);
 }
 
 export int cmd_test(const mcpplibs::cmdline::ParsedArgs& parsed,

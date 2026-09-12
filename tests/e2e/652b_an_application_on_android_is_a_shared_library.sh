@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: android-ndk
+# requires: elf gcc android-ndk
 # 652b_an_application_on_android_is_a_shared_library.sh -- the row half of
 # `kind = "app"` (#622 A3, design record §2.3): on `*-linux-android` an
 # application's link form is `SharedObject`, not `Executable`. Split from 652
@@ -15,6 +15,10 @@
 # script is that the row's own toolchain resolution reaches the payload
 # already on this machine, exactly as an end user's first `--target
 # x86_64-linux-android` build would.
+#
+# Section 4/5 below also does one HOST build (`elf gcc`, added to the header)
+# to hold the negative direction of #622 A11: MCPP_TARGET_MIN_PLATFORM_VERSION
+# is empty there, and numeric on the Android row.
 set -e
 
 TMP=$(mktemp -d)
@@ -80,5 +84,87 @@ if grep -q "is an application" <<<"$out"; then
     fail "the app refusal fired for a plain bin target" <(echo "$out")
 fi
 echo "the refusal does not fire for a bin target OK"
+
+# ── 4. the pack pipeline treats this app as the program target too ────────
+# (#622 A10, "the second half"): an `Application` is a program target on
+# EVERY row, whatever file it links to; on Android that file is
+# `lib/libmyapp.so`, and the closure stages a shared object there. Added
+# AFTER the checks above, and only now, because the build program below
+# declares `provides_pack_format("blob")` UNCONDITIONALLY (§1 rule 3) --
+# adding it earlier would change what check 3's refusal lists (it asserts
+# "one of: none declared", which is only true while this package provides
+# no format at all).
+cat > copy.sh <<'EOF'
+#!/usr/bin/env bash
+set -e
+cp "$1" "$2"
+EOF
+chmod +x copy.sh
+
+cat > build.mcpp <<'EOF'
+import mcpp;
+#include <cstdio>
+#include <string>
+#include <string_view>
+int main() {
+    // #622 A11: written on EVERY build, host and Android alike, so this one
+    // build program's environment answers both halves of the criterion --
+    // numeric on Android, empty on the host -- without a second fixture.
+    if (FILE* f = std::fopen(
+            (std::string(mcpp::out_dir()) + "/minplat.txt").c_str(), "w")) {
+        std::fputs(mcpp::min_platform_version(), f);
+        std::fclose(f);
+    }
+
+    mcpp::provides_pack_format("blob");
+    if (std::string_view(mcpp::pack_format()) != "blob") return 0;
+
+    const std::string root = mcpp::manifest_dir();
+    const std::string out  = std::string(mcpp::out_dir()) + "/myapp.blob";
+    mcpp::action a;
+    a.id          = "blob";
+    a.role        = "artifact";
+    a.description = "blob";
+    // The FILE, whatever it is on this row -- `${mcpp.target_file:myapp}`
+    // resolves through the same link-unit table on every row (mcpp.build.plan),
+    // so nothing here asks the row's form at all.
+    a.arg((root + "/copy.sh").c_str())
+     .arg("${mcpp.target_file:myapp}")
+     .arg(out.c_str())
+     .input("${mcpp.target_file:myapp}")
+     .output(out.c_str())
+     .submit();
+    return 0;
+}
+EOF
+
+"$MCPP" pack --format blob --target "$TARGET" > pack.log 2>&1 \
+    || fail "mcpp pack --format blob on Android failed" pack.log
+staged=$(ls -d target/dist/myapp-0.1.0-*/ 2>/dev/null | head -1)
+[ -n "$staged" ] || fail "no staged tree under target/dist for the Android pack" pack.log
+[ -f "${staged}lib/libmyapp.so" ] \
+    || fail "the staged tree has no lib/libmyapp.so" pack.log
+[ -n "$(find target -name 'myapp.blob' 2>/dev/null)" ] \
+    || fail "the reported artifact myapp.blob does not exist" pack.log
+echo "mcpp pack --format blob on Android stages lib/libmyapp.so OK"
+
+# ── 5. MCPP_TARGET_MIN_PLATFORM_VERSION: numeric on Android, empty on host ─
+# `mcpp::out_dir()` for a build PROGRAM (as opposed to `${mcpp.out_dir}` inside
+# an action, which is per-triple) is one path per package,
+# `target/.build-mcpp/out/` -- read the value RIGHT AFTER the Android pack
+# above, before the host build below writes the SAME file with its own answer.
+minplatFile="target/.build-mcpp/out/minplat.txt"
+[ -f "$minplatFile" ] || fail "build.mcpp did not write $minplatFile" pack.log
+androidMinplat=$(cat "$minplatFile")
+case "$androidMinplat" in
+    ''|*[!0-9]*) fail "MCPP_TARGET_MIN_PLATFORM_VERSION '$androidMinplat' is not numeric on $TARGET" pack.log ;;
+esac
+echo "MCPP_TARGET_MIN_PLATFORM_VERSION is numeric on $TARGET ($androidMinplat) OK"
+
+"$MCPP" build > buildhost.log 2>&1 || fail "the host build failed" buildhost.log
+hostMinplat=$(cat "$minplatFile" 2>/dev/null || true)
+[ -z "$hostMinplat" ] \
+    || fail "MCPP_TARGET_MIN_PLATFORM_VERSION was '$hostMinplat', not empty, on the host" buildhost.log
+echo "MCPP_TARGET_MIN_PLATFORM_VERSION is empty on the host OK"
 
 echo "652b: kind = \"app\" on Android is a shared library OK"
