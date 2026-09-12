@@ -122,4 +122,38 @@ TEST(ArtifactNaming, RealHostConstantsRoundTrip) {
     EXPECT_EQ(n.sharedLibExt, mcpp::platform::shared_lib_ext);
 }
 
+// ── #622 A3: the link form of `kind = "app"` is a property of the row ───────
+//
+// `application_form` answers the one question §2.3 of the #622 design record
+// turns into a fourth `kind` rather than a manifest predicate: on Android an
+// application IS the shared library the platform loads (there is no
+// executable form of an app there at all); everywhere else it is identical to
+// `bin`. The negative direction here is the positive direction of every OTHER
+// row — a form function with only one answer would not be a function.
+
+TEST(ArtifactNaming, ApplicationFormIsSharedObjectOnAndroid) {
+    EXPECT_EQ(tr::application_form(T("aarch64-linux-android")),
+              tr::ApplicationForm::SharedObject);
+    EXPECT_EQ(tr::application_form(T("x86_64-linux-android")),
+              tr::ApplicationForm::SharedObject);
+}
+
+TEST(ArtifactNaming, ApplicationFormIsExecutableEverywhereElse) {
+    EXPECT_EQ(tr::application_form(T("x86_64-linux-gnu")),
+              tr::ApplicationForm::Executable);
+    EXPECT_EQ(tr::application_form(T("aarch64-ios-sim")),
+              tr::ApplicationForm::Executable);
+    EXPECT_EQ(tr::application_form(T("wasm32-emscripten")),
+              tr::ApplicationForm::Executable);
+    EXPECT_EQ(tr::application_form(T("x86_64-windows-msvc")),
+              tr::ApplicationForm::Executable);
+}
+
+// An empty (host) triple is not Android on any machine this engine runs on
+// today -- the negative direction that keeps a bare `kind = "app"` host build
+// linking an ordinary executable, exactly as it does before this feature.
+TEST(ArtifactNaming, ApplicationFormOnTheHostTripleIsExecutable) {
+    EXPECT_EQ(tr::application_form(tr::Triple{}), tr::ApplicationForm::Executable);
+}
+
 } // namespace

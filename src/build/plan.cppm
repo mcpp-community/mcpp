@@ -482,13 +482,22 @@ mcpp::toolchain::triple::ArtifactNaming naming_for(const mcpp::toolchain::Toolch
 // Reading the host constants here made ninja declare an output the compiler
 // never writes (Linux -> PE: declared `bin/foo`, produced `bin/foo.exe`), so
 // the link edge could never be satisfied and reran on every build.
+//
+// `asSharedObject` (#622 A3) is set by the caller for an `Application` target
+// exactly when `toolchain::triple::application_form(triple)` answered
+// `SharedObject` — the file name derives from the link FORM, and this
+// function has no triple of its own to ask, by design (it is called on the
+// dependency-target axis too, where the naming has already been resolved).
+// It is inert for every other kind.
 std::filesystem::path target_output(const mcpp::manifest::Target& t,
-                                    const mcpp::toolchain::triple::ArtifactNaming& n) {
+                                    const mcpp::toolchain::triple::ArtifactNaming& n,
+                                    bool asSharedObject = false) {
     if (t.kind == mcpp::manifest::Target::Library) {
         return std::filesystem::path("bin") /
                std::format("{}{}{}", n.libPrefix, t.name, n.staticLibExt);
     }
-    if (t.kind == mcpp::manifest::Target::SharedLibrary) {
+    if (t.kind == mcpp::manifest::Target::SharedLibrary
+        || (t.kind == mcpp::manifest::Target::Application && asSharedObject)) {
         return std::filesystem::path("bin") /
                std::format("{}{}{}", n.libPrefix, t.name, n.sharedLibExt);
     }
@@ -1370,7 +1379,11 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // disambiguate the common single-binary project).
     for (auto& t : manifest.targets) {
         if (t.main.empty()) continue;
-        if (t.kind != mcpp::manifest::Target::Binary
+        // `is_program()` (#622 A3): an `app` also has an entry `main` --
+        // compiled as an ordinary executable entry on every row but Android,
+        // and as a translation unit of the shared library there -- so it
+        // occupies an object address in this census exactly as `bin` does.
+        if (!t.is_program()
             && t.kind != mcpp::manifest::Target::TestBinary) continue;
         auto entry = projectRoot / t.main;
         if (scannedSources.contains(entry)) continue;
@@ -1792,7 +1805,26 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             lu.kind   = LinkUnit::TestBinary;
             lu.output = target_output(t, naming);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
+        } else if (t.kind == mcpp::manifest::Target::Application
+                   && mcpp::toolchain::triple::application_form(targetTriple)
+                      == mcpp::toolchain::triple::ApplicationForm::SharedObject) {
+            // #622 A3: on `*-linux-android` an `app` links as `shared` does --
+            // this row is the one case the form function answers
+            // `SharedObject` for. `main` still names the file compiled INTO
+            // the library (its actual entry is the platform's JNI/
+            // NativeActivity contract, not mcpp's), so it is synthesized the
+            // same way a `Binary`'s entry is, below.
+            lu.kind   = LinkUnit::SharedLibrary;
+            lu.output = target_output(t, naming, /*asSharedObject=*/true);
+            lu.importLibrary = import_library_for(t, naming);
+            lu.soname = t.soname;
+            lu.exportPatterns = t.exportPatterns;
+            lu.runtimeAliases = runtime_aliases_for_target(t, naming);
+            if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
         } else {
+            // `Binary`, or an `Application` whose row form is `Executable`
+            // (every row this record verifies except Android) -- identical
+            // to `bin` in every respect, which is the point of the kind.
             lu.kind   = LinkUnit::Binary;
             lu.output = target_output(t, naming);
             if (!t.main.empty()) lu.entryMain = projectRoot / t.main;
@@ -1817,7 +1849,13 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // false → inline (the pre-archive behavior, always provides the entry).
         bool entryDefinesMain = lu.entryMain && source_defines_main(*lu.entryMain);
 
-        if ((lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary) && lu.entryMain) {
+        // #622 A3: a `SharedLibrary` unit only ever carries `entryMain` when
+        // it is an `app` on the Android row (an ordinary `kind = "shared"`
+        // target never sets it) -- so this condition widens to synthesize
+        // that translation unit exactly as `Binary`'s is, without touching
+        // an ordinary shared library's compile set.
+        if ((lu.kind == LinkUnit::Binary || lu.kind == LinkUnit::TestBinary
+             || lu.kind == LinkUnit::SharedLibrary) && lu.entryMain) {
             // Synthesize the entry main's compile unit. Its object path is
             // NOT computed here — it comes from the shared `object_for`
             // disambiguator below, so the link input matches the compile edge

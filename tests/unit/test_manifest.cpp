@@ -2456,6 +2456,105 @@ kind = "{}"
     }
 }
 
+// #622 A3: `kind = "app"` -- "the thing a user launches", on every row. Its
+// link form is a property of the row (`toolchain::triple::application_form`),
+// not of the manifest; see test_artifact_naming.cpp for that half.
+TEST(Manifest, KindAppParsesToApplication) {
+    constexpr auto src = R"(
+[package]
+name    = "myapp"
+version = "0.1.0"
+[targets.myapp]
+kind = "app"
+main = "src/main.cpp"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->targets.size(), 1u);
+    EXPECT_EQ(m->targets[0].kind, mcpp::manifest::Target::Application);
+    EXPECT_EQ(m->targets[0].main, "src/main.cpp");
+    EXPECT_TRUE(m->targets[0].is_program());
+}
+
+// `is_program()` is exactly {Binary, Application} -- the negative direction,
+// asserted on every OTHER kind so the predicate cannot silently widen.
+TEST(Manifest, IsProgramIsExactlyBinaryAndApplication) {
+    auto kind_of = [](std::string_view kind) {
+        auto src = std::format(R"(
+[package]
+name    = "p"
+version = "0.1.0"
+[targets.t]
+kind = "{}"
+{}
+)", kind, (kind == "bin" || kind == "app") ? "main = \"src/main.cpp\"" : "");
+        auto m = mcpp::manifest::parse_string(src);
+        return m;
+    };
+    for (auto [kind, expected] : {std::pair{"bin", true}, {"app", true},
+                                   {"lib", false}, {"shared", false}}) {
+        auto m = kind_of(kind);
+        ASSERT_TRUE(m.has_value()) << kind << ": " << m.error().format();
+        ASSERT_EQ(m->targets.size(), 1u) << kind;
+        EXPECT_EQ(m->targets[0].is_program(), expected) << kind;
+    }
+}
+
+// The refusal for an unrecognized `kind` lists all four accepted spellings --
+// including the new one -- so a typo's message never falls behind the parser.
+TEST(Manifest, KindRefusalListsAllFourKinds) {
+    constexpr auto src = R"(
+[package]
+name    = "p"
+version = "0.1.0"
+[targets.t]
+kind = "framework"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("'bin', 'app', 'lib' or 'shared'"),
+              std::string::npos) << m.error().message;
+}
+
+// `main` is required for `app` exactly as it is for `bin` -- on Android it
+// becomes a translation unit of the shared library rather than an
+// executable's entry, but it is still named the same way.
+TEST(Manifest, ApplicationRequiresMainField) {
+    constexpr auto src = R"(
+[package]
+name    = "myapp"
+version = "0.1.0"
+[targets.myapp]
+kind = "app"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("requires 'main'"), std::string::npos)
+        << m.error().message;
+}
+
+// `windows_subsystem` / `windows_entry` accept `app` exactly as they accept
+// `bin` (#622 A3) -- the negative direction is
+// RefusesWindowsKeysOnALibraryNamingTheTargetAndTheKey above, which still
+// covers `lib` and `shared`.
+TEST(Manifest, WindowsKeysAreAcceptedOnAnApplicationTarget) {
+    constexpr auto src = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.app]
+kind              = "app"
+main              = "src/main.cpp"
+windows_subsystem = "windows"
+windows_entry     = "wWinMain"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->targets.size(), 1u);
+    EXPECT_EQ(m->targets[0].windowsSubsystem, "windows");
+    EXPECT_EQ(m->targets[0].windowsEntry, "wWinMain");
+}
+
 TEST(Manifest, RefusesAnUnknownWindowsValueNamingTheAcceptedOnes) {
     constexpr auto subsystem = R"(
 [package]

@@ -1715,6 +1715,33 @@ export int build_run_target(const std::optional<std::string>& targetName,
         if (targetName) break;
     }
     if (!chosen) {
+        // #622 A3/A10: an `app` whose form on THIS row is a shared library
+        // never becomes a `LinkUnit::Binary`, so the loop above cannot find
+        // it — that is correct (there is no executable to exec), but "no
+        // binary target 'myapp' found" would blame the user for a name that
+        // does exist. Read the manifest directly and, when that is exactly
+        // why the search came up empty, name the actual reason and the way
+        // out (`--format`, §2.10) instead.
+        for (auto const& t : ctx->manifest.targets) {
+            if (t.kind != mcpp::manifest::Target::Application) continue;
+            if (targetName && t.name != *targetName) continue;
+            auto triple = mcpp::toolchain::triple::parse(ctx->tc.targetTriple);
+            if (mcpp::toolchain::triple::application_form(
+                    triple ? *triple : mcpp::toolchain::triple::Triple{})
+                != mcpp::toolchain::triple::ApplicationForm::SharedObject)
+                continue;
+            std::string formats;
+            for (auto const& f : ctx->plan.providedPackFormats)
+                formats += (formats.empty() ? "" : ", ") + f;
+            std::println(stderr,
+                "error: '{}' is an application, and on {} an application is "
+                "a shared library that a package installs. Run it through a "
+                "distributable: mcpp run --format <name>, where <name> is "
+                "one of: {}",
+                t.name, ctx->tc.targetTriple,
+                formats.empty() ? std::string("none declared") : formats);
+            return 2;
+        }
         std::println(stderr, "error: no binary target {}",
             targetName ? std::format("'{}' found", *targetName) : "in this package");
         return 2;

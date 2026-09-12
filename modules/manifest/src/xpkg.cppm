@@ -1566,6 +1566,10 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                         else if (k == "bin" || k == "binary")      t.kind = Target::Binary;
                         else if (k == "shared" || k == "dylib"
                               || k == "so" || k == "shlib")        t.kind = Target::SharedLibrary;
+                        // #622 A3: a descriptor's target can be `app` too --
+                        // read exactly like `mcpp.toml` (`toml.cppm`), so a
+                        // Form B package can publish an application.
+                        else if (k == "app" || k == "application") t.kind = Target::Application;
                     } else if (sub == "main") {
                         t.main = cur.read_string();
                     } else if (sub == "soname") {

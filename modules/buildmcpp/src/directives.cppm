@@ -878,13 +878,16 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
 
     // A named executable's subsystem and entry. `target_directive_error` has
     // refused every value that names no executable, so the conditions below
-    // only keep this function total.
+    // only keep this function total. #622 A3: `is_program()`, not `Binary`
+    // alone — `windows_subsystem`/`windows_entry` accept `app` exactly as
+    // they accept `bin` (PE has no Android row, so this never meets an
+    // `Application` whose form is a shared object in practice).
     for (auto const& entry : d.at(Slot::WindowsSubsystem)) {
         const auto sep = entry.rfind(':');
         if (sep == std::string::npos) continue;
         const auto name = entry.substr(0, sep);
         for (auto& t : m.targets)
-            if (t.name == name && t.kind == mcpp::manifest::Target::Binary)
+            if (t.name == name && t.is_program())
                 t.windowsSubsystem = entry.substr(sep + 1);
     }
     for (auto const& entry : d.at(Slot::WindowsEntry)) {
@@ -892,7 +895,7 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
         if (sep == std::string::npos) continue;
         const auto name = entry.substr(0, sep);
         for (auto& t : m.targets)
-            if (t.name == name && t.kind == mcpp::manifest::Target::Binary)
+            if (t.name == name && t.is_program())
                 t.windowsEntry = entry.substr(sep + 1);
     }
 
@@ -967,10 +970,12 @@ static std::string named_target_error(const mcpp::manifest::Manifest& m,
                 wire, entry, m.package.name, name,
                 names.empty() ? std::string("none") : names);
         }
-        if (target->kind != mcpp::manifest::Target::Binary)
+        // #622 A3: `is_program()` — a program, not literally `Binary` — so an
+        // `app` accepts these exactly as a `bin` does.
+        if (!target->is_program())
             return std::format(
                 "build.mcpp emitted `mcpp:{}={}`, and `{}` applies to an executable "
-                "(`kind = \"bin\"`); target `{}` is not one.",
+                "(`kind = \"bin\"` or `\"app\"`); target `{}` is not one.",
                 wire, entry, key, name);
         const std::string& declared =
             subsystem ? target->windowsSubsystem : target->windowsEntry;
