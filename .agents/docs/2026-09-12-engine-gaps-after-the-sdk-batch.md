@@ -604,11 +604,13 @@ code, and what was built instead.
     `toolchain=` lines the two builds record: identical lines report the host as
     not measured, and differing lines fail.
 
-12. **The sandbox verification of the release, and two findings outside it.**
+12. **The sandbox verification of the release, and three findings outside it.**
     Sections 1 to 15 held for the published 2026.9.12.2 installed from the
-    index, except the Web section, and openkal-emscripten 0.1.1's own check
-    held (the feature refused without the root table, and a task starting,
-    running and joining under node).
+    index, and openkal-emscripten 0.1.1's own check held (the feature refused
+    without the root table, and a task starting, running and joining under
+    node). Two sections first read otherwise, for the reasons recorded below;
+    after both were understood, one run held all fifteen sections at once, the
+    Web section among them.
     - **A home inside a subos cannot install a toolchain.** With the published
       tarball extracted into the verification subos directory, the first
       `mcpp build` failed at `gcc installed but registered none of the programs
@@ -625,6 +627,19 @@ code, and what was built instead.
       docs/20, its Chinese copy, the CHANGELOG and the #617 record now state the
       three steps; mcpp#621 tracks the diagnostic that would make the failure
       self-explaining.
+    - **A verification script that does not clear its probes reports its own
+      history.** Section 9 held on one run and failed on the next, both times
+      against the same published binary. The second run inherited the first
+      run's project directory, and a carried-over `target/` tree makes a plain
+      second build decline the fast path, so the clause requiring that build
+      not to resolve failed. The asserted property was never the one that
+      broke: in a directory that had never been built in, the three legs
+      resolve, replay and resolve, as this change specifies. A sandbox home
+      persists between runs, so a fixed probe path is state, and a criterion
+      sensitive to whether a directory was built before measures that state
+      rather than the engine. One of the script's thirteen probe directories
+      cleared itself; all thirteen now do, and the run that follows holds every
+      section.
 
 ## 13. What landed, and where each claim was measured
 
@@ -640,6 +655,8 @@ code, and what was built instead.
 The sandbox scripts are `verify.sh` (sections 1 to 15, the engine) and
 `verify-e1.sh` (openkal-emscripten through the index), both run with
 `xlings subos use verify-09114 --sandbox` and the CN mirror set on mcpp itself.
+Each section clears its own probe directory, so a repeated run states what the
+release does rather than what the previous run left behind.
 Two CI failures during the sequence were the index pointer's propagation lag and
 not the release: a bootstrap that read `xim@artifact:971571a` while the pointer
 already named `487deaf`, cleared by rerunning the job.
