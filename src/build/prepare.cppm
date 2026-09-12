@@ -1712,6 +1712,19 @@ prepare_build(bool print_fingerprint,
     // learned by experiment — writing the same value a second time in
     // `[target.<triple>]` and observing that it works.
     std::string pinReplacedDefault;
+    // THE HOST SPEC AS IT STOOD BEFORE A TARGET ROW'S CONVENTION REPLACED IT,
+    // whatever its origin. `build.mcpp` is compiled and run on this machine,
+    // so its compiler is a host fact; the row's pin is a target fact. Before
+    // this snapshot existed, `host_tc_for_build_program` read `tcSpec` after
+    // the row had overwritten it and resolved the row's payload "for the
+    // host" -- which works by accident for a payload whose compiler can also
+    // target the host (an NDK clang) and cannot work for one that cannot:
+    // `em++` produces WebAssembly under every invocation, and every project
+    // with a build program failed under `--target wasm32-emscripten` inside
+    // `emcc.py` (#622, measured by the dist-web member's first build). Empty
+    // when the row replaced nothing, in which case the row's pin remains the
+    // only spec there is and the previous behaviour is kept.
+    std::optional<std::string> hostSpecBeforeRowPin;
     // THE PACKAGE WHOSE `requires` CHOSE THE COMPILER, AND WHAT IT ASKED FOR.
     //
     // Non-empty only when the graph's requirement actually changed the answer.
@@ -4114,10 +4127,19 @@ prepare_build(bool print_fingerprint,
                 "build.mcpp under a cross --target needs a resolvable host "
                 "toolchain — set one via [toolchain] or `mcpp toolchain default`"));
         }
-        auto spec = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
+        // THE ROW'S CONVENTION IS NOT THE HOST'S COMPILER. When the target
+        // row's pin replaced a spec the user or the machine had chosen, the
+        // build program resolves the replaced one: it is what a native build
+        // on this machine would use, and it is what the user wrote. A pin
+        // that replaced nothing is resolved as before.
+        const std::string hostSpecText =
+            (tcOrigin == TcOrigin::TargetPin && hostSpecBeforeRowPin.has_value()
+             && !hostSpecBeforeRowPin->empty() && *hostSpecBeforeRowPin != "system")
+                ? *hostSpecBeforeRowPin : *tcSpec;
+        auto spec = mcpp::toolchain::parse_toolchain_spec(hostSpecText);
         if (!spec || spec->version.empty()) {
             return std::unexpected(std::format(
-                "toolchain spec '{}' is invalid for the build.mcpp host resolve", *tcSpec));
+                "toolchain spec '{}' is invalid for the build.mcpp host resolve", hostSpecText));
         }
         // Deliberately NO target injection: the spec resolves for the host.
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
@@ -4128,7 +4150,7 @@ prepare_build(bool print_fingerprint,
         auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
         if (!payload) {
             return std::unexpected(std::format(
-                "host toolchain for build.mcpp ('{}'): {}", *tcSpec,
+                "host toolchain for build.mcpp ('{}'): {}", hostSpecText,
                 payload.error().message));
         }
         auto frontendR = mcpp::toolchain::payload_frontend(payload->root, pkg);
@@ -7240,6 +7262,12 @@ prepare_build(bool print_fingerprint,
             if (tcOrigin == TcOrigin::GlobalDefault && tcSpec.has_value()
                 && *tcSpec != targetPinCandidate)
                 pinReplacedDefault = *tcSpec;
+            // Kept for the build program's host resolution; see the
+            // declaration. Taken from every origin, not only the global
+            // default, because a `[toolchain]` the manifest named is just as
+            // much the host's compiler as a remembered default is.
+            if (tcSpec.has_value() && *tcSpec != targetPinCandidate)
+                hostSpecBeforeRowPin = *tcSpec;
             tcSpec   = targetPinCandidate;
             tcOrigin = TcOrigin::TargetPin;
         }
