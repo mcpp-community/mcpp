@@ -625,3 +625,24 @@ code, and what was built instead.
       docs/20, its Chinese copy, the CHANGELOG and the #617 record now state the
       three steps; mcpp#621 tracks the diagnostic that would make the failure
       self-explaining.
+
+## 13. What landed, and where each claim was measured
+
+| repository | change | measured on the published form |
+|---|---|---|
+| mcpp | #619, tag `v2026.9.12.2` at `37c6796a` | 12 CI workflows green on the PR head; release job green for the four platforms, the sealed manifest and `publish-ecosystem`; every archive matches its `.sha256` and is byte-identical on both `xlings-res/mcpp` mirrors; the extracted Linux binary reports `mcpp 2026.9.12.2`, statically linked and stripped |
+| openxlings/xim-pkgindex | #824 (`487deaf`), the bot bump | three `["latest"]` lines on 2026.9.12.2; the artifact `xim-index-487deaf.tar.gz` matches the pointer's size and sha256 and lists the version; `xlings install mcpp@2026.9.12.2` in the sandbox installs it |
+| mcpplibs/mcpp-index | #399 (`8963c6fe`), the `c++-abi` requirement per platform | the macOS leg of the first revision refused the member and produced the per-platform form; the published artifact carries `requires` under `linux` and `macosx`; a local-index package with the same entry is refused under llvm naming both implementations and satisfied by gcc |
+| mcpplibs/openkal-emscripten | #1 (`d5bc117e`), tag `0.1.1` | the package's CI, pinned to 2026.9.12.2, held the task gate in three directions; the GitHub tag archive and the `mcpp-res` GitCode asset are byte-identical (40399 bytes, sha256 `a33359fc…`) |
+| mcpplibs/mcpp-index | #400 (`794a456b`), openkal-emscripten 0.1.1 | the published artifact `mcpp-index-794a456.tar.gz` carries the three entries; `mcpp index update` with the released binary syncs them; in the sandbox the feature without the root table is refused naming the feature, and with it a task starts, runs and joins under node |
+| mcpp | #620 (`1b26d62b`), the bootstrap pin | moved only after the release was published, mirrored and indexed; `check_version_pins.sh` reports building and bootstrapping from 2026.9.12.2 |
+
+The sandbox scripts are `verify.sh` (sections 1 to 15, the engine) and
+`verify-e1.sh` (openkal-emscripten through the index), both run with
+`xlings subos use verify-09114 --sandbox` and the CN mirror set on mcpp itself.
+Two CI failures during the sequence were the index pointer's propagation lag and
+not the release: a bootstrap that read `xim@artifact:971571a` while the pointer
+already named `487deaf`, cleared by rerunning the job.
+
+Issues #609, #613, #614, #615 and #618 are closed with the measurement each
+resolution rests on. mcpp#621 records the one diagnostic this batch did not add.
