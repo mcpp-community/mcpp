@@ -5,6 +5,29 @@
 
 ## [Unreleased]
 
+### `mcpp::action` 的列表不再有长度上限;`${mcpp.self}` 让 action 叫出引擎自己
+
+内置的 `mcpp` 模块此前把一个 action 的 `inputs`、`outputs`、`command` 等六个列表
+放在定长数组里(`inputs` 与 `outputs` 各 8192 字节的序列化 JSON),放不下的声明
+被拒绝为「arguments did not fit」。上限按字节计,于是一个消费者的 checkout 深度
+决定了 44 个资源文件的列表能否通过(HuxerUI#130 量得的余量是 45 字节);而
+`outputs` 是作者无法缩短的那一个列表:没有点名的产物无法构建,也不存在面向
+outputs 的 depfile。六个数组换成模块内部基于 `realloc` 增长的 std-free 缓冲,
+导出接口、协议版本与原本放得下的 action 的序列化字节全部不变(缓存键因此不变)。
+`"overflow":true` 标记保留,含义改为分配失败,引擎侧消息随之重写。运行期的命令
+仍受操作系统 argv 上限约束,那是工具自己命令行的事。
+
+`${mcpp.self}` 加入 action argv 的替换家族,替换为引擎自己的绝对路径。action 的
+命令是没有 shell 的 argv,构建程序此前没有可移植的拷贝手段;`${mcpp.self} stage
+--verify content --output <dst> <src>` 即每条 `stage_file` 边已在执行的那次拷贝。
+`mcpp stage` 的参数形状自此成为契约,其帮助文本改为陈述真实的默认值(content)。
+
+- 判据:`tests/e2e/659`(200 个输入与 200 个输出的 action 整体进入 build.ninja,
+  缓存回放后仍完整;在 2026.9.12.4 上同一夹具被拒绝),`tests/e2e/660`
+  (`${mcpp.self}` 在每个分片上完成一次拷贝,空转重建不再拷贝;在 2026.9.12.4
+  上 token 原样落入 build.ninja)。
+- 设计记录:`.agents/docs/2026-09-13-four-upstream-asks-from-a-ui-framework.md`。
+
 ### wasm 产物契约:启动器改名为 `.js`,`.wasm` 是隐式输出(#622 A5)
 
 `wasm32-emscripten` 行此前用的是宿主借来的裸名 —— `bin/<name>`(Linux 宿主)或
