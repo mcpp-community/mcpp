@@ -461,6 +461,19 @@ int run(int argc, char** argv) {
                 .help("Reach the artifact by a named runner a package supplied; see --list-runners"))
             .option(cl::Option("list-runners")
                 .help("List the named runners this project supplies, and exit"))
+            // #622 A10: `mcpp run --format <name>` IS `mcpp pack --format
+            // <name>` — the two prepares, the staged tree, the provider's
+            // action — followed by the ordinary run of the artifact THAT
+            // reported, through the same runner resolution every other `run`
+            // uses. Reused verbatim from `mcpp pack`'s option (same value
+            // space, same refusal naming what the graph provides) rather than
+            // given a run-specific spelling, because it is the same request:
+            // "produce this distributable", asked from a command that also
+            // executes it afterward.
+            .option(cl::Option("format").takes_value()
+                .help("Run the distributable a `--format <name>` pack would produce "
+                      "(same values as `mcpp pack --format`); refused together with "
+                      "--no-runner"))
             .action(wrap_rc([&passthrough](const cl::ParsedArgs& p) {
                 return cmd_run(p, std::span<const std::string>(passthrough));
             })))

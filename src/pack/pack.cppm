@@ -176,6 +176,20 @@ struct Plan {
     // the file `.js` in the first place (see `artifact_naming`), so it is the
     // one fact this format IS recorded under.
     bool                                 targetIsWasm = false;
+    // #622 A3/A10: is `builtBinary` an `Application` target whose link form
+    // on THIS row is a shared object (`*-linux-android`,
+    // `toolchain::triple::application_form`)? Read from the CALLER, which
+    // already asked the manifest which target this file belongs to while
+    // choosing it (`pipeline.cppm`'s program-selection loop) -- `make_plan`
+    // has only the file and would have to re-derive the same answer from the
+    // triple and the manifest a second time, which is the shape a dep
+    // fingerprint gap in this codebase's own history warns against. A shared
+    // object is not runnable here (an Android object names
+    // `/system/bin/linker64` as its interpreter, which this host does not
+    // have), so it is staged like a dependency .so -- under `lib/`, with no
+    // dependency closure attempted -- rather than through the ELF closure
+    // walk below, which asks the file to name its own needs by executing it.
+    bool                                 programIsSharedObject = false;
     // The search set the PE closure resolves names against, after the
     // contract has had its say (see make_plan).
     std::vector<std::filesystem::path>   searchDirs;
@@ -204,7 +218,9 @@ make_plan(const mcpp::manifest::Manifest& manifest,
           // The RESOLVED run-time requirements, from BuildPlan. Not the root
           // manifest's: an application almost never declares a host capability
           // itself, it depends on something that does.
-          std::span<const mcpp::manifest::RuntimeRequirement> resolvedRequirements = {});
+          std::span<const mcpp::manifest::RuntimeRequirement> resolvedRequirements = {},
+          // #622 A3/A10: see the field comment on `Plan::programIsSharedObject`.
+          bool programIsSharedObject = false);
 
 // Execute the plan: copies binary + .so + extra files, runs patchelf,
 // writes the final tarball or directory.
@@ -323,13 +339,15 @@ make_plan(const mcpp::manifest::Manifest& manifest,
           const std::filesystem::path& builtBinary,
           const std::filesystem::path& projectRoot,
           std::string_view triple,
-          std::span<const mcpp::manifest::RuntimeRequirement> resolvedRequirements)
+          std::span<const mcpp::manifest::RuntimeRequirement> resolvedRequirements,
+          bool programIsSharedObject)
 {
     Plan p;
     p.opts            = opts;
     p.projectRoot     = projectRoot;
     p.builtBinary     = builtBinary;
     p.binaryName      = builtBinary.filename().string();
+    p.programIsSharedObject = programIsSharedObject;
     p.packageName     = manifest.package.name;
     p.packageVersion  = manifest.package.version;
     p.triple          = std::string(triple);
@@ -1127,6 +1145,38 @@ run_wasm(const Plan& plan)
     return make_tarball(plan.stagingRoot, plan.archivePath);
 }
 
+// #622 A3/A10: the Application half whose form on this row is a shared
+// object (`*-linux-android`). No dependency closure: the ELF closure below
+// asks the file to name its own needs by executing it under
+// `LD_TRACE_LOADED_OBJECTS`, and a cross-compiled Android object names an
+// interpreter this host does not have (`/system/bin/linker64`) -- it is not
+// runnable here at all, on any host architecture. The file is staged the way
+// a dependency .so is staged below (`lib/`), because that is where a closure
+// conventionally puts a shared object; a provider that wants the object's
+// own dependency set bundled (`dist-apk`) reads `${mcpp.target_file:<name>}`
+// and resolves that itself, out of the engine's closure entirely.
+std::expected<void, Error>
+run_shared_program(const Plan& plan)
+{
+    std::error_code ec;
+    std::filesystem::remove_all(plan.stagingRoot, ec);
+    std::filesystem::create_directories(plan.stagingRoot / "lib", ec);
+    if (ec) return std::unexpected(Error{std::format(
+        "cannot create staging '{}': {}", plan.stagingRoot.string(), ec.message())});
+
+    auto staged = plan.stagingRoot / "lib" / plan.binaryName;
+    std::filesystem::copy_file(plan.builtBinary, staged,
+        std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) return std::unexpected(Error{std::format(
+        "copy binary failed: {}", ec.message())});
+
+    copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);
+    copy_if_exists(plan.projectRoot / "LICENSE",   plan.stagingRoot);
+
+    if (plan.opts.format != Format::Tar) return {};
+    return make_tarball(plan.stagingRoot, plan.archivePath);
+}
+
 } // namespace detail
 
 std::expected<void, Error>
@@ -1136,6 +1186,13 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     // that path executes the artifact. This is the branch the `#if
     // defined(_WIN32)` refusal used to occupy — and it was never really about
     // the host: `LD_TRACE_LOADED_OBJECTS` cannot trace a PE from Linux either.
+    // #622 A3/A10: checked before the format-specific branches below --
+    // this row's file is an ordinary ELF (`binfmt::identify` would answer
+    // `Elf`, same as any Linux program), so it would otherwise fall into the
+    // closure walk that follows and try to execute an object this host
+    // cannot load at all. See the field comment on `programIsSharedObject`.
+    if (plan.programIsSharedObject) return detail::run_shared_program(plan);
+
     if (plan.targetIsPe) return detail::run_pe(plan);
 
     // wasm32-emscripten, before the Mach-O refusal and the ELF closure below:
