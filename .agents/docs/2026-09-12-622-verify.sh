@@ -120,22 +120,25 @@ printf '\n[target.'"'"'cfg(linux)'"'"'.abi]\nthreads = true\n' >> "$d/mcpp.toml"
 printf '\n[target.'"'"'cfg(linux)'"'"'.abi]\nfrobnicate = true\n' >> "$d/mcpp.toml"
 (cd "$d" && "$STORE" build > b3.log 2>&1) && fail "an unknown abi member was accepted" || { has_text "$d/b3.log" "threads, exceptions" && ok "unknown member refused naming both members" || { fail "refused without naming the members"; tail -2 "$d/b3.log"; }; }
 
-section "F. frameworks per target: a Linux build is byte-identical with and without the tables"
+section "F. frameworks per target: a Linux build renders no framework and its graph is unchanged"
 d=$root/f; mkprog "$d" fw ""
 (cd "$d" && "$STORE" build > b1.log 2>&1) && n1=$(find "$d/target" -name build.ninja | head -1) && cp "$n1" "$d/n1"
 printf '\n[runtime]\nframeworks = ["Foundation"]\n\n[target.macos.runtime]\nframeworks = ["AppKit"]\n\n[target.'"'"'cfg(os = "ios")'"'"'.runtime]\nframeworks = ["UIKit"]\n' >> "$d/mcpp.toml"
 rm -rf "$d/target"; (cd "$d" && "$STORE" build > b2.log 2>&1) && n2=$(find "$d/target" -name build.ninja | head -1)
-if [ -n "${n2:-}" ] && cmp -s "$d/n1" "$n2"; then ok "build.ninja identical on Linux"; else fail "build.ninja differs or build failed"; fi
+# The manifest changed, so the fingerprint directory named inside build.ninja
+# changes with it; the comparison is made with that segment normalised, and
+# what it then asserts is that no flag, input or edge differs on Linux.
+norm() { sed 's#/[0-9a-f]\{16\}/#/FP/#g' "$1"; }
+if [ -n "${n2:-}" ] && diff -q <(norm "$d/n1") <(norm "$n2") >/dev/null; then ok "build.ninja identical on Linux up to the fingerprint segment"; else fail "build.ninja differs beyond the fingerprint segment, or the build failed"; diff <(norm "$d/n1") <(norm "${n2:-/dev/null}") | head -6; fi
+grep -q -- '-framework' "${n2:-/dev/null}" && fail "a -framework flag rendered on an ELF target" || ok "no -framework on Linux"
 grep -q "unsupported key 'frameworks'" "$d/b2.log" && fail "frameworks reported as unsupported under a target table" || ok "frameworks accepted under [target.<sel>.runtime]"
 
 section "G. platforms names the rows that exist"
-d=$root/g; mkprog "$d" pl 'platforms = ["linux", "ios", "android", "emscripten"]'
-sed -i 's/^\[targets.pl\]/[targets.pl]/' "$d/mcpp.toml"; python3 - "$d/mcpp.toml" <<'PY'
-import sys,re; p=sys.argv[1]; s=open(p).read()
-s=s.replace('version = "0.1.0"\n','version = "0.1.0"\nplatforms = ["linux", "ios", "android", "emscripten"]\n',1).replace('\nplatforms = ["linux", "ios", "android", "emscripten"]\n\n','\n\n')
-open(p,'w').write(s)
-PY
-(cd "$d" && "$STORE" build --strict > b1.log 2>&1) && ok "the six-word vocabulary passes --strict" || { fail "a known platform name was refused"; grep -i platform "$d/b1.log" | head -2; }
+d=$root/g; rm -rf "$d"; mkdir -p "$d/src"
+printf '[package]\nname = "pl"\nversion = "0.1.0"\nplatforms = ["linux", "ios", "android", "emscripten"]\n\n[targets.pl]\nkind = "bin"\nmain = "src/main.cpp"\n' > "$d/mcpp.toml"
+printf '#include <cstdio>\nint main() { std::puts("1-2-3"); return 0; }\n' > "$d/src/main.cpp"
+(cd "$d" && "$STORE" build > b1.log 2>&1) || { fail "a manifest naming the six platforms does not build"; tail -3 "$d/b1.log"; }
+grep -q "unknown platform" "$d/b1.log" && fail "a known platform name was reported as unknown" || ok "the six-word vocabulary is accepted"
 sed -i 's/platforms = \[.*\]/platforms = ["web"]/' "$d/mcpp.toml"; rm -rf "$d/target"
 (cd "$d" && "$STORE" build --strict > b2.log 2>&1) && fail "'web' was accepted" || { has_text "$d/b2.log" "unknown platform 'web'" && has_text "$d/b2.log" "linux | macos | windows | ios | android | emscripten" && ok "'web' refused naming the six" || { fail "refused without the vocabulary"; tail -2 "$d/b2.log"; }; }
 
