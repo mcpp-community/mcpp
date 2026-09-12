@@ -753,6 +753,16 @@ ResolvedRuntimeContract resolve_runtime_contract(
         // `runtime.deploy` (#615): the source resolves against the package that
         // declared it; the destination stays relative, because it is relative
         // to an executable this package has not seen.
+        //
+        // `absolute_from` ALREADY DOES NOT RE-ROOT AN ABSOLUTE PATH (see its
+        // definition above): `value.is_absolute() ? value : root / value`. A
+        // manifest-sourced `entry.from` is never absolute — the TOML reader's
+        // `deploy_path_problem("from", from, false)` refuses one — but a
+        // `mcpp::deploy()` directive's `from` (#622 A4) is resolved to an
+        // absolute path by the directive table before it ever reaches this
+        // manifest, because it may be an action's own declared output. Both
+        // shapes pass through this one line correctly without it knowing
+        // which one it was handed.
         for (auto const& entry : runtime.linkIntent.deploy) {
             mcpp::manifest::DeployEntry resolved{
                 absolute_from(package.root, entry.from), entry.to};
