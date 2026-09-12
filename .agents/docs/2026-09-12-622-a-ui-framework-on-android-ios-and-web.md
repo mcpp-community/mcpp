@@ -1,11 +1,11 @@
 ---
 subject: targets
-status: active
+status: landed
 ---
 
 # A UI framework on Android, iOS and Web: where each item of #622 lands, and the three it does not list
 
-**Status:** implemented in mcpp (engine items A1 to A7, A10, A11; the version
+**Status:** landed. Engine in mcpp 2026.9.12.3 and 2026.9.12.4; payloads and runner programs in openxlings/xim-pkgindex (#825, #827); `mcpp:plugins` 0.8.0; the published form verified in a sandbox (§9).
 is assigned at release); ecosystem changes follow. Every "measured" statement
 below was checked against `main` at `85df514a` (mcpp 2026.9.12.2),
 `mcpp-plugins` at `9064107` (0.6.0) and `openxlings/xim-pkgindex` at `571f845`,
@@ -999,3 +999,103 @@ directory. Both become packages, found the way every other payload is found.
 
 Each is a reading a sub-issue takes before its criterion is written down as
 met; none changes a shape above.
+
+## 9. What landed, and where each claim was measured
+
+Written after the fact, 2026-09-12. The plan's waves ran as ten subagent tasks
+in their own worktrees and merged without conflict; the corrections the
+implementation forced on this record are in §2.3, §2.5, §2.6 and §2.10.
+
+| repository | change | measured on the published form |
+|---|---|---|
+| mcpp | #623 (`c765c8cd`), the engine half: A1 to A7, A10, A11; docs/04, 10, 21, 22, 30, 31 and their zh mirrors; CHANGELOG; version 2026.9.12.3 | 39 of 40 checks green on the PR head (the iOS probe job is manual by design); an independent review of the diff found one missed `is_program` site, fixed before merge; main's own run on `22cedfa9` was 10 of 10 |
+| mcpp | #624 (`22cedfa9`): the distributable is the terminal artifact, and a library-form application stages its runtime files | found by the first `dist-apk` build against #623: `adb-run` received the unsigned `base.apk`, and the Android staged tree carried no `assets/` |
+| mcpp | #625 (`5260dec4`): e2e 658, a program on an attached Android device through `adb-run`; the verification script | PASS in 18 s on a 2211133C (arm64-v8a) over USB, exit status crossing the session in both directions |
+| mcpp | #626 (`fe3a008a`) and #628: the bootstrap pin, to 2026.9.12.3 and then 2026.9.12.4 | each moved after its release was indexed and the sandbox reading was green |
+| mcpp | #627 (`13f5a8a9`), 2026.9.12.4: the build program's host toolchain under a cross target resolves the native default when the row's pin replaced nothing, and carries the host's C-library payload paths | found by the sandbox's section J on 2026.9.12.3 (`features.h: No such file` while compiling the `mcpp` module for a Web project's build program in a fresh home); reproduced in the sandbox with the released binary and green with the fix; the development machine had masked it through a subos sysroot leaked into the shared-store gcc's search path |
+| mcpp | tags `v2026.9.12.3` at `22cedfa9` and `v2026.9.12.4` at `13f5a8a9` | `release.yml` six jobs green; four platform archives GET 200 on both `xlings-res` hosts with the upstream sizes; no manual GitCode repair was needed |
+| openxlings/xim-pkgindex | #825 (`2cd3a6a`): `android-build-tools`, `android-platform`, `adb-run`, `simctl-run` 0.2.0, `android-debug-keystore` | installed from the local checkout; the keystore's sha256 matched through both mirrors; the asset is on both `xlings-res` hosts, GET-verified |
+| openxlings/xim-pkgindex | #827 (`2d94ff2`): `adb-run` returns when the activity finishes; the emulator finds its SDK root | both defects were met by the first real run and measured again after the fix: the emulator boots to `sys.boot_completed=1` with no environment set by hand |
+| openxlings/xim-pkgindex | #828 (`f9a2761`) and #831 (`6d60234`), the bot's bumps to 2026.9.12.3 and 2026.9.12.4 | `xlings install mcpp@<ver>` in the shared store; the sandbox binary reports the version |
+| openxlings/xlings | #590 | the resolver's alias-key defect, found by the build-tools recipe and worked around with an exact pin and a run-time fallback |
+| mcpp-plugins | #19 (`db16e277`), 0.8.0, tag `v0.8.0`: `dist-apk`, `dist-web`, the iOS row of `dist-apple`, `dist-wix` through `xim:wix` | Linux: the APK is signed (`CN=Android Debug`), lists the library, `libc++_shared.so`, the deploy'd asset and the run sidecar, `minSdkVersion:'24'`; macOS: the simulator installed the bundle through `simctl-run` and the program printed `1-2-3`; Windows: the MSI carries the program with no host `wix` on PATH |
+| mcpplibs/mcpp-index | #404 (`92a1ba6`): `mcpp:plugins` 0.8.0, CI pin 2026.9.12.3 | the GitHub tag archive and the `mcpp-res` asset are byte-identical (250406 bytes); `mcpp index update` on the released engine carries the entry |
+
+Off the repositories: `mcpp run --format apk` printed the program's line on the
+x86_64 emulator and on an arm64 phone; `mcpp run --format app` printed it on
+the macos-15 simulator. A local, unpublished set of `localtest:` recipes
+stands up an Intel macOS guest under QEMU/KVM for the `x86_64-ios-sim` row;
+it stops at the installer, and mcpp ships no Intel macOS binary, so it is a
+path for a future measurement and not one taken here.
+
+The sandbox reading of the published binary (`2026-09-12-622-verify.sh`,
+`xlings subos use verify-622 --sandbox`, CN mirror set inside):
+
+
+```
+== A. the published mcpp answers for itself, with the CN mirror configured ==
+ok: mcpp --version says mcpp 2026.9.12.4
+ok: mcpp self config --mirror CN
+== B. the wasm row: bin/<name>.js, the .wasm sibling, the staged family, shared refused ==
+ok: launcher is bin/w.js
+ok: bin/w.wasm beside it
+ok: no bare bin/w
+ok: mcpp run prints 1-2-3 through the payload's runner
+ok: pack --format dir stages w.js and w.wasm
+ok: shared refused naming -sSIDE_MODULE
+== C. a build program deploys what it generated (mcpp::deploy), and the copy survives a cache hit ==
+ok: bin/dep.resources/res.bin carries the generated content
+ok: restored after bin/ was deleted (replay on a cache hit)
+ok: pack --format dir stages it
+== D. kind = app: a program on the host, a shared library on Android, run refused without --format ==
+ok: an app is a program on the host
+ok: libmyapp.so on Android
+ok: bin keeps meaning binary on Android
+ok: run refused naming --format
+== E. requires_abi on the target axis, and the two-member abi table ==
+ok: refused naming the member and the selector
+ok: satisfied by the root's table
+ok: unknown member refused naming both members
+== F. frameworks per target: a Linux build renders no framework and its graph is unchanged ==
+ok: build.ninja identical on Linux up to the fingerprint segment
+ok: no -framework on Linux
+ok: frameworks accepted under [target.<sel>.runtime]
+== G. platforms names the rows that exist ==
+ok: the six-word vocabulary is accepted
+ok: 'web' refused naming the six
+== H. mcpp run --format hands the distributable to the runner ==
+ok: run --format blob ran the blob through the runner
+ok: plain run hands the link output
+ok: unknown format refused naming blob
+ok: --format with --no-runner refused
+== I. abi.exceptions on the Web row ==
+ok: throw and catch under node with exceptions = true
+ok: -fexceptions in build.ninja
+ok: without the table the run does not print the marker
+== J. mcpp:plugins dist-web through the index ==
+ok: dist-web wrote index.html, web.js, web.wasm
+fails=0
+```
+
+fails=0 over 31 assertions, sections A to J, on the released 2026.9.12.4
+installed through the index (three retries of `xlings update` until the pointer
+named the new artifact). The reading of 2026.9.12.3 the day before was fails=0
+over sections A to I and one failure in J, which is the defect the last row of
+the table records.
+
+The first run of that script reported four failures, all in the probes and
+none in the engine: an action input named by a path relative to the manifest
+while an action runs in the build directory, a `build.ninja` comparison that
+did not normalise the fingerprint segment, and a key written under the wrong
+table. Each is the class §1 rule 8 names, and each was visible on the
+development machine before the sandbox; the script now clears its probe
+directories and names the object each assertion selected.
+
+What remains unmeasured is the list in §8, minus the items the runs above
+closed: `-fexceptions` built its libc++ variant inside the payload store (I);
+`libc++_shared.so` is `NEEDED` on NDK r30 and is bundled; `simctl launch
+--console-pty` returned the program's output and status; the build-tools and
+platform archives' `NOTICE` files were read and recorded in the recipes;
+`xim:wix` produced the MSI on the Windows runner without a step installing
+.NET. The published debug key installed over nothing on the devices used, so
+the last bullet of §8 stands as written.

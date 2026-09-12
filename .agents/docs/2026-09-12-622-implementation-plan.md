@@ -1,6 +1,6 @@
 ---
 subject: targets
-status: active
+status: landed
 ---
 
 # Implementation plan: a UI framework on Android, iOS and Web (#622)
