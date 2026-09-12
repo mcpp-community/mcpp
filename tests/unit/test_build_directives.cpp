@@ -761,6 +761,26 @@ TEST(BuildDirectives, WindowsSubsystemReachesTheNamedExecutableOnly) {
     EXPECT_TRUE(m.buildConfig.cxxflags.empty());
 }
 
+// #622 A3: `windows-subsystem`/`windows-entry` reach an `app` target exactly
+// as they reach a `bin` one -- `directives.cppm`'s `apply` and
+// `target_directive_error` ask `is_program()`, not `kind == Binary`.
+TEST(BuildDirectives, WindowsSubsystemReachesAnApplicationTargetToo) {
+    mcpp::manifest::Manifest m;
+    m.package.name = "app";
+    mcpp::manifest::Target myapp;
+    myapp.name = "myapp";
+    myapp.kind = mcpp::manifest::Target::Application;
+    m.targets = {myapp};
+
+    auto d = parse("mcpp:protocol=10\n"
+                   "mcpp:windows-subsystem=myapp:windows\n"
+                   "mcpp:windows-entry=myapp:wWinMain\n");
+    ASSERT_EQ(dirs::target_directive_error(m, d), "");
+    dirs::apply(m, d);
+    EXPECT_EQ(m.targets[0].windowsSubsystem, "windows");
+    EXPECT_EQ(m.targets[0].windowsEntry, "wWinMain");
+}
+
 TEST(BuildDirectives, WindowsSubsystemRowsHaveTheTargetLinkScope) {
     for (auto wire : {"windows-subsystem", "windows-entry"}) {
         auto def = dirs::find_by_wire(wire);

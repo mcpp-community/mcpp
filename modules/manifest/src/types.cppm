@@ -133,8 +133,26 @@ inline std::string windows_choice_problem(bool subsystem, std::string_view value
 
 struct Target {
     std::string                 name;
-    enum Kind { Library, Binary, SharedLibrary, TestBinary } kind;
-    std::string                 main;           // for binary / test
+    // `Application` (#622 A3, `kind = "app"`) is "the thing a user launches",
+    // and its link form is a property of the ROW, not of this enum: on every
+    // row but Android it links exactly as `Binary` does; on `*-linux-android`
+    // it links as `SharedLibrary` does, because that is the only form an
+    // Android application has. See `toolchain::triple::application_form`,
+    // which is the one function that answers this — the manifest carries no
+    // predicate for it.
+    enum Kind { Library, Binary, SharedLibrary, TestBinary, Application } kind;
+    std::string                 main;           // for binary / test / app
+
+    // Whether this target is a PROGRAM -- something `mcpp run` can be asked
+    // for and `mcpp pack` treats as the application pipeline's subject --
+    // as opposed to a library. True for `Binary` and `Application`.
+    //
+    // Every call site that used to ask `kind == Binary` to mean "is this the
+    // program" now asks this instead; a site that means "is this literally an
+    // executable link" (a PE subsystem, a host build tool that must be exec'd
+    // directly) keeps comparing against `Binary` and, where an `app` can
+    // stand in for it, adds `Application` guarded by the row's actual form.
+    bool is_program() const { return kind == Binary || kind == Application; }
     std::string                 soname;         // ABI name for shared libraries, e.g. libfoo.so.1
     // WHICH SYMBOLS THIS ARTIFACT PUBLISHES. Empty = every symbol, which is
     // what both platforms do today (ELF default visibility; PE gets an

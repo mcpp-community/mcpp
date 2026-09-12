@@ -1106,14 +1106,28 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         else if (kind_s == "bin"    || kind_s == "binary")   t.kind = Target::Binary;
         else if (kind_s == "shared" || kind_s == "dylib"
               || kind_s == "so"     || kind_s == "shlib")    t.kind = Target::SharedLibrary;
+        // #622 A3: "the thing a user launches", on every row. Its link form
+        // is a function of the row alone (`toolchain::triple::
+        // application_form`) -- identical to `bin` everywhere except
+        // `*-linux-android`, where it is the shared library the platform
+        // loads. An older engine refuses this name (`toml.cppm:1110` on
+        // 2026.9.12.2 lists three kinds), which is correct: a root that
+        // names a form the engine cannot produce must not build.
+        else if (kind_s == "app"    || kind_s == "application") t.kind = Target::Application;
         else return std::unexpected(error(origin,
-            std::format("targets.{}.kind must be 'bin', 'lib' or 'shared'; got '{}'", tname, kind_s)));
+            std::format("targets.{}.kind must be 'bin', 'app', 'lib' or 'shared'; got '{}'", tname, kind_s)));
 
-        if (t.kind == Target::Binary) {
+        // `main` is required for `bin` and for `app`: on every row but
+        // Android it is the executable's entry, exactly as it is for `bin`;
+        // on Android it is a translation unit compiled INTO the shared
+        // library (its actual entry is `ANativeActivity_onCreate` or the
+        // JNI exports, which is the platform's contract and not mcpp's to
+        // rename -- see `is_program()` and `application_form`).
+        if (t.is_program()) {
             auto mit = tt.find("main");
             if (mit == tt.end() || !mit->second.is_string()) {
                 return std::unexpected(error(origin,
-                    std::format("targets.{} (kind=bin) requires 'main' field", tname)));
+                    std::format("targets.{} (kind={}) requires 'main' field", tname, kind_s)));
             }
             t.main = mit->second.as_string();
         }
@@ -1219,12 +1233,16 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             return std::unexpected(r.error());
         // An executable's property. A library has no subsystem, and a GUI
         // subsystem on anything a test runner executes is the defect #618
-        // describes, so both are refused naming the key.
+        // describes, so both are refused naming the key. `app` is accepted
+        // exactly as `bin` is (#622 A3: PE has no Android row, so this key
+        // never meets `application_form`'s SharedObject form in practice) --
+        // `is_program()` is "is this the program", which is what the PE
+        // subsystem attaches to; `TestBinary` stays refused on purpose.
         if ((!t.windowsSubsystem.empty() || !t.windowsEntry.empty())
-            && t.kind != Target::Binary)
+            && !t.is_program())
             return std::unexpected(error(origin, std::format(
-                "targets.{}.{} applies to an executable (`kind = \"bin\"`), and this "
-                "target is not one", tname,
+                "targets.{}.{} applies to an executable (`kind = \"bin\"` or "
+                "`\"app\"`), and this target is not one", tname,
                 t.windowsSubsystem.empty() ? "windows_entry" : "windows_subsystem")));
         // Guard: -std=... belongs to [package].standard, not per-target flags
         // (same rule as [build].cxxflags). Reject early with a clear message.
@@ -3404,6 +3422,12 @@ void apply_defaults_and_infer(Manifest& m, const std::filesystem::path& root) {
         const bool hasModuleInterface = !moduleInterfaceExt.empty();
 
         if (hasMain) {
+            // #622 A3: inference stays `Binary`, deliberately. `app` is a
+            // platform fact an author states on purpose (an Android build is
+            // never an accident), never a default this engine guesses from a
+            // bare `src/main.cpp` -- guessing wrong here would silently link
+            // a library where the author's `[targets]`-free project expected
+            // an executable.
             Target t;
             t.name = m.package.name;
             t.kind = Target::Binary;

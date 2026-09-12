@@ -1158,6 +1158,31 @@ inline ArtifactNaming artifact_naming(const Triple& t, const ArtifactNaming& hos
     return hostNaming;
 }
 
+// ── The link form of `kind = "app"` ──────────────────────────────────────────
+//
+// #622 A3. An application is "the thing a user launches" on every row, but
+// what that MEANS is not the same file shape everywhere: on Android there is
+// no executable form of an application at all -- the platform loads a shared
+// library into a Java process (`System.loadLibrary`, `android:name` in the
+// manifest) -- while on ELF, PE, Mach-O and the Emscripten row it is an
+// ordinary executable, exactly like `kind = "bin"`.
+//
+// This is a property of the ROW ALONE, the same reason `artifact_naming` sits
+// here rather than in the manifest: the manifest says what the author means
+// (`app`), and the engine answers how THIS row spells it. A manifest that
+// tried to say this itself would need a predicate over `[targets.<name>]`,
+// which is exactly the shape §2.3 of the #622 design record rejects.
+enum class ApplicationForm { Executable, SharedObject };
+
+inline ApplicationForm application_form(const Triple& t) {
+    // `env == "android"` is the same test `is_android()` uses (and the same
+    // one `artifact_naming` would use for an Android row, if it had one) --
+    // deliberately not `os == "linux"`, which would also catch a plain
+    // ELF/glibc or musl row that has an ordinary executable `main`.
+    return t.env == "android" ? ApplicationForm::SharedObject
+                              : ApplicationForm::Executable;
+}
+
 } // namespace mcpp::toolchain::triple
 
 namespace mcpp::toolchain::triple {

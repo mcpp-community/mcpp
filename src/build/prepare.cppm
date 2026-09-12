@@ -1817,14 +1817,17 @@ prepare_build(bool print_fingerprint,
                     overrides.package_filter));
             }
         } else if (m->package.name.empty()) {
-            // Virtual workspace: find a member with a binary target, or use last member.
+            // Virtual workspace: find a member with a program target ("is
+            // this the program", #622 A3's `is_program()`, so a member whose
+            // only target is `kind = "app"` is picked exactly as one whose
+            // target is `bin` is), or use last member.
             for (auto& mp : m->workspace.members) {
                 auto memberDir = *root / mp;
                 auto mm = mcpp::manifest::load(memberDir / "mcpp.toml",
                                                {.insideWorkspace = true});
                 if (!mm) continue;
                 for (auto& t : mm->targets) {
-                    if (t.kind == mcpp::manifest::Target::Binary) {
+                    if (t.is_program()) {
                         targetMember = mp;
                         break;
                     }
@@ -8425,6 +8428,16 @@ prepare_build(bool print_fingerprint,
                     // The target must exist and be a binary. Naming the
                     // alternatives matters: the consumer wrote a string, and a
                     // typo is the likeliest cause.
+                    //
+                    // #622 A3: deliberately still `Binary`, not `is_program()`.
+                    // A host tool is exec'd directly ON THE BUILD MACHINE
+                    // during THIS build, so it is "literally an executable
+                    // link" — the question this site was already asking — and
+                    // an `app` whose row form happened to be a library (never
+                    // the host row in practice, but the check would be a
+                    // silent trap if the host itself were ever Android) could
+                    // not stand in for it. A build-time tool is declared
+                    // `kind = "bin"`; that is what the word means here.
                     const mcpp::manifest::Target* tgt = nullptr;
                     std::string binList;
                     for (auto const& t : depPkg.manifest.targets) {
