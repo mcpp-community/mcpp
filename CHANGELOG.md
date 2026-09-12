@@ -164,6 +164,15 @@ Emscripten 自己的 CMake 工具链(`CMAKE_EXECUTABLE_SUFFIX ".js"`)与 Rust �
   图提供的格式集合。`mcpp test` 不受影响。
 - 判据:`tests/e2e/656`。
 
+### 修复:目标行的默认工具链不再被拿去编译 `build.mcpp`(#622)
+
+- 交叉构建时,`build.mcpp` 的宿主编译器从 `tcSpec` 解析,而这个值在读取时已被目标行的
+  约定 pin 覆盖。NDK 的 clang 也能产出宿主程序,所以 Android 行看不出来;`em++` 在任何
+  调用下都产出 WebAssembly,于是任何带构建程序的工程在 `--target wasm32-emscripten` 下
+  都在 emcc.py 的断言里失败(dist-web 成员的第一次构建实测)。引擎现在保留行 pin 覆盖之前
+  的宿主 spec(用户写的 `[toolchain]` 或机器默认),构建程序按它解析;行 pin 没有替换任何
+  东西时行为不变。`tests/e2e/657`。
+
 ## [2026.9.12.2] - 2026-09-12
 
 2026.9.12.1 未单独发布,其条目并入本版本。
