@@ -173,6 +173,46 @@ Emscripten 自己的 CMake 工具链(`CMAKE_EXECUTABLE_SUFFIX ".js"`)与 Rust �
   的宿主 spec(用户写的 `[toolchain]` 或机器默认),构建程序按它解析;行 pin 没有替换任何
   东西时行为不变。`tests/e2e/657`。
 
+### 修复:交叉目标下,构建程序的宿主工具链带上宿主自己的 C 库(#622 续)
+
+- **第一处口子:行 pin 没有替换任何东西时,回落的仍然是行自己的 spec。** 上一条修复
+  留了一个口子,注释里也写明了:"行 pin 没有替换任何东西时行为不变"——而"不变"的
+  行为正是缺陷本身。在 xlings 沙箱里对已发布的 2026.9.12.3 复现:全新 `$HOME`
+  (`~/.mcpp` registry 为空)第一次调用就是 `mcpp pack --target wasm32-emscripten`,
+  这时 `[toolchain]`、全局默认、`[target.<row>]` 均不存在,没有"替换之前"的宿主 spec
+  可以保留,于是回落分支又落回了行 pin 本身——宿主编译器被解析成 `emsdk@6.0.9`
+  (`em++`),`build.mcpp` 在 emcc.py 的 `phase_compile_inputs` 里得到与最初报告相同的
+  `AssertionError`。开发机上同一份工程能过,只是因为此前的原生构建已经把机器默认工具链
+  写进了 `~/.mcpp/config.toml`。"没有可保留的宿主 spec"不等于"没有宿主可言":引擎现在
+  在这种情况下解析平台自身的原生默认工具链(`native_first_run_spec()`,与首次运行安装器
+  共用同一份平台/架构判定,而不是第二份手抄的判定),即一次普通 `mcpp build`(不带
+  `--target`)在同一台机器上会安装的那一个,而不是目标行的约定。该函数只返回 spec
+  字符串,不做安装或持久化——安装、fixup、探测复用 `host_tc_for_build_program` 原有的
+  通用流水线。
+- **第二处口子,在同一个 lambda 里,第一处修好之后才现形:宿主编译器选对了,却没带上
+  它自己的 C 库。** 在 xlings 沙箱里对同一个已发布版本复现(全新 registry,真实的
+  gcc@16.1.0 + glibc@2.44.2 载荷,没有任何会掩盖问题的机器状态):pack 日志正确地说
+  "Resolved host toolchain for build.mcpp: gcc 16.1.0 (x86_64-linux-gnu)",随即在
+  编译内建 `mcpp` module 时报 `features.h: No such file or directory`;沙箱里
+  `echo | g++ -x c++ -E -v -` 只列出该 gcc 载荷自己的 `c++/16.1.0`、`include`、
+  `include-fixed`,没有任何 C 库目录。真因:`host_tc_for_build_program` 的交叉分支
+  调用 `detect(frontend)` 时只传编译器路径,没有像原生路径那样一并传入
+  `runtimePayload` 与宿主的运行时绑定契约哈希——`detect()` 正是靠第二个参数才能探测出
+  这个宿主工具链具体对应哪一份 glibc/linux-headers 载荷(`Toolchain::payloadPaths`),
+  漏传这两个参数,该字段就始终为空,无论是显式的 `-isystem`/`-idirafter <glibc>/include`
+  还是依赖它才会触发的 sysroot 补全符号链接都不会发生。修法是把原生调用点已经在用、也
+  已经确认与 `--target` 无关的那两个参数原样传给这次 `detect()` 调用——宿主的 C 运行时
+  绑定(`runtimeBindingSnapshot`)从不随目标切换,这一点在两处修复里都成立。开发机上
+  这处口子不会稳定复现:mcpp 自带的一次性沙箱布局初始化会以另一条路径把一份可用的
+  sysroot 铺好,与这处缺陷完全无关——和这个代码库里其他"机器上的既有状态掩盖了一个
+  载荷缺口"的记录是同一个形状,真正可信的判据只有沙箱。
+- 判据:`tests/e2e/657` 新增第二、三阶段——在同一次调用里新建一个全新 `$MCPP_HOME`,
+  确认交叉构建下 `MCPP_HOST` 落在真实宿主三元组而非 `wasm32-*`、日志中不出现
+  `AssertionError` 或 `features.h` 缺失,随后在**同一个**全新 home 里再跑一次原生构建,
+  确认修复没有反过来影响原生路径;`features.h` 那一条断言是可移植的(不依赖某台机器
+  具体走 `-isystem` 载荷路径还是 sysroot 符号链接),第二处口子本身的权威判据是 xlings
+  沙箱里的实测,记在这次提交的说明里。
+
 ### 修复:发布物是终端产物;库形态的应用也带上运行期文件(#622)
 
 - `mcpp pack --format <name>` 与 `mcpp run --format <name>` 报告的产物改为请求引入的
