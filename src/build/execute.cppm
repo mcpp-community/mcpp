@@ -1886,6 +1886,21 @@ export int build_run_target(const std::optional<std::string>& targetName,
         if (auto rc = run_build_plan(*ctx2, /*verbose=*/false, no_cache, target_triple);
             rc != 0)
             return rc;
+        // ONE DISTRIBUTABLE, OR A SENTENCE. The pack pipeline reports the
+        // terminal artifacts of the request (outputs no other introduced
+        // action consumes); a format that ends in two files has no single
+        // operand a runner can take.
+        if (outcome.artifacts.size() != 1) {
+            std::string names;
+            for (auto const& a : outcome.artifacts) {
+                if (!names.empty()) names += ", ";
+                names += a.string();
+            }
+            std::println(stderr,
+                "error: --format {} produced {} distributables ({}); mcpp run needs "
+                "exactly one to hand to the runner", format, outcome.artifacts.size(), names);
+            return 1;
+        }
         return run_artifact_via_runner(*ctx2, outcome.artifacts.front(),
                                        passthrough, no_runner, runner_name);
     }

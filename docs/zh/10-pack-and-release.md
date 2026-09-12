@@ -171,6 +171,12 @@ mcpp run --target aarch64-ios-sim      --format app
 报出的那个产物,经由为一个程序解析出的 runner:项目的 `[target.<triple>] runner`,
 其次依赖的 `mcpp::runner(...)`,再次载荷描述文件的。
 
+打包报出的产物是这次请求的**终端**产物:在请求引入的 `artifact` 动作中,没有被其他
+引入动作当作输入的那个输出。提供者常常是一条链(`dist-apk`:链接、加库、对齐、签名),
+链上每个输出都会被核验存在,但只有最后一个是发布物,也只有它以 `Packed` 报出。链的
+末端有两个文件的格式会被 `mcpp run --format` 拒绝并点名两者,因为 runner 只接受一个
+操作数。
+
 未知的 `<name>` 会被拒绝,点名已解析图提供的格式集合,与 `mcpp pack --format
 bogus` 报出的是同一个集合。`--format` 与 `--no-runner` 同时出现会被拒绝——一个
 `.apk` 或已安装的 `.app` 无法被直接执行。在 `kind = "app"` 的形态是一个库的那一行上,

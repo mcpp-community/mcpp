@@ -94,6 +94,7 @@ echo "the refusal does not fire for a bin target OK"
 # adding it earlier would change what check 3's refusal lists (it asserts
 # "one of: none declared", which is only true while this package provides
 # no format at all).
+printf "resource-1\n" > res.txt
 cat > copy.sh <<'EOF'
 #!/usr/bin/env bash
 set -e
@@ -115,6 +116,11 @@ int main() {
         std::fputs(mcpp::min_platform_version(), f);
         std::fclose(f);
     }
+
+    // A deploy'd file (#622 A4) travels with the library: staged under
+    // `bin/<to>/` on this row as on every other, where a provider that maps
+    // it into its own layout (dist-apk: assets/) reads it.
+    mcpp::deploy((std::string(mcpp::manifest_dir()) + "/res.txt").c_str(), "myres");
 
     mcpp::provides_pack_format("blob");
     if (std::string_view(mcpp::pack_format()) != "blob") return 0;
@@ -144,6 +150,8 @@ staged=$(ls -d target/dist/myapp-0.1.0-*/ 2>/dev/null | head -1)
 [ -n "$staged" ] || fail "no staged tree under target/dist for the Android pack" pack.log
 [ -f "${staged}lib/libmyapp.so" ] \
     || fail "the staged tree has no lib/libmyapp.so" pack.log
+[ -f "${staged}bin/myres/res.txt" ] \
+    || fail "the deploy'd file was not staged under bin/myres/ on the Android row" pack.log
 [ -n "$(find target -name 'myapp.blob' 2>/dev/null)" ] \
     || fail "the reported artifact myapp.blob does not exist" pack.log
 echo "mcpp pack --format blob on Android stages lib/libmyapp.so OK"

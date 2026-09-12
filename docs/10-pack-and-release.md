@@ -212,6 +212,14 @@ then runs the artifact the pack reported, through the runner resolved for a
 program: the project's `[target.<triple>] runner`, then a dependency's
 `mcpp::runner(...)`, then the payload descriptor's.
 
+The artifact a pack reports is the request's **terminal** one: among the
+`artifact` actions the request introduced, the output no other introduced
+action consumes. A provider is often a chain (`dist-apk`: link, add the
+libraries, align, sign), and every output in it is verified to exist, but only
+the last is the distributable and only it is printed as `Packed`. A format
+whose chain ends in two files is refused by `mcpp run --format`, naming both,
+because a runner takes one operand.
+
 An unknown `<name>` is refused naming the format set the resolved graph
 provides, the same set `mcpp pack --format bogus` reports. `--format` together
 with `--no-runner` is refused — an `.apk` or an installed `.app` cannot be

@@ -173,6 +173,17 @@ Emscripten 自己的 CMake 工具链(`CMAKE_EXECUTABLE_SUFFIX ".js"`)与 Rust �
   的宿主 spec(用户写的 `[toolchain]` 或机器默认),构建程序按它解析;行 pin 没有替换任何
   东西时行为不变。`tests/e2e/657`。
 
+### 修复:发布物是终端产物;库形态的应用也带上运行期文件(#622)
+
+- `mcpp pack --format <name>` 与 `mcpp run --format <name>` 报告的产物改为请求引入的
+  artifact 动作中**没有被其他引入动作当作输入**的输出(终端产物)。此前取第一个输出:
+  `dist-apk` 提交的是一条链(link、加库、对齐、签名),`adb-run` 拿到的是未签名的 `base.apk`,
+  `adb install` 拒绝安装。中间产物仍逐个核验存在,只是不再以 `Packed` 报告;`mcpp run` 在终端
+  产物不止一个时按句拒绝并列出它们。`tests/e2e/656`。
+- 在应用形态为共享库的行上(`*-linux-android` 的 `kind = "app"`),`mcpp pack` 此前只暂存
+  `lib/<name>.so`,`deploy` 放置的运行期文件没有进暂存树,于是 dist-apk 的 `assets/` 为空。
+  现在与其他行一致,按 `bin/<to>/...` 的相对路径暂存。`tests/e2e/652b`。
+
 ## [2026.9.12.2] - 2026-09-12
 
 2026.9.12.1 未单独发布,其条目并入本版本。
