@@ -1,11 +1,11 @@
 ---
 subject: build-program
-status: active
+status: landed
 ---
 
 # Four upstream asks from a UI framework: what each one is under mcpp's design, and the combined plan
 
-**Status:** proposed and reviewed (2026-09-13). Nothing here is implemented.
+**Status:** the mcpp half landed in 2026.9.13.1 (PR #629, released and indexed 2026-09-13); the index half landed (openxlings/xim-pkgindex#832); the mcpp-plugins half is in review as 0.9.0 (mcpp-plugins#20). §8.1 to §8.3 record what implementation changed.
 The first ask was analysed in an earlier draft of this record (the action
 buffer, §2); this revision reads all four against the rules the 2026-09-11
 and 2026-09-12 records state, and replaces that draft. The review accepted
@@ -535,6 +535,49 @@ Four additions came from the review and are folded in above:
   raised to 600 so that the edge line also crosses the POSIX 128 KiB limit,
   and the fixture holds the guard on every shard. Reverse leg: the raised
   fixture is refused by the engine before the guard fix on Linux too.
+
+### 8.2 What implementation changed (mcpp-plugins side, 2026-09-13)
+
+- **The Java glob was absolute and matched nothing.** 0.8.0 declared
+  `rerun_if_changed_glob(<root>/**/*.java)` with an absolute root, and the
+  engine's glob fingerprint compares paths made relative to the package root
+  (`modules/manifest/src/glob.cppm`), so the recorded fingerprint for that
+  pattern was the same hash whether or not a `.java` had been added
+  (measured: `cbf29ce484222325` in both states). The rule of §3.3 is now
+  declared with the manifest-relative form, and the fixture's leg (f) holds
+  the fingerprint changing under the project root and no glob being recorded
+  for the external root.
+- **`mcpp pack` re-runs the build program on every invocation** of the
+  `apk-consumer` fixture (three consecutive identical packs all compile and
+  run it; a plain `mcpp build` caches). Recorded, not acted on: it is an
+  engine observation outside this batch, and it means a packaging fixture
+  cannot use "the program did not re-run" as a criterion until it is
+  understood.
+
+### 8.3 What the pull request's CI found
+
+- **The openkal cross-build's Windows job went red on the same sources.**
+  `lld: unable to find library -lntdll` linking the `x86_64-windows-gnu`
+  example on the Windows host. The job was green at the previous head with
+  one restored sandbox cache and red at the next with another; the cache key
+  hashes `mcpp.toml`, so the version bump rotated it, and the first Windows
+  job to finish on the bumped head saved the lineage every sibling then
+  restored. On a Windows host `openkal-windows`'s build program generates no
+  import libraries ("the system's own are present"), so where lld finds them
+  is a property of the host, the sandbox or the payload, and nothing in the
+  job said which. A step now prints it. The reading: on the Windows runner
+  the payload's clang, asked for `x86_64-w64-windows-gnu`, lists
+  `C:\mingw64\x86_64-w64-mingw32\lib` among its library directories and
+  finds `libntdll.a` there; `x86_64-w64-mingw32-gcc` on the image's `PATH`
+  is what the driver derives that sysroot from. So the job links against
+  the runner image's mingw, not against anything the ecosystem declares,
+  and a sandbox lineage that changes what the driver finds first changes
+  the outcome. The failing lineage was evicted before it could be read; the
+  job passed on a fresh sandbox with the same sources. The durable fix
+  belongs to `openkal-windows` (generate its import libraries on a Windows
+  host too, as it does elsewhere, or declare the payload that carries them)
+  and is filed there (mcpplibs/openkal-windows#19) rather than worked around
+  in this workflow.
 
 One observation stands as recorded and not acted on: `options::resources`
 as a single directory declared as an input (§3.4). It affects HuxerUI
