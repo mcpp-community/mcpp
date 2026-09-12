@@ -340,13 +340,18 @@ cxxflags = ["-march=x86-64-v2"]
   `cfg(arch = "x86_64")` 之后;`!` 排除 glob 在此同样有效),再加 `flags` 与
   `include_dirs` / `include_dirs_after`(mcpp 0.0.102+),
   以及 `private_include_dirs` 与 `std-module-flags`(mcpp 2026.9.1.1+),
-  还有带 `libraries` / `link_library_dirs` 的 `runtime`(mcpp 2026.8.29.1+)。
+  还有带 `frameworks` / `libraries` / `link_library_dirs` 的 `runtime`
+  (mcpp 2026.8.29.1+;`frameworks` 自 2026.9.12.3 起)。
 - **`runtime` 是链接行中与方言无关的那一半。** `build.ldflags` 按 GNU 拼法书写,
-  而原生 `cl.exe` 不接受 `-L`。这两个键表达同一件事而不承诺拼法:mcpp 按目标
-  渲染成 `-L<dir>` + `-l<name>` 或 `/LIBPATH:<dir>` + `<name>.lib`。它们就是
-  顶层 `[runtime]`(见 [04 —— mcpp.toml](04-mcpp-toml.md) §2.11)已有的同两个键,
-  此处只是让它们按目标生效,并未引入新词汇。`[runtime]` 的其余键在这里会被报出
-  并忽略,因为它们不是按目标区分的。
+  而原生 `cl.exe` 不接受 `-L`。这些键表达同一件事而不承诺拼法:mcpp 把
+  `libraries` / `link_library_dirs` 渲染成 `-L<dir>` + `-l<name>` 或
+  `/LIBPATH:<dir>` + `<name>.lib`,把 `frameworks` 在 Mach-O 各行渲染成
+  `-framework <name>`,其余各行不产生任何标志。它们就是顶层 `[runtime]`
+  (见 [04 —— mcpp.toml](04-mcpp-toml.md) §2.11)已有的同几个键,此处只是
+  让它们按目标生效,并未引入新词汇。此处的一条追加在顶层列表**之后**,不是
+  替换——manifest 借此把 `UIKit` 挡在 macOS 链接之外、把 `AppKit` 挡在 iOS
+  链接之外,同时在顶层共享两者都要的那些 framework。`[runtime]` 的其余键
+  在这里会被报出并忽略,因为它们不是按目标区分的。
 
   ```toml
   # 只在 Windows 上链接,并按实际编译器的拼法书写。
@@ -437,20 +442,32 @@ C 库,那时解析出的 `c-abi` 就不是这里返回的东西。要按已解�
 
 ```toml
 [target.'cfg(os = "emscripten")'.abi]
-threads = true
+threads    = true
+exceptions = true
 ```
 
 目标的某些性质不是单个翻译单元可以自行选择的 flag。线程支持即是一例:在 WebAssembly 上,每个目标文件、
 预编译的标准库模块与链接必须在共享内存与原子操作上保持一致,只要有一个翻译单元未启用它们,链接就会失败,
-或模块拒绝加载。这类性质写作 `[target.<selector>.abi]` 的有类型成员,而不是 `cxxflags` 中的 flag,
-引擎因此能把它施加到每个必须一致的单元上,并把它与包的需求相比较。
+或模块拒绝加载。异常是同一种形状:clang 把异常模型记进 BMI,并拒绝一个与之不一致的导入者。这类性质
+写作 `[target.<selector>.abi]` 的有类型成员,而不是 `cxxflags` 中的 flag,引擎因此能把它施加到每个
+必须一致的单元上,并把它与包的需求相比较。
 
 | 成员 | 类型 | 渲染为 | 到达 |
 |---|---|---|---|
 | `threads` | 布尔 | 在既非 PE 也非 freestanding 的目标上为 `-pthread`;在 PE 与 freestanding 目标上不产生任何 flag | 标准库模块的预构建、依赖扫描、所有包的每个 C 与 C++ 翻译单元,以及链接 |
+| `exceptions` *(mcpp 2026.9.12.3+)* | 布尔 | `-fexceptions`,只在 `os = "emscripten"` 上,经方言 flag 进入编译行,也进入链接行;在其余每个目标上什么都不产生,因为那里异常本来就是默认开启的 | 与 `threads` 相同的那一套 |
 
-该成员经由方言 flag 进入依赖缓存键,因此未启用线程时构建的依赖不会被启用线程的构建复用。未知成员,以及
-不是布尔值的 `threads`,都会被拒绝。
+两个成员都经由方言 flag 进入依赖缓存键,因此未启用某个成员时构建的依赖不会被启用它的构建复用。未知
+成员,以及不是布尔值的成员,都会被拒绝,并同时列出 `threads` 与 `exceptions`。
+
+**没有 `exceptions`,观察到的失败在运行时,不在链接时。** 一个跨 `import std` 边界抛出异常的 Web
+程序能正常编译并链接——Emscripten 的编译期异常支持不依赖这个 flag——只在 `throw` 真正执行时中止:
+
+```
+Aborted(Assertion failed: Exception thrown, but exception catching is not
+enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or
+-sEXCEPTION_CATCHING_ALLOWED=[..] to catch.)
+```
 
 **只有根 manifest 做决定。** 这个开关属于产物,而根包是唯一构建产物的包。依赖写下的
 `[target.<selector>.abi]` 会被报告(`abi/dependency-table`),且不改变任何东西。依赖改为声明自己的需求:
@@ -474,6 +491,49 @@ error: `wasmrt` requires the artefact's ABI to have threads (feature `mt`), and 
 ```
 
 若没有这项拒绝,不匹配会表现为预编译模块的配置错误,而该错误既不指出包,也不指出开关。
+
+### `requires_abi` 在 target 轴上(mcpp 2026.9.12.3+)
+
+`[package] requires_abi` 与 `[features.<f>] requires_abi` 是无条件的:它们要求
+本包构建的每一个目标都打开某个开关。一个需求局限于某个平台的依赖——比如每个
+hosted 行都要线程、Web 上一个都不要——直接写在已经承载它自己 `sources` 的
+选择器上:
+
+```toml
+[target.'cfg(linux)']
+requires_abi = { threads = true }
+
+# 按 feature 的形式,命名沿用 feature-deps 与 feature-xlings
+[target.'cfg(linux)'.feature-requires-abi]
+mt = { threads = true }
+```
+
+需求集合是 `[package] requires_abi`、活跃 feature 各自的表、以及每一个命中的
+选择器各自表的并集——不止一个选择器可以要求同一个成员,而它们各自都是真话。
+它只对**命中已解析目标**的选择器生效:`[target.'cfg(windows)']` 下的需求对
+一次 Linux 构建不施加任何东西,双向皆然——有它、没它,那次构建都不受影响。
+根包未满足的需求在任何编译开始之前被拒绝,拒绝信息按原样点名那个选择器:
+
+```
+error: `wasmrt` requires the artefact's ABI to have threads ([target.'cfg(linux)']), and this build does not state it.
+       Add to the root manifest, for the targets that need it:
+
+           [target.'cfg(os = "<os>")'.abi]
+           threads = true
+```
+
+**早于 2026.9.12.3 的引擎静默读过这个键——既不警告,也不报错。**
+`[target.<sel>] requires_abi` 是目标选择器下一个取值为表的键,而旧引擎的
+schema 清扫会跳过每一个取值为表的键,理由是它假定表就是条件通道;
+`requires_abi` 在这里恰好是一个内联表,与那个假定同一种 TOML 形状,于是
+不受任何报告地漏过同一次清扫。一个依赖这份拒绝来保护一次无条件线程构建的
+包,因此要自己声明引擎下限
+(`[build-dependencies.mcpp] version = ">= 2026.9.12.3"`),而不能指望旧客户端
+自己发现这个缺口。
+
+`--no-entry`(Emscripten 里没有 `main` 的模块用的 flag)不是 mcpp 解释的开关;
+它是一条普通的 `[target.'cfg(os = "emscripten")'.build] ldflags` 条目,`main`
+照样只是指出一个翻译单元——见[21 —— 目标三元组](21-the-target-triple.md#wasm-产物契约)。
 
 ## 当前边界
 

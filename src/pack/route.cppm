@@ -52,6 +52,7 @@ std::expected<PackRoute, std::string> route_pack_target(std::string_view request
             case mcpp::manifest::Target::Library:       return "lib";
             case mcpp::manifest::Target::SharedLibrary: return "shared";
             case mcpp::manifest::Target::TestBinary:    return "test";
+            case mcpp::manifest::Target::Application:   return "app";
         }
         return "?";
     };
@@ -89,10 +90,21 @@ std::expected<PackRoute, std::string> route_pack_target(std::string_view request
     // Nothing requested. A program is still the default — `mcpp pack` has
     // always meant "bundle this application" and a project that has one is
     // asking for that.
+    //
+    // `is_program()` (#622 A3): an `app` is a program route on every row,
+    // whatever file it links to. On Android its link form is a shared
+    // object, but that is a fact about the FILE (`toolchain::triple::
+    // application_form`), not about which pipeline packs it — routing does
+    // not ask the row's form at all. A `--format` that knows what to do with
+    // that file (`dist-apk`, not part of this change) is what makes the
+    // route usable end to end; without one, the generic archive formats
+    // refuse further in with "not a program in this build", which is a
+    // pre-existing message for any target the application pipeline finds no
+    // executable link unit for.
     const mcpp::manifest::Target* onlyLib = nullptr;
     std::size_t libCount = 0;
     for (auto const& t : m->targets) {
-        if (t.kind == mcpp::manifest::Target::Binary) return PackRoute{ t.name, false };
+        if (t.is_program()) return PackRoute{ t.name, false };
         if (is_library(t)) { onlyLib = &t; ++libCount; }
     }
     if (libCount == 1) return PackRoute{ onlyLib->name, true };

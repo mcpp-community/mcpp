@@ -104,6 +104,54 @@ TEST(ArtifactNaming, UnknownOsFallsBackToHost) {
     EXPECT_EQ(n.staticLibExt, ".HOST");
 }
 
+// A bare-metal `none` OS is not the emscripten row and must keep falling back
+// to the host answer — the emscripten branch below must not widen the
+// fallback it sits next to.
+TEST(ArtifactNaming, NoneOsFallsBackToHost) {
+    tr::Triple none; none.arch = "aarch64"; none.os = "none";
+    auto n = tr::artifact_naming(none, kBogusHost);
+    EXPECT_EQ(n.exeSuffix, ".HOST");
+    EXPECT_EQ(n.staticLibExt, ".HOST");
+}
+
+// ── wasm32-emscripten: the executable is the file a runner executes, and on
+// this row that file is the JavaScript launcher, not a bare ELF-shaped name.
+// See .agents/docs/2026-09-12-622-a-ui-framework-on-android-ios-and-web.md §2.5.
+
+// A Linux host must not leak its own (empty-suffix) naming onto the row.
+TEST(ArtifactNaming, EmscriptenOnLinuxHostNamesJs) {
+    const tr::ArtifactNaming linuxHost{
+        .exeSuffix = "", .libPrefix = "lib", .staticLibExt = ".a",
+        .sharedLibExt = ".so", .sharedNeedsImportLib = false,
+    };
+    auto n = tr::artifact_naming(T("wasm32-emscripten"), linuxHost);
+    EXPECT_EQ(n.exeSuffix, ".js");
+    EXPECT_EQ(n.libPrefix, "lib");
+    EXPECT_EQ(n.staticLibExt, ".a");
+}
+
+// A Windows host must not leak `.exe` onto the row either — the row names one
+// file on every host.
+TEST(ArtifactNaming, EmscriptenOnWindowsHostNamesJs) {
+    const tr::ArtifactNaming windowsHost{
+        .exeSuffix = ".exe", .libPrefix = "", .staticLibExt = ".lib",
+        .sharedLibExt = ".dll", .sharedNeedsImportLib = true,
+    };
+    auto n = tr::artifact_naming(T("wasm32-emscripten"), windowsHost);
+    EXPECT_EQ(n.exeSuffix, ".js");
+    EXPECT_EQ(n.libPrefix, "lib");
+    EXPECT_EQ(n.staticLibExt, ".a");
+}
+
+// A side module needs `-sSIDE_MODULE`, which mcpp does not render — the row
+// marks shared libraries unsupported rather than naming a file emcc's default
+// link would not actually produce as a working shared object.
+TEST(ArtifactNaming, EmscriptenSharedIsUnsupported) {
+    auto n = tr::artifact_naming(T("wasm32-emscripten"), kBogusHost);
+    EXPECT_TRUE(n.sharedNeedsImportLib);
+    EXPECT_EQ(n.sharedLibExt, "");
+}
+
 // ── Host builds must be bit-for-bit unchanged ───────────────────────────────
 // Passing the real host constants for the host target has to reproduce exactly
 // what the old code produced on this machine.
@@ -122,4 +170,66 @@ TEST(ArtifactNaming, RealHostConstantsRoundTrip) {
     EXPECT_EQ(n.sharedLibExt, mcpp::platform::shared_lib_ext);
 }
 
+// ── #622 A3: the link form of `kind = "app"` is a property of the row ───────
+//
+// `application_form` answers the one question §2.3 of the #622 design record
+// turns into a fourth `kind` rather than a manifest predicate: on Android an
+// application IS the shared library the platform loads (there is no
+// executable form of an app there at all); everywhere else it is identical to
+// `bin`. The negative direction here is the positive direction of every OTHER
+// row — a form function with only one answer would not be a function.
+
+TEST(ArtifactNaming, ApplicationFormIsSharedObjectOnAndroid) {
+    EXPECT_EQ(tr::application_form(T("aarch64-linux-android")),
+              tr::ApplicationForm::SharedObject);
+    EXPECT_EQ(tr::application_form(T("x86_64-linux-android")),
+              tr::ApplicationForm::SharedObject);
+}
+
+TEST(ArtifactNaming, ApplicationFormIsExecutableEverywhereElse) {
+    EXPECT_EQ(tr::application_form(T("x86_64-linux-gnu")),
+              tr::ApplicationForm::Executable);
+    EXPECT_EQ(tr::application_form(T("aarch64-ios-sim")),
+              tr::ApplicationForm::Executable);
+    EXPECT_EQ(tr::application_form(T("wasm32-emscripten")),
+              tr::ApplicationForm::Executable);
+    EXPECT_EQ(tr::application_form(T("x86_64-windows-msvc")),
+              tr::ApplicationForm::Executable);
+}
+
+// An empty (host) triple is not Android on any machine this engine runs on
+// today -- the negative direction that keeps a bare `kind = "app"` host build
+// linking an ordinary executable, exactly as it does before this feature.
+TEST(ArtifactNaming, ApplicationFormOnTheHostTripleIsExecutable) {
+    EXPECT_EQ(tr::application_form(tr::Triple{}), tr::ApplicationForm::Executable);
+}
+
 } // namespace
+
+// `platform_name` (#622 A7): the triple's `os`, except that an `env` naming a
+// platform of its own wins. Every row the engine has maps into the closed
+// vocabulary `[package] platforms` accepts, so a claim can be made for every
+// row and for nothing else.
+TEST(PlatformName, IsTheOsExceptForAndroid) {
+    using mcpp::toolchain::triple::parse;
+    using mcpp::toolchain::triple::platform_name;
+    EXPECT_EQ(platform_name(*parse("x86_64-linux-gnu")), "linux");
+    EXPECT_EQ(platform_name(*parse("aarch64-macos")), "macos");
+    EXPECT_EQ(platform_name(*parse("x86_64-windows-msvc")), "windows");
+    EXPECT_EQ(platform_name(*parse("aarch64-ios-sim")), "ios");
+    EXPECT_EQ(platform_name(*parse("aarch64-linux-android")), "android");
+    EXPECT_EQ(platform_name(*parse("wasm32-emscripten")), "emscripten");
+}
+
+TEST(PlatformName, EveryKnownRowIsInTheVocabulary) {
+    using namespace mcpp::toolchain::triple;
+    for (auto const& row : known_targets()) {
+        auto t = parse(std::string(row.canonical));
+        ASSERT_TRUE(t.has_value()) << row.canonical;
+        if (t->os == "none") continue;   // bare-metal rows claim no platform
+        EXPECT_TRUE(is_platform_name(platform_name(*t))) << row.canonical;
+    }
+    EXPECT_TRUE(is_platform_name("emscripten"));
+    EXPECT_FALSE(is_platform_name("web"));
+    EXPECT_EQ(platform_names_joined(), "linux | macos | windows | ios | android | emscripten");
+}

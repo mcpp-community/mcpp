@@ -12,6 +12,8 @@ export module mcpp.build.execute;
 import std;
 import mcpp.build.build_program;   // #359 glob inputs the mtime sweep cannot see
 import mcpp.build.prepare;
+import mcpp.pack;                  // #622 A10: mcpp::pack::Options / Format
+import mcpp.pack.pipeline;         // #622 A10: build_and_pack, for `run --format`
 import mcpp.build.test_targets;
 import mcpp.diag;
 import mcpp.build.plan;
@@ -1590,6 +1592,155 @@ std::optional<int> try_fast_run(const std::filesystem::path& projectRoot,
     return exitRc;
 }
 
+// The runner-resolution + exec tail shared by every way `build_run_target`
+// can arrive at an artifact to run: the ordinary link output, or (#622 A10)
+// the distributable `mcpp pack --format <name>` reported. Everything from
+// here on asks only `ctx` and `exe` — which runner applies is a property of
+// the project and the resolved triple, not of how the artifact was produced,
+// and that is the whole point of `--format` reusing this tail rather than
+// inventing a second resolution.
+int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
+                            const std::filesystem::path& exe,
+                            std::span<const std::string> passthrough,
+                            bool no_runner,
+                            std::string_view runner_name) {
+    auto pathCtx = mcpp::fetcher::make_path_ctx(/*cfg=*/nullptr, ctx.projectRoot);
+    std::vector<std::string> argv;
+    // An artifact this machine cannot execute — a freestanding image by
+    // construction, a hosted cross artifact by circumstance — needs something
+    // to stand in front of it. The runner template says what; mcpp never
+    // guesses one, because which emulator and which machine model are facts
+    // about the board or the host (see mcpp.freestanding.runner and
+    // mcpp.build.runner_lookup). One read point decides for both `run` and
+    // `test`: choose_runner.
+    //
+    // Two producers, and the precedence is the ordinary one: what the author
+    // of THIS project wrote beats what a dependency supplied. The dependency
+    // is the normal case on bare metal — a board-support package knows the
+    // emulator, its machine model and its firmware mode, and computes the
+    // absolute path that a static manifest cannot. The explicit key exists for
+    // the other case: swapping `-bios default` for `-bios none -semihosting`
+    // while debugging, or naming `qemu-aarch64-static` for a cross target.
+    const bool isRunSlot = runner_name.empty();
+    const std::string slotName{runner_name};
+    const auto choice = choose_device_action(ctx, runner_name, no_runner);
+    if (choice.ignored)
+        mcpp::ui::info("note", std::format(
+            "--no-runner: ignoring the runner declared for {}", choice.tripleKey));
+    if (choice.fromManifest)
+        mcpp::ui::info("note", std::format(
+            "[target.{}] overrides the {} a dependency supplied",
+            choice.tripleKey,
+            isRunSlot ? std::string("runner")
+                      : std::format("runner '{}'", slotName)));
+    // THE THREE NEW SLOTS HAVE NO FALLBACK, AND `run` STILL DOES.
+    //
+    // An artefact with no runner on a hosted target is executed directly, and
+    // that is right: the host can run it. There is no such reading of "no
+    // flasher" — nothing else writes an image to a device — so an empty
+    // template is an error for those three on EVERY target, not only a
+    // freestanding one. Saying "nothing is configured" beats doing something
+    // that was never asked for.
+    if (!isRunSlot && choice.tmpl.empty()) {
+        // AND THE MESSAGE LISTS WHAT THIS PROJECT DOES HAVE. A name the
+        // engine does not know is usually a typo or a missing feature, and
+        // "no such runner" alone leaves the reader guessing which.
+        std::string have;
+        for (auto const& [n, _] : ctx.manifest.buildConfig.namedRunners)
+            have += (have.empty() ? "" : ", ") + n;
+        std::println(stderr,
+            "error: this project has no runner named '{}' for '{}'.\n"
+            "       Available: {}\n"
+            "       A package supplies one with `mcpp::runner(\"{}\", …)`, or a\n"
+            "       project declares it:\n"
+            "\n"
+            "           [target.{}.runners]\n"
+            "           {} = [\"<tool>\", \"<args>\", \"{{}}\"]\n"
+            "\n"
+            "       The artefact path is appended, or substituted for `{{}}`.",
+            slotName, choice.tripleKey,
+            have.empty() ? "(none — no package in this graph supplies a named runner)"
+                         : have,
+            slotName, choice.tripleKey, slotName);
+        return 2;
+    }
+    if (isRunSlot && choice.freestanding && choice.tmpl.empty()) {
+        std::println(stderr, "error: {}",
+            mcpp::freestanding::no_runner_message(choice.tripleKey));
+        return 2;
+    }
+    if (!choice.tmpl.empty()) {
+        // The program is located by mcpp, not by posix_spawnp: a declared
+        // payload's bin/ and then its root, then PATH — see runner_lookup for the shim
+        // measurement that makes the order matter. Not found anywhere is
+        // decided here, before any spawn, and is an error rather than a
+        // fallback to bare execution (#544, D1): running the artifact under a
+        // different interpreter with different arguments is the failure the
+        // runner key exists to prevent.
+        auto tmpl = choice.tmpl;
+        const char* pathEnv = std::getenv("PATH");
+        auto found = mcpp::build::runner_lookup::locate(
+            tmpl.front(), ctx.xlingsDepBinDirs, pathEnv ? pathEnv : "");
+        if (!found.program) {
+            std::println(stderr, "error: {}",
+                mcpp::build::runner_lookup::not_found_message(
+                    choice.tripleKey, tmpl.front(), found.searched));
+            return 2;
+        }
+        tmpl.front() = found.program->string();
+        argv = mcpp::freestanding::expand(tmpl, exe);
+        for (auto& a : passthrough) argv.push_back(a);
+        // The status word is the NAME the package chose, capitalised. The
+        // engine has no table of verbs to look one up in, which is the point:
+        // `Serve`, `Submit` and `Flash` all read correctly and none is known
+        // here.
+        std::string verb = isRunSlot ? std::string("Running") : slotName;
+        if (!isRunSlot && !verb.empty())
+            verb[0] = static_cast<char>(std::toupper(verb[0]));
+        mcpp::ui::status(verb, std::format("`{} … {}`", choice.tmpl.front(),
+                                           mcpp::ui::shorten_path(exe, pathCtx)));
+    } else {
+        argv.push_back(exe.string());
+        for (auto& a : passthrough) argv.push_back(a);
+        mcpp::ui::status("Running",
+            std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
+    }
+    std::println("");
+    std::fflush(stdout);
+
+    std::vector<std::pair<std::string, std::string>> childEnv;
+    auto [runEnvKey, runEnvValue] = compute_run_env(ctx.plan);
+    if (!runEnvKey.empty() && !runEnvValue.empty())
+        childEnv.emplace_back(runEnvKey, runEnvValue);
+    // ...plus whatever the subos declares for the programs it hosts (#352).
+    for (auto& kv : compute_subos_env(ctx.plan)) childEnv.push_back(std::move(kv));
+
+    // Direct exec (no /bin/sh): the loader env reaches ONLY the target child,
+    // never mcpp or a host shell. Fixes the bundled-glibc-vs-host-libtinfo
+    // crash on newer-glibc distros.
+    //
+    // A refused spawn is typed and reported here, and exits in the 125-127 band
+    // — never inside the range the program itself owns. With a runner the
+    // failure is the runner's own (verbatim errno, no advice); without one,
+    // ENOEXEC is the kernel saying this host cannot load the artifact, and the
+    // message carries the key that would change that. Anything else is reported
+    // as itself — EACCES is a permission problem, not an absence.
+    int spawnErr = 0;
+    const int rc = mcpp::platform::process::run_exec(argv, childEnv, &spawnErr);
+    if (spawnErr != 0) {
+        using namespace mcpp::build::runner_lookup;
+        if (!choice.tmpl.empty())
+            std::println(stderr, "error: {}", spawn_failed_message(argv.front(), spawnErr));
+        else if (classify(spawnErr) == SpawnClass::Unloadable)
+            std::println(stderr, "error: {}",
+                         unrunnable_message(choice.tripleKey, exe, spawnErr));
+        else
+            std::println(stderr, "error: {}", spawn_failed_message(exe.string(), spawnErr));
+        return launcher_status(spawnErr);
+    }
+    return rc;
+}
+
 // `mcpp run` driver: build, locate the binary target, exec it with the
 // resolved runtime environment. `package_filter` (`-p`/`--package`) scopes
 // a workspace invocation to one member — single-member only, no
@@ -1628,7 +1779,23 @@ export int build_run_target(const std::optional<std::string>& targetName,
                             const std::string& profile = {},
                             // The device axis. `--no-accel` arrives as the
                             // "(none)" sentinel, as it does for `build`.
-                            const std::string& accel = {}) {
+                            const std::string& accel = {},
+                            // #622 A10: reused VERBATIM from `mcpp pack
+                            // --format` — same value space, same refusal
+                            // naming what the resolved graph provides. Empty
+                            // is the ordinary run of the link output.
+                            const std::string& format = {}) {
+    // --format WITH --no-runner: refused before anything is built. A
+    // distributable (an `.apk`, an `.msi`, this record's own `blob` fixture)
+    // is not the link output, and "run it directly, ignoring the runner" has
+    // no reading for a file this host was never going to execute on its own.
+    if (!format.empty() && no_runner) {
+        std::println(stderr,
+            "error: --format and --no-runner cannot be combined: a "
+            "distributable is not something this host executes directly.");
+        return 2;
+    }
+
     // mcpp#225 (E2): reuse the resolved build cache when it's still fresh,
     // skipping prepare_build's toolchain resolution + modgraph scan
     // entirely — mirrors cmd_build's try_fast_build fast path. The cached
@@ -1660,12 +1827,67 @@ export int build_run_target(const std::optional<std::string>& targetName,
         //
         // The guard is the slot rather than a flag, because the property that
         // makes the fast path wrong here is what the slot means.
-        && runner_name.empty()) {
+        && runner_name.empty()
+        // #622 A10: `--format` runs a DISTRIBUTABLE, produced by the pack
+        // pipeline below — the cached artefact this path would exec bare is
+        // the link output, which is not that file.
+        && format.empty()) {
         if (auto root = mcpp::project::find_manifest_root(std::filesystem::current_path())) {
             if (auto rc = try_fast_run(*root, targetName, passthrough)) {
                 return *rc;
             }
         }
+    }
+
+    // #622 A10: `mcpp run --format <name>` IS `mcpp pack --format <name>` --
+    // the two prepares, the build, the staging, the provider's action --
+    // followed by the ordinary run, with the artifact THAT reported as the
+    // operand. Nothing here re-derives what the pack pipeline already
+    // decided: whether the format is one the graph provides (refused by
+    // `build_and_pack` naming what is available, exactly as `mcpp pack
+    // --format bogus` is), the build, the staged tree, which action claimed
+    // the request.
+    if (!format.empty()) {
+        mcpp::pack::Options popts;
+        popts.targetTriple = target_triple;
+        popts.profile      = profile;
+        popts.format       = mcpp::pack::Format::Dispatched;
+        popts.formatName   = format;
+        auto outcome = mcpp::pack::build_and_pack(
+            std::move(popts), /*modeFromUser=*/false, targetName.value_or(std::string{}));
+        if (outcome.rc != 0) return outcome.rc;
+        if (outcome.artifacts.empty()) {
+            // Not reached today: `build_and_pack` returns rc=0 only after
+            // confirming at least one reported artifact exists on disk. Kept
+            // as a named refusal rather than an assert, so a future format
+            // shape that reports zero artifacts fails LOUDLY here instead of
+            // dereferencing past the end of an empty vector below.
+            std::println(stderr,
+                "error: --format {} reported success and named no artifact to run", format);
+            return 1;
+        }
+        // THE RUNNER RESOLUTION NEEDS A BuildContext, AND build_and_pack's OWN
+        // ONE DOES NOT ESCAPE IT — it is an internal detail of a function
+        // whose contract is a CLI exit code plus the paths it packed. Preparing
+        // again is not a second build: the ninja graph above is already up to
+        // date, so this is the same "prepare, then drive a no-op graph scan"
+        // shape the plain run path below always pays once.
+        mcpp::build::BuildOverrides ov2;
+        ov2.package_filter = package_filter;
+        ov2.cache_mode     = cache_mode;
+        ov2.target_triple  = target_triple;
+        ov2.features       = features;
+        ov2.profile        = profile;
+        ov2.accel          = accel;
+        ov2.will_run       = true;
+        auto ctx2 = prepare_build(/*print_fp=*/false, /*includeDevDeps=*/false,
+                                  /*extraTargets=*/{}, ov2);
+        if (!ctx2) { std::println(stderr, "error: {}", ctx2.error()); return 2; }
+        if (auto rc = run_build_plan(*ctx2, /*verbose=*/false, no_cache, target_triple);
+            rc != 0)
+            return rc;
+        return run_artifact_via_runner(*ctx2, outcome.artifacts.front(),
+                                       passthrough, no_runner, runner_name);
     }
 
     // Build first. Single prepare_build → drive build → reuse ctx to locate
@@ -1715,147 +1937,40 @@ export int build_run_target(const std::optional<std::string>& targetName,
         if (targetName) break;
     }
     if (!chosen) {
+        // #622 A3/A10: an `app` whose form on THIS row is a shared library
+        // never becomes a `LinkUnit::Binary`, so the loop above cannot find
+        // it — that is correct (there is no executable to exec), but "no
+        // binary target 'myapp' found" would blame the user for a name that
+        // does exist. Read the manifest directly and, when that is exactly
+        // why the search came up empty, name the actual reason and the way
+        // out (`--format`, §2.10) instead.
+        for (auto const& t : ctx->manifest.targets) {
+            if (t.kind != mcpp::manifest::Target::Application) continue;
+            if (targetName && t.name != *targetName) continue;
+            auto triple = mcpp::toolchain::triple::parse(ctx->tc.targetTriple);
+            if (mcpp::toolchain::triple::application_form(
+                    triple ? *triple : mcpp::toolchain::triple::Triple{})
+                != mcpp::toolchain::triple::ApplicationForm::SharedObject)
+                continue;
+            std::string formats;
+            for (auto const& f : ctx->plan.providedPackFormats)
+                formats += (formats.empty() ? "" : ", ") + f;
+            std::println(stderr,
+                "error: '{}' is an application, and on {} an application is "
+                "a shared library that a package installs. Run it through a "
+                "distributable: mcpp run --format <name>, where <name> is "
+                "one of: {}",
+                t.name, ctx->tc.targetTriple,
+                formats.empty() ? std::string("none declared") : formats);
+            return 2;
+        }
         std::println(stderr, "error: no binary target {}",
             targetName ? std::format("'{}' found", *targetName) : "in this package");
         return 2;
     }
 
     auto exe = ctx->outputDir / chosen->output;
-    auto pathCtx = mcpp::fetcher::make_path_ctx(/*cfg=*/nullptr, ctx->projectRoot);
-    std::vector<std::string> argv;
-    // An artifact this machine cannot execute — a freestanding image by
-    // construction, a hosted cross artifact by circumstance — needs something
-    // to stand in front of it. The runner template says what; mcpp never
-    // guesses one, because which emulator and which machine model are facts
-    // about the board or the host (see mcpp.freestanding.runner and
-    // mcpp.build.runner_lookup). One read point decides for both `run` and
-    // `test`: choose_runner.
-    //
-    // Two producers, and the precedence is the ordinary one: what the author
-    // of THIS project wrote beats what a dependency supplied. The dependency
-    // is the normal case on bare metal — a board-support package knows the
-    // emulator, its machine model and its firmware mode, and computes the
-    // absolute path that a static manifest cannot. The explicit key exists for
-    // the other case: swapping `-bios default` for `-bios none -semihosting`
-    // while debugging, or naming `qemu-aarch64-static` for a cross target.
-    const bool isRunSlot = runner_name.empty();
-    const std::string slotName{runner_name};
-    const auto choice = choose_device_action(*ctx, runner_name, no_runner);
-    if (choice.ignored)
-        mcpp::ui::info("note", std::format(
-            "--no-runner: ignoring the runner declared for {}", choice.tripleKey));
-    if (choice.fromManifest)
-        mcpp::ui::info("note", std::format(
-            "[target.{}] overrides the {} a dependency supplied",
-            choice.tripleKey,
-            isRunSlot ? std::string("runner")
-                      : std::format("runner '{}'", slotName)));
-    // THE THREE NEW SLOTS HAVE NO FALLBACK, AND `run` STILL DOES.
-    //
-    // An artefact with no runner on a hosted target is executed directly, and
-    // that is right: the host can run it. There is no such reading of "no
-    // flasher" — nothing else writes an image to a device — so an empty
-    // template is an error for those three on EVERY target, not only a
-    // freestanding one. Saying "nothing is configured" beats doing something
-    // that was never asked for.
-    if (!isRunSlot && choice.tmpl.empty()) {
-        // AND THE MESSAGE LISTS WHAT THIS PROJECT DOES HAVE. A name the
-        // engine does not know is usually a typo or a missing feature, and
-        // "no such runner" alone leaves the reader guessing which.
-        std::string have;
-        for (auto const& [n, _] : ctx->manifest.buildConfig.namedRunners)
-            have += (have.empty() ? "" : ", ") + n;
-        std::println(stderr,
-            "error: this project has no runner named '{}' for '{}'.\n"
-            "       Available: {}\n"
-            "       A package supplies one with `mcpp::runner(\"{}\", …)`, or a\n"
-            "       project declares it:\n"
-            "\n"
-            "           [target.{}.runners]\n"
-            "           {} = [\"<tool>\", \"<args>\", \"{{}}\"]\n"
-            "\n"
-            "       The artefact path is appended, or substituted for `{{}}`.",
-            slotName, choice.tripleKey,
-            have.empty() ? "(none — no package in this graph supplies a named runner)"
-                         : have,
-            slotName, choice.tripleKey, slotName);
-        return 2;
-    }
-    if (isRunSlot && choice.freestanding && choice.tmpl.empty()) {
-        std::println(stderr, "error: {}",
-            mcpp::freestanding::no_runner_message(choice.tripleKey));
-        return 2;
-    }
-    if (!choice.tmpl.empty()) {
-        // The program is located by mcpp, not by posix_spawnp: a declared
-        // payload's bin/ and then its root, then PATH — see runner_lookup for the shim
-        // measurement that makes the order matter. Not found anywhere is
-        // decided here, before any spawn, and is an error rather than a
-        // fallback to bare execution (#544, D1): running the artifact under a
-        // different interpreter with different arguments is the failure the
-        // runner key exists to prevent.
-        auto tmpl = choice.tmpl;
-        const char* pathEnv = std::getenv("PATH");
-        auto found = mcpp::build::runner_lookup::locate(
-            tmpl.front(), ctx->xlingsDepBinDirs, pathEnv ? pathEnv : "");
-        if (!found.program) {
-            std::println(stderr, "error: {}",
-                mcpp::build::runner_lookup::not_found_message(
-                    choice.tripleKey, tmpl.front(), found.searched));
-            return 2;
-        }
-        tmpl.front() = found.program->string();
-        argv = mcpp::freestanding::expand(tmpl, exe);
-        for (auto& a : passthrough) argv.push_back(a);
-        // The status word is the NAME the package chose, capitalised. The
-        // engine has no table of verbs to look one up in, which is the point:
-        // `Serve`, `Submit` and `Flash` all read correctly and none is known
-        // here.
-        std::string verb = isRunSlot ? std::string("Running") : slotName;
-        if (!isRunSlot && !verb.empty())
-            verb[0] = static_cast<char>(std::toupper(verb[0]));
-        mcpp::ui::status(verb, std::format("`{} … {}`", choice.tmpl.front(),
-                                           mcpp::ui::shorten_path(exe, pathCtx)));
-    } else {
-        argv.push_back(exe.string());
-        for (auto& a : passthrough) argv.push_back(a);
-        mcpp::ui::status("Running",
-            std::format("`{}`", mcpp::ui::shorten_path(exe, pathCtx)));
-    }
-    std::println("");
-    std::fflush(stdout);
-
-    std::vector<std::pair<std::string, std::string>> childEnv;
-    auto [runEnvKey, runEnvValue] = compute_run_env(ctx->plan);
-    if (!runEnvKey.empty() && !runEnvValue.empty())
-        childEnv.emplace_back(runEnvKey, runEnvValue);
-    // ...plus whatever the subos declares for the programs it hosts (#352).
-    for (auto& kv : compute_subos_env(ctx->plan)) childEnv.push_back(std::move(kv));
-
-    // Direct exec (no /bin/sh): the loader env reaches ONLY the target child,
-    // never mcpp or a host shell. Fixes the bundled-glibc-vs-host-libtinfo
-    // crash on newer-glibc distros.
-    //
-    // A refused spawn is typed and reported here, and exits in the 125-127 band
-    // — never inside the range the program itself owns. With a runner the
-    // failure is the runner's own (verbatim errno, no advice); without one,
-    // ENOEXEC is the kernel saying this host cannot load the artifact, and the
-    // message carries the key that would change that. Anything else is reported
-    // as itself — EACCES is a permission problem, not an absence.
-    int spawnErr = 0;
-    const int rc = mcpp::platform::process::run_exec(argv, childEnv, &spawnErr);
-    if (spawnErr != 0) {
-        using namespace mcpp::build::runner_lookup;
-        if (!choice.tmpl.empty())
-            std::println(stderr, "error: {}", spawn_failed_message(argv.front(), spawnErr));
-        else if (classify(spawnErr) == SpawnClass::Unloadable)
-            std::println(stderr, "error: {}",
-                         unrunnable_message(choice.tripleKey, exe, spawnErr));
-        else
-            std::println(stderr, "error: {}", spawn_failed_message(exe.string(), spawnErr));
-        return launcher_status(spawnErr);
-    }
-    return rc;
+    return run_artifact_via_runner(*ctx, exe, passthrough, no_runner, runner_name);
 }
 
 export enum class TestMessageFormat { Human, Json };

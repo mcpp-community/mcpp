@@ -1124,9 +1124,99 @@ inline ArtifactNaming artifact_naming(const Triple& t, const ArtifactNaming& hos
             .sharedNeedsImportLib = false,
         };
     }
+    if (t.os == "emscripten") {
+        // `artifact_naming`'s one sentence, unchanged: the executable is the
+        // file a runner executes, in the row's own convention. On this row
+        // that file is the JavaScript launcher — what the emsdk payload's
+        // `node` runs and what a browser loads — so the row's convention for
+        // "the executable" is `.js`, not the ELF/host-borrowed bare name this
+        // used to fall back to (a different file on Linux vs. Windows hosts).
+        //
+        // Read, not recalled: Emscripten's own CMake toolchain fixes
+        // `CMAKE_EXECUTABLE_SUFFIX ".js"` (`Platform/Emscripten.cmake`) and
+        // Rust's `wasm32-unknown-emscripten` target spec sets
+        // `exe_suffix: ".js"` — both because emcc's `-o` extension selects
+        // what it emits, and anything but `.js`/`.html`/`.wasm` falls back to
+        // the `.js` case. A future `wasm32-wasi` row would answer `.wasm` by
+        // the same sentence, the way Rust's other wasm targets do, because
+        // there the module IS the executable a runner executes.
+        //
+        // `sharedLibExt` is empty and `sharedNeedsImportLib` is set as the
+        // "shared libraries are not supported for this target" marker (see
+        // the field comment above): a wasm side module needs `-sSIDE_MODULE`,
+        // a link contract this engine does not render, so the fallback answer
+        // (a `.so`-shaped file that does not work as one) is refused instead
+        // of produced — see the plan-time refusal in prepare.cppm.
+        return ArtifactNaming{
+            .exeSuffix = ".js", .libPrefix = "lib",
+            .staticLibExt = ".a", .sharedLibExt = "",
+            .sharedNeedsImportLib = true,
+        };
+    }
     // Outside the triple language: fall back to the host answer rather than
     // guessing. A wrong guess here silently misnames every artifact.
     return hostNaming;
+}
+
+// ── The link form of `kind = "app"` ──────────────────────────────────────────
+//
+// #622 A3. An application is "the thing a user launches" on every row, but
+// what that MEANS is not the same file shape everywhere: on Android there is
+// no executable form of an application at all -- the platform loads a shared
+// library into a Java process (`System.loadLibrary`, `android:name` in the
+// manifest) -- while on ELF, PE, Mach-O and the Emscripten row it is an
+// ordinary executable, exactly like `kind = "bin"`.
+//
+// This is a property of the ROW ALONE, the same reason `artifact_naming` sits
+// here rather than in the manifest: the manifest says what the author means
+// (`app`), and the engine answers how THIS row spells it. A manifest that
+// tried to say this itself would need a predicate over `[targets.<name>]`,
+// which is exactly the shape §2.3 of the #622 design record rejects.
+enum class ApplicationForm { Executable, SharedObject };
+
+inline ApplicationForm application_form(const Triple& t) {
+    // `env == "android"` is the same test `is_android()` uses (and the same
+    // one `artifact_naming` would use for an Android row, if it had one) --
+    // deliberately not `os == "linux"`, which would also catch a plain
+    // ELF/glibc or musl row that has an ordinary executable `main`.
+    return t.env == "android" ? ApplicationForm::SharedObject
+                              : ApplicationForm::Executable;
+}
+
+// THE PLATFORM NAME OF A ROW, for `[package] platforms` (#622 A7). A platform
+// name is the triple's `os`, except where an `env` names a platform of its
+// own: Android is `linux` with `env = "android"` in the triple, and a
+// package that supports Linux does not thereby support Android. The Web row
+// keeps its `os` word, `emscripten`, which is also the word the `cfg()`
+// grammar uses; a WASI row would be another `os`.
+//
+// `kPlatformNames` is the closed vocabulary the `[package] platforms`
+// validator, `mcpp doctor` and the pack coverage check share. It is derived by
+// hand rather than from `kKnownTargets` so that a `planned` row does not admit
+// a claim nothing can yet check; the unit test asserts every known row's
+// `platform_name` is a member.
+inline constexpr std::string_view kPlatformNames[] = {
+    "linux", "macos", "windows", "ios", "android", "emscripten",
+};
+
+inline std::string platform_name(const Triple& t) {
+    if (t.env == "android") return "android";
+    return t.os;
+}
+
+inline bool is_platform_name(std::string_view name) {
+    for (auto p : kPlatformNames)
+        if (p == name) return true;
+    return false;
+}
+
+inline std::string platform_names_joined() {
+    std::string out;
+    for (auto p : kPlatformNames) {
+        if (!out.empty()) out += " | ";
+        out += p;
+    }
+    return out;
 }
 
 } // namespace mcpp::toolchain::triple

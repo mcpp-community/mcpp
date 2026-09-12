@@ -133,8 +133,26 @@ inline std::string windows_choice_problem(bool subsystem, std::string_view value
 
 struct Target {
     std::string                 name;
-    enum Kind { Library, Binary, SharedLibrary, TestBinary } kind;
-    std::string                 main;           // for binary / test
+    // `Application` (#622 A3, `kind = "app"`) is "the thing a user launches",
+    // and its link form is a property of the ROW, not of this enum: on every
+    // row but Android it links exactly as `Binary` does; on `*-linux-android`
+    // it links as `SharedLibrary` does, because that is the only form an
+    // Android application has. See `toolchain::triple::application_form`,
+    // which is the one function that answers this — the manifest carries no
+    // predicate for it.
+    enum Kind { Library, Binary, SharedLibrary, TestBinary, Application } kind;
+    std::string                 main;           // for binary / test / app
+
+    // Whether this target is a PROGRAM -- something `mcpp run` can be asked
+    // for and `mcpp pack` treats as the application pipeline's subject --
+    // as opposed to a library. True for `Binary` and `Application`.
+    //
+    // Every call site that used to ask `kind == Binary` to mean "is this the
+    // program" now asks this instead; a site that means "is this literally an
+    // executable link" (a PE subsystem, a host build tool that must be exec'd
+    // directly) keeps comparing against `Binary` and, where an `app` can
+    // stand in for it, adds `Application` guarded by the row's actual form.
+    bool is_program() const { return kind == Binary || kind == Application; }
     std::string                 soname;         // ABI name for shared libraries, e.g. libfoo.so.1
     // WHICH SYMBOLS THIS ARTIFACT PUBLISHES. Empty = every symbol, which is
     // what both platforms do today (ELF default visibility; PE gets an
@@ -803,6 +821,20 @@ struct BuildConfig : BuildInputs {
     // value because `threads = false` is also a statement.
     bool                               abiThreads = false;
     bool                               abiThreadsDeclared = false;
+    // `[target.<selector>.abi] exceptions` -- design 2026-09-12 (the UI
+    // framework record) section 2.1, A1: the second member of the table.
+    // Whether the artefact is built with C++ exceptions on. A GRAPH-WIDE ABI
+    // SWITCH for the same reason `threads` is one: clang records the
+    // exception model in a BMI and refuses an importer that disagrees, so
+    // the switch must reach the standard library prebuild, the scan, every
+    // translation unit, and the link. Rendered only where the target's
+    // default is OFF -- Emscripten; every hosted target already links with
+    // exceptions on, so the member is satisfied by default there, the same
+    // property `threads` has on PE. Declared is kept apart from the value
+    // for the same reason `threads` keeps it: `exceptions = false` is also
+    // a statement.
+    bool                               abiExceptions = false;
+    bool                               abiExceptionsDeclared = false;
     std::string                         cStandard;
     // Escape hatch for the hermetic link check: a sandbox toolchain whose
     // CRT/loader resolve OUTSIDE the sandbox is a hard error by default
@@ -1270,10 +1302,34 @@ struct ConditionalConfig {
     // add to them.
     std::vector<std::filesystem::path>  linkLibraryDirs;
     std::vector<std::string>            libraries;
+    // `frameworks` is the third per-target runtime key (#622 A2). It is the
+    // one Mach-O key that names a platform library, and iOS and macOS do not
+    // share those names: `AppKit` is absent from the iOS SDK and `UIKit` from
+    // the macOS one. Appended after the top-level list, rendered only on
+    // Mach-O, exactly as `libraries` is handled.
+    std::vector<std::string>            frameworks;
     // `[target.<sel>.abi]` -- graph-wide ABI switches as typed members. See
     // BuildConfig::abiThreads for what the value does and where it applies.
     bool                                abiThreads = false;
     bool                                abiThreadsDeclared = false;
+    // `[target.<sel>.abi] exceptions` -- see BuildConfig::abiExceptions.
+    bool                                abiExceptions = false;
+    bool                                abiExceptionsDeclared = false;
+    // `[target.<sel>] requires_abi = { ... }` -- design 2026-09-12 (the UI
+    // framework record) section 2.6, A6: a requirement can sit on the target
+    // axis, because the sources it gates (`[target.<sel>.build] sources`) are
+    // selected by this SAME predicate. No "declared" pair: a requirement is a
+    // union (this selector asks, or it does not), so `false` carries nothing
+    // a plain absence would not -- unlike `abi`'s value, which the root
+    // renders and where `false` overrides an outer `true`.
+    bool                                requiresAbiThreads = false;
+    bool                                requiresAbiExceptions = false;
+    // `[target.<sel>.feature-requires-abi] <feature> = { ... }` -- the
+    // per-feature form of the same requirement, on the target axis. Named
+    // after `feature-deps`/`feature-xlings` below, the two existing
+    // per-target-per-feature tables (SPEC-004 section 4; #359).
+    std::map<std::string, bool>        featureRequiresAbiThreads;
+    std::map<std::string, bool>        featureRequiresAbiExceptions;
     // Conditional dependencies (Phase 1b): merged into the corresponding
     // manifest maps in prepare_build when the predicate matches the resolved
     // target — before dependency resolution, so they resolve like any dep.
@@ -1338,9 +1394,12 @@ struct ConditionalConfig {
 // same reason `is_empty(BuildInputs)` is one.
 inline bool is_empty(const ConditionalConfig& c) {
     return is_empty(c.inputs) && c.linkLibraryDirs.empty() && c.libraries.empty()
+        && c.frameworks.empty()
         && c.dependencies.empty() && c.devDependencies.empty()
         && c.buildDependencies.empty() && c.featureDeps.empty()
-        && c.xlings.empty() && !c.abiThreadsDeclared;
+        && c.xlings.empty() && !c.abiThreadsDeclared && !c.abiExceptionsDeclared
+        && !c.requiresAbiThreads && !c.requiresAbiExceptions
+        && c.featureRequiresAbiThreads.empty() && c.featureRequiresAbiExceptions.empty();
 }
 
 // `[lib]` — library "root" interface convention.
@@ -1672,12 +1731,28 @@ struct Manifest {
     // through untouched, exactly as they do in `provides`.
     // The spelling is `requires_` because `requires` is a keyword.
     std::vector<std::string>                        requires_;
-    // `requires_abi = { threads = true }` at package level, and per feature.
-    // A statement that the ARTEFACT's ABI has a switch on, compared at
-    // resolution with the root's `[target.<selector>.abi]`. Only `threads`
-    // exists; a feature's entry counts only when that feature is active.
+    // `requires_abi = { threads = true, exceptions = true }` at package
+    // level, and per feature. A statement that the ARTEFACT's ABI has a
+    // switch on, compared at resolution with the root's
+    // `[target.<selector>.abi]`. A feature's entry counts only when that
+    // feature is active.
     bool                                            requiresAbiThreads = false;
+    bool                                            requiresAbiExceptions = false;
     std::map<std::string, bool>                     featureRequiresAbiThreads;
+    std::map<std::string, bool>                     featureRequiresAbiExceptions;
+    // The TARGET-AXIS form of the same requirement (design 2026-09-12, the UI
+    // framework record, section 2.6, A6): `[target.<sel>] requires_abi =
+    // {...}` and `[target.<sel>.feature-requires-abi] <f> = {...}`, unioned
+    // in by `merge_conditional_config` when the selector matches the resolved
+    // target. Kept apart from the two members above -- rather than folded
+    // into them -- so the check that reports an unmet requirement can name
+    // the SELECTOR that asked, as written, and not just "the package": each
+    // vector holds the predicate text of every matching selector that
+    // declared the member, in the order merge_conditional_config visited them.
+    std::vector<std::string>                        targetRequiresAbiThreads;
+    std::vector<std::string>                        targetRequiresAbiExceptions;
+    std::map<std::string, std::vector<std::string>> targetFeatureRequiresAbiThreads;
+    std::map<std::string, std::vector<std::string>> targetFeatureRequiresAbiExceptions;
     // [package] exclusive — the capabilities this package claims it is the ONLY
     // provider of.
     //

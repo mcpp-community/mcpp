@@ -28,6 +28,19 @@ import mcpp.ui;
 
 namespace mcpp::pack {
 
+// #622 A10: the CLI exit code, plus the artifact(s) this pass reported as
+// "Packed" -- the staged tree or archive for a built-in format, or the
+// distributable(s) a DISPATCHED format's provider submitted for THIS
+// request. `mcpp run --format <name>` takes `artifacts.front()` as its run
+// operand rather than re-deriving it: the reported path IS the thing rule 3
+// ("declare unconditionally, submit conditionally") makes unambiguous, and a
+// second derivation is a second place for it to disagree. Empty whenever
+// `rc != 0`.
+export struct PackOutcome {
+    int                                 rc = 0;
+    std::vector<std::filesystem::path> artifacts;
+};
+
 // Everything after CLI option parsing for `mcpp pack`.
 //
 // `wantTarget` is the target NAME the user asked for, empty when they did not.
@@ -36,7 +49,7 @@ namespace mcpp::pack {
 // or a project with two `bin` targets would accept `mcpp pack app2` and
 // silently bundle app1 — the shape where the command succeeds and the answer
 // is wrong.
-export int build_and_pack(Options opts, bool modeFromUser,
+export PackOutcome build_and_pack(Options opts, bool modeFromUser,
                           const std::string& wantTarget = {}) {
     // `--target *-linux-musl` without an explicit `--mode` implies
     // `--mode static` — packaging a musl-static ELF as bundle-project
@@ -78,7 +91,7 @@ export int build_and_pack(Options opts, bool modeFromUser,
     if (quietUntilValidated) mcpp::ui::set_quiet(false);
     if (!ctx) {
         mcpp::ui::error(ctx.error());
-        return 2;
+        return PackOutcome{2};
     }
 
     // Manifest may override mode only when neither --mode nor an
@@ -113,7 +126,7 @@ export int build_and_pack(Options opts, bool modeFromUser,
         if (quietUntilValidated) mcpp::ui::set_quiet(true);
         auto ctx2 = mcpp::build::prepare_build(false, false, {}, ov);
         if (quietUntilValidated) mcpp::ui::set_quiet(false);
-        if (!ctx2) { mcpp::ui::error(ctx2.error()); return 2; }
+        if (!ctx2) { mcpp::ui::error(ctx2.error()); return PackOutcome{2}; }
         ctx = std::move(ctx2);
     }
 
@@ -147,7 +160,7 @@ export int build_and_pack(Options opts, bool modeFromUser,
                 "  that provides '{}' to [build-dependencies] and activate its "
                 "feature.",
                 opts.formatName, avail, opts.formatName));
-            return 2;
+            return PackOutcome{2};
         }
     }
 
@@ -176,7 +189,7 @@ export int build_and_pack(Options opts, bool modeFromUser,
             if (br.error().diagnosticOutput.back() != '\n') std::fputs("\n", stderr);
         }
         mcpp::ui::error(br.error().message);
-        return 1;
+        return PackOutcome{1};
     }
 
     // ─── Pick the main binary target ─────────────────────────────────
@@ -184,46 +197,70 @@ export int build_and_pack(Options opts, bool modeFromUser,
     // An explicitly named target wins over the package-name convention: the
     // user said which one, and guessing past that is how `mcpp pack app2`
     // would produce app1's bundle under app2's name.
+    //
+    // #622 A3/A10: an `app` whose form on THIS row is a shared object still
+    // links as `LinkUnit::SharedLibrary` (`mcpp.build.plan`), so "is this
+    // link unit the program" cannot ask for `Binary` alone any more without
+    // reintroducing the refusal `Target::is_program()` exists to remove
+    // everywhere else this record sweeps (§2.3). `dependencyOwned` is
+    // excluded: a dependency's own `shared` target contributes a link unit to
+    // this plan too, and it is never the package being packed.
+    auto is_program_link_unit = [&](const mcpp::build::LinkUnit& lu) {
+        if (lu.kind == mcpp::build::LinkUnit::Binary) return true;
+        if (lu.kind != mcpp::build::LinkUnit::SharedLibrary || lu.dependencyOwned)
+            return false;
+        for (auto const& t : ctx->manifest.targets)
+            if (t.name == lu.targetName)
+                return t.kind == mcpp::manifest::Target::Application;
+        return false;
+    };
     std::filesystem::path mainBinary;
+    const mcpp::build::LinkUnit* chosenLu = nullptr;
     if (!wantTarget.empty()) {
         for (auto& lu : ctx->plan.linkUnits) {
-            if (lu.kind == mcpp::build::LinkUnit::Binary && lu.targetName == wantTarget) {
+            if (is_program_link_unit(lu) && lu.targetName == wantTarget) {
                 mainBinary = ctx->outputDir / lu.output;
+                chosenLu = &lu;
                 break;
             }
         }
         if (mainBinary.empty()) {
             mcpp::ui::error(std::format(
                 "target '{}' is not a program in this build", wantTarget));
-            return 2;
+            return PackOutcome{2};
         }
     }
     for (auto& lu : ctx->plan.linkUnits) {
         if (!mainBinary.empty()) break;
-        if (lu.kind == mcpp::build::LinkUnit::Binary
-            && lu.targetName == ctx->manifest.package.name)
-        {
+        if (is_program_link_unit(lu) && lu.targetName == ctx->manifest.package.name) {
             mainBinary = ctx->outputDir / lu.output;
+            chosenLu = &lu;
             break;
         }
     }
     if (mainBinary.empty()) {
         // Fall back to the first binary target if package.name doesn't match.
         for (auto& lu : ctx->plan.linkUnits) {
-            if (lu.kind == mcpp::build::LinkUnit::Binary) {
+            if (is_program_link_unit(lu)) {
                 mainBinary = ctx->outputDir / lu.output;
+                chosenLu = &lu;
                 break;
             }
         }
     }
     if (mainBinary.empty()) {
         mcpp::ui::error("no binary target to pack");
-        return 1;
+        return PackOutcome{1};
     }
+    // Passed to `make_plan` rather than re-derived from the file: `make_plan`
+    // has only `mainBinary` and would otherwise have to ask the triple and
+    // the manifest the same question a second time.
+    const bool programIsSharedObject =
+        chosenLu && chosenLu->kind == mcpp::build::LinkUnit::SharedLibrary;
 
     auto cfg = mcpp::config::load_or_init(/*quiet=*/false,
         mcpp::fetcher::make_bootstrap_progress_callback());
-    if (!cfg) { mcpp::ui::error(cfg.error().message); return 4; }
+    if (!cfg) { mcpp::ui::error(cfg.error().message); return PackOutcome{4}; }
 
     // ─── What the build promised, and where its runtime lives ────────
     //
@@ -260,8 +297,8 @@ export int build_and_pack(Options opts, bool modeFromUser,
         // From the RESOLVED graph. `mcpp why runtime` on a real imgui project
         // lists `capability:opengl.glx.driver <- compat.glfw@3.4` — none of
         // which appears in the project's own manifest.
-        ctx->plan.runtimeRequirements);
-    if (!plan) { mcpp::ui::error(plan.error().message); return 1; }
+        ctx->plan.runtimeRequirements, programIsSharedObject);
+    if (!plan) { mcpp::ui::error(plan.error().message); return PackOutcome{1}; }
 
     // The RESOLVED debug-information decision. On the plan, not in Options:
     // Options is the request, this is what it came out as once the manifest
@@ -316,7 +353,7 @@ export int build_and_pack(Options opts, bool modeFromUser,
     if (auto r = mcpp::pack::run(*plan, *cfg); !r) {
         if (opts.format != mcpp::pack::Format::Dispatched) {
             mcpp::ui::error(r.error().message);
-            return 1;
+            return PackOutcome{1};
         }
         stageFailure = r.error().message;
         mcpp::ui::warning(std::format(
@@ -372,7 +409,7 @@ export int build_and_pack(Options opts, bool modeFromUser,
                                                  : std::filesystem::path{};
         ov.pack_stage_reason = stageFailure;
         auto distCtx = mcpp::build::prepare_build(false, false, {}, ov);
-        if (!distCtx) { mcpp::ui::error(distCtx.error()); return 2; }
+        if (!distCtx) { mcpp::ui::error(distCtx.error()); return PackOutcome{2}; }
 
         // WHICH ACTIONS ARE THE DISTRIBUTABLE: the artifact actions the REQUEST
         // INTRODUCED. An action present in both passes existed before anyone
@@ -418,7 +455,7 @@ export int build_and_pack(Options opts, bool modeFromUser,
                 "      if (std::string_view(mcpp::pack_format()) == \"{}\") ..."
                 "   // then submit",
                 opts.formatName, opts.formatName, opts.formatName));
-            return 1;
+            return PackOutcome{1};
         }
 
         mcpp::ui::info("Distributing", std::format("{} v{} (--format {})",
@@ -437,7 +474,7 @@ export int build_and_pack(Options opts, bool modeFromUser,
                 if (dr.error().diagnosticOutput.back() != '\n') std::fputs("\n", stderr);
             }
             mcpp::ui::error(dr.error().message);
-            return 1;
+            return PackOutcome{1};
         }
 
         // THE CRITERION IS THE FILE, NOT THE EXIT CODE. A cached build program
@@ -446,6 +483,7 @@ export int build_and_pack(Options opts, bool modeFromUser,
         // measured failure was a packaging step that succeeded while carrying
         // nothing.
         std::error_code ec;
+        std::vector<std::filesystem::path> reported;
         for (auto const& o : distOutputs) {
             auto abs = std::filesystem::path(o).is_absolute()
                      ? std::filesystem::path(o) : distCtx->plan.outputDir / o;
@@ -454,17 +492,18 @@ export int build_and_pack(Options opts, bool modeFromUser,
                 mcpp::ui::error(std::format(
                     "--format {} reported success and produced nothing at {}",
                     opts.formatName, abs.string()));
-                return 1;
+                return PackOutcome{1};
             }
             mcpp::ui::status("Packed", mcpp::ui::shorten_path(abs, pathCtx));
+            reported.push_back(std::move(abs));
         }
-        return 0;
+        return PackOutcome{0, std::move(reported)};
     }
 
     auto outPath = (opts.format == mcpp::pack::Format::Tar)
         ? plan->archivePath : plan->stagingRoot;
     mcpp::ui::status("Packed", mcpp::ui::shorten_path(outPath, pathCtx));
-    return 0;
+    return PackOutcome{0, {outPath}};
 }
 
 } // namespace mcpp::pack

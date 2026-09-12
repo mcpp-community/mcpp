@@ -171,6 +171,17 @@ inline void windows_subsystem(const char* target, const char* value) {
 inline void windows_entry(const char* target, const char* value) {
     std::printf("mcpp:windows-entry=%s:%s\n", target, value);
 }
+// A file THIS PROGRAM produced or selected, placed beside the artifact at a
+// path relative to the executable's directory (#622 A4) — the build-program
+// form of `[runtime] deploy` (docs/04). `from` may be absolute (an action's
+// own declared output; see mcpp::action) or relative to this package's root;
+// `to` follows the manifest key's own rule: `/`-separated, no `..`
+// component, and `"."` names the executable's own directory. TAB-separated
+// on the wire because an absolute `from` is a Windows path on that platform,
+// and `windows_subsystem`'s `:` splitter would misparse `C:\...`.
+inline void deploy(const char* from, const char* to) {
+    std::printf("mcpp:deploy=%s\t%s\n", from, to);
+}
 // ── Build-graph nodes (mcpp 2026.8.5.1+) ────────────────────────────────
 // Declare WORK instead of doing it. A build program is a good place to decide
 // what the build looks like and a bad place to perform it: work done here is
@@ -445,6 +456,16 @@ inline const char* package_namespace()            { return env_or("MCPP_PKG_NAME
 // say so itself when it is empty, naming the value it wanted: only the member
 // knows whether the absence is fatal.
 inline const char* package_version()              { return env_or("MCPP_PKG_VERSION"); }
+// THE PROJECT'S FLOOR FOR THIS TRIPLE, IN THE PLATFORM'S OWN WORDS (#622
+// A11): `14.0` on macOS, `18.0` on iOS, an API level on Android, empty
+// everywhere else. One function on the engine side, `min_platform_version`,
+// already answers this for the compiler flag and the fingerprint slot; before
+// this a member (`dist-apple`'s `minimum_system_version`, `dist-apk`'s
+// `minSdkVersion`) had no channel to it and restated the value in its own
+// options, where it silently drifted from the manifest's actual answer.
+// Empty under an engine older than this, which a member reads as "restate the
+// value yourself", the behaviour every consumer had before.
+inline const char* min_platform_version()         { return env_or("MCPP_TARGET_MIN_PLATFORM_VERSION"); }
 inline const char* package_description()          { return env_or("MCPP_PKG_DESCRIPTION"); }
 inline const char* package_license()              { return env_or("MCPP_PKG_LICENSE"); }
 inline const char* package_authors()              { return env_or("MCPP_PKG_AUTHORS"); }

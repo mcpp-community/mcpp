@@ -762,19 +762,22 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 read_str_array(ft, "requires", reqs);
                 read_str_array(ft, "provides", provs);
                 if (!reqs.empty())  m.featureRequires[fname] = std::move(reqs);
-                // `requires_abi = { threads = true }`: this feature needs the
-                // artefact's ABI switch on. See Manifest::featureRequiresAbiThreads.
+                // `requires_abi = { threads = true, exceptions = true }`:
+                // this feature needs the artefact's ABI switch(es) on. See
+                // Manifest::featureRequiresAbiThreads /
+                // Manifest::featureRequiresAbiExceptions.
                 if (auto rait = ft.find("requires_abi"); rait != ft.end()) {
                     if (!rait->second.is_table())
                         return std::unexpected(error(origin, std::format(
                             "features.{}.requires_abi must be a table such as "
                             "`{{ threads = true }}`", fname)));
                     for (auto& [ak, av] : rait->second.as_table()) {
-                        if (ak != "threads" || !av.is_bool())
+                        if ((ak != "threads" && ak != "exceptions") || !av.is_bool())
                             return std::unexpected(error(origin, std::format(
                                 "features.{}.requires_abi.{}: the members are "
-                                "`threads`, a boolean", fname, ak)));
-                        m.featureRequiresAbiThreads[fname] = av.as_bool();
+                                "`threads`, `exceptions`, booleans", fname, ak)));
+                        if (ak == "threads") m.featureRequiresAbiThreads[fname] = av.as_bool();
+                        else m.featureRequiresAbiExceptions[fname] = av.as_bool();
                     }
                 }
                 if (!provs.empty()) m.featureProvides[fname] = std::move(provs);
@@ -945,16 +948,19 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 m.unknownCapabilities.push_back(entry);
         m.requires_ = *v;
     }
-    // [package] requires_abi -- see Manifest::requiresAbiThreads.
+    // [package] requires_abi -- see Manifest::requiresAbiThreads /
+    // Manifest::requiresAbiExceptions.
     if (auto* ra = doc->get("package.requires_abi")) {
         if (!ra->is_table())
             return std::unexpected(error(origin,
                 "[package] requires_abi must be a table such as `{ threads = true }`"));
         for (auto& [ak, av] : ra->as_table()) {
-            if (ak != "threads" || !av.is_bool())
+            if ((ak != "threads" && ak != "exceptions") || !av.is_bool())
                 return std::unexpected(error(origin, std::format(
-                    "[package] requires_abi.{}: the members are `threads`, a boolean", ak)));
-            m.requiresAbiThreads = av.as_bool();
+                    "[package] requires_abi.{}: the members are `threads`, "
+                    "`exceptions`, booleans", ak)));
+            if (ak == "threads") m.requiresAbiThreads = av.as_bool();
+            else m.requiresAbiExceptions = av.as_bool();
         }
     }
     // [package] exclusive — capabilities this package claims sole provision of.
@@ -1106,14 +1112,28 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         else if (kind_s == "bin"    || kind_s == "binary")   t.kind = Target::Binary;
         else if (kind_s == "shared" || kind_s == "dylib"
               || kind_s == "so"     || kind_s == "shlib")    t.kind = Target::SharedLibrary;
+        // #622 A3: "the thing a user launches", on every row. Its link form
+        // is a function of the row alone (`toolchain::triple::
+        // application_form`) -- identical to `bin` everywhere except
+        // `*-linux-android`, where it is the shared library the platform
+        // loads. An older engine refuses this name (`toml.cppm:1110` on
+        // 2026.9.12.2 lists three kinds), which is correct: a root that
+        // names a form the engine cannot produce must not build.
+        else if (kind_s == "app"    || kind_s == "application") t.kind = Target::Application;
         else return std::unexpected(error(origin,
-            std::format("targets.{}.kind must be 'bin', 'lib' or 'shared'; got '{}'", tname, kind_s)));
+            std::format("targets.{}.kind must be 'bin', 'app', 'lib' or 'shared'; got '{}'", tname, kind_s)));
 
-        if (t.kind == Target::Binary) {
+        // `main` is required for `bin` and for `app`: on every row but
+        // Android it is the executable's entry, exactly as it is for `bin`;
+        // on Android it is a translation unit compiled INTO the shared
+        // library (its actual entry is `ANativeActivity_onCreate` or the
+        // JNI exports, which is the platform's contract and not mcpp's to
+        // rename -- see `is_program()` and `application_form`).
+        if (t.is_program()) {
             auto mit = tt.find("main");
             if (mit == tt.end() || !mit->second.is_string()) {
                 return std::unexpected(error(origin,
-                    std::format("targets.{} (kind=bin) requires 'main' field", tname)));
+                    std::format("targets.{} (kind={}) requires 'main' field", tname, kind_s)));
             }
             t.main = mit->second.as_string();
         }
@@ -1219,12 +1239,16 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             return std::unexpected(r.error());
         // An executable's property. A library has no subsystem, and a GUI
         // subsystem on anything a test runner executes is the defect #618
-        // describes, so both are refused naming the key.
+        // describes, so both are refused naming the key. `app` is accepted
+        // exactly as `bin` is (#622 A3: PE has no Android row, so this key
+        // never meets `application_form`'s SharedObject form in practice) --
+        // `is_program()` is "is this the program", which is what the PE
+        // subsystem attaches to; `TestBinary` stays refused on purpose.
         if ((!t.windowsSubsystem.empty() || !t.windowsEntry.empty())
-            && t.kind != Target::Binary)
+            && !t.is_program())
             return std::unexpected(error(origin, std::format(
-                "targets.{}.{} applies to an executable (`kind = \"bin\"`), and this "
-                "target is not one", tname,
+                "targets.{}.{} applies to an executable (`kind = \"bin\"` or "
+                "`\"app\"`), and this target is not one", tname,
                 t.windowsSubsystem.empty() ? "windows_entry" : "windows_subsystem")));
         // Guard: -std=... belongs to [package].standard, not per-target flags
         // (same rule as [build].cxxflags). Reject early with a clear message.
@@ -2746,24 +2770,95 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // keys only, and the same two `[runtime]` already has at the top
             // level: this makes them per-target, it does not invent a vocabulary.
             // `[target.<pred>.abi]` -- graph-wide ABI switches as typed members
-            // rather than flags (design 2026-09-12, section 5.2). One member
-            // today, and an unknown member is refused, so the table cannot
-            // become a second flag list.
+            // rather than flags (design 2026-09-12, section 5.2; `exceptions`
+            // added by section 2.1, A1). Two members, and an unknown one is
+            // refused naming both, so the table cannot become a second flag
+            // list.
             if (auto ait = body.find("abi"); ait != body.end()) {
                 if (!ait->second.is_table())
                     return std::unexpected(error(origin, std::format(
                         "[target.{}].abi must be a table, e.g. `[target.{}.abi]` "
                         "with `threads = true`", triple, triple)));
                 for (auto& [ak, av] : ait->second.as_table()) {
-                    if (ak != "threads")
+                    if (ak != "threads" && ak != "exceptions")
                         return std::unexpected(error(origin, std::format(
                             "[target.{}.abi] has no member '{}'; the members are: "
-                            "threads", triple, ak)));
+                            "threads, exceptions", triple, ak)));
                     if (!av.is_bool())
                         return std::unexpected(error(origin, std::format(
-                            "[target.{}.abi].threads must be true or false", triple)));
-                    cc.abiThreads = av.as_bool();
-                    cc.abiThreadsDeclared = true;
+                            "[target.{}.abi].{} must be true or false", triple, ak)));
+                    if (ak == "threads") {
+                        cc.abiThreads = av.as_bool();
+                        cc.abiThreadsDeclared = true;
+                    } else {
+                        cc.abiExceptions = av.as_bool();
+                        cc.abiExceptionsDeclared = true;
+                    }
+                }
+            }
+            // `[target.<pred>] requires_abi = { ... }` -- design 2026-09-12
+            // (the UI framework record), section 2.6, A6: the requirement can
+            // sit on the TARGET axis, because the sources it gates
+            // (`[target.<pred>.build] sources`) are selected by this same
+            // predicate. A DIRECT key of the selector table (an inline-table
+            // VALUE), not a sub-section -- which is why the unsupported-key
+            // sweep above does not have to name it: that sweep skips every
+            // table-valued key, on the reasoning that a table is the
+            // conditional channel, and an inline table is the same TOML value
+            // shape as a dotted sub-section. Stored on `cc` and unioned into
+            // the package's requirement set by `merge_conditional_config`
+            // when the predicate matches the resolved target, keeping the
+            // selector text so a refusal can name what asked.
+            //
+            // MEASURED: an mcpp before this change (2026.9.12.2) neither
+            // warns nor errors on this key -- it is a table, so the same
+            // "skip tables" sweep already silently drops it there too. The
+            // design record's claim that an older engine warns
+            // "[target.cfg(linux)] has unsupported key 'requires_abi'
+            // (ignored)" does not hold for 2026.9.12.2; verified by running
+            // it against `[target.'cfg(linux)'] requires_abi = { threads =
+            // true }`, which built with no diagnostic at all.
+            if (auto rait2 = body.find("requires_abi"); rait2 != body.end()) {
+                if (!rait2->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}] requires_abi must be a table such as "
+                        "`{{ threads = true }}`", triple)));
+                for (auto& [ak, av] : rait2->second.as_table()) {
+                    if ((ak != "threads" && ak != "exceptions") || !av.is_bool())
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}].requires_abi.{}: the members are "
+                            "`threads`, `exceptions`, booleans", triple, ak)));
+                    if (ak == "threads") cc.requiresAbiThreads = av.as_bool();
+                    else cc.requiresAbiExceptions = av.as_bool();
+                }
+            }
+            // `[target.<pred>.feature-requires-abi] <feature> = { ... }` --
+            // the per-feature form of the same requirement, on the target
+            // axis. Named after `feature-deps` and `feature-xlings` below,
+            // the two existing per-target-per-feature tables. The feature is
+            // registered UNCONDITIONALLY, exactly as `feature-deps` does a
+            // few dozen lines down: whether the predicate matches decides
+            // whether the requirement counts, not whether the feature exists.
+            if (auto frait = body.find("feature-requires-abi");
+                frait != body.end() && frait->second.is_table()) {
+                for (auto& [fname, fval] : frait->second.as_table()) {
+                    if (!fval.is_table())
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}.feature-requires-abi.{}] must be a "
+                            "table such as `{{ threads = true }}`", triple, fname)));
+                    for (auto& [ak, av] : fval.as_table()) {
+                        if ((ak != "threads" && ak != "exceptions") || !av.is_bool())
+                            return std::unexpected(error(origin, std::format(
+                                "[target.{}.feature-requires-abi.{}].{}: the "
+                                "members are `threads`, `exceptions`, booleans",
+                                triple, fname, ak)));
+                        if (ak == "threads")
+                            cc.featureRequiresAbiThreads[std::string(fname)] = av.as_bool();
+                        else
+                            cc.featureRequiresAbiExceptions[std::string(fname)] = av.as_bool();
+                    }
+                    m.featuresMap.try_emplace(std::string(fname),
+                                              std::vector<std::string>{});
                 }
             }
             if (auto rit = body.find("runtime"); rit != body.end() && rit->second.is_table()) {
@@ -2774,7 +2869,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 if (auto f = rt.find("libraries"); f != rt.end() && f->second.is_array())
                     for (auto& v : f->second.as_array())
                         if (v.is_string()) cc.libraries.push_back(v.as_string());
-                // Two keys, and therefore a third key is a typo. The sweep over
+                if (auto f = rt.find("frameworks"); f != rt.end() && f->second.is_array())
+                    for (auto& v : f->second.as_array())
+                        if (v.is_string()) cc.frameworks.push_back(v.as_string());
+                // Three keys, and therefore a fourth key is a typo. The sweep over
                 // `[target.<pred>]` above cannot reach here: it skips tables,
                 // because tables are its conditional channel — so this table's
                 // own keys were swept by nothing.
@@ -2785,7 +2883,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 // and had drifted from both others, so the only spelling that
                 // turned the feature on was the one reported as unsupported.
                 static constexpr std::string_view kKnownCondRuntimeKeys[] = {
-                    "libraries", "link_library_dirs",
+                    "frameworks", "libraries", "link_library_dirs",
                 };
                 for (auto& [rk, _] : rt) {
                     if (std::ranges::find(kKnownCondRuntimeKeys, rk)
@@ -3404,6 +3502,12 @@ void apply_defaults_and_infer(Manifest& m, const std::filesystem::path& root) {
         const bool hasModuleInterface = !moduleInterfaceExt.empty();
 
         if (hasMain) {
+            // #622 A3: inference stays `Binary`, deliberately. `app` is a
+            // platform fact an author states on purpose (an Android build is
+            // never an accident), never a default this engine guesses from a
+            // bare `src/main.cpp` -- guessing wrong here would silently link
+            // a library where the author's `[targets]`-free project expected
+            // an executable.
             Target t;
             t.name = m.package.name;
             t.kind = Target::Binary;

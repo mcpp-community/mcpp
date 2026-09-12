@@ -400,15 +400,21 @@ for arch/env conditions and combinators.
   `cfg(arch = "x86_64")`; `!`-exclusion globs work here too), plus `flags` and
   `include_dirs` / `include_dirs_after` (mcpp 0.0.102+), plus
   `private_include_dirs` and `std-module-flags` (mcpp 2026.9.1.1+), and
-  `runtime` with `libraries` / `link_library_dirs` (mcpp 2026.8.29.1+).
+  `runtime` with `frameworks` / `libraries` / `link_library_dirs`
+  (mcpp 2026.8.29.1+; `frameworks` since 2026.9.12.3).
 - **`runtime` is the dialect-neutral half of a link line.** `build.ldflags` is
-  spelled the GNU way, and a native `cl.exe` rejects `-L`. These two keys say
-  the same thing without committing to a spelling: mcpp renders them as
-  `-L<dir>` + `-l<name>` or `/LIBPATH:<dir>` + `<name>.lib` according to the
-  target. They are the same two keys `[runtime]` (§2.11 of
-  [04 — mcpp.toml](04-mcpp-toml.md)) already has at the top level; this makes
-  them per-target and invents no vocabulary. Any other `[runtime]` key is
-  reported here and ignored, because the rest are not per-target.
+  spelled the GNU way, and a native `cl.exe` rejects `-L`. These keys say the
+  same thing without committing to a spelling: mcpp renders `libraries` /
+  `link_library_dirs` as `-L<dir>` + `-l<name>` or `/LIBPATH:<dir>` +
+  `<name>.lib` according to the target, and `frameworks` as
+  `-framework <name>` on Mach-O rows, nothing on the others. They are the same
+  keys `[runtime]` (§2.11 of [04 — mcpp.toml](04-mcpp-toml.md)) already has at
+  the top level; this makes them per-target and invents no vocabulary. An
+  entry here is appended after the top-level list, never a replacement — the
+  way a manifest keeps `UIKit` off the macOS link and `AppKit` off the iOS one
+  while sharing every framework both need at the top level. Any other
+  `[runtime]` key is reported here and ignored, because the rest are not
+  per-target.
 
   ```toml
   # Linked only on Windows, and spelled correctly for whichever compiler builds it.
@@ -522,24 +528,40 @@ until 2026.9.1.1, which was the wrong one of the two.
 
 ```toml
 [target.'cfg(os = "emscripten")'.abi]
-threads = true
+threads    = true
+exceptions = true
 ```
 
 Some properties of a target are not a flag a translation unit may choose. Thread
 support is one: on WebAssembly every object, the precompiled standard library
 module and the link must agree on shared memory and atomics, and one translation
-unit built without them makes the link fail or the module refuse to load. Such a
-property is written as a typed member of `[target.<selector>.abi]` rather than as
-a flag in `cxxflags`, so the engine applies it to every unit that has to agree
-and compares it with what a package needs.
+unit built without them makes the link fail or the module refuse to load.
+Exceptions are the same shape: clang records the exception model in a BMI and
+refuses an importer that disagrees. Such a property is written as a typed
+member of `[target.<selector>.abi]` rather than as a flag in `cxxflags`, so the
+engine applies it to every unit that has to agree and compares it with what a
+package needs.
 
 | Member | Type | Renders as | Reaches |
 |---|---|---|---|
 | `threads` | boolean | `-pthread` on a target that is neither PE nor freestanding; nothing on PE and on freestanding targets | the standard library module prebuild, the dependency scan, every C and C++ translation unit of every package, and the link |
+| `exceptions` *(mcpp 2026.9.12.3+)* | boolean | `-fexceptions`, on `os = "emscripten"` only, on the compile line through the dialect flags and on the link; nothing on every other target, where exceptions are already the default | the same set `threads` reaches |
 
-The member enters the dependency cache key through the dialect flags, so a
-dependency built without threads is never reused by a build with them. An
-unknown member, and a `threads` that is not a boolean, are refused.
+Both members enter the dependency cache key through the dialect flags, so a
+dependency built without one is never reused by a build with it. An unknown
+member, and a member that is not a boolean, are refused naming both `threads`
+and `exceptions`.
+
+**Without `exceptions`, the observed failure is at run time, not at link.** A
+Web program that throws across an `import std` boundary builds and links with
+no complaint — Emscripten's compile-time exception support does not depend on
+the flag — and aborts only when the `throw` executes:
+
+```
+Aborted(Assertion failed: Exception thrown, but exception catching is not
+enabled. Compile with -sNO_DISABLE_EXCEPTION_CATCHING or
+-sEXCEPTION_CATCHING_ALLOWED=[..] to catch.)
+```
 
 **Only the root manifest decides.** The switch belongs to the artefact, and the
 root is the only package that builds one. A dependency that writes
@@ -567,6 +589,54 @@ error: `wasmrt` requires the artefact's ABI to have threads (feature `mt`), and 
 
 Without the refusal the mismatch surfaces as a precompiled-module configuration
 error that names neither the package nor the switch.
+
+### `requires_abi` on the target axis (mcpp 2026.9.12.3+)
+
+`[package] requires_abi` and `[features.<f>] requires_abi` are unconditional:
+they ask for a switch on every target this package builds for. A dependency
+whose need is scoped to a platform — threads on every hosted row, none on the
+Web — states that directly on the selector that already carries its sources:
+
+```toml
+[target.'cfg(linux)']
+requires_abi = { threads = true }
+
+# the per-feature form, named after feature-deps and feature-xlings
+[target.'cfg(linux)'.feature-requires-abi]
+mt = { threads = true }
+```
+
+The requirement set is the union of `[package] requires_abi`, the active
+features' tables, and every matching selector's — more than one selector may
+ask for the same member, and every one of them is a true statement. It is
+unioned only for a selector that matches the resolved target: a requirement
+under `[target.'cfg(windows)']` imposes nothing on a Linux build, in either
+direction — present or absent, that build is unaffected. A requirement the
+root does not satisfy is refused before anything compiles, naming the selector
+exactly as written:
+
+```
+error: `wasmrt` requires the artefact's ABI to have threads ([target.'cfg(linux)']), and this build does not state it.
+       Add to the root manifest, for the targets that need it:
+
+           [target.'cfg(os = "<os>")'.abi]
+           threads = true
+```
+
+**An engine older than 2026.9.12.3 reads this key silently — neither a warning
+nor an error.** `[target.<sel>] requires_abi` is a table-valued key under a
+target selector, and the schema sweep an older engine runs skips every
+table-valued key on the assumption that a table is the conditional channel;
+`requires_abi` there is an inline table, the same TOML shape, and falls
+through the same sweep unreported. A package that relies on the refusal above
+to protect an unconditional threads build must therefore state its own engine
+floor (`[build-dependencies.mcpp] version = ">= 2026.9.12.3"`), rather than
+relying on an older client to notice the gap.
+
+`--no-entry` (Emscripten's flag for a module with no `main`) is not a switch
+mcpp interprets; it is an ordinary `[target.'cfg(os = "emscripten")'.build]
+ldflags` entry, and `main` keeps naming a translation unit regardless — see
+[21 — The Target Triple](21-the-target-triple.md#the-wasm-artifact-contract).
 
 ## Current limitations
 

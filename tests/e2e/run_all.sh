@@ -96,6 +96,18 @@ case "$OS" in
            || ls "$HOME"/.xlings/data/xpkgs/xim-x-qemu-arm/*/bin/qemu-system-arm &>/dev/null; then
             CAPS+=(qemu-arm)
         fi
+        # android-ndk (#622 A3, 652b): the payload a `--target
+        # *-linux-android` build resolves its toolchain from
+        # (`xim:android-ndk`). Same shape as the `qemu-arm`/`mingw-cross`
+        # probes above: a payload path, not a PATH lookup, and both the
+        # xlings-managed location and the mcpp-vendored one, because either
+        # can be where a given machine's copy lives.
+        if ls "$HOME"/.xlings/data/xpkgs/xim-x-android-ndk/*/toolchains/llvm/prebuilt/*/bin/clang++ \
+              &>/dev/null \
+           || ls "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-android-ndk/*/toolchains/llvm/prebuilt/*/bin/clang++ \
+              &>/dev/null; then
+            CAPS+=(android-ndk)
+        fi
         # pack capability: ELF + patchelf both required
         if [[ " ${CAPS[*]} " == *" patchelf "* ]]; then
             CAPS+=(pack)
@@ -220,9 +232,10 @@ echo "Detected capabilities: ${CAPS[*]:-<none>}"
 # absent on Linux and must stay legal to declare. It is checked against the
 # CAPS+=() calls above by tests/e2e/README or by reading them -- keep it in
 # sync when adding a capability.
-KNOWN_CAPS=(elf fresh-sandbox gcc import-std-libcxx jq llvm macos mingw
-            mingw-cross msvc musl nasm no-msvc pack patchelf python3 qemu-arm
-            qemu-riscv scan-deps symlink unix-shell windows wine xlings-msvc)
+KNOWN_CAPS=(android-ndk elf fresh-sandbox gcc import-std-libcxx jq llvm macos
+            mingw mingw-cross msvc musl nasm no-msvc pack patchelf python3
+            qemu-arm qemu-riscv scan-deps symlink unix-shell windows wine
+            xlings-msvc)
 
 bad_tokens=0
 for tf in "$HERE"/[0-9]*.sh; do

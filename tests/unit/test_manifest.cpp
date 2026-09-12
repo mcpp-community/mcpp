@@ -2456,6 +2456,105 @@ kind = "{}"
     }
 }
 
+// #622 A3: `kind = "app"` -- "the thing a user launches", on every row. Its
+// link form is a property of the row (`toolchain::triple::application_form`),
+// not of the manifest; see test_artifact_naming.cpp for that half.
+TEST(Manifest, KindAppParsesToApplication) {
+    constexpr auto src = R"(
+[package]
+name    = "myapp"
+version = "0.1.0"
+[targets.myapp]
+kind = "app"
+main = "src/main.cpp"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->targets.size(), 1u);
+    EXPECT_EQ(m->targets[0].kind, mcpp::manifest::Target::Application);
+    EXPECT_EQ(m->targets[0].main, "src/main.cpp");
+    EXPECT_TRUE(m->targets[0].is_program());
+}
+
+// `is_program()` is exactly {Binary, Application} -- the negative direction,
+// asserted on every OTHER kind so the predicate cannot silently widen.
+TEST(Manifest, IsProgramIsExactlyBinaryAndApplication) {
+    auto kind_of = [](std::string_view kind) {
+        auto src = std::format(R"(
+[package]
+name    = "p"
+version = "0.1.0"
+[targets.t]
+kind = "{}"
+{}
+)", kind, (kind == "bin" || kind == "app") ? "main = \"src/main.cpp\"" : "");
+        auto m = mcpp::manifest::parse_string(src);
+        return m;
+    };
+    for (auto [kind, expected] : {std::pair{"bin", true}, {"app", true},
+                                   {"lib", false}, {"shared", false}}) {
+        auto m = kind_of(kind);
+        ASSERT_TRUE(m.has_value()) << kind << ": " << m.error().format();
+        ASSERT_EQ(m->targets.size(), 1u) << kind;
+        EXPECT_EQ(m->targets[0].is_program(), expected) << kind;
+    }
+}
+
+// The refusal for an unrecognized `kind` lists all four accepted spellings --
+// including the new one -- so a typo's message never falls behind the parser.
+TEST(Manifest, KindRefusalListsAllFourKinds) {
+    constexpr auto src = R"(
+[package]
+name    = "p"
+version = "0.1.0"
+[targets.t]
+kind = "framework"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("'bin', 'app', 'lib' or 'shared'"),
+              std::string::npos) << m.error().message;
+}
+
+// `main` is required for `app` exactly as it is for `bin` -- on Android it
+// becomes a translation unit of the shared library rather than an
+// executable's entry, but it is still named the same way.
+TEST(Manifest, ApplicationRequiresMainField) {
+    constexpr auto src = R"(
+[package]
+name    = "myapp"
+version = "0.1.0"
+[targets.myapp]
+kind = "app"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find("requires 'main'"), std::string::npos)
+        << m.error().message;
+}
+
+// `windows_subsystem` / `windows_entry` accept `app` exactly as they accept
+// `bin` (#622 A3) -- the negative direction is
+// RefusesWindowsKeysOnALibraryNamingTheTargetAndTheKey above, which still
+// covers `lib` and `shared`.
+TEST(Manifest, WindowsKeysAreAcceptedOnAnApplicationTarget) {
+    constexpr auto src = R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.app]
+kind              = "app"
+main              = "src/main.cpp"
+windows_subsystem = "windows"
+windows_entry     = "wWinMain"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->targets.size(), 1u);
+    EXPECT_EQ(m->targets[0].windowsSubsystem, "windows");
+    EXPECT_EQ(m->targets[0].windowsEntry, "wWinMain");
+}
+
 TEST(Manifest, RefusesAnUnknownWindowsValueNamingTheAcceptedOnes) {
     constexpr auto subsystem = R"(
 [package]
@@ -5117,6 +5216,43 @@ cuda = { provides = ["gpu-blas"] }
 // unrelated key under the same predicate made it work, which is the control
 // below: the two manifests differ in one dimension that has nothing to do with
 // libraries, and before the fix that dimension decided the outcome.
+// `frameworks` is the third per-target runtime key (#622 A2): a table that
+// carries only it is recorded, it is not reported as unsupported, and a key
+// outside the three is still reported naming all three.
+TEST(Manifest, AConditionalFrameworksTableIsRecordedAndNotWarned) {
+    constexpr auto only_frameworks = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.'cfg(os = "ios")'.runtime]
+frameworks = ["UIKit", "MobileCoreServices"]
+)";
+    auto m = mcpp::manifest::parse_string(only_frameworks);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->conditionalConfigs.size(), 1u)
+        << "a frameworks-only predicate was parsed and then discarded";
+    ASSERT_EQ(m->conditionalConfigs[0].frameworks.size(), 2u);
+    EXPECT_EQ(m->conditionalConfigs[0].frameworks[0], "UIKit");
+    for (auto const& w : m->schemaWarnings)
+        EXPECT_EQ(w.find("frameworks"), std::string::npos) << w;
+
+    constexpr auto a_fourth_key = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.macos.runtime]
+deploy_files = ["x"]
+)";
+    auto m2 = mcpp::manifest::parse_string(a_fourth_key);
+    ASSERT_TRUE(m2.has_value()) << m2.error().format();
+    bool named = false;
+    for (auto const& w : m2->schemaWarnings)
+        if (w.find("unsupported key 'deploy_files'") != std::string::npos
+            && w.find("frameworks, libraries, link_library_dirs") != std::string::npos)
+            named = true;
+    EXPECT_TRUE(named) << "the unsupported-key report must list the three keys";
+}
+
 TEST(Manifest, AConditionalRuntimeTableAloneIsRecorded) {
     constexpr auto only_runtime = R"(
 [package]
@@ -5187,14 +5323,15 @@ name = "x"
 version = "0.1.0"
 [target.linux.runtime]
 libraries = ["dl"]
-frameworks = ["Cocoa"]
+deploy_files = ["x"]
 )";
     auto m = mcpp::manifest::parse_string(src);
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->schemaWarnings.size(), 1u);
-    // `frameworks` is a real `[runtime]` key and not a per-target one, so the
-    // plausible-looking case is the one held here.
-    EXPECT_NE(m->schemaWarnings[0].find("frameworks"), std::string::npos)
+    // `deploy_files` is a real `[runtime]` key and not a per-target one, so
+    // the plausible-looking case is the one held here. (`frameworks` was the
+    // example until #622 made it the third per-target key.)
+    EXPECT_NE(m->schemaWarnings[0].find("deploy_files"), std::string::npos)
         << m->schemaWarnings[0];
     EXPECT_NE(m->schemaWarnings[0].find("[target.linux.runtime]"), std::string::npos)
         << m->schemaWarnings[0];
@@ -5339,16 +5476,20 @@ st = { requires_abi = { threads = false } }
     EXPECT_TRUE(m->schemaWarnings.empty());
 }
 
-TEST(Manifest, AbiTablesRefuseAnythingButABooleanThreads) {
+// `exceptions` joined `threads` as the second `abi` member 2026-09-12 (the UI
+// framework record, section 2.1, A1); the accepted set and every refusal
+// below name both. See tests/unit/test_abi.cpp for the member's own coverage
+// (parsing, rendering, the target-axis `requires_abi` forms).
+TEST(Manifest, AbiTablesRefuseAnythingButABooleanMember) {
     const std::pair<std::string_view, std::string_view> cases[] = {
         {"[package]\nname = \"a\"\nversion = \"0.1.0\"\nrequires_abi = true\n",
          "[package] requires_abi must be a table such as `{ threads = true }`"},
         {"[package]\nname = \"a\"\nversion = \"0.1.0\"\nrequires_abi = { threads = 1 }\n",
-         "[package] requires_abi.threads: the members are `threads`, a boolean"},
+         "[package] requires_abi.threads: the members are `threads`, `exceptions`, booleans"},
         {"[package]\nname = \"a\"\nversion = \"0.1.0\"\n[features]\nmt = { requires_abi = { thread = true } }\n",
-         "features.mt.requires_abi.thread: the members are `threads`, a boolean"},
+         "features.mt.requires_abi.thread: the members are `threads`, `exceptions`, booleans"},
         {"[package]\nname = \"a\"\nversion = \"0.1.0\"\n[target.'cfg(os = \"linux\")'.abi]\nthread = true\n",
-         "has no member 'thread'; the members are: threads"},
+         "has no member 'thread'; the members are: threads, exceptions"},
         {"[package]\nname = \"a\"\nversion = \"0.1.0\"\n[target.'cfg(os = \"linux\")'.abi]\nthreads = \"yes\"\n",
          ".threads must be true or false"},
     };

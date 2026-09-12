@@ -389,7 +389,8 @@ export void merge_conditional_config(mcpp::manifest::Manifest& m,
         if (cfgpred::uses_layer(cc.predicate)) continue;
         if (!cfgpred::matches(cc.predicate, ctx)) continue;
         const bool neutralWins = generatedPackage
-                              && (!cc.linkLibraryDirs.empty() || !cc.libraries.empty());
+                              && (!cc.linkLibraryDirs.empty() || !cc.libraries.empty()
+                                  || !cc.frameworks.empty());
         // One append() for every field the axis may carry (#258). Matching
         // sections land AFTER the base entries, so a conditional rule beats
         // a broader unconditional one under GNU last-wins — which is what
@@ -420,6 +421,8 @@ export void merge_conditional_config(mcpp::manifest::Manifest& m,
             m.runtimeConfig.linkIntent.linkLibraryDirs.push_back(d);
         for (auto const& l : cc.libraries)
             m.runtimeConfig.linkIntent.libraries.push_back(l);
+        for (auto const& f : cc.frameworks)
+            m.runtimeConfig.linkIntent.frameworks.push_back(f);
         merge_conditional_xlings(m, cc);
         // `[target.<sel>.abi]`: recorded for every package; rendered only for
         // the root, where prepare_build reads it. Last matching section wins,
@@ -428,6 +431,25 @@ export void merge_conditional_config(mcpp::manifest::Manifest& m,
             m.buildConfig.abiThreads = cc.abiThreads;
             m.buildConfig.abiThreadsDeclared = true;
         }
+        if (cc.abiExceptionsDeclared) {
+            m.buildConfig.abiExceptions = cc.abiExceptions;
+            m.buildConfig.abiExceptionsDeclared = true;
+        }
+        // `[target.<sel>] requires_abi` / `.feature-requires-abi` (A6): a
+        // requirement on the TARGET axis, unioned in -- not overwritten --
+        // because more than one matching selector may ask for the same
+        // member, and every one of them is a true statement. The selector
+        // text rides along so the unmet-requirement check can name what
+        // asked, the same courtesy `[package] requires_abi` gets by naming
+        // "the package" and a feature's entry by naming the feature.
+        if (cc.requiresAbiThreads)
+            m.targetRequiresAbiThreads.push_back(cc.predicate);
+        if (cc.requiresAbiExceptions)
+            m.targetRequiresAbiExceptions.push_back(cc.predicate);
+        for (auto const& [f, val] : cc.featureRequiresAbiThreads)
+            if (val) m.targetFeatureRequiresAbiThreads[f].push_back(cc.predicate);
+        for (auto const& [f, val] : cc.featureRequiresAbiExceptions)
+            if (val) m.targetFeatureRequiresAbiExceptions[f].push_back(cc.predicate);
         // `modules.sources` is the scanner's own view and is not part of
         // BuildInputs, so conditional sources are mirrored into it here.
         for (auto const& s : cc.inputs.sources)
@@ -512,6 +534,8 @@ bool merge_layer_conditional_config(mcpp::manifest::Manifest& m,
             m.runtimeConfig.linkIntent.linkLibraryDirs.push_back(d);
         for (auto const& l : cc.libraries)
             m.runtimeConfig.linkIntent.libraries.push_back(l);
+        for (auto const& f : cc.frameworks)
+            m.runtimeConfig.linkIntent.frameworks.push_back(f);
         // NO `merge_conditional_xlings` HERE, DELIBERATELY. A cc that reaches
         // this pass has a layer in its predicate, and one carrying tools was
         // refused long before — see `layer_predicated_xlings_refusal`. Folding
@@ -1193,6 +1217,12 @@ mcpp::platform::process::RunResult run_with_network_retry(
 // root gained `packageName` and the dependency loop gained it separately, and
 // a value added to only one of them is a rule package that works for a root
 // project and not for a dependency, with nothing failing to say so.
+// Forward-declared: defined below (#622 A11), and `fill_target_build_env`
+// needs it before that point in the file.
+std::string min_platform_version(const mcpp::manifest::Manifest& m,
+                                 const mcpp::toolchain::triple::Triple& t,
+                                 const std::filesystem::path& compilerPath);
+
 void fill_package_build_env(mcpp::build::BuildProgramEnv& e,
                             const mcpp::manifest::Manifest& m)
 {
@@ -1213,6 +1243,7 @@ void fill_package_build_env(mcpp::build::BuildProgramEnv& e,
 }
 
 void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
+                           const mcpp::manifest::Manifest& m,
                            const mcpp::toolchain::Toolchain* tc)
 {
     e.toolchainDir  = (tc && !tc->binaryPath.empty())
@@ -1263,6 +1294,12 @@ void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
             ? "clang_rt.builtins-" + t->arch
             : std::string("gcc");
     }
+
+    // #622 A11: MCPP_TARGET_MIN_PLATFORM_VERSION. One call, so a new consumer
+    // (`dist-apple`, `dist-apk`) reads the same answer the compiler flag and
+    // the fingerprint slot already resolved, rather than restating it.
+    if (auto tt = mcpp::toolchain::triple::parse(tc->targetTriple))
+        e.minPlatformVersion = min_platform_version(m, *tt, tc->binaryPath);
 }
 
 // ── Tool tiers: which of a manifest's declared packages this verb needs ─────
@@ -1675,6 +1712,19 @@ prepare_build(bool print_fingerprint,
     // learned by experiment — writing the same value a second time in
     // `[target.<triple>]` and observing that it works.
     std::string pinReplacedDefault;
+    // THE HOST SPEC AS IT STOOD BEFORE A TARGET ROW'S CONVENTION REPLACED IT,
+    // whatever its origin. `build.mcpp` is compiled and run on this machine,
+    // so its compiler is a host fact; the row's pin is a target fact. Before
+    // this snapshot existed, `host_tc_for_build_program` read `tcSpec` after
+    // the row had overwritten it and resolved the row's payload "for the
+    // host" -- which works by accident for a payload whose compiler can also
+    // target the host (an NDK clang) and cannot work for one that cannot:
+    // `em++` produces WebAssembly under every invocation, and every project
+    // with a build program failed under `--target wasm32-emscripten` inside
+    // `emcc.py` (#622, measured by the dist-web member's first build). Empty
+    // when the row replaced nothing, in which case the row's pin remains the
+    // only spec there is and the previous behaviour is kept.
+    std::optional<std::string> hostSpecBeforeRowPin;
     // THE PACKAGE WHOSE `requires` CHOSE THE COMPILER, AND WHAT IT ASKED FOR.
     //
     // Non-empty only when the graph's requirement actually changed the answer.
@@ -1817,14 +1867,17 @@ prepare_build(bool print_fingerprint,
                     overrides.package_filter));
             }
         } else if (m->package.name.empty()) {
-            // Virtual workspace: find a member with a binary target, or use last member.
+            // Virtual workspace: find a member with a program target ("is
+            // this the program", #622 A3's `is_program()`, so a member whose
+            // only target is `kind = "app"` is picked exactly as one whose
+            // target is `bin` is), or use last member.
             for (auto& mp : m->workspace.members) {
                 auto memberDir = *root / mp;
                 auto mm = mcpp::manifest::load(memberDir / "mcpp.toml",
                                                {.insideWorkspace = true});
                 if (!mm) continue;
                 for (auto& t : mm->targets) {
-                    if (t.kind == mcpp::manifest::Target::Binary) {
+                    if (t.is_program()) {
                         targetMember = mp;
                         break;
                     }
@@ -2255,12 +2308,15 @@ prepare_build(bool print_fingerprint,
     }();
 
     // [package] platforms — fixed vocabulary owned by mcpp (it owns the
-    // target/triple system). Unknown values: warning, or error under --strict.
+    // target/triple system): the platform name of every row it has
+    // (`platform_name`, beside `artifact_naming`). Unknown values: warning, or
+    // error under --strict.
     for (auto& pf : m->package.platforms) {
-        if (pf != "linux" && pf != "macos" && pf != "windows") {
+        if (!mcpp::toolchain::triple::is_platform_name(pf)) {
             auto msg = std::format(
                 "[package] platforms contains unknown platform '{}' "
-                "(expected: linux | macos | windows)", pf);
+                "(expected: {})", pf,
+                mcpp::toolchain::triple::platform_names_joined());
             if (overrides.strict) return std::unexpected(msg);
             mcpp::diag::warning("manifest/platforms", msg);
         }
@@ -2519,6 +2575,32 @@ prepare_build(bool print_fingerprint,
                     "compiler is not what is missing: these rows pin "
                     "`xim:llvm`, which every other Apple row also uses.",
                     parsed->str(), which, which));
+            }
+        }
+        // A `shared` TARGET NAMES A LINK CONTRACT THIS ENGINE DOES NOT RENDER.
+        //
+        // `-sSIDE_MODULE` is a different Emscripten link mode from the
+        // ordinary one (one static image, `artifact_naming`'s `.js`+`.wasm`
+        // pair) and mcpp emits no flag for it. Falling through to the
+        // ordinary link would still WRITE a `.so`-shaped file — the fallback
+        // naming's `sharedLibExt` is empty, so the linker would be asked for
+        // an empty-named output — so this is caught here, by NAME, rather
+        // than reached as an obscure link failure.
+        //
+        // REFUSED HERE AND NOT AT PLAN TIME, same reasoning as the Apple SDK
+        // check above: `parsed` and the manifest's own target list are both
+        // already known, resolving neither an emsdk payload nor any other
+        // toolchain, so an offline build (no emsdk installed) gets this
+        // sentence instead of downloading the SDK first.
+        if (parsed && parsed->object_format()
+                          == triple::ObjectFormat::Wasm) {
+            for (auto const& t : m->targets) {
+                if (t.kind != mcpp::manifest::Target::SharedLibrary) continue;
+                return std::unexpected(std::format(
+                    "[targets.{}] kind = \"shared\" is not supported on "
+                    "wasm32-emscripten: a side module needs -sSIDE_MODULE, "
+                    "which mcpp does not render",
+                    t.name));
             }
         }
         // Known, supported — and IMPOSSIBLE ON THIS HOST.
@@ -2877,6 +2959,25 @@ prepare_build(bool print_fingerprint,
         add_once(m->buildConfig.dialectCxxflags, "-pthread");
         add_once(m->buildConfig.cflags, "-pthread");
         add_once(m->buildConfig.ldflags, "-pthread");
+    }
+    // `[target.<selector>.abi] exceptions` -- design 2026-09-12 (the UI
+    // framework record), section 2.1, A1: the second `abi` member, the
+    // ROOT's statement, rendered once. Reaches the dialect flag set (every
+    // C++ translation unit, the std module's own commands, the scan, every
+    // dependency's cache key) and the link -- NOT the C flags, unlike
+    // `threads`: `-fexceptions` has no C-language meaning worth carrying to
+    // a `.c` translation unit.
+    //
+    // Rendered only where the target's default is OFF: Emscripten's native
+    // toolchain builds without exceptions unless asked. gcc, clang and MSVC
+    // already link with exceptions on, so a host build with the member
+    // declared is byte-identical to one without -- the same property
+    // `threads` has on PE.
+    const bool abiExceptionsRendered = m->buildConfig.abiExceptions
+                                     && cfgCtx().os == "emscripten";
+    if (abiExceptionsRendered) {
+        add_once(m->buildConfig.dialectCxxflags, "-fexceptions");
+        add_once(m->buildConfig.ldflags, "-fexceptions");
     }
     // `[build].defines` must reach the scanner (P1689) and the compile edge,
     // and must participate in the fingerprint. Fold before dependency
@@ -4026,10 +4127,19 @@ prepare_build(bool print_fingerprint,
                 "build.mcpp under a cross --target needs a resolvable host "
                 "toolchain — set one via [toolchain] or `mcpp toolchain default`"));
         }
-        auto spec = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
+        // THE ROW'S CONVENTION IS NOT THE HOST'S COMPILER. When the target
+        // row's pin replaced a spec the user or the machine had chosen, the
+        // build program resolves the replaced one: it is what a native build
+        // on this machine would use, and it is what the user wrote. A pin
+        // that replaced nothing is resolved as before.
+        const std::string hostSpecText =
+            (tcOrigin == TcOrigin::TargetPin && hostSpecBeforeRowPin.has_value()
+             && !hostSpecBeforeRowPin->empty() && *hostSpecBeforeRowPin != "system")
+                ? *hostSpecBeforeRowPin : *tcSpec;
+        auto spec = mcpp::toolchain::parse_toolchain_spec(hostSpecText);
         if (!spec || spec->version.empty()) {
             return std::unexpected(std::format(
-                "toolchain spec '{}' is invalid for the build.mcpp host resolve", *tcSpec));
+                "toolchain spec '{}' is invalid for the build.mcpp host resolve", hostSpecText));
         }
         // Deliberately NO target injection: the spec resolves for the host.
         auto pkg = mcpp::toolchain::to_xim_package(*spec);
@@ -4040,7 +4150,7 @@ prepare_build(bool print_fingerprint,
         auto payload = fetcher.resolve_xpkg_path(pkg.target(), /*autoInstall=*/true, &progress);
         if (!payload) {
             return std::unexpected(std::format(
-                "host toolchain for build.mcpp ('{}'): {}", *tcSpec,
+                "host toolchain for build.mcpp ('{}'): {}", hostSpecText,
                 payload.error().message));
         }
         auto frontendR = mcpp::toolchain::payload_frontend(payload->root, pkg);
@@ -5126,7 +5236,7 @@ prepare_build(bool print_fingerprint,
             // version. Scoped: restored when this dependency's install returns,
             // compat retries below included.
             mcpp::build::BuildProgramEnv hookEnv;
-            fill_target_build_env(hookEnv, tc ? &*tc : nullptr);
+            fill_target_build_env(hookEnv, *m, tc ? &*tc : nullptr);
             hookEnv.targetTriple = overrides.target_triple;
             // Six names, fixed by install_hook_env; one guard each.
             const auto hookVars = mcpp::build::install_hook_env(hookEnv);
@@ -7152,6 +7262,12 @@ prepare_build(bool print_fingerprint,
             if (tcOrigin == TcOrigin::GlobalDefault && tcSpec.has_value()
                 && *tcSpec != targetPinCandidate)
                 pinReplacedDefault = *tcSpec;
+            // Kept for the build program's host resolution; see the
+            // declaration. Taken from every origin, not only the global
+            // default, because a `[toolchain]` the manifest named is just as
+            // much the host's compiler as a remembered default is.
+            if (tcSpec.has_value() && *tcSpec != targetPinCandidate)
+                hostSpecBeforeRowPin = *tcSpec;
             tcSpec   = targetPinCandidate;
             tcOrigin = TcOrigin::TargetPin;
         }
@@ -7357,6 +7473,10 @@ prepare_build(bool print_fingerprint,
     std::vector<std::pair<std::string, std::string>> capRequires;
     // `requires_abi`: (what, requirer). See Manifest::requiresAbiThreads.
     std::vector<std::pair<std::string, std::string>> abiRequires;
+    // Same shape, for the second `abi` member (A1/A6). Two vectors rather
+    // than one tagged one, because every reader below already asks "threads
+    // or exceptions" as two separate questions.
+    std::vector<std::pair<std::string, std::string>> abiRequiresExceptions;
     // Who claimed sole provision of what. Separate from capProviders because
     // the question it answers is different: capProviders asks "can this
     // requirement be satisfied", this asks "can these two coexist at all".
@@ -7452,18 +7572,49 @@ prepare_build(bool print_fingerprint,
                 if (auto it = pkg.manifest.featureRequiresAbiThreads.find(f);
                     it != pkg.manifest.featureRequiresAbiThreads.end() && it->second)
                     abiRequires.emplace_back(std::format("feature `{}`", f), pcap);
+                if (auto it = pkg.manifest.featureRequiresAbiExceptions.find(f);
+                    it != pkg.manifest.featureRequiresAbiExceptions.end() && it->second)
+                    abiRequiresExceptions.emplace_back(std::format("feature `{}`", f), pcap);
+                // The TARGET-AXIS per-feature form (A6):
+                // `[target.<sel>.feature-requires-abi] <f>`, already reduced
+                // by merge_conditional_config to the selectors that matched
+                // and asked. Named by the selector, as written, not "feature
+                // `f`" -- the feature only decided whether the section counts;
+                // the selector is what asked for the switch.
+                if (auto it = pkg.manifest.targetFeatureRequiresAbiThreads.find(f);
+                    it != pkg.manifest.targetFeatureRequiresAbiThreads.end() && !it->second.empty())
+                    abiRequires.emplace_back(
+                        std::format("[target.'{}']", it->second.front()), pcap);
+                if (auto it = pkg.manifest.targetFeatureRequiresAbiExceptions.find(f);
+                    it != pkg.manifest.targetFeatureRequiresAbiExceptions.end() && !it->second.empty())
+                    abiRequiresExceptions.emplace_back(
+                        std::format("[target.'{}']", it->second.front()), pcap);
             }
             if (pkg.manifest.requiresAbiThreads)
                 abiRequires.emplace_back("the package", pcap);
+            if (pkg.manifest.requiresAbiExceptions)
+                abiRequiresExceptions.emplace_back("the package", pcap);
+            // `[target.<sel>] requires_abi` (A6): the package-wide form of the
+            // same target-axis requirement, one entry per matching selector
+            // that asked.
+            for (auto const& sel : pkg.manifest.targetRequiresAbiThreads)
+                abiRequires.emplace_back(std::format("[target.'{}']", sel), pcap);
+            for (auto const& sel : pkg.manifest.targetRequiresAbiExceptions)
+                abiRequiresExceptions.emplace_back(std::format("[target.'{}']", sel), pcap);
             // A DEPENDENCY'S OWN `[target.<selector>.abi]` DOES NOT CHANGE THE
             // BUILD. The switch belongs to the artefact, which the root decides;
             // a table written in a dependency is reported rather than silently
-            // ignored, and points at the key a dependency does have.
-            if (pcap != m->package.name && pkg.manifest.buildConfig.abiThreadsDeclared)
+            // ignored, and points at the key a dependency does have. Covers
+            // BOTH members: a dependency that declares only `exceptions` must
+            // be reported exactly as one that declares only `threads`.
+            if (pcap != m->package.name
+                && (pkg.manifest.buildConfig.abiThreadsDeclared
+                    || pkg.manifest.buildConfig.abiExceptionsDeclared))
                 mcpp::diag::warning("abi/dependency-table", std::format(
                     "`{}` declares [target.<selector>.abi], which only the root "
                     "manifest decides; a dependency states what it needs with "
-                    "`requires_abi = {{ threads = true }}`", pcap));
+                    "`requires_abi = {{ threads = true }}` or "
+                    "`requires_abi = {{ exceptions = true }}`", pcap));
             // `[targets.*] required_features` on a DEPENDENCY.
             //
             // THIS GATE EXISTED ONLY FOR THE ROOT. The root's targets are
@@ -8399,6 +8550,16 @@ prepare_build(bool print_fingerprint,
                     // The target must exist and be a binary. Naming the
                     // alternatives matters: the consumer wrote a string, and a
                     // typo is the likeliest cause.
+                    //
+                    // #622 A3: deliberately still `Binary`, not `is_program()`.
+                    // A host tool is exec'd directly ON THE BUILD MACHINE
+                    // during THIS build, so it is "literally an executable
+                    // link" — the question this site was already asking — and
+                    // an `app` whose row form happened to be a library (never
+                    // the host row in practice, but the check would be a
+                    // silent trap if the host itself were ever Android) could
+                    // not stand in for it. A build-time tool is declared
+                    // `kind = "bin"`; that is what the word means here.
                     const mcpp::manifest::Target* tgt = nullptr;
                     std::string binList;
                     for (auto const& t : depPkg.manifest.targets) {
@@ -8707,7 +8868,7 @@ prepare_build(bool print_fingerprint,
             // library resolved, and the three answers that keep a board
             // package from naming a toolchain. One call, so a new answer
             // reaches every build program at once — see fill_target_build_env.
-            fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
+            fill_target_build_env(bpEnv, *m, tc ? &*tc : nullptr);
             bpEnv.toolsBin = projectSubosBin;
             bpEnv.profile      = effectiveProfile;
             bpEnv.accel        = resolvedAccel();
@@ -8907,20 +9068,34 @@ prepare_build(bool print_fingerprint,
         if (auto err = checkVersionFloors(); err) return std::unexpected(*err);
 
         // `requires_abi`: a package needs the artefact's ABI switch on. The
-        // root's `[target.<selector>.abi]` is the only table that sets it, so a
-        // mismatch is refused naming both halves, before anything compiles --
-        // otherwise it surfaces as a precompiled-module configuration mismatch
-        // that names neither.
-        if (!m->buildConfig.abiThreads && !abiRequires.empty()) {
-            auto const& [what, requirer] = abiRequires.front();
-            return std::unexpected(std::format(
-                "`{}` requires the artefact's ABI to have threads ({}), and this "
+        // root's `[target.<selector>.abi]` is the only table that sets it
+        // (whether the value is written there directly, or reaches it
+        // through a matching `[target.<sel>.abi]` predicate resolved by
+        // merge_conditional_config), so a mismatch is refused naming both
+        // halves, before anything compiles -- otherwise
+        // it surfaces as a precompiled-module configuration mismatch that
+        // names neither. Two members (A1's `exceptions` beside the original
+        // `threads`), checked and refused the same way, parametrised so a
+        // wording change to one cannot drift from the other.
+        auto checkAbiRequirement = [](std::string_view member, bool rootHasIt,
+                std::vector<std::pair<std::string, std::string>> const& reqs)
+                -> std::optional<std::string> {
+            if (rootHasIt || reqs.empty()) return std::nullopt;
+            auto const& [what, requirer] = reqs.front();
+            return std::format(
+                "`{}` requires the artefact's ABI to have {} ({}), and this "
                 "build does not state it.\n"
                 "       Add to the root manifest, for the targets that need it:\n"
                 "\n"
                 "           [target.'cfg(os = \"<os>\")'.abi]\n"
-                "           threads = true", requirer, what));
-        }
+                "           {} = true", requirer, member, what, member);
+        };
+        if (auto err = checkAbiRequirement(
+                "threads", m->buildConfig.abiThreads, abiRequires))
+            return std::unexpected(*err);
+        if (auto err = checkAbiRequirement(
+                "exceptions", m->buildConfig.abiExceptions, abiRequiresExceptions))
+            return std::unexpected(*err);
 
         std::set<std::string> boundCaps;
         for (auto& [cap, requirer] : capRequires) {
@@ -9685,7 +9860,7 @@ prepare_build(bool print_fingerprint,
         // C library, which compiler and which C++ standard library resolved,
         // and the three answers that keep a board package from naming a
         // toolchain. One call — see fill_target_build_env.
-        fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
+        fill_target_build_env(bpEnv, *m, tc ? &*tc : nullptr);
         bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;
         bpEnv.accel        = resolvedAccel();
@@ -9723,6 +9898,11 @@ prepare_build(bool print_fingerprint,
         const auto rldN = bcRoot.ldflags.size(), rsrcN = bcRoot.sources.size(),
                    rmodN = m->modules.sources.size();
         const auto ractN = bcRoot.actions.size();
+        // #622 A4: how many `[runtime] deploy` entries existed before this
+        // program ran — the manifest-sourced ones, already in `packages[0]`'s
+        // snapshot. Anything past this index is a `mcpp::deploy()` residue
+        // that needs the same mirror the flag/source tails get below.
+        const auto rdeployN = m->runtimeConfig.linkIntent.deploy.size();
         if (auto bp = mcpp::build::run_build_program(
                 *m, *root, host->first, host->second,
                 m->cppStandard, bpEnv);
@@ -9777,6 +9957,15 @@ prepare_build(bool print_fingerprint,
         pkg0.manifest.buildConfig.ldflags.insert(
             pkg0.manifest.buildConfig.ldflags.end(),
             bcRoot.ldflags.begin() + rldN, bcRoot.ldflags.end());
+        // #622 A4: `mcpp::deploy()` residue → `packages[0].manifest`, the
+        // object `resolve_runtime_contract` (plan.cppm) actually reads.
+        // Without this mirror a directive-sourced deploy entry lands in `*m`
+        // and nowhere the planner looks — the same gap this block already
+        // closes for sources/flags, one more field wide.
+        pkg0.manifest.runtimeConfig.linkIntent.deploy.insert(
+            pkg0.manifest.runtimeConfig.linkIntent.deploy.end(),
+            m->runtimeConfig.linkIntent.deploy.begin() + static_cast<std::ptrdiff_t>(rdeployN),
+            m->runtimeConfig.linkIntent.deploy.end());
     }
 
     // ── Every device source must reach some action ─────────────────────────

@@ -345,6 +345,20 @@ consumer's build program, so a member that runs a payload tool declares it
 itself — and says so when the lookup returns empty, rather than pointing at a
 manifest the reader does not own.
 
+A host module's declaration is the exception, and it is visible in every build
+program it is compiled into (`tests/e2e/622`), because a host module's own
+code runs as part of each of those build programs rather than as a dependency
+seen only through the graph. This is why a member declares its own payload on
+itself, and a project that pulls the member in never repeats the declaration.
+A dist member's payload therefore belongs on the member — on the target axis
+when the tool serves one target and not others, exactly as any other
+target-conditional declaration does:
+
+```toml
+[target.'cfg(env = "android")'.feature-xlings.dist-apk]
+"xim:android-build-tools" = ""
+```
+
 **A build must not reach the network, and a wrapped tool may.** Measured on
 `appimagetool` 1.9.1: it downloads its type-2 runtime stub from a GitHub
 release on every invocation unless `--runtime-file` names a local copy. A member

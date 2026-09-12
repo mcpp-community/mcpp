@@ -5,6 +5,174 @@
 
 ## [Unreleased]
 
+### wasm 产物契约:启动器改名为 `.js`,`.wasm` 是隐式输出(#622 A5)
+
+`wasm32-emscripten` 行此前用的是宿主借来的裸名 —— `bin/<name>`(Linux 宿主)或
+`bin/<name>.exe`(Windows 宿主),因为 `artifact_naming` 对这一行落到了「未知 OS
+就套用宿主拼法」的兜底分支。改为 `bin/<name>.js`:这是 runner 执行的文件,而
+Emscripten 自己的 CMake 工具链(`CMAKE_EXECUTABLE_SUFFIX ".js"`)与 Rust 的
+`wasm32-unknown-emscripten` target spec(`exe_suffix: ".js"`)各自用一行钉死了
+同一个后缀。
+
+- `bin/<name>.wasm` 是同一条链接边的**隐式输出**,而不是靠命名约定推断出来的
+  旁路文件:`ninja -t clean`、增量检查与 `mcpp pack` 都经由图看到它。
+- `mcpp pack` 暂存「词干家族」——启动器旁边每一个 `<name>.<任意>` 的文件,包括
+  `--preload-file` 产生的 `<name>.data`——而不是一份写死的扩展名表;`.wasm`
+  缺席时 `mcpp pack` 拒绝,而不是把一个没有模块的启动器发出去。
+- `kind = "shared"` 在这一行上被拒绝,点名 `-sSIDE_MODULE`:side module 需要
+  一种 mcpp 不渲染的链接契约,让它落到兜底命名只会产出一个存在却打不开的
+  `.so` 形状的文件。
+- **这是对 2026-09-11 才发布的那一行的一次可见改名**:2026.9.11.3 把
+  `wasm32-emscripten` 发布为 `verified` 时用的正是那个裸名。已知的唯一消费者
+  与每一个尚未写出的 `${mcpp.target_file:}` 用法都会在这次改名后编码新名字,
+  所以选择现在改而不是等更多消费者出现。
+- `LinkIntentFlavor::Wasm` 不再落到 `Elf` 的兜底分支上:它是 ELF 的拼法本身
+  (`-l<name>`,emcc 接受它),只是 `frameworks` 与 `link_library_dirs` 在这一行
+  上不产生任何标志。
+- 判据:`tests/e2e/650`。
+
+### `kind = "app"`:一个平台的事实,不是一处 cfg 门(#622 A3)
+
+`[targets.<name>] kind = "app"` 是继 `bin` / `lib` / `shared` 之后第四个取值,
+意思是「用户启动的那个东西」。它的链接形态完全由**行**决定:在 ELF、PE、Mach-O
+各行与 `wasm32-emscripten` 上与 `bin` 相同;在 `*-linux-android` 上与 `shared`
+相同,产出 `libmyapp.so`,即 `System.loadLibrary` 与 manifest 里
+`android:name` 命名的那个文件。`main` 在每一行上都还是指出一个翻译单元;
+`windows_subsystem` / `windows_entry` 接受 `app` 与接受 `bin` 完全相同。
+
+- `mcpp pack` 把一个 `app` 当作程序 target 处理,不论这一行把它链接成什么文件。
+  在形态是共享库的行上,不带 `--format` 运行 `mcpp run` 会被拒绝,点名 `--format
+  apk` 与提供它的成员。
+- **兼容性**:早于本版本的 mcpp(2026.9.12.2 及更早)按名字拒绝这个取值——
+  `targets.<name>.kind must be 'bin', 'lib' or 'shared'; got 'app'`,三种
+  已知取值。这是正确的:一份要求引擎产出不出来的形态的 manifest 不应该构建。
+- 判据:`tests/e2e/652`(ELF 行)、`tests/e2e/652b`(Android 行,`# requires:
+  android-ndk`)。
+
+### `mcpp::deploy`:构建程序部署自己生成的文件,协议升至 11(#622 A4)
+
+`[runtime] deploy` 只能点名包里已经存在、按包根解析的文件,而一个 action 一步
+之后才写出的文件通常是 `MCPP_OUT_DIR` 下的绝对路径,manifest 键够不到它。新指令
+`mcpp:deploy=<from>\t<to>`(typed API:`mcpp::deploy(from, to)`)补上这个缺口:
+`<from>` 可以是绝对路径或按包根解析,`<to>` 遵守与 manifest 键相同的规则
+(`/` 分隔、禁止 `..`、`"."` 表示可执行文件自己所在的目录)。
+
+- 传入一个 action 自己声明的输出,让拷贝边天然依赖上那个 action——边的输入
+  就是那份输出,ninja 据此排序。
+- 并入被 `link-lib`/`link-search`/`link-flag` 喂入的同一个 `LinkIntent`,因此
+  到达消费者的 `bin/`,并被 `mcpp pack` 按格式各自的布局暂存(`.apk` 落进
+  `assets/`,`.app` 落进 bundle 的可执行文件目录,web 落进静态目录)。
+- 像 `runner` 与 `warning` 一样持久化进构建缓存:一次缓存命中的重放,即使
+  `bin/` 被手工删除,也仍然写出被部署的文件。
+- **兼容性**:协议版本升至 11。早于本版本的 mcpp 调用 `mcpp::deploy()` 在
+  build.mcpp **编译期**就失败,因为那个引擎自带的 `mcpp` module 里没有这个
+  函数——与 v5 起历次协议升级同一个代价。
+- 判据:`tests/e2e/651`。
+
+### `MCPP_TARGET_MIN_PLATFORM_VERSION`:平台部署下限交给构建程序(#622 A11)
+
+此前 `dist-apple` 一类成员写着「mcpp 不把编译期部署目标暴露给构建程序」,只能由
+项目在成员自己的选项里重复一遍这个值,而这个副本会与 manifest 的真实答案悄悄
+走样。新增环境变量 `MCPP_TARGET_MIN_PLATFORM_VERSION`,typed reader
+`mcpp::min_platform_version()`:macOS 上是 `macos_deployment_target` 或引擎
+自带的默认值 `14.0`;iOS 上是 `ios_deployment_target` 原样给出,项目未声明时
+为空;`*-linux-android` 上是 `min_api_level`,或已解析 NDK 载荷给出的回落值;
+其余每一行为空。取的是有效三元组携带的那个值,并进入重跑键——与既有的
+`min_platform_version()`(链接与标准库预构建已经在用的那个函数)是同一个答案,
+只是多了一个读者。
+
+- 判据:`tests/e2e/651` 断言 Linux 上该值为空。
+
+### `abi.exceptions`:`abi` 表的第二个成员(#622 A1)
+
+`[target.<selector>.abi]` 新增 `exceptions`(布尔),只在 `os = "emscripten"`
+上渲染 `-fexceptions`——经方言 flag 进入编译行,也进入链接行;在其余每个目标上
+什么都不产生,因为那里异常本来就是默认开启的。clang 把异常模型记进 BMI 并拒绝
+一个与之不一致的导入者,这与 `threads` 要求整个产物一致的理由相同,所以它进的
+是同一张表,而不是 `cxxflags` 里的一条 flag。
+
+- 不带这个成员时,失败发生在**运行时**而不是链接时:一个跨 `import std` 边界
+  抛出异常的 Web 程序照常编译链接,只在 `throw` 真正执行时以
+  `Aborted(Assertion failed: Exception thrown, but exception catching is not
+  enabled. ...)` 中止。
+- 接受的成员集合变为 `threads | exceptions`;未知成员被拒绝,同时列出两者。
+- `requires_abi = { exceptions = true }` 是依赖声明需求的形式,与 `threads`
+  同构;根包未满足时的拒绝信息指出包(或 feature)与成员名。
+- **兼容性**:`abi` 表的成员是兼容性规则里唯一的例外——早于本版本的 mcpp
+  按名字拒绝一个它不认识的成员,这是正确的:一份要求引擎渲染不出来的开关的
+  根 manifest 不应该构建。
+- 判据:`tests/e2e/653`(`# requires: elf`,emsdk 载荷缺席时打印 SKIP 并
+  仍以 PASS 退出)。
+
+### `requires_abi` 落到 target 轴上(#622 A6)
+
+`[package] requires_abi` 与 `[features.<f>] requires_abi` 是无条件的一份需求;
+一个需求局限于某个平台的依赖此前无法表达它。现在可以直接写在承载对应
+`sources` 的选择器上:`[target.<sel>] requires_abi = { ... }` 以及
+`[target.<sel>.feature-requires-abi] <feature> = { ... }`(命名沿用
+`feature-deps`、`feature-xlings` 的既有形式)。需求集合是包级、feature 级与
+每一个命中的选择器级的并集,只对命中已解析目标的选择器生效;根包未满足时的
+拒绝按原样点名那个选择器,例如 `[target.'cfg(linux)']`。
+
+- **兼容性(实测,纠正了设计记录最初的推断)**:`mcpp 2026.9.12.2` 读到
+  `[target.<sel>] requires_abi` 时既不警告也不报错,**静默忽略**这项需求。
+  它是选择器表下一个取值为表的键,而旧引擎的 schema 清扫把每一个取值为表的
+  键都当作条件通道跳过;`requires_abi` 恰好是同一种 TOML 形状(内联表),
+  于是不受任何报告地漏过同一次清扫。依赖这份拒绝来保护一次无条件构建的包,
+  因此要自己声明引擎下限,而不能指望旧客户端替它发现这个缺口。
+- 判据:`tests/e2e/654`。
+
+### `frameworks` 成为按 target 的键(#622 A2)
+
+`[target.<sel>.runtime]` 的词汇表从 `libraries`、`link_library_dirs` 扩到
+`frameworks`。语义与 `libraries` 相同:追加在顶层 `[runtime] frameworks` 之后,
+只在 Mach-O 各行渲染为 `-framework <name>`,其余各行不产生任何标志——`AppKit`
+不存在于 iOS SDK,`UIKit` 不存在于 macOS 的,这是 `[runtime]` 里第一个必须
+按 target 区分的键。
+
+- **兼容性**:与既有的 `[target.<sel>.runtime]` 键相同——早于本版本的 mcpp
+  报出并忽略 `[target.macos.runtime] has unsupported key 'frameworks'
+  (ignored)`,manifest 在旧引擎上仍能构建,只是拿不到这个键的效果。
+- 判据:`tests/unit/test_target_runtime_frameworks.cpp`(本批未新增覆盖它的
+  e2e)。
+
+### `[package] platforms` 的词表扩到六个平台(#622 A7)
+
+词表从 `linux | macos | windows` 扩到
+`linux | macos | windows | ios | android | emscripten`。一个平台名是三元组的
+`os`,除非某个 `env` 自己命名了一个平台——Android 各行 `os = "linux"`、
+`env = "android"`,因此 `linux` 不覆盖它们;Web 行用 `emscripten` 而不是
+`web`,这是 `cfg(...)` 选择器语法已经在用的词。`mcpp pack` 的覆盖检查、
+`mcpp doctor` 的「已声明平台」一行与校验器三处一起改,校验器不再是写死的
+三条候选三元组,而是逐一询问引擎认识的每一行。
+
+- **兼容性**:不是一次收紧——旧词表之外的值此前就只产生警告(`--strict`
+  下报错),新词表只是让 `ios`、`android`、`emscripten` 不再落进那条警告。
+- 判据:`tests/e2e/67_features_strict.sh`。
+
+### `mcpp run --format <name>`:运行一个不是链接产物本身的产物(#622 A10)
+
+一个 Android **应用程序**是一个 `.apk`,一个 iOS 应用程序是一个已安装的
+`.app`,两者都不是 `mcpp run` 默认执行的链接产物。`--format` 复用 `mcpp pack`
+的同一个 flag:`mcpp run --format <name>` 先按 `<name>` 打包(与
+`mcpp pack --format <name>` 相同的两遍与暂存树),再运行打包报出的那个产物,
+经由为一个程序解析出的 runner——项目的 `runner`、依赖的 `mcpp::runner(...)`、
+载荷描述文件的,顺序不变。
+
+- `--format` 与 `--no-runner` 同时给出会被拒绝;在 `kind = "app"` 的形态是
+  共享库的行上不带 `--format` 运行同样被拒绝,两处都点名 `--format` 与已解析
+  图提供的格式集合。`mcpp test` 不受影响。
+- 判据:`tests/e2e/656`。
+
+### 修复:目标行的默认工具链不再被拿去编译 `build.mcpp`(#622)
+
+- 交叉构建时,`build.mcpp` 的宿主编译器从 `tcSpec` 解析,而这个值在读取时已被目标行的
+  约定 pin 覆盖。NDK 的 clang 也能产出宿主程序,所以 Android 行看不出来;`em++` 在任何
+  调用下都产出 WebAssembly,于是任何带构建程序的工程在 `--target wasm32-emscripten` 下
+  都在 emcc.py 的断言里失败(dist-web 成员的第一次构建实测)。引擎现在保留行 pin 覆盖之前
+  的宿主 spec(用户写的 `[toolchain]` 或机器默认),构建程序按它解析;行 pin 没有替换任何
+  东西时行为不变。`tests/e2e/657`。
+
 ## [2026.9.12.2] - 2026-09-12
 
 2026.9.12.1 未单独发布,其条目并入本版本。

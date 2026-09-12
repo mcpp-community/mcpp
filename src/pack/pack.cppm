@@ -40,11 +40,13 @@ import mcpp.config;
 import mcpp.pack.binfmt;
 import mcpp.pack.host_requirements;
 import mcpp.pack.relocate;
+import mcpp.pack.stage_tree;
 import mcpp.pack.strip;
 import mcpp.pack.zip;
 import mcpp.platform;
 import mcpp.xlings;
 import mcpp.manifest;
+import mcpp.toolchain.triple;
 
 export namespace mcpp::pack {
 
@@ -167,6 +169,27 @@ struct Plan {
     // Is the artifact a PE? Read from the FILE, not inferred from the triple —
     // the file is the thing being packaged, and a triple is a request.
     bool                                 targetIsPe = false;
+    // Is the artifact a wasm32-emscripten launcher? Read from the TRIPLE, not
+    // the file: the packed file is `bin/<name>.js`, plain JavaScript text
+    // carrying none of ELF/PE/Mach-O's magic, so `binfmt::identify` cannot
+    // answer this the way it answers `targetIsPe`. The triple is what named
+    // the file `.js` in the first place (see `artifact_naming`), so it is the
+    // one fact this format IS recorded under.
+    bool                                 targetIsWasm = false;
+    // #622 A3/A10: is `builtBinary` an `Application` target whose link form
+    // on THIS row is a shared object (`*-linux-android`,
+    // `toolchain::triple::application_form`)? Read from the CALLER, which
+    // already asked the manifest which target this file belongs to while
+    // choosing it (`pipeline.cppm`'s program-selection loop) -- `make_plan`
+    // has only the file and would have to re-derive the same answer from the
+    // triple and the manifest a second time, which is the shape a dep
+    // fingerprint gap in this codebase's own history warns against. A shared
+    // object is not runnable here (an Android object names
+    // `/system/bin/linker64` as its interpreter, which this host does not
+    // have), so it is staged like a dependency .so -- under `lib/`, with no
+    // dependency closure attempted -- rather than through the ELF closure
+    // walk below, which asks the file to name its own needs by executing it.
+    bool                                 programIsSharedObject = false;
     // The search set the PE closure resolves names against, after the
     // contract has had its say (see make_plan).
     std::vector<std::filesystem::path>   searchDirs;
@@ -195,7 +218,9 @@ make_plan(const mcpp::manifest::Manifest& manifest,
           // The RESOLVED run-time requirements, from BuildPlan. Not the root
           // manifest's: an application almost never declares a host capability
           // itself, it depends on something that does.
-          std::span<const mcpp::manifest::RuntimeRequirement> resolvedRequirements = {});
+          std::span<const mcpp::manifest::RuntimeRequirement> resolvedRequirements = {},
+          // #622 A3/A10: see the field comment on `Plan::programIsSharedObject`.
+          bool programIsSharedObject = false);
 
 // Execute the plan: copies binary + .so + extra files, runs patchelf,
 // writes the final tarball or directory.
@@ -314,13 +339,15 @@ make_plan(const mcpp::manifest::Manifest& manifest,
           const std::filesystem::path& builtBinary,
           const std::filesystem::path& projectRoot,
           std::string_view triple,
-          std::span<const mcpp::manifest::RuntimeRequirement> resolvedRequirements)
+          std::span<const mcpp::manifest::RuntimeRequirement> resolvedRequirements,
+          bool programIsSharedObject)
 {
     Plan p;
     p.opts            = opts;
     p.projectRoot     = projectRoot;
     p.builtBinary     = builtBinary;
     p.binaryName      = builtBinary.filename().string();
+    p.programIsSharedObject = programIsSharedObject;
     p.packageName     = manifest.package.name;
     p.packageVersion  = manifest.package.version;
     p.triple          = std::string(triple);
@@ -378,6 +405,11 @@ make_plan(const mcpp::manifest::Manifest& manifest,
     p.targetIsPe =
         mcpp::pack::binfmt::identify(builtBinary).format
             == mcpp::pack::binfmt::Format::Pe;
+    // The triple, not the file — see the field comment on `targetIsWasm`.
+    if (auto t = mcpp::toolchain::triple::parse(p.triple)) {
+        p.targetIsWasm =
+            t->object_format() == mcpp::toolchain::triple::ObjectFormat::Wasm;
+    }
 
     // THE CONTRACT REACHES PACKAGING. Until now it stopped at the compile and
     // link flags, so the step that decides which files travel could not see
@@ -1055,6 +1087,96 @@ run_pe(const Plan& plan)
     return {};
 }
 
+// The wasm32-emscripten half of `run`. No dependency closure: the ordinary
+// Emscripten link produces one static image with everything embedded (a
+// `shared` target on this row is refused at plan time, before packaging ever
+// sees it — see prepare.cppm), so there is nothing here to trace under a
+// dynamic linker the way the PE and ELF halves do.
+//
+// THE STEM FAMILY RULE. The launcher (`<name>.js`) is the executable; the
+// family is every other `<name>.<anything>` the link wrote beside it. `.wasm`
+// is required — the link edge declares it as an implicit output
+// (ninja_backend.cppm), so its absence names a build directory that does not
+// match the graph rather than a program that legitimately has none. A
+// `.data` (from `--preload-file`), a `.worker.js` or a `.wasm.map` are
+// optional and travel exactly when the link wrote them: this packer stages
+// whatever it finds, and asks the link, never a fixed extension list.
+std::expected<void, Error>
+run_wasm(const Plan& plan)
+{
+    std::error_code ec;
+    std::filesystem::remove_all(plan.stagingRoot, ec);
+    std::filesystem::create_directories(plan.stagingRoot / "bin", ec);
+    if (ec) return std::unexpected(Error{std::format(
+        "cannot create staging '{}': {}", plan.stagingRoot.string(), ec.message())});
+
+    auto stagedJs = plan.stagingRoot / "bin" / plan.binaryName;
+    std::filesystem::copy_file(plan.builtBinary, stagedJs,
+        std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) return std::unexpected(Error{std::format(
+        "copy launcher failed: {}", ec.message())});
+
+    const auto builtDir = plan.builtBinary.parent_path();
+    auto family = mcpp::pack::emscripten_stem_family(builtDir, plan.binaryName);
+    if (!family.hasWasm) {
+        const auto stem = plan.builtBinary.stem().string();
+        return std::unexpected(Error{std::format(
+            "'{}.wasm' is missing beside the built launcher '{}' -- the "
+            "wasm32-emscripten link declares it as an implicit output, so its "
+            "absence means the build directory does not match the graph",
+            stem, plan.builtBinary.string())});
+    }
+    for (auto const& name : family.siblings) {
+        std::error_code fec;
+        std::filesystem::copy_file(builtDir / name,
+            plan.stagingRoot / "bin" / name,
+            std::filesystem::copy_options::overwrite_existing, fec);
+        if (fec) return std::unexpected(Error{std::format(
+            "failed to copy {} -> {}: {}", (builtDir / name).string(),
+            (plan.stagingRoot / "bin" / name).string(), fec.message())});
+    }
+
+    if (auto r = stage_runtime_files(plan, stagedJs.parent_path()); !r) return r;
+
+    copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);
+    copy_if_exists(plan.projectRoot / "LICENSE",   plan.stagingRoot);
+
+    if (plan.opts.format != Format::Tar) return {};
+    return make_tarball(plan.stagingRoot, plan.archivePath);
+}
+
+// #622 A3/A10: the Application half whose form on this row is a shared
+// object (`*-linux-android`). No dependency closure: the ELF closure below
+// asks the file to name its own needs by executing it under
+// `LD_TRACE_LOADED_OBJECTS`, and a cross-compiled Android object names an
+// interpreter this host does not have (`/system/bin/linker64`) -- it is not
+// runnable here at all, on any host architecture. The file is staged the way
+// a dependency .so is staged below (`lib/`), because that is where a closure
+// conventionally puts a shared object; a provider that wants the object's
+// own dependency set bundled (`dist-apk`) reads `${mcpp.target_file:<name>}`
+// and resolves that itself, out of the engine's closure entirely.
+std::expected<void, Error>
+run_shared_program(const Plan& plan)
+{
+    std::error_code ec;
+    std::filesystem::remove_all(plan.stagingRoot, ec);
+    std::filesystem::create_directories(plan.stagingRoot / "lib", ec);
+    if (ec) return std::unexpected(Error{std::format(
+        "cannot create staging '{}': {}", plan.stagingRoot.string(), ec.message())});
+
+    auto staged = plan.stagingRoot / "lib" / plan.binaryName;
+    std::filesystem::copy_file(plan.builtBinary, staged,
+        std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) return std::unexpected(Error{std::format(
+        "copy binary failed: {}", ec.message())});
+
+    copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);
+    copy_if_exists(plan.projectRoot / "LICENSE",   plan.stagingRoot);
+
+    if (plan.opts.format != Format::Tar) return {};
+    return make_tarball(plan.stagingRoot, plan.archivePath);
+}
+
 } // namespace detail
 
 std::expected<void, Error>
@@ -1064,7 +1186,21 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     // that path executes the artifact. This is the branch the `#if
     // defined(_WIN32)` refusal used to occupy — and it was never really about
     // the host: `LD_TRACE_LOADED_OBJECTS` cannot trace a PE from Linux either.
+    // #622 A3/A10: checked before the format-specific branches below --
+    // this row's file is an ordinary ELF (`binfmt::identify` would answer
+    // `Elf`, same as any Linux program), so it would otherwise fall into the
+    // closure walk that follows and try to execute an object this host
+    // cannot load at all. See the field comment on `programIsSharedObject`.
+    if (plan.programIsSharedObject) return detail::run_shared_program(plan);
+
     if (plan.targetIsPe) return detail::run_pe(plan);
+
+    // wasm32-emscripten, before the Mach-O refusal and the ELF closure below:
+    // this artifact is neither. `binfmt::identify` reports `Unknown` for the
+    // `.js` launcher (plain text, none of the three magics), which is exactly
+    // the branch the ELF path's own comment warns cannot be assumed away by
+    // exclusion any more.
+    if (plan.targetIsWasm) return detail::run_wasm(plan);
 
     // A Mach-O artifact is REFUSED, on every host including macOS.
     //

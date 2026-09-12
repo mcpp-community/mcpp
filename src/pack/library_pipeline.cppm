@@ -391,9 +391,13 @@ export int build_and_pack_library(const std::string& targetName,
             return s;
         }();
 
+        // A leg's platform is `platform_name`, not the triple's `os`: an
+        // Android leg is `linux` by `os` and would otherwise satisfy a
+        // `linux` claim it does not serve.
         std::set<std::string> packedOs;
         for (auto const& leg : plan.legs) {
-            if (auto t = mcpp::toolchain::triple::parse(leg.triple)) packedOs.insert(t->os);
+            if (auto t = mcpp::toolchain::triple::parse(leg.triple))
+                packedOs.insert(mcpp::toolchain::triple::platform_name(*t));
         }
 
         for (auto const& os : packedOs) {
@@ -406,22 +410,20 @@ export int build_and_pack_library(const std::string& targetName,
                 os, os, joined));
         }
 
-        // Could this host have built a leg for `platform` at all?
+        // Could this host have built a leg for `platform` at all? Ask every
+        // row the engine has whose platform name is `platform`, through the
+        // same `host_can_serve` that decides which `--target` values are
+        // accepted. The rows are enumerated rather than spelled here, so a
+        // row added to `kKnownTargets` is covered by this check on the day it
+        // lands; the earlier hand-written list of three platforms is why
+        // `ios`, `android` and `emscripten` could never be claimed.
         auto servable_here = [](std::string_view platform) {
-            using mcpp::toolchain::triple::Triple;
-            const std::string arch{ mcpp::platform::host_arch };
-            std::vector<Triple> candidates;
-            if (platform == "linux") {
-                candidates.push_back(Triple{ arch, "linux", "gnu" });
-                candidates.push_back(Triple{ arch, "linux", "musl" });
-            } else if (platform == "windows") {
-                candidates.push_back(Triple{ arch, "windows", "msvc" });
-                candidates.push_back(Triple{ arch, "windows", "gnu" });
-            } else if (platform == "macos") {
-                candidates.push_back(Triple{ arch, "macos", "" });
+            for (auto const& row : mcpp::toolchain::triple::known_targets()) {
+                auto t = mcpp::toolchain::triple::parse(std::string(row.canonical));
+                if (!t) continue;
+                if (mcpp::toolchain::triple::platform_name(*t) != platform) continue;
+                if (mcpp::toolchain::host_can_serve(*t)) return true;
             }
-            for (auto const& c : candidates)
-                if (mcpp::toolchain::host_can_serve(c)) return true;
             return false;
         };
 

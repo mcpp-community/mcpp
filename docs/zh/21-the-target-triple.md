@@ -94,6 +94,34 @@ LLVM 词表里「非 MSVC 的那套 ABI」的标签,继承自 MinGW,而 clang �
 且没有 OS;一个 wasm 模块有一层类 OS 的东西(Emscripten 的 POSIX 模拟)而不是
 ELF。把这两个轴并成一个,正是这处改动要消除的那个错误。
 
+## wasm 产物契约
+
+`artifact_naming` 在每一行上是同一句话:可执行文件是**runner 执行的那个文件**,
+按这一行自己的拼法命名。在 `wasm32-emscripten` 上,那个文件是 JavaScript 启动
+器——载荷的 `node` 运行的、浏览器加载的正是它——所以这一行对它的拼法是
+`bin/<name>.js`,而不是 mcpp 2026.9.12.3 之前那种裸的、借用宿主拼法的名字。
+面向 Emscripten 的两套权威构建系统各用一行话钉死了同一个后缀,原因相同:
+Emscripten 自己的 CMake 工具链设置 `CMAKE_EXECUTABLE_SUFFIX ".js"`,Rust 的
+`wasm32-unknown-emscripten` target spec 设置 `exe_suffix: ".js"`。
+
+| kind | 文件 | 说明 |
+|---|---|---|
+| `bin`、`app` | `bin/<name>.js` | `bin/<name>.wasm` 是同一条链接边的隐式输出,随它一起暂存。emcc 用同一词干写出的其余文件(`--preload-file` 产生的 `<name>.data`、`<name>.worker.js`、`<name>.wasm.map`)在链接产出了它们时才会出现 |
+| `lib` | `lib/lib<name>.a` | —— |
+| `shared` | 被拒绝,点名 `-sSIDE_MODULE` | wasm 的 side module 需要一种 mcpp 不渲染的链接契约 |
+
+`--no-entry` 不是 mcpp 解释的开关。它是一条普通的
+`[target.'cfg(os = "emscripten")'.build] ldflags` 条目,`main` 仍然只是在每一行
+上都一样地指出一个翻译单元——所以一个模块化的 Web 程序,如果它的页面调用一个
+导出的工厂函数,就是一个 `main` 文件不定义 `main()` 的 `bin` 目标,在自己的
+`ldflags` 里带上 `--no-entry` 链接。
+
+执行 `bin/<name>.js` 的 runner 来自载荷描述文件(`.mcpp-toolchain.json`)、项目的
+`[target.<triple>] runner`,或依赖的 `mcpp::runner(...)`——与每一行相同的解析
+顺序。`.js` 文件没有 shebang,所以一份在它的描述文件获得 `runner` 字段之前就装好
+的 emsdk 载荷,需要先做[第 20 章](20-toolchains.md)说的那次索引刷新,`mcpp run`
+才能找到 runner。
+
 ## 省略第三段
 
 `<arch>-<os>` 在每个平台上都是一个完整的目标:
@@ -477,6 +505,10 @@ CRT;图供给时是 `musl`。一个目标字符串,两个不同的 C 库 —— 
 x86_64 宿主行得通的路线,而平台模拟器会直接拒绝异构 guest
 (`QEMU2 emulator does not support arm64 CPU architecture`)。一个层级断言的是产物
 被构建**并运行**过,它不断言是哪个模拟器运行的。
+
+在这两行上,`kind = "app"` 链接成一个共享库而不是可执行文件
+(见[04 §2.2](04-mcpp-toml.md))——由 `application_form` 对 `env == "android"`
+给出这个形态,与 `is_android()` 用的是同一个判据。
 
 ### 而 CI 把每一台都测了
 
