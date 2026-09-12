@@ -1721,9 +1721,18 @@ prepare_build(bool print_fingerprint,
     // target the host (an NDK clang) and cannot work for one that cannot:
     // `em++` produces WebAssembly under every invocation, and every project
     // with a build program failed under `--target wasm32-emscripten` inside
-    // `emcc.py` (#622, measured by the dist-web member's first build). Empty
-    // when the row replaced nothing, in which case the row's pin remains the
-    // only spec there is and the previous behaviour is kept.
+    // `emcc.py` (#622, measured by the dist-web member's first build).
+    //
+    // Empty when the row replaced nothing — no [toolchain], no global
+    // default, no [target.<row>] entry existed before the row's pin applied.
+    // THIS IS NOT "the row's pin remains the only spec there is": on a
+    // fresh $HOME whose first-ever invocation names a hosted `--target`
+    // (nothing to be "before"), that reading resolved the SAME payload the
+    // row just picked — `em++` again — as the host compiler, which is the
+    // exact defect this field exists to close, just with no prior value to
+    // restore. `host_tc_for_build_program` resolves the platform's own
+    // native default in that case instead (`native_first_run_spec()`), the
+    // same one a plain `mcpp build` would have installed.
     std::optional<std::string> hostSpecBeforeRowPin;
     // THE PACKAGE WHOSE `requires` CHOSE THE COMPILER, AND WHAT IT ASKED FOR.
     //
@@ -2372,6 +2381,31 @@ prepare_build(bool print_fingerprint,
         if (!c) return mcpp::toolchain::msvc::has_usable_msvc();
         return mcpp::toolchain::msvc::msvc_available_here(
             (*c)->xlingsHome() / "data" / "xpkgs");
+    };
+
+    // THE PLATFORM'S CANONICAL NATIVE DEFAULT — a spec string only; no
+    // install, no persistence. Two places need "what would a native
+    // `mcpp build` pick here, with no --target": the first-run installer
+    // further below (which goes on to install and persist it), and
+    // `host_tc_for_build_program`'s cross branch (which needs a genuine HOST
+    // compiler when nothing was ever recorded as one — see its own comment
+    // for why #622 happened). One derivation, called from both, so they
+    // cannot drift the way a hand-copied second copy would.
+    auto native_first_run_spec = [&]() -> std::string {
+        namespace pins = mcpp::toolchain::triple::pins;
+        if constexpr (mcpp::platform::is_macos) {
+            return std::string(pins::kFirstRunMac);
+        } else if constexpr (mcpp::platform::is_windows) {
+            // A machine with no usable MSVC gets the GNU pin, not an
+            // MSVC-ABI clang it cannot use — mirrors the windows-gnu seed
+            // below, which this function's other caller runs after.
+            return std::string(msvc_usable_either_origin()
+                ? pins::kFirstRunWinMsvc : pins::kFirstRunWinGnu);
+        } else if (mcpp::platform::host_arch == std::string_view("x86_64")) {
+            return std::string(pins::kFirstRunLinuxX86_64);
+        } else {
+            return std::string(pins::kFirstRunLinuxOther);
+        }
     };
 
     bool windowsGnuFirstRun = false;
@@ -3332,20 +3366,11 @@ prepare_build(bool print_fingerprint,
         //            static binaries (ideal for aarch64 / Termux, no bionic dep).
         //            glibc-world linking (X11/GL) needs an explicit glibc
         //            toolchain, addable later for native-ABI aarch64 builds.
-        namespace pins = mcpp::toolchain::triple::pins;
-        std::string defaultSpec;
-        if constexpr (mcpp::platform::is_macos) {
-            defaultSpec = std::string(pins::kFirstRunMac);
-        } else if constexpr (mcpp::platform::is_windows) {
-            // Reaching here means msvc_usable_either_origin() was true — the seed above
-            // diverts the no-Visual-Studio case onto the windows-gnu target
-            // before the target block runs, so it never gets this far.
-            defaultSpec = std::string(pins::kFirstRunWinMsvc);
-        } else if (mcpp::platform::host_arch == std::string_view("x86_64")) {
-            defaultSpec = std::string(pins::kFirstRunLinuxX86_64);
-        } else {
-            defaultSpec = std::string(pins::kFirstRunLinuxOther);
-        }
+        // `native_first_run_spec()` (declared above) is this exact selection
+        // — on Windows it re-checks `msvc_usable_either_origin()`, which here
+        // is redundant (the seed above already diverted the unusable case
+        // onto the windows-gnu target before this block runs) but harmless.
+        std::string defaultSpec = native_first_run_spec();
         auto defaultParsed = mcpp::toolchain::parse_toolchain_spec(defaultSpec);
         // The legacy "-musl" spelling normalizes to (gcc, <host>-linux-musl),
         // so the resolver finds the `<host_arch>-linux-musl-g++` frontend
@@ -4130,12 +4155,36 @@ prepare_build(bool print_fingerprint,
         // THE ROW'S CONVENTION IS NOT THE HOST'S COMPILER. When the target
         // row's pin replaced a spec the user or the machine had chosen, the
         // build program resolves the replaced one: it is what a native build
-        // on this machine would use, and it is what the user wrote. A pin
-        // that replaced nothing is resolved as before.
+        // on this machine would use, and it is what the user wrote.
+        //
+        // A PIN THAT REPLACED NOTHING IS NOT "RESOLVED AS BEFORE" ANY MORE
+        // (#622). "Before" meant falling through to `*tcSpec`, which at this
+        // point (`tcOrigin == TargetPin`) IS the row's own pin — a TARGET
+        // answer. For a row whose payload can only ever emit its target
+        // (`emscripten@…` → em++, WebAssembly under every invocation) that
+        // resolved a cross compiler as the HOST toolchain for build.mcpp,
+        // which is compiled AND RUN on this machine: the compile itself
+        // "succeeds" (clang accepts the syntax) and the failure surfaces one
+        // step later, inside the payload's own driver, trying to produce a
+        // program this machine can execute (measured: emcc.py's
+        // `phase_compile_inputs` hits `assert os.path.exists(output_file)`
+        // and raises, on the very first `mcpp build --target
+        // wasm32-emscripten` in a fresh $HOME, before any [toolchain] default
+        // has ever been resolved or persisted). A row whose payload happens
+        // to double as a host compiler (an NDK clang) hid the same defect by
+        // accident.
+        //
+        // "Nothing to fall back on" must mean "resolve the platform's native
+        // default now", exactly as a plain `mcpp build` would on a virgin
+        // machine — not "reuse the target's answer". `native_first_run_spec()`
+        // is that exact selection (declared once, above, and used by the
+        // first-run installer itself), reused rather than re-derived so the
+        // two cannot silently drift apart.
         const std::string hostSpecText =
             (tcOrigin == TcOrigin::TargetPin && hostSpecBeforeRowPin.has_value()
              && !hostSpecBeforeRowPin->empty() && *hostSpecBeforeRowPin != "system")
-                ? *hostSpecBeforeRowPin : *tcSpec;
+                ? *hostSpecBeforeRowPin
+                : (tcOrigin == TcOrigin::TargetPin ? native_first_run_spec() : *tcSpec);
         auto spec = mcpp::toolchain::parse_toolchain_spec(hostSpecText);
         if (!spec || spec->version.empty()) {
             return std::unexpected(std::format(

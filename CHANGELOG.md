@@ -173,6 +173,27 @@ Emscripten 自己的 CMake 工具链(`CMAKE_EXECUTABLE_SUFFIX ".js"`)与 Rust �
   的宿主 spec(用户写的 `[toolchain]` 或机器默认),构建程序按它解析;行 pin 没有替换任何
   东西时行为不变。`tests/e2e/657`。
 
+### 修复:行 pin 没有替换任何东西时,回落的仍然是行自己的 spec(#622 续)
+
+- 上一条修复留了一个口子,注释里也写明了:"行 pin 没有替换任何东西时行为不变"——而
+  "不变"的行为正是缺陷本身。在 xlings 沙箱里对已发布的 2026.9.12.3 复现:全新
+  `$HOME`(`~/.mcpp` registry 为空)第一次调用就是 `mcpp pack --target
+  wasm32-emscripten`,这时 `[toolchain]`、全局默认、`[target.<row>]` 均不存在,
+  没有"替换之前"的宿主 spec 可以保留,于是回落分支又落回了行 pin 本身——宿主编译器
+  被解析成 `emsdk@6.0.9`(`em++`),`build.mcpp` 在 emcc.py 的 `phase_compile_inputs`
+  里得到与最初报告相同的 `AssertionError`。开发机上同一份工程能过,只是因为此前的原生
+  构建已经把机器默认工具链写进了 `~/.mcpp/config.toml`。
+- "没有可保留的宿主 spec"不等于"没有宿主可言":引擎现在在这种情况下解析平台自身的
+  原生默认工具链(`native_first_run_spec()`,与首次运行安装器共用同一份平台/架构判定,
+  而不是第二份手抄的判定),即一次普通 `mcpp build`(不带 `--target`)在同一台机器上
+  会安装的那一个,而不是目标行的约定。该函数只返回 spec 字符串,不做安装或持久化——
+  安装、fixup、探测复用 `host_tc_for_build_program` 原有的通用流水线,宿主的 C 运行时
+  绑定(`runtimeBindingSnapshot`)不随目标切换,这一路径自始至终不曾变过。
+- 判据:`tests/e2e/657` 新增第二、三阶段——在同一次调用里新建一个全新 `$MCPP_HOME`,
+  确认交叉构建下 `MCPP_HOST` 落在真实宿主三元组而非 `wasm32-*`、日志中不出现
+  `AssertionError`,随后在**同一个**全新 home 里再跑一次原生构建,确认修复没有反过来
+  影响原生路径。
+
 ### 修复:发布物是终端产物;库形态的应用也带上运行期文件(#622)
 
 - `mcpp pack --format <name>` 与 `mcpp run --format <name>` 报告的产物改为请求引入的
