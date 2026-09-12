@@ -76,7 +76,12 @@ export namespace mcpp::build::program_protocol {
 // `[targets.<name>]` keys of the same names. Same cost as v5's: a package
 // calling `mcpp::windows_subsystem()` fails on an older engine at the
 // build.mcpp COMPILE, because that engine's bundled module has no such function.
-inline constexpr int kProtocolVersion = 10;
+// v11: adds `deploy` -- the build-program form of `[runtime] deploy` (#622
+// A4): a file this program produced or selected, placed beside the artifact
+// at a path relative to the executable. Same cost as v5's: a package calling
+// `mcpp::deploy()` fails on an older engine at the build.mcpp COMPILE, because
+// that engine's bundled module has no such function.
+inline constexpr int kProtocolVersion = 11;
 
 // ── Cache-format epoch ─────────────────────────────────────────────────────
 //

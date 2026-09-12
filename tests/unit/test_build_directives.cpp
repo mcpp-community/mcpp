@@ -822,3 +822,112 @@ TEST(BuildDirectives, WindowsSubsystemThatContradictsTheManifestIsRefused) {
     m.targets[0].windowsSubsystem = "windows";
     EXPECT_EQ(dirs::target_directive_error(m, d), "");
 }
+
+// ── #622 A4: `mcpp::deploy(from, to)` ───────────────────────────────────────
+//
+// The build-program form of `[runtime] deploy` (#615): a file this program
+// produced or selected, placed beside the artifact at `to`. What is asserted:
+// `from` is resolved to an absolute path at PARSE time (so a package-relative
+// `from` and an already-absolute one, an action's own declared output, land on
+// the manifest the same way); `to` obeys the same rule the manifest key does,
+// checked BEFORE `apply` so a bad value is refused on every replay, not only
+// the run that first emitted it.
+
+namespace {
+
+mcpp::manifest::Manifest manifest_named(std::string name) {
+    mcpp::manifest::Manifest m;
+    m.package.name = std::move(name);
+    return m;
+}
+
+}  // namespace
+
+TEST(BuildDirectives, DeployRowIsProtocolElevenWithLinkGlobalScopeAndATag) {
+    auto def = dirs::find_by_wire("deploy");
+    ASSERT_NE(def, nullptr);
+    EXPECT_EQ(def->scope, dirs::Scope::LinkGlobal);
+    EXPECT_EQ(def->sinceProtocol, 11);
+    EXPECT_FALSE(def->tag.empty());
+    EXPECT_EQ(dirs::kProtocolVersion, 11);
+}
+
+TEST(BuildDirectives, ProtocolElevenIsAcceptedAndTwelveIsNot) {
+    auto ok = parse("mcpp:protocol=11\n");
+    EXPECT_FALSE(dirs::protocol_error(ok).has_value());
+    auto no = parse("mcpp:protocol=12\n");
+    EXPECT_TRUE(dirs::protocol_error(no).has_value());
+}
+
+TEST(BuildDirectives, DeployWithAnAbsoluteFromYieldsOneEntryOnTheManifest) {
+    const std::string from = under_root("gen/x.bin");
+    auto d = parse(std::format("mcpp:deploy={}\tres\n", from));
+    auto m = manifest_named("app");
+    ASSERT_EQ(dirs::deploy_directive_error(m, d), "");
+    dirs::apply(m, d);
+    ASSERT_EQ(m.runtimeConfig.linkIntent.deploy.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.linkIntent.deploy[0].from.string(), from);
+    EXPECT_EQ(m.runtimeConfig.linkIntent.deploy[0].to, "res");
+}
+
+// The manifest-sourced `from` rule (`deploy_path_problem`) refuses an absolute
+// path. A directive's `from` is not run through that check at all: it is
+// resolved to an absolute path by the table's own transform instead, because
+// it may be an action's own declared output (#622 A4). This is the case that
+// rule cannot see and must not reject.
+TEST(BuildDirectives, DeployFromIsResolvedToAbsoluteEvenWhenTheWireValueAlreadyWasOne) {
+    const std::string absFrom = under_root("out/gen/res.bin");
+    auto d = parse(std::format("mcpp:deploy={}\tapp.resources\n", absFrom));
+    auto m = manifest_named("app");
+    EXPECT_EQ(dirs::deploy_directive_error(m, d), "");
+    dirs::apply(m, d);
+    ASSERT_EQ(m.runtimeConfig.linkIntent.deploy.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.linkIntent.deploy[0].from.string(), absFrom);
+}
+
+// A relative `from` resolves against the package root, exactly as
+// `include-dir`'s AbsPath case does — the directive never leaves a relative
+// path for a later stage to guess the base of.
+TEST(BuildDirectives, DeployFromRelativeToTheRootIsMadeAbsolute) {
+    auto d = parse("mcpp:deploy=gen/x.bin\tres\n");
+    auto m = manifest_named("app");
+    ASSERT_EQ(dirs::deploy_directive_error(m, d), "");
+    dirs::apply(m, d);
+    ASSERT_EQ(m.runtimeConfig.linkIntent.deploy.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.linkIntent.deploy[0].from.string(), under_root("gen/x.bin"));
+}
+
+// The negative direction (#622 A4, and rule 8 of the design record): a `to`
+// `apply` cannot honour is refused BEFORE apply, naming the directive and the
+// package -- not only the path problem, which `deploy_path_problem` already
+// states on its own.
+TEST(BuildDirectives, DeployToDotDotIsRefusedNamingTheDirectiveAndThePackage) {
+    auto d = parse(std::format("mcpp:deploy={}\t../x\n", under_root("gen/x.bin")));
+    auto m = manifest_named("widget");
+    auto err = dirs::deploy_directive_error(m, d);
+    EXPECT_NE(err.find("deploy"), std::string::npos) << err;
+    EXPECT_NE(err.find("widget"), std::string::npos) << err;
+    EXPECT_NE(err.find("`.` or `..` component"), std::string::npos) << err;
+}
+
+TEST(BuildDirectives, DeployWithAMalformedWireValueIsRefused) {
+    auto d = parse("mcpp:deploy=onlyfromnotab\n");
+    auto m = manifest_named("app");
+    auto err = dirs::deploy_directive_error(m, d);
+    EXPECT_NE(err.find("deploy"), std::string::npos) << err;
+    EXPECT_NE(err.find("not `<from>"), std::string::npos) << err;
+}
+
+// A `to` that IS honourable does not stop the build, and the collected entry
+// is the only thing `apply` touches -- no flag channel gains anything, unlike
+// nothing here (deploy is not a compile/link flag).
+TEST(BuildDirectives, DeployReachesOnlyTheRuntimeDeployListNotAnyFlagChannel) {
+    auto d = parse(std::format("mcpp:deploy={}\t.\n", under_root("gen/x.bin")));
+    auto m = manifest_named("app");
+    ASSERT_EQ(dirs::deploy_directive_error(m, d), "");
+    dirs::apply(m, d);
+    ASSERT_EQ(m.runtimeConfig.linkIntent.deploy.size(), 1u);
+    EXPECT_EQ(m.runtimeConfig.linkIntent.deploy[0].to, ".");
+    EXPECT_TRUE(m.buildConfig.ldflags.empty());
+    EXPECT_TRUE(m.buildConfig.cxxflags.empty());
+}

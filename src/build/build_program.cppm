@@ -115,6 +115,14 @@ struct BuildProgramEnv {
     std::string targetBuiltinsLib;          // "clang_rt.builtins-riscv64" | "gcc" | ""
     std::string targetLibcProfile;          // "rv64gc/lp64d" | ""
     std::string targetLibc;                 // "picolibc-riscv" | "" (zero-libc tier)
+    // THE PROJECT'S FLOOR FOR THIS TRIPLE, IN THE PLATFORM'S OWN WORDS (#622
+    // A11): `14.0` on macOS, `18.0` on iOS, an API level on Android, empty
+    // elsewhere. The same `min_platform_version` (prepare.cppm) already
+    // computes for the compiler's `--target` flag and the fingerprint slot --
+    // this is that answer, handed to the build program instead of restated in
+    // a member's own options, where `dist/apple.cppm:140-143` measured it
+    // drifting.
+    std::string minPlatformVersion;
     std::string profile;                    // effective profile name (dev/release/…)
     std::vector<std::string> features;      // active feature closure of the package
     // The device axis of this build, in the wire form `mcpp.pack.abi_tag`
@@ -569,6 +577,12 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     e.emplace_back("MCPP_TARGET_BUILTINS_LIB", env.targetBuiltinsLib);
     e.emplace_back("MCPP_TARGET_LIBC_PROFILE", env.targetLibcProfile);
     e.emplace_back("MCPP_TARGET_LIBC", env.targetLibc);
+    // #622 A11. Always emitted, empty when `min_platform_version` returned
+    // empty (every non-Apple, non-Android target) — the same "absent and
+    // empty must not be the same observation" reason every other always-on
+    // contract value here is. Rides this vector, so it joins the re-run key
+    // like every other value contract_hash folds in.
+    e.emplace_back("MCPP_TARGET_MIN_PLATFORM_VERSION", env.minPlatformVersion);
     e.emplace_back("MCPP_PROFILE", env.profile);
     e.emplace_back("MCPP_ACCEL", env.accel);
     e.emplace_back("MCPP_LANGUAGE_MODULES", env.languageModules ? "1" : "0");
@@ -1081,6 +1095,11 @@ std::expected<void, std::string> run_build_program(
     if (cache_fresh(root, bdir, cache, programHash, compilerHash, ctxHash)) {
         if (auto terr = dirs::target_directive_error(m, cache.directives); !terr.empty())
             return std::unexpected(terr);
+        // #622 A4. Checked on the cache-hit path too, so a `deploy` a fresh
+        // run would refuse is refused again on a replay, never silently
+        // applied because the check itself was never re-run.
+        if (auto derr = dirs::deploy_directive_error(m, cache.directives); !derr.empty())
+            return std::unexpected(derr);
         dirs::apply(m, cache.directives);
         // ONE OF TWO SITES, AND THE ONE THAT IS EASY TO FORGET.
         //
@@ -1503,6 +1522,11 @@ std::expected<void, std::string> run_build_program(
     // anything is applied, for the same reason.
     if (auto terr = dirs::target_directive_error(m, d); !terr.empty()) {
         return std::unexpected(terr);
+    }
+    // #622 A4: a `deploy` directive's `to` is checked before anything is
+    // applied, for the same reason.
+    if (auto derr = dirs::deploy_directive_error(m, d); !derr.empty()) {
+        return std::unexpected(derr);
     }
     if (d.protocol == 0) {
         for (auto const& k : d.unknownKeys)

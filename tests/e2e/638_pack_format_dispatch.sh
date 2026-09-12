@@ -60,9 +60,14 @@ EOF
 cat > dist.sh <<'EOF'
 #!/usr/bin/env bash
 set -e
-version="$1"; stage="$2"; out="$3"
+version="$1"; stage="$2"; out="$3"; minplat="$4"
 {
   echo "version=$version"
+  # #622 A11: MCPP_TARGET_MIN_PLATFORM_VERSION, unset for every other build
+  # program below (they pass 3 args), so this line reads "min_platform_version="
+  # for them too -- harmless, since the assertion below matches it by exact
+  # line rather than by file content as a whole.
+  echo "min_platform_version=$minplat"
   echo "staged:"
   ls -1 "$stage" | sort
 } > "$out"
@@ -94,6 +99,9 @@ int main() {
      .arg(mcpp::package_version())
      .arg("${mcpp.stage_dir}")
      .arg(out.c_str())
+     // #622 A11: the platform floor for this triple, empty on Linux. Read
+     // here rather than restated, exactly as the version above is.
+     .arg(mcpp::min_platform_version())
      .input("${mcpp.target_file:app}")
      .output(out.c_str())
      .submit();
@@ -152,6 +160,10 @@ Z=$(find target -name 'app.zap' | head -1)
 # The engine handed the build program the rest of `[package]`.
 grep -qx "version=2.5.0" "$Z" \
   || { cat "$Z"; echo "FAIL: the action was not told the package version"; exit 1; }
+# #622 A11: MCPP_TARGET_MIN_PLATFORM_VERSION is empty on a Linux host/target,
+# read through mcpp::min_platform_version() rather than restated.
+grep -qx "min_platform_version=" "$Z" \
+  || { cat "$Z"; echo "FAIL: MCPP_TARGET_MIN_PLATFORM_VERSION was not empty on Linux"; exit 1; }
 # The action ran with a staged tree that already held the program. This is the
 # assertion the ordering exists for: an artifact edge is scheduled by ninja and
 # the tree is staged by mcpp after the link, so a single-pass design would run

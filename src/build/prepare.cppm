@@ -1193,6 +1193,12 @@ mcpp::platform::process::RunResult run_with_network_retry(
 // root gained `packageName` and the dependency loop gained it separately, and
 // a value added to only one of them is a rule package that works for a root
 // project and not for a dependency, with nothing failing to say so.
+// Forward-declared: defined below (#622 A11), and `fill_target_build_env`
+// needs it before that point in the file.
+std::string min_platform_version(const mcpp::manifest::Manifest& m,
+                                 const mcpp::toolchain::triple::Triple& t,
+                                 const std::filesystem::path& compilerPath);
+
 void fill_package_build_env(mcpp::build::BuildProgramEnv& e,
                             const mcpp::manifest::Manifest& m)
 {
@@ -1213,6 +1219,7 @@ void fill_package_build_env(mcpp::build::BuildProgramEnv& e,
 }
 
 void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
+                           const mcpp::manifest::Manifest& m,
                            const mcpp::toolchain::Toolchain* tc)
 {
     e.toolchainDir  = (tc && !tc->binaryPath.empty())
@@ -1263,6 +1270,12 @@ void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
             ? "clang_rt.builtins-" + t->arch
             : std::string("gcc");
     }
+
+    // #622 A11: MCPP_TARGET_MIN_PLATFORM_VERSION. One call, so a new consumer
+    // (`dist-apple`, `dist-apk`) reads the same answer the compiler flag and
+    // the fingerprint slot already resolved, rather than restating it.
+    if (auto tt = mcpp::toolchain::triple::parse(tc->targetTriple))
+        e.minPlatformVersion = min_platform_version(m, *tt, tc->binaryPath);
 }
 
 // ── Tool tiers: which of a manifest's declared packages this verb needs ─────
@@ -5155,7 +5168,7 @@ prepare_build(bool print_fingerprint,
             // version. Scoped: restored when this dependency's install returns,
             // compat retries below included.
             mcpp::build::BuildProgramEnv hookEnv;
-            fill_target_build_env(hookEnv, tc ? &*tc : nullptr);
+            fill_target_build_env(hookEnv, *m, tc ? &*tc : nullptr);
             hookEnv.targetTriple = overrides.target_triple;
             // Six names, fixed by install_hook_env; one guard each.
             const auto hookVars = mcpp::build::install_hook_env(hookEnv);
@@ -8746,7 +8759,7 @@ prepare_build(bool print_fingerprint,
             // library resolved, and the three answers that keep a board
             // package from naming a toolchain. One call, so a new answer
             // reaches every build program at once — see fill_target_build_env.
-            fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
+            fill_target_build_env(bpEnv, *m, tc ? &*tc : nullptr);
             bpEnv.toolsBin = projectSubosBin;
             bpEnv.profile      = effectiveProfile;
             bpEnv.accel        = resolvedAccel();
@@ -9724,7 +9737,7 @@ prepare_build(bool print_fingerprint,
         // C library, which compiler and which C++ standard library resolved,
         // and the three answers that keep a board package from naming a
         // toolchain. One call — see fill_target_build_env.
-        fill_target_build_env(bpEnv, tc ? &*tc : nullptr);
+        fill_target_build_env(bpEnv, *m, tc ? &*tc : nullptr);
         bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;
         bpEnv.accel        = resolvedAccel();
@@ -9762,6 +9775,11 @@ prepare_build(bool print_fingerprint,
         const auto rldN = bcRoot.ldflags.size(), rsrcN = bcRoot.sources.size(),
                    rmodN = m->modules.sources.size();
         const auto ractN = bcRoot.actions.size();
+        // #622 A4: how many `[runtime] deploy` entries existed before this
+        // program ran — the manifest-sourced ones, already in `packages[0]`'s
+        // snapshot. Anything past this index is a `mcpp::deploy()` residue
+        // that needs the same mirror the flag/source tails get below.
+        const auto rdeployN = m->runtimeConfig.linkIntent.deploy.size();
         if (auto bp = mcpp::build::run_build_program(
                 *m, *root, host->first, host->second,
                 m->cppStandard, bpEnv);
@@ -9816,6 +9834,15 @@ prepare_build(bool print_fingerprint,
         pkg0.manifest.buildConfig.ldflags.insert(
             pkg0.manifest.buildConfig.ldflags.end(),
             bcRoot.ldflags.begin() + rldN, bcRoot.ldflags.end());
+        // #622 A4: `mcpp::deploy()` residue → `packages[0].manifest`, the
+        // object `resolve_runtime_contract` (plan.cppm) actually reads.
+        // Without this mirror a directive-sourced deploy entry lands in `*m`
+        // and nowhere the planner looks — the same gap this block already
+        // closes for sources/flags, one more field wide.
+        pkg0.manifest.runtimeConfig.linkIntent.deploy.insert(
+            pkg0.manifest.runtimeConfig.linkIntent.deploy.end(),
+            m->runtimeConfig.linkIntent.deploy.begin() + static_cast<std::ptrdiff_t>(rdeployN),
+            m->runtimeConfig.linkIntent.deploy.end());
     }
 
     // ── Every device source must reach some action ─────────────────────────

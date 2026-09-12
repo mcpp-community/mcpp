@@ -155,6 +155,15 @@ enum class Slot : std::size_t {
     // `manifest::Target` with its own set of accepted values.
     WindowsSubsystem,
     WindowsEntry,
+    // A FILE THIS PROGRAM PRODUCED OR SELECTED, PLACED BESIDE THE ARTIFACT
+    // (#622 A4), as `<from>\t<to>`. The build-program form of `[runtime]
+    // deploy` (#615): `from` may be an action's own absolute declared output,
+    // which the manifest key can never name because it refuses an absolute
+    // path. One slot, not two, because `Transform::Deploy` resolves `from`
+    // against the package root at parse time and stores the pair together --
+    // splitting it into two slots would let a build with N deploy directives
+    // pair them up wrong the moment N > 1.
+    Deploy,
     Count
 };
 inline constexpr std::size_t kSlotCount = static_cast<std::size_t>(Slot::Count);
@@ -223,6 +232,14 @@ enum class Transform {
     DefinePrefix,   // dialect definePrefix + value
     AbsPath,        // absolute, lexically normal
     LinkerScript,   // "-T <absolute path>" — freestanding link layout
+    // `<from>\t<to>` (#622 A4). `from` is resolved against the package root
+    // exactly as AbsPath does -- absolute stays absolute, relative resolves --
+    // and `to` is left verbatim, because it is relative to an executable this
+    // package has not seen and `deploy_path_problem` (not this table) is what
+    // checks its shape. TAB rather than `:` (the `windows-subsystem` pair
+    // separator): an absolute `from` is a Windows path on that platform, and
+    // `C:\...` contains a colon.
+    Deploy,
 };
 
 struct Def {
@@ -245,7 +262,7 @@ struct Def {
     int              sinceProtocol;
 };
 
-inline constexpr std::array<Def, 25> kTable{{
+inline constexpr std::array<Def, 26> kTable{{
     //  wire                    tag                  slot                    scope                  transform                must   missingPrefix                 missingSuffix                                    since
     {"cxxflag",             "cxxflag",           Slot::CxxFlags,         Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
     {"cflag",               "cflag",             Slot::CFlags,           Scope::PackagePrivate, Transform::Verbatim,      false, "",                           "",                                              1},
@@ -384,6 +401,18 @@ inline constexpr std::array<Def, 25> kTable{{
     // cached run applies what the program said.
     {"windows-subsystem",   "windows-subsystem", Slot::WindowsSubsystem, Scope::TargetLink,     Transform::Verbatim,      false, "",                           "",                                              10},
     {"windows-entry",       "windows-entry",     Slot::WindowsEntry,     Scope::TargetLink,     Transform::Verbatim,      false, "",                           "",                                              10},
+    // v11 (#622 A4). Scope::LinkGlobal because this joins `LinkIntent`, the
+    // same struct `link-lib`/`link-search`/`link-script`/`link-flag` feed, and
+    // is merged into a CONSUMER's `bin/` by `resolve_runtime_contract` exactly
+    // as the manifest key `[runtime] deploy` already is -- it is that field,
+    // reached from a build program instead of TOML. `mustExistAfterRun` is
+    // FALSE: `from` routinely names an action's output, and the action has not
+    // run yet when build.mcpp exits -- it is a ninja edge scheduled after this
+    // process, not a side effect of it. `deploy_directive_error` is the `to`
+    // check the manifest reader also runs (`deploy_path_problem`), checked
+    // before `apply` on both the run path and the cache-hit path, so a cached
+    // replay refuses exactly what a fresh run would.
+    {"deploy",              "deploy",            Slot::Deploy,           Scope::LinkGlobal,     Transform::Deploy,        false, "",                           "",                                              11},
 }};
 
 // ── Collected output of one run ────────────────────────────────────────────
@@ -511,6 +540,16 @@ std::string action_error(const Directives& d);
 // earlier directive of the same program. Checked before `apply` on both the run
 // path and the cache-hit path, so the two apply one rule.
 std::string target_directive_error(const mcpp::manifest::Manifest& m, const Directives& d);
+
+// Non-empty when a `deploy` directive names something `apply` cannot honour
+// (#622 A4): a wire value that is not `<from>\t<to>`, or a `to` that fails the
+// same rule `deploy_path_problem` enforces for the manifest key. `from` is
+// never checked here — it was already resolved to an absolute path by
+// `Transform::Deploy`, and a directive-sourced `from` is allowed to be one (an
+// action's own declared output), unlike the manifest key's. Checked before
+// `apply` on both the run path and the cache-hit path, and the message names
+// both the directive and the declaring package, like `target_directive_error`.
+std::string deploy_directive_error(const mcpp::manifest::Manifest& m, const Directives& d);
 
 // Resolve an action's paths against `pkgRoot` and make its Source outputs
 // exist, so the ordinary source scan can see them.
@@ -641,6 +680,17 @@ std::string transformed(const Def& def, std::string_view raw,
         // relative script path resolves against the wrong root and lld
         // answers "cannot find linker script link.ld" — measured.
         case Transform::LinkerScript:  return "-T " + abs_against(root, raw);
+        // Resolve `from` NOW, while `root` (this build.mcpp's package root) is
+        // still in hand -- `apply` is never given it. `to` is left untouched:
+        // it is a destination relative to an executable this package has not
+        // seen, and its shape is `deploy_directive_error`'s question, not
+        // this transform's.
+        case Transform::Deploy: {
+            const auto tab = raw.find('\t');
+            if (tab == std::string_view::npos) return std::string(raw);
+            return abs_against(root, raw.substr(0, tab)) + '\t'
+                 + std::string(raw.substr(tab + 1));
+        }
     }
     return std::string(raw);
 }
@@ -904,6 +954,17 @@ void apply(mcpp::manifest::Manifest& m, const Directives& d) {
     for (auto const& payload : d.at(Slot::Actions)) {
         if (auto a = decode_action(payload)) bc.actions.push_back(std::move(*a));
     }
+
+    // `[runtime] deploy` from a build program (#622 A4). `from` was resolved
+    // to absolute by Transform::Deploy at parse time; `deploy_directive_error`
+    // has refused every `to` this function cannot honour, so the missing-tab
+    // guard below only keeps this function total.
+    for (auto const& entry : d.at(Slot::Deploy)) {
+        const auto tab = entry.find('\t');
+        if (tab == std::string::npos) continue;
+        m.runtimeConfig.linkIntent.deploy.push_back(
+            {std::filesystem::path(entry.substr(0, tab)), entry.substr(tab + 1)});
+    }
 }
 
 std::optional<mcpp::manifest::BuildAction> decode_action(std::string_view payload) {
@@ -1003,6 +1064,26 @@ std::string target_directive_error(const mcpp::manifest::Manifest& m, const Dire
         return e;
     return named_target_error(m, d.at(Slot::WindowsEntry),
                               "windows-entry", "windows_entry", false);
+}
+
+std::string deploy_directive_error(const mcpp::manifest::Manifest& m, const Directives& d) {
+    for (auto const& entry : d.at(Slot::Deploy)) {
+        const auto tab = entry.find('\t');
+        if (tab == std::string::npos)
+            return std::format(
+                "build.mcpp emitted `mcpp:deploy={}`, which is not `<from>\\t<to>`.",
+                entry);
+        const std::string from = entry.substr(0, tab);
+        const std::string to   = entry.substr(tab + 1);
+        // `dotAllowed = true`: `to = "."` means the executable's own
+        // directory, exactly as it does for the manifest key. `from` is
+        // deliberately not run through this check — see the declaration.
+        if (auto p = mcpp::manifest::deploy_path_problem("to", to, true); !p.empty())
+            return std::format(
+                "build.mcpp emitted `mcpp:deploy={}\\t{}` for package `{}`, and {}.",
+                from, to, m.package.name, p);
+    }
+    return {};
 }
 
 std::string action_error(const Directives& d) {
