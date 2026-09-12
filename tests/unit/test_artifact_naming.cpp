@@ -205,3 +205,31 @@ TEST(ArtifactNaming, ApplicationFormOnTheHostTripleIsExecutable) {
 }
 
 } // namespace
+
+// `platform_name` (#622 A7): the triple's `os`, except that an `env` naming a
+// platform of its own wins. Every row the engine has maps into the closed
+// vocabulary `[package] platforms` accepts, so a claim can be made for every
+// row and for nothing else.
+TEST(PlatformName, IsTheOsExceptForAndroid) {
+    using mcpp::toolchain::triple::parse;
+    using mcpp::toolchain::triple::platform_name;
+    EXPECT_EQ(platform_name(*parse("x86_64-linux-gnu")), "linux");
+    EXPECT_EQ(platform_name(*parse("aarch64-macos")), "macos");
+    EXPECT_EQ(platform_name(*parse("x86_64-windows-msvc")), "windows");
+    EXPECT_EQ(platform_name(*parse("aarch64-ios-sim")), "ios");
+    EXPECT_EQ(platform_name(*parse("aarch64-linux-android")), "android");
+    EXPECT_EQ(platform_name(*parse("wasm32-emscripten")), "emscripten");
+}
+
+TEST(PlatformName, EveryKnownRowIsInTheVocabulary) {
+    using namespace mcpp::toolchain::triple;
+    for (auto const& row : known_targets()) {
+        auto t = parse(std::string(row.canonical));
+        ASSERT_TRUE(t.has_value()) << row.canonical;
+        if (t->os == "none") continue;   // bare-metal rows claim no platform
+        EXPECT_TRUE(is_platform_name(platform_name(*t))) << row.canonical;
+    }
+    EXPECT_TRUE(is_platform_name("emscripten"));
+    EXPECT_FALSE(is_platform_name("web"));
+    EXPECT_EQ(platform_names_joined(), "linux | macos | windows | ios | android | emscripten");
+}

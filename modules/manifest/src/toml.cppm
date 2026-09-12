@@ -2792,7 +2792,10 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 if (auto f = rt.find("libraries"); f != rt.end() && f->second.is_array())
                     for (auto& v : f->second.as_array())
                         if (v.is_string()) cc.libraries.push_back(v.as_string());
-                // Two keys, and therefore a third key is a typo. The sweep over
+                if (auto f = rt.find("frameworks"); f != rt.end() && f->second.is_array())
+                    for (auto& v : f->second.as_array())
+                        if (v.is_string()) cc.frameworks.push_back(v.as_string());
+                // Three keys, and therefore a fourth key is a typo. The sweep over
                 // `[target.<pred>]` above cannot reach here: it skips tables,
                 // because tables are its conditional channel — so this table's
                 // own keys were swept by nothing.
@@ -2803,7 +2806,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 // and had drifted from both others, so the only spelling that
                 // turned the feature on was the one reported as unsupported.
                 static constexpr std::string_view kKnownCondRuntimeKeys[] = {
-                    "libraries", "link_library_dirs",
+                    "frameworks", "libraries", "link_library_dirs",
                 };
                 for (auto& [rk, _] : rt) {
                     if (std::ranges::find(kKnownCondRuntimeKeys, rk)

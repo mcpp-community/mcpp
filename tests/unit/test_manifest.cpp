@@ -5216,6 +5216,43 @@ cuda = { provides = ["gpu-blas"] }
 // unrelated key under the same predicate made it work, which is the control
 // below: the two manifests differ in one dimension that has nothing to do with
 // libraries, and before the fix that dimension decided the outcome.
+// `frameworks` is the third per-target runtime key (#622 A2): a table that
+// carries only it is recorded, it is not reported as unsupported, and a key
+// outside the three is still reported naming all three.
+TEST(Manifest, AConditionalFrameworksTableIsRecordedAndNotWarned) {
+    constexpr auto only_frameworks = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.'cfg(os = "ios")'.runtime]
+frameworks = ["UIKit", "MobileCoreServices"]
+)";
+    auto m = mcpp::manifest::parse_string(only_frameworks);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->conditionalConfigs.size(), 1u)
+        << "a frameworks-only predicate was parsed and then discarded";
+    ASSERT_EQ(m->conditionalConfigs[0].frameworks.size(), 2u);
+    EXPECT_EQ(m->conditionalConfigs[0].frameworks[0], "UIKit");
+    for (auto const& w : m->schemaWarnings)
+        EXPECT_EQ(w.find("frameworks"), std::string::npos) << w;
+
+    constexpr auto a_fourth_key = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[target.macos.runtime]
+deploy_files = ["x"]
+)";
+    auto m2 = mcpp::manifest::parse_string(a_fourth_key);
+    ASSERT_TRUE(m2.has_value()) << m2.error().format();
+    bool named = false;
+    for (auto const& w : m2->schemaWarnings)
+        if (w.find("unsupported key 'deploy_files'") != std::string::npos
+            && w.find("frameworks, libraries, link_library_dirs") != std::string::npos)
+            named = true;
+    EXPECT_TRUE(named) << "the unsupported-key report must list the three keys";
+}
+
 TEST(Manifest, AConditionalRuntimeTableAloneIsRecorded) {
     constexpr auto only_runtime = R"(
 [package]
@@ -5286,14 +5323,15 @@ name = "x"
 version = "0.1.0"
 [target.linux.runtime]
 libraries = ["dl"]
-frameworks = ["Cocoa"]
+deploy_files = ["x"]
 )";
     auto m = mcpp::manifest::parse_string(src);
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->schemaWarnings.size(), 1u);
-    // `frameworks` is a real `[runtime]` key and not a per-target one, so the
-    // plausible-looking case is the one held here.
-    EXPECT_NE(m->schemaWarnings[0].find("frameworks"), std::string::npos)
+    // `deploy_files` is a real `[runtime]` key and not a per-target one, so
+    // the plausible-looking case is the one held here. (`frameworks` was the
+    // example until #622 made it the third per-target key.)
+    EXPECT_NE(m->schemaWarnings[0].find("deploy_files"), std::string::npos)
         << m->schemaWarnings[0];
     EXPECT_NE(m->schemaWarnings[0].find("[target.linux.runtime]"), std::string::npos)
         << m->schemaWarnings[0];

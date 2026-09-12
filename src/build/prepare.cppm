@@ -389,7 +389,8 @@ export void merge_conditional_config(mcpp::manifest::Manifest& m,
         if (cfgpred::uses_layer(cc.predicate)) continue;
         if (!cfgpred::matches(cc.predicate, ctx)) continue;
         const bool neutralWins = generatedPackage
-                              && (!cc.linkLibraryDirs.empty() || !cc.libraries.empty());
+                              && (!cc.linkLibraryDirs.empty() || !cc.libraries.empty()
+                                  || !cc.frameworks.empty());
         // One append() for every field the axis may carry (#258). Matching
         // sections land AFTER the base entries, so a conditional rule beats
         // a broader unconditional one under GNU last-wins — which is what
@@ -420,6 +421,8 @@ export void merge_conditional_config(mcpp::manifest::Manifest& m,
             m.runtimeConfig.linkIntent.linkLibraryDirs.push_back(d);
         for (auto const& l : cc.libraries)
             m.runtimeConfig.linkIntent.libraries.push_back(l);
+        for (auto const& f : cc.frameworks)
+            m.runtimeConfig.linkIntent.frameworks.push_back(f);
         merge_conditional_xlings(m, cc);
         // `[target.<sel>.abi]`: recorded for every package; rendered only for
         // the root, where prepare_build reads it. Last matching section wins,
@@ -512,6 +515,8 @@ bool merge_layer_conditional_config(mcpp::manifest::Manifest& m,
             m.runtimeConfig.linkIntent.linkLibraryDirs.push_back(d);
         for (auto const& l : cc.libraries)
             m.runtimeConfig.linkIntent.libraries.push_back(l);
+        for (auto const& f : cc.frameworks)
+            m.runtimeConfig.linkIntent.frameworks.push_back(f);
         // NO `merge_conditional_xlings` HERE, DELIBERATELY. A cc that reaches
         // this pass has a layer in its predicate, and one carrying tools was
         // refused long before — see `layer_predicated_xlings_refusal`. Folding
@@ -2271,12 +2276,15 @@ prepare_build(bool print_fingerprint,
     }();
 
     // [package] platforms — fixed vocabulary owned by mcpp (it owns the
-    // target/triple system). Unknown values: warning, or error under --strict.
+    // target/triple system): the platform name of every row it has
+    // (`platform_name`, beside `artifact_naming`). Unknown values: warning, or
+    // error under --strict.
     for (auto& pf : m->package.platforms) {
-        if (pf != "linux" && pf != "macos" && pf != "windows") {
+        if (!mcpp::toolchain::triple::is_platform_name(pf)) {
             auto msg = std::format(
                 "[package] platforms contains unknown platform '{}' "
-                "(expected: linux | macos | windows)", pf);
+                "(expected: {})", pf,
+                mcpp::toolchain::triple::platform_names_joined());
             if (overrides.strict) return std::unexpected(msg);
             mcpp::diag::warning("manifest/platforms", msg);
         }

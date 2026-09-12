@@ -1183,6 +1183,42 @@ inline ApplicationForm application_form(const Triple& t) {
                               : ApplicationForm::Executable;
 }
 
+// THE PLATFORM NAME OF A ROW, for `[package] platforms` (#622 A7). A platform
+// name is the triple's `os`, except where an `env` names a platform of its
+// own: Android is `linux` with `env = "android"` in the triple, and a
+// package that supports Linux does not thereby support Android. The Web row
+// keeps its `os` word, `emscripten`, which is also the word the `cfg()`
+// grammar uses; a WASI row would be another `os`.
+//
+// `kPlatformNames` is the closed vocabulary the `[package] platforms`
+// validator, `mcpp doctor` and the pack coverage check share. It is derived by
+// hand rather than from `kKnownTargets` so that a `planned` row does not admit
+// a claim nothing can yet check; the unit test asserts every known row's
+// `platform_name` is a member.
+inline constexpr std::string_view kPlatformNames[] = {
+    "linux", "macos", "windows", "ios", "android", "emscripten",
+};
+
+inline std::string platform_name(const Triple& t) {
+    if (t.env == "android") return "android";
+    return t.os;
+}
+
+inline bool is_platform_name(std::string_view name) {
+    for (auto p : kPlatformNames)
+        if (p == name) return true;
+    return false;
+}
+
+inline std::string platform_names_joined() {
+    std::string out;
+    for (auto p : kPlatformNames) {
+        if (!out.empty()) out += " | ";
+        out += p;
+    }
+    return out;
+}
+
 } // namespace mcpp::toolchain::triple
 
 namespace mcpp::toolchain::triple {

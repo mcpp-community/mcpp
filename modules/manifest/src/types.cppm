@@ -1288,6 +1288,12 @@ struct ConditionalConfig {
     // add to them.
     std::vector<std::filesystem::path>  linkLibraryDirs;
     std::vector<std::string>            libraries;
+    // `frameworks` is the third per-target runtime key (#622 A2). It is the
+    // one Mach-O key that names a platform library, and iOS and macOS do not
+    // share those names: `AppKit` is absent from the iOS SDK and `UIKit` from
+    // the macOS one. Appended after the top-level list, rendered only on
+    // Mach-O, exactly as `libraries` is handled.
+    std::vector<std::string>            frameworks;
     // `[target.<sel>.abi]` -- graph-wide ABI switches as typed members. See
     // BuildConfig::abiThreads for what the value does and where it applies.
     bool                                abiThreads = false;
@@ -1356,6 +1362,7 @@ struct ConditionalConfig {
 // same reason `is_empty(BuildInputs)` is one.
 inline bool is_empty(const ConditionalConfig& c) {
     return is_empty(c.inputs) && c.linkLibraryDirs.empty() && c.libraries.empty()
+        && c.frameworks.empty()
         && c.dependencies.empty() && c.devDependencies.empty()
         && c.buildDependencies.empty() && c.featureDeps.empty()
         && c.xlings.empty() && !c.abiThreadsDeclared;

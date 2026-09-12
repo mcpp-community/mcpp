@@ -107,5 +107,21 @@ grep -q "unknown platform 'amiga'" b6.log || { cat b6.log; echo "missing platfor
 if "$MCPP" build --strict > b7.log 2>&1; then
     cat b7.log; echo "--strict must fail on unknown platform"; exit 1
 fi
+grep -q "expected: linux | macos | windows | ios | android | emscripten" b7.log \
+    || { cat b7.log; echo "the refusal must list the six platform names"; exit 1; }
+
+# 6. The vocabulary names every row the engine has (#622 A7): the three rows
+#    verified in 2026.9.11.x are claimable, and the word is the triple's own
+#    (`emscripten`), not `web`.
+sed 's/platforms = \["linux", "amiga"\]/platforms = ["linux", "ios", "android", "emscripten"]/' mcpp.toml > mcpp.toml.tmp && mv mcpp.toml.tmp mcpp.toml
+rm -rf target
+"$MCPP" build --strict > b8.log 2>&1 || { cat b8.log; echo "the six platform names must pass --strict"; exit 1; }
+if grep -q "unknown platform" b8.log; then cat b8.log; echo "a known platform name was reported as unknown"; exit 1; fi
+sed 's/platforms = \["linux", "ios", "android", "emscripten"\]/platforms = ["web"]/' mcpp.toml > mcpp.toml.tmp && mv mcpp.toml.tmp mcpp.toml
+rm -rf target
+if "$MCPP" build --strict > b9.log 2>&1; then
+    cat b9.log; echo "--strict must fail on 'web': the word is emscripten"; exit 1
+fi
+grep -q "unknown platform 'web'" b9.log || { cat b9.log; echo "missing platform refusal for 'web'"; exit 1; }
 
 echo "OK"
