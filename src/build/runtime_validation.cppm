@@ -1261,11 +1261,25 @@ check_dlopen_surface(const mcpp::build::BuildPlan& plan) {
     // drives the backend twice: the first pass links the dependency's shared
     // library and nothing else, and reported `libur_adapter_opencl.so.0 needs
     // libOpenCL.so.1` -- the very library it was in the middle of producing.
-    const bool producesAProgram = std::ranges::any_of(
-        plan.linkUnits, [](auto const& unit) {
-            return unit.kind == mcpp::build::LinkUnit::Binary
-                || unit.kind == mcpp::build::LinkUnit::TestBinary;
-        });
+    //
+    // AN APPLICATION IS A PROGRAM ON EVERY ROW (#622 A3). On `*-linux-android`
+    // a `kind = "app"` target links as `LinkUnit::SharedLibrary`, the form the
+    // Android runtime loads into a process; at the link-unit level it is
+    // indistinguishable from a dependency's `shared` target, so the manifest
+    // is asked which it is. The same predicate serves `mcpp pack`
+    // (`pipeline.cppm`, `is_program_link_unit`), and a link unit a dependency
+    // owns is excluded there for the same reason it is excluded here.
+    auto is_program_unit = [&](const mcpp::build::LinkUnit& unit) {
+        if (unit.kind == mcpp::build::LinkUnit::Binary
+            || unit.kind == mcpp::build::LinkUnit::TestBinary) return true;
+        if (unit.kind != mcpp::build::LinkUnit::SharedLibrary || unit.dependencyOwned)
+            return false;
+        for (auto const& t : plan.manifest.targets)
+            if (t.name == unit.targetName)
+                return t.kind == mcpp::manifest::Target::Application;
+        return false;
+    };
+    const bool producesAProgram = std::ranges::any_of(plan.linkUnits, is_program_unit);
     if (!producesAProgram) {
         publish_reason("this build produces no program; the surface is reached "
                        "from a process and belongs to whatever runs");
