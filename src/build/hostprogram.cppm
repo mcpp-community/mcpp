@@ -14,6 +14,7 @@ export module mcpp.build.hostprogram;
 
 import std;
 import mcpp.build.directives;   // kProtocolVersion — the announced value has ONE source
+import mcpp.log;
 import mcpp.platform;
 import mcpp.platform.process;
 import mcpp.toolchain.dialect;
@@ -685,6 +686,18 @@ build_mcpp_module(const fs::path& bdir, const fs::path& compiler,
 
     auto run = [&](std::vector<std::string> argv, const char* what)
         -> std::expected<void, std::string> {
+        // THE ONLY PLACE THIS ARGV IS EVER OBSERVABLE ON A SUCCESSFUL RUN.
+        // A failing compile shows its own command implicitly (the compiler's
+        // diagnostics name the headers it looked for and did not find); a
+        // passing one otherwise leaves no trace of which `-isystem` rows it
+        // carried — which is exactly the fact that distinguishes a host
+        // toolchain whose C library was attached from one whose wasn't (#622,
+        // `host_tc_for_build_program`'s cross branch). `verbose()` always logs
+        // it; MCPP_VERBOSE=1 additionally echoes it to stderr.
+        std::string joined;
+        for (auto const& a : argv) { if (!joined.empty()) joined += ' '; joined += a; }
+        mcpp::log::verbose("buildmcpp-host",
+            std::format("mcpp module {}: {}", what, joined));
         auto r = mcpp::platform::process::capture_exec(argv, env, bdir.string());
         if (r.exit_code != 0)
             return std::unexpected(std::format("mcpp module {} failed (exit {}):\n{}",

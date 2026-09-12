@@ -36,6 +36,37 @@
 # not the row's convention. Phase 2 holds a fresh $MCPP_HOME so this is the
 # condition actually exercised, and phase 3 checks the fix did not cost the
 # native path anything in that same fresh home.
+#
+# PHASE 2 ALSO CATCHES A SECOND, NARROWER DEFECT IN THE SAME LAMBDA, found
+# after the row-pin fix above: even once the host toolchain is correctly
+# resolved as the platform's gcc, `host_tc_for_build_program`'s cross branch
+# called `detect(frontend)` with ONLY the compiler path -- not the two extra
+# arguments (`runtimePayload`, the host's runtime-binding contract hash) the
+# native call site always passes. `detect()` uses the second argument to
+# probe which glibc/linux-headers xpkg payloads belong to this exact host
+# toolchain (`Toolchain::payloadPaths`); without it, that field stays unset,
+# so neither the explicit `-isystem`/`-idirafter <glibc>/include` rows nor
+# the sysroot-completion symlinking that depends on it ever run. Measured in
+# the xlings sandbox (a fresh registry, real gcc@16.1.0 + glibc@2.44.2
+# payloads, no leaked host state): the log said "Resolved host toolchain for
+# build.mcpp: gcc 16.1.0 (x86_64-linux-gnu)" -- the RIGHT compiler -- and
+# then `mcpp module compile failed`:
+#   .../xim-x-gcc/16.1.0/include/c++/16.1.0/x86_64-linux-gnu/bits/os_defines.h:
+#   fatal error: features.h: No such file or directory
+# `echo | g++ -x c++ -E -v -` in that sandbox listed only the payload's own
+# `c++/16.1.0`, `include`, `include-fixed` -- no C library directory at all.
+# The fix passes the SAME `runtimePayload`/host runtime-binding the native
+# call already trusts (declared once, near the top of prepare_build) rather
+# than deriving anything new -- the value is the host's, so it does not vary
+# with `--target`. NOT RELIABLY REPRODUCIBLE OUTSIDE A REAL SANDBOX: on an
+# interactive dev machine the same fresh-$MCPP_HOME recipe did not fail --
+# mcpp's own bundled "Initialize mcpp sandbox layout" step populates a usable
+# sysroot there by some path this defect never went near, the same shape as
+# every other "ambient machine state hides a payload gap" note in this
+# codebase's history. The assertion below is therefore the portable,
+# environment-independent half (the exact error string from the report must
+# never appear); the authoritative before/after check is the sandbox run
+# recorded in this commit's message.
 set -e
 
 have_emsdk=0
@@ -137,11 +168,24 @@ int main() {
 CPP
 
 cd "$TMP/q"
-MCPP_HOME="$FRESH_HOME" "$MCPP" build --target wasm32-emscripten > fresh-build.log 2>&1 \
+# MCPP_VERBOSE=1 makes the mcpp-module compile command itself observable in
+# the log (mcpp.build.hostprogram's `run` lambda logs it under the
+# "buildmcpp-host" tag) — the only place a SUCCESSFUL compile's `-isystem`/
+# `-idirafter <glibc>/include` rows are visible at all; a failing one shows
+# them implicitly, through the headers the compiler says it could not find.
+MCPP_VERBOSE=1 MCPP_HOME="$FRESH_HOME" "$MCPP" build --target wasm32-emscripten > fresh-build.log 2>&1 \
     || fail "a fresh \$MCPP_HOME's first build does not build for wasm32-emscripten (row-pin fallback picked the row's own compiler as the host toolchain again)" fresh-build.log
 grep -q 'AssertionError' fresh-build.log && fail "emcc.py's assertion is in the fresh-home log" fresh-build.log
 grep -q 'host toolchain for build.mcpp: clang' fresh-build.log \
     && fail "the fresh-home host toolchain for build.mcpp was the Web row's own clang" fresh-build.log
+# THE SECOND DEFECT'S EXACT SIGNATURE (see the header comment): the host
+# toolchain can be correctly gcc and still have no path to its own C
+# library. This string appears only when a C library header search
+# actually failed, so it is portable across whatever the local sysroot
+# happens to look like (payload -isystem rows vs. a symlinked bundled
+# sysroot) — unlike asserting a specific flag on the compile line.
+grep -qi 'features\.h' fresh-build.log \
+    && fail "features.h was reported missing while compiling the mcpp module (host toolchain has no C library attached)" fresh-build.log
 [ -f bp-env.txt ] || fail "the build program did not run in the fresh home" fresh-build.log
 fresh_host_triple=$(grep '^host=' bp-env.txt | cut -d= -f2)
 fresh_target_triple=$(grep '^target=' bp-env.txt | cut -d= -f2)

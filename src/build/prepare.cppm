@@ -4217,7 +4217,41 @@ prepare_build(bool print_fingerprint,
             return std::unexpected(std::format(
                 "host toolchain post-install fixup: {}", fixed.error()));
         else report_fixup(*fixed, payload->root);
-        auto htc = mcpp::toolchain::detect(frontend);
+        // SAME THREE ARGUMENTS THE NATIVE CALL USES (line ~3550), not the
+        // one-argument form. `detect()` probes `payloadPaths` — the
+        // fine-grained glibc/linux-headers xpkg directories `resolve_link_model`
+        // attaches as explicit `-isystem` rows — from the SECOND argument, and
+        // does so only when it is given; passing only `frontend` leaves
+        // `tc.payloadPaths` unset, so `host_base_flags`/`host_compile_tokens`
+        // fell back to `tc.sysroot` alone (from the payload's own
+        // `*sysroot_spec: --sysroot=%R`, `%R` being wherever the fixup pointed
+        // it — nothing, on a sandbox with no leaked subos sysroot to fill it
+        // in by accident).
+        //
+        // Measured in the xlings sandbox against the released 2026.9.12.3, on
+        // a fresh registry (a real, non-symlinked gcc@16.1.0 payload, no
+        // ambient /usr/include, no subos state to leak): "Resolved host
+        // toolchain for build.mcpp: gcc 16.1.0 (x86_64-linux-gnu)" — the right
+        // FAMILY, since #622's first fix already keeps the pre-row spec — and
+        // then the `mcpp` module compile failed with `features.h: No such
+        // file or directory`, because that gcc's specs alone name no C
+        // library. `echo | g++ -x c++ -E -v -` there lists only the payload's
+        // own `c++/16.1.0`, `include`, `include-fixed` — no glibc directory.
+        // On a development machine the same probe happens to pass, but for a
+        // reason that has nothing to do with this code path: the shared-store
+        // gcc's search list there ends with a SUBOS's `usr/include`, leaked
+        // into `%R` by machine state the payload never declared (the same
+        // shape as "host /usr/include silently completes a payload
+        // toolchain") — which is exactly the kind of thing a fresh sandbox
+        // does not have lying around to hide the gap.
+        //
+        // `runtimePayload` and `runtimeBindingSnapshot` (declared once, near
+        // the top of this function) are the HOST's C-library identity — never
+        // re-derived from `--target`, see their own declarations — so passing
+        // them here is not a parallel derivation; it is the one this function
+        // already had in scope and the native call already trusts.
+        auto htc = mcpp::toolchain::detect(
+            frontend, runtimePayload, runtimeBindingSnapshot.contractHash);
         if (!htc) return std::unexpected(htc.error().message);
         mcpp::ui::info("Resolved", std::format(
             "host toolchain for build.mcpp: {}", htc->label()));
