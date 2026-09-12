@@ -5438,16 +5438,20 @@ st = { requires_abi = { threads = false } }
     EXPECT_TRUE(m->schemaWarnings.empty());
 }
 
-TEST(Manifest, AbiTablesRefuseAnythingButABooleanThreads) {
+// `exceptions` joined `threads` as the second `abi` member 2026-09-12 (the UI
+// framework record, section 2.1, A1); the accepted set and every refusal
+// below name both. See tests/unit/test_abi.cpp for the member's own coverage
+// (parsing, rendering, the target-axis `requires_abi` forms).
+TEST(Manifest, AbiTablesRefuseAnythingButABooleanMember) {
     const std::pair<std::string_view, std::string_view> cases[] = {
         {"[package]\nname = \"a\"\nversion = \"0.1.0\"\nrequires_abi = true\n",
          "[package] requires_abi must be a table such as `{ threads = true }`"},
         {"[package]\nname = \"a\"\nversion = \"0.1.0\"\nrequires_abi = { threads = 1 }\n",
-         "[package] requires_abi.threads: the members are `threads`, a boolean"},
+         "[package] requires_abi.threads: the members are `threads`, `exceptions`, booleans"},
         {"[package]\nname = \"a\"\nversion = \"0.1.0\"\n[features]\nmt = { requires_abi = { thread = true } }\n",
-         "features.mt.requires_abi.thread: the members are `threads`, a boolean"},
+         "features.mt.requires_abi.thread: the members are `threads`, `exceptions`, booleans"},
         {"[package]\nname = \"a\"\nversion = \"0.1.0\"\n[target.'cfg(os = \"linux\")'.abi]\nthread = true\n",
-         "has no member 'thread'; the members are: threads"},
+         "has no member 'thread'; the members are: threads, exceptions"},
         {"[package]\nname = \"a\"\nversion = \"0.1.0\"\n[target.'cfg(os = \"linux\")'.abi]\nthreads = \"yes\"\n",
          ".threads must be true or false"},
     };
