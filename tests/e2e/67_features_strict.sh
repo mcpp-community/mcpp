@@ -112,10 +112,14 @@ grep -q "expected: linux | macos | windows | ios | android | emscripten" b7.log 
 
 # 6. The vocabulary names every row the engine has (#622 A7): the three rows
 #    verified in 2026.9.11.x are claimable, and the word is the triple's own
-#    (`emscripten`), not `web`.
+#    (`emscripten`), not `web`. Asserted on the warning's absence rather than
+#    on `--strict` succeeding: `--strict` also fails on degradations unrelated
+#    to this key (a toolchain that emits no GNU depfile, measured on the
+#    Windows shard), so a strict success would read a platform fact through a
+#    toolchain fact.
 sed 's/platforms = \["linux", "amiga"\]/platforms = ["linux", "ios", "android", "emscripten"]/' mcpp.toml > mcpp.toml.tmp && mv mcpp.toml.tmp mcpp.toml
 rm -rf target
-"$MCPP" build --strict > b8.log 2>&1 || { cat b8.log; echo "the six platform names must pass --strict"; exit 1; }
+"$MCPP" build > b8.log 2>&1 || { cat b8.log; echo "a manifest naming the six platforms must build"; exit 1; }
 if grep -q "unknown platform" b8.log; then cat b8.log; echo "a known platform name was reported as unknown"; exit 1; fi
 sed 's/platforms = \["linux", "ios", "android", "emscripten"\]/platforms = ["web"]/' mcpp.toml > mcpp.toml.tmp && mv mcpp.toml.tmp mcpp.toml
 rm -rf target
