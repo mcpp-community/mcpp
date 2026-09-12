@@ -22,8 +22,14 @@ outputs 的 depfile。六个数组换成模块内部基于 `realloc` 增长的 s
 --verify content --output <dst> <src>` 即每条 `stage_file` 边已在执行的那次拷贝。
 `mcpp stage` 的参数形状自此成为契约,其帮助文本改为陈述真实的默认值(content)。
 
-- 判据:`tests/e2e/659`(200 个输入与 200 个输出的 action 整体进入 build.ninja,
-  缓存回放后仍完整;在 2026.9.12.4 上同一夹具被拒绝),`tests/e2e/660`
+顺带修正引擎的命令长度守卫:它此前把每条 `build` 行读成命令的代理,这对展开
+`$in`/`$out` 的规则成立,对命令是字面 argv 的 action 规则不成立 —— 一个 200 个
+输出的 action 在 Windows 分片上被整条边行当 argv 计数而拒绝。守卫现在对字面命令
+量它自己的文本。
+
+- 判据:`tests/e2e/659`(600 个输入与 600 个输出的 action 整体进入 build.ninja,
+  边行越过每个宿主的 argv 上限而不被守卫误拒,缓存回放后仍完整;在 2026.9.12.4
+  上同一夹具被拒绝),`tests/e2e/660`
   (`${mcpp.self}` 在每个分片上完成一次拷贝,空转重建不再拷贝;在 2026.9.12.4
   上 token 原样落入 build.ninja)。
 - 设计记录:`.agents/docs/2026-09-13-four-upstream-asks-from-a-ui-framework.md`。

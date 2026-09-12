@@ -26,11 +26,23 @@
 # producing files is the command's business, covered by 188. What is under
 # test here is the declaration channel.
 #
-# A second action carries a command past 16384 bytes on the hosts whose OS
-# allows it. Windows is skipped for that leg only: ninja runs every command
-# through `cmd /c` there, which caps a command line at 8191 characters, and
-# that is the operating system's limit on the tool's own argv, not the
-# engine's on the declaration (the design record's section 2.4).
+# N is chosen so that the action's EDGE LINE in build.ninja (outputs, rule,
+# inputs) is longer than the POSIX per-argument limit of 128 KiB as well as
+# Windows's 32767-character CreateProcess limit. That is the second thing this
+# fixture measures: the engine's command-length guard used to read the edge
+# line as a proxy for the command, which is right for a rule that expands
+# `$in` and `$out` and wrong for an action rule, whose command is a literal
+# argv and whose inputs and outputs exist only so that ninja can order and
+# re-run it. Its first run on the Windows shard refused this fixture with the
+# whole list counted as argv; the guard now measures a literal command's own
+# text, and the same fixture is what holds that on every shard.
+#
+# A second action carries a command past 16384 bytes, the old bound of the
+# command list, on the POSIX hosts: its command is `true`, a program that
+# accepts any argv and exits 0, which Windows does not have. 19200 bytes is
+# under every operating system's limit on a process's arguments; what remains
+# bounded at run time is the tool's own argv, by the OS (the design record's
+# section 2.4), and that is not the engine's bound on the declaration.
 set -e
 
 source "$(dirname "$0")/_host_path.sh"
@@ -39,7 +51,7 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
 
-readonly N=200
+readonly N=600
 
 mkdir -p app/src app/in
 cd app
@@ -61,17 +73,19 @@ EOF
 
 # N input files, so that ninja finds every declared input on disk. Each path
 # is padded to a fixed width with a long directory name, so the serialised
-# list crosses the old bound regardless of where this fixture runs:
-# N * (width + 3) > 8192 whenever width >= 40.
-PAD="a-directory-name-long-enough-to-make-the-list-cross-the-old-bound"
+# lists cross the old 8192-byte bound and the edge line crosses 128 KiB
+# regardless of where this fixture runs: with a 100-byte directory name each
+# path is at least 115 bytes, and 600 inputs plus 600 outputs put more than
+# 138000 bytes on the one edge line.
+PAD="a-directory-name-long-enough-to-make-the-edge-line-cross-the-per-argument-limit-of-the-host-os-xxxx"
 mkdir -p "in/$PAD"
 for i in $(seq 1 $N); do : > "in/$PAD/input-$i.txt"; done
 
 ROOT_HOST=$(host_path "$PWD")
 MCPP_HOST=$(host_path "$(cd "$(dirname "$MCPP")" && pwd)/$(basename "$MCPP")")
 
-# The long-command leg: a program that accepts any argv and exits 0. Not on
-# Windows (see the header).
+# The long-command leg: a program that accepts any argv and exits 0. POSIX
+# hosts only (see the header).
 TRUE_HOST=""
 case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*) ;;
@@ -157,5 +171,39 @@ NINJA=$(find target -name build.ninja -print -quit)
 outs=$(count_in_edge "output-[0-9]*\.txt")
 [ "$outs" = "$N" ] || { echo "FAIL: after a replay build.ninja names $outs of $N declared outputs"; exit 1; }
 echo "ok: the replayed record carries all $N outputs"
+
+# The negative direction of the guard: a LITERAL command that really is too
+# long for the host is still refused, before anything is compiled, and the
+# refusal names the edge by its first output rather than by every output.
+# 2200 arguments of 64 bytes is 140800 bytes, over the POSIX 128 KiB
+# per-argument limit and over Windows's 32767 alike, so this leg runs on
+# every shard. The program named does not have to exist: the guard fires
+# while build.ninja is being written.
+mkdir -p ../too-long/src
+cp mcpp.toml ../too-long/ && cp src/main.cpp ../too-long/src/
+cd ../too-long
+cat > build.mcpp <<EOF
+import std;
+import mcpp;
+int main() {
+    mcpp::action c;
+    c.id   = "too-long";
+    c.role = "check";
+    c.arg("$MCPP_HOST");
+    const std::string word(64, 'y');
+    for (int i = 0; i < 2200; ++i) c.arg(word.c_str());
+    c.output((std::string(mcpp::out_dir()) + "/too-long.stamp").c_str());
+    c.submit();
+}
+EOF
+if "$MCPP" build > b4.log 2>&1; then
+    cat b4.log; echo "FAIL: a 140800-byte literal command was accepted"; exit 1
+fi
+grep -q "over the .* byte limit" b4.log || { cat b4.log; echo "FAIL: the refusal is not the command-length guard's"; exit 1; }
+grep -q "too-long.stamp" b4.log || { cat b4.log; echo "FAIL: the refusal does not name the edge"; exit 1; }
+# One output, so no "(and N more outputs)" suffix; the whole message stays
+# short enough to read.
+[ "$(wc -c < b4.log)" -lt 4000 ] || { wc -c b4.log; echo "FAIL: the refusal printed the whole edge line"; exit 1; }
+echo "ok: a command over the host limit is refused, naming the edge"
 
 echo "OK"

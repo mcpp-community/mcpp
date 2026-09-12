@@ -560,10 +560,12 @@ list in a fixed array (8192 bytes of serialised JSON for `inputs` and
 `outputs`) and refused a declaration that did not fit, so a consumer's
 checkout depth decided whether a list of forty files was accepted. What
 remains bounded is the **command at run time**, by the operating system's
-limit on a process's arguments (about 128 KiB per argument on Linux, 32767
-characters on Windows, 8191 through `cmd.exe`); that is a limit on the tool's
-own command line, and a tool that takes hundreds of files takes them through
-a response file or a directory argument of its own.
+limit on a process's arguments (128 KiB per argument on Linux, 32767
+characters for a Windows `CreateProcess`); that is a limit on the tool's own
+command line, and a tool that takes hundreds of files takes them through a
+response file or a directory argument of its own. The engine's own guard
+against it measures the command, not the edge: an action's inputs and
+outputs are graph edges, never argv.
 
 For a generated **module interface**, declare its interface too:
 

@@ -519,10 +519,22 @@ Four additions came from the review and are folded in above:
   content.** The help now states the shape the docs/30 row quotes. The
   subcommand stays out of the top-level usage list, since nobody types it;
   the contract is the argument shape, not its place in `--help`.
-- **The long-command leg of M5 is skipped on Windows only**, and the reason is
-  §2.4's last row: ninja runs every command through `cmd /c` there, whose
-  8191-character cap is the operating system's limit on the tool's argv. The
-  wide-list leg runs on every shard.
+- **The long-command leg of M5 runs on POSIX hosts only**, because its
+  command is `true`, a program that accepts any argv, and Windows has none.
+  An earlier draft of this bullet said ninja runs every command through
+  `cmd /c` on Windows; it does not (#261 removed the last rule that needed a
+  shell), and a plain argv goes through `CreateProcess` with its 32767
+  characters. The wide-list leg runs on every shard.
+- **The engine's command-length guard refused the wide action on the Windows
+  shard.** `check_inline_command_lengths` read each `build` line as a proxy
+  for the command, which is right for a rule that expands `$in` and `$out`
+  and wrong for an action rule, whose command is a literal argv; 200 outputs
+  and 200 inputs of Windows temp paths put the line over 32767. That is
+  §2.4's claim ("edge lists, never an argv") not holding inside one guard.
+  The guard now measures a literal command's own text; e2e 659's N was
+  raised to 600 so that the edge line also crosses the POSIX 128 KiB limit,
+  and the fixture holds the guard on every shard. Reverse leg: the raised
+  fixture is refused by the engine before the guard fix on Linux too.
 
 One observation stands as recorded and not acted on: `options::resources`
 as a single directory declared as an input (§3.4). It affects HuxerUI
