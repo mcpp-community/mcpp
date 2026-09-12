@@ -1170,6 +1170,15 @@ run_shared_program(const Plan& plan)
     if (ec) return std::unexpected(Error{std::format(
         "copy binary failed: {}", ec.message())});
 
+    // THE RUNTIME FILES TRAVEL AS ON EVERY OTHER ROW. `deploy` placed them
+    // under `bin/<to>/` beside the built library; they are staged at the same
+    // relative path under `bin/`, which is where a provider that maps them
+    // into its own layout (`dist-apk`: `assets/`) reads them. Measured
+    // 2026-09-12: without this the Android staged tree carried the library
+    // alone and a deploy'd resource never reached the APK.
+    if (!plan.opts.runtimeFiles.empty())
+        if (auto r = stage_runtime_files(plan, plan.stagingRoot / "bin"); !r) return r;
+
     copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);
     copy_if_exists(plan.projectRoot / "LICENSE",   plan.stagingRoot);
 

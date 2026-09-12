@@ -433,11 +433,27 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
         // Identity is (package, id): an id is unique within the package that
         // declared it and nothing more.
         std::vector<std::string> distOutputs;
+        // THE DISTRIBUTABLE IS THE TERMINAL ARTIFACT. A provider may submit a
+        // chain (`dist-apk`: link, add libraries, align, sign); every output
+        // is verified below, but the thing a user installs, and the operand
+        // `mcpp run --format` hands the runner, is an output no other
+        // introduced action consumes. Measured 2026-09-12: with the first
+        // output taken as the operand, `adb-run` received the unsigned
+        // `base.apk` and `adb install` refused it.
+        std::vector<std::string> distInputs;
         for (auto const& a : distCtx->plan.actions) {
             if (a.role != mcpp::manifest::BuildAction::Role::Artifact) continue;
             if (preexistingArtifacts.contains({a.packageName, a.id})) continue;
             for (auto const& o : a.outputs) distOutputs.push_back(o);
+            for (auto const& i : a.inputs)  distInputs.push_back(i);
         }
+        auto absolute_of = [&](std::string const& p) {
+            auto q = std::filesystem::path(p).is_absolute()
+                   ? std::filesystem::path(p) : distCtx->plan.outputDir / p;
+            return q.lexically_normal();
+        };
+        std::set<std::filesystem::path> consumed;
+        for (auto const& i : distInputs) consumed.insert(absolute_of(i));
         // DECLARED AND THEN SUBMITTED NOTHING. The half of the contract a
         // member is most likely to get wrong is the gate, and a member whose
         // gate never opens leaves a pass that succeeds and produces no
@@ -484,9 +500,9 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
         // nothing.
         std::error_code ec;
         std::vector<std::filesystem::path> reported;
+        std::vector<std::filesystem::path> intermediate;
         for (auto const& o : distOutputs) {
-            auto abs = std::filesystem::path(o).is_absolute()
-                     ? std::filesystem::path(o) : distCtx->plan.outputDir / o;
+            auto abs = absolute_of(o);
             if (!std::filesystem::is_regular_file(abs, ec)
                 && !std::filesystem::is_directory(abs, ec)) {
                 mcpp::ui::error(std::format(
@@ -494,9 +510,13 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
                     opts.formatName, abs.string()));
                 return PackOutcome{1};
             }
+            if (consumed.contains(abs)) { intermediate.push_back(std::move(abs)); continue; }
             mcpp::ui::status("Packed", mcpp::ui::shorten_path(abs, pathCtx));
             reported.push_back(std::move(abs));
         }
+        // Every output consumed by another: a cycle a provider should not
+        // write, reported as all outputs rather than as nothing.
+        if (reported.empty()) reported = std::move(intermediate);
         return PackOutcome{0, std::move(reported)};
     }
 

@@ -90,6 +90,21 @@ int main() {
      .input("${mcpp.target_file:app}")
      .output(out.c_str())
      .submit();
+    // A second step that consumes the first: the format's distributable is
+    // the TERMINAL artifact (the output no other introduced action consumes),
+    // which is what the runner must receive. A provider such as dist-apk is
+    // a chain of this shape (link, add libraries, align, sign).
+    const std::string fin = std::string(mcpp::out_dir()) + "/app.final";
+    mcpp::action b;
+    b.id          = "final";
+    b.role        = "artifact";
+    b.description = "final";
+    b.arg((root + "/copy.sh").c_str())
+     .arg(out.c_str())
+     .arg(fin.c_str())
+     .input(out.c_str())
+     .output(fin.c_str())
+     .submit();
     return 0;
 }
 EOF
@@ -130,8 +145,14 @@ printf '\n[target.%s]\nrunner = ["%s"]\n' "$HOST" "$TMP/runner.sh" >> mcpp.toml
 
 # ── 1. `mcpp run --format blob` hands the runner the distributable ────────
 out=$("$MCPP" run --format blob 2>&1) || fail "mcpp run --format blob failed" <(echo "$out")
+grep -q "RUNNER: .*/app\.final$" <<<"$out" \
+    || fail "the runner's operand was not the terminal artifact app.final" <(echo "$out")
 grep -q "RUNNER: .*/app\.blob$" <<<"$out" \
-    || fail "the runner's operand was not app.blob" <(echo "$out")
+    && fail "the runner received the intermediate app.blob" <(echo "$out")
+grep -q "Packed .*app\.final" <<<"$out" \
+    || fail "the Packed line does not name the terminal artifact" <(echo "$out")
+grep -q "Packed .*app\.blob" <<<"$out" \
+    && fail "the intermediate app.blob was reported as Packed" <(echo "$out")
 grep -q "1-2-3" <<<"$out" \
     || fail "the program's marker did not print through the runner" <(echo "$out")
 echo "mcpp run --format blob hands the runner the distributable OK"
