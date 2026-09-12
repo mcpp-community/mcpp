@@ -187,6 +187,27 @@ jobs:
           "$MCPP_UNDER_TEST" toolchain install llvm 22.1.8
           "$MCPP_UNDER_TEST" toolchain default 'llvm@22.1.8'
 
+      # WHAT THIS RUNNER ACTUALLY PROVIDES FOR THE mingw TARGET. On a Windows
+      # host `openkal-windows`'s build program generates no import libraries
+      # ("the system's own are present"), so `-lntdll` and its neighbours are
+      # found by lld only where the host, the sandbox or the payload puts
+      # them. This job was green with one sandbox lineage and red with the
+      # next (2026-09-13, PR #629, same sources, same image), which is the
+      # signature of a dependency on cached state nobody declared. The lines
+      # below say where the libraries come from, so the next such reading is
+      # diagnosed from the log rather than from a bisect over caches.
+      - name: What this host provides for x86_64-w64-windows-gnu
+        if: matrix.host == 'windows'
+        run: |
+          echo "PATH=$PATH" | tr ':' '\n' | head -40
+          ls "${MCPP_HOME:-$HOME/.mcpp}/registry/data/xpkgs" 2>/dev/null || echo "(no xpkgs dir)"
+          CLANG=$(ls "${MCPP_HOME:-$HOME/.mcpp}"/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/clang++.exe 2>/dev/null | head -1)
+          echo "clang=$CLANG"
+          [ -n "$CLANG" ] && "$CLANG" --target=x86_64-w64-windows-gnu -print-search-dirs
+          [ -n "$CLANG" ] && "$CLANG" --target=x86_64-w64-windows-gnu -print-file-name=libntdll.a
+          [ -n "$CLANG" ] && "$CLANG" --target=x86_64-w64-windows-gnu -print-file-name=libkernel32.a
+          command -v x86_64-w64-mingw32-gcc gcc 2>/dev/null || true
+
       - name: The program — one source, three targets
         run: |
           set -euo pipefail
