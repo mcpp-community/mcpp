@@ -762,19 +762,22 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 read_str_array(ft, "requires", reqs);
                 read_str_array(ft, "provides", provs);
                 if (!reqs.empty())  m.featureRequires[fname] = std::move(reqs);
-                // `requires_abi = { threads = true }`: this feature needs the
-                // artefact's ABI switch on. See Manifest::featureRequiresAbiThreads.
+                // `requires_abi = { threads = true, exceptions = true }`:
+                // this feature needs the artefact's ABI switch(es) on. See
+                // Manifest::featureRequiresAbiThreads /
+                // Manifest::featureRequiresAbiExceptions.
                 if (auto rait = ft.find("requires_abi"); rait != ft.end()) {
                     if (!rait->second.is_table())
                         return std::unexpected(error(origin, std::format(
                             "features.{}.requires_abi must be a table such as "
                             "`{{ threads = true }}`", fname)));
                     for (auto& [ak, av] : rait->second.as_table()) {
-                        if (ak != "threads" || !av.is_bool())
+                        if ((ak != "threads" && ak != "exceptions") || !av.is_bool())
                             return std::unexpected(error(origin, std::format(
                                 "features.{}.requires_abi.{}: the members are "
-                                "`threads`, a boolean", fname, ak)));
-                        m.featureRequiresAbiThreads[fname] = av.as_bool();
+                                "`threads`, `exceptions`, booleans", fname, ak)));
+                        if (ak == "threads") m.featureRequiresAbiThreads[fname] = av.as_bool();
+                        else m.featureRequiresAbiExceptions[fname] = av.as_bool();
                     }
                 }
                 if (!provs.empty()) m.featureProvides[fname] = std::move(provs);
@@ -945,16 +948,19 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 m.unknownCapabilities.push_back(entry);
         m.requires_ = *v;
     }
-    // [package] requires_abi -- see Manifest::requiresAbiThreads.
+    // [package] requires_abi -- see Manifest::requiresAbiThreads /
+    // Manifest::requiresAbiExceptions.
     if (auto* ra = doc->get("package.requires_abi")) {
         if (!ra->is_table())
             return std::unexpected(error(origin,
                 "[package] requires_abi must be a table such as `{ threads = true }`"));
         for (auto& [ak, av] : ra->as_table()) {
-            if (ak != "threads" || !av.is_bool())
+            if ((ak != "threads" && ak != "exceptions") || !av.is_bool())
                 return std::unexpected(error(origin, std::format(
-                    "[package] requires_abi.{}: the members are `threads`, a boolean", ak)));
-            m.requiresAbiThreads = av.as_bool();
+                    "[package] requires_abi.{}: the members are `threads`, "
+                    "`exceptions`, booleans", ak)));
+            if (ak == "threads") m.requiresAbiThreads = av.as_bool();
+            else m.requiresAbiExceptions = av.as_bool();
         }
     }
     // [package] exclusive — capabilities this package claims sole provision of.
@@ -2764,24 +2770,95 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // keys only, and the same two `[runtime]` already has at the top
             // level: this makes them per-target, it does not invent a vocabulary.
             // `[target.<pred>.abi]` -- graph-wide ABI switches as typed members
-            // rather than flags (design 2026-09-12, section 5.2). One member
-            // today, and an unknown member is refused, so the table cannot
-            // become a second flag list.
+            // rather than flags (design 2026-09-12, section 5.2; `exceptions`
+            // added by section 2.1, A1). Two members, and an unknown one is
+            // refused naming both, so the table cannot become a second flag
+            // list.
             if (auto ait = body.find("abi"); ait != body.end()) {
                 if (!ait->second.is_table())
                     return std::unexpected(error(origin, std::format(
                         "[target.{}].abi must be a table, e.g. `[target.{}.abi]` "
                         "with `threads = true`", triple, triple)));
                 for (auto& [ak, av] : ait->second.as_table()) {
-                    if (ak != "threads")
+                    if (ak != "threads" && ak != "exceptions")
                         return std::unexpected(error(origin, std::format(
                             "[target.{}.abi] has no member '{}'; the members are: "
-                            "threads", triple, ak)));
+                            "threads, exceptions", triple, ak)));
                     if (!av.is_bool())
                         return std::unexpected(error(origin, std::format(
-                            "[target.{}.abi].threads must be true or false", triple)));
-                    cc.abiThreads = av.as_bool();
-                    cc.abiThreadsDeclared = true;
+                            "[target.{}.abi].{} must be true or false", triple, ak)));
+                    if (ak == "threads") {
+                        cc.abiThreads = av.as_bool();
+                        cc.abiThreadsDeclared = true;
+                    } else {
+                        cc.abiExceptions = av.as_bool();
+                        cc.abiExceptionsDeclared = true;
+                    }
+                }
+            }
+            // `[target.<pred>] requires_abi = { ... }` -- design 2026-09-12
+            // (the UI framework record), section 2.6, A6: the requirement can
+            // sit on the TARGET axis, because the sources it gates
+            // (`[target.<pred>.build] sources`) are selected by this same
+            // predicate. A DIRECT key of the selector table (an inline-table
+            // VALUE), not a sub-section -- which is why the unsupported-key
+            // sweep above does not have to name it: that sweep skips every
+            // table-valued key, on the reasoning that a table is the
+            // conditional channel, and an inline table is the same TOML value
+            // shape as a dotted sub-section. Stored on `cc` and unioned into
+            // the package's requirement set by `merge_conditional_config`
+            // when the predicate matches the resolved target, keeping the
+            // selector text so a refusal can name what asked.
+            //
+            // MEASURED: an mcpp before this change (2026.9.12.2) neither
+            // warns nor errors on this key -- it is a table, so the same
+            // "skip tables" sweep already silently drops it there too. The
+            // design record's claim that an older engine warns
+            // "[target.cfg(linux)] has unsupported key 'requires_abi'
+            // (ignored)" does not hold for 2026.9.12.2; verified by running
+            // it against `[target.'cfg(linux)'] requires_abi = { threads =
+            // true }`, which built with no diagnostic at all.
+            if (auto rait2 = body.find("requires_abi"); rait2 != body.end()) {
+                if (!rait2->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{}] requires_abi must be a table such as "
+                        "`{{ threads = true }}`", triple)));
+                for (auto& [ak, av] : rait2->second.as_table()) {
+                    if ((ak != "threads" && ak != "exceptions") || !av.is_bool())
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}].requires_abi.{}: the members are "
+                            "`threads`, `exceptions`, booleans", triple, ak)));
+                    if (ak == "threads") cc.requiresAbiThreads = av.as_bool();
+                    else cc.requiresAbiExceptions = av.as_bool();
+                }
+            }
+            // `[target.<pred>.feature-requires-abi] <feature> = { ... }` --
+            // the per-feature form of the same requirement, on the target
+            // axis. Named after `feature-deps` and `feature-xlings` below,
+            // the two existing per-target-per-feature tables. The feature is
+            // registered UNCONDITIONALLY, exactly as `feature-deps` does a
+            // few dozen lines down: whether the predicate matches decides
+            // whether the requirement counts, not whether the feature exists.
+            if (auto frait = body.find("feature-requires-abi");
+                frait != body.end() && frait->second.is_table()) {
+                for (auto& [fname, fval] : frait->second.as_table()) {
+                    if (!fval.is_table())
+                        return std::unexpected(error(origin, std::format(
+                            "[target.{}.feature-requires-abi.{}] must be a "
+                            "table such as `{{ threads = true }}`", triple, fname)));
+                    for (auto& [ak, av] : fval.as_table()) {
+                        if ((ak != "threads" && ak != "exceptions") || !av.is_bool())
+                            return std::unexpected(error(origin, std::format(
+                                "[target.{}.feature-requires-abi.{}].{}: the "
+                                "members are `threads`, `exceptions`, booleans",
+                                triple, fname, ak)));
+                        if (ak == "threads")
+                            cc.featureRequiresAbiThreads[std::string(fname)] = av.as_bool();
+                        else
+                            cc.featureRequiresAbiExceptions[std::string(fname)] = av.as_bool();
+                    }
+                    m.featuresMap.try_emplace(std::string(fname),
+                                              std::vector<std::string>{});
                 }
             }
             if (auto rit = body.find("runtime"); rit != body.end() && rit->second.is_table()) {

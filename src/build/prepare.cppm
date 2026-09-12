@@ -431,6 +431,25 @@ export void merge_conditional_config(mcpp::manifest::Manifest& m,
             m.buildConfig.abiThreads = cc.abiThreads;
             m.buildConfig.abiThreadsDeclared = true;
         }
+        if (cc.abiExceptionsDeclared) {
+            m.buildConfig.abiExceptions = cc.abiExceptions;
+            m.buildConfig.abiExceptionsDeclared = true;
+        }
+        // `[target.<sel>] requires_abi` / `.feature-requires-abi` (A6): a
+        // requirement on the TARGET axis, unioned in -- not overwritten --
+        // because more than one matching selector may ask for the same
+        // member, and every one of them is a true statement. The selector
+        // text rides along so the unmet-requirement check can name what
+        // asked, the same courtesy `[package] requires_abi` gets by naming
+        // "the package" and a feature's entry by naming the feature.
+        if (cc.requiresAbiThreads)
+            m.targetRequiresAbiThreads.push_back(cc.predicate);
+        if (cc.requiresAbiExceptions)
+            m.targetRequiresAbiExceptions.push_back(cc.predicate);
+        for (auto const& [f, val] : cc.featureRequiresAbiThreads)
+            if (val) m.targetFeatureRequiresAbiThreads[f].push_back(cc.predicate);
+        for (auto const& [f, val] : cc.featureRequiresAbiExceptions)
+            if (val) m.targetFeatureRequiresAbiExceptions[f].push_back(cc.predicate);
         // `modules.sources` is the scanner's own view and is not part of
         // BuildInputs, so conditional sources are mirrored into it here.
         for (auto const& s : cc.inputs.sources)
@@ -2927,6 +2946,25 @@ prepare_build(bool print_fingerprint,
         add_once(m->buildConfig.dialectCxxflags, "-pthread");
         add_once(m->buildConfig.cflags, "-pthread");
         add_once(m->buildConfig.ldflags, "-pthread");
+    }
+    // `[target.<selector>.abi] exceptions` -- design 2026-09-12 (the UI
+    // framework record), section 2.1, A1: the second `abi` member, the
+    // ROOT's statement, rendered once. Reaches the dialect flag set (every
+    // C++ translation unit, the std module's own commands, the scan, every
+    // dependency's cache key) and the link -- NOT the C flags, unlike
+    // `threads`: `-fexceptions` has no C-language meaning worth carrying to
+    // a `.c` translation unit.
+    //
+    // Rendered only where the target's default is OFF: Emscripten's native
+    // toolchain builds without exceptions unless asked. gcc, clang and MSVC
+    // already link with exceptions on, so a host build with the member
+    // declared is byte-identical to one without -- the same property
+    // `threads` has on PE.
+    const bool abiExceptionsRendered = m->buildConfig.abiExceptions
+                                     && cfgCtx().os == "emscripten";
+    if (abiExceptionsRendered) {
+        add_once(m->buildConfig.dialectCxxflags, "-fexceptions");
+        add_once(m->buildConfig.ldflags, "-fexceptions");
     }
     // `[build].defines` must reach the scanner (P1689) and the compile edge,
     // and must participate in the fingerprint. Fold before dependency
@@ -7407,6 +7445,10 @@ prepare_build(bool print_fingerprint,
     std::vector<std::pair<std::string, std::string>> capRequires;
     // `requires_abi`: (what, requirer). See Manifest::requiresAbiThreads.
     std::vector<std::pair<std::string, std::string>> abiRequires;
+    // Same shape, for the second `abi` member (A1/A6). Two vectors rather
+    // than one tagged one, because every reader below already asks "threads
+    // or exceptions" as two separate questions.
+    std::vector<std::pair<std::string, std::string>> abiRequiresExceptions;
     // Who claimed sole provision of what. Separate from capProviders because
     // the question it answers is different: capProviders asks "can this
     // requirement be satisfied", this asks "can these two coexist at all".
@@ -7502,18 +7544,49 @@ prepare_build(bool print_fingerprint,
                 if (auto it = pkg.manifest.featureRequiresAbiThreads.find(f);
                     it != pkg.manifest.featureRequiresAbiThreads.end() && it->second)
                     abiRequires.emplace_back(std::format("feature `{}`", f), pcap);
+                if (auto it = pkg.manifest.featureRequiresAbiExceptions.find(f);
+                    it != pkg.manifest.featureRequiresAbiExceptions.end() && it->second)
+                    abiRequiresExceptions.emplace_back(std::format("feature `{}`", f), pcap);
+                // The TARGET-AXIS per-feature form (A6):
+                // `[target.<sel>.feature-requires-abi] <f>`, already reduced
+                // by merge_conditional_config to the selectors that matched
+                // and asked. Named by the selector, as written, not "feature
+                // `f`" -- the feature only decided whether the section counts;
+                // the selector is what asked for the switch.
+                if (auto it = pkg.manifest.targetFeatureRequiresAbiThreads.find(f);
+                    it != pkg.manifest.targetFeatureRequiresAbiThreads.end() && !it->second.empty())
+                    abiRequires.emplace_back(
+                        std::format("[target.'{}']", it->second.front()), pcap);
+                if (auto it = pkg.manifest.targetFeatureRequiresAbiExceptions.find(f);
+                    it != pkg.manifest.targetFeatureRequiresAbiExceptions.end() && !it->second.empty())
+                    abiRequiresExceptions.emplace_back(
+                        std::format("[target.'{}']", it->second.front()), pcap);
             }
             if (pkg.manifest.requiresAbiThreads)
                 abiRequires.emplace_back("the package", pcap);
+            if (pkg.manifest.requiresAbiExceptions)
+                abiRequiresExceptions.emplace_back("the package", pcap);
+            // `[target.<sel>] requires_abi` (A6): the package-wide form of the
+            // same target-axis requirement, one entry per matching selector
+            // that asked.
+            for (auto const& sel : pkg.manifest.targetRequiresAbiThreads)
+                abiRequires.emplace_back(std::format("[target.'{}']", sel), pcap);
+            for (auto const& sel : pkg.manifest.targetRequiresAbiExceptions)
+                abiRequiresExceptions.emplace_back(std::format("[target.'{}']", sel), pcap);
             // A DEPENDENCY'S OWN `[target.<selector>.abi]` DOES NOT CHANGE THE
             // BUILD. The switch belongs to the artefact, which the root decides;
             // a table written in a dependency is reported rather than silently
-            // ignored, and points at the key a dependency does have.
-            if (pcap != m->package.name && pkg.manifest.buildConfig.abiThreadsDeclared)
+            // ignored, and points at the key a dependency does have. Covers
+            // BOTH members: a dependency that declares only `exceptions` must
+            // be reported exactly as one that declares only `threads`.
+            if (pcap != m->package.name
+                && (pkg.manifest.buildConfig.abiThreadsDeclared
+                    || pkg.manifest.buildConfig.abiExceptionsDeclared))
                 mcpp::diag::warning("abi/dependency-table", std::format(
                     "`{}` declares [target.<selector>.abi], which only the root "
                     "manifest decides; a dependency states what it needs with "
-                    "`requires_abi = {{ threads = true }}`", pcap));
+                    "`requires_abi = {{ threads = true }}` or "
+                    "`requires_abi = {{ exceptions = true }}`", pcap));
             // `[targets.*] required_features` on a DEPENDENCY.
             //
             // THIS GATE EXISTED ONLY FOR THE ROOT. The root's targets are
@@ -8967,20 +9040,34 @@ prepare_build(bool print_fingerprint,
         if (auto err = checkVersionFloors(); err) return std::unexpected(*err);
 
         // `requires_abi`: a package needs the artefact's ABI switch on. The
-        // root's `[target.<selector>.abi]` is the only table that sets it, so a
-        // mismatch is refused naming both halves, before anything compiles --
-        // otherwise it surfaces as a precompiled-module configuration mismatch
-        // that names neither.
-        if (!m->buildConfig.abiThreads && !abiRequires.empty()) {
-            auto const& [what, requirer] = abiRequires.front();
-            return std::unexpected(std::format(
-                "`{}` requires the artefact's ABI to have threads ({}), and this "
+        // root's `[target.<selector>.abi]` is the only table that sets it
+        // (whether the value is written there directly, or reaches it
+        // through a matching `[target.<sel>.abi]` predicate resolved by
+        // merge_conditional_config), so a mismatch is refused naming both
+        // halves, before anything compiles -- otherwise
+        // it surfaces as a precompiled-module configuration mismatch that
+        // names neither. Two members (A1's `exceptions` beside the original
+        // `threads`), checked and refused the same way, parametrised so a
+        // wording change to one cannot drift from the other.
+        auto checkAbiRequirement = [](std::string_view member, bool rootHasIt,
+                std::vector<std::pair<std::string, std::string>> const& reqs)
+                -> std::optional<std::string> {
+            if (rootHasIt || reqs.empty()) return std::nullopt;
+            auto const& [what, requirer] = reqs.front();
+            return std::format(
+                "`{}` requires the artefact's ABI to have {} ({}), and this "
                 "build does not state it.\n"
                 "       Add to the root manifest, for the targets that need it:\n"
                 "\n"
                 "           [target.'cfg(os = \"<os>\")'.abi]\n"
-                "           threads = true", requirer, what));
-        }
+                "           {} = true", requirer, member, what, member);
+        };
+        if (auto err = checkAbiRequirement(
+                "threads", m->buildConfig.abiThreads, abiRequires))
+            return std::unexpected(*err);
+        if (auto err = checkAbiRequirement(
+                "exceptions", m->buildConfig.abiExceptions, abiRequiresExceptions))
+            return std::unexpected(*err);
 
         std::set<std::string> boundCaps;
         for (auto& [cap, requirer] : capRequires) {
