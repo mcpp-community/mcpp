@@ -11138,6 +11138,18 @@ prepare_build(bool print_fingerprint,
             rep("${mcpp.out_dir}",    ctx.plan.outputDir.string());
             rep("${mcpp.bin_dir}",    (ctx.plan.outputDir / "bin").string());
             rep("${mcpp.compile_db}", ctx.plan.compileDbPath.string());
+            // The engine's own executable, absolute (2026.9.13.1+). An action
+            // whose command is an argv with no shell has no portable way to
+            // copy, touch or compare a file, and the engine is the one
+            // program present wherever a build runs -- the reason a `check`
+            // is wrapped with `mcpp __action-stamp` (ninja_backend.cppm). This
+            // token lets a build program say the same thing: `${mcpp.self}
+            // stage --verify content --output <dst> <src>` is the copy every
+            // `stage_file` edge already performs. The same caveat as the
+            // wrapper's: a version change regenerates build.ninja, and a
+            // binary moved under an unchanged version leaves a stale path,
+            // exactly as it would for the compiler.
+            rep("${mcpp.self}",       mcpp::platform::fs::self_exe_path().string());
             // ABSOLUTE, unlike `${mcpp.target_file:}` and for the same reason
             // stated the other way round: the staged tree lives outside the
             // build directory and no ninja edge produces it, so there is no
