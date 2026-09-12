@@ -147,6 +147,44 @@ soname = "libmylib.so.1"  # 可选: Linux/ELF ABI 名称,运行时会生成同�
 MSVC ABI 上从对象生成导出表(该 ABI 没有 `__declspec(dllexport)` 或 `.def` 时
 不导出任何符号)。参见 `tests/e2e/08`、`257`、`259`。
 
+#### `kind = "app"` —— 用户启动的那个东西(mcpp 2026.9.12.3+)
+
+```toml
+[targets.myapp]
+kind = "app"
+main = "src/main.cpp"
+```
+
+`app` 在每一行上表达同一件事——用户启动的程序——而每一行为它提供各自的文件:
+
+| 行 | `app` 的形态 | 文件 |
+|---|---|---|
+| ELF、PE、Mach-O 各行,`wasm32-emscripten` | 与 `bin` 相同 | `myapp`、`myapp.exe`、`myapp.js` |
+| `*-linux-android` | 与 `shared` 相同 | `libmyapp.so` |
+
+在 `*-linux-android` 上,平台把应用程序作为共享库加载进一个 Java 进程
+(`System.loadLibrary("myapp")`、manifest 里的 `android:name`);这一行上不存在
+应用程序的可执行形态。在其余每一行上,`app` 的链接方式与 `bin` 完全相同,产物
+与 `bin` 目标逐字节相同。
+
+`main` 在每一行上保持同一含义:它指出定义入口点的翻译单元。在 `app` 是可执行文件
+的那些行上,该入口就是 `main` 本身。在 `*-linux-android` 上,这个文件被编译为共享库
+的一个翻译单元,平台自己的入口(`ANativeActivity_onCreate`,或它声明的 JNI 导出)
+是平台的契约,不是 mcpp 指定的名字。`exports`(见上)对 `app` 目标的适用方式与对
+`shared` 完全相同;`windows_subsystem` / `windows_entry`(见下)接受 `app` 的方式
+与接受 `bin` 完全相同。
+
+在 `app` 的形态是共享库的那一行上,不带 `--format` 运行 `mcpp run` 会被拒绝,拒绝信息
+指出该旗标以及已解析图提供的格式集合。`mcpp pack --format apk` 把这个库放到闭包已经
+安放共享对象的位置。参见 [10 — 打包与发布](10-pack-and-release.md)里的 `mcpp run
+--format`。
+
+早于 2026.9.12.3 的引擎不认识这个取值,按名字拒绝,并列出它认识的三种:
+
+```
+targets.myapp.kind must be 'bin', 'lib' or 'shared'; got 'app'
+```
+
 #### `exports` —— 产物发布的符号集合(mcpp 2026.9.6.5+)
 
 ```toml
@@ -971,8 +1009,23 @@ provider = "acme.widget-runtime@2.0.0"
 
 本表中不受支持的键会被**报出并忽略**,消息里列出它比对用的那份键表。
 `[runtime.<capability>]` 子表是 provider 覆盖而不是键,因此不在清扫范围内。
-同一规则适用于 `[target.<predicate>.runtime]`,其词汇表只有 `libraries` 与
-`link_library_dirs`(见[22 —— 目标侧](22-target-side.md))。
+同一规则适用于 `[target.<predicate>.runtime]`,其词汇表是 `libraries`、
+`link_library_dirs` 与 `frameworks`(mcpp 2026.9.12.3+)
+(见[22 —— 目标侧](22-target-side.md))。该表上的 `frameworks` 追加在顶层列表
+之后,只在 Mach-O 各行渲染为 `-framework <name>`,其余各行不产生任何标志——
+当某个 framework 存在于 iOS 而不存在于 macOS(或相反)时,manifest 用这个键
+表达:
+
+```toml
+[runtime]
+frameworks = ["Foundation", "CoreGraphics"]
+
+[target.macos.runtime]
+frameworks = ["AppKit"]
+
+[target.'cfg(os = "ios")'.runtime]
+frameworks = ["UIKit"]
+```
 
 `requirements` 记录非空 `kind`/`value`、`link` 或 `run` 阶段,以及是否强制
 (`required` 默认 `true`)。`artifacts` 必须含 `role`、`path`、`provenance`;
@@ -1041,12 +1094,18 @@ requirements/providers/artifacts、LinkIntent、平台搜索机制与链接后 v
 
 ```toml
 [package]
-platforms = ["linux", "macos", "windows"]
+platforms = ["linux", "macos", "windows", "ios", "android", "emscripten"]
 ```
 
 声明包支持的平台(CI 矩阵提示,经 `mcpp why` 展示)。词表由 mcpp 固定
-(它拥有 target/triple 体系):`linux | macos | windows`;未知值 warning,
-`--strict` 下报错。
+(它拥有 target/triple 体系):`linux | macos | windows | ios | android |
+emscripten`(mcpp 2026.9.12.3+;`ios`、`android`、`emscripten` 是新加入的——
+此前的词表是 `linux | macos | windows`);未知值 warning,`--strict` 下报错。
+
+一个平台名就是目标三元组的 `os`,除非某个 `env` 自己命名了一个平台。Android
+各行的 `os = "linux"`、`env = "android"`,所以这份列表里的 `linux` 不覆盖
+它们——服务 Android 的包要另写 `android`。Web 行保留自己的 `os` 单词
+`emscripten`,与 `cfg(...)` 选择器语法用的是同一个词;不存在 `web` 这种拼法。
 
 对库目标执行 `mcpp pack` 时,会拿这条声明与**实际产出的腿**核对 —— 那是第一个
 有证据可核的时刻:

@@ -107,6 +107,38 @@ against". A bare-metal RISC-V image is ELF with no OS; a wasm module has an
 OS-like layer (Emscripten's POSIX emulation) and is not ELF. Merging the two
 axes is the mistake this replaces.
 
+## The wasm artifact contract
+
+`artifact_naming`'s rule is the same sentence on every row: the executable is
+*the file a runner executes*, named in the row's own convention. On
+`wasm32-emscripten` that file is the JavaScript launcher — the file the
+payload's `node` runs and a browser loads — so the row's convention for it is
+`bin/<name>.js`, not the bare, host-borrowed name the row used before
+mcpp 2026.9.12.3. Both authoritative build systems that target Emscripten fix
+the same suffix for the same reason: Emscripten's own CMake toolchain sets
+`CMAKE_EXECUTABLE_SUFFIX ".js"`, and Rust's `wasm32-unknown-emscripten` target
+spec sets `exe_suffix: ".js"`.
+
+| kind | file | notes |
+|---|---|---|
+| `bin`, `app` | `bin/<name>.js` | `bin/<name>.wasm` is an implicit output of the same link edge, staged with it. Any further file emcc writes with the same stem (`<name>.data` from `--preload-file`, `<name>.worker.js`, `<name>.wasm.map`) travels exactly when the link produced it |
+| `lib` | `lib/lib<name>.a` | — |
+| `shared` | refused, naming `-sSIDE_MODULE` | a wasm side module needs a link contract mcpp does not render |
+
+`--no-entry` is not a switch mcpp interprets. It is an ordinary
+`[target.'cfg(os = "emscripten")'.build] ldflags` entry, and `main` keeps
+naming a translation unit as it does on every other row — so a modularised
+Web program whose page calls an exported factory is a `bin` target whose
+`main` file defines no `main()`, linked with `--no-entry` on its own `ldflags`
+line.
+
+The runner that executes `bin/<name>.js` comes from the payload descriptor
+(`.mcpp-toolchain.json`), the project's `[target.<triple>] runner`, or a
+dependency's `mcpp::runner(...)` — the same resolution order every row uses.
+A `.js` file carries no shebang, so an emsdk payload installed before its
+descriptor gained a `runner` field needs the index refresh
+[chapter 20](20-toolchains.md) describes before `mcpp run` finds one.
+
 ## Declining The Third Segment
 
 `<arch>-<os>` is a complete target on every platform:
@@ -532,6 +564,10 @@ under qemu-user over the system image's own bionic, which is the route that
 works from an x86_64 host -- the platform emulator refuses a foreign guest
 (`QEMU2 emulator does not support arm64 CPU architecture`). A tier states that
 an artefact was built and RUN; it does not state which emulator ran it.
+
+On these two rows, `kind = "app"` links as a shared library rather than as an
+executable ([04 §2.2](04-mcpp-toml.md)) — the form `application_form` answers
+for `env == "android"`, the same test `is_android()` uses.
 
 ### And CI measures every one of them
 

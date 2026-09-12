@@ -147,13 +147,35 @@ error: unknown --format 'bogus'.
 进入构建程序、以及这次分派本身。每一样都与格式无关 —— 而「与格式无关」正是判断某样
 东西该不该进引擎的判据。
 
-被分派的格式作用于一个**程序** target。库包发的是一份接口加上每个三元组的预构建产物,
-没有单独一棵暂存树,所以 `mcpp pack <库> --format <name>` 会被拒绝,而不是被忽略。
+被分派的格式作用于一个**程序** target——`kind = "app"` 也不例外,不论这一行把它
+链接成什么文件(见[04 §2.2](04-mcpp-toml.md))。库包发的是一份接口加上每个三元组
+的预构建产物,没有单独一棵暂存树,所以 `mcpp pack <库> --format <name>` 会被拒绝,
+而不是被忽略。
 
 `-o` 接受裸文件名时自动归到 `target/dist/`;含目录(相对或绝对)
 时按字面路径输出。
 
 完整选项参见 `mcpp pack --help`。
+
+### `mcpp run --format <name>`(mcpp 2026.9.12.3+)
+
+```bash
+mcpp run --target x86_64-linux-android --format apk
+mcpp run --target aarch64-ios-sim      --format app
+```
+
+`--format` 与 `mcpp pack` 用的是同一个 flag,这里复用它来覆盖一种普通 `mcpp run`
+够不到的情形:一个 Android 应用程序是一个 `.apk`,一个已安装的 iOS 应用程序是一个
+`.app`,两者都不是 `mcpp run` 默认执行的链接产物。`mcpp run --format <name>` 先为
+`<name>` 打包——与 `mcpp pack --format <name>` 相同的两遍与暂存树——再运行打包
+报出的那个产物,经由为一个程序解析出的 runner:项目的 `[target.<triple>] runner`,
+其次依赖的 `mcpp::runner(...)`,再次载荷描述文件的。
+
+未知的 `<name>` 会被拒绝,点名已解析图提供的格式集合,与 `mcpp pack --format
+bogus` 报出的是同一个集合。`--format` 与 `--no-runner` 同时出现会被拒绝——一个
+`.apk` 或已安装的 `.app` 无法被直接执行。在 `kind = "app"` 的形态是一个库的那一行上,
+不带 `--format` 运行它同样被拒绝,点名该旗标与同一个格式集合。`mcpp test` 不受影响:
+测试二进制在每一行上都是程序。
 
 ### 打包产物的构建输入与随包内容
 
@@ -288,6 +310,24 @@ if (!base) {
 如果应用本身改不了(比如第三方 GUI 框架自己做解析),改用 `--mode vendored`:
 它把 `PT_INTERP` 重指到宿主 loader,`/proc/self/exe` 正常,代价是要求宿主
 glibc 不低于构建时所用的那份。
+
+### WebAssembly(`wasm32-emscripten`):词干家族
+
+```
+target/dist/myapp-0.1.0-wasm32-emscripten.tar.gz
+└── myapp-0.1.0-wasm32-emscripten/
+    ├── bin/myapp.js              ← 启动器;runner 执行的文件
+    ├── bin/myapp.wasm            ← 链接的隐式输出,随它一起暂存
+    ├── bin/myapp.data            ← 只在链接携带 --preload-file 时出现
+    ├── README.md
+    └── LICENSE
+```
+
+打包程序暂存启动器,以及同一次链接在它旁边写出的每一个 `myapp.<任意>` ——
+词干家族。`myapp.wasm` 是必需的:链接边把它声明为隐式输出,它的缺席说明
+构建目录与图对不上,`mcpp pack` 因此拒绝,而不是暂存一个没有模块的启动器。
+`myapp.data` 以及 emcc 用同一词干写出的其余文件(`myapp.worker.js`、
+`myapp.wasm.map`)是可选的,链接产出了就跟着走。
 
 ### Windows(PE):产物为 `.zip`,DLL 与 `.exe` 同目录
 

@@ -66,6 +66,7 @@ is ignored, so diagnostics may be logged freely.
 | `mcpp:link-flag=<flag>` *(2026.9.6.5+)* | add a **linker flag** this program computed, verbatim. The outlet `link-lib` / `link-search` / `link-script` leave open: a generated version script (`-Wl,--version-script=`), `-Wl,--wrap=malloc` for a runtime that takes over a C-library symbol, `-Wl,--exclude-libs,ALL` so a statically absorbed third party does not become part of this package's ABI. Appended after `[build] ldflags`, in emission order. **Reaches the consumer**, exactly as `[build] ldflags` does — see below |
 | `mcpp:windows-subsystem=<target>:<value>` *(2026.9.12.2+)* | set the PE subsystem (`console` or `windows`) of the executable `<target>` of **this** package, the same field as `[targets.<target>] windows_subsystem` (docs/04). Reaches that target's link and no other, never a consumer, and renders nothing on a target that is not PE. A target the package does not declare with `kind = "bin"`, a value outside the set, and a value that contradicts mcpp.toml are each refused before any directive is applied |
 | `mcpp:windows-entry=<target>:<value>` *(2026.9.12.2+)* | set the entry function (`main`, `wmain`, `WinMain` or `wWinMain`) of the executable `<target>`, the same field as `windows_entry`; the scope and the refusals are those of `windows-subsystem` |
+| `mcpp:deploy=<from>\t<to>` *(2026.9.12.3+, protocol 11)* | place a file this program produced or selected beside the artifact, at `<to>`, relative to the executable's directory — the build-program form of `[runtime] deploy` (docs/04 §2.11). `<from>` may be absolute (an action's own declared output) or resolved against the package root; TAB-separated, because an absolute Windows `<from>` contains a colon. **Reaches the consumer**, joining the same `LinkIntent` `link-lib`/`link-search`/`link-flag` feed — see below |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | link with this **linker script** (`-T`; relative resolves against the package root, and the emitted path is absolute because the link runs in the build directory). Reaches the **consumer**, unlike `include-dir` — a board's memory layout is the one thing a consumer cannot write for itself |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | say something to the user and **keep going**. The one directive that changes no compile line, no link line and no source set. Survives the build cache — see below |
 | `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | state something the program **established about the machine** (`cuda.driver=12.4`). Compared against floors before anything is compiled; see below |
@@ -132,6 +133,7 @@ int main() {
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | reads `MCPP_DEP_<PKG>_BIN_<TOOL>` — the absolute path of a **host tool** built by a dependency (see below) |
 | `mcpp::link_flag(s)` *(2026.9.6.5+)* | `mcpp:link-flag=` |
 | `mcpp::windows_subsystem(target, value)` / `mcpp::windows_entry(target, value)` *(2026.9.12.2+)* | `mcpp:windows-subsystem=` / `mcpp:windows-entry=` |
+| `mcpp::deploy(from, to)` *(2026.9.12.3+, protocol 11)* | `mcpp:deploy=<from>\t<to>` — see below |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` — see below |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | the payload directory of a package declared in `[xlings.workspace]` — by this manifest, or by a dependency compiled into this build program *(2026.9.6.6+)*; `""` when it was not declared or is not installed (see below) |
@@ -562,6 +564,54 @@ scan agrees with what the generator will emit — the same assertion-plus-
 verification trade `[modules].scan_overrides` makes, and the compiler's own
 P1689 output checks it at build time.
 
+### Deploying what the program generated: `deploy` (2026.9.12.3+, protocol 11)
+
+`[runtime] deploy` (docs/04 §2.11) places a file that already exists in the
+package at a path relative to the executable. It cannot name a file an
+`action` produces one step later, because its `from` is resolved against the
+package root and refuses an absolute path — and an action's declared output is
+usually an absolute path under `MCPP_OUT_DIR`. `mcpp::deploy` is that same
+placement, reached from a build program:
+
+```cpp
+import mcpp;
+
+int main() {
+    const std::string out = std::string(mcpp::out_dir()) + "/final/resources.bin";
+    mcpp::action a;
+    a.id   = "gen-resources";
+    a.role = "source";                 // produced, not compiled — see `action` above
+    a.arg("resource-compiler").arg("assets/").arg(out.c_str())
+     .output(out.c_str())
+     .submit();
+
+    mcpp::deploy(out.c_str(), "myapp.resources");
+}
+```
+
+- **`from` is a file, not a directory.** A generated directory whose members
+  are unknown at prepare time cannot be a graph node, so a generated tree of
+  N files is N outputs and N `deploy` calls.
+- **`from` may be absolute or package-relative.** Passing an action's own
+  declared output makes the copy edge depend on that action by construction —
+  the edge's input is the action's output, and ninja orders them; nothing
+  further has to be written to sequence the two.
+- **`to` obeys the same rule as the manifest key**: `/`-separated, no `..`
+  component, and `"."` names the executable's own directory. A path that
+  breaks the rule is refused, naming the directive and the declaring package.
+- **Replayed on a cache hit.** A `deploy` directive is persisted in the build
+  cache like `runner` and `warning`; a cached run restores the file exactly as
+  a fresh run would, even after `bin/` has been deleted by hand.
+- **Staged by `mcpp pack`** at the same relative path beside the packed
+  executable, in every format:
+
+  | format | where `to = "myapp.resources"` lands |
+  |---|---|
+  | tar, dir, AppImage, MSI | `bin/myapp.resources/` beside the executable |
+  | `.app` (macOS, iOS) | the bundle's executable directory |
+  | `.apk` | `assets/myapp.resources/` |
+  | web | the same relative path in the static directory, served beside `<name>.js`. A project that wants the files inside the `.data` preload instead links with `--preload-file <dir>@/<to>`, an ordinary link flag |
+
 ### Producing a distributable: `pack_format` / `stage_dir` (2026.9.11.1+)
 
 An `.msi`, a `.deb`, an AppImage and a signed `.app` are none of the four roles'
@@ -769,6 +819,7 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_PKG_LICENSE` *(2026.9.11.1+)* | `mcpp::package_license()` | The `[package] license` |
 | `MCPP_PKG_AUTHORS` *(2026.9.11.1+)* | `mcpp::package_authors()` | The `[package] authors`, joined with `;`. Not `,`: an author entry is conventionally `Name <mail@host>` and a name may carry a comma, so a comma-joined list cannot be split back into the entries it was made from |
 | `MCPP_PKG_REPO` *(2026.9.11.1+)* | `mcpp::package_repo()` | The `[package] repo` |
+| `MCPP_TARGET_MIN_PLATFORM_VERSION` *(2026.9.12.3+)* | `mcpp::min_platform_version()` | The project's floor for this triple, in the platform's own words: on macOS, `[build] macos_deployment_target` or the engine's own default `14.0`; on iOS, `[build] ios_deployment_target` verbatim, empty when the project states none; on `*-linux-android`, `[target.<triple>] min_api_level`, or a fallback the resolved NDK payload states; empty on every other row. The value the effective triple carries, and part of the re-run key |
 | `MCPP_PACK_FORMAT` *(2026.9.11.1+)* | `mcpp::pack_format()` | The `--format` value of the `mcpp pack` pass this program is part of; empty for every ordinary build. The empty value is the one that carries the meaning — a member gates its submission on this, so `mcpp build` has the graph it always had |
 | `MCPP_PACK_STAGE_DIR` *(2026.9.11.1+)* | `mcpp::pack_stage_dir()` | Where `mcpp pack` has already staged the closure, absolute; empty when this build is not packaging. Read it to decide the shape of the work; write `${mcpp.stage_dir}` into the action, so the path in the graph and the path the program read cannot disagree |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | the device-kind sources (`.cu`, `.hip`, …) the package's effective `sources` match, package-root-relative, one per line; empty when there are none. The engine compiles none of them — the rule package this program imports turns each into an `mcpp::action`. Already narrowed: a `{ glob, accel }` entry the build does not cover contributes nothing, so `--no-accel` yields an empty list |

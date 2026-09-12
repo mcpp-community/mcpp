@@ -63,6 +63,7 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 | `mcpp:link-flag=<flag>` *(2026.9.6.5+)* | 加一条本程序**算出来的**链接标志,原样传递。这是 `link-lib` / `link-search` / `link-script` 各自命名一类东西之后留下的出口:生成的版本脚本(`-Wl,--version-script=`)、运行时接管 C 库符号用的 `-Wl,--wrap=malloc`、以及 `-Wl,--exclude-libs,ALL`(静态吞入的第三方不得成为本包 ABI 的一部分)。按发出顺序追加在 `[build] ldflags` 之后。**到达消费者**,与 `[build] ldflags` 一致 —— 理由见下 |
 | `mcpp:windows-subsystem=<target>:<value>` *(2026.9.12.2+)* | 设置**本包**可执行目标 `<target>` 的 PE 子系统(`console` 或 `windows`),与 `[targets.<target>] windows_subsystem`(docs/04)是同一字段。只到达该目标的链接,不到达其他目标或消费者,在非 PE 目标上不产生任何标志。本包未以 `kind = "bin"` 声明该目标、取值不在集合内、取值与 mcpp.toml 的声明矛盾,这三种情形都在应用任何指令之前被拒绝 |
 | `mcpp:windows-entry=<target>:<value>` *(2026.9.12.2+)* | 设置可执行目标 `<target>` 的入口函数(`main`、`wmain`、`WinMain` 或 `wWinMain`),与 `windows_entry` 是同一字段;作用域与拒绝条件同 `windows-subsystem` |
+| `mcpp:deploy=<from>\t<to>` *(2026.9.12.3+,protocol 11)* | 把本程序生成或选中的一个文件放到产物旁边的 `<to>`(相对可执行文件所在目录)——`[runtime] deploy`(docs/04 §2.11)的构建程序形态。`<from>` 可以是绝对路径(某个 action 自己声明的输出),也可以按包根解析;用 TAB 分隔,因为一个绝对的 Windows `<from>` 本身含冒号。**到达消费者**,并入同一个被 `link-lib`/`link-search`/`link-flag` 喂入的 `LinkIntent`——见下 |
 | `mcpp:link-script=<path>` *(2026.8.19+)* | 用这个**链接脚本**链接(`-T`;相对路径按包根解析,发出的是绝对路径,因为链接是在构建目录里跑的)。与 `include-dir` 不同,它**到达消费者** —— 板子的内存布局恰恰是消费者写不出来的那一项 |
 | `mcpp:warning=<text>` *(2026.8.21.2+)* | 对用户说一句话并**继续**。唯一一条不改变编译行、链接行与源码集的指令。它**穿过构建缓存** —— 见下 |
 | `mcpp:fact=<name>=<version>` *(2026.9.5.2+)* | 陈述程序**测得的机器事实**(`cuda.driver=12.4`)。在编译任何东西之前与 floor 比较;见下 |
@@ -121,6 +122,7 @@ int main() {
 | `mcpp::dep_bin(pkg, tool)` *(2026.8.5.1+)* | 读 `MCPP_DEP_<PKG>_BIN_<TOOL>` —— 依赖构建出的 **host 工具**的绝对路径(见下) |
 | `mcpp::link_flag(s)` *(2026.9.6.5+)* | `mcpp:link-flag=` |
 | `mcpp::windows_subsystem(target, value)` / `mcpp::windows_entry(target, value)` *(2026.9.12.2+)* | `mcpp:windows-subsystem=` / `mcpp:windows-entry=` |
+| `mcpp::deploy(from, to)` *(2026.9.12.3+,protocol 11)* | `mcpp:deploy=<from>\t<to>` —— 见下 |
 | `mcpp::link_script(p)` *(2026.8.19+)* | `mcpp:link-script=` |
 | `mcpp::runner(tok)` *(2026.8.19.2+)* | `mcpp:runner=` —— 见下 |
 | `mcpp::xpkg_dir(ns, name)` / `mcpp::xpkg_dir(name)` *(2026.8.19+)* | `[xlings.workspace]` 里声明的包的载荷目录 —— 本 manifest 声明的,或编进本构建程序的某个依赖声明的(2026.9.6.6+);没声明或没安装时返回 `""`(见下) |
@@ -478,6 +480,50 @@ mcpp 会播下一个带着该声明的占位文件,使 prepare 期的扫描与�
 内容一致 —— 与 `[modules].scan_overrides` 同一条「声明 + 验证」的取舍,build 期由
 编译器自己的 P1689 输出复核。
 
+### 部署程序生成的东西:`deploy`(2026.9.12.3+,protocol 11)
+
+`[runtime] deploy`(docs/04 §2.11)把包里已经存在的一个文件,放到相对可执行
+文件的某个路径。它点不了一个 action 后一步才产出的文件,因为它的 `from` 按包根
+解析,并拒绝绝对路径——而一个 action 声明的输出通常是 `MCPP_OUT_DIR` 下的
+绝对路径。`mcpp::deploy` 就是同一次放置,从构建程序里发出:
+
+```cpp
+import mcpp;
+
+int main() {
+    const std::string out = std::string(mcpp::out_dir()) + "/final/resources.bin";
+    mcpp::action a;
+    a.id   = "gen-resources";
+    a.role = "source";                 // 产出但不编译 —— 见上文的 `action`
+    a.arg("resource-compiler").arg("assets/").arg(out.c_str())
+     .output(out.c_str())
+     .submit();
+
+    mcpp::deploy(out.c_str(), "myapp.resources");
+}
+```
+
+- **`from` 是一个文件,不是一个目录。** prepare 期无法得知一棵生成目录里都有
+  哪些成员,因此不能成为图节点;一棵 N 个文件的生成树对应 N 个输出与 N 次
+  `deploy` 调用。
+- **`from` 可以是绝对路径或按包根解析的相对路径。** 传入一个 action 自己声明
+  的输出,天然让拷贝边依赖上那个 action——边的输入就是 action 的输出,
+  ninja 据此排序,不必再写别的东西去串联两者。
+- **`to` 遵守与 manifest 键相同的规则**:`/` 分隔、不得含 `..` 分量,
+  `"."` 表示可执行文件自己所在的目录。违反规则的路径会被拒绝,拒绝信息指出
+  该指令与声明它的包。
+- **在缓存命中时被重放。** `deploy` 指令与 `runner`、`warning` 一样进入构建
+  缓存;即使手工删掉 `bin/` 之后,一次缓存命中的重跑也会像真正跑过一样把
+  文件恢复回来。
+- **由 `mcpp pack` 在每种格式里,按相同的相对路径暂存到打包后的可执行文件旁边**:
+
+  | 格式 | `to = "myapp.resources"` 落在哪里 |
+  |---|---|
+  | tar、dir、AppImage、MSI | 可执行文件旁边的 `bin/myapp.resources/` |
+  | `.app`(macOS、iOS) | bundle 的可执行文件目录 |
+  | `.apk` | `assets/myapp.resources/` |
+  | web | 静态目录里同一个相对路径,与 `<name>.js` 放在一起。想把文件放进 `.data` 预加载的项目改用链接标志 `--preload-file <dir>@/<to>`,那是一条普通的链接标志 |
+
 ### 产出可分发物:`pack_format` 与 `stage_dir`(2026.9.11.1+)
 
 一个 `.msi`、一个 `.deb`、一个 AppImage、一个签过名的 `.app`,都不是那四个 role 的
@@ -661,6 +707,7 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存�
 | `MCPP_PKG_LICENSE` *(2026.9.11.1+)* | `mcpp::package_license()` | `[package] license` |
 | `MCPP_PKG_AUTHORS` *(2026.9.11.1+)* | `mcpp::package_authors()` | `[package] authors`,以 `;` 连接。不用 `,`:一条 author 的惯例写法是 `Name <mail@host>`,名字里可能带逗号,以逗号连接的列表无法再切回原来的条目 |
 | `MCPP_PKG_REPO` *(2026.9.11.1+)* | `mcpp::package_repo()` | `[package] repo` |
+| `MCPP_TARGET_MIN_PLATFORM_VERSION` *(2026.9.12.3+)* | `mcpp::min_platform_version()` | 项目对这个三元组的下限,用平台自己的措辞:macOS 上是 `[build] macos_deployment_target` 或引擎自带的默认值 `14.0`;iOS 上是 `[build] ios_deployment_target` 原样给出,项目没写就是空;`*-linux-android` 上是 `[target.<triple>] min_api_level`,或已解析 NDK 载荷给出的回落值;其余每一行都是空。取的是有效三元组携带的那个值,并进入重跑键 |
 | `MCPP_PACK_FORMAT` *(2026.9.11.1+)* | `mcpp::pack_format()` | 本程序所处的这次 `mcpp pack` 的 `--format` 取值;任何普通构建下都为空。承载含义的正是这个空值 —— 成员据此为自己的提交加闸,于是 `mcpp build` 拿到的还是它一直以来的那张图 |
 | `MCPP_PACK_STAGE_DIR` *(2026.9.11.1+)* | `mcpp::pack_stage_dir()` | `mcpp pack` 已经把闭包暂存到的位置,绝对路径;本次构建不在打包时为空。读它来判断这次要干的活是什么形状,而把 `${mcpp.stage_dir}` 写进 action —— 这样图里的路径与程序读到的路径不可能不一致 |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | 本包有效 `sources` 匹配到的设备类源文件(`.cu`、`.hip`…),相对包根,一行一个;没有时为空串。引擎一个都不编译 —— 由本程序引入的规则包把每一个变成一条 `mcpp::action`。已经过收窄:构建未覆盖的 `{ glob, accel }` 条目贡献为空,因此 `--no-accel` 得到空列表 |
