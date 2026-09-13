@@ -38,12 +38,18 @@ TOML
 # The negative direction first, so that the baseline is read before the
 # package changes anything: the payload's headers and its own runtime.
 "$MCPP" build > base.log 2>&1 || fail "the baseline build failed" base.log
-grep -q 'c++-abi.*libc++.*payload\|c++-abi.*libc++.*xim-x-llvm' base.log \
-    || fail "the baseline report does not name the payload's libc++" base.log
+# The report prints a layer only when a package answers for it, so the
+# baseline is read from the command lines rather than from a line that is
+# absent by design.
+grep -q 'c++-abi.*graph)' base.log && fail "the baseline report names a graph C++ layer" base.log
 base_ninja=$(ls target/*/*/build.ninja | head -1)
 grep -q -- '-isystem.*include/c++/v1' "$base_ninja" \
     || fail "the baseline compile line carries no payload libc++ -isystem" "$base_ninja"
-grep -q -- '-nostdlib++' "$base_ninja" && fail "the baseline link line carries -nostdlib++"
+# On this host the payload's contract is self-contained, so the link line
+# names the payload's own archives; that, not `-nostdlib++`, is the mark of
+# the payload's runtime.
+grep -q -- 'xim-x-llvm[^ ]*libc++\.a' "$base_ninja" \
+    || fail "the baseline link line does not name the payload's libc++.a" "$base_ninja"
 echo "ok: without the package the payload's libc++ is used"
 
 cat >> mcpp.toml <<'TOML'
@@ -60,6 +66,8 @@ grep -q -- '-isystem[^ ]*xim-x-llvm[^ ]*include/c++/v1' "$ninja" \
     && fail "the payload's libc++ headers are still on a compile line" "$ninja"
 grep -q -- '-nostdinc++' "$ninja" || fail "the compile lines carry no -nostdinc++" "$ninja"
 grep -q -- '-nostdlib++' "$ninja" || fail "the link line carries no -nostdlib++" "$ninja"
+grep -q -- 'xim-x-llvm[^ ]*libc++\(abi\)\?\.a' "$ninja" \
+    && fail "the link line still names the payload's libc++ archives" "$ninja"
 bin=$(ls target/*/*/bin/app | head -1)
 ldd "$bin" | grep -q 'libc++' && fail "the artefact still links a libc++ shared object" <(ldd "$bin")
 out=$("$bin") || fail "the program exited non-zero"
