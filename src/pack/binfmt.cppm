@@ -72,6 +72,72 @@ Ident identify(const std::filesystem::path& binary);
 std::expected<std::vector<std::string>, std::string>
 needed_names(const std::filesystem::path& binary);
 
+// What a Mach-O object's load commands name.
+//
+// `names`, in load-command order: `LC_LOAD_DYLIB`, `LC_LOAD_WEAK_DYLIB`,
+// `LC_REEXPORT_DYLIB` and `LC_LOAD_UPWARD_DYLIB` each contribute one — the
+// four load commands that name a dylib this object needs at load time (a
+// weak, re-exported or upward one is still a name a bundle has to resolve or
+// account for, whatever `dyld` does with it once it is missing).
+// `rpaths`, in the same order: `LC_RPATH` search-path entries, which `@rpath`
+// in a name (this object's own, or another dylib's already-collected name) is
+// resolved against — see `resolve_macho_names`.
+//
+// A THIN struct rather than growing `needed_names`'s return type: ELF and PE
+// resolve entirely through the caller's search directories, so only Mach-O
+// has a second list to carry, and `needed_names` keeps returning names alone
+// for the two formats that already had callers depending on that shape.
+struct MachoNeeded {
+    std::vector<std::string> names;
+    std::vector<std::string> rpaths;
+};
+
+// Read `binary`'s Mach-O load commands, or the ones of the SLICE named by
+// `arch` when `binary` is a fat (universal) object.
+//
+// `arch` is mcpp's canonical arch spelling ("x86_64", "aarch64", …) — the
+// same spelling `Ident::arch` and the resolved triple already use, so a
+// caller passes the triple's arch straight through. A THIN file ignores it:
+// there is only one slice to read, and refusing to read it because the
+// caller asked for a different architecture would be wrong — the caller
+// already knows what it built. An EMPTY `arch` on a fat file reads the FIRST
+// slice, which exists so the function is total, not because it is a good
+// answer; `needed_names` (below) is the only caller that has no triple to
+// pass, and every other caller should supply one.
+//
+// Handles both endiannesses (the CIGAM magics: a big-endian-authored Mach-O
+// is still valid input) and both widths (`mach_header` / `mach_header_64`).
+std::expected<MachoNeeded, std::string>
+macho_needed(const std::filesystem::path& binary, std::string_view arch = {});
+
+// One Mach-O dependency NAME, resolved (or not) against the loader's own
+// substitution rules — see `resolve_macho_names`.
+struct MachoResolved {
+    std::string            name;          // as the load command spelled it
+    std::filesystem::path  path;          // empty when unresolved
+    bool                   unresolved = false;
+};
+
+// Resolve Mach-O dependency `names` the way `dyld` would, without loading
+// anything: `@executable_path` and `@loader_path` are replaced by
+// `executableDir` / `loaderDir` wherever either leads a name, and
+// `@rpath/<rest>` is tried against every entry of `rpaths` IN ORDER — the
+// same two substitutions applied to the rpath entry first, then `<rest>`
+// joined on. The first candidate that exists on disk wins.
+//
+// A NAME THAT RESOLVES NOWHERE IS REPORTED, NOT DROPPED: the caller decides
+// what an unresolved dependency means for the bundle it is building, and
+// silently skipping the entry is how one ships without a library it needs.
+//
+// PURE — every input is a value, the only filesystem access is
+// `std::filesystem::exists`, and it is exercised with a name list, an rpath
+// list and two directories, never a real Mach-O file.
+std::vector<MachoResolved>
+resolve_macho_names(std::span<const std::string> names,
+                    std::span<const std::string> rpaths,
+                    const std::filesystem::path& executableDir,
+                    const std::filesystem::path& loaderDir);
+
 // Is `name` provided by the target OS itself — i.e. must NOT be bundled?
 //
 // On ELF this is the manylinux allow-list, which `pack` already had.
@@ -160,6 +226,26 @@ std::optional<std::uint64_t> le64(std::string_view b, std::size_t off) {
     return v;
 }
 
+// Big-endian counterparts, for the two places this module reads integers
+// that are NOT in the reading host's own byte order regardless of platform:
+// a FAT Mach-O header (always big-endian on disk, by the format's own
+// definition) and a CIGAM (byte-swapped) thin Mach-O's load commands.
+std::optional<std::uint32_t> be32(std::string_view b, std::size_t off) {
+    if (off + 4 > b.size()) return std::nullopt;
+    std::uint32_t v = 0;
+    for (int i = 0; i < 4; ++i)
+        v = (v << 8) | static_cast<unsigned char>(b[off + static_cast<std::size_t>(i)]);
+    return v;
+}
+
+std::optional<std::uint64_t> be64(std::string_view b, std::size_t off) {
+    if (off + 8 > b.size()) return std::nullopt;
+    std::uint64_t v = 0;
+    for (int i = 0; i < 8; ++i)
+        v = (v << 8) | static_cast<unsigned char>(b[off + static_cast<std::size_t>(i)]);
+    return v;
+}
+
 // Do the bytes at `off` equal `lit`?
 //
 // NOT `b.substr(off, n) == lit`, and the difference is a crash.
@@ -204,6 +290,158 @@ std::string pe_arch(std::uint16_t machine) {
         case 0x01c4: return "arm";      // ARMNT
         default:     return {};
     }
+}
+
+// mach/machine.h `cputype` values for the two slices mcpp's fat Mach-O
+// support cares about. Not a general table: a fat binary carrying a slice
+// for an architecture mcpp does not build for is a slice this reader never
+// has a reason to select.
+constexpr std::uint32_t kCpuTypeX86_64 = 0x01000007;
+constexpr std::uint32_t kCpuTypeArm64  = 0x0100000c;
+
+std::string macho_cputype_arch(std::uint32_t cputype) {
+    switch (cputype) {
+        case kCpuTypeX86_64: return "x86_64";
+        case kCpuTypeArm64:  return "aarch64";
+        default:             return {};
+    }
+}
+
+// ─── Mach-O ───────────────────────────────────────────────────────────────
+//
+// A thin object's load commands, starting right after the header at `base`
+// (0 for a non-fat file, a slice's own offset within `b` for a fat one).
+// `bigEndian` says whether THIS SLICE's own integers — cputype (unread
+// here), ncmds, and every load command that follows — are stored in the
+// opposite byte order from a plain `le32` read; true for the CIGAM magics,
+// which `macho_needed` below maps from the four thin magics before calling
+// this.
+//
+// LC_LOAD_DYLIB, LC_LOAD_WEAK_DYLIB, LC_REEXPORT_DYLIB and
+// LC_LOAD_UPWARD_DYLIB share one layout after `cmd`/`cmdsize`: an `lc_str`
+// at offset 8, a 32-bit OFFSET FROM THE START OF THE LOAD COMMAND (not from
+// the file) to a NUL-terminated name. `LC_RPATH` carries the identical
+// shape at the identical offset for its path, which is why one read
+// (`stringField`) serves every case this function handles.
+std::expected<MachoNeeded, std::string>
+macho_thin_needed(std::string_view b, std::size_t base, bool is64, bool bigEndian)
+{
+    auto rd32 = [&](std::size_t off) {
+        return bigEndian ? be32(b, off) : le32(b, off);
+    };
+
+    auto ncmds      = rd32(base + 16);
+    auto sizeofcmds = rd32(base + 20);
+    if (!ncmds || !sizeofcmds)
+        return std::unexpected("Mach-O header is truncated");
+    (void)sizeofcmds;   // bounds come from `b`'s own size, not this field.
+
+    const std::size_t cmdsStart = base + (is64 ? 32 : 28);
+
+    constexpr std::uint32_t LC_LOAD_DYLIB       = 0x0000000c;
+    constexpr std::uint32_t LC_LOAD_WEAK_DYLIB  = 0x80000018;
+    constexpr std::uint32_t LC_REEXPORT_DYLIB   = 0x8000001f;
+    constexpr std::uint32_t LC_LOAD_UPWARD_DYLIB= 0x80000023;
+    constexpr std::uint32_t LC_RPATH            = 0x8000001c;
+
+    auto stringField = [&](std::size_t cmdStart) -> std::optional<std::string> {
+        auto off = rd32(cmdStart + 8);
+        if (!off) return std::nullopt;
+        return cstr(b, cmdStart + *off);
+    };
+
+    MachoNeeded out;
+    std::size_t cursor = cmdsStart;
+    for (std::uint32_t i = 0; i < *ncmds; ++i) {
+        auto cmd     = rd32(cursor);
+        auto cmdsize = rd32(cursor + 4);
+        // A cmdsize too small to hold its own header is malformed input, and
+        // one of zero would loop forever — both end the walk rather than
+        // trusting the field.
+        if (!cmd || !cmdsize || *cmdsize < 8) break;
+
+        if (*cmd == LC_LOAD_DYLIB || *cmd == LC_LOAD_WEAK_DYLIB
+         || *cmd == LC_REEXPORT_DYLIB || *cmd == LC_LOAD_UPWARD_DYLIB) {
+            if (auto s = stringField(cursor); s && !s->empty())
+                out.names.push_back(std::move(*s));
+        } else if (*cmd == LC_RPATH) {
+            if (auto s = stringField(cursor); s && !s->empty())
+                out.rpaths.push_back(std::move(*s));
+        }
+        cursor += *cmdsize;
+    }
+    return out;
+}
+
+// Identify the magic at `base` (0, or a fat slice's own offset) and dispatch
+// to `macho_thin_needed` with the width and endianness it names. See the
+// field comment on `macho_needed` for what the four magics mean.
+std::expected<MachoNeeded, std::string>
+macho_needed_at(std::string_view b, std::size_t base)
+{
+    if (base + 4 > b.size())
+        return std::unexpected("Mach-O slice offset is out of range");
+    bool is64, bigEndian;
+    if      (has_at(b, base, std::string_view("\xcf\xfa\xed\xfe", 4))) { is64 = true;  bigEndian = false; }
+    else if (has_at(b, base, std::string_view("\xce\xfa\xed\xfe", 4))) { is64 = false; bigEndian = false; }
+    else if (has_at(b, base, std::string_view("\xfe\xed\xfa\xcf", 4))) { is64 = true;  bigEndian = true;  }
+    else if (has_at(b, base, std::string_view("\xfe\xed\xfa\xce", 4))) { is64 = false; bigEndian = true;  }
+    else return std::unexpected("not a Mach-O object at this offset");
+    return macho_thin_needed(b, base, is64, bigEndian);
+}
+
+// Replace a leading `@executable_path` or `@loader_path` with `dir`,
+// preserving whatever follows verbatim (typically `/../Frameworks` or
+// similar) so `..` is resolved by the filesystem at `exists()`, not by this
+// function. `std::nullopt` when `s` does not start with `prefix`.
+std::optional<std::filesystem::path>
+substitute_leading(std::string_view s, std::string_view prefix,
+                   const std::filesystem::path& dir)
+{
+    if (!s.starts_with(prefix)) return std::nullopt;
+    return std::filesystem::path(dir.string() + std::string(s.substr(prefix.size())));
+}
+
+// The byte-level implementation behind the exported `macho_needed`: FAT_MAGIC
+// / FAT_MAGIC_64 select a slice by `arch` (or the first slice when `arch` is
+// empty — see the exported declaration's comment), everything else is a thin
+// object read directly. FAT headers are ALWAYS big-endian on disk regardless
+// of a slice's own endianness, which is why `fat_arch`'s fields go through
+// `be32`/`be64` unconditionally rather than through `macho_thin_needed`'s
+// per-slice `bigEndian` flag.
+std::expected<MachoNeeded, std::string>
+macho_needed(std::string_view b, std::string_view arch)
+{
+    if (b.size() < 4) return std::unexpected("file is too small to be Mach-O");
+
+    const bool fat64 = has_at(b, 0, std::string_view("\xca\xfe\xba\xbf", 4));
+    if (fat64 || has_at(b, 0, std::string_view("\xca\xfe\xba\xbe", 4))) {
+        auto nfat = be32(b, 4);
+        if (!nfat) return std::unexpected("fat Mach-O header is truncated");
+        const std::size_t entrySize = fat64 ? 32 : 20;
+        std::optional<std::size_t> chosen, first;
+        for (std::uint32_t i = 0; i < *nfat; ++i) {
+            const std::size_t at = 8 + static_cast<std::size_t>(i) * entrySize;
+            auto cputype = be32(b, at);
+            std::optional<std::uint64_t> offset;
+            if (fat64) offset = be64(b, at + 8);
+            else if (auto o = be32(b, at + 8)) offset = *o;
+            if (!cputype || !offset)
+                return std::unexpected("fat_arch entry is truncated");
+            const auto sliceOffset = static_cast<std::size_t>(*offset);
+            if (!first) first = sliceOffset;
+            if (!arch.empty() && macho_cputype_arch(*cputype) == arch) {
+                chosen = sliceOffset;
+                break;
+            }
+        }
+        auto sliceOffset = chosen ? chosen : first;
+        if (!sliceOffset)
+            return std::unexpected("fat Mach-O names no architecture slices");
+        return macho_needed_at(b, *sliceOffset);
+    }
+
+    return macho_needed_at(b, 0);
 }
 
 // ─── ELF ────────────────────────────────────────────────────────────────
@@ -469,14 +707,15 @@ Ident identify(const std::filesystem::path& binary) {
         }
         return id;
     }
-    // Mach-O, both endiannesses and the fat wrapper. Recognised but not
-    // parsed: macOS packaging still asks the loader, and a caller that lands
-    // here deserves a message naming the format rather than "unknown".
+    // Mach-O, both endiannesses, and the fat wrapper (32- and 64-bit
+    // `fat_arch` alike — `needed_names`/`macho_needed` tell those two apart
+    // by re-reading the same magic; `identify` only has to know it is one).
     for (auto magic : {std::string_view("\xcf\xfa\xed\xfe", 4),
                        std::string_view("\xce\xfa\xed\xfe", 4),
                        std::string_view("\xfe\xed\xfa\xcf", 4),
                        std::string_view("\xfe\xed\xfa\xce", 4),
-                       std::string_view("\xca\xfe\xba\xbe", 4)}) {
+                       std::string_view("\xca\xfe\xba\xbe", 4),
+                       std::string_view("\xca\xfe\xba\xbf", 4)}) {
         if (b.starts_with(magic)) { id.format = Format::MachO; return id; }
     }
     return id;
@@ -491,17 +730,85 @@ needed_names(const std::filesystem::path& binary) {
     switch (identify(binary).format) {
         case Format::Elf: return detail::elf_needed(b);
         case Format::Pe:  return detail::pe_needed(b);
-        case Format::MachO:
-            return std::unexpected(
-                "Mach-O dependency reading is not implemented; macOS packaging "
-                "resolves the closure through the loader instead");
+        case Format::MachO: {
+            // No triple to pass here — see the field comment on the
+            // exported `macho_needed`'s `arch` parameter. A caller that HAS
+            // one (`pack::run`'s Mach-O closure step) calls `macho_needed`
+            // directly instead of through this dispatcher.
+            auto r = macho_needed(binary, {});
+            if (!r) return std::unexpected(r.error());
+            return std::move(r->names);
+        }
         case Format::Unknown: break;
     }
     return std::unexpected(std::format(
         "'{}' is not an ELF, PE or Mach-O object", binary.string()));
 }
 
+std::expected<MachoNeeded, std::string>
+macho_needed(const std::filesystem::path& binary, std::string_view arch) {
+    auto buf = detail::slurp(binary);
+    if (!buf)
+        return std::unexpected(std::format("cannot read '{}'", binary.string()));
+    return detail::macho_needed(std::string_view{*buf}, arch);
+}
+
+std::vector<MachoResolved>
+resolve_macho_names(std::span<const std::string> names,
+                    std::span<const std::string> rpaths,
+                    const std::filesystem::path& executableDir,
+                    const std::filesystem::path& loaderDir)
+{
+    auto exists = [](const std::filesystem::path& p) {
+        std::error_code ec;
+        return std::filesystem::exists(p, ec) && !ec;
+    };
+
+    std::vector<MachoResolved> out;
+    for (auto const& name : names) {
+        MachoResolved r{.name = name};
+        std::optional<std::filesystem::path> found;
+
+        if (auto p = detail::substitute_leading(name, "@executable_path", executableDir)) {
+            if (exists(*p)) found = *p;
+        } else if (auto p = detail::substitute_leading(name, "@loader_path", loaderDir)) {
+            if (exists(*p)) found = *p;
+        } else if (name.starts_with("@rpath/")) {
+            const auto rest = name.substr(std::string_view("@rpath/").size());
+            for (auto const& rp : rpaths) {
+                std::filesystem::path base;
+                if (auto p = detail::substitute_leading(rp, "@executable_path", executableDir))
+                    base = *p;
+                else if (auto p = detail::substitute_leading(rp, "@loader_path", loaderDir))
+                    base = *p;
+                else
+                    base = std::filesystem::path(rp);
+                if (auto candidate = base / rest; exists(candidate)) {
+                    found = candidate;
+                    break;
+                }
+            }
+        } else if (exists(std::filesystem::path(name))) {
+            // An absolute path, or a bare name found relative to the
+            // process's own cwd -- tried as-is, same as a name with no
+            // `@`-prefix at all.
+            found = std::filesystem::path(name);
+        }
+
+        if (found) r.path = *found;
+        else       r.unresolved = true;
+        out.push_back(std::move(r));
+    }
+    return out;
+}
+
 bool is_system_lib(Format f, std::string_view name) {
+    if (f == Format::MachO) {
+        // Case-sensitive, unlike the PE row below: HFS+/APFS paths are
+        // (usually) case-sensitive, and `/usr/lib/`/`/System/Library/` are
+        // the two roots dyld's shared cache and every OS dylib live under.
+        return name.starts_with("/usr/lib/") || name.starts_with("/System/Library/");
+    }
     std::string lower(name);
     for (auto& c : lower)
         c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
