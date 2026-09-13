@@ -4668,8 +4668,12 @@ runnerX = ["qemu-aarch64-static"]
     ASSERT_TRUE(m.has_value()) << m.error().format();
     ASSERT_EQ(m->schemaWarnings.size(), 1u);
     EXPECT_NE(m->schemaWarnings[0].find("'runnerX'"), std::string::npos) << m->schemaWarnings[0];
+    // #610 / #630 item 5 — `min_api_level` joined this list; see
+    // tests/unit/test_target_scalar_keys.cpp for the test that keeps this
+    // string (and the array beside it) from drifting from the parser again.
     EXPECT_NE(m->schemaWarnings[0].find(
-                  "Supported keys: cxx_runtime, linkage, runner, sysroot, toolchain"),
+                  "Supported keys: cxx_runtime, linkage, min_api_level, runner, "
+                  "sysroot, toolchain"),
               std::string::npos) << m->schemaWarnings[0];
 }
 

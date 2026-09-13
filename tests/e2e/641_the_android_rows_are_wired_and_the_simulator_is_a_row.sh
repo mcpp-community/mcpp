@@ -285,5 +285,30 @@ done
 # tests/unit/test_toolchain_triple.cpp, where `llvm_triple` is asked directly
 # and every host can ask it.
 
+# 9. `min_api_level` DECLARED ON ONE ROW MUST NOT TRIP `--strict` WHEN
+#    BUILDING A DIFFERENT ROW. The unknown-key sweep runs over every
+#    `[target.<triple>]` section in the manifest regardless of which target
+#    is resolved, so a manifest that declares `min_api_level` only under
+#    `[target.aarch64-linux-android]` and is then built for this (non-Android)
+#    host must produce neither a schema warning nor, under `--strict`, a
+#    failure. Before #610's drift was closed, this exact shape failed:
+#    `min_api_level` was parsed and honoured for the android row yet reported
+#    as "has unsupported key 'min_api_level'" for it, and `--strict` turned
+#    that report into a build failure that had nothing to do with the target
+#    actually being built.
+d="$t/apilevel-strict-other-row"; pkg "$d" "" "[target.aarch64-linux-android]" "min_api_level = 24"
+out=$( cd "$d" && "$MCPP" build --strict 2>&1 ); rc=$?
+if [ "$rc" -ne 0 ]; then
+    echo "FAIL: --strict build for this host failed with min_api_level declared on another row"
+    grep -m5 -E "^error|unsupported key" <<<"$out" | sed 's/^/    /'
+    fail=1
+elif grep -qi "unsupported key" <<<"$out"; then
+    echo "FAIL: --strict build reported min_api_level as an unsupported key"
+    grep -i "unsupported key" <<<"$out" | sed 's/^/    /'
+    fail=1
+else
+    echo "  ok: min_api_level on [target.aarch64-linux-android] does not trip --strict for this row"
+fi
+
 if [ "$fail" -ne 0 ]; then echo "FAIL: 641"; exit 1; fi
 echo "PASS: 641"

@@ -169,7 +169,7 @@ fi
 printf '\n[target.%s]\nrunnerX = ["x"]\n' "$HOST" >> mcpp.toml
 out=$("$MCPP" build 2>&1)
 grep -q "unsupported key 'runnerX'" <<<"$out" || fail "array typo not reported: $out"
-grep -q "Supported keys: cxx_runtime, linkage, runner, sysroot, toolchain" <<<"$out" \
+grep -q "Supported keys: cxx_runtime, linkage, min_api_level, runner, sysroot, toolchain" <<<"$out" \
     || fail "runner missing from the supported-keys list: $out"
 
 echo "PASS: 330_runner_hosted_targets"

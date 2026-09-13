@@ -2741,8 +2741,15 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // correctly spelled array is not; the message prints both in one
             // alphabetical line, because a reader of the warning should not
             // have to know a key's type to find it there.
+            // #610 / #630 item 5 — `min_api_level` was parsed above but
+            // missing from this list, so a correctly spelled key was reported
+            // as unsupported and, under `--strict`, turned into a hard error.
+            // tests/unit/test_manifest.cpp reads the parse sites above by
+            // source text and checks both directions against these two
+            // arrays, so a sixth key added to the parser without a matching
+            // entry here fails that test instead of shipping silently again.
             static constexpr std::string_view kKnownTargetScalars[] = {
-                "cxx_runtime", "linkage", "sysroot", "toolchain",
+                "cxx_runtime", "linkage", "min_api_level", "sysroot", "toolchain",
             };
             static constexpr std::string_view kKnownTargetArrays[] = { "runner" };
             for (auto& [key, value] : body) {
@@ -2753,8 +2760,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 if (std::ranges::find(known, key) != known.end()) continue;
                 m.schemaWarnings.push_back(std::format(
                     "[target.{}] has unsupported key '{}' (ignored). Supported keys: "
-                    "cxx_runtime, linkage, runner, sysroot, toolchain, plus the "
-                    "[target.<triple>.runners] table for named runners. "
+                    "cxx_runtime, linkage, min_api_level, runner, sysroot, toolchain, "
+                    "plus the [target.<triple>.runners] table for named runners. "
                     "Per-role contracts go in [build].cxx_runtime's table form.",
                     triple, key));
             }
