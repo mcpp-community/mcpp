@@ -112,6 +112,34 @@ baz = "=1.2.3"      # Exact match
 qux = ">=1.0, <2.0" # Range combination
 ```
 
+### When two declarations of one dependency disagree
+
+Two edges in the dependency graph can name the same identity — the same
+`(namespace, name)` pair — from two different places: the root manifest and a
+dependency's own `[dependencies]`, or two unrelated dependencies. A declaration
+has a **kind** (`version`, `git`, or `path`) and a **reference** within that
+kind (a SemVer constraint, a `git` URL plus `rev`/`tag`/`branch`, or a
+filesystem path). mcpp resolves the identity once; every requester's edge is
+recorded, and what one requester's declaration decides is what every other
+requester of the same identity gets.
+
+| first declaration | second declaration | outcome |
+|---|---|---|
+| any | same kind, same reference | Unchanged: the second declaration becomes an edge to the identity already resolved. Nothing is reported. |
+| `version` | `version`, a different constraint | The two constraints are AND-combined by SemVer, as above; an unsatisfiable pair is refused, naming both constraints and both requesters. |
+| `git` | `git`, a different `rev`/`tag`/`branch` | The root's declaration wins when the root is one of the two requesters; otherwise the declaration resolved first wins. A `dependency/source-override` warning names both requesters and both references, states which one is used and why, and how to take the other. This is never silent. |
+| `path` | `path`, a different directory | The same rule and the same warning as the row above, compared by canonical absolute directory rather than by git reference. |
+| a root `path` or `git` declaration | a dependency's `git` or `version` declaration (a kind clash) | The root's declaration wins, with the same warning. When the losing declaration is a `version` requirement, it is checked against the `[package] version` of the root's resolved checkout; a violated requirement is refused, naming the pin, the requester and the requirement. |
+| a dependency's `path`/`git` declaration | another dependency's declaration of a different kind (a kind clash, and neither party is the root) | Refused: "requested as both a … dep … and a … dep …. Pick one." The message adds one sentence: declare the identity in the root to settle it. |
+
+The root's privilege here is bounded the same way `linkage` is bounded to the
+root manifest's own edges (see `[dependencies]` above): a whole-graph choice of
+*which checkout* an identity resolves to is a decision only the artifact's own
+manifest may make silently on a dependency's behalf. A dependency that
+disagrees with another dependency, with neither being the root, is never
+settled by guessing which one was declared first — that is exactly the
+"accident of queue order" this section replaces.
+
 ### Namespace resolution rules
 
 Every package has a two-part identity: a **namespace** and a **name**. Every
