@@ -698,11 +698,13 @@ TEST(HostFlags, TheCxxLayerDecidesWhoseLibcxxHeadersAreEmitted) {
     EXPECT_TRUE(has(b, "-nostdinc++"));
     EXPECT_TRUE(has(b, "--no-default-config"));
 
-    // An Apple cross target without a graph C++ runtime: the runtime is the
-    // SDK's libc++, so the headers are the SDK's, named explicitly because
-    // clang's Darwin driver would otherwise prefer the copy beside itself.
+    // An Apple cross target whose runtime is the SDK's libc++ and whose graph
+    // does not import `std`: prepare chose the SDK's headers, named
+    // explicitly because clang's Darwin driver would otherwise prefer the
+    // copy beside itself.
     HostFlagOptions sdk = payload;
-    sdk.appleSdkRoot = fs::path("/Sdk/iPhoneSimulator.sdk");
+    sdk.appleSdkRoot       = fs::path("/Sdk/iPhoneSimulator.sdk");
+    sdk.appleSdkCxxHeaders = true;
     const auto c = mcpp::toolchain::host_compile_tokens(tc, sdk, mcpp::toolchain::no_escape);
     EXPECT_FALSE(any_payload_cxx(c));
     EXPECT_TRUE(has(c, "-nostdinc++"));
@@ -711,7 +713,8 @@ TEST(HostFlags, TheCxxLayerDecidesWhoseLibcxxHeadersAreEmitted) {
     // And with the graph runtime on that same target the SDK's headers are
     // not named either: one libc++ per command line, whichever it is.
     HostFlagOptions sdkGraph = sdk;
-    sdkGraph.cxxFromGraph = true;
+    sdkGraph.cxxFromGraph       = true;
+    sdkGraph.appleSdkCxxHeaders = false;
     const auto d = mcpp::toolchain::host_compile_tokens(tc, sdkGraph, mcpp::toolchain::no_escape);
     EXPECT_FALSE(any_payload_cxx(d));
     EXPECT_FALSE(std::ranges::any_of(d, [](const std::string& t) {

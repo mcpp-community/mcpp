@@ -319,10 +319,11 @@ jobs:
           echo "ok: no libc++ dylib in the load commands; both layers are the graph's"
 
       # THE NEGATIVE DIRECTION: without the packages a program that imports
-      # std is refused with the message naming them, and one that does not
-      # still builds against the SDK's libc++ and headers. Without this step
-      # the change could be read as "every iOS build now needs a package".
-      - name: "aarch64-ios-sim: without the packages, import std is refused and plain C++ still builds"
+      # std still builds, as it did before this release, and the degradation
+      # names the two lines; one that does not import std takes the SDK's
+      # headers under the SDK's libc++. Without this step the change could be
+      # read as "every iOS build now needs a package".
+      - name: "aarch64-ios-sim: without the packages, import std builds with the hazard named and plain C++ takes the SDK's headers"
         run: |
           set -euo pipefail
           rm -rf /tmp/iosplain && mkdir -p /tmp/iosplain/src && cd /tmp/iosplain
@@ -334,17 +335,20 @@ jobs:
           ios_deployment_target = "18.0"
           TOML
           printf 'import std;\nint main() { std::print("x\\n"); }\n' > src/main.cpp
-          if "$MCPP_DEV" build --target aarch64-ios-sim > refuse.log 2>&1; then
-            echo "FAIL: import std without llvm.libcxx was not refused"; cat refuse.log; exit 1
-          fi
-          grep -q 'llvm.libcxx' refuse.log || { echo "FAIL: the refusal does not name llvm.libcxx"; cat refuse.log; exit 1; }
+          "$MCPP_DEV" build --target aarch64-ios-sim > mixed.log 2>&1 || { echo "FAIL: import std without llvm.libcxx no longer builds"; cat mixed.log; exit 1; }
+          grep -q 'target/cxx-runtime' mixed.log || { echo "FAIL: no degradation named the mixed libc++"; cat mixed.log; exit 1; }
+          grep -q 'llvm.libcxx' mixed.log || { echo "FAIL: the degradation does not name llvm.libcxx"; cat mixed.log; exit 1; }
           printf '#include <cstdio>\n#include <string>\nint main() { std::string s = "1-2-3"; std::puts(s.c_str()); }\n' > src/main.cpp
           rm -rf target
           "$MCPP_DEV" build --target aarch64-ios-sim 2>&1 | tee plain.log
           grep -q 'target/compiler-runtime' plain.log || { echo "FAIL: no degradation named the missing compiler runtime"; exit 1; }
+          grep -q 'target/cxx-runtime' plain.log && { echo "FAIL: a program without import std was reported as mixing libc++"; exit 1; }
+          ninja=$(ls target/aarch64-ios-sim/*/build.ninja | head -1)
+          grep -q -- '-isystem[^ ]*iPhoneSimulator[^ ]*/usr/include/c++/v1' "$ninja" || { echo "FAIL: the plain program does not take the SDK's C++ headers"; grep -o -- '-isystem[^ ]*c++/v1' "$ninja" | sort -u; exit 1; }
+          grep -q -- '-isystem[^ ]*xim-x-llvm[^ ]*/c++/v1' "$ninja" && { echo "FAIL: the plain program still takes the payload's C++ headers"; exit 1; }
           art=$(ls target/aarch64-ios-sim/*/bin/iosplain | head -1)
           otool -L "$art" | grep -q '/usr/lib/libc++.1.dylib' || { echo "FAIL: the plain program does not link the SDK's libc++"; otool -L "$art"; exit 1; }
-          echo "ok: refused with the package named; plain C++ links the SDK's libc++ and the degradation names the builtins"
+          echo "ok: import std builds with the hazard named; plain C++ takes the SDK's headers and libc++; the builtins degradation is printed"
 
       # THE SUPPORTED PATH, which is what the `verified` tier claims: a runner
       # the manifest declares and a program a package provides. The program's
