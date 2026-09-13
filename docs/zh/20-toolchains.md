@@ -606,6 +606,28 @@ error: target aarch64-ios needs the iphoneos SDK, which this machine does not pr
 没有任何后续步骤能学到会改变这个答案的信息 —— 而一台没有 Xcode 的机器不应该先下载
 一个编译器,然后才被告知缺的不是编译器。
 
+### 这些行上的 C++ 运行时与编译器运行时是包
+
+载荷的静态 libc++ 是 macOS 的目标文件,ld64 拒绝把它链进 iOS 的链接;载荷的资源目录里只有
+`libclang_rt.osx.a`,没有 `ios` 或 `iossim` 的归档。因此这两层都来自依赖图,与裸机行上的
+C 库和 builtins 同一做法:
+
+```toml
+[target.'cfg(os = "ios")'.dependencies]
+llvm.libcxx               = "22.1.8.1"   # libc++ 与 libc++abi 的源码,带 std 模块
+llvm.compiler-rt-builtins = "22.1.8.3"   # __isPlatformVersionAtLeast 与通用例程
+```
+
+框架声明一次,每个应用通过依赖边继承。报告把两层都记为图里的,链接行带 `-nostdlib++`,
+产物的加载命令不含 `libc++.1.dylib`:翻译单元编译所用的头、导入的模块与链接的目标文件按构造
+是同一个发布版本。
+
+不声明第一行时,运行时是 SDK 的 libc++,头文件因此也取 SDK 的
+(`-nostdinc++ -isystem <sdk>/usr/include/c++/v1`),`import std` 被拒绝并在消息里点名该包:
+SDK 不附带模块源,而载荷的模块源描述的是另一个 libc++。不导入 `std` 的程序照常构建并链接
+`-lc++`。不声明第二行时,prepare 报告一次「载荷没有这个平台的编译器运行时」;从不触及可用性
+检查的程序照常链接。
+
 ### 部署目标
 
 `[build] ios_deployment_target` 与 `macos_deployment_target` 并列,而两者是两个键

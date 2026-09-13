@@ -164,7 +164,7 @@ clang. It needs:
 | | comes from | why |
 |---|---|---|
 | the compiler | `xim:llvm` | any sufficiently new clang emits arm64 Mach-O for an iOS deployment target |
-| the C++ runtime | the payload's libc++ | as on every other Apple row |
+| the C++ runtime | the payload's libc++ | as on every other Apple row -- superseded: the payload's archives are macOS objects and the SDK's libc++ is another release; the rows take `llvm.libcxx` from the graph (2026-09-13 record for #630, §5) |
 | the **SDK** | the machine's Xcode | headers and stub libraries, not redistributable |
 | running on a simulator | the machine's `simctl` | a proprietary runtime that exists only on its own OS |
 

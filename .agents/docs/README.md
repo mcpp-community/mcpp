@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-283 records.
+284 records.
 
 ## By subject
 
@@ -58,6 +58,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### triage
 
+- [What a framework and its ecosystem library still hit in the engine: the ten items of #630, read against the code](2026-09-13-630-what-a-framework-still-hits-in-the-engine.md) — active
 - [The engine gaps left open after the SDK batch](2026-09-12-engine-gaps-after-the-sdk-batch.md) — landed
 - [Six open issues: what each one actually is, and what would answer it](2026-09-11-six-open-issues-analysis.md) — active
 
@@ -66,6 +67,7 @@ Records that declare one. Everything else is listed by date below.
 ### 2026-09
 
 - [Four upstream asks from a UI framework: what each one is under mcpp's design, and the combined plan](2026-09-13-four-upstream-asks-from-a-ui-framework.md) — landed
+- [What a framework and its ecosystem library still hit in the engine: the ten items of #630, read against the code](2026-09-13-630-what-a-framework-still-hits-in-the-engine.md) — active
 - [The engine gaps left open after the SDK batch](2026-09-12-engine-gaps-after-the-sdk-batch.md) — landed
 - [A verified Web run that asked the host for node](2026-09-12-a-verified-web-run-that-asked-the-host-for-node.md) — landed
 - [Implementation plan: a UI framework on Android, iOS and Web (#622)](2026-09-12-622-implementation-plan.md) — landed
