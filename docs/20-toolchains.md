@@ -690,13 +690,16 @@ and the artifact's load commands name no `libc++.1.dylib`: the headers a
 translation unit is compiled against, the module it imports and the objects it
 links are one release by construction.
 
-Without the first declaration the runtime is the SDK's libc++, so the headers
-are the SDK's too (`-nostdinc++ -isystem <sdk>/usr/include/c++/v1`), and
-`import std` is refused with a message naming the package: the SDK ships no
-module sources, and the payload's describe a different libc++. A program that
-does not import `std` builds and links `-lc++`. Without the second, prepare
-reports once that the payload has no compiler runtime for the platform; a
-program that never reaches an availability check links regardless.
+Without the first declaration the runtime is the SDK's libc++. A program that
+does not import `std` then takes the SDK's headers too
+(`-nostdinc++ -isystem <sdk>/usr/include/c++/v1`) and links `-lc++`. A program
+that imports `std` keeps the payload's module and headers over the SDK's
+dylib, as every iOS build did before this release; the two are different
+releases of libc++, and prepare reports the pairing once, naming the two lines
+above, because it links until an inline path in the newer headers names an
+export the older dylib lacks. Without the second declaration, prepare reports
+once that the payload has no compiler runtime for the platform; a program that
+never reaches an availability check links regardless.
 
 ### The deployment target
 

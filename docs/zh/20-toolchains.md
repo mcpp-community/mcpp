@@ -622,11 +622,12 @@ llvm.compiler-rt-builtins = "22.1.8.3"   # __isPlatformVersionAtLeast 与通用�
 产物的加载命令不含 `libc++.1.dylib`:翻译单元编译所用的头、导入的模块与链接的目标文件按构造
 是同一个发布版本。
 
-不声明第一行时,运行时是 SDK 的 libc++,头文件因此也取 SDK 的
-(`-nostdinc++ -isystem <sdk>/usr/include/c++/v1`),`import std` 被拒绝并在消息里点名该包:
-SDK 不附带模块源,而载荷的模块源描述的是另一个 libc++。不导入 `std` 的程序照常构建并链接
-`-lc++`。不声明第二行时,prepare 报告一次「载荷没有这个平台的编译器运行时」;从不触及可用性
-检查的程序照常链接。
+不声明第一行时,运行时是 SDK 的 libc++。不导入 `std` 的程序随之取 SDK 的头文件
+(`-nostdinc++ -isystem <sdk>/usr/include/c++/v1`)并链接 `-lc++`。导入 `std` 的程序仍用载荷的
+模块与头文件配 SDK 的 dylib,与此版本之前每一次 iOS 构建相同;二者是 libc++ 的两个发布版本,
+prepare 报告一次这对搭配并点名上面两行,因为它只在较新头文件里的内联路径没有引用旧 dylib 缺失的
+导出时才能链接。不声明第二行时,prepare 报告一次「载荷没有这个平台的编译器运行时」;从不触及
+可用性检查的程序照常链接。
 
 ### 部署目标
 

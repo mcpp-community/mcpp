@@ -432,15 +432,20 @@ and the row table names none. The alternatives and why they are not taken:
   SDK a machine has. The `llvm@20.1.7` workaround is this alternative done by
   hand, and it holds only until the next SDK.
 
-**What the engine does when no package is declared.** Rule C still binds:
-the runtime is the SDK's, so the headers are the SDK's
+**What the engine does when no package is declared.** The runtime is the
+SDK's. A graph that does not import `std` takes the SDK's headers
 (`-nostdinc++ -isystem <sdk>/usr/include/c++/v1`; clang's Darwin driver
-would otherwise prefer the libc++ installed beside the compiler), and the
-std module is withdrawn: the SDKs ship no module sources (measured above)
-and the engine does not consume one, so a program that imports `std` is
-refused with a message naming the two package lines, and a program that does
-not is unaffected. This is honest where today's default is a coincidence,
-and it is the same `HostCoupled` cell the macOS fallback already occupies.
+would otherwise prefer the libc++ installed beside the compiler): one libc++
+on every line, which Rule C asks for. A graph that imports `std` keeps the
+payload's module and headers over the SDK's dylib, which is what every iOS
+build got before this batch; the SDKs ship no module sources (measured
+above) and the engine does not consume one, so there is no consistent pair
+to switch to. That pairing is reported once as a degradation
+(`target/cxx-runtime`) naming the hazard and the two package lines, and the
+build proceeds. A refusal was written first and withdrawn on review: it
+would have broken a program that built the day before, while the
+degradation names the remedy at the first build and costs nothing until an
+inline path reaches an export the older dylib lacks.
 
 The engine change, in full:
 
@@ -466,10 +471,12 @@ The engine change, in full:
 5. The std-module adoption at `prepare.cppm:10362` accepts
    `mcpp:c++-abi=libc++` as the current spelling of `hosted-standard-library`
    and continues to accept the older one.
-6. On an Apple cross target without a graph C++ runtime: the compile side
-   emits `-nostdinc++ -isystem <sdk>/usr/include/c++/v1`; `hasImportStd`
-   is false, and a graph that imports `std` is refused with the message
-   naming `llvm.libcxx` and `llvm.compiler-rt-builtins`.
+6. On an Apple cross target without a graph C++ runtime: when the graph
+   does not import `std`, `Toolchain::appleSdkCxxHeaders` is set and the
+   compile side emits `-nostdinc++ -isystem <sdk>/usr/include/c++/v1`; when
+   it does, the payload's module stays and prepare reports the
+   `target/cxx-runtime` degradation naming `llvm.libcxx` and
+   `llvm.compiler-rt-builtins`.
 7. The builtins archive. Clang's Darwin driver adds
    `libclang_rt.<platform>.a` from its own resource directory and, when the
    file is absent, continues without it (its source says missing runtime
@@ -515,10 +522,10 @@ the engine's part is measured first:
   carries `-nostdlib++` and no `-lc++`.
 - `aarch64-macos` with a floor: command lines unchanged from today, byte for
   byte (the `SelfContained` row must not move).
-- `aarch64-ios-sim` without the declaration: the compile command carries
-  `-isystem <sdk>/usr/include/c++/v1` and no payload `-isystem`; a program
-  that does not import `std` links `-lc++` and runs; one that does is refused
-  with the message naming `llvm.libcxx`.
+- `aarch64-ios-sim` without the declaration: a program that does not import
+  `std` carries `-isystem <sdk>/usr/include/c++/v1` and no payload
+  `-isystem`, links `-lc++` and prints no `target/cxx-runtime` line; one that
+  does still builds and the degradation names `llvm.libcxx`.
 - Builtins: `aarch64-ios-sim` with `llvm.compiler-rt-builtins` declared and
   a program whose source contains `if (__builtin_available(iOS 17, *))`
   links and runs; without the declaration the same program fails at link
