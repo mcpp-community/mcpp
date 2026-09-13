@@ -831,3 +831,11 @@ that none is left half done when its neighbour ships.
 Parallel groups: {T1, T2}, {T3}, {T4 then T5}, {T6, T9}, {T7 then T8} can
 proceed at once; T10 follows its inputs; T11 follows T7; T12 follows the
 release; T13 to T15 are sequential.
+
+**Progress (2026-09-13, evening).** T1 to T8 and T10 are on the batch branch
+(mcpp-community/mcpp#631). T7 is published (`mcpplibs/libcxx`, tag
+22.1.8.1; GitCode mirror byte-identical). T7b is merged and tagged
+(mcpplibs/compiler-rt-builtins#1, 22.1.8.3). T11 is merged and published
+(mcpplibs/mcpp-index#408; a program resolving `llvm.libcxx = "22.1.8.1"`
+from the index built and ran on Linux). T12 is prepared on a plugins
+branch and waits for the release pin. T9, T13, T14 and T15 follow.
