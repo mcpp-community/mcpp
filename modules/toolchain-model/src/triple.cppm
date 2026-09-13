@@ -1183,6 +1183,22 @@ inline ApplicationForm application_form(const Triple& t) {
                               : ApplicationForm::Executable;
 }
 
+// THE ANDROID ABI NAME OF A ROW'S ARCHITECTURE (#630 A9), for the
+// `lib/<abi>/lib<name>.so` layout every Android packaging tool uses
+// (`aapt2`'s `lib/` convention, and mcpp's own multi-target staging when a
+// `kind = "app"` target whose form is `SharedObject` is packed for more than
+// one triple at once). Android coined its own vocabulary for the
+// architectures it supports rather than reusing GNU's; the two rows mcpp
+// currently produces a shared object for (`aarch64`, `x86_64`) are the only
+// ones this translates, and an architecture Android has no name for keeps
+// its GNU spelling — mcpp has never had reason to invent a fourth
+// architecture vocabulary, and guessing one here would be exactly that.
+inline std::string android_abi(const Triple& t) {
+    if (t.arch == "aarch64") return "arm64-v8a";
+    if (t.arch == "x86_64")  return "x86_64";
+    return t.arch;
+}
+
 // THE PLATFORM NAME OF A ROW, for `[package] platforms` (#622 A7). A platform
 // name is the triple's `os`, except where an `env` names a platform of its
 // own: Android is `linux` with `env = "android"` in the triple, and a

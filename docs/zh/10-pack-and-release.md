@@ -152,6 +152,17 @@ error: unknown --format 'bogus'.
 的预构建产物,没有单独一棵暂存树,所以 `mcpp pack <库> --format <name>` 会被拒绝,
 而不是被忽略。
 
+**产物是共享目标文件的 `kind = "app"` target 可以接受一个以上的 `--target`**
+(mcpp 2026.9.13.2+):在每一行 Android 上,一个应用*就是*平台加载的那个共享库,
+所以 `mcpp pack myapp --target aarch64-linux-android --target x86_64-linux-android`
+会构建并把两条腿暂存进同一棵树里,与库包的多三元组做法完全一致。每条腿落在
+`lib/<abi>/lib<name>.so`(`aarch64` → `arm64-v8a`,`x86_64` → `x86_64`),声明的
+部署文件只暂存一次,随后对这棵合并后的树只跑一次分派——这正是 `dist-apk` 这样的
+成员能构建出一个通用 APK 的原因。只给一个 `--target` 时,今天这种扁平的
+`lib/lib<name>.so` 布局保持不变。产物在任何被请求的一行上是可执行文件的 target,
+第二个 `--target` 依旧被拒绝:为多个三元组打包一个可执行文件需要多个可执行文件,
+那是另一种机制(`lipo` 的通用二进制),不在此列。
+
 `-o` 接受裸文件名时自动归到 `target/dist/`;含目录(相对或绝对)
 时按字面路径输出。
 

@@ -191,6 +191,20 @@ on every row, whatever file that row links it to (see
 prebuilt binaries per triple and has no single staged tree, so
 `mcpp pack <lib> --format <name>` is refused rather than ignored.
 
+**A `kind = "app"` target whose artifact is a shared object accepts more than
+one `--target`** (mcpp 2026.9.13.2+): on every Android row an application
+*is* the shared library the platform loads, so `mcpp pack myapp --target
+aarch64-linux-android --target x86_64-linux-android` builds and stages both
+legs into one tree, exactly as a library package's several triples already
+do. Each leg lands at `lib/<abi>/lib<name>.so` (`aarch64` → `arm64-v8a`,
+`x86_64` → `x86_64`), the declared deploy files are staged once, and one
+dispatch runs against the combined tree — which is what lets a member such as
+`dist-apk` build one universal APK. A single `--target` keeps today's flat
+`lib/lib<name>.so` layout unchanged. A target whose artifact is an executable
+on any requested row is still refused for a second `--target`: packing one
+executable for several triples would need several executables, which is a
+different mechanism (`lipo`'s universal binary) that this does not provide.
+
 When `-o` is given a bare filename, the output is placed under `target/dist/`;
 when it includes a directory (relative or absolute), the literal path is used.
 

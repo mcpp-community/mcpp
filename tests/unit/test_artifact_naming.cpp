@@ -204,6 +204,20 @@ TEST(ArtifactNaming, ApplicationFormOnTheHostTripleIsExecutable) {
     EXPECT_EQ(tr::application_form(tr::Triple{}), tr::ApplicationForm::Executable);
 }
 
+// ── #630 A9: the Android ABI name of a row's architecture ───────────────────
+//
+// The two rows mcpp currently produces a shared object for; a third
+// architecture keeps its GNU spelling rather than a guessed Android name.
+
+TEST(AndroidAbi, TranslatesTheTwoKnownArchitectures) {
+    EXPECT_EQ(tr::android_abi(T("aarch64-linux-android")), "arm64-v8a");
+    EXPECT_EQ(tr::android_abi(T("x86_64-linux-android")), "x86_64");
+}
+
+TEST(AndroidAbi, AnUntranslatedArchitectureKeepsItsGnuSpelling) {
+    EXPECT_EQ(tr::android_abi(T("riscv64-linux-android")), "riscv64");
+}
+
 } // namespace
 
 // `platform_name` (#622 A7): the triple's `os`, except that an `env` naming a
