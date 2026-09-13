@@ -525,7 +525,14 @@ std::vector<std::string> graph_runtime_compile_flags(const Toolchain& tc) {
     // `os == "macos"` used to miss. Both need the emulated-TLS model for the
     // same reason PE does -- `_tlv_bootstrap` is loader-bootstrapped there
     // exactly as `_tls_index` is on PE.
-    if (t->is_pe() || t->is_mach_o()) out.emplace_back("-femulated-tls");
+    //
+    // AND ONLY WHILE THE C LIBRARY IS THE GRAPH'S. `_tlv_bootstrap` is
+    // supplied by dyld, and openkal-macos has no dyld; a hosted Mach-O target
+    // whose C library is the SDK's (the iOS rows over `llvm.libcxx`) has the
+    // loader and the native TLS model with it. Emulated TLS there would be a
+    // graph-wide ABI choice made for a reason that does not apply.
+    if (t->is_pe() || (t->is_mach_o() && !tc.cAbiPrebuilt))
+        out.emplace_back("-femulated-tls");
     // MACH-O ONLY, AND THE REASON IS THAT WEAK-DEF IS A RUN-TIME MECHANISM
     // THERE. See the note on this function for the measurement. `is_mach_o()`
     // rather than `os == "macos"`: the mechanism is ld64's, which iOS shares.

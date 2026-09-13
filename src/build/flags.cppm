@@ -614,6 +614,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // is what makes it impossible for them to disagree — which they did,
         // from #511 until now, because only the link side was corrected.
         hopt.cAbiPrebuilt = plan.targetSide.cAbi.prebuilt();
+        // AND THE C++ LAYER'S OWN ANSWER, which the C library's used to stand
+        // in for. The two differ on a hosted target whose C library is a
+        // located SDK while a package supplies libc++ (mcpp#630, §5).
+        hopt.cxxFromGraph = plan.targetSide.cxx.fromGraph();
         compile_toolchain_flags = mcpp::toolchain::render_tokens(
             mcpp::toolchain::host_compile_tokens(plan.toolchain, hopt, ninjaEsc));
     } else {
@@ -1157,13 +1161,16 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         //
         // measured on `openkal-linux = "0.5.4"` with a `throw` in main.
         //
-        // THE C LIBRARY IS WHAT DECIDES IT, for the same reason it decides
-        // the link line's search paths: the payload's C++ runtime was
-        // configured against the payload's C library, so it is eligible when
-        // and only when that C library is the one in use. `check_layering`
-        // states the same rule in the other direction, refusing the
-        // combination this predicate must not create.
-        mi.graphCxxRuntime = !plan.targetSide.cAbi.prebuilt();
+        // THE C++ LAYER DECIDES IT. This read `!cAbi.prebuilt()` while the
+        // only graph C++ runtime sat over a graph C library, and the two
+        // questions were one; `check_layering` still refuses the payload's
+        // libc++ over a graph C library, so a graph C library implies a graph
+        // C++ runtime. The converse does not hold: a hosted target whose C
+        // library is a located SDK can take libc++ from a package
+        // (`llvm.libcxx` on the iOS rows, mcpp#630), and asking the C library
+        // there answered "payload" and linked the SDK's `-lc++` under objects
+        // compiled against the package's headers.
+        mi.graphCxxRuntime = plan.targetSide.cxx.fromGraph();
 
         const bool wantsArchives =
             (base == dist::Contract::SelfContained

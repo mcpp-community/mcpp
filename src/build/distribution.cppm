@@ -495,15 +495,19 @@ Mechanism resolve(const MechanismInput& in) {
             }
             return m;
         }
-        // iOS TAKES ITS C++ RUNTIME FROM THE SDK, AND HAS NO OTHER OPTION.
+        // iOS TAKES ITS C++ RUNTIME FROM THE SDK UNLESS THE GRAPH SUPPLIES ONE.
         //
         // Every iOS release ships libc++ in the OS, and the SDK's
         // `libc++.tbd` is the stub that links against it -- so `-lc++` is
-        // both the correct and the only answer for these rows. The two
-        // alternatives are closed by construction rather than by policy: the
-        // payload's static archives are built for macOS and ld64 refuses
-        // them in an iOS link, and the payload's libc++.dylib is not present
-        // on a device at all.
+        // the answer the PAYLOAD can give for these rows. The two payload
+        // alternatives are closed by construction rather than by policy: its
+        // static archives are built for macOS and ld64 refuses them in an
+        // iOS link, and its libc++.dylib is not present on a device at all.
+        // A graph package (`llvm.libcxx`, libc++ as source) is the other
+        // option, and it is decided before this switch: `graphCxxRuntime`
+        // returns `SelfContained` with `-nostdlib++` and this branch is not
+        // reached (mcpp#630). What remains here is the no-package case, whose
+        // headers `hostflags.cppm` takes from the SDK for the same reason.
         //
         // The contract vocabulary calls this `HostCoupled`, which reads
         // oddly for a cross target; what it means in every cell is "the C++

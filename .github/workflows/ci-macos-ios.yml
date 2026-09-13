@@ -194,6 +194,19 @@ jobs:
           [build]
           ios_deployment_target = "18.0"
 
+          # THE C++ STANDARD LIBRARY AND THE COMPILER RUNTIME ARE PACKAGES ON
+          # THESE ROWS (#630). The payload's static libc++ is a macOS object
+          # and its resource directory carries no iOS builtins archive, so the
+          # engine used to link the SDK's libc++ under the payload's newer
+          # headers -- which fails at link on the first inline path the older
+          # dylib does not export. `llvm.libcxx` brings headers, module and
+          # objects as one release; `llvm.compiler-rt-builtins` brings
+          # `__isPlatformVersionAtLeast`. Declared by git until the index
+          # carries them.
+          [target.'cfg(os = "ios")'.dependencies]
+          llvm.libcxx               = { git = "https://github.com/mcpplibs/libcxx.git", tag = "22.1.8.1" }
+          llvm.compiler-rt-builtins = { git = "https://github.com/mcpplibs/compiler-rt-builtins.git", tag = "22.1.8.3" }
+
           # THE RUNNER IS AN ARGV PREFIX AND THE SESSION BELONGS TO A
           # PACKAGE. `simctl-run` comes from `xim:apple-simulator-tools`; it
           # chooses a device, boots it if it is not booted, waits, spawns, and
@@ -212,8 +225,18 @@ jobs:
           TOML
           cat > /tmp/iostest/src/main.cpp << 'CPP'
           import std;
+          // The two inline paths that failed at link under the payload's
+          // headers over the SDK's libc++ (`__hash_memory`,
+          // `__atomic_notify_all_global_table`), and an availability check,
+          // which is `__isPlatformVersionAtLeast` from the builtins package.
           int main() {
-            std::vector<int> v{3, 1, 2};
+            std::unordered_map<std::string, int> m;
+            m["three"] = 3;
+            std::atomic<int> a{1};
+            a.notify_all();
+            int two = 2;
+            if (__builtin_available(iOS 17, *)) two = 2;
+            std::vector<int> v{m["three"], a.load(), two};
             std::ranges::sort(v);
             std::print("{}-{}-{}\n", v[0], v[1], v[2]);
           }
@@ -274,8 +297,54 @@ jobs:
         run: |
           set -euo pipefail
           cd /tmp/iostest
-          "$MCPP_DEV" build --target aarch64-ios-sim
+          "$MCPP_DEV" build --target aarch64-ios-sim 2>&1 | tee build-sim.log
           /tmp/assert-artefact.sh aarch64-ios-sim arm64 7 18.0
+
+      # THE TWO LAYERS THE PACKAGES SUPPLY, READ FROM THE REPORT AND FROM THE
+      # ARTEFACT. A build that succeeds cannot tell a self-contained libc++
+      # from the SDK's; the load commands can, and the report says which
+      # package answered for each layer.
+      - name: "aarch64-ios-sim: the C++ runtime and the builtins are the graph's"
+        run: |
+          set -euo pipefail
+          cd /tmp/iostest
+          grep -E 'c\+\+-abi +libc\+\+ +\(libcxx@22\.1\.8\.1, graph\)' build-sim.log \
+            || { echo "FAIL: the report does not name llvm.libcxx as the C++ layer"; exit 1; }
+          grep -E 'compiler-runtime +compiler-rt +\(compiler-rt-builtins@22\.1\.8\.3, graph\)' build-sim.log \
+            || { echo "FAIL: the report does not name llvm.compiler-rt-builtins as the compiler runtime"; exit 1; }
+          art=$(ls /tmp/iostest/target/aarch64-ios-sim/*/bin/iostest | head -1)
+          if otool -L "$art" | grep -q 'libc++'; then
+            echo "FAIL: the artefact links a libc++ dylib"; otool -L "$art"; exit 1
+          fi
+          echo "ok: no libc++ dylib in the load commands; both layers are the graph's"
+
+      # THE NEGATIVE DIRECTION: without the packages a program that imports
+      # std is refused with the message naming them, and one that does not
+      # still builds against the SDK's libc++ and headers. Without this step
+      # the change could be read as "every iOS build now needs a package".
+      - name: "aarch64-ios-sim: without the packages, import std is refused and plain C++ still builds"
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/iosplain && mkdir -p /tmp/iosplain/src && cd /tmp/iosplain
+          cat > mcpp.toml << 'TOML'
+          [package]
+          name = "iosplain"
+          version = "0.1.0"
+          [build]
+          ios_deployment_target = "18.0"
+          TOML
+          printf 'import std;\nint main() { std::print("x\\n"); }\n' > src/main.cpp
+          if "$MCPP_DEV" build --target aarch64-ios-sim > refuse.log 2>&1; then
+            echo "FAIL: import std without llvm.libcxx was not refused"; cat refuse.log; exit 1
+          fi
+          grep -q 'llvm.libcxx' refuse.log || { echo "FAIL: the refusal does not name llvm.libcxx"; cat refuse.log; exit 1; }
+          printf '#include <cstdio>\n#include <string>\nint main() { std::string s = "1-2-3"; std::puts(s.c_str()); }\n' > src/main.cpp
+          rm -rf target
+          "$MCPP_DEV" build --target aarch64-ios-sim 2>&1 | tee plain.log
+          grep -q 'target/compiler-runtime' plain.log || { echo "FAIL: no degradation named the missing compiler runtime"; exit 1; }
+          art=$(ls target/aarch64-ios-sim/*/bin/iosplain | head -1)
+          otool -L "$art" | grep -q '/usr/lib/libc++.1.dylib' || { echo "FAIL: the plain program does not link the SDK's libc++"; otool -L "$art"; exit 1; }
+          echo "ok: refused with the package named; plain C++ links the SDK's libc++ and the degradation names the builtins"
 
       # THE SUPPORTED PATH, which is what the `verified` tier claims: a runner
       # the manifest declares and a program a package provides. The program's

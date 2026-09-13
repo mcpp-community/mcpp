@@ -136,6 +136,18 @@ struct HostFlagOptions {
     // every caller that has no graph (the std module build, the build.mcpp
     // host helper) means.
     bool cAbiPrebuilt = true;
+
+    // DOES THE C++ RUNTIME COME FROM THE GRAPH? -- `plan.targetSide.cxx.fromGraph()`,
+    // READ rather than derived from `cAbiPrebuilt`.
+    //
+    // The payload's libc++ header set was withheld exactly when the C LIBRARY
+    // was the graph's. The two questions coincide for openkal (both layers
+    // from packages) and for a native build (both from the payload), and come
+    // apart on a hosted target whose C library is a located SDK while a
+    // package supplies libc++: the iOS rows with `llvm.libcxx` (mcpp#630).
+    // There the old predicate emitted the payload's `-isystem …/c++/v1` on
+    // top of the package's headers, two libc++ on one command line.
+    bool cxxFromGraph = false;
 };
 
 // Host-compile flags as argv tokens, in the order the string channels have
@@ -340,7 +352,18 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
     // cannot disagree.
     const bool graphSuppliesTarget = !opt.cAbiPrebuilt;
 
-    if (bypassCfg && !graphSuppliesTarget) {
+    // THE C++ HEADERS ARE THE C++ LAYER'S QUESTION. `dm.compile_tokens` carries
+    // libc++'s directories and nothing else, so it is emitted only when the
+    // payload's libc++ is the runtime being linked: not when a package
+    // supplies the C++ layer (`cxxFromGraph`), and not on an Apple cross
+    // target, whose runtime is the SDK's libc++ by construction
+    // (`distribution.cppm`, the Mach-O cell) and whose headers must therefore
+    // be the SDK's too. Measured on Xcode 16.4 with llvm 22.1.8: the payload's
+    // libc++ 22 headers over the SDK's libc++ 19 dylib fail at link on
+    // `__hash_memory`, which an inline function in the newer headers names
+    // and the older dylib does not export (mcpp#630).
+    const bool cxxFromPayload = !opt.cxxFromGraph && opt.appleSdkRoot.empty();
+    if (bypassCfg && !graphSuppliesTarget && cxxFromPayload) {
         for (auto& t : dm.compile_tokens(esc, opt.clangStdlibSelect))
             out.push_back(t);
     } else if (bypassCfg) {
@@ -366,6 +389,18 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
         // it would invalidate every user's std BMI for no behavioural gain.
         // Nothing that used to be emitted moves; this path emitted nothing.
         out.push_back("--no-default-config");
+    }
+    if (bypassCfg && !graphSuppliesTarget && !cxxFromPayload) {
+        // The driver's own C++ search contributes nothing: beside the compiler
+        // it finds the payload's libc++, and clang's Darwin driver prefers that
+        // copy to the SDK's whenever it exists. What replaces it is either the
+        // graph package's directories, which reach every unit through the
+        // target-side broadcast, or the SDK's `c++/v1`, named here.
+        out.push_back("-nostdinc++");
+        if (opt.clangStdlibSelect) out.push_back("-stdlib=libc++");
+        if (!opt.cxxFromGraph)
+            out.push_back("-isystem"
+                          + esc(opt.appleSdkRoot / "usr" / "include" / "c++" / "v1"));
     }
 
     // Unconditional on macOS, cfg or no cfg. clang refuses to load a module

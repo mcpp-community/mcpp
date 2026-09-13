@@ -359,11 +359,15 @@ TEST(HostFlags, DeploymentTargetOnlyOnMacos) {
 
 namespace {
 
+// The openkal shape: the C library is the graph's too. `cAbiPrebuilt` is set
+// explicitly because it decides the Mach-O emulated-TLS row below, and the
+// default (`true`) describes the other arrangement.
 mcpp::toolchain::Toolchain graph_tc(std::string triple) {
     mcpp::toolchain::Toolchain tc;
     tc.compiler         = CompilerId::Clang;
     tc.targetTriple     = std::move(triple);
     tc.targetCxxRuntime = true;
+    tc.cAbiPrebuilt     = false;
     return tc;
 }
 
@@ -408,6 +412,25 @@ TEST(GraphRuntimeFlags, IosTakesTheSameFlagsAsMacOS) {
     EXPECT_TRUE(has(f, "-femulated-tls"));
     EXPECT_TRUE(has(f, "-fvisibility=hidden"));
     EXPECT_TRUE(has(f, "-fvisibility-inlines-hidden"));
+}
+
+// A hosted Mach-O target whose C library is a located SDK (the iOS rows over
+// `llvm.libcxx`, mcpp#630) has dyld and the native TLS model with it, so the
+// emulated-TLS row does not apply; the visibility rows still do, since a
+// second libc++ in one process is kept apart by visibility on Mach-O.
+TEST(GraphRuntimeFlags, MachOOverAPrebuiltCLibraryKeepsNativeTls) {
+    auto tc = graph_tc("aarch64-ios");
+    tc.cAbiPrebuilt = true;
+    auto f = mcpp::toolchain::graph_runtime_compile_flags(tc);
+    EXPECT_FALSE(has(f, "-femulated-tls"));
+    EXPECT_FALSE(has(f, "-fdwarf-exceptions"));
+    EXPECT_TRUE(has(f, "-fvisibility=hidden"));
+    EXPECT_TRUE(has(f, "-fvisibility-inlines-hidden"));
+    // And PE keeps it regardless: `_tls_index` is loader-bootstrapped there
+    // whether or not the C library is the graph's.
+    auto pe = graph_tc("x86_64-windows-gnu");
+    pe.cAbiPrebuilt = true;
+    EXPECT_TRUE(has(mcpp::toolchain::graph_runtime_compile_flags(pe), "-femulated-tls"));
 }
 
 // ELF takes NONE of them, and that is a decision rather than an omission.
@@ -617,3 +640,83 @@ TEST(HostFlags, AnOwnSysrootTargetIsToldWhichTargetAndNothingElse) {
     EXPECT_TRUE(mcpp::toolchain::host_compile_tokens(
                     bare, opt, mcpp::toolchain::no_escape).empty());
 }
+
+// ── The C++ headers are the C++ layer's question ─────────────────────────────
+//
+// The payload's libc++ `-isystem` block was withheld exactly when the C
+// LIBRARY came from the graph, which was the same question while the only
+// graph C++ runtime sat over a graph C library. A hosted target whose C
+// library is a located SDK while a package supplies libc++ (the iOS rows over
+// `llvm.libcxx`, mcpp#630) answered "payload" there and put two libc++ header
+// sets on one command line. The same fixture as the bypass test above: two
+// empty files beside an `include/c++/v1` are a complete driver model.
+TEST(HostFlags, TheCxxLayerDecidesWhoseLibcxxHeadersAreEmitted) {
+    namespace fs = std::filesystem;
+    const auto root = fs::temp_directory_path() / "mcpp_hostflags_cxx_fixture";
+    fs::remove_all(root);
+    fs::create_directories(root / "bin");
+    fs::create_directories(root / "include" / "c++" / "v1");
+    { std::ofstream(root / "bin" / "clang++"); }
+    { std::ofstream(root / "bin" / "clang++.cfg"); }
+    struct Cleanup {
+        fs::path p;
+        ~Cleanup() { std::error_code ec; fs::remove_all(p, ec); }
+    } cleanup{root};
+
+    auto tc = tc_for(CompilerId::Clang);
+    tc.binaryPath = root / "bin" / "clang++";
+    ASSERT_TRUE(mcpp::toolchain::resolve_clang_driver(tc).hasCfg)
+        << "the fixture did not produce a cfg — the assertions below would be vacuous";
+
+    const auto any_payload_cxx = [&](const std::vector<std::string>& v) {
+        return std::ranges::any_of(v, [&](const std::string& t) {
+            return t.starts_with("-isystem")
+                && t.find((root / "include" / "c++" / "v1").string()) != std::string::npos;
+        });
+    };
+    const auto has = [](const std::vector<std::string>& v, std::string_view f) {
+        return std::ranges::find(v, f) != v.end();
+    };
+
+    HostFlagOptions payload;
+    payload.cfgBypass    = HostFlagOptions::CfgBypass::Always;
+    payload.cAbiPrebuilt = true;
+
+    // The baseline: a prebuilt C library under the payload's own libc++ takes
+    // the payload's headers, as every native build does.
+    const auto a = mcpp::toolchain::host_compile_tokens(tc, payload, mcpp::toolchain::no_escape);
+    EXPECT_TRUE(any_payload_cxx(a));
+    EXPECT_TRUE(has(a, "-nostdinc++"));
+
+    // A graph C++ runtime over the same prebuilt C library: the payload's
+    // headers are withheld and the driver's own search is closed, since the
+    // package's directories arrive through the target-side broadcast.
+    HostFlagOptions graph = payload;
+    graph.cxxFromGraph = true;
+    const auto b = mcpp::toolchain::host_compile_tokens(tc, graph, mcpp::toolchain::no_escape);
+    EXPECT_FALSE(any_payload_cxx(b));
+    EXPECT_TRUE(has(b, "-nostdinc++"));
+    EXPECT_TRUE(has(b, "--no-default-config"));
+
+    // An Apple cross target without a graph C++ runtime: the runtime is the
+    // SDK's libc++, so the headers are the SDK's, named explicitly because
+    // clang's Darwin driver would otherwise prefer the copy beside itself.
+    HostFlagOptions sdk = payload;
+    sdk.appleSdkRoot = fs::path("/Sdk/iPhoneSimulator.sdk");
+    const auto c = mcpp::toolchain::host_compile_tokens(tc, sdk, mcpp::toolchain::no_escape);
+    EXPECT_FALSE(any_payload_cxx(c));
+    EXPECT_TRUE(has(c, "-nostdinc++"));
+    EXPECT_TRUE(has(c, "-isystem" + (fs::path("/Sdk/iPhoneSimulator.sdk") / "usr" / "include" / "c++" / "v1").string()));
+
+    // And with the graph runtime on that same target the SDK's headers are
+    // not named either: one libc++ per command line, whichever it is.
+    HostFlagOptions sdkGraph = sdk;
+    sdkGraph.cxxFromGraph = true;
+    const auto d = mcpp::toolchain::host_compile_tokens(tc, sdkGraph, mcpp::toolchain::no_escape);
+    EXPECT_FALSE(any_payload_cxx(d));
+    EXPECT_FALSE(std::ranges::any_of(d, [](const std::string& t) {
+        return t.starts_with("-isystem") && t.find("iPhoneSimulator.sdk") != std::string::npos;
+    }));
+    EXPECT_TRUE(has(d, "-nostdinc++"));
+}
+
