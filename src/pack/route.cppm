@@ -16,12 +16,20 @@ export module mcpp.pack.route;
 import std;
 import mcpp.manifest;
 import mcpp.project;
+import mcpp.toolchain.triple;
 
 export namespace mcpp::pack {
 
 struct PackRoute {
     std::string targetName;
     bool        library = false;   // kind = lib | shared
+    // #630 A9: `kind = "app"`, as opposed to `kind = "bin"` — both are
+    // program routes (`library == false`), but only an `app` can resolve to
+    // a shared-object FORM on some row (`toolchain::triple::
+    // application_form`), which is what lets `mcpp pack` accept more than
+    // one `--target` for it. `cmd_pack` reads this rather than re-deriving
+    // it from the manifest a second time.
+    bool        isApplication = false;
 };
 
 // Resolve `requested` (possibly empty) against the current project.
@@ -31,6 +39,20 @@ struct PackRoute {
 // packing the wrong one produces a plausible-looking archive of the wrong
 // shape, which is worse than an error.
 std::expected<PackRoute, std::string> route_pack_target(std::string_view requested);
+
+// #630 A9: does a several-`--target` pack request suit `route`? The route is
+// chosen by the ARTIFACT'S FORM, not by the target's kind: a program route
+// serves several triples only when every one of them resolves to a
+// shared-object form (Android's `app` rows), which is the library route's
+// input already accepts applied to a program. A malformed triple answers
+// `false` — the caller reports it as a parse failure, not as a routing
+// decision this function made.
+//
+// A pure function of the route and the requested triples, with no filesystem
+// or manifest read of its own, so a routing question this small does not
+// need a fixture project to test.
+bool accepts_several_targets(const PackRoute& route,
+                             std::span<const std::string> triples);
 
 } // namespace mcpp::pack
 
@@ -64,7 +86,8 @@ std::expected<PackRoute, std::string> route_pack_target(std::string_view request
                 return std::unexpected(std::format(
                     "target '{}' is a test binary; there is nothing to distribute",
                     requested));
-            return PackRoute{ t.name, is_library(t) };
+            return PackRoute{ t.name, is_library(t),
+                              t.kind == mcpp::manifest::Target::Application };
         }
         std::string list;
         for (auto const& t : m->targets) {
@@ -104,7 +127,9 @@ std::expected<PackRoute, std::string> route_pack_target(std::string_view request
     const mcpp::manifest::Target* onlyLib = nullptr;
     std::size_t libCount = 0;
     for (auto const& t : m->targets) {
-        if (t.is_program()) return PackRoute{ t.name, false };
+        if (t.is_program())
+            return PackRoute{ t.name, false,
+                              t.kind == mcpp::manifest::Target::Application };
         if (is_library(t)) { onlyLib = &t; ++libCount; }
     }
     if (libCount == 1) return PackRoute{ onlyLib->name, true };
@@ -120,6 +145,19 @@ std::expected<PackRoute, std::string> route_pack_target(std::string_view request
     return std::unexpected(std::format(
         "this package declares more than one library, so `mcpp pack` cannot pick "
         "one for you.\n  Name it: {}", list));
+}
+
+bool accepts_several_targets(const PackRoute& route,
+                             std::span<const std::string> triples)
+{
+    if (!route.isApplication) return false;
+    for (auto const& tr : triples) {
+        auto t = mcpp::toolchain::triple::parse(tr);
+        if (!t) return false;
+        if (mcpp::toolchain::triple::application_form(*t)
+            != mcpp::toolchain::triple::ApplicationForm::SharedObject) return false;
+    }
+    return true;
 }
 
 } // namespace mcpp::pack

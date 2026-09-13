@@ -41,6 +41,77 @@ export struct PackOutcome {
     std::vector<std::filesystem::path> artifacts;
 };
 
+// #630 A9: build every triple but the PRIMARY one for a `kind = "app"`
+// target whose form is a shared object on every requested row (Android).
+// Each leg is its own `prepare_build` + `ninja` build, the same shape
+// `build_and_pack_library`'s leg loop uses and for the same reason: the
+// artifact a leg contributes is the one THIS run made, never a glob over
+// `target/` that could silently pick up a stale binary from an earlier
+// build. The primary triple is not built here — it takes the ordinary
+// single-triple `build_and_pack` path, which is what stages the tree,
+// deploys the declared files once and runs the one dispatch pass; this
+// function only produces the OTHER legs' bytes and where they belong.
+//
+// Returns `nullopt` on the first leg that fails, having already printed the
+// error — the same contract `build_and_pack_library` and `build_and_pack`
+// use, so `cmd_pack` only has to check the outcome and return.
+export std::optional<std::vector<std::pair<std::string, std::filesystem::path>>>
+build_extra_android_legs(const std::string& targetName,
+                         std::span<const std::string> triples,
+                         const std::string& profile)
+{
+    std::vector<std::pair<std::string, std::filesystem::path>> out;
+    for (auto const& triple : triples) {
+        mcpp::build::BuildOverrides ov;
+        ov.target_triple    = triple;
+        // A packaged artifact leaves this machine — same fallback as every
+        // other pack leg (`build_and_pack_library`, and the primary leg
+        // below).
+        ov.profile          = profile;
+        ov.profile_fallback = "release";
+        auto ctx = mcpp::build::prepare_build(false, false, {}, ov);
+        if (!ctx) { mcpp::ui::error(ctx.error()); return std::nullopt; }
+
+        auto be = mcpp::build::make_ninja_backend();
+        mcpp::build::BuildOptions bo;
+        if (auto br = be->build(ctx->plan, bo); !br) {
+            if (!br.error().diagnosticOutput.empty()) {
+                std::fputs(br.error().diagnosticOutput.c_str(), stderr);
+                if (br.error().diagnosticOutput.back() != '\n') std::fputs("\n", stderr);
+            }
+            mcpp::ui::error(br.error().message);
+            return std::nullopt;
+        }
+
+        // FROM THE PLAN, never a glob — see the function comment. A
+        // dependency's own `shared` target also contributes a `SharedLibrary`
+        // link unit to this plan, and `dependencyOwned` is what excludes it
+        // (the same exclusion `pipeline.cppm`'s `is_program_link_unit` makes
+        // for the primary leg).
+        const mcpp::build::LinkUnit* lu = nullptr;
+        for (auto const& u : ctx->plan.linkUnits)
+            if (u.targetName == targetName
+                && u.kind == mcpp::build::LinkUnit::SharedLibrary
+                && !u.dependencyOwned) { lu = &u; break; }
+        if (!lu) {
+            mcpp::ui::error(std::format(
+                "target '{}' produced no shared-object artifact for {}.\n"
+                "  Every leg of a several-`--target` app pack must resolve to "
+                "the same shared-object\n"
+                "  form the primary `--target` does; this row did not.",
+                targetName, triple));
+            return std::nullopt;
+        }
+
+        auto t = mcpp::toolchain::triple::parse(triple);
+        auto canonical = t ? t->str() : triple;
+        auto abi = t ? mcpp::toolchain::triple::android_abi(*t) : triple;
+        mcpp::ui::status("Packed leg", std::format("{}  [{}]", canonical, abi));
+        out.emplace_back(std::move(abi), ctx->outputDir / lu->output);
+    }
+    return out;
+}
+
 // Everything after CLI option parsing for `mcpp pack`.
 //
 // `wantTarget` is the target NAME the user asked for, empty when they did not.
@@ -49,8 +120,21 @@ export struct PackOutcome {
 // or a project with two `bin` targets would accept `mcpp pack app2` and
 // silently bundle app1 — the shape where the command succeeds and the answer
 // is wrong.
+//
+// `extraLegs` (#630 A9) is every OTHER triple a several-`--target` app-pack
+// request named, already built by `build_extra_android_legs` below as
+// (android abi, its artifact path). This call still does exactly one build —
+// of `opts.targetTriple`, the PRIMARY leg — and stages the primary's own
+// artifact and the declared deploy files as it always has; `extraLegs`, when
+// non-empty, only changes WHERE the primary's shared object lands
+// (`Plan::extraSharedLegs`, read by `run_shared_program`) and adds the other
+// legs beside it in the same staged tree, before the one dispatch pass runs.
+// Empty for every caller before this item, which is what keeps a
+// single-`--target` pack byte-identical.
 export PackOutcome build_and_pack(Options opts, bool modeFromUser,
-                          const std::string& wantTarget = {}) {
+                          const std::string& wantTarget = {},
+                          std::vector<std::pair<std::string, std::filesystem::path>>
+                              extraLegs = {}) {
     // `--target *-linux-musl` without an explicit `--mode` implies
     // `--mode static` — packaging a musl-static ELF as bundle-project
     // would feed patchelf a static binary and crash. The docs treat
@@ -299,6 +383,10 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
         // which appears in the project's own manifest.
         ctx->plan.runtimeRequirements, programIsSharedObject);
     if (!plan) { mcpp::ui::error(plan.error().message); return PackOutcome{1}; }
+    // #630 A9: see the field comment on `Plan::extraSharedLegs` and the
+    // parameter comment on `extraLegs` above. A no-op (default-constructed,
+    // empty) for every caller before this item.
+    plan->extraSharedLegs = std::move(extraLegs);
 
     // The RESOLVED debug-information decision. On the plan, not in Options:
     // Options is the request, this is what it came out as once the manifest

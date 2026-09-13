@@ -190,6 +190,15 @@ struct Plan {
     // dependency closure attempted -- rather than through the ELF closure
     // walk below, which asks the file to name its own needs by executing it.
     bool                                 programIsSharedObject = false;
+    // #630 A9: the OTHER triples this `app` was packed for, each already
+    // built by the caller (`pack::pipeline::build_extra_android_legs`) as
+    // (android abi, its artifact path). Set AFTER `make_plan`, the way
+    // `strip`/`debugDir` are: what the request came out as once more than
+    // one `--target` was resolved, which `make_plan` itself has no way to
+    // know from a single triple. Empty means "an ordinary single-triple
+    // pack", which is every caller before this item and keeps
+    // `run_shared_program`'s layout byte-identical for it.
+    std::vector<std::pair<std::string, std::filesystem::path>> extraSharedLegs;
     // The search set the PE closure resolves names against, after the
     // contract has had its say (see make_plan).
     std::vector<std::filesystem::path>   searchDirs;
@@ -1155,6 +1164,10 @@ run_wasm(const Plan& plan)
 // conventionally puts a shared object; a provider that wants the object's
 // own dependency set bundled (`dist-apk`) reads `${mcpp.target_file:<name>}`
 // and resolves that itself, out of the engine's closure entirely.
+//
+// #630 A9: one triple stages flat (`lib/<name>.so`, unchanged); more than
+// one triple stages one `lib/<abi>/<name>.so` per leg into the SAME tree —
+// see `Plan::extraSharedLegs`.
 std::expected<void, Error>
 run_shared_program(const Plan& plan)
 {
@@ -1164,11 +1177,39 @@ run_shared_program(const Plan& plan)
     if (ec) return std::unexpected(Error{std::format(
         "cannot create staging '{}': {}", plan.stagingRoot.string(), ec.message())});
 
-    auto staged = plan.stagingRoot / "lib" / plan.binaryName;
-    std::filesystem::copy_file(plan.builtBinary, staged,
-        std::filesystem::copy_options::overwrite_existing, ec);
-    if (ec) return std::unexpected(Error{std::format(
-        "copy binary failed: {}", ec.message())});
+    // #630 A9: MORE THAN ONE TRIPLE MEANS MORE THAN ONE `lib/<abi>/`, since a
+    // flat `lib/<name>.so` cannot hold two architectures' bytes under one
+    // name. `extraSharedLegs` is non-empty ONLY when the caller is the
+    // several-`--target` route (`cmd_pack`, via `build_and_pack`'s trailing
+    // parameter) — every pre-existing single-triple caller leaves it empty
+    // and keeps the flat layout below byte-identical to before this item.
+    if (!plan.extraSharedLegs.empty()) {
+        auto stage_leg = [&](std::string_view abi, const std::filesystem::path& artifact)
+            -> std::expected<void, Error>
+        {
+            auto dir = plan.stagingRoot / "lib" / abi;
+            std::error_code dec;
+            std::filesystem::create_directories(dir, dec);
+            if (dec) return std::unexpected(Error{std::format(
+                "cannot create staging '{}': {}", dir.string(), dec.message())});
+            std::filesystem::copy_file(artifact, dir / plan.binaryName,
+                std::filesystem::copy_options::overwrite_existing, dec);
+            if (dec) return std::unexpected(Error{std::format(
+                "copy binary failed: {}", dec.message())});
+            return {};
+        };
+        auto t = mcpp::toolchain::triple::parse(plan.triple);
+        auto primaryAbi = t ? mcpp::toolchain::triple::android_abi(*t) : plan.triple;
+        if (auto r = stage_leg(primaryAbi, plan.builtBinary); !r) return r;
+        for (auto const& [legAbi, legArtifact] : plan.extraSharedLegs)
+            if (auto r = stage_leg(legAbi, legArtifact); !r) return r;
+    } else {
+        auto staged = plan.stagingRoot / "lib" / plan.binaryName;
+        std::filesystem::copy_file(plan.builtBinary, staged,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        if (ec) return std::unexpected(Error{std::format(
+            "copy binary failed: {}", ec.message())});
+    }
 
     // THE RUNTIME FILES TRAVEL AS ON EVERY OTHER ROW. `deploy` placed them
     // under `bin/<to>/` beside the built library; they are staged at the same

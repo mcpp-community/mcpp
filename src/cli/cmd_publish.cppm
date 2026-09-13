@@ -81,9 +81,12 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto v = parsed.value("debug-symbols")) opts.debugSymbols = *v;
 
     // `--target` is repeatable: one leg per triple, which is how a library
-    // package ships for several targets at once. The application path has
-    // always taken exactly one, and still does — packing one executable for
-    // several triples would need several executables.
+    // package ships for several targets at once. The application path takes
+    // exactly one triple UNLESS the target is a `kind = "app"` whose form is
+    // a shared object on every requested row (#630 A9, below) — packing an
+    // executable for several triples would need several executables, and
+    // that refusal still stands for a `bin` target and for any row whose
+    // form is not a shared object.
     std::vector<std::string> triples;
     if (auto o = parsed.option("target")) triples = o->get().values;
     if (!triples.empty()) opts.targetTriple = triples.back();
@@ -122,10 +125,34 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return mcpp::pack::build_and_pack_library(route->targetName, triples, opts);
     }
     if (triples.size() > 1) {
-        mcpp::ui::error(
-            "--target may be given once when packing a program: an application "
-            "bundle wraps one executable, and one executable has one target.");
-        return 2;
+        // #630 A9: THE ROUTE IS CHOSEN BY THE ARTIFACT'S FORM, NOT BY THE
+        // TARGET'S KIND. An `app` whose resolved link form is a shared
+        // object on EVERY requested row (Android) takes the several-triple
+        // path a library target already has: the other legs are built first
+        // (`build_extra_android_legs`, the same leg-loop shape
+        // `build_and_pack_library` uses) and staged as `lib/<abi>/` beside
+        // the primary leg's own `lib/<abi>/`, into ONE tree, behind ONE
+        // dispatch. A `bin` target, or any row whose form is an executable,
+        // keeps today's refusal — packing an executable for several triples
+        // would need several executables, and there is no "universal
+        // executable" mechanism the way there is a universal shared object
+        // (that is `lipo`, a different tool, and out of scope here).
+        if (!mcpp::pack::accepts_several_targets(*route, triples)) {
+            mcpp::ui::error(
+                "--target may be given once when packing a program: an application "
+                "bundle wraps one executable, and one executable has one target.");
+            return 2;
+        }
+        auto extraLegs = mcpp::pack::build_extra_android_legs(
+            route->targetName,
+            std::span<const std::string>(triples).first(triples.size() - 1),
+            opts.profile);
+        if (!extraLegs) return 1;   // build_extra_android_legs already printed why
+        // #622 A10: `build_and_pack` now reports the artifact(s) it packed, for
+        // `mcpp run --format` to take as its operand -- `mcpp pack` itself only
+        // ever needed the exit code.
+        return mcpp::pack::build_and_pack(std::move(opts), modeFromUser,
+                                          route->targetName, std::move(*extraLegs)).rc;
     }
     // #622 A10: `build_and_pack` now reports the artifact(s) it packed, for
     // `mcpp run --format` to take as its operand -- `mcpp pack` itself only
