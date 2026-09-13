@@ -11,7 +11,7 @@ mcpp run
 
 ```
        Rules example.rules.toy (example:rules-toy)
-    Building host tool toyc:toyc from toyc v0.1.0 (once per package version × host toolchain)
+    Building host tool toyc:toyc from toyc v0.1.0 (once per package source and host toolchain)
    Compiling toyapp v0.1.0 (.)
     Finished dev [unoptimized + debuginfo] in 0.65s
 
@@ -182,30 +182,33 @@ a real compiler rather than a script.
 | editing the `.toy` reaches the artifact | `scale(…, 2)` → `scale(…, 3)`: `42` → `63` |
 | the compiler is built for the build machine, on demand, and only when the rule is active | the `Building host tool` line above; no store entry without the feature |
 
-## The boundary this example measured: a host tool is cached by version
+## The boundary this example measured: a host tool is cached by its source
 
 Four changes were made one at a time, each from the same starting state:
 
 | what changed | the artifact | how it was changed |
 |---|---|---|
 | the `.toy` source | follows: `42` → `63` | `scale(…, 2)` → `scale(…, 3)` |
-| the compiler's **bytes**, at the path the action names | follows: `42` → `168` | overwriting the binary in the tool store |
-| the compiler's **sources**, its version unchanged | does not follow: the previous answer stands | editing the emitter |
+| the compiler's **bytes**, at the path the action names | follows: `42` → `168` | overwriting the binary in the tool store, from a copy of the tree |
+| the compiler's **sources**, its version unchanged | follows: `42` → `168`, and the tool is rebuilt | editing the emitter |
 | the compiler's **version** | follows: `42` → `168`, and the tool is rebuilt | `0.1.0` → `0.1.1` |
 
-Rows two and three are the whole finding, and they separate two things that are
-easy to merge. **The action's input tracking works**: `rules-toy` declares the
-compiler beside the source, and changing that file's bytes re-runs the edge.
-**What does not happen is the rebuild that would change those bytes.** The tool
-store's key is the tool package's identity, version, host triple, compiler
-identity, profile, features and the versions of its transitive dependencies —
-it holds no source content. For a package that arrives from an index the key is
-exact, because a published version is immutable; for a `path` dependency being
-edited it is not.
+Rows two and three separate two things that are easy to merge. **The action's
+input tracking** is one: `rules-toy` declares the compiler beside the source,
+and changing that file's bytes re-runs the edge. **The store's key** is the
+other: it holds the tool package's identity, version, host triple, compiler
+identity, profile, features, the versions of its transitive dependencies, and
+the tool's source in the form its kind offers. For a package that arrives from
+an index the version alone identifies the sources, because a published version
+is immutable. For a `path` dependency being edited the key carries a stamp of
+the tree (every file's relative path, size and modification time), so row
+three rebuilds the tool and the artifact follows. Row three used to read "does
+not follow: the previous answer stands", and that reading was the measurement
+mcpp#630 (item 6) removed.
 
-`mcpp run` prints `Finished dev in 0.00s` in row three, and that line is mcpp's
-own summary rather than evidence: row two prints it too, and the artifact
-changed.
+`mcpp run` prints `Finished dev in 0.00s` when nothing changed, and that line
+is mcpp's own summary rather than evidence: row two prints it too, and the
+artifact changed.
 
 **Row four does not test row two, which is why the difference is worth stating.**
 The tool's path is on the action's command line, so a new version re-runs the
@@ -216,9 +219,9 @@ row two — and it takes both of its directions: with the input removed, the
 artifact followed the overwrite and then stopped following the restore. CI runs
 that pair.
 
-Two ways out: bump the tool package's version, or empty the build cache with
-`mcpp cache clean` — the tool store lives inside it, at
-`<mcpp cache dir>/tool/<index>/<name>@<version>/`.
+Entries accumulate in the store as a tree is edited, one per stamp;
+`mcpp cache clean` empties it. The store lives at
+`<mcpp cache dir>/tool/<index>/<name>@<version>[+<source>]/`.
 
 **One more trap sits behind them.** Going back from `0.1.1` to `0.1.0`, whose
 clean tool was still in the store, left the artifact at `168`. The build program

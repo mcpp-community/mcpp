@@ -366,27 +366,36 @@ jobs:
           # `n.value * 2` keeps `0` at `0`: a probe that changed every literal
           # would turn `while (b != 0)` into a loop that divides by zero, and
           # this step would report a crash rather than an answer.
-          probe_on() { sed -i 's/return std::format("{}", n.value);/return std::format("{}", n.value * 2);/' ../toyc/src/compile.cppm; }
-          probe_off() { sed -i 's/return std::format("{}", n.value \* 2);/return std::format("{}", n.value);/' ../toyc/src/compile.cppm; }
-          install_toyc() {
-            ( cd ../toyc && "$MCPP" build >/dev/null )
-            cp "$(find ../toyc/target -name toyc -type f -perm -u+x | head -1)" "$1"
+          # THE PROBE COMPILER IS BUILT FROM A COPY OF THE TREE. The store's
+          # key carries a stamp of the tool's tree (#630, item 6), so touching
+          # `../toyc` would move the key and the next run would rebuild the
+          # tool from the restored source -- the isolating change here is
+          # different bytes at the SAME path, which needs the tree untouched.
+          probe_tree=/tmp/toyc-probe
+          rm -rf "$probe_tree"; cp -r ../toyc "$probe_tree"; rm -rf "$probe_tree/target"
+          probe_on() { sed -i 's/return std::format("{}", n.value);/return std::format("{}", n.value * 2);/' "$1/src/compile.cppm"; }
+          probe_off() { sed -i 's/return std::format("{}", n.value \* 2);/return std::format("{}", n.value);/' "$1/src/compile.cppm"; }
+          install_toyc() {   # $1 = the tree to build, $2 = the store path to overwrite
+            ( cd "$1" && "$MCPP" build >/dev/null )
+            cp "$(find "$1/target" -name toyc -type f -perm -u+x | head -1)" "$2"
           }
 
           # `mcpp cache dir` prints a legacy-directory note on a second line.
+          # The newest entry, since a tree edited earlier in this job may have
+          # left another one.
           store="$("$MCPP" cache dir | head -1)/tool"
-          cached="$(find "$store" -path '*toyc@0.1.0*/bin/toyc' | head -1)"
+          cached="$(ls -t $(find "$store" -path '*toyc@0.1.0*/bin/toyc') 2>/dev/null | head -1)"
           [ -n "$cached" ] || {
             echo "FAIL: no toyc in the tool store under $store"; exit 1; }
 
-          probe_on; install_toyc "$cached"; probe_off
+          probe_on "$probe_tree"; install_toyc "$probe_tree" "$cached"; probe_off "$probe_tree"
           "$MCPP" run > /tmp/toy3.log 2>&1 || true
           grep -q 'answer()       = 168' /tmp/toy3.log || {
             cat /tmp/toy3.log
             echo "FAIL: a changed compiler binary did not reach the artifact."
             echo "      rules-toy must declare the compiler among the action's inputs."
             exit 1; }
-          install_toyc "$cached"
+          install_toyc "$probe_tree" "$cached"
           "$MCPP" run > /tmp/toy4.log 2>&1 || true
           grep -q 'answer()       = 42' /tmp/toy4.log || {
             cat /tmp/toy4.log
@@ -395,25 +404,34 @@ jobs:
             echo "      rules-toy must declare the compiler among the action's inputs."
             exit 1; }
 
-          # THE STORE HOLDS NO SOURCE CONTENT, which the example's README and
-          # docs/30 both state. Editing the compiler's sources at the same
-          # version changes nothing, because nothing rebuilds the tool.
-          probe_on
+          # THE STORE'S KEY HOLDS THE SOURCE (#630, item 6), which the
+          # example's README and docs/30 both state: editing the compiler's
+          # sources at the same version rebuilds the tool, and so does the
+          # reversal. Both directions, because a key that only ever grew
+          # would pass the first and fail the second.
+          sleep 1; probe_on ../toyc
           "$MCPP" run > /tmp/toy5.log 2>&1 || true
-          grep -q 'answer()       = 42' /tmp/toy5.log || {
+          grep -q 'answer()       = 168' /tmp/toy5.log || {
             cat /tmp/toy5.log
-            echo "FAIL: the tool store now sees source content."
-            echo "      The example's README and docs/30 state that it does not; update them."
+            echo "FAIL: editing the compiler's sources at the same version did not reach the artifact."
+            echo "      The tool store's key must carry the path package's tree stamp."
+            exit 1; }
+          sleep 1; probe_off ../toyc
+          "$MCPP" run > /tmp/toy5b.log 2>&1 || true
+          grep -q 'answer()       = 42' /tmp/toy5b.log || {
+            cat /tmp/toy5b.log
+            echo "FAIL: reverting the compiler's sources did not reach the artifact."
             exit 1; }
 
-          # ... and bumping the version is the way out both of them offer.
+          # ... and a version bump still rebuilds it, as it always did.
+          sleep 1; probe_on ../toyc
           sed -i 's/^version     = "0.1.0"/version     = "0.1.1"/' ../toyc/mcpp.toml
           "$MCPP" run > /tmp/toy6.log 2>&1 || true
           sed -i 's/^version     = "0.1.1"/version     = "0.1.0"/' ../toyc/mcpp.toml
-          probe_off
+          probe_off ../toyc
           grep -q 'answer()       = 168' /tmp/toy6.log || {
             cat /tmp/toy6.log; echo "FAIL: bumping the tool version did not rebuild it"; exit 1; }
-          echo "ok: the compiler is a declared input, and the store is keyed on the version"
+          echo "ok: the compiler is a declared input, and the store is keyed on the tool's source"
 
       - name: "Graphics example: render offscreen on lavapipe and assert the pixels"
         run: |
