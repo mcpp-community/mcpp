@@ -10714,6 +10714,16 @@ prepare_build(bool print_fingerprint,
             // DWARF. Same function, not a second copy of the decision.
             for (auto& f : mcpp::toolchain::graph_runtime_compile_flags(*tc))
                 flags += " " + f;
+            // AND THE APPLE CROSS TARGET'S SDK, WHICH THE TOOLCHAIN RESOLUTION
+            // HAD ALREADY PUT ON THIS CHANNEL AND THIS ASSIGNMENT REPLACES.
+            // The module's C library is the SDK's on the iOS rows (the
+            // package supplies the C++ layer alone), and without the sysroot
+            // the precompile stops on `mbstate_t` inside libc++'s own
+            // headers. Measured on macos-15 with `llvm.libcxx` over
+            // `arm64-apple-ios18.0`: twenty "reference to unresolved using
+            // declaration" errors, every one a C library type.
+            if (!tc->appleSdkRoot.empty())
+                flags += " -isysroot " + mcpp::xlings::shq(tc->appleSdkRoot.string());
         }
         // Everything up to here says which machine the module is for; what
         // follows says where its headers are. The codegen step needs only the
