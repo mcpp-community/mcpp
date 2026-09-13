@@ -4596,6 +4596,11 @@ prepare_build(bool print_fingerprint,
         // version-keyed directory, so name@version identifies its sources.
         // Path and git checkouts can change under an unchanged identity.
         std::string sourceKind;
+        // What identifies the SOURCES when the version does not: the resolved
+        // commit for `git`, the package root for `path`, empty for an index
+        // package. Read by the tool store, whose key must hold everything
+        // that can change a built tool's bytes (#630, item 6).
+        std::string sourceRef;
     };
     std::vector<DepCacheIdentity> dep_cache_identities;
     struct GitLockIdentity {
@@ -6514,6 +6519,9 @@ prepare_build(bool print_fingerprint,
             spec.isPath()    ? "path"
             : spec.isGit()    ? "git"
             : "version";
+        // The commit a `git` dependency resolved to, carried out of the clone
+        // branch below for the cache identity.
+        std::string sourceCommit;
 
         if (auto it = resolved.find(key); it != resolved.end()) {
             // A package is dev-only until some non-dev consumer wants it. Order
@@ -7135,6 +7143,7 @@ prepare_build(bool print_fingerprint,
                         + resolvedGitRev)),
                 };
             }
+            sourceCommit = resolvedGitRev;
             dep_root = gitRoot;
         }
         // (version-source: dep_root + manifest are loaded together via
@@ -7272,6 +7281,9 @@ prepare_build(bool print_fingerprint,
                 ? spec.version
                 : dep_manifests.back()->package.version,
             .sourceKind  = sourceKind,
+            .sourceRef   = sourceKind == "git"  ? sourceCommit
+                         : sourceKind == "path" ? dep_root.string()
+                         : std::string{},
         });
         const auto depPackageIndex = packages.size();
         packages.push_back(makePackageRoot(dep_root, *dep_manifests.back()));
@@ -8918,7 +8930,28 @@ prepare_build(bool print_fingerprint,
                                   ? dep_cache_identities[depIdx - 1].indexName
                                   : std::string(mcpp::pm::kDefaultNamespace);
                     key.packageName      = depName;
-                    key.version          = depPkg.manifest.package.version;
+                    // THE VERSION IDENTIFIES THE SOURCES ONLY FOR AN INDEX
+                    // PACKAGE. A `git` package is keyed by its commit and a
+                    // `path` package by a stamp of its tree, because both
+                    // change under an unchanged version and the store then
+                    // serves a binary built from sources that no longer exist
+                    // (#630, item 6; measured 2026-09-08 with examples/12).
+                    // The same rule applies to every upstream below.
+                    auto source_keyed_version = [&](std::size_t pkgIdx) {
+                        const auto& man = packages[pkgIdx].manifest.package;
+                        std::string v = man.version;
+                        if (pkgIdx >= 1 && pkgIdx - 1 < dep_cache_identities.size()) {
+                            const auto& id = dep_cache_identities[pkgIdx - 1];
+                            if (id.sourceKind == "git" && !id.sourceRef.empty())
+                                v += "+git." + id.sourceRef;
+                            else if (id.sourceKind == "path")
+                                v += "+path." + mcpp::build::tool_store::tree_stamp(
+                                    id.sourceRef.empty() ? packages[pkgIdx].root
+                                                         : std::filesystem::path(id.sourceRef));
+                        }
+                        return v;
+                    };
+                    key.version          = source_keyed_version(depIdx);
                     key.targetName       = toolName;
                     key.hostTriple       = mcpp::toolchain::triple::host_triple().str();
                     key.compilerIdentity = std::format("{}|{}|{}",
@@ -8936,7 +8969,7 @@ prepare_build(bool print_fingerprint,
                     for (auto up : dg::transitive_dependencies(dependencyEdges, depIdx))
                         key.upstreamKeys.push_back(std::format("{}@{}",
                             packages[up].manifest.package.name,
-                            packages[up].manifest.package.version));
+                            source_keyed_version(up)));
                     std::ranges::sort(key.upstreamKeys);
 
                     const auto cacheRoot = mcpp::home::cache_root();
@@ -8952,7 +8985,7 @@ prepare_build(bool print_fingerprint,
                     }
 
                     mcpp::ui::status("Building", std::format(
-                        "host tool {}:{} from {} v{} (once per package version × "
+                        "host tool {}:{} from {} v{} (once per package source and "
                         "host toolchain)", depName, toolName, depName,
                         depPkg.manifest.package.version));
 
