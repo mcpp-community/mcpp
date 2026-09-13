@@ -618,6 +618,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // in for. The two differ on a hosted target whose C library is a
         // located SDK while a package supplies libc++ (mcpp#630, §5).
         hopt.cxxFromGraph = plan.targetSide.cxx.fromGraph();
+        hopt.appleSdkCxxHeaders = plan.toolchain.appleSdkCxxHeaders;
         compile_toolchain_flags = mcpp::toolchain::render_tokens(
             mcpp::toolchain::host_compile_tokens(plan.toolchain, hopt, ninjaEsc));
     } else {

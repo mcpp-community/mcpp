@@ -205,6 +205,15 @@ struct Toolchain {
     // so the SDK has to travel explicitly, on the compile side as well as the
     // link side.
     std::filesystem::path               appleSdkRoot;
+    // THE C++ HEADERS ARE THE SDK'S, on an Apple cross target whose C++
+    // runtime is the SDK's libc++ and whose graph does not import `std`.
+    // Decided by prepare, read by the compile-flag builder: with no graph
+    // package the runtime is the SDK's by construction, and the headers
+    // follow the runtime. When the graph imports `std` the payload's module
+    // and headers stay in use over the SDK's dylib, which is the pairing
+    // that fails at link on the first inline path the older dylib lacks, and
+    // prepare reports that once rather than refusing what built yesterday.
+    bool                                appleSdkCxxHeaders = false;
     std::vector<std::filesystem::path>   compilerRuntimeDirs; // LD_LIBRARY_PATH for private tools
     std::vector<std::filesystem::path>   linkRuntimeDirs;     // -L/-rpath dirs for produced binaries
     // Environment the toolchain's tools need when invoked (set on the ninja

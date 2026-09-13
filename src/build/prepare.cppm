@@ -10775,36 +10775,46 @@ prepare_build(bool print_fingerprint,
         break;
     }
 
-    // AN APPLE CROSS TARGET WITHOUT A GRAPH C++ RUNTIME HAS NO std MODULE.
+    // AN APPLE CROSS TARGET WITHOUT A GRAPH C++ RUNTIME LINKS THE SDK'S
+    // libc++ (the Mach-O cell in distribution.cppm), AND THE HEADERS FOLLOW
+    // THE RUNTIME. The payload's `std.cppm` and headers describe libc++ 22;
+    // the SDK's dylib is libc++ 19 (Xcode 16.4, measured), and Apple's SDKs
+    // ship no module sources of their own (no `usr/share/libc++/v1` on the
+    // macOS 15.5 and iOS 18.5 SDKs). So:
     //
-    // Its runtime is the SDK's libc++ (the Mach-O cell in distribution.cppm),
-    // so its headers are the SDK's (hostflags.cppm), and the module has to be
-    // the SDK's or none: the payload's `std.cppm` describes libc++ 22 and the
-    // SDK's dylib is libc++ 19 (Xcode 16.4, measured), which is the pairing
-    // that fails at link on names the older dylib does not export. Apple's
-    // SDKs ship no `usr/share/libc++/v1` (measured on the macOS 15.5 and iOS
-    // 18.5 SDKs), and this engine does not consume one, so the module is
-    // withdrawn here and a program that imports it is told which package
-    // restores it. A program that does not import `std` is unaffected.
+    //   - a graph that does not import `std` takes the SDK's headers
+    //     (hostflags.cppm, `appleSdkCxxHeaders`): one libc++ on every line,
+    //     and the payload's module, unused, is withdrawn;
+    //   - a graph that imports `std` keeps the payload's module and headers
+    //     over the SDK's dylib. That pairing links until an inline path in
+    //     the newer headers names an export the older dylib lacks
+    //     (`__hash_memory`, `__atomic_notify_all_global_table`, measured),
+    //     and it is what every iOS program built before this release got.
+    //     It is REPORTED ONCE rather than refused: refusing would break a
+    //     program that built yesterday, and the report names the two lines
+    //     that make the hazard disappear.
     if (tc && !tc->appleSdkRoot.empty() && targetSideResolved
         && !resolvedTargetSide.cxx.fromGraph()) {
-        tc->hasImportStd = false;
-        tc->stdModuleSource.clear();
-        tc->stdCompatSource.clear();
-        if (needsStdModule) {
-            return std::unexpected(std::format(
-                "`import std` is not available for {}: the target's C++ "
-                "runtime is the SDK's libc++, and the payload's std module "
-                "describes a different libc++.\n"
-                "       Declare the C++ standard library as a package, which "
-                "brings its headers, its module and its objects as one "
-                "release:\n"
-                "         [target.'cfg(os = \"ios\")'.dependencies]\n"
-                "         llvm.libcxx = \"22.1.8.1\"\n"
-                "       (and `llvm.compiler-rt-builtins = \"22.1.8.3\"` beside "
-                "it for the compiler runtime the payload lacks on this "
-                "platform).",
-                tc->targetTriple));
+        if (!needsStdModule) {
+            tc->appleSdkCxxHeaders = true;
+            tc->hasImportStd = false;
+            tc->stdModuleSource.clear();
+            tc->stdCompatSource.clear();
+        } else {
+            mcpp::diag::degraded("target/cxx-runtime", std::format(
+                "{} links the SDK's libc++ under the toolchain payload's "
+                "libc++ headers and std module, which are a different "
+                "release of the library", tc->targetTriple),
+                "the program links while no inline path in the newer headers "
+                "names an export the SDK's dylib lacks; `std::unordered_map` "
+                "over `std::string` and `std::atomic<T>::notify_all` are two "
+                "that do, and they fail at link with `__hash_memory` or "
+                "`__atomic_notify_all_global_table` undefined",
+                "declare the C++ standard library as a package, which brings "
+                "its headers, its module and its objects as one release: "
+                "[target.'cfg(os = \"ios\")'.dependencies] "
+                "llvm.libcxx = \"22.1.8.1\" (and "
+                "llvm.compiler-rt-builtins = \"22.1.8.3\" beside it)");
         }
     }
 

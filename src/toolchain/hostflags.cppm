@@ -148,6 +148,11 @@ struct HostFlagOptions {
     // There the old predicate emitted the payload's `-isystem …/c++/v1` on
     // top of the package's headers, two libc++ on one command line.
     bool cxxFromGraph = false;
+
+    // THE SDK'S C++ HEADERS INSTEAD OF THE PAYLOAD'S -- `Toolchain::appleSdkCxxHeaders`,
+    // read rather than derived from `appleSdkRoot`: prepare decides it from
+    // whether the graph imports `std`, which this function cannot see.
+    bool appleSdkCxxHeaders = false;
 };
 
 // Host-compile flags as argv tokens, in the order the string channels have
@@ -354,15 +359,14 @@ std::vector<std::string> host_compile_tokens(const Toolchain& tc,
 
     // THE C++ HEADERS ARE THE C++ LAYER'S QUESTION. `dm.compile_tokens` carries
     // libc++'s directories and nothing else, so it is emitted only when the
-    // payload's libc++ is the runtime being linked: not when a package
-    // supplies the C++ layer (`cxxFromGraph`), and not on an Apple cross
-    // target, whose runtime is the SDK's libc++ by construction
-    // (`distribution.cppm`, the Mach-O cell) and whose headers must therefore
-    // be the SDK's too. Measured on Xcode 16.4 with llvm 22.1.8: the payload's
-    // libc++ 22 headers over the SDK's libc++ 19 dylib fail at link on
-    // `__hash_memory`, which an inline function in the newer headers names
-    // and the older dylib does not export (mcpp#630).
-    const bool cxxFromPayload = !opt.cxxFromGraph && opt.appleSdkRoot.empty();
+    // payload's libc++ headers are the ones in use: not when a package
+    // supplies the C++ layer (`cxxFromGraph`), and not when prepare chose
+    // the SDK's headers for an Apple cross target whose runtime is the SDK's
+    // libc++ (`appleSdkCxxHeaders`). Measured on Xcode 16.4 with llvm 22.1.8:
+    // the payload's libc++ 22 headers over the SDK's libc++ 19 dylib fail at
+    // link on `__hash_memory`, which an inline function in the newer headers
+    // names and the older dylib does not export (mcpp#630).
+    const bool cxxFromPayload = !opt.cxxFromGraph && !opt.appleSdkCxxHeaders;
     if (bypassCfg && !graphSuppliesTarget && cxxFromPayload) {
         for (auto& t : dm.compile_tokens(esc, opt.clangStdlibSelect))
             out.push_back(t);
