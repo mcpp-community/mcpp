@@ -5,6 +5,7 @@ import mcpp.manifest;
 import mcpp.modgraph.graph;
 import mcpp.platform.env;
 import mcpp.publish.xpkg_emit;
+import mcpp.diag;
 
 using namespace mcpp::publish;
 
@@ -157,4 +158,86 @@ TEST(XpkgEmit, LongBracketSequenceInValueIsHarmless) {
     m.package.description = "trick: ]==] more stuff";
     auto out = emit_xpkg(m, g, placeholder_release("0.1.0"));
     EXPECT_NE(out.find("\"trick: ]==] more stuff\""), std::string::npos);
+}
+
+// ── #630 item 7: an OS-only selector is a platform ──────────────────────────
+//
+// Design record 2026-09-13-630 §8.3's two criteria, both asserted here: an
+// OS-only `[target.<selector>]` tool declaration names its block and raises
+// no `publish/target-axis-tools` warning; a selector that is not OS-only
+// names no block and still raises the warning (the residual case, so the
+// advisory is not dead code once the OS-only path exists).
+
+namespace {
+
+// The three platform blocks are rendered back to back, each opened by its
+// own header line and closed by "        },\n" before the next one starts —
+// see `mcpp::pm::emit_xpkg`. Slicing out one block lets a test ask "does
+// THIS platform name the address" without the substring also matching a
+// different block that happens to share indentation.
+std::string block(const std::string& out, std::string_view header) {
+    auto p = out.find(header);
+    if (p == std::string::npos) return {};
+    auto end = out.find("        },\n", p);
+    return out.substr(p, (end == std::string::npos ? out.size() : end) - p);
+}
+
+}  // namespace
+
+TEST(XpkgEmit, OsOnlySelectorNamesItsPlatformBlockAndSuppressesTheWarning) {
+    constexpr const char* src = R"(
+[package]
+name    = "gtkapp"
+version = "0.1.0"
+
+[target.'cfg(linux)'.xlings.workspace]
+"xim:gtk4" = ""
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << (m ? std::string{} : m.error().format());
+    auto g = minimal_graph();
+
+    mcpp::diag::reset();
+    auto out = emit_xpkg(*m, g, placeholder_release("0.1.0"));
+
+    EXPECT_NE(block(out, "linux   = {").find("xim:gtk4"), std::string::npos)
+        << out;
+    EXPECT_EQ(block(out, "macosx  = {").find("xim:gtk4"), std::string::npos);
+    EXPECT_EQ(block(out, "windows = {").find("xim:gtk4"), std::string::npos);
+
+    // No `publish/target-axis-tools` advisory for THIS section: an OS-only
+    // selector is emitted, so there is nothing left to warn about.
+    EXPECT_EQ(mcpp::diag::count(mcpp::diag::Severity::Warning), 0u);
+    EXPECT_TRUE(mcpp::diag::records().empty());
+}
+
+TEST(XpkgEmit, NonOsSelectorNamesNoBlockAndStillWarns) {
+    constexpr const char* src = R"(
+[package]
+name    = "gtkapp"
+version = "0.1.0"
+
+[target.'cfg(target_arch = "aarch64")'.xlings.workspace]
+"xim:gtk4" = ""
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << (m ? std::string{} : m.error().format());
+    auto g = minimal_graph();
+
+    mcpp::diag::reset();
+    auto out = emit_xpkg(*m, g, placeholder_release("0.1.0"));
+
+    EXPECT_EQ(block(out, "linux   = {").find("xim:gtk4"), std::string::npos);
+    EXPECT_EQ(block(out, "macosx  = {").find("xim:gtk4"), std::string::npos);
+    EXPECT_EQ(block(out, "windows = {").find("xim:gtk4"), std::string::npos);
+
+    // The residual case: the advisory still fires, and its text now also
+    // states that an OS-only selector WOULD have been emitted.
+    ASSERT_EQ(mcpp::diag::count(mcpp::diag::Severity::Warning), 1u);
+    auto recs = mcpp::diag::records();
+    ASSERT_EQ(recs.size(), 1u);
+    EXPECT_EQ(recs.front().domain, "publish/target-axis-tools");
+    EXPECT_NE(recs.front().what.find("xim:gtk4"), std::string::npos);
+    EXPECT_NE(recs.front().what.find("OS-only selector"), std::string::npos)
+        << recs.front().what;
 }

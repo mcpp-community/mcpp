@@ -12,6 +12,11 @@ import mcpp.manifest;
 import mcpp.diag;
 import mcpp.modgraph.graph;
 import mcpp.platform;
+// `cfgpred::os_only_platforms` (#630 item 7) — the standalone half of
+// `mcpp.build.prepare`, carrying no dependency on the rest of it (see that
+// module's header comment), which is what makes it importable from the
+// publish side without pulling in the build plan.
+import mcpp.build.prepare_inputs;
 
 export namespace mcpp::pm {
 
@@ -198,22 +203,53 @@ std::string emit_xpkg(const mcpp::manifest::Manifest&  manifest,
     out += "    type = \"package\",\n\n";
 
     out += "    xpm = {\n";
-    // A TARGET-AXIS TOOL DECLARATION PRODUCES NO EDGE, AND IS SAID SO HERE.
+    // A TARGET-AXIS TOOL DECLARATION PRODUCES NO EDGE IN GENERAL, AND IS SAID
+    // SO HERE -- EXCEPT WHEN THE SELECTOR NAMES ONLY AN OPERATING SYSTEM.
     //
-    // `workspaceByPlatform` is filled by the TOP-LEVEL `[xlings.workspace]`
-    // only, because a descriptor has one block per platform and a platform-keyed
+    // `workspaceByPlatform` is filled by the TOP-LEVEL `[xlings.workspace]`,
+    // because a descriptor has one block per platform and a platform-keyed
     // value is exactly that shape. `[target.<selector>.xlings.workspace]` is a
-    // different question -- it conditions on the resolved TARGET, and a
-    // selector is not a platform: `cfg(target_arch = "aarch64")` names no block
-    // this file has.
+    // different question in general -- it conditions on the resolved TARGET,
+    // and most selectors are not a platform: `cfg(target_arch = "aarch64")`
+    // names no block this file has, and neither does `cfg(not(windows))` (see
+    // `os_only_platforms` for why the latter is excluded even though it
+    // mentions only an OS).
     //
-    // Reported rather than dropped, and reported rather than guessed. Mapping a
-    // selector onto the three blocks would need a representative triple per
-    // platform, and every entry whose predicate that triple did not satisfy
-    // would vanish into the same silence this advisory exists to break. The
-    // same reasoning the superseded `deps` key gets, two comments up.
+    // But `cfg(linux)`, `cfg(os = "linux")` and their windows/macos/unix
+    // counterparts DO name a block: they ask the exact question a descriptor
+    // block answers, on the same axis `[xlings.workspace]` already resolves
+    // by platform (design record 2026-09-13-630 §8.2). A copy, not the
+    // manifest's own map, because the merge below is specific to rendering
+    // this descriptor and must not mutate what the rest of `emit_xpkg` (or a
+    // second call) reads.
+    auto byPlatform = manifest.xlings.workspaceByPlatform;
+    auto merge_into = [&](std::string_view platform, const std::string& address) {
+        auto& list = byPlatform[std::string(platform)];
+        // Do not duplicate an address already present in the block -- an
+        // `[xlings.workspace]` entry and an OS-only conditional one can name
+        // the same package without the descriptor listing it twice.
+        if (std::ranges::find(list, address) == list.end())
+            list.push_back(address);
+    };
     for (auto const& cc : manifest.conditionalConfigs) {
         if (cc.xlings.deps.empty() && cc.xlings.featureDeps.empty()) continue;
+        auto platforms = mcpp::build::cfgpred::os_only_platforms(cc.predicate);
+        if (!platforms.empty()) {
+            // The install-time edge a consumer's `xlings install` needs is
+            // exactly the same for a package declared here as for one
+            // declared in the top-level `[xlings.workspace]` restricted to
+            // this platform -- so it is merged into the same containers,
+            // under the same key shape (platform → addresses) that table
+            // fills. Feature-gated tools have no feature axis in this
+            // descriptor at all yet (the unconditional block above does not
+            // either), so they fold in unconditionally, same as `deps`.
+            for (auto const& platform : platforms) {
+                for (auto const& a : cc.xlings.deps) merge_into(platform, a);
+                for (auto const& [f, addrs] : cc.xlings.featureDeps)
+                    for (auto const& a : addrs) merge_into(platform, a);
+            }
+            continue;
+        }
         std::string named;
         auto add = [&](const std::string& a) {
             if (!named.empty()) named += ", ";
@@ -225,13 +261,14 @@ std::string emit_xpkg(const mcpp::manifest::Manifest&  manifest,
         mcpp::diag::warning("publish/target-axis-tools", std::format(
             "[target.'{}'] declares tools ({}) and the descriptor carries no "
             "edge for them: its blocks are per platform, and a selector is not "
-            "a platform. A consumer of this package installs what the three "
-            "`xpm.<platform>.deps` blocks name, which come from the top-level "
-            "[xlings.workspace]. Declare there anything a CONSUMER must have "
-            "installed; the target axis stays correct for what this package's "
-            "own build compiles against.", cc.predicate, named));
+            "a platform (an OS-only selector, such as cfg(linux) or "
+            "cfg(os = \"windows\"), IS emitted as one of the three blocks; "
+            "this one is not). A consumer of this package installs what the "
+            "three `xpm.<platform>.deps` blocks name, which come from the "
+            "top-level [xlings.workspace]. Declare there anything a CONSUMER "
+            "must have installed; the target axis stays correct for what "
+            "this package's own build compiles against.", cc.predicate, named));
     }
-    const auto& byPlatform = manifest.xlings.workspaceByPlatform;
     out += "        linux   = {\n" + platform_deps_block(byPlatform, "linux")
          + platform_block(release.version, release.linux)   + "        },\n";
     out += "        macosx  = {\n" + platform_deps_block(byPlatform, "macosx")

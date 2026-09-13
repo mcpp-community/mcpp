@@ -334,12 +334,15 @@ this applies to.
 `subos` is not conditional on a target: a project has one environment, so
 `[target.<selector>.xlings]` refuses the key rather than dropping it.
 
-**A published descriptor carries no edge for a target-axis entry**, and
-`mcpp publish` says so. A descriptor has one block per platform, and a selector
-is not a platform — `cfg(target_arch = "aarch64")` names no block that file has.
-What a CONSUMER of the package gets installed comes from the top-level
-`[xlings.workspace]`; the target axis stays correct for what the package's own
-build compiles against.
+**A published descriptor carries no edge for a target-axis entry in general**,
+and `mcpp publish` says so. A descriptor has one block per platform, and most
+selectors are not a platform — `cfg(target_arch = "aarch64")` names no block
+that file has. **A selector that names only an operating system IS a
+platform**, though: `cfg(linux)`, `cfg(os = "linux")` and the windows/macos/unix
+equivalents fold into the matching `xpm.<platform>.deps` block(s) instead of
+only raising the advisory. What a CONSUMER of the package gets installed
+otherwise comes from the top-level `[xlings.workspace]`; the target axis stays
+correct for what the package's own build compiles against.
 
 See [SPEC-004](specs/manifest-semantics.md) for the general rule these two axes
 are an instance of.

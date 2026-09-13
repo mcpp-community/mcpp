@@ -275,10 +275,12 @@ this applies to.
 `subos` 不按目标条件化:一个工程只有一个环境,所以 `[target.<selector>.xlings]`
 拒绝这个键,而不是把它丢掉。
 
-**已发布的描述符不为目标轴条目携带边**,`mcpp publish` 会说明这一点。描述符按平台
-分块,而 selector 不是平台 —— `cfg(target_arch = "aarch64")` 不对应那份文件里的任何一块。
-**使用者**装到的东西来自顶层 `[xlings.workspace]`;目标轴对"本包自己的构建对着什么"
-仍然是正确的。
+**已发布的描述符一般不为目标轴条目携带边**,`mcpp publish` 会说明这一点。描述符按
+平台分块,大多数 selector 不是平台 —— `cfg(target_arch = "aarch64")` 不对应那份文件
+里的任何一块。**但只命名一个操作系统的 selector 就是平台**:`cfg(linux)`、
+`cfg(os = "linux")` 以及 windows/macos/unix 的对应写法,会被并入相应的
+`xpm.<platform>.deps` 块,而不只是给出提示。除此之外,**使用者**装到的东西来自顶层
+`[xlings.workspace]`;目标轴对"本包自己的构建对着什么"仍然是正确的。
 
 这两条轴所属的一般规则见 [SPEC-004](../specs/manifest-semantics.md)。
 

@@ -232,6 +232,15 @@ struct Parser {
     std::string_view s; std::size_t i = 0; const Ctx& c;
     std::vector<std::string>* seenKeys  = nullptr;  // every `key=` key, in order
     std::vector<std::string>* seenWords = nullptr;  // every bareword
+    // Two more optional taps, used only by `os_only_platforms` below and left
+    // null for `scan_predicate`'s callers so this is additive, not a rewrite.
+    // `seenKV` carries the VALUE a `seenKeys` entry does not, and `combinator`
+    // records whether `all`/`any`/`not` fired anywhere in the traversal — an
+    // OS-only predicate is a single term, and a combinator, even one built
+    // entirely from OS terms, is not the platform it happens to reduce to on
+    // this one evaluation.
+    std::vector<std::pair<std::string, std::string>>* seenKV = nullptr;
+    bool* combinator = nullptr;
     void ws() { while (i < s.size() && std::isspace((unsigned char)s[i])) ++i; }
     bool eat(char ch) { ws(); if (i < s.size() && s[i] == ch) { ++i; return true; } return false; }
     std::string ident() {
@@ -262,6 +271,7 @@ struct Parser {
     }
     bool match_kv(const std::string& k, const std::string& v) {
         if (seenKeys) seenKeys->push_back(k);
+        if (seenKV) seenKV->emplace_back(k, v);
         if (k == "os")     return c.os == v;
         if (k == "arch")   return c.arch == v;
         if (k == "family") return c.family == v;
@@ -281,6 +291,7 @@ struct Parser {
     bool expr() {
         std::string id = ident();
         if (id == "all" || id == "any") {
+            if (combinator) *combinator = true;
             eat('(');
             bool acc = (id == "all");
             ws();
@@ -291,7 +302,10 @@ struct Parser {
             eat(')');
             return acc;
         }
-        if (id == "not") { eat('('); bool r = expr(); eat(')'); return !r; }
+        if (id == "not") {
+            if (combinator) *combinator = true;
+            eat('('); bool r = expr(); eat(')'); return !r;
+        }
         ws();
         if (i < s.size() && s[i] == '=') { ++i; return match_kv(id, str()); }
         return match_alias(id);
@@ -358,6 +372,85 @@ inline PredicateScan scan_predicate(const std::string& predicate) {
         (void)p.expr();
     }
     return out;
+}
+
+// ── #630 item 7: an OS-only selector is a platform ──────────────────────────
+//
+// `mcpp emit xpkg`'s descriptor has exactly three blocks — `linux`, `macosx`,
+// `windows` (`mcpp::pm::emit_xpkg`) — and a `[target.<selector>]` predicate is,
+// in general, a question about more axes than the descriptor has (arch, env, a
+// target-side layer, a feature gate via a combinator). But a predicate that
+// asks about NOTHING but the operating system answers a question the
+// descriptor already has a block for, so it can be folded into that block
+// instead of only producing the `publish/target-axis-tools` advisory.
+//
+// Built on the SAME `Parser` the evaluator (`matches`) and the diagnostic scan
+// (`scan_predicate`) use, not a second reading of the predicate text: it runs
+// the one grammar with two more optional taps (`seenKV`, `combinator`) and
+// then asks a structural question of the result, rather than pattern-matching
+// the source string. A hand-rolled string check here would be a second parser
+// of `cfg(...)`, which is the shape this repository has already paid for once
+// (`[hooks]` re-parsing mcpp.toml; see the comment on `Parser` above).
+//
+// Deliberately conservative: a combinator disqualifies the predicate even when
+// every operand it combines is itself an OS term. `cfg(any(linux, macos))` is
+// true on a broader set of machines than "linux" or "macosx" alone, but the
+// descriptor's blocks are per platform, and folding a compound predicate into
+// two of them would silently say "installed on this platform" for a predicate
+// whose truth also depends on how it combines — `cfg(not(windows))` is the
+// case that makes this concrete: it is exactly as OS-only as `cfg(windows)`
+// syntactically, and answers a different, unbounded set of platforms (every
+// platform this vocabulary does not yet name, not just "macosx and linux").
+// Keeping the warning for every combinator, `not` included, means a predicate
+// this function accepts is always a single OS term with no combinator wrapped
+// around it — the same seven forms design record 2026-09-13-630 §8.2 lists.
+//
+// Returns the descriptor block names (`"linux"`, `"macosx"`, `"windows"`) an
+// OS-only predicate maps onto, in the same spelling `emit_xpkg` and
+// `XlingsConfig::workspaceByPlatform` use; empty for anything else, including
+// a predicate this function cannot classify as OS-only at all.
+inline std::vector<std::string> os_only_platforms(const std::string& predicate) {
+    std::string_view text = predicate;
+    const bool wrapped = text.starts_with("cfg(") && text.ends_with(")");
+    // The bare-alias sugar (`[target.windows]` ≡ `[target.'cfg(windows)']`,
+    // docs/22) shares the grammar with `cfg(...)` — both are read by the same
+    // `Parser::expr()` in `matches()` — so both are eligible here. Anything
+    // else (an exact triple, or the unparsed escape hatch) names neither an
+    // OS nor a platform on its own.
+    static constexpr std::string_view kBareAliases[] = { "linux", "macos", "unix", "windows" };
+    if (!wrapped && std::ranges::find(kBareAliases, predicate) == std::end(kBareAliases))
+        return {};
+    std::string_view inner = wrapped ? text.substr(4, text.size() - 5) : text;
+
+    Ctx scratch;
+    std::vector<std::pair<std::string, std::string>> kv;
+    std::vector<std::string> words;
+    bool combinator = false;
+    Parser p{ inner, 0, scratch, nullptr, &words, &kv, &combinator };
+    (void)p.expr();
+
+    // A combinator, or more than one term, disqualifies the predicate — see
+    // the comment above for why even an all-OS combinator does.
+    if (combinator || kv.size() + words.size() != 1) return {};
+
+    if (words.size() == 1) {
+        // `unix` is the one bareword naming TWO platforms (docs/22: it means
+        // `c.family == "unix"`, which macOS and Linux both satisfy and Windows
+        // does not) — matching `matches()`'s own `match_alias`.
+        if (words[0] == "unix")    return { "linux", "macosx" };
+        if (words[0] == "linux")   return { "linux" };
+        if (words[0] == "windows") return { "windows" };
+        if (words[0] == "macos")   return { "macosx" };
+        return {};   // an unrecognised bareword names no platform
+    }
+    // kv.size() == 1: only `os = "<value>"` answers a platform; any other key
+    // (arch, env, a layer, an unrecognised one) is not an OS question.
+    auto const& [key, value] = kv.front();
+    if (key != "os") return {};
+    if (value == "linux")   return { "linux" };
+    if (value == "windows") return { "windows" };
+    if (value == "macos")   return { "macosx" };
+    return {};   // `os = "<something this vocabulary does not name>"`
 }
 
 // True when the predicate names a target-side layer and therefore cannot be
