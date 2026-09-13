@@ -681,7 +681,7 @@ the C library and the builtins do on the bare-metal rows:
 ```toml
 [target.'cfg(os = "ios")'.dependencies]
 llvm.libcxx               = "22.1.8.1"   # libc++ and libc++abi as source, with the std module
-llvm.compiler-rt-builtins = "22.1.8.4"   # __isPlatformVersionAtLeast and the generic routines
+llvm.compiler-rt-builtins = "22.1.8.5"   # __isPlatformVersionAtLeast and the generic routines
 ```
 
 A framework declares the two lines once and every application inherits them.

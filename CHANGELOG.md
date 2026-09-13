@@ -32,7 +32,7 @@ libc++ 是否适用」,在 openkal 与原生构建重合,在 iOS 行(SDK 的 C �
 libc++)分开:引擎把 libc++ 22 的头配到 SDK 的 libc++ 19 上,程序在
 `__hash_memory` 处链接失败。现改读 `plan.targetSide.cxx.fromGraph()`;iOS 行的
 C++ 运行时与编译器运行时成为图里的源码包(`llvm.libcxx@22.1.8.1`、
-`llvm.compiler-rt-builtins@22.1.8.4`,与 `openkal-llvm-runtime` 同一机制,框架
+`llvm.compiler-rt-builtins@22.1.8.5`,与 `openkal-llvm-runtime` 同一机制,框架
 声明一次、应用继承)。不声明时:不导入 `std` 的程序取 SDK 的头;导入的保留昨天
 的搭配并由 prepare 报告一次(`target/cxx-runtime`)点名两行;载荷没有该平台的
 builtins 归档时报告一次(`target/compiler-runtime`),从不去 Xcode 里找。

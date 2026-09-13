@@ -7,7 +7,7 @@ status: landed
 
 **Status:** landed on 2026-09-13 as mcpp 2026.9.13.2 (mcpp-community/mcpp#631),
 `llvm.libcxx` 22.1.8.1 (new repository `mcpplibs/libcxx`),
-`llvm.compiler-rt-builtins` 22.1.8.4 (mcpplibs/compiler-rt-builtins#1, #2),
+`llvm.compiler-rt-builtins` 22.1.8.5 (mcpplibs/compiler-rt-builtins#1, #2),
 mcpp-index #408 and #409, and a `mcpp:plugins` change that follows the
 release. Every statement about the engine was read at `b63dc4e5` (mcpp
 2026.9.13.1), the version the issue measured against. §0 classifies the ten
@@ -420,7 +420,7 @@ application inherits it through the ordinary dependency edge:
 ```toml
 [target.'cfg(os = "ios")'.dependencies]
 llvm.libcxx               = "22.1.8.1"
-llvm.compiler-rt-builtins = "22.1.8.4"
+llvm.compiler-rt-builtins = "22.1.8.5"
 ```
 
 An application without a framework writes the same three lines. The two
@@ -556,7 +556,7 @@ the engine's part is measured first:
 | `llvm.libcxx` 22.1.8.1: libc++ and libc++abi sources at `llvmorg-22.1.8`, generated configuration and module sources, manifest, examples, CI on Linux and on the iOS simulator | new repository `mcpplibs/libcxx` | one package |
 | index entry, GitHub and GitCode release assets | `mcpp-index`, `mcpp-res` | one PR, one release |
 | `cxxFromGraph` at the four sites, `-femulated-tls` narrowed, the older and current capability spellings, the SDK-header fallback, the builtins refusal, tests | mcpp | part of the batch PR |
-| the Apple source selection (22.1.8.4) | `mcpplibs/compiler-rt-builtins` | one PR, one release, one index entry |
+| the Apple source selection (22.1.8.5) | `mcpplibs/compiler-rt-builtins` | one PR, one release, one index entry |
 | `docs/20` iOS rows and `docs/22`; the 2026-09-11 record's table gains a superseded note pointing here | mcpp docs | text |
 
 The order between the repositories is the one every package-plus-engine
@@ -822,11 +822,11 @@ that none is left half done when its neighbour ships.
 | T5 | `needed_names` for Mach-O (thin and fat), `@rpath` resolution, Mach-O row of `is_system_lib`; unit tests with checked-in Mach-O fixtures; the macOS e2e | mcpp | T4 | §4.3 |
 | T6 | tool store: `git` keyed by commit, `path` never a hit; `upstreamKeys` per source kind; e2e in both directions with `examples/12` | mcpp | - | §7.3 |
 | T7 | `llvm.libcxx` 22.1.8.1: repository, sources at `llvmorg-22.1.8`, generated configuration and module sources, manifest, examples, CI (Linux with `llvm@22.1.8`; macOS runner for `aarch64-ios-sim`) | `mcpplibs/libcxx` (new) | - | §5.4 |
-| T7b | `llvm.compiler-rt-builtins` 22.1.8.4: the Apple source selection under `cfg(os = "ios")` and `cfg(os = "macos")`; CI on a macOS runner | `mcpplibs/compiler-rt-builtins` | - | §5.4 |
+| T7b | `llvm.compiler-rt-builtins` 22.1.8.5: the Apple source selection under `cfg(os = "ios")` and `cfg(os = "macos")`; CI on a macOS runner | `mcpplibs/compiler-rt-builtins` | - | §5.4 |
 | T8 | engine: `cxxFromGraph` at the four sites; `-femulated-tls` narrowed; both capability spellings; SDK-header fallback and the std-module diagnostic; the unsupplied compiler-runtime degradation; Linux e2e with T7 by `git`; iOS CI fixture declares T7 and T7b | mcpp | T7, T7b | §5.4 |
 | T9 | route by artifact form: an `app` whose artifact is a shared object takes the library route's several triples; `lib/<abi>/` staging; e2e on the Android rows | mcpp | - | §9 |
 | T10 | docs: `docs/05` (T3), `docs/20` and `docs/22` iOS rows (T8), `docs/30` stage manifest field (T4), zh mirrors; the 2026-09-11 record's superseded note | mcpp | T3, T4, T8 | structure and parity checks |
-| T11 | `mcpp-index`: `llvm.libcxx` entry and the `llvm.compiler-rt-builtins` 22.1.8.4 entry (GitHub and GitCode assets); `mcpp-res` releases | `mcpp-index`, `mcpp-res` | T7, T7b | index `latest` names them; sandbox install |
+| T11 | `mcpp-index`: `llvm.libcxx` entry and the `llvm.compiler-rt-builtins` 22.1.8.5 entry (GitHub and GitCode assets); `mcpp-res` releases | `mcpp-index`, `mcpp-res` | T7, T7b | index `latest` names them; sandbox install |
 | T12 | `mcpp:plugins`: `dist-apple` places the staged tree's deployed files at the bundle's resource destination | `mcpp-plugins` | T4 released | the `.app` carries the deployed file |
 | T13 | release mcpp; bump the workspace pin; GitCode assets by `gtc`; index bump PR | mcpp, `mcpp-index` | T1-T10 merged, CI green | `origin/main` HEAD run green; sandbox `mcpp --version` |
 | T14 | sandbox verification with `xlings subos … --sandbox --cmd`, CN mirror configured for both tools: T3 warning, T6 rebuild, T8 Linux program, T2 descriptor, T1 silence | sandbox | T11, T13 | one ok/FAILED line per claim |
@@ -839,7 +839,7 @@ release; T13 to T15 are sequential.
 **Progress (2026-09-13, evening).** T1 to T8 and T10 are on the batch branch
 (mcpp-community/mcpp#631). T7 is published (`mcpplibs/libcxx`, tag
 22.1.8.1; GitCode mirror byte-identical). T7b is merged and tagged
-(mcpplibs/compiler-rt-builtins#1, 22.1.8.4). T11 is merged and published
+(mcpplibs/compiler-rt-builtins#1, 22.1.8.5). T11 is merged and published
 (mcpplibs/mcpp-index#408; a program resolving `llvm.libcxx = "22.1.8.1"`
 from the index built and ran on Linux). T12 is prepared on a plugins
 branch and waits for the release pin. T9, T13, T14 and T15 follow.
@@ -851,13 +851,13 @@ branch and waits for the release pin. T9, T13, T14 and T15 follow.
 | 1, 2 | `prepare.cppm`: `ResolvedRecord.sourceRef`/`fromRoot`, the six-row decision at the resolve hit, `dependency/source-override`; `docs/05` en and zh | e2e 661, six cases, on Linux, macOS and Windows shards of #631 |
 | 3a | `pack.cppm`: `stage_declared` before the closure, `finish_without_closure`, `closure_unavailable_outcome`; `stage_tree.cppm`: `ClosureStatus` in the manifest; `pipeline.cppm`: the tree is handed over with `closure = not-walked` | e2e 662 (Linux), e2e 666 (macOS: a Mach-O program reaches a dispatched format with the deployed file and `closure = not-walked`; `--format dir` still refuses), unit tests for the outcome function and the manifest |
 | 3b | `binfmt.cppm`: `macho_needed` (thin and fat, both byte orders), `resolve_macho_names`, the Mach-O row of `is_system_lib`; `needed_names` dispatches to it. The closure step still reports `not-walked` for Mach-O; bundling waits for the `LC_RPATH` measurement | `test_pack_binfmt` over generated fixtures |
-| 4 | `hostflags.cppm`/`flags.cppm`: `cxxFromGraph` and `appleSdkCxxHeaders`; `model.cppm`: `-femulated-tls` only when the C library is the graph's; `prepare.cppm`: both capability spellings, the `-isysroot` on the package std module's command, the `target/cxx-runtime` and `target/compiler-runtime` degradations, `payloadCompilerRuntimeAbsent`; `docs/20` en and zh | e2e 663 on Linux (glibc under `llvm.libcxx`, both directions); `ci-macos-ios` on #631: `aarch64-ios` and `aarch64-ios-sim` build a program that imports `std`, hashes strings, notifies an atomic and takes an availability check, over the two packages, with the report naming `c++-abi libc++ (libcxx@22.1.8.1, graph)` and `compiler-runtime compiler-rt (compiler-rt-builtins@22.1.8.4, graph)`; the first run without `-isysroot` on the std module's command stopped on `mbstate_t`, which is the measurement behind that line |
+| 4 | `hostflags.cppm`/`flags.cppm`: `cxxFromGraph` and `appleSdkCxxHeaders`; `model.cppm`: `-femulated-tls` only when the C library is the graph's; `prepare.cppm`: both capability spellings, the `-isysroot` on the package std module's command, the `target/cxx-runtime` and `target/compiler-runtime` degradations, `payloadCompilerRuntimeAbsent`; `docs/20` en and zh | e2e 663 on Linux (glibc under `llvm.libcxx`, both directions); `ci-macos-ios` on #631: `aarch64-ios` and `aarch64-ios-sim` build a program that imports `std`, hashes strings, notifies an atomic and takes an availability check, over the two packages, with the report naming `c++-abi libc++ (libcxx@22.1.8.1, graph)` and `compiler-runtime compiler-rt (compiler-rt-builtins@22.1.8.5, graph)`; the first run without `-isysroot` on the std module's command stopped on `mbstate_t`, which is the measurement behind that line |
 | 5 | `toml.cppm`: `min_api_level` in the known list and the message; `test_target_scalar_keys` with the parser's own `body.find` sites as the denominator | e2e 641 case 9 under `--strict` |
 | 6 | `tool_store.cppm`: `tree_stamp`; `prepare.cppm`: `DepCacheIdentity.sourceRef`, `source_keyed_version` for the tool and its upstreams; `docs/30`, the examples/12 README and the CI probe restated | e2e 665 (both directions, a store hit when unchanged, `git` by commit), e2e 187 unchanged, `test_tool_store`; the examples job of #631, whose first run measured that the old probe edits the tree it later reads and had to build its probe compiler from a copy |
 | 7 | `prepare_inputs.cppm`: `cfgpred::os_only_platforms`; `publisher.cppm`: OS-only selectors fill the platform blocks, the warning says so | `test_cfg_os_only_platform`, `test_xpkg_emit` |
 | A9 | `route.cppm`: `accepts_several_targets`; `pipeline.cppm`: `build_extra_android_legs`; `pack.cppm`: `lib/<abi>/` per leg; `triple.cppm`: `android_abi` | e2e 664 on the Android rows (two ABIs in one tree, one triple unchanged, executables refused) |
 | A8 | declined; `docs/31` already states the rule | - |
-| T7, T7b, T11 | `mcpplibs/libcxx` 22.1.8.1; `mcpplibs/compiler-rt-builtins` 22.1.8.4; index entries | GitHub and GitCode archives byte-identical; a Linux program resolving `llvm.libcxx = "22.1.8.1"` from the published index built and printed `1-2-3`; the builtins package's macOS CI reads six symbols out of the simulator archive |
+| T7, T7b, T11 | `mcpplibs/libcxx` 22.1.8.1; `mcpplibs/compiler-rt-builtins` 22.1.8.5; index entries | GitHub and GitCode archives byte-identical; a Linux program resolving `llvm.libcxx = "22.1.8.1"` from the published index built and printed `1-2-3`; the builtins package's macOS CI reads six symbols out of the simulator archive |
 
 Three things the batch measured that the design did not foresee:
 

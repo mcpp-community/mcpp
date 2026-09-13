@@ -10824,7 +10824,7 @@ prepare_build(bool print_fingerprint,
                 "its headers, its module and its objects as one release: "
                 "[target.'cfg(os = \"ios\")'.dependencies] "
                 "llvm.libcxx = \"22.1.8.1\" (and "
-                "llvm.compiler-rt-builtins = \"22.1.8.4\" beside it)");
+                "llvm.compiler-rt-builtins = \"22.1.8.5\" beside it)");
         }
     }
 
