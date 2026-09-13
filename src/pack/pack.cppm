@@ -69,6 +69,26 @@ enum class Mode { None, Static, BundleProject, BundleAll };
 // does not control.
 enum class Format { Tar, Dir, Dispatched };
 
+// What happens when a FORMAT's dependency closure cannot be resolved on this
+// host, as a function of the format alone — never of the reason (a Mach-O
+// program whose loader ignores `LD_TRACE_LOADED_OBJECTS`, or a Windows host
+// that cannot execute the artifact at all; see the two call sites in `run`).
+//
+// `Tar` and `Dir` are the archive: the staged tree IS the product, so an
+// unavailable closure is the command failing, exactly as before this type
+// existed. A dispatched format receives the staged tree regardless, because
+// the provider may not need a closure at all — `dist-apk` reads
+// `${mcpp.target_file:<name>}` and never looks at the tree — so the outcome
+// there is "staged, closure not walked", never a refusal. A pure function of
+// one enum value, so it is tested without building a Plan.
+enum class ClosureUnavailableOutcome { CommandFails, StageWithoutClosure };
+
+ClosureUnavailableOutcome closure_unavailable_outcome(Format format) {
+    return format == Format::Dispatched
+        ? ClosureUnavailableOutcome::StageWithoutClosure
+        : ClosureUnavailableOutcome::CommandFails;
+}
+
 struct Options {
     Mode                            mode         = Mode::BundleProject;
     Format                          format       = Format::Tar;
@@ -205,6 +225,20 @@ struct Plan {
 
 struct Error { std::string message; };
 
+// What step 4 of `run` (resolving the dependency closure) produced.
+//
+// `walked = false` reaches a caller only for `Format::Dispatched` —
+// `closure_unavailable_outcome` turns the same condition into an `Error` for
+// `Tar` and `Dir`, so a provider is the only reader that ever sees `false`
+// here. `reason` is populated exactly when `!walked`, and is the same text a
+// hard refusal used to carry — moved from "before staging" to "step 4's
+// outcome", per the design record's decision (§3 of
+// 2026-09-13-630-what-a-framework-still-hits-in-the-engine.md).
+struct ClosureResult {
+    bool        walked = true;
+    std::string reason;
+};
+
 // Build a Plan from already-resolved inputs. Caller is expected to have
 // already run `mcpp build` (or equivalent) and pass the resulting
 // binary path in.
@@ -223,8 +257,11 @@ make_plan(const mcpp::manifest::Manifest& manifest,
           bool programIsSharedObject = false);
 
 // Execute the plan: copies binary + .so + extra files, runs patchelf,
-// writes the final tarball or directory.
-std::expected<void, Error>
+// writes the final tarball or directory. The tree is staged (the program,
+// then the declared runtime files) before the dependency closure is
+// resolved, so a format whose closure mechanism is unavailable here still
+// gets a tree — see `ClosureResult` and `closure_unavailable_outcome`.
+std::expected<ClosureResult, Error>
 run(const Plan& plan, const mcpp::config::GlobalConfig& cfg);
 
 // Helpers used by cli.cppm to render mode names + parse `--mode`.
@@ -878,6 +915,78 @@ stage_runtime_files(const Plan& plan, const std::filesystem::path& stagedExeDir)
     return {};
 }
 
+// Steps 1-3 of `run`'s generic (non-PE, non-wasm, non-shared-object) path:
+// wipe and recreate the staging root, copy the program into `bin/`, stage the
+// files `[runtime] deploy` / `deploy_files` declared (#615), and copy
+// README/LICENSE and the host-requirements file when there is one to write.
+//
+// PORTABLE AND UNCONDITIONAL. Every one of these is a plain filesystem
+// operation; none of them executes the artifact and none of them asks what
+// the artifact's FORMAT is. That is exactly why it runs before `run` asks
+// whether THIS HOST can walk the artifact's dependency closure (step 4,
+// below) — the declared files need no loader, only the discovered ones do.
+// Moved out of `run` so the Mach-O and Windows-host branches, which used to
+// refuse before any of this ran, can stage the same tree a dispatched format
+// receives. See §3 of
+// .agents/docs/2026-09-13-630-what-a-framework-still-hits-in-the-engine.md.
+//
+// Returns the path of the staged binary, `<stagingRoot>/bin/<name>`.
+std::expected<std::filesystem::path, Error>
+stage_declared(const Plan& plan)
+{
+    std::error_code ec;
+    std::filesystem::remove_all(plan.stagingRoot, ec);
+    std::filesystem::create_directories(plan.stagingRoot / "bin", ec);
+    if (ec) return std::unexpected(Error{std::format(
+        "cannot create staging '{}': {}", plan.stagingRoot.string(), ec.message())});
+
+    auto bundledBinary = plan.stagingRoot / "bin" / plan.binaryName;
+    std::filesystem::copy_file(plan.builtBinary, bundledBinary,
+        std::filesystem::copy_options::overwrite_existing, ec);
+    if (ec) return std::unexpected(Error{std::format(
+        "copy binary failed: {}", ec.message())});
+    std::filesystem::permissions(bundledBinary,
+        std::filesystem::perms::owner_exec
+      | std::filesystem::perms::group_exec
+      | std::filesystem::perms::others_exec,
+        std::filesystem::perm_options::add, ec);
+
+    if (auto r = stage_runtime_files(plan, bundledBinary.parent_path()); !r)
+        return std::unexpected(r.error());
+
+    copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);
+    copy_if_exists(plan.projectRoot / "LICENSE",   plan.stagingRoot);
+
+    // What the TARGET must provide. Only written when there is something to
+    // say — an empty file would be read as "nothing is needed", which is a
+    // claim, and for most programs the absence of the file is the honest
+    // form of it. When it IS written it is load-bearing: a bundle that omits
+    // the driver without saying so is a bundle that fails on the user's
+    // machine with no way to find out why.
+    if (!plan.hostRequirements.empty()) {
+        std::ofstream out(plan.stagingRoot / std::filesystem::path(kFileName));
+        if (!out) return std::unexpected(Error{std::format(
+            "cannot write {} into the bundle", kFileName)});
+        out << render(plan.hostRequirements);
+        if (!out) return std::unexpected(Error{std::format(
+            "failed writing {}", kFileName)});
+    }
+
+    return bundledBinary;
+}
+
+// What `run` does with a reason the closure could not be resolved, as a
+// function of the plan's requested format — see `closure_unavailable_outcome`
+// for the two outcomes and why they differ.
+std::expected<ClosureResult, Error>
+finish_without_closure(const Plan& plan, std::string reason)
+{
+    if (closure_unavailable_outcome(plan.opts.format)
+        == ClosureUnavailableOutcome::StageWithoutClosure)
+        return ClosureResult{false, std::move(reason)};
+    return std::unexpected(Error{std::move(reason)});
+}
+
 // ─── PE: the closure, read rather than executed ─────────────────────────
 //
 // BFS over the import tables, resolving each name against `searchDirs`. A
@@ -1188,7 +1297,7 @@ run_shared_program(const Plan& plan)
 
 } // namespace detail
 
-std::expected<void, Error>
+std::expected<ClosureResult, Error>
 run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
 {
     // A PE package is produced the same way on every host, because nothing in
@@ -1200,18 +1309,46 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     // `Elf`, same as any Linux program), so it would otherwise fall into the
     // closure walk that follows and try to execute an object this host
     // cannot load at all. See the field comment on `programIsSharedObject`.
-    if (plan.programIsSharedObject) return detail::run_shared_program(plan);
+    //
+    // These three dispatchers read their own closure (PE) or need none at
+    // all (the Android shared-object row; the wasm32-emscripten launcher, a
+    // static image with everything embedded) — none of them is the "declare
+    // before discover" reorder below, so each reports a walked closure on
+    // success.
+    if (plan.programIsSharedObject) {
+        if (auto r = detail::run_shared_program(plan); !r) return std::unexpected(r.error());
+        return ClosureResult{};
+    }
 
-    if (plan.targetIsPe) return detail::run_pe(plan);
+    if (plan.targetIsPe) {
+        if (auto r = detail::run_pe(plan); !r) return std::unexpected(r.error());
+        return ClosureResult{};
+    }
 
     // wasm32-emscripten, before the Mach-O refusal and the ELF closure below:
     // this artifact is neither. `binfmt::identify` reports `Unknown` for the
     // `.js` launcher (plain text, none of the three magics), which is exactly
     // the branch the ELF path's own comment warns cannot be assumed away by
     // exclusion any more.
-    if (plan.targetIsWasm) return detail::run_wasm(plan);
+    if (plan.targetIsWasm) {
+        if (auto r = detail::run_wasm(plan); !r) return std::unexpected(r.error());
+        return ClosureResult{};
+    }
 
-    // A Mach-O artifact is REFUSED, on every host including macOS.
+    using namespace detail;
+
+    // STEPS 1-3: stage what is DECLARED before asking whether this host can
+    // WALK what the artifact needs. The program, then the runtime files
+    // `mcpp::deploy` and `[runtime] deploy` placed beside it, need no
+    // loader — only the dependency closure below does. See `stage_declared`
+    // and §3 of
+    // .agents/docs/2026-09-13-630-what-a-framework-still-hits-in-the-engine.md.
+    auto staged = stage_declared(plan);
+    if (!staged) return std::unexpected(staged.error());
+    auto bundledBinary = *staged;
+
+    // STEP 4, first mechanism: a Mach-O artifact's closure is never walked,
+    // on every host including macOS.
     //
     // The closure below asks the dynamic linker for the dependency list by
     // running the artifact with `LD_TRACE_LOADED_OBJECTS=1`. That variable
@@ -1237,9 +1374,14 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     // exact defect `route_pack_target` exists to prevent. It is also the only
     // way an e2e can check that routing on macOS, where no program bundle can
     // be produced to inspect.
+    //
+    // THIS USED TO BE A HARD REFUSAL BEFORE ANY STAGING RAN. It is now step
+    // 4's outcome: the reason text is unchanged (it is accurate), but for a
+    // dispatched format the tree staged above is handed to the provider
+    // regardless — see `finish_without_closure`.
     if (mcpp::pack::binfmt::identify(plan.builtBinary).format
         == mcpp::pack::binfmt::Format::MachO) {
-        return std::unexpected(Error{std::format(
+        return finish_without_closure(plan, std::format(
             "cannot package the Mach-O program '{}' yet.\n", plan.binaryName) +
             "       The dependency closure for that format is resolved by running the "
             "artifact under\n"
@@ -1251,17 +1393,21 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
             "       A `kind = \"lib\"` / `\"shared\"` target packs normally on macOS "
             "(`mcpp pack <lib-target>`);\n"
             "       for a program, ship the build tree or use a platform bundler until "
-            "macOS support lands."});
+            "macOS support lands.");
     }
 
 #if defined(_WIN32)
-    // A NON-PE artifact on a Windows host: a cross build to Linux or macOS.
-    // The closure below asks the dynamic linker by running the binary, which
-    // this machine cannot do — so say that, rather than reporting a platform
-    // limitation that no longer exists for the case a Windows user is
-    // actually likely to hit.
+    // STEP 4, second mechanism: a NON-PE artifact on a Windows host — a cross
+    // build to Linux or macOS. The closure would be resolved by running the
+    // binary under its own dynamic linker, which this machine cannot do — so
+    // say that, rather than reporting a platform limitation that no longer
+    // exists for the case a Windows user is actually likely to hit.
+    //
+    // Also step 4's outcome now, for the same reason the Mach-O branch above
+    // is: the tree from `stage_declared` already exists when a dispatched
+    // format reaches this point.
     (void)cfg;
-    return std::unexpected(Error{std::format(
+    return finish_without_closure(plan, std::format(
         "cannot package a {} artifact from a Windows host.\n"
         "       The dependency closure for that format is resolved by running "
         "the artifact under\n"
@@ -1271,52 +1417,12 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
         "x86_64-pc-windows-msvc`), which\n"
         "       needs no such step.",
         std::string(mcpp::pack::binfmt::format_name(
-            mcpp::pack::binfmt::identify(plan.builtBinary).format)))});
+            mcpp::pack::binfmt::identify(plan.builtBinary).format))));
 #else
-    using namespace detail;
     std::error_code ec;
 
-    // 1. Wipe + recreate staging dir for a clean snapshot.
-    std::filesystem::remove_all(plan.stagingRoot, ec);
-    std::filesystem::create_directories(plan.stagingRoot / "bin", ec);
-    if (ec) return std::unexpected(Error{std::format(
-        "cannot create staging '{}': {}", plan.stagingRoot.string(), ec.message())});
-
-    // 2. Main binary.
-    auto bundledBinary = plan.stagingRoot / "bin" / plan.binaryName;
-    std::filesystem::copy_file(plan.builtBinary, bundledBinary,
-        std::filesystem::copy_options::overwrite_existing, ec);
-    if (ec) return std::unexpected(Error{std::format(
-        "copy binary failed: {}", ec.message())});
-    std::filesystem::permissions(bundledBinary,
-        std::filesystem::perms::owner_exec
-      | std::filesystem::perms::group_exec
-      | std::filesystem::perms::others_exec,
-        std::filesystem::perm_options::add, ec);
-    // 2b. Runtime files beside it, at the paths the build used (#615).
-    if (auto r = stage_runtime_files(plan, bundledBinary.parent_path()); !r) return r;
-
-    // 3. README / LICENSE if present at project root.
-    copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);
-    copy_if_exists(plan.projectRoot / "LICENSE",   plan.stagingRoot);
-
-    // 3b. What the TARGET must provide.
-    //
-    // Only written when there is something to say — an empty file would be
-    // read as "nothing is needed", which is a claim, and for most programs the
-    // absence of the file is the honest form of it. When it IS written it is
-    // load-bearing: a bundle that omits the driver without saying so is a
-    // bundle that fails on the user's machine with no way to find out why.
-    if (!plan.hostRequirements.empty()) {
-        std::ofstream out(plan.stagingRoot / std::filesystem::path(kFileName));
-        if (!out) return std::unexpected(Error{std::format(
-            "cannot write {} into the bundle", kFileName)});
-        out << render(plan.hostRequirements);
-        if (!out) return std::unexpected(Error{std::format(
-            "failed writing {}", kFileName)});
-    }
-
-    // 4. Library bundling for non-static modes.
+    // STEP 4, third mechanism, and STEP 5 (the format tail): library
+    // bundling for non-static modes.
     //
     //    BundleProject (default) — drop all manylinux-allowed system libs
     //    (libc/libstdc++/ld-linux/...) and bundle the rest. The user can
@@ -1364,14 +1470,14 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
         // that does not fail, it RUNS the module.
         if (auto fmt = mcpp::pack::binfmt::identify(plan.builtBinary).format;
             fmt != mcpp::pack::binfmt::Format::Elf) {
-            return std::unexpected(Error{std::format(
+            return finish_without_closure(plan, std::format(
                 "cannot package the {} artifact '{}' yet.\n"
                 "       Its dependency closure is resolved by running the "
                 "artifact under its own\n"
                 "       dynamic linker, and this file is neither ELF, PE nor "
                 "Mach-O -- there is no\n"
                 "       such linker to ask.",
-                mcpp::pack::binfmt::format_name(fmt), plan.binaryName)});
+                mcpp::pack::binfmt::format_name(fmt), plan.binaryName));
         }
         auto deps = ldd_parse(plan.builtBinary);
         if (!deps) return std::unexpected(Error{std::format(
@@ -1507,20 +1613,22 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
             return std::unexpected(Error{r.error()});
     }
 
-    // 4b. Debug information does not travel either.
+    // The format tail's last two steps, run only because step 4 above
+    // produced a list (an early return took every path where it did not):
+    // debug information does not travel either.
     //
     // AFTER every byte-changing step above (patchelf's search path, PT_INTERP)
     // and before the archive: strip must see the final image, and the archive
     // must see the stripped one. Same ordering rule the library packer states
     // at its leg loop.
-    if (auto r = strip_program(plan, bundledBinary); !r) return r;
+    if (auto r = strip_program(plan, bundledBinary); !r) return std::unexpected(r.error());
 
-    // 5. Output.
+    // Output.
     if (plan.opts.format == Format::Tar) {
         if (auto r = make_tarball(plan.stagingRoot, plan.archivePath); !r)
-            return r;
+            return std::unexpected(r.error());
     }
-    return {};
+    return ClosureResult{};
 #endif // !_WIN32
 }
 

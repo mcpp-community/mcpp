@@ -30,6 +30,16 @@
 // because a staged file whose length is unchanged and whose bytes differ can
 // only have come from a rebuild, and a rebuild moved the link output that the
 // dist edge also depends on.
+//
+// THE HEADER LINE. `mcpp pack` stages the program and its declared runtime
+// files before it asks whether this host can walk the artifact's dependency
+// closure (§3 of
+// .agents/docs/2026-09-13-630-what-a-framework-still-hits-in-the-engine.md),
+// so a tree can exist without one -- a Mach-O program today, a non-PE
+// artifact on a Windows host. `closure = walked | not-walked` is the one fact
+// the manifest states that the sorted file list cannot: a provider that needs
+// the closure reads this line and decides for itself rather than discovering
+// the gap by what is absent from `lib/`.
 
 module;
 #include <cstdio>
@@ -53,6 +63,23 @@ std::filesystem::path stage_manifest_path(const std::filesystem::path& stagingRo
     return p;
 }
 
+// Whether `mcpp pack` resolved the staged tree's dependency closure, and why
+// not when it did not.
+//
+// The default (`walked = true`, empty `reason`) is what every archive format
+// and every successful ELF/PE pack reports. `walked = false` reaches a
+// manifest only for a DISPATCHED format -- `pack::closure_unavailable_outcome`
+// turns the same condition into a hard failure for `--format tar` and
+// `--format dir`, so those two never write a `not-walked` manifest.
+struct ClosureStatus {
+    bool        walked = true;
+    // Populated only when `!walked`. A SINGLE LINE: the manifest is a plain
+    // list of one entry per line, and the reason text pack::run produces
+    // carries its own embedded newlines (it doubles as a CLI diagnostic), so
+    // `write_stage_manifest` folds them to spaces before writing.
+    std::string reason;
+};
+
 // Write the manifest for the tree now on disk at `stagingRoot`.
 //
 // Best-effort by construction and deliberately so: the manifest is a
@@ -61,7 +88,8 @@ std::filesystem::path stage_manifest_path(const std::filesystem::path& stagingRo
 // manifest makes the dist edge fail with ninja's own "missing and no known rule
 // to make it", which names the file — a legible failure rather than a silent
 // staleness.
-bool write_stage_manifest(const std::filesystem::path& stagingRoot) {
+bool write_stage_manifest(const std::filesystem::path& stagingRoot,
+                          ClosureStatus closure = {}) {
     std::error_code ec;
     if (!std::filesystem::is_directory(stagingRoot, ec)) return false;
 
@@ -91,7 +119,27 @@ bool write_stage_manifest(const std::filesystem::path& stagingRoot) {
     // every run for no reason.
     std::ranges::sort(lines);
 
-    std::string text;
+    // The header, ahead of the sorted file list and NOT part of it -- it is a
+    // property of the whole tree, not an entry in it, and mixing the two
+    // would put "closure = walked" through the same alphabetical sort as a
+    // path and make its position in the file a function of what got staged.
+    std::string text = closure.walked ? "closure = walked\n" : "closure = not-walked\n";
+    if (!closure.walked) {
+        // Folded to one line: see the field comment on `ClosureStatus::reason`.
+        std::string reason = closure.reason;
+        std::ranges::replace(reason, '\n', ' ');
+        std::string folded;
+        bool lastWasSpace = false;
+        for (char c : reason) {
+            bool isSpace = (c == ' ' || c == '\t');
+            if (isSpace && lastWasSpace) continue;
+            folded.push_back(isSpace ? ' ' : c);
+            lastWasSpace = isSpace;
+        }
+        while (!folded.empty() && folded.front() == ' ') folded.erase(folded.begin());
+        while (!folded.empty() && folded.back()  == ' ') folded.pop_back();
+        text += std::format("reason = {}\n", folded);
+    }
     for (auto const& l : lines) { text += l; text.push_back('\n'); }
 
     auto out = stage_manifest_path(stagingRoot);

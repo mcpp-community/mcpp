@@ -130,6 +130,62 @@ TEST(PackStageTree, TheEngineOwnsExactlyTwoFormatNames) {
     EXPECT_EQ(mcpp::pack::kBuiltinPackFormats.size(), 2u);
 }
 
+// ── #630 §3: the `closure` field ─────────────────────────────────────────
+//
+// The "not-walked" case (a Mach-O program, or a non-PE artifact on a Windows
+// host) cannot be produced on this (Linux) runner through `pack::run` -- it
+// is covered end to end on macOS/iOS CI instead (see the e2e fixture's
+// comment). What CAN be tested here, on every host, is the writer/reader
+// contract itself: both values round-trip through the manifest file.
+
+TEST(PackStageTree, DefaultClosureIsWalkedAndSaysSo) {
+    Tmp t;
+    auto stage = t.path / "app";
+    write_file(stage / "bin" / "app", "x");
+    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage));
+    auto text = read_file(mcpp::pack::stage_manifest_path(stage));
+    EXPECT_EQ(text.substr(0, text.find('\n')), "closure = walked");
+    EXPECT_EQ(text.find("reason ="), std::string::npos);
+}
+
+TEST(PackStageTree, NotWalkedRecordsTheReasonOnOneLine) {
+    Tmp t;
+    auto stage = t.path / "app";
+    write_file(stage / "bin" / "app", "x");
+    mcpp::pack::ClosureStatus closure{
+        .walked = false,
+        .reason = "cannot package the Mach-O program 'app' yet.\n"
+                  "       The dependency closure for that format is resolved "
+                  "by running the artifact under\n"
+                  "       the target's own dynamic linker.",
+    };
+    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage, closure));
+    auto text = read_file(mcpp::pack::stage_manifest_path(stage));
+    auto firstLine = text.substr(0, text.find('\n'));
+    EXPECT_EQ(firstLine, "closure = not-walked");
+    // Folded to ONE line -- the manifest is one entry per line, and the
+    // reason text carries its own embedded newlines because it doubles as a
+    // CLI diagnostic.
+    auto secondLineEnd = text.find('\n', text.find('\n') + 1);
+    auto secondLine = text.substr(text.find('\n') + 1, secondLineEnd - text.find('\n') - 1);
+    EXPECT_TRUE(secondLine.starts_with("reason = cannot package the Mach-O program"));
+    EXPECT_EQ(secondLine.find('\n'), std::string::npos);
+    // The rest of the manifest -- the staged file listing -- is unaffected.
+    EXPECT_NE(text.find("bin/app"), std::string::npos);
+}
+
+TEST(PackStageTree, WalkedAndNotWalkedProduceDifferentManifests) {
+    Tmp t;
+    auto stage = t.path / "app";
+    write_file(stage / "bin" / "app", "x");
+    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage, mcpp::pack::ClosureStatus{true, ""}));
+    auto walked = read_file(mcpp::pack::stage_manifest_path(stage));
+    ASSERT_TRUE(mcpp::pack::write_stage_manifest(
+        stage, mcpp::pack::ClosureStatus{false, "no such linker to ask"}));
+    auto notWalked = read_file(mcpp::pack::stage_manifest_path(stage));
+    EXPECT_NE(walked, notWalked);
+}
+
 TEST(PackStageTree, AMissingTreeIsRefusedRatherThanDescribedAsEmpty) {
     Tmp t;
     // An empty manifest for a directory that does not exist would say "nothing

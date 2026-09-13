@@ -709,6 +709,17 @@ changes, and a closure that grew a dependency's shared library while the
 program's own bytes did not would leave the previous distributable in place,
 reported as up to date.
 
+**The manifest's first line is `closure = walked` or `closure = not-walked`.**
+`mcpp pack` stages the program and its declared runtime
+files before it asks whether this host can resolve the artifact's dependency
+closure, so the tree can exist without one — a Mach-O program today, or a
+non-PE artifact packed from a Windows host. `--format tar` and `--format dir`
+still fail the command in that case, since the archive IS the closure; a
+dispatched format receives the tree regardless, with a second manifest line,
+`reason = <why>`, naming the mechanism that was unavailable. A provider that
+needs the closure reads the field rather than inferring a gap from an empty
+`lib/`.
+
 Commands are an **argv, not a shell string** (no shell is assumed — Windows has
 none to rely on), and the only interpolations are a closed set:
 
