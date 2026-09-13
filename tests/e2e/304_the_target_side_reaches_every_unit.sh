@@ -86,11 +86,16 @@ version = "0.1.0"
 abiprov = { path = "abi" }
 sibling = { path = "dep" }
 EOF
+# THE C HEADER, NOT THE C++ ONE. `abiprov` declares itself the C++ layer, and
+# a package that answers for that layer answers for its headers: the payload's
+# libc++ directories are withheld from every unit (#630, item 4). This stub
+# ships no standard library, so the probe uses the C library's `<stdio.h>`,
+# which the payload or the SDK still supplies, rather than `<cstdio>`.
 cat > src/main.cpp <<'EOF'
-#include <cstdio>
+#include <stdio.h>
 import abiprov;
 import sibling;
-int main() { std::printf("%d\n", abiprov_v() + sibling_v()); }
+int main() { printf("%d\n", abiprov_v() + sibling_v()); }
 EOF
 
 "$MCPP" build >/dev/null 2>&1 || {

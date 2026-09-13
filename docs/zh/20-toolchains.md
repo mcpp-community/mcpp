@@ -615,7 +615,7 @@ C 库和 builtins 同一做法:
 ```toml
 [target.'cfg(os = "ios")'.dependencies]
 llvm.libcxx               = "22.1.8.1"   # libc++ 与 libc++abi 的源码,带 std 模块
-llvm.compiler-rt-builtins = "22.1.8.3"   # __isPlatformVersionAtLeast 与通用例程
+llvm.compiler-rt-builtins = "22.1.8.4"   # __isPlatformVersionAtLeast 与通用例程
 ```
 
 框架声明一次,每个应用通过依赖边继承。报告把两层都记为图里的,链接行带 `-nostdlib++`,

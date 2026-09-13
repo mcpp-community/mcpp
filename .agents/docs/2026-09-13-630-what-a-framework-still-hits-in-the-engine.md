@@ -416,7 +416,7 @@ application inherits it through the ordinary dependency edge:
 ```toml
 [target.'cfg(os = "ios")'.dependencies]
 llvm.libcxx               = "22.1.8.1"
-llvm.compiler-rt-builtins = "22.1.8.3"
+llvm.compiler-rt-builtins = "22.1.8.4"
 ```
 
 An application without a framework writes the same three lines. The two
@@ -552,7 +552,7 @@ the engine's part is measured first:
 | `llvm.libcxx` 22.1.8.1: libc++ and libc++abi sources at `llvmorg-22.1.8`, generated configuration and module sources, manifest, examples, CI on Linux and on the iOS simulator | new repository `mcpplibs/libcxx` | one package |
 | index entry, GitHub and GitCode release assets | `mcpp-index`, `mcpp-res` | one PR, one release |
 | `cxxFromGraph` at the four sites, `-femulated-tls` narrowed, the older and current capability spellings, the SDK-header fallback, the builtins refusal, tests | mcpp | part of the batch PR |
-| the Apple source selection (22.1.8.3) | `mcpplibs/compiler-rt-builtins` | one PR, one release, one index entry |
+| the Apple source selection (22.1.8.4) | `mcpplibs/compiler-rt-builtins` | one PR, one release, one index entry |
 | `docs/20` iOS rows and `docs/22`; the 2026-09-11 record's table gains a superseded note pointing here | mcpp docs | text |
 
 The order between the repositories is the one every package-plus-engine
@@ -818,11 +818,11 @@ that none is left half done when its neighbour ships.
 | T5 | `needed_names` for Mach-O (thin and fat), `@rpath` resolution, Mach-O row of `is_system_lib`; unit tests with checked-in Mach-O fixtures; the macOS e2e | mcpp | T4 | §4.3 |
 | T6 | tool store: `git` keyed by commit, `path` never a hit; `upstreamKeys` per source kind; e2e in both directions with `examples/12` | mcpp | - | §7.3 |
 | T7 | `llvm.libcxx` 22.1.8.1: repository, sources at `llvmorg-22.1.8`, generated configuration and module sources, manifest, examples, CI (Linux with `llvm@22.1.8`; macOS runner for `aarch64-ios-sim`) | `mcpplibs/libcxx` (new) | - | §5.4 |
-| T7b | `llvm.compiler-rt-builtins` 22.1.8.3: the Apple source selection under `cfg(os = "ios")` and `cfg(os = "macos")`; CI on a macOS runner | `mcpplibs/compiler-rt-builtins` | - | §5.4 |
+| T7b | `llvm.compiler-rt-builtins` 22.1.8.4: the Apple source selection under `cfg(os = "ios")` and `cfg(os = "macos")`; CI on a macOS runner | `mcpplibs/compiler-rt-builtins` | - | §5.4 |
 | T8 | engine: `cxxFromGraph` at the four sites; `-femulated-tls` narrowed; both capability spellings; SDK-header fallback and the std-module diagnostic; the unsupplied compiler-runtime degradation; Linux e2e with T7 by `git`; iOS CI fixture declares T7 and T7b | mcpp | T7, T7b | §5.4 |
 | T9 | route by artifact form: an `app` whose artifact is a shared object takes the library route's several triples; `lib/<abi>/` staging; e2e on the Android rows | mcpp | - | §9 |
 | T10 | docs: `docs/05` (T3), `docs/20` and `docs/22` iOS rows (T8), `docs/30` stage manifest field (T4), zh mirrors; the 2026-09-11 record's superseded note | mcpp | T3, T4, T8 | structure and parity checks |
-| T11 | `mcpp-index`: `llvm.libcxx` entry and the `llvm.compiler-rt-builtins` 22.1.8.3 entry (GitHub and GitCode assets); `mcpp-res` releases | `mcpp-index`, `mcpp-res` | T7, T7b | index `latest` names them; sandbox install |
+| T11 | `mcpp-index`: `llvm.libcxx` entry and the `llvm.compiler-rt-builtins` 22.1.8.4 entry (GitHub and GitCode assets); `mcpp-res` releases | `mcpp-index`, `mcpp-res` | T7, T7b | index `latest` names them; sandbox install |
 | T12 | `mcpp:plugins`: `dist-apple` places the staged tree's deployed files at the bundle's resource destination | `mcpp-plugins` | T4 released | the `.app` carries the deployed file |
 | T13 | release mcpp; bump the workspace pin; GitCode assets by `gtc`; index bump PR | mcpp, `mcpp-index` | T1-T10 merged, CI green | `origin/main` HEAD run green; sandbox `mcpp --version` |
 | T14 | sandbox verification with `xlings subos … --sandbox --cmd`, CN mirror configured for both tools: T3 warning, T6 rebuild, T8 Linux program, T2 descriptor, T1 silence | sandbox | T11, T13 | one ok/FAILED line per claim |
@@ -835,7 +835,7 @@ release; T13 to T15 are sequential.
 **Progress (2026-09-13, evening).** T1 to T8 and T10 are on the batch branch
 (mcpp-community/mcpp#631). T7 is published (`mcpplibs/libcxx`, tag
 22.1.8.1; GitCode mirror byte-identical). T7b is merged and tagged
-(mcpplibs/compiler-rt-builtins#1, 22.1.8.3). T11 is merged and published
+(mcpplibs/compiler-rt-builtins#1, 22.1.8.4). T11 is merged and published
 (mcpplibs/mcpp-index#408; a program resolving `llvm.libcxx = "22.1.8.1"`
 from the index built and ran on Linux). T12 is prepared on a plugins
 branch and waits for the release pin. T9, T13, T14 and T15 follow.

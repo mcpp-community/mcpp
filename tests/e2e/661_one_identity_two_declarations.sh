@@ -270,9 +270,10 @@ echo "ok: case 3 -- with no root opinion, the first-dequeued declaration wins fo
 # this is refused exactly as a KIND clash always was, plus the new hint.
 # ═══════════════════════════════════════════════════════════════════════
 C4="$TMP/case4"
+FW_V020_HOST="$(host_path "$FW_V020")"
 make_lib "$C4/libd" "libd" "$(cat <<EOF
 [dependencies.framework]
-path = "$(host_path "$FW_V020")"
+path = "$FW_V020_HOST"
 EOF
 )"
 make_lib "$C4/libe" "libe" "$(cat <<EOF
@@ -370,7 +371,7 @@ main = "src/main.cpp"
 default = { path = "$INDEX_DIR_HOST" }
 
 [dependencies.framework]
-path = "$(host_path "$FW_V020")"
+path = "$FW_V020_HOST"
 
 [dependencies.libv]
 path = "../libv"

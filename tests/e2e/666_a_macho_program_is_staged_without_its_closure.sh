@@ -36,6 +36,7 @@ stage="$1"; manifest="$2"; out="$3"
 EOF
 chmod +x dist.sh
 cat > build.mcpp <<'EOF'
+import std;
 import mcpp;
 int main() {
     mcpp::provides_pack_format("zap");

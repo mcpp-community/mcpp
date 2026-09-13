@@ -205,7 +205,7 @@ jobs:
           # carries them.
           [target.'cfg(os = "ios")'.dependencies]
           llvm.libcxx               = { git = "https://github.com/mcpplibs/libcxx.git", tag = "22.1.8.1" }
-          llvm.compiler-rt-builtins = { git = "https://github.com/mcpplibs/compiler-rt-builtins.git", tag = "22.1.8.3" }
+          llvm.compiler-rt-builtins = { git = "https://github.com/mcpplibs/compiler-rt-builtins.git", tag = "22.1.8.4" }
 
           # THE RUNNER IS AN ARGV PREFIX AND THE SESSION BELONGS TO A
           # PACKAGE. `simctl-run` comes from `xim:apple-simulator-tools`; it
