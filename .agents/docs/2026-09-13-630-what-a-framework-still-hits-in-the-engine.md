@@ -275,6 +275,16 @@ The ELF path is not moved off `ldd_parse` in this batch. It is noted as the
 third beneficiary: the reader exists, and reading is what would let a Linux
 host pack for another glibc or a Windows host pack an ELF.
 
+**What landed.** The reader (`macho_needed`, thin and fat, both byte
+orders), the Mach-O row of `is_system_lib`, the `@rpath` resolver
+(`resolve_macho_names`) and `needed_names`'s dispatch to them, with unit
+tests over generated fixtures. The closure step of `pack::run` still reports
+a Mach-O program as `not-walked`: wiring the reader into that step without
+bundling would name a closure the tree does not carry, and bundling needs the
+`LC_RPATH` decision the measurement above is for. The dispatched format
+therefore receives the program and the declared files (item 3a) and a
+manifest that says so, which is what `dist-apple` needs today.
+
 ### 4.3 Criteria
 
 - Unit: a checked-in thin arm64 Mach-O and a fat (`x86_64` + `arm64`) Mach-O
