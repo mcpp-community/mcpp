@@ -411,6 +411,13 @@ struct Inputs {
     EnvAxis envAxis = EnvAxis::Unknown;
 
     std::optional<Provider> compilerRuntime;
+    // THE PAYLOAD SHIPS NO COMPILER RUNTIME FOR THIS TARGET. Set by the caller
+    // when it has looked: clang's official macOS payload carries
+    // `libclang_rt.osx.a` and no `ios`/`iossim` archive (measured, 22.1.8),
+    // and the Darwin driver links nothing rather than failing when the file
+    // is absent. With no graph provider the layer is then genuinely absent,
+    // and saying so is what lets the report and a diagnostic name it.
+    bool payloadCompilerRuntimeAbsent = false;
     std::optional<Provider> kernelAbi;
     std::optional<Provider> cAbi;
     std::optional<Provider> cxxAbi;
@@ -512,6 +519,8 @@ inline TargetSide resolve(const Inputs& in) {
         ts.compilerRuntime = { Origin::Graph,
                                in.compilerRuntime->display_interface(),
                                in.compilerRuntime->id(), false };
+    else if (in.payloadCompilerRuntimeAbsent)
+        ts.compilerRuntime = { Origin::None, {}, {}, false };
     else if (!in.compilerFamily.empty())
         ts.compilerRuntime = { Origin::Payload, in.compilerFamily, {}, false };
 

@@ -9456,6 +9456,37 @@ prepare_build(bool print_fingerprint,
             // checked against and so the report can show the whole stack.
             in.compilerFamily  = std::string(tc->compiler_family());
             in.compilerVersion = tc->version;
+            // WHETHER THE PAYLOAD HAS A COMPILER RUNTIME FOR AN APPLE CROSS
+            // TARGET, read from the payload's own resource directory. Clang's
+            // Darwin driver adds `libclang_rt.<platform>.a` from there when
+            // the file exists and continues silently when it does not, and
+            // the official payload builds only the macOS archive (measured,
+            // 22.1.8: `lib/clang/22/lib/darwin/` holds `libclang_rt.osx.a` and
+            // no `ios` or `iossim`). The consequence without this line is
+            // `__isPlatformVersionAtLeast` undefined at link with nothing
+            // said earlier (mcpp#630). The engine never looks in Xcode for the
+            // archive: a compiler runtime the payload lacks is a graph
+            // package, as it is on the bare rows.
+            if (!tc->appleSdkRoot.empty()) {
+                if (auto tt = mcpp::toolchain::triple::parse(tc->targetTriple);
+                    tt && tt->is_ios()) {
+                    const std::string archive = std::format(
+                        "libclang_rt.{}.a", tt->is_ios_simulator() ? "iossim" : "ios");
+                    const auto payloadRoot =
+                        tc->binaryPath.parent_path().parent_path();
+                    bool found = false;
+                    std::error_code ec;
+                    for (auto const& ver : std::filesystem::directory_iterator(
+                             payloadRoot / "lib" / "clang", ec)) {
+                        if (std::filesystem::exists(
+                                ver.path() / "lib" / "darwin" / archive, ec)) {
+                            found = true;
+                            break;
+                        }
+                    }
+                    in.payloadCompilerRuntimeAbsent = !found;
+                }
+            }
         }
         in.compilerRuntime = provider_of(tsd::CapLayer::CompilerRuntime);
         in.kernelAbi       = provider_of(tsd::CapLayer::KernelAbi);
@@ -9509,6 +9540,25 @@ prepare_build(bool print_fingerprint,
 
         resolvedTargetSide = tsd::resolve(in);
         targetSideResolved = true;
+
+        // REPORTED ONCE, NOT REFUSED. A program that never reaches an
+        // availability check links and runs without the archive; refusing it
+        // would trade a diagnosed hazard for a regression. The degradation
+        // names the platform, the file and the package that supplies it.
+        if (resolvedTargetSide.compilerRuntime.absent() && tc) {
+            auto tt = mcpp::toolchain::triple::parse(tc->targetTriple);
+            mcpp::diag::degraded("target/compiler-runtime", std::format(
+                "the toolchain payload carries no compiler runtime for {} "
+                "(no libclang_rt.{}.a under its lib/clang/*/lib/darwin), and no "
+                "package in the graph provides mcpp:compiler-runtime",
+                tc->targetTriple,
+                tt && tt->is_ios_simulator() ? "iossim" : "ios"),
+                "a program that reaches an availability check "
+                "(`__builtin_available`, or a system header that uses it) fails "
+                "at link with `__isPlatformVersionAtLeast` undefined",
+                "declare `llvm.compiler-rt-builtins` under the target's "
+                "[target.'cfg(os = \"ios\")'.dependencies]");
+        }
 
         // RECORDED ON THE TOOLCHAIN THE MOMENT IT IS KNOWN, because three
         // producers of a compile line need it and only one of them can see
@@ -10361,10 +10411,17 @@ prepare_build(bool print_fingerprint,
     // library would be describing something it does not have.
     for (auto& pkg : packages) {
         if (pkg.manifest.stdModule.empty()) continue;
+        // Either spelling of the C++ layer: `hosted-standard-library` is the
+        // one that predates the layer vocabulary, `mcpp:c++-abi=<impl>` the
+        // current one. A package written against a newer engine may carry
+        // only the second.
         const auto& provs = pkg.manifest.provides;
-        if (std::find(provs.begin(), provs.end(),
-                      std::string{"hosted-standard-library"}) == provs.end())
-            continue;
+        const bool declaresCxxLayer = std::any_of(
+            provs.begin(), provs.end(), [](const std::string& p) {
+                return p == "hosted-standard-library"
+                    || p.starts_with("mcpp:c++-abi=");
+            });
+        if (!declaresCxxLayer) continue;
         auto src = pkg.root / pkg.manifest.stdModule;
         if (!std::filesystem::exists(src)) {
             return std::unexpected(std::format(
@@ -10488,6 +10545,39 @@ prepare_build(bool print_fingerprint,
             flags += " " + mcpp::xlings::shq(f);
         tc->stdModuleFlags = flags;
         break;
+    }
+
+    // AN APPLE CROSS TARGET WITHOUT A GRAPH C++ RUNTIME HAS NO std MODULE.
+    //
+    // Its runtime is the SDK's libc++ (the Mach-O cell in distribution.cppm),
+    // so its headers are the SDK's (hostflags.cppm), and the module has to be
+    // the SDK's or none: the payload's `std.cppm` describes libc++ 22 and the
+    // SDK's dylib is libc++ 19 (Xcode 16.4, measured), which is the pairing
+    // that fails at link on names the older dylib does not export. Apple's
+    // SDKs ship no `usr/share/libc++/v1` (measured on the macOS 15.5 and iOS
+    // 18.5 SDKs), and this engine does not consume one, so the module is
+    // withdrawn here and a program that imports it is told which package
+    // restores it. A program that does not import `std` is unaffected.
+    if (tc && !tc->appleSdkRoot.empty() && targetSideResolved
+        && !resolvedTargetSide.cxx.fromGraph()) {
+        tc->hasImportStd = false;
+        tc->stdModuleSource.clear();
+        tc->stdCompatSource.clear();
+        if (needsStdModule) {
+            return std::unexpected(std::format(
+                "`import std` is not available for {}: the target's C++ "
+                "runtime is the SDK's libc++, and the payload's std module "
+                "describes a different libc++.\n"
+                "       Declare the C++ standard library as a package, which "
+                "brings its headers, its module and its objects as one "
+                "release:\n"
+                "         [target.'cfg(os = \"ios\")'.dependencies]\n"
+                "         llvm.libcxx = \"22.1.8.1\"\n"
+                "       (and `llvm.compiler-rt-builtins = \"22.1.8.3\"` beside "
+                "it for the compiler runtime the payload lacks on this "
+                "platform).",
+                tc->targetTriple));
+        }
     }
 
     if (needsStdModule && !tc->hasImportStd) {

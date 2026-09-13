@@ -198,6 +198,50 @@ TEST(TargetSideResolve, PrebuiltCLibraryUnderAGraphSuppliedCxxSubset) {
     EXPECT_TRUE(r.cxx.subset) << "no std module declared, so the library is a subset";
 }
 
+// A hosted target whose C library is the payload's (a located SDK, or glibc)
+// while a package supplies the whole standard library: the iOS rows over
+// `llvm.libcxx` (mcpp#630). The C++ layer is the graph's and is not a subset,
+// and the C library stays the payload's; nothing about one decides the other.
+TEST(TargetSideResolve, PrebuiltCLibraryUnderAGraphSuppliedLibcxx) {
+    auto in = payload_linux();
+    in.cxxAbi = provider("libcxx", "22.1.8.1", "libc++", /*stdModule=*/true);
+
+    auto r = ts::resolve(in);
+    EXPECT_EQ(r.cAbi.origin, ts::Origin::Payload) << "the SDK's or glibc's, prebuilt";
+    EXPECT_TRUE(r.cAbi.prebuilt());
+    EXPECT_EQ(r.cxx.origin, ts::Origin::Graph);
+    EXPECT_TRUE(r.cxx.fromGraph());
+    EXPECT_FALSE(r.cxx.subset) << "a std module is declared, so this is the whole library";
+    EXPECT_FALSE(r.system_from_graph()) << "the system is still the payload's";
+}
+
+// The payload has no compiler runtime for this platform and the graph
+// declares none: the layer is absent, and the report says so rather than
+// naming the compiler's family for an archive that does not exist. With a
+// graph provider the same input resolves to the graph.
+TEST(TargetSideResolve, APayloadWithoutACompilerRuntimeForThePlatform) {
+    auto in = payload_linux();
+    in.llvmTriple = "arm64-apple-ios18.0-simulator";
+    in.targetOs   = "ios";
+    in.targetEnv  = "sim";
+    in.compilerFamily = "llvm";
+    in.payloadCompilerRuntimeAbsent = true;
+
+    auto absent = ts::resolve(in);
+    EXPECT_TRUE(absent.compilerRuntime.absent());
+
+    in.compilerRuntime = provider("compiler-rt-builtins", "22.1.8.3", "compiler-rt");
+    auto supplied = ts::resolve(in);
+    EXPECT_EQ(supplied.compilerRuntime.origin, ts::Origin::Graph);
+    EXPECT_FALSE(supplied.compilerRuntime.absent());
+
+    // Negative direction: a payload that has the archive reports its own.
+    in.compilerRuntime.reset();
+    in.payloadCompilerRuntimeAbsent = false;
+    auto own = ts::resolve(in);
+    EXPECT_EQ(own.compilerRuntime.origin, ts::Origin::Payload);
+}
+
 TEST(TargetSideResolve, ZeroLibcTierHasNothingAtAll) {
     ts::Inputs in;
     in.llvmTriple           = "x86_64-none-elf";
