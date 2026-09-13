@@ -4614,6 +4614,24 @@ prepare_build(bool print_fingerprint,
         std::string constraint;         // AND-combined original constraints (version src only)
         std::string requestedBy;        // human-readable for error messages
         std::string source;             // "version" | "path" | "git" — for type-clash check
+        // The declaration's identity beyond `source`, so a SECOND declaration
+        // of the same (ns, name) can be compared for "the same reference"
+        // rather than merely "the same kind". `git`: "<url>#<refKind>=<ref>",
+        // from the DECLARED ref (never the resolved commit — comparing two
+        // branch names must not need a network round trip to decide whether
+        // they conflict). `path`: the canonical absolute directory. `version`:
+        // the original constraint string ("*" for none). See the
+        // `dependency/source-override` decision at the resolve hit (2026-09-13
+        // #630 record, §2.2).
+        std::string sourceRef;
+        // True when this record's declaration came from the root manifest's
+        // own [dependencies]/[dev-dependencies]/[build-dependencies]
+        // (`item.consumerDepIndex == kMainConsumer` at the time the record
+        // was created). Bounds the root's privilege to override a
+        // conflicting declaration of the SAME identity the way
+        // `DependencySpec::linkage` is honoured only on the root's own
+        // edges — see dep_spec.cppm.
+        bool        fromRoot = false;
         // Reached ONLY through [dev-dependencies]. mcpp.lock excludes these:
         // dev-deps are resolved under `mcpp test` and not under `mcpp build`, so
         // recording them makes a VCS-committed file depend on which command ran
@@ -6431,6 +6449,31 @@ prepare_build(bool print_fingerprint,
                             /*buildOnly=*/true});
     }
 
+    // `ResolvedRecord::sourceRef` for a given declaration — see the field's
+    // comment. Computed from what was AUTHORED, not from a network round
+    // trip: a `branch` reference is compared by name here, and the two
+    // clones it may eventually resolve to are a question `resolveSemver`-style
+    // ANSWERING code, not this IDENTITY code, would have to ask.
+    auto sourceRefOf = [&](const std::string& kind,
+                           const mcpp::manifest::DependencySpec& s,
+                           const std::filesystem::path& resolveRoot,
+                           const std::string& originalConstraint) -> std::string {
+        if (kind == "git") {
+            return std::format("{}#{}={}", s.git, s.gitRefKind, s.gitRev);
+        }
+        if (kind == "path") {
+            std::filesystem::path p = s.path;
+            auto base = resolveRoot.empty() ? *root : resolveRoot;
+            if (p.is_relative()) p = base / p;
+            std::error_code ec;
+            auto canon = std::filesystem::weakly_canonical(p, ec);
+            return (ec ? p : canon).lexically_normal().generic_string();
+        }
+        // "version": the constraint as authored; empty means unconstrained,
+        // matching `addrset::unify`'s treatment of a bare-name claim.
+        return originalConstraint.empty() ? std::string("*") : originalConstraint;
+    };
+
     while (!worklist.empty()) {
         auto item = std::move(worklist.front());
         worklist.pop_front();
@@ -6476,14 +6519,106 @@ prepare_build(bool print_fingerprint,
             // A package is dev-only until some non-dev consumer wants it. Order
             // of arrival must not decide, so this is an AND over every request.
             it->second.devOnly = it->second.devOnly && item.devOnly;
-            // Conflict detection.
+            // Conflict detection: a KIND clash (`path`/`git`/`version` differ).
+            // Rows 4 and 5 of the decision table in the 2026-09-13-630 record
+            // §2.2. Two non-root requesters keep the outright refusal (row
+            // 5); when the root is a party, its declaration wins instead
+            // (row 4) — a whole-graph choice of WHICH checkout an identity
+            // resolves to is exactly the kind of decision
+            // `DependencySpec::linkage` already reserves to the root's own
+            // edges (dep_spec.cppm).
             if (it->second.source != sourceKind) {
-                return std::unexpected(std::format(
-                    "dependency '{}{}{}' is requested as both a {} dep "
-                    "(by '{}') and a {} dep (by '{}'). Pick one.",
+                const bool existingIsRoot = it->second.fromRoot;
+                const bool incomingIsRoot = item.consumerDepIndex == kMainConsumer;
+
+                if (!existingIsRoot && !incomingIsRoot) {
+                    return std::unexpected(std::format(
+                        "dependency '{}{}{}' is requested as both a {} dep "
+                        "(by '{}') and a {} dep (by '{}'). Pick one.\n"
+                        "       declare '{}{}{}' in the root to settle it.",
+                        key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                        it->second.source, it->second.requestedBy,
+                        sourceKind, item.requestedBy,
+                        key.ns, key.ns.empty() ? "" : ".", key.shortName));
+                }
+                if (incomingIsRoot && !existingIsRoot) {
+                    // FIFO SEEDING MAKES THIS UNREACHABLE. Every root-declared
+                    // identity is pushed onto `worklist` before this loop
+                    // starts; a transitive dependency's request is pushed
+                    // onto the BACK of the same deque while the loop runs.
+                    // The root's own entry for any identity is therefore
+                    // always dequeued — and resolved — before any
+                    // dependency's request for that identity can arrive. If
+                    // this branch is ever reached, the invariant broke
+                    // upstream (the seed reordered, or a new seed source was
+                    // added after the loop starts): refusing and naming the
+                    // invariant is safer than silently letting whichever side
+                    // arrived first win, which is the accident #630 reports.
+                    return std::unexpected(std::format(
+                        "internal: dependency '{}{}{}': the root's "
+                        "declaration arrived after '{}' had already resolved "
+                        "it. This is unreachable under first-in-first-out "
+                        "worklist seeding; please report this as an mcpp "
+                        "engine defect.",
+                        key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                        it->second.requestedBy));
+                }
+
+                // The root already holds this identity (existingIsRoot); the
+                // incoming, non-root declaration is overridden. When the
+                // OVERRIDDEN declaration is a version requirement, it is
+                // still a promise about the graph and is checked against
+                // what the root's checkout actually is — the same
+                // Holds/Violated test `addrset::unify` runs for a tool pin
+                // (address_set.cppm).
+                if (sourceKind == "version") {
+                    const std::string winnerVersion = it->second.source == "version"
+                        ? it->second.version
+                        : (it->second.depIndex < dep_manifests.size()
+                               ? dep_manifests[it->second.depIndex]->package.version
+                               : std::string{});
+                    auto req = mcpp::version_req::parse_req(item.originalConstraint);
+                    auto ver = mcpp::version_req::parse_version(winnerVersion);
+                    // An unparseable requirement or checkout version is
+                    // reported as an override below rather than refused: a
+                    // refusal manufactured from ignorance is worse than the
+                    // silent override it would be preventing (the same
+                    // reasoning `addrset::check` states for an unparseable
+                    // spelling).
+                    if (req && ver && !mcpp::version_req::matches(*req, *ver)) {
+                        return std::unexpected(std::format(
+                            "'{}{}{}' is pinned to {} (version {}) by '{}', "
+                            "and '{}' requires {}.\n"
+                            "       One checkout of a package is used, so the "
+                            "two cannot both hold.\n"
+                            "       fix: relax the requirement, or point the "
+                            "root's pin at a checkout satisfying it.",
+                            key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                            it->second.sourceRef, winnerVersion,
+                            it->second.requestedBy,
+                            item.requestedBy, item.originalConstraint));
+                    }
+                }
+
+                mcpp::diag::warning("dependency/source-override", std::format(
+                    "'{}{}{}' is declared as a {} dep (by '{}', {}) and as a "
+                    "{} dep (by '{}', {}); the root's declaration wins.",
                     key.ns, key.ns.empty() ? "" : ".", key.shortName,
-                    it->second.source, it->second.requestedBy,
-                    sourceKind, item.requestedBy));
+                    it->second.source, it->second.requestedBy, it->second.sourceRef,
+                    sourceKind, item.requestedBy,
+                    sourceKind == "version" ? item.originalConstraint
+                                            : sourceRefOf(sourceKind, spec,
+                                                          item.resolveRoot,
+                                                          item.originalConstraint)),
+                    std::format("declare '{}{}{}' in the root to choose the other.",
+                        key.ns, key.ns.empty() ? "" : ".", key.shortName));
+
+                if (it->second.depIndex + 1 < packages.size()) {
+                    recordDependencyEdge(item.consumerDepIndex,
+                                         it->second.depIndex + 1,
+                                         spec, item.buildOnly);
+                }
+                continue;
             }
             if (sourceKind == "version" && it->second.version != spec.version) {
                 // SemVer merge attempt: AND-combine the two original
@@ -6655,6 +6790,13 @@ prepare_build(bool print_fingerprint,
                         .constraint        = item.originalConstraint,
                         .requestedBy       = item.requestedBy,
                         .source            = "version",
+                        .sourceRef         = item.originalConstraint.empty()
+                                                 ? std::string("*") : item.originalConstraint,
+                        // The mangling fallback refuses a main-package
+                        // participant earlier (see the branch's comment
+                        // above), so this record's requester is always a
+                        // dependency.
+                        .fromRoot          = false,
                         .devOnly           = item.devOnly,
                         .depIndex          = dep_manifests.size() - 1,
                         .linkFlagsAdded    = std::move(linkFlagsAdded),
@@ -6760,6 +6902,56 @@ prepare_build(bool print_fingerprint,
                                         it->second.depIndex, {}, item.devOnly});
                 }
                 continue;
+            }
+            // SAME kind, possibly DIFFERENT reference: two `git` declarations
+            // of different rev/tag/branch, or two `path` declarations of
+            // different directories. Row 3 of the decision table (`version`
+            // vs `version` is handled above and never reaches here). Before
+            // this comparison existed, the second declaration's reference was
+            // never even read — the record kept no `path`/`gitRev`, so there
+            // was nothing to compare, and the winner was whichever request
+            // happened to be dequeued first (the #630 "accident of queue
+            // order").
+            if (sourceKind != "version") {
+                const std::string incomingRef =
+                    sourceRefOf(sourceKind, spec, item.resolveRoot, item.originalConstraint);
+                if (incomingRef != it->second.sourceRef) {
+                    const bool existingIsRoot = it->second.fromRoot;
+                    const bool incomingIsRoot = item.consumerDepIndex == kMainConsumer;
+                    if (incomingIsRoot && !existingIsRoot) {
+                        // See the identical comment in the kind-clash branch
+                        // above: unreachable under FIFO seeding, and refused
+                        // by name rather than silently swapped in.
+                        return std::unexpected(std::format(
+                            "internal: dependency '{}{}{}': the root's "
+                            "declaration arrived after '{}' had already "
+                            "resolved it. This is unreachable under "
+                            "first-in-first-out worklist seeding; please "
+                            "report this as an mcpp engine defect.",
+                            key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                            it->second.requestedBy));
+                    }
+                    // The already-resolved record wins either way: it is the
+                    // root's (existingIsRoot) or it is simply the first one
+                    // dequeued (neither party is the root). Both are "the
+                    // first requester" in the sense row 3 states — the root
+                    // is dequeued before any transitive request under FIFO
+                    // seeding, so "the root wins" and "the first dequeued
+                    // wins" never disagree about WHICH record already sits in
+                    // `resolved`.
+                    mcpp::diag::warning("dependency/source-override", std::format(
+                        "'{}{}{}' is declared as {} '{}' (by '{}') and as {} "
+                        "'{}' (by '{}'); {} wins.",
+                        key.ns, key.ns.empty() ? "" : ".", key.shortName,
+                        sourceKind, it->second.sourceRef, it->second.requestedBy,
+                        sourceKind, incomingRef, item.requestedBy,
+                        existingIsRoot ? "the root's declaration"
+                                       : std::format("'{}', declared first",
+                                                     it->second.requestedBy)),
+                        std::format("declare '{}{}{}' in the root to choose "
+                                    "the other.",
+                            key.ns, key.ns.empty() ? "" : ".", key.shortName));
+                }
             }
             // Same key, same version (or compatible path/git) — already
             // processed; still record the dependency edge before skipping.
@@ -7093,6 +7285,9 @@ prepare_build(bool print_fingerprint,
             .constraint        = sourceKind == "version" ? item.originalConstraint : "",
             .requestedBy       = item.requestedBy,
             .source            = sourceKind,
+            .sourceRef         = sourceRefOf(sourceKind, spec, item.resolveRoot,
+                                             item.originalConstraint),
+            .fromRoot          = item.consumerDepIndex == kMainConsumer,
             .devOnly           = item.devOnly,
             .depIndex          = dep_manifests.size() - 1,
             .linkFlagsAdded    = std::move(linkFlagsAdded),
