@@ -310,7 +310,7 @@ jobs:
           cd /tmp/iostest
           grep -E 'c\+\+-abi +libc\+\+ +\(libcxx@22\.1\.8\.1, graph\)' build-sim.log \
             || { echo "FAIL: the report does not name llvm.libcxx as the C++ layer"; exit 1; }
-          grep -E 'compiler-runtime +compiler-rt +\(compiler-rt-builtins@22\.1\.8\.3, graph\)' build-sim.log \
+          grep -E 'compiler-runtime +compiler-rt +\(compiler-rt-builtins@22\.1\.8\.4, graph\)' build-sim.log \
             || { echo "FAIL: the report does not name llvm.compiler-rt-builtins as the compiler runtime"; exit 1; }
           art=$(ls /tmp/iostest/target/aarch64-ios-sim/*/bin/iostest | head -1)
           if otool -L "$art" | grep -q 'libc++'; then
