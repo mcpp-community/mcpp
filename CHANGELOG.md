@@ -5,6 +5,68 @@
 
 ## [Unreleased]
 
+### 一个框架与它的生态库仍会撞到的引擎缺口:#630 的十项
+
+#630 汇总了 HuxerUI 在六个平台上落地后引擎仍欠的十项。每一项都先在
+`b63dc4e5` 上定位到代码行再分类,其中四处与 issue 的叙述不同(设计记录 §0):
+「根赢」其实是工作队列先出队者赢;`mcpp pack` 早已把 Mach-O 的拒绝带到
+dispatched 格式,只是交出去的树是空的;第 7 项的后果在安装期而不在链接期;
+A8 在 2026-09-12 的记录里已判定为声明放错了包。
+
+**一个身份,两条声明,要说出来(项 1、2)。** 同一依赖身份的两条 `git`/`path`
+声明此前没有任何字段被比较,留下的是先出队的那条。现在根的声明跨 kind、跨引用
+都赢,并以 `dependency/source-override` 告警点名双方与各自引用;依赖对根所钉
+checkout 的版本要求照 `addrset::unify` 的 Holds/Violated 校验;两个非根声明的
+kind 冲突仍拒绝,并提示在根里声明以决之。`docs/05` 中英文各得一张决策表。
+
+**先暂存声明的文件,再走发现的闭包(项 3a)。** `mcpp pack` 在闭包之前拷贝程序
+与 `mcpp::deploy` 的文件;本机走不了闭包的格式(Mach-O 程序;Windows 宿主上的
+非 PE 产物)把树交给 dispatched 格式,stage manifest 记 `closure = not-walked`
+与原因;`tar`/`dir` 仍拒绝。`binfmt` 得到 Mach-O 读取器(thin 与 fat、两种字节
+序、`LC_LOAD_DYLIB`/`LC_RPATH`)、`is_system_lib` 的 Mach-O 行与 `@rpath` 解析
+器(项 3b);闭包步骤对 Mach-O 仍报 not-walked,打包 dylib 待 `LC_RPATH` 改写
+的实测。
+
+**C++ 层回答自己的头文件(项 4)。** 四处用 `cAbi.prebuilt()` 代答「载荷的
+libc++ 是否适用」,在 openkal 与原生构建重合,在 iOS 行(SDK 的 C 库 + 图里的
+libc++)分开:引擎把 libc++ 22 的头配到 SDK 的 libc++ 19 上,程序在
+`__hash_memory` 处链接失败。现改读 `plan.targetSide.cxx.fromGraph()`;iOS 行的
+C++ 运行时与编译器运行时成为图里的源码包(`llvm.libcxx@22.1.8.1`、
+`llvm.compiler-rt-builtins@22.1.8.3`,与 `openkal-llvm-runtime` 同一机制,框架
+声明一次、应用继承)。不声明时:不导入 `std` 的程序取 SDK 的头;导入的保留昨天
+的搭配并由 prepare 报告一次(`target/cxx-runtime`)点名两行;载荷没有该平台的
+builtins 归档时报告一次(`target/compiler-runtime`),从不去 Xcode 里找。
+`graph_runtime_compile_flags` 只在 C 库来自图时给 Mach-O 加 `-femulated-tls`。
+
+**`min_api_level` 是已知键(项 5)。** 它被 Android 行读取、被 `dist-apk` 写成
+`minSdkVersion`,却被 `[target.<triple>]` 的未知键扫描报成 unsupported,`--strict`
+下变硬错。加入已知表;单测的分母取自解析器自己的 `body.find` 站点。
+
+**工具仓库的键里有源码(项 6)。** host 工具按 包×版本×宿主×编译器×feature×闭包
+版本 键控,`path` 包改源码不抬版本即被无视。现在 `git` 包按解析出的 commit、
+`path` 包按树的 stat 印记(相对路径、大小、mtime)进键,上游同理;改动与回退各
+到达消费者,未变的树仍命中(e2e 187 的断言不变)。
+
+**只点操作系统的 selector 就是平台(项 7)。** `mcpp emit xpkg` 把 `cfg(linux)`、
+`cfg(os = "windows")`、`cfg(macos)`、`cfg(unix)` 映射到描述符的平台块;其余
+selector 保留告警并说明这一例外。
+
+**一个 app 的产物是共享库时,pack 接受多个 triple(A9)。** 路由按产物形态而非
+target 的 kind:Android 行的 `kind = "app"` 走库路线的多腿暂存,一棵树里
+`lib/<abi>/lib<name>.so` 各一份,一次 dispatch 得到 universal APK。
+
+- 判据:`tests/e2e/661`(六种声明组合,双向)、`662`(先暂存后闭包,dispatched
+  格式看到部署文件)、`663`(Linux 上以 glibc 为 C 库、`llvm.libcxx` 为 C++ 层:
+  报告、`-nostdinc++`、`-nostdlib++`、`ldd` 无 libc++、程序运行;不带包时命令行
+  逐字节不变)、`665`(工具跟随源码,双向,未变命中)、`666`(macOS:Mach-O 程序
+  被暂存并交给 dispatched 格式,`closure = not-walked`)、`641` 第 9 例(`--strict`
+  下 `min_api_level` 静默);`ci-macos-ios` 在模拟器行上用两个包构建并运行,并断言
+  不带包的两个方向;单测 `test_hostflags`、`test_targetside`、`test_tool_store`、
+  `test_pack_binfmt`、`test_target_scalar_keys`、`test_cfg_os_only_platform`。
+- 生态:`mcpplibs/libcxx`(新仓)、`mcpplibs/compiler-rt-builtins#1`、
+  `mcpplibs/mcpp-index#408`,GitHub 与 GitCode 双端资产逐字节核验。
+- 设计记录:`.agents/docs/2026-09-13-630-what-a-framework-still-hits-in-the-engine.md`。
+
 ### `mcpp::action` 的列表不再有长度上限;`${mcpp.self}` 让 action 叫出引擎自己
 
 内置的 `mcpp` 模块此前把一个 action 的 `inputs`、`outputs`、`command` 等六个列表
