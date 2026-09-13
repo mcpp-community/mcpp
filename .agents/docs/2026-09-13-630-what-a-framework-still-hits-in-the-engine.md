@@ -1,16 +1,20 @@
 ---
 subject: triage
-status: active
+status: landed
 ---
 
 # What a framework and its ecosystem library still hit in the engine: the ten items of #630, read against the code
 
-**Status:** design for review. Every statement about the engine was read at
-`b63dc4e5` (mcpp 2026.9.13.1), the version the issue measured against. Nothing
-here is implemented. §0 classifies the ten items; §1 states the rules the
-proposals share; §2 to §9 take the items one at a time with the code, the
-classification, the proposed shape and the criterion in both directions; §10
-is the order and what the ecosystem side deletes after each item lands.
+**Status:** landed on 2026-09-13 as mcpp 2026.9.13.2 (mcpp-community/mcpp#631),
+`llvm.libcxx` 22.1.8.1 (new repository `mcpplibs/libcxx`),
+`llvm.compiler-rt-builtins` 22.1.8.4 (mcpplibs/compiler-rt-builtins#1, #2),
+mcpp-index #408 and #409, and a `mcpp:plugins` change that follows the
+release. Every statement about the engine was read at `b63dc4e5` (mcpp
+2026.9.13.1), the version the issue measured against. §0 classifies the ten
+items; §1 states the rules the changes share; §2 to §9 take the items one at
+a time with the code, the classification, the shape and the criterion in both
+directions; §10 is the order and what the ecosystem side deletes; §12 is the
+task list; §13 records what landed and where each claim was measured.
 
 ## 0. The ledger
 
@@ -839,3 +843,40 @@ release; T13 to T15 are sequential.
 (mcpplibs/mcpp-index#408; a program resolving `llvm.libcxx = "22.1.8.1"`
 from the index built and ran on Linux). T12 is prepared on a plugins
 branch and waits for the release pin. T9, T13, T14 and T15 follow.
+
+## 13. What landed, and where each claim was measured
+
+| item | landed as | measured |
+|---|---|---|
+| 1, 2 | `prepare.cppm`: `ResolvedRecord.sourceRef`/`fromRoot`, the six-row decision at the resolve hit, `dependency/source-override`; `docs/05` en and zh | e2e 661, six cases, on Linux, macOS and Windows shards of #631 |
+| 3a | `pack.cppm`: `stage_declared` before the closure, `finish_without_closure`, `closure_unavailable_outcome`; `stage_tree.cppm`: `ClosureStatus` in the manifest; `pipeline.cppm`: the tree is handed over with `closure = not-walked` | e2e 662 (Linux), e2e 666 (macOS: a Mach-O program reaches a dispatched format with the deployed file and `closure = not-walked`; `--format dir` still refuses), unit tests for the outcome function and the manifest |
+| 3b | `binfmt.cppm`: `macho_needed` (thin and fat, both byte orders), `resolve_macho_names`, the Mach-O row of `is_system_lib`; `needed_names` dispatches to it. The closure step still reports `not-walked` for Mach-O; bundling waits for the `LC_RPATH` measurement | `test_pack_binfmt` over generated fixtures |
+| 4 | `hostflags.cppm`/`flags.cppm`: `cxxFromGraph` and `appleSdkCxxHeaders`; `model.cppm`: `-femulated-tls` only when the C library is the graph's; `prepare.cppm`: both capability spellings, the `-isysroot` on the package std module's command, the `target/cxx-runtime` and `target/compiler-runtime` degradations, `payloadCompilerRuntimeAbsent`; `docs/20` en and zh | e2e 663 on Linux (glibc under `llvm.libcxx`, both directions); `ci-macos-ios` on #631: `aarch64-ios` and `aarch64-ios-sim` build a program that imports `std`, hashes strings, notifies an atomic and takes an availability check, over the two packages, with the report naming `c++-abi libc++ (libcxx@22.1.8.1, graph)` and `compiler-runtime compiler-rt (compiler-rt-builtins@22.1.8.4, graph)`; the first run without `-isysroot` on the std module's command stopped on `mbstate_t`, which is the measurement behind that line |
+| 5 | `toml.cppm`: `min_api_level` in the known list and the message; `test_target_scalar_keys` with the parser's own `body.find` sites as the denominator | e2e 641 case 9 under `--strict` |
+| 6 | `tool_store.cppm`: `tree_stamp`; `prepare.cppm`: `DepCacheIdentity.sourceRef`, `source_keyed_version` for the tool and its upstreams; `docs/30`, the examples/12 README and the CI probe restated | e2e 665 (both directions, a store hit when unchanged, `git` by commit), e2e 187 unchanged, `test_tool_store`; the examples job of #631, whose first run measured that the old probe edits the tree it later reads and had to build its probe compiler from a copy |
+| 7 | `prepare_inputs.cppm`: `cfgpred::os_only_platforms`; `publisher.cppm`: OS-only selectors fill the platform blocks, the warning says so | `test_cfg_os_only_platform`, `test_xpkg_emit` |
+| A9 | `route.cppm`: `accepts_several_targets`; `pipeline.cppm`: `build_extra_android_legs`; `pack.cppm`: `lib/<abi>/` per leg; `triple.cppm`: `android_abi` | e2e 664 on the Android rows (two ABIs in one tree, one triple unchanged, executables refused) |
+| A8 | declined; `docs/31` already states the rule | - |
+| T7, T7b, T11 | `mcpplibs/libcxx` 22.1.8.1; `mcpplibs/compiler-rt-builtins` 22.1.8.4; index entries | GitHub and GitCode archives byte-identical; a Linux program resolving `llvm.libcxx = "22.1.8.1"` from the published index built and printed `1-2-3`; the builtins package's macOS CI reads six symbols out of the simulator archive |
+
+Three things the batch measured that the design did not foresee:
+
+- **The package std module lost the SDK.** The block that adopts a package's
+  std module rebuilds `stdModuleTargetFlags` and replaced the `-isysroot`
+  the toolchain resolution had put there; the precompile stopped on
+  `mbstate_t`. The SDK is now appended in that block (§5.3, the first
+  `ci-macos-ios` run).
+- **An exclusion in a manifest's source list is global.** The builtins
+  package's first Apple revision re-listed five routines the package-wide
+  list excluded, and the archive did not carry them; the exclusions moved
+  into the five M-profile blocks (compiler-rt-builtins#2).
+- **A fixture that stands in for the C++ layer answers for its headers.**
+  e2e 304's stub `mcpp:c++-abi` provider included `<cstdio>` and lost the
+  payload's libc++ under the new rule, on the one host whose toolchain is
+  clang; it now includes the C header. e2e 661 was corrected for the
+  fixture-path hygiene rule, and 666 for `import std` under clang.
+
+The design's two refusals were withdrawn on review before landing: a graph
+that imports `std` on an Apple cross target without a package builds as it
+did yesterday and is reported once (§5.3), and a payload without a builtins
+archive is reported once rather than refused (§5.3, item 7).
