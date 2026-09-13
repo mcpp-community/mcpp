@@ -336,13 +336,15 @@ jobs:
           TOML
           printf 'import std;\nint main() { std::print("x\\n"); }\n' > src/main.cpp
           "$MCPP_DEV" build --target aarch64-ios-sim > mixed.log 2>&1 || { echo "FAIL: import std without llvm.libcxx no longer builds"; cat mixed.log; exit 1; }
-          grep -q 'target/cxx-runtime' mixed.log || { echo "FAIL: no degradation named the mixed libc++"; cat mixed.log; exit 1; }
+          # A degradation renders its `what` text, not its domain, so the
+          # sentence is what a log can be asked for.
+          grep -q "links the SDK's libc++ under the toolchain payload's libc++ headers" mixed.log || { echo "FAIL: no degradation named the mixed libc++"; cat mixed.log; exit 1; }
           grep -q 'llvm.libcxx' mixed.log || { echo "FAIL: the degradation does not name llvm.libcxx"; cat mixed.log; exit 1; }
           printf '#include <cstdio>\n#include <string>\nint main() { std::string s = "1-2-3"; std::puts(s.c_str()); }\n' > src/main.cpp
           rm -rf target
           "$MCPP_DEV" build --target aarch64-ios-sim 2>&1 | tee plain.log
-          grep -q 'target/compiler-runtime' plain.log || { echo "FAIL: no degradation named the missing compiler runtime"; exit 1; }
-          grep -q 'target/cxx-runtime' plain.log && { echo "FAIL: a program without import std was reported as mixing libc++"; exit 1; }
+          grep -q 'carries no compiler runtime for aarch64-ios-sim' plain.log || { echo "FAIL: no degradation named the missing compiler runtime"; exit 1; }
+          grep -q "links the SDK's libc++ under" plain.log && { echo "FAIL: a program without import std was reported as mixing libc++"; exit 1; }
           ninja=$(ls target/aarch64-ios-sim/*/build.ninja | head -1)
           grep -q -- '-isystem[^ ]*iPhoneSimulator[^ ]*/usr/include/c++/v1' "$ninja" || { echo "FAIL: the plain program does not take the SDK's C++ headers"; grep -o -- '-isystem[^ ]*c++/v1' "$ninja" | sort -u; exit 1; }
           grep -q -- '-isystem[^ ]*xim-x-llvm[^ ]*/c++/v1' "$ninja" && { echo "FAIL: the plain program still takes the payload's C++ headers"; exit 1; }
