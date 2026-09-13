@@ -327,12 +327,12 @@ jobs:
         run: |
           set -euo pipefail
           rm -rf /tmp/iosplain && mkdir -p /tmp/iosplain/src && cd /tmp/iosplain
+          # NO FLOOR STATED: the row takes the located SDK's version, read
+          # through xcrun, and the artefact's LC_BUILD_VERSION minos says so.
           cat > mcpp.toml << 'TOML'
           [package]
           name = "iosplain"
           version = "0.1.0"
-          [build]
-          ios_deployment_target = "18.0"
           TOML
           printf 'import std;\nint main() { std::print("x\\n"); }\n' > src/main.cpp
           "$MCPP_DEV" build --target aarch64-ios-sim > mixed.log 2>&1 || { echo "FAIL: import std without llvm.libcxx no longer builds"; cat mixed.log; exit 1; }
@@ -350,6 +350,10 @@ jobs:
           grep -q -- '-isystem[^ ]*xim-x-llvm[^ ]*/c++/v1' "$ninja" && { echo "FAIL: the plain program still takes the payload's C++ headers"; exit 1; }
           art=$(ls target/aarch64-ios-sim/*/bin/iosplain | head -1)
           otool -L "$art" | grep -q '/usr/lib/libc++.1.dylib' || { echo "FAIL: the plain program does not link the SDK's libc++"; otool -L "$art"; exit 1; }
+          sdkver=$(xcrun --sdk iphonesimulator --show-sdk-version)
+          minos=$(otool -l "$art" | awk '/cmd LC_BUILD_VERSION/{f=1} f && $1=="minos"{print $2; exit}')
+          [ "$minos" = "$sdkver" ] || { echo "FAIL: with no floor stated, minos is '$minos' and the located SDK is $sdkver"; exit 1; }
+          echo "ok: an unset floor is the located SDK's version ($sdkver)"
           echo "ok: import std builds with the hazard named; plain C++ takes the SDK's headers and libc++; the builtins degradation is printed"
 
       # THE SUPPORTED PATH, which is what the `verified` tier claims: a runner

@@ -723,9 +723,12 @@ Target aarch64-ios-sim → arm64-apple-ios18.0-simulator
 which are Apple's own spellings. No `-miphoneos-version-min` flag is emitted:
 the triple fully determines the platform and the minimum, and a flag would be a
 second place answering a question the triple already answers. Leaving the key
-unset is legal and means the SDK's own default, which clang supplies for an
-Apple target -- unlike Android, where bionic refuses an unversioned triple
-outright.
+unset is legal and means the located SDK's own version, which mcpp reads from
+`xcrun --sdk <name> --show-sdk-version` and writes into the same slot: clang's
+own default for an unversioned iOS triple is older than any SDK on the machine
+(it refused thread-local storage, which libc++abi uses; measured on Xcode
+16.4), so the triple is versioned before the driver sees it. Android differs
+in the other direction: bionic refuses an unversioned triple outright.
 
 ### The simulator's shape, and its boundary
 

@@ -68,6 +68,15 @@ grep -q -- '-nostdinc++' "$ninja" || fail "the compile lines carry no -nostdinc+
 grep -q -- '-nostdlib++' "$ninja" || fail "the link line carries no -nostdlib++" "$ninja"
 grep -q -- 'xim-x-llvm[^ ]*libc++\(abi\)\?\.a' "$ninja" \
     && fail "the link line still names the payload's libc++ archives" "$ninja"
+# The package's std module was precompiled against the payload's C library,
+# not against whatever the driver found on the machine: the recorded command
+# names the glibc payload. Before this assertion the command carried only
+# `--no-default-config -nostdinc++` and the runner's /usr/include stood in,
+# a host dependency no report showed.
+stdjson=$(grep -l 'llvm.libcxx\|libcxx' "$MCPP_HOME"/build-cache/v1/std/*/std-module.json 2>/dev/null | xargs -r ls -t | head -1)
+[ -n "$stdjson" ] || fail "no std-module.json records the package's module under $MCPP_HOME/build-cache/v1/std"
+grep -q 'xim-x-glibc' "$stdjson" \
+    || fail "the package std module's command does not name the payload's glibc" "$stdjson"
 bin=$(ls target/*/*/bin/app | head -1)
 ldd "$bin" | grep -q 'libc++' && fail "the artefact still links a libc++ shared object" <(ldd "$bin")
 out=$("$bin") || fail "the program exited non-zero"

@@ -32,6 +32,7 @@ import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.modgraph.validate;
 import mcpp.toolchain.clang;
+import mcpp.toolchain.hostflags;   // the compile-token producer the package std module reuses
 import mcpp.toolchain.cppfly;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
@@ -1664,10 +1665,12 @@ std::string min_platform_version(const mcpp::manifest::Manifest& m,
     // one target, which is why they still share this function's single return
     // and the single fingerprint slot behind it.
     //
-    // Empty is a legal answer here and not a refusal, unlike Android's. The
-    // asymmetry is a measured property of the platforms rather than a policy:
-    // Darwin's driver supplies the SDK's own deployment target when the
-    // triple carries none, and bionic rejects the unversioned triple outright.
+    // Empty is a legal answer here and not a refusal, unlike Android's, and
+    // for the iOS rows prepare fills it with the located SDK's version before
+    // this is read: an unversioned `arm64-apple-ios` made clang refuse
+    // thread-local storage (measured, Xcode 16.4), so the driver's own
+    // default is not the SDK's. Bionic rejects the unversioned triple
+    // outright, which is the other half of the asymmetry.
     if (t.is_ios()) return m.buildConfig.iosDeploymentTarget;
     return mcpp::platform::macos::deployment_target(
         m.buildConfig.macosDeploymentTarget);
@@ -2591,6 +2594,20 @@ prepare_build(bool print_fingerprint,
                 ? mcpp::platform::macos::sdk_iphonesim
                 : mcpp::platform::macos::sdk_iphoneos;
             appleSdkLocated = mcpp::platform::macos::sdk_path(which);
+            // AN UNSET FLOOR IS THE LOCATED SDK'S VERSION, READ RATHER THAN
+            // LEFT TO THE DRIVER. `docs/20` promised that an unversioned
+            // triple meant the SDK's own default; measured on macos-15 with
+            // Xcode 16.4, clang given `arm64-apple-ios` with no version
+            // refused thread-local storage for the target, which libc++abi
+            // uses, so the default it chose was older than any SDK on the
+            // machine. The version `xcrun` reports for the located SDK is the
+            // one the SDK was made for, and it enters the manifest here so
+            // that the fingerprint slot, the effective triple and every
+            // report read one value.
+            if (appleSdkLocated && m->buildConfig.iosDeploymentTarget.empty()) {
+                if (auto v = mcpp::platform::macos::sdk_version(which))
+                    m->buildConfig.iosDeploymentTarget = *v;
+            }
             if (!appleSdkLocated) {
                 // A CODE, BECAUSE THE MATRIX COMPARES REASONS AND NOT ONLY
                 // OUTCOMES. A refusal with no code is recorded as `other`,
@@ -10714,16 +10731,6 @@ prepare_build(bool print_fingerprint,
             // DWARF. Same function, not a second copy of the decision.
             for (auto& f : mcpp::toolchain::graph_runtime_compile_flags(*tc))
                 flags += " " + f;
-            // AND THE APPLE CROSS TARGET'S SDK, WHICH THE TOOLCHAIN RESOLUTION
-            // HAD ALREADY PUT ON THIS CHANNEL AND THIS ASSIGNMENT REPLACES.
-            // The module's C library is the SDK's on the iOS rows (the
-            // package supplies the C++ layer alone), and without the sysroot
-            // the precompile stops on `mbstate_t` inside libc++'s own
-            // headers. Measured on macos-15 with `llvm.libcxx` over
-            // `arm64-apple-ios18.0`: twenty "reference to unresolved using
-            // declaration" errors, every one a C library type.
-            if (!tc->appleSdkRoot.empty())
-                flags += " -isysroot " + mcpp::xlings::shq(tc->appleSdkRoot.string());
         }
         // Everything up to here says which machine the module is for; what
         // follows says where its headers are. The codegen step needs only the
@@ -10779,6 +10786,42 @@ prepare_build(bool print_fingerprint,
         // its own translation units see. Measured: without them the module
         // reaches musl's <time.h> and stops on `clockid_t', a name that header
         // declares only under the macro the package carries.
+        // THE PREBUILT C LIBRARY'S OWN TOKENS, FROM THE PRODUCER EVERY UNIT
+        // USES. A package that supplies the C++ layer over a prebuilt C
+        // library (`llvm.libcxx` over glibc, or over an Apple SDK) has no
+        // way to name that library's headers in its manifest, and the
+        // target-side broadcast below carries only graph layers. Without
+        // these the precompile reads whatever the driver finds on its own:
+        // on Linux the runner's `/usr/include` rather than the payload's
+        // glibc, a host dependency no report showed; on macOS nothing, and
+        // the precompile stops on `mbstate_t`; on the iOS rows nothing, and
+        // it stopped on the same name. Measured on 2026-09-14 across the
+        // three. `host_compile_tokens` is what every translation unit of the
+        // build gets, asked with the C++ layer marked as the graph's so that
+        // it withholds the payload's libc++ and emits the rest: the cfg
+        // bypass, the C library's directories, the SDK and the deployment
+        // floor. Same function, not a second copy.
+        //
+        // AND LAST ON THE COMMAND, after the package's own directories:
+        // `-isystem` order is search order, and libc++'s headers must precede
+        // the C library's, which libc++ states in as many words (`<cctype>`
+        // stops the build if it reaches a `<ctype.h>` that is not its own).
+        // Emitted ahead of them, glibc's `<math.h>` shadowed libc++'s wrapper
+        // and `<complex>` failed on `std::__builtin_isnan` (measured).
+        if (tc->cAbiPrebuilt) {
+            mcpp::toolchain::HostFlagOptions hopt;
+            hopt.cfgBypass             = mcpp::toolchain::HostFlagOptions::CfgBypass::Always;
+            hopt.cAbiPrebuilt          = true;
+            hopt.cxxFromGraph          = true;
+            hopt.appleSdkRoot          = tc->appleSdkRoot;
+            hopt.macosDeploymentTarget = mcpp::platform::macos::deployment_target(
+                m->buildConfig.macosDeploymentTarget);
+            for (auto& t : mcpp::toolchain::host_compile_tokens(
+                     *tc, hopt, mcpp::toolchain::no_escape)) {
+                const auto q = " " + mcpp::xlings::shq(t);
+                if (flags.find(q) == std::string::npos) flags += q;
+            }
+        }
         for (auto& f : targetSideUsage.cxxflags)
             flags += " " + mcpp::xlings::shq(f);
         tc->stdModuleFlags = flags;

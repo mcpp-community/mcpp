@@ -649,8 +649,10 @@ Target aarch64-ios-sim → arm64-apple-ios18.0-simulator
 
 这是 Apple 自己的拼法。不发 `-miphoneos-version-min` 标志:三元组已经完全决定了
 平台与最低版本,而一个标志会成为第二个回答三元组已经回答过的问题的地方。不写这个键
-是合法的,含义是 SDK 自己的默认值 —— 对一个 Apple 目标,clang 会供给它 ——
-这与 Android 不同,那里 bionic 会直接拒绝一个不带版本的三元组。
+是合法的,含义是定位到的 SDK 自己的版本:mcpp 用 `xcrun --sdk <name> --show-sdk-version`
+读出它并写进同一个槽。clang 对不带版本的 iOS 三元组给的默认比机器上任何 SDK 都旧
+(它拒绝了 libc++abi 用到的线程局部存储;在 Xcode 16.4 上实测),所以三元组在驱动看到
+之前就带上了版本。Android 的差别在另一个方向:bionic 会直接拒绝一个不带版本的三元组。
 
 ### 模拟器的形状与它的边界
 

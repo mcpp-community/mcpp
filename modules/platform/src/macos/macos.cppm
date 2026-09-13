@@ -74,6 +74,13 @@ bool sdkroot_answers(const std::filesystem::path& candidate,
 // today's behaviour for today's callers.
 std::optional<std::filesystem::path> sdk_path(std::string_view sdk = sdk_macos);
 
+// The version the located SDK was made for, as `xcrun --sdk <name>
+// --show-sdk-version` reports it ("18.5"). Empty off macOS and when xcrun
+// cannot answer. Read for an iOS row whose manifest states no deployment
+// floor, since clang's own default for an unversioned iOS triple is older
+// than any SDK on the machine (it refused thread-local storage; measured).
+std::optional<std::string> sdk_version(std::string_view sdk);
+
 // Built-in default deployment floor (rustc-style: every target has a
 // baseline). 14.0 = the floor of the official LLVM static libc++
 // archives; with the default-static stdlib this makes `mcpp run`
@@ -192,6 +199,17 @@ bool sdkroot_answers(const std::filesystem::path& candidate,
     auto named = sdk_name_of_root(candidate);
     if (!named.empty()) return named == sdk;
     return sdk == sdk_macos;
+}
+
+std::optional<std::string> sdk_version(std::string_view sdk) {
+#if defined(__APPLE__)
+    auto v = run_capture_trimmed(std::format("xcrun --sdk {} --show-sdk-version 2>/dev/null", sdk));
+    if (v.empty()) return std::nullopt;
+    return v;
+#else
+    (void)sdk;
+    return std::nullopt;
+#endif
 }
 
 std::optional<std::filesystem::path> sdk_path(std::string_view sdk) {

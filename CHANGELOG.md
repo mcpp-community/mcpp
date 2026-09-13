@@ -5,6 +5,22 @@
 
 ## [Unreleased]
 
+### 图里的 libc++ 之下,预编译 C 库的头文件也要进 std 模块的命令;iOS 行未写的部署下限取 SDK 的版本
+
+`llvm.libcxx` 的 CI 扩到它声明的每一行后量到两处引擎缺口。包提供的 std 模块在
+预编译时只拿到包自己的 `std-module-flags` 与图里各层的头文件目录,预编译 C 库
+(glibc、Apple SDK)的目录一个都没有:Linux 上它读的是 runner 的 `/usr/include`
+而不是载荷的 glibc(没有任何报告显示这一点),macOS 原生行停在 `mbstate_t`。现在
+这条命令从每个翻译单元用的同一个生产者(`host_compile_tokens`,C++ 层记为图里的)
+取 cfg 旁路、C 库目录、SDK 与部署下限。`docs/20` 曾承诺 iOS 行不写
+`ios_deployment_target` 时取 SDK 的默认;实测 clang 对无版本的 `arm64-apple-ios`
+拒绝线程局部存储(libc++abi 用到它),所以那个默认比机器上任何 SDK 都旧。现在
+定位 SDK 时同时读 `xcrun --sdk <name> --show-sdk-version`,写进同一个槽。
+
+- 判据:`tests/e2e/663` 断言包 std 模块记录的命令点名载荷的 glibc;`ci-macos-ios`
+  的纯 C++ 夹具不写下限,断言产物 `LC_BUILD_VERSION minos` 等于定位到的 SDK 版本;
+  `mcpplibs/libcxx` 的 CI 在 linux、aarch64-macos、aarch64-ios、两个模拟器行上各量一次。
+
 ### 一个框架与它的生态库仍会撞到的引擎缺口:#630 的十项
 
 #630 汇总了 HuxerUI 在六个平台上落地后引擎仍欠的十项。每一项都先在
