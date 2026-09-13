@@ -408,6 +408,17 @@ mcpp pack --target x86_64-windows-gnu     # 在 Linux 宿主上
 `kind = "lib"` / `"shared"` 目标在 macOS 上照常打包 —— 库打包从不运行产物。
 这条限制只针对程序。
 
+依赖闭包现在可以被**读出来**而不必运行了 —— `mcpp.pack.binfmt` 走一遍 Mach-O 的
+load command(`LC_LOAD_DYLIB` 及其 weak/re-export/upward 三个变体给出名字,
+`LC_RPATH` 给出搜索项),读法与它读 PE 导入表一样;并按 `dyld` 的规则解析
+`@executable_path`、`@loader_path`、`@rpath`,全程不加载任何东西。`mcpp pack`
+还没有调用它:把解析到的 dylib 拷到程序旁边、再重写它的 `LC_RPATH`,需要一个
+load command 编辑器(一条 load command 里没有空间可以塞进更长的路径),这个编辑器
+要等在真实的 macOS 构建上量过解析结果之后才设计,而不是先设计。在那之前,Mach-O
+程序仍然是"暂存但没有闭包"——一个被分发出去的格式(`.app`、`.ipa`)已经能拿这样一棵
+"有程序、没闭包"的树做什么,见
+[产出可分发物](30-build-mcpp.md#产出可分发物pack_format-与-stage_dir20269111)。
+
 ## 配置项
 
 打包行为通过 `mcpp.toml` 中的 `[pack]` 节配置,常用字段如下:
@@ -435,10 +446,11 @@ force_bundle = ["libfoo.so"]        # 即使命中 PEP 600 名单也强制打包
 
 ## 待支持
 
-macOS **程序** bundling(Mach-O 依赖闭包,走 `otool -L` / `LC_LOAD_DYLIB`,
-重定位走 `install_name_tool`)仍在规划中;在它落地之前,`mcpp pack <程序>`
-会在该格式上拒绝,而不是产出一个只是看起来像 bundle 的东西。当前 `.zip`
-之外的 Windows DLL 分发,同样在规划中。
+macOS **程序** bundling 仍在规划中。闭包现在已经能读出来了(`mcpp.pack.binfmt`
+走一遍 Mach-O 的 load command,不需要 `otool`),但把解析到的 dylib 拷到程序旁边、
+再重写它的 `LC_RPATH` 还没做;在这落地之前,`mcpp pack <程序>` 仍会在该格式上拒绝,
+而不是产出一个只是看起来像 bundle 的东西。当前 `.zip` 之外的 Windows DLL 分发,
+同样在规划中。
 
 `.deb`、`.rpm`、AppImage、`.msi` 这些分发格式**不在**这份清单上,而这是一个决定而不是
 一处遗漏:它们住在包里,经 `--format <name>` 到达用户,理由见上一节。`[pack]` 的内建

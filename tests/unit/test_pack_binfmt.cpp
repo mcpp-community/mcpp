@@ -28,6 +28,15 @@ void put(std::string& b, std::size_t at, std::uint64_t v, std::size_t width) {
         b[at + i] = static_cast<char>((v >> (8 * i)) & 0xFF);
 }
 
+// Big-endian counterpart, for the Mach-O fixtures below: a FAT header is
+// always big-endian on disk, and one thin fixture is deliberately built with
+// a byte-swapped (CIGAM) magic to exercise that leg of the reader.
+void put_be(std::string& b, std::size_t at, std::uint64_t v, std::size_t width) {
+    if (b.size() < at + width) b.resize(at + width, '\0');
+    for (std::size_t i = 0; i < width; ++i)
+        b[at + width - 1 - i] = static_cast<char>((v >> (8 * i)) & 0xFF);
+}
+
 std::filesystem::path write_temp(std::string_view tag, std::string_view bytes) {
     auto p = std::filesystem::temp_directory_path()
            / std::format("mcpp-binfmt-{}-{}", tag,
@@ -236,6 +245,110 @@ struct TempFile {
     TempFile& operator=(const TempFile&) = delete;
 };
 
+// ─── minimal Mach-O objects (thin and fat) ───────────────────────────────
+//
+// Same reasoning as the ELF and PE fixtures above: a real Mach-O needs a
+// macOS toolchain to produce, which is the dependency this reader exists to
+// remove. Hand-built headers make "found these two names at these load
+// commands, in this order" exact.
+
+// mach/machine.h. Kept local to the fixture builder rather than imported
+// from `mcpp.pack.binfmt`, which does not export them (a fixture is allowed
+// to know the format's own constants; a caller of the module should not have
+// to).
+constexpr std::uint32_t kCpuTypeX86_64 = 0x01000007;
+constexpr std::uint32_t kCpuTypeArm64  = 0x0100000c;
+
+constexpr std::uint32_t kLcLoadDylib      = 0x0000000c;
+constexpr std::uint32_t kLcLoadWeakDylib  = 0x80000018;
+constexpr std::uint32_t kLcRpath          = 0x8000001c;
+
+// One load command to bake into a fixture: `cmd` plus the string it carries.
+// `structSize` is 24 for a dylib_command (name is the first field, after
+// timestamp/current_version/compatibility_version at offsets 12/16/20 sit
+// before the string) and 12 for an rpath_command (path is the only field
+// after cmd/cmdsize).
+struct Lc { std::uint32_t cmd; std::size_t structSize; std::string str; };
+
+constexpr std::size_t kDylibStructSize = 24;
+constexpr std::size_t kRpathStructSize = 12;
+
+// A thin Mach-O object: `is64` selects `mach_header`/`mach_header_64`,
+// `bigEndian` selects the plain or the CIGAM (byte-swapped) magic, and every
+// integer in the header and its load commands is written in the byte order
+// `bigEndian` names — exactly what a real byte-swapped object would contain,
+// and what `macho_thin_needed` has to undo to read it.
+std::string macho_thin(bool is64, bool bigEndian, std::uint32_t cputype,
+                       const std::vector<Lc>& cmds)
+{
+    auto putN = [&](std::string& b, std::size_t at, std::uint64_t v, std::size_t w) {
+        if (bigEndian) put_be(b, at, v, w); else put(b, at, v, w);
+    };
+
+    std::string magic;
+    if (is64) magic = bigEndian ? std::string("\xfe\xed\xfa\xcf", 4)
+                                : std::string("\xcf\xfa\xed\xfe", 4);
+    else      magic = bigEndian ? std::string("\xfe\xed\xfa\xce", 4)
+                                : std::string("\xce\xfa\xed\xfe", 4);
+
+    const std::size_t headerSize = is64 ? 32 : 28;
+    std::string b(headerSize, '\0');
+    std::copy(magic.begin(), magic.end(), b.begin());
+    putN(b, 4,  cputype, 4);       // cputype
+    putN(b, 8,  0, 4);             // cpusubtype
+    putN(b, 12, 2, 4);             // filetype = MH_EXECUTE
+    putN(b, 16, cmds.size(), 4);   // ncmds
+    putN(b, 20, 0, 4);             // sizeofcmds, filled in below
+    putN(b, 24, 0, 4);             // flags
+    if (is64) putN(b, 28, 0, 4);   // reserved
+
+    std::size_t cursor = headerSize;
+    for (auto const& lc : cmds) {
+        const std::size_t rawSize = lc.structSize + lc.str.size() + 1;
+        // Padded to a 4-byte boundary, as a real linker's cmdsize is —
+        // exercising that the reader trusts `cmdsize` to advance, not the
+        // string's own length.
+        const std::size_t cmdsize = (rawSize + 3) & ~std::size_t(3);
+        b.resize(cursor + cmdsize, '\0');
+        putN(b, cursor + 0, lc.cmd, 4);
+        putN(b, cursor + 4, cmdsize, 4);
+        putN(b, cursor + 8, lc.structSize, 4);   // lc_str offset from cmd start
+        std::copy(lc.str.begin(), lc.str.end(), b.begin() + static_cast<long>(cursor + lc.structSize));
+        cursor += cmdsize;
+    }
+    putN(b, 20, cursor - headerSize, 4);   // sizeofcmds, now that it is known
+    return b;
+}
+
+// A fat (universal) Mach-O: FAT_MAGIC plus one 20-byte `fat_arch` entry per
+// slice, ALWAYS big-endian regardless of what the slices themselves are.
+std::string macho_fat(const std::vector<std::pair<std::uint32_t, std::string>>& slices)
+{
+    const std::size_t headerSize = 8 + slices.size() * 20;
+    std::vector<std::size_t> sliceOffsets;
+    std::size_t cursor = headerSize;
+    for (auto const& [cputype, bytes] : slices) {
+        sliceOffsets.push_back(cursor);
+        cursor += bytes.size();
+    }
+
+    std::string b(cursor, '\0');
+    put_be(b, 0, 0xcafebabe, 4);            // FAT_MAGIC
+    put_be(b, 4, slices.size(), 4);         // nfat_arch
+    for (std::size_t i = 0; i < slices.size(); ++i) {
+        const std::size_t at = 8 + i * 20;
+        put_be(b, at + 0,  slices[i].first, 4);        // cputype
+        put_be(b, at + 4,  0, 4);                      // cpusubtype
+        put_be(b, at + 8,  sliceOffsets[i], 4);         // offset
+        put_be(b, at + 12, slices[i].second.size(), 4); // size
+        put_be(b, at + 16, 0, 4);                       // align
+    }
+    for (std::size_t i = 0; i < slices.size(); ++i)
+        std::copy(slices[i].second.begin(), slices[i].second.end(),
+                  b.begin() + static_cast<long>(sliceOffsets[i]));
+    return b;
+}
+
 } // namespace
 
 TEST(PackBinfmt, IdentifiesElfWithoutRunningIt) {
@@ -375,6 +488,176 @@ TEST(PackBinfmt, TheSystemPredicateKnowsWindowsFromTheToolset) {
     EXPECT_TRUE(bf::is_system_lib(bf::Format::Elf, "libstdc++.so.6"));
     EXPECT_TRUE(bf::is_system_lib(bf::Format::Elf, "ld-linux-x86-64.so.2"));
     EXPECT_FALSE(bf::is_system_lib(bf::Format::Elf, "libcurl.so.4"));
+}
+
+// ─── Mach-O: #630 §4 — the reader `needed_names` used to refuse ─────────
+
+TEST(PackBinfmt, IdentifiesThinAndFatMachOWithoutRunningIt) {
+    TempFile thin{"macho-thin",
+        macho_thin(/*is64=*/true, /*bigEndian=*/false, kCpuTypeArm64,
+                  {{kLcLoadDylib, kDylibStructSize, "/usr/lib/libSystem.B.dylib"}})};
+    EXPECT_EQ(bf::identify(thin.path).format, bf::Format::MachO);
+
+    TempFile fat{"macho-fat",
+        macho_fat({{kCpuTypeX86_64, macho_thin(true, false, kCpuTypeX86_64, {})},
+                   {kCpuTypeArm64,  macho_thin(true, false, kCpuTypeArm64, {})}})};
+    EXPECT_EQ(bf::identify(fat.path).format, bf::Format::MachO);
+}
+
+TEST(PackBinfmt, ThinMachOReadsNamesAndRpathsInLoadCommandOrder) {
+    // Two LC_LOAD_DYLIB, one LC_LOAD_WEAK_DYLIB, two LC_RPATH — the record's
+    // §4.3 fixture shape, in one file.
+    TempFile f{"macho-thin-arm64",
+        macho_thin(true, false, kCpuTypeArm64, {
+            {kLcLoadDylib,     kDylibStructSize, "@rpath/libfoo.dylib"},
+            {kLcLoadDylib,     kDylibStructSize, "/usr/lib/libSystem.B.dylib"},
+            {kLcLoadWeakDylib, kDylibStructSize, "@rpath/libbar.dylib"},
+            {kLcRpath,         kRpathStructSize, "@executable_path/../Frameworks"},
+            {kLcRpath,         kRpathStructSize, "@loader_path/../lib"},
+        })};
+
+    auto r = bf::macho_needed(f.path, "aarch64");
+    ASSERT_TRUE(r.has_value()) << r.error();
+    EXPECT_EQ(r->names, (std::vector<std::string>{
+        "@rpath/libfoo.dylib", "/usr/lib/libSystem.B.dylib", "@rpath/libbar.dylib"}));
+    EXPECT_EQ(r->rpaths, (std::vector<std::string>{
+        "@executable_path/../Frameworks", "@loader_path/../lib"}));
+
+    // `needed_names` completes for Mach-O now: names alone, through the same
+    // dispatcher ELF and PE already go through.
+    auto names = bf::needed_names(f.path);
+    ASSERT_TRUE(names.has_value()) << names.error();
+    EXPECT_EQ(*names, r->names);
+}
+
+TEST(PackBinfmt, AWrongArchRequestOnAThinFileStillReadsIt) {
+    // There is only one slice in a thin file; refusing to read it because
+    // the caller asked for a different architecture would be wrong — the
+    // caller already knows what it built, and mcpp never builds a thin
+    // Mach-O whose OWN cputype disagrees with the triple that produced it.
+    TempFile f{"macho-thin-wrongarch",
+        macho_thin(true, false, kCpuTypeArm64,
+                  {{kLcLoadDylib, kDylibStructSize, "@rpath/libfoo.dylib"}})};
+    auto r = bf::macho_needed(f.path, "x86_64");
+    ASSERT_TRUE(r.has_value()) << r.error();
+    EXPECT_EQ(r->names, (std::vector<std::string>{"@rpath/libfoo.dylib"}));
+}
+
+TEST(PackBinfmt, FatMachOReadsOnlyTheRequestedSlice) {
+    auto x64 = macho_thin(true, false, kCpuTypeX86_64,
+        {{kLcLoadDylib, kDylibStructSize, "onlyintel.dylib"}});
+    auto arm = macho_thin(true, false, kCpuTypeArm64,
+        {{kLcLoadDylib, kDylibStructSize, "onlyarm.dylib"}});
+    TempFile fat{"macho-fat-differing",
+        macho_fat({{kCpuTypeX86_64, x64}, {kCpuTypeArm64, arm}})};
+
+    auto arm64Read = bf::macho_needed(fat.path, "aarch64");
+    ASSERT_TRUE(arm64Read.has_value()) << arm64Read.error();
+    EXPECT_EQ(arm64Read->names, (std::vector<std::string>{"onlyarm.dylib"}));
+    // A name present only in the OTHER slice must be absent — the whole
+    // point of selecting by architecture rather than reading both.
+    EXPECT_EQ(std::ranges::find(arm64Read->names, "onlyintel.dylib"),
+              arm64Read->names.end());
+
+    auto x64Read = bf::macho_needed(fat.path, "x86_64");
+    ASSERT_TRUE(x64Read.has_value()) << x64Read.error();
+    EXPECT_EQ(x64Read->names, (std::vector<std::string>{"onlyintel.dylib"}));
+}
+
+TEST(PackBinfmt, ABigEndianMagicThinMachOIsReadCorrectly) {
+    // The CIGAM leg: every integer in the header and its load commands is
+    // written big-endian, which `macho_thin_needed` has to detect from the
+    // magic alone and undo.
+    TempFile f{"macho-thin-be",
+        macho_thin(/*is64=*/true, /*bigEndian=*/true, kCpuTypeArm64,
+                  {{kLcLoadDylib, kDylibStructSize, "/usr/lib/libSystem.B.dylib"},
+                   {kLcRpath,     kRpathStructSize, "@executable_path/../lib"}})};
+    auto r = bf::macho_needed(f.path, {});
+    ASSERT_TRUE(r.has_value()) << r.error();
+    EXPECT_EQ(r->names, (std::vector<std::string>{"/usr/lib/libSystem.B.dylib"}));
+    EXPECT_EQ(r->rpaths, (std::vector<std::string>{"@executable_path/../lib"}));
+}
+
+TEST(PackBinfmt, TheSystemPredicateKnowsMachOsOwnRoots) {
+    EXPECT_TRUE(bf::is_system_lib(bf::Format::MachO, "/usr/lib/libSystem.B.dylib"));
+    EXPECT_TRUE(bf::is_system_lib(bf::Format::MachO,
+        "/System/Library/Frameworks/Foundation.framework/Foundation"));
+    // Not yet resolved to a file -- `@rpath` names a search, not a root.
+    EXPECT_FALSE(bf::is_system_lib(bf::Format::MachO, "@rpath/libc++.1.dylib"));
+}
+
+TEST(PackBinfmt, ResolveMachoNamesTriesRpathsInOrderAndReportsUnresolved) {
+    auto dir = std::filesystem::temp_directory_path()
+             / std::format("mcpp-macho-resolve-{}",
+                           std::chrono::steady_clock::now().time_since_epoch().count());
+    auto bin = dir / "bin";
+    auto first = dir / "first";
+    auto second = dir / "second";
+    std::filesystem::create_directories(bin);
+    std::filesystem::create_directories(first);
+    std::filesystem::create_directories(second);
+    // The SAME leaf name in both candidate directories, so a resolution that
+    // ignores rpath order cannot be told apart from one that respects it --
+    // only the CONTENT of which file won can.
+    std::ofstream{first / "dup.dylib"} << "first";
+    std::ofstream{second / "dup.dylib"} << "second";
+    std::ofstream{first / "onlysecond-decoy.dylib"} << "unused";
+
+    std::vector<std::string> names{
+        "@rpath/dup.dylib",
+        "@rpath/nowhere.dylib",
+    };
+    std::vector<std::string> rpaths{
+        "@executable_path/../first",
+        "@executable_path/../second",
+    };
+
+    auto resolved = bf::resolve_macho_names(names, rpaths, bin, bin);
+    ASSERT_EQ(resolved.size(), 2u);
+
+    EXPECT_EQ(resolved[0].name, "@rpath/dup.dylib");
+    EXPECT_FALSE(resolved[0].unresolved);
+    // `lexically_normal`: the resolver joins `@executable_path/../first` onto
+    // `bin` without collapsing the `..` itself (that is the filesystem's job,
+    // at `exists()`), so the raw and the hand-built path differ textually
+    // while naming the same file.
+    EXPECT_EQ(resolved[0].path.lexically_normal(), (first / "dup.dylib").lexically_normal())
+        << "the FIRST rpath entry must win when both would resolve";
+
+    // Reported, not skipped: the vector still carries an entry for the name
+    // that resolved nowhere.
+    EXPECT_EQ(resolved[1].name, "@rpath/nowhere.dylib");
+    EXPECT_TRUE(resolved[1].unresolved);
+    EXPECT_TRUE(resolved[1].path.empty());
+
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
+
+TEST(PackBinfmt, ResolveMachoNamesSubstitutesExecutableAndLoaderPath) {
+    auto dir = std::filesystem::temp_directory_path()
+             / std::format("mcpp-macho-resolve2-{}",
+                           std::chrono::steady_clock::now().time_since_epoch().count());
+    auto exeDir = dir / "bin";
+    auto loaderDir = dir / "lib" / "plugins";
+    std::filesystem::create_directories(exeDir);
+    std::filesystem::create_directories(loaderDir);
+    std::ofstream{exeDir / "libbeside.dylib"} << "x";
+    std::ofstream{loaderDir / "libplugin.dylib"} << "x";
+
+    std::vector<std::string> names{
+        "@executable_path/libbeside.dylib",
+        "@loader_path/libplugin.dylib",
+    };
+    auto resolved = bf::resolve_macho_names(names, {}, exeDir, loaderDir);
+    ASSERT_EQ(resolved.size(), 2u);
+    EXPECT_EQ(resolved[0].path, exeDir / "libbeside.dylib");
+    EXPECT_FALSE(resolved[0].unresolved);
+    EXPECT_EQ(resolved[1].path, loaderDir / "libplugin.dylib");
+    EXPECT_FALSE(resolved[1].unresolved);
+
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
 }
 
 // ─── the zip writer ──────────────────────────────────────────────────────
