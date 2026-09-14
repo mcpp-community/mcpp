@@ -85,9 +85,11 @@ mathkit-0.1.0-x86_64-linux-gnu-gcc16-libstdcxx16-c++23/
 produce `libfoo.a` and `foo.lib` respectively.
 
 A **shared** package carries the library under *both* of its names: a consumer
-links `lib<target>.so` and the loader then asks for the `SONAME`, and those are
-different filenames. Shipping only the built file links cleanly and then fails
-to start.
+links `lib<target>.so` and the loader then asks for the `SONAME`. A declared
+`soname` makes those two different filenames, and shipping only the built file
+links cleanly and then fails to start. A library that declares no `soname`
+records its file name as its `SONAME` (mcpp 2026.9.14.2+), so its two names are
+one file.
 
 ### The reason neither set may be trimmed
 
