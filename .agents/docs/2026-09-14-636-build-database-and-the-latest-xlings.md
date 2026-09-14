@@ -480,3 +480,49 @@ on another repository, and it is small.
 | consistency | One envelope builder, one selector parser, one unit record, one std command source | none |
 | seamless upgrade | A pin move reaches an existing Windows home only through B's fix; swept stores keep working and are repaired on request | B and M7 ship in one pull request; `self doctor --fix` |
 | test coverage | Each criterion has a leg that fails on the released binary; the schema validator refuses keywords it does not implement, so a schema change cannot pass unvalidated | M2 and M5 |
+
+## 9. Execution record
+
+### 9.1 What landed, by repository
+
+| repository | vehicle | content |
+|---|---|---|
+| openxlings/xlings | #596, squash `3cd8061`, version 2026.9.14.1 | 2.3 to 2.6: the §6 sentence, private extraction, the strip branch removed, `self doctor` finding `SweptPayload` with remove-then-reinstall, e2e for the rule and the doctor |
+| mcpp-community/mcpp | #639, version 2026.9.15.1 | B, C, the pin of §4, and the findings of 9.2 |
+
+### 9.2 Found during implementation
+
+1. **A digest string that GCC accepted and clang refused.** The selector digest
+   joined values with `"\x1f"` followed by a letter (`"\x1ffeatures"`), which
+   is one out-of-range hex escape. GCC truncated it; clang on macOS and Windows
+   refused the file. The separator is now a newline.
+2. **The four S1 SHOULD fields.** lsp-mcpp's validator (`specs/tools/validate.py`,
+   `s1_semantics`) requires `config-files`, `baseline-arguments`,
+   `local-arguments` and `private`, which the first rendering omitted. Each is
+   now derived from the plan (5.4).
+3. **An entry source read by a second parser.** Validating lsp-mcpp's own
+   database found a scanner test planned as importing `also.fake`, `in.raw` and
+   `real`, which are text inside its raw string literal. The entry of a target
+   that no `sources` glob matched was read by line-leading `import`, in two
+   places. Both now call `scan_entry_file` (5.4). A test source placed in
+   `src/` did not reproduce it, which is why the fixtures had never shown it.
+4. **A precondition met by one runner's configuration.** e2e 687 inherited
+   the developer configuration, and the macOS runner's configuration names its
+   `~/.xlings` shim as the xlings binary: nothing was vendored and the test
+   stopped before either criterion. It now plans in a home with its own
+   configuration.
+5. **The swept-payload fingerprint.** The first xlings rendering flagged any
+   top-level file with a download extension or a `.meta` name, so a package
+   shipping `setup.exe` would be reinstalled on every `--fix`. The fingerprint
+   is now a zero-length `<name>.lock` whose `<name>` is a sibling, has a download
+   extension, or has a `<name>.meta` sibling.
+
+### 9.3 Measurements
+
+| run | reading |
+|---|---|
+| lsp-mcpp `s1_semantics` and `mcpp_contract`, schema, argument decomposition | 0 failures on a GCC 16 project, an LLVM 22 project, and the lsp-mcpp repository (11 sets, `std` from openkal-llvm-runtime 0.9.6) |
+| lsp-mcpp conformance runner with this mcpp in place of `lsp-mcpp-mock-mcpp` | `mcpp-emit` 12/12, `mcpp-emit-package-std` 13/13; a watch scenario on the real manifest 10/10 (an edit reloads; a broken manifest leaves the model stale with `MCPP_BUILD_DATABASE_PLAN_FAILED`; the repair makes it fresh) |
+| `mcpp emit build-database` on the lsp-mcpp repository | 0.84 s; `git status` unchanged |
+| e2e 687 on windows-2022 (39053b9a) | A and B pass: the second command prints no path error, and an older vendored xlings is replaced |
+| e2e subset touching `mcpp test` and entry mains, Linux | 60 pass, 6 skipped for capability, 0 fail |
