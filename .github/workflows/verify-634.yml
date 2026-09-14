@@ -4,10 +4,11 @@
 # platform does as READING lines in its log and step summary, and fails only
 # when a probe cannot run at all.
 #
-# Run 3 keeps only the two questions runs 1 and 2 left open: the Frameworks
-# bundle with a literal rpath (the link-time one is anchored by the engine),
-# and the simulator's exit status. The other jobs' readings are final and
-# recorded in the design record; their scripts stay on the branch.
+# Run 4 keeps only B1's last question: why an rpath edit of an mcpp-built
+# program fails, and whether a Frameworks bundle loads through a link-time
+# rpath or through an edit of a program linked with header padding. The other
+# jobs' readings are final and recorded in the design record; their scripts
+# stay on the branch.
 name: verify-634 (temporary measurements)
 
 on:
@@ -22,8 +23,8 @@ env:
   XLINGS_NON_INTERACTIVE: "1"
 
 jobs:
-  macos-bundle:
-    name: macos-15 bundle (M1 B1 B2)
+  macos-bundle-rpath:
+    name: macos-15 bundle rpath (B1 run 4)
     runs-on: macos-15
     timeout-minutes: 60
     defaults:
@@ -36,24 +37,6 @@ jobs:
       - name: Fetch the released mcpp
         timeout-minutes: 10
         run: bash .github/verify-634/setup-mcpp.sh
-      - name: M1 B1 B2 - Mach-O staged closure, Frameworks bundle, DMG
+      - name: B1 - link-time rpath, header padding, rpath edit
         timeout-minutes: 40
-        run: bash .github/verify-634/macos-closure-bundle.sh 2>&1
-
-  macos-sim-status:
-    name: macos-15 simulator status (M5 run 3)
-    runs-on: macos-15
-    timeout-minutes: 60
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - name: Pin MCPP_HOME
-        run: echo "MCPP_HOME=$HOME/.mcpp" >> "$GITHUB_ENV"
-      - name: Fetch the released mcpp
-        timeout-minutes: 10
-        run: bash .github/verify-634/setup-mcpp.sh
-      - name: M5 - fresh-install launches, spawn of the installed executable, a crash
-        timeout-minutes: 40
-        run: bash .github/verify-634/macos-simctl-status.sh 2>&1
+        run: bash .github/verify-634/macos-bundle-rpath.sh 2>&1
