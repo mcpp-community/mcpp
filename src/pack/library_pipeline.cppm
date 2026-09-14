@@ -137,6 +137,7 @@ export int build_and_pack_library(const std::string& targetName,
         // decides when the project states one — see resolve_profile_name.
         ov.profile          = opts.profile;
         ov.profile_fallback = "release";
+        ov.features         = opts.features;
         auto ctx = mcpp::build::prepare_build(false, /*includeDevDeps=*/false, {}, ov);
         if (!ctx) { mcpp::ui::error(ctx.error()); return 2; }
 

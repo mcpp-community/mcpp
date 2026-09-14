@@ -112,7 +112,8 @@ DriverLibraryDirs driver_library_dirs(const mcpp::toolchain::Toolchain& tc)
 export std::optional<std::vector<SharedLeg>>
 build_extra_android_legs(const std::string& targetName,
                          std::span<const std::string> triples,
-                         const std::string& profile)
+                         const std::string& profile,
+                         const std::string& features)
 {
     std::vector<SharedLeg> out;
     for (auto const& triple : triples) {
@@ -123,6 +124,7 @@ build_extra_android_legs(const std::string& targetName,
         // below).
         ov.profile          = profile;
         ov.profile_fallback = "release";
+        ov.features         = features;
         auto ctx = mcpp::build::prepare_build(false, false, {}, ov);
         if (!ctx) { mcpp::ui::error(ctx.error()); return std::nullopt; }
 
@@ -222,6 +224,9 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
     // `[build] default-profile` still decides when the project states one.
     ov.profile          = opts.profile;
     ov.profile_fallback = "release";
+    // The same features on this pass and on the dispatched format's second
+    // pass below, which reuses `ov`.
+    ov.features         = opts.features;
 
     // QUIET FOR A DISPATCHED FORMAT, AND ONLY UNTIL THE VALUE IS VALIDATED.
     //

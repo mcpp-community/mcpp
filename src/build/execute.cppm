@@ -1981,6 +1981,10 @@ export int build_run_target(const std::optional<std::string>& targetName,
         popts.profile      = profile;
         popts.format       = mcpp::pack::Format::Dispatched;
         popts.formatName   = format;
+        // The pack passes build with the features this run was asked for; the
+        // second prepare below already did, so without this the artifact and
+        // the run disagreed about the graph (#641).
+        popts.features     = features;
         auto outcome = mcpp::pack::build_and_pack(
             std::move(popts), /*modeFromUser=*/false, targetName.value_or(std::string{}));
         if (outcome.rc != 0) return outcome.rc;

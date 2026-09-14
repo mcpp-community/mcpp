@@ -161,6 +161,11 @@ struct Options {
     // `--debug-symbols <dir>`: where the separated `*.debug` files go. Empty =
     // do not separate.
     std::filesystem::path           debugSymbols;
+    // `--features <LIST>`: root-package features for every build pass the
+    // pack performs -- each leg, and both passes of a dispatched format. It is
+    // the value `mcpp build --features` takes, carried as that string so the
+    // parser that reads it stays the build's own (#641).
+    std::string                     features;
 };
 
 // The strip decision for this run: `--strip`/`--no-strip` > `[pack] strip` >

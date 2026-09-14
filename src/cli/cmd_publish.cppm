@@ -79,6 +79,7 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto v = parsed.value("profile")) opts.profile = *v;
     if (parsed.is_flag_set("no-strip")) opts.strip = false;
     if (auto v = parsed.value("debug-symbols")) opts.debugSymbols = *v;
+    if (auto v = parsed.value("features")) opts.features = *v;
 
     // `--target` is repeatable: one leg per triple, which is how a library
     // package ships for several targets at once. The application path takes
@@ -146,7 +147,7 @@ export int cmd_pack(const mcpplibs::cmdline::ParsedArgs& parsed) {
         auto extraLegs = mcpp::pack::build_extra_android_legs(
             route->targetName,
             std::span<const std::string>(triples).first(triples.size() - 1),
-            opts.profile);
+            opts.profile, opts.features);
         if (!extraLegs) return 1;   // build_extra_android_legs already printed why
         // #622 A10: `build_and_pack` now reports the artifact(s) it packed, for
         // `mcpp run --format` to take as its operand -- `mcpp pack` itself only

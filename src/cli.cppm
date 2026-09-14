@@ -621,6 +621,8 @@ int run(int argc, char** argv) {
                 .help("Build profile (default: [build] default-profile, else release)"))
             .option(cl::Option("toolchain").takes_value().value_name("SPEC")
                 .help("Build with this toolchain for one invocation, e.g. llvm@22.1.8"))
+            .option(cl::Option("features").takes_value().value_name("LIST")
+                .help("Activate root-package features for every build pass of the pack (comma-separated)"))
             .option(cl::Option("no-strip")
                 .help("Ship the artifacts as built (default: strip debug info)"))
             .option(cl::Option("debug-symbols").takes_value().value_name("DIR")
