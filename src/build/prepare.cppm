@@ -1747,6 +1747,10 @@ prepare_build(bool print_fingerprint,
     // developer directory can be switched between them -- and this repository
     // has a standing rule that a value crossing two sites is resolved at one.
     std::optional<std::filesystem::path> appleSdkLocated;
+    // The iOS floor was not written and was taken from the located SDK. The
+    // refusal of a dependency's platform floor names where the value came
+    // from, and after the fill below the manifest no longer says.
+    bool iosFloorFromSdk = false;
     // Non-empty when a target row's convention replaced a toolchain the user
     // had set with `mcpp toolchain default`. Reported on the status line,
     // because a substitution nobody is told about is a rule that can only be
@@ -2654,8 +2658,10 @@ prepare_build(bool print_fingerprint,
             // that the fingerprint slot, the effective triple and every
             // report read one value.
             if (appleSdkLocated && m->buildConfig.iosDeploymentTarget.empty()) {
-                if (auto v = mcpp::platform::macos::sdk_version(which))
+                if (auto v = mcpp::platform::macos::sdk_version(which)) {
                     m->buildConfig.iosDeploymentTarget = *v;
+                    iosFloorFromSdk = true;
+                }
             }
             if (!appleSdkLocated) {
                 // A CODE, BECAUSE THE MATRIX COMPARES REASONS AND NOT ONLY
@@ -7997,6 +8003,48 @@ prepare_build(bool print_fingerprint,
     std::map<std::string, std::vector<std::string>> deviceSourcesByPackage;
     auto checkVersionFloors = [&]() -> std::optional<std::string> {
         std::map<std::string, std::pair<std::string, std::string>> facts;  // name -> (version, who)
+        // #634, A9: THE TARGET'S PLATFORM FLOOR IS A FACT THE ENGINE STATES,
+        // in the platform's own words. A dependency that needs Android API 23
+        // writes `android.api-level >= 23` as an ordinary `version-floor`
+        // requirement and is refused before compiling when the application
+        // targets less. The floor is not raised for it: the value is already
+        // inside the compiler's `--target` by now, and which devices an
+        // application installs on is the application's decision. A row that
+        // states no such fact (a desktop Linux build) leaves the requirement
+        // silent, so a requirement needs no selector. The engine's value is
+        // entered first, so a package stating the same name cannot replace it.
+        std::map<std::string, std::string> platformFactOrigin;   // name -> the key that sets it
+        if (tc) {
+            if (auto t = mcpp::toolchain::triple::parse(tc->targetTriple);
+                t && (t->is_android() || t->is_apple())) {
+                const auto value = min_platform_version(*m, *t, tc->binaryPath);
+                std::string name, origin;
+                if (t->is_android()) {
+                    auto row = m->targetOverrides.find(t->str());
+                    name = "android.api-level";
+                    origin = row != m->targetOverrides.end() && row->second.minApiLevel > 0
+                        ? std::format("[target.{}] min_api_level", t->str())
+                        : std::format("the toolchain's lowest supported level, because "
+                                      "[target.{}] min_api_level is not set", t->str());
+                } else if (t->is_ios()) {
+                    name = "ios.deployment-target";
+                    origin = iosFloorFromSdk
+                        ? std::string("the located SDK's version, because [build] "
+                                      "ios_deployment_target is not set")
+                        : std::string("[build] ios_deployment_target");
+                } else {
+                    name = "macos.deployment-target";
+                    origin = m->buildConfig.macosDeploymentTarget.empty()
+                        ? std::string("mcpp's default for macOS, because [build] "
+                                      "macos_deployment_target is not set")
+                        : std::string("[build] macos_deployment_target");
+                }
+                if (!value.empty()) {
+                    facts.emplace(name, std::pair{value, std::string{}});
+                    platformFactOrigin.emplace(name, std::move(origin));
+                }
+            }
+        }
         for (std::size_t pi = 0; pi < packages.size(); ++pi) {
             // The root's claims live in *m: its build program mutates
             // *m, and packages[0] is a snapshot taken before it ran.
@@ -8028,15 +8076,26 @@ prepare_build(bool print_fingerprint,
                                                         floor.version);
                 if (!met || *met) continue;
                 refusal::record(refusal::Code::VersionFloorUnmet);
+                if (auto origin = platformFactOrigin.find(floor.name);
+                    origin != platformFactOrigin.end())
+                    return std::format(
+                        "`{}` requires {} >= {}, and this build targets {}.\n"
+                        "         set by: {}\n"
+                        "       This is checked before anything is compiled "
+                        "because the failure it prevents is not:\n"
+                        "       a library that needs a newer platform links "
+                        "cleanly and fails on the device that lacks it.",
+                        who, floor.name, floor.version, it->second.first,
+                        origin->second);
                 return std::format(
-                    "`{}` requires {} >= {}, and this machine has {}.\n"
+                    "`{}` requires {} >= {}, and {} is stated as {}.\n"
                     "         stated by: {}\n"
                     "       This is checked before anything is compiled "
                     "because the failure it prevents is not:\n"
                     "       a build against too-new a runtime links "
                     "cleanly and fails at first use.",
-                    who, floor.name, floor.version, it->second.first,
-                    it->second.second);
+                    who, floor.name, floor.version, floor.name,
+                    it->second.first, it->second.second);
             }
         }
         return std::nullopt;
