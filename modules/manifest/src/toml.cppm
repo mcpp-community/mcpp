@@ -3789,13 +3789,22 @@ std::expected<Manifest, ManifestError> load(const std::filesystem::path& path,
     // library target exists only after the inference above, so the name is
     // checked here rather than where the row is parsed.
     for (auto const& cc : m->conditionalConfigs) {
-        for (auto const& [name, row] : cc.targetKinds) {
-            auto target = std::ranges::find(m->targets, name, &Target::name);
-            if (target == m->targets.end()) {
+        // Plain loops, no structured binding and no projection: clang 20.1.7 on
+        // the MSVC ABI crashed generating this function (0xC0000005 in LLVM IR
+        // generation) with `for (auto const& [name, row] : ...)` and a
+        // member-pointer projection, the class the 2026-09-12 directives.cppm
+        // crash recorded without isolating the trigger.
+        for (auto it = cc.targetKinds.begin(); it != cc.targetKinds.end(); ++it) {
+            const std::string& name = it->first;
+            const RowTargetKind& row = it->second;
+            const Target* target = nullptr;
+            for (std::size_t i = 0; i < m->targets.size(); ++i)
+                if (m->targets[i].name == name) { target = &m->targets[i]; break; }
+            if (target == nullptr) {
                 std::string names;
-                for (auto const& t : m->targets) {
+                for (std::size_t i = 0; i < m->targets.size(); ++i) {
                     if (!names.empty()) names += ", ";
-                    names += t.name;
+                    names += m->targets[i].name;
                 }
                 return std::unexpected(ManifestError{std::format(
                     "{} names no target of this package (its targets: {})",
