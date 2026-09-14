@@ -403,9 +403,11 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
             if (std::filesystem::exists(sp.root / "build.mcpp", ec)) ranBuildPrograms = true;
         }
     }
+    // One line per selector: a value never spans lines, and a `\x1f` separator
+    // before `f`, `c` or `a` reads as a longer hex escape (clang refuses it).
     const auto selector = std::format(
-        "spec={}\x1ftarget={}\x1ftoolchain={}\x1fprofile={}\x1ffeatures={}\x1f"
-        "cap={}\x1faccel={}\x1fstatic={}\x1fpackage={}\x1fworkspace={}",
+        "spec={}\ntarget={}\ntoolchain={}\nprofile={}\nfeatures={}\n"
+        "cap={}\naccel={}\nstatic={}\npackage={}\nworkspace={}",
         spec, ov.target_triple, mcpp::platform::env::get("MCPP_TOOLCHAIN").value_or(""),
         ov.profile, ov.features, ov.capabilities, ov.accel, ov.force_static,
         ov.package_filter, parsed.is_flag_set("workspace"));
