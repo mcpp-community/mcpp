@@ -582,6 +582,83 @@ compute_subos_env(const mcpp::build::BuildPlan& plan) {
         });
 }
 
+// THE FILES A RUNNER HAS TO CARRY WITH THE ARTIFACT (#634 A6).
+//
+// A runner receives the artifact's path and nothing else, and for a runner
+// that executes the artifact on this machine that is enough: the files beside
+// it are beside it. A runner that moves the artifact -- `adb-run` pushes the
+// program to a device -- moved only the program, and a test reading its
+// deployed data then failed on the emulator with `open failed:
+// /data/local/tmp/data/data.txt` while passing on the host and on the iOS
+// simulator, which reads the host's filesystem.
+//
+// THE LIST IS WHAT THE ARTIFACT LOADS OR READS FROM ITS OWN DIRECTORY, AS THE
+// BUILD LAID IT OUT: every `[runtime] deploy` and `deploy_files` entry, and
+// every shared library the plan links, which consumers find beside them
+// through `$ORIGIN` or `@loader_path`. A test of a package whose dependency is
+// shared on a row (#634 A1) needs that library on the device as much as its
+// data. The staged copy in the output tree is named, not the declared source:
+// it is the file the artifact reads when it runs here.
+//
+// One line per file: the destination relative to the artifact's directory,
+// with `/` separators, a TAB, and the absolute path of the file. A TAB,
+// because a Windows user directory commonly contains a space. A destination
+// begins with `../` when the artifact sits below the tree's root, as a test
+// discovered in a subdirectory does. The file exists for every runner
+// invocation and is empty when there is nothing to carry, so a runner can
+// tell an engine that states "nothing" from one that predates the variable.
+constexpr std::string_view kRuntimeFilesEnv = "MCPP_RUNTIME_FILES";
+
+std::vector<std::pair<std::string, std::filesystem::path>>
+runtime_files_for(const mcpp::build::BuildContext& ctx,
+                  const std::filesystem::path& artifact) {
+    std::vector<std::pair<std::string, std::filesystem::path>> out;
+    const auto artifactDir = artifact.parent_path().lexically_normal();
+    const auto artifactNorm = artifact.lexically_normal();
+    std::set<std::string> seen;
+    auto add = [&](const std::filesystem::path& relToOutputDir) {
+        const auto staged = (ctx.outputDir / relToOutputDir).lexically_normal();
+        if (staged == artifactNorm) return;
+        auto dest = staged.lexically_relative(artifactDir).generic_string();
+        if (dest.empty() || !seen.insert(dest).second) return;
+        out.emplace_back(std::move(dest), staged);
+    };
+    for (auto const& d : ctx.plan.runtimeDeployFiles) add(d.dest);
+    for (auto const& lu : ctx.plan.linkUnits) {
+        if (lu.kind != mcpp::build::LinkUnit::SharedLibrary) continue;
+        add(lu.output);
+        for (auto const& alias : lu.runtimeAliases) add(alias);
+    }
+    return out;
+}
+
+// Writes the list for `artifact` under the output tree and returns its path.
+// `carried` is empty for a distributable, which holds its own files.
+std::expected<std::filesystem::path, std::string>
+write_runtime_files_list(
+    const mcpp::build::BuildContext& ctx,
+    const std::filesystem::path& artifact,
+    const std::vector<std::pair<std::string, std::filesystem::path>>& carried) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    auto rel = artifact.lexically_normal().lexically_relative(
+        ctx.outputDir.lexically_normal());
+    if (rel.empty() || *rel.begin() == "..")
+        rel = fs::path("distributable") / artifact.filename();
+    auto listPath = ctx.outputDir / ".mcpp-runtime-files" / rel;
+    listPath += ".tsv";
+    fs::create_directories(listPath.parent_path(), ec);
+    std::ofstream os(listPath, std::ios::binary | std::ios::trunc);
+    for (auto const& [dest, source] : carried)
+        os << dest << '\t' << source.string() << '\n';
+    os.flush();
+    if (!os)
+        return std::unexpected(std::format(
+            "could not write the runtime-files list '{}' a runner receives as {}",
+            listPath.string(), kRuntimeFilesEnv));
+    return listPath;
+}
+
 // Compile a prepared BuildContext. Shared between `mcpp build` and `mcpp run`
 // so the latter doesn't call prepare_build twice (and re-print the toolchain
 // resolution banner).
@@ -1603,7 +1680,13 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
                             const std::filesystem::path& exe,
                             std::span<const std::string> passthrough,
                             bool no_runner,
-                            std::string_view runner_name) {
+                            std::string_view runner_name,
+                            // Non-empty when `exe` is the distributable a
+                            // `--format` pack reported; `runner_from_format`
+                            // says the named runner was chosen by that name
+                            // rather than typed with `--runner`.
+                            std::string_view format_name = {},
+                            bool runner_from_format = false) {
     auto pathCtx = mcpp::fetcher::make_path_ctx(/*cfg=*/nullptr, ctx.projectRoot);
     std::vector<std::string> argv;
     // An artifact this machine cannot execute — a freestanding image by
@@ -1669,6 +1752,29 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
             mcpp::freestanding::no_runner_message(choice.tripleKey));
         return 2;
     }
+    // A DISTRIBUTABLE THAT IS A DIRECTORY, AND NOTHING TO RUN IT (#634 B3).
+    //
+    // An application bundle is a directory. Handed to the kernel, it came back
+    // as `could not be started: Permission denied (error 13)` with status 126
+    // (measured on macos-15), a sentence about permissions for a request that
+    // lacked a runner. The status stays 126 -- found, and not executable -- and
+    // the sentence names the runner that would reach it, before any spawn.
+    std::error_code dirEc;
+    if (!format_name.empty() && choice.tmpl.empty()
+        && std::filesystem::is_directory(exe, dirEc)) {
+        std::println(stderr,
+            "error: --format {} produced a directory, '{}', and no runner reaches it.\n"
+            "       A directory is not executed directly: a runner named '{}' runs\n"
+            "       it. A package supplies one with `mcpp::runner(\"{}\", …)`, or the\n"
+            "       project declares it:\n"
+            "\n"
+            "           [target.{}.runners]\n"
+            "           {} = [\"<tool>\", \"{{}}\"]",
+            format_name, mcpp::ui::shorten_path(exe, pathCtx),
+            format_name, format_name, choice.tripleKey, format_name);
+        return 126;
+    }
+    std::optional<std::filesystem::path> runtimeFilesList;
     if (!choice.tmpl.empty()) {
         // The program is located by mcpp, not by posix_spawnp: a declared
         // payload's bin/ and then its root, then PATH — see runner_lookup for the shim
@@ -1690,12 +1796,25 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         tmpl.front() = found.program->string();
         argv = mcpp::freestanding::expand(tmpl, exe);
         for (auto& a : passthrough) argv.push_back(a);
+        // What the runner has to carry with the artifact. A distributable
+        // holds its own files, so its list is empty and still exists.
+        auto listed = write_runtime_files_list(
+            ctx, exe,
+            format_name.empty() ? runtime_files_for(ctx, exe)
+                                : std::vector<std::pair<std::string, std::filesystem::path>>{});
+        if (!listed) {
+            std::println(stderr, "error: {}", listed.error());
+            return 1;
+        }
+        runtimeFilesList = *listed;
         // The status word is the NAME the package chose, capitalised. The
         // engine has no table of verbs to look one up in, which is the point:
         // `Serve`, `Submit` and `Flash` all read correctly and none is known
-        // here.
-        std::string verb = isRunSlot ? std::string("Running") : slotName;
-        if (!isRunSlot && !verb.empty())
+        // here. A runner the format's own name selected is still `mcpp run`
+        // running something, and says so.
+        std::string verb = (isRunSlot || runner_from_format) ? std::string("Running")
+                                                             : slotName;
+        if (!isRunSlot && !runner_from_format && !verb.empty())
             verb[0] = static_cast<char>(std::toupper(verb[0]));
         mcpp::ui::status(verb, std::format("`{} … {}`", choice.tmpl.front(),
                                            mcpp::ui::shorten_path(exe, pathCtx)));
@@ -1714,6 +1833,8 @@ int run_artifact_via_runner(mcpp::build::BuildContext& ctx,
         childEnv.emplace_back(runEnvKey, runEnvValue);
     // ...plus whatever the subos declares for the programs it hosts (#352).
     for (auto& kv : compute_subos_env(ctx.plan)) childEnv.push_back(std::move(kv));
+    if (runtimeFilesList)
+        childEnv.emplace_back(std::string(kRuntimeFilesEnv), runtimeFilesList->string());
 
     // Direct exec (no /bin/sh): the loader env reaches ONLY the target child,
     // never mcpp or a host shell. Fixes the bundled-glibc-vs-host-libtinfo
@@ -1901,8 +2022,25 @@ export int build_run_target(const std::optional<std::string>& targetName,
                 "exactly one to hand to the runner", format, outcome.artifacts.size(), names);
             return 1;
         }
+        // THE NAMED RUNNER THE FORMAT'S OWN NAME SELECTS (#634 B3).
+        //
+        // A distributable is reached the way its format is reached, and the
+        // name a package gives that way is the format's own: `dist-apple`
+        // supplies `mcpp::runner("app", …)` for `--format app`. Without this,
+        // `mcpp run --format app` took the DEFAULT runner -- the one a plain
+        // `mcpp run` hands the link output -- and a project had to repeat the
+        // format as `--runner app`. A typed `--runner` still wins, and a
+        // format no runner is named after keeps the default runner.
+        std::string effectiveRunner{runner_name};
+        bool runnerFromFormat = false;
+        if (effectiveRunner.empty()
+            && !choose_device_action(*ctx2, format).tmpl.empty()) {
+            effectiveRunner = format;
+            runnerFromFormat = true;
+        }
         return run_artifact_via_runner(*ctx2, outcome.artifacts.front(),
-                                       passthrough, no_runner, runner_name);
+                                       passthrough, no_runner, effectiveRunner,
+                                       format, runnerFromFormat);
     }
 
     // Build first. Single prepare_build → drive build → reuse ctx to locate
@@ -2103,7 +2241,16 @@ export int run_tests(std::span<const std::string> passthrough,
     auto testRoot = discovered->packageRoot;
     auto testTargets = std::move(discovered->targets);
     if (testTargets.empty()) {
-        std::println("no tests found in tests/");
+        // Names where it looked when the manifest chose the place, so that a
+        // glob that matches nothing is not read as a project without tests.
+        if (discovered->discoverDeclared) {
+            std::string globs;
+            for (auto const& g : discovered->discover)
+                globs += std::format("{}\"{}\"", globs.empty() ? "" : ", ", g);
+            std::println("no tests found ([test] discover = [{}])", globs);
+        } else {
+            std::println("no tests found in tests/");
+        }
         return 0;
     }
     // --list: enumerate (filtered) tests and stop — no toolchain resolution,
@@ -2669,6 +2816,16 @@ export int run_tests(std::span<const std::string> passthrough,
         // A GL test that cannot find a driver fails the same way a GL program
         // does, so it must be told the same things.
         for (auto& kv : subosEnv) childEnv.push_back(kv);
+        // ...and, through a runner, the files the test carries with it, as
+        // `mcpp run` hands them over (see `runtime_files_for`). Written here,
+        // in the single-threaded pass, one list per test program.
+        if (!runnerTmpl.empty()) {
+            if (auto listed = write_runtime_files_list(*ctx, exe,
+                                                       runtime_files_for(*ctx, exe)))
+                childEnv.emplace_back(std::string(kRuntimeFilesEnv), listed->string());
+            else if (invocationNotRunReason.empty())
+                invocationNotRunReason = listed.error();
+        }
 
         // Prepend the sandbox's subos/default/bin to the CHILD PATH so test
         // binaries that shell out to bootstrapped tools (patchelf, ninja) find

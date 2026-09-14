@@ -2362,6 +2362,44 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         }
     }
 
+    // [test] — which files are test programs (#634 A5).
+    //
+    // One key. A suite compiled from several sources is a package of its own,
+    // as any program that must diverge from its siblings is (see `Target`);
+    // what a project could not say before was only WHERE its test programs
+    // are, which mattered once `tests/` belonged to another build system.
+    // A wrong type is an error, because the author's value is in front of
+    // them; an unknown key is a warning, so a manifest written for a later
+    // mcpp still loads on this one.
+    if (auto* testValue = doc->get("test"); testValue && !testValue->is_table()) {
+        return std::unexpected(error(origin,
+            "[test] must be a table, e.g. [test] discover = [\"tests/**/*.cpp\"]"));
+    }
+    if (auto* tt = doc->get_table("test")) {
+        for (auto& [key, value] : *tt) {
+            if (key != "discover") {
+                m.schemaWarnings.push_back(std::format(
+                    "[test] has unsupported key '{}' (ignored). Supported keys: "
+                    "discover.", key));
+                continue;
+            }
+            bool ok = value.is_array();
+            if (ok) {
+                for (auto& e : value.as_array())
+                    if (!e.is_string() || e.as_string().empty()) { ok = false; break; }
+            }
+            if (!ok) {
+                return std::unexpected(error(origin,
+                    "[test] discover must be an array of non-empty glob strings, "
+                    "e.g. [\"tests/**/*.cpp\", \"!tests/fixtures/**\"]; an empty "
+                    "array discovers no test"));
+            }
+            m.testDiscover.clear();
+            for (auto& e : value.as_array()) m.testDiscover.push_back(e.as_string());
+            m.testDiscoverDeclared = true;
+        }
+    }
+
     // [hooks] — project build lifecycle commands (#496). Parsed HERE rather
     // than by the module that runs them, for the reason Appendix A of
     // docs/04-mcpp-toml.md states: mcpp.toml has one grammar and one parser.

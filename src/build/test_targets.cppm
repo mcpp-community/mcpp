@@ -12,7 +12,14 @@ export namespace mcpp::build {
 struct TestTargetSet {
     std::filesystem::path packageRoot;
     std::vector<mcpp::manifest::Target> targets;
+    // The globs discovery used, and whether the manifest wrote them. Carried
+    // so that "no tests found" can name where it looked.
+    std::vector<std::string> discover;
+    bool discoverDeclared = false;
 };
+
+// `[test] discover` when the manifest says nothing.
+inline constexpr std::string_view kDefaultTestDiscover = "tests/**/*.cpp";
 
 // 损坏 manifest 时仅提供 best-effort 文件清单；严格调用方仍须走 prepare/validate。
 std::expected<TestTargetSet, std::string>
@@ -35,7 +42,40 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
     std::vector<mcpp::manifest::GlobFlags> globFlags;
     if (packageManifest) globFlags = packageManifest->buildConfig.globFlags;
 
-    const auto testFiles = mcpp::modgraph::expand_glob(packageRoot, "tests/**/*.cpp");
+    TestTargetSet result{packageRoot, {}, {}, false};
+    if (packageManifest && packageManifest->testDiscoverDeclared) {
+        result.discover = packageManifest->testDiscover;
+        result.discoverDeclared = true;
+    } else {
+        result.discover = { std::string(kDefaultTestDiscover) };
+    }
+
+    // `[test] discover` IN THE VOCABULARY OF `[build] sources` (#634 A5):
+    // every positive glob is expanded, then every `!` glob, and an excluded
+    // file is excluded whichever positive glob found it. A file keeps the
+    // FIRST positive glob that found it, because that glob's fixed prefix is
+    // what its name is relative to -- which is how the default,
+    // `tests/**/*.cpp`, names `tests/unit/test_span.cpp` `unit/test_span`, the
+    // name every earlier release gave it.
+    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> testFiles;
+    {
+        std::set<std::filesystem::path> excluded;
+        for (auto const& g : result.discover) {
+            if (g.starts_with('!'))
+                for (auto& p : mcpp::modgraph::expand_glob(packageRoot, g.substr(1)))
+                    excluded.insert(p);
+        }
+        std::set<std::filesystem::path> seenFiles;
+        for (auto const& g : result.discover) {
+            if (g.starts_with('!')) continue;
+            const auto prefix = mcpp::modgraph::glob_literal_prefix(g);
+            const auto base = prefix.empty() ? packageRoot : packageRoot / prefix;
+            for (auto& p : mcpp::modgraph::expand_glob(packageRoot, g)) {
+                if (excluded.contains(p) || !seenFiles.insert(p).second) continue;
+                testFiles.emplace_back(p, base);
+            }
+        }
+    }
     std::vector<std::set<std::filesystem::path>> globHits;
     globHits.reserve(globFlags.size());
     for (auto const& gf : globFlags) {
@@ -43,10 +83,9 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
         globHits.emplace_back(hits.begin(), hits.end());
     }
 
-    TestTargetSet result{packageRoot, {}};
     result.targets.reserve(testFiles.size());
-    std::set<std::string> seenNames;
-    for (auto const& file : testFiles) {
+    std::map<std::string, std::filesystem::path> seenNames;
+    for (auto const& [file, discoverBase] : testFiles) {
         auto lexical_relative = [&](const std::filesystem::path& base,
                                     std::string_view boundary)
             -> std::expected<std::filesystem::path, std::string> {
@@ -61,15 +100,18 @@ discover_test_targets(const std::filesystem::path& manifestRoot,
             return relative;
         };
 
-        auto testRelative = lexical_relative(packageRoot / "tests", "tests root");
+        auto testRelative = lexical_relative(discoverBase, "its discover glob's directory");
         if (!testRelative) return std::unexpected(testRelative.error());
         auto mainRelative = lexical_relative(packageRoot, "package root");
         if (!mainRelative) return std::unexpected(mainRelative.error());
 
         auto name = testRelative->replace_extension("").generic_string();
-        if (!seenNames.insert(name).second) {
+        if (auto [it, fresh] = seenNames.emplace(name, *mainRelative); !fresh) {
             return std::unexpected(std::format(
-                "duplicate test name '{}' (two test files map to the same name)", name));
+                "duplicate test name '{}': '{}' and '{}' map to the same name "
+                "(a test's name is its path relative to the fixed directory of "
+                "the [test] discover glob that found it)",
+                name, it->second.generic_string(), mainRelative->generic_string()));
         }
 
         mcpp::manifest::Target target;
