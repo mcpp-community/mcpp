@@ -193,7 +193,7 @@ and only the first belongs to the program:
 | range | meaning |
 |---|---|
 | `0`–`124` | the program ran; this is its own status, passed through unchanged |
-| `125`–`127` | the spawn was attempted and refused — `127` not found, `126` found but not executable, `125` anything else |
+| `125`–`127` | the spawn was attempted and refused — `127` not found, `126` found but not executable, `125` anything else; `126` also answers `mcpp run --format <f>` for a distributable that is a directory and meets no runner, refused before the spawn with the same meaning (2026.9.14.2+) |
 | `2` | mcpp refused before attempting anything: a usage, configuration or resolution error |
 
 Until 2026.9.4.3 every non-zero status was folded to `1`, so that `2` could mean
