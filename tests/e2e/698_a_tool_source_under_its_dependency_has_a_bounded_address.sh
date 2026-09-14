@@ -123,6 +123,11 @@ int main() {
     if (!tool || !*tool) { std::fprintf(stderr, "no tool path\n"); return 1; }
     std::string out = std::string(mcpp::out_dir()) + "/gen.cpp";
     std::string cmd = std::string("\"") + tool + "\" \"" + out + "\"";
+#ifdef _WIN32
+    // cmd.exe strips the first and the last quote of the string it is given,
+    // which splits two quoted words; a further pair keeps both intact.
+    cmd = "\"" + cmd + "\"";
+#endif
     if (std::system(cmd.c_str()) != 0) { std::fprintf(stderr, "tool failed\n"); return 1; }
     mcpp::generated(out.c_str());
 }
