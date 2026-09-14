@@ -5,6 +5,19 @@
 
 ## [Unreleased]
 
+### 在已激活的 xlings subos 中运行时,registry 不再被重定向(2026.9.14.3)
+
+`xlings subos use <name>` 打开的 shell 导出 `XLINGS_ACTIVE_SUBOS`,xlings 解析 subos
+时它的优先级高于 home 自身的 `activeSubos`。这个变量指的是 shell 所在 xlings home
+的 subos;mcpp 的 registry 是另一个 home,mcpp 的工具路径与视图路径都从
+`subos/default` 推导。mcpp 调用自带的 xlings 时继承了它,于是 registry 把引导安装
+的工具与工程的载荷装进同名的另一个 subos:2026.9.14.2 上实测,全新 home 的
+`ninja`、`patchelf` 落在 `registry/subos/<name>/bin`,`mcpp::pkg_config_libdir()`
+指向的 pkg-config 视图为空(在 #634 的沙箱验证中发现)。现在 mcpp 对 xlings 的每次
+调用都不带这个变量,POSIX 上由命令前缀 `env -u` 去掉,Windows 上由
+`ScopedInvocationEnv` 在调用期间移除并在结束后恢复。(单测
+`XlingsInvocationEnv.TheShellsActiveSubosIsNeverInherited`,e2e 686)
+
 ### 一个框架的 CMake 对齐清单:#634 的二十一项中引擎的部分(2026.9.14.2)
 
 #634 列出 HuxerUI 从 CMake 迁到 mcpp 时仍缺的二十一项。分类与决定见设计记录

@@ -629,12 +629,40 @@ TEST(XlingsInvocationEnv, TheProcessEnvironmentIsUnchangedAfterwards) {
 #if !defined(_WIN32)
 TEST(XlingsInvocationEnv, ThePosixPrefixRendersTheDecision) {
     auto global = mcpp::xlings::build_command_prefix(xlings_env(""));
-    EXPECT_NE(global.find("env -u XLINGS_PROJECT_DIR PATH="), std::string::npos) << global;
+    EXPECT_NE(global.find("env -u XLINGS_PROJECT_DIR -u XLINGS_ACTIVE_SUBOS PATH="),
+              std::string::npos) << global;
     EXPECT_EQ(global.find("XLINGS_PROJECT_DIR="), std::string::npos) << global;
 
     auto project = mcpp::xlings::build_command_prefix(xlings_env("/work/proj"));
     EXPECT_EQ(project.find("-u XLINGS_PROJECT_DIR"), std::string::npos) << project;
+    EXPECT_NE(project.find("env -u XLINGS_ACTIVE_SUBOS PATH="), std::string::npos) << project;
     EXPECT_NE(project.find("XLINGS_PROJECT_DIR="), std::string::npos) << project;
     EXPECT_NE(project.find("/work/proj"), std::string::npos) << project;
 }
 #endif
+
+// A shell that ran `xlings subos use <name>` exports XLINGS_ACTIVE_SUBOS, which
+// names a SubOS of the shell's xlings home and not of mcpp's registry; no
+// invocation carries it, in either mode.
+TEST(XlingsInvocationEnv, TheShellsActiveSubosIsNeverInherited) {
+    auto global = decided(xlings_env(""), "XLINGS_ACTIVE_SUBOS");
+    ASSERT_EQ(global.name, "XLINGS_ACTIVE_SUBOS");
+    EXPECT_FALSE(global.present);
+    auto project = decided(xlings_env("proj-dir"), "XLINGS_ACTIVE_SUBOS");
+    ASSERT_EQ(project.name, "XLINGS_ACTIVE_SUBOS");
+    EXPECT_FALSE(project.present);
+
+    namespace env = mcpp::platform::env;
+    env::ScopedEnv keepPath("PATH", env::get("PATH"));
+    env::ScopedEnv keepHome("XLINGS_HOME", env::get("XLINGS_HOME"));
+    env::ScopedEnv prior("XLINGS_ACTIVE_SUBOS", std::string("shell-subos"));
+    {
+        auto e = xlings_env("");
+        mcpp::xlings::ScopedInvocationEnv scope(e);
+        (void)mcpp::xlings::build_command_prefix(e);
+#if defined(_WIN32)
+        EXPECT_FALSE(env::get("XLINGS_ACTIVE_SUBOS").has_value());
+#endif
+    }
+    EXPECT_EQ(env::get("XLINGS_ACTIVE_SUBOS"), std::optional<std::string>("shell-subos"));
+}

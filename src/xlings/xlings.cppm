@@ -275,6 +275,15 @@ std::string build_command_prefix(const Env& env);
 // absent XLINGS_PROJECT_DIR, because xlings resolves its subos scope from that
 // variable. POSIX renders the decision into the command prefix (`env -u` and
 // `K=V`); Windows applies it to the process through ScopedInvocationEnv.
+//
+// XLINGS_ACTIVE_SUBOS IS ALWAYS ABSENT. A shell that ran `xlings subos use
+// <name>` exports it, and xlings ranks it above the home's own `activeSubos`.
+// It names a SubOS of the shell's xlings home; mcpp's registry is a different
+// home, whose paths mcpp derives from `subos/default`. Inherited, it made the
+// registry install mcpp's tools and a project's payloads into a SubOS of the
+// shell's name, where mcpp does not look (measured on 2026.9.14.2: a fresh
+// home's `ninja` and `patchelf` landed in `registry/subos/<name>/bin`, and the
+// pkg-config view `mcpp::pkg_config_libdir()` names stayed empty).
 struct InvocationVar {
     std::string name;
     std::string value;
@@ -297,9 +306,15 @@ public:
     ScopedInvocationEnv& operator=(const ScopedInvocationEnv&) = delete;
 
 private:
-    bool        active_      = false;
-    bool        hadPrevious_ = false;
-    std::string previous_;
+    // One entry per scope variable the guard applied: its name and the value
+    // it had before, if any. Plain members, not `std::optional<std::string>`,
+    // which clang on the MSVC ABI does not copy inside a vector element.
+    struct Saved {
+        std::string name;
+        bool        hadPrevious = false;
+        std::string previous;
+    };
+    std::vector<Saved> saved_;
 };
 
 // Build full xlings interface command.
@@ -1182,18 +1197,24 @@ std::vector<InvocationVar> invocation_env(const Env& env) {
     return {
         {"XLINGS_HOME", env.home.string(), true},
         {"XLINGS_PROJECT_DIR", env.projectDir.string(), !env.projectDir.empty()},
+        {"XLINGS_ACTIVE_SUBOS", "", false},
     };
 }
 
 ScopedInvocationEnv::ScopedInvocationEnv(const Env& env) {
     if constexpr (mcpp::platform::is_windows) {
+        // Every variable but XLINGS_HOME is scope: applied for the guard's
+        // lifetime and restored after it. XLINGS_HOME keeps the process-wide
+        // lifetime `build_command_prefix` gives it.
         for (auto const& var : invocation_env(env)) {
-            if (var.name != "XLINGS_PROJECT_DIR") continue;
+            if (var.name == "XLINGS_HOME") continue;
+            Saved s;
+            s.name = var.name;
             if (auto prior = mcpp::platform::env::get(var.name)) {
-                hadPrevious_ = true;
-                previous_ = *prior;
+                s.hadPrevious = true;
+                s.previous = *prior;
             }
-            active_ = true;
+            saved_.push_back(s);
             if (var.present) mcpp::platform::env::set(var.name, var.value);
             else             mcpp::platform::env::unset(var.name);
         }
@@ -1201,9 +1222,10 @@ ScopedInvocationEnv::ScopedInvocationEnv(const Env& env) {
 }
 
 ScopedInvocationEnv::~ScopedInvocationEnv() {
-    if (!active_) return;
-    if (hadPrevious_) mcpp::platform::env::set("XLINGS_PROJECT_DIR", previous_);
-    else              mcpp::platform::env::unset("XLINGS_PROJECT_DIR");
+    for (auto const& s : saved_) {
+        if (s.hadPrevious) mcpp::platform::env::set(s.name, s.previous);
+        else               mcpp::platform::env::unset(s.name);
+    }
 }
 
 std::string build_command_prefix(const Env& env) {

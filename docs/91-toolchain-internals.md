@@ -262,6 +262,12 @@ must refuse its `-rpath "$XLINGS_SUBOS_LIB"`, because that variable names the
 different physical glibc payload. mcpp emits the farm entry it derived from the
 binding it actually selected.
 
+For the same reason mcpp's own xlings invocations do not carry
+`XLINGS_ACTIVE_SUBOS` (2026.9.14.3+). A shell that ran `xlings subos use <name>`
+exports it, and xlings ranks it above a home's own `activeSubos`; inherited, it
+made the registry install mcpp's tools and a project's payloads into a SubOS of
+that name, while mcpp reads `subos/default`.
+
 ## 3. The link model (`modules/toolchain-model/src/linkmodel.cppm`)
 
 `ToolchainLinkModel` answers exactly one question — *how does mcpp compile and

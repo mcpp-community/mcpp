@@ -214,6 +214,11 @@ mcpp 还会给它启动的每个进程声明 `XLINGS_SUBOS_LD_PATHS=0` —— �
 (`<mcpp home>/registry`),两者通常指向由**不同物理 glibc 载荷**支撑的不同 farm。
 mcpp 发的是自己从已选 binding 推导出来的那一条。
 
+出于同样的原因,mcpp 自己对 xlings 的调用不带 `XLINGS_ACTIVE_SUBOS`
+(2026.9.14.3+)。执行过 `xlings subos use <name>` 的 shell 会导出它,xlings 把它排在
+home 自身的 `activeSubos` 之前;被继承时,registry 会把 mcpp 的工具和工程的载荷装进
+同名的 subos,而 mcpp 读取的是 `subos/default`。
+
 ## 3. 链接模型(`modules/toolchain-model/src/linkmodel.cppm`)
 
 `ToolchainLinkModel` 只回答一个问题——*如何对该工具链的 C 库编译与链接*——
