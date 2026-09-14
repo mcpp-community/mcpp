@@ -66,7 +66,14 @@ if (cd "$d" && "$STORE" build > build.log 2>&1); then
             *.tar.gz*|*.zip*) fail "the cmdline payload holds an archive: $top" ;;
             *) ok "the cmdline payload's top level is its own archive's entries: $top" ;;
         esac
-        [ -n "$(find "$cmd" -mindepth 2 -maxdepth 2 -name mcpp.toml)" ] && ok "the top-level directory is kept, so */mcpp.toml matches" || fail "no */mcpp.toml under $cmd"
+        # cmdline's index entry describes 0.0.1 inline, with globs such as
+        # `*/src/**/*.cppm` whose `*/` is the archive's own top-level directory.
+        tops=$(find "$cmd" -mindepth 1 -maxdepth 1 -type d ! -name '.*' | wc -l)
+        if [ "$tops" -eq 1 ] && [ -n "$(find "$cmd" -mindepth 3 -maxdepth 3 -path '*/src/*.cppm')" ]; then
+            ok "the archive's top-level directory is kept, so the entry's */src globs match"
+        else
+            fail "the payload does not have one top-level directory holding src/*.cppm"; ls -A "$cmd"
+        fi
     else
         skip "B: the cmdline payload directory was not found"
     fi
@@ -150,21 +157,26 @@ cmd=$(find "$REG/data/xpkgs" -maxdepth 2 -path '*cmdline*' -type d | tail -1)
 strip_ansi() { sed 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
 if [ -n "$cmd" ]; then
     # The control: the store section B produced has no finding of this kind.
-    XLINGS_HOME="$REG" "$REG/bin/xlings" self doctor 2>&1 | strip_ansi > "$root/doctor0.log"
+    # The sandbox shell exports XLINGS_ACTIVE_SUBOS for its own home; mcpp's
+    # xlings calls drop it (2026.9.14.3), and so do these.
+    XLINGS_HOME="$REG" env -u XLINGS_ACTIVE_SUBOS "$REG/bin/xlings" self doctor 2>&1 | strip_ansi > "$root/doctor0.log"
     grep -qi 'swept payload' "$root/doctor0.log" && { fail "self doctor reports a swept payload before any was seeded"; grep -i -A2 'swept' "$root/doctor0.log" | head -6; } || ok "the fresh store has no swept-payload finding"
     # The downloader's shape: an archive beside its zero-length lock.
     printf 'x' > "$cmd/intruder-1.0-linux-x86_64.tar.gz"; : > "$cmd/intruder-1.0-linux-x86_64.tar.gz.lock"
-    XLINGS_HOME="$REG" "$REG/bin/xlings" self doctor 2>&1 | strip_ansi > "$root/doctor.log"
+    XLINGS_HOME="$REG" env -u XLINGS_ACTIVE_SUBOS "$REG/bin/xlings" self doctor 2>&1 | strip_ansi > "$root/doctor.log"
     if grep -qi 'swept payload' "$root/doctor.log" && grep -qF "intruder-1.0-linux-x86_64.tar.gz.lock" "$root/doctor.log"; then
         ok "self doctor reports the swept payload and names the lock file"
     else
         fail "self doctor did not report the seeded payload"; tail -12 "$root/doctor.log"
     fi
-    XLINGS_HOME="$REG" "$REG/bin/xlings" self doctor --fix 2>&1 | strip_ansi > "$root/fix.log"
+    seeded_at=$(date +%s)
+    sleep 1
+    XLINGS_HOME="$REG" env -u XLINGS_ACTIVE_SUBOS "$REG/bin/xlings" self doctor --fix 2>&1 | strip_ansi > "$root/fix.log"
     cmd=$(find "$REG/data/xpkgs" -maxdepth 2 -path '*cmdline*' -type d | tail -1)
+    stamped=$(stat -c %Y "$cmd/.xpkg-install.json" 2>/dev/null || echo 0)
     if [ -n "$cmd" ] && [ ! -e "$cmd/intruder-1.0-linux-x86_64.tar.gz.lock" ] && [ ! -e "$cmd/intruder-1.0-linux-x86_64.tar.gz" ] \
-       && [ -n "$(find "$cmd" -mindepth 2 -maxdepth 2 -name mcpp.toml)" ]; then
-        ok "self doctor --fix reinstalls the payload: no seeded file, and */mcpp.toml is back"
+       && [ "$stamped" -gt "$seeded_at" ] && [ -n "$(find "$cmd" -mindepth 3 -maxdepth 3 -path '*/src/*.cppm')" ]; then
+        ok "self doctor --fix reinstalls the payload: no seeded file, a new install record, and */src/*.cppm is back"
     else
         fail "the payload after --fix"; ls -A "$cmd" 2>/dev/null | head; tail -12 "$root/fix.log"
     fi

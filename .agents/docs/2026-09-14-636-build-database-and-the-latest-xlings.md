@@ -6,9 +6,10 @@ status: active
 # The build database of #636, and two defects on the way to the latest xlings
 
 **Status:** proposed on 2026-09-14; adopted the same day as the plan in §6, with
-the decisions of §7 settled by the self-review in §8. Implementation is in
-progress in one pull request per repository: mcpp-community/mcpp#639 for every
-mcpp change, and one xlings pull request for item A. Code was read at mcpp
+the decisions of §7 settled by the self-review in §8. Landed on 2026-09-15 in one
+pull request per repository, mcpp-community/mcpp#639 for every mcpp change and
+openxlings/xlings#596 for item A, and released as mcpp 2026.9.15.1 with xlings
+2026.9.14.1; §9 is the execution record. Code was read at mcpp
 `9b6a1188` (2026.9.14.3), xlings `59068d6` (2026.9.12.1, the latest release) and
 lsp-mcpp `4ea9f81` (S1 profile 0.2.0, S2 0.2.0). Measured: the store of this
 host's mcpp registry, and the Windows CI logs of 2026-09-14 on `main`. A
@@ -491,8 +492,10 @@ on another repository, and it is small.
 
 | repository | vehicle | content |
 |---|---|---|
-| openxlings/xlings | #596, squash `3cd8061`, version 2026.9.14.1 | 2.3 to 2.6: the §6 sentence, private extraction, the strip branch removed, `self doctor` finding `SweptPayload` with remove-then-reinstall, e2e for the rule and the doctor |
-| mcpp-community/mcpp | #639, version 2026.9.15.1 | B, C, the pin of §4, and the findings of 9.2 |
+| openxlings/xlings | #596, squash `3cd8061`, released 2026.9.14.1 | 2.3 to 2.6: the §6 sentence, private extraction, the strip branch removed, `self doctor` finding `SweptPayload` with remove-then-reinstall, e2e for the rule and the doctor |
+| openxlings/xim-pkgindex | #841 (release bot, +22/-3), squash `fbef674` | `latest` of xlings is 2026.9.14.1 in the three platform tables |
+| mcpp-community/mcpp | #639, squash `87d4ff05`, released 2026.9.15.1 | B, C, the pin of §4, and the findings of 9.2; the merged tree equals the tree CI tested (40 checks passed, one conditional job skipped); the ten workflows on `main` at that commit passed |
+| openxlings/xim-pkgindex | #842 (release bot, +22/-3), squash `ffde527` | `latest` of mcpp is 2026.9.15.1 in the three platform tables |
 
 ### 9.2 Found during implementation
 
@@ -537,3 +540,24 @@ on another repository, and it is small.
 | `mcpp emit build-database` on the lsp-mcpp repository | 0.84 s; `git status` unchanged |
 | e2e 687 on windows-2022 (39053b9a) | A and B pass: the second command prints no path error, and an older vendored xlings is replaced |
 | e2e subset touching `mcpp test` and entry mains, Linux | 60 pass, 6 skipped for capability, 0 fail |
+| e2e 687 and 688 in CI at `2f5b71c4` | 687 passes on Linux, macOS and Windows; 688 prints its J, K, L and L-control lines on the three hosts |
+| xlings 2026.9.14.1 publication | GitHub: 8 assets, each archive's sha256 equal to its sidecar. GitCode: the Windows archive exceeded the runner's cross-border upload and was completed with `tools/mirror-latest.sh xlings`, 16 of 16 verified. `tools/verify-release.sh 2026.9.14.1` passes, including a byte comparison of the CN copies |
+| `xlings self update` on this host | 2026.9.12.1 to 2026.9.14.1 through the index |
+| mcpp 2026.9.15.1 publication | The tag points at `87d4ff05`. Each platform archive was uploaded to GitCode with the local `gtc` as soon as its build job attached it to the GitHub release, so `publish-ecosystem` found all eight GitCode assets present and skipped them. The four GitCode archives match the GitHub sidecars byte for byte |
+| `xlings install mcpp@2026.9.15.1` on this host, CN mirror | the store payload reports `mcpp 2026.9.15.1` and carries `xlings 2026.9.14.1` |
+| `2026-09-14-636-verify.sh` in `xlings subos use verify-636 --sandbox`, CN mirror, the published mcpp 2026.9.15.1 | 18 checks pass, 0 fail; section E (Windows) is not run in a Linux sandbox and is covered by e2e 687 in CI. A: version, CN mirror, xlings pin and vendored xlings 2026.9.14.1. B: a toolchain install followed by the hookless `mcpplibs.cmdline` leaves no download sidecar in any store payload, the payload's top level is the archive's own directory, and `mcpp run` prints. C and C2: the build databases of a module project and of section B's project are S1 documents with the stated sets, no store path in `watch`, and unchanged trees. D: a seeded archive with its lock is reported by name and `--fix` reinstalls the payload |
+| `XLINGS_HOME=~/.mcpp/registry xlings self doctor` (2026.9.14.1, read-only) on this host | 223 swept-payload findings, against 221 version directories with download sidecars measured on 2026-09-14 (2.2) |
+
+The first sandbox run failed two checks and read a third finding, all from the verification script:
+it looked for `*/mcpp.toml` in `mcpplibs.cmdline` 0.0.1, whose index entry describes that version inline
+with `*/src/**/*.cppm` globs because 0.0.1 ships no manifest; and it called the registry's xlings directly
+while the sandbox shell exported `XLINGS_ACTIVE_SUBOS`, which mcpp's own calls drop, so `self doctor` tried
+to write a manifest for that subos inside the registry. The second run asks what the entry uses and drops the
+variable.
+
+### 9.4 Observed and not addressed
+
+- xlings `xlings-ci-fresh-install` fails its "core" legs on `main`: after a
+  multi-version switch of mcpp, `self doctor` reports `shim table 3 missing
+  (elfpatch, mcpp, patchelf)`. The run on `59068d6` (2026.9.12.1) fails
+  identically, so the failure predates #596.
