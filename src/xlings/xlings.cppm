@@ -83,7 +83,13 @@ namespace pinned {
     // correctly — which is why this is a floor and not a preference, and why
     // an index must still not publish a deliberately colliding
     // `<name>@<version>` (see .agents/docs/2026-08-30-cross-repo-fix-plan §1).
-    inline constexpr std::string_view kXlingsVersion   = "2026.9.5.1";
+    //
+    // Third, at 2026.9.14.1 (mcpp#636). Below it, a package without an
+    // `install()` received the whole download directory rather than its own
+    // archive: on a host store, openkal 0.8.0 held 1.6 G of other packages'
+    // downloads. A registry that already holds such a payload is repaired by
+    // `XLINGS_HOME=<registry> xlings self doctor --fix`.
+    inline constexpr std::string_view kXlingsVersion   = "2026.9.14.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 

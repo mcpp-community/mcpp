@@ -32,6 +32,15 @@ SPEC-005(`docs/specs/build-database.md`)。
   `WireGolden.NullDataIsOmitted`;e2e 688 以随仓的 S1 schema 校验输出,并以
   `--configure-only` 作对照腿证明工程目录未被写入。
 
+### 内置 xlings 升至 2026.9.14.1(2026.9.15.1)
+
+此前没有 `install()` 的包在安装时得到的是整个下载目录,而不是它自己的归档:宿主机上
+openkal 0.8.0 的包目录因此多占 1.6 G 其他包的下载物。xlings 2026.9.14.1 让这类包在
+私有目录中解压自己的归档,并由 `xlings self doctor` 报告已被污染的包目录、`--fix`
+重装(openxlings/xlings#596)。已有的 registry 用
+`XLINGS_HOME=<registry> xlings self doctor --fix` 修复。`kXlingsVersion` 与
+`check_version_pins.sh` 列出的全部 pin 随之前移。
+
 ### 未被 `sources` 匹配的目标入口由扫描器读取(2026.9.15.1)
 
 发现的测试与 glob 之外的 `main` 不在包扫描中,它们的 import 此前只按行首的 `import`
