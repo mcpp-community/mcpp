@@ -2422,6 +2422,26 @@ prepare_build(bool print_fingerprint,
     // silently overrule one the user wrote down.
     auto tcOrigin = tcSpec.has_value() ? TcOrigin::ManifestToolchain
                                        : TcOrigin::None;
+    // `--toolchain` shares `ManifestToolchain`'s precedence and not its
+    // spelling: the messages that refuse a spec name where it was written, and
+    // a value from the command line credited to a manifest key sends the
+    // reader to a file that does not contain it.
+    bool tcFromCommandLine = false;
+    auto tcSpecSource = [&]() -> std::string {
+        if (tcOrigin == TcOrigin::ManifestToolchain && tcFromCommandLine)
+            return "--toolchain";
+        switch (tcOrigin) {
+            case TcOrigin::ManifestToolchain:
+                return std::format("[toolchain].{}", kCurrentPlatform);
+            case TcOrigin::TargetSection:
+                return std::format("[target.{}].toolchain", overrides.target_triple);
+            case TcOrigin::GlobalDefault:
+                return "the default toolchain (`mcpp toolchain default`)";
+            default:
+                return std::format("the toolchain mcpp chose ({})",
+                                   tc_origin_name(tcOrigin));
+        }
+    };
     // `--toolchain` (arriving as MCPP_TOOLCHAIN, the same side channel
     // `--offline` and `--jobs` use) beats everything, including the manifest.
     //
@@ -2436,6 +2456,7 @@ prepare_build(bool print_fingerprint,
     if (const char* tcEnv = std::getenv("MCPP_TOOLCHAIN"); tcEnv && *tcEnv) {
         tcSpec   = std::string(tcEnv);
         tcOrigin = TcOrigin::ManifestToolchain;
+        tcFromCommandLine = true;
     }
     if (!tcSpec.has_value()) {
         auto cfg = get_cfg();
@@ -3175,7 +3196,7 @@ prepare_build(bool print_fingerprint,
         // where it used to happen — somewhere else, saying something else.
         auto s = mcpp::toolchain::parse_toolchain_spec(*tcSpec);
         if (!s) return std::unexpected(std::format(
-            "[toolchain].{} = '{}': {}", kCurrentPlatform, *tcSpec, s.error()));
+            "{} = '{}': {}", tcSpecSource(), *tcSpec, s.error()));
         parsedSpec   = std::move(*s);
         tcOriginAxis = mcpp::toolchain::origin_of(*parsedSpec);
       }
@@ -3202,8 +3223,8 @@ prepare_build(bool print_fingerprint,
         auto spec = parsedSpec;
         if (spec->version.empty()) {
             return std::unexpected(std::format(
-                "[toolchain].{} = '{}' is invalid; expected '<pkg>@<version>'",
-                kCurrentPlatform, *tcSpec));
+                "{} = '{}' is invalid; expected '<pkg>@<version>'",
+                tcSpecSource(), *tcSpec));
         }
         // A `--target <triple>` build carries the (already canonical) triple
         // into the spec's target axis: the payload mapping then resolves the

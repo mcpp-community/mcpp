@@ -79,4 +79,15 @@ case "$own" in
         ;;
 esac
 
+# ── 4. a spec the command line gave is refused as the command line's ─────
+if "$MCPP" build --toolchain nosuch@1.0 > t4.log 2>&1; then
+    fail "an unknown toolchain from --toolchain was accepted" t4.log
+fi
+grep -q "^error: --toolchain = 'nosuch@1.0'" t4.log \
+    || fail "the refusal does not name --toolchain as where the value was written" t4.log
+if grep -q "\[toolchain\]\." t4.log; then
+    fail "the refusal credits a manifest key with a command-line value" t4.log
+fi
+echo "an unknown toolchain from --toolchain is refused naming --toolchain OK"
+
 echo "PASS: 671_toolchain_is_an_option_of_run_test_and_pack"
