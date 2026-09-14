@@ -430,7 +430,7 @@ question for lsp-mcpp.
 | M3 | mcpp: the five engine changes of 5.3 | none |
 | M4 | mcpp: `emit build-database` (renderer, `watch`, fingerprint, lock comparison, effects, kind) | M3 |
 | M5 | mcpp: unit, contract and e2e tests for C, with the vendored S1 schema and a validator that refuses keywords it does not implement | M4 |
-| M6 | mcpp: SPEC-005, docs/50 and its translation, docs/09, the three specification indexes | M4 |
+| M6 | mcpp: SPEC-005, docs/50 and docs/01 with their translations, the three specification indexes | M4 |
 | M7 | mcpp: `kXlingsVersion = 2026.9.14.1` | X5 |
 | M8 | mcpp: #639 renamed; CI green; self-review; merge | M1 to M7 |
 | R1 | mcpp release; mirrors (GitCode completed with local `gtc`); index merge | M8 |
