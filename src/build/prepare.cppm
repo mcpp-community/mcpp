@@ -11953,8 +11953,8 @@ prepare_build(bool print_fingerprint,
             == dist::Contract::SelfContained;
         // A refused library, and the statement that makes it shared when its
         // own package makes it so: an edge's `linkage = "static"` cannot change
-        // a form the package constrains, so that remedy is offered only where
-        // the resolution says a request or a default decided.
+        // a form the package constrains (`declaredShared`), so that remedy is
+        // offered only where a request or the package's default decided.
         struct Refused { std::string name; std::string statedBy; };
         std::vector<Refused> withoutRuntime;
         const auto runtimeObjects = mcpp::build::package_link_objects(ctx.plan, providerName);
@@ -11969,14 +11969,13 @@ prepare_build(bool print_fingerprint,
                 continue;
             }
             Refused r{ lu.targetName, {} };
-            for (std::size_t i = 1; i < packages.size(); ++i) {
-                auto form = graphLinkForms.find(i);
-                if (form == graphLinkForms.end()) continue;
-                if (form->second.second != "package-kind" && form->second.second != "row-kind")
-                    continue;
+            for (auto const& [i, form] : dependencyLinkForms) {
+                if (!form.facts.declaredShared || i >= packages.size()) continue;
                 for (auto const& t : packages[i].manifest.targets)
-                    if (t.name == lu.targetName && !t.kindDeclaredBy.empty())
-                        r.statedBy = t.kindDeclaredBy;
+                    if (t.name == lu.targetName)
+                        r.statedBy = form.facts.declaredSharedBy.empty()
+                            ? std::string("its manifest declares a shared library target")
+                            : form.facts.declaredSharedBy;
             }
             withoutRuntime.push_back(std::move(r));
         }
