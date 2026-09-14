@@ -94,6 +94,54 @@ a dependency supplied, and the override is reported rather than applied in
 silence. Exactly one dependency may supply a given name; a second is an error
 naming both packages.
 
+## What a runner receives
+
+A runner receives an argv — its own tokens, with the artifact's path appended
+or substituted for `{}` — and one environment variable, `MCPP_RUNTIME_FILES`.
+The variable is set for every runner that `mcpp run` and `mcpp test` start,
+the default and the named ones alike. `mcpp run --no-runner` starts no runner
+and sets nothing.
+
+`MCPP_RUNTIME_FILES` names a file that lists what the artifact reads or loads
+from its own directory: the `[runtime] deploy` and `deploy_files` entries, and
+the shared libraries the build links. One line per file:
+
+```
+data/data.txt<TAB>/abs/project/target/<triple>/<fp>/bin/data/data.txt
+libfw.so<TAB>/abs/project/target/<triple>/<fp>/bin/libfw.so
+```
+
+The first field is the destination relative to the artifact's directory, with
+`/` separators; it begins with `../` for a test program discovered in a
+subdirectory. The second is the absolute path of the file in the output tree. A
+TAB separates them. The file exists for every runner invocation and is empty
+when there is nothing to carry; a distributable run with `--format` receives
+an empty file, because the distributable holds its own files.
+
+A runner that executes the artifact where it lies ignores the variable. A
+runner that moves the artifact — to a device, a container, a remote host —
+copies each listed file to the destination beside the moved artifact.
+
+## Running a distributable
+
+`mcpp run --format <f>` packs the distributable `<f>` and runs it. Without
+`--runner`, it is reached by the runner named `<f>` when the graph or the
+manifest supplies one, and by the default runner otherwise:
+
+```cpp
+mcpp::runner("app", "<tool>");          // a package names a runner after its format
+```
+
+```bash
+mcpp run --format app                   # through the runner named `app`
+mcpp run --format app --runner other    # a typed --runner still wins
+```
+
+A distributable that is a directory, such as an application bundle, is not
+executed directly. When no runner reaches it, `mcpp run --format <f>` refuses
+before starting anything, with exit status `126`, and names the runner `<f>`
+and the manifest table that would declare it.
+
 ## Termination is declared, not inferred
 
 | | Meaning |

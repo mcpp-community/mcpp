@@ -36,6 +36,27 @@ also why a test written for another framework needs no adapter.
 `mcpp new` scaffolds `tests/test_smoke.cpp` so a project starts with the
 directory in place.
 
+### Where tests are
+
+`tests/**/*.cpp` is the default of one key:
+
+```toml
+[test]
+discover = ["checks/**/*.cpp", "!checks/fixtures/**"]
+```
+
+`discover` takes globs in the vocabulary of `[build] sources`: every file a
+glob matches is one test program, and a glob beginning with `!` removes the
+files it matches from the set, whichever glob found them. A test's name is its
+path relative to the fixed directory of the first glob that matched it, without
+the extension, so the default names `tests/unit/test_span.cpp` `unit/test_span`.
+`discover = []` discovers no test. Two files whose names coincide are refused,
+naming both.
+
+A suite compiled from several sources is a package of its own: a workspace
+member whose `[build] sources` carries the suite and whose one test program
+drives it, selected with `mcpp test -p <member>`.
+
 ## Running them
 
 ```bash
@@ -55,6 +76,7 @@ configuration it is meant to check rather than against the default one:
 | `--target <triple>` | a target other than the host |
 | `--accel <spec>` / `--no-accel` | the device backends the build targets |
 | `--cap <list>` | pin a capability provider |
+| `--toolchain <spec>` | the toolchain for this invocation, e.g. `llvm@22.1.8` |
 
 `--timeout <secs>` kills a test still running (default 300; `0` disables it) and
 `--build-timeout <secs>` bounds the compile. A test that hangs is reported as a
@@ -92,6 +114,13 @@ or a QEMU exit code is what a bare-metal runner is chosen to produce.
 `--no-runner` exists for a host that can execute the binaries natively and
 should not pay for an emulator.
 
+A test program carries the files it reads beside it: the runner receives
+`MCPP_RUNTIME_FILES`, the list of its deployed files and the shared libraries it
+loads, and a runner that moves the program to a device copies them with it. A
+test locates such a file relative to its own directory. On the Android rows a
+test program links the C++ runtime statically unless `cxx_runtime` says
+otherwise, so it needs no `libc++_shared.so` on the device.
+
 The runner itself, named runners, and what a board declares are
 [41 — Reaching a Device](41-devices.md).
 
@@ -119,6 +148,8 @@ here is only that the flag exists and that the human format is the default.
 - A test is one `.cpp` producing one program. mcpp does not discover cases
   inside a file, so a framework's per-case selection happens inside the program,
   through arguments after `--`.
+- `mcpp test --list` over a manifest that does not load lists
+  `tests/**/*.cpp`, not the `[test] discover` set it cannot read.
 - `--build-timeout` is POSIX-only.
 - `--workspace-timeout` bounds a `--workspace` fan-out and reports what did run;
   it does not attribute the timeout to a member.

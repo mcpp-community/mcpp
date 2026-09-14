@@ -213,6 +213,12 @@ for (auto a : {"-machine","virt","-nographic","-no-reboot","-kernel"})
 **只能有一个依赖提供 runner。** 两个板级支持包都声称知道怎么跑这个产物是配置
 错误;mcpp 会**同时点名两个**并报错,而不是把它们并成一个谁也不是的 argv。
 
+**在一个构建程序之内,每个名字的 token 组成一个 argv。** 每次 `mcpp::runner(tok)`
+调用追加到默认 runner,每次 `mcpp::runner(name, tok)` 调用追加到名为 `name` 的
+runner,按发出顺序,无论调用来自编译进这个程序的哪个 host module。要在两个 runner
+之间选择的程序,在发出任何一个之前完成选择。以打包格式命名的 runner 在
+`mcpp run --format <name>` 下抵达该格式的可分发物([41 —— 抵达一台设备](41-devices.md))。
+
 ### 问,而不是声明:`toolchain_dir` / `sysroot_dir`(2026.8.19.4+)
 
 ```cpp

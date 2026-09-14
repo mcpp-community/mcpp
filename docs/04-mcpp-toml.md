@@ -1445,6 +1445,24 @@ do`.
 
 Moved to [09 — Commands by Scenario](09-commands-by-scenario.md).
 
+### 2.17 `[test]` — Where Test Programs Are
+
+```toml
+[test]
+discover = ["tests/**/*.cpp"]    # the default
+```
+
+| Key | Type | Meaning |
+|---|---|---|
+| `discover` | array of globs | every file a glob matches is one test program; a glob beginning with `!` removes the files it matches; `[]` discovers none |
+
+The globs use the vocabulary of `[build] sources`. A test's name is its path
+relative to the fixed directory of the first glob that matched it, without the
+extension. Two files with one name are refused, naming both. A value that is not
+an array of non-empty strings is an error; any other key in `[test]` is a
+warning, and an error under `--strict`. [08 — Testing](08-testing.md) describes
+the test model.
+
 
 ## 3. Worked Examples
 
@@ -1506,7 +1524,7 @@ kind = "bin"
 | C standard | `c11` | `.c` files go through the C compiler automatically |
 | Static stdlib | `true` | Portable binary |
 | Headers | `include/` (if present) | Added to `-I` automatically |
-| Tests | `tests/**/*.cpp` | Discovered automatically by `mcpp test` |
+| Tests | `tests/**/*.cpp` | Discovered automatically by `mcpp test`; `[test] discover` replaces the set |
 | Dependency namespace | `mcpplibs` (default) | A bare selector means only this exact namespace |
 
 ### 4.1 Legacy `[language]` Compatibility Layer

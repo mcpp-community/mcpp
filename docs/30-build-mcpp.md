@@ -243,6 +243,14 @@ both claiming to know how to run the artifact is a configuration error, and
 mcpp reports it naming both rather than merging them into an argv that is
 neither one's.
 
+**Within one build program, the tokens are one argv per name.** Every
+`mcpp::runner(tok)` call appends to the default runner, and every
+`mcpp::runner(name, tok)` call appends to the runner `name`, in emission order,
+whichever host module compiled into the program makes the call. A program that
+chooses between two runners chooses before it emits either. A runner named
+after a pack format reaches that format's distributable under `mcpp run
+--format <name>` ([41 — Reaching a Device](41-devices.md)).
+
 ### Asking instead of declaring: `toolchain_dir` / `sysroot_dir` (2026.8.19.4+)
 
 ```cpp

@@ -1726,6 +1726,14 @@ struct Manifest {
     RuntimeConfig               runtimeConfig;
     XlingsConfig                xlings;             // [xlings] build environment (L-1)
     Hooks                       hooks;              // [hooks] lifecycle commands (#496)
+    // `[test] discover`: the globs whose every match is one test program, in
+    // the vocabulary of `[build] sources` (a leading `!` excludes). A test's
+    // name is its path relative to the fixed prefix of the first glob that
+    // matched it. Not declared means `["tests/**/*.cpp"]`; declared and empty
+    // means no test is discovered (#634 A5). Two members rather than an
+    // optional vector, for the reason `TargetEntry::sysrootDeclared` records.
+    std::vector<std::string>    testDiscover;
+    bool                        testDiscoverDeclared = false;
     std::vector<ConditionalConfig> conditionalConfigs;  // [target.'cfg(...)'.build], deferred
     std::map<std::string, Profile> profiles;   // [profile.<name>]
     // [features] — feature name → implied features ("default" = default set).

@@ -1079,11 +1079,11 @@ CompileFlags compute_flags(const BuildPlan& plan) {
                     ? base
                     : dist::default_contract(dist::Role::SharedLibrary, format));
 
-        // Archive lookup. LLVM lays these out either directly under lib/ (the
-        // macOS packages) or under lib/<llvm-triple>/ (the Linux ones), so try
-        // both rather than hard-coding one layout. Sorted so the choice cannot
-        // depend on directory iteration order.
-        auto find_archive = [&](std::string_view name) -> std::filesystem::path {
+        // Archive lookup, directory half. LLVM lays these out either directly
+        // under lib/ (the macOS packages) or under lib/<llvm-triple>/ (the
+        // Linux ones), so try both rather than hard-coding one layout. Sorted
+        // so the choice cannot depend on directory iteration order.
+        auto search_llvm_root = [&](std::string_view name) -> std::filesystem::path {
             if (llvmRootForStdlib.empty()) return {};
             std::error_code ec;
             auto libDir = llvmRootForStdlib / "lib";
@@ -1195,16 +1195,112 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // compiled against the package's headers.
         mi.graphCxxRuntime = plan.targetSide.cxx.fromGraph();
 
+        // AND THE DRIVER'S HALF, WHICH IS ASKED FIRST (#634 A6).
+        //
+        // The search above knows one layout; the Android NDK keeps these
+        // archives in its sysroot per API level, the search missed them, and
+        // every Android test program degraded to needing `libc++_shared.so`.
+        // `runtime_archive_path` asks the driver with the flags this link
+        // carries -- the target with its API level, and the configuration
+        // bypass when the payload has a cfg -- which is the question the link
+        // itself will ask.
+        //
+        // The same file found both ways keeps the SEARCH's spelling, so a host
+        // link line the search already served stays byte-identical (a cache key
+        // and a ninja command both read it). A different file means the search
+        // guessed: a payload carrying several triples' archives sorts another
+        // triple first.
+        //
+        // Asked only where an answer is used: ELF and Mach-O links of a hosted
+        // target whose C++ runtime is the toolchain's. Every other cell of the
+        // mechanism table ignores these archives, and a query costs a process.
+        const bool driverPlacesArchives =
+            (format == dist::Format::Elf || format == dist::Format::MachO)
+            && !mi.freestanding && !mi.graphCxxRuntime && !mi.appleCrossTarget;
+        const std::string driverFlags =
+            crossTarget + (isClangWithCfg ? " --no-default-config" : "");
+        auto find_archive = [&](std::string_view name) -> std::filesystem::path {
+            auto searched = search_llvm_root(name);
+            if (!driverPlacesArchives) return searched;
+            auto answered = mcpp::toolchain::clang::runtime_archive_path(
+                plan.toolchain, driverFlags, name);
+            if (answered.empty()) return searched;
+            std::error_code ec;
+            if (!searched.empty() && std::filesystem::equivalent(searched, answered, ec))
+                return searched;
+            return answered;
+        };
+
         const bool wantsArchives =
             (base == dist::Contract::SelfContained
              || testsContract == dist::Contract::SelfContained
              || sharedContract == dist::Contract::SelfContained)
             && caps.stdlib_id == "libc++";
+        // THE ARCHIVES A LINKER SCRIPT OPENS, by file name.
+        //
+        // A driver may place an archive name on a linker script rather than on
+        // an archive: the Android NDK's per-API `libc++.a` is
+        // `INPUT(-lc++_static -lc++abi)`. Linking it is correct -- lld reads a
+        // script given as an input -- but `--exclude-libs` names the archive a
+        // member came from, so hiding `libc++.a` hid nothing (see
+        // `MechanismInput::libcxxLinkedArchiveNames`). An archive starts with
+        // `!<arch>` and yields nothing here, so a payload whose archives are
+        // archives keeps the two default names and its link line.
+        auto script_archive_names = [](const std::filesystem::path& p)
+            -> std::vector<std::string> {
+            std::vector<std::string> names;
+            std::error_code ec;
+            if (p.empty() || std::filesystem::file_size(p, ec) > 4096 || ec) return names;
+            std::ifstream is(p, std::ios::binary);
+            std::string text((std::istreambuf_iterator<char>(is)),
+                             std::istreambuf_iterator<char>());
+            if (text.starts_with("!<arch>")) return names;
+            auto open = text.find('(');
+            auto close = text.rfind(')');
+            if (open == std::string::npos || close == std::string::npos || close < open)
+                return names;
+            auto keyword = text.substr(0, open);
+            std::erase_if(keyword, [](unsigned char c) { return std::isspace(c); });
+            if (keyword != "INPUT" && keyword != "GROUP") return names;
+            std::string token;
+            auto flush = [&] {
+                if (token.empty() || token == "AS_NEEDED") { token.clear(); return; }
+                std::string name;
+                if (token.starts_with("-l:"))     name = token.substr(3);
+                else if (token.starts_with("-l")) name = "lib" + token.substr(2) + ".a";
+                else name = std::filesystem::path(token).filename().string();
+                if (!name.empty() && std::ranges::find(names, name) == names.end())
+                    names.push_back(std::move(name));
+                token.clear();
+            };
+            for (auto c : std::string_view(text).substr(open + 1, close - open - 1)) {
+                if (std::isspace(static_cast<unsigned char>(c)) || c == ',' || c == '('
+                    || c == ')')
+                    flush();
+                else
+                    token.push_back(c);
+            }
+            flush();
+            return names;
+        };
+
         if (wantsArchives) {
             auto libcxxA    = find_archive("libc++.a");
             auto libcxxAbiA = find_archive("libc++abi.a");
             mi.libcxxArchive    = libcxxA.empty()    ? std::string{} : escape_path(libcxxA);
             mi.libcxxAbiArchive = libcxxAbiA.empty() ? std::string{} : escape_path(libcxxAbiA);
+            {
+                auto fromLibcxx = script_archive_names(libcxxA);
+                auto fromAbi    = script_archive_names(libcxxAbiA);
+                if (!fromLibcxx.empty() || !fromAbi.empty()) {
+                    std::vector<std::string> names{"libc++.a", "libc++abi.a"};
+                    for (auto* list : {&fromLibcxx, &fromAbi})
+                        for (auto& n : *list)
+                            if (std::ranges::find(names, n) == names.end())
+                                names.push_back(n);
+                    mi.libcxxLinkedArchiveNames = std::move(names);
+                }
+            }
             // ELF only: without it the "self-contained" binary still pulls
             // libunwind.so.1. Mach-O's libc++abi.a carries its own unwinder.
             if (mi.format == dist::Format::Elf) {

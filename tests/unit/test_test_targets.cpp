@@ -112,6 +112,106 @@ version = "0.1.0"
               std::filesystem::path("tests") / "vendor" / "external.cpp");
 }
 
+// `[test] discover` (#634 A5): names are relative to the fixed directory of
+// the glob that found the file, `main` stays relative to the package root.
+TEST(TestTargets, DiscoverNamesAreRelativeToTheGlobsDirectory) {
+    Tmp tmp;
+    write_manifest(tmp.path, R"([package]
+name = "demo"
+version = "0.1.0"
+
+[test]
+discover = ["checks/**/*.cpp"]
+)");
+    write_file(tmp.path / "checks/deep/a.cpp", "int main() {}\n");
+    write_file(tmp.path / "tests/ignored.cpp", "int main() {}\n");
+
+    auto result = mcpp::build::discover_test_targets(tmp.path, {});
+    ASSERT_TRUE(result.has_value()) << result.error();
+    EXPECT_TRUE(result->discoverDeclared);
+    ASSERT_EQ(result->targets.size(), 1u);
+    EXPECT_EQ(result->targets[0].name, "deep/a");
+    EXPECT_EQ(std::filesystem::path(result->targets[0].main),
+              std::filesystem::path("checks") / "deep" / "a.cpp");
+}
+
+// An exclusion removes a file whichever positive glob found it, and a glob
+// with no fixed directory names files relative to the package root.
+TEST(TestTargets, DiscoverExclusionsApplyAcrossGlobs) {
+    Tmp tmp;
+    write_manifest(tmp.path, R"([package]
+name = "demo"
+version = "0.1.0"
+
+[test]
+discover = ["tests/**/*.cpp", "*_check.cpp", "!tests/fixtures/**"]
+)");
+    write_file(tmp.path / "tests/kept.cpp", "int main() {}\n");
+    write_file(tmp.path / "tests/fixtures/dropped.cpp", "int main() {}\n");
+    write_file(tmp.path / "root_check.cpp", "int main() {}\n");
+
+    auto result = mcpp::build::discover_test_targets(tmp.path, {});
+    ASSERT_TRUE(result.has_value()) << result.error();
+    std::set<std::string> names;
+    for (auto const& t : result->targets) names.insert(t.name);
+    EXPECT_EQ(names, (std::set<std::string>{"kept", "root_check"}));
+}
+
+TEST(TestTargets, AnEmptyDiscoverFindsNothing) {
+    Tmp tmp;
+    write_manifest(tmp.path, R"([package]
+name = "demo"
+version = "0.1.0"
+
+[test]
+discover = []
+)");
+    write_file(tmp.path / "tests/main.cpp", "int main() {}\n");
+
+    auto result = mcpp::build::discover_test_targets(tmp.path, {});
+    ASSERT_TRUE(result.has_value()) << result.error();
+    EXPECT_TRUE(result->discoverDeclared);
+    EXPECT_TRUE(result->discover.empty());
+    EXPECT_TRUE(result->targets.empty());
+}
+
+TEST(TestTargets, TwoFilesWithOneNameAreRefusedNamingBoth) {
+    Tmp tmp;
+    write_manifest(tmp.path, R"([package]
+name = "demo"
+version = "0.1.0"
+
+[test]
+discover = ["tests/*.cpp", "checks/*.cpp"]
+)");
+    write_file(tmp.path / "tests/same.cpp", "int main() {}\n");
+    write_file(tmp.path / "checks/same.cpp", "int main() {}\n");
+
+    auto result = mcpp::build::discover_test_targets(tmp.path, {});
+    ASSERT_FALSE(result.has_value());
+    EXPECT_NE(result.error().find("duplicate test name 'same'"), std::string::npos) << result.error();
+    EXPECT_NE(result.error().find("tests/same.cpp"), std::string::npos) << result.error();
+    EXPECT_NE(result.error().find("checks/same.cpp"), std::string::npos) << result.error();
+}
+
+// Without the key the set, and every name, is the one earlier releases gave.
+TEST(TestTargets, WithoutDiscoverTheDefaultIsTestsGlob) {
+    Tmp tmp;
+    write_manifest(tmp.path, R"([package]
+name = "demo"
+version = "0.1.0"
+)");
+    write_file(tmp.path / "tests/unit/a.cpp", "int main() {}\n");
+    write_file(tmp.path / "checks/b.cpp", "int main() {}\n");
+
+    auto result = mcpp::build::discover_test_targets(tmp.path, {});
+    ASSERT_TRUE(result.has_value()) << result.error();
+    EXPECT_FALSE(result->discoverDeclared);
+    EXPECT_EQ(result->discover, std::vector<std::string>{"tests/**/*.cpp"});
+    ASSERT_EQ(result->targets.size(), 1u);
+    EXPECT_EQ(result->targets[0].name, "unit/a");
+}
+
 TEST(TestTargets, BrokenManifestStillReturnsInventory) {
     Tmp tmp;
     write_file(tmp.path / "mcpp.toml", "this is not valid TOML\n");
