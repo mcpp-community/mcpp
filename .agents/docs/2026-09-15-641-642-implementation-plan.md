@@ -182,6 +182,20 @@ line of the run step inside it.
   so that remedy is offered only when a request or the package's default
   decided, and the refusal names the package's statement otherwise. `mcpp run
   --format` built its pack without the run's features; it now passes them.
+- **On Mach-O a shared library over a graph runtime exports only what it marks.**
+  `graph_runtime_compile_flags` compiles every unit of such a graph with hidden
+  visibility on Mach-O, so that the runtime's instantiations are never coalesced
+  with the system's libc++. Measured on macos-15 through `llvm.libcxx`'s CI
+  under this branch: the private copy links the dylib, and the program's link
+  then finds none of the library's functions until the declarations carry
+  `[[gnu::visibility("default")]]`. A framework that already marks its API for
+  its CMake shared build is unaffected; the rule is documented beside the
+  refusal (docs 20).
+- **`dep_dir` and `dep_linkage` answer under the qualified name.** A package
+  that writes `namespace = "ns"` and `name = "fw"` is `ns.fw` to its consumer,
+  and `dep_dir("ns.fw")` read nothing although the reference promised the
+  canonical spelling; the framework's rule asks `dep_linkage("huxerui.huxerui")`.
+  Both are now published under the qualified name as well (e2e 693 leg F).
 - **F3, recorded and not addressed.** The std module object is linked into every
   C++ image, so a program over a C++ shared library that imports `std` reports
   its module initialiser as provided twice (`symbol_provision`). This predates
