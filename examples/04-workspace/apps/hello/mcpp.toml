@@ -4,4 +4,4 @@ name      = "hello"
 version   = "0.1.0"
 
 [dependencies]
-greeter = { path = "../../libs/greeter" }
+demo.greeter = { path = "../../libs/greeter" }

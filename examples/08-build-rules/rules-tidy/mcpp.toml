@@ -10,4 +10,4 @@ license     = "Apache-2.0"
 # written by the CONSUMER on an edge, so without this a rule could not request
 # anything on its own behalf — which is why rules used to be leaves.
 [build-dependencies]
-rules-embed = { path = "../rules-embed", host-module = true }
+example.rules-embed = { path = "../rules-embed", host-module = true }

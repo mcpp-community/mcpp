@@ -68,7 +68,7 @@ name    = "myapp"
 version = "0.1.0"
 
 [dependencies]
-core = { path = "libs/core" }
+myproject.core = { path = "libs/core" }
 ```
 
 ### 2.3 Member Project Files
@@ -96,7 +96,7 @@ name      = "http"
 version   = "0.1.0"
 
 [dependencies]
-core = { path = "../core" }
+myproject.core = { path = "../core" }
 
 [dependencies.compat]
 mbedtls.workspace = true

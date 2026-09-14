@@ -37,4 +37,4 @@ device_extensions = [".toy"]
 # The request hangs on the FEATURE, so a project that depends on this package
 # without activating the rule builds no compiler.
 [feature-deps.rules-toy]
-toyc = { path = "../toyc", tools = ["toyc"], reexport = true }
+example.toyc = { path = "../toyc", tools = ["toyc"], reexport = true }

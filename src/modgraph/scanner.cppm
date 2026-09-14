@@ -1293,11 +1293,21 @@ void resolve_graph(ScanResult& result) {
         if (u.provides) {
             auto [it, inserted] = g.producerOf.emplace(u.provides->logicalName, i);
             if (!inserted) {
+                // Name both packages: the same file reached as two packages
+                // and two packages that happen to pick one module name are
+                // different defects, and only the package names tell them
+                // apart.
+                auto const& first = g.units[it->second];
                 result.errors.push_back(ScanError{
                     u.path, 0,
-                    std::format("module '{}' already provided by {}",
+                    std::format("module '{}' is provided by package '{}' ({}) "
+                                "and by package '{}' ({}){}",
                                 u.provides->logicalName,
-                                g.units[it->second].path.string())});
+                                first.packageName, first.path.string(),
+                                u.packageName, u.path.string(),
+                                first.path == u.path
+                                    ? "; one file is reached as two packages"
+                                    : "")});
             }
         }
     }

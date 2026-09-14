@@ -129,7 +129,7 @@ because the manifest names it:
 
 ```toml
 [dependencies]
-rules-toy = { path = "../rules-toy", features = ["rules-toy"] }
+example.rules-toy = { path = "../rules-toy", features = ["rules-toy"] }
 
 [build]
 sources = ["src/*.cpp", "src/kernels/*.toy"]
@@ -142,7 +142,7 @@ The rule contains no compiler. `toyc` is an ordinary mcpp package with a
 
 ```toml
 [feature-deps.rules-toy]
-toyc = { path = "../toyc", tools = ["toyc"], reexport = true }
+example.toyc = { path = "../toyc", tools = ["toyc"], reexport = true }
 ```
 
 | part | what it does |

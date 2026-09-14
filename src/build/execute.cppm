@@ -796,6 +796,12 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
     for (auto& [name, spec] : ctx.manifest.dependencies) {
         if (announced.contains(name)) continue;
         announced.insert(name);
+        // Two keys that resolved to one identity (#634, A2) are one package
+        // and one compile, so they are announced once.
+        if (!spec.shortName.empty()
+            && !announced.insert(std::format("identity:{}.{}", spec.namespace_,
+                                             spec.shortName)).second)
+            continue;
         // `spec.version` is the constraint the manifest WROTE. Announcing it
         // printed "Compiling compat.imgui v^1.92.8" — a banner naming a version
         // that does not exist (mcpp#363). prepare_build hands the resolution

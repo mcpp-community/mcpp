@@ -4737,6 +4737,51 @@ prepare_build(bool print_fingerprint,
     };
     std::deque<WorkItem> worklist;
 
+    // #634, A2. A `path` or `git` dependency's identity is the one its manifest
+    // declares (SPEC-001 §1.2), and the key a consumer wrote is one way of
+    // reaching it. `identityBySource` maps a canonical source (the directory,
+    // or the repository and reference) to the identity resolved from it, so a
+    // second key over the same source finds that record without loading the
+    // manifest again. `declaringManifest` holds the manifest each such
+    // identity came from, and records whether that manifest named its
+    // namespace: one that does not takes the key's, so two keys over it would
+    // be two identities over one source.
+    struct DeclaringManifest {
+        std::string path;
+        bool        namespaceDeclared = false;
+    };
+    std::map<std::string, ResolvedKey> identityBySource;
+    std::map<ResolvedKey, DeclaringManifest> declaringManifest;
+    std::set<std::pair<std::string, std::string>> adoptionsReported;
+    auto qualifiedKey = [](const ResolvedKey& k) {
+        return k.ns.empty() ? k.shortName : std::format("{}.{}", k.ns, k.shortName);
+    };
+    // A root edge that adopted an identity states it on the root's own
+    // declaration too, which is what every later reader of the root manifest
+    // (the build banner, the resolution record) sees.
+    auto stateAdoptedIdentity = [&](const WorkItem& item, const ResolvedKey& declared) {
+        if (item.consumerDepIndex != kMainConsumer) return;
+        if (auto it = m->dependencies.find(item.name); it != m->dependencies.end()) {
+            it->second.namespace_ = declared.ns;
+            it->second.shortName = declared.shortName;
+        }
+    };
+    // One warning per declaring edge: each names a line someone can correct.
+    auto reportAdoption = [&](const std::string& requestedBy, const std::string& written,
+                              const ResolvedKey& normalised, const ResolvedKey& declared,
+                              const std::string& manifestPath) {
+        if (!adoptionsReported.emplace(requestedBy, written).second) return;
+        mcpp::diag::warning("dependency/identity", std::format(
+            "'{}' declares the dependency '{}', which names {}; the manifest "
+            "'{}' declares {}, and that identity is used.",
+            requestedBy, written, qualifiedKey(normalised), manifestPath,
+            qualifiedKey(declared)),
+            std::format("write '{}' in '{}' to state the identity the "
+                        "manifest declares.",
+                        qualifiedKey(declared), requestedBy));
+    };
+
+
     // Index routing — WHICH index answers for a namespace and how its
     // descriptors are read — lives in mcpp.pm.index_route, shared with the
     // `mcpp add` existence gate so the two cannot disagree about which
@@ -6589,6 +6634,34 @@ prepare_build(bool print_fingerprint,
         // branch below for the cache identity.
         std::string sourceCommit;
 
+        // A second key over a source that is already resolved takes the
+        // identity resolved there; its manifest is not loaded again.
+        if (sourceKind != "version") {
+            const auto source = sourceRefOf(sourceKind, spec, item.resolveRoot,
+                                            item.originalConstraint);
+            if (auto bySource = identityBySource.find(source);
+                bySource != identityBySource.end() && !(bySource->second == key)) {
+                const auto& existing = resolved.at(bySource->second);
+                const auto& declaring = declaringManifest.at(bySource->second);
+                if (!declaring.namespaceDeclared) {
+                    return std::unexpected(std::format(
+                        "one source is reached as two packages: '{}' names it {} "
+                        "and '{}' names it {}, and its manifest '{}' declares no "
+                        "namespace, so each key gives it its own identity and "
+                        "its modules would be compiled twice.\n"
+                        "       fix: declare `namespace` in '{}', or write the "
+                        "same key in both places.",
+                        existing.requestedBy, qualifiedKey(bySource->second),
+                        item.requestedBy, qualifiedKey(key),
+                        declaring.path, declaring.path));
+                }
+                reportAdoption(item.requestedBy, name, key, bySource->second,
+                               declaring.path);
+                key = bySource->second;
+                stateAdoptedIdentity(item, key);
+            }
+        }
+
         if (auto it = resolved.find(key); it != resolved.end()) {
             // A package is dev-only until some non-dev consumer wants it. Order
             // of arrival must not decide, so this is an AND over every request.
@@ -7308,6 +7381,44 @@ prepare_build(bool print_fingerprint,
             }
         }
 
+        // The identity a `path` or `git` manifest declares is the package's,
+        // whatever key reached it (#634, A2). Before this, only the short name
+        // was compared, so `fw` reaching a manifest that declares `huxdemo.fw`
+        // resolved as `mcpplibs.fw` while every reader that builds a name from
+        // the manifest saw `huxdemo.fw`, and a second edge written
+        // `huxdemo.fw` put the same sources into the build twice.
+        const bool namespaceDeclared = !dep_manifest->package.namespace_.empty();
+        const std::string manifestPath = sourceKind == "version"
+            ? std::string{}
+            : (dep_root / "mcpp.toml").lexically_normal().generic_string();
+        if (sourceKind != "version" && namespaceDeclared) {
+            auto declaredName = mcpp::pm::compat::resolve_package_name(
+                dep_manifest->package.name, dep_manifest->package.namespace_);
+            ResolvedKey declared{ dep_manifest->package.namespace_,
+                                  declaredName.shortName };
+            if (!(declared == key)) {
+                reportAdoption(item.requestedBy, name, key, declared, manifestPath);
+                stateAdoptedIdentity(item, declared);
+                if (resolved.contains(declared)) {
+                    // Another source already resolved the declared identity,
+                    // and the rules for two declarations of one identity
+                    // decide (the #630 decision table, at the resolved-record
+                    // hit above). The edge is queued again stating that
+                    // identity, which sends it there.
+                    item.spec.namespace_ = declared.ns;
+                    item.spec.shortName = declared.shortName;
+                    item.spec.candidates = {{ .namespace_ = declared.ns,
+                                              .shortName = declared.shortName }};
+                    item.spec.namespaceOmitted = false;
+                    item.spec.legacyCandidateSearch = false;
+                    item.spec.legacyDottedKey = false;
+                    worklist.push_front(std::move(item));
+                    continue;
+                }
+                key = declared;
+            }
+        }
+
         // Stamp the identity with the resolver's exact coordinate and source.
         // A descriptor that omitted namespace inherits the coordinate that
         // answered it; otherwise two indices containing the same short name
@@ -7358,6 +7469,12 @@ prepare_build(bool print_fingerprint,
 
         // Record this dep as resolved so future encounters of the same
         // (ns, name) hit the fast path (skip / merge / conflict).
+        if (sourceKind != "version") {
+            identityBySource.emplace(
+                sourceRefOf(sourceKind, spec, item.resolveRoot, item.originalConstraint),
+                key);
+            declaringManifest[key] = DeclaringManifest{ manifestPath, namespaceDeclared };
+        }
         resolved[key] = ResolvedRecord{
             .version           = sourceKind == "version" ? spec.version : "",
             .constraint        = sourceKind == "version" ? item.originalConstraint : "",
