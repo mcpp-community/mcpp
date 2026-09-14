@@ -162,6 +162,28 @@ if [ -n "$BIN2" ] && [ -n "$DYLIB2" ]; then
     reading b1.control-no-link-flag "exit=$? out=$(one_line ctl.out)"
 fi
 
+# ── B1, run 3: the layout itself, with the rpath the link would carry ──────
+# Run 2 measured that the engine anchors `-Wl,-rpath,@executable_path/...` to
+# the package directory, so the link-time route cannot be measured before that
+# is fixed. This adds the literal rpath after link instead, which is the state
+# a fixed link produces, and re-signs because the file changed.
+make_bundle "$W/Fixed.app" "$BIN2" "$DYLIB2" app2
+install_name_tool -add_rpath @executable_path/../Frameworks "$W/Fixed.app/Contents/MacOS/app2" > int.txt 2>&1
+reading b1.post-link-rpath "exit=$? rpaths=$(otool -l "$W/Fixed.app/Contents/MacOS/app2" | awk '/LC_RPATH/{getline; getline; print $2}' | tr '\n' ' ')"
+"$W/Fixed.app/Contents/MacOS/app2" > fixed-unsigned.out 2>&1
+reading b1.post-link-run-before-resign "exit=$? out=$(one_line fixed-unsigned.out)"
+codesign --force --sign - "$W/Fixed.app/Contents/Frameworks/libfw.dylib" > /dev/null 2>&1
+codesign --force --sign - "$W/Fixed.app/Contents/MacOS/app2" > /dev/null 2>&1
+codesign --force --sign - "$W/Fixed.app" > /dev/null 2>&1
+codesign --verify --deep --strict --verbose=2 "$W/Fixed.app" > fixed-verify.txt 2>&1
+reading b1.post-link-verify "exit=$? $(one_line fixed-verify.txt)"
+"$W/Fixed.app/Contents/MacOS/app2" > fixed.out 2>&1
+reading b1.post-link-run "exit=$? out=$(one_line fixed.out)"
+mv "$W/Fixed.app/Contents/Frameworks/libfw.dylib" "$W/libfw.fixed.away"
+"$W/Fixed.app/Contents/MacOS/app2" > fixed-neg.out 2>&1
+reading b1.post-link-run-without-framework "exit=$? out=$(one_line fixed-neg.out | cut -c1-160)"
+mv "$W/libfw.fixed.away" "$W/Fixed.app/Contents/Frameworks/libfw.dylib"
+
 # ── B2: the DMG ─────────────────────────────────────────────────────────────
 mkdir -p dmgstage
 cp -R "$W/Demo.app" dmgstage/

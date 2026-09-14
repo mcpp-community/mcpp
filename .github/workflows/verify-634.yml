@@ -4,8 +4,10 @@
 # platform does as READING lines in its log and step summary, and fails only
 # when a probe cannot run at all.
 #
-# No artifact upload: run 1's upload step hung for ten minutes after every
-# measurement had finished, and cancelling the job lost its log with it.
+# Run 3 keeps only the two questions runs 1 and 2 left open: the Frameworks
+# bundle with a literal rpath (the link-time one is anchored by the engine),
+# and the simulator's exit status. The other jobs' readings are final and
+# recorded in the design record; their scripts stay on the branch.
 name: verify-634 (temporary measurements)
 
 on:
@@ -21,9 +23,9 @@ env:
 
 jobs:
   macos-bundle:
-    name: macos-15 bundle (M1 B1 B2 M4 B3)
+    name: macos-15 bundle (M1 B1 B2)
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -37,101 +39,21 @@ jobs:
       - name: M1 B1 B2 - Mach-O staged closure, Frameworks bundle, DMG
         timeout-minutes: 40
         run: bash .github/verify-634/macos-closure-bundle.sh 2>&1
-      - name: M4 B3 - main bundle resolution, named runner, default runner
-        timeout-minutes: 30
-        run: bash .github/verify-634/macos-runner.sh 2>&1
 
-  macos-sim:
-    name: macos-15 simulator (M5 M2-ios)
+  macos-sim-status:
+    name: macos-15 simulator status (M5 run 3)
     runs-on: macos-15
-    timeout-minutes: 90
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - name: Pin MCPP_HOME
-        run: echo "MCPP_HOME=$HOME/.mcpp" >> "$GITHUB_ENV"
-      - name: Fetch the released mcpp
-        timeout-minutes: 10
-        run: bash .github/verify-634/setup-mcpp.sh
-      - name: M5 - simctl launch spellings
-        timeout-minutes: 35
-        run: bash .github/verify-634/macos-simctl.sh 2>&1
-      - name: M2 - mcpp test on the iOS simulator
-        timeout-minutes: 30
-        run: bash .github/verify-634/macos-ios-test.sh 2>&1
-
-  android:
-    name: ubuntu-24.04 emulator (M2-android)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - name: Pin MCPP_HOME
-        run: echo "MCPP_HOME=$HOME/.mcpp" >> "$GITHUB_ENV"
-      - name: Fetch the released mcpp
-        timeout-minutes: 10
-        run: bash .github/verify-634/setup-mcpp.sh
-      - name: Enable KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: M2 - compile the tests before the emulator starts
-        timeout-minutes: 30
-        run: bash .github/verify-634/android-test.sh prebuild 2>&1
-      - name: M2 - mcpp test on an API 34 emulator
-        timeout-minutes: 40
-        uses: reactivecircus/android-emulator-runner@v2
-        with:
-          api-level: 34
-          arch: x86_64
-          target: google_apis
-          force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          disable-animations: true
-          script: bash .github/verify-634/android-test.sh run 2>&1
-
-  linux:
-    name: ubuntu-24.04 fresh homes (M3 M7)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 90
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-      - name: Fetch the released mcpp
-        timeout-minutes: 10
-        run: bash .github/verify-634/setup-mcpp.sh
-      - name: M3 - the SubOS pkg-config view with only xim:gtk4 declared
-        timeout-minutes: 40
-        run: bash .github/verify-634/linux-gtk-view.sh 2>&1
-      - name: M7 - an xim index override from a branch checkout
-        timeout-minutes: 30
-        run: bash .github/verify-634/linux-index-override.sh 2>&1
-
-  windows:
-    name: windows-2022 (M6)
-    runs-on: windows-2022
     timeout-minutes: 60
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
-      - name: Pin MCPP_HOME in the host's path syntax
-        run: |
-          H="$HOME/.mcpp"
-          command -v cygpath >/dev/null && H=$(cygpath -m "$H")
-          echo "MCPP_HOME=$H" >> "$GITHUB_ENV"
+      - name: Pin MCPP_HOME
+        run: echo "MCPP_HOME=$HOME/.mcpp" >> "$GITHUB_ENV"
       - name: Fetch the released mcpp
         timeout-minutes: 10
         run: bash .github/verify-634/setup-mcpp.sh
-      - name: M6 - WiX native SDK archives under mcpp's Windows toolchains
-        timeout-minutes: 30
-        run: bash .github/verify-634/windows-wix-link.sh 2>&1
+      - name: M5 - fresh-install launches, spawn of the installed executable, a crash
+        timeout-minutes: 40
+        run: bash .github/verify-634/macos-simctl-status.sh 2>&1
