@@ -5,6 +5,60 @@
 
 ## [Unreleased]
 
+### 一个框架的 CMake 对齐清单:#634 的二十一项中引擎的部分(2026.9.14.2)
+
+#634 列出 HuxerUI 从 CMake 迁到 mcpp 时仍缺的二十一项。分类与决定见设计记录
+`2026-09-14-634-cmake-parity-items-by-home.md`,实现计划与台账见
+`2026-09-14-634-implementation-plan.md`;引擎只承接通用能力,专有功能归官方插件
+(mcpp-plugins 0.10.0)、载荷(xim-pkgindex#838)或工程本身。
+
+**条件依赖声明替换无条件声明(A1)。** 选择器命中的行上,
+`[target.<sel>.dependencies]` 中某个身份的声明替换 `[dependencies]` 中同一身份的
+声明,按规范化身份比较,多段按清单顺序、后者为准;`dev-dependencies`、
+`build-dependencies`、`feature-deps` 同理。此前保留的是无条件那条,条件表里的
+`linkage = "shared"` 在它自己的行上被静默丢弃。只写选项、不写来源的条件表给出
+补全来源后的写法;`[target.<sel>]` 下 mcpp 不读取的子表被报出(已知表由单测从
+解析点双向核对)。`[target.<sel>.targets.<n>] kind` 是库目标形态的按行形式,
+消费者的 `linkage = "static"` 被拒时,告警点名这一行。
+
+**`path`/`git` 依赖的身份取自其清单(A2)。** 键规范化到另一身份时采用清单声明并
+每条声明边告警一次;同一来源上两个命名空间不同的键在扫描前拒绝。mcpp 自己的三个
+示例改写为声明的身份。
+
+**Android 与 Mach-O 的闭包被读取并暂存(A3)。** `mcpp pack` 从文件读闭包:Android
+暂存到 `lib/`(多 triple 为 `lib/<abi>/`),含图里的共享库与 `libc++_shared.so`;
+Mach-O 的 dylib 暂存在程序旁,不改 load command、不重签。stage manifest 增加
+`needs<TAB><name><TAB><路径|platform|unresolved>` 行;闭包不完整时写 `not-walked`,
+`dir`/`tar` 拒绝并点名。rpath 中以 `@executable_path`、`@loader_path`、`@rpath`
+开头的项不再被锚定到包目录。
+
+**ELF 共享库默认以文件名为 SONAME(A4)。** 位置在 `$ldflags` 之前,工程自己写的
+`-soname` 仍生效。
+
+**测试与运行器(A5、A6、A10、B3)。** `[test] discover` 指定测试从哪些 glob 发现;
+静态 C++ 运行时通过询问驱动(带 API level)定位,Android 行的测试程序不再依赖
+`libc++_shared.so`,NDK 的 `libc++.a` 链接脚本里的归档名进入 `--exclude-libs`;
+每个 runner 收到 `MCPP_RUNTIME_FILES`(部署文件与链接的共享库,TAB 分隔);
+`run`、`test`、`pack` 接受 `--toolchain`;`mcpp run --format <f>` 使用名为 `<f>` 的
+runner,没有 runner 能到达的目录分发物在启动前以 126 拒绝。依赖的构建程序与根的
+构建程序提供同名 runner 时拒绝并点名二者。
+
+**解析记录与平台下限(X、A9)。** `resolution.json` 增加 `graph`(每个包、每条请求
+的键与声明表、库的链接形态与原因),`mcpp why deps` 打印它;引擎把
+`android.api-level`、`ios.deployment-target`、`macos.deployment-target` 陈述为事实,
+依赖以 `version-floor` 要求拒绝过低的下限,拒绝写明「this build targets」与设定来源。
+
+**配置与访问器(C4、A7)。** `config.toml` 的 `[index.repos.<name>]` 对已存在的 home
+生效,删去后恢复原条目;从被覆盖的索引安装时打印来源。构建程序新增
+`mcpp::pkg_config_libdir()`。
+
+**实现中发现并修复的缺陷。** 嵌套在 `tests/` 子目录中的测试加载不到图构建的共享库;
+被拒的 `--toolchain` 值被记在 `[toolchain].<platform>` 名下。
+
+- 判据:`tests/e2e/266`、`666`–`685`(677–685 在 2026.9.14.1 上失败),
+  单测 `test_pack_closure`、`TargetScalarKeys.EveryParsedSubTableIsKnownToTheSweep`;
+  `ci-linux-e2e` 新增 `android` job,在 API 34 模拟器上跑 `mcpp test`。
+
 ### 图里的 libc++ 之下,预编译 C 库的头文件也要进 std 模块的命令;iOS 行未写的部署下限取 SDK 的版本
 
 `llvm.libcxx` 的 CI 扩到它声明的每一行后量到两处引擎缺口。包提供的 std 模块在
