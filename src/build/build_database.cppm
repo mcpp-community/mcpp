@@ -35,6 +35,7 @@ import mcpp.modgraph.graph;
 import mcpp.modgraph.scanner;
 import mcpp.platform;
 import mcpp.toolchain.fingerprint;
+import mcpp.toolchain.linkmodel;
 import mcpp.toolchain.model;
 import mcpp.toolchain.stdmod;
 
@@ -151,23 +152,95 @@ Redirect redirect_kind(std::string_view w) {
     return j == w.size() ? Redirect::Detached : Redirect::Attached;
 }
 
-bool names_source(std::string_view word, const std::filesystem::path& source,
+bool names_path(std::string_view word, const std::filesystem::path& path,
                   const std::filesystem::path& cwd) {
     std::filesystem::path w{std::string(word)};
-    const auto want = source.lexically_normal();
+    const auto want = path.lexically_normal();
     if (w.lexically_normal() == want) return true;
     if (!w.is_absolute() && !cwd.empty() && (cwd / w).lexically_normal() == want)
         return true;
     return false;
 }
 
+// S1 `config-files`: the configuration files the driver reads without being
+// named on a command line. A clang driver reads the `.cfg` beside it unless a
+// unit passes `--no-default-config`, which mcpp does whenever that file exists
+// (mcpp.toolchain.linkmodel::resolve_clang_driver). A GCC driver reads the
+// `specs` file in its library directory for its own machine and version, which
+// a distribution may spell with the major version only. Found from the layout
+// the driver searches; no driver is run.
+nlohmann::json config_files(const mcpp::toolchain::Toolchain& tc,
+                            const std::vector<mcpp::build::UnitInvocation>& invocations) {
+    nlohmann::json out = nlohmann::json::array();
+    using C = mcpp::toolchain::CompilerId;
+    std::error_code ec;
+    if (tc.compiler == C::Clang) {
+        const auto dm = mcpp::toolchain::resolve_clang_driver(tc);
+        const bool read = std::ranges::any_of(invocations, [](auto const& inv) {
+            return std::ranges::find(inv.arguments, "--no-default-config") == inv.arguments.end();
+        });
+        if (dm.hasCfg && read) out.push_back(native_string(dm.cfgPath));
+    } else if (tc.compiler == C::GCC && !tc.targetTriple.empty()) {
+        const auto machine = tc.binaryPath.parent_path().parent_path()
+                           / "lib" / "gcc" / tc.targetTriple;
+        const auto major = tc.version.substr(0, tc.version.find('.'));
+        for (auto const& version : {tc.version, major}) {
+            const auto specs = machine / version / "specs";
+            if (!version.empty() && std::filesystem::is_regular_file(specs, ec)) {
+                out.push_back(native_string(specs));
+                break;
+            }
+        }
+    }
+    return out;
+}
+
+// S1 `baseline-arguments` and `local-arguments`. A unit's arguments are its
+// driver, then the set's baseline, then its local arguments, then its own
+// trailing `-c <source> -o <object>` when it has one: the baseline is the longest
+// prefix that every unit of the set shares after the driver and without that
+// tail. A prefix keeps the order of the arguments, which decides include search
+// and macro definitions; a common subset would not.
+void split_baseline(nlohmann::json& set) {
+    std::vector<std::vector<std::string>> semantic;
+    for (auto const& u : set["translation-units"]) {
+        auto args = u["arguments"].get<std::vector<std::string>>();
+        std::vector<std::string> rest(args.size() > 1 ? args.begin() + 1 : args.end(), args.end());
+        const std::filesystem::path cwd{u["work-directory"].get<std::string>()};
+        const auto n = rest.size();
+        if (n >= 4 && rest[n - 4] == "-c" && rest[n - 2] == "-o"
+            && names_path(rest[n - 3], u["source"].get<std::string>(), cwd)
+            && names_path(rest[n - 1], u["object"].get<std::string>(), cwd))
+            rest.resize(n - 4);
+        semantic.push_back(std::move(rest));
+    }
+    std::vector<std::string> baseline;
+    if (!semantic.empty()) {
+        baseline = semantic.front();
+        for (auto const& unit : semantic) {
+            std::size_t k = 0;
+            while (k < baseline.size() && k < unit.size() && baseline[k] == unit[k]) ++k;
+            baseline.resize(k);
+        }
+    }
+    std::size_t i = 0;
+    for (auto& u : set["translation-units"]) {
+        const auto& unit = semantic[i++];
+        u["local-arguments"] = std::vector<std::string>(
+            unit.begin() + static_cast<std::ptrdiff_t>(baseline.size()), unit.end());
+    }
+    set["baseline-arguments"] = std::move(baseline);
+}
+
 nlohmann::json toolchain_json(const mcpp::toolchain::Toolchain& tc,
-                              std::string_view compilerTriple) {
+                              std::string_view compilerTriple,
+                              const std::vector<mcpp::build::UnitInvocation>& invocations) {
     nlohmann::json j{
-        {"family",  std::string(tc.compiler_name())},
-        {"version", tc.version},
-        {"driver",  tc.binaryPath.string()},
-        {"target",  std::string(compilerTriple)},
+        {"family",       std::string(tc.compiler_name())},
+        {"version",      tc.version},
+        {"driver",       tc.binaryPath.string()},
+        {"target",       std::string(compilerTriple)},
+        {"config-files", config_files(tc, invocations)},
     };
     if (!tc.sysroot.empty()) j["sysroot"] = native_string(tc.sysroot);
     if (!tc.stdlibId.empty()) {
@@ -347,7 +420,7 @@ std::optional<Invocation> recover_invocation(const std::vector<std::string>& com
                 }
             }
             const bool named = std::ranges::any_of(argv, [&](const std::string& w) {
-                return names_source(w, source, cwd.empty() ? defaultDirectory : cwd);
+                return names_path(w, source, cwd.empty() ? defaultDirectory : cwd);
             });
             if (!named) continue;
             return Invocation{cwd.empty() ? defaultDirectory : cwd, std::move(argv)};
@@ -398,8 +471,6 @@ Rendered render(std::span<const Member> members,
         const std::string compilerTriple = ctx.plan.targetSide.llvmTriple.empty()
             ? ctx.tc.targetTriple : ctx.plan.targetSide.llvmTriple;
         const auto tcId = toolchain_id(ctx.tc, compilerTriple);
-        if (!toolchains.contains(tcId))
-            toolchains[tcId] = toolchain_json(ctx.tc, compilerTriple);
 
         const auto rootName = qualified_name(ctx.manifest);
         std::set<std::filesystem::path> testSources;
@@ -424,7 +495,10 @@ Rendered render(std::span<const Member> members,
         };
 
         const auto flags = mcpp::build::compute_flags(ctx.plan);
-        for (auto& inv : mcpp::build::unit_invocations(ctx.plan, flags)) {
+        auto invocations = mcpp::build::unit_invocations(ctx.plan, flags);
+        if (!toolchains.contains(tcId))
+            toolchains[tcId] = toolchain_json(ctx.tc, compilerTriple, invocations);
+        for (auto& inv : invocations) {
             const auto& cu = *inv.unit;
             const bool isTest = testSources.contains(cu.source.lexically_normal());
             const std::string package = cu.packageName.empty() ? rootName : cu.packageName;
@@ -448,6 +522,7 @@ Rendered render(std::span<const Member> members,
                 {"work-directory", std::move(inv.directory)},
                 {"arguments",      std::move(inv.arguments)},
                 {"object",         std::move(inv.output)},
+                {"private",        false},
                 {"provides",       std::move(provides)},
                 {"requires",       std::move(requires_)},
                 {"ide",            {{"role", std::string(role_name(cu.declaration))}}},
@@ -478,6 +553,7 @@ Rendered render(std::span<const Member> members,
                     {"work-directory", native_string(inv->workDirectory)},
                     {"arguments",      std::move(inv->arguments)},
                     {"object",         native_string(object)},
+                    {"private",        false},
                     {"provides",       {{std::string(module), ""}}},
                     {"requires",       std::move(requires_)},
                     {"ide",            {{"role", "module-interface"}}},
@@ -493,7 +569,7 @@ Rendered render(std::span<const Member> members,
             nlohmann::json visible = nlohmann::json::array();
             for (auto const& other : order)
                 if (other != name) visible.push_back(other);
-            sets.push_back(nlohmann::json{
+            nlohmann::json setJson{
                 {"name",              name},
                 {"family-name",       set.familyName},
                 {"visible-sets",      std::move(visible)},
@@ -503,7 +579,9 @@ Rendered render(std::span<const Member> members,
                     {"configuration", ctx.profile},
                     {"kind",          set.kind},
                 }},
-            });
+            };
+            split_baseline(setJson);
+            sets.push_back(std::move(setJson));
         }
 
         watch_file(ctx.projectRoot / "mcpp.lock");

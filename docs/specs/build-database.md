@@ -6,7 +6,7 @@
 | 标题 | mcpp 输出的构建数据库:内容、取值规则与不写工程目录的保证 |
 | 状态 | 评审中 v1.0 |
 | 版本 | 1.0 |
-| 最后修改 | 2026-09-14 |
+| 最后修改 | 2026-09-15 |
 | 对应实现 | mcpp >= 2026.9.15.1 |
 | 相关设计文档 | `.agents/docs/2026-09-14-636-build-database-and-the-latest-xlings.md` |
 | 相关 issue | #636 |
@@ -71,6 +71,10 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
   `target` 为编译器自身拼写的目标三元组;构建使用 sysroot 时给出 `sysroot`;`stdlib`
   给出 `name`(`libstdc++`、`libc++`、`msvc-stl` 或 `other`)与 `version`,不给出
   `module-metadata`,标准库模块经 §3.4 的单元解析。**已实现**
+- **R3.2a** `config-files` 列出驱动在命令行之外读取的配置文件,空数组表示没有:clang
+  驱动旁的 `<驱动名>.cfg`,单元带 `--no-default-config` 时不列出;GCC 驱动库目录中
+  `lib/gcc/<targetTriple>/<版本>/specs`,版本目录也可以只写主版本号。取值来自驱动
+  搜索的目录布局,命令不运行驱动。**已实现**
 
 ### 3.2 集合
 
@@ -82,7 +86,11 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 - **R3.5** `family-name` 为包名,`mcpp:std` 集合的为 `mcpp:std`;`ide.configuration`
   为 profile 名;`ide.kind` 在测试集合为 `test`,在根包集合按其目标为 `library`、
   `executable` 或 `other`,在依赖包集合与 `mcpp:std` 为 `library`。**已实现**
-- **R3.6** 不输出 `baseline-arguments` 与 `local-arguments`。**已实现**
+- **R3.6** 单元的 `arguments` 依次是驱动、集合的 `baseline-arguments`、单元的
+  `local-arguments`,以及单元自己结尾的 `-c <source> -o <object>`(若有;两个操作数
+  相对 `work-directory` 指向 `source` 与 `object`)。`baseline-arguments` 是集合中每个
+  单元去掉驱动与该结尾后的最长公共前缀。取前缀而不取公共子集,因为参数顺序决定
+  头文件搜索与宏定义。**已实现**
 
 ### 3.3 翻译单元
 
@@ -91,7 +99,7 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
   `file`、`directory`、`arguments`、`output` 取自同一条记录,因而逐字相同。
   **已实现**
 - **R3.8** `provides` 把单元提供的模块名映射到空字符串,命令不执行构建(S1-8-6);
-  `requires` 为单元导入的模块名,分区写全名 `M:P`。不输出 `private`,即 `false`。
+  `requires` 为单元导入的模块名,分区写全名 `M:P`。`private` 为 `false`,理由同 R3.4。
   **已实现**
 - **R3.9** `ide.role` 取自扫描器读到的模块声明形式:
 
@@ -105,6 +113,11 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
   | `scan_overrides` 声明的单元;P1689 扫描中无法区分实现单元与导入者的单元 | `unknown` |
 
   **已实现**
+- **R3.9a** 没有被 `sources` glob 匹配的目标入口源文件(发现的测试、glob 之外的
+  `main`)与包源文件由同一扫描器读取,注释与原始字符串中的 `import` 不是导入。扫描器
+  拒绝的入口文件(`#if` 块中的 `import`、头文件单元)从未在这条路径上被拒绝,现在也
+  不被拒绝:`requires` 为其代码中行首的 `import`,`ide.role` 为 `unknown`。入口声明
+  自身提供模块时,`ide.role` 为 `unknown`,因为构建不为该单元产出 BMI。**已实现**
 
 ### 3.4 标准库模块
 

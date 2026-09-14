@@ -23,6 +23,12 @@
 #   H. The bare document goes to stdout, or to `-o <file>` with stdout empty.
 #   I. `watch` names the manifests, the lock, the source and test globs; the
 #      fingerprint is stable and follows a source edit.
+#   J. Each unit's arguments are its driver, its set's `baseline-arguments`, its
+#      `local-arguments` and its `-c <source> -o <object>`; `private` is false;
+#      each toolchain's `config-files` names existing files, and no `.cfg` that
+#      the units bypass with `--no-default-config`.
+#   K. The discovered test is scanned as a package source is: the imports inside
+#      its comment and its raw string are not in `requires`.
 set -e
 
 TMP=$(mktemp -d)   # the measured tree: the project and its dev-dependency
@@ -64,8 +70,8 @@ printf 'export module hello.greet;\nexport import :detail;\nimport std;\nexport 
 printf 'export module hello.greet:detail;\nexport int answer() { return 42; }\n' > src/detail.cppm
 printf 'module hello.greet:impl;\nint hidden() { return 7; }\n' > src/impl.cppm
 printf 'module hello.greet;\nimport :impl;\nstd::string greet() { return "hi"; }\n' > src/greet_impl.cpp
-printf 'import hello.greet;\nimport std;\nint main( { std::println("{}", greet()); }\n' > src/main.cpp
-printf '#include <devkit.hpp>\nint main() { return DEVKIT_MARKER - 1; }\n' > tests/test_smoke.cpp
+printf 'import hello.greet;\nimport std;\nint main() { std::println("{}", greet()); }\n' > src/main.cpp
+printf '#include <devkit.hpp>\n/*\nimport in.comment;\n*/\nconst char* text = R"x(\nimport in.raw;\n)x";\nint main() { return DEVKIT_MARKER - 1; }\n' > tests/test_smoke.cpp
 
 tree_digest() {
     "$PY" - "$TMP" <<'EOF'
@@ -157,6 +163,36 @@ assert std[0]["source"] in std[0]["arguments"] or any(a.endswith(os.path.basenam
 EOF
 echo "ok: D, roles and sets; E, the std unit"
 
+# ── J, K ───────────────────────────────────────────────────────────────────
+"$PY" - "$OUT/env.json" <<'EOF' || fail "J/K: argument decomposition, config-files, test scan" "$OUT/env.json"
+import json, os, sys
+db = json.load(open(sys.argv[1]))["data"]["database"]
+def same(word, path, cwd):
+    return os.path.normpath(os.path.join(cwd, word)) == os.path.normpath(path)
+bypassed = False
+for s in db["sets"]:
+    base = s["baseline-arguments"]
+    for u in s["translation-units"]:
+        a, local = u["arguments"], u["local-arguments"]
+        head = [a[0]] + base + local
+        assert a[:len(head)] == head, (s["name"], u["source"], base, local, a)
+        tail = a[len(head):]
+        assert tail == [] or (len(tail) == 4 and tail[0] == "-c" and tail[2] == "-o"
+                              and same(tail[1], u["source"], u["work-directory"])
+                              and same(tail[3], u["object"], u["work-directory"])), (u["source"], tail)
+        assert u["private"] is False, u
+        bypassed = bypassed or "--no-default-config" in a
+hello = next(s for s in db["sets"] if s["name"] == "hello")
+assert "-std=c++23" in hello["baseline-arguments"] or "/std:c++latest" in hello["baseline-arguments"], hello["baseline-arguments"]
+for tid, t in db["ide"]["toolchains"].items():
+    for f in t["config-files"]:
+        assert os.path.isabs(f) and os.path.isfile(f), (tid, f)
+        assert not (bypassed and f.endswith(".cfg")), (tid, f)
+test = next(u for s in db["sets"] if s["name"] == "hello:test" for u in s["translation-units"])
+assert test["requires"] == [], test["requires"]
+EOF
+echo "ok: J, baseline and local arguments, private, config-files; K, the test's imports"
+
 # ── F (the S1 and compile-commands renderings agree) ──────────────────────
 "$MCPP" emit build-database --spec compile-commands > "$OUT/cc.json" 2> "$OUT/cc.err" \
     || fail "F: --spec compile-commands exited non-zero" "$OUT/cc.err"
@@ -231,18 +267,22 @@ print(obj[: norm.index("/target/")])
 [ "$(tree_digest)" != "$before" ] || fail "B control: configure-only did not change the tree"
 [ -f compile_commands.json ] || fail "F: configure-only wrote no compile_commands.json" "$OUT/conf.out"
 "$PY" - "$OUT/cc.json" compile_commands.json <<'EOF' || fail "F: compile-commands differs from configure-only" compile_commands.json
-import json, re, sys
+import json, sys
 emitted = json.load(open(sys.argv[1]))
 written = json.load(open(sys.argv[2]))
 # The one difference by construction is where the build writes: the planning
 # pass writes under its work directory, configure-only under the project.
+def slash(text):
+    # One spelling for the comparison: a Windows argument may name a path with
+    # either separator, and the mapping below is textual.
+    return text.replace("\\", "/")
 def write_root(entry):
-    return re.split(r"[\\/]target[\\/]", entry["output"])[0]
+    return slash(entry["output"]).split("/target/")[0]
 work, project = write_root(emitted[0]), write_root(written[0])
 def mapped(args):
-    return [a.replace(work, project) for a in args]
-e = {x["file"]: mapped(x["arguments"]) for x in emitted}
-w = {x["file"]: x["arguments"] for x in written}
+    return [slash(a).replace(work, project) for a in args]
+e = {slash(x["file"]): mapped(x["arguments"]) for x in emitted}
+w = {slash(x["file"]): [slash(a) for a in x["arguments"]] for x in written}
 assert set(e) <= set(w), (sorted(e), sorted(w))
 for f in e:
     assert e[f] == w[f], (f, e[f], w[f])

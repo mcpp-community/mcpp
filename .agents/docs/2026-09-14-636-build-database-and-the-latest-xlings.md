@@ -305,17 +305,30 @@ guarantee covers mcpp's writes. A build program that writes outside
 
 | S1 | from | note |
 |---|---|---|
-| toolchain id | `<compiler_name>-<version>-<targetTriple>` | |
+| toolchain id | `<compiler_family>-<version>-<triple>`, the triple as the compiler spells it | opaque to a consumer; `llvm`, as in `llvm@22.1.8` |
 | `family` | `Toolchain::compiler_name()` (`modules/toolchain-model/src/model.cppm:261-268`): `gcc`, `clang`, `msvc` | not `compiler_family()`, which answers `llvm` |
 | `driver`, `version`, `target`, `sysroot` | `binaryPath`, `version`, `targetTriple`, `sysroot` | |
 | `stdlib` | `name` and `version` from `stdlibId` and `stdlibVersion`; no `module-metadata` | std resolves through units (next row) |
+| `config-files` | clang: the `<driver>.cfg` of `resolve_clang_driver`, unless the units pass `--no-default-config`; GCC: `lib/gcc/<targetTriple>/<version or major>/specs` beside the driver | read from the layout the driver searches; no driver is run |
 | set `mcpp:std` | units for `stdModuleSource` and `stdCompatSource`, carrying the commands of 5.3 (3) | One rule for GCC's `bits/std.cc`, libc++'s `std.cppm`, MSVC's `std.ixx` and a package's own `std.cppm`; S1 §6.1 lets units outrank a manifest. `mcpp:` is the engine's reserved namespace (SPEC-002), so the name cannot collide with a package. |
 | sets | one per package; test targets' sources in `<package>:test` | `family-name` is the package; `ide.configuration` is `BuildContext::profile`; `ide.kind` comes from the package's declared targets |
 | `visible-sets` | every other set | The engine resolves imports over one flat graph per invocation (`scanner.cppm:1289-1319`). A narrower closure would describe a rule the build does not enforce; if the engine later refuses undeclared imports, the database inherits it. |
 | units | every `CompileUnit` except NASM units, as in the CDB (`compile_commands.cppm:225-228`) | rendered from the record of 5.3 (4) |
+| `baseline-arguments`, `local-arguments` | a unit's arguments are its driver, the set's baseline, its local arguments and its own `-c <source> -o <object>`; the baseline is the longest prefix every unit of the set shares | a prefix keeps argument order, which decides include search and macro definitions; a common subset would not |
+| `private` | `false` | every module is visible to every set, as the `visible-sets` row states |
 | `provides` | `providesModule` mapped to `""` | S1-8-6 permits an empty path for a producer that performs no build |
 | `requires` | `imports` | partitions are already written in full |
 | `ide.role` | the declaration form of 5.3 (5) | `unknown` for `scan_overrides` units |
+
+A target's entry source that no `sources` glob matched (a discovered test, a
+`main` outside the globs) had its imports read from line-leading `import` alone,
+so an import in a comment or a raw string was planned as one. Validating the
+lsp-mcpp repository's own database against S1 found it: its scanner test
+required three modules no source provides. The entry is now read by the
+scanner (`scan_entry_file`); a file the scanner refuses, which this path never
+refused, keeps its line-leading imports with the role `unknown`. The standard
+library check before planning reads entries the same way, so the two cannot
+disagree about `import std`.
 
 ### 5.5 `watch` and `inputs-fingerprint`
 
