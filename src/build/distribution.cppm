@@ -305,6 +305,14 @@ struct MechanismInput {
     std::string      libcxxArchive;
     std::string      libcxxAbiArchive;
     std::string      libunwindArchive;
+    // The archive FILE NAMES the linker opens for the libc++ pair, when they
+    // are not `libc++.a` and `libc++abi.a`. `--exclude-libs` matches the
+    // archive a member was taken from, and the Android NDK's `libc++.a` is a
+    // linker script, `INPUT(-lc++_static -lc++abi)`, so its members come from
+    // `libc++_static.a`. Measured on a self-contained shared library for
+    // `x86_64-linux-android`: 161 dynamic symbols with only the two default
+    // names, 4 with `libc++_static.a` named. Empty means the two defaults.
+    std::vector<std::string> libcxxLinkedArchiveNames;
     // macOS only: the libc++ archive actually defines the ABI symbol the
     // initializer-ordering shim binds to. Checked against the archive rather
     // than assumed, so an unexpected spelling disables the shim instead of
@@ -732,8 +740,14 @@ Mechanism resolve(const MechanismInput& in) {
             // is part of the mechanism, not an optional extra.
             m.unitFlags = " -nostdlib++ " + in.libcxxArchive
                         + " " + in.libcxxAbiArchive;
-            m.unitFlags += detail::hide_static_cxx_runtime(
-                in.role, in.foreignCxxRuntime, {"libc++.a", "libc++abi.a"});
+            if (in.libcxxLinkedArchiveNames.empty()) {
+                m.unitFlags += detail::hide_static_cxx_runtime(
+                    in.role, in.foreignCxxRuntime, {"libc++.a", "libc++abi.a"});
+            } else {
+                for (auto const& name : in.libcxxLinkedArchiveNames)
+                    m.unitFlags += detail::hide_static_cxx_runtime(
+                        in.role, in.foreignCxxRuntime, {std::string_view(name)});
+            }
             if (in.foreignCxxRuntime) {
                 // ONE UNWINDER PER PROCESS.
                 //

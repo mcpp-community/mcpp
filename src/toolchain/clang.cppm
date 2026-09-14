@@ -47,6 +47,14 @@ std::vector<std::string> std_compat_build_commands(const Toolchain& tc,
 // Locate clang-scan-deps in the same bin/ directory as clang++.
 std::optional<std::filesystem::path> find_scan_deps(const Toolchain& tc);
 
+// The file the driver links for `archive` (`libc++.a`, `libc++abi.a`,
+// `libunwind.a`) under `driverFlags`, which carry the target the link names.
+// Empty when the driver cannot place it. Asked once per process for each
+// (compiler, flags, archive) triple.
+std::filesystem::path runtime_archive_path(const Toolchain& tc,
+                                           std::string_view driverFlags,
+                                           std::string_view archive);
+
 } // namespace mcpp::toolchain::clang
 
 namespace mcpp::toolchain::clang {
@@ -382,6 +390,61 @@ std::optional<std::filesystem::path> find_scan_deps(const Toolchain& tc) {
         (std::string("clang-scan-deps") + std::string(mcpp::platform::exe_suffix));
     if (std::filesystem::exists(p)) return p;
     return std::nullopt;
+}
+
+// THE DRIVER KNOWS WHERE ITS ARCHIVES ARE FOR A TARGET, AND A DIRECTORY
+// SEARCH ONLY KNOWS ONE LAYOUT.
+//
+// The self-contained contract used to look for `libc++.a` under the LLVM
+// payload's `lib/` alone. The Android NDK keeps its archives in the sysroot,
+// per API level, so the search found nothing, the contract degraded to
+// toolchain-coupled, and every test program on an Android row needed
+// `libc++_shared.so`, which a device does not have (#634 A6, measured on an
+// API 34 emulator: `CANNOT LINK EXECUTABLE ... library "libc++_shared.so" not
+// found` for every test). The drivers answer directly, measured 2026-09-14:
+//
+//   xim:android-ndk 30  --target=x86_64-linux-android24
+//                       libc++.a    <sysroot>/usr/lib/x86_64-linux-android/24/libc++.a
+//                                   (a linker script: INPUT(-lc++_static -lc++abi))
+//                       libc++abi.a <sysroot>/usr/lib/x86_64-linux-android/libc++abi.a
+//                       libunwind.a <root>/lib/clang/21/lib/linux/x86_64/libunwind.a
+//   xim:llvm 22.1.8     libc++.a    <root>/bin/../lib/x86_64-unknown-linux-gnu/libc++.a
+//
+// THE TARGET IN THE QUESTION IS THE ONE THE LINK NAMES. The same NDK asked
+// with `--target=x86_64-linux-android`, no API level, answers
+// `<root>/lib/clang/21/../../libc++.a`, a symlink to the HOST's
+// `x86_64-unknown-linux-gnu/libc++.a`. The caller passes the flags its link
+// line carries, API level included.
+//
+// A driver that cannot place a file echoes the bare name back, which is a
+// miss rather than a relative path. The answer is made lexically normal: the
+// `bin/..` in it is a spelling of the driver's, and a link line that spells
+// one file two ways is two commands to ninja.
+std::filesystem::path runtime_archive_path(const Toolchain& tc,
+                                           std::string_view driverFlags,
+                                           std::string_view archive) {
+    static std::mutex mu;
+    static std::map<std::string, std::filesystem::path> answered;
+    auto key = std::format("{}\n{}\n{}", tc.binaryPath.string(), driverFlags, archive);
+    {
+        std::scoped_lock lock(mu);
+        if (auto it = answered.find(key); it != answered.end()) return it->second;
+    }
+    std::filesystem::path out;
+    if (auto r = mcpp::toolchain::run_capture(std::format(
+            "{}{}{} --print-file-name={} {}",
+            mcpp::toolchain::compiler_env_prefix(tc),
+            mcpp::xlings::shq(tc.binaryPath.string()),
+            driverFlags, archive, mcpp::platform::null_redirect))) {
+        std::filesystem::path lib(mcpp::toolchain::trim_line(*r));
+        std::error_code ec;
+        if (lib.has_parent_path() && lib.is_absolute()
+            && std::filesystem::is_regular_file(lib, ec))
+            out = lib.lexically_normal();
+    }
+    std::scoped_lock lock(mu);
+    answered.emplace(std::move(key), out);
+    return out;
 }
 
 std::optional<std::filesystem::path> find_libcxx_std_compat_source(
