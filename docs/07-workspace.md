@@ -236,6 +236,15 @@ A C++ module graph has exactly one standard: BMIs are not compatible across
 levels, so the root package's `standard` is applied to every package in the
 graph, including dependencies. A dependency's own `standard` is not applied.
 
+One kind of package is the exception. A package that provides the C++ layer
+(the standard library itself) and states `standard` compiles each of its
+translation units that neither provides nor imports a module at exactly that
+level; its module units stay at the graph's level
+([22 — Target Side](22-target-side.md), "The Standard Library's Own Language
+Level"). No BMI crosses those units, so the rule above is not broken, and it is
+what lets a c++20 project use a standard library whose sources are written for
+C++23.
+
 When a dependency **declares** a level higher than the graph is built at, mcpp
 reports it before compiling:
 
@@ -252,7 +261,8 @@ warning: dependency `render` declares standard = "c++26", and this graph is
 ```
 
 This is a warning rather than an error — such a build usually succeeds, and it
-is promoted to an error by `--strict`. It is reported only for manifests the
+is promoted to an error by `--strict`. A C++-layer provider whose statement is
+applied as described above is not reported. It is reported only for manifests the
 project author controls (the root package, workspace members, and `path`
 dependencies): a package resolved from an index carries a `standard` written by
 a descriptor generator rather than by the person reading the message.

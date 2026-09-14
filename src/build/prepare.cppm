@@ -10915,6 +10915,13 @@ prepare_build(bool print_fingerprint,
         for (std::size_t i = 1; i < packages.size(); ++i) {
             auto const& pkg = packages[i];
             if (!pkg.manifest.package.standardDeclared) continue;
+            // A C++-layer provider's declaration IS applied, to every unit of
+            // it that neither provides nor imports a module (`make_plan`), so
+            // "is not applied" would be false for exactly the package whose
+            // sources need the level. Its module units stay at the graph's
+            // level, as every module unit does.
+            if (mcpp::manifest::cxx_layer_implementation_standard(pkg.manifest))
+                continue;
             // The scope gate. A package whose root is under a store directory
             // arrived from an index and its declaration was written by a
             // descriptor generator, not by the person reading this diagnostic.
@@ -11040,17 +11047,11 @@ prepare_build(bool print_fingerprint,
     // library would be describing something it does not have.
     for (auto& pkg : packages) {
         if (pkg.manifest.stdModule.empty()) continue;
-        // Either spelling of the C++ layer: `hosted-standard-library` is the
-        // one that predates the layer vocabulary, `mcpp:c++-abi=<impl>` the
-        // current one. A package written against a newer engine may carry
-        // only the second.
-        const auto& provs = pkg.manifest.provides;
-        const bool declaresCxxLayer = std::any_of(
-            provs.begin(), provs.end(), [](const std::string& p) {
-                return p == "hosted-standard-library"
-                    || p.starts_with("mcpp:c++-abi=");
-            });
-        if (!declaresCxxLayer) continue;
+        // Either spelling of the C++ layer (see `provides_cxx_layer`). The
+        // same predicate decides which package's implementation units keep
+        // their own standard in `make_plan`, so the two cannot name different
+        // packages as the standard library.
+        if (!mcpp::manifest::provides_cxx_layer(pkg.manifest)) continue;
         auto src = pkg.root / pkg.manifest.stdModule;
         if (!std::filesystem::exists(src)) {
             return std::unexpected(std::format(

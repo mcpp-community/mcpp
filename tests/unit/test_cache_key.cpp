@@ -499,3 +499,32 @@ TEST(CacheKey, PicDefaultsOffSoExistingEntriesKeepTheirIdentity) {
     ck::BuildAxes fresh;
     EXPECT_FALSE(fresh.pic);
 }
+
+// #641 item 2: a C++-layer provider's implementation units are compiled at the
+// level its manifest states, and the graph's level alone does not name it. The
+// entry must move when that statement moves, and nothing else's entry may move
+// because the statement exists.
+TEST(CacheKey, ACxxLayerProvidersStatedStandardChangesTheKey) {
+    const std::filesystem::path store = "/home/u/.mcpp/registry/data/xpkgs";
+    const auto pkgRoot = store / "llvm-x-libcxx/22.1.8.3/libcxx-22.1.8.3";
+    auto key_for = [&](std::vector<std::string> provides, std::string standard) {
+        auto r = rootAt(pkgRoot);
+        r.manifest.provides = std::move(provides);
+        if (!standard.empty()) {
+            r.manifest.package.standard = standard;
+            r.manifest.package.standardDeclared = true;
+        }
+        auto p = pkg();
+        ck::fill_package_config(p, r, store);
+        return ck::key_hex(axes(), p);
+    };
+    const std::vector<std::string> layer = {"hosted-standard-library"};
+    const auto none = key_for({}, "");
+    // A provider that states nothing, and a non-provider that states a level,
+    // hash exactly as a package that says neither.
+    EXPECT_EQ(key_for(layer, ""), none);
+    EXPECT_EQ(key_for({}, "c++23"), none);
+    // A stated level on a provider moves the key, and two levels are two keys.
+    EXPECT_NE(key_for(layer, "c++23"), none);
+    EXPECT_NE(key_for(layer, "c++23"), key_for(layer, "c++26"));
+}

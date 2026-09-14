@@ -274,6 +274,35 @@ package describes a library it does not supply.
 The `[package]` spelling of these three keys remains accepted and is not
 conditional.
 
+### The Standard Library's Own Language Level (mcpp 2026.9.15.2+)
+
+A module graph is compiled at one standard, the root package's
+([07 — Workspace](07-workspace.md) §4.2). A package that provides the C++
+layer (`hosted-standard-library` or `mcpp:c++-abi=<impl>`) is the one
+exception: when it states `[package] standard`, each of its C++ translation
+units that neither provides nor imports a module is compiled at exactly that
+level, whatever the graph's level is.
+
+```toml
+[package]
+standard = "c++23"
+provides = ["hosted-standard-library", "mcpp:c++-abi=libc++"]
+```
+
+A standard library is built at its own level and consumed at every other:
+libc++ is compiled at C++23 upstream, and libc++ 22's sources do not compile at
+C++20. The exception is safe because the units it covers read and write no
+BMI; the package's module units, the `std` and `std.compat` modules included,
+stay at the graph's level, so no module is split. The level is appended to
+each covered unit's own flags and therefore reaches the compile command, the
+dependency scan, `compile_commands.json` and `mcpp emit build-database` alike.
+A provider that does not state `standard` is compiled at the graph's level.
+
+The exception is not extended to other packages. A header whose declarations
+depend on `__cplusplus` would make an ordinary library's objects and its
+consumers' disagree without a diagnostic, and a standard library is the kind of
+package whose interface is designed to be consumed at a different level.
+
 ### Adaptation To The Resolved Target Side
 
 A package supplying a layer frequently supports several implementations of the
