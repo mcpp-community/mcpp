@@ -77,6 +77,11 @@ mathkit-0.1.0-x86_64-linux-gnu-gcc16-libstdcxx16-c++23/
 `lib/` 按**三元组**分目录,不按 OS 分:MinGW 与 MSVC 同为 Windows,
 一个产 `libfoo.a` 一个产 `foo.lib`。
 
+**共享**包以库的*两个*名字携带它:消费者链接 `lib<target>.so`,加载器随后按
+`SONAME` 查找。声明了 `soname` 时这是两个不同的文件名,只发构建出的那个文件能链接
+成功、随后启动失败。未声明 `soname` 的库把自己的文件名记为 `SONAME`
+(mcpp 2026.9.14.2+),它的两个名字就是同一个文件。
+
 ### 两个集合不可裁剪的原因
 
 同一个包的**源码**分发会把 `include_dirs` 里的每一个头都放到消费者的 include

@@ -454,6 +454,13 @@ for arch/env conditions and combinators.
   A predicate whose only content is this table is applied like any other. Until
   mcpp 2026.9.9.1 it was not: the block was parsed and then discarded unless
   something else appeared under the same predicate.
+- **A relative search path in `build.ldflags` belongs to the package that wrote
+  it.** `-L<dir>` and `-Wl,-rpath,<dir>` — here, in the top-level
+  `[build] ldflags`, and from `mcpp::link_flag` — reach the link as absolute
+  paths under that package's directory, also when a dependency's flags reach
+  its consumer. An entry that begins with a token the loader expands is passed
+  as written: `$ORIGIN` and every other `$`-token, and `@executable_path`,
+  `@loader_path` and `@rpath` (mcpp 2026.9.14.2+).
 - **What `build` accepts is exactly the set of *additive build inputs*** — the
   things that combine by appending and are consumed after the predicate is
   evaluated, which is the member list of `BuildInputs`. `linkage`, `target`,

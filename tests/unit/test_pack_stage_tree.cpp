@@ -186,6 +186,55 @@ TEST(PackStageTree, WalkedAndNotWalkedProduceDifferentManifests) {
     EXPECT_NE(walked, notWalked);
 }
 
+// ── #634 A3: the `needs` lines ──────────────────────────────────────────
+
+TEST(PackStageTree, NeedsLinesFollowTheHeaderSortedAndOnceEach) {
+    Tmp t;
+    auto stage = t.path / "app";
+    write_file(stage / "lib" / "libfw.so", "fw");
+    using K = mcpp::pack::ClosureNeed::Kind;
+    mcpp::pack::ClosureStatus closure;
+    // Out of order, and one platform name twice -- a several-ABI tree reads
+    // the same one once per leg.
+    closure.needs = {
+        {"libfw.so", K::Staged,   "lib/libfw.so"},
+        {"libc.so",  K::Platform, {}},
+        {"libc.so",  K::Platform, {}},
+    };
+    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage, closure));
+    auto text = read_file(mcpp::pack::stage_manifest_path(stage));
+    EXPECT_EQ(text,
+        "closure = walked\n"
+        "needs\tlibc.so\tplatform\n"
+        "needs\tlibfw.so\tlib/libfw.so\n"
+        "2 lib/libfw.so\n");
+}
+
+TEST(PackStageTree, AnIncompleteClosureListsItsUnresolvedNamesAfterTheReason) {
+    Tmp t;
+    auto stage = t.path / "app";
+    write_file(stage / "bin" / "app", "x");
+    using K = mcpp::pack::ClosureNeed::Kind;
+    mcpp::pack::ClosureStatus closure;
+    closure.walked = false;
+    closure.reason = "the dependency closure of 'app' is incomplete";
+    closure.needs  = {{"@rpath/libgone.dylib", K::Unresolved, {}}};
+    ASSERT_TRUE(mcpp::pack::write_stage_manifest(stage, closure));
+    auto text = read_file(mcpp::pack::stage_manifest_path(stage));
+    EXPECT_EQ(text,
+        "closure = not-walked\n"
+        "reason = the dependency closure of 'app' is incomplete\n"
+        "needs\t@rpath/libgone.dylib\tunresolved\n"
+        "1 bin/app\n");
+}
+
+TEST(PackStageTree, ANameWithASpaceStaysOneField) {
+    using K = mcpp::pack::ClosureNeed::Kind;
+    EXPECT_EQ(mcpp::pack::render_closure_need(
+                  {"@rpath/My Kit.framework/My Kit", K::Staged, "bin/My Kit"}),
+              "needs\t@rpath/My Kit.framework/My Kit\tbin/My Kit");
+}
+
 TEST(PackStageTree, AMissingTreeIsRefusedRatherThanDescribedAsEmpty) {
     Tmp t;
     // An empty manifest for a directory that does not exist would say "nothing

@@ -454,6 +454,29 @@ must also read `not_run`.
 existing `not_run` list, which continues to name members the
 `--workspace-timeout` stopped before they started.
 
+### The stage manifest
+
+`mcpp pack` writes `<staged tree>.stage-manifest` beside the tree it stages,
+and an `artifact` action that names `${mcpp.stage_dir}` depends on it (see
+[30](30-build-mcpp.md#producing-a-distributable-pack_format--stage_dir-20269111)).
+It is a line-oriented text file rather than a JSON envelope, and its lines form
+three blocks in this order:
+
+| Line | Content |
+|---|---|
+| `closure = walked` or `closure = not-walked` | the first line: whether every library the tree needs was resolved |
+| `reason = <text>` | only with `closure = not-walked`; one line |
+| `needs<TAB><name><TAB><where>` *(mcpp 2026.9.14.2+)* | one line per library name the closure read, sorted; `<where>` is the path of the staged library relative to the tree, `platform` for a library the target provides, or `unresolved` |
+| `<size> <path>` or `link <path>` | one line per staged file or symbolic link, sorted |
+
+`<name>` is spelled as the needing object spells it: a `DT_NEEDED` entry, a PE
+import name, or a Mach-O install name. The fields of a `needs` line are
+separated by TAB characters, because a name and a path may each contain a space.
+A tree staged by a mode that bundles nothing (`system`, `static`) carries no
+`needs` lines, and neither does a tree staged by an earlier mcpp; a reader that
+places libraries itself reads these lines rather than inferring the closure from
+the files under `lib/`.
+
 ## Current limitations
 
 - **The exit-code table is scoped to the commands it names.** A code another

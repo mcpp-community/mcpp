@@ -228,6 +228,16 @@ std::string include_token(const mcpp::toolchain::CommandDialect& d,
                           std::string_view prefixOverride = {},
                           PathForm form = PathForm::Native);
 
+// Does a search-path entry begin with a token the dynamic loader expands
+// (#634, item 11 of the triage record)? ELF's `$ORIGIN` and every other
+// `$`-token (`${ORIGIN}`, `$LIB`), and Mach-O's `@executable_path`,
+// `@loader_path` and `@rpath`. Such an entry is relative to an object the
+// loader has loaded, not to the package that wrote it, so the ldflag
+// normalisers leave it as written. One predicate for both of them: the second
+// copy exempted `$` alone, and an `@executable_path` rpath arrived in the binary
+// as `<package dir>/@executable_path/..`.
+bool is_loader_relative_search_path(std::string_view entry);
+
 }  // namespace mcpp::build
 
 namespace mcpp::build {
@@ -252,6 +262,18 @@ std::string escape_ninja_chars(std::string_view s) {
     return out;
 }
 
+bool is_loader_relative_search_path(std::string_view entry) {
+    if (entry.starts_with('$')) return true;
+    for (std::string_view token : {std::string_view("@executable_path"),
+                                   std::string_view("@loader_path"),
+                                   std::string_view("@rpath")}) {
+        if (entry.starts_with(token)
+            && (entry.size() == token.size() || entry[token.size()] == '/'))
+            return true;
+    }
+    return false;
+}
+
 namespace {
 
 std::filesystem::path staged_std_bmi_path(const BuildPlan& plan) {
@@ -266,7 +288,7 @@ std::string escape_path(const std::filesystem::path& p) {
 std::string normalize_ldflag(const std::filesystem::path& root, const std::string& flag) {
     auto absolute_path = [&](std::string_view raw) {
         std::filesystem::path p{std::string(raw)};
-        if (p.is_absolute() || raw.starts_with("$")) return p;
+        if (p.is_absolute() || is_loader_relative_search_path(raw)) return p;
         return root / p;
     };
 

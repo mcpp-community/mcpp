@@ -40,6 +40,19 @@
 // the manifest states that the sorted file list cannot: a provider that needs
 // the closure reads this line and decides for itself rather than discovering
 // the gap by what is absent from `lib/`.
+//
+// THE `needs` LINES (#634 A3). `closure = walked` says the closure was
+// resolved; it does not say what the closure was, and a provider that places
+// libraries itself (`dist-apk` under `lib/<abi>/`, `dist-apple` under
+// `Frameworks/`) would otherwise have to tell a staged library from a staged
+// resource by its extension. One line per needed name states it:
+//
+//     needs<TAB><name><TAB><staged path>   the tree carries it at that path
+//     needs<TAB><name><TAB>platform        the target provides it
+//     needs<TAB><name><TAB>unresolved      neither; the closure is not-walked
+//
+// TAB-separated because both fields are names a loader reads and either may
+// contain a space (a Mach-O install name, a Windows directory).
 
 module;
 #include <cstdio>
@@ -71,6 +84,17 @@ std::filesystem::path stage_manifest_path(const std::filesystem::path& stagingRo
 // manifest only for a DISPATCHED format -- `pack::closure_unavailable_outcome`
 // turns the same condition into a hard failure for `--format tar` and
 // `--format dir`, so those two never write a `not-walked` manifest.
+// One name the staged program or a staged library needs, and what satisfies
+// it. See the `needs` lines in the header comment.
+struct ClosureNeed {
+    enum class Kind { Staged, Platform, Unresolved };
+    std::string name;                 // as the needing object spells it
+    Kind        kind = Kind::Staged;
+    // `Kind::Staged` only: the member's path relative to the staged tree,
+    // `/`-separated on every host.
+    std::string staged;
+};
+
 struct ClosureStatus {
     bool        walked = true;
     // Populated only when `!walked`. A SINGLE LINE: the manifest is a plain
@@ -78,7 +102,24 @@ struct ClosureStatus {
     // carries its own embedded newlines (it doubles as a CLI diagnostic), so
     // `write_stage_manifest` folds them to spaces before writing.
     std::string reason;
+    // Every name the closure resolved, or failed to. Empty when no closure was
+    // read: a mode that bundles nothing (`system`, `static`), or a row whose
+    // closure this host cannot read.
+    std::vector<ClosureNeed> needs;
 };
+
+// The `needs` line for `need`, without its newline.
+std::string render_closure_need(const ClosureNeed& need) {
+    switch (need.kind) {
+        case ClosureNeed::Kind::Staged:
+            return std::format("needs\t{}\t{}", need.name, need.staged);
+        case ClosureNeed::Kind::Platform:
+            return std::format("needs\t{}\tplatform", need.name);
+        case ClosureNeed::Kind::Unresolved:
+            break;
+    }
+    return std::format("needs\t{}\tunresolved", need.name);
+}
 
 // Write the manifest for the tree now on disk at `stagingRoot`.
 //
@@ -140,6 +181,16 @@ bool write_stage_manifest(const std::filesystem::path& stagingRoot,
         while (!folded.empty() && folded.back()  == ' ') folded.pop_back();
         text += std::format("reason = {}\n", folded);
     }
+    // The closure's lines follow the header and precede the file list, as a
+    // block of their own for the reason the header is one: they describe what
+    // the tree's files are for, and sorting them into the file list would
+    // interleave the two. Sorted and deduplicated, because a several-ABI tree
+    // reads the same platform name once per leg.
+    std::vector<std::string> needs;
+    for (auto const& n : closure.needs) needs.push_back(render_closure_need(n));
+    std::ranges::sort(needs);
+    needs.erase(std::unique(needs.begin(), needs.end()), needs.end());
+    for (auto const& l : needs) { text += l; text.push_back('\n'); }
     for (auto const& l : lines) { text += l; text.push_back('\n'); }
 
     auto out = stage_manifest_path(stagingRoot);

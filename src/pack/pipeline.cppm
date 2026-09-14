@@ -21,10 +21,14 @@ import mcpp.manifest;
 import mcpp.pack;
 import mcpp.pack.stage_tree;
 import mcpp.pack.strip;
+import mcpp.platform;
+import mcpp.platform.env;
 import mcpp.toolchain.model;
+import mcpp.toolchain.probe;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
 import mcpp.ui;
+import mcpp.xlings;
 
 namespace mcpp::pack {
 
@@ -41,6 +45,56 @@ export struct PackOutcome {
     std::vector<std::filesystem::path> artifacts;
 };
 
+// #634 A3: the two directory lists an Android row's closure is read against,
+// asked of the row's own driver rather than derived from the NDK's layout:
+// where the link searches for a library (`-print-search-dirs`), and the
+// directory the driver finds bionic's `libc.so` in, which is the API level's
+// stub directory -- the set of names the device itself provides.
+//
+// A driver that answers neither leaves both lists empty; `pack::run` then
+// reports that it cannot tell the device's libraries from the program's rather
+// than staging stubs.
+struct DriverLibraryDirs {
+    std::vector<std::filesystem::path> search;
+    std::vector<std::filesystem::path> platform;
+};
+
+DriverLibraryDirs driver_library_dirs(const mcpp::toolchain::Toolchain& tc)
+{
+    DriverLibraryDirs out;
+    const auto base = std::format("{} {}", mcpp::xlings::shq(tc.binaryPath.string()),
+                                  tc.crossTargetFlag);
+    if (auto r = mcpp::toolchain::run_capture(std::format(
+            "{} -print-search-dirs {}", base, mcpp::platform::null_redirect))) {
+        std::istringstream is{*r};
+        std::string line;
+        const std::string_view key = "libraries: =";
+        const auto sep = mcpp::platform::env::path_list_separator();
+        while (std::getline(is, line)) {
+            if (!line.starts_with(key)) continue;
+            std::string rest = mcpp::toolchain::trim_line(line.substr(key.size()));
+            std::size_t at = 0;
+            while (at <= rest.size()) {
+                auto next = rest.find(sep, at);
+                if (next == std::string::npos) next = rest.size();
+                if (next > at)
+                    out.search.push_back(
+                        std::filesystem::path(rest.substr(at, next - at)).lexically_normal());
+                at = next + sep.size();
+            }
+        }
+    }
+    if (auto r = mcpp::toolchain::run_capture(std::format(
+            "{} -print-file-name=libc.so {}", base, mcpp::platform::null_redirect))) {
+        // A driver that cannot place the library echoes the bare name back.
+        std::filesystem::path lib(mcpp::toolchain::trim_line(*r));
+        std::error_code ec;
+        if (lib.has_parent_path() && std::filesystem::is_regular_file(lib, ec))
+            out.platform.push_back(lib.parent_path().lexically_normal());
+    }
+    return out;
+}
+
 // #630 A9: build every triple but the PRIMARY one for a `kind = "app"`
 // target whose form is a shared object on every requested row (Android).
 // Each leg is its own `prepare_build` + `ninja` build, the same shape
@@ -55,12 +109,12 @@ export struct PackOutcome {
 // Returns `nullopt` on the first leg that fails, having already printed the
 // error — the same contract `build_and_pack_library` and `build_and_pack`
 // use, so `cmd_pack` only has to check the outcome and return.
-export std::optional<std::vector<std::pair<std::string, std::filesystem::path>>>
+export std::optional<std::vector<SharedLeg>>
 build_extra_android_legs(const std::string& targetName,
                          std::span<const std::string> triples,
                          const std::string& profile)
 {
-    std::vector<std::pair<std::string, std::filesystem::path>> out;
+    std::vector<SharedLeg> out;
     for (auto const& triple : triples) {
         mcpp::build::BuildOverrides ov;
         ov.target_triple    = triple;
@@ -107,7 +161,24 @@ build_extra_android_legs(const std::string& targetName,
         auto canonical = t ? t->str() : triple;
         auto abi = t ? mcpp::toolchain::triple::android_abi(*t) : triple;
         mcpp::ui::status("Packed leg", std::format("{}  [{}]", canonical, abi));
-        out.emplace_back(std::move(abi), ctx->outputDir / lu->output);
+        // #634 A3: where THIS triple's closure is read from -- the same
+        // channels the primary leg's plan names (`build_and_pack` below), from
+        // this leg's own plan and driver.
+        SharedLeg leg;
+        leg.abi      = std::move(abi);
+        leg.artifact = ctx->outputDir / lu->output;
+        leg.searchDirs.push_back(leg.artifact.parent_path());
+        for (auto const& d : ctx->plan.runtimeLibraryDirs) leg.searchDirs.push_back(d);
+        for (auto const& d : ctx->plan.linkIntent.runtimeSearchDirs)
+            leg.searchDirs.push_back(d);
+        for (auto const& d : ctx->plan.linkIntent.linkLibraryDirs)
+            leg.searchDirs.push_back(d);
+        for (auto const& d : ctx->plan.linkIntent.transitiveNeededDirs)
+            leg.searchDirs.push_back(d);
+        auto dirs = driver_library_dirs(ctx->tc);
+        for (auto const& d : dirs.search) leg.searchDirs.push_back(d);
+        leg.platformDirs = std::move(dirs.platform);
+        out.push_back(std::move(leg));
     }
     return out;
 }
@@ -122,19 +193,16 @@ build_extra_android_legs(const std::string& targetName,
 // is wrong.
 //
 // `extraLegs` (#630 A9) is every OTHER triple a several-`--target` app-pack
-// request named, already built by `build_extra_android_legs` below as
-// (android abi, its artifact path). This call still does exactly one build —
-// of `opts.targetTriple`, the PRIMARY leg — and stages the primary's own
-// artifact and the declared deploy files as it always has; `extraLegs`, when
-// non-empty, only changes WHERE the primary's shared object lands
-// (`Plan::extraSharedLegs`, read by `run_shared_program`) and adds the other
-// legs beside it in the same staged tree, before the one dispatch pass runs.
-// Empty for every caller before this item, which is what keeps a
-// single-`--target` pack byte-identical.
+// request named, already built by `build_extra_android_legs` above. This call
+// still does exactly one build — of `opts.targetTriple`, the PRIMARY leg — and
+// stages the primary's own artifact and the declared deploy files as it always
+// has; `extraLegs`, when non-empty, only changes WHERE the primary's shared
+// object lands (`Plan::extraSharedLegs`, read by `run_shared_program`) and adds
+// the other legs, each with its own closure, beside it in the same staged tree,
+// before the one dispatch pass runs. Empty for a single-`--target` pack.
 export PackOutcome build_and_pack(Options opts, bool modeFromUser,
                           const std::string& wantTarget = {},
-                          std::vector<std::pair<std::string, std::filesystem::path>>
-                              extraLegs = {}) {
+                          std::vector<SharedLeg> extraLegs = {}) {
     // `--target *-linux-musl` without an explicit `--mode` implies
     // `--mode static` — packaging a musl-static ELF as bundle-project
     // would feed patchelf a static binary and crash. The docs treat
@@ -373,6 +441,19 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
         // destinations are `bin/<to>/<file>`, and the executable is in `bin/`.
         for (auto const& d : ctx->plan.runtimeDeployFiles)
             opts.runtimeFiles.push_back(d.dest.lexically_relative("bin"));
+        // #634 A3: the Android row reads its closure against the directories
+        // its link declared -- a prebuilt library named through `[runtime]
+        // link_library_dirs` is a file the link used and the device does not
+        // have -- and against its driver's; see `driver_library_dirs`.
+        if (programIsSharedObject) {
+            for (auto const& d : ctx->plan.linkIntent.linkLibraryDirs)
+                opts.depSearchDirs.push_back(d);
+            for (auto const& d : ctx->plan.linkIntent.transitiveNeededDirs)
+                opts.depSearchDirs.push_back(d);
+            auto dirs = driver_library_dirs(ctx->tc);
+            opts.toolchainLibraryDirs = std::move(dirs.search);
+            opts.platformLibraryDirs  = std::move(dirs.platform);
+        }
     }
 
     // ─── Build the plan + run ────────────────────────────────────────
@@ -458,7 +539,7 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
     } else if (!r->walked) {
         // The tree exists; only its dependency closure does not. Distinct
         // warning text -- "staged" is true here, unlike the branch above.
-        closure = mcpp::pack::ClosureStatus{false, r->reason};
+        closure = mcpp::pack::ClosureStatus{false, r->reason, r->needs};
         mcpp::ui::warning(std::format(
             "staged without its dependency closure: {}\n"
             "  A format that consumes ${{mcpp.stage_dir}} sees the program and its "
@@ -467,6 +548,8 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
             "built file\n"
             "  with ${{mcpp.target_file:<name>}} is unaffected.",
             closure.reason));
+    } else {
+        closure.needs = r->needs;
     }
 
     // The staged tree is now on disk and final -- past the closure (walked or

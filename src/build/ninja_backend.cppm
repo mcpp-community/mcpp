@@ -240,6 +240,16 @@ std::string join_flags(const std::vector<std::string>& flags) {
 //    default install name is the path it was LINKED at, so a package built in
 //    /tmp/build-xyz records /tmp/build-xyz and cannot be relocated — which is
 //    every distributed dylib. `@rpath/<file>` is the only default that travels.
+//  * On ELF likewise (#634 A4): a library linked without `-soname` carries no
+//    DT_SONAME, and bionic enforces one from API level 23 ("Missing SONAME").
+//    The default is the output file name, which is the name every consumer
+//    already records in DT_NEEDED because it links with `-l<name>`. It is a
+//    DEFAULT and not a declaration, so it is `shared_soname_default` below and
+//    reaches the link BEFORE `$ldflags`: the linker takes the last `-soname`,
+//    and a name a project passes through `[build] ldflags` or
+//    `mcpp::link_flag` has to keep winning, as it did when there was no
+//    default (e2e 220 names its library that way). A declared `soname` keeps
+//    its value, its position and its alias.
 // Whether a PE link speaks the MSVC ABI. Asked of the target triple, and of the
 // compiler's own answer only when there is no triple; `pe_link_flag` below says
 // why the compiler binary is the wrong question. One definition, so the import
@@ -287,6 +297,19 @@ std::string shared_soname_flag(const LinkUnit& lu, const BuildPlan& plan) {
         ? lu.output.filename().string() : lu.soname;
     if (macho) return "-Wl,-install_name,@rpath/" + name;
     return lu.soname.empty() ? "" : "-Wl,-soname," + lu.soname;
+}
+
+// The ELF default SONAME, for a shared library that declares none: its output
+// file name. See the comment above `shared_soname_flag` for why it is a
+// separate variable placed before `$ldflags`. A wasm row refuses a shared
+// target before a link is planned, so a non-PE, non-Mach-O triple here is ELF.
+std::string shared_soname_default(const LinkUnit& lu, const BuildPlan& plan) {
+    if (lu.kind != LinkUnit::SharedLibrary || !lu.soname.empty()) return "";
+    const auto t = mcpp::toolchain::triple::parse(plan.toolchain.targetTriple);
+    const bool pe    = t ? t->is_pe()     : bool(mcpp::platform::is_windows);
+    const bool macho = t ? t->is_mach_o() : bool(mcpp::platform::is_macos);
+    if (pe || macho) return "";
+    return "-Wl,-soname," + lu.output.filename().string();
 }
 
 // WHICH SYMBOLS A SHARED LIBRARY PUBLISHES, rendered per platform from one
@@ -1378,7 +1401,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                       "$cxx $in -o $out $ldflags $unit_ldflags", "LINK");
             link_rule("cxx_archive", std::string(dial.archiveCmd), "AR");
             link_rule("cxx_shared",
-                      "$cxx -shared $in -o $out $ldflags $soname_flag "
+                      "$cxx -shared $in -o $out $soname_default $ldflags $soname_flag "
                       "$implib_flag $def_flag $unit_ldflags",
                       "SHARED");
             // mcpp#426: a link unit with no C++ translation unit in it is
@@ -1391,7 +1414,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             link_rule("c_link",
                       "$cc $in -o $out $c_ldflags $unit_ldflags", "LINK");
             link_rule("c_shared",
-                      "$cc -shared $in -o $out $c_ldflags $soname_flag "
+                      "$cc -shared $in -o $out $soname_default $c_ldflags $soname_flag "
                       "$implib_flag $def_flag $unit_ldflags",
                       "SHARED");
         }
@@ -2273,6 +2296,8 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             implicit.empty() ? std::string{} : " |" + implicit);
         if (auto flag = shared_soname_flag(lu, plan); !flag.empty())
             out_line += "  soname_flag = " + flag + "\n";
+        if (auto flag = shared_soname_default(lu, plan); !flag.empty())
+            out_line += "  soname_default = " + flag + "\n";
         // The export set, written beside the artifact and named on the link.
         //
         // Folded into `soname_flag` rather than given a rule variable of its
