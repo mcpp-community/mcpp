@@ -127,10 +127,14 @@ std::string pe_importing(const std::vector<std::string>& imports) {
     put(b, kSecAt + 16, 0x1000, 4);
     put(b, kSecAt + 20, kRawAt, 4);
 
-    std::vector<std::uint32_t> nameRvas;
+    // `std::size_t` elements, not `std::uint32_t`: on macos-15 (clang 22,
+    // libc++ as a module) the first `push_back` into a `std::vector<std::uint32_t>`
+    // here faulted in `memmove` at address 0 (lldb, run 34819771218), while
+    // `elf_needing`'s `std::vector<std::size_t>` runs. The values fit either.
+    std::vector<std::size_t> nameRvas;
     std::size_t cursor = kRawAt;
     for (std::size_t k = 0; k < imports.size(); ++k) {
-        nameRvas.push_back(static_cast<std::uint32_t>(kSecVa + (cursor - kRawAt)));
+        nameRvas.push_back(kSecVa + (cursor - kRawAt));
         for (std::size_t i = 0; i < imports[k].size(); ++i) {
             put(b, cursor, static_cast<unsigned char>(imports[k][i]), 1);
             ++cursor;
