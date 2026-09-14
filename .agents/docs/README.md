@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-286 records.
+287 records.
 
 ## By subject
 
@@ -27,6 +27,10 @@ Records that declare one. Everything else is listed by date below.
 ### build-program
 
 - [Four upstream asks from a UI framework: what each one is under mcpp's design, and the combined plan](2026-09-13-four-upstream-asks-from-a-ui-framework.md) — landed
+
+### design
+
+- [The build database of #636, and two defects on the way to the latest xlings](2026-09-14-636-build-database-and-the-latest-xlings.md) — active
 
 ### docs
 
@@ -68,6 +72,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
+- [The build database of #636, and two defects on the way to the latest xlings](2026-09-14-636-build-database-and-the-latest-xlings.md) — active
 - [#634 implemented across five repositories: the plan, its review, and the ledger that tracks it](2026-09-14-634-implementation-plan.md) — landed
 - [A framework's CMake parity list: the twenty-one items of #634, read against the code and routed to where each one belongs](2026-09-14-634-cmake-parity-items-by-home.md) — landed
 - [Four upstream asks from a UI framework: what each one is under mcpp's design, and the combined plan](2026-09-13-four-upstream-asks-from-a-ui-framework.md) — landed
