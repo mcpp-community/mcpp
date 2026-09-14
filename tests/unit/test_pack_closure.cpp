@@ -323,16 +323,21 @@ TEST(PackClosureMachO, ATrailingSlashAndExecutablePathQualifyAsTheProgramsDirect
 TEST(PackClosureMachO, AnAbsoluteInstallNameOutsideTheOsRootsIsUnresolved) {
     Tree t;
     // The file exists on this machine; the loader on another one reads that
-    // path, not the tree, so a copy would not be what loads.
+    // path, not the tree, so a copy would not be what loads. An install name
+    // is a POSIX path: on a Windows host the temporary directory is not one,
+    // so the name is spelled as a macOS path there, and the rule is the same
+    // whether or not the file exists.
     auto elsewhere = t.write("opt/libq.dylib", macho_naming({}, {}));
-    auto app = t.write("bin/app", macho_naming({elsewhere.string()}, {"@loader_path"}));
+    const std::string installName = elsewhere.string().starts_with('/')
+        ? elsewhere.string() : std::string("/opt/elsewhere/libq.dylib");
+    auto app = t.write("bin/app", macho_naming({installName}, {"@loader_path"}));
 
     mcpp::pack::ClosureReadInput in;
     in.object = app;
     in.rule   = mcpp::pack::ClosureRule::MachO;
     auto r = mcpp::pack::read_closure(in);
     EXPECT_TRUE(r.members.empty());
-    EXPECT_EQ(unresolved_names(r), (Names{elsewhere.string()}));
+    EXPECT_EQ(unresolved_names(r), (Names{installName}));
     ASSERT_EQ(r.unresolved.size(), 1u);
     EXPECT_NE(r.unresolved[0].why.find("absolute install name"), std::string::npos)
         << r.unresolved[0].why;
