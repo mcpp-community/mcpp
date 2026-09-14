@@ -14,6 +14,7 @@ import mcpp.platform;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.gcc;
 import mcpp.toolchain.model;
+import mcpp.toolchain.msvc;
 
 namespace db = mcpp::build::database;
 using mcpp::modgraph::ModuleDeclaration;
@@ -136,6 +137,37 @@ TEST(BuildDatabase, RecoversTheClangStdUnitsFromTheirBuilders) {
                                          tc.binaryPath, cache, kWindows);
     ASSERT_TRUE(compat.has_value()) << compatCommands.front();
     EXPECT_TRUE(contains(compat->arguments, tc.stdCompatSource.string()));
+}
+
+TEST(BuildDatabase, RecoversTheMsvcStdUnitsFromTheirBuilders) {
+    Toolchain tc;
+    tc.compiler = CompilerId::MSVC;
+    tc.version = "19.44.35207";
+    tc.binaryPath = host_path(
+        "/vs/VC/Tools/MSVC/14.44.35207/bin/Hostx64/x64/cl.exe",
+        "C:\\Program Files\\Microsoft Visual Studio\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe");
+    tc.targetTriple = "x86_64-windows-msvc";
+    tc.stdModuleSource = host_path("/vs/VC/Tools/MSVC/14.44.35207/modules/std.ixx",
+        "C:\\Program Files\\Microsoft Visual Studio\\VC\\Tools\\MSVC\\14.44.35207\\modules\\std.ixx");
+    tc.stdCompatSource = host_path("/vs/VC/Tools/MSVC/14.44.35207/modules/std.compat.ixx",
+        "C:\\Program Files\\Microsoft Visual Studio\\VC\\Tools\\MSVC\\14.44.35207\\modules\\std.compat.ixx");
+    const auto cache = host_path("/home/u/.mcpp/cache/std/k3", "C:\\u\\.mcpp\\std\\k3");
+
+    auto stdCommands = msvc::std_module_build_commands(tc, cache, "/std:c++latest", "/MD");
+    auto inv = db::recover_invocation(stdCommands, tc.stdModuleSource, tc.binaryPath,
+                                      "/unused", kWindows);
+    ASSERT_TRUE(inv.has_value()) << stdCommands.front();
+    EXPECT_EQ(inv->workDirectory, cache) << stdCommands.front();
+    EXPECT_EQ(inv->arguments.front(), tc.binaryPath.string()) << stdCommands.front();
+    EXPECT_TRUE(contains(inv->arguments, "/std:c++latest")) << stdCommands.front();
+    EXPECT_TRUE(contains(inv->arguments, tc.stdModuleSource.string())) << stdCommands.front();
+    EXPECT_FALSE(contains(inv->arguments, "2>&1")) << stdCommands.front();
+
+    auto compatCommands = msvc::std_compat_build_commands(tc, cache, "/std:c++latest", "/MD");
+    auto compat = db::recover_invocation(compatCommands, tc.stdCompatSource,
+                                         tc.binaryPath, "/unused", kWindows);
+    ASSERT_TRUE(compat.has_value()) << compatCommands.front();
+    EXPECT_TRUE(contains(compat->arguments, "/reference")) << compatCommands.front();
 }
 
 TEST(BuildDatabase, NoCommandNamingTheSourceRecoversNothing) {
