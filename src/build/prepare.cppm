@@ -10565,11 +10565,62 @@ prepare_build(bool print_fingerprint,
         // snapshot. Anything past this index is a `mcpp::deploy()` residue
         // that needs the same mirror the flag/source tails get below.
         const auto rdeployN = m->runtimeConfig.linkIntent.deploy.size();
+        // What the dependencies supplied as runners, before the root's program
+        // speaks. The root's emissions are appended to the same slots, so a
+        // name both supply becomes one argv joining the two (#634, §9 item 8,
+        // measured: `run-A.sh run-B.sh <artifact>`).
+        const auto runnerBeforeRoot = bcRoot.runner;
+        const auto namedBeforeRoot  = bcRoot.namedRunners;
         if (auto bp = mcpp::build::run_build_program(
                 *m, *root, host->first, host->second,
                 m->cppStandard, bpEnv);
             !bp) {
             return std::unexpected(bp.error());
+        }
+        // THE SAME RULE THE DEPENDENCIES ARE HELD TO, WITH THE ROOT AS A PARTY.
+        // Two suppliers of one runner are refused naming both, and the
+        // manifest is the way to choose: a `[target.<triple>]` runner the
+        // project writes outranks every supplied one where the runner is
+        // looked up, so a name the manifest declares is not refused here.
+        {
+            const auto rowKey = [&]() -> std::string {
+                if (!tc) return {};
+                auto t = mcpp::toolchain::triple::parse(tc->targetTriple);
+                return t ? t->str() : tc->targetTriple;
+            }();
+            const auto row = m->targetOverrides.find(rowKey);
+            const auto manifestNames = [&](std::string_view name) {
+                if (row == m->targetOverrides.end()) return false;
+                if (name.empty()) return !row->second.runner.empty();
+                return row->second.namedRunners.contains(std::string(name));
+            };
+            if (!runnerProvider.empty() && !runnerBeforeRoot.empty()
+                && bcRoot.runner.size() > runnerBeforeRoot.size()
+                && !manifestNames({})) {
+                return std::unexpected(std::format(
+                    "the dependency '{}' and this project's build program both "
+                    "supply the runner for this target, and the two would be "
+                    "joined into one argv.\n"
+                    "       Drop one of them, or state the runner in "
+                    "[target.{}].runner.",
+                    runnerProvider, rowKey));
+            }
+            for (auto const& [name, nr] : bcRoot.namedRunners) {
+                auto before = namedBeforeRoot.find(name);
+                auto who = namedRunnerProvider.find(name);
+                if (before == namedBeforeRoot.end() || before->second.argv.empty()
+                    || who == namedRunnerProvider.end() || who->second.empty())
+                    continue;
+                if (nr.argv.size() <= before->second.argv.size()) continue;
+                if (manifestNames(name)) continue;
+                return std::unexpected(std::format(
+                    "the dependency '{}' and this project's build program both "
+                    "supply a runner named '{}' for this target, and the two "
+                    "would be joined into one argv.\n"
+                    "       Drop one of them, or state it in "
+                    "[target.{}.runners].{}.",
+                    who->second, name, rowKey, name));
+            }
         }
         auto& pkg0 = packages[0];
         // Compile-visible tail → privateBuild: the shared fold (same owner
