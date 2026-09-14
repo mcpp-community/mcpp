@@ -1072,12 +1072,13 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // false`) applies to shared libraries too — a human said what the
         // whole project promises. Only when nobody said anything does the
         // role's own default apply, which is the case that changes on ELF.
+        // The statement is read by `stated_shared_library_contract`, which the
+        // refusal of a C++ shared library over a graph runtime reads too (#641).
         const bool projectWideExplicit = !bc.cxxRuntime.empty() || !bc.staticStdlib;
         const dist::Contract sharedContract =
-            dist::parse_contract(bc.cxxRuntimeShared).value_or(
-                projectWideExplicit
-                    ? base
-                    : dist::default_contract(dist::Role::SharedLibrary, format));
+            dist::stated_shared_library_contract(bc.cxxRuntime, bc.cxxRuntimeShared,
+                                                 bc.staticStdlib, format)
+                .value_or(dist::default_contract(dist::Role::SharedLibrary, format));
 
         // Archive lookup, directory half. LLVM lays these out either directly
         // under lib/ (the macOS packages) or under lib/<llvm-triple>/ (the

@@ -100,6 +100,11 @@ enum class Code {
     // step learns changes the answer. Distinct from TierPlanned, which says
     // the row is not wired at all -- these rows are.
     AppleSdkAbsent,
+    // A dependency's C++ shared library in a graph whose C++ runtime is a
+    // package, with no statement that shared libraries carry a private copy.
+    // Distinct from LayerOrdering, which is about the layers not stacking: here
+    // they stack, and one image would link with no C++ runtime at all (#641).
+    SharedLibraryCxxRuntime,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -130,6 +135,8 @@ constexpr std::string_view name(Code c) {
                                          return "device-source-unconsumed";
         case Code::HostModuleMissing:    return "host-module-missing";
         case Code::ToolVersionConflict:  return "tool-version-conflict";
+        case Code::SharedLibraryCxxRuntime:
+                                         return "shared-library-cxx-runtime";
         case Code::Other:                return "other";
     }
     return "other";

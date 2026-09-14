@@ -7721,7 +7721,8 @@ prepare_build(bool print_fingerprint,
         //      downloaded, and it is literally the same two functions
         //      `toolchain_set_default` calls;
         //   2. the vocabulary's own pins — the version this ecosystem ships for
-        //      that family, already written down once per row. Deriving it from
+        //      that family's payload, already written down once per row
+        //      (`pinned_versions_for`). Deriving it from
         //      there rather than from a fresh constant means the answer moves
         //      when the ecosystem moves, with nobody having to remember a
         //      second place.
@@ -7752,17 +7753,10 @@ prepare_build(bool print_fingerprint,
                     return std::format("{}@{}", family, *picked);
             }
 
-            std::vector<std::string> fromVocabulary;
-            for (auto const& row : mcpp::toolchain::triple::known_targets()) {
-                if (row.pin.empty()) continue;
-                auto p = mcpp::toolchain::parse_toolchain_spec(
-                    std::string(row.pin));
-                if (!p || p->version.empty()) continue;
-                if (mcpp::toolchain::family_name(p->family) != family) continue;
-                fromVocabulary.push_back(p->version);
-            }
+            // Matched by the payload a pin names, not by its family: the NDK
+            // and emsdk pins are llvm-family pins of other payloads (#641).
             if (auto picked = mcpp::toolchain::resolve_version_match(
-                    "", std::move(fromVocabulary)))
+                    "", mcpp::toolchain::pinned_versions_for(*spec)))
                 return std::format("{}@{}", family, *picked);
 
             // Neither source has one. Saying which family and which two places
@@ -9797,6 +9791,10 @@ prepare_build(bool print_fingerprint,
     }
 
     mcpp::targetside::TargetSide resolvedTargetSide;
+    // The package that supplies the C++ layer when the graph does, as an index
+    // into `packages`. Recorded where the provider is found so that the check
+    // after planning (#641) reads the same package the resolution chose.
+    std::optional<std::size_t> cxxLayerProviderIndex;
     // Whether the block below ran at all. `resolvedTargetSide` is default
     // constructed, so "no layer resolved" and "resolution has not happened"
     // read identically off its members — and the layer-conditional pass must
@@ -10197,8 +10195,11 @@ prepare_build(bool print_fingerprint,
             auto note_layer = [&](tsd::CapLayer which, const tsd::Layer& resolved) {
                 if (!resolved.fromGraph()) return;
                 auto it = byLayer.find(static_cast<int>(which));
-                if (it != byLayer.end() && !it->second.empty())
+                if (it != byLayer.end() && !it->second.empty()) {
                     layerProviderIndices.insert(it->second.front().index);
+                    if (which == tsd::CapLayer::CxxAbi)
+                        cxxLayerProviderIndex = it->second.front().index;
+                }
             };
             note_layer(tsd::CapLayer::CompilerRuntime, resolvedTargetSide.compilerRuntime);
             note_layer(tsd::CapLayer::KernelAbi,       resolvedTargetSide.kernelAbi);
@@ -11812,6 +11813,86 @@ prepare_build(bool print_fingerprint,
     // that function does depends on it: the flag assembly that does reads the
     // plan, and every reader of `compute_flags` runs after this line.
     ctx.plan.targetSide = resolvedTargetSide;
+
+    // A DEPENDENCY'S C++ SHARED LIBRARY OVER A C++ RUNTIME THAT IS A PACKAGE
+    // (#641, item 5).
+    //
+    // The runtime package is linked like every other static package: its
+    // objects go into the program. A dependency's shared library is linked from
+    // its own package's objects, and `-nostdlib++` withholds the driver's
+    // runtime, so the library has no C++ runtime at all. A private copy does
+    // not come for free either: `llvm.libcxx` compiles its classes with hidden
+    // visibility, so no image resolves against another's copy, and each image
+    // then holds its own type information for the library's classes. Measured
+    // on x86_64 Linux, an exception of `std::runtime_error` thrown in such a
+    // library is not caught by that type in the program; libc++ documents the
+    // same identity split for hidden types on arm64 Apple.
+    //
+    // So the private copy is linked only when the manifest states it for
+    // shared libraries (`cxx_runtime = { shared = "self-contained" }`, the key
+    // that already means a private runtime in each shared library for the
+    // payload's runtime), and every other case is refused here, before
+    // anything compiles. Each build this refuses failed at link before.
+    if (resolvedTargetSide.cxx.fromGraph() && cxxLayerProviderIndex
+        && *cxxLayerProviderIndex < packages.size()) {
+        namespace dist = mcpp::build::dist;
+        auto const& provider = packages[*cxxLayerProviderIndex].manifest;
+        const auto providerName = mcpp::build::qualified_package_name(provider);
+        auto const& bc = ctx.plan.manifest.buildConfig;
+        const auto format = dist::format_for(
+            tc->targetTriple,
+            mcpp::platform::is_windows ? dist::Format::Pe
+            : mcpp::platform::is_macos ? dist::Format::MachO
+                                       : dist::Format::Elf);
+        const bool privateCopy =
+            dist::stated_shared_library_contract(bc.cxxRuntime, bc.cxxRuntimeShared,
+                                                 bc.staticStdlib, format)
+            == dist::Contract::SelfContained;
+        std::vector<std::string> withoutRuntime;
+        const auto runtimeObjects = mcpp::build::package_link_objects(ctx.plan, providerName);
+        for (auto& lu : ctx.plan.linkUnits) {
+            if (lu.kind != mcpp::build::LinkUnit::SharedLibrary || !lu.dependencyOwned)
+                continue;
+            if (!mcpp::build::link_unit_holds_cxx(ctx.plan, lu)) continue;
+            if (!privateCopy) {
+                withoutRuntime.push_back(lu.targetName);
+                continue;
+            }
+            for (auto const& o : runtimeObjects)
+                if (std::ranges::find(lu.objects, o) == lu.objects.end())
+                    lu.objects.push_back(o);
+        }
+        if (!withoutRuntime.empty()) {
+            std::string names;
+            for (auto const& n : withoutRuntime)
+                names += (names.empty() ? "'" : ", '") + n + "'";
+            refusal::record(refusal::Code::SharedLibraryCxxRuntime);
+            return std::unexpected(std::format(
+                "{} {} linked as a shared library, and this graph's C++ runtime is "
+                "the package '{}@{}', whose objects are linked into the program.\n"
+                "       A shared library built here would have no C++ runtime: the "
+                "package compiles its runtime\n"
+                "       with hidden visibility, so one image cannot use another "
+                "image's copy.\n"
+                "       Link the dependency static, on its edge in [dependencies]:\n"
+                "\n"
+                "           <name> = {{ ..., linkage = \"static\" }}\n"
+                "\n"
+                "       or give each shared library a private copy of the runtime:\n"
+                "\n"
+                "           [build]\n"
+                "           cxx_runtime = {{ shared = \"self-contained\" }}\n"
+                "\n"
+                "       With a private copy, an exception of a standard library class "
+                "thrown in the shared\n"
+                "       library is not caught by that class in the program, because "
+                "each copy has its own\n"
+                "       type information.",
+                names, withoutRuntime.size() == 1 ? "is" : "are",
+                providerName, provider.package.version));
+        }
+    }
+
     // The module graph outlives the plan for one consumer: `mcpp pack`, which
     // has to know which units are INTERFACE (published as source) and which
     // are implementation (published only as an object). The plan flattens that

@@ -2,6 +2,7 @@
 
 import std;
 import mcpp.platform;
+import mcpp.toolchain.lifecycle;
 import mcpp.toolchain.model;
 import mcpp.toolchain.registry;
 import mcpp.toolchain.triple;
@@ -695,5 +696,52 @@ TEST(SdkPayloads, TheWithdrawnAliasIsRefusedAtParseAndNotByTheCapabilityGate) {
         EXPECT_EQ(std::string("ndk@30.0.16248370").find(pinName),
                   std::string::npos)
             << "the alias could only pass the gate by a second mechanism";
+    }
+}
+
+// ── A required family's version comes from pins of the same payload (#641) ──
+//
+// `resolve_required_family` falls back to the versions the target rows pin when
+// nothing is installed. Those pins include `android-ndk@...` and `emsdk@...`,
+// which are llvm-family pins of other payloads. Compared by family, the highest
+// "llvm" pin was the NDK's, and a requirement on `emsdk` or `android-ndk`
+// matched nothing. The expectations are read from the row table itself, so the
+// test follows the table when a pin moves.
+namespace {
+// The answer `resolve_required_family` takes: the highest of the pinned
+// versions, chosen by the same function.
+std::string highest_pin(std::string_view spelling) {
+    auto spec = parse_toolchain_spec(std::string(spelling));
+    if (!spec) return "unparsed: " + spec.error();
+    return mcpp::toolchain::resolve_version_match("", pinned_versions_for(*spec))
+        .value_or("");
+}
+
+std::string pinned_row_version(std::string_view payload) {
+    for (auto const& row : triple::known_targets()) {
+        std::string_view pin = row.pin;
+        if (pin.starts_with(std::string(payload) + "@"))
+            return std::string(pin.substr(payload.size() + 1));
+    }
+    return "";
+}
+} // namespace
+
+TEST(RequiredFamilyPins, EachFamilyTakesThePinsOfItsOwnPayload) {
+    for (auto payload : {"llvm", "emsdk", "android-ndk", "gcc"}) {
+        const auto expected = pinned_row_version(payload);
+        ASSERT_FALSE(expected.empty()) << "no row pins " << payload;
+        EXPECT_EQ(highest_pin(payload), expected) << payload;
+    }
+}
+
+TEST(RequiredFamilyPins, NoLlvmPinComesFromAnotherPayload) {
+    auto spec = parse_toolchain_spec("llvm");
+    ASSERT_TRUE(spec.has_value()) << spec.error();
+    const auto versions = pinned_versions_for(*spec);
+    EXPECT_FALSE(versions.empty());
+    for (auto const& v : versions) {
+        EXPECT_NE(v, pinned_row_version("android-ndk"));
+        EXPECT_NE(v, pinned_row_version("emsdk"));
     }
 }

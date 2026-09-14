@@ -1590,20 +1590,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
     //
     // No separate dependency walk is needed: a `kind = "lib"` dependency's
     // objects are appended into `lu.objects` by `append_package_objects`, so
-    // their language is already in this table. A shared-library dependency
-    // carries its own NEEDED and does not decide this unit's driver.
-    std::unordered_map<std::string, bool> objectIsCxx;
-    for (auto& cu : plan.compileUnits)
-        objectIsCxx[cu.object.generic_string()] =
-            cu.kind == mcpp::SourceKind::ModuleInterface
-         || cu.kind == mcpp::SourceKind::Cxx;
-
+    // their language is already known to the plan. A shared-library dependency
+    // carries its own NEEDED and does not decide this unit's driver. The
+    // answer is the plan's, because the refusal of a C++ shared library with
+    // no C++ runtime asks the same question before this emitter runs (#641).
     auto unit_needs_cxx_runtime = [&](const LinkUnit& lu) {
-        for (auto& o : lu.objects) {
-            auto it = objectIsCxx.find(o.generic_string());
-            if (it == objectIsCxx.end() || it->second) return true;
-        }
-        return false;
+        return mcpp::build::link_unit_holds_cxx(plan, lu);
     };
     if (has_std_artifacts) {
         append(std::format("build {} : stage_file {}\n", escape_ninja_path(std_bmi_dst),

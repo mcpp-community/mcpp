@@ -155,6 +155,17 @@ void print_compat_hint(const ToolchainSpec& spec);
 // The (family, target, host) → xim package mapping — the distribution layer.
 XimToolchainPackage to_xim_package(const ToolchainSpec& spec);
 
+// The versions the target rows pin for the PAYLOAD a spec names (mcpp#641).
+//
+// A pin is kept when `to_xim_package` names the same package for it as for
+// `requested`. Comparing the normalised family instead is what went wrong:
+// `android-ndk@30.0.16248370` and `emsdk@6.0.9` are llvm-family pins, so a
+// requirement on `llvm` took the NDK's version and asked for a payload that
+// does not exist, while a requirement on `emsdk` or `android-ndk` found no pin
+// at all. The comparison is the one the installed-version source already
+// makes, so the two sources of a family's version answer the same question.
+std::vector<std::string> pinned_versions_for(const ToolchainSpec& requested);
+
 // #367: does a GCC spec aimed at the NATIVE Linux host resolve to the
 // `musl-gcc` payload rather than the glibc `gcc` one?
 //
@@ -678,6 +689,19 @@ int ndk_min_api_level(const std::filesystem::path& compilerPath) {
         }
     }
     return 0;
+}
+
+std::vector<std::string> pinned_versions_for(const ToolchainSpec& requested) {
+    const auto wanted = to_xim_package(requested).ximName;
+    std::vector<std::string> versions;
+    for (auto const& row : triple::known_targets()) {
+        if (row.pin.empty()) continue;
+        auto pin = parse_toolchain_spec(std::string(row.pin));
+        if (!pin || pin->version.empty()) continue;
+        if (to_xim_package(*pin).ximName != wanted) continue;
+        versions.push_back(pin->version);
+    }
+    return versions;
 }
 
 XimToolchainPackage to_xim_package(const ToolchainSpec& spec) {

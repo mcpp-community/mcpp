@@ -413,6 +413,21 @@ expand_manifest_include_entry(const std::filesystem::path& root,
 // ends up spelled two ways.
 std::string qualified_package_name(const mcpp::manifest::Manifest& manifest);
 
+// The objects a package contributes to an image that links it whole: its
+// module units, which link unconditionally, then its implementation units, in
+// plan order. A shared library that carries a private copy of a graph C++
+// runtime takes the runtime package's objects through this (#641).
+std::vector<std::filesystem::path>
+package_link_objects(const BuildPlan& plan, std::string_view packageName);
+
+// mcpp#426: does this link unit contain any C++ at all? An object the plan did
+// not compile (an action's output, a staged std module object) has no declared
+// language and counts as C++: a wrong "no" is an undefined-symbol link failure,
+// a wrong "yes" is a C++ driver on a C link. The ninja emitter chooses the
+// driver and the C++ runtime slot with this, and the refusal of a C++ shared
+// library without a C++ runtime reads the same answer (#641).
+bool link_unit_holds_cxx(const BuildPlan& plan, const LinkUnit& lu);
+
 } // namespace mcpp::build
 
 namespace mcpp::build {
@@ -424,6 +439,18 @@ std::string qualified_package_name(const mcpp::manifest::Manifest& manifest) {
     }
     if (manifest.package.namespace_.empty()) return manifest.package.name;
     return manifest.package.namespace_ + "." + manifest.package.name;
+}
+
+bool link_unit_holds_cxx(const BuildPlan& plan, const LinkUnit& lu) {
+    std::unordered_set<std::string> notCxx;
+    for (auto const& cu : plan.compileUnits) {
+        if (cu.kind == mcpp::SourceKind::ModuleInterface
+            || cu.kind == mcpp::SourceKind::Cxx) continue;
+        notCxx.insert(cu.object.generic_string());
+    }
+    return std::ranges::any_of(lu.objects, [&](const std::filesystem::path& o) {
+        return !notCxx.contains(o.generic_string());
+    });
 }
 
 namespace {
@@ -2014,6 +2041,18 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     }
 
     return plan;
+}
+
+std::vector<std::filesystem::path>
+package_link_objects(const BuildPlan& plan, std::string_view packageName) {
+    std::vector<std::filesystem::path> objects;
+    for (auto const& cu : plan.compileUnits)
+        if (cu.packageName == packageName && mcpp::links_unconditionally(cu.kind))
+            objects.push_back(cu.object);
+    for (auto const& cu : plan.compileUnits)
+        if (cu.packageName == packageName && is_implementation_source(cu.kind))
+            objects.push_back(cu.object);
+    return objects;
 }
 
 } // namespace mcpp::build

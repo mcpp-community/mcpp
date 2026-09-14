@@ -250,6 +250,25 @@ Contract default_contract(Role r, Format f) {
     return Contract::SelfContained;
 }
 
+// The contract a manifest STATES for shared libraries, or nothing when it
+// states none and the role's default applies.
+//
+// `cxx_runtime = { shared = "..." }` states it directly. A project-wide
+// statement (`cxx_runtime = "..."`, or `static_stdlib = false`, which nobody
+// writes to get the default) states it for shared libraries too. The flag
+// assembly derives the shared-library contract from this, and so does the
+// refusal of a C++ shared library in a graph whose runtime is a package
+// (#641): that refusal is lifted by a statement, never by a default, so the
+// two must agree about what was written.
+std::optional<Contract> stated_shared_library_contract(std::string_view cxxRuntime,
+                                                       std::string_view cxxRuntimeShared,
+                                                       bool staticStdlib, Format f) {
+    if (auto shared = parse_contract(cxxRuntimeShared)) return shared;
+    if (cxxRuntime.empty() && staticStdlib) return std::nullopt;
+    return parse_contract(cxxRuntime).value_or(
+        staticStdlib ? default_contract(Role::Distributable, f) : Contract::HostCoupled);
+}
+
 // ---------------------------------------------------------------- Layer 3
 
 struct MechanismInput {
