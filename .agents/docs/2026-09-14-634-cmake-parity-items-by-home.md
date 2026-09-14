@@ -5,8 +5,10 @@ status: active
 
 # A framework's CMake parity list: the twenty-one items of #634, read against the code and routed to where each one belongs
 
-**Status:** active, revision 2. Analysis and design awaiting review; nothing
-here has landed. Revision 1 classified the items; revision 2 held every
+**Status:** active, revision 3. Revision 3 is the implementation's: the plan
+and ledger are `2026-09-14-634-implementation-plan.md`, whose §1 states the
+refinements adopted before and while implementing; the sections below carry
+them where a decision's wording changed (§5.2, §5.3, §5.6). Revision 1 classified the items; revision 2 held every
 decision to six properties (simple, low in new surface, observable,
 cross-platform, stable for existing manifests, consistent with the rules its
 neighbours already follow) and measured every premise revision 1 had left
@@ -289,8 +291,10 @@ HuxerUI's `huxerui-build-rules`, `huxerui-tools` and `huxerui-tests`.
 **Decision.** A `path` or `git` dependency's identity is the one its manifest
 declares. A key that normalises to another identity adopts the declared one
 and warns, naming the requester, the key, its normalisation and the
-declaration. Implemented by registering the record under both keys when the
-manifest is loaded, so an edge arriving under either spelling finds it; an
+declaration. Implemented by recording the identity resolved from each
+canonical source, so a second key over the same directory or commit takes it
+without the manifest being loaded again (revision 3: a key-to-identity alias
+would also have captured a `version` dependency written with the same key); an
 identity already resolved from a different source follows the #630 decision
 table (`docs/05-dependencies.md:126-133`). Two identities over one canonical
 source (possible only for manifests without a namespace, which keep taking the
@@ -343,8 +347,11 @@ application. CI, `macos-15`: the program in the build tree runs (exit 7) with `L
 4. `walked` is written only when every needed name resolved to a staged file
    or a platform name; otherwise `not-walked` with the names, and `dir` and
    `tar` refuse.
-5. The stage manifest gains one additive line per closure member (`needs
-   <name> <staged path>` or `needs <name> platform`).
+5. The stage manifest gains one additive line per needed name,
+   `needs<TAB><name><TAB><staged path>`, `needs<TAB><name><TAB>platform` or
+   `needs<TAB><name><TAB>unresolved` (revision 3: TAB-separated, because an
+   install name or a directory can contain a space, and a third value so a
+   provider reads a failure as state).
 
 The ELF host row keeps `ldd_parse`; moving it onto the reader is a separate
 change with its own byte-identical criterion. `dist-apk` then reads `lib/`
@@ -431,7 +438,7 @@ effective target: the NDK names its API-level `libc++.a` (a linker script,
    falls back to today's directory search. The self-contained contract then
    holds on the Android rows for tests and programs; the shared-object role
    keeps `libc++_shared.so`, which `dist-apk` packages.
-2. *Runners learn the artifact's runtime files.* Every runner, for `mcpp run` and `mcpp test`, receives `MCPP_RUNTIME_FILES`: the path of a file of `<destination relative to the artifact's directory> <absolute source>` lines, taken from the plan's `runtimeDeployFiles`. The argv grammar does not change and a runner that needs no files ignores the variable. `adb-run` pushes each file beside the pushed program and runs the program from that directory. A test locates its data relative to its own directory; a compiled-in build-machine path is the project's to change.
+2. *Runners learn the artifact's runtime files.* Every runner, for `mcpp run` and `mcpp test`, receives `MCPP_RUNTIME_FILES`: the path of a file of `<destination relative to the artifact's directory><TAB><absolute source>` lines, taken from the plan's deployed files and the shared libraries the artifact links (revision 3: TAB-separated, the file always exists, and a test on a row whose dependency is shared needs that library on the device too). The argv grammar does not change and a runner that needs no files ignores the variable. `adb-run` pushes each file beside the pushed program and runs the program from that directory. A test locates its data relative to its own directory; a compiled-in build-machine path is the project's to change.
 
 **Criteria.** On the emulator the fixture without any `ldflags` passes `runs`,
 and its test programs name no `libc++_shared.so`; with `adb-run` reading

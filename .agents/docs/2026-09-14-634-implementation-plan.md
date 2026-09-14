@@ -21,63 +21,64 @@ for the project in the reply on #634.
 
 ## 0. The ledger
 
-Status is one of `todo`, `doing`, `done` (merged, with the reading that closed
-it), `dropped` (with the reason). Owner `lead` is the integrating session;
+Status is one of `todo`, `doing`, `branch` (implemented on the pull request's
+branch, with the reading that measured it), `done` (merged, with the reading
+that closed it), `dropped` (with the reason). Owner `lead` is the integrating session;
 `W1` to `W4` are the parallel work trees of §8.
 
 ### 0.1 Engine: mcpp-community/mcpp, one pull request (`feat/634-cmake-parity`)
 
 | id | task (triage §) | owner | depends on | status |
 |---|---|---|---|---|
-| E1 | a matching conditional dependency declaration replaces the unconditional one, compared by identity; the same for `dev-dependencies`, `build-dependencies`, `feature-deps` (§5.1.1) | lead | - | todo |
-| E2 | conditional dependency tables labelled by their full section; an option-named selector with a string value warns with the restated form (§5.1.2) | lead | - | todo |
-| E3 | `[target.<sel>.targets.<n>] kind` for declared library targets; the `[target.<sel>]` sweep reports sub-tables the parser does not read (§5.1.3) | lead | - | todo |
-| E4 | the link-form degradation names the package's statement and, for a row, its selector (§5.1.3, §9 item 5) | lead | E3 | todo |
-| E5 | a `path`/`git` dependency adopts its manifest's identity and warns once; the record is registered under both keys (§5.2) | lead | - | todo |
-| E6 | two identities over one canonical source are refused before scanning; the scanner's duplicate-provider message names the packages (§5.2) | lead | E5 | todo |
-| E7 | the six edges in mcpp's `examples/` write the declared identity (§5.2) | lead | E5 | todo |
-| E8 | one reader-driven closure for PE, the Android rows and Mach-O, with per-format platform rules (§5.3.1) | W1 | - | todo |
-| E9 | Android stages `lib/` (per ABI), Mach-O stages beside the program; `walked` only when complete, else `not-walked` naming the names and `dir`/`tar` refuse; `needs` lines on every row (§5.3.2-5) | W1 | E8 | todo |
-| E10 | rpath entries that begin with a loader token (`$ORIGIN`, `@executable_path`, `@loader_path`, `@rpath`) are not anchored, through one function shared by both normalisers (§9 item 11) | W1 | - | todo |
-| E11 | an ELF shared library without a declared `soname` is linked with its file name as SONAME (§5.4) | W1 | - | todo |
-| E12 | the static C++ runtime archives are located by asking the driver for the effective target (§5.6.1) | W2 | - | todo |
-| E13 | every runner of `mcpp run` and `mcpp test` receives `MCPP_RUNTIME_FILES` (§5.6.2, format refined in §1) | W2 | - | todo |
-| E14 | `run`, `test` and `pack` declare `--toolchain` (§5.10) | W2 | - | todo |
-| E15 | `[test] discover` (§5.5) | W2 | - | todo |
-| E16 | `mcpp run --format <f>` uses the named runner `<f>` when one exists; a directory distributable that meets no runner is refused before the spawn (§6.3) | W2 | - | todo |
-| E17 | two emissions of one named runner: measured, then decided (§9 item 8; see §1) | W2 | - | todo |
-| E18 | `resolution.json` records `graph`; `mcpp why deps` prints it (§5.11) | lead | E1-E6 | todo |
-| E19 | the engine states `android.api-level`, `ios.deployment-target`, `macos.deployment-target`; the refusal names the fact's key and says "this build targets" (§5.9, §9 item 6) | lead | - | todo |
-| E20 | `config.toml [index.repos.<name>]` reaches an existing registry; a payload installed from an overridden index names the source (§7.4, §9 item 7) | lead | - | todo |
-| E21 | `mcpp::pkg_config_libdir()` (§5.7) | lead | - | todo |
-| E22 | CI: the `android-ndk` e2e tests run on a Linux job, and one emulator step runs `mcpp test` on the x86_64 Android row (§1, test coverage) | lead | E9, E12, E13 | todo |
-| E23 | user documentation and its Chinese mirror; normative specification changes (§5 below) | lead, W1, W2 | E1-E21 | todo |
-| E24 | triage record revision 3 folded in; this ledger closed for the engine rows; CHANGELOG; version group 1 | lead | E1-E23 | todo |
+| E1 | a matching conditional dependency declaration replaces the unconditional one, compared by identity; the same for `dev-dependencies`, `build-dependencies`, `feature-deps` (§5.1.1) | lead | - | branch: e2e 677 A, B (fails on 2026.9.14.1) |
+| E2 | conditional dependency tables labelled by their full section; an option-named selector with a string value warns with the restated form (§5.1.2) | lead | - | branch: e2e 677 C |
+| E3 | `[target.<sel>.targets.<n>] kind` for declared library targets; the `[target.<sel>]` sweep reports sub-tables the parser does not read (§5.1.3) | lead | - | branch: e2e 677 D, 678 D; unit `TargetScalarKeys.EveryParsedSubTableIsKnownToTheSweep` |
+| E4 | the link-form degradation names the package's statement and, for a row, its selector (§5.1.3, §9 item 5) | lead | E3 | branch: e2e 678 C |
+| E5 | a `path`/`git` dependency adopts its manifest's identity and warns once; the record is registered under both keys (§5.2) | lead | - | branch: e2e 679 A, B |
+| E6 | two identities over one canonical source are refused before scanning; the scanner's duplicate-provider message names the packages (§5.2) | lead | E5 | branch: e2e 679 C |
+| E7 | the six edges in mcpp's `examples/` write the declared identity (§5.2) | lead | E5 | branch: the three examples build with no identity warning, and still build on 2026.9.14.1 |
+| E8 | one reader-driven closure for PE, the Android rows and Mach-O, with per-format platform rules (§5.3.1) | W1 | - | branch: unit `test_pack_closure` (11 cases); e2e 667, 668 (macOS CI) |
+| E9 | Android stages `lib/` (per ABI), Mach-O stages beside the program; `walked` only when complete, else `not-walked` naming the names and `dir`/`tar` refuse; `needs` lines on every row (§5.3.2-5) | W1 | E8 | branch: e2e 266, 666, 668 (macOS CI), 667, 669 |
+| E10 | rpath entries that begin with a loader token (`$ORIGIN`, `@executable_path`, `@loader_path`, `@rpath`) are not anchored, through one function shared by both normalisers (§9 item 11) | W1 | - | branch: unit `test_build_flags`; e2e 670 |
+| E11 | an ELF shared library without a declared `soname` is linked with its file name as SONAME (§5.4) | W1 | - | branch: e2e 667, 669 |
+| E12 | the static C++ runtime archives are located by asking the driver for the effective target (§5.6.1) | W2 | - | branch: e2e 675 |
+| E13 | every runner of `mcpp run` and `mcpp test` receives `MCPP_RUNTIME_FILES` (§5.6.2, format refined in §1) | W2 | - | branch: e2e 672; the `android` job's emulator step |
+| E14 | `run`, `test` and `pack` declare `--toolchain` (§5.10) | W2 | - | branch: e2e 671 |
+| E15 | `[test] discover` (§5.5) | W2 | - | branch: e2e 673; unit `test_test_targets` |
+| E16 | `mcpp run --format <f>` uses the named runner `<f>` when one exists; a directory distributable that meets no runner is refused before the spawn (§6.3) | W2 | - | branch: e2e 674 |
+| E17 | two emissions of one named runner: measured, then decided (§9 item 8; see §1) | W2 | - | branch: decided in §1.9, e2e 684 |
+| E18 | `resolution.json` records `graph`; `mcpp why deps` prints it (§5.11) | lead | E1-E6 | branch: e2e 682; 677, 678 and 679 read `graph` |
+| E19 | the engine states `android.api-level`, `ios.deployment-target`, `macos.deployment-target`; the refusal names the fact's key and says "this build targets" (§5.9, §9 item 6) | lead | - | branch: e2e 680 |
+| E20 | `config.toml [index.repos.<name>]` reaches an existing registry; a payload installed from an overridden index names the source (§7.4, §9 item 7) | lead | - | branch: e2e 681; an existing home re-pointed its index and restored the entry (local probe, §1.9) |
+| E21 | `mcpp::pkg_config_libdir()` (§5.7) | lead | - | branch: e2e 683 |
+| E22 | CI: the `android-ndk` e2e tests run on a Linux job, and one emulator step runs `mcpp test` on the x86_64 Android row (§1, test coverage) | lead | E9, E12, E13 | branch: `ci-linux-e2e.yml` job `android` |
+| E23 | user documentation and its Chinese mirror; normative specification changes (§5 below) | lead, W1, W2 | E1-E21 | doing |
+| E24 | triage record revision 3 folded in; this ledger closed for the engine rows; CHANGELOG; version group 1 | lead | E1-E23 | doing |
 
 ### 0.2 Payloads: openxlings/xim-pkgindex, one pull request (`feat/634-runners-and-payloads`)
 
 | id | task (triage §) | owner | depends on | status |
 |---|---|---|---|---|
-| X1 | `macapp-run`: a macOS application bundle runner (§7.1) | W3 | - | todo |
-| X2 | `simctl-run` spawns the installed executable of a bundle that does not load UIKit; UNMEASURED notes replaced by readings (§7.2) | W3 | - | todo |
-| X3 | `adb-run` transfers the files `MCPP_RUNTIME_FILES` names and runs the program from their directory (§5.6.2) | W3 | E13 merged in the branch | todo |
-| X4 | `xim:wix` close-out: anchor `mbanative.dll`, a Windows install-verify job, `WixToolset.BootstrapperApplications.wixext`, the ABI statement (§7.3) | W3 | - | todo |
-| X5 | `xim:bundletool` (§6.5) | W3 | - | todo |
-| X6 | `libxml2` declares its `.pc` files into the view (§5.7, §9 item 9) | W3 | - | todo |
-| X7 | the pull-request workflow builds a consumer fixture through the `config.toml` index override (§7.4) | W3 | - | todo |
+| X1 | `macapp-run`: a macOS application bundle runner (§7.1) | W3 | - | done: xim-pkgindex#838 (8f67d875), job `macapp-run` |
+| X2 | `simctl-run` spawns the installed executable of a bundle that does not load UIKit; UNMEASURED notes replaced by readings (§7.2) | W3 | - | done: xim-pkgindex#838, job `simctl-run` |
+| X3 | `adb-run` transfers the files `MCPP_RUNTIME_FILES` names and runs the program from their directory (§5.6.2) | W3 | E13 merged in the branch | done: xim-pkgindex#838, job `adb-run` on the API 34 emulator |
+| X4 | `xim:wix` close-out: anchor `mbanative.dll`, a Windows install-verify job, `WixToolset.BootstrapperApplications.wixext`, the ABI statement (§7.3) | W3 | - | done: xim-pkgindex#838, job `wix` |
+| X5 | `xim:bundletool` (§6.5) | W3 | - | done: xim-pkgindex#838, workflow `bundletool` on three hosts |
+| X6 | `libxml2` declares its `.pc` files into the view (§5.7, §9 item 9) | W3 | - | done: xim-pkgindex#838, job `consumers` |
+| X7 | the pull-request workflow builds a consumer fixture through the `config.toml` index override (§7.4) | W3 | - | done: xim-pkgindex#838, workflow `consumer-through-index-override` |
 
 ### 0.3 Official plugins: mcpp-community/mcpp-plugins, one pull request (`feat/634-closure-bundles`, 0.10.0)
 
 | id | task (triage §) | owner | depends on | status |
 |---|---|---|---|---|
-| P1 | `dist-apk` reads the staged closure (`lib/`, `lib/<abi>/`), deletes its walk and stamp, packs several ABIs into one APK, reports refusals through `mcpp::warning`, and refuses a stage without `needs` lines naming the engine floor (§6.5) | W4 | E9 | todo |
-| P2 | `dist-apple` places staged dylibs in the framework directory, adds the link-time rpath through `mcpp::link_flag`, signs ad hoc when no identity is given, and keeps closure members out of the resource directory (§6.1) | W4 | E9, E10 | todo |
-| P3 | `dist-apple` supplies `mcpp::runner("app", "macapp-run")` on `*-macos` and declares the payload (§6.3) | W4 | E16, X1 | todo |
-| P4 | `dist-apple` `dmg` format (§6.2) | W4 | - | todo |
-| P5 | `dist-apk` `aab` format (§6.5) | W4 | P1, X5 | todo |
-| P6 | `dist-wix` `setup` format (§6.4) | W4 | X4 | todo |
-| P7 | `rules-metal` (§6.6) | W4 | - | todo |
-| P8 | CI: the iOS fixture exits non-zero, the diagnostic is portable, P1-P7 have jobs, `MCPP_VERSION` names the released engine (§7.2, §9 item 10) | W4 | R1 | todo |
+| P1 | `dist-apk` reads the staged closure (`lib/`, `lib/<abi>/`), deletes its walk and stamp, packs several ABIs into one APK, reports refusals through `mcpp::warning`, and refuses a stage without `needs` lines naming the engine floor (§6.5) | W4 | E9 | doing |
+| P2 | `dist-apple` places staged dylibs in the framework directory, adds the link-time rpath through `mcpp::link_flag`, signs ad hoc when no identity is given, and keeps closure members out of the resource directory (§6.1) | W4 | E9, E10 | doing |
+| P3 | `dist-apple` supplies `mcpp::runner("app", "macapp-run")` on `*-macos` and declares the payload (§6.3) | W4 | E16, X1 | doing |
+| P4 | `dist-apple` `dmg` format (§6.2) | W4 | - | doing |
+| P5 | `dist-apk` `aab` format (§6.5) | W4 | P1, X5 | doing |
+| P6 | `dist-wix` `setup` format (§6.4) | W4 | X4 | doing |
+| P7 | `rules-metal` (§6.6) | W4 | - | doing |
+| P8 | CI: the iOS fixture exits non-zero, the diagnostic is portable, P1-P7 have jobs, `MCPP_VERSION` names the released engine (§7.2, §9 item 10) | W4 | R1 | doing |
 | P9 | documentation, version 0.10.0, release, GitCode assets (§4 below) | lead | P1-P8 | todo |
 
 ### 0.4 Index: mcpplibs/mcpp-index, one pull request
@@ -93,7 +94,7 @@ it), `dropped` (with the reason). Owner `lead` is the integrating session;
 |---|---|---|---|
 | R1 | engine: merge, tag, `release.yml` on four hosts, `publish-ecosystem`, the bot's index pull request merged, GitCode assets checked (local `gtc` for any missing), bootstrap pin (version group 2) | E24, CI green | todo |
 | R2 | plugins: merge, tag `v0.10.0`, release assets on GitHub and GitCode (`gtc`), byte comparison of each downloaded asset | P9, CI green | todo |
-| R3 | xim-pkgindex pull request merged, and its artifact read back from a client | X1-X7, CI green | todo |
+| R3 | xim-pkgindex pull request merged, and its artifact read back from a client | X1-X7, CI green | done: a local client installed `xim:android-platform-tools@37.0.1-4` from the index after the merge |
 | R4 | mcpp-index pull request merged; `latest` of `mcpp.plugins` read back from a client | I1 | todo |
 | V1 | sandbox verification of the released engine (§6.2) | R1, R3 | todo |
 | V2 | sandbox verification of plugins 0.10.0 through the index (§6.2) | R2, R4 | todo |
@@ -244,6 +245,66 @@ A cell marked `-` is a row the task does not change.
   sentence is the deliverable (E2, E4, E5, E19).
 - **Negative directions** are the triage record's, per task, and are tests,
   not prose.
+
+### 1.9 Refinements found while implementing
+
+Each item was found by a measurement on the branch, and each has a test.
+
+- **A2 is keyed by source, not by key.** A map from a key an edge wrote to the
+  identity its manifest declared would also have captured a `version`
+  dependency written with the same key, which is a different package. The
+  resolver records the identity resolved from each canonical source (a
+  directory, or a repository and reference); a second key over that source
+  takes it, and a manifest that declares no namespace makes the second key a
+  refusal (e2e 679).
+- **The `[target.<sel>]` sweep reports sub-tables.** The sweep skipped every
+  table-valued key because a hand-written list of sections had drifted
+  twice. The list now exists beside the scalar lists and a unit test derives
+  the parsed sections from the parser's source in both directions, so the
+  drift is a failing test rather than a false warning.
+- **A row's `kind` is checked after target inference.** A library target a
+  package does not declare exists only after `load` infers it, so the name
+  is validated there rather than where the row is parsed.
+- **The stage manifest's `needs` lines are TAB-separated and carry a third
+  value.** `needs<TAB><name><TAB><staged path|platform|unresolved>`: a Mach-O
+  install name or a Windows directory can contain a space, and a provider
+  reads a failure as state. The ELF host row applies §5.3.4 too: a name the
+  loader reports as not found makes the closure `not-walked`.
+- **The Android search set includes `[runtime] link_library_dirs` and the
+  transitive needed directories.** Without them a valid prebuilt library was
+  refused (measured).
+- **The default SONAME precedes `$ldflags`.** A project that names its SONAME
+  through `[build] ldflags` keeps it, because the linker takes the last
+  `-soname` (e2e 220).
+- **The NDK is asked with the API level, and its `libc++.a` is a linker
+  script.** Without the level the NDK answers with the host's archive. With
+  the script's archive names passed to `--exclude-libs`, a self-contained
+  Android shared library exports 4 dynamic symbols instead of 161.
+- **`MCPP_RUNTIME_FILES` lists the linked shared libraries too.** A test on a
+  row whose dependency is shared (A1's per-row kind) needs the library beside
+  it on the device; a nested test's destinations start with `../`.
+- **A directory distributable that meets no runner exits 126.** The
+  exit-code specification forbids moving a published failure to another
+  category, and the kernel's refusal of the same case was 126 (docs/50 §6).
+- **§9 item 8 (E17).** Measured on 2026.9.14.1: a manifest runner and a
+  build-program runner of one name do not concatenate (the manifest wins);
+  two emissions in one build program form one argv by the directive contract,
+  now stated in docs/30; a runner a dependency's build program supplies and
+  the root's build program also emits became one argv (`run-A.sh run-B.sh
+  <artifact>`). The last is refused naming both, unless the manifest declares
+  the name, which is the precedence every other runner conflict follows
+  (e2e 684).
+- **A test built from a subdirectory could not load a graph-built shared
+  library.** Its search path named its own directory (`bin/sub/`), and the
+  post-link closure check refused the build on 2026.9.14.1. A consumer outside
+  the library's directory also searches the relative path to it (e2e 685).
+- **A refused `--toolchain` value was credited to `[toolchain].<platform>`.**
+  The message names where the value was written (e2e 671).
+- **C4, measured before implementing.** On an existing home, once the
+  registry's `.xlings.json` names a checkout, `mcpp index update` re-points
+  `data/xim-pkgindex` at it. Removing the table restores the previous entry,
+  through a record of what mcpp wrote (`.mcpp-index-overrides.json`), unless
+  the entry was changed after mcpp wrote it (e2e 681).
 
 ## 2. Repositories, branches, versions
 
