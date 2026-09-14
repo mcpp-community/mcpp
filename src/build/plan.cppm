@@ -1731,6 +1731,26 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                     lu.implicitInputs.push_back(alias);
                 auto flags = shared_library_link_flags(dep.target, naming, targetTriple);
                 lu.linkFlags.insert(lu.linkFlags.end(), flags.begin(), flags.end());
+                // A CONSUMER IN ANOTHER DIRECTORY NEEDS THE WAY BACK. The
+                // search path above is the consumer's own directory, which is
+                // where the library is for a program in `bin/` and is not for
+                // a test built from a subdirectory of `tests/`
+                // (`bin/tests/sub/`): measured, such a test could not load a
+                // graph-built shared library and exited 127. The relative
+                // path from the consumer's directory to the library's is
+                // added for that case only, so every consumer that shares the
+                // library's directory keeps its link line.
+                const auto libDir = dep.output.parent_path().lexically_normal();
+                const auto unitDir = lu.output.parent_path().lexically_normal();
+                if (!naming.sharedNeedsImportLib && !unitDir.empty() && libDir != unitDir) {
+                    const auto rel = libDir.lexically_relative(unitDir).generic_string();
+                    const bool macho = targetTriple.empty() ? bool(mcpp::platform::is_macos)
+                                                            : targetTriple.is_mach_o();
+                    if (!rel.empty() && rel != ".")
+                        lu.linkFlags.push_back(macho
+                            ? "-Wl,-rpath,@loader_path/" + rel
+                            : "-Wl,-rpath,'$$ORIGIN/" + rel + "'");
+                }
             }
         }
     };
