@@ -399,6 +399,25 @@ mcpp test [pattern] [--workspace] --message-format json
 测试都 `not_run` 的成员),与既有的 `not_run` 列表并列;后者仍然指
 `--workspace-timeout` 到达时尚未开始的成员。
 
+### 暂存清单
+
+`mcpp pack` 在它暂存的树旁边写出 `<staged tree>.stage-manifest`,点名
+`${mcpp.stage_dir}` 的 `artifact` action 依赖这个文件(见
+[30](30-build-mcpp.md#产出可分发物pack_format-与-stage_dir20269111))。它是按行
+组织的文本文件而不是 JSON 信封,各行按以下顺序构成三块:
+
+| 行 | 内容 |
+|---|---|
+| `closure = walked` 或 `closure = not-walked` | 第一行:树所需的每一个库是否都已解析 |
+| `reason = <text>` | 仅在 `closure = not-walked` 时出现;一行 |
+| `needs<TAB><name><TAB><where>` *(mcpp 2026.9.14.2+)* | 闭包读到的每个库名一行,已排序;`<where>` 是暂存库相对于树的路径、目标提供的库记为 `platform`,或 `unresolved` |
+| `<size> <path>` 或 `link <path>` | 每个暂存文件或符号链接一行,已排序 |
+
+`<name>` 按需要它的对象的拼写给出:`DT_NEEDED` 条目、PE 导入名或 Mach-O install
+name。`needs` 行的字段以 TAB 分隔,因为名字与路径都可能含空格。不打包任何东西的
+模式(`system`、`static`)暂存的树不带 `needs` 行,更早的 mcpp 暂存的树同样不带;
+自行放置库的读者读这些行,而不是从 `lib/` 下的文件推断闭包。
+
 ## 当前边界
 
 - **退出码表的作用域只到它点名的那些命令。** 别的命令返回的码不在表里,而把它加进来

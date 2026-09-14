@@ -156,7 +156,8 @@ error: unknown --format 'bogus'.
 (mcpp 2026.9.13.2+):在每一行 Android 上,一个应用*就是*平台加载的那个共享库,
 所以 `mcpp pack myapp --target aarch64-linux-android --target x86_64-linux-android`
 会构建并把两条腿暂存进同一棵树里,与库包的多三元组做法完全一致。每条腿落在
-`lib/<abi>/lib<name>.so`(`aarch64` → `arm64-v8a`,`x86_64` → `x86_64`),声明的
+`lib/<abi>/lib<name>.so`(`aarch64` → `arm64-v8a`,`x86_64` → `x86_64`),各自的
+闭包暂存在它旁边(见 [Android](#android应用目标文件与它的闭包在-lib-下)),声明的
 部署文件只暂存一次,随后对这棵合并后的树只跑一次分派——这正是 `dist-apk` 这样的
 成员能构建出一个通用 APK 的原因。只给一个 `--target` 时,今天这种扁平的
 `lib/lib<name>.so` 布局保持不变。产物在任何被请求的一行上是可执行文件的 target,
@@ -239,6 +240,15 @@ DWARF 带着发布者源码树与构建目录的绝对路径。剥什么取决�
 tarball 内容包在一个顶层目录里,该目录的名字与 tarball 文件名(去掉
 `.tar.gz`)保持一致 —— 这样图形界面"右键解压"和命令行 `tar -xzf` 都
 得到同一个自包含的目录,不会把内容散到当前路径。
+
+**闭包会被记录,不完整的闭包使归档被拒绝**(mcpp 2026.9.14.2+)。暂存树旁边的
+`<tree>.stage-manifest` 列出闭包解析过的每一个库名:树里携带的库给出其暂存路径,
+目标自己提供的库记为 `platform`,哪里都找不到的记为 `unresolved`(行格式见
+[50](50-machine-output.md#暂存清单))。只要有一个名字是 unresolved,
+`--format tar` 与 `--format dir` 就失败并点名它,因为缺了这个库的树在安装处无法启动;
+被分派的格式仍然收到这棵树,并带 `closure = not-walked`。目标提供、而本机没有的库,
+写进 `[pack.bundle-project] also_skip`。不打包任何东西的模式(`system`、`static`)
+不记录闭包。
 
 ### Mode `static`
 
@@ -402,33 +412,61 @@ mcpp pack --target x86_64-windows-gnu     # 在 Linux 宿主上
 - 压缩包是**确定性**的:不读取任何时间戳,同一棵树打两次字节一致,公布的校验和
   才有意义。
 
-反方向 —— 在 Windows 上给 Linux / macOS 产物打包 —— 仍然不支持,原因还是最初
-那个:那条闭包要由目标自己的动态链接器解析,而 Windows 宿主没有办法运行它。
+反方向 —— 在 Windows 上给 Linux 产物打包 —— 仍然不支持:ELF 程序的闭包要由目标
+自己的动态链接器解析,而 Windows 宿主没有办法运行它。Mach-O 程序的闭包是从文件里
+读出来的,所以 macOS 程序在任何宿主上都能打包。
 
-#### Mach-O 程序会被拒绝 —— 在所有宿主上,包括 macOS
+### macOS(Mach-O):dylib 与程序同目录
 
-同一步闭包解析是靠 `LD_TRACE_LOADED_OBJECTS=1` **运行产物**来问动态链接器要
-依赖表的。这个变量属于 glibc 的 ld.so,dyld 从来不认(它的对应物是
-`DYLD_PRINT_LIBRARIES`)。所以在 Mac 上这条命令不会 trace 任何东西 ——
-**它会把用户的程序跑起来**,然后把程序的输出当成依赖表解析。mcpp 现在直接拒绝,
-并在信息里点名缺的是哪个机制。
+```
+target/dist/myapp-0.1.0-aarch64-macos.tar.gz
+└── myapp-0.1.0-aarch64-macos/
+    ├── bin/myapp
+    ├── bin/libmydep.dylib      ← 依赖的 dylib,与程序同目录
+    ├── myapp                   ← 入口 wrapper
+    ├── README.md
+    └── LICENSE
+```
 
-判定按产物的**格式**而不是宿主,理由与 Windows 那条完全相同:
-`LD_TRACE_LOADED_OBJECTS` 在 Linux 上也 trace 不了一个 Mach-O。
+Mach-O 程序的闭包从它的 load command 里读出(mcpp 2026.9.14.2+),所以打包时不运行
+任何东西。它的 dylib 暂存在它旁边的 `bin/` 中,而图内构建的 dylib 的消费者链接时带的
+`@loader_path` rpath 本来就指向那里:不编辑任何 load command,不重新签名,也不 strip
+这个程序。
 
-`kind = "lib"` / `"shared"` 目标在 macOS 上照常打包 —— 库打包从不运行产物。
-这条限制只针对程序。
+一个被需要的名字,在加载器能把它解析到程序所在目录时才会被暂存:
 
-依赖闭包现在可以被**读出来**而不必运行了 —— `mcpp.pack.binfmt` 走一遍 Mach-O 的
-load command(`LC_LOAD_DYLIB` 及其 weak/re-export/upward 三个变体给出名字,
-`LC_RPATH` 给出搜索项),读法与它读 PE 导入表一样;并按 `dyld` 的规则解析
-`@executable_path`、`@loader_path`、`@rpath`,全程不加载任何东西。`mcpp pack`
-还没有调用它:把解析到的 dylib 拷到程序旁边、再重写它的 `LC_RPATH`,需要一个
-load command 编辑器(一条 load command 里没有空间可以塞进更长的路径),这个编辑器
-要等在真实的 macOS 构建上量过解析结果之后才设计,而不是先设计。在那之前,Mach-O
-程序仍然是"暂存但没有闭包"——一个被分发出去的格式(`.app`、`.ipa`)已经能拿这样一棵
-"有程序、没闭包"的树做什么,见
-[产出可分发物](30-build-mcpp.md#产出可分发物pack_format-与-stage_dir20269111)。
+| 名字 | 处理 |
+|---|---|
+| `/usr/lib/…`、`/System/Library/…` | 不暂存;由操作系统提供 |
+| `@rpath/<file>` | 需要它的映像或程序本身有一条恰为 `@loader_path` 或 `@executable_path` 的 rpath 时暂存 |
+| `@loader_path/<file>`、`@executable_path/<file>` | 暂存到该路径,该路径必须留在程序所在目录之内 |
+
+其他名字都使闭包不完整,`tar` 与 `dir` 拒绝并点名它。最常见的是操作系统目录之外的
+绝对 install name:加载器在每台机器上都从那个路径读取它,不论树里带了什么。
+`--mode system` 与 `--mode static` 在这一行上不打包任何东西,与 PE 相同。
+`kind = "lib"` / `"shared"` 目标走库打包路线,不受影响。
+
+### Android:应用目标文件与它的闭包在 `lib/` 下
+
+```
+target/dist/myapp-0.1.0-x86_64-linux-android/
+├── lib/libmyapp.so             ← 应用目标文件
+├── lib/libmydep.so             ← 依赖的共享库
+├── lib/libc++_shared.so        ← NDK 的 C++ 运行时,目标文件需要它时才有
+└── bin/<to>/…                  ← `[runtime] deploy` 放置的文件
+```
+
+在 Android 行上,应用是暂存在 `lib/` 下的共享目标文件,它的闭包从文件里读出并暂存在
+它旁边(mcpp 2026.9.14.2+)。设备提供的名字不暂存:即出现在该 API level 桩目录中的
+名字,这个目录由 mcpp 向这一行自己的编译器询问得到(编译器找到 `libc.so` 的目录)——
+`libc.so`、`libm.so`、`libdl.so`、`liblog.so` 以及其他平台库。其余每个名字都必须在
+链接用过的目录中解析到:构建的输出目录、图中各包的 `[runtime] library_dirs` 与
+`link_library_dirs`,以及编译器的库搜索路径(`libc++_shared.so` 就在其中)。
+哪里都解析不到的名字使 `tar` 与 `dir` 拒绝,并点名它和搜索过的目录。
+
+给出多个 `--target` 三元组时,每条腿暂存在 `lib/<abi>/` 下,各带自己的闭包。
+`--mode` 不适用于这一行:设备恰好提供平台库,所以既没有可以留给宿主的库集合,
+也没有需要携带的加载器。
 
 ## 配置项
 
@@ -457,11 +495,7 @@ force_bundle = ["libfoo.so"]        # 即使命中 PEP 600 名单也强制打包
 
 ## 待支持
 
-macOS **程序** bundling 仍在规划中。闭包现在已经能读出来了(`mcpp.pack.binfmt`
-走一遍 Mach-O 的 load command,不需要 `otool`),但把解析到的 dylib 拷到程序旁边、
-再重写它的 `LC_RPATH` 还没做;在这落地之前,`mcpp pack <程序>` 仍会在该格式上拒绝,
-而不是产出一个只是看起来像 bundle 的东西。当前 `.zip` 之外的 Windows DLL 分发,
-同样在规划中。
+当前 `.zip` 之外的 Windows DLL 分发在规划中。
 
 `.deb`、`.rpm`、AppImage、`.msi` 这些分发格式**不在**这份清单上,而这是一个决定而不是
 一处遗漏:它们住在包里,经 `--format <name>` 到达用户,理由见上一节。`[pack]` 的内建

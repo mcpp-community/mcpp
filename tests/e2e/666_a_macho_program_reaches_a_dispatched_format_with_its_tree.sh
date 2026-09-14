@@ -2,10 +2,13 @@
 # requires: macos
 # 666 -- on the one host that produces a Mach-O program, `mcpp pack` stages
 # the program and its declared files and hands the tree to a dispatched
-# format with `closure = not-walked` and a reason (#630, item 3a). Before
-# this, the Mach-O refusal preceded staging, and a bundler reached its action
-# with no tree at all. The negative direction stays: `--format dir` and
-# `--format tar`, whose product is the closure, still refuse.
+# format (#630, item 3a). Until #634 A3 the tree arrived with
+# `closure = not-walked`, because the Mach-O closure was never read, and
+# `--format dir` and `--format tar` refused the program. The closure is read
+# from the load commands now, so both directions changed: the built-in
+# archive stages the program, and the dispatched format sees
+# `closure = walked` with the OS's libraries stated as `platform`. A program
+# with a dylib of its own is 668.
 set -e
 
 TMP=$(mktemp -d)
@@ -59,22 +62,26 @@ int main() {
 }
 EOF
 
-# The negative direction first: the built-in archive still refuses, since
-# its product IS the closure.
-if "$MCPP" pack --format dir > dir.log 2>&1; then
-    fail "--format dir of a Mach-O program was accepted" dir.log
-fi
-grep -q 'Mach-O' dir.log || fail "the refusal does not name the format" dir.log
-echo "  negative: --format dir still refuses a Mach-O program"
+# The built-in archive stages the program: its closure is only the OS's.
+"$MCPP" pack --format dir > dir.log 2>&1 || fail "--format dir of a Mach-O program failed" dir.log
+D=$(find target/dist -mindepth 1 -maxdepth 1 -type d -name 'zapapp-0.1.0-*' | head -1)
+[ -n "$D" ] || fail "--format dir staged no tree" dir.log
+[ -x "$D/bin/zapapp" ] || fail "the staged tree has no bin/zapapp" dir.log
+[ "$(sed -n '1p' "$D.stage-manifest")" = "closure = walked" ] \
+    || fail "the dir manifest does not say closure = walked" "$D.stage-manifest"
+echo "  --format dir stages a Mach-O program with closure = walked"
 
 "$MCPP" pack --format zap > zap.log 2>&1 || fail "mcpp pack --format zap failed" zap.log
-grep -q 'staged without its dependency closure' zap.log \
-    || fail "pack did not report the tree as staged without its closure" zap.log
+if grep -q 'staged without its dependency closure' zap.log; then
+    fail "pack still reports the tree as staged without its closure" zap.log
+fi
 Z=$(find target -name 'app.zap' | head -1)
 [ -n "$Z" ] || fail "--format zap produced nothing" zap.log
 grep -qx './bin/zapapp' "$Z" || fail "the action's view of the tree lacks bin/zapapp" "$Z" zap.log
 grep -qx './bin/data/notes.txt' "$Z" || fail "the action's view of the tree lacks the deployed file" "$Z" zap.log
-grep -qx 'closure = not-walked' "$Z" || fail "the manifest does not say closure = not-walked" "$Z" zap.log
-grep -q '^reason = ' "$Z" || fail "the manifest carries no reason line" "$Z" zap.log
-echo "  positive: the dispatched format sees the program, the deployed file, and closure = not-walked"
-echo "PASS: 666_a_macho_program_is_staged_without_its_closure"
+grep -qx 'closure = walked' "$Z" || fail "the manifest does not say closure = walked" "$Z" zap.log
+if grep -q '^reason = ' "$Z"; then
+    fail "a walked closure carries a reason line" "$Z" zap.log
+fi
+echo "  the dispatched format sees the program, the deployed file, and closure = walked"
+echo "PASS: 666_a_macho_program_reaches_a_dispatched_format_with_its_tree"

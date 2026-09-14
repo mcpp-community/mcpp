@@ -1,10 +1,12 @@
 // mcpp.pack — bundle a built binary into a self-contained release archive.
 //
-// TWO OUTPUT FAMILIES, ONE PIPELINE. An ELF/Mach-O artifact becomes a
-// `.tar.gz` whose libraries live in `lib/` and are reached through a rewritten
-// RUNPATH; a PE artifact becomes a `.zip` whose DLLs sit BESIDE the .exe,
-// because that is where the Win32 loader looks and PE has no rpath to rewrite.
-// Same contract, same modes, different mechanism — see
+// TWO OUTPUT FAMILIES, ONE PIPELINE. An ELF artifact becomes a `.tar.gz` whose
+// libraries live in `lib/` and are reached through a rewritten RUNPATH; a PE
+// artifact becomes a `.zip` whose DLLs sit BESIDE the .exe, because that is
+// where the Win32 loader looks and PE has no rpath to rewrite. A Mach-O program
+// takes PE's placement inside the ELF family's archive: its dylibs sit beside
+// it in `bin/`, where the `@loader_path` rpath it was linked with finds them
+// (#634 A3). Same contract, same modes, different mechanism — see
 // .agents/docs/2026-08-16-windows-toolchain-three-axes-design.md §4.
 //
 // The PE path runs on ANY host. That is not a portability nicety: the ELF
@@ -103,8 +105,9 @@ struct Options {
     std::string                     targetTriple;  // empty = host
     // Where a dependency NAME may be resolved to a file.
     //
-    // Only used where the closure is read STATICALLY (PE): on ELF the loader
-    // hands back resolved paths and no search is performed here. Deliberately
+    // Only used where the closure is read STATICALLY (PE, the Android row): on
+    // the ELF host row the loader hands back resolved paths and no search is
+    // performed here, and a Mach-O name carries its own search rule. Deliberately
     // never the target's own system directories — a DLL that resolves only
     // there is the target's to provide, and copying one is a broken program
     // rather than a heavier one.
@@ -113,6 +116,13 @@ struct Options {
     // toolset's `VC\Redist\MSVC\<v>\<arch>\Microsoft.VC*.CRT\` for cl.
     // Searched ONLY under the toolchain-coupled contract — see make_plan.
     std::vector<std::filesystem::path> toolchainRuntimeDirs;
+    // #634 A3: the Android row's closure is read against the directories the
+    // row's own driver links from (`-print-search-dirs`), and a name found in
+    // `platformLibraryDirs` -- the directory the driver finds bionic's
+    // `libc.so` in, which is the API level's stub directory -- is the
+    // device's. Both are empty on every other row.
+    std::vector<std::filesystem::path> toolchainLibraryDirs;
+    std::vector<std::filesystem::path> platformLibraryDirs;
     // What the build placed relative to the executable, from
     // `runtime.deploy_files` and `runtime.deploy` (#615), as paths relative to
     // the executable's directory. Each is staged at the same relative path
@@ -167,6 +177,18 @@ std::filesystem::path resolve_debug_dir(const Options& opts,
                                         const mcpp::manifest::PackConfig& cfg,
                                         const std::filesystem::path& projectRoot);
 
+// #630 A9: one more leg of a several-triple application pack, built by
+// `pack::pipeline::build_extra_android_legs`: the Android ABI it is staged
+// under and the artifact that triple produced. #634 A3 adds where that leg's
+// closure is read from, because each triple resolves its libraries against
+// its own directories (see `Options::toolchainLibraryDirs`).
+struct SharedLeg {
+    std::string                        abi;
+    std::filesystem::path              artifact;
+    std::vector<std::filesystem::path> searchDirs;
+    std::vector<std::filesystem::path> platformDirs;
+};
+
 // Resolved plan — all paths absolute, all decisions baked in.
 struct Plan {
     Options                              opts;
@@ -211,16 +233,14 @@ struct Plan {
     // walk below, which asks the file to name its own needs by executing it.
     bool                                 programIsSharedObject = false;
     // #630 A9: the OTHER triples this `app` was packed for, each already
-    // built by the caller (`pack::pipeline::build_extra_android_legs`) as
-    // (android abi, its artifact path). Set AFTER `make_plan`, the way
-    // `strip`/`debugDir` are: what the request came out as once more than
-    // one `--target` was resolved, which `make_plan` itself has no way to
-    // know from a single triple. Empty means "an ordinary single-triple
-    // pack", which is every caller before this item and keeps
-    // `run_shared_program`'s layout byte-identical for it.
-    std::vector<std::pair<std::string, std::filesystem::path>> extraSharedLegs;
-    // The search set the PE closure resolves names against, after the
-    // contract has had its say (see make_plan).
+    // built by the caller (`pack::pipeline::build_extra_android_legs`). Set
+    // AFTER `make_plan`, the way `strip`/`debugDir` are: what the request came
+    // out as once more than one `--target` was resolved, which `make_plan`
+    // itself has no way to know from a single triple. Empty means "an ordinary
+    // single-triple pack", which stages the flat `lib/` layout.
+    std::vector<SharedLeg>               extraSharedLegs;
+    // The search set the PE and Android closures resolve names against, after
+    // the contract has had its say (see make_plan).
     std::vector<std::filesystem::path>   searchDirs;
     // ── debug information: the RESOLVED decision, not the request ─────
     //
@@ -243,10 +263,77 @@ struct Error { std::string message; };
 // hard refusal used to carry — moved from "before staging" to "step 4's
 // outcome", per the design record's decision (§3 of
 // 2026-09-13-630-what-a-framework-still-hits-in-the-engine.md).
+//
+// `needs` (#634 A3) is every name the closure resolved or failed to, for the
+// stage manifest's `needs` lines; it is empty when no closure was read (a mode
+// that bundles nothing, the wasm launcher). `walked` is true only when no
+// entry of it is unresolved.
 struct ClosureResult {
-    bool        walked = true;
-    std::string reason;
+    bool                     walked = true;
+    std::string              reason;
+    std::vector<ClosureNeed> needs;
 };
+
+// ─── the closure, read from the files (#634 A3) ───────────────────────────
+//
+// THREE ROWS, ONE READER. PE, the Android shared-object row and Mach-O have
+// their closure read from the files rather than traced by a loader, and they
+// differ in two answers only: which names the target itself provides, and
+// where a member is staged relative to the object that needs it. Those two
+// answers are the rule; the walk is shared, and so are the refusal and the
+// `needs` lines that the stagers in `run` derive from its result.
+//
+//   Pe       a name `binfmt::is_system_lib` knows (unless `[pack]
+//            force_bundle` names it), or one found in no search directory,
+//            is the target's -- as before this reader existed: a Windows
+//            component has no file to find on another host, and only the
+//            system directory holds it on a Windows one.
+//   Android  a name found in a platform directory (the API level's stub
+//            directory the driver links against) is the device's; any other
+//            name must resolve in a search directory, or the closure is
+//            incomplete.
+//   MachO    a name under `/usr/lib/` or `/System/Library/` is the OS's.
+//            Members are staged beside the program, so a name is a member only
+//            when the loader resolves it there: `@executable_path/<file>`,
+//            `@loader_path/<file>`, or `@rpath/<file>` when an rpath of the
+//            image that needs it, or of the program, is exactly `@loader_path`
+//            or `@executable_path`. Any other name -- an absolute install name
+//            outside the OS's roots is read from that path on the target,
+//            whatever the tree carries -- leaves the closure incomplete.
+enum class ClosureRule { Pe, Android, MachO };
+
+struct ClosureReadInput {
+    std::filesystem::path              object;        // the program or application object
+    ClosureRule                        rule = ClosureRule::Pe;
+    std::vector<std::filesystem::path> searchDirs;    // Pe, Android
+    std::vector<std::filesystem::path> platformDirs;  // Android
+    std::vector<std::string>           forceBundle;   // Pe: overrides the system list
+    std::string                        arch;          // MachO: the slice of a fat file
+};
+
+// A name that resolved to a file, and where that file is staged: `dest` is
+// relative to the directory the object itself is staged in.
+struct ClosureMember {
+    std::string           name;
+    std::filesystem::path source;
+    std::filesystem::path dest;
+};
+
+struct ClosureUnresolved {
+    std::string name;
+    std::string why;
+};
+
+struct ClosureRead {
+    std::vector<ClosureMember>     members;     // sorted by `dest`
+    std::vector<std::string>       platform;    // sorted
+    std::vector<ClosureUnresolved> unresolved;  // sorted by name
+};
+
+// Read `in.object`'s closure under `in.rule`, transitively. Runs nothing; the
+// only file-system access is reading the objects and asking whether a file
+// exists.
+ClosureRead read_closure(const ClosureReadInput& in);
 
 // Build a Plan from already-resolved inputs. Caller is expected to have
 // already run `mcpp build` (or equivalent) and pass the resulting
@@ -590,7 +677,15 @@ bool soname_matches(std::string_view soname,
     return false;
 }
 
-std::expected<std::vector<ResolvedDep>, std::string>
+// What the loader reported: the names it found a file for, and the names it
+// found none for (#634 A3). A name in `notFound` used to be dropped here, so a
+// bundle that could not start said `closure = walked`.
+struct LddClosure {
+    std::vector<ResolvedDep> found;
+    std::vector<std::string> notFound;
+};
+
+std::expected<LddClosure, std::string>
 ldd_parse(const std::filesystem::path& binary)
 {
     // Don't shell out to `ldd` directly — many distros (and our own
@@ -606,7 +701,7 @@ ldd_parse(const std::filesystem::path& binary)
     auto out = run_capture(cmd);
     if (!out) return std::unexpected(out.error());
 
-    std::vector<ResolvedDep> deps;
+    LddClosure deps;
     std::istringstream is{*out};
     std::string line;
     while (std::getline(is, line)) {
@@ -626,8 +721,9 @@ ldd_parse(const std::filesystem::path& binary)
             // Trim "(0x...)" tail.
             if (auto paren = rest.find(" ("); paren != std::string::npos)
                 rest = rest.substr(0, paren);
-            // "not found" → mcpp can't ship a lib it can't see.
-            if (rest == "not found") continue;
+            // "not found": mcpp cannot ship a library it cannot see, and the
+            // caller decides whether the mode leaves it to the target.
+            if (rest == "not found") { deps.notFound.push_back(d.soname); continue; }
             d.path = rest;
         } else if (line.starts_with('/')) {
             // Absolute-path line (typically the dynamic linker itself).
@@ -639,7 +735,7 @@ ldd_parse(const std::filesystem::path& binary)
         } else {
             continue;
         }
-        deps.push_back(std::move(d));
+        deps.found.push_back(std::move(d));
     }
     return deps;
 }
@@ -987,73 +1083,94 @@ stage_declared(const Plan& plan)
 // What `run` does with a reason the closure could not be resolved, as a
 // function of the plan's requested format — see `closure_unavailable_outcome`
 // for the two outcomes and why they differ.
+//
+// `needs` is what a closure that was read but is incomplete did resolve
+// (#634 A3); a provider receives those lines with `closure = not-walked`.
 std::expected<ClosureResult, Error>
-finish_without_closure(const Plan& plan, std::string reason)
+finish_without_closure(const Plan& plan, std::string reason,
+                       std::vector<ClosureNeed> needs = {})
 {
     if (closure_unavailable_outcome(plan.opts.format)
         == ClosureUnavailableOutcome::StageWithoutClosure)
-        return ClosureResult{false, std::move(reason)};
+        return ClosureResult{false, std::move(reason), std::move(needs)};
     return std::unexpected(Error{std::move(reason)});
 }
 
-// ─── PE: the closure, read rather than executed ─────────────────────────
-//
-// BFS over the import tables, resolving each name against `searchDirs`. A
-// name that resolves NOWHERE is deliberately not an error: on a Linux host
-// `kernel32.dll` has no file to find, and on a Windows host it would resolve
-// only in the system directory, which is not searched. Both are the same
-// answer — the target provides it — and both are correct.
-std::vector<ResolvedDep>
-pe_closure(const std::filesystem::path& binary,
-           std::span<const std::filesystem::path> searchDirs,
-           const std::vector<std::string>& forceBundle)
+// The refusal text for a closure with unresolved names: one line per name,
+// under the object it was read for, then what the row accepts as a way out.
+// `hint` is that row's sentence, since what makes a name resolve differs: a
+// directory the link declared (Android), the program's run-time search path
+// (ELF), an install name the loader resolves beside the program (Mach-O).
+std::string unresolved_reason(std::string_view object,
+                              const std::vector<std::string>& lines,
+                              std::string_view hint)
 {
-    namespace bf = mcpp::pack::binfmt;
-    std::vector<ResolvedDep> out;
-    std::set<std::string> seen;               // lowercased: PE names are not
-    std::vector<std::filesystem::path> queue{binary};
-
-    auto lower = [](std::string_view s) {
-        std::string l(s);
-        std::ranges::transform(l, l.begin(),
-                               [](unsigned char c) { return std::tolower(c); });
-        return l;
-    };
-
-    while (!queue.empty()) {
-        auto current = queue.back();
-        queue.pop_back();
-        auto names = bf::needed_names(current);
-        if (!names) continue;                 // unreadable: nothing to add
-        for (auto const& name : *names) {
-            auto key = lower(name);
-            if (!seen.insert(key).second) continue;
-            // `[pack] force_bundle` is the escape hatch, and it has to reach
-            // the SYSTEM list too — on ELF it always did. Shipping a Windows
-            // component is normally a broken program rather than a heavier
-            // one, so this is a decision a human has to make explicitly; when
-            // they have, mcpp does not know better than them.
-            if (bf::is_system_lib(bf::Format::Pe, name)
-                && !soname_matches(name, forceBundle))
-                continue;
-            std::error_code ec;
-            for (auto const& dir : searchDirs) {
-                auto cand = dir / name;
-                if (!std::filesystem::is_regular_file(cand, ec)) continue;
-                out.push_back({name, cand});
-                // Transitive: a bundled DLL brings its own imports, and a
-                // closure that stops at depth one ships a package that starts
-                // failing one link further in.
-                queue.push_back(cand);
-                break;
-            }
-        }
-    }
-    std::sort(out.begin(), out.end(),
-              [](const ResolvedDep& a, const ResolvedDep& b) {
-                  return a.soname < b.soname;
-              });
+    std::string out = std::format(
+        "the dependency closure of '{}' is incomplete, so the staged tree would "
+        "not load where it is installed:\n", object);
+    for (auto const& l : lines) out += std::format("         {}\n", l);
+    out += std::format("       {}\n", hint);
+    out += "       A library the target provides is named in "
+           "[pack.bundle-project] also_skip.";
     return out;
+}
+
+// Copy a read closure's members under `dir`, the directory the object itself
+// is staged in, and describe every name it read as a `needs` line whose staged
+// path is relative to the staging root (#634 A3). `[pack] also_skip` keeps a
+// member out of the tree and states it as the target's, as it always has; it
+// is matched against a name's last path component too, so a Mach-O
+// `@rpath/libfoo.dylib` answers to `libfoo`. `prefix` leads each refusal line
+// (a several-ABI tree names the leg).
+std::expected<void, Error>
+stage_closure(const Plan& plan, const ClosureRead& read,
+              const std::filesystem::path& dir,
+              std::vector<ClosureNeed>& needs,
+              std::vector<std::string>& unresolvedLines,
+              std::string_view prefix)
+{
+    auto skipped = [&](const std::string& name) {
+        const auto leaf = std::filesystem::path(name).filename().string();
+        const bool skip = soname_matches(name, plan.alsoSkipLibs)
+                       || soname_matches(leaf, plan.alsoSkipLibs);
+        const bool force = soname_matches(name, plan.forceBundleLibs)
+                        || soname_matches(leaf, plan.forceBundleLibs);
+        return skip && !force;
+    };
+    for (auto const& name : read.platform)
+        needs.push_back({name, ClosureNeed::Kind::Platform, {}});
+    for (auto const& m : read.members) {
+        if (skipped(m.name)) {
+            needs.push_back({m.name, ClosureNeed::Kind::Platform, {}});
+            continue;
+        }
+        const auto dst = dir / m.dest;
+        std::error_code ec;
+        std::filesystem::create_directories(dst.parent_path(), ec);
+        // The build may already have placed it where it is staged, in which
+        // case source and destination are the same file.
+        if (!std::filesystem::equivalent(m.source, dst, ec)) {
+            std::error_code cec;
+            std::filesystem::copy_file(m.source, dst,
+                std::filesystem::copy_options::overwrite_existing, cec);
+            if (cec) return std::unexpected(Error{std::format(
+                "failed to copy {} -> {}: {}",
+                m.source.string(), dst.string(), cec.message())});
+        }
+        needs.push_back({m.name, ClosureNeed::Kind::Staged,
+                         dst.lexically_relative(plan.stagingRoot).generic_string()});
+    }
+    for (auto const& u : read.unresolved) {
+        // Named as the target's: the tree need not carry what this machine
+        // does not have.
+        if (skipped(u.name)) {
+            needs.push_back({u.name, ClosureNeed::Kind::Platform, {}});
+            continue;
+        }
+        needs.push_back({u.name, ClosureNeed::Kind::Unresolved, {}});
+        unresolvedLines.push_back(std::format("{}{}: {}", prefix, u.name, u.why));
+    }
+    return {};
 }
 
 std::expected<void, Error>
@@ -1085,6 +1202,213 @@ make_tarball(const std::filesystem::path& stagingRoot,
 }
 
 } // namespace detail
+
+ClosureRead read_closure(const ClosureReadInput& in)
+{
+    namespace bf = mcpp::pack::binfmt;
+    ClosureRead out;
+
+    auto is_file = [](const std::filesystem::path& p) {
+        std::error_code ec;
+        return std::filesystem::is_regular_file(p, ec);
+    };
+    auto lower = [](std::string_view s) {
+        std::string l(s);
+        std::ranges::transform(l, l.begin(),
+                               [](unsigned char c) { return std::tolower(c); });
+        return l;
+    };
+    auto dir_list = [](const std::vector<std::filesystem::path>& dirs) {
+        std::string s;
+        for (auto const& d : dirs) s += (s.empty() ? "" : ", ") + d.string();
+        return s.empty() ? std::string("(no directory)") : s;
+    };
+
+    // Names are unique per process on all three formats: a second request for
+    // one is the same library. PE compares them case-insensitively, as its
+    // loader does.
+    std::set<std::string> seen;
+
+    if (in.rule != ClosureRule::MachO) {
+        std::vector<std::filesystem::path> queue{in.object};
+        while (!queue.empty()) {
+            auto current = queue.back();
+            queue.pop_back();
+            auto names = bf::needed_names(current);
+            if (!names) {
+                // The object itself was chosen by the caller, so an unreadable
+                // one is reported; a member that cannot be read was already
+                // staged and contributes nothing further.
+                if (current == in.object)
+                    out.unresolved.push_back({current.filename().string(), names.error()});
+                continue;
+            }
+            for (auto const& name : *names) {
+                auto key = in.rule == ClosureRule::Pe ? lower(name) : name;
+                if (!seen.insert(key).second) continue;
+                // `[pack] force_bundle` is the escape hatch, and it has to reach
+                // the SYSTEM list too -- on ELF it always did. Shipping a
+                // Windows component is normally a broken program rather than a
+                // heavier one, so this is a decision a human has to make
+                // explicitly; when they have, mcpp does not know better.
+                if (in.rule == ClosureRule::Pe
+                    && bf::is_system_lib(bf::Format::Pe, name)
+                    && !detail::soname_matches(name, in.forceBundle)) {
+                    out.platform.push_back(name);
+                    continue;
+                }
+                if (in.rule == ClosureRule::Android
+                    && std::ranges::any_of(in.platformDirs, [&](auto const& d) {
+                           return is_file(d / name); })) {
+                    out.platform.push_back(name);
+                    continue;
+                }
+                std::optional<std::filesystem::path> hit;
+                for (auto const& dir : in.searchDirs)
+                    if (is_file(dir / name)) { hit = dir / name; break; }
+                if (hit) {
+                    out.members.push_back({name, *hit, std::filesystem::path(name)});
+                    // Transitive: a staged library brings its own needs, and a
+                    // closure that stops at depth one ships a package that
+                    // starts failing one load further in.
+                    queue.push_back(*hit);
+                    continue;
+                }
+                if (in.rule == ClosureRule::Pe) {
+                    // Found nowhere: the target provides it (see the rule).
+                    out.platform.push_back(name);
+                    continue;
+                }
+                out.unresolved.push_back({name, std::format(
+                    "found in none of {}", dir_list(in.searchDirs))});
+            }
+        }
+    } else {
+        struct Image {
+            std::filesystem::path    source;     // on this machine
+            std::filesystem::path    stagedDir;  // relative to the program's directory
+            std::vector<std::string> names;
+            std::vector<std::string> rpaths;
+        };
+        auto first = bf::macho_needed(in.object, in.arch);
+        if (!first) {
+            out.unresolved.push_back({in.object.filename().string(), first.error()});
+            return out;
+        }
+        const auto programDir = in.object.parent_path();
+        const auto programRpaths = first->rpaths;
+        std::set<std::string> seenDest;
+        std::vector<Image> queue{
+            Image{in.object, {}, std::move(first->names), std::move(first->rpaths)}};
+
+        // `@loader_path/<rest>` -> `<rest>`; nullopt when `s` does not begin
+        // with the token followed by a separator.
+        auto after = [](std::string_view s, std::string_view token)
+            -> std::optional<std::string> {
+            if (s.size() > token.size() + 1 && s.starts_with(token)
+                && s[token.size()] == '/')
+                return std::string(s.substr(token.size() + 1));
+            return std::nullopt;
+        };
+        // An rpath entry that places a library in the carrying image's own
+        // directory (`@loader_path`) or the program's (`@executable_path`).
+        auto is_exactly = [](std::string_view rp, std::string_view token) {
+            return rp == token
+                || (rp.size() == token.size() + 1 && rp.starts_with(token)
+                    && rp.back() == '/');
+        };
+
+        while (!queue.empty()) {
+            auto image = std::move(queue.back());
+            queue.pop_back();
+            const auto imageDir = image.source.parent_path();
+            for (auto const& name : image.names) {
+                if (bf::is_system_lib(bf::Format::MachO, name)) {
+                    if (seen.insert(name).second) out.platform.push_back(name);
+                    continue;
+                }
+                // WHERE THE LOADER FINDS IT ON THIS MACHINE, by dyld's own
+                // substitutions (`resolve_macho_names`): the needing image's
+                // rpaths first, then the program's, which every image it loads
+                // inherits.
+                std::optional<std::filesystem::path> source;
+                const std::array<std::string, 1> one{name};
+                auto own = bf::resolve_macho_names(one, image.rpaths, programDir, imageDir);
+                if (!own.front().unresolved) source = own.front().path;
+                if (!source && image.source != in.object && name.starts_with("@rpath/")) {
+                    auto inherited = bf::resolve_macho_names(one, programRpaths,
+                                                             programDir, programDir);
+                    if (!inherited.front().unresolved) source = inherited.front().path;
+                }
+                // `resolve_macho_names` asks only whether a path exists; a
+                // member is a file to copy.
+                if (source && !is_file(*source)) source.reset();
+
+                // WHERE A COPY BESIDE THE PROGRAM IS WHAT THE LOADER FINDS.
+                std::optional<std::filesystem::path> dest;
+                std::string why;
+                if (auto rest = after(name, "@executable_path")) {
+                    dest = std::filesystem::path(*rest).lexically_normal();
+                } else if (auto rest = after(name, "@loader_path")) {
+                    dest = (image.stagedDir / *rest).lexically_normal();
+                } else if (auto rest = after(name, "@rpath")) {
+                    for (auto const& rp : image.rpaths) {
+                        if (is_exactly(rp, "@loader_path"))
+                            { dest = (image.stagedDir / *rest).lexically_normal(); break; }
+                        if (is_exactly(rp, "@executable_path"))
+                            { dest = std::filesystem::path(*rest).lexically_normal(); break; }
+                    }
+                    if (!dest && image.source != in.object) {
+                        for (auto const& rp : programRpaths) {
+                            if (is_exactly(rp, "@loader_path") || is_exactly(rp, "@executable_path"))
+                                { dest = std::filesystem::path(*rest).lexically_normal(); break; }
+                        }
+                    }
+                    if (!dest)
+                        why = "no rpath of the image that needs it is exactly "
+                              "@loader_path or @executable_path, so a copy beside "
+                              "the program is not where the loader looks";
+                } else if (name.starts_with("/")) {
+                    why = "an absolute install name outside /usr/lib and "
+                          "/System/Library, which the loader reads from that path "
+                          "rather than from the staged tree";
+                } else {
+                    why = "an install name with no loader token";
+                }
+                if (dest && (dest->empty() || dest->begin()->string() == "..")) {
+                    dest.reset();
+                    why = "it names a location outside the program's directory";
+                }
+                if (dest && !source)
+                    why = "the loader finds no file for it on this machine";
+
+                if (dest && source) {
+                    if (!seenDest.insert(dest->generic_string()).second) continue;
+                    out.members.push_back({name, *source, *dest});
+                    if (auto sub = bf::macho_needed(*source, in.arch)) {
+                        queue.push_back(Image{*source, dest->parent_path(),
+                                              std::move(sub->names),
+                                              std::move(sub->rpaths)});
+                    }
+                    continue;
+                }
+                if (seen.insert(name).second) out.unresolved.push_back({name, why});
+            }
+        }
+    }
+
+    std::ranges::sort(out.members, [](const ClosureMember& a, const ClosureMember& b) {
+        return a.dest.generic_string() < b.dest.generic_string();
+    });
+    std::ranges::sort(out.platform);
+    out.platform.erase(std::unique(out.platform.begin(), out.platform.end()),
+                       out.platform.end());
+    std::ranges::sort(out.unresolved, [](const ClosureUnresolved& a,
+                                         const ClosureUnresolved& b) {
+        return a.name < b.name;
+    });
+    return out;
+}
 
 namespace detail {
 
@@ -1118,7 +1442,7 @@ namespace detail {
 // namespace comment above, and hostflags.cppm on a neighbouring function
 // being miscompiled by an unrelated addition). Each replacement is also
 // simpler than what it replaced, so nothing is being paid for the avoidance.
-std::expected<void, Error>
+std::expected<std::vector<ClosureNeed>, Error>
 run_pe(const Plan& plan)
 {
     std::error_code ec;
@@ -1132,7 +1456,8 @@ run_pe(const Plan& plan)
         std::filesystem::copy_options::overwrite_existing, ec);
     if (ec) return std::unexpected(Error{std::format(
         "copy binary failed: {}", ec.message())});
-    if (auto r = stage_runtime_files(plan, stagedExe.parent_path()); !r) return r;
+    if (auto r = stage_runtime_files(plan, stagedExe.parent_path()); !r)
+        return std::unexpected(r.error());
 
     copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);
     copy_if_exists(plan.projectRoot / "LICENSE",   plan.stagingRoot);
@@ -1143,7 +1468,7 @@ run_pe(const Plan& plan)
         out << render(plan.hostRequirements);
     }
 
-    std::vector<ResolvedDep> deps;
+    std::vector<ClosureNeed> needs;
     if (plan.opts.mode != Mode::None && plan.opts.mode != Mode::Static) {
         // `vendored` and `self-contained` collect the same set here, and that
         // is a property of the PLATFORM rather than a simplification.
@@ -1153,27 +1478,26 @@ run_pe(const Plan& plan)
         // have two of something that must be unique. So the ceiling on
         // "everything" is the same for both modes: every dependency mcpp is
         // ALLOWED to carry.
-        deps = pe_closure(stagedExe, plan.searchDirs, plan.forceBundleLibs);
-        for (auto const& d : deps) {
-            if (soname_matches(d.soname, plan.alsoSkipLibs)
-                && !soname_matches(d.soname, plan.forceBundleLibs))
-                continue;
-            auto dst = plan.stagingRoot / d.soname;
-            // The build may already have staged it beside the artifact, in
-            // which case source and destination are the same file.
-            std::error_code cec;
-            if (std::filesystem::equivalent(d.path, dst, cec)) continue;
-            std::filesystem::copy_file(d.path, dst,
-                std::filesystem::copy_options::overwrite_existing, cec);
-            if (cec) return std::unexpected(Error{std::format(
-                "failed to copy {} → {}: {}",
-                d.path.string(), dst.string(), cec.message())});
-        }
+        ClosureReadInput in;
+        in.object      = stagedExe;
+        in.rule        = ClosureRule::Pe;
+        in.searchDirs  = plan.searchDirs;
+        in.forceBundle = plan.forceBundleLibs;
+        const auto read = read_closure(in);
+        // PE's rule resolves every name (see `ClosureRule`); what can remain
+        // is an executable the reader could not parse, which no format can
+        // package.
+        std::vector<std::string> unresolved;
+        if (auto r = stage_closure(plan, read, plan.stagingRoot, needs, unresolved, {}); !r)
+            return std::unexpected(r.error());
+        if (!unresolved.empty())
+            return std::unexpected(Error{unresolved_reason(plan.binaryName, unresolved,
+                "The executable's import table could not be read.")});
     }
 
-    if (auto r = strip_program(plan, stagedExe); !r) return r;
+    if (auto r = strip_program(plan, stagedExe); !r) return std::unexpected(r.error());
 
-    if (plan.opts.format != Format::Tar) return {};
+    if (plan.opts.format != Format::Tar) return needs;
 
     std::vector<mcpp::pack::zip::Entry> entries;
     const auto wrapper = plan.stagingRoot.filename().string();
@@ -1202,7 +1526,7 @@ run_pe(const Plan& plan)
                  const mcpp::pack::zip::Entry& b) { return a.name < b.name; });
     if (auto r = mcpp::pack::zip::write(plan.archivePath, entries); !r)
         return std::unexpected(Error{r.error()});
-    return {};
+    return needs;
 }
 
 // The wasm32-emscripten half of `run`. No dependency closure: the ordinary
@@ -1264,20 +1588,25 @@ run_wasm(const Plan& plan)
 }
 
 // #622 A3/A10: the Application half whose form on this row is a shared
-// object (`*-linux-android`). No dependency closure: the ELF closure below
-// asks the file to name its own needs by executing it under
-// `LD_TRACE_LOADED_OBJECTS`, and a cross-compiled Android object names an
-// interpreter this host does not have (`/system/bin/linker64`) -- it is not
-// runnable here at all, on any host architecture. The file is staged the way
-// a dependency .so is staged below (`lib/`), because that is where a closure
-// conventionally puts a shared object; a provider that wants the object's
-// own dependency set bundled (`dist-apk`) reads `${mcpp.target_file:<name>}`
-// and resolves that itself, out of the engine's closure entirely.
+// object (`*-linux-android`). The object is staged under `lib/`, where every
+// Android packaging tool expects native libraries, and it is never executed:
+// a cross-compiled Android object names an interpreter this host does not have
+// (`/system/bin/linker64`).
 //
-// #630 A9: one triple stages flat (`lib/<name>.so`, unchanged); more than
-// one triple stages one `lib/<abi>/<name>.so` per leg into the SAME tree —
-// see `Plan::extraSharedLegs`.
-std::expected<void, Error>
+// #634 A3: ITS CLOSURE IS READ AND STAGED BESIDE IT. It used to be left to a
+// provider (`dist-apk` walked `DT_NEEDED` itself), which meant the engine's
+// own `dir` and `tar` shipped an object without the libraries it loads and said
+// `closure = walked`. The rule is `ClosureRule::Android`: a name the API
+// level's stub directory holds is the device's, and every other name --
+// a graph-built dependency, the NDK's `libc++_shared.so` -- travels. The mode
+// does not apply on this row: the device provides exactly the platform's
+// libraries, so there is no `system` set to leave out and no loader or libc to
+// carry.
+//
+// #630 A9: one triple stages flat (`lib/<name>.so`); more than one triple
+// stages one `lib/<abi>/` per leg into the SAME tree, each with its own
+// closure — see `Plan::extraSharedLegs`.
+std::expected<ClosureResult, Error>
 run_shared_program(const Plan& plan)
 {
     std::error_code ec;
@@ -1286,38 +1615,67 @@ run_shared_program(const Plan& plan)
     if (ec) return std::unexpected(Error{std::format(
         "cannot create staging '{}': {}", plan.stagingRoot.string(), ec.message())});
 
+    struct Leg {
+        std::filesystem::path              dir;       // where the object is staged
+        std::string                        abi;       // empty on the flat layout
+        std::filesystem::path              artifact;
+        std::vector<std::filesystem::path> searchDirs;
+        std::vector<std::filesystem::path> platformDirs;
+    };
+    auto primarySearch = plan.searchDirs;
+    for (auto const& d : plan.opts.toolchainLibraryDirs) primarySearch.push_back(d);
+
     // #630 A9: MORE THAN ONE TRIPLE MEANS MORE THAN ONE `lib/<abi>/`, since a
     // flat `lib/<name>.so` cannot hold two architectures' bytes under one
     // name. `extraSharedLegs` is non-empty ONLY when the caller is the
     // several-`--target` route (`cmd_pack`, via `build_and_pack`'s trailing
-    // parameter) — every pre-existing single-triple caller leaves it empty
-    // and keeps the flat layout below byte-identical to before this item.
+    // parameter).
+    std::vector<Leg> legs;
     if (!plan.extraSharedLegs.empty()) {
-        auto stage_leg = [&](std::string_view abi, const std::filesystem::path& artifact)
-            -> std::expected<void, Error>
-        {
-            auto dir = plan.stagingRoot / "lib" / abi;
-            std::error_code dec;
-            std::filesystem::create_directories(dir, dec);
-            if (dec) return std::unexpected(Error{std::format(
-                "cannot create staging '{}': {}", dir.string(), dec.message())});
-            std::filesystem::copy_file(artifact, dir / plan.binaryName,
-                std::filesystem::copy_options::overwrite_existing, dec);
-            if (dec) return std::unexpected(Error{std::format(
-                "copy binary failed: {}", dec.message())});
-            return {};
-        };
         auto t = mcpp::toolchain::triple::parse(plan.triple);
         auto primaryAbi = t ? mcpp::toolchain::triple::android_abi(*t) : plan.triple;
-        if (auto r = stage_leg(primaryAbi, plan.builtBinary); !r) return r;
-        for (auto const& [legAbi, legArtifact] : plan.extraSharedLegs)
-            if (auto r = stage_leg(legAbi, legArtifact); !r) return r;
+        legs.push_back({plan.stagingRoot / "lib" / primaryAbi, primaryAbi,
+                        plan.builtBinary, primarySearch, plan.opts.platformLibraryDirs});
+        for (auto const& leg : plan.extraSharedLegs)
+            legs.push_back({plan.stagingRoot / "lib" / leg.abi, leg.abi, leg.artifact,
+                            leg.searchDirs, leg.platformDirs});
     } else {
-        auto staged = plan.stagingRoot / "lib" / plan.binaryName;
-        std::filesystem::copy_file(plan.builtBinary, staged,
-            std::filesystem::copy_options::overwrite_existing, ec);
-        if (ec) return std::unexpected(Error{std::format(
-            "copy binary failed: {}", ec.message())});
+        legs.push_back({plan.stagingRoot / "lib", {}, plan.builtBinary, primarySearch,
+                        plan.opts.platformLibraryDirs});
+    }
+
+    std::vector<ClosureNeed> needs;
+    std::vector<std::string> unresolved;
+    for (auto const& leg : legs) {
+        std::error_code dec;
+        std::filesystem::create_directories(leg.dir, dec);
+        if (dec) return std::unexpected(Error{std::format(
+            "cannot create staging '{}': {}", leg.dir.string(), dec.message())});
+        std::filesystem::copy_file(leg.artifact, leg.dir / plan.binaryName,
+            std::filesystem::copy_options::overwrite_existing, dec);
+        if (dec) return std::unexpected(Error{std::format(
+            "copy binary failed: {}", dec.message())});
+
+        const std::string prefix = leg.abi.empty() ? std::string{} : leg.abi + ": ";
+        // WITHOUT A PLATFORM DIRECTORY EVERY NAME WOULD BE A MEMBER: bionic's
+        // `libc.so` stub is on the driver's search path too, and staging it
+        // would ship a library with no code in it. The driver is what names
+        // the directory, so a driver that did not answer is reported.
+        if (leg.platformDirs.empty()) {
+            unresolved.push_back(prefix + std::format(
+                "the driver named no directory holding the platform's libc.so, so "
+                "the device's libraries cannot be told from the ones '{}' carries",
+                plan.binaryName));
+            continue;
+        }
+        ClosureReadInput in;
+        in.object       = leg.artifact;
+        in.rule         = ClosureRule::Android;
+        in.searchDirs   = leg.searchDirs;
+        in.platformDirs = leg.platformDirs;
+        const auto read = read_closure(in);
+        if (auto r = stage_closure(plan, read, leg.dir, needs, unresolved, prefix); !r)
+            return std::unexpected(r.error());
     }
 
     // THE RUNTIME FILES TRAVEL AS ON EVERY OTHER ROW. `deploy` placed them
@@ -1327,13 +1685,25 @@ run_shared_program(const Plan& plan)
     // 2026-09-12: without this the Android staged tree carried the library
     // alone and a deploy'd resource never reached the APK.
     if (!plan.opts.runtimeFiles.empty())
-        if (auto r = stage_runtime_files(plan, plan.stagingRoot / "bin"); !r) return r;
+        if (auto r = stage_runtime_files(plan, plan.stagingRoot / "bin"); !r)
+            return std::unexpected(r.error());
 
     copy_if_exists(plan.projectRoot / "README.md", plan.stagingRoot);
     copy_if_exists(plan.projectRoot / "LICENSE",   plan.stagingRoot);
 
-    if (plan.opts.format != Format::Tar) return {};
-    return make_tarball(plan.stagingRoot, plan.archivePath);
+    if (!unresolved.empty())
+        return finish_without_closure(
+            plan,
+            unresolved_reason(plan.binaryName, unresolved,
+                "A library the link used is found through the build's output "
+                "directory, [runtime] library_dirs\n"
+                "       or link_library_dirs, or the compiler's library search path."),
+            std::move(needs));
+
+    if (plan.opts.format == Format::Tar)
+        if (auto r = make_tarball(plan.stagingRoot, plan.archivePath); !r)
+            return std::unexpected(r.error());
+    return ClosureResult{true, {}, std::move(needs)};
 }
 
 } // namespace detail
@@ -1351,19 +1721,16 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     // closure walk that follows and try to execute an object this host
     // cannot load at all. See the field comment on `programIsSharedObject`.
     //
-    // These three dispatchers read their own closure (PE) or need none at
-    // all (the Android shared-object row; the wasm32-emscripten launcher, a
-    // static image with everything embedded) — none of them is the "declare
-    // before discover" reorder below, so each reports a walked closure on
-    // success.
-    if (plan.programIsSharedObject) {
-        if (auto r = detail::run_shared_program(plan); !r) return std::unexpected(r.error());
-        return ClosureResult{};
-    }
+    // These three dispatchers stage their own tree: PE and the Android
+    // shared-object row read their closure from the files (#634 A3), and the
+    // wasm32-emscripten launcher is a static image with everything embedded.
+    // None of them is the "declare before discover" reorder below.
+    if (plan.programIsSharedObject) return detail::run_shared_program(plan);
 
     if (plan.targetIsPe) {
-        if (auto r = detail::run_pe(plan); !r) return std::unexpected(r.error());
-        return ClosureResult{};
+        auto r = detail::run_pe(plan);
+        if (!r) return std::unexpected(r.error());
+        return ClosureResult{true, {}, std::move(*r)};
     }
 
     // wasm32-emscripten, before the Mach-O refusal and the ELF closure below:
@@ -1388,53 +1755,51 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     if (!staged) return std::unexpected(staged.error());
     auto bundledBinary = *staged;
 
-    // STEP 4, first mechanism: a Mach-O artifact's closure is never walked,
-    // on every host including macOS.
+    // STEP 4 FOR A MACH-O PROGRAM: ITS CLOSURE IS READ, ON EVERY HOST (#634 A3).
     //
-    // The closure below asks the dynamic linker for the dependency list by
+    // The ELF closure below asks the dynamic linker for the dependency list by
     // running the artifact with `LD_TRACE_LOADED_OBJECTS=1`. That variable
-    // belongs to glibc's ld.so; dyld has never heard of it (its counterpart is
-    // `DYLD_PRINT_LIBRARIES`), so on macOS the command does not trace anything
-    // — IT RUNS THE USER'S PROGRAM. Whatever that program prints is then parsed
-    // as a dependency table, which yields nothing, and the bundle is written
-    // and reported as `Packed`. A program with side effects performs them; an
-    // interactive one hangs the packer.
+    // belongs to glibc's ld.so; dyld has never heard of it, so on macOS the
+    // command would RUN THE USER'S PROGRAM and parse whatever it printed. So a
+    // Mach-O program never reaches that path: its load commands are read
+    // (`ClosureRule::MachO`), which needs no loader and therefore no macOS
+    // host either, and its dylibs are staged beside it in `bin/`, where the
+    // `@loader_path` rpath a consumer of a graph-built dylib links with
+    // already finds them. No load command is edited and nothing is re-signed,
+    // which is also why the program is not stripped on this row.
     //
-    // ASKED OF THE FORMAT, NOT OF THE HOST — the same correction the `_WIN32`
-    // branch below already carries. `LD_TRACE_LOADED_OBJECTS` cannot trace a
-    // Mach-O from Linux either, and a macOS host is not the thing that makes
-    // this impossible.
-    //
-    // docs/02 lists macOS bundling under "Planned Support"; until it lands,
-    // saying so is strictly better than producing an empty bundle that claims
-    // to be one.
-    //
-    // NAMES THE ARTIFACT. Not decoration: `mcpp pack <name>` routes on the
-    // target's kind, and a refusal that does not say WHICH program it got to is
-    // indistinguishable from one that resolved the wrong target — which is the
-    // exact defect `route_pack_target` exists to prevent. It is also the only
-    // way an e2e can check that routing on macOS, where no program bundle can
-    // be produced to inspect.
-    //
-    // THIS USED TO BE A HARD REFUSAL BEFORE ANY STAGING RAN. It is now step
-    // 4's outcome: the reason text is unchanged (it is accurate), but for a
-    // dispatched format the tree staged above is handed to the provider
-    // regardless — see `finish_without_closure`.
+    // THE BUILT PROGRAM IS READ, NOT THE STAGED COPY: `@loader_path` must
+    // expand to the directory the dylibs were built into.
     if (mcpp::pack::binfmt::identify(plan.builtBinary).format
         == mcpp::pack::binfmt::Format::MachO) {
-        return finish_without_closure(plan, std::format(
-            "cannot package the Mach-O program '{}' yet.\n", plan.binaryName) +
-            "       The dependency closure for that format is resolved by running the "
-            "artifact under\n"
-            "       the target's own dynamic linker, and the mechanism mcpp uses "
-            "(LD_TRACE_LOADED_OBJECTS)\n"
-            "       is glibc's — dyld ignores it and simply RUNS the program, which is "
-            "why this is\n"
-            "       refused rather than attempted.\n"
-            "       A `kind = \"lib\"` / `\"shared\"` target packs normally on macOS "
-            "(`mcpp pack <lib-target>`);\n"
-            "       for a program, ship the build tree or use a platform bundler until "
-            "macOS support lands.");
+        std::vector<ClosureNeed> needs;
+        std::vector<std::string> unresolved;
+        if (plan.opts.mode != Mode::None && plan.opts.mode != Mode::Static) {
+            ClosureReadInput in;
+            in.object = plan.builtBinary;
+            in.rule   = ClosureRule::MachO;
+            auto t = mcpp::toolchain::triple::parse(plan.triple);
+            in.arch   = t ? t->arch : std::string(mcpp::platform::host_arch);
+            const auto read = read_closure(in);
+            if (auto r = stage_closure(plan, read, plan.stagingRoot / "bin", needs,
+                                       unresolved, {}); !r)
+                return std::unexpected(r.error());
+        }
+        if (!unresolved.empty())
+            return finish_without_closure(
+                plan,
+                unresolved_reason(plan.binaryName, unresolved,
+                    "A dylib is staged beside the program when its install name "
+                    "is @rpath/<file> and the program\n"
+                    "       carries an @loader_path or @executable_path rpath, or "
+                    "when it is @loader_path/<file>."),
+                std::move(needs));
+        if (auto r = write_topentry_wrapper(plan.stagingRoot, plan.binaryName); !r)
+            return std::unexpected(Error{r.error()});
+        if (plan.opts.format == Format::Tar)
+            if (auto r = make_tarball(plan.stagingRoot, plan.archivePath); !r)
+                return std::unexpected(r.error());
+        return ClosureResult{true, {}, std::move(needs)};
     }
 
 #if defined(_WIN32)
@@ -1473,6 +1838,10 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     //    BundleAll — ship every dep including the dynamic linker; entry
     //    point becomes `run.sh` which invokes the bundled ld with
     //    --library-path → fully portable across glibc versions.
+    // #634 A3: what step 4 resolved, for the stage manifest, and the refusal
+    // text when it is incomplete. Both stay empty under `--mode static`.
+    std::vector<ClosureNeed> needs;
+    std::string unresolvedText;
     if (plan.opts.mode != Mode::Static) {
         // THE BUILT BINARY, NOT THE STAGED COPY, and the difference is
         // `$ORIGIN`.
@@ -1524,19 +1893,59 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
         if (!deps) return std::unexpected(Error{std::format(
             "ldd failed on {}: {}", plan.builtBinary.string(), deps.error())});
 
-        std::vector<ResolvedDep> toBundle;
-        for (auto& d : *deps) {
+        auto skipped_by_mode = [&](std::string_view soname) {
             bool skip = false;
             if (plan.opts.mode == Mode::None) {
                 skip = true;  // system: host provides every .so, bundle nothing
             } else if (plan.opts.mode == Mode::BundleProject) {
-                if (is_system_lib(d.soname))                          skip = true;
-                if (soname_matches(d.soname, plan.alsoSkipLibs))      skip = true;
-                if (soname_matches(d.soname, plan.forceBundleLibs))   skip = false;  // override
+                if (is_system_lib(soname))                          skip = true;
+                if (soname_matches(soname, plan.alsoSkipLibs))      skip = true;
+                if (soname_matches(soname, plan.forceBundleLibs))   skip = false;  // override
             }
             // Mode::BundleAll: skip nothing — we want the loader too.
-            if (!skip) toBundle.push_back(d);
+            return skip;
+        };
+
+        // #634 A3: the `needs` lines, from the same decisions that fill the
+        // tree. A mode that bundles nothing states no closure, as on every
+        // other row.
+        const bool bundling = plan.opts.mode != Mode::None;
+        std::vector<ResolvedDep> toBundle;
+        for (auto& d : deps->found) {
+            if (skipped_by_mode(d.soname)) {
+                if (bundling) needs.push_back({d.soname, ClosureNeed::Kind::Platform, {}});
+                continue;
+            }
+            toBundle.push_back(d);
+            needs.push_back({d.soname, ClosureNeed::Kind::Staged, "lib/" + d.soname});
         }
+        // A name the loader found no file for is one the tree cannot carry.
+        // When the mode leaves it to the target anyway it is the target's;
+        // otherwise the closure is incomplete, and an archive that says
+        // `walked` would not start where it is installed.
+        std::vector<std::string> unresolved;
+        for (auto const& name : deps->notFound) {
+            if (!bundling) continue;
+            // `also_skip` names the target's libraries in every bundling mode
+            // here, `self-contained` included: the tree cannot carry a file
+            // this machine does not have.
+            if (skipped_by_mode(name) || (soname_matches(name, plan.alsoSkipLibs)
+                                          && !soname_matches(name, plan.forceBundleLibs))) {
+                needs.push_back({name, ClosureNeed::Kind::Platform, {}});
+                continue;
+            }
+            needs.push_back({name, ClosureNeed::Kind::Unresolved, {}});
+            unresolved.push_back(name + ": the loader finds no file for it");
+        }
+        if (!unresolved.empty())
+            unresolvedText = unresolved_reason(plan.binaryName, unresolved,
+                "The loader looks through the program's run-time search path "
+                "(DT_RPATH, DT_RUNPATH) and\n"
+                "       its own default directories.");
+        // An archive refuses before any file is edited; a dispatched format
+        // still receives the tree the resolved names allow.
+        if (!unresolved.empty() && plan.opts.format != Format::Dispatched)
+            return finish_without_closure(plan, unresolvedText, needs);
 
         if (auto r = bundle_libs(toBundle, plan.stagingRoot); !r)
             return std::unexpected(Error{r.error()});
@@ -1615,7 +2024,7 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
             //                   ignores it and launches via the bundled
             //                   loader directly.
             if (plan.opts.mode == Mode::BundleProject || plan.opts.mode == Mode::None) {
-                if (auto soname = find_loader_soname(*deps); !soname.empty()) {
+                if (auto soname = find_loader_soname(deps->found); !soname.empty()) {
                     auto distroLoader =
                         (soname == "ld-linux-x86-64.so.2" ? "/lib64/" : "/lib/")
                         + soname;
@@ -1664,12 +2073,17 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     // at its leg loop.
     if (auto r = strip_program(plan, bundledBinary); !r) return std::unexpected(r.error());
 
+    // A dispatched format reaches this point with an incomplete closure; an
+    // archive was refused before any file was edited.
+    if (!unresolvedText.empty())
+        return finish_without_closure(plan, unresolvedText, std::move(needs));
+
     // Output.
     if (plan.opts.format == Format::Tar) {
         if (auto r = make_tarball(plan.stagingRoot, plan.archivePath); !r)
             return std::unexpected(r.error());
     }
-    return ClosureResult{};
+    return ClosureResult{true, {}, std::move(needs)};
 #endif // !_WIN32
 }
 

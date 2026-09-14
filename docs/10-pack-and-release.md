@@ -197,7 +197,9 @@ one `--target`** (mcpp 2026.9.13.2+): on every Android row an application
 aarch64-linux-android --target x86_64-linux-android` builds and stages both
 legs into one tree, exactly as a library package's several triples already
 do. Each leg lands at `lib/<abi>/lib<name>.so` (`aarch64` → `arm64-v8a`,
-`x86_64` → `x86_64`), the declared deploy files are staged once, and one
+`x86_64` → `x86_64`) with its own closure beside it (see
+[Android](#android-the-application-object-and-its-closure-under-lib)), the
+declared deploy files are staged once, and one
 dispatch runs against the combined tree — which is what lets a member such as
 `dist-apk` build one universal APK. A single `--target` keeps today's flat
 `lib/lib<name>.so` layout unchanged. A target whose artifact is an executable
@@ -298,6 +300,18 @@ matches the tarball filename (minus the `.tar.gz`) —— this way both a GUI
 "right-click extract" and a command-line `tar -xzf` yield the same
 self-contained directory, instead of scattering the contents across the current
 path.
+
+**The closure is recorded, and an incomplete one refuses the archive**
+(mcpp 2026.9.14.2+). Beside the staged tree, `<tree>.stage-manifest` states
+every library name the closure resolved: the staged path of a library the tree
+carries, `platform` for one the target provides, and `unresolved` for one found
+nowhere (the line format is in [50](50-machine-output.md#the-stage-manifest)).
+When a name is unresolved, `--format tar` and `--format dir` fail naming it,
+because a tree without that library does not start where it is installed; a
+dispatched format still receives the tree, with `closure = not-walked`. A
+library the target provides and this machine does not have is named in
+`[pack.bundle-project] also_skip`. The modes that bundle nothing (`system`,
+`static`) state no closure.
 
 ### Mode `static`
 
@@ -477,37 +491,70 @@ Two consequences worth knowing:
 - The archive is **deterministic**: no timestamps are read, so two packs of
   the same tree are byte-identical and a published checksum means something.
 
-The reverse direction — packing a Linux or macOS artifact *from* Windows —
-still does not work, and for the original reason: that closure is resolved by
-the target's own dynamic linker, which a Windows host has no way to run.
+The reverse direction — packing a Linux artifact *from* Windows — still does
+not work: an ELF program's closure is resolved by the target's own dynamic
+linker, which a Windows host has no way to run. A Mach-O program's closure is
+read from the file, so a macOS program packs from any host.
 
-#### Packing a Mach-O program is refused — on every host, including macOS
+### macOS (Mach-O): the dylibs beside the program
 
-The same closure step asks the dynamic linker for the dependency list by running
-the artifact with `LD_TRACE_LOADED_OBJECTS=1`. That variable is glibc's; dyld
-has never heard of it. So on a Mac the command does not trace anything — **it
-runs the program**, and whatever the program prints is then parsed as a
-dependency table. mcpp refuses instead, and says which mechanism is missing.
+```
+target/dist/myapp-0.1.0-aarch64-macos.tar.gz
+└── myapp-0.1.0-aarch64-macos/
+    ├── bin/myapp
+    ├── bin/libmydep.dylib      ← a dependency's dylib, beside the program
+    ├── myapp                   ← entry-point wrapper
+    ├── README.md
+    └── LICENSE
+```
 
-The refusal is keyed on the artifact's **format**, not on the host, for the same
-reason the Windows one is: `LD_TRACE_LOADED_OBJECTS` cannot trace a Mach-O from
-Linux either.
+A Mach-O program's closure is read from its load commands (mcpp 2026.9.14.2+),
+so packing it runs nothing. Its dylibs are staged beside it in `bin/`, which is
+where the `@loader_path` rpath a consumer of a graph-built dylib is linked with
+already looks: no load command is edited, nothing is re-signed, and the program
+is not stripped.
 
-A `kind = "lib"` / `"shared"` target packs normally on macOS — a library package
-never runs the artifact. This restriction is only for programs.
+A needed name is staged when the loader resolves it to the program's
+directory:
 
-The dependency closure can now be **read** rather than run — `mcpp.pack.binfmt`
-walks a Mach-O's load commands (`LC_LOAD_DYLIB` and its weak/re-export/upward
-siblings for names, `LC_RPATH` for search entries) the same way it already
-reads a PE's import table, and resolves `@executable_path`, `@loader_path` and
-`@rpath` the way `dyld` would, without loading anything. `mcpp pack` does not
-call it yet: bundling a resolved dylib beside the program needs an editor for
-`LC_RPATH` (a load command has no free space to grow into), and that editor is
-designed once resolution is measured on a real macOS build, not before. Until
-then a Mach-O program still stages without its closure — see [Producing a
-distributable](30-build-mcpp.md#producing-a-distributable-pack_format--stage_dir-20269111)
-for what a dispatched format (`.app`, `.ipa`) can already do with a tree that
-has a program and no closure.
+| Name | Treatment |
+|---|---|
+| `/usr/lib/…`, `/System/Library/…` | not staged; the OS provides it |
+| `@rpath/<file>` | staged when an rpath of the image that needs it, or of the program, is exactly `@loader_path` or `@executable_path` |
+| `@loader_path/<file>`, `@executable_path/<file>` | staged at that path, which must stay inside the program's directory |
+
+Any other name leaves the closure incomplete, and `tar` and `dir` refuse naming
+it. An absolute install name outside the OS's directories is the common case:
+the loader reads it from that path on every machine, whatever the tree carries.
+`--mode system` and `--mode static` bundle nothing on this row, as on PE. A
+`kind = "lib"` / `"shared"` target is packaged by the library route, which is
+unaffected.
+
+### Android: the application object and its closure under `lib/`
+
+```
+target/dist/myapp-0.1.0-x86_64-linux-android/
+├── lib/libmyapp.so             ← the application object
+├── lib/libmydep.so             ← a dependency's shared library
+├── lib/libc++_shared.so        ← the NDK's C++ runtime, when the object needs it
+└── bin/<to>/…                  ← files `[runtime] deploy` placed
+```
+
+On an Android row the application is a shared object staged under `lib/`, and
+its closure is read from the files and staged beside it (mcpp 2026.9.14.2+). A
+name the device provides is not staged: one present in the API level's stub
+directory, which mcpp takes from the row's own compiler (the directory it finds
+`libc.so` in) — `libc.so`, `libm.so`, `libdl.so`, `liblog.so` and the other
+platform libraries. Every other name must resolve in a directory the link used:
+the build's output directory, the `[runtime] library_dirs` and
+`link_library_dirs` of the packages in the graph, and the compiler's library
+search path, which holds `libc++_shared.so`. A name that resolves nowhere makes
+`tar` and `dir` refuse, naming it and the directories searched.
+
+With several `--target` triples each leg is staged under `lib/<abi>/` with its
+own closure. `--mode` does not apply on this row: the device provides exactly
+the platform libraries, so there is no host set to leave out and no loader to
+carry.
 
 ## Configuration
 
@@ -540,12 +587,7 @@ The `static` mode additionally requires a musl toolchain configured under
 
 ## Planned Support
 
-macOS **program** bundling is still on the roadmap. The closure is read now
-(`mcpp.pack.binfmt`'s Mach-O load-command walk — no `otool` needed), but
-bundling a resolved dylib beside the program and rewriting `LC_RPATH` for it
-is not; until that lands `mcpp pack <program>` still refuses on that format
-rather than producing something that only looks like a bundle. Windows DLL
-bundling beyond the current `.zip` is also on the roadmap.
+Windows DLL bundling beyond the current `.zip` is on the roadmap.
 
 Distribution formats such as `.deb`, `.rpm`, AppImage and `.msi` are **not** on
 this list, and that is a decision rather than an omission: they live in
