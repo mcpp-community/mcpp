@@ -751,6 +751,9 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::println(stderr, "error: --output <path> required");
         return 2;
     }
+    // Every path ninja hands this edge is relative to the build directory,
+    // and a deep build directory takes it past the Windows path limit.
+    outPath = mcpp::platform::fs::extended_length(outPath);
 
     bool single = parsed.is_flag_set("single");
 
@@ -777,7 +780,8 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
         std::string expImports  = parsed.option_or_empty("expect-imports").value();
         if (!expProvides.empty() || !expImports.empty() ||
             parsed.is_flag_set("expect-none")) {
-            std::ifstream is{std::filesystem::path{parsed.positional(0)}};
+            std::ifstream is{mcpp::platform::fs::extended_length(
+                std::filesystem::path{parsed.positional(0)})};
             std::string ddiBody{std::istreambuf_iterator<char>(is), {}};
             auto unit = mcpp::dyndep::parse_ddi(ddiBody);
             if (!unit) {
@@ -798,11 +802,14 @@ export int cmd_dyndep(const mcpplibs::cmdline::ParsedArgs& parsed) {
                 return 1;
             }
         }
-        body = mcpp::dyndep::emit_dyndep_single(parsed.positional(0), opts);
+        body = mcpp::dyndep::emit_dyndep_single(
+            mcpp::platform::fs::extended_length(
+                std::filesystem::path{parsed.positional(0)}), opts);
     } else {
         std::vector<std::filesystem::path> ddis;
         for (std::size_t i = 0; i < parsed.positional_count(); ++i)
-            ddis.emplace_back(parsed.positional(i));
+            ddis.emplace_back(mcpp::platform::fs::extended_length(
+                std::filesystem::path{parsed.positional(i)}));
         body = mcpp::dyndep::emit_dyndep_from_files(ddis, /*stdImports=*/{}, opts);
     }
 
@@ -844,7 +851,8 @@ export int cmd_stage(const mcpplibs::cmdline::ParsedArgs& parsed) {
         opts.verify = mcpp::build::stage::parse_verify(verify);
 
     auto r = mcpp::build::stage::stage_file(
-        std::filesystem::path{parsed.positional(0)}, outPath, opts);
+        mcpp::platform::fs::extended_length(std::filesystem::path{parsed.positional(0)}),
+        mcpp::platform::fs::extended_length(outPath), opts);
     if (!r) {
         std::println(stderr, "error: {}", r.error().message);
         return 1;
@@ -864,8 +872,8 @@ export int cmd_bmi_equal(const mcpplibs::cmdline::ParsedArgs& parsed) {
         return 2;
     }
     const bool same = mcpp::build::stage::bmi_equivalent(
-        std::filesystem::path{parsed.positional(0)},
-        std::filesystem::path{parsed.positional(1)});
+        mcpp::platform::fs::extended_length(std::filesystem::path{parsed.positional(0)}),
+        mcpp::platform::fs::extended_length(std::filesystem::path{parsed.positional(1)}));
     // Exit status IS the answer, so it can drive `if ...; then` in the rule
     // exactly the way `cmp -s` did. No output on either path: this runs once per
     // module compile and any chatter would land in the build log.
@@ -899,7 +907,7 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
     bool annotated = false;
     for (std::size_t i = 0; i < parsed.positional_count(); ++i) {
         const std::filesystem::path obj{ parsed.positional(i) };
-        std::ifstream in(obj, std::ios::binary);
+        std::ifstream in(mcpp::platform::fs::extended_length(obj), std::ios::binary);
         if (!in) {
             std::println(stderr, "error: cannot read object '{}'", obj.string());
             return 1;
@@ -936,8 +944,10 @@ export int cmd_coff_def(const mcpplibs::cmdline::ParsedArgs& parsed) {
     }
 
     std::error_code ec;
-    if (out.has_parent_path()) std::filesystem::create_directories(out.parent_path(), ec);
-    std::ofstream o(out, std::ios::binary | std::ios::trunc);
+    const auto outOpen = mcpp::platform::fs::extended_length(out);
+    if (outOpen.has_parent_path())
+        std::filesystem::create_directories(outOpen.parent_path(), ec);
+    std::ofstream o(outOpen, std::ios::binary | std::ios::trunc);
     if (!o) {
         std::println(stderr, "error: cannot write '{}'", out.string());
         return 1;
@@ -984,16 +994,23 @@ std::string opt_value(const mcpplibs::cmdline::ParsedArgs& parsed, std::string_v
 // Phase 1: start the compiler, return when the BMI is published.
 export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
     mcpp::build::schedule::detach::CompileRequest req;
-    req.bmi       = std::filesystem::path{opt_value(parsed, "bmi")};
-    req.slot      = std::filesystem::path{opt_value(parsed, "slot")};
+    // Every file path this edge opens goes through `file_path`; `--self` does
+    // not, because it names an executable to spawn rather than a file to open.
+    const auto file_path = [&](std::string_view name) {
+        return mcpp::platform::fs::extended_length(
+            std::filesystem::path{opt_value(parsed, name)});
+    };
+    req.bmi       = file_path("bmi");
+    req.bmiTarget = opt_value(parsed, "bmi");
+    req.slot      = file_path("slot");
     req.self      = std::filesystem::path{opt_value(parsed, "self")};
-    req.semaphore = std::filesystem::path{opt_value(parsed, "sem")};
+    req.semaphore = file_path("sem");
     req.maxCompilers = 0;
     if (const auto cap = opt_value(parsed, "cap"); !cap.empty())
         std::from_chars(cap.data(), cap.data() + cap.size(), req.maxCompilers);
-    req.commandFile = std::filesystem::path{opt_value(parsed, "command-file")};
-    req.depFrom     = std::filesystem::path{opt_value(parsed, "dep-from")};
-    req.depTo       = std::filesystem::path{opt_value(parsed, "dep-to")};
+    req.commandFile = file_path("command-file");
+    req.depFrom     = file_path("dep-from");
+    req.depTo       = file_path("dep-to");
     req.command     = read_command_file(req.commandFile);
     if (req.slot.empty()) {
         std::println(stderr, "error: bmi-compile needs --slot");
@@ -1008,9 +1025,12 @@ export int cmd_bmi_compile(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
 // The supervisor. Detached by phase 1; never named by a build edge.
 export int cmd_bmi_supervise(const mcpplibs::cmdline::ParsedArgs& parsed) {
-    const std::filesystem::path slot{opt_value(parsed, "slot")};
-    const std::filesystem::path token{opt_value(parsed, "token")};
-    const auto command = read_command_file(std::filesystem::path{opt_value(parsed, "command-file")});
+    const auto slot = mcpp::platform::fs::extended_length(
+        std::filesystem::path{opt_value(parsed, "slot")});
+    const auto token = mcpp::platform::fs::extended_length(
+        std::filesystem::path{opt_value(parsed, "token")});
+    const auto command = read_command_file(mcpp::platform::fs::extended_length(
+        std::filesystem::path{opt_value(parsed, "command-file")}));
     // Only `--slot` is checked here. An empty COMMAND is handed to supervise()
     // on purpose: it is the one place that can record the failure in the file
     // both waiters are polling. Returning early instead left them waiting on an
@@ -1024,8 +1044,10 @@ export int cmd_bmi_supervise(const mcpplibs::cmdline::ParsedArgs& parsed) {
 
 // Phase 2: join the detached compiler before anything reads its object.
 export int cmd_bmi_await(const mcpplibs::cmdline::ParsedArgs& parsed) {
-    const std::filesystem::path slot{opt_value(parsed, "slot")};
-    const std::filesystem::path object{opt_value(parsed, "object")};
+    const auto slot = mcpp::platform::fs::extended_length(
+        std::filesystem::path{opt_value(parsed, "slot")});
+    const auto object = mcpp::platform::fs::extended_length(
+        std::filesystem::path{opt_value(parsed, "object")});
     if (slot.empty()) {
         std::println(stderr, "error: bmi-await needs --slot");
         return 2;

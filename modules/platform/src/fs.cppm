@@ -52,6 +52,30 @@ std::filesystem::path self_exe_path();
 //   POSIX:   `command -v <name>`
 std::optional<std::filesystem::path> which(std::string_view binary_name);
 
+// ── extended_length ───────────────────────────────────────────────────────
+//
+// The form of a path that a file operation may open whatever its length.
+//
+// A Win32 path that is not in the extended-length form is limited to 259
+// characters, and a relative path counts the working directory against that
+// limit. The engine subcommands ninja invokes (`mcpp dyndep`, `mcpp stage`,
+// the `bmi-*` edges, `coff-def`, the check stamps) receive paths relative to a
+// build directory, and in a host-tool sub-build those paths crossed the limit:
+// `clang-scan-deps` wrote a `.ddi` that `mcpp dyndep` then could not read
+// (mcpp#641, item 3).
+//
+//   Windows  the absolute, lexically normal path with backslashes, prefixed
+//            `\\?\` (a UNC path `\\server\share\x` becomes
+//            `\\?\UNC\server\share\x`); a path already in that form is
+//            returned unchanged.
+//   POSIX    the argument, unchanged. No limit of this kind exists.
+std::filesystem::path extended_length(const std::filesystem::path& p);
+
+// The Windows spelling rule of `extended_length`, as a pure function of an
+// absolute, generic (forward-slash or backslash) path string, so that the rule
+// is tested on every host. An empty or relative input is returned unchanged.
+std::string windows_extended_length_spelling(std::string_view absolutePath);
+
 // 不先删除目标文件，避免发布失败时丢失最后一份可用的编译数据库。
 bool replace_file(const std::filesystem::path& source,
                   const std::filesystem::path& destination,
@@ -139,6 +163,71 @@ std::optional<std::filesystem::path> which(std::string_view binary_name) {
     if (rc != 0 || out.empty()) return std::nullopt;
     if (!std::filesystem::exists(out)) return std::nullopt;
     return std::filesystem::path(out);
+}
+
+std::string windows_extended_length_spelling(std::string_view in) {
+    std::string s(in);
+    for (auto& c : s) if (c == '/') c = '\\';
+    // Already extended-length (`\\?\`) or a device path (`\\.\`): the
+    // prefix disables every further interpretation, so nothing is rewritten.
+    if (s.starts_with("\\\\?\\") || s.starts_with("\\\\.\\")) return s;
+
+    std::string prefix;
+    std::string rest;
+    if (s.starts_with("\\\\")) {
+        prefix = "\\\\?\\UNC\\";
+        rest = s.substr(2);
+    } else if (s.size() >= 3 && std::isalpha(static_cast<unsigned char>(s[0]))
+               && s[1] == ':' && s[2] == '\\') {
+        prefix = "\\\\?\\";
+        rest = s;
+    } else {
+        return std::string(in);   // relative or rootless: not this function's input
+    }
+
+    // The prefix turns off `.`/`..` processing, so the components are resolved
+    // here, lexically. A `..` never climbs above the drive or the share.
+    std::vector<std::string> parts;
+    std::size_t keep = prefix.ends_with("UNC\\") ? 2 : 1;   // share or drive
+    std::size_t start = 0;
+    while (start <= rest.size()) {
+        auto end = rest.find('\\', start);
+        if (end == std::string::npos) end = rest.size();
+        std::string comp = rest.substr(start, end - start);
+        start = end + 1;
+        if (comp.empty() || comp == ".") continue;
+        if (comp == "..") {
+            if (parts.size() > keep) parts.pop_back();
+            continue;
+        }
+        parts.push_back(std::move(comp));
+    }
+    std::string out = prefix;
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        if (i) out += '\\';
+        out += parts[i];
+    }
+    // A bare drive keeps its root separator: `\\?\C:\`, not `\\?\C:`.
+    if (parts.size() == 1 && keep == 1) out += '\\';
+    return out;
+}
+
+std::filesystem::path extended_length(const std::filesystem::path& p) {
+#if defined(_WIN32)
+    if (p.empty()) return p;
+    std::error_code ec;
+    auto abs = std::filesystem::absolute(p, ec);
+    if (ec) return p;
+    // Through UTF-8, so that a name the ANSI code page cannot spell survives:
+    // the path narrowing rule (mcpp-contributing) forbids `.string()` here.
+    const auto u8 = abs.generic_u8string();
+    std::string narrow(reinterpret_cast<const char*>(u8.data()), u8.size());
+    const auto spelled = windows_extended_length_spelling(narrow);
+    return std::filesystem::path(std::u8string(
+        reinterpret_cast<const char8_t*>(spelled.data()), spelled.size()));
+#else
+    return p;
+#endif
 }
 
 bool replace_file(const std::filesystem::path& source,

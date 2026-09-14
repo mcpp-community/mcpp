@@ -123,6 +123,12 @@ struct CompileRequest {
     // itself reran.
     std::filesystem::path depFrom;
     std::filesystem::path depTo;
+    // The BMI as ninja spells it, which is what the copied depfile must name.
+    // `bmi` is the path this edge OPENS, and on Windows it is the absolute,
+    // extended-length form (mcpp::platform::fs::extended_length); ninja treats
+    // an edge whose depfile names anything but its own output spelling as
+    // permanently dirty. Empty means `bmi` is already that spelling.
+    std::string bmiTarget;
 };
 
 // Phase 1 — returns 0 as soon as the BMI is published, leaving code generation
@@ -372,7 +378,10 @@ int run_to_completion(std::string_view command,
     line += command;
 
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};
-    HANDLE log = ::CreateFileA(logPath.string().c_str(), GENERIC_WRITE,
+    // The wide API: an extended-length log path (`bmi-supervise` receives one,
+    // see mcpp::platform::fs::extended_length) is honoured only by it, and a
+    // narrowed spelling would also throw on a name the code page cannot spell.
+    HANDLE log = ::CreateFileW(logPath.c_str(), GENERIC_WRITE,
                                FILE_SHARE_READ, &sa, CREATE_ALWAYS,
                                FILE_ATTRIBUTE_NORMAL, nullptr);
     // The command, in the log, before it runs. Phase 2 replays this file, so a
@@ -523,7 +532,8 @@ int compile_release_at_bmi(const CompileRequest& req) {
         // For a unit with no previous BMI that reduces to "it now exists".
         if (!req.bmi.empty() && bmi_identity(req.bmi) != before) {
             settle_bmi(req.bmi);
-            copy_first_rule(req.depFrom, req.depTo, req.bmi.string());
+            copy_first_rule(req.depFrom, req.depTo,
+                            req.bmiTarget.empty() ? req.bmi.string() : req.bmiTarget);
             return 0;                       // importers may proceed
         }
         if (const auto rc = read_rc(req.slot)) {
@@ -553,7 +563,8 @@ int compile_release_at_bmi(const CompileRequest& req) {
                 // in an importer — reproducible at `-j1`, so it was never a
                 // race between compilers, only between this loop's two checks.
                 settle_bmi(req.bmi);
-                copy_first_rule(req.depFrom, req.depTo, req.bmi.string());
+                copy_first_rule(req.depFrom, req.depTo,
+                                req.bmiTarget.empty() ? req.bmi.string() : req.bmiTarget);
             }
             return *rc;
         }

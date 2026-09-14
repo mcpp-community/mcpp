@@ -122,6 +122,20 @@ std::string tree_stamp(const std::filesystem::path& root);
 
 // <cacheRoot>/tool/<index>/<pkg>@<ver>/<keyHex>/
 std::filesystem::path entry_dir(const std::filesystem::path& cacheRoot, const Key& k);
+
+// <cacheRoot>/tool/.build/<16 hex>/ -- where one consumer builds one entry.
+//
+// A SIBLING OF THE ENTRIES, NOT A CHILD OF ONE. The sub-build's own layout
+// (`target/<triple>/<fingerprint>/obj/...`) is appended to this path, and the
+// entry directory already spends its length on the index, the package, its
+// version with the source stamp and the key: 133 characters on a Windows
+// runner before the sub-build added its own (mcpp#641, item 3). The scratch
+// needs none of those names, only an identity per (entry, consumer) pair, so
+// that two projects building one tool at once do not share a ninja tree and a
+// re-run reuses its own.
+std::filesystem::path scratch_dir(const std::filesystem::path& cacheRoot,
+                                  const std::filesystem::path& entryDir,
+                                  const std::filesystem::path& consumerRoot);
 std::filesystem::path bin_path(const std::filesystem::path& entryDir,
                                std::string_view toolName,
                                std::string_view exeSuffix);
@@ -226,6 +240,18 @@ fs::path entry_dir(const fs::path& cacheRoot, const Key& k) {
          / (k.indexName.empty() ? std::string("_") : k.indexName)
          / std::format("{}@{}", k.packageName, k.version)
          / key_hex(k);
+}
+
+fs::path scratch_dir(const fs::path& cacheRoot, const fs::path& entryDir,
+                     const fs::path& consumerRoot) {
+    // Identities, not narrow spellings: a home or project directory whose name
+    // the Windows code page cannot spell must not throw here.
+    const auto entry    = entryDir.lexically_normal().generic_u8string();
+    const auto consumer = consumerRoot.lexically_normal().generic_u8string();
+    std::string joined(reinterpret_cast<const char*>(entry.data()), entry.size());
+    joined += '\n';
+    joined.append(reinterpret_cast<const char*>(consumer.data()), consumer.size());
+    return cacheRoot / "tool" / ".build" / mcpp::toolchain::hash_string(joined);
 }
 
 fs::path bin_path(const fs::path& entryDir, std::string_view toolName,

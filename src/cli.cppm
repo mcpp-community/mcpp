@@ -32,6 +32,7 @@ import mcpp.wire;
 import mcpp.cli.cmd_sbom;
 import mcpp.platform.env;            // --offline → MCPP_OFFLINE
 import mcpp.platform.process;        // __action-stamp runs the checked command
+import mcpp.platform.fs;             // __action-stamp writes its stamps
 import mcpp.platform.runtime_search; // linker-wrapper path-injection opt-out
 import mcpp.ui;
 import mcpp.log;
@@ -1005,7 +1006,9 @@ int run(int argc, char** argv) {
         if (r != 0) return r;
         for (auto const& s : stamps) {
             std::error_code ec;
-            std::filesystem::path p{s};
+            // Relative to the build directory, which can be deep enough to
+            // take the stamp past the Windows path limit (mcpp#641, item 3).
+            const auto p = mcpp::platform::fs::extended_length(std::filesystem::path{s});
             if (!p.parent_path().empty())
                 std::filesystem::create_directories(p.parent_path(), ec);
             if (std::filesystem::exists(p, ec)) continue;
