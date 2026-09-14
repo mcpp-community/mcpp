@@ -347,6 +347,7 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `device-source-unconsumed` | 一个设备类源文件没有到达任何 action,因此没有东西编译它 |
 | `host-module-missing` | `build.mcpp` 导入了没有任何依赖以 host module 形式提供的模块 |
 | `tool-version-conflict` | 两处声明把同一个 xlings 包定在不能同时成立的版本上 |
+| `shared-library-cxx-runtime` | C++ 运行时来自图中的包,而依赖的 C++ 共享库没有声明私有副本 |
 | `other` | 一处还没有被命名的拒绝分支 |
 
 **只要问题被回答了就退 0,包括答案是「拒绝」。** 「它能不能构建,不能的话

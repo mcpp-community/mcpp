@@ -123,7 +123,11 @@ $ mcpp build
 build; the machine's default stays whatever it was, for every other project.
 The version comes from what is already installed — the same resolution
 `mcpp toolchain default <family>` performs — and only from the ecosystem's own
-pin when nothing of that family is present.
+pin when nothing of that family is present. That pin is read from the rows whose
+payload is the one the requirement names: `llvm` takes the `llvm@…` pins and not
+the Android NDK's or emsdk's, which are llvm-family compilers of other payloads,
+and `mcpp:compiler=emsdk` or `mcpp:compiler=android-ndk` takes its own payload's
+pin (mcpp 2026.9.15.2+).
 
 **A compiler the project states is not revised.** At ranks 1–2 the project has
 said what it builds with, and a dependency disagreeing is a real contradiction:
@@ -1010,6 +1014,27 @@ and is not the leak this guards against.
 A project-wide `cxx_runtime = "…"` (or `static_stdlib = false`) applies to shared
 libraries too: a human said what the whole project promises. The format-specific
 default applies only when nobody said anything.
+
+**A dependency's shared library over a C++ runtime that is a package** (mcpp
+2026.9.15.2+). When a package in the graph supplies the C++ layer (`llvm.libcxx`,
+[22](22-target-side.md)), its objects are linked into the program, and it compiles
+them with hidden visibility, so a dependency built as a C++ shared library cannot
+resolve against the program's copy. mcpp refuses such a build before compiling
+(reason `shared-library-cxx-runtime`, [50](50-machine-output.md)) and names two
+ways out: link the dependency static with `linkage = "static"` on its edge, which is
+offered only when the dependency's own manifest does not constrain it to the shared
+form, or state a private copy for shared libraries:
+
+```toml
+[build]
+cxx_runtime = { shared = "self-contained" }
+```
+
+Under that statement each such shared library links the runtime package's objects
+itself. Each image then holds its own type information for the runtime's classes:
+an exception of a standard library class thrown in the shared library is not caught
+by that class in the program, while a class the shared library defines is. A
+default never selects the private copy; only the statement does.
 
 `static_stdlib` is the older spelling and still works: `true` means
 `self-contained`, `false` means `host-coupled`. An explicit `cxx_runtime` wins.

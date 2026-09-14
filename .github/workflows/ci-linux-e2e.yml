@@ -416,3 +416,30 @@ jobs:
           export MCPP
           bash tests/e2e/86_llvm_hermetic_link.sh
           bash tests/e2e/37_llvm_import_std.sh
+
+      # The scripts whose C++ runtime is a package (`llvm.libcxx`) declare
+      # `# requires: llvm`, which no shard has, and `run_all.sh` exits 0 when it
+      # skips. They run here, where llvm is installed, and each is held to the
+      # line it prints only when it ran to the end, and to the line of the step
+      # that runs a program (#641).
+      - name: "graph C++ runtime e2e (663, 690, 696)"
+        run: |
+          set -o pipefail
+          export PATH="$HOME/.xlings/subos/current/bin:$PATH"
+          export MCPP
+          run_and_assert() {   # $1 = script; the remaining arguments are lines it must print
+            local script="$1"; shift
+            local log="$RUNNER_TEMP/$(basename "$script").log"
+            bash "$script" 2>&1 | tee "$log"
+            for line in "$@"; do
+              grep -qxF "$line" "$log" || { echo "::error::$script did not print: $line"; exit 1; }
+            done
+          }
+          run_and_assert tests/e2e/663_a_graph_libcxx_over_the_payloads_c_library.sh \
+            "ok: llvm.libcxx supplies the C++ layer over the payload's C library, and the program runs"
+          run_and_assert tests/e2e/690_a_shared_library_over_a_graph_cxx_runtime.sh \
+            'ok: linkage = "static" builds and runs' \
+            'ok: cxx_runtime = { shared = "self-contained" } links a private copy and runs' \
+            "PASS: 690 a shared library over a graph C++ runtime is refused or carries a stated private copy"
+          run_and_assert tests/e2e/696_a_cxx_layer_provider_keeps_its_own_standard.sh \
+            "PASS: a C++-layer provider compiles its implementation units at its own standard"

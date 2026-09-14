@@ -112,7 +112,14 @@ mcpp pack -o /abs/path/myapp.tar.gz    # 含目录:按字面路径输出
 mcpp pack --profile dev                # 换一个 profile 构建(默认 release)
 mcpp pack --no-strip                   # 按构建原样发货,不剥符号
 mcpp pack --debug-symbols dbg/         # 把分离出的 *.debug 写到 dbg/
+mcpp pack --format msi --features installer   # 为这次打包启用根包 feature
 ```
+
+`--features <LIST>`(mcpp 2026.9.15.2+)为打包执行的每一次构建启用根包 feature:每条
+`--target` 腿,以及分派格式的两次构建。它与 `mcpp build --features` 接受同样的取值,
+因此只为某一种发布才需要的主机工具,可以声明在带 `tools = [...]` 的
+`[feature-deps.<f>]` 下,只由点名 `<f>` 的那次打包构建。
+`mcpp run --format <name> --features <LIST>` 把同样的 feature 交给它执行的那次打包。
 
 ### `--format` 是一个轴,引擎只拥有其中两个取值
 

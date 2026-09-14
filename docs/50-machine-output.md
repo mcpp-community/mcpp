@@ -394,6 +394,7 @@ a program classifying the outcome reads `reason`:
 | `device-source-unconsumed` | a device-kind source reached no action, so nothing compiles it |
 | `host-module-missing` | `build.mcpp` imports a module no dependency supplies as a host module |
 | `tool-version-conflict` | two declarations name one xlings package at versions that cannot both hold |
+| `shared-library-cxx-runtime` | a dependency's C++ shared library in a graph whose C++ runtime is a package, with no private copy stated |
 | `other` | a refusal whose branch has not been given a token yet |
 
 **Exit 0 whenever the question was answered, including "refused".** "Would

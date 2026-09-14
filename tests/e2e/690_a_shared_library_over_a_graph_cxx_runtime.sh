@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# requires: llvm
+# requires: llvm elf
 # 690 -- a dependency's C++ shared library in a graph whose C++ runtime is a
 # package (#641, item 5). The runtime package's objects are linked into the
 # program; the dependency's shared library was linked from its own objects with
@@ -26,6 +26,10 @@ trap "rm -rf $TMP" EXIT
 export MCPP_HOME=$HOME/.mcpp
 
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
+
+# The container job that runs this has no binutils; the llvm payload has nm.
+NM=$(command -v nm || true)
+[ -n "$NM" ] || NM=$(ls "$MCPP_HOME"/registry/data/xpkgs/xim-x-llvm/22.1.8/bin/llvm-nm 2>/dev/null | head -1)
 
 cd "$TMP"
 mkdir -p fw/src app/src
@@ -145,7 +149,8 @@ rm -rf target
 "$MCPP" build > private.log 2>&1 || fail "the stated private copy did not build" private.log
 so=$(ls target/*/*/bin/libfw.so | head -1)
 [ -n "$so" ] || fail "no libfw.so under the stated private copy" private.log
-undefined=$(nm -D --undefined-only "$so" | grep -c '__1' || true)
+[ -n "$NM" ] || fail "no nm and no llvm-nm to read libfw.so with"
+undefined=$("$NM" -D --undefined-only "$so" | grep -c '__1' || true)
 [ "$undefined" -eq 0 ] || fail "libfw.so still has $undefined undefined std::__1 references" private.log
 bin=$(ls target/*/*/bin/app | head -1)
 out=$("$bin") || fail "the program over the private copy exited non-zero"

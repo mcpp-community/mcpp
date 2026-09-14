@@ -146,7 +146,15 @@ mcpp pack -o /abs/path/myapp.tar.gz    # includes a directory: output to the lit
 mcpp pack --profile dev                # build with a different profile (default: release)
 mcpp pack --no-strip                   # ship the artifacts as built
 mcpp pack --debug-symbols dbg/         # write the separated *.debug files under dbg/
+mcpp pack --format msi --features installer   # activate root-package features for the pack
 ```
+
+`--features <LIST>` (mcpp 2026.9.15.2+) activates root-package features for every
+build pass the pack performs: each `--target` leg, and both passes of a dispatched
+format. It is the value `mcpp build --features` takes, so a host tool needed only for
+one distribution is declared under `[feature-deps.<f>]` with `tools = [...]` and built
+only by the pack that names `<f>`. `mcpp run --format <name> --features <LIST>` hands
+the same features to the pack it performs.
 
 ### `--format` owns one axis, and the engine owns two of its values
 
