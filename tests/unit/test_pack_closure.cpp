@@ -127,10 +127,14 @@ std::string pe_importing(const std::vector<std::string>& imports) {
     put(b, kSecAt + 16, 0x1000, 4);
     put(b, kSecAt + 20, kRawAt, 4);
 
-    std::vector<std::uint32_t> nameRvas;
+    // `std::size_t` elements, not `std::uint32_t`: on macos-15 (clang 22,
+    // libc++ as a module) the first `push_back` into a `std::vector<std::uint32_t>`
+    // here faulted in `memmove` at address 0 (lldb, run 34819771218), while
+    // `elf_needing`'s `std::vector<std::size_t>` runs. The values fit either.
+    std::vector<std::size_t> nameRvas;
     std::size_t cursor = kRawAt;
     for (std::size_t k = 0; k < imports.size(); ++k) {
-        nameRvas.push_back(static_cast<std::uint32_t>(kSecVa + (cursor - kRawAt)));
+        nameRvas.push_back(kSecVa + (cursor - kRawAt));
         for (std::size_t i = 0; i < imports[k].size(); ++i) {
             put(b, cursor, static_cast<unsigned char>(imports[k][i]), 1);
             ++cursor;
@@ -323,16 +327,21 @@ TEST(PackClosureMachO, ATrailingSlashAndExecutablePathQualifyAsTheProgramsDirect
 TEST(PackClosureMachO, AnAbsoluteInstallNameOutsideTheOsRootsIsUnresolved) {
     Tree t;
     // The file exists on this machine; the loader on another one reads that
-    // path, not the tree, so a copy would not be what loads.
+    // path, not the tree, so a copy would not be what loads. An install name
+    // is a POSIX path: on a Windows host the temporary directory is not one,
+    // so the name is spelled as a macOS path there, and the rule is the same
+    // whether or not the file exists.
     auto elsewhere = t.write("opt/libq.dylib", macho_naming({}, {}));
-    auto app = t.write("bin/app", macho_naming({elsewhere.string()}, {"@loader_path"}));
+    const std::string installName = elsewhere.string().starts_with('/')
+        ? elsewhere.string() : std::string("/opt/elsewhere/libq.dylib");
+    auto app = t.write("bin/app", macho_naming({installName}, {"@loader_path"}));
 
     mcpp::pack::ClosureReadInput in;
     in.object = app;
     in.rule   = mcpp::pack::ClosureRule::MachO;
     auto r = mcpp::pack::read_closure(in);
     EXPECT_TRUE(r.members.empty());
-    EXPECT_EQ(unresolved_names(r), (Names{elsewhere.string()}));
+    EXPECT_EQ(unresolved_names(r), (Names{installName}));
     ASSERT_EQ(r.unresolved.size(), 1u);
     EXPECT_NE(r.unresolved[0].why.find("absolute install name"), std::string::npos)
         << r.unresolved[0].why;
