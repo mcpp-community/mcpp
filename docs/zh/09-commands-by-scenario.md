@@ -90,6 +90,21 @@ $ mcpp search imgui
 这次扫描只在查找已经失败之后进行,结果只进入错误文本与 search 输出。裸名不会因此跨
 命名空间解析。
 
+## 为一次调用换一个工具链
+
+`mcpp build`、`mcpp run`、`mcpp test` 与 `mcpp pack` 接受 `--toolchain <spec>`,
+它为这一次调用选择编译器,不写入任何东西:
+
+```bash
+mcpp test --toolchain llvm@22.1.8
+mcpp run --toolchain gcc@16.1.0
+mcpp pack --toolchain llvm@22.1.8 --format dir
+```
+
+对这一次调用,这个选项取代 `mcpp.toml` 中的 `[toolchain] default`,其优先级即
+[20 —— 工具链管理](20-toolchains.md) 给 `MCPP_TOOLCHAIN` 的那一级。每个工具链构建到
+它自己的输出目录,一次记录下来的构建只为记录它的那个工具链请求重放。
+
 ## 解释一次解析
 
 `mcpp why` 报告一次构建会解析出什么,并且不构建任何东西:

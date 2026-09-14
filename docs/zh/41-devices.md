@@ -77,6 +77,47 @@ monitor = ["probe-rs", "attach", "--chip", "STM32L475VG"]
 优先级是通常那个:工程作者写的胜过依赖提供的,且覆盖会被报告。一个名字只允许一个
 依赖提供,第二个是点名两个包的错误。
 
+## runner 收到的内容
+
+runner 收到一段 argv —— 它自己的 token,产物路径被追加或替换 `{}` —— 以及一个环境
+变量 `MCPP_RUNTIME_FILES`。`mcpp run` 与 `mcpp test` 启动的每一个 runner 都会收到
+这个变量,默认 runner 与具名 runner 相同。`mcpp run --no-runner` 不启动 runner,
+也不设置它。
+
+`MCPP_RUNTIME_FILES` 指向一个文件,列出产物从自己所在目录读取或加载的东西:
+`[runtime] deploy` 与 `deploy_files` 的条目,以及构建链接的共享库。每个文件一行:
+
+```
+data/data.txt<TAB>/abs/project/target/<triple>/<fp>/bin/data/data.txt
+libfw.so<TAB>/abs/project/target/<triple>/<fp>/bin/libfw.so
+```
+
+第一个字段是相对于产物所在目录的目的路径,分隔符为 `/`;在子目录中发现的测试程序,
+其目的路径以 `../` 开头。第二个字段是该文件在输出树中的绝对路径。两者以 TAB 分隔。
+每次启动 runner 时这个文件都存在,没有需要携带的东西时为空;以 `--format` 运行的
+可分发物收到空文件,因为可分发物自带其文件。
+
+就地执行产物的 runner 忽略这个变量。把产物移走的 runner —— 移到设备、容器或远程
+主机 —— 把列出的每个文件复制到被移走的产物旁边对应的目的路径。
+
+## 运行一个可分发物
+
+`mcpp run --format <f>` 打包可分发物 `<f>` 并运行它。不带 `--runner` 时,若图或
+清单提供了名为 `<f>` 的 runner,就由它抵达,否则由默认 runner 抵达:
+
+```cpp
+mcpp::runner("app", "<tool>");          // 包以格式名命名 runner
+```
+
+```bash
+mcpp run --format app                   # 经名为 `app` 的 runner
+mcpp run --format app --runner other    # 显式的 --runner 仍然优先
+```
+
+目录形式的可分发物(例如应用包)不被直接执行。没有 runner 抵达它时,
+`mcpp run --format <f>` 在启动任何东西之前拒绝,退出状态为 `126`,并点名能抵达它的
+runner `<f>` 以及声明它的清单表。
+
 ## 终止由声明决定,不由推断
 
 | | 含义 |

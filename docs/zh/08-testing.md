@@ -33,6 +33,24 @@ myproject/
 
 `mcpp new` 会生成 `tests/test_smoke.cpp`,让工程一开始就有这个目录。
 
+### 测试的位置
+
+`tests/**/*.cpp` 是一个键的默认值:
+
+```toml
+[test]
+discover = ["checks/**/*.cpp", "!checks/fixtures/**"]
+```
+
+`discover` 接受与 `[build] sources` 同一套词汇的 glob:glob 匹配到的每个文件都是一个
+测试程序,以 `!` 开头的 glob 把它匹配到的文件从集合中去掉,无论是哪个 glob 找到的。
+测试的名字是它相对于第一个匹配它的 glob 的固定目录的路径,去掉扩展名,因此默认值
+把 `tests/unit/test_span.cpp` 命名为 `unit/test_span`。`discover = []` 不发现任何测试。
+名字相同的两个文件会被拒绝,并点名两者。
+
+由多个源文件编译成的测试套件是一个独立的包:一个工作区成员,它的 `[build] sources`
+承载套件,它唯一的测试程序驱动套件,用 `mcpp test -p <member>` 选中。
+
 ## 运行它们
 
 ```bash
@@ -52,6 +70,7 @@ mcpp test -- --verbose    # `--` 之后的一切传给每个测试程序
 | `--target <triple>` | 宿主以外的目标 |
 | `--accel <spec>` / `--no-accel` | 本次构建面向的设备后端 |
 | `--cap <list>` | 钉住某个能力的 provider |
+| `--toolchain <spec>` | 本次调用使用的工具链,例如 `llvm@22.1.8` |
 
 `--timeout <secs>` 杀掉仍在运行的测试(默认 300;`0` 关闭),`--build-timeout <secs>`
 限制编译。一个挂住的测试被报为**以它自己的名字失败**,而不是一个停下来的任务。
@@ -84,6 +103,11 @@ mcpp test --no-runner                        # 忽略 runner,直接执行
 
 `--no-runner` 是给「本机就能原生执行这些二进制、不该为模拟器付代价」的宿主准备的。
 
+测试程序把它读取的文件带在身边:runner 收到 `MCPP_RUNTIME_FILES`,即它部署的文件与
+它加载的共享库的清单,把程序移到设备上的 runner 连同这些文件一起复制。测试按相对于
+自身所在目录的路径定位这类文件。在 Android 行上,除非 `cxx_runtime` 另有声明,测试
+程序静态链接 C++ 运行时,因此设备上不需要 `libc++_shared.so`。
+
 runner 本身、具名 runner,以及一块板子声明什么,见
 [41 —— 抵达一台设备](41-devices.md)。
 
@@ -110,6 +134,8 @@ mcpp test --message-format json
 
 - 一个测试是一个 `.cpp` 产出一个程序。mcpp 不发现文件内部的用例,因此框架的
   逐用例选择发生在程序内部,经由 `--` 之后的参数。
+- 清单无法加载时,`mcpp test --list` 列出的是 `tests/**/*.cpp`,而不是它读不到的
+  `[test] discover` 集合。
 - `--build-timeout` 只在 POSIX 上有效。
 - `--workspace-timeout` 限制 `--workspace` 的扇出并报告跑到了哪些;它不把超时
   归因到某个成员。

@@ -1236,6 +1236,22 @@ o.arg("./mkblob.sh").arg("blob.bin").arg("${mcpp.out_dir}/blob.o")
 
 已移入 [09 —— 按场景选命令](09-commands-by-scenario.md)。
 
+### 2.17 `[test]` —— 测试程序的位置
+
+```toml
+[test]
+discover = ["tests/**/*.cpp"]    # 默认值
+```
+
+| 键 | 类型 | 含义 |
+|---|---|---|
+| `discover` | glob 数组 | glob 匹配到的每个文件都是一个测试程序;以 `!` 开头的 glob 去掉它匹配到的文件;`[]` 不发现任何测试 |
+
+glob 使用 `[build] sources` 的词汇。测试的名字是它相对于第一个匹配它的 glob 的固定
+目录的路径,去掉扩展名。同名的两个文件会被拒绝,并点名两者。值不是非空字符串数组时
+报错;`[test]` 中的其他键给出警告,在 `--strict` 下为错误。测试模型见
+[08 —— 测试](08-testing.md)。
+
 
 ## 3. 实战示例
 
@@ -1296,7 +1312,7 @@ kind = "bin"
 | C 标准 | `c11` | `.c` 文件自动走 C 编译器 |
 | 静态 stdlib | `true` | 便携二进制 |
 | 头文件 | `include/`(如果存在） | 自动加到 `-I` |
-| 测试 | `tests/**/*.cpp` | `mcpp test` 自动发现 |
+| 测试 | `tests/**/*.cpp` | `mcpp test` 自动发现;`[test] discover` 替换这个集合 |
 | 依赖命名空间 | `mcpplibs`(默认) | 裸 selector 只表示该精确 ns |
 
 ### 4.1 旧 `[language]` 兼容层

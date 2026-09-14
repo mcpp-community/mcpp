@@ -107,6 +107,22 @@ This scan runs only after a lookup has already failed, and its result reaches
 error text and search output only. A bare name never resolves across namespaces
 on the strength of it.
 
+## Another toolchain for one invocation
+
+`mcpp build`, `mcpp run`, `mcpp test` and `mcpp pack` take `--toolchain <spec>`,
+which selects the compiler for that invocation and writes nothing:
+
+```bash
+mcpp test --toolchain llvm@22.1.8
+mcpp run --toolchain gcc@16.1.0
+mcpp pack --toolchain llvm@22.1.8 --format dir
+```
+
+For that invocation the option takes the place of `[toolchain] default` in
+`mcpp.toml`, at the rank [20 — Toolchain Management](20-toolchains.md) gives
+`MCPP_TOOLCHAIN`. Each toolchain builds into its own output directory, and a
+recorded build is replayed only for the toolchain request that recorded it.
+
 ## Explaining a resolution
 
 `mcpp why` reports what a build would resolve, and builds nothing:
