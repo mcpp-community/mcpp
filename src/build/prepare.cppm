@@ -11895,7 +11895,10 @@ prepare_build(bool print_fingerprint,
     // moved in — an earlier assignment was silently overwritten by that move,
     // which produced a generated file that nothing ever passed to the driver.
     // Generated here rather than in compute_flags, which runs twice per build.
-    if (tc->compiler == mcpp::toolchain::CompilerId::GCC)
+    // A link input only: a plan that builds nothing (`plan_only`) neither reads
+    // it nor runs the driver to produce it, and its compile arguments are the
+    // same without it.
+    if (tc->compiler == mcpp::toolchain::CompilerId::GCC && !overrides.plan_only)
         ctx.plan.gccCleanSpecs = mcpp::toolchain::write_clean_link_specs(
             tc->binaryPath, ctx.outputDir);
 

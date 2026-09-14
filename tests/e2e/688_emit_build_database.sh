@@ -29,6 +29,12 @@
 #      the units bypass with `--no-default-config`.
 #   K. The discovered test is scanned as a package source is: the imports inside
 #      its comment and its raw string are not in `requires`.
+#   L. The planning pass compiles nothing and writes no link input: its work
+#      directory, fresh for this project, holds the resolution record and no
+#      object, BMI or `mcpp-clean-link.specs`; in a home whose std cache is cold
+#      the document still lists the std unit and the home gains no object or
+#      BMI. The control leg at the end runs `build --configure-only` on a copy
+#      in that home and sees the std module compiled there.
 set -e
 
 TMP=$(mktemp -d)   # the measured tree: the project and its dev-dependency
@@ -262,6 +268,34 @@ norm = obj.replace("\\", "/")
 print(obj[: norm.index("/target/")])
 ' "$OUT/env.json")
 
+# ── L ──────────────────────────────────────────────────────────────────────
+[ -n "$(find "$WORK_DIR" -type f -name resolution.json 2>/dev/null)" ] \
+    || fail "L: no resolution record under the work directory $WORK_DIR"
+written=$(find "$WORK_DIR" -type f \( -name '*.o' -o -name '*.obj' -o -name '*.gcm' \
+               -o -name '*.pcm' -o -name '*.ifc' -o -name 'mcpp-clean-link.specs' \) | head -5)
+[ -z "$written" ] || fail "L: the planning pass wrote compile or link outputs: $written"
+
+# A home with the machine's toolchain payloads and an empty build cache.
+COLD="$OUT/cold-home"
+compiled_in_cold_home() {
+    find "$COLD" -path "$COLD/registry" -prune -o -type f \( -name '*.o' -o -name '*.obj' \
+         -o -name '*.gcm' -o -name '*.pcm' -o -name '*.ifc' \) -print | head -5
+}
+(
+    export MCPP_HOME="$COLD" MCPP_OFFLINE=1
+    source "$HERE/_inherit_toolchain.sh"
+    "$MCPP" emit build-database --format json > "$OUT/cold.json" 2> "$OUT/cold.err"
+) || fail "L: emit in a home with a cold std cache" "$OUT/cold.err"
+"$PY" - "$OUT/cold.json" <<'EOF' || fail "L: the cold-home document" "$OUT/cold.json"
+import json, sys
+db = json.load(open(sys.argv[1]))["data"]["database"]
+std = [u for s in db["sets"] if s["name"] == "mcpp:std" for u in s["translation-units"] if "std" in u["provides"]]
+assert len(std) == 1, db["sets"]
+EOF
+written=$(compiled_in_cold_home)
+[ -z "$written" ] || fail "L: emit compiled into a cold home: $written" "$OUT/cold.err"
+echo "ok: L, the planning pass wrote no object, BMI or link input, and a cold std cache stays cold"
+
 # ── F (against configure-only) and the control leg of B ───────────────────
 "$MCPP" build --configure-only > "$OUT/conf.out" 2>&1 || fail "F: configure-only" "$OUT/conf.out"
 [ "$(tree_digest)" != "$before" ] || fail "B control: configure-only did not change the tree"
@@ -288,3 +322,14 @@ for f in e:
     assert e[f] == w[f], (f, e[f], w[f])
 EOF
 echo "ok: F, the arguments are configure-only's; B control, configure-only writes the project"
+
+# ── the control leg of L ──────────────────────────────────────────────────
+mkdir -p "$OUT/copy"
+cp -R "$TMP/hello" "$TMP/devkit" "$OUT/copy/"
+rm -rf "$OUT/copy/hello/target" "$OUT/copy/hello/compile_commands.json"
+(
+    export MCPP_HOME="$COLD" MCPP_OFFLINE=1
+    cd "$OUT/copy/hello" && "$MCPP" build --configure-only > "$OUT/cold-conf.out" 2>&1
+) || fail "L control: configure-only in the cold home" "$OUT/cold-conf.out"
+[ -n "$(compiled_in_cold_home)" ] || fail "L control: configure-only compiled nothing into the home" "$OUT/cold-conf.out"
+echo "ok: L control, configure-only compiles the std module into the same home"

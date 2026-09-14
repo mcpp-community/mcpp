@@ -387,10 +387,14 @@ disagree about `import std`.
    source when run in its `work-directory`.
 5. A project with a syntax error, and a project never built, both produce a
    document.
-6. With mcpp's own tree as input (it has no build program), no compiler process
-   starts, on a cold std cache and on a warm one; a driver wrapper that fails
-   when invoked is the probe. The wall time on a warm cache is of the order of
-   `--configure-only`.
+6. Nothing is compiled and no link input is written, on a cold std cache and on
+   a warm one: the planning pass's work directory holds no object, BMI or
+   `mcpp-clean-link.specs`, and a home whose build cache is empty gains no object
+   or BMI, while `--configure-only` in the same home compiles the std module (the
+   control). The driver still answers the queries toolchain resolution makes
+   (`--version`, `-dumpmachine`, `-print-sysroot`), as it does for `mcpp build`,
+   so a driver wrapper that fails whenever it is invoked cannot be the probe.
+   The wall time on a warm cache is of the order of `--configure-only`.
 7. `tests/unit/test_wire.cpp` pins the kind's key set; `--format ndjson` exits 2
    with empty stdout.
 
@@ -511,7 +515,14 @@ on another repository, and it is small.
    `~/.xlings` shim as the xlings binary: nothing was vendored and the test
    stopped before either criterion. It now plans in a home with its own
    configuration.
-5. **The swept-payload fingerprint.** The first xlings rendering flagged any
+5. **A link input written by a plan that links nothing.** The independent review
+   of #639 found `prepare_build` running `g++ -dumpspecs` to write
+   `mcpp-clean-link.specs` under `plan_only`. Criterion 6 as first written
+   (a driver wrapper that fails when invoked) could not have caught it: toolchain
+   resolution queries the driver on every plan. The call is now skipped under
+   `plan_only`, the link specs being read only by the link line, and e2e 688
+   criterion L measures the work directory and a cold home instead.
+6. **The swept-payload fingerprint.** The first xlings rendering flagged any
    top-level file with a download extension or a `.meta` name, so a package
    shipping `setup.exe` would be reinstalled on every `--fix`. The fingerprint
    is now a zero-length `<name>.lock` whose `<name>` is a sibling, has a download
