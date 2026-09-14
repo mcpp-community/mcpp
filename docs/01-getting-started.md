@@ -152,6 +152,19 @@ Run it only in a trusted workspace. The process exit code and the resulting
 `compile_commands.json` are the stable integration contract; stdout remains
 human-readable.
 
+An editor that must not write into the project asks for the same plan on stdout
+*(mcpp 2026.9.15.1+)*:
+
+```bash
+mcpp emit build-database --format json
+```
+
+The document is an S1 build database: every translation unit with its compile
+command, the modules it provides and requires, the toolchain and the standard
+library units. `--spec compile-commands` prints `compile_commands.json` entries
+instead. The fields are listed in [50 — Machine-Readable Output](50-machine-output.md),
+and the rules in [SPEC-005](specs/build-database.md).
+
 ## Incremental Compilation and Testing
 
 ```bash

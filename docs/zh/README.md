@@ -155,3 +155,4 @@
   - [SPEC-002 —— 目标侧模型:保留命名空间、五层、三条规则](../specs/target-side.md)
   - [SPEC-003 —— 退出码契约](../specs/exit-codes.md)
   - [SPEC-004 —— `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约](../specs/manifest-semantics.md)
+  - [SPEC-005 —— `mcpp emit build-database` 输出的构建数据库](../specs/build-database.md)

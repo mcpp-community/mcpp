@@ -136,6 +136,16 @@ target 和 toolchain 解析结果。生成的 `compile_commands.json` 同时覆�
 workspace 中运行。插件稳定依赖进程退出码和生成的 `compile_commands.json`,标准输出仍是
 面向人的文本,不作为机器协议。
 
+不允许写入工程目录的编辑器在标准输出上取得同一份计划 *(mcpp 2026.9.15.1+)*:
+
+```bash
+mcpp emit build-database --format json
+```
+
+文档是 S1 构建数据库:每个翻译单元及其编译命令、它提供与导入的模块、工具链以及标准库
+模块单元。`--spec compile-commands` 改为输出 `compile_commands.json` 的条目。字段见
+[50 —— 机器可读输出](50-machine-output.md),规则见 [SPEC-005](../specs/build-database.md)。
+
 ## 增量编译与测试
 
 [08 —— 测试](08-testing.md) 是拥有这个主题的章节;下面只是本教程需要的那一步。

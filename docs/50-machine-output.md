@@ -59,6 +59,10 @@ for `mcpp.xpkg`, with no way to tell which actually changed.
 `effects` is always present. An empty array means "nothing"; an absent array
 would mean "unknown", which is a different claim.
 
+`data` is present whenever the command produced its document. A command that
+failed before it had one omits `data` rather than sending an empty object, and
+its `diagnostics` state why; `mcpp.build-database` is such a kind (§8).
+
 ### Diagnostics
 
 ```jsonc
@@ -402,6 +406,42 @@ from the same resolution a build performs, which may fetch packages, install a
 payload and run a dependency's build program. A client gates on that table
 *before* running anything, so an omission would be a safety claim that is not
 true.
+
+### `mcpp.build-database` — the build plan as a build database *(mcpp 2026.9.15.1+)*
+
+```
+mcpp emit build-database [--spec s1|compile-commands] --format json
+```
+
+It plans as `mcpp build --configure-only` plans, with the same selectors, and
+writes nothing into the project. `data` is:
+
+| field | |
+|---|---|
+| `spec` | `{"name": "s1", "version": "0.2.0"}`, or `{"name": "compile-commands"}` with `--spec compile-commands` |
+| `database` | the document of that specification: an S1 build database, or the entries `mcpp build --configure-only` writes to `compile_commands.json` |
+| `watch` | the inputs whose change can change the document: paths and glob patterns relative to the workspace root, or absolute paths |
+| `inputs-fingerprint` | `fnv1a:<16 hex digits>`, a digest of those inputs, the mcpp version and the selectors |
+
+Without `--format`, the command prints the document alone; `-o <file>` writes
+whatever it would print to `<file>` instead. The content of the document, the
+no-write guarantee and the `watch` rules are
+[SPEC-005](specs/build-database.md).
+
+A failure omits `data` and exits 1, with the diagnostic code
+`MCPP_BUILD_DATABASE_NO_PROJECT` outside a project or
+`MCPP_BUILD_DATABASE_PLAN_FAILED` when planning fails. Warnings leave the
+document in place:
+
+| code | |
+|---|---|
+| `MCPP_LOCK_WOULD_CHANGE` | the resolution differs from the project's `mcpp.lock`, which the command does not write |
+| `MCPP_GENERATED_FILE_NOT_MATERIALIZED` | a root `[build] generated_files` entry is missing or stale on disk, and the command does not write it |
+| `MCPP_BUILD_DATABASE_STD_UNIT_UNDESCRIBED` | no standard-library build command names its module source, so that unit is not listed |
+
+`--protocol-version` declares `init-mcpp-home`, `read-project`, `network`,
+`write-global-cache` and `exec-build-script` for the command, and never
+`write-project`.
 
 ### `mcpp test --message-format json` — the test stream
 

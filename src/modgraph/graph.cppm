@@ -13,6 +13,32 @@ struct ModuleId {
     auto operator<=>(const ModuleId&) const = default;
 };
 
+// THE MODULE DECLARATION A UNIT CARRIES, AS THE SCANNER READ IT.
+//
+// `provides`, `providesInterface` and `requires_` describe the module GRAPH, and
+// one declaration form is not recoverable from them: `module M;` (an
+// implementation unit of M) is recorded as `requires M`, exactly as a unit that
+// only says `import M;`. The form is what a build database states as a unit's
+// role, and a reader has to be told it rather than guess it (S1 profile 0.2.0
+// §8.2: a producer that cannot decide writes `unknown`).
+//
+//   None                     no module declaration
+//   Interface                `export module M;`
+//   InterfacePartition       `export module M:P;`
+//   ImplementationPartition  `module M:P;`
+//   Implementation           `module M;`
+//   Unknown                  the declaration was not read: a `scan_overrides`
+//                            entry, or a P1689 record that cannot tell an
+//                            implementation unit from an importer
+enum class ModuleDeclaration {
+    None,
+    Interface,
+    InterfacePartition,
+    ImplementationPartition,
+    Implementation,
+    Unknown,
+};
+
 struct SourceUnit {
     std::filesystem::path           path;
     // mcpp#233: path relative to this unit's PACKAGE ROOT (not the primary
@@ -61,6 +87,9 @@ struct SourceUnit {
     // to prevent. Unknown now warns, naming the file and the reason.
     std::optional<bool>             providesInterface;
     std::vector<ModuleId>           requires_;
+    // The declaration form (see ModuleDeclaration). Read by the build database
+    // renderer (mcpp.build.build_database), which states it as the unit's role.
+    ModuleDeclaration               declaration = ModuleDeclaration::None;
     // The unit's ROLE, decided once by the scanner from the owning package's
     // extension table and carried from here on. Every downstream consumer
     // (planner, backend, compile_commands, the asm dialect check) reads this

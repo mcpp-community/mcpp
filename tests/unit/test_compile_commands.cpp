@@ -416,3 +416,49 @@ TEST(CompileCommandsWriter, ExistingUnreadableDatabaseIsNotOverwritten) {
     std::filesystem::permissions(path, std::filesystem::perms::owner_all,
                                  std::filesystem::perm_options::replace, permissionEc);
 }
+
+// ── One record, two databases ───────────────────────────────────────────────
+//
+// The compile database and the build database render the same per-unit record,
+// so `arguments` cannot differ between them. The second half shows the
+// comparison can fail: the record under other flags is not the CDB's.
+TEST(CompileCommandsEmit, UnitInvocationsAreTheCompileDatabaseArguments) {
+    BuildPlan plan;
+    plan.projectRoot = "/p";
+    plan.outputDir = "/p/target";
+    plan.compileUnits.push_back({
+        .source = std::filesystem::path("/p/src/main.cpp"),
+        .kind = mcpp::SourceKind::Cxx,
+        .object = std::filesystem::path("obj") / "main.o",
+        .packageName = "demo",
+        .localIncludeDirs = { std::filesystem::path("/p/include") },
+        .packageCxxflags = { "-DDEMO=1" },
+    });
+    plan.compileUnits.push_back({
+        .source = std::filesystem::path("/p/src/c.c"),
+        .kind = mcpp::SourceKind::C,
+        .object = std::filesystem::path("obj") / "c.o",
+        .packageName = "demo",
+    });
+    CompileFlags flags;
+    flags.cxxBinary = "/usr/bin/g++";
+    flags.ccBinary  = "/usr/bin/gcc";
+    flags.cxx = "-std=c++23 '-DQUOTED=a b'";
+    flags.cc  = "-std=c11";
+
+    auto j = nlohmann::json::parse(emit_compile_commands(plan, flags));
+    auto invs = unit_invocations(plan, flags);
+    ASSERT_EQ(j.size(), invs.size());
+    for (std::size_t i = 0; i < invs.size(); ++i) {
+        EXPECT_EQ(j[i]["arguments"].get<std::vector<std::string>>(), invs[i].arguments);
+        EXPECT_EQ(j[i]["file"].get<std::string>(), invs[i].file);
+        EXPECT_EQ(j[i]["directory"].get<std::string>(), invs[i].directory);
+        EXPECT_EQ(j[i]["output"].get<std::string>(), invs[i].output);
+        EXPECT_EQ(invs[i].unit, &plan.compileUnits[i]);
+    }
+
+    CompileFlags other = flags;
+    other.cxx = "-std=c++26";
+    EXPECT_NE(j[0]["arguments"].get<std::vector<std::string>>(),
+              unit_invocations(plan, other)[0].arguments);
+}

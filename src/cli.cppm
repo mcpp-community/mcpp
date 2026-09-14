@@ -629,7 +629,7 @@ int run(int argc, char** argv) {
 
         // ─── emit (one nested subcommand: xpkg) ────────────────────────
         .subcommand(cl::App("emit")
-            .description("Generate a document describing this project (xpkg, sbom)")
+            .description("Generate a document describing this project (xpkg, sbom, build-database)")
             .subcommand(cl::App("xpkg")
                 .description("Generate xpkg Lua entry")
                 .option(cl::Option("version").short_name('V').takes_value().value_name("VER")
@@ -648,9 +648,45 @@ int run(int argc, char** argv) {
                 .description("Write a CycloneDX bill of materials for the recorded resolution")
                 .option(cl::Option("output").short_name('o').takes_value().value_name("FILE")
                     .help("Write to file instead of stdout")))
+            // The plan as an S1 build database, planned as `build
+            // --configure-only` plans it and written into nothing; the build
+            // selectors are `build`'s own (docs/specs/build-database.md).
+            .subcommand(cl::App("build-database")
+                .description("Print the build plan as an S1 build database, without writing into the project")
+                .option(cl::Option("spec").takes_value().value_name("NAME")
+                    .help("Document specification: s1 (default; the S1 IDE profile of P2977R2) | compile-commands"))
+                .option(cl::Option("format").takes_value().value_name("json")
+                    .help("Machine-readable output (enveloped; see docs/50-machine-output.md)"))
+                .option(cl::Option("output").short_name('o').takes_value().value_name("FILE")
+                    .help("Write to file instead of stdout"))
+                .option(cl::Option("target").takes_value().value_name("TRIPLE")
+                    .help("Describe the build for <triple> (same axis as `mcpp build --target`)"))
+                .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+                    .help("Describe the build with this toolchain, e.g. llvm@22.1.8"))
+                .option(cl::Option("accel").takes_value().value_name("SPEC")
+                    .help("Device backends and architectures (same axis as `mcpp build --accel`)"))
+                .option(cl::Option("no-accel")
+                    .help("Describe the variant built for no accelerator"))
+                .option(cl::Option("static").help("Describe the build with --static"))
+                .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
+                    .help("Describe only the named workspace member"))
+                .option(cl::Option("profile").takes_value().value_name("NAME")
+                    .help("Build profile: dev (default) | release | dist | <[profile.*] name>"))
+                .option(cl::Option("release").help("Shorthand for --profile release"))
+                .option(cl::Option("dev").help("Shorthand for --profile dev"))
+                .option(cl::Option("features").takes_value().value_name("LIST")
+                    .help("Activate root-package features (comma-separated)"))
+                .option(cl::Option("cap").takes_value().value_name("LIST")
+                    .help("Pin capability providers (e.g. blas=openblas,lapack=mkl)"))
+                .option(cl::Option("strict")
+                    .help("Treat manifest schema warnings (unknown feature/platform) as errors"))
+                .option(cl::Option("workspace")
+                    .help("Describe all workspace members in one document")))
             .action(wrap_rc([&dispatch_sub](const cl::ParsedArgs& p) {
                 return dispatch_sub("emit", p, {{"xpkg", cmd_emit_xpkg},
-                                                {"sbom", mcpp::cli::cmd_sbom}});
+                                                {"sbom", mcpp::cli::cmd_sbom},
+                                                {"build-database",
+                                                 mcpp::cli::cmd_emit_build_database}});
             })))
 
         // ─── xpkg (descriptor tooling: parse) ──────────────────────────
@@ -1027,6 +1063,13 @@ int run(int argc, char** argv) {
             {"why toolchain",  {Effect::InitMcppHome, Effect::ReadProject,
                                 Effect::Network, Effect::WriteGlobalCache,
                                 Effect::ExecBuildScript}},
+            // The same resolution as `why toolchain` and as `build
+            // --configure-only`, and therefore the same declaration, with one
+            // difference that is the command's reason to exist: no
+            // `write-project`. Planning writes under the mcpp home.
+            {"emit build-database", {Effect::InitMcppHome, Effect::ReadProject,
+                                     Effect::Network, Effect::WriteGlobalCache,
+                                     Effect::ExecBuildScript}},
         };
     };
 

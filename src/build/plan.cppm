@@ -54,6 +54,9 @@ struct CompileUnit {
     // Unit came from a scan_overrides declaration — plan-vs-ddi
     // verification is mandatory for it (ninja_backend emits --expect-*).
     bool                            scanOverridden = false;
+    // The module declaration form the scanner read (mcpp.modgraph.graph).
+    // Stated as the unit's role by the build database.
+    mcpp::modgraph::ModuleDeclaration declaration = mcpp::modgraph::ModuleDeclaration::None;
     // This unit's outputs are already in the global cache: the backend emits
     // `stage_file` edges from the cache instead of a compile edge (and skips
     // the P1689 scan for it entirely). The unit itself stays in the plan so
@@ -1521,6 +1524,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
         for (auto& req : u.requires_) cu.imports.push_back(req.logicalName);
         cu.scanOverridden = u.scanOverridden;
+        cu.declaration    = u.declaration;
         plan.compileUnits.push_back(std::move(cu));
     }
 

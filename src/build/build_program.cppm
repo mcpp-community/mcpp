@@ -384,6 +384,19 @@ std::expected<void, std::string> run_build_program(
 // so a dependency's input is evaluated against the dependency's tree.
 bool program_inputs_stale(const std::filesystem::path& projectRoot);
 
+// The inputs the build programs under `<workRoot>/target/.build-mcpp` declared
+// on their last run, read from the same caches program_inputs_stale compares:
+// declared files (absolute), glob patterns (relative to `root`) and environment
+// variable names. The build database lists them as inputs that change the plan.
+struct DeclaredProgramInputs {
+    std::filesystem::path              root;
+    std::vector<std::filesystem::path> files;
+    std::vector<std::string>           globs;
+    std::vector<std::string>           envs;
+};
+std::vector<DeclaredProgramInputs>
+declared_program_inputs(const std::filesystem::path& workRoot);
+
 } // namespace mcpp::build
 
 namespace mcpp::build {
@@ -1572,6 +1585,36 @@ std::expected<void, std::string> run_build_program(
         mcpp::ui::warning(a);
     write_cache(bdir, root, programHash, compilerHash, ctxHash, d);
     return {};
+}
+
+std::vector<DeclaredProgramInputs>
+declared_program_inputs(const fs::path& workRoot) {
+    std::vector<DeclaredProgramInputs> out;
+    std::error_code ec;
+    const fs::path base = workRoot / "target" / ".build-mcpp";
+    if (!fs::exists(base, ec)) return out;
+    // The walk program_inputs_stale makes, bounded the same way.
+    fs::recursive_directory_iterator it(
+        base, fs::directory_options::skip_permission_denied, ec);
+    if (ec) return out;
+    for (; it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) break;
+        if (it.depth() >= 3) { it.disable_recursion_pending(); continue; }
+        if (it->path().filename() != "build.mcpp.cache") continue;
+        auto rec = read_cache(it->path().parent_path());
+        if (!rec.loaded || rec.rootPath.empty()) continue;
+        DeclaredProgramInputs d;
+        d.root = fs::path{rec.rootPath};
+        for (auto const& [h, rel] : rec.inputs)
+            d.files.emplace_back(abs_against_root(d.root, rel));
+        for (auto const& [h, pattern] : rec.globs) d.globs.push_back(pattern);
+        for (auto const& [h, name] : rec.envs) d.envs.push_back(name);
+        out.push_back(std::move(d));
+    }
+    std::ranges::sort(out, {}, [](const DeclaredProgramInputs& d) {
+        return d.root.generic_string();
+    });
+    return out;
 }
 
 bool program_inputs_stale(const fs::path& projectRoot) {

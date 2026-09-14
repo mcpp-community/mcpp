@@ -99,6 +99,35 @@ TEST(Scanner, InterfacePartitionIsMarkedAsAnInterface) {
     std::filesystem::remove_all(dir);
 }
 
+// ─── the declaration form (build database roles) ─────────────────────────
+//
+// `module M;` is stored as `requires M`, exactly as `import M;` is, so the form
+// cannot be recovered from provides/requires. The scanner records what it read.
+TEST(Scanner, DeclarationFormIsRecordedAsRead) {
+    auto dir = make_tempdir("scan-declform");
+    std::filesystem::create_directories(dir / "src");
+    struct Case { const char* file; const char* text; ModuleDeclaration want; };
+    const Case cases[] = {
+        {"iface.cppm",  "export module mathkit;\nexport int f();\n",
+                        ModuleDeclaration::Interface},
+        {"ipart.cppm",  "export module mathkit:api;\nexport int g();\n",
+                        ModuleDeclaration::InterfacePartition},
+        {"impart.cppm", "module mathkit:secret;\nint h() { return 1; }\n",
+                        ModuleDeclaration::ImplementationPartition},
+        {"impl.cpp",    "module mathkit;\nint f() { return 2; }\n",
+                        ModuleDeclaration::Implementation},
+        {"user.cpp",    "import mathkit;\nint main() { return f(); }\n",
+                        ModuleDeclaration::None},
+    };
+    for (auto const& c : cases) {
+        write(dir / "src" / c.file, c.text);
+        auto u = scan_file(dir / "src" / c.file, "pkg", mcpp::builtin_extension_table());
+        ASSERT_TRUE(u.has_value()) << c.file;
+        EXPECT_EQ(static_cast<int>(u->declaration), static_cast<int>(c.want)) << c.file;
+    }
+    std::filesystem::remove_all(dir);
+}
+
 TEST(Scanner, PlainImplementationUnitStillRequiresItsInterface) {
     auto dir = make_tempdir("scan-implunit");
     std::filesystem::create_directories(dir / "src");

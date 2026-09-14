@@ -19,12 +19,20 @@ import mcpp.build.coff_exports;
 import mcpp.build.stage;
 import mcpp.build.schedule.detach_codegen;
 import mcpp.build.test_targets;
+import mcpp.build.build_database;
+import mcpp.build.build_program;
 import mcpp.dyndep;
+import mcpp.home;
 import mcpp.hooks;
+import mcpp.libs.json;
 import mcpp.log;
+import mcpp.platform;
+import mcpp.platform.terminal;
 import mcpp.project;
 import mcpp.manifest;
+import mcpp.toolchain.fingerprint;
 import mcpp.ui;
+import mcpp.wire;
 
 namespace mcpp::cli {
 
@@ -83,12 +91,11 @@ int run_build_with_hooks(mcpp::build::BuildContext& ctx, bool verbose,
     return rc != 0 ? rc : ((spanOk && hookOk) ? 0 : 1);
 }
 
-export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
-    bool verbose  = parsed.is_flag_set("verbose") || mcpp::log::is_verbose();
-    bool print_fp = parsed.is_flag_set("print-fingerprint");
-    bool no_cache = parsed.is_flag_set("no-cache");
-    bool configure_only = parsed.is_flag_set("configure-only");
-
+// The build selectors, read once for every command that plans a build: `mcpp
+// build` and `mcpp emit build-database` select the same plan from the same
+// flags, so the database describes the build the same flags would run.
+mcpp::build::BuildOverrides overrides_from_selectors(
+        const mcpplibs::cmdline::ParsedArgs& parsed) {
     mcpp::build::BuildOverrides ov;
     if (auto t = parsed.value("target")) ov.target_triple = *t;
     // --accel / --no-accel stand to `[build] accel` exactly as --target stands
@@ -99,11 +106,6 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (parsed.is_flag_set("no-accel"))       ov.accel = "(none)";
     else if (auto a = parsed.value("accel"))  ov.accel = *a;
     if (auto p = parsed.value("package")) ov.package_filter = *p;
-    // --cache global|local|off. --no-cache is the deprecated alias for off; the
-    // old flag only ever cleared target/, which says nothing about a cache, so
-    // it is expressed in terms of the new one rather than kept as a second axis.
-    if (auto c = parsed.value("cache")) ov.cache_mode = *c;
-    else if (no_cache)                  ov.cache_mode = "off";
     // Profile selection precedence: --profile NAME > --release / --dev > the
     // project default ([build].default-profile) > "release", resolved in
     // prepare_build. --release/--dev are shorthands only.
@@ -114,6 +116,21 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (auto cp = parsed.value("cap")) ov.capabilities = *cp;
     ov.strict = parsed.is_flag_set("strict");
     ov.force_static = parsed.is_flag_set("static");
+    return ov;
+}
+
+export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    bool verbose  = parsed.is_flag_set("verbose") || mcpp::log::is_verbose();
+    bool print_fp = parsed.is_flag_set("print-fingerprint");
+    bool no_cache = parsed.is_flag_set("no-cache");
+    bool configure_only = parsed.is_flag_set("configure-only");
+
+    mcpp::build::BuildOverrides ov = overrides_from_selectors(parsed);
+    // --cache global|local|off. --no-cache is the deprecated alias for off; the
+    // old flag only ever cleared target/, which says nothing about a cache, so
+    // it is expressed in terms of the new one rather than kept as a second axis.
+    if (auto c = parsed.value("cache")) ov.cache_mode = *c;
+    else if (no_cache)                  ov.cache_mode = "off";
 
     // Fan-out prefixes every diagnostic with the member it came from; the
     // single-package path has nothing to disambiguate and passes "".
@@ -205,6 +222,222 @@ export int cmd_build(const mcpplibs::cmdline::ParsedArgs& parsed) {
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
 
     return run_build_with_hooks(*ctx, verbose, no_cache, ov.target_triple);
+}
+
+// ─── `mcpp emit build-database` ─────────────────────────────────────────────
+//
+// The plan `mcpp build --configure-only` computes, printed as an S1 build
+// database instead of being configured: nothing is written into the project
+// (docs/specs/build-database.md, SPEC-005). Planning writes under a work
+// directory in the mcpp home, and the std module is described, not compiled.
+namespace {
+
+// One work directory per project root and member, under the mcpp home: the
+// planning pass writes its lock, its build programs' artifacts and its output
+// directory there, never inside the project.
+std::filesystem::path build_database_work_dir(const std::filesystem::path& root,
+                                              std::string_view member) {
+    return mcpp::home::root() / "cache" / "build-database"
+         / mcpp::toolchain::hash_string(root.lexically_normal().generic_string()
+                                        + "\x1f" + std::string(member));
+}
+
+std::optional<std::string> read_whole_file(const std::filesystem::path& p) {
+    std::ifstream is(p, std::ios::binary);
+    if (!is) return std::nullopt;
+    return std::string((std::istreambuf_iterator<char>(is)),
+                       std::istreambuf_iterator<char>());
+}
+
+} // namespace
+
+export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) {
+    using mcpp::wire::Diagnostic;
+    using mcpp::wire::Effect;
+    using mcpp::wire::Severity;
+
+    const auto formatValue = parsed.value("format");
+    if (formatValue && !mcpp::wire::parse_format(*formatValue)) {
+        std::println(stderr, "error: {}", mcpp::wire::unsupported_format(*formatValue));
+        return 2;
+    }
+    const bool envelope = formatValue.has_value();
+    // Which specification the document follows. The plan is one; the document
+    // is a rendering of it, named by its specification rather than by any
+    // consumer. `s1` is the default.
+    const std::string spec = parsed.value("spec").value_or("s1");
+    if (spec != "s1" && spec != "compile-commands") {
+        std::println(stderr, "error: unsupported --spec '{}'; expected: s1, compile-commands",
+                     spec);
+        return 2;
+    }
+    const auto outputPath = parsed.value("output");
+    const mcpp::build::BuildOverrides ov = overrides_from_selectors(parsed);
+
+    std::vector<Diagnostic> diagnostics;
+    auto publish = [&](const std::string& text) -> int {
+        if (!outputPath) { std::print("{}", text); return 0; }
+        const std::filesystem::path out{*outputPath};
+        auto tmp = out;
+        tmp += std::format(".tmp-{}", std::chrono::steady_clock::now()
+                                          .time_since_epoch().count());
+        {
+            std::ofstream os(tmp, std::ios::binary);
+            os << text;
+            if (!os) {
+                std::println(stderr, "error: cannot write '{}'", tmp.string());
+                return 1;
+            }
+        }
+        std::error_code ec;
+        if (!mcpp::platform::fs::replace_file(tmp, out, ec)) {
+            std::filesystem::remove(tmp, ec);
+            std::println(stderr, "error: cannot replace '{}'", out.string());
+            return 1;
+        }
+        return 0;
+    };
+    // A failure is one envelope with diagnostics and no `data` (S2 0.2.0 §3.4:
+    // a command without data has failed), and exit 1.
+    auto failed = [&](std::string code, std::string message) -> int {
+        diagnostics.push_back({std::move(code), Severity::Error, std::move(message)});
+        if (!envelope) {
+            for (auto const& d : diagnostics)
+                std::println(stderr, "{}: {}",
+                             mcpp::wire::severity_name(d.severity), d.message);
+            return 1;
+        }
+        const auto text = mcpp::wire::to_json(mcpp::wire::Envelope{
+            .kind = "mcpp.build-database",
+            .effects = {Effect::ReadProject},
+            .data = nullptr,
+            .diagnostics = diagnostics,
+        }).dump(2) + "\n";
+        (void)publish(text);
+        return 1;
+    };
+
+    auto root = mcpp::project::find_manifest_root(std::filesystem::current_path());
+    if (!root)
+        return failed("MCPP_BUILD_DATABASE_NO_PROJECT",
+                      "no mcpp.toml found in current directory or any parent");
+
+    std::vector<std::pair<std::string, mcpp::build::BuildOverrides>> requests;
+    if (auto members = workspace_fanout_members(parsed.is_flag_set("workspace"),
+                                                ov.package_filter)) {
+        for (auto const& mp : *members) {
+            auto mo = ov;
+            mo.package_filter = mp;
+            requests.emplace_back(mp, std::move(mo));
+        }
+    } else {
+        requests.emplace_back(std::string{}, ov);
+    }
+
+    std::vector<mcpp::build::BuildContext> contexts;
+    std::vector<std::filesystem::path>     workDirs;
+    std::vector<std::string>               prefixes;
+    std::vector<std::pair<std::filesystem::path, std::vector<std::string>>> testDiscovery;
+    std::optional<std::string>             planError;
+    {
+        // Planning narrates on stdout and may start programs that inherit it;
+        // the document is printed after this scope, alone.
+        mcpp::platform::terminal::StdoutToStderr narration;
+        for (auto& [member, mo] : requests) {
+            auto discovered = mcpp::build::discover_test_targets(*root, mo.package_filter);
+            if (!discovered) {
+                planError = member.empty() ? discovered.error()
+                                           : std::format("{}: {}", member, discovered.error());
+                break;
+            }
+            // As `--configure-only`: tests and dev-dependencies are part of the
+            // surface an editor needs.
+            const bool includeDevDeps = !discovered->targets.empty();
+            auto discovery = std::pair{discovered->packageRoot, discovered->discover};
+            mo.plan_only = true;
+            mo.work_dir  = build_database_work_dir(*root, mo.package_filter);
+            std::error_code ec;
+            std::filesystem::remove(mo.work_dir / "mcpp.lock", ec);
+            auto ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false,
+                                                  includeDevDeps,
+                                                  std::move(discovered->targets), mo);
+            if (!ctx) {
+                planError = member.empty() ? ctx.error()
+                                           : std::format("{}: {}", member, ctx.error());
+                break;
+            }
+            contexts.push_back(std::move(*ctx));
+            workDirs.push_back(mo.work_dir);
+            prefixes.push_back(member.empty() ? std::string{} : member + "/");
+            testDiscovery.push_back(std::move(discovery));
+        }
+    }
+    if (planError) return failed("MCPP_BUILD_DATABASE_PLAN_FAILED", *planError);
+
+    // The lock this planning produced, against the project's. The project's is
+    // never written; a difference is reported.
+    for (std::size_t i = 0; i < contexts.size(); ++i) {
+        const auto now = read_whole_file(workDirs[i] / "mcpp.lock");
+        if (!now) continue;
+        const auto projectLock = contexts[i].projectRoot / "mcpp.lock";
+        const auto was = read_whole_file(projectLock);
+        if (!was)
+            diagnostics.push_back({"MCPP_LOCK_WOULD_CHANGE", Severity::Warning,
+                std::format("'{}' does not exist; `mcpp build` would create it",
+                            projectLock.string())});
+        else if (*was != *now)
+            diagnostics.push_back({"MCPP_LOCK_WOULD_CHANGE", Severity::Warning,
+                std::format("this resolution differs from '{}'; `mcpp build` "
+                            "would update it", projectLock.string())});
+    }
+
+    std::vector<mcpp::build::database::Member> members;
+    bool ranBuildPrograms = false;
+    for (std::size_t i = 0; i < contexts.size(); ++i) {
+        members.push_back({&contexts[i], prefixes[i], workDirs[i],
+                           testDiscovery[i].first, testDiscovery[i].second});
+        if (!mcpp::build::declared_program_inputs(workDirs[i]).empty())
+            ranBuildPrograms = true;
+        for (auto const& sp : contexts[i].sourcePackages) {
+            std::error_code ec;
+            if (std::filesystem::exists(sp.root / "build.mcpp", ec)) ranBuildPrograms = true;
+        }
+    }
+    const auto selector = std::format(
+        "spec={}\x1ftarget={}\x1ftoolchain={}\x1fprofile={}\x1ffeatures={}\x1f"
+        "cap={}\x1faccel={}\x1fstatic={}\x1fpackage={}\x1fworkspace={}",
+        spec, ov.target_triple, mcpp::platform::env::get("MCPP_TOOLCHAIN").value_or(""),
+        ov.profile, ov.features, ov.capabilities, ov.accel, ov.force_static,
+        ov.package_filter, parsed.is_flag_set("workspace"));
+    auto rendered = mcpp::build::database::render(members, *root, selector);
+    for (auto& note : rendered.notes)
+        diagnostics.push_back({std::move(note.code), Severity::Warning,
+                               std::move(note.message)});
+
+    auto document = spec == "s1" ? std::move(rendered.database)
+                                 : std::move(rendered.compileCommands);
+    if (!envelope) {
+        for (auto const& d : diagnostics)
+            std::println(stderr, "{}: {}", mcpp::wire::severity_name(d.severity),
+                         d.message);
+        return publish(document.dump(2) + "\n");
+    }
+    std::vector<Effect> effects{Effect::ReadProject, Effect::WriteGlobalCache};
+    if (ranBuildPrograms) effects.push_back(Effect::ExecBuildScript);
+    nlohmann::json specJson{{"name", spec}};
+    if (spec == "s1")
+        specJson["version"] = std::string(mcpp::build::database::kProfileVersion);
+    return publish(mcpp::wire::to_json(mcpp::wire::Envelope{
+        .kind = "mcpp.build-database",
+        .effects = std::move(effects),
+        .data = nlohmann::json{
+            {"spec",               std::move(specJson)},
+            {"database",           std::move(document)},
+            {"watch",              std::move(rendered.watch)},
+            {"inputs-fingerprint", std::move(rendered.inputsFingerprint)},
+        },
+        .diagnostics = diagnostics,
+    }).dump(2) + "\n");
 }
 
 export int cmd_run(const mcpplibs::cmdline::ParsedArgs& parsed,

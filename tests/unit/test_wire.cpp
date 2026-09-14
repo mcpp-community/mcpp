@@ -240,8 +240,26 @@ TEST(WireGolden, SeverityNamesAreStable) {
 // whether to bother calling; dropping one silently is a breaking change.
 TEST(WireGolden, DeclaredKinds) {
     auto j = w::protocol_document({});
-    expect_has_keys(j["kinds"], {"mcpp.env", "mcpp.xpkg", "mcpp.cache"},
+    expect_has_keys(j["kinds"], {"mcpp.env", "mcpp.xpkg", "mcpp.cache",
+                                 "mcpp.build-database"},
                     "the kind list");
+    EXPECT_EQ(j["kinds"]["mcpp.build-database"], 1);
+}
+
+// A failure that leaves nothing to describe omits `data`: a consumer of the
+// build database reads "no data" as "the command failed" (S2 0.2.0 section 3.4),
+// so an empty object in its place would read as a success with nothing in it.
+TEST(WireGolden, NullDataIsOmitted) {
+    auto failed = w::to_json(w::Envelope{
+        .kind = "mcpp.build-database",
+        .effects = {w::Effect::ReadProject},
+        .data = nullptr,
+        .diagnostics = {{"MCPP_BUILD_DATABASE_PLAN_FAILED", w::Severity::Error, "x"}},
+    });
+    EXPECT_FALSE(failed.contains("data")) << failed.dump();
+    EXPECT_TRUE(failed.contains("diagnostics"));
+    auto ok = w::to_json(w::Envelope{.kind = "mcpp.env"});
+    EXPECT_TRUE(ok.contains("data")) << ok.dump();
 }
 
 }  // namespace

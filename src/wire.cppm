@@ -67,7 +67,7 @@ inline constexpr int kEnvelopeVersion = 1;
 // from what comes back.
 struct KindVersion { std::string_view kind; int version; };
 
-inline constexpr std::array<KindVersion, 5> kKinds{{
+inline constexpr std::array<KindVersion, 6> kKinds{{
     {"mcpp.env",             1},
     {"mcpp.xpkg",            1},
     {"mcpp.cache",           1},
@@ -79,6 +79,11 @@ inline constexpr std::array<KindVersion, 5> kKinds{{
     // `mcpp toolchain list --format json`: which toolchains are installed and
     // which target rows this host serves, with their status.
     {"mcpp.toolchain.list",  1},
+    // `mcpp emit build-database --format json`: the plan as an S1 build
+    // database (`data.database`), the inputs whose change changes it
+    // (`data.watch`) and their digest (`data.inputs-fingerprint`). Written
+    // into nothing; see docs/specs/build-database.md.
+    {"mcpp.build-database",  1},
 }};
 
 // What running a command does, beyond writing to stdout.
@@ -144,6 +149,9 @@ struct Diagnostic {
 struct Envelope {
     std::string_view kind;
     std::vector<Effect> effects;
+    // A null `data` is omitted from the envelope. That is how a command whose
+    // failure leaves nothing to describe says so: its envelope carries only
+    // diagnostics (docs/50 §2).
     nlohmann::json data = nlohmann::json::object();
     std::vector<Diagnostic> diagnostics;
 };
@@ -177,7 +185,7 @@ inline nlohmann::json to_json(const Envelope& e) {
     nlohmann::json diags = nlohmann::json::array();
     for (auto const& d : e.diagnostics) diags.push_back(to_json(d));
 
-    return nlohmann::json{
+    nlohmann::json out{
         {"schemaVersion", kEnvelopeVersion},
         {"kind",          std::string(e.kind)},
         {"kindVersion",   kind_version(e.kind)},
@@ -186,9 +194,10 @@ inline nlohmann::json to_json(const Envelope& e) {
             {"version", std::string(mcpp::MCPP_VERSION)},
             {"protocol", {{"min", kEnvelopeVersion}, {"max", kEnvelopeVersion}}},
         }},
-        {"data",        e.data},
-        {"diagnostics", std::move(diags)},
     };
+    if (!e.data.is_null()) out["data"] = e.data;
+    out["diagnostics"] = std::move(diags);
+    return out;
 }
 
 // Serialise and write to stdout. Two spaces, trailing newline: a client reads

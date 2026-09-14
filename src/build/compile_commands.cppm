@@ -30,6 +30,23 @@ export namespace mcpp::build {
 // rather than by inspection of a whole generated document.
 std::vector<std::string> split_flags(std::string_view s);
 
+// ONE TRANSLATION UNIT AS THE COMPILER IS INVOKED FOR IT.
+//
+// The compile database and the build database (mcpp.build.build_database) both
+// render this record, so the `arguments` one lists for a unit cannot differ from
+// the other's. NASM units have no record: no consumer of either format can
+// interpret their command line.
+struct UnitInvocation {
+    const CompileUnit*       unit = nullptr;   // into the plan it came from
+    std::string              directory;
+    std::string              file;
+    std::vector<std::string> arguments;        // driver first
+    std::string              output;
+};
+
+std::vector<UnitInvocation> unit_invocations(const BuildPlan& plan,
+                                             const CompileFlags& flags);
+
 // Generate compile_commands.json content as a string.
 std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& flags);
 
@@ -218,8 +235,10 @@ CompileCommandsWriteError write_error(std::string message) {
 
 }  // namespace
 
-std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
-    nlohmann::json entries = nlohmann::json::array();
+std::vector<UnitInvocation> unit_invocations(const BuildPlan& plan,
+                                             const CompileFlags& flags) {
+    std::vector<UnitInvocation> out;
+    out.reserve(plan.compileUnits.size());
 
     for (auto& cu : plan.compileUnits) {
         // NASM units carry a command line no CDB consumer (clangd, …) can
@@ -235,27 +254,42 @@ std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& fla
                             : isCSource   ? flags.cc
                                           : flags.cxx;
 
-        auto output_path = native_string(plan.outputDir / cu.object);
+        UnitInvocation inv;
+        inv.unit      = &cu;
+        inv.output    = native_string(plan.outputDir / cu.object);
+        inv.directory = native_string(plan.projectRoot);
+        inv.file      = native_string(cu.source);
 
         // Build arguments array.
-        nlohmann::json args = nlohmann::json::array();
-        args.push_back(compiler.string());
+        inv.arguments.push_back(compiler.string());
         for (auto& f : local_include_args(cu))
-            args.push_back(std::move(f));
+            inv.arguments.push_back(std::move(f));
         for (auto& f : split_flags(flagStr))
-            args.push_back(std::move(f));
+            inv.arguments.push_back(std::move(f));
         for (auto& f : package_flag_args(cu, isCSource))
-            args.push_back(std::move(f));
-        args.push_back("-c");
-        args.push_back(native_string(cu.source));
-        args.push_back("-o");
-        args.push_back(output_path);
+            inv.arguments.push_back(std::move(f));
+        inv.arguments.push_back("-c");
+        inv.arguments.push_back(inv.file);
+        inv.arguments.push_back("-o");
+        inv.arguments.push_back(inv.output);
+
+        out.push_back(std::move(inv));
+    }
+    return out;
+}
+
+std::string emit_compile_commands(const BuildPlan& plan, const CompileFlags& flags) {
+    nlohmann::json entries = nlohmann::json::array();
+
+    for (auto& inv : unit_invocations(plan, flags)) {
+        nlohmann::json args = nlohmann::json::array();
+        for (auto& a : inv.arguments) args.push_back(std::move(a));
 
         nlohmann::json entry;
-        entry["directory"] = native_string(plan.projectRoot);
-        entry["file"] = native_string(cu.source);
+        entry["directory"] = std::move(inv.directory);
+        entry["file"] = std::move(inv.file);
         entry["arguments"] = std::move(args);
-        entry["output"] = output_path;
+        entry["output"] = std::move(inv.output);
 
         entries.push_back(std::move(entry));
     }

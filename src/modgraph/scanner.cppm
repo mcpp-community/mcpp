@@ -916,6 +916,9 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
                 }
                 u.provides          = ModuleId{name};
                 u.providesInterface = true;   // read from the keyword, not assumed
+                u.declaration       = name.find(':') != std::string::npos
+                    ? ModuleDeclaration::InterfacePartition
+                    : ModuleDeclaration::Interface;
             } else {
                 // A non-exporting `module …;` is TWO different declarations
                 // wearing one spelling, and they were treated as one:
@@ -947,8 +950,10 @@ std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file
                     }
                     u.provides = ModuleId{name};
                     u.providesInterface = false;
+                    u.declaration = ModuleDeclaration::ImplementationPartition;
                 } else if (!u.provides) {
                     u.requires_.push_back(ModuleId{name});
+                    u.declaration = ModuleDeclaration::Implementation;
                 }
             }
             // The module this TU belongs to, for resolving `import :part;`
@@ -1166,6 +1171,8 @@ void scan_one_into(ScanResult& result,
             u.relPath        = std::filesystem::relative(f, root);
             u.packageName    = qualifiedName;
             u.scanOverridden = true;
+            // The override names modules; it does not carry the declaration.
+            u.declaration    = ModuleDeclaration::Unknown;
             // A declared unit still gets its role from the same classifier —
             // scan_overrides overrides what was SCANNED, not what the file is.
             u.kind           = mcpp::classify(f, extTable);

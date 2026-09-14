@@ -54,6 +54,23 @@ struct StdModule {
 
 struct StdModError { std::string message; };
 
+// WHAT ensure_built WOULD BUILD, WITHOUT BUILDING IT.
+//
+// The cache directory, the artifact paths and the build commands are all
+// derived before any compiler runs; deriving them creates no directory and
+// starts no process. A caller that describes a build rather than performing it
+// (the build database) reads this, and ensure_built reads the same derivation,
+// so the two cannot name different directories or commands.
+struct StdModuleDescription {
+    std::filesystem::path           cacheDir;
+    std::filesystem::path           bmiPath;
+    std::filesystem::path           objectPath;
+    std::filesystem::path           compatBmiPath;       // empty without std.compat
+    std::filesystem::path           compatObjectPath;    // empty without std.compat
+    std::vector<std::string>        stdCommands;         // as run, in order
+    std::vector<std::string>        compatCommands;      // as run, in order
+};
+
 std::filesystem::path default_cache_root();
 
 // Build std module if not already cached. Returns paths to BMI + object.
@@ -73,6 +90,15 @@ std::expected<StdModule, StdModError> ensure_built(
     // other one makes every importing TU fail in the ucrt headers. It also
     // enters `std_build_commands`, which is part of the cache identity, so two
     // CRT models cannot share a cache directory.
+    std::string_view                  msvc_crt_flag = {});
+
+// The derivation ensure_built builds from, with the same parameters.
+std::expected<StdModuleDescription, StdModError> describe_std_module(
+    const Toolchain&                  tc,
+    std::string_view                  cpp_standard,
+    std::string_view                  cpp_standard_flag,
+    std::string_view                  macos_deployment_target = {},
+    const std::filesystem::path&      cache_root = default_cache_root(),
     std::string_view                  msvc_crt_flag = {});
 
 } // namespace mcpp::toolchain
@@ -218,7 +244,14 @@ std::filesystem::path default_cache_root() {
     return mcpp::home::cache_root();
 }
 
-std::expected<StdModule, StdModError> ensure_built(
+namespace {
+
+struct StdDerivation {
+    StdModuleDescription description;
+    nlohmann::json       metadata;
+};
+
+std::expected<StdDerivation, StdModError> derive_std_module(
     const Toolchain&                  tc,
     std::string_view                  cpp_standard,
     std::string_view                  cpp_standard_flag,
@@ -232,7 +265,6 @@ std::expected<StdModule, StdModError> ensure_built(
     }
 
     const bool isMsvc = tc.compiler == CompilerId::MSVC;
-    StdModule sm;
 
     // Build sysroot + include flags for std module precompilation, derived
     // from the shared toolchain link model (same resolver as flags.cppm —
@@ -321,14 +353,63 @@ std::expected<StdModule, StdModError> ensure_built(
     const auto stdRoot = cache_root / "std";
     auto normalized = derive(stdRoot / kStdKeyPlaceholder).metadata;
     auto identity   = std_identity_key(normalized);
-    sm.cacheDir = stdRoot / identity;
 
-    auto derived = derive(sm.cacheDir);
-    sm.bmiPath    = derived.bmiPath;
-    sm.objectPath = derived.objectPath;
-    const auto& stdCommands    = derived.stdCommands;
-    const auto& compatCommands = derived.compatCommands;
-    const auto& metadata       = derived.metadata;
+    StdDerivation out;
+    auto& desc = out.description;
+    desc.cacheDir = stdRoot / identity;
+    auto derived = derive(desc.cacheDir);
+    desc.bmiPath        = derived.bmiPath;
+    desc.objectPath     = derived.objectPath;
+    desc.stdCommands    = std::move(derived.stdCommands);
+    desc.compatCommands = std::move(derived.compatCommands);
+    if (!desc.compatCommands.empty()) {
+        desc.compatBmiPath = isMsvc
+            ? mcpp::toolchain::msvc::std_compat_bmi_path(desc.cacheDir)
+            : mcpp::toolchain::clang::std_compat_bmi_path(desc.cacheDir);
+        desc.compatObjectPath =
+            desc.cacheDir / (isMsvc ? "std.compat.obj" : "std.compat.o");
+    }
+    out.metadata = std::move(derived.metadata);
+    return out;
+}
+
+} // namespace
+
+std::expected<StdModuleDescription, StdModError> describe_std_module(
+    const Toolchain&                  tc,
+    std::string_view                  cpp_standard,
+    std::string_view                  cpp_standard_flag,
+    std::string_view                  macos_deployment_target,
+    const std::filesystem::path&      cache_root,
+    std::string_view                  msvc_crt_flag)
+{
+    auto d = derive_std_module(tc, cpp_standard, cpp_standard_flag,
+                               macos_deployment_target, cache_root, msvc_crt_flag);
+    if (!d) return std::unexpected(d.error());
+    return std::move(d->description);
+}
+
+std::expected<StdModule, StdModError> ensure_built(
+    const Toolchain&                  tc,
+    std::string_view                  cpp_standard,
+    std::string_view                  cpp_standard_flag,
+    std::string_view                  macos_deployment_target,
+    const std::filesystem::path&      cache_root,
+    std::string_view                  msvc_crt_flag)
+{
+    auto derivation = derive_std_module(tc, cpp_standard, cpp_standard_flag,
+                                        macos_deployment_target, cache_root,
+                                        msvc_crt_flag);
+    if (!derivation) return std::unexpected(derivation.error());
+    const auto& desc = derivation->description;
+
+    StdModule sm;
+    sm.cacheDir   = desc.cacheDir;
+    sm.bmiPath    = desc.bmiPath;
+    sm.objectPath = desc.objectPath;
+    const auto& stdCommands    = desc.stdCommands;
+    const auto& compatCommands = desc.compatCommands;
+    const auto& metadata       = derivation->metadata;
     auto metaPath = metadata_path(sm.cacheDir);
     bool std_cached = std::filesystem::exists(sm.bmiPath)
                    && std::filesystem::exists(sm.objectPath)
@@ -354,17 +435,15 @@ std::expected<StdModule, StdModError> ensure_built(
 
     // Build std.compat after std (std.compat imports std; Clang + MSVC).
     if (!compatCommands.empty()) {
-        auto compatBmi = isMsvc
-            ? mcpp::toolchain::msvc::std_compat_bmi_path(sm.cacheDir)
-            : mcpp::toolchain::clang::std_compat_bmi_path(sm.cacheDir);
+        const auto& compatBmi = desc.compatBmiPath;
         if (rebuiltStd || !std::filesystem::exists(compatBmi)
             || !metadata_matches(metaPath, metadata)) {
             if (auto out = run_commands(compatCommands, tc); !out) {
                 return std::unexpected(out.error());
             }
         }
-        sm.compatBmiPath = compatBmi;
-        sm.compatObjectPath = sm.cacheDir / (isMsvc ? "std.compat.obj" : "std.compat.o");
+        sm.compatBmiPath    = desc.compatBmiPath;
+        sm.compatObjectPath = desc.compatObjectPath;
     }
 
     if (auto r = write_metadata(metaPath, metadata); !r) {

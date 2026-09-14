@@ -417,6 +417,21 @@ scan_file(const std::filesystem::path&        source,
     for (auto& r : rule->requires_) {
         u.requires_.push_back(ModuleId{ r });
     }
+    // The declaration form, only as far as the record states it. A provided
+    // module with `is-interface` names its form; a unit that requires modules
+    // and provides none is either `module M;` or an importer, and P1689 does not
+    // say which; a unit with neither has no module declaration.
+    if (u.provides && u.providesInterface) {
+        const bool partition =
+            u.provides->logicalName.find(':') != std::string::npos;
+        u.declaration = *u.providesInterface
+            ? (partition ? ModuleDeclaration::InterfacePartition
+                         : ModuleDeclaration::Interface)
+            : (partition ? ModuleDeclaration::ImplementationPartition
+                         : ModuleDeclaration::Unknown);
+    } else if (u.provides || !u.requires_.empty()) {
+        u.declaration = ModuleDeclaration::Unknown;
+    }
     return u;
 }
 

@@ -44,6 +44,9 @@ mcpp 不支持所请求的内容。
 
 `effects` 永远存在。空数组表示「没有」;字段缺失会表示「未知」,那是另一个断言。
 
+命令产出了它的文档时 `data` 存在。命令在得到文档之前就失败时省略 `data`,而不是
+给一个空对象,原因写在 `diagnostics` 里;`mcpp.build-database` 就是这样的 kind(§8)。
+
 ### 诊断
 
 ```jsonc
@@ -354,6 +357,37 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 `network`、`write-global-cache` 与 `exec-build-script`:答案来自与构建同一次的
 解析,而那可能拉取包、安装载荷、并运行某个依赖的构建程序。客户端是在**运行之前**
 读这张表来决定放不放行的,漏报一项就是一句不成立的安全承诺。
+
+### `mcpp.build-database` —— 以构建数据库表达的构建计划 *(mcpp 2026.9.15.1+)*
+
+```
+mcpp emit build-database [--spec s1|compile-commands] --format json
+```
+
+它按 `mcpp build --configure-only` 的方式、用相同的选择器规划,不写入工程目录。
+`data` 为:
+
+| 字段 | |
+|---|---|
+| `spec` | `{"name": "s1", "version": "0.2.0"}`;使用 `--spec compile-commands` 时为 `{"name": "compile-commands"}` |
+| `database` | 该规范的文档:S1 构建数据库,或 `mcpp build --configure-only` 写入 `compile_commands.json` 的条目 |
+| `watch` | 变化后可能改变文档的输入:相对工作区根的路径与 glob,或绝对路径 |
+| `inputs-fingerprint` | `fnv1a:<16 位十六进制>`,上述输入、mcpp 版本与选择器的摘要 |
+
+不带 `--format` 时命令只输出文档;`-o <file>` 把原本输出的内容写入 `<file>`。文档的
+内容、不写工程目录的保证与 `watch` 的规则见 [SPEC-005](../specs/build-database.md)。
+
+失败时省略 `data` 并以 1 退出:不在工程中时诊断码为 `MCPP_BUILD_DATABASE_NO_PROJECT`,
+规划失败时为 `MCPP_BUILD_DATABASE_PLAN_FAILED`。警告不影响文档:
+
+| 诊断码 | |
+|---|---|
+| `MCPP_LOCK_WOULD_CHANGE` | 解析结果与工程的 `mcpp.lock` 不一致,命令不写这个文件 |
+| `MCPP_GENERATED_FILE_NOT_MATERIALIZED` | 根包 `[build] generated_files` 中的某个文件缺失或内容过期,命令不写这个文件 |
+| `MCPP_BUILD_DATABASE_STD_UNIT_UNDESCRIBED` | 没有标准库构建命令点名其模块源文件,该单元不被列出 |
+
+`--protocol-version` 为这条命令声明 `init-mcpp-home`、`read-project`、`network`、
+`write-global-cache` 与 `exec-build-script`,从不声明 `write-project`。
 
 ### `mcpp test --message-format json` —— 测试流
 
