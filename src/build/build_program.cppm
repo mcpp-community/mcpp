@@ -123,6 +123,10 @@ struct BuildProgramEnv {
     // a member's own options, where `dist/apple.cppm:140-143` measured it
     // drifting.
     std::string minPlatformVersion;
+    // #634, A7: the pkg-config directories of the registry SubOS, the view
+    // payloads declare their `.pc` files into. Joined with the platform's
+    // path-list separator; empty when no registry was loaded.
+    std::string pkgConfigLibdir;
     std::string profile;                    // effective profile name (dev/release/…)
     std::vector<std::string> features;      // active feature closure of the package
     // The device axis of this build, in the wire form `mcpp.pack.abi_tag`
@@ -583,6 +587,7 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     // contract value here is. Rides this vector, so it joins the re-run key
     // like every other value contract_hash folds in.
     e.emplace_back("MCPP_TARGET_MIN_PLATFORM_VERSION", env.minPlatformVersion);
+    e.emplace_back("MCPP_PKG_CONFIG_LIBDIR", env.pkgConfigLibdir);
     e.emplace_back("MCPP_PROFILE", env.profile);
     e.emplace_back("MCPP_ACCEL", env.accel);
     e.emplace_back("MCPP_LANGUAGE_MODULES", env.languageModules ? "1" : "0");

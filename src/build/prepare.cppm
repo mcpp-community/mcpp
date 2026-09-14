@@ -1283,8 +1283,18 @@ void fill_package_build_env(mcpp::build::BuildProgramEnv& e,
 
 void fill_target_build_env(mcpp::build::BuildProgramEnv& e,
                            const mcpp::manifest::Manifest& m,
-                           const mcpp::toolchain::Toolchain* tc)
+                           const mcpp::toolchain::Toolchain* tc,
+                           const mcpp::config::GlobalConfig* cfg)
 {
+    // The registry SubOS is where payloads are installed, whichever
+    // toolchain or link mode resolved, so this is set before the toolchain
+    // gate below.
+    if (cfg) {
+        const auto view = mcpp::xlings::paths::sysroot(mcpp::config::make_xlings_env(*cfg));
+        e.pkgConfigLibdir = (view / "usr" / "lib" / "pkgconfig").generic_string()
+            + mcpp::platform::env::path_list_separator()
+            + (view / "usr" / "share" / "pkgconfig").generic_string();
+    }
     e.toolchainDir  = (tc && !tc->binaryPath.empty())
         ? tc->binaryPath.parent_path().parent_path().string() : std::string{};
     e.targetSysroot = tc ? tc->targetSysrootRoot.string() : std::string{};
@@ -1543,6 +1553,25 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
             if (needProvision) {
                 mcpp::ui::status("Provisioning",
                     std::format("{} ({})", label, join_deps(", ")));
+                // An address whose index a `[index.repos.<name>]` table
+                // redirects is installed from that source, and says so: an
+                // installation from a branch checkout must not read as one
+                // from the published index (#634, C4).
+                std::set<std::string> redirected;
+                for (auto const& d : declaredDeps) {
+                    const auto colon = d.find(':');
+                    if (colon == std::string::npos) continue;
+                    const auto index = d.substr(0, colon);
+                    for (auto const& r : cfg.indexRepos) {
+                        if (!r.fromConfig || r.name != index) continue;
+                        if (r.name == "mcpplibs" && r.url == mcpp::config::kMcpplibsIndexUrl)
+                            continue;
+                        if (redirected.insert(index).second)
+                            mcpp::ui::status("Index", std::format(
+                                "{} -> {} ([index.repos.{}] in config.toml)",
+                                r.name, r.url, r.name));
+                    }
+                }
                 // GLOBAL scope, and the scope is the whole point.
                 //
                 // The obvious alternative -- `install_packages` against
@@ -5459,7 +5488,7 @@ prepare_build(bool print_fingerprint,
             // version. Scoped: restored when this dependency's install returns,
             // compat retries below included.
             mcpp::build::BuildProgramEnv hookEnv;
-            fill_target_build_env(hookEnv, *m, tc ? &*tc : nullptr);
+            fill_target_build_env(hookEnv, *m, tc ? &*tc : nullptr, cfg_opt ? &*cfg_opt : nullptr);
             hookEnv.targetTriple = overrides.target_triple;
             // Six names, fixed by install_hook_env; one guard each.
             const auto hookVars = mcpp::build::install_hook_env(hookEnv);
@@ -9449,7 +9478,7 @@ prepare_build(bool print_fingerprint,
             // library resolved, and the three answers that keep a board
             // package from naming a toolchain. One call, so a new answer
             // reaches every build program at once — see fill_target_build_env.
-            fill_target_build_env(bpEnv, *m, tc ? &*tc : nullptr);
+            fill_target_build_env(bpEnv, *m, tc ? &*tc : nullptr, cfg_opt ? &*cfg_opt : nullptr);
             bpEnv.toolsBin = projectSubosBin;
             bpEnv.profile      = effectiveProfile;
             bpEnv.accel        = resolvedAccel();
@@ -10491,7 +10520,7 @@ prepare_build(bool print_fingerprint,
         // C library, which compiler and which C++ standard library resolved,
         // and the three answers that keep a board package from naming a
         // toolchain. One call — see fill_target_build_env.
-        fill_target_build_env(bpEnv, *m, tc ? &*tc : nullptr);
+        fill_target_build_env(bpEnv, *m, tc ? &*tc : nullptr, cfg_opt ? &*cfg_opt : nullptr);
         bpEnv.toolsBin = projectSubosBin;
         bpEnv.profile      = effectiveProfile;
         bpEnv.accel        = resolvedAccel();

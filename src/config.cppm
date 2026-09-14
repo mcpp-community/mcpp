@@ -23,6 +23,7 @@ export module mcpp.config;
 import std;
 import mcpp.home;
 import mcpp.libs.toml;
+import mcpp.libs.json;
 import mcpp.pm.index_spec;
 import mcpp.xlings;
 import mcpp.platform;
@@ -40,6 +41,10 @@ struct IndexRepo {
     std::string url;
     std::string artifact;   // optional artifact source base (xlings >= 0.4.68, #269)
     std::string source;     // optional "auto" | "artifact" | "git" ("" = xlings default auto)
+    // Read from a `[index.repos.<name>]` table rather than added by mcpp as a
+    // default. The provisioning line names an index that such a table
+    // redirected (#634, C4).
+    bool        fromConfig = false;
 };
 
 // Canonical mcpplibs index coordinates. The index repository moved from the
@@ -384,6 +389,142 @@ bool write_default_xlings_json(const std::filesystem::path& path,
     return std::filesystem::exists(path);
 }
 
+// ── `[index.repos.<name>]` reaches an existing registry (#634, C4) ──────────
+//
+// The table used to seed the registry's `.xlings.json` only when that file did
+// not exist, so a table added to the config of a home that had already run
+// once did nothing, without a word; the measured case is a consumer's CI that
+// points `xim` at a checkout of an unmerged recipe branch. Every configured
+// index repository is now written into `index_repos` when it differs from the
+// entry of the same name, and xlings re-points the index at the next sync
+// (measured: an existing home's `data/xim-pkgindex` became the checkout after
+// `mcpp index update`).
+//
+// WHAT MCPP WROTE IS RECORDED, so that removing the table undoes it. The record
+// (`.mcpp-index-overrides.json`, beside the file) keeps, per name, the entry a
+// table replaced (`null` when there was none) and the entry mcpp wrote. A name
+// that leaves the configuration gets its previous entry back, but only while
+// the file still holds what mcpp wrote: an entry changed since belongs to
+// whoever changed it. Each change prints one line.
+namespace {
+
+std::filesystem::path index_override_record(const std::filesystem::path& xjson) {
+    return xjson.parent_path() / ".mcpp-index-overrides.json";
+}
+
+std::optional<nlohmann::json> read_json_file(const std::filesystem::path& path) {
+    std::ifstream in(path);
+    if (!in) return std::nullopt;
+    auto doc = nlohmann::json::parse(in, nullptr, false);
+    if (doc.is_discarded()) return std::nullopt;
+    return doc;
+}
+
+bool write_json_file(const std::filesystem::path& path, const nlohmann::json& doc) {
+    auto tmp = path;
+    tmp += ".tmp";
+    {
+        std::ofstream out(tmp);
+        if (!out) return false;
+        out << doc.dump(2) << "\n";
+    }
+    std::error_code ec;
+    std::filesystem::rename(tmp, path, ec);
+    return !ec;
+}
+
+nlohmann::json index_repo_entry(const IndexRepo& r) {
+    nlohmann::json e = { {"name", r.name}, {"url", r.url} };
+    if (!r.artifact.empty()) e["artifact"] = r.artifact;
+    if (!r.source.empty())   e["source"] = r.source;
+    return e;
+}
+
+std::string describe_index_repo(const IndexRepo& r) {
+    return std::format("{} -> {} ([index.repos.{}] in config.toml)", r.name, r.url, r.name);
+}
+
+} // namespace
+
+// A fresh home was seeded with every configured repository. The ones a table
+// declared are recorded as written over nothing, so that removing the table
+// later restores the default instead of leaving the redirection behind.
+void record_seeded_index_repos(const std::filesystem::path& xjson,
+                               const std::vector<IndexRepo>& repos,
+                               bool quiet)
+{
+    nlohmann::json record = nlohmann::json::object();
+    for (auto const& r : repos) {
+        if (!r.fromConfig) continue;
+        if (r.name == "mcpplibs" && r.url == kMcpplibsIndexUrl) continue;  // the default
+        record[r.name] = { {"previous", nullptr}, {"written", index_repo_entry(r)} };
+        if (!quiet) print_status("Index", describe_index_repo(r));
+    }
+    if (!record.empty()) (void)write_json_file(index_override_record(xjson), record);
+}
+
+void reconcile_index_repos(const std::filesystem::path& xjson,
+                           const std::vector<IndexRepo>& repos,
+                           bool quiet)
+{
+    auto doc = read_json_file(xjson);
+    if (!doc || !doc->is_object()) return;
+    auto& entries = (*doc)["index_repos"];
+    if (!entries.is_array()) entries = nlohmann::json::array();
+    const auto recordPath = index_override_record(xjson);
+    auto record = read_json_file(recordPath).value_or(nlohmann::json::object());
+    if (!record.is_object()) record = nlohmann::json::object();
+
+    auto find = [&](const std::string& name) -> nlohmann::json* {
+        for (auto& e : entries)
+            if (e.is_object() && e.value("name", std::string{}) == name) return &e;
+        return nullptr;
+    };
+    bool fileChanged = false, recordChanged = false;
+    for (auto const& r : repos) {
+        const auto want = index_repo_entry(r);
+        auto* have = find(r.name);
+        if (have && *have == want) continue;
+        if (!record.contains(r.name))
+            record[r.name] = { {"previous", have ? *have : nlohmann::json(nullptr)} };
+        record[r.name]["written"] = want;
+        recordChanged = true;
+        if (have) *have = want;
+        else entries.insert(entries.begin(), want);
+        fileChanged = true;
+        if (!quiet) print_status("Index", describe_index_repo(r));
+    }
+    for (auto it = record.begin(); it != record.end();) {
+        const std::string name = it.key();
+        const bool stillConfigured = std::ranges::any_of(repos,
+            [&](const IndexRepo& r) { return r.name == name; });
+        if (stillConfigured) { ++it; continue; }
+        auto* have = find(name);
+        if (have && it.value().contains("written") && *have == it.value()["written"]) {
+            const auto& previous = it.value()["previous"];
+            if (previous.is_null()) {
+                for (auto e = entries.begin(); e != entries.end(); ++e)
+                    if (&*e == have) { entries.erase(e); break; }
+            } else {
+                *have = previous;
+            }
+            fileChanged = true;
+            if (!quiet)
+                print_status("Index", std::format(
+                    "{} restored (its [index.repos.{}] table is no longer in config.toml)",
+                    name, name));
+        }
+        it = record.erase(it);
+        recordChanged = true;
+    }
+    if (fileChanged) (void)write_json_file(xjson, *doc);
+    if (recordChanged) {
+        std::error_code ec;
+        if (record.empty()) std::filesystem::remove(recordPath, ec);
+        else (void)write_json_file(recordPath, record);
+    }
+}
+
 // Migration helpers delegated to mcpp.fallback.config_migration.
 // canonicalize_legacy_index_names is exported (declared above, defined after
 // this helper namespace) so its ordering rules stay under unit test.
@@ -540,6 +681,7 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
             auto it = tt.find("url");
             if (it == tt.end() || !it->second.is_string()) continue;
             IndexRepo r{ name, it->second.as_string() };
+            r.fromConfig = true;
             if (auto a = tt.find("artifact"); a != tt.end() && a->second.is_string())
                 r.artifact = a->second.as_string();
             if (auto s = tt.find("source"); s != tt.end() && s->second.is_string())
@@ -591,8 +733,10 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     auto xjson = cfg.xlingsHome() / ".xlings.json";
     if (!std::filesystem::exists(xjson)) {
         write_default_xlings_json(xjson, cfg.indexRepos, initial_mirror);
+        record_seeded_index_repos(xjson, cfg.indexRepos, quiet);
     } else {
         mcpp::fallback::migrate_xlings_json_index_names(xjson);
+        reconcile_index_repos(xjson, cfg.indexRepos, quiet);
     }
 
     // 6. Acquire xlings binary if needed

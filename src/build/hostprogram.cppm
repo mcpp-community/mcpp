@@ -401,6 +401,17 @@ inline const char* toolchain_dir()                { return env_or("MCPP_TOOLCHAI
 inline const char* toolchain_sysroot()            { return env_or("MCPP_TOOLCHAIN_SYSROOT"); }
 inline const char* toolchain_binutils_dir()       { return env_or("MCPP_TOOLCHAIN_BINUTILS_DIR"); }
 
+// The pkg-config search path of the payloads mcpp installed: the registry
+// SubOS's `usr/lib/pkgconfig` and `usr/share/pkgconfig`, joined with the
+// platform's path-list separator, for a build program that runs `pkg-config`
+// over a library a payload provides (`PKG_CONFIG_LIBDIR=<this> pkg-config
+// --cflags --libs gtk4`). Payload recipes declare their `.pc` files into that
+// view, so it resolves a payload's whole pkg-config closure.
+//
+// AN ACCESSOR AND NOT AN ENVIRONMENT DEFAULT: a package that means the host's
+// own pkg-config database keeps it, and one that means the payloads says so.
+inline const char* pkg_config_libdir()            { return env_or("MCPP_PKG_CONFIG_LIBDIR"); }
+
 // Which compiler resolved: "gcc", "clang", "msvc", or "" if none did.
 //
 // Ask this rather than inferring it from `toolchain_dir()`. The two questions
