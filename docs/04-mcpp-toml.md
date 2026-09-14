@@ -321,6 +321,7 @@ required_features = ["gui"]                   # only built when feature `gui` is
 | `required_features` | The target is emitted only when **every** listed feature is active in the build; otherwise it is silently skipped. A gate only — it does not activate features (use `--features` / `[features].default`). **One exception, and it is not a second rule:** when this target is requested as a host tool (`tools = [...]`, §2.14), the target is what was *asked for*, so its `required_features` become the sub-build's *inputs*. Same field, one meaning — the resolution just runs in the opposite direction. |
 | `windows_subsystem` *(2026.9.12.2+)* | The PE subsystem of an executable: `"console"` (the default) or `"windows"`, a GUI program that starts without a console. Reaches this target's link and no other, and renders nothing on a target that is not PE. See the section above. |
 | `windows_entry` *(2026.9.12.2+)* | The entry function the program defines: `"main"` (the default), `"wmain"`, `"WinMain"` or `"wWinMain"`. See the section above. |
+| `linkage` *(2026.9.15.2+)* | A library target's **default** link form, `"static"` or `"shared"`: the form a consumer that writes no `linkage` receives. Unlike `kind = "shared"` it is not a constraint, so a consumer's explicit statement is honoured. Refused beside `kind = "shared"` and on a program target. See [`dependency_linkage`](#dependency_linkage--static-or-shared-is-the-consumers-decision). |
 
 > **Scope (important):** `defines` / `cxxflags` / `cflags` on a target apply **only to that
 > target's exclusive entry source** (its `main`) — never to shared module/impl objects, which
@@ -452,12 +453,48 @@ whose C library is linked statically — which is the **default for musl** —
 packages write it without choosing anything. Absence of a statement is not a
 statement.
 
+**A package can also state a default** *(2026.9.15.2+)*, which is not a
+constraint:
+
+```toml
+[targets.fw]
+kind    = "lib"
+linkage = "shared"                   # the form a silent consumer receives
+
+[target.'cfg(env = "android")'.targets.fw]
+linkage = "shared"                   # the same, on the rows the selector matches
+```
+
+- The form is decided, most specific statement first, by the root's
+  `linkage` on the dependency's edge, the root's `dependency_linkage` when it
+  is written (in `[build]` or in the active profile), the package's
+  `linkage`, and `static`.
+- An explicit statement that differs from the package's default is honoured.
+  It is not a degradation, so `--strict` accepts it, and one information line
+  (`Linkage`) names both statements.
+- `kind = "shared"` and `linkage` in one table are refused, because a
+  constraint leaves no default to state; a row states one of `kind` and
+  `linkage`, and the last matching statement replaces the earlier one, so a
+  row's `linkage = "static"` returns a package the unconditional table
+  constrains to `shared` to a form its consumers choose.
+- A default the target cannot honour (a fully static image, a freestanding
+  target) falls back without a warning, because nobody asked for it.
+- An engine before 2026.9.15.2 reports `[targets.<n>] linkage` as an
+  unsupported key (silently for a dependency) and links the package statically;
+  engines from 2026.9.14.2 refuse a row table without `kind`. A package that
+  relies on the key states that engine floor.
+
+The root project's build program reads the form each dependency takes in the
+build through `mcpp::dep_linkage("name")` ([30 — build.mcpp](30-build-mcpp.md)),
+so a generated loader entry or import declaration follows the same decision.
+
 A request the constraint refuses is linked in the form the package allows,
 with a warning that names the package's statement (`its manifest states
 [targets.fw] kind = "shared", ...`); `--strict` turns the warning into an
 error. `mcpp why deps` reports each dependency's form and the reason for it:
-`default`, `requested`, `package-kind`, `row-kind`, `packaged`, `no-sources`,
-`prebuilt-inputs`, `no-loader` or `static-libc` (2026.9.14.2+).
+`default`, `package-default` (2026.9.15.2+), `requested`, `package-kind`,
+`row-kind`, `packaged`, `no-sources`, `prebuilt-inputs`, `no-loader` or
+`static-libc` (2026.9.14.2+).
 
 A per-dependency `linkage` is honoured **only in the root project's**
 `[dependencies]`. A package deep in the graph does not get to decide how the

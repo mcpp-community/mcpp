@@ -761,6 +761,7 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存�
 | `MCPP_FEATURE_<NAME>` | `mcpp::has_feature("name")` | 每个活跃 feature 置 `1`(`<NAME>` 消毒规则与 `MCPP_FEATURE_` 编译宏一致) |
 | `MCPP_FEATURES` | — | 活跃 feature 逗号列表 |
 | `MCPP_DEP_<NAME>_DIR` | `mcpp::dep_dir("name")` | 每个已声明依赖解析后的安装目录(canonical 名与去命名空间短名两种拼写都可用;`<NAME>` 消毒规则同 `MCPP_FEATURE_`)。依赖包的 build.mcpp **和**根工程的 build.mcpp 都能拿到(根工程的 build.mcpp 在依赖解析之后运行,0.0.100+) |
+| `MCPP_DEP_<NAME>_LINKAGE` *(2026.9.15.2+)* | `mcpp::dep_linkage("name")` | 每个依赖在本次构建中的链接形态,`static` 或 `shared`,名字与 `MCPP_DEP_<NAME>_DIR` 相同;没有库形态的依赖为空。该值就是决定链接内容的那次解析,生成的加载入口或 `dllimport` 声明因此与之一致。只有**根工程**的 build.mcpp 能拿到:根工程决定每个依赖的形态,而依赖包的程序运行在发现顺序更靠后的包之前,那些包的程序提供了答案所依赖的事实,所以在那里 `dep_linkage` 总是为空 |
 
 这些契约值**无条件**折入重跑键——换 target、换 profile、开关 feature 都会触发重跑,
 不需要任何 `rerun-if-env-changed` 声明。

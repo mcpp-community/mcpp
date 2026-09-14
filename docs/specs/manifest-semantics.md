@@ -5,8 +5,8 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.3 |
-| **最后修改** | 2026-09-14 |
+| **版本** | 1.4 |
+| **最后修改** | 2026-09-15 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md` |
@@ -95,7 +95,15 @@ Principle)规定,本规范不重复它,只在 §6 引用并补充一条。
 只接受库目标,只在 `lib` 与 `shared` 之间选择,在命中的行上约束该包的链接形态,
 与无条件的 `kind = "shared"` 相同。
 
-**状态:已实现**(mcpp 2026.9.14.2)。
+`linkage = "static" | "shared"` 与 `kind` 并列,可写在 `[targets.<name>]` 与其按行形式中,
+陈述库目标的**默认**链接形态:它不收窄可选形态的集合,只在消费者没有陈述时给出答案。
+形态按以下顺序决定,前者优先:根工程依赖边上的 `linkage`,根工程写下的
+`dependency_linkage`,包的 `linkage`,`static`。与包默认值不同的显式陈述**必须**被遵从,
+且不得记为降级;实现**必须**输出一条同时点名两条陈述的信息。同一张表中 `kind = "shared"`
+与 `linkage` 并存、一行同时陈述 `kind` 与 `linkage`、`linkage` 写在程序目标上,均**必须**
+被拒绝;按行合并时后命中的陈述替换先前的陈述,无论两者各是 `kind` 还是 `linkage`。
+
+**状态:已实现**(mcpp 2026.9.14.2;`linkage` 为 2026.9.15.2)。
 
 ### 3.2 门可以嵌进条件
 
@@ -315,6 +323,10 @@ feature-deps          feature-xlings         ← 限定词是门
    声明所在的表(`tests/e2e/677_a_conditional_dependency_replaces_the_unconditional_one.sh`);
    按行 `kind` 在命中行上给出共享库与原因 `row-kind`,不命中行为 `default`
    (`tests/e2e/678_a_row_states_a_library_form.sh`)。
+9. §3.1.1 `linkage` 的判据:包的默认值为 `shared` 时,不陈述的消费者得到共享库与原因
+   `package-default`;边上的 `linkage = "static"` 与写下的 `dependency_linkage = "static"`
+   都得到静态形态与原因 `requested`,且 `--strict` 下构建通过;按行 `linkage` 替换无条件的
+   `kind = "shared"`(`tests/e2e/692_a_package_states_its_default_link_form.sh`)。
 
 ## 变更记录
 
@@ -324,3 +336,4 @@ feature-deps          feature-xlings         ← 限定词是门
 | 1.1 | 2026-09-07 | 目标轴落地(mcpp 2026.9.6.4):§4.3.1 工具 selector 禁止命名目标侧层;`[target.<selector>.xlings…]` 与 `[target.<selector>.feature-xlings.<f>]` 转为已实现;§4.3 补两条轴同时命名一个包时的取舍与按包去重;§4.4 转为已实现;§7 补第 4 条判据。 |
 | 1.2 | 2026-09-07 | 一个包一个版本(mcpp 2026.9.6.6):新增 §4.5(身份=`(namespace, name)`,版本是约束;裁决与校验两步;范围必须双向可解且可被 `xpkg_dir` 回答);§4.3.1 改为「禁止命名**被解析的**层」,`accelerator` 明确被接受(2026.9.6.5);§7 补第 5 条的反向腿与第 6、7 条判据。 |
 | 1.3 | 2026-09-14 | 条件依赖声明替换同一身份的无条件声明,`targets.<name>` 成为可条件化的 section,不读取的 section 必须报出(mcpp 2026.9.14.2):新增 §3.1.1 与 §7 第 8 条判据。 |
+| 1.4 | 2026-09-15 | 库目标的默认链接形态 `linkage`(mcpp 2026.9.15.2):§3.1.1 补默认值的语义、优先顺序与拒绝条件;§7 补第 9 条判据。 |

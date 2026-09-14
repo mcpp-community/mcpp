@@ -6,6 +6,7 @@ import mcpp.libs.toml;
 import mcpp.pm.dep_spec;
 import mcpp.platform.axis;
 import mcpp.platform;
+import mcpp.build.prepare;   // merge_conditional_config: a row's statement replaces
 
 TEST(Manifest, CppFlyStandard) {
     // standard = "c++fly": latest level + all experimental gates (design
@@ -5525,4 +5526,163 @@ version = "0.1.0"
               std::string::npos) << m.error().message;
     EXPECT_NE(m.error().message.find("[target.aarch64-ios-sim.xlings.workspace]"),
               std::string::npos) << m.error().message;
+}
+
+// ─── `linkage` beside `kind`: a library's default form (#642 E1) ────────────
+//
+// `kind = "shared"` is a constraint; `linkage` is the answer a consumer gets
+// when it asks for nothing. The parse accepts the default on a library, refuses
+// it beside the constraint and on a program, and a row states one of the two.
+TEST(Manifest, TargetLinkageIsParsedAsTheLibrarysDefaultForm) {
+    auto m = mcpp::manifest::parse_string(R"(
+[package]
+name    = "fw"
+version = "0.1.0"
+[targets.fw]
+kind    = "lib"
+linkage = "shared"
+)");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->targets.size(), 1u);
+    EXPECT_EQ(m->targets[0].kind, mcpp::manifest::Target::Library);
+    EXPECT_EQ(m->targets[0].linkageDefault, "shared");
+    EXPECT_EQ(m->targets[0].linkageDeclaredBy, "[targets.fw] linkage = \"shared\"");
+    // A known key: no schema warning.
+    for (auto const& w : m->schemaWarnings)
+        EXPECT_EQ(w.find("'linkage'"), std::string::npos) << w;
+}
+
+TEST(Manifest, TargetLinkageIsRefusedBesideKindSharedAndOnAProgram) {
+    auto both = mcpp::manifest::parse_string(R"(
+[package]
+name    = "fw"
+version = "0.1.0"
+[targets.fw]
+kind    = "shared"
+linkage = "static"
+)");
+    ASSERT_FALSE(both.has_value());
+    EXPECT_NE(both.error().message.find(
+                  "states both `kind = \"shared\"` and `linkage = \"static\"`"),
+              std::string::npos) << both.error().message;
+
+    auto program = mcpp::manifest::parse_string(R"(
+[package]
+name    = "app"
+version = "0.1.0"
+[targets.app]
+kind    = "bin"
+main    = "src/main.cpp"
+linkage = "shared"
+)");
+    ASSERT_FALSE(program.has_value());
+    EXPECT_NE(program.error().message.find("a program target has no link form"),
+              std::string::npos) << program.error().message;
+
+    auto value = mcpp::manifest::parse_string(R"(
+[package]
+name    = "fw"
+version = "0.1.0"
+[targets.fw]
+kind    = "lib"
+linkage = "dynamic"
+)");
+    ASSERT_FALSE(value.has_value());
+    EXPECT_NE(value.error().message.find("`static` or `shared`"), std::string::npos)
+        << value.error().message;
+}
+
+TEST(Manifest, ARowStatesEitherKindOrLinkage) {
+    auto ok = mcpp::manifest::parse_string(R"(
+[package]
+name    = "fw"
+version = "0.1.0"
+[targets.fw]
+kind = "lib"
+[target.'cfg(os = "linux")'.targets.fw]
+linkage = "shared"
+)");
+    ASSERT_TRUE(ok.has_value()) << ok.error().format();
+    ASSERT_EQ(ok->conditionalConfigs.size(), 1u);
+    auto const& rows = ok->conditionalConfigs[0].targetKinds;
+    ASSERT_EQ(rows.count("fw"), 1u);
+    EXPECT_EQ(rows.at("fw").linkage, "shared");
+    EXPECT_EQ(rows.at("fw").statement,
+              "[target.'cfg(os = \"linux\")'.targets.fw] linkage = \"shared\"");
+    for (auto const& w : ok->schemaWarnings)
+        EXPECT_EQ(w.find("unsupported key"), std::string::npos) << w;
+
+    auto both = mcpp::manifest::parse_string(R"(
+[package]
+name    = "fw"
+version = "0.1.0"
+[targets.fw]
+kind = "lib"
+[target.'cfg(os = "linux")'.targets.fw]
+kind    = "shared"
+linkage = "shared"
+)");
+    ASSERT_FALSE(both.has_value());
+    EXPECT_NE(both.error().message.find("states both `kind` and `linkage`"),
+              std::string::npos) << both.error().message;
+}
+
+namespace {
+
+mcpp::manifest::Manifest merged_for_linux(std::string_view src) {
+    auto m = mcpp::manifest::parse_string(src);
+    EXPECT_TRUE(m.has_value()) << (m.has_value() ? "" : m.error().format());
+    if (!m) return {};
+    mcpp::build::merge_conditional_config(
+        *m, mcpp::build::cfgpred::context_for("x86_64-unknown-linux-gnu"));
+    return *m;
+}
+
+} // namespace
+
+TEST(Manifest, ARowDefaultReplacesAnUnconditionalKindShared) {
+    auto m = merged_for_linux(R"(
+[package]
+name    = "fw"
+version = "0.1.0"
+[targets.fw]
+kind = "shared"
+[target.'cfg(os = "linux")'.targets.fw]
+linkage = "static"
+)");
+    ASSERT_EQ(m.targets.size(), 1u);
+    EXPECT_EQ(m.targets[0].kind, mcpp::manifest::Target::Library);
+    EXPECT_EQ(m.targets[0].linkageDefault, "static");
+}
+
+TEST(Manifest, ARowKindClearsAnUnconditionalDefault) {
+    auto m = merged_for_linux(R"(
+[package]
+name    = "fw"
+version = "0.1.0"
+[targets.fw]
+kind    = "lib"
+linkage = "shared"
+[target.'cfg(os = "linux")'.targets.fw]
+kind = "lib"
+)");
+    ASSERT_EQ(m.targets.size(), 1u);
+    EXPECT_EQ(m.targets[0].kind, mcpp::manifest::Target::Library);
+    EXPECT_TRUE(m.targets[0].linkageDefault.empty());
+}
+
+TEST(Manifest, ARowThatDoesNotMatchLeavesTheUnconditionalStatement) {
+    auto m = merged_for_linux(R"(
+[package]
+name    = "fw"
+version = "0.1.0"
+[targets.fw]
+kind    = "lib"
+linkage = "shared"
+[target.'cfg(os = "windows")'.targets.fw]
+kind = "shared"
+)");
+    ASSERT_EQ(m.targets.size(), 1u);
+    EXPECT_EQ(m.targets[0].kind, mcpp::manifest::Target::Library);
+    EXPECT_EQ(m.targets[0].linkageDefault, "shared");
 }

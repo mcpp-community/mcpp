@@ -25,6 +25,11 @@
 //   Request      what the consumer wants — one new manifest key
 //   DepLinkage   the answer — a total function of the two
 //
+// A package may state a DEFAULT form (`linkage` beside `kind`, #642 E1). It is
+// neither of the first two layers: it does not narrow the admissible set, and it
+// is not the consumer's request. It is what `resolve` asks for when the consumer
+// asked for nothing.
+//
 // Every input to `resolve` except the request already existed in the manifest:
 // `sources`, the `-L` in `ldflags`, `targets.*.kind`,
 // `runtime.artifacts[].role`, the target format, the libc linkage. This axis
@@ -112,6 +117,15 @@ struct PackageFacts {
     std::string declaredSharedBy;
     bool        declaredSharedByRow = false;
 
+    // The author wrote `linkage = "static" | "shared"` (#642 E1): the form
+    // this package takes when the consumer asks for nothing. A PREFERENCE, and
+    // the difference from `declaredShared` is the whole point: it does not
+    // narrow the admissible set, so an explicit request for the other form is
+    // honoured rather than refused. The statement is named by the information
+    // line such an override prints.
+    std::optional<DepLinkage> defaultLinkage;
+    std::string               defaultDeclaredBy;
+
     // The package's resolved `ldflags` name link inputs mcpp did not compile
     // (see `carries_foreign_link_inputs`).
     bool carriesForeignLinkInputs = false;
@@ -166,9 +180,16 @@ struct Resolution {
     DepLinkage  linkage = DepLinkage::Static;
     // Non-empty exactly when the answer differs from an EXPLICIT request.
     std::string diagnostic;
+    // Non-empty exactly when an explicit request was honoured against the
+    // package's own stated default (#642 E1). Information, not a degradation:
+    // the build did what was asked, and the line names both statements so a
+    // reader of one manifest learns that the other exists.
+    std::string note;
     // Why this form, for the resolution record: `default` (nobody asked and
-    // nothing constrains), `requested` (an explicit request was honoured), or
-    // the `Admissible::constraint` token that overrode the request.
+    // nothing constrains), `package-default` (nobody asked and the package
+    // states its default form), `requested` (an explicit request was
+    // honoured), or the `Admissible::constraint` token that overrode the
+    // request.
     std::string reason;
 };
 
@@ -285,17 +306,44 @@ Admissible admissible(const PackageFacts& package, const TargetFacts& target) {
 Resolution resolve(const PackageFacts& package, const Admissible& admissible,
                    const Request& request) {
     // A per-package request is always explicit — someone wrote it on the edge.
+    // Precedence, most specific first: the consumer's edge, the consumer's
+    // whole-graph value when a human wrote it, the package's own default, and
+    // mcpp's default. The package's default ranks BELOW the whole-graph value
+    // because both of the consumer's statements are explicit and a default is
+    // exactly the answer an explicit statement replaces.
     bool explicitRequest = request.wholeIsExplicit;
+    bool fromPackageDefault = false;
     DepLinkage wanted = request.whole;
+    std::string requestedBy = std::format(
+        "the consumer's `[build] dependency_linkage = \"{}\"`", to_string(request.whole));
     if (auto it = request.perPackage.find(package.label);
         it != request.perPackage.end()) {
         wanted = it->second;
         explicitRequest = true;
+        requestedBy = std::format("the consumer's `linkage = \"{}\"` on this dependency",
+                                  to_string(it->second));
+    } else if (!request.wholeIsExplicit && package.defaultLinkage) {
+        wanted = *package.defaultLinkage;
+        fromPackageDefault = true;
     }
 
-    if (admissible.allows(wanted))
-        return Resolution{ .linkage = wanted,
-                           .reason = explicitRequest ? "requested" : "default" };
+    if (admissible.allows(wanted)) {
+        Resolution out{ .linkage = wanted,
+                        .reason = explicitRequest    ? "requested"
+                                : fromPackageDefault ? "package-default"
+                                                     : "default" };
+        if (explicitRequest && package.defaultLinkage
+            && *package.defaultLinkage != wanted)
+            out.note = std::format(
+                "{} is linked as a {} library: {} overrides the package's "
+                "default, {}",
+                package.label, to_string(wanted), requestedBy,
+                package.defaultDeclaredBy.empty()
+                    ? std::format("`linkage = \"{}\"`",
+                                  to_string(*package.defaultLinkage))
+                    : package.defaultDeclaredBy);
+        return out;
+    }
 
     // Not allowed. There is exactly one other form, and the admissible set is
     // never empty by construction — `staticOk` is false only for a package the

@@ -585,6 +585,24 @@ inline const char* dep_dir(const char* name) {
     buf[o++] = '_'; buf[o++] = 'D'; buf[o++] = 'I'; buf[o++] = 'R'; buf[o] = 0;
     return env_or(buf);
 }
+// #642 E2: the link form a declared dependency takes in this build, "static" or
+// "shared", or "" when it has no library form or the name is unknown. Wraps
+// MCPP_DEP_<SANITIZED_NAME>_LINKAGE, under the names dep_dir() answers for.
+// Offered to the ROOT package's build program only: the root decides every
+// dependency's form, and a dependency's program runs before every fact that
+// decides it is known, so there it is always "".
+inline const char* dep_linkage(const char* name) {
+    char buf[256] = "MCPP_DEP_";
+    unsigned long o = 9;
+    for (const char* p = name; *p && o + 9 < sizeof buf; ++p, ++o) {
+        char c = *p;
+        buf[o] = (c >= 'a' && c <= 'z') ? char(c - 'a' + 'A')
+               : ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) ? c : '_';
+    }
+    for (const char* suffix = "_LINKAGE"; *suffix; ++suffix) buf[o++] = *suffix;
+    buf[o] = 0;
+    return env_or(buf);
+}
 // The payload directory of a package declared in `[xlings] deps`.
 //
 // An INTERFACE, not a naming convention. `dep_dir` answers for mcpp

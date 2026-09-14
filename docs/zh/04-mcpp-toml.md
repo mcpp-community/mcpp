@@ -289,6 +289,7 @@ required_features = ["gui"]                   # 仅当 feature `gui` 激活时�
 | `required_features` | 仅当列出的 feature **全部**激活时才生成该目标,否则静默跳过。只是门禁——不激活 feature(用 `--features` / `[features].default`)。 |
 | `windows_subsystem` *(2026.9.12.2+)* | 可执行文件的 PE 子系统:`"console"`(默认)或 `"windows"`(启动时不带控制台的 GUI 程序)。只到达该目标的链接,在非 PE 目标上不产生任何标志。见上一节。 |
 | `windows_entry` *(2026.9.12.2+)* | 程序定义的入口函数:`"main"`(默认)、`"wmain"`、`"WinMain"` 或 `"wWinMain"`。见上一节。 |
+| `linkage` *(2026.9.15.2+)* | 库目标的**默认**链接形态,`"static"` 或 `"shared"`:不写 `linkage` 的消费者得到的形态。它不同于 `kind = "shared"`,不是约束,因此消费者的显式陈述会被遵从。与 `kind = "shared"` 同写或写在程序目标上会被拒绝。见 [`dependency_linkage`](#dependency_linkage--静态还是动态由消费者决定)。 |
 
 > **作用域(重要):** 目标上的 `defines` / `cxxflags` / `cflags` **只作用于该目标独占的入口源**
 > (它的 `main`)——**绝不**作用于共享的模块/实现对象(那些只编译一次、被每个目标链接,即 mcpp 的
@@ -402,11 +403,39 @@ dependency_linkage = "shared"        # 按 profile 覆盖
 `kind = "lib"` **不是**约束:它是默认值,大多数包写下它并没有做任何选择。
 **没有陈述不等于一条陈述。**
 
+**包还可以陈述一个默认值** *(2026.9.15.2+)*,它不是约束:
+
+```toml
+[targets.fw]
+kind    = "lib"
+linkage = "shared"                   # 不写 linkage 的消费者得到的形态
+
+[target.'cfg(env = "android")'.targets.fw]
+linkage = "shared"                   # 同上,只在选择器命中的行上
+```
+
+- 形态按陈述从具体到一般的顺序决定:根工程在该依赖边上的 `linkage`,根工程
+  写下的 `dependency_linkage`(`[build]` 或当前 profile),包的 `linkage`,
+  最后是 `static`。
+- 与包的默认值不同的显式陈述会被遵从。它不是降级,`--strict` 接受它,并由一条
+  信息行(`Linkage`)同时点名两条陈述。
+- 同一张表里同时写 `kind = "shared"` 与 `linkage` 会被拒绝,因为约束没有默认值可言;
+  一行只陈述 `kind` 与 `linkage` 之一,后命中的陈述替换先前的陈述,因此某行的
+  `linkage = "static"` 会把无条件表约束为 `shared` 的包恢复为由消费者选择的形态。
+- 目标无法遵从的默认值(完全静态的映像、freestanding 目标)静默回落,因为没有人
+  要求它。
+- 2026.9.15.2 之前的引擎把 `[targets.<n>] linkage` 报为不支持的键(对依赖静默)
+  并静态链接该包;2026.9.14.2 起的引擎拒绝不含 `kind` 的行表。依赖此键的包应陈述
+  这一引擎下限。
+
+根工程的构建程序通过 `mcpp::dep_linkage("name")` 读取每个依赖在本次构建中的形态
+([30 —— build.mcpp](30-build-mcpp.md)),生成的加载入口或导入声明因此跟随同一个决定。
+
 约束拒绝的请求按包允许的形态链接,并给出一条点名包的陈述的警告
 (`its manifest states [targets.fw] kind = "shared", ...`);`--strict` 下该警告
-成为错误。`mcpp why deps` 报告每个依赖的形态及其原因:`default`、`requested`、
-`package-kind`、`row-kind`、`packaged`、`no-sources`、`prebuilt-inputs`、
-`no-loader` 或 `static-libc`(2026.9.14.2+)。
+成为错误。`mcpp why deps` 报告每个依赖的形态及其原因:`default`、
+`package-default`(2026.9.15.2+)、`requested`、`package-kind`、`row-kind`、
+`packaged`、`no-sources`、`prebuilt-inputs`、`no-loader` 或 `static-libc`(2026.9.14.2+)。
 
 依赖边上的 `linkage` 只在**根工程**的 `[dependencies]` 里生效。依赖图深处的包
 无权决定最终程序的布局;真正必须只有一份共享副本的包,应当在自己的 target 上

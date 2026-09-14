@@ -124,3 +124,38 @@ package = {
         if (k.find("protobuf") != std::string::npos)
             EXPECT_EQ(spec.version, "35.1");
 }
+
+// #642 E1: a descriptor's target states its default link form exactly as
+// `mcpp.toml` does, and the same statements are refused.
+TEST(XpkgHostTools, TargetsCarryTheirDefaultLinkForm) {
+    auto m = parse_or_fail(R"LUA(
+package = {
+    spec = "1", name = "demo", namespace = "compat", type = "package",
+    mcpp = {
+        sources = { "*/src/**.cc" },
+        targets = {
+            ["demo"] = { linkage = "shared", kind = "lib" },
+        },
+    },
+}
+)LUA");
+    auto const* lib = find_target(m, "demo");
+    ASSERT_NE(lib, nullptr);
+    EXPECT_EQ(lib->kind, mcpp::manifest::Target::Library);
+    EXPECT_EQ(lib->linkageDefault, "shared");
+
+    auto refused = mcpp::manifest::synthesize_from_xpkg_lua(R"LUA(
+package = {
+    spec = "1", name = "demo", namespace = "compat", type = "package",
+    mcpp = {
+        sources = { "*/src/**.cc" },
+        targets = {
+            ["demo"] = { kind = "shared", linkage = "static" },
+        },
+    },
+}
+)LUA", "compat.demo", "1.0.0", mcpp::platform::HostPlatform::current());
+    ASSERT_FALSE(refused.has_value());
+    EXPECT_NE(refused.error().message.find("states both `kind = \"shared\"`"),
+              std::string::npos) << refused.error().message;
+}

@@ -73,6 +73,15 @@ SourceUnit scan_entry_file(const std::filesystem::path& file,
                            const std::string&           packageName,
                            const mcpp::ExtensionTable&  extTable);
 
+// The files a package's `sources` select, after exclusions: every file in the
+// set becomes one unit of the scan. Exported so that a decision the engine takes
+// BEFORE the scan (whether a dependency has sources of its own, which decides
+// whether it can be a shared library) reads the scan's own selection rather
+// than a second derivation of it.
+std::set<std::filesystem::path>
+package_source_files(const std::filesystem::path& root,
+                     const mcpp::manifest::Manifest& manifest);
+
 // Scan the entire package: collects all sources via manifest globs and returns a Graph.
 struct ScanResult {
     Graph                       graph;
@@ -1090,29 +1099,19 @@ local_include_dirs_after_for(const std::filesystem::path& root,
     return dirs;
 }
 
-// Phase 1: scan a single package, append units to result.graph.units;
-// errors go straight into result.errors. producerOf/edges are NOT built
-// here — the caller does that after all packages are scanned.
-void scan_one_into(ScanResult& result,
-                   const std::filesystem::path& root,
-                   const mcpp::manifest::Manifest& manifest,
-                   const std::vector<std::filesystem::path>& localIncludeDirs,
-                   const std::vector<std::filesystem::path>& localIncludeDirsAfter,
-                   const std::vector<std::string>& packageCflags,
-                   const std::vector<std::string>& packageCxxflags)
-{
-    // This package's own extension table. Built once per package, not per
-    // file, and taken from THIS manifest — a dependency is classified by its
-    // own `[build] module_extensions`, never by the consumer's.
-    const auto extTable =
-        mcpp::extension_table_for(manifest.buildConfig.moduleExtensions,
-                                  manifest.buildConfig.deviceExtensions);
+} // namespace
 
-    // Glob exclusion: patterns starting with `!` remove files from the
-    // include set (like .gitignore).
-    //   sources = ["src/**/*.cpp", "!src/**/*_test.cpp"]
-    // All positive patterns are expanded first, then all `!`-prefixed
-    // patterns are expanded and the resulting paths are removed.
+// The files a package's `sources` select, every one of which becomes a unit.
+//
+// Glob exclusion: patterns starting with `!` remove files from the include set
+// (like .gitignore).
+//   sources = ["src/**/*.cpp", "!src/**/*_test.cpp"]
+// All positive patterns are expanded first, then all `!`-prefixed patterns are
+// expanded and the resulting paths are removed.
+std::set<std::filesystem::path>
+package_source_files(const std::filesystem::path& root,
+                     const mcpp::manifest::Manifest& manifest)
+{
     std::set<std::filesystem::path> all_files;
     std::set<std::filesystem::path> excluded;
     for (auto const& g : manifest.modules.sources) {
@@ -1138,6 +1137,31 @@ void scan_one_into(ScanResult& result,
         }
     }
     for (auto& p : excluded) all_files.erase(p);
+    return all_files;
+}
+
+namespace {
+
+// Phase 1: scan a single package, append units to result.graph.units;
+// errors go straight into result.errors. producerOf/edges are NOT built
+// here — the caller does that after all packages are scanned.
+void scan_one_into(ScanResult& result,
+                   const std::filesystem::path& root,
+                   const mcpp::manifest::Manifest& manifest,
+                   const std::vector<std::filesystem::path>& localIncludeDirs,
+                   const std::vector<std::filesystem::path>& localIncludeDirsAfter,
+                   const std::vector<std::string>& packageCflags,
+                   const std::vector<std::string>& packageCxxflags)
+{
+    // This package's own extension table. Built once per package, not per
+    // file, and taken from THIS manifest — a dependency is classified by its
+    // own `[build] module_extensions`, never by the consumer's.
+    const auto extTable =
+        mcpp::extension_table_for(manifest.buildConfig.moduleExtensions,
+                                  manifest.buildConfig.deviceExtensions);
+
+    const std::set<std::filesystem::path> all_files =
+        package_source_files(root, manifest);
 
     // 0.0.6+: use qualified name (namespace.name) so the validator's
     // "module must be prefixed by package name" check works when the
@@ -1420,10 +1444,10 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
         const auto extTable =
             mcpp::extension_table_for(p.manifest.buildConfig.moduleExtensions,
                                       p.manifest.buildConfig.deviceExtensions);
-        std::set<std::filesystem::path> all_files;
-        for (auto const& g : p.manifest.modules.sources) {
-            for (auto& f : expand_glob(p.root, g)) all_files.insert(f);
-        }
+        // The same selection the regex scanner makes, exclusions and literal
+        // absolute entries included, from the one function that makes it.
+        const std::set<std::filesystem::path> all_files =
+            package_source_files(p.root, p.manifest);
         const auto localIncludeDirs = p.usageResolved
             ? p.privateBuild.includeDirs
             : local_include_dirs_for(p.root, p.manifest);

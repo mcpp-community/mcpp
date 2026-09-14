@@ -1143,6 +1143,22 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             std::format("targets.{}.kind must be 'bin', 'app', 'lib' or 'shared'; got '{}'", tname, kind_s)));
         t.kindDeclaredBy = std::format("[targets.{}] kind = \"{}\"", tname, kind_s);
 
+        // `linkage` (#642 E1): the library's default form. Refused beside
+        // `kind = "shared"`, which is a constraint and leaves no default to
+        // state, and on a program, which has no link form a consumer chooses.
+        if (auto lit = tt.find("linkage"); lit != tt.end()) {
+            if (!lit->second.is_string())
+                return std::unexpected(error(origin, std::format(
+                    "[targets.{}] linkage must be \"static\" or \"shared\"", tname)));
+            if (auto msg = library_linkage_problem(std::format("[targets.{}]", tname),
+                                                   lit->second.as_string(), t.kind);
+                !msg.empty())
+                return std::unexpected(error(origin, msg));
+            t.linkageDefault = lit->second.as_string();
+            t.linkageDeclaredBy = std::format("[targets.{}] linkage = \"{}\"",
+                                              tname, t.linkageDefault);
+        }
+
         // `main` is required for `bin` and for `app`: on every row but
         // Android it is the executable's entry, exactly as it is for `bin`;
         // on Android it is a translation unit compiled INTO the shared
@@ -1286,7 +1302,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         // must reach SHARED code is intentionally not a target key; point users
         // at the right axis (workspace / features / profile).
         static constexpr std::string_view kKnownTargetKeys[] = {
-            "kind", "main", "soname", "exports",
+            "kind", "linkage", "main", "soname", "exports",
             "cflags", "cxxflags", "defines", "required_features",
             "windows_entry", "windows_subsystem",
         };
@@ -3001,17 +3017,47 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                             "`kind = \"shared\"`", header)));
                     auto& row = tval.as_table();
                     for (auto& [rk, rv] : row)
-                        if (rk != "kind")
+                        if (rk != "kind" && rk != "linkage")
                             m.schemaWarnings.push_back(std::format(
                                 "{} has unsupported key '{}' (ignored). A row "
-                                "states only `kind`; every other key of a target "
-                                "is declared once, under [targets.{}].",
+                                "states only `kind` or `linkage`; every other key "
+                                "of a target is declared once, under [targets.{}].",
                                 header, rk, tname));
                     auto kit = row.find("kind");
+                    auto lit = row.find("linkage");
+                    // `linkage` (#642 E1): the row's DEFAULT form. A row states
+                    // one statement, a constraint or a default, and the last
+                    // matching statement replaces the earlier one when rows are
+                    // merged, so a row that states both would ask the merge to
+                    // keep two answers to one question.
+                    if (kit != row.end() && lit != row.end())
+                        return std::unexpected(error(origin, std::format(
+                            "{} states both `kind` and `linkage`. A row states one: "
+                            "`kind = \"shared\"` constrains the library to the "
+                            "shared form, `linkage = \"shared\"` makes it the "
+                            "default a consumer may override", header)));
+                    if (lit != row.end()) {
+                        if (!lit->second.is_string())
+                            return std::unexpected(error(origin, std::format(
+                                "{} linkage must be \"static\" or \"shared\"", header)));
+                        // The target's kind is not known here (targets are
+                        // inferred later), so only the value is checked; `load`
+                        // refuses a row that names a program target.
+                        if (auto msg = library_linkage_problem(
+                                header, lit->second.as_string(), Target::Library);
+                            !msg.empty())
+                            return std::unexpected(error(origin, msg));
+                        RowTargetKind rowDefault;
+                        rowDefault.linkage = lit->second.as_string();
+                        rowDefault.statement = std::format(
+                            "{} linkage = \"{}\"", header, rowDefault.linkage);
+                        cc.targetKinds[std::string(tname)] = std::move(rowDefault);
+                        continue;
+                    }
                     if (kit == row.end() || !kit->second.is_string())
                         return std::unexpected(error(origin, std::format(
-                            "{} must set `kind = \"lib\"` or `kind = \"shared\"`",
-                            header)));
+                            "{} must set `kind = \"lib\"`, `kind = \"shared\"` or "
+                            "`linkage = \"static\" | \"shared\"`", header)));
                     const auto& kindText = kit->second.as_string();
                     RowTargetKind rowKind;
                     if (kindText == "lib" || kindText == "library")
@@ -3813,10 +3859,15 @@ std::expected<Manifest, ManifestError> load(const std::filesystem::path& path,
             }
             if (target->kind != Target::Library
                 && target->kind != Target::SharedLibrary)
-                return std::unexpected(ManifestError{std::format(
-                    "{}: '{}' is a program target, and a row chooses between "
-                    "the library forms only, `lib` and `shared`",
-                    row.statement, name),
+                return std::unexpected(ManifestError{row.linkage.empty()
+                    ? std::format(
+                          "{}: '{}' is a program target, and a row chooses between "
+                          "the library forms only, `lib` and `shared`",
+                          row.statement, name)
+                    : std::format(
+                          "{}: '{}' is a program target, which has no link form for "
+                          "a consumer to choose, and `linkage` applies to a library "
+                          "target", row.statement, name),
                     path, 0, 0});
         }
     }
