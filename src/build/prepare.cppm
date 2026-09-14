@@ -6032,6 +6032,17 @@ prepare_build(bool print_fingerprint,
                     form = &f->second;
             e.depDirs.emplace_back(canon, depPkg.root);
             if (form) e.depLinkages.emplace_back(canon, *form);
+            // AND THE SPELLING THE CONSUMER'S MANIFEST USES. A package that
+            // writes `namespace = "ns"` and `name = "fw"` is a dependency named
+            // `ns.fw`, and `dep_dir("ns.fw")` read nothing while the reference
+            // above promised the canonical spelling (#642: the framework's rule
+            // asks `dep_linkage("huxerui.huxerui")`). The qualified name is
+            // unique in the graph, so it needs no binding check.
+            if (auto qualified = mcpp::build::qualified_package_name(depPkg.manifest);
+                qualified != canon) {
+                e.depDirs.emplace_back(qualified, depPkg.root);
+                if (form) e.depLinkages.emplace_back(qualified, *form);
+            }
             auto tail = prov::tail_of(canon);
             if (tail == canon) continue;
             auto it = bind.find(tail);

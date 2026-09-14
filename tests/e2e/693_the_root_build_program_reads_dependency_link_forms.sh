@@ -21,6 +21,10 @@
 #   E. In every leg, a dependency's program reads "" for its own dependency
 #      while dep_dir() answers for the same name; `gen`'s program fails the
 #      build otherwise.
+#   F. A dependency whose manifest states `namespace = "ns"` and `name =
+#      "nsfw"` is named `ns.nsfw` by its consumer, and the root program reads
+#      both `dep_linkage` and `dep_dir` under that spelling as well as under the
+#      bare name.
 set -e
 
 TMP=$(mktemp -d)
@@ -133,5 +137,33 @@ write_app ', linkage = "shared"'
 "$MCPP" build > d.log 2>&1 || fail "D: build failed" d.log
 [ "$(tail -1 runs.log)" = "fw=shared gen=shared" ] || fail "D: the root program read '$(tail -1 runs.log)'" d.log
 [ -n "$(libfw)" ] || fail "D: no libfw.so while the program read shared" d.log
+
+# ── F ──────────────────────────────────────────────────────────────────────
+mkdir -p "$TMP/nsfw/src" "$TMP/nsapp/src"
+printf '[package]\nnamespace = "ns"\nname = "nsfw"\nversion = "0.1.0"\n[targets.nsfw]\nkind = "lib"\nlinkage = "shared"\n' \
+    > "$TMP/nsfw/mcpp.toml"
+printf 'int nsfw_value() { return 42; }\n' > "$TMP/nsfw/src/nsfw.cpp"
+printf '[package]\nname = "nsapp"\nversion = "0.1.0"\n[dependencies]\nns.nsfw = { path = "../nsfw" }\n' \
+    > "$TMP/nsapp/mcpp.toml"
+printf 'int nsfw_value();\nint main() { return nsfw_value() == 42 ? 0 : 1; }\n' > "$TMP/nsapp/src/main.cpp"
+cat > "$TMP/nsapp/build.mcpp" <<'EOF'
+#include <cstdio>
+#include <string>
+import mcpp;
+int main() {
+    std::string line = std::string("qualified=") + mcpp::dep_linkage("ns.nsfw")
+                     + " bare=" + mcpp::dep_linkage("nsfw")
+                     + " dir=" + (mcpp::dep_dir("ns.nsfw")[0] != '\0' ? "yes" : "no") + "\n";
+    std::string log = std::string(mcpp::manifest_dir()) + "/runs.log";
+    std::FILE* f = std::fopen(log.c_str(), "a");
+    std::fputs(line.c_str(), f);
+    std::fclose(f);
+    return 0;
+}
+EOF
+cd "$TMP/nsapp"
+"$MCPP" build > f.log 2>&1 || fail "F: build failed" f.log
+[ "$(tail -1 runs.log)" = "qualified=shared bare=shared dir=yes" ] \
+    || fail "F: the root program read '$(tail -1 runs.log)'" f.log
 
 echo "OK"
