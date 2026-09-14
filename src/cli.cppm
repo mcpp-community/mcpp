@@ -419,6 +419,14 @@ int run(int argc, char** argv) {
                 .help("Alias for --target"))
             .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
                 .help("Run only the named workspace member (single-member; no --workspace fan-out)"))
+            // DECLARED ON THE THREE COMMANDS THAT BUILD BEFORE THEY ACT, AS ON
+            // `build`. The value has always reached them: the pre-parse loop
+            // above publishes it as MCPP_TOOLCHAIN for every command, and
+            // `MCPP_TOOLCHAIN=llvm@22.1.8 mcpp test` compiled with clang, while
+            // the spelling the help of `build` teaches was refused here as an
+            // unknown option (#634 A10).
+            .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+                .help("Build with this toolchain for one invocation, e.g. llvm@22.1.8"))
             .option(cl::Option("cache").takes_value().value_name("MODE")
                 .help("Global dependency cache: global (default) | local | off"))
             .option(cl::Option("no-cache")
@@ -509,6 +517,8 @@ int run(int argc, char** argv) {
                 .help("Treat manifest schema warnings (unknown feature/platform) as errors"))
             .option(cl::Option("package").short_name('p').takes_value().value_name("NAME")
                 .help("Run tests only for the named workspace member"))
+            .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+                .help("Build the tests with this toolchain for one invocation, e.g. llvm@22.1.8"))
             .option(cl::Option("cache").takes_value().value_name("MODE")
                 .help("Global dependency cache: global (default) | local | off"))
             .option(cl::Option("no-cache")
@@ -609,6 +619,8 @@ int run(int argc, char** argv) {
             // this only replaces the "dev" fallback every other command uses.
             .option(cl::Option("profile").takes_value()
                 .help("Build profile (default: [build] default-profile, else release)"))
+            .option(cl::Option("toolchain").takes_value().value_name("SPEC")
+                .help("Build with this toolchain for one invocation, e.g. llvm@22.1.8"))
             .option(cl::Option("no-strip")
                 .help("Ship the artifacts as built (default: strip debug info)"))
             .option(cl::Option("debug-symbols").takes_value().value_name("DIR")
