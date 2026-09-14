@@ -8,12 +8,14 @@
 # refused the program ("non-exported symbol ... referenced by DSO"), on macOS
 # the dylib itself failed to link.
 #
-# The engine now refuses before compiling, naming the two ways out, and links a
+# The engine now refuses before compiling, naming the ways out, and links a
 # private copy of the runtime into the shared library when the manifest states
-# `cxx_runtime = { shared = "self-contained" }`. Read in three legs: the refusal
-# and its token; the static edge, which builds and runs; the stated private
-# copy, which builds, leaves the library with no undefined libc++ reference,
-# and runs. The last leg also prints, as a reading, whether a standard
+# `cxx_runtime = { shared = "self-contained" }`. Read in four legs: the refusal
+# for a package that constrains its own form, which names its statement and
+# offers no edge remedy, with the refusal's token; the refusal for a form the
+# consumer requested, which offers both remedies; the static edge, which builds
+# and runs; the stated private copy, which builds, leaves the library with no
+# undefined libc++ reference, and runs. The last leg also prints, as a reading, whether a standard
 # exception thrown in the library is caught by its class in the program: with
 # one private copy per image it is not, and that is the consequence the
 # refusal states.
@@ -28,14 +30,16 @@ fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2
 cd "$TMP"
 mkdir -p fw/src app/src
 
-cat > fw/mcpp.toml <<'TOML'
+write_fw() {    # $1 = the kind fw declares
+    cat > fw/mcpp.toml <<TOML
 [package]
 name    = "fw"
 version = "0.1.0"
 
 [targets.fw]
-kind = "shared"
+kind = "$1"
 TOML
+}
 cat > fw/src/fw.cppm <<'CPP'
 export module fw;
 import std;
@@ -77,7 +81,8 @@ int main() {
 }
 CPP
 
-# ── The refusal, before anything compiles ───────────────────────────────────
+# ── The refusal, before anything compiles: the package constrains the form ─
+write_fw shared
 write_app '{ path = "../fw" }' ''
 cd app
 if "$MCPP" build > refused.log 2>&1; then
@@ -86,10 +91,13 @@ fi
 grep -q "'fw' is linked as a shared library" refused.log \
     || fail "the refusal does not name the shared library" refused.log
 grep -q "llvm.libcxx@22.1.8.2" refused.log || fail "the refusal does not name the provider" refused.log
-grep -q 'linkage = "static"' refused.log || fail "the refusal does not name the static edge" refused.log
 grep -q 'cxx_runtime = { shared = "self-contained" }' refused.log \
     || fail "the refusal does not name the private-copy statement" refused.log
 grep -q "not caught by that class" refused.log || fail "the refusal does not state the consequence" refused.log
+grep -q "'fw' states its form itself (\[targets.fw\] kind = \"shared\")" refused.log \
+    || fail "the refusal does not name the package's own statement" refused.log
+grep -q 'linkage = "static" }' refused.log \
+    && fail "the refusal offers an edge remedy the package's constraint defeats" refused.log
 ninja=$(ls target/*/*/build.ninja 2>/dev/null | head -1 || true)
 [ -z "$ninja" ] || ! grep -q '^build bin/libfw.so' "$ninja" \
     || fail "a build graph with the shared library was written before the refusal" "$ninja"
@@ -99,7 +107,22 @@ if command -v jq >/dev/null 2>&1; then
     [ "$reason" = "shared-library-cxx-runtime" ] \
         || fail "the machine reason was '$reason', expected shared-library-cxx-runtime" why.json
 fi
-echo "ok: the shared library is refused before compiling, with both remedies"
+echo "ok: a package-constrained shared library is refused before compiling"
+cd ..
+
+# ── The refusal when the consumer asked for the shared form: both remedies ──
+write_fw lib
+write_app '{ path = "../fw", linkage = "shared" }' ''
+cd app
+rm -rf target
+if "$MCPP" build > requested.log 2>&1; then
+    fail "a requested shared library over a graph C++ runtime was not refused" requested.log
+fi
+grep -q 'linkage = "static" }' requested.log \
+    || fail "the refusal does not offer the static edge for a requested form" requested.log
+grep -q 'cxx_runtime = { shared = "self-contained" }' requested.log \
+    || fail "the refusal does not offer the private copy for a requested form" requested.log
+echo "ok: a requested shared library is refused with both remedies"
 cd ..
 
 # ── The static edge: builds and runs, no shared library ──────────────────────
@@ -115,6 +138,7 @@ echo "ok: linkage = \"static\" builds and runs"
 cd ..
 
 # ── The stated private copy: builds, no undefined libc++ reference, runs ────
+write_fw shared
 write_app '{ path = "../fw" }' 'cxx_runtime = { shared = "self-contained" }'
 cd app
 rm -rf target

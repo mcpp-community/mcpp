@@ -11849,24 +11849,52 @@ prepare_build(bool print_fingerprint,
             dist::stated_shared_library_contract(bc.cxxRuntime, bc.cxxRuntimeShared,
                                                  bc.staticStdlib, format)
             == dist::Contract::SelfContained;
-        std::vector<std::string> withoutRuntime;
+        // A refused library, and the statement that makes it shared when its
+        // own package makes it so: an edge's `linkage = "static"` cannot change
+        // a form the package constrains, so that remedy is offered only where
+        // the resolution says a request or a default decided.
+        struct Refused { std::string name; std::string statedBy; };
+        std::vector<Refused> withoutRuntime;
         const auto runtimeObjects = mcpp::build::package_link_objects(ctx.plan, providerName);
         for (auto& lu : ctx.plan.linkUnits) {
             if (lu.kind != mcpp::build::LinkUnit::SharedLibrary || !lu.dependencyOwned)
                 continue;
             if (!mcpp::build::link_unit_holds_cxx(ctx.plan, lu)) continue;
-            if (!privateCopy) {
-                withoutRuntime.push_back(lu.targetName);
+            if (privateCopy) {
+                for (auto const& o : runtimeObjects)
+                    if (std::ranges::find(lu.objects, o) == lu.objects.end())
+                        lu.objects.push_back(o);
                 continue;
             }
-            for (auto const& o : runtimeObjects)
-                if (std::ranges::find(lu.objects, o) == lu.objects.end())
-                    lu.objects.push_back(o);
+            Refused r{ lu.targetName, {} };
+            for (std::size_t i = 1; i < packages.size(); ++i) {
+                auto form = graphLinkForms.find(i);
+                if (form == graphLinkForms.end()) continue;
+                if (form->second.second != "package-kind" && form->second.second != "row-kind")
+                    continue;
+                for (auto const& t : packages[i].manifest.targets)
+                    if (t.name == lu.targetName && !t.kindDeclaredBy.empty())
+                        r.statedBy = t.kindDeclaredBy;
+            }
+            withoutRuntime.push_back(std::move(r));
         }
         if (!withoutRuntime.empty()) {
-            std::string names;
-            for (auto const& n : withoutRuntime)
-                names += (names.empty() ? "'" : ", '") + n + "'";
+            std::string names, constrained;
+            bool anyRequested = false;
+            for (auto const& r : withoutRuntime) {
+                names += (names.empty() ? "'" : ", '") + r.name + "'";
+                if (r.statedBy.empty()) anyRequested = true;
+                else constrained += std::format(
+                    "       '{}' states its form itself ({}), so its edge cannot "
+                    "link it static.\n", r.name, r.statedBy);
+            }
+            const std::string staticRemedy = anyRequested
+                ? "       Link the dependency static, on its edge in [dependencies]:\n"
+                  "\n"
+                  "           <name> = { ..., linkage = \"static\" }\n"
+                  "\n"
+                  "       or give each shared library a private copy of the runtime:\n"
+                : "       Give each shared library a private copy of the runtime:\n";
             refusal::record(refusal::Code::SharedLibraryCxxRuntime);
             return std::unexpected(std::format(
                 "{} {} linked as a shared library, and this graph's C++ runtime is "
@@ -11875,11 +11903,7 @@ prepare_build(bool print_fingerprint,
                 "package compiles its runtime\n"
                 "       with hidden visibility, so one image cannot use another "
                 "image's copy.\n"
-                "       Link the dependency static, on its edge in [dependencies]:\n"
-                "\n"
-                "           <name> = {{ ..., linkage = \"static\" }}\n"
-                "\n"
-                "       or give each shared library a private copy of the runtime:\n"
+                "{}{}"
                 "\n"
                 "           [build]\n"
                 "           cxx_runtime = {{ shared = \"self-contained\" }}\n"
@@ -11890,7 +11914,7 @@ prepare_build(bool print_fingerprint,
                 "each copy has its own\n"
                 "       type information.",
                 names, withoutRuntime.size() == 1 ? "is" : "are",
-                providerName, provider.package.version));
+                providerName, provider.package.version, constrained, staticRemedy));
         }
     }
 
