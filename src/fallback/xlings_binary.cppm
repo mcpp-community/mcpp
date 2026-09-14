@@ -156,8 +156,12 @@ acquire_xlings_binary(const std::filesystem::path& destBin, bool quiet = false,
 std::string vendored_xlings_version(const std::filesystem::path& bin) {
     std::error_code ec;
     if (!std::filesystem::exists(bin, ec)) return {};
-    auto r = mcpp::platform::process::capture(std::format(
-        "{} --version 2>/dev/null", mcpp::platform::shell::quote(bin.string())));
+    // An argument vector, not a command string. The string form carried
+    // `2>/dev/null`, which cmd.exe cannot open: on Windows it printed "The
+    // system cannot find the path specified." in every command after the first,
+    // did not run xlings, and so returned an empty version, which made the
+    // pin comparison in acquire_xlings_binary return early forever.
+    auto r = mcpp::platform::process::capture_stdout({bin.string(), "--version"});
     if (r.exit_code != 0) return {};
     // Output carries ANSI colour; take the first dotted-numeric run.
     std::string out;

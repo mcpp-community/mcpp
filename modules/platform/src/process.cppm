@@ -32,6 +32,7 @@ module;
 // Linux and macOS launchers do a direct exec (see run_exec / capture_exec
 // below); only Windows keeps the std::system shell path (#248).
 #include <unistd.h>    // pipe, dup2, close, read
+#include <fcntl.h>     // O_RDONLY, O_WRONLY for capture_stdout's /dev/null
 #include <sys/wait.h>  // waitpid
 #include <spawn.h>     // posix_spawnp, posix_spawn_file_actions_* (incl. addchdir_np)
 // The deadline runners' headers (signal.h, errno, poll.h, fcntl.h, time.h)
@@ -109,6 +110,37 @@ RunResult capture_exec(
     const std::vector<std::pair<std::string, std::string>>& extraEnv = {},
     std::string_view cwd = {},
     int* spawn_error = nullptr);
+
+// A PROGRAM PROBE: run `argv` directly, capture its standard output only, give
+// it an empty standard input, and discard its standard error.
+//
+// This is the argument-vector form of `<program> <args> 2>/dev/null`, and it
+// exists because that string form is written in one shell's grammar. On
+// Windows every command string reaches cmd.exe, which resolves `/dev/null` to
+// `\dev\null` on the current drive, cannot open it, prints "The system cannot
+// find the path specified." on its own stderr and does not run the program.
+// Measured on windows-2022 with mcpp 2026.9.14.3: the vendored-xlings version
+// probe printed that line in every command after the first, and returned an
+// empty version, which silently disabled the pin check it existed for. The
+// null device and the redirection belong to this layer; a caller states only
+// the program and its arguments.
+//
+// The output is the program's standard output and nothing else. A program
+// that cannot be started yields exit code 127 and EMPTY output: a probe parses
+// what it captured, so a launcher error message in `output` would be read as
+// the program's answer. `spawn_error` has run_exec's contract.
+RunResult capture_stdout(
+    const std::vector<std::string>& argv,
+    const std::vector<std::pair<std::string, std::string>>& extraEnv = {},
+    int* spawn_error = nullptr);
+
+// capture_stdout for a host tool: the target runtime library search variable is
+// cleared for the child, as capture_host_tool does for a command string.
+RunResult capture_host_tool_stdout(const std::vector<std::string>& argv);
+
+// The command line capture_stdout hands to cmd.exe on Windows. Host-independent
+// so the Windows rendering is testable from any platform.
+std::string windows_stdout_probe_command(const std::vector<std::string>& argv);
 
 // Deadline variants: kill the child once `deadline` elapses and set
 // *timed_out. A zero deadline means no limit.
@@ -751,6 +783,86 @@ RunResult capture_exec(
     }
     return capture_with_env(cmd, extraEnv);
 #endif
+}
+
+// Host-independent (see the declaration): always the Windows shape. The
+// redirect names cmd.exe's own null device, and the argv is quoted by the one
+// shaper every Windows launch in this file uses.
+std::string windows_stdout_probe_command(const std::vector<std::string>& argv) {
+    return windows_command_from_argv(argv) + " 2>nul";
+}
+
+RunResult capture_stdout(
+    const std::vector<std::string>& argv,
+    const std::vector<std::pair<std::string, std::string>>& extraEnv,
+    int* spawn_error)
+{
+    RunResult result;
+    if (spawn_error) *spawn_error = 0;
+    if (argv.empty()) { result.exit_code = 127; return result; }
+#if defined(__linux__) || defined(__APPLE__)
+    int fds[2];
+    if (::pipe(fds) != 0) { result.exit_code = 127; return result; }
+
+    auto envStore = merged_environ(extraEnv);
+    std::vector<char*> envp;
+    for (auto& s : envStore) envp.push_back(s.data());
+    envp.push_back(nullptr);
+    std::vector<char*> cargv;
+    for (auto& a : argv) cargv.push_back(const_cast<char*>(a.c_str()));
+    cargv.push_back(nullptr);
+
+    posix_spawn_file_actions_t fa;
+    ::posix_spawn_file_actions_init(&fa);
+    ::posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
+    ::posix_spawn_file_actions_adddup2(&fa, fds[1], 1);   // stdout -> pipe
+    ::posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
+    ::posix_spawn_file_actions_addclose(&fa, fds[0]);
+    ::posix_spawn_file_actions_addclose(&fa, fds[1]);
+
+    // Owned as capture_exec's child is: a probe that outlives an interrupted
+    // mcpp is the same orphan, only smaller.
+    posix_spawnattr_t attr;
+    ::posix_spawnattr_init(&attr);
+    ::posix_spawnattr_setpgroup(&attr, 0);
+    ::posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+
+    pid_t pid = 0;
+    int sp = ::posix_spawnp(&pid, cargv[0], &fa, &attr, cargv.data(), envp.data());
+    ::posix_spawnattr_destroy(&attr);
+    ::posix_spawn_file_actions_destroy(&fa);
+    ::close(fds[1]);
+    if (sp != 0) {
+        ::close(fds[0]);
+        result.exit_code = 127;
+        if (spawn_error) *spawn_error = sp;
+        return result;
+    }
+    mcpp::platform::unixproc::guard_group_on_signal(pid);
+
+    std::array<char, 4096> buf{};
+    ssize_t n;
+    while ((n = ::read(fds[0], buf.data(), buf.size())) > 0)
+        result.output.append(buf.data(), static_cast<size_t>(n));
+    ::close(fds[0]);
+    int status = 0;
+    while (::waitpid(pid, &status, 0) < 0) { /* EINTR retry */ }
+    mcpp::platform::unixproc::unguard_group(pid);
+    result.exit_code = normalize_exit_code(status);
+    return result;
+#else
+    // cmd.exe reports a program it cannot find on stderr, which the redirect
+    // discards, and returns 9009; the output stays empty either way.
+    return capture_with_env(windows_stdout_probe_command(argv), extraEnv);
+#endif
+}
+
+RunResult capture_host_tool_stdout(const std::vector<std::string>& argv) {
+    auto key = mcpp::platform::env::host_tool_runtime_library_path_key();
+    std::optional<mcpp::platform::env::ScopedEnv> runtime_env;
+    if (!key.empty())
+        runtime_env.emplace(key, std::nullopt);
+    return capture_stdout(argv);
 }
 
 // ─── The ONE place the platform question is asked for a bounded run ────────

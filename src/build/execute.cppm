@@ -810,11 +810,12 @@ void report_freestanding_size(const BuildContext& ctx) {
         auto art = ctx.outputDir / lu.output;
         std::error_code ec;
         if (!std::filesystem::exists(art, ec)) continue;
-        auto out = mcpp::xlings::run_capture(std::format(
-            "{} {} 2>/dev/null", mcpp::xlings::shq(tool.string()),
-            mcpp::xlings::shq(art.string())));
-        if (!out) continue;
-        auto s = mcpp::freestanding::parse_size_output(*out);
+        // An argument vector rather than a `2>/dev/null` command string,
+        // which cmd.exe cannot open on a Windows host.
+        auto out = mcpp::platform::process::capture_stdout(
+            {tool.string(), art.string()});
+        if (out.exit_code != 0 && out.output.empty()) continue;
+        auto s = mcpp::freestanding::parse_size_output(out.output);
         if (!s) continue;
         mcpp::ui::info("Size", std::format(
             "{}  text {}  data {}  bss {}  total {}",

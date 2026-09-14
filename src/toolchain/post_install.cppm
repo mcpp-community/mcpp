@@ -849,9 +849,11 @@ std::filesystem::path write_clean_link_specs(
     // regenerating it every build would spawn a process for a constant.
     if (std::filesystem::exists(out, ec)) return out;
 
-    auto r = mcpp::platform::process::capture(std::format(
-        "{} -dumpspecs 2>/dev/null",
-        mcpp::platform::shell::quote(compilerBin.string())));
+    // An argument vector: the command-string form carried `2>/dev/null`, which
+    // cmd.exe cannot open, so on a Windows host this probe printed a spurious
+    // path error in every prepared GCC build and never produced the file.
+    auto r = mcpp::platform::process::capture_stdout(
+        {compilerBin.string(), "-dumpspecs"});
     if (r.exit_code != 0 || r.output.empty()) return {};
 
     // `*link:` is a section header on its own line; its body is the next line.

@@ -123,11 +123,12 @@ std::optional<std::filesystem::path> find_std_module_source(
         }
     }
 
-    auto cmd = std::format("'{}' -print-file-name=libstdc++.so 2>/dev/null",
-                           cxx_binary.string());
-    auto r = mcpp::toolchain::run_capture(cmd);
-    if (r) {
-        auto trimmed = mcpp::toolchain::trim_line(*r);
+    // An argument vector: the command-string form was written for /bin/sh
+    // (single quotes and `2>/dev/null`), and cmd.exe reads neither.
+    auto r = mcpp::platform::process::capture_host_tool_stdout(
+        {cxx_binary.string(), "-print-file-name=libstdc++.so"});
+    if (r.exit_code == 0) {
+        auto trimmed = mcpp::toolchain::trim_line(r.output);
         if (!trimmed.empty()) {
             std::filesystem::path libpath = trimmed;
             auto root2 = libpath.parent_path().parent_path();

@@ -215,6 +215,47 @@ TEST(CaptureExecDeadline, SpawnFailureIsInOutputWhenCallerDoesNotAsk) {
     EXPECT_NE(r.output.find("error 2"), std::string::npos) << r.output;
 }
 
+// ── capture_stdout: the argument-vector form of `<program> 2>/dev/null` ──
+
+TEST(CaptureStdout, CapturesStandardOutputOnly) {
+    auto r = process::capture_stdout(
+        {"/bin/sh", "-c", "echo out; echo 9.9.9-on-stderr 1>&2"});
+    EXPECT_EQ(r.exit_code, 0);
+    EXPECT_EQ(r.output, "out\n");
+}
+
+TEST(CaptureStdout, PropagatesExitCode) {
+    auto r = process::capture_stdout({"/bin/sh", "-c", "echo partial; exit 3"});
+    EXPECT_EQ(r.exit_code, 3);
+    EXPECT_EQ(r.output, "partial\n");
+}
+
+// A probe parses what it captured, so a launcher message must never be read
+// as the program's answer: a missing program leaves the output empty.
+TEST(CaptureStdout, MissingProgramLeavesOutputEmpty) {
+    int spawnErr = 0;
+    auto r = process::capture_stdout({"/no/such/program/mcpp-probe-2026.1.2.3"},
+                                     {}, &spawnErr);
+    EXPECT_EQ(r.exit_code, 127);
+    EXPECT_EQ(spawnErr, ENOENT);
+    EXPECT_TRUE(r.output.empty()) << r.output;
+}
+
+TEST(CaptureStdout, StandardInputIsEmpty) {
+    // `cat` returns at once with nothing when stdin is /dev/null; with an
+    // inherited terminal or pipe it would block or echo the parent's input.
+    auto r = process::capture_stdout({"/bin/sh", "-c", "cat; echo done"});
+    EXPECT_EQ(r.exit_code, 0);
+    EXPECT_EQ(r.output, "done\n");
+}
+
+TEST(CaptureStdout, ExtraEnvironmentReachesTheChild) {
+    auto r = process::capture_stdout({"/bin/sh", "-c", "printf %s \"$MCPP_PROBE_ENV\""},
+                                     {{"MCPP_PROBE_ENV", "reached"}});
+    EXPECT_EQ(r.exit_code, 0);
+    EXPECT_EQ(r.output, "reached");
+}
+
 #else  // _WIN32
 
 TEST(RunExec, WindowsCoveredByIntegration) {
@@ -224,3 +265,12 @@ TEST(RunExec, WindowsCoveredByIntegration) {
 }
 
 #endif
+
+// Host-independent: the command line capture_stdout gives cmd.exe names cmd's
+// own null device, never a POSIX path cmd would try to open as `\dev\null`.
+TEST(CaptureStdout, WindowsCommandNamesCmdNullDevice) {
+    auto line = process::windows_stdout_probe_command(
+        {"C:\\Program Files\\xlings\\xlings.exe", "--version"});
+    EXPECT_EQ(line, "\"C:\\Program Files\\xlings\\xlings.exe\" \"--version\" 2>nul");
+    EXPECT_EQ(line.find("/dev/null"), std::string::npos) << line;
+}

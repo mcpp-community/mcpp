@@ -13,6 +13,7 @@
 // one, and an unparseable version is not evidence of being behind.
 
 #include <gtest/gtest.h>
+#include <fstream>
 
 import std;
 import mcpp.fallback.xlings_binary;
@@ -61,6 +62,40 @@ TEST(XlingsVersionPin, DatedSchemeIsNewerThanTheOldOne) {
     EXPECT_FALSE(fb::version_is_older("2026.8.2.1", "0.4.51"));
     EXPECT_TRUE(fb::version_is_older("0.4.51", "2026.8.2.1"));
     EXPECT_TRUE(fb::version_is_older("0.4.51", "0.4.54"));
+}
+
+// THE PROBE READS STANDARD OUTPUT, AND ON WINDOWS IT RUNS AT ALL.
+//
+// The version used to be read through the command string
+// `<bin> --version 2>/dev/null`. cmd.exe cannot open `/dev/null`, so on Windows
+// the probe printed "The system cannot find the path specified.", never ran
+// xlings, and returned an empty version -- which acquire_xlings_binary reads as
+// "unknown, keep it", so a Windows home never moved to a newer pin. On Windows
+// this test runs a .bat through the real launcher, which is the path that
+// failed; elsewhere a shell script. Both print a dotted number on stderr first,
+// which must not be taken for the version.
+TEST(XlingsVersionPin, ProbeReadsStandardOutputThroughTheLauncher) {
+    auto dir = std::filesystem::temp_directory_path()
+             / std::format("mcpp probe {}", std::chrono::steady_clock::now().time_since_epoch().count());
+    std::filesystem::create_directories(dir);
+#if defined(_WIN32)
+    auto fake = dir / "xlings.bat";
+    {
+        std::ofstream os(fake, std::ios::binary);
+        os << "@echo off\r\necho warning 9.9.9 1>&2\r\necho xlings 2026.1.2.3\r\n";
+    }
+#else
+    auto fake = dir / "xlings";
+    {
+        std::ofstream os(fake, std::ios::binary);
+        os << "#!/bin/sh\necho 'warning 9.9.9' 1>&2\nprintf 'xlings 2026.1.2.3\\n'\n";
+    }
+    std::filesystem::permissions(fake, std::filesystem::perms::owner_all,
+                                 std::filesystem::perm_options::replace);
+#endif
+    EXPECT_EQ(fb::vendored_xlings_version(fake), "2026.1.2.3");
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
 }
 
 }  // namespace

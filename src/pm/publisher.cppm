@@ -360,9 +360,10 @@ std::string release_tarball_url(std::string_view repo,
 
 std::string sha256_of_file(const std::filesystem::path& file) {
     if (!std::filesystem::exists(file)) return {};
-    auto cmd = std::format("sha256sum {} 2>/dev/null",
-        mcpp::platform::shell::quote(file.string()));
-    auto r = mcpp::platform::process::capture_host_tool(cmd);
+    // An argument vector rather than a `2>/dev/null` command string, which
+    // cmd.exe cannot open on a Windows host.
+    auto r = mcpp::platform::process::capture_host_tool_stdout(
+        {"sha256sum", file.string()});
     if (r.exit_code != 0) return {};
     // sha256sum format: "<64-hex>  <filename>\n"
     auto sp = r.output.find(' ');
