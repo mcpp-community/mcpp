@@ -1,11 +1,14 @@
 ---
 subject: triage
-status: active
+status: landed
 ---
 
 # A framework's CMake parity list: the twenty-one items of #634, read against the code and routed to where each one belongs
 
-**Status:** active, revision 3. Revision 3 is the implementation's: the plan
+**Status:** landed on 2026-09-14, revision 3: mcpp 2026.9.14.2 and 2026.9.14.3
+(mcpp-community/mcpp#637, #638), `mcpp:plugins` 0.10.0 (mcpp-community/mcpp-plugins#24),
+openxlings/xim-pkgindex#838 and mcpplibs/mcpp-index#426; the closure and the
+sandbox readings are §9 of the implementation plan. Revision 3 is the implementation's: the plan
 and ledger are `2026-09-14-634-implementation-plan.md`, whose §1 states the
 refinements adopted before and while implementing; the sections below carry
 them where a decision's wording changed (§5.2, §5.3, §5.6). Revision 1 classified the items; revision 2 held every

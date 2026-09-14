@@ -1,11 +1,14 @@
 ---
 subject: triage
-status: active
+status: landed
 ---
 
 # #634 implemented across five repositories: the plan, its review, and the ledger that tracks it
 
-**Status:** active. This record turns the decisions of
+**Status:** landed on 2026-09-14 as mcpp 2026.9.14.2 (mcpp-community/mcpp#637)
+and 2026.9.14.3 (mcpp-community/mcpp#638), `mcpp:plugins` 0.10.0
+(mcpp-community/mcpp-plugins#24), openxlings/xim-pkgindex#838, #839 and #840,
+and mcpplibs/mcpp-index#426; §9 records the closure. This record turns the decisions of
 `2026-09-14-634-cmake-parity-items-by-home.md` (revision 2, "the triage
 record" below) into work: one pull request per repository, the order in which
 they merge and release, the criteria each task is held to, and a ledger whose
@@ -30,30 +33,31 @@ that closed it), `dropped` (with the reason). Owner `lead` is the integrating se
 
 | id | task (triage §) | owner | depends on | status |
 |---|---|---|---|---|
-| E1 | a matching conditional dependency declaration replaces the unconditional one, compared by identity; the same for `dev-dependencies`, `build-dependencies`, `feature-deps` (§5.1.1) | lead | - | branch: e2e 677 A, B (fails on 2026.9.14.1) |
-| E2 | conditional dependency tables labelled by their full section; an option-named selector with a string value warns with the restated form (§5.1.2) | lead | - | branch: e2e 677 C |
-| E3 | `[target.<sel>.targets.<n>] kind` for declared library targets; the `[target.<sel>]` sweep reports sub-tables the parser does not read (§5.1.3) | lead | - | branch: e2e 677 D, 678 D; unit `TargetScalarKeys.EveryParsedSubTableIsKnownToTheSweep` |
-| E4 | the link-form degradation names the package's statement and, for a row, its selector (§5.1.3, §9 item 5) | lead | E3 | branch: e2e 678 C |
-| E5 | a `path`/`git` dependency adopts its manifest's identity and warns once; the record is registered under both keys (§5.2) | lead | - | branch: e2e 679 A, B |
-| E6 | two identities over one canonical source are refused before scanning; the scanner's duplicate-provider message names the packages (§5.2) | lead | E5 | branch: e2e 679 C |
-| E7 | the six edges in mcpp's `examples/` write the declared identity (§5.2) | lead | E5 | branch: the three examples build with no identity warning, and still build on 2026.9.14.1 |
-| E8 | one reader-driven closure for PE, the Android rows and Mach-O, with per-format platform rules (§5.3.1) | W1 | - | branch: unit `test_pack_closure` (11 cases); e2e 667, 668 (macOS CI) |
-| E9 | Android stages `lib/` (per ABI), Mach-O stages beside the program; `walked` only when complete, else `not-walked` naming the names and `dir`/`tar` refuse; `needs` lines on every row (§5.3.2-5) | W1 | E8 | branch: e2e 266, 666, 668 (macOS CI), 667, 669 |
-| E10 | rpath entries that begin with a loader token (`$ORIGIN`, `@executable_path`, `@loader_path`, `@rpath`) are not anchored, through one function shared by both normalisers (§9 item 11) | W1 | - | branch: unit `test_build_flags`; e2e 670 |
-| E11 | an ELF shared library without a declared `soname` is linked with its file name as SONAME (§5.4) | W1 | - | branch: e2e 667, 669 |
-| E12 | the static C++ runtime archives are located by asking the driver for the effective target (§5.6.1) | W2 | - | branch: e2e 675 |
-| E13 | every runner of `mcpp run` and `mcpp test` receives `MCPP_RUNTIME_FILES` (§5.6.2, format refined in §1) | W2 | - | branch: e2e 672; the `android` job's emulator step |
-| E14 | `run`, `test` and `pack` declare `--toolchain` (§5.10) | W2 | - | branch: e2e 671 |
-| E15 | `[test] discover` (§5.5) | W2 | - | branch: e2e 673; unit `test_test_targets` |
-| E16 | `mcpp run --format <f>` uses the named runner `<f>` when one exists; a directory distributable that meets no runner is refused before the spawn (§6.3) | W2 | - | branch: e2e 674 |
-| E17 | two emissions of one named runner: measured, then decided (§9 item 8; see §1) | W2 | - | branch: decided in §1.9, e2e 684 |
-| E18 | `resolution.json` records `graph`; `mcpp why deps` prints it (§5.11) | lead | E1-E6 | branch: e2e 682; 677, 678 and 679 read `graph` |
-| E19 | the engine states `android.api-level`, `ios.deployment-target`, `macos.deployment-target`; the refusal names the fact's key and says "this build targets" (§5.9, §9 item 6) | lead | - | branch: e2e 680 |
-| E20 | `config.toml [index.repos.<name>]` reaches an existing registry; a payload installed from an overridden index names the source (§7.4, §9 item 7) | lead | - | branch: e2e 681; an existing home re-pointed its index and restored the entry (local probe, §1.9) |
-| E21 | `mcpp::pkg_config_libdir()` (§5.7) | lead | - | branch: e2e 683 |
-| E22 | CI: the `android-ndk` e2e tests run on a Linux job, and one emulator step runs `mcpp test` on the x86_64 Android row (§1, test coverage) | lead | E9, E12, E13 | branch: `ci-linux-e2e.yml` job `android` |
-| E23 | user documentation and its Chinese mirror; normative specification changes (§5 below) | lead, W1, W2 | E1-E21 | doing |
-| E24 | triage record revision 3 folded in; this ledger closed for the engine rows; CHANGELOG; version group 1 | lead | E1-E23 | doing |
+| E1 | a matching conditional dependency declaration replaces the unconditional one, compared by identity; the same for `dev-dependencies`, `build-dependencies`, `feature-deps` (§5.1.1) | lead | - | merged (#637): e2e 677 A, B (fails on 2026.9.14.1) |
+| E2 | conditional dependency tables labelled by their full section; an option-named selector with a string value warns with the restated form (§5.1.2) | lead | - | merged (#637): e2e 677 C |
+| E3 | `[target.<sel>.targets.<n>] kind` for declared library targets; the `[target.<sel>]` sweep reports sub-tables the parser does not read (§5.1.3) | lead | - | merged (#637): e2e 677 D, 678 D; unit `TargetScalarKeys.EveryParsedSubTableIsKnownToTheSweep` |
+| E4 | the link-form degradation names the package's statement and, for a row, its selector (§5.1.3, §9 item 5) | lead | E3 | merged (#637): e2e 678 C |
+| E5 | a `path`/`git` dependency adopts its manifest's identity and warns once; the record is registered under both keys (§5.2) | lead | - | merged (#637): e2e 679 A, B |
+| E6 | two identities over one canonical source are refused before scanning; the scanner's duplicate-provider message names the packages (§5.2) | lead | E5 | merged (#637): e2e 679 C |
+| E7 | the six edges in mcpp's `examples/` write the declared identity (§5.2) | lead | E5 | merged (#637): the three examples build with no identity warning, and still build on 2026.9.14.1 |
+| E8 | one reader-driven closure for PE, the Android rows and Mach-O, with per-format platform rules (§5.3.1) | W1 | - | merged (#637): unit `test_pack_closure` (11 cases); e2e 667, 668 (macOS CI) |
+| E9 | Android stages `lib/` (per ABI), Mach-O stages beside the program; `walked` only when complete, else `not-walked` naming the names and `dir`/`tar` refuse; `needs` lines on every row (§5.3.2-5) | W1 | E8 | merged (#637): e2e 266, 666, 668 (macOS CI), 667, 669 |
+| E10 | rpath entries that begin with a loader token (`$ORIGIN`, `@executable_path`, `@loader_path`, `@rpath`) are not anchored, through one function shared by both normalisers (§9 item 11) | W1 | - | merged (#637): unit `test_build_flags`; e2e 670 |
+| E11 | an ELF shared library without a declared `soname` is linked with its file name as SONAME (§5.4) | W1 | - | merged (#637): e2e 667, 669 |
+| E12 | the static C++ runtime archives are located by asking the driver for the effective target (§5.6.1) | W2 | - | merged (#637): e2e 675 |
+| E13 | every runner of `mcpp run` and `mcpp test` receives `MCPP_RUNTIME_FILES` (§5.6.2, format refined in §1) | W2 | - | merged (#637): e2e 672; the `android` job's emulator step |
+| E14 | `run`, `test` and `pack` declare `--toolchain` (§5.10) | W2 | - | merged (#637): e2e 671 |
+| E15 | `[test] discover` (§5.5) | W2 | - | merged (#637): e2e 673; unit `test_test_targets` |
+| E16 | `mcpp run --format <f>` uses the named runner `<f>` when one exists; a directory distributable that meets no runner is refused before the spawn (§6.3) | W2 | - | merged (#637): e2e 674 |
+| E17 | two emissions of one named runner: measured, then decided (§9 item 8; see §1) | W2 | - | merged (#637): decided in §1.9, e2e 684 |
+| E18 | `resolution.json` records `graph`; `mcpp why deps` prints it (§5.11) | lead | E1-E6 | merged (#637): e2e 682; 677, 678 and 679 read `graph` |
+| E19 | the engine states `android.api-level`, `ios.deployment-target`, `macos.deployment-target`; the refusal names the fact's key and says "this build targets" (§5.9, §9 item 6) | lead | - | merged (#637): e2e 680 |
+| E20 | `config.toml [index.repos.<name>]` reaches an existing registry; a payload installed from an overridden index names the source (§7.4, §9 item 7) | lead | - | merged (#637): e2e 681; an existing home re-pointed its index and restored the entry (local probe, §1.9) |
+| E21 | `mcpp::pkg_config_libdir()` (§5.7) | lead | - | merged (#637): e2e 683 |
+| E22 | CI: the `android-ndk` e2e tests run on a Linux job, and one emulator step runs `mcpp test` on the x86_64 Android row (§1, test coverage) | lead | E9, E12, E13 | merged (#637): `ci-linux-e2e.yml` job `android` |
+| E23 | user documentation and its Chinese mirror; normative specification changes (§5 below) | lead, W1, W2 | E1-E21 | merged (#637): docs 04, 05, 06, 07, 08, 09, 10, 12, 22, 30, 32, 41, 50 with their Chinese mirrors; SPEC-001 §5.4, SPEC-004 §3.1.1 |
+| E24 | triage record revision 3 folded in; this ledger closed for the engine rows; CHANGELOG; version group 1 | lead | E1-E23 | merged (#637): revision 3; CHANGELOG; 2026.9.14.2 |
+| E25 | mcpp's xlings invocations do not inherit `XLINGS_ACTIVE_SUBOS` (found by V1, §9) | lead | V1 | merged (#638): unit `XlingsInvocationEnv.TheShellsActiveSubosIsNeverInherited`; e2e 686 fails on 2026.9.14.2 and passes on 2026.9.14.3 |
 
 ### 0.2 Payloads: openxlings/xim-pkgindex, one pull request (`feat/634-runners-and-payloads`)
 
@@ -71,35 +75,35 @@ that closed it), `dropped` (with the reason). Owner `lead` is the integrating se
 
 | id | task (triage §) | owner | depends on | status |
 |---|---|---|---|---|
-| P1 | `dist-apk` reads the staged closure (`lib/`, `lib/<abi>/`), deletes its walk and stamp, packs several ABIs into one APK, reports refusals through `mcpp::warning`, and refuses a stage without `needs` lines naming the engine floor (§6.5) | W4 | E9 | doing |
-| P2 | `dist-apple` places staged dylibs in the framework directory, adds the link-time rpath through `mcpp::link_flag`, signs ad hoc when no identity is given, and keeps closure members out of the resource directory (§6.1) | W4 | E9, E10 | doing |
-| P3 | `dist-apple` supplies `mcpp::runner("app", "macapp-run")` on `*-macos` and declares the payload (§6.3) | W4 | E16, X1 | doing |
-| P4 | `dist-apple` `dmg` format (§6.2) | W4 | - | doing |
-| P5 | `dist-apk` `aab` format (§6.5) | W4 | P1, X5 | doing |
-| P6 | `dist-wix` `setup` format (§6.4) | W4 | X4 | doing |
-| P7 | `rules-metal` (§6.6) | W4 | - | doing |
-| P8 | CI: the iOS fixture exits non-zero, the diagnostic is portable, P1-P7 have jobs, `MCPP_VERSION` names the released engine (§7.2, §9 item 10) | W4 | R1 | doing |
-| P9 | documentation, version 0.10.0, release, GitCode assets (§4 below) | lead | P1-P8 | todo |
+| P1 | `dist-apk` reads the staged closure (`lib/`, `lib/<abi>/`), deletes its walk and stamp, packs several ABIs into one APK, reports refusals through `mcpp::warning`, and refuses a stage without `needs` lines naming the engine floor (§6.5) | W4 | E9 | done (mcpp-plugins#24): Linux job, two packs keep the dependency's library; `native-code: 'arm64-v8a' 'x86_64'`; the floor refusal |
+| P2 | `dist-apple` places staged dylibs in the framework directory, adds the link-time rpath through `mcpp::link_flag`, signs ad hoc when no identity is given, and keeps closure members out of the resource directory (§6.1) | W4 | E9, E10 | done (mcpp-plugins#24): macOS job, `@executable_path/../Frameworks`; `codesign --verify --deep --strict` valid; exit 7 through the framework, 134 without it |
+| P3 | `dist-apple` supplies `mcpp::runner("app", "macapp-run")` on `*-macos` and declares the payload (§6.3) | W4 | E16, X1 | done (mcpp-plugins#24): macOS job, `mcpp run --format app` exits 7 through `macapp-run` |
+| P4 | `dist-apple` `dmg` format (§6.2) | W4 | - | done (mcpp-plugins#24): macOS job, `hdiutil verify` valid; the image root holds the bundle and `Applications` |
+| P5 | `dist-apk` `aab` format (§6.5) | W4 | P1, X5 | done (mcpp-plugins#24): Linux job, `bundletool validate`; a universal APK carries the dependency's library |
+| P6 | `dist-wix` `setup` format (§6.4) | W4 | X4 | done (mcpp-plugins#24): Windows job, the MSI extracted from the bundle is byte-identical to the built one |
+| P7 | `rules-metal` (§6.6) | W4 | - | done (mcpp-plugins#24): macOS job, three `MTLB` libraries; a header edit recompiles only the shaders that include it |
+| P8 | CI: the iOS fixture exits non-zero, the diagnostic is portable, P1-P7 have jobs, `MCPP_VERSION` names the released engine (§7.2, §9 item 10) | W4 | R1 | done (mcpp-plugins#24): run 34831041382 on the released 2026.9.14.2; the iOS fixture returns 7 through `simctl-run` |
+| P9 | documentation, version 0.10.0, release, GitCode assets (§4 below) | lead | P1-P8 | done: README floors; 0.10.0; tag `v0.10.0` (4525537) |
 
 ### 0.4 Index: mcpplibs/mcpp-index, one pull request
 
 | id | task | owner | depends on | status |
 |---|---|---|---|---|
-| I1 | `mcpp.plugins` 0.10.0 descriptor entry and its note | lead | R2 | todo |
+| I1 | `mcpp.plugins` 0.10.0 descriptor entry and its note | lead | R2 | done: mcpplibs/mcpp-index#426 |
 | I2 | D1, HuxerUI's six-row descriptors | project | HuxerUI's release | dropped: follows the project's release, and HuxerUI is not modified here |
 
 ### 0.5 Release, verification, reply
 
 | id | task | depends on | status |
 |---|---|---|---|
-| R1 | engine: merge, tag, `release.yml` on four hosts, `publish-ecosystem`, the bot's index pull request merged, GitCode assets checked (local `gtc` for any missing), bootstrap pin (version group 2) | E24, CI green | todo |
-| R2 | plugins: merge, tag `v0.10.0`, release assets on GitHub and GitCode (`gtc`), byte comparison of each downloaded asset | P9, CI green | todo |
+| R1 | engine: merge, tag, `release.yml` on four hosts, `publish-ecosystem`, the bot's index pull request merged, GitCode assets checked (local `gtc` for any missing), bootstrap pin (version group 2) | E24, CI green | done: 2026.9.14.2 (adbd8c20) and 2026.9.14.3 (9b6a1188); both releases' eight mirrored assets fetched back byte-identical (2026.9.14.3's `linux-aarch64` and `macosx-arm64` uploaded to GitCode with local `gtc`); xim-pkgindex#839 and #840; the artifacts `xim-index-c01ac75` and `xim-index-ed04041` name each as `latest`; the bootstrap pin moves to 2026.9.14.3 with this closure |
+| R2 | plugins: merge, tag `v0.10.0`, release assets on GitHub and GitCode (`gtc`), byte comparison of each downloaded asset | P9, CI green | done: the tag archive equals `git archive v0.10.0`; the GitCode asset, uploaded with `gtc`, is byte-identical to it (302708 bytes, one sha256 `b7cfa4b5`) |
 | R3 | xim-pkgindex pull request merged, and its artifact read back from a client | X1-X7, CI green | done: a local client installed `xim:android-platform-tools@37.0.1-4` from the index after the merge |
-| R4 | mcpp-index pull request merged; `latest` of `mcpp.plugins` read back from a client | I1 | todo |
-| V1 | sandbox verification of the released engine (§6.2) | R1, R3 | todo |
-| V2 | sandbox verification of plugins 0.10.0 through the index (§6.2) | R2, R4 | todo |
-| V3 | the ecosystem review (§7) | V1, V2 | todo |
-| V4 | the reply on #634 | V3 | todo |
+| R4 | mcpp-index pull request merged; `latest` of `mcpp.plugins` read back from a client | I1 | done: #426 merged (f5e3de6); the artifact `mcpp-index-f5e3de6`, identical on GitHub and GitCode, names `latest` 0.10.0; the sandbox installed 0.10.0 from it (V2) |
+| V1 | sandbox verification of the released engine (§6.2) | R1, R3 | done: §9.2 |
+| V2 | sandbox verification of plugins 0.10.0 through the index (§6.2) | R2, R4 | done: §9.2 |
+| V3 | the ecosystem review (§7) | V1, V2 | done: §9.3 |
+| V4 | the reply on #634 | V3 | done: https://github.com/mcpp-community/mcpp/issues/634#issuecomment-5663600579 |
 
 ## 1. Review of revision 2 from the implementation's side, and revision 3
 
@@ -576,3 +580,66 @@ e2e tests that cover the files it changes; a built binary is copied to a fixed
 path before a suite runs against it. The lead merges W1 and W2 into the
 feature branch, resolves conflicts, and runs the full suite once on the
 merged tree. No work tree kills processes by pattern.
+
+## 9. Closure
+
+### 9.1 What landed
+
+| repository | pull request | merge commit | published as |
+|---|---|---|---|
+| mcpp-community/mcpp | #637 (E1-E24) | `adbd8c20` | mcpp 2026.9.14.2 |
+| mcpp-community/mcpp | #638 (E25) | `9b6a1188` | mcpp 2026.9.14.3 |
+| mcpp-community/mcpp-plugins | #24 (P1-P9) | `4525537` | `mcpp:plugins` 0.10.0 |
+| openxlings/xim-pkgindex | #838 (X1-X7); #839 and #840 (the release bot) | `8f67d875`; `c01ac75b`; `ed040415` | the payloads; `mcpp` 2026.9.14.2 and 2026.9.14.3 |
+| mcpplibs/mcpp-index | #426 (I1) | `f5e3de6` | `mcpp.plugins` 0.10.0 |
+
+HuxerUI and Lib-Live2D are unchanged; the reply on #634 lists what the project
+can change.
+
+### 9.2 Sandbox readings
+
+One SubOS, `m634-eco`, entered with `xlings subos use m634-eco --sandbox`, with
+`xlings config --mirror CN` and `mcpp self config --mirror CN` set inside it.
+The engine is installed with `xlings install mcpp@<version>` and addressed by
+its store path; `mcpp:plugins` is resolved from the index. The mcpp home inside
+the sandbox is removed before each run that the table marks fresh.
+
+| run | engine | readings |
+|---|---|---|
+| V1 | 2026.9.14.2, fresh home | 16 pass; S10 and S15 fail; S11 skipped, S13 and S14 not requested. At the failure site the registry had `subos/default` and `subos/m634-eco`, the gtk4 `.pc` files were in the second, and the accessor names the first: the sandbox exports `XLINGS_ACTIVE_SUBOS=m634-eco` and mcpp passed it to its xlings (E25) |
+| pre-release | #638 built as a static musl binary, fresh home | S10 and S15 pass. S13 and S14 fail on two probe defects: the check read an intermediate APK (`dist-apk/base.apk`) instead of the path the pack reports as `Packed`, and looked for the manifest at the version directory instead of inside the archive's top directory; the APK the pack reported carried `lib/x86_64/libfw.so` and `lib/arm64-v8a/libfw.so` |
+| V1 and V2 | 2026.9.14.3 released, `mcpp:plugins` 0.10.0 from the index, fresh home | 22 pass, 0 fail. S11, run afterwards in the same home: the table reached the existing registry with one line naming it, and its removal restored the entry, 4 of 4 |
+| control | 2026.9.14.1, fresh home, same script | 4 pass (S1 twice; S8's `closure = walked`, which that release wrote over an incomplete tree; S14, which reads the index), 18 fail |
+
+### 9.3 The ecosystem review (V3)
+
+- Every ledger row is done, with a reading, or dropped with a reason (I2).
+- The main heads build green on their own commits: mcpp `9b6a1188` (every
+  workflow, including the fresh-install, AUR and Homebrew runs the release
+  triggers), mcpp-plugins `4525537` (three jobs on the released engine),
+  xim-pkgindex `ed040415`, mcpp-index `f5e3de6`.
+- The published artifacts carry the releases: `xim-index-ed04041` names mcpp
+  2026.9.14.3 as `latest` on its three platform tables, and
+  `mcpp-index-f5e3de6`, identical on GitHub and GitCode, names `mcpp.plugins`
+  0.10.0 as `latest`.
+- Both engine releases' eight mirrored assets and the plugins archive were
+  fetched back and compared byte for byte; 2026.9.14.3's `linux-aarch64` and
+  `macosx-arm64` assets were uploaded to GitCode with a local `gtc`.
+- The documentation states what the sandbox measured: `mcpp::pkg_config_libdir()`
+  names a view that holds the payloads' `.pc` files, and from 2026.9.14.3 that
+  holds inside an activated SubOS as well (docs/91).
+- The triage record and this record are marked landed.
+
+### 9.4 Observed and not changed by this work
+
+- xlings stages a package that has no install hook by moving every entry of the
+  shared `data/runtimedir` into the package's directory:
+  `extract_archive_detailed` returns the destination directory itself, and
+  `stage_extracted_payload_` moves each entry it finds there. On this host
+  `mcpplibs-x-openkal/0.8.0` holds 1.6 GiB of other packages' archives and
+  `mcpplibs-x-openkal-emscripten/0.1.0` 1.5 GiB (59 archives); in the sandbox
+  `mcpp-x-plugins/0.10.0` received 1.2 GiB. No result above depends on it, and
+  the change belongs to xlings.
+- On Windows, mcpp prints `The system cannot find the path specified.` as a
+  command starts; the released 2026.9.13.2 prints it too (mcpp-plugins run
+  34772006562, twelve times). Not investigated.
