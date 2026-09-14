@@ -648,43 +648,6 @@ bool is_std_module(std::string_view name) {
     return name == "std" || name == "std.compat";
 }
 
-std::string trim_copy(std::string s) {
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
-        s.erase(0, 1);
-    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back())))
-        s.pop_back();
-    return s;
-}
-
-bool source_file_imports_std(const std::filesystem::path& path) {
-    std::ifstream is(path);
-    if (!is) return false;
-
-    std::string line;
-    while (std::getline(is, line)) {
-        line = trim_copy(std::move(line));
-        std::size_t i = std::string::npos;
-        if (line.starts_with("import ")) {
-            i = 7;
-        } else if (line.starts_with("export import ")) {
-            i = 14;
-        }
-        if (i == std::string::npos) continue;
-        while (i < line.size() && std::isspace(static_cast<unsigned char>(line[i])))
-            ++i;
-
-        std::string name;
-        while (i < line.size()
-            && (std::isalnum(static_cast<unsigned char>(line[i]))
-                || line[i] == '_' || line[i] == '.' || line[i] == ':')) {
-            name.push_back(line[i]);
-            ++i;
-        }
-        if (is_std_module(name)) return true;
-    }
-    return false;
-}
-
 bool graph_or_targets_import_std(const mcpp::modgraph::Graph& graph,
                                  const mcpp::manifest::Manifest& manifest,
                                  const std::filesystem::path& projectRoot) {
@@ -696,10 +659,16 @@ bool graph_or_targets_import_std(const mcpp::modgraph::Graph& graph,
     }
 
     // Some target entry files can be added to the plan after the package scan.
-    // Check them here so std BMI setup matches what make_plan will compile.
+    // Check them here so std BMI setup matches what make_plan will compile: they
+    // are read by the same scan_entry_file make_plan reads them with.
+    const auto extTable = mcpp::extension_table_for(manifest.buildConfig.moduleExtensions,
+                                                    manifest.buildConfig.deviceExtensions);
     for (auto& t : manifest.targets) {
-        if (!t.main.empty() && source_file_imports_std(projectRoot / t.main))
-            return true;
+        if (t.main.empty()) continue;
+        const auto entry = mcpp::modgraph::scan_entry_file(projectRoot / t.main,
+                                                           manifest.package.name, extTable);
+        for (auto const& req : entry.requires_)
+            if (is_std_module(req.logicalName)) return true;
     }
     return false;
 }

@@ -128,6 +128,50 @@ TEST(Scanner, DeclarationFormIsRecordedAsRead) {
     std::filesystem::remove_all(dir);
 }
 
+// ─── an entry source no `sources` glob matched ─────────────────────────────
+//
+// A discovered test, or a `main` outside the globs, is not in the package scan.
+// Its imports were read from line-leading `import` alone, so an import inside a
+// comment or a raw string was recorded as one: a scanner test in lsp-mcpp was
+// planned as importing three modules no source provides.
+TEST(Scanner, AnEntrySourceIsReadByTheScanner) {
+    auto dir = make_tempdir("scan-entry");
+    write(dir / "t.cpp",
+          "import std;\n"
+          "/* a comment\n"
+          "   import in.comment; */\n"
+          "auto s = R\"x(\n"
+          "import in.raw;\n"
+          ")x\";\n"
+          "import real;\n"
+          "int main() {}\n");
+    auto u = scan_entry_file(dir / "t.cpp", "pkg", mcpp::builtin_extension_table());
+    std::vector<std::string> names;
+    for (auto const& r : u.requires_) names.push_back(r.logicalName);
+    EXPECT_EQ(names, (std::vector<std::string>{"std", "real"}));
+    EXPECT_EQ(static_cast<int>(u.declaration), static_cast<int>(ModuleDeclaration::None));
+    std::filesystem::remove_all(dir);
+}
+
+// The scanner's refusals were never applied to such a file, and are not now: a
+// file it refuses keeps its line-leading imports, and its form is not decided.
+TEST(Scanner, AnEntrySourceTheScannerRefusesKeepsItsImports) {
+    auto dir = make_tempdir("scan-entry-refused");
+    write(dir / "t.cpp",
+          "#ifdef WITH_EXTRA\n"
+          "import extra;\n"
+          "#endif\n"
+          "export import std;\n"
+          "int main() {}\n");
+    ASSERT_FALSE(scan_file(dir / "t.cpp", "pkg", mcpp::builtin_extension_table()).has_value());
+    auto u = scan_entry_file(dir / "t.cpp", "pkg", mcpp::builtin_extension_table());
+    std::vector<std::string> names;
+    for (auto const& r : u.requires_) names.push_back(r.logicalName);
+    EXPECT_EQ(names, (std::vector<std::string>{"extra", "std"}));
+    EXPECT_EQ(static_cast<int>(u.declaration), static_cast<int>(ModuleDeclaration::Unknown));
+    std::filesystem::remove_all(dir);
+}
+
 TEST(Scanner, PlainImplementationUnitStillRequiresItsInterface) {
     auto dir = make_tempdir("scan-implunit");
     std::filesystem::create_directories(dir / "src");
