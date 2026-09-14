@@ -24,11 +24,11 @@
 # No `# requires:` line: the host's default toolchain builds every leg.
 set -e
 
+source "$(dirname "$0")/_host_path.sh"
+
 TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
-
-source "$(dirname "$0")/_host_path.sh"
 
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
 
