@@ -28,6 +28,8 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 cd "$TMP"
 
+source "$(dirname "$0")/_host_path.sh"
+
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
 
 is_windows=0
@@ -55,6 +57,8 @@ EOF
 # $1 = installer directory, $2 = path to the dependency from it,
 # $3 = directory of the helper inside the dependency
 write_installer() {
+    local DEP_HOST
+    DEP_HOST=$(host_path "$2")
     mkdir -p "$1/src"
     cat > "$1/mcpp.toml" <<EOF
 [package]
@@ -62,7 +66,7 @@ name    = "installer"
 version = "0.1.0"
 
 [dependencies]
-dep = { path = "$2" }
+dep = { path = "$DEP_HOST" }
 
 [targets.installer-app]
 kind = "bin"
@@ -93,6 +97,8 @@ EOF
 
 # $1 = consumer directory, $2 = path to the installer from it
 write_app() {
+    local INSTALLER_HOST
+    INSTALLER_HOST=$(host_path "$2")
     mkdir -p "$1/src"
     cat > "$1/mcpp.toml" <<EOF
 [package]
@@ -100,7 +106,7 @@ name    = "app"
 version = "0.1.0"
 
 [dependencies]
-installer = { path = "$2", tools = ["installer-app"] }
+installer = { path = "$INSTALLER_HOST", tools = ["installer-app"] }
 EOF
     cat > "$1/src/main.cpp" <<'EOF'
 #include <cstdio>

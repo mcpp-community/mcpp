@@ -25,6 +25,8 @@ TMP=$(mktemp -d)
 trap "rm -rf $TMP" EXIT
 export MCPP_HOME=${MCPP_HOME:-$HOME/.mcpp}
 
+source "$(dirname "$0")/_host_path.sh"
+
 fail() { echo "FAIL: $1"; shift; for f in "$@"; do echo "--- $f ---"; cat "$f" 2>/dev/null; done; exit 1; }
 
 # The -std= tokens of the translation unit whose source ends with $2, in
@@ -56,6 +58,8 @@ awk '/^cxx_standard = "c\+\+23"$/ { next }
 grep -q '^standard    = "c++23"$' stated/mcpp.toml || fail "the restated manifest has no standard" stated/mcpp.toml
 
 make_root() {   # $1 directory, $2 standard, $3 libcxx path
+    local LIBCXX_HOST
+    LIBCXX_HOST=$(host_path "$3")
     mkdir -p "$1/src"
     cat > "$1/mcpp.toml" <<TOML
 [package]
@@ -67,7 +71,7 @@ standard = "$2"
 default = "llvm@22.1.8"
 
 [dependencies.llvm.libcxx]
-path = "$3"
+path = "$LIBCXX_HOST"
 TOML
     cat > "$1/src/main.cpp" <<'CPP'
 import std;
