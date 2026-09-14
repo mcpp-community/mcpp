@@ -139,7 +139,9 @@ soname = "libmylib.so.1"  # 可选: Linux/ELF ABI 名称,运行时会生成同�
 `SOVERSION`/`SONAME`。在 Linux 上,mcpp 会向链接器传递
 `-Wl,-soname,<name>`,并在输出目录生成 `<name> -> lib<target>.so` alias,
 让下游程序可通过标准 ABI 名称 `DT_NEEDED` 或 `dlopen()` 加载该库。
-该字段只对 `kind = "shared"` 有效,值必须是文件名 basename。
+该字段只对 `kind = "shared"` 有效,值必须是文件名 basename。未声明 `soname`
+的 ELF 共享库以输出文件名作为 SONAME(2026.9.14.2+),这正是消费者已经记录在
+`DT_NEEDED` 中的名字;bionic 自 API level 23 起要求共享库带有 SONAME。
 
 共享库目标在三种二进制格式上都可用。ELF 产出带 `soname` 的 `.so` 与 `$ORIGIN`
 搜索路径;Mach-O 产出 install name 为 `@rpath/<file>` 的 `.dylib`,因此移动后

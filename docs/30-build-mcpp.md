@@ -733,14 +733,15 @@ reported as up to date.
 
 **The manifest's first line is `closure = walked` or `closure = not-walked`.**
 `mcpp pack` stages the program and its declared runtime
-files before it asks whether this host can resolve the artifact's dependency
-closure, so the tree can exist without one — a Mach-O program today, or a
-non-PE artifact packed from a Windows host. `--format tar` and `--format dir`
-still fail the command in that case, since the archive IS the closure; a
-dispatched format receives the tree regardless, with a second manifest line,
-`reason = <why>`, naming the mechanism that was unavailable. A provider that
-needs the closure reads the field rather than inferring a gap from an empty
-`lib/`.
+files before it resolves the artifact's dependency closure, so the tree can
+exist without a complete one: a closure with a name that resolves to no file
+the tree can carry (2026.9.14.2+), or a non-PE, non-Mach-O artifact packed from
+a Windows host. `--format tar` and `--format dir` fail the command in that
+case, since the archive IS the closure; a dispatched format receives the tree
+regardless, with a second manifest line, `reason = <why>`. The `needs` lines
+that follow the header state each needed name and what satisfies it
+([50 — Machine Output](50-machine-output.md)), so a provider that places
+libraries itself reads them rather than inferring the closure from `lib/`.
 
 Commands are an **argv, not a shell string** (no shell is assumed — Windows has
 none to rely on), and the only interpolations are a closed set:

@@ -147,7 +147,10 @@ Autotools/CMake. On Linux, mcpp passes `-Wl,-soname,<name>` to the linker and
 generates a `<name> -> lib<target>.so` alias in the output directory, so that
 downstream programs can load the library via its standard ABI name through
 `DT_NEEDED` or `dlopen()`. This field only applies to `kind = "shared"`, and the
-value must be a filename basename.
+value must be a filename basename. An ELF shared library that declares no
+`soname` records its output file name as its SONAME (2026.9.14.2+), which is
+the name its consumers already record in `DT_NEEDED`; bionic requires one from
+API level 23.
 
 Shared-library targets work on all three binary formats. ELF gets a `.so` with
 its `soname` and a `$ORIGIN` search path; Mach-O gets a `.dylib` whose install
