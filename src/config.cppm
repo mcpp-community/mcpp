@@ -394,18 +394,19 @@ bool write_default_xlings_json(const std::filesystem::path& path,
 // The table used to seed the registry's `.xlings.json` only when that file did
 // not exist, so a table added to the config of a home that had already run
 // once did nothing, without a word; the measured case is a consumer's CI that
-// points `xim` at a checkout of an unmerged recipe branch. Every configured
-// index repository is now written into `index_repos` when it differs from the
-// entry of the same name, and xlings re-points the index at the next sync
-// (measured: an existing home's `data/xim-pkgindex` became the checkout after
-// `mcpp index update`).
+// points `xim` at a checkout of an unmerged recipe branch. Every index
+// repository a table declares is now written into `index_repos` when it differs
+// from the entry of the same name, and xlings re-points the index at the next
+// sync (measured: an existing home's `data/xim-pkgindex` became the checkout
+// after `mcpp index update`). The default entry mcpp adds without a table is
+// not reconciled: the file's copy of it is left as the file has it.
 //
 // WHAT MCPP WROTE IS RECORDED, so that removing the table undoes it. The record
 // (`.mcpp-index-overrides.json`, beside the file) keeps, per name, the entry a
 // table replaced (`null` when there was none) and the entry mcpp wrote. A name
-// that leaves the configuration gets its previous entry back, but only while
-// the file still holds what mcpp wrote: an entry changed since belongs to
-// whoever changed it. Each change prints one line.
+// whose table leaves the configuration gets its previous entry back, but only
+// while the file still holds what mcpp wrote: an entry changed since belongs
+// to whoever changed it. Each change prints one line.
 namespace {
 
 std::filesystem::path index_override_record(const std::filesystem::path& xjson) {
@@ -480,8 +481,18 @@ void reconcile_index_repos(const std::filesystem::path& xjson,
             if (e.is_object() && e.value("name", std::string{}) == name) return &e;
         return nullptr;
     };
+    // ONLY A TABLE IS RECONCILED. The entry mcpp adds as its default was
+    // seeded with the file, and an existing home's copy of it belongs to the
+    // file: rewriting a copy that differs would report a table config.toml
+    // does not have, and record a change no removal can undo. The same holds
+    // below, where a name counts as configured only while a table names it.
+    const auto fromTable = [&](const std::string& name) {
+        return std::ranges::any_of(repos,
+            [&](const IndexRepo& r) { return r.fromConfig && r.name == name; });
+    };
     bool fileChanged = false, recordChanged = false;
     for (auto const& r : repos) {
+        if (!r.fromConfig) continue;
         const auto want = index_repo_entry(r);
         auto* have = find(r.name);
         if (have && *have == want) continue;
@@ -496,9 +507,7 @@ void reconcile_index_repos(const std::filesystem::path& xjson,
     }
     for (auto it = record.begin(); it != record.end();) {
         const std::string name = it.key();
-        const bool stillConfigured = std::ranges::any_of(repos,
-            [&](const IndexRepo& r) { return r.name == name; });
-        if (stillConfigured) { ++it; continue; }
+        if (fromTable(name)) { ++it; continue; }
         auto* have = find(name);
         if (have && it.value().contains("written") && *have == it.value()["written"]) {
             const auto& previous = it.value()["previous"];

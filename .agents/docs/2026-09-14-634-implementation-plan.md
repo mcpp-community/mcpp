@@ -305,6 +305,17 @@ Each item was found by a measurement on the branch, and each has a test.
   `data/xim-pkgindex` at it. Removing the table restores the previous entry,
   through a record of what mcpp wrote (`.mcpp-index-overrides.json`), unless
   the entry was changed after mcpp wrote it (e2e 681).
+- **C4 reconciles tables only (found by the independent review of the pull
+  request).** The reconciliation compared every index repository the
+  configuration resolved, including the `mcpplibs` entry mcpp adds when
+  `config.toml` has no table for it, so a registry copy of that entry which
+  differed from the default was rewritten with a line naming a table that
+  did not exist, and a later `[index.repos.mcpplibs]` table could not be
+  undone by removing it. The review's premise was partly wrong: a home mcpp
+  creates writes the `mcpplibs` table into its own `config.toml`, where the
+  line is accurate; the defect needs that table removed. Only a table is now
+  reconciled, and a name counts as configured only while a table names it
+  (e2e 681 E and F, which fail without the change).
 
 ## 2. Repositories, branches, versions
 
