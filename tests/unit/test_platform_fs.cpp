@@ -2,6 +2,7 @@
 
 import std;
 import mcpp.platform.fs;
+import mcpp.platform.common;
 
 namespace {
 
@@ -55,3 +56,50 @@ TEST(PlatformFs, ReplaceFailureKeepsExistingDestination) {
 }
 
 } // namespace
+
+// ── extended_length (mcpp#641, item 3) ────────────────────────────────────
+
+// Outside Windows there is no path limit of this kind, so the helper is the
+// identity: a relative path stays relative and nothing is spelled differently.
+TEST(PlatformFs, ExtendedLengthIsTheIdentityOutsideWindows) {
+    if constexpr (mcpp::platform::is_windows) {
+        GTEST_SKIP() << "the Windows branch is covered by the spelling tests";
+    } else {
+        const std::filesystem::path rel{"obj/pkg/__pkg/dep/a.cpp.ddi"};
+        EXPECT_EQ(mcpp::platform::fs::extended_length(rel), rel);
+        const std::filesystem::path abs{"/tmp/x/../y"};
+        EXPECT_EQ(mcpp::platform::fs::extended_length(abs), abs);
+        EXPECT_TRUE(mcpp::platform::fs::extended_length({}).empty());
+    }
+}
+
+// The Windows rule, as a pure function, so every host tests it.
+TEST(PlatformFs, WindowsExtendedLengthSpellsADrivePath) {
+    using mcpp::platform::fs::windows_extended_length_spelling;
+    EXPECT_EQ(windows_extended_length_spelling("C:/Users/runner/.mcpp/obj/a.ddi"),
+              "\\\\?\\C:\\Users\\runner\\.mcpp\\obj\\a.ddi");
+    // `.` and `..` are resolved lexically, because the prefix turns their
+    // processing off; `..` does not climb above the drive.
+    EXPECT_EQ(windows_extended_length_spelling("C:\\a\\.\\b\\..\\c\\"),
+              "\\\\?\\C:\\a\\c");
+    EXPECT_EQ(windows_extended_length_spelling("C:/../../x"), "\\\\?\\C:\\x");
+    EXPECT_EQ(windows_extended_length_spelling("D:/"), "\\\\?\\D:\\");
+}
+
+TEST(PlatformFs, WindowsExtendedLengthSpellsAUncPath) {
+    using mcpp::platform::fs::windows_extended_length_spelling;
+    EXPECT_EQ(windows_extended_length_spelling("//server/share/dir/../f.o"),
+              "\\\\?\\UNC\\server\\share\\f.o");
+    // `..` does not climb above the share.
+    EXPECT_EQ(windows_extended_length_spelling("\\\\server\\share\\..\\..\\f"),
+              "\\\\?\\UNC\\server\\share\\f");
+}
+
+TEST(PlatformFs, WindowsExtendedLengthLeavesPrefixedAndRelativePathsAlone) {
+    using mcpp::platform::fs::windows_extended_length_spelling;
+    // Idempotent: a path handed on to a child process is converted again there.
+    EXPECT_EQ(windows_extended_length_spelling("\\\\?\\C:\\a\\b"), "\\\\?\\C:\\a\\b");
+    EXPECT_EQ(windows_extended_length_spelling("\\\\.\\pipe\\x"), "\\\\.\\pipe\\x");
+    EXPECT_EQ(windows_extended_length_spelling("obj/a.ddi"), "obj/a.ddi");
+    EXPECT_EQ(windows_extended_length_spelling(""), "");
+}

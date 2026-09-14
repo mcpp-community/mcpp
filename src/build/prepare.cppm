@@ -9355,8 +9355,13 @@ prepare_build(bool print_fingerprint,
                     // Hashed rather than random so a re-run reuses its own
                     // scratch (ninja stays incremental if the publish step
                     // never got to delete it).
-                    sub.work_dir     = entry / std::format("build-{}",
-                        mcpp::toolchain::hash_string(workRoot.string()));
+                    //
+                    // Beside the entries rather than inside one: every
+                    // directory name of the entry is repeated in each object
+                    // path the sub-build writes, and on Windows those paths
+                    // crossed the 260-character limit (mcpp#641, item 3).
+                    sub.work_dir     = mcpp::build::tool_store::scratch_dir(
+                        cacheRoot, entry, workRoot);
                     sub.target_triple = "";            // HOST — the whole point
                     sub.profile       = "release";
                     sub.cache_mode    = overrides.cache_mode;

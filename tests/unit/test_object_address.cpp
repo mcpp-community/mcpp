@@ -250,3 +250,124 @@ TEST(ObjectAddress, RootObjectsStayFlatAndUncacheable) {
         }
     }
 }
+
+// ── A source outside the package that declares it (mcpp#641, item 3) ───────
+
+namespace {
+
+mcpp::manifest::Manifest rootManifestNamed(std::string_view name) {
+    mcpp::manifest::Manifest m;
+    m.package.name     = std::string(name);
+    m.package.version  = "0.1.0";
+    m.package.standard = "c++23";
+    mcpp::manifest::Target bin;
+    bin.name = std::string(name);
+    bin.kind = mcpp::manifest::Target::Library;
+    m.targets.push_back(bin);
+    return m;
+}
+
+// The address of `source` in a plan whose root package `installer` lives at
+// `installerRoot` and declares a source under the root of its dependency
+// `dep`, as a build program's `mcpp::source(...)` does.
+std::optional<std::string> addressOfDeclaredDependencySource(
+        const std::filesystem::path& installerRoot,
+        const std::filesystem::path& depRoot,
+        std::string* err) {
+    auto rootManifest = rootManifestNamed("installer");
+    std::vector<mcpp::modgraph::PackageRoot> packages;
+    auto rootPkg = makePackage(installerRoot, "installer");
+    rootPkg.manifest = rootManifest;
+    packages.push_back(rootPkg);
+    packages.push_back(makePackage(depRoot, "dep"));
+
+    const auto helper = depRoot / "platform" / "impl" / "helper.cpp";
+    mcpp::modgraph::Graph graph;
+    graph.units.push_back(unitFor(installerRoot, "src/main.cpp", "installer"));
+    graph.units.push_back(unitFor(installerRoot,
+        std::filesystem::relative(helper, installerRoot), "installer"));
+    graph.units.back().path = helper;
+    touchFile(helper);
+    graph.units.push_back(unitFor(depRoot, "src/own.cpp", "dep"));
+
+    std::vector<std::size_t> topo{0, 1, 2};
+    auto plan = make_plan(rootManifest, gccLike(), {}, graph, topo, packages,
+                          installerRoot, installerRoot / "target" / "t", {}, {}, {});
+    if (!plan) { if (err) *err = plan.error(); return std::nullopt; }
+    std::optional<std::string> found;
+    for (auto& cu : plan->compileUnits) {
+        if (cu.source == depRoot / "src" / "own.cpp") {
+            // The dependency's own source keeps the mirrored address.
+            if (cu.object.generic_string() != "obj/dep/src/own.o") {
+                if (err) *err = "dependency's own source moved: " + cu.object.generic_string();
+                return std::nullopt;
+            }
+        }
+        if (cu.source == helper) found = cu.object.generic_string();
+    }
+    if (!found && err) *err = "helper compile unit not found";
+    return found;
+}
+
+} // namespace
+
+// The address names the package that contains the file and the path inside it,
+// so it does not grow with the distance between the two package roots.
+TEST(ObjectAddress, ASourceUnderAnotherPackageIsAddressedByThatPackage) {
+    Tmp t;
+    const auto dep = t.path / "fw" / "dep";
+    std::string err;
+    auto near = addressOfDeclaredDependencySource(t.path / "fw" / "tool", dep, &err);
+    ASSERT_TRUE(near) << err;
+    EXPECT_EQ(*near, "obj/installer/__pkg/dep/platform/impl/helper.o");
+    EXPECT_EQ(near->find("__up"), std::string::npos) << *near;
+
+    auto deeper = addressOfDeclaredDependencySource(
+        t.path / "fw" / "tools" / "windows" / "installer" / "tool", dep, &err);
+    ASSERT_TRUE(deeper) << err;
+    EXPECT_EQ(*deeper, *near)
+        << "moving the declaring package deeper changed the address";
+}
+
+// A source no package contains, colliding by basename with a root source, is
+// filed under a hash of its directory rather than a climbing mirror of it.
+TEST(ObjectAddress, AnUnownedEscapingSourceIsAddressedByAHashOfItsDirectory) {
+    Tmp t;
+    auto projectRoot = t.path / "proj";
+    auto depRoot     = t.path / "store" / "dep@1.0.0";
+    auto outside     = t.path / "elsewhere" / "out" / "gen.cpp";
+
+    auto rootManifest = rootManifestNamed("app");
+    std::vector<mcpp::modgraph::PackageRoot> packages;
+    auto rootPkg = makePackage(projectRoot, "app");
+    rootPkg.manifest = rootManifest;
+    packages.push_back(rootPkg);
+    packages.push_back(makePackage(depRoot, "dep"));
+
+    mcpp::modgraph::Graph graph;
+    graph.units.push_back(unitFor(projectRoot, "src/gen.cpp", "app"));
+    graph.units.push_back(unitFor(depRoot,
+        std::filesystem::relative(outside, depRoot), "dep"));
+    graph.units.back().path = outside;
+    touchFile(outside);
+
+    std::vector<std::size_t> topo{0, 1};
+    auto plan = make_plan(rootManifest, gccLike(), {}, graph, topo, packages,
+                          projectRoot, projectRoot / "target" / "t", {}, {}, {});
+    ASSERT_TRUE(plan) << plan.error();
+
+    std::string rootObj, outsideObj;
+    for (auto& cu : plan->compileUnits) {
+        if (cu.source == projectRoot / "src" / "gen.cpp") rootObj = cu.object.generic_string();
+        if (cu.source == outside) outsideObj = cu.object.generic_string();
+    }
+    EXPECT_EQ(rootObj, "obj/app/src/gen.o");
+    ASSERT_TRUE(outsideObj.starts_with("obj/dep/__ext/")) << outsideObj;
+    EXPECT_TRUE(outsideObj.ends_with("/gen.o")) << outsideObj;
+    EXPECT_EQ(outsideObj.find("__up"), std::string::npos) << outsideObj;
+    const auto hash = outsideObj.substr(std::string("obj/dep/__ext/").size(), 8);
+    EXPECT_EQ(outsideObj.size(), std::string("obj/dep/__ext/").size() + 8 + std::string("/gen.o").size())
+        << outsideObj;
+    EXPECT_TRUE(std::ranges::all_of(hash, [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'); })) << outsideObj;
+}

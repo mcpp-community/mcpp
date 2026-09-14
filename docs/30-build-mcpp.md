@@ -1171,6 +1171,20 @@ left `mcpp run` printing the previous answer until the version was bumped.
 Entries accumulate as a tree is edited; `mcpp cache clean` empties the store,
 which lives at `<mcpp cache dir>/tool/<index>/<name>@<version>[+<source>]/`.
 
+**The paths a tool build writes are bounded (2026.9.15.2+).** The sub-build
+runs in `<mcpp cache dir>/tool/.build/<hash>/`, a directory named by the entry
+and the consuming project rather than nested inside the entry, and it is
+removed once the binary is published. A source that a build program selects
+from outside its own package, such as a file under a dependency's root named
+with `mcpp::source`, is compiled to
+`obj/<package>/__pkg/<owning package>/<path inside that package>`, or to
+`obj/<package>/__ext/<hash of its directory>/` when no package contains it, so
+its address does not grow with the distance between the two packages. On
+Windows, the engine's own build steps (`dyndep`, `stage`, the BMI edges,
+`coff-def` and check stamps) open their files through extended-length paths.
+Before these changes a tool's scan output reached 271 characters on a Windows
+runner and could not be read (#641).
+
 The action's own tracking is separate from the store's key. An action that
 declares the tool among its inputs re-runs when that file's bytes change,
 measured by overwriting the binary in the store: the artifact followed.

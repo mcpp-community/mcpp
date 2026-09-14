@@ -984,6 +984,16 @@ grpc     = { version = "1.83.0", tools = ["grpc_cpp_plugin"] }
 版本被抬高。树被编辑时条目会累积;`mcpp cache clean` 清空 store,路径是
 `<mcpp cache dir>/tool/<index>/<name>@<version>[+<source>]/`。
 
+**工具构建写出的路径长度有界(2026.9.15.2+)。** 子构建在
+`<mcpp cache dir>/tool/.build/<hash>/` 中进行,这个目录由条目与消费工程命名,不嵌套在
+条目之内,二进制发布后即被删除。构建程序从自身包之外选入的源文件(例如用
+`mcpp::source` 选入依赖根下的文件)编译到
+`obj/<包>/__pkg/<所属包>/<在该包内的路径>`;没有任何包包含它时,编译到
+`obj/<包>/__ext/<其目录的哈希>/`。因此地址不随两个包之间的距离增长。在 Windows 上,
+引擎自己的构建步骤(`dyndep`、`stage`、BMI 相关的边、`coff-def` 与检查戳)以
+extended-length 路径打开文件。在这些改动之前,一个工具的扫描产物在 Windows runner
+上达到 271 个字符而无法读取(#641)。
+
 action 自己的跟踪与 store 的键是两回事。把工具列进 action 输入的规则,会在那个文件的
 字节变化时重跑 —— 实测直接覆盖 store 里的二进制,产物随之改变。
 

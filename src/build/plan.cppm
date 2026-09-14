@@ -1360,7 +1360,12 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     // match would file the member's sources under the outer package. Index 0 is
     // the root project; `packages.size()` means "outside every known root",
     // which is treated as root-owned and never cached.
-    auto owner_of = [&](const std::filesystem::path& src) -> std::size_t {
+    //
+    // `container_of` keeps the distinction `owner_of` folds away: no package
+    // contains the source at all. The object address of a source outside its
+    // declaring package needs it (see `outside_prefix` below).
+    auto container_of = [&](const std::filesystem::path& src)
+        -> std::optional<std::size_t> {
         std::size_t best = 0;
         std::size_t bestLen = 0;
         bool found = false;
@@ -1372,7 +1377,11 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
             auto len = packages[p].root.generic_string().size();
             if (!found || len > bestLen) { best = p; bestLen = len; found = true; }
         }
-        return found ? best : 0;
+        if (!found) return std::nullopt;
+        return best;
+    };
+    auto owner_of = [&](const std::filesystem::path& src) -> std::size_t {
+        return container_of(src).value_or(0);
     };
 
     std::set<std::filesystem::path> scannedSources;
@@ -1442,6 +1451,47 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         return pkg.empty() ? safe
                            : std::filesystem::path(sanitize(pkg)) / safe;
     };
+    // A SOURCE OUTSIDE ITS DECLARING PACKAGE IS ADDRESSED BY WHERE IT IS, NOT
+    // BY HOW FAR IT IS FROM THAT PACKAGE (mcpp#641, item 3).
+    //
+    // `relPath` is relative to the package whose manifest or build program
+    // named the source. When a build program names a file under another
+    // package's root, mirroring that relPath spells one `__up` per directory
+    // between the two roots, so the address grew with a distance that has
+    // nothing to do with the file. Reported on windows-2022: a host tool's
+    // `.ddi` reached 271 characters, 90 of them this mirror, and `mcpp dyndep`
+    // could not open it.
+    //
+    // The address is instead the owning package's slug under a `__pkg`
+    // component, followed by the path inside that package; a source that no
+    // package contains is filed under `__ext/<hash of its directory>`. Both
+    // are downward and shell-safe by construction, and the marker components
+    // keep them apart from the declaring package's own mirrored directories.
+    // A source inside its declaring package does not reach this function, so
+    // its address is unchanged.
+    auto escapes_declaring_package = [](const std::filesystem::path& relPath) {
+        if (relPath.empty()) return false;
+        if (relPath.is_absolute() || relPath.has_root_name()) return true;
+        return *relPath.begin() == "..";
+    };
+    auto outside_prefix = [&](const std::filesystem::path& src)
+        -> std::filesystem::path {
+        if (auto c = container_of(src)) {
+            std::error_code ec;
+            auto rel = std::filesystem::relative(src, packages[*c].root, ec);
+            if (!ec && !rel.empty())
+                return std::filesystem::path("__pkg")
+                     / sanitize(qualified_package_name(packages[*c].manifest))
+                     / safe_object_prefix({}, rel.parent_path());
+        }
+        // The identity of a directory, not its spelling on this code page
+        // (see the path narrowing rule in mcpp-contributing).
+        const auto dir = src.parent_path().lexically_normal().generic_u8string();
+        const auto digest = mcpp::toolchain::hash_string(std::string_view(
+            reinterpret_cast<const char*>(dir.data()), dir.size()));
+        return std::filesystem::path("__ext") / digest.substr(0, 8);
+    };
+
     // mcpp#233/#240/#344: the single source of truth for a compile unit's
     // object addresses — scanned units AND the synthesized entry main go
     // through here, so neither the link input nor the cache address can
@@ -1456,12 +1506,20 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                           std::size_t owner) -> ObjectAddress
     {
         const auto fname = object_filename_for(src, objExt);
+        const bool escapes = escapes_declaring_package(relPath);
         if (owner == 0) {
             // Root project: never cached, historical layout preserved.
-            if (rootBasenameCount[fname] > 1)
+            if (rootBasenameCount[fname] > 1) {
+                if (escapes)
+                    return { std::filesystem::path("obj")
+                           / (pkg.empty() ? std::filesystem::path{}
+                                          : std::filesystem::path(sanitize(pkg)))
+                           / outside_prefix(src) / fname,
+                             {} };
                 return { std::filesystem::path("obj")
                        / safe_object_prefix(pkg, relPath.parent_path()) / fname,
                          {} };
+            }
             return { std::filesystem::path("obj") / fname, {} };
         }
 
@@ -1471,7 +1529,8 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         auto mirrored = safe_object_prefix({}, relPath.parent_path()) / fname;
 
         ObjectAddress addr;
-        addr.object = std::filesystem::path("obj") / slug / mirrored;
+        addr.object = std::filesystem::path("obj") / slug
+                    / (escapes ? outside_prefix(src) / fname : mirrored);
 
         // The cache address additionally has to be MACHINE-independent: another
         // machine computes the same key and reads the same entry. A relPath
