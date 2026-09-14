@@ -89,7 +89,9 @@ printf 'module hello.greet;\nstd::string greet() { return "hi"; }\n' > "$d/src/g
 printf 'import hello.greet;\nimport std;\nint main() { std::println("{}", greet()); }\n' > "$d/src/main.cpp"
 printf 'int main() { return 0; }\n' > "$d/tests/test_smoke.cpp"
 before=$(cd "$d" && find . -type f | sort | xargs sha256sum | sha256sum)
-if (cd "$d" && "$STORE" emit build-database --format json > "$root/c.json" 2> "$root/c.err"); then
+if ! command -v python3 >/dev/null 2>&1; then
+    skip "C: no python3 in the sandbox to read the document"
+elif (cd "$d" && "$STORE" emit build-database --format json > "$root/c.json" 2> "$root/c.err"); then
     after=$(cd "$d" && find . -type f | sort | xargs sha256sum | sha256sum)
     [ "$before" = "$after" ] && ok "the project tree is unchanged" || fail "the project tree changed"
     if python3 - "$root/c.json" <<'EOF'
@@ -112,14 +114,60 @@ else
     fail "emit build-database failed"; tail -5 "$root/c.err"
 fi
 
+section "C2. the build database of a project with an mcpp-index dependency"
+d=$root/b
+if [ ! -f "$d/mcpp.toml" ] || ! command -v python3 >/dev/null 2>&1; then
+    skip "C2: section B's project or python3 is missing"
+else
+    before=$(cd "$d" && find . -type f | sort | xargs sha256sum | sha256sum)
+    if (cd "$d" && "$STORE" emit build-database --format json > "$root/c2.json" 2> "$root/c2.err"); then
+        after=$(cd "$d" && find . -type f | sort | xargs sha256sum | sha256sum)
+        [ "$before" = "$after" ] && ok "the built project's tree is unchanged, target/ included" || fail "the built project's tree changed"
+        if python3 - "$root/c2.json" "$REG" <<'EOF'
+import json, os, sys
+e = json.load(open(sys.argv[1])); reg = os.path.realpath(sys.argv[2])
+db, watch = e["data"]["database"], e["data"]["watch"]
+sets = {s["name"]: s for s in db["sets"]}
+assert {"eco636", "mcpplibs.cmdline", "mcpp:std"} <= set(sets), sorted(sets)
+assert all(not os.path.realpath(w).startswith(reg) for w in watch if os.path.isabs(w)), watch
+for tid, t in db["ide"]["toolchains"].items():
+    assert all(os.path.isfile(f) for f in t["config-files"]), (tid, t["config-files"])
+for s in db["sets"]:
+    for u in s["translation-units"]:
+        head = [u["arguments"][0]] + s["baseline-arguments"] + u["local-arguments"]
+        assert u["arguments"][:len(head)] == head and u["private"] is False, (s["name"], u["source"])
+print("sets", sorted(sets), "watch", len(watch))
+EOF
+        then ok "the document has the dependency's set, watches no store path, and carries the S1 SHOULD fields"
+        else fail "the dependency project's document"; fi
+    else
+        fail "emit build-database failed on the dependency project"; tail -5 "$root/c2.err"
+    fi
+fi
+
 section "D. xlings reports and repairs a payload that holds another package's download"
 cmd=$(find "$REG/data/xpkgs" -maxdepth 2 -path '*cmdline*' -type d | tail -1)
+strip_ansi() { sed 's/\x1b\[[0-9;]*[A-Za-z]//g'; }
 if [ -n "$cmd" ]; then
+    # The control: the store section B produced has no finding of this kind.
+    XLINGS_HOME="$REG" "$REG/bin/xlings" self doctor 2>&1 | strip_ansi > "$root/doctor0.log"
+    grep -qi 'swept payload' "$root/doctor0.log" && { fail "self doctor reports a swept payload before any was seeded"; grep -i -A2 'swept' "$root/doctor0.log" | head -6; } || ok "the fresh store has no swept-payload finding"
+    # The downloader's shape: an archive beside its zero-length lock.
     printf 'x' > "$cmd/intruder-1.0-linux-x86_64.tar.gz"; : > "$cmd/intruder-1.0-linux-x86_64.tar.gz.lock"
-    XLINGS_HOME="$REG" "$REG/bin/xlings" self doctor > "$root/doctor.log" 2>&1
-    grep -qi 'intruder\|swept\|download' "$root/doctor.log" && ok "self doctor reports the swept payload" || { fail "self doctor did not report it"; tail -8 "$root/doctor.log"; }
-    XLINGS_HOME="$REG" "$REG/bin/xlings" self doctor --fix > "$root/fix.log" 2>&1
-    [ ! -e "$cmd/intruder-1.0-linux-x86_64.tar.gz.lock" ] && ok "self doctor --fix leaves no download sidecar in the payload" || { fail "the sidecar is still there after --fix"; tail -8 "$root/fix.log"; }
+    XLINGS_HOME="$REG" "$REG/bin/xlings" self doctor 2>&1 | strip_ansi > "$root/doctor.log"
+    if grep -qi 'swept payload' "$root/doctor.log" && grep -qF "intruder-1.0-linux-x86_64.tar.gz.lock" "$root/doctor.log"; then
+        ok "self doctor reports the swept payload and names the lock file"
+    else
+        fail "self doctor did not report the seeded payload"; tail -12 "$root/doctor.log"
+    fi
+    XLINGS_HOME="$REG" "$REG/bin/xlings" self doctor --fix 2>&1 | strip_ansi > "$root/fix.log"
+    cmd=$(find "$REG/data/xpkgs" -maxdepth 2 -path '*cmdline*' -type d | tail -1)
+    if [ -n "$cmd" ] && [ ! -e "$cmd/intruder-1.0-linux-x86_64.tar.gz.lock" ] && [ ! -e "$cmd/intruder-1.0-linux-x86_64.tar.gz" ] \
+       && [ -n "$(find "$cmd" -mindepth 2 -maxdepth 2 -name mcpp.toml)" ]; then
+        ok "self doctor --fix reinstalls the payload: no seeded file, and */mcpp.toml is back"
+    else
+        fail "the payload after --fix"; ls -A "$cmd" 2>/dev/null | head; tail -12 "$root/fix.log"
+    fi
 else
     skip "D: section B produced no cmdline payload to seed"
 fi
