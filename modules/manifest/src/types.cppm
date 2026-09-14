@@ -192,6 +192,21 @@ struct Target {
     // inert on every object format that is not PE.
     std::string                 windowsSubsystem;
     std::string                 windowsEntry;
+    // Where `kind` was stated, as the manifest line that states it:
+    // `[targets.fw] kind = "shared"`, or, when a row states it,
+    // `[target.'cfg(os = "android")'.targets.fw] kind = "shared"`. Read by
+    // the link-form resolution, whose refusal names the statement that
+    // constrains a package instead of saying that a form "is not available".
+    std::string                 kindDeclaredBy;
+    bool                        kindFromRow = false;
+};
+
+// One `[target.<sel>.targets.<name>] kind` statement: the form a row gives a
+// library target, and the manifest line that gives it, which the link-form
+// resolution names when it has to refuse a request against it.
+struct RowTargetKind {
+    Target::Kind kind = Target::Library;
+    std::string  statement;
 };
 
 // `DependencySpec` and `kDefaultNamespace` have moved to mcpp.pm.dep_spec.
@@ -1348,6 +1363,14 @@ struct ConditionalConfig {
     // declaration turns an unsupported platform into a hard error raised from
     // inside the LIBRARY's manifest, which its user cannot work around.
     std::map<std::string, std::map<std::string, DependencySpec>> featureDeps;
+    // `[target.<sel>.targets.<name>] kind` -- the per-row form of
+    // `[targets.<name>] kind`, for a library target the package declares
+    // unconditionally and only between the two library forms (`Library`,
+    // `SharedLibrary`). Keyed by target name. A framework that is linked
+    // statically on the desktop rows and must be one shared copy on Android
+    // states that once, in its own manifest, and every consumer keeps a
+    // single unconditional dependency line.
+    std::map<std::string, RowTargetKind> targetKinds;
     // SPEC-004 §4: `[target.<sel>.xlings…]` — the TARGET axis of the tool plane.
     //
     // THE WHOLE TYPE, NOT A HAND-PICKED SUBSET, for the reason `inputs` above
@@ -1397,6 +1420,7 @@ inline bool is_empty(const ConditionalConfig& c) {
         && c.frameworks.empty()
         && c.dependencies.empty() && c.devDependencies.empty()
         && c.buildDependencies.empty() && c.featureDeps.empty()
+        && c.targetKinds.empty()
         && c.xlings.empty() && !c.abiThreadsDeclared && !c.abiExceptionsDeclared
         && !c.requiresAbiThreads && !c.requiresAbiExceptions
         && c.featureRequiresAbiThreads.empty() && c.featureRequiresAbiExceptions.empty();

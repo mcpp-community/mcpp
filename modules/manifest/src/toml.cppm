@@ -396,6 +396,25 @@ bool is_array_of_tables(const t::Value& v) {
     return true;
 }
 
+// A key as a TOML header has to spell it: bare when every character is one a
+// bare key admits, quoted otherwise. Messages name a conditional section with
+// it, so that the name a reader sees can be pasted back into a manifest:
+// `[target.'cfg(os = "android")'.dependencies]`, not
+// `[target.cfg(os = "android").dependencies]`, which does not parse.
+std::string toml_header_key(std::string_view key) {
+    const bool bare = !key.empty() && std::ranges::all_of(key, [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-';
+    });
+    if (bare) return std::string(key);
+    if (key.find('\'') == std::string_view::npos) return std::format("'{}'", key);
+    std::string out = "\"";
+    for (char c : key) {
+        if (c == '"' || c == '\\') out += '\\';
+        out += c;
+    }
+    return out + "\"";
+}
+
 // #253: shared parser for the per-glob flags array shape
 // `[{ glob = "...", cflags/cxxflags/asmflags/defines = [...] }, ...]` —
 // one entry grammar for `[build].flags` and `[features].<name>.flags`.
@@ -1122,6 +1141,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         else if (kind_s == "app"    || kind_s == "application") t.kind = Target::Application;
         else return std::unexpected(error(origin,
             std::format("targets.{}.kind must be 'bin', 'app', 'lib' or 'shared'; got '{}'", tname, kind_s)));
+        t.kindDeclaredBy = std::format("[targets.{}] kind = \"{}\"", tname, kind_s);
 
         // `main` is required for `bin` and for `app`: on every row but
         // Android it is the executable's entry, exactly as it is for `bin`;
@@ -1352,6 +1372,78 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         return false;
     };
 
+    // A selector whose last segment is a dependency OPTION rather than a
+    // package: `huxerui.huxerui.linkage = "shared"`. TOML reads it as a table
+    // that names no source, so the grammar sees a dependency on a package
+    // called `linkage` in the namespace `huxerui.huxerui`, and every later
+    // message is about that package. The grammar does not change -- a package
+    // named like an option stays addressable -- but the message does: it says
+    // what the line declares and restates the dependency with its source,
+    // taken from the unconditional declaration of the same key when there is
+    // one. Empty when the last segment is not an option.
+    auto option_restatement = [&](std::string_view section,
+                                  std::string_view selectorText,
+                                  std::string_view renderedValue) -> std::string {
+        auto dot = selectorText.rfind('.');
+        if (dot == std::string_view::npos) return {};
+        const auto option = selectorText.substr(dot + 1);
+        if (!is_dep_spec_key(option) || option == "path" || option == "version"
+            || option == "git" || option == "workspace")
+            return {};
+        const std::string dependency(selectorText.substr(0, dot));
+        const auto& family = section.ends_with("dev-dependencies")   ? m.devDependencies
+                           : section.ends_with("build-dependencies") ? m.buildDependencies
+                                                                     : m.dependencies;
+        auto it = family.find(dependency);
+        const std::string defaultPrefix = std::format("{}.", kDefaultNamespace);
+        if (it == family.end() && dependency.starts_with(defaultPrefix))
+            it = family.find(dependency.substr(defaultPrefix.size()));
+        std::string source = "version = \"<version>\"";
+        if (it != family.end()) {
+            auto const& s = it->second;
+            if (s.isPath())
+                source = std::format("path = \"{}\"", s.path);
+            else if (s.isGit())
+                source = std::format("git = \"{}\", {} = \"{}\"", s.git,
+                                     s.gitRefKind.empty() ? "rev" : s.gitRefKind, s.gitRev);
+            else if (s.inheritWorkspace)
+                source = "workspace = true";
+            else if (!s.version.empty())
+                source = std::format("version = \"{}\"", s.version);
+        }
+        const bool conditional = section.starts_with("target.");
+        return std::format(
+            "'{}' is an option of a dependency, not a package: a dependency "
+            "table names its source (path, version, git or workspace) beside "
+            "its options. Restate the dependency with its source: "
+            "{} = {{ {}, {} = {} }}.{}",
+            option, dependency, source, option, renderedValue,
+            conditional ? " On the rows this selector matches, that declaration "
+                          "replaces the unconditional one."
+                        : "");
+    };
+    // The same restatement for a value that reached an error site rather than
+    // the version warning (`features = [...]`, `default-features = false`),
+    // as a clause appended to that error. Empty when the key is not an option.
+    auto with_restatement = [&](std::string_view section,
+                                std::string_view selectorText,
+                                const t::Value& value) -> std::string {
+        std::string rendered = "...";
+        if (value.is_bool()) {
+            rendered = value.as_bool() ? "true" : "false";
+        } else if (value.is_array()) {
+            rendered = "[";
+            for (auto const& e : value.as_array()) {
+                if (rendered.size() > 1) rendered += ", ";
+                rendered += e.is_string() ? std::format("\"{}\"", e.as_string())
+                                          : std::string("...");
+            }
+            rendered += "]";
+        }
+        auto restated = option_restatement(section, selectorText, rendered);
+        return restated.empty() ? std::string{} : std::format(". {}", restated);
+    };
+
     auto fill_inline_spec = [&](DependencySpec& spec,
                                 std::string_view section,
                                 std::string_view fqName,
@@ -1505,11 +1597,22 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         spec.legacyDottedKey = legacyDottedKey;
         spec.legacyCandidateSearch = legacyCandidateSearch;
         spec.namespaceOmitted = selector.namespaceOmitted;
+        spec.declaredIn = std::format("[{}]", section);
 
         auto key = selector.stableMapKey;
         if (value.is_string()) {
             spec.version = value.as_string();
-            if (auto why = version_req_problem(spec.version); !why.empty())
+            auto why = version_req_problem(spec.version);
+            auto restated = why.empty()
+                ? std::string{}
+                : option_restatement(section, key,
+                                     std::format("\"{}\"", spec.version));
+            if (!restated.empty())
+                m.schemaWarnings.push_back(std::format(
+                    "[{}] {} = \"{}\" declares a dependency on a package named "
+                    "'{}'. {}",
+                    section, key, spec.version, key, restated));
+            else if (!why.empty())
                 m.schemaWarnings.push_back(std::format(
                     "[{}] {} = '{}' is not a version RANGE ({}), so it is used "
                     "as an exact index key: the index must carry it verbatim, "
@@ -1576,8 +1679,9 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             }
             if (!v.is_table()) {
                 return std::unexpected(error(origin, std::format(
-                    "[{}].{}.{} must be a string, inline dep table, or nested table",
-                    section, ns, k)));
+                    "[{}].{}.{} must be a string, inline dep table, or nested table{}",
+                    section, ns, k,
+                    with_restatement(section, std::format("{}.{}", ns, k), v))));
             }
             auto childNs = std::format("{}.{}", ns, k);
             auto childMapPrefix = mapPrefix.empty()
@@ -1618,8 +1722,9 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             }
             if (!v.is_table()) {
                 return std::unexpected(error(origin, std::format(
-                    "[{}].{} must be a string, inline dep table, or nested table",
-                    section, selectorText)));
+                    "[{}].{} must be a string, inline dep table, or nested table{}",
+                    section, selectorText,
+                    with_restatement(section, selectorText, v))));
             }
             if (auto r = load_selector_dep_table(
                     section, out, selectorText, v.as_table()); !r)
@@ -1631,10 +1736,20 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     // Parse a dependency table (already obtained) into `out`. Factored out of
     // load_deps so the same logic serves both [dependencies] (via doc->get_table)
     // and [target.'cfg(...)'.dependencies] (a nested table the dotted getter
-    // can't address). `section` is the logical section name, used for error
-    // messages and namespace/selector resolution.
+    // can't address).
+    //
+    // TWO NAMES, BECAUSE THEY ANSWER TWO QUESTIONS. `section` is the table's
+    // name as a reader writes it, used in every message and recorded on each
+    // edge (`DependencySpec::declaredIn`): `target.'cfg(os = "android")'.
+    // dependencies` for a conditional table. `lookup` is the path the
+    // explicit-namespace-table test builds (`is_namespace_table`), which a
+    // conditional table has always resolved against `dependencies`; empty
+    // means the same as `section`. Before the two were separated, a
+    // conditional table was loaded under the name `dependencies`, so its
+    // messages named the unconditional table.
     auto load_deps_table = [&](std::string_view section, auto& tt,
-                               std::map<std::string, DependencySpec>& out)
+                               std::map<std::string, DependencySpec>& out,
+                               std::string_view lookup = {})
         -> std::expected<void, ManifestError>
     {
         for (auto& [k, v] : tt) {
@@ -1678,7 +1793,7 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // Explicit tables such as `[dependencies.acme]` are namespace
             // roots. Dotted keys inside the single dependency table are exact
             // selectors too: `capi.lua` means only `(capi, lua)`.
-            if (is_namespace_table(section, k)) {
+            if (is_namespace_table(lookup.empty() ? section : lookup, k)) {
                 if (auto r = load_nested_dep_table(section, out, k, k, sub); !r)
                     return r;
             } else if (auto r = load_selector_dep_table(section, out, k, sub); !r) {
@@ -2717,21 +2832,22 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             // so a key that looks plausible — `cxx_runtime_tests` was the real
             // one — was accepted in silence and had no effect (#418).
             //
-            // NO SUB-TABLES, AND THAT IS THE POINT. The sub-TABLES here are the
-            // conditional channel (`[target.<pred>.build]`, `.dependencies`,
-            // `.dev-dependencies`, `.build-dependencies`, `.feature-deps`) and
-            // TOML presents each as a key of this table. A hand-written list of
-            // "known keys" therefore has to enumerate that channel too — and
-            // that list is exactly the thing this codebase has watched drift
-            // twice already (see ConditionalConfig's comments on #258 and #359,
-            // both "the conditional reader kept its own subset and fell
-            // behind"). The first version of this check did hand-list them and
-            // warned about `[target.'cfg(unix)'.dependencies]`, a documented
-            // feature with its own e2e.
-            //
-            // Restricting the check to non-tables removes the coupling entirely:
-            // new conditional sections need no change here, and the reported
-            // case — a key that does nothing — is still caught.
+            // SUB-TABLES ARE CHECKED AGAINST A LIST A TEST DERIVES FROM THE
+            // PARSER. The sub-tables here are the conditional channel
+            // (`[target.<pred>.build]`, `.dependencies`, `.targets`, ...) and
+            // TOML presents each as a key of this table. The first version of
+            // this check hand-listed them and warned about
+            // `[target.'cfg(unix)'.dependencies]`, a documented feature with
+            // its own e2e, and the next version skipped every table-valued
+            // key. That made a misspelled section (`.dependecies`) and a
+            // section an older engine does not know (`.targets`, #634) do
+            // nothing without a word, which is the failure this sweep exists
+            // to report. `kKnownTargetTables` is written next to the scalar
+            // lists, and tests/unit/test_target_scalar_keys.cpp reads the
+            // parse sites of the whole loop body by source text and checks the
+            // list in both directions, so a new section added to the parser
+            // without the list fails that test instead of being reported as
+            // unsupported.
             //
             // Scalars AND arrays (#544). The sweep used to skip arrays, which
             // kept it from reporting `runner` as unsupported while honouring
@@ -2752,8 +2868,28 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 "cxx_runtime", "linkage", "min_api_level", "sysroot", "toolchain",
             };
             static constexpr std::string_view kKnownTargetArrays[] = { "runner" };
+            static constexpr std::string_view kKnownTargetTables[] = {
+                "abi", "build", "build-dependencies", "dependencies",
+                "dev-dependencies", "feature-deps", "feature-requires-abi",
+                "feature-xlings", "requires_abi", "runners", "runtime",
+                "targets", "xlings",
+            };
             for (auto& [key, value] : body) {
-                if (value.is_table()) continue;   // the conditional channel
+                if (value.is_table()) {
+                    if (std::ranges::find(kKnownTargetTables, key)
+                        != std::end(kKnownTargetTables))
+                        continue;
+                    std::string tables;
+                    for (auto name : kKnownTargetTables) {
+                        if (!tables.empty()) tables += ", ";
+                        tables += name;
+                    }
+                    m.schemaWarnings.push_back(std::format(
+                        "[target.{}.{}] is not a section mcpp reads (ignored). "
+                        "The sections of a [target.<selector>] table are: {}.",
+                        toml_header_key(triple), key, tables));
+                    continue;
+                }
                 const std::span<const std::string_view> known = value.is_array()
                     ? std::span<const std::string_view>(kKnownTargetArrays)
                     : std::span<const std::string_view>(kKnownTargetScalars);
@@ -2801,6 +2937,56 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                         cc.abiExceptions = av.as_bool();
                         cc.abiExceptionsDeclared = true;
                     }
+                }
+            }
+            // `[target.<pred>.targets.<name>] kind` (#634, A1) -- the per-row
+            // form of `[targets.<name>] kind`: only `kind`, and only between
+            // the two library forms. A row may decide how a library is linked;
+            // it may not decide which targets exist or what a program is.
+            // Bad values are refused, as `[targets.<name>] kind` refuses its
+            // own, because a package that states a form and silently does not
+            // get it is the defect this table exists to remove. Whether the
+            // name is a library target of this package is checked in `load`,
+            // after target inference, where the target list is complete.
+            if (auto tit = body.find("targets"); tit != body.end()) {
+                if (!tit->second.is_table())
+                    return std::unexpected(error(origin, std::format(
+                        "[target.{0}].targets must be a table of target names, "
+                        "e.g. `[target.{0}.targets.<name>]` with `kind = \"shared\"`",
+                        toml_header_key(triple))));
+                for (auto& [tname, tval] : tit->second.as_table()) {
+                    const auto header = std::format("[target.{}.targets.{}]",
+                                                    toml_header_key(triple), tname);
+                    if (!tval.is_table())
+                        return std::unexpected(error(origin, std::format(
+                            "{} must be a table with `kind = \"lib\"` or "
+                            "`kind = \"shared\"`", header)));
+                    auto& row = tval.as_table();
+                    for (auto& [rk, rv] : row)
+                        if (rk != "kind")
+                            m.schemaWarnings.push_back(std::format(
+                                "{} has unsupported key '{}' (ignored). A row "
+                                "states only `kind`; every other key of a target "
+                                "is declared once, under [targets.{}].",
+                                header, rk, tname));
+                    auto kit = row.find("kind");
+                    if (kit == row.end() || !kit->second.is_string())
+                        return std::unexpected(error(origin, std::format(
+                            "{} must set `kind = \"lib\"` or `kind = \"shared\"`",
+                            header)));
+                    const auto& kindText = kit->second.as_string();
+                    RowTargetKind rowKind;
+                    if (kindText == "lib" || kindText == "library")
+                        rowKind.kind = Target::Library;
+                    else if (kindText == "shared" || kindText == "dylib"
+                          || kindText == "so" || kindText == "shlib")
+                        rowKind.kind = Target::SharedLibrary;
+                    else
+                        return std::unexpected(error(origin, std::format(
+                            "{} kind = \"{}\": a row chooses between the library "
+                            "forms only, `lib` and `shared`", header, kindText)));
+                    rowKind.statement = std::format("{} kind = \"{}\"", header, kindText);
+                    cc.targetKinds[std::string(tname)] = std::move(rowKind);
                 }
             }
             // `[target.<pred>] requires_abi = { ... }` -- design 2026-09-12
@@ -3011,12 +3197,16 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             }
             // [target.<predicate>.{dependencies,dev-dependencies,build-dependencies}]
             // parsed via the shared table-based loader (same selectors/namespaces
-            // as the global [dependencies]) into the deferred config.
+            // as the global [dependencies]) into the deferred config, under the
+            // table's full name so that a message and the resolution record
+            // name the conditional table rather than the unconditional one.
             auto read_deps = [&](const char* key, std::map<std::string, DependencySpec>& out)
                 -> std::expected<void, ManifestError>
             {
                 if (auto f = body.find(key); f != body.end() && f->second.is_table())
-                    return load_deps_table(key, f->second.as_table(), out);
+                    return load_deps_table(
+                        std::format("target.{}.{}", toml_header_key(triple), key),
+                        f->second.as_table(), out, key);
                 return {};
             };
             if (auto r = read_deps("dependencies",       cc.dependencies);     !r) return std::unexpected(r.error());
@@ -3031,9 +3221,14 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
                 f != body.end() && f->second.is_table()) {
                 for (auto& [fname, fval] : f->second.as_table()) {
                     if (!fval.is_table()) continue;
+                    // The lookup keeps the spelling this table has always
+                    // been resolved against; only the name a reader sees
+                    // changes, which used to arrive in double brackets.
                     if (auto r = load_deps_table(
-                            std::format("[target.{}.feature-deps.{}]", triple, fname),
-                            fval.as_table(), cc.featureDeps[std::string(fname)]); !r)
+                            std::format("target.{}.feature-deps.{}",
+                                        toml_header_key(triple), fname),
+                            fval.as_table(), cc.featureDeps[std::string(fname)],
+                            std::format("[target.{}.feature-deps.{}]", triple, fname)); !r)
                         return std::unexpected(r.error());
                     m.featuresMap.try_emplace(std::string(fname),
                                               std::vector<std::string>{});
@@ -3551,6 +3746,33 @@ std::expected<Manifest, ManifestError> load(const std::filesystem::path& path,
 
     // M5.0: defaults + target inference (uses filesystem context relative to mcpp.toml).
     apply_defaults_and_infer(*m, path.parent_path());
+
+    // A `[target.<sel>.targets.<name>]` row names a target, and an undeclared
+    // library target exists only after the inference above, so the name is
+    // checked here rather than where the row is parsed.
+    for (auto const& cc : m->conditionalConfigs) {
+        for (auto const& [name, row] : cc.targetKinds) {
+            auto target = std::ranges::find(m->targets, name, &Target::name);
+            if (target == m->targets.end()) {
+                std::string names;
+                for (auto const& t : m->targets) {
+                    if (!names.empty()) names += ", ";
+                    names += t.name;
+                }
+                return std::unexpected(ManifestError{std::format(
+                    "{} names no target of this package (its targets: {})",
+                    row.statement, names.empty() ? std::string("none") : names),
+                    path, 0, 0});
+            }
+            if (target->kind != Target::Library
+                && target->kind != Target::SharedLibrary)
+                return std::unexpected(ManifestError{std::format(
+                    "{}: '{}' is a program target, and a row chooses between "
+                    "the library forms only, `lib` and `shared`",
+                    row.statement, name),
+                    path, 0, 0});
+        }
+    }
     return m;
 }
 

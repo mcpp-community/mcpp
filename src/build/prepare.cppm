@@ -364,6 +364,28 @@ layer_predicated_xlings_refusal(const mcpp::manifest::Manifest& m)
     return std::nullopt;
 }
 
+// Two declarations of one dependency, compared by the identity their keys
+// normalise to rather than by the keys themselves: `fw` and `mcpplibs.fw` are
+// one package under two map keys (`selector.stableMapKey`), and a comparison
+// of keys would leave both entries in the map for the resolver to see.
+bool same_dependency_identity(const mcpp::manifest::DependencySpec& a,
+                              const mcpp::manifest::DependencySpec& b) {
+    if (a.shortName.empty() || b.shortName.empty()) return false;
+    return a.namespace_ == b.namespace_ && a.shortName == b.shortName;
+}
+
+void replace_dependencies(
+    std::map<std::string, mcpp::manifest::DependencySpec>& into,
+    const std::map<std::string, mcpp::manifest::DependencySpec>& from)
+{
+    for (auto const& [key, spec] : from) {
+        std::erase_if(into, [&](auto const& entry) {
+            return entry.first == key || same_dependency_identity(entry.second, spec);
+        });
+        into[key] = spec;
+    }
+}
+
 export void merge_conditional_config(mcpp::manifest::Manifest& m,
                                     const cfgpred::Ctx& ctx)
 {
@@ -455,18 +477,34 @@ export void merge_conditional_config(mcpp::manifest::Manifest& m,
         // BuildInputs, so conditional sources are mirrored into it here.
         for (auto const& s : cc.inputs.sources)
             m.modules.sources.push_back(s);
-        // insert() keeps an existing unconditional entry: a conditional
-        // section adds a dependency, it never silently overrides one.
-        m.dependencies.insert(cc.dependencies.begin(), cc.dependencies.end());
-        m.devDependencies.insert(cc.devDependencies.begin(), cc.devDependencies.end());
-        m.buildDependencies.insert(cc.buildDependencies.begin(),
-                                   cc.buildDependencies.end());
+        // A matching conditional declaration of a dependency REPLACES the
+        // declaration of the same identity, and a later matching section
+        // replaces an earlier one: the rule every conditional scalar above
+        // follows (#634, A1). This used to be `insert()`, which kept the
+        // unconditional entry, so `linkage = "shared"` written for one row was
+        // dropped on that row without a word. No manifest among 509 scanned
+        // declared one dependency in both tables, so no build that worked
+        // changes; the declaring table rides on the spec (`declaredIn`) into
+        // the resolution record.
+        replace_dependencies(m.dependencies, cc.dependencies);
+        replace_dependencies(m.devDependencies, cc.devDependencies);
+        replace_dependencies(m.buildDependencies, cc.buildDependencies);
         // #359: `[target.<sel>.feature-deps.<feature>]`. The feature is
         // registered by the parser regardless of the predicate; only what it
         // pulls in is conditional.
-        for (auto const& [fname, deps] : cc.featureDeps) {
-            auto& dst = m.featureDeps[fname];
-            dst.insert(deps.begin(), deps.end());
+        for (auto const& [fname, deps] : cc.featureDeps)
+            replace_dependencies(m.featureDeps[fname], deps);
+        // `[target.<sel>.targets.<name>] kind`: the row's form of a library
+        // target, applied before resolution, so the link-form resolution
+        // reads it exactly as it reads `[targets.<name>] kind`. `load` has
+        // already refused a name that is not a library target.
+        for (auto const& [name, row] : cc.targetKinds) {
+            for (auto& t : m.targets) {
+                if (t.name != name) continue;
+                t.kind = row.kind;
+                t.kindDeclaredBy = row.statement;
+                t.kindFromRow = true;
+            }
         }
     }
 }
@@ -2051,6 +2089,17 @@ prepare_build(bool print_fingerprint,
                 "for. Build inputs under this predicate DO apply; move the "
                 "dependency to an unconditional [dependencies] entry, or "
                 "condition it on the triple instead.",
+                cc.predicate));
+        }
+        // The same reason holds for a row's library form: whether a package
+        // is linked shared is decided while the graph is resolved, before a
+        // layer has an answer.
+        if (cfgpred::uses_layer(cc.predicate) && !cc.targetKinds.empty()) {
+            m->schemaWarnings.push_back(std::format(
+                "[target.'{}'] conditions a target's kind on a target-side "
+                "layer (ignored). A layer is resolved from the dependency "
+                "graph, and a library's form is decided while that graph is "
+                "resolved; condition the kind on the triple instead.",
                 cc.predicate));
         }
     }
@@ -11329,8 +11378,12 @@ prepare_build(bool print_fingerprint,
             }
             std::vector<mcpp::manifest::Target*> libraryTargets;
             for (auto& t : pkg.targets) {
-                if (t.kind == mcpp::manifest::Target::SharedLibrary)
+                if (t.kind == mcpp::manifest::Target::SharedLibrary
+                    && !facts.declaredShared) {
                     facts.declaredShared = true;
+                    facts.declaredSharedBy = t.kindDeclaredBy;
+                    facts.declaredSharedByRow = t.kindFromRow;
+                }
                 if (t.kind == mcpp::manifest::Target::Library)
                     libraryTargets.push_back(&t);
             }

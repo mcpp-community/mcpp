@@ -118,6 +118,14 @@ struct DependencySpec {
     // author wrote. Only such a selector is eligible for the one-release
     // bare-name fallback: `mcpplibs.gtest` states an identity and must miss.
     bool                        namespaceOmitted = false;
+    // The table that declared this edge, spelled as its TOML header:
+    // `[dependencies]`, `[target.'cfg(os = "android")'.dependencies]`,
+    // `[feature-deps.gpu]`. A conditional declaration replaces an
+    // unconditional one on the rows its selector matches, so which table a
+    // resolved edge came from is a fact the resolution record states rather
+    // than one a reader reconstructs. Empty for an edge the parser did not
+    // create (a synthesised or xpkg-derived dependency).
+    std::string                 declaredIn;
 
     bool isPath()    const { return !path.empty(); }
     bool isGit()     const { return !git.empty(); }

@@ -73,6 +73,16 @@ struct Admissible {
     // Why not, when `sharedOk` is false. Always populated in that case: a
     // refusal a user cannot act on is worse than no feature.
     std::string sharedRefusal;
+    // Why not, when `staticOk` is false: the manifest line that constrains
+    // the package to the shared form. Before it existed, a refused `static`
+    // request was answered with "the requested form is not available here",
+    // a sentence that does not name the statement that decided.
+    std::string staticRefusal;
+    // Which constraint narrowed the set, as the token the resolution record
+    // stores (`package-kind`, `row-kind`, `no-loader`, `static-libc`,
+    // `packaged`, `no-sources`, `prebuilt-inputs`). Empty when both forms are
+    // admissible.
+    std::string constraint;
 
     bool allows(DepLinkage linkage) const {
         return linkage == DepLinkage::Static ? staticOk : sharedOk;
@@ -96,6 +106,11 @@ struct PackageFacts {
     // as "must be static" would freeze the entire ecosystem out of this axis.
     // Absence of a constraint is not a constraint.
     bool declaredShared = false;
+    // The line that states it, `[targets.fw] kind = "shared"` or its per-row
+    // form, and whether it is the per-row form. Read only for the refusal and
+    // the resolution record.
+    std::string declaredSharedBy;
+    bool        declaredSharedByRow = false;
 
     // The package's resolved `ldflags` name link inputs mcpp did not compile
     // (see `carries_foreign_link_inputs`).
@@ -151,6 +166,10 @@ struct Resolution {
     DepLinkage  linkage = DepLinkage::Static;
     // Non-empty exactly when the answer differs from an EXPLICIT request.
     std::string diagnostic;
+    // Why this form, for the resolution record: `default` (nobody asked and
+    // nothing constrains), `requested` (an explicit request was honoured), or
+    // the `Admissible::constraint` token that overrode the request.
+    std::string reason;
 };
 
 Resolution resolve(const PackageFacts& package, const Admissible& admissible,
@@ -205,14 +224,16 @@ Admissible admissible(const PackageFacts& package, const TargetFacts& target) {
     if (!target.hasLoader) {
         return Admissible{ .staticOk = true, .sharedOk = false,
             .sharedRefusal = "this target has no dynamic loader, so there is "
-                             "nothing that could load a shared library" };
+                             "nothing that could load a shared library",
+            .constraint = "no-loader" };
     }
     if (target.fullStaticLibc) {
         return Admissible{ .staticOk = true, .sharedOk = false,
             .sharedRefusal = "this image links its C library statically "
                              "(`linkage = \"static\"`), and a static "
                              "executable has no interpreter to load a shared "
-                             "library with" };
+                             "library with",
+            .constraint = "static-libc" };
     }
 
     if (package.isDistribution) {
@@ -226,24 +247,37 @@ Admissible admissible(const PackageFacts& package, const TargetFacts& target) {
             out.sharedRefusal = std::format(
                 "{} is a packaged library and ships only a static leg",
                 package.label);
+        if (!out.staticOk)
+            out.staticRefusal = std::format(
+                "{} is a packaged library and ships only a shared leg",
+                package.label);
+        if (!out.staticOk || !out.sharedOk) out.constraint = "packaged";
         return out;
     }
 
     if (package.declaredShared)
-        return Admissible{ .staticOk = false, .sharedOk = true };
+        return Admissible{ .staticOk = false, .sharedOk = true,
+            .staticRefusal = package.declaredSharedBy.empty()
+                ? std::string("its manifest declares a shared library target")
+                : std::format("its manifest states {}, which constrains the "
+                              "package to the shared form",
+                              package.declaredSharedBy),
+            .constraint = package.declaredSharedByRow ? "row-kind" : "package-kind" };
 
     if (!package.hasSources) {
         return Admissible{ .staticOk = true, .sharedOk = false,
             .sharedRefusal = std::format(
                 "{} builds none of its own sources, so mcpp has no objects to "
-                "make a shared library from", package.label) };
+                "make a shared library from", package.label),
+            .constraint = "no-sources" };
     }
     if (package.carriesForeignLinkInputs) {
         return Admissible{ .staticOk = true, .sharedOk = false,
             .sharedRefusal = std::format(
                 "{} brings its own prebuilt link inputs (its `ldflags` carry a "
                 "`-L`), which mcpp cannot place inside a shared library it "
-                "builds", package.label) };
+                "builds", package.label),
+            .constraint = "prebuilt-inputs" };
     }
     return Admissible{ .staticOk = true, .sharedOk = true };
 }
@@ -259,26 +293,33 @@ Resolution resolve(const PackageFacts& package, const Admissible& admissible,
         explicitRequest = true;
     }
 
-    if (admissible.allows(wanted)) return Resolution{ .linkage = wanted };
+    if (admissible.allows(wanted))
+        return Resolution{ .linkage = wanted,
+                           .reason = explicitRequest ? "requested" : "default" };
 
     // Not allowed. There is exactly one other form, and the admissible set is
     // never empty by construction — `staticOk` is false only for a package the
     // author constrained to shared, and that case allows Shared.
     const DepLinkage fallback = admissible.sharedOk ? DepLinkage::Shared
                                                     : DepLinkage::Static;
-    Resolution out{ .linkage = fallback };
+    Resolution out{ .linkage = fallback, .reason = admissible.constraint };
     // SPEAK ONLY FOR A BROKEN PROMISE. When the whole-graph value is mcpp's
     // own default, nobody asked for anything and there is nothing to report;
     // saying so on every build would put a warning on correct manifests that
     // their authors cannot act on. Same rule mcpp.build.distribution applies
     // to its contract defaults.
     if (explicitRequest && wanted != fallback) {
+        // The refusal of the form that was ASKED FOR: a refused `static`
+        // request is explained by what constrains the package to `shared`.
+        const auto& refusal = wanted == DepLinkage::Static
+            ? admissible.staticRefusal
+            : admissible.sharedRefusal;
         out.diagnostic = std::format(
             "{} is linked as a {} library: {}",
             package.label, to_string(fallback),
-            admissible.sharedRefusal.empty()
+            refusal.empty()
                 ? std::string("the requested form is not available here")
-                : admissible.sharedRefusal);
+                : refusal);
     }
     return out;
 }

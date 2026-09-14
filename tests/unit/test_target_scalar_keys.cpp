@@ -165,6 +165,73 @@ TEST(TargetScalarKeys, EveryParsedNonTableKeyIsKnownToTheSweep) {
             << "body.find(...) parse site";
 }
 
+// The whole `[target.<selector>]` loop body: the scalar parser, the sweep, and
+// the conditional channel that follows it, up to the point the block is
+// recorded. Sub-tables are parsed in both halves (`runners` before the sweep,
+// `build`, `dependencies`, `targets` and the rest after it).
+std::string target_loop_region(const std::string& source) {
+    auto begin = source.find("for (auto& [triple, val] : *tt) {");
+    auto end = source.find("m.conditionalConfigs.push_back(std::move(cc));");
+    if (begin == std::string::npos || end == std::string::npos || end < begin) return {};
+    return source.substr(begin, end - begin);
+}
+
+// Every sub-table the loop body reads: a `body.find("<key>")` whose first type
+// check is `is_table()`, and every `read_deps("<key>", ...)`, the helper the
+// three conditional dependency tables go through.
+std::vector<std::string> parsed_target_tables(const std::string& region) {
+    std::vector<std::string> out;
+    const std::string needle = "body.find(\"";
+    std::vector<std::pair<std::size_t, std::string>> hits;
+    for (std::size_t pos = 0; (pos = region.find(needle, pos)) != std::string::npos;) {
+        std::size_t nameStart = pos + needle.size();
+        std::size_t nameEnd = region.find('"', nameStart);
+        hits.emplace_back(pos, region.substr(nameStart, nameEnd - nameStart));
+        pos = nameEnd;
+    }
+    for (std::size_t i = 0; i < hits.size(); ++i) {
+        std::size_t nextPos = (i + 1 < hits.size()) ? hits[i + 1].first : region.size();
+        if (classify(region, hits[i].first, nextPos) == Kind::Table)
+            out.push_back(hits[i].second);
+    }
+    const std::string helper = "read_deps(\"";
+    for (std::size_t pos = 0; (pos = region.find(helper, pos)) != std::string::npos;) {
+        std::size_t nameStart = pos + helper.size();
+        std::size_t nameEnd = region.find('"', nameStart);
+        out.push_back(region.substr(nameStart, nameEnd - nameStart));
+        pos = nameEnd;
+    }
+    return out;
+}
+
+TEST(TargetScalarKeys, EveryParsedSubTableIsKnownToTheSweep) {
+    // #634: the sweep used to skip every table-valued key, so a misspelled
+    // section, and a section an older engine does not read, did nothing
+    // without a word. It now checks tables against `kKnownTargetTables`, and
+    // this test holds that list to the parse sites in both directions, which
+    // is the drift the skip was introduced to avoid.
+    auto source = read_file(repo_root() / "modules" / "manifest" / "src" / "toml.cppm");
+    ASSERT_FALSE(source.empty()) << "could not read toml.cppm";
+    auto region = target_loop_region(source);
+    ASSERT_FALSE(region.empty()) << "could not locate the [target.<selector>] loop body";
+
+    auto parsed = parsed_target_tables(region);
+    auto known = known_list(region, "kKnownTargetTables[]");
+    ASSERT_FALSE(parsed.empty());
+    ASSERT_FALSE(known.empty());
+
+    for (auto const& key : parsed)
+        EXPECT_NE(std::ranges::find(known, key), known.end())
+            << "'" << key << "' is parsed as a sub-table of [target.<selector>] "
+            << "but missing from kKnownTargetTables, so the sweep would report it";
+    for (auto const& key : known)
+        EXPECT_NE(std::ranges::find(parsed, key), parsed.end())
+            << "kKnownTargetTables names '" << key << "', which has no parse site "
+            << "in the [target.<selector>] loop body";
+    // The table this list was introduced beside.
+    EXPECT_NE(std::ranges::find(parsed, std::string("targets")), parsed.end());
+}
+
 TEST(TargetScalarKeys, MinApiLevelIsParsedAndKnown) {
     // A direct, non-derived check on the specific regression: `min_api_level`
     // must be both a parse site and a known scalar key. If this test passes
