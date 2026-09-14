@@ -63,4 +63,4 @@ printf '%s' "$base" > mcpp.toml
 "$MCPP" build > d.log 2>&1 || fail "D: the host row was refused" d.log
 if grep -q "android.api-level" d.log; then fail "D: the host row mentions the Android floor" d.log; fi
 
-echo "OK"
+echo "PASS: 680_a_dependency_floor_on_the_android_api_level"

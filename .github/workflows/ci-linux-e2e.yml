@@ -258,6 +258,93 @@ jobs:
             echo "338 neither passed nor reported why it did not run"; exit 1; }
 
   # ──────────────────────────────────────────────────────────────────
+  # Android: the rows no sharded runner can reach.
+  #
+  # `run_all.sh` adds the `android-ndk` capability only when the NDK payload
+  # is already installed, and no other job installs it, so every
+  # `# requires: android-ndk` test skipped on every CI runner while reporting
+  # green. This job installs the payload, runs those tests directly and demands
+  # each PASS line, then runs `mcpp test` on an API 34 emulator through
+  # `adb-run` (the configuration measured on mcpp#635), which is the only
+  # place a test program's loading on the device is observed.
+  # ──────────────────────────────────────────────────────────────────
+  android:
+    name: android e2e (NDK rows + x86_64 emulator)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    env:
+      MCPP_HOME: /home/runner/.mcpp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+
+      - name: Build mcpp from source (self-host)
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$XLINGS_BIN" config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" self config --mirror GLOBAL 2>/dev/null || true
+          "$MCPP" build
+
+      - name: Install the NDK (xim:android-ndk)
+        timeout-minutes: 20
+        run: |
+          XLINGS_HOME="$MCPP_HOME/registry" "$XLINGS_BIN" install xim:android-ndk@30.0.16248370 -y
+          # Present before the tests, so a missing payload fails this step
+          # rather than an assertion deep inside a test.
+          ls "$MCPP_HOME"/registry/data/xpkgs/xim-x-android-ndk/*/toolchains/llvm/prebuilt/*/bin/clang++
+
+      - name: Android e2e (no device)
+        timeout-minutes: 40
+        run: |
+          MCPP=$(realpath "$(find target -type f -name mcpp -printf '%T@ %p\n' | sort -rn | head -1 | cut -d' ' -f2)")
+          test -x "$MCPP"
+          export MCPP
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          "$MCPP" self config --mirror "$MCPP_E2E_TOOLCHAIN_MIRROR"
+          "$MCPP" toolchain install gcc 16.1.0
+          "$MCPP" toolchain default gcc@16.1.0
+          # Run directly, not through run_all.sh, so a skip cannot pass as a
+          # green: each script either prints its PASS line or this step fails.
+          declare -A pass=(
+            [652b_an_application_on_android_is_a_shared_library]='652b: kind = "app" on Android is a shared library OK'
+            [664_a_universal_apk_is_two_legs_in_one_tree]='664: the universal APK is the library route applied to an app OK'
+            [667_an_android_pack_stages_its_closure]='667: an Android pack stages its closure OK'
+            [675_android_test_programs_carry_their_cxx_runtime]='PASS: 675_android_test_programs_carry_their_cxx_runtime'
+            [680_a_dependency_floor_on_the_android_api_level]='PASS: 680_a_dependency_floor_on_the_android_api_level'
+          )
+          for t in "${!pass[@]}"; do
+            echo "=== $t ==="
+            bash "tests/e2e/$t.sh" 2>&1 | tee "$t.log"
+            rc=${PIPESTATUS[0]}
+            [ "$rc" = "0" ] || { echo "$t failed (exit $rc)"; exit 1; }
+            grep -qF "${pass[$t]}" "$t.log" || { echo "$t did not print its PASS line"; exit 1; }
+          done
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Compile the device tests before the emulator starts
+        timeout-minutes: 20
+        run: bash .github/tools/android_emulator_test.sh prebuild "$RUNNER_TEMP/droidtest"
+
+      - name: mcpp test on an API 34 emulator
+        timeout-minutes: 30
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: bash .github/tools/android_emulator_test.sh run "$RUNNER_TEMP/droidtest"
+
+  # ──────────────────────────────────────────────────────────────────
   # Hermetic (no host toolchain): the ONLY environment class that
   # faithfully reproduces issue #195. Standard runners ship gcc +
   # libc6-dev, so a sandbox toolchain that leaks to the host's CRT
