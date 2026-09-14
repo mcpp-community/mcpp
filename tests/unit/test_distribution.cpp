@@ -747,6 +747,36 @@ TEST(Distribution, ASharedLibraryStillHidesTheArchivesWithoutASecondRuntime) {
               " /tc/libunwind.a -Wl,--exclude-libs,libunwind.a");
 }
 
+// THE NAMES `--exclude-libs` MATCHES ARE THE ARCHIVES THE LINKER OPENS
+// (#634 A6). The Android NDK's per-API `libc++.a` is a linker script,
+// `INPUT(-lc++_static -lc++abi)`: its members come from `libc++_static.a`, and
+// hiding `libc++.a` alone left 161 dynamic symbols in a self-contained shared
+// library where naming `libc++_static.a` left 4 (measured). The paths on the
+// line are unchanged; only the hidden names grow, and only when given.
+TEST(Distribution, ALinkerScriptsArchivesAreTheNamesHidden) {
+    dist::MechanismInput in;
+    in.format            = dist::Format::Elf;
+    in.stdlibId          = "libc++";
+    in.role              = dist::Role::SharedLibrary;
+    in.requested         = dist::Contract::SelfContained;
+    in.libcxxArchive     = "/ndk/sysroot/usr/lib/x86_64-linux-android/24/libc++.a";
+    in.libcxxAbiArchive  = "/ndk/sysroot/usr/lib/x86_64-linux-android/libc++abi.a";
+    in.libunwindArchive  = "/ndk/lib/clang/21/lib/linux/x86_64/libunwind.a";
+    in.libcxxLinkedArchiveNames = {"libc++.a", "libc++abi.a", "libc++_static.a"};
+    auto m = dist::resolve(in);
+    EXPECT_EQ(m.unitFlags,
+              " -nostdlib++ /ndk/sysroot/usr/lib/x86_64-linux-android/24/libc++.a"
+              " /ndk/sysroot/usr/lib/x86_64-linux-android/libc++abi.a"
+              " -Wl,--exclude-libs,libc++.a -Wl,--exclude-libs,libc++abi.a"
+              " -Wl,--exclude-libs,libc++_static.a"
+              " /ndk/lib/clang/21/lib/linux/x86_64/libunwind.a"
+              " -Wl,--exclude-libs,libunwind.a");
+
+    // An executable still carries no guard, whatever the names are.
+    in.role = dist::Role::Test;
+    EXPECT_EQ(dist::resolve(in).unitFlags.find("exclude-libs"), std::string::npos);
+}
+
 // ─── Format::Wasm, the member the module predicted and deferred ────────────
 //
 // `format_for`'s own comment said a wasm triple "falls out of every branch"
