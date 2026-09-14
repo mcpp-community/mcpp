@@ -515,7 +515,12 @@ Rendered render(std::span<const Member> members,
             for (auto const& g : sp.sources) watch_glob(sp.root, g);
         }
         for (auto const& g : member.testDiscover) watch_glob(member.testRoot, g);
+        // Only an editable package's build program inputs can change: a store
+        // package's are fixed by the version its manifest and lock name.
+        std::set<std::filesystem::path> editableRoots;
+        for (auto const& sp : ctx.sourcePackages) editableRoots.insert(sp.root.lexically_normal());
         for (auto const& declared : mcpp::build::declared_program_inputs(member.workDir)) {
+            if (!editableRoots.contains(declared.root.lexically_normal())) continue;
             for (auto const& f : declared.files) watch_file(f);
             for (auto const& g : declared.globs) watch_glob(declared.root, g);
         }
