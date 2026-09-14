@@ -34,6 +34,10 @@ env -u PKG_CONFIG_LIBDIR "$MCPP" build > build.log 2>&1 || fail "build failed" b
 
 registry=$("$MCPP" self env 2>/dev/null | sed -n 's/^xlings home *= *//p' | head -1)
 [ -n "$registry" ] || fail "cannot read the registry from mcpp self env"
+# `self env` prints the native spelling (`C:\Users\...` on Windows); the
+# accessor joins generic, `/`-separated paths with the platform's list
+# separator, which the `?` below matches.
+registry=${registry//\\//}
 line=$(grep -o 'libdir=.*' build.log | head -1)
 case "$line" in
     "libdir=$registry/subos/default/usr/lib/pkgconfig"?"$registry/subos/default/usr/share/pkgconfig inherited=(unset)") ;;
