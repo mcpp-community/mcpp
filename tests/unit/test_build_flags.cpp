@@ -146,3 +146,22 @@ TEST(BuildFlags, NormalizeIncludeFlagsLeavesAbsolutePathsAlone) {
 }
 
 }  // namespace
+
+// #634, item 11 of the triage record: a search-path entry that begins with a
+// token the loader expands is relative to a loaded object, not to the package
+// that wrote it. Both ldflag normalisers ask this one predicate.
+TEST(BuildFlagsLoaderTokens, EveryLoaderTokenIsLeftAsWritten) {
+    for (std::string_view entry : {"$ORIGIN", "${ORIGIN}", "$ORIGIN/../lib", "$LIB",
+                                   "@executable_path", "@executable_path/../Frameworks",
+                                   "@loader_path", "@loader_path/", "@rpath",
+                                   "@rpath/sub"}) {
+        EXPECT_TRUE(mcpp::build::is_loader_relative_search_path(entry)) << entry;
+    }
+}
+
+TEST(BuildFlagsLoaderTokens, OrdinaryPathsAreNotTokens) {
+    for (std::string_view entry : {"", "lib", "./lib", "/opt/lib", "rpath",
+                                   "@executable_pathology", "@rpathx", "x/@rpath"}) {
+        EXPECT_FALSE(mcpp::build::is_loader_relative_search_path(entry)) << entry;
+    }
+}

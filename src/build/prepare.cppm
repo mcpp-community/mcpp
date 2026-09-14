@@ -6141,7 +6141,9 @@ prepare_build(bool print_fingerprint,
                                  const std::string& flag) {
         auto absolute_path = [&](std::string_view raw) {
             std::filesystem::path p{std::string(raw)};
-            if (p.is_absolute() || raw.starts_with("$")) return p;
+            // A loader token stays as written; see the predicate.
+            if (p.is_absolute() || mcpp::build::is_loader_relative_search_path(raw))
+                return p;
             return depRoot / p;
         };
 
