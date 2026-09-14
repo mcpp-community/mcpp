@@ -1,0 +1,39 @@
+name: verify-macos-closure
+# Temporary: locates the SIGSEGV of unit/test_pack_closure on macos-15 (mcpp#637). Not for merging.
+on:
+  push:
+    branches: [ verify/634-macos-closure ]
+jobs:
+  closure:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-macos-llvm
+      - name: Build mcpp from source
+        timeout-minutes: 20
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          "$MCPP" build
+      - name: Build the closure unit test
+        timeout-minutes: 15
+        run: |
+          set +e
+          M=$(find target -path "*/bin/mcpp" | head -1)
+          M=$(cd "$(dirname "$M")" && pwd)/$(basename "$M")
+          "$M" self config --mirror GLOBAL
+          "$M" test test_pack_closure > t.log 2>&1
+          echo "READING test exit=$?"
+          tail -40 t.log
+      - name: Run each suite under lldb
+        timeout-minutes: 10
+        run: |
+          set +e
+          BIN=$(find target -path "*/bin/unit/test_pack_closure" | head -1)
+          echo "READING binary=$BIN"
+          for f in 'PackClosureAndroid.*' 'PackClosurePe.SystemNamesAndNamesFoundNowhereAreTheTargets' 'PackClosurePe.ForceBundleReachesTheSystemList' 'PackClosureMachO.*'; do
+            "$BIN" --gtest_filter="$f" > run.log 2>&1
+            echo "READING filter=$f exit=$?"
+            tail -5 run.log
+          done
+          lldb --batch -o "run" -o "bt 40" -o "frame variable" -k "bt 40" -k "quit 1" -- "$BIN" --gtest_filter='PackClosurePe.*' 2>&1 | tail -80
