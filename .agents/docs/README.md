@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-284 records.
+285 records.
 
 ## By subject
 
@@ -58,6 +58,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### triage
 
+- [A framework's CMake parity list: the twenty-one items of #634, read against the code and routed to where each one belongs](2026-09-14-634-cmake-parity-items-by-home.md) — active
 - [What a framework and its ecosystem library still hit in the engine: the ten items of #630, read against the code](2026-09-13-630-what-a-framework-still-hits-in-the-engine.md) — landed
 - [The engine gaps left open after the SDK batch](2026-09-12-engine-gaps-after-the-sdk-batch.md) — landed
 - [Six open issues: what each one actually is, and what would answer it](2026-09-11-six-open-issues-analysis.md) — active
@@ -66,6 +67,7 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
+- [A framework's CMake parity list: the twenty-one items of #634, read against the code and routed to where each one belongs](2026-09-14-634-cmake-parity-items-by-home.md) — active
 - [Four upstream asks from a UI framework: what each one is under mcpp's design, and the combined plan](2026-09-13-four-upstream-asks-from-a-ui-framework.md) — landed
 - [What a framework and its ecosystem library still hit in the engine: the ten items of #630, read against the code](2026-09-13-630-what-a-framework-still-hits-in-the-engine.md) — landed
 - [The engine gaps left open after the SDK batch](2026-09-12-engine-gaps-after-the-sdk-batch.md) — landed
