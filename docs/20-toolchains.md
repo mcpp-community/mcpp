@@ -1034,7 +1034,11 @@ Under that statement each such shared library links the runtime package's object
 itself. Each image then holds its own type information for the runtime's classes:
 an exception of a standard library class thrown in the shared library is not caught
 by that class in the program, while a class the shared library defines is. A
-default never selects the private copy; only the statement does.
+default never selects the private copy; only the statement does. On Mach-O every
+unit of a graph whose C++ runtime is a package is compiled with hidden visibility,
+so that the runtime's instantiations are never coalesced with the system's libc++;
+a shared library there exports the declarations its sources mark
+`[[gnu::visibility("default")]]` and nothing else.
 
 `static_stdlib` is the older spelling and still works: `true` means
 `self-contained`, `false` means `host-coupled`. An explicit `cxx_runtime` wins.
