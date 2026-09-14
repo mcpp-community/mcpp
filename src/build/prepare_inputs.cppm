@@ -654,6 +654,13 @@ std::string canonical_package_build_metadata(
         // one rule rather than one rule and an exception.
         s += ' ';
         s += canonical_compile_flags(pkg.manifest);
+        // The level a C++-layer provider compiles its implementation units at
+        // (`make_plan`). Appended only when there is one, so every other
+        // output directory keeps its identity.
+        if (auto own = mcpp::manifest::cxx_layer_implementation_standard(pkg.manifest)) {
+            s += " implementation-standard=";
+            s += own->canonical;
+        }
         for (auto const& src : pkg.manifest.buildConfig.sources) {
             s += " src:";
             s += src;

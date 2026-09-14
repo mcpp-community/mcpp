@@ -1529,6 +1529,32 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         return addr;
     };
 
+    // THE C++ LAYER'S OWN SOURCES KEEP THE LEVEL THEIR PACKAGE STATES.
+    //
+    // Keyed by the unit's package name (the scanner's qualified spelling) and
+    // holding the dialect's spelling of that level, present only for a
+    // provider whose level differs from the graph's. The flag is appended to
+    // the unit's own C++ flag vector, which the compile edge, the scan edge,
+    // compile_commands.json and the build database all read after the graph's
+    // flags, so one value reaches every command that names the unit and the
+    // later `-std=` is the one the driver takes. The std module itself is not
+    // a unit of the package (`std-module` is precompiled by the prebuild at
+    // the graph's level), so no BMI moves. See
+    // `mcpp::manifest::cxx_layer_implementation_standard` for why the
+    // exception exists and why it is scoped to this kind of package.
+    std::map<std::string, std::string, std::less<>> implementationStandardFlag;
+    {
+        const auto graphStandard =
+            mcpp::manifest::normalize_cpp_standard(manifest.package.standard);
+        for (auto const& p : packages) {
+            auto own = mcpp::manifest::cxx_layer_implementation_standard(p.manifest);
+            if (!own) continue;
+            if (graphStandard && own->canonical == graphStandard->canonical) continue;
+            implementationStandardFlag[qualified_package_name(p.manifest)] =
+                mcpp::toolchain::cppfly::std_flag(tc, own->canonical, own->level);
+        }
+    }
+
     // 1. Compile units in topological order
     for (auto idx : topoOrder) {
         auto& u = graph.units[idx];
@@ -1552,6 +1578,16 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         for (auto& req : u.requires_) cu.imports.push_back(req.logicalName);
         cu.scanOverridden = u.scanOverridden;
         cu.declaration    = u.declaration;
+        // A C++ unit of the provider that neither provides nor imports a
+        // module (`import std` included) and declares none: the one kind of
+        // unit that reads and writes no BMI.
+        if (auto it = implementationStandardFlag.find(cu.packageName);
+            it != implementationStandardFlag.end()
+            && cu.kind == mcpp::SourceKind::Cxx && !cu.providesModule
+            && cu.imports.empty()
+            && cu.declaration == mcpp::modgraph::ModuleDeclaration::None) {
+            cu.packageCxxflags.push_back(it->second);
+        }
         plan.compileUnits.push_back(std::move(cu));
     }
 

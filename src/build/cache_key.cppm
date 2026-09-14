@@ -505,6 +505,11 @@ void fill_package_config(PackageAxes&                        out,
         // A package may pin its own C standard; it reaches its own C units.
         out.cflags.push_back("__c_standard=" + bc.cStandard);
     }
+    // A C++-layer provider's own C++ level reaches its implementation units
+    // (`make_plan`), and the graph's level alone does not say which level
+    // that is. Appended only when there is one, so no other key moves.
+    if (auto own = mcpp::manifest::cxx_layer_implementation_standard(pkg.manifest))
+        out.cxxflags.push_back("__implementation_standard=" + own->canonical);
 
     for (auto const& gf : bc.globFlags) {
         std::string one = "glob:" + gf.glob;
