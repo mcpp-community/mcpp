@@ -5,6 +5,47 @@
 
 ## [Unreleased]
 
+### 链接形态、标准档位与路径长度:#641 与 #642(2026.9.15.2)
+
+一个 UI 框架迁到 macOS 12 下限与 Android 独立共享库时报告的七项,全部在引擎内处理。
+设计与实测记录:`.agents/docs/2026-09-15-641-642-*.md`。
+
+- **必需编译器族的版本取自同一载荷的 pin(#641 项 1)。** 全新 home 上
+  `requires = ["mcpp:compiler=llvm"]` 此前按族比较行 pin,取到 NDK 的
+  `llvm@30.0.16248370`;`compiler=emsdk` / `compiler=android-ndk` 则一个都匹配不到,
+  并谎称没有行固定版本。现按 `to_xim_package` 的包名比较(`pinned_versions_for`)。
+  (单测 `RequiredFamilyPins.*`)
+- **C++ 层提供者按自己声明的标准编译实现单元(#641 项 2)。** 提供
+  `hosted-standard-library` / `mcpp:c++-abi=` 的包若写了 `[package] standard`,其既不
+  提供也不导入模块的 C++ 单元按该档位编译,模块单元(含 std 模块)仍按图的档位;
+  于是 c++20 的程序可以使用 `llvm.libcxx`。该档位进入依赖缓存键与指纹;不写的提供者
+  逐字节不变。(单测 `CxxLayerStandard.*`,e2e 696)
+- **工具构建的路径有界(#641 项 3)。** 位于声明包之外的源文件,对象地址改为
+  `obj/<声明包>/__pkg/<所属包>/<包内路径>`,无所属包时为 `obj/<声明包>/__ext/<目录哈希>/`;
+  host 工具子构建的暂存目录改为 `<cache>/tool/.build/<16 位哈希>`;ninja 调用的引擎子命令
+  在 Windows 上以扩展长度路径打开文件。(单测 `ObjectAddress.*`、`PlatformFs.*`、
+  `ToolStoreScratch.*`,e2e 698)
+- **`mcpp pack --features`(#641 项 4)。** 作用于打包的每一次构建(每条 `--target` 腿、
+  分派格式的两次构建);`mcpp run --format` 把自己的 feature 交给它执行的打包。(e2e 689)
+- **图中的 C++ 运行时之上的依赖共享库(#641 项 5)。** 运行时包的对象只链进程序,依赖
+  的 C++ 共享库此前没有任何 C++ 运行时(Linux 上 lld 拒绝链接程序,macOS 上 dylib
+  链接失败)。现在编译前拒绝,reason 为 `shared-library-cxx-runtime`,并给出出路;
+  写明 `cxx_runtime = { shared = "self-contained" }` 时,共享库链接运行时包对象的私有
+  副本。实测:每个镜像一份副本时,共享库抛出的 `std::runtime_error` 在程序中不能按该类
+  捕获,拒绝消息写明这一后果。(e2e 690,在 hermetic llvm job 上运行)
+- **包声明默认链接形态(#642 E1)。** `[targets.<n>]` 与
+  `[target.<sel>.targets.<n>]` 中的 `linkage = "static" | "shared"` 是包的默认值,
+  `kind = "shared"` 仍是约束;根的边 `linkage`、显式的 `[build] dependency_linkage`
+  依次优先于它,覆盖默认值时打印一行信息而非降级,`--strict` 接受。解析记录的 reason
+  为 `package-default` 或 `requested`。(单测 `LinkageForm.*`,e2e 692)
+- **根构建程序读取依赖的链接形态(#642 E2)。** 依赖的链接形态在根构建程序之前计算一次,
+  应用位置不变;根构建程序得到 `MCPP_DEP_<NAME>_LINKAGE` 与 `mcpp::dep_linkage(name)`。
+  依赖的构建程序不提供该值:只有根决定链接形态,且它运行时排在其后的包的输入尚未齐备。
+  `hasSources` 取自扫描器导出的 `package_source_files`,p1689 扫描器由此也遵循 `!` 排除。
+  (e2e 693)
+- CI:`ci-linux-e2e` 的 hermetic job 直接运行 663、690、696 并断言其结束行;这三份脚本
+  需要 llvm,分片上一向被跳过。
+
 ### `mcpp emit build-database`:不写工程目录的构建数据库(#636,2026.9.15.1)
 
 新命令按 `mcpp build --configure-only` 的方式、用相同的选择器规划,把计划打印为

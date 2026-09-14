@@ -28,16 +28,16 @@ the parallel work trees of §8.
 
 | id | task (triage §) | owner | depends on | status |
 |---|---|---|---|---|
-| M1 | a required compiler family's version is taken from pins that name the same payload; the refusal no longer states a false reason (§3.1) | lead | - | todo |
-| M2 | `mcpp pack --features` reaches every build pass `pack` performs (§3.6) | lead | - | todo |
-| M3 | a dependency's C++ shared library in a graph whose C++ runtime is a package is refused before compiling, unless `cxx_runtime` states `self-contained` for shared libraries; under that statement the library links the provider's objects (§3.3) | lead | - | todo |
-| M4 | `linkage = "static" \| "shared"` in `[targets.<n>]` and `[target.<sel>.targets.<n>]` states the package's default form; precedence and the information line (§3.4) | W1 | - | todo |
-| M5 | dependency link forms are computed once before the root's build program and applied where they are today; `MCPP_DEP_<NAME>_LINKAGE` and `mcpp::dep_linkage` for the root's program (§3.5) | W1 | M4 | todo |
-| M6 | a C++-layer provider that states `[package] standard` compiles its implementation units at that level; module units stay at the graph's (§3.2) | W2 | - | todo |
-| M7 | the object address of a source outside its declaring package is relative to its owning package, or a hashed directory when no package owns it (§3.7 item 3) | W3 | - | todo |
-| M8 | the host-tool sub-build runs in a short key-named scratch directory (§3.7 item 2) | W3 | - | todo |
-| M9 | files the engine opens from ninja-invoked subcommands go through one extended-length path helper on Windows (§3.7 item 1) | W3 | - | todo |
-| M10 | CI: the llvm-dependent e2e scripts of M3 and M6, and the existing 663, run on a job that has llvm, with their PASS lines asserted (§1.8) | lead | M3, M6 | todo |
+| M1 | a required compiler family's version is taken from pins that name the same payload; the refusal no longer states a false reason (§3.1) | lead | - | branch: unit `RequiredFamilyPins.*`; M1 probe reads `llvm@30.0.16248370` on 2026.9.15.1 |
+| M2 | `mcpp pack --features` reaches every build pass `pack` performs (§3.6) | lead | - | branch: e2e 689 (fails on 2026.9.15.1: `pack --features installer failed`) |
+| M3 | a dependency's C++ shared library in a graph whose C++ runtime is a package is refused before compiling, unless `cxx_runtime` states `self-contained` for shared libraries; under that statement the library links the provider's objects (§3.3) | lead | - | branch: e2e 690, four legs (fails on 2026.9.15.1: the refusal is absent) |
+| M4 | `linkage = "static" \| "shared"` in `[targets.<n>]` and `[target.<sel>.targets.<n>]` states the package's default form; precedence and the information line (§3.4) | W1 | - | branch: unit `LinkageForm.*`, manifest cases; e2e 692 (fails on 2026.9.15.1: no libfw.so for a silent consumer) |
+| M5 | dependency link forms are computed once before the root's build program and applied where they are today; `MCPP_DEP_<NAME>_LINKAGE` and `mcpp::dep_linkage` for the root's program (§3.5) | W1 | M4 | branch: e2e 693 (fails on 2026.9.15.1: `'dep_linkage' is not a member of 'mcpp'`) |
+| M6 | a C++-layer provider that states `[package] standard` compiles its implementation units at that level; module units stay at the graph's (§3.2) | W2 | - | branch: unit `CxxLayerStandard.*` (9), `CacheKey` case; e2e 696 (fails on 2026.9.15.1: `new.cpp` at `-std=c++20`) |
+| M7 | the object address of a source outside its declaring package is relative to its owning package, or a hashed directory when no package owns it (§3.7 item 3) | W3 | - | branch: unit `ObjectAddress.*`; e2e 698 leg A (fails on 2026.9.15.1: `obj/installer/__up/__up/dep/...`) |
+| M8 | the host-tool sub-build runs in a short key-named scratch directory (§3.7 item 2) | W3 | - | branch: unit `ToolStoreScratch.*`; e2e 698 leg B |
+| M9 | files the engine opens from ninja-invoked subcommands go through one extended-length path helper on Windows (§3.7 item 1) | W3 | - | branch: unit `PlatformFs.*`; e2e 698 leg C (Windows readings from CI) |
+| M10 | CI: the llvm-dependent e2e scripts of M3 and M6, and the existing 663, run on a job that has llvm, with their PASS lines asserted (§1.8) | lead | M3, M6 | branch: `ci-linux-e2e.yml` hermetic job step |
 | M11 | user documentation with its Chinese mirror; SPEC changes; CHANGELOG; version 2026.9.15.2 | lead, W1-W3 | M1-M9 | todo |
 | M12 | the triage and plan records closed with their readings | lead | all | todo |
 
@@ -157,6 +157,36 @@ there and `run_all.sh` exits 0. M10 runs the llvm scripts of M3 and M6, and 663
 which has never run in CI, directly on the `hermetic` job (which already
 installs `llvm@22.1.8`) and asserts each script's final PASS line, and the
 line of the run step inside it.
+
+### 1.9 Refinements found while implementing
+
+- **M5's computation follows the layer-conditional pass (L1b), not only the
+  dependency programs.** L1b changes dependency manifests, so a computation
+  placed before it would read facts that are not final. The p1689 scanner had a
+  source enumeration of its own that ignored `!` exclusions; it now reads the
+  function the resolution reads. Form B descriptors read `linkage` as
+  `mcpp.toml` does, and SPEC-001 records the precedence (v1.4, criterion 9).
+- **M6's level enters the dependency cache key and the fingerprint** when a
+  provider states one, because the graph's level alone no longer says which
+  level the provider's sources were compiled at. The opt-in p1689 scan runs
+  before planning and still preprocesses these units at the graph's level,
+  which affects import detection only.
+- **M7 and M8 shorten the issue's case to about 170 characters,** so crossing
+  260 now needs nesting deep inside the dependency; e2e 698 leg C does that and
+  is the Windows reading of whether ninja and the compilers cope. M9 had to
+  guard two things beyond opens: a path string ninja reads back (the copied
+  depfile's target keeps ninja's spelling) and an ANSI Win32 call
+  (`CreateFileW` for the detached compile's log).
+- **M3's static remedy depends on who made the library shared.** A package that
+  constrains its form (`declaredShared`) cannot be linked static from its edge,
+  so that remedy is offered only when a request or the package's default
+  decided, and the refusal names the package's statement otherwise. `mcpp run
+  --format` built its pack without the run's features; it now passes them.
+- **F3, recorded and not addressed.** The std module object is linked into every
+  C++ image, so a program over a C++ shared library that imports `std` reports
+  its module initialiser as provided twice (`symbol_provision`). This predates
+  the work: under gcc on 2026.9.15.1 the same shape reports 882 symbols; under
+  the private copy of M3 it reports two, `_ZGIW3std` and `_ZGIW3stdW6compat`.
 
 ## 2. Engine tasks
 
