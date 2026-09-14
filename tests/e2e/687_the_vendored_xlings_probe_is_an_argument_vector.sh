@@ -33,7 +33,10 @@ export MCPP_HOME="$TMP/mcpp-home"
 # Offline: configuration loading still acquires the vendored xlings (it copies
 # a local binary), and no bootstrap step reaches the network.
 export MCPP_OFFLINE=1
-source "$(dirname "$0")/_inherit_toolchain.sh"
+# The home's own configuration, whose xlings binary is the vendored one. An
+# inherited configuration may name another (the macOS runner's names its
+# `~/.xlings` shim), and then nothing is vendored and nothing is probed.
+MCPP_INHERIT_CONFIG=0 source "$(dirname "$0")/_inherit_toolchain.sh"
 cd "$TMP"
 
 VENDORED="$MCPP_HOME/registry/bin/xlings$EXE"
