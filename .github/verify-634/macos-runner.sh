@@ -86,10 +86,11 @@ T
 printf '#include <cstdio>\nint main(int argc, char**) { std::printf("1-2-3 argc=%%d\\n", argc); return 7; }\n' > rapp/src/main.cpp
 
 cd "$W/rapp" || exit 1
-"$MCPP" build > build.log 2>&1
-reading b3.build "exit=$? $(tail -2 build.log | tr '\n' '|')"
+"$MCPP" build > build.log 2>&1; rc=$?
+reading b3.build "exit=$rc $(tail -2 build.log | tr '\n' '|')"
+[ "$rc" -eq 0 ] || tail -40 build.log
 "$MCPP" run --format app --runner app -- extra > fmt-runner.out 2>&1
-reading b3.run-format-app-runner-app "exit=$? $(grep -E '1-2-3|Running|error' fmt-runner.out | tr '\n' '|')"
+rc=$?; reading b3.run-format-app-runner-app "exit=$rc $(grep -E '1-2-3|Running|error' fmt-runner.out | tr '\n' '|')"; [ "$rc" -eq 7 ] || tail -25 fmt-runner.out
 "$MCPP" run --format app > fmt-default.out 2>&1
 reading b3.run-format-app-no-runner "exit=$? $(grep -E '1-2-3|Running|error' fmt-default.out | tr '\n' '|' | cut -c1-400)"
 "$MCPP" run > plain.out 2>&1

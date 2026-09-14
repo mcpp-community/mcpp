@@ -21,7 +21,8 @@ runner = ["simctl-run"]
 "xim:apple-simulator-tools" = "0.2.0"'
 cd "$D" || exit 1
 "$MCPP" test --target aarch64-ios-sim --message-format json > test.json 2> test.err
-reading m2ios.exit "exit=$? stderr=$(tail -5 test.err | tr '\n' '|' | cut -c1-500)"
+rc=$?; reading m2ios.exit "exit=$rc stderr=$(tail -5 test.err | tr '\n' '|' | cut -c1-500)"
+[ "$rc" -eq 0 ] || tail -40 test.err
 reading m2ios.deployed-in-build-tree "$(find target -path '*bin/data/data.txt' 2>/dev/null | head -1)"
 report_tests test.json m2ios
 exit 0

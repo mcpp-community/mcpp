@@ -31,6 +31,13 @@ int main() {
     mcpp::link_search((w + "/bootstrapper/build/native/v14/x64").c_str());
     mcpp::link_lib("dutil");
     mcpp::link_lib("balutil");
+    // The first run named no system import library, and every unresolved
+    // symbol was one of these (MessageBoxA, RegOpenKeyExW, CoInitializeEx):
+    // the archives' own symbols all resolved on both MSVC-ABI toolchains.
+    for (auto lib : {"user32", "advapi32", "ole32", "oleaut32", "shell32",
+                     "shlwapi", "version", "crypt32", "wininet", "msi",
+                     "rpcrt4", "uuid", "gdi32", "comctl32", "wintrust"})
+        mcpp::link_lib(lib);
     return 0;
 }
 T

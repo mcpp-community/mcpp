@@ -88,9 +88,18 @@ reading m7.A.build "exit=$rc $(grep -m2 -iE 'error|m634' "$RUNNER_TEMP/m7/a/buil
 state A
 "$MCPP" index update > "$RUNNER_TEMP/m7/a/update.log" 2>&1
 reading m7.A.index-update "exit=$? $(tail -2 "$RUNNER_TEMP/m7/a/update.log" | tr '\n' '|')"
-rm -rf "$MCPP_HOME/registry/data/xpkgs/xim-x-m634-probe"
-(cd "$RUNNER_TEMP/m7/a" && touch src/main.cpp && "$MCPP" build > build2.log 2>&1); rc=$?
-reading m7.A.build-after-update "exit=$rc $(grep -m2 -iE 'error|m634' "$RUNNER_TEMP/m7/a/build2.log" | tr '\n' '|')"
+# A version committed to the branch AFTER the update: resolving it proves the
+# index still reads the live checkout. (Deleting the installed payload and
+# rebuilding proves nothing: mcpp's provisioning stamp skips the reinstall,
+# which the first run of this probe measured.)
+sed -i 's/linux = { \["0.0.1"\] = { } },/linux = { ["0.0.1"] = { }, ["0.0.2"] = { } },/' "$R/pkgs/m/m634-probe.lua"
+git -C "$R" -c user.name=m634 -c user.email=m634@example.invalid commit -q -am "m634 probe 0.0.2"
+reading m7.branch-after-update "rev=$(git -C "$R" rev-parse --short HEAD) $(grep -c '0.0.2' "$R/pkgs/m/m634-probe.lua") mentions of 0.0.2"
+mkdir -p "$RUNNER_TEMP/m7/a2/src"
+printf '[package]\nname = "consumer2"\nversion = "0.1.0"\n\n[xlings.workspace]\n"xim:m634-probe" = "0.0.2"\n' > "$RUNNER_TEMP/m7/a2/mcpp.toml"
+printf 'int main() { return 0; }\n' > "$RUNNER_TEMP/m7/a2/src/main.cpp"
+(cd "$RUNNER_TEMP/m7/a2" && "$MCPP" build > build.log 2>&1); rc=$?
+reading m7.A.new-version-after-update "exit=$rc $(grep -m3 -iE 'error|m634' "$RUNNER_TEMP/m7/a2/build.log" | tr '\n' '|')"
 state A-after
 
 # ── B: fresh home, no override ─────────────────────────────────────────────

@@ -1,8 +1,11 @@
 # TEMPORARY. Measurements behind the #634 design record
 # (.agents/docs/2026-09-14-634-cmake-parity-items-by-home.md). This branch
 # carries no other workflow and is not for merging: each job records what one
-# platform does (READING lines, the step summary, an artifact of logs) and
-# fails only when a probe cannot run at all.
+# platform does as READING lines in its log and step summary, and fails only
+# when a probe cannot run at all.
+#
+# No artifact upload: run 1's upload step hung for ten minutes after every
+# measurement had finished, and cancelling the job lost its log with it.
 name: verify-634 (temporary measurements)
 
 on:
@@ -17,10 +20,10 @@ env:
   XLINGS_NON_INTERACTIVE: "1"
 
 jobs:
-  macos:
-    name: macos-15 (M1 M4 M5 M2-ios B1 B2 B3)
+  macos-bundle:
+    name: macos-15 bundle (M1 B1 B2 M4 B3)
     runs-on: macos-15
-    timeout-minutes: 150
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
@@ -29,35 +32,40 @@ jobs:
       - name: Pin MCPP_HOME
         run: echo "MCPP_HOME=$HOME/.mcpp" >> "$GITHUB_ENV"
       - name: Fetch the released mcpp
+        timeout-minutes: 10
         run: bash .github/verify-634/setup-mcpp.sh
       - name: M1 B1 B2 - Mach-O staged closure, Frameworks bundle, DMG
-        run: bash .github/verify-634/macos-closure-bundle.sh 2>&1 | tee "$RUNNER_TEMP/macos-closure-bundle.log"
+        timeout-minutes: 40
+        run: bash .github/verify-634/macos-closure-bundle.sh 2>&1
       - name: M4 B3 - main bundle resolution, named runner, default runner
-        run: bash .github/verify-634/macos-runner.sh 2>&1 | tee "$RUNNER_TEMP/macos-runner.log"
+        timeout-minutes: 30
+        run: bash .github/verify-634/macos-runner.sh 2>&1
+
+  macos-sim:
+    name: macos-15 simulator (M5 M2-ios)
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pin MCPP_HOME
+        run: echo "MCPP_HOME=$HOME/.mcpp" >> "$GITHUB_ENV"
+      - name: Fetch the released mcpp
+        timeout-minutes: 10
+        run: bash .github/verify-634/setup-mcpp.sh
       - name: M5 - simctl launch spellings
-        run: bash .github/verify-634/macos-simctl.sh 2>&1 | tee "$RUNNER_TEMP/macos-simctl.log"
+        timeout-minutes: 35
+        run: bash .github/verify-634/macos-simctl.sh 2>&1
       - name: M2 - mcpp test on the iOS simulator
-        run: bash .github/verify-634/macos-ios-test.sh 2>&1 | tee "$RUNNER_TEMP/macos-ios-test.log"
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: verify-634-macos
-          path: |
-            ${{ runner.temp }}/*.log
-            ${{ runner.temp }}/m1/**/*.log
-            ${{ runner.temp }}/m1/*.txt
-            ${{ runner.temp }}/m1/*.out
-            ${{ runner.temp }}/m4/**/*.out
-            ${{ runner.temp }}/m4/**/*.log
-            ${{ runner.temp }}/m2ios/**/*.json
-            ${{ runner.temp }}/m2ios/**/*.err
-          if-no-files-found: warn
+        timeout-minutes: 30
+        run: bash .github/verify-634/macos-ios-test.sh 2>&1
 
   android:
     name: ubuntu-24.04 emulator (M2-android)
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
@@ -66,6 +74,7 @@ jobs:
       - name: Pin MCPP_HOME
         run: echo "MCPP_HOME=$HOME/.mcpp" >> "$GITHUB_ENV"
       - name: Fetch the released mcpp
+        timeout-minutes: 10
         run: bash .github/verify-634/setup-mcpp.sh
       - name: Enable KVM
         run: |
@@ -73,8 +82,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       - name: M2 - compile the tests before the emulator starts
-        run: bash .github/verify-634/android-test.sh prebuild 2>&1 | tee "$RUNNER_TEMP/android-prebuild.log"
+        timeout-minutes: 30
+        run: bash .github/verify-634/android-test.sh prebuild 2>&1
       - name: M2 - mcpp test on an API 34 emulator
+        timeout-minutes: 40
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -83,48 +94,31 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: bash .github/verify-634/android-test.sh run 2>&1 | tee "$RUNNER_TEMP/android-run.log"
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: verify-634-android
-          path: |
-            ${{ runner.temp }}/*.log
-            ${{ runner.temp }}/m2android/**/*.json
-            ${{ runner.temp }}/m2android/**/*.err
-          if-no-files-found: warn
+          script: bash .github/verify-634/android-test.sh run 2>&1
 
   linux:
     name: ubuntu-24.04 fresh homes (M3 M7)
     runs-on: ubuntu-24.04
-    timeout-minutes: 120
+    timeout-minutes: 90
     defaults:
       run:
         shell: bash
     steps:
       - uses: actions/checkout@v4
       - name: Fetch the released mcpp
+        timeout-minutes: 10
         run: bash .github/verify-634/setup-mcpp.sh
       - name: M3 - the SubOS pkg-config view with only xim:gtk4 declared
-        run: bash .github/verify-634/linux-gtk-view.sh 2>&1 | tee "$RUNNER_TEMP/linux-gtk-view.log"
+        timeout-minutes: 40
+        run: bash .github/verify-634/linux-gtk-view.sh 2>&1
       - name: M7 - an xim index override from a branch checkout
-        run: bash .github/verify-634/linux-index-override.sh 2>&1 | tee "$RUNNER_TEMP/linux-index-override.log"
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: verify-634-linux
-          path: |
-            ${{ runner.temp }}/*.log
-            ${{ runner.temp }}/m3/**/*.log
-            ${{ runner.temp }}/m7/**/*.log
-          if-no-files-found: warn
+        timeout-minutes: 30
+        run: bash .github/verify-634/linux-index-override.sh 2>&1
 
   windows:
     name: windows-2022 (M6)
     runs-on: windows-2022
-    timeout-minutes: 90
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash
@@ -136,15 +130,8 @@ jobs:
           command -v cygpath >/dev/null && H=$(cygpath -m "$H")
           echo "MCPP_HOME=$H" >> "$GITHUB_ENV"
       - name: Fetch the released mcpp
+        timeout-minutes: 10
         run: bash .github/verify-634/setup-mcpp.sh
       - name: M6 - WiX native SDK archives under mcpp's Windows toolchains
-        run: bash .github/verify-634/windows-wix-link.sh 2>&1 | tee "$RUNNER_TEMP/windows-wix-link.log"
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: verify-634-windows
-          path: |
-            ${{ runner.temp }}/*.log
-            ${{ runner.temp }}/m6/**/*.log
-          if-no-files-found: warn
+        timeout-minutes: 30
+        run: bash .github/verify-634/windows-wix-link.sh 2>&1

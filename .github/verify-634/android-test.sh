@@ -11,9 +11,17 @@ set -u
 . "$(dirname "$0")/test-fixture.sh"
 
 D="$RUNNER_TEMP/m2android/ttest"
+# `-static-libstdc++`: the first run measured that every test program on this
+# row needs `libc++_shared.so` (the engine does not find the NDK's static
+# libc++ and degrades to toolchain-coupled), and `adb-run` pushes only the
+# executable, so no test loaded at all. The flag lets the NDK driver link its
+# static runtime, which leaves the deployed-file question measurable.
 ROW='[target.x86_64-linux-android]
 min_api_level = 24
 runner = ["adb-run"]
+
+[target.x86_64-linux-android.build]
+ldflags = ["-static-libstdc++"]
 
 [target.x86_64-linux-android.xlings.workspace]
 "xim:android-platform-tools" = "37.0.1-3"'
