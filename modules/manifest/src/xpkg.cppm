@@ -1570,6 +1570,13 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                         // read exactly like `mcpp.toml` (`toml.cppm`), so a
                         // Form B package can publish an application.
                         else if (k == "app" || k == "application") t.kind = Target::Application;
+                    } else if (sub == "linkage") {
+                        // #642 E1: the library's default form, read exactly as
+                        // `mcpp.toml` reads it; validated below, once `kind` is
+                        // known whichever order the two were written in.
+                        t.linkageDefault = cur.read_string();
+                        t.linkageDeclaredBy = std::format(
+                            "targets.{} linkage = \"{}\"", tname, t.linkageDefault);
                     } else if (sub == "main") {
                         t.main = cur.read_string();
                     } else if (sub == "soname") {
@@ -1606,6 +1613,12 @@ synthesize_from_xpkg_lua(std::string_view luaContent,
                 cur.consume('}');
                 if (auto msg = validate_target_soname(t, std::format("targets.{}.", tname))) {
                     return std::unexpected(ManifestError{*msg, m.sourcePath, 0, 0});
+                }
+                if (!t.linkageDefault.empty()) {
+                    if (auto msg = library_linkage_problem(
+                            std::format("targets.{}", tname), t.linkageDefault, t.kind);
+                        !msg.empty())
+                        return std::unexpected(ManifestError{msg, m.sourcePath, 0, 0});
                 }
                 m.targets.push_back(std::move(t));
                 cur.skip_ws_and_comments();

@@ -199,15 +199,52 @@ struct Target {
     // constrains a package instead of saying that a form "is not available".
     std::string                 kindDeclaredBy;
     bool                        kindFromRow = false;
+    // `linkage = "static" | "shared"` (#642 E1): the form a library target
+    // takes when the consumer says nothing, stated by `[targets.<n>]` or by a
+    // row. A DEFAULT, not a constraint: `kind = "shared"` removes the static
+    // form from what a consumer may choose, while this only answers the
+    // question the consumer's own `linkage` answers when the consumer does
+    // not. Empty when not stated. The statement is kept for the information
+    // line that names it when a consumer overrides the default.
+    std::string                 linkageDefault;
+    std::string                 linkageDeclaredBy;
 };
 
-// One `[target.<sel>.targets.<name>] kind` statement: the form a row gives a
+// One `[target.<sel>.targets.<name>]` statement: the form a row gives a
 // library target, and the manifest line that gives it, which the link-form
-// resolution names when it has to refuse a request against it.
+// resolution names when it has to refuse a request against it. A row states
+// either `kind` (a constraint) or `linkage` (a default); `linkage` is empty
+// when the row states `kind`.
 struct RowTargetKind {
     Target::Kind kind = Target::Library;
+    std::string  linkage;
     std::string  statement;
 };
+
+// Why a `linkage` statement cannot stand, or an empty string when it can.
+// `statementHead` is the table that states it (`[targets.fw]`). One wording for
+// `[targets.<n>]` and its row form, which both parse the key.
+inline std::string library_linkage_problem(std::string_view statementHead,
+                                           std::string_view value,
+                                           Target::Kind kind) {
+    if (value != "static" && value != "shared")
+        return std::format(
+            "{} linkage = \"{}\": the default form of a library is `static` or "
+            "`shared`", statementHead, value);
+    if (kind == Target::SharedLibrary)
+        return std::format(
+            "{} states both `kind = \"shared\"` and `linkage = \"{}\"`. "
+            "`kind = \"shared\"` constrains the package to the shared form and "
+            "leaves no default to state; write `kind = \"lib\"` with "
+            "`linkage = \"shared\"` to make the shared form a default that a "
+            "consumer's `linkage` may override", statementHead, value);
+    if (kind != Target::Library)
+        return std::format(
+            "{} linkage = \"{}\": a program target has no link form for a "
+            "consumer to choose, and `linkage` applies to a library target",
+            statementHead, value);
+    return {};
+}
 
 // `DependencySpec` and `kDefaultNamespace` have moved to mcpp.pm.dep_spec.
 // Aliases at the top of this file keep `mcpp::manifest::DependencySpec`

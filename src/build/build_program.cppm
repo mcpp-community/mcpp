@@ -222,6 +222,12 @@ struct BuildProgramEnv {
     // MCPP_DEP_<SANITIZED_NAME>_DIR (same sanitizer as MCPP_FEATURE_) instead of
     // reverse-engineering the store layout.
     std::vector<std::pair<std::string, std::filesystem::path>> depDirs;
+    // #642 E2: the link form ("static" or "shared") each dependency takes in
+    // this build, under the same names as `depDirs`, emitted as
+    // MCPP_DEP_<SANITIZED_NAME>_LINKAGE. Filled for the ROOT package's program
+    // only: the root decides every dependency's form, and a dependency's
+    // program runs before facts that decide it are known (see prepare.cppm).
+    std::vector<std::pair<std::string, std::string>> depLinkages;
     // Payload dirs of the packages this build declared in `[xlings] deps`,
     // as (env var name → dir). Resolved by the caller through the xlings path
     // helpers, so a build.mcpp asks `xpkg_dir("xim", "picolibc-riscv")`
@@ -647,6 +653,23 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
                 "build.mcpp: dependency name collides on {} (kept '{}', ignored "
                 "'{}') — rename one dependency to disambiguate", var,
                 it->second, dir.string()));
+        }
+    }
+    // #642 E2: the form each dependency takes, beside its directory and under
+    // the same sanitised name. Its own collision map, because the variable
+    // names differ from the `_DIR` ones; the rule is the same: keep the first,
+    // warn on a conflicting second.
+    std::map<std::string, std::string> linkageVarValue;
+    for (auto const& [name, form] : env.depLinkages) {
+        auto var = "MCPP_DEP_" + sanitize_feature_env(name) + "_LINKAGE";
+        auto [it, inserted] = linkageVarValue.try_emplace(var, form);
+        if (inserted) {
+            e.emplace_back(var, form);
+        } else if (it->second != form) {
+            mcpp::ui::warning(std::format(
+                "build.mcpp: dependency name collides on {} (kept '{}', ignored "
+                "'{}') — rename one dependency to disambiguate", var,
+                it->second, form));
         }
     }
     // The xlings side of the same question. Each declared entry is emitted

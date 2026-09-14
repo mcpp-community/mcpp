@@ -225,3 +225,95 @@ TEST(LinkageForm, TheVocabularyIsClosed) {
     EXPECT_EQ(lf::to_string(lf::DepLinkage::Static), "static");
     EXPECT_EQ(lf::to_string(lf::DepLinkage::Shared), "shared");
 }
+
+// ── a package's default form (#642 E1) ─────────────────────────────────────
+
+namespace {
+
+lf::PackageFacts defaulting_to(lf::DepLinkage form) {
+    auto pkg = source_package();
+    pkg.defaultLinkage = form;
+    pkg.defaultDeclaredBy = std::format("[targets.zlib] linkage = \"{}\"",
+                                        lf::to_string(form));
+    return pkg;
+}
+
+} // namespace
+
+TEST(LinkageForm, APackageDefaultIsAnsweredWhenNobodyAsks) {
+    auto pkg = defaulting_to(lf::DepLinkage::Shared);
+    auto answer = lf::resolve(pkg, lf::admissible(pkg, hosted()), lf::Request{});
+    EXPECT_EQ(answer.linkage, lf::DepLinkage::Shared);
+    EXPECT_EQ(answer.reason, "package-default");
+    EXPECT_TRUE(answer.diagnostic.empty());
+    EXPECT_TRUE(answer.note.empty());
+}
+
+TEST(LinkageForm, APackageDefaultIsNotAConstraint) {
+    // The difference from `kind = "shared"` is the whole feature: both forms
+    // stay admissible, so a request for the other one is not refused.
+    auto pkg = defaulting_to(lf::DepLinkage::Shared);
+    auto allowed = lf::admissible(pkg, hosted());
+    EXPECT_TRUE(allowed.staticOk);
+    EXPECT_TRUE(allowed.sharedOk);
+    EXPECT_TRUE(allowed.constraint.empty());
+}
+
+TEST(LinkageForm, AnEdgeRequestOverridesThePackageDefaultAndNamesBothStatements) {
+    auto pkg = defaulting_to(lf::DepLinkage::Shared);
+    lf::Request request;
+    request.perPackage[pkg.label] = lf::DepLinkage::Static;
+    auto answer = lf::resolve(pkg, lf::admissible(pkg, hosted()), request);
+    EXPECT_EQ(answer.linkage, lf::DepLinkage::Static);
+    EXPECT_EQ(answer.reason, "requested");
+    // Honoured, so not a degradation: `--strict` must accept it.
+    EXPECT_TRUE(answer.diagnostic.empty());
+    EXPECT_NE(answer.note.find("`linkage = \"static\"` on this dependency"),
+              std::string::npos) << answer.note;
+    EXPECT_NE(answer.note.find("[targets.zlib] linkage = \"shared\""),
+              std::string::npos) << answer.note;
+}
+
+TEST(LinkageForm, AWrittenWholeGraphValueOutranksThePackageDefault) {
+    auto pkg = defaulting_to(lf::DepLinkage::Shared);
+    auto answer = lf::resolve(pkg, lf::admissible(pkg, hosted()),
+                              want(lf::DepLinkage::Static));
+    EXPECT_EQ(answer.linkage, lf::DepLinkage::Static);
+    EXPECT_EQ(answer.reason, "requested");
+    EXPECT_NE(answer.note.find("dependency_linkage = \"static\""), std::string::npos)
+        << answer.note;
+}
+
+TEST(LinkageForm, AnUnwrittenWholeGraphValueDoesNotOutrankThePackageDefault) {
+    // `whole` is static by construction; only a human writing it makes it a
+    // statement, and mcpp's own default is exactly what a package default
+    // replaces.
+    auto pkg = defaulting_to(lf::DepLinkage::Shared);
+    lf::Request none;
+    ASSERT_EQ(none.whole, lf::DepLinkage::Static);
+    EXPECT_EQ(lf::resolve(pkg, lf::admissible(pkg, hosted()), none).linkage,
+              lf::DepLinkage::Shared);
+}
+
+TEST(LinkageForm, ARequestThatAgreesWithTheDefaultPrintsNothing) {
+    auto pkg = defaulting_to(lf::DepLinkage::Shared);
+    lf::Request request;
+    request.perPackage[pkg.label] = lf::DepLinkage::Shared;
+    auto answer = lf::resolve(pkg, lf::admissible(pkg, hosted()), request);
+    EXPECT_EQ(answer.reason, "requested");
+    EXPECT_TRUE(answer.note.empty());
+}
+
+TEST(LinkageForm, ADefaultTheTargetCannotHonourFallsBackWithoutAWord) {
+    // Nobody asked, so there is no broken promise to report: the default is
+    // the package's preference, and a fully static image cannot load a
+    // shared library at all.
+    auto pkg = defaulting_to(lf::DepLinkage::Shared);
+    lf::TargetFacts target;
+    target.fullStaticLibc = true;
+    auto answer = lf::resolve(pkg, lf::admissible(pkg, target), lf::Request{});
+    EXPECT_EQ(answer.linkage, lf::DepLinkage::Static);
+    EXPECT_EQ(answer.reason, "static-libc");
+    EXPECT_TRUE(answer.diagnostic.empty());
+    EXPECT_TRUE(answer.note.empty());
+}

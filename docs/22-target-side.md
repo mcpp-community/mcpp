@@ -691,15 +691,21 @@ application on the desktop rows and must be one shared library on Android
 states it once, in its own manifest; every consumer keeps one unconditional
 dependency line.
 
-- `kind` is the only key, and it chooses between the two library forms, `lib`
-  and `shared`. A name that is not a library target of the package (declared
-  or inferred), a program target, or another kind is refused.
+- A row states `kind`, which chooses between the two library forms, `lib`
+  and `shared`, or *(2026.9.15.2+)* `linkage`, which states the library's
+  default form on those rows without constraining it; the two in one row are
+  refused, and a later matching statement replaces an earlier one, including
+  the unconditional table's. A name that is not a library target of the package
+  (declared or inferred), a program target, or another kind is refused.
 - On a matching row the package is constrained to the shared form exactly as
   `[targets.<name>] kind = "shared"` constrains it (`dependency_linkage` in
   [04 — mcpp.toml](04-mcpp-toml.md)): a consumer that writes no `linkage`
   receives the shared library, and a consumer that writes `linkage =
   "static"` receives a warning naming this line, which `--strict` turns into
-  an error. `mcpp why deps` reports the form with the reason `row-kind`.
+  an error. `mcpp why deps` reports the form with the reason `row-kind`. A
+  row's `linkage = "shared"` gives a silent consumer the shared library with the
+  reason `package-default`, and honours a consumer's `linkage = "static"` with an
+  information line instead of a warning.
 - A selector that names a target-side layer cannot carry it; the table is
   reported and ignored, because a library's form is decided while the graph
   that answers the layer is resolved.
