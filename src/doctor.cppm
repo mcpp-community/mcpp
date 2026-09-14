@@ -1086,6 +1086,40 @@ export int why_report(const std::string& topic) {
             std::println("package index: {}",
                 mcpp::pm::staleness_note(mcpp::config::make_xlings_env(*cfgW)));
         }
+        // The resolved graph first (#634, X). It is read back from the
+        // resolution record the preparation above just wrote, so what is
+        // printed is what a tool reading `resolution.json` sees, and a `path`
+        // dependency, which `mcpp.lock` does not record, is listed too.
+        std::println("dependency graph:");
+        {
+            const auto recordPath = ctx->plan.outputDir / "resolution.json";
+            std::ifstream record(recordPath);
+            auto doc = record ? nlohmann::json::parse(record, nullptr, false)
+                              : nlohmann::json{};
+            const auto graph = doc.is_object() ? doc.find("graph") : doc.end();
+            if (!doc.is_object() || graph == doc.end() || !graph->is_object()
+                || !graph->contains("packages")) {
+                std::println("  (no graph in {})", recordPath.generic_string());
+            } else {
+                for (auto const& entry : (*graph)["packages"]) {
+                    auto const& pkg = entry["package"];
+                    const auto source = pkg.value("source", std::string{});
+                    std::println("  {}{}{}",
+                        pkg.value("canonical", std::string("?")),
+                        entry.value("root", false) ? "  (root)" : "",
+                        source.empty() ? std::string{} : "  " + source);
+                    for (auto const& r : entry.value("requested_by", nlohmann::json::array()))
+                        std::println("      requested by {} as '{}' in {}",
+                            r.value("requester", std::string("?")),
+                            r.value("key", std::string("?")),
+                            r.value("table", std::string("?")));
+                    if (auto link = entry.find("link"); link != entry.end())
+                        std::println("      linked {} ({})",
+                            link->value("form", std::string("?")),
+                            link->value("reason", std::string("?")));
+                }
+            }
+        }
         std::println("dependencies (mcpp.lock):");
         std::ifstream in(ctx->projectRoot / "mcpp.lock");
         if (!in) {

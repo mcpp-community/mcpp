@@ -5667,6 +5667,22 @@ prepare_build(bool print_fingerprint,
         bool buildOnly = false;
     };
     std::vector<DependencyEdge> dependencyEdges;
+    // #634, X: every request that reached a package, as the requester wrote
+    // it, for the `graph` section of resolution.json. Kept apart from
+    // `dependencyEdges`, which merges two requests of one consumer for one
+    // dependency into one edge; the record has to keep both keys, because two
+    // keys over one identity (A2) and the table a declaration came from (A1)
+    // are what it exists to show.
+    struct GraphRequest {
+        std::size_t consumerPackageIndex = 0;
+        std::size_t dependencyPackageIndex = 0;
+        std::string key;        // the dependency key as the requester wrote it
+        std::string table;      // `DependencySpec::declaredIn`
+    };
+    std::vector<GraphRequest> graphRequests;
+    // The link form each dependency took, and why (`linkage_form::Resolution`),
+    // by package index.
+    std::map<std::size_t, std::pair<std::string, std::string>> graphLinkForms;
     namespace dg = mcpp::build::dep_graph;
     // #355: consumer package index → (env var, absolute path) for each host
     // tool that consumer requested. Filled by the provisioning pass below;
@@ -6128,13 +6144,25 @@ prepare_build(bool print_fingerprint,
         [&](std::size_t consumerDepIndex,
             std::size_t dependencyPackageIndex,
             const mcpp::manifest::DependencySpec& spec,
-            bool buildOnly = false)
+            bool buildOnly,
+            const std::string& writtenKey)
     {
         const auto consumerPackageIndex = packageIndexForConsumer(consumerDepIndex);
         if (consumerPackageIndex >= packages.size()
             || dependencyPackageIndex >= packages.size()) {
             return;
         }
+        if (std::ranges::none_of(graphRequests, [&](const GraphRequest& r) {
+                return r.consumerPackageIndex == consumerPackageIndex
+                    && r.dependencyPackageIndex == dependencyPackageIndex
+                    && r.key == writtenKey && r.table == spec.declaredIn;
+            }))
+            graphRequests.push_back(GraphRequest{
+                .consumerPackageIndex = consumerPackageIndex,
+                .dependencyPackageIndex = dependencyPackageIndex,
+                .key = writtenKey,
+                .table = spec.declaredIn,
+            });
         const auto visibility = parseVisibility(spec.visibility);
         auto same = [&](const DependencyEdge& edge) {
             return edge.consumerPackageIndex == consumerPackageIndex
@@ -6763,7 +6791,7 @@ prepare_build(bool print_fingerprint,
                 if (it->second.depIndex + 1 < packages.size()) {
                     recordDependencyEdge(item.consumerDepIndex,
                                          it->second.depIndex + 1,
-                                         spec, item.buildOnly);
+                                         spec, item.buildOnly, name);
                 }
                 continue;
             }
@@ -6928,7 +6956,7 @@ prepare_build(bool print_fingerprint,
                     const auto depPackageIndex = packages.size();
                     packages.push_back(makePackageRoot(secStage, *dep_manifests.back()));
                     recordDependencyEdge(item.consumerDepIndex, depPackageIndex,
-                                         spec, item.buildOnly);
+                                         spec, item.buildOnly, name);
                     auto linkFlagsAdded = propagateLinkFlags(secStage, *dep_manifests.back());
 
                     ResolvedKey mangledKey{key.ns, mangledPackage};
@@ -6971,7 +6999,7 @@ prepare_build(bool print_fingerprint,
                     // no re-fetch needed; just record this consumer edge.
                     recordDependencyEdge(item.consumerDepIndex,
                                          it->second.depIndex + 1,
-                                         spec, item.buildOnly);
+                                         spec, item.buildOnly, name);
                     continue;
                 }
 
@@ -7029,7 +7057,7 @@ prepare_build(bool print_fingerprint,
                     makePackageRoot(newRoot, *dep_manifests[it->second.depIndex]);
                 recordDependencyEdge(item.consumerDepIndex,
                                      it->second.depIndex + 1,
-                                     spec, item.buildOnly);
+                                     spec, item.buildOnly, name);
 
                 it->second.version            = *merged;
                 it->second.linkFlagsAdded     = std::move(linkFlagsAdded);
@@ -7108,7 +7136,7 @@ prepare_build(bool print_fingerprint,
             if (it->second.depIndex + 1 < packages.size()) {
                 recordDependencyEdge(item.consumerDepIndex,
                                      it->second.depIndex + 1,
-                                     spec, item.buildOnly);
+                                     spec, item.buildOnly, name);
             }
             continue;
         }
@@ -7465,7 +7493,7 @@ prepare_build(bool print_fingerprint,
         const auto depPackageIndex = packages.size();
         packages.push_back(makePackageRoot(dep_root, *dep_manifests.back()));
         recordDependencyEdge(item.consumerDepIndex, depPackageIndex, spec,
-                             item.buildOnly);
+                             item.buildOnly, name);
 
         // Record this dep as resolved so future encounters of the same
         // (ns, name) hit the fast path (skip / merge / conflict).
@@ -11520,6 +11548,11 @@ prepare_build(bool print_fingerprint,
             }
             auto allowed = lf::admissible(facts, targetFacts);
             auto answer  = lf::resolve(facts, allowed, request);
+            // Recorded for a package that has a library to link; a package of
+            // programs or rules has no form to report.
+            if (facts.isDistribution || facts.declaredShared || !libraryTargets.empty())
+                graphLinkForms[i] = { std::string(lf::to_string(answer.linkage)),
+                                      answer.reason };
 
             if (!answer.diagnostic.empty())
                 mcpp::diag::degraded("build/dependency-linkage", answer.diagnostic,
@@ -12989,6 +13022,39 @@ prepare_build(bool print_fingerprint,
             contracts[std::string(mcpp::build::dist::to_string(
                           static_cast<mcpp::build::dist::Role>(i)))] =
                 std::string(mcpp::build::dist::to_string(roleFlags.contractByRole[i]));
+        }
+
+        // #634, X: the resolved dependency graph. One entry per package, the
+        // root first: its identity as `runtime` records identities, every
+        // request that reached it with the key as written and the table that
+        // declared it, and for a library the link form with its reason. It is
+        // what `mcpp why deps` prints, and what a test of a resolution rule
+        // reads instead of a warning's wording.
+        {
+            nlohmann::json graphPackages = nlohmann::json::array();
+            for (std::size_t i = 0; i < packages.size(); ++i) {
+                nlohmann::json entry = {
+                    {"package", package_json(
+                        mcpp::manifest::package_id(packages[i].manifest.package))},
+                    {"root", i == 0},
+                };
+                nlohmann::json requests = nlohmann::json::array();
+                for (auto const& r : graphRequests) {
+                    if (r.dependencyPackageIndex != i) continue;
+                    requests.push_back({
+                        {"requester", mcpp::manifest::package_id(
+                            packages[r.consumerPackageIndex].manifest.package).canonical()},
+                        {"key", r.key},
+                        {"table", r.table},
+                    });
+                }
+                entry["requested_by"] = std::move(requests);
+                if (auto form = graphLinkForms.find(i); form != graphLinkForms.end())
+                    entry["link"] = { {"form", form->second.first},
+                                      {"reason", form->second.second} };
+                graphPackages.push_back(std::move(entry));
+            }
+            j["graph"] = { {"packages", std::move(graphPackages)} };
         }
 
         j["runtime"] = {
