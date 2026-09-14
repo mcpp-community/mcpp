@@ -118,6 +118,27 @@ toolchain: gcc 16.1.0 (x86_64-linux-gnu)
   reason: [toolchain] in mcpp.toml if set, else platform-native default
 ```
 
+`mcpp why deps` lists the resolved dependency graph before the lines of
+`mcpp.lock` (2026.9.14.2+): every package, the key and the table each request
+was written with, and a library's link form with the reason for it. A `path`
+dependency, which the lock does not record, is listed too:
+
+```
+$ mcpp why deps
+dependency graph:
+  mcpplibs.app@0.1.0  (root)  path+/work/app
+  huxdemo.fw@0.1.0  path+/work/fw
+      requested by mcpplibs.app@0.1.0 as 'huxdemo.fw' in [dependencies]
+      requested by huxdemo.comp@0.1.0 as 'fw' in [dependencies]
+      linked static (default)
+```
+
+The same graph is recorded under `graph` in
+`target/<triple>/<fp>/resolution.json`, one entry per package with the root
+first: `package` (canonical identity, namespace, name, version, source),
+`root`, `requested_by` (`requester`, `key`, `table`), and, for a library,
+`link` (`form`, `reason`).
+
 The topic is `toolchain`, `runtime`, `deps` or `runners`, and all four report
 when none is named. `--target` and `--toolchain` turn the report into a query
 about a pair the current directory does not use, which is how a target matrix

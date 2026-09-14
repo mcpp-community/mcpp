@@ -273,7 +273,7 @@ mcpp 在绑定 capability 时比较二者,并在任何东西被编译之前拒�
 报 `version-floor-unmet`:
 
 ```
-error: `toolkitnew` requires cuda.driver >= 13.0, and this machine has 12.4.
+error: `toolkitnew` requires cuda.driver >= 13.0, and cuda.driver is stated as 12.4.
          stated by: driverfact
 ```
 
@@ -283,6 +283,30 @@ error: `toolkitnew` requires cuda.driver >= 13.0, and this machine has 12.4.
 **没人回答的下界是沉默的。** 一台从未声明自己有什么的机器,不是「未满足下界」的机器,
 而是「没人问过」的机器。把「我们不知道」变成「不行」正是这个机制要避免的失败,
 并且有直接判据:`tests/e2e/603_version_floor.sh` 会构建一个下界指向无人提供之物的工程。
+
+**引擎陈述目标的平台下限**(mcpp 2026.9.14.2+)。在编译器接受最低平台版本的行上,
+引擎以平台自己的术语把该版本陈述为一项事实,包像对待其他事实一样对它写下界:
+
+| 事实 | 行 | 设定来源 |
+|---|---|---|
+| `android.api-level` | `*-linux-android` | `[target.<triple>] min_api_level`,否则为工具链支持的最低级别 |
+| `ios.deployment-target` | iOS 真机与模拟器各行 | `[build] ios_deployment_target`,否则为定位到的 SDK 版本 |
+| `macos.deployment-target` | macOS 各行 | `[build] macos_deployment_target`,否则为 mcpp 的 macOS 默认值 |
+
+```toml
+[[runtime.requirements]]
+kind  = "version-floor"
+value = "android.api-level >= 23"
+```
+
+```
+error: `fw` requires android.api-level >= 23, and this build targets 21.
+         set by: [target.x86_64-linux-android] min_api_level
+```
+
+不陈述这类事实的行上,该要求保持沉默,因此要求本身不需要选择器。下限不会替依赖
+抬高:键设定的值就是编译器面向的值,应用安装到哪些设备上由应用决定。包陈述同名
+事实不会替换引擎陈述的那一项。
 
 **它是关于这个包自己的符号的声明**,所以一条指向本包并不提供的能力的条目会被报为
 schema 警告:那里没有可独占的东西。而无人声明独占的能力行为完全不变 —— 两个 BLAS

@@ -127,6 +127,28 @@ exports = {
 头文件声明把载荷放进 SubOS 的 sysroot 视图。**是声明而不是复制** —— xlings 会随包
 一起移除它们,而一份复制会比它的主人活得更久。
 
+## 从检出目录解析配方(2026.9.14.2+)
+
+未合入分支上的配方,在发布之前可由消费者通过 mcpp home 的 `config.toml` 中的索引覆盖
+来解析:
+
+```toml
+# $MCPP_HOME/config.toml
+[index.repos.xim]
+url = "/work/xim-pkgindex"      # a checkout of the branch
+```
+
+下一条命令把该条目写入 registry 的 `.xlings.json` 并打印一行;此后索引跟随该检出
+目录,包括第一次构建之后才提交的内容:
+
+```
+       Index xim -> /work/xim-pkgindex ([index.repos.xim] in config.toml)
+```
+
+从该索引安装时,`Provisioning` 旁边会重复这一行。删去这张表后,下一条命令恢复
+registry 原先的条目,除非该条目在 mcpp 写入之后被改动过。以上对已经运行过的 home
+同样成立;2026.9.14.2 之前的 mcpp 只在创建 home 时应用这张表。
+
 ## 档位:需要载荷的命令
 
 ```toml

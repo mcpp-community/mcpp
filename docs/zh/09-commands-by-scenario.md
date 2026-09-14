@@ -101,6 +101,24 @@ toolchain: gcc 16.1.0 (x86_64-linux-gnu)
   reason: [toolchain] in mcpp.toml if set, else platform-native default
 ```
 
+`mcpp why deps` 在 `mcpp.lock` 的各行之前列出解析出的依赖图(2026.9.14.2+):每个包、
+每条请求书写时用的键与所在的表,以及库的链接形态与其原因。锁文件不记录的 `path`
+依赖同样列出:
+
+```
+$ mcpp why deps
+dependency graph:
+  mcpplibs.app@0.1.0  (root)  path+/work/app
+  huxdemo.fw@0.1.0  path+/work/fw
+      requested by mcpplibs.app@0.1.0 as 'huxdemo.fw' in [dependencies]
+      requested by huxdemo.comp@0.1.0 as 'fw' in [dependencies]
+      linked static (default)
+```
+
+同一张图记录在 `target/<triple>/<fp>/resolution.json` 的 `graph` 下,每个包一条,
+根在最前:`package`(规范身份、命名空间、名字、版本、来源)、`root`、
+`requested_by`(`requester`、`key`、`table`),库还有 `link`(`form`、`reason`)。
+
 话题是 `toolchain`、`runtime`、`deps` 或 `runners`,不给话题时四者全报。`--target` 与
 `--toolchain` 把报告变成对当前目录并不使用的那一对的查询,目标矩阵正是这样逐格提问的。
 

@@ -140,6 +140,33 @@ disagrees with another dependency, with neither being the root, is never
 settled by guessing which one was declared first — that is exactly the
 "accident of queue order" this section replaces.
 
+### The identity of a `path` or `git` dependency (mcpp 2026.9.14.2+)
+
+A `path` or `git` dependency is the package its manifest declares, whatever key
+reaches it. A key that normalises to another identity than the manifest's
+`[package] namespace` and `name` takes the declared identity, and mcpp warns
+once for each declaring edge, naming the requester, the key, the identity the
+key names and the identity the manifest declares:
+
+```toml
+# comp/mcpp.toml; fw/mcpp.toml declares namespace = "huxdemo"
+[dependencies]
+fw = { path = "../fw" }            # names mcpplibs.fw; huxdemo.fw is used
+```
+
+```
+warning: 'huxdemo.comp@path' declares the dependency 'fw', which names mcpplibs.fw; the manifest '.../fw/mcpp.toml' declares huxdemo.fw, and that identity is used.
+  hint: write 'huxdemo.fw' in 'huxdemo.comp@path' to state the identity the manifest declares.
+```
+
+Two edges written `fw` and `huxdemo.fw` over one directory are therefore one
+package, compiled once, and `mcpp why deps` lists both keys under it. A
+manifest that declares no namespace takes the key's, so two keys with
+different namespaces over one such directory are two identities over one
+source: the build is refused before scanning, naming both, and the fix is a
+`namespace` in that manifest or one key in both places. A `version` dependency
+is unaffected; its identity is the key.
+
 ### Namespace resolution rules
 
 Every package has a two-part identity: a **namespace** and a **name**. Every

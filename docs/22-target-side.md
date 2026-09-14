@@ -401,7 +401,36 @@ for arch/env conditions and combinators.
   `include_dirs` / `include_dirs_after` (mcpp 0.0.102+), plus
   `private_include_dirs` and `std-module-flags` (mcpp 2026.9.1.1+), and
   `runtime` with `frameworks` / `libraries` / `link_library_dirs`
-  (mcpp 2026.8.29.1+; `frameworks` since 2026.9.12.3).
+  (mcpp 2026.8.29.1+; `frameworks` since 2026.9.12.3), and `targets.<name>`
+  with `kind` (mcpp 2026.9.14.2+; see
+  [`targets.<name> kind`](#targetsname-kind--a-librarys-form-on-one-row-mcpp-20269142)).
+- **A sub-table that mcpp does not read is reported** (mcpp 2026.9.14.2+): a
+  misspelled `[target.<sel>.dependecies]` is a warning naming the sections a
+  `[target.<sel>]` table has, and `--strict` makes it an error.
+- **A conditional declaration of a dependency replaces the unconditional one**
+  (mcpp 2026.9.14.2+). On a row the selector matches, the declaration of an
+  identity in `[target.<sel>.dependencies]` is the declaration of that
+  identity, and the unconditional declaration does not apply there. A
+  dependency that one row links differently is written twice, each time with
+  its source:
+
+  ```toml
+  [dependencies]
+  huxerui.huxerui = { version = "0.3.0" }
+
+  [target.'cfg(env = "android")'.dependencies]
+  huxerui.huxerui = { version = "0.3.0", linkage = "shared" }
+  ```
+
+  The same rule applies to `dev-dependencies`, `build-dependencies` and
+  `feature-deps.<feature>`, and several matching sections apply in manifest
+  order, the last one winning. `mcpp why deps` names the table each request
+  came from ([09 — Commands by Scenario](09-commands-by-scenario.md)). A table
+  that writes options without a source, `huxerui.huxerui = { linkage =
+  "shared" }`, declares a dependency on a package named
+  `huxerui.huxerui.linkage`: mcpp reports the line with the dependency
+  restated, and the resolution fails. An engine before 2026.9.14.2 keeps the
+  unconditional declaration.
 - **`runtime` is the dialect-neutral half of a link line.** `build.ldflags` is
   spelled the GNU way, and a native `cl.exe` rejects `-L`. These keys say the
   same thing without committing to a spelling: mcpp renders `libraries` /
@@ -456,7 +485,8 @@ for arch/env conditions and combinators.
   build rather than an answer from the graph, so
   `[target.'cfg(accelerator = "cuda")'.dependencies]` applies.
 - **Precedence**: an exact-triple table wins over a `cfg`/alias table; multiple
-  matching predicate tables have their flags concatenated. Conditional entries
+  matching predicate tables have their flags concatenated, and their dependency
+  declarations applied in manifest order. Conditional entries
   are appended **after** the unconditional `[build]` ones, so under GNU
   "last flag wins" a conditional rule overrides a broader unconditional one.
   That is what makes a per-OS **removal** expressible:
@@ -637,6 +667,37 @@ relying on an older client to notice the gap.
 mcpp interprets; it is an ordinary `[target.'cfg(os = "emscripten")'.build]
 ldflags` entry, and `main` keeps naming a translation unit regardless — see
 [21 — The Target Triple](21-the-target-triple.md#the-wasm-artifact-contract).
+
+### `targets.<name> kind` — a library's form on one row (mcpp 2026.9.14.2+)
+
+```toml
+[targets.huxerui]
+kind = "lib"
+
+[target.'cfg(env = "android")'.targets.huxerui]
+kind = "shared"
+```
+
+The per-row form of `[targets.<name>] kind`
+([04 — mcpp.toml](04-mcpp-toml.md) §2.2). A framework that is linked into its
+application on the desktop rows and must be one shared library on Android
+states it once, in its own manifest; every consumer keeps one unconditional
+dependency line.
+
+- `kind` is the only key, and it chooses between the two library forms, `lib`
+  and `shared`. A name that is not a library target of the package (declared
+  or inferred), a program target, or another kind is refused.
+- On a matching row the package is constrained to the shared form exactly as
+  `[targets.<name>] kind = "shared"` constrains it (`dependency_linkage` in
+  [04 — mcpp.toml](04-mcpp-toml.md)): a consumer that writes no `linkage`
+  receives the shared library, and a consumer that writes `linkage =
+  "static"` receives a warning naming this line, which `--strict` turns into
+  an error. `mcpp why deps` reports the form with the reason `row-kind`.
+- A selector that names a target-side layer cannot carry it; the table is
+  reported and ignored, because a library's form is decided while the graph
+  that answers the layer is resolved.
+- An engine before 2026.9.14.2 does not read the table and reports nothing. A
+  package that relies on it states that engine floor.
 
 ## Current limitations
 

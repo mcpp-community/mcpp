@@ -256,6 +256,25 @@ crt/host_config.h:218: fatal error: features.h: No such file or directory
 **不是 `sysroot_dir()`。** 那个回答的是目标**档位**的问题,在宿主目标上为空,
 而宿主目标恰恰是这一对存在的场合。mcpp 不传某个开关时,对应的那个为空串。
 
+### 载荷的 pkg-config 视图:`pkg_config_libdir`(2026.9.14.2+)
+
+```cpp
+const char* dirs = mcpp::pkg_config_libdir();
+// <registry>/subos/default/usr/lib/pkgconfig:<registry>/subos/default/usr/share/pkgconfig
+```
+
+mcpp 安装的载荷的 pkg-config 搜索路径,以平台的路径列表分隔符连接。载荷配方把自己的
+`.pc` 文件声明进这个视图,因此由载荷提供的库连同它的整个 pkg-config 闭包都能解析:
+
+```cpp
+std::string cmd = std::string("PKG_CONFIG_LIBDIR=") + mcpp::pkg_config_libdir()
+                + " pkg-config --cflags --libs gtk4";
+```
+
+**这是访问器,不是环境默认值。** 构建程序的环境不携带 `PKG_CONFIG_LIBDIR`,因此
+指宿主自己 pkg-config 数据库的包照旧,指载荷的包自己写明。该值与链接模式以及解析出
+哪个工具链无关。
+
 ### 解析出的 C++ 标准库:`cxx_stdlib`(2026.9.6.3+)
 
 ```cpp

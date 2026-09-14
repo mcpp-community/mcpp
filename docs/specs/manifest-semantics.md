@@ -5,8 +5,8 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.1 |
-| **最后修改** | 2026-09-07 |
+| **版本** | 1.3 |
+| **最后修改** | 2026-09-14 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md` |
@@ -74,9 +74,28 @@ Principle)规定,本规范不重复它,只在 §6 引用并补充一条。
 (`[xlings.workspace.linux]`)或值的兄弟键。
 
 今天接受 `<section>` 为:`build`、`dependencies`、`dev-dependencies`、
-`build-dependencies`、`feature-deps.<f>`、`runtime`、`xlings`、`feature-xlings.<f>`。
+`build-dependencies`、`feature-deps.<f>`、`runtime`、`xlings`、`feature-xlings.<f>`、
+`targets.<name>`(mcpp 2026.9.14.2+),以及 `abi`、`requires_abi`、`feature-requires-abi`、
+`runners`。实现不读取的 `<section>` **必须**报出,不得静默忽略(mcpp 2026.9.14.2+)。
 
 **状态:已实现**(上列 section)。
+
+### 3.1.1 条件声明替换同一身份的无条件声明
+
+在 `<selector>` 命中的行上,`[target.<selector>.dependencies]` 中某个身份的声明
+**替换**该身份在 `[dependencies]` 中的声明;身份按键规范化后的 `(namespace, name)`
+比较,而非按键的字面。多个命中的 section 按清单顺序生效,后者替换前者。同一规则适用于
+`dev-dependencies`、`build-dependencies` 与 `feature-deps.<f>`。这与条件化标量
+「最后一个命中者为准」是同一条规则;可叠加的构建输入(`build`)仍按追加合并。
+
+只写选项而不写来源(`path`/`version`/`git`/`workspace`)的条件表不是对既有依赖的
+修饰,按文法它声明的是另一个包;实现**必须**把这种写法报出,并给出补全来源后的声明。
+
+`[target.<selector>.targets.<name>] kind` 是 `[targets.<name>] kind` 的按行形式:
+只接受库目标,只在 `lib` 与 `shared` 之间选择,在命中的行上约束该包的链接形态,
+与无条件的 `kind = "shared"` 相同。
+
+**状态:已实现**(mcpp 2026.9.14.2)。
 
 ### 3.2 门可以嵌进条件
 
@@ -291,6 +310,11 @@ feature-deps          feature-xlings         ← 限定词是门
 7. §4.5 的拒绝判据**必须**带反向腿:把钉抬到满足要求后同一份工程构建通过。否则一个
    「凡工程与依赖同时声明同一个包就拒绝」的实现也会通过
    (`tests/e2e/628_a_pin_below_a_stated_floor_is_refused.sh`)。
+8. §3.1.1 的判据:同一身份在无条件表与命中的条件表中各声明一次、只有条件表写
+   `linkage = "shared"` 时,命中的行链接共享库,不命中的行静态链接,解析记录给出
+   声明所在的表(`tests/e2e/677_a_conditional_dependency_replaces_the_unconditional_one.sh`);
+   按行 `kind` 在命中行上给出共享库与原因 `row-kind`,不命中行为 `default`
+   (`tests/e2e/678_a_row_states_a_library_form.sh`)。
 
 ## 变更记录
 
@@ -299,3 +323,4 @@ feature-deps          feature-xlings         ← 限定词是门
 | 1.0 | 2026-09-07 | 首版。平面(§2)、条件化唯一形状(§3)、两条解析轴(§4)、命名规约(§5)、条件化准入(§6)。目标轴列为未实现。 |
 | 1.1 | 2026-09-07 | 目标轴落地(mcpp 2026.9.6.4):§4.3.1 工具 selector 禁止命名目标侧层;`[target.<selector>.xlings…]` 与 `[target.<selector>.feature-xlings.<f>]` 转为已实现;§4.3 补两条轴同时命名一个包时的取舍与按包去重;§4.4 转为已实现;§7 补第 4 条判据。 |
 | 1.2 | 2026-09-07 | 一个包一个版本(mcpp 2026.9.6.6):新增 §4.5(身份=`(namespace, name)`,版本是约束;裁决与校验两步;范围必须双向可解且可被 `xpkg_dir` 回答);§4.3.1 改为「禁止命名**被解析的**层」,`accelerator` 明确被接受(2026.9.6.5);§7 补第 5 条的反向腿与第 6、7 条判据。 |
+| 1.3 | 2026-09-14 | 条件依赖声明替换同一身份的无条件声明,`targets.<name>` 成为可条件化的 section,不读取的 section 必须报出(mcpp 2026.9.14.2):新增 §3.1.1 与 §7 第 8 条判据。 |

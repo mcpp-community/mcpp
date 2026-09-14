@@ -5,8 +5,8 @@
 | **规范编号** | SPEC-001 |
 | **标题** | 包身份(`package.namespace` / `package.name`)、`[dependencies]` 选择器与匹配机制 |
 | **状态** | **评审中(Review)** —— 已实现 |
-| **版本** | 1.2 |
-| **最后修改** | 2026-08-09 |
+| **版本** | 1.4 |
+| **最后修改** | 2026-09-14 |
 | **最低实现版本** | 描述符身份:mcpp **0.0.106**;精确 selector:mcpp **2026.8.10.1**(xlings >= 0.4.69) |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-06-20-package-resolution-architecture.md` §4<br>`.agents/docs/2026-06-26-identity-first-resolution-no-filename.md`<br>`.agents/docs/2026-07-25-issue278-descriptor-name-form-canonicalization-design.md`<br>`.agents/docs/2026-07-25-name-namespace-bidirectional-verification-report.md`<br>`.agents/docs/2026-07-25-name-namespace-canonical-implementation-spec.md` |
@@ -298,6 +298,25 @@ warning，规范列举命令是 `mcpp new --list-templates pkg`。
 
 **已实现**(0.0.105)。此前空命名空间会流入 lockfile 与安装层。
 
+### 5.4 `path` 与 `git` 依赖的身份取自其清单
+
+`path` 与 `git` 依赖没有描述符查找,来源由声明行直接给定。它的身份**必须**是其清单
+`[package]` 声明的 `(namespace, name)`,与指向它的键无关;键规范化后的身份与之不同时,
+实现**必须**采用清单声明的身份,并对每条声明边给出一次告警,点名请求方、键、键规范化
+后的身份与清单声明的身份。同一来源(规范化后的目录,或仓库与引用)经不同的键到达时
+**必须**解析为同一个包。
+
+采用而非拒绝:来源已由声明行固定,§4.2 反对候选搜索的理由(索引状态改变依赖的指向)
+在这里不成立。
+
+清单未声明 `namespace` 时,身份的命名空间取键的命名空间(§5.3 的兼容边界)。此时同一
+来源经两个命名空间不同的键到达,就是同一来源上的两个身份;实现**必须**在扫描源码之前
+拒绝,点名二者。
+
+`version` 依赖不受本条影响:它的身份就是键,由 §5.2 校验。
+
+**已实现**(mcpp 2026.9.14.2)。判据:`tests/e2e/679_a_path_dependency_takes_its_manifests_identity.sh`。
+
 ---
 
 ## 6. 派生量
@@ -456,6 +475,7 @@ lua = "0.0.3"
 
 | 版本 | 日期 | 变更 |
 |---|---|---|
+| 1.4 | 2026-09-14 | 新增 §5.4:`path` 与 `git` 依赖的身份取自其清单,键规范化到另一身份时采用清单声明并告警,同一来源上的两个身份在扫描前拒绝(mcpp 2026.9.14.2) |
 | 1.3 | 2026-09-07 | 新增 §10:同一条身份规则扩展到 xlings 工具地址(mcpp 2026.9.6.6)。此前工具侧有两套定义,同一个包被两处以不同版本声明时两份都装、只用一份 |
 | 1.2 | 2026-08-09 | selector 收敛为唯一精确 PackageId:裸名只表示默认 mcpplibs,dotted 以最后一段为 name;移除 compat/空 namespace 隐式候选,加入 lock 保持与一个 release train 的双 selector 迁移 warning |
 | 1.1 | 2026-08-03 | 按当前实现复核：澄清文件名发现是快路径加身份回退扫描，修正 legacy `package.name` 的 wire key 示例，并将 0.0.106 明确为最低实现版本 |

@@ -392,12 +392,19 @@ dependency_linkage = "shared"        # 按 profile 覆盖
 | 包写了 | mcpp 读作 |
 |---|---|
 | `[targets.<n>] kind = "shared"` | *必须* shared —— 进程里会有别人 `dlopen` 它,因此只能有一份(X11、Vulkan loader) |
+| `[target.<sel>.targets.<n>] kind = "shared"` *(2026.9.14.2+)* | 在选择器命中的行上*必须* shared,其余行两种形态都可以([22 —— 目标侧](22-target-side.md)) |
 | `ldflags` 里含 `-L` | *必须* static —— 包携带了 mcpp 没有编译的预构建归档,放不进 mcpp 自己构建的共享对象 |
 | 分发包(`mcpp pack`) | 它实际随包的那些腿,取自 `[[runtime.artifacts]] role` |
 | 其他 | 两种形态都可以 |
 
 `kind = "lib"` **不是**约束:它是默认值,大多数包写下它并没有做任何选择。
 **没有陈述不等于一条陈述。**
+
+约束拒绝的请求按包允许的形态链接,并给出一条点名包的陈述的警告
+(`its manifest states [targets.fw] kind = "shared", ...`);`--strict` 下该警告
+成为错误。`mcpp why deps` 报告每个依赖的形态及其原因:`default`、`requested`、
+`package-kind`、`row-kind`、`packaged`、`no-sources`、`prebuilt-inputs`、
+`no-loader` 或 `static-libc`(2026.9.14.2+)。
 
 依赖边上的 `linkage` 只在**根工程**的 `[dependencies]` 里生效。依赖图深处的包
 无权决定最终程序的布局;真正必须只有一份共享副本的包,应当在自己的 target 上

@@ -294,6 +294,28 @@ the first one sees.
 and is empty on a hosted target, which is exactly the case this pair exists
 for. Either of these two is empty when mcpp passes no such flag.
 
+### The payloads' pkg-config view: `pkg_config_libdir` (2026.9.14.2+)
+
+```cpp
+const char* dirs = mcpp::pkg_config_libdir();
+// <registry>/subos/default/usr/lib/pkgconfig:<registry>/subos/default/usr/share/pkgconfig
+```
+
+The pkg-config search path of the payloads mcpp installed, joined with the
+platform's path-list separator. A payload recipe declares its `.pc` files into
+this view, so a library a payload provides resolves with its whole pkg-config
+closure:
+
+```cpp
+std::string cmd = std::string("PKG_CONFIG_LIBDIR=") + mcpp::pkg_config_libdir()
+                + " pkg-config --cflags --libs gtk4";
+```
+
+**An accessor, not an environment default.** A build program's environment
+does not carry `PKG_CONFIG_LIBDIR`, so a package that means the host's own
+pkg-config database keeps it, and a package that means the payloads states so.
+The value does not depend on the link mode or on which toolchain resolved.
+
 ### The resolved C++ standard library: `cxx_stdlib` (2026.9.6.3+)
 
 ```cpp

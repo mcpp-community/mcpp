@@ -318,7 +318,7 @@ mcpp compares them when capabilities are bound and refuses before anything is
 compiled, reporting `version-floor-unmet`:
 
 ```
-error: `toolkitnew` requires cuda.driver >= 13.0, and this machine has 12.4.
+error: `toolkitnew` requires cuda.driver >= 13.0, and cuda.driver is stated as 12.4.
          stated by: driverfact
 ```
 
@@ -331,6 +331,34 @@ has is not a machine that fails the floor — it is one nobody asked. Turning
 "we do not know" into "no" is the failure mode this exists to avoid, and it is
 asserted directly: `tests/e2e/603_version_floor.sh` builds a project whose floor
 names something no package provides.
+
+**The engine states the target's platform floor** (mcpp 2026.9.14.2+). On a
+row whose compiler takes a minimum platform version, the engine states that
+version as a fact in the platform's own words, and a package writes a floor
+against it as against any other fact:
+
+| fact | rows | set by |
+|---|---|---|
+| `android.api-level` | `*-linux-android` | `[target.<triple>] min_api_level`, else the toolchain's lowest supported level |
+| `ios.deployment-target` | the iOS device and simulator rows | `[build] ios_deployment_target`, else the located SDK's version |
+| `macos.deployment-target` | the macOS rows | `[build] macos_deployment_target`, else mcpp's default for macOS |
+
+```toml
+[[runtime.requirements]]
+kind  = "version-floor"
+value = "android.api-level >= 23"
+```
+
+```
+error: `fw` requires android.api-level >= 23, and this build targets 21.
+         set by: [target.x86_64-linux-android] min_api_level
+```
+
+A row that states no such fact leaves the requirement silent, so the
+requirement needs no selector. The floor is not raised on the dependency's
+behalf: the value the key sets is the one the compiler targets, and which
+devices an application installs on is the application's decision. A package
+that states a fact of the same name does not replace the engine's.
 
 **It is a claim about this package's own symbols**, so an entry that names a
 capability the package does not provide is reported as a schema warning: there

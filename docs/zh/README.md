@@ -122,6 +122,7 @@
 | `[package] platforms`、`[build] cache` | [04](04-mcpp-toml.md) | `[targets.<name>]`、`[profile.<name>]` | [04](04-mcpp-toml.md) |
 | `runner`、`[target.<t>.runners]` | [41](41-devices.md) | `rule_module` | [31](31-authoring-a-rule-package.md) |
 | `min_api_level` | [04](04-mcpp-toml.md) | `macos_deployment_target` | [04](04-mcpp-toml.md) |
+| `[target.<sel>.targets.<n>] kind` | [22](22-target-side.md) | `config.toml` 中的 `[index.repos.<name>]` | [32](32-authoring-a-payload.md) |
 
 **命令**
 

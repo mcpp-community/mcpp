@@ -440,6 +440,7 @@ whose C library is linked statically — which is the **default for musl** —
 | The package writes | mcpp reads it as |
 |---|---|
 | `[targets.<n>] kind = "shared"` | *must* be shared — something else in the process will `dlopen` it, so there may only be one copy (X11, a Vulkan loader) |
+| `[target.<sel>.targets.<n>] kind = "shared"` *(2026.9.14.2+)* | *must* be shared on the rows the selector matches, and either form elsewhere ([22 — The Target Side](22-target-side.md)) |
 | `ldflags` containing `-L` | *must* be static — the package ships prebuilt archives mcpp did not compile and cannot place inside a shared object it builds |
 | a packaged library (`mcpp pack`) | whichever legs it actually ships, from `[[runtime.artifacts]] role` |
 | anything else | either form |
@@ -447,6 +448,13 @@ whose C library is linked statically — which is the **default for musl** —
 `kind = "lib"` is **not** a constraint: it is the default value, and most
 packages write it without choosing anything. Absence of a statement is not a
 statement.
+
+A request the constraint refuses is linked in the form the package allows,
+with a warning that names the package's statement (`its manifest states
+[targets.fw] kind = "shared", ...`); `--strict` turns the warning into an
+error. `mcpp why deps` reports each dependency's form and the reason for it:
+`default`, `requested`, `package-kind`, `row-kind`, `packaged`, `no-sources`,
+`prebuilt-inputs`, `no-loader` or `static-libc` (2026.9.14.2+).
 
 A per-dependency `linkage` is honoured **only in the root project's**
 `[dependencies]`. A package deep in the graph does not get to decide how the

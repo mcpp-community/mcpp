@@ -341,7 +341,30 @@ cxxflags = ["-march=x86-64-v2"]
   `include_dirs` / `include_dirs_after`(mcpp 0.0.102+),
   以及 `private_include_dirs` 与 `std-module-flags`(mcpp 2026.9.1.1+),
   还有带 `frameworks` / `libraries` / `link_library_dirs` 的 `runtime`
-  (mcpp 2026.8.29.1+;`frameworks` 自 2026.9.12.3 起)。
+  (mcpp 2026.8.29.1+;`frameworks` 自 2026.9.12.3 起),以及带 `kind` 的
+  `targets.<name>`(mcpp 2026.9.14.2+;见
+  [`targets.<name> kind`](#targetsname-kind--一个库在某一行上的形态mcpp-20269142))。
+- **mcpp 不读取的子表会被报出**(mcpp 2026.9.14.2+):拼错的
+  `[target.<sel>.dependecies]` 是一条警告,列出 `[target.<sel>]` 表拥有的各个段,
+  `--strict` 下成为错误。
+- **条件依赖声明替换无条件声明**(mcpp 2026.9.14.2+)。在选择器命中的行上,
+  `[target.<sel>.dependencies]` 中某个身份的声明就是该身份的声明,无条件声明在
+  该行上不生效。某一行上以不同形态链接的依赖写两次,每次都带来源:
+
+  ```toml
+  [dependencies]
+  huxerui.huxerui = { version = "0.3.0" }
+
+  [target.'cfg(env = "android")'.dependencies]
+  huxerui.huxerui = { version = "0.3.0", linkage = "shared" }
+  ```
+
+  同一规则适用于 `dev-dependencies`、`build-dependencies` 与
+  `feature-deps.<feature>`;多个命中的段按清单顺序生效,最后一个为准。
+  `mcpp why deps` 给出每条请求来自哪张表([09 —— 按场景的命令](09-commands-by-scenario.md))。
+  只写选项、不写来源的表 `huxerui.huxerui = { linkage = "shared" }` 声明的是
+  名为 `huxerui.huxerui.linkage` 的包:mcpp 报出这一行并给出补全来源后的声明,
+  解析随即失败。2026.9.14.2 之前的引擎保留无条件声明。
 - **`runtime` 是链接行中与方言无关的那一半。** `build.ldflags` 按 GNU 拼法书写,
   而原生 `cl.exe` 不接受 `-L`。这些键表达同一件事而不承诺拼法:mcpp 把
   `libraries` / `link_library_dirs` 渲染成 `-L<dir>` + `-l<name>` 或
@@ -382,7 +405,8 @@ cxxflags = ["-march=x86-64-v2"]
   会被报出并忽略;同一谓词下的 `build` 输入照常生效。`accelerator` 不在此列
   (mcpp 2026.9.6.5):它是构建的输入而不是图给出的答案,所以
   `[target.'cfg(accelerator = "cuda")'.dependencies]` 生效。
-- **优先级**:精确三元组表胜过 `cfg`/别名表;多个命中的谓词表,其 flag 按序拼接。
+- **优先级**:精确三元组表胜过 `cfg`/别名表;多个命中的谓词表,其 flag 按序拼接,
+  其依赖声明按清单顺序生效。
   条件项追加在无条件 `[build]` 项**之后**,因此在 GNU「最后一个 flag 生效」的
   规则下,条件规则会覆盖更宽的无条件规则。这正是让按 OS **移除**成为可表达的原因:
 
@@ -534,6 +558,30 @@ schema 清扫会跳过每一个取值为表的键,理由是它假定表就是条
 `--no-entry`(Emscripten 里没有 `main` 的模块用的 flag)不是 mcpp 解释的开关;
 它是一条普通的 `[target.'cfg(os = "emscripten")'.build] ldflags` 条目,`main`
 照样只是指出一个翻译单元——见[21 —— 目标三元组](21-the-target-triple.md#wasm-产物契约)。
+
+### `targets.<name> kind` —— 一个库在某一行上的形态(mcpp 2026.9.14.2+)
+
+```toml
+[targets.huxerui]
+kind = "lib"
+
+[target.'cfg(env = "android")'.targets.huxerui]
+kind = "shared"
+```
+
+`[targets.<name>] kind` 的按行形式([04 —— mcpp.toml](04-mcpp-toml.md) §2.2)。
+在桌面各行上链接进应用、在 Android 上必须是唯一一份共享库的框架,在它自己的清单里
+声明一次;每个消费者都只保留一行无条件依赖。
+
+- `kind` 是唯一的键,只在两种库形态 `lib` 与 `shared` 之间选择。不是该包库目标
+  (声明的或推断的)的名字、程序目标以及其他形态都被拒绝。
+- 在命中的行上,该包被约束为共享形态,与 `[targets.<name>] kind = "shared"`
+  的约束完全相同([04 —— mcpp.toml](04-mcpp-toml.md) 中的 `dependency_linkage`):
+  不写 `linkage` 的消费者得到共享库,写 `linkage = "static"` 的消费者得到一条点名
+  这一行的警告,`--strict` 下成为错误。`mcpp why deps` 以原因 `row-kind` 报告该形态。
+- 点名目标侧层的选择器不能承载这张表;该表被报出并忽略,因为库的形态是在解析
+  回答该层的那张图时决定的。
+- 2026.9.14.2 之前的引擎不读取这张表,也不报告。依赖它的包要写明这一引擎下限。
 
 ## 当前边界
 

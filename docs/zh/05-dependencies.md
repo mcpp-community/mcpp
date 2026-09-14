@@ -127,6 +127,29 @@ qux = ">=1.0, <2.0" # 范围组合
 突、且都不是根的情形,绝不会靠猜哪个先被声明来解决 —— 那正是本节要替换掉的
 "队列顺序的意外"。
 
+### `path` 与 `git` 依赖的身份(mcpp 2026.9.14.2+)
+
+`path` 或 `git` 依赖就是它的清单所声明的那个包,与指向它的键无关。一个键规范化后的
+身份若不同于清单 `[package]` 的 `namespace` 与 `name`,就采用清单声明的身份;mcpp
+对每条声明边告警一次,点名请求方、键、键所指的身份与清单声明的身份:
+
+```toml
+# comp/mcpp.toml; fw/mcpp.toml declares namespace = "huxdemo"
+[dependencies]
+fw = { path = "../fw" }            # names mcpplibs.fw; huxdemo.fw is used
+```
+
+```
+warning: 'huxdemo.comp@path' declares the dependency 'fw', which names mcpplibs.fw; the manifest '.../fw/mcpp.toml' declares huxdemo.fw, and that identity is used.
+  hint: write 'huxdemo.fw' in 'huxdemo.comp@path' to state the identity the manifest declares.
+```
+
+因此同一目录上分别写作 `fw` 与 `huxdemo.fw` 的两条边是同一个包,只编译一次,
+`mcpp why deps` 在它下面列出两个键。未声明命名空间的清单取键的命名空间,于是在这样
+一个目录上用两个不同命名空间的键,就是同一来源上的两个身份:构建在扫描之前被拒绝,
+点名二者;修正方式是在该清单中声明 `namespace`,或两处写同一个键。`version` 依赖
+不受影响,它的身份就是键。
+
 ### 命名空间解析规则
 
 每个包的身份是**命名空间 + 名字**二元组。每个 selector 都只规范化成一个身份:

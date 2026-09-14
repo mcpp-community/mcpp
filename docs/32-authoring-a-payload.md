@@ -145,6 +145,31 @@ which is what makes a stack of payloads resolve without anyone setting
 the SubOS sysroot view. **Declared rather than copied** — xlings removes them
 with the package, and a copy would outlive its owner.
 
+## Resolving a recipe from a checkout (2026.9.14.2+)
+
+A recipe on an unmerged branch is resolved by a consumer through an index
+override in the mcpp home's `config.toml`, before the recipe is published:
+
+```toml
+# $MCPP_HOME/config.toml
+[index.repos.xim]
+url = "/work/xim-pkgindex"      # a checkout of the branch
+```
+
+The next command writes the entry into the registry's `.xlings.json` and
+prints one line; the index then follows the checkout, including commits made
+after the first build:
+
+```
+       Index xim -> /work/xim-pkgindex ([index.repos.xim] in config.toml)
+```
+
+Installations from that index repeat the line beside `Provisioning`. Removing
+the table restores the registry's previous entry on the next command, unless
+the entry was changed after mcpp wrote it. Both hold for a home that has
+already run; an mcpp before 2026.9.14.2 applies the table only when the home
+is created.
+
 ## The tier: the commands that need a payload
 
 ```toml
