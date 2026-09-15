@@ -250,3 +250,46 @@ TEST(SymbolProvision, AConflictRemembersWhetherItsDefinitionIsWeak) {
     EXPECT_TRUE(conflicts[0].isWeak);
     EXPECT_FALSE(conflicts[1].isWeak);
 }
+
+// #646 F3. GCC emits the static data of an inline entity with STB_GNU_UNIQUE
+// (10) so that the loader keeps one copy across RTLD_LOCAL. It is vague linkage
+// exactly as STB_WEAK is; reading only the latter reported seven libstdc++
+// objects as a program displacing the library.
+TEST(SymbolProvision, TheUniqueBindingIsVagueLinkageAsTheWeakOneIs) {
+    EXPECT_TRUE(elf::is_vague_linkage_binding(2));    // STB_WEAK
+    EXPECT_TRUE(elf::is_vague_linkage_binding(10));   // STB_GNU_UNIQUE
+    EXPECT_FALSE(elf::is_vague_linkage_binding(1));   // STB_GLOBAL
+    EXPECT_FALSE(elf::is_vague_linkage_binding(0));   // STB_LOCAL
+}
+
+// #646 F3. The std module's initialiser is linked into every C++ image that
+// imports `std`, from one object. A provider that defines a name only through
+// an object this build linked into both images is removed from that conflict.
+TEST(SymbolProvision, ADefinitionBothImagesTakeFromOneObjectIsNotAConflict) {
+    std::vector<sp::Conflict> conflicts{
+        { .name = "_ZGIW3std", .isFunc = true,
+          .alsoProvidedBy = {"bin/liblib.so"} },
+        { .name = "inflate", .isFunc = true,
+          .alsoProvidedBy = {"bin/liblib.so", "/usr/lib/libz.so.1"} },
+    };
+    const std::map<std::string, std::set<std::string>> shared{
+        { "bin/liblib.so", {"_ZGIW3std"} },
+    };
+    EXPECT_EQ(sp::drop_shared_plan_definitions(conflicts, shared), 1u);
+    ASSERT_EQ(conflicts.size(), 1u);
+    EXPECT_EQ(conflicts[0].name, "inflate");
+    // The library still defines `inflate` from its OWN object, so it stays a
+    // provider: attribution is by object, never by the library as a whole.
+    EXPECT_EQ(conflicts[0].alsoProvidedBy,
+              (std::vector<std::string>{"bin/liblib.so", "/usr/lib/libz.so.1"}));
+}
+
+// The rule is provenance, not a name pattern: an initialiser-shaped name that
+// no shared object defines is still a finding.
+TEST(SymbolProvision, AnInitialiserShapedNameWithoutSharedProvenanceIsStillReported) {
+    std::vector<sp::Conflict> conflicts{
+        { .name = "_ZGIW5other", .isFunc = true, .alsoProvidedBy = {"bin/libother.so"} },
+    };
+    EXPECT_EQ(sp::drop_shared_plan_definitions(conflicts, {}), 0u);
+    EXPECT_EQ(conflicts.size(), 1u);
+}

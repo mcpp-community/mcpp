@@ -33,14 +33,22 @@
 // mcpp binary (measured: 0 of 217 dynamic symbols). Stage two runs only when
 // stage one is not, and it is the stage that makes the report TRUE.
 //
-// STAGE TWO IS NOT OPTIONAL, and the reason is mcpp's own doing. A
-// `kind = "shared"` dependency's link unit receives only ITS OWN objects
-// (mcpp.build.plan), so a static package underneath it lands in the CONSUMER's
-// executable instead, and the shared library binds back to it at run time.
-// That is the shape above — arranged by mcpp, with exactly one copy of the
-// code in the process, and completely benign. Reporting stage one alone would
-// warn about a correct build that the user cannot do anything about, which is
-// precisely the noise `mcpp.build.distribution` refuses to emit.
+// STAGE TWO IS NOT OPTIONAL. An executable's dynamic symbol table also holds
+// what the linker exported because a shared object references it, and one of
+// those shapes is mcpp's own: a static package that several images reach is
+// linked into the program, and the shared libraries bind back to it at run
+// time. Reporting stage one alone would name that as a finding.
+//
+// THE ARRANGEMENT IS NOT BENIGN, AND IT IS NO LONGER THE DEFAULT (#646 F1).
+// This comment used to call it completely benign, and that held only on ELF
+// and only for a program that links the package: the same library refuses
+// `-Wl,-z,defs`, a host that did not link the package cannot `dlopen` it,
+// Mach-O and PE resolve at link time, and Android loads the library first. A
+// static package reachable from ONE shared image is now linked into that image
+// (mcpp.build.plan, `place_static_packages`). One reachable from several is
+// refused where it cannot work and reported by prepare on ELF, where the
+// build still binds to the program's copy; this check then reports what the
+// linker exported, which is a true statement about that build.
 //
 // Design: .agents/docs/2026-08-28-issue519-dependency-linkage-form.md §2.
 
@@ -106,6 +114,11 @@ struct Report {
     // to be told which ones this check decided about, or "clean" reads as
     // "did not look".
     std::size_t           sharedWeak = 0;
+    // Definitions this image and a library it loads both take from ONE object
+    // of this build, counted and not listed. The module initialiser in
+    // `std.o` is the case that exists: every C++ image that imports `std`
+    // links it, and the function is empty. See `drop_shared_plan_definitions`.
+    std::size_t           sharedPlanDefinitions = 0;
     // Why, for the two non-answers. Empty for Clean and Conflict.
     std::string           reason;
 
@@ -133,6 +146,22 @@ exported_definitions(const mcpp::platform::elf::DynamicSymbols& symbols);
 // Stage two. `closure` is every object the image's loader will consult.
 std::vector<Conflict> conflicting_exports(std::span<const Export> exports,
                                           std::span<const Provider> closure);
+
+// Remove what this build put into both images on purpose.
+//
+// `sharedDefinitions` maps a provider's label to the names defined by the
+// objects this build links into BOTH the image being checked and that
+// provider. A provider is removed from a conflict whose name it defines only
+// through such an object, a conflict left with no provider is dropped, and the
+// number of removed (symbol, provider) pairs is returned.
+//
+// PROVENANCE, NOT A NAME PATTERN. The case this exists for is the `std`
+// module's initialiser (`_ZGIW3std`), which every C++ image importing `std`
+// links from the same `std.o`; matching `_ZGIW` instead would also excuse a
+// real duplicate whose name happens to have that shape (#646 F3).
+std::size_t drop_shared_plan_definitions(
+    std::vector<Conflict>& conflicts,
+    const std::map<std::string, std::set<std::string>>& sharedDefinitions);
 
 // The report an image with no dynamic symbol table gets, and the one an image
 // whose author asked for exports gets. Named constructors rather than raw
@@ -206,6 +235,23 @@ std::vector<Conflict> conflicting_exports(std::span<const Export> exports,
     return out;
 }
 
+std::size_t drop_shared_plan_definitions(
+    std::vector<Conflict>& conflicts,
+    const std::map<std::string, std::set<std::string>>& sharedDefinitions) {
+    std::size_t removed = 0;
+    for (auto& conflict : conflicts) {
+        std::erase_if(conflict.alsoProvidedBy, [&](const std::string& label) {
+            auto it = sharedDefinitions.find(label);
+            const bool shared = it != sharedDefinitions.end()
+                             && it->second.contains(conflict.name);
+            if (shared) ++removed;
+            return shared;
+        });
+    }
+    std::erase_if(conflicts, [](const Conflict& c) { return c.alsoProvidedBy.empty(); });
+    return removed;
+}
+
 Report not_applicable(std::string reason) {
     return Report{ .status = Status::NotApplicable, .reason = std::move(reason) };
 }
@@ -246,6 +292,12 @@ std::string Report::explain(std::string_view artifact) const {
             "  finding: the C++ ABI emits one per image and the loader keeps one.)\n",
             sharedWeak, sharedWeak == 1 ? "" : "s",
             sharedWeak == 1 ? "is" : "are");
+    if (sharedPlanDefinitions > 0)
+        body += std::format(
+            "  ({} definition{} this build links into both images from one object\n"
+            "  {} NOT part of this finding either.)\n",
+            sharedPlanDefinitions, sharedPlanDefinitions == 1 ? "" : "s",
+            sharedPlanDefinitions == 1 ? "is" : "are");
 
     // WHY it matters, then what to do — IN THE ORDER THAT ACTUALLY WORKS.
     //
