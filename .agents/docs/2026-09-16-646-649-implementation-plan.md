@@ -284,6 +284,11 @@ means the default.
     shim now follows the predicate the link line itself uses
     (`unit_needs_cxx_runtime`). The defect predates this batch; no fixture had
     a C-only shared library beside a C++ program on macOS before e2e 702.
+18. **The local verification of the integrated branch** (Linux x86_64, this
+    host): the full unit suite is 121 of 121, and `tests/e2e/run_all.sh` reads
+    `E2E Summary: 398 passed, 0 failed, 47 skipped`, the skips being the
+    capabilities this host lacks (msvc, mingw, qemu, a device). The macOS and
+    Windows legs are the pull request's own CI.
 17. **`timeout` is not on a macOS runner.** e2e 732 bounds its own commands
     with `timeout`, `gtimeout` or neither, since the bound under test is the
     engine's.
