@@ -105,6 +105,13 @@ enum class Code {
     // Distinct from LayerOrdering, which is about the layers not stacking: here
     // they stack, and one image would link with no C++ runtime at all (#641).
     SharedLibraryCxxRuntime,
+    // The plan needs something that has to be downloaded -- a toolchain, a
+    // package, a git revision, the package index -- and the run is offline
+    // (`--offline`, `MCPP_OFFLINE`, or the older `MCPP_NO_AUTO_INSTALL`).
+    // Distinct from every other code: nothing is wrong with the project, and
+    // one online run fixes it. An editor that plans offline by default tells
+    // the two apart by this code (#648).
+    OfflineDownloadRequired,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -137,6 +144,8 @@ constexpr std::string_view name(Code c) {
         case Code::ToolVersionConflict:  return "tool-version-conflict";
         case Code::SharedLibraryCxxRuntime:
                                          return "shared-library-cxx-runtime";
+        case Code::OfflineDownloadRequired:
+                                         return "offline-download-required";
         case Code::Other:                return "other";
     }
     return "other";

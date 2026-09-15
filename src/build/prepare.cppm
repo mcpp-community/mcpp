@@ -1560,6 +1560,7 @@ provision_xlings_addresses(const mcpp::config::GlobalConfig& cfg,
                             mcpp::platform::env::offline_mode()
                             ? "drop --offline / unset MCPP_OFFLINE"
                             : "unset MCPP_NO_AUTO_INSTALL";
+                        refusal::record(refusal::Code::OfflineDownloadRequired);
                         return std::unexpected(std::format(
                             "{} are declared but not provisioned, "
                             "and auto-install is off.\n"
@@ -3472,6 +3473,7 @@ prepare_build(bool print_fingerprint,
         // will actually work there instead.
         if (mcpp::platform::is_windows
             && !msvc_usable_either_origin()) {
+            refusal::record(refusal::Code::OfflineDownloadRequired);
             return std::unexpected(std::format(
                 "no toolchain configured (and no Visual Studio found).\n"
                 "       run one of:\n"
@@ -3482,6 +3484,7 @@ prepare_build(bool print_fingerprint,
                 pins::kFirstRunWinGnu,  pins::kFirstRunWinGnuTarget, release));
         }
         if constexpr (mcpp::platform::is_macos || mcpp::platform::is_windows) {
+            refusal::record(refusal::Code::OfflineDownloadRequired);
             return std::unexpected(std::format(
                 "no toolchain configured.\n"
                 "       run one of:\n"
@@ -3490,6 +3493,7 @@ prepare_build(bool print_fingerprint,
                 "       {}",
                 pins::kSuggestLlvm, pins::kFirstRunMac, release));
         } else {
+            refusal::record(refusal::Code::OfflineDownloadRequired);
             return std::unexpected(std::format(
                 "no toolchain configured.\n"
                 "       run one of:\n"
@@ -4650,7 +4654,19 @@ prepare_build(bool print_fingerprint,
                         needsRemoteUpdate = true;
                         break;
                     }
-                    if (needsRemoteUpdate) {
+                    // A first sync is a refresh of an index that has no local
+                    // copy yet, and `[index] auto_refresh = false` means that no
+                    // refresh happens implicitly (docs/05). The policy's answer is
+                    // taken rather than restated (#648 A5); offline, the sync is a
+                    // no-op as before and resolution reports what is missing.
+                    const auto refreshPolicy = mcpp::pm::policy_for(**cfg2);
+                    if (needsRemoteUpdate && !refreshPolicy.offline && !refreshPolicy.autoRefresh) {
+                        return std::unexpected(std::string(
+                            "the project's custom index repositories have never been synced, "
+                            "and [index] auto_refresh = false forbids syncing them implicitly\n"
+                            "       run `mcpp index update` once, then build again"));
+                    }
+                    if (needsRemoteUpdate && !refreshPolicy.offline) {
                         mcpp::ui::status("Fetching", "custom index repos (first use)");
                         auto projEnv = mcpp::config::make_project_xlings_env(**cfg2, *root);
                         int rc = mcpp::xlings::update_index(projEnv, /*quiet=*/true);
@@ -5238,6 +5254,18 @@ prepare_build(bool print_fingerprint,
                         mcpp::pm::staleness_note(
                             mcpp::config::make_xlings_env(**cfgA)));
                 }
+                // Offline with no local copy of the index at all, the miss says
+                // nothing about the package: nothing has been downloaded to look
+                // in. That is a download the run needs, not a wrong selector.
+                if (mcpp::platform::env::offline_mode()) {
+                    if (auto cfgO = get_cfg();
+                        cfgO && !mcpp::xlings::default_index_status(
+                                     mcpp::config::make_xlings_env(**cfgO), 0).present) {
+                        hint += "\n  offline: the package index has never been fetched; "
+                                "run `mcpp index update` without --offline";
+                        refusal::record(refusal::Code::OfflineDownloadRequired);
+                    }
+                }
                 return std::unexpected(with_index_cause(std::format(
                     "dependency '{}': no package found for exact selector"
                     "\n  tried: {}{}",
@@ -5466,6 +5494,7 @@ prepare_build(bool print_fingerprint,
             // down. (The toolchain payload path has its own gate; this is the
             // dependency path, which does not go through resolve_xpkg_path.)
             if (mcpp::platform::env::offline_mode()) {
+                refusal::record(refusal::Code::OfflineDownloadRequired);
                 return std::unexpected(std::format(
                     "offline mode: dependency '{}' v{} is not installed and "
                     "cannot be downloaded\n"
@@ -7311,6 +7340,7 @@ prepare_build(bool print_fingerprint,
             auto refuse_offline = [&](std::string_view need,
                                       std::string_view why,
                                       std::string_view verb) {
+                refusal::record(refusal::Code::OfflineDownloadRequired);
                 return std::unexpected(std::format(
                     "offline mode: git dependency '{}' needs {} of '{}'\n"
                     "       {}\n"

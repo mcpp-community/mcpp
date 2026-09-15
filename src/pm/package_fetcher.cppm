@@ -20,6 +20,8 @@ import mcpp.manifest;        // xpkg_lua_identity_matches — descriptor identit
 import mcpp.pm.compat;
 import mcpp.pm.dep_spec;
 import mcpp.pm.index_contract;   // index.toml floor check (E0006)
+import mcpp.pm.refresh_policy;   // decide_for_miss / apply (#648 A5)
+import mcpp.build.refusal;       // offline-download-required (#648 A1)
 import mcpp.ui;
 import mcpp.pm.index_spec;
 import mcpp.xlings;
@@ -1112,6 +1114,8 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         // download attempt is refused, and it names the package so the user
         // knows what to fetch rather than seeing a generic network error.
         if (mcpp::platform::env::offline_mode()) {
+            mcpp::build::refusal::record(
+                mcpp::build::refusal::Code::OfflineDownloadRequired);
             return std::unexpected(CallError{ std::format(
                 "offline mode: `{}@{}` is not installed and cannot be downloaded\n"
                 "       run without --offline (or unset MCPP_OFFLINE) to fetch it",
@@ -1119,13 +1123,18 @@ Fetcher::resolve_xpkg_path(std::string_view target,
         }
         if (parsed.indexName == "xim") {
             mcpp::xlings::Env xlEnv{ cfg_.xlingsBinary, cfg_.xlingsHome() };
-            // quiet=false: this only ever prints when a dependency is missing
-            // from the local index and we refresh once to fetch it — a rare,
-            // intentional event worth surfacing so a one-time network pause
-            // doesn't look like a silent hang. Steady-state builds (deps
-            // present) return early without a word.
-            mcpp::xlings::ensure_official_package_index_fresh(
-                xlEnv, parsed.packageName, cfg_.searchTtlSeconds, /*quiet=*/false);
+            // A descriptor missing from the local xim index may be one the
+            // remote index has. Whether that miss refreshes is the refresh
+            // policy's decision, so `[index] auto_refresh = false` and the
+            // debounce hold here as on every other path (#648 A5). The status
+            // line `apply` prints makes the one-time network pause visible.
+            if (!mcpp::xlings::official_package_present(xlEnv, parsed.packageName)) {
+                auto decision = mcpp::pm::decide_for_miss(
+                    mcpp::pm::policy_for(cfg_), xlEnv,
+                    std::format("xim:{}", parsed.packageName));
+                if (auto r = mcpp::pm::apply(decision, xlEnv); !r)
+                    mcpp::ui::warning(r.error());
+            }
         }
 
         std::vector<std::string> targets {
@@ -1200,9 +1209,12 @@ Fetcher::resolve_xpkg_path(std::string_view target,
             if (parsed.indexName == "xim") {
                 mcpp::xlings::Env refreshEnv{ cfg_.xlingsBinary, cfg_.xlingsHome() };
                 mcpp::log::verbose("fetcher",
-                    std::format("install failed for {}; refreshing index before retry",
+                    std::format("install failed for {}; asking the refresh policy before retry",
                                 targets[0]));
-                mcpp::xlings::update_index(refreshEnv, /*quiet=*/true);
+                auto decision = mcpp::pm::decide_for_miss(
+                    mcpp::pm::policy_for(cfg_), refreshEnv, targets[0]);
+                if (auto r = mcpp::pm::apply(decision, refreshEnv); !r)
+                    mcpp::log::verbose("fetcher", r.error());
             }
 
             mcpp::log::verbose("fetcher",

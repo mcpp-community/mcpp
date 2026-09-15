@@ -547,14 +547,12 @@ int update_index(const Env& env, bool quiet = false);
 // when no update is needed.
 void ensure_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet = false);
 
-// Ensure xlings' official xim index is present and fresh.
-void ensure_official_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet = false);
-
-// Ensure a specific package file exists in xlings' official xim index.
-void ensure_official_package_index_fresh(const Env& env,
-                                         std::string_view packageName,
-                                         std::int64_t ttlSeconds,
-                                         bool quiet = false);
+// Whether xlings' official xim index on disk carries a descriptor for
+// `packageName`. Offline and read-only. Whether a miss may refresh the index is
+// not decided here: that is mcpp.pm.refresh_policy's `decide_for_miss`, so
+// `[index] auto_refresh`, `--offline` and the debounce apply to it as they do
+// to every other refresh (mcpp-community/mcpp#648 A5).
+bool official_package_present(const Env& env, std::string_view packageName);
 
 // ─── Index status (read-only, offline) ──────────────────────────────
 // Snapshot of a local index directory — computed without touching the
@@ -1978,43 +1976,10 @@ void ensure_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet) {
     update_index(env, /*quiet=*/true);
 }
 
-void ensure_official_index_fresh(const Env& env, std::int64_t ttlSeconds, bool quiet) {
-    if (is_official_index_fresh(env, ttlSeconds)) return;
-    if (!quiet)
-        print_status("Updating", "package index (auto-refresh)");
-    update_index(env, /*quiet=*/true);
-}
-
-void ensure_official_package_index_fresh(const Env& env,
-                                         std::string_view packageName,
-                                         [[maybe_unused]] std::int64_t ttlSeconds,
-                                         bool quiet) {
-    // Offline-first, miss-triggered. We do NOT auto-update just because a TTL
-    // expired — that runs a network `xlings update` (git-syncs several index
-    // repos) that stalls for minutes on slow/blocked networks (the Termux
-    // first-run / build hang). But fully offline is too strict: if a requested
-    // dependency is NOT in the local index, we DO refresh once to discover it.
-    //
-    //   present locally  → use as-is, zero network (the common build case).
-    //   missing locally  → refresh once to try to fetch it.
-    //
-    // Routine, deps-already-present refresh stays the user's explicit
-    // `mcpp index update` / `xlings update`.
+bool official_package_present(const Env& env, std::string_view packageName) {
     auto pkg = official_package_file(env, packageName);
-    if (!pkg.empty() && std::filesystem::exists(pkg)) return;
-
-    // The package is missing locally. Refresh once — but guard against a build
-    // that resolves several genuinely-absent packages re-running the heavy
-    // `xlings update` per package: if the index was refreshed moments ago and
-    // the package is STILL missing, upstream simply lacks it; re-pulling won't
-    // help. (A package added upstream before this run lands in that one pull.)
-    if (is_official_index_fresh(env, kIndexRefreshDebounceSeconds)) return;
-
-    if (!quiet)
-        print_status("Refreshing",
-            std::format("package index — `{}` not found locally (one-time)",
-                        packageName));
-    update_index(env, /*quiet=*/quiet);
+    std::error_code ec;
+    return !pkg.empty() && std::filesystem::exists(pkg, ec);
 }
 
 } // namespace mcpp::xlings

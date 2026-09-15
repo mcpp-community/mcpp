@@ -21,6 +21,7 @@ import mcpp.build.schedule.detach_codegen;
 import mcpp.build.test_targets;
 import mcpp.build.build_database;
 import mcpp.build.build_program;
+import mcpp.build.refusal;          // offline-download-required (#648 A1)
 import mcpp.dyndep;
 import mcpp.home;
 import mcpp.hooks;
@@ -372,7 +373,20 @@ export int cmd_emit_build_database(const mcpplibs::cmdline::ParsedArgs& parsed) 
             testDiscovery.push_back(std::move(discovery));
         }
     }
-    if (planError) return failed("MCPP_BUILD_DATABASE_PLAN_FAILED", *planError);
+    // An offline plan that needs a download is not a defect of the project, and
+    // a client that plans offline by default (an editor) has to tell the two
+    // apart without reading the message (#648 A1). The code is taken only while
+    // the run is offline, so a refusal recorded on a path that recovered cannot
+    // relabel an unrelated failure.
+    if (planError) {
+        const bool offline = mcpp::platform::env::offline_mode()
+                          || mcpp::platform::env::no_auto_install();
+        if (mcpp::build::refusal::take()
+                == mcpp::build::refusal::Code::OfflineDownloadRequired
+            && offline)
+            return failed("MCPP_OFFLINE_DOWNLOAD_REQUIRED", *planError);
+        return failed("MCPP_BUILD_DATABASE_PLAN_FAILED", *planError);
+    }
 
     // The lock this planning produced, against the project's. The project's is
     // never written; a difference is reported.
