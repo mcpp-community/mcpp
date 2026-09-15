@@ -1266,6 +1266,7 @@ mcpp::platform::process::RunResult run_with_network_retry(
         std::string_view command,
         const std::function<void()>& between = {}) {
     mcpp::platform::process::RunResult r{};
+    mcpp::platform::env::note_network_access();   // the envelope's `effects` (#648 A4)
     for (int attempt = 1; attempt <= 3; ++attempt) {
         r = mcpp::platform::process::capture(command);
         if (r.exit_code == 0) return r;

@@ -96,11 +96,19 @@ using OutputSink = void (*)(void* ctx, const char* data, unsigned long len);
 // "KEY=VALUE" strings applied on top of the current environment. `cwd` may be
 // null. A non-positive `deadlineMs` is rejected with supported=false — "no
 // bound" belongs on the caller's untimed path, which needs none of this.
+//
+// `idleMs`, when positive, kills the child once it has written nothing for that
+// long; the POSIX peer states the reason (#648). With `idleMs` positive a
+// non-positive `deadlineMs` means "no total bound". There is no `ownGroup`
+// parameter: every child here runs in a job object with
+// JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE already, which is what the POSIX flag
+// buys there.
 DeadlineRun capture_with_deadline(const char*        commandLine,
                                   const char* const* envEntries,
                                   unsigned long      envCount,
                                   const char*        cwd,
                                   long long          deadlineMs,
+                                  long long          idleMs,
                                   OutputSink         sink,
                                   void*              ctx);
 
@@ -247,11 +255,13 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
                                   unsigned long      envCount,
                                   const char*        cwd,
                                   long long          deadlineMs,
+                                  long long          idleMs,
                                   OutputSink         sink,
                                   void*              ctx)
 {
     DeadlineRun out;
-    if (deadlineMs <= 0 || !commandLine || !*commandLine) return out;
+    const bool idleBound = idleMs > 0 && sink != nullptr;
+    if ((deadlineMs <= 0 && !idleBound) || !commandLine || !*commandLine) return out;
 
     const bool capture = (sink != nullptr);
 
@@ -337,8 +347,11 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
     // EOF, even after every child has exited.
     writeEnd.reset();
 
-    const auto until = std::chrono::steady_clock::now()
-                     + std::chrono::milliseconds(deadlineMs);
+    const auto started = std::chrono::steady_clock::now();
+    const auto until = deadlineMs > 0
+        ? started + std::chrono::milliseconds(deadlineMs)
+        : std::chrono::steady_clock::time_point::max();
+    auto lastOutput = started;
     std::array<char, 4096> buf{};
     bool killed = false;
 
@@ -354,6 +367,7 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
         if (!::ReadFile(readEnd.h, buf.data(), want, &got, nullptr) || got == 0)
             return false;
         if (sink) sink(ctx, buf.data(), static_cast<unsigned long>(got));
+        lastOutput = std::chrono::steady_clock::now();
         return true;
     };
 
@@ -365,7 +379,10 @@ DeadlineRun capture_with_deadline(const char*        commandLine,
             break;
         }
 
-        if (!killed && std::chrono::steady_clock::now() >= until) {
+        const auto now = std::chrono::steady_clock::now();
+        const bool overIdle = idleBound
+            && now - lastOutput >= std::chrono::milliseconds(idleMs);
+        if (!killed && (now >= until || overIdle)) {
             killed = true;
             // Closing the job takes the whole tree with it. TerminateProcess
             // alone would leave grandchildren holding the pipe open.
@@ -573,7 +590,7 @@ int wait_background(unsigned long long process, int* exitCode) {
 #else
 
 DeadlineRun capture_with_deadline(const char*, const char* const*, unsigned long,
-                                  const char*, long long, OutputSink, void*) {
+                                  const char*, long long, long long, OutputSink, void*) {
     // Not Windows: the POSIX launcher in mcpp.platform.process owns this.
     return {};
 }

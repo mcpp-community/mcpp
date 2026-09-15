@@ -97,6 +97,12 @@ struct GlobalConfig {
     // being portable between a corporate LAN, a laptop and CI.
     bool                            indexAutoRefresh = true;
 
+    // From config.toml [index] refresh_timeout (seconds). The total bound on
+    // one index refresh; a refresh that exceeds it counts as failed and the
+    // build continues from the local index (#648 A3). Machine policy, like
+    // auto_refresh: it describes the network, not the project.
+    std::int64_t                    indexRefreshTimeoutSeconds = 120;
+
     // From config.toml [build]
     std::int64_t                    defaultJobs = 0;
 
@@ -345,6 +351,10 @@ default = "mcpplibs"
 # cannot be resolved from the local copy (never merely because time passed).
 # Set false to require an explicit `mcpp index update`.
 auto_refresh = true
+# refresh_timeout: seconds one automatic or explicit index refresh may take.
+# A refresh that exceeds it is stopped, counts as failed, and the build
+# continues with the local index.
+refresh_timeout = 120
 
 [index.repos."mcpplibs"]
 url      = "https://github.com/mcpplibs/mcpp-index.git"
@@ -661,6 +671,10 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
         cfg.xlingsHomeOverride = *h;
     cfg.defaultIndex   = doc->get_string("index.default").value_or("mcpplibs");
     cfg.indexAutoRefresh = doc->get_bool("index.auto_refresh").value_or(true);
+    if (auto t = doc->get_int("index.refresh_timeout"); t && *t > 0)
+        cfg.indexRefreshTimeoutSeconds = *t;
+    mcpp::xlings::set_index_refresh_timeout(
+        std::chrono::seconds{cfg.indexRefreshTimeoutSeconds});
     cfg.searchTtlSeconds = doc->get_int("cache.search_ttl_seconds").value_or(3600);
     cfg.defaultJobs    = doc->get_int("build.default_jobs").value_or(0);
     cfg.defaultToolchain = doc->get_string("toolchain.default").value_or("");

@@ -49,6 +49,20 @@ bool offline_mode();
 // and kept next to offline_mode() so the two network knobs cannot drift apart.
 bool no_auto_install();
 
+// WHAT THIS RUN DID WITH THE NETWORK, AS OPPOSED TO WHAT IT MAY DO.
+//
+// docs/50 defines an envelope's `effects` as what running the command did,
+// and `--protocol-version` as what a command may do. The per-run list used to
+// be assembled from constants, so a plan that refreshed the index reported no
+// `network` (#648 A4). A launcher of a network-bound child (an index refresh,
+// an install, a git remote operation) calls `note_network_access` before it
+// starts the child; an attempt that fails or times out still counts, because
+// the effect is the access. Offline, those launchers return before this call.
+// Kept beside offline_mode() for the reason stated above: every layer can reach
+// this module, and the record has writers in several of them.
+void note_network_access();
+bool network_accessed();
+
 // Temporarily set or unset an env var, restoring the prior value on scope exit.
 class ScopedEnv {
 public:
@@ -111,6 +125,13 @@ bool no_auto_install() {
     auto* v = std::getenv("MCPP_NO_AUTO_INSTALL");
     return v && *v && std::string_view(v) != "0";
 }
+
+namespace {
+std::atomic<bool> g_network_accessed{false};
+}
+
+void note_network_access() { g_network_accessed.store(true, std::memory_order_relaxed); }
+bool network_accessed()    { return g_network_accessed.load(std::memory_order_relaxed); }
 
 std::optional<std::string> get(std::string_view key) {
     std::string k(key);

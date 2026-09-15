@@ -87,12 +87,27 @@ using OutputSink = void (*)(void* ctx, const char* data, unsigned long len);
 // (a) delay every line until the child exits, which is the opposite of what a
 // bounded `mcpp test` run is for, and (b) make the child's stdout a pipe
 // rather than a terminal, so gtest and friends silently drop their colors.
+//
+// `idleMs`, when positive, is a second bound: the child is killed once it has
+// written nothing for that long. It is meaningful only with a sink, and it is
+// what lets a long, progressing child (a download that prints progress) run to
+// completion while a wedged one does not (#648). With `idleMs` positive a
+// non-positive `deadlineMs` means "no total bound".
+//
+// `ownGroup` non-zero places the child in a process group of its own, kills
+// the GROUP at a bound, and registers the group with the signal guard for the
+// length of the call, so terminating mcpp takes the child's descendants with
+// it. It is opt-in because a child in a background group that reads the
+// terminal is stopped by SIGTTIN, and the uncaptured callers of this function
+// hand the terminal to their child.
 DeadlineRun capture_with_deadline(const char* const* argvEntries,
                                   unsigned long      argvCount,
                                   const char* const* envEntries,
                                   unsigned long      envCount,
                                   const char*        cwd,
                                   long long          deadlineMs,
+                                  long long          idleMs,
+                                  int                ownGroup,
                                   OutputSink         sink,
                                   void*              ctx);
 
@@ -188,11 +203,14 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
                                   unsigned long      envCount,
                                   const char*        cwd,
                                   long long          deadlineMs,
+                                  long long          idleMs,
+                                  int                ownGroup,
                                   OutputSink         sink,
                                   void*              ctx)
 {
     DeadlineRun out;
-    if (deadlineMs <= 0 || argvCount == 0 || !argvEntries) return out;
+    const bool idleBound = idleMs > 0 && sink != nullptr;
+    if ((deadlineMs <= 0 && !idleBound) || argvCount == 0 || !argvEntries) return out;
 
     // The child's environment: ours, minus anything overridden, plus the
     // overrides. Names are case-SENSITIVE here (unlike the Windows peer).
@@ -244,11 +262,19 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
     // else: no file actions for stdio at all — the child inherits ours, which
     // keeps its output live AND keeps it a terminal.
 
+    posix_spawnattr_t attr;
+    ::posix_spawnattr_init(&attr);
+    if (ownGroup) {
+        ::posix_spawnattr_setpgroup(&attr, 0);   // 0: a new group, id == pid
+        ::posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+    }
     pid_t pid = 0;
-    int sp = ::posix_spawnp(&pid, cargv[0], &fa, nullptr, cargv.data(), envp.data());
+    int sp = ::posix_spawnp(&pid, cargv[0], &fa, &attr, cargv.data(), envp.data());
+    ::posix_spawnattr_destroy(&attr);
     ::posix_spawn_file_actions_destroy(&fa);
     if (capture) ::close(fds[1]);
     if (sp != 0) { out.spawn_error = sp; if (capture) ::close(fds[0]); return out; }
+    if (ownGroup) guard_group_on_signal(pid);
 
     // Non-blocking reads so the deadline is still checked while the child is
     // quiet. A blocking read on a silent, hung child is exactly the hang this
@@ -256,8 +282,11 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
     if (capture)
         ::fcntl(fds[0], F_SETFL, ::fcntl(fds[0], F_GETFL, 0) | O_NONBLOCK);
 
-    const auto until = std::chrono::steady_clock::now()
-                     + std::chrono::milliseconds(deadlineMs);
+    const auto started = std::chrono::steady_clock::now();
+    const auto until = deadlineMs > 0
+        ? started + std::chrono::milliseconds(deadlineMs)
+        : std::chrono::steady_clock::time_point::max();
+    auto lastOutput = started;
     std::array<char, 4096> buf{};
     bool  killed = false;
     int   status = 0;
@@ -270,6 +299,7 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
             sink(ctx, buf.data(), static_cast<unsigned long>(n));
             any = true;
         }
+        if (any) lastOutput = std::chrono::steady_clock::now();
         return any;
     };
 
@@ -283,14 +313,23 @@ DeadlineRun capture_with_deadline(const char* const* argvEntries,
         }
         if (r < 0 && errno != EINTR && errno != ECHILD) break;
 
-        if (!killed && std::chrono::steady_clock::now() >= until) {
-            ::kill(pid, SIGKILL);
+        const auto now = std::chrono::steady_clock::now();
+        const bool overTotal = now >= until;
+        const bool overIdle  = idleBound
+            && now - lastOutput >= std::chrono::milliseconds(idleMs);
+        if (!killed && (overTotal || overIdle)) {
+            // The group when the child owns one: a shell's grandchild (the
+            // program the shell ran) would otherwise keep running, and keep
+            // the pipe open so the drain above never saw end-of-file.
+            if (ownGroup) ::killpg(pid, SIGKILL);
+            else          ::kill(pid, SIGKILL);
             killed = true;
             continue;
         }
         struct timespec ts{0, 20'000'000};   // 20ms
         ::nanosleep(&ts, nullptr);
     }
+    if (ownGroup) unguard_group(pid);
     if (capture) ::close(fds[0]);
 
     out.exit_code = normalize_status(status);
@@ -472,7 +511,8 @@ void clear_group_guard() {
 
 DeadlineRun capture_with_deadline(const char* const*, unsigned long,
                                   const char* const*, unsigned long,
-                                  const char*, long long, OutputSink, void*) {
+                                  const char*, long long, long long, int,
+                                  OutputSink, void*) {
     // Not POSIX: mcpp.platform.windows.bounded_process owns this.
     return {};
 }

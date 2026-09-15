@@ -242,6 +242,31 @@ int run_silent(std::string_view command);
 int run_streaming(std::string_view command,
                   std::function<void(std::string_view line)> on_line);
 
+// run_streaming for a child that mcpp must own and bound (#648).
+//
+// `run_streaming` hands its child to `popen`: the child is in mcpp's process
+// group, is not killed when mcpp is, and is waited on with no limit. That was
+// the xlings index refresh that held an editor for eleven minutes on a
+// connection that never answered. This runs the same shell command (the same
+// quoting, the same sealed stdin) through the deadline launchers instead:
+//
+//   - the child owns a process group on POSIX, registered with the signal
+//     guard, and runs in a kill-on-close job object on Windows, so
+//     terminating mcpp terminates the command's whole tree;
+//   - `total` bounds the run; `idle` bounds the time without output. Either
+//     may be zero (no bound of that kind), not both;
+//   - a bound that fires kills the tree and sets *timed_out; the exit code is
+//     then the killed shell's.
+//
+// Stdout and stderr share the pipe, as they do for every captured deadline
+// run; a caller that parses stdout redirects stderr in the command itself.
+// Returns -1 when the launcher could not run the command at all.
+int run_streaming_bounded(std::string_view command,
+                          std::function<void(std::string_view line)> on_line,
+                          std::chrono::milliseconds total,
+                          std::chrono::milliseconds idle,
+                          bool* timed_out);
+
 // Run `command`, passing stdout/stderr through to the terminal.
 // Optionally captures stdout into `output` if non-null.
 // Returns a platform-normalized exit code (WEXITSTATUS on POSIX).
@@ -893,13 +918,20 @@ struct BoundedOutcome {
 // normal case) means "derive it from argv". A shell command is the one caller
 // that must NOT be derived that way — see windows_shell_command_line — and the
 // POSIX branch is unaffected either way, because it never flattens argv.
+// `idle` and `ownGroup` are the streaming runner's (see run_streaming_bounded);
+// every other caller passes neither and keeps its behaviour. `on_line`, when
+// given, receives each complete line as it arrives instead of the output being
+// accumulated.
 BoundedOutcome dispatch_bounded(
     const std::vector<std::string>& argv,
     const std::vector<std::pair<std::string, std::string>>& extraEnv,
     std::string_view cwd,
     std::chrono::milliseconds deadline,
     bool capture,
-    std::string_view windowsCommandLine = {})
+    std::string_view windowsCommandLine = {},
+    std::chrono::milliseconds idle = std::chrono::milliseconds{0},
+    bool ownGroup = false,
+    const std::function<void(std::string_view)>* on_line = nullptr)
 {
     BoundedOutcome outcome;
 
@@ -916,21 +948,40 @@ BoundedOutcome dispatch_bounded(
     const char* cwdArg = cwdStore.empty() ? nullptr : cwdStore.c_str();
     const auto ms = static_cast<long long>(deadline.count());
 
+    const auto idleMs = static_cast<long long>(idle.count());
+
     // One sink for both, appending into the outcome's own buffer. Null when the
-    // caller wants the child on its own stdio.
+    // caller wants the child on its own stdio. With `on_line`, complete lines
+    // leave the buffer as they arrive, and the unterminated tail is delivered
+    // after the child exits, as run_streaming does.
+    struct StreamCtx {
+        std::string*                                     buffer;
+        const std::function<void(std::string_view)>*     on_line;
+    } streamCtx{ &outcome.output, on_line };
     using Sink = void (*)(void*, const char*, unsigned long);
-    const Sink sink = capture
+    const Sink sink = !capture ? nullptr
+        : on_line == nullptr
         ? +[](void* ctx, const char* data, unsigned long len) {
-              static_cast<std::string*>(ctx)->append(data, len);
+              static_cast<StreamCtx*>(ctx)->buffer->append(data, len);
           }
-        : nullptr;
+        : +[](void* ctx, const char* data, unsigned long len) {
+              auto* c = static_cast<StreamCtx*>(ctx);
+              c->buffer->append(data, len);
+              std::size_t pos;
+              while ((pos = c->buffer->find('\n')) != std::string::npos) {
+                  std::string_view line{c->buffer->data(), pos};
+                  while (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+                  (*c->on_line)(line);
+                  c->buffer->erase(0, pos + 1);
+              }
+          };
 
     if constexpr (mcpp::platform::is_windows) {
         const auto cmd = windowsCommandLine.empty()
                        ? windows_command_from_argv(argv)
                        : std::string(windowsCommandLine);
         auto r = mcpp::platform::winproc::capture_with_deadline(
-            cmd.c_str(), envArg, envCount, cwdArg, ms, sink, &outcome.output);
+            cmd.c_str(), envArg, envCount, cwdArg, ms, idleMs, sink, &streamCtx);
         outcome.supported = r.supported;
         outcome.exit_code = r.exit_code;
         outcome.timed_out = r.timed_out;
@@ -941,11 +992,18 @@ BoundedOutcome dispatch_bounded(
         for (auto const& a : argv) argvPtrs.push_back(a.c_str());
         auto r = mcpp::platform::unixproc::capture_with_deadline(
             argvPtrs.data(), static_cast<unsigned long>(argvPtrs.size()),
-            envArg, envCount, cwdArg, ms, sink, &outcome.output);
+            envArg, envCount, cwdArg, ms, idleMs, ownGroup ? 1 : 0,
+            sink, &streamCtx);
         outcome.supported = r.supported;
         outcome.exit_code = r.exit_code;
         outcome.timed_out = r.timed_out;
         outcome.spawn_error = r.spawn_error;
+    }
+    if (on_line && capture && !outcome.output.empty()) {
+        std::string_view tail{outcome.output};
+        while (!tail.empty() && tail.back() == '\r') tail.remove_suffix(1);
+        if (!tail.empty()) (*on_line)(tail);
+        outcome.output.clear();
     }
     return outcome;
 }
@@ -1001,6 +1059,28 @@ int run_shell_deadline(std::string_view command,
     // hook's deadline and its working directory are both part of what the
     // caller asked for, and the unbounded path can honour neither.
     if (!r.supported) return 127;
+    if (timed_out) *timed_out = r.timed_out;
+    return r.exit_code;
+}
+
+int run_streaming_bounded(std::string_view command,
+                          std::function<void(std::string_view line)> on_line,
+                          std::chrono::milliseconds total,
+                          std::chrono::milliseconds idle,
+                          bool* timed_out)
+{
+    if (timed_out) *timed_out = false;
+    if (command.empty() || (total.count() <= 0 && idle.count() <= 0)) return -1;
+    // The popen path's shaping, minus the outer cmd.exe pair: the Windows
+    // launcher's command line supplies that pair itself.
+    const auto sealed = seal_stdin(command);
+    const std::vector<std::string> argv{"/bin/sh", "-c", sealed};
+    std::function<void(std::string_view)> sink =
+        on_line ? std::move(on_line) : [](std::string_view) {};
+    auto r = dispatch_bounded(argv, {}, {}, total, /*capture=*/true,
+                              windows_shell_command_line(sealed), idle,
+                              /*ownGroup=*/true, &sink);
+    if (!r.supported) return -1;
     if (timed_out) *timed_out = r.timed_out;
     return r.exit_code;
 }

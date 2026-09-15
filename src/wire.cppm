@@ -50,6 +50,7 @@ export module mcpp.wire;
 import std;
 import mcpp.version;
 import mcpp.libs.json;
+import mcpp.platform;   // env::network_accessed (#648 A4)
 
 export namespace mcpp::wire {
 
@@ -181,6 +182,12 @@ inline nlohmann::json to_json(const Diagnostic& d) {
 inline nlohmann::json to_json(const Envelope& e) {
     nlohmann::json effects = nlohmann::json::array();
     for (auto f : e.effects) effects.push_back(std::string(effect_name(f)));
+    // `effects` states what running the command did (docs/50 section 2). Network
+    // access is observed where it happens rather than declared by each command,
+    // so every enveloped command reports it the same way.
+    if (mcpp::platform::env::network_accessed()
+        && std::ranges::find(e.effects, Effect::Network) == e.effects.end())
+        effects.push_back(std::string(effect_name(Effect::Network)));
 
     nlohmann::json diags = nlohmann::json::array();
     for (auto const& d : e.diagnostics) diags.push_back(to_json(d));
