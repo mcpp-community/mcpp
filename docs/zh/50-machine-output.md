@@ -357,8 +357,8 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `host-module-missing` | `build.mcpp` 导入了没有任何依赖以 host module 形式提供的模块 |
 | `tool-version-conflict` | 两处声明把同一个 xlings 包定在不能同时成立的版本上 |
 | `shared-library-cxx-runtime` | C++ 运行时来自图中的包,而依赖的 C++ 共享库没有声明私有副本 |
-| `offline-download-required` | 本次运行离线,而规划需要下载:工具链、包、git 修订或包索引 |
-| `package-cycle` | 依赖图中存在包的环;消息列出环上的边 |
+| `offline-download-required` | 本次运行离线,而规划需要下载:工具链、包、git 修订或包索引 *(2026.9.16.1+)* |
+| `package-cycle` | 依赖图中存在包的环;消息列出环上的边 *(2026.9.16.1+)* |
 | `program-cxx-runtime-split` | 声明了自含 C++ 运行时的程序或测试,加载了本次构建中耦合到共享运行时的 C++ 共享库 *(2026.9.16.1+)* |
 | `static-package-in-two-images` | 一个静态包被本次构建的多个映像到达,而在该目标上一个映像不能使用另一个映像里的副本 *(2026.9.16.1+)* |
 | `other` | 一处还没有被命名的拒绝分支 |

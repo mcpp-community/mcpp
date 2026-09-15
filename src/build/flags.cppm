@@ -813,6 +813,18 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // is only assemblable by its own x86_64-w64-mingw32-as.
     bool isMuslTc  = mcpp::toolchain::is_musl_target(plan.toolchain);
     bool isMingwTc = mcpp::toolchain::is_mingw_target(plan.toolchain);
+    // The object format the TARGET produces, derived once: the runtime contract
+    // table and the link-line shape both read it (#647 E3). Target-keyed, with
+    // the host's format only as the fallback for a triple that names none; a
+    // MinGW toolchain is a PE whatever its triple spelling says.
+    const mcpp::build::dist::Format targetObjectFormat =
+        isMingwTc ? mcpp::build::dist::Format::Pe
+                  : mcpp::build::dist::format_for(plan.toolchain.targetTriple,
+                        mcpp::platform::needs_explicit_libcxx
+                            ? mcpp::build::dist::Format::MachO
+                        : mcpp::platform::is_windows
+                            ? mcpp::build::dist::Format::Pe
+                            : mcpp::build::dist::Format::Elf);
     const auto linkIntentFlavor = [&] {
         if (isMingwTc) return LinkIntentFlavor::PeGnu;
         if (isMsvcDialect) return LinkIntentFlavor::PeMsvc;
@@ -1097,14 +1109,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // table because it recognises a mingw toolchain by more than its
         // triple; everything after it is `dist::format_for`, which is where
         // the question is answered and where it is tested.
-        const dist::Format format =
-            isMingwTc ? dist::Format::Pe
-                      : dist::format_for(plan.toolchain.targetTriple,
-                            mcpp::platform::needs_explicit_libcxx
-                                ? dist::Format::MachO
-                            : mcpp::platform::is_windows
-                                ? dist::Format::Pe
-                                : dist::Format::Elf);
+        const dist::Format format = targetObjectFormat;
 
         // `static_stdlib` is a faithful alias of the two ends of the contract:
         // its documented meaning has always been exactly self-contained vs the
@@ -1625,18 +1630,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     // the ordering between them is the whole point.
     std::string platformAnchor;
     // WHICH BRANCH, asked of the host AND the target (see `link_shape`). The
-    // format is the one the contract table reads, from the same function and
-    // the same host fallback; a MinGW toolchain is a PE whatever its triple
-    // spelling says.
-    const mcpp::build::dist::Format linkTargetFormat =
-        isMingwTc ? mcpp::build::dist::Format::Pe
-                  : mcpp::build::dist::format_for(plan.toolchain.targetTriple,
-                        mcpp::platform::needs_explicit_libcxx
-                            ? mcpp::build::dist::Format::MachO
-                        : mcpp::platform::is_windows
-                            ? mcpp::build::dist::Format::Pe
-                            : mcpp::build::dist::Format::Elf);
-    const LinkShape linkShape = link_shape(current_link_host(), linkTargetFormat,
+    // format is `targetObjectFormat`, the one the contract table reads.
+    const LinkShape linkShape = link_shape(current_link_host(), targetObjectFormat,
                                            isMsvcDialect,
                                            !plan.toolchain.crossTargetFlag.empty());
     if (linkShape == LinkShape::MsvcLinkExe || linkShape == LinkShape::PeLld) {

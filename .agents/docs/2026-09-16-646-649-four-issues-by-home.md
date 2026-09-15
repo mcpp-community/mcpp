@@ -5,7 +5,8 @@ status: active
 
 # Four issues from a framework and an editor: #646, #647, #648 and #649, read against the engine and routed by home
 
-**Status:** revision 1, for review. Nothing is implemented.
+**Status:** revision 1, adopted on 2026-09-16. The implementation, its
+refinements and its readings are `2026-09-16-646-649-implementation-plan.md`.
 
 Engine code was read at `2fc7b5b0` (origin/main, after mcpp 2026.9.15.2).
 mcpp-plugins, openxlings/xlings (`3cd8061`) and mcpplibs/mcpp-index were read

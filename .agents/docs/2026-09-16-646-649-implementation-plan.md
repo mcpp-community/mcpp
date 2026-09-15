@@ -29,51 +29,51 @@ the parallel work trees of §8. Triage sections are cited as `T§`.
 
 | id | task (triage §) | owner | depends on | status |
 |---|---|---|---|---|
-| L1 | the refresh decision walks the resolver's deprecated bare-name rung before calling a miss (T§7.0) | lead | - | todo |
-| L2 | the saved standard output is close-on-exec, and not inheritable on Windows (T§7.2) | lead | - | todo |
-| L3 | xlings runs under the owned launcher; a total deadline for the index refresh, an inactivity deadline for installs (T§7.3) | lead | L2 | todo |
-| L4 | a per-run record of observed effects; `network` when a network child is launched (T§7.4) | lead | L3 | todo |
-| L5 | the three refreshes that bypass `mcpp.pm.index_refresh` go through `decide_for_miss` (T§7.5) | lead | L1 | todo |
-| L6 | the refusal code `offline-download-required` at every offline refusal site; `MCPP_OFFLINE_DOWNLOAD_REQUIRED` in the envelope (T§7.1) | lead | - | todo |
-| L7 | the default `artifact` of the mcpplibs index is the region object; the existing `.xlings.json` migration carries it (T§7.6 step 2) | lead | X1 | todo |
-| R1 | ELF: programs and tests over a plan-built C++ shared library take the shared-library runtime contract; an explicit `self-contained` program there is refused (T§4.1, D1) | W1 | - | todo |
-| R2 | symbol provision: `STB_GNU_UNIQUE` is vague linkage; a duplicate whose definitions come from one plan object is not reported (T§4.2) | W1 | - | todo |
-| R3 | a static package reachable from one shared image only is linked into that image; one reachable from two images is refused where the link or load cannot succeed and diagnosed elsewhere (T§4.3, D2, §1.5) | W1 | - | todo |
-| R4 | clang on the MSVC ABI records the runtime it delivers; an undeliverable `cxx_runtime` is diagnosed; docs/20 states the row's model (T§4.5 step 1) | W1 | - | todo |
-| R5 | measurement legs: exception identity across a Mach-O dylib under the payload default (macos-15), and across an llvm-row DLL (windows-2022), each printing its reading (T§4.4, §9.2) | W1 | - | todo |
-| G1 | the forward validator accepts a key declared in any dependency table on any row (T§6.1, X8) | W2 | - | todo |
-| G2 | a `[feature-deps]` restatement whose source differs is refused; docs/05 says to restate the source (T§6.2, D8) | W2 | - | todo |
-| G3 | one helper names a provider for a consumer; `dep_bin` gains the qualified spelling (T§6.3) | W2 | - | todo |
-| G4 | a package with no library target contributes nothing to a consumer's target graph; package cycles are checked at resolution; a repeated tool is refused at its first repetition (T§6.4, D3, X2, X3) | W2 | - | todo |
-| G5 | a git dependency selects a repository member by identity; a second declaration merges additively; the git banner names the commit (T§6.5, D9, X1, X6) | W2 | G4 | todo |
-| G6 | `--features dep/feature` is a root forward; `why deps --features` (T§6.6, X7) | W2 | G1 | todo |
-| S1 | `mcpp::graph_file()` for the root build program, with `[package.metadata]` and a digest in the re-run key (T§5.1, D4) | W3 | - | todo |
-| S2 | the link branch is chosen by host and target object format, as a pure function with a host-by-row unit test (T§5.3) | W3 | - | todo |
-| S3 | pack strips the program on every stripping row, every graph-built shared library and staged runtime copies; the status line reports what was done; `mcpp::pack_strip()` and `mcpp::pack_debug_symbols_dir()` (T§5.4, D5) | W3 | - | todo |
-| S4 | `mcpp pack --message-format json` prints one `mcpp.pack` envelope; `pack --release/--dev`; `run` takes `build`'s profile precedence (T§5.5, D6, X5) | W3 | - | todo |
-| S5 | `[package]` warns about an unknown key, `metadata` included in its known set (X4) | W3 | S1 | todo |
-| C1 | CI: new llvm-dependent e2e scripts run on the hermetic job with their PASS lines asserted; the macOS and Windows measurement legs print their readings to the job summary | lead | R1-R5, S2 | todo |
-| C2 | user documentation with its Chinese mirror, docs/50 codes and kinds, CHANGELOG, version 2026.9.16.1 | lead, W1-W3 | all | todo |
+| L1 | the refresh decision walks the resolver's deprecated bare-name rung before calling a miss (T§7.0) | lead | - | branch: unit `PmIndexRefresh.BareNameResolvedThroughTheLegacyRungIsNotAMiss`; e2e 730 (fails on 2026.9.15.2: the decision asked for a refresh of `cjson@1.7.19`) |
+| L2 | the saved standard output is close-on-exec, and not inheritable on Windows (T§7.2) | lead | - | branch: e2e 731 (fails on 2026.9.15.2: a build program holds the caller's pipe as descriptor 3) |
+| L3 | xlings runs under the owned launcher; a total deadline for the index refresh, an inactivity deadline for installs (T§7.3) | lead | L2 | branch: e2e 732 (fails on 2026.9.15.2: `index update` returned after 60 s under a 3 s bound); SIGTERM to mcpp took the stub's group (local) |
+| L4 | a per-run record of observed effects; `network` when a network child is launched (T§7.4) | lead | L3 | branch: e2e 733 (fails on 2026.9.15.2: a plan that refreshed the index reports no `network`) |
+| L5 | the three refreshes that bypass `mcpp.pm.index_refresh` go through `decide_for_miss` (T§7.5) | lead | L1 | branch: e2e 734 (fails on 2026.9.15.2: the unsynced custom index was synced under `auto_refresh = false`) |
+| L6 | the refusal code `offline-download-required` at every offline refusal site; `MCPP_OFFLINE_DOWNLOAD_REQUIRED` in the envelope (T§7.1) | lead | - | branch: e2e 733 leg B and 735 (fail on 2026.9.15.2: `MCPP_BUILD_DATABASE_PLAN_FAILED`) |
+| L7 | the default `artifact` of the mcpplibs index is the region object; the existing `.xlings.json` migration carries it (T§7.6 step 2) | lead | X1 | branch: e2e 151 (fails on 2026.9.15.2: no region artifact); traced `mcpp index update` with `mirror = CN` connects only to raw.gitcode.com, gitcode.com and file-cdn.gitcode.com |
+| R1 | ELF: programs and tests over a plan-built C++ shared library take the shared-library runtime contract; an explicit `self-contained` program there is refused (T§4.1, D1) | W1 | - | branch: unit `Distribution.*`; e2e 700 (fails on 2026.9.15.2: the default llvm shape aborts with `std::bad_cast`) |
+| R2 | symbol provision: `STB_GNU_UNIQUE` is vague linkage; a duplicate whose definitions come from one plan object is not reported (T§4.2) | W1 | - | branch: unit `SymbolProvision.*`; e2e 701 (fails on 2026.9.15.2: `--strict` exits 1) |
+| R3 | a static package reachable from one shared image only is linked into that image; one reachable from two images is refused where the link or load cannot succeed and diagnosed elsewhere (T§4.3, D2, §1.5) | W1 | - | branch: unit `StaticPlacement.*` (9); e2e 702 and the rewritten 307 (fail on 2026.9.15.2: `undefined symbol: x_answer` through a foreign `dlopen`) |
+| R4 | clang on the MSVC ABI records the runtime it delivers; an undeliverable `cxx_runtime` is diagnosed; docs/20 states the row's model (T§4.5 step 1) | W1 | - | branch: e2e 703 (Windows CI) |
+| R5 | measurement legs: exception identity across a Mach-O dylib under the payload default (macos-15), and across an llvm-row DLL (windows-2022), each printing its reading (T§4.4, §9.2) | W1 | - | branch: e2e 704 (macOS CI), 705 (Windows CI); readings to the job summaries |
+| G1 | the forward validator accepts a key declared in any dependency table on any row (T§6.1, X8) | W2 | - | branch: e2e 710 (fails on 2026.9.15.2: the two-level build-dependency forward refused under `--strict`) |
+| G2 | a `[feature-deps]` restatement whose source differs is refused; docs/05 says to restate the source (T§6.2, D8) | W2 | - | branch: e2e 711 (fails on 2026.9.15.2: the differing restatement is not refused) |
+| G3 | one helper names a provider for a consumer; `dep_bin` gains the qualified spelling (T§6.3) | W2 | - | branch: e2e 711 and a new 187 leg (fail on 2026.9.15.2: `dep_bin("spike.installer")` reads nothing) |
+| G4 | a package with no library target contributes nothing to a consumer's target graph; package cycles are checked at resolution; a repeated tool is refused at its first repetition (T§6.4, D3, X2, X3) | W2 | - | branch: e2e 712 (fails on 2026.9.15.2: the feature tool depending on its declaring package does not build); scan of 902 manifests found no consumer relying on the old edge |
+| G5 | a git dependency selects a repository member by identity; a second declaration merges additively; the git banner names the commit (T§6.5, D9, X1, X6) | W2 | G4 | branch: e2e 713 (fails on 2026.9.15.2: a git dependency naming a repository member is refused) |
+| G6 | `--features dep/feature` is a root forward; `why deps --features` (T§6.6, X7) | W2 | G1 | branch: e2e 714 (fails on 2026.9.15.2: `--features spike.fw/installer` does not open the feature) |
+| S1 | `mcpp::graph_file()` for the root build program, with `[package.metadata]` and a digest in the re-run key (T§5.1, D4) | W3 | - | branch: e2e 720 (fails on 2026.9.15.2: `graph_file` is not a member of `mcpp`) |
+| S2 | the link branch is chosen by host and target object format, as a pure function with a host-by-row unit test (T§5.3) | W3 | - | branch: unit `LinkShape.*`; e2e 721 (macOS CI step) |
+| S3 | pack strips the program on every stripping row, every graph-built shared library and staged runtime copies; the status line reports what was done; `mcpp::pack_strip()` and `mcpp::pack_debug_symbols_dir()` (T§5.4, D5) | W3 | - | branch: e2e 722 (fails on 2026.9.15.2: `lib/libdep.so is not stripped: symtab=1 debug=7`; the Android leg ran locally) |
+| S4 | `mcpp pack --message-format json` prints one `mcpp.pack` envelope; `pack --release/--dev`; `run` takes `build`'s profile precedence (T§5.5, D6, X5) | W3 | - | branch: unit `BuildProfile.*`; e2e 723 (fails on 2026.9.15.2: `unknown option: --message-format`) |
+| S5 | `[package]` warns about an unknown key, `metadata` included in its known set (X4) | W3 | S1 | branch: unit `Manifest.PackageMetadata*`, `UnknownPackageKeyIsReported` |
+| C1 | CI: new llvm-dependent e2e scripts run on the hermetic job with their PASS lines asserted; the macOS and Windows measurement legs print their readings to the job summary | lead | R1-R5, S2 | branch: 700 on the hermetic job; READING lines to the macOS and Windows summaries; 721 as its own macOS step |
+| C2 | user documentation with its Chinese mirror, docs/50 codes and kinds, CHANGELOG, version 2026.9.16.1 | lead, W1-W3 | all | branch: docs 04, 05, 06, 07, 10, 20, 30, 50 with mirrors; SPEC-005 v1.1; CHANGELOG; 2026.9.16.1 |
 | C3 | the two records closed with their readings | lead | all | todo |
 
 ### 0.2 Plugins: mcpp-community/mcpp-plugins, one pull request (`feat/646-649`, 0.12.0)
 
 | id | task | owner | depends on | status |
 |---|---|---|---|---|
-| P1 | `dist-apple` `options::omit_keys` over the defaulted keys (T§8) | lead | - | todo |
-| P2 | `dist-web` `options::page`, default `index.html` (T§8) | lead | - | todo |
-| P3 | `dist-apk` follows `mcpp::pack_strip()` and `mcpp::pack_debug_symbols_dir()` when the engine provides them, and keeps its own strip otherwise | lead | S3 released | todo |
-| P4 | `rules-swift`: one package's Swift sources compile through an `object` action, a generated header through a `source` action, and the runtime link flags through `link_flag`; a macos-15 consumer runs (T§5.2) | lead | - | todo |
+| P1 | `dist-apple` `options::omit_keys` over the defaulted keys (T§8) | lead | - | branch: `b5f759e`, plan checks on Linux; the bundle on macos-15 CI |
+| P2 | `dist-web` `options::page`, default `index.html` (T§8) | lead | - | branch: `c804312`, `check-web-plan.sh` with a named-page leg |
+| P3 | `dist-apk` follows `mcpp::pack_strip()` and `mcpp::pack_debug_symbols_dir()` when the engine provides them, and keeps its own strip otherwise | lead | S3 released | branch: `ad7a3dd`; unset and simulated variables verified; legs (m) and (n) run once the CI pin is 2026.9.16.1 |
+| P4 | `rules-swift`: one package's Swift sources compile through an `object` action, a generated header through a `source` action, and the runtime link flags through `link_flag`; a macos-15 consumer runs (T§5.2) | lead | - | branch: `38ac2ba`, `all-rules-compile` on Linux; build, run and the header on macos-15 CI |
 | P5 | `dist-apk` and `dist-apple` collect library contributions from `[package.metadata.dist-apk]` and `[package.metadata.dist-apple]` through `mcpp::graph_file()` when present | lead | S1 released | todo |
 
 ### 0.3 Index, payloads and projects
 
 | id | task | owner | depends on | status |
 |---|---|---|---|---|
-| X1 | mcpplibs/mcpp-index: the artifact is byte-reproducible, and a version whose GitCode asset differs is republished under a new name (T§7.6 step 1) | lead | - | todo |
+| X1 | mcpplibs/mcpp-index: the artifact is byte-reproducible, and a version whose GitCode asset differs is republished under a new name (T§7.6 step 1) | lead | - | done: mcpplibs/mcpp-index#432 (`0cbac960`); the publish of `0cbac96` verified both forges itself, and the probe reads pointer, GitHub and GitCode all `02a437110017` (547679 bytes) |
 | X2 | openxlings/xim-pkgindex: the release bot's `mcpp` bump merged | lead | release | todo |
 | X3 | mcpplibs/mcpp-index: the plugins descriptor 0.12.0; the index CI's `MCPP_VERSION` moves to 2026.9.16.1 | lead | X2, P1-P5 | todo |
-| X4 | openxlings/xlings: `compat.ftxui` and `compat.gtest` spelled with their namespace (T§7.0) | lead | - | todo |
+| X4 | openxlings/xlings: `compat.ftxui` and `compat.gtest` spelled with their namespace (T§7.0) | lead | - | done: openxlings/xlings#597 (`4ea4eac9`), CI 9 of 9 |
 
 ### 0.4 Verification
 
@@ -203,7 +203,69 @@ means the default.
 
 ### 1.9 Refinements found while implementing
 
-(appended during implementation)
+1. **L5 adds a module.** `mcpp.pm.index_refresh` reads descriptors through
+   `mcpp.pm.index_route`, which imports the fetcher, so the fetcher could not
+   ask it. The policy half (reasons, policy, `decide_for_miss`, `apply`, the
+   one-sync guard) moved to `mcpp.pm.refresh_policy`, which
+   `mcpp.pm.index_refresh` re-exports. §1.1's "no task adds a module" does not
+   hold for this task, and no other derivation of the policy remains.
+2. **L3 keeps the shell command.** The xlings invocations keep their command
+   strings (quoting, environment prefix, stderr redirection, all of which carry
+   earlier Windows lessons) and run them through `run_streaming_bounded`, which
+   is the deadline launcher with a streaming sink, an inactivity bound and, on
+   POSIX, an opt-in process group registered with the signal guard. The group
+   is opt-in because the launcher's uncaptured callers hand the terminal to
+   their child, and a background group reading the terminal is stopped by
+   SIGTTIN. A direct `xlings install -y` sends its output to the null device,
+   so it has a total bound of three hours rather than an inactivity bound.
+3. **X1 reuses rather than renames.** A version already published is reused,
+   GitCode's copy first because GitCode cannot replace an asset, so a republish
+   converges on bytes that are already fixed; a fresh pack is reproducible.
+   This is the rule xim-pkgindex adopted on 2026-09-05, and it needs no new
+   asset name.
+4. **GitCode's raw endpoint answered 403 for a while** for the mcpp-index
+   pointer through `main`, and 200 by commit id, while xim-index's pointer
+   answered 200; the responses carry Huawei WAF cookies, and the same request
+   answered 200 later. A client whose CN pointer fetch fails falls back to the
+   git source rather than to the GLOBAL artifact base; that is xlings'
+   behaviour, recorded here and reported as openxlings/xlings#598, not changed in
+   this batch. It is no regression: before the region object a CN client fetched
+   the pointer from GitHub, and its fallback was the same git source.
+5. **R2 also excuses the toolchain's own std module initialisers.** GCC 16's
+   `libstdc++.so.6` exports `_ZGIW3std` and `_ZGIW3stdW6compat` itself, so the
+   one-plan-object rule alone left one finding on the gcc default; names that
+   `std.o` defines are also excused when the other provider lives inside the
+   compiler's installation (W1).
+6. **R3's placement skips layer providers and distribution packages**
+   (`provides = ["mcpp:..."]`), which would otherwise report a graph C++ runtime
+   as a two-image conflict (e2e 690 passes), and the root's reach includes its
+   dev-dependencies. The criterion is a foreign `dlopen` with `RTLD_NOW` rather
+   than a replayed `-z defs` link (W1).
+7. **G4 needs `targetsInferred`.** A package with only `src/main.cpp` and no
+   `[targets]` infers a program target; the rule applies to declared targets
+   only, so the manifest records which of the two it produced (W2).
+8. **G4's first-repetition refusal also covers an unconditional
+   `[build-dependencies]` edge** on a tool that depends on its declarer, which is
+   a genuine cycle (W2).
+9. **G5 selects members without the adoption warning**: the root and a member
+   pinned by the same revision are two identities over one clone, and the
+   member's source string carries a `#member=` suffix (W2).
+10. **S4's profile rule lives in `mcpp.build.prepare`.** Importing
+    `mcpp.cli.cmd_build` from `mcpp.cli.cmd_publish` made GCC 16.1 crash at
+    `import mcpp.cli;` on every build (W3).
+11. **S2's shape value is `PeLld`, not `WindowsLld`**: the substring `wsl` is
+    reserved by the runtime-contract source check (W3). A Windows host building
+    a non-PE target whose driver is not named by `--target` keeps today's lld
+    line, which keeps the Windows-to-Linux cross job unchanged.
+12. **S3 uses one strip tool for every Android leg**: the NDK's `llvm-strip`
+    reads every Android ABI (W3).
+13. **P3 reads the environment rather than new accessors**, so `dist-apk` keeps
+    working on an engine that does not publish the variables, and writes debug
+    files per ABI, because one APK carries one library name per ABI (plugins).
+14. **P4 serves the iOS device row as well**, as `rules-metal` does; the
+    consumer declares the `@_cdecl` function itself rather than including the
+    generated header, whose C++ visibility depends on the Swift version
+    (plugins).
 
 ## 2. Engine tasks
 

@@ -5,6 +5,94 @@
 
 ## [Unreleased]
 
+### 一个进程一个 C++ 运行时、图与打包的事实、离线与有期限的规划:#646 至 #649(2026.9.16.1)
+
+一个 UI 框架与一个编辑器报告的 23 项,外加实测发现的 12 项。按归属分诊后,引擎承担其中的通用
+缺陷与通用能力;插件、索引与 xlings 清单各自的一项在各自仓库。设计、测量与计划:
+`.agents/docs/2026-09-16-646-649-*.md`。
+
+**图像与运行时(#646、#649 E10)**
+
+- **程序与共享库共用一个 C++ 运行时(F3a)。** ELF 上程序默认 `self-contained`、共享库默认
+  `toolchain-coupled`,一个加载本次构建所出 C++ 共享库的程序于是在一个进程里带两份运行时:
+  llvm 默认构建运行即以 `std::bad_cast` 中止(退出 134),gcc 带 900 个被抢占的 libstdc++
+  符号。现在这样的程序与测试取共享库的契约;显式写明自含运行时的程序被编译前拒绝,reason 为
+  `program-cxx-runtime-split`。(单测 `Distribution.*`,e2e 700)
+- **符号重复检查不再报告按构造共享的定义(F3b)。** `STB_GNU_UNIQUE` 按弱定义处理;两个映像
+  取自同一个构建对象(如 `std.o`)的定义,以及工具链自身运行时提供的 std 模块初始化器,不算
+  冲突;真实的重复定义仍然报告。(单测 `SymbolProvision.*`,e2e 701)
+- **静态包放进到达它的那个共享库(F1)。** 只被一个依赖共享库到达的静态包链进该库,不再链进
+  程序(此前库里留着未定义符号,只在 ELF 上靠程序的副本侥幸运行);被多个映像到达时,在
+  Mach-O、PE 与 Android `app` 行上编译前拒绝(`static-package-in-two-images`),其他 ELF 行
+  照旧构建并给出 `build/static-placement` 警告,`--strict` 下失败,出路是
+  `linkage = "shared"`。(单测 `StaticPlacement.*`,e2e 702、307)
+- **llvm 行在 MSVC ABI 上如实记录静态 CRT(E10 第一步)。** 解析记录此前写 `host-coupled`
+  而产物静态链接 `libcmt`;显式要求本行不能交付的动态运行时会得到说明。默认值是否改为 `/MD`
+  另行测量与记录。(e2e 703;Mach-O 与 PE 上跨映像的异常身份由 e2e 704、705 测量)
+
+**图、构建程序与打包(#647 E1–E3、#649 E5、E9)**
+
+- **根构建程序读取解析后的依赖图(E1)。** `mcpp::graph_file()` / `MCPP_GRAPH_FILE` 指向按
+  依赖在前排序的 JSON 文档,每个包含 `manifest_dir`、`features`、`targets`、链接形态与原样
+  保留的 `[package.metadata.<tool>]`;文档摘要进入构建程序的重跑键,编辑依赖的 metadata 会
+  重跑根构建程序,编辑其源码不会。`[package]` 的未知键像 `[build]` 一样报告。(e2e 720)
+- **macOS 主机上 Android 行可以链接(E3)。** 链接行按主机与目标对象格式选择
+  (`link_shape`),Apple SDK 分支只用于 Mach-O 目标;Linux 上的链接行逐字节不变。
+  (单测 `LinkShape.*`,e2e 721 在 macOS CI 上运行)
+- **打包剥离构建出来的一切(E5)。** Android 行的程序此前根本没有经过剥离步骤;现在每条剥离的
+  行上剥离程序、本图构建的共享库与暂存的工具链运行时副本(`--strip-unneeded`,保留导出),
+  状态行只在真正剥离时写 "stripped";`--no-strip` 与 `--debug-symbols` 作用于每个文件,构建
+  程序通过 `MCPP_PACK_STRIP` / `MCPP_PACK_DEBUG_SYMBOLS_DIR` 读到同一决定。(e2e 722)
+- **`mcpp pack --message-format json`(E9)。** 输出一个 `mcpp.pack` 信封,逐项列出产物的
+  绝对路径、类型、格式与目标行;人类可读的行改走 stderr。`pack` 接受 `--release` / `--dev`;
+  `build`、`run`、`test`、`pack` 共用一个 profile 判定,`--profile` 优先于简写(此前 `run`
+  相反)。(单测 `BuildProfile.*`,e2e 723)
+
+**feature、工具与 git 依赖(#647 E4、#649 E6–E8)**
+
+- **转发校验覆盖每一张依赖表与每一行(E4.1)。** 经 `[build-dependencies]` 的转发、只在另一行
+  声明的依赖不再被报告为未声明;无处声明的键仍然报告。(e2e 710)
+- **`[feature-deps]` 的重述(E4.2)。** 文档改为写明重述来源;来源与生效声明不同的重述被拒绝,
+  消息给出两个来源。(e2e 711)
+- **`dep_bin` 发布限定名(E4.3)。** 一个函数给出提供者对消费者的所有名字,`dep_dir`、
+  `dep_linkage` 与 `dep_bin` 共用;`namespace = "ns"` 加 `name = "x"` 的包也有
+  `MCPP_DEP_NS_X_BIN_*`。(e2e 187、711)
+- **只提供程序的包不进入消费者的图(E6)。** 这样的包不被扫描、不链接进消费者,其程序只由工具
+  子构建产出;feature 工具于是可以依赖声明它的包。包之间的环在解析时拒绝(`package-cycle`),
+  各种缓存模式一致;工具请求自身时在第一次重复即拒绝。(e2e 712)
+- **git 依赖可以选择仓库里的成员包(E7)。** 键的身份不是根包时,在根的 `[workspace] members`
+  中按身份查找;同一消费者对同一依赖的第二次声明合并其 `tools`、`features`、`host-module` 与
+  `reexport`;git 依赖的编译行写提交而不是空版本。(e2e 713)
+- **`--features dep/feature`(E8)。** 作为根的转发应用;不指向任何依赖时警告,`--strict` 下
+  失败,且不再变成宏;普通名字保持文档所述的纯宏用法。`mcpp why deps` 接受 `--features`。
+  (e2e 714)
+
+**编辑器在后台规划(#648)**
+
+- **刷新判定与解析器走同一条阶梯(新发现)。** 省略命名空间的 `ftxui = "6.1.9"` 由解析器经
+  已弃用的裸名回退找到 `compat.ftxui`,刷新判定却只查精确坐标并判为缺失;防抖只有 120 秒,
+  这样的工程每次联网规划都执行一次 `xlings update`。现在判定也走该回退。(单测
+  `PmIndexRefresh.BareNameResolvedThroughTheLegacyRungIsNotAMiss`,e2e 730)
+- **规划期间的子进程不继承调用方的管道(A2)。** 保存的标准输出是 close-on-exec(Windows 上不可
+  继承);此前构建程序以描述符 3 持有调用方读取的管道。(e2e 731)
+- **xlings 子进程有期限并随 mcpp 结束(A3)。** 刷新受 `[index] refresh_timeout`(秒,默认
+  120)约束,超时视为刷新失败并继续用本地索引;经接口的安装在 300 秒无任何输出(含心跳)时终止;
+  子进程在自己的进程组(Windows 上为作业对象)中运行,结束 mcpp 即一并结束。(e2e 732)
+- **信封的 `effects` 按观测报告 `network`(A4)。** 本次运行启动过刷新、安装或 git 远程操作时
+  列出,离线运行从不列出。(e2e 733)
+- **`auto_refresh = false` 约束所有隐式刷新(A5)。** 安装前的刷新、重试前的刷新与自定义索引的
+  首次同步改走同一个刷新策略(`mcpp.pm.refresh_policy`)。(e2e 734)
+- **离线缺下载有自己的诊断码(A1)。** `MCPP_OFFLINE_DOWNLOAD_REQUIRED` 与 refusal
+  `offline-download-required`,消息指出第一个需要下载的工具链、包、git 修订或索引。
+  (e2e 733、735)
+- **默认索引制品按镜像分区(A6)。** mcpplibs 索引的 `artifact` 默认是
+  `{ GLOBAL = github, CN = gitcode }`,已有 home 的 `.xlings.json` 就地升级;`mirror = CN` 时
+  `mcpp index update` 只访问 GitCode。前提是 mcpplibs/mcpp-index#432 让两端制品逐字节一致。
+  (e2e 151)
+
+**CI**:hermetic llvm job 运行 700 并断言结束行;macOS 与 Windows e2e 把测量行写入 job
+summary;macOS 上单独一步运行 721。
+
 ### 链接形态、标准档位与路径长度:#641 与 #642(2026.9.15.2)
 
 一个 UI 框架迁到 macOS 12 下限与 Android 独立共享库时报告的七项,全部在引擎内处理。
