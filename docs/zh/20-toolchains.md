@@ -932,6 +932,15 @@ C++ 共享库,会在编译前被拒绝(reason `program-cxx-runtime-split`,见
 `cxx_runtime = { shared = "self-contained" }` 给共享库一份私有副本,让每份运行时留在
 各自的映像里。
 
+**Mach-O 上每个映像各带一份运行时**(mcpp 2026.9.16.1+)。那里每个角色的默认值都是
+self-contained,每个映像以隐藏可见性内嵌载荷的 `libc++.a`,于是标准库类的类型信息每个
+映像各有一份,而 libc++ 按地址比较它。macos-15 实测:按默认值,dylib 里抛出的
+`std::runtime_error` 在程序中不被 `catch (const std::runtime_error&)` 捕获,两个
+`std::error_code` 的 category 比较不相等;所有角色都写 `cxx_runtime = "host-coupled"`
+时两者都成立。默认值不变——它是今天每个 macOS 构建的形态——但程序加载了本次构建的 C++
+dylib 时会被告知一次(`build/cxx-runtime-identity`):当对象以异常、或以按身份比较的
+libc++ 值跨过边界时,为整个进程声明一份运行时。
+
 **C++ 运行时来自图中的包时,依赖的共享库**(mcpp 2026.9.15.2+)。当图中有包提供
 C++ 层(`llvm.libcxx`,见 [22](22-target-side.md)),它的对象被链进程序,并且以隐藏
 可见性编译,于是一个构建为 C++ 共享库的依赖无法解析到程序里的那份。mcpp 在编译前

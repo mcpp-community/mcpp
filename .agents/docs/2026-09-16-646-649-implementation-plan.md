@@ -40,7 +40,7 @@ the parallel work trees of §8. Triage sections are cited as `T§`.
 | R2 | symbol provision: `STB_GNU_UNIQUE` is vague linkage; a duplicate whose definitions come from one plan object is not reported (T§4.2) | W1 | - | branch: unit `SymbolProvision.*`; e2e 701 (fails on 2026.9.15.2: `--strict` exits 1) |
 | R3 | a static package reachable from one shared image only is linked into that image; one reachable from two images is refused where the link or load cannot succeed and diagnosed elsewhere (T§4.3, D2, §1.5) | W1 | - | branch: unit `StaticPlacement.*` (9); e2e 702 and the rewritten 307 (fail on 2026.9.15.2: `undefined symbol: x_answer` through a foreign `dlopen`) |
 | R4 | clang on the MSVC ABI records the runtime it delivers; an undeliverable `cxx_runtime` is diagnosed; docs/20 states the row's model (T§4.5 step 1) | W1 | - | branch: e2e 703 (Windows CI) |
-| R5 | measurement legs: exception identity across a Mach-O dylib under the payload default (macos-15), and across an llvm-row DLL (windows-2022), each printing its reading (T§4.4, §9.2) | W1 | - | branch: e2e 704 (macOS CI), 705 (Windows CI); readings to the job summaries |
+| R5 | measurement legs: exception identity across a Mach-O dylib under the payload default (macos-15), and across an llvm-row DLL (windows-2022), each printing its reading (T§4.4, §9.2) | W1 | - | done: macos-15 run 35032727668 reads `macho default: runtime_error=not-matched own_error=caught errc=unequal`, `macho host-coupled: runtime_error=caught errc=equal`, `macho shared-host-coupled: not-matched`. F2 is confirmed; this release warns (`build/cxx-runtime-identity`) and leaves the default to its own record |
 | G1 | the forward validator accepts a key declared in any dependency table on any row (T§6.1, X8) | W2 | - | branch: e2e 710 (fails on 2026.9.15.2: the two-level build-dependency forward refused under `--strict`) |
 | G2 | a `[feature-deps]` restatement whose source differs is refused; docs/05 says to restate the source (T§6.2, D8) | W2 | - | branch: e2e 711 (fails on 2026.9.15.2: the differing restatement is not refused) |
 | G3 | one helper names a provider for a consumer; `dep_bin` gains the qualified spelling (T§6.3) | W2 | - | branch: e2e 711 and a new 187 leg (fail on 2026.9.15.2: `dep_bin("spike.installer")` reads nothing) |
@@ -266,6 +266,27 @@ means the default.
     consumer declares the `@_cdecl` function itself rather than including the
     generated header, whose C++ visibility depends on the Swift version
     (plugins).
+
+15. **F2 is confirmed, and answered with a diagnostic (macos-15, run
+    35032727668).** Under the payload's Mach-O default a `std::runtime_error`
+    thrown in a dylib is not caught by its class in the program and two
+    `std::error_code` categories compare unequal; a host-coupled graph catches
+    it and compares equal; the mixed leg (a self-contained program over a
+    host-coupled library) splits as well. The default is unchanged in this
+    release, and a build whose program loads a C++ dylib of its own is told
+    once through `build/cxx-runtime-identity`, with `cxx_runtime =
+    "host-coupled"` as the remedy. Changing the Mach-O default belongs to its
+    own record, as T§4.4 states.
+16. **The macOS stream-init shim was prepended to every link unit.** The object
+    calls libc++'s `ios_base::Init` constructor, and a C-only shared library
+    links without the C++ runtime, so on macos-15 the F1 fixture failed with
+    `ld64.lld: error: undefined symbol: std::__1::ios_base::Init::Init()`. The
+    shim now follows the predicate the link line itself uses
+    (`unit_needs_cxx_runtime`). The defect predates this batch; no fixture had
+    a C-only shared library beside a C++ program on macOS before e2e 702.
+17. **`timeout` is not on a macOS runner.** e2e 732 bounds its own commands
+    with `timeout`, `gtimeout` or neither, since the bound under test is the
+    engine's.
 
 ## 2. Engine tasks
 

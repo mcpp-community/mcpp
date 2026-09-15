@@ -1036,6 +1036,19 @@ is refused before compiling (reason `program-cxx-runtime-split`,
 the shared library a private copy with `cxx_runtime = { shared = "self-contained" }`,
 which keeps each runtime inside its own image.
 
+**On Mach-O every image carries its own runtime** (mcpp 2026.9.16.1+). The
+default there is self-contained for every role, and each image embeds the
+payload's `libc++.a` with hidden visibility, so the type information of a
+standard library class exists once per image and libc++ compares it by address.
+Measured on macos-15: with the default, a `std::runtime_error` thrown in a dylib
+is not caught by `catch (const std::runtime_error&)` in the program and two
+`std::error_code` categories compare unequal; with `cxx_runtime = "host-coupled"`
+for every role, both hold. The default is unchanged, because it is what every
+macOS build ships, and a build whose program loads a C++ dylib of its own is told
+once (`build/cxx-runtime-identity`): state one runtime for the process when
+objects cross the boundary as exceptions, or as libc++ values compared by
+identity.
+
 **A dependency's shared library over a C++ runtime that is a package** (mcpp
 2026.9.15.2+). When a package in the graph supplies the C++ layer (`llvm.libcxx`,
 [22](22-target-side.md)), its objects are linked into the program, and it compiles

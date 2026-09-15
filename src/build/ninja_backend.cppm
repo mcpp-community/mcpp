@@ -2184,7 +2184,16 @@ std::string emit_ninja_string(const BuildPlan& plan) {
         // LINK order and has no priority-ordered init section, so "runs
         // before the user's global constructors" is spelled "is the first
         // input" — nothing else about this edge achieves it (#336).
-        if (need_ios_init_shim && lu.kind != LinkUnit::StaticLibrary)
+        // ... and only into a unit that HOLDS a C++ runtime. The shim calls
+        // libc++'s `ios_base::Init` constructor, so a unit linked without the
+        // C++ runtime (a C-only shared library, whose line carries neither the
+        // C++ driver nor libc++.a) has nothing to resolve it against: measured
+        // on macos-15, `ld64.lld: error: undefined symbol:
+        // std::__1::ios_base::Init::Init()` from this object, in a build whose
+        // program is C++ and whose dependency's shared library is C (#646 F1's
+        // fixture). The predicate is the one the link line itself uses.
+        if (need_ios_init_shim && lu.kind != LinkUnit::StaticLibrary
+            && unit_needs_cxx_runtime(lu))
             ins += " " + escape_ninja_path(ios_init_obj);
         for (auto& o : lu.objects) {
             ins += " " + escape_ninja_path(o);

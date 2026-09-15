@@ -12680,6 +12680,40 @@ prepare_build(bool print_fingerprint,
                 tests ? "tests" : "programs", tests ? "tests" : "default"));
         }
 
+        // MACH-O: EVERY IMAGE CARRIES ITS OWN HIDDEN libc++ (#646 F2).
+        //
+        // The Mach-O default is self-contained for every role, and each image
+        // embeds the payload's `libc++.a` through `-load_hidden`, so the type
+        // information of a standard library class exists once per image and libc++
+        // compares it by address. Measured on macos-15 for this release: with the
+        // default, a `std::runtime_error` thrown in a dylib is NOT caught by its
+        // class in the program and two `std::error_code` categories compare
+        // unequal; with `cxx_runtime = "host-coupled"` for every role, both hold.
+        // The default is not changed here, because it is what every macOS build
+        // ships today and changing it is its own record; a build that would meet
+        // the split is told, once, what it is and how to avoid it.
+        if (format == dist::Format::MachO && (load.program || load.tests)
+            && contracts.shared == dist::Contract::SelfContained) {
+            std::string libraries;
+            for (auto const& lu : ctx.plan.linkUnits) {
+                if (lu.kind != mcpp::build::LinkUnit::SharedLibrary) continue;
+                if (!mcpp::build::link_unit_holds_cxx(ctx.plan, lu)) continue;
+                libraries += (libraries.empty() ? "'" : ", '") + lu.targetName + "'";
+            }
+            mcpp::diag::degraded("build/cxx-runtime-identity",
+                std::format("this build's program and the C++ shared library {} each "
+                            "carry a private copy of the C++ runtime",
+                            libraries.empty() ? std::string("'(unnamed)'") : libraries),
+                "on Mach-O every image embeds the payload's libc++ with hidden "
+                "visibility, so the type information of a standard library class exists "
+                "once per image: measured on macOS, an exception of such a class thrown "
+                "in the library is not caught by that class in the program, and two "
+                "error categories compare unequal",
+                "state one runtime for the process, for example [build] cxx_runtime = "
+                "\"host-coupled\", when objects cross the boundary as exceptions or as "
+                "libc++ values compared by identity");
+        }
+
         // F1. A static package that several images reach. Refused where the
         // build cannot work (Mach-O and PE resolve every reference at link
         // time; Android's Java host loads an application's shared library

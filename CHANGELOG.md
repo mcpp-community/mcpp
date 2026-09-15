@@ -26,6 +26,11 @@
   Mach-O、PE 与 Android `app` 行上编译前拒绝(`static-package-in-two-images`),其他 ELF 行
   照旧构建并给出 `build/static-placement` 警告,`--strict` 下失败,出路是
   `linkage = "shared"`。(单测 `StaticPlacement.*`,e2e 702、307)
+- **Mach-O 上跨映像的 C++ 身份(F2,macos-15 实测)。** 默认每个映像内嵌一份隐藏的
+  `libc++.a`:dylib 里抛出的 `std::runtime_error` 在程序中不按该类捕获,两个
+  `std::error_code` 的 category 比较不相等;全角色 `cxx_runtime = "host-coupled"` 时
+  两者成立。默认值本次不改(它是今天每个 macOS 构建的形态,改动另行记录),但这样的构建
+  会被告知一次:`build/cxx-runtime-identity`。(e2e 704 的读数)
 - **llvm 行在 MSVC ABI 上如实记录静态 CRT(E10 第一步)。** 解析记录此前写 `host-coupled`
   而产物静态链接 `libcmt`;显式要求本行不能交付的动态运行时会得到说明。默认值是否改为 `/MD`
   另行测量与记录。(e2e 703;Mach-O 与 PE 上跨映像的异常身份由 e2e 704、705 测量)

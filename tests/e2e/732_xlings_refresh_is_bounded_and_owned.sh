@@ -20,6 +20,16 @@ cleanup() {
 trap cleanup EXIT
 fail() { echo "FAIL: $1"; [ -n "${2:-}" ] && cat "$2"; exit 1; }
 
+# `timeout` is GNU coreutils and is absent on macOS; `gtimeout` is there when
+# coreutils is installed. Without either, the bound under test is the engine's
+# own, and the suite's per-test bound is the backstop.
+bounded() {   # <seconds> <command...>
+    local secs="$1"; shift
+    if command -v timeout  >/dev/null 2>&1; then timeout  "$secs" "$@"; return $?; fi
+    if command -v gtimeout >/dev/null 2>&1; then gtimeout "$secs" "$@"; return $?; fi
+    "$@"
+}
+
 mkdir -p "$TMP/bin" "$TMP/home"
 cat > "$TMP/bin/xlings" <<'EOF'
 #!/usr/bin/env bash
@@ -44,7 +54,7 @@ EOF
 write_config 3
 start=$(date +%s)
 set +e
-STUB_PID="$TMP/stub.pid" MCPP_HOME="$TMP/home" timeout 60 "$MCPP" index update > "$TMP/a.log" 2>&1
+STUB_PID="$TMP/stub.pid" MCPP_HOME="$TMP/home" bounded 60 "$MCPP" index update > "$TMP/a.log" 2>&1
 set -e
 elapsed=$(( $(date +%s) - start ))
 [ -s "$TMP/stub.pid" ] || fail "A: the stub's update never ran" "$TMP/a.log"
