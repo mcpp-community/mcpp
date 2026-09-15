@@ -84,6 +84,17 @@ mcpp 会在编译前失败，并同时报出工具链与工程档位。
 当**依赖声明的档位高于当前图**时,mcpp 会在编译前说出来,而不是让它在那个依赖的源码里
 某处失败。见 [workspace §4.2](07-workspace.md)。
 
+`[package.metadata.<tool>]`(mcpp 2026.9.16.1+)是引擎保留但不解释的表。它是包对自身的
+陈述,供读取它的工具使用,例如收集每个库贡献内容的框架;它通过 `mcpp::graph_file()` 到达根包
+的构建程序([30 —— build.mcpp](30-build-mcpp.md))。其中的路径由读取方相对于该包的清单目录
+解析。`[package]` 中 mcpp 不读取的其他键会被报告,与 `[build]` 一致:给出警告,在 `--strict`
+下报错(2026.9.16.1+)。
+
+```toml
+[package.metadata.demo]
+resources = "res"
+```
+
 #### 方言标志与 `import std` BMI
 
 有些标志会改变标准库头文件**声明出什么**,因此预编译的 `import std` BMI 也必须带着它们一起

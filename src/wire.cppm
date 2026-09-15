@@ -68,7 +68,7 @@ inline constexpr int kEnvelopeVersion = 1;
 // from what comes back.
 struct KindVersion { std::string_view kind; int version; };
 
-inline constexpr std::array<KindVersion, 6> kKinds{{
+inline constexpr std::array<KindVersion, 7> kKinds{{
     {"mcpp.env",             1},
     {"mcpp.xpkg",            1},
     {"mcpp.cache",           1},
@@ -85,6 +85,12 @@ inline constexpr std::array<KindVersion, 6> kKinds{{
     // (`data.watch`) and their digest (`data.inputs-fingerprint`). Written
     // into nothing; see docs/specs/build-database.md.
     {"mcpp.build-database",  1},
+    // `mcpp pack --message-format json`: what the pack produced -- each
+    // artifact with its absolute path, whether it is a file or a directory,
+    // the format and the triples of its legs -- and the staged tree it was
+    // made from (`data.stage`). `--format` names the package format on that
+    // command, hence the `test`-style spelling (docs/50 §3).
+    {"mcpp.pack",            1},
 }};
 
 // What running a command does, beyond writing to stdout.

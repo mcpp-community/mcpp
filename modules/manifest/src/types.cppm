@@ -1989,6 +1989,18 @@ struct Manifest {
     // under [targets.<name>]). The caller (prepare_build) prints these and, under
     // --strict, escalates them to errors — mirroring the feature/platform path.
     std::vector<std::string>    schemaWarnings;
+
+    // `[package.metadata]`, as a JSON object text; empty when the manifest has
+    // none (#647 E1).
+    //
+    // THE ENGINE DOES NOT INTERPRET IT. The table belongs to whoever reads it
+    // (`[package.metadata.<tool>]`), and it travels to the root build program
+    // verbatim in the graph document (`mcpp::graph_file()`). A path in it is
+    // resolved by that reader against the package's manifest directory, which
+    // the document states beside it, because only the reader knows which
+    // values are paths. Kept as text so this module's interface names no JSON
+    // type.
+    std::string                 packageMetadataJson;
 };
 
 struct ManifestError {

@@ -110,9 +110,18 @@ std::vector<std::filesystem::path> extras_of(const mcpp::manifest::Manifest& m,
 // `triples` is the `--target` list; empty means "this host". Each entry gets
 // its own prepare+build, so the artifacts really are the ones this run made —
 // the packer never searches `target/` for something that looks right.
+//
+// `report`, when given, receives what `mcpp pack --message-format json` states
+// (#649 E9): the package produced and the canonical triple of each leg.
+export struct LibraryPackReport {
+    std::filesystem::path    artifact;
+    std::vector<std::string> targets;
+};
+
 export int build_and_pack_library(const std::string& targetName,
                                   const std::vector<std::string>& triples,
-                                  const mcpp::pack::Options& opts)
+                                  const mcpp::pack::Options& opts,
+                                  LibraryPackReport* report = nullptr)
 {
     std::vector<std::string> legs = triples;
     if (legs.empty()) legs.push_back({});   // one leg, this host
@@ -478,6 +487,11 @@ export int build_and_pack_library(const std::string& targetName,
     auto out = run_library_pack(plan);
     if (!out) { mcpp::ui::error(out.error().message); return 1; }
     mcpp::ui::status("Packed", out->string());
+    if (report) {
+        std::error_code ec;
+        report->artifact = std::filesystem::absolute(*out, ec).lexically_normal();
+        for (auto const& leg : plan.legs) report->targets.push_back(leg.triple);
+    }
     return 0;
 }
 

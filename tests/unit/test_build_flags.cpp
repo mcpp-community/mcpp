@@ -2,6 +2,7 @@
 
 import std;
 import mcpp.build.flags;
+import mcpp.build.distribution;
 import mcpp.modgraph.scanner;
 
 namespace {
@@ -164,4 +165,46 @@ TEST(BuildFlagsLoaderTokens, OrdinaryPathsAreNotTokens) {
                                    "@executable_pathology", "@rpathx", "x/@rpath"}) {
         EXPECT_FALSE(mcpp::build::is_loader_relative_search_path(entry)) << entry;
     }
+}
+
+// #647 E3: which link line a (host, target) pair takes. The branch used to be
+// chosen by `if constexpr` on the host, so an Android row built on a macOS host
+// received the Apple SDK line with no `--target` and linked through
+// `ld64.lld`. The choice is a function of the host AND the target's object
+// format, stated here for every host on every CI machine.
+namespace {
+using mcpp::build::LinkHost;
+using mcpp::build::LinkShape;
+using mcpp::build::link_shape;
+using Fmt = mcpp::build::dist::Format;
+} // namespace
+
+TEST(LinkShape, LinuxHostTakesTheGenericLineForEveryTarget) {
+    for (auto f : {Fmt::Elf, Fmt::MachO, Fmt::Pe, Fmt::Wasm}) {
+        EXPECT_EQ(link_shape(LinkHost::Linux, f, false, true),  LinkShape::Generic);
+        EXPECT_EQ(link_shape(LinkHost::Linux, f, false, false), LinkShape::Generic);
+    }
+}
+
+TEST(LinkShape, MacOSHostKeepsTheAppleLineForMachOOnly) {
+    // macOS for macOS, and the iOS rows: the Apple SDK line, as before.
+    EXPECT_EQ(link_shape(LinkHost::MacOS, Fmt::MachO, false, false), LinkShape::AppleSdk);
+    EXPECT_EQ(link_shape(LinkHost::MacOS, Fmt::MachO, false, true),  LinkShape::AppleSdk);
+    // x86_64-linux-android and wasm32-emscripten on a Mac: the line that
+    // carries `--target`.
+    EXPECT_EQ(link_shape(LinkHost::MacOS, Fmt::Elf,  false, true),  LinkShape::Generic);
+    EXPECT_EQ(link_shape(LinkHost::MacOS, Fmt::Wasm, false, true),  LinkShape::Generic);
+    EXPECT_EQ(link_shape(LinkHost::MacOS, Fmt::Elf,  false, false), LinkShape::Generic);
+    EXPECT_EQ(link_shape(LinkHost::MacOS, Fmt::Pe,   false, true),  LinkShape::Generic);
+}
+
+TEST(LinkShape, WindowsHostSeparatesPeFromTargetsNamedByFlag) {
+    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Pe,  true,  false), LinkShape::MsvcLinkExe);
+    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Pe,  false, true),  LinkShape::PeLld);
+    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Pe,  false, false), LinkShape::PeLld);
+    // An SDK or retargetable clang aimed at an ELF row: named by `--target`.
+    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Elf, false, true),  LinkShape::Generic);
+    // The canadian GCC cross to x86_64-linux-musl names its target by prefix
+    // and keeps the line its CI job verifies.
+    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Elf, false, false), LinkShape::PeLld);
 }

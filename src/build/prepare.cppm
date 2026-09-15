@@ -1046,6 +1046,22 @@ export std::string resolve_profile_name(const mcpp::manifest::Manifest& m,
     return fallback.empty() ? std::string("dev") : std::string(fallback);
 }
 
+// THE OVERRIDE NAME THE COMMAND LINE STATES, OR "" FOR NONE (#649 E9).
+//
+// `--profile NAME` > `--release` > `--dev`, and one function for every verb
+// that takes the spellings (`build`, `run`, `test`, `emit build-database`,
+// `pack`). The rule used to be written twice and the copies disagreed:
+// `mcpp build --profile dev --release` built `dev` while `mcpp run` given the
+// same line built `release`. Its result is `resolve_profile_name`'s
+// `override_name`.
+export std::string profile_override_from_flags(std::string_view profileOption,
+                                               bool release, bool dev) {
+    if (!profileOption.empty()) return std::string(profileOption);
+    if (release)                return "release";
+    if (dev)                    return "dev";
+    return {};
+}
+
 // Command-level overrides (--target / --static).
 // Empty defaults preserve pre-existing behaviour exactly.
 export struct BuildOverrides {
@@ -1171,6 +1187,13 @@ export struct BuildOverrides {
     // reading "this build is not packaging" for a build that plainly is would
     // be sent looking in the wrong place.
     std::string           pack_stage_reason;
+    // #649 E5: the strip decision and the debug-symbol directory that pass
+    // resolved, "1" or "0" and absolute, set only beside `pack_format`. A
+    // member that stages libraries of its own reads them through
+    // `mcpp::pack_strip()` and `mcpp::pack_debug_symbols_dir()`, so
+    // `--no-strip` reaches its files as it reaches the engine's.
+    std::string           pack_strip;
+    std::filesystem::path pack_debug_symbols_dir;
 };
 
 // ── git dependency helpers ──────────────────────────────────────────────────
@@ -5880,9 +5903,6 @@ prepare_build(bool print_fingerprint,
         std::string table;      // `DependencySpec::declaredIn`
     };
     std::vector<GraphRequest> graphRequests;
-    // The link form each dependency took, and why (`linkage_form::Resolution`),
-    // by package index.
-    std::map<std::size_t, std::pair<std::string, std::string>> graphLinkForms;
     // The link form each dependency takes and the facts it was decided from,
     // by package index. COMPUTED ONCE, before the root build program runs, so
     // that program can read the answer (#642 E2); APPLIED after the scan, where
@@ -10010,6 +10030,8 @@ prepare_build(bool print_fingerprint,
             fill_package_build_env(bpEnv, pkg.manifest);
             bpEnv.packFormat   = overrides.pack_format;
             bpEnv.packStageDir = overrides.pack_stage_dir;
+            bpEnv.packStrip           = overrides.pack_strip;
+            bpEnv.packDebugSymbolsDir = overrides.pack_debug_symbols_dir;
             bpEnv.languageModules = pkg.manifest.language.modules;
             bpEnv.ruleModules  = pkg.manifest.buildConfig.ruleModules;
             if (auto dit = deviceSourcesByPackage.find(pkg.root.string()); dit != deviceSourcesByPackage.end())
@@ -11128,6 +11150,79 @@ prepare_build(bool print_fingerprint,
         }
     }
 
+    // ── The resolved graph, one derivation for two readers (#634 X, #647 E1) ──
+    //
+    // `resolution.json`'s `graph` section and the document the root build
+    // program reads (`mcpp::graph_file()`) describe the same packages, and they
+    // are built by this one function so they cannot disagree. Each entry holds
+    // the package's identity, every request that reached it (the key as
+    // written and the table that declared it) and, for a library, its link
+    // form with the reason. The build program's entries add what a program
+    // needs to act on a package: its manifest directory, the features it is
+    // built with, its targets, and its `[package.metadata]` verbatim.
+    //
+    // The link form is read from `dependencyLinkForms`, which is computed once,
+    // before this point, for exactly this program (#642 E2).
+    auto graph_package_entry = [&](std::size_t i, bool forBuildProgram) {
+        auto const& pm = packages[i].manifest;
+        const auto id = mcpp::manifest::package_id(pm.package);
+        nlohmann::json entry = {
+            {"package", {
+                {"canonical", id.canonical()},
+                {"namespace", id.namespace_},
+                {"name", id.name},
+                {"version", id.version},
+                {"source", id.sourceProvenance},
+            }},
+            {"root", i == 0},
+        };
+        nlohmann::json requests = nlohmann::json::array();
+        for (auto const& r : graphRequests) {
+            if (r.dependencyPackageIndex != i) continue;
+            requests.push_back({
+                {"requester", mcpp::manifest::package_id(
+                    packages[r.consumerPackageIndex].manifest.package).canonical()},
+                {"key", r.key},
+                {"table", r.table},
+            });
+        }
+        entry["requested_by"] = std::move(requests);
+        if (auto form = dependencyLinkForms.find(i);
+            form != dependencyLinkForms.end() && form->second.recorded)
+            entry["link"] = {
+                {"form", std::string(mcpp::build::linkage_form::to_string(
+                             form->second.answer.linkage))},
+                {"reason", form->second.answer.reason},
+            };
+        if (!forBuildProgram) return entry;
+
+        std::error_code ec;
+        auto dir = std::filesystem::absolute(packages[i].root, ec).lexically_normal();
+        entry["manifest_dir"] = dir.string();
+        nlohmann::json feats = nlohmann::json::array();
+        if (i < activeFeaturesByPackage.size())
+            for (auto const& f : activeFeaturesByPackage[i]) feats.push_back(f);
+        entry["features"] = std::move(feats);
+        nlohmann::json targets = nlohmann::json::array();
+        for (auto const& t : pm.targets) {
+            using K = mcpp::manifest::Target::Kind;
+            const std::string_view kind =
+                t.kind == K::Library       ? "lib"
+              : t.kind == K::Binary        ? "bin"
+              : t.kind == K::SharedLibrary ? "shared"
+              : t.kind == K::TestBinary    ? "test"
+              :                              "app";
+            targets.push_back({{"name", t.name}, {"kind", std::string(kind)}});
+        }
+        entry["targets"] = std::move(targets);
+        entry["metadata"] = pm.packageMetadataJson.empty()
+            ? nlohmann::json::object()
+            : nlohmann::json::parse(pm.packageMetadataJson, nullptr,
+                                    /*allow_exceptions=*/false);
+        if (entry["metadata"].is_discarded()) entry["metadata"] = nlohmann::json::object();
+        return entry;
+    };
+
     // ── L3: ROOT build.mcpp (moved after dependency resolution, design §3.1
     // item 4) ────────────────────────────────────────────────────────────────
     // Runs HERE — after dep resolution + feature activation (so the contract
@@ -11210,6 +11305,68 @@ prepare_build(bool print_fingerprint,
         bpEnv.hostModules = hostModulesByConsumer.count(0u)
             ? hostModulesByConsumer.at(0u)
             : decltype(bpEnv.hostModules){};
+        // #649 E5: the packaging pass's strip decision, beside its format.
+        bpEnv.packStrip           = overrides.pack_strip;
+        bpEnv.packDebugSymbolsDir = overrides.pack_debug_symbols_dir;
+        // #647 E1: THE RESOLVED GRAPH, FOR THE ROOT'S PROGRAM ONLY.
+        //
+        // Every package, dependencies before the packages that request them
+        // (ties in discovery order), so a program that merges what libraries
+        // contribute can apply them in override order without a sort of its
+        // own. The root decides the graph, and every input of that decision is
+        // final here -- the same reason `dep_linkage` is offered to this
+        // program alone. A file, not variables: a graph with metadata does not
+        // fit an environment block (`MAX_ARG_STRLEN`, the Windows limit).
+        //
+        // ITS DIGEST JOINS THE RE-RUN KEY. Editing a dependency's
+        // `[package.metadata]` changes what this program would answer, so it
+        // must run again; editing that dependency's sources does not, and the
+        // document does not change.
+        {
+            std::vector<std::size_t> order;
+            std::vector<bool> placed(packages.size(), false);
+            while (order.size() < packages.size()) {
+                std::size_t pick = packages.size();
+                for (std::size_t i = 0; i < packages.size() && pick == packages.size(); ++i) {
+                    if (placed[i]) continue;
+                    bool ready = true;
+                    for (auto const& r : graphRequests)
+                        if (r.consumerPackageIndex == i && r.dependencyPackageIndex != i
+                            && r.dependencyPackageIndex < packages.size()
+                            && !placed[r.dependencyPackageIndex]) { ready = false; break; }
+                    if (ready) pick = i;
+                }
+                // A cycle leaves nothing ready; its first member in discovery
+                // order is taken so the document is still complete.
+                if (pick == packages.size())
+                    for (std::size_t i = 0; i < packages.size(); ++i)
+                        if (!placed[i]) { pick = i; break; }
+                placed[pick] = true;
+                order.push_back(pick);
+            }
+            nlohmann::json doc;
+            doc["kind"] = "mcpp.graph";
+            doc["version"] = 1;
+            nlohmann::json list = nlohmann::json::array();
+            for (auto i : order) list.push_back(graph_package_entry(i, true));
+            doc["packages"] = std::move(list);
+            const auto text = doc.dump(2) + "\n";
+            const auto graphPath = bpEnv.artifactsDir / "graph.json";
+            std::error_code gec;
+            std::filesystem::create_directories(graphPath.parent_path(), gec);
+            const auto tmp = graphPath.string() + ".tmp";
+            {
+                std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+                out << text;
+            }
+            std::filesystem::rename(tmp, graphPath, gec);
+            if (gec)
+                return std::unexpected(std::format(
+                    "cannot write the graph document '{}': {}",
+                    graphPath.string(), gec.message()));
+            bpEnv.graphFile   = graphPath;
+            bpEnv.graphDigest = mcpp::toolchain::hash_string(text);
+        }
         auto& bcRoot = m->buildConfig;
         const auto mark = markDirectiveTail(*m);
         const auto rldN = bcRoot.ldflags.size(), rsrcN = bcRoot.sources.size(),
@@ -12318,9 +12475,6 @@ prepare_build(bool print_fingerprint,
         for (auto const& [i, form] : dependencyLinkForms) {
             auto const& answer = form.answer;
             auto const& facts  = form.facts;
-            if (form.recorded)
-                graphLinkForms[i] = { std::string(lf::to_string(answer.linkage)),
-                                      answer.reason };
 
             if (!answer.diagnostic.empty())
                 mcpp::diag::degraded("build/dependency-linkage", answer.diagnostic,
@@ -14029,28 +14183,8 @@ prepare_build(bool print_fingerprint,
         // reads instead of a warning's wording.
         {
             nlohmann::json graphPackages = nlohmann::json::array();
-            for (std::size_t i = 0; i < packages.size(); ++i) {
-                nlohmann::json entry = {
-                    {"package", package_json(
-                        mcpp::manifest::package_id(packages[i].manifest.package))},
-                    {"root", i == 0},
-                };
-                nlohmann::json requests = nlohmann::json::array();
-                for (auto const& r : graphRequests) {
-                    if (r.dependencyPackageIndex != i) continue;
-                    requests.push_back({
-                        {"requester", mcpp::manifest::package_id(
-                            packages[r.consumerPackageIndex].manifest.package).canonical()},
-                        {"key", r.key},
-                        {"table", r.table},
-                    });
-                }
-                entry["requested_by"] = std::move(requests);
-                if (auto form = graphLinkForms.find(i); form != graphLinkForms.end())
-                    entry["link"] = { {"form", form->second.first},
-                                      {"reason", form->second.second} };
-                graphPackages.push_back(std::move(entry));
-            }
+            for (std::size_t i = 0; i < packages.size(); ++i)
+                graphPackages.push_back(graph_package_entry(i, /*forBuildProgram=*/false));
             j["graph"] = { {"packages", std::move(graphPackages)} };
         }
 

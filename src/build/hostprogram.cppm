@@ -560,6 +560,37 @@ inline const char* pack_format()                  { return env_or("MCPP_PACK_FOR
 // then names it through the placeholder, so the path in the graph and the path
 // this program read cannot disagree.
 inline const char* pack_stage_dir()               { return env_or("MCPP_PACK_STAGE_DIR"); }
+
+// WHETHER THIS PACKAGING PASS STRIPS: "1" or "0", and "" for every ordinary
+// build (#649 E5).
+//
+// The engine strips the program, every shared library the graph built and the
+// staged copy of the toolchain's runtime, and `--no-strip` turns all of it off.
+// A member that stages libraries of its own -- an Android archive's native
+// libraries, say -- asks here instead of deciding for itself, so one switch
+// governs every file in the package. An engine older than this one leaves it
+// empty, which a member reads as "decide as before".
+inline const char* pack_strip()                   { return env_or("MCPP_PACK_STRIP"); }
+
+// Where `--debug-symbols` sends the separated `*.debug` files, absolute; ""
+// when they are discarded or this build is not packing (#649 E5).
+inline const char* pack_debug_symbols_dir()       { return env_or("MCPP_PACK_DEBUG_SYMBOLS_DIR"); }
+
+// THE RESOLVED DEPENDENCY GRAPH, as a JSON document; "" for a dependency's
+// program and under an older engine (#647 E1).
+//
+// Offered to the ROOT package's program only, for the reason `dep_linkage` is:
+// the root decides the graph, and when its program runs every input of that
+// decision is final. `packages` lists every package, dependencies before the
+// packages that request them, each with `package` (identity), `root`,
+// `requested_by`, `link` (for a library), `manifest_dir` (absolute),
+// `features`, `targets` and `metadata` (its `[package.metadata]`, verbatim).
+// A path inside `metadata` is the reader's to resolve, against that entry's
+// `manifest_dir`.
+//
+// Editing a package's `[package.metadata]` re-runs this program; editing its
+// sources does not.
+inline const char* graph_file()                   { return env_or("MCPP_GRAPH_FILE"); }
 inline bool has_feature(const char* name) {
     char buf[256] = "MCPP_FEATURE_";
     unsigned long o = 13;

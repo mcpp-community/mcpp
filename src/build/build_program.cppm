@@ -183,6 +183,20 @@ struct BuildProgramEnv {
     // actually has) and writes the placeholder into the action, so the two
     // never disagree.
     std::filesystem::path packStageDir;
+    // The packaging pass's RESOLVED strip decision, "1" or "0", and where the
+    // separated debug files go, absolute; both empty for every ordinary build
+    // (#649 E5). A member that stages libraries of its own follows them, so
+    // `--no-strip` and `--debug-symbols` reach its files as they reach the
+    // engine's.
+    std::string packStrip;
+    std::filesystem::path packDebugSymbolsDir;
+    // #647 E1: the graph document offered to the ROOT package's program, and
+    // the digest of its text. Empty for a dependency's program. The digest
+    // joins the re-run key (see `run_build_program`), so a change to what the
+    // document says re-runs the program and a change it does not state does
+    // not.
+    std::filesystem::path graphFile;
+    std::string graphDigest;
     // Whether this package builds C++ modules (`[language] modules`).
     //
     // Reported because a rule package that GENERATES a consumer-facing
@@ -629,6 +643,9 @@ contract_env(const fs::path& root, const fs::path& outDir, const BuildProgramEnv
     e.emplace_back("MCPP_PKG_REPO", env.packageRepo);
     e.emplace_back("MCPP_PACK_FORMAT", env.packFormat);
     e.emplace_back("MCPP_PACK_STAGE_DIR", env.packStageDir.string());
+    e.emplace_back("MCPP_PACK_STRIP", env.packStrip);
+    e.emplace_back("MCPP_PACK_DEBUG_SYMBOLS_DIR", env.packDebugSymbolsDir.string());
+    e.emplace_back("MCPP_GRAPH_FILE", env.graphFile.string());
     std::string csv;
     for (auto const& f : env.features) {
         if (!csv.empty()) csv += ',';
@@ -970,6 +987,11 @@ std::expected<void, std::string> run_build_program(
     fs::path outDir = bdir / "out";
     auto childEnv = contract_env(root, outDir, env);
     std::string ctxHash = contract_hash(childEnv);
+    // THE GRAPH DOCUMENT'S CONTENT, NOT ITS PATH. The path is the same on
+    // every run; what the document says is what the program's answer depends
+    // on (#647 E1).
+    if (!env.graphDigest.empty())
+        ctxHash = mcpp::toolchain::hash_string(ctxHash + "\ngraph=" + env.graphDigest);
 
     // ── Helper self-containment (the single decision point) ─────────────────
     // The compiled helper is exec'd by the host OS, outside anything mcpp

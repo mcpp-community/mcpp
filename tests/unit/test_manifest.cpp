@@ -5718,3 +5718,74 @@ TEST(Manifest, TargetsInferredIsDistinguishedFromDeclared) {
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
 }
+
+// ── #647 E1 / #649 X4: `[package.metadata]` and the `[package]` key check ────
+//
+// The metadata table is kept verbatim for the graph document, as JSON text, and
+// `metadata` is a known key. Any other key the parser does not read is reported
+// the way `[build]` reports one, so `licence` is no longer accepted in silence.
+TEST(Manifest, PackageMetadataIsKeptVerbatimAsJson) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+[package.metadata.demo]
+resources = "res"
+langs = ["en", "zh"]
+count = 3
+enabled = true
+note = "a \"quoted\" value"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->packageMetadataJson,
+              R"({"demo":{"count":3,"enabled":true,"langs":["en","zh"],"note":"a \"quoted\" value","resources":"res"}})");
+    EXPECT_TRUE(m->schemaWarnings.empty())
+        << (m->schemaWarnings.empty() ? "" : m->schemaWarnings[0]);
+}
+
+TEST(Manifest, PackageWithoutMetadataHasNone) {
+    auto m = mcpp::manifest::parse_string("[package]\nname = \"x\"\nversion = \"0.1.0\"\n");
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_TRUE(m->packageMetadataJson.empty());
+}
+
+TEST(Manifest, UnknownPackageKeyIsReported) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+version = "0.1.0"
+licence = "MIT"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_EQ(m->schemaWarnings.size(), 1u);
+    EXPECT_NE(m->schemaWarnings[0].find("[package] has unsupported key 'licence'"),
+              std::string::npos) << m->schemaWarnings[0];
+}
+
+TEST(Manifest, EveryReadPackageKeyIsKnown) {
+    constexpr auto src = R"(
+[package]
+name = "x"
+namespace = "ns"
+version = "0.1.0"
+standard = "c++23"
+description = "d"
+license = "MIT"
+repo = "https://example.org"
+authors = ["a"]
+platforms = ["linux"]
+accelerators = ["cuda"]
+provides = ["cap"]
+requires = ["other"]
+exclusive = ["cap"]
+std-module = "m"
+std-compat-module = "c"
+std-module-flags = ["-x"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    for (auto const& w : m->schemaWarnings)
+        EXPECT_EQ(w.find("[package] has unsupported key"), std::string::npos) << w;
+}

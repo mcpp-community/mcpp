@@ -88,6 +88,67 @@ std::string version_req_problem(std::string_view spec) {
     return {};
 }
 
+
+// A TOML table as JSON text, for `[package.metadata]` (#647 E1). The TOML
+// reader here produces strings, integers, booleans, arrays and tables, and each
+// has one JSON spelling; nothing is interpreted.
+void append_json_string(std::string& out, std::string_view s) {
+    out += '"';
+    for (unsigned char c : s) {
+        switch (c) {
+            case '"':  out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (c < 0x20) out += std::format("\\u{:04x}", static_cast<unsigned>(c));
+                else          out += static_cast<char>(c);
+        }
+    }
+    out += '"';
+}
+
+void append_json_value(std::string& out, const mcpp::libs::toml::Value& v) {
+    using Kind = mcpp::libs::toml::Value::Kind;
+    switch (v.kind()) {
+        case Kind::String: append_json_string(out, v.as_string()); break;
+        case Kind::Int:    out += std::to_string(v.as_int()); break;
+        case Kind::Bool:   out += v.as_bool() ? "true" : "false"; break;
+        case Kind::Array: {
+            out += '[';
+            bool first = true;
+            for (auto const& e : v.as_array()) {
+                if (!first) out += ',';
+                first = false;
+                append_json_value(out, e);
+            }
+            out += ']';
+            break;
+        }
+        case Kind::Table: {
+            out += '{';
+            bool first = true;
+            for (auto const& [k, e] : v.as_table()) {
+                if (!first) out += ',';
+                first = false;
+                append_json_string(out, k);
+                out += ':';
+                append_json_value(out, e);
+            }
+            out += '}';
+            break;
+        }
+        case Kind::Null: out += "null"; break;
+    }
+}
+
+std::string toml_table_to_json(const mcpp::libs::toml::Table& table) {
+    std::string out;
+    append_json_value(out, mcpp::libs::toml::Value(table));
+    return out;
+}
+
 }  // namespace
 
 
@@ -1029,6 +1090,41 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         m.stdCompatModule = *v;
     if (auto v = doc->get_string_array("build.std-module-flags"))
         m.buildConfig.stdModuleFlags = *v;
+
+    // [package.metadata] (#647 E1): kept verbatim for the graph document.
+    if (auto* meta = doc->get_table("package.metadata"))
+        m.packageMetadataJson = toml_table_to_json(*meta);
+
+    // Surface unsupported [package] keys the way [build] does (#649 X4): a
+    // warning for the root manifest, an error under --strict, and nothing for
+    // a dependency's manifest, whose schema warnings are not surfaced (a
+    // package may adopt a key before its consumers upgrade). `[package]` was
+    // the one central section without the check, so a misspelt `licence` or
+    // `descripton` was accepted in silence.
+    //
+    // MUST stay in sync with the `doc->get_*("package.<key>")` reads above.
+    static constexpr std::string_view kKnownPackageKeys[] = {
+        "accelerators", "authors", "description", "exclusive", "license",
+        "metadata", "name", "namespace", "platforms", "provides", "repo",
+        "requires", "requires_abi", "standard", "std-compat-module",
+        "std-module", "std-module-flags", "version",
+    };
+    if (auto* pt = doc->get_table("package")) {
+        for (auto& [key, _] : *pt) {
+            bool known = false;
+            for (auto k : kKnownPackageKeys) if (key == k) { known = true; break; }
+            if (!known) {
+                std::string supported;
+                for (auto k : kKnownPackageKeys) {
+                    if (!supported.empty()) supported += ", ";
+                    supported += k;
+                }
+                m.schemaWarnings.push_back(std::format(
+                    "[package] has unsupported key '{}' (ignored). Supported keys: {}.",
+                    key, supported));
+            }
+        }
+    }
 
     // [capabilities] cap = "provider" — root-only provider pins.
     if (auto* caps = doc->get_table("capabilities"); caps && !caps->empty()) {

@@ -144,6 +144,8 @@ mcpp pack --format appimage             # a format a package in the graph provid
 mcpp pack -o myapp.tar.gz              # filename only: lands at target/dist/myapp.tar.gz
 mcpp pack -o /abs/path/myapp.tar.gz    # includes a directory: output to the literal path
 mcpp pack --profile dev                # build with a different profile (default: release)
+mcpp pack --dev                        # the same, as `build` and `run` spell it; --profile wins over it
+mcpp pack --message-format json        # one mcpp.pack envelope on stdout (mcpp 2026.9.16.1+)
 mcpp pack --no-strip                   # ship the artifacts as built
 mcpp pack --debug-symbols dbg/         # write the separated *.debug files under dbg/
 mcpp pack --format msi --features installer   # activate root-package features for the pack
@@ -155,6 +157,19 @@ format. It is the value `mcpp build --features` takes, so a host tool needed onl
 one distribution is declared under `[feature-deps.<f>]` with `tools = [...]` and built
 only by the pack that names `<f>`. `mcpp run --format <name> --features <LIST>` hands
 the same features to the pack it performs.
+
+`--release` and `--dev` (mcpp 2026.9.16.1+) are the shorthands `build` and `run`
+take, with the same precedence: `--profile` wins over either, on all three
+commands.
+
+`--message-format json` (mcpp 2026.9.16.1+) prints one `mcpp.pack` envelope on
+stdout after the command finishes and sends every human line to stderr. Its
+`data.artifacts` holds each produced file or directory with its absolute path,
+its `type` (`file` or `directory`), the `--format` value and the triples of its
+legs; `data.stage` holds the staged tree, its manifest and whether the closure
+was walked ([50 — Machine Output](50-machine-output.md)). `--format` names the
+package format on this command, so machine output is asked for the way
+`mcpp test` asks for it.
 
 ### `--format` owns one axis, and the engine owns two of its values
 
@@ -297,9 +312,23 @@ follow.
 > anything; this one governs what the **package** carries. Two different
 > decisions, two different names.
 
-**Bundled libraries are never stripped.** They came out of the store or off the
-host, mcpp did not build them, and rewriting somebody else's shared payload for
-this bundle's benefit is not the packer's business.
+**What the graph built is stripped on every row that carries debug information in
+the image; a library from the store or the host is not** (mcpp 2026.9.16.1+). The
+rule is dh_strip's, a package strips what it built, and it covers:
+
+| staged file | stripped | reason |
+|---|---|---|
+| the program | yes, as an executable; as a shared library on the Android row, where the program is one | this build compiled it |
+| a shared library a `SharedLibrary` link unit of the graph produced | yes, `--strip-unneeded` | this build compiled it from source |
+| the staged copy of the toolchain's own runtime (`libc++_shared.so` from the NDK) | yes, `--strip-unneeded` | a copy in the tree is not the shared payload; the Android Gradle plugin strips the same file |
+| a library from the store, the host, or a prebuilt a package deployed | no | its bytes are its publisher's, and a vendor library may be signed |
+
+Mach-O and MSVC PE keep their debug information beside the image, so nothing is
+stripped there, and the `Packing` line says "stripped" only on a row that strips.
+`--no-strip` and `--debug-symbols` reach every stripped file. A build program
+that stages libraries of its own reads the same decision through
+`mcpp::pack_strip()` and `mcpp::pack_debug_symbols_dir()`
+([30 — build.mcpp](30-build-mcpp.md))
 
 ## Output Layout
 

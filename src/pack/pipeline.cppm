@@ -43,6 +43,21 @@ namespace mcpp::pack {
 export struct PackOutcome {
     int                                 rc = 0;
     std::vector<std::filesystem::path> artifacts;
+    // #649 E9: what `mcpp pack --message-format json` reports beside the
+    // artifacts. All of it was already answered by the pass that produced
+    // them; nothing here is derived for the report.
+    //
+    // `format` is the `--format` value as requested (`tar` when omitted);
+    // `targets` the canonical triple of every leg, the primary first. The
+    // stage fields are empty when no tree was staged; `closure` is the stage
+    // manifest's own word, `walked` or `not-walked`.
+    std::string                         format;
+    std::vector<std::string>            targets;
+    std::filesystem::path               stageDir;
+    std::filesystem::path               stageManifest;
+    std::string                         closure;
+    // Whether a build program ran in this pack, for the envelope's `effects`.
+    bool                                ranBuildPrograms = false;
 };
 
 // #634 A3: the two directory lists an Android row's closure is read against,
@@ -168,7 +183,13 @@ build_extra_android_legs(const std::string& targetName,
         // this leg's own plan and driver.
         SharedLeg leg;
         leg.abi      = std::move(abi);
+        leg.triple   = canonical;
         leg.artifact = ctx->outputDir / lu->output;
+        // #649 E5: what THIS leg's graph built, which pack strips as it strips
+        // the program; see `Plan::graphSharedLibraries`.
+        for (auto const& u : ctx->plan.linkUnits)
+            if (u.kind == mcpp::build::LinkUnit::SharedLibrary)
+                leg.graphSharedLibraries.push_back(ctx->outputDir / u.output);
         leg.searchDirs.push_back(leg.artifact.parent_path());
         for (auto const& d : ctx->plan.runtimeLibraryDirs) leg.searchDirs.push_back(d);
         for (auto const& d : ctx->plan.linkIntent.runtimeSearchDirs)
@@ -473,6 +494,12 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
     // parameter comment on `extraLegs` above. A no-op (default-constructed,
     // empty) for every caller before this item.
     plan->extraSharedLegs = std::move(extraLegs);
+    // #649 E5: the shared libraries this graph built, primary leg. From the
+    // plan's link units, never from a directory listing: a vendor library
+    // deployed beside the program is not one of them and stays as shipped.
+    for (auto const& u : ctx->plan.linkUnits)
+        if (u.kind == mcpp::build::LinkUnit::SharedLibrary)
+            plan->graphSharedLibraries.push_back(ctx->outputDir / u.output);
 
     // The RESOLVED debug-information decision. On the plan, not in Options:
     // Options is the request, this is what it came out as once the manifest
@@ -496,10 +523,14 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
                   }()),
     };
 
+    // "stripped" STATES WHAT THIS ROW DOES, NOT WHAT WAS REQUESTED (#649 E5).
+    // It used to print the decision alone, so a Mach-O row, whose debug
+    // information is not in the image and is never stripped, and the Android
+    // row, which did not reach the strip step at all, both said "stripped".
     mcpp::ui::info("Packing", std::format("{} v{} ({}{})",
         plan->packageName, plan->packageVersion,
         mcpp::pack::mode_cli_name(plan->opts.mode),
-        plan->strip ? ", stripped" : ""));
+        mcpp::pack::strips_on_this_row(*plan) ? ", stripped" : ""));
 
     // STAGING IS A SERVICE TO THE PROVIDER, NOT A PRECONDITION FOR DISPATCH.
     //
@@ -565,6 +596,34 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
     // no tree exists, so no manifest describes a tree that is not there.
     if (stageFailure.empty()) mcpp::pack::write_stage_manifest(plan->stagingRoot, closure);
 
+    // #649 E9: the outcome a machine reader receives, from values this pass
+    // has already answered. Both returns below go through it.
+    auto outcome_with = [&](std::vector<std::filesystem::path> artifacts) {
+        PackOutcome o;
+        o.artifacts = std::move(artifacts);
+        o.format = opts.format == mcpp::pack::Format::Tar ? std::string("tar")
+                 : opts.format == mcpp::pack::Format::Dir ? std::string("dir")
+                 : opts.formatName;
+        const auto canonical = [](std::string const& t) {
+            if (t.empty()) return mcpp::toolchain::triple::host_triple().str();
+            auto parsed = mcpp::toolchain::triple::parse(t);
+            return parsed ? parsed->str() : t;
+        };
+        o.targets.push_back(canonical(plan->triple));
+        for (auto const& leg : plan->extraSharedLegs) o.targets.push_back(leg.triple);
+        if (stageFailure.empty()) {
+            o.stageDir      = plan->stagingRoot;
+            o.stageManifest = mcpp::pack::stage_manifest_path(plan->stagingRoot);
+            o.closure       = closure.walked ? "walked" : "not-walked";
+        }
+        std::error_code bec;
+        o.ranBuildPrograms = std::filesystem::exists(ctx->projectRoot / "build.mcpp", bec)
+                          || !ctx->manifest.buildConfig.ruleModules.empty();
+        for (auto const& sp : ctx->sourcePackages)
+            if (std::filesystem::exists(sp.root / "build.mcpp", bec)) o.ranBuildPrograms = true;
+        return o;
+    };
+
     auto pathCtx = mcpp::fetcher::make_path_ctx(&*cfg, ctx->projectRoot);
 
     // ─── The dispatch pass ───────────────────────────────────────────
@@ -595,6 +654,11 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
                 preexistingArtifacts.emplace(a.packageName, a.id);
 
         ov.pack_format    = opts.formatName;
+        // #649 E5: the RESOLVED strip decision and debug directory, for a
+        // member that stages libraries of its own and must follow the same
+        // switch `--no-strip` and `--debug-symbols` set for this tree.
+        ov.pack_strip             = plan->strip ? "1" : "0";
+        ov.pack_debug_symbols_dir = plan->debugDir;
         // Empty when staging was refused, which is what makes
         // `${mcpp.stage_dir}` refuse with the reason attached rather than
         // expand to a directory that does not exist.
@@ -710,13 +774,13 @@ export PackOutcome build_and_pack(Options opts, bool modeFromUser,
         // Every output consumed by another: a cycle a provider should not
         // write, reported as all outputs rather than as nothing.
         if (reported.empty()) reported = std::move(intermediate);
-        return PackOutcome{0, std::move(reported)};
+        return outcome_with(std::move(reported));
     }
 
     auto outPath = (opts.format == mcpp::pack::Format::Tar)
         ? plan->archivePath : plan->stagingRoot;
     mcpp::ui::status("Packed", mcpp::ui::shorten_path(outPath, pathCtx));
-    return PackOutcome{0, {outPath}};
+    return outcome_with({outPath});
 }
 
 } // namespace mcpp::pack

@@ -89,6 +89,20 @@ When a **dependency declares a level above the graph's**, mcpp says so before co
 rather than letting it fail somewhere inside that dependency's sources. See
 [workspace §4.2](07-workspace.md).
 
+`[package.metadata.<tool>]` (mcpp 2026.9.16.1+) is a table the engine keeps and
+does not interpret. It is the package's statement about itself for a tool that
+reads it, such as a framework collecting what each library contributes, and it
+reaches the root package's build program through `mcpp::graph_file()`
+([30 — build.mcpp](30-build-mcpp.md)). A path in it is resolved by that reader
+against the package's manifest directory. Any other key in `[package]` that
+mcpp does not read is reported, as in `[build]`: a warning, and an error under
+`--strict` (2026.9.16.1+).
+
+```toml
+[package.metadata.demo]
+resources = "res"
+```
+
 #### Dialect flags and the `import std` BMI
 
 Some flags change what the standard library's headers declare, so the precompiled `import std`
