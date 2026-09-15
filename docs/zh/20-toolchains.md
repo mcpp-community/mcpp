@@ -916,6 +916,22 @@ C++ 运行时的进程。
 工程级的 `cxx_runtime = "…"`(或 `static_stdlib = false`)同样作用于共享库:
 有人写下了整个工程的承诺。只有在**没人写**的时候,随格式变化的默认值才生效。
 
+**加载 C++ 共享库的程序**(mcpp 2026.9.16.1+)。在 ELF 上,上面两个默认值会在同一个
+进程里冲突:self-contained 的程序加载 toolchain-coupled 的 C++ 共享库,进程里就同时
+有一份静态 C++ 运行时和一份共享的。可执行文件导出该库引用的运行时符号,库把其中一部分
+绑到程序的那份、其余留给自己,两半对共享状态的认识互不一致;实测 `llvm@22.1.8` 下这样的
+程序在库第一次格式化字符串时以 `std::bad_cast` 中止,`gcc@16.1.0` 下能跑但有 900 个
+libstdc++ 符号被抢占。因此在 ELF 上,没有人声明契约的程序或测试,若直接或经由另一个
+共享库加载本次构建产出的 C++ 共享库,就取该共享库的契约。进程本来就通过库自己的
+`NEEDED` 条目需要那份运行时,所以没有任何部署因此多出依赖;`resolution.json` 在
+`runtime.cxx_runtime_by_role` 下记录最终的契约。
+
+声明过的契约从不改动。**声明了** `self-contained` 的程序或测试,若加载耦合到共享运行时的
+C++ 共享库,会在编译前被拒绝(reason `program-cxx-runtime-split`,见
+[50](50-machine-output.md));出路是删掉这条声明,或用
+`cxx_runtime = { shared = "self-contained" }` 给共享库一份私有副本,让每份运行时留在
+各自的映像里。
+
 **C++ 运行时来自图中的包时,依赖的共享库**(mcpp 2026.9.15.2+)。当图中有包提供
 C++ 层(`llvm.libcxx`,见 [22](22-target-side.md)),它的对象被链进程序,并且以隐藏
 可见性编译,于是一个构建为 C++ 共享库的依赖无法解析到程序里的那份。mcpp 在编译前
@@ -974,6 +990,14 @@ Windows 组件(Win10 起),mcpp 从不分发它;而 `vcruntime140.dll` /
 把它和 `/MT` 一起用是**矛盾**而不是缺功能 —— 静态 CRT 根本没有 DLL 可以耦合 ——
 所以会被报出来并落到 `self-contained`。另一半由 `mcpp pack` 兜底:什么都不打包的
 模式(`--mode system`、`--mode static`)兑现不了 `toolchain-coupled`,会直接拒绝。
+
+**MSVC ABI 上的 clang**(`x86_64-windows-msvc` 的 `llvm` 行,记录自 mcpp 2026.9.16.1
+起)。上表描述的是 `cl.exe`,mcpp 只向它传递 CRT 模型。MSVC ABI 上的 clang 使用 GNU
+方言、收不到任何模型,它的驱动链接静态 CRT(`-defaultlib:libcmt`):这一行构建的程序
+不导入 `vcruntime140.dll`、`msvcp140.dll` 或 `api-ms-win-crt-*`,每个 DLL 各带一份 CRT。
+因此这一行无论 `cxx_runtime` 写什么都是 `self-contained`,`resolution.json` 如实记录,
+显式写 `host-coupled` 或 `toolchain-coupled` 会打印这一行兑现不了它。需要在 MSVC ABI
+上使用动态 CRT 的工程,用 `msvc@system` 构建。
 
 **边界。** 该契约只管 C++ 运行时。静态 **libc** 是另一根轴(`linkage = "static"`
 / `--static`,如 musl 目标),部署下限是第三根轴 —— Apple 目标用 `[package]` 里的

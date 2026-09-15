@@ -1,22 +1,23 @@
 #!/usr/bin/env bash
-# requires: elf
+# requires: elf python3
 # 307_symbol_provision.sh — one library, one provider (issue #519).
 #
 # THE SILENT CASE IS THE IMPORTANT ONE, and it is why this test has two
-# halves that differ by a single package.
+# halves.
 #
-# mcpp's own `kind = "shared"` mechanism produces the exact shape the
-# diagnostic looks for: a shared dependency's link unit takes only ITS OWN
-# objects, so a static package underneath it lands in the consumer's
-# executable and the shared library binds back to it at run time. There is one
-# copy of the code in the process and nothing is wrong. A check that reported
-# "this image exports a symbol a library it loads binds to" would fire on
-# every correct build of that shape, and the user could do nothing about it.
+# A shared dependency over a static package used to put the static package in
+# the consumer's executable, and the shared library bound back to it at run
+# time; this test then asserted that the executable's export stayed silent.
+# Since #646 F1 the static package is linked INTO the shared library, which is
+# the only arrangement that works on every format, so the executable exports
+# nothing for it and the check still measures the image (half 1).
 #
-# The finding is the SECOND provider, not the export. So:
+# The finding is a SECOND provider of a name the executable holds. So:
 #
-#   half 1   wrap.so (shared) → core (static)             must stay SILENT
-#   half 2   ... plus alt.so, which defines the same name  must REPORT both
+#   half 1   app -> wrap.so (shared) -> core (static)      must stay SILENT,
+#            with core linked into wrap.so
+#   half 2   app -> core (static) and alt.so, which defines the same name and
+#            calls it                                       must REPORT both
 #
 # Asserted against `resolution.json` rather than stdout: the message is free
 # to improve, the recorded verdict is the contract.
@@ -105,15 +106,19 @@ status="$(verdict "$res" status)"
     echo "FAIL: the legitimate shared→static arrangement reported '$status'"
     cat "$res"; exit 1; }
 
-# It must have been MEASURED, not skipped: the export is real and the
-# denominator is real. "0 findings" and "never looked" must not read alike.
+# It must have been MEASURED, not skipped: the denominator is real. "0
+# findings" and "never looked" must not read alike.
 exported="$(verdict "$res" exported)"
 total="$(verdict "$res" dynamic_symbols)"
-[[ "$exported" -ge 1 ]] || {
-    echo "FAIL: expected the executable to export shared_answer, got $exported"
-    exit 1; }
 [[ "$total" -gt "$exported" ]] || {
     echo "FAIL: implausible denominator ($exported of $total)"; exit 1; }
+
+# core lives in wrap.so now, not in the executable (#646 F1): a host that never
+# linked core loads it.
+wrapso="$(ls "$(dirname "$res")"/bin/libwrap.so 2>/dev/null | head -1)"
+[[ -n "$wrapso" ]] || { echo "FAIL: no libwrap.so"; exit 1; }
+"$PYTHON" -c 'import ctypes, os, sys; assert ctypes.CDLL(sys.argv[1], mode=os.RTLD_NOW).wrap_call() == 8' "$wrapso" \
+    || { echo "FAIL: a host that did not link core cannot load libwrap.so"; exit 1; }
 
 grep -qi "also provided by" silent.log && {
     echo "FAIL: a correct build printed a conflict warning"; exit 1; }
@@ -144,14 +149,14 @@ c_standard = "c11"
 kind = "bin"
 main = "src/main.c"
 [dependencies]
-wrap = { path = "../wrap" }
+core = { path = "../core" }
 alt  = { path = "../alt" }
 EOF
 cat > src/main.c <<'EOF'
 #include <stdio.h>
-int wrap_call(void);
+int shared_answer(void);
 int alt_ping(void);
-int main(void) { printf("%d %d\n", wrap_call(), alt_ping()); return 0; }
+int main(void) { printf("%d %d\n", shared_answer(), alt_ping()); return 0; }
 EOF
 
 "$MCPP" build > conflict.log 2>&1 || { cat conflict.log; exit 1; }
@@ -186,11 +191,12 @@ done
     cat conflict.log; exit 1; }
 
 # The defect is real, not theoretical: alt's 999 is unreachable because the
-# executable's merged copy wins for every caller in the process.
+# executable's copy wins for every caller in the process, alt's own call
+# included.
 cbin="$conflict_dir/bin/app"
 [[ -x "$cbin" ]] || { echo "FAIL: no executable in $conflict_dir"; exit 1; }
-"$cbin" | grep -qx "8 7" || {
-    echo "FAIL: expected '8 7' (the merged copy winning), got: $("$cbin")"; exit 1; }
+"$cbin" | grep -qx "7 7" || {
+    echo "FAIL: expected '7 7' (the executable's copy winning), got: $("$cbin")"; exit 1; }
 
 # ── --strict turns the finding into a failure, in ONE place ────────────────
 touch src/main.c

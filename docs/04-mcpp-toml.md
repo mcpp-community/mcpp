@@ -501,6 +501,46 @@ A per-dependency `linkage` is honoured **only in the root project's**
 final program is laid out; one that genuinely must be a single shared copy says
 so on its own target instead.
 
+#### A static package under a shared library *(mcpp 2026.9.16.1+)*
+
+A shared library is linked with the static packages it reaches. Each shared
+image of a build has a **static closure**: the static packages reachable from
+its package without crossing another shared package. A static package in
+exactly one closure, which the root project does not reach itself, is linked
+into that image and not into the program.
+
+Before 2026.9.16.1 such a package went into the program, and the library bound
+to the program's copy at run time. That worked on ELF and only for that program:
+the library refused `-Wl,-z,defs`, a host that did not link the package could not
+load it (`undefined symbol`), Mach-O and PE resolve every reference at link time,
+and Android loads an application's shared library before anything that could
+supply the package.
+
+A static package that **several** images reach (two shared libraries, or a shared
+library and the program) has no single image to live in:
+
+- on Mach-O, on PE and on the Android application row the build is refused
+  before compiling, with reason `static-package-in-two-images`
+  ([50](50-machine-output.md));
+- on other ELF rows the package stays in the program as before, and the build
+  reports it (`build/static-placement`), which `--strict` turns into an error.
+
+The message names the package, the images that reach it, and the remedy: give
+the package the shared form, so that every image loads one copy.
+
+```toml
+[dependencies]
+x = { path = "../x", linkage = "shared" }   # on the root's edge
+
+# or as the package's own default, in its manifest
+[targets.x]
+linkage = "shared"
+```
+
+A package that provides a target layer (`provides = ["mcpp:..."]`, a C library or
+a C++ runtime) is outside this rule: where its objects go is the runtime
+contract's decision ([20](20-toolchains.md)).
+
 #### `soname` on a library target
 
 A `soname` (§2.2) may be declared on `kind = "lib"` as well as
@@ -525,7 +565,14 @@ diagnostic exists for this.
 The check is a measurement, not a declaration: it reads the produced image's
 dynamic symbol table, removes the entries that are copy relocations, and
 reports only those a library in the artifact's own closure **also** defines.
-An arrangement with one copy in the process is silent. The verdict is recorded
+An arrangement with one copy in the process is silent. Three kinds of shared
+definition are counted and not reported *(2026.9.16.1+ for the last two)*:
+vague linkage, which the loader unifies by design (`STB_WEAK`, and
+`STB_GNU_UNIQUE`, which GCC uses for the static data of inline entities); a
+definition the build links into both images from **one object**, such as the
+`std` module's initialiser in every C++ image that imports `std`; and that same
+initialiser against the toolchain's own C++ runtime, which exports it from
+GCC 16 on. A name of the same shape defined anywhere else is still a finding. The verdict is recorded
 in `target/<triple>/<fp>/resolution.json` under `runtime.symbol_provision`,
 with the count and its denominator, so CI can read it without `readelf`.
 
