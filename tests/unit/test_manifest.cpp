@@ -5686,3 +5686,35 @@ kind = "shared"
     EXPECT_EQ(m.targets[0].kind, mcpp::manifest::Target::Library);
     EXPECT_EQ(m.targets[0].linkageDefault, "shared");
 }
+
+// #649 E6: a consumer reads "every declared target is a program" as "a tool
+// provider that contributes nothing to my graph". A target list the loader
+// INFERRED from the tree is not that statement, so the loader says which of
+// the two it produced.
+TEST(Manifest, TargetsInferredIsDistinguishedFromDeclared) {
+    auto dir = std::filesystem::temp_directory_path()
+        / std::format("mcpp_targets_inferred_{}", std::random_device{}());
+    std::filesystem::create_directories(dir / "src");
+    {
+        std::ofstream(dir / "src" / "main.cpp") << "int main() {}\n";
+        std::ofstream(dir / "mcpp.toml") << "[package]\nname = \"inferred\"\nversion = \"0.1.0\"\n";
+    }
+    auto inferred = mcpp::manifest::load(dir / "mcpp.toml");
+    ASSERT_TRUE(inferred) << (inferred ? "" : inferred.error().message);
+    ASSERT_EQ(inferred->targets.size(), 1u);
+    EXPECT_EQ(inferred->targets[0].kind, mcpp::manifest::Target::Binary);
+    EXPECT_TRUE(inferred->targetsInferred);
+
+    {
+        std::ofstream(dir / "mcpp.toml")
+            << "[package]\nname = \"declared\"\nversion = \"0.1.0\"\n\n"
+               "[targets.declared]\nkind = \"bin\"\nmain = \"src/main.cpp\"\n";
+    }
+    auto declared = mcpp::manifest::load(dir / "mcpp.toml");
+    ASSERT_TRUE(declared) << (declared ? "" : declared.error().message);
+    ASSERT_EQ(declared->targets.size(), 1u);
+    EXPECT_FALSE(declared->targetsInferred);
+
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+}
