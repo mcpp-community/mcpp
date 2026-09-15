@@ -12,9 +12,17 @@ module;
 #include <sys/ioctl.h>
 #endif
 #if defined(_WIN32)
-#include <io.h>        // _dup, _dup2, _close
+#include <io.h>        // _dup, _dup2, _close, _get_osfhandle
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>   // SetHandleInformation, HANDLE_FLAG_INHERIT
 #else
-#include <unistd.h>    // dup, dup2, close
+#include <unistd.h>    // dup2, close
+#include <fcntl.h>     // fcntl, F_DUPFD_CLOEXEC
 #endif
 
 export module mcpp.platform.terminal;
@@ -39,6 +47,15 @@ std::size_t cols();
 // a document (`mcpp emit build-database`) plans under one of these and prints
 // the document after it is gone: people still see the progress, on stderr, and
 // the document arrives alone.
+//
+// THE SAVED DESCRIPTOR IS NOT INHERITED. It is the caller's pipe, and a child
+// started during the redirection (a build program, an xlings refresh) that
+// inherited it would keep the caller from reading end-of-file for as long as
+// the child lives, however long after mcpp itself exited. Measured
+// (mcpp-community/mcpp#648): a build program started by
+// `emit build-database` held the caller's pipe as its descriptor 3. The copy
+// is therefore close-on-exec on POSIX and not inheritable on Windows, so a
+// child receives only descriptors 0 to 2, and 1 is standard error here.
 class StdoutToStderr {
 public:
     StdoutToStderr();
@@ -77,9 +94,18 @@ StdoutToStderr::StdoutToStderr() {
     std::fflush(stdout);
 #if defined(_WIN32)
     saved_ = ::_dup(1);
-    if (saved_ >= 0) ::_dup2(2, 1);
+    if (saved_ >= 0) {
+        // `_dup` duplicates the handle as inheritable, and CreateProcess with
+        // handle inheritance (every `_popen` and `system`) passes it on.
+        const auto h = reinterpret_cast<HANDLE>(::_get_osfhandle(saved_));
+        if (h != INVALID_HANDLE_VALUE)
+            ::SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+        ::_dup2(2, 1);
+    }
 #else
-    saved_ = ::dup(1);
+    // Not `dup`: its copy survives exec. Descriptor 3 or above, as `dup`
+    // would have chosen, so nothing else about the redirection moves.
+    saved_ = ::fcntl(1, F_DUPFD_CLOEXEC, 3);
     if (saved_ >= 0) ::dup2(2, 1);
 #endif
 }

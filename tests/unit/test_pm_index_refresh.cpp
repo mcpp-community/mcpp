@@ -62,6 +62,27 @@ package = {{
 )", name, versions, versions, versions);
     }
 
+    // A descriptor under another namespace, laid out as the index lays out
+    // `compat.*` packages: pkgs/<initial>/<namespace>.<name>.lua.
+    void publish_namespaced(std::string_view ns, std::string_view name,
+                            std::string_view versions) {
+        auto dir = index_dir() / "pkgs" / std::string(1, ns.front());
+        std::filesystem::create_directories(dir);
+        std::ofstream(dir / std::format("{}.{}.lua", ns, name)) << std::format(R"(
+package = {{
+    spec      = "1",
+    namespace = "{}",
+    name      = "{}",
+    type      = "package",
+    xpm = {{
+        linux   = {{ {} }},
+        macosx  = {{ {} }},
+        windows = {{ {} }},
+    }},
+}}
+)", ns, name, versions, versions, versions);
+    }
+
     // Age the refresh marker by writing it and back-dating it.
     void mark_refreshed(std::chrono::seconds ago = std::chrono::seconds{0}) {
         auto marker = index_dir() / ".mcpp-index-updated";
@@ -145,6 +166,35 @@ TEST(PmIndexRefresh, OfflineSuppressesEvenAGenuineMiss) {
 
     EXPECT_EQ(decide(route, spec, reg.env(), offline), RefreshReason::SuppressedOffline);
     EXPECT_FALSE(refreshes(route, spec, reg.env(), offline));
+}
+
+// mcpp-community/mcpp#648. `ftxui = "6.1.9"` omits the namespace, so the
+// exact coordinate is (mcpplibs, ftxui), which the index does not carry; the
+// resolver then reaches compat.ftxui through the deprecated bare-name rung and
+// the build succeeds from disk. The decision must walk the same rung, or every
+// build of such a manifest refreshes the index once the debounce has passed.
+TEST(PmIndexRefresh, BareNameResolvedThroughTheLegacyRungIsNotAMiss) {
+    FakeRegistry reg("legacyrung");
+    reg.publish_namespaced("compat", "ftxui", R"(["6.1.9"] = { url = "u", sha256 = "s" },)");
+    reg.mark_refreshed(std::chrono::hours{99});
+    mcpp::pm::IndexMap indices;
+    auto cfg = reg.config();
+    mcpp::pm::IndexRoute route{ &indices, "/nowhere", &cfg };
+
+    auto bare = version_dep("mcpplibs", "ftxui", "6.1.9");
+    bare.namespaceOmitted = true;
+    EXPECT_EQ(decide(route, bare, reg.env()), RefreshReason::None);
+    EXPECT_FALSE(refreshes(route, bare, reg.env()));
+
+    // A constraint is checked against the descriptor the rung found.
+    auto bareRange = version_dep("mcpplibs", "ftxui", "^7");
+    bareRange.namespaceOmitted = true;
+    EXPECT_EQ(decide(route, bareRange, reg.env()), RefreshReason::VersionMiss);
+
+    // The namespace written out states an identity: the rung does not apply,
+    // exactly as in the resolver, and the miss stands.
+    auto stated = version_dep("mcpplibs", "ftxui", "6.1.9");
+    EXPECT_EQ(decide(route, stated, reg.env()), RefreshReason::DescriptorMiss);
 }
 
 TEST(PmIndexRefresh, OfflineDoesNotMisreportAResolvableDependency) {

@@ -41,6 +41,7 @@ import mcpp.log;
 import mcpp.platform;
 import mcpp.platform.axis;
 import mcpp.pm.dep_spec;
+import mcpp.pm.dependency_selector;   // legacy_bare_candidates
 import mcpp.pm.index_contract;
 import mcpp.pm.index_route;
 import mcpp.pm.resolver;
@@ -223,6 +224,23 @@ RefreshDecision decide_for_dependency(const IndexRoute&               route,
 
     // 3. INV-3: a miss only counts when the index could have refuted it.
     auto found = lookup_descriptor(route, coords);
+
+    // 3b. THE RESOLVER'S LADDER, NOT A SHORTER ONE. After the exact coordinate
+    //     misses, the resolver tries the deprecated bare-name rung for a
+    //     version selector whose namespace was omitted (`ftxui = "6.1.9"`
+    //     reaches `compat.ftxui`, prepare.cppm). A decision that stopped at the
+    //     exact coordinate called that dependency missing while the resolver
+    //     found it on disk, so every build of such a manifest started a network
+    //     refresh once the debounce had passed (mcpp-community/mcpp#648: an
+    //     editor planning in the background waited on one for 11 minutes). The
+    //     same condition as the resolver's, for as long as the rung exists.
+    if (!found.hit && found.error.empty() && found.conclusive
+        && spec.isVersion() && spec.namespaceOmitted && !coords.empty()) {
+        auto legacy = lookup_descriptor(
+            route, mcpp::pm::legacy_bare_candidates(coords.front()));
+        if (legacy.hit) found = std::move(legacy);
+    }
+
     if (!found.error.empty()) {
         d.reason = RefreshReason::SuppressedMalformedDescriptor;
         return d;
