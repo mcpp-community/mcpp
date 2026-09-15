@@ -1978,6 +1978,12 @@ struct Manifest {
     bool                        usesModules    = true;   // refined by scanner
     bool                        usesImportStd  = true;   // refined by scanner
     std::vector<std::string>    inferredNotes;           // for `Inferred ...` banner
+    // `targets` was inferred from the source tree (no `[targets]` table), not
+    // declared. A consumer treats a package whose DECLARED targets are all
+    // programs as a tool provider that contributes nothing to its own graph
+    // (#649 E6); a package that declared nothing keeps the older reading, so an
+    // inferred `bin` from `src/main.cpp` is not taken as that statement.
+    bool                        targetsInferred = false;
 
     // Non-fatal schema warnings collected during parse (e.g. unsupported keys
     // under [targets.<name>]). The caller (prepare_build) prints these and, under

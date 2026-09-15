@@ -886,8 +886,20 @@ export int run_build_plan(BuildContext& ctx, bool verbose, bool no_cache,
         // result over in ctx.resolvedVersions; fall back to the spec only for
         // deps that never went through resolution (git, or an exact pin).
         auto rit = ctx.resolvedVersions.find(name);
+        // A git dependency has no version to announce: `spec.version` is empty
+        // for it, and the banner used to read "Compiling spike.fw v" (#649 E7).
+        // It names the reference the manifest wrote instead, shortening a
+        // commit to the length `git` itself abbreviates to.
+        auto gitReference = [&] {
+            std::string ref = spec.gitRev;
+            if (spec.gitRefKind == "rev" && ref.size() > 12) ref.resize(12);
+            return std::format("(git {} {})",
+                               spec.gitRefKind.empty() ? "rev" : spec.gitRefKind, ref);
+        };
         std::string ver = spec.isPath()
             ? "(path)"
+            : spec.isGit()
+            ? gitReference()
             : std::string("v") + (rit != ctx.resolvedVersions.end() ? rit->second
                                                                     : spec.version);
         auto it = cachedUnits.find(name);

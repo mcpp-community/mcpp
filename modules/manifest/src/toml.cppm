@@ -3799,6 +3799,7 @@ void apply_defaults_and_infer(Manifest& m, const std::filesystem::path& root) {
             t.kind = Target::Binary;
             t.main = "src/main.cpp";
             m.targets.push_back(std::move(t));
+            m.targetsInferred = true;
             m.inferredNotes.push_back(
                 std::format("target {} (bin from src/main.cpp)", m.package.name));
         } else if (hasModuleInterface) {
@@ -3806,6 +3807,7 @@ void apply_defaults_and_infer(Manifest& m, const std::filesystem::path& root) {
             t.name = m.package.name;
             t.kind = Target::Library;
             m.targets.push_back(std::move(t));
+            m.targetsInferred = true;
             m.inferredNotes.push_back(
                 std::format("target {} (lib from {} in src/)", m.package.name, moduleInterfaceExt));
         }

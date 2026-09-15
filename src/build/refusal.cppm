@@ -105,6 +105,11 @@ enum class Code {
     // Distinct from LayerOrdering, which is about the layers not stacking: here
     // they stack, and one image would link with no C++ runtime at all (#641).
     SharedLibraryCxxRuntime,
+    // The dependency graph contains a cycle of packages. Detected where the
+    // graph is resolved, so every cache mode refuses it alike (#649 E6); the
+    // build-cache key walk used to be the only place that noticed, and a
+    // `--cache=local` build of the same graph went ahead.
+    PackageCycle,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -137,6 +142,7 @@ constexpr std::string_view name(Code c) {
         case Code::ToolVersionConflict:  return "tool-version-conflict";
         case Code::SharedLibraryCxxRuntime:
                                          return "shared-library-cxx-runtime";
+        case Code::PackageCycle:         return "package-cycle";
         case Code::Other:                return "other";
     }
     return "other";
