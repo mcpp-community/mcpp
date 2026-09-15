@@ -178,6 +178,46 @@ struct ResolvedRuntimeContract {
 ResolvedRuntimeContract resolve_runtime_contract(
     const std::vector<mcpp::modgraph::PackageRoot>& packages);
 
+// A static package this build could not link into exactly one image (#646 F1).
+//
+// `images` names the shared libraries of the plan whose static closure
+// reaches the package (by target name); `program` says whether the root's own
+// images reach it as well. `make_plan` leaves such a package where it always
+// was, in the root's images, and records it here: whether that is refused or
+// reported depends on the target format, which prepare decides.
+struct StaticPlacementConflict {
+    std::string              package;   // qualified package name
+    std::vector<std::string> images;    // shared library target names
+    bool                     program = false;
+};
+
+// Where each static package of a graph is linked.
+//
+// A shared image's STATIC CLOSURE is the set of static packages reachable from
+// its package without crossing another shared package. A static package in
+// exactly one closure, which the root does not reach itself, belongs in that
+// image; one in several closures, or in one and the root's, has no single
+// image to live in (`conflicts`). Packages in no closure stay with the root.
+//
+// Indices are package indices; 0 is the root. `sharedImages` maps each shared
+// package to the number of images it produces; `boundaries` are packages that
+// are neither placed nor traversed (a distribution package's library is
+// already built).
+struct StaticPlacement {
+    std::map<std::size_t, std::size_t> intoImage;   // static package -> shared package
+    struct Conflict {
+        std::size_t              package = 0;
+        std::vector<std::size_t> images;            // shared packages reaching it
+        bool                     root = false;
+    };
+    std::vector<Conflict> conflicts;
+};
+
+StaticPlacement place_static_packages(
+    const std::map<std::size_t, std::vector<std::size_t>>& edges,
+    const std::map<std::size_t, std::size_t>&              sharedImages,
+    const std::set<std::size_t>&                           boundaries);
+
 struct BuildPlan {
     mcpp::manifest::Manifest        manifest;
     mcpp::toolchain::Toolchain      toolchain;
@@ -215,6 +255,10 @@ struct BuildPlan {
     // the failure is `relocation R_X86_64_32S ... can not be used when making
     // a shared object` on a file nobody edited.
     bool                            needsPic = false;
+    // Static packages that no single image could take (#646 F1); see
+    // `StaticPlacementConflict`. Empty for every graph without a shared
+    // library over a static package that something else reaches too.
+    std::vector<StaticPlacementConflict> staticPlacementConflicts;
     std::string                     scheduleTag = "none";
     // Whether `--accel` / `--no-accel` selected this graph's device variant
     // over `[build] accel`. The variant is in the fingerprint, so the two
@@ -428,6 +472,14 @@ package_link_objects(const BuildPlan& plan, std::string_view packageName);
 // library without a C++ runtime reads the same answer (#641).
 bool link_unit_holds_cxx(const BuildPlan& plan, const LinkUnit& lu);
 
+// Does an image of `kind` load a shared library of this plan that holds C++,
+// directly or through another shared library of the plan? Answered from the
+// link edges the plan declares (a consumer lists each shared library it links
+// among its implicit inputs), so it is the process the build will produce and
+// not a guess about it. The C++ runtime contract of programs and tests reads
+// this (#646 F3a).
+bool image_loads_cxx_shared_library(const BuildPlan& plan, LinkUnit::Kind kind);
+
 } // namespace mcpp::build
 
 namespace mcpp::build {
@@ -451,6 +503,69 @@ bool link_unit_holds_cxx(const BuildPlan& plan, const LinkUnit& lu) {
     return std::ranges::any_of(lu.objects, [&](const std::filesystem::path& o) {
         return !notCxx.contains(o.generic_string());
     });
+}
+
+StaticPlacement place_static_packages(
+    const std::map<std::size_t, std::vector<std::size_t>>& edges,
+    const std::map<std::size_t, std::size_t>&              sharedImages,
+    const std::set<std::size_t>&                           boundaries) {
+    auto closure = [&](std::size_t start) {
+        std::set<std::size_t> out;
+        std::vector<std::size_t> stack{start};
+        while (!stack.empty()) {
+            const auto at = stack.back();
+            stack.pop_back();
+            auto it = edges.find(at);
+            if (it == edges.end()) continue;
+            for (auto next : it->second) {
+                if (next == 0 || next == start) continue;
+                if (sharedImages.contains(next) || boundaries.contains(next)) continue;
+                if (out.insert(next).second) stack.push_back(next);
+            }
+        }
+        return out;
+    };
+    const auto rootClosure = closure(0);
+    std::map<std::size_t, std::vector<std::size_t>> owners;
+    for (auto const& [shared, count] : sharedImages) {
+        (void)count;
+        for (auto s : closure(shared)) owners[s].push_back(shared);
+    }
+    StaticPlacement out;
+    for (auto const& [s, images] : owners) {
+        std::size_t imageCount = 0;
+        for (auto p : images) imageCount += sharedImages.at(p);
+        const bool root = rootClosure.contains(s);
+        if (!root && images.size() == 1 && imageCount == 1)
+            out.intoImage.emplace(s, images.front());
+        else
+            out.conflicts.push_back({ .package = s, .images = images, .root = root });
+    }
+    return out;
+}
+
+bool image_loads_cxx_shared_library(const BuildPlan& plan, LinkUnit::Kind kind) {
+    std::map<std::string, const LinkUnit*> sharedByOutput;
+    for (auto const& lu : plan.linkUnits)
+        if (lu.kind == LinkUnit::SharedLibrary)
+            sharedByOutput.emplace(lu.output.lexically_normal().generic_string(), &lu);
+    if (sharedByOutput.empty()) return false;
+    for (auto const& lu : plan.linkUnits) {
+        if (lu.kind != kind) continue;
+        std::vector<const LinkUnit*> stack{&lu};
+        std::set<const LinkUnit*> seen;
+        while (!stack.empty()) {
+            const LinkUnit* at = stack.back();
+            stack.pop_back();
+            for (auto const& input : at->implicitInputs) {
+                auto it = sharedByOutput.find(input.lexically_normal().generic_string());
+                if (it == sharedByOutput.end() || !seen.insert(it->second).second) continue;
+                if (link_unit_holds_cxx(plan, *it->second)) return true;
+                stack.push_back(it->second);
+            }
+        }
+    }
+    return false;
 }
 
 namespace {
@@ -1714,6 +1829,10 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
     std::set<std::string> sharedDepPackages;
     std::map<std::size_t, std::vector<std::size_t>> sharedTargetsByPackage;
     std::map<std::string, std::size_t, std::less<>> packageIndexByName;
+    // #646 F1: static packages linked into a dependency's shared image instead
+    // of the root's, by name and by the shared package that takes them.
+    std::set<std::string> placedInImage;
+    std::map<std::size_t, std::vector<std::size_t>> staticsByImagePackage;
     for (std::size_t i = 0; i < packages.size(); ++i) {
         auto const& p = packages[i];
         packageIndexByName[qualified_package_name(p.manifest)] = i;
@@ -1827,6 +1946,69 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         }
     }
 
+    // WHERE A STATIC PACKAGE UNDER A SHARED LIBRARY IS LINKED (#646 F1).
+    //
+    // A dependency's shared library used to be linked from its own package's
+    // objects only, and every static package went into the root's images. A
+    // static package reachable only through the library then lived in the
+    // program, and the library bound to the program's copy at run time. ELF
+    // allows that, and only for a consumer that linked the package itself:
+    // measured on Linux, the same library refused `-Wl,-z,defs`, and a
+    // program that did not link the package could not `dlopen` it
+    // (`undefined symbol: x_answer`). Mach-O and PE resolve at link time, and
+    // Android's Java host loads the library before the application.
+    //
+    // So a static package in exactly one shared image's closure, which the
+    // root does not reach itself, is linked into that image. One that several
+    // images reach has no single home and is recorded; prepare refuses it
+    // where the link or load cannot succeed and reports it on ELF, where the
+    // build proceeds as it always did. The root's edges include its
+    // dev-dependencies: a test program that links a package directly keeps it.
+    {
+        auto placementEdges = directPackageDeps;
+        for (auto const& [depName, spec] : manifest.devDependencies) {
+            for (auto const& candidate : dependency_name_candidates(depName, spec)) {
+                auto it = packageIndexByName.find(candidate);
+                if (it == packageIndexByName.end() || it->second == 0) continue;
+                auto& deps = placementEdges[0];
+                if (std::ranges::find(deps, it->second) == deps.end())
+                    deps.push_back(it->second);
+                break;
+            }
+        }
+        std::map<std::size_t, std::size_t> sharedImages;
+        for (auto const& [i, targets] : sharedTargetsByPackage)
+            sharedImages[i] = targets.size();
+        // Two kinds of package are neither placed nor walked through. A
+        // distribution package's library is already built. A package that
+        // provides a target layer (a C library, a compiler runtime, a C++
+        // runtime: `provides = ["mcpp:..."]`) is beneath every image, and
+        // where its objects go is the runtime contract's decision, which
+        // #641 made (`cxx_runtime = { shared = "self-contained" }`).
+        std::set<std::size_t> boundaries;
+        for (std::size_t i = 1; i < packages.size(); ++i) {
+            auto const& pm = packages[i].manifest;
+            const bool layer = std::ranges::any_of(pm.provides, [](const std::string& p) {
+                return p.starts_with("mcpp:") || p == "hosted-standard-library";
+            });
+            if (layer || mcpp::pack::is_distribution_package(pm)) boundaries.insert(i);
+        }
+        auto placement = place_static_packages(placementEdges, sharedImages, boundaries);
+        for (auto const& [staticIndex, sharedIndex] : placement.intoImage) {
+            placedInImage.insert(qualified_package_name(packages[staticIndex].manifest));
+            staticsByImagePackage[sharedIndex].push_back(staticIndex);
+        }
+        for (auto const& conflict : placement.conflicts) {
+            StaticPlacementConflict c;
+            c.package = qualified_package_name(packages[conflict.package].manifest);
+            c.program = conflict.root;
+            for (auto sharedIndex : conflict.images)
+                for (auto targetIndex : sharedTargetsByPackage[sharedIndex])
+                    c.images.push_back(sharedDepTargets[targetIndex].target.name);
+            plan.staticPlacementConflicts.push_back(std::move(c));
+        }
+    }
+
     auto append_direct_shared_deps = [&](LinkUnit& lu, std::size_t packageIndex) {
         auto depsIt = directPackageDeps.find(packageIndex);
         if (depsIt == directPackageDeps.end()) return;
@@ -1886,6 +2068,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         linkedPackages.insert(0);
         for (auto& cu : plan.compileUnits) {
             if (sharedDepPackages.contains(cu.packageName)) continue;
+            if (placedInImage.contains(cu.packageName)) continue;
             auto it = packageIndexByName.find(cu.packageName);
             if (it == packageIndexByName.end()) continue;
             linkedPackages.insert(it->second);
@@ -1927,6 +2110,14 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         lu.loaderTagFlag = loader_tag_flag(lu.kind);
         append_package_objects(lu, dep.packageName);
         append_direct_shared_deps(lu, dep.packageIndex);
+        if (auto it = staticsByImagePackage.find(dep.packageIndex);
+            it != staticsByImagePackage.end()) {
+            for (auto staticIndex : it->second) {
+                append_package_objects(
+                    lu, qualified_package_name(packages[staticIndex].manifest));
+                append_direct_shared_deps(lu, staticIndex);
+            }
+        }
         plan.linkUnits.push_back(std::move(lu));
     }
 
@@ -1993,6 +2184,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // For binary target, also include main.cpp's object if main is present.
         for (auto& cu : plan.compileUnits) {
             if (sharedDepPackages.contains(cu.packageName)) continue;
+            if (placedInImage.contains(cu.packageName)) continue;
             if (mcpp::links_unconditionally(cu.kind)) {
                 lu.objects.push_back(cu.object);
             }
@@ -2107,6 +2299,7 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
         // is exclusive to that binary).
         for (auto& cu : plan.compileUnits) {
             if (sharedDepPackages.contains(cu.packageName)) continue;
+            if (placedInImage.contains(cu.packageName)) continue;
             if (!is_implementation_source(cu.kind)) continue;
             if (lu.entryMain && cu.source == *lu.entryMain) continue;     // own entry: already added above
             if (entryFilesAcrossTargets.contains(cu.source)) continue;     // foreign entry: skip

@@ -250,6 +250,44 @@ Contract default_contract(Role r, Format f) {
     return Contract::SelfContained;
 }
 
+// What a manifest states about the C++ runtime, read once for every role.
+struct ContractStatement {
+    std::string_view cxxRuntime;        // `cxx_runtime = "..."` or its `default`
+    std::string_view cxxRuntimeTests;   // `cxx_runtime = { tests = "..." }`
+    std::string_view cxxRuntimeShared;  // `cxx_runtime = { shared = "..." }`
+    bool             staticStdlib = true;
+};
+
+// Which images of a build load a C++ shared library the build itself makes:
+// its programs, and its test programs.
+struct CxxSharedLoad {
+    bool program = false;
+    bool tests   = false;
+};
+
+// The contract each role holds, and whether a human stated it.
+//
+// A stated contract is what the manifest said; an unstated one is a default,
+// and a default is the only thing `role_contracts` is allowed to move.
+struct RoleContracts {
+    Contract program      = Contract::SelfContained;
+    Contract tests        = Contract::SelfContained;
+    Contract intermediate = Contract::SelfContained;
+    Contract shared       = Contract::SelfContained;
+    bool     programStated = false;
+    bool     testsStated   = false;
+    bool     sharedStated  = false;
+};
+
+// THE ONE DERIVATION of every role's contract, for the flag assembly and for
+// the refusal that reads the same answer before anything compiles.
+RoleContracts role_contracts(const ContractStatement& s, Format f, CxxSharedLoad load);
+
+// The role whose STATED contract splits the process's C++ runtime: on ELF, a
+// self-contained program or test that loads a C++ shared library coupled to a
+// shared runtime. Empty when no role does.
+std::optional<Role> runtime_split(const RoleContracts& c, Format f, CxxSharedLoad load);
+
 // The contract a manifest STATES for shared libraries, or nothing when it
 // states none and the role's default applies.
 //
@@ -267,6 +305,57 @@ std::optional<Contract> stated_shared_library_contract(std::string_view cxxRunti
     if (cxxRuntime.empty() && staticStdlib) return std::nullopt;
     return parse_contract(cxxRuntime).value_or(
         staticStdlib ? default_contract(Role::Distributable, f) : Contract::HostCoupled);
+}
+
+RoleContracts role_contracts(const ContractStatement& s, Format f, CxxSharedLoad load) {
+    RoleContracts c;
+    c.programStated = !s.cxxRuntime.empty() || !s.staticStdlib;
+    c.program = parse_contract(s.cxxRuntime).value_or(
+        s.staticStdlib ? default_contract(Role::Distributable, f) : Contract::HostCoupled);
+    c.intermediate = c.program;
+    c.testsStated = c.programStated || !s.cxxRuntimeTests.empty();
+    c.tests = parse_contract(s.cxxRuntimeTests).value_or(c.program);
+    c.sharedStated = c.programStated || !s.cxxRuntimeShared.empty();
+    c.shared = stated_shared_library_contract(s.cxxRuntime, s.cxxRuntimeShared,
+                                              s.staticStdlib, f)
+                   .value_or(default_contract(Role::SharedLibrary, f));
+
+    // ONE PROCESS, ONE C++ RUNTIME (#646 F3a).
+    //
+    // The ELF defaults are right one at a time and wrong together. A program
+    // is self-contained and a shared library couples to the toolchain's
+    // runtime, so a program that LOADS such a library holds a static runtime
+    // and a shared one. The executable exports the runtime symbols the library
+    // references, the library binds some of them to the program's copy and
+    // keeps the rest, and the two halves disagree about shared state.
+    // Measured on Linux x86_64 with llvm@22.1.8: the program aborted with
+    // `std::bad_cast` (exit 134) as soon as the library formatted a string;
+    // with gcc@16.1.0 it ran with 900 libstdc++ symbols interposed.
+    //
+    // So a role nobody stated takes the shared library's contract when its
+    // image loads a C++ shared library this build makes. The process already
+    // needs that runtime through the library's own NEEDED entry, so no
+    // deployment gains a requirement; what changes is that the program binds
+    // to the same copy. A stated contract is never changed here; one that
+    // splits the runtime is refused by the caller (`runtime_split`).
+    if (f == Format::Elf) {
+        if (load.program && !c.programStated) c.program = c.shared;
+        if (load.tests && !c.testsStated)     c.tests   = c.shared;
+    }
+    return c;
+}
+
+std::optional<Role> runtime_split(const RoleContracts& c, Format f, CxxSharedLoad load) {
+    if (f != Format::Elf) return std::nullopt;
+    // A shared library that embeds a hidden private copy keeps its runtime to
+    // itself (`hide_static_cxx_runtime`); that is the documented private-copy
+    // arrangement, not a split. A coupled library shares the process's.
+    if (c.shared == Contract::SelfContained) return std::nullopt;
+    if (load.program && c.programStated && c.program == Contract::SelfContained)
+        return Role::Distributable;
+    if (load.tests && c.testsStated && c.tests == Contract::SelfContained)
+        return Role::Test;
+    return std::nullopt;
 }
 
 // ---------------------------------------------------------------- Layer 3
@@ -294,6 +383,13 @@ struct MechanismInput {
     // decoration. Derived by `msvc_wants_static_crt`, which is also what
     // emits the flag.
     bool             msvcStaticCrt = false;
+    // MSVC STL only: does mcpp pass a CRT model (`/MT` or `/MD`) to this
+    // compiler? True for cl.exe. FALSE FOR CLANG ON THE MSVC ABI: that driver
+    // speaks the GNU dialect, mcpp emits no runtime flag for it, and clang
+    // then links the static CRT (`-defaultlib:libcmt`, measured with the
+    // 22.1.8 driver). The table must report the model the compiler was given,
+    // not the model `cl.exe` would have been given (#649 E10).
+    bool             msvcCrtModelEmitted = true;
     // Toolchain capability id: "libstdc++", "libc++", or an MSVC STL spelling.
     std::string_view stdlibId;
     Format           format = Format::Elf;
@@ -625,6 +721,26 @@ Mechanism resolve(const MechanismInput& in) {
             //
             // No unit flags: the model is a COMPILE flag on every TU, not
             // something added to the link line.
+            //
+            // CLANG ON THE MSVC ABI IS GIVEN NO MODEL, so the table records
+            // the one its driver chooses. The rows below were written for
+            // cl.exe, and for this row they recorded `host-coupled` beside an
+            // artifact that imports no vcruntime DLL at all (#649 E10). The
+            // artifact is left as it is; the record, and an explicit request
+            // the row does not deliver, now say what it is.
+            if (!in.msvcCrtModelEmitted) {
+                m.effective = Contract::SelfContained;
+                if (in.requested != Contract::SelfContained && in.explicitRequest) {
+                    m.degraded   = true;
+                    m.diagnostic = std::format(
+                        "cxx_runtime = \"{}\" is not delivered for clang on the "
+                        "MSVC ABI: mcpp passes this driver no CRT model, and clang "
+                        "links the static CRT (libcmt) by default. Use msvc@system "
+                        "for the dynamic CRT; using self-contained",
+                        to_string(in.requested));
+                }
+                return m;
+            }
             m.effective = in.msvcStaticCrt ? Contract::SelfContained
                                            : Contract::HostCoupled;
             if (in.requested == Contract::SelfContained && !in.msvcStaticCrt) {

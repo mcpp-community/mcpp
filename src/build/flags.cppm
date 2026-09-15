@@ -1057,28 +1057,27 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // its documented meaning has always been exactly self-contained vs the
         // dynamic system runtime. An explicit `cxx_runtime` wins.
         //
-        // The role defaults come from `dist::default_contract` rather than
-        // being spelled again here. They were spelled again here, and that
-        // second derivation is why `default_contract` sat with no caller while
-        // this file quietly disagreed with it about shared libraries.
-        const dist::Contract base =
-            dist::parse_contract(bc.cxxRuntime).value_or(
-                bc.staticStdlib
-                    ? dist::default_contract(dist::Role::Distributable, format)
-                    : dist::Contract::HostCoupled);
-        const dist::Contract testsContract =
-            dist::parse_contract(bc.cxxRuntimeTests).value_or(base);
-        // A project-wide statement (`cxx_runtime = "…"` or `static_stdlib =
-        // false`) applies to shared libraries too — a human said what the
-        // whole project promises. Only when nobody said anything does the
-        // role's own default apply, which is the case that changes on ELF.
-        // The statement is read by `stated_shared_library_contract`, which the
-        // refusal of a C++ shared library over a graph runtime reads too (#641).
-        const bool projectWideExplicit = !bc.cxxRuntime.empty() || !bc.staticStdlib;
-        const dist::Contract sharedContract =
-            dist::stated_shared_library_contract(bc.cxxRuntime, bc.cxxRuntimeShared,
-                                                 bc.staticStdlib, format)
-                .value_or(dist::default_contract(dist::Role::SharedLibrary, format));
+        // Every role's contract comes from `dist::role_contracts`, the one
+        // derivation the refusal of a split runtime reads as well. The role
+        // defaults were spelled here once, and that second derivation is why
+        // `default_contract` sat with no caller while this file quietly
+        // disagreed with it about shared libraries. A project-wide statement
+        // (`cxx_runtime = "..."` or `static_stdlib = false`) applies to shared
+        // libraries too; only when nobody said anything does a role's own
+        // default apply, and on ELF a program or test that loads a C++ shared
+        // library of this build takes that library's contract (#646 F3a).
+        const dist::CxxSharedLoad cxxSharedLoad{
+            .program = mcpp::build::image_loads_cxx_shared_library(plan, LinkUnit::Binary),
+            .tests   = mcpp::build::image_loads_cxx_shared_library(plan, LinkUnit::TestBinary),
+        };
+        const dist::RoleContracts contracts = dist::role_contracts(
+            dist::ContractStatement{
+                .cxxRuntime       = bc.cxxRuntime,
+                .cxxRuntimeTests  = bc.cxxRuntimeTests,
+                .cxxRuntimeShared = bc.cxxRuntimeShared,
+                .staticStdlib     = bc.staticStdlib,
+            },
+            format, cxxSharedLoad);
 
         // Archive lookup, directory half. LLVM lays these out either directly
         // under lib/ (the macOS packages) or under lib/<llvm-triple>/ (the
@@ -1134,6 +1133,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         // ignoring a role override.
         mi.msvcStaticCrt  = mcpp::toolchain::msvc_wants_static_crt(
                                 bc.linkage, bc.cxxRuntime);
+        // The model is emitted only for the `msvc` dialect (above); clang on
+        // the MSVC ABI receives none and links the static CRT (#649 E10).
+        mi.msvcCrtModelEmitted = isMsvcDialect;
         mi.mingw          = isMingwTc;
         mi.macosFloor     = !macosDeploymentTarget.empty();
         // READ from the one value prepare resolved. The SDK being located for
@@ -1233,9 +1235,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         };
 
         const bool wantsArchives =
-            (base == dist::Contract::SelfContained
-             || testsContract == dist::Contract::SelfContained
-             || sharedContract == dist::Contract::SelfContained)
+            (contracts.program == dist::Contract::SelfContained
+             || contracts.tests == dist::Contract::SelfContained
+             || contracts.intermediate == dist::Contract::SelfContained
+             || contracts.shared == dist::Contract::SelfContained)
             && caps.stdlib_id == "libc++";
         // THE ARCHIVES A LINKER SCRIPT OPENS, by file name.
         //
@@ -1317,9 +1320,9 @@ CompileFlags compute_flags(const BuildPlan& plan) {
 
         // "Explicit" = a human wrote it down. `static_stdlib = false` counts:
         // nobody sets a flag to its default to get non-default behavior.
-        const bool explicitBase   = projectWideExplicit;
-        const bool explicitTests  = explicitBase || !bc.cxxRuntimeTests.empty();
-        const bool explicitShared = explicitBase || !bc.cxxRuntimeShared.empty();
+        const bool explicitBase   = contracts.programStated;
+        const bool explicitTests  = contracts.testsStated;
+        const bool explicitShared = contracts.sharedStated;
 
         // Report a role's degradation only if this build HAS that role.
         //
@@ -1337,10 +1340,10 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         bool wantsToolchainRuntime = false;
 
         for (auto [role, requested, wasAsked] : {
-                 std::tuple{dist::Role::Distributable, base,           explicitBase},
-                 std::tuple{dist::Role::Test,          testsContract,  explicitTests},
-                 std::tuple{dist::Role::Intermediate,  base,           explicitBase},
-                 std::tuple{dist::Role::SharedLibrary, sharedContract, explicitShared}}) {
+                 std::tuple{dist::Role::Distributable, contracts.program,      explicitBase},
+                 std::tuple{dist::Role::Test,          contracts.tests,        explicitTests},
+                 std::tuple{dist::Role::Intermediate,  contracts.intermediate, explicitBase},
+                 std::tuple{dist::Role::SharedLibrary, contracts.shared,       explicitShared}}) {
             mi.role            = role;
             mi.requested       = requested;
             mi.explicitRequest = wasAsked;

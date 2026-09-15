@@ -105,6 +105,18 @@ enum class Code {
     // Distinct from LayerOrdering, which is about the layers not stacking: here
     // they stack, and one image would link with no C++ runtime at all (#641).
     SharedLibraryCxxRuntime,
+    // A program or test whose manifest states a self-contained C++ runtime
+    // loads a C++ shared library of the same build that couples to a shared
+    // runtime, so the process would hold two C++ runtimes (#646 F3a). Distinct
+    // from SharedLibraryCxxRuntime, where the library has none: here both
+    // images have one and they are different copies.
+    ProgramCxxRuntimeSplit,
+    // A static package is reachable from two images of one build (two shared
+    // libraries, or a shared library and the program) on a format whose link
+    // or load cannot share one copy between them (#646 F1). Distinct from
+    // ExclusiveCapability, which is about two implementations of an interface:
+    // here it is one package that has no single image to live in.
+    StaticPackageInTwoImages,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -137,6 +149,10 @@ constexpr std::string_view name(Code c) {
         case Code::ToolVersionConflict:  return "tool-version-conflict";
         case Code::SharedLibraryCxxRuntime:
                                          return "shared-library-cxx-runtime";
+        case Code::ProgramCxxRuntimeSplit:
+                                         return "program-cxx-runtime-split";
+        case Code::StaticPackageInTwoImages:
+                                         return "static-package-in-two-images";
         case Code::Other:                return "other";
     }
     return "other";
