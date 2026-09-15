@@ -955,6 +955,98 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
         return closureCache.emplace(object, std::move(names)).first->second;
     };
 
+    // The objects a link unit links, as absolute paths. The staged `std`
+    // module objects are added to every unit: the emitter appends them to
+    // each C++ image that imports `std` and records them nowhere else, and an
+    // image that did not link them cannot define the names they define, so
+    // listing them for every unit attributes nothing that is not there.
+    auto objects_of = [&](const mcpp::build::LinkUnit& lu) {
+        std::set<std::filesystem::path> out;
+        for (auto const& o : lu.objects)
+            out.insert((o.is_absolute() ? o : plan.outputDir / o).lexically_normal());
+        for (auto name : {"std.o", "std.compat.o"})
+            out.insert((plan.outputDir / "obj" / name).lexically_normal());
+        return out;
+    };
+    std::map<std::filesystem::path, std::vector<std::string>> objectSymbolCache;
+    auto object_defines = [&](const std::filesystem::path& object)
+        -> const std::vector<std::string>& {
+        auto it = objectSymbolCache.find(object);
+        if (it != objectSymbolCache.end()) return it->second;
+        std::vector<std::string> names;
+        std::error_code ec;
+        if (std::filesystem::exists(object, ec))
+            if (auto symbols = mcpp::platform::elf::defined_object_symbols(object))
+                names = std::move(*symbols);
+        return objectSymbolCache.emplace(object, std::move(names)).first->second;
+    };
+    // The installation the toolchain's compiler belongs to, canonical, for
+    // the second rule below: `<root>/bin/<compiler>`, whose C++ runtime
+    // library and module source both live under `<root>`.
+    std::filesystem::path toolchainRoot;
+    {
+        std::error_code ec;
+        auto compiler = std::filesystem::weakly_canonical(plan.toolchain.binaryPath, ec);
+        if (!ec && compiler.has_parent_path())
+            toolchainRoot = compiler.parent_path().parent_path();
+    }
+    auto in_toolchain = [&](const std::filesystem::path& file) {
+        if (toolchainRoot.empty()) return false;
+        std::error_code ec;
+        auto canonical = std::filesystem::weakly_canonical(file, ec);
+        if (ec) return false;
+        auto rel = canonical.lexically_relative(toolchainRoot);
+        return !rel.empty() && *rel.begin() != "..";
+    };
+    // For each provider in `resolution` that is a shared library of this
+    // plan: the names defined by objects linked into both it and `image`.
+    //
+    // AND ONE PROVIDER THAT IS NOT A LINK UNIT: the toolchain's own C++
+    // runtime. The staged `std` module object is compiled from the module
+    // source that runtime ships, and GCC 16's `libstdc++.so.6` exports the
+    // same initialisers (`_ZGIW3std@@GLIBCXX_3.4.35`, measured), so a program
+    // coupled to that runtime defines them twice by construction. The names
+    // excused are the ones the std objects define, and only against a library
+    // that belongs to the toolchain's own installation.
+    auto shared_plan_definitions =
+        [&](const mcpp::build::LinkUnit& image,
+            const mcpp::platform::elf::RuntimeResolution& resolution) {
+        std::map<std::string, std::set<std::string>> out;
+        const auto imageObjects = objects_of(image);
+        for (auto const& object : resolution.objects) {
+            if (in_toolchain(object.artifact)) {
+                auto& names = out[object.artifact.string()];
+                for (auto name : {"std.o", "std.compat.o"})
+                    for (auto const& defined :
+                         object_defines((plan.outputDir / "obj" / name).lexically_normal()))
+                        names.insert(defined);
+                continue;
+            }
+            const mcpp::build::LinkUnit* provider = nullptr;
+            for (auto const& lu : plan.linkUnits) {
+                if (lu.kind != mcpp::build::LinkUnit::SharedLibrary) continue;
+                std::vector<std::filesystem::path> names{plan.outputDir / lu.output};
+                for (auto const& alias : lu.runtimeAliases)
+                    names.push_back(plan.outputDir / alias);
+                for (auto const& candidate : names) {
+                    std::error_code ec;
+                    if (std::filesystem::equivalent(candidate, object.artifact, ec)) {
+                        provider = &lu;
+                        break;
+                    }
+                }
+                if (provider) break;
+            }
+            if (!provider) continue;
+            auto& names = out[object.artifact.string()];
+            for (auto const& o : objects_of(*provider)) {
+                if (!imageObjects.contains(o)) continue;
+                for (auto const& name : object_defines(o)) names.insert(name);
+            }
+        }
+        return out;
+    };
+
     for (auto const& [artifact, oldStamp] : before) {
         auto now = stamp(artifact);
         if (!now.exists) continue;
@@ -1079,6 +1171,18 @@ check_symbol_provision(const mcpp::build::BuildPlan& plan,
         for (auto const& conflict : all)
             if (conflict.isWeak) ++report.sharedWeak;
         std::erase_if(all, [](auto const& c) { return c.isWeak; });
+        // WHAT THIS BUILD PUT INTO BOTH IMAGES ON PURPOSE (#646 F3).
+        //
+        // A provider that is itself a link unit of this plan may define a
+        // name from an object this image links as well. The `std` module's
+        // object is linked into every C++ image that imports `std`, so its
+        // empty initialiser is defined twice in a program over a C++ shared
+        // library by construction; reporting it made `--strict` unusable for
+        // that shape. Attributed by the objects both units link, never by
+        // the shape of the name.
+        if (unit && !all.empty())
+            report.sharedPlanDefinitions = sp::drop_shared_plan_definitions(
+                all, shared_plan_definitions(*unit, resolution));
         report.conflicts = std::move(all);
         report.status = report.conflicts.empty() ? sp::Status::Clean
                                                  : sp::Status::Conflict;

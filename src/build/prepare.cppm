@@ -12019,8 +12019,10 @@ prepare_build(bool print_fingerprint,
         // construction the fingerprint promised (stdFlagAndDialect above).
         // #422: the CRT model reaches the std module too. Derived from the
         // SAME expression the project's TUs use (flags.cppm), through the one
-        // helper, so the two cannot drift. Non-MSVC dialects yield "" and the
-        // command is unchanged.
+        // helper, so the two cannot drift. A GNU dialect yields "-static" or ""
+        // here, and the gcc and clang std module builders do not read it, so
+        // their commands are unchanged; clang on the MSVC ABI is given no CRT
+        // model at all (see `MechanismInput::msvcCrtModelEmitted`).
         const auto& stdDialect = mcpp::toolchain::dialect_for(*tc);
         const auto stdCrt = mcpp::toolchain::msvc_crt_flag(
             stdDialect, mcpp::toolchain::msvc_wants_static_crt(
@@ -12457,6 +12459,123 @@ prepare_build(bool print_fingerprint,
                 "       type information.",
                 names, withoutRuntime.size() == 1 ? "is" : "are",
                 providerName, provider.package.version, constrained, staticRemedy));
+        }
+    }
+
+    // ONE PROCESS, ONE C++ RUNTIME; ONE STATIC PACKAGE, ONE IMAGE (#646).
+    //
+    // Both are decided by `make_plan` and the contract table; this is where a
+    // decision that cannot be delivered stops the build before it compiles.
+    {
+        namespace dist = mcpp::build::dist;
+        auto const& bc = ctx.plan.manifest.buildConfig;
+        const auto format = dist::format_for(
+            tc->targetTriple,
+            mcpp::platform::is_windows ? dist::Format::Pe
+            : mcpp::platform::is_macos ? dist::Format::MachO
+                                       : dist::Format::Elf);
+        const dist::CxxSharedLoad load{
+            .program = mcpp::build::image_loads_cxx_shared_library(
+                ctx.plan, mcpp::build::LinkUnit::Binary),
+            .tests   = mcpp::build::image_loads_cxx_shared_library(
+                ctx.plan, mcpp::build::LinkUnit::TestBinary),
+        };
+        const auto contracts = dist::role_contracts(
+            dist::ContractStatement{
+                .cxxRuntime       = bc.cxxRuntime,
+                .cxxRuntimeTests  = bc.cxxRuntimeTests,
+                .cxxRuntimeShared = bc.cxxRuntimeShared,
+                .staticStdlib     = bc.staticStdlib,
+            },
+            format, load);
+        // F3a. A stated self-contained program over a coupled C++ shared
+        // library of this build: the program would carry a static C++ runtime
+        // and the library would load a shared one. The unstated case needs no
+        // refusal, because `role_contracts` then gives the program the
+        // library's contract.
+        if (auto role = dist::runtime_split(contracts, format, load)) {
+            std::string libraries;
+            for (auto const& lu : ctx.plan.linkUnits) {
+                if (lu.kind != mcpp::build::LinkUnit::SharedLibrary) continue;
+                if (!mcpp::build::link_unit_holds_cxx(ctx.plan, lu)) continue;
+                libraries += (libraries.empty() ? "'" : ", '") + lu.targetName + "'";
+            }
+            const bool tests = *role == dist::Role::Test;
+            refusal::record(refusal::Code::ProgramCxxRuntimeSplit);
+            return std::unexpected(std::format(
+                "this build's {} state a self-contained C++ runtime and load the C++ "
+                "shared library {}, which is linked against the {} C++ runtime.\n"
+                "       The process would hold two C++ runtimes: the program exports the "
+                "runtime symbols the\n"
+                "       library references, the library binds some of them there and keeps "
+                "the rest, and the two\n"
+                "       halves disagree about shared state (measured: a string formatted in "
+                "the library aborts\n"
+                "       with std::bad_cast).\n"
+                "       Remove the self-contained statement for {} (the `{}` value of "
+                "[build] cxx_runtime), and\n"
+                "       they take the shared library's contract, or give the shared library "
+                "a private copy of the\n"
+                "       runtime:\n"
+                "\n"
+                "           [build]\n"
+                "           cxx_runtime = {{ shared = \"self-contained\" }}",
+                tests ? "tests" : "programs",
+                libraries.empty() ? std::string("'(unnamed)'") : libraries,
+                dist::to_string(contracts.shared),
+                tests ? "tests" : "programs", tests ? "tests" : "default"));
+        }
+
+        // F1. A static package that several images reach. Refused where the
+        // build cannot work (Mach-O and PE resolve every reference at link
+        // time; Android's Java host loads an application's shared library
+        // before anything that could supply the package), reported on other
+        // ELF rows, where the library binds to the program's copy at run time
+        // as it always has.
+        if (!ctx.plan.staticPlacementConflicts.empty()) {
+            const bool applicationRow = std::ranges::any_of(ctx.plan.linkUnits,
+                [](auto const& lu) {
+                    return lu.kind == mcpp::build::LinkUnit::SharedLibrary
+                        && !lu.dependencyOwned && lu.entryMain.has_value();
+                });
+            const bool refuse = format == dist::Format::MachO
+                             || format == dist::Format::Pe || applicationRow;
+            std::string listing;
+            for (auto const& c : ctx.plan.staticPlacementConflicts) {
+                std::string reachers;
+                if (c.program) reachers = "the program";
+                for (auto const& image : c.images)
+                    reachers += (reachers.empty() ? "'" : ", '") + image + "'";
+                listing += std::format("       '{}' is reached by {}\n", c.package, reachers);
+            }
+            const std::string first = ctx.plan.staticPlacementConflicts.front().package;
+            const std::string remedy = std::format(
+                "       Link the package shared, so that every image loads one copy: on its "
+                "edge in [dependencies],\n"
+                "\n"
+                "           {} = {{ ..., linkage = \"shared\" }}\n"
+                "\n"
+                "       or as the package's own default, in its manifest:\n"
+                "\n"
+                "           [targets.<name>]\n"
+                "           linkage = \"shared\"", first);
+            if (refuse) {
+                refusal::record(refusal::Code::StaticPackageInTwoImages);
+                return std::unexpected(std::format(
+                    "a static package is linked into more than one image of this build, "
+                    "and on this target\n"
+                    "       an image cannot use another image's copy:\n{}{}",
+                    listing, remedy));
+            }
+            mcpp::diag::degraded("build/static-placement",
+                std::format("a static package is reachable from more than one image of "
+                            "this build and is linked into the program only:\n{}",
+                            listing),
+                "the shared libraries bind to the program's copy at run time, which only "
+                "an ELF process whose program links the package can do; the same graph "
+                "is refused on Mach-O, PE and the Android application row",
+                std::format("give the package the shared form, e.g. {} = {{ ..., linkage "
+                            "= \"shared\" }}", first));
         }
     }
 

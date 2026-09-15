@@ -403,6 +403,8 @@ a program classifying the outcome reads `reason`:
 | `shared-library-cxx-runtime` | a dependency's C++ shared library in a graph whose C++ runtime is a package, with no private copy stated |
 | `offline-download-required` | the run is offline and the plan needs a download: a toolchain, a package, a git revision or the package index |
 | `package-cycle` | the dependency graph contains a cycle of packages; the message names its edges |
+| `program-cxx-runtime-split` | a program or test that states a self-contained C++ runtime loads a C++ shared library of the build that couples to a shared one *(2026.9.16.1+)* |
+| `static-package-in-two-images` | a static package several images of the build reach, on a target where an image cannot use another image's copy *(2026.9.16.1+)* |
 | `other` | a refusal whose branch has not been given a token yet |
 
 **Exit 0 whenever the question was answered, including "refused".** "Would

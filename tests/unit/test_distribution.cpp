@@ -817,3 +817,120 @@ TEST(Distribution, WasmIsSelfContainedByConstructionAndSaysNothing) {
     // second answer to a question the driver has already answered.
     EXPECT_TRUE(m.unitFlags.empty()) << m.unitFlags;
 }
+
+// ---------------------------------------------------------------------------
+// #646 F3a -- one process, one C++ runtime.
+//
+// The ELF defaults give a program `self-contained` and a shared library
+// `toolchain-coupled`. Each is right alone; a program that LOADS such a library
+// held two C++ runtimes, and with llvm@22.1.8 it aborted with std::bad_cast.
+// An unstated program or test contract takes the shared library's when its
+// image loads a C++ shared library of the build.
+TEST(Distribution, AProgramThatLoadsACxxSharedLibraryTakesItsContractOnElf) {
+    const dist::ContractStatement nothing{};
+    auto c = dist::role_contracts(nothing, dist::Format::Elf,
+                                  {.program = true, .tests = true});
+    EXPECT_EQ(c.shared,  dist::Contract::ToolchainCoupled);
+    EXPECT_EQ(c.program, dist::Contract::ToolchainCoupled);
+    EXPECT_EQ(c.tests,   dist::Contract::ToolchainCoupled);
+    // The intermediate role links no runtime and keeps the program default.
+    EXPECT_EQ(c.intermediate, dist::Contract::SelfContained);
+    EXPECT_FALSE(c.programStated);
+    EXPECT_FALSE(dist::runtime_split(c, dist::Format::Elf,
+                                     {.program = true, .tests = true}).has_value());
+}
+
+// Nothing moves for a program that loads no C++ shared library: the default
+// that makes a shipped binary portable is untouched.
+TEST(Distribution, AProgramThatLoadsNoCxxSharedLibraryKeepsItsDefault) {
+    auto c = dist::role_contracts({}, dist::Format::Elf, {});
+    EXPECT_EQ(c.program, dist::Contract::SelfContained);
+    EXPECT_EQ(c.tests,   dist::Contract::SelfContained);
+    auto onlyTests = dist::role_contracts({}, dist::Format::Elf, {.tests = true});
+    EXPECT_EQ(onlyTests.program, dist::Contract::SelfContained);
+    EXPECT_EQ(onlyTests.tests,   dist::Contract::ToolchainCoupled);
+}
+
+// Mach-O and PE keep their table: Mach-O's shared default is already
+// self-contained (the F2 question is measured separately), and PE resolves
+// imports per DLL.
+TEST(Distribution, TheFollowingRuleIsElfOnly) {
+    for (auto f : {dist::Format::MachO, dist::Format::Pe, dist::Format::Wasm}) {
+        auto c = dist::role_contracts({}, f, {.program = true, .tests = true});
+        EXPECT_EQ(c.program, dist::Contract::SelfContained);
+        EXPECT_FALSE(dist::runtime_split(c, f, {.program = true}).has_value());
+    }
+}
+
+// A STATED contract is never moved. A stated self-contained program over a
+// coupled C++ shared library is the split, and is named for the caller to
+// refuse; a stated self-contained project (the library self-contained too) is
+// the documented private-copy arrangement and is not.
+TEST(Distribution, AStatedSelfContainedProgramOverACoupledLibraryIsASplit) {
+    const dist::ContractStatement split{
+        .cxxRuntime = "self-contained", .cxxRuntimeShared = "toolchain-coupled"};
+    auto c = dist::role_contracts(split, dist::Format::Elf, {.program = true});
+    EXPECT_EQ(c.program, dist::Contract::SelfContained);
+    EXPECT_TRUE(c.programStated);
+    auto role = dist::runtime_split(c, dist::Format::Elf, {.program = true});
+    ASSERT_TRUE(role.has_value());
+    EXPECT_EQ(*role, dist::Role::Distributable);
+
+    const dist::ContractStatement whole{.cxxRuntime = "self-contained"};
+    auto w = dist::role_contracts(whole, dist::Format::Elf, {.program = true});
+    EXPECT_EQ(w.shared, dist::Contract::SelfContained);
+    EXPECT_FALSE(dist::runtime_split(w, dist::Format::Elf, {.program = true}).has_value());
+
+    const dist::ContractStatement tests{.cxxRuntimeTests = "self-contained"};
+    auto t = dist::role_contracts(tests, dist::Format::Elf, {.tests = true});
+    auto testRole = dist::runtime_split(t, dist::Format::Elf, {.tests = true});
+    ASSERT_TRUE(testRole.has_value());
+    EXPECT_EQ(*testRole, dist::Role::Test);
+}
+
+// `static_stdlib = false` is a statement for every role: all of them are
+// host-coupled and nothing splits.
+TEST(Distribution, TheOlderSpellingStatesEveryRole) {
+    const dist::ContractStatement host{.staticStdlib = false};
+    auto c = dist::role_contracts(host, dist::Format::Elf, {.program = true, .tests = true});
+    EXPECT_EQ(c.program, dist::Contract::HostCoupled);
+    EXPECT_EQ(c.shared,  dist::Contract::HostCoupled);
+    EXPECT_FALSE(dist::runtime_split(c, dist::Format::Elf, {.program = true}).has_value());
+}
+
+// ---------------------------------------------------------------------------
+// #649 E10 -- clang on the MSVC ABI is given no CRT model, and its driver links
+// the static CRT (`-defaultlib:libcmt`). The table recorded `host-coupled`
+// beside an artifact that imports no vcruntime DLL. It now records what the
+// row delivers, and an explicit request the row does not deliver says so.
+TEST(Distribution, ClangOnTheMsvcAbiRecordsTheStaticCrtItsDriverLinks) {
+    dist::MechanismInput in;
+    in.format              = dist::Format::Pe;
+    in.stdlibId            = "msvc";
+    in.msvcCrtModelEmitted = false;
+
+    for (auto requested : {dist::Contract::SelfContained,
+                           dist::Contract::HostCoupled,
+                           dist::Contract::ToolchainCoupled}) {
+        in.requested       = requested;
+        in.explicitRequest = false;
+        auto quiet = dist::resolve(in);
+        EXPECT_EQ(quiet.effective, dist::Contract::SelfContained);
+        EXPECT_FALSE(quiet.degraded);
+        EXPECT_FALSE(quiet.deployToolchainRuntime);
+        EXPECT_TRUE(quiet.unitFlags.empty());
+    }
+
+    in.explicitRequest = true;
+    in.requested = dist::Contract::HostCoupled;
+    auto undelivered = dist::resolve(in);
+    EXPECT_EQ(undelivered.effective, dist::Contract::SelfContained);
+    EXPECT_TRUE(undelivered.degraded);
+    EXPECT_NE(undelivered.diagnostic.find("not delivered"), std::string::npos)
+        << undelivered.diagnostic;
+    EXPECT_NE(undelivered.diagnostic.find("libcmt"), std::string::npos)
+        << undelivered.diagnostic;
+
+    in.requested = dist::Contract::SelfContained;
+    EXPECT_FALSE(dist::resolve(in).degraded);
+}

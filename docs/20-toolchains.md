@@ -1015,6 +1015,27 @@ A project-wide `cxx_runtime = "…"` (or `static_stdlib = false`) applies to sha
 libraries too: a human said what the whole project promises. The format-specific
 default applies only when nobody said anything.
 
+**A program that loads a C++ shared library** (mcpp 2026.9.16.1+). On ELF the two
+defaults above disagree inside one process: a self-contained program over a
+toolchain-coupled C++ shared library holds a static C++ runtime and a shared one.
+The executable exports the runtime symbols the library references, the library
+binds some of them to the program's copy and keeps the rest, and the halves
+disagree about shared state; measured with `llvm@22.1.8`, such a program aborted
+with `std::bad_cast` the first time the library formatted a string, and with
+`gcc@16.1.0` it ran with 900 libstdc++ symbols interposed. So on ELF a program or
+test whose contract nobody stated takes the shared library's contract when it
+loads a C++ shared library the build makes, directly or through another one. The
+process already needs that runtime through the library's own `NEEDED` entry, so
+no deployment gains a requirement; `resolution.json` records the resulting
+contract under `runtime.cxx_runtime_by_role`.
+
+A stated contract is never changed. A program or test that **states**
+`self-contained` while loading a C++ shared library coupled to a shared runtime
+is refused before compiling (reason `program-cxx-runtime-split`,
+[50](50-machine-output.md)); the ways out are to remove the statement, or to give
+the shared library a private copy with `cxx_runtime = { shared = "self-contained" }`,
+which keeps each runtime inside its own image.
+
 **A dependency's shared library over a C++ runtime that is a package** (mcpp
 2026.9.15.2+). When a package in the graph supplies the C++ layer (`llvm.libcxx`,
 [22](22-target-side.md)), its objects are linked into the program, and it compiles
@@ -1085,6 +1106,17 @@ static CRT leaves no DLL to couple to — so it is reported and resolved to
 `self-contained`. `mcpp pack` enforces the other half: a mode that bundles
 nothing (`--mode system`, `--mode static`) cannot deliver `toolchain-coupled`
 and refuses.
+
+**Clang on the MSVC ABI** (the `llvm` row of `x86_64-windows-msvc`, mcpp
+2026.9.16.1+ for the record). The table above describes `cl.exe`, the one
+compiler mcpp passes a CRT model to. Clang on the MSVC ABI speaks the GNU dialect
+and receives no model, and its driver links the static CRT (`-defaultlib:libcmt`):
+a program built on this row imports no `vcruntime140.dll`, `msvcp140.dll` or
+`api-ms-win-crt-*`, and each DLL carries its own CRT. The row is therefore
+`self-contained` whatever `cxx_runtime` says, `resolution.json` records it so, and
+an explicit `host-coupled` or `toolchain-coupled` prints that the row does not
+deliver it. A project that needs the dynamic CRT on the MSVC ABI builds with
+`msvc@system`.
 
 **Scope.** The contract governs the C++ runtime only. Static **libc** is a separate
 axis (`linkage = "static"` / `--static`, e.g. a musl target), and the deployment

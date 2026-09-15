@@ -137,15 +137,37 @@ struct DynamicSymbol {
     // dynamic symbol table therefore has exactly one cause — the linker
     // exported it so that some shared object's reference would bind to it.
     bool          isFunc = false;
-    // STB_WEAK. A vague-linkage definition -- a template instantiation, an
-    // inline function, a vtable -- which the C++ ABI emits into every
-    // translation unit that needs it and expects the loader to unify across
-    // the process. That is the intended behaviour, not a leak, so a caller
-    // asking "is this image providing something twice" has to be able to tell
-    // it from a strong definition that displaces a library's own.
+    // A vague-linkage definition -- a template instantiation, an inline
+    // function, a vtable, or the static data member of such a template --
+    // which the C++ ABI emits into every translation unit that needs it and
+    // expects the loader to unify across the process. That is the intended
+    // behaviour, not a leak, so a caller asking "is this image providing
+    // something twice" has to be able to tell it from a strong definition that
+    // displaces a library's own.
+    //
+    // TWO BINDINGS SAY IT, NOT ONE. `STB_WEAK` is the portable spelling;
+    // `STB_GNU_UNIQUE` is what GCC emits for the static data of an inline
+    // entity so that the loader keeps exactly one copy even across RTLD_LOCAL
+    // (libstdc++'s `__from_chars_alnum_to_val_table<false>::value`, measured).
+    // Reading only the first reported seven such objects as a program
+    // displacing libstdc++ (#646 F3). See `is_vague_linkage_binding`.
     bool          isWeak = false;
     std::uint64_t value = 0;   // st_value; the key a copy relocation matches
 };
+
+// Is a symbol of this binding a vague-linkage definition the loader unifies?
+// `STB_WEAK` (2) and `STB_GNU_UNIQUE` (10); every other binding is either
+// strong (`STB_GLOBAL`) or not visible to the loader.
+constexpr bool is_vague_linkage_binding(unsigned char binding) {
+    return binding == 2 || binding == 10;
+}
+
+// The names an ELF RELOCATABLE object (`.o`) defines with external linkage:
+// GLOBAL, WEAK and GNU_UNIQUE entries of `.symtab` whose section index is not
+// SHN_UNDEF. Used to attribute a definition to the object that contributed it,
+// which a linked image no longer records.
+std::expected<std::vector<std::string>, std::string>
+defined_object_symbols(const std::filesystem::path& object);
 
 // What an ELF object's DYNAMIC symbol table says it provides.
 //
@@ -739,7 +761,7 @@ inspect_dynamic_symbols(const std::filesystem::path& object) {
         out.defined.push_back(DynamicSymbol{
             .name   = std::move(*name),
             .isFunc = (type == detail::kSttFunc || type == detail::kSttGnuIfunc),
-            .isWeak = (bind == detail::kStbWeak),
+            .isWeak = is_vague_linkage_binding(bind),
             .value  = *value,
         });
     }
@@ -768,6 +790,73 @@ inspect_dynamic_symbols(const std::filesystem::path& object) {
         }
     }
     return out;
+}
+
+std::expected<std::vector<std::string>, std::string>
+defined_object_symbols(const std::filesystem::path& object) {
+    detail::Reader reader;
+    std::ifstream input(object, std::ios::binary);
+    if (!input) return std::unexpected(std::format(
+        "cannot open ELF object '{}'", object.string()));
+    reader.bytes.assign(std::istreambuf_iterator<char>(input), {});
+
+    if (reader.bytes.size() < 0x40
+        || reader.bytes[0] != 0x7f || reader.bytes[1] != 'E'
+        || reader.bytes[2] != 'L' || reader.bytes[3] != 'F')
+        return std::unexpected(std::format(
+            "object '{}' is not ELF", object.string()));
+    if (reader.bytes[4] != 2 || reader.bytes[5] != 1)
+        return std::unexpected(std::format(
+            "object '{}' is not ELF64 little-endian", object.string()));
+
+    // Section headers: e_shoff at 0x28, e_shentsize at 0x3A, e_shnum at 0x3C.
+    auto shoff     = reader.u64(0x28);
+    auto shentsize = reader.u16(0x3A);
+    auto shnum     = reader.u16(0x3C);
+    if (!shoff || !shentsize || !shnum || *shentsize < 0x40 || *shnum > 65000
+        || !reader.range(*shoff, static_cast<std::uint64_t>(*shentsize) * *shnum))
+        return std::unexpected(std::format(
+            "object '{}' has a truncated section table", object.string()));
+
+    constexpr std::uint32_t kShtSymtab = 2;
+    std::vector<std::string> names;
+    for (std::uint16_t i = 0; i < *shnum; ++i) {
+        const auto at = *shoff + static_cast<std::uint64_t>(i) * *shentsize;
+        auto type = reader.u32(at + 0x04);
+        if (!type || *type != kShtSymtab) continue;
+        auto offset  = reader.u64(at + 0x18);
+        auto size    = reader.u64(at + 0x20);
+        auto link    = reader.u32(at + 0x28);
+        auto entsize = reader.u64(at + 0x38);
+        if (!offset || !size || !link || !entsize
+            || *entsize != detail::kSymEntrySize || *link >= *shnum
+            || !reader.range(*offset, *size))
+            return std::unexpected(std::format(
+                "object '{}' has a malformed symbol table", object.string()));
+        const auto strAt = *shoff + static_cast<std::uint64_t>(*link) * *shentsize;
+        auto strOffset = reader.u64(strAt + 0x18);
+        auto strSize   = reader.u64(strAt + 0x20);
+        if (!strOffset || !strSize || !reader.range(*strOffset, *strSize))
+            return std::unexpected(std::format(
+                "object '{}' has a malformed string table", object.string()));
+        for (std::uint64_t off = 0; off + detail::kSymEntrySize <= *size;
+             off += detail::kSymEntrySize) {
+            const auto sym = *offset + off;
+            auto nameOffset = reader.u32(sym);
+            auto shndx      = reader.u16(sym + 6);
+            if (!nameOffset || !shndx) break;
+            if (*shndx == 0) continue;                    // SHN_UNDEF
+            const unsigned char bind =
+                static_cast<unsigned char>(reader.bytes[sym + 4] >> 4);
+            if (bind == detail::kStbLocal) continue;
+            if (*nameOffset >= *strSize) continue;
+            auto name = reader.cstr(*strOffset + *nameOffset, *strSize - *nameOffset);
+            if (name && !name->empty()) names.push_back(std::move(*name));
+        }
+    }
+    std::ranges::sort(names);
+    names.erase(std::ranges::unique(names).begin(), names.end());
+    return names;
 }
 
 std::expected<ElfRuntimeFacts, std::string>
