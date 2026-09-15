@@ -40,6 +40,10 @@ struct IndexRepo {
     std::string name;
     std::string url;
     std::string artifact;   // optional artifact source base (xlings >= 0.4.68, #269)
+    // The CN base of the same artifact. Non-empty makes `artifact` the GLOBAL
+    // half of a region object, which xlings resolves against its mirror
+    // setting (xlings #377): `{"GLOBAL": artifact, "CN": artifactCn}`.
+    std::string artifactCn;
     std::string source;     // optional "auto" | "artifact" | "git" ("" = xlings default auto)
     // Read from a `[index.repos.<name>]` table rather than added by mcpp as a
     // default. The provisioning line names an index that such a table
@@ -58,6 +62,14 @@ inline constexpr std::string_view kMcpplibsIndexUrlLegacy =
     "https://github.com/mcpp-community/mcpp-index.git";
 inline constexpr std::string_view kMcpplibsIndexArtifact =
     "https://github.com/xlings-res/mcpp-index";
+// The GitCode mirror of the same artifact, published by mcpp-index's
+// `tools/publish_mcpp_index.sh` with the same bytes as the GitHub copy
+// (mcpplibs/mcpp-index#432 made that a property the script checks). A CN
+// machine used to fetch the index from GitHub even with `mirror = CN`, and a
+// connection that never answered held a background plan for eleven minutes
+// (#648 A6).
+inline constexpr std::string_view kMcpplibsIndexArtifactCn =
+    "https://gitcode.com/xlings-res/mcpp-index";
 
 struct GlobalConfig {
     // Resolved paths
@@ -358,7 +370,7 @@ refresh_timeout = 120
 
 [index.repos."mcpplibs"]
 url      = "https://github.com/mcpplibs/mcpp-index.git"
-artifact = "https://github.com/xlings-res/mcpp-index"
+artifact = { GLOBAL = "https://github.com/xlings-res/mcpp-index", CN = "https://gitcode.com/xlings-res/mcpp-index" }
 # source = "auto"  # default: artifact first, git fallback; set "git" to force git
 # xlings auto-adds xim / awesome / scode / d2x as defaults.
 
@@ -382,7 +394,7 @@ bool write_default_xlings_json(const std::filesystem::path& path,
     std::vector<mcpp::xlings::SeedRepo> pairs;
     pairs.reserve(repos.size());
     for (auto& r : repos)
-        pairs.push_back({ r.name, r.url, r.artifact, r.source });
+        pairs.push_back({ r.name, r.url, r.artifact, r.source, r.artifactCn });
     // seed_xlings_json writes to env.home / ".xlings.json", so we
     // construct a temporary Env with home = path.parent_path().
     mcpp::xlings::Env env;
@@ -446,7 +458,10 @@ bool write_json_file(const std::filesystem::path& path, const nlohmann::json& do
 
 nlohmann::json index_repo_entry(const IndexRepo& r) {
     nlohmann::json e = { {"name", r.name}, {"url", r.url} };
-    if (!r.artifact.empty()) e["artifact"] = r.artifact;
+    if (!r.artifact.empty() && !r.artifactCn.empty())
+        e["artifact"] = { {"GLOBAL", r.artifact}, {"CN", r.artifactCn} };
+    else if (!r.artifact.empty())
+        e["artifact"] = r.artifact;
     if (!r.source.empty())   e["source"] = r.source;
     return e;
 }
@@ -606,6 +621,12 @@ void canonicalize_legacy_index_names(GlobalConfig& cfg) {
         // explicit opt-out; a user-set artifact base always wins.
         if (r.url == kMcpplibsIndexUrl && r.artifact.empty() && r.source != "git")
             r.artifact = std::string(kMcpplibsIndexArtifact);
+        // The CN half of the default (#648 A6), for a configuration written
+        // before it existed. Only when the GLOBAL base is the default one: a
+        // user's own artifact base has no mirror mcpp knows of.
+        if (r.url == kMcpplibsIndexUrl && r.artifact == kMcpplibsIndexArtifact
+            && r.artifactCn.empty())
+            r.artifactCn = std::string(kMcpplibsIndexArtifactCn);
         bool duplicate = std::any_of(normalized.begin(), normalized.end(),
             [&](const IndexRepo& existing) {
                 return existing.name == r.name && existing.url == r.url;
@@ -705,8 +726,17 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
             if (it == tt.end() || !it->second.is_string()) continue;
             IndexRepo r{ name, it->second.as_string() };
             r.fromConfig = true;
-            if (auto a = tt.find("artifact"); a != tt.end() && a->second.is_string())
+            if (auto a = tt.find("artifact"); a != tt.end() && a->second.is_string()) {
                 r.artifact = a->second.as_string();
+            } else if (a != tt.end() && a->second.is_table()) {
+                // The region form xlings reads: GLOBAL is the base every
+                // mirror falls back to, CN the base a CN mirror asks first.
+                auto& region = a->second.as_table();
+                if (auto g = region.find("GLOBAL"); g != region.end() && g->second.is_string())
+                    r.artifact = g->second.as_string();
+                if (auto c = region.find("CN"); c != region.end() && c->second.is_string())
+                    r.artifactCn = c->second.as_string();
+            }
             if (auto s = tt.find("source"); s != tt.end() && s->second.is_string())
                 r.source = s->second.as_string();
             cfg.indexRepos.push_back(std::move(r));
@@ -742,12 +772,15 @@ std::expected<GlobalConfig, ConfigError> load_or_init(
     // dependency resolution (e.g. linux-headers existing in both
     // scode and xim). See docs/21 §VII.
     auto add_default = [&](std::string_view name, std::string_view url,
-                           std::string_view artifact = {}) {
+                           std::string_view artifact = {},
+                           std::string_view artifactCn = {}) {
         for (auto& r : cfg.indexRepos) if (r.name == name) return;
-        cfg.indexRepos.push_back({ std::string(name), std::string(url),
-                                   std::string(artifact), std::string() });
+        IndexRepo r{ std::string(name), std::string(url), std::string(artifact) };
+        r.artifactCn = std::string(artifactCn);
+        cfg.indexRepos.push_back(std::move(r));
     };
-    add_default("mcpplibs", kMcpplibsIndexUrl, kMcpplibsIndexArtifact);
+    add_default("mcpplibs", kMcpplibsIndexUrl, kMcpplibsIndexArtifact,
+                kMcpplibsIndexArtifactCn);
     canonicalize_legacy_index_names(cfg);
 
     // 5. Seed registry/.xlings.json if missing; migrate legacy cached

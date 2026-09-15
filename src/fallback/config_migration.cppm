@@ -94,13 +94,28 @@ bool migrate_xlings_json_index_names(const std::filesystem::path& path) {
     // means a previous run (or a fresh seed) already declared it — a plain
     // replace_all would re-inject on every run. Both spacing variants
     // because the file has two writers (mcpp pretty / xlings compact).
+    constexpr std::string_view region =
+        "{ \"GLOBAL\": \"https://github.com/xlings-res/mcpp-index\", "
+        "\"CN\": \"https://gitcode.com/xlings-res/mcpp-index\" }";
     if (updated.find("xlings-res/mcpp-index") == std::string::npos) {
-        constexpr std::string_view art =
-            ", \"artifact\": \"https://github.com/xlings-res/mcpp-index\"";
+        const std::string art = std::string(", \"artifact\": ") + std::string(region);
         for (std::string_view urlkv : {
                 "\"url\": \"https://github.com/mcpplibs/mcpp-index.git\"",
                 "\"url\":\"https://github.com/mcpplibs/mcpp-index.git\"" })
-            replace_all(updated, urlkv, std::string(urlkv) + std::string(art));
+            replace_all(updated, urlkv, std::string(urlkv) + art);
+    }
+
+    // The CN half of the default artifact (#648 A6). An existing home keeps the
+    // GitHub-only base it was seeded with, and its default entry is not
+    // reconciled from configuration, so this is the channel that gives it the
+    // GitCode mirror. Only the exact default value is rewritten: a base the user
+    // wrote is theirs. Idempotent, because the rewritten value no longer
+    // contains the flat spelling. Both spacings, for the two writers.
+    if (updated.find("gitcode.com/xlings-res/mcpp-index") == std::string::npos) {
+        for (std::string_view flat : {
+                "\"artifact\": \"https://github.com/xlings-res/mcpp-index\"",
+                "\"artifact\":\"https://github.com/xlings-res/mcpp-index\"" })
+            replace_all(updated, flat, std::string("\"artifact\": ") + std::string(region));
     }
 
     return write_text_if_changed(path, original, updated);

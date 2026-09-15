@@ -470,6 +470,9 @@ struct SeedRepo {
     std::string url;
     std::string artifact;   // artifact source base, e.g. https://github.com/xlings-res/mcpp-index
     std::string source;     // "auto" | "artifact" | "git"
+    // Non-empty: `artifact` is written as the region object
+    // {"GLOBAL": artifact, "CN": artifactCn} (xlings #377).
+    std::string artifactCn;
 };
 
 void seed_xlings_json(const Env& env,
@@ -1718,7 +1721,11 @@ void seed_xlings_json(const Env& env,
         json += std::format("    {{ \"name\": \"{}\", \"url\": \"{}\"",
                             json_escape(repos[i].name),
                             json_escape(repos[i].url));
-        if (!repos[i].artifact.empty())
+        if (!repos[i].artifact.empty() && !repos[i].artifactCn.empty())
+            json += std::format(", \"artifact\": {{ \"GLOBAL\": \"{}\", \"CN\": \"{}\" }}",
+                                json_escape(repos[i].artifact),
+                                json_escape(repos[i].artifactCn));
+        else if (!repos[i].artifact.empty())
             json += std::format(", \"artifact\": \"{}\"",
                                 json_escape(repos[i].artifact));
         if (!repos[i].source.empty())
