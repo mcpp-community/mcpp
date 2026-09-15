@@ -1,11 +1,20 @@
 ---
 subject: triage
-status: active
+status: landed
 ---
 
 # Link forms, standard levels and a path limit: the asks of #641 and #642, read against the code
 
-**Status:** active, revision 1, for review. No code has changed.
+**Status:** landed on 2026-09-15 as mcpp 2026.9.15.2 (mcpp-community/mcpp#644),
+with `llvm.libcxx` 22.1.8.3 and `openkal-llvm-runtime` 0.9.7 in the index
+(mcpplibs/mcpp-index#428). The recommendations D1 to D4 were adopted; D4's
+Windows measurement became e2e 698 leg C on the pull request's own windows-2022
+run instead of a separate pull request. Where the landed form differs from this
+revision, `2026-09-15-641-642-implementation-plan.md` §1.9 records it: the
+dependency spelling `namespace.name` is published for `dep_dir` and
+`dep_linkage`; on Mach-O a shared library over a graph runtime exports what its
+sources mark with default visibility; the M3 remedy follows whether the package
+constrains its own form. The body below is revision 1, unchanged.
 
 Engine code was read at `69fae268` (origin/main, mcpp 2026.9.15.1). The
 issues measured 2026.9.14.2 and 2026.9.14.3; every probe below reproduces its

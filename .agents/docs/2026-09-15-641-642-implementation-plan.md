@@ -1,11 +1,14 @@
 ---
 subject: triage
-status: active
+status: landed
 ---
 
 # #641 and #642 implemented: the plan, its review from eight angles, and the ledger
 
-**Status:** active. This record turns the decisions of
+**Status:** landed on 2026-09-15 as mcpp 2026.9.15.2 (mcpp-community/mcpp#644),
+`llvm.libcxx` 22.1.8.3 (mcpplibs/libcxx#1), `openkal-llvm-runtime` 0.9.7
+(mcpplibs/openkal-llvm-runtime#22), openxlings/xim-pkgindex#843 and
+mcpplibs/mcpp-index#428; §9 records the closure. This record turns the decisions of
 `2026-09-15-641-642-link-forms-standards-and-paths.md` ("the triage record")
 into work: one pull request per repository, the order in which they merge and
 release, the criterion each task is held to, and a ledger whose rows are
@@ -28,40 +31,40 @@ the parallel work trees of §8.
 
 | id | task (triage §) | owner | depends on | status |
 |---|---|---|---|---|
-| M1 | a required compiler family's version is taken from pins that name the same payload; the refusal no longer states a false reason (§3.1) | lead | - | branch: unit `RequiredFamilyPins.*`; M1 probe reads `llvm@30.0.16248370` on 2026.9.15.1 |
-| M2 | `mcpp pack --features` reaches every build pass `pack` performs (§3.6) | lead | - | branch: e2e 689 (fails on 2026.9.15.1: `pack --features installer failed`) |
-| M3 | a dependency's C++ shared library in a graph whose C++ runtime is a package is refused before compiling, unless `cxx_runtime` states `self-contained` for shared libraries; under that statement the library links the provider's objects (§3.3) | lead | - | branch: e2e 690, four legs (fails on 2026.9.15.1: the refusal is absent) |
-| M4 | `linkage = "static" \| "shared"` in `[targets.<n>]` and `[target.<sel>.targets.<n>]` states the package's default form; precedence and the information line (§3.4) | W1 | - | branch: unit `LinkageForm.*`, manifest cases; e2e 692 (fails on 2026.9.15.1: no libfw.so for a silent consumer) |
-| M5 | dependency link forms are computed once before the root's build program and applied where they are today; `MCPP_DEP_<NAME>_LINKAGE` and `mcpp::dep_linkage` for the root's program (§3.5) | W1 | M4 | branch: e2e 693 (fails on 2026.9.15.1: `'dep_linkage' is not a member of 'mcpp'`) |
-| M6 | a C++-layer provider that states `[package] standard` compiles its implementation units at that level; module units stay at the graph's (§3.2) | W2 | - | branch: unit `CxxLayerStandard.*` (9), `CacheKey` case; e2e 696 (fails on 2026.9.15.1: `new.cpp` at `-std=c++20`) |
-| M7 | the object address of a source outside its declaring package is relative to its owning package, or a hashed directory when no package owns it (§3.7 item 3) | W3 | - | branch: unit `ObjectAddress.*`; e2e 698 leg A (fails on 2026.9.15.1: `obj/installer/__up/__up/dep/...`) |
-| M8 | the host-tool sub-build runs in a short key-named scratch directory (§3.7 item 2) | W3 | - | branch: unit `ToolStoreScratch.*`; e2e 698 leg B |
-| M9 | files the engine opens from ninja-invoked subcommands go through one extended-length path helper on Windows (§3.7 item 1) | W3 | - | branch: unit `PlatformFs.*`; e2e 698 leg C (Windows readings from CI) |
-| M10 | CI: the llvm-dependent e2e scripts of M3 and M6, and the existing 663, run on a job that has llvm, with their PASS lines asserted (§1.8) | lead | M3, M6 | branch: `ci-linux-e2e.yml` hermetic job step |
-| M11 | user documentation with its Chinese mirror; SPEC changes; CHANGELOG; version 2026.9.15.2 | lead, W1-W3 | M1-M9 | todo |
-| M12 | the triage and plan records closed with their readings | lead | all | todo |
+| M1 | a required compiler family's version is taken from pins that name the same payload; the refusal no longer states a false reason (§3.1) | lead | - | done (#644, `55a856d2`): unit `RequiredFamilyPins.*`; M1 probe reads `llvm@30.0.16248370` on 2026.9.15.1 |
+| M2 | `mcpp pack --features` reaches every build pass `pack` performs (§3.6) | lead | - | done (#644, `55a856d2`): e2e 689 (fails on 2026.9.15.1: `pack --features installer failed`) |
+| M3 | a dependency's C++ shared library in a graph whose C++ runtime is a package is refused before compiling, unless `cxx_runtime` states `self-contained` for shared libraries; under that statement the library links the provider's objects (§3.3) | lead | - | done (#644, `55a856d2`): e2e 690, four legs (fails on 2026.9.15.1: the refusal is absent) |
+| M4 | `linkage = "static" \| "shared"` in `[targets.<n>]` and `[target.<sel>.targets.<n>]` states the package's default form; precedence and the information line (§3.4) | W1 | - | done (#644, `55a856d2`): unit `LinkageForm.*`, manifest cases; e2e 692 (fails on 2026.9.15.1: no libfw.so for a silent consumer) |
+| M5 | dependency link forms are computed once before the root's build program and applied where they are today; `MCPP_DEP_<NAME>_LINKAGE` and `mcpp::dep_linkage` for the root's program (§3.5) | W1 | M4 | done (#644, `55a856d2`): e2e 693 (fails on 2026.9.15.1: `'dep_linkage' is not a member of 'mcpp'`) |
+| M6 | a C++-layer provider that states `[package] standard` compiles its implementation units at that level; module units stay at the graph's (§3.2) | W2 | - | done (#644, `55a856d2`): unit `CxxLayerStandard.*` (9), `CacheKey` case; e2e 696 (fails on 2026.9.15.1: `new.cpp` at `-std=c++20`) |
+| M7 | the object address of a source outside its declaring package is relative to its owning package, or a hashed directory when no package owns it (§3.7 item 3) | W3 | - | done (#644, `55a856d2`): unit `ObjectAddress.*`; e2e 698 leg A (fails on 2026.9.15.1: `obj/installer/__up/__up/dep/...`) |
+| M8 | the host-tool sub-build runs in a short key-named scratch directory (§3.7 item 2) | W3 | - | done (#644, `55a856d2`): unit `ToolStoreScratch.*`; e2e 698 leg B |
+| M9 | files the engine opens from ninja-invoked subcommands go through one extended-length path helper on Windows (§3.7 item 1) | W3 | - | done (#644, `55a856d2`): unit `PlatformFs.*`; e2e 698 leg C (Windows readings from CI) |
+| M10 | CI: the llvm-dependent e2e scripts of M3 and M6, and the existing 663, run on a job that has llvm, with their PASS lines asserted (§1.8) | lead | M3, M6 | done (#644, `55a856d2`): `ci-linux-e2e.yml` hermetic job step |
+| M11 | user documentation with its Chinese mirror; SPEC changes; CHANGELOG; version 2026.9.15.2 | lead, W1-W3 | M1-M9 | done (#644): docs 04, 07, 10, 20, 22, 30, 50 with mirrors; SPEC-001 v1.4 criterion 9; CHANGELOG; 2026.9.15.2 |
+| M12 | the triage and plan records closed with their readings | lead | all | done: this revision, §9 |
 
 ### 0.2 Packages: mcpplibs/libcxx and mcpplibs/openkal-llvm-runtime, one pull request each
 
 | id | task | owner | depends on | status |
 |---|---|---|---|---|
-| P1 | `llvm.libcxx` 22.1.8.3: `[package] standard = "c++23"` replaces `[build] cxx_standard`; a CI leg builds a c++20 consumer with the released engine | lead | M6 released | todo |
-| P2 | `openkal-llvm-runtime` next patch: the same statement | lead | - | todo |
-| P3 | both tags published and mirrored to GitCode | lead | P1, P2 | todo |
+| P1 | `llvm.libcxx` 22.1.8.3: `[package] standard = "c++23"` replaces `[build] cxx_standard`; a CI leg builds a c++20 consumer with the released engine | lead | M6 released | done: mcpplibs/libcxx#1 (`2aa6724d`); CI green on five rows under 2026.9.15.2, and before the release under `mcpp_ref=feat/641-642` (run 34896741837) |
+| P2 | `openkal-llvm-runtime` next patch: the same statement | lead | - | done: mcpplibs/openkal-llvm-runtime#22 (`246bc669`), 0.9.7; green under its pin and under `mcpp_ref=feat/641-642` (run 34895002497) |
+| P3 | both tags published and mirrored to GitCode | lead | P1, P2 | done: tags `22.1.8.3` and `0.9.7`; each GitHub archive and its GitCode mirror byte-identical (sha256 `b7360797…`, `8914579f…`) and opened as a tar |
 
 ### 0.3 Index and payloads
 
 | id | task | owner | depends on | status |
 |---|---|---|---|---|
-| I1 | openxlings/xim-pkgindex: the release bot's `mcpp` bump merged | lead | release | todo |
-| I2 | mcpplibs/mcpp-index: `llvm.libcxx` 22.1.8.3 and the `openkal-llvm-runtime` patch; the index CI's `MCPP_VERSION` moves to 2026.9.15.2 | lead | P3, I1 | todo |
+| I1 | openxlings/xim-pkgindex: the release bot's `mcpp` bump merged | lead | release | done: #843 (`15d78b85`), +22/-3, four hashes equal to the downloaded archives; pointer `index_version` `15d78b8`; the host installed `mcpp@2026.9.15.2` through the CN mirror |
+| I2 | mcpplibs/mcpp-index: `llvm.libcxx` 22.1.8.3 and the `openkal-llvm-runtime` patch; the index CI's `MCPP_VERSION` moves to 2026.9.15.2 | lead | P3, I1 | done: #428 (`83801b98`); the artifact published; the full member sweep under 2026.9.15.2 green after #429 (§9.4) |
 
 ### 0.4 Verification
 
 | id | task | owner | depends on | status |
 |---|---|---|---|---|
-| V1 | a fresh SubOS sandbox with CN mirrors for xlings and mcpp runs the scenarios of §7 against the published engine and index | lead | I1, I2 | todo |
-| V2 | replies on #641 and #642 naming the release and what the framework writes | lead | V1 | todo |
+| V1 | a fresh SubOS sandbox with CN mirrors for xlings and mcpp runs the scenarios of §7 against the published engine and index | lead | I1, I2 | done: SubOS `v641`, 18 of 18, `fails=0` (§9.3) |
+| V2 | replies on #641 and #642 naming the release and what the framework writes | lead | V1 | done: issuecomment-5675298116 and -5675298352 |
 
 ## 1. The review
 
@@ -330,3 +333,91 @@ with a READING line:
 
 e2e numbers: lead 689-691, W1 692-695, W2 696-697, W3 698-699. A tree removes
 its `target/` after its branch is merged.
+
+## 9. Closure
+
+### 9.1 The engine pull request
+
+mcpp-community/mcpp#644 ran CI twice.
+
+- **Round 1: three red jobs, none of them in the engine.** On all three hosts
+  `00_fixture_path_hygiene.sh` refused e2e 696 and 698, which wrote manifest
+  paths without `host_path`. On windows-2022 e2e 698's consumer passed a command
+  with two quoted words to `std::system`, and cmd.exe stripped the outer quotes
+  ("The filename, directory name, or volume label syntax is incorrect"). Both
+  were fixed in the scripts, together with the refinements measured meanwhile
+  (§1.9: the qualified dependency name, the Mach-O visibility rule).
+- **Round 2: 40 checks green.** The hermetic job printed the asserted lines of
+  663, 690 (`READING private copy: runtime_error not matched by its class`) and
+  696. On windows-2022 e2e 698 read `LongPathsEnabled: 1`, an estimated longest
+  sub-build path of 279 characters, and a deep tool build that exits 0.
+- An independent read-only review of the diff against §2 and the triage record
+  reported no defect.
+- The squash merge `55a856d2` is byte-identical to the tested head `0cde03d2`.
+  Every workflow on `55a856d2` is green; `ci-fresh-install` waited twenty
+  minutes for the index, timed out before the bump merged, and passed on its
+  second attempt.
+
+### 9.2 The release
+
+Release run 34900385287 built the four archives, sealed the manifest and ran
+`publish-ecosystem`. Each archive and its `.sha256` were uploaded to GitCode from
+this host as the build job published them; each counted as done at a GET of 200
+with the upstream size, and the GitHub mirror answered the same four sizes.
+openxlings/xim-pkgindex#843 was merged after its four hashes were compared with
+the archives downloaded from GitCode; the pointer read `index_version 15d78b8`,
+and `xlings install mcpp@2026.9.15.2` through the CN mirror installed a binary
+that reports 2026.9.15.2.
+
+### 9.3 The sandbox
+
+`2026-09-15-641-642-verify.sh`, run in a fresh SubOS `v641` with CN mirrors for
+xlings and mcpp, against the published engine and index: 18 of 18, `fails=0`.
+
+| section | reading |
+|---|---|
+| A | `mcpp --version` 2026.9.15.2; both mirrors CN, read back from mcpp's xlings configuration |
+| B | `llvm.libcxx` 22.1.8.3 and `openkal-llvm-runtime` 0.9.7 are in the index |
+| C | a required llvm on a fresh home resolves `llvm@22.1.8` |
+| D | a c++20 program over `llvm.libcxx` 22.1.8.3 builds, the report names the package as the C++ layer, and the program prints `1-2` |
+| E | a shared dependency over the graph runtime is refused naming the private copy; with the statement it builds and runs |
+| F | a package default `linkage = "shared"`: the silent consumer gets the shared library and its build program reads `shared`; an explicit `linkage = "static"` under `--strict` gets no shared library, the information line, and reads `static` |
+| G | `mcpp pack --format dir --features extra` succeeds |
+
+The same script run before the package revisions were indexed (SubOS
+`v641pre`, `llvm.libcxx` 22.1.8.2) differs in D alone: the c++20 program stops at
+`no template named 'bad_expected_access'`. That run is the control: the engine
+change needs the package's statement, and the statement is what 22.1.8.3 adds.
+
+### 9.4 The index members under the new engine
+
+mcpplibs/mcpp-index validates only the descriptors a change names on a pull
+request or a push, so the full member sweep under `MCPP_VERSION` 2026.9.15.2
+was dispatched by hand.
+
+- **Run 34933120467 on `83801b98`:** every member built and tested on Linux
+  (default and llvm), macOS and Windows except `nanodbc` on the two Linux legs.
+  Both stopped before compiling, on `compat.unixodbc`'s download:
+  `connecting… 306s` and `download artifact missing`. The descriptor named only
+  `www.unixodbc.org`, which did not answer from the runners or from a host in
+  CN; the weekly sweep of 2026-09-13 had passed, so neither the member nor the
+  engine had changed.
+- **The fix, mcpplibs/mcpp-index#429 (`0d278e98`):** upstream publishes the
+  same dist tarball as the asset of its GitHub release `v2.3.14` (sha256
+  `4e2814de…`, equal to the descriptor's, with `libltdl/`). The descriptor
+  names it as GLOBAL and a new GitCode mirror, `mcpp-res/unixodbc` release
+  `2.3.14`, byte-identical, as CN.
+- **Run 34939202738 on `0d278e98`:** 27 jobs successful and one skipped (the
+  job that runs only when a sweep fails); `nanodbc 13s ok` on both Linux legs.
+  Every member of the index builds and passes its tests under 2026.9.15.2.
+
+### 9.5 What remains open
+
+- **F1**, a shared package over a static package: recorded in the triage
+  record §3.3.5, for its own record.
+- **F2**, the payload's Mach-O shared default: `llvm.libcxx`'s CI measured the
+  catch-by-type property for the graph's runtime on macOS arm64
+  (`runtime_error not matched by its class`), as libc++'s comparison rules
+  predict; the payload's origin is still unmeasured and touches builds that work
+  today.
+- **F3**, the std module initialiser linked into every C++ image (§1.9).

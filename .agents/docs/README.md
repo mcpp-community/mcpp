@@ -62,8 +62,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### triage
 
-- [Link forms, standard levels and a path limit: the asks of #641 and #642, read against the code](2026-09-15-641-642-link-forms-standards-and-paths.md) — active
-- [#641 and #642 implemented: the plan, its review from eight angles, and the ledger](2026-09-15-641-642-implementation-plan.md) — active
+- [Link forms, standard levels and a path limit: the asks of #641 and #642, read against the code](2026-09-15-641-642-link-forms-standards-and-paths.md) — landed
+- [#641 and #642 implemented: the plan, its review from eight angles, and the ledger](2026-09-15-641-642-implementation-plan.md) — landed
 - [#634 implemented across five repositories: the plan, its review, and the ledger that tracks it](2026-09-14-634-implementation-plan.md) — landed
 - [A framework's CMake parity list: the twenty-one items of #634, read against the code and routed to where each one belongs](2026-09-14-634-cmake-parity-items-by-home.md) — landed
 - [What a framework and its ecosystem library still hit in the engine: the ten items of #630, read against the code](2026-09-13-630-what-a-framework-still-hits-in-the-engine.md) — landed
@@ -74,8 +74,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
-- [Link forms, standard levels and a path limit: the asks of #641 and #642, read against the code](2026-09-15-641-642-link-forms-standards-and-paths.md) — active
-- [#641 and #642 implemented: the plan, its review from eight angles, and the ledger](2026-09-15-641-642-implementation-plan.md) — active
+- [Link forms, standard levels and a path limit: the asks of #641 and #642, read against the code](2026-09-15-641-642-link-forms-standards-and-paths.md) — landed
+- [#641 and #642 implemented: the plan, its review from eight angles, and the ledger](2026-09-15-641-642-implementation-plan.md) — landed
 - [The build database of #636, and two defects on the way to the latest xlings](2026-09-14-636-build-database-and-the-latest-xlings.md) — active
 - [#634 implemented across five repositories: the plan, its review, and the ledger that tracks it](2026-09-14-634-implementation-plan.md) — landed
 - [A framework's CMake parity list: the twenty-one items of #634, read against the code and routed to where each one belongs](2026-09-14-634-cmake-parity-items-by-home.md) — landed
