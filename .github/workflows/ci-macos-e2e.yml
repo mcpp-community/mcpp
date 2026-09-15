@@ -24,7 +24,7 @@ jobs:
   e2e:
     name: e2e suite (macOS ARM64, self-host)
     runs-on: macos-15
-    timeout-minutes: 30
+    timeout-minutes: 60
     # NOTE: no MCPP_VERBOSE — the e2e suite asserts mcpp's default quiet
     # output (tests 48/53).
     steps:
@@ -64,4 +64,35 @@ jobs:
           "$MCPP" self config
           # macOS default toolchain is LLVM
           "$MCPP" toolchain default "llvm@${MCPP_LLVM_VER}"
-          bash tests/e2e/run_all.sh
+          echo "MCPP=$MCPP" >> "$GITHUB_ENV"
+          set -o pipefail
+          bash tests/e2e/run_all.sh 2>&1 | tee "$RUNNER_TEMP/e2e-suite.log"
+
+      # Measurement legs print READING lines and pass whatever they read; the
+      # readings are what a decision is taken from (#646 F2: whether a C++
+      # exception thrown in a dylib is caught by its class under the payload's
+      # default runtime), so they are collected where a reader finds them.
+      - name: Measurement readings
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "### Measurement readings (macOS)"
+            echo '```'
+            grep -h '^READING' "$RUNNER_TEMP/e2e-suite.log" 2>/dev/null || echo "(none)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # #647 E3: an Android row links on a macOS host. Its own step, because the
+      # NDK is a large download the suite's per-test bound does not allow for,
+      # and the shard does not carry it (the script declares android-ndk).
+      - name: "Android row on a macOS host (721)"
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          set -o pipefail
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          export MCPP_E2E_TOOLCHAIN_MIRROR=GLOBAL
+          "$MCPP" toolchain install android-ndk@30.0.16248370
+          bash tests/e2e/721_*.sh 2>&1 | tee "$RUNNER_TEMP/721.log"
+          grep -q '^PASS: 721' "$RUNNER_TEMP/721.log"

@@ -422,7 +422,7 @@ jobs:
       # skips. They run here, where llvm is installed, and each is held to the
       # line it prints only when it ran to the end, and to the line of the step
       # that runs a program (#641).
-      - name: "graph C++ runtime e2e (663, 690, 696)"
+      - name: "C++ runtime e2e that needs llvm (663, 690, 696, 700)"
         run: |
           set -o pipefail
           export PATH="$HOME/.xlings/subos/current/bin:$PATH"
@@ -443,3 +443,9 @@ jobs:
             "PASS: 690 a shared library over a graph C++ runtime is refused or carries a stated private copy"
           run_and_assert tests/e2e/696_a_cxx_layer_provider_keeps_its_own_standard.sh \
             "PASS: a C++-layer provider compiles its implementation units at its own standard"
+          # #646 F3a: the default llvm shape of a program over a C++ shared library
+          # aborted with std::bad_cast before its programs took the library's contract.
+          run_and_assert tests/e2e/700_a_program_over_a_cxx_shared_library_has_one_cxx_runtime.sh \
+            "ok: a program over a C++ shared library runs on one C++ runtime" \
+            "ok: a stated self-contained program over a coupled C++ shared library is refused" \
+            "PASS: 700 a program over a C++ shared library has one C++ runtime"

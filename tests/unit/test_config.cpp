@@ -265,7 +265,8 @@ TEST(ConfigIndexMigration, XlingsJsonHealsPrettyLegacyEntry) {
     auto text = read_all(p);
     EXPECT_NE(text.find(
         "\"url\": \"https://github.com/mcpplibs/mcpp-index.git\", "
-        "\"artifact\": \"https://github.com/xlings-res/mcpp-index\""),
+        "\"artifact\": { \"GLOBAL\": \"https://github.com/xlings-res/mcpp-index\", "
+        "\"CN\": \"https://gitcode.com/xlings-res/mcpp-index\" }"),
         std::string::npos) << text;
     EXPECT_NE(text.find("\"subos\": \"default\""), std::string::npos);
     EXPECT_EQ(text.find("mcpp-community/mcpp-index"), std::string::npos);
@@ -288,20 +289,44 @@ TEST(ConfigIndexMigration, XlingsJsonHealsCompactLegacyNameAndUrl) {
     EXPECT_NE(text.find("\"name\":\"mcpplibs\""), std::string::npos);
     EXPECT_NE(text.find(
         "\"url\":\"https://github.com/mcpplibs/mcpp-index.git\", "
-        "\"artifact\": \"https://github.com/xlings-res/mcpp-index\""),
+        "\"artifact\": { \"GLOBAL\": \"https://github.com/xlings-res/mcpp-index\", "
+        "\"CN\": \"https://gitcode.com/xlings-res/mcpp-index\" }"),
         std::string::npos) << text;
     EXPECT_FALSE(mcpp::fallback::migrate_xlings_json_index_names(p));
     std::filesystem::remove_all(dir);
 }
 
-TEST(ConfigIndexMigration, XlingsJsonSkipsInjectionWhenArtifactPresent) {
+// #648 A6. A home seeded with the GitHub-only default artifact gains the CN half
+// of the region object once; the migration is idempotent afterwards.
+TEST(ConfigIndexMigration, XlingsJsonUpgradesTheFlatDefaultArtifactToTheRegionObject) {
     auto dir = make_tempdir("mcpp-migrate-xja");
+    auto p = dir / ".xlings.json";
+    {
+        std::ofstream os(p);
+        os << "{\n  \"index_repos\": [\n"
+              "    { \"name\": \"mcpplibs\", \"url\": "
+              "\"https://github.com/mcpplibs/mcpp-index.git\", "
+              "\"artifact\": \"https://github.com/xlings-res/mcpp-index\" }\n"
+              "  ]\n}\n";
+    }
+    EXPECT_TRUE(mcpp::fallback::migrate_xlings_json_index_names(p));
+    auto text = read_all(p);
+    EXPECT_NE(text.find("\"artifact\": { \"GLOBAL\": \"https://github.com/xlings-res/mcpp-index\", "
+        "\"CN\": \"https://gitcode.com/xlings-res/mcpp-index\" }"), std::string::npos) << text;
+    EXPECT_FALSE(mcpp::fallback::migrate_xlings_json_index_names(p));
+    EXPECT_EQ(read_all(p), text);
+    std::filesystem::remove_all(dir);
+}
+
+// An artifact base the user wrote is theirs: no CN half is added to it.
+TEST(ConfigIndexMigration, XlingsJsonLeavesAUserArtifactBaseAlone) {
+    auto dir = make_tempdir("mcpp-migrate-xju");
     auto p = dir / ".xlings.json";
     std::string body =
         "{\n  \"index_repos\": [\n"
         "    { \"name\": \"mcpplibs\", \"url\": "
         "\"https://github.com/mcpplibs/mcpp-index.git\", "
-        "\"artifact\": \"https://github.com/xlings-res/mcpp-index\" }\n"
+        "\"artifact\": \"https://mirror.example/xlings-res/mcpp-index\" }\n"
         "  ]\n}\n";
     {
         std::ofstream os(p);
