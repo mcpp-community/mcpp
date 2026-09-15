@@ -145,6 +145,10 @@ mcpp --protocol-version
 多数门只在乎 `exec-build-script` 与 `write-project`,可以忽略 `init-mcpp-home` ——
 mcpp 给自己做初始化不是工作区在动作。
 
+上表是命令**可能**做的事。信封里的 `effects` 是这次运行**做了**的事,其中 `network`
+按观测记录而不是按声明:本次运行启动过索引刷新、安装或 git 远程操作时即列出,包括失败
+的或被期限终止的那一次;在 `--offline` 下运行时从不列出。
+
 ## 5. `--json` 不等于 `--format json`
 
 有两条命令在本协议之前就发布了 `--json`:
@@ -348,6 +352,7 @@ mcpp why toolchain [--target <triple>] [--toolchain <spec>] --format json
 | `host-module-missing` | `build.mcpp` 导入了没有任何依赖以 host module 形式提供的模块 |
 | `tool-version-conflict` | 两处声明把同一个 xlings 包定在不能同时成立的版本上 |
 | `shared-library-cxx-runtime` | C++ 运行时来自图中的包,而依赖的 C++ 共享库没有声明私有副本 |
+| `offline-download-required` | 本次运行离线,而规划需要下载:工具链、包、git 修订或包索引 |
 | `other` | 一处还没有被命名的拒绝分支 |
 
 **只要问题被回答了就退 0,包括答案是「拒绝」。** 「它能不能构建,不能的话
@@ -378,8 +383,11 @@ mcpp emit build-database [--spec s1|compile-commands] --format json
 不带 `--format` 时命令只输出文档;`-o <file>` 把原本输出的内容写入 `<file>`。文档的
 内容、不写工程目录的保证与 `watch` 的规则见 [SPEC-005](../specs/build-database.md)。
 
-失败时省略 `data` 并以 1 退出:不在工程中时诊断码为 `MCPP_BUILD_DATABASE_NO_PROJECT`,
-规划失败时为 `MCPP_BUILD_DATABASE_PLAN_FAILED`。警告不影响文档:
+失败时省略 `data` 并以 1 退出:不在工程中时诊断码为 `MCPP_BUILD_DATABASE_NO_PROJECT`;
+离线规划(`--offline`、`MCPP_OFFLINE`、`MCPP_NO_AUTO_INSTALL`)需要下载某样东西(工具链、
+包、git 修订或包索引,消息指出第一个)时为 `MCPP_OFFLINE_DOWNLOAD_REQUIRED`;其他原因的
+规划失败为 `MCPP_BUILD_DATABASE_PLAN_FAILED`。第一种不是工程的缺陷,不带 `--offline`
+运行一次即可消除。警告不影响文档:
 
 | 诊断码 | |
 |---|---|

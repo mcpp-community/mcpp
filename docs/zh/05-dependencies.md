@@ -247,10 +247,15 @@ mcpp index status     # 看本地现状:状态、年龄、修订号
 |---|---|
 | `--offline`(任意命令) | 完全不碰网络——不刷索引、不下载、不自动装工具链,也不发 `git ls-remote`/`clone`。已安装的东西照常构建,包括 commit 已在 `mcpp.lock`、克隆已在缓存里的 git 依赖 |
 | `MCPP_OFFLINE=1` | 同上,作用于整个 shell 会话或 CI job |
-| `~/.mcpp/config.toml` 里 `[index] auto_refresh = false` | 永不自动刷新索引,但下载仍然可用 |
+| `~/.mcpp/config.toml` 里 `[index] auto_refresh = false` | 永不隐式刷新索引:依赖未命中时不刷新,安装本地索引缺少的包之前不刷新,工程自定义索引的首次同步也不做(该次构建停止并指出 `mcpp index update`)。下载仍然可用 |
 
 `MCPP_NO_AUTO_INSTALL=1` 作为 `--offline` 的旧式窄化拼写仍然有效(它只管工具链的
 自动安装)。
+
+刷新有期限。`[index] refresh_timeout`(秒,默认 120)是一次刷新最长可用的时间;超过
+即被终止,一条警告指出该设置,构建与任何一次刷新失败之后一样,继续使用本地索引。经由
+xlings 的安装在 xlings 连续 300 秒没有任何输出(包括心跳)时被终止。结束 mcpp 会一并
+结束它启动的 xlings 进程。
 
 任意命令加 `-v` 可以看到每个依赖的判定结果与原因。
 

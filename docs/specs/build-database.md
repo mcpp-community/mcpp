@@ -4,12 +4,12 @@
 |---|---|
 | 规范编号 | SPEC-005 |
 | 标题 | mcpp 输出的构建数据库:内容、取值规则与不写工程目录的保证 |
-| 状态 | 评审中 v1.0 |
-| 版本 | 1.0 |
-| 最后修改 | 2026-09-15 |
+| 状态 | 评审中 v1.1 |
+| 版本 | 1.1 |
+| 最后修改 | 2026-09-16 |
 | 对应实现 | mcpp >= 2026.9.15.1 |
 | 相关设计文档 | `.agents/docs/2026-09-14-636-build-database-and-the-latest-xlings.md` |
-| 相关 issue | #636 |
+| 相关 issue | #636, #648 |
 | 依据的外部规范 | S1「C++ Build Database: IDE Profile」profile 0.2.0 与 S2 0.2.0 §3.4,取自 https://github.com/Sunrisepeak/lsp-mcpp-private 提交 `b82859d`(schema 自提交 `28ecd6e` 起未变);JSON Compilation Database |
 
 ## 0. 适用范围
@@ -144,11 +144,15 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
   (`{"name": "s1", "version": "0.2.0"}` 或 `{"name": "compile-commands"}`)、
   `database`、`watch` 与 `inputs-fingerprint`。**已实现**
 - **R5.2** 失败时信封不含 `data`,`diagnostics` 至少含一条 `error`,退出码为 1:不在
-  工程中为 `MCPP_BUILD_DATABASE_NO_PROJECT`,规划失败为
-  `MCPP_BUILD_DATABASE_PLAN_FAILED`,工作区中其消息指出成员。工作区中任一成员规划
-  失败,整次命令失败。**已实现**
+  工程中为 `MCPP_BUILD_DATABASE_NO_PROJECT`;离线运行而规划需要下载时为
+  `MCPP_OFFLINE_DOWNLOAD_REQUIRED`,消息指出需要下载的第一项;其他规划失败为
+  `MCPP_BUILD_DATABASE_PLAN_FAILED`。工作区中消息指出成员;任一成员规划失败,整次命令
+  失败。**已实现**(离线诊断码:mcpp >= 2026.9.16.1)
 - **R5.3** 信封的 `effects` 为 `read-project` 与 `write-global-cache`,运行了构建程序时
-  另有 `exec-build-script`。**已实现**
+  另有 `exec-build-script`,本次运行启动过网络子进程(索引刷新、安装、git 远程操作,
+  失败或超时的也算)时另有 `network`。**已实现**(`network`:mcpp >= 2026.9.16.1)
+- **R5.4** 规划期间启动的子进程不继承调用方读取标准输出的描述符;xlings 子进程有期限,
+  并随 mcpp 一起结束。**已实现**(mcpp >= 2026.9.16.1)
 
 ## 6. `watch` 与 `inputs-fingerprint`
 
@@ -170,3 +174,4 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 | 版本 | 日期 | 变更 |
 |---|---|---|
 | 1.0 | 2026-09-14 | 首版(#636)。 |
+| 1.1 | 2026-09-16 | R5.2 增加离线诊断码 `MCPP_OFFLINE_DOWNLOAD_REQUIRED`;R5.3 的 `network` 按观测列出;新增 R5.4(子进程不继承调用方描述符,xlings 子进程有期限并随 mcpp 结束)(#648)。 |

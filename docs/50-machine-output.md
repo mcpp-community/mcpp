@@ -169,6 +169,12 @@ cannot separate the harmless from the thing a gate exists for:
 Most gates care about `exec-build-script` and `write-project`, and can ignore
 `init-mcpp-home` — mcpp setting itself up is not the workspace acting.
 
+The table above is what a command **may** do. The `effects` of an envelope are
+what the run **did**, and `network` is observed rather than declared: it is
+listed whenever the run started an index refresh, an install or a git remote
+operation, including one that failed or was stopped by its bound, and never
+for a run under `--offline`.
+
 ## 5. `--json` is not `--format json`
 
 Two commands shipped a `--json` flag before this protocol existed:
@@ -395,6 +401,7 @@ a program classifying the outcome reads `reason`:
 | `host-module-missing` | `build.mcpp` imports a module no dependency supplies as a host module |
 | `tool-version-conflict` | two declarations name one xlings package at versions that cannot both hold |
 | `shared-library-cxx-runtime` | a dependency's C++ shared library in a graph whose C++ runtime is a package, with no private copy stated |
+| `offline-download-required` | the run is offline and the plan needs a download: a toolchain, a package, a git revision or the package index |
 | `other` | a refusal whose branch has not been given a token yet |
 
 **Exit 0 whenever the question was answered, including "refused".** "Would
@@ -430,8 +437,13 @@ no-write guarantee and the `watch` rules are
 [SPEC-005](specs/build-database.md).
 
 A failure omits `data` and exits 1, with the diagnostic code
-`MCPP_BUILD_DATABASE_NO_PROJECT` outside a project or
-`MCPP_BUILD_DATABASE_PLAN_FAILED` when planning fails. Warnings leave the
+`MCPP_BUILD_DATABASE_NO_PROJECT` outside a project,
+`MCPP_OFFLINE_DOWNLOAD_REQUIRED` when an offline plan (`--offline`,
+`MCPP_OFFLINE`, `MCPP_NO_AUTO_INSTALL`) needs something that has to be
+downloaded (a toolchain, a package, a git revision or the package index; the
+message names the first one), or `MCPP_BUILD_DATABASE_PLAN_FAILED` when planning
+fails for any other reason. The first of the three is not a defect of the
+project: one run without `--offline` removes it. Warnings leave the
 document in place:
 
 | code | |

@@ -289,10 +289,17 @@ Controls, in order of precedence:
 |---|---|
 | `--offline` (any command) | Never touch the network — no index refresh, no downloads, no toolchain auto-install, no `git ls-remote`/`clone`. Anything already installed still builds, including git deps whose commit is in `mcpp.lock` and whose clone is cached |
 | `MCPP_OFFLINE=1` | Same, for a whole shell session or CI job |
-| `[index] auto_refresh = false` in `~/.mcpp/config.toml` | Never refresh the index automatically; downloads still work |
+| `[index] auto_refresh = false` in `~/.mcpp/config.toml` | Never refresh an index implicitly: not on a dependency miss, not before installing a package the local index lacks, and not for the first sync of a project's custom index (that build stops and names `mcpp index update`). Downloads still work |
 
 `MCPP_NO_AUTO_INSTALL=1` remains accepted as the older, narrower spelling of
 `--offline` (it gates only toolchain auto-install).
+
+A refresh is bounded. `[index] refresh_timeout` (seconds, default 120) is the
+longest one refresh may take; a refresh that exceeds it is stopped, a warning
+names the setting, and the build continues with the local index, as it does
+after any failed refresh. An install through xlings is stopped when xlings
+writes nothing, not even its heartbeat, for 300 seconds. Terminating mcpp
+terminates the xlings process it started.
 
 Run any command with `-v` to see the decision for each dependency and why.
 
