@@ -163,7 +163,7 @@ CompileFlags compute_flags(const BuildPlan& plan);
 // (an SDK such as the NDK, or a retargetable clang) is exactly the case the
 // host line cannot serve.
 enum class LinkHost  { Linux, MacOS, Windows };
-enum class LinkShape { MsvcLinkExe, WindowsLld, AppleSdk, Generic };
+enum class LinkShape { MsvcLinkExe, PeLld, AppleSdk, Generic };
 
 LinkShape link_shape(LinkHost host, mcpp::build::dist::Format targetFormat,
                      bool msvcDialect, bool targetNamedByFlag);
@@ -466,8 +466,8 @@ LinkShape link_shape(LinkHost host, mcpp::build::dist::Format targetFormat,
     switch (host) {
         case LinkHost::Windows:
             if (msvcDialect)                return LinkShape::MsvcLinkExe;
-            if (targetFormat == Format::Pe) return LinkShape::WindowsLld;
-            return targetNamedByFlag ? LinkShape::Generic : LinkShape::WindowsLld;
+            if (targetFormat == Format::Pe) return LinkShape::PeLld;
+            return targetNamedByFlag ? LinkShape::Generic : LinkShape::PeLld;
         case LinkHost::MacOS:
             return targetFormat == Format::MachO ? LinkShape::AppleSdk
                                                  : LinkShape::Generic;
@@ -1636,7 +1636,7 @@ CompileFlags compute_flags(const BuildPlan& plan) {
     const LinkShape linkShape = link_shape(current_link_host(), linkTargetFormat,
                                            isMsvcDialect,
                                            !plan.toolchain.crossTargetFlag.empty());
-    if (linkShape == LinkShape::MsvcLinkExe || linkShape == LinkShape::WindowsLld) {
+    if (linkShape == LinkShape::MsvcLinkExe || linkShape == LinkShape::PeLld) {
         if (linkShape == LinkShape::MsvcLinkExe) {
             // Native cl.exe: link.exe does the link (SeparateLinker). Search
             // paths for dependency runtime import libs via /LIBPATH; user

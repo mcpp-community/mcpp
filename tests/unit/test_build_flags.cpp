@@ -200,11 +200,11 @@ TEST(LinkShape, MacOSHostKeepsTheAppleLineForMachOOnly) {
 
 TEST(LinkShape, WindowsHostSeparatesPeFromTargetsNamedByFlag) {
     EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Pe,  true,  false), LinkShape::MsvcLinkExe);
-    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Pe,  false, true),  LinkShape::WindowsLld);
-    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Pe,  false, false), LinkShape::WindowsLld);
+    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Pe,  false, true),  LinkShape::PeLld);
+    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Pe,  false, false), LinkShape::PeLld);
     // An SDK or retargetable clang aimed at an ELF row: named by `--target`.
     EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Elf, false, true),  LinkShape::Generic);
     // The canadian GCC cross to x86_64-linux-musl names its target by prefix
     // and keeps the line its CI job verifies.
-    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Elf, false, false), LinkShape::WindowsLld);
+    EXPECT_EQ(link_shape(LinkHost::Windows, Fmt::Elf, false, false), LinkShape::PeLld);
 }
