@@ -107,7 +107,8 @@ export int cmd_why(const mcpplibs::cmdline::ParsedArgs& parsed) {
             parsed.option_or_empty("target").value(),
             parsed.option_or_empty("toolchain").value());
     }
-    return mcpp::doctor::why_report(parsed.positional(0));
+    return mcpp::doctor::why_report(parsed.positional(0),
+                                    parsed.option_or_empty("features").value());
 }
 
 // Also called directly by the dispatcher for the legacy `--explain CODE` form.

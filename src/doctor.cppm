@@ -1012,7 +1012,7 @@ export int why_toolchain_json(std::string_view target, std::string_view tcSpec) 
     return 0;
 }
 
-export int why_report(const std::string& topic) {
+export int why_report(const std::string& topic, const std::string& features) {
     const bool all = topic.empty() || topic == "all";
 
     // The dedicated runtime view is a pure interpreter of the build's stored
@@ -1020,7 +1020,13 @@ export int why_report(const std::string& topic) {
     // artifact re-parse is allowed on this path.
     if (topic == "runtime") return print_stored_runtime_resolution();
 
-    auto ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false);
+    // `--features` reaches the resolution this report reads (#649 E8): the
+    // graph of a feature build is a different graph, and before this it was
+    // visible only in the `resolution.json` of that build.
+    mcpp::build::BuildOverrides ov;
+    ov.features = features;
+    auto ctx = mcpp::build::prepare_build(/*print_fingerprint=*/false,
+                                          /*includeDevDeps=*/false, {}, ov);
     if (!ctx) { std::println(stderr, "error: {}", ctx.error()); return 2; }
     auto& tc   = ctx->tc;
 

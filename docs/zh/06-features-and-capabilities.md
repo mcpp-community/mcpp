@@ -35,6 +35,27 @@ extra   = []
 - **严格校验**:目标包声明了 `[features]` 表时,请求一个未声明的 feature 产生
   警告,在 `--strict` 下是错误。不声明 `[features]` 的包接受任意请求(纯宏用法)。
 
+### 依赖的 feature
+
+`<依赖>/<feature>` 形式的记号打开某个依赖的 feature。依赖以消费方清单所写的键命名
+(`spike.fw`、`compat.opencv`),记号是可加的:它只打开依赖更多的部分,从不把依赖拉进来。
+
+```toml
+[dependencies]
+spike.fw = { path = "../fw" }
+
+[features]
+windows-installer = ["spike.fw/installer"]   # 与表形式中的 `forward = [...]` 相同
+```
+
+- **命令行上**(mcpp 2026.9.16.1+),`mcpp build --features spike.fw/installer` 为一条命令
+  打开同一个 feature,与根的转发相同;`run`、`test`、`pack`、`emit build-database` 与
+  `why deps` 同样接受该记号。它从不是根的 feature,也从不变成宏。
+- **校验**读取写下该转发的清单的每一张依赖表:`[dependencies]`、`[build-dependencies]`、
+  `[dev-dependencies]` 与 `[feature-deps.<name>]`,覆盖所有行。只在别的行或未激活的 feature
+  下声明的键同样算已声明;在当前行上该转发不到达任何边,不产生效果。没有任何表声明的键会被
+  报告,在 `--strict` 下报告为错误。命令行上无论根是否声明 `[features]`,都做同样的检查。
+
 ### 表形式 —— 让 feature 贡献的不止是隐含 feature
 
 `[features]` 的条目除了写成数组,还可写成**表**,从而让该 feature 在隐含 feature

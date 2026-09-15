@@ -1175,6 +1175,11 @@ int main() { return grpcgen::generate_all() ? 0 : 1; }
   尾名 `protobuf`。全限定的 `MCPP_DEP_<NS>_<NAME>_BIN_<TOOL>` 总是发布;裸名
   依次绑定到 `mcpplibs.<x>`、`compat.<x>`、无命名空间的 `<x>`,最后才是「剩下
   的唯一候选」——存在争用时 mcpp 会说出来,而不是默默选一个。
+- **工具的名字与它的目录的名字完全相同。** `dep_dir`、`dep_linkage` 与 `dep_bin`
+  使用同一个推导为提供者命名:清单的 `name`、限定名 `namespace.name`,以及已绑定的尾名。
+  因此把 `namespace = "spike"` 与 `name = "installer"` 分开写的包,既是
+  `dep_bin("installer", ...)`,也是 `dep_bin("spike.installer", ...)`(mcpp 2026.9.16.1+;
+  此前它的工具只以 `installer` 发布)。
 
 #### 旧版 mcpp 读到用了这些键的 manifest
 

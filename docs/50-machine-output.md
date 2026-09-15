@@ -402,6 +402,7 @@ a program classifying the outcome reads `reason`:
 | `tool-version-conflict` | two declarations name one xlings package at versions that cannot both hold |
 | `shared-library-cxx-runtime` | a dependency's C++ shared library in a graph whose C++ runtime is a package, with no private copy stated |
 | `offline-download-required` | the run is offline and the plan needs a download: a toolchain, a package, a git revision or the package index |
+| `package-cycle` | the dependency graph contains a cycle of packages; the message names its edges |
 | `other` | a refusal whose branch has not been given a token yet |
 
 **Exit 0 whenever the question was answered, including "refused".** "Would

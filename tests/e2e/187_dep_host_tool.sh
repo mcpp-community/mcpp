@@ -221,4 +221,54 @@ cd nsapp
 out="$("$MCPP" run 2>&1 | grep '^G=' | tail -1)"
 [[ "$out" == "G=5" ]] || { echo "FAIL: namespaced tool did not generate: $out"; exit 1; }
 
+# ── a package that writes `namespace` and `name` apart (#647 E4.3) ─────────
+# `myns.tp` above is the legacy dotted name, whose `package.name` is already the
+# qualified spelling. A manifest writing `namespace = "myns2"`, `name = "tp2"`
+# has `package.name == "tp2"`, and the tool used to be published under that
+# spelling alone, so `dep_bin("myns2.tp2", ...)` read nothing while
+# `dep_dir("myns2.tp2")` answered.
+cd "$TMP"
+mkdir -p ns2/src
+cat > ns2/mcpp.toml <<'EOF'
+[package]
+name      = "tp2"
+namespace = "myns2"
+version   = "0.1.0"
+
+[targets.gen]
+kind = "bin"
+main = "src/gen.cpp"
+EOF
+cp ns/src/gen.cpp ns2/src/gen.cpp
+mkdir -p ns2app/src
+cat > ns2app/mcpp.toml <<'EOF'
+[package]
+name    = "ns2app"
+version = "0.1.0"
+
+[dependencies]
+myns2.tp2 = { path = "../ns2", tools = ["gen"] }
+EOF
+printf '#include <cstdio>\nint gv();\nint main(){std::printf("G2=%%d\\n",gv());}\n' > ns2app/src/main.cpp
+cat > ns2app/build.mcpp <<'EOF'
+#include <cstdio>
+#include <cstdlib>
+#include <string>
+import mcpp;
+int main() {
+    const char* full  = mcpp::dep_bin("myns2.tp2", "gen");
+    const char* brief = mcpp::dep_bin("tp2", "gen");
+    if (!*full)  { std::fprintf(stderr, "qualified spelling did not resolve\n"); return 1; }
+    if (!*brief) { std::fprintf(stderr, "name spelling did not resolve\n");      return 1; }
+    std::string out = std::string(mcpp::out_dir()) + "/g.cpp";
+    std::string cmd = std::string("\"") + full + "\" \"" + out + "\"";
+    if (std::system(cmd.c_str()) != 0) return 1;
+    mcpp::generated(out.c_str());
+}
+EOF
+cd ns2app
+"$MCPP" build > b7.log 2>&1 || { cat b7.log; echo "FAIL: a namespace + name package's tool was not addressable by its qualified name"; exit 1; }
+out="$("$MCPP" run 2>&1 | grep '^G2=' | tail -1)"
+[[ "$out" == "G2=5" ]] || { echo "FAIL: the namespace + name tool did not generate: $out"; exit 1; }
+
 echo "OK"

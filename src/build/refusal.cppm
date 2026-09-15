@@ -112,6 +112,11 @@ enum class Code {
     // one online run fixes it. An editor that plans offline by default tells
     // the two apart by this code (#648).
     OfflineDownloadRequired,
+    // The dependency graph contains a cycle of packages. Detected where the
+    // graph is resolved, so every cache mode refuses it alike (#649 E6); the
+    // build-cache key walk used to be the only place that noticed, and a
+    // `--cache=local` build of the same graph went ahead.
+    PackageCycle,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -146,6 +151,7 @@ constexpr std::string_view name(Code c) {
                                          return "shared-library-cxx-runtime";
         case Code::OfflineDownloadRequired:
                                          return "offline-download-required";
+        case Code::PackageCycle:         return "package-cycle";
         case Code::Other:                return "other";
     }
     return "other";
