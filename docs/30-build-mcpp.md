@@ -1399,6 +1399,13 @@ int main() { return grpcgen::generate_all() ? 0 : 1; }
   bare spelling is bound to `mcpplibs.<x>`, else `compat.<x>`, else an
   unnamespaced `<x>`, else the single remaining candidate — and when it is
   contested mcpp says so instead of picking silently.
+- **A tool is addressed by exactly the names its directory is.** One derivation
+  names a provider for `dep_dir`, `dep_linkage` and `dep_bin`: the manifest's
+  `name`, the qualified `namespace.name`, and the bound tail. A package that
+  writes `namespace = "spike"` and `name = "installer"` apart is therefore
+  `dep_bin("spike.installer", ...)` as well as `dep_bin("installer", ...)`
+  (mcpp 2026.9.16.1+; before that release its tool was published under
+  `installer` alone).
 
 #### Older mcpp reading a manifest that uses this
 

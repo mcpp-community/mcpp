@@ -150,6 +150,27 @@ warning: 'huxdemo.comp@path' declares the dependency 'fw', which names mcpplibs.
 点名二者;修正方式是在该清单中声明 `namespace`,或两处写同一个键。`version` 依赖
 不受影响,它的身份就是键。
 
+### git 仓库中的一个包(mcpp 2026.9.16.1+)
+
+`git` 依赖指向一个仓库,键说明指的是仓库里的哪一个包。根清单的包是其一;根清单
+`[workspace] members` 的每一项是另一个。键的身份不是根包时,选中清单声明该身份的那个
+member,提交相同:
+
+```toml
+# repo/mcpp.toml 声明 spike.fw 与 [workspace] members = ["tool"];
+# repo/tool/mcpp.toml 声明 spike.fw-installer
+[dependencies]
+spike.fw           = { git = "https://example.org/fw.git", rev = "cc3c74c5" }
+spike.fw-installer = { git = "https://example.org/fw.git", rev = "cc3c74c5", tools = ["fw-installer"] }
+```
+
+- member 继承仓库的 `[workspace.package]`,与从仓库自己的检出构建时相同。
+- member 中留在克隆目录之内的 `path` 边(例如 `spike.fw = { path = ".." }`)指向同一
+  git 源的同一提交,因此它就是根的键解析到的那个包,而不是第二条以 path 为源的声明。
+- 既不指根包也不指任何 member 的键沿用上一节的规则:使用根清单的身份,并给出警告。
+
+键按身份选择,不存在 `subdir` 键:较旧的客户端会忽略这样的键,并不声不响地构建根包。
+
 ### 命名空间解析规则
 
 每个包的身份是**命名空间 + 名字**二元组。每个 selector 都只规范化成一个身份:
@@ -296,13 +317,39 @@ protobuf = { version = "35.1", tools = ["protoc"] }
 
 `[build-dependencies]` 用于第一个轴无法表达的那种组合 —— 某个包的库不得进入目标,
 而它的工具或规则仍然需要。同一个包同时出现在两张表里不是错误:普通声明胜出,因为
-一行 `[build-dependencies]` 不应该悄悄拿掉目标真正需要的库。
+一行 `[build-dependencies]` 不应该悄悄拿掉目标真正需要的库;两条声明各自的请求
+(`tools`、`features`、`host-module`、`reexport`)都作用于这一条边(mcpp 2026.9.16.1+;
+此前第二条声明的请求被丢弃)。
+
+**只含程序的包只贡献它的程序(mcpp 2026.9.16.1+)。** 声明的 `[targets]` 全部是程序
+(`bin`、`app`、`test`)的依赖没有可链接的东西。它的工具由工具子构建构建,子构建把这个包
+当作自己的根来解析;在消费方的图里它只提供工具与目录:它自己的依赖不在那里解析,它的源码
+不在那里编译,它的 `ldflags` 不进入消费方的链接。因此一个程序可以依赖请求它的那个包,
+SDK 正是这样提供一个针对自身构建的程序。没有 `[targets]` 表的包不受影响,即使
+`src/main.cpp` 为它推断出一个程序。
+
+包之间的环在解析依赖图的地方被拒绝,并列出环上的边,与缓存模式无关;工具子构建再次请求
+正在构建的同一个工具时,在第一次重复处被拒绝,并给出请求链。
 
 与 `[dev-dependencies]` 不同,这些依赖**会**被传递遍历:一个构建期依赖自己的依赖正是
 让它能工作的东西,并且继承它「只服务构建」的性质。
 
-feature 可以为构建期请求划定范围而无需第二个声明处 —— `[feature-deps.<name>]` 可以给
-一条已经无条件声明的依赖追加 `tools`,所以「按需才要」不需要另开一张表。
+feature 可以为构建期请求划定范围而无需第二个声明处。`[feature-deps.<name>]` 的条目可以
+以相同的源重述一条已经无条件声明的依赖,并为它追加 `tools`,所以「按需才要」不需要另开
+一张表:
+
+```toml
+[dependencies]
+spike.installer = { path = "../installer" }
+
+[feature-deps.installer]
+spike.installer = { path = "../installer", tools = ["installer"] }
+```
+
+重述要写出源,因为每张依赖表都如此:没有 `path`、`git`、`version` 或 `workspace` 的条目
+被当作命名空间表读取并被拒绝,拒绝消息会说明要重述源。重述中的 `tools`、`features`、
+`host-module` 与 `reexport` 加到该行生效的声明上。重述写了另一个源时被拒绝,并列出两个源
+(mcpp 2026.9.16.1+);此前它被忽略。
 
 > 这个段很早就能被解析,而直到 2026.8.29.1 之前没有任何做决定的代码读它:写下它得到的是
 > 一份能加载的清单、零诊断、零效果。

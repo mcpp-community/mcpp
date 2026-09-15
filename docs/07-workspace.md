@@ -372,6 +372,12 @@ myproject/
 
 Each member's build artifacts live under its own `target/` subdirectory.
 
+A project outside the workspace reaches a member of a git-hosted workspace by
+the member's identity: `myproject.http = { git = "...", rev = "..." }` selects
+`libs/http` among the root manifest's `members`, at the same commit, and the
+member inherits `[workspace.package]` as it does here (mcpp 2026.9.16.1+; see
+[05 — Dependencies](05-dependencies.md)).
+
 ## 7. Relationship to C++ Modules
 
 Workspaces work in concert with the C++23 module mechanism:

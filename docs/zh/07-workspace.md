@@ -345,6 +345,11 @@ myproject/
 
 各成员的构建产物位于各自的 `target/` 子目录下。
 
+工作空间之外的项目以 member 的身份引用托管在 git 上的工作空间中的 member:
+`myproject.http = { git = "...", rev = "..." }` 在根清单的 `members` 中选中 `libs/http`,
+提交相同,且该 member 与在此处一样继承 `[workspace.package]`(mcpp 2026.9.16.1+;见
+[05 —— 依赖](05-dependencies.md))。
+
 ## 7. 与 C++ 模块的关系
 
 工作空间与 C++23 模块机制协同工作：

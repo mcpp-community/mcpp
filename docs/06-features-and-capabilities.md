@@ -41,6 +41,33 @@ extra   = []
   requesting an undeclared feature produces a warning; an error under `--strict`. A
   package that does not declare `[features]` accepts any request (pure macro usage).
 
+### A feature of a dependency
+
+A token `<dependency>/<feature>` opens a feature of a dependency. The dependency
+is named by the key its consumer's manifest writes (`spike.fw`, `compat.opencv`),
+and the token is additive: it opens more of the dependency, never pulls the
+dependency in.
+
+```toml
+[dependencies]
+spike.fw = { path = "../fw" }
+
+[features]
+windows-installer = ["spike.fw/installer"]   # the same as `forward = [...]` in the table form
+```
+
+- **On the command line** (mcpp 2026.9.16.1+), `mcpp build --features spike.fw/installer`
+  opens the same feature for one command, as a forward of the root does;
+  `run`, `test`, `pack`, `emit build-database` and `why deps` accept the token
+  alike. It is never a feature of the root and never becomes a macro.
+- **Validation** reads every dependency table of the manifest that writes the
+  forward: `[dependencies]`, `[build-dependencies]`, `[dev-dependencies]` and
+  `[feature-deps.<name>]`, on every row. A key declared only for another row or
+  under an inactive feature is declared; on this row the forward reaches no edge
+  and does nothing. A key no table declares is reported, and the report is an
+  error under `--strict`. On the command line the same check runs whether or not
+  the root declares `[features]`.
+
 ### Table form — a feature that contributes more than implied features
 
 A `[features]` entry may be written as a **table** instead of an array, letting the

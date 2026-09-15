@@ -167,6 +167,34 @@ source: the build is refused before scanning, naming both, and the fix is a
 `namespace` in that manifest or one key in both places. A `version` dependency
 is unaffected; its identity is the key.
 
+### A package of a git repository (mcpp 2026.9.16.1+)
+
+A `git` dependency names a repository, and its key names which package of the
+repository is meant. The root manifest's package is one; each entry of that
+manifest's `[workspace] members` is another. A key whose identity is not the
+root package's selects the member whose manifest declares it, at the same
+commit:
+
+```toml
+# repo/mcpp.toml declares spike.fw and [workspace] members = ["tool"];
+# repo/tool/mcpp.toml declares spike.fw-installer
+[dependencies]
+spike.fw           = { git = "https://example.org/fw.git", rev = "cc3c74c5" }
+spike.fw-installer = { git = "https://example.org/fw.git", rev = "cc3c74c5", tools = ["fw-installer"] }
+```
+
+- The member inherits the repository's `[workspace.package]`, as it does when
+  the repository is built from its own checkout.
+- A member's `path` edge that stays inside the clone, such as
+  `spike.fw = { path = ".." }`, names the same git source at the same commit,
+  so it is the package the root's key resolved rather than a second,
+  path-sourced declaration of it.
+- A key that names neither the root package nor a member keeps the rule of the
+  section above: the root manifest's identity is used, with the warning.
+
+A key selects by identity, and no `subdir` key exists: an older client would
+ignore such a key and build the root package without a word.
+
 ### Namespace resolution rules
 
 Every package has a two-part identity: a **namespace** and a **name**. Every
@@ -335,15 +363,49 @@ protobuf = { version = "35.1", tools = ["protoc"] }
 express — a package whose library must not reach the target while its tool or
 its rule is still wanted. Naming one package in both tables is not an error:
 the ordinary declaration wins, because a `[build-dependencies]` line must not
-quietly drop a library the target needs.
+quietly drop a library the target needs, and what each declaration requests
+(`tools`, `features`, `host-module`, `reexport`) is requested of the one edge
+(mcpp 2026.9.16.1+; before that release the second declaration's requests were
+dropped).
+
+**A package of programs contributes only its programs (mcpp 2026.9.16.1+).** A
+dependency whose declared `[targets]` are all programs (`bin`, `app`, `test`)
+has nothing to link. Its tools are built by the tool sub-build, which resolves
+the package as its own root, and in the consumer's graph it provides its tools
+and its directory and nothing else: its own dependencies are not resolved
+there, its sources are not compiled there, and its `ldflags` do not reach the
+consumer's link. A program may therefore depend on the package that requests
+it, which is how an SDK provides a program built against itself. A package
+that declares no `[targets]` table is unaffected, even when a `src/main.cpp`
+infers a program for it.
+
+A cycle among packages is refused where the graph is resolved, naming its
+edges, under every cache mode; a tool whose own sub-build requests it again is
+refused at that first repetition, naming the chain.
 
 Unlike `[dev-dependencies]`, these **are** walked transitively: a build
 dependency's own dependencies are what make it work, and they inherit its
 build-only nature.
 
-A feature scopes build-time requests without a second declaration site —
-`[feature-deps.<name>]` may add `tools` to a dependency already declared
-unconditionally, so "only when needed" needs no separate table.
+A feature scopes build-time requests without a second declaration site. A
+`[feature-deps.<name>]` entry may restate a dependency already declared
+unconditionally, with the same source, and add `tools` to it, so "only when
+needed" needs no separate table:
+
+```toml
+[dependencies]
+spike.installer = { path = "../installer" }
+
+[feature-deps.installer]
+spike.installer = { path = "../installer", tools = ["installer"] }
+```
+
+The restatement names its source because every dependency table does: an entry
+without `path`, `git`, `version` or `workspace` is read as a namespace table
+and refused, and the refusal says to restate the source. `tools`, `features`,
+`host-module` and `reexport` of the restatement are added to the declaration in
+effect on the row. A restatement that names another source is refused, naming
+both sources (mcpp 2026.9.16.1+); before that release it was ignored.
 
 > The section has been parsed since early versions and, until 2026.8.29.1, read
 > by nothing that made a decision: writing it produced a manifest that loaded,
