@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-289 records.
+291 records.
 
 ## By subject
 
@@ -62,6 +62,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### triage
 
+- [#646 to #649 implemented: the plan, its review from eight angles, and the ledger](2026-09-16-646-649-implementation-plan.md) — active
+- [Four issues from a framework and an editor: #646, #647, #648 and #649, read against the engine and routed by home](2026-09-16-646-649-four-issues-by-home.md) — active
 - [Link forms, standard levels and a path limit: the asks of #641 and #642, read against the code](2026-09-15-641-642-link-forms-standards-and-paths.md) — landed
 - [#641 and #642 implemented: the plan, its review from eight angles, and the ledger](2026-09-15-641-642-implementation-plan.md) — landed
 - [#634 implemented across five repositories: the plan, its review, and the ledger that tracks it](2026-09-14-634-implementation-plan.md) — landed
@@ -74,6 +76,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
+- [#646 to #649 implemented: the plan, its review from eight angles, and the ledger](2026-09-16-646-649-implementation-plan.md) — active
+- [Four issues from a framework and an editor: #646, #647, #648 and #649, read against the engine and routed by home](2026-09-16-646-649-four-issues-by-home.md) — active
 - [Link forms, standard levels and a path limit: the asks of #641 and #642, read against the code](2026-09-15-641-642-link-forms-standards-and-paths.md) — landed
 - [#641 and #642 implemented: the plan, its review from eight angles, and the ledger](2026-09-15-641-642-implementation-plan.md) — landed
 - [The build database of #636, and two defects on the way to the latest xlings](2026-09-14-636-build-database-and-the-latest-xlings.md) — active
