@@ -77,6 +77,11 @@ mcpp <命令> --format json
 目前只支持 `json`。`ndjson` 保留给未来真正需要流式的场景,**现在不接受** —— 请求它是
 错误,不是静默回落。
 
+`--format` 已经表示其**产物**的命令改用 `--message-format json` 请求机器输出,与
+`mcpp test` 一致。`mcpp pack --format` 表示包格式(`tar`、`dir`、`msi`),因此它的报告是
+`mcpp pack --message-format json`(2026.9.16.1+)。形状随 kind 而定:测试随时间陆续完成,
+所以 `mcpp test` 每个测试一条流式记录;一次打包只有一个结果,所以 `mcpp pack` 输出一个信封。
+
 ### 不支持的值 / 未知选项
 
 两者都走 **stderr**、退出码 **2**,且**不往 stdout 写任何东西**:
@@ -389,6 +394,25 @@ mcpp emit build-database [--spec s1|compile-commands] --format json
 
 `--protocol-version` 为这条命令声明 `init-mcpp-home`、`read-project`、`network`、
 `write-global-cache` 与 `exec-build-script`,从不声明 `write-project`。
+
+### `mcpp.pack` —— 一次打包的产物 *(mcpp 2026.9.16.1+)*
+
+```
+mcpp pack [target] [--format <f>] [--target <triple>...] --message-format json
+```
+
+信封在命令结束后输出一次;所有给人读的行都走 stderr,包括打包启动的构建程序与工具的输出。
+`data` 为:
+
+| 字段 | |
+|---|---|
+| `artifacts` | 每个产物一条记录:`path`(绝对路径)、`type`(`file` 或 `directory`)、`format`(`--format` 取值,省略时为 `tar`)与 `targets`(进入该产物的每条腿的规范三元组)。分派格式报告本次请求引入的 action 的终端输出;多 `--target` 的 Android 打包报告一个产物,其 `targets` 列出每条腿 |
+| `stage` | 产物所来自的那棵树:`dir`、`manifest`(即下文的暂存清单)与 `closure`(`walked` 或 `not-walked`);库包以及未暂存任何树时为 `null` |
+
+失败时省略 `data`,以命令自身的退出码退出,并带诊断码 `MCPP_PACK_FAILED`;原因在 stderr 上。
+每次运行的 `effects` 为 `read-project`、`write-project` 与 `write-global-cache`,有构建程序运行时
+再加 `exec-build-script`。`--protocol-version` 为 `pack` 声明 `init-mcpp-home`、
+`read-project`、`write-project`、`network`、`write-global-cache` 与 `exec-build-script`。
 
 ### `mcpp test --message-format json` —— 测试流
 

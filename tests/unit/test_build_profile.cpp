@@ -170,3 +170,18 @@ TEST(BuildProfile, UnknownManifestCacheModeFallsThroughToDefault) {
     EXPECT_EQ(mcpp::build::resolve_cache_mode(m, "bogus"),
               mcpp::build::CacheMode::Local);
 }
+
+// ── #649 E9: the override the command line states, one rule for every verb ───
+//
+// `build` preferred `--profile` over the shorthands and `run` preferred the
+// shorthands, so one command line built two profiles. Every verb now reads this.
+TEST(BuildProfile, ProfileOptionBeatsTheShorthands) {
+    EXPECT_EQ(mcpp::build::profile_override_from_flags("dev", true, false), "dev");
+    EXPECT_EQ(mcpp::build::profile_override_from_flags("release", false, true), "release");
+}
+
+TEST(BuildProfile, ShorthandsNameTheirProfile) {
+    EXPECT_EQ(mcpp::build::profile_override_from_flags("", true, false), "release");
+    EXPECT_EQ(mcpp::build::profile_override_from_flags("", false, true), "dev");
+    EXPECT_EQ(mcpp::build::profile_override_from_flags("", false, false), "");
+}

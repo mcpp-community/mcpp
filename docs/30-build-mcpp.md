@@ -751,6 +751,14 @@ that follow the header state each needed name and what satisfies it
 ([50 — Machine Output](50-machine-output.md)), so a provider that places
 libraries itself reads them rather than inferring the closure from `lib/`.
 
+**A member that stages libraries of its own follows the strip decision
+(2026.9.16.1+).** `mcpp pack` strips the program, every shared library the graph
+built and the staged copy of the toolchain's runtime, and `--no-strip` and
+`--debug-symbols` govern all of them. A provider that places further libraries
+(an Android archive's native libraries) reads `mcpp::pack_strip()` (`"1"` or
+`"0"`) and `mcpp::pack_debug_symbols_dir()` in the pass that submits, so one
+switch governs every file in the package.
+
 Commands are an **argv, not a shell string** (no shell is assumed — Windows has
 none to rely on), and the only interpolations are a closed set:
 
@@ -765,6 +773,50 @@ none to rely on), and the only interpolations are a closed set:
 
 The raw stdout protocol above remains the low-level substrate; `import mcpp;`
 is the typed layer over it.
+
+### Reading the resolved graph: `graph_file` (2026.9.16.1+)
+
+`mcpp::dep_dir` answers by name for a dependency the package declares itself.
+A framework that merges what every library contributes (resources, platform
+sources, an Info.plist fragment) needs the libraries its application does not
+name as well, in an order in which a later contribution overrides an earlier
+one. `mcpp::graph_file()` names a JSON document that states the resolved graph:
+
+```jsonc
+{
+  "kind": "mcpp.graph",
+  "version": 1,
+  "packages": [                        // dependencies before their requesters
+    {
+      "package": { "canonical": "spike.b@0.2.0", "namespace": "spike",
+                   "name": "b", "version": "0.2.0", "source": "path" },
+      "root": false,
+      "requested_by": [ { "requester": "spike.a@0.1.0", "key": "spike.b",
+                          "table": "dependencies" } ],
+      "link": { "form": "static", "reason": "..." },     // a library only
+      "manifest_dir": "/abs/path/to/b",
+      "features": [],
+      "targets": [ { "name": "b", "kind": "lib" } ],
+      "metadata": { "demo": { "resources": "res" } }      // [package.metadata], verbatim
+    }
+  ]
+}
+```
+
+- **The root package's program receives it; a dependency's program reads
+  `""`.** The root decides the graph, and when its program runs every input of
+  that decision is final, which is the reason `dep_linkage` is offered to it
+  alone.
+- **`[package.metadata.<tool>]` is the package's statement about itself.** The
+  engine does not interpret the table. A path in it is resolved by the reader
+  against the entry's `manifest_dir`, because only the reader knows which values
+  are paths. Older engines ignore the table, so a published package may state
+  it before its consumers upgrade.
+- **The document's content is part of the re-run key.** Editing a dependency's
+  `[package.metadata]` re-runs the root program; editing that dependency's
+  sources does not.
+- The entries are the `graph` section of `resolution.json` with four additions
+  (`manifest_dir`, `features`, `targets`, `metadata`), from one derivation.
 
 ### `import mcpp;` is the surface that evolves (mcpp 2026.8.5.1+)
 
@@ -879,6 +931,8 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_TARGET_MIN_PLATFORM_VERSION` *(2026.9.12.3+)* | `mcpp::min_platform_version()` | The project's floor for this triple, in the platform's own words: on macOS, `[build] macos_deployment_target` or the engine's own default `14.0`; on iOS, `[build] ios_deployment_target` verbatim, empty when the project states none; on `*-linux-android`, `[target.<triple>] min_api_level`, or a fallback the resolved NDK payload states; empty on every other row. The value the effective triple carries, and part of the re-run key |
 | `MCPP_PACK_FORMAT` *(2026.9.11.1+)* | `mcpp::pack_format()` | The `--format` value of the `mcpp pack` pass this program is part of; empty for every ordinary build. The empty value is the one that carries the meaning — a member gates its submission on this, so `mcpp build` has the graph it always had |
 | `MCPP_PACK_STAGE_DIR` *(2026.9.11.1+)* | `mcpp::pack_stage_dir()` | Where `mcpp pack` has already staged the closure, absolute; empty when this build is not packaging. Read it to decide the shape of the work; write `${mcpp.stage_dir}` into the action, so the path in the graph and the path the program read cannot disagree |
+| `MCPP_PACK_STRIP` *(2026.9.16.1+)* | `mcpp::pack_strip()` | `1` when the `mcpp pack` pass this program is part of strips, `0` under `--no-strip`; empty for every ordinary build. A member that stages libraries of its own follows it, so one switch governs every file in the package |
+| `MCPP_PACK_DEBUG_SYMBOLS_DIR` *(2026.9.16.1+)* | `mcpp::pack_debug_symbols_dir()` | Where `--debug-symbols` sends the separated `*.debug` files, absolute; empty when they are discarded or the build is not packing |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | the device-kind sources (`.cu`, `.hip`, …) the package's effective `sources` match, package-root-relative, one per line; empty when there are none. The engine compiles none of them — the rule package this program imports turns each into an `mcpp::action`. Already narrowed: a `{ glob, accel }` entry the build does not cover contributes nothing, so `--no-accel` yields an empty list |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | a writable scratch/output dir owned by mcpp |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | the package root (= CWD) |
@@ -886,6 +940,7 @@ The running program receives the build context as `MCPP_*` variables
 | `MCPP_FEATURES` | — | comma-separated active feature list |
 | `MCPP_DEP_<NAME>_DIR` | `mcpp::dep_dir("name")` | the resolved install dir of each declared dependency (the qualified `namespace.name`, the canonical name, **and** the namespace-stripped spelling when it is unambiguous; same `<NAME>` sanitization as `MCPP_FEATURE_`). Received by dependencies' build.mcpp **and** the root project's (the root runs after dependency resolution, 0.0.100+) |
 | `MCPP_DEP_<NAME>_LINKAGE` *(2026.9.15.2+)* | `mcpp::dep_linkage("name")` | the link form each dependency takes in this build, `static` or `shared`, under the names `MCPP_DEP_<NAME>_DIR` uses; empty for a dependency with no library form. The value is the resolution that decides what is linked, so a generated loader entry or `dllimport` declaration follows it. Received by the **root project's** build.mcpp only: the root decides every dependency's form, and a dependency's program runs before packages discovered after it, whose programs supply facts the answer depends on, so `dep_linkage` is always empty there |
+| `MCPP_GRAPH_FILE` *(2026.9.16.1+)* | `mcpp::graph_file()` | the resolved dependency graph as a JSON document, packages in dependency order, each with its manifest directory, features, targets and `[package.metadata]` (see [Reading the resolved graph](#reading-the-resolved-graph-graph_file-20269161)). Received by the **root project's** build.mcpp only; the document's content joins the re-run key |
 
 These values are folded into the re-run key **unconditionally** — changing the
 target, profile, or feature set re-runs the program without any

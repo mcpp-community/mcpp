@@ -110,6 +110,8 @@ mcpp pack --format appimage             # 由图里某个包提供的格式
 mcpp pack -o myapp.tar.gz              # 仅文件名:落到 target/dist/myapp.tar.gz
 mcpp pack -o /abs/path/myapp.tar.gz    # 含目录:按字面路径输出
 mcpp pack --profile dev                # 换一个 profile 构建(默认 release)
+mcpp pack --dev                        # 同上,拼法与 build、run 一致;--profile 优先于它
+mcpp pack --message-format json        # 在 stdout 上输出一个 mcpp.pack 信封(mcpp 2026.9.16.1+)
 mcpp pack --no-strip                   # 按构建原样发货,不剥符号
 mcpp pack --debug-symbols dbg/         # 把分离出的 *.debug 写到 dbg/
 mcpp pack --format msi --features installer   # 为这次打包启用根包 feature
@@ -120,6 +122,16 @@ mcpp pack --format msi --features installer   # 为这次打包启用根包 feat
 因此只为某一种发布才需要的主机工具,可以声明在带 `tools = [...]` 的
 `[feature-deps.<f>]` 下,只由点名 `<f>` 的那次打包构建。
 `mcpp run --format <name> --features <LIST>` 把同样的 feature 交给它执行的那次打包。
+
+`--release` 与 `--dev`(mcpp 2026.9.16.1+)是 `build`、`run` 所接受的简写,优先级相同:
+三条命令上都是 `--profile` 优先于它们。
+
+`--message-format json`(mcpp 2026.9.16.1+)在命令结束后于 stdout 上输出一个
+`mcpp.pack` 信封,所有给人读的行都走 stderr。其 `data.artifacts` 列出产出的每个文件或
+目录:绝对路径、`type`(`file` 或 `directory`)、`--format` 取值以及各条腿的三元组;
+`data.stage` 给出暂存树、它的 manifest 以及闭包是否走通
+([50 —— 机器输出](50-machine-output.md))。这条命令上的 `--format` 表示包格式,因此
+机器输出按 `mcpp test` 的方式请求。
 
 ### `--format` 是一个轴,引擎只拥有其中两个取值
 
@@ -239,8 +251,20 @@ DWARF 带着发布者源码树与构建目录的绝对路径。剥什么取决�
 > 既碰不到静态归档、也无法分离出任何东西;前者管的是**包里带什么**。
 > 两个不同的决定,两个不同的名字。
 
-**被捆绑进来的库永远不 strip。** 它们来自 store 或宿主,不是 mcpp 构建的,
-为了这一个 bundle 去改写别人的共享载荷不是打包器该做的事。
+**图构建出的东西在每条把调试信息放在映像内的行上都会被剥离;来自 store 或宿主的库不会**
+(mcpp 2026.9.16.1+)。规则是 dh_strip 的「包剥离自己构建的东西」,覆盖范围:
+
+| 暂存的文件 | 是否剥离 | 原因 |
+|---|---|---|
+| 程序 | 是,按可执行文件;在 Android 行上按共享库,因为那里的程序就是共享库 | 本次构建编译了它 |
+| 图中 `SharedLibrary` 链接单元产出的共享库 | 是,`--strip-unneeded` | 本次构建从源码编译了它 |
+| 工具链自身运行时的暂存副本(NDK 的 `libc++_shared.so`) | 是,`--strip-unneeded` | 树里的副本不是共享载荷;Android Gradle 插件剥离同一个文件 |
+| 来自 store、宿主的库,或包部署的预构建库 | 否 | 其字节属于其发布者,供应商的库可能带签名 |
+
+Mach-O 与 MSVC PE 的调试信息放在映像之外,因此那里什么都不剥离,`Packing` 行只在确实剥离
+的行上写「stripped」。`--no-strip` 与 `--debug-symbols` 管辖每一个被剥离的文件。自己暂存库的
+构建程序通过 `mcpp::pack_strip()` 与 `mcpp::pack_debug_symbols_dir()` 读到同一个决定
+([30 —— build.mcpp](30-build-mcpp.md))
 
 ## 产物布局
 

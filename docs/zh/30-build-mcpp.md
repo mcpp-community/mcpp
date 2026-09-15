@@ -640,6 +640,11 @@ mcpp 会写出 `<暂存树>.stage-manifest` —— 一个兄弟文件,永不是�
 被需要的名字以及满足它的东西([50 —— 机器输出](50-machine-output.md)),自行放置库的
 提供方读这些行,而不是从 `lib/` 里推断闭包。
 
+**自己暂存库的成员跟随剥离决定(2026.9.16.1+)。** `mcpp pack` 剥离程序、图构建出的每个
+共享库以及工具链运行时的暂存副本,`--no-strip` 与 `--debug-symbols` 管辖其中每一个。
+另行放置库的提供方(Android 归档里的原生库)在提交的那次 pass 中读 `mcpp::pack_strip()`
+(`"1"` 或 `"0"`)与 `mcpp::pack_debug_symbols_dir()`,于是一个开关管住包里的每个文件。
+
 命令是 **argv 而不是 shell 字符串**(不假设存在 shell —— Windows 没有能依赖的那个),
 插值只有封闭的一组:
 
@@ -653,6 +658,43 @@ mcpp 会写出 `<暂存树>.stage-manifest` —— 一个兄弟文件,永不是�
 | `${mcpp.self}` *(2026.9.13.1+)* | 引擎自己的可执行文件,绝对路径。action 的命令是没有 shell 的 argv,构建程序因此没有可移植的拷贝手段;引擎在构建运行的每台机器上都在,`${mcpp.self} stage --verify content --output <dst> <src>` 拷贝一个文件、创建目标的父目录、只在字节不同时写入。这个参数形状自 2026.9.13.1 起是契约;写下它的构建程序即以该版本为下限 |
 
 上面的裸 stdout 协议仍是底层基底;`import mcpp;` 是其上的类型化层。
+
+### 读取解析后的依赖图:`graph_file`(2026.9.16.1+)
+
+`mcpp::dep_dir` 按名字回答本包自己声明的依赖。一个要合并每个库贡献的东西(资源、平台源码、
+一段 Info.plist)的框架,还需要应用没有点名的那些库,而且要按「后来的贡献覆盖先前的」的
+顺序。`mcpp::graph_file()` 给出一份描述解析后依赖图的 JSON 文档:
+
+```jsonc
+{
+  "kind": "mcpp.graph",
+  "version": 1,
+  "packages": [                        // 依赖排在请求它的包之前
+    {
+      "package": { "canonical": "spike.b@0.2.0", "namespace": "spike",
+                   "name": "b", "version": "0.2.0", "source": "path" },
+      "root": false,
+      "requested_by": [ { "requester": "spike.a@0.1.0", "key": "spike.b",
+                          "table": "dependencies" } ],
+      "link": { "form": "static", "reason": "..." },     // 仅库有
+      "manifest_dir": "/abs/path/to/b",
+      "features": [],
+      "targets": [ { "name": "b", "kind": "lib" } ],
+      "metadata": { "demo": { "resources": "res" } }      // [package.metadata],原样
+    }
+  ]
+}
+```
+
+- **根包的程序拿到它;依赖包的程序读到 `""`。** 根包决定这张图,而它的程序运行时这个决定的
+  每个输入都已确定 —— 这正是 `dep_linkage` 只提供给根包的原因。
+- **`[package.metadata.<tool>]` 是包对自身的陈述。** 引擎不解释这张表。其中的路径由读取方
+  相对于该条目的 `manifest_dir` 解析,因为只有读取方知道哪些值是路径。旧引擎忽略这张表,
+  所以已发布的包可以在其使用方升级之前就写上它。
+- **文档内容属于重跑键。** 修改某个依赖的 `[package.metadata]` 会让根包的程序重跑;修改该
+  依赖的源码不会。
+- 这些条目就是 `resolution.json` 的 `graph` 一节再加四项(`manifest_dir`、`features`、
+  `targets`、`metadata`),出自同一次推导。
 
 ### `import mcpp;` 才是会演进的那一面(mcpp 2026.8.5.1+)
 
@@ -755,6 +797,8 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存�
 | `MCPP_TARGET_MIN_PLATFORM_VERSION` *(2026.9.12.3+)* | `mcpp::min_platform_version()` | 项目对这个三元组的下限,用平台自己的措辞:macOS 上是 `[build] macos_deployment_target` 或引擎自带的默认值 `14.0`;iOS 上是 `[build] ios_deployment_target` 原样给出,项目没写就是空;`*-linux-android` 上是 `[target.<triple>] min_api_level`,或已解析 NDK 载荷给出的回落值;其余每一行都是空。取的是有效三元组携带的那个值,并进入重跑键 |
 | `MCPP_PACK_FORMAT` *(2026.9.11.1+)* | `mcpp::pack_format()` | 本程序所处的这次 `mcpp pack` 的 `--format` 取值;任何普通构建下都为空。承载含义的正是这个空值 —— 成员据此为自己的提交加闸,于是 `mcpp build` 拿到的还是它一直以来的那张图 |
 | `MCPP_PACK_STAGE_DIR` *(2026.9.11.1+)* | `mcpp::pack_stage_dir()` | `mcpp pack` 已经把闭包暂存到的位置,绝对路径;本次构建不在打包时为空。读它来判断这次要干的活是什么形状,而把 `${mcpp.stage_dir}` 写进 action —— 这样图里的路径与程序读到的路径不可能不一致 |
+| `MCPP_PACK_STRIP` *(2026.9.16.1+)* | `mcpp::pack_strip()` | 本程序所处的这次 `mcpp pack` 剥离时为 `1`,`--no-strip` 下为 `0`;任何普通构建下都为空。自己暂存库的成员跟随它,于是一个开关管住包里的每个文件 |
+| `MCPP_PACK_DEBUG_SYMBOLS_DIR` *(2026.9.16.1+)* | `mcpp::pack_debug_symbols_dir()` | `--debug-symbols` 放置分离出的 `*.debug` 文件的位置,绝对路径;丢弃调试信息或本次构建不在打包时为空 |
 | `MCPP_DEVICE_SOURCES` *(2026.9.5.2+)* | `mcpp::device_sources()` | 本包有效 `sources` 匹配到的设备类源文件(`.cu`、`.hip`…),相对包根,一行一个;没有时为空串。引擎一个都不编译 —— 由本程序引入的规则包把每一个变成一条 `mcpp::action`。已经过收窄:构建未覆盖的 `{ glob, accel }` 条目贡献为空,因此 `--no-accel` 得到空列表 |
 | `MCPP_OUT_DIR` | `mcpp::out_dir()` | mcpp 提供的可写输出/暂存目录 |
 | `MCPP_MANIFEST_DIR` | `mcpp::manifest_dir()` | 包根(= CWD) |
@@ -762,6 +806,7 @@ mcpp 会把它自己构建时用的**同一份** std 模块暂存过来,缓存�
 | `MCPP_FEATURES` | — | 活跃 feature 逗号列表 |
 | `MCPP_DEP_<NAME>_DIR` | `mcpp::dep_dir("name")` | 每个已声明依赖解析后的安装目录(限定名 `namespace.name`、canonical 名,以及无歧义时的去命名空间短名,都可用;`<NAME>` 消毒规则同 `MCPP_FEATURE_`)。依赖包的 build.mcpp **和**根工程的 build.mcpp 都能拿到(根工程的 build.mcpp 在依赖解析之后运行,0.0.100+) |
 | `MCPP_DEP_<NAME>_LINKAGE` *(2026.9.15.2+)* | `mcpp::dep_linkage("name")` | 每个依赖在本次构建中的链接形态,`static` 或 `shared`,名字与 `MCPP_DEP_<NAME>_DIR` 相同;没有库形态的依赖为空。该值就是决定链接内容的那次解析,生成的加载入口或 `dllimport` 声明因此与之一致。只有**根工程**的 build.mcpp 能拿到:根工程决定每个依赖的形态,而依赖包的程序运行在发现顺序更靠后的包之前,那些包的程序提供了答案所依赖的事实,所以在那里 `dep_linkage` 总是为空 |
+| `MCPP_GRAPH_FILE` *(2026.9.16.1+)* | `mcpp::graph_file()` | 以 JSON 文档表示的解析后依赖图,包按依赖顺序排列,每个包带其清单目录、feature、target 与 `[package.metadata]`(见[读取解析后的依赖图](#读取解析后的依赖图graph_file20269161))。只有**根工程**的 build.mcpp 能拿到;文档内容进入重跑键 |
 
 这些契约值**无条件**折入重跑键——换 target、换 profile、开关 feature 都会触发重跑,
 不需要任何 `rerun-if-env-changed` 声明。

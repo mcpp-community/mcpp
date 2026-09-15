@@ -95,6 +95,13 @@ mcpp <command> --format json
 streaming case and is **not** accepted — asking for it is an error, not a
 silent fallback.
 
+A command whose `--format` already names its **product** asks for machine
+output with `--message-format json` instead, as `mcpp test` does. `mcpp pack
+--format` names the package format (`tar`, `dir`, `msi`), so its report is
+`mcpp pack --message-format json` (2026.9.16.1+). The shape follows the kind:
+`mcpp test` streams a record per test because tests finish over time, and
+`mcpp pack` prints one envelope because a pack has one result.
+
 ### Unsupported values and unknown options
 
 Both go to **stderr** with **exit code 2**, and write nothing to stdout:
@@ -443,6 +450,28 @@ document in place:
 `--protocol-version` declares `init-mcpp-home`, `read-project`, `network`,
 `write-global-cache` and `exec-build-script` for the command, and never
 `write-project`.
+
+### `mcpp.pack` — the products of a pack *(mcpp 2026.9.16.1+)*
+
+```
+mcpp pack [target] [--format <f>] [--target <triple>...] --message-format json
+```
+
+The envelope is printed once, after the command finishes; every human line goes
+to stderr, including what the build programs and tools the pack starts print.
+`data` is:
+
+| field | |
+|---|---|
+| `artifacts` | one record per produced artifact: `path` (absolute), `type` (`file` or `directory`), `format` (the `--format` value, `tar` when omitted) and `targets` (the canonical triple of each leg that went into it). A dispatched format reports the terminal outputs of the actions the request introduced; a several-`--target` Android pack reports one artifact whose `targets` lists every leg |
+| `stage` | the tree the artifact was made from: `dir`, `manifest` (the stage manifest below) and `closure` (`walked` or `not-walked`); `null` for a library package and when no tree was staged |
+
+A failure omits `data`, exits with the command's exit status and carries the
+diagnostic code `MCPP_PACK_FAILED`; the reason is on stderr. The per-run
+`effects` are `read-project`, `write-project` and `write-global-cache`, with
+`exec-build-script` when a build program ran. `--protocol-version` declares
+`init-mcpp-home`, `read-project`, `write-project`, `network`,
+`write-global-cache` and `exec-build-script` for `pack`.
 
 ### `mcpp test --message-format json` — the test stream
 

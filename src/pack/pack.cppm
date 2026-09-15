@@ -189,7 +189,12 @@ std::filesystem::path resolve_debug_dir(const Options& opts,
 // its own directories (see `Options::toolchainLibraryDirs`).
 struct SharedLeg {
     std::string                        abi;
+    // The leg's canonical triple, for the pack report (#649 E9).
+    std::string                        triple;
     std::filesystem::path              artifact;
+    // #649 E5: the shared libraries THIS leg's graph built. See
+    // `Plan::graphSharedLibraries`.
+    std::vector<std::filesystem::path> graphSharedLibraries;
     std::vector<std::filesystem::path> searchDirs;
     std::vector<std::filesystem::path> platformDirs;
 };
@@ -255,7 +260,20 @@ struct Plan {
     bool                                 strip = true;
     std::filesystem::path                debugDir;   // absolute; empty = discard
     mcpp::pack::StripTools               stripTools;
+    // #649 E5: WHAT THIS GRAPH BUILT, absolute: every `SharedLibrary` link
+    // unit of the plan, the dependencies' shared images included. A staged
+    // copy of one of these is stripped as the program is, because "a package
+    // strips what it built" (the dh_strip rule `strip_program` quotes) covers
+    // them: they were compiled from source by this build. Set after
+    // `make_plan`, by the caller that holds the build plan.
+    std::vector<std::filesystem::path>   graphSharedLibraries;
 };
+
+// Does packing `plan` strip anything? The strip decision, AND a format whose
+// debug information is inside the image. A Mach-O or MSVC PE row keeps its
+// debug information beside the image, so the answer there is no whatever
+// was requested; the `Packing` line states this, not the request.
+bool strips_on_this_row(const Plan& plan);
 
 struct Error { std::string message; };
 
@@ -452,6 +470,12 @@ std::string wrapper_dirname_from_archive(const std::filesystem::path& archive) {
 }
 
 } // namespace detail
+
+bool strips_on_this_row(const Plan& plan) {
+    // wasm32-emscripten is packed by `run_wasm`, which has no strip step: the
+    // launcher is JavaScript and the module is one static image.
+    return plan.strip && plan.stripTools.inBandDebugInfo && !plan.targetIsWasm;
+}
 
 bool resolve_strip(const Options& opts, const mcpp::manifest::PackConfig& cfg) {
     if (opts.strip) return *opts.strip;
@@ -815,12 +839,12 @@ set_interpreter(const std::filesystem::path& binary,
     return {};
 }
 
-// Remove the program's debug information — and ONLY the program's.
+// Remove the program's debug information.
 //
-// A bundled `.so` is somebody else's file: it came out of the store or off the
-// host, mcpp did not build it, and stripping it would change a shared payload's
-// bytes for no gain to this bundle. dh_strip draws the same line (a package
-// strips what it built).
+// dh_strip's line is that a package strips what it built, and the program is
+// the first thing this one built. The shared libraries the same graph compiled
+// are the rest (`strip_staged_library` below, #649 E5); a library that came out
+// of the store or off the host is somebody else's file and is left as shipped.
 //
 // Shared with `run_pe` deliberately: a MinGW `.exe` carries DWARF in-band just
 // like an ELF one, so "does the bundle ship debug info" must not depend on
@@ -831,6 +855,91 @@ strip_program(const Plan& plan, const std::filesystem::path& staged)
     if (!plan.strip) return {};
     auto r = mcpp::pack::strip_artifact(staged, mcpp::pack::ArtifactShape::Executable,
                                         plan.stripTools, plan.debugDir);
+    if (!r) return std::unexpected(Error{r.error()});
+    return {};
+}
+
+// IS `file` ONE OF `set`? Compared as file-system identity (after `..` and
+// symbolic links are resolved), so the loader's spelling of a path and the
+// plan's spelling of the same file agree.
+bool path_in(const std::filesystem::path& file,
+             const std::vector<std::filesystem::path>& set)
+{
+    std::error_code ec;
+    const auto want = std::filesystem::weakly_canonical(file, ec);
+    for (auto const& p : set) {
+        std::error_code pec;
+        if (std::filesystem::weakly_canonical(p, pec) == want) return true;
+    }
+    return false;
+}
+
+// DOES `file` LIE UNDER ONE OF `dirs`?
+bool path_under(const std::filesystem::path& file,
+                const std::vector<std::filesystem::path>& dirs)
+{
+    std::error_code ec;
+    const auto f = std::filesystem::weakly_canonical(file, ec);
+    for (auto const& d : dirs) {
+        std::error_code dec;
+        const auto rel = f.lexically_relative(std::filesystem::weakly_canonical(d, dec));
+        if (!rel.empty() && *rel.begin() != "..") return true;
+    }
+    return false;
+}
+
+// SHOULD THE STAGED COPY OF `source` BE STRIPPED? (#649 E5)
+//
+// Two answers are yes:
+//
+//   built by this graph   a `SharedLibrary` link unit of the plan -- compiled
+//                         from source here, so dh_strip's rule applies to it
+//                         exactly as it applies to the program;
+//   the toolchain's own   a runtime found in the directories the row's own
+//     runtime             toolchain links from (`libc++_shared.so` from the
+//                         NDK). The reason for leaving a store file alone is
+//                         not changing a SHARED payload's bytes, and a copy in
+//                         the staged tree is not shared. The Android Gradle
+//                         plugin strips the same file.
+//
+// Everything else -- a library from the store, a prebuilt a package deployed,
+// a host library -- stays as shipped: a vendor library may be signed, and its
+// bytes are its publisher's.
+bool strips_staged_copy(const Plan& plan,
+                        const std::filesystem::path& source,
+                        const std::vector<std::filesystem::path>& graphBuilt)
+{
+    if (path_in(source, graphBuilt)) return true;
+    if (path_under(source, plan.opts.toolchainLibraryDirs)) return true;
+    if (plan.opts.carryToolchainRuntime
+        && path_under(source, plan.opts.toolchainRuntimeDirs)) return true;
+    return false;
+}
+
+// Strip the staged copy of a shared library, keeping its exports
+// (`--strip-unneeded`, the `SharedLibrary` shape). `--no-strip` reaches it
+// through `plan.strip`, and `--debug-symbols` through `debugDir`, as they reach
+// the program.
+//
+// NEVER THE BUILD'S OWN FILE. A member the build already placed where it is
+// staged is the same file as its source (see `stage_closure`), and editing it
+// would change an output ninja believes is up to date.
+std::expected<void, Error>
+strip_staged_library(const Plan& plan,
+                     const std::filesystem::path& staged,
+                     const std::filesystem::path& source,
+                     const std::filesystem::path& debugDir)
+{
+    if (!plan.strip) return {};
+    std::error_code ec;
+    if (std::filesystem::equivalent(source, staged, ec)) return {};
+    // A copy of a read-only store file is read-only too, and a strip tool
+    // rewrites the file it is given.
+    std::filesystem::permissions(staged, std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::add, ec);
+    auto r = mcpp::pack::strip_artifact(staged,
+                                        mcpp::pack::ArtifactShape::SharedLibrary,
+                                        plan.stripTools, debugDir);
     if (!r) return std::unexpected(Error{r.error()});
     return {};
 }
@@ -1132,7 +1241,8 @@ stage_closure(const Plan& plan, const ClosureRead& read,
               const std::filesystem::path& dir,
               std::vector<ClosureNeed>& needs,
               std::vector<std::string>& unresolvedLines,
-              std::string_view prefix)
+              std::string_view prefix,
+              std::vector<std::pair<std::filesystem::path, std::filesystem::path>>* copies = nullptr)
 {
     auto skipped = [&](const std::string& name) {
         const auto leaf = std::filesystem::path(name).filename().string();
@@ -1162,6 +1272,8 @@ stage_closure(const Plan& plan, const ClosureRead& read,
                 "failed to copy {} -> {}: {}",
                 m.source.string(), dst.string(), cec.message())});
         }
+        // (staged, source), for the caller that strips what the graph built.
+        if (copies) copies->emplace_back(dst, m.source);
         needs.push_back({m.name, ClosureNeed::Kind::Staged,
                          dst.lexically_relative(plan.stagingRoot).generic_string()});
     }
@@ -1474,6 +1586,7 @@ run_pe(const Plan& plan)
     }
 
     std::vector<ClosureNeed> needs;
+    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> copies;
     if (plan.opts.mode != Mode::None && plan.opts.mode != Mode::Static) {
         // `vendored` and `self-contained` collect the same set here, and that
         // is a property of the PLATFORM rather than a simplification.
@@ -1493,7 +1606,8 @@ run_pe(const Plan& plan)
         // is an executable the reader could not parse, which no format can
         // package.
         std::vector<std::string> unresolved;
-        if (auto r = stage_closure(plan, read, plan.stagingRoot, needs, unresolved, {}); !r)
+        if (auto r = stage_closure(plan, read, plan.stagingRoot, needs, unresolved, {},
+                                   &copies); !r)
             return std::unexpected(r.error());
         if (!unresolved.empty())
             return std::unexpected(Error{unresolved_reason(plan.binaryName, unresolved,
@@ -1501,6 +1615,13 @@ run_pe(const Plan& plan)
     }
 
     if (auto r = strip_program(plan, stagedExe); !r) return std::unexpected(r.error());
+    // #649 E5: and the DLLs this graph built (a MinGW DLL carries its DWARF
+    // in-band as the `.exe` does), plus the toolchain runtime it carries.
+    for (auto const& [staged, source] : copies) {
+        if (!strips_staged_copy(plan, source, plan.graphSharedLibraries)) continue;
+        if (auto r = strip_staged_library(plan, staged, source, plan.debugDir); !r)
+            return std::unexpected(r.error());
+    }
 
     if (plan.opts.format != Format::Tar) return needs;
 
@@ -1626,6 +1747,8 @@ run_shared_program(const Plan& plan)
         std::filesystem::path              artifact;
         std::vector<std::filesystem::path> searchDirs;
         std::vector<std::filesystem::path> platformDirs;
+        // #649 E5: what this leg's graph built.
+        std::vector<std::filesystem::path> graphBuilt;
     };
     auto primarySearch = plan.searchDirs;
     for (auto const& d : plan.opts.toolchainLibraryDirs) primarySearch.push_back(d);
@@ -1640,13 +1763,14 @@ run_shared_program(const Plan& plan)
         auto t = mcpp::toolchain::triple::parse(plan.triple);
         auto primaryAbi = t ? mcpp::toolchain::triple::android_abi(*t) : plan.triple;
         legs.push_back({plan.stagingRoot / "lib" / primaryAbi, primaryAbi,
-                        plan.builtBinary, primarySearch, plan.opts.platformLibraryDirs});
+                        plan.builtBinary, primarySearch, plan.opts.platformLibraryDirs,
+                        plan.graphSharedLibraries});
         for (auto const& leg : plan.extraSharedLegs)
             legs.push_back({plan.stagingRoot / "lib" / leg.abi, leg.abi, leg.artifact,
-                            leg.searchDirs, leg.platformDirs});
+                            leg.searchDirs, leg.platformDirs, leg.graphSharedLibraries});
     } else {
         legs.push_back({plan.stagingRoot / "lib", {}, plan.builtBinary, primarySearch,
-                        plan.opts.platformLibraryDirs});
+                        plan.opts.platformLibraryDirs, plan.graphSharedLibraries});
     }
 
     std::vector<ClosureNeed> needs;
@@ -1679,8 +1803,38 @@ run_shared_program(const Plan& plan)
         in.searchDirs   = leg.searchDirs;
         in.platformDirs = leg.platformDirs;
         const auto read = read_closure(in);
-        if (auto r = stage_closure(plan, read, leg.dir, needs, unresolved, prefix); !r)
+        std::vector<std::pair<std::filesystem::path, std::filesystem::path>> copies;
+        if (auto r = stage_closure(plan, read, leg.dir, needs, unresolved, prefix,
+                                   &copies); !r)
             return std::unexpected(r.error());
+
+        // #649 E5: THIS ROW USED TO STRIP NOTHING. `run` dispatches a
+        // shared-object program here before the ELF path that calls
+        // `strip_program`, so the program, the libraries its graph built and
+        // the NDK's `libc++_shared.so` all shipped their symbol tables while
+        // the `Packing` line said "stripped", and `--debug-symbols` was
+        // ignored. The program is a shared object, so it takes the
+        // `SharedLibrary` shape, which keeps the `.dynsym` its host loads it
+        // through. One tool serves every leg: the NDK's `llvm-strip` reads
+        // every Android ABI. A several-ABI tree separates its debug files by
+        // ABI, since two legs stage files of one name.
+        const auto legDebugDir = (plan.debugDir.empty() || leg.abi.empty())
+            ? plan.debugDir : plan.debugDir / leg.abi;
+        if (plan.strip) {
+            const auto stagedProgram = leg.dir / plan.binaryName;
+            std::error_code pec;
+            std::filesystem::permissions(stagedProgram, std::filesystem::perms::owner_write,
+                                         std::filesystem::perm_options::add, pec);
+            auto r = mcpp::pack::strip_artifact(stagedProgram,
+                                                mcpp::pack::ArtifactShape::SharedLibrary,
+                                                plan.stripTools, legDebugDir);
+            if (!r) return std::unexpected(Error{r.error()});
+        }
+        for (auto const& [staged, source] : copies) {
+            if (!strips_staged_copy(plan, source, leg.graphBuilt)) continue;
+            if (auto r = strip_staged_library(plan, staged, source, legDebugDir); !r)
+                return std::unexpected(r.error());
+        }
     }
 
     // THE RUNTIME FILES TRAVEL AS ON EVERY OTHER ROW. `deploy` placed them
@@ -1847,6 +2001,10 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     // text when it is incomplete. Both stay empty under `--mode static`.
     std::vector<ClosureNeed> needs;
     std::string unresolvedText;
+    // #649 E5: (staged, source) of every bundled library, for the strip step
+    // at the end, which must see the final images (after the search-path edits).
+    std::vector<std::pair<std::filesystem::path, std::filesystem::path>> bundledCopies;
+    std::string bundledLoader;
     if (plan.opts.mode != Mode::Static) {
         // THE BUILT BINARY, NOT THE STAGED COPY, and the difference is
         // `$ORIGIN`.
@@ -1954,6 +2112,9 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
 
         if (auto r = bundle_libs(toBundle, plan.stagingRoot); !r)
             return std::unexpected(Error{r.error()});
+        for (auto const& d : toBundle)
+            bundledCopies.emplace_back(plan.stagingRoot / "lib" / d.soname, d.path);
+        bundledLoader = find_loader_soname(toBundle);
 
         // Search path: point at bundled libs, or REMOVE THE TAG if there are none.
         //
@@ -2077,6 +2238,15 @@ run(const Plan& plan, const mcpp::config::GlobalConfig& cfg)
     // must see the stripped one. Same ordering rule the library packer states
     // at its leg loop.
     if (auto r = strip_program(plan, bundledBinary); !r) return std::unexpected(r.error());
+    // #649 E5: and the shared libraries this graph built. The dynamic loader
+    // is never one of them and is never edited, for the reason the
+    // search-path loop above gives.
+    for (auto const& [staged, source] : bundledCopies) {
+        if (!bundledLoader.empty() && staged.filename() == bundledLoader) continue;
+        if (!strips_staged_copy(plan, source, plan.graphSharedLibraries)) continue;
+        if (auto r = strip_staged_library(plan, staged, source, plan.debugDir); !r)
+            return std::unexpected(r.error());
+    }
 
     // A dispatched format reaches this point with an incomplete closure; an
     // archive was refused before any file was edited.
