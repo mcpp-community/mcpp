@@ -1,0 +1,17 @@
+name: probe-macos27
+on:
+  pull_request:
+    branches: [ main ]
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        label: [macos-27, macos-27-arm64, macos-26, macos-latest]
+    runs-on: ${{ matrix.label }}
+    timeout-minutes: 10
+    steps:
+      - name: reading
+        run: |
+          echo "READING label=${{ matrix.label }} $(sw_vers -productVersion) build=$(sw_vers -buildVersion) arch=$(uname -m) xcode=$(xcodebuild -version 2>/dev/null | head -1) clang=$(clang --version | head -1)"
+          echo "READING image=${ImageOS:-} ${ImageVersion:-}"
