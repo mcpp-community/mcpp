@@ -544,4 +544,56 @@ its `target/` after its branch is merged.
 
 ## 9. Closure
 
-(written when the rows of §0 are closed)
+### 9.1 What shipped
+
+| repository | pull request | published as |
+|---|---|---|
+| mcpp-community/mcpp | #650 (`f4529b2a`), #651 (`2f925d48`) | 2026.9.16.1 |
+| mcpp-community/mcpp | #652 (`074d87b3`) | the bootstrap pin |
+| mcpp-community/mcpp-plugins | #28 (`dea1f09`) | 0.12.0 |
+| openxlings/xim-pkgindex | #845 (`1c951f0b`) | mcpp 2026.9.16.1 as `latest` |
+| mcpplibs/mcpp-index | #432 (`0cbac960`), #433 | the reproducible artifact; mcpp:plugins 0.12.0 |
+| openxlings/xlings | #597 (`4ea4eac9`) | the `compat.*` spelling |
+
+The engine is one pull request as the goal requires, and #651 is the exception
+it allows: the review before the release found that #650 refuses a manifest
+2026.9.15.2 builds, and the release was cancelled to carry the fix rather than
+ship the cliff and repair it in a second version (§1.10 item 19).
+
+The release is mirrored: each of the four archives was downloaded from GitCode
+and compared with its published `sha256`, and all four match. The plugins
+source archive was compared with `cmp` against the GitHub archive of the tag
+and is byte-identical; `90a70689b090be72` names both, and the index descriptor
+carries that digest.
+
+### 9.2 What the sandbox verified
+
+`.agents/docs/2026-09-16-646-649-verify.sh` in SubOS `v646`, with
+`xlings config --mirror CN` and `mcpp self config --mirror CN` inside it,
+against the PUBLISHED engine addressed by its store path.
+
+The control against 2026.9.15.2 reads `fails=10`: every change detector fails
+and every guard passes, which is what makes the run against 2026.9.16.1
+evidence rather than decoration.
+
+### 9.3 Four probe defects, and the shape they share
+
+The first three runs against the published engine read `fails=4`, `fails=2` and
+`fails=1`. Not one was an engine defect.
+
+1. Sections E and F wrote `std::println` into a build program whose fixture
+   states `standard = "c++20"`, where it does not exist. The build program
+   failed to compile, and the section reported the engine.
+2. Section G printed its reading to standard output. mcpp discards a build
+   program's output when it exits 0, so the reading was never seen and the
+   section reported the engine. Both now use `mcpp::warning`, which is what
+   every e2e script that reads a build program already used.
+3. Section I then failed where it had passed: the sandbox's `$HOME` persists
+   between runs, a build program is cached by its source, and a cache hit does
+   not re-run it or replay its warnings, so the probe measured the previous
+   run. Every build program the script writes now carries a per-run token.
+
+The third defect is the one worth keeping. Sections E and G passed on the run
+where their sources had just changed, and would have failed on the next run for
+the reason section I failed on that one. A probe that reads a build program has
+to make the build program new, or it measures the run before it.
