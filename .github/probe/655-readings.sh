@@ -5,6 +5,10 @@
 # fails the compile and must not take the others with it.
 set +e
 M="${MCPP:?}"
+# The shim refuses outside the repository's pinned subos; address the store copy.
+for cand in "$HOME"/.xlings/data/xpkgs/xim-x-mcpp/*/bin/mcpp "$HOME"/.xlings/data/xpkgs/xim-x-mcpp/*/bin/mcpp.exe; do
+  [ -x "$cand" ] && M="$cand"
+done
 PY=$(command -v python3 || command -v python)
 ROOT="$(mktemp -d)"
 reading() { echo "READING $*"; echo "- \`$*\`" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"; }
