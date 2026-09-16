@@ -16,7 +16,9 @@
 # Readings: the source-less entry is refused and names the remedy; the
 # restatement with the same source builds the tool only under the feature, and
 # the build program sees both spellings; a restatement naming another path is
-# refused under `--strict` naming both sources.
+# refused under `--strict` naming both sources; and two spellings of one version
+# constraint, differing only in whitespace, are one source, while a genuinely
+# different constraint is still refused.
 set -e
 
 TMP=$(mktemp -d)
@@ -108,5 +110,55 @@ if "$MCPP" build --strict --features installer > b4.log 2>&1; then
 fi
 grep -q '../other' b4.log && grep -q '../installer' b4.log \
     || fail "the refusal does not name both sources" b4.log
+
+# ── 4. two spellings of one constraint are one source ────────────────────
+# The judgement is on what the declarations mean. `">= 9.9.9"` and `">=9.9.9"`
+# are one constraint, and a manifest spelling them differently built on
+# 2026.9.15.2, so refusing it would be an upgrade cliff. The package is never
+# resolved here: the merge runs before resolution, so the reading is whether the
+# refusal appears at all, and the leg below with a genuinely different
+# constraint is what shows the gate still closes.
+mkdir -p "$TMP/spell/src"
+echo 'int main() { return 0; }' > "$TMP/spell/src/main.cpp"
+write_spell() {   # write_spell <restated constraint>
+cat > "$TMP/spell/mcpp.toml" <<EOF
+[package]
+name        = "spellprobe"
+version     = "0.1.0"
+description = "two spellings of one constraint"
+license     = "Apache-2.0"
+authors     = ["mcpp"]
+
+[language]
+standard = "c++23"
+
+[features]
+extra = []
+
+[dependencies]
+mcpplibs.nonexistent-spell-probe = ">=9.9.9"
+
+[feature-deps.extra]
+mcpplibs.nonexistent-spell-probe = { version = "$1", reexport = true }
+
+[targets.spellprobe]
+kind = "bin"
+main = "src/main.cpp"
+EOF
+}
+
+cd "$TMP/spell"
+write_spell ">= 9.9.9"
+MCPP_OFFLINE=1 "$MCPP" build --features extra > s1.log 2>&1 || true
+grep -q 'restates the dependency' s1.log \
+    && fail "a restatement differing from the declaration only in whitespace was refused" s1.log
+
+write_spell ">=9.9.8"
+rm -rf target
+if MCPP_OFFLINE=1 "$MCPP" build --features extra > s2.log 2>&1; then
+    fail "a restatement naming another constraint was accepted" s2.log
+fi
+grep -q 'restates the dependency' s2.log \
+    || fail "a restatement naming another constraint was not refused" s2.log
 
 echo "PASS: 711 a feature-deps restatement names one source; dep_bin answers both spellings"

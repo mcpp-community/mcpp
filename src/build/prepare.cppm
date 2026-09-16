@@ -4711,9 +4711,20 @@ prepare_build(bool print_fingerprint,
                     }
                     // A first sync is a refresh of an index that has no local
                     // copy yet, and `[index] auto_refresh = false` means that no
-                    // refresh happens implicitly (docs/05). The policy's answer is
-                    // taken rather than restated (#648 A5); offline, the sync is a
-                    // no-op as before and resolution reports what is missing.
+                    // refresh happens implicitly (docs/05). The opt-outs are the
+                    // policy's (#648 A5); offline, the sync is a no-op as before
+                    // and resolution reports what is missing.
+                    //
+                    // WHY THIS ONE DOES NOT GO THROUGH `decide_for_miss`/`apply`.
+                    // Those answer "may this run refresh the index that would
+                    // resolve a dependency", and their debounce and one-sync-per-
+                    // process guard are about that one index. This sync creates a
+                    // local copy that does not exist yet, of a DIFFERENT set of
+                    // repositories, and nothing else will create it: taking the
+                    // guard would let a refresh of the builtin index earlier in
+                    // the same run suppress a clone the build cannot proceed
+                    // without. Only the opt-outs are shared, and they are read
+                    // from the same `policy_for`.
                     const auto refreshPolicy = mcpp::pm::policy_for(**cfg2);
                     if (needsRemoteUpdate && !refreshPolicy.offline && !refreshPolicy.autoRefresh) {
                         return std::unexpected(std::string(
@@ -6782,6 +6793,14 @@ prepare_build(bool print_fingerprint,
     // while the manifest said it came from somewhere else. The comparison runs
     // against `dependencies` after the conditional fold, so a row's replacement
     // (#634 A1) is the declaration a restatement is held to.
+    //
+    // TWO SPELLINGS OF ONE SOURCE ARE ONE SOURCE. The comparison below decides
+    // whether a restatement names something else, so it has to be made on what
+    // the two declarations MEAN, not on their bytes: a path is normalised, and
+    // a version constraint is compared with its whitespace removed, because
+    // `">= 1.2.0"` and `">=1.2.0"` are one constraint and the manifest that
+    // spells them differently built on 2026.9.15.2. A gate added for #647 E4.2
+    // must refuse a restatement that names another source, and nothing else.
     auto dependencySourceOf = [](const mcpp::manifest::DependencySpec& s) {
         if (s.inheritWorkspace) return std::string("workspace = true");
         if (s.isPath()) {
@@ -6793,6 +6812,15 @@ prepare_build(bool print_fingerprint,
             return std::format("git = \"{}\", {} = \"{}\"", s.git,
                                s.gitRefKind.empty() ? "rev" : s.gitRefKind, s.gitRev);
         return std::format("version = \"{}\"", s.version);
+    };
+    // What the comparison is made on. The message shows the declaration as it
+    // was written; the judgement drops the whitespace inside a constraint, so
+    // the two declarations are compared on what they mean.
+    auto dependencySourceKey = [&](const mcpp::manifest::DependencySpec& s) {
+        auto spelled = dependencySourceOf(s);
+        if (!s.inheritWorkspace && !s.isPath() && !s.isGit())
+            std::erase_if(spelled, [](char c) { return c == ' ' || c == '\t'; });
+        return spelled;
     };
     auto mergeActiveFeatureDeps = [&](mcpp::manifest::Manifest& pm,
                                       const std::vector<std::string>& requested,
@@ -6808,7 +6836,7 @@ prepare_build(bool print_fingerprint,
                 if (!pos->second.inheritWorkspace && !spec.inheritWorkspace) {
                     const auto inEffect = dependencySourceOf(pos->second);
                     const auto restated = dependencySourceOf(spec);
-                    if (inEffect != restated)
+                    if (dependencySourceKey(pos->second) != dependencySourceKey(spec))
                         return std::unexpected(std::format(
                             "[feature-deps.{}] of '{}' restates the dependency '{}' "
                             "with {}, while the declaration in effect on this row "
