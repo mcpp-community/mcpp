@@ -5,6 +5,7 @@
 # fails the compile and must not take the others with it.
 set +e
 M="${MCPP:?}"
+PY=$(command -v python3 || command -v python)
 ROOT="$(mktemp -d)"
 reading() { echo "READING $*"; echo "- \`$*\`" >> "${GITHUB_STEP_SUMMARY:-/dev/null}"; }
 case_one() {
@@ -17,7 +18,10 @@ case_one() {
 #define STR(...) STR2(__VA_ARGS__)
 int main() {
 #ifdef V
-  std::printf("V=[%s]\n", STR(V));
+  std::printf("V=[");
+  for (const char* c = STR(V); *c; ++c)
+    if (*c >= 0x20 && *c < 0x7f) std::putchar(*c); else std::printf("<%02x>", (unsigned char)*c);
+  std::printf("]\n");
 #else
   std::printf("V undefined\n");
 #endif
@@ -33,24 +37,11 @@ CPP
   cdb=$(find "$d" -name compile_commands.json | head -1)
   args=""
   if [ -n "$cdb" ]; then
-    args=$(python3 - "$cdb" <<'PY' 2>/dev/null || python - "$cdb" <<'PY2'
-import json,sys
-e=json.load(open(sys.argv[1]))
-a=[x for x in e[0]["arguments"] if "V=" in x or x.startswith(("-DV","/DV"))]
-i=e[0]["arguments"].index(a[0]) if a else -1
-print(json.dumps(e[0]["arguments"][i:i+2] if a else []))
-PY
-import json,sys
-e=json.load(open(sys.argv[1]))
-a=[x for x in e[0]["arguments"] if "V=" in x]
-print(json.dumps(a))
-PY2
-)
+    args=$("$PY" -c 'import json,sys; a=json.load(open(sys.argv[1]))[0]["arguments"]; i=[k for k,x in enumerate(a) if "V=" in x]; print(json.dumps(a[i[0]:i[0]+2]) if i else "[]")' "$cdb")
   fi
   reading "$RUNNER_OS $id $channel $element => build: $v | cdb: $args"
 }
 "$M" --version
-case_one esc      cflags   '"-DV=\\\"esc.h\\\""'
 case_one esc_cxx  cxxflags '"-DV=\\\"esc.h\\\""'
 case_one mid      cxxflags '"-DV=\"mid\""'
 case_one sq       cxxflags "\"-DV='sq'\""

@@ -1,0 +1,23 @@
+name: verify-655
+on:
+  pull_request:
+    branches: [ main ]
+jobs:
+  readings:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/bootstrap-mcpp
+        with:
+          cache-target: 'false'
+      - name: readings
+        shell: bash
+        timeout-minutes: 40
+        run: |
+          export MCPP_VENDORED_XLINGS="$XLINGS_BIN"
+          bash .github/probe/655-readings.sh
