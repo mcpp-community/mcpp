@@ -1,0 +1,11 @@
+name: probe-macos27-libcxx
+on:
+  pull_request:
+    branches: [ main ]
+jobs:
+  probe:
+    runs-on: xcode-27
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - run: bash .github/probe/m27.sh
