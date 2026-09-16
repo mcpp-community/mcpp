@@ -94,6 +94,8 @@ std::string toolchain_id(const mcpp::toolchain::Toolchain& tc,
 
 // Splits a command string mcpp rendered for the host shell into words, undoing
 // its quoting: POSIX `sh` rules, or the Microsoft C runtime's rules on Windows.
+// The reader is mcpp::manifest::host_command_words; this name is kept for the
+// standard library units' recovery below.
 std::vector<std::string> split_command_words(std::string_view command, bool windows);
 
 // The working directory and argument vector of the command in `commands` whose
@@ -307,67 +309,7 @@ std::string toolchain_id(const mcpp::toolchain::Toolchain& tc,
 }
 
 std::vector<std::string> split_command_words(std::string_view s, bool windows) {
-    std::vector<std::string> out;
-    std::string cur;
-    bool started = false;
-    auto flush = [&] {
-        if (started) out.push_back(std::move(cur));
-        cur.clear();
-        started = false;
-    };
-    if (windows) {
-        bool quoted = false;
-        for (std::size_t i = 0; i < s.size(); ++i) {
-            const char c = s[i];
-            if (c == '\\') {
-                std::size_t j = i;
-                while (j < s.size() && s[j] == '\\') ++j;
-                const std::size_t count = j - i;
-                started = true;
-                if (j < s.size() && s[j] == '"') {
-                    cur.append(count / 2, '\\');
-                    if (count % 2 == 1) { cur.push_back('"'); i = j; }
-                    else                { i = j - 1; }
-                    continue;
-                }
-                cur.append(count, '\\');
-                i = j - 1;
-                continue;
-            }
-            if (c == '"') { quoted = !quoted; started = true; continue; }
-            if (!quoted && (c == ' ' || c == '\t')) { flush(); continue; }
-            cur.push_back(c);
-            started = true;
-        }
-        flush();
-        return out;
-    }
-    char quote = 0;
-    for (std::size_t i = 0; i < s.size(); ++i) {
-        const char c = s[i];
-        if (quote == '\'') {
-            if (c == '\'') quote = 0; else cur.push_back(c);
-            continue;
-        }
-        if (quote == '"') {
-            if (c == '"') { quote = 0; continue; }
-            if (c == '\\' && i + 1 < s.size()
-                && (s[i + 1] == '"' || s[i + 1] == '\\' || s[i + 1] == '$'
-                    || s[i + 1] == '`')) {
-                cur.push_back(s[++i]);
-                continue;
-            }
-            cur.push_back(c);
-            continue;
-        }
-        if (c == '\'' || c == '"') { quote = c; started = true; continue; }
-        if (c == '\\' && i + 1 < s.size()) { cur.push_back(s[++i]); started = true; continue; }
-        if (c == ' ' || c == '\t' || c == '\n') { flush(); continue; }
-        cur.push_back(c);
-        started = true;
-    }
-    flush();
-    return out;
+    return mcpp::manifest::host_command_words(s, windows);
 }
 
 std::optional<Invocation> recover_invocation(const std::vector<std::string>& commands,

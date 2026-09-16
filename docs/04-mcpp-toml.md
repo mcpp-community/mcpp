@@ -418,6 +418,47 @@ jobs         = "auto"             # Concurrent compiles: a positive number, or "
 bmi_schedule = "auto"             # Module-edge scheduling: auto (= off) | on | off (§ below)
 ```
 
+#### Compile-flag syntax *(mcpp 2026.9.17.1+)*
+
+An element of `cflags`, `cxxflags` or `asmflags` stands for one or more compiler
+arguments ("words"). The syntax is the same on every host, wherever the list is
+written: `[build]`, `[targets.<name>]`, a `flags` glob entry, a feature, a
+`[target.<selector>.build]` section, an xpkg descriptor, and the `mcpp:cflag=` /
+`mcpp:cxxflag=` directives of a build program.
+
+| Written | Words the compiler receives |
+|---|---|
+| `"-O2 -g"` | `-O2`, `-g` |
+| `"-include config.h"` | `-include`, `config.h` |
+| `"'-DNAME=a b'"` or `"-DNAME=\"a b\""` | `-DNAME=a b` |
+| `"-DNAME=\\\"text\\\""` | `-DNAME="text"` (a string literal) |
+| `"-I/opt/my\\ dir/include"` | `-I/opt/my dir/include` |
+| `"-IC:\\sdk\\include"` | `-IC:\sdk\include` |
+| `"-DNAME=a$b"` | `-DNAME=a$b` |
+
+The rules, stated on the element's text (after TOML or Lua has removed its own
+escapes):
+
+- unquoted spaces and tabs separate words;
+- `'...'` is literal up to the next `'`;
+- `"..."` is literal except that `\"` and `\\` stand for `"` and `\`;
+- outside quotes, a backslash before a space, a tab, `"`, `'` or `\` stands for
+  that character; any other backslash is literal;
+- quoted and unquoted pieces that touch form one word;
+- `$`, `*`, `;`, `|` and the other shell operators have no meaning.
+
+A `defines` entry is one value and is not read by this syntax: `defines =
+["NAME=\"text\""]` passes the single word `-DNAME="text"`. `ldflags`,
+`dialect_cxxflags` and `std-module-flags` are not covered by this section.
+
+`compile_commands.json` and `mcpp emit build-database` list the same words in
+`arguments`, ready to execute without a shell.
+
+On the first plan of a project, mcpp warns under `build/flag-words` about an
+element whose words differ from the arguments a release before 2026.9.17.1
+passed on the same host, and names both. A build that repeats the plan does not
+repeat the warning.
+
 #### `dependency_linkage` — static or shared is the consumer's decision
 
 ```toml

@@ -20,15 +20,31 @@ import mcpp.build.plan;
 import mcpp.build.flags;
 import mcpp.libs.json;
 import mcpp.platform.fs;
+import mcpp.platform;
+import mcpp.manifest.flag_words;
 
 export namespace mcpp::build {
 
-// Split one flag string into CDB `arguments` tokens.
+// The words the compiler receives from one flag string the engine rendered
+// for a ninja `command =` line: ninja's `$` escapes are undone, then the
+// host's command-line reader splits the text (POSIX `sh`, or the MSVCRT rules
+// on Windows; mcpp::manifest::host_command_words).
+//
+// It serves the rendered strings only, the global `$cflags`/`$cxxflags`/
+// `$asmflags`. A unit's own flag lists are never rendered and re-read: the
+// databases list their words directly (mcpp::manifest::flag_words).
 //
 // Exported because it IS the contract: what a consumer receives in
 // `arguments` is decided here, and that contract needs pinning by test
 // rather than by inspection of a whole generated document.
 std::vector<std::string> split_flags(std::string_view s);
+
+// The flag list an assembly unit's edge carries: the -D/-U/-I words of the
+// unit's C flags (feature defines land there), then its per-glob asmflags.
+// NASM shares the GNU -D/-U/-I spelling (and 2.14 and later insert a missing
+// -I path separator itself), so one filter serves both assembler rules, and
+// the compile database lists the same list for a GAS unit.
+std::vector<std::string> unit_asm_flags(const CompileUnit& cu);
 
 // ONE TRANSLATION UNIT AS THE COMPILER IS INVOKED FOR IT.
 //
@@ -97,81 +113,29 @@ namespace {
 
 }  // namespace
 
-// Split one flag string into CDB `arguments` tokens.
+// The order is the one ninja and the host apply: ninja replaces `$ `, `$:` and
+// `$$` while it builds the command line, and only then does the host read the
+// line into words. flags.cppm escapes for ninja before it quotes for the host,
+// so a quoted path's space arrives here as `$ ` inside the quotes, and it is a
+// space again before the reader sees the quotes.
 //
-// Three things happen here, and the ORDER between them is the whole point.
-//
-// 1. Ninja escapes are undone (`$ ` -> space, `$:` -> `:`, `$$` -> `$`).
-//    `flags.cppm::escape_path` adds them so a path survives embedding in a
-//    ninja rule string. A CDB consumer execs `arguments` literally -- no
-//    ninja -- so `C$:\Users\...` would be a path that does not exist.
-//
-// 2. Shell quoting is removed. `flags.cppm::shell_quote_arg` wraps a token
-//    whose characters would split or alter a word in `sh -c` / cmd.exe --
-//    and its trigger set contains the BACKSLASH, so on Windows every
-//    path-bearing flag is quoted. That quoting is correct for ninja and
-//    wrong for a consumer that never invokes a shell: the quotes arrive as
-//    part of the filename.
-//
-// 3. Tokens split on spaces -- but not on a space that came from `$ `, and
-//    not on one inside quotes.
-//
-// Getting (3) wrong is what shipped: quoting was ignored entirely, so a
-// quoted path containing a space was cut in half at that space. Measured on
-// a real build under `/tmp/.../my project`:
-//
-//   '-fmodule-file=std=/tmp/.../my project/.../std.pcm   <- closing quote gone
-//   '-fprebuilt-module-path=/tmp/.../my project/.../pcm.cache'
-//
-// One argument became two, one of them opening a quote that never closes.
-// The comment that used to live here stated the right principle -- consumers
-// exec literally, so escapes must be undone -- and implemented half of it.
-//
-// A quote in the MIDDLE of a token is data: `-DGREETING="hi"` keeps its
-// inner quotes, or the define changes meaning. Only a quote that OPENS a
-// region is quoting.
+// The reader is the host's own. The version before #655 split on spaces and
+// removed a quote only when it opened a token, which is neither host's rule:
+// `\"` stayed escaped and a quote inside a word stayed in the word, so the
+// database listed arguments the compiler never received.
 std::vector<std::string> split_flags(std::string_view s) {
-    std::vector<std::string> out;
-    std::string token;
-    bool started = false;          // token has begun (so "" is a real empty arg)
-    char quote = 0;                // active quote char, 0 when outside
-
-    auto flush = [&] {
-        if (started) { out.push_back(std::move(token)); token.clear(); }
-        started = false;
-    };
-
+    std::string unescaped;
+    unescaped.reserve(s.size());
     for (std::size_t i = 0; i < s.size(); ++i) {
-        char c = s[i];
-
-        // Ninja escapes first, and INSIDE quotes too -- a quoted path's space
-        // arrives as `$ ` because flags.cppm escapes before it quotes.
-        if (c == '$' && i + 1 < s.size()) {
-            char nc = s[i + 1];
-            if (nc == ' ' || nc == ':' || nc == '$') {
-                token.push_back(nc);
-                started = true;
-                ++i;
-                continue;
-            }
-        }
-
-        if (quote) {
-            if (c == quote) { quote = 0; continue; }   // closes the region
-            token.push_back(c);
+        if (s[i] == '$' && i + 1 < s.size()
+            && (s[i + 1] == ' ' || s[i + 1] == ':' || s[i + 1] == '$')) {
+            unescaped.push_back(s[++i]);
             continue;
         }
-
-        // Opens a region only at a token boundary; elsewhere it is data.
-        if ((c == '"' || c == '\'') && !started) { quote = c; started = true; continue; }
-
-        if (c == ' ') { flush(); continue; }
-
-        token.push_back(c);
-        started = true;
+        unescaped.push_back(s[i]);
     }
-    flush();
-    return out;
+    return mcpp::manifest::host_command_words(unescaped,
+                                              mcpp::platform::is_windows);
 }
 
 namespace {
@@ -208,14 +172,11 @@ std::vector<std::string> local_include_args(const CompileUnit& cu) {
     return args;
 }
 
+// The unit's own flag lists as words. The edge writes the same words, each
+// quoted for the host (ninja_backend.cppm::join_flags), so the database lists
+// what the compiler receives without reading a command line back.
 std::vector<std::string> package_flag_args(const CompileUnit& cu, bool isCSource) {
-    std::string joined;
-    auto const& flags = isCSource ? cu.packageCflags : cu.packageCxxflags;
-    for (auto const& flag : flags) {
-        joined += ' ';
-        joined += flag;
-    }
-    return split_flags(joined);
+    return mcpp::manifest::flag_words(isCSource ? cu.packageCflags : cu.packageCxxflags);
 }
 
 void sort_entries_by_file(nlohmann::json& entries) {
@@ -234,6 +195,16 @@ CompileCommandsWriteError write_error(std::string message) {
 }
 
 }  // namespace
+
+std::vector<std::string> unit_asm_flags(const CompileUnit& cu) {
+    std::vector<std::string> out;
+    for (auto& w : mcpp::manifest::flag_words(cu.packageCflags)) {
+        if (w.starts_with("-D") || w.starts_with("-U") || w.starts_with("-I"))
+            out.push_back(mcpp::manifest::flag_element(w));
+    }
+    out.insert(out.end(), cu.packageAsmflags.begin(), cu.packageAsmflags.end());
+    return out;
+}
 
 std::vector<UnitInvocation> unit_invocations(const BuildPlan& plan,
                                              const CompileFlags& flags) {
@@ -266,7 +237,8 @@ std::vector<UnitInvocation> unit_invocations(const BuildPlan& plan,
             inv.arguments.push_back(std::move(f));
         for (auto& f : split_flags(flagStr))
             inv.arguments.push_back(std::move(f));
-        for (auto& f : package_flag_args(cu, isCSource))
+        for (auto& f : isGasSource ? mcpp::manifest::flag_words(unit_asm_flags(cu))
+                                   : package_flag_args(cu, isCSource))
             inv.arguments.push_back(std::move(f));
         inv.arguments.push_back("-c");
         inv.arguments.push_back(inv.file);

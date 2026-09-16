@@ -10,6 +10,7 @@ import mcpp.pm.dep_spec;     // M5.x pm/ subsystem refactor: DependencySpec live
 import mcpp.pm.compat;       // Legacy dependency-key compatibility helpers
 import mcpp.pm.index_spec;   // IndexSpec for [indices] section
 import mcpp.platform;
+import mcpp.manifest.flag_words;
 
 export namespace mcpp::manifest {
 
@@ -2101,8 +2102,12 @@ std::optional<CppStandardConfig> cxx_layer_implementation_standard(
 //    modules need them reachable; they live in the manifest namespace) ──
 export namespace mcpp::manifest {
 
+// True when a compile-flag element holds a `-std` word. The element is read as
+// words (mcpp.manifest.flag_words), so `"-O2 -std=c++20"` is caught as well.
 bool starts_with_std_flag(std::string_view flag) {
-    return flag == "-std" || flag.starts_with("-std=");
+    for (auto const& w : flag_words(flag))
+        if (w == "-std" || w.starts_with("-std=")) return true;
+    return false;
 }
 
 bool is_basename(std::string_view value) {
@@ -2225,8 +2230,8 @@ std::vector<std::string> dialect_flags(const BuildConfig& bc) {
             out.push_back(f);
     };
     for (auto& f : bc.dialectCxxflags) add(f);
-    for (auto& f : bc.cxxflags)
-        if (is_dialect_flag(f)) add(f);
+    for (auto& w : flag_words(bc.cxxflags))
+        if (is_dialect_flag(w)) add(w);
     return out;
 }
 

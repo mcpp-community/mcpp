@@ -5,6 +5,31 @@
 
 ## [Unreleased]
 
+### 编译 flag 列表元素的一种读法,以及与构建一致的编译数据库:#655(2026.9.17.1)
+
+`mcpp emit build-database` 与 `compile_commands.json` 的 `arguments` 此前把 flag 文本经一种
+手写的读法切分,既不是 POSIX `sh` 也不是 MSVCRT 的规则:libarchive 描述符的
+`-DPLATFORM_CONFIG_H=\"mcpp_libarchive_config.h\"` 被列成带反斜杠的参数,消费者按原样执行时
+libarchive、bzip2、lz4、xz、zlib 与 zstd 的每个 C 文件都无法解析。实测同一类不一致有五种拼写,
+其中一种是构建本身的缺陷:`defines = ["N=\"x\""]` 到达编译器时丢掉了引号。设计、测量与计划:
+`.agents/docs/2026-09-17-655-*.md`。
+
+- **一个元素代表的词在每个宿主上相同。** `cflags`、`cxxflags`、`asmflags` 的元素按 POSIX `sh`
+  的词法读取,不做展开,且反斜杠只在空格、制表符、引号与反斜杠之前转义(Windows 路径保持原样);
+  构建为宿主给每个词加引号,编译器收到的参数不再取决于 ninja 把命令交给 `sh` 还是
+  CreateProcess。规则见 SPEC-004 §8 与 docs/04「Compile-flag syntax」。
+  (单测 `FlagWords.*`、`CompileCommandsArgs.*`,e2e 736)
+- **`defines` 的条目是一个值。** `N="x"` 以 `-DN="x"` 到达编译器;构建程序的 `mcpp:cfg=`
+  与 feature 的 `defines` 相同。
+- **两个编译数据库列出编译器收到的词。** 单元自己的 flag 直接列出词,引擎渲染的全局 flag
+  按宿主的读取规则还原;GAS 单元列出与其边相同的 `-D/-U/-I` 子集与 asmflags。
+  SPEC-005 R3.7 陈述这一点。
+- **升级提示。** 一个元素的词与 2026.9.17.1 之前在同一宿主上传入的参数不同时,首次规划以
+  `build/flag-words` 警告并给出两者;重复同一规划的构建不再提示。索引中已发布的描述符没有
+  这样的元素。
+- Windows 上 `shell_quote_arg` 按 MSVCRT 规则加倍引号前与结尾处的反斜杠,以 `\` 结尾的
+  词不再吞掉闭合引号。
+
 ### 内置 xlings 升至 2026.9.16.1(2026.9.16.2)
 
 `kXlingsVersion` 与 `.github/` 中的全部 xlings pin 前移到 2026.9.16.1(openxlings/xlings#601)。

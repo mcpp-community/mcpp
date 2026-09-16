@@ -19,6 +19,7 @@ import mcpp.diag;
 import mcpp.freestanding.target;
 import mcpp.freestanding.linkline;
 import mcpp.manifest.types;
+import mcpp.manifest.flag_words;
 import mcpp.modgraph.scanner;
 import mcpp.platform;
 import mcpp.platform.runtime_search;
@@ -219,9 +220,21 @@ std::string atomic_link_flag(const std::vector<std::filesystem::path>& linkDirs,
 // tokens that actually contain whitespace or a shell-significant character
 // are quoted — plain framework flags (`-std=c++23`, `-O2`, `-I/abs/path`)
 // come back unchanged, byte-for-byte. POSIX: wrap in single quotes (embedded
-// `'` escaped as `'\''`). Windows: wrap in double quotes (embedded `"`
-// escaped as `\"`) — cmd.exe/CreateProcess argv convention.
+// `'` escaped as `'\''`). Windows: wrap in double quotes under the MSVCRT
+// argument rules (an embedded `"` becomes `\"`, and the backslashes before it
+// or before the closing quote are doubled). The inverse is
+// `mcpp::manifest::host_command_words`: reading the result back yields `arg`.
 std::string shell_quote_arg(std::string_view arg);
+
+// One word of a compile-flag list as it is written on a ninja `command =`
+// line: quoted for the host's command-line reader, then `$` doubled so that
+// ninja hands the reader a literal `$`. A plain word comes back unchanged.
+std::string ninja_command_word(std::string_view word);
+
+// The ninja text of a compile-flag list: every element read into words
+// (`mcpp::manifest::flag_words`), every word written by `ninja_command_word`,
+// each preceded by a space. The compile databases list the same words.
+std::string ninja_flag_list(const std::vector<std::string>& elements);
 
 // Ninja's own escaping for a value that will sit on a `command = ` line:
 // ` `, `$` and `:` get a leading `$`. Exported because it is needed WITH
@@ -381,13 +394,24 @@ std::string shell_quote_arg(std::string_view arg) {
         return std::string(arg);
 
     if constexpr (mcpp::platform::is_windows) {
-        // cmd.exe / CreateProcess argv convention: wrap in double quotes,
-        // escape embedded `"` as `\"`.
+        // MSVCRT argument rules: inside double quotes a run of backslashes is
+        // literal unless a `"` follows it, in which case every backslash of
+        // the run is doubled and the quote is escaped. The closing quote is
+        // such a `"`, so a trailing run is doubled as well; `C:\dir\` would
+        // otherwise escape the quote that ends the word.
         std::string out = "\"";
+        std::size_t backslashes = 0;
         for (char c : arg) {
-            if (c == '"') out += "\\\"";
-            else out.push_back(c);
+            if (c == '\\') { ++backslashes; continue; }
+            if (c == '"') {
+                out.append(backslashes * 2 + 1, '\\');
+            } else {
+                out.append(backslashes, '\\');
+            }
+            out.push_back(c);
+            backslashes = 0;
         }
+        out.append(backslashes * 2, '\\');
         out += "\"";
         return out;
     } else {
@@ -402,6 +426,27 @@ std::string shell_quote_arg(std::string_view arg) {
         out += "'";
         return out;
     }
+}
+
+std::string ninja_command_word(std::string_view word) {
+    // An empty word is still a word. shell_quote_arg leaves it empty, which is
+    // right for its callers that append optional pieces, and wrong here.
+    if (word.empty()) return mcpp::platform::is_windows ? "\"\"" : "''";
+    std::string out;
+    for (char c : shell_quote_arg(word)) {
+        if (c == '$') out.push_back('$');
+        out.push_back(c);
+    }
+    return out;
+}
+
+std::string ninja_flag_list(const std::vector<std::string>& elements) {
+    std::string out;
+    for (auto const& word : mcpp::manifest::flag_words(elements)) {
+        out += ' ';
+        out += ninja_command_word(word);
+    }
+    return out;
 }
 
 std::string render_link_intent_flags(

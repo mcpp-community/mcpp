@@ -674,7 +674,9 @@ std::string transformed(const Def& def, std::string_view raw,
         case Transform::LibFlag:       return mcpp::toolchain::lib_flag_for(dial, raw);
         case Transform::LibSearchPath: return std::string(dial.libSearchPrefix)
                                             + abs_against(root, raw);
-        case Transform::DefinePrefix:  return std::string(dial.definePrefix) + std::string(raw);
+        // A define is one word of a compile-flag list, whatever it contains.
+        case Transform::DefinePrefix:
+            return mcpp::manifest::flag_element(std::string(dial.definePrefix) + std::string(raw));
         case Transform::AbsPath:       return abs_against(root, raw);
         // Absolute on purpose: the link runs in the build directory, so a
         // relative script path resolves against the wrong root and lld

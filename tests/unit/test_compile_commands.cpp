@@ -6,6 +6,8 @@ import mcpp.build.compile_commands;
 import mcpp.build.flags;
 import mcpp.build.plan;
 import mcpp.libs.json;
+import mcpp.manifest.flag_words;
+import mcpp.platform;
 
 using namespace mcpp::build;
 
@@ -292,23 +294,137 @@ TEST(CompileCommandsArgs, AQuotedPathWithASpaceStaysOneToken) {
     for (auto const& t : out) EXPECT_FALSE(has_edge_quote(t)) << t;
 }
 
-// Unquoted input must keep behaving exactly as before: ninja escapes undone,
-// split on spaces.
-TEST(CompileCommandsArgs, UnquotedInputIsUnchanged) {
+// Unquoted input: ninja's escapes are undone first, and then the host splits
+// the line. `$ ` is a plain space by the time the host reads it, so an
+// unquoted `-Idir$ with$ space` is three words to the compiler, and the
+// database says so. The engine quotes every word it writes (include_token,
+// ninja_command_word); the quoted spelling is the test above.
+TEST(CompileCommandsArgs, UnquotedInputSplitsWhereTheHostSplits) {
     auto out = mcpp::build::split_flags("-IC$:/x -DA=1 -Idir$ with$ space");
-    ASSERT_EQ(out.size(), 3u);
+    ASSERT_EQ(out.size(), 5u);
     EXPECT_EQ(out[0], "-IC:/x");
     EXPECT_EQ(out[1], "-DA=1");
-    EXPECT_EQ(out[2], "-Idir with space");
+    EXPECT_EQ(out[2], "-Idir");
+    EXPECT_EQ(out[3], "with");
+    EXPECT_EQ(out[4], "space");
 }
 
-// A quote in the MIDDLE of a token is data, not quoting: `-DA="x"` must keep
-// its inner quotes or the define changes meaning.
-TEST(CompileCommandsArgs, InnerQuotesAreNotStripped) {
+// A quote inside a word is quoting on both hosts' readers: `sh` and the MSVCRT
+// rules both hand the compiler `-DGREETING=hi` for this text. The version of
+// this test before #655 asserted the opposite, which pinned the compile
+// database to a reading no host applies.
+TEST(CompileCommandsArgs, QuotesInsideAWordAreQuoting) {
     auto out = mcpp::build::split_flags(R"(-DGREETING="hi")");
     ASSERT_EQ(out.size(), 1u);
-    EXPECT_EQ(out[0], R"(-DGREETING="hi")");
-    EXPECT_FALSE(is_quoted(out[0]));
+    EXPECT_EQ(out[0], "-DGREETING=hi");
+}
+
+// ── A unit's flag list: the edge and the databases agree (#655) ─────────────
+//
+// The edge writes each word of a unit's flag list quoted for the host
+// (ninja_flag_list); the databases list the words. Reading the edge's text
+// the way ninja and the host read it must give back the listed words. The
+// test runs the reader of the host it runs on, so each CI host checks its own.
+
+namespace {
+
+const std::vector<std::string> kIssue655Elements{
+    R"(-DPLATFORM_CONFIG_H=\"mcpp_libarchive_config.h\")",
+    R"(-DMID="mid")",
+    "-DSQ='sq'",
+    "-include mcpp_lua_platform_config.h",
+    R"(-I/opt/my\ dir/include)",
+    R"(-IC:\Users\x\include)",
+    "-DDOLLAR=a$b",
+    // What fold_build_defines_into_flags inserts for `defines = ["DEF=\"def\""]`
+    // and `defines = ["SPACE=a b"]`.
+    mcpp::manifest::flag_element(R"(-DDEF="def")"),
+    mcpp::manifest::flag_element("-DSPACE=a b"),
+};
+
+std::vector<std::string> random_words() {
+    std::vector<std::string> words{"", "a b", "\\", "a\\", "C:\\dir\\", "\"", "'",
+                                   "it's", "-DV=\"x\\\"y\"", "$x", "a$$b"};
+    const std::string alphabet = "ab \t\"'\\$:;&|<>";
+    std::uint32_t state = 655;
+    for (int n = 0; n < 1000; ++n) {
+        std::string w;
+        const int length = static_cast<int>(state % 10);
+        for (int i = 0; i < length; ++i) {
+            state = state * 1664525u + 1013904223u;
+            w.push_back(alphabet[(state >> 16) % alphabet.size()]);
+        }
+        state = state * 1664525u + 1013904223u;
+        words.push_back(std::move(w));
+    }
+    return words;
+}
+
+}  // namespace
+
+TEST(CompileCommandsArgs, TheEdgeAndTheDatabaseListTheSameWords) {
+    const auto words = mcpp::manifest::flag_words(kIssue655Elements);
+    EXPECT_EQ(mcpp::build::split_flags(mcpp::build::ninja_flag_list(kIssue655Elements)),
+              words);
+    const std::vector<std::string> want{
+        R"(-DPLATFORM_CONFIG_H="mcpp_libarchive_config.h")", "-DMID=mid", "-DSQ=sq",
+        "-include", "mcpp_lua_platform_config.h", "-I/opt/my dir/include",
+        R"(-IC:\Users\x\include)", "-DDOLLAR=a$b", R"(-DDEF="def")", "-DSPACE=a b"};
+    EXPECT_EQ(words, want);
+}
+
+TEST(CompileCommandsArgs, AWordOnAnEdgeReadsBackAsTheWord) {
+    for (auto const& w : random_words()) {
+        EXPECT_EQ(mcpp::build::split_flags(mcpp::build::ninja_command_word(w)),
+                  std::vector<std::string>{w})
+            << "word: [" << w << "]";
+    }
+}
+
+// The reader above is mcpp's model of the host. On a POSIX host the host itself
+// is available, so the model is checked against it: `/bin/sh` receives the
+// quoted words and prints each one back.
+TEST(CompileCommandsArgs, ShellReceivesTheQuotedWordsAsWritten) {
+    if constexpr (mcpp::platform::is_windows) {
+        GTEST_SKIP() << "the POSIX shell is the reader measured here";
+    }
+    TempDir temp;
+    const auto out = temp.path / "words.txt";
+    auto words = random_words();
+    std::erase_if(words, [](const std::string& w) { return w.empty(); });
+    words.resize(200);
+    std::string command = "printf '%s\\n'";
+    for (auto const& w : words) {
+        command += ' ';
+        command += mcpp::build::shell_quote_arg(w);
+    }
+    command += " > '" + out.string() + "'";
+    ASSERT_EQ(std::system(command.c_str()), 0);
+    std::ifstream in(out);
+    std::vector<std::string> printed;
+    for (std::string line; std::getline(in, line);) printed.push_back(line);
+    EXPECT_EQ(printed, words);
+}
+
+TEST(CompileCommandsEmit, AUnitListsTheWordsOfItsFlagList) {
+    BuildPlan plan;
+    plan.projectRoot = "/p";
+    plan.outputDir = "/p/target";
+    plan.compileUnits.push_back({
+        .source = std::filesystem::path("/p/src/archive.c"),
+        .kind = mcpp::SourceKind::C,
+        .object = std::filesystem::path("obj") / "archive.o",
+        .packageName = "demo",
+        .packageCflags = kIssue655Elements,
+    });
+    CompileFlags flags;
+    flags.ccBinary = std::filesystem::path("/usr/bin/gcc");
+    auto j = nlohmann::json::parse(emit_compile_commands(plan, flags));
+    std::vector<std::string> args;
+    for (auto const& a : j[0]["arguments"]) args.push_back(a.get<std::string>());
+    const auto words = mcpp::manifest::flag_words(kIssue655Elements);
+    auto at = std::search(args.begin(), args.end(), words.begin(), words.end());
+    EXPECT_NE(at, args.end()) << "the unit's words are not listed in order";
 }
 
 // ── Emitted paths use native separators ─────────────────────────────────────

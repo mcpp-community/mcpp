@@ -195,7 +195,25 @@ std::string local_include_flags(const CompileUnit& cu,
     return flags;
 }
 
-std::string join_flags(const std::vector<std::string>& flags) {
+// A unit's compile-flag list on its edge. Each element is read into words and
+// each word is quoted for the host (flags.cppm::ninja_flag_list), so what the
+// compiler receives does not depend on whether ninja hands the line to `sh` or
+// to CreateProcess, and the compile databases list the same words without
+// re-reading any command line (#655). The two shapes that needed the verbatim
+// paste below keep their meaning under the word reading: a packed element
+// (compat.lua's `-include mcpp_lua_platform_config.h`) is two words, and a
+// define with a space arrives as one quoted word from `flag_element`.
+std::string join_compile_flags(const std::vector<std::string>& flags) {
+    return ninja_flag_list(flags);
+}
+
+// A link unit's flag list. Its elements are rendered text, not manifest
+// elements: the engine writes them already quoted and escaped for ninja and
+// the host (`-Wl,-rpath,'$$ORIGIN'`), so they are pasted as they are. Reading
+// them as words would quote the quotes and double the `$$` (measured on the
+// first implementation: the edge carried `'-Wl,-rpath,$$$$ORIGIN'` and the
+// closure check refused the program with `libwrap.so not found`).
+std::string join_link_flags(const std::vector<std::string>& flags) {
     // mcpp#234: a manifest `defines = ["T=long long"]` arrives as the single
     // element `-DT=long long` (pushed whole by apply_glob_flags) — a space
     // that is genuinely PART of one argv token. Joining with a bare space let
@@ -428,20 +446,6 @@ bool is_scan_exempt(const mcpp::build::CompileUnit& cu) {
     return mcpp::is_scan_exempt(cu.kind);
 }
 
-// Per-unit flags an assembler can take: the -D/-U/-I subset of the unit's C
-// flags (feature defines land there). NASM shares the GNU -D/-U/-I spelling
-// (and ≥2.14 inserts a missing -I path separator itself), so one filter
-// serves both asm rules. Explicit per-glob asmflags (G4) append after the
-// filtered subset — author-directed flags win.
-std::vector<std::string> asm_unit_flags(const CompileUnit& cu) {
-    std::vector<std::string> out;
-    for (auto& f : cu.packageCflags) {
-        if (f.starts_with("-D") || f.starts_with("-U") || f.starts_with("-I"))
-            out.push_back(f);
-    }
-    out.insert(out.end(), cu.packageAsmflags.begin(), cu.packageAsmflags.end());
-    return out;
-}
 
 std::string ltrim_copy(std::string_view s) {
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front())))
@@ -1857,7 +1861,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                                    : escape_ninja_path(cu.object)));
             if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 append(std::format("  local_includes ={}\n", includes));
-            if (auto flags = join_flags(cu.packageCxxflags); !flags.empty())
+            if (auto flags = join_compile_flags(cu.packageCxxflags); !flags.empty())
                 append(std::format("  unit_cxxflags ={}\n", flags));
             // The scan has the same suffix-recognition problem as the compile:
             // a driver that does not know `.ixx` hands it to the linker and
@@ -1974,7 +1978,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                     e += std::format("  sched_cap = {}\n", plan.scheduleCompilerCap);
                     if (auto inc = local_include_flags(cu, dial); !inc.empty())
                         e += "  local_includes =" + inc + "\n";
-                    if (auto fl = join_flags(cu.packageCxxflags); !fl.empty())
+                    if (auto fl = join_compile_flags(cu.packageCxxflags); !fl.empty())
                         e += "  unit_cxxflags =" + fl + "\n";
                     append(std::move(e));
                     // The join. THE SOURCE IS AN INPUT, and the BMI is only an
@@ -2039,7 +2043,7 @@ std::string emit_ninja_string(const BuildPlan& plan) {
                         e += "\n  dyndep = " + it->second + "\n";
                         if (auto inc = local_include_flags(cu, dial); !inc.empty())
                             e += "  local_includes =" + inc + "\n";
-                        if (auto fl = join_flags(cu.packageCxxflags); !fl.empty())
+                        if (auto fl = join_compile_flags(cu.packageCxxflags); !fl.empty())
                             e += "  unit_cxxflags =" + fl + "\n";
                         append(std::move(e));
                     };
@@ -2076,13 +2080,13 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
             if (is_gas_source(cu) || is_nasm_source(cu)) {
-                if (auto flags = join_flags(asm_unit_flags(cu)); !flags.empty())
+                if (auto flags = join_compile_flags(unit_asm_flags(cu)); !flags.empty())
                     out_line += "  unit_asmflags =" + flags + "\n";
             } else if (is_c_source(cu)) {
-                if (auto flags = join_flags(cu.packageCflags); !flags.empty())
+                if (auto flags = join_compile_flags(cu.packageCflags); !flags.empty())
                     out_line += "  unit_cflags =" + flags + "\n";
             } else {
-                if (auto flags = join_flags(cu.packageCxxflags); !flags.empty())
+                if (auto flags = join_compile_flags(cu.packageCxxflags); !flags.empty())
                     out_line += "  unit_cxxflags =" + flags + "\n";
             }
             append(std::move(out_line));
@@ -2128,13 +2132,13 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             if (auto includes = local_include_flags(cu, dial); !includes.empty())
                 out_line += "  local_includes =" + includes + "\n";
             if (is_gas_source(cu) || is_nasm_source(cu)) {
-                if (auto flags = join_flags(asm_unit_flags(cu)); !flags.empty())
+                if (auto flags = join_compile_flags(unit_asm_flags(cu)); !flags.empty())
                     out_line += "  unit_asmflags =" + flags + "\n";
             } else if (is_c_source(cu)) {
-                if (auto flags = join_flags(cu.packageCflags); !flags.empty())
+                if (auto flags = join_compile_flags(cu.packageCflags); !flags.empty())
                     out_line += "  unit_cflags =" + flags + "\n";
             } else {
-                if (auto flags = join_flags(cu.packageCxxflags); !flags.empty())
+                if (auto flags = join_compile_flags(cu.packageCxxflags); !flags.empty())
                     out_line += "  unit_cxxflags =" + flags + "\n";
             }
             // Clang needs $bmi_out to emit -fmodule-output=$bmi_out
@@ -2359,12 +2363,12 @@ std::string emit_ninja_string(const BuildPlan& plan) {
             // `$ORIGIN` in DT_RPATH and an artifact loaded a different build
             // of libX11 than it was linked against.
             mcpp::build::link_line::UnitTail tail;
-            tail.dependencies = join_flags(lu.linkFlags);
+            tail.dependencies = join_link_flags(lu.linkFlags);
             // #618: this executable's own subsystem and entry. Rendered here
             // rather than carried in `linkFlags`, because the spelling depends
             // on `sepLinker`, which only this emitter knows.
             if (lu.kind == LinkUnit::Binary)
-                tail.dependencies += join_flags(windows_executable_link_flags(
+                tail.dependencies += join_link_flags(windows_executable_link_flags(
                     plan, sepLinker, lu.windowsSubsystem, lu.windowsEntry));
             // mcpp#426: a link unit with no C++ in it takes only the part of
             // the contract that is not a statement about the C++ runtime.

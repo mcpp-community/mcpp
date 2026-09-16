@@ -546,12 +546,116 @@ export void merge_conditional_config(mcpp::manifest::Manifest& m,
 // actually read.
 //
 // Idempotent: clearing the vector after folding makes repeated calls harmless.
+// ── An element whose words changed in 2026.9.17.1 (#655) ─────────────────────
+//
+// A compile-flag element used to reach the compiler as its host's command-line
+// reader made it (POSIX `sh`, or the MSVCRT rules), after ninja had replaced
+// `$` sequences, with a `-D` element containing a space quoted whole (#234).
+// It now reaches the compiler as `flag_words` reads it, and a `defines` value
+// is one word. Most spellings mean the same under both readings; the ones that
+// do not are told what the compiler receives now and what it received before.
+// The previous reading is modelled on quote removal only: `sh` expansions
+// (`$VAR`, globs) are not reproduced.
+//
+// WHEN IT IS SAID. The notes are collected while manifests load and released
+// where the output directory is decided, only if that directory has no
+// build.ninja yet. The fingerprint names the mcpp version and every flag, so
+// that is the first plan after an upgrade, after a flag was edited, or in a
+// fresh checkout. A build that repeats a plan says nothing, so a manifest that
+// is already spelled for the new reading is not warned about on every run.
+std::vector<std::pair<std::string, std::string>>& pending_flag_words_notes() {
+    static std::vector<std::pair<std::string, std::string>> notes;
+    return notes;
+}
+std::vector<std::string> previous_release_words(std::string element, bool define) {
+    if (define) element = "-D" + element;
+    if ((element.starts_with("-D") || element.starts_with("/D"))
+        && element.find(' ') != std::string::npos)
+        element = mcpp::build::shell_quote_arg(element);
+    std::string line;
+    for (std::size_t i = 0; i < element.size(); ++i) {
+        if (element[i] != '$' || i + 1 == element.size()) { line.push_back(element[i]); continue; }
+        const char n = element[i + 1];
+        if (n == '$' || n == ' ' || n == ':') { line.push_back(n); ++i; continue; }
+        // A ninja variable reference: `${name}` or `$name`, empty on a compile edge.
+        std::size_t j = i + 1;
+        if (n == '{') {
+            while (j < element.size() && element[j] != '}') ++j;
+        } else {
+            while (j + 1 < element.size()
+                   && (std::isalnum(static_cast<unsigned char>(element[j + 1]))
+                       || element[j + 1] == '_' || element[j + 1] == '-'))
+                ++j;
+        }
+        i = j;
+    }
+    return mcpp::manifest::host_command_words(line, mcpp::platform::is_windows);
+}
+
+void report_flag_words_changes(const mcpp::manifest::Manifest& m) {
+    auto check = [&](std::string_view where, const std::vector<std::string>& list,
+                     bool define) {
+        for (auto const& e : list) {
+            auto now = define ? std::vector<std::string>{"-D" + e}
+                              : mcpp::manifest::flag_words(e);
+            auto before = previous_release_words(e, define);
+            if (now == before) continue;
+            auto show = [](const std::vector<std::string>& words) {
+                std::string out = "[";
+                for (auto const& w : words)
+                    out += std::format("{}'{}'", out.size() > 1 ? ", " : "", w);
+                return out + "]";
+            };
+            auto note = std::pair{std::format(
+                "{}: {} element '{}' reaches the compiler as {}; mcpp before "
+                "2026.9.17.1 passed {} on this host",
+                m.package.name.empty() ? std::string("(root)") : m.package.name,
+                where, e, show(now), show(before)),
+                std::string(
+                "a compile-flag element is read by one syntax on every host, and a "
+                "`defines` entry is one value (docs/04-mcpp-toml.md, "
+                "\"Compile-flag syntax\"); spell the element so that it reads as the "
+                "words meant")};
+            auto& notes = pending_flag_words_notes();
+            if (std::ranges::find(notes, note) == notes.end()) notes.push_back(std::move(note));
+        }
+    };
+    auto const& bc = m.buildConfig;
+    check("[build] cflags", bc.cflags, false);
+    check("[build] cxxflags", bc.cxxflags, false);
+    check("[build] defines", bc.defines, true);
+    for (auto const& gf : bc.globFlags) {
+        check("flags cflags", gf.cflags, false);
+        check("flags cxxflags", gf.cxxflags, false);
+        check("flags asmflags", gf.asmflags, false);
+        check("flags defines", gf.defines, true);
+    }
+    for (auto const& [feature, defines] : bc.featureDefines)
+        check(std::format("features.{} defines", feature), defines, true);
+    for (auto const& [feature, globs] : bc.featureFlags) {
+        for (auto const& gf : globs) {
+            check(std::format("features.{} cflags", feature), gf.cflags, false);
+            check(std::format("features.{} cxxflags", feature), gf.cxxflags, false);
+            check(std::format("features.{} asmflags", feature), gf.asmflags, false);
+            check(std::format("features.{} defines", feature), gf.defines, true);
+        }
+    }
+    for (auto const& t : m.targets) {
+        check(std::format("targets.{} cflags", t.name), t.cflags, false);
+        check(std::format("targets.{} cxxflags", t.name), t.cxxflags, false);
+        check(std::format("targets.{} defines", t.name), t.defines, true);
+    }
+}
+
 // Both `cflags` and `cxxflags` get the macro; assembly units pick it up for
 // free via the -D/-U/-I subset the ninja backend filters out of packageCflags.
+// A define is a value, so it enters the flag list as one word
+// (`flag_element`): `N="x"` reaches the compiler as `-DN="x"` on every host.
 void fold_build_defines_into_flags(mcpp::manifest::BuildConfig& bc) {
     for (auto const& d : bc.defines) {
-        bc.cflags.push_back("-D" + d);
-        bc.cxxflags.push_back("-D" + d);
+        const auto element = mcpp::manifest::flag_element("-D" + d);
+        bc.cflags.push_back(element);
+        bc.cxxflags.push_back(element);
     }
     bc.defines.clear();
 }
@@ -1846,6 +1950,7 @@ prepare_build(bool print_fingerprint,
     // run tier and a `mcpp run` that did not would be the same defect twice.
     const ToolPurpose toolPurpose =
         overrides.will_run ? ToolPurpose::Run : ToolPurpose::Build;
+    pending_flag_words_notes().clear();
 
     // A refusal decided early and released late. `host_can_serve` answers
     // "does a payload on this machine produce this target", which is knowable
@@ -3227,6 +3332,7 @@ prepare_build(bool print_fingerprint,
     // `[build].defines` must reach the scanner (P1689) and the compile edge,
     // and must participate in the fingerprint. Fold before dependency
     // resolution / fingerprinting.
+    report_flag_words_changes(*m);
     fold_build_defines_into_flags(m->buildConfig);
 
     // ORIGIN, RESOLVED ONCE.
@@ -5861,6 +5967,7 @@ prepare_build(bool print_fingerprint,
             merge_conditional_config(*manifest,
                                     cfgCtx());
         }
+        report_flag_words_changes(*manifest);
         fold_build_defines_into_flags(manifest->buildConfig);
         // The root's `abi.threads` reaches a dependency's C translation units
         // here; its C++ units already receive it through the dialect flag set.
@@ -7882,6 +7989,7 @@ prepare_build(bool print_fingerprint,
                 merge_conditional_config(*dep_manifest,
                     cfgCtx());
             }
+            report_flag_words_changes(*dep_manifest);
             fold_build_defines_into_flags(dep_manifest->buildConfig);
             // The root's `abi.threads` reaches this dependency's C translation
             // units here, as it does for a version dependency.
@@ -8785,7 +8893,7 @@ prepare_build(bool print_fingerprint,
                 if (auto it = pkg.manifest.buildConfig.featureDefines.find(f);
                     it != pkg.manifest.buildConfig.featureDefines.end())
                     for (auto& d : it->second) {
-                        auto fdef = "-D" + d;
+                        auto fdef = mcpp::manifest::flag_element("-D" + d);
                         pkg.manifest.buildConfig.cflags.push_back(fdef);
                         pkg.manifest.buildConfig.cxxflags.push_back(fdef);
                         pkg.privateBuild.cflags.push_back(fdef);
@@ -11792,8 +11900,8 @@ prepare_build(bool print_fingerprint,
         // std", which the scan graph holds and does not expose in that shape.
         // Recorded here so the next person meets the reason and not the gap.
         for (auto const& pkg : std::span{packages}.first(1)) {
-            auto missing = mcpp::manifest::dialect_flags_missing_from_prebuild(
-                pkg.manifest.buildConfig.cxxflags, prebuilt);
+            const auto words = mcpp::manifest::flag_words(pkg.manifest.buildConfig.cxxflags);
+            auto missing = mcpp::manifest::dialect_flags_missing_from_prebuild(words, prebuilt);
             if (missing.empty()) continue;
             std::string list;
             for (auto const& f : missing) {
@@ -12007,8 +12115,10 @@ prepare_build(bool print_fingerprint,
                 if (flags.find(q) == std::string::npos) flags += q;
             }
         }
-        for (auto& f : targetSideUsage.cxxflags)
-            flags += " " + mcpp::xlings::shq(f);
+        // The same words the package's own units receive from this list
+        // (mcpp.manifest.flag_words), one quoted word each.
+        for (auto& w : mcpp::manifest::flag_words(targetSideUsage.cxxflags))
+            flags += " " + mcpp::xlings::shq(w);
         tc->stdModuleFlags = flags;
         break;
     }
@@ -12284,6 +12394,13 @@ prepare_build(bool print_fingerprint,
     ctx.cacheMode   = cacheMode;
     ctx.projectRoot= *root;
     ctx.outputDir  = target_dir(*tc, fp, workRoot);
+    {
+        std::error_code ec;
+        const bool firstPlan = !std::filesystem::exists(ctx.outputDir / "build.ninja", ec);
+        for (auto const& [what, hint] : pending_flag_words_notes())
+            if (firstPlan) mcpp::diag::warning("build/flag-words", what, hint);
+        pending_flag_words_notes().clear();
+    }
     ctx.stdBmi     = stdBmiPath;
     ctx.stdObject  = stdObjectPath;
     ctx.stdModule  = std::move(describedStdModule);

@@ -371,6 +371,41 @@ jobs         = "auto"             # 并发编译数:正整数,或 "auto"(见下�
 bmi_schedule = "auto"             # 模块边调度:auto(= 关)| on | off(见下节)
 ```
 
+#### 编译 flag 的写法 *(mcpp 2026.9.17.1+)*
+
+`cflags`、`cxxflags` 与 `asmflags` 的一个元素代表一个或多个编译器参数(下称「词」)。
+写法在每个宿主上相同,也不论列表写在哪里:`[build]`、`[targets.<name>]`、`flags` 的
+glob 条目、feature、`[target.<selector>.build]`、xpkg 描述符,以及构建程序的
+`mcpp:cflag=` / `mcpp:cxxflag=` 指令。
+
+| 写法 | 编译器收到的词 |
+|---|---|
+| `"-O2 -g"` | `-O2`、`-g` |
+| `"-include config.h"` | `-include`、`config.h` |
+| `"'-DNAME=a b'"` 或 `"-DNAME=\"a b\""` | `-DNAME=a b` |
+| `"-DNAME=\\\"text\\\""` | `-DNAME="text"`(字符串字面量) |
+| `"-I/opt/my\\ dir/include"` | `-I/opt/my dir/include` |
+| `"-IC:\\sdk\\include"` | `-IC:\sdk\include` |
+| `"-DNAME=a$b"` | `-DNAME=a$b` |
+
+规则陈述在元素的文本上(TOML 或 Lua 先去掉它们自己的转义):
+
+- 未加引号的空格与制表符分隔词;
+- `'...'` 按字面取到下一个 `'`;
+- `"..."` 按字面取,只有 `\"` 与 `\\` 分别代表 `"` 与 `\`;
+- 引号之外,反斜杠后跟空格、制表符、`"`、`'` 或 `\` 时代表该字符,其余反斜杠按字面;
+- 相邻的带引号与不带引号的片段组成一个词;
+- `$`、`*`、`;`、`|` 等 shell 运算符没有特殊含义。
+
+`defines` 的一个条目是一个值,不按此写法读取:`defines = ["NAME=\"text\""]` 传入的是
+一个词 `-DNAME="text"`。`ldflags`、`dialect_cxxflags` 与 `std-module-flags` 不在本节范围内。
+
+`compile_commands.json` 与 `mcpp emit build-database` 在 `arguments` 中列出同样的词,
+不经 shell 即可执行。
+
+一个工程的首次规划中,若某个元素的词与 2026.9.17.1 之前的版本在同一宿主上传入的参数不同,
+mcpp 以 `build/flag-words` 警告并给出两者。重复同一规划的构建不再重复该警告。
+
 #### `dependency_linkage` —— 静态还是动态由消费者决定
 
 ```toml

@@ -2284,8 +2284,9 @@ make_plan(const mcpp::manifest::Manifest&         manifest,
                 for (auto& cu : plan.compileUnits) {
                     if (cu.source != main_cu.source) continue;
                     for (auto const& d : t.defines) {
-                        cu.packageCflags.push_back("-D" + d);
-                        cu.packageCxxflags.push_back("-D" + d);
+                        const auto element = mcpp::manifest::flag_element("-D" + d);
+                        cu.packageCflags.push_back(element);
+                        cu.packageCxxflags.push_back(element);
                     }
                     for (auto const& f : t.cflags)   cu.packageCflags.push_back(f);
                     for (auto const& f : t.cxxflags) cu.packageCxxflags.push_back(f);

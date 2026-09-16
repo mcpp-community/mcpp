@@ -101,6 +101,10 @@ ScanResult scan_package(const std::filesystem::path& root,
 // Called at every point where per-unit flag vectors are attached (the
 // scanner here; plan.cppm for a target's entry unit; flags.cppm for the
 // manifest-global [build] include_dirs).
+//
+// It reads the list as words (mcpp.manifest.flag_words) and writes it back one
+// word per element, so `-isystem hdr` in one element is the separated spelling
+// and a root that contains a space stays inside its word.
 void normalize_include_flags(const std::filesystem::path& root,
                              std::vector<std::string>& flags);
 
@@ -723,21 +727,24 @@ void normalize_include_flags(const std::filesystem::path& root,
     static constexpr std::string_view kIncPrefixes[] =
         {"-I", "-iquote", "-isystem", "-idirafter", "-iprefix", "-L"};
 
-    for (std::size_t i = 0; i < flags.size(); ++i) {
+    auto words = mcpp::manifest::flag_words(flags);
+    for (std::size_t i = 0; i < words.size(); ++i) {
         for (auto pre : kIncPrefixes) {
-            if (flags[i] == pre && i + 1 < flags.size()) {          // separated
-                rewrite_rel(flags[i + 1], root);
+            if (words[i] == pre && i + 1 < words.size()) {          // separated
+                rewrite_rel(words[i + 1], root);
                 ++i;
                 break;
             }
-            if (flags[i].size() > pre.size() && flags[i].starts_with(pre)) {  // joined
-                std::string tail = flags[i].substr(pre.size());
+            if (words[i].size() > pre.size() && words[i].starts_with(pre)) {  // joined
+                std::string tail = words[i].substr(pre.size());
                 std::string abs  = rewrite_rel_copy(tail, root);
-                if (abs != tail) flags[i] = std::string(pre) + abs;
+                if (abs != tail) words[i] = std::string(pre) + abs;
                 break;
             }
         }
     }
+    flags.clear();
+    for (auto const& w : words) flags.push_back(mcpp::manifest::flag_element(w));
 }
 
 std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file,
@@ -1206,8 +1213,9 @@ void scan_one_into(ScanResult& result,
             // defines reach asm units too — via the -D subset the backend
             // filters out of packageCflags (no third copy needed here).
             for (auto const& d : gf.defines) {
-                u.packageCflags.push_back("-D" + d);
-                u.packageCxxflags.push_back("-D" + d);
+                const auto element = mcpp::manifest::flag_element("-D" + d);
+                u.packageCflags.push_back(element);
+                u.packageCxxflags.push_back(element);
             }
             for (auto const& f : gf.cflags)   u.packageCflags.push_back(f);
             for (auto const& f : gf.cxxflags) u.packageCxxflags.push_back(f);

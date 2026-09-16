@@ -18,7 +18,7 @@ superseded_by: 2026-09-07-....md  # when status is superseded
 ---
 ```
 
-291 records.
+293 records.
 
 ## By subject
 
@@ -62,6 +62,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### triage
 
+- [#655 implemented: one reading of a compile-flag element, the plan, and the ledger](2026-09-17-655-implementation-plan.md) — active
+- [#655: the `arguments` array is not the command the build runs](2026-09-17-655-arguments-are-not-the-command-the-build-runs.md) — active
 - [#646 to #649 implemented: the plan, its review from eight angles, and the ledger](2026-09-16-646-649-implementation-plan.md) — landed
 - [Four issues from a framework and an editor: #646, #647, #648 and #649, read against the engine and routed by home](2026-09-16-646-649-four-issues-by-home.md) — landed
 - [Link forms, standard levels and a path limit: the asks of #641 and #642, read against the code](2026-09-15-641-642-link-forms-standards-and-paths.md) — landed
@@ -76,6 +78,8 @@ Records that declare one. Everything else is listed by date below.
 
 ### 2026-09
 
+- [#655 implemented: one reading of a compile-flag element, the plan, and the ledger](2026-09-17-655-implementation-plan.md) — active
+- [#655: the `arguments` array is not the command the build runs](2026-09-17-655-arguments-are-not-the-command-the-build-runs.md) — active
 - [#646 to #649 implemented: the plan, its review from eight angles, and the ledger](2026-09-16-646-649-implementation-plan.md) — landed
 - [Four issues from a framework and an editor: #646, #647, #648 and #649, read against the engine and routed by home](2026-09-16-646-649-four-issues-by-home.md) — landed
 - [Link forms, standard levels and a path limit: the asks of #641 and #642, read against the code](2026-09-15-641-642-link-forms-standards-and-paths.md) — landed

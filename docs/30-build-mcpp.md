@@ -53,11 +53,11 @@ is ignored, so diagnostics may be logged freely.
 
 | Directive | Effect |
 |---|---|
-| `mcpp:cxxflag=<flag>`              | add `<flag>` to the C++ compile flags |
-| `mcpp:cflag=<flag>`                | add `<flag>` to the C compile flags |
+| `mcpp:cxxflag=<flag>`              | add `<flag>` to the C++ compile flags; `<flag>` is read as [compile-flag syntax](04-mcpp-toml.md#compile-flag-syntax-mcpp-20269171) (2026.9.17.1+) |
+| `mcpp:cflag=<flag>`                | add `<flag>` to the C compile flags, read the same way |
 | `mcpp:link-lib=<name>`             | link `-l<name>` |
 | `mcpp:link-search=<dir>`           | add a library search dir (`-L`; relative dirs resolve against the project root) |
-| `mcpp:cfg=<name>`                  | define `-D<name>` for both C and C++ |
+| `mcpp:cfg=<name>`                  | define `-D<name>` for both C and C++; `<name>` is one value, as a `defines` entry |
 | `mcpp:generated=<path>`            | add a generated source to the build. **A relative path resolves against the project root for the root package, but against `MCPP_OUT_DIR` for a dependency's build.mcpp** — emit an absolute path if the package is both (see below) |
 | `mcpp:source=<path>` *(0.0.100+)*  | select a **pre-existing** source file into the build (absolute, or relative to the package root). Same downstream effect as `generated=`; use it for files the program *chose* (payload/vendored tree) rather than wrote — e.g. a per-target source selection over a large tarball |
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | add a **private** include directory (`-I`) for this package's own TUs (absolute, or relative to the package root; normalized). Replaces the `cxxflag=-I` + `cflag=-I` double emission |

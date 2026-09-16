@@ -50,11 +50,11 @@ mcpp build      # 编译 + 运行 build.mcpp,然后构建工程
 
 | 指令 | 作用 |
 |---|---|
-| `mcpp:cxxflag=<flag>`              | 给 C++ 编译追加 `<flag>` |
-| `mcpp:cflag=<flag>`                | 给 C 编译追加 `<flag>` |
+| `mcpp:cxxflag=<flag>`              | 给 C++ 编译追加 `<flag>`;`<flag>` 按[编译 flag 的写法](04-mcpp-toml.md#编译-flag-的写法-mcpp-20269171)读取(2026.9.17.1+) |
+| `mcpp:cflag=<flag>`                | 给 C 编译追加 `<flag>`,读法相同 |
 | `mcpp:link-lib=<name>`             | 链接 `-l<name>` |
 | `mcpp:link-search=<dir>`           | 增加库搜索目录(`-L`;相对路径按工程根目录解析) |
-| `mcpp:cfg=<name>`                  | 为 C 与 C++ 同时定义 `-D<name>` |
+| `mcpp:cfg=<name>`                  | 为 C 与 C++ 同时定义 `-D<name>`;`<name>` 是一个值,与 `defines` 条目相同 |
 | `mcpp:generated=<path>`            | 把生成的源码加入构建。**相对路径在根工程按工程根解析,在依赖的 build.mcpp 里按 `MCPP_OUT_DIR` 解析** —— 两种角色都可能出现的包应发绝对路径(见下文) |
 | `mcpp:source=<path>` *(0.0.100+)*  | 把一份**既有**源文件选入构建(绝对路径,或相对包根)。下游效果与 `generated=` 相同;语义区别在于文件是程序*选中*的(tarball payload / vendored 源树)而非程序写出的——例如对大型源码包做 per-target 源选择 |
 | `mcpp:include-dir=<dir>` *(0.0.100+)* | 为本包自身 TU 增加一个**私有** include 目录(`-I`;绝对路径或相对包根,自动规范化)。取代过去 `cxxflag=-I` + `cflag=-I` 的双重裸发 |

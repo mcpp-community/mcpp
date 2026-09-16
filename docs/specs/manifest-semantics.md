@@ -5,8 +5,8 @@
 | **规范编号** | SPEC-004 |
 | **标题** | `mcpp.toml` 的平面划分、条件化形状、解析轴与命名规约 |
 | **状态** | **草案(Draft)** |
-| **版本** | 1.4 |
-| **最后修改** | 2026-09-15 |
+| **版本** | 1.5 |
+| **最后修改** | 2026-09-17 |
 | **最低实现版本** | 条件化形状:mcpp **2026.8.29.1**(`[target.<selector>.build-dependencies]` 起齐备);目标轴:mcpp **2026.9.6.4** |
 | **作者/维护** | mcpp-community |
 | **相关设计文档** | `.agents/docs/2026-09-07-mcpp-toml-unified-semantics-design.md`<br>`.agents/docs/2026-06-04-manifest-schema-ownership.md`<br>`.agents/docs/2026-09-03-xlings-workspace-as-the-one-table.md` |
@@ -33,6 +33,7 @@
 一个条目按什么解析、键怎么命名。它不列举字段——字段在 docs/05。
 
 它回答的是一个新字段或新 section 该长什么样,以及一份 manifest 为什么这样组织。
+§8 另陈述编译 flag 列表中一个元素代表哪些参数。
 
 **边界。** 本规范不覆盖字段的准入条件,那由 docs/05 附录 A(Schema Ownership
 Principle)规定,本规范不重复它,只在 §6 引用并补充一条。
@@ -327,6 +328,40 @@ feature-deps          feature-xlings         ← 限定词是门
    `package-default`;边上的 `linkage = "static"` 与写下的 `dependency_linkage = "static"`
    都得到静态形态与原因 `requested`,且 `--strict` 下构建通过;按行 `linkage` 替换无条件的
    `kind = "shared"`(`tests/e2e/692_a_package_states_its_default_link_form.sh`)。
+10. §8 的判据取自三处并要求一致:程序打印每个宏收到的值,`compile_commands.json` 与
+    `mcpp emit build-database` 列出的词,三者都等于按 §8 读出的词;同一份断言在 Linux、
+    macOS 与 Windows 上不变(`tests/e2e/736_compile_flag_words_reach_the_compiler_and_the_databases.sh`)。
+    规则本身由读回性质陈述:任意词经实现的拼写读回为它自身,经宿主引号读回也为它自身,
+    且 POSIX 宿主上由 `/bin/sh` 实测(`modules/manifest/tests/test_flag_words.cpp`、
+    `tests/unit/test_compile_commands.cpp`)。
+
+## 8. 编译 flag 列表的元素
+
+`cflags`、`cxxflags` 与 `asmflags` 的一个元素是一段文本,代表零个或多个词;编译器收到的
+参数就是这些词,按列表顺序排列。本节在元素的文本上陈述(TOML 或 Lua 先去掉自己的转义)。
+该读法对这三个键的每一个出现位置相同:`[build]`、`[targets.<n>]`、`flags` 的 glob 条目、
+feature、`[profile.<n>]`、`[target.<selector>.build]`、xpkg 描述符,以及构建程序的
+`mcpp:cflag=` 与 `mcpp:cxxflag=` 指令。
+
+1. 未加引号的空格与制表符分隔词,连续的分隔符等同于一个。
+2. `'` 开启一段单引号区域,区域内的字符按字面取到下一个 `'` 为止。
+3. `"` 开启一段双引号区域,区域内 `\"` 代表 `"`、`\\` 代表 `\`,其余字符按字面取到下一个
+   未转义的 `"` 为止。
+4. 引号区域之外,`\` 后跟空格、制表符、`"`、`'` 或 `\` 时代表该字符;其余 `\` 按字面。
+5. 相邻的区域与字面片段组成一个词;一个只含 `''` 或 `""` 的词是空词。
+6. 未闭合的引号区域延伸到元素末尾。
+7. 除上述字符外,任何字符没有特殊含义;实现**禁止**对 `$`、`*`、`?`、`;`、`|`、`&`、`<`、
+   `>`、`` ` ``、`~` 做展开或解释。
+
+`defines` 的一个条目 `X` 是一个值:它代表一个词 `-D` 与 `X` 的拼接,**禁止**按上述规则
+读取。实现向这三个列表插入一个词 `w` 时,**必须**使用一个按上述规则读回恰为 `w` 的拼写。
+
+实现**必须**把每个词原样交给编译器,与宿主的命令行读取规则(POSIX `sh`、MSVCRT)无关;
+`compile_commands.json` 与构建数据库(SPEC-005 R3.7)列出的参数**必须**是这些词。
+
+`ldflags`、`dialect_cxxflags` 与 `std-module-flags` 不在本节范围内。
+
+**状态:已实现(mcpp 2026.9.17.1)。**
 
 ## 变更记录
 
@@ -337,3 +372,4 @@ feature-deps          feature-xlings         ← 限定词是门
 | 1.2 | 2026-09-07 | 一个包一个版本(mcpp 2026.9.6.6):新增 §4.5(身份=`(namespace, name)`,版本是约束;裁决与校验两步;范围必须双向可解且可被 `xpkg_dir` 回答);§4.3.1 改为「禁止命名**被解析的**层」,`accelerator` 明确被接受(2026.9.6.5);§7 补第 5 条的反向腿与第 6、7 条判据。 |
 | 1.3 | 2026-09-14 | 条件依赖声明替换同一身份的无条件声明,`targets.<name>` 成为可条件化的 section,不读取的 section 必须报出(mcpp 2026.9.14.2):新增 §3.1.1 与 §7 第 8 条判据。 |
 | 1.4 | 2026-09-15 | 库目标的默认链接形态 `linkage`(mcpp 2026.9.15.2):§3.1.1 补默认值的语义、优先顺序与拒绝条件;§7 补第 9 条判据。 |
+| 1.5 | 2026-09-17 | 编译 flag 列表元素的读法(mcpp 2026.9.17.1,#655):新增 §8 与 §7 第 10 条判据。 |

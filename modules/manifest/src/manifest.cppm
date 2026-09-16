@@ -10,9 +10,11 @@
 //   mcpp.manifest.types  shared data model (Manifest, Target, errors)
 //   mcpp.manifest.toml   mcpp.toml parsing (projects / packages on disk)
 //   mcpp.manifest.xpkg   xpkg .lua `mcpp = {}` segment (index descriptors)
+//   mcpp.manifest.flag_words  the words an element of a compile-flag list stands for
 
 export module mcpp.manifest;
 
 export import mcpp.manifest.types;
 export import mcpp.manifest.toml;
 export import mcpp.manifest.xpkg;
+export import mcpp.manifest.flag_words;

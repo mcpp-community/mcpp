@@ -4,12 +4,12 @@
 |---|---|
 | 规范编号 | SPEC-005 |
 | 标题 | mcpp 输出的构建数据库:内容、取值规则与不写工程目录的保证 |
-| 状态 | 评审中 v1.1 |
-| 版本 | 1.1 |
-| 最后修改 | 2026-09-16 |
+| 状态 | 评审中 v1.2 |
+| 版本 | 1.2 |
+| 最后修改 | 2026-09-17 |
 | 对应实现 | mcpp >= 2026.9.15.1 |
 | 相关设计文档 | `.agents/docs/2026-09-14-636-build-database-and-the-latest-xlings.md` |
-| 相关 issue | #636, #648 |
+| 相关 issue | #636, #648, #655 |
 | 依据的外部规范 | S1「C++ Build Database: IDE Profile」profile 0.2.0 与 S2 0.2.0 §3.4,取自 https://github.com/Sunrisepeak/lsp-mcpp-private 提交 `b82859d`(schema 自提交 `28ecd6e` 起未变);JSON Compilation Database |
 
 ## 0. 适用范围
@@ -98,7 +98,9 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 - **R3.7** 除 NASM 单元外,构建计划中的每个编译单元是一个翻译单元。`source`、
   `work-directory`、`arguments`、`object` 与 `compile_commands.json` 中对应条目的
   `file`、`directory`、`arguments`、`output` 取自同一条记录,因而逐字相同。
-  **已实现**
+  `arguments` 中的每一项是编译器收到的一个参数,不带任何宿主的引号或转义,不经 shell
+  即可执行:单元自己的 flag 列表按 SPEC-004 §8 读成的词列出,引擎为宿主渲染的文本
+  按该宿主的读取规则(POSIX `sh` 或 MSVCRT)还原。**已实现**
 - **R3.8** `provides` 把单元提供的模块名映射到空字符串,命令不执行构建(S1-8-6);
   `requires` 为单元导入的模块名,分区写全名 `M:P`。`private` 为 `false`,理由同 R3.4。
   **已实现**
@@ -175,3 +177,4 @@ mcpp 输出的 S1 文档满足 S1 等级 2,不输出 `ide.options`。等级 3 �
 |---|---|---|
 | 1.0 | 2026-09-14 | 首版(#636)。 |
 | 1.1 | 2026-09-16 | R5.2 增加离线诊断码 `MCPP_OFFLINE_DOWNLOAD_REQUIRED`;R5.3 的 `network` 按观测列出;新增 R5.4(子进程不继承调用方描述符,xlings 子进程有期限并随 mcpp 结束)(#648)。 |
+| 1.2 | 2026-09-17 | R3.7 陈述 `arguments` 的每一项是编译器收到的参数,单元 flag 按 SPEC-004 §8 的词列出(#655)。 |
