@@ -289,6 +289,10 @@ std::expected<StdDerivation, StdModError> derive_std_module(
     hopt.cAbiPrebuilt = tc.cAbiPrebuilt;
     std::string sysroot_flag =
         render_tokens(host_compile_tokens(tc, hopt, shellEsc));
+    // Single-quoted for the shell that runs this command; the value holds `"`
+    // and parentheses. Apple targets only (hostflags.cppm).
+    for (auto const& w : apple_float_macro_words(tc))
+        sysroot_flag += std::format(" '{}'", w);
 
     // Deployment target appended here rather than passed to the producer
     // ONLY to keep this command string byte-identical to what earlier

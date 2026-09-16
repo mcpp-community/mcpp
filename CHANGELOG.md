@@ -29,6 +29,12 @@ libarchive、bzip2、lz4、xz、zlib 与 zstd 的每个 C 文件都无法解析�
   这样的元素。
 - Windows 上 `shell_quote_arg` 按 MSVCRT 规则加倍引号前与结尾处的反斜杠,以 `\` 结尾的
   词不再吞掉闭合引号。
+- **macOS 27 上 `import std` 可以构建。** 27.0 SDK 的 `<math.h>` 在模块开启时把 `INFINITY` 与
+  `NAN` 交给 `<float.h>`,而 clang 22 的头在 `-std=c++23` 下不提供它们,std 模块预编译因此失败
+  (`<complex>:1012: use of undeclared identifier 'INFINITY'`)。对 Apple 目标上的 clang,mcpp 以
+  SDK 自身的拼写陈述这两个宏(`-DINFINITY=HUGE_VALF -DNAN=__builtin_nanf("0x7fc00000")`),
+  普通单元中的重定义逐词相同,不产生警告。判据只读目标三元组。
+- **以 `-D` 或 `/D` 开头且含空格的元素仍是一个参数**,按原样传入,与 mcpp#234 以来各版本相同。
 - **CI 覆盖 macOS 27。** `ci-macos` 与 `ci-macos-e2e` 在 `macos-15` 与 macOS 27 上各跑一遍,
   `ci-fresh-install` 的 xlings 与 Homebrew 两条安装渠道在 `macos-14` 与 macOS 27 上各跑一遍。
   GitHub 以预览标签 `xcode-27` 提供 macOS 27(无 `macos-27` 标签),每条 macOS 27 的腿断言

@@ -23,8 +23,13 @@ TEST(FlagWords, TheSyntaxTable) {
         // Quotes inside a word are quoting, as in `sh`.
         {R"(-DMID="mid")", {"-DMID=mid"}},
         {"-DSQ='sq'", {"-DSQ=sq"}},
-        {R"(-DV="a b")", {"-DV=a b"}},
         {"'-DV=a b'", {"-DV=a b"}},
+        // The compatibility exception: a -D or /D element with a space is one
+        // word, verbatim (mcpp#234), quotes and backslashes included.
+        {"-DT=long long", {"-DT=long long"}},
+        {R"(-DV="a b")", {R"(-DV="a b")"}},
+        {"/DV=a b", {"/DV=a b"}},
+        {"-DA=1 -DB=2", {"-DA=1 -DB=2"}},
         // compat.lua's descriptor: one element, two words.
         {"-include mcpp_lua_platform_config.h", {"-include", "mcpp_lua_platform_config.h"}},
         // pkg-config writes a space in a path as `\ `.
@@ -32,6 +37,8 @@ TEST(FlagWords, TheSyntaxTable) {
         // A backslash before an ordinary character is literal: Windows paths.
         {R"(-IC:\Users\x\include)", {R"(-IC:\Users\x\include)"}},
         {R"("-IC:\Program Files\x")", {R"(-IC:\Program Files\x)"}},
+        // Without a space the syntax applies to a -D element as to any other.
+        {R"(-DV="mid")", {"-DV=mid"}},
         // Escapes a backslash can make outside and inside double quotes.
         {R"(-DV=a\\b)", {R"(-DV=a\b)"}},
         {R"("a\"b\\c\d")", {R"(a"b\c\d)"}},
@@ -49,7 +56,7 @@ TEST(FlagWords, TheSyntaxTable) {
         {"''", {""}},
         {R"(-DV="")", {"-DV="}},
         // An unterminated quote extends to the end of the element.
-        {R"(-DV="a b)", {"-DV=a b"}},
+        {R"(-I"a b)", {"-Ia b"}},
         // A trailing backslash has nothing to escape.
         {R"(-DV=a\)", {R"(-DV=a\)"}},
     };
@@ -58,12 +65,13 @@ TEST(FlagWords, TheSyntaxTable) {
 }
 
 TEST(FlagWords, AListIsTheConcatenationOfItsElements) {
-    const std::vector<std::string> list{"-include x.h", R"(-DV="a b")", "", "-O2"};
-    EXPECT_EQ(flag_words(list), (Words{"-include", "x.h", "-DV=a b", "-O2"}));
+    const std::vector<std::string> list{"-include x.h", R"(-I"my dir")", "", "-O2"};
+    EXPECT_EQ(flag_words(list), (Words{"-include", "x.h", "-Imy dir", "-O2"}));
 }
 
 TEST(FlagWords, APlainWordIsItsOwnElement) {
-    for (std::string_view w : {"-O2", "-DV=1", "-IC:/x", "/std:c++latest", "-Wl,-z,defs", "$x"})
+    for (std::string_view w : {"-O2", "-DV=1", "-IC:/x", "/std:c++latest", "-Wl,-z,defs", "$x",
+                               R"(-IC:\sdk\include)", R"(C:\dir\)"})
         EXPECT_EQ(flag_element(w), w);
 }
 
@@ -71,9 +79,10 @@ TEST(FlagWords, APlainWordIsItsOwnElement) {
 // the element it writes reads back as exactly that one word.
 TEST(FlagWords, AnElementReadsBackAsItsWord) {
     Words words{"", " ", "a b", "'", "\"", "\\", "a\\", "\\\\srv\\share", "it's",
-                "-DV=\"def\"", "-DV='c'", "x\ty", "a\"b'c\\d e"};
+                "-DV=\"def\"", "-DV='c'", "x\ty", "a\"b'c\\d e", "-DT=long long",
+                "-DV=\"a b\"", "/DV=x y"};
     // A deterministic walk over the characters the syntax gives meaning to.
-    const std::string alphabet = "ab \t\"'\\$";
+    const std::string alphabet = "ab \t\"'\\$-D";
     std::uint32_t state = 655;
     for (int n = 0; n < 2000; ++n) {
         std::string w;

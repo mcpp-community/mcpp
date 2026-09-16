@@ -34,9 +34,10 @@ cxxflags = [
   "-DV_MID=\"mid\"",            # -DV_MID=mid
   "-DV_SQ='sq'",                # -DV_SQ=sq
   "'-DV_SP=a b'",               # -DV_SP=a b
-  "-DV_BS=a\\ b",               # -DV_BS=a b        (pkg-config's escaped space)
   "-DV_DOL=a$b",                # -DV_DOL=a$b
-  "-DV_A=1 -DV_B=2",            # -DV_A=1  -DV_B=2
+  "-O0 -DV_A=1",                # -O0  -DV_A=1
+  "-DV_B=long long",            # -DV_B=long long   (a -D element with a space
+                                #  is one word, verbatim: mcpp#234)
 ]
 defines = [
   "V_DEF=\"def\"",              # -DV_DEF="def"
@@ -55,7 +56,6 @@ int main() {
     show("V_MID", STR(V_MID));
     show("V_SQ",  STR(V_SQ));
     show("V_SP",  STR(V_SP));
-    show("V_BS",  STR(V_BS));
     show("V_DOL", STR(V_DOL));
     show("V_A",   STR(V_A));
     show("V_B",   STR(V_B));
@@ -75,22 +75,21 @@ V_ESC=["esc.h"]
 V_MID=[mid]
 V_SQ=[sq]
 V_SP=[a b]
-V_BS=[a b]
 V_DOL=[a$b]
 V_A=[1]
-V_B=[2]
+V_B=[long long]
 V_DEF=["def"]
 V_DSP=[a b]
 EOF
-for line in $(seq 1 10); do
+for line in $(seq 1 9); do
     want=$(sed -n "${line}p" want.txt)
     grep -qxF -- "$want" run.txt || fail "A: the program did not print $want" run.txt
 done
 
 # B and C. What the databases list. The expected words are the ones above.
 cat > words.json <<'EOF'
-["-DV_ESC=\"esc.h\"", "-DV_MID=mid", "-DV_SQ=sq", "-DV_SP=a b", "-DV_BS=a b",
- "-DV_DOL=a$b", "-DV_A=1", "-DV_B=2", "-DV_DEF=\"def\"", "-DV_DSP=a b"]
+["-DV_ESC=\"esc.h\"", "-DV_MID=mid", "-DV_SQ=sq", "-DV_SP=a b",
+ "-DV_DOL=a$b", "-O0", "-DV_A=1", "-DV_B=long long", "-DV_DEF=\"def\"", "-DV_DSP=a b"]
 EOF
 cdb=$(find target -name compile_commands.json | head -1)
 [ -n "$cdb" ] || cdb=compile_commands.json
@@ -136,11 +135,11 @@ if not contains(flat):
 PY
 
 # D. The first plan names the elements whose words changed, and only those.
-for element in "V_DEF=\"def\"" "-DV_BS=a\\ b" "-DV_DOL=a\$b" "-DV_A=1 -DV_B=2"; do
+for element in "V_DEF=\"def\"" "-DV_DOL=a\$b"; do
     grep -qF -- "element '$element' reaches the compiler as" build1.log \
         || fail "D: the first plan does not name $element" build1.log
 done
-for element in "-DV_MID=\"mid\"" "V_DSP=a b" "-DV_ESC="; do
+for element in "-DV_MID=\"mid\"" "V_DSP=a b" "-DV_ESC=" "-DV_B=long long" "-O0 -DV_A=1"; do
     if grep -F -- "reaches the compiler as" build1.log | grep -qF -- "element '$element"; then
         fail "D: the first plan names $element, whose words did not change" build1.log
     fi

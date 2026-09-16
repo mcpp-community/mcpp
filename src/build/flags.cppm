@@ -741,6 +741,8 @@ CompileFlags compute_flags(const BuildPlan& plan) {
         hopt.appleSdkCxxHeaders = plan.toolchain.appleSdkCxxHeaders;
         compile_toolchain_flags = mcpp::toolchain::render_tokens(
             mcpp::toolchain::host_compile_tokens(plan.toolchain, hopt, ninjaEsc));
+        for (auto const& w : mcpp::toolchain::apple_float_macro_words(plan.toolchain))
+            compile_toolchain_flags += " " + ninja_command_word(w);
     } else {
         // Skipped entirely, not filtered. What this block emits is the
         // HOST's world reconstructed by hand — libc++'s headers, glibc's

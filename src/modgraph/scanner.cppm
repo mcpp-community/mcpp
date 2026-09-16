@@ -727,24 +727,41 @@ void normalize_include_flags(const std::filesystem::path& root,
     static constexpr std::string_view kIncPrefixes[] =
         {"-I", "-iquote", "-isystem", "-idirafter", "-iprefix", "-L"};
 
-    auto words = mcpp::manifest::flag_words(flags);
-    for (std::size_t i = 0; i < words.size(); ++i) {
-        for (auto pre : kIncPrefixes) {
-            if (words[i] == pre && i + 1 < words.size()) {          // separated
-                rewrite_rel(words[i + 1], root);
-                ++i;
-                break;
+    // Words are rewritten per element, and an element none of whose words
+    // changed keeps its spelling. A separated prefix whose path is the first
+    // word of the next element is rewritten there.
+    bool pendingPath = false;
+    for (auto& element : flags) {
+        auto words = mcpp::manifest::flag_words(element);
+        bool changed = false;
+        for (std::size_t i = 0; i < words.size(); ++i) {
+            if (pendingPath) {
+                auto abs = rewrite_rel_copy(words[i], root);
+                changed = changed || abs != words[i];
+                words[i] = std::move(abs);
+                pendingPath = false;
+                continue;
             }
-            if (words[i].size() > pre.size() && words[i].starts_with(pre)) {  // joined
-                std::string tail = words[i].substr(pre.size());
-                std::string abs  = rewrite_rel_copy(tail, root);
-                if (abs != tail) words[i] = std::string(pre) + abs;
-                break;
+            for (auto pre : kIncPrefixes) {
+                if (words[i] == pre) {                                  // separated
+                    pendingPath = true;
+                    break;
+                }
+                if (words[i].size() > pre.size() && words[i].starts_with(pre)) {  // joined
+                    std::string tail = words[i].substr(pre.size());
+                    std::string abs  = rewrite_rel_copy(tail, root);
+                    if (abs != tail) { words[i] = std::string(pre) + abs; changed = true; }
+                    break;
+                }
             }
         }
+        if (!changed) continue;
+        element.clear();
+        for (auto const& w : words) {
+            if (!element.empty()) element += ' ';
+            element += mcpp::manifest::flag_element(w);
+        }
     }
-    flags.clear();
-    for (auto const& w : words) flags.push_back(mcpp::manifest::flag_element(w));
 }
 
 std::expected<SourceUnit, ScanError> scan_file(const std::filesystem::path& file,

@@ -27,10 +27,17 @@
 //   - outside quotes, a backslash before a space, a tab, `"`, `'` or `\`
 //     stands for that character, and any other backslash is literal;
 //   - quoted and unquoted pieces that touch form one word, so `""` is an
-//     empty word and `-DV="a b"` is the single word `-DV=a b`.
+//     empty word and `-I"my dir"` is the single word `-Imy dir`.
 //
-// `$`, `*`, `;` and the other shell operators have no meaning. The one
-// spelling the published index relies on, libarchive's
+// `$`, `*`, `;` and the other shell operators have no meaning.
+//
+// ONE EXCEPTION, KEPT FOR COMPATIBILITY. An element that begins with `-D` or
+// `/D` and contains a space is one word, taken verbatim. Every release since
+// mcpp#234 quoted such an element whole before the host read it, so
+// `-DT=long long` has always been the single argument `-DT=long long` on every
+// host; reading it as two words would change working manifests.
+//
+// The one spelling the published index relies on, libarchive's
 // `-DPLATFORM_CONFIG_H=\"mcpp_libarchive_config.h\"`, reads as the word
 // `-DPLATFORM_CONFIG_H="mcpp_libarchive_config.h"`, which is what both hosts
 // passed before. pkg-config's `\ ` for a space in a path reads as a space.
@@ -81,6 +88,8 @@ bool escapable_outside_quotes(char c) {
 }  // namespace
 
 std::vector<std::string> flag_words(std::string_view s) {
+    if ((s.starts_with("-D") || s.starts_with("/D")) && s.find(' ') != std::string_view::npos)
+        return {std::string(s)};
     std::vector<std::string> out;
     std::string word;
     bool started = false;
@@ -125,8 +134,17 @@ std::vector<std::string> flag_words(const std::vector<std::string>& elements) {
 }
 
 std::string flag_element(std::string_view word) {
-    const bool plain = !word.empty()
-        && word.find_first_of(" \t\"'\\") == std::string_view::npos;
+    // A word with a space that begins with -D or /D is its own element (the
+    // exception above); quoting it as well would be equally correct, and
+    // leaving it keeps the spelling every release wrote.
+    if ((word.starts_with("-D") || word.starts_with("/D")) && word.find(' ') != std::string_view::npos)
+        return std::string(word);
+    // Plain means the syntax reads the word back unchanged: no blank, no
+    // quote, and no backslash in front of a character it would escape. A
+    // Windows path (`C:\sdk\include`) is plain and keeps its spelling.
+    bool plain = !word.empty() && word.find_first_of(" \t\"'") == std::string_view::npos;
+    for (std::size_t i = 0; plain && i + 1 < word.size(); ++i)
+        if (word[i] == '\\' && escapable_outside_quotes(word[i + 1])) plain = false;
     if (plain) return std::string(word);
     // Single quotes hold everything except `'`, which closes the region, is
     // written as an escaped quote outside it, and reopens it.

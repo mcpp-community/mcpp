@@ -723,3 +723,24 @@ TEST(HostFlags, TheCxxLayerDecidesWhoseLibcxxHeadersAreEmitted) {
     EXPECT_TRUE(has(d, "-nostdinc++"));
 }
 
+
+// The floating macros an Apple SDK leaves to <float.h> once modules are on
+// (apple_float_macro_words). Stated for clang on an Apple target and for
+// nothing else, as the SDK's own spellings, and quotable by every reader.
+TEST(HostFlags, AppleFloatMacrosAreStatedForClangOnAppleTargetsOnly) {
+    const std::vector<std::string> words{
+        "-DINFINITY=HUGE_VALF", "-DNAN=__builtin_nanf(\"0x7fc00000\")"};
+    auto tc = [](CompilerId id, std::string triple) {
+        mcpp::toolchain::Toolchain t;
+        t.compiler = id;
+        t.targetTriple = std::move(triple);
+        return t;
+    };
+    EXPECT_EQ(mcpp::toolchain::apple_float_macro_words(tc(CompilerId::Clang, "arm64-apple-darwin27.0.0")), words);
+    EXPECT_EQ(mcpp::toolchain::apple_float_macro_words(tc(CompilerId::Clang, "aarch64-macos")), words);
+    EXPECT_EQ(mcpp::toolchain::apple_float_macro_words(tc(CompilerId::Clang, "arm64-apple-ios18.0")), words);
+    EXPECT_TRUE(mcpp::toolchain::apple_float_macro_words(tc(CompilerId::Clang, "x86_64-linux-gnu")).empty());
+    EXPECT_TRUE(mcpp::toolchain::apple_float_macro_words(tc(CompilerId::Clang, "wasm32-emscripten")).empty());
+    EXPECT_TRUE(mcpp::toolchain::apple_float_macro_words(tc(CompilerId::GCC, "x86_64-linux-gnu")).empty());
+    EXPECT_TRUE(mcpp::toolchain::apple_float_macro_words(tc(CompilerId::MSVC, "x86_64-pc-windows-msvc")).empty());
+}

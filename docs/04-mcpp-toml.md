@@ -430,7 +430,8 @@ written: `[build]`, `[targets.<name>]`, a `flags` glob entry, a feature, a
 |---|---|
 | `"-O2 -g"` | `-O2`, `-g` |
 | `"-include config.h"` | `-include`, `config.h` |
-| `"'-DNAME=a b'"` or `"-DNAME=\"a b\""` | `-DNAME=a b` |
+| `"'-DNAME=a b'"` or `"-I\"my dir\""` | `-DNAME=a b`, `-Imy dir` |
+| `"-DNAME=long long"` | `-DNAME=long long` (see below) |
 | `"-DNAME=\\\"text\\\""` | `-DNAME="text"` (a string literal) |
 | `"-I/opt/my\\ dir/include"` | `-I/opt/my dir/include` |
 | `"-IC:\\sdk\\include"` | `-IC:\sdk\include` |
@@ -445,7 +446,9 @@ escapes):
 - outside quotes, a backslash before a space, a tab, `"`, `'` or `\` stands for
   that character; any other backslash is literal;
 - quoted and unquoted pieces that touch form one word;
-- `$`, `*`, `;`, `|` and the other shell operators have no meaning.
+- `$`, `*`, `;`, `|` and the other shell operators have no meaning;
+- an element that begins with `-D` or `/D` and contains a space is one word,
+  taken verbatim, as in every earlier release.
 
 A `defines` entry is one value and is not read by this syntax: `defines =
 ["NAME=\"text\""]` passes the single word `-DNAME="text"`. `ldflags`,

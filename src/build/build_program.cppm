@@ -509,6 +509,7 @@ std::vector<std::string> host_base_flags(const mcpp::toolchain::Toolchain& tc,
 
     const mcpp::toolchain::PathEscape plain = mcpp::toolchain::no_escape;
     auto f = mcpp::toolchain::host_compile_tokens(tc, opt, plain);
+    for (auto& w : mcpp::toolchain::apple_float_macro_words(tc)) f.push_back(std::move(w));
     for (auto& t : mcpp::toolchain::host_link_tokens(tc, opt, plain))
         f.push_back(t);
     return f;

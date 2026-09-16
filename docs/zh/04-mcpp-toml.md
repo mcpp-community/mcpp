@@ -382,7 +382,8 @@ glob 条目、feature、`[target.<selector>.build]`、xpkg 描述符,以及构�
 |---|---|
 | `"-O2 -g"` | `-O2`、`-g` |
 | `"-include config.h"` | `-include`、`config.h` |
-| `"'-DNAME=a b'"` 或 `"-DNAME=\"a b\""` | `-DNAME=a b` |
+| `"'-DNAME=a b'"` 或 `"-I\"my dir\""` | `-DNAME=a b`、`-Imy dir` |
+| `"-DNAME=long long"` | `-DNAME=long long`(见下) |
 | `"-DNAME=\\\"text\\\""` | `-DNAME="text"`(字符串字面量) |
 | `"-I/opt/my\\ dir/include"` | `-I/opt/my dir/include` |
 | `"-IC:\\sdk\\include"` | `-IC:\sdk\include` |
@@ -395,7 +396,8 @@ glob 条目、feature、`[target.<selector>.build]`、xpkg 描述符,以及构�
 - `"..."` 按字面取,只有 `\"` 与 `\\` 分别代表 `"` 与 `\`;
 - 引号之外,反斜杠后跟空格、制表符、`"`、`'` 或 `\` 时代表该字符,其余反斜杠按字面;
 - 相邻的带引号与不带引号的片段组成一个词;
-- `$`、`*`、`;`、`|` 等 shell 运算符没有特殊含义。
+- `$`、`*`、`;`、`|` 等 shell 运算符没有特殊含义;
+- 以 `-D` 或 `/D` 开头且含空格的元素是一个词,按原样取,与此前各版本相同。
 
 `defines` 的一个条目是一个值,不按此写法读取:`defines = ["NAME=\"text\""]` 传入的是
 一个词 `-DNAME="text"`。`ldflags`、`dialect_cxxflags` 与 `std-module-flags` 不在本节范围内。

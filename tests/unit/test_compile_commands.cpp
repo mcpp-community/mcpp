@@ -268,7 +268,12 @@ bool has_edge_quote(std::string_view s) {
 
 }  // namespace
 
+// The host's own reader: single quotes are quoting for `sh` and literal
+// characters for the MSVCRT rules, so this row holds on POSIX hosts only.
 TEST(CompileCommandsArgs, StripsPosixQuotingFromAToken) {
+    if constexpr (mcpp::platform::is_windows) {
+        GTEST_SKIP() << "single quotes are literal under the MSVCRT rules";
+    }
     auto out = mcpp::build::split_flags("-O2 '-fprebuilt-module-path=/a/b' -g");
     ASSERT_EQ(out.size(), 3u);
     EXPECT_EQ(out[1], "-fprebuilt-module-path=/a/b");
@@ -287,8 +292,12 @@ TEST(CompileCommandsArgs, StripsWindowsQuotingFromAToken) {
 // quotes, so the un-escape has to happen INSIDE the quotes — do it in the
 // wrong order and the token splits exactly here.
 TEST(CompileCommandsArgs, AQuotedPathWithASpaceStaysOneToken) {
-    auto out = mcpp::build::split_flags(
-        "-O2 '-fmodule-file=std=/tmp/my$ project/std.pcm' -g");
+    // The quotes are the host's: flags.cppm quotes with `'` on POSIX and `"`
+    // under the MSVCRT rules.
+    const std::string_view line = mcpp::platform::is_windows
+        ? "-O2 \"-fmodule-file=std=/tmp/my$ project/std.pcm\" -g"
+        : "-O2 '-fmodule-file=std=/tmp/my$ project/std.pcm' -g";
+    auto out = mcpp::build::split_flags(line);
     ASSERT_EQ(out.size(), 3u) << "the quoted path was split";
     EXPECT_EQ(out[1], "-fmodule-file=std=/tmp/my project/std.pcm");
     for (auto const& t : out) EXPECT_FALSE(has_edge_quote(t)) << t;

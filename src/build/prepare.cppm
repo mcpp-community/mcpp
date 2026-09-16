@@ -12114,6 +12114,10 @@ prepare_build(bool print_fingerprint,
                 const auto q = " " + mcpp::xlings::shq(t);
                 if (flags.find(q) == std::string::npos) flags += q;
             }
+            for (auto& t : mcpp::toolchain::apple_float_macro_words(*tc)) {
+                const auto q = " " + mcpp::xlings::shq(t);
+                if (flags.find(q) == std::string::npos) flags += q;
+            }
         }
         // The same words the package's own units receive from this list
         // (mcpp.manifest.flag_words), one quoted word each.

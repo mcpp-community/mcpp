@@ -155,6 +155,32 @@ struct HostFlagOptions {
     bool appleSdkCxxHeaders = false;
 };
 
+// THE TWO C FLOATING MACROS AN APPLE SDK LEAVES TO <float.h>, as argv words:
+// `-DINFINITY=HUGE_VALF` and `-DNAN=__builtin_nanf("0x7fc00000")` for a clang
+// compiling for an Apple target, and nothing otherwise.
+//
+// The macOS 27.0 SDK's <math.h> defines INFINITY and NAN itself only when
+// `__has_feature(modules)` is false. With modules on it includes <float.h>
+// with `__need_infinity_nan` set and expects the compiler's header to supply
+// them, and clang 22's does not in a strict (`-std=c++23`) compile. A module
+// interface unit has modules on, so libc++'s std module stopped building
+// (measured on the `xcode-27` image, macOS 27.0 26A5406e, llvm 22.1.8:
+// `<complex>:1012: use of undeclared identifier 'INFINITY'`; the 26.5 SDK and
+// `-std=gnu++23` both build).
+//
+// The values are the SDK's own GNU-mode spellings, token for token, so where
+// <math.h> does define them the redefinition is identical and silent, and
+// clang's <__float_infinity_nan.h> undefines before it defines. They are
+// stated for every Apple compile rather than only for module units because
+// the condition is the SDK's, and one rule is easier to hold than a
+// per-unit one. Measured: plain C and C++ units including <math.h>, <cmath>,
+// <float.h> and <cfloat> build with `-Wall -Werror` on the 27.0 SDK.
+//
+// Words, not rendered text: the NAN value holds quotes and parentheses, and
+// each reader (ninja text, the std module's shell command, a build program's
+// argv) quotes a word its own way.
+std::vector<std::string> apple_float_macro_words(const Toolchain& tc);
+
 // Host-compile flags as argv tokens, in the order the string channels have
 // always emitted them (clang cfg → deployment target → C library), so
 // rendering reproduces today's command lines byte for byte.
@@ -210,6 +236,13 @@ std::optional<std::string> orphaned_reference(
 } // namespace mcpp::toolchain
 
 namespace mcpp::toolchain {
+
+std::vector<std::string> apple_float_macro_words(const Toolchain& tc) {
+    if (tc.compiler != CompilerId::Clang) return {};
+    auto tt = triple::parse(tc.targetTriple);
+    if (!tt || !tt->is_apple()) return {};
+    return {"-DINFINITY=HUGE_VALF", "-DNAN=__builtin_nanf(\"0x7fc00000\")"};
+}
 
 std::vector<std::string> host_compile_tokens(const Toolchain& tc,
                                              const HostFlagOptions& opt,

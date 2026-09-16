@@ -243,6 +243,57 @@ limit, and the second names `xcode-27` and reads
 version 21.0.0` with `ImageOS=macos27` (run on 2026-09-16T19:16Z). Because the label names an Xcode and its
 base OS has changed once, every macOS 27 leg asserts that `sw_vers` reports 27.
 
+## 5.2 The first macOS 27 run: the std module does not build
+
+Both macOS 27 legs failed on their first run (runs 35139712291 and
+35139712295): the std module precompile with llvm 22.1.8 stops at
+`<complex>:1012: use of undeclared identifier 'INFINITY'` (14 errors), in the
+raw clang step and in mcpp's own std module build. The maintainer asked for the
+fix in the same pull request, with the host kept to the minimum. Three probe
+rounds on the `xcode-27` image (#659) read:
+
+- The 27.0 SDK's `<math.h>` defines `INFINITY` and `NAN` itself only when
+  `__has_feature(modules)` is false; with modules on it includes `<float.h>`
+  with `__need_infinity_nan` and expects the compiler's header to supply them.
+- A module interface unit has `__has_feature(modules)` true; a plain unit does
+  not.
+- `-std=c++23` and `-std=c++26` fail; `-std=gnu++23`, `-U__STRICT_ANSI__`, the
+  26.5 SDK, `-D__need_infinity_nan`, and `-DINFINITY=HUGE_VALF
+  -DNAN=__builtin_nanf("0x7fc00000")` build. `-fbuiltin-headers-in-system-modules`
+  and `-fno-implicit-module-maps` do not.
+- The CLT SDK and the Xcode SDK on the image are the same 27.0 SDK, so the
+  sysroot choice is not the cause.
+
+Adopted: `apple_float_macro_words` (hostflags.cppm) states the two macros with
+the SDK's own GNU-mode spellings for clang on an Apple target. The alternatives
+were rejected on their effect beyond the defect: `gnu++23` changes the language
+dialect of every unit, `-U__STRICT_ANSI__` exposes non-standard declarations of
+the C library, and `-D__need_infinity_nan` makes the first inclusion of
+`<float.h>` supply only the two macros, so a unit that includes it once loses
+`FLT_MAX` (clang's `float.h` lines 15-46). The identical spellings make the
+redefinition in the SDK's non-module path silent; plain C and C++ units
+including `<math.h>`, `<cmath>`, `<float.h>` and `<cfloat>` build with
+`-Wall -Werror` on the 27.0 SDK. The value holds quotes and parentheses, so the
+decision is a list of words and each reader quotes it: the ninja compile flags
+(`ninja_command_word`), the std module command (single quotes), the
+graph-supplied std module flags (`shq`) and a build program's argv (none). The
+decision reads the target triple only; it reads nothing from the host.
+
+The same round found two host-shaped test defects on the Windows runner of the
+first push, both in this pull request's own code: `normalize_include_flags`
+wrote every word back through `flag_element`, which quoted any backslash, so
+Windows paths came back single-quoted; and two `split_flags` tests assumed
+POSIX quoting on every host. `flag_element` now quotes a backslash only where
+the syntax would read it as an escape, an element whose words did not change
+keeps its spelling, and the POSIX-quoting tests are POSIX-only with a Windows
+counterpart.
+
+It also found a compatibility defect of the syntax itself: `NinjaBackend.
+QuotesFlagValueWithSpace` (mcpp#234) failed, because `-DT=long long` read as
+two words. Every release since #234 passed such an element as one argument, so
+the syntax gained one exception (SPEC-004 §8 rule 8): an element that begins
+with `-D` or `/D` and contains a space is one word, verbatim.
+
 ## 8. Residuals
 
 - `ldflags`, `dialect_cxxflags` and `std-module-flags` keep their current
