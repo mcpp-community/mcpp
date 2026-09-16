@@ -22,8 +22,13 @@ concurrency:
 
 jobs:
   e2e:
-    name: e2e suite (macOS ARM64, self-host)
-    runs-on: macos-15
+    name: e2e suite (macOS ARM64, self-host, ${{ matrix.image }})
+    # The same two images as ci-macos.yml; `xcode-27` is macOS 27 (see there).
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [macos-15, xcode-27]
+    runs-on: ${{ matrix.image }}
     timeout-minutes: 60
     # NOTE: no MCPP_VERBOSE — the e2e suite asserts mcpp's default quiet
     # output (tests 48/53).
@@ -37,6 +42,8 @@ jobs:
         with:
           submodules: recursive
       - uses: ./.github/actions/setup-macos-llvm
+        with:
+          image: ${{ matrix.image }}
 
       - name: Build mcpp from source (self-host)
         run: |

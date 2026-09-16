@@ -29,6 +29,10 @@ libarchive、bzip2、lz4、xz、zlib 与 zstd 的每个 C 文件都无法解析�
   这样的元素。
 - Windows 上 `shell_quote_arg` 按 MSVCRT 规则加倍引号前与结尾处的反斜杠,以 `\` 结尾的
   词不再吞掉闭合引号。
+- **CI 覆盖 macOS 27。** `ci-macos` 与 `ci-macos-e2e` 在 `macos-15` 与 macOS 27 上各跑一遍,
+  `ci-fresh-install` 的 xlings 与 Homebrew 两条安装渠道在 `macos-14` 与 macOS 27 上各跑一遍。
+  GitHub 以预览标签 `xcode-27` 提供 macOS 27(无 `macos-27` 标签),每条 macOS 27 的腿断言
+  `sw_vers` 主版本为 27。
 
 ### 内置 xlings 升至 2026.9.16.1(2026.9.16.2)
 

@@ -16,6 +16,13 @@ inputs:
     # .github/actions/bootstrap-mcpp/action.yml for why 0.4.69 is required
     # (two packages named `lua` in one repo need openxlings/xlings#381).
     default: '2026.9.16.1'
+  image:
+    description: >
+      The runner label the job runs on (macos-15, xcode-27). It is part of the
+      xlings cache key: the cache holds installed binaries, and a key that does
+      not name the OS release lets one image restore what another installed.
+    required: false
+    default: 'macos-15'
 
 runs:
   using: composite
@@ -24,9 +31,9 @@ runs:
       uses: actions/cache@v4
       with:
         path: ~/.xlings
-        key: xlings-macos15-arm64-v3-xl${{ inputs.xlings-version }}-${{ hashFiles('.xlings.json') }}
+        key: xlings-${{ inputs.image }}-arm64-v3-xl${{ inputs.xlings-version }}-${{ hashFiles('.xlings.json') }}
         restore-keys: |
-          xlings-macos15-arm64-v3-xl${{ inputs.xlings-version }}-
+          xlings-${{ inputs.image }}-arm64-v3-xl${{ inputs.xlings-version }}-
 
     - name: Bootstrap xlings
       shell: bash

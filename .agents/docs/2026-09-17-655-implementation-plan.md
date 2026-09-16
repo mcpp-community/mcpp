@@ -165,7 +165,8 @@ reason).
 | E7 | `build/flag-words` note on the first plan | E1 | branch: e2e 736 D and E |
 | E8 | SPEC-004 §8, SPEC-005 R3.7, docs/04 and docs/30 with their Chinese mirrors, CHANGELOG | E1-E7 | branch |
 | E9 | version 2026.9.17.1 | - | branch |
-| E10 | CI green on every workflow of the pull request | E1-E9 | todo |
+| E10 | CI green on every workflow of the pull request | E1-E9, E11 | todo |
+| E11 | macOS 27 legs (maintainer request, 2026-09-17; label measured in §5.1): `ci-macos` and `ci-macos-e2e` run on `macos-15` and macOS 27; `ci-fresh-install` runs its xlings and Homebrew channels on `macos-14` and macOS 27; each macOS 27 leg asserts `sw_vers` major 27 | - | branch |
 
 ### 3.2 Release and ecosystem, in order
 
@@ -226,6 +227,21 @@ Recorded after the release in §7.
 ## 7. Readings and closure
 
 Recorded as each row closes.
+
+## 5.1 macOS 27 on GitHub-hosted runners
+
+GitHub publishes no `macos-27` label. The runner-images README (read on
+2026-09-17) lists macOS 26 as the newest GA image (`macos-26`, `macos-latest`)
+and macOS 14 as deprecated (unsupported from 2026-11-02). macOS 27 is served as
+the preview label `xcode-27`, whose base OS moved from macOS 26 to macOS 27.0 on
+2026-09-16 (actions/runner-images#14404), with a warning that capacity may
+queue. A temporary pull request (#658) measured which labels are served; its
+first run, naming `macos-27`, `macos-27-arm64`, `macos-26` and `macos-latest`,
+was cancelled while every job was still queued behind this repository's runner
+limit, and the second names `xcode-27` and reads
+`label=xcode-27 27.0 build=26A5406e arch=arm64 xcode=Xcode 27.0 clang=Apple clang
+version 21.0.0` with `ImageOS=macos27` (run on 2026-09-16T19:16Z). Because the label names an Xcode and its
+base OS has changed once, every macOS 27 leg asserts that `sw_vers` reports 27.
 
 ## 8. Residuals
 

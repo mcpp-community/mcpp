@@ -357,13 +357,25 @@ jobs:
   # ──────────────────────────────────────────────────────────────────
   macos-fresh:
     needs: [wait-index]
-    name: macOS fresh install
+    name: macOS fresh install (${{ matrix.image }})
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
+    # Two images, the two ends of the supported range.
+    #
     # macos-14: the support floor (mcpp ≥0.0.50 / xlings ≥0.4.50 ship
     # minos=14.0 static-libc++ binaries). A fresh install passing here
     # is the continuous proof of the macOS 14 floor — and of host-tool
     # independence (this image has no sha256sum; macos-15 does).
-    runs-on: macos-14
+    #
+    # xcode-27: macOS 27, the newest release, served under the preview label
+    # `xcode-27` (actions/runner-images#14404; there is no `macos-27` label).
+    # The same released binaries, the same steps; a failure only here is a
+    # change in the newest system (SDK, loader, system libc++ headers) that the
+    # floor cannot show.
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [macos-14, xcode-27]
+    runs-on: ${{ matrix.image }}
     timeout-minutes: 30
     env:
       # The one derived value (see the header comment): every install job names
@@ -371,6 +383,14 @@ jobs:
       MCPP_PIN: ${{ needs.wait-index.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: The image is the macOS it names
+        run: |
+          echo "macOS $(sw_vers -productVersion) | $(uname -m)"
+          # See ci-macos.yml: `xcode-27` names an Xcode, not an OS.
+          if [ "${{ matrix.image }}" = xcode-27 ]; then
+            [ "$(sw_vers -productVersion | cut -d. -f1)" = 27 ] || { echo "::error::xcode-27 delivered macOS $(sw_vers -productVersion), not 27"; exit 1; }
+          fi
 
       - name: Install xlings
         env:
@@ -452,16 +472,24 @@ jobs:
   #   channel healthy the entire time. So the trust gate itself is asserted
   #   from BOTH sides: refused before `brew trust`, accepted after.
   macos-brew-fresh:
-    name: macOS fresh install (Homebrew)
+    name: macOS fresh install (Homebrew, ${{ matrix.image }})
     if: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success' }}
-    # Same floor as macos-fresh: the formula declares `depends_on macos:
-    # :sonoma` + arm64, and macos-14 is the oldest image satisfying it.
-    runs-on: macos-14
+    # Same two images as macos-fresh: the formula declares `depends_on macos:
+    # :sonoma` + arm64, macos-14 is the oldest image satisfying it, and
+    # xcode-27 is macOS 27, the newest release.
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [macos-14, xcode-27]
+    runs-on: ${{ matrix.image }}
     timeout-minutes: 30
     steps:
       - name: Environment
         run: |
           echo "macOS $(sw_vers -productVersion) | $(uname -m) | $(brew --version | head -1)"
+          if [ "${{ matrix.image }}" = xcode-27 ]; then
+            [ "$(sw_vers -productVersion | cut -d. -f1)" = 27 ] || { echo "::error::xcode-27 delivered macOS $(sw_vers -productVersion), not 27"; exit 1; }
+          fi
 
       # ① The command README.md documents, on a machine that has never tapped.
       #    Fully qualified, so Homebrew treats it as explicit intent.

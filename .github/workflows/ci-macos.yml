@@ -19,9 +19,22 @@ concurrency:
 
 jobs:
   macos-xlings-llvm:
-    name: macOS ARM64 — xlings LLVM end-to-end
-    runs-on: macos-15
-    timeout-minutes: 30
+    name: macOS ARM64 — xlings LLVM end-to-end (${{ matrix.image }})
+    # Two images: macos-15, the image every other macOS job uses, and macOS 27,
+    # the newest macOS release. The newest release is where a change of the SDK,
+    # the system libc++ headers or the loader first shows; the packaged binaries
+    # carry minos=14.0, and ci-fresh-install covers that floor.
+    #
+    # GitHub serves macOS 27 under the preview label `xcode-27` (macOS 27.0 with
+    # Xcode 27, actions/runner-images#14404); there is no `macos-27` label, and
+    # a job naming one waits for a runner that never comes. The "System info"
+    # step prints the OS the label delivered.
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [macos-15, xcode-27]
+    runs-on: ${{ matrix.image }}
+    timeout-minutes: 45
     # NOTE: no MCPP_VERBOSE here — keep this job's output shape identical to
     # ci-macos-e2e.yml, which asserts mcpp's default quiet output (48/53).
     steps:
@@ -31,10 +44,18 @@ jobs:
         run: |
           uname -a
           sw_vers
+          # `xcode-27` names an Xcode, not an OS, and the image changed its base
+          # OS once already; the leg exists for macOS 27, so it says so or fails.
+          if [ "${{ matrix.image }}" = xcode-27 ]; then
+            major=$(sw_vers -productVersion | cut -d. -f1)
+            [ "$major" = 27 ] || { echo "::error::xcode-27 delivered macOS $(sw_vers -productVersion), not 27"; exit 1; }
+          fi
           xcrun --show-sdk-path
           echo "SDK: $(xcrun --show-sdk-version)"
 
       - uses: ./.github/actions/setup-macos-llvm
+        with:
+          image: ${{ matrix.image }}
 
       - name: Inspect LLVM package structure
         run: |
