@@ -82,10 +82,11 @@ The compatibility cost is bounded by measurement rather than by argument:
 - every string literal of the published index that starts like a flag was
   read under the new syntax and under both hosts' previous readings
   (mcpplibs/mcpp-index `c176883`, 285 literals,
-  `2026-09-17-655-index-readings.py`): 9 differ, and all 9 are pieces of the CMake command line in
-  `compat.mysql-connector-cpp.lua`'s install hook, not elements of a flag list.
-  libarchive's `\"` and compat.lua's packed `-include` read the same under all
-  three (§4 K6);
+  `2026-09-17-655-index-readings.py`): before the `-D` exception (§5.2) 9
+  differed, all pieces of the CMake command line in
+  `compat.mysql-connector-cpp.lua`'s install hook rather than elements of a flag
+  list; with the exception, 0 differ. libarchive's `\"` and compat.lua's packed
+  `-include` read the same under all three (§4 K6);
 - an element whose reading does change is named once, with both readings, on the
   first plan after the upgrade (§2.5).
 
@@ -165,8 +166,8 @@ reason).
 | E7 | `build/flag-words` note on the first plan | E1 | branch: e2e 736 D and E |
 | E8 | SPEC-004 §8, SPEC-005 R3.7, docs/04 and docs/30 with their Chinese mirrors, CHANGELOG | E1-E7 | branch |
 | E9 | version 2026.9.17.1 | - | branch |
-| E10 | CI green on every workflow of the pull request | E1-E9, E11 | todo |
-| E11 | macOS 27 legs (maintainer request, 2026-09-17; label measured in §5.1): `ci-macos` and `ci-macos-e2e` run on `macos-15` and macOS 27; `ci-fresh-install` runs its xlings and Homebrew channels on `macos-14` and macOS 27; each macOS 27 leg asserts `sw_vers` major 27 | - | branch |
+| E10 | CI green on every workflow of the pull request | E1-E9, E11 | branch: `e90674fb` 12/12 runs green (macOS 27 unit 121/121, macOS 27 e2e 182 passed 0 failed, Windows unit and e2e) |
+| E11 | macOS 27 legs and the macOS 27 std module fix (maintainer request, 2026-09-17; §5.1, §5.2): `ci-macos` and `ci-macos-e2e` run on `macos-15` and macOS 27; `ci-fresh-install` runs its xlings and Homebrew channels on `macos-14` and macOS 27; each macOS 27 leg asserts `sw_vers` major 27 | - | branch |
 
 ### 3.2 Release and ecosystem, in order
 
@@ -303,11 +304,22 @@ or later: the wrapper passes the same two words to clang through
 `CCC_OVERRIDE_OPTIONS` (quiet form, measured on clang 22.1.8: both definitions
 arrive exactly and nothing is written to stderr). The binary the job builds
 runs unwrapped, so the unit tests, the second self-host build and the e2e suite
-measure the engine's own fix; e2e 252 keeps its real old-client leg through the
-wrapper. The wrapper retires when the bootstrap pin reaches 2026.9.17.1.
+measure the engine's own fix. The wrapper retires when the bootstrap pin
+reaches 2026.9.17.1. (Corrected in review: an earlier sentence here said e2e 252
+keeps its real old-client leg through the wrapper. It does not, and did not
+before this pull request on any macOS leg: `MCPP_BOOT` is the xlings shim,
+which answers no `--version` inside the test's temporary directory, so the test
+prints its NOTE and runs only its static half. Recorded in §8.)
 
 ## 8. Residuals
 
+- e2e 252's real old-client leg does not run on the macOS legs (main included):
+  `MCPP_BOOT` is the xlings shim, not a store binary. Pointing it at
+  `~/.xlings/data/xpkgs/xim-x-mcpp/<version>/bin/mcpp` would make it run.
+- Dialect promotion now reads words, so a packed element such as
+  `"-fno-exceptions -fno-rtti"` is promoted into the std module's dialect set;
+  the compiler already received both flags, so the std BMI now matches its
+  importers where it did not.
 - `ldflags`, `dialect_cxxflags` and `std-module-flags` keep their current
   meaning (documented in docs/04). Moving `ldflags` needs the link path's
   rendered text separated from manifest elements first (F1).

@@ -4,6 +4,9 @@
 # applied. Run from the index checkout; prints the literals whose readings differ.
 import re, shlex, subprocess, sys
 def flag_words(s):
+    # SPEC-004 section 8 rule 8: a -D or /D element with a space is one word.
+    if (s.startswith('-D') or s.startswith('/D')) and ' ' in s:
+        return [s]
     out=[];w=[];st=False;i=0
     while i<len(s):
         c=s[i]

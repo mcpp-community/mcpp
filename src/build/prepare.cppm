@@ -534,18 +534,6 @@ export void merge_conditional_config(mcpp::manifest::Manifest& m,
     }
 }
 
-// Desugar `[build].defines` into `-D<x>` on both C and C++ flag channels.
-//
-// ORDER (both halves are load-bearing): this must run AFTER
-// merge_conditional_config — `defines` is a BuildInputs member, so a
-// matching `[target.'cfg(...)'.build] defines` has been appended by then and
-// folds in the same pass, landing after the unconditional entries so GNU
-// last-wins gives the conditional rule precedence — and BEFORE the manifest is
-// snapshotted into packages[] / fingerprinted, because that snapshot (not the
-// manifest) is what the P1689 scan, the compile edges and compute_fingerprint
-// actually read.
-//
-// Idempotent: clearing the vector after folding makes repeated calls harmless.
 // ── An element whose words changed in 2026.9.17.1 (#655) ─────────────────────
 //
 // A compile-flag element used to reach the compiler as its host's command-line
@@ -647,6 +635,18 @@ void report_flag_words_changes(const mcpp::manifest::Manifest& m) {
     }
 }
 
+// Desugar `[build].defines` into `-D<x>` on both C and C++ flag channels.
+//
+// ORDER (both halves are load-bearing): this must run AFTER
+// merge_conditional_config — `defines` is a BuildInputs member, so a
+// matching `[target.'cfg(...)'.build] defines` has been appended by then and
+// folds in the same pass, landing after the unconditional entries so GNU
+// last-wins gives the conditional rule precedence — and BEFORE the manifest is
+// snapshotted into packages[] / fingerprinted, because that snapshot (not the
+// manifest) is what the P1689 scan, the compile edges and compute_fingerprint
+// actually read.
+//
+// Idempotent: clearing the vector after folding makes repeated calls harmless.
 // Both `cflags` and `cxxflags` get the macro; assembly units pick it up for
 // free via the -D/-U/-I subset the ninja backend filters out of packageCflags.
 // A define is a value, so it enters the flag list as one word
