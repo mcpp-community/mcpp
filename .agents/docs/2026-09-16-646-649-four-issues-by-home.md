@@ -1,6 +1,6 @@
 ---
 subject: triage
-status: closed
+status: landed
 ---
 
 # Four issues from a framework and an editor: #646, #647, #648 and #649, read against the engine and routed by home

@@ -1,6 +1,6 @@
 ---
 subject: triage
-status: closed
+status: landed
 ---
 
 # #646 to #649 implemented: the plan, its review from eight angles, and the ledger
