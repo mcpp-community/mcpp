@@ -1,6 +1,6 @@
 ---
 subject: triage
-status: active
+status: landed
 ---
 
 # #655 implemented: one reading of a compile-flag element, the plan, and the ledger
@@ -157,28 +157,28 @@ reason).
 
 | id | task | depends on | status |
 |---|---|---|---|
-| E1 | `mcpp.manifest.flag_words`: `flag_words`, `flag_element`, `host_command_words` | - | branch: `FlagWords.*` 6/6 |
-| E2 | every define push site spells one word (`[build]`, globs, targets, features, `mcpp:cfg=`) | E1 | branch: e2e 736 `V_DEF=["def"]` |
-| E3 | compile edges write words quoted for the host; link edges keep the rendered text | E1 | branch: e2e 307, 615, 736 |
-| E4 | databases list words; `split_flags` = ninja unescape + host reader; GAS units list their edge's list | E1 | branch: `CompileCommandsArgs.*`, `BuildDatabase.*` |
-| E5 | include normalisation, the `-std` guard, dialect promotion and the std module's target-side flags read words | E1 | branch: build and e2e subset |
-| E6 | Windows `shell_quote_arg` follows the MSVCRT backslash rule | - | branch: round trip on the Windows runner |
-| E7 | `build/flag-words` note on the first plan | E1 | branch: e2e 736 D and E |
-| E8 | SPEC-004 §8, SPEC-005 R3.7, docs/04 and docs/30 with their Chinese mirrors, CHANGELOG | E1-E7 | branch |
-| E9 | version 2026.9.17.1 | - | branch |
-| E10 | CI green on every workflow of the pull request | E1-E9, E11 | branch: `e90674fb` 12/12 runs green (macOS 27 unit 121/121, macOS 27 e2e 182 passed 0 failed, Windows unit and e2e) |
-| E11 | macOS 27 legs and the macOS 27 std module fix (maintainer request, 2026-09-17; §5.1, §5.2): `ci-macos` and `ci-macos-e2e` run on `macos-15` and macOS 27; `ci-fresh-install` runs its xlings and Homebrew channels on `macos-14` and macOS 27; each macOS 27 leg asserts `sw_vers` major 27 | - | branch |
+| E1 | `mcpp.manifest.flag_words`: `flag_words`, `flag_element`, `host_command_words` | - | done (#657): `FlagWords.*` 6/6 |
+| E2 | every define push site spells one word (`[build]`, globs, targets, features, `mcpp:cfg=`) | E1 | done (#657): e2e 736 `V_DEF=["def"]` |
+| E3 | compile edges write words quoted for the host; link edges keep the rendered text | E1 | done (#657): e2e 307, 615, 736 |
+| E4 | databases list words; `split_flags` = ninja unescape + host reader; GAS units list their edge's list | E1 | done (#657): `CompileCommandsArgs.*`, `BuildDatabase.*` |
+| E5 | include normalisation, the `-std` guard, dialect promotion and the std module's target-side flags read words | E1 | done (#657): build and e2e subset |
+| E6 | Windows `shell_quote_arg` follows the MSVCRT backslash rule | - | done (#657): round trip on the Windows runner |
+| E7 | `build/flag-words` note on the first plan | E1 | done (#657): e2e 736 D and E |
+| E8 | SPEC-004 §8, SPEC-005 R3.7, docs/04 and docs/30 with their Chinese mirrors, CHANGELOG | E1-E7 | done (#657)|
+| E9 | version 2026.9.17.1 | - | done (#657)|
+| E10 | CI green on every workflow of the pull request | E1-E9, E11 | done (#657): `e90674fb` 12/12 runs green (macOS 27 unit 121/121, macOS 27 e2e 182 passed 0 failed, Windows unit and e2e) |
+| E11 | macOS 27 legs and the macOS 27 std module fix (maintainer request, 2026-09-17; §5.1, §5.2): `ci-macos` and `ci-macos-e2e` run on `macos-15` and macOS 27; `ci-fresh-install` runs its xlings and Homebrew channels on `macos-14` and macOS 27; each macOS 27 leg asserts `sw_vers` major 27 | - | done (#657)|
 
 ### 3.2 Release and ecosystem, in order
 
 | id | task | depends on | status |
 |---|---|---|---|
-| R1 | merge the engine pull request; verify the `origin/main` run | E10 | todo |
-| R2 | dispatch `release.yml`; upload each archive to GitCode with the local `gtc` as it appears | R1 | todo |
-| R3 | merge the xim-pkgindex bump; read the index artifact, not git | R2 | todo |
-| R4 | bootstrap pin 2026.9.17.1 (pull request) | R3 | todo |
-| R5 | sandbox verification with CN mirrors (§6) | R3 | todo |
-| R6 | reply on #655; close #656 | R5 | todo |
+| R1 | merge the engine pull request; verify the `origin/main` run | E10 | done: #657 merged as `f1043b78`; 10 of 10 push workflows green on `f1043b78` |
+| R2 | dispatch `release.yml`; upload each archive to GitCode with the local `gtc` as it appears | R1 | done: release run 35153200320 green, tag `v2026.9.17.1` at `f1043b78`; the four archives uploaded to GitCode from this host as each appeared, each GET 200 and byte-identical to the GitHub asset |
+| R3 | merge the xim-pkgindex bump; read the index artifact, not git | R2 | done: openxlings/xim-pkgindex#854 (+22/-3, four sha256 equal to the downloaded archives, 16 of 16 checks) merged as `21dccfb`; the published artifact `xim-index-21dccfb` tracks 2026.9.17.1 |
+| R4 | bootstrap pin 2026.9.17.1 (pull request) | R3 | done: #661 (this record's closure rides on it) |
+| R5 | sandbox verification with CN mirrors (§6) | R3 | done: `version=2026.9.17.1 fails=0`, no section skipped; control 2026.9.16.2 `fails=10` |
+| R6 | reply on #655; close #656 | R5 | done: #655 answered (comment 5705170602); probes #656, #658, #659 closed with their readings |
 
 No change is needed in mcpplibs/mcpp-index (§4 K6), in mcpp-plugins (no flag
 list) or in openxlings/xlings (its manifest pins an older engine and carries no
@@ -223,11 +223,36 @@ flag element; its build database is verified in R5).
 
 ## 6. Sandbox verification
 
-Recorded after the release in §7.
+`2026-09-17-655-verify.sh` runs inside `xlings subos use v655 --sandbox` with
+the CN mirror set for xlings and for mcpp, against the published binary addressed
+by its store path. Sections marked CHANGE must fail on the previous release and
+pass on this one; sections marked GUARD must pass on both.
+
+| section | 2026.9.16.2 (control) | 2026.9.17.1 |
+|---|---|---|
+| A GUARD: version and CN mirrors | ok | ok |
+| B CHANGE: the issue's five macros, build against database | 6 fails: the database's arguments exit 1, `ESC \"esc.h\"` | ok: identical, rc 0 |
+| C CHANGE: e2e 736 on the published binary | fails at `V_DOL=[a$b]` | ok |
+| D CHANGE: compat.libarchive consumer and its database | fails: the unit reads `'#include' expects "FILENAME"` | ok: runs `libarchive 3.8.7`; the unit executes |
+| D GUARD: no `build/flag-words` note for published descriptors | ok | ok |
+| E GUARD: compat.lua consumer (packed `-include`) | ok: `lua=42` | ok: `lua=42` |
+| F CHANGE: openxlings/xlings `5c52a16` build database | fails: `-DPLATFORM_CONFIG_H=\\"..\\"` | ok: the define is unescaped; the libarchive unit executes from the database |
+| summary | `fails=10` | `fails=0`, nothing skipped |
 
 ## 7. Readings and closure
 
-Recorded as each row closes.
+- The engine change, the macOS 27 fix and the CI legs landed in one pull request,
+  #657; after the last review commit every workflow was green, 12 of 12.
+- Release 2026.9.17.1: four archives on GitHub and GitCode, byte-identical; index
+  bump merged and published; bootstrap pin in #661.
+- The post-release fresh-install run (35154678676) installs the release on every
+  row. Its Homebrew leg on macOS 27 ran before the tap carried 2026.9.17.1 and
+  installed 2026.9.16.2, which failed at the std module exactly as §5.2 describes;
+  that leg is re-run against the bumped formula. The xlings leg on macOS 27
+  installs 2026.9.17.1 fresh, runs `mcpp new` then `mcpp run` (`Hello from
+  hello_mac!`), resolves a template package, and builds mcpp from source: the
+  released fix measured on the system it is for, with nothing wrapped.
+- No change was needed in mcpplibs/mcpp-index, mcpp-plugins or openxlings/xlings.
 
 ## 5.1 macOS 27 on GitHub-hosted runners
 

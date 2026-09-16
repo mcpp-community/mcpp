@@ -1,9 +1,11 @@
 ---
 subject: triage
-status: active
+status: landed
 ---
 
 # #655: the `arguments` array is not the command the build runs
+
+**Status:** landed in mcpp 2026.9.17.1 (#657); the closure is `2026-09-17-655-implementation-plan.md` §7.
 
 **Revision 2026-09-17 (before implementation).** §3 proposed that the
 database adopt each host's own reading (C1) and that defines be tagged at
