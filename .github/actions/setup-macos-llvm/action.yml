@@ -75,6 +75,33 @@ runs:
         # `xlings install mcpp` resolved 0.0.105 here on a cold cache — below
         # the index floor, which makes every descriptor read return nothing.
         MCPP=$(bash "$GITHUB_WORKSPACE/.github/tools/install_pinned_mcpp.sh" "$GITHUB_WORKSPACE")
+
+        # A BOOTSTRAP OLDER THAN THE macOS 27 FIX, ON macOS 27, IS WRAPPED.
+        #
+        # The 27.0 SDK leaves INFINITY and NAN to <float.h> once modules are on,
+        # and mcpp states them itself from 2026.9.17.1 (hostflags.cppm,
+        # apple_float_macro_words). A released mcpp older than that cannot
+        # build its std module here, so it could not build the source that
+        # carries the fix. The wrapper hands clang the same two words through
+        # CCC_OVERRIDE_OPTIONS (a leading `#` keeps clang quiet) for the
+        # bootstrap binary only; the binary this job builds runs unwrapped, so
+        # the fix is what every later step measures. It retires itself: once the
+        # bootstrap pin is 2026.9.17.1 or later, nothing is wrapped.
+        major=$(sw_vers -productVersion | cut -d. -f1)
+        boot=$("$MCPP" --version 2>/dev/null | awk '{print $2}')
+        if [ "$major" -ge 27 ] && [ -n "$boot" ] \
+           && [ "$(printf '%s\n' "$boot" 2026.9.17.1 | sort -V | head -1)" = "$boot" ] \
+           && [ "$boot" != 2026.9.17.1 ]; then
+          wrapper="$RUNNER_TEMP/mcpp-bootstrap-macos27"
+          {
+            echo '#!/bin/sh'
+            echo "CCC_OVERRIDE_OPTIONS='# +-DINFINITY=HUGE_VALF +-DNAN=__builtin_nanf(\"0x7fc00000\")' exec \"$MCPP\" \"\$@\""
+          } > "$wrapper"
+          chmod +x "$wrapper"
+          echo "bootstrap mcpp $boot on macOS $major: wrapped ($wrapper)"
+          cat "$wrapper"
+          MCPP="$wrapper"
+        fi
         echo "MCPP=$MCPP" >> "$GITHUB_ENV"
         echo "XLINGS_BIN=$HOME/.xlings/subos/default/bin/xlings" >> "$GITHUB_ENV"
 

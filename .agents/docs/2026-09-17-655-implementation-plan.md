@@ -294,6 +294,18 @@ two words. Every release since #234 passed such an element as one argument, so
 the syntax gained one exception (SPEC-004 §8 rule 8): an element that begins
 with `-D` or `/D` and contains a space is one word, verbatim.
 
+The second macOS 27 run (`10224fb8`) confirmed the fix at the compiler: the raw
+clang steps print `C++23 import std works on macOS via xlings LLVM!`. It then
+failed where the job builds mcpp with the bootstrap binary, 2026.9.16.1, which
+predates the fix and so cannot build its std module on macOS 27. The
+`setup-macos-llvm` action wraps a bootstrap older than 2026.9.17.1 on macOS 27
+or later: the wrapper passes the same two words to clang through
+`CCC_OVERRIDE_OPTIONS` (quiet form, measured on clang 22.1.8: both definitions
+arrive exactly and nothing is written to stderr). The binary the job builds
+runs unwrapped, so the unit tests, the second self-host build and the e2e suite
+measure the engine's own fix; e2e 252 keeps its real old-client leg through the
+wrapper. The wrapper retires when the bootstrap pin reaches 2026.9.17.1.
+
 ## 8. Residuals
 
 - `ldflags`, `dialect_cxxflags` and `std-module-flags` keep their current
