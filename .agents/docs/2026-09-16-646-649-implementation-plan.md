@@ -295,6 +295,53 @@ means the default.
     with `timeout`, `gtimeout` or neither, since the bound under test is the
     engine's.
 
+### 1.10 The review before the release, and what it changed
+
+The pull requests were reviewed once more after #650 merged and before
+2026.9.16.1 was tagged, by two readers given the diff and the classes of defect
+this project's CI has historically missed. Four findings survived measurement;
+the release dispatch was cancelled to carry the first of them, so 2026.9.16.1
+ships from the follow-up branch rather than from `f4529b2a`.
+
+19. **A gate refused what the previous release builds** (engine,
+    mcpp-community/mcpp#651). E4.2 compares a `[feature-deps]` restatement's
+    source with the declaration in effect. A path is normalised first; a version
+    constraint was compared byte for byte, so `">= 11.0.0"` and `">=11.0.0"`
+    read as two sources. Measured: the manifest builds on the released
+    2026.9.15.2 with no error and no warning, and is refused on `f4529b2a`. The
+    judgement is now made with the constraint's whitespace removed, while the
+    message shows each declaration as it was written. This is the
+    "a new gate refuses yesterday's build" shape again; the rule it breaks is
+    that a gate refuses the thing it names and nothing else.
+20. **The record claimed a call the code does not make** (engine, same pull
+    request). The first custom-index sync restates two of `decide_for_miss`'s
+    conditions rather than calling it, which is correct -- that pair's debounce
+    and one-sync-per-process guard are about the index that resolves a
+    dependency, while this sync creates a local copy of a different set of
+    repositories that nothing else will create, so taking the guard would let an
+    earlier refresh suppress a clone the build cannot proceed without. The
+    comment said "the policy's answer is taken" without saying which half, and
+    now states both halves and the reason.
+21. **Two contributors naming one file: the deepest won** (plugins,
+    mcpp-community/mcpp-plugins#28). `contributions` is ordered highest priority
+    first, and the resources merge walks it backwards for exactly that reason.
+    The assets merge walked it forwards into a copy that overwrites, so the
+    deepest dependency decided a file two packages name. Measured on the new
+    `tests/apk-consumer-graph/lib2` fixture: `from-the-deeper-library` where the
+    documented order gives `from-the-requester`. Separately, `lib/<abi>/` is
+    flat, so two contributors carrying one library name produced two build steps
+    with one id and one output; one destination now has one claimant, the first
+    in the priority order, and a later claim is reported by name.
+22. **A reader that could not represent what it accepted** (plugins, same pull
+    request). `mcpp::plugins::json` decoded each `\u` escape on its own, so a
+    code point above U+FFFF -- which reaches JSON as a surrogate pair -- became
+    two three-byte sequences holding unpaired surrogates, which is not UTF-8.
+    Pairs are combined now, and a surrogate that is not half of one is refused.
+    mcpp's own writer escapes only characters below `0x20` and passes UTF-8
+    through, so no producer reaches this path today: the reader is shared by
+    `dist-apk` and `dist-apple`, and the fix is that it refuses what it cannot
+    represent rather than writing it into a manifest.
+
 ## 2. Engine tasks
 
 ### 2.1 Lead: #648 (L1 to L7)
