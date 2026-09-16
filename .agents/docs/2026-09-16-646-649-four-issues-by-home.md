@@ -1,12 +1,24 @@
 ---
 subject: triage
-status: active
+status: closed
 ---
 
 # Four issues from a framework and an editor: #646, #647, #648 and #649, read against the engine and routed by home
 
-**Status:** revision 1, adopted on 2026-09-16. The implementation, its
-refinements and its readings are `2026-09-16-646-649-implementation-plan.md`.
+**Status:** closed on 2026-09-16. Every row of this record is implemented and
+published: mcpp 2026.9.16.1 (mcpp-community/mcpp#650 and #651),
+mcpp-plugins 0.12.0 (#28), mcpplibs/mcpp-index#432 and #433,
+openxlings/xlings#597 and openxlings/xim-pkgindex#845. The implementation, its
+refinements, its readings and the sandbox verification are
+`2026-09-16-646-649-implementation-plan.md`; its §9 is the closure and §1.10
+states what the review before the release changed.
+
+Two decisions in this record were revised while implementing. F2 is confirmed
+rather than only probable, and the Mach-O default stays with a diagnostic
+(D10, plan §0.1 row R5). E4.2's gate compares a restatement's source with the
+declaration in effect, and the comparison is made on what the declarations
+mean rather than on their bytes, because the byte comparison refused a
+manifest 2026.9.15.2 builds (plan §1.10 item 19).
 
 Engine code was read at `2fc7b5b0` (origin/main, after mcpp 2026.9.15.2).
 mcpp-plugins, openxlings/xlings (`3cd8061`) and mcpplibs/mcpp-index were read
