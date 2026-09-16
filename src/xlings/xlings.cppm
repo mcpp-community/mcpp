@@ -89,7 +89,14 @@ namespace pinned {
     // archive: on a host store, openkal 0.8.0 held 1.6 G of other packages'
     // downloads. A registry that already holds such a payload is repaired by
     // `XLINGS_HOME=<registry> xlings self doctor --fix`.
-    inline constexpr std::string_view kXlingsVersion   = "2026.9.14.1";
+    //
+    // Fourth, at 2026.9.16.1 (openxlings/xlings#601). Below it, the region
+    // object mcpp writes for an index artifact (`{"GLOBAL": …, "CN": …}`,
+    // src/config.cppm) resolved to one base, so under `mirror = CN` a 403 from
+    // GitCode fell back to a git clone from GitHub instead of trying GLOBAL;
+    // and an index refresh had no bound on a connection that went silent
+    // after its handshake.
+    inline constexpr std::string_view kXlingsVersion   = "2026.9.16.1";
     inline constexpr std::string_view kNasmVersion     = "3.02";
 }
 

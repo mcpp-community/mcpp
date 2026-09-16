@@ -5,6 +5,15 @@
 
 ## [Unreleased]
 
+### 内置 xlings 升至 2026.9.16.1(2026.9.16.2)
+
+`kXlingsVersion` 与 `.github/` 中的全部 xlings pin 前移到 2026.9.16.1(openxlings/xlings#601)。
+mcpp 为索引 artifact 写入的区域对象 `{"GLOBAL": …, "CN": …}` 此前只解析为一个地址:
+`mirror = CN` 下 GitCode 返回 403 时直接回落到从 GitHub 克隆,现在按 CN → GLOBAL 的顺序
+依次尝试,git 仍是最后的回落。一次索引刷新现在有上限(git 低速中止、索引 HTTP 10 s / 120 s、
+整次刷新 300 s),可分别由 `XLINGS_GIT_NETWORK_TIMEOUT`、`XLINGS_INDEX_HTTP_TIMEOUT`、
+`XLINGS_UPDATE_TIMEOUT` 覆盖。mcpp 侧无代码改动。
+
 ### 一个进程一个 C++ 运行时、图与打包的事实、离线与有期限的规划:#646 至 #649(2026.9.16.1)
 
 一个 UI 框架与一个编辑器报告的 23 项,外加实测发现的 12 项。按归属分诊后,引擎承担其中的通用
