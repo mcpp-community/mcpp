@@ -8,4 +8,5 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-macos-llvm
       - run: bash .github/probe/m27.sh
