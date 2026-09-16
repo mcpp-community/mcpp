@@ -1,13 +1,21 @@
 ---
 subject: triage
-status: active
+status: closed
 ---
 
 # #646 to #649 implemented: the plan, its review from eight angles, and the ledger
 
-**Status:** active; the engine pull request is merged. mcpp-community/mcpp#650
-(`f4529b2a`) landed 2026.9.16.1 with 40 of 40 checks green (one skipped). This
-record turns the decisions of
+**Status:** closed on 2026-09-16. Every row of §0 is closed with a reading, and
+the ecosystem is verified end to end: a SubOS sandbox with CN mirrors runs the
+scenarios against the published engine, plugins and index and reads
+`version=2026.9.16.1 fails=0` (§9.2), where the same script against 2026.9.15.2
+reads `fails=10`.
+
+mcpp-community/mcpp#650 (`f4529b2a`) carried the engine work with 40 of 40
+checks green. 2026.9.16.1 ships from #651 (`2f925d48`) rather than from that
+commit: the review before the release found that #650 refuses a manifest
+2026.9.15.2 builds, and the dispatched release was cancelled to carry the fix
+(§1.10 item 19). This record turns the decisions of
 `2026-09-16-646-649-four-issues-by-home.md` ("the triage record") into work:
 one pull request per repository, the order in which they merge and release,
 the criterion each task is held to, and a ledger whose rows close only with a
@@ -56,7 +64,7 @@ the parallel work trees of §8. Triage sections are cited as `T§`.
 | S5 | `[package]` warns about an unknown key, `metadata` included in its known set (X4) | W3 | S1 | done (#650): unit `Manifest.PackageMetadata*`, `UnknownPackageKeyIsReported` |
 | C1 | CI: new llvm-dependent e2e scripts run on the hermetic job with their PASS lines asserted; the macOS and Windows measurement legs print their readings to the job summary | lead | R1-R5, S2 | done (#650): 700 on the hermetic job; READING lines to the macOS and Windows summaries; 721 as its own macOS step |
 | C2 | user documentation with its Chinese mirror, docs/50 codes and kinds, CHANGELOG, version 2026.9.16.1 | lead, W1-W3 | all | done (#650): docs 04, 05, 06, 07, 10, 20, 30, 50 with mirrors; SPEC-005 v1.1; CHANGELOG; 2026.9.16.1 |
-| C3 | the two records closed with their readings | lead | all | todo |
+| C3 | the two records closed with their readings | lead | all | done: the triage record is `status: closed`, and §9 below is this record's closure |
 
 ### 0.2 Plugins: mcpp-community/mcpp-plugins, one pull request (`feat/646-649`, 0.12.0)
 
@@ -74,15 +82,15 @@ the parallel work trees of §8. Triage sections are cited as `T§`.
 |---|---|---|---|---|
 | X1 | mcpplibs/mcpp-index: the artifact is byte-reproducible, and a version whose GitCode asset differs is republished under a new name (T§7.6 step 1) | lead | - | done: mcpplibs/mcpp-index#432 (`0cbac960`); the publish of `0cbac96` verified both forges itself, and the probe reads pointer, GitHub and GitCode all `02a437110017` (547679 bytes) |
 | X2 | openxlings/xim-pkgindex: the release bot's `mcpp` bump merged | lead | release | done: openxlings/xim-pkgindex#845 (`1c951f0b`), 16 of 16 checks; the index artifact republished as `v1c951f0` and a consumer resolves `xim@artifact:1c951f0` |
-| X3 | mcpplibs/mcpp-index: the plugins descriptor 0.12.0; the index CI's `MCPP_VERSION` moves to 2026.9.16.1 | lead | X2, P1-P5 | todo |
+| X3 | mcpplibs/mcpp-index: the plugins descriptor 0.12.0; the index CI's `MCPP_VERSION` moves to 2026.9.16.1 | lead | X2, P1-P5 | done: mcpplibs/mcpp-index#433 (`c176883`). The pull request's own CI selected no workspace member, so the pin move was held to a dispatched full sweep: 27 jobs, 0 failures, the workspace matrix building on linux, macos and windows under both the default and llvm toolchains |
 | X4 | openxlings/xlings: `compat.ftxui` and `compat.gtest` spelled with their namespace (T§7.0) | lead | - | done: openxlings/xlings#597 (`4ea4eac9`), CI 9 of 9 |
 
 ### 0.4 Verification
 
 | id | task | owner | depends on | status |
 |---|---|---|---|---|
-| V1 | a fresh SubOS sandbox with CN mirrors for xlings and mcpp runs §7's scenarios against the published engine, plugins and index | lead | X2, X3 | todo |
-| V2 | replies on #646, #647, #648 and #649 naming the releases and what each project writes | lead | V1 | todo |
+| V1 | a fresh SubOS sandbox with CN mirrors for xlings and mcpp runs §7's scenarios against the published engine, plugins and index | lead | X2, X3 | done: `version=2026.9.16.1 fails=0`, seventeen assertions (§9.2); the control against 2026.9.15.2 reads `fails=10` |
+| V2 | replies on #646, #647, #648 and #649 naming the releases and what each project writes | lead | V1 | done: one comment on each issue, stating what was measured, where the measurement differs from the report, and the assertion of §9.2 that closes it |
 
 ## 1. The review
 
@@ -574,7 +582,40 @@ against the PUBLISHED engine addressed by its store path.
 
 The control against 2026.9.15.2 reads `fails=10`: every change detector fails
 and every guard passes, which is what makes the run against 2026.9.16.1
-evidence rather than decoration.
+evidence rather than decoration. The run against the published release reads
+`version=2026.9.16.1 fails=0`, seventeen assertions:
+
+    ok: mcpp --version says mcpp 2026.9.16.1
+    ok: xlings config --mirror CN
+    ok: mcpp self config --mirror CN
+    ok: mcpp's xlings reads mirror CN
+    ok: the mcpplibs artifact names the GitCode mirror
+    ok: mcpp index update
+    ok: the program runs on one C++ runtime
+    ok: libfw.so loads on its own (RTLD_NOW): x is inside it
+    ok: the tool builds, and dep_bin answers under both spellings
+    ok: --features spike.fw/installer built the dependency's tool
+    ok: the graph lists b before a, with b's [package.metadata]
+    ok: pack --release --message-format json names an artifact that exists
+    ok: the graph-built libdep.so is stripped
+    ok: an offline plan that needs a download has its own code
+    ok: A2: no planning child holds the caller's pipe
+    ok: T: cjson@1.7.19 resolves through the rung and asks for no refresh
+    ok: mcpp:plugins 0.12.0 resolves and a consumer builds
+
+### 9.2.1 An index artifact reaches its publisher before its consumers
+
+Section K failed twice after mcpplibs/mcpp-index#433 merged and its artifact
+published. The sandbox read `mcpplibs@artifact:0cbac96` -- the artifact from
+before the merge -- two minutes after `vc176883` was published as the latest
+release. The same lag made mcpp-community/mcpp#652 report twelve red checks
+while its pin was correct: those runners read `xim@artifact:ccc6e12` after
+openxlings/xim-pkgindex#845 had merged and published.
+
+Neither is a defect in the thing under test, and neither is visible from the
+publishing side, where the new pointer is already served. A release is reachable
+when a CONSUMER resolves it, so both were settled by resolving the package
+through mcpp on a host outside the publishing path and only then re-running.
 
 ### 9.3 Four probe defects, and the shape they share
 
