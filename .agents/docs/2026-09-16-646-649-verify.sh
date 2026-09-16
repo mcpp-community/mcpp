@@ -33,6 +33,13 @@ has_text() { grep -qF -- "$2" "$1"; }
 reading() { printf 'READING %s\n' "$*"; }
 unset XLINGS_ACTIVE_SUBOS
 
+# A BUILD PROGRAM MUST BE NEW EVERY RUN. The sandbox's $HOME persists between
+# runs, and a build program is cached by its source; a cache hit does not re-run
+# it, and mcpp replays neither its output nor its warnings. A probe that reads a
+# build program would then measure the previous run. Every build program this
+# script writes carries this token, so each run compiles and runs its own.
+RUNID="$(date +%s)-$$"
+
 root="$HOME/verify-646"
 rm -rf "$root"; mkdir -p "$root"
 
@@ -156,10 +163,16 @@ import mcpp;
 int main() {
     const char* a = mcpp::dep_bin("fw-installer", "fw-installer");
     const char* b = mcpp::dep_bin("spike.fw-installer", "fw-installer");
-    std::println("SPIKE short=[{}] qualified=[{}]", a ? a : "", b ? b : "");
+    // `mcpp::warning`, not `std::println`: the fixture states c++20, where
+    // `std::println` does not exist, and mcpp discards a build program's
+    // standard output when it exits 0, so a reading printed there is never
+    // seen. Every e2e script that reads a build program takes this route.
+    mcpp::warning((std::string("SPIKE short=[") + (a ? a : "") + "] qualified=["
+                   + (b ? b : "") + "]").c_str());
     return 0;
 }
 EOF
+printf '// run %s\n' "$RUNID" >> "$d/app/build.mcpp"
 printf 'int fw_answer() { return 42; }\n' > "$d/fw/src/fw.cpp"
 printf 'int fw_answer();\n#include <cstdio>\nint main() { std::printf("fw-installer ran %%d\\n", fw_answer()); return 0; }\n' > "$d/fw/tool/src/main.cpp"
 printf 'int fw_answer();\nint main() { return fw_answer() == 42 ? 0 : 1; }\n' > "$d/app/src/main.cpp"
@@ -200,11 +213,14 @@ int main() {
     const auto doc = text.str();
     const auto posA = doc.find("\"spike.a@");
     const auto posB = doc.find("\"spike.b@");
-    std::println("GRAPH b-before-a={} metadata={}", posB < posA,
-                 doc.find("\"resources\"") != std::string::npos);
+    // See section E on why this is a warning rather than standard output.
+    mcpp::warning((std::string("GRAPH b-before-a=")
+                   + (posB < posA ? "true" : "false") + " metadata="
+                   + (doc.find("\"resources\"") != std::string::npos ? "true" : "false")).c_str());
     return 0;
 }
 EOF
+printf '// run %s\n' "$RUNID" >> "$d/app/build.mcpp"
 ( cd "$d/app" && timeout 1200 "$STORE" build > build.log 2>&1 ); rc=$?
 reading "E1 exit=$rc: $(grep -m1 -E 'GRAPH|graph_file' "$d/app/build.log")"
 if grep -q 'GRAPH b-before-a=true metadata=true' "$d/app/build.log"; then
@@ -269,6 +285,7 @@ int main() {
     return 0;
 }
 EOF
+printf '// run %s\n' "$RUNID" >> "$d2/build.mcpp"
 ( cd "$d2" && MCPP_OFFLINE=1 timeout 600 "$STORE" emit build-database --format json 2>/dev/null \
     | { readlink /proc/self/fd/0 > "$d2/reader.txt"; cat > /dev/null; } )
 pipe=$(cat "$d2/reader.txt" 2>/dev/null)

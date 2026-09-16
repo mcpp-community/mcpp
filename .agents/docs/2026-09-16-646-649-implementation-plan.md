@@ -62,18 +62,18 @@ the parallel work trees of §8. Triage sections are cited as `T§`.
 
 | id | task | owner | depends on | status |
 |---|---|---|---|---|
-| P1 | `dist-apple` `options::omit_keys` over the defaulted keys (T§8) | lead | - | branch: `b5f759e`, plan checks on Linux; the bundle on macos-15 CI |
-| P2 | `dist-web` `options::page`, default `index.html` (T§8) | lead | - | branch: `c804312`, `check-web-plan.sh` with a named-page leg |
-| P3 | `dist-apk` follows `mcpp::pack_strip()` and `mcpp::pack_debug_symbols_dir()` when the engine provides them, and keeps its own strip otherwise | lead | S3 released | branch: `ad7a3dd`; unset and simulated variables verified; legs (m) and (n) run once the CI pin is 2026.9.16.1 |
-| P4 | `rules-swift`: one package's Swift sources compile through an `object` action, a generated header through a `source` action, and the runtime link flags through `link_flag`; a macos-15 consumer runs (T§5.2) | lead | - | branch: `38ac2ba`, `all-rules-compile` on Linux; build, run and the header on macos-15 CI |
-| P5 | `dist-apk` and `dist-apple` collect library contributions from `[package.metadata.dist-apk]` and `[package.metadata.dist-apple]` through `mcpp::graph_file()` when present | lead | S1 released | todo |
+| P1 | `dist-apple` `options::omit_keys` over the defaulted keys (T§8) | lead | - | done (#28, 0.12.0): plan checks on Linux; the bundle on macos-15 CI |
+| P2 | `dist-web` `options::page`, default `index.html` (T§8) | lead | - | done (#28, 0.12.0): `check-web-plan.sh` with a named-page leg |
+| P3 | `dist-apk` follows `mcpp::pack_strip()` and `mcpp::pack_debug_symbols_dir()` when the engine provides them, and keeps its own strip otherwise | lead | S3 released | branch: `ad7a3dd`; unset and simulated variables verified; legs (m) and (n) ran in CI once the pin moved to 2026.9.16.1: `--no-strip packs the library with its symbol table` and `--debug-symbols: the packed library is the engine's stripped copy` |
+| P4 | `rules-swift`: one package's Swift sources compile through an `object` action, a generated header through a `source` action, and the runtime link flags through `link_flag`; a macos-15 consumer runs (T§5.2) | lead | - | done (#28, 0.12.0): `all-rules-compile` on Linux; build, run and the header on macos-15 CI |
+| P5 | `dist-apk` and `dist-apple` collect library contributions from `[package.metadata.dist-apk]` and `[package.metadata.dist-apple]` through `mcpp::graph_file()` when present | lead | S1 released | done (#28, 0.12.0): `tests/apk-consumer-graph` five legs, including the precedence between two contributors (§1.10 item 21); `tests/ios-app-consumer` two-dependency plist merge |
 
 ### 0.3 Index, payloads and projects
 
 | id | task | owner | depends on | status |
 |---|---|---|---|---|
 | X1 | mcpplibs/mcpp-index: the artifact is byte-reproducible, and a version whose GitCode asset differs is republished under a new name (T§7.6 step 1) | lead | - | done: mcpplibs/mcpp-index#432 (`0cbac960`); the publish of `0cbac96` verified both forges itself, and the probe reads pointer, GitHub and GitCode all `02a437110017` (547679 bytes) |
-| X2 | openxlings/xim-pkgindex: the release bot's `mcpp` bump merged | lead | release | todo |
+| X2 | openxlings/xim-pkgindex: the release bot's `mcpp` bump merged | lead | release | done: openxlings/xim-pkgindex#845 (`1c951f0b`), 16 of 16 checks; the index artifact republished as `v1c951f0` and a consumer resolves `xim@artifact:1c951f0` |
 | X3 | mcpplibs/mcpp-index: the plugins descriptor 0.12.0; the index CI's `MCPP_VERSION` moves to 2026.9.16.1 | lead | X2, P1-P5 | todo |
 | X4 | openxlings/xlings: `compat.ftxui` and `compat.gtest` spelled with their namespace (T§7.0) | lead | - | done: openxlings/xlings#597 (`4ea4eac9`), CI 9 of 9 |
 
