@@ -188,6 +188,49 @@ Interface and implementation are separate columns. `openkal` is an interface
 and `openkal-windows` an implementation of it; collapsing the two would conceal
 why one source reaches several machines.
 
+## Closure Visibility
+
+The five-layer report above answers "where does each layer come from"; it
+says nothing about the OTHER packages in the graph — a dependency bound to
+one platform's SDK is exactly as invisible to it as an ordinary one. Two
+mechanisms close that gap (design 2026-09-18 §6).
+
+**What counts as a platform dependency, precisely.** A package brings one if
+and only if it says so — `provides = ["platform-sdk"]`, an ordinary,
+unprefixed capability. Nothing here is inferred from header paths, link
+flags or a dependency's `visibility`: inference would have exactly the
+silent-typo failure mode the reserved `mcpp:` prefix exists to avoid for the
+five layers, applied to a fact this engine cannot otherwise observe. [06 —
+A platform SDK dependency stays private](06-features-and-capabilities.md#a-platform-sdk-dependency-stays-private)
+is the pattern such a package's own manifest follows.
+
+**The report.** A build's `Target` report gains a line naming every package
+in the graph that declares `platform-sdk`, empty when none:
+
+```
+      Target              platform-deps     —
+```
+
+```
+      Target              platform-deps     some.windows-headers@1.0.0
+```
+
+Printed under the same visibility rule as the five layers: only when there
+is something to report, or always under `MCPP_VERBOSE`.
+
+**The refusal.** `[build] platform-dependencies = "refuse"` fails the build
+outright when the graph contains one — the machine-checkable form of "this
+build is a closure entirely on its kernel-abi implementation and nothing
+else":
+
+```toml
+[build]
+platform-dependencies = "refuse"
+```
+
+The only accepted value is `"refuse"`; absent (the default) allows platform
+dependencies, today's behaviour.
+
 ## What A Package Declares
 
 ### provides
@@ -244,6 +287,124 @@ install hook has already run; the hook receives the build's target but no
 toolchain values ([32 — Authoring a Payload](32-authoring-a-payload.md)). It
 must not build a different variant into the same store directory, because the
 first consumer would then decide the variant for every later one.
+
+### The C Environment A `c-abi` Package Presents (mcpp 2026.9.18+)
+
+A traditional stack never has to say this: the compiler payload's target
+triple already implies the environment a C program compiles against. The
+moment a package supplies the C library instead, that stops being true —
+openkal-musl on `x86_64-windows-gnu` generates PE/Win64 code while
+presenting a POSIX environment to source, because it is a musl port and
+every `#ifdef _WIN32` in the libraries above it is asking the wrong layer.
+The `[c-abi]` block is how the C library states, once, what it actually
+presents — and only the package that supplies the layer may state it.
+
+```toml
+# openkal-musl's manifest
+[package]
+provides = ["mcpp:c-abi=musl"]
+
+[c-abi]
+presents   = "posix"        # posix | windows | none
+data-model = "arch-default"  # arch-default | lp64 | llp64 | ilp32
+wchar      = 32               # 16 | 32
+builtins   = "iso"            # iso | platform (default platform)
+```
+
+**Who may declare it.** A package that writes `[c-abi]` without also listing
+`mcpp:c-abi=<impl>` in `provides` is stating a fact about a layer it does not
+supply, and that is always wrong rather than merely unusual — it is refused
+at manifest parse time, naming the missing `provides` entry.
+
+**The four keys, and their closed value sets.**
+
+| Key | Values | Answers |
+|---|---|---|
+| `presents` | `posix` / `windows` / `none` | which environment-identity macros source sees (`__unix__` vs `_WIN32` vs neither) |
+| `data-model` | `arch-default` / `lp64` / `llp64` / `ilp32` | how wide `long` is |
+| `wchar` | `16` / `32` | how wide `wchar_t` is |
+| `builtins` | `iso` / `platform` (default) | whether the compiler may assume the platform C library's own extensions |
+
+`presents`, `data-model` and `wchar` carry no default: a block that omits one
+of them is refused naming the missing key, because "absent" is not the same
+statement as any of the three closed values could make. `builtins` alone
+defaults to `platform`, today's behaviour. An unrecognised key or an
+unrecognised value is always a parse error naming the key — never silently
+ignored. **A package that declares no `[c-abi]` block changes nothing**: the
+resolved target side, every compile command and every cache key are
+byte-identical to a build before this feature existed.
+
+Three facts, kept separate, because none of them implies another: `presents`
+picks the source branch, `data-model`/`wchar` pick the ABI. POSIX does not
+imply LP64 (it is ILP32 on a 32-bit architecture), and LP64 does not imply
+POSIX.
+
+**Realisation.** Once the `c-abi` layer resolves to a package that declares
+this block, mcpp turns the request into compiler configuration for every
+target-side unit — the C library itself, the C++ runtime, the compiler
+runtime's builtins, and every ordinary package in the graph — covering C,
+C++ and assembly compiles, the dependency scan, and the `std` module
+precompile alike. mcpp holds one mapping table from request to triple and
+flags, generic knowledge that names no C library:
+
+| Target | Request | Realisation |
+|---|---|---|
+| Linux | `posix` / `arch-default` | the default triple already satisfies it |
+| macOS | `posix` / `arch-default` | the default triple already satisfies it |
+| Windows | `posix` / `arch-default` | Cygwin-flavoured: `--target=x86_64-pc-cygwin` on the compile line only, `-U__CYGWIN__ -U__CYGWIN32__` (those interfaces are not in this graph); `data-model` becomes LP64 as a consequence of the triple, not a separate flag |
+| any | `builtins = "iso"` | turns off code-generation idioms that assume a platform C library — `-fno-builtin-memset_pattern16` on Apple targets is the one this survey measured; see `src/toolchain/cenv.cppm` for what else was checked and found not to apply |
+| anything else | | refused, naming the target, the request and what is missing — never a silent downgrade |
+
+The Windows row is the flagship case: `x86_64-w64-windows-gnu` and
+`x86_64-pc-cygwin` produce IDENTICAL machine code — same PE format, same
+Win64 calling convention, same SEH — and differ only in what the
+preprocessor sees and how wide `long` is. Realisation therefore touches only
+the **compile** line; the **link** line keeps the triple the graph resolved,
+because nothing about the object format changed.
+
+**A package's own units can opt out.** A package that provides
+`mcpp:kernel-abi=openkal` (openkal-windows, say) has to see the platform's
+own environment — it includes platform declarations and `_WIN32` must be
+true for it. Such a package, or a platform shim, states:
+
+```toml
+[package]
+provides = ["mcpp:kernel-abi=openkal"]
+c-environment = "platform"   # this package's own units compile in the
+                              # triple's own default environment, whatever
+                              # the graph's c-abi declares
+```
+
+This is a boundary rule, documented rather than enforced by the engine
+beyond the flag itself: the interface such a package exposes to the rest of
+the graph must still cross in fixed-width types only (SPEC §5.4).
+
+**Verification, not trust.** A declaration is checked, never trusted — the
+same rule openkal applies to its own conformance claims. Once the tokens
+above are known, mcpp compiles one syntax-only probe (`-E -dM`, a predefined-
+macro dump — cheap, and it needs no execution, which matters because the
+realised environment is routinely a cross target) with them and reads back
+`__SIZEOF_LONG__`, `__SIZEOF_WCHAR_T__` and which environment-identity
+macros are defined, comparing them against the declaration. A mismatch fails
+the build and prints both the declared and the measured values. The result
+is cached per configuration (compiler binary identity + exact flags), so a
+build that resolves the same configuration twice pays for the probe once.
+
+**Fingerprint.** The realised environment participates in the build's
+fingerprint (`compileFlags`, §92's field 7): two builds whose C library
+declares `lp64` and `llp64` compile the same source into objects whose
+`long` disagrees in width, so they never share an output directory, and
+neither can reuse a cached object the other produced.
+
+**Store key — not yet closed.** A package whose *install hook* compiles a
+static library from source into the shared store is keyed by package and
+version, not by which environment it was built against — the same gap
+[requires](#requires) already documents for a C++ runtime selection. Closing
+it the same way (a `requires`-shaped statement of the environment, checked
+at resolution and refused on mismatch) is designed but not yet implemented;
+until it is, such a package's install hook must not build more than one
+environment's variant into one store directory, exactly as the C++-runtime
+case already requires.
 
 ### Standard Library Module Sources
 

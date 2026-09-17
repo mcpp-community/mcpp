@@ -5,6 +5,44 @@
 
 ## [Unreleased]
 
+### C 库层可以声明它呈现的 C 环境,引擎实现并校验:设计 2026-09-18(2026.9.18.1)
+
+三元组的 OS 段过去总是同时回答两件事:目标机器长什么样,以及源码面对的 C 环境是什么。
+一旦某个包接管了 C 库(`mcpp:c-abi=<impl>`),这两个问题就可能有不同答案——openkal-musl
+在 `x86_64-windows-gnu` 上生成 PE/Win64 代码,却是一个呈现 POSIX 环境的 musl 移植版,而
+`_WIN32` 在这种图里同时冒充了「机器是 Windows」与「C 运行时是 Windows CRT」两件事,后者
+是假的。这一版本让 C 库层把它实际呈现的环境说出来,由引擎实现并校验,不再由三元组或某个
+库自己猜。
+
+- **`[c-abi]` 块**:只有提供 `mcpp:c-abi=<impl>` 层的包可以声明,其余情况在清单解析阶段
+  即被拒绝。`presents`(`posix`/`windows`/`none`)、`data-model`
+  (`arch-default`/`lp64`/`llp64`/`ilp32`)、`wchar`(`16`/`32`)三个键没有默认值,
+  `builtins`(`iso`/`platform`)默认 `platform`;拼错的键或取值都是解析错误而不是静默
+  忽略。不声明该块的包,产出的命令行与这项能力之前逐字节相同。
+  (`modules/manifest/src/{targetside_model,toml,types}.cppm`,单测 `test_manifest.cpp`)
+- **实现(realisation)**:新模块 `mcpp.toolchain.cenv` 保存「请求 → 三元组与开关」的映射
+  ——通用知识,不含包名。Windows 上 `presents = "posix", data-model = "arch-default"`
+  采用 Cygwin 式语义,仅在编译行把 `--target=` 换成 `x86_64-pc-cygwin` 并去掉
+  `__CYGWIN__`/`__CYGWIN32__`;链接行保持图解析出的三元组不变,因为两个三元组生成的机器码
+  实测完全一致(PE、Win64 调用约定、SEH)。无法满足的请求明确拒绝,点名目标、请求与缺什么。
+  `[package] c-environment = "platform"` 让一个包(如 openkal-windows)的自身单元退出这项
+  实现,继续按三元组自身的默认环境编译。(`src/toolchain/cenv.cppm`,单测 `test_cenv.cpp`)
+- **声明被校验,不被信任**:新模块 `mcpp.toolchain.cenv_probe` 用最终参数编译一次纯预处理
+  探针(`-E -dM`,不执行、不需要目标可在本机运行),核对 `__SIZEOF_LONG__`、
+  `__SIZEOF_WCHAR_T__` 与环境身份宏是否与声明相符,不符即失败并同时打印声明值与实测值;
+  结果按配置缓存。(`src/toolchain/cenv_probe.cppm`)
+- **`__openkal__`**:`kernel-abi` 解析为 `openkal` 时,引擎为目标侧全部单元定义它——取自层
+  的取值,不取自包名。只能用于决定是否调用 `kal_*`,不得用于选择头文件或推断平台
+  (`docs/24`)。
+- **闭包可见性**:`provides = ["platform-sdk"]` 是包对自己的陈述;构建报告新增一行列出
+  图中所有这样的包(没有则为空),`[build] platform-dependencies = "refuse"`
+  让它们的出现直接失败构建。(`src/build/prepare.cppm`,`docs/06`)
+- **指纹**:解析出的环境与 `__openkal__` 参与构建指纹,LP64 与 LLP64 两次构建绝不共享输出
+  目录。安装钩子的存储键尚未补上同一个缺口,已在 `docs/22` 记录为已知差距。
+- 文档:`docs/22`(`[c-abi]`、校验、指纹)、`docs/21`(声明的环境如何移动编译三元组而不
+  移动链接三元组)、`docs/24`(三组宏、`__openkal__` 的规则、平台单元)、`docs/06`
+  (`platform-sdk` 标记)及对应 zh 镜像。
+
 ### 目标侧由依赖图供给时,编译侧关掉对应的隐式搜索:#662(2026.9.17.3)
 
 链接侧早在 #511 就已经按 `plan.targetSide.cAbi.prebuilt()` 撤掉 `-nostdlib`,编译侧一直

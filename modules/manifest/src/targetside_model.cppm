@@ -111,6 +111,87 @@ inline std::string_view env_axis_noun(EnvAxis a, std::string_view segment = {}) 
 // one name. On a traditional stack the two are often the same object — macOS
 // supplies its kernel interface and its C library as one library — and that
 // sameness is itself worth showing.
+// ── The C environment a `c-abi` package declares it presents ────────────────
+//
+// design 2026-09-18 (openkal, "C environment declared by the C library
+// layer"), §3.2. A traditional stack never has to say this: the compiler
+// payload's target triple already implies the environment. The moment a
+// package supplies the C library (`mcpp:c-abi=<impl>`), the triple's OS field
+// is a fact about the MACHINE and no longer a fact about the ENVIRONMENT the
+// C library presents to source — openkal-musl on `x86_64-windows-gnu`
+// generates PE/Win64 code while presenting a POSIX environment, because it is
+// a musl port and every source file that branches on `_WIN32` is asking the
+// wrong question of the wrong layer.
+//
+// THREE FACTS, KEPT SEPARATE. `presents` picks the SOURCE branch (does
+// `#ifdef _WIN32` see itself); `dataModel`/`wcharBits` pick the ABI (how wide
+// is `long`, how wide is `wchar_t`). POSIX does not imply LP64 — it is ILP32
+// on a 32-bit architecture — and LP64 does not imply POSIX, so a declaration
+// states both rather than letting one stand in for the other.
+enum class CAbiPresents  { Posix, Windows, None };
+enum class CAbiDataModel { ArchDefault, Lp64, Llp64, Ilp32 };
+enum class CAbiBuiltins  { Iso, Platform };
+
+constexpr std::string_view c_abi_presents_name(CAbiPresents p) {
+    switch (p) {
+        case CAbiPresents::Posix:   return "posix";
+        case CAbiPresents::Windows: return "windows";
+        case CAbiPresents::None:    return "none";
+    }
+    return {};
+}
+constexpr std::string_view c_abi_data_model_name(CAbiDataModel d) {
+    switch (d) {
+        case CAbiDataModel::ArchDefault: return "arch-default";
+        case CAbiDataModel::Lp64:        return "lp64";
+        case CAbiDataModel::Llp64:       return "llp64";
+        case CAbiDataModel::Ilp32:       return "ilp32";
+    }
+    return {};
+}
+constexpr std::string_view c_abi_builtins_name(CAbiBuiltins b) {
+    switch (b) {
+        case CAbiBuiltins::Iso:      return "iso";
+        case CAbiBuiltins::Platform: return "platform";
+    }
+    return {};
+}
+
+inline std::optional<CAbiPresents> parse_c_abi_presents(std::string_view v) {
+    if (v == "posix")   return CAbiPresents::Posix;
+    if (v == "windows") return CAbiPresents::Windows;
+    if (v == "none")    return CAbiPresents::None;
+    return std::nullopt;
+}
+inline std::optional<CAbiDataModel> parse_c_abi_data_model(std::string_view v) {
+    if (v == "arch-default") return CAbiDataModel::ArchDefault;
+    if (v == "lp64")         return CAbiDataModel::Lp64;
+    if (v == "llp64")        return CAbiDataModel::Llp64;
+    if (v == "ilp32")        return CAbiDataModel::Ilp32;
+    return std::nullopt;
+}
+inline std::optional<CAbiBuiltins> parse_c_abi_builtins(std::string_view v) {
+    if (v == "iso")      return CAbiBuiltins::Iso;
+    if (v == "platform") return CAbiBuiltins::Platform;
+    return std::nullopt;
+}
+
+// `presents`, `data-model` and `wchar` carry no default — a declaration that
+// omits one has said nothing about it, and "nothing" is not the same value as
+// any of the three closed sets could name; `builtins` alone defaults to
+// `platform` (today's behaviour), per §3.2.1.
+struct CAbiDecl {
+    bool          declared   = false;   // was `[c-abi]` present at all
+    bool          hasPresents = false;
+    bool          hasDataModel = false;
+    bool          hasWchar   = false;
+    CAbiPresents  presents   = CAbiPresents::None;
+    CAbiDataModel dataModel  = CAbiDataModel::ArchDefault;
+    int           wcharBits  = 0;       // 16 or 32
+    CAbiBuiltins  builtins   = CAbiBuiltins::Platform;
+};
+
+
 struct Layer {
     Origin      origin = Origin::None;
     std::string interfaceName;   // openkal / linux / win32 / darwin / musl / glibc / libc++
@@ -173,6 +254,12 @@ struct TargetSide {
     Layer kernelAbi;
     Layer cAbi;
     Layer cxx;
+
+    // The resolved `c-abi` provider's own `[c-abi]` block, carried through
+    // unchanged from `Inputs::cAbi->cAbiDecl` — `resolve` does not interpret
+    // it, only threads it to callers that turn a declaration into compiler
+    // configuration (`mcpp.toolchain.cenv`).
+    std::optional<CAbiDecl> cAbiDecl;
 
     // What the triple asked the C library to be, empty when it did not ask.
     // Kept beside the resolved value rather than replacing it: the report
@@ -362,6 +449,10 @@ struct Provider {
     // distinction needs no second capability name: the capability says a layer
     // has a supplier, and this key says how far the supply goes.
     bool        hasStdModule = false;
+    // The `[c-abi]` block, read only from a `mcpp:c-abi=<impl>` provider
+    // (design 2026-09-18 §3.2). `std::nullopt` here means the package supplies
+    // no such block and today's behaviour applies unchanged.
+    std::optional<CAbiDecl> cAbiDecl;
 
     std::string id() const {
         return version.empty() ? name : std::format("{}@{}", name, version);
@@ -538,8 +629,10 @@ inline TargetSide resolve(const Inputs& in) {
         ts.kernelAbi = { Origin::Payload, in.targetOs, in.payloadSystemRef, false };
 
     // c-abi ← the triple's ENV field.
-    if (in.cAbi)
+    if (in.cAbi) {
         ts.cAbi = { Origin::Graph, in.cAbi->display_interface(), in.cAbi->id(), false };
+        ts.cAbiDecl = in.cAbi->cAbiDecl;
+    }
     else if (in.sysrootDeclaredEmpty)
         ts.cAbi = { Origin::None, {}, {}, false };
     else if (!in.sysrootXpkg.empty())

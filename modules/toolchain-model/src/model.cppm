@@ -162,6 +162,33 @@ struct Toolchain {
     // is the only place that has both the request and the compiler — and read
     // verbatim everywhere else.
     std::string                         crossTargetFlag;
+
+    // [c-abi] REALISATION (design 2026-09-18, "C environment declared by the
+    // C library layer", §3.2-§3.4). When the resolved `c-abi` provider
+    // declares a `[c-abi]` block, `mcpp.toolchain.cenv::realise` turns the
+    // request into these tokens, computed once in `prepare` and read by every
+    // one of `mcpp.toolchain.hostflags`'s three consumers plus the per-package
+    // broadcast that reaches the dependency scan (`docs/22`, "Adaptation To
+    // The Resolved Target Side"). Empty = no `[c-abi]` block, or nothing
+    // beyond the base triple was requested — every command line this build
+    // emits is then byte-identical to a release before this existed.
+    std::vector<std::string>            cEnvTokens;
+    // `[c-abi].builtins = "iso"` tokens, kept apart from `cEnvTokens` so a
+    // report can name the two requests separately.
+    std::vector<std::string>            cEnvBuiltinsTokens;
+    // What the verification probe (`mcpp.toolchain.cenv_probe`) checks the
+    // realised configuration against. 0 / empty = the declaration said
+    // nothing about that fact and it is not checked.
+    int                                  cEnvExpectWcharBits = 0;
+    int                                  cEnvExpectLongBytes = 0;
+    std::vector<std::string>            cEnvExpectDefined;
+    std::vector<std::string>            cEnvExpectUndefined;
+    // The resolved `kernel-abi` is `openkal` — the engine defines
+    // `__openkal__` for every target-side unit (design §2.1, §3.4). Read from
+    // the LAYER's value, never from a package name, so a second `openkal`
+    // implementation needs no engine change.
+    bool                                 kernelAbiIsOpenkal = false;
+
     std::filesystem::path               sysroot;            // -print-sysroot output (or empty)
     std::optional<PayloadPaths>         payloadPaths;        // fine-grained sysroot from xpkgs
     // The TARGET's C library, for targets whose row in kKnownTargets names one

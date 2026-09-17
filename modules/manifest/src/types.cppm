@@ -11,6 +11,7 @@ import mcpp.pm.compat;       // Legacy dependency-key compatibility helpers
 import mcpp.pm.index_spec;   // IndexSpec for [indices] section
 import mcpp.platform;
 import mcpp.manifest.flag_words;
+import mcpp.targetside;
 
 export namespace mcpp::manifest {
 
@@ -958,6 +959,14 @@ struct BuildConfig : BuildInputs {
     // error under --strict) rather than here, so parsing a manifest never
     // depends on the build-mode vocabulary.
     std::string                         cacheMode;
+    // `[build] platform-dependencies` — "" (default, allowed) | "refuse".
+    // design 2026-09-18 §6: the machine-checkable form of "this build is a
+    // closure entirely on openkal (or whatever kernel-abi it names) and
+    // nothing else" — any package in the graph that declares itself a
+    // platform dependency (`provides = ["platform-sdk"]`) fails the build
+    // rather than being silently linked in. Root-only, like `target`;
+    // validated in `prepare_build`, not here.
+    std::string                         platformDependencies;
 };
 
 // Canonical package identity used by runtime requirements/artifacts.  A short
@@ -1823,6 +1832,19 @@ struct Manifest {
     std::vector<std::string>                        targetRequiresAbiExceptions;
     std::map<std::string, std::vector<std::string>> targetFeatureRequiresAbiThreads;
     std::map<std::string, std::vector<std::string>> targetFeatureRequiresAbiExceptions;
+    // [c-abi] — a `mcpp:c-abi=<impl>` provider's declaration of the C
+    // environment it presents (design 2026-09-18 §3.2). `std::nullopt` when
+    // the table is absent, which is today's behaviour unchanged. Validated at
+    // parse time against `provides` — see `load()` in toml.cppm — so every
+    // manifest carrying a value here is one this engine has already confirmed
+    // the right to state it.
+    std::optional<mcpp::targetside::CAbiDecl>       cAbiDecl;
+    // [package] c-environment = "platform" — this package's own translation
+    // units compile in the triple's OWN default environment even when the
+    // graph's `c-abi` declares another (design §3.4). Empty = no override, the
+    // ordinary case. The only accepted value is "platform"; anything else is a
+    // parse error naming the one value that exists.
+    std::string                                     cEnvironment;
     // [package] exclusive — the capabilities this package claims it is the ONLY
     // provider of.
     //

@@ -129,6 +129,19 @@ enum class Code {
     // ExclusiveCapability, which is about two implementations of an interface:
     // here it is one package that has no single image to live in.
     StaticPackageInTwoImages,
+    // The resolved `c-abi` provider's `[c-abi]` declaration has no known
+    // realisation for this target (design 2026-09-18 §3.2, mapping table
+    // §3.3) — `mcpp.toolchain.cenv::realise` returned a refusal, or the
+    // resolved compiler is not one this engine can realise it through.
+    CEnvUnrealisable,
+    // The probe translation unit compiled with the realised `[c-abi]`
+    // configuration disagrees with the declaration (design §3.2, "声明被校验，
+    // 而不是被信任"): `sizeof(long)`, `__SIZEOF_WCHAR_T__`, or the presence of
+    // an environment-identity macro did not match what was declared.
+    CEnvVerificationMismatch,
+    // `[build] platform-dependencies = "refuse"` and a package in the graph
+    // brings a platform SDK dependency (design §6).
+    PlatformDependency,
     Other,                 // a refusal that has not been given a code yet
 };
 
@@ -168,6 +181,10 @@ constexpr std::string_view name(Code c) {
                                          return "program-cxx-runtime-split";
         case Code::StaticPackageInTwoImages:
                                          return "static-package-in-two-images";
+        case Code::CEnvUnrealisable:     return "c-env-unrealisable";
+        case Code::CEnvVerificationMismatch:
+                                         return "c-env-verification-mismatch";
+        case Code::PlatformDependency:   return "platform-dependency";
         case Code::Other:                return "other";
     }
     return "other";

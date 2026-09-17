@@ -523,6 +523,32 @@ exists to name — it works for the declaring package and then hands the SDK's
 headers, unasked, to a consumer that may be built for a target where that SDK
 does not belong at all.
 
+#### Making it visible to the closure, not only private (mcpp 2026.9.18+)
+
+`visibility = "private"` answers "does this dependency leak to a consumer's
+`-I` list" and says nothing about "is this dependency in the graph at all" —
+a question [22 — The Target Side](22-target-side.md#closure-visibility)
+answers for the WHOLE build. The SDK package itself states the fact a report
+or a refusal needs:
+
+```toml
+[package]
+name     = "some.windows-headers"
+version  = "1.0.0"
+provides = ["platform-sdk"]
+```
+
+`platform-sdk` is an ordinary, UNPREFIXED capability — like `blas` above, not
+like `mcpp:c-abi=<impl>` — because it names no layer this engine resolves,
+only a fact a package states about itself. A build's `Target` report lists
+every package in the graph that declares it (empty when none), and `[build]
+platform-dependencies = "refuse"` fails the build outright when one is
+present — the machine-checkable form of "this build is a closure entirely on
+its kernel-abi implementation and nothing else." Declaring `provides =
+["platform-sdk"]` and `visibility = "private"` together is the complete
+statement: private keeps the headers off a consumer's search path, and
+`platform-sdk` keeps the fact off nobody's report.
+
 ## Current limitations
 
 **A default feature is turned off in the manifest, not on the command line.**

@@ -468,6 +468,21 @@ is in use. A payload for it does not exist on any host; its system can only come
 from a dependency graph, which is what `toolchain list` reports as
 `via dependency graph`.
 
+### A declared environment can move the compiled triple, never the linked one (mcpp 2026.9.18+)
+
+A `c-abi` package's `[c-abi]` block ([22 — The C Environment](22-target-side.md#the-c-environment-a-c-abi-package-presents-mcpp-2026918))
+can change what `--target=` a COMPILE receives — `x86_64-windows-gnu` compiles
+as `x86_64-pc-cygwin` when the graph's C library declares `presents =
+"posix"` — without changing the triple this chapter is otherwise about. The
+resolved triple (`mcpp toolchain list`'s spelling, the output directory name,
+the `Target` report's head line, the LINK line) stays exactly what the graph
+and the toolchain resolved; only the compiler's own `--target=` token, on
+compile commands, is substituted, because that is the one place the
+declaration's environment-identity macros and data model come from. A reader
+who greps a `compile_commands.json` for `--target=` and finds a spelling this
+chapter never lists is looking at exactly this — see docs/22 for what
+triggered it and why.
+
 ## The Build Host Is A Third Axis
 
 The two axes above — which compiler, and where the C library comes from — are

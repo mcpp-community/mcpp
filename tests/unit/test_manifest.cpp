@@ -2,6 +2,7 @@
 
 import std;
 import mcpp.manifest;
+import mcpp.targetside;
 import mcpp.libs.toml;
 import mcpp.pm.dep_spec;
 import mcpp.platform.axis;
@@ -5783,9 +5784,210 @@ exclusive = ["cap"]
 std-module = "m"
 std-compat-module = "c"
 std-module-flags = ["-x"]
+c-environment = "platform"
 )";
     auto m = mcpp::manifest::parse_string(src);
     ASSERT_TRUE(m.has_value()) << m.error().format();
     for (auto const& w : m->schemaWarnings)
         EXPECT_EQ(w.find("[package] has unsupported key"), std::string::npos) << w;
+    EXPECT_EQ(m->cEnvironment, "platform");
+}
+
+// ── `[c-abi]` — the C environment a `mcpp:c-abi=<impl>` provider declares
+// (design 2026-09-18 §3.2) ──────────────────────────────────────────────────
+
+TEST(Manifest, CAbiBlockParsesOnAProviderOfTheLayer) {
+    constexpr auto src = R"(
+[package]
+name     = "openkal-musl"
+version  = "0.15.0"
+provides = ["mcpp:c-abi=musl"]
+
+[c-abi]
+presents   = "posix"
+data-model = "arch-default"
+wchar      = 32
+builtins   = "iso"
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_TRUE(m->cAbiDecl.has_value());
+    EXPECT_TRUE(m->cAbiDecl->declared);
+    EXPECT_EQ(m->cAbiDecl->presents, mcpp::targetside::CAbiPresents::Posix);
+    EXPECT_EQ(m->cAbiDecl->dataModel, mcpp::targetside::CAbiDataModel::ArchDefault);
+    EXPECT_EQ(m->cAbiDecl->wcharBits, 32);
+    EXPECT_EQ(m->cAbiDecl->builtins, mcpp::targetside::CAbiBuiltins::Iso);
+}
+
+// `builtins` alone defaults — the other three carry no default (§3.2).
+TEST(Manifest, CAbiBuiltinsDefaultsToPlatform) {
+    constexpr auto src = R"(
+[package]
+name     = "openkal-musl"
+version  = "0.15.0"
+provides = ["mcpp:c-abi=musl"]
+
+[c-abi]
+presents   = "posix"
+data-model = "arch-default"
+wchar      = 32
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    ASSERT_TRUE(m->cAbiDecl.has_value());
+    EXPECT_EQ(m->cAbiDecl->builtins, mcpp::targetside::CAbiBuiltins::Platform);
+}
+
+// A package that does not provide the layer has no standing to state what
+// environment it presents — an internal contradiction, refused rather than
+// silently ignored (§3.2, gap #3 of the design's own self-review).
+TEST(Manifest, CAbiBlockWithoutProvidingTheLayerIsRefused) {
+    constexpr auto src = R"(
+[package]
+name    = "not-a-c-library"
+version = "0.1.0"
+
+[c-abi]
+presents   = "posix"
+data-model = "arch-default"
+wchar      = 32
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_FALSE(m.has_value());
+    EXPECT_NE(m.error().message.find(
+        "[package] provides does not list `mcpp:c-abi=<impl>`"),
+        std::string::npos) << m.error().message;
+}
+
+TEST(Manifest, CAbiRequiresAllThreeKeysWithNoDefault) {
+    const std::pair<std::string_view, std::string_view> cases[] = {
+        {R"([package]
+name = "a"
+version = "0.1.0"
+provides = ["mcpp:c-abi=x"]
+[c-abi]
+data-model = "arch-default"
+wchar = 32
+)", "[c-abi] is missing `presents`"},
+        {R"([package]
+name = "a"
+version = "0.1.0"
+provides = ["mcpp:c-abi=x"]
+[c-abi]
+presents = "posix"
+wchar = 32
+)", "[c-abi] is missing `data-model`"},
+        {R"([package]
+name = "a"
+version = "0.1.0"
+provides = ["mcpp:c-abi=x"]
+[c-abi]
+presents = "posix"
+data-model = "arch-default"
+)", "[c-abi] is missing `wchar`"},
+    };
+    for (auto [src, expected] : cases) {
+        auto m = mcpp::manifest::parse_string(src);
+        ASSERT_FALSE(m.has_value()) << src;
+        EXPECT_NE(m.error().message.find(expected), std::string::npos)
+            << src << " -> " << m.error().message;
+    }
+}
+
+TEST(Manifest, CAbiClosedValueSetsRejectAMisspelling) {
+    const std::pair<std::string_view, std::string_view> cases[] = {
+        {R"([package]
+name = "a"
+version = "0.1.0"
+provides = ["mcpp:c-abi=x"]
+[c-abi]
+presents = "posixx"
+data-model = "arch-default"
+wchar = 32
+)", "presents = \"posixx\" names no known environment identity"},
+        {R"([package]
+name = "a"
+version = "0.1.0"
+provides = ["mcpp:c-abi=x"]
+[c-abi]
+presents = "posix"
+data-model = "lp65"
+wchar = 32
+)", "data-model = \"lp65\" names no known data model"},
+        {R"([package]
+name = "a"
+version = "0.1.0"
+provides = ["mcpp:c-abi=x"]
+[c-abi]
+presents = "posix"
+data-model = "arch-default"
+wchar = 17
+)", "[c-abi].wchar must be the integer 16 or 32"},
+        {R"([package]
+name = "a"
+version = "0.1.0"
+provides = ["mcpp:c-abi=x"]
+[c-abi]
+presents = "posix"
+data-model = "arch-default"
+wchar = 32
+builtins = "gnuish"
+)", "builtins = \"gnuish\" names no known policy"},
+        {R"([package]
+name = "a"
+version = "0.1.0"
+provides = ["mcpp:c-abi=x"]
+[c-abi]
+presents = "posix"
+data-model = "arch-default"
+wchar = 32
+extra = 1
+)", "[c-abi] has no member 'extra'"},
+    };
+    for (auto [src, expected] : cases) {
+        auto m = mcpp::manifest::parse_string(src);
+        ASSERT_FALSE(m.has_value()) << src;
+        EXPECT_NE(m.error().message.find(expected), std::string::npos)
+            << src << " -> " << m.error().message;
+    }
+}
+
+// A package with no [c-abi] block resolves `cAbiDecl` to nullopt — the
+// absent-block case §3.2 requires to be byte-identical to today.
+TEST(Manifest, NoCAbiBlockLeavesCAbiDeclEmpty) {
+    constexpr auto src = R"(
+[package]
+name     = "openkal-musl"
+version  = "0.15.0"
+provides = ["mcpp:c-abi=musl"]
+)";
+    auto m = mcpp::manifest::parse_string(src);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_FALSE(m->cAbiDecl.has_value());
+}
+
+// `[package] c-environment` — design §3.4. The only value is "platform".
+TEST(Manifest, CEnvironmentAcceptsOnlyPlatform) {
+    constexpr auto ok = R"(
+[package]
+name = "openkal-windows"
+version = "0.1.0"
+provides = ["mcpp:kernel-abi=openkal"]
+c-environment = "platform"
+)";
+    auto m = mcpp::manifest::parse_string(ok);
+    ASSERT_TRUE(m.has_value()) << m.error().format();
+    EXPECT_EQ(m->cEnvironment, "platform");
+
+    constexpr auto bad = R"(
+[package]
+name = "x"
+version = "0.1.0"
+c-environment = "native"
+)";
+    auto m2 = mcpp::manifest::parse_string(bad);
+    ASSERT_FALSE(m2.has_value());
+    EXPECT_NE(m2.error().message.find(
+        "c-environment = \"native\" names no known override"),
+        std::string::npos) << m2.error().message;
 }

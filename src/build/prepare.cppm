@@ -33,6 +33,8 @@ import mcpp.modgraph.scanner;
 import mcpp.modgraph.validate;
 import mcpp.toolchain.clang;
 import mcpp.toolchain.hostflags;   // the compile-token producer the package std module reuses
+import mcpp.toolchain.cenv;        // [c-abi] declaration → compiler configuration (design 2026-09-18)
+import mcpp.toolchain.cenv_probe;  // [c-abi] declaration is checked, not trusted (design §3.2)
 import mcpp.toolchain.cppfly;
 import mcpp.toolchain.detect;
 import mcpp.toolchain.dialect;
@@ -10583,6 +10585,7 @@ prepare_build(bool print_fingerprint,
                 p.version       = pkg.manifest.package.version;
                 p.interfaceName = decl->interfaceName;
                 p.hasStdModule  = !pkg.manifest.stdModule.empty();
+                p.cAbiDecl      = pkg.manifest.cAbiDecl;
 
                 auto& slot = byLayer[static_cast<int>(decl->layer)];
                 // A package may carry both spellings during the transition, and
@@ -10769,6 +10772,96 @@ prepare_build(bool print_fingerprint,
         resolvedTargetSide = tsd::resolve(in);
         targetSideResolved = true;
 
+        // `__openkal__` — design 2026-09-18 §2.1, §3.4. Read from the
+        // resolved LAYER's interface name, never from a package name, so a
+        // second implementation of `mcpp:kernel-abi=openkal` needs no engine
+        // change. Applies to every target-side unit unconditionally — even
+        // one that declares `c-environment = "platform"`, because the
+        // exception in §3.4 is about the C ENVIRONMENT a package sees, not
+        // about whether `kal_*` may be called from it.
+        if (tc) tc->kernelAbiIsOpenkal =
+            resolvedTargetSide.kernelAbi.interfaceName == "openkal";
+
+        // [c-abi] REALISATION — design §3.2-§3.4. `TargetSide::cAbiDecl` is
+        // set only when the resolved `c-abi` provider's manifest carried a
+        // `[c-abi]` block (validated at parse time, toml.cppm); everything
+        // below is therefore skipped, and every command line unchanged, for
+        // the graph this engine has always built.
+        if (tc && resolvedTargetSide.cAbiDecl) {
+            if (!mcpp::toolchain::is_clang(*tc)) {
+                refusal::record(refusal::Code::CEnvUnrealisable);
+                return std::unexpected(std::format(
+                    "the C library ('{}', {}) declares [c-abi], and this "
+                    "build's compiler ('{}') is not one mcpp can realise it "
+                    "through.\n"
+                    "       [c-abi] is realised with Clang-specific "
+                    "mechanisms — a `--target=` substitution and "
+                    "`-f[no-]short-wchar` — so a Clang toolchain is required "
+                    "for this target while a [c-abi] block is in the graph.\n"
+                    "       Select one: [toolchain] default = \"llvm@<version>\", "
+                    "or [target.<triple>] toolchain = \"llvm@<version>\".",
+                    resolvedTargetSide.cAbi.interfaceName,
+                    resolvedTargetSide.cAbi.impl, tc->compiler_family()));
+            }
+            auto tt = mcpp::toolchain::triple::parse(tc->targetTriple);
+            auto realised = mcpp::toolchain::cenv::realise(
+                *resolvedTargetSide.cAbiDecl, tt ? tt->os : std::string{},
+                tt ? tt->arch : std::string{}, tt && tt->is_freestanding());
+            if (!realised) {
+                refusal::record(refusal::Code::CEnvUnrealisable);
+                return std::unexpected(realised.error());
+            }
+            tc->cEnvTokens          = realised->tokens;
+            tc->cEnvBuiltinsTokens  = realised->builtinsTokens;
+            tc->cEnvExpectWcharBits = realised->expectWcharBits;
+            tc->cEnvExpectLongBytes = realised->expectLongBytes;
+            tc->cEnvExpectDefined   = realised->expectDefined;
+            tc->cEnvExpectUndefined = realised->expectUndefined;
+
+            // VERIFICATION, NOT TRUST (design §3.2). The probe's argv is the
+            // IDENTITY-AFFECTING SUBSET of the real command line — the
+            // `--target=` substitution and the `-U`/`-f[no-]short-wchar`
+            // tokens `cenv::realise` just produced — because those are the
+            // only tokens that change what a compiler predefines; include
+            // paths and library search flags do not, and leaving them out
+            // is what makes this probe cheap AND cacheable across every
+            // package that shares this build's target side.
+            if (tc->cEnvExpectWcharBits != 0 || tc->cEnvExpectLongBytes != 0
+                || !tc->cEnvExpectDefined.empty()
+                || !tc->cEnvExpectUndefined.empty()) {
+                std::vector<std::string> probeArgv;
+                if (!tc->crossTargetFlag.empty())
+                    probeArgv.push_back(tc->crossTargetFlag);
+                for (auto& t : tc->cEnvTokens) probeArgv.push_back(t);
+                for (auto& t : tc->cEnvBuiltinsTokens) probeArgv.push_back(t);
+                auto probe = mcpp::toolchain::cenv_probe::verify(
+                    tc->binaryPath, probeArgv,
+                    tc->cEnvExpectWcharBits, tc->cEnvExpectLongBytes,
+                    tc->cEnvExpectDefined, tc->cEnvExpectUndefined);
+                if (!probe) {
+                    refusal::record(refusal::Code::CEnvUnrealisable);
+                    return std::unexpected(probe.error());
+                }
+                if (!probe->mismatches.empty()) {
+                    refusal::record(refusal::Code::CEnvVerificationMismatch);
+                    std::string lines;
+                    for (auto& mm : probe->mismatches)
+                        lines += std::format(
+                            "\n         {:<24} declared {:<10} measured {}",
+                            mm.fact, mm.declared, mm.measured);
+                    return std::unexpected(std::format(
+                        "the C library's [c-abi] declaration does not match "
+                        "what the compiler actually produced for '{}'.{}\n"
+                        "       A declaration is checked, never trusted "
+                        "(design 2026-09-18 §3.2) — the mismatch above was "
+                        "measured from the compiler's own predefined macros, "
+                        "compiled with the exact tokens this build derived "
+                        "from the declaration.",
+                        tc->targetTriple, lines));
+                }
+            }
+        }
+
         // REPORTED, NOT REFUSED (mcpp#662, D4). `mcpp.toolchain.hostflags`
         // closes the compiler's own C-library search with `-nostdlibinc`
         // when a package supplies the target's C library (M1) — but only on
@@ -10928,6 +11021,37 @@ prepare_build(bool print_fingerprint,
                     appendUniqueFlags(p.privateBuild.cxxflags,
                                       targetSideUsage.cxxflags);
                 }
+            }
+        }
+
+        // `__openkal__` AND THE REALISED [c-abi] ENVIRONMENT — design
+        // 2026-09-18 §2.1, §3.2-§3.4. Broadcast into every package's OWN
+        // `privateBuild`, the same channel `targetSideUsage` just used above:
+        // it reaches that package's C/C++ compiles AND its dependency scan
+        // (`mcpp.modgraph.scanner` reads `privateBuild.cflags`/`cxxflags`),
+        // and it is APPENDED, so it follows every flag the package wrote for
+        // itself and the driver's own defaults still come last.
+        //
+        // `c-environment = "platform"` (§3.4) opts a package OUT of the
+        // [c-abi] REALISATION ONLY — `__openkal__` still reaches it, because
+        // the exception is about the C environment a package's headers see,
+        // not about whether its own code may call `kal_*`. The base command
+        // line these tokens are appended to is untouched either way, which is
+        // what keeps a package that declares neither field byte-identical to
+        // a build before this feature existed.
+        if (tc && (tc->kernelAbiIsOpenkal || !tc->cEnvTokens.empty()
+                   || !tc->cEnvBuiltinsTokens.empty())) {
+            static const std::vector<std::string> kOpenkalDefine = {"-D__openkal__"};
+            for (auto& p : packages) {
+                if (tc->kernelAbiIsOpenkal) {
+                    appendUniqueFlags(p.privateBuild.cflags, kOpenkalDefine);
+                    appendUniqueFlags(p.privateBuild.cxxflags, kOpenkalDefine);
+                }
+                if (p.manifest.cEnvironment == "platform") continue;
+                appendUniqueFlags(p.privateBuild.cflags, tc->cEnvTokens);
+                appendUniqueFlags(p.privateBuild.cxxflags, tc->cEnvTokens);
+                appendUniqueFlags(p.privateBuild.cflags, tc->cEnvBuiltinsTokens);
+                appendUniqueFlags(p.privateBuild.cxxflags, tc->cEnvBuiltinsTokens);
             }
         }
 
@@ -11146,6 +11270,61 @@ prepare_build(bool print_fingerprint,
         }
         mcpp::ui::info("Target", tsd::format_report(
             resolvedTargetSide, reportedTargetName, mcpp::log::is_verbose()));
+
+        // CLOSURE VISIBILITY — design §6. Distinct from the five-layer
+        // report above: a platform dependency is not a LAYER (no engine
+        // vocabulary names it, and `mcpp.targetside` — the pure, layer-only
+        // module the report above comes from — stays that way), it is an
+        // ORDINARY package that happens to declare `provides =
+        // ["platform-sdk"]`. That is the precise, machine-checkable
+        // definition this build uses: a package brings a platform
+        // dependency if and only if it says so, the same way a package
+        // states any other capability (docs/22, "provides"). Nothing infers
+        // this from header paths or link flags, because inference here would
+        // have exactly the silent-typo failure mode the reserved `mcpp:`
+        // prefix exists to avoid for the five layers — except this
+        // capability is deliberately UNPREFIXED, because it names no layer
+        // this engine resolves, only a fact a package states about itself.
+        std::vector<std::string> platformDeps;
+        for (auto& pkg : packages) {
+            if (std::ranges::find(pkg.manifest.provides, "platform-sdk")
+                == pkg.manifest.provides.end())
+                continue;
+            platformDeps.push_back(pkg.manifest.package.version.empty()
+                ? pkg.manifest.package.name
+                : std::format("{}@{}", pkg.manifest.package.name,
+                              pkg.manifest.package.version));
+        }
+        if (!platformDeps.empty() || mcpp::log::is_verbose()) {
+            std::string joined;
+            for (auto& d : platformDeps) {
+                if (!joined.empty()) joined += ", ";
+                joined += d;
+            }
+            mcpp::ui::info("Target", std::format(
+                "             {:<17} {}", "platform-deps",
+                joined.empty() ? std::string("—") : joined));
+        }
+        if (!platformDeps.empty()
+            && m->buildConfig.platformDependencies == "refuse") {
+            refusal::record(refusal::Code::PlatformDependency);
+            std::string joined;
+            for (auto& d : platformDeps) {
+                if (!joined.empty()) joined += ", ";
+                joined += d;
+            }
+            return std::unexpected(std::format(
+                "[build] platform-dependencies = \"refuse\", and the "
+                "dependency graph brings {}: {}.\n"
+                "       This build asked to be a closure entirely on its "
+                "kernel-abi implementation and nothing else (design "
+                "2026-09-18 §6).\n"
+                "       Remove the dependency, remove the feature that "
+                "pulled it in, or drop the refusal to allow it.",
+                platformDeps.size() == 1 ? "a platform dependency"
+                                         : "platform dependencies",
+                joined));
+        }
     }
 
     // ── L1b: conditional sections whose predicate names a target-side layer ──
@@ -12075,6 +12254,18 @@ prepare_build(bool print_fingerprint,
             for (auto& f : mcpp::toolchain::graph_runtime_compile_flags(*tc))
                 flags += " " + f;
         }
+        // `__openkal__` AND THE REALISED [c-abi] ENVIRONMENT REACH THE STD
+        // MODULE TOO (design §3.4: "环境作用于目标侧的全部编译单元... 以及图中
+        // 所有普通包"). The std module's own command is assembled here rather
+        // than through `mcpp.toolchain.hostflags`'s shared string (see the
+        // comment above), so it needs the same broadcast the ordinary
+        // per-package loop gives every other unit — this is that same rule,
+        // stated once more at the one site it cannot reach on its own.
+        if (tc->kernelAbiIsOpenkal) flags += " -D__openkal__";
+        if (pkg.manifest.cEnvironment != "platform") {
+            for (auto& t : tc->cEnvTokens)         flags += " " + t;
+            for (auto& t : tc->cEnvBuiltinsTokens)  flags += " " + t;
+        }
         // Everything up to here says which machine the module is for; what
         // follows says where its headers are. The codegen step needs only the
         // first — see Toolchain::stdModuleTargetFlags.
@@ -12323,6 +12514,26 @@ prepare_build(bool print_fingerprint,
     fpi.cppStandard         = m->package.standard;
     fpi.compileFlags        = canonical_compile_flags(*m)
                               + canonical_package_build_metadata(packages);
+    // [c-abi] REALISATION AND `__openkal__` PARTICIPATE IN THE FINGERPRINT
+    // (design 2026-09-18 §3.4, gap #4 of the design's own self-review). Two
+    // builds whose C library declares `data-model = "lp64"` and `"llp64"`
+    // compile the SAME source, against the SAME manifest, into objects whose
+    // `long` disagrees in width — sharing an output directory between them is
+    // exactly the silent ABI mismatch §3.4 exists to rule out. Appended only
+    // when non-empty (`tc->cEnvTokens` is empty whenever no `[c-abi]` block
+    // resolved), so a graph that declares nothing keeps the directory it
+    // already had.
+    if (tc->kernelAbiIsOpenkal) fpi.compileFlags += " openkal-kernel-abi";
+    for (auto& t : tc->cEnvTokens)        fpi.compileFlags += " cenv:" + t;
+    for (auto& t : tc->cEnvBuiltinsTokens) fpi.compileFlags += " cenv:" + t;
+    // A package opting OUT via `c-environment = "platform"` (§3.4) still
+    // changes what ITS OWN objects contain, relative to a graph where it
+    // did not opt out — so the opt-out is folded in too, named by the
+    // package rather than by its flags, since the flags it now keeps are
+    // simply the ones already covered above.
+    for (auto& pkg : packages)
+        if (pkg.manifest.cEnvironment == "platform")
+            fpi.compileFlags += " cenv-platform:" + pkg.manifest.package.name;
     // The module-edge schedule changes the SHAPE of build.ninja, and the fast
     // path replays that file without a plan to compare against. Folding the
     // switch into the fingerprint puts a differently-scheduled build in a

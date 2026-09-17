@@ -34,6 +34,45 @@ reaches every architecture the compiler supports.
 The claim is verified by a matrix of three hosts and three targets, each cell
 building one source and running the result.
 
+## Three Layers, Three Macro Families (mcpp 2026.9.18+)
+
+A build over openkal answers three different questions, and until this
+release one macro (`_WIN32`) answered two of them at once — the root cause
+of every openkal-Windows failure whose diagnosis named a missing platform
+header: the code was asking "is this openkal" through a macro that actually
+meant "is the Windows CRT present."
+
+| Family | States | Defined by | Example |
+|---|---|---|---|
+| kernel ABI | `kal_*` is callable, and behaves the same on every platform | the layer providing `mcpp:kernel-abi=openkal` | `__openkal__` |
+| C environment | the shape of the C environment source sees | the layer providing `mcpp:c-abi=<impl>`, via [`[c-abi]`](22-target-side.md#the-c-environment-a-c-abi-package-presents-mcpp-2026918) | `__unix__`, `_WIN32`, `__MINGW32__` |
+| system & architecture | the underlying OS and processor | the target triple | `__linux__`, `__APPLE__`, `__x86_64__` |
+
+**`__openkal__` — the rule.** The engine defines it, for every target-side
+unit, whenever the resolved `kernel-abi` layer's interface name is
+`openkal` — read from the LAYER's value, never from a package name, so a
+second implementation (`openkal-macos`, `openkal-opensbi`, …) needs no
+engine change.
+
+*Allowed:* gating whether a call site invokes `kal_*` at all. Its meaning is
+identical on every target, so using it this way never smuggles platform
+information into source that is supposed to be implementation-agnostic.
+
+*Forbidden:* selecting a header, inferring whether `_WIN32` is real,
+working around a missing SDK, or telling `linux`/`windows`/`macos` apart.
+Those are the C-environment layer's or the platform layer's questions —
+write `cfg(c-abi = "…")` or `cfg(kernel-abi = "…")` in the manifest instead
+(and see [22 — Adaptation To The Resolved Target Side](22-target-side.md#adaptation-to-the-resolved-target-side)
+for the predicate grammar).
+
+**Platform units.** A package that itself needs the platform's own
+environment — openkal-windows, or a platform shim under [06's private
+dependency pattern](06-features-and-capabilities.md#a-platform-sdk-dependency-stays-private)
+— states `[package] c-environment = "platform"` (docs/22) rather than
+reading `__openkal__` or any other macro to work it out: the boundary is
+declared, not inferred, and everything crossing it is still fixed-width
+(SPEC §5.4).
+
 ## What A Project Writes
 
 ```toml

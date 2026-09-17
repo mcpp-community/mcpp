@@ -447,6 +447,28 @@ some.windows-headers = { version = "1.0", visibility = "private" }
 可以工作,却会把 SDK 的头文件不由分说地交给消费方,而消费方构建的目标上很可能
 根本不该出现这个 SDK。
 
+#### 让闭包也能看见它,而不只是私有(mcpp 2026.9.18+)
+
+`visibility = "private"` 回答的是「这个依赖会不会泄漏到消费方的 `-I` 列表」,不回答
+「这个依赖到底在不在图里」——后者是[22 —— 目标侧](22-target-side.md#closure-visibility)
+要为**整个构建**回答的问题。由 SDK 包自己陈述报告或拒绝开关需要的事实:
+
+```toml
+[package]
+name     = "some.windows-headers"
+version  = "1.0.0"
+provides = ["platform-sdk"]
+```
+
+`platform-sdk` 是一个普通的、不带命名空间前缀的能力——像上面的 `blas`,不像
+`mcpp:c-abi=<impl>`——因为它不指代引擎解析的任何一层,只是包对自己陈述的一个事实。
+构建的 `Target` 报告会列出图中每一个声明了它的包(没有则显示为空);
+`[build] platform-dependencies = "refuse"` 则在它出现时直接让构建失败——这是
+「本次构建完全是基于其 kernel-abi 实现的闭包,不多不少」这句话的机器可核验形式。
+同时声明 `provides = ["platform-sdk"]` 与 `visibility = "private"` 才是完整的陈述:
+private 让头文件不出现在消费方的搜索路径上,`platform-sdk` 让这个事实不从任何人的
+报告里消失。
+
 ## 当前边界
 
 **默认 feature 在 manifest 里关掉,不在命令行上关掉。** 没有 `--no-default-features`。

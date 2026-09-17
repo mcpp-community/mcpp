@@ -1043,6 +1043,120 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
             else m.requiresAbiExceptions = av.as_bool();
         }
     }
+    // [c-abi] — the C environment a `mcpp:c-abi=<impl>` provider presents
+    // (design 2026-09-18 §3.2). A TOP-LEVEL table, not `[package.c-abi]`: it
+    // is a declaration about the target side on a par with `[build]`, not a
+    // package-identity field.
+    //
+    // ONLY THE PACKAGE THAT PROVIDES THE LAYER MAY DECLARE IT (§3.2, gap #3
+    // of the design's self-review, §12). A package writing this block without
+    // `provides = ["mcpp:c-abi=<impl>"]` is stating a fact about a layer it
+    // does not supply, which is always wrong rather than merely unusual, so
+    // it is a hard parse error rather than a warning — the same severity as
+    // every other internal inconsistency this function refuses.
+    //
+    // `presents`, `data-model` and `wchar` carry no default: each is checked
+    // for presence separately so a declaration that forgets one names that
+    // key rather than silently taking a value nobody wrote. `builtins`
+    // alone defaults to `platform` — see `CAbiDecl`.
+    if (auto* ct = doc->get_table("c-abi")) {
+        bool providesCAbi = std::ranges::any_of(m.provides, [](auto const& e) {
+            auto cap = mcpp::targetside::parse_capability(e);
+            return cap && *cap && (*cap)->layer == mcpp::targetside::CapLayer::CAbi;
+        });
+        if (!providesCAbi)
+            return std::unexpected(error(origin,
+                "[c-abi] is declared, and [package] provides does not list "
+                "`mcpp:c-abi=<impl>`.\n"
+                "       Only the package that supplies the C library may state "
+                "the environment it presents — this package is stating a fact "
+                "about a layer it does not provide.\n"
+                "       Add `mcpp:c-abi=<name>` to [package] provides, or "
+                "remove [c-abi]."));
+
+        mcpp::targetside::CAbiDecl decl;
+        decl.declared = true;
+        static constexpr std::string_view kKnownCAbiKeys[] = {
+            "builtins", "data-model", "presents", "wchar",
+        };
+        for (auto& [key, _] : *ct) {
+            if (std::ranges::find(kKnownCAbiKeys, key) == std::end(kKnownCAbiKeys))
+                return std::unexpected(error(origin, std::format(
+                    "[c-abi] has no member '{}'; the members are: builtins, "
+                    "data-model, presents, wchar", key)));
+        }
+        if (auto pit = ct->find("presents"); pit != ct->end()) {
+            if (!pit->second.is_string())
+                return std::unexpected(error(origin,
+                    "[c-abi].presents must be a string: \"posix\", \"windows\" "
+                    "or \"none\""));
+            auto parsed = mcpp::targetside::parse_c_abi_presents(pit->second.as_string());
+            if (!parsed)
+                return std::unexpected(error(origin, std::format(
+                    "[c-abi].presents = \"{}\" names no known environment "
+                    "identity. The values are: posix, windows, none",
+                    pit->second.as_string())));
+            decl.presents = *parsed;
+            decl.hasPresents = true;
+        } else {
+            return std::unexpected(error(origin,
+                "[c-abi] is missing `presents`. A declared block states all "
+                "three: `presents`, `data-model`, `wchar` — an absent key is "
+                "not the same statement as any of its values."));
+        }
+        if (auto dit = ct->find("data-model"); dit != ct->end()) {
+            if (!dit->second.is_string())
+                return std::unexpected(error(origin,
+                    "[c-abi].data-model must be a string: \"arch-default\", "
+                    "\"lp64\", \"llp64\" or \"ilp32\""));
+            auto parsed = mcpp::targetside::parse_c_abi_data_model(dit->second.as_string());
+            if (!parsed)
+                return std::unexpected(error(origin, std::format(
+                    "[c-abi].data-model = \"{}\" names no known data model. "
+                    "The values are: arch-default, lp64, llp64, ilp32",
+                    dit->second.as_string())));
+            decl.dataModel = *parsed;
+            decl.hasDataModel = true;
+        } else {
+            return std::unexpected(error(origin,
+                "[c-abi] is missing `data-model`. A declared block states all "
+                "three: `presents`, `data-model`, `wchar`."));
+        }
+        if (auto wit = ct->find("wchar"); wit != ct->end()) {
+            if (!wit->second.is_int()
+                || (wit->second.as_int() != 16 && wit->second.as_int() != 32))
+                return std::unexpected(error(origin,
+                    "[c-abi].wchar must be the integer 16 or 32"));
+            decl.wcharBits = static_cast<int>(wit->second.as_int());
+            decl.hasWchar = true;
+        } else {
+            return std::unexpected(error(origin,
+                "[c-abi] is missing `wchar`. A declared block states all "
+                "three: `presents`, `data-model`, `wchar`."));
+        }
+        if (auto bit = ct->find("builtins"); bit != ct->end()) {
+            if (!bit->second.is_string())
+                return std::unexpected(error(origin,
+                    "[c-abi].builtins must be a string: \"iso\" or \"platform\""));
+            auto parsed = mcpp::targetside::parse_c_abi_builtins(bit->second.as_string());
+            if (!parsed)
+                return std::unexpected(error(origin, std::format(
+                    "[c-abi].builtins = \"{}\" names no known policy. The "
+                    "values are: iso, platform", bit->second.as_string())));
+            decl.builtins = *parsed;
+        }
+        m.cAbiDecl = decl;
+    }
+    // [package] c-environment = "platform" — see Manifest::cEnvironment.
+    if (auto v = doc->get_string("package.c-environment")) {
+        if (*v != "platform")
+            return std::unexpected(error(origin, std::format(
+                "[package] c-environment = \"{}\" names no known override. "
+                "The only value is \"platform\" — this package's own units "
+                "compile in the triple's default environment regardless of "
+                "what the graph's C library declares.", *v)));
+        m.cEnvironment = *v;
+    }
     // [package] exclusive — capabilities this package claims sole provision of.
     //
     // Not validated against the reserved prefix: exclusivity is a property of
@@ -1104,9 +1218,9 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     //
     // MUST stay in sync with the `doc->get_*("package.<key>")` reads above.
     static constexpr std::string_view kKnownPackageKeys[] = {
-        "accelerators", "authors", "description", "exclusive", "license",
-        "metadata", "name", "namespace", "platforms", "provides", "repo",
-        "requires", "requires_abi", "standard", "std-compat-module",
+        "accelerators", "authors", "c-environment", "description", "exclusive",
+        "license", "metadata", "name", "namespace", "platforms", "provides",
+        "repo", "requires", "requires_abi", "standard", "std-compat-module",
         "std-module", "std-module-flags", "version",
     };
     if (auto* pt = doc->get_table("package")) {
@@ -2077,6 +2191,18 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
     if (auto v = doc->get_string("build.default-profile")) m.buildConfig.defaultProfile = *v;
     else if (auto v = doc->get_string("build.profile"))   m.buildConfig.defaultProfile = *v;  // accepted alias
     if (auto v = doc->get_string("build.cache"))          m.buildConfig.cacheMode = *v;
+    // [build] platform-dependencies — see Manifest::platformDependencies.
+    // Validated HERE (unlike `cache`) because the value set is one word and
+    // there is nothing build-mode-specific about it to keep out of the
+    // manifest layer.
+    if (auto v = doc->get_string("build.platform-dependencies")) {
+        if (*v != "refuse")
+            return std::unexpected(error(origin, std::format(
+                "[build] platform-dependencies = \"{}\" names no known "
+                "policy. The only value is \"refuse\" — absent means "
+                "platform dependencies are allowed, today's behaviour.", *v)));
+        m.buildConfig.platformDependencies = *v;
+    }
     // #519. Validated HERE rather than in prepare_build because the vocabulary
     // is closed and owned by mcpp: unlike `cache`, whose values interact with
     // a build mode resolved much later, "static" and "shared" are the whole
@@ -2274,7 +2400,8 @@ std::expected<Manifest, ManifestError> parse_string(std::string_view content,
         "dialect_cxxflags", "flags", "include_dirs", "include_dirs_after",
         "private_include_dirs",
         "ios_deployment_target",
-        "jobs", "ldflags", "macos_deployment_target", "module_extensions", "profile",
+        "jobs", "ldflags", "macos_deployment_target", "module_extensions",
+        "platform-dependencies", "profile",
         "sources", "static_stdlib", "target",
         // #540: read a few hundred lines above and, until now, absent here —
         // the SECOND drift of this list, and the comment below narrates the
