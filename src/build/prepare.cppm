@@ -10769,6 +10769,39 @@ prepare_build(bool print_fingerprint,
         resolvedTargetSide = tsd::resolve(in);
         targetSideResolved = true;
 
+        // REPORTED, NOT REFUSED (mcpp#662, D4). `mcpp.toolchain.hostflags`
+        // closes the compiler's own C-library search with `-nostdlibinc`
+        // when a package supplies the target's C library (M1) — but only on
+        // a Clang-family driver; GCC has no one-token equivalent
+        // (`hostflags.cppm`'s own note on the shape it would need). Silently
+        // building unisolated was ruled out once already: the resolver
+        // refusing the combination outright was ALSO tried and reverted —
+        // it fired before `format_report` below and broke three existing
+        // e2e fixtures (268, 282, 303) that use a synthetic C-library
+        // provider on this host's native, GCC-default target to assert
+        // something else entirely, none of them about isolation. A
+        // degradation is the third option: it changes no command line
+        // (this branch decides nothing `hostflags.cppm` does not already
+        // decide on its own), and it does not stop a build the previous
+        // release would have allowed — it names, once, the gap the previous
+        // release left silent.
+        if (tc && resolvedTargetSide.cAbi.fromGraph()
+            && !mcpp::toolchain::is_clang(*tc)) {
+            mcpp::diag::degraded("target/c-abi-isolation", std::format(
+                "the target's C library ('{}', {}) comes from the "
+                "dependency graph, and the resolved compiler ('{}') has no "
+                "way to stop its own driver from also searching the host's "
+                "C library headers",
+                resolvedTargetSide.cAbi.interfaceName,
+                resolvedTargetSide.cAbi.impl, tc->compiler_family()),
+                "a host header can still satisfy an #include the graph's "
+                "own headers do not, silently — a Clang-family toolchain "
+                "closes that search entirely (docs/22 'Adaptation To The "
+                "Resolved Target Side')",
+                "add [toolchain] default = \"llvm@<version>\", or for one "
+                "target only [target.<triple>] toolchain = \"llvm@<version>\"");
+        }
+
         // REPORTED ONCE, NOT REFUSED. A program that never reaches an
         // availability check links and runs without the archive; refusing it
         // would trade a diagnosed hazard for a regression. The degradation

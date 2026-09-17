@@ -20,15 +20,21 @@
   条件改为只看这一层自己的来源,不再看 `c-abi` 是否也来自图。两个 token 出现在 `cflags`/
   `cxxflags`/`asmflags` 这组全局 flags 里,C、C++、汇编、依赖扫描、std 模块预编译同时受益。
   (`src/toolchain/hostflags.cppm`,单测 `test_hostflags.cpp`)
-- **GCC 家族没有等价的单一 flag,保持原样不隔离。** `-nostdinc` 加 `-isystem <gcc
-  -print-file-name=include>`、`<…/include-fixed>` 才能拼出等价物,且 GCC 本就没有
-  `<driver>.cfg` 可供 `bypassCfg` 打开这整块——`hostflags.cppm` 因此对 GCC 不做任何改动。
-  最初的草案在 `prepare.cppm` 里加了一条「图供给 C 库 + GCC」的硬拒绝,想着比静默不隔离更
-  诚实;实测(268、282、303 三个既有 e2e)显示这个组合是这几个文件的常规夹具——它们用一个
-  只声明 `provides = ["mcpp:c-abi=..."]`、不含真实头文件的假包在**原生**目标上验证与隔离
-  完全无关的其它事实,且都依赖 268 自己注释所陈述的设计:目标侧的解析报告先于编译打印,
-  失败与否不影响这条报告——而这条硬拒绝恰好抢在报告打印之前退出,三个文件全部转红。撤回
-  该拒绝;GCC 在这一组合上的行为与 #662 之前逐字节相同。
+- **GCC 家族没有等价的单一 flag,命令行不变,但不再静默。** `-nostdinc` 加
+  `-isystem <gcc -print-file-name=include>`、`<…/include-fixed>` 才能拼出等价物,且
+  GCC 本就没有 `<driver>.cfg` 可供 `bypassCfg` 打开这整块——`hostflags.cppm` 因此对 GCC
+  不做任何改动,这一组合上产出的编译命令与 #662 之前逐字节相同。
+  中途试过两种更强的处理,都被实测推翻:静默不隔离(#662 之前的状态,`GCC 家族没有等价的
+  单一 flag` 的最初读法)什么也不说;`prepare.cppm` 里一条「图供给 C 库 + GCC」的硬拒绝
+  (想着比静默更诚实)在既有 e2e 268、282、303 上转红——它们用一个只声明
+  `provides = ["mcpp:c-abi=..."]`、不含真实头文件的假包在**原生**目标上验证与隔离完全无关
+  的其它事实,且都依赖 268 自己注释所陈述的设计:目标侧的解析报告先于编译打印,失败与否
+  不影响这条报告——而硬拒绝恰好抢在报告打印之前退出。第三种形状落地:`mcpp::diag::degraded`
+  在目标侧解析出「c-abi 来自图 且 编译器不是 Clang 家族」时报一条 warning,点名 C 库
+  (名字与 `包名@版本`)和编译器,并指向 Clang 家族能做到隔离——不拒绝构建,不改动任何命令行
+  (`hostflags.cppm` 本就没有为这一组合追加过 token),也不再沉默。`--strict` 下
+  `mcpp::diag::flush` 按其既有策略把它提升为错误,复用的是这一整块已经存在的策略,不是新写
+  的一条。(`src/build/prepare.cppm`,e2e 740;268、282、303 仍然全绿)
 - **隔离后原本靠宿主补齐的包会确定地失败,失败信息现在可读。** 构建失败、目标侧 `c-abi`
   来自图、且编译器输出含 `file not found` 时,追加一条说明,点名 C 库(名字与
   `包名@版本`)并给出两条路:按 `cfg(c-abi = "...")` 适配,或把平台依赖以私有可见性带进
@@ -44,11 +50,13 @@
   构建与载荷提供 C 库的构建命令行逐字节不变(单测守卫)。这类构建的 flags 指纹变化,升级后
   会重建一次。原先只因为宿主头文件补上缺口才能编译的包,现在会确定地失败——这类构建此前只在
   装了对应宿主包的机器上成功,产物还混用了两个 C 库的声明;新增的说明使这类失败可以诊断。
+  C 库来自图、编译器却是 GCC 家族的构建会多打印一条 warning(命令行不变,构建照常继续)。
 - 单测:`test_hostflags.cpp`(选项矩阵 `cAbiPrebuilt × cxxFromGraph × {clang, gcc}`,以及
   载荷提供两层时命令行不变的回归守卫)、`test_ninja_backend.cpp`。e2e:738(openkal
   `x86_64-windows-gnu` 构建,逐单元核对 clang 自己报告的头文件搜索列表,门在
   `mingw-host-headers` capability 上,`openkal-cross.yml` 的 `ecosystem-e2e` job 安装
-  `mingw-w64` 使其在 CI 上成立)、739(私有 feature-dep 的双向锁定)。
+  `mingw-w64` 使其在 CI 上成立)、739(私有 feature-dep 的双向锁定)、740(GCC 家族在
+  图供给 C 库上得到警告而非拒绝,且既有的 268/282/303 仍然全绿)。
 
 ### 声明的 C 运行时由 mcpp 安装,查找只做精确匹配:#660(2026.9.17.2)
 
