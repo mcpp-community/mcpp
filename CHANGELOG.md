@@ -46,6 +46,18 @@
   让它们的出现直接失败构建。(`src/build/prepare.cppm`,`docs/06`)
 - **指纹**:解析出的环境与 `__openkal__` 参与构建指纹,LP64 与 LLP64 两次构建绝不共享输出
   目录。安装钩子的存储键尚未补上同一个缺口,已在 `docs/22` 记录为已知差距。
+- **实现同样到达汇编单元,经 openkal-musl 尖峰实验发现并修订。** 最初的广播只写入每个包的
+  `privateBuild.cflags`/`cxxflags`,`.S` 单元走独立组装的 `f.as`,只从 `packageCflags` 里
+  继承 `-D`/`-U`/`-I` 子集(`unit_asm_flags`,本就如此,为了不让 `-std=`/`-O` 这类对汇编
+  无意义的标志混进去)——`--target=`/`-fno-short-wchar` 因此从未到达汇编器,同一个包里
+  `.c` 单元看到 `_WIN32` 未定义而 `.S` 单元仍看到它已定义(openkal-musl 自己的
+  `okm_setjmp.S`、上游 libunwind 的 `assembly.h` 都按这个宏选目标文件格式分支与寄存器保存
+  集,后果是用 SysV 保存集写、按 Win64 头部量的 `jmp_buf` 悄悄错位)。新增
+  `UsageRequirements::asmflags`——`privateBuild` 内与 `cflags`/`cxxflags` 平行、但只供引擎
+  自己广播用的第三条通道(没有对应的 `[build] asmflags = [...]` 清单键)——把同一份令牌
+  原样送进 `packageAsmflags`,绕开 D/U/I 过滤。实测 clang 对 `-x assembler-with-cpp` 接受
+  这些令牌全集,故未作裁剪。(`src/modgraph/scanner.cppm`、`src/build/prepare.cppm`,e2e
+  `tests/e2e/741_...sh` 新增 `.S` 单元与其上的断言)
 - 文档:`docs/22`(`[c-abi]`、校验、指纹)、`docs/21`(声明的环境如何移动编译三元组而不
   移动链接三元组)、`docs/24`(三组宏、`__openkal__` 的规则、平台单元)、`docs/06`
   (`platform-sdk` 标记)及对应 zh 镜像。

@@ -11039,6 +11039,27 @@ prepare_build(bool print_fingerprint,
         // line these tokens are appended to is untouched either way, which is
         // what keeps a package that declares neither field byte-identical to
         // a build before this feature existed.
+        //
+        // ALSO INTO `privateBuild.asmflags` (openkal-musl spike, post-review):
+        // the environment is a property of the TARGET, so it has to reach
+        // every translation unit built for that target, assembly (.S/.s)
+        // included — assembly is preprocessed with the same macros, and real
+        // code selects on them (openkal-musl's own `okm_setjmp.S`; upstream
+        // libunwind's `assembly.h`). `cflags`/`cxxflags` do not reach a .S
+        // file wholesale (`mcpp.build.compile_commands::unit_asm_flags` keeps
+        // only their -D/-U/-I words, on purpose — a -std= or -O token meant
+        // for the C compiler has no meaning for GAS), so the object-format
+        // and wchar-width tokens have to be named again here, into the
+        // channel `unit_asm_flags` passes through UNFILTERED. `__openkal__`
+        // needs no second copy: it is a -D, and the -D/-U/-I filter already
+        // carries it from `cflags` into every assembly unit.
+        //
+        // Every token in `cEnvTokens`/`cEnvBuiltinsTokens` was checked against
+        // clang's GAS (`-x assembler-with-cpp`) front end before this was
+        // written (`--target=`, `-f[no-]short-wchar`,
+        // `-fno-builtin-memset_pattern16`) and none is rejected — so nothing
+        // here is filtered a second time; if a future token IS GAS-hostile,
+        // `cenv::realise` is where to split it, not this broadcast.
         if (tc && (tc->kernelAbiIsOpenkal || !tc->cEnvTokens.empty()
                    || !tc->cEnvBuiltinsTokens.empty())) {
             static const std::vector<std::string> kOpenkalDefine = {"-D__openkal__"};
@@ -11050,8 +11071,10 @@ prepare_build(bool print_fingerprint,
                 if (p.manifest.cEnvironment == "platform") continue;
                 appendUniqueFlags(p.privateBuild.cflags, tc->cEnvTokens);
                 appendUniqueFlags(p.privateBuild.cxxflags, tc->cEnvTokens);
+                appendUniqueFlags(p.privateBuild.asmflags, tc->cEnvTokens);
                 appendUniqueFlags(p.privateBuild.cflags, tc->cEnvBuiltinsTokens);
                 appendUniqueFlags(p.privateBuild.cxxflags, tc->cEnvBuiltinsTokens);
+                appendUniqueFlags(p.privateBuild.asmflags, tc->cEnvBuiltinsTokens);
             }
         }
 

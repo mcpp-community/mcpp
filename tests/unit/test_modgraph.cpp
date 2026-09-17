@@ -541,6 +541,58 @@ TEST(Scanner, UsesResolvedPackagePrivateBuildIncludeDirs) {
     std::filesystem::remove_all(dir);
 }
 
+// The realised [c-abi] environment (design 2026-09-18) broadcasts into
+// `privateBuild.asmflags`, and this proves the wiring on the ONE point that
+// went wrong first (coordinator report, openkal-musl spike): the broadcast
+// must reach a GAS (.S) unit's `packageAsmflags`, exactly as it reaches a
+// `.c`/`.cpp` unit's cflags/cxxflags -- and it must NOT reach a NASM (.asm)
+// unit's, because NASM has no `--target=` concept and does not recognize a
+// single clang-family flag. A `--target=x86_64-pc-cygwin` handed to `nasm`
+// is not a degraded build, it is a build that does not assemble at all, so
+// this is a refusal-shaped guarantee even though nothing here calls
+// `refusal::record`: the wrong list for the wrong assembler.
+TEST(Scanner, ResolvedCEnvAsmflagsReachGasUnitsOnlyNotNasm) {
+    auto dir = make_tempdir("mcpp-scanner-cenv-asm");
+    write(dir / "src" / "gas.S",
+          ".text\n.globl gas_marker\ngas_marker:\n  ret\n");
+    write(dir / "src" / "nasm.asm",
+          "section .text\nglobal nasm_marker\nnasm_marker:\n  ret\n");
+
+    mcpp::manifest::Manifest m;
+    m.package.name = "pkg";
+    m.modules.sources = {"src/*.S", "src/*.asm"};
+
+    PackageRoot p{dir, m};
+    p.usageResolved = true;
+    p.privateBuild.asmflags = {"--target=x86_64-pc-cygwin", "-fno-short-wchar"};
+
+    auto r = scan_packages({p});
+    ASSERT_TRUE(r.errors.empty());
+    ASSERT_EQ(r.graph.units.size(), 2u);
+
+    bool sawGas = false, sawNasm = false;
+    for (auto const& u : r.graph.units) {
+        if (u.kind == mcpp::SourceKind::GasAsm) {
+            sawGas = true;
+            EXPECT_NE(std::find(u.packageAsmflags.begin(), u.packageAsmflags.end(),
+                                "--target=x86_64-pc-cygwin"),
+                     u.packageAsmflags.end())
+                << "the realised environment must reach a GAS unit";
+        } else if (u.kind == mcpp::SourceKind::NasmAsm) {
+            sawNasm = true;
+            EXPECT_EQ(std::find(u.packageAsmflags.begin(), u.packageAsmflags.end(),
+                                "--target=x86_64-pc-cygwin"),
+                     u.packageAsmflags.end())
+                << "NASM does not understand a clang --target= flag and must "
+                   "never receive it";
+        }
+    }
+    EXPECT_TRUE(sawGas);
+    EXPECT_TRUE(sawNasm);
+
+    std::filesystem::remove_all(dir);
+}
+
 TEST(Scanner, PartitionImportFromPrimaryInterface) {
     // Primary module interface: `export module foo;` → logicalName = "foo".
     // `import :tls;` resolves to "foo:tls".

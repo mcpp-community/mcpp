@@ -121,6 +121,19 @@ struct UsageRequirements {
     std::vector<std::filesystem::path> includeDirsAfter;
     std::vector<std::string>           cflags;
     std::vector<std::string>           cxxflags;
+    // Whole-package assembler flags. There is no `[build] asmflags = [...]`
+    // manifest key to back this — a per-glob `flags = [{ glob, asmflags }]`
+    // entry is the author-facing channel (scan_one_into applies it below, via
+    // apply_glob_flags) — this field exists only for the engine's own
+    // broadcasts, today the realised [c-abi] environment tokens (design
+    // 2026-09-18 §3.2). `cflags`/`cxxflags` do NOT reach assembly wholesale:
+    // `mcpp.build.compile_commands::unit_asm_flags` narrows a unit's C flags
+    // to their -D/-U/-I words before letting them near a .S file (a -std= or
+    // -O flag meant for the C compiler is meaningless, or worse, to GAS), so
+    // a broadcast that must reach assembly UNFILTERED — `--target=`,
+    // `-f[no-]short-wchar`, the object-format identity itself — has to name
+    // itself here rather than ride along in cflags and be quietly dropped.
+    std::vector<std::string>           asmflags;
     std::vector<std::string>           ldflags;
     std::vector<std::string>           modules;
 };
@@ -1175,7 +1188,8 @@ void scan_one_into(ScanResult& result,
                    const std::vector<std::filesystem::path>& localIncludeDirs,
                    const std::vector<std::filesystem::path>& localIncludeDirsAfter,
                    const std::vector<std::string>& packageCflags,
-                   const std::vector<std::string>& packageCxxflags)
+                   const std::vector<std::string>& packageCxxflags,
+                   const std::vector<std::string>& packageAsmflags = {})
 {
     // This package's own extension table. Built once per package, not per
     // file, and taken from THIS manifest — a dependency is classified by its
@@ -1286,6 +1300,16 @@ void scan_one_into(ScanResult& result,
             u.localIncludeDirsAfter = localIncludeDirsAfter;
             u.packageCflags    = packageCflags;
             u.packageCxxflags  = packageCxxflags;
+            // GAS ONLY. NASM has no `--target=` concept and does not
+            // recognize clang-family flags at all — `packageAsmflags` here is
+            // the engine's own broadcast (today: the realised [c-abi]
+            // environment), and unlike a per-glob `flags = [{asmflags}]`
+            // entry (applied below by apply_glob_flags, to both kinds, which
+            // is safe because THAT list is author-written per glob) it is not
+            // written with any one assembler in mind. A NASM unit still gets
+            // its own per-glob asmflags untouched.
+            if (u.kind == mcpp::SourceKind::GasAsm)
+                u.packageAsmflags = packageAsmflags;
             apply_glob_flags(u);
             normalize_include_flags(root, u.packageCflags);
             normalize_include_flags(root, u.packageCxxflags);
@@ -1305,6 +1329,9 @@ void scan_one_into(ScanResult& result,
         r->localIncludeDirsAfter = localIncludeDirsAfter;
         r->packageCflags = packageCflags;
         r->packageCxxflags = packageCxxflags;
+        // See the identical GAS-only gate in the scan_overrides branch above.
+        if (r->kind == mcpp::SourceKind::GasAsm)
+            r->packageAsmflags = packageAsmflags;
         apply_glob_flags(*r);
         normalize_include_flags(root, r->packageCflags);
         normalize_include_flags(root, r->packageCxxflags);
@@ -1451,8 +1478,21 @@ ScanResult scan_packages(const std::vector<PackageRoot>& packages) {
         auto const& packageCxxflags = p.usageResolved
             ? p.privateBuild.cxxflags
             : p.manifest.buildConfig.cxxflags;
+        // No `!p.usageResolved` fallback here: unlike cflags/cxxflags there is
+        // no `manifest.buildConfig.asmflags` to fall back to (see
+        // `UsageRequirements::asmflags`'s own comment) — a package's whole-
+        // package asm broadcast exists only once usage is resolved. A static
+        // empty vector (rather than a ternary mixing an lvalue with a
+        // temporary) keeps the resolved branch a reference, not a copy — the
+        // same reason packageCflags/packageCxxflags above are two same-typed
+        // lvalues rather than one lvalue and one temporary.
+        static const std::vector<std::string> kNoAsmFlags;
+        auto const& packageAsmflags = p.usageResolved
+            ? p.privateBuild.asmflags
+            : kNoAsmFlags;
         scan_one_into(result, p.root, p.manifest, localIncludeDirs,
-                      localIncludeDirsAfter, packageCflags, packageCxxflags);
+                      localIncludeDirsAfter, packageCflags, packageCxxflags,
+                      packageAsmflags);
     }
     resolve_graph(result);
     return result;
@@ -1497,6 +1537,9 @@ ScanResult scan_packages_p1689(const std::vector<PackageRoot>&     packages,
             r->packageCxxflags = p.usageResolved
                 ? p.privateBuild.cxxflags
                 : p.manifest.buildConfig.cxxflags;
+            // GAS only — see the identical gate in scan_one_into above.
+            if (p.usageResolved && r->kind == mcpp::SourceKind::GasAsm)
+                r->packageAsmflags = p.privateBuild.asmflags;
             result.graph.units.push_back(std::move(*r));
         }
     }

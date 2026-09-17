@@ -344,8 +344,19 @@ this block, mcpp turns the request into compiler configuration for every
 target-side unit — the C library itself, the C++ runtime, the compiler
 runtime's builtins, and every ordinary package in the graph — covering C,
 C++ and assembly compiles, the dependency scan, and the `std` module
-precompile alike. mcpp holds one mapping table from request to triple and
-flags, generic knowledge that names no C library:
+precompile alike. Assembly (`.S`/`.s`) needs its own broadcast channel to get
+this: a `.S` unit's command line is assembled independently of a `.c`/`.cpp`
+unit's (`mcpp.build.flags::CompileFlags::as`, not `::cc`/`::cxx`), and only
+takes the `-D`/`-U`/`-I` words out of a package's C flags on purpose — a
+`-std=` or `-O` token meant for the C compiler is meaningless to GAS — so the
+realised environment tokens (`--target=`, `-f[no-]short-wchar`, and anything
+`builtins = "iso"` adds) are broadcast a second time, verbatim, into that
+narrower channel (found missing, and fixed, by the openkal-musl spike: a
+`.c` unit in a package saw `_WIN32` undefined while a `.S` unit in the SAME
+package — real code, like `okm_setjmp.S` and upstream libunwind's
+`assembly.h`, selects register-save sets on it — still saw it defined). mcpp
+holds one mapping table from request to triple and flags, generic knowledge
+that names no C library:
 
 | Target | Request | Realisation |
 |---|---|---|

@@ -14,8 +14,12 @@
 # a provider's block actually reaches the resolved target side, that the
 # realised tokens reach the compile database of an ordinary package, that a
 # package opting out with `c-environment = "platform"` does not receive them,
-# and that a request this engine cannot realise is refused before anything
-# compiles -- rather than compiled wrong and shipped.
+# that a GAS (.S) unit gets the SAME tokens a .c/.cpp unit in the same package
+# does (a defect found by the openkal-musl spike after this test's first
+# version: the substitution reached `f.cc`/`f.cxx` but not `f.as`, so a .c unit
+# saw `_WIN32` undefined while a .S unit in the same package still saw it
+# defined), and that a request this engine cannot realise is refused before
+# anything compiles -- rather than compiled wrong and shipped.
 #
 # `x86_64-windows-gnu` is the flagship target (design's own motivating case),
 # and this test compiles only -- it never links or runs the artifact, so it
@@ -44,6 +48,18 @@ EOF
 mkdir -p src
 cat > src/main.cpp <<'EOF'
 int main() { return 0; }
+EOF
+
+# A third-party-style assembly unit, mirroring the class of file the
+# coordinator's report named (openkal-musl's `okm_setjmp.S`, upstream
+# libunwind's `assembly.h`): real GAS source that is preprocessed and reads
+# the SAME environment macros a `.c`/`.cpp` unit does. Compiled only (never
+# linked/run), so it needs no runtime -- one label is enough to be valid GAS.
+cat > src/probe.S <<'EOF'
+.text
+.globl cabi_probe_asm_marker
+cabi_probe_asm_marker:
+    ret
 EOF
 
 cat > mcpp.toml <<'EOF'
@@ -153,6 +169,39 @@ if present:
 libc = joined(args_for("fakemusl/src/lib.c"))
 if "--target=x86_64-pc-cygwin" not in libc:
     print(f"FAIL: the c-abi provider's own unit is missing the realised triple\n  args: {libc}")
+    sys.exit(1)
+
+# The GAS (.S) unit must carry the SAME environment tokens as the C/C++ units
+# of the SAME package -- the defect this leg pins (coordinator report,
+# openkal-musl spike): the substitution used to reach C/C++ compiles only, so
+# a `.c` unit in a package saw `_WIN32` undefined while a `.S` unit in the
+# SAME package still saw it defined, because `--target=`/`-fno-short-wchar`
+# never reached the assembler's command line at all. `--target=` is asserted
+# by full-string match (assembly's flag string is independently assembled --
+# `mcpp.build.flags::f.as`, not `f.cc` -- so a match here proves the token
+# actually reached that channel, not merely that it exists somewhere in the
+# database). `-fno-short-wchar` is meaningless to GAS (no wchar_t in
+# assembly) and is asserted too regardless, on the coordinator's own
+# instruction: "whatever the C units get for the environment, the assembler
+# units should get too, minus anything meaningless to the assembler" --
+# clang accepts the flag for `.S` input (measured, does not error), so
+# nothing here justifies dropping it just because assembly has no use for it.
+asm_args = list(args_for("probe.S"))
+if not asm_args:
+    print("FAIL: could not find the .S unit's compile command at all")
+    sys.exit(1)
+asm_joined = joined(iter(asm_args))
+missing = [tok for tok in ("--target=x86_64-pc-cygwin", "-fno-short-wchar")
+           if tok not in asm_joined]
+if missing:
+    print(f"FAIL: the assembly unit is missing realised tokens {missing} "
+          f"-- the [c-abi] substitution must reach .S the same as .c/.cpp\n"
+          f"  args: {asm_joined}")
+    sys.exit(1)
+present = [tok for tok in ("-U__CYGWIN__", "-U__CYGWIN32__") if tok in asm_joined]
+if present:
+    print(f"FAIL: __CYGWIN__/__CYGWIN32__ must stay defined on assembly too, "
+          f"but found {present}\n  args: {asm_joined}")
     sys.exit(1)
 
 # openkalwin declared c-environment = "platform" and must NOT see the
